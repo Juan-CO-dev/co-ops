@@ -503,8 +503,8 @@
         "path": "docs/guides/manager-guide.md",
         "revision": "5241016",
         "section": "Receiving a delivery / 4. Flag a problem",
-        "quote": "**Delivery confirmed** stays off until there is a receipt photo or **Photo later** is ticked. It submits immediately, with no \"are you sure\".",
-        "quoteSha256": "872321390edc1deb23ff333ef2ba4109d90357688382fa1e8ddd031dbf13aef7"
+        "quote": "**Delivery confirmed** stays off until there is a receipt photo or **Photo later** is ticked. If expected items are still unconfirmed, the first tap opens a review notice. Check those items, then tap again to file the delivery.",
+        "quoteSha256": "a757e97f9bec892ecb10ac0ba6ca10d6eed556aaf37d8b1fff5c72399fc0b36e"
       },
       "actor": "key holder (Rosa at EM; Angel at MEP)",
       "preconditions": "Fixture cold-empty; no receipt photo is supplied and all other required fields are valid.",

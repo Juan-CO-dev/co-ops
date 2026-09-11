@@ -21,7 +21,7 @@ Who does what:
 - Setup lives in Admin. Packages, FAQ, LTOs and prep demand open at **AGM**; the catering menu, capacity, delivery zones and the fulfillment map at **GM**.
 - Pricing and rates — tax, gratuity, service charge, deposit — are **Manager of Operations and up**.
 
-**Your password is asked for once: sending a quote.** Everything else here is one tap with no confirmation — moving a stage, marking a quote accepted, marking a payment paid. Admin asks on every change you save.
+**Your password is asked for once: sending a quote.** Everything else here is one tap with no confirmation — moving a stage, marking a quote accepted, marking a payment paid. Admin changes need your password too; some reuse the confirmation you just gave, others ask again.
 
 Two things happen without you. Delivery-platform orders and catering orders rung up in the store arrive as leads on their own. And overnight, any event still in Confirmed or Out for delivery whose date has passed is moved to Completed.
 
@@ -104,11 +104,11 @@ This is the board you work. One card per lead, one column per stage, left to rig
 
 ![The Add lead form with contact, company, event date, headcount, lead source, order lead, follow-up, location and notes](img/catering/05-add-lead-note.png)
 
-**What to do** — Tap **+ Add lead**, fill in what you know, and tap **Add**. Only **Contact name** is required.
+**What to do** — Tap **+ Add lead** and fill in what you know; only **Contact name** is required. Put the address, the packages they mentioned and what you promised to do next into **Notes** before you tap **Add**.
 
 **Worth knowing**
 
-- **Notes can only be typed here, when you create the lead.** The card shows notes back to you afterwards, but there is nowhere on the board to add one or change one. Write the whole phone call into **Notes** now — the address, the packages they mentioned, what you promised to do next — because this is your only chance at it from this screen.
+- **The board cannot add or change a note after the lead exists.** The card shows the note back to you; this form is the only place to write it.
 - **Order lead** is who owns the follow-up; their name shows on the card as **@name**. **Follow-up date** is what puts the lead on the follow-up list.
 - Leave **Location** on the shop that will actually make the food. Delivery zones, capacity and pricing are all per shop, and a quote inherits none of them if the lead is on the wrong one.
 - **A lead you add by hand is not tied to a customer record.** Adding it here does not create one, and it will not show on anybody's customer history. Typing the client's email into the quote builder is what does that — see [Quotes](#quotes).
@@ -137,7 +137,7 @@ This is the board you work. One card per lead, one column per stage, left to rig
 **Worth knowing**
 
 - An online order only becomes a lead **after the customer clicks the link we email them.** Somebody who fills the form in and never opens the email leaves no card on the board — there is nothing to chase, because you have no way of knowing they started.
-- Platform and in-store catering orders land on their own, and they arrive already **Confirmed**. See [What arrives on its own](#what-arrives-on-its-own).
+- EZCater and in-store catering orders land on their own. An EZCater order sits in **Inquiry** until it is accepted on the platform, then moves to **Confirmed**; in-store catering arrives **Confirmed**. See [What arrives on its own](#what-arrives-on-its-own).
 
 ---
 
@@ -179,15 +179,15 @@ A quote is a priced document with a version number. You build it, you send it, a
 
 **What you see**
 
-![Three line items above the Add package and Add à la carte pickers, with Delivery ticked](img/catering/41-quote-builder-with-lines.png)
+![The quote header and the start of the line-item editor; the pickers and the Delivery box are in the next screenshot](img/catering/41-quote-builder-with-lines.png)
 
 **What to do** — Use **Add package** and **Add à la carte** to drop lines in, then fix the description, **Qty** and **Unit price** on each one.
 
 **Worth knowing**
 
-- **Every line is Qty × Unit price, and the quote is the sum of the lines.** Nothing else prices anything. **Unit price is the price of ONE.**
-- **A package arrives as lines you can edit.** If its contents carry prices, those lines come in priced. If every content line is a *pick* with no price — *"Choose your subs (×8)"* — the package's own price comes in on one extra line at Qty 1, and the picks stay at **quantity filled in, Unit price blank**. A package with no contents is one priced line.
-- **Leave the pick lines at a blank price.** Typing the package price into a ×8 pick line charges it eight times over — the $920.00 line in the picture.
+- **Each line is Qty × Unit price, and Unit price is the price of ONE.** The lines add up to the subtotal; delivery, service charge, gratuity and tax go on top of that.
+- **A package arrives as lines you can edit.** Its contents keep their quantities and any prices already set. If every content line is unpriced and the package has a price, the app adds one package line at Qty 1 carrying that price; the picks — *"Choose your subs (×8)"* — stay at **quantity filled in, Unit price blank**. A package with no contents arrives as one line at Qty 1 with its price.
+- **Leave the pick lines blank and keep the package price on the package line only.** Typing $115 into a Qty 8 pick charges $920 — the mistake in the saved-quote picture at step 6.
 - An **à la carte** item behaves differently — it arrives with its description and its price already filled in. Change the quantity and leave the price alone.
 - The pickers offer active menu items and active packages. If an old draft or a package still points at a retired item, saving the quote is refused until you swap that line for an active item. The message says: *"One of the lines points at an item that is no longer on the menu. Remove that line and add it again from the picker."*
 - **A line you type in yourself is money only.** Lines that came from the menu or from a package carry through to the kitchen's prep list and to the allergen labels. A hand-typed line does neither. Use the pickers whenever the thing exists on the menu.
@@ -206,7 +206,7 @@ A quote is a priced document with a version number. You build it, you send it, a
 - The sum is done by the app, not by the page you are looking at, so what you are reading is the real answer and not a preview.
 - The block shows **Subtotal**, then **Delivery**, **Service charge**, **Gratuity** and **Tax** — **each of those four only when it is not zero** — then **Total** in bold, then **Deposit due**.
 - **Tax is charged on the subtotal plus the service charge**, plus the delivery fee and the gratuity if your shop's rule says to tax them. **Deposit due is a percentage of the total**, not of the subtotal.
-- **No Tax line and no Deposit due line means no pricing rule.** That is the red banner from step 2, not a quiet zero. Do not send it.
+- Zero amounts are hidden, so a missing Tax or Deposit due line does not by itself prove the shop has no pricing rule — the red **No pricing rule** banner from step 2 does. If you see that banner, do not send; ask your Manager of Operations to set pricing first.
 - Every rate is frozen onto the quote when you save. Somebody changing the tax rate next month will not move the number you sent.
 
 ### 5. Save it
@@ -221,7 +221,7 @@ A quote is a priced document with a version number. You build it, you send it, a
 
 - **Landing on this page is the confirmation.** There is no "saved" message and there is not meant to be.
 - **Expires** is fourteen days out. A quote past that date cannot be sent and cannot be accepted — you revise it, which starts the fourteen days again.
-- **Revise** makes a new version: the old one is kept, the new one goes back to **draft**, and you have to send it again. If the lead is already Confirmed, revising also updates what the kitchen is prepping.
+- **Revise** makes a new version: the old one is kept, the new one goes back to **draft**, and you have to send it again. If the lead is already Confirmed, a revision with no package lines updates the kitchen's prep list; a revision that contains a package line leaves the existing prep list as it was — tell the kitchen what changed and have your GM check the prep list.
 
 ### 6. Check the lines came out right
 
@@ -456,7 +456,7 @@ These screens could not be photographed, because reaching them needs the emailed
 - Then they **build** — packages first, then the à la carte sections — with a running cart and a coverage panel telling them whether they have enough food. Prices come from your shop's catering menu; there is nothing on that screen they can type a price into.
 - Then they **review**: the whole order, the full totals, and the **Deposit to record**. **Record deposit & submit order →** turns their draft into a submitted order and records the deposit as **due**.
 - **No money is taken online.** The deposit is a record, not a payment. It is marked paid on the quote's own page, under **Payments**, by an AGM or above, once you have actually collected it.
-- The review screen names no payment provider. Under **How your deposit works**, it tells them: *"No money is taken online. The deposit is a record, not a payment."* **We confirm the details with you** explains that your team will confirm the order, date and payment arrangements. The balance reads **Balance — confirmed with you by our team**.
+- The review names no payment provider. **How your deposit works** says no money is taken online; **We confirm the details with you** says your team will confirm the order, date and payment arrangements; the remainder is labelled **Balance — confirmed with you by our team**.
 - Their account page — **Your orders** — keeps their orders and their saved details for next time.
 - The lead stays in **Inquiry** until you move it. Nothing about placing an order confirms it.
 
@@ -489,7 +489,7 @@ These screens could not be photographed, because reaching them needs the emailed
 
 ## Setting up catering (admin)
 
-Do this once, then leave it alone. Every change you save in Admin asks for your password.
+Do this once, then leave it alone. Changes here need your password — some reuse the confirmation you just gave, others ask again.
 
 ### 1. The setup hub
 
@@ -502,7 +502,7 @@ Do this once, then leave it alone. Every change you save in Admin asks for your 
 **Worth knowing**
 
 - *"Packages, pricing, capacity, delivery zones, and menu FAQ."*
-- **There is no Pricing or Rates tile, and that is correct** — tax, gratuity, service charge and the deposit percentage are **Manager of Operations and up**. A GM who types the address is sent back to the dashboard with no message; it is not a bug. Ask your Manager of Operations.
+- **There is no Pricing or Rates tile, and that is correct** — tax, gratuity, service charge and the deposit percentage are **Manager of Operations and up**. A GM who types either address is returned to Admin with a line explaining why; it is not a bug. Ask your Manager of Operations.
 - **Packages, FAQ, Prep Demand and LTO open at AGM. Catering Menu, Capacity, Delivery Zones and Fulfillment Zones open at GM.**
 
 ### 2. Catering Menu
@@ -630,7 +630,7 @@ Some leads you never type. Know which, so you do not chase an order that is alre
 - **Catering orders rung up in the store become leads too**, and they arrive already **Confirmed**, because they were paid when they were placed. If one is voided later, the lead moves to **Lost** on its own.
 - Both kinds arrive **assigned to the catering manager**, and both carry the order's total — which is where the dollar figure on those cards comes from.
 - **They carry no quote.** Do not build one to "match" the order; the money is already on the card.
-- Once a day, early afternoon Eastern, the app checks that its background jobs — the Toast catering scan, the same-day sales pull and the overnight jobs — are still reporting. A job that has gone quiet triggers one email a day to the operations address, naming it, when it last reported, and whether to check the store computer or the hosting schedule. Nothing for you to do; it exists so silence is never mistaken for *"nothing happened."*
+- Once a day, early afternoon Eastern, the app checks that its five background jobs — the Toast catering scan, the same-day sales pull, the overnight sales pull, session cleanup and receipt parsing — are still reporting. For each job that has gone quiet it sends at most one email that day to the operations address, naming the job, when it last reported (or that it never has), and whether to check the store computer or the hosting schedule. Nothing for you to do; it exists so silence is never mistaken for *"nothing happened."*
 - **Catering enquiries arriving by email are not collected anywhere.** There is no inbox digest. Coming soon.
 
 ---

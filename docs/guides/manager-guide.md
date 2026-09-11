@@ -21,7 +21,7 @@ Evening: the **PM report** — grade the crew, name an MVP. Then the **cash depo
 Two ceremonies ask you to prove it is you:
 
 - **Your PIN** — signing the cash deposit, and confirming the closing.
-- **Your password** — recording an inventory audit, and every change you save in Admin.
+- **Your password** — recording an inventory audit, and changes you save in Admin.
 
 Inventory audits and the team pages start at AGM. User management is not a GM page at all.
 
@@ -187,7 +187,7 @@ You do this once a day, before the doors open. The crew can fill the whole thing
 
 - A row that has not saved shows **Save failed** with **Retry** right there, and the bottom bar counts it as outstanding. Nothing is lost from the screen; it just has not landed.
 - **Finalize Phase 2** stays disabled while any row is outstanding, and it names how many.
-- Saving a row again just replaces the earlier number. The failure that stopped every row on the first walk was fixed on 2026-09-10; a **Save failed** today is the rare exception, not the rule.
+- Saving a row again replaces its earlier number. The picture shows the failure that stopped every row on the first walk; that bug is fixed. If **Retry** still fails, tell your GM.
 
 ### 5. Finalize Phase 2 — *not shown*
 
@@ -336,7 +336,7 @@ This did not come up on the walk, because the deposit and the PM report were alr
 
 ## AM prep and mid-day prep
 
-Two separate lists, both yours. Employees are sent back to the dashboard from these pages unless a manager has assigned them the day.
+Two separate lists, both yours. A manager can assign an employee a specific day's AM prep; mid-day prep stays a key-holder job.
 
 ### 1. The AM prep sheet
 
@@ -449,7 +449,7 @@ Do this at the door, while the driver is still there. Key holder and up.
 
 - **The quantity you type is what arrived, not what was ordered.** The flag is the story; the number is the count.
 - Nothing happens on screen when you tap the flag. The vendor credit is filed when you tap **Delivery confirmed**, and it shows up on the delivery afterwards.
-- **Delivery confirmed** stays off until there is a receipt photo or **Photo later** is ticked. It submits immediately, with no "are you sure".
+- **Delivery confirmed** stays off until there is a receipt photo or **Photo later** is ticked. If expected items are still unconfirmed, the first tap opens a review notice. Check those items, then tap again to file the delivery.
 
 ### 5. Read the finished delivery
 
@@ -461,7 +461,7 @@ Do this at the door, while the driver is still there. Key holder and up.
 
 **Worth knowing**
 
-- **Lines without a catalog item are not saved.** The form only submits lines that name an item *and* carry a quantity above zero — anything else is dropped with no warning. If something came off the truck that is not in the picker, put it in the delivery **Notes** box and get it added to the catalog; do not type it into the blank card and expect it to survive.
+- **Lines without a catalog item are not saved.** Only lines that name an item *and* carry a quantity above zero are submitted. Expected items you never touched show up in the review notice first; a blank card with no item never saves at all. If something came off the truck that is not in the picker, put it in the delivery **Notes** box and get it added to the catalog.
 - A **Short** flag on a line that was not on a purchase order records the problem but no quantity and no dollar amount, because there is no ordered quantity to subtract from. That is the *"Short — — —"* row you are looking at. Flag shorts against a purchase order when there is one, and the amount fills itself in.
 - **Vendor claim — "Not compared"** means no vendor invoice has been matched to this delivery yet.
 
@@ -522,7 +522,7 @@ Run this when the owner calls for a full audit. Day to day the app works on-hand
 
 **Worth knowing**
 
-- **The Unit field comes in two kinds, and the difference matters.** For an item whose pack sizes are on file it is a dropdown reading **Pick a unit…**. For an item with nothing on file it is a plain text box reading *"Unit (e.g. tub)"* — and there is no conversion behind whatever you type. See the next step.
+- **The Unit field comes in two kinds.** For an item with its pack units on file it is a dropdown reading **Pick a unit…** — pick from it and you are safe. For an item with no pack-unit list it is a plain text box reading *"Unit (e.g. tub)"* — whatever you type still has to be a unit the app can convert. See step 4.
 - A line you start and do not finish is dropped, with a warning above the button telling you how many.
 
 ### 3. Confirm your password
@@ -549,7 +549,7 @@ Run this when the owner calls for a full audit. Day to day the app works on-hand
 **Worth knowing**
 
 - **One unreadable line fails the whole audit.** Nothing is saved — not even the lines that were fine. The message does not name the line, so look for the one where you typed the unit yourself.
-- **Avoid it by picking from the dropdown.** A free-text Unit box means that item has no pack size on file (step 2) and cannot be converted — leave it off this audit, or add its pack size or average weight in the SKU catalog first.
+- **Avoid it by picking a listed unit whenever there is one.** If the app refuses a unit you typed, that item's pack information or average weight is missing in the SKU catalog — fix it there, or leave the item off this audit and record the rest.
 
 ### 5. The recorded audit
 
@@ -624,8 +624,8 @@ The 6 AM job. Walk the shelves, say what is there, and the app works out the ord
 **Worth knowing**
 
 - **One draft order per vendor**, covering only the lines above zero. The zeros stay on the walk record as evidence you checked.
-- **Never two orders for one vendor on one day.** If a draft already exists when you record a walk, your quantities go into that draft: a line you typed takes your number, a new item is added, everything else stays. The screen says **added to today's draft**. Nothing is summed, and a zero on the walk does not remove a draft line.
-- If today's order is already confirmed or placed, the walk still records what you saw but changes nothing on the order, and says so. **Generate draft** refuses outright while any order exists for that vendor today. For more after placing, use **Add-on order** (step 7).
+- **Recording a walk never creates a second order for the same vendor at the same shop that day.** If a draft exists, your positive quantities update it: a line you typed takes your number, a new item is added, everything else stays. Nothing is summed, and a zero on the walk does not remove a draft line. The screen says **added to today's draft**. For a deliberate extra order after placing, use **Add-on order** (step 7).
+- If today's order is already confirmed or placed, the walk still records what you saw but changes nothing on the order, and says so. **Generate draft** refuses outright while any order exists for that vendor today.
 - The order's code is your shop's code, today's date, and the vendor — so `EM-20260908-PFG` reads at a glance.
 - **Confirm** freezes the prices and the line list; it does not send anything. Confirming twice is refused. To change a confirmed order before it is placed, unlock it first, as in step 6.
 - **Sending is a separate tap**, and the email is rebuilt on the server from the confirmed order — not from anything on your screen. If the vendor has no ordering email on file, the app says so and leaves the order alone; use the phone or portal link instead and mark it placed.
@@ -943,7 +943,7 @@ Everything filed at your shop, and the shape it makes over time.
 
 ## Admin console
 
-Business configuration: who you buy from, what you buy, what the lists say. **Admin opens at AGM.** Every change you save asks for your password.
+Business configuration: who you buy from, what you buy, what the lists say. **Admin opens at AGM.** Changes need your password — some reuse the confirmation you just gave, others ask again.
 
 ### 1. The admin home
 
@@ -955,8 +955,8 @@ Business configuration: who you buy from, what you buy, what the lists say. **Ad
 
 **Worth knowing**
 
-- **There is no Users tile, and there is no way to add a person from here.** User management starts at **Manager of Operations** — a GM who types the address in is sent straight back to the dashboard with no message at all. It is not broken and it is not a permissions bug: **it is not a GM page.** Ask the Manager of Operations or the owner to add, deactivate or re-role somebody.
-- **Checklist Templates is GM and up.** Everything else on this page opens at AGM.
+- **There is no Users tile, and there is no way to add a person from here.** User management starts at **Manager of Operations**. A GM who types the address in is returned to Admin with a line explaining why — it is not a bug, it is not a GM page. Ask the Manager of Operations or the owner to add, deactivate or re-role somebody.
+- **Checklist Templates and the Par Levels placeholder are GM and up.** Every other section on this page opens at AGM.
 - Counts on the tiles — *"SKUs — 160 not ready"*, *"Items — 46 not ready"* — are how much setup is still missing, not how much is broken.
 
 ### 2. Checklist templates
@@ -982,7 +982,7 @@ Business configuration: who you buy from, what you buy, what the lists say. **Ad
 
 **Worth knowing**
 
-- **Who can do it?** sets the lowest role that may tick that line. Raising it hides the line from everyone below.
+- **Who can do it?** sets the lowest role that may tick that line. People below it still see the line, locked and marked with the role it needs.
 - **When is this required?** has three settings: **Optional**, **Must complete — or explain**, and **Hard gate — can't submit until done**. A hard gate stops the whole list being confirmed, so use it sparingly.
 - **Connections** ticks the line automatically when a named report is finished.
 - Every line has a **Spanish** field. Fill it in when you add a line, or half your crew reads English.
@@ -1039,11 +1039,11 @@ Business configuration: who you buy from, what you buy, what the lists say. **Ad
 
 **Worth knowing**
 
-- This is where the pack sizes live. **ORDER · COUNT · COST** are three separate chips for each SKU included in daily operations, each marked **usable**, **degraded** or **blocked**. Usable means no data errand for that job; degraded means information needs attention; blocked means required information is missing. One job can be usable while another is blocked.
+- **ORDER · COUNT · COST** show whether each job has the data it needs for that SKU: **usable** needs nothing, **degraded** needs attention, **blocked** is missing something required. The three can differ for one SKU. Pack sizes are edited here.
 - The header gives blocked and degraded counts for each job at each shop you can see. The row chips show the worst state across those shops; the drawer explains any differences. **Same at both shops** means the results agree.
 - The drawer gives you the errand in plain words: *"Enter the invoice price in this SKU's order unit."*, *"Read the package label and enter the case → piece chain."*, *"Tare and weigh the standard portion."* or *"Count the shelf and enter the standing par."* Follow the errand for that item rather than guessing from a general readiness badge.
 - **Not included in this shop's daily operations.** means the SKU is outside the set being checked for that shop, not broken. If readiness cannot load, the page says so; refresh rather than treating it as no errands.
-- Prices come from invoices. The price of record is the latest invoice price recorded at receiving; the September 2026 purchase-history import filled in prices and pack sizes for about 20 items, so you do not type those.
+- Prices come from invoices, entered at receiving or with **Record price** in the SKU's drawer — always the price of one order unit. The latest invoice date wins; on the same date, the latest entry. The September 2026 purchase-history import filled in prices and pack sizes for about 20 items and says so on each; do not type those again.
 
 ### 8. Items
 
@@ -1100,7 +1100,7 @@ Business configuration: who you buy from, what you buy, what the lists say. **Ad
 
 - The app signs you out on its own after about ten minutes of no touching, and warns you first.
 - Log out anyway, every time you walk away. Anything tapped while you are signed in is recorded under your name — including a cash deposit and a closing confirmation.
-- **Log out** ends this sign-in at once. If an admin deactivates you or changes your role, or you reset or first set your password, every sign-in you had open anywhere ends at the same moment and you sign in again. Setting your first password signs you straight back in on that device.
+- **Log out** ends only this sign-in. Deactivation, a role change, a password reset or setting your first password ends your old sign-ins on every device at once. A deactivated account has to be reactivated before you can sign in; otherwise you just sign in again, and setting your first password does that for you on the device you used.
 
 ### 3. You are out
 

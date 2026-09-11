@@ -12,7 +12,7 @@ You sign in on the tablet with a four-digit PIN. Your dashboard tells you what t
 
 In the morning, the job is the **opening report**: walk each station, check that last night's closing matches what you are actually looking at, type the fridge temperatures, and tap **Verified**. A key holder or above is the one who taps **Submit Opening** — you can fill the whole thing in, they finish it.
 
-**AM prep and mid-day prep are key-holder jobs.** Those pages will not open for you unless a manager has assigned you the prep for that day.
+**AM prep and mid-day prep are key-holder jobs.** A manager can assign you a specific day's AM prep, and then that page opens for you; mid-day prep stays a key-holder job.
 
 At night, the **closing checklist** is a list of lines. Tap each one as you finish it. A key holder locks up at the end, and that final confirmation is theirs — it needs the walk-out items done and the cash deposit filed.
 
@@ -233,8 +233,8 @@ You do this once a day, before the doors open. The question it asks is not "did 
 **Worth knowing**
 
 - **AM prep** bounces you straight back to the dashboard, even from the link inside the closing checklist. That is the role gate, not a broken link. A manager can assign you the AM prep for a specific day, and then it opens.
-- **Mid-day prep** loads but tells an employee it is a key-holder task, whether or not the shop has a mid-day list.
-- If you have been told to do prep, ask the manager to assign it to you for the day, or to open it on their own login.
+- **Mid-day prep** tells an employee it is a key-holder task, whether or not the shop has a mid-day list. The older screenshot above shows the *"No mid-day prep template"* message it used to give instead.
+- If you have been asked to do AM prep, ask the manager to assign it to you for that day. For mid-day prep, get a key holder or manager.
 
 ---
 
@@ -526,5 +526,5 @@ Do this every time you walk away from the tablet.
 
 - The app signs you out on its own after about ten minutes of no touching, and warns you thirty seconds before. If you are still working, tap **Stay signed in**.
 - Log out anyway. Anything tapped while you are signed in is recorded under your name.
-- **Log out** ends this sign-in at once. If an admin deactivates you or changes your role, or you reset or first set your password, every sign-in you had open anywhere ends at the same moment and you sign in again. Setting your first password signs you straight back in on that device.
+- **Log out** ends only this sign-in. Deactivation, a role change, a password reset or setting your first password ends your old sign-ins on every device at once. A deactivated account has to be reactivated before you can sign in; otherwise you just sign in again, and setting your first password does that for you on the device you used.
 - Half-finished work behaves differently depending on where you were. Closing checklist ticks and notes are already saved. **An opening report you have not submitted is not saved** — if you are mid-walk, finish it and hand it to a key holder before you go.
