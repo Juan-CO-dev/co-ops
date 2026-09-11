@@ -79,6 +79,7 @@ import { loadProductIndex } from "@/lib/products";
 import { rollupUsageByProduct } from "@/lib/products-shared";
 import {
   createDraftsFromLines,
+  updateDraftLines,
   PurchaseOrderError,
   type CreatedDraft,
   type DraftLineInput,
@@ -103,7 +104,7 @@ const EVENT_ADVISORY_HORIZON_DAYS = 14;
 export const PAR_PASS_MIN = 4; // key_holder+
 
 export class OrderingError extends Error {
-  constructor(public status: number, public code: string, message?: string, public existingPoId?: string) {
+  constructor(public status: number, public code: string, message?: string, public existingPoId?: string, public existingPoStatus?: string) {
     super(message ?? code);
     this.name = "OrderingError";
   }
@@ -1421,6 +1422,16 @@ export interface SkippedWalkPo {
   vendorName: string;
   reason: "po_exists";
   existingPoId: string;
+  existingStatus?: string;
+}
+
+export interface MergedWalkPo {
+  vendorId: string;
+  vendorName: string;
+  poId: string;
+  displayCode: string;
+  linesUpdated: number;
+  linesAdded: number;
 }
 
 /**
@@ -1451,6 +1462,7 @@ export async function submitParPass(
   poError: boolean;
   /** Existing orders preserved while this walk's observations were recorded. */
   poSkipped: SkippedWalkPo[];
+  poMerged: MergedWalkPo[];
 }> {
   requireLevel(actor, PAR_PASS_MIN);
   if (!lockLocationContext(actorLoc(actor), locationId)) {
@@ -1567,7 +1579,9 @@ export async function submitParPass(
     });
     byVendor.set(vid, arr);
   }
-  const skippedByVendor = new Map<string, string>();
+  const skippedByVendor = new Map<string, { id: string; status?: string }>();
+  const existingByVendor = new Map<string, { id: string; status?: string }>();
+  const mergedByVendor = new Map<string, Omit<MergedWalkPo, "vendorId" | "vendorName">>();
   let poError = false;
   // PO checks may suppress orders, but must never refuse the observations.
   try {
@@ -1576,8 +1590,7 @@ export async function submitParPass(
         await assertNoLivePoToday(sb, locationId, vendorId);
       } catch (err) {
         if (err instanceof OrderingError && err.code === "po_exists" && err.existingPoId) {
-          skippedByVendor.set(vendorId, err.existingPoId);
-          byVendor.delete(vendorId);
+          existingByVendor.set(vendorId, { id: err.existingPoId, status: err.existingPoStatus });
           continue;
         }
         throw err;
@@ -1623,21 +1636,48 @@ export async function submitParPass(
   // birth; po_exists skips one vendor, other failures return pos: [] with poError true;
   // the manager re-generates drafts from the cutoff path. On success, each vendor's display code threads into the
   // draft card + copy/mailto body ("PO {displayCode}"). ──
+  // The walk and audit are durable before any draft merge is attempted.
+  const mergeOrSkip = async (vendorId: string, vendorLines: DraftLineInput[], existing: { id: string; status?: string }) => {
+    if (existing.status === "draft") {
+      try {
+        // Keep the walk's order unit label: a NEW line on the draft gets it from here (CC review 2026-09-10).
+        const counts = await updateDraftLines(actor, existing.id, vendorLines.map(({ skuId, orderQty, orderUnitLabel, note }) => ({ skuId, orderQty, orderUnitLabel, note })));
+        const { data: po, error } = await sb.from("purchase_orders").select("display_code").eq("id", existing.id)
+          .maybeSingle<{ display_code: string }>();
+        if (error || !po) throw new Error("Merged PO detail unavailable");
+        mergedByVendor.set(vendorId, { poId: existing.id, displayCode: po.display_code, linesUpdated: counts.updated, linesAdded: counts.inserted });
+        return;
+      } catch {
+        // A failed refresh is still a skip; never claim a status we could not read.
+        try {
+          const { data: current, error } = await sb.from("purchase_orders").select("status").eq("id", existing.id)
+            .maybeSingle<{ status: string }>();
+          existing.status = error ? undefined : current?.status;
+        } catch { existing.status = undefined; }
+      }
+    }
+    skippedByVendor.set(vendorId, { id: existing.id, status: existing.status });
+  };
   let pos: CreatedDraft[] = [];
   if (!poError && byVendor.size > 0) {
     try {
       for (const [vendorId, vendorLines] of byVendor) {
+        const existing = existingByVendor.get(vendorId);
+        if (existing) {
+          await mergeOrSkip(vendorId, vendorLines, existing);
+          continue;
+        }
         try {
           pos.push(...await createDraftsFromLines(actor, locationId, new Map([[vendorId, vendorLines]]), ev.id, { noCodeSuffixRetry: true }));
         } catch (err) {
           if (err instanceof PurchaseOrderError && err.code === "po_exists" && err.displayCode) {
             // Read the exact arbiter winner, including a PO placed since the pre-check.
             const { data: existing, error } = await sb.from("purchase_orders")
-              .select("id").eq("location_id", locationId).eq("display_code", err.displayCode)
-              .maybeSingle<{ id: string }>();
+              .select("id, status").eq("location_id", locationId).eq("display_code", err.displayCode)
+              .maybeSingle<{ id: string; status: string }>();
             if (error) throw new Error(`submitParPass race winner: ${error.message}`);
             if (!existing) throw new Error("submitParPass race winner missing");
-            skippedByVendor.set(vendorId, existing.id);
+            await mergeOrSkip(vendorId, vendorLines, existing);
             continue;
           }
           throw err;
@@ -1680,15 +1720,19 @@ export async function submitParPass(
 
   return {
     eventId: ev.id,
-    draftOrders: draftOrders.filter((order) => !skippedByVendor.has(order.vendorId)),
+    draftOrders: draftOrders.filter((order) => !skippedByVendor.has(order.vendorId) && !mergedByVendor.has(order.vendorId)),
     shrinkage,
     pos: pos.map((p) => ({ vendorId: p.vendorId, poId: p.poId, displayCode: p.displayCode })),
     poError,
+    poMerged: draftOrders.filter((order) => mergedByVendor.has(order.vendorId)).map((order) => ({
+      vendorId: order.vendorId, vendorName: order.vendorName, ...mergedByVendor.get(order.vendorId)!,
+    })),
     poSkipped: draftOrders.filter((order) => skippedByVendor.has(order.vendorId)).map((order) => ({
       vendorId: order.vendorId,
       vendorName: order.vendorName,
       reason: "po_exists",
-      existingPoId: skippedByVendor.get(order.vendorId)!,
+      existingPoId: skippedByVendor.get(order.vendorId)!.id,
+      existingStatus: skippedByVendor.get(order.vendorId)!.status,
     })),
   };
 }
@@ -2011,14 +2055,14 @@ async function assertNoLivePoToday(
   const { walkDateEt: dateEt } = etWalkDay();
   const { startIso, endExclusiveIso } = operationalDayUtcRange(dateEt);
   const { data: existing, error: exErr } = await sb.from("purchase_orders")
-    .select("id")
+    .select("id, status")
     .eq("location_id", locationId).eq("vendor_id", vendorId)
     .in("status", ["draft", "confirmed"])
     .gte("created_at", startIso).lt("created_at", endExclusiveIso)
     .limit(1)
-    .maybeSingle<{ id: string }>();
+    .maybeSingle<{ id: string; status: string }>();
   if (exErr) throw new Error(`generateDraftForVendor existing PO: ${exErr.message}`);
-  if (existing) throw new OrderingError(409, "po_exists", "A draft or confirmed order already exists today for this vendor", existing.id);
+  if (existing) throw new OrderingError(409, "po_exists", "A draft or confirmed order already exists today for this vendor", existing.id, existing.status);
 }
 
 // ── generateDraftForVendor: a walk-less draft PO from suggested qtys (cutoff path) ────────

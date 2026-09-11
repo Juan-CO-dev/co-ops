@@ -315,9 +315,57 @@
         "quoteSha256": "cdd5e2e814fa472d6e2f4ddc8cf0e496f3a5782582aaebeeae497865f483898b"
       },
       "actor": "key holder (Rosa at EM; Angel at MEP)",
-      "preconditions": "A cutoff draft already exists for this vendor/shop today; a key holder submits a walk with positive quantities for the same vendor.",
-      "expected": "Walk submit returns 201 and persists every observation. Exactly one PO remains for the vendor/shop/day; poSkipped names the vendor and existing PO with reason po_exists. No duplicate PO or replacement lines are written.",
+      "preconditions": "A cutoff draft for this vendor/shop today has been confirmed; a key holder submits a walk with different positive quantities for the same vendor.",
+      "expected": "Walk submit returns 201 and persists every observation. Exactly one PO remains for the vendor/shop/day; poSkipped names the vendor and existing PO with reason po_exists and existingStatus confirmed. The confirmed PO, snapshot and lines remain unchanged.",
       "assertionId": "ordering.walk.duplicate-po",
+      "evidence": null,
+      "status": "pending"
+    },
+    {
+      "id": "ordering.walk-merge-into-draft",
+      "guide": {
+        "path": "docs/guides/manager-guide.md",
+        "revision": "5241016",
+        "section": "Ordering and purchase orders / 4. The draft order",
+        "quote": "**One draft order per vendor**, covering only the lines above zero. The zeros stay on the walk record as evidence you checked.",
+        "quoteSha256": "cdd5e2e814fa472d6e2f4ddc8cf0e496f3a5782582aaebeeae497865f483898b"
+      },
+      "actor": "key holder (Rosa at EM; Angel at MEP)",
+      "preconditions": "A fresh vendor has a cutoff draft today and a positive suggestion; a key holder submits different typed walk quantities, leaving an existing line untouched when the fixture has multiple lines.",
+      "expected": "LRA-229: walk submit returns 201, poMerged names the vendor and existing draft, and exactly one PO remains for the vendor/shop/day. Touched draft quantities equal the typed walk quantities; untouched lines survive; every walk observation persists.",
+      "assertionId": "ordering.walk.merge-into-draft",
+      "evidence": null,
+      "status": "pending"
+    },
+    {
+      "id": "ordering.po-reopen",
+      "guide": {
+        "path": "docs/guides/manager-guide.md",
+        "revision": "5241016",
+        "section": "Ordering and purchase orders / 4. The draft order",
+        "quote": "**One draft order per vendor**, covering only the lines above zero. The zeros stay on the walk record as evidence you checked.",
+        "quoteSha256": "cdd5e2e814fa472d6e2f4ddc8cf0e496f3a5782582aaebeeae497865f483898b"
+      },
+      "actor": "key holder (Rosa at EM; Angel at MEP)",
+      "preconditions": "A confirmed PO exists for the key holder's shop. The governing guide quote establishes draft identity; reopening is the LRA-229 approved extension, not yet described in the guide.",
+      "expected": "LRA-229: a level-4 key holder can reopen the confirmed PO to draft, retaining its old snapshot until re-confirmation, PATCH a quantity and confirm again. The replacement confirmed_snapshot contains the edited quantity.",
+      "assertionId": "ordering.po.reopen",
+      "evidence": null,
+      "status": "pending"
+    },
+    {
+      "id": "ordering.po-add-on",
+      "guide": {
+        "path": "docs/guides/manager-guide.md",
+        "revision": "5241016",
+        "section": "Ordering and purchase orders / 4. The draft order",
+        "quote": "**One draft order per vendor**, covering only the lines above zero. The zeros stay on the walk record as evidence you checked.",
+        "quoteSha256": "cdd5e2e814fa472d6e2f4ddc8cf0e496f3a5782582aaebeeae497865f483898b"
+      },
+      "actor": "key holder (Rosa at EM; Angel at MEP)",
+      "preconditions": "Exactly one PO exists for the vendor/shop/day and is placed. The governing guide quote establishes draft identity; intentional add-on orders are the LRA-229 approved extension, not yet described in the guide.",
+      "expected": "LRA-229: add_on with one positive line returns 201 and creates exactly one second PO for the vendor/shop/day, in draft status with display code <parent base>-2 and the requested line. The placed parent and its lines remain unchanged.",
+      "assertionId": "ordering.po.add-on",
       "evidence": null,
       "status": "pending"
     },

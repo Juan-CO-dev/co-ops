@@ -36,6 +36,9 @@
  */
 
 export const DESTRUCTIVE_ACTIONS = [
+  // Purchase-order accountability
+  "po.reopened",
+
   // User lifecycle
   "user.create",
   "user.activate",
