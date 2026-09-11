@@ -89,7 +89,6 @@ Four taps and a PIN. You do this at the start of every shift, and again any time
 **Worth knowing**
 
 - The bell in the header shows messages sent to you specifically, with a count of the unread ones.
-- After about ten minutes without a tap, the app warns you and then signs you out. Tap **Stay signed in** on that warning if you are still working.
 
 ---
 
@@ -234,7 +233,7 @@ You do this once a day, before the doors open. The question it asks is not "did 
 **Worth knowing**
 
 - **AM prep** bounces you straight back to the dashboard, even from the link inside the closing checklist. That is the role gate, not a broken link. A manager can assign you the AM prep for a specific day, and then it opens.
-- **Mid-day prep** loads but tells an employee it is a key-holder task, whether or not the shop has a mid-day list. (Older screens showed *"No mid-day prep template"* instead — same gate, misleading wording, since fixed.)
+- **Mid-day prep** loads but tells an employee it is a key-holder task, whether or not the shop has a mid-day list.
 - If you have been told to do prep, ask the manager to assign it to you for the day, or to open it on their own login.
 
 ---
@@ -527,5 +526,5 @@ Do this every time you walk away from the tablet.
 
 - The app signs you out on its own after about ten minutes of no touching, and warns you thirty seconds before. If you are still working, tap **Stay signed in**.
 - Log out anyway. Anything tapped while you are signed in is recorded under your name.
-- **Log out** ends your current sign-in immediately. If an admin deactivates your account or changes your role, or you reset your password or set your first password, every sign-in you had open on any device ends at once. Those old sign-ins need a fresh login; a deactivated account must be reactivated first. Setting your first password signs you back in automatically on the device where you set it.
+- **Log out** ends this sign-in at once. If an admin deactivates you or changes your role, or you reset or first set your password, every sign-in you had open anywhere ends at the same moment and you sign in again. Setting your first password signs you straight back in on that device.
 - Half-finished work behaves differently depending on where you were. Closing checklist ticks and notes are already saved. **An opening report you have not submitted is not saved** — if you are mid-walk, finish it and hand it to a key holder before you go.

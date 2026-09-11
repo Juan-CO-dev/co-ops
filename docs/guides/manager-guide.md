@@ -175,11 +175,11 @@ You do this once a day, before the doors open. The crew can fill the whole thing
 - **"Prep need: verify section first"** means the app cannot work the number out. Usually the section is not verified yet. It also shows on an item that has no par set at all — that item takes your number with no reason needed.
 - The **"Uses:"** row is the raw stock the app thinks that batch consumed. Open it and correct it if you used something else; it is what gets deducted from stock.
 
-### 4. When a row will not save
+### 4. If a row will not save
 
 **What you see**
 
-![Every prep row showing a red "Save failed" alert with a Retry button](img/manager/11-opening-phase2-save-failed-bug.png)
+![A prep row showing a red "Save failed" alert with a Retry button — from the walk that found the bug](img/manager/11-opening-phase2-save-failed-bug.png)
 
 **What to do** — Tap **Retry** on the row. If it fails again, tell your GM — the opening cannot be finished until rows save.
 
@@ -187,10 +187,11 @@ You do this once a day, before the doors open. The crew can fill the whole thing
 
 - A row that has not saved shows **Save failed** with **Retry** right there, and the bottom bar counts it as outstanding. Nothing is lost from the screen; it just has not landed.
 - **Finalize Phase 2** stays disabled while any row is outstanding, and it names how many.
+- Saving a row again just replaces the earlier number. The failure that stopped every row on the first walk was fixed on 2026-09-10; a **Save failed** today is the rare exception, not the rule.
 
 ### 5. Finalize Phase 2 — *not shown*
 
-This step could not be photographed: on the original walk every prep row failed to save, so the finalize button never became available. That save failure has since been fixed. What the button does is written into the app, and it is this:
+This step was not photographed on the walk. What the button does is written into the app, and it is this:
 
 **What to do** — When every prep row has saved, tap **Finalize Phase 2**.
 
@@ -421,6 +422,7 @@ Do this at the door, while the driver is still there. Key holder and up.
 
 - **The blank "New item" card at the top is a placeholder, not a line.** It has no product attached, and it is thrown away on submit — see step 5.
 - "SKU" here means one exact thing from one vendor: their pack, their size, their item number. Two vendors' mozzarella are two different lines.
+- A line only survives submit if it names an item **and** has a quantity above zero — see step 5 before you type into the blank card.
 
 ### 3. Enter the line
 
@@ -547,7 +549,7 @@ Run this when the owner calls for a full audit. Day to day the app works on-hand
 **Worth knowing**
 
 - **One unreadable line fails the whole audit.** Nothing is saved — not even the lines that were fine. The message does not name the line, so look for the one where you typed the unit yourself.
-- **Avoid it two ways.** If the Unit field is a dropdown, pick from it and you are safe. If it is a free text box, that item has no pack size on file and cannot be converted at all — leave it off this audit, or have somebody add its pack size or average weight in the SKU catalog first.
+- **Avoid it by picking from the dropdown.** A free-text Unit box means that item has no pack size on file (step 2) and cannot be converted — leave it off this audit, or add its pack size or average weight in the SKU catalog first.
 
 ### 5. The recorded audit
 
@@ -622,8 +624,8 @@ The 6 AM job. Walk the shelves, say what is there, and the app works out the ord
 **Worth knowing**
 
 - **One draft order per vendor**, covering only the lines above zero. The zeros stay on the walk record as evidence you checked.
-- The walk and the cutoff shortcut never create two orders for the same vendor at the same shop on one day. If a draft already exists, **Record walk** puts your positive walk quantities into that draft: a matching line takes the quantity you typed, new lines are added, and other lines stay as they were. The screen says **added to today's draft**. The quantities are not added together, and a zero on the walk does not remove an existing draft line.
-- If today's order is already confirmed or placed, the walk still records your observations but leaves that order unchanged, and the screen says so. **Generate draft** refuses to create another order when one already exists for that vendor today. A deliberate **Add-on order** is the separate path after placement, below.
+- **Never two orders for one vendor on one day.** If a draft already exists when you record a walk, your quantities go into that draft: a line you typed takes your number, a new item is added, everything else stays. The screen says **added to today's draft**. Nothing is summed, and a zero on the walk does not remove a draft line.
+- If today's order is already confirmed or placed, the walk still records what you saw but changes nothing on the order, and says so. **Generate draft** refuses outright while any order exists for that vendor today. For more after placing, use **Add-on order** (step 7).
 - The order's code is your shop's code, today's date, and the vendor — so `EM-20260908-PFG` reads at a glance.
 - **Confirm** freezes the prices and the line list; it does not send anything. Confirming twice is refused. To change a confirmed order before it is placed, unlock it first, as in step 6.
 - **Sending is a separate tap**, and the email is rebuilt on the server from the confirmed order — not from anything on your screen. If the vendor has no ordering email on file, the app says so and leaves the order alone; use the phone or portal link instead and mark it placed.
@@ -668,7 +670,7 @@ The 6 AM job. Walk the shelves, say what is there, and the app works out the ord
 
 - This is a deliberate second order for the same vendor at this shop today. It starts as a draft with a **-2** at the end of today's order code; another add-on takes the next free number.
 - Enter only the extra quantities you need. The placed order stays as it was, and creating the add-on does not send it.
-- The add-on picker currently only offers this vendor's active items that are not on the original order. It does not offer another quantity of a line already on that order.
+- The picker offers any of this vendor's active items, including more of something already on the placed order.
 - A later walk can update this new draft. The cutoff **Generate draft** shortcut still refuses another order for that vendor today.
 
 ---
@@ -995,7 +997,7 @@ Business configuration: who you buy from, what you buy, what the lists say. **Ad
 
 **Worth knowing**
 
-- Pars are set today on each item in the **SKU** catalog.
+- Pars are set today on each item in the **SKU** catalog. A GM can also accept a suggested par on the ordering walk; the app never changes a par on its own.
 
 ### 5. Vendors
 
@@ -1041,7 +1043,7 @@ Business configuration: who you buy from, what you buy, what the lists say. **Ad
 - The header gives blocked and degraded counts for each job at each shop you can see. The row chips show the worst state across those shops; the drawer explains any differences. **Same at both shops** means the results agree.
 - The drawer gives you the errand in plain words: *"Enter the invoice price in this SKU's order unit."*, *"Read the package label and enter the case → piece chain."*, *"Tare and weigh the standard portion."* or *"Count the shelf and enter the standing par."* Follow the errand for that item rather than guessing from a general readiness badge.
 - **Not included in this shop's daily operations.** means the SKU is outside the set being checked for that shop, not broken. If readiness cannot load, the page says so; refresh rather than treating it as no errands.
-- The price of record is the latest recorded invoice price. The September 2026 Angel purchase-history import seeded prices and pack information for about 20 SKUs and records its own source. You do not need to type those imported values again. New invoice prices come through receiving; if a price needs recording separately, use the invoice and the SKU's order unit.
+- Prices come from invoices. The price of record is the latest invoice price recorded at receiving; the September 2026 purchase-history import filled in prices and pack sizes for about 20 items, so you do not type those.
 
 ### 8. Items
 
@@ -1098,7 +1100,7 @@ Business configuration: who you buy from, what you buy, what the lists say. **Ad
 
 - The app signs you out on its own after about ten minutes of no touching, and warns you first.
 - Log out anyway, every time you walk away. Anything tapped while you are signed in is recorded under your name — including a cash deposit and a closing confirmation.
-- **Log out** ends your current sign-in immediately. If an admin deactivates your account or changes your role, or you reset your password or set your first password, every sign-in you had open on any device ends at once. Those old sign-ins need a fresh login; a deactivated account must be reactivated first. Setting your first password signs you back in automatically on the device where you set it.
+- **Log out** ends this sign-in at once. If an admin deactivates you or changes your role, or you reset or first set your password, every sign-in you had open anywhere ends at the same moment and you sign in again. Setting your first password signs you straight back in on that device.
 
 ### 3. You are out
 

@@ -64,7 +64,7 @@ This is the board you work. One card per lead, one column per stage, left to rig
 - The six stages, in order, are **Inquiry**, **Quote sent**, **Confirmed**, **Out for delivery**, **Completed** and **Lost**. An empty column says *"None"*.
 - Each card carries the contact, the company, the event date, the headcount, where the lead came from, and the person it is assigned to — shown as **@** and their name.
 - The **Source** dropdown filters by where a lead came from: **Online portal**, **Staff entered**, **Phone**, **Walk-in**, **Toast catering**, **EZCater**, **Direct invoice**, **Other**. **Order lead** filters by who owns it.
-- **A dollar figure on a card is the lead's own Est. revenue — never a quote total.** Building a quote, sending it, or even marking it accepted does not write it. There is **no Est. revenue box on the Add lead form**, so a lead you type in yourself carries no figure at all, and still carries none after you have quoted it. That is not a bug, and there is nothing to fix on the card. The cards that do carry a figure are the ones that arrived with an order total attached: platform orders and catering orders rung up in the store.
+- **A dollar figure on a card is the lead's own Est. revenue — never a quote total.** Quoting, sending or accepting a quote never writes it. A lead you type in has no Est. revenue box, so it carries no figure before or after you quote it — by design, nothing to fix. The cards that do carry one arrived with an order total: platform orders and catering rung up in the store.
 - **To see the money on a lead, search for it.** The search box — *"Search leads by name, company, or phone…"* — searches wider than the board does: it also matches the customer's email and the company account name, and every result tells you the current quote's **status and amount**. It is the fastest way to answer *"what did we quote them?"*
 - Insights counts a quote's money too — but only once the quote is marked **accepted**.
 
@@ -186,8 +186,8 @@ A quote is a priced document with a version number. You build it, you send it, a
 **Worth knowing**
 
 - **Every line is Qty × Unit price, and the quote is the sum of the lines.** Nothing else prices anything. **Unit price is the price of ONE.**
-- **A package with unpriced picks arrives as its price on one line, plus its picks.** When every pick has a blank price, picking a package with a listed price drops in one line for the package itself at Qty 1 and that price, then one line for each thing the package contains. If the contents already carry prices, those prices come across instead, with no extra package-price line. A package with no contents arrives as one line at Qty 1 and its listed price. A line the customer chooses for themselves — *"Choose your subs (×8)"* — is a pick, not a charge: it arrives with **the quantity filled in and Unit price blank**, and it stays that way.
-- **Leave the pick lines at a blank price.** Typing the package's sticker price into a line that came in at Qty 8 charges the package eight times over: $115 × 8 is the $920.00 line in the picture. The price belongs on the package line only, and the app now puts it there for you.
+- **A package arrives as lines you can edit.** If its contents carry prices, those lines come in priced. If every content line is a *pick* with no price — *"Choose your subs (×8)"* — the package's own price comes in on one extra line at Qty 1, and the picks stay at **quantity filled in, Unit price blank**. A package with no contents is one priced line.
+- **Leave the pick lines at a blank price.** Typing the package price into a ×8 pick line charges it eight times over — the $920.00 line in the picture.
 - An **à la carte** item behaves differently — it arrives with its description and its price already filled in. Change the quantity and leave the price alone.
 - The pickers offer active menu items and active packages. If an old draft or a package still points at a retired item, saving the quote is refused until you swap that line for an active item. The message says: *"One of the lines points at an item that is no longer on the menu. Remove that line and add it again from the picker."*
 - **A line you type in yourself is money only.** Lines that came from the menu or from a package carry through to the kitchen's prep list and to the allergen labels. A hand-typed line does neither. Use the pickers whenever the thing exists on the menu.
@@ -502,7 +502,7 @@ Do this once, then leave it alone. Every change you save in Admin asks for your 
 **Worth knowing**
 
 - *"Packages, pricing, capacity, delivery zones, and menu FAQ."*
-- **You will not see a Pricing tile or a Rates tile, and that is correct.** Both are **Manager of Operations and up**. A GM who types the address in is sent straight back to the dashboard with no message at all — it is not broken and it is not a permissions bug: **it is not a GM page.** Tax, gratuity, service charge and the deposit percentage all live there. Ask your Manager of Operations.
+- **There is no Pricing or Rates tile, and that is correct** — tax, gratuity, service charge and the deposit percentage are **Manager of Operations and up**. A GM who types the address is sent back to the dashboard with no message; it is not a bug. Ask your Manager of Operations.
 - **Packages, FAQ, Prep Demand and LTO open at AGM. Catering Menu, Capacity, Delivery Zones and Fulfillment Zones open at GM.**
 
 ### 2. Catering Menu
@@ -532,7 +532,7 @@ Do this once, then leave it alone. Every change you save in Admin asks for your 
 **Worth knowing**
 
 - **Packages can belong to one shop or be Global.** Editing a shop's package does not change a separate copy at another shop; editing a Global package changes the shared package. Check the shop name or **Global** label before you edit.
-- What you set here — the price, the minimum headcount, the lead time, what is inside — is what customers order from online. On a staff-built quote, priced contents bring their own prices. If all the picks are unpriced, the listed package price comes across on a separate line at Qty 1; a package with no contents also comes across as one priced line. See [Quotes, step 3](#quotes).
+- What you set here — the price, the minimum headcount, the lead time, what is inside — is what customers order from online. On a staff-built quote the contents come across as editable lines; [Quotes, step 3](#quotes) says where the price lands.
 
 ### 4. Delivery Zones
 
@@ -630,7 +630,7 @@ Some leads you never type. Know which, so you do not chase an order that is alre
 - **Catering orders rung up in the store become leads too**, and they arrive already **Confirmed**, because they were paid when they were placed. If one is voided later, the lead moves to **Lost** on its own.
 - Both kinds arrive **assigned to the catering manager**, and both carry the order's total — which is where the dollar figure on those cards comes from.
 - **They carry no quote.** Do not build one to "match" the order; the money is already on the card.
-- The app checks once a day, around noon or early afternoon Eastern, that the Toast catering scan, the same-day sales pull and the scheduled overnight sales pull, session cleanup and receipt parsing are still reporting. If a job has gone quiet, it emails the operations address at most once per day for that job, naming it and the last time it reported successfully (or saying it has never reported). The message says whether to check the store computer, which runs the scans, or the hosting service's scheduled jobs. You do not need to do anything with this as a manager; it exists so silence is never mistaken for *"nothing happened."*
+- Once a day, early afternoon Eastern, the app checks that its background jobs — the Toast catering scan, the same-day sales pull and the overnight jobs — are still reporting. A job that has gone quiet triggers one email a day to the operations address, naming it, when it last reported, and whether to check the store computer or the hosting schedule. Nothing for you to do; it exists so silence is never mistaken for *"nothing happened."*
 - **Catering enquiries arriving by email are not collected anywhere.** There is no inbox digest. Coming soon.
 
 ---
