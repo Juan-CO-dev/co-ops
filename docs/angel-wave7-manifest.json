@@ -6,10 +6,10 @@
    "revision": "wave7-r2-2026-09-10",
    "angel": {
     "product": "OVENGOLD TURKEY",
-    "brand": "\u2014",
-    "manufacturer": "\u2014",
+    "brand": "—",
+    "manufacturer": "—",
     "vendor": "Delmar Provisions",
-    "pack_size": "\u2014",
+    "pack_size": "—",
     "source_file": "docs/angel-products-rollup.csv",
     "source_line": 2,
     "latest_price_per_lb": "6.29",
@@ -154,10 +154,10 @@
    "revision": "wave7-r2-2026-09-10",
    "angel": {
     "product": "LONDON BROIL",
-    "brand": "\u2014",
-    "manufacturer": "\u2014",
+    "brand": "—",
+    "manufacturer": "—",
     "vendor": "Delmar Provisions",
-    "pack_size": "\u2014",
+    "pack_size": "—",
     "source_file": "docs/angel-products-rollup.csv",
     "source_line": 6,
     "latest_price_per_lb": "8.69",
@@ -191,10 +191,10 @@
    "revision": "wave7-r2-2026-09-10",
    "angel": {
     "product": "MILD PROVOLONE",
-    "brand": "\u2014",
-    "manufacturer": "\u2014",
+    "brand": "—",
+    "manufacturer": "—",
     "vendor": "Delmar Provisions",
-    "pack_size": "\u2014",
+    "pack_size": "—",
     "source_file": "docs/angel-products-rollup.csv",
     "source_line": 7,
     "latest_price_per_lb": "3.49",
@@ -376,10 +376,10 @@
    "revision": "wave7-r2-2026-09-10",
    "angel": {
     "product": "DILANDRI GENOA SALAME",
-    "brand": "\u2014",
-    "manufacturer": "\u2014",
+    "brand": "—",
+    "manufacturer": "—",
     "vendor": "Delmar Provisions",
-    "pack_size": "\u2014",
+    "pack_size": "—",
     "source_file": "docs/angel-products-rollup.csv",
     "source_line": 12,
     "latest_price_per_lb": "4.39",
@@ -450,10 +450,10 @@
    "revision": "wave7-r2-2026-09-10",
    "angel": {
     "product": "HOT BUTT CAPPY",
-    "brand": "\u2014",
-    "manufacturer": "\u2014",
+    "brand": "—",
+    "manufacturer": "—",
     "vendor": "Delmar Provisions",
-    "pack_size": "\u2014",
+    "pack_size": "—",
     "source_file": "docs/angel-products-rollup.csv",
     "source_line": 14,
     "latest_price_per_lb": "5.45",
@@ -517,7 +517,7 @@
    "evidence": "Product is explicitly iceberg C&T like the PFG SKU, but this invoice line is from US Foods not PFG.",
    "meaning": "Iceberg lettuce, cleaned and trimmed",
    "owner_question": "",
-   "owner_answer": "Juan 2026-09-10: 'we have mostly moved away from US Foods and mostly use PFG now' \u2014 historical purchase, no US Foods twin, never prices another vendor's SKU",
+   "owner_answer": "Juan 2026-09-10: 'we have mostly moved away from US Foods and mostly use PFG now' — historical purchase, no US Foods twin, never prices another vendor's SKU",
    "row_n": 14
   },
   {
@@ -558,13 +558,13 @@
    "row_n": 15
   },
   {
-   "revision": "wave7-r2-2026-09-10",
+   "revision": "wave7-r4-2026-09-11",
    "angel": {
     "product": "PICKLES CHIPS 1/4",
-    "brand": "\u2014",
-    "manufacturer": "\u2014",
+    "brand": "—",
+    "manufacturer": "—",
     "vendor": "Delmar Provisions",
-    "pack_size": "\u2014",
+    "pack_size": "—",
     "source_file": "docs/angel-products-rollup.csv",
     "source_line": 17,
     "latest_price_per_lb": "35.95",
@@ -587,12 +587,16 @@
    },
    "decision": "selected",
    "vendor_binding": "vendor-match",
-   "confidence": "high",
+   "confidence": "HIGH",
    "evidence": "Chips = sliced pickles, matching the Boar's Head 'Pickle slices' tub over whole pickles.",
    "meaning": "Sliced pickle chips, 1/4-cut",
-   "owner_question": "",
-   "owner_answer": "",
-   "row_n": 16
+   "owner_question": "#50: how many whole pickles are in the 5-gallon pail? (Juan 2026-09-11: not sure)",
+   "owner_answer": "Juan 2026-09-11: \"the pickle chips are the 1500 slice tub\"",
+   "row_n": 16,
+   "owner_pack": {
+    "pack": "1/1500 CT",
+    "source": "Juan 2026-09-11: \"the pickle chips are the 1500 slice tub\" — one Delmar PICKLES CHIPS 1/4 line = our 1,500-slice tub"
+   }
   },
   {
    "revision": "wave7-r2-2026-09-10",
@@ -632,7 +636,7 @@
    "row_n": 17
   },
   {
-   "revision": "wave7-r2-2026-09-10",
+   "revision": "wave7-r4-2026-09-11",
    "angel": {
     "product": "ONION YLW COLOSSAL BAG",
     "brand": "PEAK",
@@ -652,17 +656,17 @@
     "total_spend": "720.28"
    },
    "selected_sku": {
-    "id": "393d974f-fad6-4d62-b137-e09024c491c6",
-    "name": "Onions",
-    "vendor": "Baldor",
-    "pack_format": "",
+    "id": "17422bb2-b29b-4a57-9c23-c53bd9d43403",
+    "name": "Onion (White)",
+    "vendor": "PFG",
+    "pack_format": "Bag",
     "active": true,
-    "item_number": ""
+    "item_number": "898641"
    },
    "decision": "selected",
-   "vendor_binding": "VENDOR_DRIFT",
+   "vendor_binding": "vendor-match",
    "confidence": "medium",
-   "evidence": "CC override: yellow colossal 50-lb sack = the 'Onions' sack SKU (n85/n113), not the white-onion SKU",
+   "evidence": "recipes consume Onion (White) (PFG, 50 lb bag = 800 oz exact); the Baldor Onions SKU has no pack, no price and no recipe consumer (CC 2026-09-11)",
    "meaning": "Yellow onions, colossal size, bagged",
    "owner_question": "",
    "owner_answer": "",
@@ -672,10 +676,10 @@
    "revision": "wave7-r2-2026-09-10",
    "angel": {
     "product": "IMP LAYER BACON 12/14",
-    "brand": "\u2014",
-    "manufacturer": "\u2014",
+    "brand": "—",
+    "manufacturer": "—",
     "vendor": "Delmar Provisions",
-    "pack_size": "\u2014",
+    "pack_size": "—",
     "source_file": "docs/angel-products-rollup.csv",
     "source_line": 20,
     "latest_price_per_lb": "4.69",
@@ -739,7 +743,7 @@
    "evidence": "Brand Dukes and product mayonnaise map directly to the only Duke's Mayo SKU; invoice vendor is US Foods but this is the identical product listed under PFG.",
    "meaning": "Duke's mayonnaise, 4 one-gallon jugs per case",
    "owner_question": "",
-   "owner_answer": "Juan 2026-09-10: 'we have mostly moved away from US Foods and mostly use PFG now' \u2014 historical purchase, no US Foods twin, never prices another vendor's SKU",
+   "owner_answer": "Juan 2026-09-10: 'we have mostly moved away from US Foods and mostly use PFG now' — historical purchase, no US Foods twin, never prices another vendor's SKU",
    "row_n": 20
   },
   {
@@ -850,17 +854,17 @@
    "evidence": "Brand is Natalie's and product is lemonade; catalog only lists it under PFG though this invoice line is US Foods, and no separate US Foods SKU exists.",
    "meaning": "Natalie's brand lemonade drink",
    "owner_question": "",
-   "owner_answer": "Juan 2026-09-10: 'we have mostly moved away from US Foods and mostly use PFG now' \u2014 historical purchase, no US Foods twin, never prices another vendor's SKU",
+   "owner_answer": "Juan 2026-09-10: 'we have mostly moved away from US Foods and mostly use PFG now' — historical purchase, no US Foods twin, never prices another vendor's SKU",
    "row_n": 23
   },
   {
-   "revision": "wave7-r2-2026-09-10",
+   "revision": "wave7-r4-2026-09-11",
    "angel": {
     "product": "DIET COKE",
-    "brand": "\u2014",
-    "manufacturer": "\u2014",
+    "brand": "—",
+    "manufacturer": "—",
     "vendor": "Delmar Provisions",
-    "pack_size": "\u2014",
+    "pack_size": "—",
     "source_file": "docs/angel-products-rollup.csv",
     "source_line": 25,
     "latest_price_per_lb": "25.45",
@@ -888,16 +892,20 @@
    "meaning": "Diet Coke soda",
    "owner_question": "",
    "owner_answer": "",
-   "row_n": 24
+   "row_n": 24,
+   "owner_pack": {
+    "pack": "35/12 FL OZ",
+    "source": "Juan 2026-08-28 verbatim (seed 30 source A): Coke and Diet Coke each come in 35x12fl oz"
+   }
   },
   {
-   "revision": "wave7-r2-2026-09-10",
+   "revision": "wave7-r4-2026-09-11",
    "angel": {
     "product": "HOT CHERRY PEPPERS",
-    "brand": "\u2014",
-    "manufacturer": "\u2014",
+    "brand": "—",
+    "manufacturer": "—",
     "vendor": "Delmar Provisions",
-    "pack_size": "\u2014",
+    "pack_size": "—",
     "source_file": "docs/angel-products-rollup.csv",
     "source_line": 26,
     "latest_price_per_lb": "8.95",
@@ -920,12 +928,15 @@
    },
    "decision": "selected",
    "vendor_binding": "vendor-match",
-   "confidence": "high",
+   "confidence": "HIGH",
    "evidence": "Vendor (Delmar/Boar's Head) and product category match the active Hot Peppers SKU.",
    "meaning": "Hot cherry peppers, a spicy pepper condiment",
-   "owner_question": "",
-   "owner_answer": "",
-   "row_n": 25
+   "owner_answer": "Juan 2026-09-11: \"Correct\" — one $8.95/$8.75 line = one 128 fl oz jar; our case = 4 jars",
+   "row_n": 25,
+   "owner_pack": {
+    "pack": "1/128 FL OZ",
+    "source": "Juan 2026-08-28: the sweet/hot/banana peppers are all 4x128fl oz; the $8.95 Delmar line is ONE 128 fl oz jar — a 4-jar case cannot be $8.95 (CC inference 2026-09-11, flagged for Juan)"
+   }
   },
   {
    "revision": "wave7-r2-2026-09-10",
@@ -1076,13 +1087,13 @@
    "row_n": 29
   },
   {
-   "revision": "wave7-r2-2026-09-10",
+   "revision": "wave7-r4-2026-09-11",
    "angel": {
     "product": "Food Service Prosciutto",
-    "brand": "\u2014",
-    "manufacturer": "\u2014",
+    "brand": "—",
+    "manufacturer": "—",
     "vendor": "Delmar Provisions",
-    "pack_size": "\u2014",
+    "pack_size": "—",
     "source_file": "docs/angel-products-rollup.csv",
     "source_line": 31,
     "latest_price_per_lb": "12.95",
@@ -1105,21 +1116,24 @@
    },
    "decision": "selected",
    "vendor_binding": "vendor-match",
-   "confidence": "high",
+   "confidence": "HIGH",
    "evidence": "Delmar (Boar's Head distributor) prosciutto matches catalog directly.",
    "meaning": "Prosciutto",
-   "owner_question": "",
-   "owner_answer": "",
-   "row_n": 30
+   "owner_answer": "Juan 2026-09-11: \"Per pack\"",
+   "row_n": 30,
+   "owner_pack": {
+    "pack": "1/12 OZ",
+    "source": "Juan 2026-09-11: the $12.95 prosciutto line is per our 12 oz pack (\"Per pack\")"
+   }
   },
   {
-   "revision": "wave7-r2-2026-09-10",
+   "revision": "wave7-r4-2026-09-11",
    "angel": {
     "product": "COKE",
-    "brand": "\u2014",
-    "manufacturer": "\u2014",
+    "brand": "—",
+    "manufacturer": "—",
     "vendor": "Delmar Provisions",
-    "pack_size": "\u2014",
+    "pack_size": "—",
     "source_file": "docs/angel-products-rollup.csv",
     "source_line": 32,
     "latest_price_per_lb": "25.45",
@@ -1147,7 +1161,11 @@
    "meaning": "Coca-Cola",
    "owner_question": "",
    "owner_answer": "",
-   "row_n": 31
+   "row_n": 31,
+   "owner_pack": {
+    "pack": "35/12 FL OZ",
+    "source": "Juan 2026-08-28 verbatim (seed 30 source A): Coke and Diet Coke each come in 35x12fl oz"
+   }
   },
   {
    "revision": "wave7-r2-2026-09-10",
@@ -1220,7 +1238,7 @@
    "evidence": "Glove size (Medium) is unambiguous; only the vendor differs (US Foods vs PFG), so per rule the active PFG SKU is used.",
    "meaning": "Medium-size latex powder-free disposable gloves",
    "owner_question": "",
-   "owner_answer": "Juan 2026-09-10: 'we have mostly moved away from US Foods and mostly use PFG now' \u2014 historical purchase, no US Foods twin, never prices another vendor's SKU",
+   "owner_answer": "Juan 2026-09-10: 'we have mostly moved away from US Foods and mostly use PFG now' — historical purchase, no US Foods twin, never prices another vendor's SKU",
    "row_n": 33
   },
   {
@@ -1331,17 +1349,17 @@
    "evidence": "Only arugula SKU in catalog; invoice vendor is US Foods but catalog lists it under PFG, so picking the active match.",
    "meaning": "Fresh baby arugula, bagged",
    "owner_question": "",
-   "owner_answer": "Juan 2026-09-10: 'we have mostly moved away from US Foods and mostly use PFG now' \u2014 historical purchase, no US Foods twin, never prices another vendor's SKU",
+   "owner_answer": "Juan 2026-09-10: 'we have mostly moved away from US Foods and mostly use PFG now' — historical purchase, no US Foods twin, never prices another vendor's SKU",
    "row_n": 36
   },
   {
    "revision": "wave7-r2-2026-09-10",
    "angel": {
     "product": "EVERROAST CHICKEN",
-    "brand": "\u2014",
-    "manufacturer": "\u2014",
+    "brand": "—",
+    "manufacturer": "—",
     "vendor": "Delmar Provisions",
-    "pack_size": "\u2014",
+    "pack_size": "—",
     "source_file": "docs/angel-products-rollup.csv",
     "source_line": 38,
     "latest_price_per_lb": "5.99",
@@ -1375,10 +1393,10 @@
    "revision": "wave7-r2-2026-09-10",
    "angel": {
     "product": "Pepperoni Slicing",
-    "brand": "\u2014",
-    "manufacturer": "\u2014",
+    "brand": "—",
+    "manufacturer": "—",
     "vendor": "Delmar Provisions",
-    "pack_size": "\u2014",
+    "pack_size": "—",
     "source_file": "docs/angel-products-rollup.csv",
     "source_line": 39,
     "latest_price_per_lb": "5.19",
@@ -1479,7 +1497,7 @@
    "evidence": "Size Large gloves match the only Gloves Large SKU; vendor is US Foods vs catalog's PFG.",
    "meaning": "Latex exam gloves, size Large",
    "owner_question": "",
-   "owner_answer": "Juan 2026-09-10: 'we have mostly moved away from US Foods and mostly use PFG now' \u2014 historical purchase, no US Foods twin, never prices another vendor's SKU",
+   "owner_answer": "Juan 2026-09-10: 'we have mostly moved away from US Foods and mostly use PFG now' — historical purchase, no US Foods twin, never prices another vendor's SKU",
    "row_n": 40
   },
   {
@@ -1520,7 +1538,7 @@
    "row_n": 41
   },
   {
-   "revision": "wave7-r2-2026-09-10",
+   "revision": "wave7-r4-2026-09-11",
    "angel": {
     "product": "CHIVES FRSH",
     "brand": "PEAK FRS",
@@ -1543,7 +1561,7 @@
     "id": "1c85ccb0-cdd0-4a05-971e-189b61132f8a",
     "name": "Chives",
     "vendor": "PFG",
-    "pack_format": "Case",
+    "pack_format": "Each",
     "active": true,
     "item_number": "855552"
    },
@@ -1560,10 +1578,10 @@
    "revision": "wave7-r2-2026-09-10",
    "angel": {
     "product": "SWEET PEPPERS",
-    "brand": "\u2014",
-    "manufacturer": "\u2014",
+    "brand": "—",
+    "manufacturer": "—",
     "vendor": "Delmar Provisions",
-    "pack_size": "\u2014",
+    "pack_size": "—",
     "source_file": "docs/angel-products-rollup.csv",
     "source_line": 44,
     "latest_price_per_lb": "10.25",
@@ -1626,18 +1644,18 @@
    "confidence": "medium",
    "evidence": "Closest shredded-cheese SKU, but catalog has no dedicated mozz/provolone blend item.",
    "meaning": "Shredded 50/50 mozzarella-provolone cheese blend",
-   "owner_question": "'MOZZ PROV 50/50 SHRED' (PFG 6/5 lb) \u2014 is our Shredded Mozz now this mozz-provolone blend?",
+   "owner_question": "'MOZZ PROV 50/50 SHRED' (PFG 6/5 lb) — is our Shredded Mozz now this mozz-provolone blend?",
    "owner_answer": "Juan 2026-09-10: '#44 is def the shredded mozz we have, we used to call it 50/50 to differentiate'",
    "row_n": 44
   },
   {
-   "revision": "wave7-r2-2026-09-10",
+   "revision": "wave7-r4-2026-09-11",
    "angel": {
     "product": "Compliments Branded Water",
-    "brand": "\u2014",
-    "manufacturer": "\u2014",
+    "brand": "—",
+    "manufacturer": "—",
     "vendor": "Delmar Provisions",
-    "pack_size": "\u2014",
+    "pack_size": "—",
     "source_file": "docs/angel-products-rollup.csv",
     "source_line": 46,
     "latest_price_per_lb": "12.95",
@@ -1665,7 +1683,11 @@
    "meaning": "Restaurant's own compliments-branded bottled water",
    "owner_question": "",
    "owner_answer": "",
-   "row_n": 45
+   "row_n": 45,
+   "owner_pack": {
+    "pack": "24/12 FL OZ",
+    "source": "Juan 2026-08-28 verbatim (seed 30 source A): c/o water 24x12 fl oz"
+   }
   },
   {
    "revision": "wave7-r2-2026-09-10",
@@ -1816,13 +1838,13 @@
    "row_n": 49
   },
   {
-   "revision": "wave7-r2-2026-09-10",
+   "revision": "wave7-r4-2026-09-11",
    "angel": {
     "product": "5 GALLON GARLIC PICKLES",
-    "brand": "\u2014",
-    "manufacturer": "\u2014",
+    "brand": "—",
+    "manufacturer": "—",
     "vendor": "Delmar Provisions",
-    "pack_size": "\u2014",
+    "pack_size": "—",
     "source_file": "docs/angel-products-rollup.csv",
     "source_line": 51,
     "latest_price_per_lb": "35.95",
@@ -1843,13 +1865,13 @@
     "active": true,
     "item_number": ""
    },
-   "decision": "selected",
+   "decision": "pending",
    "vendor_binding": "vendor-match",
    "confidence": "medium",
    "evidence": "Bulk bucket pack implies whole pickles rather than pre-sliced; Delmar/Boar's Head vendor matches.",
    "meaning": "Whole garlic-flavor pickles, 5-gal bucket",
-   "owner_question": "",
-   "owner_answer": "",
+   "owner_question": "How many whole pickles are in the 5-gallon pail? (count one pail when it lands)",
+   "owner_answer": "Juan 2026-09-11: \"Not sure how many whole pickles honestly\"",
    "row_n": 50
   },
   {
@@ -1922,8 +1944,8 @@
    "confidence": "medium",
    "evidence": "Same ham product family as row 4 but invoice vendor is US Foods, matching neither Ham SKU's listed vendor (PFG or Baldor); chose the Baldor entry as the closer case-pack match.",
    "meaning": "Foodservice cooked deli ham, rectangular 4x6 pieces",
-   "owner_question": "Ham 2/13 lb from US FOODS ($384 Jul\u2013Aug) \u2014 do we buy ham from US Foods now, or was that a one-off? (Our Ham SKUs are PFG and Baldor.)",
-   "owner_answer": "Juan 2026-09-10: US Foods ham \u2014 legacy vendor; our Ham SKUs are PFG/Baldor",
+   "owner_question": "Ham 2/13 lb from US FOODS ($384 Jul–Aug) — do we buy ham from US Foods now, or was that a one-off? (Our Ham SKUs are PFG and Baldor.)",
+   "owner_answer": "Juan 2026-09-10: US Foods ham — legacy vendor; our Ham SKUs are PFG/Baldor",
    "row_n": 52
   },
   {
@@ -2145,11 +2167,11 @@
    "evidence": "Product matches 'salad bowl + lid' description; vendor is US Foods not PFG but no US Foods equivalent exists.",
    "meaning": "24oz clear plastic salad bowl with lid",
    "owner_question": "",
-   "owner_answer": "Juan 2026-09-10: 'we have mostly moved away from US Foods and mostly use PFG now' \u2014 historical purchase, no US Foods twin, never prices another vendor's SKU",
+   "owner_answer": "Juan 2026-09-10: 'we have mostly moved away from US Foods and mostly use PFG now' — historical purchase, no US Foods twin, never prices another vendor's SKU",
    "row_n": 58
   },
   {
-   "revision": "wave7-r2-2026-09-10",
+   "revision": "wave7-r4-2026-09-11",
    "angel": {
     "product": "CELERY SPLIT",
     "brand": "PEAK FRS",
@@ -2172,7 +2194,7 @@
     "id": "45f9aa24-0263-42dd-bed2-53c50e0f57c6",
     "name": "Celery",
     "vendor": "PFG",
-    "pack_format": "Each (no case)",
+    "pack_format": "Case",
     "active": true,
     "item_number": "865009"
    },
@@ -2293,7 +2315,7 @@
    "evidence": "Catalog has two active 'Ham' SKUs (Baldor, PFG); chose Baldor since its 'case' pack better matches the 2/13 LB case format, but neither vendor matches US Foods.",
    "meaning": "Cooked deli ham",
    "owner_question": "(same answer as #52)",
-   "owner_answer": "Juan 2026-09-10: US Foods ham \u2014 legacy vendor; our Ham SKUs are PFG/Baldor",
+   "owner_answer": "Juan 2026-09-10: US Foods ham — legacy vendor; our Ham SKUs are PFG/Baldor",
    "row_n": 62
   },
   {
@@ -2330,7 +2352,7 @@
    "evidence": "6/#10 CN pack matches the SKU's '(10#)' can-size notation; vendor differs (US Foods vs PFG) but no US Foods equivalent exists.",
    "meaning": "Canned crushed tomatoes, #10 can",
    "owner_question": "",
-   "owner_answer": "Juan 2026-09-10: 'we have mostly moved away from US Foods and mostly use PFG now' \u2014 historical purchase, no US Foods twin, never prices another vendor's SKU",
+   "owner_answer": "Juan 2026-09-10: 'we have mostly moved away from US Foods and mostly use PFG now' — historical purchase, no US Foods twin, never prices another vendor's SKU",
    "row_n": 63
   },
   {
@@ -2411,8 +2433,8 @@
    "revision": "wave7-r2-2026-09-10",
    "angel": {
     "product": "Large Hero Hearth",
-    "brand": "\u2014",
-    "manufacturer": "\u2014",
+    "brand": "—",
+    "manufacturer": "—",
     "vendor": "Cardinal Bakery",
     "pack_size": "12 ct",
     "source_file": "docs/angel-products-rollup.csv",
@@ -2515,7 +2537,7 @@
    "evidence": "Size XL gloves match the Gloves Extra Large SKU by food/product knowledge, overriding the string matcher's wrong Medium-size guess; vendor is US Foods vs catalog PFG.",
    "meaning": "Latex exam gloves, size XL",
    "owner_question": "",
-   "owner_answer": "Juan 2026-09-10: 'we have mostly moved away from US Foods and mostly use PFG now' \u2014 historical purchase, no US Foods twin, never prices another vendor's SKU",
+   "owner_answer": "Juan 2026-09-10: 'we have mostly moved away from US Foods and mostly use PFG now' — historical purchase, no US Foods twin, never prices another vendor's SKU",
    "row_n": 68
   },
   {
@@ -2552,7 +2574,7 @@
    "evidence": "Two of three dimensions (12x9) match the Large Bags SKU exactly; only height differs and vendor is US Foods vs PFG, so the active PFG SKU is used per rule.",
    "meaning": "Brown kraft paper carry-out bag with twist handles",
    "owner_question": "",
-   "owner_answer": "Juan 2026-09-10: 'we have mostly moved away from US Foods and mostly use PFG now' \u2014 historical purchase, no US Foods twin, never prices another vendor's SKU",
+   "owner_answer": "Juan 2026-09-10: 'we have mostly moved away from US Foods and mostly use PFG now' — historical purchase, no US Foods twin, never prices another vendor's SKU",
    "row_n": 69
   },
   {
@@ -2852,7 +2874,7 @@
    "row_n": 77
   },
   {
-   "revision": "wave7-r2-2026-09-10",
+   "revision": "wave7-r4-2026-09-11",
    "angel": {
     "product": "Tomato, Paste 26% Light Shelf Stable Canned",
     "brand": "Full Red",
@@ -2884,8 +2906,8 @@
    "confidence": "medium",
    "evidence": "Product matches directly; vendor is US Foods not PFG but no other Tomato Paste SKU exists.",
    "meaning": "Canned tomato paste",
-   "owner_question": "",
-   "owner_answer": "Juan 2026-09-10: 'we have mostly moved away from US Foods and mostly use PFG now' \u2014 historical purchase, no US Foods twin, never prices another vendor's SKU",
+   "owner_question": "Use the last US Foods price as the stand-in until a PFG invoice lands?",
+   "owner_answer": "Juan 2026-09-10: 'we have mostly moved away from US Foods and mostly use PFG now' — historical purchase, no US Foods twin, never prices another vendor's SKU",
    "row_n": 78
   },
   {
@@ -2959,17 +2981,17 @@
    "evidence": "A colored 1/8-fold dinner napkin is a specialty/event napkin, closer to 'Fancy Napkins' than to C-Fold (which is a paper-towel style).",
    "meaning": "Colored 1/8-fold dinner napkins",
    "owner_question": "",
-   "owner_answer": "Juan 2026-09-10: 'we have mostly moved away from US Foods and mostly use PFG now' \u2014 historical purchase, no US Foods twin, never prices another vendor's SKU",
+   "owner_answer": "Juan 2026-09-10: 'we have mostly moved away from US Foods and mostly use PFG now' — historical purchase, no US Foods twin, never prices another vendor's SKU",
    "row_n": 80
   },
   {
    "revision": "wave7-r2-2026-09-10",
    "angel": {
     "product": "Just Dragon Green Can",
-    "brand": "\u2014",
-    "manufacturer": "\u2014",
+    "brand": "—",
+    "manufacturer": "—",
     "vendor": "Delmar Provisions",
-    "pack_size": "\u2014",
+    "pack_size": "—",
     "source_file": "docs/angel-products-rollup.csv",
     "source_line": 82,
     "latest_price_per_lb": "14.95",
@@ -2989,17 +3011,17 @@
    "evidence": "CC: 'Just' green can: unidentified canned drink; not modelled",
    "meaning": "Unclear product, described only by a green can",
    "owner_question": "",
-   "owner_answer": "Juan 2026-09-10: 'the just tea is our Just Ice Tea drinks we carry\u2026 packs of 12 12oz cans' \u2014 NOT in the catalog yet \u2192 errand: add Just Ice Tea SKUs (3 flavors, Delmar, 12\u00d712 oz)",
+   "owner_answer": "Juan 2026-09-10: 'the just tea is our Just Ice Tea drinks we carry… packs of 12 12oz cans' — NOT in the catalog yet → errand: add Just Ice Tea SKUs (3 flavors, Delmar, 12×12 oz)",
    "row_n": 81
   },
   {
    "revision": "wave7-r2-2026-09-10",
    "angel": {
     "product": "Just Raspberry Tea Can",
-    "brand": "\u2014",
-    "manufacturer": "\u2014",
+    "brand": "—",
+    "manufacturer": "—",
     "vendor": "Delmar Provisions",
-    "pack_size": "\u2014",
+    "pack_size": "—",
     "source_file": "docs/angel-products-rollup.csv",
     "source_line": 83,
     "latest_price_per_lb": "14.95",
@@ -3019,17 +3041,17 @@
    "evidence": "CC: canned tea not modelled",
    "meaning": "Canned raspberry iced tea",
    "owner_question": "",
-   "owner_answer": "Juan 2026-09-10: 'the just tea is our Just Ice Tea drinks we carry\u2026 packs of 12 12oz cans' \u2014 NOT in the catalog yet \u2192 errand: add Just Ice Tea SKUs (3 flavors, Delmar, 12\u00d712 oz)",
+   "owner_answer": "Juan 2026-09-10: 'the just tea is our Just Ice Tea drinks we carry… packs of 12 12oz cans' — NOT in the catalog yet → errand: add Just Ice Tea SKUs (3 flavors, Delmar, 12×12 oz)",
    "row_n": 82
   },
   {
    "revision": "wave7-r2-2026-09-10",
    "angel": {
     "product": "Just Lemon Tea Can",
-    "brand": "\u2014",
-    "manufacturer": "\u2014",
+    "brand": "—",
+    "manufacturer": "—",
     "vendor": "Delmar Provisions",
-    "pack_size": "\u2014",
+    "pack_size": "—",
     "source_file": "docs/angel-products-rollup.csv",
     "source_line": 84,
     "latest_price_per_lb": "14.95",
@@ -3049,17 +3071,17 @@
    "evidence": "CC: canned tea not modelled",
    "meaning": "Canned lemon iced tea beverage",
    "owner_question": "",
-   "owner_answer": "Juan 2026-09-10: 'the just tea is our Just Ice Tea drinks we carry\u2026 packs of 12 12oz cans' \u2014 NOT in the catalog yet \u2192 errand: add Just Ice Tea SKUs (3 flavors, Delmar, 12\u00d712 oz)",
+   "owner_answer": "Juan 2026-09-10: 'the just tea is our Just Ice Tea drinks we carry… packs of 12 12oz cans' — NOT in the catalog yet → errand: add Just Ice Tea SKUs (3 flavors, Delmar, 12×12 oz)",
    "row_n": 83
   },
   {
-   "revision": "wave7-r2-2026-09-10",
+   "revision": "wave7-r4-2026-09-11",
    "angel": {
     "product": "BLACK CHERRY DR. BROWNS",
-    "brand": "\u2014",
-    "manufacturer": "\u2014",
+    "brand": "—",
+    "manufacturer": "—",
     "vendor": "Delmar Provisions",
-    "pack_size": "\u2014",
+    "pack_size": "—",
     "source_file": "docs/angel-products-rollup.csv",
     "source_line": 85,
     "latest_price_per_lb": "14.95",
@@ -3082,12 +3104,15 @@
    },
    "decision": "selected",
    "vendor_binding": "vendor-match",
-   "confidence": "high",
+   "confidence": "HIGH",
    "evidence": "Dr. Brown's (DB) Black Cherry, non-diet, matches DB Cherry Soda rather than the Diet Cherry variant.",
    "meaning": "Dr. Brown's Black Cherry soda",
-   "owner_question": "",
-   "owner_answer": "",
-   "row_n": 84
+   "owner_answer": "Juan 2026-09-11: \"Per 6\"",
+   "row_n": 84,
+   "owner_pack": {
+    "pack": "6/12 FL OZ",
+    "source": "Juan 2026-09-11: the $14.95 Dr. Brown's line is one 6-pack (\"Per 6\"); packs of 6x12 fl oz (2026-08-28)"
+   }
   },
   {
    "revision": "wave7-r2-2026-09-10",
@@ -3123,7 +3148,7 @@
    "evidence": "Catalog only distinguishes White and Red onions by color; this generic bulk 'Onions' (Baldor) SKU is the best fit for yellow cooking onions despite the vendor (US Foods) not matching.",
    "meaning": "Fresh jumbo yellow cooking onions, 50 lb bag",
    "owner_question": "",
-   "owner_answer": "Juan 2026-09-10: 'we have mostly moved away from US Foods and mostly use PFG now' \u2014 historical purchase, no US Foods twin, never prices another vendor's SKU",
+   "owner_answer": "Juan 2026-09-10: 'we have mostly moved away from US Foods and mostly use PFG now' — historical purchase, no US Foods twin, never prices another vendor's SKU",
    "row_n": 85
   },
   {
@@ -3365,20 +3390,20 @@
    "decision": "rejected",
    "vendor_binding": "n/a",
    "confidence": "high",
-   "evidence": "CC: US Foods C-fold paper TOWEL \u2014 we model no paper-towel SKU; catalog gap",
+   "evidence": "CC: US Foods C-fold paper TOWEL — we model no paper-towel SKU; catalog gap",
    "meaning": "White C-fold paper hand towels",
    "owner_question": "",
    "owner_answer": "Juan 2026-09-10: 'the other stuff is probably bought individually or a part of specials'",
    "row_n": 92
   },
   {
-   "revision": "wave7-r2-2026-09-10",
+   "revision": "wave7-r4-2026-09-11",
    "angel": {
     "product": "ROOT BEER DR. BROWNS",
-    "brand": "\u2014",
-    "manufacturer": "\u2014",
+    "brand": "—",
+    "manufacturer": "—",
     "vendor": "Delmar Provisions",
-    "pack_size": "\u2014",
+    "pack_size": "—",
     "source_file": "docs/angel-products-rollup.csv",
     "source_line": 94,
     "latest_price_per_lb": "14.95",
@@ -3401,21 +3426,24 @@
    },
    "decision": "selected",
    "vendor_binding": "vendor-match",
-   "confidence": "high",
+   "confidence": "HIGH",
    "evidence": "Exact brand and vendor (Delmar/Boar's Head) match on an active SKU.",
    "meaning": "Dr. Brown's root beer soda",
-   "owner_question": "",
-   "owner_answer": "",
-   "row_n": 93
+   "owner_answer": "Juan 2026-09-11: \"Per 6\"",
+   "row_n": 93,
+   "owner_pack": {
+    "pack": "6/12 FL OZ",
+    "source": "Juan 2026-09-11: the $14.95 Dr. Brown's line is one 6-pack (\"Per 6\"); packs of 6x12 fl oz (2026-08-28)"
+   }
   },
   {
-   "revision": "wave7-r2-2026-09-10",
+   "revision": "wave7-r4-2026-09-11",
    "angel": {
     "product": "CREAM DR. BROWNS",
-    "brand": "\u2014",
-    "manufacturer": "\u2014",
+    "brand": "—",
+    "manufacturer": "—",
     "vendor": "Delmar Provisions",
-    "pack_size": "\u2014",
+    "pack_size": "—",
     "source_file": "docs/angel-products-rollup.csv",
     "source_line": 95,
     "latest_price_per_lb": "14.95",
@@ -3438,12 +3466,15 @@
    },
    "decision": "selected",
    "vendor_binding": "vendor-match",
-   "confidence": "high",
+   "confidence": "HIGH",
    "evidence": "Delmar distributes Boar's Head-line beverages incl. Dr. Brown's (DB); 'Cream' (non-diet) matches this SKU not the Diet one.",
    "meaning": "Dr. Brown's Cream Soda",
-   "owner_question": "",
-   "owner_answer": "",
-   "row_n": 94
+   "owner_answer": "Juan 2026-09-11: \"Per 6\"",
+   "row_n": 94,
+   "owner_pack": {
+    "pack": "6/12 FL OZ",
+    "source": "Juan 2026-09-11: the $14.95 Dr. Brown's line is one 6-pack (\"Per 6\"); packs of 6x12 fl oz (2026-08-28)"
+   }
   },
   {
    "revision": "wave7-r2-2026-09-10",
@@ -3589,8 +3620,8 @@
    "confidence": "low",
    "evidence": "Closest existing container+lid SKU, but this is a carry-out container not specifically a salad bowl.",
    "meaning": "32oz round clear plastic carry-out container with lid",
-   "owner_question": "32 oz round containers with lids \u2014 are those the 'Round Salad Bowls & Lids' SKU, or a different container?",
-   "owner_answer": "Juan 2026-09-10: '#98 those are heat resistant quart containers' \u2014 identity = Quart (Large); US Foods purchase is historical",
+   "owner_question": "32 oz round containers with lids — are those the 'Round Salad Bowls & Lids' SKU, or a different container?",
+   "owner_answer": "Juan 2026-09-10: '#98 those are heat resistant quart containers' — identity = Quart (Large); US Foods purchase is historical",
    "row_n": 98
   },
   {
@@ -3627,17 +3658,17 @@
    "evidence": "Same generic foil roll product; vendor differs (US Foods vs PFG) but no US Foods foil SKU exists.",
    "meaning": "Heavy-duty aluminum foil roll",
    "owner_question": "",
-   "owner_answer": "Juan 2026-09-10: 'we have mostly moved away from US Foods and mostly use PFG now' \u2014 historical purchase, no US Foods twin, never prices another vendor's SKU",
+   "owner_answer": "Juan 2026-09-10: 'we have mostly moved away from US Foods and mostly use PFG now' — historical purchase, no US Foods twin, never prices another vendor's SKU",
    "row_n": 99
   },
   {
-   "revision": "wave7-r2-2026-09-10",
+   "revision": "wave7-r4-2026-09-11",
    "angel": {
     "product": "DIET CREAM DR. BROWNS",
-    "brand": "\u2014",
-    "manufacturer": "\u2014",
+    "brand": "—",
+    "manufacturer": "—",
     "vendor": "Delmar Provisions",
-    "pack_size": "\u2014",
+    "pack_size": "—",
     "source_file": "docs/angel-products-rollup.csv",
     "source_line": 101,
     "latest_price_per_lb": "14.95",
@@ -3660,12 +3691,15 @@
    },
    "decision": "selected",
    "vendor_binding": "vendor-match",
-   "confidence": "high",
+   "confidence": "HIGH",
    "evidence": "Exact name match; Delmar is the Boar's Head distributor.",
    "meaning": "Dr. Brown's Diet Cream soda",
-   "owner_question": "",
-   "owner_answer": "",
-   "row_n": 100
+   "owner_answer": "Juan 2026-09-11: \"Per 6\"",
+   "row_n": 100,
+   "owner_pack": {
+    "pack": "6/12 FL OZ",
+    "source": "Juan 2026-09-11: the $14.95 Dr. Brown's line is one 6-pack (\"Per 6\"); packs of 6x12 fl oz (2026-08-28)"
+   }
   },
   {
    "revision": "wave7-r2-2026-09-10",
@@ -3701,7 +3735,7 @@
    "evidence": "Only Tuna SKU in the catalog; product is unambiguous, only vendor differs (US Foods vs PFG), so the active PFG SKU is used per rule.",
    "meaning": "Canned chunk light tuna in water",
    "owner_question": "",
-   "owner_answer": "Juan 2026-09-10: 'we have mostly moved away from US Foods and mostly use PFG now' \u2014 historical purchase, no US Foods twin, never prices another vendor's SKU",
+   "owner_answer": "Juan 2026-09-10: 'we have mostly moved away from US Foods and mostly use PFG now' — historical purchase, no US Foods twin, never prices another vendor's SKU",
    "row_n": 101
   },
   {
@@ -3738,17 +3772,17 @@
    "evidence": "Brand name 'Saratoga Spring Water' matches the catalog's Saratoga SKU directly, overriding the vendor (PFG vs US Foods) mismatch.",
    "meaning": "Saratoga sparkling water, glass bottles",
    "owner_question": "",
-   "owner_answer": "Juan 2026-09-10: 'we have mostly moved away from US Foods and mostly use PFG now' \u2014 historical purchase, no US Foods twin, never prices another vendor's SKU",
+   "owner_answer": "Juan 2026-09-10: 'we have mostly moved away from US Foods and mostly use PFG now' — historical purchase, no US Foods twin, never prices another vendor's SKU",
    "row_n": 102
   },
   {
-   "revision": "wave7-r2-2026-09-10",
+   "revision": "wave7-r4-2026-09-11",
    "angel": {
     "product": "BANANA PEPPER RINGS",
     "brand": "Boar's Head",
-    "manufacturer": "\u2014",
+    "manufacturer": "—",
     "vendor": "Delmar Provisions",
-    "pack_size": "\u2014",
+    "pack_size": "—",
     "source_file": "docs/angel-products-rollup.csv",
     "source_line": 104,
     "latest_price_per_lb": "8.75",
@@ -3771,12 +3805,15 @@
    },
    "decision": "selected",
    "vendor_binding": "vendor-match",
-   "confidence": "high",
+   "confidence": "HIGH",
    "evidence": "Exact brand+product+vendor match.",
    "meaning": "Boar's Head banana pepper rings",
-   "owner_question": "",
-   "owner_answer": "",
-   "row_n": 103
+   "owner_answer": "Juan 2026-09-11: \"Correct\" — one $8.95/$8.75 line = one 128 fl oz jar; our case = 4 jars",
+   "row_n": 103,
+   "owner_pack": {
+    "pack": "1/128 FL OZ",
+    "source": "Juan 2026-08-28: the sweet/hot/banana peppers are all 4x128fl oz; the $8.95 Delmar line is ONE 128 fl oz jar — a 4-jar case cannot be $8.95 (CC inference 2026-09-11, flagged for Juan)"
+   }
   },
   {
    "revision": "wave7-r2-2026-09-10",
@@ -3812,7 +3849,7 @@
    "evidence": "Brand Cholula matches the only Cholula SKU; invoice vendor US Foods vs catalog Baldor.",
    "meaning": "Cholula original hot sauce",
    "owner_question": "",
-   "owner_answer": "Juan 2026-09-10: 'we have mostly moved away from US Foods and mostly use PFG now' \u2014 historical purchase, no US Foods twin, never prices another vendor's SKU",
+   "owner_answer": "Juan 2026-09-10: 'we have mostly moved away from US Foods and mostly use PFG now' — historical purchase, no US Foods twin, never prices another vendor's SKU",
    "row_n": 104
   },
   {
@@ -3997,7 +4034,7 @@
    "evidence": "CC override: 32 oz clear deli w/ lid = the round bowl SKU family (n58/n98); floor-confirm | 0202 re-vendored Quart (Large) to PFG (Juan 2026-09-10)",
    "meaning": "Clear 32 oz plastic deli container with lid",
    "owner_question": "",
-   "owner_answer": "Juan 2026-09-10: quart containers = Quart (Large); SKU vendor is Webstaurant, invoice is PFG \u2192 held until the SKU is re-vendored to PFG (errand)",
+   "owner_answer": "Juan 2026-09-10: quart containers = Quart (Large); SKU vendor is Webstaurant, invoice is PFG → held until the SKU is re-vendored to PFG (errand)",
    "row_n": 109
   },
   {
@@ -4034,7 +4071,7 @@
    "evidence": "Fresh tomatoes match the generic PFG Tomatoes SKU; vendor is US Foods not PFG but no other Tomatoes SKU exists.",
    "meaning": "Fresh round tomatoes",
    "owner_question": "",
-   "owner_answer": "Juan 2026-09-10: 'we have mostly moved away from US Foods and mostly use PFG now' \u2014 historical purchase, no US Foods twin, never prices another vendor's SKU",
+   "owner_answer": "Juan 2026-09-10: 'we have mostly moved away from US Foods and mostly use PFG now' — historical purchase, no US Foods twin, never prices another vendor's SKU",
    "row_n": 110
   },
   {
@@ -4112,7 +4149,7 @@
    "row_n": 112
   },
   {
-   "revision": "wave7-r2-2026-09-10",
+   "revision": "wave7-r4-2026-09-11",
    "angel": {
     "product": "ONION YLW JUMBO",
     "brand": "PEAK FRS",
@@ -4132,17 +4169,17 @@
     "total_spend": "60.33"
    },
    "selected_sku": {
-    "id": "393d974f-fad6-4d62-b137-e09024c491c6",
-    "name": "Onions",
-    "vendor": "Baldor",
-    "pack_format": "",
+    "id": "17422bb2-b29b-4a57-9c23-c53bd9d43403",
+    "name": "Onion (White)",
+    "vendor": "PFG",
+    "pack_format": "Bag",
     "active": true,
-    "item_number": ""
+    "item_number": "898641"
    },
    "decision": "selected",
-   "vendor_binding": "VENDOR_DRIFT",
+   "vendor_binding": "vendor-match",
    "confidence": "medium",
-   "evidence": "Same product as n=85; only White and Red onion SKUs exist for PFG, so the generic 'Onions' (Baldor) bucket is the best fit despite the vendor mismatch.",
+   "evidence": "recipes consume Onion (White) (PFG, 50 lb bag = 800 oz exact); the Baldor Onions SKU has no pack, no price and no recipe consumer (CC 2026-09-11)",
    "meaning": "Fresh jumbo yellow cooking onions, 50 lb",
    "owner_question": "",
    "owner_answer": "",
@@ -4182,7 +4219,7 @@
    "evidence": "Explicitly hard-cooked eggs; vendor is US Foods not PFG but no other cooked-egg SKU exists.",
    "meaning": "Hard-cooked peeled eggs",
    "owner_question": "",
-   "owner_answer": "Juan 2026-09-10: 'we have mostly moved away from US Foods and mostly use PFG now' \u2014 historical purchase, no US Foods twin, never prices another vendor's SKU",
+   "owner_answer": "Juan 2026-09-10: 'we have mostly moved away from US Foods and mostly use PFG now' — historical purchase, no US Foods twin, never prices another vendor's SKU",
    "row_n": 114
   },
   {
@@ -4256,7 +4293,7 @@
    "evidence": "Owner confirmed watermelon radish is the only radish used (Never Been Cheddar sub); invoice is generic 'Radish' from US Foods vs catalog PFG.",
    "meaning": "Fresh radish",
    "owner_question": "",
-   "owner_answer": "Juan 2026-09-10: 'we have mostly moved away from US Foods and mostly use PFG now' \u2014 historical purchase, no US Foods twin, never prices another vendor's SKU",
+   "owner_answer": "Juan 2026-09-10: 'we have mostly moved away from US Foods and mostly use PFG now' — historical purchase, no US Foods twin, never prices another vendor's SKU",
    "row_n": 116
   },
   {
@@ -4293,7 +4330,7 @@
    "evidence": "Product description (interfold wax paper wrap) matches the catalog's wax-paper deli sheets exactly; vendor (US Foods vs PFG) is the only mismatch, so the active PFG SKU is used, overriding the string matcher's bad 'White Cheddar' guess.",
    "meaning": "White interfolded deli wax paper sheets",
    "owner_question": "",
-   "owner_answer": "Juan 2026-09-10: 'we have mostly moved away from US Foods and mostly use PFG now' \u2014 historical purchase, no US Foods twin, never prices another vendor's SKU",
+   "owner_answer": "Juan 2026-09-10: 'we have mostly moved away from US Foods and mostly use PFG now' — historical purchase, no US Foods twin, never prices another vendor's SKU",
    "row_n": 117
   },
   {
@@ -4367,7 +4404,7 @@
    "evidence": "The Webstaurant '16/32 oz Bottles' SKUs are generic squeeze/sauce bottles from a packaging supplier, not drinking water; bulk bottled water fits Employee Water better.",
    "meaning": "Bottled drinking water, 24-pack",
    "owner_question": "",
-   "owner_answer": "Juan 2026-09-10: 'we have mostly moved away from US Foods and mostly use PFG now' \u2014 historical purchase, no US Foods twin, never prices another vendor's SKU",
+   "owner_answer": "Juan 2026-09-10: 'we have mostly moved away from US Foods and mostly use PFG now' — historical purchase, no US Foods twin, never prices another vendor's SKU",
    "row_n": 119
   },
   {
@@ -4441,7 +4478,7 @@
    "evidence": "Direct product match; only vendor differs (US Foods vs Baldor), so the active Baldor SKU is used per rule.",
    "meaning": "Sharp white cheddar cheese, vacuum packed",
    "owner_question": "",
-   "owner_answer": "Juan 2026-09-10: 'we have mostly moved away from US Foods and mostly use PFG now' \u2014 historical purchase, no US Foods twin, never prices another vendor's SKU",
+   "owner_answer": "Juan 2026-09-10: 'we have mostly moved away from US Foods and mostly use PFG now' — historical purchase, no US Foods twin, never prices another vendor's SKU",
    "row_n": 121
   },
   {
@@ -4477,8 +4514,8 @@
    "confidence": "medium",
    "evidence": "Only plate SKU in catalog is 8 inch; this invoice item is 9 inch, so it may be a different plate line.",
    "meaning": "9-inch compostable fiber plate",
-   "owner_question": "9-inch fiber plates (US Foods) \u2014 do we use 9-inch now, or is our 'Plates 8\"' SKU the same plate mislabeled?",
-   "owner_answer": "Juan 2026-09-10: '#122 I don't know what that is honestly' \u2014 US Foods 9-inch plate; historical",
+   "owner_question": "9-inch fiber plates (US Foods) — do we use 9-inch now, or is our 'Plates 8\"' SKU the same plate mislabeled?",
+   "owner_answer": "Juan 2026-09-10: '#122 I don't know what that is honestly' — US Foods 9-inch plate; historical",
    "row_n": 122
   },
   {
@@ -4515,7 +4552,7 @@
    "evidence": "Same product as n=59; vendor differs (US Foods vs PFG) but no US Foods celery SKU exists.",
    "meaning": "Fresh celery stalks, boxed",
    "owner_question": "",
-   "owner_answer": "Juan 2026-09-10: 'we have mostly moved away from US Foods and mostly use PFG now' \u2014 historical purchase, no US Foods twin, never prices another vendor's SKU",
+   "owner_answer": "Juan 2026-09-10: 'we have mostly moved away from US Foods and mostly use PFG now' — historical purchase, no US Foods twin, never prices another vendor's SKU",
    "row_n": 123
   },
   {
@@ -4552,7 +4589,7 @@
    "evidence": "Only heavy-cream SKU in catalog; invoice vendor US Foods vs catalog PFG.",
    "meaning": "Heavy whipping cream, carton",
    "owner_question": "",
-   "owner_answer": "Juan 2026-09-10: 'we have mostly moved away from US Foods and mostly use PFG now' \u2014 historical purchase, no US Foods twin, never prices another vendor's SKU",
+   "owner_answer": "Juan 2026-09-10: 'we have mostly moved away from US Foods and mostly use PFG now' — historical purchase, no US Foods twin, never prices another vendor's SKU",
    "row_n": 124
   },
   {
@@ -4609,7 +4646,7 @@
    "decision": "rejected",
    "vendor_binding": "n/a",
    "confidence": "high",
-   "evidence": "CC: multifold paper towel \u2014 catalog gap",
+   "evidence": "CC: multifold paper towel — catalog gap",
    "meaning": "Multifold paper hand towels",
    "owner_question": "",
    "owner_answer": "Juan 2026-09-10: 'the other stuff is probably bought individually or a part of specials'",
@@ -4649,7 +4686,7 @@
    "evidence": "Vendor differs (US Foods vs PFG) but no US Foods ricotta SKU exists.",
    "meaning": "Whole-milk ricotta cheese",
    "owner_question": "",
-   "owner_answer": "Juan 2026-09-10: 'we have mostly moved away from US Foods and mostly use PFG now' \u2014 historical purchase, no US Foods twin, never prices another vendor's SKU",
+   "owner_answer": "Juan 2026-09-10: 'we have mostly moved away from US Foods and mostly use PFG now' — historical purchase, no US Foods twin, never prices another vendor's SKU",
    "row_n": 127
   },
   {
@@ -4686,7 +4723,7 @@
    "evidence": "Lemon juice (an ingredient) matches the catalog's 'Lemon Juice' SKU, not the unrelated 'Natalie's Lemonade' beverage despite the shared Natalie's brand name; vendor is US Foods vs catalog PFG.",
    "meaning": "Lemon juice, not-from-concentrate",
    "owner_question": "",
-   "owner_answer": "Juan 2026-09-10: 'we have mostly moved away from US Foods and mostly use PFG now' \u2014 historical purchase, no US Foods twin, never prices another vendor's SKU",
+   "owner_answer": "Juan 2026-09-10: 'we have mostly moved away from US Foods and mostly use PFG now' — historical purchase, no US Foods twin, never prices another vendor's SKU",
    "row_n": 128
   },
   {
@@ -4760,7 +4797,7 @@
    "evidence": "Direct product match; vendor is US Foods not PFG but no other plastic-forks SKU exists.",
    "meaning": "Black plastic forks, bulk",
    "owner_question": "",
-   "owner_answer": "Juan 2026-09-10: 'we have mostly moved away from US Foods and mostly use PFG now' \u2014 historical purchase, no US Foods twin, never prices another vendor's SKU",
+   "owner_answer": "Juan 2026-09-10: 'we have mostly moved away from US Foods and mostly use PFG now' — historical purchase, no US Foods twin, never prices another vendor's SKU",
    "row_n": 130
   },
   {
@@ -4797,7 +4834,7 @@
    "evidence": "Same product as n=107; string matcher's Utz-chips guess is wrong. Vendor differs (US Foods vs PFG), no US Foods equivalent exists.",
    "meaning": "Imported Italian balsamic vinegar",
    "owner_question": "",
-   "owner_answer": "Juan 2026-09-10: 'we have mostly moved away from US Foods and mostly use PFG now' \u2014 historical purchase, no US Foods twin, never prices another vendor's SKU",
+   "owner_answer": "Juan 2026-09-10: 'we have mostly moved away from US Foods and mostly use PFG now' — historical purchase, no US Foods twin, never prices another vendor's SKU",
    "row_n": 131
   },
   {
@@ -4871,7 +4908,7 @@
    "evidence": "CC override: special-print bottled water = the customer-facing water SKU",
    "meaning": "Custom-label bottled spring water, 16.9 oz",
    "owner_question": "",
-   "owner_answer": "Juan 2026-09-10: 'we have mostly moved away from US Foods and mostly use PFG now' \u2014 historical purchase, no US Foods twin, never prices another vendor's SKU",
+   "owner_answer": "Juan 2026-09-10: 'we have mostly moved away from US Foods and mostly use PFG now' — historical purchase, no US Foods twin, never prices another vendor's SKU",
    "row_n": 133
   },
   {
@@ -4975,7 +5012,7 @@
    "evidence": "8 oz round hard plastic container matches 'Half Pint 8oz (hard)' by size/material, overriding the string matcher's irrelevant plastic-wrap guess; vendor is US Foods vs catalog PFG.",
    "meaning": "8 oz round clear plastic deli/to-go container",
    "owner_question": "",
-   "owner_answer": "Juan 2026-09-10: 'we have mostly moved away from US Foods and mostly use PFG now' \u2014 historical purchase, no US Foods twin, never prices another vendor's SKU",
+   "owner_answer": "Juan 2026-09-10: 'we have mostly moved away from US Foods and mostly use PFG now' — historical purchase, no US Foods twin, never prices another vendor's SKU",
    "row_n": 136
   },
   {
@@ -5012,7 +5049,7 @@
    "evidence": "Product and even pack style (jug) match exactly; only vendor differs (US Foods vs PFG), so the active PFG SKU is used per rule.",
    "meaning": "Dried oregano leaf seasoning, in a jug",
    "owner_question": "",
-   "owner_answer": "Juan 2026-09-10: 'we have mostly moved away from US Foods and mostly use PFG now' \u2014 historical purchase, no US Foods twin, never prices another vendor's SKU",
+   "owner_answer": "Juan 2026-09-10: 'we have mostly moved away from US Foods and mostly use PFG now' — historical purchase, no US Foods twin, never prices another vendor's SKU",
    "row_n": 137
   },
   {
@@ -5123,7 +5160,7 @@
    "evidence": "Only garlic SKU in catalog; vendor is US Foods vs catalog PFG.",
    "meaning": "Fresh peeled garlic cloves",
    "owner_question": "",
-   "owner_answer": "Juan 2026-09-10: 'we have mostly moved away from US Foods and mostly use PFG now' \u2014 historical purchase, no US Foods twin, never prices another vendor's SKU",
+   "owner_answer": "Juan 2026-09-10: 'we have mostly moved away from US Foods and mostly use PFG now' — historical purchase, no US Foods twin, never prices another vendor's SKU",
    "row_n": 140
   },
   {
@@ -5187,7 +5224,7 @@
    "row_n": 142
   },
   {
-   "revision": "wave7-r2-2026-09-10",
+   "revision": "wave7-r4-2026-09-11",
    "angel": {
     "product": "Horseradish, Prepared Ref",
     "brand": "Monarch",
@@ -5219,8 +5256,8 @@
    "confidence": "medium",
    "evidence": "Vendor differs (US Foods vs PFG) but no US Foods horseradish SKU exists.",
    "meaning": "Prepared horseradish",
-   "owner_question": "",
-   "owner_answer": "Juan 2026-09-10: 'we have mostly moved away from US Foods and mostly use PFG now' \u2014 historical purchase, no US Foods twin, never prices another vendor's SKU",
+   "owner_question": "Use the last US Foods price as the stand-in until a PFG invoice lands?",
+   "owner_answer": "Juan 2026-09-10: 'we have mostly moved away from US Foods and mostly use PFG now' — historical purchase, no US Foods twin, never prices another vendor's SKU",
    "row_n": 143
   },
   {
@@ -5257,7 +5294,7 @@
    "evidence": "Only cucumber SKU in catalog; vendor is US Foods vs catalog PFG.",
    "meaning": "English seedless cucumbers",
    "owner_question": "",
-   "owner_answer": "Juan 2026-09-10: 'we have mostly moved away from US Foods and mostly use PFG now' \u2014 historical purchase, no US Foods twin, never prices another vendor's SKU",
+   "owner_answer": "Juan 2026-09-10: 'we have mostly moved away from US Foods and mostly use PFG now' — historical purchase, no US Foods twin, never prices another vendor's SKU",
    "row_n": 144
   },
   {
@@ -5328,13 +5365,13 @@
    "row_n": 146
   },
   {
-   "revision": "wave7-r2-2026-09-10",
+   "revision": "wave7-r4-2026-09-11",
    "angel": {
     "product": "CEL-RAY DR. BROWNS",
     "brand": "Boar's Head",
-    "manufacturer": "\u2014",
+    "manufacturer": "—",
     "vendor": "Delmar Provisions",
-    "pack_size": "\u2014",
+    "pack_size": "—",
     "source_file": "docs/angel-products-rollup.csv",
     "source_line": 148,
     "latest_price_per_lb": "16.95",
@@ -5357,12 +5394,15 @@
    },
    "decision": "selected",
    "vendor_binding": "vendor-match",
-   "confidence": "high",
+   "confidence": "HIGH",
    "evidence": "'DB' = Dr. Brown's; Cel-Ray flavor matches exactly, Delmar=Boar's Head.",
    "meaning": "Dr. Brown's Cel-Ray soda",
-   "owner_question": "",
-   "owner_answer": "",
-   "row_n": 147
+   "owner_answer": "Juan 2026-09-11: \"Per 6\"",
+   "row_n": 147,
+   "owner_pack": {
+    "pack": "6/12 FL OZ",
+    "source": "Juan 2026-09-11: the $14.95 Dr. Brown's line is one 6-pack (\"Per 6\"); packs of 6x12 fl oz (2026-08-28)"
+   }
   },
   {
    "revision": "wave7-r2-2026-09-10",
@@ -5402,13 +5442,13 @@
    "row_n": 148
   },
   {
-   "revision": "wave7-r2-2026-09-10",
+   "revision": "wave7-r4-2026-09-11",
    "angel": {
     "product": "DIET CHERRY DR. BROWNS",
-    "brand": "\u2014",
-    "manufacturer": "\u2014",
+    "brand": "—",
+    "manufacturer": "—",
     "vendor": "Delmar Provisions",
-    "pack_size": "\u2014",
+    "pack_size": "—",
     "source_file": "docs/angel-products-rollup.csv",
     "source_line": 150,
     "latest_price_per_lb": "16.5",
@@ -5431,12 +5471,15 @@
    },
    "decision": "selected",
    "vendor_binding": "vendor-match",
-   "confidence": "high",
+   "confidence": "HIGH",
    "evidence": "Exact brand and vendor (Delmar/Boar's Head) match on an active SKU.",
    "meaning": "Dr. Brown's diet cherry soda",
-   "owner_question": "",
-   "owner_answer": "",
-   "row_n": 149
+   "owner_answer": "Juan 2026-09-11: \"Per 6\"",
+   "row_n": 149,
+   "owner_pack": {
+    "pack": "6/12 FL OZ",
+    "source": "Juan 2026-09-11: the $14.95 Dr. Brown's line is one 6-pack (\"Per 6\"); packs of 6x12 fl oz (2026-08-28)"
+   }
   },
   {
    "revision": "wave7-r2-2026-09-10",
@@ -5502,7 +5545,7 @@
    "evidence": "Same product as n=71; vendor differs (US Foods vs PFG), no US Foods basil SKU exists.",
    "meaning": "Fresh basil herb",
    "owner_question": "",
-   "owner_answer": "Juan 2026-09-10: 'we have mostly moved away from US Foods and mostly use PFG now' \u2014 historical purchase, no US Foods twin, never prices another vendor's SKU",
+   "owner_answer": "Juan 2026-09-10: 'we have mostly moved away from US Foods and mostly use PFG now' — historical purchase, no US Foods twin, never prices another vendor's SKU",
    "row_n": 151
   },
   {
@@ -5633,7 +5676,7 @@
    "decision": "selected",
    "vendor_binding": "vendor-match",
    "confidence": "high",
-   "evidence": "Exact vendor (US Foods) and product type (dried, shelf-stable shaker) match \u2014 better than the fresh 'Chives' PFG SKU string matcher picked.",
+   "evidence": "Exact vendor (US Foods) and product type (dried, shelf-stable shaker) match — better than the fresh 'Chives' PFG SKU string matcher picked.",
    "meaning": "Dried chopped chive seasoning (shaker)",
    "owner_question": "",
    "owner_answer": "",
@@ -5673,17 +5716,17 @@
    "evidence": "Only sour cream SKU in catalog; vendor is US Foods vs catalog PFG.",
    "meaning": "Cultured sour cream, tub",
    "owner_question": "",
-   "owner_answer": "Juan 2026-09-10: 'we have mostly moved away from US Foods and mostly use PFG now' \u2014 historical purchase, no US Foods twin, never prices another vendor's SKU",
+   "owner_answer": "Juan 2026-09-10: 'we have mostly moved away from US Foods and mostly use PFG now' — historical purchase, no US Foods twin, never prices another vendor's SKU",
    "row_n": 156
   },
   {
    "revision": "wave7-r2-2026-09-10",
    "angel": {
     "product": "Deer Park Loose",
-    "brand": "\u2014",
-    "manufacturer": "\u2014",
+    "brand": "—",
+    "manufacturer": "—",
     "vendor": "Delmar Provisions",
-    "pack_size": "\u2014",
+    "pack_size": "—",
     "source_file": "docs/angel-products-rollup.csv",
     "source_line": 158,
     "latest_price_per_lb": "8.5",
@@ -5707,7 +5750,7 @@
    "decision": "selected",
    "vendor_binding": "vendor-match",
    "confidence": "high",
-   "evidence": "CC: Deer Park loose bottles \u2014 one-off | binding evidence: Juan 2026-09-10: 'Deerpark loose is the employee waters'",
+   "evidence": "CC: Deer Park loose bottles — one-off | binding evidence: Juan 2026-09-10: 'Deerpark loose is the employee waters'",
    "meaning": "Deer Park brand bottled spring water",
    "owner_question": "",
    "owner_answer": "Juan 2026-09-10: 'Deerpark loose is the employee waters'",
@@ -5784,9 +5827,9 @@
    "evidence": "Same size category as Gloves Medium; vendor (US Foods) and material (vinyl vs latex) differ, no US Foods glove SKU exists.",
    "meaning": "Medium vinyl powder-free gloves",
    "owner_question": "",
-   "owner_answer": "Juan 2026-09-10: 'we have mostly moved away from US Foods and mostly use PFG now' \u2014 historical purchase, no US Foods twin, never prices another vendor's SKU",
+   "owner_answer": "Juan 2026-09-10: 'we have mostly moved away from US Foods and mostly use PFG now' — historical purchase, no US Foods twin, never prices another vendor's SKU",
    "row_n": 159
   }
  ],
- "revision_note": "r2 \u2014 Juan 2026-09-10 floor answers applied: US Foods = legacy vendor (43 rows rejected as historical), bags confirmed, 50/50 shred = Shredded Mozz, quart containers = Quart (Large) (PFG re-vendor errand), Deer Park = Employee Water (owner-confirmed binding), Just Ice Tea = catalog gap errand, rest = specials/one-offs"
+ "revision_note": "r4 — Wave 8 costing readiness (CC 2026-09-11): Juan owner packs fill missing Delmar packs; unresolved purchase units pending; PFG onions target recipe-consumed Onion (White), latest invoice row #18; US Foods remains rejected. Onion item number 898641 from order-guide-caphill-2025-pfg.csv; runtime identity guard verifies it. | r4b 2026-09-11: Juan answered — Dr. Brown's per 6-pack, prosciutto per 12 oz pack, pickle chips = the 1,500-slice tub, peppers confirmed one jar per line; whole-pickle pail count still open; Celery/Chives pack shapes updated for the seed-32 corrections."
 }

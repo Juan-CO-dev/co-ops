@@ -11,6 +11,7 @@ export type RawRow = Record<string, unknown>;
 export interface Snapshot { sku: RawRow; vendor: RawRow | null; chain: RawRow[]; price: RawRow | null }
 export interface ManifestRow {
   revision: string;
+  owner_pack?: { pack: string; source: string };
   angel: { product: string; brand: string; manufacturer: string; vendor: string; pack_size: string; source_file: string; source_line: number; weight_source: string; [key: string]: unknown };
   selected_sku: { id: string; name: string; vendor: string; pack_format: string | null; active: boolean; item_number: string } | null;
   decision: "selected" | "pending" | "rejected";
@@ -89,6 +90,7 @@ export function readManifest(text: string): Manifest {
   for (const r of data.rows) {
     if (!Number.isInteger(r.row_n) || r.row_n <= 0 || seen.has(r.row_n) || !r.revision || !r.angel || !["selected", "pending", "rejected"].includes(r.decision) || !["vendor-match", "VENDOR_DRIFT", "pending", "n/a"].includes(r.vendor_binding)) throw new Error("Invalid wave-7 reviewed row");
     for (const key of ["product", "brand", "manufacturer", "vendor", "pack_size", "source_file", "weight_source"] as const) if (typeof r.angel[key] !== "string") throw new Error("Invalid Angel identity");
+    if (r.owner_pack !== undefined && (!r.owner_pack || typeof r.owner_pack.pack !== "string" || !r.owner_pack.pack.trim() || typeof r.owner_pack.source !== "string" || !r.owner_pack.source.trim() || !parsePack(r.owner_pack.pack) || parsePack(r.angel.pack_size))) throw new Error("Invalid wave-7 reviewed row");
     if (!Number.isInteger(r.angel.source_line) || r.angel.source_line < 2 || typeof r.evidence !== "string") throw new Error("Missing mapping evidence");
     if (r.decision === "selected" && (!r.selected_sku || !/^[\da-f]{8}-(?:[\da-f]{4}-){3}[\da-f]{12}$/i.test(r.selected_sku.id) || !r.evidence.trim())) throw new Error("Selected mapping lacks exact SKU/evidence");
     seen.add(r.row_n);
@@ -158,6 +160,7 @@ const PIECES: Readonly<Record<string, string>> = {
 };
 export interface Intent {
   source: typeof SOURCE; revision: string;
+  owner_pack?: ManifestRow["owner_pack"];
   duplicate_decision?: { row_n: number; rejected_row_ns: number[] };
   price: { unit_price: number; effective_date: string; source_note: string };
   chain: StarterChainLevel[] | null;
@@ -166,7 +169,16 @@ export interface Intent {
   evidence: { manifest: ManifestRow; observations: PurchaseRow[]; arithmetic: string; grain: string; average: ReturnType<typeof invoiceAverageLbs>; beforeOz: number | null; afterOz: number | null; packWeightClass: "INVOICE_DERIVED" | null };
 }
 export interface Decision { row: ManifestRow; snapshot: Snapshot | null; refusals: Refusal[]; intent: Intent | null; packRatio?: number; selection?: string; rejected?: boolean; warnings?: string[] }
+export function ownerPackNote(row: ManifestRow): string {
+  return row.owner_pack ? ` (owner pack: ${row.owner_pack.pack} — ${row.owner_pack.source})` : "";
+}
+/** Decorate all exit paths, including invoice-selection failures and price no-ops. */
 export function planRow(row: ManifestRow, snapshot: Snapshot | null, history: readonly PurchaseRow[], measures: Map<string, MeasureUnitFactor>, asOf: string, deferPricePolicy = false, replay = false): Decision {
+  const result = planRowInner(row, snapshot, history, measures, asOf, deferPricePolicy, replay);
+  for (const entry of result.refusals) entry.message += ownerPackNote(row);
+  return result;
+}
+function planRowInner(row: ManifestRow, snapshot: Snapshot | null, history: readonly PurchaseRow[], measures: Map<string, MeasureUnitFactor>, asOf: string, deferPricePolicy = false, replay = false): Decision {
   const result: Decision = { row, snapshot, refusals: [], intent: null };
   const a = row.angel, selected = row.selected_sku;
   const ctx = { row: `${a.source_file}:${a.source_line} ${a.product}`, SKU: selected?.name ?? a.product };
@@ -192,7 +204,7 @@ export function planRow(row: ManifestRow, snapshot: Snapshot | null, history: re
   if ("code" in source) { result.refusals.push(source); return result; }
   const currentDate = snapshot.price && String(snapshot.price.effective_date);
   const appPrice = snapshot.price != null && (snapshot.price.recorded_by != null || !String(snapshot.price.source ?? "").startsWith("angel-"));
-  const parsed = parsePack(a.pack_size), ours = physicalContents(snapshot, measures);
+  const parsed = parsePack(a.pack_size) ?? (row.owner_pack ? parsePack(row.owner_pack.pack) : null), ours = physicalContents(snapshot, measures);
   const beforeOz = packOz(snapshot, measures);
   let afterOz = beforeOz, chain: StarterChainLevel[] | null = null, weight: Intent["weight"] = null;
   let ratio: number | null = null, grain = "invoice purchase pack", arithmetic = "";
@@ -234,6 +246,8 @@ export function planRow(row: ManifestRow, snapshot: Snapshot | null, history: re
     if (!parsed) return hold("UNSUPPORTED_PACK_SYNTAX", { text: a.pack_size });
     const variable = VARIABLE_CATCH_RULES.find(v => identityKey(v.product, v.brand, v.vendor, v.packSizeRaw) === identityKey(a.product, a.brand, a.vendor, a.pack_size));
     if (variable) {
+      // Wave 8's 8 oz correction does not resolve the 12.96 oz invoice-weight
+      // anomaly documented in angel-wave4; retain the net-weight refusal.
       if (variable.skuName === "Chives") return hold("PACK_PREMISE_BROKEN", { pack: [a.pack_size, `${beforeOz ?? "unknown"} oz`] });
       if (!source.average) return hold("NO_MEASURED_INVOICE_WEIGHT", { source: a.weight_source }, "weight");
       const invoiceOz = round(source.average.meanLbs * 16, 2);
@@ -304,8 +318,10 @@ export function planRow(row: ManifestRow, snapshot: Snapshot | null, history: re
     }
   }
   const previous = snapshot.price?.source === SOURCE ? String(snapshot.price.id) : null;
+  arithmetic += ownerPackNote(row);
   const note = `${a.product} [${a.brand}] ${a.pack_size} | ${arithmetic} | vendor ${a.vendor}; invoice ${source.date}; decision ${row.revision}; preceding price ${snapshot.price?.id ?? "none"}`;
   result.intent = { source: SOURCE, revision: row.revision, price: { unit_price: round(price, 2), effective_date: source.date, source_note: note }, chain, weight, previous_price_id: previous, evidence: { manifest: row, observations: source.rows, arithmetic, grain, average, beforeOz, afterOz, packWeightClass: chain && s.sku_class === "raw" && average ? "INVOICE_DERIVED" : null } };
+  if (row.owner_pack) result.intent.owner_pack = { ...row.owner_pack };
   return result;
 }
 export function planWave7(manifest: Manifest, snapshots: ReadonlyMap<string, Snapshot>, history: readonly PurchaseRow[], measures: Map<string, MeasureUnitFactor>, asOf: string, replaySkus: ReadonlySet<string> = new Set()): Decision[] {
@@ -351,6 +367,10 @@ export function planWave7(manifest: Manifest, snapshots: ReadonlyMap<string, Sna
         }
       }
     }
+  }
+  for (const d of decisions) for (const entry of d.refusals) {
+    const note = ownerPackNote(d.row);
+    if (note && !entry.message.endsWith(note)) entry.message += note;
   }
   return decisions;
 }
