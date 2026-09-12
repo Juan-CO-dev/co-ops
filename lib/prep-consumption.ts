@@ -119,7 +119,8 @@ async function loadItemParBasis(
 
 /**
  * Load the WHOLE recipe universe in a fixed number of queries (6), regardless of
- * how many items/menu_items are subsequently resolved. Replaces the former
+ * how many items/menu_items are subsequently resolved (+1 when a product pin resolves
+ * to a member SKU no recipe names directly — LRA-231). Replaces the former
  * per-recipe-node recursive loading (4+ queries per node — the N+1 the
  * 2026-07-23 council review flagged as a latent cliff for real catering volume).
  * The graph is small (dozens of recipes / a few hundred rows); resolution is
@@ -195,6 +196,19 @@ export async function loadRecipeGraph(opts?: { locationId?: string | null }): Pr
     // Zero product-pinned rows → zero queries (loadProductIndex returns early).
     loadProductIndex(productIds, locationId),
   ]);
+  // THE RESOLVED MEMBER IS A LEAF TOO (LRA-231, 2026-09-11). A product pin resolves to one
+  // member SKU and the flatten emits THAT id as the leaf (productLineOz), but `skuIds` above
+  // only names the SKUs recipes pin directly — so the member's pack never reached
+  // `graph.skuPack`, and every consumer that prices a leaf off its pack (the menu costing
+  // board's costPerOzFromGraph, computeSkuCostPerOz) saw a priced, packed Turkey as
+  // "unpriced". Live: every deli sub on the board. One more query, only when a product
+  // resolved to a member the recipes did not already name.
+  const memberIds = [...new Set([...productIndex.index.resolution.values()]
+    .map((r) => r.skuId)
+    .filter((id): id is string => id != null && !skuPack.has(id)))];
+  if (memberIds.length > 0) {
+    for (const [id, pack] of await loadSkuPack(memberIds)) skuPack.set(id, pack);
+  }
 
   const inputsByRecipe = new Map<string, GraphRecipe["inputs"]>();
   for (const c of inRows ?? []) {
