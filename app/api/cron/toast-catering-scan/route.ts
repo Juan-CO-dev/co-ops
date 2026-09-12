@@ -1,11 +1,13 @@
 // GET Toast catering scan (catering inbox A1.2). Toast order webhooks are partner-only, so an
 // external pinger (CO desktop Task Scheduler) calls this every 10 minutes in business hours.
 // Auth: x-cron-secret header (or Authorization: Bearer) must equal env CATERING_SCAN_SECRET —
-// a DEDICATED, low-blast secret (it can only trigger an idempotent scan), so it may live on the
-// pinger machine without exposing CRON_SECRET. 503 no-op when unset (dormant-safe).
+// a DEDICATED pinger secret; this route also catches up eligible daily jobs server-side
+// without exposing CRON_SECRET to the pinger. 503 no-op when unset (dormant-safe).
 import { timingSafeEqual } from "node:crypto";
 import { type NextRequest } from "next/server";
 import { jsonError, jsonOk } from "@/lib/api-helpers";
+import { catchUpDailyJobs } from "@/lib/daily-catchup";
+import { watchSiblings } from "@/lib/job-watch-run";
 import { audit } from "@/lib/audit";
 import { scanToastCateringForAllLocations } from "@/lib/catering/toast-catering-scan";
 import { etCalendarDate, etYmdMinusDays } from "@/lib/operational-day";
@@ -39,9 +41,11 @@ export async function GET(req: NextRequest) {
   try {
     const results = await scanToastCateringForAllLocations(dates);
     const sum = (k: "seen" | "catering" | "attributed" | "createdLeads" | "lostLeads" | "refreshed" | "skipped" | "errors" | "unparsedAmounts") => results.reduce((n, r) => n + r[k], 0);
-    void audit({ actorId: null, actorRole: null, action: "cron.success", resourceTable: "cron", resourceId: null,
+    await audit({ actorId: null, actorRole: null, action: "cron.success", resourceTable: "cron", resourceId: null,
       metadata: { job: "toast-catering-scan", dates, seen: sum("seen"), catering: sum("catering"), attributed: sum("attributed"), created_leads: sum("createdLeads"), lost_leads: sum("lostLeads"), refreshed: sum("refreshed"), skipped: sum("skipped"), errors: sum("errors"), unparsed_amounts: sum("unparsedAmounts"), per_location_failures: results.filter((r) => !r.ok).length },
       ipAddress: null, userAgent: null });
+    await catchUpDailyJobs();
+    await watchSiblings("toast-catering-scan");
     return jsonOk({ dates, results });
   } catch (e) {
     void audit({ actorId: null, actorRole: null, action: "cron.failure", resourceTable: "cron", resourceId: null, metadata: { job: "toast-catering-scan", dates, error: truncateErr(e) }, ipAddress: null, userAgent: null });
