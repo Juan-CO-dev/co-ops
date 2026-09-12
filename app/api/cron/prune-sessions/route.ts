@@ -8,8 +8,9 @@
 import { timingSafeEqual } from "node:crypto";
 import { type NextRequest } from "next/server";
 import { jsonError, jsonOk } from "@/lib/api-helpers";
+import { watchSiblings } from "@/lib/job-watch-run";
 import { audit } from "@/lib/audit";
-import { pruneExpiredSessions } from "@/lib/session";
+import { runPruneSessions } from "@/lib/prune-sessions-run";
 
 /** Truncate a caught error message so a giant stack never bloats the audit row. */
 function truncateErr(e: unknown): string {
@@ -32,9 +33,9 @@ export async function GET(req: NextRequest) {
   if (!process.env.CRON_SECRET) return jsonError(503, "cron_disabled");
   if (!secretOk(req)) return jsonError(401, "unauthorized");
   try {
-    const { revoked } = await pruneExpiredSessions();
+    const { revoked } = await runPruneSessions();
     // Heartbeat (fail-open): a cron.success row lets the admin hub show "last run OK".
-    void audit({
+    await audit({
       actorId: null,
       actorRole: null,
       action: "cron.success",
@@ -44,6 +45,7 @@ export async function GET(req: NextRequest) {
       ipAddress: null,
       userAgent: null,
     });
+    await watchSiblings("prune-sessions");
     return jsonOk({ revoked });
   } catch (e) {
     // A LIVE failure is otherwise silent (console only). Write a fail-open audit row
