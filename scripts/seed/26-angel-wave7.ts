@@ -14,7 +14,7 @@ import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { SIM_PROJECT_REF } from "@/lib/sim-isolation-shared";
 import { deriveFlatFieldsFromChain } from "@/lib/admin/catalog-shared";
-import { SOURCE, canonical, readManifest, parseHistory, planWave7, refusal, REFUSAL_TEMPLATES, isoDate, num, type RawRow, type Snapshot, type Decision, type Intent, type RefusalCode } from "@/lib/angel-wave7";
+import { SOURCE, canonical, readManifest, parseHistory, planWave7, ownerPackNote, refusal, REFUSAL_TEMPLATES, isoDate, num, type RawRow, type Snapshot, type Decision, type Intent, type RefusalCode } from "@/lib/angel-wave7";
 import type { MeasureUnitFactor } from "@/lib/recipe-math";
 import { loadWave7ReadinessTables, evaluateWave7Tables, printWave7Comparison, verifyWave7Scope } from "../parity-angel";
 
@@ -107,13 +107,15 @@ export async function readSnapshot(sb: SupabaseClient, id: string): Promise<Snap
   return data.sku ? data as Snapshot : null;
 }
 interface Operation { decision: Decision; skuId: string; operationId: string; priceId: string; expected: Snapshot; bundle: RawRow; applied: boolean; stored: RawRow | null }
-function bundleFor(intent: Intent, operationId: string, hashes: Record<string, string>): RawRow {
+export function bundleFor(intent: Intent, operationId: string, hashes: Record<string, string>): RawRow {
   const ids = intent.chain?.map((_, i) => operationUuid(`${operationId}/chain/${i}`));
   const chain = intent.chain?.map((l, i) => ({ id: ids![i]!, label: l.label, contains_qty: l.containsQty, contains_level_id: l.containsIndex == null ? null : ids![l.containsIndex]!, contains_measure_unit: l.containsMeasureUnit, display_ordinal: i })) ?? null;
   return { ...intent, chain, evidence: { ...intent.evidence, input_hashes: hashes } };
 }
 function statusRefusal(code: RefusalCode, d: Decision) {
-  return refusal(code, { row: `${d.row.angel.source_file}:${d.row.angel.source_line} ${d.row.angel.product}`, SKU: d.row.selected_sku?.name ?? d.row.angel.product, n: 0, value: String(d.snapshot?.sku.avg_oz_per_each ?? "missing"), field: "RPC bundle", "collision/cycle/multiple roots/dangling pointer/invalid quantity": "invalid chain", A: d.row.angel.vendor, B: d.row.selected_sku?.vendor ?? "unselected" });
+  const entry = refusal(code, { row: `${d.row.angel.source_file}:${d.row.angel.source_line} ${d.row.angel.product}`, SKU: d.row.selected_sku?.name ?? d.row.angel.product, n: 0, value: String(d.snapshot?.sku.avg_oz_per_each ?? "missing"), field: "RPC bundle", "collision/cycle/multiple roots/dangling pointer/invalid quantity": "invalid chain", A: d.row.angel.vendor, B: d.row.selected_sku?.vendor ?? "unselected" });
+  entry.message += ownerPackNote(d.row);
+  return entry;
 }
 /** Same review identity after a verified retry; unrelated consumer drift changes it. */
 export function reviewDigest(tables: Record<string, RawRow[]>, applied: readonly { skuId: string; priceId: string; expected: Snapshot; bundle: RawRow }[], review: unknown): string {
@@ -209,19 +211,19 @@ function printReport(config: Target, ctx: Awaited<ReturnType<typeof context>>) {
   console.log("Invoice dates stay historical. Pack changes do not certify slice or sprig weights. Errand counts overlap.");
   heading(2);
   for (const d of decisions.filter(d => d.row.decision === "selected")) {
-    console.log(`${d.row.angel.product} [${d.row.angel.brand}] (#${d.row.row_n}) → ${d.row.selected_sku?.name ?? "unresolved"} (${d.row.selected_sku?.vendor ?? "no vendor"}); ${d.row.evidence}; ${d.selection ?? "single selected row"}; ${d.intent?.evidence.arithmetic ?? (d.rejected ? "competitor excluded" : d.refusals.some(r => r.code === "ALREADY_CORRECT") ? "ALREADY_CORRECT" : "relationship refused — see ledger")}`);
-    for (const warning of d.warnings ?? []) console.log(warning);
+    console.log(`${d.row.angel.product} [${d.row.angel.brand}] (#${d.row.row_n}) → ${d.row.selected_sku?.name ?? "unresolved"} (${d.row.selected_sku?.vendor ?? "no vendor"}); ${d.row.evidence}; ${d.selection ?? "single selected row"}; ${d.intent?.evidence.arithmetic ?? (d.rejected ? "competitor excluded" : d.refusals.some(r => r.code === "ALREADY_CORRECT") ? "ALREADY_CORRECT" : "relationship refused — see ledger")}${d.intent ? "" : ownerPackNote(d.row)}`);
+    for (const warning of d.warnings ?? []) console.log(warning + ownerPackNote(d.row));
   }
   heading(3);
   for (const d of decisions.filter(d => d.intent)) console.log(`${d.row.selected_sku!.name}: current ${d.snapshot?.price ? `$${d.snapshot.price.unit_price} / ${d.snapshot.price.effective_date} / ${d.snapshot.price.source ?? "app"}` : "unpriced"}; proposed $${d.intent!.price.unit_price} / ${d.intent!.price.effective_date}; ${d.intent!.evidence.arithmetic}; pack oz ${d.intent!.evidence.beforeOz ?? "unresolved"} → ${d.intent!.evidence.afterOz ?? "unresolved"}`);
   heading(4);
-  for (const d of decisions.filter(d => d.intent)) console.log(`${d.row.selected_sku!.name}: ${d.intent!.evidence.grain}; old ${d.snapshot!.sku.avg_oz_per_each ?? "missing"} oz (${d.snapshot!.sku.weight_class ?? "unclassified"}); new ${d.intent!.weight ? `${d.intent!.weight.avg_oz_per_each} oz INVOICE_DERIVED` : "kept live"}; samples ${JSON.stringify(d.intent!.evidence.average)}; named recipe effects in PER-SHOP ERRANDS / MATRIX`);
+  for (const d of decisions.filter(d => d.intent)) console.log(`${d.row.selected_sku!.name}: ${d.intent!.evidence.grain}; old ${d.snapshot!.sku.avg_oz_per_each ?? "missing"} oz (${d.snapshot!.sku.weight_class ?? "unclassified"}); new ${d.intent!.weight ? `${d.intent!.weight.avg_oz_per_each} oz INVOICE_DERIVED` : "kept live"}; samples ${JSON.stringify(d.intent!.evidence.average)}; named recipe effects in PER-SHOP ERRANDS / MATRIX${ownerPackNote(d.row)}`);
   heading(5);
-  for (const op of operations.filter(o => o.bundle.chain)) console.log(`${op.decision.row.selected_sku!.name}: ${JSON.stringify(op.expected.chain.map(l => ({ label: l.label, quantity: l.contains_qty, leaf: l.contains_measure_unit })))} → ${JSON.stringify(op.decision.intent!.chain)}; mirrors ${JSON.stringify(deriveFlatFieldsFromChain(op.decision.intent!.chain!))}; count resolution below`);
+  for (const op of operations.filter(o => o.bundle.chain)) console.log(`${op.decision.row.selected_sku!.name}: ${JSON.stringify(op.expected.chain.map(l => ({ label: l.label, quantity: l.contains_qty, leaf: l.contains_measure_unit })))} → ${JSON.stringify(op.decision.intent!.chain)}; mirrors ${JSON.stringify(deriveFlatFieldsFromChain(op.decision.intent!.chain!))}; count resolution below${ownerPackNote(op.decision.row)}`);
   heading(6);
-  for (const d of decisions) for (const r of d.refusals) { console.log(r.message); console.log(`  ${r.code} | ${d.row.selected_sku?.name ?? d.row.angel.product} | ${r.operation} | missing fact: ${r.missingFact}`); }
+  for (const d of decisions) for (const r of d.refusals) { console.log(r.message); console.log(`  ${r.code} | ${d.row.selected_sku?.name ?? d.row.angel.product} | ${r.operation} | missing fact: ${r.missingFact}${ownerPackNote(d.row)}`); }
   heading(7);
-  for (const op of operations.filter(o => !o.applied)) console.log(JSON.stringify({ sku: op.decision.row.selected_sku!.name, p_sku_id: op.skuId, p_operation_id: op.operationId, p_price_id: op.priceId, p_expected: op.expected, p_bundle: op.bundle }, null, 2));
+  for (const op of operations.filter(o => !o.applied)) console.log(JSON.stringify({ sku: op.decision.row.selected_sku!.name, p_sku_id: op.skuId, p_operation_id: op.operationId, p_price_id: op.priceId, p_expected: op.expected, p_bundle: op.bundle, ...(op.decision.row.owner_pack ? { owner_pack_note: ownerPackNote(op.decision.row).trim() } : {}) }, null, 2));
   heading(8);
   const before = evaluateWave7Tables(ctx.tables, undefined, config.asOf);
   const after = evaluateWave7Tables(ctx.tables, new Map(operations.map(o => [o.skuId, projected(o)])), config.asOf);

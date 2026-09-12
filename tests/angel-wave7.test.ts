@@ -1,13 +1,14 @@
 /** Wave 7: prove physical denominators and refusals with synthetic invoice evidence. */
 import { describe, expect, it } from "vitest";
+import { readFileSync } from "node:fs";
 import {
-  SOURCE, canonical, identityKey, isoDate, parsePack, planRow, planWave7,
+  SOURCE, canonical, identityKey, isoDate, parseHistory, parsePack, planRow, planWave7,
   readManifest, refusal, selectInvoices,
   type ManifestRow, type Snapshot,
 } from "@/lib/angel-wave7";
 import type { PurchaseRow } from "@/lib/angel-wave4";
 import type { MeasureUnitFactor } from "@/lib/recipe-math";
-import { loadAll, operationUuid, reviewDigest, validateTarget } from "@/scripts/seed/26-angel-wave7";
+import { bundleFor, loadAll, operationUuid, reviewDigest, validateTarget } from "@/scripts/seed/26-angel-wave7";
 import { evaluateWave7Tables, verifyWave7Scope } from "@/scripts/parity-angel";
 import { SIM_PROJECT_REF } from "@/lib/sim-isolation-shared";
 import type { SupabaseClient } from "@supabase/supabase-js";
@@ -45,6 +46,79 @@ function withPack(pack: string, sku: Record<string, unknown>) {
   return { r, s };
 }
 const codes = (d: ReturnType<typeof planRow>) => d.refusals.map(f => f.code);
+
+describe("owner pack hole filling", () => {
+  const owner = { pack: "35/12 FL OZ", source: "Juan 2026-08-28 label" };
+  function fixture(pack = "—") {
+    const { r, s } = withPack(pack, { units_per_pack: 35, each_size: 12, each_measure: "fl oz", avg_oz_per_each: 1, weight_class: "ESTIMATE" });
+    r.owner_pack = owner;
+    const registry = new Map(measures).set("fl oz", { dimension: "volume", toBaseFactor: 1 });
+    return { r, s, registry };
+  }
+  it.each(["—", "", "unknown"])("prices missing or unsupported Angel pack %j and preserves invoice join/provenance", pack => {
+    const { r, s, registry } = fixture(pack);
+    const d = planRow(r, s, [invoice(r)], registry, AS_OF);
+    expect(d.intent?.price.unit_price).toBe(81.11);
+    expect(d.intent?.owner_pack).toEqual(owner);
+    expect(bundleFor(d.intent!, "test", {}).owner_pack).toEqual(owner);
+    expect(d.intent?.evidence.manifest.angel.pack_size).toBe(pack);
+    expect(d.intent?.evidence.arithmetic).toContain("(owner pack: 35/12 FL OZ — Juan 2026-08-28 label)");
+    expect(d.refusals.every(f => f.message.includes("(owner pack:"))).toBe(true);
+    expect(readManifest(JSON.stringify({ wave: SOURCE, built_by: "test", rows: [r] })).rows[0]?.owner_pack).toEqual(owner);
+  });
+  it("refuses a hole without owner evidence", () => {
+    const { r, s, registry } = fixture(); delete r.owner_pack;
+    expect(codes(planRow(r, s, [invoice(r)], registry, AS_OF))).toContain("UNSUPPORTED_PACK_SYNTAX");
+  });
+  it("rejects owner overrides of parseable invoices", () => {
+    const { r } = fixture("24/12 FL OZ");
+    expect(() => readManifest(JSON.stringify({ wave: SOURCE, built_by: "test", rows: [r] }))).toThrow("Invalid wave-7 reviewed row");
+  });
+  it.each([null, {}, { pack: "", source: "label" }, { pack: "1 CT", source: " " }, { pack: "unknown", source: "label" }, { pack: 12, source: "label" }])("rejects malformed owner evidence %j", owner_pack => {
+    const { r } = fixture();
+    expect(() => readManifest(JSON.stringify({ wave: SOURCE, built_by: "test", rows: [{ ...r, owner_pack }] }))).toThrow("Invalid wave-7 reviewed row");
+  });
+  it("labels invoice-join refusals too", () => {
+    const { r, s, registry } = fixture();
+    expect(planRow(r, s, [], registry, AS_OF).refusals[0]?.message).toContain("(owner pack:");
+  });
+  it("scales a gallon jar invoice to the four-jar order case", () => {
+    const { r, s, registry } = fixture();
+    r.owner_pack = { pack: "1/128 FL OZ", source: "CC inference flagged for Juan" };
+    Object.assign(s.sku, { units_per_pack: 4, each_size: 128 });
+    expect(planRow(r, s, [invoice(r, { unitPricePerCase: 8.95, lineTotal: 8.95 })], registry, AS_OF).intent?.price.unit_price).toBe(35.8);
+  });
+  it("keeps r4 uncertainties pending and routes both onions to the consuming SKU", () => {
+    const manifest = readManifest(JSON.stringify(wave7Manifest));
+    // r4b (Juan 2026-09-11): Dr. Brown's per 6-pack, prosciutto per our 12 oz pack, pickle chips = the 1,500-slice tub.
+    expect(manifest.rows.filter(r => r.owner_pack).map(r => r.row_n)).toEqual([16, 24, 25, 30, 31, 43, 45, 84, 93, 94, 100, 103, 147, 149]);
+    for (const n of [50]) expect(manifest.rows.find(r => r.row_n === n)?.decision).toBe("pending");
+    for (const n of [16, 30, 84, 93, 94, 100, 147, 149]) expect(manifest.rows.find(r => r.row_n === n)?.decision).toBe("selected");
+    for (const n of [78, 143]) expect(manifest.rows.find(r => r.row_n === n)?.decision).toBe("rejected");
+    for (const n of [18, 113]) expect(manifest.rows.find(r => r.row_n === n)).toMatchObject({ vendor_binding: "vendor-match", selected_sku: { id: "17422bb2-b29b-4a57-9c23-c53bd9d43403", name: "Onion (White)", pack_format: "Bag" } });
+  });
+  it("uses the actual purchase history for owner-pack prices and the August onion winner", () => {
+    const manifest = readManifest(JSON.stringify(wave7Manifest));
+    const history = parseHistory(readFileSync("docs/angel-purchase-history.csv", "utf8"));
+    const registry = new Map(measures).set("fl oz", { dimension: "volume", toBaseFactor: 1 });
+    const snapshots = new Map<string, Snapshot>();
+    // Physical states are CC's 2026-09-11 verified facts from the dispatch; no DB read.
+    for (const r of manifest.rows.filter(r => r.owner_pack || [18, 113].includes(r.row_n))) {
+      const selected = r.selected_sku!;
+      const onion = [18, 113].includes(r.row_n), pepper = [25, 103].includes(r.row_n);
+      snapshots.set(selected.id, snapshot({
+        sku: { ...snapshot().sku, ...selected, vendor_id: "vendor-1", units_per_pack: onion ? 1 : pepper ? 4 : r.row_n === 45 ? 24 : 35, each_size: onion ? 800 : pepper ? 128 : 12, each_measure: onion ? "oz" : "fl oz", avg_oz_per_each: 1, weight_class: "ESTIMATE" },
+        vendor: { id: "vendor-1", name: selected.vendor, active: true },
+      }));
+    }
+    const decisions = planWave7(manifest, snapshots, history, registry, "2026-09-11");
+    // $32.40 is an older line; the Aug 14 row of record is $35.33.
+    for (const [n, price] of [[24, 25.45], [31, 25.45], [45, 12.95], [25, 35.8], [103, 35], [18, 35.33]]) {
+      expect(decisions.find(d => d.row.row_n === n)?.intent?.price.unit_price).toBe(price);
+    }
+    expect(decisions.find(d => d.row.row_n === 113)?.selection).toContain("row of record #18");
+  });
+});
 
 describe("reviewed identity and source selection", () => {
   it("normalizes missing sentinels without collapsing different brands or vendors", () => {
