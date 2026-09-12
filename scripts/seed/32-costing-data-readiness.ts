@@ -99,8 +99,11 @@ export function planCostingData(t: Tables): Plan[] {
     const history = t.sku_pack_levels.filter(r => r.sku_id === sku.id);
     p.expected = { sku, levels, history };
     p.before = { ...projectFlat(sku), chain: chainShape(levels) };
-    if ("avg" in spec && n(sku.avg_oz_per_each) !== spec.avg) throw new Error(`Recorded average drift: expected ${spec.avg}`);
     const chain = packChain(spec);
+    // The weight basis belongs to the WEIGHT lane (the Angel import legitimately rewrites it after this pack lands —
+    // Iceberg on prod 2026-09-11), so the pinned average is asserted on the BEFORE-state only, never on an applied row.
+    const alreadyApplied = equal(projectFlat(sku), spec.after) && equal(chainShape(levels), chain);
+    if (!alreadyApplied && "avg" in spec && n(sku.avg_oz_per_each) !== spec.avg) throw new Error(`Recorded average drift: expected ${spec.avg}`);
     const collision = firstLabelMeasureCollision(chain.map(l => l.label), new Set(measures.map(r => String(r.label))));
     if (collision) throw new Error(`Pack label shadows measure ${collision}`);
     if (!measures.some(m => m.label === spec.after.each_measure)) throw new Error("Missing active measure");
