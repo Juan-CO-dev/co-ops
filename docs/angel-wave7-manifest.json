@@ -1575,7 +1575,7 @@
    "row_n": 42
   },
   {
-   "revision": "wave7-r2-2026-09-10",
+   "revision": "wave7-r4-2026-09-11",
    "angel": {
     "product": "SWEET PEPPERS",
     "brand": "—",
@@ -1604,12 +1604,16 @@
    },
    "decision": "selected",
    "vendor_binding": "vendor-match",
-   "confidence": "high",
+   "confidence": "HIGH",
    "evidence": "Exact name+vendor match (Delmar=Boar's Head, score 1.0).",
    "meaning": "Boar's Head jarred sweet peppers",
    "owner_question": "",
    "owner_answer": "",
-   "row_n": 43
+   "row_n": 43,
+   "owner_pack": {
+    "pack": "1/128 FL OZ",
+    "source": "Juan 2026-08-28: the sweet/hot/banana peppers are all 4x128fl oz; Juan 2026-09-11 confirmed one $8.95-class Delmar line = one 128 fl oz jar (our case = 4 jars) — same rule for the $10.25 sweet peppers line"
+   }
   },
   {
    "revision": "wave7-r2-2026-09-10",
@@ -5831,5 +5835,5 @@
    "row_n": 159
   }
  ],
- "revision_note": "r4 — Wave 8 costing readiness (CC 2026-09-11): Juan owner packs fill missing Delmar packs; unresolved purchase units pending; PFG onions target recipe-consumed Onion (White), latest invoice row #18; US Foods remains rejected. Onion item number 898641 from order-guide-caphill-2025-pfg.csv; runtime identity guard verifies it. | r4b 2026-09-11: Juan answered — Dr. Brown's per 6-pack, prosciutto per 12 oz pack, pickle chips = the 1,500-slice tub, peppers confirmed one jar per line; whole-pickle pail count still open; Celery/Chives pack shapes updated for the seed-32 corrections."
+ "revision_note": "r4 — Wave 8 costing readiness (CC 2026-09-11): Juan owner packs fill missing Delmar packs; unresolved purchase units pending; PFG onions target recipe-consumed Onion (White), latest invoice row #18; US Foods remains rejected. Onion item number 898641 from order-guide-caphill-2025-pfg.csv; runtime identity guard verifies it. | r4b 2026-09-11: Juan answered — Dr. Brown's per 6-pack, prosciutto per 12 oz pack, pickle chips = the 1,500-slice tub, peppers confirmed one jar per line; whole-pickle pail count still open; Celery/Chives pack shapes updated for the seed-32 corrections. | r4c: Sweet Peppers owner pack (one jar per line), Cucumber count pack (seed 32)."
 }

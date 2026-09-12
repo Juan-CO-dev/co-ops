@@ -45,34 +45,34 @@ function after(): Tables {
   }
   return t;
 }
-const find = (t: Tables, name: string) => planCostingData(t).find(p => p.name === name)!;
+const find = (t: Tables, name: string, section?: "packs" | "portions" | "resales") => planCostingData(t).find(p => p.name === name && (!section || p.section === section))!;
 
 describe("Wave 8 expected/after contracts", () => {
-  it("plans all six packs, five portions and five resale recipes from the reviewed before-state", () => {
+  it("plans all seven packs, five portions and five resale recipes from the reviewed before-state", () => {
     const plans = planCostingData(before());
-    expect(plans).toHaveLength(16);
-    expect(plans.map(p => p.status)).toEqual(Array(16).fill("ready"));
-    expect(plans.filter(p => p.section === "packs")).toHaveLength(6);
+    expect(plans).toHaveLength(17);
+    expect(plans.map(p => p.status)).toEqual(Array(17).fill("ready"));
+    expect(plans.filter(p => p.section === "packs")).toHaveLength(7);
     expect(plans.filter(p => p.section === "portions")).toHaveLength(5);
     expect(plans.filter(p => p.section === "resales")).toHaveLength(5);
     expect(plans.some(p => p.name === "Roasted Red Peppers")).toBe(false);
   });
   it("reports already for every complete after-state on a second run", () => {
-    expect(planCostingData(after()).map(p => p.status)).toEqual(Array(16).fill("already"));
+    expect(planCostingData(after()).map(p => p.status)).toEqual(Array(17).fill("already"));
   });
   it.each([
     // The produce packs are COUNT packs (24 heads · 6 stalks · 6 cans) so the Angel import can relate them;
     // the weight basis rides on avg_oz_per_each (CC sim finding 2026-09-11).
     ["Iceberg", "Case", 24, 1, "each"], ["Celery", "Case", 6, 1, "each"],
     ["Tomatoes Crushed (10#)", "Case", 6, 1, "can"], ["Chives", "Each", 1, 8, "oz"],
-    ["Lemon Juice", "Case", 6, 32, "oz"], ["Tomatoes", "Case", 1, 400, "oz"],
+    ["Lemon Juice", "Case", 6, 32, "oz"], ["Cucumber", "Case", 12, 1, "each"], ["Tomatoes", "Case", 1, 400, "oz"],
   ])("%s writes the reviewed pack and derives matching flat fields", (name, packFormat, unitsPerPack, eachSize, eachMeasure) => {
     const spec = PACKS.find(s => s.name === name)!;
     expect(deriveFlatFieldsFromChain(packChain(spec))).toEqual({ packFormat, unitsPerPack, eachSize, eachMeasure });
     expect(find(before(), String(name)).source).toContain("Angel #");
   });
   it.each([["Onion", 0.25], ["Pickles", 0.5], ["Tomato", 2.5], ["Cucumber", 1.2], ["Radish", 0.5]])("%s declares exactly %s oz for both ingredient and finished portion", (name, oz) => {
-    expect(find(before(), String(name)).after).toEqual({ quantity: oz, unit: "oz", oz_per_par_unit: oz, yield: 1 });
+    expect(find(before(), String(name), "portions").after).toEqual({ quantity: oz, unit: "oz", oz_per_par_unit: oz, yield: 1 });
   });
   it("clearly separates the two verbatim portions from the three pending scale estimates", () => {
     expect(PORTIONS.filter(p => p.estimated).map(p => p.name)).toEqual(["Tomato", "Cucumber", "Radish"]);
@@ -127,7 +127,7 @@ describe("drift and partial-write refusals", () => {
   });
   it.each(PORTIONS.map(p => p.name))("%s refuses a changed placeholder quantity", name => {
     const t = before(); t.recipe_inputs.find(r => r.id === `input-${name}`)!.quantity = 2;
-    expect(find(t, name).status).toBe("refused");
+    expect(find(t, name, "portions").status).toBe("refused");
   });
   it("refuses an ambiguous active item even if only one is global", () => {
     const t = before(); t.items.push({ ...t.items[0], id: "duplicate", location_id: "shop" });

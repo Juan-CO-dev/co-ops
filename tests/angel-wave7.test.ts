@@ -91,7 +91,7 @@ describe("owner pack hole filling", () => {
   it("keeps r4 uncertainties pending and routes both onions to the consuming SKU", () => {
     const manifest = readManifest(JSON.stringify(wave7Manifest));
     // r4b (Juan 2026-09-11): Dr. Brown's per 6-pack, prosciutto per our 12 oz pack, pickle chips = the 1,500-slice tub.
-    expect(manifest.rows.filter(r => r.owner_pack).map(r => r.row_n)).toEqual([16, 24, 25, 30, 31, 45, 84, 93, 94, 100, 103, 147, 149]);
+    expect(manifest.rows.filter(r => r.owner_pack).map(r => r.row_n)).toEqual([16, 24, 25, 30, 31, 43, 45, 84, 93, 94, 100, 103, 147, 149]);
     for (const n of [50]) expect(manifest.rows.find(r => r.row_n === n)?.decision).toBe("pending");
     for (const n of [16, 30, 84, 93, 94, 100, 147, 149]) expect(manifest.rows.find(r => r.row_n === n)?.decision).toBe("selected");
     for (const n of [78, 143]) expect(manifest.rows.find(r => r.row_n === n)?.decision).toBe("rejected");
