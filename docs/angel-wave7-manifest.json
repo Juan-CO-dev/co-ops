@@ -1805,7 +1805,7 @@
    "row_n": 48
   },
   {
-   "revision": "wave7-r2-2026-09-10",
+   "revision": "wave7-r4-2026-09-11",
    "angel": {
     "product": "CUCUMBER EURO SDLS",
     "brand": "PACKER",
@@ -1828,7 +1828,7 @@
     "id": "11d14e78-bdce-4aa9-8602-2e7a7e09e4f3",
     "name": "Cucumber",
     "vendor": "PFG",
-    "pack_format": "Each (no case)",
+    "pack_format": "Case",
     "active": true,
     "item_number": "23280"
    },
