@@ -16,6 +16,7 @@
 import { timingSafeEqual } from "node:crypto";
 import { type NextRequest } from "next/server";
 import { jsonError, jsonOk } from "@/lib/api-helpers";
+import { watchSiblings } from "@/lib/job-watch-run";
 import { audit } from "@/lib/audit";
 import { pullTodaySalesForAllLocations } from "@/lib/catering/toast-sales";
 import { etCalendarDate } from "@/lib/operational-day";
@@ -41,7 +42,7 @@ export async function GET(req: NextRequest) {
   try {
     const results = await pullTodaySalesForAllLocations(today);
     const n = (k: string) => results.filter((r) => r.result === k).length;
-    void audit({
+    await audit({
       actorId: null, actorRole: null, action: "cron.success", resourceTable: "cron", resourceId: null,
       metadata: {
         job: "toast-sales-today", date: today,
@@ -52,6 +53,7 @@ export async function GET(req: NextRequest) {
       },
       ipAddress: null, userAgent: null,
     });
+    await watchSiblings("toast-sales-today");
     return jsonOk({ date: today, results });
   } catch (e) {
     void audit({
