@@ -1027,7 +1027,80 @@ export function OpeningClient({
       });
 
       if (!res.ok) {
-        const body = (await res.json().catch(() => ({}))) as { code?: string };
+        const body = (await res.json().catch(() => ({}))) as {
+          code?: string;
+          // LRA-203 — the 409's winner row, same shape the 200 body's `completion`
+          // carries (lib/checklist-rows.ts rowToCompletion). null when the server
+          // could not name the winner.
+          completion?: { id?: string; prepData?: unknown } | null;
+        };
+        // LRA-203 — 409 phase2_save_conflict: another save for THIS item landed at
+        // the same instant and its row is the one live phase-2 head (0196's index
+        // arbitrated it). Nothing broke, and there is nothing to retry — a retry
+        // would only race again — so this must never render as the red "failed"
+        // badge. Instead the client ADOPTS the winner: its numbers go into
+        // phase2Values and its attribution into saveStates, through the EXACT
+        // helpers the initial hydration uses (readPhase2SaveState →
+        // saveStateToFormValue → phase2Signature), so an adopted row is
+        // indistinguishable from one loaded on a fresh page open — which is what
+        // makes "showing the latest" true rather than a hopeful label. The status
+        // is "saved" because a live head genuinely exists, so the finalize gate
+        // keeps counting this item. router.refresh() still runs, for everything
+        // downstream of this row (saverNames for the winner's display name, the
+        // rest of the server-rendered page).
+        if (res.status === 409 && body.code === "phase2_save_conflict") {
+          const winner = body.completion ?? null;
+          const winnerSave = winner ? readPhase2SaveState(winner.prepData) : null;
+          if (winnerSave) {
+            const adopted = saveStateToFormValue(winnerSave, templateItemId);
+            setPhase2Values((prev) => {
+              const updated = new Map(prev);
+              updated.set(templateItemId, adopted);
+              return updated;
+            });
+            setSaveStates((prev) => {
+              const updated = new Map(prev);
+              updated.set(templateItemId, {
+                status: "saved",
+                savedById: winnerSave.saved_by,
+                savedAt: winnerSave.saved_at,
+                errorCode: null,
+                incompleteReason: null,
+                // Signature of the ADOPTED value, computed the same way the success
+                // path computes it — so the prepper's next edit diffs against what
+                // is actually persisted, and a re-blur on the winner's own numbers
+                // correctly skips the round-trip.
+                savedSignature: phase2Signature(adopted),
+                completionId: winner?.id ?? null,
+                raceNotice: true,
+              });
+              return updated;
+            });
+          } else {
+            // The server could not name the winner (read-back failed, or the row
+            // moved again). The item IS persisted — 23505 proves a live head — so
+            // still no error badge; notice plus refresh, and savedSignature clears
+            // so this prepper's next edit round-trips instead of being skipped by
+            // the value-diff guard against a value that never persisted.
+            setSaveStates((prev) => {
+              const updated = new Map(prev);
+              const prior = prev.get(templateItemId);
+              updated.set(templateItemId, {
+                status: "saved",
+                savedById: prior?.savedById ?? null,
+                savedAt: prior?.savedAt ?? null,
+                errorCode: null,
+                incompleteReason: null,
+                savedSignature: null,
+                completionId: prior?.completionId ?? null,
+                raceNotice: true,
+              });
+              return updated;
+            });
+          }
+          router.refresh();
+          return;
+        }
         const errorCode = res.status >= 500 ? "fallback" : (body.code ?? "fallback");
         setSaveStates((prev) => {
           const updated = new Map(prev);

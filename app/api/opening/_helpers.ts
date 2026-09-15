@@ -17,6 +17,11 @@
  *   409 phase2_not_eligible           — C.53 entry phase mismatch (status≠'phase1_complete')
  *   409 phase3_not_eligible           — C.53 entry phase mismatch (status≠'phase2_complete')
  *   409 revoke_conflict              — C.53 §8.4 revoke: no live phase2 completion (raced/already gone)
+ *   409 phase2_save_conflict         — LRA-203: per-item Phase 2 save lost a concurrent-write
+ *                                     race (23505 on the one-live-head-per-phase index); the
+ *                                     winner's row IS the head, so the body carries it as
+ *                                     `completion` (null if unnameable) for the client to
+ *                                     adopt under a calm notice instead of an error
  *   422 phase2_incomplete             — C.53 Phase 2 finalize with unsaved prep items (Model Y universe)
  *   422 reason_required              — C.53 §8.4 revoke: structured revoke with no reason (client SIGNAL to open RevokeReasonModal; no display i18n key)
  *   422 revocation_reason_invalid    — C.53 §8.4 revoke: revocation_reason CHECK (23514) defense
@@ -44,6 +49,7 @@ import {
   OpeningPhase1NotEligibleError,
   OpeningPhase2IncompleteError,
   OpeningPhase2NotEligibleError,
+  OpeningPhase2SaveConflictError,
   OpeningPhase3NotEligibleError,
   OpeningProvenanceRequiredError,
   OpeningNullSourceRequiresRecountError,
@@ -151,6 +157,21 @@ export function mapOpeningError(err: OpeningError): NextResponse {
     return jsonError(403, err.code, {
       message: err.message,
       completion_id: err.completionId,
+    });
+  }
+  if (err instanceof OpeningPhase2SaveConflictError) {
+    // 409 — LRA-203. Two concurrent per-item Phase 2 saves both superseded the
+    // same prior row; the loser's INSERT hit the one-live-head-per-phase index
+    // (23505). Exactly one live head survives, so this is a STATE conflict, not
+    // a failure: the client ADOPTS `completion` — the winner's row, the same
+    // shape the 200 body carries — and renders the calm race notice over it.
+    // Never a blind retry (it would just race again) and never a 500.
+    // `completion` is null when the read-back could not name the winner; the
+    // client then falls back to notice-plus-refresh.
+    return jsonError(409, err.code, {
+      message: err.message,
+      template_item_id: err.templateItemId,
+      completion: err.liveCompletion,
     });
   }
   if (err instanceof OpeningRevokeConflictError) {

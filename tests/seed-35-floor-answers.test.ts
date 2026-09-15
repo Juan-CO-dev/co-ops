@@ -14,7 +14,7 @@ function before(): Tables {
   t.vendor_items.push({ id: IDS.lemonOilSku, name: "Lemon Oil", vendor_id: null, active: true });
   for (const i of LEMON_OIL.inputs) t.vendor_items.push({ id: i.sku, name: i.name, vendor_id: V.PFG, active: true });
   for (const spec of PARS) if (!t.vendor_items.some(r => r.name === spec.name && r.vendor_id === V[spec.vendor])) t.vendor_items.push({ id: `sku-${spec.name}`, name: spec.name, vendor_id: V[spec.vendor], active: true, weekday_par: 1, weekend_par: 2 });
-  const siblingVendor: Record<string, string> = { "Oven Cleaner": V["US Foods"], "Butcher Paper": V.Trimark, "Trash Liners 40x46": V.Trimark, "Plastic Wraop": V.Trimark, "Toilet Paper": V.Amazon, "Stainless Steel Scrubbies": V.Webstaurant };
+  const siblingVendor: Record<string, string> = { "Oven Cleaner": V["US Foods"]!, "Butcher Paper": V.Trimark!, "Trash Liners 40x46": V.Trimark!, "Plastic Wraop": V.Trimark!, "Toilet Paper": V.Amazon!, "Stainless Steel Scrubbies": V.Webstaurant! };
   for (const spec of TWINS) if (spec.sibling && !t.vendor_items.some(r => r.name === spec.sibling)) t.vendor_items.push({ id: `sib-${spec.sibling}`, name: spec.sibling, vendor_id: siblingVendor[spec.sibling] ?? V.PFG, active: true, pack_format: "Case", inventory_only: true, sku_class: "packaging" });
   for (const loc of ["loc-a", "loc-b"]) for (const dow of [1, 2, 3, 4, 5]) t.vendor_delivery_rhythm.push({ id: `leo-${loc}-${dow}`, vendor_id: V["Leonard Paper"], location_id: loc, order_dow: dow, lead_days: 1, active: true });
   for (const dow of [1, 2, 3, 4, 5]) t.vendor_cutoffs.push({ id: `leo-cut-${dow}`, vendor_id: V["Leonard Paper"], location_id: null, order_day: dow, cutoff_time: "15:30:00", active: true });
@@ -88,8 +88,8 @@ describe("seed 35 planner", () => {
     const rhythm = plans.find(p => p.section === "rhythm")!;
     const rhythmOnly = before();
     for (const r of rhythmOnly.vendor_delivery_rhythm) r.active = false; for (const r of rhythmOnly.vendor_cutoffs) r.active = false;
-    rhythmOnly.vendor_delivery_rhythm.push(...a.vendor_delivery_rhythm.filter(r => r.id.startsWith("new-")));
-    rhythmOnly.vendor_cutoffs.push(...a.vendor_cutoffs.filter(r => r.id.startsWith("newcut-")));
+    rhythmOnly.vendor_delivery_rhythm.push(...a.vendor_delivery_rhythm.filter(r => String(r.id).startsWith("new-")));
+    rhythmOnly.vendor_cutoffs.push(...a.vendor_cutoffs.filter(r => String(r.id).startsWith("newcut-")));
     expect(() => verifyWriteScope(b, rhythmOnly, rhythm)).not.toThrow();
     expect(() => verifyWriteScope(b, rhythmOnly, par)).toThrow(/unrelated\/concurrent vendor_delivery_rhythm/);
     const lemon = plans.find(p => p.name.startsWith("Lemon Oil"))!;
