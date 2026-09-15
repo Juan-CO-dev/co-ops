@@ -2185,6 +2185,7 @@
   "opening.phase2.save.unsaved": "Sin guardar",
   "opening.phase2.save.incomplete_ground_truth": "Verifica la sección para guardar",
   "opening.phase2.save.incomplete_reason": "Agrega una razón para guardar",
+  "opening.phase2.save.race_notice": "Guardado hace un momento por otra persona — mostrando lo más reciente",
   "opening.phase2.revoke.cta": "Deshacer",
   "opening.phase2.revoke.cta_pending": "Deshaciendo…",
   "opening.phase2.revoke.cta_aria": "Deshacer la entrada de prep guardada para {item}",
