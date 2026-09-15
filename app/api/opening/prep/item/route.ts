@@ -27,6 +27,12 @@
  *   - 403 role_level_insufficient / location_access_denied
  *   - 404 instance_not_found
  *   - 409 phase2_not_eligible            — instance status ≠ 'phase1_complete'
+ *   - 409 phase2_save_conflict           — LRA-203: a concurrent save for this item won the
+ *                                          race (23505 on the one-live-head-per-phase index).
+ *                                          Body carries { template_item_id, completion } where
+ *                                          `completion` is the winner's live row (same shape as
+ *                                          the 200 body's, null if unnameable). The client adopts
+ *                                          it under a calm notice; it never retries.
  *   - 422 ground_truth_unresolved        — item has no live prep_data->phase1 (phase1_not_resolved)
  *   - 500 internal_error
  *

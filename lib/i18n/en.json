@@ -2180,6 +2180,7 @@
   "opening.phase2.save.unsaved": "Not saved",
   "opening.phase2.save.incomplete_ground_truth": "Verify section to save",
   "opening.phase2.save.incomplete_reason": "Add a reason to save",
+  "opening.phase2.save.race_notice": "Saved a moment ago by someone else — showing the latest",
   "opening.phase2.revoke.cta": "Undo",
   "opening.phase2.revoke.cta_pending": "Undoing…",
   "opening.phase2.revoke.cta_aria": "Undo saved prep entry for {item}",

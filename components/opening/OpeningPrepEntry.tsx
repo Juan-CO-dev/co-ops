@@ -119,6 +119,15 @@ export interface Phase2SaveState {
    * only while status==="saved" (cleared on revoke so the row goes "unsaved").
    */
   completionId: string | null;
+  /**
+   * LRA-203 — the last save LOST a concurrent-write race (409 phase2_save_conflict):
+   * someone else saved this item at the same instant and their row is the one live
+   * head. The status deliberately stays "saved" (a live phase-2 head exists, so the
+   * finalize gate must keep counting this row) and this flag drives a calm inline
+   * notice, never the red "failed" badge. Absent/false = no notice; every other
+   * save-state write constructs a fresh object, so it clears itself on the next save.
+   */
+  raceNotice?: boolean;
 }
 
 /** §8.4 Lane D structured-path reason vocabulary (silent path stamps its own sentinel). */
@@ -754,6 +763,14 @@ function PrepEntryRow({
             {revokeError ? (
               <span role="alert" className="font-bold text-co-cta-text">
                 {t("opening.phase2.revoke.error")}
+              </span>
+            ) : null}
+            {/* LRA-203 — concurrent-save notice. Calm (Brand Blue, no role="alert"),
+                same register as the "incomplete" nudge: the row IS saved, it just
+                isn't this prepper's number. */}
+            {saveState.raceNotice ? (
+              <span className="font-medium text-co-info">
+                {t("opening.phase2.save.race_notice")}
               </span>
             ) : null}
           </>

@@ -506,6 +506,45 @@ export class OpeningPhase2IncompleteError extends OpeningError {
   }
 }
 
+/**
+ * LRA-203 — a per-item Phase 2 save LOST a concurrent-write race. Two callers
+ * (two managers, or one double-tap) entered `save_phase2_item_atomic` for the
+ * SAME item at the same instant; both superseded the same prior live row and
+ * both INSERTed, and the loser's insert violated the partial unique index
+ * `checklist_completions_one_live_head_per_phase` (0196) — Postgres `23505`.
+ *
+ * The DATA is correct either way: exactly one live phase-2 head survives, which
+ * is the index doing its job. Only the loser's RESPONSE was wrong — an unmapped
+ * 23505 fell to the generic re-throw and surfaced as a raw 500 `internal_error`.
+ * Mapping it to 409 `phase2_save_conflict` gives the loser a clean answer:
+ * refresh and show the winner's row, do not blind-retry, and never render an
+ * error for a save that is, at the kitchen's grain, already done. No lock and no
+ * RPC change — the index already guarantees the head. i18n key
+ * `opening.phase2.save.race_notice` (a calm notice, NOT an `opening.error.*`).
+ *
+ * The error CARRIES THE WINNER (`liveCompletion`), which is what makes the calm
+ * notice honest: the route puts that row in the 409 body and the client adopts it
+ * into the form — same value, same attribution, same completion id the prepper
+ * would have seen on a full page load. `null` means the read-back could not name
+ * the winner (it failed, or found no live phase-2 row in the instant between the
+ * 23505 and the SELECT); the client then falls back to notice-plus-refresh. A
+ * failed read-back must NEVER turn this clean 409 back into a 500 — the conflict
+ * is already known, the winner's identity is the nice-to-have.
+ */
+export class OpeningPhase2SaveConflictError extends OpeningError {
+  constructor(
+    public readonly templateItemId: string,
+    /** The winner's live phase-2 completion — the SAME shape the success path returns. */
+    public readonly liveCompletion: ChecklistCompletion | null = null,
+  ) {
+    super(
+      `Phase 2 save for item ${templateItemId} lost a concurrent-write race; another save is the one live head.`,
+      "phase2_save_conflict",
+    );
+    this.name = "OpeningPhase2SaveConflictError";
+  }
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Phase resolution helpers
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1649,6 +1688,52 @@ function extractMissingCount(msg: string): number {
 }
 
 /**
+ * LRA-203 — name the WINNER of a lost Phase 2 save race: the live phase-2
+ * completion for `(instance, template item)` right after a 23505.
+ *
+ * TOTAL BY CONSTRUCTION — it never throws and never rejects. It runs on an error
+ * path whose answer is already decided (409 `phase2_save_conflict`), so a failure
+ * here may only downgrade the response from "409 plus the winner" to "409"; it may
+ * never promote it back to the 500 this whole fix exists to remove. Every failure
+ * mode — transport, PostgREST error, no live row, a row that isn't a phase-2 row —
+ * returns null.
+ *
+ * It reads the live rows and picks the phase-2 one in JS rather than asking
+ * PostgREST for `prep_data ? 'phase2'` + `.maybeSingle()`, and the reason is
+ * DUAL MEMBERSHIP: an openingPhase2 item legitimately holds TWO live completions
+ * (its Phase 1 verification row and its Phase 2 prep row — the law 0196 encodes),
+ * so an unfiltered `.maybeSingle()` is an error, not a row, and a jsonb-path
+ * filter is a PostgREST dialect detail this fix cannot probe against a live DB.
+ * 0196's index guarantees at most ONE live phase-2 row per key, so the JS pick is
+ * exact, not a heuristic.
+ */
+async function readLivePhase2Completion(
+  service: SupabaseClient,
+  instanceId: string,
+  templateItemId: string,
+): Promise<ChecklistCompletion | null> {
+  try {
+    const { data, error } = await service
+      .from("checklist_completions")
+      .select(COMPLETION_COLUMNS)
+      .eq("instance_id", instanceId)
+      .eq("template_item_id", templateItemId)
+      .is("superseded_at", null)
+      .is("revoked_at", null);
+    if (error || !Array.isArray(data)) return null;
+    const row = (data as CompletionRow[]).find(
+      (r) =>
+        r.prep_data != null &&
+        typeof r.prep_data === "object" &&
+        Object.hasOwn(r.prep_data, "phase2"),
+    );
+    return row ? rowToCompletion(row) : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Phase 2 per-item §8.4 save invoker — wires the `save_phase2_item_atomic` RPC
  * (migration 0056). Writes ONE prep item's phase2 completion in the §8.4
  * 14-field shape (12 core + saved_at/saved_by), sourcing ground_truth/prep_need
@@ -1665,11 +1750,16 @@ function extractMissingCount(msg: string): number {
  *     / over_par_reason_missing
  *     / under_par_reason_missing
  *     / under_par_freetext_required → OpeningEntryShapeError(reason)
- *   - 23503 (actor)          → OpeningActorNotFoundError; other → generic re-throw
+ *   - 23503 (actor)          → OpeningActorNotFoundError
+ *   - 23505 (one live head)  → OpeningPhase2SaveConflictError(templateItemId, liveCompletion)
+ *                              — LRA-203: the concurrent-save loser. The winner's row is read
+ *                              back and rides on the error so the route's 409 can hand the
+ *                              client the row it lost to. A failed read-back degrades to
+ *                              liveCompletion=null, never to a 500. Other codes → generic re-throw
  *
  * Audit (JS-side): action `opening.phase2.item_saved`, NOT destructive
  * (append-only per-item save). Outcomes: role_insufficient | phase2_not_eligible
- * | phase1_not_resolved | invalid_entry_shape | rpc_failed | success.
+ * | phase1_not_resolved | invalid_entry_shape | save_conflict | rpc_failed | success.
  */
 export async function savePhase2Item(
   service: SupabaseClient,
@@ -1750,6 +1840,18 @@ export async function savePhase2Item(
       if (error.code === "23503" && error.message.includes("actor")) {
         void audit({ ...auditBase, metadata: { outcome: "actor_not_found", rpc_error: error.message } });
         throw new OpeningActorNotFoundError(args.actor.userId);
+      }
+      // LRA-203 — 23505 on `checklist_completions_one_live_head_per_phase` (0196):
+      // a concurrent save for this item won the race. Data is already correct (one
+      // live head); the loser gets a named 409 instead of an opaque 500, and the
+      // winner's row rides along so the client can adopt it instead of guessing.
+      // The read-back is awaited BEFORE the audit so the row names the winner it
+      // found (or records that it could not) — a race with no winner id in the log
+      // is the one shape that would be un-forensic later.
+      if (error.code === "23505") {
+        const liveCompletion = await readLivePhase2Completion(service, args.instanceId, args.entry.templateItemId);
+        void audit({ ...auditBase, metadata: { outcome: "save_conflict", rpc_error: error.message, template_item_id: args.entry.templateItemId, live_completion_id: liveCompletion?.id ?? null } });
+        throw new OpeningPhase2SaveConflictError(args.entry.templateItemId, liveCompletion);
       }
       throw new Error(`save_phase2_item_atomic rpc: ${error.message}`);
     }
