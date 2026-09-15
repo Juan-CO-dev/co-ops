@@ -26,10 +26,12 @@ import { serverT } from "@/lib/i18n/server";
 import type { Language } from "@/lib/i18n/types";
 import {
   loadOpeningCloserCountSnapshots,
+  loadOpeningPhase1Draft,
   loadOpeningSectionVerifications,
   loadOpeningState,
   type OpeningCloserCountSnapshotRow,
 } from "@/lib/opening";
+import type { OpeningPhase1Draft } from "@/lib/opening-draft-shared";
 import { etCalendarDate } from "@/lib/operational-day";
 import { requireSessionFromHeaders } from "@/lib/session";
 import { getServiceRoleClient } from "@/lib/supabase-server";
@@ -241,6 +243,17 @@ export default async function OpeningPage({ searchParams }: OpeningPageProps) {
     state.instance.id,
   );
 
+  // LRA-121 — the autosaved Phase 1 form state (migration 0203). Loaded ONLY while the
+  // instance is still 'open': past that, submit_phase1_atomic has written the real
+  // completion + section-verification rows and THOSE are the truth, so a leftover draft
+  // row is inert by construction and needs no cleanup path. This is what lets the key
+  // holder open the same opening on their own device and find the employee's ticks,
+  // temperatures and comments already there.
+  const initialDraft: OpeningPhase1Draft | null =
+    state.instance.status === "open"
+      ? await loadOpeningPhase1Draft(sb, state.instance.id)
+      : null;
+
   const managers = await loadAgmPlusManagers(sb, selectedLocation.id);
 
   // status='open' — render the form. (This branch renders OpeningClient
@@ -254,6 +267,7 @@ export default async function OpeningPage({ searchParams }: OpeningPageProps) {
         closerSnapshots={closerSnapshots}
         derived={state.derived}
         verifiedSections={verifiedSections}
+        initialDraft={initialDraft}
         completions={state.completions}
         managers={managers}
         saverNames={{ ...state.authors, [auth.user.id]: auth.user.name }}

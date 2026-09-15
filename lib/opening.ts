@@ -63,6 +63,10 @@ import {
   type TemplateItemRow,
   rowToTemplateItem,
 } from "./template-items";
+import {
+  parseOpeningPhase1Draft,
+  type OpeningPhase1Draft,
+} from "./opening-draft-shared";
 import type {
   ChecklistCompletion,
   ChecklistInstance,
@@ -90,6 +94,21 @@ export type {
   OpeningEntryPhase3,
   OpeningSectionVerificationEntry,
 } from "./types";
+
+/**
+ * LRA-121 — the Phase 1 draft's pure surface, re-exported per the `*-shared.ts`
+ * pattern so server consumers keep importing from `lib/opening`. The canonical
+ * source is `lib/opening-draft-shared.ts` (zero I/O; the client imports it directly).
+ */
+export {
+  OPENING_DRAFT_MIN_LEVEL,
+  OPENING_PHASE1_DRAFT_VERSION,
+  parseOpeningPhase1Draft,
+} from "./opening-draft-shared";
+export type {
+  OpeningPhase1Draft,
+  OpeningPhase1DraftItem,
+} from "./opening-draft-shared";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Actor + role gate
@@ -1266,6 +1285,98 @@ export async function loadOpeningSectionVerifications(
     seen.add(row.section_key);
   }
   return [...seen];
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// LRA-121 — Phase 1 draft (unsubmitted form state), migration 0203
+//
+// The pure half (shape, validator, precedence rule, role floor) lives in
+// lib/opening-draft-shared.ts so the client component can import it; these two
+// functions are its I/O. Both take the SERVICE client — the table's app access is
+// service-role only, exactly like every other opening loader on this page.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * loadOpeningPhase1Draft — read back the autosaved Phase 1 form state for one instance.
+ *
+ * Returns null when there is no draft row AND when the stored jsonb fails
+ * `parseOpeningPhase1Draft`. Those two are deliberately the same answer: a draft that
+ * half-parses would hydrate a form with a silently missing field, and the caller's only
+ * correct response to either is "show an empty form". A malformed row is logged so it is
+ * observable rather than swallowed.
+ *
+ * CALLERS MUST GATE ON STATUS. A draft is meaningful only while
+ * `checklist_instances.status = 'open'`; past that, `submit_phase1_atomic` has written
+ * the real completion + section-verification rows and they are the truth. This function
+ * does not re-read the instance to enforce that — page.tsx already holds the status.
+ */
+export async function loadOpeningPhase1Draft(
+  service: SupabaseClient,
+  instanceId: string,
+): Promise<OpeningPhase1Draft | null> {
+  const { data, error } = await service
+    .from("opening_phase1_drafts")
+    .select("draft")
+    .eq("instance_id", instanceId)
+    .maybeSingle<{ draft: unknown }>();
+  if (error) {
+    throw new Error(`loadOpeningPhase1Draft: ${error.message}`);
+  }
+  if (!data) return null;
+  const parsed = parseOpeningPhase1Draft(data.draft);
+  if (!parsed) {
+    console.error(
+      `[opening] loadOpeningPhase1Draft: unparseable draft on instance ${instanceId}; treating as absent`,
+    );
+  }
+  return parsed;
+}
+
+/**
+ * saveOpeningPhase1Draft — upsert the draft for one instance. LAST WRITE WINS.
+ *
+ * There is no per-field merge, and that is a decision, not an omission: two openers
+ * editing the same instance at the same moment is not the shift this fixes (the real
+ * sequence is sequential — employee walks, then key holder takes the tablet or opens it
+ * on their own device). A field-level merge needs per-field timestamps and a conflict
+ * story the operator can read, which is its own design; shipping a silent, guessy merge
+ * would be worse than a rule everyone can state. Documented as a later refinement.
+ *
+ * Returns the persisted `saved_at` so the client's status line shows SERVER time, not the
+ * browser's.
+ */
+export async function saveOpeningPhase1Draft(
+  service: SupabaseClient,
+  args: {
+    instanceId: string;
+    locationId: string;
+    draft: OpeningPhase1Draft;
+    savedBy: string | null;
+  },
+): Promise<{ savedAt: string }> {
+  // saved_at is written explicitly: the column DEFAULT fires on INSERT only, and an
+  // upsert that lands on the UPDATE arm would otherwise keep the first save's timestamp.
+  const savedAt = new Date().toISOString();
+  const { data, error } = await service
+    .from("opening_phase1_drafts")
+    .upsert(
+      {
+        instance_id: args.instanceId,
+        location_id: args.locationId,
+        draft: args.draft,
+        saved_by: args.savedBy,
+        saved_at: savedAt,
+      },
+      { onConflict: "instance_id" },
+    )
+    .select("saved_at")
+    .single<{ saved_at: string }>();
+  // Supabase JS swallows constraint violations on the data path — check `error`, never
+  // infer success from `data` (AGENTS.md).
+  if (error) {
+    throw new Error(`saveOpeningPhase1Draft: ${error.message}`);
+  }
+  return { savedAt: data?.saved_at ?? savedAt };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

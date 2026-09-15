@@ -23,10 +23,15 @@
  * photoId, notes are independent fields — never touched by tick toggles.
  */
 
-import { useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 
 import { useTranslation } from "@/lib/i18n/provider";
+import {
+  buildOpeningPhase1Draft,
+  openingPhase1ValueSource,
+  type OpeningPhase1Draft,
+} from "@/lib/opening-draft-shared";
 import type { Language, TranslationKey, TranslationParams } from "@/lib/i18n/types";
 import type { OpeningCloserCountSnapshotRow } from "@/lib/opening";
 import type { DerivedSku } from "@/lib/prep-consumption";
@@ -88,6 +93,17 @@ interface OpeningClientProps {
    */
   verifiedSections: ReadonlyArray<string>;
   /**
+   * LRA-121 — the autosaved, UNSUBMITTED Phase 1 form state for this instance
+   * (opening_phase1_drafts, migration 0203), parsed by the page loader. Null when there
+   * is no draft, when it failed validation, or when the instance is past 'open' (the
+   * loader does not read one then — the completion rows are the truth).
+   *
+   * Seeds `values` and `sectionVerifications` BELOW a persisted completion and ABOVE
+   * empty (openingPhase1ValueSource). This is what carries an employee's walk across to
+   * the key holder's own device.
+   */
+  initialDraft: OpeningPhase1Draft | null;
+  /**
    * Live (non-superseded, non-revoked) completions for this instance, loaded by
    * loadOpeningState. Under dual-membership an openingPhase2 item carries TWO
    * live rows once Phase 2 saves exist — a phase1 row (prep_data ? 'phase1')
@@ -109,6 +125,16 @@ interface OpeningClientProps {
    *  server refuses below it, and since 2026-09-09 the button says so instead of 403ing. */
   actorLevel: number;
 }
+
+/**
+ * LRA-121 — Phase 1 draft autosave debounce.
+ *
+ * 800ms: long enough that typing a fridge temperature or a sentence of note is one POST
+ * rather than one per keystroke, short enough that a tablet handed over mid-walk has
+ * already persisted. A tick or a section verify is a single discrete act, so it lands
+ * well inside the window too.
+ */
+const DRAFT_AUTOSAVE_DEBOUNCE_MS = 800;
 
 interface SubmitState {
   status: "idle" | "submitting" | "error";
@@ -329,6 +355,7 @@ export function OpeningClient({
   closerSnapshots,
   derived,
   verifiedSections,
+  initialDraft,
   completions,
   managers,
   saverNames,
@@ -409,10 +436,22 @@ export function OpeningClient({
   // back from the completion, or the second opener faces an empty field and is
   // forced to re-enter a value that's already once-per-instance committed.
   //
-  // On an 'open' instance (first opener, pre-submit) there are no phase1
-  // completions, so the seed yields a blank form — unchanged from prior
-  // behavior. The phase2 row of a dual-membership item is excluded via
+  // LRA-121 — on an 'open' instance the seed now falls through to the AUTOSAVED DRAFT
+  // (opening_phase1_drafts, migration 0203) before it falls to blank, which is what makes
+  // a key holder's fresh browser show the employee's ticks, temps and comments. The
+  // precedence is completion > draft > empty (`openingPhase1ValueSource`): a completion is
+  // a submitted accountability row, a draft is unsubmitted scratch that is stale by
+  // definition once one exists. The phase2 row of a dual-membership item is excluded via
   // isPhase2Row so it can never seed this verification map.
+  //
+  // SEEDED ONCE, ON MOUNT — and that is deliberate. This component DOES re-render in
+  // place with new props after router.refresh() (that is the whole premise of the
+  // status-driven spinner reset below), so a during-render prev-compare on `initialDraft`
+  // is mechanically possible. It would be WRONG: this browser is the one writing the
+  // draft, so its live `values` are always at least as new as any draft the server can
+  // hand back, and re-seeding would clobber whatever the operator typed during the
+  // refresh round-trip. The draft answers "what did the last device leave here", which is
+  // a question only the initial load asks.
   const [values, setValues] = useState<Map<string, OpeningItemFormValue>>(() => {
     const phase1ByItem = new Map<string, ChecklistCompletion>();
     for (const c of completions) {
@@ -421,19 +460,40 @@ export function OpeningClient({
     }
     const map = new Map<string, OpeningItemFormValue>();
     for (const item of phase1Items) {
-      const c = phase1ByItem.get(item.id);
-      map.set(
-        item.id,
-        c
-          ? {
-              countValue: c.countValue,
-              photoId: c.photoId,
-              notes: c.notes,
-              ticked: true,
-              openerRecount: readPhase1OpenerRecount(c.prepData),
-            }
-          : { countValue: null, photoId: null, notes: null, ticked: false, openerRecount: null },
-      );
+      const c = phase1ByItem.get(item.id) ?? null;
+      const d = initialDraft?.items[item.id] ?? null;
+      // The precedence is a PURE function in the shared module, called here rather than
+      // re-expressed, so the rule this seed follows and the rule the unit spine pins are
+      // the same statement and cannot drift apart.
+      switch (openingPhase1ValueSource(c !== null, d !== null)) {
+        case "completion":
+          map.set(item.id, {
+            countValue: c!.countValue,
+            photoId: c!.photoId,
+            notes: c!.notes,
+            ticked: true,
+            openerRecount: readPhase1OpenerRecount(c!.prepData),
+          });
+          break;
+        case "draft":
+          map.set(item.id, {
+            countValue: d!.countValue,
+            photoId: d!.photoId,
+            notes: d!.notes,
+            ticked: d!.ticked,
+            openerRecount: d!.openerRecount,
+          });
+          break;
+        case "empty":
+          map.set(item.id, {
+            countValue: null,
+            photoId: null,
+            notes: null,
+            ticked: false,
+            openerRecount: null,
+          });
+          break;
+      }
     }
     return map;
   });
@@ -604,7 +664,15 @@ export function OpeningClient({
           (it) => (values.get(it.id)?.openerRecount ?? null) !== null,
         );
 
-      map.set(section, hasVerifyRow || allNullSourceResolved);
+      // LRA-121 path (c): the AUTOSAVED DRAFT. Section-verify rows are written ONLY
+      // inside the submit RPCs (0053 / 0055 / 0185) — verified in-repo — so on an 'open'
+      // instance path (a) is ALWAYS false and a second opener had no way to see that the
+      // first one had verified a section. The draft is the only carrier pre-submit.
+      // OR-ed, never AND-ed: it can light a section up, and can never un-verify one that
+      // server truth already resolved.
+      const draftVerified = initialDraft?.sections[section] === true;
+
+      map.set(section, hasVerifyRow || allNullSourceResolved || draftVerified);
     }
     return map;
   });
@@ -653,8 +721,148 @@ export function OpeningClient({
   // below), NOT an empty required prompt the second opener can't satisfy. On a
   // fresh 'open' instance the column is null, so the first opener still starts
   // unselected.
-  const [attestationReason, setAttestationReason] =
-    useState<OpeningNoPriorDataReason | null>(instance.openerNoPriorDataReason);
+  //
+  // LRA-121 — and on a still-'open' instance it now falls through to the AUTOSAVED DRAFT
+  // before it falls to unselected. SAME PRECEDENCE AS THE ITEMS: server truth wins
+  // (`openingPhase1ValueSource`), because `opener_no_prior_data_reason` is only ever
+  // written by the submit RPC — its presence means Phase 1 landed, which makes any draft
+  // stale by definition. The attestation is a statement about the PRIOR NIGHT, and the
+  // only person positioned to make it is whoever walked the shop; without this the
+  // employee picks a reason, hands the tablet over, and the key holder meets a required
+  // prompt they have no way to answer.
+  const [attestationReason, setAttestationReason] = useState<OpeningNoPriorDataReason | null>(
+    () => {
+      const persisted = instance.openerNoPriorDataReason;
+      const drafted = initialDraft?.openerNoPriorDataAttestation ?? null;
+      switch (openingPhase1ValueSource(persisted !== null, drafted !== null)) {
+        case "completion":
+          return persisted;
+        case "draft":
+          return drafted;
+        case "empty":
+          return null;
+      }
+    },
+  );
+
+  // ── LRA-121: Phase 1 draft autosave ────────────────────────────────────────────────
+  //
+  // Every change to `values`, `sectionVerifications` or `attestationReason` is mirrored
+  // to POST /api/opening/phase1/draft, debounced, so the work survives the employee → key
+  // holder handoff and survives navigating away. Active ONLY while the instance is still
+  // 'open': past that the submit RPC owns the truth and the route 409s anyway.
+  //
+  // NEVER BLOCKS THE OPERATOR. A failed save sets a calm status line and nothing else —
+  // no modal, no disabled control, no retry loop. Because `draftSentRef` is advanced only
+  // on SUCCESS, the very next edit re-sends the full latest draft, which is the retry.
+  const draftEnabled = instance.status === "open";
+  const [draftState, setDraftState] = useState<{
+    status: "idle" | "saving" | "saved" | "error";
+  }>({ status: "idle" });
+
+  /** The serialized body of the last SUCCESSFULLY persisted draft. Dedup + retry anchor. */
+  const draftSentRef = useRef<string | null>(null);
+  /** The serialized body of the newest local state, for the pagehide/visibility beacon. */
+  const draftLatestRef = useRef<string | null>(null);
+
+  // Serialized here (not in the effect) so the effect's dependency is a plain string:
+  // the debounce then coalesces a burst of keystrokes into one POST, and a change that
+  // normalizes back to an already-saved payload (trailing whitespace, a re-tick) costs
+  // nothing at all.
+  const draftBody = useMemo(
+    () =>
+      JSON.stringify({
+        instanceId: instance.id,
+        draft: buildOpeningPhase1Draft(
+          [...values].map(
+            ([itemId, v]) =>
+              [
+                itemId,
+                {
+                  countValue: v.countValue,
+                  photoId: v.photoId,
+                  notes: v.notes,
+                  ticked: v.ticked,
+                  openerRecount: v.openerRecount,
+                },
+              ] as const,
+          ),
+          [...sectionVerifications],
+          attestationReason,
+        ),
+      }),
+    [instance.id, values, sectionVerifications, attestationReason],
+  );
+
+  const flushDraft = useCallback(async (body: string) => {
+    setDraftState({ status: "saving" });
+    try {
+      const res = await fetch("/api/opening/phase1/draft", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body,
+      });
+      if (!res.ok) throw new Error(`draft save ${res.status}`);
+      draftSentRef.current = body;
+      setDraftState({ status: "saved" });
+    } catch {
+      // Deliberately swallowed past the status line: an autosave failure is not an
+      // operator error and must not interrupt the walk. draftSentRef stays put, so the
+      // next edit resends.
+      setDraftState({ status: "error" });
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!draftEnabled) return;
+    draftLatestRef.current = draftBody;
+    // Mount: adopt the current body as "already saved" WITHOUT a POST. The form was just
+    // hydrated FROM this draft, so the first render's payload is by construction what the
+    // server already holds — posting it would be a write per page load.
+    if (draftSentRef.current === null) {
+      draftSentRef.current = draftBody;
+      return;
+    }
+    if (draftSentRef.current === draftBody) return;
+    const timer = setTimeout(() => {
+      void flushDraft(draftBody);
+    }, DRAFT_AUTOSAVE_DEBOUNCE_MS);
+    // Cleanup on every re-run IS the coalescing: a burst of keystrokes cancels each
+    // pending send and only the last one, 800ms after the operator stops, goes out.
+    return () => clearTimeout(timer);
+  }, [draftEnabled, draftBody, flushDraft]);
+
+  // Navigating away, backgrounding the tab, or locking the tablet must not lose the last
+  // edit inside the debounce window. `fetch` is cancelled on unload; `sendBeacon` is
+  // queued by the browser and survives it. It cannot set headers, so the body goes out as
+  // text/plain — which the route accepts on purpose (it parses the body text without
+  // consulting Content-Type; see the route doc).
+  useEffect(() => {
+    if (!draftEnabled) return;
+    const flushBeacon = () => {
+      const body = draftLatestRef.current;
+      if (body === null || body === draftSentRef.current) return;
+      if (typeof navigator === "undefined" || typeof navigator.sendBeacon !== "function") {
+        return;
+      }
+      const queued = navigator.sendBeacon(
+        "/api/opening/phase1/draft",
+        new Blob([body], { type: "text/plain;charset=UTF-8" }),
+      );
+      // Only claim it on a successful ENQUEUE. A refused beacon (over the UA's queue
+      // budget) leaves the ref untouched so an ordinary save still retries it.
+      if (queued) draftSentRef.current = body;
+    };
+    const onVisibility = () => {
+      if (document.visibilityState === "hidden") flushBeacon();
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+    window.addEventListener("pagehide", flushBeacon);
+    return () => {
+      document.removeEventListener("visibilitychange", onVisibility);
+      window.removeEventListener("pagehide", flushBeacon);
+    };
+  }, [draftEnabled]);
 
   // Group Phase 1 items by station — same pattern as closing-client.tsx.
   const stationGroups = useMemo(() => {
@@ -1721,6 +1929,27 @@ export function OpeningClient({
                         })
                       : t("opening.submit.gate_disabled_generic")}
             </p>
+            {/* LRA-121 — draft autosave status. Renders only on the verification tab of a
+                still-'open' instance (past that there is no draft to speak for), and only
+                once the first save has been attempted: an "idle" line on a freshly opened
+                form would be noise about a thing that has not happened. Muted text token,
+                deliberately quiet — this is a reassurance, not an alert, and even the
+                failure line is a statement rather than a demand. aria-live="polite" so a
+                screen reader hears it settle without interrupting the walk. */}
+            {draftEnabled && activePhase === "verification" && draftState.status !== "idle" ? (
+              <p
+                role="status"
+                aria-live="polite"
+                aria-label={t("opening.draft.aria")}
+                className="text-[11px] text-co-text-muted"
+              >
+                {draftState.status === "saving"
+                  ? t("opening.draft.saving")
+                  : draftState.status === "saved"
+                    ? t("opening.draft.saved")
+                    : t("opening.draft.error")}
+              </p>
+            ) : null}
           </div>
           <ActionButton onClick={handleSubmit} disabled={!submitEnabled}>
             {submitState.status === "submitting"
