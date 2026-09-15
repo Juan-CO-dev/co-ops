@@ -11,10 +11,15 @@
  *
  * A prominent report-level banner flags the NULL-sentinel case (the whole
  * opening was a recount-because-no-prior-day-submission).
+ *
+ * LRA-205 adds the PHASE 2 block: what the opener actually prepped against the
+ * need Phase 1 derived, the over/under status and its reason, and the per-item
+ * save provenance. Without it a manager reading a finalized opening could see
+ * the verification but never its outcome.
  */
 
 import { interpretAnswer } from "@/lib/checklist-answers";
-import { formatDateLabel } from "@/lib/i18n/format";
+import { formatDateLabel, formatTime } from "@/lib/i18n/format";
 import { serverT } from "@/lib/i18n/server";
 import type { Language, TranslationKey } from "@/lib/i18n/types";
 import type { OpeningDetailItem, OpeningReportDetail } from "@/lib/reports-hub";
@@ -54,6 +59,128 @@ function QuestionAnswer({
     return <span className="text-co-text">{text}</span>;
   }
   return null;
+}
+
+/**
+ * Reason-category label keys. The vocabulary is CLOSED (validated at
+ * app/api/opening/prep/item/route.ts before the RPC ever sees it) and these are
+ * the SAME keys the capture modals render — OverParModal reads
+ * `opening.over_par.reason.*`, UnderParModal reads
+ * `notifications.under_par_alert.reason.*`. Reused rather than re-spelled so the
+ * report and the modal can never drift apart in either language.
+ */
+const OVER_PREP_REASON_KEYS: Readonly<Record<string, TranslationKey>> = {
+  management_directive: "opening.over_par.reason.management_directive",
+  clear_fridge_space: "opening.over_par.reason.clear_fridge_space",
+  prevent_expiration: "opening.over_par.reason.prevent_expiration",
+  forecast_busy: "opening.over_par.reason.forecast_busy",
+  bulk_efficiency: "opening.over_par.reason.bulk_efficiency",
+  other: "opening.over_par.reason.other",
+};
+const UNDER_PREP_REASON_KEYS: Readonly<Record<string, TranslationKey>> = {
+  ingredient_unavailable: "notifications.under_par_alert.reason.ingredient_unavailable",
+  equipment_issue: "notifications.under_par_alert.reason.equipment_issue",
+  time_constraint: "notifications.under_par_alert.reason.time_constraint",
+  staff_shortage: "notifications.under_par_alert.reason.staff_shortage",
+  other: "notifications.under_par_alert.reason.other",
+};
+
+/** Status tone — the report's existing text roles (AGENTS.md token law). */
+const PHASE2_STATUS_TONE: Readonly<Record<string, string>> = {
+  at_par: "text-co-confirm-text",
+  over_prep: "text-co-warning-text",
+  under_prep: "text-co-cta-text",
+};
+
+/**
+ * Phase 2 outcome block (LRA-205) — rendered only when the item has a live
+ * phase-2 completion. The FIRST line is the opener-prepped quantity, and it
+ * deliberately opens with the exact words of `opening.phase2.opener_prepped_label`
+ * in each language: the opening journey's report assertion matches
+ * "<label>: <number>" on this row, and `tests/reports-hub-phase2.test.ts` pins
+ * that prefix so a copy edit cannot silently break the contract.
+ */
+function Phase2Outcome({
+  phase2,
+  language,
+  t,
+}: {
+  phase2: NonNullable<OpeningDetailItem["phase2"]>;
+  language: Language;
+  t: (key: TranslationKey, params?: Record<string, string | number>) => string;
+}) {
+  const { overUnderStatus, deltaVsPrepNeed, reasonCategory } = phase2;
+  const reasonKey =
+    reasonCategory === null
+      ? null
+      : overUnderStatus === "over_prep"
+        ? (OVER_PREP_REASON_KEYS[reasonCategory] ?? null)
+        : overUnderStatus === "under_prep"
+          ? (UNDER_PREP_REASON_KEYS[reasonCategory] ?? null)
+          : null;
+  // Defensive: an out-of-vocabulary category still shows its raw value rather
+  // than an untranslated key or nothing at all.
+  const reasonLabel = reasonKey !== null ? t(reasonKey) : reasonCategory;
+  const savedTime = phase2.savedAt !== null ? formatTime(phase2.savedAt, language) : "";
+  const savedName = phase2.savedByName ?? t("opening.phase2.save.saved_by_unknown");
+
+  return (
+    <div className="mt-1 flex flex-col gap-0.5 rounded bg-co-bg px-2 py-1.5 text-xs text-co-text">
+      {/* The outcome itself — Phase 2's whole reason for existing. */}
+      <span className="font-semibold">
+        {t("reports.opening.opener_prepped", { value: phase2.openerPrepped })}
+      </span>
+
+      {/* Status pill + signed delta against the derived prep need. */}
+      {overUnderStatus !== null && (
+        <span className="flex flex-wrap items-center gap-2">
+          <span
+            className={`rounded-full border border-co-border px-2 py-0.5 font-semibold ${
+              PHASE2_STATUS_TONE[overUnderStatus] ?? "text-co-text-muted"
+            }`}
+          >
+            {t(`reports.opening.phase2.status.${overUnderStatus}` as TranslationKey)}
+          </span>
+          {deltaVsPrepNeed !== null && deltaVsPrepNeed !== 0 && (
+            <span className="text-co-text-muted">
+              {t("reports.opening.phase2.delta", {
+                delta: deltaVsPrepNeed > 0 ? `+${deltaVsPrepNeed}` : String(deltaVsPrepNeed),
+              })}
+            </span>
+          )}
+        </span>
+      )}
+
+      {/* Why, when a reason was captured. */}
+      {reasonLabel !== null && (
+        <span className="text-co-text-muted">
+          {t("reports.opening.phase2.reason", { reason: reasonLabel })}
+        </span>
+      )}
+      {/* Operator free text — the loader nulls this below L5. */}
+      {phase2.reasonText !== null && (
+        <span className="text-co-text-muted">
+          {t("reports.opening.phase2.reason_note", { text: phase2.reasonText })}
+        </span>
+      )}
+
+      {/* Accountability: the manager who directed an over-prep. */}
+      {phase2.directedByName !== null && (
+        <span className="text-co-text-muted">
+          {t("reports.opening.phase2.directed_by", { name: phase2.directedByName })}
+        </span>
+      )}
+
+      {/* Per-item save provenance (C.52). House time formatter, never toLocale*. */}
+      {(phase2.savedByName !== null || phase2.savedAt !== null) && (
+        <span className="text-co-text-muted">
+          {savedTime !== ""
+            ? t("opening.phase2.save.saved_by_at", { name: savedName, time: savedTime })
+            : t("reports.opening.phase2.saved_by", { name: savedName })}
+        </span>
+      )}
+    </div>
+  );
 }
 
 interface Props {
@@ -227,6 +354,13 @@ export function OpeningReportDetailView({ detail, language }: Props) {
                           </span>
                         )}
                       </div>
+                    )}
+
+                    {/* Phase 2 outcome — what was actually prepped against the
+                        need Phase 1 derived (LRA-205). Under dual membership the
+                        same line carries both phases' data. */}
+                    {item.phase2 !== null && (
+                      <Phase2Outcome phase2={item.phase2} language={language} t={t} />
                     )}
 
                     {/* Note — only when non-null (loader redacts below L5). Suppressed

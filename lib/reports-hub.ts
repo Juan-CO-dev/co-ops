@@ -503,6 +503,13 @@ async function loadChecklistDetail(
 // the recount-because-no-prior-submission case. This loader renders that case
 // instead: the recount value plus a "no prior-day submission" baseline label,
 // and an instance-level NULL-sentinel flag for the detail header.
+//
+// LRA-205: the same blind spot ran one phase deeper. The report showed Phase 1's
+// verification and nothing of Phase 2 — not what the opener actually PREPPED
+// against the need Phase 1 derived, which is the number Phase 2 exists to
+// produce. Under dual membership (0196) an openingPhase2 item has a live phase-1
+// row AND a live phase-2 row; the loader now keeps both and reads each phase's
+// prep_data from its own row.
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
@@ -543,6 +550,25 @@ export interface OpeningDetailItem {
   /** Fulledit PR-2 (0165): the line's question input type — drives how the
    *  completion's count_value/notes read in the report (via interpretAnswer). */
   inputType: "yes_no" | "free_text" | null;
+  /**
+   * Phase 2 OUTCOME (prep_data->phase2 on this item's live phase-2 completion;
+   * LRA-205). Null when the item has no live phase-2 row. Under dual membership
+   * (0196) an openingPhase2 item carries BOTH a phase-1 and a phase-2 row — the
+   * phase-1 fields above still read the phase-1 row; this reads the phase-2 one.
+   *
+   * `reasonText` is operator free text and therefore obeys the SAME redaction
+   * rule as `note` — null below REPORTS_HUB_NOTES_LEVEL.
+   */
+  phase2: {
+    openerPrepped: number;
+    deltaVsPrepNeed: number | null;
+    overUnderStatus: "at_par" | "over_prep" | "under_prep" | null;
+    reasonCategory: string | null;
+    reasonText: string | null; // null unless viewer.level >= REPORTS_HUB_NOTES_LEVEL
+    directedByName: string | null;
+    savedByName: string | null;
+    savedAt: string | null;
+  } | null;
 }
 
 export interface OpeningReportDetail {
@@ -582,6 +608,60 @@ function readPhase1SpotCheck(prepData: unknown): {
     groundTruth: typeof gt === "number" ? gt : null,
     prepNeed: typeof pn === "number" ? pn : null,
     spotCheckStatus: typeof st === "string" ? st : null,
+  };
+}
+
+/**
+ * Reads `prep_data->phase2` defensively (untyped JSONB boundary) — the sibling of
+ * readPhase1SpotCheck for the Phase 2 OUTCOME (LRA-205).
+ *
+ * Source of truth: `save_phase2_item_atomic` (migration 0056) writes a 14-field
+ * object — 6 mirrored phase-1 numbers, then `opener_prepped`, `delta_vs_prep_need`,
+ * `over_under_status`, `over_under_reason_category`, `over_under_reason_text`,
+ * `directed_by`, `saved_at`, `saved_by`. Only the 8 phase-2-owned fields are read
+ * here; the mirrored phase-1 numbers are already carried by the phase-1 row.
+ *
+ * Returns null when there is no phase2 key, when it is not an object, or when
+ * `opener_prepped` is not a finite number — that field is the outcome itself and
+ * the RPC refuses to write the row without it (`opener_prepped_missing`), so a row
+ * lacking it carries no outcome to show. Every other field degrades to null.
+ */
+export function readPhase2Outcome(prepData: unknown): {
+  openerPrepped: number;
+  deltaVsPrepNeed: number | null;
+  overUnderStatus: "at_par" | "over_prep" | "under_prep" | null;
+  reasonCategory: string | null;
+  reasonText: string | null;
+  directedById: string | null;
+  savedById: string | null;
+  savedAt: string | null;
+} | null {
+  if (prepData == null || typeof prepData !== "object") return null;
+  if (!("phase2" in prepData)) return null;
+  const p2 = (prepData as { phase2: unknown }).phase2;
+  if (p2 == null || typeof p2 !== "object") return null;
+
+  const prepped = (p2 as { opener_prepped?: unknown }).opener_prepped;
+  if (typeof prepped !== "number" || !Number.isFinite(prepped)) return null;
+
+  const delta = (p2 as { delta_vs_prep_need?: unknown }).delta_vs_prep_need;
+  const status = (p2 as { over_under_status?: unknown }).over_under_status;
+  const cat = (p2 as { over_under_reason_category?: unknown }).over_under_reason_category;
+  const text = (p2 as { over_under_reason_text?: unknown }).over_under_reason_text;
+  const directedBy = (p2 as { directed_by?: unknown }).directed_by;
+  const savedBy = (p2 as { saved_by?: unknown }).saved_by;
+  const savedAt = (p2 as { saved_at?: unknown }).saved_at;
+
+  return {
+    openerPrepped: prepped,
+    deltaVsPrepNeed: typeof delta === "number" && Number.isFinite(delta) ? delta : null,
+    overUnderStatus:
+      status === "at_par" || status === "over_prep" || status === "under_prep" ? status : null,
+    reasonCategory: typeof cat === "string" && cat !== "" ? cat : null,
+    reasonText: typeof text === "string" && text !== "" ? text : null,
+    directedById: typeof directedBy === "string" && directedBy !== "" ? directedBy : null,
+    savedById: typeof savedBy === "string" && savedBy !== "" ? savedBy : null,
+    savedAt: typeof savedAt === "string" && savedAt !== "" ? savedAt : null,
   };
 }
 
@@ -637,6 +717,7 @@ async function loadOpeningDetail(
 
   // Read prep_data so the recount / ground_truth / prep_need surface — the
   // generic loader never selects this, which is why the recount was invisible.
+  // Same column carries the Phase 2 outcome (prep_data->phase2, LRA-205).
   const comps = await selectAllRows<{
     template_item_id: string;
     completed_by: string | null;
@@ -655,23 +736,55 @@ async function loadOpeningDetail(
       .range(from, to),
   );
 
-  // Spot-check phase1 fields live on the phase1 row; under dual-membership an
-  // openingPhase2 item also has a phase2 row — phase1 fields are absent there,
-  // so the phase1 row is preferred when both exist for one item.
+  // Spot-check phase1 fields live on the phase1 row; under dual-membership (0196)
+  // an openingPhase2 item also has a phase2 row, and each row carries only its own
+  // phase's prep_data. Hold BOTH per item: `phase1` and `phase2` feed their own
+  // fields, and `any` is the row the phase-agnostic fields (done / byName /
+  // count_value / notes / photo) read — phase1-preferred, exactly as before, so
+  // adding the phase-2 capture changes nothing the phase-1 rendering already did.
+  type OpeningComp = {
+    completed_by: string | null;
+    count_value: number | null;
+    notes: string | null;
+    prep_data: unknown;
+    photo_id: string | null;
+  };
   const compByItem = new Map<
     string,
-    { completed_by: string | null; count_value: number | null; notes: string | null; prep_data: unknown; photo_id: string | null }
+    { phase1: OpeningComp | null; phase2: OpeningComp | null; any: OpeningComp }
   >();
   for (const c of comps) {
+    const hasKey = (k: string) =>
+      c.prep_data != null && typeof c.prep_data === "object" && k in c.prep_data;
+    const isPhase1 = hasKey("phase1");
+    const isPhase2 = hasKey("phase2");
     const existing = compByItem.get(c.template_item_id);
-    const isPhase1 =
-      c.prep_data != null && typeof c.prep_data === "object" && "phase1" in c.prep_data;
-    if (!existing || isPhase1) compByItem.set(c.template_item_id, c);
+    if (!existing) {
+      compByItem.set(c.template_item_id, {
+        phase1: isPhase1 ? c : null,
+        phase2: isPhase2 ? c : null,
+        any: c,
+      });
+      continue;
+    }
+    if (isPhase1) {
+      existing.phase1 = c;
+      existing.any = c; // phase1-preferred (prior behavior, preserved verbatim)
+    } else if (isPhase2) {
+      existing.phase2 = c;
+    }
   }
 
+  // Name lookup covers the completers AND the phase-2 provenance ids — the
+  // manager who directed an over-prep need never have completed anything here.
   const byIds = [
     ...new Set(
-      [...compByItem.values()].map((c) => c.completed_by).filter((v): v is string => !!v),
+      [...compByItem.values()]
+        .flatMap((e) => {
+          const p2 = readPhase2Outcome(e.phase2?.prep_data ?? null);
+          return [e.any.completed_by, p2?.directedById ?? null, p2?.savedById ?? null];
+        })
+        .filter((v): v is string => !!v),
     ),
   ];
   const nameById = new Map<string, string>();
@@ -686,11 +799,13 @@ async function loadOpeningDetail(
   // UNION filter (spec §2.2): inactive items render only when this instance
   // completed them — never as phantom skips.
   const items: OpeningDetailItem[] = titems.filter((ti) => ti.active || compByItem.has(ti.id)).map((ti) => {
-    const c = compByItem.get(ti.id);
+    const entry = compByItem.get(ti.id);
+    const c = entry?.any;
     const countValue = c?.count_value ?? null;
     const snap = closerSnapshots.get(ti.id);
     const isSpotCheck = snap !== undefined;
     const p1 = readPhase1SpotCheck(c?.prep_data ?? null);
+    const p2 = readPhase2Outcome(entry?.phase2?.prep_data ?? null);
 
     if (isSpotCheck) {
       spotCheckCount += 1;
@@ -723,6 +838,21 @@ async function loadOpeningDetail(
       resolution,
       photoId: c?.photo_id ?? null,
       inputType: ti.input_type,
+      phase2: p2
+        ? {
+            openerPrepped: p2.openerPrepped,
+            deltaVsPrepNeed: p2.deltaVsPrepNeed,
+            overUnderStatus: p2.overUnderStatus,
+            reasonCategory: p2.reasonCategory,
+            // SECURITY: operator free text — same redaction rule as `note`.
+            reasonText: showNotes ? p2.reasonText : null,
+            directedByName: p2.directedById
+              ? (nameById.get(p2.directedById) ?? null)
+              : null,
+            savedByName: p2.savedById ? (nameById.get(p2.savedById) ?? null) : null,
+            savedAt: p2.savedAt,
+          }
+        : null,
     };
   });
 
