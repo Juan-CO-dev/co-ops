@@ -163,21 +163,34 @@ export async function runOpeningContracts(pins: Record<string, string | undefine
       assert.deepEqual(live(rows).filter(row => !row.prep_data?.phase2), phase1Rows, current);
       mark("opening.phase2.concurrent-save");
       const second = await sessionFor(alias, code, pins);
-      const race = await Promise.all([kh, second].map((session, index) => session.call("POST", "/api/opening/prep/item", phase2Body(instanceId, first.id, 11 + index, need(first.id)))));
-      result.race = race.map(response => ({ status: response.status, acknowledged: response.status === 200 }));
-      rows = await completions(instanceId);
-      if (process.env.LRA_DEBUG) {
-        const mine = rows.filter(row => row.template_item_id === first.id && row.prep_data?.phase2);
-        console.error(`[lra debug] ${current} race responses: ${JSON.stringify(race.map(r => ({ status: r.status, completionId: (r.json as { completionId?: string } | undefined)?.completionId })))}`);
-        console.error(`[lra debug] ${current} phase2 rows for item ${first.id}: ${JSON.stringify(mine.map(row => ({ id: row.id, live: !row.superseded_at && !row.revoked_at, supersededAt: row.superseded_at, prepped: row.prep_data?.phase2?.opener_prepped })))}`);
+      // LRA-203 soak knob. Unset (the default) = exactly ONE race, byte-for-byte the
+      // single race this contract always ran: iteration 0 fires 11/12 and result.race
+      // holds that pair. LRA_RACE_LOOPS=N repeats the same two concurrent saves N times
+      // with fresh values (11 + index + 2*iteration keeps every save distinct), re-reads
+      // completions and re-asserts each round — a 23505 that only shows up one time in
+      // twenty is still a live defect, and one pass is not evidence it is gone.
+      // A malformed value runs ONE race rather than silently skipping the contract — a
+      // zero-iteration loop would report "passed" having asserted nothing.
+      const raceLoops = Math.max(1, Math.trunc(Number(process.env.LRA_RACE_LOOPS ?? 1)) || 1);
+      result.race = [];
+      for (let iteration = 0; iteration < raceLoops; iteration += 1) {
+        const base = 11 + 2 * iteration;
+        const race = await Promise.all([kh, second].map((session, index) => session.call("POST", "/api/opening/prep/item", phase2Body(instanceId, first.id, base + index, need(first.id)))));
+        result.race.push(...race.map(response => ({ status: response.status, acknowledged: response.status === 200 })));
+        rows = await completions(instanceId);
+        if (process.env.LRA_DEBUG) {
+          const mine = rows.filter(row => row.template_item_id === first.id && row.prep_data?.phase2);
+          console.error(`[lra debug] ${current} race responses: ${JSON.stringify(race.map(r => ({ status: r.status, completionId: (r.json as { completionId?: string } | undefined)?.completionId })))}`);
+          console.error(`[lra debug] ${current} phase2 rows for item ${first.id}: ${JSON.stringify(mine.map(row => ({ id: row.id, live: !row.superseded_at && !row.revoked_at, supersededAt: row.superseded_at, prepped: row.prep_data?.phase2?.opener_prepped })))}`);
+        }
+        try {
+          assert(race.every(response => response.status === 200 || response.status === 409), current);
+          assert(race.some(response => response.status === 200), current);
+          checkHeads(rows);
+          assert.equal(live(rows).filter(row => row.template_item_id === first.id && row.prep_data?.phase1).length, 1, current);
+          race.forEach((response, index) => { if (response.status === 200) assert(rows.some(row => row.id === response.json?.completionId && row.template_item_id === first.id && row.prep_data?.phase2?.opener_prepped === base + index && row.completed_by === kh.user.id), current); });
+        } catch { result.status = "failed"; if (!result.failedAssertionIds.includes(current)) result.failedAssertionIds.push(current); }
       }
-      try {
-        assert(race.every(response => response.status === 200 || response.status === 409), current);
-        assert(race.some(response => response.status === 200), current);
-        checkHeads(rows);
-        assert.equal(live(rows).filter(row => row.template_item_id === first.id && row.prep_data?.phase1).length, 1, current);
-        race.forEach((response, index) => { if (response.status === 200) assert(rows.some(row => row.id === response.json?.completionId && row.template_item_id === first.id && row.prep_data?.phase2?.opener_prepped === 11 + index && row.completed_by === kh.user.id), current); });
-      } catch { result.status = "failed"; result.failedAssertionIds.push(current); }
       mark("opening.phase2.status-transition");
       // LRA_DEBUG: print each response (status + code/message) to stderr before asserting — never into evidence.
       const dbg = (label: string, r: { status: number; code?: string; json?: unknown }) => { if (process.env.LRA_DEBUG) console.error(`[lra debug] ${current} ${label}: ${r.status} ${r.code ?? ""} ${JSON.stringify(r.json ?? "").slice(0, 300)}`); };
