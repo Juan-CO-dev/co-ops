@@ -71,7 +71,7 @@ export async function resetFixture(options: {
     const catalog = JSON.parse(readFileSync(resolve("scripts/sim/launch-readiness/fixtures/manifest.json"), "utf8")) as Catalog;
     const dir = options.snapshotDir ?? env.LRA_SNAPSHOT_DIR ?? DEFAULT_SNAPSHOT_DIR;
     const manifest = loadSnapshotManifest(dir);
-    classifyTables(manifest, catalog.inventory);
+    classifyTables(manifest, catalog.inventory, catalog.expectedTableCount);
     // Explicitly refused prerequisites cannot be turned into a successful empty fixture.
     if (catalog.blocked.length) throw new Error("Fixture inventory blocked; inspect fixtures/manifest.json");
     const recipe = catalog.recipes.find(row => row.id === fixtureId);

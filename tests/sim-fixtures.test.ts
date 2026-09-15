@@ -59,14 +59,15 @@ describe("F2 pure fixtures", () => {
     expect(() => resolveHandle({ ...snapshot, vendor_items: [...snapshot.vendor_items, ...snapshot.vendor_items] }, handle)).toThrow(/exactly once/);
     expect(() => resolveHandle({ ...snapshot, vendors: [...snapshot.vendors, ...snapshot.vendors] }, handle)).toThrow(/exactly once/);
   });
-  it("classifies the authoritative 141-table set without overlaps", () => {
-    expect(new Set(Object.values(catalog.inventory).flat()).size).toBe(141);
+  it("classifies the authoritative table set (expectedTableCount, 142 since 0203) without overlaps", () => {
+    expect(catalog.expectedTableCount).toBe(142);
+    expect(new Set(Object.values(catalog.inventory).flat()).size).toBe(catalog.expectedTableCount);
     expect(catalog.inventory.HISTORY).toContain("deep_clean_assignments");
     expect(catalog.blocked).toEqual([]);
-    expect(classifyTables(manifestFor(catalog.inventory), catalog.inventory).size).toBe(141);
-    expect(() => classifyTables(manifestFor(catalog.inventory), { ...catalog.inventory, AUTH: [...catalog.inventory.AUTH, "users"] })).toThrow(/disjoint/);
+    expect(classifyTables(manifestFor(catalog.inventory), catalog.inventory, catalog.expectedTableCount).size).toBe(catalog.expectedTableCount);
+    expect(() => classifyTables(manifestFor(catalog.inventory), { ...catalog.inventory, AUTH: [...catalog.inventory.AUTH, "users"] }, catalog.expectedTableCount)).toThrow(/disjoint/);
     const extra = manifestFor(catalog.inventory); extra.tables.sessions = { rows: 0, sha256: sha256("[]") };
-    expect(() => classifyTables(extra, catalog.inventory)).toThrow(/unexpected table/);
+    expect(() => classifyTables(extra, catalog.inventory, catalog.expectedTableCount)).toThrow(/unexpected table/);
   });
   it("deletes children before parents for the relevant FK families, and refuses cycles", () => {
     const foreignKeys = [
@@ -152,10 +153,10 @@ describe("F2 schema-derived restore plan", () => {
     const dir = resolve("scripts/sim/launch-readiness/.private/snapshot");
     const real = JSON.parse(readFileSync(resolve(dir, "schema-meta.json"), "utf8")) as SchemaMeta;
     const manifest = loadSnapshotManifest(dir), snapshot = loadSnapshot(dir, manifest);
-    expect(classifyTables(manifest, catalog.inventory).size).toBe(141);
-    expect(real.foreign_keys).toHaveLength(372);
+    expect(classifyTables(manifest, catalog.inventory, catalog.expectedTableCount).size).toBe(catalog.expectedTableCount);
+    expect(real.foreign_keys).toHaveLength(375);
     const before = canonical(snapshot), plan = planConfig(real, catalog.inventory, snapshot);
-    expect(plan.deleteOrder).toHaveLength(141);
+    expect(plan.deleteOrder).toHaveLength(catalog.expectedTableCount);
     expect(plan.loadOrder).toHaveLength(56);
     expect(plan.deleteStages.map(s => `${s.child}.${s.column}`)).toEqual([
       "catering_companies.claimed_by_customer_id", "email_receipts.linked_delivery_id", "checklist_template_items.equipment_id",
