@@ -53,7 +53,7 @@ export function loadSnapshotManifest(dir: string): SnapshotManifest {
   }
   return manifest;
 }
-export function classifyTables(manifest: SnapshotManifest, inventory: Inventory): Map<string, keyof Inventory> {
+export function classifyTables(manifest: SnapshotManifest, inventory: Inventory, expectedTableCount: number): Map<string, keyof Inventory> {
   const classified = new Map<string, keyof Inventory>();
   for (const kind of ["CONFIG", "AUTH", "HISTORY"] as const) {
     for (const table of inventory[kind]) {
@@ -61,7 +61,8 @@ export function classifyTables(manifest: SnapshotManifest, inventory: Inventory)
       classified.set(table, kind);
     }
   }
-  if (classified.size !== 141) throw new Error(`Inventory must classify 141 tables; found ${classified.size}`);
+  // The table count is pinned in fixtures/manifest.json (expectedTableCount), bumped with every migration that adds a table (0203: 141 → 142).
+  if (classified.size !== expectedTableCount) throw new Error(`Inventory must classify ${expectedTableCount} tables; found ${classified.size}`);
   const dropped = new Set(manifest.dropped);
   if (dropped.size !== manifest.dropped.length || [...dropped].some(table => !classified.has(table))) throw new Error("Invalid dropped table inventory");
   for (const table of Object.keys(manifest.tables)) if (classified.get(table) !== "CONFIG" || dropped.has(table)) throw new Error("Snapshot contains an unexpected table");
