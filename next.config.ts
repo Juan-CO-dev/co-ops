@@ -16,6 +16,27 @@ const nextConfig: NextConfig = {
   // Dev-only. Production builds ignore it.
   allowedDevOrigins: ["10.0.0.20"],
 
+  // /training renders the three written guides straight out of docs/guides, and
+  // its image route streams the screenshots beside them. Neither is an import,
+  // so Vercel's file tracing does not see them and the serverless bundle ships
+  // without the .md files OR the PNGs — a page that works locally and 500s in
+  // production. Naming them here is the fix; lib/guides/content.ts keeps its
+  // paths literal for the same reason.
+  // Both entries name both sets on purpose: Next unions these includes across
+  // the entries, so splitting them would ship the PNGs into the page's bundle
+  // and the Markdown into the route's anyway — saying it plainly keeps the
+  // config true to what each function carries.
+  //
+  // MEASURED, not assumed (production build, 2026-09-15): exactly these two
+  // .nft.json manifests carry docs/guides — 146 PNGs and 11 Markdown files —
+  // and the other 283 routes carry none. The patterns resolve a little wider
+  // than they read (the walk scripts beside the guides come along, ~40 KB);
+  // that is Next's globbing, and it is cheap enough to leave alone.
+  outputFileTracingIncludes: {
+    "/training": ["./docs/guides/*-guide.md", "./docs/guides/img/**/*.png"],
+    "/api/guides/img/[guide]/[file]": ["./docs/guides/*-guide.md", "./docs/guides/img/**/*.png"],
+  },
+
   // P2-7 — stop announcing the stack. `x-powered-by: Next.js` is free
   // reconnaissance and buys nothing.
   poweredByHeader: false,

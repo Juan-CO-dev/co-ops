@@ -4,6 +4,8 @@ For key holders, shift leads, AGMs and the GM. It covers the jobs that only you 
 
 You do not need to read it front to back. Find your section, do the steps.
 
+You can read this guide inside the app. Open **Training** from the Explore list on your dashboard; it is the same guide, with the same pictures.
+
 If you also work the line, the [staff guide](staff-guide.md) covers the parts of the app everyone uses.
 
 ---
@@ -107,7 +109,7 @@ Two ways in. Which one you get depends on your role, not on your preference.
 - **Check which shop you are on before you touch anything.** The dashboard opens on one of your shops, and it is not always the one you are standing in.
 - The location switcher lists the shops **you are assigned to**. A GM assigned to both sees both; being a GM does not by itself give you every shop.
 - Tiles staff never see: **Cash Deposit**, **PM Report** and **Mid-day Prep** (key holder and up), **Inventory Audit** (AGM and up).
-- The **Explore** list adds **Mid-Shift Pulse**, **Ordering**, **Trends** and **Admin** to the staff list. **Tip Pool**, **AI Insights**, **Rollups**, **Deep Cleaning**, **Feedback**, **LTO**, **Training**, **Recipes**, **Announcements** and **Comms** are placeholder pages today.
+- The **Explore** list adds **Mid-Shift Pulse**, **Ordering**, **Trends** and **Admin** to the staff list. **Training** opens the written guides. **Tip Pool**, **AI Insights**, **Rollups**, **Deep Cleaning**, **Feedback**, **LTO**, **Recipes**, **Announcements** and **Comms** are placeholder pages today.
 
 ### 7. Switch shops
 
@@ -188,6 +190,7 @@ You do this once a day, before the doors open. The crew can fill the whole thing
 - A row that has not saved shows **Save failed** with **Retry** right there, and the bottom bar counts it as outstanding. Nothing is lost from the screen; it just has not landed.
 - **Finalize Phase 2** stays disabled while any row is outstanding, and it names how many.
 - Saving a row again replaces its earlier number. The picture shows the failure that stopped every row on the first walk; that bug is fixed. If **Retry** still fails, tell your GM.
+- **If two of you type the same row at the same moment, the row keeps the number that landed and tells you so.** It shows their figure, their name on **Saved by**, and the line *"Saved a moment ago by someone else — showing the latest"*. It is not an error and there is no **Retry** to tap: nothing was lost, and the row is saved. If their number is wrong, type yours over it and tap out of the box again.
 
 ### 5. Finalize Phase 2 — *not shown*
 

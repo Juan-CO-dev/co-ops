@@ -4,6 +4,8 @@ For whoever runs catering — AGM, catering manager, GM. It covers the whole job
 
 You do not need to read it front to back. Find your section, do the steps.
 
+You can read this guide inside the app. Open **Training** from the Explore list on your dashboard; it is the same guide, with the same pictures.
+
 If you also run a shift, the [manager guide](manager-guide.md) covers the rest of the app.
 
 ---
