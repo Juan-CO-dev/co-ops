@@ -4,6 +4,8 @@ For anyone working the line. It covers everything you touch on a normal shift: l
 
 You do not need to read it front to back. Find your section, do the steps.
 
+You can read this guide inside the app. Open **Training** from the Explore list on your dashboard; it is the same guide, with the same pictures.
+
 ---
 
 ## Your day at a glance
@@ -128,7 +130,8 @@ This is your home screen. Everything you actually need on a shift is either on i
 **Worth knowing**
 
 - The list mixes your tools and manager tools with no divider. **Catering** will bounce you straight back to the dashboard — it is a manager surface.
-- **Tip Pool**, **AI Insights**, **Rollups**, **Deep Cleaning**, **Feedback**, **Training**, **Recipes**, **Announcements** and **Comms** are placeholder pages today. They open, but there is nothing to do on them yet.
+- **Training** opens the written guides — this one, and the manager and catering guides if your role reaches them.
+- **Tip Pool**, **AI Insights**, **Rollups**, **Deep Cleaning**, **Feedback**, **Recipes**, **Announcements** and **Comms** are placeholder pages today. They open, but there is nothing to do on them yet.
 - On saved reports in the Reports Hub, the notes people wrote on checklist lines are hidden below shift lead. You will see the reports; you will not see everyone's notes on them.
 
 ---
@@ -493,10 +496,6 @@ These open from the Explore list, but there is nothing to do on them yet.
 - **Tip Pool** — Coming soon.
 
   ![Tip Pool placeholder page](img/staff/29-tips-stub.png)
-
-- **Training** — Coming soon.
-
-  ![Training placeholder page](img/staff/30-training-stub.png)
 
 - **Announcements** — Coming soon.
 

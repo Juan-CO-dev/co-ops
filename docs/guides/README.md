@@ -19,7 +19,7 @@ Content updated as of 2026-09-11: ordering edits and add-ons, SKU data readiness
   - **What you see** — the screenshot.
   - **What to do** — the action, one or two sentences.
   - **Worth knowing** — why the app asks, what happens next, the common mistake, and when to stop and tell a manager. Skip a bullet if there is nothing to say; never pad.
-- Stub pages (tips, training, announcements, comms) get one line: "Coming soon."
+- Stub pages (tips, announcements, comms) get one line: "Coming soon."
 - Never describe behavior you did not verify in the code or on screen. If a step could not be photographed, say "not shown" and describe it in words.
 
 ## Screenshot conventions
@@ -40,6 +40,6 @@ Content updated as of 2026-09-11: ordering edits and add-ons, SKU data readiness
 - Personas, PINs, and locations live in `scripts/sim/personas.md`. Location codes are crossed in sim data: code EM is "P Street", code MEP is "Capitol Hill".
 - The sim database is caught up to prod's lineage except migration 0193, which is a production-only data purge and is never applied to sim.
 
-## Future home
+## In the app
 
-The in-app `/training` page is a stub today. These guides are its planned content.
+These guides render at `/training`. The Markdown here is the only source — the page reads these files, so a re-shoot or a text fix ships to the app with the commit. Which guides a person sees follows their role level (staff 2+, manager 4+, catering 6+), and `/training?guide=<staff|manager|catering>#<heading-slug>` links straight to one section.
