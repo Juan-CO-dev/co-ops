@@ -15,6 +15,7 @@ import { serverT } from "@/lib/i18n/server";
 import { loadAdminCateringMenu, MENU_ADMIN_MIN } from "@/lib/admin/catering/menu";
 import { loadToastMapState } from "@/lib/admin/toast-map";
 import { loadEzcaterAdminState } from "@/lib/admin/ezcater-map";
+import { loadPaymentsReadiness } from "@/lib/admin/payments-readiness";
 import { countActivePackages } from "@/lib/admin/catering/packages";
 import { MenuTabs } from "@/components/admin/catering/menu/MenuTabs";
 import { PageHeader } from "@/components/ui/PageHeader";
@@ -25,11 +26,12 @@ export default async function AdminCateringMenuPage() {
   if (level < MENU_ADMIN_MIN) redirect("/dashboard");
   const lang = auth.user.language;
 
-  const [items, toastState, ezcaterState, packageCount] = await Promise.all([
+  const [items, toastState, ezcaterState, packageCount, paymentsReadiness] = await Promise.all([
     loadAdminCateringMenu(auth),
     loadToastMapState(auth),
     loadEzcaterAdminState(auth),
     countActivePackages(auth),
+    loadPaymentsReadiness(auth),
   ]);
 
   return (
@@ -38,7 +40,7 @@ export default async function AdminCateringMenuPage() {
         title={serverT(lang, "admin.catering.menu.title" as TranslationKey)}
         subtitle={serverT(lang, "admin.catering.menu.subtitle" as TranslationKey)}
       />
-      <MenuTabs items={items} toastState={toastState} ezcaterState={ezcaterState} canWrite={level >= MENU_ADMIN_MIN} packageCount={packageCount} />
+      <MenuTabs items={items} toastState={toastState} ezcaterState={ezcaterState} payments={paymentsReadiness} canWrite={level >= MENU_ADMIN_MIN} packageCount={packageCount} />
     </div>
   );
 }

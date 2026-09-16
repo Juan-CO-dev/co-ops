@@ -89,6 +89,11 @@ function OrderReview() {
   const [tipRate, setTipRate] = useState<TipRate>(0);
   const [napkins, setNapkins] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
+  // Does THIS shop take a card online? A server fact (lib/stripe/client.ts, resolved per
+  // location), delivered beside the draft. It changes what the copy PROMISES and nothing
+  // else — LRA-210's lesson is that a page must never describe a provider the deployment
+  // has not actually wired. Starts false, which is the dormant/honest reading.
+  const [paymentsOnline, setPaymentsOnline] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   // Track whether a preview fetch is in-flight so we don't stack them.
@@ -107,8 +112,9 @@ function OrderReview() {
         const res = await fetch(`/api/portal/order/draft/${encodeURIComponent(quoteId)}`);
         if (res.status === 404) { router.push("/order/start"); return; }
         if (!res.ok) { setLoadError("Couldn't load your order. Please refresh or start over."); return; }
-        const json = (await res.json()) as { ok: boolean; draft: DraftLoad };
+        const json = (await res.json()) as { ok: boolean; draft: DraftLoad; paymentsOnline?: boolean };
         setDraft(json.draft);
+        setPaymentsOnline(json.paymentsOnline === true);
       } catch {
         setLoadError("Couldn't load your order. Please refresh or start over.");
       }
@@ -381,9 +387,13 @@ function OrderReview() {
             <div className="border-t border-co-border/60 bg-co-text px-6 py-5 text-co-bg">
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-sm font-extrabold text-co-gold">{t("order.review.deposit_label")}</p>
+                  <p className="text-sm font-extrabold text-co-gold">
+                    {t(paymentsOnline ? "order.review.deposit_due" : "order.review.deposit_label")}
+                  </p>
                   <p className="mt-0.5 text-xs text-co-bg/60">
-                    {t("order.review.deposit_record", { percent: depositLabel(stack.depositCents, stack.totalCents) })}
+                    {t(paymentsOnline ? "order.review.deposit_pay" : "order.review.deposit_record", {
+                      percent: depositLabel(stack.depositCents, stack.totalCents),
+                    })}
                   </p>
                 </div>
                 <span className="text-2xl font-extrabold tabular-nums text-co-bg">{centsToMoney(stack.depositCents)}</span>
@@ -403,8 +413,19 @@ function OrderReview() {
           <section className="rounded-3xl border border-co-gold/50 bg-co-gold/10 p-6">
             <h2 className="text-sm font-extrabold text-co-text">{t("order.review.payment_heading")}</h2>
             <ol className="mt-3 flex flex-col gap-3 text-sm text-co-text">
-              <PayStep n="1" title={t("order.review.deposit_record", { percent: depositLabel(stack.depositCents, stack.totalCents) })}>
-                {t("order.review.no_online_payment")}
+              {/* THE LRA-210 SENTENCE. It describes what actually happens next, and what
+                  happens next depends on whether this shop has a payment provider wired:
+                  with Stripe configured the customer really does pay by card on the quote
+                  page; without it, no money is taken online and the team follows up. Two
+                  branches, both true, neither a promise the deployment cannot keep. */}
+              <PayStep
+                n="1"
+                title={t(
+                  paymentsOnline ? "order.review.deposit_pay" : "order.review.deposit_record",
+                  { percent: depositLabel(stack.depositCents, stack.totalCents) },
+                )}
+              >
+                {t(paymentsOnline ? "order.review.pay_online" : "order.review.no_online_payment")}
               </PayStep>
               <PayStep n="2" title={t("order.review.confirm_heading")}>
                 {t("order.review.deposit_explanation")}
@@ -426,7 +447,9 @@ function OrderReview() {
           )}
           <div className="flex items-center justify-between gap-4">
             <div className="min-w-0">
-              <p className="text-xs text-co-text-dim">{t("order.review.deposit_label")}</p>
+              <p className="text-xs text-co-text-dim">
+                {t(paymentsOnline ? "order.review.deposit_due" : "order.review.deposit_label")}
+              </p>
               <p className="text-lg font-extrabold tabular-nums text-co-text">
                 {centsToMoney(stack.depositCents)}
                 <span className="ml-1.5 text-xs font-semibold text-co-text-dim">of {centsToMoney(stack.totalCents)}</span>
@@ -438,7 +461,9 @@ function OrderReview() {
               disabled={submitting}
               className="inline-flex min-h-[54px] flex-1 items-center justify-center rounded-full bg-co-text px-6 text-sm font-bold uppercase tracking-[0.08em] text-co-cta shadow-xl shadow-black/20 transition hover:bg-co-text/90 disabled:opacity-50 sm:flex-none sm:px-10"
             >
-              {submitting ? t("order.review.submitting") : t("order.review.submit")}
+              {submitting
+                ? t("order.review.submitting")
+                : t(paymentsOnline ? "order.review.submit_pay" : "order.review.submit")}
             </button>
           </div>
         </div>
