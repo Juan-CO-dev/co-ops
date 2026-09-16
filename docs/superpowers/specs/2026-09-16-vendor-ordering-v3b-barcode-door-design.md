@@ -30,10 +30,12 @@ create table public.sku_barcodes (
   taught_by   uuid null references public.users(id),
   taught_at   timestamptz not null default now(),
   note        text null,
-  unique (code, sku_id, level),                    -- a code is the MANUFACTURER's: twins at two vendors share it; the SAME code can mean case AND inner for one SKU
+  forgotten_at timestamptz null,                   -- soft delete; lookups ignore forgotten rows
   check (level in ('case','inner'))
 );
-create index sku_barcodes_code_ix on public.sku_barcodes (code);
+-- a code is the MANUFACTURER's: twins at two vendors share it; the SAME code can mean case AND inner for one SKU
+create unique index sku_barcodes_live_key on public.sku_barcodes (code, sku_id, level) where forgotten_at is null;
+create index sku_barcodes_code_ix on public.sku_barcodes (code) where forgotten_at is null;
 -- deny-all RLS, revoke from anon/authenticated/public (0174/0182/0203 posture)
 ```
 
@@ -41,7 +43,7 @@ Why not `unique (code)`: a UPC/GTIN is printed by the manufacturer, so Boar's He
 
 **What `code` holds.** The GTIN (or the plain code for non-GS1 symbologies), never the raw label. `normalizeCode` parses GS1-128 / GS1 DataBar application identifiers: AI 01 or 02 → the GTIN; AI 10 (lot), 31xx (weight), 11/15/17 (dates) are stripped and discarded (V3-B does not keep lot or weight; V3-C or a later spec may). A code whose check digit fails is still stored as scanned (a reprinted label is a real object on the floor) and flagged `symbology = 'unknown'`.
 
-**Forget is a soft delete:** `forgotten_at timestamptz null`; lookups ignore forgotten rows; the unique key includes only live rows (partial unique index `where forgotten_at is null`).
+**Forget is a soft delete:** `forgotten_at` is stamped; lookups ignore forgotten rows; the unique key covers live rows only, so a forgotten code can be re-taught cleanly.
 
 ## 4. Lookup rule (pure, tested)
 
