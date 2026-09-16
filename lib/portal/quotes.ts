@@ -14,14 +14,24 @@
  * `origin` (absent from the staff `Quote` type, present on the row since migration 0127) because
  * the pay panel's payment plan is origin-driven.
  *
- * PAYMENT PROVIDER IS DEFERRED. `initiatePayment` only ensures a `catering_payments` deposit/full
- * intent exists in `status='due'` and audits the intent — no Stripe/Toast. It returns a stub.
+ * PAYMENT PROVIDER — TWO PATHS, ONE INTENT. `initiatePayment` is unchanged in what it
+ * GUARANTEES: a `catering_payments` deposit/full intent exists in `status='due'` and the
+ * intent is audited. What it now also REPORTS is whether this shop has Stripe credentials
+ * (`stub: false`), which is the route's cue to call `createQuoteCheckout` and hand back a
+ * hosted Checkout URL. With no keys set, `stub` is true and the behaviour is byte-for-byte
+ * what it was: the intent is recorded and the customer sees the stub message.
+ *
+ * NO MONEY IS EVER COMPUTED HERE FROM CLIENT INPUT. The amount is read from the quote's own
+ * snapshot (`deposit_cents` / `total_cents`) and the requested kind must be an option the
+ * pure `paymentPlan` allows — the same authority the staff path answers to.
  */
 
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import { audit } from "@/lib/audit";
 import { createPaymentDue } from "@/lib/catering/payments";
 import { paymentPlan } from "@/lib/catering/payment-plan";
+import { createCheckoutSession, stripeCredentialsFor, StripeError } from "@/lib/stripe/client";
+import { TENANT_NAME } from "@/lib/tenant";
 import type { Quote, QuoteItem, QuoteDetail } from "@/lib/catering/quotes";
 import { isQuoteStatus } from "@/lib/catering/quotes";
 
@@ -41,9 +51,24 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 
 export type QuoteOrigin = "self_serve" | "staff";
 
-/** QuoteDetail (shape reused) + the origin the payment plan is driven by. */
+/** One of the quote's payment intents, as the customer's own surface needs to see it.
+ *  Deliberately narrower than lib/catering/payments.ts's staff `Payment`: no provider
+ *  refs, no created_by, nothing about how the money was taken — a customer is owed the
+ *  fact and the amount, not the plumbing. */
+export interface PortalPayment {
+  kind: "deposit" | "balance" | "full";
+  status: "due" | "paid" | "refunded" | "void";
+  amountCents: number;
+  paidAt: string | null;
+}
+
+/** QuoteDetail (shape reused) + the origin the payment plan is driven by + what has
+ *  actually been paid. The payments ride ALONG with the quote because the pay panel's
+ *  correctness depends on them: a `paid` deposit must hide its own button, and that is a
+ *  server-authoritative fact, never a `?checkout=success` query parameter. */
 export interface PortalQuoteDetail extends QuoteDetail {
   origin: QuoteOrigin;
+  payments: PortalPayment[];
 }
 
 interface DbQuoteRow {
@@ -181,42 +206,87 @@ export async function loadCustomerQuoteDetail(
   // OWNERSHIP CHECK — the authorization boundary. A quote is only ever visible to its owner.
   if (row.customer_id !== customerId) return null;
 
-  const { data: itemRows, error: iErr } = await sb
-    .from("catering_quote_items")
-    .select(ITEM_COLS)
-    .eq("quote_id", quoteId)
-    .order("display_order", { ascending: true })
-    .returns<DbItemRow[]>();
+  const [{ data: itemRows, error: iErr }, { data: payRows, error: pErr }] = await Promise.all([
+    sb
+      .from("catering_quote_items")
+      .select(ITEM_COLS)
+      .eq("quote_id", quoteId)
+      .order("display_order", { ascending: true })
+      .returns<DbItemRow[]>(),
+    sb
+      .from("catering_payments")
+      .select("kind, status, amount_cents, paid_at")
+      .eq("quote_id", quoteId)
+      .order("created_at", { ascending: true })
+      .returns<Array<{ kind: string; status: string; amount_cents: number; paid_at: string | null }>>(),
+  ]);
   if (iErr) throw new Error(`loadCustomerQuoteDetail items: ${iErr.message}`);
+  if (pErr) throw new Error(`loadCustomerQuoteDetail payments: ${pErr.message}`);
 
   return {
     quote: mapQuote(row),
     items: (itemRows ?? []).map(mapItem),
     origin: normalizeOrigin(row.origin),
+    payments: (payRows ?? []).map(mapPortalPayment),
   };
 }
 
+function mapPortalPayment(r: {
+  kind: string;
+  status: string;
+  amount_cents: number;
+  paid_at: string | null;
+}): PortalPayment {
+  const kind: PortalPayment["kind"] =
+    r.kind === "balance" ? "balance" : r.kind === "full" ? "full" : "deposit";
+  const status: PortalPayment["status"] =
+    r.status === "paid" ? "paid" : r.status === "refunded" ? "refunded" : r.status === "void" ? "void" : "due";
+  return { kind, status, amountCents: r.amount_cents, paidAt: r.paid_at };
+}
+
+/** What the pay route needs back from an intent. `stub` means "no provider is wired for
+ *  this shop" — the historical behaviour, kept as its own boolean rather than inferred
+ *  from the absence of a url, so the route's two branches read as two branches. */
+export interface InitiatePaymentResult {
+  ok: true;
+  /** The `catering_payments` row now sitting in `status='due'`. */
+  paymentId: string;
+  /** Integer cents, from the quote's own snapshot. Never from the client. */
+  amountCents: number;
+  stub: boolean;
+}
+
+/** The payable quote as both payment paths need it. Loaded once, ownership-checked. */
+interface PayableQuote {
+  id: string;
+  locationId: string;
+  origin: QuoteOrigin;
+  eventDate: string | null;
+  depositCents: number;
+  totalCents: number;
+}
+
 /**
- * Begin a payment for the customer's own quote. PAYMENT PROVIDER IS DEFERRED — this only
- * ensures a `catering_payments` intent exists for (quote, kind) in `status='due'` (the amount
- * is read from the quote's snapshot: deposit_cents for a deposit, total_cents for full) and
- * audits the intent. Returns a stub. Ownership is re-verified here — a quote the caller doesn't
- * own is a 404, never actionable.
+ * Load a quote for a PAYMENT action: exists, owned by this customer, and still payable.
+ *
+ * The ownership check is the authorization boundary and it is re-run at BOTH payment
+ * entry points (intent, then checkout) rather than trusted across the pair — the second
+ * call arrives on its own request and must not inherit the first one's conclusion.
  */
-export async function initiatePayment(
+async function loadPayableQuote(
+  sb: ReturnType<typeof getServiceRoleClient>,
   customerId: string,
   quoteId: string,
-  kind: "deposit" | "full",
-): Promise<{ ok: true; stub: true }> {
+): Promise<PayableQuote> {
   if (!UUID_RE.test(quoteId)) throw new PortalQuoteError(404, "not_found", "Quote not found");
-  const sb = getServiceRoleClient();
   const { data: row, error } = await sb
     .from("catering_quotes")
-    .select("id, customer_id, origin, status, superseded_at, event_date, deposit_cents, total_cents")
+    .select("id, customer_id, location_id, origin, status, superseded_at, event_date, deposit_cents, total_cents")
     .eq("id", quoteId)
     .maybeSingle<{
       id: string;
       customer_id: string | null;
+      location_id: string;
       origin: string;
       status: string;
       superseded_at: string | null;
@@ -224,35 +294,117 @@ export async function initiatePayment(
       deposit_cents: number;
       total_cents: number;
     }>();
-  if (error) throw new Error(`initiatePayment quote: ${error.message}`);
+  if (error) throw new Error(`loadPayableQuote: ${error.message}`);
   // OWNERSHIP CHECK — the authorization boundary. Not owned (or missing) ⇒ 404, never actionable.
   if (!row || row.customer_id !== customerId) {
     throw new PortalQuoteError(404, "not_found", "Quote not found");
   }
-
   // PAYABILITY GATE — a superseded revision or a terminal quote (declined/expired) is not payable.
   if (row.superseded_at != null || row.status === "declined" || row.status === "expired") {
     throw new PortalQuoteError(409, "not_payable", "This quote can no longer be paid");
   }
-
-  // PAYMENT-PLAN AUTHORITY — the requested kind must be an option the real money rules allow
-  // for this quote (origin/lead-time/deposit-driven). This makes the stub enforce the same
-  // authority a real provider will wire behind, so an invalid kind can never create an intent.
-  const plan = paymentPlan({
+  return {
+    id: row.id,
+    locationId: row.location_id,
     origin: normalizeOrigin(row.origin),
     eventDate: row.event_date,
-    totalCents: row.total_cents,
     depositCents: row.deposit_cents,
+    totalCents: row.total_cents,
+  };
+}
+
+/**
+ * The shop's `locations.code`, or null. This is the ONLY way a shop code enters the Stripe
+ * credential lookup — read from the row at runtime, never a literal in code (AGENTS.md
+ * tenant-vocabulary law). A read failure returns null, which resolves to the shared
+ * account: an unknown shop must not silently acquire a different account's keys, and it
+ * must not lose the ability to take a payment either.
+ */
+async function locationCodeFor(
+  sb: ReturnType<typeof getServiceRoleClient>,
+  locationId: string,
+): Promise<string | null> {
+  const { data, error } = await sb
+    .from("locations")
+    .select("code")
+    .eq("id", locationId)
+    .maybeSingle<{ code: string | null }>();
+  if (error) return null;
+  return data?.code ?? null;
+}
+
+/**
+ * "Will this shop take a card online?" — the one question the /order/review copy has to
+ * answer before it can be honest about what happens next. Presence of credentials only;
+ * no key material crosses this boundary, and the answer is a boolean the client renders,
+ * never a capability it is granted.
+ */
+export async function paymentsOnlineForLocation(locationId: string): Promise<boolean> {
+  if (!UUID_RE.test(locationId)) return false;
+  const sb = getServiceRoleClient();
+  const code = await locationCodeFor(sb, locationId);
+  return stripeCredentialsFor(code) !== null;
+}
+
+/**
+ * Begin a payment for the customer's own quote: ensure a `catering_payments` intent exists
+ * for (quote, kind) in `status='due'` — the amount read from the quote's snapshot
+ * (deposit_cents for a deposit, total_cents for full) — and audit the intent.
+ *
+ * Returns the intent's id + amount, and `stub` = "this shop has no Stripe credentials".
+ * When `stub` is true the caller behaves exactly as it always did; when it is false the
+ * caller follows up with `createQuoteCheckout`. Splitting it this way keeps the INTENT
+ * (an append-only fact about what the customer asked for) independent of the PROVIDER
+ * call, so a Stripe outage never costs us the record of the request.
+ *
+ * Ownership is re-verified here — a quote the caller doesn't own is a 404, never actionable.
+ */
+export async function initiatePayment(
+  customerId: string,
+  quoteId: string,
+  kind: "deposit" | "full",
+): Promise<InitiatePaymentResult> {
+  const sb = getServiceRoleClient();
+  const quote = await loadPayableQuote(sb, customerId, quoteId);
+
+  // PAYMENT-PLAN AUTHORITY — the requested kind must be an option the real money rules allow
+  // for this quote (origin/lead-time/deposit-driven). The provider is wired BEHIND this
+  // authority, never beside it, so an invalid kind can never create an intent or a session.
+  const plan = paymentPlan({
+    origin: quote.origin,
+    eventDate: quote.eventDate,
+    totalCents: quote.totalCents,
+    depositCents: quote.depositCents,
   });
   if (!plan.options.some((o) => o.kind === kind)) {
     throw new PortalQuoteError(400, "invalid_payment_kind", "That payment option is not available for this quote");
   }
 
-  const amountCents = kind === "deposit" ? row.deposit_cents : row.total_cents;
+  // ALREADY-PAID GATE — the double-charge guard, and it is here rather than in the UI.
+  // Both of `paymentPlan`'s options are priced for an UNPAID quote (`deposit` =
+  // deposit_cents, `full` = total_cents), so a customer who has paid a deposit and then
+  // posts `{kind:"full"}` would be charged the whole total a second time. The page hides
+  // the panel once anything is paid; this refuses the request whatever the page did. The
+  // remaining BALANCE is a `balance` intent the team raises — a kind this endpoint has
+  // never accepted — so refusing here closes the hole without closing a real path.
+  const { data: alreadyPaid, error: paidErr } = await sb
+    .from("catering_payments")
+    .select("id")
+    .eq("quote_id", quoteId)
+    .eq("status", "paid")
+    .limit(1)
+    .maybeSingle<{ id: string }>();
+  if (paidErr) throw new Error(`initiatePayment paid check: ${paidErr.message}`);
+  if (alreadyPaid) {
+    throw new PortalQuoteError(409, "already_paid", "A payment has already been received for this order");
+  }
 
-  // Idempotent-ish: reuse an existing due intent for this (quote, kind) — there is no unique
-  // constraint on (quote_id, kind), so SELECT-then-INSERT rather than upsert. A benign race
-  // (two taps) could create a second due row; acceptable for a deferred-provider stub.
+  const amountCents = kind === "deposit" ? quote.depositCents : quote.totalCents;
+
+  // Idempotent: reuse an existing due intent for this (quote, kind). The DB-enforced
+  // invariant is migration 0130's partial unique index `catering_payments_one_due`, which
+  // createPaymentDue treats as idempotent (23505 → re-read the winner); this SELECT is the
+  // fast path in front of it, not the guard.
   const { data: existing, error: exErr } = await sb
     .from("catering_payments")
     .select("id")
@@ -263,15 +415,9 @@ export async function initiatePayment(
     .maybeSingle<{ id: string }>();
   if (exErr) throw new Error(`initiatePayment existing: ${exErr.message}`);
 
-  if (!existing) {
-    await createPaymentDue(sb, {
-      quoteId,
-      customerId,
-      kind,
-      amountCents,
-      createdBy: customerId,
-    });
-  }
+  const paymentId = existing
+    ? existing.id
+    : (await createPaymentDue(sb, { quoteId, customerId, kind, amountCents, createdBy: customerId })).id;
 
   void audit({
     actorId: null,
@@ -279,10 +425,141 @@ export async function initiatePayment(
     action: "catering.order.pay_intent",
     resourceTable: "catering_quotes",
     resourceId: quoteId,
-    metadata: { kind, amount_cents: amountCents, customer_id: customerId },
+    metadata: { kind, amount_cents: amountCents, customer_id: customerId, payment_id: paymentId },
     ipAddress: null,
     userAgent: null,
   });
 
-  return { ok: true, stub: true };
+  // DORMANCY IS DECIDED PER SHOP, and it is decided HERE rather than at the route so that
+  // every caller of initiatePayment inherits the same answer.
+  const code = await locationCodeFor(sb, quote.locationId);
+  const stub = stripeCredentialsFor(code) === null;
+
+  return { ok: true, paymentId, amountCents, stub };
+}
+
+/** What the customer's browser needs to leave for Stripe. */
+export interface QuoteCheckout {
+  /** The hosted Checkout URL. The ONLY thing the client is told. */
+  url: string;
+}
+
+/**
+ * Mint a hosted Stripe Checkout Session for an intent `initiatePayment` just guaranteed.
+ *
+ * ── ORDER OF OPERATIONS, AND WHY ─────────────────────────────────────────────────────
+ *   1. re-load + re-own the quote (a second request is a second authorization),
+ *   2. resolve the shop's credentials (no keys ⇒ 409 `not_configured`; the route should
+ *      never have got here, and guessing a different account's keys is not a fallback),
+ *   3. create the session at Stripe,
+ *   4. GUARDED UPDATE of the still-`due` row with `provider='stripe'` + the session id.
+ *
+ * Step 4 runs AFTER step 3 on purpose: a session is not a charge, so a session we then
+ * fail to record costs nothing but an unused Stripe object, whereas recording a session id
+ * we failed to create would leave the webhook's fallback lookup pointing at nothing. And
+ * the update is guarded on `status='due'` so a row a webhook advanced to `paid` in the
+ * meantime REFUSES — count 0 ⇒ 409, and the customer is told the payment already landed
+ * instead of being handed a second checkout for money they have already sent.
+ *
+ * The audit row carries ids and the amount and NOTHING ELSE: no URLs (the success/cancel
+ * links are ours but the Checkout URL is a live payment surface), no email, no card data.
+ */
+export async function createQuoteCheckout(input: {
+  customerId: string;
+  customerEmail: string;
+  quoteId: string;
+  kind: "deposit" | "full";
+  paymentId: string;
+  amountCents: number;
+  /** Absolute origin for the return links, e.g. `https://co-ops-ashy.vercel.app`. */
+  appOrigin: string;
+}): Promise<QuoteCheckout> {
+  const sb = getServiceRoleClient();
+  const quote = await loadPayableQuote(sb, input.customerId, input.quoteId);
+
+  const code = await locationCodeFor(sb, quote.locationId);
+  const creds = stripeCredentialsFor(code);
+  if (!creds) throw new PortalQuoteError(409, "not_configured", "Online payment is not enabled");
+
+  // The payment row is the authority for currency and for the fact that it is still due.
+  const { data: payRow, error: payErr } = await sb
+    .from("catering_payments")
+    .select("id, quote_id, status, currency")
+    .eq("id", input.paymentId)
+    .maybeSingle<{ id: string; quote_id: string; status: string; currency: string | null }>();
+  if (payErr) throw new Error(`createQuoteCheckout payment: ${payErr.message}`);
+  if (!payRow || payRow.quote_id !== input.quoteId) {
+    throw new PortalQuoteError(404, "not_found", "Payment not found");
+  }
+  if (payRow.status !== "due") {
+    throw new PortalQuoteError(409, "not_due", "That payment is no longer due");
+  }
+
+  const origin = input.appOrigin.replace(/\/$/, "");
+  const label = input.kind === "deposit" ? "Catering deposit" : "Catering order";
+  const dateLabel = quote.eventDate ?? "date to be confirmed";
+
+  let session: { id: string; url: string };
+  try {
+    session = await createCheckoutSession(
+      creds.secretKey,
+      {
+        quoteId: input.quoteId,
+        paymentId: input.paymentId,
+        kind: input.kind,
+        amountCents: input.amountCents,
+        currency: (payRow.currency ?? "usd").toLowerCase(),
+        // Tenant vocabulary comes from lib/tenant.ts (env-backed), never a brand literal.
+        productName: `${TENANT_NAME} — ${label} (${dateLabel})`,
+        description: `${TENANT_NAME} catering ${input.kind} · quote ${input.quoteId}`,
+        customerEmail: input.customerEmail,
+        successUrl: `${origin}/order/quote/${input.quoteId}?checkout=success`,
+        cancelUrl: `${origin}/order/quote/${input.quoteId}?checkout=cancel`,
+      },
+      // Keyed on the row AND the amount: the row id alone would make a re-priced intent
+      // collide with its own earlier session (Stripe 400s a key replayed with different
+      // params), and the amount is the only field of this request that can honestly move.
+      `${input.paymentId}:${input.amountCents}`,
+    );
+  } catch (e) {
+    if (e instanceof StripeError) {
+      // Stripe's message describes the REQUEST, never the credential — safe to log.
+      console.error(`[stripe] checkout session failed (${e.status}/${e.code}):`, e.message);
+      throw new PortalQuoteError(502, "provider_error", "Payment provider is unavailable");
+    }
+    throw e;
+  }
+
+  const { error: updErr, count } = await sb
+    .from("catering_payments")
+    .update({ provider: "stripe", provider_session_id: session.id }, { count: "exact" })
+    .eq("id", input.paymentId)
+    .eq("status", "due");
+  if (updErr) throw new Error(`createQuoteCheckout persist session: ${updErr.message}`);
+  if (count === 0) {
+    // Advanced between the read and the write — the money already landed. Refuse the
+    // redirect rather than invite a second payment.
+    throw new PortalQuoteError(409, "not_due", "That payment is no longer due");
+  }
+
+  void audit({
+    actorId: null,
+    actorRole: null,
+    action: "catering.payment.checkout_created",
+    resourceTable: "catering_payments",
+    resourceId: input.paymentId,
+    metadata: {
+      quote_id: input.quoteId,
+      payment_id: input.paymentId,
+      kind: input.kind,
+      amount_cents: input.amountCents,
+      session_id: session.id,
+      location_id: quote.locationId,
+      credential_source: creds.source,
+    },
+    ipAddress: null,
+    userAgent: null,
+  });
+
+  return { url: session.url };
 }

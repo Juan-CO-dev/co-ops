@@ -138,7 +138,19 @@ export const NON_DESTRUCTIVE_ACTIONS = [
   "catering.kb.zones.deactivate",
   "catering.kb.zones.edit",
   "catering.order.pay_intent",
+  // The three Stripe rows are SYSTEM OBSERVATIONS, adjudicated the same way
+  // `product.resolution_flip` was: `checkout_created` records that the machine
+  // minted a hosted Checkout Session for an intent the customer already asked
+  // for (actor_id null — the customer is not a staff actor and no shared config
+  // moved), and `provider_paid` / `provider_refunded` are written by the signed
+  // webhook with no actor at all. Nobody changed the kitchen; the kitchen's
+  // money moved and we recorded it. `catering.payment.mark_paid` above is the
+  // STAFF seam-advance and stays exactly where it is — the two are deliberately
+  // distinct names so "did a human mark this paid, or did Stripe?" is one query.
+  "catering.payment.checkout_created",
   "catering.payment.mark_paid",
+  "catering.payment.provider_paid",
+  "catering.payment.provider_refunded",
   "catering.pipeline.create",
   "catering.pipeline.edit",
   "catering.pipeline.stage_move",
