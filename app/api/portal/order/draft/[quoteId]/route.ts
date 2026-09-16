@@ -9,6 +9,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireCustomerSession } from "@/lib/portal/session";
 import { loadDraft } from "@/lib/portal/draft";
+import { paymentsOnlineForLocation } from "@/lib/portal/quotes";
 
 export const runtime = "nodejs";
 
@@ -19,5 +20,10 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ quot
   const { quoteId } = await params;
   const draft = await loadDraft(ctx.customerId, quoteId);
   if (!draft) return NextResponse.json({ error: "not_found" }, { status: 404 });
-  return NextResponse.json({ ok: true, draft });
+  // `paymentsOnline` rides BESIDE the draft, not inside it: DraftLoad is a lib type with
+  // several consumers and this is a per-shop deployment fact, not part of the order. The
+  // review page needs it to tell the customer the truth about what the next screen does
+  // (LRA-210 — the copy must not promise a provider that is not wired for this shop).
+  const paymentsOnline = await paymentsOnlineForLocation(draft.locationId);
+  return NextResponse.json({ ok: true, draft, paymentsOnline });
 }

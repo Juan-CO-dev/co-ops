@@ -16,6 +16,7 @@ import type { TranslationKey } from "@/lib/i18n/types";
 import { PasswordModal } from "@/components/auth/PasswordModal";
 import type { ToastMapState, DriftReport } from "@/lib/admin/toast-map";
 import type { EzcaterAdminState } from "@/lib/admin/ezcater-map";
+import type { PaymentsReadiness } from "@/lib/admin/payments-readiness";
 
 const KNOWN = new Set([
   "forbidden", "invalid_payload", "invalid_guid", "invalid_uuid", "not_found", "location_not_found",
@@ -37,7 +38,7 @@ function ModBadge({ r, t }: { r: import("@/lib/admin/toast-map").ToastMapRow; t:
   );
 }
 
-export function ToastTab({ state, ezcater, canWrite }: { state: ToastMapState; ezcater: EzcaterAdminState; canWrite: boolean }) {
+export function ToastTab({ state, ezcater, payments, canWrite }: { state: ToastMapState; ezcater: EzcaterAdminState; payments: PaymentsReadiness; canWrite: boolean }) {
   const { t, language } = useTranslation();
   const router = useRouter();
   const [errorKey, setErrorKey] = useState<TranslationKey | null>(null);
@@ -256,6 +257,31 @@ export function ToastTab({ state, ezcater, canWrite }: { state: ToastMapState; e
             </li>
           ))}
           {ezcater.events.length === 0 && <li className="text-co-text-muted">{t("admin.ezcater.no_events")}</li>}
+        </ul>
+      </section>
+
+      {/* Payments readiness — presence of credentials only, never key material. Same
+          shape as the ezCater line above: an operator needs to know whether the errand is
+          done, per shop, and where the webhook goes. */}
+      <section className="co-card p-4">
+        <h2 className="text-sm font-extrabold uppercase tracking-[0.14em] text-co-text">{t("admin.stripe.heading")}</h2>
+        <p className="mt-1 text-xs text-co-text-muted">
+          {payments.defaultConfigured ? t("admin.stripe.default_on") : t("admin.stripe.default_off")}
+          {payments.webhookUrl ? ` · ${t("admin.stripe.webhook_hint", { url: payments.webhookUrl })}` : ""}
+        </p>
+        <ul className="mt-2 flex flex-col gap-1 text-xs text-co-text">
+          {payments.locations.map((l) => (
+            <li key={l.locationId}>
+              {t(
+                l.configured
+                  ? l.ownAccount
+                    ? "admin.stripe.shop_own"
+                    : "admin.stripe.shop_shared"
+                  : "admin.stripe.shop_off",
+                { location: payments.locationNames[l.locationId] ?? l.locationCode },
+              )}
+            </li>
+          ))}
         </ul>
       </section>
 

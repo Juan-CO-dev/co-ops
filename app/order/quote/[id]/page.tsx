@@ -7,16 +7,47 @@
  * Renders the line items + the snapshotted charge stack + a pay panel whose options come from
  * paymentPlan(origin, eventDate, total, deposit). Visual style mirrors /order/review.
  *
+ * ── WHAT HAS BEEN PAID IS A SERVER FACT, AND ONLY A SERVER FACT ──────────────────────
+ * The `paid` rows come from `catering_payments` via loadCustomerQuoteDetail. A kind with a
+ * paid row loses its button and gains a calm "payment received" line. `?checkout=success`
+ * and `?checkout=cancel` are Stripe's return links and they are HINTS ONLY — anyone can
+ * type them — so they render one notice and decide nothing. The money's status is what the
+ * webhook wrote, never what the URL claims, and a success return that arrives before the
+ * webhook honestly says "we're confirming it" rather than pretending.
+ *
  * Dynamic route (per-customer, per-quote) — never statically prerendered.
  */
 
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { getCustomerFromHeaders } from "@/lib/portal/session";
-import { loadCustomerQuoteDetail } from "@/lib/portal/quotes";
+import { loadCustomerQuoteDetail, type PortalPayment } from "@/lib/portal/quotes";
 import { paymentPlan } from "@/lib/catering/payment-plan";
+import { serverT } from "@/lib/i18n/server";
+import { TranslationProvider } from "@/lib/i18n/provider";
+import type { TranslationKey } from "@/lib/i18n/types";
 import type { Quote, QuoteItem } from "@/lib/catering/quotes";
 import { PayButtons } from "./pay-buttons";
+
+/**
+ * The portal has no per-customer language preference yet — every /order surface mounts
+ * `TranslationProvider initialLanguage="en"`. Server-rendered strings resolve through the
+ * same dictionaries with the same constant, so the day a customer language lands, this is
+ * one variable, not a copy hunt.
+ */
+const PORTAL_LANG = "en" as const;
+const t = (key: TranslationKey, params?: Record<string, string | number>) =>
+  serverT(PORTAL_LANG, key, params);
+
+const PAID_LINE_KEY: Record<PortalPayment["kind"], TranslationKey> = {
+  deposit: "order.quote.paid_deposit",
+  balance: "order.quote.paid_balance",
+  full: "order.quote.paid_full",
+};
+const PAY_LABEL_KEY: Record<"deposit" | "full", TranslationKey> = {
+  deposit: "order.quote.pay_deposit",
+  full: "order.quote.pay_full",
+};
 
 const money = (cents: number) =>
   (cents / 100).toLocaleString("en-US", { style: "currency", currency: "USD" });
@@ -43,11 +74,19 @@ function Shell({ children }: { children: React.ReactNode }) {
   );
 }
 
-export default async function QuotePage({ params }: { params: Promise<{ id: string }> }) {
+export default async function QuotePage({
+  params,
+  searchParams,
+}: {
+  params: Promise<{ id: string }>;
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+}) {
   const ctx = await getCustomerFromHeaders();
   if (!ctx) redirect("/order/start"); // sign in first
 
   const { id } = await params; // Next 16 — params is a Promise.
+  const query = await searchParams; // Next 16 — searchParams is a Promise too.
+  const checkoutHint = query.checkout === "success" ? "success" : query.checkout === "cancel" ? "cancel" : null;
   const detail = await loadCustomerQuoteDetail(ctx.customerId, id);
 
   if (!detail) {
@@ -79,6 +118,16 @@ export default async function QuotePage({ params }: { params: Promise<{ id: stri
     totalCents: quote.totalCents,
     depositCents: quote.depositCents,
   });
+
+  // ONCE ANYTHING IS PAID, THE SELF-SERVE PANEL CLOSES — every option, not just the one
+  // that was paid. `paymentPlan`'s options are both priced for an UNPAID quote: `deposit`
+  // is deposit_cents and `full` is total_cents. So leaving `full` on the panel after a
+  // deposit landed would offer the customer the whole total a second time, which is a
+  // double charge wearing the label of a helpful button. The remaining BALANCE is a
+  // `balance` intent the team raises (lib/catering/payment-plan.ts: deposit → team
+  // confirms → balance), and this surface has never been able to create one.
+  const paid = detail.payments.filter((p) => p.status === "paid");
+  const payOptions = paid.length > 0 ? [] : plan.options;
 
   return (
     <Shell>
@@ -130,26 +179,72 @@ export default async function QuotePage({ params }: { params: Promise<{ id: stri
         </div>
       </section>
 
-      {/* Pay panel — options come from the server-side payment plan */}
-      <section className="mt-5 rounded-3xl border border-co-gold/50 bg-co-gold/10 p-6">
-        <h2 className="text-sm font-extrabold text-co-text">
-          {plan.mode === "deposit_required"
-            ? "Pay your deposit to reserve"
-            : plan.mode === "deposit_optional"
-              ? "Choose how to pay"
-              : "Pay in full"}
-        </h2>
-        <p className="mt-1 text-xs text-co-text-dim">
-          {plan.mode === "deposit_required"
-            ? "A deposit reserves your date while our team confirms your order. We'll email you to pay the balance."
-            : plan.mode === "deposit_optional"
-              ? "Lock your date with a deposit, or pay the full amount now."
-              : "Your event is close — please pay the full amount to confirm."}
+      {/* Stripe's return links are HINTS ONLY — one notice, zero authority over state. */}
+      {checkoutHint && (
+        <p
+          className={`mt-5 rounded-2xl border px-5 py-4 text-sm font-semibold ${
+            checkoutHint === "success"
+              ? "border-co-gold/50 bg-co-gold/10 text-co-text"
+              : "border-co-border bg-co-surface text-co-text-muted"
+          }`}
+        >
+          {checkoutHint === "success" ? t("order.quote.checkout_success") : t("order.quote.checkout_cancel")}
         </p>
-        <div className="mt-5">
-          <PayButtons quoteId={quote.id} options={plan.options.map((o) => ({ kind: o.kind, amountCents: o.amountCents, label: o.label }))} />
-        </div>
-      </section>
+      )}
+
+      {/* What has actually been paid — server-authoritative, from catering_payments. */}
+      {paid.length > 0 && (
+        <section className="mt-5 rounded-3xl border border-co-border/70 bg-co-surface p-6 shadow-sm">
+          <h2 className="text-sm font-extrabold uppercase tracking-[0.14em] text-co-text-dim">
+            {t("order.quote.paid_heading")}
+          </h2>
+          <ul className="mt-2 flex flex-col gap-1.5">
+            {paid.map((p, i) => (
+              <li key={`${p.kind}-${i}`} className="text-sm font-semibold text-co-text">
+                {t(PAID_LINE_KEY[p.kind], { amount: money(p.amountCents) })}
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+
+      {/* Pay panel — options come from the server-side payment plan, minus what is paid */}
+      {payOptions.length > 0 ? (
+        <section className="mt-5 rounded-3xl border border-co-gold/50 bg-co-gold/10 p-6">
+          <h2 className="text-sm font-extrabold text-co-text">
+            {plan.mode === "deposit_required"
+              ? "Pay your deposit to reserve"
+              : plan.mode === "deposit_optional"
+                ? "Choose how to pay"
+                : "Pay in full"}
+          </h2>
+          <p className="mt-1 text-xs text-co-text-dim">
+            {plan.mode === "deposit_required"
+              ? "A deposit reserves your date while our team confirms your order. We'll email you to pay the balance."
+              : plan.mode === "deposit_optional"
+                ? "Lock your date with a deposit, or pay the full amount now."
+                : "Your event is close — please pay the full amount to confirm."}
+          </p>
+          <div className="mt-5">
+            <TranslationProvider initialLanguage={PORTAL_LANG}>
+              <PayButtons
+                quoteId={quote.id}
+                options={payOptions.map((o) => ({
+                  kind: o.kind,
+                  amountCents: o.amountCents,
+                  labelKey: PAY_LABEL_KEY[o.kind],
+                }))}
+              />
+            </TranslationProvider>
+          </div>
+        </section>
+      ) : (
+        paid.length > 0 && (
+          <p className="mt-5 text-center text-sm font-semibold text-co-text-muted">
+            {t("order.quote.all_paid")}
+          </p>
+        )
+      )}
 
       <p className="mt-6 text-center text-xs text-co-text-dim">
         Questions about your order? Reply to the email we sent and our team will help.

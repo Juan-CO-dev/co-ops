@@ -74,6 +74,12 @@ export const PROVIDER_KEYS_CLOSED_INVENTORY = [
   "TWILIO_ACCOUNT_SID", "TWILIO_AUTH_TOKEN", "TWILIO_FROM_NUMBER", "TWILIO_WEBHOOK_URL",
   "ANTHROPIC_API_KEY", "TOAST_API_HOSTNAME", "TOAST_CLIENT_ID", "TOAST_CLIENT_SECRET",
   "SEVENSHIFTS_API_KEY", "EZCATER_API_HOSTNAME", "EZCATER_API_TOKEN", "EZCATER_WEBHOOK_SECRET",
+  // Stripe: the SHARED pair. Per-location overrides (STRIPE_SECRET_KEY__<CODE>) cannot be
+  // enumerated — the codes live in the tenant's `locations` table, not in code — so the
+  // whole `STRIPE_` prefix is blanked in buildChildEnv below, and a per-location key in
+  // .env.sim fails validation as an unknown key. Empty keys = the leg is dormant, which is
+  // the only state sim may ever be in: a live secret here could move real money.
+  "STRIPE_SECRET_KEY", "STRIPE_WEBHOOK_SECRET",
 ] as const;
 
 /** JWT is an additional either/or requirement, validated separately below. */
@@ -128,7 +134,9 @@ export function buildChildEnv(parentEnv: Env, simFile: Record<string, string>): 
   for (const [key, value] of Object.entries(parentEnv)) {
     if (value === undefined) continue;
     // Case-insensitive to cover Windows environment names as well.
-    child[key] = /^(NEXT_PUBLIC_SUPABASE_|SUPABASE_|AUTH_)/i.test(key) || providers.has(key.toUpperCase()) ? "" : value;
+    // `STRIPE_` is a PREFIX match, unlike the exact-name provider list: per-location
+    // credentials are named from the tenant's own location codes and can never be listed.
+    child[key] = /^(NEXT_PUBLIC_SUPABASE_|SUPABASE_|AUTH_|STRIPE_)/i.test(key) || providers.has(key.toUpperCase()) ? "" : value;
   }
   for (const key of PROVIDER_KEYS_CLOSED_INVENTORY) child[key] = "";
   Object.assign(child, simFile);

@@ -216,7 +216,7 @@ for (const code of ["EM", "MEP"] as const) {
     }, { times: 1 });
     const submitted = responseFor(page, SUBMIT);
     await contract.screenshot("submit-decision");
-    await page.getByRole("button", { name: /^Pay deposit & lock my date/ }).click();
+    await page.getByRole("button", { name: /^Record deposit & submit order/ }).click();
     const uiResponse = await submitted;
     expect(raceRequests, "customer.submit.once: race activated").toBe(1);
     expect(peer, "customer.submit.once: peer dispatched").toBeDefined();
@@ -239,7 +239,7 @@ for (const code of ["EM", "MEP"] as const) {
     mark("customer.payment.stub");
     expect(current.deposit_cents, "customer.payment.stub: configured deposit required").toBeGreaterThan(0);
     const paying = responseFor(page, payPath(quote.id));
-    await page.getByRole("button", { name: /^Pay deposit to reserve/ }).click();
+    await page.getByRole("button", { name: /^Pay deposit/ }).click();
     const payment = await paying;
     expect(payment.status(), "customer.payment.stub").toBe(200);
     expect(await payment.json(), "customer.payment.stub").toMatchObject({ ok: true, stub: true, message: expect.stringContaining("Payment isn't wired yet") });
