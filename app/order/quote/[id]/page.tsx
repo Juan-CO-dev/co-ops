@@ -128,6 +128,11 @@ export default async function QuotePage({
   // confirms → balance), and this surface has never been able to create one.
   const paid = detail.payments.filter((p) => p.status === "paid");
   const payOptions = paid.length > 0 ? [] : plan.options;
+  // What the customer still owes AFTER what has cleared. The closed panel must not read as
+  // "nothing left to pay" when only the deposit landed (LRA-236): the balance is real money
+  // the team raises later, so name it and say when it comes.
+  const paidCents = paid.reduce((sum, p) => sum + p.amountCents, 0);
+  const remainingCents = Math.max(0, quote.totalCents - paidCents);
 
   return (
     <Shell>
@@ -241,7 +246,9 @@ export default async function QuotePage({
       ) : (
         paid.length > 0 && (
           <p className="mt-5 text-center text-sm font-semibold text-co-text-muted">
-            {t("order.quote.all_paid")}
+            {remainingCents > 0
+              ? t("order.quote.balance_later", { amount: money(remainingCents) })
+              : t("order.quote.all_paid")}
           </p>
         )
       )}

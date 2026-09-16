@@ -4200,6 +4200,7 @@
   "order.quote.paid_balance": "Saldo recibido — {amount}. Gracias.",
   "order.quote.paid_full": "Pagado por completo — {amount}. Gracias.",
   "order.quote.all_paid": "No queda nada por pagar en este pedido.",
+  "order.quote.balance_later": "Falta el saldo de {amount} — nuestro equipo confirma tu pedido primero y luego te escribe cuando sea momento de pagarlo.",
   "order.quote.checkout_success": "Gracias — estamos confirmando tu pago. Esta página lo muestra como recibido en cuanto se acredite.",
   "order.quote.checkout_cancel": "No se cobró nada. Puedes pagar cuando quieras.",
   "order.quote.pay_deposit": "Pagar depósito",

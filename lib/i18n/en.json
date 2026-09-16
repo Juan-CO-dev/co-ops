@@ -4200,6 +4200,7 @@
   "order.quote.paid_balance": "Balance received — {amount}. Thank you.",
   "order.quote.paid_full": "Paid in full — {amount}. Thank you.",
   "order.quote.all_paid": "Nothing left to pay on this order.",
+  "order.quote.balance_later": "Balance of {amount} still to come — our team confirms your order first, then emails you when it's time to pay it.",
   "order.quote.checkout_success": "Thanks — we're confirming your payment. This page shows it as received the moment it clears.",
   "order.quote.checkout_cancel": "No payment was taken. You can pay whenever you're ready.",
   "order.quote.pay_deposit": "Pay deposit",
