@@ -9,12 +9,14 @@ if (!load || !ts.isFunctionDeclaration(load) || !load.body) throw new Error("Mis
 const body = load.body.getText(ast);
 
 describe("LRA-229: the PO's vendor SKU picker", () => {
-  it("reads only the PO vendor's active catalog in guide/name order, with null positions last", () => {
+  it("reads only the PO vendor's active catalog by name, then sorts it in memory by the live order guide (V3-A)", () => {
     const catalog = body.slice(body.indexOf("const { data: vendorSkuRows"), body.indexOf("const onPo"));
     expect(catalog).toContain('sb.from("vendor_items")');
     expect(catalog).toContain('.eq("vendor_id", po.vendor_id).eq("active", true)');
-    expect(catalog).toContain('.order("guide_position", { ascending: true, nullsFirst: false }).order("name", { ascending: true })');
-    expect(catalog).toContain('"id, name, item_number, pack_format, guide_position"');
+    expect(catalog).toContain('.order("name", { ascending: true })');
+    expect(catalog).toContain('"id, name, item_number, pack_format"');
+    expect(catalog).not.toContain("guide_position\"");
+    expect(body).toContain("compareByGuide(");
   });
 
   it("on a DRAFT excludes every existing PO line including removed zero-quantity lines", () => {

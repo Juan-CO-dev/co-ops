@@ -49,6 +49,9 @@ import { loadCreditsForDelivery } from "@/lib/credits";
 import { emailOrderingAvailable, isPlausibleEmail } from "@/lib/po-email-shared";
 import { loadSkuPackChains } from "@/lib/prep-consumption";
 import { buildPackChain, chainRootLabel } from "@/lib/pack-chain-shared";
+import { guideKeysFor } from "@/lib/order-guides";
+import { resolveGuideKey } from "@/lib/order-guides-shared";
+import { compareByGuide } from "@/lib/order-guide-sort";
 
 /** KH+ read/write floor for the PO lifecycle (draft/confirm/place/receive + reads). */
 export const PO_MIN = 4; // key_holder+
@@ -177,7 +180,7 @@ export interface CreatedDraft {
  * cutoff surfacing's "generate draft" path (parPassEventId null). Per vendor:
  *   - resolve a unique display code (base + -2/-3 on same-day collision; the
  *     23505 unique-violation race is caught + retried at the next suffix, bounded);
- *   - snapshot each line's guide_position into guide_position_snapshot at creation;
+ *   - snapshot each line's guide key (section + position, from the live guide) at creation;
  *   - one PO header + its lines, error-checked and sequential (house pattern).
  * Emits ONE `po.draft_created` audit row for the whole batch with the po_ids +
  * source. Vendors with no lines are skipped. Append-only.
@@ -218,20 +221,16 @@ export async function createDraftsFromLines(
   if (locErr) throw new Error(`createDraftsFromLines location: ${locErr.message}`);
   if (!loc) throw new PurchaseOrderError(404, "not_found", "Location not found");
 
-  // Batch: vendor names (for the code fragment) + guide positions for every SKU
-  // across all vendors (one query — never per-SKU/per-vendor).
+  // Batch: vendor names (for the code fragment) + the LIVE guide key for every SKU across
+  // all vendors (one query — never per-SKU/per-vendor). V3-A: the key is snapshotted onto
+  // the line so a confirmed order keeps its shape when the guide is edited later.
   const allSkuIds = [...new Set(vendorIds.flatMap((vid) => (byVendor.get(vid) ?? []).map((l) => l.skuId)))];
-  const [{ data: vendorRows, error: vErr }, { data: skuRows, error: sErr }] = await Promise.all([
+  const [{ data: vendorRows, error: vErr }, guideKeys] = await Promise.all([
     sb.from("vendors").select("id, name").in("id", vendorIds).returns<Array<{ id: string; name: string }>>(),
-    allSkuIds.length
-      ? sb.from("vendor_items").select("id, guide_position").in("id", allSkuIds)
-          .returns<Array<{ id: string; guide_position: number | null }>>()
-      : Promise.resolve({ data: [] as Array<{ id: string; guide_position: number | null }>, error: null }),
+    guideKeysFor(allSkuIds),
   ]);
   if (vErr) throw new Error(`createDraftsFromLines vendors: ${vErr.message}`);
-  if (sErr) throw new Error(`createDraftsFromLines skus: ${sErr.message}`);
   const vNameById = new Map((vendorRows ?? []).map((v) => [v.id, v.name]));
-  const guidePosBySku = new Map((skuRows ?? []).map((s) => [s.id, s.guide_position]));
 
   // Prefetch every existing display code for TODAY at this location so collision
   // resolution is in-memory (the 23505 retry handles the rare cross-request race).
@@ -306,7 +305,7 @@ export async function createDraftsFromLines(
       throw new PurchaseOrderError(500, "display_code_exhausted", "Could not allocate a unique PO code");
     }
 
-    // Insert the PO's lines (guide_position snapshotted at creation; qty tolerated
+    // Insert the PO's lines (guide section + position snapshotted at creation; qty tolerated
     // fractional as par-pass qtys are; unit label carried from the walker line).
     const { error: lErr } = await sb.from("po_lines").insert(
       lines.map((l) => ({
@@ -314,7 +313,8 @@ export async function createDraftsFromLines(
         sku_id: l.skuId,
         order_qty: l.orderQty,
         order_unit_label: l.orderUnitLabel ?? null,
-        guide_position_snapshot: guidePosBySku.get(l.skuId) ?? null,
+        guide_position_snapshot: guideKeys.get(l.skuId)?.position ?? null,
+        guide_section_snapshot: guideKeys.get(l.skuId)?.section ?? null,
         note: l.note?.trim() || null,
       })),
     );
@@ -433,17 +433,14 @@ async function insertNewDraftLines(
 ): Promise<{ code?: string; message: string } | null> {
   if (toInsert.length === 0) return null;
   const newSkuIds = toInsert.map((l) => l.skuId);
-  const { data: skuRows, error: sErr } = await sb.from("vendor_items")
-    .select("id, guide_position").in("id", newSkuIds)
-    .returns<Array<{ id: string; guide_position: number | null }>>();
-  if (sErr) throw new Error(`updateDraftLines new skus: ${sErr.message}`);
-  const guidePosBySku = new Map((skuRows ?? []).map((s) => [s.id, s.guide_position]));
+  const guideKeys = await guideKeysFor(newSkuIds); // same helper as createDraftsFromLines — one law, two paths
   const { error: iErr } = await sb.from("po_lines").insert(
     toInsert.map((l) => ({
       po_id: poId,
       sku_id: l.skuId,
       order_qty: l.orderQty,
-      guide_position_snapshot: guidePosBySku.get(l.skuId) ?? null,
+      guide_position_snapshot: guideKeys.get(l.skuId)?.position ?? null,
+      guide_section_snapshot: guideKeys.get(l.skuId)?.section ?? null,
       order_unit_label: l.orderUnitLabel ?? null,
       note: l.note?.trim() || null,
     })),
@@ -457,7 +454,7 @@ async function insertNewDraftLines(
  * FORBIDDEN — we UPDATE existing (po_id, sku_id) rows' qty/note (rowcount-checked)
  * and INSERT genuinely-new SKUs. Removing a line is expressed as qty 0 (the review
  * UI treats 0 as removed; transmission rendering skips 0-qty lines) — the row
- * survives as history. Duplicate SKUs in the input are rejected. guide_position is
+ * survives as history. Duplicate SKUs in the input are rejected. The guide key is
  * NOT re-snapshotted here (creation-time snapshot is the anchor); a new SKU added
  * during a draft edit gets its current guide position.
  */
@@ -577,6 +574,8 @@ interface SnapshotLine {
   unitLabel: string | null;
   priceCents: number | null;
   guidePos: number | null;
+  /** V3-A: section name at draft time; null on pre-0205 snapshots. */
+  guideSection: string | null;
 }
 interface ConfirmedSnapshot {
   displayCode: string;
@@ -665,9 +664,9 @@ export async function confirmPO(actor: AuthContext, poId: string): Promise<void>
   // the snapshot has to exist before the status claims it does.
   const confirmedAt = new Date().toISOString();
   const { data: lineRows, error: lErr } = await sb.from("po_lines")
-    .select("id, sku_id, order_qty, order_unit_label, guide_position_snapshot")
+    .select("id, sku_id, order_qty, order_unit_label, guide_position_snapshot, guide_section_snapshot")
     .eq("po_id", poId).order("created_at", { ascending: true })
-    .returns<Array<{ id: string; sku_id: string; order_qty: number | string; order_unit_label: string | null; guide_position_snapshot: number | null }>>();
+    .returns<Array<{ id: string; sku_id: string; order_qty: number | string; order_unit_label: string | null; guide_position_snapshot: number | null; guide_section_snapshot: string | null }>>();
   if (lErr) throw new Error(`confirmPO lines: ${lErr.message}`);
   const lines = lineRows ?? [];
   const skuIds = [...new Set(lines.map((l) => l.sku_id))];
@@ -712,6 +711,7 @@ export async function confirmPO(actor: AuthContext, poId: string): Promise<void>
         unitLabel: l.order_unit_label,
         priceCents: priceBySku.get(l.sku_id) ?? null,
         guidePos: l.guide_position_snapshot,
+        guideSection: l.guide_section_snapshot,
       };
     }),
     confirmedBy: { id: actor.user.id, name: user?.name ?? null },
@@ -1226,6 +1226,8 @@ export interface PoDetailLine {
   orderUnitLabel: string | null;
   priceCentsAtOrder: number | null;
   guidePositionSnapshot: number | null;
+  /** Section name for the header the line sits under (snapshot ?? live). null = not on the guide. */
+  guideSection: string | null;
   note: string | null;
 }
 export interface PoTransmissionRow {
@@ -1307,6 +1309,7 @@ export interface VendorPoSku {
   itemNumber: string | null;
   orderUnitLabel: string | null;
   guidePosition: number | null;
+  guideSection: string | null;
 }
 
 export interface PoDetail {
@@ -1399,9 +1402,9 @@ export async function loadPoDetail(actor: AuthContext, poId: string): Promise<Po
     { data: smsRows, error: smsErr },
   ] = await Promise.all([
     sb.from("po_lines")
-      .select("sku_id, order_qty, order_unit_label, price_cents_at_order, guide_position_snapshot, note")
+      .select("sku_id, order_qty, order_unit_label, price_cents_at_order, guide_position_snapshot, guide_section_snapshot, note")
       .eq("po_id", poId).order("guide_position_snapshot", { ascending: true, nullsFirst: false }).order("created_at", { ascending: true })
-      .returns<Array<{ sku_id: string; order_qty: number | string; order_unit_label: string | null; price_cents_at_order: number | null; guide_position_snapshot: number | null; note: string | null }>>(),
+      .returns<Array<{ sku_id: string; order_qty: number | string; order_unit_label: string | null; price_cents_at_order: number | null; guide_position_snapshot: number | null; guide_section_snapshot: string | null; note: string | null }>>(),
     sb.from("po_transmissions")
       .select("id, channel, target, sent_at, sent_by, note, provider_message_id")
       .eq("po_id", poId).order("sent_at", { ascending: true })
@@ -1440,11 +1443,14 @@ export async function loadPoDetail(actor: AuthContext, poId: string): Promise<Po
   // One vendor catalog read for every status. Exclusion stays in memory, avoiding
   // an unbounded NOT IN request line. Pack-chain labels use the walk's authority.
   const { data: vendorSkuRows, error: vsErr } = await sb.from("vendor_items")
-    .select("id, name, item_number, pack_format, guide_position")
+    .select("id, name, item_number, pack_format")
     .eq("vendor_id", po.vendor_id).eq("active", true)
-    .order("guide_position", { ascending: true, nullsFirst: false }).order("name", { ascending: true })
-    .returns<Array<{ id: string; name: string; item_number: string | null; pack_format: string | null; guide_position: number | null }>>();
+    .order("name", { ascending: true })
+    .returns<Array<{ id: string; name: string; item_number: string | null; pack_format: string | null }>>();
   if (vsErr) throw new Error(`loadPoDetail vendor skus: ${vsErr.message}`);
+  // V3-A read law: a line renders by its snapshot when it has one, else by the LIVE guide
+  // (legacy POs, lines added to a draft after an edit); the picker is always live. One read.
+  const liveGuide = await guideKeysFor([...(lineRows ?? []).map((l) => l.sku_id), ...(vendorSkuRows ?? []).map((s) => s.id)]);
   // A DRAFT's picker excludes what is already on the order (edit that row instead). Past
   // draft, the picker feeds an ADD-ON — "two more cases of the same thing" is the common
   // case — so every active SKU stays offered (LRA-230, CC 2026-09-11).
@@ -1452,9 +1458,10 @@ export async function loadPoDetail(actor: AuthContext, poId: string): Promise<Po
   const availableSkus = (vendorSkuRows ?? []).filter((s) => !onPo.has(s.id));
   const chains = await loadSkuPackChains(availableSkus.map((s) => s.id));
   const vendorSkus = availableSkus.map((s) => ({
-    skuId: s.id, name: s.name, itemNumber: s.item_number, guidePosition: s.guide_position,
+    skuId: s.id, name: s.name, itemNumber: s.item_number,
+    guidePosition: liveGuide.get(s.id)?.position ?? null, guideSection: liveGuide.get(s.id)?.section ?? null,
     orderUnitLabel: chainRootLabel(buildPackChain(chains.get(s.id) ?? [])) ?? s.pack_format,
-  }));
+  })).sort((a, b) => compareByGuide({ position: a.guidePosition, section: a.guideSection, name: a.name }, { position: b.guidePosition, section: b.guideSection, name: b.name }));
 
   // The transmit block (spec §3): tier + portal + active contacts (accepts_text_orders
   // badged) + ordering-detail affordances. Tier defaults to manual (D4 — every vendor
@@ -1560,7 +1567,7 @@ export async function loadPoDetail(actor: AuthContext, poId: string): Promise<Po
         orderQty: num(l.order_qty) ?? 0,
         orderUnitLabel: l.order_unit_label,
         priceCentsAtOrder: l.price_cents_at_order,
-        guidePositionSnapshot: l.guide_position_snapshot,
+        ...(() => { const k = resolveGuideKey({ position: l.guide_position_snapshot, section: l.guide_section_snapshot }, liveGuide.get(l.sku_id)); return { guidePositionSnapshot: k.position, guideSection: k.section }; })(),
         note: l.note,
       };
     }),

@@ -402,6 +402,22 @@
       "status": "pending"
     },
     {
+      "id": "ordering.guide-order",
+      "guide": {
+        "path": "docs/guides/manager-guide.md",
+        "revision": "b826ea4",
+        "section": "Ordering and purchase orders / 4. The draft order",
+        "quote": "**The order lists items in the vendor's own guide order, section by section, so you can key it into their portal top to bottom.** Anything not on the guide sits last under *Not on the guide*.",
+        "quoteSha256": "cd97dcffc6dee8555d1e67d2d8a3f60f8665166fd4f9f7cb9795a7c7c289f825"
+      },
+      "actor": "key holder (Rosa at EM; Angel at MEP) after Marcus (GM) sets the vendor's guide",
+      "preconditions": "Fixture cold-empty; the GM creates a two-section guide for the walked vendor through the admin route before the walk submits.",
+      "expected": "Draft lines snapshot section*1000+line and the section name; the confirmed snapshot carries the section; the PO panel's frozen table renders Extras, its line, Deli, its lines in guide order.",
+      "assertionId": "ordering.po.guide-order",
+      "evidence": null,
+      "status": "pending"
+    },
+    {
       "id": "ordering.manual-placement",
       "guide": {
         "path": "docs/guides/manager-guide.md",

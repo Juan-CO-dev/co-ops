@@ -40,6 +40,7 @@
  *
  * APPEND-ONLY: par_pass_events / par_pass_lines rows are never DELETEd or mutated.
  */
+import { guideKeysFor } from "@/lib/order-guides";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import { selectAllRows } from "@/lib/supabase-paginate";
 import { vendorOrderMinimumReady } from "@/lib/vendor-schema-probes";
@@ -473,6 +474,9 @@ export interface WalkerSku {
   itemNumber: string | null;
   /** Chain root label (chained) else pack_format else null. */
   orderUnitLabel: string | null;
+  /** V3-A — for the REVIEW PREVIEW only. The walk order is usage then name and never reads these. */
+  guidePosition: number | null;
+  guideSection: string | null;
   /** The par that applies on the walk day (order units). Never null here — a SKU with
    *  neither par set is EXCLUDED (not surfaced). */
   parToday: number;
@@ -937,6 +941,8 @@ export async function loadWalkerData(actor: AuthContext, locationId: string): Pr
       parEvent: parEvent != null ? { needDate: parEvent.needDate, oz: parEvent.oz } : null,
       itemNumber: s.item_number,
       orderUnitLabel: orderUnitLabelFor(s.pack_format, chain),
+      guidePosition: guideKeys.get(s.id)?.position ?? null,
+      guideSection: guideKeys.get(s.id)?.section ?? null,
       parToday: par,
       parIsWeekend,
       lastOrderQty: lastOrderBySku.get(s.id) ?? null,
@@ -960,6 +966,9 @@ export async function loadWalkerData(actor: AuthContext, locationId: string): Pr
     parIsWeekend: boolean;
     cause: "skuInactive" | "vendorInactive";
   }
+
+  // V3-A: one live read of the guide keys for the preview's grouping (the walk order ignores it).
+  const guideKeys = await guideKeysFor(skus.map((s) => s.id));
 
   // Build a per-SKU WalkerSku, grouped under its (active) vendor.
   const skusByVendor = new Map<string, WalkerSku[]>();

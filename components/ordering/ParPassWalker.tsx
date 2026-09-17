@@ -30,11 +30,12 @@
  * imports; phone-first 390px; every string + aria i18n'd (ordering.* namespace).
  */
 
-import { useMemo, useState } from "react";
+import { Fragment, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 
 import { useTranslation } from "@/lib/i18n/provider";
 import { CollapsibleSection } from "@/components/ui/CollapsibleSection";
+import { groupByGuideSection, NOT_ON_GUIDE } from "@/lib/order-guide-sort";
 import { AlertPill } from "@/components/ui/AlertPill";
 import { EmptyState } from "@/components/EmptyState";
 import { CopyButton, DeliveryRow } from "@/components/ordering/delivery-affordances";
@@ -380,17 +381,29 @@ export function ParPassWalker({
                       </tr>
                     </thead>
                     <tbody>
-                      {p.lines.map((s) => (
-                        <tr key={s.skuId} className="border-t border-co-border/50">
-                          <td className="py-1 font-semibold text-co-text">{s.name}</td>
-                          <td className="py-1 text-co-text-dim">{s.itemNumber ?? "—"}</td>
-                          <td className="py-1 text-right font-bold text-co-text">
-                            {t("ordering.review.qty_unit", {
-                              qty: p.qty.get(s.skuId) ?? 0,
-                              unit: s.orderUnitLabel ?? t("ordering.unit_generic"),
-                            })}
-                          </td>
-                        </tr>
+                      {/* V3-A: the preview follows the vendor's guide (sections, then line order). */}
+                      {groupByGuideSection(p.lines.map((s) => ({ ...s, position: s.guidePosition, section: s.guideSection }))).map((g) => (
+                        <Fragment key={g.section ?? "__only__"}>
+                          {g.section !== null && (
+                            <tr>
+                              <td colSpan={3} className="pb-1 pt-3 text-[11px] font-bold uppercase tracking-[0.1em] text-co-text-dim">
+                                {g.section === NOT_ON_GUIDE ? t("ordering.body.not_on_guide_plain") : g.section}
+                              </td>
+                            </tr>
+                          )}
+                          {g.rows.map((s) => (
+                            <tr key={s.skuId} className="border-t border-co-border/50">
+                              <td className="py-1 font-semibold text-co-text">{s.name}</td>
+                              <td className="py-1 text-co-text-dim">{s.itemNumber ?? "—"}</td>
+                              <td className="py-1 text-right font-bold text-co-text">
+                                {t("ordering.review.qty_unit", {
+                                  qty: p.qty.get(s.skuId) ?? 0,
+                                  unit: s.orderUnitLabel ?? t("ordering.unit_generic"),
+                                })}
+                              </td>
+                            </tr>
+                          ))}
+                        </Fragment>
                       ))}
                     </tbody>
                   </table>

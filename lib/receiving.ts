@@ -1094,6 +1094,8 @@ export async function loadOpenPoTemplate(
   const { data: lineRows, error: lErr } = await sb.from("po_lines")
     .select("sku_id, order_qty, order_unit_label")
     .eq("po_id", po.id)
+    // The PO's own snapshot order (V3-A: section*1000+line, frozen at draft time) — the door
+    // reads the order the way it was keyed, never the live guide.
     .order("guide_position_snapshot", { ascending: true, nullsFirst: false })
     .order("created_at", { ascending: true })
     .returns<Array<{ sku_id: string; order_qty: number | string; order_unit_label: string | null }>>();

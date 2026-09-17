@@ -31,6 +31,36 @@ for (const [code, khAlias, employeeAlias] of [["EM", "rosa", "maya"], ["MEP", "a
       await login(page, kh, code);
       const api = await sessionFor(khAlias, code);
       const { vendor, decisions } = await walkLedger(api, code);
+      // V3-A (ordering.po.guide-order): a GM sets this vendor's order guide BEFORE the walk creates
+      // the draft, so the draft's lines snapshot the guide (section*1000+line) and every surface
+      // reads it. Two sections, deliberately NOT alphabetical: the last SKU by name goes first.
+      const gm = await sessionFor("marcus", code);
+      const guideApi = `/api/admin/vendors/${vendor.vendorId}/order-guide`;
+      const orderedSkus = decisions.filter(d => d.orderQty > 0).map(d => ({ skuId: d.skuId, name: d.name })).sort((a, b) => a.name.localeCompare(b.name));
+      expect(orderedSkus.length, "ordering.po.guide-order: needs at least two ordered SKUs").toBeGreaterThanOrEqual(2);
+      // One guide per VENDOR (not per shop): the second shop's run finds the first shop's guide (409 exists) and rewrites it.
+      type GuideJson = { guide?: { guideId: string; updatedAt: string; sections: unknown[] } | null };
+      const createAttempt = await gm.call("POST", guideApi, { create: true }) as { status: number; code?: string; json: GuideJson };
+      expect([201, 409].includes(createAttempt.status), `ordering.po.guide-order: create (${createAttempt.status} ${createAttempt.code ?? ""})`).toBe(true);
+      const createdGuide = createAttempt.status === 201
+        ? createAttempt
+        : await gm.call("GET", guideApi) as { status: number; json: GuideJson };
+      expect(createdGuide.json.guide, "ordering.po.guide-order: guide present").toBeTruthy();
+      const existingGuide = createdGuide.json.guide!;
+      const firstSection = [orderedSkus[orderedSkus.length - 1]!];              // the alphabetically-last SKU leads
+      const secondSection = orderedSkus.slice(0, -1);
+      const guideModel = {
+        guideId: existingGuide.guideId, vendorId: vendor.vendorId, name: "Sim guide", updatedAt: existingGuide.updatedAt,
+        sections: [
+          { id: "00000000-0000-4000-8000-000000000a01", name: "Extras", position: 1, lines: firstSection.map((x, j) => ({ id: `00000000-0000-4000-8000-0000000000${(10 + j).toString(16).padStart(2, "0")}`, position: j + 1, skuId: x.skuId, label: x.name, itemNumber: null, note: null })) },
+          { id: "00000000-0000-4000-8000-000000000a02", name: "Deli", position: 2, lines: secondSection.map((x, j) => ({ id: `00000000-0000-4000-8000-0000000000${(20 + j).toString(16).padStart(2, "0")}`, position: j + 1, skuId: x.skuId, label: x.name, itemNumber: null, note: null })) },
+        ],
+      };
+      const savedGuide = await gm.call("POST", guideApi, { model: guideModel, expectedUpdatedAt: guideModel.updatedAt }) as { status: number; code?: string };
+      expect(savedGuide.status, `ordering.po.guide-order: save (${savedGuide.code ?? ""})`).toBe(200);
+      const expectedGuideKey = new Map<string, { position: number; section: string }>();
+      firstSection.forEach((x, j) => expectedGuideKey.set(x.skuId, { position: 1000 + j + 1, section: "Extras" }));
+      secondSection.forEach((x, j) => expectedGuideKey.set(x.skuId, { position: 2000 + j + 1, section: "Deli" }));
       expect(await orders(code, vendor.vendorId), "ordering.walk.decisions: clean shop").toEqual([]);
       await page.goto(url("/ordering", code));
       const accordion = page.getByRole("button", { name: /^Boar's Head/ }).filter({ has: page.locator("span") }).and(page.locator("[aria-expanded]"));
@@ -90,6 +120,29 @@ for (const [code, khAlias, employeeAlias] of [["EM", "rosa", "maya"], ["MEP", "a
       const po = await checkSnapshot(poId, expected);
       expect(po.status, "ordering.po.snapshot").toBe("confirmed");
       expect((await poLines(poId)).map(l => l.id).sort(), "ordering.po.snapshot").toEqual(originalIds);
+      mark("ordering.po.guide-order");
+      const snapLines = await readRows<{ sku_id: string; guide_position_snapshot: number | null; guide_section_snapshot: string | null }>("po_lines", "sku_id,guide_position_snapshot,guide_section_snapshot", { po_id: poId });
+      for (const l of snapLines) {
+        expect({ position: l.guide_position_snapshot, section: l.guide_section_snapshot }, `ordering.po.guide-order: snapshot for ${l.sku_id}`).toEqual(expectedGuideKey.get(l.sku_id) ?? { position: null, section: null });
+      }
+      const frozen = (po.confirmed_snapshot as unknown as { lines: { skuId: string; guideSection: string | null }[] }).lines;
+      for (const l of frozen) expect(l.guideSection, "ordering.po.guide-order: confirmed snapshot carries the section").toBe(expectedGuideKey.get(l.skuId)?.section ?? null);
+      // The panel renders the frozen table in guide order: Extras header, its line, Deli header, its lines (by position).
+      const expectedRowOrder = ["Extras", ...firstSection.map(x => x.name), ...(secondSection.length ? ["Deli", ...secondSection.map(x => x.name)] : [])];
+      // textContent (not innerText): the frozen table lives in a collapsible section that may be folded after confirm.
+      await contract.screenshot("guide-order");
+      const tables = page.locator("table"); // page-wide: the frozen table may sit outside the heading's wrapper after confirm
+      await expect(page.getByText(text(lang, "ordering.po.loading"), { exact: true }), "ordering.po.guide-order: panel reloaded").toHaveCount(0, { timeout: 20000 });
+      await expect(tables.first(), "ordering.po.guide-order: frozen table rendered").toBeAttached({ timeout: 20000 });
+      let renderedRows: string[] = [];
+      for (let i = 0; i < await tables.count(); i++) {
+        const rows = (await tables.nth(i).getByRole("row").allTextContents()).map(t => t.replace(/\s+/g, " ").trim()).filter(t => t.length > 0);
+        if (rows.some(r => expectedRowOrder.some(name => r.includes(name)))) { renderedRows = rows; break; }
+      }
+      const firstRowWith = (name: string) => renderedRows.findIndex(r => r.includes(name));
+      const bodyPositions = expectedRowOrder.map(firstRowWith);
+      expect(bodyPositions.every(i => i >= 0), `ordering.po.guide-order: every header and line rendered (tables=${await tables.count()} rows=${JSON.stringify(renderedRows)} pageText=${JSON.stringify((await page.locator("body").textContent() ?? "").replace(/\s+/g, " ").slice(0, 600))})`).toBe(true);
+      expect([...bodyPositions].sort((a, b) => a - b), "ordering.po.guide-order: header before lines, sections in order").toEqual(bodyPositions);
       mark("ordering.po.manual");
       await poButton("ordering.po.mark_placed").click();
       // PlaceDialog is a sibling of the content wrapper inside THIS PoPanel.

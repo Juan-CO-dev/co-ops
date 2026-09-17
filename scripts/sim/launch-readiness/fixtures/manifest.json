@@ -1,5 +1,5 @@
 {
-  "expectedTableCount": 143,
+  "expectedTableCount": 146,
   "inventory": {
     "CONFIG": [
       "locations",
@@ -148,7 +148,10 @@
       "audit_log",
       "deep_clean_assignments",
       "opening_phase1_drafts",
-      "stripe_events"
+      "stripe_events",
+      "vendor_order_guides",
+      "order_guide_sections",
+      "order_guide_lines"
     ]
   },
   "blocked": [],

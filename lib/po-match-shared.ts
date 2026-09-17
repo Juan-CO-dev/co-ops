@@ -120,7 +120,7 @@ function fin(v: number | null | undefined): number | null {
 }
 
 /** Trim + lowercase for case-insensitive key/name comparison; empty → null. */
-function norm(s: string | null | undefined): string | null {
+export function norm(s: string | null | undefined): string | null {
   if (typeof s !== "string") return null;
   const t = s.trim().toLowerCase();
   return t.length > 0 ? t : null;
