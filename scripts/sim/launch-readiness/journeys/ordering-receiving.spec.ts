@@ -118,7 +118,7 @@ for (const [code, khAlias, employeeAlias] of [["EM", "rosa", "maya"], ["MEP", "a
       for (const l of snapLines) {
         expect({ position: l.guide_position_snapshot, section: l.guide_section_snapshot }, `ordering.po.guide-order: snapshot for ${l.sku_id}`).toEqual(expectedGuideKey.get(l.sku_id) ?? { position: null, section: null });
       }
-      const frozen = (po.confirmed_snapshot as { lines: { skuId: string; guideSection: string | null }[] }).lines;
+      const frozen = (po.confirmed_snapshot as unknown as { lines: { skuId: string; guideSection: string | null }[] }).lines;
       for (const l of frozen) expect(l.guideSection, "ordering.po.guide-order: confirmed snapshot carries the section").toBe(expectedGuideKey.get(l.skuId)?.section ?? null);
       // The panel renders the frozen table in guide order: Extras header, its line, Deli header, its lines (by position).
       const expectedRowOrder = ["Extras", ...firstSection.map(x => x.name), ...(secondSection.length ? ["Deli", ...secondSection.map(x => x.name)] : [])];
