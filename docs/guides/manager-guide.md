@@ -426,6 +426,7 @@ Do this at the door, while the driver is still there. Key holder and up.
 - **The blank "New item" card at the top is a placeholder, not a line.** It has no product attached, and it is thrown away on submit — see step 5.
 - "SKU" here means one exact thing from one vendor: their pack, their size, their item number. Two vendors' mozzarella are two different lines.
 - A line only survives submit if it names an item **and** has a quantity above zero — see step 5 before you type into the blank card.
+- **Scan a case label to jump to its line.** Tap **Scan** for the phone camera, or use a Bluetooth scanner; the first time the app sees a code it asks which item it is and remembers. Scanning is optional — picking from the list always works the same.
 
 ### 3. Enter the line
 

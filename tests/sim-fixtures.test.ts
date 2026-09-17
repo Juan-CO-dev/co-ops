@@ -59,8 +59,8 @@ describe("F2 pure fixtures", () => {
     expect(() => resolveHandle({ ...snapshot, vendor_items: [...snapshot.vendor_items, ...snapshot.vendor_items] }, handle)).toThrow(/exactly once/);
     expect(() => resolveHandle({ ...snapshot, vendors: [...snapshot.vendors, ...snapshot.vendors] }, handle)).toThrow(/exactly once/);
   });
-  it("classifies the authoritative table set (expectedTableCount, 146 since 0205) without overlaps", () => {
-    expect(catalog.expectedTableCount).toBe(146);
+  it("classifies the authoritative table set (expectedTableCount, 147 since 0206) without overlaps", () => {
+    expect(catalog.expectedTableCount).toBe(147);
     expect(new Set(Object.values(catalog.inventory).flat()).size).toBe(catalog.expectedTableCount);
     expect(catalog.inventory.HISTORY).toContain("deep_clean_assignments");
     expect(catalog.blocked).toEqual([]);
@@ -154,7 +154,7 @@ describe("F2 schema-derived restore plan", () => {
     const real = JSON.parse(readFileSync(resolve(dir, "schema-meta.json"), "utf8")) as SchemaMeta;
     const manifest = loadSnapshotManifest(dir), snapshot = loadSnapshot(dir, manifest);
     expect(classifyTables(manifest, catalog.inventory, catalog.expectedTableCount).size).toBe(catalog.expectedTableCount);
-    expect(real.foreign_keys).toHaveLength(380);
+    expect(real.foreign_keys).toHaveLength(382);
     const before = canonical(snapshot), plan = planConfig(real, catalog.inventory, snapshot);
     expect(plan.deleteOrder).toHaveLength(catalog.expectedTableCount);
     expect(plan.loadOrder).toHaveLength(56);

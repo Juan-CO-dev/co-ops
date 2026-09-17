@@ -1,5 +1,5 @@
 {
-  "expectedTableCount": 146,
+  "expectedTableCount": 147,
   "inventory": {
     "CONFIG": [
       "locations",
@@ -151,7 +151,8 @@
       "stripe_events",
       "vendor_order_guides",
       "order_guide_sections",
-      "order_guide_lines"
+      "order_guide_lines",
+      "sku_barcodes"
     ]
   },
   "blocked": [],

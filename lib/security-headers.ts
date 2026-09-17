@@ -119,17 +119,18 @@ export interface SecurityHeader {
  *
  * HSTS is two years with includeSubDomains and preload — the app is
  * HTTPS-only on Vercel and has no plaintext host to strand.
- * Permissions-Policy denies camera, microphone and geolocation outright:
- * verified by grep that the app calls none of them (the delivery map takes a
- * DRAGGED pin, never the device's position), so this costs nothing and closes
- * the surface for any embedded third party.
+ * Permissions-Policy grants `camera` to the app's OWN origin only — the one
+ * consumer is the receiving-door barcode scanner (components/receiving/ScanField.tsx,
+ * V3-B), and nothing else calls getUserMedia — and still denies microphone and
+ * geolocation outright (the delivery map takes a DRAGGED pin, never the device's
+ * position). `(self)` keeps the surface closed to any embedded third party.
  */
 export const SECURITY_HEADERS: readonly SecurityHeader[] = [
   { key: "Strict-Transport-Security", value: "max-age=63072000; includeSubDomains; preload" },
   { key: "X-Content-Type-Options", value: "nosniff" },
   { key: "X-Frame-Options", value: "DENY" },
   { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
-  { key: "Permissions-Policy", value: "camera=(), microphone=(), geolocation=()" },
+  { key: "Permissions-Policy", value: "camera=(self), microphone=(), geolocation=()" },
   {
     // REPORT-ONLY. See the module header — do not rename this to the enforcing
     // header without violation data to back the flip.
