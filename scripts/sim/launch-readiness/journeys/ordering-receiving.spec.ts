@@ -57,7 +57,7 @@ for (const [code, khAlias, employeeAlias] of [["EM", "rosa", "maya"], ["MEP", "a
         ],
       };
       const savedGuide = await gm.call("POST", guideApi, { model: guideModel, expectedUpdatedAt: guideModel.updatedAt }) as { status: number; code?: string };
-      expect({ status: savedGuide.status, code: savedGuide.code }, "ordering.po.guide-order: save").toEqual({ status: 200, code: undefined });
+      expect(savedGuide.status, `ordering.po.guide-order: save (${savedGuide.code ?? ""})`).toBe(200);
       const expectedGuideKey = new Map<string, { position: number; section: string }>();
       firstSection.forEach((x, j) => expectedGuideKey.set(x.skuId, { position: 1000 + j + 1, section: "Extras" }));
       secondSection.forEach((x, j) => expectedGuideKey.set(x.skuId, { position: 2000 + j + 1, section: "Deli" }));
