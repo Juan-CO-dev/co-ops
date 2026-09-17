@@ -348,15 +348,6 @@ async function insert(sb: SupabaseClient, table: string, row: RawRow): Promise<v
   const { error } = await sb.from(table).insert(row);
   if (error) throw new Error(`${table}: INSERT failed (${error.code ?? "unknown"} ${error.message}); stop and reconcile`);
 }
-async function update(sb: SupabaseClient, table: string, before: RawRow, values: RawRow): Promise<void> {
-  let q = sb.from(table).update(values, { count: "exact" }).eq("id", before.id);
-  for (const [key, value] of Object.entries(before)) {
-    if (key === "id" || typeof value === "object" && value !== null) continue;
-    q = value == null ? q.is(key, null) : q.eq(key, value);
-  }
-  const { error, count } = await q;
-  if (error || count !== 1) throw new Error(`${table}: guarded UPDATE failed or matched ${count ?? "unknown"} rows`);
-}
 async function record(sb: SupabaseClient, action: AuditAction, table: string, id: string, p: Plan, extra: RawRow = {}): Promise<void> {
   const { audit } = await import("@/lib/audit");
   const operation = randomUUID();
@@ -381,41 +372,26 @@ async function apply(sb: SupabaseClient, p: Plan): Promise<void> {
     await record(sb, "vendor.order_guide.seeded", "vendor_order_guides", guideId, p, { vendor_id: p.vendorId, guide_id: guideId, creation_method: "seed_script" });
     return;
   }
-  const rematchRows = (p.expected.rematchRows ?? []) as RawRow[];
-  for (const [i, row] of rematchRows.entries()) {
-    const target = p.rematch[i]!;
-    if (str(row.id) !== target.lineId) throw new Error(`${p.vendor}: rematch row/id mismatch; stop and reconcile`);
-    await update(sb, "order_guide_lines", row, { sku_id: target.skuId });
-  }
-  const sectionsById = new Map(((p.expected.guideSections ?? []) as { id: string; name: string; position: number }[]).map(s => [s.id, s]));
-  const sectionIdByName = new Map([...sectionsById.values()].map(s => [s.name, s.id]));
-  const nextLinePosition = new Map<string, number>();
-  for (const l of (p.expected.guideLines ?? []) as { id: string; sectionId: string; position: number }[]) {
-    nextLinePosition.set(l.sectionId, Math.max(nextLinePosition.get(l.sectionId) ?? 0, l.position + 1));
-  }
-  let sectionPosition = Math.max(0, ...[...sectionsById.values()].map(s => s.position)) + 1;
-  for (const entry of p.append) {
-    let sectionId = sectionIdByName.get(entry.sectionName);
-    if (!sectionId) {
-      sectionId = randomUUID();
-      await insert(sb, "order_guide_sections", { id: sectionId, guide_id: existingId, name: entry.sectionName, position: sectionPosition++ });
-      sectionIdByName.set(entry.sectionName, sectionId);
-    }
-    const position = nextLinePosition.get(sectionId) ?? 1;
-    nextLinePosition.set(sectionId, position + 1);
-    await insert(sb, "order_guide_lines", { id: randomUUID(), section_id: sectionId, position, sku_id: entry.line.skuId, label: entry.line.label, item_number: entry.line.itemNumber, note: null });
-  }
-  // THE RERUN ADVANCES THE EDITOR'S TOKEN (Astra finding 3, BC-007). A rematch or an append
-  // changes what the admin panel is looking at, and `vendor_order_guides.updated_at` is the
-  // token that panel holds. Leaving it untouched let a manager who had the guide open save an
-  // unrelated reorder against a stale model — clearing the re-match, deleting the appended
-  // line — with no concurrent request and no error. Guarded on the token we planned against,
-  // so a guide edited mid-run refuses here rather than silently losing the manager's work.
-  const expectedUpdatedAt = p.expected.guideUpdatedAt == null ? null : String(p.expected.guideUpdatedAt);
-  let bump = sb.from("vendor_order_guides").update({ updated_at: new Date().toISOString() }, { count: "exact" }).eq("id", existingId);
-  bump = expectedUpdatedAt == null ? bump.is("updated_at", null) : bump.eq("updated_at", expectedUpdatedAt);
-  const { error: bumpErr, count: bumpCount } = await bump;
-  if (bumpErr || bumpCount !== 1) throw new Error(`vendor_order_guides: guarded updated_at bump failed or matched ${bumpCount ?? "unknown"} rows; stop and reconcile`);
+  // A RERUN IS ONE TRANSACTION, BEHIND THE GUIDE'S OWN LOCK (Astra r2-1, BC-007; migration
+  // 0208). Every rematch and every append used to commit on its own, and the guarded token
+  // bump ran only afterwards — so a manager saving MID-RERUN won: the re-match was cleared or
+  // the appended line deleted, the manager was told "Saved", and the seed learned the token
+  // was stale AFTER the loss, with nothing rolled back. A failure halfway through left
+  // committed rows behind an unadvanced token. `rerun_order_guide` takes the same
+  // `for update` lock the admin editor takes, refuses a stale token BEFORE writing anything,
+  // and advances the token in the same transaction as the writes. Nothing here writes rows.
+  //
+  // The RPC's own rule is the idempotency rule (spec §5 rule 4): it fills a line only while
+  // `sku_id is null`, so a line a manager resolved by hand is `rematch_conflict`, never
+  // overwritten. Appends land dense at the end of their section, and a section the laminate
+  // grew since the last run is created LAST, never among the manager's own.
+  const { error: rerunErr } = await sb.rpc("rerun_order_guide", {
+    p_guide_id: existingId,
+    p_expected_updated_at: p.expected.guideUpdatedAt == null ? null : String(p.expected.guideUpdatedAt),
+    p_rematches: p.rematch.map(r => ({ lineId: r.lineId, skuId: r.skuId })),
+    p_appends: p.append.map(a => ({ sectionName: a.sectionName, label: a.line.label, itemNumber: a.line.itemNumber, skuId: a.line.skuId })),
+  });
+  if (rerunErr) throw new Error(`${p.vendor}: rerun_order_guide refused (${rerunErr.message}); nothing was written, stop and reconcile`);
   await record(sb, "vendor.order_guide.seeded", "vendor_order_guides", existingId, p, { vendor_id: p.vendorId, guide_id: existingId, creation_method: "seed_script_rerun" });
 }
 

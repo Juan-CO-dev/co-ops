@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { planOrderGuides, routeRow, SECTION_NAMES, SOURCE, verifyWriteScope, type Plan, type Tables } from "@/scripts/seed/37-order-guides";
 
@@ -122,5 +123,50 @@ describe("verifyWriteScope — the rerun's token bump", () => {
     const sku = clone(guides());
     sku.vendor_items[0]!.name = "Arugula (new pack)";
     expect(() => verifyWriteScope(guides(), sku, plan())).toThrow(/vendor_items/);
+  });
+});
+
+/**
+ * Astra r2-1 (BC-007). The token bump closed the concurrency window at the END of a rerun;
+ * every rematch and every append still committed on its own before it, so a manager saving
+ * MID-rerun won and the seed only learned it had lost afterwards, with nothing rolled back.
+ * The rerun is now ONE call to the 0208 RPC, behind the same guide lock the editor takes —
+ * which is only true as long as no direct row write survives in that path.
+ */
+describe("the seed's rerun path writes through rerun_order_guide and nothing else", () => {
+  const src = readFileSync("scripts/seed/37-order-guides.ts", "utf8");
+  const apply = src.slice(src.indexOf("async function apply("), src.indexOf("async function verifyAudits("));
+  // The fresh-guide branch ends at its own audit call; everything after it IS the rerun path.
+  const BOUNDARY = 'creation_method: "seed_script"';
+  const rerun = apply.slice(apply.indexOf(BOUNDARY) + BOUNDARY.length);
+
+  it("calls the RPC once, with the guide id and the token the plan was built against", () => {
+    expect(rerun).toContain('sb.rpc("rerun_order_guide"');
+    expect(rerun).toContain("p_guide_id: existingId");
+    expect(rerun).toContain("p_expected_updated_at: p.expected.guideUpdatedAt");
+    expect(rerun).toContain("p_rematches:");
+    expect(rerun).toContain("p_appends:");
+  });
+
+  it("refuses to continue when the RPC refuses — nothing was written, so nothing is reconciled", () => {
+    expect(rerun).toMatch(/if \(rerunErr\) throw new Error/);
+  });
+
+  it("has no direct row write left in it: no insert, no update, no table handle", () => {
+    expect(rerun).not.toContain("insert(sb,");
+    expect(rerun).not.toContain('sb.from("order_guide_lines")');
+    expect(rerun).not.toContain('sb.from("order_guide_sections")');
+    expect(rerun).not.toContain('sb.from("vendor_order_guides")');
+    expect(rerun).not.toContain(".update(");
+  });
+
+  it("the guarded-UPDATE helper is gone with its only caller", () => {
+    expect(src).not.toContain("async function update(");
+  });
+
+  it("the fresh-guide branch still inserts directly (a guide nobody can be holding open)", () => {
+    const fresh = apply.slice(0, apply.indexOf(BOUNDARY));
+    expect(fresh).toContain('insert(sb, "vendor_order_guides"');
+    expect(fresh).toContain('insert(sb, "order_guide_lines"');
   });
 });
