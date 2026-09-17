@@ -855,7 +855,11 @@ export function ReceivingForm({
     }
     // The delivery this code was scanned onto is over — its row and its button are gone.
     if (!stillThisIntake(token, boundVendor)) return;
-    setIntake((prev) => forgetScannedCodeAt(prev, key));
+    // ONLY THE CODE THIS REQUEST FORGOT (Astra r5). A forget is a round-trip, and a scan can
+    // land on the same row while it is out; clearing whatever the row holds NOW would drop
+    // the newer code's attribution even though the server only forgot the older one, leaving
+    // the new code taught but unforgettable from this screen.
+    setIntake((prev) => forgetScannedCodeAt(prev, key, remembered));
     setScanNotice(t("receiving.scan.forgotten"));
   };
 

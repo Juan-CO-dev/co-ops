@@ -669,6 +669,43 @@ describe("applyScanToIntake — one transition for the count and its code", () =
     });
   });
 
+  // Astra r5. A forget is a round-trip; a scan can land on the same row while it is out.
+  it("a forget in flight for code A does NOT clear code B that arrived on the row meanwhile", () => {
+    const state: IntakeScanState<Line> = {
+      lines: [line({ key: "k1" })],
+      scanned: { k1: { code: "AAA", level: "case" } },
+    };
+    const captured = state.scanned.k1; // what the request set out to forget
+    // B is scanned onto the same row before A's answer lands.
+    const withB = applyScanToIntake(state, {
+      skuId: "sku-a", levelLabel: "Case", level: "case", code: "BBB", newLine: null, lineKey: null,
+    });
+    expect(withB.scanned.k1).toEqual({ code: "BBB", level: "case" });
+
+    const afterAnswer = forgetScannedCodeAt(withB, "k1", captured);
+    expect(afterAnswer).toBe(withB); // B stays forgettable; only A was forgotten server-side
+    expect(afterAnswer.scanned.k1).toEqual({ code: "BBB", level: "case" });
+  });
+
+  it("the same code re-attributed at a DIFFERENT level is also left alone", () => {
+    const state: IntakeScanState<Line> = {
+      lines: [line({ key: "k1" })],
+      scanned: { k1: { code: "AAA", level: "inner" } },
+    };
+    expect(forgetScannedCodeAt(state, "k1", { code: "AAA", level: "case" })).toBe(state);
+  });
+
+  it("clears when the row still carries exactly the code the request forgot", () => {
+    const state: IntakeScanState<Line> = {
+      lines: [line({ key: "k1" }), line({ key: "k2", skuId: "sku-b" })],
+      scanned: { k1: { code: "AAA", level: "case" }, k2: { code: "BBB", level: "inner" } },
+    };
+    // A fresh object with the same values — the state is rebuilt on every transition, so the
+    // guard has to compare by VALUE, never by identity.
+    const after = forgetScannedCodeAt(state, "k1", { code: "AAA", level: "case" });
+    expect(after.scanned).toEqual({ k2: { code: "BBB", level: "inner" } });
+  });
+
   it("forgetScannedCodeAt clears one row's code and leaves the rest alone", () => {
     const state: IntakeScanState<Line> = {
       lines: [line({ key: "k1" }), line({ key: "k2", skuId: "sku-b" })],

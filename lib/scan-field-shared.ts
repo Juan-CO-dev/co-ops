@@ -428,12 +428,28 @@ export function applyScanToIntake<L extends ScanStepLine>(
   return { lines: next.lines, scanned };
 }
 
-/** Forget the code remembered against one row, leaving every other row's alone. */
+/**
+ * Forget the code remembered against one row, leaving every other row's alone.
+ *
+ * `expected` is the attribution the CALLER set out to remove, and the removal happens only
+ * if that is still what the row carries (Astra r5). A forget is a network round-trip: tap
+ * "Forget this code" on a row holding code A, scan code B onto the same row while the
+ * request is out, and the answer used to clear B's attribution even though only A was
+ * forgotten on the server — B became unforgettable, and the row's button pointed at nothing.
+ * Comparing by VALUE, not identity, because the state object is rebuilt on every transition.
+ *
+ * Omit `expected` to clear unconditionally. Nothing to do = the SAME state object comes back.
+ */
 export function forgetScannedCodeAt<L extends ScanStepLine>(
   state: IntakeScanState<L>,
   key: string,
+  expected?: ScannedCode,
 ): IntakeScanState<L> {
-  if (state.scanned[key] === undefined) return state;
+  const current = state.scanned[key];
+  if (current === undefined) return state;
+  if (expected !== undefined && (current.code !== expected.code || current.level !== expected.level)) {
+    return state;
+  }
   const scanned = { ...state.scanned };
   delete scanned[key];
   return { lines: state.lines, scanned };
