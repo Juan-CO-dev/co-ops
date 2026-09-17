@@ -1,5 +1,5 @@
 /**
- * lib/order-guide-edit.ts — the vendor order guide's MODEL + PURE edit reducer (V3-A §6).
+ * lib/order-guides-shared.ts — the vendor order guide's MODEL + PURE edit reducer (V3-A §6).
  *
  * WHY THIS IS ITS OWN FILE. `lib/order-guides.ts` is the DB layer, and it imports
  * `lib/supabase-server.ts`, which carries `import "server-only"` — so a client component
