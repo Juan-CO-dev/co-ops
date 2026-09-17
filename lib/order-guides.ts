@@ -86,6 +86,43 @@ export async function guideKeysFor(skuIds: readonly string[]): Promise<Map<strin
 export const ORDER_GUIDE_EDIT_MIN = 7; // GM+
 
 /**
+ * Start a guide for a vendor that has none — the admin panel's only creation path (§6).
+ *
+ * Deliberately EMPTY, not pre-filled from the vendor's SKUs: seed 37 is what turns a
+ * laminated sheet into rows, and a starter guide it authors carries `[seed-37 starter]`.
+ * A guide made here is a manager saying "I have this vendor's sheet in front of me", so the
+ * `source_note` names the human, and the first section is theirs to add.
+ *
+ * `unique (vendor_id)` is the real fence; the pre-read is the READABLE error (409 `exists`)
+ * rather than a raw constraint message. The audit row carries `before: null` — the shape
+ * saveOrderGuide writes, so the two halves of "how did this guide get this way?" read the same.
+ */
+export async function createEmptyGuide(actor: AuthContext, vendorId: string): Promise<GuideModel> {
+  const sb = getServiceRoleClient();
+  const existing = await loadOrderGuide(vendorId);
+  if (existing) throw new OrderGuideError(409, "exists", "This vendor already has an order guide");
+
+  const { data: vendor, error: vErr } = await sb.from("vendors").select("name").eq("id", vendorId).maybeSingle<{ name: string }>();
+  if (vErr) throw new Error(`createEmptyGuide vendor: ${vErr.message}`);
+  if (!vendor) throw new OrderGuideError(404, "vendor_not_found", "No such vendor");
+
+  const { data: inserted, error } = await sb
+    .from("vendor_order_guides")
+    .insert({ vendor_id: vendorId, name: `${vendor.name} — guide`, source_note: `[admin] created by ${actor.user.name}` })
+    .select("id")
+    .single<{ id: string }>();
+  if (error || !inserted) throw new Error(`createEmptyGuide: ${error?.message ?? "insert returned no row"}`);
+
+  await audit({
+    actorId: actor.user.id, actorRole: actor.user.role, action: "vendor.order_guide.edited",
+    resourceTable: "vendor_order_guides", resourceId: inserted.id,
+    metadata: { vendor_id: vendorId, before: null, after: { name: `${vendor.name} — guide`, sections: [] } },
+    ipAddress: null, userAgent: null,
+  });
+  return (await loadOrderGuide(vendorId))!;
+}
+
+/**
  * Persist a whole model (already reduced client-side or here). Precondition: `expectedUpdatedAt`
  * equals the stored updated_at, else 409 guide_stale. Writes: upsert sections/lines by id,
  * delete rows absent from the model, bump updated_at, audit full before/after.

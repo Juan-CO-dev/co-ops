@@ -24,7 +24,9 @@ import { skuPackComplete, skuReadiness, type Readiness } from "@/lib/readiness";
 import { loadSkuPackChains } from "@/lib/prep-consumption";
 import { buildPackChain, isChainUnverified, type PackChainLevel } from "@/lib/pack-chain-shared";
 import type { MeasureUnitFactor } from "@/lib/recipe-math";
+import { loadOrderGuide, ORDER_GUIDE_EDIT_MIN } from "@/lib/order-guides";
 import { VendorDetailClient } from "@/components/admin/vendors/VendorDetailClient";
+import { OrderGuidePanel } from "@/components/admin/vendors/OrderGuidePanel";
 import { PageHeader } from "@/components/ui/PageHeader";
 
 export default async function AdminVendorDetailPage({
@@ -56,6 +58,11 @@ export default async function AdminVendorDetailPage({
     rhythmSkips,
     rhythmReady,
     parsReady,
+    // V3-A §6 — the vendor's order guide, and the vendor's active SKUs (the panel's
+    // "not on the guide" bucket is derived from these two together, exactly as the
+    // route's GET derives it, so a refresh and a save agree).
+    orderGuide,
+    guideSkuRes,
   ] = await Promise.all([
     getVendor(auth, id),
     loadCategories(auth),
@@ -70,8 +77,17 @@ export default async function AdminVendorDetailPage({
     loadVendorRhythmSkips(id),
     rhythmSchemaReady(sb),
     parsColumnsReady(),
+    loadOrderGuide(id),
+    sb.from("vendor_items").select("id, name, item_number").eq("vendor_id", id).eq("active", true).order("name"),
   ]);
   if (!vendor) notFound();
+
+  const guidePlaced = new Set<string>();
+  for (const s of orderGuide?.sections ?? []) for (const l of s.lines) if (l.skuId) guidePlaced.add(l.skuId);
+  const guideSkuRows = (guideSkuRes.data ?? []) as Array<{ id: string; name: string; item_number: string | null }>;
+  const skusNotOnGuide = guideSkuRows
+    .filter((r) => !guidePlaced.has(r.id))
+    .map((r) => ({ skuId: r.id, name: r.name, itemNumber: r.item_number }));
   const skuLocations = (locRes.data ?? []).map((r) => ({
     id: (r as { id: string }).id,
     name: (r as { name: string }).name,
@@ -182,6 +198,15 @@ export default async function AdminVendorDetailPage({
         skuProductIdBySku={productIdBySku}
         parsFieldsReady={parsReady}
         actorLevel={level}
+      />
+      {/* Order guide (V3-A §6) — the vendor's own sheet order, which every PO surface
+          follows. A sibling of the detail editor rather than a card inside it: the guide
+          belongs to the vendor, not to any one of the editor's role-gated concerns. */}
+      <OrderGuidePanel
+        vendorId={vendor.id}
+        vendorName={vendor.name}
+        initial={{ guide: orderGuide, skusNotOnGuide }}
+        canEdit={level >= ORDER_GUIDE_EDIT_MIN}
       />
     </div>
   );
