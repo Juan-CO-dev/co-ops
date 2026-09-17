@@ -97,10 +97,10 @@ import { formatTime } from "@/lib/i18n/format";
 import { ActionButton, actionButtonClass } from "@/components/ActionButton";
 import { PhotoCapture } from "@/components/photos/PhotoCapture";
 import { IntakeLineRow, type IntakeLine } from "@/components/receiving/IntakeLineRow";
-import { ScanField } from "@/components/receiving/ScanField";
+import { ScanField, type ScanFieldEvent } from "@/components/receiving/ScanField";
 import { CollapsibleSection } from "@/components/ui/CollapsibleSection";
 import type { ReceivingFormData, ReceivingSkuOption } from "@/lib/receiving";
-import type { Level, ScanMatch } from "@/lib/barcodes-shared";
+import type { Level } from "@/lib/barcodes-shared";
 import { applyScanToLines, levelLabelFor } from "@/lib/scan-field-shared";
 import type { OpenCreditRow } from "@/lib/credits";
 import {
@@ -136,6 +136,28 @@ interface TemplateResponse {
 
 let keySeq = 0;
 const nextKey = () => `l${keySeq++}`;
+
+/**
+ * ONE SCAN EVENT'S WORKFLOW, IN FLIGHT (Astra r3 item 2).
+ *
+ * `stage` is which question is on screen: the twin offer, the teach 409's level confirm, or
+ * the add-item picker waiting for a "Not on this delivery" code. `eventId` is what the form
+ * hands back to `ScanField` when the workflow ends — and `token` is the intake generation it
+ * belongs to, so a confirm from a truck that has left renders nothing and writes nothing.
+ */
+interface ActiveScan {
+  eventId: number;
+  token: number;
+  code: string;
+  stage: "twin" | "level" | "picker";
+  /** The SKU under offer (twin) or being taught (level). Empty for the picker stage. */
+  skuId: string;
+  level: Level;
+  /** The level the code is ALREADY taught at — the 409's other half. */
+  storedLevel: Level;
+  /** The row the receiver actually picked, carried THROUGH the 409 (Astra r2 item 5). */
+  lineKey: string | null;
+}
 
 /**
  * V3-B: every scan request — lookup, teach, forget — is bounded at 4 s (spec §7, and Astra
@@ -381,27 +403,24 @@ export function ReceivingForm({
   //   `scannedCodes` remembers, per LINE KEY, which code reached that row this session —
   //     the only thing that can offer "Forget this code" on the right row (the same SKU
   //     may legitimately sit on two rows, so the key, never the skuId).
-  //   `twinPending` / `levelPending` are the two one-sentence confirms. Both are INLINE
-  //     state in the form's own notice idiom — never window.confirm, which is unstyled,
-  //     untranslated, and unusable one-handed at a truck.
-  //   `pendingTeach` is a "Not on this delivery" scan waiting for the Add-item picker: the
-  //     next pick teaches the code onto whatever SKU the receiver chooses.
+  //   `activeScan` is THE WORKFLOW THIS FORM IS CURRENTLY EXECUTING for one scan event —
+  //     the twin confirm, the teach 409 level confirm, or a "Not on this delivery" code
+  //     waiting for the Add-item picker. It was three independent slots until Astra's third
+  //     pass (r3 item 2): a second scan overwrote the first mid-confirmation and the first
+  //     scan then counted ZERO units. ONE slot is now provably safe, because `ScanField`
+  //     hands over the head of its queue and does not hand over the next one until this
+  //     form calls `resolveScanRef.current(eventId)` — which it does EXACTLY ONCE per event,
+  //     whether the workflow ended in a count, a cancel or a dismissal.
+  //     Still INLINE state in the form's own notice idiom — never window.confirm, which is
+  //     unstyled, untranslated, and unusable one-handed at a truck.
   const [scannedCodes, setScannedCodes] = useState<Record<string, { code: string; level: Level }>>({});
   //   EVERY PENDING CONFIRM CARRIES ITS INTAKE GENERATION (Astra r2 item 1). A sheet is a
   //   question about a truck; when the truck changes the question retires with it, and the
   //   render guard below is what makes that true even for a confirm that was opened by a
   //   response still in flight at the moment the receiver switched.
-  const [twinPending, setTwinPending] = useState<{ skuId: string; level: Level; code: string; token: number } | null>(null);
-  const [levelPending, setLevelPending] = useState<{
-    code: string;
-    skuId: string;
-    level: Level;
-    storedLevel: Level;
-    /** The row the receiver actually picked, carried THROUGH the 409 (Astra r2 item 5). */
-    lineKey: string | null;
-    token: number;
-  } | null>(null);
-  const [pendingTeach, setPendingTeach] = useState<{ code: string; level: Level; token: number } | null>(null);
+  const [activeScan, setActiveScan] = useState<ActiveScan | null>(null);
+  /** Filled in by ScanField: the ONLY way this form can advance the scan queue. */
+  const resolveScanRef = useRef<(id: number) => void>(() => undefined);
   const [scanNotice, setScanNotice] = useState<string | null>(null);
 
   // THE INTAKE GENERATION (Astra finding 4). Scanning is the only part of this form that
@@ -665,11 +684,15 @@ export function ReceivingForm({
     confirmLevelChange: boolean,
     lineKey: string | null,
     token: number,
+    eventId: number,
   ) => {
     const boundVendor = vendorId;
     // The generation is checked BEFORE the request too: a tap on a confirm that belongs to a
     // truck which has since left must not even reach the server as this intake's act.
-    if (!stillThisIntake(token, boundVendor)) return;
+    if (!stillThisIntake(token, boundVendor)) {
+      finishScan(eventId);
+      return;
+    }
     let outcome: "created" | "known" | "failed" = "failed";
     try {
       const res = await scanPost("/api/operations/receiving/scan/teach", {
@@ -684,12 +707,20 @@ export function ReceivingForm({
       // The body is already read (see `scanPost`), so this ONE check covers the whole
       // round-trip — headers and body — and nothing below it can resurrect a dead intake's
       // confirmation sheet (Astra r2 item 2).
-      if (!stillThisIntake(token, boundVendor)) return;
+      if (!stillThisIntake(token, boundVendor)) {
+        finishScan(eventId);
+        return;
+      }
       if (res.status === 409 && !confirmLevelChange) {
         const j = res.body as { code?: string; storedLevel?: Level };
         if (j.code === "level_differs") {
-          setLevelPending({
+          // The event STAYS OPEN — this workflow is not over, it has only asked a question,
+          // and the queue behind it must keep waiting (Astra r3 item 2).
+          setActiveScan({
+            eventId,
+            token,
             code,
+            stage: "level",
             skuId,
             level,
             storedLevel: j.storedLevel === "inner" ? "inner" : "case",
@@ -697,7 +728,6 @@ export function ReceivingForm({
             // the answer back through the automatic matcher, which steps the FIRST row of
             // the SKU — so picking the second of two rows counted the first one.
             lineKey,
-            token,
           });
           return;
         }
@@ -710,7 +740,10 @@ export function ReceivingForm({
       // says only that the code was not remembered.
       outcome = "failed";
     }
-    if (!stillThisIntake(token, boundVendor)) return;
+    if (!stillThisIntake(token, boundVendor)) {
+      finishScan(eventId);
+      return;
+    }
     applyScan(skuId, level, code, lineKey);
     setScanNotice(
       outcome === "created"
@@ -719,41 +752,68 @@ export function ReceivingForm({
           ? t("receiving.scan.not_remembered")
           : null,
     );
+    finishScan(eventId);
   };
 
   /**
+   * THIS SCAN IS DONE. Exactly one call per event, from every path a workflow can end on —
+   * a count, a cancel, a dismissal, or a refusal because the truck has changed. It is what
+   * releases the next question in ScanField's queue (Astra r3 item 2).
+   */
+  const finishScan = (eventId: number) => {
+    setActiveScan(null);
+    resolveScanRef.current(eventId);
+  };
+
+  /**
+   * THE EXECUTOR. ScanField hands over the head of its queue — never a later event, and
+   * never a second one while this workflow is open — and this form carries it out.
+   *
    * THE PARENT REFUSES A DEAD GENERATION TOO (Astra r2 item 1). ScanField aborts its own
    * lookups, but an unmounted island's pending fetch is not something the child can always
    * catch in time — changing vendors sets `prefilling`, which unmounts it — so the token
-   * rides on the answer and the last word belongs to the code that owns `lines`.
+   * rides on the event and the last word belongs to the code that owns `lines`.
    */
-  const onScanMatch = (m: ScanMatch & { code: string; token: number }) => {
-    if (m.token !== intakeTokenRef.current) return;
+  const onScanEvent = (ev: ScanFieldEvent) => {
+    if (ev.token !== intakeTokenRef.current) {
+      finishScan(ev.id);
+      return;
+    }
     setScanNotice(null);
-    if (m.kind === "unknown") return;
+    const action = ev.action;
+
+    // "Not on this delivery" hands the code to the Add-item picker; the next pick teaches it.
+    if (action.kind === "not_on_delivery") {
+      setActiveScan({
+        eventId: ev.id, token: ev.token, code: ev.code, stage: "picker",
+        skuId: "", level: action.level, storedLevel: "case", lineKey: null,
+      });
+      return;
+    }
+
+    if (action.kind === "teach") {
+      const line = linesRef.current.find((l) => l.key === action.lineKey);
+      if (!line || line.skuId === "") {
+        finishScan(ev.id); // the row went away while the sheet was open
+        return;
+      }
+      void teachThenStep(ev.code, line.skuId, action.level, false, line.key, ev.token, ev.id);
+      return;
+    }
+
     // A twin is an OFFER, never an assumption: the code was taught on another vendor's
     // version of the same product, and only the receiver can say the box in their hands is
     // this vendor's. Accepting teaches it here too, so the question is asked once.
-    if (m.kind === "twin") {
-      setTwinPending({ skuId: m.skuId, level: m.level, code: m.code, token: m.token });
+    if (action.match.kind === "twin") {
+      setActiveScan({
+        eventId: ev.id, token: ev.token, code: ev.code, stage: "twin",
+        skuId: action.match.skuId, level: action.level, storedLevel: "case", lineKey: null,
+      });
       return;
     }
-    applyScan(m.skuId, m.level, m.code);
-  };
 
-  const onScanUnknownPick = (code: string, lineKey: string | null, level: Level, token: number) => {
-    if (token !== intakeTokenRef.current) return;
-    setScanNotice(null);
-    const line = lineKey === null ? undefined : linesRef.current.find((l) => l.key === lineKey);
-    if (!line || line.skuId === "") return;
-    void teachThenStep(code, line.skuId, level, false, line.key, token);
-  };
-
-  /** "Not on this delivery" hands the code to the Add-item picker; the next pick teaches it. */
-  const onScanNotOnDelivery = (code: string, level: Level, token: number) => {
-    if (token !== intakeTokenRef.current) return;
-    setScanNotice(null);
-    setPendingTeach({ code, level, token });
+    applyScan(action.match.skuId, action.level, ev.code, null);
+    finishScan(ev.id);
   };
 
   const forgetScannedCode = async (key: string) => {
@@ -788,9 +848,9 @@ export function ReceivingForm({
    *  taught against one vendor's truck must never be offered for forgetting on the next. */
   const clearScanState = () => {
     setScannedCodes({});
-    setTwinPending(null);
-    setLevelPending(null);
-    setPendingTeach(null);
+    // The workflow retires with its truck; ScanField drops the queue behind it on the same
+    // token bump, so there is nothing left to resolve.
+    setActiveScan(null);
     setScanNotice(null);
     // A new intake generation: every request still in flight against the old one is now
     // answering a question nobody is asking (Astra finding 4).
@@ -1263,9 +1323,8 @@ export function ReceivingForm({
                 disabled={busy}
                 lines={scanLines}
                 skuNameFor={skuNameFor}
-                onMatch={onScanMatch}
-                onUnknownPick={onScanUnknownPick}
-                onNotOnDelivery={onScanNotOnDelivery}
+                resolveRef={resolveScanRef}
+                onScanEvent={onScanEvent}
               />
 
               {/* The scan's one-line answer: taught, not remembered, forgotten. Advisory
@@ -1283,7 +1342,7 @@ export function ReceivingForm({
               {/* TWIN OFFER — the code was taught on another vendor's version of this
                   product. The sentence IS the button: one tap accepts and teaches it here
                   too, so the question is asked once per code and never again. */}
-              {twinPending && twinPending.token === intakeToken ? (
+              {activeScan?.stage === "twin" && activeScan.token === intakeToken ? (
                 <div
                   role="status"
                   className="mb-2.5 rounded-lg border-2 border-co-gold-deep bg-co-warning-surface px-3 py-3"
@@ -1293,20 +1352,20 @@ export function ReceivingForm({
                       type="button"
                       disabled={busy}
                       onClick={() => {
-                        const twin = twinPending;
-                        setTwinPending(null);
-                        void teachThenStep(twin.code, twin.skuId, twin.level, false, null, twin.token);
+                        const twin = activeScan;
+                        setActiveScan(null);
+                        void teachThenStep(twin.code, twin.skuId, twin.level, false, null, twin.token, twin.eventId);
                       }}
                       className="inline-flex min-h-[44px] items-center rounded-full border-2 border-co-text bg-co-surface px-4 text-sm font-bold text-co-text"
                     >
                       {t("receiving.scan.twin_confirm", {
-                        sku: skuById.get(twinPending.skuId)?.name ?? t("receiving.door.unknown_sku"),
+                        sku: skuById.get(activeScan.skuId)?.name ?? t("receiving.door.unknown_sku"),
                       })}
                     </button>
                     <button
                       type="button"
                       disabled={busy}
-                      onClick={() => setTwinPending(null)}
+                      onClick={() => finishScan(activeScan.eventId)}
                       className="inline-flex min-h-[44px] items-center rounded-full border-2 border-co-border bg-co-surface px-4 text-sm font-bold text-co-text-dim hover:border-co-text"
                     >
                       {t("common.cancel")}
@@ -1317,7 +1376,7 @@ export function ReceivingForm({
 
               {/* LEVEL CONFIRM — the same UPC really is printed on the case and on the
                   inner pack, so this ADDS the second level; nothing is ever rewritten. */}
-              {levelPending && levelPending.token === intakeToken ? (
+              {activeScan?.stage === "level" && activeScan.token === intakeToken ? (
                 <div
                   role="status"
                   className="mb-2.5 rounded-lg border-2 border-co-gold-deep bg-co-warning-surface px-3 py-3"
@@ -1327,20 +1386,23 @@ export function ReceivingForm({
                       type="button"
                       disabled={busy}
                       onClick={() => {
-                        const pending = levelPending;
-                        setLevelPending(null);
-                        void teachThenStep(pending.code, pending.skuId, pending.level, true, pending.lineKey, pending.token);
+                        const pending = activeScan;
+                        setActiveScan(null);
+                        void teachThenStep(
+                          pending.code, pending.skuId, pending.level, true,
+                          pending.lineKey, pending.token, pending.eventId,
+                        );
                       }}
                       className="inline-flex min-h-[44px] items-center rounded-full border-2 border-co-text bg-co-surface px-4 text-sm font-bold text-co-text"
                     >
                       {t("receiving.scan.level_confirm", {
                         stored: t(
-                          levelPending.storedLevel === "case"
+                          activeScan.storedLevel === "case"
                             ? "receiving.scan.level_case"
                             : "receiving.scan.level_inner",
                         ),
                         level: t(
-                          levelPending.level === "case"
+                          activeScan.level === "case"
                             ? "receiving.scan.level_case"
                             : "receiving.scan.level_inner",
                         ),
@@ -1350,13 +1412,14 @@ export function ReceivingForm({
                       type="button"
                       disabled={busy}
                       onClick={() => {
-                        const pending = levelPending;
-                        setLevelPending(null);
-                        if (pending.token !== intakeTokenRef.current) return;
+                        const pending = activeScan;
                         // Declining teaches nothing — but the case still came off the truck,
                         // so the count lands anyway — on the row the receiver PICKED, which
                         // is a no-op if that row has since been removed (r2 item 5).
-                        applyScan(pending.skuId, pending.level, null, pending.lineKey);
+                        if (pending.token === intakeTokenRef.current) {
+                          applyScan(pending.skuId, pending.level, null, pending.lineKey);
+                        }
+                        finishScan(pending.eventId);
                       }}
                       className="inline-flex min-h-[44px] items-center rounded-full border-2 border-co-border bg-co-surface px-4 text-sm font-bold text-co-text-dim hover:border-co-text"
                     >
@@ -1424,10 +1487,26 @@ export function ReceivingForm({
               {/* A scan of something that is not on this delivery lands HERE — the picker
                   the door already has, with the code waiting for whatever the receiver
                   chooses. No second search box, no new screen. */}
-              {pendingTeach && pendingTeach.token === intakeToken ? (
-                <p role="status" className="mb-2 text-[12px] font-semibold text-co-gold-text">
-                  {t("receiving.scan.unknown_title")}
-                </p>
+              {/* A WAITING CODE IS A WORKFLOW, AND IT NEEDS AN EXIT (Astra r3 item 2). Without
+                  one, a receiver who changed their mind left the head of the scan queue open
+                  forever and every later beep sat behind it unanswered. */}
+              {activeScan?.stage === "picker" && activeScan.token === intakeToken ? (
+                <div className="mb-2 flex flex-wrap items-center gap-2">
+                  <p role="status" className="text-[12px] font-semibold text-co-gold-text">
+                    {t("receiving.scan.unknown_title")}
+                  </p>
+                  <span className="break-all font-mono text-[12px] font-bold text-co-text-dim">
+                    {activeScan.code}
+                  </span>
+                  <button
+                    type="button"
+                    disabled={busy}
+                    onClick={() => finishScan(activeScan.eventId)}
+                    className="inline-flex min-h-[44px] items-center rounded-full border-2 border-co-border bg-co-surface px-4 text-sm font-bold text-co-text-dim hover:border-co-text"
+                  >
+                    {t("receiving.scan.close")}
+                  </button>
+                </div>
               ) : null}
               <AddItemPicker
                 options={vendorSkus}
@@ -1435,15 +1514,18 @@ export function ReceivingForm({
                 pickLabel={t("receiving.form.pick_sku")}
                 addLabel={t("receiving.form.add_line")}
                 onAdd={(sku) => {
-                  const pending = pendingTeach;
-                  setPendingTeach(null);
+                  const pending = activeScan?.stage === "picker" ? activeScan : null;
                   // A waiting code from a truck that has since left teaches nothing — but the
                   // tap is still a real "add this item", so it falls through rather than
                   // being swallowed (Astra r2 item 1).
                   if (pending !== null && pending.token === intakeTokenRef.current) {
-                    void teachThenStep(pending.code, sku.id, pending.level, false, null, pending.token);
+                    setActiveScan(null);
+                    void teachThenStep(
+                      pending.code, sku.id, pending.level, false, null, pending.token, pending.eventId,
+                    );
                     return;
                   }
+                  if (pending !== null) finishScan(pending.eventId);
                   setLines((ls) => [
                     ...ls,
                     { ...addedLine(), skuId: sku.id, skuName: sku.name, level: "" },
