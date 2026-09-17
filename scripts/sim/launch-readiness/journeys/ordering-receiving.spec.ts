@@ -38,12 +38,19 @@ for (const [code, khAlias, employeeAlias] of [["EM", "rosa", "maya"], ["MEP", "a
       const guideApi = `/api/admin/vendors/${vendor.vendorId}/order-guide`;
       const orderedSkus = decisions.filter(d => d.orderQty > 0).map(d => ({ skuId: d.skuId, name: d.name })).sort((a, b) => a.name.localeCompare(b.name));
       expect(orderedSkus.length, "ordering.po.guide-order: needs at least two ordered SKUs").toBeGreaterThanOrEqual(2);
-      const createdGuide = await gm.call("POST", guideApi, { create: true }) as { status: number; guide?: { guideId: string; updatedAt: string; sections: unknown[] } };
-      expect(createdGuide.status, "ordering.po.guide-order: create").toBe(201);
+      // One guide per VENDOR (not per shop): the second shop's run finds the first shop's guide (409 exists) and rewrites it.
+      type GuideJson = { guide?: { guideId: string; updatedAt: string; sections: unknown[] } | null };
+      const createAttempt = await gm.call("POST", guideApi, { create: true }) as { status: number; code?: string; json: GuideJson };
+      expect([201, 409].includes(createAttempt.status), `ordering.po.guide-order: create (${createAttempt.status} ${createAttempt.code ?? ""})`).toBe(true);
+      const createdGuide = createAttempt.status === 201
+        ? createAttempt
+        : await gm.call("GET", guideApi) as { status: number; json: GuideJson };
+      expect(createdGuide.json.guide, "ordering.po.guide-order: guide present").toBeTruthy();
+      const existingGuide = createdGuide.json.guide!;
       const firstSection = [orderedSkus[orderedSkus.length - 1]!];              // the alphabetically-last SKU leads
       const secondSection = orderedSkus.slice(0, -1);
       const guideModel = {
-        guideId: createdGuide.guide!.guideId, vendorId: vendor.vendorId, name: "Sim guide", updatedAt: createdGuide.guide!.updatedAt,
+        guideId: existingGuide.guideId, vendorId: vendor.vendorId, name: "Sim guide", updatedAt: existingGuide.updatedAt,
         sections: [
           { id: "00000000-0000-4000-8000-000000000a01", name: "Extras", position: 1, lines: firstSection.map((x, j) => ({ id: `00000000-0000-4000-8000-0000000000${(10 + j).toString(16).padStart(2, "0")}`, position: j + 1, skuId: x.skuId, label: x.name, itemNumber: null, note: null })) },
           { id: "00000000-0000-4000-8000-000000000a02", name: "Deli", position: 2, lines: secondSection.map((x, j) => ({ id: `00000000-0000-4000-8000-0000000000${(20 + j).toString(16).padStart(2, "0")}`, position: j + 1, skuId: x.skuId, label: x.name, itemNumber: null, note: null })) },
