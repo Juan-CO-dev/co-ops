@@ -132,6 +132,8 @@ for (const [code, khAlias, employeeAlias] of [["EM", "rosa", "maya"], ["MEP", "a
       // textContent (not innerText): the frozen table lives in a collapsible section that may be folded after confirm.
       await contract.screenshot("guide-order");
       const tables = page.locator("table"); // page-wide: the frozen table may sit outside the heading's wrapper after confirm
+      await expect(page.getByText(text(lang, "ordering.po.loading"), { exact: true }), "ordering.po.guide-order: panel reloaded").toHaveCount(0, { timeout: 20000 });
+      await expect(tables.first(), "ordering.po.guide-order: frozen table rendered").toBeAttached({ timeout: 20000 });
       let renderedRows: string[] = [];
       for (let i = 0; i < await tables.count(); i++) {
         const rows = (await tables.nth(i).getByRole("row").allTextContents()).map(t => t.replace(/\s+/g, " ").trim()).filter(t => t.length > 0);
