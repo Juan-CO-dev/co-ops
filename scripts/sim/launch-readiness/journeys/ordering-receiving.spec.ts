@@ -130,7 +130,8 @@ for (const [code, khAlias, employeeAlias] of [["EM", "rosa", "maya"], ["MEP", "a
       // The panel renders the frozen table in guide order: Extras header, its line, Deli header, its lines (by position).
       const expectedRowOrder = ["Extras", ...firstSection.map(x => x.name), ...(secondSection.length ? ["Deli", ...secondSection.map(x => x.name)] : [])];
       // textContent (not innerText): the frozen table lives in a collapsible section that may be folded after confirm.
-      const tables = panel.getByRole("table");
+      await contract.screenshot("guide-order");
+      const tables = page.locator("table"); // page-wide: the frozen table may sit outside the heading's wrapper after confirm
       let renderedRows: string[] = [];
       for (let i = 0; i < await tables.count(); i++) {
         const rows = (await tables.nth(i).getByRole("row").allTextContents()).map(t => t.replace(/\s+/g, " ").trim()).filter(t => t.length > 0);
@@ -138,7 +139,7 @@ for (const [code, khAlias, employeeAlias] of [["EM", "rosa", "maya"], ["MEP", "a
       }
       const firstRowWith = (name: string) => renderedRows.findIndex(r => r.includes(name));
       const bodyPositions = expectedRowOrder.map(firstRowWith);
-      expect(bodyPositions.every(i => i >= 0), `ordering.po.guide-order: every header and line rendered (${JSON.stringify(renderedRows)})`).toBe(true);
+      expect(bodyPositions.every(i => i >= 0), `ordering.po.guide-order: every header and line rendered (tables=${await tables.count()} rows=${JSON.stringify(renderedRows)} pageText=${JSON.stringify((await page.locator("body").textContent() ?? "").replace(/\s+/g, " ").slice(0, 600))})`).toBe(true);
       expect([...bodyPositions].sort((a, b) => a - b), "ordering.po.guide-order: header before lines, sections in order").toEqual(bodyPositions);
       mark("ordering.po.manual");
       await poButton("ordering.po.mark_placed").click();
