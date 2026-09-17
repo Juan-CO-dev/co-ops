@@ -30,7 +30,7 @@
  * ethos. Untrusted portal_url renders ONLY via the shared isValidHttpUrl validator.
  */
 
-import { useCallback, useEffect, useId, useMemo, useState } from "react";
+import { Fragment, useCallback, useEffect, useId, useMemo, useState } from "react";
 
 import { useTranslation } from "@/lib/i18n/provider";
 import { formatTime } from "@/lib/i18n/format";
@@ -45,6 +45,8 @@ import {
 } from "@/components/ordering/delivery-affordances";
 import { CollapsibleSection } from "@/components/ui/CollapsibleSection";
 import type { PoDetail, VendorPoSku } from "@/lib/purchase-orders";
+import { renderPoBodyText } from "@/lib/po-body";
+import { groupByGuideSection, NOT_ON_GUIDE } from "@/lib/order-guide-sort";
 import type { OrderEmailPreview } from "@/lib/po-email-shared";
 import type { ThreeWayView, ThreeWayLine, ThreeWayFlag } from "@/lib/po-match-shared";
 import type { TranslationKey } from "@/lib/i18n/types";
@@ -322,21 +324,13 @@ export function PoPanel({
   };
 
   // ── The plaintext order body (PO code first line, then shop/date, then lines) ────
+  // V3-A: ONE renderer (lib/po-body) — the copied text and the emailed text cannot diverge.
   const bodyText = useMemo(() => {
     if (!detail) return "";
-    const poLine = `${t("ordering.email.body_po", { code: detail.displayCode })}\n`;
-    const header = t("ordering.email.body_header", { shop: shopLabel, date: dateLabel });
-    const lines = detail.lines
-      .filter((l) => l.orderQty > 0)
-      .map((l) =>
-        t("ordering.email.body_line", {
-          sku: l.skuName,
-          qty: l.orderQty,
-          unit: l.orderUnitLabel ?? t("ordering.unit_generic"),
-          item: l.itemNumber ?? "—",
-        }),
-      );
-    return `${poLine}${header}\n\n${lines.join("\n")}`;
+    return renderPoBodyText({
+      displayCode: detail.displayCode, shopLabel, dateLabel,
+      lines: detail.lines.map((l) => ({ skuName: l.skuName, orderQty: l.orderQty, orderUnitLabel: l.orderUnitLabel, itemNumber: l.itemNumber, guidePosition: l.guidePositionSnapshot, guideSection: l.guideSection })),
+    }, t);
   }, [detail, shopLabel, dateLabel, t]);
 
   const subject = t("ordering.email.subject", { shop: shopLabel, date: dateLabel });
@@ -693,21 +687,13 @@ function ConfirmedView({
   const { t } = useTranslation();
   const { transmit } = detail;
 
-  // Assisted tier sorts lines by guide_position (nulls last, then name) — the vendor's guide
-  // sequence, so the manager can key the order into the vendor's own portal top-to-bottom.
-  const orderedLines = useMemo(() => {
-    const sent = detail.lines.filter((l) => l.orderQty > 0);
-    if (transmit.tier !== "assisted") return sent;
-    return [...sent].sort((a, b) => {
-      const ga = a.guidePositionSnapshot;
-      const gb = b.guidePositionSnapshot;
-      if (ga == null && gb == null) return a.skuName.localeCompare(b.skuName);
-      if (ga == null) return 1; // nulls last
-      if (gb == null) return -1;
-      if (ga !== gb) return ga - gb;
-      return a.skuName.localeCompare(b.skuName);
-    });
-  }, [detail.lines, transmit.tier]);
+  // V3-A: EVERY tier follows the vendor's order guide — lines under their section headers, in
+  // guide order, "Not on the guide" last — so the manager keys the order into the vendor's
+  // portal top-to-bottom (Juan's rule: the walk stays as it is; the order follows the guide).
+  const lineGroups = useMemo(
+    () => groupByGuideSection(detail.lines.filter((l) => l.orderQty > 0).map((l) => ({ ...l, name: l.skuName, position: l.guidePositionSnapshot, section: l.guideSection }))),
+    [detail.lines],
+  );
 
   return (
     <div className="mt-4 flex flex-col gap-4">
@@ -724,15 +710,26 @@ function ConfirmedView({
             </tr>
           </thead>
           <tbody>
-            {orderedLines.map((l) => (
-              <tr key={l.skuId} className="border-t border-co-border/50">
-                <td className="py-1 font-semibold text-co-text">{l.skuName}</td>
-                <td className="py-1 text-co-text-dim">{l.itemNumber ?? "—"}</td>
-                <td className="py-1 text-right font-bold text-co-text">
-                  {t("ordering.review.qty_unit", { qty: l.orderQty, unit: l.orderUnitLabel ?? t("ordering.unit_generic") })}
-                </td>
-                <td className="py-1 text-right text-co-text-dim">{money(l.priceCentsAtOrder)}</td>
-              </tr>
+            {lineGroups.map((g) => (
+              <Fragment key={g.section ?? "__only__"}>
+                {g.section !== null && (
+                  <tr>
+                    <td colSpan={4} className="pb-1 pt-3 text-[11px] font-bold uppercase tracking-[0.12em] text-co-text-dim">
+                      {g.section === NOT_ON_GUIDE ? t("ordering.body.not_on_guide_plain") : g.section}
+                    </td>
+                  </tr>
+                )}
+                {g.rows.map((l) => (
+                  <tr key={l.skuId} className="border-t border-co-border/50">
+                    <td className="py-1 font-semibold text-co-text">{l.skuName}</td>
+                    <td className="py-1 text-co-text-dim">{l.itemNumber ?? "—"}</td>
+                    <td className="py-1 text-right font-bold text-co-text">
+                      {t("ordering.review.qty_unit", { qty: l.orderQty, unit: l.orderUnitLabel ?? t("ordering.unit_generic") })}
+                    </td>
+                    <td className="py-1 text-right text-co-text-dim">{money(l.priceCentsAtOrder)}</td>
+                  </tr>
+                ))}
+              </Fragment>
             ))}
           </tbody>
         </table>

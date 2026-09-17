@@ -35,6 +35,9 @@ import type { AuthContext } from "@/lib/session";
 import { TENANT_NAME } from "@/lib/tenant";
 import { sendEmail } from "@/lib/email";
 import { renderEmailLayout, escapeHtml } from "@/lib/email-templates/_layout";
+import { renderPoBodyLines, type PoBodyLine } from "@/lib/po-body";
+import { groupByGuideSection, NOT_ON_GUIDE } from "@/lib/order-guide-sort";
+import { serverT } from "@/lib/i18n/server";
 import {
   PurchaseOrderError,
   PO_MIN,
@@ -68,6 +71,8 @@ interface SnapshotLine {
   unitLabel: string | null;
   priceCents: number | null;
   guidePos: number | null;
+  /** V3-A: section name frozen with the snapshot; null on pre-0205 snapshots. */
+  guideSection: string | null;
 }
 
 interface PoEmailContext {
@@ -162,6 +167,7 @@ async function loadPoEmailContext(actor: AuthContext, poId: string): Promise<PoE
         unitLabel: typeof r.unitLabel === "string" ? r.unitLabel : null,
         priceCents: typeof r.priceCents === "number" && Number.isFinite(r.priceCents) ? r.priceCents : null,
         guidePos: typeof r.guidePos === "number" ? r.guidePos : null,
+        guideSection: typeof r.guideSection === "string" ? r.guideSection : null,
       };
     })
     .filter((l): l is SnapshotLine => l !== null && l.qty > 0); // qty 0 = removed (transmission skips)
@@ -179,20 +185,30 @@ async function loadPoEmailContext(actor: AuthContext, poId: string): Promise<PoE
   };
 }
 
-/** One order line as plain text: "  3 case · Sub Roll (#12345)". Item number only when
- *  present. No HTML — this is the text/plain body. */
-function textLine(l: SnapshotLine): string {
-  const unit = l.unitLabel ?? "";
-  const qtyUnit = unit ? `${l.qty} ${unit}` : `${l.qty}`;
-  const item = l.itemNumber ? ` (#${l.itemNumber})` : "";
-  return `  ${qtyUnit} · ${l.name}${item}`;
+/** V3-A: the vendor reads English; the ONE renderer (lib/po-body) decides the line order and
+ *  wording, so the emailed lines equal the copied lines in the PO panel byte for byte. */
+const bodyT = (key: Parameters<typeof serverT>[1], params?: Parameters<typeof serverT>[2]) => serverT("en", key, params);
+const asBodyLine = (l: SnapshotLine): PoBodyLine =>
+  ({ skuName: l.name, orderQty: l.qty, orderUnitLabel: l.unitLabel, itemNumber: l.itemNumber, guidePosition: l.guidePos, guideSection: l.guideSection });
+
+/** One HTML row per line (escaped throughout). */
+function rowHtml(l: SnapshotLine): string {
+  const unit = l.unitLabel ? escapeHtml(l.unitLabel) : "";
+  const qtyUnit = unit ? `${escapeHtml(String(l.qty))} ${unit}` : escapeHtml(String(l.qty));
+  const item = l.itemNumber
+    ? `<span style="color:#666;"> · #${escapeHtml(l.itemNumber)}</span>`
+    : "";
+  return `<tr>
+        <td style="padding:6px 8px;border-bottom:1px solid #ECE3C2;white-space:nowrap;font-weight:700;">${qtyUnit}</td>
+        <td style="padding:6px 8px;border-bottom:1px solid #ECE3C2;">${escapeHtml(l.name)}${item}</td>
+      </tr>`;
 }
 
 /** Build the two bodies (text + html) from server-derived context. Everything that lands
  *  in HTML is escaped (escapeHtml) — SKU names/item numbers/location strings/PO code are
  *  vendor/config data but the outbound side escapes uniformly (DOM law). The plain-text
  *  body is a separate line-per-SKU render. The PO code is repeated in-body (V1 §5b.3 key). */
-function renderBodies(ctx: PoEmailContext, subject: string): { textBody: string; htmlBody: string } {
+export function renderBodies(ctx: PoEmailContext, subject: string): { textBody: string; htmlBody: string } {
   const shipToName = ctx.locationName || TENANT_NAME;
   const shipToLines = [shipToName, ctx.locationAddress ?? ""].filter((s) => s.trim().length > 0);
 
@@ -205,23 +221,19 @@ function renderBodies(ctx: PoEmailContext, subject: string): { textBody: string;
   for (const s of shipToLines) textParts.push(`  ${s}`);
   textParts.push("");
   textParts.push("Order:");
-  for (const l of ctx.lines) textParts.push(textLine(l));
+  for (const s of renderPoBodyLines(ctx.lines.map(asBodyLine), bodyT)) textParts.push(`  ${s}`);
   textParts.push("");
   textParts.push(`Reply to this email (${ctx.receiptEmail ?? ""}) to confirm or ask about this order.`);
   const textBody = textParts.join("\n");
 
   // ── HTML (escaped throughout) ──
-  const rowsHtml = ctx.lines
-    .map((l) => {
-      const unit = l.unitLabel ? escapeHtml(l.unitLabel) : "";
-      const qtyUnit = unit ? `${escapeHtml(String(l.qty))} ${unit}` : escapeHtml(String(l.qty));
-      const item = l.itemNumber
-        ? `<span style="color:#666;"> · #${escapeHtml(l.itemNumber)}</span>`
-        : "";
-      return `<tr>
-        <td style="padding:6px 8px;border-bottom:1px solid #ECE3C2;white-space:nowrap;font-weight:700;">${qtyUnit}</td>
-        <td style="padding:6px 8px;border-bottom:1px solid #ECE3C2;">${escapeHtml(l.name)}${item}</td>
-      </tr>`;
+  // Rows under their guide-section headers (V3-A): same grouping law as the panel.
+  const rowsHtml = groupByGuideSection(ctx.lines.map((l) => ({ ...l, position: l.guidePos, section: l.guideSection })))
+    .map((g) => {
+      const header = g.section === null
+        ? ""
+        : `<tr><td colspan="2" style="padding:10px 8px 4px;font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:0.06em;color:#666;">${escapeHtml(g.section === NOT_ON_GUIDE ? bodyT("ordering.body.not_on_guide_plain") : g.section)}</td></tr>`;
+      return header + g.rows.map(rowHtml).join("");
     })
     .join("");
   const shipToHtml = shipToLines.map((s) => `<div>${escapeHtml(s)}</div>`).join("");

@@ -4,8 +4,9 @@
  * call renderPoBodyText. Order = lib/order-guide-sort (section headers, not-on-guide last).
  */
 import { groupByGuideSection, NOT_ON_GUIDE } from "@/lib/order-guide-sort";
+import type { TranslationKey, TranslationParams } from "@/lib/i18n/types";
 
-export type BodyT = (key: string, vars?: Record<string, string | number>) => string;
+export type BodyT = (key: TranslationKey, vars?: TranslationParams) => string;
 export interface PoBodyLine {
   skuName: string; orderQty: number; orderUnitLabel: string | null; itemNumber: string | null;
   guidePosition: number | null; guideSection: string | null;
