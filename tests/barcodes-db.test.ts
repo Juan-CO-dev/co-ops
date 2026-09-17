@@ -233,6 +233,19 @@ describe("teachBarcode — idempotent, never a silent rewrite", () => {
 });
 
 describe("forgetBarcode — soft delete, audited, and it must actually have hit a row", () => {
+  it("normalises the code first — a raw GTIN-14 scan forgets the stored 13-digit row (first sim run, 09-17)", async () => {
+    queue.push({ data: null, error: null, count: 1 });
+    await expect(forgetBarcode(actor, { vendorId: VENDOR, locationId: LOCATION, code: "04006381333931", skuId: SKU_TURKEY, level: "case" })).resolves.toBeUndefined();
+    expect(argsFor("sku_barcodes", "eq")[0]).toEqual(["code", "4006381333931"]);
+    expect((vi.mocked(audit).mock.calls[0]![0] as { metadata: Record<string, unknown> }).metadata).toMatchObject({ code: "4006381333931" });
+  });
+
+  it("refuses a code too short to be a barcode with 400 invalid_code before any database work", async () => {
+    await expect(forgetBarcode(actor, { vendorId: VENDOR, locationId: LOCATION, code: "123", skuId: SKU_TURKEY, level: "case" }))
+      .rejects.toMatchObject({ status: 400, code: "invalid_code" });
+    expect(audit).not.toHaveBeenCalled();
+  });
+
   it("stamps forgotten_at on the live row with an exact count and audits the removal", async () => {
     queue.push({ data: null, error: null, count: 1 });
 
