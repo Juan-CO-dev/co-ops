@@ -199,11 +199,13 @@ export function resolveScan(code: string, ctx: ScanContext): ScanMatch {
  * Keyboard-wedge burst detector. Feed every keydown with a timestamp; call `tick(now)` from
  * a timer so a burst that ends in silence rather than Enter still lands.
  *
- * The swallow is PROVISIONAL. The first key of a scanner burst and the first key of a person
- * typing are indistinguishable — both arrive after an unbounded gap — so the machine buffers
- * and swallows, then hands the characters back through `tick` as `{ release }` when the burst
- * hypothesis dies. ScanField re-dispatches a release into the focused element, so nothing a
- * person typed is lost.
+ * The swallow is PROVISIONAL, and the machine is LOSSLESS. The first key of a scanner burst
+ * and the first key of a person typing are indistinguishable — both arrive after an unbounded
+ * gap — so the machine buffers and swallows. The moment the burst hypothesis dies, every
+ * character it was holding comes straight back as `{ release }`, from `key` when a slow
+ * keystroke or a terminating Enter disproves it and from `tick` when the buffer just stalls.
+ * ScanField re-dispatches a release into the focused element, so nothing a person typed is
+ * lost. Enter itself is never part of a release — only the characters that were swallowed.
  */
 export class ScanBurst {
   private buf = "";
@@ -211,7 +213,7 @@ export class ScanBurst {
 
   constructor(private readonly o: { maxGapMs: number; minLength: number; silenceMs: number }) {}
 
-  key(key: string, now: number): "swallow" | "pass" | { scan: string } {
+  key(key: string, now: number): "swallow" | "pass" | { scan: string } | { release: string } {
     const gap = now - this.last;
     if (key === "Enter") {
       if (this.buf.length >= this.o.minLength && gap <= this.o.maxGapMs * 3) {
@@ -219,14 +221,22 @@ export class ScanBurst {
         this.reset();
         return { scan };
       }
+      // A short or stale buffer was typing, and Enter belongs to the form — but the
+      // characters still have to go back. Enter itself is never part of the release.
+      const stale = this.buf;
       this.reset();
-      return "pass"; // a short or stale buffer was typing, and Enter belongs to the form
+      return stale ? { release: stale } : "pass";
     }
     if (key.length !== 1) return "pass"; // Shift, Tab, arrows … never part of a code
     // THE ORDER MATTERS: judge the gap BEFORE deciding to swallow. A key slower than
-    // maxGapMs proves the buffer was a person typing, so that hypothesis dies here and this
-    // key starts a fresh, provisional one.
-    if (this.buf && gap > this.o.maxGapMs) this.reset();
+    // maxGapMs proves the buffer was a person typing, so that hypothesis dies here — the
+    // stale text goes straight back to the caller and this key opens a fresh provisional one.
+    if (this.buf && gap > this.o.maxGapMs) {
+      const stale = this.buf;
+      this.buf = key;
+      this.last = now;
+      return { release: stale };
+    }
     this.buf += key;
     this.last = now;
     return "swallow";

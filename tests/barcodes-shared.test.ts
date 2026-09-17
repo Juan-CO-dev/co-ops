@@ -126,17 +126,49 @@ describe("ScanBurst (keyboard-wedge state machine)", () => {
   // That is unsatisfiable alongside the test above: the first key of a scanner burst and
   // the first key of typing are indistinguishable (both arrive with an infinite gap), so
   // `key()` must return the same verdict for both — and the test above requires "swallow".
-  // The guarantee the plan's own implementer note actually describes is that the swallow is
-  // PROVISIONAL: typing never produces a scan, and `tick` hands the stalled characters back
-  // as `{ release }` for ScanField to re-dispatch into the focused element.
-  it("human typing (>35 ms between keys) never produces a scan; the provisional swallow is handed back by tick", () => {
+  //
+  // The plan's machine was also LOSSY: when a slow key disproved the burst it called
+  // reset(), which DISCARDED the buffer. At a realistic ~120 ms cadence the 300 ms tick
+  // never fires in between, so "turkey" lost "turke" and only the last character ever came
+  // back. `key()` therefore also returns `{ release }` now — the same vocabulary `tick`
+  // uses — and ScanField re-dispatches it into the focused element.
+  it("human typing (>35 ms between keys) never produces a scan, and every character comes back", () => {
     const b = new ScanBurst({ maxGapMs: 35, minLength: 6, silenceMs: 300 });
     let t = 1000;
-    for (const ch of "turkey") { expect(b.key(ch, t)).toBe("swallow"); t += 120; }
-    expect(b.key("Enter", t)).toBe("pass"); // a sub-minLength buffer is typing, not a scan
-    const b2 = new ScanBurst({ maxGapMs: 35, minLength: 6, silenceMs: 300 });
-    expect(b2.key("t", 0)).toBe("swallow");
-    expect(b2.tick(300)).toEqual({ release: "t" }); // nothing the person typed is lost
+    let handedBack = "";
+    for (const ch of "turkey") {
+      const v = b.key(ch, t);
+      expect(v).not.toBe("pass");
+      if (typeof v === "object") {
+        expect("release" in v).toBe(true); // never a scan mid-typing
+        if ("release" in v) handedBack += v.release;
+      }
+      t += 120;
+    }
+    // the trailing character is handed back by the terminating Enter, not swallowed for good
+    expect(b.key("Enter", t)).toEqual({ release: "y" });
+    handedBack += "y";
+    expect(handedBack).toBe("turkey"); // nothing the person typed is lost
+  });
+
+  it("a release carries only the swallowed characters — never the Enter key itself", () => {
+    const b = new ScanBurst({ maxGapMs: 35, minLength: 6, silenceMs: 300 });
+    let t = 0;
+    for (const ch of "1234") { expect(b.key(ch, t)).toBe("swallow"); t += 10; }
+    const v = b.key("Enter", t); // fast enough for a burst, too short to be a scan
+    expect(v).toEqual({ release: "1234" });
+    expect(JSON.stringify(v)).not.toContain("Enter");
+  });
+
+  it("Enter on an empty buffer is plain typing and belongs to the form", () => {
+    const b = new ScanBurst({ maxGapMs: 35, minLength: 6, silenceMs: 300 });
+    expect(b.key("Enter", 1000)).toBe("pass");
+  });
+
+  it("a stalled provisional swallow is still handed back by tick", () => {
+    const b = new ScanBurst({ maxGapMs: 35, minLength: 6, silenceMs: 300 });
+    expect(b.key("t", 0)).toBe("swallow");
+    expect(b.tick(300)).toEqual({ release: "t" });
   });
 
   // PLAN CORRECTION (arithmetic). The plan wrote `b.tick(t + 299)` after a loop that
