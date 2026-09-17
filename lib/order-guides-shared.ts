@@ -128,3 +128,17 @@ export function applyGuideEdit(model: GuideModel, edit: GuideEdit): GuideModel {
   }
   return renumber(m);
 }
+
+/**
+ * THE READ LAW (spec §3): a PO line renders by its snapshot when it has one, else by the live
+ * guide, else it is "not on the guide". Both halves of the snapshot travel together — a line
+ * snapshotted before 0205 has a position but no section, and still reads as snapshotted.
+ */
+export function resolveGuideKey(
+  snapshot: { position: number | null; section: string | null },
+  live: GuideKey | undefined,
+): { position: number | null; section: string | null } {
+  if (snapshot.position != null) return { position: snapshot.position, section: snapshot.section };
+  if (live) return { position: live.position, section: live.section };
+  return { position: null, section: null };
+}
