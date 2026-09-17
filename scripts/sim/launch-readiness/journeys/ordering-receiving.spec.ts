@@ -209,7 +209,9 @@ for (const [code, khAlias, employeeAlias] of [["EM", "rosa", "maya"], ["MEP", "a
       const receivedItems = await readRows<{ vendor_item_id: string }>("vendor_delivery_items", "vendor_item_id", { delivery_id: receipt.header.id });
       const taughtSku = receivedItems[0]!.vendor_item_id;
       const scanApi = (leaf: string) => `/api/operations/receiving/scan/${leaf}`;
-      const scanBody = { vendorId: vendor.vendorId, locationId: SIM_LOCATIONS[code].id, code: "04006381333931" };
+      // One code per shop: SKUs are global, and both shops receive the same vendor — the same code taught to two SKUs is (correctly) ambiguous.
+      const scanCode = code === "EM" ? "04006381333931" : "5901234123457"; // EM: GTIN-14 with a leading zero (folds to 13); MEP: a plain EAN-13
+      const scanBody = { vendorId: vendor.vendorId, locationId: SIM_LOCATIONS[code].id, code: scanCode };
       const teach1 = await api.call("POST", scanApi("teach"), { ...scanBody, skuId: taughtSku, level: "case", invoiceNumber: ledger.body.invoiceNumber });
       expect({ status: teach1.status, created: (teach1.json as { created?: boolean }).created }, "receiving.scan.teach-then-hit: teach").toEqual({ status: 201, created: true });
       const asSku = await api.call("POST", scanApi("lookup"), { ...scanBody, lineSkuIds: [] });

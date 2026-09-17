@@ -285,12 +285,16 @@ export async function forgetBarcode(
   input: { vendorId: string; locationId: string; code: string; skuId: string; level: Level },
 ): Promise<void> {
   bind(actor, input.locationId);
+  // Same normalisation as lookup/teach: the client may hold the RAW scan (a GTIN-14 with its
+  // leading zero, a GS1 string) while the row stores the GTIN. First sim run proved it (09-17).
+  const normalized = normalizeCode(input.code);
+  if (!normalized) throw new BarcodeError(400, "invalid_code", "That code is too short to be a barcode");
 
   const sb = getServiceRoleClient();
   const { error, count } = await sb
     .from("sku_barcodes")
     .update({ forgotten_at: new Date().toISOString() }, { count: "exact" })
-    .eq("code", input.code)
+    .eq("code", normalized.code)
     .eq("sku_id", input.skuId)
     .eq("level", input.level)
     .is("forgotten_at", null);
@@ -304,7 +308,7 @@ export async function forgetBarcode(
     resourceTable: "sku_barcodes",
     resourceId: null,
     metadata: {
-      code: input.code,
+      code: normalized.code,
       sku_id: input.skuId,
       level: input.level,
       vendor_id: input.vendorId,
