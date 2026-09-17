@@ -137,8 +137,14 @@ export function OrderGuidePanel({
   );
 
   // ── Local edits ──────────────────────────────────────────────────────────────
+  // EDITING IS LOCKED WHILE A SAVE IS IN FLIGHT (Astra review 2026-09-17, finding 6, BC-007).
+  // Save and Discard disabled while busy, but every reorder/rename/remove/place control stayed
+  // live and `dispatch` ignored `busy` — so a change made during a slow save was replaced by
+  // the server's response, dirty was cleared, and the panel said "Saved". The controls below
+  // all carry `disabled={busy …}`; this guard is the floor under them, because a select fired
+  // by a keyboard or a control added later must not be able to slip past the disabled props.
   const dispatch = (edit: GuideEdit) => {
-    if (!model || !canEdit) return;
+    if (busy || !model || !canEdit) return;
     setErrorMsg(null);
     setNotice(null);
     try {
@@ -151,6 +157,7 @@ export function OrderGuidePanel({
   };
 
   const discard = () => {
+    if (busy) return;
     setModel(baseline.guide);
     setDirty(false);
     setErrorMsg(null);
@@ -209,12 +216,13 @@ export function OrderGuidePanel({
   const commitRename = (sectionId: string) => {
     const name = renameDraft.trim();
     setRenamingId(null);
+    if (busy) return;
     if (name) dispatch({ kind: "rename_section", sectionId, name });
   };
 
   const addSection = () => {
     const name = newSection.trim();
-    if (!name) return;
+    if (busy || !name) return;
     dispatch({ kind: "add_section", name });
     setNewSection("");
   };
@@ -259,6 +267,7 @@ export function OrderGuidePanel({
                   <input
                     className={`${fieldCls} max-w-xs`}
                     value={renameDraft}
+                    disabled={busy}
                     autoFocus
                     aria-label={t("admin.order_guide.section_name")}
                     onChange={(e) => setRenameDraft(e.target.value)}
@@ -276,17 +285,18 @@ export function OrderGuidePanel({
                     <PlainBtn
                       label="▲"
                       ariaLabel={t("admin.order_guide.up")}
-                      disabled={sIdx === 0}
+                      disabled={busy || sIdx === 0}
                       onClick={() => dispatch({ kind: "move_section", sectionId: section.id, direction: "up" })}
                     />
                     <PlainBtn
                       label="▼"
                       ariaLabel={t("admin.order_guide.down")}
-                      disabled={sIdx === model.sections.length - 1}
+                      disabled={busy || sIdx === model.sections.length - 1}
                       onClick={() => dispatch({ kind: "move_section", sectionId: section.id, direction: "down" })}
                     />
                     <PlainBtn
                       label={t("admin.order_guide.rename")}
+                      disabled={busy}
                       onClick={() => {
                         setRenameDraft(section.name);
                         setRenamingId(section.id);
@@ -294,6 +304,7 @@ export function OrderGuidePanel({
                     />
                     <PlainBtn
                       label={t("admin.order_guide.remove")}
+                      disabled={busy}
                       onClick={() => dispatch({ kind: "remove_section", sectionId: section.id })}
                     />
                   </div>
@@ -324,19 +335,20 @@ export function OrderGuidePanel({
                           <PlainBtn
                             label="▲"
                             ariaLabel={t("admin.order_guide.up")}
-                            disabled={lIdx === 0}
+                            disabled={busy || lIdx === 0}
                             onClick={() => dispatch({ kind: "move_line", lineId: line.id, direction: "up" })}
                           />
                           <PlainBtn
                             label="▼"
                             ariaLabel={t("admin.order_guide.down")}
-                            disabled={lIdx === section.lines.length - 1}
+                            disabled={busy || lIdx === section.lines.length - 1}
                             onClick={() => dispatch({ kind: "move_line", lineId: line.id, direction: "down" })}
                           />
                           {model.sections.length > 1 ? (
                             <select
                               className={`${fieldCls} w-auto`}
                               aria-label={t("admin.order_guide.move_to")}
+                              disabled={busy}
                               value=""
                               onChange={(e) => {
                                 if (e.target.value) dispatch({ kind: "move_line_to_section", lineId: line.id, sectionId: e.target.value });
@@ -355,6 +367,7 @@ export function OrderGuidePanel({
                           <PlainBtn
                             label="✕"
                             ariaLabel={t("admin.order_guide.remove")}
+                            disabled={busy}
                             onClick={() => dispatch({ kind: "remove_line", lineId: line.id })}
                           />
                         </div>
@@ -366,6 +379,7 @@ export function OrderGuidePanel({
                       <select
                         className={`${fieldCls} mt-2`}
                         aria-label={t("admin.order_guide.needs_sku")}
+                        disabled={busy}
                         value=""
                         onChange={(e) => {
                           if (e.target.value) dispatch({ kind: "set_line_sku", lineId: line.id, skuId: e.target.value });
@@ -395,6 +409,7 @@ export function OrderGuidePanel({
                 <input
                   className={`${fieldCls} mt-1`}
                   aria-label={t("admin.order_guide.section_name")}
+                  disabled={busy}
                   value={newSection}
                   onChange={(e) => setNewSection(e.target.value)}
                   onKeyDown={(e) => {
@@ -402,7 +417,7 @@ export function OrderGuidePanel({
                   }}
                 />
               </label>
-              <PrimaryBtn label={t("admin.order_guide.add_section")} disabled={!newSection.trim()} onClick={addSection} />
+              <PrimaryBtn label={t("admin.order_guide.add_section")} disabled={busy || !newSection.trim()} onClick={addSection} />
             </div>
           ) : null}
 
@@ -421,6 +436,7 @@ export function OrderGuidePanel({
                       <select
                         className={`${fieldCls} w-auto`}
                         aria-label={t("admin.order_guide.place_in")}
+                        disabled={busy}
                         value=""
                         onChange={(e) => {
                           if (e.target.value) {
