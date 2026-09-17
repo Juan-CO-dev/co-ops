@@ -46,7 +46,7 @@ import {
 import { CollapsibleSection } from "@/components/ui/CollapsibleSection";
 import type { PoDetail, VendorPoSku } from "@/lib/purchase-orders";
 import { renderPoBodyText } from "@/lib/po-body";
-import { groupByGuideSection, NOT_ON_GUIDE } from "@/lib/order-guide-sort";
+import { groupByGuideSection, hasGuideHeader, NOT_ON_GUIDE } from "@/lib/order-guide-sort";
 import type { OrderEmailPreview } from "@/lib/po-email-shared";
 import type { ThreeWayView, ThreeWayLine, ThreeWayFlag } from "@/lib/po-match-shared";
 import type { TranslationKey } from "@/lib/i18n/types";
@@ -550,15 +550,34 @@ function DraftView({
   const { t } = useTranslation();
   const [pickerOpen, setPickerOpen] = useState(false);
   const pickerId = useId();
+  // V3-A, Astra review 2026-09-17 finding 5 (BC-042). The draft was the ONE order-reading
+  // surface still rendering insertion order: it concatenated the existing lines with the newly
+  // picked ones and mapped straight over the result, so an item picked from the guide's first
+  // section appeared BELOW a later-section line and no section headers showed at all — the
+  // manager reviewed one sequence and confirmed a different one. A new pick carries the live
+  // guide key the picker already sorted by, and the combined list runs through the SAME
+  // grouping helper the frozen table, the copied body and the email use.
   const newLines = detail.vendorSkus.filter((sku) => edits[sku.skuId]).map((sku) => ({
     skuId: sku.skuId, skuName: sku.name, itemNumber: sku.itemNumber,
     orderUnitLabel: sku.orderUnitLabel, orderQty: 1, note: null,
+    guidePositionSnapshot: sku.guidePosition, guideSection: sku.guideSection,
   }));
+  const newSkuIds = new Set(newLines.map((n) => n.skuId));
+  const draftGroups = groupByGuideSection(
+    [...detail.lines, ...newLines].map((l) => ({ ...l, name: l.skuName, position: l.guidePositionSnapshot, section: l.guideSection })),
+  );
   return (
     <div className="mt-4 flex flex-col gap-3">
       <p className="text-[13px] text-co-text-dim">{t("ordering.po.draft_help")}</p>
       <div className="flex flex-col gap-2">
-        {[...detail.lines, ...newLines].map((l) => {
+        {draftGroups.map((g) => (
+        <Fragment key={g.section ?? "__only__"}>
+        {hasGuideHeader(g.section) && (
+          <p className="mt-1 text-[11px] font-bold uppercase tracking-[0.12em] text-co-text-dim">
+            {g.section === NOT_ON_GUIDE ? t("ordering.body.not_on_guide_plain") : g.section}
+          </p>
+        )}
+        {g.rows.map((l) => {
           const e = edits[l.skuId] ?? { qty: String(l.orderQty), note: l.note, orderUnitLabel: l.orderUnitLabel };
           const qtyNum = Number(e.qty);
           const removed = Number.isFinite(qtyNum) && qtyNum === 0;
@@ -585,7 +604,7 @@ function DraftView({
                     {l.orderUnitLabel ?? t("ordering.unit_generic")}
                   </span>
                 </div>
-                {newLines.some((n) => n.skuId === l.skuId) && (
+                {newSkuIds.has(l.skuId) && (
                   <AlertPill tone="info" uppercase={false}>{t("ordering.po.new_line")}</AlertPill>
                 )}
                 {removed && (
@@ -625,6 +644,8 @@ function DraftView({
             </div>
           );
         })}
+        </Fragment>
+        ))}
       </div>
 
       <ActionButton variant="secondary" className="w-full" disabled={busy} aria-expanded={pickerOpen} aria-controls={pickerId} onClick={() => setPickerOpen((v) => !v)}>
@@ -712,7 +733,7 @@ function ConfirmedView({
           <tbody>
             {lineGroups.map((g) => (
               <Fragment key={g.section ?? "__only__"}>
-                {g.section !== null && (
+                {hasGuideHeader(g.section) && (
                   <tr>
                     <td colSpan={4} className="pb-1 pt-3 text-[11px] font-bold uppercase tracking-[0.12em] text-co-text-dim">
                       {g.section === NOT_ON_GUIDE ? t("ordering.body.not_on_guide_plain") : g.section}

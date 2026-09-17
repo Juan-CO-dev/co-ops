@@ -36,7 +36,7 @@ import { TENANT_NAME } from "@/lib/tenant";
 import { sendEmail } from "@/lib/email";
 import { renderEmailLayout, escapeHtml } from "@/lib/email-templates/_layout";
 import { renderPoBodyLines, type PoBodyLine } from "@/lib/po-body";
-import { groupByGuideSection, NOT_ON_GUIDE } from "@/lib/order-guide-sort";
+import { groupByGuideSection, hasGuideHeader, NOT_ON_GUIDE } from "@/lib/order-guide-sort";
 import { serverT } from "@/lib/i18n/server";
 import {
   PurchaseOrderError,
@@ -230,7 +230,7 @@ export function renderBodies(ctx: PoEmailContext, subject: string): { textBody: 
   // Rows under their guide-section headers (V3-A): same grouping law as the panel.
   const rowsHtml = groupByGuideSection(ctx.lines.map((l) => ({ ...l, position: l.guidePos, section: l.guideSection })))
     .map((g) => {
-      const header = g.section === null
+      const header = !hasGuideHeader(g.section)
         ? ""
         : `<tr><td colspan="2" style="padding:10px 8px 4px;font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:0.06em;color:#666;">${escapeHtml(g.section === NOT_ON_GUIDE ? bodyT("ordering.body.not_on_guide_plain") : g.section)}</td></tr>`;
       return header + g.rows.map(rowHtml).join("");

@@ -5,9 +5,16 @@
  * live read — one query, keyed by SKU — used by both draft-creation paths (snapshot) and by
  * loadPoDetail / the walker preview (fallback). Position = section.position*1000 + line.position.
  *
- * Write law (spec §6/§7): the editor sends the whole model + the `updatedAt` it loaded;
- * stale → 409 guide_stale; the server rewrites positions dense (renumber) inside one RPC-less
- * sequence guarded by the deferrable unique constraints; audit stores the full before/after.
+ * Write law (spec §6/§7, hardened by the Astra review of 2026-09-17, findings 1 + 2): the
+ * editor sends the whole model + the `updatedAt` it loaded, and the ENTIRE rewrite happens
+ * inside ONE transaction — `save_order_guide` (migration 0207, SECURITY DEFINER, service-role
+ * only). It locks the guide row, refuses a stale token BEFORE it writes anything, validates
+ * that every submitted section/line id belongs to this guide and every SKU to this vendor,
+ * then rewrites the children dense and advances the token. The old shape — delete, then a
+ * park-at-a-high-offset upsert, then a final upsert, as three separate PostgREST requests —
+ * could let two saves interleave (the loser heard 409 only after its writes landed) and let
+ * a concurrent `guideKeysFor` read a parked position onto a PO line. Audit still stores the
+ * full before/after, and `before` is read BEFORE the RPC so it is the state the RPC replaced.
  *
  * THE MODEL AND THE PURE REDUCER LIVE IN `lib/order-guides-shared.ts` and are re-exported here,
  * because this file imports the service-role client (`server-only`) and the admin Order-guide
@@ -123,37 +130,83 @@ export async function createEmptyGuide(actor: AuthContext, vendorId: string): Pr
 }
 
 /**
- * Persist a whole model (already reduced client-side or here). Precondition: `expectedUpdatedAt`
- * equals the stored updated_at, else 409 guide_stale. Writes: upsert sections/lines by id,
- * delete rows absent from the model, bump updated_at, audit full before/after.
+ * Every refusal `save_order_guide` can raise (migration 0207), and the HTTP shape the admin
+ * route turns it into. The RPC raises the CODE as the message, so this table is the whole
+ * mapping — a message we do not recognise is a real 500, never a silently-swallowed 400.
+ */
+const RPC_REFUSALS: Record<string, { status: number; message: string }> = {
+  guide_stale: { status: 409, message: "The guide changed since you loaded it" },
+  sku_already_placed: { status: 409, message: "That SKU is on two lines" },
+  section_name_taken: { status: 409, message: "That section name is already used on this guide" },
+  foreign_section: { status: 400, message: "That section belongs to another vendor's guide" },
+  foreign_line: { status: 400, message: "That line belongs to another vendor's guide" },
+  foreign_sku: { status: 400, message: "That SKU is not in this vendor's active catalog" },
+  invalid_payload: { status: 400, message: "The guide payload is not well formed" },
+  guide_not_found: { status: 404, message: "No guide for this vendor" },
+};
+
+function rpcRefusal(message: string): OrderGuideError | null {
+  const raw = message.trim();
+  const exact = RPC_REFUSALS[raw];
+  if (exact) return new OrderGuideError(exact.status, raw, exact.message);
+  for (const [code, spec] of Object.entries(RPC_REFUSALS)) {
+    if (raw.includes(code)) return new OrderGuideError(spec.status, code, spec.message);
+  }
+  return null;
+}
+
+/**
+ * The cheap TS half of validation: the shape a manager's own editor can produce. The RPC
+ * re-checks all of it (and the ownership questions TS cannot answer) inside the transaction —
+ * this exists so the common refusals cost no round trip and read in the reducer's words.
+ */
+function assertSaveable(model: GuideModel): void {
+  if (!model.name.trim()) throw new OrderGuideError(400, "invalid_payload", "A guide name is required");
+  const names = new Set<string>();
+  const skus = new Set<string>();
+  for (const s of model.sections) {
+    const name = s.name.trim().toLowerCase();
+    if (!name) throw new OrderGuideError(400, "invalid_payload", "A section name is required");
+    if (names.has(name)) throw new OrderGuideError(409, "section_name_taken", RPC_REFUSALS.section_name_taken!.message);
+    names.add(name);
+    for (const l of s.lines) {
+      if (!l.label.trim()) throw new OrderGuideError(400, "invalid_payload", "A line label is required");
+      if (!l.skuId) continue;
+      if (skus.has(l.skuId)) throw new OrderGuideError(409, "sku_already_placed", RPC_REFUSALS.sku_already_placed!.message);
+      skus.add(l.skuId);
+    }
+  }
+}
+
+/**
+ * Persist a whole model (already reduced client-side or here). ONE transaction, in the DB:
+ * `save_order_guide` locks the guide, re-checks `expectedUpdatedAt` under the lock, validates
+ * the payload's ownership, rewrites sections/lines dense, and advances `updated_at`.
+ *
+ * The `before` read here is NOT the concurrency check — the RPC's is, under the row lock. It
+ * is read first so the audit row carries the state the RPC actually replaced, and so a guide
+ * that does not exist is a 404 before we spend an RPC on it.
  */
 export async function saveOrderGuide(actor: AuthContext, vendorId: string, next: GuideModel, expectedUpdatedAt: string): Promise<GuideModel> {
   const sb = getServiceRoleClient();
   const before = await loadOrderGuide(vendorId);
   if (!before) throw new OrderGuideError(404, "not_found", "No guide for this vendor");
-  if (before.updatedAt !== expectedUpdatedAt) throw new OrderGuideError(409, "guide_stale", "The guide changed since you loaded it");
+  if (before.updatedAt !== expectedUpdatedAt) throw new OrderGuideError(409, "guide_stale", RPC_REFUSALS.guide_stale!.message);
   const model = renumber(next);
-  // One SKU per line, across the whole model (the DB unique index is the floor; this is the readable error).
-  const seen = new Set<string>();
-  for (const s of model.sections) for (const l of s.lines) { if (l.skuId) { if (seen.has(l.skuId)) throw new OrderGuideError(409, "sku_already_placed", "That SKU is on two lines"); seen.add(l.skuId); } }
-  const now = new Date().toISOString();
-  const keepSections = new Set(model.sections.map((s) => s.id));
-  const keepLines = new Set(model.sections.flatMap((s) => s.lines.map((l) => l.id)));
-  // Delete first (frees names/positions), then upsert with positions offset to avoid transient collisions.
-  const goneLines = before.sections.flatMap((s) => s.lines).filter((l) => !keepLines.has(l.id)).map((l) => l.id);
-  if (goneLines.length) { const { error } = await sb.from("order_guide_lines").delete().in("id", goneLines); if (error) throw new Error(`saveOrderGuide delete lines: ${error.message}`); }
-  const goneSections = before.sections.filter((s) => !keepSections.has(s.id)).map((s) => s.id);
-  if (goneSections.length) { const { error } = await sb.from("order_guide_sections").delete().in("id", goneSections); if (error) throw new Error(`saveOrderGuide delete sections: ${error.message}`); }
-  // Two-phase positions: park at +100000 then set final, so (guide_id, position) never collides mid-way.
-  for (const phase of ["park", "final"] as const) {
-    const sRows = model.sections.map((s) => ({ id: s.id, guide_id: before.guideId, name: s.name, position: phase === "park" ? s.position + 100000 : s.position }));
-    const { error: sErr } = await sb.from("order_guide_sections").upsert(sRows, { onConflict: "id" });
-    if (sErr) throw new Error(`saveOrderGuide sections (${phase}): ${sErr.message}`);
-    const lRows = model.sections.flatMap((s) => s.lines.map((l) => ({ id: l.id, section_id: s.id, position: phase === "park" ? l.position + 100000 : l.position, sku_id: l.skuId, label: l.label, item_number: l.itemNumber, note: l.note })));
-    if (lRows.length) { const { error: lErr } = await sb.from("order_guide_lines").upsert(lRows, { onConflict: "id" }); if (lErr) throw new Error(`saveOrderGuide lines (${phase}): ${lErr.message}`); }
+  assertSaveable(model);
+
+  const { error } = await sb.rpc("save_order_guide", {
+    p_guide_id: before.guideId,
+    p_expected_updated_at: expectedUpdatedAt,
+    p_name: model.name,
+    p_sections: model.sections,
+  });
+  if (error) {
+    const refusal = rpcRefusal(error.message ?? "");
+    if (refusal) throw refusal;
+    throw new Error(`saveOrderGuide: ${error.message}`);
   }
-  const { error: uErr, count } = await sb.from("vendor_order_guides").update({ updated_at: now, name: model.name }, { count: "exact" }).eq("id", before.guideId).eq("updated_at", expectedUpdatedAt);
-  if (uErr || count !== 1) throw new OrderGuideError(409, "guide_stale", "The guide changed while saving");
+
   await audit({
     actorId: actor.user.id, actorRole: actor.user.role, action: "vendor.order_guide.edited",
     resourceTable: "vendor_order_guides", resourceId: before.guideId,

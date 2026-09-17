@@ -35,7 +35,7 @@ import { useRouter } from "next/navigation";
 
 import { useTranslation } from "@/lib/i18n/provider";
 import { CollapsibleSection } from "@/components/ui/CollapsibleSection";
-import { groupByGuideSection, NOT_ON_GUIDE } from "@/lib/order-guide-sort";
+import { groupByGuideSection, hasGuideHeader, NOT_ON_GUIDE } from "@/lib/order-guide-sort";
 import { AlertPill } from "@/components/ui/AlertPill";
 import { EmptyState } from "@/components/EmptyState";
 import { CopyButton, DeliveryRow } from "@/components/ordering/delivery-affordances";
@@ -384,7 +384,7 @@ export function ParPassWalker({
                       {/* V3-A: the preview follows the vendor's guide (sections, then line order). */}
                       {groupByGuideSection(p.lines.map((s) => ({ ...s, position: s.guidePosition, section: s.guideSection }))).map((g) => (
                         <Fragment key={g.section ?? "__only__"}>
-                          {g.section !== null && (
+                          {hasGuideHeader(g.section) && (
                             <tr>
                               <td colSpan={3} className="pb-1 pt-3 text-[11px] font-bold uppercase tracking-[0.1em] text-co-text-dim">
                                 {g.section === NOT_ON_GUIDE ? t("ordering.body.not_on_guide_plain") : g.section}

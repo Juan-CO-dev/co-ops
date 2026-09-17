@@ -3,7 +3,7 @@
  * text in the PO panel and the text half of the vendor email are byte-identical because both
  * call renderPoBodyText. Order = lib/order-guide-sort (section headers, not-on-guide last).
  */
-import { groupByGuideSection, NOT_ON_GUIDE } from "@/lib/order-guide-sort";
+import { groupByGuideSection, hasGuideHeader, NOT_ON_GUIDE } from "@/lib/order-guide-sort";
 import type { TranslationKey, TranslationParams } from "@/lib/i18n/types";
 
 export type BodyT = (key: TranslationKey, vars?: TranslationParams) => string;
@@ -18,7 +18,7 @@ export function renderPoBodyLines(lines: readonly PoBodyLine[], t: BodyT): strin
   const out: string[] = [];
   for (const g of groupByGuideSection(sent)) {
     if (g.section === NOT_ON_GUIDE) out.push(t("ordering.body.not_on_guide"));
-    else if (g.section !== null) out.push(t("ordering.body.section", { section: g.section }));
+    else if (hasGuideHeader(g.section)) out.push(t("ordering.body.section", { section: g.section }));
     for (const l of g.rows) out.push(t("ordering.email.body_line", { sku: l.skuName, qty: l.orderQty, unit: l.orderUnitLabel ?? t("ordering.unit_generic"), item: l.itemNumber ?? "—" }));
   }
   return out;

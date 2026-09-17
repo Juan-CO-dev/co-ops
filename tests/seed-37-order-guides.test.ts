@@ -1,5 +1,6 @@
+import { readdirSync, readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { planOrderGuides, routeRow, SECTION_NAMES, SOURCE, type Tables } from "@/scripts/seed/37-order-guides";
+import { planOrderGuides, routeRow, SECTION_NAMES, SOURCE, verifyWriteScope, type Plan, type Tables } from "@/scripts/seed/37-order-guides";
 
 const V = { PFG: "v-pfg", "Leonard Paper": "v-leo", Trimark: "v-tri", "Boar's Head": "v-bh", Baldor: "v-bal", Whisked: "v-wh" };
 const sku = (name: string, vendor: keyof typeof V, item_number: string | null = null, product_id: string | null = null) =>
@@ -71,5 +72,136 @@ describe("planOrderGuides", () => {
     expect(planOrderGuides(t, sheets).find((p) => p.vendor === "PFG")!.status).toBe("already");
     t.vendor_order_guides[0]!.source_note = "made by hand";
     expect(planOrderGuides(t, sheets).find((p) => p.vendor === "PFG")!.status).toBe("refused");
+  });
+});
+
+/**
+ * Astra finding 3 (BC-007): a rerun's rematches and appends never advanced
+ * `vendor_order_guides.updated_at`, so a manager holding the editor open could save an
+ * unrelated reorder against a stale model and quietly undo the rerun. The rerun now bumps the
+ * token with a guarded UPDATE — which means `verifyWriteScope` has to permit that one column
+ * on that one guide, and still refuse it everywhere else.
+ */
+describe("verifyWriteScope — the rerun's token bump", () => {
+  const guides = () => ({
+    vendors: [{ id: V.PFG, name: "PFG", active: true }, { id: V["Leonard Paper"], name: "Leonard Paper", active: true }],
+    vendor_items: [sku("Arugula", "PFG", "242470")],
+    vendor_order_guides: [
+      { id: "g", vendor_id: V.PFG, name: "PFG — laminated guide", source_note: `[${SOURCE}]`, updated_at: "t0" },
+      { id: "g2", vendor_id: V["Leonard Paper"], name: "Leonard — laminated guide", source_note: `[${SOURCE}]`, updated_at: "t0" },
+    ],
+    order_guide_sections: [{ id: "s", guide_id: "g", name: "Produce", position: 1 }],
+    order_guide_lines: [{ id: "l", section_id: "s", position: 1, sku_id: null, label: "Arugula", item_number: "242470" }],
+  }) as Tables;
+  const plan = (): Plan => ({
+    vendor: "PFG", vendorId: V.PFG, kind: "sheet", status: "ready", name: "PFG — laminated guide",
+    sourceNote: `[${SOURCE}]`, sections: [], rematch: [{ lineId: "l", skuId: "Arugula|PFG" }], append: [], report: [],
+    before: null, expected: { guideId: "g", guideUpdatedAt: "t0" },
+  });
+  const clone = (t: Tables) => JSON.parse(JSON.stringify(t)) as Tables;
+
+  it("allows the rerun's own writes: the re-matched sku_id, an appended line, and this guide's updated_at", () => {
+    const before = guides();
+    const after = clone(before);
+    after.vendor_order_guides[0]!.updated_at = "t1";
+    after.order_guide_lines[0]!.sku_id = "Arugula|PFG";
+    after.order_guide_lines.push({ id: "l2", section_id: "s", position: 2, sku_id: null, label: "Basil", item_number: null });
+    expect(() => verifyWriteScope(before, after, plan())).not.toThrow();
+  });
+
+  it("still refuses another guide's token moving", () => {
+    const before = guides();
+    const after = clone(before);
+    after.vendor_order_guides[1]!.updated_at = "t1";
+    expect(() => verifyWriteScope(before, after, plan())).toThrow(/vendor_order_guides/);
+  });
+
+  it("still refuses an unrelated change on this guide's own row, and anything outside the guide tables", () => {
+    const renamed = clone(guides());
+    renamed.vendor_order_guides[0]!.name = "renamed by hand";
+    expect(() => verifyWriteScope(guides(), renamed, plan())).toThrow(/vendor_order_guides/);
+    const sku = clone(guides());
+    sku.vendor_items[0]!.name = "Arugula (new pack)";
+    expect(() => verifyWriteScope(guides(), sku, plan())).toThrow(/vendor_items/);
+  });
+});
+
+/**
+ * Astra r2-1 (BC-007). The token bump closed the concurrency window at the END of a rerun;
+ * every rematch and every append still committed on its own before it, so a manager saving
+ * MID-rerun won and the seed only learned it had lost afterwards, with nothing rolled back.
+ * The rerun is now ONE call to the 0208 RPC, behind the same guide lock the editor takes —
+ * which is only true as long as no direct row write survives in that path.
+ */
+describe("the seed's rerun path writes through rerun_order_guide and nothing else", () => {
+  const src = readFileSync("scripts/seed/37-order-guides.ts", "utf8");
+  const apply = src.slice(src.indexOf("async function apply("), src.indexOf("async function verifyAudits("));
+  // The fresh-guide branch ends at its own audit call; everything after it IS the rerun path.
+  const BOUNDARY = 'creation_method: "seed_script"';
+  const rerun = apply.slice(apply.indexOf(BOUNDARY) + BOUNDARY.length);
+
+  it("calls the RPC once, with the guide id and the token the plan was built against", () => {
+    expect(rerun).toContain('sb.rpc("rerun_order_guide"');
+    expect(rerun).toContain("p_guide_id: existingId");
+    expect(rerun).toContain("p_expected_updated_at: p.expected.guideUpdatedAt");
+    expect(rerun).toContain("p_rematches:");
+    expect(rerun).toContain("p_appends:");
+  });
+
+  it("refuses to continue when the RPC refuses — nothing was written, so nothing is reconciled", () => {
+    expect(rerun).toMatch(/if \(rerunErr\) throw new Error/);
+  });
+
+  it("has no direct row write left in it: no insert, no update, no table handle", () => {
+    expect(rerun).not.toContain("insert(sb,");
+    expect(rerun).not.toContain('sb.from("order_guide_lines")');
+    expect(rerun).not.toContain('sb.from("order_guide_sections")');
+    expect(rerun).not.toContain('sb.from("vendor_order_guides")');
+    expect(rerun).not.toContain(".update(");
+  });
+
+  it("the guarded-UPDATE helper is gone with its only caller", () => {
+    expect(src).not.toContain("async function update(");
+  });
+
+  it("the fresh-guide branch still inserts directly (a guide nobody can be holding open)", () => {
+    const fresh = apply.slice(0, apply.indexOf(BOUNDARY));
+    expect(fresh).toContain('insert(sb, "vendor_order_guides"');
+    expect(fresh).toContain('insert(sb, "order_guide_lines"');
+  });
+});
+
+/**
+ * Astra r3 (BC-036, BC-042). The rerun resolved a section by EXACT name while the editor's
+ * reducer and `save_order_guide` enforce `lower(btrim(name))` uniqueness. A manager renaming
+ * "Produce" to "produce" got a SECOND "Produce" from the next rerun — legal for the DB's
+ * case-sensitive unique, and fatal to every later editor save, which then refuses the pair with
+ * `section_name_taken` and locks the guide. The rerun RPC lives in SQL, so the pin does too:
+ * whichever migration defines it LAST is the one production runs.
+ */
+describe("the rerun RPC matches section names the way every other writer does", () => {
+  const dir = "supabase/migrations";
+  const defining = readdirSync(dir)
+    .filter((f) => f.endsWith(".sql"))
+    .filter((f) => readFileSync(`${dir}/${f}`, "utf8").includes("function public.rerun_order_guide("))
+    .sort();
+  const latest = readFileSync(`${dir}/${defining[defining.length - 1]!}`, "utf8");
+
+  it("has a migration defining it, and 0209 is the one that defines it last", () => {
+    expect(defining.length).toBeGreaterThanOrEqual(1);
+    expect(defining[defining.length - 1]).toBe("0209_rerun_order_guide_section_match.sql");
+  });
+
+  it("resolves the target section case-insensitively, with no exact-name match left", () => {
+    expect(latest).toContain("lower(btrim(s.name)) = lower(btrim(v_rec->>'sectionName'))");
+    expect(latest).not.toContain("s.name = v_rec->>'sectionName'");
+  });
+
+  it("keeps the service-role-only posture every order-guide RPC has", () => {
+    expect(latest).toContain("security definer");
+    expect(latest).toContain("set search_path = pg_catalog, public");
+    expect(latest).toContain("revoke all on function public.rerun_order_guide(uuid, timestamptz, jsonb, jsonb) from public, anon, authenticated;");
+    expect(latest).toContain("grant execute on function public.rerun_order_guide(uuid, timestamptz, jsonb, jsonb) to service_role;");
+    expect(latest).toContain("raise exception '0209: unexpected rerun_order_guide execute grant'");
   });
 });

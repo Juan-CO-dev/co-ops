@@ -50,7 +50,7 @@ import { emailOrderingAvailable, isPlausibleEmail } from "@/lib/po-email-shared"
 import { loadSkuPackChains } from "@/lib/prep-consumption";
 import { buildPackChain, chainRootLabel } from "@/lib/pack-chain-shared";
 import { guideKeysFor } from "@/lib/order-guides";
-import { resolveGuideKey } from "@/lib/order-guides-shared";
+import { poLineGuideKey, resolveGuideKey } from "@/lib/order-guides-shared";
 import { compareByGuide } from "@/lib/order-guide-sort";
 
 /** KH+ read/write floor for the PO lifecycle (draft/confirm/place/receive + reads). */
@@ -671,6 +671,19 @@ export async function confirmPO(actor: AuthContext, poId: string): Promise<void>
   const lines = lineRows ?? [];
   const skuIds = [...new Set(lines.map((l) => l.sku_id))];
 
+  // FREEZE THE EFFECTIVE GUIDE KEY AT CONFIRMATION (V3-A, Astra review 2026-09-17 finding 4).
+  // A legacy draft, or a SKU placed on the guide after the draft was made, carries null
+  // snapshot columns and renders in the panel through the LIVE fallback (`resolveGuideKey`).
+  // Copying those raw nulls into the confirmed snapshot made the emailed order — which reads
+  // the snapshot with no fallback of its own — sort those lines alphabetically under "Not on
+  // the guide" while the copied body showed them in guide order. Both halves of the read law
+  // are resolved HERE, once, and the answer is what the snapshot (and the row, below) carries.
+  const liveGuideAtConfirm = await guideKeysFor(skuIds);
+  const frozenGuideKeys = new Map(lines.map((l) => [
+    l.id,
+    resolveGuideKey({ position: l.guide_position_snapshot, section: l.guide_section_snapshot }, liveGuideAtConfirm.get(l.sku_id)),
+  ]));
+
   // Batch: SKU names/item numbers, latest price per SKU, vendor name, actor name.
   const [{ data: skuRows, error: sErr }, priceBySku, { data: vend, error: vErr }, { data: user, error: uuErr }] =
     await Promise.all([
@@ -710,8 +723,8 @@ export async function confirmPO(actor: AuthContext, poId: string): Promise<void>
         qty: num(l.order_qty) ?? 0,
         unitLabel: l.order_unit_label,
         priceCents: priceBySku.get(l.sku_id) ?? null,
-        guidePos: l.guide_position_snapshot,
-        guideSection: l.guide_section_snapshot,
+        guidePos: frozenGuideKeys.get(l.id)?.position ?? null,
+        guideSection: frozenGuideKeys.get(l.id)?.section ?? null,
       };
     }),
     confirmedBy: { id: actor.user.id, name: user?.name ?? null },
@@ -745,10 +758,21 @@ export async function confirmPO(actor: AuthContext, poId: string): Promise<void>
   // was written above. So a failure here cannot change what the vendor is sent, and
   // throwing past the point of no return is exactly what this fix exists to stop. Log and
   // continue, for a rowcount 0 (append-only: a line cannot vanish) and for an error alike.
+  //
+  // The guide key rides the SAME advisory write (finding 4). Where a line had no snapshot the
+  // row now records the key the snapshot froze above, so `po_lines` and `confirmed_snapshot`
+  // agree and a later guide edit cannot re-order a confirmed PO's rows. A line that already
+  // had a snapshot keeps it — the snapshot is the vendor's order, and it never moves.
   for (const l of lines) {
     const priceCents = priceBySku.get(l.sku_id) ?? null;
+    const frozen = frozenGuideKeys.get(l.id);
+    const patch: Record<string, unknown> = { price_cents_at_order: priceCents };
+    if (l.guide_position_snapshot == null && frozen?.position != null) {
+      patch.guide_position_snapshot = frozen.position;
+      patch.guide_section_snapshot = frozen.section;
+    }
     const { error: puErr, count } = await sb.from("po_lines")
-      .update({ price_cents_at_order: priceCents }, { count: "exact" })
+      .update(patch, { count: "exact" })
       .eq("id", l.id);
     if (puErr) console.error(`confirmPO: price freeze failed on line ${l.id} (po ${poId}): ${puErr.message} — snapshot already holds the price; continuing`);
     else if (count === 0) console.error(`confirmPO: line ${l.id} missing during price freeze (po ${poId}) — continuing`);
@@ -1448,8 +1472,10 @@ export async function loadPoDetail(actor: AuthContext, poId: string): Promise<Po
     .order("name", { ascending: true })
     .returns<Array<{ id: string; name: string; item_number: string | null; pack_format: string | null }>>();
   if (vsErr) throw new Error(`loadPoDetail vendor skus: ${vsErr.message}`);
-  // V3-A read law: a line renders by its snapshot when it has one, else by the LIVE guide
-  // (legacy POs, lines added to a draft after an edit); the picker is always live. One read.
+  // V3-A read law (`poLineGuideKey`): a DRAFT renders `snapshot ?? live` — the guide still
+  // moves under it — while a PO past draft renders from its CONFIRMED SNAPSHOT, where an
+  // explicitly recorded null means "off the guide when this order was frozen" and stays that
+  // way (Astra r2-2). The picker is always live. One read serves both.
   const liveGuide = await guideKeysFor([...(lineRows ?? []).map((l) => l.sku_id), ...(vendorSkuRows ?? []).map((s) => s.id)]);
   // A DRAFT's picker excludes what is already on the order (edit that row instead). Past
   // draft, the picker feeds an ADD-ON — "two more cases of the same thing" is the common
@@ -1567,7 +1593,7 @@ export async function loadPoDetail(actor: AuthContext, poId: string): Promise<Po
         orderQty: num(l.order_qty) ?? 0,
         orderUnitLabel: l.order_unit_label,
         priceCentsAtOrder: l.price_cents_at_order,
-        ...(() => { const k = resolveGuideKey({ position: l.guide_position_snapshot, section: l.guide_section_snapshot }, liveGuide.get(l.sku_id)); return { guidePositionSnapshot: k.position, guideSection: k.section }; })(),
+        ...(() => { const k = poLineGuideKey({ status: po.status, confirmedSnapshot: po.confirmed_snapshot, skuId: l.sku_id, snapshot: { position: l.guide_position_snapshot, section: l.guide_section_snapshot }, live: liveGuide.get(l.sku_id) }); return { guidePositionSnapshot: k.position, guideSection: k.section }; })(),
         note: l.note,
       };
     }),
