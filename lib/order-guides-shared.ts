@@ -142,3 +142,61 @@ export function resolveGuideKey(
   if (live) return { position: live.position, section: live.section };
   return { position: null, section: null };
 }
+
+/**
+ * The confirmed snapshot's OWN record of a line's guide key, or `undefined` when it has none.
+ *
+ * `undefined` and a recorded `null` are different answers and the difference is the whole point
+ * (Astra r2-2): a snapshot that CARRIES the fields and records null is saying "this line was off
+ * the guide when the order was frozen", which is authoritative. A snapshot written before 0205
+ * has no `guideSection` at all — it cannot say anything — and that is the only case that may
+ * fall back to the live guide.
+ */
+function frozenSnapshotKey(confirmedSnapshot: unknown, skuId: string): { position: number | null; section: string | null } | undefined {
+  if (!confirmedSnapshot || typeof confirmedSnapshot !== "object") return undefined;
+  const lines = (confirmedSnapshot as { lines?: unknown }).lines;
+  if (!Array.isArray(lines)) return undefined;
+  for (const raw of lines) {
+    if (!raw || typeof raw !== "object") continue;
+    const l = raw as Record<string, unknown>;
+    if (l.skuId !== skuId) continue;
+    if (l.guideSection === undefined) return undefined; // pre-0205 shape: it has no opinion
+    return {
+      position: typeof l.guidePos === "number" ? l.guidePos : null,
+      section: typeof l.guideSection === "string" ? l.guideSection : null,
+    };
+  }
+  return undefined;
+}
+
+/**
+ * THE READ LAW FOR ONE PO LINE, all of it, in one place (spec §3 + Astra r2-2, BC-013/BC-042).
+ *
+ * A DRAFT reads `snapshot ?? live`: the guide is still moving under it, a line added after an
+ * edit has no snapshot yet, and rendering it in today's guide order is the helpful answer.
+ *
+ * ONCE A PO LEAVES DRAFT ITS BODY NEVER CHANGES SHAPE. `confirmPO` freezes the effective key
+ * into `confirmed_snapshot`, so that snapshot — not the `po_lines` columns, and never the live
+ * guide — is what the panel and the copied body read. Without this, a SKU that was off-guide at
+ * confirmation and placed on the guide afterwards MOVED in the panel while the email, which
+ * reads the snapshot and has no fallback, kept it where it was frozen: the two halves of one
+ * order disagreeing, with no concurrent request and no failure anywhere. The advisory `po_lines`
+ * patch can also fail (it is deliberately log-and-continue), and that must not change what the
+ * manager reads either — which is why the SNAPSHOT is consulted and the columns are not.
+ */
+export function poLineGuideKey(input: {
+  /** `purchase_orders.status`. Only "draft" reads live. */
+  status: string;
+  /** `purchase_orders.confirmed_snapshot`, raw. */
+  confirmedSnapshot: unknown;
+  skuId: string;
+  /** The `po_lines` snapshot columns. */
+  snapshot: { position: number | null; section: string | null };
+  live: GuideKey | undefined;
+}): { position: number | null; section: string | null } {
+  if (input.status !== "draft") {
+    const frozen = frozenSnapshotKey(input.confirmedSnapshot, input.skuId);
+    if (frozen) return frozen;
+  }
+  return resolveGuideKey(input.snapshot, input.live);
+}

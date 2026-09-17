@@ -10,7 +10,7 @@
 import { readFileSync } from "node:fs";
 import ts from "typescript";
 import { describe, expect, it } from "vitest";
-import { resolveGuideKey } from "@/lib/order-guides-shared";
+import { poLineGuideKey, resolveGuideKey } from "@/lib/order-guides-shared";
 
 describe("resolveGuideKey (V3-A read law)", () => {
   const live = { position: 2001, section: "Produce" };
@@ -42,9 +42,11 @@ describe("lib/purchase-orders.ts wiring pins", () => {
     expect((src.match(/guide_section_snapshot: guideKeys\.get\(l\.skuId\)\?\.section \?\? null/g) ?? []).length).toBe(2);
     expect((src.match(/guide_position_snapshot: guideKeys\.get\(l\.skuId\)\?\.position \?\? null/g) ?? []).length).toBe(2);
   });
-  it("loadPoDetail hydrates lines through resolveGuideKey and sorts the picker by the guide", () => {
-    expect(src).toContain("resolveGuideKey({ position: l.guide_position_snapshot, section: l.guide_section_snapshot }, liveGuide.get(l.sku_id))");
+  it("loadPoDetail hydrates every line through poLineGuideKey, status and snapshot included", () => {
+    expect(src).toContain("poLineGuideKey({ status: po.status, confirmedSnapshot: po.confirmed_snapshot");
     expect(src).toContain("compareByGuide(");
+    // The bare read law is no longer wired straight into loadPoDetail — poLineGuideKey owns it.
+    expect(src).not.toContain("resolveGuideKey({ position: l.guide_position_snapshot, section: l.guide_section_snapshot }, liveGuide.get(l.sku_id))");
   });
   it("the confirmed snapshot carries the FROZEN key, never the raw columns", () => {
     expect(src).toContain("guidePos: frozenGuideKeys.get(l.id)?.position ?? null,");
@@ -102,5 +104,52 @@ describe("confirmPO freezes the effective guide key (finding 4)", () => {
       .toEqual({ price_cents_at_order: null });
     expect(patchFor(line("c", "sku-c", null, null), { position: null, section: null }, 250))
       .toEqual({ price_cents_at_order: 250 });
+  });
+});
+
+/**
+ * Astra r2-2 (BC-013, BC-042). `loadPoDetail` applied the DRAFT read law to every status, so a
+ * SKU that was off the guide when the order was confirmed and placed on the guide afterwards
+ * MOVED in the panel and the copied body, while the email — which reads the confirmed snapshot
+ * and has no fallback — kept it where it was frozen. One order, two orders.
+ */
+describe("poLineGuideKey — a confirmed PO reads its own snapshot (r2-2)", () => {
+  const live = { position: 2001, section: "Produce" };
+  const key = (status: string, confirmedSnapshot: unknown, snapshot: { position: number | null; section: string | null }, hasLive = true) =>
+    poLineGuideKey({ status, confirmedSnapshot, skuId: "sku-a", snapshot, live: hasLive ? live : undefined });
+  const frozen = (line: Record<string, unknown>) => ({ lines: [{ skuId: "other", guidePos: 9, guideSection: "Elsewhere" }, { skuId: "sku-a", ...line }] });
+
+  it("confirmed + an EXPLICIT null is authoritative — a later placement never moves the line", () => {
+    expect(key("confirmed", frozen({ guidePos: null, guideSection: null }), { position: null, section: null }))
+      .toEqual({ position: null, section: null });
+  });
+
+  it("confirmed + a recorded key wins over both the row columns and the live guide", () => {
+    expect(key("confirmed", frozen({ guidePos: 1001, guideSection: "Dairy" }), { position: 7, section: "Stale" }))
+      .toEqual({ position: 1001, section: "Dairy" });
+  });
+
+  it("confirmed + a PRE-0205 snapshot (no guideSection at all) falls back to the live guide", () => {
+    expect(key("confirmed", frozen({ guidePos: 7 }), { position: null, section: null })).toEqual(live);
+  });
+
+  it("confirmed with no snapshot, no line for this SKU, or a junk snapshot falls back too", () => {
+    expect(key("confirmed", null, { position: null, section: null })).toEqual(live);
+    expect(key("confirmed", { lines: [{ skuId: "other", guidePos: 1, guideSection: "X" }] }, { position: null, section: null })).toEqual(live);
+    expect(key("confirmed", { lines: "nope" }, { position: null, section: null })).toEqual(live);
+    expect(key("confirmed", "nope", { position: null, section: null })).toEqual(live);
+  });
+
+  it("a DRAFT keeps snapshot-then-live, and never consults a confirmed snapshot", () => {
+    expect(key("draft", frozen({ guidePos: null, guideSection: null }), { position: null, section: null })).toEqual(live);
+    expect(key("draft", null, { position: 1001, section: "Dairy" })).toEqual({ position: 1001, section: "Dairy" });
+    expect(key("draft", null, { position: null, section: null }, false)).toEqual({ position: null, section: null });
+  });
+
+  it("every status past draft reads the snapshot, not just `confirmed`", () => {
+    for (const status of ["confirmed", "placed", "invoiced", "received", "reconciled"]) {
+      expect(key(status, frozen({ guidePos: null, guideSection: null }), { position: null, section: null }))
+        .toEqual({ position: null, section: null });
+    }
   });
 });

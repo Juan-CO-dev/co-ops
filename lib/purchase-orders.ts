@@ -50,7 +50,7 @@ import { emailOrderingAvailable, isPlausibleEmail } from "@/lib/po-email-shared"
 import { loadSkuPackChains } from "@/lib/prep-consumption";
 import { buildPackChain, chainRootLabel } from "@/lib/pack-chain-shared";
 import { guideKeysFor } from "@/lib/order-guides";
-import { resolveGuideKey } from "@/lib/order-guides-shared";
+import { poLineGuideKey, resolveGuideKey } from "@/lib/order-guides-shared";
 import { compareByGuide } from "@/lib/order-guide-sort";
 
 /** KH+ read/write floor for the PO lifecycle (draft/confirm/place/receive + reads). */
@@ -1472,8 +1472,10 @@ export async function loadPoDetail(actor: AuthContext, poId: string): Promise<Po
     .order("name", { ascending: true })
     .returns<Array<{ id: string; name: string; item_number: string | null; pack_format: string | null }>>();
   if (vsErr) throw new Error(`loadPoDetail vendor skus: ${vsErr.message}`);
-  // V3-A read law: a line renders by its snapshot when it has one, else by the LIVE guide
-  // (legacy POs, lines added to a draft after an edit); the picker is always live. One read.
+  // V3-A read law (`poLineGuideKey`): a DRAFT renders `snapshot ?? live` — the guide still
+  // moves under it — while a PO past draft renders from its CONFIRMED SNAPSHOT, where an
+  // explicitly recorded null means "off the guide when this order was frozen" and stays that
+  // way (Astra r2-2). The picker is always live. One read serves both.
   const liveGuide = await guideKeysFor([...(lineRows ?? []).map((l) => l.sku_id), ...(vendorSkuRows ?? []).map((s) => s.id)]);
   // A DRAFT's picker excludes what is already on the order (edit that row instead). Past
   // draft, the picker feeds an ADD-ON — "two more cases of the same thing" is the common
@@ -1591,7 +1593,7 @@ export async function loadPoDetail(actor: AuthContext, poId: string): Promise<Po
         orderQty: num(l.order_qty) ?? 0,
         orderUnitLabel: l.order_unit_label,
         priceCentsAtOrder: l.price_cents_at_order,
-        ...(() => { const k = resolveGuideKey({ position: l.guide_position_snapshot, section: l.guide_section_snapshot }, liveGuide.get(l.sku_id)); return { guidePositionSnapshot: k.position, guideSection: k.section }; })(),
+        ...(() => { const k = poLineGuideKey({ status: po.status, confirmedSnapshot: po.confirmed_snapshot, skuId: l.sku_id, snapshot: { position: l.guide_position_snapshot, section: l.guide_section_snapshot }, live: liveGuide.get(l.sku_id) }); return { guidePositionSnapshot: k.position, guideSection: k.section }; })(),
         note: l.note,
       };
     }),
