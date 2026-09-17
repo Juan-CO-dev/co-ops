@@ -222,6 +222,14 @@ export const NON_DESTRUCTIVE_ACTIONS = [
   "recipe_input.update",
   "sku.deduplicate",
   "sku_count.recorded",
+  // Vendor order guides (V3-A, 2026-09-16). The guide is the READING ORDER of a vendor's
+  // laminate, not the vendor's terms — re-ordering it changes which line a manager's eye
+  // lands on next, never what the kitchen buys, from whom, or at what price. That keeps it
+  // out of the "who changed the kitchen's configuration" filter that `vendor.ordering_change`
+  // and `vendor.cutoff_change` answer, and the row still carries the FULL before/after model
+  // so the edit is reconstructible. `seeded` is seed 37's one-shot provenance row.
+  "vendor.order_guide.edited",
+  "vendor.order_guide.seeded",
   "vendor_item.price_recorded",
 
   // ── TOAST / POS ───────────────────────────────────────────────────────
