@@ -339,7 +339,7 @@ async function apply(sb: SupabaseClient, p: Plan): Promise<void> {
     const spec = TWINS.find(s => `${s.name} (${s.vendor})` === p.name)!, vendor = p.expected.vendor as RawRow, sibling = p.expected.sibling as RawRow | null;
     const id = randomUUID();
     const copied: RawRow = sibling ? Object.fromEntries(SKU_COPY.map(k => [k, sibling[k] ?? null])) : { inventory_only: true, sku_class: "packaging" };
-    await insert(sb, "vendor_items", { id, ...copied, name: spec.name, vendor_id: vendor.id, location_id: null, active: true, item_number: spec.item_number, weekday_par: spec.weekday, weekend_par: spec.weekend, notes: twinNote(spec), product_id: null, guide_position: null, created_by: null, updated_by: null });
+    await insert(sb, "vendor_items", { id, ...copied, name: spec.name, vendor_id: vendor.id, location_id: null, active: true, item_number: spec.item_number, weekday_par: spec.weekday, weekend_par: spec.weekend, notes: twinNote(spec), product_id: null, created_by: null, updated_by: null });
     await record(sb, "vendor_item.create", "vendor_items", id, p, { name: spec.name, vendor: spec.vendor, twin_of: sibling?.id ?? null, creation_method: "seed_script" });
   } else if (p.section === "pars") {
     const spec = PARS.find(s => s.name === p.name)!, sku = p.expected.sku as RawRow;
