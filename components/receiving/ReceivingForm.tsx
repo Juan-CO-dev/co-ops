@@ -65,6 +65,15 @@
  *   readout sits beside the toggle whatever its state, and resuming a draft that carries
  *   prices turns the mode on explicitly.
  *
+ * SCANNING AT THE DOOR (V3-B, 2026-09-16): `ScanField` sits above the list and turns a
+ * scanned case label — from a Bluetooth gun in HID keyboard mode or the phone camera — into
+ * the SAME `setLine(i, patch)` the ± stepper writes. Nothing about this form changes for a
+ * receiver who never scans: no new required field, no new submit payload key, and the scan
+ * state (which code reached which row, the two one-sentence confirms) is session-only and
+ * is deliberately absent from the draft shelf — a resumed intake resumes a COUNT, not a
+ * scanner session. Teaching needs the network; counting does not, so a failed teach still
+ * steps the line and says so.
+ *
  * The key holds a LIST (newest first, capped) rather than one draft, and the
  * writer stands down while the resume banner is up. Both are data-loss fixes:
  *   - ONE SLOT PER LOCATION meant two same-hour deliveries clobbered each
@@ -84,8 +93,11 @@ import { formatTime } from "@/lib/i18n/format";
 import { ActionButton, actionButtonClass } from "@/components/ActionButton";
 import { PhotoCapture } from "@/components/photos/PhotoCapture";
 import { IntakeLineRow, type IntakeLine } from "@/components/receiving/IntakeLineRow";
+import { ScanField } from "@/components/receiving/ScanField";
 import { CollapsibleSection } from "@/components/ui/CollapsibleSection";
 import type { ReceivingFormData, ReceivingSkuOption } from "@/lib/receiving";
+import type { Level, ScanMatch } from "@/lib/barcodes-shared";
+import { applyScanToLines, levelLabelFor } from "@/lib/scan-field-shared";
 import type { OpenCreditRow } from "@/lib/credits";
 import {
   INTAKE_DRAFT_CAP,
@@ -319,6 +331,11 @@ export function ReceivingForm({
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const startedAtRef = useRef<string | null>(null);
   const isFirstRender = useRef(true);
+  // V3-B: the scan handlers are asynchronous (teach, THEN step), so a `lines` captured in
+  // their closure is whatever it was when the POST left. This ref is the committed truth at
+  // the moment each patch is computed — the write itself still goes through a functional
+  // updater, so nothing here can clobber an edit made while the network was out.
+  const linesRef = useRef(lines);
 
   // PO context — set when the template route returns source "po".
   // Cleared on vendor change or form reset. poId is carried into the submit
@@ -345,6 +362,29 @@ export function ReceivingForm({
   const [armComplete, setArmComplete] = useState(false);
   const [notArrived, setNotArrived] = useState<Record<string, true>>({});
 
+  // ── V3-B · scanning at the door ────────────────────────────────────────────
+  // Everything here is INERT until a scan happens: a receiver who never taps Scan and
+  // never picks up a gun sees no new control, no new required field, and submits the same
+  // payload as before.
+  //   `scannedCodes` remembers, per LINE KEY, which code reached that row this session —
+  //     the only thing that can offer "Forget this code" on the right row (the same SKU
+  //     may legitimately sit on two rows, so the key, never the skuId).
+  //   `twinPending` / `levelPending` are the two one-sentence confirms. Both are INLINE
+  //     state in the form's own notice idiom — never window.confirm, which is unstyled,
+  //     untranslated, and unusable one-handed at a truck.
+  //   `pendingTeach` is a "Not on this delivery" scan waiting for the Add-item picker: the
+  //     next pick teaches the code onto whatever SKU the receiver chooses.
+  const [scannedCodes, setScannedCodes] = useState<Record<string, { code: string; level: Level }>>({});
+  const [twinPending, setTwinPending] = useState<{ skuId: string; level: Level; code: string } | null>(null);
+  const [levelPending, setLevelPending] = useState<{
+    code: string;
+    skuId: string;
+    level: Level;
+    storedLevel: Level;
+  } | null>(null);
+  const [pendingTeach, setPendingTeach] = useState<{ code: string; level: Level } | null>(null);
+  const [scanNotice, setScanNotice] = useState<string | null>(null);
+
   // Price mode — the one switch that puts a price input on every collapsed row.
   // Starts false so the FIRST render is always the plain ceremony (localStorage is not
   // readable during SSR); the mount effect below adopts the stored preference.
@@ -358,6 +398,20 @@ export function ReceivingForm({
     if (drafts.length > 0) setPendingDrafts(drafts);
     setPriceMode(readPriceMode(locationId));
   }, [locationId]);
+
+  // Commit-phase mirror of `lines` for the scan handlers (see the ref's own note).
+  useEffect(() => {
+    linesRef.current = lines;
+  }, [lines]);
+
+  // The scan answer is a TOAST, not a state: it describes something that already happened
+  // to the count, so it retires itself rather than waiting to be dismissed. Keyed on the
+  // string so a second identical answer (two unknown codes taught in a row) re-arms.
+  useEffect(() => {
+    if (scanNotice === null) return;
+    const timer = setTimeout(() => setScanNotice(null), 5_000);
+    return () => clearTimeout(timer);
+  }, [scanNotice]);
 
   // Debounced draft save. Fires 500 ms after the last state change.
   // Skipped when the form is pristine (no vendor + no edited lines).
@@ -453,6 +507,147 @@ export function ReceivingForm({
     writePriceMode(locationId, next);
   };
 
+  // ── V3-B · scan → the same patch the stepper writes ────────────────────────
+
+  /** The scan surface only ever needs the SKUs on screen, deduped and capped as the route caps them. */
+  const lineSkuIds = [...new Set(lines.map((l) => l.skuId).filter((id) => id !== ""))].slice(0, 200);
+  const scanLines = lines.flatMap((l, i) => (l.skuId === "" ? [] : [{ index: i, skuName: l.skuName }]));
+
+  /**
+   * ONE SCAN = ONE UNIT on the matched line. A SKU that is not on the delivery yet joins it
+   * through the SAME `offeredLine` row the no-template fallback builds, so a scanned
+   * addition is indistinguishable from an offered one — and, like every offered row, it
+   * files nothing if the count never lands on it.
+   */
+  const applyScan = (skuId: string, level: Level, code: string | null) => {
+    const sku = skuById.get(skuId);
+    if (!sku) return; // a SKU this location does not carry — nothing to step
+    const label = levelLabelFor(sku.chainLabels, level);
+    // ONE row object, used by both passes below, so the key the scan remembers is the key
+    // the list actually gets — the updater is what writes state (never a stale `lines`
+    // closure, which a teach round-trip would otherwise hand us), and the preview is only
+    // read for that key.
+    const fresh = offeredLine(sku);
+    const preview = applyScanToLines(linesRef.current, { skuId }, label, fresh);
+    if (preview.index < 0) return;
+    setLines((ls) => {
+      const next = applyScanToLines(ls, { skuId }, label, fresh);
+      return next.index < 0 ? ls : next.lines;
+    });
+    const key = preview.lines[preview.index]?.key;
+    if (key !== undefined && code !== null) {
+      setScannedCodes((m) => ({ ...m, [key]: { code, level } }));
+    }
+  };
+
+  /**
+   * Teach the code, THEN step the line — and step it either way. Teaching needs the
+   * network; counting does not, and a receiver whose Wi-Fi dropped at the door still has a
+   * truck to count (spec §7). The only branch that does NOT step is the 409: that one is
+   * still a question, and the answer re-enters here with the confirm.
+   */
+  const teachThenStep = async (code: string, skuId: string, level: Level, confirmLevelChange: boolean) => {
+    let outcome: "created" | "known" | "failed" = "failed";
+    try {
+      const res = await fetch("/api/operations/receiving/scan/teach", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          vendorId,
+          locationId,
+          code,
+          skuId,
+          level,
+          invoiceNumber: invoiceNumber || null,
+          ...(confirmLevelChange ? { confirmLevelChange: true } : {}),
+        }),
+      });
+      if (res.status === 409 && !confirmLevelChange) {
+        const j = (await res.json().catch(() => ({}))) as { code?: string; storedLevel?: Level };
+        if (j.code === "level_differs") {
+          setLevelPending({ code, skuId, level, storedLevel: j.storedLevel === "inner" ? "inner" : "case" });
+          return;
+        }
+      }
+      if (res.status === 201) outcome = "created";
+      else if (res.ok) outcome = "known";
+    } catch {
+      outcome = "failed";
+    }
+    applyScan(skuId, level, code);
+    setScanNotice(
+      outcome === "created"
+        ? t("receiving.scan.taught")
+        : outcome === "failed"
+          ? t("receiving.scan.not_remembered")
+          : null,
+    );
+  };
+
+  const onScanMatch = (m: ScanMatch & { code: string }) => {
+    setScanNotice(null);
+    if (m.kind === "unknown") return;
+    // A twin is an OFFER, never an assumption: the code was taught on another vendor's
+    // version of the same product, and only the receiver can say the box in their hands is
+    // this vendor's. Accepting teaches it here too, so the question is asked once.
+    if (m.kind === "twin") {
+      setTwinPending({ skuId: m.skuId, level: m.level, code: m.code });
+      return;
+    }
+    applyScan(m.skuId, m.level, m.code);
+  };
+
+  const onScanUnknownPick = (code: string, lineIndex: number | null, level: Level) => {
+    setScanNotice(null);
+    const line = lineIndex === null ? undefined : linesRef.current[lineIndex];
+    if (!line || line.skuId === "") return;
+    void teachThenStep(code, line.skuId, level, false);
+  };
+
+  /** "Not on this delivery" hands the code to the Add-item picker; the next pick teaches it. */
+  const onScanNotOnDelivery = (code: string, level: Level) => {
+    setScanNotice(null);
+    setPendingTeach({ code, level });
+  };
+
+  const forgetScannedCode = async (key: string) => {
+    const remembered = scannedCodes[key];
+    const line = linesRef.current.find((l) => l.key === key);
+    if (!remembered || !line || line.skuId === "") return;
+    try {
+      const res = await fetch("/api/operations/receiving/scan/forget", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          vendorId,
+          locationId,
+          code: remembered.code,
+          skuId: line.skuId,
+          level: remembered.level,
+        }),
+      });
+      if (!res.ok) return; // the code is still taught — leave the button where it is
+    } catch {
+      return;
+    }
+    setScannedCodes((m) => {
+      const next = { ...m };
+      delete next[key];
+      return next;
+    });
+    setScanNotice(t("receiving.scan.forgotten"));
+  };
+
+  /** Clear every scan-session artefact. Shared by resetForm and the vendor switch — a code
+   *  taught against one vendor's truck must never be offered for forgetting on the next. */
+  const clearScanState = () => {
+    setScannedCodes({});
+    setTwinPending(null);
+    setLevelPending(null);
+    setPendingTeach(null);
+    setScanNotice(null);
+  };
+
   // ── Missing-item honesty gate ──────────────────────────────────────────────
   // UNCONFIRMED EXPECTED ROWS. Only PRE-FILLED rows can be missed (expectedQty != null —
   // they came from the PO or the last-delivery template; offered/added rows carry no
@@ -525,6 +720,7 @@ export function ReceivingForm({
     setCheckedCreditIds(new Set());
     setArmComplete(false);
     setNotArrived({});
+    clearScanState();
     // NOTE: closedCount / closureError are the success-state notice — NOT cleared here.
     // resetForm runs on a successful submit; the notice must survive to be shown.
   };
@@ -587,6 +783,7 @@ export function ReceivingForm({
     // A new vendor means a new expected list — never carry a stale arm or disposition.
     setArmComplete(false);
     setNotArrived({});
+    clearScanState();
     if (!nextVendorId) return;
     setPrefilling(true);
     // Fallback we drop to whenever there's no usable template: the vendor's usage-ranked
@@ -900,6 +1097,119 @@ export function ReceivingForm({
             </p>
           ) : (
             <>
+              {/* ── V3-B · SCAN AT THE DOOR ────────────────────────────────────
+                  Above the list because a scan acts ON the list, and because the wedge
+                  listener has to be mounted before the first trigger — the receiver with a
+                  gun never taps anything. `disabled` while submitting: past the submit the
+                  lines are gone, and a stray beep must not step a row that is being filed. */}
+              <ScanField
+                vendorId={vendorId}
+                locationId={locationId}
+                lineSkuIds={lineSkuIds}
+                invoiceNumber={invoiceNumber.trim() || null}
+                disabled={busy}
+                lines={scanLines}
+                onMatch={onScanMatch}
+                onUnknownPick={onScanUnknownPick}
+                onNotOnDelivery={onScanNotOnDelivery}
+              />
+
+              {/* The scan's one-line answer: taught, not remembered, forgotten. Advisory
+                  tone (role="status"), never an error — every one of them describes
+                  something that already happened to the count. */}
+              {scanNotice ? (
+                <p
+                  role="status"
+                  className="mb-2.5 rounded-lg border-2 border-co-border-2 bg-co-surface-2 px-3 py-2 text-[12px] font-semibold text-co-text"
+                >
+                  {scanNotice}
+                </p>
+              ) : null}
+
+              {/* TWIN OFFER — the code was taught on another vendor's version of this
+                  product. The sentence IS the button: one tap accepts and teaches it here
+                  too, so the question is asked once per code and never again. */}
+              {twinPending ? (
+                <div
+                  role="status"
+                  className="mb-2.5 rounded-lg border-2 border-co-gold-deep bg-co-warning-surface px-3 py-3"
+                >
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      disabled={busy}
+                      onClick={() => {
+                        const twin = twinPending;
+                        setTwinPending(null);
+                        void teachThenStep(twin.code, twin.skuId, twin.level, false);
+                      }}
+                      className="inline-flex min-h-[44px] items-center rounded-full border-2 border-co-text bg-co-surface px-4 text-sm font-bold text-co-text"
+                    >
+                      {t("receiving.scan.twin_confirm", {
+                        sku: skuById.get(twinPending.skuId)?.name ?? t("receiving.door.unknown_sku"),
+                      })}
+                    </button>
+                    <button
+                      type="button"
+                      disabled={busy}
+                      onClick={() => setTwinPending(null)}
+                      className="inline-flex min-h-[44px] items-center rounded-full border-2 border-co-border bg-co-surface px-4 text-sm font-bold text-co-text-dim hover:border-co-text"
+                    >
+                      {t("common.cancel")}
+                    </button>
+                  </div>
+                </div>
+              ) : null}
+
+              {/* LEVEL CONFIRM — the same UPC really is printed on the case and on the
+                  inner pack, so this ADDS the second level; nothing is ever rewritten. */}
+              {levelPending ? (
+                <div
+                  role="status"
+                  className="mb-2.5 rounded-lg border-2 border-co-gold-deep bg-co-warning-surface px-3 py-3"
+                >
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      disabled={busy}
+                      onClick={() => {
+                        const pending = levelPending;
+                        setLevelPending(null);
+                        void teachThenStep(pending.code, pending.skuId, pending.level, true);
+                      }}
+                      className="inline-flex min-h-[44px] items-center rounded-full border-2 border-co-text bg-co-surface px-4 text-sm font-bold text-co-text"
+                    >
+                      {t("receiving.scan.level_confirm", {
+                        stored: t(
+                          levelPending.storedLevel === "case"
+                            ? "receiving.scan.level_case"
+                            : "receiving.scan.level_inner",
+                        ),
+                        level: t(
+                          levelPending.level === "case"
+                            ? "receiving.scan.level_case"
+                            : "receiving.scan.level_inner",
+                        ),
+                      })}
+                    </button>
+                    <button
+                      type="button"
+                      disabled={busy}
+                      onClick={() => {
+                        const pending = levelPending;
+                        setLevelPending(null);
+                        // Declining teaches nothing — but the case still came off the truck,
+                        // so the count lands anyway.
+                        applyScan(pending.skuId, pending.level, null);
+                      }}
+                      className="inline-flex min-h-[44px] items-center rounded-full border-2 border-co-border bg-co-surface px-4 text-sm font-bold text-co-text-dim hover:border-co-text"
+                    >
+                      {t("common.cancel")}
+                    </button>
+                  </div>
+                </div>
+              ) : null}
+
               {/* PRICE MODE — one switch for the whole list, sitting where the operator
                   already is when the invoice comes out of the box. Same chip spelling as
                   the flag chips inside each row (44px floor + items-center, rounded-full,
@@ -942,6 +1252,9 @@ export function ReceivingForm({
                     showPrice={priceMode}
                     onChange={(patch) => setLine(i, patch)}
                     onRemove={lines.length > 1 ? () => setLines((ls) => ls.filter((_, j) => j !== i)) : null}
+                    onForgetCode={
+                      scannedCodes[l.key] !== undefined ? () => void forgetScannedCode(l.key) : null
+                    }
                   />
                 ))}
               </div>
@@ -952,17 +1265,31 @@ export function ReceivingForm({
               expanded line whose SKU is chosen from the vendor's SKU picker. */}
           {vendorId !== "" && !prefilling ? (
             <div className="mt-3">
+              {/* A scan of something that is not on this delivery lands HERE — the picker
+                  the door already has, with the code waiting for whatever the receiver
+                  chooses. No second search box, no new screen. */}
+              {pendingTeach ? (
+                <p role="status" className="mb-2 text-[12px] font-semibold text-co-gold-text">
+                  {t("receiving.scan.unknown_title")}
+                </p>
+              ) : null}
               <AddItemPicker
                 options={vendorSkus}
                 busy={busy}
                 pickLabel={t("receiving.form.pick_sku")}
                 addLabel={t("receiving.form.add_line")}
-                onAdd={(sku) =>
+                onAdd={(sku) => {
+                  const pending = pendingTeach;
+                  if (pending !== null) {
+                    setPendingTeach(null);
+                    void teachThenStep(pending.code, sku.id, pending.level, false);
+                    return;
+                  }
                   setLines((ls) => [
                     ...ls,
                     { ...addedLine(), skuId: sku.id, skuName: sku.name, level: "" },
-                  ])
-                }
+                  ]);
+                }}
               />
             </div>
           ) : null}

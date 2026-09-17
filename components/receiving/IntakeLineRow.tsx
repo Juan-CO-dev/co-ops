@@ -113,6 +113,7 @@ export function IntakeLineRow({
   busy,
   onChange,
   onRemove,
+  onForgetCode = null,
   locationId,
   showPrice = false,
 }: {
@@ -121,6 +122,10 @@ export function IntakeLineRow({
   busy: boolean;
   onChange: (patch: Partial<IntakeLine>) => void;
   onRemove: (() => void) | null;
+  /** V3-B: present only on a row a SCAN reached this session, and only then can the code
+   *  that reached it be wrong. Null everywhere else — a receiver who never scans sees no
+   *  new control. */
+  onForgetCode?: (() => void) | null;
   locationId: string;
   /** Parent's price-mode switch. Adds the compact price strip to the COLLAPSED row only;
    *  the expanded editor has always had its own price field and is unaffected either way.
@@ -487,16 +492,31 @@ export function IntakeLineRow({
         onUploaded={(pid) => onChange({ photoId: pid })}
       />
 
-      {onRemove ? (
-        <button
-          type="button"
-          disabled={busy}
-          onClick={onRemove}
-          className="mt-2 text-xs font-bold text-co-cta-text"
-        >
-          {t("receiving.form.remove_line")}
-        </button>
-      ) : null}
+      <div className="mt-2 flex flex-wrap items-center gap-4">
+        {onRemove ? (
+          <button
+            type="button"
+            disabled={busy}
+            onClick={onRemove}
+            className="text-xs font-bold text-co-cta-text"
+          >
+            {t("receiving.form.remove_line")}
+          </button>
+        ) : null}
+        {/* A code taught to the wrong item is the one scan mistake that OUTLIVES the
+            delivery (spec §7), so the undo lives on the row the bad scan opened — not in
+            an admin screen nobody at the door will find. */}
+        {onForgetCode ? (
+          <button
+            type="button"
+            disabled={busy}
+            onClick={onForgetCode}
+            className="text-xs font-bold text-co-text-dim underline hover:text-co-text"
+          >
+            {t("receiving.scan.forget")}
+          </button>
+        ) : null}
+      </div>
     </div>
   );
 }
