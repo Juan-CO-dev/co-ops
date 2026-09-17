@@ -102,14 +102,32 @@ function looksGs1(s: string): boolean {
   return /[()]/.test(s) || s.startsWith("]C1") || s.includes(GS) || /^(01|02)\d{14}/.test(s);
 }
 
+/**
+ * Every control character EXCEPT GS — GS is FNC1 and is the one control byte a legitimate
+ * label carries. Anything else in the buffer means the read is damaged (a partial wedge
+ * burst, a reader emitting RS/EOT, a paste of terminal output), and `code` is a database
+ * key, never a transcript.
+ */
+const FOREIGN_CONTROL = /[\u0000-\u001c\u001e\u001f\u007f]/;
+
 export function normalizeCode(raw: string): NormalizedCode | null {
   const trimmed = raw.trim();
   if (trimmed.length < 6) return null;
+  // Astra finding 6. A damaged read is refused OUTRIGHT rather than stored: `ABC\u001eDEF`
+  // used to survive normalisation unchanged and be taught verbatim.
+  if (FOREIGN_CONTROL.test(trimmed)) return null;
 
-  const gtin = looksGs1(trimmed) ? gs1Gtin(trimmed) : null;
-  if (gtin) {
+  if (looksGs1(trimmed)) {
+    // A RECOGNISED GS1 label that will not parse is refused here and never falls through to
+    // the Code 128 branch below — that fall-through turned a truncated element string into a
+    // teachable key carrying the label's lot/weight transcript (Astra finding 6).
+    const gtin = gs1Gtin(trimmed);
+    if (!gtin) return null;
+    const ok = gtinCheckOk(gtin);
     const code = gtin.startsWith("0") && gtinCheckOk(gtin.slice(1)) ? gtin.slice(1) : gtin;
-    return { code, symbology: "gs1_128", checkDigitOk: gtinCheckOk(gtin) };
+    // A reprinted label with a broken check digit is a real object on the floor: keep the
+    // code, but say `unknown` — spec section 3, and the same call the bare-digits branch makes.
+    return { code, symbology: ok ? "gs1_128" : "unknown", checkDigitOk: ok };
   }
 
   // Strip the separators a human or a reader may inject, and never let a stray FNC1 reach
@@ -213,6 +231,19 @@ export class ScanBurst {
 
   constructor(private readonly o: { maxGapMs: number; minLength: number; silenceMs: number }) {}
 
+  /**
+   * Has a BURST been confirmed — two or more characters that arrived within `maxGapMs` of
+   * each other? `key()` restarts the buffer at length 1 whenever a keystroke is slower than
+   * that, so a buffer of 2+ is exactly the machine saying "no human types this fast".
+   *
+   * The door reads this to decide whether to swallow the keystroke (Astra finding 1): the
+   * FIRST character of a candidate burst is let through, because outside an editable element
+   * it lands nowhere and a swallow we might have to undo is the whole bug class.
+   */
+  get confirmed(): boolean {
+    return this.buf.length >= 2;
+  }
+
   key(key: string, now: number): "swallow" | "pass" | { scan: string } | { release: string } {
     const gap = now - this.last;
     if (key === "Enter") {
@@ -257,21 +288,28 @@ export class ScanBurst {
 }
 
 /**
- * Camera keep-scanning mode: the same code held in frame is ONE event until it leaves the
- * frame or `holdMs` passes — so a label resting on the counter does not rack up phantom units.
+ * Camera keep-scanning mode: the same code held in frame is ONE event, and the ONLY thing
+ * that re-arms it is the label LEAVING the frame (`frameWithout`).
+ *
+ * The timer path is gone (Astra follow-up 8). v1 also re-accepted a code after `holdMs`,
+ * which meant a case parked in front of the lens counted itself again every 1.5 s — a
+ * phantom unit for standing still, which is exactly what the spec's counting rule forbids.
+ * Disappearance is the only honest evidence that a SECOND case was presented.
+ *
+ * `holdMs` survives as the map's eviction horizon, not as an acceptance rule: every sighting
+ * refreshes the entry, so an entry nobody has sighted for `holdMs` belongs to a code that
+ * left the frame without the caller saying so, and a long session cannot grow unbounded.
  */
 export function dedupeCameraDecode(holdMs: number) {
   const seenAt = new Map<string, number>();
   return {
     decode(code: string, now: number): boolean {
-      const at = seenAt.get(code);
-      if (at != null && now - at < holdMs) return false;
-      seenAt.set(code, now);
-      return true;
+      const fresh = !seenAt.has(code);
+      seenAt.set(code, now); // still in frame — refresh, so the sweep below never evicts it
+      return fresh;
     },
     frameWithout(code: string, now: number) {
       seenAt.delete(code);
-      // A long keep-scanning session should not grow this map without bound.
       for (const [seen, at] of seenAt) if (now - at > holdMs) seenAt.delete(seen);
     },
   };

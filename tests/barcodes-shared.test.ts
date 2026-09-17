@@ -63,6 +63,30 @@ describe("normalizeCode", () => {
   it("alphanumeric Code 128 passes through uppercased", () => {
     expect(normalizeCode("abc-12345")).toEqual({ code: "ABC12345", symbology: "code_128", checkDigitOk: null });
   });
+
+  // Astra finding 6. `code` is a DATABASE KEY, not a transcript of the label: three ways a
+  // damaged read used to become a teachable key, all three refused at the door.
+  it("a control byte other than FNC1/GS is a damaged read, never a key", () => {
+    expect(normalizeCode("ABC\u001eDEF")).toBeNull();
+    expect(normalizeCode("ABC\u0000DEF")).toBeNull();
+    expect(normalizeCode("ABC\u007fDEF")).toBeNull();
+    // GS itself is legitimate — it is how a wedge delivers FNC1.
+    expect(normalizeCode("10LOT77\u001d0110614141000415")?.code).toBe("10614141000415");
+  });
+
+  it("a GS1 label whose element string does not parse is refused, never folded into Code 128", () => {
+    // Truncated: AI 01 promises 14 digits and the label carries five before the next FNC1.
+    expect(normalizeCode("]C10112345\u001d10LOT")).toBeNull();
+    expect(normalizeCode("(01)123")).toBeNull();
+  });
+
+  it("a GS1 GTIN whose check digit fails is KEPT but flagged unknown (spec section 3)", () => {
+    expect(normalizeCode("(01)10614141000416")).toEqual({
+      code: "10614141000416",
+      symbology: "unknown",
+      checkDigitOk: false,
+    });
+  });
 });
 
 describe("gs1Gtin (the AI walk)", () => {
@@ -190,15 +214,57 @@ describe("ScanBurst (keyboard-wedge state machine)", () => {
     for (const ch of "1234") { b.key(ch, t); t += 10; }
     expect(b.tick(t + 300)).toEqual({ release: "1234" });
   });
+
+  // Astra finding 1. `confirmed` is what the door reads to decide whether to SWALLOW a
+  // keystroke: one character is never proof of a gun, two characters 35 ms apart are.
+  it("confirmed is false on the first character and true from the second fast one", () => {
+    const b = new ScanBurst({ maxGapMs: 35, minLength: 6, silenceMs: 300 });
+    expect(b.confirmed).toBe(false);
+    b.key("0", 0);
+    expect(b.confirmed).toBe(false);
+    b.key("1", 20);
+    expect(b.confirmed).toBe(true);
+    b.key("2", 40);
+    expect(b.confirmed).toBe(true);
+  });
+
+  it("a slow keystroke un-confirms the burst — the fresh hypothesis is one character long", () => {
+    const b = new ScanBurst({ maxGapMs: 35, minLength: 6, silenceMs: 300 });
+    b.key("0", 0);
+    b.key("1", 20);
+    expect(b.confirmed).toBe(true);
+    b.key("2", 500); // a person's cadence: the buffer restarts at length 1
+    expect(b.confirmed).toBe(false);
+  });
 });
 
 describe("dedupeCameraDecode", () => {
-  it("the same code held in frame is one event until it leaves or 1500 ms pass", () => {
+  // Astra follow-up 8: TIME ALONE NEVER RE-ARMS A CODE. A label resting on the counter used
+  // to rack up one phantom unit every holdMs; only leaving the frame counts as a new case.
+  it("a code held in frame is ONE event however long it is held", () => {
     const d = dedupeCameraDecode(1500);
     expect(d.decode("111", 0)).toBe(true);
     expect(d.decode("111", 400)).toBe(false);
-    expect(d.decode("111", 1600)).toBe(true);
-    d.frameWithout("111", 1700);
-    expect(d.decode("111", 1750)).toBe(true);
+    expect(d.decode("111", 1600)).toBe(false);
+    expect(d.decode("111", 60_000)).toBe(false);
+  });
+
+  it("re-accepts only after the label has left the frame", () => {
+    const d = dedupeCameraDecode(1500);
+    expect(d.decode("111", 0)).toBe(true);
+    d.frameWithout("111", 100);
+    expect(d.decode("111", 150)).toBe(true);
+    expect(d.decode("111", 200)).toBe(false);
+  });
+
+  it("evicts codes nobody has sighted for holdMs so a long session cannot grow unbounded", () => {
+    const d = dedupeCameraDecode(1500);
+    expect(d.decode("111", 0)).toBe(true);
+    expect(d.decode("222", 0)).toBe(true);
+    // 222 keeps being sighted; 111 has not been seen since t=0 and ages out of the map.
+    expect(d.decode("222", 2_000)).toBe(false);
+    d.frameWithout("333", 2_000);
+    expect(d.decode("111", 2_001)).toBe(true);
+    expect(d.decode("222", 2_001)).toBe(false);
   });
 });
