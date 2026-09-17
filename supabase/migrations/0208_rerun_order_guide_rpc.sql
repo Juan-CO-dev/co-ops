@@ -23,8 +23,12 @@
 -- `clock_timestamp()`, not `now()`. `now()` is the TRANSACTION timestamp, so two writers in one
 -- transaction stamp the same value and the first one's token still verifies — proven on the sim,
 -- where a rerun followed by a second rerun on the stale token was accepted. PostgREST gives each
--- request its own transaction so production never saw it, but a concurrency token that can fail
--- to advance is not a concurrency token; `clock_timestamp()` advances per statement, always.
+-- request its own transaction so production never saw it, but a token that is constant across a
+-- transaction is not much of a token. `clock_timestamp()` is the STATEMENT's wall clock: it is
+-- read afresh per statement and is distinct per statement in practice, which is all the token
+-- needs. It is NOT a monotonicity guarantee and nothing here depends on one — what actually
+-- serialises two writers is the `for update` lock on the guide row, taken before either of them
+-- reads the token. The clock only has to make the stale reader's copy look stale.
 begin;
 
 -- ── r2-3: `active` is a rule for NEW placements, not for the whole guide ─────────────────

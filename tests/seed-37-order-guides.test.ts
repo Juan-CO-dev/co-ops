@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { planOrderGuides, routeRow, SECTION_NAMES, SOURCE, verifyWriteScope, type Plan, type Tables } from "@/scripts/seed/37-order-guides";
 
@@ -168,5 +168,40 @@ describe("the seed's rerun path writes through rerun_order_guide and nothing els
     const fresh = apply.slice(0, apply.indexOf(BOUNDARY));
     expect(fresh).toContain('insert(sb, "vendor_order_guides"');
     expect(fresh).toContain('insert(sb, "order_guide_lines"');
+  });
+});
+
+/**
+ * Astra r3 (BC-036, BC-042). The rerun resolved a section by EXACT name while the editor's
+ * reducer and `save_order_guide` enforce `lower(btrim(name))` uniqueness. A manager renaming
+ * "Produce" to "produce" got a SECOND "Produce" from the next rerun — legal for the DB's
+ * case-sensitive unique, and fatal to every later editor save, which then refuses the pair with
+ * `section_name_taken` and locks the guide. The rerun RPC lives in SQL, so the pin does too:
+ * whichever migration defines it LAST is the one production runs.
+ */
+describe("the rerun RPC matches section names the way every other writer does", () => {
+  const dir = "supabase/migrations";
+  const defining = readdirSync(dir)
+    .filter((f) => f.endsWith(".sql"))
+    .filter((f) => readFileSync(`${dir}/${f}`, "utf8").includes("function public.rerun_order_guide("))
+    .sort();
+  const latest = readFileSync(`${dir}/${defining[defining.length - 1]!}`, "utf8");
+
+  it("has a migration defining it, and 0209 is the one that defines it last", () => {
+    expect(defining.length).toBeGreaterThanOrEqual(1);
+    expect(defining[defining.length - 1]).toBe("0209_rerun_order_guide_section_match.sql");
+  });
+
+  it("resolves the target section case-insensitively, with no exact-name match left", () => {
+    expect(latest).toContain("lower(btrim(s.name)) = lower(btrim(v_rec->>'sectionName'))");
+    expect(latest).not.toContain("s.name = v_rec->>'sectionName'");
+  });
+
+  it("keeps the service-role-only posture every order-guide RPC has", () => {
+    expect(latest).toContain("security definer");
+    expect(latest).toContain("set search_path = pg_catalog, public");
+    expect(latest).toContain("revoke all on function public.rerun_order_guide(uuid, timestamptz, jsonb, jsonb) from public, anon, authenticated;");
+    expect(latest).toContain("grant execute on function public.rerun_order_guide(uuid, timestamptz, jsonb, jsonb) to service_role;");
+    expect(latest).toContain("raise exception '0209: unexpected rerun_order_guide execute grant'");
   });
 });
