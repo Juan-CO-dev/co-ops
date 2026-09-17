@@ -230,10 +230,36 @@ describe("teachBarcode — idempotent, never a silent rewrite", () => {
       .rejects.toMatchObject({ status: 404, code: "not_found" });
     expect(getServiceRoleClient).not.toHaveBeenCalled();
   });
+
+  // Astra finding 5. The read and the insert are not one transaction, so two receivers
+  // teaching the same case at once both find no live row. 0206's partial unique index is the
+  // floor; the loser's 23505 must read as "already taught", not as a failed scan.
+  it("a concurrent same-level teach loses the unique index and answers created:false, not 500", async () => {
+    primeTeach([]);
+    queue.push({ data: null, error: { code: "23505", message: 'duplicate key value violates unique constraint "sku_barcodes_live_key"' } });
+
+    await expect(teachBarcode(actor, { vendorId: VENDOR, locationId: LOCATION, code: UPC, skuId: SKU_TURKEY, level: "case" }))
+      .resolves.toEqual({ created: false });
+    // The row exists but THIS request did not create it, so it writes no audit row either.
+    expect(audit).not.toHaveBeenCalled();
+  });
+
+  it("any other insert failure is still a loud 500", async () => {
+    primeTeach([]);
+    queue.push({ data: null, error: { code: "23503", message: "foreign key violation" } });
+    await expect(teachBarcode(actor, { vendorId: VENDOR, locationId: LOCATION, code: UPC, skuId: SKU_TURKEY, level: "case" }))
+      .rejects.toMatchObject({ status: 500, code: "teach_failed" });
+  });
 });
 
 describe("forgetBarcode — soft delete, audited, and it must actually have hit a row", () => {
+  /** The SKU-ownership read every forget now performs (Astra finding 7), then the UPDATE. */
+  const primeForget = (sku: Record<string, unknown> | null = { id: SKU_TURKEY, vendor_id: VENDOR }) => {
+    queue.push({ data: sku, error: null });
+  };
+
   it("normalises the code first — a raw GTIN-14 scan forgets the stored 13-digit row (first sim run, 09-17)", async () => {
+    primeForget();
     queue.push({ data: null, error: null, count: 1 });
     await expect(forgetBarcode(actor, { vendorId: VENDOR, locationId: LOCATION, code: "04006381333931", skuId: SKU_TURKEY, level: "case" })).resolves.toBeUndefined();
     expect(argsFor("sku_barcodes", "eq")[0]).toEqual(["code", "4006381333931"]);
@@ -247,6 +273,7 @@ describe("forgetBarcode — soft delete, audited, and it must actually have hit 
   });
 
   it("stamps forgotten_at on the live row with an exact count and audits the removal", async () => {
+    primeForget();
     queue.push({ data: null, error: null, count: 1 });
 
     await expect(forgetBarcode(actor, { vendorId: VENDOR, locationId: LOCATION, code: UPC, skuId: SKU_TURKEY, level: "case" })).resolves.toBeUndefined();
@@ -265,10 +292,39 @@ describe("forgetBarcode — soft delete, audited, and it must actually have hit 
   });
 
   it("answers 404 not_taught when the update matched nothing — and writes no audit row", async () => {
+    primeForget();
     queue.push({ data: null, error: null, count: 0 });
     await expect(forgetBarcode(actor, { vendorId: VENDOR, locationId: LOCATION, code: UPC, skuId: SKU_TURKEY, level: "case" }))
       .rejects.toMatchObject({ status: 404, code: "not_taught" });
     expect(audit).not.toHaveBeenCalled();
+  });
+
+  // Astra finding 7 — and the asymmetry class: teach bound the vendor to the SKU row from
+  // day one and its sibling trusted the request body.
+  it("refuses a SKU belonging to another vendor with 400 vendor_mismatch, before the update", async () => {
+    primeForget({ id: SKU_TURKEY, vendor_id: OTHER_VENDOR });
+    await expect(forgetBarcode(actor, { vendorId: VENDOR, locationId: LOCATION, code: UPC, skuId: SKU_TURKEY, level: "case" }))
+      .rejects.toMatchObject({ status: 400, code: "vendor_mismatch" });
+    expect(argsFor("sku_barcodes", "update")).toEqual([]);
+    expect(audit).not.toHaveBeenCalled();
+  });
+
+  it("refuses an unknown SKU with 404 sku_not_found", async () => {
+    primeForget(null);
+    await expect(forgetBarcode(actor, { vendorId: VENDOR, locationId: LOCATION, code: UPC, skuId: SKU_TURKEY, level: "case" }))
+      .rejects.toMatchObject({ status: 404, code: "sku_not_found" });
+    expect(argsFor("sku_barcodes", "update")).toEqual([]);
+  });
+
+  it("the audit row's vendor_id comes from the SKU ROW, never from the request body", async () => {
+    // A caller-supplied vendor that MATCHES is still not the source: the row is.
+    primeForget({ id: SKU_TURKEY, vendor_id: VENDOR });
+    queue.push({ data: null, error: null, count: 1 });
+    await forgetBarcode(actor, { vendorId: VENDOR, locationId: LOCATION, code: UPC, skuId: SKU_TURKEY, level: "case" });
+    expect(argsFor("vendor_items", "eq")).toEqual([["id", SKU_TURKEY]]);
+    expect(audit).toHaveBeenCalledWith(expect.objectContaining({
+      metadata: expect.objectContaining({ vendor_id: VENDOR }),
+    }));
   });
 
   it("refuses an out-of-location actor with 404 not_found before any database work", async () => {

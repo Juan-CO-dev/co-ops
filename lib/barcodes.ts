@@ -239,9 +239,23 @@ export async function teachBarcode(
     })
     .select("id")
     .single<{ id: string }>();
-  if (insErr || !inserted) {
-    throw new BarcodeError(500, "teach_failed", `Barcode write failed: ${insErr?.message ?? "insert returned no row"}`);
+  if (insErr) {
+    // TWO RECEIVERS, ONE CASE (Astra finding 5). The read above and this insert are not one
+    // transaction, so two requests teaching the SAME code at the SAME level can both find no
+    // live row; 0206's partial unique index arbitrates and the loser gets 23505. The honest
+    // answer is the read path's own answer — the code IS taught, this request did not create
+    // it — and NOT a 500, which would tell the receiver their scan failed when it did not.
+    // The index is the floor; the read is only the readable refusal.
+    //
+    // A CROSS-LEVEL race needs no handling and gets none: two requests teaching case and
+    // inner concurrently insert two rows with different unique keys, both succeed, and both
+    // are TRUE — the same UPC really is printed on the case and on the inner pack. What they
+    // skip is the 409 confirm, which is a question about intent, not a correctness gate; the
+    // outcome is exactly what an operator who answered "yes" to it would have got.
+    if ((insErr as { code?: string }).code === "23505") return { created: false };
+    throw new BarcodeError(500, "teach_failed", `Barcode write failed: ${insErr.message}`);
   }
+  if (!inserted) throw new BarcodeError(500, "teach_failed", "Barcode write failed: insert returned no row");
 
   await audit({
     actorId: actor.user.id,
@@ -279,6 +293,12 @@ export async function teachBarcode(
  * `(code, sku_id, level)`, which IS 0206's live unique key, so the row is identifiable from
  * the audit entry without a second read (audit.ts's header: orphaned/absent resource ids are
  * expected and the row itself is the source of truth).
+ *
+ * THE VENDOR IS READ FROM THE SKU, NEVER TRUSTED FROM THE CALLER (Astra finding 7 — and the
+ * asymmetry class: teach checked this from day one and its sibling did not). Without the
+ * check, an actor authorised at this location could forget a code taught on ANOTHER vendor's
+ * SKU, and the audit row would then record the vendor the caller claimed rather than the one
+ * the row belongs to — a provenance defect on top of a binding one.
  */
 export async function forgetBarcode(
   actor: AuthContext,
@@ -291,6 +311,19 @@ export async function forgetBarcode(
   if (!normalized) throw new BarcodeError(400, "invalid_code", "That code is too short to be a barcode");
 
   const sb = getServiceRoleClient();
+  const { data: sku, error: skuErr } = await sb
+    .from("vendor_items")
+    .select("id, vendor_id")
+    .eq("id", input.skuId)
+    .maybeSingle<{ id: string; vendor_id: string | null }>();
+  if (skuErr) throw new BarcodeError(500, "forget_failed", `SKU read failed: ${skuErr.message}`);
+  if (!sku) throw new BarcodeError(404, "sku_not_found", "Item not found");
+  if (sku.vendor_id !== input.vendorId) {
+    throw new BarcodeError(400, "vendor_mismatch", "That item belongs to a different vendor");
+  }
+  // `active` is deliberately NOT checked, unlike teach: forgetting a mistaught code on a SKU
+  // that has since been deactivated is exactly the cleanup this escape hatch is for.
+
   const { error, count } = await sb
     .from("sku_barcodes")
     .update({ forgotten_at: new Date().toISOString() }, { count: "exact" })
@@ -311,7 +344,8 @@ export async function forgetBarcode(
       code: normalized.code,
       sku_id: input.skuId,
       level: input.level,
-      vendor_id: input.vendorId,
+      // From the SKU ROW, not from the request body — the provenance half of finding 7.
+      vendor_id: sku.vendor_id,
       location_id: input.locationId,
     },
     ipAddress: null,
