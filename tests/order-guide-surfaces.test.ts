@@ -104,6 +104,30 @@ describe("OrderGuidePanel locks editing while a save is in flight (finding 6)", 
     expect(offenders).toEqual([]);
   });
 
+  /**
+   * Astra r2-4 (BC-007, BC-042). `busy` was cleared the moment the POST returned, and only THEN
+   * did the stale branch await `reload()`. During that GET the controls were live again, and
+   * whatever the manager changed was replaced by the fresh model with `dirty` cleared — the
+   * same loss the lock exists to stop, moved a few hundred milliseconds later. A failed GET
+   * returned silently while the notice claimed the guide had reloaded.
+   */
+  it("holds busy through the stale reload, and releases it exactly once, in a finally", () => {
+    const save = body.slice(body.indexOf("const save = async () => {"), body.indexOf("const commitRename"));
+    expect(save).toContain("} finally {");
+    expect(save.match(/setBusy\(false\)/g) ?? []).toHaveLength(1);
+    expect(save.indexOf("setBusy(false)")).toBeGreaterThan(save.indexOf("await reload()"));
+  });
+
+  it("announces a reload only after one actually happened, and says so when it did not", () => {
+    const save = body.slice(body.indexOf("const save = async () => {"), body.indexOf("const commitRename"));
+    expect(save).toContain("const reloaded = await reload();");
+    expect(save).toMatch(/if \(!reloaded\)[\s\S]{0,120}setErrorMsg\(/);
+    expect(save.indexOf('setNotice(t("admin.order_guide.stale"))')).toBeGreaterThan(save.indexOf("const reloaded"));
+    // reload has to be able to report failure at all.
+    expect(body).toContain("const reload = async (): Promise<boolean> =>");
+    expect(body).toMatch(/if \(!res\.ok\) return false;/);
+  });
+
   it("the panel still has the controls this is protecting (the assertion cannot pass vacuously)", () => {
     const editable = controls(file, panel as unknown as ts.Node).filter(([tag]) =>
       ["PlainBtn", "PrimaryBtn", "select", "input"].includes(tag),

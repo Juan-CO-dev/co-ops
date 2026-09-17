@@ -166,21 +166,32 @@ export function OrderGuidePanel({
   };
 
   // ── Server round-trips ───────────────────────────────────────────────────────
-  const reload = async () => {
-    const res = await fetch(url, { headers: { accept: "application/json" }, redirect: "manual" });
-    if (!res.ok) return;
-    const fresh = (await res.json()) as OrderGuideInitial;
-    setBaseline(fresh);
-    setModel(fresh.guide);
-    setDirty(false);
+  /** Reconcile with the server's state. Returns false when the GET failed — the caller must
+   *  say so rather than claim a reload that did not happen (Astra r2-4). */
+  const reload = async (): Promise<boolean> => {
+    try {
+      const res = await fetch(url, { headers: { accept: "application/json" }, redirect: "manual" });
+      if (!res.ok) return false;
+      const fresh = (await res.json()) as OrderGuideInitial;
+      setBaseline(fresh);
+      setModel(fresh.guide);
+      setDirty(false);
+      return true;
+    } catch {
+      return false;
+    }
   };
 
   const create = async () => {
     if (busy || !canEdit) return;
     setBusy(true);
     setErrorMsg(null);
-    const result = await postJson(url, { create: true });
-    setBusy(false);
+    let result;
+    try {
+      result = await postJson(url, { create: true });
+    } finally {
+      setBusy(false);
+    }
     if (result.ok) {
       const guide = result.data.guide as GuideModel;
       setBaseline({ guide, skusNotOnGuide: baseline.skusNotOnGuide });
@@ -189,28 +200,43 @@ export function OrderGuidePanel({
     } else setErrorMsg(t(resolveErrorKey(result.code)));
   };
 
+  /**
+   * BUSY IS HELD THROUGH THE WHOLE ROUND TRIP, RECONCILIATION INCLUDED (Astra r2-4, BC-007).
+   * The stale branch clears `busy` only in the `finally`, because the reload GET is part of the
+   * save: releasing the controls before it returned let a manager make an edit that `reload()`
+   * then replaced, clearing `dirty` under them — the same loss the busy lock exists to stop,
+   * moved a few hundred milliseconds later. And a reload that FAILED says so: the "reloaded —
+   * redo your change" notice is only truthful after the fresh state actually arrived.
+   */
   const save = async () => {
     if (busy || !model || !canEdit) return;
     setBusy(true);
     setErrorMsg(null);
     setNotice(null);
-    const result = await postJson(url, { model, expectedUpdatedAt: model.updatedAt });
-    setBusy(false);
-    if (result.ok) {
-      const guide = result.data.guide as GuideModel;
-      setBaseline({ guide, skusNotOnGuide: bucket });
-      setModel(guide);
-      setDirty(false);
-      setNotice(t("admin.order_guide.saved"));
-      return;
+    try {
+      const result = await postJson(url, { model, expectedUpdatedAt: model.updatedAt });
+      if (result.ok) {
+        const guide = result.data.guide as GuideModel;
+        setBaseline({ guide, skusNotOnGuide: bucket });
+        setModel(guide);
+        setDirty(false);
+        setNotice(t("admin.order_guide.saved"));
+        return;
+      }
+      if (result.code === "guide_stale") {
+        // Replay NOTHING (spec §7): the manager redoes the move against the fresh state.
+        const reloaded = await reload();
+        if (!reloaded) {
+          setErrorMsg(t("admin.vendors.error.generic"));
+          return;
+        }
+        setNotice(t("admin.order_guide.stale"));
+        return;
+      }
+      setErrorMsg(t(resolveErrorKey(result.code)));
+    } finally {
+      setBusy(false);
     }
-    if (result.code === "guide_stale") {
-      // Replay NOTHING (spec §7): the manager redoes the move against the fresh state.
-      setNotice(t("admin.order_guide.stale"));
-      await reload();
-      return;
-    }
-    setErrorMsg(t(resolveErrorKey(result.code)));
   };
 
   const commitRename = (sectionId: string) => {
