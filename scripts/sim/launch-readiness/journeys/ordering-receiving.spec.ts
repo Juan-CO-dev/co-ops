@@ -129,10 +129,16 @@ for (const [code, khAlias, employeeAlias] of [["EM", "rosa", "maya"], ["MEP", "a
       for (const l of frozen) expect(l.guideSection, "ordering.po.guide-order: confirmed snapshot carries the section").toBe(expectedGuideKey.get(l.skuId)?.section ?? null);
       // The panel renders the frozen table in guide order: Extras header, its line, Deli header, its lines (by position).
       const expectedRowOrder = ["Extras", ...firstSection.map(x => x.name), ...(secondSection.length ? ["Deli", ...secondSection.map(x => x.name)] : [])];
-      const renderedRows = (await panel.getByRole("table").first().getByRole("row").allInnerTexts()).map(t => t.trim()).filter(t => t.length > 0);
-      const renderedOrder = expectedRowOrder.filter(name => renderedRows.some(r => r.startsWith(name)));
-      expect(renderedOrder, "ordering.po.guide-order: rendered order").toEqual(expectedRowOrder);
-      const bodyPositions = expectedRowOrder.map(name => renderedRows.findIndex(r => r.startsWith(name)));
+      // textContent (not innerText): the frozen table lives in a collapsible section that may be folded after confirm.
+      const tables = panel.getByRole("table");
+      let renderedRows: string[] = [];
+      for (let i = 0; i < await tables.count(); i++) {
+        const rows = (await tables.nth(i).getByRole("row").allTextContents()).map(t => t.replace(/\s+/g, " ").trim()).filter(t => t.length > 0);
+        if (rows.some(r => expectedRowOrder.some(name => r.includes(name)))) { renderedRows = rows; break; }
+      }
+      const firstRowWith = (name: string) => renderedRows.findIndex(r => r.includes(name));
+      const bodyPositions = expectedRowOrder.map(firstRowWith);
+      expect(bodyPositions.every(i => i >= 0), `ordering.po.guide-order: every header and line rendered (${JSON.stringify(renderedRows)})`).toBe(true);
       expect([...bodyPositions].sort((a, b) => a - b), "ordering.po.guide-order: header before lines, sections in order").toEqual(bodyPositions);
       mark("ordering.po.manual");
       await poButton("ordering.po.mark_placed").click();
