@@ -12,11 +12,16 @@
  */
 import { describe, expect, it } from "vitest";
 
+import type { Level } from "@/lib/barcodes-shared";
 import {
   applyScanToLines,
   isEditableTarget,
   levelLabelFor,
+  scanQueue,
   type EditableProbe,
+  type ResolvedScanMatch,
+  type ScanQueueOutcome,
+  type ScanQueueState,
   type ScanStepLine,
 } from "@/lib/scan-field-shared";
 
@@ -252,5 +257,258 @@ describe("isEditableTarget — when the wedge stands down (Astra finding 1)", ()
     const a: EditableProbe = { tagName: "DIV", getAttribute: () => null, parentElement: null };
     a.parentElement = a;
     expect(isEditableTarget(a)).toBe(false);
+  });
+});
+
+/**
+ * The scan event machine (Astra r3). Both P1s of the third pass live or die here:
+ * ARRIVAL ORDER (the question asked must be about the box in the receiver's hands) and
+ * ONE WORKFLOW AT A TIME (a second scan must never overwrite the first mid-confirmation).
+ *
+ * The executor below is the parent modelled as a counter — because the thing the arc is
+ * ultimately protecting is a quantity on a line, and "each accepted scan increments exactly
+ * once" is the only statement of that worth pinning.
+ */
+describe("scanQueue", () => {
+  const TOKEN = 7;
+
+  const match = (skuId: string, kind: "line" | "sku" | "twin" = "line"): ResolvedScanMatch =>
+    kind === "twin"
+      ? { kind: "twin", skuId, viaSkuId: "via-sku", level: "case", levels: ["case"], ambiguous: false }
+      : { kind, skuId, level: "case", levels: ["case"], ambiguous: false };
+
+  /** Two labels read back to back, before either lookup has answered. */
+  const twoArrivals = (token = TOKEN) => {
+    const a = scanQueue.arrive(scanQueue.empty, { code: "AAA111", token });
+    const b = scanQueue.arrive(a.state, { code: "BBB222", token });
+    return { a: a.event, b: b.event, state: b.state };
+  };
+
+  it("allocates the queue position when the label ARRIVES, not when the lookup answers", () => {
+    const { a, b, state } = twoArrivals();
+    expect(a.seq).toBeLessThan(b.seq);
+    expect(a.state).toBe("looking_up");
+
+    // B's lookup returns FIRST — the reversal that asked about B while A was in hand, and
+    // taught B's barcode onto A's SKU.
+    let q = scanQueue.resolve(state, b.id, { kind: "unknown", failed: false });
+    expect(scanQueue.head(q, TOKEN)).toMatchObject({ id: a.id, code: "AAA111", state: "looking_up" });
+
+    // A answers second and is STILL the question asked first.
+    q = scanQueue.resolve(q, a.id, { kind: "unknown", failed: false });
+    expect(scanQueue.head(q, TOKEN)).toMatchObject({ id: a.id, code: "AAA111", state: "resolved" });
+
+    q = scanQueue.complete(q, a.id);
+    expect(scanQueue.head(q, TOKEN)).toMatchObject({ id: b.id, code: "BBB222" });
+  });
+
+  it("a resolved later event is never presented ahead of an unresolved head", () => {
+    const { a, b, state } = twoArrivals();
+    const q = scanQueue.resolve(state, b.id, { kind: "match", match: match("sku-b") });
+    expect(scanQueue.head(q, TOKEN)?.id).toBe(a.id);
+    expect(scanQueue.pending(q, TOKEN)).toBe(2);
+  });
+
+  it("completing an event twice removes nothing the second time", () => {
+    const { a, b, state } = twoArrivals();
+    let q = scanQueue.complete(state, a.id);
+    q = scanQueue.complete(q, a.id); // a double-tap must not consume B
+    expect(scanQueue.pending(q, TOKEN)).toBe(1);
+    expect(scanQueue.head(q, TOKEN)?.id).toBe(b.id);
+  });
+
+  it("a late answer for a completed scan is inert — resolve never creates an entry", () => {
+    const { a, state } = twoArrivals();
+    let q = scanQueue.complete(state, a.id);
+    q = scanQueue.complete(q, scanQueue.head(q, TOKEN)?.id ?? -1);
+    q = scanQueue.resolve(q, a.id, { kind: "unknown", failed: true });
+    expect(scanQueue.pending(q, TOKEN)).toBe(0);
+    expect(scanQueue.head(q, TOKEN)).toBeNull();
+  });
+
+  it("each event keeps its OWN case/inner choice", () => {
+    const { a, b, state } = twoArrivals();
+    const q = scanQueue.chooseLevel(state, a.id, "inner");
+    expect(q.events.find((e) => e.id === a.id)?.level).toBe("inner");
+    expect(q.events.find((e) => e.id === b.id)?.level).toBe("case");
+  });
+
+  it("dropping a generation removes only that generation's events", () => {
+    const old = scanQueue.arrive(scanQueue.empty, { code: "AAA111", token: 1 });
+    const fresh = scanQueue.arrive({ events: [], nextSeq: old.state.nextSeq }, { code: "BBB222", token: 2 });
+    // Built by hand: `arrive` sweeps foreign tokens, so this tests `drop` on its own.
+    const mixed = { events: [...old.state.events, ...fresh.state.events], nextSeq: fresh.state.nextSeq };
+    expect(scanQueue.pending(mixed, 1)).toBe(1);
+    expect(scanQueue.pending(mixed, 2)).toBe(1);
+
+    const after = scanQueue.drop(mixed, 1);
+    expect(scanQueue.pending(after, 1)).toBe(0);
+    expect(scanQueue.pending(after, 2)).toBe(1);
+    expect(scanQueue.head(after, 2)?.code).toBe("BBB222");
+  });
+
+  it("a new arrival sweeps the previous generation — the token only ever moves forward", () => {
+    let q = scanQueue.arrive(scanQueue.empty, { code: "AAA111", token: 1 }).state;
+    q = scanQueue.arrive(q, { code: "BBB222", token: 2 }).state;
+    expect(scanQueue.pending(q, 1)).toBe(0);
+    expect(scanQueue.pending(q, 2)).toBe(1);
+  });
+
+  /**
+   * THE EXECUTOR, MODELLED — the parent. It is handed the head ONLY when the head is resolved
+   * and nothing is already active, it runs one workflow at a time, and it completes exactly
+   * once. `units` is the quantity on a line: the number the whole arc protects.
+   */
+  interface Active {
+    id: number;
+    stage: "twin" | "level";
+    lineKey: string | null;
+    level: Level;
+  }
+  const executor = (start: ScanQueueState) => {
+    let q = start;
+    let units = 0;
+    let active: Active | null = null;
+    const seen: Active[] = [];
+    return {
+      get units() {
+        return units;
+      },
+      get pending() {
+        return scanQueue.pending(q, TOKEN);
+      },
+      get active() {
+        return active;
+      },
+      get seen() {
+        return seen;
+      },
+      resolve(id: number, outcome: ScanQueueOutcome) {
+        q = scanQueue.resolve(q, id, outcome);
+      },
+      chooseLevel(id: number, level: Level) {
+        q = scanQueue.chooseLevel(q, id, level);
+      },
+      /** What ScanField would hand over right now, or null. */
+      take() {
+        if (active !== null) return null;
+        const h = scanQueue.head(q, TOKEN);
+        return h !== null && h.state === "resolved" ? h : null;
+      },
+      open(id: number, stage: "twin" | "level", lineKey: string | null, level: Level) {
+        active = { id, stage, lineKey, level };
+        seen.push(active);
+      },
+      /** The workflow ended in a count. */
+      accept() {
+        if (active === null) throw new Error("nothing active");
+        units += 1;
+        q = scanQueue.complete(q, active.id);
+        active = null;
+      },
+      /** The workflow ended without one. */
+      dismiss() {
+        if (active === null) throw new Error("nothing active");
+        q = scanQueue.complete(q, active.id);
+        active = null;
+      },
+    };
+  };
+
+  it("two twin offers in a row each increment EXACTLY once — neither overwrites the other", () => {
+    const { a, b, state } = twoArrivals();
+    const ex = executor(state);
+    // Both answer as twins, B's lookup first.
+    ex.resolve(b.id, { kind: "match", match: match("sku-b", "twin") });
+    ex.resolve(a.id, { kind: "match", match: match("sku-a", "twin") });
+
+    const first = ex.take();
+    expect(first?.id).toBe(a.id); // arrival order, not answer order
+    ex.open(first!.id, "twin", null, "case");
+    // While A's confirm is open, B is NOT handed over: that is the overwrite that used to
+    // make the first scan count zero.
+    expect(ex.take()).toBeNull();
+    ex.accept();
+
+    const second = ex.take();
+    expect(second?.id).toBe(b.id);
+    ex.open(second!.id, "twin", null, "case");
+    ex.accept();
+
+    expect(ex.units).toBe(2);
+    expect(ex.pending).toBe(0);
+  });
+
+  it("two 409 level confirms in a row keep their own lineKey and level", () => {
+    const { a, b, state } = twoArrivals();
+    const ex = executor(state);
+    ex.resolve(a.id, { kind: "unknown", failed: false });
+    ex.resolve(b.id, { kind: "unknown", failed: false });
+
+    // A: the receiver picks row k9 and answers INNER; the teach comes back 409.
+    ex.chooseLevel(a.id, "inner");
+    const first = ex.take();
+    expect(first?.id).toBe(a.id);
+    expect(first?.level).toBe("inner");
+    ex.open(first!.id, "level", "k9", first!.level);
+    expect(ex.take()).toBeNull();
+    ex.accept();
+
+    // B: a different row, its own level — A's slot was never touched.
+    const second = ex.take();
+    expect(second?.id).toBe(b.id);
+    expect(second?.level).toBe("case");
+    ex.open(second!.id, "level", "k2", second!.level);
+    ex.accept();
+
+    expect(ex.units).toBe(2);
+    expect(ex.seen).toEqual([
+      { id: a.id, stage: "level", lineKey: "k9", level: "inner" },
+      { id: b.id, stage: "level", lineKey: "k2", level: "case" },
+    ]);
+  });
+
+  it("dispatch takes the head out of the ASKING state without moving it off the head", () => {
+    const { a, b, state } = twoArrivals();
+    let q = scanQueue.resolve(state, a.id, { kind: "unknown", failed: false });
+    expect(scanQueue.isPresentable(scanQueue.head(q, TOKEN))).toBe(true);
+
+    q = scanQueue.dispatch(q, a.id); // the receiver tapped a line; the sheet must close
+    expect(scanQueue.isPresentable(scanQueue.head(q, TOKEN))).toBe(false);
+    expect(scanQueue.head(q, TOKEN)?.id).toBe(a.id); // …and B still waits behind it
+    expect(scanQueue.pending(q, TOKEN)).toBe(2);
+
+    q = scanQueue.complete(q, a.id);
+    expect(scanQueue.head(q, TOKEN)?.id).toBe(b.id);
+  });
+
+  it("dispatching a working or unresolved event changes nothing — one scan executes once", () => {
+    const { a, state } = twoArrivals();
+    const looking = scanQueue.dispatch(state, a.id); // still looking up
+    expect(looking.events.find((e) => e.id === a.id)?.state).toBe("looking_up");
+
+    let q = scanQueue.resolve(state, a.id, { kind: "unknown", failed: false });
+    q = scanQueue.dispatch(q, a.id);
+    const twice = scanQueue.dispatch(q, a.id); // a double-tap
+    expect(twice.events.find((e) => e.id === a.id)?.state).toBe("working");
+    expect(scanQueue.pending(twice, TOKEN)).toBe(2);
+  });
+
+  it("a dismissed workflow increments zero times and still frees the queue", () => {
+    const { a, b, state } = twoArrivals();
+    const ex = executor(state);
+    ex.resolve(a.id, { kind: "unknown", failed: false });
+    ex.resolve(b.id, { kind: "match", match: match("sku-b") });
+
+    ex.open(ex.take()!.id, "level", null, "case");
+    ex.dismiss(); // closed without answering
+    expect(ex.units).toBe(0);
+
+    const next = ex.take();
+    expect(next?.id).toBe(b.id);
+    ex.open(next!.id, "twin", null, "case");
+    ex.accept();
+    expect(ex.units).toBe(1);
+    expect(ex.pending).toBe(0);
   });
 });

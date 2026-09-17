@@ -12,7 +12,7 @@
  * ZERO IMPORTS except the `Level` type, for the same reason `barcodes-shared` has none.
  */
 
-import type { Level } from "./barcodes-shared";
+import type { Level, ScanMatch } from "./barcodes-shared";
 
 /**
  * The receiving level picker speaks the SKU's own pack-chain labels ("Case", "Bag", …),
@@ -191,3 +191,159 @@ export function isEditableTarget(el: EditableProbe | null | undefined): boolean 
   }
   return false;
 }
+
+// ── The scan event machine (Astra r3) ──────────────────────────────────────
+
+/**
+ * Every match that names a SKU — i.e. everything a lookup can answer but `unknown`.
+ * A type-only import, so this module still pulls in nothing at runtime.
+ */
+export type ResolvedScanMatch = Exclude<ScanMatch, { kind: "unknown" }>;
+
+/** What the lookup turned out to mean. `ambiguous` resolves as `unknown`: it is the same question. */
+export type ScanQueueOutcome =
+  /** Nobody has taught this code, or the lookup could not answer (`failed`). Ask which line. */
+  | { kind: "unknown"; failed: boolean }
+  /** Taught at BOTH levels — case or inner must be asked before anything steps or teaches. */
+  | { kind: "needs_level"; match: ResolvedScanMatch; levels: readonly Level[] }
+  /** A single-level match (`line`, `sku`, or a `twin` offer): the executor can act on it. */
+  | { kind: "match"; match: ResolvedScanMatch };
+
+export interface ScanQueueEvent {
+  /** Identity. Monotonic and never reused, so a completion can never land on a later event. */
+  id: number;
+  /** ARRIVAL ORDER, allocated the instant the label was read — not when the network answered. */
+  seq: number;
+  /** The intake generation the label was scanned under. */
+  token: number;
+  code: string;
+  /**
+   * `looking_up` the lookup is out · `resolved` it answered and the event is presentable ·
+   * `working` it has been handed to the executor and its workflow is running. The third one
+   * is why the sheet closes on the tap that answers it while the event itself STAYS at the
+   * head of the queue: the question is over, the workflow is not.
+   */
+  state: "looking_up" | "resolved" | "working";
+  outcome: ScanQueueOutcome | null;
+  /** The case/inner this event's own sheet is showing. Per EVENT, never a shared slot. */
+  level: Level;
+}
+
+export interface ScanQueueState {
+  events: readonly ScanQueueEvent[];
+  nextSeq: number;
+}
+
+/**
+ * ONE EVENT MACHINE FOR THE DOOR (Astra r3, both P1s).
+ *
+ * THE POSITION IS ALLOCATED WHEN THE LABEL IS READ, NOT WHEN THE SERVER ANSWERS. Scanning
+ * unknown labels A then B and letting B's lookup return first used to ask about B first —
+ * with no code on screen — so a receiver answering for the box in their hands taught B's
+ * barcode onto A's SKU and corrupted every future match. `arrive` allocates `seq`; the
+ * lookup only ever RESOLVES an entry that already exists, so network timing cannot reorder
+ * the questions.
+ *
+ * ONLY THE HEAD IS EVER PRESENTED, AND IT STAYS THE HEAD UNTIL ITS WHOLE WORKFLOW ENDS. That
+ * is what retires the downstream single slots: the twin confirm, the level choice, the teach
+ * 409 confirm and the "not on this delivery" hand-off were each one slot that a second scan
+ * overwrote mid-workflow, so the first scan counted zero units. Because the executor is never
+ * handed event N+1 until it calls `complete(N)`, a single active slot is provably enough.
+ *
+ * THE COUNTING RULE FALLS OUT OF THE SHAPE: an accepted event is completed exactly once and
+ * increments exactly once; a dismissed event is completed exactly once and increments zero
+ * times; `complete` on an id that has already left is a no-op, so a double-tap cannot pop the
+ * event behind it.
+ */
+export const scanQueue = {
+  empty: { events: [], nextSeq: 1 } as ScanQueueState,
+
+  /**
+   * A label was read. Entries from RETIRED generations are swept here — the token only ever
+   * moves forward, so anything carrying an older one is a question about a truck that has
+   * gone, and sweeping on the way in keeps the machine honest with no effect and no
+   * cascading render.
+   */
+  arrive(
+    state: ScanQueueState,
+    input: { code: string; token: number },
+  ): { state: ScanQueueState; event: ScanQueueEvent } {
+    const event: ScanQueueEvent = {
+      id: state.nextSeq,
+      seq: state.nextSeq,
+      token: input.token,
+      code: input.code,
+      state: "looking_up",
+      outcome: null,
+      level: "case",
+    };
+    return {
+      state: {
+        events: [...state.events.filter((e) => e.token === input.token), event],
+        nextSeq: state.nextSeq + 1,
+      },
+      event,
+    };
+  },
+
+  /** The lookup answered. Resolves the EXISTING entry in place; it never creates one. */
+  resolve(state: ScanQueueState, id: number, outcome: ScanQueueOutcome): ScanQueueState {
+    return {
+      ...state,
+      events: state.events.map((e) => (e.id === id ? { ...e, state: "resolved" as const, outcome } : e)),
+    };
+  },
+
+  /**
+   * Handed to the executor. ONLY a `resolved` event can be dispatched, which is what makes a
+   * double-tap and a re-render idempotent: the second call finds a `working` event and
+   * changes nothing, so one scan can never be executed twice.
+   */
+  dispatch(state: ScanQueueState, id: number): ScanQueueState {
+    return {
+      ...state,
+      events: state.events.map((e) =>
+        e.id === id && e.state === "resolved" ? { ...e, state: "working" as const } : e,
+      ),
+    };
+  },
+
+  /** Is this event presentable — resolved, and not already out with the executor? */
+  isPresentable(event: ScanQueueEvent | null): boolean {
+    return event !== null && event.state === "resolved";
+  },
+
+  /** The case/inner toggle, remembered on the event so two queued codes keep their own answer. */
+  chooseLevel(state: ScanQueueState, id: number, level: Level): ScanQueueState {
+    return { ...state, events: state.events.map((e) => (e.id === id ? { ...e, level } : e)) };
+  },
+
+  /** The oldest unfinished scan of this generation — resolved or not. Null when there is none. */
+  head(state: ScanQueueState, token: number): ScanQueueEvent | null {
+    let head: ScanQueueEvent | null = null;
+    for (const e of state.events) {
+      if (e.token !== token) continue;
+      if (head === null || e.seq < head.seq) head = e;
+    }
+    return head;
+  },
+
+  /** How many scans of this generation are still unfinished, the head included. */
+  pending(state: ScanQueueState, token: number): number {
+    return state.events.filter((e) => e.token === token).length;
+  },
+
+  /**
+   * This scan's workflow is over — stepped, taught, cancelled or abandoned. Idempotent by id:
+   * calling it twice removes nothing the second time, so a double-tap can never consume the
+   * event queued behind it.
+   */
+  complete(state: ScanQueueState, id: number): ScanQueueState {
+    return { ...state, events: state.events.filter((e) => e.id !== id) };
+  },
+
+  /** Retire one generation's events and leave every other generation untouched. */
+  drop(state: ScanQueueState, token: number): ScanQueueState {
+    return { ...state, events: state.events.filter((e) => e.token !== token) };
+  },
+};
