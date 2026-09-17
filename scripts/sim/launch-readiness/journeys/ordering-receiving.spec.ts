@@ -204,6 +204,29 @@ for (const [code, khAlias, employeeAlias] of [["EM", "rosa", "maya"], ["MEP", "a
       try { await checkCredits(receipt.header, receipt.lines, ledger); }
       catch { expect.soft(false, "ordering.receiving.credits: exact independent cent ledger").toBe(true); }
       expect((await poById(poId)).status, "ordering.receiving.quantities").toBe("received");
+      // V3-B (receiving.scan.teach-then-hit): teach a case code for a received SKU, then look it up both ways.
+      mark("receiving.scan.teach-then-hit");
+      const receivedItems = await readRows<{ vendor_item_id: string }>("vendor_delivery_items", "vendor_item_id", { delivery_id: receipt.header.id });
+      const taughtSku = receivedItems[0]!.vendor_item_id;
+      const scanApi = (leaf: string) => `/api/operations/receiving/scan/${leaf}`;
+      const scanBody = { vendorId: vendor.vendorId, locationId: SIM_LOCATIONS[code].id, code: "04006381333931" };
+      const teach1 = await api.call("POST", scanApi("teach"), { ...scanBody, skuId: taughtSku, level: "case", invoiceNumber: ledger.body.invoiceNumber });
+      expect({ status: teach1.status, created: (teach1.json as { created?: boolean }).created }, "receiving.scan.teach-then-hit: teach").toEqual({ status: 201, created: true });
+      const asSku = await api.call("POST", scanApi("lookup"), { ...scanBody, lineSkuIds: [] });
+      expect(asSku.json, "receiving.scan.teach-then-hit: lookup off the delivery").toMatchObject({ kind: "sku", skuId: taughtSku, level: "case" });
+      const asLine = await api.call("POST", scanApi("lookup"), { ...scanBody, lineSkuIds: [taughtSku] });
+      expect(asLine.json, "receiving.scan.teach-then-hit: lookup on the delivery").toMatchObject({ kind: "line", skuId: taughtSku, level: "case" });
+      const teachAgain = await api.call("POST", scanApi("teach"), { ...scanBody, skuId: taughtSku, level: "case" });
+      expect({ status: teachAgain.status, created: (teachAgain.json as { created?: boolean }).created }, "receiving.scan.teach-then-hit: idempotent").toEqual({ status: 200, created: false });
+      const otherLevel = await api.call("POST", scanApi("teach"), { ...scanBody, skuId: taughtSku, level: "inner" });
+      expect({ status: otherLevel.status, code: otherLevel.code }, "receiving.scan.teach-then-hit: second level asks first").toEqual({ status: 409, code: "level_differs" });
+      const confirmed = await api.call("POST", scanApi("teach"), { ...scanBody, skuId: taughtSku, level: "inner", confirmLevelChange: true });
+      expect(confirmed.status, "receiving.scan.teach-then-hit: second level added").toBe(201);
+      const both = await api.call("POST", scanApi("lookup"), { ...scanBody, lineSkuIds: [taughtSku] });
+      expect((both.json as { levels?: string[] }).levels, "receiving.scan.teach-then-hit: both levels").toEqual(["case", "inner"]);
+      expect((await api.call("POST", scanApi("forget"), { ...scanBody, skuId: taughtSku, level: "case" })).status, "receiving.scan.teach-then-hit: forget").toBe(200);
+      const after = await api.call("POST", scanApi("lookup"), { ...scanBody, lineSkuIds: [taughtSku] });
+      expect((after.json as { levels?: string[] }).levels, "receiving.scan.teach-then-hit: forgotten level gone").toEqual(["inner"]);
       mark("ordering.receiving.history");
       await page.reload();
       await page.context().clearCookies();
