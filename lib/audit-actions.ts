@@ -220,6 +220,14 @@ export const NON_DESTRUCTIVE_ACTIONS = [
   "receipt.po_linked",
   "recipe.input_unit_normalize",
   "recipe_input.update",
+  // Barcode taught at the receiving door (V3-B, 2026-09-16). Teaching a code is a
+  // RECOGNITION aid, not a configuration change: nothing about what the kitchen buys, from
+  // whom, at what price or in what pack moves — the next scan of that label simply opens the
+  // line the receiver would otherwise have hunted for. The row still carries the full
+  // provenance (code, sku, level, symbology, vendor, location, invoice, check digit) so a
+  // mistaught code is reconstructible. Its sibling `sku.barcode.forgotten` DOES remove a live
+  // code from lookups and is registered in DESTRUCTIVE_ACTIONS.
+  "sku.barcode.taught",
   "sku.deduplicate",
   "sku_count.recorded",
   // Vendor order guides (V3-A, 2026-09-16). The guide is the READING ORDER of a vendor's
