@@ -210,8 +210,17 @@ export type ScanQueueOutcome =
   | { kind: "match"; match: ResolvedScanMatch };
 
 export interface ScanQueueEvent {
-  /** Identity. Monotonic and never reused, so a completion can never land on a later event. */
-  id: number;
+  /**
+   * Identity, GLOBALLY UNIQUE: `<token>:<seq>` (Astra r4 item 1).
+   *
+   * A plain counter was not enough. A vendor change sets `prefilling`, which UNMOUNTS the
+   * scan island, and its replacement started its counter again at 1 — so a teach still in
+   * flight for vendor A could complete vendor B's event of the same number, either popping
+   * B's scan or leaving B's `working` head blocked for good. Stamping the generation into
+   * the id makes that collision unrepresentable rather than merely unlikely, and it stays a
+   * pure function of the state (no module-level counter to reset, share, or forget).
+   */
+  id: string;
   /** ARRIVAL ORDER, allocated the instant the label was read — not when the network answered. */
   seq: number;
   /** The intake generation the label was scanned under. */
@@ -269,7 +278,7 @@ export const scanQueue = {
     input: { code: string; token: number },
   ): { state: ScanQueueState; event: ScanQueueEvent } {
     const event: ScanQueueEvent = {
-      id: state.nextSeq,
+      id: `${input.token}:${state.nextSeq}`,
       seq: state.nextSeq,
       token: input.token,
       code: input.code,
@@ -287,7 +296,7 @@ export const scanQueue = {
   },
 
   /** The lookup answered. Resolves the EXISTING entry in place; it never creates one. */
-  resolve(state: ScanQueueState, id: number, outcome: ScanQueueOutcome): ScanQueueState {
+  resolve(state: ScanQueueState, id: string, outcome: ScanQueueOutcome): ScanQueueState {
     return {
       ...state,
       events: state.events.map((e) => (e.id === id ? { ...e, state: "resolved" as const, outcome } : e)),
@@ -299,7 +308,7 @@ export const scanQueue = {
    * double-tap and a re-render idempotent: the second call finds a `working` event and
    * changes nothing, so one scan can never be executed twice.
    */
-  dispatch(state: ScanQueueState, id: number): ScanQueueState {
+  dispatch(state: ScanQueueState, id: string): ScanQueueState {
     return {
       ...state,
       events: state.events.map((e) =>
@@ -314,7 +323,7 @@ export const scanQueue = {
   },
 
   /** The case/inner toggle, remembered on the event so two queued codes keep their own answer. */
-  chooseLevel(state: ScanQueueState, id: number, level: Level): ScanQueueState {
+  chooseLevel(state: ScanQueueState, id: string, level: Level): ScanQueueState {
     return { ...state, events: state.events.map((e) => (e.id === id ? { ...e, level } : e)) };
   },
 
@@ -337,9 +346,14 @@ export const scanQueue = {
    * This scan's workflow is over — stepped, taught, cancelled or abandoned. Idempotent by id:
    * calling it twice removes nothing the second time, so a double-tap can never consume the
    * event queued behind it.
+   *
+   * GENERATION-AWARE (Astra r4 item 1): a completion carries the token it was issued under
+   * and removes nothing unless that token still matches. A teach that finishes after the
+   * receiver switched trucks is a fact about an intake that is over; it may not reach into
+   * the new one, and the composite id is the belt to this brace.
    */
-  complete(state: ScanQueueState, id: number): ScanQueueState {
-    return { ...state, events: state.events.filter((e) => e.id !== id) };
+  complete(state: ScanQueueState, id: string, token: number): ScanQueueState {
+    return { ...state, events: state.events.filter((e) => !(e.id === id && e.token === token)) };
   },
 
   /** Retire one generation's events and leave every other generation untouched. */
@@ -347,3 +361,80 @@ export const scanQueue = {
     return { ...state, events: state.events.filter((e) => e.token !== token) };
   },
 };
+
+// ── Lines and their scanned-code attribution, in ONE transition (Astra r4) ──
+
+/** Which code reached a row this session, and at which level — the "Forget this code" target. */
+export interface ScannedCode {
+  code: string;
+  level: Level;
+}
+
+/**
+ * The two halves of the door's scan state, held together because they have to MOVE together.
+ */
+export interface IntakeScanState<L extends ScanStepLine> {
+  lines: readonly L[];
+  /** Keyed by ROW KEY — the same SKU may legitimately sit on two rows. */
+  scanned: Readonly<Record<string, ScannedCode>>;
+}
+
+/**
+ * ONE SCAN, APPLIED TO THE LINES AND TO THE ATTRIBUTION AT ONCE (Astra r4 item 2).
+ *
+ * The attribution used to be computed from a PREVIEW run against a ref holding the last
+ * COMMITTED lines, while the lines themselves moved through a functional updater. Released
+ * together — which is exactly what draining a queue of resolved matches does — two scans of
+ * the same SKU absent from the delivery both previewed against the same stale list and each
+ * predicted its OWN new row. The functional updaters were right (one row, two units, because
+ * the second saw the first's row and stepped it), and the second code was therefore
+ * remembered against a row key that never existed: the visible row's "Forget this code"
+ * silently targeted the earlier code, and the later one could not be forgotten at all.
+ *
+ * Computing both from the SAME state closes it by construction — there is no second reading
+ * of the world to disagree with the first. `newLine` is still built by the caller (the form
+ * owns row identity) but is only ADOPTED when this transition actually appends it, so a
+ * discarded candidate row can never be named by the attribution.
+ *
+ * Nothing moved = the SAME array and map references come back, so the caller can bail out of
+ * the render instead of re-committing identical state.
+ */
+export function applyScanToIntake<L extends ScanStepLine>(
+  state: IntakeScanState<L>,
+  input: {
+    skuId: string;
+    levelLabel: string;
+    level: Level;
+    /** Null when the count lands without a code to remember (a declined level confirm). */
+    code: string | null;
+    newLine: L | null;
+    lineKey: string | null;
+  },
+): IntakeScanState<L> {
+  const match = { skuId: input.skuId };
+  let next = applyScanToLines(state.lines, match, input.levelLabel, input.newLine, input.lineKey);
+  // The picked row is already counted at ANOTHER level: the scanned level gets its own row
+  // rather than relabelling a counted one (finding 2). Decided here, once.
+  if (next.conflict === "level") {
+    next = applyScanToLines(state.lines, match, input.levelLabel, input.newLine, null);
+  }
+  if (next.index < 0) return state;
+
+  const key = next.lines[next.index]?.key;
+  const scanned =
+    key === undefined || input.code === null
+      ? state.scanned
+      : { ...state.scanned, [key]: { code: input.code, level: input.level } };
+  return { lines: next.lines, scanned };
+}
+
+/** Forget the code remembered against one row, leaving every other row's alone. */
+export function forgetScannedCodeAt<L extends ScanStepLine>(
+  state: IntakeScanState<L>,
+  key: string,
+): IntakeScanState<L> {
+  if (state.scanned[key] === undefined) return state;
+  const scanned = { ...state.scanned };
+  delete scanned[key];
+  return { lines: state.lines, scanned };
+}

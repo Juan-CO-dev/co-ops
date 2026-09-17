@@ -101,7 +101,12 @@ import { ScanField, type ScanFieldEvent } from "@/components/receiving/ScanField
 import { CollapsibleSection } from "@/components/ui/CollapsibleSection";
 import type { ReceivingFormData, ReceivingSkuOption } from "@/lib/receiving";
 import type { Level } from "@/lib/barcodes-shared";
-import { applyScanToLines, levelLabelFor } from "@/lib/scan-field-shared";
+import {
+  applyScanToIntake,
+  forgetScannedCodeAt,
+  levelLabelFor,
+  type IntakeScanState,
+} from "@/lib/scan-field-shared";
 import type { OpenCreditRow } from "@/lib/credits";
 import {
   INTAKE_DRAFT_CAP,
@@ -146,7 +151,7 @@ const nextKey = () => `l${keySeq++}`;
  * belongs to, so a confirm from a truck that has left renders nothing and writes nothing.
  */
 interface ActiveScan {
-  eventId: number;
+  eventId: string;
   token: number;
   code: string;
   stage: "twin" | "level" | "picker";
@@ -347,7 +352,28 @@ export function ReceivingForm({
   const [notes, setNotes] = useState("");
   const [receiptPhotoId, setReceiptPhotoId] = useState<string | null>(null);
   const [photoLater, setPhotoLater] = useState(false);
-  const [lines, setLines] = useState<LineDraft[]>([addedLine()]);
+  /**
+   * THE LINES AND THE SCAN ATTRIBUTION ARE ONE STATE OBJECT (Astra r4 item 2).
+   *
+   * They used to be two, and the attribution was computed from a PREVIEW against a ref of
+   * the last committed lines while the lines themselves moved through a functional updater.
+   * Two scans released together — which is exactly what draining resolved matches does —
+   * both previewed the same stale list, each predicted its own new row, and the second code
+   * was remembered against a row key that never existed. Now every scan computes both halves
+   * from the SAME state in one transition; there is no second reading of the world to
+   * disagree with the first.
+   *
+   * `setLines` keeps its old signature so the ~15 non-scan call sites are untouched — the
+   * ordinary count ceremony has nothing to do with scanning and should not have to know.
+   */
+  const [intake, setIntake] = useState<IntakeScanState<LineDraft>>({ lines: [addedLine()], scanned: {} });
+  const lines = intake.lines as LineDraft[];
+  const scannedCodes = intake.scanned;
+  const setLines = (update: LineDraft[] | ((ls: LineDraft[]) => LineDraft[])) =>
+    setIntake((s) => ({
+      ...s,
+      lines: typeof update === "function" ? update(s.lines as LineDraft[]) : update,
+    }));
   const [prefilling, setPrefilling] = useState(false);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -413,14 +439,13 @@ export function ReceivingForm({
   //     whether the workflow ended in a count, a cancel or a dismissal.
   //     Still INLINE state in the form's own notice idiom — never window.confirm, which is
   //     unstyled, untranslated, and unusable one-handed at a truck.
-  const [scannedCodes, setScannedCodes] = useState<Record<string, { code: string; level: Level }>>({});
   //   EVERY PENDING CONFIRM CARRIES ITS INTAKE GENERATION (Astra r2 item 1). A sheet is a
   //   question about a truck; when the truck changes the question retires with it, and the
   //   render guard below is what makes that true even for a confirm that was opened by a
   //   response still in flight at the moment the receiver switched.
   const [activeScan, setActiveScan] = useState<ActiveScan | null>(null);
   /** Filled in by ScanField: the ONLY way this form can advance the scan queue. */
-  const resolveScanRef = useRef<(id: number) => void>(() => undefined);
+  const resolveScanRef = useRef<(id: string, token: number) => void>(() => undefined);
   const [scanNotice, setScanNotice] = useState<string | null>(null);
 
   // THE INTAKE GENERATION (Astra finding 4). Scanning is the only part of this form that
@@ -475,9 +500,9 @@ export function ReceivingForm({
   // Commit-phase mirror of `lines` for the scan handlers (see the ref's own note), and of
   // the vendor, which is the other half of every scan request's binding.
   useEffect(() => {
-    linesRef.current = lines;
+    linesRef.current = intake.lines as LineDraft[];
     vendorIdRef.current = vendorId;
-  }, [lines, vendorId]);
+  }, [intake, vendorId]);
 
   // The scan answer is a TOAST, not a state: it describes something that already happened
   // to the count, so it retires itself rather than waiting to be dismissed. Keyed on the
@@ -601,28 +626,18 @@ export function ReceivingForm({
     const sku = skuById.get(skuId);
     if (!sku) return; // a SKU this location does not carry — nothing to step
     const label = levelLabelFor(sku.chainLabels, level);
-    // ONE row object, used by both passes below, so the key the scan remembers is the key
-    // the list actually gets — the updater is what writes state (never a stale `lines`
-    // closure, which a teach round-trip would otherwise hand us), and the preview is only
-    // read for that key.
+    // The candidate row a SKU not yet on the delivery would join through — the SAME
+    // `offeredLine` the no-template fallback builds, so a scanned addition is
+    // indistinguishable from an offered one. It is ADOPTED only if the transition below
+    // actually appends it; a discarded candidate can never be named by the attribution.
     const fresh = offeredLine(sku);
-    let preview = applyScanToLines(linesRef.current, { skuId }, label, fresh, lineKey);
-    // THE PICKED ROW IS ALREADY COUNTED AT ANOTHER LEVEL. Nothing is relabelled and nothing
-    // is asked twice: the scanned level gets its own row, exactly as an automatic match of a
-    // SKU present only at another level does (Astra finding 2). The DECISION is taken once,
-    // here, and both passes then use it — the functional updater must make the same choice
-    // the preview did, or the key the code is remembered against is not the key the list got.
-    const effectiveKey = preview.conflict === "level" ? null : lineKey;
-    if (preview.conflict === "level") preview = applyScanToLines(linesRef.current, { skuId }, label, fresh, null);
-    if (preview.index < 0) return;
-    setLines((ls) => {
-      const next = applyScanToLines(ls, { skuId }, label, fresh, effectiveKey);
-      return next.index < 0 ? ls : next.lines;
+    setIntake((prev) => {
+      const next = applyScanToIntake(prev, {
+        skuId, levelLabel: label, level, code, newLine: fresh, lineKey,
+      });
+      // Nothing moved: hand back the same object so React bails out of the render.
+      return next.lines === prev.lines && next.scanned === prev.scanned ? prev : next;
     });
-    const key = preview.lines[preview.index]?.key;
-    if (key !== undefined && code !== null) {
-      setScannedCodes((m) => ({ ...m, [key]: { code, level } }));
-    }
   };
 
   /**
@@ -684,13 +699,13 @@ export function ReceivingForm({
     confirmLevelChange: boolean,
     lineKey: string | null,
     token: number,
-    eventId: number,
+    eventId: string,
   ) => {
     const boundVendor = vendorId;
     // The generation is checked BEFORE the request too: a tap on a confirm that belongs to a
     // truck which has since left must not even reach the server as this intake's act.
     if (!stillThisIntake(token, boundVendor)) {
-      finishScan(eventId);
+      finishScan(token, eventId);
       return;
     }
     let outcome: "created" | "known" | "failed" = "failed";
@@ -708,7 +723,7 @@ export function ReceivingForm({
       // round-trip — headers and body — and nothing below it can resurrect a dead intake's
       // confirmation sheet (Astra r2 item 2).
       if (!stillThisIntake(token, boundVendor)) {
-        finishScan(eventId);
+        finishScan(token, eventId);
         return;
       }
       if (res.status === 409 && !confirmLevelChange) {
@@ -741,7 +756,7 @@ export function ReceivingForm({
       outcome = "failed";
     }
     if (!stillThisIntake(token, boundVendor)) {
-      finishScan(eventId);
+      finishScan(token, eventId);
       return;
     }
     applyScan(skuId, level, code, lineKey);
@@ -752,7 +767,7 @@ export function ReceivingForm({
           ? t("receiving.scan.not_remembered")
           : null,
     );
-    finishScan(eventId);
+    finishScan(token, eventId);
   };
 
   /**
@@ -760,9 +775,16 @@ export function ReceivingForm({
    * a count, a cancel, a dismissal, or a refusal because the truck has changed. It is what
    * releases the next question in ScanField's queue (Astra r3 item 2).
    */
-  const finishScan = (eventId: number) => {
-    setActiveScan(null);
-    resolveScanRef.current(eventId);
+  const finishScan = (token: number, eventId: string) => {
+    // A COMPLETION FROM A RETIRED INTAKE TOUCHES NOTHING (Astra r4 item 1). Teaching on
+    // vendor A, switching, then scanning on vendor B used to let A's late completion clear
+    // B's confirmation and pop B's event — leaving B's `working` head blocked for good.
+    // Nothing is cleared and the resolver is not called; the child already dropped A's
+    // events when the token moved.
+    if (token !== intakeTokenRef.current) return;
+    // …and the active workflow is cleared only when it IS this event's.
+    setActiveScan((a) => (a !== null && a.eventId === eventId ? null : a));
+    resolveScanRef.current(eventId, token);
   };
 
   /**
@@ -775,10 +797,7 @@ export function ReceivingForm({
    * rides on the event and the last word belongs to the code that owns `lines`.
    */
   const onScanEvent = (ev: ScanFieldEvent) => {
-    if (ev.token !== intakeTokenRef.current) {
-      finishScan(ev.id);
-      return;
-    }
+    if (ev.token !== intakeTokenRef.current) return; // a scan from a truck that has gone
     setScanNotice(null);
     const action = ev.action;
 
@@ -794,7 +813,7 @@ export function ReceivingForm({
     if (action.kind === "teach") {
       const line = linesRef.current.find((l) => l.key === action.lineKey);
       if (!line || line.skuId === "") {
-        finishScan(ev.id); // the row went away while the sheet was open
+        finishScan(ev.token, ev.id); // the row went away while the sheet was open
         return;
       }
       void teachThenStep(ev.code, line.skuId, action.level, false, line.key, ev.token, ev.id);
@@ -813,7 +832,7 @@ export function ReceivingForm({
     }
 
     applyScan(action.match.skuId, action.level, ev.code, null);
-    finishScan(ev.id);
+    finishScan(ev.token, ev.id);
   };
 
   const forgetScannedCode = async (key: string) => {
@@ -836,18 +855,14 @@ export function ReceivingForm({
     }
     // The delivery this code was scanned onto is over — its row and its button are gone.
     if (!stillThisIntake(token, boundVendor)) return;
-    setScannedCodes((m) => {
-      const next = { ...m };
-      delete next[key];
-      return next;
-    });
+    setIntake((prev) => forgetScannedCodeAt(prev, key));
     setScanNotice(t("receiving.scan.forgotten"));
   };
 
   /** Clear every scan-session artefact. Shared by resetForm and the vendor switch — a code
    *  taught against one vendor's truck must never be offered for forgetting on the next. */
   const clearScanState = () => {
-    setScannedCodes({});
+    setIntake((prev) => (Object.keys(prev.scanned).length === 0 ? prev : { ...prev, scanned: {} }));
     // The workflow retires with its truck; ScanField drops the queue behind it on the same
     // token bump, so there is nothing left to resolve.
     setActiveScan(null);
@@ -1365,7 +1380,7 @@ export function ReceivingForm({
                     <button
                       type="button"
                       disabled={busy}
-                      onClick={() => finishScan(activeScan.eventId)}
+                      onClick={() => finishScan(activeScan.token, activeScan.eventId)}
                       className="inline-flex min-h-[44px] items-center rounded-full border-2 border-co-border bg-co-surface px-4 text-sm font-bold text-co-text-dim hover:border-co-text"
                     >
                       {t("common.cancel")}
@@ -1419,7 +1434,7 @@ export function ReceivingForm({
                         if (pending.token === intakeTokenRef.current) {
                           applyScan(pending.skuId, pending.level, null, pending.lineKey);
                         }
-                        finishScan(pending.eventId);
+                        finishScan(pending.token, pending.eventId);
                       }}
                       className="inline-flex min-h-[44px] items-center rounded-full border-2 border-co-border bg-co-surface px-4 text-sm font-bold text-co-text-dim hover:border-co-text"
                     >
@@ -1501,7 +1516,7 @@ export function ReceivingForm({
                   <button
                     type="button"
                     disabled={busy}
-                    onClick={() => finishScan(activeScan.eventId)}
+                    onClick={() => finishScan(activeScan.token, activeScan.eventId)}
                     className="inline-flex min-h-[44px] items-center rounded-full border-2 border-co-border bg-co-surface px-4 text-sm font-bold text-co-text-dim hover:border-co-text"
                   >
                     {t("receiving.scan.close")}
@@ -1525,7 +1540,7 @@ export function ReceivingForm({
                     );
                     return;
                   }
-                  if (pending !== null) finishScan(pending.eventId);
+                  if (pending !== null) finishScan(pending.token, pending.eventId);
                   setLines((ls) => [
                     ...ls,
                     { ...addedLine(), skuId: sku.id, skuName: sku.name, level: "" },

@@ -112,7 +112,8 @@ export interface ScanFieldLine {
  * queue, which is what makes the parent's single active slot provably safe (Astra r3).
  */
 export interface ScanFieldEvent {
-  id: number;
+  /** Globally unique across remounts — `<intakeToken>:<seq>` (Astra r4 item 1). */
+  id: string;
   token: number;
   code: string;
   action:
@@ -163,7 +164,7 @@ export function ScanField({
    * because the direction is child → parent and the file already uses this idiom for
    * `closeCameraRef`; storing a function in the parent's state would be the alternative.
    */
-  resolveRef: MutableRefObject<(id: number) => void>;
+  resolveRef: MutableRefObject<(id: string, token: number) => void>;
   onScanEvent: (event: ScanFieldEvent) => void;
 }) {
   const { t } = useTranslation();
@@ -240,7 +241,10 @@ export function ScanField({
     lookupPropsRef.current = { vendorId, locationId, lineSkuIds, intakeToken };
     onScanEventRef.current = onScanEvent;
     // The executor's ONLY way to advance the machine: it says an event's workflow is over.
-    resolveRef.current = (id: number) => commit(scanQueue.complete(queueRef.current, id));
+    // GENERATION-AWARE (Astra r4 item 1): a completion names the intake it was issued
+    // under, so a workflow that finishes after the truck changed removes nothing here.
+    resolveRef.current = (id: string, token: number) =>
+      commit(scanQueue.complete(queueRef.current, id, token));
   });
 
   /**
@@ -350,7 +354,7 @@ export function ScanField({
       } catch {
         if (controller.signal.aborted && !timedOut) {
           // Cancelled by an intake change or an unmount: the question goes away with it.
-          commit(scanQueue.complete(queueRef.current, id));
+          commit(scanQueue.complete(queueRef.current, id, token));
           return;
         }
         if (stillMine()) settle(true);
@@ -628,7 +632,7 @@ export function ScanField({
    */
   const showSheet = head !== null && (asks || (head.state === "looking_up" && waiting > 1));
   const closeHead = () => {
-    if (head !== null) commit(scanQueue.complete(queueRef.current, head.id));
+    if (head !== null) commit(scanQueue.complete(queueRef.current, head.id, head.token));
   };
 
   return (

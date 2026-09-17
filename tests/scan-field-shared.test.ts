@@ -14,11 +14,14 @@ import { describe, expect, it } from "vitest";
 
 import type { Level } from "@/lib/barcodes-shared";
 import {
+  applyScanToIntake,
   applyScanToLines,
+  forgetScannedCodeAt,
   isEditableTarget,
   levelLabelFor,
   scanQueue,
   type EditableProbe,
+  type IntakeScanState,
   type ResolvedScanMatch,
   type ScanQueueOutcome,
   type ScanQueueState,
@@ -298,7 +301,7 @@ describe("scanQueue", () => {
     q = scanQueue.resolve(q, a.id, { kind: "unknown", failed: false });
     expect(scanQueue.head(q, TOKEN)).toMatchObject({ id: a.id, code: "AAA111", state: "resolved" });
 
-    q = scanQueue.complete(q, a.id);
+    q = scanQueue.complete(q, a.id, TOKEN);
     expect(scanQueue.head(q, TOKEN)).toMatchObject({ id: b.id, code: "BBB222" });
   });
 
@@ -311,16 +314,16 @@ describe("scanQueue", () => {
 
   it("completing an event twice removes nothing the second time", () => {
     const { a, b, state } = twoArrivals();
-    let q = scanQueue.complete(state, a.id);
-    q = scanQueue.complete(q, a.id); // a double-tap must not consume B
+    let q = scanQueue.complete(state, a.id, TOKEN);
+    q = scanQueue.complete(q, a.id, TOKEN); // a double-tap must not consume B
     expect(scanQueue.pending(q, TOKEN)).toBe(1);
     expect(scanQueue.head(q, TOKEN)?.id).toBe(b.id);
   });
 
   it("a late answer for a completed scan is inert — resolve never creates an entry", () => {
     const { a, state } = twoArrivals();
-    let q = scanQueue.complete(state, a.id);
-    q = scanQueue.complete(q, scanQueue.head(q, TOKEN)?.id ?? -1);
+    let q = scanQueue.complete(state, a.id, TOKEN);
+    q = scanQueue.complete(q, scanQueue.head(q, TOKEN)?.id ?? "none", TOKEN);
     q = scanQueue.resolve(q, a.id, { kind: "unknown", failed: true });
     expect(scanQueue.pending(q, TOKEN)).toBe(0);
     expect(scanQueue.head(q, TOKEN)).toBeNull();
@@ -360,7 +363,7 @@ describe("scanQueue", () => {
    * once. `units` is the quantity on a line: the number the whole arc protects.
    */
   interface Active {
-    id: number;
+    id: string;
     stage: "twin" | "level";
     lineKey: string | null;
     level: Level;
@@ -383,10 +386,10 @@ describe("scanQueue", () => {
       get seen() {
         return seen;
       },
-      resolve(id: number, outcome: ScanQueueOutcome) {
+      resolve(id: string, outcome: ScanQueueOutcome) {
         q = scanQueue.resolve(q, id, outcome);
       },
-      chooseLevel(id: number, level: Level) {
+      chooseLevel(id: string, level: Level) {
         q = scanQueue.chooseLevel(q, id, level);
       },
       /** What ScanField would hand over right now, or null. */
@@ -395,7 +398,7 @@ describe("scanQueue", () => {
         const h = scanQueue.head(q, TOKEN);
         return h !== null && h.state === "resolved" ? h : null;
       },
-      open(id: number, stage: "twin" | "level", lineKey: string | null, level: Level) {
+      open(id: string, stage: "twin" | "level", lineKey: string | null, level: Level) {
         active = { id, stage, lineKey, level };
         seen.push(active);
       },
@@ -403,13 +406,13 @@ describe("scanQueue", () => {
       accept() {
         if (active === null) throw new Error("nothing active");
         units += 1;
-        q = scanQueue.complete(q, active.id);
+        q = scanQueue.complete(q, active.id, TOKEN);
         active = null;
       },
       /** The workflow ended without one. */
       dismiss() {
         if (active === null) throw new Error("nothing active");
-        q = scanQueue.complete(q, active.id);
+        q = scanQueue.complete(q, active.id, TOKEN);
         active = null;
       },
     };
@@ -478,7 +481,7 @@ describe("scanQueue", () => {
     expect(scanQueue.head(q, TOKEN)?.id).toBe(a.id); // …and B still waits behind it
     expect(scanQueue.pending(q, TOKEN)).toBe(2);
 
-    q = scanQueue.complete(q, a.id);
+    q = scanQueue.complete(q, a.id, TOKEN);
     expect(scanQueue.head(q, TOKEN)?.id).toBe(b.id);
   });
 
@@ -510,5 +513,171 @@ describe("scanQueue", () => {
     ex.accept();
     expect(ex.units).toBe(1);
     expect(ex.pending).toBe(0);
+  });
+});
+
+/**
+ * Astra r4 item 1 — completion is bound to the generation that issued it.
+ *
+ * The scan island UNMOUNTS on a vendor change (the form sets `prefilling`), so a plain
+ * counter restarted at 1 and vendor A's late teach could complete vendor B's event of the
+ * same number: B's scan popped, or B's `working` head blocked for good.
+ */
+describe("scanQueue — a completion can never cross generations", () => {
+  const A = 4;
+  const B = 5;
+
+  it("event ids never collide across generations, even after a drop and a fresh start", () => {
+    const first = scanQueue.arrive(scanQueue.empty, { code: "AAA111", token: A });
+    // The island unmounts and remounts: the replacement starts from an EMPTY queue, which is
+    // exactly how a bare counter used to hand out `1` a second time.
+    const remounted = scanQueue.arrive(scanQueue.empty, { code: "BBB222", token: B });
+    expect(first.event.seq).toBe(remounted.event.seq); // same position…
+    expect(first.event.id).not.toBe(remounted.event.id); // …different identity
+
+    // And after a drop inside one generation, ids still never repeat.
+    const dropped = scanQueue.drop(first.state, A);
+    const again = scanQueue.arrive(dropped, { code: "CCC333", token: A });
+    expect(again.event.id).not.toBe(first.event.id);
+  });
+
+  it("completing with a stale token is a no-op — nothing is removed", () => {
+    const stale = scanQueue.arrive(scanQueue.empty, { code: "AAA111", token: A });
+    const fresh = scanQueue.arrive(scanQueue.empty, { code: "BBB222", token: B });
+
+    // A's completion, arriving late, aimed at the queue B is now using.
+    const after = scanQueue.complete(fresh.state, stale.event.id, A);
+    expect(after.events).toEqual(fresh.state.events);
+    expect(scanQueue.pending(after, B)).toBe(1);
+
+    // Even the RIGHT id under the WRONG generation removes nothing.
+    const wrongGeneration = scanQueue.complete(fresh.state, fresh.event.id, A);
+    expect(scanQueue.pending(wrongGeneration, B)).toBe(1);
+  });
+
+  it("a stale completion leaves the current head WORKING rather than unblocking it", () => {
+    const fresh = scanQueue.arrive(scanQueue.empty, { code: "BBB222", token: B });
+    let q = scanQueue.resolve(fresh.state, fresh.event.id, { kind: "unknown", failed: false });
+    q = scanQueue.dispatch(q, fresh.event.id); // B's workflow is running
+
+    const after = scanQueue.complete(q, fresh.event.id, A); // A's late teach lands
+    const head = scanQueue.head(after, B);
+    expect(head?.id).toBe(fresh.event.id);
+    expect(head?.state).toBe("working"); // untouched: B's workflow still owns the head
+    expect(scanQueue.isPresentable(head)).toBe(false);
+
+    // B's own completion still works.
+    expect(scanQueue.pending(scanQueue.complete(after, fresh.event.id, B), B)).toBe(0);
+  });
+});
+
+/**
+ * Astra r4 item 2 — the lines and the "Forget this code" attribution move together.
+ *
+ * Releasing a held head drains every resolved match in one synchronous pass. Computing the
+ * attribution from a preview against the last COMMITTED lines made the second scan predict a
+ * row that the (correct) functional update never created.
+ */
+describe("applyScanToIntake — one transition for the count and its code", () => {
+  const empty: IntakeScanState<Line> = { lines: [], scanned: {} };
+  const step = (
+    state: IntakeScanState<Line>,
+    code: string | null,
+    over: { skuId?: string; levelLabel?: string; newLine?: Line | null; lineKey?: string | null } = {},
+  ) =>
+    applyScanToIntake(state, {
+      skuId: over.skuId ?? "sku-a",
+      levelLabel: over.levelLabel ?? "Case",
+      level: "case",
+      code,
+      newLine: over.newLine === undefined ? line({ key: "new-" + (code ?? "x"), skuId: over.skuId ?? "sku-a" }) : over.newLine,
+      lineKey: over.lineKey ?? null,
+    });
+
+  it("two codes for the same ABSENT SKU, drained in sequence, make ONE row with TWO units", () => {
+    const first = step(empty, "CODE-AAA");
+    const second = step(first, "CODE-BBB");
+
+    expect(second.lines).toHaveLength(1);
+    const row = second.lines[0];
+    expect(row?.qty).toBe("2");
+
+    // BOTH scans are attributed to the row that actually exists — the defect was the second
+    // code landing on a predicted key no row ever carried.
+    expect(Object.keys(second.scanned)).toEqual([row?.key]);
+    // …and the Forget target for the visible row is the LATEST code.
+    expect(second.scanned[row?.key ?? ""]).toEqual({ code: "CODE-BBB", level: "case" });
+    expect(second.scanned["new-CODE-BBB"]).toBeUndefined();
+  });
+
+  it("the candidate row is adopted only when it is actually appended", () => {
+    const first = step(empty, "CODE-AAA");
+    const key = first.lines[0]?.key;
+    expect(key).toBe("new-CODE-AAA");
+    // The second scan's candidate is discarded, so its key must appear nowhere.
+    const second = step(first, "CODE-BBB");
+    expect(second.lines.map((l) => l.key)).toEqual([key]);
+    expect(second.scanned["new-CODE-BBB"]).toBeUndefined();
+  });
+
+  it("two rows of one SKU at different levels each keep their OWN code", () => {
+    const cases = applyScanToIntake(empty, {
+      skuId: "sku-a", levelLabel: "Case", level: "case", code: "CODE-CASE",
+      newLine: line({ key: "k-case", skuId: "sku-a" }), lineKey: null,
+    });
+    const both = applyScanToIntake(cases, {
+      skuId: "sku-a", levelLabel: "Bag", level: "inner", code: "CODE-BAG",
+      newLine: line({ key: "k-bag", skuId: "sku-a" }), lineKey: null,
+    });
+    expect(both.lines).toHaveLength(2);
+    expect(both.scanned).toEqual({
+      "k-case": { code: "CODE-CASE", level: "case" },
+      "k-bag": { code: "CODE-BAG", level: "inner" },
+    });
+  });
+
+  it("a count with no code to remember steps the line and attributes nothing", () => {
+    const first = step(empty, "CODE-AAA");
+    const declined = step(first, null);
+    expect(declined.lines[0]?.qty).toBe("2");
+    expect(declined.scanned).toEqual({ "new-CODE-AAA": { code: "CODE-AAA", level: "case" } });
+  });
+
+  it("nothing moved hands back the SAME references so the caller can bail out", () => {
+    const state: IntakeScanState<Line> = { lines: [line({ key: "k1", skuId: "sku-a", qty: "2", level: "Case" })], scanned: {} };
+    const next = applyScanToIntake(state, {
+      skuId: "sku-z", levelLabel: "Case", level: "case", code: "CODE", newLine: null, lineKey: null,
+    });
+    expect(next.lines).toBe(state.lines);
+    expect(next.scanned).toBe(state.scanned);
+  });
+
+  it("a picked row already counted at another level appends instead, and the code follows it", () => {
+    const state: IntakeScanState<Line> = {
+      lines: [line({ key: "k1", skuId: "sku-a", qty: "2", level: "Case" })],
+      scanned: { k1: { code: "CODE-CASE", level: "case" } },
+    };
+    const next = applyScanToIntake(state, {
+      skuId: "sku-a", levelLabel: "Bag", level: "inner", code: "CODE-BAG",
+      newLine: line({ key: "k2", skuId: "sku-a" }), lineKey: "k1",
+    });
+    expect(next.lines).toHaveLength(2);
+    expect(next.lines[0]).toEqual(state.lines[0]); // the two counted cases are untouched
+    expect(next.scanned).toEqual({
+      k1: { code: "CODE-CASE", level: "case" },
+      k2: { code: "CODE-BAG", level: "inner" },
+    });
+  });
+
+  it("forgetScannedCodeAt clears one row's code and leaves the rest alone", () => {
+    const state: IntakeScanState<Line> = {
+      lines: [line({ key: "k1" }), line({ key: "k2", skuId: "sku-b" })],
+      scanned: { k1: { code: "AAA", level: "case" }, k2: { code: "BBB", level: "inner" } },
+    };
+    const after = forgetScannedCodeAt(state, "k1");
+    expect(after.scanned).toEqual({ k2: { code: "BBB", level: "inner" } });
+    expect(after.lines).toBe(state.lines);
+    // A row with nothing remembered comes back untouched, by reference.
+    expect(forgetScannedCodeAt(after, "k1")).toBe(after);
   });
 });
