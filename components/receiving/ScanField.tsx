@@ -21,14 +21,20 @@
  *   CONFIRMED (two characters ≤ 35 ms apart); the first character of a candidate burst is let
  *   through, because outside an editable it lands nowhere. Autorepeat, chorded keys and IME
  *   composition never reach the machine at all.
+ *   DISARMING DISCARDS THE BUFFER (Astra r2 item 4). Standing down mid-burst used to leave
+ *   six buffered characters for the 50 ms tick to fire as a truncated scan while the rest of
+ *   the code typed itself into the field the caret had just moved to. The buffer is reset the
+ *   moment focus lands in an editable, on every intake change, and on disable — and the tick
+ *   re-reads the live focus at EMISSION time rather than trusting the state it was scheduled
+ *   under, because 50 ms is long enough for a caret to move.
  *   The "Scanner ready" pill is the armed lamp: it appears exactly when the wedge would act.
  *
  * CAMERA PATH — on tap, and never before. `BarcodeDetector` where the browser has it
  * (Android Chrome), else `zxing-wasm/reader` DYNAMICALLY imported when the sheet opens, so
  * the door page's bundle carries no decoder for the receivers who use a gun. Frames are
  * sampled ~150 ms apart off a canvas; `dedupeCameraDecode` is what keeps a label resting on
- * the counter from racking up phantom units — a code re-arms only after it has LEFT the
- * frame (spec §4 counting rule, Astra follow-up 8).
+ * the counter from racking up phantom units — a code re-arms only after it has been ABSENT
+ * for two consecutive sampled frames (spec §4 counting rule, Astra follow-up 8 + r2).
  *
  * WHAT IS NOT HERE: the arithmetic. `lib/scan-field-shared.ts` owns what a match does to
  * the line list and `lib/barcodes-shared.ts` owns what a label means — both node-tested.
@@ -89,15 +95,35 @@ export interface ScanFieldLine {
   skuName: string;
 }
 
+let eventSeq = 0;
+
 /**
- * The sheet has two questions, and they share one shell.
+ * ONE SCAN THE RECEIVER STILL OWES AN ANSWER TO.
+ *
+ * The sheet asks two questions and they share one shell:
  *   `unknown` — nobody has taught this code: which line is it, or is it not on this delivery?
  *   `level`   — the code IS known and is taught at BOTH levels, so the case/inner question
  *               has to be asked before anything is stepped or taught (Astra finding 3).
+ *
+ * THEY QUEUE (Astra r2 item 3). A single pending slot meant two beeps on a both-level code
+ * overwrote each other and one Case/Inner tap counted ONE unit for TWO cases — a silent
+ * undercount, the exact failure the counting rule exists to prevent. The sheet shows the
+ * head, every answer consumes exactly one event and steps exactly one unit, and an event
+ * carries the intake generation it was scanned under so a vendor switch retires it instead
+ * of asking about a truck that has gone.
  */
-type Ask =
-  | { kind: "unknown"; code: string; failed: boolean }
-  | { kind: "level"; code: string; match: ResolvedMatch; levels: Level[] };
+interface ScanEvent {
+  id: number;
+  token: number;
+  code: string;
+  kind: "unknown" | "level";
+  /** The sheet is up because the lookup never answered, not because the code is new. */
+  failed: boolean;
+  /** The level the toggle currently shows (`unknown` only — a `level` chip IS the answer). */
+  level: Level;
+  match: ResolvedMatch | null;
+  levels: Level[];
+}
 
 export function ScanField({
   vendorId,
@@ -124,8 +150,8 @@ export function ScanField({
   /**
    * The intake generation this scan belongs to. Bumped by the form on a vendor change,
    * reset, draft restore and successful submit; a lookup whose answer arrives after the
-   * token moved is DROPPED, because it describes an intake that no longer exists
-   * (Astra finding 4).
+   * token moved is DROPPED, its request is aborted, and every unanswered sheet it opened
+   * retires with it (Astra finding 4 + r2 item 1).
    */
   intakeToken: number;
   /** Submitting, or the form is otherwise closed: the listener stands down entirely. */
@@ -133,23 +159,41 @@ export function ScanField({
   lines: ScanFieldLine[];
   /** Names the SKU a two-level code resolved to, for the case/inner question. */
   skuNameFor: (skuId: string) => string;
-  onMatch: (m: ScanMatch & { code: string }) => void;
-  onUnknownPick: (code: string, lineKey: string | null, level: Level) => void;
-  onNotOnDelivery: (code: string, level: Level) => void;
+  /** The token rides with every answer: the PARENT re-checks it before it touches a line. */
+  onMatch: (m: ScanMatch & { code: string; token: number }) => void;
+  onUnknownPick: (code: string, lineKey: string | null, level: Level, token: number) => void;
+  onNotOnDelivery: (code: string, level: Level, token: number) => void;
 }) {
   const { t } = useTranslation();
 
   const [cameraOpen, setCameraOpen] = useState(false);
   const [cameraError, setCameraError] = useState(false);
   const [keepScanning, setKeepScanning] = useState(false);
-  /** The sheet's question, or null when it is closed. */
-  const [ask, setAsk] = useState<Ask | null>(null);
-  const [level, setLevel] = useState<Level>("case");
+  /** Scans still awaiting an answer, oldest first. The sheet shows the head. */
+  const [queue, setQueue] = useState<ScanEvent[]>([]);
   /** True while nothing editable holds focus — i.e. while the wedge would actually act. */
   const [armed, setArmed] = useState(false);
 
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const closeCameraRef = useRef<() => void>(() => undefined);
+
+  /**
+   * Every lookup in flight. A lookup is a READ, so cancelling one costs nothing and closes
+   * the hole a token check alone could not: changing vendors sets `prefilling`, which
+   * UNMOUNTS this component, and an unmounted island's pending fetch still holds the props
+   * ref it captured — so its own freshness check passed and the retained parent callback
+   * appended the previous vendor's SKU to the new intake (Astra r2 item 1). The cleanup
+   * runs on BOTH an intake change and unmount, which is exactly the set of moments an
+   * answer stops being wanted.
+   */
+  const abortersRef = useRef<Set<AbortController>>(new Set());
+  useEffect(() => {
+    const aborters = abortersRef.current;
+    return () => {
+      for (const c of aborters) c.abort();
+      aborters.clear();
+    };
+  }, [intakeToken]);
 
   // The burst machine must survive re-renders — it IS the buffered keystrokes.
   const burstRef = useRef<ScanBurst | null>(null);
@@ -172,11 +216,21 @@ export function ScanField({
     onMatchRef.current = onMatch;
   });
 
-  const openUnknown = useCallback((code: string, failed: boolean) => {
-    setAsk({ kind: "unknown", code, failed });
-    setLevel("case");
+  /**
+   * Park one unanswered scan. Entries from retired generations are swept here rather than in
+   * an effect: filtering on the way in (and on the way out, below) keeps the queue honest
+   * with no cascading render and no `setState` in an effect body.
+   */
+  const enqueue = useCallback((event: Omit<ScanEvent, "id">) => {
+    setQueue((q) => [...q.filter((e) => e.token === event.token), { ...event, id: eventSeq++ }]);
     closeCameraRef.current();
   }, []);
+
+  const enqueueUnknown = useCallback(
+    (code: string, failed: boolean, token: number) =>
+      enqueue({ token, code, kind: "unknown", failed, level: "case", match: null, levels: [] }),
+    [enqueue],
+  );
 
   /**
    * Ask the server what this label means. A timeout or a network error is NOT an error the
@@ -184,9 +238,8 @@ export function ScanField({
    * saying the code could not be checked. The truck is still at the door either way.
    *
    * THE REQUEST IS BOUND TO ITS INTAKE. The vendor and the generation token are captured
-   * before the fetch and re-checked after it; an answer that arrives once the receiver has
-   * switched vendors, reset the form, restored a draft or filed the delivery is dropped
-   * without effect, because it is a fact about an intake that is over (Astra finding 4).
+   * before the fetch, re-checked after it, aborted when the generation ends, and carried on
+   * the resulting event so the PARENT can refuse it one more time before it touches a line.
    */
   const lookup = useCallback(
     async (raw: string) => {
@@ -195,7 +248,14 @@ export function ScanField({
       const stillMine = () =>
         lookupPropsRef.current.vendorId === v && lookupPropsRef.current.intakeToken === token;
       const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), LOOKUP_TIMEOUT_MS);
+      abortersRef.current.add(controller);
+      // A 4 s abort and a cancellation abort are the same signal and mean opposite things:
+      // one opens the unknown sheet, the other must leave no trace at all.
+      let timedOut = false;
+      const timer = setTimeout(() => {
+        timedOut = true;
+        controller.abort();
+      }, LOOKUP_TIMEOUT_MS);
       try {
         const res = await fetch("/api/operations/receiving/scan/lookup", {
           method: "POST",
@@ -205,7 +265,7 @@ export function ScanField({
         });
         if (!stillMine()) return;
         if (!res.ok) {
-          openUnknown(code, true);
+          enqueueUnknown(code, true, token);
           return;
         }
         const body = (await res.json()) as LookupResponse;
@@ -214,7 +274,7 @@ export function ScanField({
         // AMBIGUOUS IS NOT A MATCH. Two of this vendor's SKUs carrying one code is a data
         // error; auto-opening either line would file the wrong item confidently.
         if (body.kind === "unknown" || body.ambiguous === true) {
-          openUnknown(resolved, false);
+          enqueueUnknown(resolved, false, token);
           return;
         }
         // A CODE TAUGHT AT BOTH LEVELS IS A QUESTION, NOT A DEFAULT (Astra finding 3). v1
@@ -222,22 +282,25 @@ export function ScanField({
         // shared with the case silently added a CASE. Ask before stepping or teaching.
         const levels = body.levels;
         if (levels.length > 1) {
-          setAsk({ kind: "level", code: resolved, match: body, levels });
-          setLevel(levels[0] ?? "case");
-          closeCameraRef.current();
+          enqueue({ token, code: resolved, kind: "level", failed: false, level: levels[0] ?? "case", match: body, levels });
           return;
         }
-        onMatchRef.current({ ...body, code: resolved });
+        onMatchRef.current({ ...body, code: resolved, token });
       } catch {
-        if (stillMine()) openUnknown(code, true);
+        if (controller.signal.aborted && !timedOut) return; // cancelled: this intake is over
+        if (stillMine()) enqueueUnknown(code, true, token);
       } finally {
         clearTimeout(timer);
+        abortersRef.current.delete(controller);
       }
     },
-    [openUnknown],
+    [enqueue, enqueueUnknown],
   );
 
   // ── Keyboard-wedge path ────────────────────────────────────────────────────
+
+  /** The live answer, read from the DOM rather than from state that may be a tick behind. */
+  const isArmedNow = () => !isEditableTarget(document.activeElement as unknown as EditableProbe | null);
 
   /**
    * The armed lamp. Focus events are the external system this effect subscribes to; the
@@ -251,7 +314,11 @@ export function ScanField({
     let timer: ReturnType<typeof setTimeout> | null = null;
     const sync = () => {
       timer = null;
-      setArmed(!isEditableTarget(document.activeElement as unknown as EditableProbe | null));
+      const nowArmed = isArmedNow();
+      // STANDING DOWN THROWS THE BUFFER AWAY (r2 item 4): a half-typed burst must never
+      // survive into a field, and the characters were never taken from anyone.
+      if (!nowArmed) burstRef.current?.reset();
+      setArmed(nowArmed);
     };
     const schedule = () => {
       if (timer === null) timer = setTimeout(sync, 0);
@@ -266,6 +333,11 @@ export function ScanField({
     };
   }, [disabled]);
 
+  /** A new intake is a new truck: whatever was half-scanned at the old one is not a code. */
+  useEffect(() => {
+    burstRef.current?.reset();
+  }, [intakeToken]);
+
   useEffect(() => {
     if (disabled) return;
     const burst = burstRef.current;
@@ -277,10 +349,8 @@ export function ScanField({
       if (e.ctrlKey || e.metaKey || e.altKey || e.repeat || e.isComposing) return;
       // THE ONE RULE (finding 1): never touch a keystroke aimed at something editable. No
       // buffering, no swallowing, no re-dispatch — the gun just types into the field.
-      if (
-        isEditableTarget(e.target as unknown as EditableProbe | null) ||
-        isEditableTarget(document.activeElement as unknown as EditableProbe | null)
-      ) {
+      if (isEditableTarget(e.target as unknown as EditableProbe | null) || !isArmedNow()) {
+        burst.reset();
         return;
       }
 
@@ -308,6 +378,13 @@ export function ScanField({
     // here is a short buffer that stalled; with nothing editable focused there is nowhere to
     // put it and nothing was taken from anyone, so it is simply dropped.
     const timer = setInterval(() => {
+      // ARMED IS RE-READ AT EMISSION TIME, NOT AT SCHEDULING TIME (r2 item 4). 50 ms is
+      // ample for a caret to land in a field mid-burst, and the half of the code already
+      // buffered would otherwise fire as a truncated scan while the rest typed itself in.
+      if (!isArmedNow()) {
+        burst.reset();
+        return;
+      }
       const verdict = burst.tick(performance.now());
       if (verdict !== null && "scan" in verdict) void lookup(verdict.scan);
     }, 50);
@@ -315,6 +392,7 @@ export function ScanField({
     return () => {
       document.removeEventListener("keydown", onKeyDown, true);
       clearInterval(timer);
+      burst.reset(); // disabled (submitting) discards the buffer too
     };
   }, [disabled, lookup]);
 
@@ -325,7 +403,7 @@ export function ScanField({
     let stream: MediaStream | null = null;
     let frame = 0;
     const dedupe = dedupeCameraDecode(DEDUPE_EVICT_MS);
-    /** Codes currently held in frame — the other half of the "away and back = two" rule. */
+    /** Codes the dedupe still considers held — the other half of the "away and back = two" rule. */
     const inFrame = new Set<string>();
 
     const stop = () => {
@@ -426,12 +504,11 @@ export function ScanField({
             failures = 0;
             const at = performance.now();
             // A code that has LEFT the frame is released, so presenting it again counts —
-            // and is now the ONLY thing that re-arms it (follow-up 8).
+            // and is now the ONLY thing that re-arms it (follow-up 8). `frameWithout` says
+            // whether THIS absence was enough; a single blank decode is not, so the code
+            // stays held and keeps being reported until the dedupe releases it (r2).
             for (const held of [...inFrame]) {
-              if (!codes.includes(held)) {
-                dedupe.frameWithout(held, at);
-                inFrame.delete(held);
-              }
+              if (!codes.includes(held) && dedupe.frameWithout(held, at)) inFrame.delete(held);
             }
             for (const code of codes) {
               const fresh = dedupe.decode(code, at);
@@ -470,6 +547,14 @@ export function ScanField({
   };
 
   const levelLabel = (l: Level) => t(l === "case" ? "receiving.scan.level_case" : "receiving.scan.level_inner");
+
+  // Only this generation's events can be asked about; the rest are swept on the next write.
+  const live = queue.filter((e) => e.token === intakeToken);
+  const head = live[0] ?? null;
+  /** Exactly one event leaves the queue per answer — one scan, one unit (spec §4). */
+  const consumeHead = () => setQueue((q) => q.filter((e) => e.token === intakeToken).slice(1));
+  const setHeadLevel = (l: Level) =>
+    setQueue((q) => q.map((e) => (head !== null && e.id === head.id ? { ...e, level: l } : e)));
 
   return (
     <div className="mb-2.5 flex flex-wrap items-center gap-2">
@@ -544,21 +629,31 @@ export function ScanField({
       ) : null}
 
       {/* ── The sheet: "which item is this?" or "which level?" ──────────────── */}
-      {ask !== null ? (
+      {head !== null ? (
         <div
           role="dialog"
           aria-modal="true"
-          aria-label={ask.kind === "level" ? skuNameFor(ask.match.skuId) : t("receiving.scan.unknown_title")}
+          aria-label={head.kind === "level" && head.match ? skuNameFor(head.match.skuId) : t("receiving.scan.unknown_title")}
           className={sheetShell}
           onClick={(e) => {
-            if (e.target === e.currentTarget) setAsk(null);
+            if (e.target === e.currentTarget) consumeHead();
           }}
         >
           <div className={sheetBody}>
-            <h3 className="text-lg font-extrabold leading-tight text-co-text">
-              {ask.kind === "level" ? skuNameFor(ask.match.skuId) : t("receiving.scan.unknown_title")}
-            </h3>
-            {ask.kind === "unknown" && ask.failed ? (
+            <div className="flex flex-wrap items-center gap-2">
+              <h3 className="text-lg font-extrabold leading-tight text-co-text">
+                {head.kind === "level" && head.match ? skuNameFor(head.match.skuId) : t("receiving.scan.unknown_title")}
+              </h3>
+              {/* HOW MANY SCANS ARE STILL WAITING. A bare number beside the title, and only
+                  when there is more than one — a count is the whole message, so it needs no
+                  sentence and mints no key. */}
+              {live.length > 1 ? (
+                <span className="rounded-full border-2 border-co-gold-deep bg-co-warning-surface px-2 py-0.5 text-[12px] font-extrabold text-co-warning-text">
+                  {live.length}
+                </span>
+              ) : null}
+            </div>
+            {head.kind === "unknown" && head.failed ? (
               <p className="mt-1 text-[12px] text-co-text-dim">{t("receiving.scan.could_not_check")}</p>
             ) : null}
 
@@ -568,23 +663,24 @@ export function ScanField({
                 level the following line pick will teach, and case leads because a case is
                 what comes off a truck. */}
             <div className="mt-3 flex flex-wrap gap-2">
-              {(ask.kind === "level" ? ask.levels : (["case", "inner"] as const)).map((l) => (
+              {(head.kind === "level" ? head.levels : (["case", "inner"] as const)).map((l) => (
                 <button
                   key={l}
                   type="button"
                   onClick={() => {
-                    if (ask.kind !== "level") {
-                      setLevel(l);
+                    if (head.kind !== "level" || head.match === null) {
+                      setHeadLevel(l);
                       return;
                     }
-                    setAsk(null);
-                    onMatch({ ...ask.match, level: l, code: ask.code });
+                    const { match, code, token } = head;
+                    consumeHead();
+                    onMatch({ ...match, level: l, code, token });
                   }}
-                  aria-pressed={ask.kind === "level" ? undefined : level === l}
+                  aria-pressed={head.kind === "level" ? undefined : head.level === l}
                   className={
                     chip +
                     " " +
-                    (ask.kind !== "level" && level === l
+                    (head.kind !== "level" && head.level === l
                       ? "border-co-text bg-co-surface-2 text-co-text"
                       : "border-co-border bg-co-surface text-co-text-dim hover:border-co-text")
                   }
@@ -594,7 +690,7 @@ export function ScanField({
               ))}
             </div>
 
-            {ask.kind === "unknown" ? (
+            {head.kind === "unknown" ? (
               <>
                 <ul className="mt-3 flex flex-col gap-1.5">
                   {lines.map((l) => (
@@ -602,9 +698,9 @@ export function ScanField({
                       <button
                         type="button"
                         onClick={() => {
-                          const code = ask.code;
-                          setAsk(null);
-                          onUnknownPick(code, l.key, level);
+                          const { code, level, token } = head;
+                          consumeHead();
+                          onUnknownPick(code, l.key, level, token);
                         }}
                         className="inline-flex min-h-[44px] w-full items-center rounded-lg border-2 border-co-border-2 bg-co-surface px-3 text-left text-sm font-semibold text-co-text hover:border-co-text"
                       >
@@ -618,9 +714,9 @@ export function ScanField({
                   <button
                     type="button"
                     onClick={() => {
-                      const code = ask.code;
-                      setAsk(null);
-                      onNotOnDelivery(code, level);
+                      const { code, level, token } = head;
+                      consumeHead();
+                      onNotOnDelivery(code, level, token);
                     }}
                     className={chip + " border-co-border bg-co-surface text-co-text hover:border-co-text"}
                   >
@@ -628,7 +724,7 @@ export function ScanField({
                   </button>
                   <button
                     type="button"
-                    onClick={() => setAsk(null)}
+                    onClick={consumeHead}
                     className={chip + " border-co-border bg-co-surface text-co-text-dim hover:border-co-text"}
                   >
                     {t("receiving.scan.close")}
@@ -639,7 +735,7 @@ export function ScanField({
               <div className="mt-3 flex flex-wrap gap-2">
                 <button
                   type="button"
-                  onClick={() => setAsk(null)}
+                  onClick={consumeHead}
                   className={chip + " border-co-border bg-co-surface text-co-text-dim hover:border-co-text"}
                 >
                   {t("receiving.scan.close")}

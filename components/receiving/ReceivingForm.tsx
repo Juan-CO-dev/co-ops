@@ -387,14 +387,21 @@ export function ReceivingForm({
   //   `pendingTeach` is a "Not on this delivery" scan waiting for the Add-item picker: the
   //     next pick teaches the code onto whatever SKU the receiver chooses.
   const [scannedCodes, setScannedCodes] = useState<Record<string, { code: string; level: Level }>>({});
-  const [twinPending, setTwinPending] = useState<{ skuId: string; level: Level; code: string } | null>(null);
+  //   EVERY PENDING CONFIRM CARRIES ITS INTAKE GENERATION (Astra r2 item 1). A sheet is a
+  //   question about a truck; when the truck changes the question retires with it, and the
+  //   render guard below is what makes that true even for a confirm that was opened by a
+  //   response still in flight at the moment the receiver switched.
+  const [twinPending, setTwinPending] = useState<{ skuId: string; level: Level; code: string; token: number } | null>(null);
   const [levelPending, setLevelPending] = useState<{
     code: string;
     skuId: string;
     level: Level;
     storedLevel: Level;
+    /** The row the receiver actually picked, carried THROUGH the 409 (Astra r2 item 5). */
+    lineKey: string | null;
+    token: number;
   } | null>(null);
-  const [pendingTeach, setPendingTeach] = useState<{ code: string; level: Level } | null>(null);
+  const [pendingTeach, setPendingTeach] = useState<{ code: string; level: Level; token: number } | null>(null);
   const [scanNotice, setScanNotice] = useState<string | null>(null);
 
   // THE INTAKE GENERATION (Astra finding 4). Scanning is the only part of this form that
@@ -412,6 +419,25 @@ export function ReceivingForm({
     intakeTokenRef.current += 1;
     setIntakeToken(intakeTokenRef.current);
   };
+
+  /**
+   * Every teach/forget in flight, so leaving the page does not leave a fetch holding a
+   * closure over a form that is gone (Astra r2 item 1).
+   *
+   * UNMOUNT ONLY — deliberately NOT on an intake change, unlike ScanField's lookups. A
+   * lookup is a read and cancelling one costs nothing; a teach is a WRITE the receiver
+   * asked for, and a code taught on the truck that just left is still true and still worth
+   * remembering. The token check is what stops its answer touching the new intake's lines;
+   * killing the request would also throw away the memory it was creating.
+   */
+  const scanAbortersRef = useRef<Set<AbortController>>(new Set());
+  useEffect(() => {
+    const aborters = scanAbortersRef.current;
+    return () => {
+      for (const c of aborters) c.abort();
+      aborters.clear();
+    };
+  }, []);
 
   // Price mode — the one switch that puts a price input on every collapsed row.
   // Starts false so the FIRST render is always the plain ceremony (localStorage is not
@@ -589,19 +615,40 @@ export function ReceivingForm({
   const stillThisIntake = (token: number, boundVendor: string) =>
     intakeTokenRef.current === token && vendorIdRef.current === boundVendor;
 
-  /** A scan request must not outlive the truck — the same 4 s the lookup gets (spec §7). */
-  const scanFetch = async (url: string, body: unknown): Promise<Response> => {
+  /**
+   * One scan request, deadline-bounded from the first byte to the LAST (Astra r2 item 2).
+   *
+   * v1 cleared the timer the instant `fetch` resolved — which is when the HEADERS arrive,
+   * not the body. A 409 `level_differs` whose body then stalled waited forever, and the 4 s
+   * lookup fallback led straight into the unbounded wait it was supposed to have replaced.
+   * The body is therefore read INSIDE the deadline: the abort cancels the body stream too,
+   * and that rejection is re-thrown so the caller treats it as the timeout it is. A body
+   * that is merely absent or not JSON is not a timeout and reads as `{}`.
+   */
+  const scanPost = async (
+    url: string,
+    body: unknown,
+  ): Promise<{ status: number; ok: boolean; body: Record<string, unknown> }> => {
     const controller = new AbortController();
+    scanAbortersRef.current.add(controller);
     const timer = setTimeout(() => controller.abort(), SCAN_REQUEST_TIMEOUT_MS);
     try {
-      return await fetch(url, {
+      const res = await fetch(url, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify(body),
         signal: controller.signal,
       });
+      let parsed: Record<string, unknown> = {};
+      try {
+        parsed = (await res.json()) as Record<string, unknown>;
+      } catch (e) {
+        if (controller.signal.aborted) throw e; // the deadline, or the page going away
+      }
+      return { status: res.status, ok: res.ok, body: parsed };
     } finally {
       clearTimeout(timer);
+      scanAbortersRef.current.delete(controller);
     }
   };
 
@@ -616,13 +663,16 @@ export function ReceivingForm({
     skuId: string,
     level: Level,
     confirmLevelChange: boolean,
-    lineKey: string | null = null,
+    lineKey: string | null,
+    token: number,
   ) => {
-    const token = intakeTokenRef.current;
     const boundVendor = vendorId;
+    // The generation is checked BEFORE the request too: a tap on a confirm that belongs to a
+    // truck which has since left must not even reach the server as this intake's act.
+    if (!stillThisIntake(token, boundVendor)) return;
     let outcome: "created" | "known" | "failed" = "failed";
     try {
-      const res = await scanFetch("/api/operations/receiving/scan/teach", {
+      const res = await scanPost("/api/operations/receiving/scan/teach", {
         vendorId,
         locationId,
         code,
@@ -631,11 +681,24 @@ export function ReceivingForm({
         invoiceNumber: invoiceNumber || null,
         ...(confirmLevelChange ? { confirmLevelChange: true } : {}),
       });
+      // The body is already read (see `scanPost`), so this ONE check covers the whole
+      // round-trip — headers and body — and nothing below it can resurrect a dead intake's
+      // confirmation sheet (Astra r2 item 2).
       if (!stillThisIntake(token, boundVendor)) return;
       if (res.status === 409 && !confirmLevelChange) {
-        const j = (await res.json().catch(() => ({}))) as { code?: string; storedLevel?: Level };
+        const j = res.body as { code?: string; storedLevel?: Level };
         if (j.code === "level_differs") {
-          setLevelPending({ code, skuId, level, storedLevel: j.storedLevel === "inner" ? "inner" : "case" });
+          setLevelPending({
+            code,
+            skuId,
+            level,
+            storedLevel: j.storedLevel === "inner" ? "inner" : "case",
+            // THE PICKED ROW SURVIVES THE QUESTION (Astra r2 item 5). Dropping it here sent
+            // the answer back through the automatic matcher, which steps the FIRST row of
+            // the SKU — so picking the second of two rows counted the first one.
+            lineKey,
+            token,
+          });
           return;
         }
       }
@@ -658,30 +721,39 @@ export function ReceivingForm({
     );
   };
 
-  const onScanMatch = (m: ScanMatch & { code: string }) => {
+  /**
+   * THE PARENT REFUSES A DEAD GENERATION TOO (Astra r2 item 1). ScanField aborts its own
+   * lookups, but an unmounted island's pending fetch is not something the child can always
+   * catch in time — changing vendors sets `prefilling`, which unmounts it — so the token
+   * rides on the answer and the last word belongs to the code that owns `lines`.
+   */
+  const onScanMatch = (m: ScanMatch & { code: string; token: number }) => {
+    if (m.token !== intakeTokenRef.current) return;
     setScanNotice(null);
     if (m.kind === "unknown") return;
     // A twin is an OFFER, never an assumption: the code was taught on another vendor's
     // version of the same product, and only the receiver can say the box in their hands is
     // this vendor's. Accepting teaches it here too, so the question is asked once.
     if (m.kind === "twin") {
-      setTwinPending({ skuId: m.skuId, level: m.level, code: m.code });
+      setTwinPending({ skuId: m.skuId, level: m.level, code: m.code, token: m.token });
       return;
     }
     applyScan(m.skuId, m.level, m.code);
   };
 
-  const onScanUnknownPick = (code: string, lineKey: string | null, level: Level) => {
+  const onScanUnknownPick = (code: string, lineKey: string | null, level: Level, token: number) => {
+    if (token !== intakeTokenRef.current) return;
     setScanNotice(null);
     const line = lineKey === null ? undefined : linesRef.current.find((l) => l.key === lineKey);
     if (!line || line.skuId === "") return;
-    void teachThenStep(code, line.skuId, level, false, line.key);
+    void teachThenStep(code, line.skuId, level, false, line.key, token);
   };
 
   /** "Not on this delivery" hands the code to the Add-item picker; the next pick teaches it. */
-  const onScanNotOnDelivery = (code: string, level: Level) => {
+  const onScanNotOnDelivery = (code: string, level: Level, token: number) => {
+    if (token !== intakeTokenRef.current) return;
     setScanNotice(null);
-    setPendingTeach({ code, level });
+    setPendingTeach({ code, level, token });
   };
 
   const forgetScannedCode = async (key: string) => {
@@ -691,7 +763,7 @@ export function ReceivingForm({
     const token = intakeTokenRef.current;
     const boundVendor = vendorId;
     try {
-      const res = await scanFetch("/api/operations/receiving/scan/forget", {
+      const res = await scanPost("/api/operations/receiving/scan/forget", {
         vendorId,
         locationId,
         code: remembered.code,
@@ -1211,7 +1283,7 @@ export function ReceivingForm({
               {/* TWIN OFFER — the code was taught on another vendor's version of this
                   product. The sentence IS the button: one tap accepts and teaches it here
                   too, so the question is asked once per code and never again. */}
-              {twinPending ? (
+              {twinPending && twinPending.token === intakeToken ? (
                 <div
                   role="status"
                   className="mb-2.5 rounded-lg border-2 border-co-gold-deep bg-co-warning-surface px-3 py-3"
@@ -1223,7 +1295,7 @@ export function ReceivingForm({
                       onClick={() => {
                         const twin = twinPending;
                         setTwinPending(null);
-                        void teachThenStep(twin.code, twin.skuId, twin.level, false);
+                        void teachThenStep(twin.code, twin.skuId, twin.level, false, null, twin.token);
                       }}
                       className="inline-flex min-h-[44px] items-center rounded-full border-2 border-co-text bg-co-surface px-4 text-sm font-bold text-co-text"
                     >
@@ -1245,7 +1317,7 @@ export function ReceivingForm({
 
               {/* LEVEL CONFIRM — the same UPC really is printed on the case and on the
                   inner pack, so this ADDS the second level; nothing is ever rewritten. */}
-              {levelPending ? (
+              {levelPending && levelPending.token === intakeToken ? (
                 <div
                   role="status"
                   className="mb-2.5 rounded-lg border-2 border-co-gold-deep bg-co-warning-surface px-3 py-3"
@@ -1257,7 +1329,7 @@ export function ReceivingForm({
                       onClick={() => {
                         const pending = levelPending;
                         setLevelPending(null);
-                        void teachThenStep(pending.code, pending.skuId, pending.level, true);
+                        void teachThenStep(pending.code, pending.skuId, pending.level, true, pending.lineKey, pending.token);
                       }}
                       className="inline-flex min-h-[44px] items-center rounded-full border-2 border-co-text bg-co-surface px-4 text-sm font-bold text-co-text"
                     >
@@ -1280,9 +1352,11 @@ export function ReceivingForm({
                       onClick={() => {
                         const pending = levelPending;
                         setLevelPending(null);
+                        if (pending.token !== intakeTokenRef.current) return;
                         // Declining teaches nothing — but the case still came off the truck,
-                        // so the count lands anyway.
-                        applyScan(pending.skuId, pending.level, null);
+                        // so the count lands anyway — on the row the receiver PICKED, which
+                        // is a no-op if that row has since been removed (r2 item 5).
+                        applyScan(pending.skuId, pending.level, null, pending.lineKey);
                       }}
                       className="inline-flex min-h-[44px] items-center rounded-full border-2 border-co-border bg-co-surface px-4 text-sm font-bold text-co-text-dim hover:border-co-text"
                     >
@@ -1350,7 +1424,7 @@ export function ReceivingForm({
               {/* A scan of something that is not on this delivery lands HERE — the picker
                   the door already has, with the code waiting for whatever the receiver
                   chooses. No second search box, no new screen. */}
-              {pendingTeach ? (
+              {pendingTeach && pendingTeach.token === intakeToken ? (
                 <p role="status" className="mb-2 text-[12px] font-semibold text-co-gold-text">
                   {t("receiving.scan.unknown_title")}
                 </p>
@@ -1362,9 +1436,12 @@ export function ReceivingForm({
                 addLabel={t("receiving.form.add_line")}
                 onAdd={(sku) => {
                   const pending = pendingTeach;
-                  if (pending !== null) {
-                    setPendingTeach(null);
-                    void teachThenStep(pending.code, sku.id, pending.level, false);
+                  setPendingTeach(null);
+                  // A waiting code from a truck that has since left teaches nothing — but the
+                  // tap is still a real "add this item", so it falls through rather than
+                  // being swallowed (Astra r2 item 1).
+                  if (pending !== null && pending.token === intakeTokenRef.current) {
+                    void teachThenStep(pending.code, sku.id, pending.level, false, null, pending.token);
                     return;
                   }
                   setLines((ls) => [
