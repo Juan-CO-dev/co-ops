@@ -73,6 +73,10 @@
  * is deliberately absent from the draft shelf — a resumed intake resumes a COUNT, not a
  * scanner session. Teaching needs the network; counting does not, so a failed teach still
  * steps the line and says so.
+ *   Three laws the 2026-09-17 review hardened: a scan steps the row at the SCANNED LEVEL and
+ *   never relabels a counted one (`applyScanToLines`), every request is bound to the intake
+ *   generation that issued it and is dropped if that generation is gone (`intakeTokenRef`),
+ *   and all three requests are bounded at 4 s so a slow teach cannot stall the count.
  *
  * The key holds a LIST (newest first, capped) rather than one draft, and the
  * writer stands down while the resume banner is up. Both are data-loss fixes:
@@ -132,6 +136,14 @@ interface TemplateResponse {
 
 let keySeq = 0;
 const nextKey = () => `l${keySeq++}`;
+
+/**
+ * V3-B: every scan request — lookup, teach, forget — is bounded at 4 s (spec §7, and Astra
+ * finding 4: a lookup that fell back after 4 s used to lead straight into an unbounded teach).
+ * The truck does not wait, so a request that has not answered by then is over: the case is
+ * counted locally and the code is simply not remembered.
+ */
+const SCAN_REQUEST_TIMEOUT_MS = 4_000;
 
 /** A blank added/overage line — always expanded, no expected qty. */
 const addedLine = (): LineDraft => ({
@@ -385,6 +397,22 @@ export function ReceivingForm({
   const [pendingTeach, setPendingTeach] = useState<{ code: string; level: Level } | null>(null);
   const [scanNotice, setScanNotice] = useState<string | null>(null);
 
+  // THE INTAKE GENERATION (Astra finding 4). Scanning is the only part of this form that
+  // dispatches a request and then writes to the line list AFTER it answers, so it is the only
+  // part that can mutate an intake that no longer exists: a teach begun on Baldor's truck used
+  // to land its step after the receiver switched to Leonard, reinserting a Baldor SKU into
+  // Leonard's delivery. Every lookup/teach/forget captures this counter and the vendor it was
+  // issued for, and an answer whose token has moved is DROPPED with no effect.
+  //   The ref is the truth (an in-flight response must see the bump the instant it happens,
+  //   not one commit later); the state exists only to hand ScanField the same number.
+  const intakeTokenRef = useRef(0);
+  const [intakeToken, setIntakeToken] = useState(0);
+  const vendorIdRef = useRef(vendorId);
+  const bumpIntakeToken = () => {
+    intakeTokenRef.current += 1;
+    setIntakeToken(intakeTokenRef.current);
+  };
+
   // Price mode — the one switch that puts a price input on every collapsed row.
   // Starts false so the FIRST render is always the plain ceremony (localStorage is not
   // readable during SSR); the mount effect below adopts the stored preference.
@@ -399,10 +427,12 @@ export function ReceivingForm({
     setPriceMode(readPriceMode(locationId));
   }, [locationId]);
 
-  // Commit-phase mirror of `lines` for the scan handlers (see the ref's own note).
+  // Commit-phase mirror of `lines` for the scan handlers (see the ref's own note), and of
+  // the vendor, which is the other half of every scan request's binding.
   useEffect(() => {
     linesRef.current = lines;
-  }, [lines]);
+    vendorIdRef.current = vendorId;
+  }, [lines, vendorId]);
 
   // The scan answer is a TOAST, not a state: it describes something that already happened
   // to the count, so it retires itself rather than waiting to be dismissed. Keyed on the
@@ -511,7 +541,10 @@ export function ReceivingForm({
 
   /** The scan surface only ever needs the SKUs on screen, deduped and capped as the route caps them. */
   const lineSkuIds = [...new Set(lines.map((l) => l.skuId).filter((id) => id !== ""))].slice(0, 200);
-  const scanLines = lines.flatMap((l, i) => (l.skuId === "" ? [] : [{ index: i, skuName: l.skuName }]));
+  // Keyed by the ROW, never by its index: a removed or reordered line between the sheet
+  // opening and the receiver tapping would otherwise step a different item (finding 4).
+  const scanLines = lines.flatMap((l) => (l.skuId === "" ? [] : [{ key: l.key, skuName: l.skuName }]));
+  const skuNameFor = (skuId: string) => skuById.get(skuId)?.name ?? t("receiving.door.unknown_sku");
 
   /**
    * ONE SCAN = ONE UNIT on the matched line. A SKU that is not on the delivery yet joins it
@@ -519,7 +552,7 @@ export function ReceivingForm({
    * addition is indistinguishable from an offered one — and, like every offered row, it
    * files nothing if the count never lands on it.
    */
-  const applyScan = (skuId: string, level: Level, code: string | null) => {
+  const applyScan = (skuId: string, level: Level, code: string | null, lineKey: string | null = null) => {
     const sku = skuById.get(skuId);
     if (!sku) return; // a SKU this location does not carry — nothing to step
     const label = levelLabelFor(sku.chainLabels, level);
@@ -528,10 +561,17 @@ export function ReceivingForm({
     // closure, which a teach round-trip would otherwise hand us), and the preview is only
     // read for that key.
     const fresh = offeredLine(sku);
-    const preview = applyScanToLines(linesRef.current, { skuId }, label, fresh);
+    let preview = applyScanToLines(linesRef.current, { skuId }, label, fresh, lineKey);
+    // THE PICKED ROW IS ALREADY COUNTED AT ANOTHER LEVEL. Nothing is relabelled and nothing
+    // is asked twice: the scanned level gets its own row, exactly as an automatic match of a
+    // SKU present only at another level does (Astra finding 2). The DECISION is taken once,
+    // here, and both passes then use it — the functional updater must make the same choice
+    // the preview did, or the key the code is remembered against is not the key the list got.
+    const effectiveKey = preview.conflict === "level" ? null : lineKey;
+    if (preview.conflict === "level") preview = applyScanToLines(linesRef.current, { skuId }, label, fresh, null);
     if (preview.index < 0) return;
     setLines((ls) => {
-      const next = applyScanToLines(ls, { skuId }, label, fresh);
+      const next = applyScanToLines(ls, { skuId }, label, fresh, effectiveKey);
       return next.index < 0 ? ls : next.lines;
     });
     const key = preview.lines[preview.index]?.key;
@@ -541,27 +581,57 @@ export function ReceivingForm({
   };
 
   /**
+   * Is the answer that just arrived still about the intake that asked the question?
+   * (Astra finding 4.) Captured before every scan request, re-checked after it: a teach or a
+   * forget that resolves once the receiver has switched vendors, reset the form, restored a
+   * draft or filed the delivery describes an intake that is over, and writes nothing.
+   */
+  const stillThisIntake = (token: number, boundVendor: string) =>
+    intakeTokenRef.current === token && vendorIdRef.current === boundVendor;
+
+  /** A scan request must not outlive the truck — the same 4 s the lookup gets (spec §7). */
+  const scanFetch = async (url: string, body: unknown): Promise<Response> => {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), SCAN_REQUEST_TIMEOUT_MS);
+    try {
+      return await fetch(url, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+        signal: controller.signal,
+      });
+    } finally {
+      clearTimeout(timer);
+    }
+  };
+
+  /**
    * Teach the code, THEN step the line — and step it either way. Teaching needs the
    * network; counting does not, and a receiver whose Wi-Fi dropped at the door still has a
    * truck to count (spec §7). The only branch that does NOT step is the 409: that one is
    * still a question, and the answer re-enters here with the confirm.
    */
-  const teachThenStep = async (code: string, skuId: string, level: Level, confirmLevelChange: boolean) => {
+  const teachThenStep = async (
+    code: string,
+    skuId: string,
+    level: Level,
+    confirmLevelChange: boolean,
+    lineKey: string | null = null,
+  ) => {
+    const token = intakeTokenRef.current;
+    const boundVendor = vendorId;
     let outcome: "created" | "known" | "failed" = "failed";
     try {
-      const res = await fetch("/api/operations/receiving/scan/teach", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          vendorId,
-          locationId,
-          code,
-          skuId,
-          level,
-          invoiceNumber: invoiceNumber || null,
-          ...(confirmLevelChange ? { confirmLevelChange: true } : {}),
-        }),
+      const res = await scanFetch("/api/operations/receiving/scan/teach", {
+        vendorId,
+        locationId,
+        code,
+        skuId,
+        level,
+        invoiceNumber: invoiceNumber || null,
+        ...(confirmLevelChange ? { confirmLevelChange: true } : {}),
       });
+      if (!stillThisIntake(token, boundVendor)) return;
       if (res.status === 409 && !confirmLevelChange) {
         const j = (await res.json().catch(() => ({}))) as { code?: string; storedLevel?: Level };
         if (j.code === "level_differs") {
@@ -572,9 +642,13 @@ export function ReceivingForm({
       if (res.status === 201) outcome = "created";
       else if (res.ok) outcome = "known";
     } catch {
+      // A refused, dropped or TIMED-OUT teach (the 4 s abort above) is not a refusal to
+      // count: the case is on the truck either way, so the line still steps and the notice
+      // says only that the code was not remembered.
       outcome = "failed";
     }
-    applyScan(skuId, level, code);
+    if (!stillThisIntake(token, boundVendor)) return;
+    applyScan(skuId, level, code, lineKey);
     setScanNotice(
       outcome === "created"
         ? t("receiving.scan.taught")
@@ -597,11 +671,11 @@ export function ReceivingForm({
     applyScan(m.skuId, m.level, m.code);
   };
 
-  const onScanUnknownPick = (code: string, lineIndex: number | null, level: Level) => {
+  const onScanUnknownPick = (code: string, lineKey: string | null, level: Level) => {
     setScanNotice(null);
-    const line = lineIndex === null ? undefined : linesRef.current[lineIndex];
+    const line = lineKey === null ? undefined : linesRef.current.find((l) => l.key === lineKey);
     if (!line || line.skuId === "") return;
-    void teachThenStep(code, line.skuId, level, false);
+    void teachThenStep(code, line.skuId, level, false, line.key);
   };
 
   /** "Not on this delivery" hands the code to the Add-item picker; the next pick teaches it. */
@@ -614,22 +688,22 @@ export function ReceivingForm({
     const remembered = scannedCodes[key];
     const line = linesRef.current.find((l) => l.key === key);
     if (!remembered || !line || line.skuId === "") return;
+    const token = intakeTokenRef.current;
+    const boundVendor = vendorId;
     try {
-      const res = await fetch("/api/operations/receiving/scan/forget", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          vendorId,
-          locationId,
-          code: remembered.code,
-          skuId: line.skuId,
-          level: remembered.level,
-        }),
+      const res = await scanFetch("/api/operations/receiving/scan/forget", {
+        vendorId,
+        locationId,
+        code: remembered.code,
+        skuId: line.skuId,
+        level: remembered.level,
       });
       if (!res.ok) return; // the code is still taught — leave the button where it is
     } catch {
-      return;
+      return; // refused, dropped or timed out: same answer, the button stays
     }
+    // The delivery this code was scanned onto is over — its row and its button are gone.
+    if (!stillThisIntake(token, boundVendor)) return;
     setScannedCodes((m) => {
       const next = { ...m };
       delete next[key];
@@ -646,6 +720,9 @@ export function ReceivingForm({
     setLevelPending(null);
     setPendingTeach(null);
     setScanNotice(null);
+    // A new intake generation: every request still in flight against the old one is now
+    // answering a question nobody is asking (Astra finding 4).
+    bumpIntakeToken();
   };
 
   // ── Missing-item honesty gate ──────────────────────────────────────────────
@@ -740,6 +817,9 @@ export function ReceivingForm({
     setReceiptPhotoId(draft.receiptPhotoId);
     setLines(draft.lines.length > 0 ? draft.lines : [addedLine()]);
     startedAtRef.current = draft.startedAt;
+    // A restored draft is a NEW intake generation: the codes the previous session scanned
+    // belong to rows that are gone, and any request still in flight is stale (finding 4).
+    clearScanState();
     setPendingDrafts([]);
     setSavedAt(draft.savedAt);
     // A draft that already carries prices opens WITH the strip visible — resuming must
@@ -1106,9 +1186,11 @@ export function ReceivingForm({
                 vendorId={vendorId}
                 locationId={locationId}
                 lineSkuIds={lineSkuIds}
+                intakeToken={intakeToken}
                 invoiceNumber={invoiceNumber.trim() || null}
                 disabled={busy}
                 lines={scanLines}
+                skuNameFor={skuNameFor}
                 onMatch={onScanMatch}
                 onUnknownPick={onScanUnknownPick}
                 onNotOnDelivery={onScanNotOnDelivery}
