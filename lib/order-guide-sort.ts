@@ -18,8 +18,23 @@ export function compareByGuide<T extends GuideSortKey>(a: T, b: T): number {
   return a.name.localeCompare(b.name);
 }
 
+/**
+ * True when a group's header is worth printing. THREE ways a group has no name, and all three
+ * mean "just render the rows" (Astra review 2026-09-17, the minor):
+ *   `null` — the not-on-guide group standing alone, so a header would be noise.
+ *   `""`   — a row with a POSITION but no section name (a pre-0205 snapshot carries exactly
+ *            that shape, per the read law in `resolveGuideKey`). It used to print an empty
+ *            header row above the line — a blank band in the copied body, the email and the
+ *            frozen table — so consumers ask this instead of testing `!== null`.
+ * A real section name is a string, so this doubles as the narrowing every consumer needs.
+ */
+export function hasGuideHeader(section: string | null): section is string {
+  return section !== null && section !== "";
+}
+
 /** Sort, then split into consecutive same-section runs. Rows without a position form the
- *  last group under NOT_ON_GUIDE; when that is the ONLY group its section is null (no header). */
+ *  last group under NOT_ON_GUIDE; when that is the ONLY group its section is null (no header).
+ *  A positioned row whose section name is null groups under `""` — positioned, but unnamed. */
 export function groupByGuideSection<T extends GuideSortKey>(rows: readonly T[]): GuideGroup<T>[] {
   const sorted = [...rows].sort(compareByGuide);
   const groups: GuideGroup<T>[] = [];
