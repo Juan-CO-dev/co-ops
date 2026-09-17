@@ -262,6 +262,10 @@ function buildPlan(t: Tables, d: Draft, kind: "sheet" | "starter", vendorSkus: r
   };
   p.expected = {
     vendorId: d.vendorId, guideId, guideName: str(guide.name), sourceNote: guide.source_note ?? null,
+    // The editor's concurrency token, carried so a rerun can advance it with the same guarded
+    // UPDATE the admin save uses (Astra finding 3) — and so a guide edited between the reviewed
+    // dry-run and the execute changes the plan digest instead of being written over.
+    guideUpdatedAt: guide.updated_at == null ? null : str(guide.updated_at),
     guideSections: gSections.map(s => ({ id: str(s.id), name: str(s.name), position: pos(s) })),
     guideLines: gLines.map(l => ({ id: str(l.id), sectionId: str(l.section_id), position: pos(l) })),
     rematchRows: [] as RawRow[],
@@ -401,6 +405,17 @@ async function apply(sb: SupabaseClient, p: Plan): Promise<void> {
     nextLinePosition.set(sectionId, position + 1);
     await insert(sb, "order_guide_lines", { id: randomUUID(), section_id: sectionId, position, sku_id: entry.line.skuId, label: entry.line.label, item_number: entry.line.itemNumber, note: null });
   }
+  // THE RERUN ADVANCES THE EDITOR'S TOKEN (Astra finding 3, BC-007). A rematch or an append
+  // changes what the admin panel is looking at, and `vendor_order_guides.updated_at` is the
+  // token that panel holds. Leaving it untouched let a manager who had the guide open save an
+  // unrelated reorder against a stale model — clearing the re-match, deleting the appended
+  // line — with no concurrent request and no error. Guarded on the token we planned against,
+  // so a guide edited mid-run refuses here rather than silently losing the manager's work.
+  const expectedUpdatedAt = p.expected.guideUpdatedAt == null ? null : String(p.expected.guideUpdatedAt);
+  let bump = sb.from("vendor_order_guides").update({ updated_at: new Date().toISOString() }, { count: "exact" }).eq("id", existingId);
+  bump = expectedUpdatedAt == null ? bump.is("updated_at", null) : bump.eq("updated_at", expectedUpdatedAt);
+  const { error: bumpErr, count: bumpCount } = await bump;
+  if (bumpErr || bumpCount !== 1) throw new Error(`vendor_order_guides: guarded updated_at bump failed or matched ${bumpCount ?? "unknown"} rows; stop and reconcile`);
   await record(sb, "vendor.order_guide.seeded", "vendor_order_guides", existingId, p, { vendor_id: p.vendorId, guide_id: existingId, creation_method: "seed_script_rerun" });
 }
 
@@ -420,8 +435,14 @@ export function verifyWriteScope(before: Tables, after: Tables, p: Plan): void {
   const guideIds = new Set(after.vendor_order_guides.filter(g => str(g.vendor_id) === p.vendorId).map(g => str(g.id)));
   const sectionIds = new Set(after.order_guide_sections.filter(s => guideIds.has(str(s.guide_id))).map(s => str(s.id)));
   const rematchIds = new Set(p.rematch.map(r => r.lineId));
+  // A rerun advances this guide's own `updated_at` (Astra finding 3) — the one column outside
+  // the added-rows allowance that a rerun is permitted to move, and only on its own guide.
+  const rerunGuideId = p.expected.guideId == null ? null : String(p.expected.guideId);
   for (const table of Object.keys(before) as (keyof Tables)[]) {
-    const allowed = (r: RawRow): string[] => table === "order_guide_lines" && rematchIds.has(str(r.id)) ? ["sku_id"] : [];
+    const allowed = (r: RawRow): string[] =>
+      table === "order_guide_lines" && rematchIds.has(str(r.id)) ? ["sku_id"]
+      : table === "vendor_order_guides" && rerunGuideId !== null && str(r.id) === rerunGuideId ? ["updated_at"]
+      : [];
     const addedAllowed = (r: RawRow) =>
       (table === "vendor_order_guides" && str(r.vendor_id) === p.vendorId)
       || (table === "order_guide_sections" && guideIds.has(str(r.guide_id)))

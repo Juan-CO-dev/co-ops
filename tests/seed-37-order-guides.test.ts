@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { planOrderGuides, routeRow, SECTION_NAMES, SOURCE, type Tables } from "@/scripts/seed/37-order-guides";
+import { planOrderGuides, routeRow, SECTION_NAMES, SOURCE, verifyWriteScope, type Plan, type Tables } from "@/scripts/seed/37-order-guides";
 
 const V = { PFG: "v-pfg", "Leonard Paper": "v-leo", Trimark: "v-tri", "Boar's Head": "v-bh", Baldor: "v-bal", Whisked: "v-wh" };
 const sku = (name: string, vendor: keyof typeof V, item_number: string | null = null, product_id: string | null = null) =>
@@ -71,5 +71,56 @@ describe("planOrderGuides", () => {
     expect(planOrderGuides(t, sheets).find((p) => p.vendor === "PFG")!.status).toBe("already");
     t.vendor_order_guides[0]!.source_note = "made by hand";
     expect(planOrderGuides(t, sheets).find((p) => p.vendor === "PFG")!.status).toBe("refused");
+  });
+});
+
+/**
+ * Astra finding 3 (BC-007): a rerun's rematches and appends never advanced
+ * `vendor_order_guides.updated_at`, so a manager holding the editor open could save an
+ * unrelated reorder against a stale model and quietly undo the rerun. The rerun now bumps the
+ * token with a guarded UPDATE — which means `verifyWriteScope` has to permit that one column
+ * on that one guide, and still refuse it everywhere else.
+ */
+describe("verifyWriteScope — the rerun's token bump", () => {
+  const guides = () => ({
+    vendors: [{ id: V.PFG, name: "PFG", active: true }, { id: V["Leonard Paper"], name: "Leonard Paper", active: true }],
+    vendor_items: [sku("Arugula", "PFG", "242470")],
+    vendor_order_guides: [
+      { id: "g", vendor_id: V.PFG, name: "PFG — laminated guide", source_note: `[${SOURCE}]`, updated_at: "t0" },
+      { id: "g2", vendor_id: V["Leonard Paper"], name: "Leonard — laminated guide", source_note: `[${SOURCE}]`, updated_at: "t0" },
+    ],
+    order_guide_sections: [{ id: "s", guide_id: "g", name: "Produce", position: 1 }],
+    order_guide_lines: [{ id: "l", section_id: "s", position: 1, sku_id: null, label: "Arugula", item_number: "242470" }],
+  }) as Tables;
+  const plan = (): Plan => ({
+    vendor: "PFG", vendorId: V.PFG, kind: "sheet", status: "ready", name: "PFG — laminated guide",
+    sourceNote: `[${SOURCE}]`, sections: [], rematch: [{ lineId: "l", skuId: "Arugula|PFG" }], append: [], report: [],
+    before: null, expected: { guideId: "g", guideUpdatedAt: "t0" },
+  });
+  const clone = (t: Tables) => JSON.parse(JSON.stringify(t)) as Tables;
+
+  it("allows the rerun's own writes: the re-matched sku_id, an appended line, and this guide's updated_at", () => {
+    const before = guides();
+    const after = clone(before);
+    after.vendor_order_guides[0]!.updated_at = "t1";
+    after.order_guide_lines[0]!.sku_id = "Arugula|PFG";
+    after.order_guide_lines.push({ id: "l2", section_id: "s", position: 2, sku_id: null, label: "Basil", item_number: null });
+    expect(() => verifyWriteScope(before, after, plan())).not.toThrow();
+  });
+
+  it("still refuses another guide's token moving", () => {
+    const before = guides();
+    const after = clone(before);
+    after.vendor_order_guides[1]!.updated_at = "t1";
+    expect(() => verifyWriteScope(before, after, plan())).toThrow(/vendor_order_guides/);
+  });
+
+  it("still refuses an unrelated change on this guide's own row, and anything outside the guide tables", () => {
+    const renamed = clone(guides());
+    renamed.vendor_order_guides[0]!.name = "renamed by hand";
+    expect(() => verifyWriteScope(guides(), renamed, plan())).toThrow(/vendor_order_guides/);
+    const sku = clone(guides());
+    sku.vendor_items[0]!.name = "Arugula (new pack)";
+    expect(() => verifyWriteScope(guides(), sku, plan())).toThrow(/vendor_items/);
   });
 });
