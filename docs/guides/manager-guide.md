@@ -631,6 +631,7 @@ The 6 AM job. Walk the shelves, say what is there, and the app works out the ord
 - If today's order is already confirmed or placed, the walk still records what you saw but changes nothing on the order, and says so. **Generate draft** refuses outright while any order exists for that vendor today.
 - The order's code is your shop's code, today's date, and the vendor — so `EM-20260908-PFG` reads at a glance.
 - **Confirm** freezes the prices and the line list; it does not send anything. Confirming twice is refused. To change a confirmed order before it is placed, unlock it first, as in step 6.
+- **The order lists items in the vendor's own guide order, section by section, so you can key it into their portal top to bottom.** Anything not on the guide sits last under *Not on the guide*. The guide itself lives on the vendor's admin page (Order guide), where a GM can move lines and sections once; the shelf walk keeps its own order.
 - **Sending is a separate tap**, and the email is rebuilt on the server from the confirmed order — not from anything on your screen. If the vendor has no ordering email on file, the app says so and leaves the order alone; use the phone or portal link instead and mark it placed.
 
 ### 5. Edit the draft
