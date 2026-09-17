@@ -9,7 +9,7 @@
  * stale → 409 guide_stale; the server rewrites positions dense (renumber) inside one RPC-less
  * sequence guarded by the deferrable unique constraints; audit stores the full before/after.
  *
- * THE MODEL AND THE PURE REDUCER LIVE IN `lib/order-guide-edit.ts` and are re-exported here,
+ * THE MODEL AND THE PURE REDUCER LIVE IN `lib/order-guides-shared.ts` and are re-exported here,
  * because this file imports the service-role client (`server-only`) and the admin Order-guide
  * panel is a client island. Server consumers import either path; client code must import the
  * edit module directly — the AGENTS.md § Module boundaries split, one file further along the
@@ -24,21 +24,21 @@ import {
   renumber,
   type GuideKey,
   type GuideModel,
-} from "@/lib/order-guide-edit";
+} from "@/lib/order-guides-shared";
 
 export {
   applyGuideEdit,
   OrderGuideError,
   positionOf,
   renumber,
-} from "@/lib/order-guide-edit";
+} from "@/lib/order-guides-shared";
 export type {
   GuideEdit,
   GuideKey,
   GuideLine,
   GuideModel,
   GuideSection,
-} from "@/lib/order-guide-edit";
+} from "@/lib/order-guides-shared";
 
 // ── DB layer ────────────────────────────────────────────────────────────────────────────
 
