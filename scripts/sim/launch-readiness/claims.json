@@ -546,6 +546,22 @@
       "status": "pending"
     },
     {
+      "id": "receiving.scan-teach-then-hit",
+      "guide": {
+        "path": "docs/guides/manager-guide.md",
+        "revision": "9ad2ca1",
+        "section": "Receiving a delivery / 2. The line list",
+        "quote": "**Scan a case label to jump to its line.** Tap **Scan** for the phone camera, or use a Bluetooth scanner; the first time the app sees a code it asks which item it is and remembers.",
+        "quoteSha256": "bde031f1ae2046e55bfcc3e31ac86d500a1a706f645c919906f62a77ee80881d"
+      },
+      "actor": "key holder (Rosa at EM; Angel at MEP)",
+      "preconditions": "Fixture cold-empty; a delivery has been received for the walked vendor.",
+      "expected": "Teaching a case code for a received SKU returns created; lookup answers sku (not on the delivery) and line (on it); the same teach is idempotent; a second level needs confirmation then both levels are returned; forgetting one level leaves the other.",
+      "assertionId": "receiving.scan.teach-then-hit",
+      "evidence": null,
+      "status": "pending"
+    },
+    {
       "id": "ordering.receiving-po-credit-amount",
       "guide": {
         "path": "docs/guides/manager-guide.md",

@@ -351,6 +351,15 @@ export const DESTRUCTIVE_ACTIONS = [
   //   nulls the auto column, and SETS the pin. Consumes the weekly budget (r2-8 final).
   "par.auto_tune_revert",
 
+  // ── Barcode forget at the receiving door (V3-B, 2026-09-16) ───────────────
+  // The asymmetric half of the pair. `sku.barcode.taught` is a recognition aid and sits in
+  // the non-destructive list; THIS one removes a live code from every future lookup, so the
+  // next receiver scanning that case gets the unknown-code sheet instead of the line — a
+  // human act that changes shared operational behaviour, which is this registry's criterion.
+  // Soft delete (`forgotten_at`), so the row survives for the audit trail; membership here is
+  // forensic-only and grants or withholds nothing (see the header).
+  "sku.barcode.forgotten",
+
   // ── Catering test-data purge (0193, 2026-09-05) ───────────────────────────
   // catering.test_data_purge = the ONE-TIME migration-only purge of builder test artifacts
   //   (0193, Juan's ruling 2026-09-05: "the law is for the people using it, not for us making

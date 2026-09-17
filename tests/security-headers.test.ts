@@ -159,7 +159,7 @@ describe("next.config.ts ships the header set", () => {
     ["X-Content-Type-Options", /nosniff/],
     ["X-Frame-Options", /DENY/],
     ["Referrer-Policy", /strict-origin-when-cross-origin/],
-    ["Permissions-Policy", /camera=\(\), microphone=\(\), geolocation=\(\)/],
+    ["Permissions-Policy", /camera=\(self\), microphone=\(\), geolocation=\(\)/],
   ];
 
   for (const [key, value] of expected) {
@@ -170,11 +170,11 @@ describe("next.config.ts ships the header set", () => {
     });
   }
 
-  it("grants no camera, no microphone and no geolocation — the app uses none", () => {
+  it("grants the camera to the app's own origin only (the receiving-door scanner, V3-B); no microphone, no geolocation", () => {
     // Verified by grep: no getUserMedia, no navigator.geolocation anywhere.
     // The delivery map takes a dragged PIN, never the device's location.
     const pp = SECURITY_HEADERS.find((h) => h.key === "Permissions-Policy")!;
-    expect(pp.value).toBe("camera=(), microphone=(), geolocation=()");
+    expect(pp.value).toBe("camera=(self), microphone=(), geolocation=()");
   });
 
   it("ships the CSP as REPORT-ONLY and never as the enforcing header", () => {
