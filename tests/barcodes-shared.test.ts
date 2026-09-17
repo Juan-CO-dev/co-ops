@@ -228,6 +228,28 @@ describe("ScanBurst (keyboard-wedge state machine)", () => {
     expect(b.confirmed).toBe(true);
   });
 
+  // Astra r2 item 4. The door resets the buffer the moment focus lands in a text field; a
+  // machine that merely stopped being FED would still fire what it was holding.
+  it("reset discards the buffer — a reset burst can never emit the characters it held", () => {
+    const b = new ScanBurst({ maxGapMs: 35, minLength: 6, silenceMs: 300 });
+    let t = 0;
+    for (const ch of "012345678905") { b.key(ch, t); t += 10; }
+    b.reset();
+    expect(b.confirmed).toBe(false);
+    expect(b.tick(t + 10_000)).toBeNull(); // no truncated scan, and no release either
+    expect(b.key("Enter", t + 10_001)).toBe("pass");
+  });
+
+  it("a burst that RESUMES after a reset is judged from scratch, not from the discarded half", () => {
+    const b = new ScanBurst({ maxGapMs: 35, minLength: 6, silenceMs: 300 });
+    let t = 0;
+    for (const ch of "01234") { b.key(ch, t); t += 10; }
+    b.reset();
+    // The remaining characters alone are too short to be a code and must not scan.
+    for (const ch of "5678") { b.key(ch, t); t += 10; }
+    expect(b.tick(t + 300)).toEqual({ release: "5678" });
+  });
+
   it("a slow keystroke un-confirms the burst — the fresh hypothesis is one character long", () => {
     const b = new ScanBurst({ maxGapMs: 35, minLength: 6, silenceMs: 300 });
     b.key("0", 0);
@@ -249,12 +271,41 @@ describe("dedupeCameraDecode", () => {
     expect(d.decode("111", 60_000)).toBe(false);
   });
 
-  it("re-accepts only after the label has left the frame", () => {
+  it("re-accepts only after the label has been absent for two consecutive frames", () => {
     const d = dedupeCameraDecode(1500);
     expect(d.decode("111", 0)).toBe(true);
-    d.frameWithout("111", 100);
-    expect(d.decode("111", 150)).toBe(true);
-    expect(d.decode("111", 200)).toBe(false);
+    expect(d.frameWithout("111", 150)).toBe(false); // one blank frame is not a disappearance
+    expect(d.frameWithout("111", 300)).toBe(true); // …two is
+    expect(d.decode("111", 450)).toBe(true);
+    expect(d.decode("111", 600)).toBe(false);
+  });
+
+  // Astra r2 follow-up: the phantom unit came back through a different door. A decoder drops
+  // a frame on a glare or a shadow all the time; re-arming on that first miss let a case
+  // held perfectly still count itself twice.
+  it("ONE dropped frame while the label is held still does not re-arm it", () => {
+    const d = dedupeCameraDecode(1500);
+    expect(d.decode("111", 0)).toBe(true);
+    expect(d.frameWithout("111", 150)).toBe(false); // the decoder blinked
+    expect(d.decode("111", 300)).toBe(false); // the label never left: still ONE case
+    // …and the partial absence is cancelled, so it takes two fresh misses to release.
+    expect(d.frameWithout("111", 450)).toBe(false);
+    expect(d.frameWithout("111", 600)).toBe(true);
+    expect(d.decode("111", 750)).toBe(true);
+  });
+
+  it("an absence reported for a code the dedupe never saw releases nothing", () => {
+    const d = dedupeCameraDecode(1500);
+    expect(d.frameWithout("999", 0)).toBe(false);
+    expect(d.frameWithout("999", 150)).toBe(false);
+  });
+
+  it("the required run of misses is configurable and honoured", () => {
+    const d = dedupeCameraDecode(1500, 3);
+    expect(d.decode("111", 0)).toBe(true);
+    expect(d.frameWithout("111", 150)).toBe(false);
+    expect(d.frameWithout("111", 300)).toBe(false);
+    expect(d.frameWithout("111", 450)).toBe(true);
   });
 
   it("evicts codes nobody has sighted for holdMs so a long session cannot grow unbounded", () => {

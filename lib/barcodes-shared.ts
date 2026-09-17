@@ -281,7 +281,18 @@ export class ScanBurst {
     return buf.length >= this.o.minLength ? { scan: buf } : { release: buf };
   }
 
-  private reset() {
+  /**
+   * Throw the buffer away.
+   *
+   * PUBLIC, because the door needs it (Astra r2 item 4). The wedge stands down the moment
+   * focus lands in an editable element, and a machine that merely stops being FED still
+   * holds whatever it had: the 50 ms tick would then emit those six characters as a
+   * truncated scan while the rest of the code typed itself into the field the caret had
+   * just moved to. Disarming, a new intake and a disabled form all discard instead.
+   * Discarding is lossless by construction — an armed burst is only ever buffered while
+   * nothing editable has focus, so its characters were never taken from anybody.
+   */
+  reset() {
     this.buf = "";
     this.last = -Infinity;
   }
@@ -289,28 +300,47 @@ export class ScanBurst {
 
 /**
  * Camera keep-scanning mode: the same code held in frame is ONE event, and the ONLY thing
- * that re-arms it is the label LEAVING the frame (`frameWithout`).
+ * that re-arms it is the label LEAVING the frame — proven by `requiredMisses` CONSECUTIVE
+ * frames without it.
  *
- * The timer path is gone (Astra follow-up 8). v1 also re-accepted a code after `holdMs`,
- * which meant a case parked in front of the lens counted itself again every 1.5 s — a
- * phantom unit for standing still, which is exactly what the spec's counting rule forbids.
- * Disappearance is the only honest evidence that a SECOND case was presented.
+ * The timer path is gone (Astra follow-up 8). v1 re-accepted a code after `holdMs`, which
+ * meant a case parked in front of the lens counted itself again every 1.5 s — a phantom unit
+ * for standing still, which is exactly what the spec's counting rule forbids. Disappearance
+ * is the only honest evidence that a SECOND case was presented.
  *
- * `holdMs` survives as the map's eviction horizon, not as an acceptance rule: every sighting
- * refreshes the entry, so an entry nobody has sighted for `holdMs` belongs to a code that
- * left the frame without the caller saying so, and a long session cannot grow unbounded.
+ * ONE BLANK FRAME IS NOT A DISAPPEARANCE (Astra r2 follow-up). Decoders drop a frame all the
+ * time — a hand shadow, a glare, a motion blur — and re-arming on the first miss handed the
+ * label back its phantom unit through a different door: hold a case steady, let one frame
+ * fail, and the next successful decode counts a second case. Two consecutive misses at the
+ * door's ~150 ms sampling is ~300 ms of genuine absence, which is longer than any dropped
+ * frame and far shorter than the time it takes to present the next case.
+ *
+ * `frameWithout` ANSWERS whether that absence was enough, so the caller can keep reporting a
+ * still-held code until the dedupe actually releases it; a caller that forgets a code on the
+ * first miss would never deliver the second.
+ *
+ * `holdMs` is the map's eviction horizon, not an acceptance rule: every sighting refreshes
+ * the entry, so an entry nobody has sighted for `holdMs` belongs to a code that left the
+ * frame without the caller saying so, and a long session cannot grow unbounded.
  */
-export function dedupeCameraDecode(holdMs: number) {
-  const seenAt = new Map<string, number>();
+export function dedupeCameraDecode(holdMs: number, requiredMisses = 2) {
+  const seen = new Map<string, { at: number; misses: number }>();
   return {
     decode(code: string, now: number): boolean {
-      const fresh = !seenAt.has(code);
-      seenAt.set(code, now); // still in frame — refresh, so the sweep below never evicts it
-      return fresh;
+      const held = seen.get(code);
+      // A sighting cancels a partial absence: the label never actually left.
+      seen.set(code, { at: now, misses: 0 });
+      return held === undefined;
     },
-    frameWithout(code: string, now: number) {
-      seenAt.delete(code);
-      for (const [seen, at] of seenAt) if (now - at > holdMs) seenAt.delete(seen);
+    /** True when this absence RELEASED the code — i.e. the next sighting counts as a unit. */
+    frameWithout(code: string, now: number): boolean {
+      const held = seen.get(code);
+      for (const [other, entry] of seen) if (other !== code && now - entry.at > holdMs) seen.delete(other);
+      if (held === undefined) return false;
+      held.misses += 1;
+      if (held.misses < requiredMisses) return false;
+      seen.delete(code);
+      return true;
     },
   };
 }
