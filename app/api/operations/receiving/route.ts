@@ -1,5 +1,6 @@
 import { type NextRequest } from "next/server";
 import { requireSession } from "@/lib/session";
+import { assertSameOrigin } from "@/lib/portal/csrf";
 import { ROLES } from "@/lib/roles";
 import { jsonError, jsonOk, parseJsonBody } from "@/lib/api-helpers";
 import { recordDelivery, ReceivingError, type RecordDeliveryInput } from "@/lib/receiving";
@@ -14,6 +15,10 @@ const MAX_MISSING_LINES = 50;
 
 // Log a delivery. KH+ (≥4), location-bound (checked in recordDelivery).
 export async function POST(req: NextRequest) {
+  // Same-origin FIRST (LRA-237): the door's newer siblings (order-guide, scan/*) wear this belt;
+  // a cross-site POST must never reach the session or the database.
+  const origin = assertSameOrigin(req);
+  if (origin) return origin;
   const parsed = await parseJsonBody(req);
   if (parsed instanceof Response) return parsed;
   const ctx = await requireSession(req, "/api/operations/receiving");

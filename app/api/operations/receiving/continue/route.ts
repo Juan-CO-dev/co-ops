@@ -1,5 +1,6 @@
 import { type NextRequest } from "next/server";
 import { requireSession } from "@/lib/session";
+import { assertSameOrigin } from "@/lib/portal/csrf";
 import { ROLES } from "@/lib/roles";
 import { jsonError, jsonOk, parseJsonBody } from "@/lib/api-helpers";
 import { addDeliveryLines, completeDelivery, ReceivingError, RECEIVE_MIN, type DeliveryLineInput } from "@/lib/receiving";
@@ -9,6 +10,9 @@ import { addDeliveryLines, completeDelivery, ReceivingError, RECEIVE_MIN, type D
 // POST { deliveryId, lines, complete: true } → append then complete.
 // KH+ (≥4), location-bound (checked in lib).
 export async function POST(req: NextRequest) {
+  // Same-origin FIRST (LRA-237): same belt as the scan/* and order-guide routes.
+  const origin = assertSameOrigin(req);
+  if (origin) return origin;
   const parsed = await parseJsonBody(req);
   if (parsed instanceof Response) return parsed;
   const ctx = await requireSession(req, "/api/operations/receiving/continue");
