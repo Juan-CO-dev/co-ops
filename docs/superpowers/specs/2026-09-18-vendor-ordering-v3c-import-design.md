@@ -2,6 +2,36 @@
 
 **DRAFT for CC review · updated 2026-09-19 · waves 1–4 groundwork.** This document proposes the write design; this branch contains only offline normalization, comparison, tests, and reports. No import writer, migration, network operation, or production read was performed by Astra. CC supplied the offline production export.
 
+## 0. CC ruling (2026-09-19, after the four-wave R0) — what V3-C is, in order
+
+**Verdict on the groundwork:** accepted. The adapters, parsers, real-catalog loader and the four reports are correct where sampled, conservative where they could not be sure, and every table row cites its source. PR #374 lands them as tooling; nothing in it writes to prod.
+
+**The finding that reorders the arc.** The join was built to compare vendor prices against the catalog. What it actually exposed is that the catalog is not yet a stable thing to import INTO:
+
+| Defect (prod export 2026-09-19) | Count | Example |
+|---|---|---|
+| SKUs whose pack chain has duplicate `display_ordinal` levels | 55 of 73 chained SKUs | Oregano 261432: `jug 80 oz` AND `jug 96 oz`, both ordinal 0 |
+| … of which the duplicates CONFLICT on qty or unit | 28 | Cucumber, Mustard (Whole), Chives, Natalie's Lemonade, Basil, Grapeseed Oil, Utz Ripples, Pepperoni, Thyme, Fresh Mozzarella, Red wine vinegar, Eggs (cooked) |
+| SKUs holding more than one price on ONE `effective_date` | 8 of 92 priced | Oregano: 55.27 and 13.82 on 2026-08-14, then 4.50 on 08-31 |
+| "case"-format SKUs whose `units_per_pack` is 1 — the catalog's *case* is the vendor's *each* | 35 of 86 | Butter "case" = 1 lb @ $2.25 (PFG sells 36/1 LB @ $80.30); Duke's "case" = 1 gal @ $18.50 (PFG 4/1 GA @ $73.99) |
+| Guide lines whose SKU has no vendor item number | 67 of 163 | every Boar's Head, Baldor and Amazon line |
+
+The dollar "deltas" in the reports are therefore mostly **denominator mismatches and duplicate-level artefacts from the seed and Angel waves**, not vendor price moves. An importer that wrote observations into this catalog today would propagate the duplicates and misread every case-versus-each row. So:
+
+**V3-C is two deliverables, and the order is not negotiable.**
+
+**V3-C-1 — catalog repair + vendor identity, as a seed (seed 38), before any importer.** Built from the reviewed join, human-reviewed CSV → seed with dry-run + audit rows, the repo's existing law for data changes:
+1. Dedupe `sku_pack_levels`: one level per (sku, ordinal); where the duplicates conflict, the reviewed CSV names the survivor, citing the vendor export or receipt line (`pack` column of the normalized rows).
+2. Resolve the 8 same-date price conflicts the same way; the survivor is the one that reconciles to the vendor's pack at the catalog's purchase basis.
+3. **Declare the purchase basis explicitly** — migration 0210 adds `vendor_items.price_basis` (`per_case | per_each | per_lb | per_dozen | per_bundle`) and, where the catalog's "case" is the vendor's each, records that fact rather than silently renaming. Costing (`computeSkuCostPerOz`) is untouched; ordering gains the true purchase pack for PO quantities.
+4. Attach `item_number` to the 67 number-less guide lines from the exports and receipts (Boar's Head from the Delmar invoices: 278, 505, 137, 558, 546, 12011, 30, 795; Baldor from its invoice codes; Cardinal 1030/3290; Thompson 27149/00602; Berger 1001/1010). Amazon/Webstaurant lines stay null — no vendor number exists.
+5. Vendor identity: `Boar's Head` and `Delmar Provisions` are one purveyor in the catalog today; Juan names the survivor and the seed re-points the other's SKUs (append-only: the losing vendor row goes `active = false`).
+6. Guide hygiene from section I: the 41 numbered lines absent from every export are NOT touched by the seed — they become the first human review list, with the export's nearest candidates beside each.
+
+**V3-C-2 — the importer, as designed in §§2–8 of this draft**, after V3-C-1 is on prod: adapter registry, upload, dry-run report identical in shape to these reports, apply through the 0207–0209 RPC pattern with the auto-versus-human table of §4 enforced structurally (no-price adapters never blank a price; catch weight needs `price_basis`; mixed-flavor DSD cases are one SKU priced per case). Second export cycle (October) is the acceptance test.
+
+**Rulings on the report's own open items:** Izzy MAIN and US Foods Order Guide #514925 are treated as the live lists until a manager says otherwise (question 1 stays open only to confirm). Eggs: the guide's plain "Eggs" line re-points to 517879 (large) unless Juan says medium. The former question 6 is withdrawn (see the note in §9). Five floor questions remain; they go to Juan in one list.
+
 ## 1. Evidence and governing contracts
 
 The [re-runnable PFG report](../../seed/source/vendor-exports/reports/2026-09-18-pfg-diff.md) cites physical source lines for every table row. Five CustomerFirst files contain 273 observations, 115 distinct item numbers. The independent counts are 97 purchase history, 84 Izzy MAIN, 58 Opening, 14 managed, 20 Paper. Last Purchase is the **last event only**, not cumulative transaction history. The 60-calendar-day window is July 21–September 18 inclusive.
