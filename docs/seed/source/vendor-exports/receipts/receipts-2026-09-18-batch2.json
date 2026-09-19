@@ -3,7 +3,7 @@
   "receipts": [
     {
       "vendor": "Country Snacks",
-      "vendor_note": "Country Snacks Inc, Upper Marlboro MD (301-735-4816); handwritten carbon invoice; DSD",
+      "vendor_note": "Country Snacks Inc, Upper Marlboro MD (301-735-4816); handwritten carbon invoice; DSD; sells the single-serve Utz bags (the 'one Utz bag' menu item) as mixed-flavor cases; the carbon never details flavors",
       "doc": "Invoice 760171",
       "date": "2026-09-08",
       "date_note": "handwritten '9/8/26'",
@@ -11,14 +11,14 @@
       "lines": [
         {
           "item_no": null,
-          "description": "POTATO CHIPS (handwritten size reads '1/4oz' or '1 oz'; unclear)",
+          "description": "Utz single-serve potato chip bags, mixed flavors (the '/14' on the carbon = 14 bags per case)",
           "qty": 23,
-          "unit": "DOZ",
-          "unit_price_handwritten": "1.80 (unclear)",
+          "unit": "CASE (14 bags)",
+          "bags": 322,
+          "price_per_bag": 1.8,
+          "price_per_case": 25.2,
           "ext": 579.6,
-          "implied_per_doz": 25.2,
-          "implied_per_bag": 2.1,
-          "note": "[UNCERTAIN] 579.60/23 doz = 25.20/doz = 2.10/bag; the handwritten unit price does not reconcile — ask Juan"
+          "source": "Juan 2026-09-18: '23 cases, 14 bags each at 1.80 per Utz bag'"
         }
       ],
       "total": 579.6,
