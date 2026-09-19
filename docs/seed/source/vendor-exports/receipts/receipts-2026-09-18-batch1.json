@@ -1,0 +1,32 @@
+{
+  "_note": "CC transcription of receipt photos Juan sent 2026-09-18 (batch 1 of N). Photos (not in git): ~/co-ops-assets/vendor-receipts/2026-09-18/. Prices are what was billed. ship_to tells the SHOP: '2029 P Street NW' = P Street (prod code EM); '526 8th St SE' = Capitol Hill (prod code MEP).",
+  "receipts": [
+    {"vendor": "Thompson Delivers", "vendor_note": "authorized Utz distributor; DSD, cash due at delivery", "doc": "Delivery Ticket 459903105 (NOT AN INVOICE)", "date": "2026-09-17", "ship_to": "Compliments Only 8th St, 526 8th St SE Ste A, Washington DC 20003", "customer_no": "C001190454", "route": "994599",
+     "lines": [
+       {"item_no": "27149", "upc": "00-41780-27149", "description": "12.5 oz Utz Rip Chip", "qty": 108, "unit": "EA (bag)", "retail": 5.99, "unit_net": 4.37, "ext": 471.96},
+       {"item_no": "00602", "upc": "00-41780-00602", "description": "60 oz Utz Club Pk Reg Chip", "qty": 2, "unit": "EA (bag)", "retail": 31.99, "unit_net": 23.35, "ext": 46.70}
+     ], "total": 518.66, "handwritten": "1960 (unknown meaning; crossed-out address)"},
+    {"vendor": "Baldor", "doc": "Invoice IV105-0003374467", "date": "2026-07-01", "ship_to": "Compliments Only, 2029 P Street NW", "customer_no": "CU105-0000224435", "po": "2026630", "terms": "Net 14",
+     "lines": [
+       {"item_no": "A3", "description": "ARUGULA BABY 4 LB", "qty": 2, "unit": "CTN", "origin": "USA", "price": 19.50, "ext": 39.00},
+       {"item_no": "PAMILKRB1", "description": "BUTTERMILK WHOLE 1 QT", "qty": 2, "unit": "EACH", "origin": "USA", "price": 3.29, "ext": 6.58},
+       {"item_no": "D", "description": "DILL 4 OZ", "qty": 2, "unit": "EACH", "origin": "COL", "price": 5.50, "ext": 11.00},
+       {"item_no": "RA1A", "description": "RADISH CELLO 6 OZ EACH", "qty": 3, "unit": "EACH", "origin": "USA", "price": 1.50, "ext": 4.50},
+       {"item_no": "ICE1", "description": "ICEBERG CELLO 24 CT", "qty": 2, "unit": "CTN", "origin": "USA", "price": 72.75, "ext": 145.50}
+     ], "total": 206.58, "note": "cash-discounted total; other payment methods up to 212.77"},
+    {"vendor": "Whisked", "vendor_note": "Whisked, Inc (by Jenna), Capitol Heights MD; accounting@whiskeddc.com", "doc": "Invoice 4914517276", "date": "2026-09-18", "due": "2026-10-03", "terms": "Net 15", "ship_to": "Compliments Only, 2029 P ST NW (attn Emily Cipes)", "bill_to": "Pete Sitcov",
+     "lines": [
+       {"item_no": null, "description": "Cookie, Individually Packaged, Chocolate Chip - Case of 54", "qty": 1, "unit": "case (54)", "price": 59.40, "ext": 59.40}
+     ], "shipping": 8.00, "total": 67.40, "note": "SHIP DATE printed 12/22/2023 (template artifact)"},
+    {"vendor": "TriMark", "vendor_note": "TriMark Adams-Burch; account 22031 Compliments Only Subs / Extra Mayo LLC; rep Sarah Beaghan; ACH Net 7", "doc": "Invoice 6656806-00", "date": "2026-09-16", "ship_to": "2029 P Street NW Front1",
+     "lines": [
+       {"item_no": "20970", "sku_code": "TPB1LDS", "description": "DISPENSER PRO TRANSPARENT BLACK/CHROME 1L 1ea", "qty": 4, "unit": "EACH", "price": 0.00, "ext": 0.00},
+       {"item_no": "95967", "sku_code": "18x24 COMP ONLY", "description": "PAPER BUTCHER WHITE 40# 18x24\" 1000/BUNDLE", "qty": 5, "unit": "BNDL (1000 sheets)", "price": 70.14, "ext": 350.70}
+     ], "subtotal": 350.70, "surcharge": 8.00, "tax": 21.52, "total": 380.22},
+    {"vendor": "Berger", "vendor_note": "DeBaufre Bakeries Inc / Berger Cookies, Baltimore; DSD, card on file", "doc": "Invoice 3-2609093", "date": "2026-09-09", "ship_to": "Compliments Only, 2029 P Street NW",
+     "lines": [
+       {"item_no": "1001", "description": "CHOCOLATE CREME", "qty": 24, "unit": "EA", "price": 8.79, "ext": 210.96},
+       {"item_no": "1010", "description": "Snackpacks", "qty": 100, "unit": "EA", "price": 2.25, "ext": 225.00}
+     ], "total": 435.96}
+  ]
+}
