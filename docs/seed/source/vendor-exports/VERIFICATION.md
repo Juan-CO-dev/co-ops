@@ -1,5 +1,68 @@
 # Wave 1 verification and handoff — 2026-09-18
 
+## Wave 4 — production-export join, 2026-09-19
+
+CC supplied the export; Astra used files only, no network or production access.
+This section supersedes the richer-export request below. Changes remain on disk,
+without commits, on `feat/vendor-export-diff`, `C:/Users/conta/co-ops-astra`.
+CC cross-family review is still pending under the existing deferred arrangement.
+
+Entry point: [master report](reports/2026-09-19-catalog-join.md), plus regenerated
+PFG, US Foods and receipt reports for September 19. All table rows cite source
+file and physical line. The old September 18 reports remain byte-reproducible
+with `--catalog snapshot`; production export is now the default.
+
+Real catalog: 229 SKUs, 210 active / 19 inactive, 119 with item numbers,
+92 with latest prices, 111 with derivable packs. All SKU location_id values are
+null/global; zero overlays. Two duplicate PFG identity keys (`870550`, `439686`)
+block unique matching; never choose an active row silently over its twin.
+All Boar's Head/Cardinal item numbers are null; all 101 US Foods bought-proxy
+items lack exact catalog identity. Their catalog name hypotheses show actual
+packs/prices, but do not authorize numerical identity-dependent deltas.
+
+Section I: 163 lines = 51 present + 67 linked SKUs without numbers + 4 unlinked +
+41 numbered SKUs absent from the supplied export corpus. Absent is not proof
+of discontinuation, especially for vendors with no export. There are 65 dated
+recent vendor/items on no guide (44 PFG, 21 receipt identities), plus 2 recent
+receipt lines with no item number whose placement cannot be determined.
+Unlinked printed guide numbers must be reconciled before adding a duplicate line.
+
+Most consequential comparable dollar-impact proxies (absolute last event,
+normalized to export contents; not cumulative spend): oregano 261432 $51.52;
+onion powder 326558 $26.60; red onion 907425 $12.9750; thyme 855509 $7.7421;
+basil 23097 $7.2510. See master source citations and before/after packs.
+These can expose stale catalog pack/price denominators, not just price changes.
+
+No floor question is fully answered merely by stored configuration. The draft
+drops the resolved data-export requests and groups the previous eight floor
+questions into six decisions, retaining every unresolved decision.
+
+Final checks (all exit 0):
+
+```text
+npm.cmd test
+  180 files passed; 3,423 tests passed. Full suite run once after code completion.
+node_modules/.bin/tsc.cmd --noEmit --incremental false --pretty false
+  Passed, no diagnostics.
+node_modules/.bin/eslint.cmd scripts/vendor-exports tests/vendor-exports-catalog.test.ts tests/vendor-exports-catalog-joins.test.ts tests/vendor-exports-diff.test.ts tests/vendor-exports-waves-diff.test.ts tests/vendor-exports-parsers.test.ts
+  Passed, no diagnostics.
+node_modules/.bin/vitest.cmd run tests/vendor-exports-catalog.test.ts tests/vendor-exports-catalog-joins.test.ts tests/vendor-exports-diff.test.ts tests/vendor-exports-waves-diff.test.ts tests/vendor-exports-parsers.test.ts
+  5 files / 71 tests passed during development.
+SHA-256 before/after production + snapshot regeneration (README CJS launcher)
+  19 artifacts compared; changed: []. Includes all 12 normalized JSONs,
+  four new reports and three unchanged historical reports.
+git diff --check
+  Passed. Final status contains only the authorized scripts/docs/script tests.
+```
+
+New script modules: `catalog.ts`, `catalog-reports.ts`; existing `diff.ts`,
+`diff-core.ts`, `wave-reports.ts` provide mode routing, enriched row fields and
+shared candidate reporting. New tests: `vendor-exports-catalog.test.ts` and
+`vendor-exports-catalog-joins.test.ts`; wave-1 fixture explicitly selects snapshot.
+PLAN, README, this verification, the four new reports and the existing DRAFT
+spec carry the handoff. No app/lib/migration/seed file changed. No Next build
+was run for this offline-only change; CC retains review/commit authority.
+
 ## Waves 2–3 continuation — catalog export needed from CC
 
 Wave 1 below is historical; its files are now committed by CC. This continuation leaves edits on `feat/vendor-export-diff` in `C:/Users/conta/co-ops-astra`, with no commit attempts, pushes, network or production access. The readiness snapshot is intentionally unchanged.

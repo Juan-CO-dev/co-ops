@@ -118,6 +118,8 @@ function matches(row: ExportRow, catalog: CatalogRow[]) {
   return vendor.filter(s => !s.item_number && (candidate(s.name, row) ||
     ((row.vendor === "Boar's Head" || row.vendor === "Cardinal Bakery") && receiptNames[row.item_no]?.toLowerCase() === s.name.toLowerCase())));
 }
+// Review suggestions only; wave 4 never uses these to assert exact identity or a delta.
+export { matches as catalogMatchCandidates };
 
 /** Catalog price_per_oz is dollars; input invoice rates are cents. Only exact identities produce deltas. */
 export function receiptCatalogDelta(row: ExportRow, sku: CatalogRow & { price_per_oz?: number | null }) {

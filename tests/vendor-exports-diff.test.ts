@@ -80,7 +80,7 @@ describe("offline vendor diff", () => {
   });
   it("pins wave-1 conflicts, evidence limits, gaps and list metrics from the real artifacts", () => {
     const rows = readdirSync(join(EXPORT_ROOT, "normalized")).filter(f => f.startsWith("pfg-") && f.endsWith(".json")).flatMap(f => JSON.parse(readFileSync(join(EXPORT_ROOT, "normalized", f), "utf8")) as ExportRow[]);
-    const { guides, catalog } = loadInputs();
+    const { guides, catalog } = loadInputs("snapshot");
     const result = buildDiff(rows, guides, catalog, asOf);
     expect(rows).toHaveLength(273);
     expect(result.items).toHaveLength(115);

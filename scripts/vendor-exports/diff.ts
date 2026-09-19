@@ -7,6 +7,8 @@ import { EXPORT_ROOT, ROOT, normalizeAll } from "./normalize";
 import { buildDiff, packEqual, recent, type CatalogRow, type Evidence, type GuideRow } from "./diff-core";
 import type { ExportRow } from "./model";
 import { writeWaveReports } from "./wave-reports";
+import { writeCatalogReports } from "./catalog-reports";
+import { loadCatalog } from "./catalog";
 
 const GUIDE = "docs/seed/source/order-guide-2026-09-13.json";
 const CATALOG = "docs/seed/source/vendor-exports/context/readiness-list-prod-2026-09-16.json";
@@ -34,11 +36,15 @@ const money = (cents: number | null | undefined) => cents == null ? "unavailable
 const price = (r: ExportRow) => r.price_per_lb_cents == null ? `${money(r.price_cents)}/${r.uom}` : `${money(r.price_per_lb_cents)}/lb`;
 const purchase = (r: ExportRow) => r.last_purchase_date ? `${r.last_purchase_qty} ${r.last_purchase_uom} ${r.last_purchase_date}` : "never bought / no last purchase recorded";
 
-export function loadInputs() {
+export function loadInputs(catalogMode: "prod" | "snapshot" = "prod") {
   const source = JSON.parse(read(GUIDE)) as { sheets: { pfg_leonard: Omit<GuideRow, keyof Evidence>[] } };
+  const guides: GuideRow[] = source.sheets.pfg_leonard.filter(g => g.vendor === "PFG").map(g => ({ ...g, ...locate(GUIDE, `"item": ${JSON.stringify(g.item)}`) }));
+  if (catalogMode === "prod") {
+    const { catalog, data } = loadCatalog();
+    return { guides, catalog, snapshot: { probed_at: data.exported_at } };
+  }
   const snapshot = JSON.parse(read(CATALOG)) as { active: number; probed_at: string; skus: Omit<CatalogRow, keyof Evidence>[] };
   if (!Array.isArray(snapshot.skus) || snapshot.active !== snapshot.skus.length) throw new Error("Catalog snapshot count/shape mismatch");
-  const guides: GuideRow[] = source.sheets.pfg_leonard.filter(g => g.vendor === "PFG").map(g => ({ ...g, ...locate(GUIDE, `"item": ${JSON.stringify(g.item)}`) }));
   const catalog: CatalogRow[] = snapshot.skus.map(s => ({ ...s, ...locate(CATALOG, `"id": ${JSON.stringify(s.id)}`) }));
   return { guides, catalog, snapshot };
 }
@@ -48,7 +54,7 @@ export function writeReport(asOf = "2026-09-18", normalized = normalizeAll()): {
   // Use this run's manifest only; stale generated JSON is never an input.
   const rows = normalized.flatMap(n => n.rows).filter(r => r.vendor === "pfg");
   if (!rows.length) throw new Error("No PFG observations");
-  const { guides, catalog, snapshot } = loadInputs();
+  const { guides, catalog, snapshot } = loadInputs("snapshot");
   const d = buildDiff(rows, guides, catalog, asOf);
   const seedLines = read(SEED).split(/\r?\n/);
   const seedEvidence = (g: GuideRow) => {
@@ -153,15 +159,22 @@ export function writeReport(asOf = "2026-09-18", normalized = normalizeAll()): {
   return { path, summary: [`${rows.length} observations; ${d.items.length} unique items; ${recentCount} recent`, `${d.gaps.length} guide gaps; ${d.unmatchedPurchases.length} candidate catalog gaps; ${d.conflicts.length} conflict families`, `Best list: ${d.lists[0]?.name}; D/E unavailable in supplied snapshot`] };
 }
 
-export function writeReports(asOf = "2026-09-18") {
+export function writeReports(asOf = "2026-09-19", catalogMode: "prod" | "snapshot" = "prod") {
   const normalized = normalizeAll();
+  if (catalogMode === "prod") return writeCatalogReports(normalized.flatMap(n => n.rows), asOf);
   return [writeReport(asOf, normalized), ...writeWaveReports(normalized.flatMap(n => n.rows), asOf)];
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
   const args = process.argv.slice(2);
-  if (args.length && (args.length !== 2 || args[0] !== "--as-of")) throw new Error("Usage: diff.ts [--as-of YYYY-MM-DD]");
-  for (const result of writeReports(args[1])) {
+  let asOf: string | undefined;
+  let catalogMode: "prod" | "snapshot" = "prod";
+  for (let i = 0; i < args.length; i += 2) {
+    if (args[i] === "--as-of" && args[i + 1]) asOf = args[i + 1];
+    else if (args[i] === "--catalog" && (args[i + 1] === "snapshot" || args[i + 1] === "prod")) catalogMode = args[i + 1] as "snapshot" | "prod";
+    else throw new Error("Usage: diff.ts [--as-of YYYY-MM-DD] [--catalog prod|snapshot]");
+  }
+  for (const result of writeReports(asOf ?? (catalogMode === "snapshot" ? "2026-09-18" : "2026-09-19"), catalogMode)) {
     console.log(relative(ROOT, result.path));
     result.summary.forEach(s => console.log(s));
   }

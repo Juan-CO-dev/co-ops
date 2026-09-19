@@ -1,12 +1,14 @@
 # Vendor Ordering V3-C — vendor export import
 
-**DRAFT for CC review · 2026-09-18 · waves 1–3 groundwork.** This document proposes the write design; this branch contains only offline normalization, comparison, tests, and reports. No import writer, migration, network operation, or production read was performed.
+**DRAFT for CC review · updated 2026-09-19 · waves 1–4 groundwork.** This document proposes the write design; this branch contains only offline normalization, comparison, tests, and reports. No import writer, migration, network operation, or production read was performed by Astra. CC supplied the offline production export.
 
 ## 1. Evidence and governing contracts
 
 The [re-runnable PFG report](../../seed/source/vendor-exports/reports/2026-09-18-pfg-diff.md) cites physical source lines for every table row. Five CustomerFirst files contain 273 observations, 115 distinct item numbers. The independent counts are 97 purchase history, 84 Izzy MAIN, 58 Opening, 14 managed, 20 Paper. Last Purchase is the **last event only**, not cumulative transaction history. The 60-calendar-day window is July 21–September 18 inclusive.
 
-The supplied September 16 readiness snapshot has 210 SKUs, including 84 PFG, but **no item numbers, pack values, UOM, location_id, or price amounts**. A readiness flag is not a value. Exact catalog identity, price changes, and pack changes remain unverified. CC must supply a richer offline snapshot before an executable import plan can be signed; no new prod access is implied.
+The September 19 [real catalog join](../../seed/source/vendor-exports/reports/2026-09-19-catalog-join.md) supersedes the readiness-only comparison. CC's export contains 2 locations, 21 vendors, 229 vendor_items (including inactive), 186 pack levels, 21 measures, 103 price-history rows, zero location overlays, and 15 guides / 24 sections / 163 lines. `vendor_items.id` IS the SKU id. Null stored identifiers/packs/prices remain null; US Foods still supplies no quote prices or dated purchases. The September 16 snapshot remains available for one release via `--catalog snapshot` to regenerate wave 1 unchanged.
+
+The wave-4 window is July 22–September 19 inclusive. The loader imports the pure production pack/cost functions; it joins history by `vendor_item_id`, orders `effective_date DESC, recorded_at DESC, id DESC`, and preserves the winning price's date and source line. Active pack pointers govern contents; display ordinal never defines conversion. Flat pack fields remain a separately shown mirror. Latest unit_price is dollars per internal purchase root, not necessarily a vendor case. Report cents are dollars ×100; derived lb prices are cost/oz ×16×100. Count/volume averages remain estimates, never actual invoice weights.
 
 Contracts read before this draft:
 
@@ -46,7 +48,7 @@ Inputs are recursively read beneath each vendor directory; context/reports/norma
 
 ## 3. Identity, idempotency and scope
 
-Canonical vendor product identity is **(vendor_id, item_no)**. A description, barcode, fuzzy name or list membership never replaces this key. Existing duplicate keys are a blocking ambiguity, not “first row wins.” Repeated rows in several PFG lists are observations of one vendor item, not new SKUs or extra purchases. Existing SKU identity may need an explicit, reviewed location binding where two internal SKU rows carry that vendor item.
+Canonical vendor product identity/idempotency key against the real schema is **(vendor_items.vendor_id, vendor_items.item_number)**, with export `item_no` mapped to `item_number` as a string (leading zeroes preserved). This is the proposed import identity, not a claim that the export proves a database unique constraint. `vendor_items.id` remains the FK target of price history and guide lines. Null/empty item_number cannot be an apply key. A description, barcode, fuzzy name or list membership never replaces this key. Duplicate keys are blocking ambiguity, not “first row wins.” Repeated export lists observe one item without adding purchase volume. Location-scoped internal variants still require explicit reviewed binding. Batch replay additionally needs the apply key below; product identity alone cannot deduplicate price observations.
 
 Proposed future persistence, requiring separately reviewed migrations after the current lineage:
 
@@ -59,7 +61,32 @@ Newest export date wins for quote observations; older batches remain evidence an
 
 **Location gate:** every batch requires a verified vendor-account → location binding. Account **56910015 is Dupont/P Street**, whose historical location code is **EM**; retain it, never rename codes. Capitol Hill's account and price agreement are unknown. The older [2025 Capitol Hill guide](../../seed/source/order-guide-caphill-2025-pfg.csv) establishes historical PFG ordering, not current account equivalence.
 
-Guides remain one per vendor under 0205. `vendor_items.location_id` can already scope a SKU, but the snapshot does not expose those bindings; `location_sku_settings` is not a price overlay. Price readers select by SKU, not PFG account. Therefore a Dupont quote for a global SKU stays an account observation until CC establishes shared pricing or approves a scoped price-model change and its consumers. Do not create duplicate SKUs merely to evade the scope question. Do not insert per-location guides under the current uniqueness constraint. If shop sequences differ, that is a V3-A scope amendment before any writer is built.
+Guides remain one per vendor under 0205. The real export now exposes `vendor_items.location_id` → `locations.code`; null means global, not unknown shop stocking. `location_sku_settings` has zero rows and is not a price overlay. Price readers select by SKU, not PFG account. Therefore a Dupont quote for a global SKU stays an account observation until CC establishes shared pricing or approves a scoped price-model change and its consumers. Do not create duplicate SKUs merely to evade the scope question. Do not insert per-location guides under the current uniqueness constraint. If shop sequences differ, that is a V3-A scope amendment before any writer is built.
+
+### 3.1 Concrete adapter → schema mapping (proposed writes, not an implemented importer)
+
+The real join detects duplicate PFG keys `870550` and `439686` (see report C),
+so `(vendor_id, item_number)` cannot be blindly upserted as though it already
+uniquely selects a SKU. It also finds all 229 location_id values null/global,
+119 numbered SKUs, 92 with a latest price and 111 with a derivable pack. These
+are configuration facts, not proof of per-shop assortment or current quote entitlement.
+
+| Adapter / export column | Real destination / transformation | Source contract |
+| --- | --- | --- |
+| PFG `Product Number` | `vendor_items.item_number`; reviewed vendor binding → `vendor_items.vendor_id`; never Custom Product Number | [pfg.ts:22](../../../scripts/vendor-exports/adapters/pfg.ts#L22) |
+| PFG `Product Description`, `Brand` | Description proposes `vendor_items.name`; brand remains observation metadata (no invented brand column) | [pfg.ts:26](../../../scripts/vendor-exports/adapters/pfg.ts#L26) |
+| PFG `Pack Size`, `UOM` | Reviewed root label + parsed quantities → `sku_pack_levels.label, contains_qty, contains_level_id, contains_measure_unit, display_ordinal`; active chain superseded as a whole. Production helper derives `vendor_items.pack_format, units_per_pack, each_size, each_measure` mirror | [pack writer:138](../../../lib/admin/pack-chain.ts#L138), [pure mirror:349](../../../lib/admin/catalog-shared.ts#L349) |
+| PFG `Price`, Generated date | After denominator reconciliation only: dollars per internal pack → `vendor_price_history.unit_price`, bound SKU id → `vendor_item_id`, quote date → `effective_date`; `recorded_at` is ingestion time. `/lb` cannot be inserted as a case price | [cost.ts:87](../../../lib/admin/cost.ts#L87), [pfg.ts:27](../../../scripts/vendor-exports/adapters/pfg.ts#L27) |
+| PFG `Last Purchase (qty & date)`, category/list | Observation metadata only; no fabricated deliveries, pars or guide positions | [pfg.ts:27](../../../scripts/vendor-exports/adapters/pfg.ts#L27) |
+| US Foods `Product Number`, `Product Description`, `Product Package Size` | Same `vendor_items.item_number/name` and reviewed `sku_pack_levels` mapping; US Foods vendor id distinct from PFG | [usfoods.ts:36](../../../scripts/vendor-exports/adapters/usfoods.ts#L36) |
+| US Foods `Product Brand`, Customer Product Number, Class, Storage, Group/Line | Observation metadata; no automatic SKU-class/storage/guide-order overwrite | [usfoods.ts:43](../../../scripts/vendor-exports/adapters/usfoods.ts#L43) |
+| US Foods prices / dated purchases | No source columns: no price-history write, no dated purchase inference; Recently Purchased remains undated membership | [usfoods.ts:39](../../../scripts/vendor-exports/adapters/usfoods.ts#L39) |
+| Receipts `vendor`, `lines.item_no`, `description` | Reviewed vendor id + item_number identity; null printed numbers stay unresolved; description proposes name only | [receipts.ts:39](../../../scripts/vendor-exports/adapters/receipts.ts#L39) |
+| Receipts `unit_net` / `price_per_case` / `price`, `unit`, `date` | Reconcile billing denominator to internal purchase pack before `vendor_price_history.unit_price`; receipt date → effective_date; document/line identifies observation, not SKU | [receipts.ts:50](../../../scripts/vendor-exports/adapters/receipts.ts#L50) |
+| Receipts `net_wt_lb`, qty, pack/clarification notes | Net pounds extend lb rates; pieces do not. Notes may propose reviewed chain quantities/measures; qty alone never changes units_per_pack. Preserve billed mini-chip price and clarified bag price independently | [receipts.ts:54](../../../scripts/vendor-exports/adapters/receipts.ts#L54) |
+| All adapters account metadata | Reviewed location binding → existing SKU scope; never infer shared prices or change `locations.code` from a vendor label | [skus.ts:238](../../../lib/admin/skus.ts#L238) |
+
+Section I uses `order_guide_lines.sku_id` → `vendor_items.id` → current SKU item_number, not a stale copied line.item_number. It accounts for every seeded line, distinguishes null links from linked SKUs without numbers, and lists dated recent export identities absent from all guides. A guide line with an unlinked printed number is still unresolved; a potential addition must resolve that existing line before creating a duplicate. No guide or PO snapshot is modified; `resolveGuideKey` remains unchanged.
 
 ## 4. Automatic changes versus human decisions
 
@@ -115,11 +142,11 @@ Before a future writer ships: tests for replay-after-commit, interrupted transpo
 
 ## 9. Open questions for Juan — floor answers only
 
-1. Which lists do staff open to order today: Izzy MAIN for PFG, and Daily, Master or managed for US Foods, while reading in laminate order?
-2. For mayo, Saratoga, Natalie's lemonade, iceberg and cooked eggs, which vendor is the normal source at each shop and which is the backup?
-3. Which shell eggs are stocked (PFG 517879 large or 517842 medium), and are cooked eggs (PFG 439686 / US Foods 827428) also ordered separately?
-4. Is Dried Chives a separate product; are the vinegars, mint, strawberries and multifold towels regular stock or occasional purchases?
-5. Which alternate parmesan, garlic, oregano, basil and mozzarella lines replaced the laminate versus serving as backups; is premium basil intentional, does White onion mean yellow, and is pork 474569 now the code staff keys?
-6. Does Capitol Hill use separate PFG/US Foods accounts, prices/packs or laminate sequence from P Street?
-7. For mini chips, should the repeat order use the ticket's $23.35/60-pack or the clarified $0.39/bag ($23.40/box)?
-8. Are US Foods' 4×6 ham lines still bought for a separate use from Boar's Head Ovengold turkey, and which ham is the current choice?
+The join answers the former **evidence requests** for stored SKU identifiers, active flags, pack chains, dated catalog prices, locations and actual guide links; those requests are dropped. None of the eight previous floor questions is fully answered by stored configuration alone. In particular, global active flags with zero shop overrides do not prove normal-versus-backup usage. The six decisions below consolidate related questions without falsely closing them (old 2+8 and 3+5 are grouped).
+
+1. Which PFG/US Foods lists do staff actually open while ordering in laminate order?
+2. Which vendor is normal versus backup at each shop for the twin families, and which US Foods ham is still bought for its separate use (never a turkey substitute)?
+3. Which shell-egg size and cooked-egg line are intended, and which alternate parmesan/garlic/oregano/basil/mozzarella/onion/pork numbers supersede the laminate versus remain backups?
+4. Is Dried Chives separate, and are the unmatched vinegars/mint/strawberries/towels regular stock or occasional purchases?
+5. Does Capitol Hill use separate accounts, prices/packs or guide sequence? Stored location bindings do not establish account-price equivalence.
+6. For repeat mini-chip orders, does the billed $23.35/60-pack or clarified $0.39/bag ($23.40/box) govern?

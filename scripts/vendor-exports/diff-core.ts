@@ -10,6 +10,12 @@ export interface CatalogRow extends Evidence {
   price_cents?: number | null; price_per_lb_cents?: number | null;
   /** Dollars/oz, derived by catalog costing; not a vendor_items database column. */
   price_per_oz?: number | null;
+  vendor_id?: string | null; active?: boolean; location_code?: string | null; sku_class?: string | null;
+  price_basis?: string | null; price_date?: string | null; price_evidence?: Evidence;
+  pack_evidence?: Evidence[]; content_oz?: number | null;
+  pack_format?: string | null; units_per_pack?: number | null; each_size?: number | null; each_measure?: string | null;
+  flat_pack?: string | null; chain_descriptor?: string | null;
+  cost_is_estimate?: boolean;
 }
 
 const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();

@@ -1,10 +1,32 @@
 # Vendor export groundwork (offline)
 
+Wave 4 defaults to `context/catalog-prod-2026-09-19.json` and writes the three
+2026-09-19 A–I reports plus `2026-09-19-catalog-join.md`. `catalog.ts` imports the
+production pure pack/cost helpers, joins all 229 SKU rows (including inactive),
+and retains physical SKU/chain/price evidence. `catalog-reports.ts` accounts for
+all 163 guide lines and exact vendor/item comparisons. Null database values,
+duplicate keys, undated purchases and absent quote prices remain explicit.
+
+```powershell
+node_modules/.bin/tsx.cmd scripts/vendor-exports/diff.ts --as-of 2026-09-19
+# One-release compatibility: regenerate the original three reports unchanged.
+node_modules/.bin/tsx.cmd scripts/vendor-exports/diff.ts --catalog snapshot --as-of 2026-09-18
+# Snapshot equivalent when the Windows tsx startup workaround below is needed:
+node -e "process.geteuid=()=>0;require('tsx/cjs');require('./scripts/vendor-exports/diff.ts').writeReports('2026-09-18','snapshot');"
+```
+
+`--catalog prod` is the default. No server module or DB is loaded; type-only
+references in the production pure helpers erase. Numerical impact compares
+equivalent contents where dimensions are proven and uses only the last dated
+purchase quantity. A changed hierarchy remains visible even when contents match.
+Unlinked receipt identities show catalog name hypotheses without asserting a
+price delta. The historical documentation below describes snapshot mode.
+
 From the repository root, using installed dependencies (no network or environment file):
 
 ```powershell
 node_modules/.bin/tsx.cmd scripts/vendor-exports/normalize.ts
-node_modules/.bin/tsx.cmd scripts/vendor-exports/diff.ts --as-of 2026-09-18
+node_modules/.bin/tsx.cmd scripts/vendor-exports/diff.ts --catalog snapshot --as-of 2026-09-18
 node_modules/.bin/vitest.cmd run tests/vendor-exports-parsers.test.ts tests/vendor-exports-diff.test.ts
 npm.cmd test
 ```
