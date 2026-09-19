@@ -1,5 +1,15 @@
 # V3-C wave 1 execution plan — 2026-09-18
 
+## Waves 2–3 continuation (CC CODE dispatch, same branch)
+
+Read before authoring: existing parsers/model/adapters/diff/tests, five MOXē files and README, both receipt batches, laminate JSON and Boar's Head vA, location overlay resolver, V3-A §11, draft spec and verification. Continue the wave-1 deferred CC review arrangement; files only, no Git writes.
+
+1. Extend only the offline observation contract/parser and add US Foods header and receipt JSON adapters. Preserve absent prices, catch-weight ranges, nested packs, receipt quantities versus net weight, and original source citations. Ignore only documented README sidecars; unknown data formats still fail before output.
+2. Generate vendor-scoped A–H reports with purchase-proxy metrics, unit-aware receipt comparisons and conservative cross-vendor hypotheses. Laminate remains order authority. No inferred substitutions or fabricated dates/prices.
+3. Pin real-file counts and new parsing/unit hazards in script tests; update the draft and export-field handoff. Run focused tests while developing, then full npm test once, typecheck, scoped lint, and byte-identical regeneration.
+
+Measured US Foods counts agree: managed 96, Daily 241, Master 76, Recently Purchased 101, Catering 52. Receipt risk: 00602 ticket bills $23.35 per club pack versus Juan's $0.39/bag × 60 = $23.40; preserve both. Receipt LB quantities count pieces, not pounds. Missing receipt identifiers remain missing; never mint an item number. Snapshot limitations remain unchanged.
+
 CC review: deferred to tomorrow by the task's explicit instruction; no claim of cross-family review yet.
 
 1. Add offline, import-safe pure parsers and a folder + header adapter registry under `scripts/vendor-exports/`. Retain source physical lines, account, decimal cents, missing purchases, and unknown raw packs. Generate five JSON files.

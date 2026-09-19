@@ -6,6 +6,7 @@ import { pathToFileURL } from "node:url";
 import { EXPORT_ROOT, ROOT, normalizeAll } from "./normalize";
 import { buildDiff, packEqual, recent, type CatalogRow, type Evidence, type GuideRow } from "./diff-core";
 import type { ExportRow } from "./model";
+import { writeWaveReports } from "./wave-reports";
 
 const GUIDE = "docs/seed/source/order-guide-2026-09-13.json";
 const CATALOG = "docs/seed/source/vendor-exports/context/readiness-list-prod-2026-09-16.json";
@@ -42,9 +43,9 @@ export function loadInputs() {
   return { guides, catalog, snapshot };
 }
 
-export function writeReport(asOf = "2026-09-18"): { path: string; summary: string[] } {
+export function writeReport(asOf = "2026-09-18", normalized = normalizeAll()): { path: string; summary: string[] } {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(asOf)) throw new Error("--as-of requires YYYY-MM-DD");
-  const normalized = normalizeAll(); // Use this manifest only; stale generated JSON is never an input.
+  // Use this run's manifest only; stale generated JSON is never an input.
   const rows = normalized.flatMap(n => n.rows).filter(r => r.vendor === "pfg");
   if (!rows.length) throw new Error("No PFG observations");
   const { guides, catalog, snapshot } = loadInputs();
@@ -152,10 +153,16 @@ export function writeReport(asOf = "2026-09-18"): { path: string; summary: strin
   return { path, summary: [`${rows.length} observations; ${d.items.length} unique items; ${recentCount} recent`, `${d.gaps.length} guide gaps; ${d.unmatchedPurchases.length} candidate catalog gaps; ${d.conflicts.length} conflict families`, `Best list: ${d.lists[0]?.name}; D/E unavailable in supplied snapshot`] };
 }
 
+export function writeReports(asOf = "2026-09-18") {
+  const normalized = normalizeAll();
+  return [writeReport(asOf, normalized), ...writeWaveReports(normalized.flatMap(n => n.rows), asOf)];
+}
+
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
   const args = process.argv.slice(2);
   if (args.length && (args.length !== 2 || args[0] !== "--as-of")) throw new Error("Usage: diff.ts [--as-of YYYY-MM-DD]");
-  const result = writeReport(args[1]);
-  console.log(relative(ROOT, result.path));
-  result.summary.forEach(s => console.log(s));
+  for (const result of writeReports(args[1])) {
+    console.log(relative(ROOT, result.path));
+    result.summary.forEach(s => console.log(s));
+  }
 }

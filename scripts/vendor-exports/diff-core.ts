@@ -8,6 +8,8 @@ export interface CatalogRow extends Evidence {
   // Optional enrichment contract. Missing properties are NOT evidence of a null database value.
   item_number?: string | null; pack?: string | null; uom?: string | null;
   price_cents?: number | null; price_per_lb_cents?: number | null;
+  /** Dollars/oz, derived by catalog costing; not a vendor_items database column. */
+  price_per_oz?: number | null;
 }
 
 const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
@@ -126,7 +128,9 @@ export function catalogCandidates(row: ExportRow, catalog: readonly CatalogRow[]
 export function packEqual(a: string, b: string): boolean | null {
   const x = parsePack(a), y = parsePack(b);
   if (x.pack_unparsed || y.pack_unparsed) return null;
-  return x.pack_qty === y.pack_qty && x.pack_size === y.pack_size && x.pack_unit === y.pack_unit;
+  return x.pack_qty === y.pack_qty && x.pack_size === y.pack_size && x.pack_unit === y.pack_unit
+    && x.pack_inner_qty === y.pack_inner_qty && x.pack_size_min === y.pack_size_min
+    && x.pack_size_max === y.pack_size_max && x.pack_catch_weight === y.pack_catch_weight;
 }
 
 export function priceDelta(sku: CatalogRow, row: ExportRow, asOf: string) {

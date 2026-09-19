@@ -1,11 +1,27 @@
 import type { ExportRow } from "./model";
 
-export function parsePack(pack: string): Pick<ExportRow, "pack" | "pack_qty" | "pack_size" | "pack_unit" | "pack_unparsed"> {
-  const m = /^(\d+)\/(#\d+|\d+(?:\.\d+)?)\s+(CT|LB|CN|OZ|FT|LT|EA|DZ|GA)$/i.exec(pack.trim());
-  if (!m || Number(m[1]) <= 0 || (m[2]!.startsWith("#") ? m[3]!.toUpperCase() !== "CN" : Number(m[2]) <= 0)) {
-    return { pack, pack_qty: null, pack_size: null, pack_unit: null, pack_unparsed: true };
+export function parsePack(pack: string): Pick<ExportRow, "pack" | "pack_qty" | "pack_size" | "pack_unit" | "pack_unparsed" | "pack_inner_qty" | "pack_size_min" | "pack_size_max" | "pack_catch_weight"> {
+  const unknown = { pack, pack_qty: null, pack_size: null, pack_unit: null, pack_unparsed: true as const };
+  const m = /^(.+?)\s+(CT|LB|LBA|CN|OZ|FT|LT|EA|DZ|GA|RL|GR|QT)$/i.exec(pack.trim());
+  if (!m) return unknown;
+  const levels = m[1]!.split("/");
+  if (levels.length > 3) return unknown;
+  const size = levels.pop()!;
+  const counts = levels.map(Number);
+  if (counts.some(n => !Number.isSafeInteger(n) || n <= 0)) return unknown;
+  const unit = m[2]!.toUpperCase();
+  const base = { pack, pack_qty: counts[0] ?? 1 };
+  const extra = { pack_unit: unit === "LBA" ? "LB" : unit,
+    ...(counts[1] === undefined ? {} : { pack_inner_qty: counts[1] }),
+    ...(unit === "LBA" ? { pack_catch_weight: true as const } : {}) };
+  if (/^#[1-9]\d*$/.test(size)) return unit === "CN" ? { ...base, pack_size: size, ...extra } : unknown;
+  const range = /^(\d+(?:\.\d+)?|\.\d+)-(\d+(?:\.\d+)?|\.\d+)$/.exec(size);
+  if (range) {
+    const min = Number(range[1]), max = Number(range[2]);
+    return min > 0 && max >= min ? { ...base, pack_size: null, ...extra, pack_size_min: min, pack_size_max: max } : unknown;
   }
-  return { pack, pack_qty: Number(m[1]), pack_size: m[2]!.startsWith("#") ? m[2]! : Number(m[2]), pack_unit: m[3]!.toUpperCase() };
+  if (!/^(\d+(?:\.\d+)?|\.\d+)$/.test(size) || !Number.isFinite(Number(size)) || Number(size) <= 0) return unknown;
+  return { ...base, pack_size: Number(size), ...extra };
 }
 
 export function parsePrice(raw: string): Pick<ExportRow, "price_cents" | "price_per_lb_cents"> {

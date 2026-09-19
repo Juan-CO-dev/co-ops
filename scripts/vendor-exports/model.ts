@@ -14,7 +14,22 @@ export interface ExportRow {
   /** '#10' is a can designation, never ten pounds. */
   pack_size: number | string | null;
   pack_unit: string | null;
+  pack_inner_qty?: number;
+  pack_size_min?: number;
+  pack_size_max?: number;
+  pack_catch_weight?: true;
   pack_unparsed?: true;
+  price_basis?: "per case" | "per lb" | "per each" | "per dozen" | "per bundle" | null;
+  receipt_doc?: string;
+  receipt_line?: number;
+  net_wt_lb?: number;
+  billed_unit?: string;
+  billed_price_cents?: number;
+  billed_price_basis?: string;
+  notes?: string[];
+  customer_product_no?: string;
+  storage?: string;
+  product_class?: string;
   uom: string;
   price_cents: number | null;
   price_per_lb_cents: number | null;

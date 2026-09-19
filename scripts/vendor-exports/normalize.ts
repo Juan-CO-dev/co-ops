@@ -4,10 +4,12 @@ import { basename, extname, join, relative, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import type { Adapter, ExportRow } from "./model";
 import { pfg } from "./adapters/pfg";
+import { usfoods } from "./adapters/usfoods";
+import { receipts } from "./adapters/receipts";
 
 export const ROOT = fileURLToPath(new URL("../../", import.meta.url));
 export const EXPORT_ROOT = join(ROOT, "docs/seed/source/vendor-exports");
-export const adapters: readonly Adapter[] = [pfg];
+export const adapters: readonly Adapter[] = [pfg, usfoods, receipts];
 
 export function normalizeText(vendor: string, text: string, sourceFile: string): ExportRow[] {
   const matches = adapters.filter(a => a.vendor === vendor && a.detects(text));
@@ -28,6 +30,7 @@ export function normalizeAll(root = EXPORT_ROOT): { output: string; rows: Export
   for (const folder of readdirSync(root, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
     if (["normalized", "reports", "context"].includes(folder.name) || !folder.isDirectory()) continue;
     for (const file of filesUnder(join(root, folder.name))) {
+      if (basename(file) === "README.md") continue; // Documented capture metadata, never a data export.
       const stem = relative(join(root, folder.name), file).replaceAll("\\", "/").slice(0, -extname(file).length).replaceAll("/", "--");
       const output = `${folder.name}-${stem}.json`;
       if (names.has(output)) throw new Error(`Output collision: ${output}`);
