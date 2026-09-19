@@ -142,6 +142,8 @@ Before a future writer ships: tests for replay-after-commit, interrupted transpo
 
 ## 9. Open questions for Juan — floor answers only
 
+> CC 2026-09-19: the former question 6 (mini-chip billing $23.35 vs $23.40) is withdrawn — the Thompson ticket's $23.35 line is the **60 oz Utz Club Pack** (a 60-OUNCE bag, qty 2), not the 60-COUNT mini-chips box; the ticket carries no mini-chips line at all. Mini chips are priced solely from Juan's note ($0.39/bag, 60/box). Nothing to reconcile.
+
 The join answers the former **evidence requests** for stored SKU identifiers, active flags, pack chains, dated catalog prices, locations and actual guide links; those requests are dropped. None of the eight previous floor questions is fully answered by stored configuration alone. In particular, global active flags with zero shop overrides do not prove normal-versus-backup usage. The six decisions below consolidate related questions without falsely closing them (old 2+8 and 3+5 are grouped).
 
 1. Which PFG/US Foods lists do staff actually open while ordering in laminate order?
@@ -149,4 +151,3 @@ The join answers the former **evidence requests** for stored SKU identifiers, ac
 3. Which shell-egg size and cooked-egg line are intended, and which alternate parmesan/garlic/oregano/basil/mozzarella/onion/pork numbers supersede the laminate versus remain backups?
 4. Is Dried Chives separate, and are the unmatched vinegars/mint/strawberries/towels regular stock or occasional purchases?
 5. Does Capitol Hill use separate accounts, prices/packs or guide sequence? Stored location bindings do not establish account-price equivalence.
-6. For repeat mini-chip orders, does the billed $23.35/60-pack or clarified $0.39/bag ($23.40/box) govern?
