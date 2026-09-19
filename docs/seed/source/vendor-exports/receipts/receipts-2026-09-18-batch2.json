@@ -1,0 +1,225 @@
+{
+  "_note": "CC transcription of receipt photos batch 2 (Juan 2026-09-18). Photos: ~/co-ops-assets/vendor-receipts/2026-09-18/. All ship to 2029 P Street NW unless noted.",
+  "receipts": [
+    {
+      "vendor": "Country Snacks",
+      "vendor_note": "Country Snacks Inc, Upper Marlboro MD (301-735-4816); handwritten carbon invoice; DSD",
+      "doc": "Invoice 760171",
+      "date": "2026-09-08",
+      "date_note": "handwritten '9/8/26'",
+      "account": "Compliments Only",
+      "lines": [
+        {
+          "item_no": null,
+          "description": "POTATO CHIPS (handwritten size reads '1/4oz' or '1 oz'; unclear)",
+          "qty": 23,
+          "unit": "DOZ",
+          "unit_price_handwritten": "1.80 (unclear)",
+          "ext": 579.6,
+          "implied_per_doz": 25.2,
+          "implied_per_bag": 2.1,
+          "note": "[UNCERTAIN] 579.60/23 doz = 25.20/doz = 2.10/bag; the handwritten unit price does not reconcile — ask Juan"
+        }
+      ],
+      "total": 579.6,
+      "handwritten": "#1896"
+    },
+    {
+      "vendor": "Cardinal Bakery",
+      "vendor_note": "Sterling VA; account CO; Net 1 day; delivery days Mon/Wed/Thu/Fri/Sat; orders before 3 pm for next day; route RT 8; phone contact Peter",
+      "doc": "Invoice 1656322",
+      "date": "2026-09-12",
+      "route": "RT 8 SAT",
+      "sequence": 90,
+      "lines": [
+        {
+          "item_no": "1030",
+          "description": "LARGE HERO HEARTH",
+          "qty": 84,
+          "unit": "DZ",
+          "price": 7.87,
+          "ext": 661.08
+        },
+        {
+          "item_no": "3290",
+          "description": "SPECIALTY FOOTER - NUMBERS",
+          "qty": 2,
+          "unit": "EA",
+          "price": 35.24,
+          "ext": 70.48
+        }
+      ],
+      "subtotal": 731.56,
+      "freight": 5.0,
+      "total": 736.56
+    },
+    {
+      "vendor": "Cardinal Bakery",
+      "doc": "Invoice 1656094",
+      "date": "2026-09-07",
+      "route": "RT 8 MON",
+      "sequence": 90,
+      "lines": [
+        {
+          "item_no": "1030",
+          "description": "LARGE HERO HEARTH",
+          "qty": 80,
+          "unit": "DZ",
+          "price": 7.87,
+          "ext": 629.6
+        }
+      ],
+      "subtotal": 629.6,
+      "freight": 5.0,
+      "total": 634.6
+    },
+    {
+      "vendor": "Boar's Head",
+      "vendor_note": "Delmar Deli Provisions, Gaithersburg MD (BHDelmar@aol.com, 301-740-3956); Net 7; catalogue delmardeliprovisions.org; catch-weight lines priced per LB on Net Wgt",
+      "doc": "Invoice 8167550",
+      "date": "2026-09-16",
+      "ship_date": "2026-09-16",
+      "printed": "2026-09-15 16:11",
+      "lines": [
+        {
+          "item_no": "546",
+          "description": "IMP LAYER BACON 12/14",
+          "qty": 1,
+          "net_wt_lb": 15.0,
+          "price": 4.69,
+          "unit": "LB",
+          "ext": 70.35
+        },
+        {
+          "item_no": "137",
+          "description": "HOT BUTT CAPPY",
+          "qty": 5,
+          "net_wt_lb": 17.96,
+          "price": 5.45,
+          "unit": "LB",
+          "ext": 97.88
+        },
+        {
+          "item_no": "278",
+          "description": "OVENGOLD TURKEY",
+          "qty": 4,
+          "net_wt_lb": 35.96,
+          "price": 6.29,
+          "unit": "LB",
+          "ext": 226.19
+        },
+        {
+          "item_no": "505",
+          "description": "DILANDRI GENOA SALAME",
+          "qty": 6,
+          "net_wt_lb": 42.34,
+          "price": 4.39,
+          "unit": "LB",
+          "ext": 185.87
+        },
+        {
+          "item_no": "558",
+          "description": "Pepperoni Slicing",
+          "qty": 3,
+          "net_wt_lb": 11.3,
+          "price": 4.99,
+          "unit": "LB",
+          "ext": 56.39
+        },
+        {
+          "item_no": "30",
+          "description": "HOT CHERRY PEPPERS",
+          "qty": 4,
+          "price": 8.95,
+          "unit": "EA",
+          "ext": 35.8
+        },
+        {
+          "item_no": "795",
+          "description": "5 GALLON GARLIC PICKLES",
+          "qty": 1,
+          "price": 35.95,
+          "unit": "EA",
+          "ext": 35.95
+        }
+      ],
+      "total": 708.43
+    },
+    {
+      "vendor": "Boar's Head",
+      "doc": "Invoice 8167367",
+      "date": "2026-09-15",
+      "ship_date": "2026-09-15",
+      "printed": "2026-09-14 16:15",
+      "lines": [
+        {
+          "item_no": "12011",
+          "description": "LONDON BROIL",
+          "qty": 4,
+          "net_wt_lb": 25.91,
+          "price": 8.69,
+          "unit": "LB",
+          "ext": 225.16
+        },
+        {
+          "item_no": "278",
+          "description": "OVENGOLD TURKEY",
+          "qty": 8,
+          "net_wt_lb": 73.8,
+          "price": 6.29,
+          "unit": "LB",
+          "ext": 464.2
+        },
+        {
+          "item_no": "75",
+          "description": "COKE",
+          "qty": 1,
+          "price": 25.45,
+          "unit": "EA (case)",
+          "ext": 25.45
+        },
+        {
+          "item_no": "76",
+          "description": "DIET COKE",
+          "qty": 1,
+          "price": 25.45,
+          "unit": "EA (case)",
+          "ext": 25.45
+        },
+        {
+          "item_no": "84",
+          "description": "CREAM DR. BROWNS",
+          "qty": 1,
+          "price": 14.95,
+          "unit": "EA (case)",
+          "ext": 14.95
+        },
+        {
+          "item_no": "85",
+          "description": "DIET CREAM DR. BROWNS",
+          "qty": 1,
+          "price": 14.95,
+          "unit": "EA (case)",
+          "ext": 14.95
+        },
+        {
+          "item_no": "DM101",
+          "description": "Compliments Branded Water",
+          "qty": 1,
+          "price": 12.95,
+          "unit": "EA (case)",
+          "ext": 12.95
+        },
+        {
+          "item_no": "30",
+          "description": "HOT CHERRY PEPPERS",
+          "qty": 4,
+          "price": 8.95,
+          "unit": "EA",
+          "ext": 35.8
+        }
+      ],
+      "total": 818.91
+    }
+  ]
+}
