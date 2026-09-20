@@ -1,0 +1,10721 @@
+{
+ "probed_at": "2026-09-16T21:11:54.814Z",
+ "active": 210,
+ "skus": [
+  {
+   "id": "4eb40f46-8d44-4969-a7a4-3ebd294a60e2",
+   "name": "1/2 pint bottoms (flexi)",
+   "vendor": "PFG",
+   "sku_class": "packaging",
+   "cls": "supplies",
+   "status": "incomplete",
+   "reasons": [
+    "missing_pack",
+    "missing_price",
+    "no_delivery"
+   ],
+   "lanes": {
+    "Capitol Hill": {
+     "order": "blocked",
+     "count": "blocked",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_countable_chain",
+       "blocks": [
+        "count"
+       ]
+      },
+      {
+       "code": "no_par",
+       "blocks": [
+        "order"
+       ]
+      },
+      {
+       "code": "no_order_unit",
+       "blocks": [
+        "order"
+       ]
+      }
+     ]
+    },
+    "P Street": {
+     "order": "blocked",
+     "count": "blocked",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_countable_chain",
+       "blocks": [
+        "count"
+       ]
+      },
+      {
+       "code": "no_par",
+       "blocks": [
+        "order"
+       ]
+      },
+      {
+       "code": "no_order_unit",
+       "blocks": [
+        "order"
+       ]
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "cc12c4b1-b13d-4741-976f-85f1241fa0ae",
+   "name": "1/2 pint bottoms (flexi)",
+   "vendor": "Leonard Paper",
+   "sku_class": "packaging",
+   "cls": "supplies",
+   "status": "incomplete",
+   "reasons": [
+    "missing_pack",
+    "missing_price",
+    "no_delivery"
+   ],
+   "lanes": {
+    "Capitol Hill": {
+     "order": "blocked",
+     "count": "blocked",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_countable_chain",
+       "blocks": [
+        "count"
+       ]
+      },
+      {
+       "code": "no_order_unit",
+       "blocks": [
+        "order"
+       ]
+      }
+     ]
+    },
+    "P Street": {
+     "order": "blocked",
+     "count": "blocked",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_countable_chain",
+       "blocks": [
+        "count"
+       ]
+      },
+      {
+       "code": "no_order_unit",
+       "blocks": [
+        "order"
+       ]
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "cd3ac056-53b4-42a3-941b-9d29094ec099",
+   "name": "1/2 pint top (flexi)",
+   "vendor": "PFG",
+   "sku_class": "packaging",
+   "cls": "supplies",
+   "status": "incomplete",
+   "reasons": [
+    "missing_pack",
+    "missing_price",
+    "no_delivery"
+   ],
+   "lanes": {
+    "Capitol Hill": {
+     "order": "blocked",
+     "count": "blocked",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_countable_chain",
+       "blocks": [
+        "count"
+       ]
+      },
+      {
+       "code": "no_order_unit",
+       "blocks": [
+        "order"
+       ]
+      }
+     ]
+    },
+    "P Street": {
+     "order": "blocked",
+     "count": "blocked",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_countable_chain",
+       "blocks": [
+        "count"
+       ]
+      },
+      {
+       "code": "no_order_unit",
+       "blocks": [
+        "order"
+       ]
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "771b8fcb-a71c-4071-81b1-a50758fce583",
+   "name": "1/2 pint top (flexi)",
+   "vendor": "Leonard Paper",
+   "sku_class": "packaging",
+   "cls": "supplies",
+   "status": "incomplete",
+   "reasons": [
+    "missing_pack",
+    "missing_price",
+    "no_delivery"
+   ],
+   "lanes": {
+    "Capitol Hill": {
+     "order": "blocked",
+     "count": "blocked",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_countable_chain",
+       "blocks": [
+        "count"
+       ]
+      },
+      {
+       "code": "no_order_unit",
+       "blocks": [
+        "order"
+       ]
+      }
+     ]
+    },
+    "P Street": {
+     "order": "blocked",
+     "count": "blocked",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_countable_chain",
+       "blocks": [
+        "count"
+       ]
+      },
+      {
+       "code": "no_order_unit",
+       "blocks": [
+        "order"
+       ]
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "8c581042-24e6-4aab-b33c-b2903984cfb1",
+   "name": "16 oz Bottles",
+   "vendor": "Webstaurant",
+   "sku_class": "packaging",
+   "cls": "supplies",
+   "status": "incomplete",
+   "reasons": [
+    "missing_pack",
+    "missing_price",
+    "no_delivery"
+   ],
+   "lanes": {
+    "Capitol Hill": {
+     "order": "blocked",
+     "count": "blocked",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_countable_chain",
+       "blocks": [
+        "count"
+       ]
+      },
+      {
+       "code": "no_par",
+       "blocks": [
+        "order"
+       ]
+      },
+      {
+       "code": "no_rhythm",
+       "blocks": []
+      },
+      {
+       "code": "no_order_unit",
+       "blocks": [
+        "order"
+       ]
+      }
+     ]
+    },
+    "P Street": {
+     "order": "blocked",
+     "count": "blocked",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_countable_chain",
+       "blocks": [
+        "count"
+       ]
+      },
+      {
+       "code": "no_par",
+       "blocks": [
+        "order"
+       ]
+      },
+      {
+       "code": "no_rhythm",
+       "blocks": []
+      },
+      {
+       "code": "no_order_unit",
+       "blocks": [
+        "order"
+       ]
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "f439133f-6407-4a9d-adfd-0727c84722c8",
+   "name": "2 oz portion cup lids",
+   "vendor": "PFG",
+   "sku_class": "packaging",
+   "cls": "supplies",
+   "status": "incomplete",
+   "reasons": [
+    "missing_pack",
+    "missing_price",
+    "no_delivery"
+   ],
+   "lanes": {
+    "Capitol Hill": {
+     "order": "blocked",
+     "count": "blocked",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_countable_chain",
+       "blocks": [
+        "count"
+       ]
+      },
+      {
+       "code": "no_order_unit",
+       "blocks": [
+        "order"
+       ]
+      }
+     ]
+    },
+    "P Street": {
+     "order": "blocked",
+     "count": "blocked",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_countable_chain",
+       "blocks": [
+        "count"
+       ]
+      },
+      {
+       "code": "no_order_unit",
+       "blocks": [
+        "order"
+       ]
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "16aba9a0-92fc-4403-a07b-9972347566f6",
+   "name": "2 oz portion cup lids",
+   "vendor": "Leonard Paper",
+   "sku_class": "packaging",
+   "cls": "supplies",
+   "status": "incomplete",
+   "reasons": [
+    "missing_pack",
+    "missing_price",
+    "no_delivery"
+   ],
+   "lanes": {
+    "Capitol Hill": {
+     "order": "blocked",
+     "count": "blocked",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_countable_chain",
+       "blocks": [
+        "count"
+       ]
+      },
+      {
+       "code": "no_order_unit",
+       "blocks": [
+        "order"
+       ]
+      }
+     ]
+    },
+    "P Street": {
+     "order": "blocked",
+     "count": "blocked",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_countable_chain",
+       "blocks": [
+        "count"
+       ]
+      },
+      {
+       "code": "no_order_unit",
+       "blocks": [
+        "order"
+       ]
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "95ebb862-ae36-42c4-887c-2eeb527930bd",
+   "name": "2 oz portion cups",
+   "vendor": "Leonard Paper",
+   "sku_class": "packaging",
+   "cls": "supplies",
+   "status": "incomplete",
+   "reasons": [
+    "missing_pack",
+    "missing_price",
+    "no_delivery"
+   ],
+   "lanes": {
+    "Capitol Hill": {
+     "order": "blocked",
+     "count": "blocked",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_countable_chain",
+       "blocks": [
+        "count"
+       ]
+      },
+      {
+       "code": "no_order_unit",
+       "blocks": [
+        "order"
+       ]
+      }
+     ]
+    },
+    "P Street": {
+     "order": "blocked",
+     "count": "blocked",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_countable_chain",
+       "blocks": [
+        "count"
+       ]
+      },
+      {
+       "code": "no_order_unit",
+       "blocks": [
+        "order"
+       ]
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "00379e2c-7d29-40fd-9c4e-383c092d4974",
+   "name": "2 oz portion cups",
+   "vendor": "PFG",
+   "sku_class": "packaging",
+   "cls": "supplies",
+   "status": "incomplete",
+   "reasons": [
+    "missing_pack",
+    "missing_price",
+    "no_delivery"
+   ],
+   "lanes": {
+    "Capitol Hill": {
+     "order": "blocked",
+     "count": "blocked",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_countable_chain",
+       "blocks": [
+        "count"
+       ]
+      },
+      {
+       "code": "no_order_unit",
+       "blocks": [
+        "order"
+       ]
+      }
+     ]
+    },
+    "P Street": {
+     "order": "blocked",
+     "count": "blocked",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_countable_chain",
+       "blocks": [
+        "count"
+       ]
+      },
+      {
+       "code": "no_order_unit",
+       "blocks": [
+        "order"
+       ]
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "be360461-4874-4207-859a-df8cb27162a9",
+   "name": "32 oz Bottles",
+   "vendor": "Webstaurant",
+   "sku_class": "packaging",
+   "cls": "supplies",
+   "status": "incomplete",
+   "reasons": [
+    "missing_pack",
+    "missing_price",
+    "no_delivery"
+   ],
+   "lanes": {
+    "Capitol Hill": {
+     "order": "blocked",
+     "count": "blocked",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_countable_chain",
+       "blocks": [
+        "count"
+       ]
+      },
+      {
+       "code": "no_par",
+       "blocks": [
+        "order"
+       ]
+      },
+      {
+       "code": "no_rhythm",
+       "blocks": []
+      },
+      {
+       "code": "no_order_unit",
+       "blocks": [
+        "order"
+       ]
+      }
+     ]
+    },
+    "P Street": {
+     "order": "blocked",
+     "count": "blocked",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_countable_chain",
+       "blocks": [
+        "count"
+       ]
+      },
+      {
+       "code": "no_par",
+       "blocks": [
+        "order"
+       ]
+      },
+      {
+       "code": "no_rhythm",
+       "blocks": []
+      },
+      {
+       "code": "no_order_unit",
+       "blocks": [
+        "order"
+       ]
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "32fdbe2f-8844-4ba9-98be-8c7a19db73d2",
+   "name": "Aluminum Full Pan (Catering)",
+   "vendor": "Leonard Paper",
+   "sku_class": "packaging",
+   "cls": "supplies",
+   "status": "incomplete",
+   "reasons": [
+    "missing_pack",
+    "missing_price",
+    "no_delivery"
+   ],
+   "lanes": {
+    "Capitol Hill": {
+     "order": "blocked",
+     "count": "blocked",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_countable_chain",
+       "blocks": [
+        "count"
+       ]
+      },
+      {
+       "code": "no_par",
+       "blocks": [
+        "order"
+       ]
+      }
+     ]
+    },
+    "P Street": {
+     "order": "blocked",
+     "count": "blocked",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_countable_chain",
+       "blocks": [
+        "count"
+       ]
+      },
+      {
+       "code": "no_par",
+       "blocks": [
+        "order"
+       ]
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "e775f929-1db1-4f78-919d-cd0665cef85b",
+   "name": "Aluminum Full Pan (Catering)",
+   "vendor": "PFG",
+   "sku_class": "packaging",
+   "cls": "supplies",
+   "status": "incomplete",
+   "reasons": [
+    "missing_pack",
+    "missing_price",
+    "no_delivery"
+   ],
+   "lanes": {
+    "Capitol Hill": {
+     "order": "usable",
+     "count": "blocked",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_countable_chain",
+       "blocks": [
+        "count"
+       ]
+      }
+     ]
+    },
+    "P Street": {
+     "order": "usable",
+     "count": "blocked",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_countable_chain",
+       "blocks": [
+        "count"
+       ]
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "c80de5cd-bc7c-4765-baa1-cb9dbca9e552",
+   "name": "Aluminum Full Pan Lid (Catering)",
+   "vendor": "Leonard Paper",
+   "sku_class": "packaging",
+   "cls": "supplies",
+   "status": "incomplete",
+   "reasons": [
+    "missing_pack",
+    "missing_price",
+    "no_delivery"
+   ],
+   "lanes": {
+    "Capitol Hill": {
+     "order": "blocked",
+     "count": "blocked",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_countable_chain",
+       "blocks": [
+        "count"
+       ]
+      },
+      {
+       "code": "no_par",
+       "blocks": [
+        "order"
+       ]
+      }
+     ]
+    },
+    "P Street": {
+     "order": "blocked",
+     "count": "blocked",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_countable_chain",
+       "blocks": [
+        "count"
+       ]
+      },
+      {
+       "code": "no_par",
+       "blocks": [
+        "order"
+       ]
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "11bb09eb-e9e4-49e3-b172-96f490a278d2",
+   "name": "Aluminum Full Pan Lid (Catering)",
+   "vendor": "PFG",
+   "sku_class": "packaging",
+   "cls": "supplies",
+   "status": "incomplete",
+   "reasons": [
+    "missing_pack",
+    "missing_price",
+    "no_delivery"
+   ],
+   "lanes": {
+    "Capitol Hill": {
+     "order": "usable",
+     "count": "blocked",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_countable_chain",
+       "blocks": [
+        "count"
+       ]
+      }
+     ]
+    },
+    "P Street": {
+     "order": "usable",
+     "count": "blocked",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_countable_chain",
+       "blocks": [
+        "count"
+       ]
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "fa14310e-aaa0-4376-be09-09a39f49ddab",
+   "name": "Arugula",
+   "vendor": "PFG",
+   "sku_class": "raw",
+   "cls": "food",
+   "status": "ready",
+   "reasons": [],
+   "lanes": {
+    "Capitol Hill": {
+     "order": "usable",
+     "count": "degraded",
+     "cost": "degraded",
+     "errands": [
+      {
+       "code": "price_stale",
+       "blocks": []
+      },
+      {
+       "code": "weight_estimate",
+       "blocks": []
+      }
+     ]
+    },
+    "P Street": {
+     "order": "usable",
+     "count": "degraded",
+     "cost": "degraded",
+     "errands": [
+      {
+       "code": "price_stale",
+       "blocks": []
+      },
+      {
+       "code": "weight_estimate",
+       "blocks": []
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "c94d6c52-9005-49db-a00a-90b4b7ef50fb",
+   "name": "Bacon",
+   "vendor": "Boar's Head",
+   "sku_class": "raw",
+   "cls": "food",
+   "status": "incomplete",
+   "reasons": [
+    "no_delivery"
+   ],
+   "lanes": {
+    "Capitol Hill": {
+     "order": "usable",
+     "count": "usable",
+     "cost": "degraded",
+     "errands": [
+      {
+       "code": "price_stale",
+       "blocks": []
+      }
+     ]
+    },
+    "P Street": {
+     "order": "usable",
+     "count": "usable",
+     "cost": "degraded",
+     "errands": [
+      {
+       "code": "price_stale",
+       "blocks": []
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "ac1b5724-a7cf-4896-ac76-0139dc652f04",
+   "name": "Balsamic Glaze",
+   "vendor": "PFG",
+   "sku_class": "raw",
+   "cls": "food",
+   "status": "incomplete",
+   "reasons": [
+    "no_delivery"
+   ],
+   "lanes": {
+    "Capitol Hill": {
+     "order": "usable",
+     "count": "usable",
+     "cost": "usable",
+     "errands": []
+    },
+    "P Street": {
+     "order": "usable",
+     "count": "usable",
+     "cost": "usable",
+     "errands": []
+    }
+   }
+  },
+  {
+   "id": "132c3a75-fd2f-49b7-9606-60489a250c0d",
+   "name": "Balsamic Vin",
+   "vendor": "PFG",
+   "sku_class": "raw",
+   "cls": "food",
+   "status": "ready",
+   "reasons": [],
+   "lanes": {
+    "Capitol Hill": {
+     "order": "usable",
+     "count": "usable",
+     "cost": "degraded",
+     "errands": [
+      {
+       "code": "price_stale",
+       "blocks": []
+      }
+     ]
+    },
+    "P Street": {
+     "order": "usable",
+     "count": "usable",
+     "cost": "degraded",
+     "errands": [
+      {
+       "code": "price_stale",
+       "blocks": []
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "f97d28a1-1320-4030-9575-d84e14db00d1",
+   "name": "Banana Peppers",
+   "vendor": "Boar's Head",
+   "sku_class": "raw",
+   "cls": "food",
+   "status": "incomplete",
+   "reasons": [
+    "no_delivery"
+   ],
+   "lanes": {
+    "Capitol Hill": {
+     "order": "usable",
+     "count": "degraded",
+     "cost": "degraded",
+     "errands": [
+      {
+       "code": "price_stale",
+       "blocks": []
+      },
+      {
+       "code": "weight_estimate",
+       "blocks": []
+      }
+     ]
+    },
+    "P Street": {
+     "order": "usable",
+     "count": "degraded",
+     "cost": "degraded",
+     "errands": [
+      {
+       "code": "price_stale",
+       "blocks": []
+      },
+      {
+       "code": "weight_estimate",
+       "blocks": []
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "5996f84f-5feb-4f0e-8241-9aab3b3cc6fe",
+   "name": "Basil",
+   "vendor": "PFG",
+   "sku_class": "raw",
+   "cls": "food",
+   "status": "incomplete",
+   "reasons": [
+    "no_delivery"
+   ],
+   "lanes": {
+    "Capitol Hill": {
+     "order": "usable",
+     "count": "degraded",
+     "cost": "degraded",
+     "errands": [
+      {
+       "code": "price_stale",
+       "blocks": []
+      },
+      {
+       "code": "weight_estimate",
+       "blocks": []
+      }
+     ]
+    },
+    "P Street": {
+     "order": "usable",
+     "count": "degraded",
+     "cost": "degraded",
+     "errands": [
+      {
+       "code": "price_stale",
+       "blocks": []
+      },
+      {
+       "code": "weight_estimate",
+       "blocks": []
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "f52c50de-fc80-45c1-be29-fdb395059779",
+   "name": "Beef Base",
+   "vendor": "PFG",
+   "sku_class": "raw",
+   "cls": "food",
+   "status": "incomplete",
+   "reasons": [
+    "no_delivery"
+   ],
+   "lanes": {
+    "Capitol Hill": {
+     "order": "blocked",
+     "count": "usable",
+     "cost": "degraded",
+     "errands": [
+      {
+       "code": "price_stale",
+       "blocks": []
+      },
+      {
+       "code": "no_par",
+       "blocks": [
+        "order"
+       ]
+      },
+      {
+       "code": "recipe_unresolved",
+       "blocks": []
+      }
+     ]
+    },
+    "P Street": {
+     "order": "blocked",
+     "count": "usable",
+     "cost": "degraded",
+     "errands": [
+      {
+       "code": "price_stale",
+       "blocks": []
+      },
+      {
+       "code": "no_par",
+       "blocks": [
+        "order"
+       ]
+      },
+      {
+       "code": "recipe_unresolved",
+       "blocks": []
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "699f17e1-2bc7-4216-a906-4b9e0ecd9094",
+   "name": "Black peppercorn",
+   "vendor": "PFG",
+   "sku_class": "raw",
+   "cls": "food",
+   "status": "incomplete",
+   "reasons": [
+    "no_delivery"
+   ],
+   "lanes": {
+    "Capitol Hill": {
+     "order": "usable",
+     "count": "usable",
+     "cost": "degraded",
+     "errands": [
+      {
+       "code": "price_stale",
+       "blocks": []
+      },
+      {
+       "code": "recipe_unresolved",
+       "blocks": []
+      }
+     ]
+    },
+    "P Street": {
+     "order": "usable",
+     "count": "usable",
+     "cost": "degraded",
+     "errands": [
+      {
+       "code": "price_stale",
+       "blocks": []
+      },
+      {
+       "code": "recipe_unresolved",
+       "blocks": []
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "44089460-c74d-40d9-9d4d-65fd10defd39",
+   "name": "Bleach Gallons",
+   "vendor": "Trimark",
+   "sku_class": "packaging",
+   "cls": "supplies",
+   "status": "incomplete",
+   "reasons": [
+    "missing_pack",
+    "missing_price"
+   ],
+   "lanes": {
+    "Capitol Hill": {
+     "order": "usable",
+     "count": "blocked",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_countable_chain",
+       "blocks": [
+        "count"
+       ]
+      }
+     ]
+    },
+    "P Street": {
+     "order": "usable",
+     "count": "blocked",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_countable_chain",
+       "blocks": [
+        "count"
+       ]
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "339a267a-083e-489c-b5f8-2885408f1469",
+   "name": "Blue Tape (labeling)",
+   "vendor": "Leonard Paper",
+   "sku_class": "packaging",
+   "cls": "supplies",
+   "status": "incomplete",
+   "reasons": [
+    "missing_pack",
+    "missing_price",
+    "no_delivery"
+   ],
+   "lanes": {
+    "Capitol Hill": {
+     "order": "blocked",
+     "count": "blocked",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_countable_chain",
+       "blocks": [
+        "count"
+       ]
+      },
+      {
+       "code": "no_order_unit",
+       "blocks": [
+        "order"
+       ]
+      }
+     ]
+    },
+    "P Street": {
+     "order": "blocked",
+     "count": "blocked",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_countable_chain",
+       "blocks": [
+        "count"
+       ]
+      },
+      {
+       "code": "no_order_unit",
+       "blocks": [
+        "order"
+       ]
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "f35168e5-d0a5-494d-ac2b-7c5806ce62a6",
+   "name": "Bottle Tops",
+   "vendor": "Webstaurant",
+   "sku_class": "packaging",
+   "cls": "supplies",
+   "status": "incomplete",
+   "reasons": [
+    "missing_pack",
+    "missing_price",
+    "no_delivery"
+   ],
+   "lanes": {
+    "Capitol Hill": {
+     "order": "blocked",
+     "count": "blocked",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_countable_chain",
+       "blocks": [
+        "count"
+       ]
+      },
+      {
+       "code": "no_par",
+       "blocks": [
+        "order"
+       ]
+      },
+      {
+       "code": "no_rhythm",
+       "blocks": []
+      },
+      {
+       "code": "no_order_unit",
+       "blocks": [
+        "order"
+       ]
+      }
+     ]
+    },
+    "P Street": {
+     "order": "blocked",
+     "count": "blocked",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_countable_chain",
+       "blocks": [
+        "count"
+       ]
+      },
+      {
+       "code": "no_par",
+       "blocks": [
+        "order"
+       ]
+      },
+      {
+       "code": "no_rhythm",
+       "blocks": []
+      },
+      {
+       "code": "no_order_unit",
+       "blocks": [
+        "order"
+       ]
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "835e7cbc-22ab-4248-becc-428d8c3947e9",
+   "name": "Branded (C/O) Water",
+   "vendor": "Boar's Head",
+   "sku_class": "raw",
+   "cls": "food",
+   "status": "incomplete",
+   "reasons": [
+    "no_delivery"
+   ],
+   "lanes": {
+    "Capitol Hill": {
+     "order": "usable",
+     "count": "degraded",
+     "cost": "degraded",
+     "errands": [
+      {
+       "code": "price_stale",
+       "blocks": []
+      },
+      {
+       "code": "weight_estimate",
+       "blocks": []
+      }
+     ]
+    },
+    "P Street": {
+     "order": "usable",
+     "count": "degraded",
+     "cost": "degraded",
+     "errands": [
+      {
+       "code": "price_stale",
+       "blocks": []
+      },
+      {
+       "code": "weight_estimate",
+       "blocks": []
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "49035c16-d16c-4cbb-b952-83f92df53b93",
+   "name": "Bread Knives",
+   "vendor": "Webstaurant",
+   "sku_class": "packaging",
+   "cls": "supplies",
+   "status": "incomplete",
+   "reasons": [
+    "missing_pack",
+    "missing_price",
+    "no_delivery"
+   ],
+   "lanes": {
+    "Capitol Hill": {
+     "order": "blocked",
+     "count": "blocked",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_countable_chain",
+       "blocks": [
+        "count"
+       ]
+      },
+      {
+       "code": "no_rhythm",
+       "blocks": []
+      },
+      {
+       "code": "no_order_unit",
+       "blocks": [
+        "order"
+       ]
+      }
+     ]
+    },
+    "P Street": {
+     "order": "blocked",
+     "count": "blocked",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_countable_chain",
+       "blocks": [
+        "count"
+       ]
+      },
+      {
+       "code": "no_rhythm",
+       "blocks": []
+      },
+      {
+       "code": "no_order_unit",
+       "blocks": [
+        "order"
+       ]
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "9ec51b85-608f-4579-a0a9-a4c62eaced56",
+   "name": "Butcher Paper",
+   "vendor": "Leonard Paper",
+   "sku_class": "packaging",
+   "cls": "supplies",
+   "status": "incomplete",
+   "reasons": [
+    "missing_pack",
+    "missing_price",
+    "no_delivery"
+   ],
+   "lanes": {
+    "Capitol Hill": {
+     "order": "blocked",
+     "count": "blocked",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_countable_chain",
+       "blocks": [
+        "count"
+       ]
+      },
+      {
+       "code": "no_order_unit",
+       "blocks": [
+        "order"
+       ]
+      }
+     ]
+    },
+    "P Street": {
+     "order": "blocked",
+     "count": "blocked",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_countable_chain",
+       "blocks": [
+        "count"
+       ]
+      },
+      {
+       "code": "no_order_unit",
+       "blocks": [
+        "order"
+       ]
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "eaa9411a-2b8c-4cf4-9b2d-4e74b5fa1a81",
+   "name": "Butcher Paper",
+   "vendor": "Trimark",
+   "sku_class": "packaging",
+   "cls": "supplies",
+   "status": "incomplete",
+   "reasons": [
+    "missing_pack",
+    "missing_price"
+   ],
+   "lanes": {
+    "Capitol Hill": {
+     "order": "blocked",
+     "count": "blocked",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_countable_chain",
+       "blocks": [
+        "count"
+       ]
+      },
+      {
+       "code": "no_order_unit",
+       "blocks": [
+        "order"
+       ]
+      }
+     ]
+    },
+    "P Street": {
+     "order": "blocked",
+     "count": "blocked",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_countable_chain",
+       "blocks": [
+        "count"
+       ]
+      },
+      {
+       "code": "no_order_unit",
+       "blocks": [
+        "order"
+       ]
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "ee111f0e-b50d-498a-bc2b-614e8eda199b",
+   "name": "Butter",
+   "vendor": "PFG",
+   "sku_class": "raw",
+   "cls": "food",
+   "status": "incomplete",
+   "reasons": [
+    "no_delivery"
+   ],
+   "lanes": {
+    "Capitol Hill": {
+     "order": "usable",
+     "count": "usable",
+     "cost": "degraded",
+     "errands": [
+      {
+       "code": "price_stale",
+       "blocks": []
+      },
+      {
+       "code": "recipe_unresolved",
+       "blocks": []
+      }
+     ]
+    },
+    "P Street": {
+     "order": "usable",
+     "count": "usable",
+     "cost": "degraded",
+     "errands": [
+      {
+       "code": "price_stale",
+       "blocks": []
+      },
+      {
+       "code": "recipe_unresolved",
+       "blocks": []
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "60191884-3284-45ca-a4ac-a241326e68a7",
+   "name": "C- Fold napkins",
+   "vendor": "Leonard Paper",
+   "sku_class": "packaging",
+   "cls": "supplies",
+   "status": "incomplete",
+   "reasons": [
+    "missing_pack",
+    "missing_price",
+    "no_delivery"
+   ],
+   "lanes": {
+    "Capitol Hill": {
+     "order": "blocked",
+     "count": "blocked",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_countable_chain",
+       "blocks": [
+        "count"
+       ]
+      },
+      {
+       "code": "no_order_unit",
+       "blocks": [
+        "order"
+       ]
+      }
+     ]
+    },
+    "P Street": {
+     "order": "blocked",
+     "count": "blocked",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_countable_chain",
+       "blocks": [
+        "count"
+       ]
+      },
+      {
+       "code": "no_order_unit",
+       "blocks": [
+        "order"
+       ]
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "01caa0f4-cfb1-45f9-a7a7-e03b6abf41f6",
+   "name": "C- Fold napkins",
+   "vendor": "PFG",
+   "sku_class": "packaging",
+   "cls": "supplies",
+   "status": "incomplete",
+   "reasons": [
+    "missing_pack",
+    "missing_price",
+    "no_delivery"
+   ],
+   "lanes": {
+    "Capitol Hill": {
+     "order": "blocked",
+     "count": "blocked",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_countable_chain",
+       "blocks": [
+        "count"
+       ]
+      },
+      {
+       "code": "no_order_unit",
+       "blocks": [
+        "order"
+       ]
+      }
+     ]
+    },
+    "P Street": {
+     "order": "blocked",
+     "count": "blocked",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_countable_chain",
+       "blocks": [
+        "count"
+       ]
+      },
+      {
+       "code": "no_order_unit",
+       "blocks": [
+        "order"
+       ]
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "2f71d6db-919f-48d6-8da4-62e95335023f",
+   "name": "Cannoli Shell",
+   "vendor": "PFG",
+   "sku_class": "raw",
+   "cls": "food",
+   "status": "incomplete",
+   "reasons": [
+    "no_delivery"
+   ],
+   "lanes": {
+    "Capitol Hill": {
+     "order": "degraded",
+     "count": "degraded",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "price_stale",
+       "blocks": []
+      },
+      {
+       "code": "raw_pack_contents_missing",
+       "blocks": [
+        "cost"
+       ]
+      }
+     ]
+    },
+    "P Street": {
+     "order": "degraded",
+     "count": "degraded",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "price_stale",
+       "blocks": []
+      },
+      {
+       "code": "raw_pack_contents_missing",
+       "blocks": [
+        "cost"
+       ]
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "8175a393-5d1a-4354-8a78-75eb4b3fc8ac",
+   "name": "Cannoli Shell",
+   "vendor": "Baldor",
+   "sku_class": "raw",
+   "cls": "food",
+   "status": "incomplete",
+   "reasons": [
+    "missing_price",
+    "no_delivery"
+   ],
+   "lanes": {
+    "Capitol Hill": {
+     "order": "degraded",
+     "count": "degraded",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "raw_pack_contents_missing",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_rhythm",
+       "blocks": []
+      }
+     ]
+    },
+    "P Street": {
+     "order": "degraded",
+     "count": "degraded",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "raw_pack_contents_missing",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_rhythm",
+       "blocks": []
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "bf3f655c-f8d9-4214-9df1-d0bbc3a94017",
+   "name": "Canola Oil",
+   "vendor": "PFG",
+   "sku_class": "raw",
+   "cls": "food",
+   "status": "incomplete",
+   "reasons": [
+    "no_delivery"
+   ],
+   "lanes": {
+    "Capitol Hill": {
+     "order": "usable",
+     "count": "usable",
+     "cost": "degraded",
+     "errands": [
+      {
+       "code": "price_stale",
+       "blocks": []
+      }
+     ]
+    },
+    "P Street": {
+     "order": "usable",
+     "count": "usable",
+     "cost": "degraded",
+     "errands": [
+      {
+       "code": "price_stale",
+       "blocks": []
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "e886552d-ba06-4932-9f38-1580aea0beee",
+   "name": "Capicola",
+   "vendor": "Boar's Head",
+   "sku_class": "raw",
+   "cls": "food",
+   "status": "incomplete",
+   "reasons": [
+    "no_delivery"
+   ],
+   "lanes": {
+    "Capitol Hill": {
+     "order": "usable",
+     "count": "usable",
+     "cost": "degraded",
+     "errands": [
+      {
+       "code": "price_stale",
+       "blocks": []
+      }
+     ]
+    },
+    "P Street": {
+     "order": "usable",
+     "count": "usable",
+     "cost": "degraded",
+     "errands": [
+      {
+       "code": "price_stale",
+       "blocks": []
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "e480f8f7-04b9-45bb-bb3a-189544cc88a0",
+   "name": "Catering Box Bottoms",
+   "vendor": "Leonard Paper",
+   "sku_class": "packaging",
+   "cls": "supplies",
+   "status": "incomplete",
+   "reasons": [
+    "missing_pack",
+    "missing_price",
+    "no_delivery"
+   ],
+   "lanes": {
+    "Capitol Hill": {
+     "order": "blocked",
+     "count": "blocked",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_countable_chain",
+       "blocks": [
+        "count"
+       ]
+      },
+      {
+       "code": "no_order_unit",
+       "blocks": [
+        "order"
+       ]
+      }
+     ]
+    },
+    "P Street": {
+     "order": "blocked",
+     "count": "blocked",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_countable_chain",
+       "blocks": [
+        "count"
+       ]
+      },
+      {
+       "code": "no_order_unit",
+       "blocks": [
+        "order"
+       ]
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "a9963c1d-0482-4ae0-b406-9e3fce25c862",
+   "name": "Catering Box Tops",
+   "vendor": "Leonard Paper",
+   "sku_class": "packaging",
+   "cls": "supplies",
+   "status": "incomplete",
+   "reasons": [
+    "missing_pack",
+    "missing_price",
+    "no_delivery"
+   ],
+   "lanes": {
+    "Capitol Hill": {
+     "order": "blocked",
+     "count": "blocked",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_countable_chain",
+       "blocks": [
+        "count"
+       ]
+      },
+      {
+       "code": "no_order_unit",
+       "blocks": [
+        "order"
+       ]
+      }
+     ]
+    },
+    "P Street": {
+     "order": "blocked",
+     "count": "blocked",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_countable_chain",
+       "blocks": [
+        "count"
+       ]
+      },
+      {
+       "code": "no_order_unit",
+       "blocks": [
+        "order"
+       ]
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "45f9aa24-0263-42dd-bed2-53c50e0f57c6",
+   "name": "Celery",
+   "vendor": "PFG",
+   "sku_class": "raw",
+   "cls": "food",
+   "status": "incomplete",
+   "reasons": [
+    "no_delivery"
+   ],
+   "lanes": {
+    "Capitol Hill": {
+     "order": "usable",
+     "count": "degraded",
+     "cost": "degraded",
+     "errands": [
+      {
+       "code": "price_stale",
+       "blocks": []
+      },
+      {
+       "code": "weight_estimate",
+       "blocks": []
+      }
+     ]
+    },
+    "P Street": {
+     "order": "usable",
+     "count": "degraded",
+     "cost": "degraded",
+     "errands": [
+      {
+       "code": "price_stale",
+       "blocks": []
+      },
+      {
+       "code": "weight_estimate",
+       "blocks": []
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "a5433061-7d9f-4d5e-994c-2258500ffec9",
+   "name": "Checkmate gallons (dupont only)",
+   "vendor": "Trimark",
+   "sku_class": "packaging",
+   "cls": "supplies",
+   "status": "incomplete",
+   "reasons": [
+    "missing_pack",
+    "missing_price",
+    "no_delivery"
+   ],
+   "lanes": {
+    "Capitol Hill": {
+     "order": "usable",
+     "count": "blocked",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_countable_chain",
+       "blocks": [
+        "count"
+       ]
+      }
+     ]
+    },
+    "P Street": {
+     "order": "usable",
+     "count": "blocked",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_countable_chain",
+       "blocks": [
+        "count"
+       ]
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "e3ee9508-8c1c-42b9-a0ce-403bbd7bcbc1",
+   "name": "Cheddar",
+   "vendor": "PFG",
+   "sku_class": "raw",
+   "cls": "food",
+   "status": "incomplete",
+   "reasons": [
+    "no_delivery"
+   ],
+   "lanes": {
+    "Capitol Hill": {
+     "order": "usable",
+     "count": "usable",
+     "cost": "degraded",
+     "errands": [
+      {
+       "code": "price_stale",
+       "blocks": []
+      }
+     ]
+    },
+    "P Street": {
+     "order": "usable",
+     "count": "usable",
+     "cost": "degraded",
+     "errands": [
+      {
+       "code": "price_stale",
+       "blocks": []
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "2351bd99-077c-48a3-97eb-e030b93a0a7d",
+   "name": "Chicken Breast",
+   "vendor": "PFG",
+   "sku_class": "raw",
+   "cls": "food",
+   "status": "incomplete",
+   "reasons": [
+    "no_delivery"
+   ],
+   "lanes": {
+    "Capitol Hill": {
+     "order": "usable",
+     "count": "usable",
+     "cost": "usable",
+     "errands": []
+    },
+    "P Street": {
+     "order": "usable",
+     "count": "usable",
+     "cost": "usable",
+     "errands": []
+    }
+   }
+  },
+  {
+   "id": "45c5840b-2353-47cc-8319-8cdc352ebe12",
+   "name": "Chili Flake",
+   "vendor": "PFG",
+   "sku_class": "raw",
+   "cls": "food",
+   "status": "incomplete",
+   "reasons": [
+    "no_delivery"
+   ],
+   "lanes": {
+    "Capitol Hill": {
+     "order": "usable",
+     "count": "usable",
+     "cost": "usable",
+     "errands": []
+    },
+    "P Street": {
+     "order": "usable",
+     "count": "usable",
+     "cost": "usable",
+     "errands": []
+    }
+   }
+  },
+  {
+   "id": "1c85ccb0-cdd0-4a05-971e-189b61132f8a",
+   "name": "Chives",
+   "vendor": "PFG",
+   "sku_class": "raw",
+   "cls": "food",
+   "status": "incomplete",
+   "reasons": [
+    "no_delivery"
+   ],
+   "lanes": {
+    "Capitol Hill": {
+     "order": "usable",
+     "count": "usable",
+     "cost": "usable",
+     "errands": []
+    },
+    "P Street": {
+     "order": "usable",
+     "count": "usable",
+     "cost": "usable",
+     "errands": []
+    }
+   }
+  },
+  {
+   "id": "f70a0a6d-d7ac-4a01-b529-56abbbd2ea3d",
+   "name": "Cholula",
+   "vendor": "Baldor",
+   "sku_class": "raw",
+   "cls": "food",
+   "status": "incomplete",
+   "reasons": [
+    "missing_price",
+    "no_delivery"
+   ],
+   "lanes": {
+    "Capitol Hill": {
+     "order": "degraded",
+     "count": "usable",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_rhythm",
+       "blocks": []
+      }
+     ]
+    },
+    "P Street": {
+     "order": "degraded",
+     "count": "usable",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_rhythm",
+       "blocks": []
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "f88ef594-2981-4267-9ea4-678864f25f6f",
+   "name": "Circle Label Stickers",
+   "vendor": "Amazon",
+   "sku_class": "packaging",
+   "cls": "supplies",
+   "status": "incomplete",
+   "reasons": [
+    "missing_pack",
+    "missing_price",
+    "no_delivery"
+   ],
+   "lanes": {
+    "Capitol Hill": {
+     "order": "blocked",
+     "count": "blocked",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_countable_chain",
+       "blocks": [
+        "count"
+       ]
+      },
+      {
+       "code": "no_rhythm",
+       "blocks": []
+      },
+      {
+       "code": "no_order_unit",
+       "blocks": [
+        "order"
+       ]
+      }
+     ]
+    },
+    "P Street": {
+     "order": "blocked",
+     "count": "blocked",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_countable_chain",
+       "blocks": [
+        "count"
+       ]
+      },
+      {
+       "code": "no_rhythm",
+       "blocks": []
+      },
+      {
+       "code": "no_order_unit",
+       "blocks": [
+        "order"
+       ]
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "9a4de7a1-fc04-4eab-a09a-97c564fc8698",
+   "name": "Coke",
+   "vendor": "Boar's Head",
+   "sku_class": "raw",
+   "cls": "food",
+   "status": "incomplete",
+   "reasons": [
+    "no_delivery"
+   ],
+   "lanes": {
+    "Capitol Hill": {
+     "order": "usable",
+     "count": "degraded",
+     "cost": "degraded",
+     "errands": [
+      {
+       "code": "price_stale",
+       "blocks": []
+      },
+      {
+       "code": "weight_estimate",
+       "blocks": []
+      }
+     ]
+    },
+    "P Street": {
+     "order": "usable",
+     "count": "degraded",
+     "cost": "degraded",
+     "errands": [
+      {
+       "code": "price_stale",
+       "blocks": []
+      },
+      {
+       "code": "weight_estimate",
+       "blocks": []
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "1724b425-250b-4d05-876b-2d6bfa6d6f35",
+   "name": "Confectioners Sugar",
+   "vendor": "PFG",
+   "sku_class": "raw",
+   "cls": "food",
+   "status": "incomplete",
+   "reasons": [
+    "no_delivery"
+   ],
+   "lanes": {
+    "Capitol Hill": {
+     "order": "usable",
+     "count": "degraded",
+     "cost": "degraded",
+     "errands": [
+      {
+       "code": "weight_estimate",
+       "blocks": []
+      }
+     ]
+    },
+    "P Street": {
+     "order": "usable",
+     "count": "degraded",
+     "cost": "degraded",
+     "errands": [
+      {
+       "code": "weight_estimate",
+       "blocks": []
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "11d14e78-bdce-4aa9-8602-2e7a7e09e4f3",
+   "name": "Cucumber",
+   "vendor": "PFG",
+   "sku_class": "raw",
+   "cls": "food",
+   "status": "incomplete",
+   "reasons": [
+    "no_delivery"
+   ],
+   "lanes": {
+    "Capitol Hill": {
+     "order": "usable",
+     "count": "usable",
+     "cost": "degraded",
+     "errands": [
+      {
+       "code": "price_stale",
+       "blocks": []
+      }
+     ]
+    },
+    "P Street": {
+     "order": "usable",
+     "count": "usable",
+     "cost": "degraded",
+     "errands": [
+      {
+       "code": "price_stale",
+       "blocks": []
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "a2adb4c7-ccf6-40c9-9a59-8fa7debc7b55",
+   "name": "DB Cel Ray",
+   "vendor": "Boar's Head",
+   "sku_class": "raw",
+   "cls": "food",
+   "status": "incomplete",
+   "reasons": [
+    "no_delivery"
+   ],
+   "lanes": {
+    "Capitol Hill": {
+     "order": "usable",
+     "count": "degraded",
+     "cost": "degraded",
+     "errands": [
+      {
+       "code": "price_stale",
+       "blocks": []
+      },
+      {
+       "code": "weight_estimate",
+       "blocks": []
+      }
+     ]
+    },
+    "P Street": {
+     "order": "usable",
+     "count": "degraded",
+     "cost": "degraded",
+     "errands": [
+      {
+       "code": "price_stale",
+       "blocks": []
+      },
+      {
+       "code": "weight_estimate",
+       "blocks": []
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "c0019de5-000c-4104-aa3a-5da952192d6f",
+   "name": "DB Cherry Soda",
+   "vendor": "Boar's Head",
+   "sku_class": "raw",
+   "cls": "food",
+   "status": "incomplete",
+   "reasons": [
+    "no_delivery"
+   ],
+   "lanes": {
+    "Capitol Hill": {
+     "order": "usable",
+     "count": "degraded",
+     "cost": "degraded",
+     "errands": [
+      {
+       "code": "price_stale",
+       "blocks": []
+      },
+      {
+       "code": "weight_estimate",
+       "blocks": []
+      }
+     ]
+    },
+    "P Street": {
+     "order": "usable",
+     "count": "degraded",
+     "cost": "degraded",
+     "errands": [
+      {
+       "code": "price_stale",
+       "blocks": []
+      },
+      {
+       "code": "weight_estimate",
+       "blocks": []
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "33742a07-fe19-42fa-b900-232559826985",
+   "name": "DB Cream Soda",
+   "vendor": "Boar's Head",
+   "sku_class": "raw",
+   "cls": "food",
+   "status": "incomplete",
+   "reasons": [
+    "no_delivery"
+   ],
+   "lanes": {
+    "Capitol Hill": {
+     "order": "usable",
+     "count": "degraded",
+     "cost": "degraded",
+     "errands": [
+      {
+       "code": "price_stale",
+       "blocks": []
+      },
+      {
+       "code": "weight_estimate",
+       "blocks": []
+      }
+     ]
+    },
+    "P Street": {
+     "order": "usable",
+     "count": "degraded",
+     "cost": "degraded",
+     "errands": [
+      {
+       "code": "price_stale",
+       "blocks": []
+      },
+      {
+       "code": "weight_estimate",
+       "blocks": []
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "2d5a5194-6cdb-4295-8143-251928c390df",
+   "name": "DB Diet Cherry Soda",
+   "vendor": "Boar's Head",
+   "sku_class": "raw",
+   "cls": "food",
+   "status": "incomplete",
+   "reasons": [
+    "no_delivery"
+   ],
+   "lanes": {
+    "Capitol Hill": {
+     "order": "usable",
+     "count": "degraded",
+     "cost": "degraded",
+     "errands": [
+      {
+       "code": "price_stale",
+       "blocks": []
+      },
+      {
+       "code": "weight_estimate",
+       "blocks": []
+      }
+     ]
+    },
+    "P Street": {
+     "order": "usable",
+     "count": "degraded",
+     "cost": "degraded",
+     "errands": [
+      {
+       "code": "price_stale",
+       "blocks": []
+      },
+      {
+       "code": "weight_estimate",
+       "blocks": []
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "1d9b48ff-bb76-4aeb-b021-09c85aed80b4",
+   "name": "DB Diet Cream Soda",
+   "vendor": "Boar's Head",
+   "sku_class": "raw",
+   "cls": "food",
+   "status": "incomplete",
+   "reasons": [
+    "no_delivery"
+   ],
+   "lanes": {
+    "Capitol Hill": {
+     "order": "usable",
+     "count": "degraded",
+     "cost": "degraded",
+     "errands": [
+      {
+       "code": "price_stale",
+       "blocks": []
+      },
+      {
+       "code": "weight_estimate",
+       "blocks": []
+      }
+     ]
+    },
+    "P Street": {
+     "order": "usable",
+     "count": "degraded",
+     "cost": "degraded",
+     "errands": [
+      {
+       "code": "price_stale",
+       "blocks": []
+      },
+      {
+       "code": "weight_estimate",
+       "blocks": []
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "26a0d9c0-9033-4742-9458-e77b3d573b8c",
+   "name": "DB Root Beer",
+   "vendor": "Boar's Head",
+   "sku_class": "raw",
+   "cls": "food",
+   "status": "incomplete",
+   "reasons": [
+    "no_delivery"
+   ],
+   "lanes": {
+    "Capitol Hill": {
+     "order": "usable",
+     "count": "degraded",
+     "cost": "degraded",
+     "errands": [
+      {
+       "code": "price_stale",
+       "blocks": []
+      },
+      {
+       "code": "weight_estimate",
+       "blocks": []
+      }
+     ]
+    },
+    "P Street": {
+     "order": "usable",
+     "count": "degraded",
+     "cost": "degraded",
+     "errands": [
+      {
+       "code": "price_stale",
+       "blocks": []
+      },
+      {
+       "code": "weight_estimate",
+       "blocks": []
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "23f9a85e-afca-4146-8b7e-cd2a0bec2f48",
+   "name": "Diet Coke",
+   "vendor": "Boar's Head",
+   "sku_class": "raw",
+   "cls": "food",
+   "status": "incomplete",
+   "reasons": [
+    "no_delivery"
+   ],
+   "lanes": {
+    "Capitol Hill": {
+     "order": "usable",
+     "count": "degraded",
+     "cost": "degraded",
+     "errands": [
+      {
+       "code": "price_stale",
+       "blocks": []
+      },
+      {
+       "code": "weight_estimate",
+       "blocks": []
+      }
+     ]
+    },
+    "P Street": {
+     "order": "usable",
+     "count": "degraded",
+     "cost": "degraded",
+     "errands": [
+      {
+       "code": "price_stale",
+       "blocks": []
+      },
+      {
+       "code": "weight_estimate",
+       "blocks": []
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "d0ae6c94-26e8-48a7-9b73-857d4428270a",
+   "name": "Dried Chives",
+   "vendor": "US Foods",
+   "sku_class": "raw",
+   "cls": "food",
+   "status": "incomplete",
+   "reasons": [
+    "no_delivery"
+   ],
+   "lanes": {
+    "Capitol Hill": {
+     "order": "blocked",
+     "count": "usable",
+     "cost": "degraded",
+     "errands": [
+      {
+       "code": "price_stale",
+       "blocks": []
+      },
+      {
+       "code": "no_par",
+       "blocks": [
+        "order"
+       ]
+      },
+      {
+       "code": "no_rhythm",
+       "blocks": []
+      }
+     ]
+    },
+    "P Street": {
+     "order": "blocked",
+     "count": "usable",
+     "cost": "degraded",
+     "errands": [
+      {
+       "code": "price_stale",
+       "blocks": []
+      },
+      {
+       "code": "no_par",
+       "blocks": [
+        "order"
+       ]
+      },
+      {
+       "code": "no_rhythm",
+       "blocks": []
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "2ee92d69-4bd2-490b-b109-4760e6396691",
+   "name": "Dry Erase Markers",
+   "vendor": "Amazon",
+   "sku_class": "packaging",
+   "cls": "supplies",
+   "status": "incomplete",
+   "reasons": [
+    "missing_pack",
+    "missing_price",
+    "no_delivery"
+   ],
+   "lanes": {
+    "Capitol Hill": {
+     "order": "blocked",
+     "count": "blocked",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_countable_chain",
+       "blocks": [
+        "count"
+       ]
+      },
+      {
+       "code": "no_rhythm",
+       "blocks": []
+      },
+      {
+       "code": "no_order_unit",
+       "blocks": [
+        "order"
+       ]
+      }
+     ]
+    },
+    "P Street": {
+     "order": "blocked",
+     "count": "blocked",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_countable_chain",
+       "blocks": [
+        "count"
+       ]
+      },
+      {
+       "code": "no_rhythm",
+       "blocks": []
+      },
+      {
+       "code": "no_order_unit",
+       "blocks": [
+        "order"
+       ]
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "5c589b38-6431-4a45-b8b7-924125c05aa6",
+   "name": "Duke's Mayo",
+   "vendor": "PFG",
+   "sku_class": "raw",
+   "cls": "food",
+   "status": "incomplete",
+   "reasons": [
+    "no_delivery"
+   ],
+   "lanes": {
+    "Capitol Hill": {
+     "order": "usable",
+     "count": "degraded",
+     "cost": "degraded",
+     "errands": [
+      {
+       "code": "price_stale",
+       "blocks": []
+      },
+      {
+       "code": "weight_estimate",
+       "blocks": []
+      },
+      {
+       "code": "recipe_unresolved",
+       "blocks": []
+      }
+     ]
+    },
+    "P Street": {
+     "order": "usable",
+     "count": "degraded",
+     "cost": "degraded",
+     "errands": [
+      {
+       "code": "price_stale",
+       "blocks": []
+      },
+      {
+       "code": "weight_estimate",
+       "blocks": []
+      },
+      {
+       "code": "recipe_unresolved",
+       "blocks": []
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "7de78f9b-bc00-4e42-be3a-80419048eaa3",
+   "name": "Eggs",
+   "vendor": "PFG",
+   "sku_class": "raw",
+   "cls": "food",
+   "status": "incomplete",
+   "reasons": [
+    "no_delivery"
+   ],
+   "lanes": {
+    "Capitol Hill": {
+     "order": "usable",
+     "count": "degraded",
+     "cost": "degraded",
+     "errands": [
+      {
+       "code": "weight_estimate",
+       "blocks": []
+      }
+     ]
+    },
+    "P Street": {
+     "order": "usable",
+     "count": "degraded",
+     "cost": "degraded",
+     "errands": [
+      {
+       "code": "weight_estimate",
+       "blocks": []
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "d6c913a4-888b-4d2d-a151-9a15c9dd69c4",
+   "name": "Eggs (cooked)",
+   "vendor": "PFG",
+   "sku_class": "raw",
+   "cls": "food",
+   "status": "incomplete",
+   "reasons": [
+    "no_delivery"
+   ],
+   "lanes": {
+    "Capitol Hill": {
+     "order": "usable",
+     "count": "degraded",
+     "cost": "degraded",
+     "errands": [
+      {
+       "code": "weight_estimate",
+       "blocks": []
+      }
+     ]
+    },
+    "P Street": {
+     "order": "usable",
+     "count": "degraded",
+     "cost": "degraded",
+     "errands": [
+      {
+       "code": "weight_estimate",
+       "blocks": []
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "e9817760-0b15-4b79-b37b-cbf376432dad",
+   "name": "Employee Water",
+   "vendor": "PFG",
+   "sku_class": "raw",
+   "cls": "food",
+   "status": "incomplete",
+   "reasons": [
+    "no_delivery"
+   ],
+   "lanes": {
+    "Capitol Hill": {
+     "order": "usable",
+     "count": "usable",
+     "cost": "degraded",
+     "errands": [
+      {
+       "code": "price_stale",
+       "blocks": []
+      }
+     ]
+    },
+    "P Street": {
+     "order": "usable",
+     "count": "usable",
+     "cost": "degraded",
+     "errands": [
+      {
+       "code": "price_stale",
+       "blocks": []
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "16a0089c-a714-422c-a3fc-6921436c88b0",
+   "name": "Ever Roast Chicken",
+   "vendor": "Boar's Head",
+   "sku_class": "raw",
+   "cls": "food",
+   "status": "incomplete",
+   "reasons": [
+    "no_delivery"
+   ],
+   "lanes": {
+    "Capitol Hill": {
+     "order": "usable",
+     "count": "degraded",
+     "cost": "degraded",
+     "errands": [
+      {
+       "code": "price_stale",
+       "blocks": []
+      },
+      {
+       "code": "weight_estimate",
+       "blocks": []
+      }
+     ]
+    },
+    "P Street": {
+     "order": "usable",
+     "count": "degraded",
+     "cost": "degraded",
+     "errands": [
+      {
+       "code": "price_stale",
+       "blocks": []
+      },
+      {
+       "code": "weight_estimate",
+       "blocks": []
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "5bedbd16-0713-4c7a-994b-ef5f4a33db42",
+   "name": "EZ Dry gallons",
+   "vendor": "Trimark",
+   "sku_class": "packaging",
+   "cls": "supplies",
+   "status": "incomplete",
+   "reasons": [
+    "missing_pack",
+    "missing_price",
+    "no_delivery"
+   ],
+   "lanes": {
+    "Capitol Hill": {
+     "order": "usable",
+     "count": "blocked",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_countable_chain",
+       "blocks": [
+        "count"
+       ]
+      }
+     ]
+    },
+    "P Street": {
+     "order": "usable",
+     "count": "blocked",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_countable_chain",
+       "blocks": [
+        "count"
+       ]
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "9bb473a4-f2a6-4926-aad4-8fea2e716164",
+   "name": "Fancy Napkins",
+   "vendor": "Trimark",
+   "sku_class": "packaging",
+   "cls": "supplies",
+   "status": "incomplete",
+   "reasons": [
+    "missing_pack",
+    "missing_price",
+    "no_delivery"
+   ],
+   "lanes": {
+    "Capitol Hill": {
+     "order": "usable",
+     "count": "blocked",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_countable_chain",
+       "blocks": [
+        "count"
+       ]
+      }
+     ]
+    },
+    "P Street": {
+     "order": "usable",
+     "count": "blocked",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_countable_chain",
+       "blocks": [
+        "count"
+       ]
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "24e760b5-b60c-4d84-a2e3-b64202dbfd92",
+   "name": "First Aid Items",
+   "vendor": "Webstaurant",
+   "sku_class": "packaging",
+   "cls": "supplies",
+   "status": "incomplete",
+   "reasons": [
+    "missing_pack",
+    "missing_price",
+    "no_delivery"
+   ],
+   "lanes": {
+    "Capitol Hill": {
+     "order": "blocked",
+     "count": "blocked",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_countable_chain",
+       "blocks": [
+        "count"
+       ]
+      },
+      {
+       "code": "no_par",
+       "blocks": [
+        "order"
+       ]
+      },
+      {
+       "code": "no_rhythm",
+       "blocks": []
+      },
+      {
+       "code": "no_order_unit",
+       "blocks": [
+        "order"
+       ]
+      }
+     ]
+    },
+    "P Street": {
+     "order": "blocked",
+     "count": "blocked",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_countable_chain",
+       "blocks": [
+        "count"
+       ]
+      },
+      {
+       "code": "no_par",
+       "blocks": [
+        "order"
+       ]
+      },
+      {
+       "code": "no_rhythm",
+       "blocks": []
+      },
+      {
+       "code": "no_order_unit",
+       "blocks": [
+        "order"
+       ]
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "1413cbf4-382f-4dea-bea4-235497169b85",
+   "name": "Floor Cleaner (Kitchen Citrus #8)",
+   "vendor": "Trimark",
+   "sku_class": "packaging",
+   "cls": "supplies",
+   "status": "incomplete",
+   "reasons": [
+    "missing_pack",
+    "missing_price",
+    "no_delivery"
+   ],
+   "lanes": {
+    "Capitol Hill": {
+     "order": "blocked",
+     "count": "blocked",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_countable_chain",
+       "blocks": [
+        "count"
+       ]
+      },
+      {
+       "code": "no_order_unit",
+       "blocks": [
+        "order"
+       ]
+      }
+     ]
+    },
+    "P Street": {
+     "order": "blocked",
+     "count": "blocked",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_countable_chain",
+       "blocks": [
+        "count"
+       ]
+      },
+      {
+       "code": "no_order_unit",
+       "blocks": [
+        "order"
+       ]
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "5bcd74af-93f0-4f00-8769-56f5caecf3b8",
+   "name": "Foam Soap",
+   "vendor": "Trimark",
+   "sku_class": "packaging",
+   "cls": "supplies",
+   "status": "incomplete",
+   "reasons": [
+    "missing_pack",
+    "missing_price",
+    "no_delivery"
+   ],
+   "lanes": {
+    "Capitol Hill": {
+     "order": "usable",
+     "count": "blocked",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_countable_chain",
+       "blocks": [
+        "count"
+       ]
+      }
+     ]
+    },
+    "P Street": {
+     "order": "usable",
+     "count": "blocked",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_countable_chain",
+       "blocks": [
+        "count"
+       ]
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "54899675-4645-4d62-a7d1-360f20bb5744",
+   "name": "Foam Soap (restrooms)",
+   "vendor": "Trimark",
+   "sku_class": "packaging",
+   "cls": "supplies",
+   "status": "incomplete",
+   "reasons": [
+    "missing_pack",
+    "missing_price",
+    "no_delivery"
+   ],
+   "lanes": {
+    "Capitol Hill": {
+     "order": "blocked",
+     "count": "blocked",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_countable_chain",
+       "blocks": [
+        "count"
+       ]
+      },
+      {
+       "code": "no_order_unit",
+       "blocks": [
+        "order"
+       ]
+      }
+     ]
+    },
+    "P Street": {
+     "order": "blocked",
+     "count": "blocked",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_countable_chain",
+       "blocks": [
+        "count"
+       ]
+      },
+      {
+       "code": "no_order_unit",
+       "blocks": [
+        "order"
+       ]
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "53ad7e70-55cf-475f-b4b3-f8496ecdf1a9",
+   "name": "Foil Pick up sheets",
+   "vendor": "PFG",
+   "sku_class": "packaging",
+   "cls": "supplies",
+   "status": "incomplete",
+   "reasons": [
+    "missing_pack",
+    "missing_price",
+    "no_delivery"
+   ],
+   "lanes": {
+    "Capitol Hill": {
+     "order": "usable",
+     "count": "blocked",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_countable_chain",
+       "blocks": [
+        "count"
+       ]
+      }
+     ]
+    },
+    "P Street": {
+     "order": "usable",
+     "count": "blocked",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_countable_chain",
+       "blocks": [
+        "count"
+       ]
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "c4c0f286-41ed-4ac6-8e78-cd5180a1bf1a",
+   "name": "Foil roll",
+   "vendor": "Leonard Paper",
+   "sku_class": "packaging",
+   "cls": "supplies",
+   "status": "incomplete",
+   "reasons": [
+    "missing_pack",
+    "missing_price",
+    "no_delivery"
+   ],
+   "lanes": {
+    "Capitol Hill": {
+     "order": "blocked",
+     "count": "blocked",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_countable_chain",
+       "blocks": [
+        "count"
+       ]
+      },
+      {
+       "code": "no_order_unit",
+       "blocks": [
+        "order"
+       ]
+      }
+     ]
+    },
+    "P Street": {
+     "order": "blocked",
+     "count": "blocked",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_countable_chain",
+       "blocks": [
+        "count"
+       ]
+      },
+      {
+       "code": "no_order_unit",
+       "blocks": [
+        "order"
+       ]
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "05c36266-1378-4886-b306-31e138d2ec13",
+   "name": "Foil roll",
+   "vendor": "PFG",
+   "sku_class": "packaging",
+   "cls": "supplies",
+   "status": "incomplete",
+   "reasons": [
+    "missing_pack",
+    "missing_price",
+    "no_delivery"
+   ],
+   "lanes": {
+    "Capitol Hill": {
+     "order": "blocked",
+     "count": "blocked",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_countable_chain",
+       "blocks": [
+        "count"
+       ]
+      },
+      {
+       "code": "no_order_unit",
+       "blocks": [
+        "order"
+       ]
+      }
+     ]
+    },
+    "P Street": {
+     "order": "blocked",
+     "count": "blocked",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_countable_chain",
+       "blocks": [
+        "count"
+       ]
+      },
+      {
+       "code": "no_order_unit",
+       "blocks": [
+        "order"
+       ]
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "a74cfd14-af8d-4483-aef5-5f13619e8b8d",
+   "name": "Formula C gallons",
+   "vendor": "Trimark",
+   "sku_class": "packaging",
+   "cls": "supplies",
+   "status": "incomplete",
+   "reasons": [
+    "missing_pack",
+    "missing_price",
+    "no_delivery"
+   ],
+   "lanes": {
+    "Capitol Hill": {
+     "order": "usable",
+     "count": "blocked",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_countable_chain",
+       "blocks": [
+        "count"
+       ]
+      }
+     ]
+    },
+    "P Street": {
+     "order": "usable",
+     "count": "blocked",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_countable_chain",
+       "blocks": [
+        "count"
+       ]
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "c35dfb4f-492a-43e9-8551-3a0558b695f7",
+   "name": "Fresh Mozzarella",
+   "vendor": "Baldor",
+   "sku_class": "raw",
+   "cls": "food",
+   "status": "incomplete",
+   "reasons": [
+    "missing_price",
+    "no_delivery"
+   ],
+   "lanes": {}
+  },
+  {
+   "id": "27066f2a-8e5c-4c60-8a0f-a62980241998",
+   "name": "Fresh Mozzarella",
+   "vendor": "PFG",
+   "sku_class": "raw",
+   "cls": "food",
+   "status": "incomplete",
+   "reasons": [
+    "no_delivery"
+   ],
+   "lanes": {
+    "Capitol Hill": {
+     "order": "usable",
+     "count": "usable",
+     "cost": "degraded",
+     "errands": [
+      {
+       "code": "price_stale",
+       "blocks": []
+      }
+     ]
+    },
+    "P Street": {
+     "order": "usable",
+     "count": "usable",
+     "cost": "degraded",
+     "errands": [
+      {
+       "code": "price_stale",
+       "blocks": []
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "3f778338-97ea-4ff2-b63f-baf35e7e02c4",
+   "name": "Frooties",
+   "vendor": "Penny Candy",
+   "sku_class": "raw",
+   "cls": "food",
+   "status": "incomplete",
+   "reasons": [
+    "missing_pack",
+    "missing_price",
+    "no_delivery"
+   ],
+   "lanes": {
+    "Capitol Hill": {
+     "order": "blocked",
+     "count": "degraded",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "raw_pack_contents_missing",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_rhythm",
+       "blocks": []
+      },
+      {
+       "code": "no_order_unit",
+       "blocks": [
+        "order"
+       ]
+      }
+     ]
+    },
+    "P Street": {
+     "order": "blocked",
+     "count": "degraded",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "raw_pack_contents_missing",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_rhythm",
+       "blocks": []
+      },
+      {
+       "code": "no_order_unit",
+       "blocks": [
+        "order"
+       ]
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "8b1a5799-8ace-47c2-ab54-73d940288989",
+   "name": "Fruity Pebbles",
+   "vendor": "Amazon",
+   "sku_class": "raw",
+   "cls": "food",
+   "status": "incomplete",
+   "reasons": [
+    "missing_pack",
+    "missing_price",
+    "no_delivery"
+   ],
+   "lanes": {
+    "Capitol Hill": {
+     "order": "blocked",
+     "count": "degraded",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "raw_pack_contents_missing",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_rhythm",
+       "blocks": []
+      },
+      {
+       "code": "no_order_unit",
+       "blocks": [
+        "order"
+       ]
+      }
+     ]
+    },
+    "P Street": {
+     "order": "blocked",
+     "count": "degraded",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "raw_pack_contents_missing",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_rhythm",
+       "blocks": []
+      },
+      {
+       "code": "no_order_unit",
+       "blocks": [
+        "order"
+       ]
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "a58b7f10-5006-4a3a-98b2-0bda57424ac4",
+   "name": "Fusilli Pasta",
+   "vendor": "PFG",
+   "sku_class": "raw",
+   "cls": "food",
+   "status": "incomplete",
+   "reasons": [
+    "no_delivery"
+   ],
+   "lanes": {
+    "Capitol Hill": {
+     "order": "usable",
+     "count": "usable",
+     "cost": "degraded",
+     "errands": [
+      {
+       "code": "price_stale",
+       "blocks": []
+      }
+     ]
+    },
+    "P Street": {
+     "order": "usable",
+     "count": "usable",
+     "cost": "degraded",
+     "errands": [
+      {
+       "code": "price_stale",
+       "blocks": []
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "d4b03398-d04f-4551-8c3b-517aac7b910b",
+   "name": "Garlic",
+   "vendor": "PFG",
+   "sku_class": "raw",
+   "cls": "food",
+   "status": "incomplete",
+   "reasons": [
+    "no_delivery"
+   ],
+   "lanes": {
+    "Capitol Hill": {
+     "order": "usable",
+     "count": "degraded",
+     "cost": "degraded",
+     "errands": [
+      {
+       "code": "price_stale",
+       "blocks": []
+      },
+      {
+       "code": "weight_estimate",
+       "blocks": []
+      }
+     ]
+    },
+    "P Street": {
+     "order": "usable",
+     "count": "degraded",
+     "cost": "degraded",
+     "errands": [
+      {
+       "code": "price_stale",
+       "blocks": []
+      },
+      {
+       "code": "weight_estimate",
+       "blocks": []
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "ff4dc473-d0a5-4169-a137-a5d3deb24ca9",
+   "name": "Garlic Powder",
+   "vendor": "PFG",
+   "sku_class": "raw",
+   "cls": "food",
+   "status": "incomplete",
+   "reasons": [
+    "no_delivery"
+   ],
+   "lanes": {
+    "Capitol Hill": {
+     "order": "usable",
+     "count": "usable",
+     "cost": "degraded",
+     "errands": [
+      {
+       "code": "price_stale",
+       "blocks": []
+      }
+     ]
+    },
+    "P Street": {
+     "order": "usable",
+     "count": "usable",
+     "cost": "degraded",
+     "errands": [
+      {
+       "code": "price_stale",
+       "blocks": []
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "313fdc2e-20e4-48fa-a473-89027b68639b",
+   "name": "Genoa",
+   "vendor": "Boar's Head",
+   "sku_class": "raw",
+   "cls": "food",
+   "status": "incomplete",
+   "reasons": [
+    "no_delivery"
+   ],
+   "lanes": {
+    "Capitol Hill": {
+     "order": "usable",
+     "count": "usable",
+     "cost": "degraded",
+     "errands": [
+      {
+       "code": "price_stale",
+       "blocks": []
+      }
+     ]
+    },
+    "P Street": {
+     "order": "usable",
+     "count": "usable",
+     "cost": "degraded",
+     "errands": [
+      {
+       "code": "price_stale",
+       "blocks": []
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "4283a522-82df-47c9-93a1-43311b9440af",
+   "name": "Glass Cleaner (#1)",
+   "vendor": "Trimark",
+   "sku_class": "packaging",
+   "cls": "supplies",
+   "status": "incomplete",
+   "reasons": [
+    "missing_pack",
+    "missing_price",
+    "no_delivery"
+   ],
+   "lanes": {
+    "Capitol Hill": {
+     "order": "blocked",
+     "count": "blocked",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_countable_chain",
+       "blocks": [
+        "count"
+       ]
+      },
+      {
+       "code": "no_order_unit",
+       "blocks": [
+        "order"
+       ]
+      }
+     ]
+    },
+    "P Street": {
+     "order": "blocked",
+     "count": "blocked",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_countable_chain",
+       "blocks": [
+        "count"
+       ]
+      },
+      {
+       "code": "no_order_unit",
+       "blocks": [
+        "order"
+       ]
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "dc20e61c-b403-4091-97a0-f69b91724e62",
+   "name": "Gloves Extra Large",
+   "vendor": "Leonard Paper",
+   "sku_class": "packaging",
+   "cls": "supplies",
+   "status": "incomplete",
+   "reasons": [
+    "missing_pack",
+    "missing_price",
+    "no_delivery"
+   ],
+   "lanes": {
+    "Capitol Hill": {
+     "order": "usable",
+     "count": "blocked",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_countable_chain",
+       "blocks": [
+        "count"
+       ]
+      }
+     ]
+    },
+    "P Street": {
+     "order": "usable",
+     "count": "blocked",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_countable_chain",
+       "blocks": [
+        "count"
+       ]
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "65e66e9e-1d23-4d63-b574-478e15b4850f",
+   "name": "Gloves Extra Large",
+   "vendor": "PFG",
+   "sku_class": "packaging",
+   "cls": "supplies",
+   "status": "incomplete",
+   "reasons": [
+    "missing_pack",
+    "missing_price",
+    "no_delivery"
+   ],
+   "lanes": {
+    "Capitol Hill": {
+     "order": "usable",
+     "count": "blocked",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_countable_chain",
+       "blocks": [
+        "count"
+       ]
+      }
+     ]
+    },
+    "P Street": {
+     "order": "usable",
+     "count": "blocked",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_countable_chain",
+       "blocks": [
+        "count"
+       ]
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "67052151-c067-4451-8fd9-f917b3168ff1",
+   "name": "Gloves Large",
+   "vendor": "Leonard Paper",
+   "sku_class": "packaging",
+   "cls": "supplies",
+   "status": "incomplete",
+   "reasons": [
+    "missing_pack",
+    "missing_price",
+    "no_delivery"
+   ],
+   "lanes": {
+    "Capitol Hill": {
+     "order": "usable",
+     "count": "blocked",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_countable_chain",
+       "blocks": [
+        "count"
+       ]
+      }
+     ]
+    },
+    "P Street": {
+     "order": "usable",
+     "count": "blocked",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_countable_chain",
+       "blocks": [
+        "count"
+       ]
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "c2700725-8824-4832-824e-c99d92779f78",
+   "name": "Gloves Large",
+   "vendor": "PFG",
+   "sku_class": "packaging",
+   "cls": "supplies",
+   "status": "incomplete",
+   "reasons": [
+    "missing_pack",
+    "missing_price",
+    "no_delivery"
+   ],
+   "lanes": {
+    "Capitol Hill": {
+     "order": "usable",
+     "count": "blocked",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_countable_chain",
+       "blocks": [
+        "count"
+       ]
+      }
+     ]
+    },
+    "P Street": {
+     "order": "usable",
+     "count": "blocked",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_countable_chain",
+       "blocks": [
+        "count"
+       ]
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "a9fc7faf-51c1-444c-ae91-917777490122",
+   "name": "Gloves Medium",
+   "vendor": "Leonard Paper",
+   "sku_class": "packaging",
+   "cls": "supplies",
+   "status": "incomplete",
+   "reasons": [
+    "missing_pack",
+    "missing_price",
+    "no_delivery"
+   ],
+   "lanes": {
+    "Capitol Hill": {
+     "order": "usable",
+     "count": "blocked",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_countable_chain",
+       "blocks": [
+        "count"
+       ]
+      }
+     ]
+    },
+    "P Street": {
+     "order": "usable",
+     "count": "blocked",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_countable_chain",
+       "blocks": [
+        "count"
+       ]
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "40db8dc1-2aff-49da-9350-4a268ba6d940",
+   "name": "Gloves Medium",
+   "vendor": "PFG",
+   "sku_class": "packaging",
+   "cls": "supplies",
+   "status": "incomplete",
+   "reasons": [
+    "missing_pack",
+    "missing_price",
+    "no_delivery"
+   ],
+   "lanes": {
+    "Capitol Hill": {
+     "order": "usable",
+     "count": "blocked",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_countable_chain",
+       "blocks": [
+        "count"
+       ]
+      }
+     ]
+    },
+    "P Street": {
+     "order": "usable",
+     "count": "blocked",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_countable_chain",
+       "blocks": [
+        "count"
+       ]
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "74fcc1cf-25ef-4b71-b700-57d61dd8d8da",
+   "name": "Gluten Free Bread",
+   "vendor": "Sarah",
+   "sku_class": "raw",
+   "cls": "food",
+   "status": "incomplete",
+   "reasons": [
+    "missing_price",
+    "no_delivery"
+   ],
+   "lanes": {
+    "Capitol Hill": {
+     "order": "degraded",
+     "count": "degraded",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "raw_pack_contents_missing",
+       "blocks": [
+        "cost"
+       ]
+      }
+     ]
+    },
+    "P Street": {
+     "order": "degraded",
+     "count": "degraded",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "raw_pack_contents_missing",
+       "blocks": [
+        "cost"
+       ]
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "3430a53e-30b2-4b54-9f18-b10409fac129",
+   "name": "Grapeseed Oil",
+   "vendor": "PFG",
+   "sku_class": "raw",
+   "cls": "food",
+   "status": "incomplete",
+   "reasons": [
+    "no_delivery"
+   ],
+   "lanes": {
+    "Capitol Hill": {
+     "order": "usable",
+     "count": "usable",
+     "cost": "usable",
+     "errands": []
+    },
+    "P Street": {
+     "order": "usable",
+     "count": "usable",
+     "cost": "usable",
+     "errands": []
+    }
+   }
+  },
+  {
+   "id": "350d4fd1-add2-4328-935b-dfdb6887c5a4",
+   "name": "Green scouring pads",
+   "vendor": "Leonard Paper",
+   "sku_class": "packaging",
+   "cls": "supplies",
+   "status": "incomplete",
+   "reasons": [
+    "missing_pack",
+    "missing_price",
+    "no_delivery"
+   ],
+   "lanes": {
+    "Capitol Hill": {
+     "order": "blocked",
+     "count": "blocked",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_countable_chain",
+       "blocks": [
+        "count"
+       ]
+      },
+      {
+       "code": "no_order_unit",
+       "blocks": [
+        "order"
+       ]
+      }
+     ]
+    },
+    "P Street": {
+     "order": "blocked",
+     "count": "blocked",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_countable_chain",
+       "blocks": [
+        "count"
+       ]
+      },
+      {
+       "code": "no_order_unit",
+       "blocks": [
+        "order"
+       ]
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "05d75891-7fff-436f-ba31-8d4b0689bc9f",
+   "name": "Ground Beef",
+   "vendor": "PFG",
+   "sku_class": "raw",
+   "cls": "food",
+   "status": "incomplete",
+   "reasons": [
+    "no_delivery"
+   ],
+   "lanes": {
+    "Capitol Hill": {
+     "order": "usable",
+     "count": "usable",
+     "cost": "degraded",
+     "errands": [
+      {
+       "code": "price_stale",
+       "blocks": []
+      }
+     ]
+    },
+    "P Street": {
+     "order": "usable",
+     "count": "usable",
+     "cost": "degraded",
+     "errands": [
+      {
+       "code": "price_stale",
+       "blocks": []
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "90e58245-582e-467d-8453-ee5a9dc0c703",
+   "name": "Ground Pork",
+   "vendor": "PFG",
+   "sku_class": "raw",
+   "cls": "food",
+   "status": "incomplete",
+   "reasons": [
+    "no_delivery"
+   ],
+   "lanes": {
+    "Capitol Hill": {
+     "order": "usable",
+     "count": "usable",
+     "cost": "degraded",
+     "errands": [
+      {
+       "code": "price_stale",
+       "blocks": []
+      }
+     ]
+    },
+    "P Street": {
+     "order": "usable",
+     "count": "usable",
+     "cost": "degraded",
+     "errands": [
+      {
+       "code": "price_stale",
+       "blocks": []
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "c0df5165-e7d8-411a-89c1-6e43b1d11b75",
+   "name": "Guest Check Pads",
+   "vendor": "Webstaurant",
+   "sku_class": "packaging",
+   "cls": "supplies",
+   "status": "incomplete",
+   "reasons": [
+    "missing_pack",
+    "missing_price",
+    "no_delivery"
+   ],
+   "lanes": {
+    "Capitol Hill": {
+     "order": "blocked",
+     "count": "blocked",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_countable_chain",
+       "blocks": [
+        "count"
+       ]
+      },
+      {
+       "code": "no_rhythm",
+       "blocks": []
+      },
+      {
+       "code": "no_order_unit",
+       "blocks": [
+        "order"
+       ]
+      }
+     ]
+    },
+    "P Street": {
+     "order": "blocked",
+     "count": "blocked",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_countable_chain",
+       "blocks": [
+        "count"
+       ]
+      },
+      {
+       "code": "no_rhythm",
+       "blocks": []
+      },
+      {
+       "code": "no_order_unit",
+       "blocks": [
+        "order"
+       ]
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "47019996-2efb-4a32-9d8b-7383f3047021",
+   "name": "Half Pint 8oz (hard)",
+   "vendor": "PFG",
+   "sku_class": "packaging",
+   "cls": "supplies",
+   "status": "incomplete",
+   "reasons": [
+    "no_delivery"
+   ],
+   "lanes": {
+    "Capitol Hill": {
+     "order": "usable",
+     "count": "usable",
+     "cost": "degraded",
+     "errands": [
+      {
+       "code": "price_stale",
+       "blocks": []
+      }
+     ]
+    },
+    "P Street": {
+     "order": "usable",
+     "count": "usable",
+     "cost": "degraded",
+     "errands": [
+      {
+       "code": "price_stale",
+       "blocks": []
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "2729c10a-3954-405d-abbd-e5a8306ba829",
+   "name": "Half Pint 8oz (hard)",
+   "vendor": "Leonard Paper",
+   "sku_class": "packaging",
+   "cls": "supplies",
+   "status": "incomplete",
+   "reasons": [
+    "missing_price",
+    "no_delivery"
+   ],
+   "lanes": {
+    "Capitol Hill": {
+     "order": "usable",
+     "count": "blocked",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_countable_chain",
+       "blocks": [
+        "count"
+       ]
+      }
+     ]
+    },
+    "P Street": {
+     "order": "usable",
+     "count": "blocked",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_countable_chain",
+       "blocks": [
+        "count"
+       ]
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "804cb32d-ea68-4467-8479-b82f34a143a0",
+   "name": "Ham",
+   "vendor": "PFG",
+   "sku_class": "raw",
+   "cls": "food",
+   "status": "incomplete",
+   "reasons": [
+    "no_delivery"
+   ],
+   "lanes": {
+    "Capitol Hill": {
+     "order": "usable",
+     "count": "usable",
+     "cost": "degraded",
+     "errands": [
+      {
+       "code": "price_stale",
+       "blocks": []
+      }
+     ]
+    },
+    "P Street": {
+     "order": "usable",
+     "count": "usable",
+     "cost": "degraded",
+     "errands": [
+      {
+       "code": "price_stale",
+       "blocks": []
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "15944b2d-881b-419e-bcdb-8d8c5412de5a",
+   "name": "Ham",
+   "vendor": "Baldor",
+   "sku_class": "raw",
+   "cls": "food",
+   "status": "incomplete",
+   "reasons": [
+    "no_delivery"
+   ],
+   "lanes": {}
+  },
+  {
+   "id": "017a0f25-2ac1-4eb8-89f2-83a18d29889e",
+   "name": "Heavy Cream",
+   "vendor": "PFG",
+   "sku_class": "raw",
+   "cls": "food",
+   "status": "incomplete",
+   "reasons": [
+    "no_delivery"
+   ],
+   "lanes": {
+    "Capitol Hill": {
+     "order": "usable",
+     "count": "degraded",
+     "cost": "degraded",
+     "errands": [
+      {
+       "code": "price_stale",
+       "blocks": []
+      },
+      {
+       "code": "weight_estimate",
+       "blocks": []
+      }
+     ]
+    },
+    "P Street": {
+     "order": "usable",
+     "count": "degraded",
+     "cost": "degraded",
+     "errands": [
+      {
+       "code": "price_stale",
+       "blocks": []
+      },
+      {
+       "code": "weight_estimate",
+       "blocks": []
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "1509fd6a-6092-4500-9323-2bb897d9e6e0",
+   "name": "Honey",
+   "vendor": "PFG",
+   "sku_class": "raw",
+   "cls": "food",
+   "status": "incomplete",
+   "reasons": [
+    "no_delivery"
+   ],
+   "lanes": {
+    "Capitol Hill": {
+     "order": "usable",
+     "count": "usable",
+     "cost": "degraded",
+     "errands": [
+      {
+       "code": "price_stale",
+       "blocks": []
+      }
+     ]
+    },
+    "P Street": {
+     "order": "usable",
+     "count": "usable",
+     "cost": "degraded",
+     "errands": [
+      {
+       "code": "price_stale",
+       "blocks": []
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "6f412776-bd4a-4eb7-8458-472e90e8167b",
+   "name": "Horseradish",
+   "vendor": "PFG",
+   "sku_class": "raw",
+   "cls": "food",
+   "status": "incomplete",
+   "reasons": [
+    "no_delivery"
+   ],
+   "lanes": {
+    "Capitol Hill": {
+     "order": "usable",
+     "count": "usable",
+     "cost": "degraded",
+     "errands": [
+      {
+       "code": "recipe_unresolved",
+       "blocks": []
+      }
+     ]
+    },
+    "P Street": {
+     "order": "usable",
+     "count": "usable",
+     "cost": "degraded",
+     "errands": [
+      {
+       "code": "recipe_unresolved",
+       "blocks": []
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "49603e5a-16d3-4337-ba87-3e2a5f04e5ed",
+   "name": "Hot Peppers",
+   "vendor": "Boar's Head",
+   "sku_class": "raw",
+   "cls": "food",
+   "status": "incomplete",
+   "reasons": [
+    "no_delivery"
+   ],
+   "lanes": {
+    "Capitol Hill": {
+     "order": "usable",
+     "count": "degraded",
+     "cost": "degraded",
+     "errands": [
+      {
+       "code": "price_stale",
+       "blocks": []
+      },
+      {
+       "code": "weight_estimate",
+       "blocks": []
+      }
+     ]
+    },
+    "P Street": {
+     "order": "usable",
+     "count": "degraded",
+     "cost": "degraded",
+     "errands": [
+      {
+       "code": "price_stale",
+       "blocks": []
+      },
+      {
+       "code": "weight_estimate",
+       "blocks": []
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "d88500d9-ae59-4807-ac3d-5542f35ca4f3",
+   "name": "Iceberg",
+   "vendor": "PFG",
+   "sku_class": "raw",
+   "cls": "food",
+   "status": "incomplete",
+   "reasons": [
+    "no_delivery"
+   ],
+   "lanes": {
+    "Capitol Hill": {
+     "order": "usable",
+     "count": "usable",
+     "cost": "degraded",
+     "errands": [
+      {
+       "code": "price_stale",
+       "blocks": []
+      }
+     ]
+    },
+    "P Street": {
+     "order": "usable",
+     "count": "usable",
+     "cost": "degraded",
+     "errands": [
+      {
+       "code": "price_stale",
+       "blocks": []
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "4e64ae0f-04a0-434d-b59d-3bc98e7e3a61",
+   "name": "Isopropyl Alcohol Spray",
+   "vendor": "Amazon",
+   "sku_class": "packaging",
+   "cls": "supplies",
+   "status": "incomplete",
+   "reasons": [
+    "missing_pack",
+    "missing_price",
+    "no_delivery"
+   ],
+   "lanes": {
+    "Capitol Hill": {
+     "order": "blocked",
+     "count": "blocked",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_countable_chain",
+       "blocks": [
+        "count"
+       ]
+      },
+      {
+       "code": "no_rhythm",
+       "blocks": []
+      },
+      {
+       "code": "no_order_unit",
+       "blocks": [
+        "order"
+       ]
+      }
+     ]
+    },
+    "P Street": {
+     "order": "blocked",
+     "count": "blocked",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_countable_chain",
+       "blocks": [
+        "count"
+       ]
+      },
+      {
+       "code": "no_rhythm",
+       "blocks": []
+      },
+      {
+       "code": "no_order_unit",
+       "blocks": [
+        "order"
+       ]
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "7a1f6d2e-3c5b-4e8a-9f01-2a6b8c4d0e13",
+   "name": "Just Ice Tea Dragon Green",
+   "vendor": "Boar's Head",
+   "sku_class": "raw",
+   "cls": "food",
+   "status": "incomplete",
+   "reasons": [
+    "no_delivery"
+   ],
+   "lanes": {
+    "Capitol Hill": {
+     "order": "usable",
+     "count": "degraded",
+     "cost": "degraded",
+     "errands": [
+      {
+       "code": "price_stale",
+       "blocks": []
+      },
+      {
+       "code": "weight_estimate",
+       "blocks": []
+      }
+     ]
+    },
+    "P Street": {
+     "order": "usable",
+     "count": "degraded",
+     "cost": "degraded",
+     "errands": [
+      {
+       "code": "price_stale",
+       "blocks": []
+      },
+      {
+       "code": "weight_estimate",
+       "blocks": []
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "7a1f6d2e-3c5b-4e8a-9f01-2a6b8c4d0e11",
+   "name": "Just Ice Tea Lemon",
+   "vendor": "Boar's Head",
+   "sku_class": "raw",
+   "cls": "food",
+   "status": "incomplete",
+   "reasons": [
+    "no_delivery"
+   ],
+   "lanes": {
+    "Capitol Hill": {
+     "order": "usable",
+     "count": "degraded",
+     "cost": "degraded",
+     "errands": [
+      {
+       "code": "price_stale",
+       "blocks": []
+      },
+      {
+       "code": "weight_estimate",
+       "blocks": []
+      }
+     ]
+    },
+    "P Street": {
+     "order": "usable",
+     "count": "degraded",
+     "cost": "degraded",
+     "errands": [
+      {
+       "code": "price_stale",
+       "blocks": []
+      },
+      {
+       "code": "weight_estimate",
+       "blocks": []
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "7a1f6d2e-3c5b-4e8a-9f01-2a6b8c4d0e12",
+   "name": "Just Ice Tea Raspberry",
+   "vendor": "Boar's Head",
+   "sku_class": "raw",
+   "cls": "food",
+   "status": "incomplete",
+   "reasons": [
+    "no_delivery"
+   ],
+   "lanes": {
+    "Capitol Hill": {
+     "order": "usable",
+     "count": "degraded",
+     "cost": "degraded",
+     "errands": [
+      {
+       "code": "price_stale",
+       "blocks": []
+      },
+      {
+       "code": "weight_estimate",
+       "blocks": []
+      }
+     ]
+    },
+    "P Street": {
+     "order": "usable",
+     "count": "degraded",
+     "cost": "degraded",
+     "errands": [
+      {
+       "code": "price_stale",
+       "blocks": []
+      },
+      {
+       "code": "weight_estimate",
+       "blocks": []
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "c42b025d-317e-4c7e-bcd3-b99615f677c6",
+   "name": "Kraft 10x5x13 (Small Bags)",
+   "vendor": "PFG",
+   "sku_class": "packaging",
+   "cls": "supplies",
+   "status": "incomplete",
+   "reasons": [
+    "missing_pack",
+    "missing_price",
+    "no_delivery"
+   ],
+   "lanes": {
+    "Capitol Hill": {
+     "order": "usable",
+     "count": "blocked",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_countable_chain",
+       "blocks": [
+        "count"
+       ]
+      }
+     ]
+    },
+    "P Street": {
+     "order": "usable",
+     "count": "blocked",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_countable_chain",
+       "blocks": [
+        "count"
+       ]
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "e929f054-d6b3-41d7-b8ec-e37dca8b9836",
+   "name": "Kraft 10x5x13 (Small Bags)",
+   "vendor": "Leonard Paper",
+   "sku_class": "packaging",
+   "cls": "supplies",
+   "status": "incomplete",
+   "reasons": [
+    "missing_pack",
+    "missing_price",
+    "no_delivery"
+   ],
+   "lanes": {
+    "Capitol Hill": {
+     "order": "usable",
+     "count": "blocked",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_countable_chain",
+       "blocks": [
+        "count"
+       ]
+      }
+     ]
+    },
+    "P Street": {
+     "order": "usable",
+     "count": "blocked",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_countable_chain",
+       "blocks": [
+        "count"
+       ]
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "25eefff4-1434-4383-9414-70a097c40658",
+   "name": "Kraft 12x9x13 (Large Bags)",
+   "vendor": "PFG",
+   "sku_class": "packaging",
+   "cls": "supplies",
+   "status": "incomplete",
+   "reasons": [
+    "no_delivery"
+   ],
+   "lanes": {
+    "Capitol Hill": {
+     "order": "usable",
+     "count": "usable",
+     "cost": "degraded",
+     "errands": [
+      {
+       "code": "price_stale",
+       "blocks": []
+      }
+     ]
+    },
+    "P Street": {
+     "order": "usable",
+     "count": "usable",
+     "cost": "degraded",
+     "errands": [
+      {
+       "code": "price_stale",
+       "blocks": []
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "135092b1-d44f-4166-b4fa-91abfabfe41e",
+   "name": "Kraft 12x9x13 (Large Bags)",
+   "vendor": "Leonard Paper",
+   "sku_class": "packaging",
+   "cls": "supplies",
+   "status": "incomplete",
+   "reasons": [
+    "missing_price",
+    "no_delivery"
+   ],
+   "lanes": {
+    "Capitol Hill": {
+     "order": "usable",
+     "count": "blocked",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_countable_chain",
+       "blocks": [
+        "count"
+       ]
+      }
+     ]
+    },
+    "P Street": {
+     "order": "usable",
+     "count": "blocked",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_countable_chain",
+       "blocks": [
+        "count"
+       ]
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "6004d43b-f624-4884-bdb2-5e195ebc6c87",
+   "name": "Lemon Juice",
+   "vendor": "PFG",
+   "sku_class": "raw",
+   "cls": "food",
+   "status": "incomplete",
+   "reasons": [
+    "no_delivery"
+   ],
+   "lanes": {
+    "Capitol Hill": {
+     "order": "usable",
+     "count": "usable",
+     "cost": "degraded",
+     "errands": [
+      {
+       "code": "price_stale",
+       "blocks": []
+      }
+     ]
+    },
+    "P Street": {
+     "order": "usable",
+     "count": "usable",
+     "cost": "degraded",
+     "errands": [
+      {
+       "code": "price_stale",
+       "blocks": []
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "7c161441-848f-4290-bc68-a8088e112961",
+   "name": "Lettuce",
+   "vendor": "Sysco",
+   "sku_class": "raw",
+   "cls": "food",
+   "status": "incomplete",
+   "reasons": [
+    "missing_price",
+    "no_delivery"
+   ],
+   "lanes": {}
+  },
+  {
+   "id": "8cbebce5-b2e5-4da4-8a17-17a2d756ec12",
+   "name": "Lettuce",
+   "vendor": "Baldor",
+   "sku_class": "raw",
+   "cls": "food",
+   "status": "incomplete",
+   "reasons": [
+    "missing_pack",
+    "missing_price",
+    "no_delivery"
+   ],
+   "lanes": {}
+  },
+  {
+   "id": "1dea936f-0ece-4d7c-8812-e07a81753a5d",
+   "name": "Lid for 8-32 oz cont.",
+   "vendor": "Leonard Paper",
+   "sku_class": "packaging",
+   "cls": "supplies",
+   "status": "incomplete",
+   "reasons": [
+    "missing_pack",
+    "missing_price",
+    "no_delivery"
+   ],
+   "lanes": {
+    "Capitol Hill": {
+     "order": "blocked",
+     "count": "blocked",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_countable_chain",
+       "blocks": [
+        "count"
+       ]
+      },
+      {
+       "code": "no_order_unit",
+       "blocks": [
+        "order"
+       ]
+      }
+     ]
+    },
+    "P Street": {
+     "order": "blocked",
+     "count": "blocked",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_countable_chain",
+       "blocks": [
+        "count"
+       ]
+      },
+      {
+       "code": "no_order_unit",
+       "blocks": [
+        "order"
+       ]
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "af9c73f0-4806-498f-b7b1-5fedb499f185",
+   "name": "Logo Tape",
+   "vendor": "Continental Tape",
+   "sku_class": "packaging",
+   "cls": "supplies",
+   "status": "incomplete",
+   "reasons": [
+    "missing_pack",
+    "missing_price",
+    "no_delivery"
+   ],
+   "lanes": {
+    "Capitol Hill": {
+     "order": "blocked",
+     "count": "blocked",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_countable_chain",
+       "blocks": [
+        "count"
+       ]
+      },
+      {
+       "code": "no_rhythm",
+       "blocks": []
+      },
+      {
+       "code": "no_order_unit",
+       "blocks": [
+        "order"
+       ]
+      }
+     ]
+    },
+    "P Street": {
+     "order": "blocked",
+     "count": "blocked",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_countable_chain",
+       "blocks": [
+        "count"
+       ]
+      },
+      {
+       "code": "no_rhythm",
+       "blocks": []
+      },
+      {
+       "code": "no_order_unit",
+       "blocks": [
+        "order"
+       ]
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "72367600-9f48-45e2-a3a6-a166367d87fd",
+   "name": "Loyalty Cards",
+   "vendor": "Vistaprint",
+   "sku_class": "packaging",
+   "cls": "supplies",
+   "status": "incomplete",
+   "reasons": [
+    "missing_pack",
+    "missing_price",
+    "no_delivery"
+   ],
+   "lanes": {
+    "Capitol Hill": {
+     "order": "blocked",
+     "count": "blocked",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_countable_chain",
+       "blocks": [
+        "count"
+       ]
+      },
+      {
+       "code": "no_rhythm",
+       "blocks": []
+      },
+      {
+       "code": "no_order_unit",
+       "blocks": [
+        "order"
+       ]
+      }
+     ]
+    },
+    "P Street": {
+     "order": "blocked",
+     "count": "blocked",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_countable_chain",
+       "blocks": [
+        "count"
+       ]
+      },
+      {
+       "code": "no_rhythm",
+       "blocks": []
+      },
+      {
+       "code": "no_order_unit",
+       "blocks": [
+        "order"
+       ]
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "64ddf387-7719-4e79-b731-bc0ae7657f9b",
+   "name": "Mixed Herbs",
+   "vendor": null,
+   "sku_class": "raw",
+   "cls": "food",
+   "status": "incomplete",
+   "reasons": [
+    "missing_pack",
+    "missing_price",
+    "no_delivery"
+   ],
+   "lanes": {
+    "Capitol Hill": {
+     "order": "blocked",
+     "count": "degraded",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "raw_pack_contents_missing",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "weight_estimate",
+       "blocks": []
+      },
+      {
+       "code": "no_par",
+       "blocks": [
+        "order"
+       ]
+      },
+      {
+       "code": "no_rhythm",
+       "blocks": []
+      },
+      {
+       "code": "no_vendor",
+       "blocks": [
+        "order"
+       ]
+      },
+      {
+       "code": "no_order_unit",
+       "blocks": [
+        "order"
+       ]
+      }
+     ]
+    },
+    "P Street": {
+     "order": "blocked",
+     "count": "degraded",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "raw_pack_contents_missing",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "weight_estimate",
+       "blocks": []
+      },
+      {
+       "code": "no_par",
+       "blocks": [
+        "order"
+       ]
+      },
+      {
+       "code": "no_rhythm",
+       "blocks": []
+      },
+      {
+       "code": "no_vendor",
+       "blocks": [
+        "order"
+       ]
+      },
+      {
+       "code": "no_order_unit",
+       "blocks": [
+        "order"
+       ]
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "8cdbffa4-30d3-4971-8929-8250ba4fff1e",
+   "name": "Mortadella",
+   "vendor": "Boar's Head",
+   "sku_class": "raw",
+   "cls": "food",
+   "status": "incomplete",
+   "reasons": [
+    "missing_price",
+    "no_delivery"
+   ],
+   "lanes": {
+    "Capitol Hill": {
+     "order": "blocked",
+     "count": "degraded",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "weight_estimate",
+       "blocks": []
+      },
+      {
+       "code": "no_par",
+       "blocks": [
+        "order"
+       ]
+      }
+     ]
+    },
+    "P Street": {
+     "order": "blocked",
+     "count": "degraded",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "weight_estimate",
+       "blocks": []
+      },
+      {
+       "code": "no_par",
+       "blocks": [
+        "order"
+       ]
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "e3e79f4a-4e39-49a3-b7a0-42f09cb7d256",
+   "name": "Multi Cleaner (Kitchen Citrus #8)",
+   "vendor": "Trimark",
+   "sku_class": "packaging",
+   "cls": "supplies",
+   "status": "incomplete",
+   "reasons": [
+    "missing_pack",
+    "missing_price",
+    "no_delivery"
+   ],
+   "lanes": {
+    "Capitol Hill": {
+     "order": "usable",
+     "count": "blocked",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_countable_chain",
+       "blocks": [
+        "count"
+       ]
+      }
+     ]
+    },
+    "P Street": {
+     "order": "usable",
+     "count": "blocked",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_countable_chain",
+       "blocks": [
+        "count"
+       ]
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "dbff905e-1086-43f5-bc07-f05bcadd0eb6",
+   "name": "Mustard (Dijon)",
+   "vendor": "PFG",
+   "sku_class": "raw",
+   "cls": "food",
+   "status": "incomplete",
+   "reasons": [
+    "no_delivery"
+   ],
+   "lanes": {
+    "Capitol Hill": {
+     "order": "usable",
+     "count": "usable",
+     "cost": "usable",
+     "errands": []
+    },
+    "P Street": {
+     "order": "usable",
+     "count": "usable",
+     "cost": "usable",
+     "errands": []
+    }
+   }
+  },
+  {
+   "id": "c8709801-3266-423a-aa3c-1e14c23f050e",
+   "name": "Mustard (Whole)",
+   "vendor": "PFG",
+   "sku_class": "raw",
+   "cls": "food",
+   "status": "incomplete",
+   "reasons": [
+    "no_delivery"
+   ],
+   "lanes": {
+    "Capitol Hill": {
+     "order": "usable",
+     "count": "usable",
+     "cost": "usable",
+     "errands": []
+    },
+    "P Street": {
+     "order": "usable",
+     "count": "usable",
+     "cost": "usable",
+     "errands": []
+    }
+   }
+  },
+  {
+   "id": "56d40a78-80f0-4ec7-bb44-3ed2f81cc551",
+   "name": "Natalie's Lemonade",
+   "vendor": "PFG",
+   "sku_class": "raw",
+   "cls": "food",
+   "status": "incomplete",
+   "reasons": [
+    "no_delivery"
+   ],
+   "lanes": {
+    "Capitol Hill": {
+     "order": "usable",
+     "count": "degraded",
+     "cost": "degraded",
+     "errands": [
+      {
+       "code": "price_stale",
+       "blocks": []
+      },
+      {
+       "code": "weight_estimate",
+       "blocks": []
+      }
+     ]
+    },
+    "P Street": {
+     "order": "usable",
+     "count": "degraded",
+     "cost": "degraded",
+     "errands": [
+      {
+       "code": "price_stale",
+       "blocks": []
+      },
+      {
+       "code": "weight_estimate",
+       "blocks": []
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "96f36a92-5984-4630-965a-73aaa7885c40",
+   "name": "Neon Green Tape",
+   "vendor": "Webstaurant",
+   "sku_class": "packaging",
+   "cls": "supplies",
+   "status": "incomplete",
+   "reasons": [
+    "missing_pack",
+    "missing_price",
+    "no_delivery"
+   ],
+   "lanes": {
+    "Capitol Hill": {
+     "order": "blocked",
+     "count": "blocked",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_countable_chain",
+       "blocks": [
+        "count"
+       ]
+      },
+      {
+       "code": "no_rhythm",
+       "blocks": []
+      },
+      {
+       "code": "no_order_unit",
+       "blocks": [
+        "order"
+       ]
+      }
+     ]
+    },
+    "P Street": {
+     "order": "blocked",
+     "count": "blocked",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_countable_chain",
+       "blocks": [
+        "count"
+       ]
+      },
+      {
+       "code": "no_rhythm",
+       "blocks": []
+      },
+      {
+       "code": "no_order_unit",
+       "blocks": [
+        "order"
+       ]
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "2a705f78-7ea1-409d-a15f-5f45040dac71",
+   "name": "Old Bay",
+   "vendor": "PFG",
+   "sku_class": "raw",
+   "cls": "food",
+   "status": "incomplete",
+   "reasons": [
+    "no_delivery"
+   ],
+   "lanes": {
+    "Capitol Hill": {
+     "order": "usable",
+     "count": "usable",
+     "cost": "usable",
+     "errands": []
+    },
+    "P Street": {
+     "order": "usable",
+     "count": "usable",
+     "cost": "usable",
+     "errands": []
+    }
+   }
+  },
+  {
+   "id": "b99206db-21b4-4349-b69a-aac7bd2a69df",
+   "name": "Olive Oil",
+   "vendor": "PFG",
+   "sku_class": "raw",
+   "cls": "food",
+   "status": "incomplete",
+   "reasons": [
+    "no_delivery"
+   ],
+   "lanes": {
+    "Capitol Hill": {
+     "order": "usable",
+     "count": "degraded",
+     "cost": "degraded",
+     "errands": [
+      {
+       "code": "price_stale",
+       "blocks": []
+      },
+      {
+       "code": "weight_estimate",
+       "blocks": []
+      },
+      {
+       "code": "recipe_unresolved",
+       "blocks": []
+      }
+     ]
+    },
+    "P Street": {
+     "order": "usable",
+     "count": "degraded",
+     "cost": "degraded",
+     "errands": [
+      {
+       "code": "price_stale",
+       "blocks": []
+      },
+      {
+       "code": "weight_estimate",
+       "blocks": []
+      },
+      {
+       "code": "recipe_unresolved",
+       "blocks": []
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "7e826df5-a12d-4883-bd90-3e8a3b387848",
+   "name": "Onion (red)",
+   "vendor": "PFG",
+   "sku_class": "raw",
+   "cls": "food",
+   "status": "incomplete",
+   "reasons": [
+    "no_delivery"
+   ],
+   "lanes": {
+    "Capitol Hill": {
+     "order": "usable",
+     "count": "degraded",
+     "cost": "degraded",
+     "errands": [
+      {
+       "code": "price_stale",
+       "blocks": []
+      },
+      {
+       "code": "weight_estimate",
+       "blocks": []
+      }
+     ]
+    },
+    "P Street": {
+     "order": "usable",
+     "count": "degraded",
+     "cost": "degraded",
+     "errands": [
+      {
+       "code": "price_stale",
+       "blocks": []
+      },
+      {
+       "code": "weight_estimate",
+       "blocks": []
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "17422bb2-b29b-4a57-9c23-c53bd9d43403",
+   "name": "Onion (White)",
+   "vendor": "PFG",
+   "sku_class": "raw",
+   "cls": "food",
+   "status": "incomplete",
+   "reasons": [
+    "no_delivery"
+   ],
+   "lanes": {
+    "Capitol Hill": {
+     "order": "usable",
+     "count": "degraded",
+     "cost": "degraded",
+     "errands": [
+      {
+       "code": "price_stale",
+       "blocks": []
+      },
+      {
+       "code": "weight_estimate",
+       "blocks": []
+      },
+      {
+       "code": "recipe_unresolved",
+       "blocks": []
+      }
+     ]
+    },
+    "P Street": {
+     "order": "usable",
+     "count": "degraded",
+     "cost": "degraded",
+     "errands": [
+      {
+       "code": "price_stale",
+       "blocks": []
+      },
+      {
+       "code": "weight_estimate",
+       "blocks": []
+      },
+      {
+       "code": "recipe_unresolved",
+       "blocks": []
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "af9e5c96-027e-4300-ab2b-6f816cad821d",
+   "name": "Onion Powder",
+   "vendor": "PFG",
+   "sku_class": "raw",
+   "cls": "food",
+   "status": "incomplete",
+   "reasons": [
+    "no_delivery"
+   ],
+   "lanes": {
+    "Capitol Hill": {
+     "order": "usable",
+     "count": "usable",
+     "cost": "degraded",
+     "errands": [
+      {
+       "code": "price_stale",
+       "blocks": []
+      }
+     ]
+    },
+    "P Street": {
+     "order": "usable",
+     "count": "usable",
+     "cost": "degraded",
+     "errands": [
+      {
+       "code": "price_stale",
+       "blocks": []
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "393d974f-fad6-4d62-b137-e09024c491c6",
+   "name": "Onions",
+   "vendor": "Baldor",
+   "sku_class": "raw",
+   "cls": "food",
+   "status": "incomplete",
+   "reasons": [
+    "missing_pack",
+    "missing_price",
+    "no_delivery"
+   ],
+   "lanes": {}
+  },
+  {
+   "id": "508ae1c1-6648-4e87-8941-3b3a35e085b9",
+   "name": "Oregano",
+   "vendor": "PFG",
+   "sku_class": "raw",
+   "cls": "food",
+   "status": "ready",
+   "reasons": [],
+   "lanes": {
+    "Capitol Hill": {
+     "order": "usable",
+     "count": "usable",
+     "cost": "usable",
+     "errands": []
+    },
+    "P Street": {
+     "order": "usable",
+     "count": "usable",
+     "cost": "usable",
+     "errands": []
+    }
+   }
+  },
+  {
+   "id": "243f0b0d-ac51-4766-87c5-6158021797dd",
+   "name": "Oven Cleaner",
+   "vendor": "US Foods",
+   "sku_class": "packaging",
+   "cls": "supplies",
+   "status": "incomplete",
+   "reasons": [
+    "missing_pack",
+    "missing_price",
+    "no_delivery"
+   ],
+   "lanes": {
+    "Capitol Hill": {
+     "order": "blocked",
+     "count": "blocked",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_countable_chain",
+       "blocks": [
+        "count"
+       ]
+      },
+      {
+       "code": "no_rhythm",
+       "blocks": []
+      },
+      {
+       "code": "no_order_unit",
+       "blocks": [
+        "order"
+       ]
+      }
+     ]
+    },
+    "P Street": {
+     "order": "blocked",
+     "count": "blocked",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_countable_chain",
+       "blocks": [
+        "count"
+       ]
+      },
+      {
+       "code": "no_rhythm",
+       "blocks": []
+      },
+      {
+       "code": "no_order_unit",
+       "blocks": [
+        "order"
+       ]
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "f04287fa-c1eb-45b6-809c-c007c4706f44",
+   "name": "Oven Cleaner",
+   "vendor": "Leonard Paper",
+   "sku_class": "packaging",
+   "cls": "supplies",
+   "status": "incomplete",
+   "reasons": [
+    "missing_pack",
+    "missing_price",
+    "no_delivery"
+   ],
+   "lanes": {
+    "Capitol Hill": {
+     "order": "blocked",
+     "count": "blocked",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_countable_chain",
+       "blocks": [
+        "count"
+       ]
+      },
+      {
+       "code": "no_order_unit",
+       "blocks": [
+        "order"
+       ]
+      }
+     ]
+    },
+    "P Street": {
+     "order": "blocked",
+     "count": "blocked",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_countable_chain",
+       "blocks": [
+        "count"
+       ]
+      },
+      {
+       "code": "no_order_unit",
+       "blocks": [
+        "order"
+       ]
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "56d8678f-2f55-4e33-97e4-745434375941",
+   "name": "Panko (Japanese)",
+   "vendor": "PFG",
+   "sku_class": "raw",
+   "cls": "food",
+   "status": "incomplete",
+   "reasons": [
+    "no_delivery"
+   ],
+   "lanes": {
+    "Capitol Hill": {
+     "order": "usable",
+     "count": "usable",
+     "cost": "degraded",
+     "errands": [
+      {
+       "code": "price_stale",
+       "blocks": []
+      }
+     ]
+    },
+    "P Street": {
+     "order": "usable",
+     "count": "usable",
+     "cost": "degraded",
+     "errands": [
+      {
+       "code": "price_stale",
+       "blocks": []
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "8fd6eb5f-fa44-4f1f-a807-2dd97e96321d",
+   "name": "Paper Deli Sheets (Wax Paper)",
+   "vendor": "PFG",
+   "sku_class": "packaging",
+   "cls": "supplies",
+   "status": "incomplete",
+   "reasons": [
+    "no_delivery"
+   ],
+   "lanes": {
+    "Capitol Hill": {
+     "order": "usable",
+     "count": "usable",
+     "cost": "degraded",
+     "errands": [
+      {
+       "code": "price_stale",
+       "blocks": []
+      }
+     ]
+    },
+    "P Street": {
+     "order": "usable",
+     "count": "usable",
+     "cost": "degraded",
+     "errands": [
+      {
+       "code": "price_stale",
+       "blocks": []
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "d214539e-c3d5-4556-b06d-a19e64553067",
+   "name": "Paper Deli Sheets (Wax Paper)",
+   "vendor": "Leonard Paper",
+   "sku_class": "packaging",
+   "cls": "supplies",
+   "status": "incomplete",
+   "reasons": [
+    "missing_price",
+    "no_delivery"
+   ],
+   "lanes": {
+    "Capitol Hill": {
+     "order": "blocked",
+     "count": "blocked",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_countable_chain",
+       "blocks": [
+        "count"
+       ]
+      },
+      {
+       "code": "no_par",
+       "blocks": [
+        "order"
+       ]
+      }
+     ]
+    },
+    "P Street": {
+     "order": "blocked",
+     "count": "blocked",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_countable_chain",
+       "blocks": [
+        "count"
+       ]
+      },
+      {
+       "code": "no_par",
+       "blocks": [
+        "order"
+       ]
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "0428489d-a980-4389-aace-3abd7c4d0a86",
+   "name": "Parmesan (Grated)",
+   "vendor": "PFG",
+   "sku_class": "raw",
+   "cls": "food",
+   "status": "incomplete",
+   "reasons": [
+    "no_delivery"
+   ],
+   "lanes": {
+    "Capitol Hill": {
+     "order": "usable",
+     "count": "usable",
+     "cost": "degraded",
+     "errands": [
+      {
+       "code": "price_stale",
+       "blocks": []
+      }
+     ]
+    },
+    "P Street": {
+     "order": "usable",
+     "count": "usable",
+     "cost": "degraded",
+     "errands": [
+      {
+       "code": "price_stale",
+       "blocks": []
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "84bbed49-1acd-409c-ab63-bec827beb51a",
+   "name": "Parsley",
+   "vendor": "PFG",
+   "sku_class": "raw",
+   "cls": "food",
+   "status": "incomplete",
+   "reasons": [
+    "no_delivery"
+   ],
+   "lanes": {
+    "Capitol Hill": {
+     "order": "usable",
+     "count": "usable",
+     "cost": "degraded",
+     "errands": [
+      {
+       "code": "price_stale",
+       "blocks": []
+      }
+     ]
+    },
+    "P Street": {
+     "order": "usable",
+     "count": "usable",
+     "cost": "degraded",
+     "errands": [
+      {
+       "code": "price_stale",
+       "blocks": []
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "8fdc3a92-e8a6-4789-811c-4d28db2e07d9",
+   "name": "Pastry bags",
+   "vendor": "Leonard Paper",
+   "sku_class": "packaging",
+   "cls": "supplies",
+   "status": "incomplete",
+   "reasons": [
+    "missing_pack",
+    "missing_price",
+    "no_delivery"
+   ],
+   "lanes": {
+    "Capitol Hill": {
+     "order": "blocked",
+     "count": "blocked",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_countable_chain",
+       "blocks": [
+        "count"
+       ]
+      },
+      {
+       "code": "no_order_unit",
+       "blocks": [
+        "order"
+       ]
+      }
+     ]
+    },
+    "P Street": {
+     "order": "blocked",
+     "count": "blocked",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_countable_chain",
+       "blocks": [
+        "count"
+       ]
+      },
+      {
+       "code": "no_order_unit",
+       "blocks": [
+        "order"
+       ]
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "721bf0f9-208c-41ad-9a63-1586aa7fe392",
+   "name": "Patty Paper",
+   "vendor": "PFG",
+   "sku_class": "packaging",
+   "cls": "supplies",
+   "status": "incomplete",
+   "reasons": [
+    "missing_pack",
+    "missing_price",
+    "no_delivery"
+   ],
+   "lanes": {
+    "Capitol Hill": {
+     "order": "blocked",
+     "count": "blocked",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_countable_chain",
+       "blocks": [
+        "count"
+       ]
+      },
+      {
+       "code": "no_order_unit",
+       "blocks": [
+        "order"
+       ]
+      }
+     ]
+    },
+    "P Street": {
+     "order": "blocked",
+     "count": "blocked",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_countable_chain",
+       "blocks": [
+        "count"
+       ]
+      },
+      {
+       "code": "no_order_unit",
+       "blocks": [
+        "order"
+       ]
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "890e9e3b-22c0-4dc2-afb8-5fc4d2968ee4",
+   "name": "Patty Paper",
+   "vendor": "Leonard Paper",
+   "sku_class": "packaging",
+   "cls": "supplies",
+   "status": "incomplete",
+   "reasons": [
+    "missing_pack",
+    "missing_price",
+    "no_delivery"
+   ],
+   "lanes": {
+    "Capitol Hill": {
+     "order": "blocked",
+     "count": "blocked",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_countable_chain",
+       "blocks": [
+        "count"
+       ]
+      },
+      {
+       "code": "no_order_unit",
+       "blocks": [
+        "order"
+       ]
+      }
+     ]
+    },
+    "P Street": {
+     "order": "blocked",
+     "count": "blocked",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_countable_chain",
+       "blocks": [
+        "count"
+       ]
+      },
+      {
+       "code": "no_order_unit",
+       "blocks": [
+        "order"
+       ]
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "55c0a2c4-cef8-4afe-863c-de7f45d526a2",
+   "name": "Pepperoncini",
+   "vendor": null,
+   "sku_class": "raw",
+   "cls": "food",
+   "status": "incomplete",
+   "reasons": [
+    "missing_pack",
+    "missing_price",
+    "no_delivery"
+   ],
+   "lanes": {}
+  },
+  {
+   "id": "9eced455-d0c2-4b2f-8884-4b741d4d1edf",
+   "name": "Pepperoni",
+   "vendor": "Boar's Head",
+   "sku_class": "raw",
+   "cls": "food",
+   "status": "incomplete",
+   "reasons": [
+    "no_delivery"
+   ],
+   "lanes": {
+    "Capitol Hill": {
+     "order": "usable",
+     "count": "usable",
+     "cost": "degraded",
+     "errands": [
+      {
+       "code": "price_stale",
+       "blocks": []
+      }
+     ]
+    },
+    "P Street": {
+     "order": "usable",
+     "count": "usable",
+     "cost": "degraded",
+     "errands": [
+      {
+       "code": "price_stale",
+       "blocks": []
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "2dcc2757-f3eb-470f-bd39-2881c2a06e4e",
+   "name": "Pickle slices",
+   "vendor": "Boar's Head",
+   "sku_class": "raw",
+   "cls": "food",
+   "status": "incomplete",
+   "reasons": [
+    "no_delivery"
+   ],
+   "lanes": {
+    "Capitol Hill": {
+     "order": "usable",
+     "count": "degraded",
+     "cost": "degraded",
+     "errands": [
+      {
+       "code": "price_stale",
+       "blocks": []
+      },
+      {
+       "code": "weight_estimate",
+       "blocks": []
+      }
+     ]
+    },
+    "P Street": {
+     "order": "usable",
+     "count": "degraded",
+     "cost": "degraded",
+     "errands": [
+      {
+       "code": "price_stale",
+       "blocks": []
+      },
+      {
+       "code": "weight_estimate",
+       "blocks": []
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "e1df419a-1d45-4c56-8817-9f7c87e52735",
+   "name": "Pint (Medium)",
+   "vendor": "PFG",
+   "sku_class": "packaging",
+   "cls": "supplies",
+   "status": "incomplete",
+   "reasons": [
+    "missing_pack",
+    "missing_price",
+    "no_delivery"
+   ],
+   "lanes": {
+    "Capitol Hill": {
+     "order": "blocked",
+     "count": "blocked",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_countable_chain",
+       "blocks": [
+        "count"
+       ]
+      },
+      {
+       "code": "no_order_unit",
+       "blocks": [
+        "order"
+       ]
+      }
+     ]
+    },
+    "P Street": {
+     "order": "blocked",
+     "count": "blocked",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_countable_chain",
+       "blocks": [
+        "count"
+       ]
+      },
+      {
+       "code": "no_order_unit",
+       "blocks": [
+        "order"
+       ]
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "702c3610-b67e-47a6-bb6e-135788e40a81",
+   "name": "Pint (Medium)",
+   "vendor": "Leonard Paper",
+   "sku_class": "packaging",
+   "cls": "supplies",
+   "status": "incomplete",
+   "reasons": [
+    "missing_pack",
+    "missing_price",
+    "no_delivery"
+   ],
+   "lanes": {
+    "Capitol Hill": {
+     "order": "blocked",
+     "count": "blocked",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_countable_chain",
+       "blocks": [
+        "count"
+       ]
+      },
+      {
+       "code": "no_order_unit",
+       "blocks": [
+        "order"
+       ]
+      }
+     ]
+    },
+    "P Street": {
+     "order": "blocked",
+     "count": "blocked",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_countable_chain",
+       "blocks": [
+        "count"
+       ]
+      },
+      {
+       "code": "no_order_unit",
+       "blocks": [
+        "order"
+       ]
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "8da19438-063c-4fa0-b952-31cf30f942d8",
+   "name": "Plastic forks",
+   "vendor": "PFG",
+   "sku_class": "packaging",
+   "cls": "supplies",
+   "status": "incomplete",
+   "reasons": [
+    "missing_pack",
+    "missing_price",
+    "no_delivery"
+   ],
+   "lanes": {
+    "Capitol Hill": {
+     "order": "usable",
+     "count": "blocked",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_countable_chain",
+       "blocks": [
+        "count"
+       ]
+      }
+     ]
+    },
+    "P Street": {
+     "order": "usable",
+     "count": "blocked",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_countable_chain",
+       "blocks": [
+        "count"
+       ]
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "98fe0d23-1d80-46bc-abc1-f4714e5baf52",
+   "name": "Plastic forks",
+   "vendor": "Leonard Paper",
+   "sku_class": "packaging",
+   "cls": "supplies",
+   "status": "incomplete",
+   "reasons": [
+    "missing_pack",
+    "missing_price",
+    "no_delivery"
+   ],
+   "lanes": {
+    "Capitol Hill": {
+     "order": "usable",
+     "count": "blocked",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_countable_chain",
+       "blocks": [
+        "count"
+       ]
+      }
+     ]
+    },
+    "P Street": {
+     "order": "usable",
+     "count": "blocked",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_countable_chain",
+       "blocks": [
+        "count"
+       ]
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "3c2f5b1b-1c5f-4b0b-b6ec-2c457423a72c",
+   "name": "Plastic Knives",
+   "vendor": "PFG",
+   "sku_class": "packaging",
+   "cls": "supplies",
+   "status": "incomplete",
+   "reasons": [
+    "missing_pack",
+    "missing_price",
+    "no_delivery"
+   ],
+   "lanes": {
+    "Capitol Hill": {
+     "order": "usable",
+     "count": "blocked",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_countable_chain",
+       "blocks": [
+        "count"
+       ]
+      }
+     ]
+    },
+    "P Street": {
+     "order": "usable",
+     "count": "blocked",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_countable_chain",
+       "blocks": [
+        "count"
+       ]
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "c2dad104-a912-49ae-a743-1d3884f08f6e",
+   "name": "Plastic Knives",
+   "vendor": "Leonard Paper",
+   "sku_class": "packaging",
+   "cls": "supplies",
+   "status": "incomplete",
+   "reasons": [
+    "missing_pack",
+    "missing_price",
+    "no_delivery"
+   ],
+   "lanes": {
+    "Capitol Hill": {
+     "order": "usable",
+     "count": "blocked",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_countable_chain",
+       "blocks": [
+        "count"
+       ]
+      }
+     ]
+    },
+    "P Street": {
+     "order": "usable",
+     "count": "blocked",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_countable_chain",
+       "blocks": [
+        "count"
+       ]
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "d04aafeb-14a0-4585-827e-60c4d9a46560",
+   "name": "Plastic Spoons",
+   "vendor": "PFG",
+   "sku_class": "packaging",
+   "cls": "supplies",
+   "status": "incomplete",
+   "reasons": [
+    "missing_pack",
+    "missing_price",
+    "no_delivery"
+   ],
+   "lanes": {
+    "Capitol Hill": {
+     "order": "usable",
+     "count": "blocked",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_countable_chain",
+       "blocks": [
+        "count"
+       ]
+      }
+     ]
+    },
+    "P Street": {
+     "order": "usable",
+     "count": "blocked",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_countable_chain",
+       "blocks": [
+        "count"
+       ]
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "1e4854f8-a90c-4bce-acdb-f7eb7759ac1f",
+   "name": "Plastic Spoons",
+   "vendor": "Leonard Paper",
+   "sku_class": "packaging",
+   "cls": "supplies",
+   "status": "incomplete",
+   "reasons": [
+    "missing_pack",
+    "missing_price",
+    "no_delivery"
+   ],
+   "lanes": {
+    "Capitol Hill": {
+     "order": "usable",
+     "count": "blocked",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_countable_chain",
+       "blocks": [
+        "count"
+       ]
+      }
+     ]
+    },
+    "P Street": {
+     "order": "usable",
+     "count": "blocked",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_countable_chain",
+       "blocks": [
+        "count"
+       ]
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "911e04f1-def8-4cb3-a782-b0e7e5f4ec34",
+   "name": "Plastic Wraop",
+   "vendor": "Trimark",
+   "sku_class": "packaging",
+   "cls": "supplies",
+   "status": "incomplete",
+   "reasons": [
+    "missing_pack",
+    "missing_price",
+    "no_delivery"
+   ],
+   "lanes": {
+    "Capitol Hill": {
+     "order": "blocked",
+     "count": "blocked",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_countable_chain",
+       "blocks": [
+        "count"
+       ]
+      },
+      {
+       "code": "no_order_unit",
+       "blocks": [
+        "order"
+       ]
+      }
+     ]
+    },
+    "P Street": {
+     "order": "blocked",
+     "count": "blocked",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_countable_chain",
+       "blocks": [
+        "count"
+       ]
+      },
+      {
+       "code": "no_order_unit",
+       "blocks": [
+        "order"
+       ]
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "9534aaac-d9f2-4fa8-bca5-d2c4bae8a063",
+   "name": "Plastic Wrap",
+   "vendor": "Leonard Paper",
+   "sku_class": "packaging",
+   "cls": "supplies",
+   "status": "incomplete",
+   "reasons": [
+    "missing_pack",
+    "missing_price",
+    "no_delivery"
+   ],
+   "lanes": {
+    "Capitol Hill": {
+     "order": "blocked",
+     "count": "blocked",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_countable_chain",
+       "blocks": [
+        "count"
+       ]
+      },
+      {
+       "code": "no_order_unit",
+       "blocks": [
+        "order"
+       ]
+      }
+     ]
+    },
+    "P Street": {
+     "order": "blocked",
+     "count": "blocked",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_countable_chain",
+       "blocks": [
+        "count"
+       ]
+      },
+      {
+       "code": "no_order_unit",
+       "blocks": [
+        "order"
+       ]
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "52e3b1bb-7340-4f3e-ada8-adb39089eb2e",
+   "name": "Plates 8\"",
+   "vendor": "Leonard Paper",
+   "sku_class": "packaging",
+   "cls": "supplies",
+   "status": "incomplete",
+   "reasons": [
+    "missing_pack",
+    "missing_price",
+    "no_delivery"
+   ],
+   "lanes": {
+    "Capitol Hill": {
+     "order": "usable",
+     "count": "blocked",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_countable_chain",
+       "blocks": [
+        "count"
+       ]
+      }
+     ]
+    },
+    "P Street": {
+     "order": "usable",
+     "count": "blocked",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_countable_chain",
+       "blocks": [
+        "count"
+       ]
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "4de54cd3-419c-4901-ac63-de9c3dc48393",
+   "name": "Plates 8\"",
+   "vendor": "PFG",
+   "sku_class": "packaging",
+   "cls": "supplies",
+   "status": "incomplete",
+   "reasons": [
+    "missing_pack",
+    "missing_price",
+    "no_delivery"
+   ],
+   "lanes": {
+    "Capitol Hill": {
+     "order": "usable",
+     "count": "blocked",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_countable_chain",
+       "blocks": [
+        "count"
+       ]
+      }
+     ]
+    },
+    "P Street": {
+     "order": "usable",
+     "count": "blocked",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_countable_chain",
+       "blocks": [
+        "count"
+       ]
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "5ee8b7c2-3f48-4e28-924a-a9d85ed672a0",
+   "name": "Pot & Pan Sanitizer",
+   "vendor": "Trimark",
+   "sku_class": "packaging",
+   "cls": "supplies",
+   "status": "incomplete",
+   "reasons": [
+    "missing_pack",
+    "missing_price",
+    "no_delivery"
+   ],
+   "lanes": {
+    "Capitol Hill": {
+     "order": "usable",
+     "count": "blocked",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_countable_chain",
+       "blocks": [
+        "count"
+       ]
+      }
+     ]
+    },
+    "P Street": {
+     "order": "usable",
+     "count": "blocked",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_countable_chain",
+       "blocks": [
+        "count"
+       ]
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "7dd29935-1278-4c0b-a9a6-8406c4a30588",
+   "name": "Printer Ink",
+   "vendor": "Amazon",
+   "sku_class": "packaging",
+   "cls": "supplies",
+   "status": "incomplete",
+   "reasons": [
+    "missing_pack",
+    "missing_price",
+    "no_delivery"
+   ],
+   "lanes": {
+    "Capitol Hill": {
+     "order": "blocked",
+     "count": "blocked",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_countable_chain",
+       "blocks": [
+        "count"
+       ]
+      },
+      {
+       "code": "no_rhythm",
+       "blocks": []
+      },
+      {
+       "code": "no_order_unit",
+       "blocks": [
+        "order"
+       ]
+      }
+     ]
+    },
+    "P Street": {
+     "order": "blocked",
+     "count": "blocked",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_countable_chain",
+       "blocks": [
+        "count"
+       ]
+      },
+      {
+       "code": "no_rhythm",
+       "blocks": []
+      },
+      {
+       "code": "no_order_unit",
+       "blocks": [
+        "order"
+       ]
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "7d0481f5-df88-49f2-addb-ff96c7cc1024",
+   "name": "Prosciutto",
+   "vendor": "Boar's Head",
+   "sku_class": "raw",
+   "cls": "food",
+   "status": "incomplete",
+   "reasons": [
+    "no_delivery"
+   ],
+   "lanes": {
+    "Capitol Hill": {
+     "order": "usable",
+     "count": "degraded",
+     "cost": "degraded",
+     "errands": [
+      {
+       "code": "price_stale",
+       "blocks": []
+      },
+      {
+       "code": "weight_estimate",
+       "blocks": []
+      }
+     ]
+    },
+    "P Street": {
+     "order": "usable",
+     "count": "degraded",
+     "cost": "degraded",
+     "errands": [
+      {
+       "code": "price_stale",
+       "blocks": []
+      },
+      {
+       "code": "weight_estimate",
+       "blocks": []
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "8a2297e2-2121-4a02-9234-e46e1af2a19b",
+   "name": "Provolone",
+   "vendor": "Boar's Head",
+   "sku_class": "raw",
+   "cls": "food",
+   "status": "incomplete",
+   "reasons": [
+    "no_delivery"
+   ],
+   "lanes": {
+    "Capitol Hill": {
+     "order": "usable",
+     "count": "usable",
+     "cost": "degraded",
+     "errands": [
+      {
+       "code": "price_stale",
+       "blocks": []
+      },
+      {
+       "code": "recipe_unresolved",
+       "blocks": []
+      }
+     ]
+    },
+    "P Street": {
+     "order": "usable",
+     "count": "usable",
+     "cost": "degraded",
+     "errands": [
+      {
+       "code": "price_stale",
+       "blocks": []
+      },
+      {
+       "code": "recipe_unresolved",
+       "blocks": []
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "2b36cfe8-06cb-46cf-b5d2-7f30abacc498",
+   "name": "Quart (Large)",
+   "vendor": "PFG",
+   "sku_class": "packaging",
+   "cls": "supplies",
+   "status": "incomplete",
+   "reasons": [
+    "no_delivery"
+   ],
+   "lanes": {
+    "Capitol Hill": {
+     "order": "usable",
+     "count": "usable",
+     "cost": "degraded",
+     "errands": [
+      {
+       "code": "price_stale",
+       "blocks": []
+      }
+     ]
+    },
+    "P Street": {
+     "order": "usable",
+     "count": "usable",
+     "cost": "degraded",
+     "errands": [
+      {
+       "code": "price_stale",
+       "blocks": []
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "50b4f662-2f85-405c-9df7-991fef10f803",
+   "name": "Quart (Large)",
+   "vendor": "Leonard Paper",
+   "sku_class": "packaging",
+   "cls": "supplies",
+   "status": "incomplete",
+   "reasons": [
+    "missing_price",
+    "no_delivery"
+   ],
+   "lanes": {
+    "Capitol Hill": {
+     "order": "usable",
+     "count": "blocked",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_countable_chain",
+       "blocks": [
+        "count"
+       ]
+      }
+     ]
+    },
+    "P Street": {
+     "order": "usable",
+     "count": "blocked",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_countable_chain",
+       "blocks": [
+        "count"
+       ]
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "b6b2cf44-d199-4698-9abe-e752d0ef289c",
+   "name": "Quart Bags (single)",
+   "vendor": "Leonard Paper",
+   "sku_class": "packaging",
+   "cls": "supplies",
+   "status": "incomplete",
+   "reasons": [
+    "missing_pack",
+    "missing_price",
+    "no_delivery"
+   ],
+   "lanes": {
+    "Capitol Hill": {
+     "order": "blocked",
+     "count": "blocked",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_countable_chain",
+       "blocks": [
+        "count"
+       ]
+      },
+      {
+       "code": "no_order_unit",
+       "blocks": [
+        "order"
+       ]
+      }
+     ]
+    },
+    "P Street": {
+     "order": "blocked",
+     "count": "blocked",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_countable_chain",
+       "blocks": [
+        "count"
+       ]
+      },
+      {
+       "code": "no_order_unit",
+       "blocks": [
+        "order"
+       ]
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "60430c13-738f-4783-9c08-f8143253a46f",
+   "name": "Reciept Paper (thermal)",
+   "vendor": "PFG",
+   "sku_class": "packaging",
+   "cls": "supplies",
+   "status": "incomplete",
+   "reasons": [
+    "no_delivery"
+   ],
+   "lanes": {
+    "Capitol Hill": {
+     "order": "usable",
+     "count": "usable",
+     "cost": "degraded",
+     "errands": [
+      {
+       "code": "price_stale",
+       "blocks": []
+      }
+     ]
+    },
+    "P Street": {
+     "order": "usable",
+     "count": "usable",
+     "cost": "degraded",
+     "errands": [
+      {
+       "code": "price_stale",
+       "blocks": []
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "76a42517-d11b-4dfb-9e1f-011822854873",
+   "name": "Reciept Paper (thermal)",
+   "vendor": "Leonard Paper",
+   "sku_class": "packaging",
+   "cls": "supplies",
+   "status": "incomplete",
+   "reasons": [
+    "missing_price",
+    "no_delivery"
+   ],
+   "lanes": {
+    "Capitol Hill": {
+     "order": "usable",
+     "count": "blocked",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_countable_chain",
+       "blocks": [
+        "count"
+       ]
+      }
+     ]
+    },
+    "P Street": {
+     "order": "usable",
+     "count": "blocked",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_countable_chain",
+       "blocks": [
+        "count"
+       ]
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "541c2e67-a30f-4189-964c-8d17634b6506",
+   "name": "Red wine vinegar",
+   "vendor": "PFG",
+   "sku_class": "raw",
+   "cls": "food",
+   "status": "incomplete",
+   "reasons": [
+    "no_delivery"
+   ],
+   "lanes": {
+    "Capitol Hill": {
+     "order": "usable",
+     "count": "usable",
+     "cost": "degraded",
+     "errands": [
+      {
+       "code": "recipe_unresolved",
+       "blocks": []
+      }
+     ]
+    },
+    "P Street": {
+     "order": "usable",
+     "count": "usable",
+     "cost": "degraded",
+     "errands": [
+      {
+       "code": "recipe_unresolved",
+       "blocks": []
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "6647596e-15d4-4564-af52-7acd182f39c4",
+   "name": "Register Rolls (3 1/8 thermal)",
+   "vendor": "Webstaurant",
+   "sku_class": "packaging",
+   "cls": "supplies",
+   "status": "incomplete",
+   "reasons": [
+    "missing_pack",
+    "missing_price",
+    "no_delivery"
+   ],
+   "lanes": {
+    "Capitol Hill": {
+     "order": "blocked",
+     "count": "blocked",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_countable_chain",
+       "blocks": [
+        "count"
+       ]
+      },
+      {
+       "code": "no_rhythm",
+       "blocks": []
+      },
+      {
+       "code": "no_order_unit",
+       "blocks": [
+        "order"
+       ]
+      }
+     ]
+    },
+    "P Street": {
+     "order": "blocked",
+     "count": "blocked",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_countable_chain",
+       "blocks": [
+        "count"
+       ]
+      },
+      {
+       "code": "no_rhythm",
+       "blocks": []
+      },
+      {
+       "code": "no_order_unit",
+       "blocks": [
+        "order"
+       ]
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "a55ef47b-f139-4607-a7d2-cde275e71009",
+   "name": "Ricotta",
+   "vendor": "PFG",
+   "sku_class": "raw",
+   "cls": "food",
+   "status": "incomplete",
+   "reasons": [
+    "no_delivery"
+   ],
+   "lanes": {
+    "Capitol Hill": {
+     "order": "usable",
+     "count": "usable",
+     "cost": "degraded",
+     "errands": [
+      {
+       "code": "price_stale",
+       "blocks": []
+      }
+     ]
+    },
+    "P Street": {
+     "order": "usable",
+     "count": "usable",
+     "cost": "degraded",
+     "errands": [
+      {
+       "code": "price_stale",
+       "blocks": []
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "36a06d72-b66a-4808-9132-3568d76216dc",
+   "name": "Roast Beef",
+   "vendor": "Boar's Head",
+   "sku_class": "raw",
+   "cls": "food",
+   "status": "incomplete",
+   "reasons": [
+    "no_delivery"
+   ],
+   "lanes": {
+    "Capitol Hill": {
+     "order": "usable",
+     "count": "degraded",
+     "cost": "degraded",
+     "errands": [
+      {
+       "code": "price_stale",
+       "blocks": []
+      },
+      {
+       "code": "weight_estimate",
+       "blocks": []
+      },
+      {
+       "code": "recipe_unresolved",
+       "blocks": []
+      }
+     ]
+    },
+    "P Street": {
+     "order": "usable",
+     "count": "degraded",
+     "cost": "degraded",
+     "errands": [
+      {
+       "code": "price_stale",
+       "blocks": []
+      },
+      {
+       "code": "weight_estimate",
+       "blocks": []
+      },
+      {
+       "code": "recipe_unresolved",
+       "blocks": []
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "2f3cdefe-5fac-4ce5-b11e-a01bb7ede664",
+   "name": "Roasted Red Peppers",
+   "vendor": "PFG",
+   "sku_class": "raw",
+   "cls": "food",
+   "status": "incomplete",
+   "reasons": [
+    "no_delivery"
+   ],
+   "lanes": {
+    "Capitol Hill": {
+     "order": "usable",
+     "count": "degraded",
+     "cost": "degraded",
+     "errands": [
+      {
+       "code": "weight_estimate",
+       "blocks": []
+      }
+     ]
+    },
+    "P Street": {
+     "order": "usable",
+     "count": "degraded",
+     "cost": "degraded",
+     "errands": [
+      {
+       "code": "weight_estimate",
+       "blocks": []
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "c2e04bcd-79b3-4888-9f68-e358db716941",
+   "name": "Round Salad Bowls & Lids",
+   "vendor": "Leonard Paper",
+   "sku_class": "packaging",
+   "cls": "supplies",
+   "status": "incomplete",
+   "reasons": [
+    "missing_pack",
+    "missing_price",
+    "no_delivery"
+   ],
+   "lanes": {
+    "Capitol Hill": {
+     "order": "usable",
+     "count": "blocked",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_countable_chain",
+       "blocks": [
+        "count"
+       ]
+      }
+     ]
+    },
+    "P Street": {
+     "order": "usable",
+     "count": "blocked",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_countable_chain",
+       "blocks": [
+        "count"
+       ]
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "d228f056-03eb-49ae-a30d-6977825c8e63",
+   "name": "Round Salad Bowls & Lids",
+   "vendor": "PFG",
+   "sku_class": "packaging",
+   "cls": "supplies",
+   "status": "incomplete",
+   "reasons": [
+    "missing_pack",
+    "missing_price",
+    "no_delivery"
+   ],
+   "lanes": {
+    "Capitol Hill": {
+     "order": "usable",
+     "count": "blocked",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_countable_chain",
+       "blocks": [
+        "count"
+       ]
+      }
+     ]
+    },
+    "P Street": {
+     "order": "usable",
+     "count": "blocked",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_countable_chain",
+       "blocks": [
+        "count"
+       ]
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "b0e7de6b-6289-481e-904b-d3bf8cda8f07",
+   "name": "Salad Clam Shell (55oz)",
+   "vendor": "PFG",
+   "sku_class": "packaging",
+   "cls": "supplies",
+   "status": "incomplete",
+   "reasons": [
+    "missing_pack",
+    "missing_price",
+    "no_delivery"
+   ],
+   "lanes": {
+    "Capitol Hill": {
+     "order": "usable",
+     "count": "blocked",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_countable_chain",
+       "blocks": [
+        "count"
+       ]
+      }
+     ]
+    },
+    "P Street": {
+     "order": "usable",
+     "count": "blocked",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_countable_chain",
+       "blocks": [
+        "count"
+       ]
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "a758efc3-d58b-43d4-92fd-e12e39a06226",
+   "name": "Salad Clam Shell (55oz)",
+   "vendor": "Leonard Paper",
+   "sku_class": "packaging",
+   "cls": "supplies",
+   "status": "incomplete",
+   "reasons": [
+    "missing_pack",
+    "missing_price",
+    "no_delivery"
+   ],
+   "lanes": {
+    "Capitol Hill": {
+     "order": "usable",
+     "count": "blocked",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_countable_chain",
+       "blocks": [
+        "count"
+       ]
+      }
+     ]
+    },
+    "P Street": {
+     "order": "usable",
+     "count": "blocked",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_countable_chain",
+       "blocks": [
+        "count"
+       ]
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "c7df2c08-bf91-4d04-aa8c-55b2dd82b382",
+   "name": "Salami",
+   "vendor": "Baldor",
+   "sku_class": "raw",
+   "cls": "food",
+   "status": "incomplete",
+   "reasons": [
+    "missing_pack",
+    "missing_price",
+    "no_delivery"
+   ],
+   "lanes": {}
+  },
+  {
+   "id": "b69d26ff-551d-4bdf-93ca-441c5c5436cf",
+   "name": "Salt",
+   "vendor": "PFG",
+   "sku_class": "raw",
+   "cls": "food",
+   "status": "incomplete",
+   "reasons": [
+    "no_delivery"
+   ],
+   "lanes": {
+    "Capitol Hill": {
+     "order": "usable",
+     "count": "usable",
+     "cost": "degraded",
+     "errands": [
+      {
+       "code": "price_stale",
+       "blocks": []
+      },
+      {
+       "code": "recipe_unresolved",
+       "blocks": []
+      }
+     ]
+    },
+    "P Street": {
+     "order": "usable",
+     "count": "usable",
+     "cost": "degraded",
+     "errands": [
+      {
+       "code": "price_stale",
+       "blocks": []
+      },
+      {
+       "code": "recipe_unresolved",
+       "blocks": []
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "c361c3e7-bafd-44e7-b47f-78eac3a3f9fd",
+   "name": "Sani 512 gallons",
+   "vendor": "Trimark",
+   "sku_class": "packaging",
+   "cls": "supplies",
+   "status": "incomplete",
+   "reasons": [
+    "missing_pack",
+    "missing_price",
+    "no_delivery"
+   ],
+   "lanes": {
+    "Capitol Hill": {
+     "order": "blocked",
+     "count": "blocked",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_countable_chain",
+       "blocks": [
+        "count"
+       ]
+      },
+      {
+       "code": "no_order_unit",
+       "blocks": [
+        "order"
+       ]
+      }
+     ]
+    },
+    "P Street": {
+     "order": "blocked",
+     "count": "blocked",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_countable_chain",
+       "blocks": [
+        "count"
+       ]
+      },
+      {
+       "code": "no_order_unit",
+       "blocks": [
+        "order"
+       ]
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "6016302f-dcf0-458c-88ab-13a001608a15",
+   "name": "Saratoga",
+   "vendor": "PFG",
+   "sku_class": "raw",
+   "cls": "food",
+   "status": "incomplete",
+   "reasons": [
+    "no_delivery"
+   ],
+   "lanes": {
+    "Capitol Hill": {
+     "order": "usable",
+     "count": "degraded",
+     "cost": "degraded",
+     "errands": [
+      {
+       "code": "price_stale",
+       "blocks": []
+      },
+      {
+       "code": "weight_estimate",
+       "blocks": []
+      }
+     ]
+    },
+    "P Street": {
+     "order": "usable",
+     "count": "degraded",
+     "cost": "degraded",
+     "errands": [
+      {
+       "code": "price_stale",
+       "blocks": []
+      },
+      {
+       "code": "weight_estimate",
+       "blocks": []
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "5c005d9d-b3ad-493f-99f1-28b3fd883a5e",
+   "name": "Sharpies",
+   "vendor": "Amazon",
+   "sku_class": "packaging",
+   "cls": "supplies",
+   "status": "incomplete",
+   "reasons": [
+    "missing_pack",
+    "missing_price",
+    "no_delivery"
+   ],
+   "lanes": {
+    "Capitol Hill": {
+     "order": "blocked",
+     "count": "blocked",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_countable_chain",
+       "blocks": [
+        "count"
+       ]
+      },
+      {
+       "code": "no_rhythm",
+       "blocks": []
+      },
+      {
+       "code": "no_order_unit",
+       "blocks": [
+        "order"
+       ]
+      }
+     ]
+    },
+    "P Street": {
+     "order": "blocked",
+     "count": "blocked",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_countable_chain",
+       "blocks": [
+        "count"
+       ]
+      },
+      {
+       "code": "no_rhythm",
+       "blocks": []
+      },
+      {
+       "code": "no_order_unit",
+       "blocks": [
+        "order"
+       ]
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "c6ee7005-d995-486b-89ce-c74fd2a8abe5",
+   "name": "Shredded Mozz",
+   "vendor": "PFG",
+   "sku_class": "raw",
+   "cls": "food",
+   "status": "incomplete",
+   "reasons": [
+    "no_delivery"
+   ],
+   "lanes": {
+    "Capitol Hill": {
+     "order": "usable",
+     "count": "degraded",
+     "cost": "degraded",
+     "errands": [
+      {
+       "code": "price_stale",
+       "blocks": []
+      },
+      {
+       "code": "weight_estimate",
+       "blocks": []
+      }
+     ]
+    },
+    "P Street": {
+     "order": "usable",
+     "count": "degraded",
+     "cost": "degraded",
+     "errands": [
+      {
+       "code": "price_stale",
+       "blocks": []
+      },
+      {
+       "code": "weight_estimate",
+       "blocks": []
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "d69ebd1f-7789-425f-9cb9-0a38f3da88c9",
+   "name": "Solar Green gallons",
+   "vendor": "Trimark",
+   "sku_class": "packaging",
+   "cls": "supplies",
+   "status": "incomplete",
+   "reasons": [
+    "missing_pack",
+    "missing_price",
+    "no_delivery"
+   ],
+   "lanes": {
+    "Capitol Hill": {
+     "order": "blocked",
+     "count": "blocked",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_countable_chain",
+       "blocks": [
+        "count"
+       ]
+      },
+      {
+       "code": "no_order_unit",
+       "blocks": [
+        "order"
+       ]
+      }
+     ]
+    },
+    "P Street": {
+     "order": "blocked",
+     "count": "blocked",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_countable_chain",
+       "blocks": [
+        "count"
+       ]
+      },
+      {
+       "code": "no_order_unit",
+       "blocks": [
+        "order"
+       ]
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "3e908efc-2769-43a0-8916-77667f33c855",
+   "name": "Solid Suds (cap hill only)",
+   "vendor": "Trimark",
+   "sku_class": "packaging",
+   "cls": "supplies",
+   "status": "incomplete",
+   "reasons": [
+    "missing_pack",
+    "missing_price",
+    "no_delivery"
+   ],
+   "lanes": {
+    "Capitol Hill": {
+     "order": "usable",
+     "count": "blocked",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_countable_chain",
+       "blocks": [
+        "count"
+       ]
+      }
+     ]
+    },
+    "P Street": {
+     "order": "usable",
+     "count": "blocked",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_countable_chain",
+       "blocks": [
+        "count"
+       ]
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "55f71966-dd29-4712-aed4-987144519b30",
+   "name": "Sour Cream",
+   "vendor": "PFG",
+   "sku_class": "raw",
+   "cls": "food",
+   "status": "incomplete",
+   "reasons": [
+    "no_delivery"
+   ],
+   "lanes": {
+    "Capitol Hill": {
+     "order": "usable",
+     "count": "usable",
+     "cost": "degraded",
+     "errands": [
+      {
+       "code": "price_stale",
+       "blocks": []
+      }
+     ]
+    },
+    "P Street": {
+     "order": "usable",
+     "count": "usable",
+     "cost": "degraded",
+     "errands": [
+      {
+       "code": "price_stale",
+       "blocks": []
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "2cd933ea-f8db-4b10-a81e-a74cc973df68",
+   "name": "Stainless Steel Scrubbies",
+   "vendor": "Leonard Paper",
+   "sku_class": "packaging",
+   "cls": "supplies",
+   "status": "incomplete",
+   "reasons": [
+    "missing_pack",
+    "missing_price",
+    "no_delivery"
+   ],
+   "lanes": {
+    "Capitol Hill": {
+     "order": "blocked",
+     "count": "blocked",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_countable_chain",
+       "blocks": [
+        "count"
+       ]
+      },
+      {
+       "code": "no_order_unit",
+       "blocks": [
+        "order"
+       ]
+      }
+     ]
+    },
+    "P Street": {
+     "order": "blocked",
+     "count": "blocked",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_countable_chain",
+       "blocks": [
+        "count"
+       ]
+      },
+      {
+       "code": "no_order_unit",
+       "blocks": [
+        "order"
+       ]
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "a200e417-88d9-483e-a369-c213b169dbb6",
+   "name": "Stainless Steel Scrubbies",
+   "vendor": "Webstaurant",
+   "sku_class": "packaging",
+   "cls": "supplies",
+   "status": "incomplete",
+   "reasons": [
+    "missing_pack",
+    "missing_price",
+    "no_delivery"
+   ],
+   "lanes": {
+    "Capitol Hill": {
+     "order": "blocked",
+     "count": "blocked",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_countable_chain",
+       "blocks": [
+        "count"
+       ]
+      },
+      {
+       "code": "no_rhythm",
+       "blocks": []
+      },
+      {
+       "code": "no_order_unit",
+       "blocks": [
+        "order"
+       ]
+      }
+     ]
+    },
+    "P Street": {
+     "order": "blocked",
+     "count": "blocked",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_countable_chain",
+       "blocks": [
+        "count"
+       ]
+      },
+      {
+       "code": "no_rhythm",
+       "blocks": []
+      },
+      {
+       "code": "no_order_unit",
+       "blocks": [
+        "order"
+       ]
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "d67b13b7-a63e-4901-bef3-cdaf76d6bf19",
+   "name": "Staples",
+   "vendor": "Amazon",
+   "sku_class": "packaging",
+   "cls": "supplies",
+   "status": "incomplete",
+   "reasons": [
+    "missing_pack",
+    "missing_price",
+    "no_delivery"
+   ],
+   "lanes": {
+    "Capitol Hill": {
+     "order": "blocked",
+     "count": "blocked",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_countable_chain",
+       "blocks": [
+        "count"
+       ]
+      },
+      {
+       "code": "no_rhythm",
+       "blocks": []
+      },
+      {
+       "code": "no_order_unit",
+       "blocks": [
+        "order"
+       ]
+      }
+     ]
+    },
+    "P Street": {
+     "order": "blocked",
+     "count": "blocked",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_countable_chain",
+       "blocks": [
+        "count"
+       ]
+      },
+      {
+       "code": "no_rhythm",
+       "blocks": []
+      },
+      {
+       "code": "no_order_unit",
+       "blocks": [
+        "order"
+       ]
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "9478c3e2-868e-444f-95f4-009a7b3b507b",
+   "name": "Sub Roll",
+   "vendor": "Cardinal Bakery",
+   "sku_class": "raw",
+   "cls": "food",
+   "status": "incomplete",
+   "reasons": [
+    "no_delivery"
+   ],
+   "lanes": {
+    "Capitol Hill": {
+     "order": "blocked",
+     "count": "degraded",
+     "cost": "degraded",
+     "errands": [
+      {
+       "code": "price_stale",
+       "blocks": []
+      },
+      {
+       "code": "weight_estimate",
+       "blocks": []
+      },
+      {
+       "code": "no_par",
+       "blocks": [
+        "order"
+       ]
+      },
+      {
+       "code": "recipe_unresolved",
+       "blocks": []
+      }
+     ]
+    },
+    "P Street": {
+     "order": "blocked",
+     "count": "degraded",
+     "cost": "degraded",
+     "errands": [
+      {
+       "code": "price_stale",
+       "blocks": []
+      },
+      {
+       "code": "weight_estimate",
+       "blocks": []
+      },
+      {
+       "code": "no_par",
+       "blocks": [
+        "order"
+       ]
+      },
+      {
+       "code": "recipe_unresolved",
+       "blocks": []
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "6e6d9d56-2260-46a5-9d8f-fca3f8501d7e",
+   "name": "Sweet Peppers",
+   "vendor": "Boar's Head",
+   "sku_class": "raw",
+   "cls": "food",
+   "status": "incomplete",
+   "reasons": [
+    "no_delivery"
+   ],
+   "lanes": {
+    "Capitol Hill": {
+     "order": "usable",
+     "count": "degraded",
+     "cost": "degraded",
+     "errands": [
+      {
+       "code": "price_stale",
+       "blocks": []
+      },
+      {
+       "code": "weight_estimate",
+       "blocks": []
+      }
+     ]
+    },
+    "P Street": {
+     "order": "usable",
+     "count": "degraded",
+     "cost": "degraded",
+     "errands": [
+      {
+       "code": "price_stale",
+       "blocks": []
+      },
+      {
+       "code": "weight_estimate",
+       "blocks": []
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "170482dc-b11f-4aa8-b10d-3ad65b202a99",
+   "name": "Thyme",
+   "vendor": "PFG",
+   "sku_class": "raw",
+   "cls": "food",
+   "status": "incomplete",
+   "reasons": [
+    "no_delivery"
+   ],
+   "lanes": {
+    "Capitol Hill": {
+     "order": "usable",
+     "count": "degraded",
+     "cost": "degraded",
+     "errands": [
+      {
+       "code": "price_stale",
+       "blocks": []
+      },
+      {
+       "code": "weight_estimate",
+       "blocks": []
+      },
+      {
+       "code": "recipe_unresolved",
+       "blocks": []
+      }
+     ]
+    },
+    "P Street": {
+     "order": "usable",
+     "count": "degraded",
+     "cost": "degraded",
+     "errands": [
+      {
+       "code": "price_stale",
+       "blocks": []
+      },
+      {
+       "code": "weight_estimate",
+       "blocks": []
+      },
+      {
+       "code": "recipe_unresolved",
+       "blocks": []
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "0c48c87f-1e40-4ac8-bdff-b54300106c19",
+   "name": "Toilet Paper",
+   "vendor": "Leonard Paper",
+   "sku_class": "packaging",
+   "cls": "supplies",
+   "status": "incomplete",
+   "reasons": [
+    "missing_pack",
+    "missing_price",
+    "no_delivery"
+   ],
+   "lanes": {
+    "Capitol Hill": {
+     "order": "blocked",
+     "count": "blocked",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_countable_chain",
+       "blocks": [
+        "count"
+       ]
+      },
+      {
+       "code": "no_order_unit",
+       "blocks": [
+        "order"
+       ]
+      }
+     ]
+    },
+    "P Street": {
+     "order": "blocked",
+     "count": "blocked",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_countable_chain",
+       "blocks": [
+        "count"
+       ]
+      },
+      {
+       "code": "no_order_unit",
+       "blocks": [
+        "order"
+       ]
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "fe484f68-7d9c-4ce5-bfd1-dff8982e910c",
+   "name": "Toilet Paper",
+   "vendor": "Amazon",
+   "sku_class": "packaging",
+   "cls": "supplies",
+   "status": "incomplete",
+   "reasons": [
+    "missing_pack",
+    "missing_price",
+    "no_delivery"
+   ],
+   "lanes": {
+    "Capitol Hill": {
+     "order": "blocked",
+     "count": "blocked",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_countable_chain",
+       "blocks": [
+        "count"
+       ]
+      },
+      {
+       "code": "no_rhythm",
+       "blocks": []
+      },
+      {
+       "code": "no_order_unit",
+       "blocks": [
+        "order"
+       ]
+      }
+     ]
+    },
+    "P Street": {
+     "order": "blocked",
+     "count": "blocked",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_countable_chain",
+       "blocks": [
+        "count"
+       ]
+      },
+      {
+       "code": "no_rhythm",
+       "blocks": []
+      },
+      {
+       "code": "no_order_unit",
+       "blocks": [
+        "order"
+       ]
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "d587fa4b-bae4-4d97-84ef-102b8b44d9a9",
+   "name": "Tomato Paste",
+   "vendor": "PFG",
+   "sku_class": "raw",
+   "cls": "food",
+   "status": "incomplete",
+   "reasons": [
+    "no_delivery"
+   ],
+   "lanes": {
+    "Capitol Hill": {
+     "order": "usable",
+     "count": "degraded",
+     "cost": "degraded",
+     "errands": [
+      {
+       "code": "weight_estimate",
+       "blocks": []
+      }
+     ]
+    },
+    "P Street": {
+     "order": "usable",
+     "count": "degraded",
+     "cost": "degraded",
+     "errands": [
+      {
+       "code": "weight_estimate",
+       "blocks": []
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "9fcd86c2-77af-482e-8ccc-d07167aad795",
+   "name": "Tomatoes",
+   "vendor": "PFG",
+   "sku_class": "raw",
+   "cls": "food",
+   "status": "incomplete",
+   "reasons": [
+    "no_delivery"
+   ],
+   "lanes": {
+    "Capitol Hill": {
+     "order": "usable",
+     "count": "degraded",
+     "cost": "degraded",
+     "errands": [
+      {
+       "code": "price_stale",
+       "blocks": []
+      },
+      {
+       "code": "weight_estimate",
+       "blocks": []
+      }
+     ]
+    },
+    "P Street": {
+     "order": "usable",
+     "count": "degraded",
+     "cost": "degraded",
+     "errands": [
+      {
+       "code": "price_stale",
+       "blocks": []
+      },
+      {
+       "code": "weight_estimate",
+       "blocks": []
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "093ddb58-feb3-46c4-9c22-469aedc84f73",
+   "name": "Tomatoes Crushed (10#)",
+   "vendor": "PFG",
+   "sku_class": "raw",
+   "cls": "food",
+   "status": "incomplete",
+   "reasons": [
+    "no_delivery"
+   ],
+   "lanes": {
+    "Capitol Hill": {
+     "order": "usable",
+     "count": "degraded",
+     "cost": "degraded",
+     "errands": [
+      {
+       "code": "price_stale",
+       "blocks": []
+      },
+      {
+       "code": "weight_estimate",
+       "blocks": []
+      }
+     ]
+    },
+    "P Street": {
+     "order": "usable",
+     "count": "degraded",
+     "cost": "degraded",
+     "errands": [
+      {
+       "code": "price_stale",
+       "blocks": []
+      },
+      {
+       "code": "weight_estimate",
+       "blocks": []
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "e25e24eb-14b9-4a77-b3ac-5d9c4a268dbe",
+   "name": "Trash Liners 40x46",
+   "vendor": "Leonard Paper",
+   "sku_class": "packaging",
+   "cls": "supplies",
+   "status": "incomplete",
+   "reasons": [
+    "missing_pack",
+    "missing_price",
+    "no_delivery"
+   ],
+   "lanes": {
+    "Capitol Hill": {
+     "order": "usable",
+     "count": "blocked",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_countable_chain",
+       "blocks": [
+        "count"
+       ]
+      }
+     ]
+    },
+    "P Street": {
+     "order": "usable",
+     "count": "blocked",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_countable_chain",
+       "blocks": [
+        "count"
+       ]
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "5cff2e20-a30e-4da6-b51b-7dd015a984c0",
+   "name": "Trash Liners 40x46",
+   "vendor": "Trimark",
+   "sku_class": "packaging",
+   "cls": "supplies",
+   "status": "incomplete",
+   "reasons": [
+    "missing_pack",
+    "missing_price",
+    "no_delivery"
+   ],
+   "lanes": {
+    "Capitol Hill": {
+     "order": "usable",
+     "count": "blocked",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_countable_chain",
+       "blocks": [
+        "count"
+       ]
+      }
+     ]
+    },
+    "P Street": {
+     "order": "usable",
+     "count": "blocked",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_countable_chain",
+       "blocks": [
+        "count"
+       ]
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "f0e8a841-5841-4f96-a107-c74033e4cf88",
+   "name": "Tuna",
+   "vendor": "PFG",
+   "sku_class": "raw",
+   "cls": "food",
+   "status": "incomplete",
+   "reasons": [
+    "no_delivery"
+   ],
+   "lanes": {
+    "Capitol Hill": {
+     "order": "usable",
+     "count": "degraded",
+     "cost": "degraded",
+     "errands": [
+      {
+       "code": "price_stale",
+       "blocks": []
+      },
+      {
+       "code": "weight_estimate",
+       "blocks": []
+      }
+     ]
+    },
+    "P Street": {
+     "order": "usable",
+     "count": "degraded",
+     "cost": "degraded",
+     "errands": [
+      {
+       "code": "price_stale",
+       "blocks": []
+      },
+      {
+       "code": "weight_estimate",
+       "blocks": []
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "ca3cc47c-51a7-4306-b11f-6e2e90971c8d",
+   "name": "Turkey",
+   "vendor": "Boar's Head",
+   "sku_class": "raw",
+   "cls": "food",
+   "status": "incomplete",
+   "reasons": [
+    "no_delivery"
+   ],
+   "lanes": {
+    "Capitol Hill": {
+     "order": "usable",
+     "count": "degraded",
+     "cost": "degraded",
+     "errands": [
+      {
+       "code": "price_stale",
+       "blocks": []
+      },
+      {
+       "code": "weight_estimate",
+       "blocks": []
+      }
+     ]
+    },
+    "P Street": {
+     "order": "usable",
+     "count": "degraded",
+     "cost": "degraded",
+     "errands": [
+      {
+       "code": "price_stale",
+       "blocks": []
+      },
+      {
+       "code": "weight_estimate",
+       "blocks": []
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "01e246aa-cd09-4949-8edc-1475b8f2710f",
+   "name": "Utz BBQ",
+   "vendor": "Country Snacks",
+   "sku_class": "raw",
+   "cls": "food",
+   "status": "incomplete",
+   "reasons": [
+    "missing_price",
+    "no_delivery"
+   ],
+   "lanes": {
+    "Capitol Hill": {
+     "order": "blocked",
+     "count": "usable",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_par",
+       "blocks": [
+        "order"
+       ]
+      },
+      {
+       "code": "no_rhythm",
+       "blocks": []
+      }
+     ]
+    },
+    "P Street": {
+     "order": "blocked",
+     "count": "usable",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_par",
+       "blocks": [
+        "order"
+       ]
+      },
+      {
+       "code": "no_rhythm",
+       "blocks": []
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "3005af1a-6f7d-4b9e-96e9-18323b279a6f",
+   "name": "Utz Original",
+   "vendor": "Country Snacks",
+   "sku_class": "raw",
+   "cls": "food",
+   "status": "incomplete",
+   "reasons": [
+    "missing_price",
+    "no_delivery"
+   ],
+   "lanes": {
+    "Capitol Hill": {
+     "order": "blocked",
+     "count": "usable",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_par",
+       "blocks": [
+        "order"
+       ]
+      },
+      {
+       "code": "no_rhythm",
+       "blocks": []
+      }
+     ]
+    },
+    "P Street": {
+     "order": "blocked",
+     "count": "usable",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_par",
+       "blocks": [
+        "order"
+       ]
+      },
+      {
+       "code": "no_rhythm",
+       "blocks": []
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "4390b5b3-c59e-4d8f-804e-35570e1aef84",
+   "name": "Utz Ripples",
+   "vendor": "Country Snacks",
+   "sku_class": "raw",
+   "cls": "food",
+   "status": "incomplete",
+   "reasons": [
+    "missing_price",
+    "no_delivery"
+   ],
+   "lanes": {
+    "Capitol Hill": {
+     "order": "blocked",
+     "count": "degraded",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "weight_estimate",
+       "blocks": []
+      },
+      {
+       "code": "no_par",
+       "blocks": [
+        "order"
+       ]
+      },
+      {
+       "code": "no_rhythm",
+       "blocks": []
+      }
+     ]
+    },
+    "P Street": {
+     "order": "blocked",
+     "count": "degraded",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "weight_estimate",
+       "blocks": []
+      },
+      {
+       "code": "no_par",
+       "blocks": [
+        "order"
+       ]
+      },
+      {
+       "code": "no_rhythm",
+       "blocks": []
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "21a905e8-ad70-45b8-ba97-f2509dbaed2b",
+   "name": "Utz Salt & Pepper",
+   "vendor": "Country Snacks",
+   "sku_class": "raw",
+   "cls": "food",
+   "status": "incomplete",
+   "reasons": [
+    "missing_price",
+    "no_delivery"
+   ],
+   "lanes": {
+    "Capitol Hill": {
+     "order": "blocked",
+     "count": "usable",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_par",
+       "blocks": [
+        "order"
+       ]
+      },
+      {
+       "code": "no_rhythm",
+       "blocks": []
+      }
+     ]
+    },
+    "P Street": {
+     "order": "blocked",
+     "count": "usable",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_par",
+       "blocks": [
+        "order"
+       ]
+      },
+      {
+       "code": "no_rhythm",
+       "blocks": []
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "03b88130-165f-46a6-98a9-9341842bed9d",
+   "name": "Utz Salt & Vinegar",
+   "vendor": "Country Snacks",
+   "sku_class": "raw",
+   "cls": "food",
+   "status": "incomplete",
+   "reasons": [
+    "missing_price",
+    "no_delivery"
+   ],
+   "lanes": {
+    "Capitol Hill": {
+     "order": "blocked",
+     "count": "usable",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_par",
+       "blocks": [
+        "order"
+       ]
+      },
+      {
+       "code": "no_rhythm",
+       "blocks": []
+      }
+     ]
+    },
+    "P Street": {
+     "order": "blocked",
+     "count": "usable",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_par",
+       "blocks": [
+        "order"
+       ]
+      },
+      {
+       "code": "no_rhythm",
+       "blocks": []
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "ec934453-3d5a-4826-9ca9-6b8b86c6c7b9",
+   "name": "Utz Sour Cream & Onion",
+   "vendor": "Country Snacks",
+   "sku_class": "raw",
+   "cls": "food",
+   "status": "incomplete",
+   "reasons": [
+    "missing_price",
+    "no_delivery"
+   ],
+   "lanes": {
+    "Capitol Hill": {
+     "order": "blocked",
+     "count": "usable",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_par",
+       "blocks": [
+        "order"
+       ]
+      },
+      {
+       "code": "no_rhythm",
+       "blocks": []
+      }
+     ]
+    },
+    "P Street": {
+     "order": "blocked",
+     "count": "usable",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_par",
+       "blocks": [
+        "order"
+       ]
+      },
+      {
+       "code": "no_rhythm",
+       "blocks": []
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "72d11ad5-143f-4636-b490-40fc07f4fc13",
+   "name": "Vanilla Bean Paste",
+   "vendor": null,
+   "sku_class": "raw",
+   "cls": "food",
+   "status": "incomplete",
+   "reasons": [
+    "missing_price",
+    "no_delivery"
+   ],
+   "lanes": {
+    "Capitol Hill": {
+     "order": "blocked",
+     "count": "degraded",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "weight_estimate",
+       "blocks": []
+      },
+      {
+       "code": "no_par",
+       "blocks": [
+        "order"
+       ]
+      },
+      {
+       "code": "no_rhythm",
+       "blocks": []
+      },
+      {
+       "code": "no_vendor",
+       "blocks": [
+        "order"
+       ]
+      }
+     ]
+    },
+    "P Street": {
+     "order": "blocked",
+     "count": "degraded",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "weight_estimate",
+       "blocks": []
+      },
+      {
+       "code": "no_par",
+       "blocks": [
+        "order"
+       ]
+      },
+      {
+       "code": "no_rhythm",
+       "blocks": []
+      },
+      {
+       "code": "no_vendor",
+       "blocks": [
+        "order"
+       ]
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "8e00d1d8-5e9b-4410-b4d2-fca1971bc34f",
+   "name": "Watermelon Radish",
+   "vendor": "PFG",
+   "sku_class": "raw",
+   "cls": "food",
+   "status": "incomplete",
+   "reasons": [
+    "no_delivery"
+   ],
+   "lanes": {
+    "Capitol Hill": {
+     "order": "usable",
+     "count": "degraded",
+     "cost": "degraded",
+     "errands": [
+      {
+       "code": "price_stale",
+       "blocks": []
+      },
+      {
+       "code": "weight_estimate",
+       "blocks": []
+      }
+     ]
+    },
+    "P Street": {
+     "order": "usable",
+     "count": "degraded",
+     "cost": "degraded",
+     "errands": [
+      {
+       "code": "price_stale",
+       "blocks": []
+      },
+      {
+       "code": "weight_estimate",
+       "blocks": []
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "55f46c10-c8d9-4a4e-aeaa-f0f6526d1e84",
+   "name": "White Cheddar",
+   "vendor": "Baldor",
+   "sku_class": "raw",
+   "cls": "food",
+   "status": "incomplete",
+   "reasons": [
+    "missing_pack",
+    "missing_price",
+    "no_delivery"
+   ],
+   "lanes": {}
+  },
+  {
+   "id": "656155ae-1302-4940-93d1-3e5e0a8ce331",
+   "name": "White Wine",
+   "vendor": null,
+   "sku_class": "raw",
+   "cls": "food",
+   "status": "incomplete",
+   "reasons": [
+    "missing_pack",
+    "missing_price",
+    "no_delivery"
+   ],
+   "lanes": {
+    "Capitol Hill": {
+     "order": "blocked",
+     "count": "degraded",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "raw_pack_contents_missing",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_par",
+       "blocks": [
+        "order"
+       ]
+      },
+      {
+       "code": "no_rhythm",
+       "blocks": []
+      },
+      {
+       "code": "no_vendor",
+       "blocks": [
+        "order"
+       ]
+      },
+      {
+       "code": "no_order_unit",
+       "blocks": [
+        "order"
+       ]
+      }
+     ]
+    },
+    "P Street": {
+     "order": "blocked",
+     "count": "degraded",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "raw_pack_contents_missing",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_par",
+       "blocks": [
+        "order"
+       ]
+      },
+      {
+       "code": "no_rhythm",
+       "blocks": []
+      },
+      {
+       "code": "no_vendor",
+       "blocks": [
+        "order"
+       ]
+      },
+      {
+       "code": "no_order_unit",
+       "blocks": [
+        "order"
+       ]
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "a72ea2c4-1063-4d4c-8bcc-7a47bad3e10b",
+   "name": "Whole pickles",
+   "vendor": "Boar's Head",
+   "sku_class": "raw",
+   "cls": "food",
+   "status": "incomplete",
+   "reasons": [
+    "missing_price",
+    "no_delivery"
+   ],
+   "lanes": {
+    "Capitol Hill": {
+     "order": "degraded",
+     "count": "degraded",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "raw_pack_contents_missing",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "recipe_unresolved",
+       "blocks": []
+      }
+     ]
+    },
+    "P Street": {
+     "order": "degraded",
+     "count": "degraded",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "raw_pack_contents_missing",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "recipe_unresolved",
+       "blocks": []
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "11f7f7ad-4515-42db-a4e0-9b0fabbef4d4",
+   "name": "Worcestershire",
+   "vendor": null,
+   "sku_class": "raw",
+   "cls": "food",
+   "status": "incomplete",
+   "reasons": [
+    "missing_pack",
+    "missing_price",
+    "no_delivery"
+   ],
+   "lanes": {
+    "Capitol Hill": {
+     "order": "blocked",
+     "count": "degraded",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "raw_pack_contents_missing",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_par",
+       "blocks": [
+        "order"
+       ]
+      },
+      {
+       "code": "no_rhythm",
+       "blocks": []
+      },
+      {
+       "code": "no_vendor",
+       "blocks": [
+        "order"
+       ]
+      },
+      {
+       "code": "no_order_unit",
+       "blocks": [
+        "order"
+       ]
+      },
+      {
+       "code": "recipe_unresolved",
+       "blocks": []
+      }
+     ]
+    },
+    "P Street": {
+     "order": "blocked",
+     "count": "degraded",
+     "cost": "blocked",
+     "errands": [
+      {
+       "code": "no_price",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "raw_pack_contents_missing",
+       "blocks": [
+        "cost"
+       ]
+      },
+      {
+       "code": "no_par",
+       "blocks": [
+        "order"
+       ]
+      },
+      {
+       "code": "no_rhythm",
+       "blocks": []
+      },
+      {
+       "code": "no_vendor",
+       "blocks": [
+        "order"
+       ]
+      },
+      {
+       "code": "no_order_unit",
+       "blocks": [
+        "order"
+       ]
+      },
+      {
+       "code": "recipe_unresolved",
+       "blocks": []
+      }
+     ]
+    }
+   }
+  }
+ ]
+}

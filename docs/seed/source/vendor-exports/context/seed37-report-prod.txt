@@ -1,0 +1,105 @@
+seed 37 — order guides — order-guides-2026-09-13 — target prod
+plan digest: 16f843b56ea3f22edd54bd498eee97cc4515f29ff729903e9211d5b06a7b5f3d
+
+PFG — sheet — already
+  6 sections, 58 lines: 55 matched, 2 unmatched with candidates, 1 unmatched with none; rerun: 0 re-matched, 0 appended
+  - ambiguous: Eggs (pfg_leonard row 23) -> Eggs, Eggs (cooked)
+  - ambiguous: Eggs (cooked) (pfg_leonard row 24) -> Eggs, Eggs (cooked)
+  - no match: Dried Chives (pfg_leonard row 63)
+  - active SKU on no line: 1/2 pint bottoms (flexi)
+  - active SKU on no line: 1/2 pint top (flexi)
+  - active SKU on no line: 2 oz portion cup lids
+  - active SKU on no line: 2 oz portion cups
+  - active SKU on no line: Aluminum Full Pan (Catering)
+  - active SKU on no line: Aluminum Full Pan Lid (Catering)
+  - active SKU on no line: Beef Base
+  - active SKU on no line: C- Fold napkins
+  - active SKU on no line: Cannoli Shell
+  - active SKU on no line: Eggs
+  - active SKU on no line: Eggs (cooked)
+  - active SKU on no line: Foil roll
+  - active SKU on no line: Gloves Extra Large
+  - active SKU on no line: Gloves Large
+  - active SKU on no line: Gloves Medium
+  - active SKU on no line: Half Pint 8oz (hard)
+  - active SKU on no line: Kraft 10x5x13 (Small Bags)
+  - active SKU on no line: Kraft 12x9x13 (Large Bags)
+  - active SKU on no line: Paper Deli Sheets (Wax Paper)
+  - active SKU on no line: Patty Paper
+  - active SKU on no line: Pint (Medium)
+  - active SKU on no line: Plastic forks
+  - active SKU on no line: Plastic Knives
+  - active SKU on no line: Plastic Spoons
+  - active SKU on no line: Plates 8"
+  - active SKU on no line: Quart (Large)
+  - active SKU on no line: Reciept Paper (thermal)
+  - active SKU on no line: Round Salad Bowls & Lids
+  - active SKU on no line: Salad Clam Shell (55oz)
+  - reported, not lined: Cholula (pfg_leonard row 61, section Dry Goods, vendor key TRANSFER)
+
+Leonard Paper — sheet — already
+  3 sections, 38 lines: 38 matched, 0 unmatched with candidates, 0 unmatched with none; rerun: 0 re-matched, 0 appended
+
+Trimark — sheet — already
+  1 sections, 10 lines: 9 matched, 0 unmatched with candidates, 1 unmatched with none; rerun: 0 re-matched, 0 appended
+  - no match: Multi Cleaner (Kitchen) (pfg_leonard row 104)
+  - active SKU on no line: Butcher Paper
+  - active SKU on no line: Floor Cleaner (Kitchen Citrus #8)
+  - active SKU on no line: Foam Soap (restrooms)
+  - active SKU on no line: Glass Cleaner (#1)
+  - active SKU on no line: Multi Cleaner (Kitchen Citrus #8)
+  - active SKU on no line: Plastic Wraop
+  - active SKU on no line: Sani 512 gallons
+  - active SKU on no line: Trash Liners 40x46
+
+Boar's Head — sheet — already
+  2 sections, 26 lines: 26 matched, 0 unmatched with candidates, 0 unmatched with none; rerun: 0 re-matched, 0 appended
+  - active SKU on no line: Mortadella
+  - second sheet, no match, no line: .75oz Mini Chips (boars_head row 33, Lrg. Utz Chips)
+  - second sheet, no match, no line: 21x21x1 Air filters (boars_head row 35, Smallwares)
+  - second sheet, no match, no line: Batteries (boars_head row 36, Smallwares)
+  - second sheet, no match, no line: Long Name/Order labels (boars_head row 38, Smallwares)
+  - second sheet, no match, no line: Sharpies - Click (boars_head row 40, Smallwares)
+  - second sheet, no match, no line: Price Gun Labels (boars_head row 44, Smallwares)
+
+Country Snacks — sheet — already
+  2 sections, 6 lines: 6 matched, 0 unmatched with candidates, 0 unmatched with none; rerun: 0 re-matched, 0 appended
+
+Sarah — sheet — already
+  1 sections, 1 lines: 1 matched, 0 unmatched with candidates, 0 unmatched with none; rerun: 0 re-matched, 0 appended
+
+Amazon — sheet — already
+  1 sections, 4 lines: 4 matched, 0 unmatched with candidates, 0 unmatched with none; rerun: 0 re-matched, 0 appended
+  - active SKU on no line: Dry Erase Markers
+  - active SKU on no line: Isopropyl Alcohol Spray
+  - active SKU on no line: Printer Ink
+  - active SKU on no line: Toilet Paper
+
+Continental Tape — sheet — already
+  1 sections, 1 lines: 1 matched, 0 unmatched with candidates, 0 unmatched with none; rerun: 0 re-matched, 0 appended
+
+Webstaurant — sheet — already
+  1 sections, 5 lines: 5 matched, 0 unmatched with candidates, 0 unmatched with none; rerun: 0 re-matched, 0 appended
+  - active SKU on no line: Bottle Tops
+  - active SKU on no line: Neon Green Tape
+  - active SKU on no line: Register Rolls (3 1/8 thermal)
+  - active SKU on no line: Stainless Steel Scrubbies
+
+Penny Candy — sheet — already
+  1 sections, 1 lines: 1 matched, 0 unmatched with candidates, 0 unmatched with none; rerun: 0 re-matched, 0 appended
+
+Vistaprint — sheet — already
+  1 sections, 1 lines: 1 matched, 0 unmatched with candidates, 0 unmatched with none; rerun: 0 re-matched, 0 appended
+
+Baldor — starter — already
+  1 sections, 8 lines: 8 matched, 0 unmatched with candidates, 0 unmatched with none; rerun: 0 re-matched, 0 appended
+  - reported, not lined: Cannoli Shell (pfg_leonard row 60, section Dry Goods, vendor key Baldor)
+
+Cardinal Bakery — starter — already
+  1 sections, 1 lines: 1 matched, 0 unmatched with candidates, 0 unmatched with none; rerun: 0 re-matched, 0 appended
+
+Sysco — starter — already
+  1 sections, 1 lines: 1 matched, 0 unmatched with candidates, 0 unmatched with none; rerun: 0 re-matched, 0 appended
+
+US Foods — starter — already
+  1 sections, 2 lines: 2 matched, 0 unmatched with candidates, 0 unmatched with none; rerun: 0 re-matched, 0 appended
