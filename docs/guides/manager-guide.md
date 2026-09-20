@@ -678,6 +678,22 @@ The 6 AM job. Walk the shelves, say what is there, and the app works out the ord
 - The picker offers any of this vendor's active items, including more of something already on the placed order.
 - A later walk can update this new draft. The cutoff **Generate draft** shortcut still refuses another order for that vendor today.
 
+### 8. Import a vendor export
+
+**What you see**
+
+The **Vendor import** card at the bottom of a vendor's admin page, under its order guide.
+
+**What to do** — Export the vendor's list or purchase history from their portal (PFG CustomerFirst: Lists → Export; US Foods MOXē: Lists → ⋮ → Export), then choose the file and tap **Stage import**. The app matches every row to this vendor's SKUs and shows a report: what is the same, what would change, and what needs a person. Set each changing row to **Accept** or **Skip**, then tap **Apply** to write the accepted prices, item numbers and pack sizes in one go.
+
+**Worth knowing**
+
+- Staging writes nothing to the catalog. The report is a dry run, and the same file staged twice returns the same report.
+- Rows marked **Needs a person** never apply on their own: a new item the catalog has never seen, a number shared by two SKUs, a pack sold by volume where the catalog counts weight, or a per-pound price on an item counted by the piece. Fix those in the SKU editor or the order guide, then stage again.
+- An export with no prices (US Foods lists) can fill in missing item numbers and packs but never blanks a price the catalog already has.
+- Applying is an owner-level act and asks for your password first, because both shops order on the same vendor accounts and an applied price is a two-shop change. Every applied row keeps its evidence: the file, its date and the row it came from.
+- If the catalog changed between staging and applying, the app refuses with **Report out of date** — stage the file again and re-check.
+
 ---
 
 ## Production capture
