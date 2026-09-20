@@ -242,7 +242,7 @@ export function buildWritePlan(csv: string, baseline: Snapshot, live: Snapshot, 
     const value = e.price_per_lb_cents != null ? e.price_per_lb_cents / 100 * rootOz / 16
       : contents?.unit === "oz" ? number(e.price_cents) / 100 * rootOz / contents.quantity : NaN;
     if (!Number.isFinite(value) || value <= 0) throw new Error(`${r.row_id}: cannot express price at purchase root`);
-    const unitPrice = Math.round(value * 1000000) / 1000000;
+    const unitPrice = Math.round(value * 100) / 100 /* vendor_price_history.unit_price is numeric(10,2): the ledger stores cents, so the plan must too or the read-back can never match (sim rehearsal 2026-09-20) */;
     const date = e.receipt_doc ? e.last_purchase_date : e.exported_at;
     if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date)) throw new Error("Missing evidence date");
     const current = latestPrice(state.vendor_price_history, str(sku.id));

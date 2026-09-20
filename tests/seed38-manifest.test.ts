@@ -35,7 +35,7 @@ describe("seed38 real evidence manifest", () => {
     for (const price of input.baseline.vendor_price_history) expect(state.vendor_price_history.find(p => p.id === price.id)).toEqual(price);
     expect(plan.held).toContain("PC-001 Ever Roast Chicken: held, no vendor evidence");
     const pepperoni = plan.operations.find(o => o.key === "PC-002")!.mutations[0]!.after;
-    expect(pepperoni).toMatchObject({ unit_price: 17.427575, effective_date: "2026-09-16" });
+    expect(pepperoni).toMatchObject({ unit_price: 17.43, effective_date: "2026-09-16" });
     expect(plan.operations.find(o => o.key === "PC-004")?.status).toBe("already");
     expect(plan.operations.find(o => o.key === "PC-008")!.mutations[0]!.after.unit_price).toBe(81.89);
   });
