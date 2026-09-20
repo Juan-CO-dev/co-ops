@@ -15,9 +15,13 @@ create table public.vendor_import_batches (
   report jsonb not null,
   status text not null default 'staged' check (status in ('staged','applied','superseded')),
   created_by uuid not null references public.users(id),
-  created_at timestamptz not null default now(),
-  unique (vendor_id, source_sha256, adapter_version)
+  created_at timestamptz not null default now()
 );
+-- One STAGED batch per (vendor, file, adapter version). A superseded batch (its
+-- before-state went stale under it) or an applied one never blocks re-staging the
+-- same file: the fresh batch re-reads the catalog and reports what is left to do.
+create unique index vendor_import_batches_staged_source_uidx
+  on public.vendor_import_batches(vendor_id, source_sha256, adapter_version) where status = 'staged';
 create table public.vendor_import_observations (
   id uuid primary key default gen_random_uuid(),
   batch_id uuid not null references public.vendor_import_batches(id),
@@ -66,11 +70,12 @@ begin
     p_batch->>'adapter_version', p_batch->>'source_name', p_batch->>'source_sha256',
     (p_batch->>'exported_at')::date, (p_batch->>'row_count')::int,
     p_batch->'report', (p_batch->>'created_by')::uuid)
-  on conflict (vendor_id, source_sha256, adapter_version) do nothing returning id into v_id;
+  on conflict (vendor_id, source_sha256, adapter_version) where status = 'staged' do nothing returning id into v_id;
   if v_id is null then
     select id into v_id from public.vendor_import_batches
     where vendor_id = (p_batch->>'vendor_id')::uuid
-      and source_sha256 = p_batch->>'source_sha256' and adapter_version = p_batch->>'adapter_version';
+      and source_sha256 = p_batch->>'source_sha256' and adapter_version = p_batch->>'adapter_version'
+      and status = 'staged';
     return jsonb_build_object('batch_id',v_id,'created',false);
   end if;
   insert into public.vendor_import_observations

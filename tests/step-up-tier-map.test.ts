@@ -175,6 +175,7 @@ const SERVER_TIER_MAP: Record<string, string[]> = {
   "app/api/admin/vendors/[id]/contacts/route.ts": ["A"],
   "app/api/admin/vendors/[id]/cutoffs/[cutoffId]/route.ts": ["A"],
   "app/api/admin/vendors/[id]/cutoffs/route.ts": ["A"],
+  "app/api/admin/vendors/[id]/import/[batchId]/apply/route.ts": ["A"],
   "app/api/admin/vendors/[id]/order-types/route.ts": ["A"],
   "app/api/admin/vendors/[id]/ordering-details/[detailId]/route.ts": ["A"],
   "app/api/admin/vendors/[id]/ordering-details/route.ts": ["A"],

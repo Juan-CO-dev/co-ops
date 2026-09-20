@@ -177,7 +177,7 @@ export async function stageVendorImport(actor: AuthContext, vendorId: string, fi
   const sha = createHash("sha256").update(file.text, "utf8").digest("hex");
   const sb = getServiceRoleClient();
   const { data: existing, error: findError } = await sb.from("vendor_import_batches").select("id")
-    .eq("vendor_id", vendorId).eq("source_sha256", sha).eq("adapter_version", ADAPTER_VERSION).maybeSingle<{ id: string }>();
+    .eq("vendor_id", vendorId).eq("source_sha256", sha).eq("adapter_version", ADAPTER_VERSION).eq("status", "staged").maybeSingle<{ id: string }>();
   check(findError);
   if (existing) return loadImportBatch(actor, vendorId, existing.id);
   const { catalog, packs, measures } = await loadCatalog(vendorId);
@@ -264,11 +264,20 @@ export async function applyVendorImport(actor: AuthContext, vendorId: string, ba
     p_batch_id: batchId, p_plan_digest: expectedDigest, p_actor: actor.user.id, p_ops: ops,
   });
   if (error) {
-    if (error.message.includes("stale_before_state")) throw new VendorImportError(409, "stale_before_state");
+    if (error.message.includes("stale_before_state")) {
+      // The catalog moved under this batch: retire it so the same file can be
+      // staged again against the live catalog (0211 keys uniqueness on STAGED only).
+      await getServiceRoleClient().from("vendor_import_batches").update({ status: "superseded" })
+        .eq("id", batchId).eq("vendor_id", vendorId).eq("status", "staged");
+      throw new VendorImportError(409, "stale_before_state");
+    }
     if (error.message.includes("plan_changed")) throw new VendorImportError(409, "plan_changed");
     if (error.message.includes("batch_already_applied")) throw new VendorImportError(409, "batch_already_applied");
+    if (error.message.includes("batch_not_found")) throw new VendorImportError(404, "batch_not_found");
     if (error.message.includes("vendor_not_found")) throw new VendorImportError(404, "vendor_not_found");
+    if (error.message.includes("forbidden")) throw new VendorImportError(403, "forbidden");
     if (error.message.includes("invalid_chain")) throw new VendorImportError(409, "invalid_chain");
+    if (error.message.includes("invalid_price")) throw new VendorImportError(409, "invalid_price");
     if (error.message.includes("conflicting_operations")) throw new VendorImportError(409, "conflicting_operations");
     throw new VendorImportError(500, "internal_error");
   }
