@@ -864,6 +864,22 @@
       "assertionId": "customer.email.failure-honesty",
       "evidence": null,
       "status": "pending"
+    },
+    {
+      "id": "admin.vendor_import.stage-review-apply",
+      "guide": {
+        "path": "docs/guides/manager-guide.md",
+        "revision": "f33a8be",
+        "section": "Ordering and purchase orders / 8. Import a vendor export",
+        "quote": "Staging writes nothing to the catalog. The report is a dry run, and the same file staged twice returns the same report.",
+        "quoteSha256": "1c76678f3e5a64aec90977391218c29f17f36bbb6b9c814215312895500b2ed2"
+      },
+      "actor": "GM Marcus Webb (level 7) stages; employee Maya denied; GM refused at apply (owner-level act)",
+      "preconditions": "Fixture cold-empty from the 2026-09-20 prod config snapshot (post seed 38); the real PFG CustomerFirst export docs/seed/source/vendor-exports/pfg/list-izzy-main-2026-09-18.csv; migration 0211 on the sim. The sim roster has no level-9 persona, so the apply write itself is rehearsed by CC outside the harness (scripts/sim/rehearsals/2026-09-20-v3c2-vendor-import.ts: stale under a human edit → superseded → fresh stage, one price applied, replay idempotent, re-stage, stale → superseded) and pinned by the route tests.",
+      "expected": "Staging the export returns a report with the pinned row and kind counts and writes only the import ledger (batches + observations), never the catalog; the same file staged twice returns the same batch and digest; an employee cannot stage; the GM cannot apply (403 forbidden).",
+      "assertionId": "admin.vendor_import.stage-review-apply",
+      "evidence": null,
+      "status": "pending"
     }
   ]
 }

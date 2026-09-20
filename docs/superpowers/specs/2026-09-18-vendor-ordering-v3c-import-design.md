@@ -31,6 +31,15 @@ The dollar "deltas" in the reports are therefore mostly **denominator mismatches
 
 **Rulings on the report's own open items:** Izzy MAIN and US Foods Order Guide #514925 are treated as the live lists until a manager says otherwise (question 1 stays open only to confirm). Eggs: the guide's plain "Eggs" line re-points to 517879 (large) unless Juan says medium. The former question 6 is withdrawn (see the note in §9). Five floor questions remain; they go to Juan in one list.
 
+## 0b. V3-C-2 v1 — shipped scope (CC, 2026-09-20, built on auto; plan `docs/superpowers/plans/2026-09-20-v3c-2-vendor-importer.md`)
+
+- **R1** write set = price observations (append), item numbers (null → value only), pack chains (whole active chain versioned) through ONE transactional RPC `apply_vendor_import` (0211). Guide writes (§6) and SKU creation stay human: the report lists them as `needs_person` with deep links to the Order Guide panel and the SKU editor.
+- **R2** audit = the seed-38 row actions + `vendor.import_staged` (non-destructive) / `vendor.import_applied` (destructive), `actor_context: vendor_import`; the spec's `vendor_item.update` / `sku.pack_chain_update` names do not exist and were not created.
+- **R3** stage at GM (7); **apply at 9 + step-up Tier A** — both shops share the vendor accounts (§9a.5), so an applied price is a two-shop effect.
+- **R4** identity: exact `(vendor_id, item_number)` → exact normalized name → `ambiguous` / `unmatched` (a person decides). **R5** a missing price never blanks a price; `/lb` applies only to weight-denominated roots. **R6** pack changes only within one dimension (fl oz vs oz = needs a person). **R7** batches are global in v1; the account id is recorded as evidence.
+- Idempotency: `vendor_import_applies` UNIQUE `(batch_id, plan_digest)` is the apply claim; before-state is re-checked inside the RPC (`stale_before_state` → 409, fresh dry-run required). Same file twice = same batch (`(vendor_id, source_sha256, adapter_version)` unique).
+- v2 (not built): guide RPC calls inside the same transaction; SKU creation from a staged candidate; receipts by OCR; per-location batches.
+
 ## 1. Evidence and governing contracts
 
 The [re-runnable PFG report](../../seed/source/vendor-exports/reports/2026-09-18-pfg-diff.md) cites physical source lines for every table row. Five CustomerFirst files contain 273 observations, 115 distinct item numbers. The independent counts are 97 purchase history, 84 Izzy MAIN, 58 Opening, 14 managed, 20 Paper. Last Purchase is the **last event only**, not cumulative transaction history. The 60-calendar-day window is July 21–September 18 inclusive.

@@ -9,6 +9,9 @@ import {
   poLines, lineShape, sortSku, checkSnapshot, receivingLedger, checkReceipt,
   checkCredits, checkThreeWay,
 } from "../contracts/ordering-receiving.spec";
+import * as driver from "../../concurrency/driver.mjs";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 
 type Language = "en" | "es";
 type Key = keyof typeof en;
@@ -272,3 +275,64 @@ for (const [code, khAlias, employeeAlias] of [["EM", "rosa", "maya"], ["MEP", "a
     }
   });
 }
+
+// V3-C-2 v1 (admin.vendor_import.stage-review-apply): the real PFG CustomerFirst export against the restored catalog.
+// Counts pinned from CC's sim rehearsal of 2026-09-20 (.scratch/v3c2-rehearsal.mts) on the post-seed-38 snapshot.
+const PFG_IZZY_MAIN = {
+  file: "docs/seed/source/vendor-exports/pfg/list-izzy-main-2026-09-18.csv", name: "list-izzy-main-2026-09-18.csv",
+  adapter: "pfg-customerfirst-v1", exportedAt: "2026-09-18", rows: 84, counts: { noop: 20, price: 2, needs_person: 62 } as Record<string, number>, needsPerson: 62,
+};
+test("vendor import: stage the PFG export, same file twice is one report, employee denied, GM cannot apply", async ({ contract }) => {
+  const mark = (id: string) => { if (!contract.assertionIds.includes(id)) contract.assertionIds.push(id); };
+  mark("ordering.raw-500"); mark("admin.vendor_import.stage-review-apply");
+  const claim = "admin.vendor_import.stage-review-apply";
+  expect(process.env.LRA_FIXTURE, claim).toBe("cold-empty");
+  const gm = await sessionFor("marcus", "EM");
+  const vendors = await readRows<{ id: string; name: string }>("vendors", "id,name", { name: "PFG", active: "true" });
+  expect(vendors, `${claim}: exactly one PFG vendor`).toHaveLength(1);
+  const vendorId = vendors[0]!.id;
+  const importApi = `/api/admin/vendors/${vendorId}/import`;
+  const text = readFileSync(resolve(PFG_IZZY_MAIN.file), "utf8");
+  type View = { batch: { id: string; status: string; adapter: string; exported_at: string | null; row_count: number; report: { counts: Record<string, number>; needs_person: unknown[] } }; observations: unknown[]; ops: unknown[]; expectedDigest: string };
+  // The stage route takes multipart, which the JSON session helper cannot send: same cookie, same origin header, manual redirects.
+  const stage = async (session: { cookie: string }) => {
+    const form = new FormData();
+    form.append("file", new Blob([text], { type: "text/csv" }), PFG_IZZY_MAIN.name);
+    const res = await fetch(new URL(importApi, driver.BASE), { method: "POST", headers: { cookie: session.cookie, origin: driver.BASE }, body: form, redirect: "manual" });
+    expect(res.status, "ordering.raw-500").toBeLessThan(500);
+    let json: View | { code?: string } | null = null;
+    try { json = await res.json(); } catch { /* empty body */ }
+    return { status: res.status, json };
+  };
+  const first = await stage(gm as { cookie: string });
+  expect(first.status, `${claim}: GM stages (${(first.json as { code?: string } | null)?.code ?? ""})`).toBe(200);
+  const view = first.json as View;
+  expect(view.batch.status, claim).toBe("staged");
+  expect({ adapter: view.batch.adapter, exportedAt: view.batch.exported_at, rows: view.batch.row_count }, `${claim}: identity of the export`)
+    .toEqual({ adapter: PFG_IZZY_MAIN.adapter, exportedAt: PFG_IZZY_MAIN.exportedAt, rows: PFG_IZZY_MAIN.rows });
+  expect(view.batch.report.counts, `${claim}: report counts by kind`).toEqual(PFG_IZZY_MAIN.counts);
+  expect(view.batch.report.needs_person, `${claim}: rows that need a person`).toHaveLength(PFG_IZZY_MAIN.needsPerson);
+  expect(view.observations, `${claim}: one observation per counted row`).toHaveLength(Object.values(PFG_IZZY_MAIN.counts).reduce((a, b) => a + b, 0));
+  expect(view.ops, `${claim}: default plan accepts every price, item number and pack row once`).toHaveLength((PFG_IZZY_MAIN.counts.price ?? 0) + (PFG_IZZY_MAIN.counts.item_number ?? 0) + (PFG_IZZY_MAIN.counts.pack ?? 0));
+  expect(view.expectedDigest, claim).toMatch(/^[a-f0-9]{64}$/);
+  // "the same file staged twice returns the same report"
+  const second = await stage(gm as { cookie: string });
+  expect(second.status, claim).toBe(200);
+  expect({ id: (second.json as View).batch.id, digest: (second.json as View).expectedDigest }, `${claim}: same file → same batch and digest`).toEqual({ id: view.batch.id, digest: view.expectedDigest });
+  const reloaded = await gm.call("GET", `${importApi}/${view.batch.id}`) as { status: number; json: View };
+  expect(reloaded.status, claim).toBe(200);
+  expect(reloaded.json.expectedDigest, `${claim}: the stored report reloads to the same digest`).toBe(view.expectedDigest);
+  // Staging writes nothing to the catalog: only the import ledger holds rows.
+  const ledger = await readRows<{ id: string; status: string; row_count: number }>("vendor_import_batches", "id,status,row_count", { vendor_id: vendorId });
+  expect(ledger, `${claim}: one staged batch`).toEqual([{ id: view.batch.id, status: "staged", row_count: PFG_IZZY_MAIN.rows }]);
+  expect(await readRows<{ id: string }>("vendor_import_observations", "id", { batch_id: view.batch.id }), claim).toHaveLength(view.observations.length);
+  expect(await readRows<{ id: string }>("vendor_import_applies", "id", { batch_id: view.batch.id }), `${claim}: nothing applied`).toHaveLength(0);
+  expect(await readRows<{ id: string }>("vendor_price_history", "id", { source: "vendor_import" }), `${claim}: no imported price rows`).toHaveLength(0);
+  // Applying is an owner-level act: the GM is refused before any step-up question.
+  const applyAsGm = await call(gm, "POST", `${importApi}/${view.batch.id}/apply`, { decisions: {}, expectedDigest: view.expectedDigest });
+  expect({ status: applyAsGm.status, code: applyAsGm.code }, `${claim}: GM cannot apply`).toEqual({ status: 403, code: "forbidden" });
+  const employee = await sessionFor("maya", "EM");
+  const asEmployee = await stage(employee as { cookie: string });
+  expect({ status: asEmployee.status, code: (asEmployee.json as { code?: string } | null)?.code }, `${claim}: employee cannot stage`).toEqual({ status: 403, code: "forbidden" });
+  expect(await readRows<{ id: string }>("vendor_import_batches", "id", { vendor_id: vendorId }), `${claim}: refusals write nothing`).toHaveLength(1);
+});

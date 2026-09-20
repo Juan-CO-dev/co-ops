@@ -41,6 +41,7 @@ import { DESTRUCTIVE_ACTIONS } from "@/lib/destructive-actions";
  * to filter for.
  */
 export const NON_DESTRUCTIVE_ACTIONS = [
+  "vendor.import_staged", // Vendor evidence only; staging does not change the catalog.
 
   // ── AUTH & SESSION ────────────────────────────────────────────────────
   // Sign-in, lockout, token and step-up events. Security-relevant and
