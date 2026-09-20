@@ -10,8 +10,7 @@
 
 | Defect (prod export 2026-09-19) | Count | Example |
 |---|---|---|
-| SKUs whose pack chain has duplicate `display_ordinal` levels | 55 of 73 chained SKUs | Oregano 261432: `jug 80 oz` AND `jug 96 oz`, both ordinal 0 |
-| … of which the duplicates CONFLICT on qty or unit | 28 | Cucumber, Mustard (Whole), Chives, Natalie's Lemonade, Basil, Grapeseed Oil, Utz Ripples, Pepperoni, Thyme, Fresh Mozzarella, Red wine vinegar, Eggs (cooked) |
+| SKUs whose pack chain has duplicate `display_ordinal` levels **among ACTIVE rows** | **0** of 73 chained SKUs (CORRECTED 2026-09-20: CC's first count ignored `active`; the 55 "duplicates" are historical `active=false` levels — 91 of 186 level rows — that append-only correctly keeps) | Oregano 261432 has `jug 80 oz` retired and `jug 96 oz` active |
 | SKUs holding more than one price on ONE `effective_date` | 8 of 92 priced | Oregano: 55.27 and 13.82 on 2026-08-14, then 4.50 on 08-31 |
 | "case"-format SKUs whose `units_per_pack` is 1 — the catalog's *case* is the vendor's *each* | 35 of 86 | Butter "case" = 1 lb @ $2.25 (PFG sells 36/1 LB @ $80.30); Duke's "case" = 1 gal @ $18.50 (PFG 4/1 GA @ $73.99) |
 | Guide lines whose SKU has no vendor item number | 67 of 163 | every Boar's Head, Baldor and Amazon line |
@@ -21,7 +20,7 @@ The dollar "deltas" in the reports are therefore mostly **denominator mismatches
 **V3-C is two deliverables, and the order is not negotiable.**
 
 **V3-C-1 — catalog repair + vendor identity, as a seed (seed 38), before any importer.** Built from the reviewed join, human-reviewed CSV → seed with dry-run + audit rows, the repo's existing law for data changes:
-1. Dedupe `sku_pack_levels`: one level per (sku, ordinal); where the duplicates conflict, the reviewed CSV names the survivor, citing the vendor export or receipt line (`pack` column of the normalized rows).
+1. ~~Dedupe `sku_pack_levels`~~ — WITHDRAWN 2026-09-20 (see the corrected table: active chains are already unique per ordinal). What remains for packs is the ACTIVE level's quantity where it disagrees with the vendor export (e.g. Oregano active `jug 96 oz` vs PFG `1/5 LB` = 80 oz): those become reviewed `price_basis`/pack rows, not a dedupe.
 2. Resolve the 8 same-date price conflicts the same way; the survivor is the one that reconciles to the vendor's pack at the catalog's purchase basis.
 3. **Declare the purchase basis explicitly** — migration 0210 adds `vendor_items.price_basis` (`per_case | per_each | per_lb | per_dozen | per_bundle`) and, where the catalog's "case" is the vendor's each, records that fact rather than silently renaming. Costing (`computeSkuCostPerOz`) is untouched; ordering gains the true purchase pack for PO quantities.
 4. Attach `item_number` to the 67 number-less guide lines from the exports and receipts (Boar's Head from the Delmar invoices: 278, 505, 137, 558, 546, 12011, 30, 795; Baldor from its invoice codes; Cardinal 1030/3290; Thompson 27149/00602; Berger 1001/1010). Amazon/Webstaurant lines stay null — no vendor number exists.
