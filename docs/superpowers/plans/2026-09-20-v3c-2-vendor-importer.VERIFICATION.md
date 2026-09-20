@@ -37,3 +37,27 @@ SHA256 before **and** after, identical (all filenames prefixed `2026-09-19-`):
 | pfg-diff.md | 21B86D67D77F946D37BF75766514317F0251CA47EA61DB615BAABCBC59D81EA9 |
 | receipts-diff.md | F333915F8392F468208EFD717628B0872FA9755E6C492F01BCD85B53FD355F76 |
 | usfoods-diff.md | 9C3D04B674B70F0071D5FCBAE5FEC19D8EA3474640FB570E7D44F007C27AAF0C |
+
+## CC R0 + sim rehearsal (2026-09-20, CC)
+
+R0 fixes on Astra's tasks 1–6 (commit 7920b6e): 0211 keys uniqueness on **staged** batches only (partial unique index; ON CONFLICT + lookup carry the predicate) and the lib retires a batch to `superseded` on the RPC's `stale_before_state`, so the same file can be re-staged instead of 409ing forever; `invalid_price` → 409, `forbidden` → 403, `batch_not_found` → 404 (were 500); the apply route pinned as Tier A in `tests/step-up-tier-map.test.ts`.
+
+Task 7 (Astra, commit d31e13f): BOMs stripped from the two new files, cents rounded before `formatCents`, `aria-label` on the file input; `next build` exit 0 with network.
+
+**Rehearsal catch (commit f209d03):** the first sim run proposed Butter 2.25 → 80.30 and Kosher Salt 6.98 → 62.83. `priceAtRoot` priced one root (the 36 lb case) while `vendor_items.unit_price` is per the SKU's `price_basis` (per each = the pound, seed 38). Four of five "price changed" rows and all three "pack changed" rows were that artifact (`packComparison` scaled the vendor contents by the basis and proposed shrinking Butter's root to 16 oz). Fixed: a proposal is dollars for ONE unit of the declared basis (per_case/per_bundle = root, per_each = the vendor's each, per_lb = 16 oz, per_dozen = 12); pack comparison is basis-independent.
+
+Sim rehearsal after the fix (`scripts/sim/rehearsals/2026-09-20-v3c2-vendor-import.ts`; sim restored cold-empty from the 2026-09-20 06:22Z prod config snapshot, post seed 38; 0211 applied to the sim; run 0a119994):
+
+| Step | Result |
+|---|---|
+| Stage `list-izzy-main-2026-09-18.csv` on PFG | batch `34a98aa3`, 84 rows → 84 observations: noop 20 · price 2 · needs_person 62 (no_match 15 · price_basis_unresolved 36 · pack_dimension_mismatch 8 · duplicate_item_number 2 · per_lb_on_count_root 1); default plan 2 ops |
+| The two moves | Butter 1051772: 2.25 → 2.23 per each · Powdered sugar 913783: 33.51 → 33.04 |
+| Stage again | same batch id, same digest |
+| Human edits Butter's price under the staged batch, apply both | `409 stale_before_state`, batch → `superseded`, zero `vendor_import` price rows |
+| Stage again | new batch `e77c6ec1`; Butter now `needs_person / stale_price_evidence`; price 1 |
+| Apply the sugar move | one `sku.price_supersede`, `non_atomic: []`, read-back 33.04 @ 2026-09-18 `source=vendor_import` |
+| Replay same digest | identical stored result, no new rows |
+| Audit | `vendor.import_staged` ×2 batches; per batch `sku.price_supersede` + `vendor.import_applied` |
+| Stage a third time | fresh batch, noop 21, default plan 0 ops (an applied batch never blocks re-staging) |
+
+Harness: `fixtures/manifest.json` 147 → 150 tables (the three 0211 tables are HISTORY), private `schema-meta.json` +3 tables / +7 FKs, `tests/sim-fixtures.test.ts` pins 150 / 389; claim `admin.vendor_import.stage-review-apply` (manager guide § Ordering 8, revision f33a8be) + the journey leg in `journeys/ordering-receiving.spec.ts` (GM stages via multipart, pinned counts, same file twice, employee 403, GM apply 403 — the sim roster has no level-9 persona, so the apply write is the rehearsal above).
