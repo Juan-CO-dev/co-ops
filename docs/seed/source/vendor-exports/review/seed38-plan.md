@@ -29,7 +29,7 @@ was used during implementation; validation uses the committed fixtures.
 | vendor.deactivate | 1 | 0 |
 | vendor.merge | 1 | 0 |
 | sku.vendor_repoint | 1 | 0 |
-| sku.create | 1 | 0 |
+| vendor_item.create | 1 | 0 |
 | sku.item_number_set | 17 | 0 |
 | sku.price_basis_set | 53 | 0 |
 | sku.pack_level_supersede | 15 | 0 |

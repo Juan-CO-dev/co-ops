@@ -19,7 +19,7 @@ describe("seed38 real evidence manifest", () => {
     expect(input.digest).toBe(INPUT_DIGEST);
     const counts: Record<string, number> = {};
     for (const op of build().operations.filter(o => o.status === "ready")) counts[op.action] = (counts[op.action] ?? 0) + 1;
-    expect(counts).toEqual({ "vendor.create": 1, "vendor.deactivate": 1, "vendor.merge": 1, "sku.vendor_repoint": 1, "sku.create": 1, "sku.item_number_set": 17, "sku.price_basis_set": 53, "sku.pack_level_supersede": 15, "sku.price_supersede": 13 });
+    expect(counts).toEqual({ "vendor.create": 1, "vendor.deactivate": 1, "vendor.merge": 1, "sku.vendor_repoint": 1, "vendor_item.create": 1, "sku.item_number_set": 17, "sku.price_basis_set": 53, "sku.pack_level_supersede": 15, "sku.price_supersede": 13 });
   });
   it.each([["Butter", "per_each"], ["Duke's Mayo", "per_each"], ["Onion Powder", "per_lb"], ["Sour Cream", "per_case"], ["Turkey", "per_lb"], ["Ricotta", null]])("reconciles %s mechanically", (sku, basis) => {
     expect(build().basis.find(b => b.sku === sku)?.basis).toBe(basis);
@@ -123,8 +123,8 @@ describe("seed38 real evidence manifest", () => {
     expect(latestPrice([...rows, { ...rows[0]!, id: "null", recorded_at: null }], "s")?.id).toBe("null");
   });
   it("adjudicates every requested action", () => {
-    for (const action of ["vendor.create", "sku.create", "sku.item_number_set", "sku.price_basis_set"]) expect(isDestructive(action)).toBe(false);
-    for (const action of ["vendor.deactivate", "vendor.merge", "sku.pack_level_supersede", "sku.price_supersede", "sku.vendor_repoint"]) expect(isDestructive(action)).toBe(true);
+    // CC 2026-09-20: every seed-38 write follows the sku.angel_import precedent — a human-driven change to shared config is destructive.
+    for (const action of ["vendor.create", "vendor_item.create", "sku.item_number_set", "sku.price_basis_set", "vendor.deactivate", "vendor.merge", "sku.pack_level_supersede", "sku.price_supersede", "sku.vendor_repoint"]) expect(isDestructive(action)).toBe(true);
   });
 });
 describe("seed38 CLI guard (no client created)", () => {

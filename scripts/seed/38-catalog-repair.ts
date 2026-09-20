@@ -17,7 +17,7 @@ import { buildWritePlan, TABLES, type Evidence, type Snapshot, type Row, type Op
 export const SOURCE_DIR = "docs/seed/source/vendor-exports";
 export const HOSTS = { sim: `${SIM_PROJECT_REF}.supabase.co`, prod: "bgcvurheqzylyfehqgzh.supabase.co" } as const;
 export const INPUT_DIGEST = "5d9f255a21bbe0cb1b5646212af1a082b63c939a8c966443df9ef013f15d5d14";
-export const ACTION_ORDER: AuditAction[] = ["vendor.create", "vendor.deactivate", "vendor.merge", "sku.vendor_repoint", "sku.create", "sku.item_number_set", "sku.price_basis_set", "sku.pack_level_supersede", "sku.price_supersede"];
+export const ACTION_ORDER: AuditAction[] = ["vendor.create", "vendor.deactivate", "vendor.merge", "sku.vendor_repoint", "vendor_item.create", "sku.item_number_set", "sku.price_basis_set", "sku.pack_level_supersede", "sku.price_supersede"];
 const canonical = (value: unknown): string => JSON.stringify(value, (_key, v) => v && typeof v === "object" && !Array.isArray(v) ? Object.fromEntries(Object.entries(v).sort(([a], [b]) => a.localeCompare(b))) : v);
 const equal = (a: unknown, b: unknown) => canonical(a) === canonical(b);
 export function validateArgs(args: string[], env: Record<string, string | undefined> = process.env) {

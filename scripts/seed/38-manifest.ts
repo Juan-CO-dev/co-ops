@@ -156,7 +156,7 @@ export function buildWritePlan(csv: string, baseline: Snapshot, live: Snapshot, 
   if (mini && (mini.vendor_id !== thompsonId || mini.active !== true || number(mini.units_per_pack) !== 60 || number(mini.each_size) !== 1 || mini.each_measure !== "oz" || mini.item_number != null || mini.sku_class !== ripples.sku_class)) throw new Error("Mini Chips identity differs from manifest");
   if (!mini && state.vendor_items.some(s => s.id === MINI_ID)) throw new Error("Mini SKU ID collision");
   const miniId = mini?.id ?? MINI_ID;
-  add("sku.create", str(miniId), mini ? [] : [
+  add("vendor_item.create", str(miniId), mini ? [] : [
     { table: "vendor_items", before: null, after: { id: miniId, vendor_id: thompsonId, name: "Utz Mini Chips (1 oz)", sku_class: ripples.sku_class, active: true, item_number: null, pack_format: "Box", units_per_pack: 60, each_size: 1, each_measure: "oz", each_container_label: "Bag" } },
     { table: "sku_pack_levels", before: null, after: { id: "38000000-0000-5000-a000-000000000003", sku_id: miniId, label: "Bag", contains_qty: 1, contains_level_id: null, contains_measure_unit: "oz", display_ordinal: 1, active: true } },
     { table: "sku_pack_levels", before: null, after: { id: "38000000-0000-5000-a000-000000000004", sku_id: miniId, label: "Box", contains_qty: 60, contains_level_id: "38000000-0000-5000-a000-000000000003", contains_measure_unit: null, display_ordinal: 0, active: true } },
@@ -269,7 +269,7 @@ export function buildWritePlan(csv: string, baseline: Snapshot, live: Snapshot, 
     add("sku.price_supersede", `Utz:${str(u.sku.id)}`, existing ? [] : [{ table: "vendor_price_history", before: null, after: { id, vendor_item_id: u.sku.id, unit_price: unitPrice, effective_date: u.date, recorded_by: null, source: "seed_38", source_note: `${JUAN}; ${u.bagPrice}/bag x ${u.count} bags/root = ${unitPrice}/root` } }], [JUAN], `${str(u.sku.name)}: ${u.bagPrice}/bag x ${u.count} bags/root = ${unitPrice}/root`);
   }
   // Literal reviewed logical operation counts (PC-004 is included as an already).
-  const expected = { "vendor.create": 1, "vendor.deactivate": 1, "vendor.merge": 1, "sku.vendor_repoint": 1, "sku.create": 1, "sku.item_number_set": 17, "sku.price_basis_set": 53, "sku.pack_level_supersede": 15, "sku.price_supersede": 14 };
+  const expected = { "vendor.create": 1, "vendor.deactivate": 1, "vendor.merge": 1, "sku.vendor_repoint": 1, "vendor_item.create": 1, "sku.item_number_set": 17, "sku.price_basis_set": 53, "sku.pack_level_supersede": 15, "sku.price_supersede": 14 };
   for (const [action, count] of Object.entries(expected)) if (plan.operations.filter(o => o.action === action).length !== count) throw new Error(`Literal manifest count mismatch: ${action} expected ${count}`);
   return plan;
 }

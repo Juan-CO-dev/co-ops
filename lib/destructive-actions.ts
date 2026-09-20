@@ -70,8 +70,11 @@ export const DESTRUCTIVE_ACTIONS = [
   "role_model.renumber",
 
   // Vendor lifecycle
-  // vendor.create is non-destructive under CC's seed-38 ruling (2026-09-20).
+  "vendor.create",
+  // Seed 38 (CC 2026-09-20): catalog-repair writes follow sku.angel_import — a human-driven change to shared config, destructive.
   "vendor.merge",
+  "sku.item_number_set",
+  "sku.price_basis_set",
   "sku.pack_level_supersede",
   "sku.price_supersede",
   "sku.vendor_repoint",
