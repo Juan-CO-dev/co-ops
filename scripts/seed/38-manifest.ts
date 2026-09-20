@@ -193,11 +193,15 @@ export function buildWritePlan(csv: string, baseline: Snapshot, live: Snapshot, 
   }
   const eggReview = review.find(r => r.row_id === "IN-068")!;
   const eggCurrent = JSON.parse(eggReview.current) as Row;
-  const eggLine = one(state.order_guide_lines.filter(l => l.id === eggCurrent.guide_line_id), "IN-068 guide line");
-  if (eggLine.sku_id != null || eggLine.label !== "Eggs" || !["439686", "517842"].includes(str(eggLine.item_number))) throw new Error("IN-068 guide identity drift");
+  // NATURAL KEY, not the prod UUID: seed 37 mints guide-line ids per target (the sim's differ from prod's), and the
+  // line's identity is (PFG guide, label "Eggs", unlinked, the old or new egg number). The reviewed id, when present,
+  // must agree — a different row under the same key is drift, not a match.
+  const pfgGuideIds = new Set(state.vendor_order_guides.filter(g => g.vendor_id === vendor("PFG").id).map(g => g.id));
+  const pfgSectionIds = new Set(state.order_guide_sections.filter(s => pfgGuideIds.has(s.guide_id)).map(s => s.id));
+  const eggLine = one(state.order_guide_lines.filter(l => pfgSectionIds.has(l.section_id) && l.label === "Eggs" && l.sku_id == null && ["439686", "517842"].includes(str(l.item_number))), "IN-068 guide line");
+  if (state.order_guide_lines.some(l => l.id === eggCurrent.guide_line_id) && eggLine.id !== eggCurrent.guide_line_id) throw new Error("IN-068 guide identity drift");
   const eggSection = one(state.order_guide_sections.filter(s => s.id === eggLine.section_id), "Eggs section");
   const eggGuide = one(state.vendor_order_guides.filter(g => g.id === eggSection.guide_id), "Eggs guide");
-  if (eggGuide.vendor_id !== vendor("PFG").id) throw new Error("IN-068 wrong vendor guide");
   const eggNote = "tentative — confirm at the door";
   add("sku.item_number_set", "IN-068", [update("order_guide_lines", eggLine, { item_number: "517842", note: str(eggLine.note).includes(eggNote) ? eggLine.note : [str(eggLine.note), eggNote].filter(Boolean).join("\n") })], [eggReview.evidence, "seed38-rulings.md IN-068"], `Unlinked Eggs guide line only; guide=${str(eggGuide.id)}; SKU numbers unchanged`);
   // Use the pre-seed catalog's exact number, not a number just attached above.
