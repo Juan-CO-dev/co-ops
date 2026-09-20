@@ -35,8 +35,9 @@ function purchaseContents(row: ExportRow, basis: Basis | null): Contents | null 
   return null;
 }
 
-export function packComparison(row: ExportRow, root: Root | null, basis: Basis | null = "per_case"): { same: boolean; dimensionMismatch: boolean; proposedQuantity?: number } {
-  const contents = purchaseContents(row, basis);
+/** The root is the vendor's shipping pack (seed 38 aligned every root to it), whatever the price basis. */
+export function packComparison(row: ExportRow, root: Root | null): { same: boolean; dimensionMismatch: boolean; proposedQuantity?: number } {
+  const contents = vendorContents(row);
   if (!root || !contents) return { same: false, dimensionMismatch: false };
   if (contents.dimension !== root.dimension) return { same: false, dimensionMismatch: true };
   if (contents.unit !== root.unit) return { same: false, dimensionMismatch: false };
@@ -44,18 +45,31 @@ export function packComparison(row: ExportRow, root: Root | null, basis: Basis |
   return { same, dimensionMismatch: false, ...(same ? {} : { proposedQuantity: contents.quantity }) };
 }
 
-/** Dollars for ONE current purchase root; the declared purchase basis is mandatory. */
+/** What ONE unit of the catalog's price basis contains, in the root's unit: the case root, the vendor's each, a pound, a dozen. */
+function basisContents(row: ExportRow, root: Root, basis: Basis): number | null {
+  if (basis === "per_case" || basis === "per_bundle") return root.quantity;
+  if (basis === "per_lb") return root.dimension === "weight" && root.unit === "oz" ? 16 : null;
+  if (basis === "per_dozen") return root.dimension === "count" && root.unit === "each" ? 12 : null;
+  const contents = vendorContents(row);
+  if (!contents || contents.dimension !== root.dimension || contents.unit !== root.unit) return null;
+  return contents.quantity / (row.pack_qty! * (row.pack_inner_qty ?? 1));
+}
+
+/** Dollars for ONE unit of the catalog's declared price basis (`vendor_items.price_basis`, seed 38): unit_price is
+ * per each for Butter (the pound) while its root is the 36 lb case. The basis is mandatory; never guess it. */
 export function priceAtRoot(row: ExportRow, root: Root | null, basis: Basis | null): number | null {
   if (!root || !positive(root.quantity) || !basis) return null;
+  const target = basisContents(row, root, basis);
+  if (!positive(target)) return null;
   if (row.price_per_lb_cents != null) {
     if (root.dimension !== "weight" || root.unit !== "oz" || !positive(row.price_per_lb_cents)) return null;
-    return round(row.price_per_lb_cents / 100 * root.quantity / 16);
+    return round(row.price_per_lb_cents / 100 / 16 * target);
   }
   if (!positive(row.price_cents)) return null;
   const billed = reconcileBasis(row);
   const contents = purchaseContents(row, billed);
   if (!contents || contents.dimension !== root.dimension || contents.unit !== root.unit) return null;
-  const result = row.price_cents / 100 * root.quantity / contents.quantity;
+  const result = row.price_cents / 100 / contents.quantity * target;
   return positive(result) ? round(result) : null;
 }
 

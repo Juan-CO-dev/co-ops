@@ -31,7 +31,7 @@ export function matchObservations(rows: readonly ExportRow[], catalog: readonly 
       add("needs_person", "stale_price_evidence"); return result;
     }
     const noPrice = row.price_cents == null && row.price_per_lb_cents == null;
-    const comparison = packComparison(row, sku.root, sku.price_basis);
+    const comparison = packComparison(row, sku.root);
     if (row.price_per_lb_cents != null && sku.root?.dimension !== "weight") add("needs_person", "per_lb_on_count_root");
     else if (comparison.dimensionMismatch) add("needs_person", "pack_dimension_mismatch");
     else if (!noPrice) {
