@@ -59,3 +59,27 @@ export interface Observation { source_row: number; row: ExportRow; match: { rule
 export type Decision = "accept" | "skip";
 export interface PlanOp { action: "sku.price_supersede" | "sku.item_number_set" | "sku.pack_level_supersede"; sku_id: string; source_row: number;
   before: Record<string, unknown>; after: Record<string, unknown> }
+
+/** All persisted observation reasons, including server-side pack review. */
+export const REASONS = [
+  "duplicate_item_number",
+  "duplicate_name",
+  "no_match",
+  "inactive_sku",
+  "item_number_conflict",
+  "item_number_missing",
+  "stale_price_evidence",
+  "per_lb_on_count_root",
+  "pack_dimension_mismatch",
+  "price_date_missing",
+  "price_basis_unresolved",
+  "price_depends_on_pack",
+  "price_same",
+  "same_date_price_conflict",
+  "price_changed",
+  "pack_changed",
+  "no_price_supplied",
+  "stale_batch_evidence",
+  "conflicting_batch_evidence",
+  "pack_hierarchy_review"
+] as const;

@@ -27,6 +27,8 @@ import type { MeasureUnitFactor } from "@/lib/recipe-math";
 import { loadOrderGuide, ORDER_GUIDE_EDIT_MIN } from "@/lib/order-guides";
 import { VendorDetailClient } from "@/components/admin/vendors/VendorDetailClient";
 import { OrderGuidePanel } from "@/components/admin/vendors/OrderGuidePanel";
+import { VendorImportPanel } from "@/components/admin/vendors/VendorImportPanel";
+import { VENDOR_IMPORT_STAGE_MIN, VENDOR_IMPORT_APPLY_MIN } from "@/lib/vendor-import-shared/levels";
 import { PageHeader } from "@/components/ui/PageHeader";
 
 export default async function AdminVendorDetailPage({
@@ -202,12 +204,16 @@ export default async function AdminVendorDetailPage({
       {/* Order guide (V3-A §6) — the vendor's own sheet order, which every PO surface
           follows. A sibling of the detail editor rather than a card inside it: the guide
           belongs to the vendor, not to any one of the editor's role-gated concerns. */}
-      <OrderGuidePanel
-        vendorId={vendor.id}
-        vendorName={vendor.name}
-        initial={{ guide: orderGuide, skusNotOnGuide }}
-        canEdit={level >= ORDER_GUIDE_EDIT_MIN}
-      />
+      <div id="order-guide">
+        <OrderGuidePanel
+          vendorId={vendor.id}
+          vendorName={vendor.name}
+          initial={{ guide: orderGuide, skusNotOnGuide }}
+          canEdit={level >= ORDER_GUIDE_EDIT_MIN}
+        />
+      </div>
+      <VendorImportPanel vendorId={vendor.id} vendorName={vendor.name}
+        canStage={level >= VENDOR_IMPORT_STAGE_MIN} canApply={level >= VENDOR_IMPORT_APPLY_MIN} />
     </div>
   );
 }

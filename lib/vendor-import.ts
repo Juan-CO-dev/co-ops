@@ -6,7 +6,7 @@ import { selectAllRows } from "@/lib/supabase-paginate";
 import { audit } from "@/lib/audit";
 import { getRoleLevel } from "@/lib/roles";
 import type { AuthContext } from "@/lib/session";
-import { ORDER_GUIDE_EDIT_MIN } from "@/lib/order-guides";
+import { VENDOR_IMPORT_STAGE_MIN, VENDOR_IMPORT_APPLY_MIN } from "@/lib/vendor-import-shared/levels";
 import { buildPackChain, chainRootLabel, type PackChainLevel } from "@/lib/pack-chain-shared";
 import { detectAdapter } from "@/lib/vendor-import-shared/adapters";
 import type { CatalogSku, Decision, Observation, PlanOp } from "@/lib/vendor-import-shared/model";
@@ -15,8 +15,7 @@ import { matchObservations, observationKey, planDigest, planFromDecisions, snaps
 export class VendorImportError extends Error {
   constructor(public status: number, public code: string, message?: string) { super(message ?? code); }
 }
-export const VENDOR_IMPORT_STAGE_MIN = ORDER_GUIDE_EDIT_MIN;
-export const VENDOR_IMPORT_APPLY_MIN = 9;
+export { VENDOR_IMPORT_STAGE_MIN, VENDOR_IMPORT_APPLY_MIN } from "@/lib/vendor-import-shared/levels";
 export const MAX_IMPORT_BYTES = 2 * 1024 * 1024;
 const ADAPTER_VERSION = "v3c2-v1";
 type BeforeState = Record<string, Record<string, unknown>>;
