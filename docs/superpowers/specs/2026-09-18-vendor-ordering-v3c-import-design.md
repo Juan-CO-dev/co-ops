@@ -170,6 +170,14 @@ Wave 1 pins all requested pack examples, sub-cent per-pound prices, quote handli
 
 Before a future writer ships: tests for replay-after-commit, interrupted transport, two competing guide saves, foreign section/line/SKU, inactive retained versus new placement, case-insensitive sections, duplicate appends, changed before-state, no-op tokens, account scope, whole-chain pack versions, unsupported price basis and frozen confirmed PO keys. Exercise the coordinator in sim only; verify rollback on a forced late failure and service-role-only grants. CC reviews the plan, schema and code; ordinary PR CI/build applies then. Juan retains production merge/application authority. US Foods and receipt adapters now have real-file regression fixtures; any writer activation still requires the separate review above.
 
+## 9a. Juan's floor answers (2026-09-19 night)
+
+1. **Live lists confirmed:** Izzy MAIN at PFG; the managed Order Guide #514925 at US Foods.
+2. **Twins: no fixed primary.** "Whichever one has what we need available." The product ladder's rung ② (most-recently-received active member) IS the policy; seed 38 designates no primaries.
+3. **Shell eggs: medium, tentatively** (517842) — "I think medium, I'm not sure." Confirm at the door; the seed points the plain "Eggs" line at 517842 with a note.
+4. **Dried Chives, vinegars, mint, strawberries, towels:** not sure; "some of those are just specials or seasonal." → occasional-purchase class; NOT standing guide lines; never added to a guide from purchase history alone.
+5. **Capitol Hill orders on the SAME PFG and US Foods accounts, choosing the store in the vendor's UI at order time.** Consequence for §3: the account→location binding is not by account. Both shops share item numbers, prices and lists; per-location facts (pars, sequence, active overlay) come from CO-OPS, not from the vendor. Exports are account-wide evidence for BOTH locations.
+
 ## 9. Open questions for Juan — floor answers only
 
 > CC 2026-09-19: the former question 6 (mini-chip billing $23.35 vs $23.40) is withdrawn — the Thompson ticket's $23.35 line is the **60 oz Utz Club Pack** (a 60-OUNCE bag, qty 2), not the 60-COUNT mini-chips box; the ticket carries no mini-chips line at all. Mini chips are priced solely from Juan's note ($0.39/bag, 60/box). Nothing to reconcile.
