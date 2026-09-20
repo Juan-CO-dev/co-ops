@@ -133,6 +133,16 @@ the `*-shared` law so it is finally testable (10 tests incl. a board-parity orac
 
 ## NOW (build — small, unblocked, dormant→live)
 
+**🟡 VENDOR ORDERING V3-C — the export importer (opened 2026-09-16, in flight 2026-09-20):**
+V3-A order guides ✅ (#370, 0205) · V3-B barcode at the door ✅ (#371, 0206) · **V3-C-1
+catalog repair ✅ (seed 38 + 0210 on prod 2026-09-20: Thompson Delivers, 17 item numbers,
+15 pack roots, 13 prices, 53 purchase bases)** · **V3-C-2 v1 importer 🟡 (branch
+`feat/v3c-2-importer`, plan `docs/superpowers/plans/2026-09-20-v3c-2-vendor-importer.md`,
+mig 0211): stage a PFG / US Foods / receipts export on the vendor page, dry-run report,
+row decisions, one transactional apply; guide writes + SKU creation stay human.** After
+merge: second export cycle (October) is the acceptance; then v2 (guide RPC in the
+transaction, staged SKU creation, receipts OCR). Evidence: `docs/seed/source/vendor-exports/`.
+
 **✅ NOW COLUMN COMPLETE (2026-07-30):** photo uploader (#211, mig 0164), Written
 Reports + Settings (#212), ops guardrails (#213 — cron visibility, backup runbook,
 adoption card, mark-paid wiring, orphaned-mirror check). The board now waits on the
