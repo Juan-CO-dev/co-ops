@@ -41,6 +41,11 @@ import { DESTRUCTIVE_ACTIONS } from "@/lib/destructive-actions";
  * to filter for.
  */
 export const NON_DESTRUCTIVE_ACTIONS = [
+  // CC seed-38 adjudication, 2026-09-20.
+  "vendor.create",
+  "sku.create",
+  "sku.item_number_set",
+  "sku.price_basis_set",
 
   // ── AUTH & SESSION ────────────────────────────────────────────────────
   // Sign-in, lockout, token and step-up events. Security-relevant and

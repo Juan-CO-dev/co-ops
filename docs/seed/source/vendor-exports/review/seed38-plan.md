@@ -1,67 +1,131 @@
+﻿# Seed 38 — catalog repair and vendor identity (built 2026-09-20)
+
+Authority: seed38-rulings.md + the CODE dispatch override the earlier review draft.
+Branch: feat/seed38-catalog-repair, C:/Users/conta/co-ops-astra. Files only; CC commits,
+reviews, applies 0210, and runs the seed on sim then prod. No network or DB access
+was used during implementation; validation uses the committed fixtures.
+
+## Files and contracts
+
+- 0210_vendor_items_price_basis.sql: exactly the reviewed nullable text column,
+  five-value CHECK and COMMENT. No default, grants, RLS, enum or data changes.
+- 38-manifest.ts: pure planner over the real 293-row CSV, the September 19 catalog
+  and normalized vendor evidence. Literal review and operation counts; exact SKU
+  identities; no fuzzy pack changes. The CLI pins all evidence with SHA-256.
+- 38-catalog-repair.ts: one guarded CLI, default dry-run, paginated complete reads,
+  checked UPDATE rowcounts, read-back after every mutation and audit, closed audit
+  vocabulary, one audit per changed class, and explicit interrupted-run refusal.
+- Audit registries: existing vendor.create moves to NON_DESTRUCTIVE_ACTIONS per
+  the dispatch; vendor.deactivate is reused; the other seven new names are typed
+  and classified exactly as requested. This changes no permission or step-up gate.
+- seed38-manifest.test.ts + seed38-execution.test.ts: real-fixture math/counts and
+  refusal tests, plus the actual runner against an in-memory Supabase double.
+
+## First-run fixture counts (logical operations)
+
+| Class | Ready | Already |
+|---|---:|---:|
+| vendor.create | 1 | 0 |
+| vendor.deactivate | 1 | 0 |
+| vendor.merge | 1 | 0 |
+| sku.vendor_repoint | 1 | 0 |
+| sku.create | 1 | 0 |
+| sku.item_number_set | 17 | 0 |
+| sku.price_basis_set | 53 | 0 |
+| sku.pack_level_supersede | 15 | 0 |
+| sku.price_supersede | 13 | 1 |
+
+The 17 number operations are 16 SKU attachments plus IN-068's existing guide
+line. Of the 92 PB rows, 46 reconcile and 46 remain basis_unresolved; seven Utz
+assignments carry the explicit per_each ruling. Prices: six PC appends plus seven
+Utz appends; Black peppercorn is already current; Ever Roast is held. dedupe_level
+is withdrawn; guide_absent has no mutations. Historical prices/levels are kept.
+
+## Implementation decisions and assumptions
+
+- [ASSUMPTION] IN-068 has no sku_id; both its guide line and the distinct plain
+  Eggs SKU currently carry 439686. Amend ONLY the existing unlinked guide line to
+  517842 and append "tentative — confirm at the door". Preserve sku_id=NULL and
+  every SKU number. The full-model save_order_guide RPC validates ownership and
+  the old token, preserves all IDs/order, and advances the token atomically.
+  This follows the original plan's guide exception; ordinary SKU numbers remain
+  strictly null-to-value. A different non-null SKU number always refuses.
+- [ASSUMPTION] Keep the locked ledger denomination: dollars per purchase root.
+  Ripples stores 4.37 x 9 = 39.33/Box; Mini stores 0.39 x 60 = 23.40/Box, both
+  with price_basis=per_each (bag). Pepperoni stores 4.99 x 55.88/16 = 17.427575
+  per piece. The printed bag/pound rates and arithmetic remain in source_note,
+  dry-run and audit. No costing function is changed.
+- [ASSUMPTION] Catch-weight receipts explicitly billed per lb normalize the
+  existing purchase-root price by its proven pounds before comparing to the
+  billed rate. Thus Ovengold 58.18 / (148/16) reconciles to 6.29/lb. No unproven
+  count-to-weight or volume-to-weight conversion is made.
+- [ASSUMPTION] Country Snacks has FIVE flavor SKUs, each a 2.75-oz Bag, and no
+  mixed-case SKU. Apply 1.80/bag to all five, keeping those identities and roots.
+  Do not invent five separate 14-bag flavor cases from a mixed-flavor receipt.
+  Thompson's Mini SKU is new and intentionally has no ticket number 00602.
+- The literal whole-vendor-pack root rule computes 15 repairs, including Butter
+  16→576 oz, Shredded Mozz 80→480 oz, Ground Pork 80→160 oz, Ricotta 160→320 oz,
+  Salt 48→432 oz and Garlic Powder 96→288 oz, in addition to the named herbs,
+  red onion, Panko, Fusilli, Garlic and Cheddar. It changes cost denominators;
+  CC must inspect these printed repairs in the dry-run. Labels/ordinals stay as
+  requested. Existing pointer children stay reachable; only roots are replaced.
+  Dimension mismatches are printed as pack_unresolved, never guessed.
+- Basis decisions use the reviewed pre-seed ledger values, so a price append does
+  not change the next run's basis plan. Unresolved entries remain an explicit
+  data errand. Original exact-number joins determine pack eligibility forever;
+  newly attached ICE1 cannot authorize a later accidental lettuce pack repair.
+
+## Runtime and provenance
+
 ```text
-Offline review-check output (2026-09-20; commands in verification.md):
-dedupe_level: 55
-price_conflict: 8
-price_basis: 92
-item_number: 68
-vendor_merge: 29
-guide_absent: 41
-needs_juan: 74
-total: 293
+node --env-file=<env> --import tsx scripts/seed/38-catalog-repair.ts --target sim
+node --env-file=<env> --import tsx scripts/seed/38-catalog-repair.ts --target sim --execute
+node --env-file=<env> --import tsx scripts/seed/38-catalog-repair.ts --target prod --execute --i-have-juans-word
 ```
 
-# Seed 38 — catalog repair and vendor identity review
+Only the usual NEXT_PUBLIC_SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY are needed.
+No env file loads on import. Fixed exact HTTPS hosts match seed 26/37. An omitted
+--target is accepted only for dry-run and only on one of those two known hosts.
+Execute internally starts Node with react-server for the house audit() helper;
+no extra flag is required from CC. Neither psql nor DATABASE_URL is required.
 
-**REVIEW DRAFT, not executable approval.** [Sheet](seed38-review.csv); [verification and command transcript](verification.md). CC rules on the sheet and plan; Juan answers flagged floor rows; only then is the seed authored. No network, seed script, migration file, commit, or production operation belongs to this wave.
+The existing 0201 angel_wave7_snapshot(NULL) RPC reads information_schema.columns
+at runtime. Missing 0210 or missing write columns refuse before any write.
+Unexpected user-defined column types refuse for pg_enum review; this manifest
+inserts no enum value. vendors.notes is optional: absence is printed, the note
+is retained in provenance, and no absent column is written.
 
-## Ground truth and scope decisions
+Writes follow vendor → SKU → pack → price classes. Because active level labels
+are unique, a pack retires its old root before inserting its new root. Every
+write is read back. Every audit carries actor_context=seed_38, input digest,
+before/after IDs and rows, evidence, counts, and the registry's destructive flag.
+Merge provenance explicitly names both vendor IDs. Price rows also carry source
+and arithmetic source_note. Identical reruns verify provenance and write nothing.
 
-The complete September 19 export contains 229 SKUs, 186 levels (95 active, 91 inactive), 103 prices, and 163 guide lines. **All 55 repeated-ordinal SKUs already have unique active ordinals.** The 28 conflicting historical groups are version history, not duplicate live chains (BC-009). Fifty DL rows retain current IDs; five name an export-matching historical source for a possible whole-chain replacement: Basil, Garlic, Oregano, Parsley, Thyme. Retired source IDs never become active again. CC must explicitly approve those pack changes; they are not deduplication no-ops.
+Like seeds 36/37, the overall seed is NOT atomic. On any failure it stops; CC
+must reconcile committed effects. A missing class audit on an already-applied
+operation refuses instead of silently continuing or inventing recovery history.
+Deterministic insert IDs prevent duplicate prices/levels; newer current prices,
+changed identities, changed packs and unrelated concurrent writes refuse.
+Only the guide amendment is protected by an existing transactional RPC. The
+sim execution remains required before production; offline tests do not validate
+PostgREST, live SQL constraints or the deployed RPCs.
 
-Eight SKUs have historical same-date price differences. Black peppercorn's exact winner is already current. Oregano has a conditional superseding proposal, coupled to its pack decision. Six have no evidence-supported winner; proximity to a later quote cannot authenticate a historical price. Keep them held.
+## Verification
 
-The 68 IN rows are the requested 67 numberless linked lines **plus** Juan's existing plain-Eggs line amendment. That line is unlinked, and no SKU has number 517842. Propose printed number 517842 and note `tentative — confirm at the door`; keep its SKU link null until CC approves a genuine shell-egg identity. Never bind it to cooked eggs or invent a SKU ID.
+Focused fixture/runner suite: 37 tests (counts, named basis examples, unresolved,
+collision/Delmar/Ripples refusals, append-only history, read-only dry-run, nine
+class audits, zero-write rerun, UPDATE 0 and fail-open audit loss).
+Final full npm test, tsc --noEmit and scoped eslint results are in the handoff.
 
-Boar's Head has 27 SKUs; Delmar has zero. VM contains one decision header, one loser row, and all 27 member inventories. Only the header needs Juan. `vendors.notes` exists in `lib/admin/vendors.ts`, but its value is omitted from the snapshot; append the purveyor attribution after reading existing notes.
-
-Receipt coverage cannot fill all 67 lines. Baldor ICE1 is tentative for generic Lettuce; A3/RA1A/D/PAMILKRB1 match none of the other numberless Baldor labels. Cardinal 1030 matches Sub Roll; 3290 has no matching guide SKU. Berger 1001/1010 have no catalog/guide SKU. Thompson has no vendor row: 27149 matches Country Snacks' Ripples pack but cannot become that vendor's number. Raw ticket 00602 means a 60-ounce bag; CC §9 overrides its stale normalized mini-chip interpretation. Country Snacks/Amazon/Webstaurant remain null. Other unmatched numbers remain unknown, not nonexistent.
-
-## Migration 0210 (DDL for the future seed PR)
-
-Land as `supabase/migrations/0210_vendor_items_price_basis.sql`, after checking lineage and authorized schema. No file is created in this wave.
-
-```sql
-ALTER TABLE public.vendor_items
-  ADD COLUMN price_basis text
-  CONSTRAINT vendor_items_price_basis_check
-  CHECK (price_basis IN
-    ('per_case', 'per_each', 'per_lb', 'per_dozen', 'per_bundle'));
-COMMENT ON COLUMN public.vendor_items.price_basis IS
-  'Reviewed vendor purchase denomination. Nullable until adjudicated; no default. '
-  'Does not reinterpret vendor_price_history.unit_price, which remains dollars '
-  'per internal purchase root. Pack conversion is required when bases differ.';
-```
-
-No default, NOT NULL, enum, RLS relaxation, or grant change. The distinction is necessary: Butter is per_each (one pound), Duke's per_each (one gallon), turkey per_lb, and Cardinal per_dozen, while turkey's stored $58.18 still prices a 148-oz piece. Ricotta's two-tub internal unit is unresolved. A five-value column cannot encode conversion factors; ordering must not treat the stored piece price as a pound price. `computeSkuCostPerOz` remains unchanged.
-
-## Write order and exact operations
-
-Follow seeds 36/37: pure manifest/planner, default dry-run, target guards, digest-bound execution, direct-invocation guard, no env loading on import. Future implementation plan and code require CC's cross-family review before execution.
-
-1. Read complete tables using pagination, schema columns/enums, all vendor references and guide tokens. Assert literal input counts above, exact reviewed IDs/values, 92 priced SKUs, 67 missing-number lines, 41 absent lines, 27/0 merge members, and approved sheet hash. Replace literals only through a fresh reviewed export. Refuse unknown/missing/stale rows and unresolved mutating proposals before any write.
-2. **dedupe_level:** `no_op_already_retired` writes nothing. A real redundant active row would receive only `active=false`, with survivor pointer reachability validated. Five `review_whole_chain_replacement` rows are held: after explicit approval, deactivate the entire current active set and insert a fresh complete chain from the named source contents. Validate one root, acyclicity, reachability, measures, labels, and ounce resolution; derive/check flat mirror fields. Never apply `retire_ids` blindly or reactivate historical IDs.
-3. **price_basis:** guarded `vendor_items.price_basis = proposed` for each approved PB row. Equal values are no-ops; different non-null values refuse. Low-confidence inferred rows need CC adjudication. No existing price/pack amount changes merely from setting basis.
-4. **price_conflict:** preserve every historical row. PC-004 writes nothing. PC-007 conditionally INSERTs `vendor_price_history` for the same `vendor_item_id`, `unit_price=55.27`, `effective_date=2026-09-20`, only after the reviewed 80-oz pack is established and the selected source is not already latest. Refresh review date/digest if execution is later. Carry the sheet note/source IDs in audit metadata; only use a ledger note column if schema confirms it. Six held rows write nothing until adjudicated. Recheck `effective_date DESC, recorded_at DESC, id DESC`.
-5. **item_number:** guarded null-to-number UPDATE on the reviewed `vendor_items.id`; empty proposals do nothing. Refuse same-vendor identifier collisions. IN-068 updates the existing guide number/note through full-model `save_order_guide` with expected token and all other line IDs/order preserved; no appends.
-6. **vendor_merge:** retain Boar's Head active, append Delmar attribution once to existing notes, repoint only approved loser SKUs (zero here), then set Delmar `active=false`. Assert remaining references; historical FKs remain intact. Inventory rows already on the survivor do nothing.
-7. **guide_absent:** zero writes. Candidates include weak lexical matches and 35 rows without vendor export coverage; they are not substitutions or standing guide additions.
-
-No twin primaries, location vendor facts, occasional-item additions, product memberships, pars, or historical PO edits. Both shops share accounts (§9a).
-
-## Audit, dry-run, and acceptance
-
-ONE audit row per changed class, aggregating exact before/after IDs, sheet/source hashes, approved decisions and affected counts. Proposed new actions `sku.pack_level_dedupe`, `sku.price_basis_set`, `vendor.merge` must enter `lib/audit-actions.ts` through the closed union and `DESTRUCTIVE_ACTIONS` (human config changes), not `NON_DESTRUCTIVE_ACTIONS`. Reuse `vendor_item.price_recorded` for PC and `vendor_item.update` for IN with existing classifications; the single IN audit includes its guide amendment and both tables' before/after records. No audit for unchanged classes. Do not claim action membership enforces step-up.
-
-Dry-run prints each row's ready/already/held status, exact operations, assertions, conversions, audit classes, refusals and digest. Execution checks errors AND rowcounts; read back every write and audit. Seeds 36/37 are not atomic: coupled pack/price and guide/vendor operations require an explicitly reviewed transaction strategy, or stop on partial completion for CC reconciliation. Retry verifies committed effects/provenance and never appends twice (BC-007).
-
-Acceptance: CC supplies a post-seed export and re-runs `scripts/vendor-exports/diff.ts --catalog prod`. Require ZERO duplicate **active** levels, ZERO **unresolved current** same-date price decisions, every priced SKU with an approved basis, unchanged historical rows and unchanged unrelated guide/PO state. **Literal ZERO historical duplicates/conflicts is impossible under append-only.** The current diff also lacks these diagnostic gates and reads root labels as price basis; its future reporting extension and corrected acceptance wording need CC approval. Do not report the original gate passed or activate the importer while six price decisions or other required repairs remain held.
+Final verification (offline, 2026-09-20):
+- npm.cmd test: PASS — 184 files, 3,467 tests (37 seed-38 tests).
+  The initial npm test spelling hit the machine's disabled npm.ps1 policy;
+  npm.cmd ran the same package script successfully, once, over the full suite.
+- node node_modules/typescript/bin/tsc --noEmit --incremental false: PASS.
+- Scoped ESLint on both 38 scripts, both seed38 test files and both registries: PASS.
+- git diff --check: PASS; only dispatch-allowlisted paths changed.
+- Fixture report: 46 basis_unresolved, 8 cross-dimension pack_unresolved, one held
+  Ever Roast decision. The mock runner verifies all nine class audits and no-op retry.
+- No commits, pushes, network calls, sim operations, production operations or SQL
+  application. Live SQL/REST execution and CC cross-review remain outside this run.

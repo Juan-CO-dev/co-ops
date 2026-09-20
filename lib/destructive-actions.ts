@@ -70,7 +70,11 @@ export const DESTRUCTIVE_ACTIONS = [
   "role_model.renumber",
 
   // Vendor lifecycle
-  "vendor.create",
+  // vendor.create is non-destructive under CC's seed-38 ruling (2026-09-20).
+  "vendor.merge",
+  "sku.pack_level_supersede",
+  "sku.price_supersede",
+  "sku.vendor_repoint",
   "vendor.activate",
   "vendor.deactivate",
   "vendor.full_profile_edit",
