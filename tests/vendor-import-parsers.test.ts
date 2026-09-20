@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { EXPORT_ROOT, normalizeText } from "../scripts/vendor-exports/normalize";
-import { parseCsv, parseDate, parsePack, parsePrice, parsePurchase } from "../scripts/vendor-exports/parsers";
+import { parseCsv, parseDate, parsePack, parsePrice, parsePurchase } from "../lib/vendor-import-shared/parsers";
 import { packEqual } from "../scripts/vendor-exports/diff-core";
 
 describe("vendor export primitives", () => {
