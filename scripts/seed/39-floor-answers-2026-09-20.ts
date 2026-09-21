@@ -288,7 +288,7 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
   const config = validateArgs(args), sb = createWave7Client(config);
   let expectedTables = await readTables(sb);
   const plans = planFloorAnswers(expectedTables);
-  const digest = createHash("sha256").update(canonical({ project: config.projectRef, source: SOURCE, plans: plans.map(({ expected: _expected, ...rest }) => rest) })).digest("hex");
+  const digest = createHash("sha256").update(canonical({ project: config.projectRef, source: SOURCE, plans: plans.map(p => Object.fromEntries(Object.entries(p).filter(([key]) => key !== "expected"))) })).digest("hex");
   console.log(`${SOURCE}: ${config.execute ? "EXECUTE" : "DRY RUN"}, target ${config.target}`);
   for (const section of ["skus", "prices", "packs", "weights", "items", "recipes", "vendor"] as const) {
     console.log(`\n${section}`);
