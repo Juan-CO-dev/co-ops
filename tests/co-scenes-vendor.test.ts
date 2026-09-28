@@ -1,5 +1,5 @@
 /**
- * Unit spine — the vendored co-scenes bundle (public/vendor/co-scenes/).
+ * Unit spine — the vendored co-scenes bundle (vendor/co-scenes/dist/).
  *
  * Every file the asset manifest names is present and matches its sha256; the
  * training entry the app imports exists and exports the two functions it
@@ -13,7 +13,7 @@ import { describe, expect, it } from "vitest";
 
 import { CO_SCENES_TRAINING_URL } from "@/lib/training/co-scenes-shared";
 
-const DIR = path.join("public", "vendor", "co-scenes");
+const DIR = path.join("vendor", "co-scenes", "dist");
 const manifest = JSON.parse(readFileSync(path.join(DIR, "asset-manifest.json"), "utf8")) as {
   entries: { training: string };
   files: Record<string, string>;
@@ -31,7 +31,7 @@ describe("vendored co-scenes bundle", () => {
 
   it("the training entry is in the manifest and is what the app loads", () => {
     expect(manifest.files[manifest.entries.training]).toBeTruthy();
-    expect(CO_SCENES_TRAINING_URL).toBe(`/vendor/co-scenes/${manifest.entries.training}`);
+    expect(CO_SCENES_TRAINING_URL).toBe(`/api/training/co-scenes/${manifest.entries.training}`);
     const src = readFileSync(path.join(DIR, manifest.entries.training), "utf8");
     expect(src).toMatch(/as defineTrainingElement\b/);
     expect(src).toMatch(/as trainingSceneFactory\b/);

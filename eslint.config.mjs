@@ -28,7 +28,7 @@ const eslintConfig = defineConfig([
     "build/**",
     "next-env.d.ts",
     // Vendored, minified co-scenes bundle (scripts/vendor-co-scenes.ts); hash-checked by tests, not linted.
-    "public/vendor/**",
+    "vendor/co-scenes/dist/**",
   ]),
 ]);
 

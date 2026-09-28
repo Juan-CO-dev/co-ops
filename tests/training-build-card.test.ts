@@ -36,6 +36,20 @@ describe("card export freshness", () => {
     const edited = CSV.replace("Crunchy Boi,Aioli,1.5,oz", "Crunchy Boi,Aioli,2,oz");
     expect(edited).not.toBe(CSV);
     expect(exportBuildCard(edited, "Crunchy Boi").revision_sha).not.toBe(base);
+    const otherItem = CSV.replace("Hot Pants,Capicola,3,ea", "Hot Pants,Capicola,4,ea");
+    expect(otherItem).not.toBe(CSV);
+    expect(exportBuildCard(otherItem, "Crunchy Boi").revision_sha).toBe(base);
+  });
+});
+
+describe("every build def joins its card", () => {
+  // A def/card mismatch is a code bug, not an unknown slug: it must fail HERE (and in the
+  // export script), never reach the page, where it would be a loud 500 rather than a 404.
+  it.each(BUILD_DEFS.map((d) => [d.slug, d] as const))("%s: card exists and buildSteps succeeds in en and es", (slug, def) => {
+    const card = buildCardForSlug(slug);
+    expect(card).not.toBeNull();
+    expect(() => buildSteps(def, card!, "en")).not.toThrow();
+    expect(() => buildSteps(def, card!, "es")).not.toThrow();
   });
 });
 
@@ -50,6 +64,19 @@ describe("parseBuildSheetItem", () => {
   it("reads Handfull as a presentation amount with no quantity", () => {
     const chips = parseBuildSheetItem(CSV, "Crunchy Boi").find((l) => l.ingredient === "Utz Ripples");
     expect(chips).toEqual({ ingredient: "Utz Ripples", quantity: null, unit: null, presentation: "handful" });
+  });
+
+  it("refuses a malformed block instead of truncating it", () => {
+    const sheet = (...rows: string[]) => ["Sandwich,Ingredient,Quantity,Unit", ...rows].join("\n");
+    // a stray note in column 0 mid-block
+    expect(() => parseBuildSheetItem(sheet("X,A,1,oz", "note,B,2,oz", ",,,"), "X")).toThrow(/not closed by a blank row/);
+    // the next item with no blank row before it
+    expect(() => parseBuildSheetItem(sheet("X,A,1,oz", "Y,B,2,oz", ",,,"), "X")).toThrow(/not closed by a blank row before "Y"/);
+    // a continuation row with an amount but no ingredient
+    expect(() => parseBuildSheetItem(sheet("X,A,1,oz", ",,2,oz", ",,,"), "X")).toThrow(/no ingredient/);
+    // well-formed: a blank row, or the end of the file, closes it
+    expect(parseBuildSheetItem(sheet("X,A,1,oz", ",B,2,oz", ",,,", "Y,C,1,oz"), "X").map((l) => l.ingredient)).toEqual(["A", "B"]);
+    expect(parseBuildSheetItem(sheet("X,A,1,oz", ",B,2,oz"), "X").map((l) => l.ingredient)).toEqual(["A", "B"]);
   });
 
   it("refuses an item that is not on the sheet, and a bad quantity", () => {
@@ -148,7 +175,7 @@ describe("buildSteps refusals", () => {
 
 describe("display table mirror (co-scenes src/card/display.ts)", () => {
   it("equals the vendored co-scenes card-display.json, keyed by sha256 of the trimmed lower-cased name", () => {
-    const vendored = JSON.parse(readFileSync("public/vendor/co-scenes/card-display.json", "utf8")) as unknown;
+    const vendored = JSON.parse(readFileSync("vendor/co-scenes/dist/card-display.json", "utf8")) as unknown;
     const hashed = Object.fromEntries(
       Object.entries(CARD_DISPLAY).map(([name, rule]) => [
         createHash("sha256").update(name.trim().toLowerCase()).digest("hex"),

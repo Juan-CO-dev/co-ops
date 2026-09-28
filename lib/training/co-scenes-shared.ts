@@ -3,8 +3,8 @@
  * narrow surface this app uses from it. Client-safe (a JSON import, no I/O).
  *
  * The bundle is co-scenes' hashed web build, vendored by
- * scripts/vendor-co-scenes.ts into public/vendor/co-scenes/ and pinned in
- * vendor/co-scenes/VERSION. The hashed filenames make every URL immutable, so
+ * scripts/vendor-co-scenes.ts into vendor/co-scenes/dist/ (NOT public/) and
+ * pinned in vendor/co-scenes/VERSION. The hashed filenames make every URL immutable, so
  * a re-vendor can never serve a stale chunk under an old name.
  *
  * The training entry exports `trainingSceneFactory(steps)`: today it draws the
@@ -14,13 +14,26 @@
  * (scripts/vendor-co-scenes.ts); no CO-OPS code changes.
  */
 
-import manifest from "@/public/vendor/co-scenes/asset-manifest.json";
+import manifest from "@/vendor/co-scenes/dist/asset-manifest.json";
 
 import type { WebStep } from "./build-card-shared";
 
-export const CO_SCENES_BASE = "/vendor/co-scenes/";
+/** Served by app/api/training/co-scenes/[...path]/route.ts, behind full session validation. */
+export const CO_SCENES_BASE = "/api/training/co-scenes/";
 
-/** Public URL of the training entry module, from the vendored manifest. */
+/**
+ * The manifest's own allowlist: a request path is an asset only if it is a key
+ * of `files` (hash-checked by tests/co-scenes-vendor.test.ts). Returns the
+ * content type to serve it with, or null. Pure, so the gate is testable.
+ */
+export function coScenesAsset(rel: string): { rel: string; contentType: string } | null {
+  if (!Object.hasOwn(manifest.files, rel)) return null;
+  if (rel.endsWith(".js")) return { rel, contentType: "text/javascript; charset=utf-8" };
+  if (rel.endsWith(".json")) return { rel, contentType: "application/json; charset=utf-8" };
+  return null;
+}
+
+/** URL of the training entry module, from the vendored manifest. */
 export const CO_SCENES_TRAINING_URL = `${CO_SCENES_BASE}${manifest.entries.training}`;
 
 type SceneFactory = (canvas: HTMLCanvasElement, opts: { look: "stage" | "studio"; quality: "phone" | "full" }) => unknown;
@@ -46,7 +59,7 @@ export interface CoScenesTraining {
 
 let loading: Promise<CoScenesTraining> | null = null;
 
-/** Loads the vendored bundle once per page. A failed load is not cached, so a retry can succeed. */
+/** Loads the vendored bundle once per page. A failed load is not cached, so the next mount (e.g. a language switch) retries. */
 export function loadCoScenesTraining(): Promise<CoScenesTraining> {
   loading ??= (
     import(/* webpackIgnore: true */ /* turbopackIgnore: true */ CO_SCENES_TRAINING_URL) as Promise<CoScenesTraining>

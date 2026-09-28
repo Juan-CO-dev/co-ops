@@ -6,7 +6,8 @@
  *   1. `parseBuildSheetItem` reads ONE item's block out of the build-sheet CSV
  *      (docs/seed/source/sandwich-build-sheet.csv): the item name in column 0,
  *      its lines in columns 1–3, continuation rows with column 0 empty, the
- *      block ending at a blank row or the next item. Only the LEFT block
+ *      block ending ONLY at a fully blank row or the end of the file (anything
+ *      else is refused, never truncated). Only the LEFT block
  *      (columns 0–3) is read; the sheet's right-hand block is another sandwich.
  *   2. `BUILD_DEFS` — the canonical build ORDER per item, each ingredient step
  *      BOUND to a card line by its verbatim sheet name, plus the en/es action
@@ -113,7 +114,13 @@ export function itemRows(csvText: string, item: string): string[][] {
       }
       continue;
     }
-    if (name || !ingredient) break; // next item, or the blank row that ends the block
+    // The block ends ONLY at a fully blank row (or the end of the file). Anything
+    // else is refused, never truncated: a human-edited sheet with a stray note in
+    // column 0, or a next item with no blank row before it, would otherwise drop
+    // lines silently and still pass if no step happened to bind them.
+    if (c.every((x) => x === "")) return rows;
+    if (name) throw new Error(`build-card: "${item}" block is not closed by a blank row before "${name}"`);
+    if (!ingredient) throw new Error(`build-card: "${item}" has a row with no ingredient`);
     rows.push(c);
   }
   if (!inside) throw new Error(`build-card: item "${item}" is not on the sheet`);
@@ -149,7 +156,7 @@ export interface DisplayRule {
  * sha256(trimmed, lower-cased card name) because that repo holds no CO-OPS
  * names; here it is keyed by the card name itself. tests/training-build-card.test.ts
  * hashes these names and asserts equality with the vendored
- * public/vendor/co-scenes/card-display.json, so the two cannot drift: change
+ * vendor/co-scenes/dist/card-display.json, so the two cannot drift: change
  * the rule in co-scenes, re-vendor, then mirror it here.
  * Spanish strings are drafts pending Cristian's review.
  */
