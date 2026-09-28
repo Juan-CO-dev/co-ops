@@ -252,9 +252,10 @@ export function buildSteps(def: BuildDef, card: BuildCard, lang: BuildLang): Web
  *
  * STEP KEYS AND PLACEMENT MATCH co-scenes track C's CRUNCHY_STEPS (the scene
  * Juan approved, round 3): the real-photo scene refuses host steps whose keys
- * differ, and the provolone lands on the gutted (aioli) half — it seals the
- * aioli from the chips. The ENGLISH ACTIONS are the scene's own (its on-screen
- * HUD shows them), pinned equal by tests/co-scenes-vendor.test.ts.
+ * differ. The provolone (Juan's build order) COVERS the gutted aioli half AND
+ * overlaps onto some of the chips, sealing the two from each other. The
+ * ENGLISH ACTIONS are the scene's own (its on-screen HUD shows them), pinned
+ * equal by tests/co-scenes-vendor.test.ts.
  */
 const CRUNCHY_BOI: BuildDef = {
   slug: "crunchy-boi",
@@ -310,8 +311,8 @@ const CRUNCHY_BOI: BuildDef = {
       line: "Provolone",
       action: { en: "Seals the aioli from the chips", es: "Separa el aioli de las papitas" },
       howto: {
-        en: "Lay the provolone over the aioli so it seals the aioli away from the chips and they stay crunchy.",
-        es: "Cubre el aioli con el provolone para separarlo de las papitas, así se quedan crujientes.",
+        en: "Cover the aioli and overlap onto the chips; this seals them apart so the chips stay crunchy.",
+        es: "Cubre el aioli y un poco de las papitas; los separa y las papitas se quedan crujientes.",
       },
     },
     {
