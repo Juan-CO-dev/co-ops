@@ -1,0 +1,31 @@
+{
+  "49a7401dc52a86d430b5bd19b7370cfcb9c43c2ed939544ba0d1af4869c05624": {
+    "label": {
+      "en": "Oil and vinegar",
+      "es": "Aceite y vinagre"
+    }
+  },
+  "6864c7c5474ec1f3c0109e1d10b9e71f7cc2b4a69a68359c8b6b43ce86596c6b": {
+    "each": {
+      "one": {
+        "en": "slice",
+        "es": "rebanada"
+      },
+      "other": {
+        "en": "slices",
+        "es": "rebanadas"
+      }
+    }
+  },
+  "bd3da3e78e76cb1952256002b7ca284d03433fc9e7a73d45fef3124be7f348f6": {
+    "handful": {
+      "min": 20,
+      "max": 25,
+      "typical": 22,
+      "noun": {
+        "en": "chips",
+        "es": "papitas"
+      }
+    }
+  }
+}

@@ -15,6 +15,8 @@
  * translated, as PlaceholderCard does for the remaining stubs.
  */
 
+import Link from "next/link";
+
 import { BackLink } from "@/components/nav/BackLink";
 import { TranslationProvider } from "@/lib/i18n/provider";
 import { GuideReader, type GuideTab } from "@/components/training/GuideReader";
@@ -24,6 +26,41 @@ import type { GuideSlug } from "@/lib/guides/markdown-shared";
 import { serverT } from "@/lib/i18n/server";
 import type { TranslationKey } from "@/lib/i18n/types";
 import { requireSessionFromHeaders } from "@/lib/session";
+import { BUILD_DEFS, learnTheBuildHref } from "@/lib/training/build-card-shared";
+import type { Language } from "@/lib/i18n/types";
+
+/**
+ * "Learn the build" — one row per item with build steps (co-scenes spec §9),
+ * linking to the interactive build. Everyone who can open /training sees it:
+ * the build is the whole crew's job, not one role's.
+ */
+function LearnTheBuildEntry({ lang }: { lang: Language }) {
+  return (
+    <section className="co-card mb-3 px-4 py-3" aria-labelledby="learn-the-build">
+      {/* A <p>, not a heading: on the guides branch this card sits above the reader's h1. */}
+      <p id="learn-the-build" className="m-0 text-sm font-bold text-co-text">
+        {serverT(lang, "training.build.entry.title")}
+      </p>
+      <p className="m-0 mt-0.5 text-xs text-co-text-muted">{serverT(lang, "training.build.entry.sub")}</p>
+      <ul className="m-0 mt-2 list-none p-0">
+        {BUILD_DEFS.map((d) => (
+          <li key={d.slug}>
+            <Link
+              href={learnTheBuildHref(d.slug)}
+              aria-label={serverT(lang, "training.build.entry.open", { item: d.item })}
+              className="flex min-h-[44px] items-center justify-between border-t border-co-border text-sm font-bold text-co-text transition hover:text-co-gold-text focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60"
+            >
+              <span>{d.item}</span>
+              <span aria-hidden="true" className="text-co-text-dim">
+                ›
+              </span>
+            </Link>
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
 
 const TAB_LABEL_KEY: Record<GuideSlug, TranslationKey> = {
   staff: "training.tab.staff",
@@ -57,6 +94,7 @@ export default async function TrainingPage({
         <div className="mx-auto w-full max-w-3xl p-3 pb-8">
           <BackLink hrefOverride="/dashboard" labelKey="nav.dashboard" />
           <h1 className="m-0 mb-2 text-base font-bold text-co-text">{title}</h1>
+          <LearnTheBuildEntry lang={lang} />
           <p className="co-card m-0 px-4 py-3 text-sm text-co-text-muted">
             {serverT(lang, "training.none")}
           </p>
@@ -81,6 +119,7 @@ export default async function TrainingPage({
     <TranslationProvider initialLanguage={lang}>
       <div className="mx-auto w-full max-w-3xl px-3 pt-3">
         <BackLink hrefOverride="/dashboard" labelKey="nav.dashboard" />
+        <LearnTheBuildEntry lang={lang} />
       </div>
       <GuideReader
         title={title}

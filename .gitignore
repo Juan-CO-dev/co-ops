@@ -72,3 +72,7 @@ next-env.d.ts
 .tmp-*
 
 .vercel
+
+# co-scenes real food photos: NEVER committed (the photo rule). The vendor script
+# fills this from co-scenes; see vendor/co-scenes/README.md for how a deploy gets them.
+/vendor/co-scenes/photos/
