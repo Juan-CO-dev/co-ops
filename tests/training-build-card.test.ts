@@ -19,6 +19,7 @@ import {
   buildDefForSlug,
   buildSteps,
   parseBuildSheetItem,
+  toElementSteps,
   type BuildCard,
   type BuildDef,
 } from "@/lib/training/build-card-shared";
@@ -94,7 +95,7 @@ describe("Crunchy Boi steps", () => {
 
   it("run in the canonical order", () => {
     expect(en.map((s) => s.key)).toEqual([
-      "whole", "slice", "gut", "aioli", "chips", "provolone", "turkey", "onions", "pickles", "shredduce", "oil-vin", "oregano",
+      "whole", "slice", "gut", "aioli", "chips", "provolone", "turkey", "onions", "pickles", "shredduce", "oil-vinegar", "oregano",
     ]);
     expect(en.map((s) => s.n)).toEqual(en.map((_, i) => i + 1));
   });
@@ -106,7 +107,7 @@ describe("Crunchy Boi steps", () => {
     expect(labels.provolone).toBe("Provolone · 2 slices");
     expect(labels.turkey).toBe("Turkey · 4 oz");
     expect(labels.shredduce).toBe("Shredduce · a handful");
-    expect(labels["oil-vin"]).toBe("Oil and vinegar · 0.25 oz");
+    expect(labels["oil-vinegar"]).toBe("Oil and vinegar · 0.25 oz");
     expect(labels.oregano).toBe("Oregano · 0.1 oz");
   });
 
@@ -123,7 +124,7 @@ describe("Crunchy Boi steps", () => {
     const chips = es.find((s) => s.key === "chips")!;
     expect(chips.label).toBe("Utz Ripples · un puñado (unas 22 papitas)");
     expect(es.find((s) => s.key === "provolone")!.label).toBe("Provolone · 2 rebanadas");
-    expect(es.find((s) => s.key === "oil-vin")!.label).toBe("Aceite y vinagre · 0.25 oz");
+    expect(es.find((s) => s.key === "oil-vinegar")!.label).toBe("Aceite y vinagre · 0.25 oz");
     expect(es.find((s) => s.key === "turkey")!.label).toBe("Turkey · 4 oz");
     expect(chips.action).not.toBe(en.find((s) => s.key === "chips")!.action);
   });
@@ -190,5 +191,27 @@ describe("display table mirror (co-scenes src/card/display.ts)", () => {
       BUILD_DEFS.flatMap((d) => buildCardForSlug(d.slug)!.lines.map((l) => l.ingredient.trim().toLowerCase())),
     );
     for (const name of Object.keys(CARD_DISPLAY)) expect(names.has(name.trim().toLowerCase()), name).toBe(true);
+  });
+});
+
+describe("toElementSteps (what <crunchy-build> gets)", () => {
+  const def = buildDefForSlug("crunchy-boi")!;
+  const card = buildCardForSlug("crunchy-boi")!;
+  const en = buildSteps(def, card, "en");
+  const es = buildSteps(def, card, "es");
+  const els = toElementSteps(en, es);
+
+  it("English words, with the whole Spanish counter + action carried as a DRAFT", () => {
+    const p = els.find((x) => x.key === "provolone")!;
+    expect(p.label).toBe("Provolone · 2 slices");
+    expect(p.action).toBe("Seals the aioli from the chips");
+    expect(p.i18n?.es).toEqual({ action: "Separa el aioli de las papitas", label: "Provolone · 2 rebanadas", draft: true });
+    expect(els.find((x) => x.key === "oil-vinegar")!.i18n?.es?.label).toBe("Aceite y vinagre · 0.25 oz");
+    expect(els.find((x) => x.key === "chips")!.i18n?.es?.label).toBe("Utz Ripples · un puñado (unas 22 papitas)");
+  });
+
+  it("refuses mismatched lists", () => {
+    expect(() => toElementSteps(en, es.slice(1))).toThrow(/differ in length/);
+    expect(() => toElementSteps(en, [...es].reverse())).toThrow(/keys differ/);
   });
 });

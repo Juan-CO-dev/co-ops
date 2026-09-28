@@ -37,6 +37,8 @@ const nextConfig: NextConfig = {
     "/api/guides/img/[guide]/[file]": ["./docs/guides/*-guide.md", "./docs/guides/img/**/*.png"],
     // The vendored co-scenes bundle ("Learn the build") is read from disk by its
     // authenticated route, never served from public/ — same tracing reason.
+    // Photos are NOT traced: they are never in git or a deploy; the route serves them
+    // from the private `training-assets` bucket (docs/runbooks/training-assets.md).
     "/api/training/co-scenes/[...path]": ["./vendor/co-scenes/dist/**"],
   },
 

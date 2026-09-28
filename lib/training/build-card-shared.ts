@@ -60,6 +60,23 @@ export interface WebStep {
   label: string;
   drawn: boolean;
   howto?: { en?: string; es?: string };
+  /** Spanish for the element (co-scenes WebStep.i18n); set by toElementSteps. */
+  i18n?: { es?: { action?: string; label?: string; draft?: boolean } };
+}
+
+/**
+ * The steps handed to <crunchy-build>. The element renders the ENGLISH
+ * `label`/`action` in en; in es it takes the whole counter from `i18n.es.label`
+ * and the action from `i18n.es.action`. The Spanish is flagged `draft: true`
+ * until Cristian signs it off, so the element shows its own draft note too.
+ */
+export function toElementSteps(en: readonly WebStep[], es: readonly WebStep[]): WebStep[] {
+  if (en.length !== es.length) throw new Error("build-card: en/es step lists differ in length");
+  return en.map((e, i) => {
+    const s = es[i]!;
+    if (s.key !== e.key) throw new Error(`build-card: en/es step ${i + 1} keys differ ("${e.key}" / "${s.key}")`);
+    return { ...e, i18n: { es: { action: s.action, label: s.label, draft: true } } };
+  });
 }
 
 interface Bilingual {
@@ -232,6 +249,12 @@ export function buildSteps(def: BuildDef, card: BuildCard, lang: BuildLang): Web
  * aioli → chips on the opposite half → provolone ×2 seal → turkey → onions →
  * pickles → shredduce → oil & vinegar → oregano. The how-to notes never state
  * an amount; the amount beside them comes from the card.
+ *
+ * STEP KEYS AND PLACEMENT MATCH co-scenes track C's CRUNCHY_STEPS (the scene
+ * Juan approved, round 3): the real-photo scene refuses host steps whose keys
+ * differ, and the provolone lands on the gutted (aioli) half — it seals the
+ * aioli from the chips. The ENGLISH ACTIONS are the scene's own (its on-screen
+ * HUD shows them), pinned equal by tests/co-scenes-vendor.test.ts.
  */
 const CRUNCHY_BOI: BuildDef = {
   slug: "crunchy-boi",
@@ -285,16 +308,16 @@ const CRUNCHY_BOI: BuildDef = {
     {
       key: "provolone",
       line: "Provolone",
-      action: { en: "Seal the chips", es: "Sella las papitas" },
+      action: { en: "Seals the aioli from the chips", es: "Separa el aioli de las papitas" },
       howto: {
-        en: "Lay the provolone over the chips to seal them in, so they stay crunchy and in place.",
-        es: "Cubre las papitas con el provolone para sellarlas, así quedan crujientes y en su lugar.",
+        en: "Lay the provolone over the aioli so it seals the aioli away from the chips and they stay crunchy.",
+        es: "Cubre el aioli con el provolone para separarlo de las papitas, así se quedan crujientes.",
       },
     },
     {
       key: "turkey",
       line: "Turkey",
-      action: { en: "Add", es: "Agrega" },
+      action: { en: "Down the middle", es: "Por el centro" },
       howto: {
         en: "Spread the turkey evenly, end to end.",
         es: "Reparte el pavo parejo, de punta a punta.",
@@ -303,7 +326,7 @@ const CRUNCHY_BOI: BuildDef = {
     {
       key: "onions",
       line: "Onions",
-      action: { en: "Add", es: "Agrega" },
+      action: { en: "On the turkey", es: "Sobre el pavo" },
       howto: {
         en: "Scatter the onions evenly over the turkey.",
         es: "Reparte la cebolla pareja sobre el pavo.",
@@ -312,7 +335,7 @@ const CRUNCHY_BOI: BuildDef = {
     {
       key: "pickles",
       line: "Pickles",
-      action: { en: "Add", es: "Agrega" },
+      action: { en: "Down the line", es: "A lo largo" },
       howto: {
         en: "Spread the pickles evenly so every bite gets some.",
         es: "Reparte los pepinillos parejos para que cada mordida tenga.",
@@ -321,16 +344,16 @@ const CRUNCHY_BOI: BuildDef = {
     {
       key: "shredduce",
       line: "Shredduce",
-      action: { en: "Add", es: "Agrega" },
+      action: { en: "Piled on", es: "Bien cargado" },
       howto: {
         en: "Add the shredduce (our shredded-lettuce blend) evenly on top.",
         es: "Agrega el shredduce (nuestra mezcla de lechuga rallada) parejo por encima.",
       },
     },
     {
-      key: "oil-vin",
+      key: "oil-vinegar",
       line: "Oil/Vin",
-      action: { en: "Dress it", es: "Aderézalo" },
+      action: { en: "Drizzled", es: "Rociado" },
       howto: {
         en: "Drizzle the oil and vinegar over the shredduce.",
         es: "Echa el aceite y vinagre sobre el shredduce.",
@@ -339,7 +362,7 @@ const CRUNCHY_BOI: BuildDef = {
     {
       key: "oregano",
       line: "Oregano",
-      action: { en: "Finish", es: "Termina" },
+      action: { en: "To finish", es: "Para terminar" },
       howto: {
         en: "Sprinkle the oregano over the top. That is the build.",
         es: "Espolvorea el orégano por encima. Así queda el armado.",

@@ -19,6 +19,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { requireSession } from "@/lib/session";
 import { readCoScenesFile } from "@/lib/training/co-scenes-files";
 import { coScenesAsset, coScenesEtag, ifNoneMatchHits } from "@/lib/training/co-scenes-shared";
+import { signTrainingPhoto } from "@/lib/training/training-assets";
 
 /**
  * EVERY load revalidates through this route, so every load passes requireSession:
@@ -49,7 +50,22 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ path: strin
   }
 
   const file = readCoScenesFile(rel);
-  if (!file) return new NextResponse(null, { status: 404 });
+  if (!file) {
+    // A PHOTO not in the local (dev-only, git-ignored) store comes from the private
+    // `training-assets` bucket: a 60 s signed URL, minted only now — after
+    // requireSession and the manifest check — and never cached. The page re-checks
+    // the photo's sha256 against the manifest before use.
+    if (asset.store === "photos") {
+      const signed = await signTrainingPhoto(asset.rel);
+      if (signed) {
+        return new Response(null, {
+          status: 302,
+          headers: { Location: signed, "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff" },
+        });
+      }
+    }
+    return new NextResponse(null, { status: 404 });
+  }
 
   return new Response(file.bytes, {
     status: 200,

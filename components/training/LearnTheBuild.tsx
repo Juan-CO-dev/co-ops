@@ -25,10 +25,11 @@
  * render as a plain list, so the page still teaches the build.
  */
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
-import type { BuildLang, WebStep } from "@/lib/training/build-card-shared";
+import { toElementSteps, type BuildLang, type WebStep } from "@/lib/training/build-card-shared";
 import {
+  CO_SCENES_DATA_URL,
   loadCoScenesTraining,
   type CoScenesTraining,
   type CrunchyBuildElementLike,
@@ -51,6 +52,7 @@ export function LearnTheBuild({ item, steps }: { item: string; steps: Record<Bui
   // Follows the element: the stub is all drawn; the real-photo scene (track C) clears it where no drawn food shows.
   const [illustrated, setIllustrated] = useState(true);
   const langSteps = steps[language];
+  const elementSteps = useMemo(() => toElementSteps(steps.en, steps.es), [steps]);
   const status: "loading" | "ready" | "failed" = viewer?.lang === language ? viewer.status : "loading";
 
   useEffect(() => {
@@ -69,9 +71,13 @@ export function LearnTheBuild({ item, steps }: { item: string; steps: Record<Bui
         if (cancelled || !host) throw new Error("unmounted");
         mod.defineTrainingElement();
         const made = document.createElement("crunchy-build") as CrunchyBuildElementLike;
-        made.factory = mod.trainingSceneFactory(langSteps);
+        // Track C's real-photo C1 scene (stage look) from the vendored data file;
+        // the entry falls back to the drawn studio look itself if any photo is
+        // missing or fails its sha256 check (then the element marks it Illustrated).
+        if (!CO_SCENES_DATA_URL) throw new Error("no scene data vendored");
+        made.factory = mod.trainingSceneFactory(elementSteps, CO_SCENES_DATA_URL);
         made.setAttribute("mode", "training");
-        made.setAttribute("look", "studio");
+        made.setAttribute("look", "stage");
         made.setAttribute("lang", language);
         made.addEventListener("crunchy-step", onStep);
         host.replaceChildren(made);
@@ -103,7 +109,7 @@ export function LearnTheBuild({ item, steps }: { item: string; steps: Record<Bui
       el?.removeEventListener("crunchy-step", onStep);
       el?.remove(); // disconnect releases the scene, renderer and GL context
     };
-  }, [language, langSteps]);
+  }, [language, elementSteps]);
 
   const selectLanguage = async (next: Language) => {
     if (next === language || updating) return;

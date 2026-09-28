@@ -16,6 +16,7 @@
  *      (including a traversal) is a flat 404.
  *   4. Nothing under public/ carries the bundle.
  */
+import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { NextRequest, NextResponse } from "next/server";
@@ -145,5 +146,95 @@ describe("nothing public", () => {
   it("the bundle is not under public/", () => {
     expect(existsSync(path.join("public", "vendor", "co-scenes"))).toBe(false);
     expect(existsSync(path.join("public", "vendor"))).toBe(false);
+  });
+});
+
+describe("the photo store (git-ignored, manifest-allowlisted)", () => {
+  const m = {
+    entries: { training: "t.js", data: "d.json" },
+    files: { "t.js": "a".repeat(64), "d.json": "b".repeat(64) },
+    photos: { "cb-p-aioli-abc.png": "c".repeat(64) },
+  };
+
+  it("photos/<name> resolves only for a manifest photo, as image/png from the photo store", async () => {
+    const { coScenesAsset } = await import("@/lib/training/co-scenes-shared");
+    expect(coScenesAsset("photos/cb-p-aioli-abc.png", m)).toEqual({
+      rel: "cb-p-aioli-abc.png", store: "photos", contentType: "image/png", sha256: "c".repeat(64),
+    });
+    expect(coScenesAsset("photos/other.png", m)).toBeNull();
+    expect(coScenesAsset("photos/../t.js", m)).toBeNull();
+    expect(coScenesAsset("cb-p-aioli-abc.png", m)).toBeNull(); // a photo is never a dist file
+    expect(coScenesAsset("t.js", m)?.store).toBe("dist");
+  });
+
+  it("no photo is tracked by git, and the photo store is ignored", () => {
+    const tracked = execFileSync("git", ["ls-files", "vendor", "public"], { encoding: "utf8" }).split(/\r?\n/).filter(Boolean);
+    expect(tracked.filter((f) => /\.(png|jpe?g|webp|gif)$/i.test(f) && !f.startsWith("public/brand/"))).toEqual([]);
+    expect(tracked.filter((f) => f.startsWith("vendor/co-scenes/photos/"))).toEqual([]);
+    // check-ignore exits 0 (no throw) only when the path IS ignored.
+    expect(() => execFileSync("git", ["check-ignore", "-q", "--no-index", "vendor/co-scenes/photos/x.png"])).not.toThrow();
+  });
+});
+
+describe("photos in a deploy: 302 to a 60 s signed URL, only after the session check", () => {
+  const PHOTO = Object.keys((manifest as { photos?: Record<string, string> }).photos ?? {})[0]!;
+  afterEach(() => {
+    vi.doUnmock("@/lib/session");
+    vi.doUnmock("@/lib/training/co-scenes-files");
+    vi.doUnmock("@/lib/training/training-assets");
+    vi.resetModules();
+  });
+
+  async function route(session: "valid" | "refused", signed: string | null) {
+    vi.resetModules();
+    const sign = vi.fn(async () => signed);
+    vi.doMock("@/lib/session", () => ({
+      requireSession: vi.fn(async () =>
+        session === "valid" ? { user: { id: "u1" } } : NextResponse.json({ error: "unauthorized" }, { status: 401 }),
+      ),
+    }));
+    // No local dev store (a deploy): the file read misses, so storage is asked.
+    vi.doMock("@/lib/training/co-scenes-files", () => ({ readCoScenesFile: vi.fn(() => null) }));
+    vi.doMock("@/lib/training/training-assets", () => ({ signTrainingPhoto: sign }));
+    const { GET } = await import("@/app/api/training/co-scenes/[...path]/route");
+    return { GET, sign };
+  }
+
+  it("the vendored manifest lists photos (the real scene is vendored)", () => {
+    expect(PHOTO).toMatch(/-[0-9a-f]{64}\.png$/);
+  });
+
+  it("valid session → 302 to the signed URL, never cached", async () => {
+    const { GET, sign } = await route("valid", "https://x.supabase.co/storage/v1/object/sign/training-assets/co-scenes/p?token=t");
+    const res = await GET(req(`photos/${PHOTO}`, "co_ops_session=ok"), params(`photos/${PHOTO}`));
+    expect(res.status).toBe(302);
+    expect(res.headers.get("location")).toMatch(/\/object\/sign\/training-assets\//);
+    expect(res.headers.get("cache-control")).toBe("no-store");
+    expect(sign).toHaveBeenCalledWith(PHOTO);
+  });
+
+  it("REVOKED session → 401 and nothing is signed", async () => {
+    const { GET, sign } = await route("refused", "https://signed");
+    const res = await GET(req(`photos/${PHOTO}`, "co_ops_session=revoked"), params(`photos/${PHOTO}`));
+    expect(res.status).toBe(401);
+    expect(sign).not.toHaveBeenCalled();
+  });
+
+  it("a photo storage does not have → 404 (the page falls back to the drawn look)", async () => {
+    const { GET } = await route("valid", null);
+    expect((await GET(req(`photos/${PHOTO}`, "co_ops_session=ok"), params(`photos/${PHOTO}`))).status).toBe(404);
+  });
+
+  it("a name the manifest does not list is never signed", async () => {
+    const { GET, sign } = await route("valid", "https://signed");
+    const bad = `photos/cb-evil-${"0".repeat(64)}.png`;
+    expect((await GET(req(bad, "co_ops_session=ok"), params(bad))).status).toBe(404);
+    expect(sign).not.toHaveBeenCalled();
+  });
+
+  it("a code file is never redirected to storage", async () => {
+    const { GET, sign } = await route("valid", "https://signed");
+    expect((await GET(req(TRAINING, "co_ops_session=ok"), params(TRAINING))).status).toBe(404);
+    expect(sign).not.toHaveBeenCalled();
   });
 });

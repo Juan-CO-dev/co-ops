@@ -25,7 +25,11 @@ if (!distDir || !commit || !/^[0-9a-f]{7,40}$/.test(commit) || !branch) {
 
 const OUT = path.join("vendor", "co-scenes", "dist");
 const manifestText = readFileSync(path.join(distDir, "asset-manifest.json"), "utf8");
-const manifest = JSON.parse(manifestText) as { entries?: { training?: string }; files: Record<string, string> };
+const manifest = JSON.parse(manifestText) as {
+  entries?: { training?: string; data?: string };
+  files: Record<string, string>;
+  photos?: Record<string, string>;
+};
 if (!manifest.entries?.training) throw new Error("vendor-co-scenes: the manifest has no training entry");
 
 rmSync(OUT, { recursive: true, force: true });
@@ -40,10 +44,27 @@ for (const [rel, sha] of Object.entries(manifest.files)) {
 }
 writeFileSync(path.join(OUT, "asset-manifest.json"), manifestText, { encoding: "utf8" });
 
+// The real food photos: NEVER committed. They go to the git-ignored photo store,
+// byte-for-byte, each checked against its manifest sha256 (and re-checked by the
+// route on every first read). The manifest is the source of truth for which
+// photos exist; this store is only where their bytes sit on this machine.
+const PHOTOS = path.join("vendor", "co-scenes", "photos");
+rmSync(PHOTOS, { recursive: true, force: true });
+const photos = Object.entries(manifest.photos ?? {});
+if (photos.length) mkdirSync(PHOTOS, { recursive: true });
+for (const [name, sha] of photos) {
+  if (!/^[A-Za-z0-9._-]+\.png$/.test(name)) throw new Error(`vendor-co-scenes: refusing photo name ${name}`);
+  const bytes = readFileSync(path.join(distDir, "photos", name));
+  if (createHash("sha256").update(bytes).digest("hex") !== sha) throw new Error(`vendor-co-scenes: photo ${name} does not match its manifest hash`);
+  writeFileSync(path.join(PHOTOS, name), bytes);
+}
+
 mkdirSync(path.join("vendor", "co-scenes"), { recursive: true });
 writeFileSync(
   path.join("vendor", "co-scenes", "VERSION"),
   `co-scenes ${commit} (${branch})\ntraining entry ${manifest.entries.training}\n`,
   { encoding: "utf8" },
 );
-console.log(`vendored ${Object.keys(manifest.files).length} files → ${OUT}; training entry ${manifest.entries.training}`);
+console.log(
+  `vendored ${Object.keys(manifest.files).length} files → ${OUT}, ${photos.length} photos → ${PHOTOS} (git-ignored); training entry ${manifest.entries.training}`,
+);

@@ -7,14 +7,30 @@
  * pinned in vendor/co-scenes/VERSION. The hashed filenames make every URL immutable, so
  * a re-vendor can never serve a stale chunk under an old name.
  *
- * The training entry exports `trainingSceneFactory(steps)`: today it draws the
- * co-scenes stub scene. SWAP POINT: after track C round 2, the REAL-PHOTO C1
- * scene replaces the stub INSIDE co-scenes (web/training-entry.ts) behind the
- * same interface, so the swap here is a re-vendor only
- * (scripts/vendor-co-scenes.ts); no CO-OPS code changes.
+ * The training entry exports `trainingSceneFactory(steps, dataUrl)`: track C's
+ * REAL-PHOTO C1 scene (stage-show), Juan-approved round 3. `drawn` comes from
+ * the scene's own look plan, so C1 shows no "Illustrated" badge; if the photos
+ * are unreachable the entry falls back to track C's drawn studio look, marked
+ * illustrated. The swap lives INSIDE co-scenes (web/training-entry.ts); here it
+ * is a re-vendor (scripts/vendor-co-scenes.ts).
+ *
+ * TWO KINDS OF VENDORED FILE, one manifest:
+ *   - `files`  — code + data, COMMITTED under vendor/co-scenes/dist/;
+ *   - `photos` — the real food photos, NEVER committed (the photo rule). In a
+ *     deploy they live in the private `training-assets` bucket (0212) and the
+ *     authenticated route 302s to a 60 s signed URL; locally the vendor script
+ *     also drops them in the git-ignored vendor/co-scenes/photos/ (dev store).
+ *     docs/runbooks/training-assets.md.
  */
 
-import manifest from "@/vendor/co-scenes/dist/asset-manifest.json";
+import rawManifest from "@/vendor/co-scenes/dist/asset-manifest.json";
+
+export interface CoScenesManifest {
+  entries: { training: string; data?: string };
+  files: Record<string, string>;
+  photos?: Record<string, string>;
+}
+const manifest = rawManifest as CoScenesManifest;
 
 import type { WebStep } from "./build-card-shared";
 
@@ -26,14 +42,34 @@ export const CO_SCENES_BASE = "/api/training/co-scenes/";
  * of `files` (hash-checked by tests/co-scenes-vendor.test.ts). Returns the
  * content type to serve it with, or null. Pure, so the gate is testable.
  */
-export function coScenesAsset(rel: string): { rel: string; contentType: string; sha256: string } | null {
-  if (!Object.hasOwn(manifest.files, rel)) return null;
-  const sha256 = (manifest.files as Record<string, string>)[rel];
+export interface CoScenesAssetRef {
+  /** Path under its store: dist/<rel> for files, photos/<name> for photos. */
+  rel: string;
+  store: "dist" | "photos";
+  contentType: string;
+  sha256: string;
+}
+
+const PHOTO_PREFIX = "photos/";
+
+export function coScenesAsset(rel: string, m: CoScenesManifest = manifest): CoScenesAssetRef | null {
+  if (rel.startsWith(PHOTO_PREFIX)) {
+    const name = rel.slice(PHOTO_PREFIX.length);
+    const photos = m.photos ?? {};
+    if (!Object.hasOwn(photos, name) || !name.endsWith(".png")) return null;
+    const sha256 = photos[name];
+    return sha256 ? { rel: name, store: "photos", contentType: "image/png", sha256 } : null;
+  }
+  if (!Object.hasOwn(m.files, rel)) return null;
+  const sha256 = m.files[rel];
   if (!sha256) return null;
-  if (rel.endsWith(".js")) return { rel, contentType: "text/javascript; charset=utf-8", sha256 };
-  if (rel.endsWith(".json")) return { rel, contentType: "application/json; charset=utf-8", sha256 };
+  if (rel.endsWith(".js")) return { rel, store: "dist", contentType: "text/javascript; charset=utf-8", sha256 };
+  if (rel.endsWith(".json")) return { rel, store: "dist", contentType: "application/json; charset=utf-8", sha256 };
   return null;
 }
+
+/** URL of the scene data file (steps, layout, photo list), when the bundle carries one. */
+export const CO_SCENES_DATA_URL: string | null = manifest.entries.data ? `/api/training/co-scenes/${manifest.entries.data}` : null;
 
 /** The strong ETag of an asset: its manifest sha256, quoted. */
 export function coScenesEtag(sha256: string): string {
@@ -73,7 +109,7 @@ export interface CrunchyStepEventDetail {
 /** The training entry's exports. */
 export interface CoScenesTraining {
   defineTrainingElement(tag?: string): void;
-  trainingSceneFactory(steps: readonly WebStep[]): SceneFactory;
+  trainingSceneFactory(steps: readonly WebStep[], dataUrl: string): SceneFactory;
 }
 
 let loading: Promise<CoScenesTraining> | null = null;
