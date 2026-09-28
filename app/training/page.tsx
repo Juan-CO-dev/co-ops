@@ -26,7 +26,7 @@ import type { GuideSlug } from "@/lib/guides/markdown-shared";
 import { serverT } from "@/lib/i18n/server";
 import type { TranslationKey } from "@/lib/i18n/types";
 import { requireSessionFromHeaders } from "@/lib/session";
-import { BUILD_DEFS } from "@/lib/training/build-card-shared";
+import { BUILD_DEFS, learnTheBuildHref } from "@/lib/training/build-card-shared";
 import type { Language } from "@/lib/i18n/types";
 
 /**
@@ -46,7 +46,7 @@ function LearnTheBuildEntry({ lang }: { lang: Language }) {
         {BUILD_DEFS.map((d) => (
           <li key={d.slug}>
             <Link
-              href={`/training/build/${d.slug}`}
+              href={learnTheBuildHref(d.slug)}
               aria-label={serverT(lang, "training.build.entry.open", { item: d.item })}
               className="flex min-h-[44px] items-center justify-between border-t border-co-border text-sm font-bold text-co-text transition hover:text-co-gold-text focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60"
             >

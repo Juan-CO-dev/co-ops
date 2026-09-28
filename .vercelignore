@@ -30,4 +30,12 @@ coverage
 README.md
 AGENTS.md
 CLAUDE.md
-docs
+# docs/ is design notes, seeds and runbooks — EXCEPT docs/guides, which the app READS
+# AT RUNTIME (/training renders the Markdown; /api/guides/img streams the PNGs).
+# Vercel applies this file to GIT deploys too ("Removed N ignored files defined in
+# .vercelignore" in every build log), so a bare `docs` here deleted the guides before
+# `next build` ever ran and /training rendered its error page (ENOENT) (found 2026-09-28 on the
+# feat/learn-the-build preview). `docs/*` + the negation keeps everything else out.
+# tests/deploy-tree.test.ts pins every runtime-read path against this file.
+docs/*
+!docs/guides/

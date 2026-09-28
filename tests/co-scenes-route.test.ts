@@ -34,7 +34,9 @@ const req = (p: string, cookie?: string, ifNoneMatch?: string) => {
 const ETAG = `"${(manifest.files as Record<string, string>)[TRAINING]}"`;
 const params = (p: string) => ({ params: Promise.resolve({ path: p.split("/") }) });
 
-describe("unauthenticated (real requireSession)", () => {
+// The first test cold-imports the real route (session + supabase modules); under a loaded
+// machine that import alone can pass vitest's 5 s default, so this block gets 30 s.
+describe("unauthenticated (real requireSession)", { timeout: 30_000 }, () => {
   it("refuses a request with no session cookie — 401, no bytes", async () => {
     const { GET } = await import("@/app/api/training/co-scenes/[...path]/route");
     const res = await GET(req(TRAINING), params(TRAINING));

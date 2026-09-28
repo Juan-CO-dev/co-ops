@@ -374,6 +374,11 @@ const CRUNCHY_BOI: BuildDef = {
 
 export const BUILD_DEFS: readonly BuildDef[] = [CRUNCHY_BOI];
 
+/** The page a "Learn the build" entry links to (app/training/build/[item]/page.tsx). */
+export function learnTheBuildHref(slug: string): string {
+  return `/training/build/${slug}`;
+}
+
 export function buildDefForSlug(slug: string): BuildDef | null {
   return BUILD_DEFS.find((d) => d.slug === slug) ?? null;
 }

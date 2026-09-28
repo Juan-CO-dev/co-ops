@@ -42,8 +42,12 @@ const cache = new Map<string, CoScenesFile>();
  */
 export function storePath(store: "dist" | "photos", rel: string, root = process.cwd()): string | null {
   if (store === "photos" ? !isPhotoName(rel) : !isSafeDistPath(rel)) return null;
-  const base = path.resolve(root, "vendor", "co-scenes", store);
-  const full = path.resolve(base, ...rel.split("/"));
+  // turbopackIgnore: these reads are declared in next.config.ts
+  // outputFileTracingIncludes (dist/ only). Without the hint, Turbopack sees a
+  // dynamic path.resolve and traces the WHOLE project into the route ("Encountered
+  // unexpected file in NFT list" in the Vercel build log).
+  const base = path.resolve(/*turbopackIgnore: true*/ root, "vendor", "co-scenes", store);
+  const full = path.resolve(/*turbopackIgnore: true*/ base, ...rel.split("/"));
   return full.startsWith(base + path.sep) ? full : null;
 }
 
