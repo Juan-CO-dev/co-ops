@@ -1,0 +1,61 @@
+{
+  "item": "Crunchy Boi",
+  "source": "docs/seed/source/sandwich-build-sheet.csv",
+  "revision_sha": "9a59e21011ea67b0d31c488ed86a13c12fc6bd80ac6724140bb210bd62ad6e8d",
+  "lines": [
+    {
+      "ingredient": "Aioli",
+      "quantity": 1.5,
+      "unit": "oz",
+      "presentation": null
+    },
+    {
+      "ingredient": "Utz Ripples",
+      "quantity": null,
+      "unit": null,
+      "presentation": "handful"
+    },
+    {
+      "ingredient": "Provolone",
+      "quantity": 2,
+      "unit": "ea",
+      "presentation": null
+    },
+    {
+      "ingredient": "Turkey",
+      "quantity": 4,
+      "unit": "oz",
+      "presentation": null
+    },
+    {
+      "ingredient": "Onions",
+      "quantity": 0.25,
+      "unit": "oz",
+      "presentation": null
+    },
+    {
+      "ingredient": "Pickles",
+      "quantity": 0.5,
+      "unit": "oz",
+      "presentation": null
+    },
+    {
+      "ingredient": "Shredduce",
+      "quantity": null,
+      "unit": null,
+      "presentation": "handful"
+    },
+    {
+      "ingredient": "Oil/Vin",
+      "quantity": 0.25,
+      "unit": "oz",
+      "presentation": null
+    },
+    {
+      "ingredient": "Oregano",
+      "quantity": 0.1,
+      "unit": "oz",
+      "presentation": null
+    }
+  ]
+}
