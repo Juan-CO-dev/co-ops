@@ -26,11 +26,30 @@ export const CO_SCENES_BASE = "/api/training/co-scenes/";
  * of `files` (hash-checked by tests/co-scenes-vendor.test.ts). Returns the
  * content type to serve it with, or null. Pure, so the gate is testable.
  */
-export function coScenesAsset(rel: string): { rel: string; contentType: string } | null {
+export function coScenesAsset(rel: string): { rel: string; contentType: string; sha256: string } | null {
   if (!Object.hasOwn(manifest.files, rel)) return null;
-  if (rel.endsWith(".js")) return { rel, contentType: "text/javascript; charset=utf-8" };
-  if (rel.endsWith(".json")) return { rel, contentType: "application/json; charset=utf-8" };
+  const sha256 = (manifest.files as Record<string, string>)[rel];
+  if (!sha256) return null;
+  if (rel.endsWith(".js")) return { rel, contentType: "text/javascript; charset=utf-8", sha256 };
+  if (rel.endsWith(".json")) return { rel, contentType: "application/json; charset=utf-8", sha256 };
   return null;
+}
+
+/** The strong ETag of an asset: its manifest sha256, quoted. */
+export function coScenesEtag(sha256: string): string {
+  return `"${sha256}"`;
+}
+
+/**
+ * Whether an If-None-Match header matches this strong ETag (RFC 9110: a
+ * comma-separated list, or "*"). Weak validators never match a strong ETag.
+ */
+export function ifNoneMatchHits(header: string | null, etag: string): boolean {
+  if (!header) return false;
+  return header.split(",").some((t) => {
+    const v = t.trim();
+    return v === "*" || v === etag;
+  });
 }
 
 /** URL of the training entry module, from the vendored manifest. */
