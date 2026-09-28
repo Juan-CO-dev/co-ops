@@ -1,0 +1,13 @@
+{
+  "entry": "crunchy-build-demo-5PAGRZ7Q.js",
+  "entries": {
+    "demo": "crunchy-build-demo-5PAGRZ7Q.js",
+    "training": "crunchy-build-training-JRYMUW3O.js"
+  },
+  "files": {
+    "crunchy-build-demo-5PAGRZ7Q.js": "2240b68dddd2ca65c62d7de3bce7a7cc3f9921e5d9094f7d9bd59617700b7629",
+    "crunchy-build-training-JRYMUW3O.js": "21c2a766cdd370071f00fa56a77746a7b216812e42be009f3ff24f2a4bfa4bc3",
+    "chunks/chunk-HTS3T3UF.js": "082142f07229389cbfa057851b94ca0160a5e61a6cb0642c60737be19892b925",
+    "chunks/stub-scene-L6IGGYXI.js": "4403116f48980dc43fbeb9944e2a2fb5723afe7b15f9f56074d0fd827481085d"
+  }
+}
