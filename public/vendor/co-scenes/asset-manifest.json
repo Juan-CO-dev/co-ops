@@ -1,13 +1,14 @@
 {
-  "entry": "crunchy-build-demo-5PAGRZ7Q.js",
+  "entry": "crunchy-build-demo-44ODO3A4.js",
   "entries": {
-    "demo": "crunchy-build-demo-5PAGRZ7Q.js",
-    "training": "crunchy-build-training-JRYMUW3O.js"
+    "demo": "crunchy-build-demo-44ODO3A4.js",
+    "training": "crunchy-build-training-PVK6PE5R.js"
   },
   "files": {
-    "crunchy-build-demo-5PAGRZ7Q.js": "2240b68dddd2ca65c62d7de3bce7a7cc3f9921e5d9094f7d9bd59617700b7629",
-    "crunchy-build-training-JRYMUW3O.js": "21c2a766cdd370071f00fa56a77746a7b216812e42be009f3ff24f2a4bfa4bc3",
-    "chunks/chunk-HTS3T3UF.js": "082142f07229389cbfa057851b94ca0160a5e61a6cb0642c60737be19892b925",
-    "chunks/stub-scene-L6IGGYXI.js": "4403116f48980dc43fbeb9944e2a2fb5723afe7b15f9f56074d0fd827481085d"
+    "crunchy-build-demo-44ODO3A4.js": "6082bd9b6c78993ccef5659a8c2afac7eab69f5900c94f8ba5bcb61282209b09",
+    "crunchy-build-training-PVK6PE5R.js": "bd5217a3df5de62d5f7da9e2e8a87062b934a0dde62840dfa7dd1d85d562e2e4",
+    "chunks/chunk-34JQEPT5.js": "f160b8ab607555be31d5151f660d6cdeb4c9184c469f09c192a9d2ba93b56939",
+    "chunks/stub-scene-MF5ZRTKQ.js": "aeed8e90fd61ab06a31910a72911047def68a2ac89275965b1abdef36c34c627",
+    "card-display.json": "147261df202eea9dee9590b635d96f476b1f30e620ce3a0284c74ff025a1286e"
   }
 }

@@ -7,6 +7,7 @@
  * (no hand-typed counts); every card line is bound exactly once; and a def that
  * binds an unknown, doubled or missing line is REFUSED.
  */
+import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
@@ -14,6 +15,7 @@ import { BUILD_SHEET_PATH, exportBuildCard, serializeBuildCard } from "@/lib/tra
 import { buildCardForSlug } from "@/lib/training/build-cards";
 import {
   BUILD_DEFS,
+  CARD_DISPLAY,
   buildDefForSlug,
   buildSteps,
   parseBuildSheetItem,
@@ -70,15 +72,20 @@ describe("Crunchy Boi steps", () => {
     expect(en.map((s) => s.n)).toEqual(en.map((_, i) => i + 1));
   });
 
-  it("take amounts from the card, with verbatim sheet names", () => {
+  it("take amounts from the card, with sheet names except where a display rule applies", () => {
     const labels = Object.fromEntries(en.map((s) => [s.key, s.label]));
     expect(labels.aioli).toBe("Aioli · 1.5 oz");
-    expect(labels.chips).toBe("Utz Ripples · a handful");
-    expect(labels.provolone).toBe("Provolone · ×2");
+    expect(labels.chips).toBe("Utz Ripples · a handful (about 22 chips)");
+    expect(labels.provolone).toBe("Provolone · 2 slices");
     expect(labels.turkey).toBe("Turkey · 4 oz");
     expect(labels.shredduce).toBe("Shredduce · a handful");
-    expect(labels["oil-vin"]).toBe("Oil/Vin · 0.25 oz");
+    expect(labels["oil-vin"]).toBe("Oil and vinegar · 0.25 oz");
     expect(labels.oregano).toBe("Oregano · 0.1 oz");
+  });
+
+  it("the display rules change only how a line reads, never the card", () => {
+    expect(card.lines.find((l) => l.ingredient === "Oil/Vin")).toBeTruthy();
+    expect(card.lines.find((l) => l.ingredient === "Provolone")).toMatchObject({ quantity: 2, unit: "ea" });
   });
 
   it("state steps have no ingredient or amount", () => {
@@ -87,7 +94,9 @@ describe("Crunchy Boi steps", () => {
 
   it("Spanish keeps the names and numbers, translates the handful and the action", () => {
     const chips = es.find((s) => s.key === "chips")!;
-    expect(chips.label).toBe("Utz Ripples · un puñado");
+    expect(chips.label).toBe("Utz Ripples · un puñado (unas 22 papitas)");
+    expect(es.find((s) => s.key === "provolone")!.label).toBe("Provolone · 2 rebanadas");
+    expect(es.find((s) => s.key === "oil-vin")!.label).toBe("Aceite y vinagre · 0.25 oz");
     expect(es.find((s) => s.key === "turkey")!.label).toBe("Turkey · 4 oz");
     expect(chips.action).not.toBe(en.find((s) => s.key === "chips")!.action);
   });
@@ -134,5 +143,25 @@ describe("buildSteps refusals", () => {
   });
   it("refuses a card for a different item", () => {
     expect(() => buildSteps({ ...def([]), item: "Other" }, card, "en")).toThrow(/card is "T"/);
+  });
+});
+
+describe("display table mirror (co-scenes src/card/display.ts)", () => {
+  it("equals the vendored co-scenes card-display.json, keyed by sha256 of the trimmed lower-cased name", () => {
+    const vendored = JSON.parse(readFileSync("public/vendor/co-scenes/card-display.json", "utf8")) as unknown;
+    const hashed = Object.fromEntries(
+      Object.entries(CARD_DISPLAY).map(([name, rule]) => [
+        createHash("sha256").update(name.trim().toLowerCase()).digest("hex"),
+        rule,
+      ]),
+    );
+    expect(hashed).toEqual(vendored);
+  });
+
+  it("every rule names a line that is on a card (a typo would silently never apply)", () => {
+    const names = new Set(
+      BUILD_DEFS.flatMap((d) => buildCardForSlug(d.slug)!.lines.map((l) => l.ingredient.trim().toLowerCase())),
+    );
+    for (const name of Object.keys(CARD_DISPLAY)) expect(names.has(name.trim().toLowerCase()), name).toBe(true);
   });
 });

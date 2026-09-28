@@ -21,8 +21,11 @@
  * → lib/training/build-cards/*.card.json), and tests/training-build-card.test.ts
  * fails if that export is stale against the CSV.
  *
- * DISPLAY NAMES ARE VERBATIM from the sheet (Aioli, Utz Ripples, Shredduce,
- * Oil/Vin) in both languages: they are the names on the line and the labels.
+ * DISPLAY NAMES ARE VERBATIM from the sheet (Aioli, Utz Ripples, Shredduce)
+ * in both languages, EXCEPT where a display rule (CARD_DISPLAY, Juan's
+ * 2026-09-28 rulings, mirrored from co-scenes) says how a line reads:
+ * Oil/Vin → "Oil and vinegar", provolone ×2 → "2 slices", a handful of chips
+ * → "a handful (about 22 chips)". Display only; binding is by the sheet name.
  * The Spanish action + how-to text is a DRAFT pending Cristian's review.
  */
 
@@ -128,11 +131,69 @@ export function parseBuildSheetItem(csvText: string, item: string): CardLine[] {
 
 const HANDFUL: Record<BuildLang, string> = { en: "a handful", es: "un puñado" };
 
-/** "1.5 oz", "×2" for each-counts, "a handful" / "un puñado" for the presentation amount. */
+// ── display rules (Juan's scene-review rulings, 2026-09-28) ──────────────────
+
+/** How a card line READS on screen. Display only: the card and its amounts are untouched. */
+export interface DisplayRule {
+  /** Shown in place of the card name. */
+  label?: Bilingual;
+  /** An each-count reads "<n> <unit>" instead of "×n". */
+  each?: { one: Bilingual; other: Bilingual };
+  /** A handful also states its typical count; the range is kept for the scene. */
+  handful?: { min: number; max: number; typical: number; noun: Bilingual };
+}
+
+/**
+ * MIRROR of co-scenes `src/card/display.ts` (CARD_DISPLAY), the ONE display
+ * table track C's scene counters also read. co-scenes keys it by
+ * sha256(trimmed, lower-cased card name) because that repo holds no CO-OPS
+ * names; here it is keyed by the card name itself. tests/training-build-card.test.ts
+ * hashes these names and asserts equality with the vendored
+ * public/vendor/co-scenes/card-display.json, so the two cannot drift: change
+ * the rule in co-scenes, re-vendor, then mirror it here.
+ * Spanish strings are drafts pending Cristian's review.
+ */
+export const CARD_DISPLAY: Readonly<Record<string, DisplayRule>> = {
+  // "so they know exactly what it is"
+  "Oil/Vin": { label: { en: "Oil and vinegar", es: "Aceite y vinagre" } },
+  // ×2 reads "2 slices"
+  Provolone: { each: { one: { en: "slice", es: "rebanada" }, other: { en: "slices", es: "rebanadas" } } },
+  // a handful of chips = 20–25, 22 by default
+  "Utz Ripples": { handful: { min: 20, max: 25, typical: 22, noun: { en: "chips", es: "papitas" } } },
+};
+
+const norm = (name: string) => name.trim().toLowerCase();
+
+export function displayRuleFor(name: string): DisplayRule | null {
+  const key = Object.keys(CARD_DISPLAY).find((k) => norm(k) === norm(name));
+  return key ? (CARD_DISPLAY[key] ?? null) : null;
+}
+
+/** The on-screen name of a card line: the rule's label, else the card name verbatim. */
+export function displayName(line: CardLine, lang: BuildLang): string {
+  return displayRuleFor(line.ingredient)?.label?.[lang] ?? line.ingredient;
+}
+
+/**
+ * "1.5 oz"; "×2", or "2 slices" under an each rule; "a handful" / "un puñado",
+ * plus "(about 22 chips)" / "(unas 22 papitas)" under a handful rule. The
+ * numbers always come from the card or the display table, never from here.
+ */
 export function formatAmount(line: CardLine, lang: BuildLang): string {
-  if (line.presentation === "handful") return HANDFUL[lang];
+  const rule = displayRuleFor(line.ingredient);
+  if (line.presentation === "handful") {
+    const h = rule?.handful;
+    if (!h) return HANDFUL[lang];
+    return lang === "en"
+      ? `${HANDFUL.en} (about ${h.typical} ${h.noun.en})`
+      : `${HANDFUL.es} (unas ${h.typical} ${h.noun.es})`;
+  }
   if (line.quantity === null || line.unit === null) throw new Error(`build-card: "${line.ingredient}" has no amount`);
-  return line.unit.toLowerCase() === "ea" ? `×${line.quantity}` : `${line.quantity} ${line.unit}`;
+  if (line.unit.toLowerCase() === "ea") {
+    const each = rule?.each;
+    return each ? `${line.quantity} ${(line.quantity === 1 ? each.one : each.other)[lang]}` : `×${line.quantity}`;
+  }
+  return `${line.quantity} ${line.unit}`;
 }
 
 export function buildSteps(def: BuildDef, card: BuildCard, lang: BuildLang): WebStep[] {
@@ -141,6 +202,7 @@ export function buildSteps(def: BuildDef, card: BuildCard, lang: BuildLang): Web
   const used = new Set<string>();
   const steps = def.steps.map((s, i): WebStep => {
     // Every step is drawn until real photos land (real-food law: training may be drawn, marked "illustrated").
+    // The host's flag is a floor, not the truth: the real-photo scene (track C) sets `drawn` from its own look plan.
     const base = { n: i + 1, key: s.key, action: s.action[lang], drawn: true, howto: { en: s.howto.en, es: s.howto.es } };
     if (s.line === null) return { ...base, ingredient: null, amount: null, label: s.action[lang] };
     const line = byName.get(s.line);
@@ -148,7 +210,8 @@ export function buildSteps(def: BuildDef, card: BuildCard, lang: BuildLang): Web
     if (used.has(s.line)) throw new Error(`build-card: "${s.line}" is bound twice`);
     used.add(s.line);
     const amount = formatAmount(line, lang);
-    return { ...base, ingredient: line.ingredient, amount, label: `${line.ingredient} · ${amount}` };
+    const name = displayName(line, lang);
+    return { ...base, ingredient: name, amount, label: `${name} · ${amount}` };
   });
   const unbound = card.lines.filter((l) => !used.has(l.ingredient)).map((l) => l.ingredient);
   if (unbound.length) throw new Error(`build-card: card lines with no step: ${unbound.join(", ")}`);

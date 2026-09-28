@@ -41,6 +41,8 @@ export function LearnTheBuild({ item, steps }: { item: string; steps: Record<Bui
   const [status, setStatus] = useState<"loading" | "ready" | "failed">("loading");
   const [updating, setUpdating] = useState(false);
   const [langError, setLangError] = useState<string | null>(null);
+  // Follows the element: the stub is all drawn; the real-photo scene (track C) clears it where no drawn food shows.
+  const [illustrated, setIllustrated] = useState(true);
   const langSteps = steps[language];
 
   useEffect(() => {
@@ -48,8 +50,9 @@ export function LearnTheBuild({ item, steps }: { item: string; steps: Record<Bui
     let el: CrunchyBuildElementLike | null = null;
     const resume = stepRef.current;
     const onStep = (e: Event) => {
-      const step = (e as CustomEvent<CrunchyStepEventDetail>).detail.step;
+      const { step, illustrated: drawn } = (e as CustomEvent<CrunchyStepEventDetail>).detail;
       if (step > 0) stepRef.current = step;
+      setIllustrated(drawn);
     };
     loadCoScenesTraining()
       .then((mod) => {
@@ -137,9 +140,11 @@ export function LearnTheBuild({ item, steps }: { item: string; steps: Record<Bui
       {updating ? <p className="-mt-1 mb-2 text-[11px] text-co-text-dim">{t("user_menu.language.updating")}</p> : null}
       {langError ? <p className="-mt-1 mb-2 text-sm text-co-cta-text">{langError}</p> : null}
 
-      <p className="mb-3 rounded-xl border border-co-border bg-co-surface-inset px-3 py-2 text-xs font-medium text-co-text-muted">
-        {t("training.build.illustrated_note")}
-      </p>
+      {illustrated ? (
+        <p className="mb-3 rounded-xl border border-co-border bg-co-surface-inset px-3 py-2 text-xs font-medium text-co-text-muted">
+          {t("training.build.illustrated_note")}
+        </p>
+      ) : null}
       {language === "es" ? (
         <p className="mb-3 rounded-xl border border-co-border bg-co-surface-inset px-3 py-2 text-xs font-medium text-co-info">
           {t("training.build.spanish_draft")}

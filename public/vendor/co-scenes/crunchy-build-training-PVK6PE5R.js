@@ -1,0 +1,1 @@
+import{a as t,b as c}from"./chunks/chunk-34JQEPT5.js";function i(e="crunchy-build"){customElements.get(e)||customElements.define(e,t)}function p(e){return async(n,r)=>(await import("./chunks/stub-scene-MF5ZRTKQ.js")).createStubScene(n,r,e)}export{t as CrunchyBuildElement,c as defineCrunchyBuild,i as defineTrainingElement,p as trainingSceneFactory};

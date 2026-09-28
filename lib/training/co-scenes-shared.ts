@@ -8,8 +8,10 @@
  * a re-vendor can never serve a stale chunk under an old name.
  *
  * The training entry exports `trainingSceneFactory(steps)`: today it draws the
- * co-scenes stub scene; track C's real Crunchy Boi scene replaces it INSIDE
- * co-scenes behind the same interface, so the swap here is a re-vendor only.
+ * co-scenes stub scene. SWAP POINT: after track C round 2, the REAL-PHOTO C1
+ * scene replaces the stub INSIDE co-scenes (web/training-entry.ts) behind the
+ * same interface, so the swap here is a re-vendor only
+ * (scripts/vendor-co-scenes.ts); no CO-OPS code changes.
  */
 
 import manifest from "@/public/vendor/co-scenes/asset-manifest.json";
