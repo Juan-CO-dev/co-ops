@@ -25,7 +25,7 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 
-import { coScenesAsset } from "./co-scenes-shared";
+import { coScenesAsset, isSafeDistPath } from "./co-scenes-shared";
 
 export interface CoScenesFile {
   bytes: Uint8Array<ArrayBuffer>;
@@ -34,10 +34,15 @@ export interface CoScenesFile {
 
 const cache = new Map<string, CoScenesFile>();
 
-function storePath(store: "dist" | "photos", rel: string): string {
-  return store === "dist"
-    ? path.join(process.cwd(), "vendor", "co-scenes", "dist", ...rel.split("/"))
-    : path.join(process.cwd(), "vendor", "co-scenes", "photos", rel);
+/**
+ * The ONLY filesystem join. Re-checks the shape (defence in depth behind
+ * coScenesAsset) and refuses any result that resolves outside its store.
+ */
+export function storePath(store: "dist" | "photos", rel: string, root = process.cwd()): string | null {
+  if (store === "photos" ? rel.includes("/") || !isSafeDistPath(rel) : !isSafeDistPath(rel)) return null;
+  const base = path.resolve(root, "vendor", "co-scenes", store);
+  const full = path.resolve(base, ...rel.split("/"));
+  return full.startsWith(base + path.sep) ? full : null;
 }
 
 export function readCoScenesFile(rel: string): CoScenesFile | null {
@@ -46,14 +51,17 @@ export function readCoScenesFile(rel: string): CoScenesFile | null {
   const key = `${asset.store}:${asset.rel}`;
   const hit = cache.get(key);
   if (hit) return hit;
+  const file = storePath(asset.store, asset.rel);
+  if (!file) return null;
   let bytes: Buffer;
   try {
-    bytes = fs.readFileSync(storePath(asset.store, asset.rel));
+    bytes = fs.readFileSync(file);
   } catch {
     return null;
   }
   if (asset.store === "photos" && createHash("sha256").update(bytes).digest("hex") !== asset.sha256) return null;
-  const file = { bytes: new Uint8Array(bytes), contentType: asset.contentType };
-  cache.set(key, file);
-  return file;
+  // Cached only AFTER the hash check passed (a failed check returns above, uncached).
+  const out = { bytes: new Uint8Array(bytes), contentType: asset.contentType };
+  cache.set(key, out);
+  return out;
 }

@@ -16,7 +16,29 @@
  * caller tears the element down.
  */
 
+import { toElementSteps, type WebStep } from "./build-card-shared";
+
 export const VIEWER_TIMEOUT_MS = 8000;
+
+/**
+ * Whether the viewer can be STARTED at all, decided before any render-time
+ * work can throw. A mismatched en/es step list, or a bundle vendored without
+ * scene data, is a BUILD/CONFIG problem, not a runtime failure: the page shows
+ * the plain step list (with no "could not load" message) and logs the reason,
+ * instead of crashing during render (toElementSteps throws on a mismatch).
+ */
+export type ViewerInputs =
+  | { kind: "ok"; steps: WebStep[]; dataUrl: string }
+  | { kind: "unavailable"; reason: "no_scene_data" | "steps_mismatch"; detail: string };
+
+export function viewerInputs(en: readonly WebStep[], es: readonly WebStep[], dataUrl: string | null): ViewerInputs {
+  if (!dataUrl) return { kind: "unavailable", reason: "no_scene_data", detail: "the vendored bundle has no scene data file" };
+  try {
+    return { kind: "ok", steps: toElementSteps(en, es), dataUrl };
+  } catch (e) {
+    return { kind: "unavailable", reason: "steps_mismatch", detail: e instanceof Error ? e.message : String(e) };
+  }
+}
 
 export type ViewerOutcome = "ready" | "failed";
 

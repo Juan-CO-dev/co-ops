@@ -153,17 +153,18 @@ describe("the photo store (git-ignored, manifest-allowlisted)", () => {
   const m = {
     entries: { training: "t.js", data: "d.json" },
     files: { "t.js": "a".repeat(64), "d.json": "b".repeat(64) },
-    photos: { "cb-p-aioli-abc.png": "c".repeat(64) },
+    photos: { [`cb-p-aioli-${"c".repeat(64)}.png`]: "c".repeat(64) },
   };
+  const AIOLI = `cb-p-aioli-${"c".repeat(64)}.png`;
 
   it("photos/<name> resolves only for a manifest photo, as image/png from the photo store", async () => {
     const { coScenesAsset } = await import("@/lib/training/co-scenes-shared");
-    expect(coScenesAsset("photos/cb-p-aioli-abc.png", m)).toEqual({
-      rel: "cb-p-aioli-abc.png", store: "photos", contentType: "image/png", sha256: "c".repeat(64),
+    expect(coScenesAsset(`photos/${AIOLI}`, m)).toEqual({
+      rel: AIOLI, store: "photos", contentType: "image/png", sha256: "c".repeat(64),
     });
     expect(coScenesAsset("photos/other.png", m)).toBeNull();
     expect(coScenesAsset("photos/../t.js", m)).toBeNull();
-    expect(coScenesAsset("cb-p-aioli-abc.png", m)).toBeNull(); // a photo is never a dist file
+    expect(coScenesAsset(AIOLI, m)).toBeNull(); // a photo is never a dist file
     expect(coScenesAsset("t.js", m)?.store).toBe("dist");
   });
 
@@ -236,5 +237,40 @@ describe("photos in a deploy: 302 to a 60 s signed URL, only after the session c
     const { GET, sign } = await route("valid", "https://signed");
     expect((await GET(req(TRAINING, "co_ops_session=ok"), params(TRAINING))).status).toBe(404);
     expect(sign).not.toHaveBeenCalled();
+  });
+});
+
+describe("path shape is enforced at the gate AND at the filesystem join (DeepSeek P1)", () => {
+  const sha = "c".repeat(64);
+  const m = {
+    entries: { training: "t.js" },
+    files: { "t.js": "a".repeat(64), "../escape.js": "a".repeat(64), "chunks/../../x.js": "a".repeat(64), "a\b.js": "a".repeat(64) },
+    photos: {
+      [`cb-ok-${sha}.png`]: sha,
+      [`..-${sha}.png`]: sha,
+      [`a/../../etc-${sha}.png`]: sha,
+      [`cb-lies-${"d".repeat(64)}.png`]: sha,
+    },
+  };
+
+  it("a hostile manifest entry is still refused: traversal, separators, dot-leading, name/sha disagreement", async () => {
+    const { coScenesAsset } = await import("@/lib/training/co-scenes-shared");
+    expect(coScenesAsset(`photos/cb-ok-${sha}.png`, m)?.store).toBe("photos");
+    expect(coScenesAsset(`photos/..-${sha}.png`, m)).toBeNull();
+    expect(coScenesAsset(`photos/a/../../etc-${sha}.png`, m)).toBeNull();
+    expect(coScenesAsset(`photos/cb-lies-${"d".repeat(64)}.png`, m)).toBeNull();
+    expect(coScenesAsset("../escape.js", m)).toBeNull();
+    expect(coScenesAsset("chunks/../../x.js", m)).toBeNull();
+    expect(coScenesAsset("a\b.js", m)).toBeNull();
+    expect(coScenesAsset("t.js", m)?.store).toBe("dist");
+  });
+
+  it("storePath refuses anything that would leave its store", async () => {
+    const { storePath } = await import("@/lib/training/co-scenes-files");
+    const root = path.resolve("x-root");
+    expect(storePath("dist", "chunks/a.js", root)).toBe(path.join(root, "vendor", "co-scenes", "dist", "chunks", "a.js"));
+    expect(storePath("photos", `cb-ok-${sha}.png`, root)).toBe(path.join(root, "vendor", "co-scenes", "photos", `cb-ok-${sha}.png`));
+    for (const bad of ["../x.js", "chunks/../../x.js", "", "a//b.js", "/abs.js", "a\..\b.js"]) expect(storePath("dist", bad, root), bad).toBeNull();
+    for (const bad of ["../x.png", "a/b.png", "..png"]) expect(storePath("photos", bad, root), bad).toBeNull();
   });
 });

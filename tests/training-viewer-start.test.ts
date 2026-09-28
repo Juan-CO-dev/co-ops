@@ -6,7 +6,9 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { startViewer, VIEWER_TIMEOUT_MS, type ViewerStartDeps } from "@/lib/training/viewer-start";
+import { startViewer, viewerInputs, VIEWER_TIMEOUT_MS, type ViewerStartDeps } from "@/lib/training/viewer-start";
+import { buildCardForSlug } from "@/lib/training/build-cards";
+import { buildDefForSlug, buildSteps } from "@/lib/training/build-card-shared";
 
 beforeEach(() => vi.useFakeTimers());
 afterEach(() => vi.useRealTimers());
@@ -81,5 +83,28 @@ describe("startViewer", () => {
     await vi.advanceTimersByTimeAsync(1);
     expect(await p).toBe("failed");
     expect(mount).not.toHaveBeenCalled();
+  });
+});
+
+describe("viewerInputs (decided before render; never throws)", () => {
+  const def = buildDefForSlug("crunchy-boi")!;
+  const card = buildCardForSlug("crunchy-boi")!;
+  const en = buildSteps(def, card, "en");
+  const es = buildSteps(def, card, "es");
+
+  it("ok with matching steps and a data file", () => {
+    const r = viewerInputs(en, es, "/api/training/co-scenes/d.json");
+    expect(r.kind).toBe("ok");
+    if (r.kind === "ok") expect(r.steps).toHaveLength(12);
+  });
+
+  it("a step/key mismatch degrades to unavailable instead of throwing during render", () => {
+    expect(() => viewerInputs(en, [...es].reverse(), "/d.json")).not.toThrow();
+    expect(viewerInputs(en, [...es].reverse(), "/d.json")).toMatchObject({ kind: "unavailable", reason: "steps_mismatch" });
+    expect(viewerInputs(en, es.slice(1), "/d.json")).toMatchObject({ kind: "unavailable", reason: "steps_mismatch" });
+  });
+
+  it("no scene data vendored is a CONFIG problem (unavailable), not a runtime failure", () => {
+    expect(viewerInputs(en, es, null)).toMatchObject({ kind: "unavailable", reason: "no_scene_data" });
   });
 });

@@ -17,6 +17,10 @@ So they live in a private Supabase Storage bucket, the same way as receipts (017
 3. The page sha256-checks every photo against the manifest before use. Track C's loader checks it again.
 4. If any photo is missing or wrong, the scene falls back to the drawn studio look (marked "Illustrated"). If that also
    fails, the page falls back to the plain step list. The page never breaks.
+   - The route does NOT check that an object exists before signing it; storage only checks when the URL is fetched.
+     A photo not yet uploaded therefore returns a 302 to a signed URL that storage then answers with 400 or 404.
+   - This fails closed: the page's photo preload treats any non-OK response, or any sha256 mismatch, as "no real
+     photo". The route itself only 404s when the manifest does not list the name or when signing fails.
 
 ## One-time setup per Supabase project (Juan's word first for PROD)
 

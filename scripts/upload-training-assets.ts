@@ -62,12 +62,24 @@ export async function uploadTrainingAssets(opts: {
   return { ...plan, dryRun: opts.dryRun };
 }
 
+/** `[--dry-run] [--from <dir>]`; refuses unknown flags and a flag given as the directory. */
+export function parseUploadArgs(args: readonly string[]): { dryRun: boolean; from: string } {
+  let dryRun = false;
+  let from = path.join("vendor", "co-scenes", "photos");
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i]!;
+    if (a === "--dry-run") dryRun = true;
+    else if (a === "--from") {
+      const v = args[++i];
+      if (!v || v.startsWith("-")) throw new Error("--from needs a directory");
+      from = v;
+    } else throw new Error(`unknown argument ${a}`);
+  }
+  return { dryRun, from };
+}
+
 async function main() {
-  const args = process.argv.slice(2);
-  const dryRun = args.includes("--dry-run");
-  const fromIdx = args.indexOf("--from");
-  const from = fromIdx >= 0 ? args[fromIdx + 1] : path.join("vendor", "co-scenes", "photos");
-  if (!from) throw new Error("--from needs a directory");
+  const { dryRun, from } = parseUploadArgs(process.argv.slice(2));
 
   const manifest = JSON.parse(readFileSync(path.join("vendor", "co-scenes", "dist", "asset-manifest.json"), "utf8")) as {
     photos?: Record<string, string>;
@@ -93,7 +105,14 @@ async function main() {
     },
   };
 
-  const r = await uploadTrainingAssets({ photos, readPhoto: (n) => readFileSync(path.join(from, n)), storage, dryRun });
+  const readPhoto = (n: string) => {
+    try {
+      return readFileSync(path.join(from, n));
+    } catch {
+      throw new Error(`upload-training-assets: ${n} is not in ${from} — run scripts/vendor-co-scenes.ts first (or pass --from)`);
+    }
+  };
+  const r = await uploadTrainingAssets({ photos, readPhoto, storage, dryRun });
   console.log(
     `${dryRun ? "[dry-run] " : ""}training-assets: ${r.upload.length} to upload, ${r.skip.length} already present` +
       (r.stray.length ? `, ${r.stray.length} stray object(s) not in the manifest (left alone)` : ""),

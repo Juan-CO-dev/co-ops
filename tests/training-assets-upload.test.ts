@@ -7,10 +7,12 @@
  * name that does not carry a sha256.
  */
 import { createHash } from "node:crypto";
+import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
-import { uploadTrainingAssets, type TrainingStorage } from "@/scripts/upload-training-assets";
+import { parseUploadArgs, uploadTrainingAssets, type TrainingStorage } from "@/scripts/upload-training-assets";
 import {
+  bareListedName,
   planTrainingUpload,
   shaInPhotoName,
   TRAINING_ASSETS_BUCKET,
@@ -81,5 +83,33 @@ describe("uploadTrainingAssets (mocked storage)", () => {
     ).rejects.toThrow(/does not match its manifest sha256/);
     expect(storage.upload).not.toHaveBeenCalled();
     expect(storage.list).not.toHaveBeenCalled();
+  });
+});
+
+describe("Supabase list() name forms are pinned (GLM P2)", () => {
+  it("bare and prefixed listings plan identically", () => {
+    expect(bareListedName(`co-scenes/${nameA}`)).toBe(nameA);
+    expect(bareListedName(nameA)).toBe(nameA);
+    expect(planTrainingUpload(photos, [`co-scenes/${nameA}`])).toEqual(planTrainingUpload(photos, [nameA]));
+    expect(planTrainingUpload(photos, [`co-scenes/${nameA}`, `co-scenes/${nameB}`]).upload).toEqual([]);
+  });
+
+  it("a prefixed listing still makes the upload a no-op (no attempt to re-upload)", async () => {
+    const storage = mockStorage([`co-scenes/${nameA}`, `co-scenes/${nameB}`]);
+    const r = await uploadTrainingAssets({ photos, readPhoto: (n) => files[n]!, storage, dryRun: false });
+    expect(r.upload).toEqual([]);
+    expect(storage.upload).not.toHaveBeenCalled();
+  });
+});
+
+describe("parseUploadArgs", () => {
+  it("defaults, --dry-run, --from <dir>", () => {
+    expect(parseUploadArgs([])).toEqual({ dryRun: false, from: path.join("vendor", "co-scenes", "photos") });
+    expect(parseUploadArgs(["--dry-run", "--from", "some/dir"])).toEqual({ dryRun: true, from: "some/dir" });
+  });
+  it("refuses a flag given as the directory, a missing directory, and unknown flags", () => {
+    expect(() => parseUploadArgs(["--from", "--dry-run"])).toThrow(/needs a directory/);
+    expect(() => parseUploadArgs(["--from"])).toThrow(/needs a directory/);
+    expect(() => parseUploadArgs(["--yes"])).toThrow(/unknown argument/);
   });
 });

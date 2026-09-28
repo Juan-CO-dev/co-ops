@@ -27,7 +27,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 
-import { toElementSteps, type BuildLang, type WebStep } from "@/lib/training/build-card-shared";
+import type { BuildLang, WebStep } from "@/lib/training/build-card-shared";
 import {
   CO_SCENES_DATA_URL,
   loadCoScenesTraining,
@@ -35,7 +35,7 @@ import {
   type CrunchyBuildElementLike,
   type CrunchyStepEventDetail,
 } from "@/lib/training/co-scenes-shared";
-import { startViewer, VIEWER_TIMEOUT_MS } from "@/lib/training/viewer-start";
+import { startViewer, viewerInputs, VIEWER_TIMEOUT_MS } from "@/lib/training/viewer-start";
 import { useTranslation } from "@/lib/i18n/provider";
 import type { Language } from "@/lib/i18n/types";
 
@@ -52,10 +52,18 @@ export function LearnTheBuild({ item, steps }: { item: string; steps: Record<Bui
   // Follows the element: the stub is all drawn; the real-photo scene (track C) clears it where no drawn food shows.
   const [illustrated, setIllustrated] = useState(true);
   const langSteps = steps[language];
-  const elementSteps = useMemo(() => toElementSteps(steps.en, steps.es), [steps]);
-  const status: "loading" | "ready" | "failed" = viewer?.lang === language ? viewer.status : "loading";
+  // Decided up front and never throws: a step mismatch or a missing scene-data file
+  // is a build/config problem that degrades to the plain list, not a render crash.
+  const inputs = useMemo(() => viewerInputs(steps.en, steps.es, CO_SCENES_DATA_URL), [steps]);
+  const status: "loading" | "ready" | "failed" | "unavailable" =
+    inputs.kind === "unavailable" ? "unavailable" : viewer?.lang === language ? viewer.status : "loading";
 
   useEffect(() => {
+    if (inputs.kind !== "ok") {
+      console.error(`Learn the build: viewer unavailable (${inputs.reason}): ${inputs.detail}`);
+      return;
+    }
+    const { steps: elementSteps, dataUrl } = inputs;
     let cancelled = false;
     let el: CrunchyBuildElementLike | null = null;
     const resume = stepRef.current;
@@ -74,8 +82,7 @@ export function LearnTheBuild({ item, steps }: { item: string; steps: Record<Bui
         // Track C's real-photo C1 scene (stage look) from the vendored data file;
         // the entry falls back to the drawn studio look itself if any photo is
         // missing or fails its sha256 check (then the element marks it Illustrated).
-        if (!CO_SCENES_DATA_URL) throw new Error("no scene data vendored");
-        made.factory = mod.trainingSceneFactory(elementSteps, CO_SCENES_DATA_URL);
+        made.factory = mod.trainingSceneFactory(elementSteps, dataUrl);
         made.setAttribute("mode", "training");
         made.setAttribute("look", "stage");
         made.setAttribute("lang", language);
@@ -109,7 +116,7 @@ export function LearnTheBuild({ item, steps }: { item: string; steps: Record<Bui
       el?.removeEventListener("crunchy-step", onStep);
       el?.remove(); // disconnect releases the scene, renderer and GL context
     };
-  }, [language, elementSteps]);
+  }, [language, inputs]);
 
   const selectLanguage = async (next: Language) => {
     if (next === language || updating) return;
@@ -185,7 +192,16 @@ export function LearnTheBuild({ item, steps }: { item: string; steps: Record<Bui
             {t("training.build.loading")}
           </p>
         ) : null}
-        {status === "failed" ? <FallbackSteps steps={langSteps} lang={language} failedText={t("training.build.failed")} heading={t("training.build.steps_heading")} /> : null}
+        {status === "failed" || status === "unavailable" ? (
+          <FallbackSteps
+            steps={langSteps}
+            lang={language}
+            // "unavailable" is a build/config problem (logged), not something the reader did or
+            // can retry: the steps show without the "could not load" line.
+            failedText={status === "failed" ? t("training.build.failed") : null}
+            heading={t("training.build.steps_heading")}
+          />
+        ) : null}
       </section>
     </div>
   );
@@ -199,14 +215,16 @@ function FallbackSteps({
 }: {
   steps: WebStep[];
   lang: Language;
-  failedText: string;
+  failedText: string | null;
   heading: string;
 }) {
   return (
     <div>
-      <p className="m-0 mb-2 text-sm text-co-text-muted" role="status">
-        {failedText}
-      </p>
+      {failedText ? (
+        <p className="m-0 mb-2 text-sm text-co-text-muted" role="status">
+          {failedText}
+        </p>
+      ) : null}
       <h2 className="m-0 mb-1 text-xs font-bold tracking-wide text-co-text-muted">{heading}</h2>
       <ol className="m-0 list-none p-0">
         {steps.map((s) => (

@@ -37,7 +37,18 @@ export interface UploadPlan {
  * name is content-addressed, so it is already the right bytes). Refuses a
  * manifest whose name and sha256 disagree.
  */
-export function planTrainingUpload(photos: Readonly<Record<string, string>>, remote: readonly string[]): UploadPlan {
+/**
+ * Supabase `list(prefix)` returns names RELATIVE to the prefix on current
+ * storage-api, but some versions have returned the full path. Normalise both to
+ * the bare name so the plan never depends on which one this project runs.
+ */
+export function bareListedName(listed: string): string {
+  const p = `${TRAINING_ASSETS_PREFIX}/`;
+  return listed.startsWith(p) ? listed.slice(p.length) : listed;
+}
+
+export function planTrainingUpload(photos: Readonly<Record<string, string>>, listed: readonly string[]): UploadPlan {
+  const remote = listed.map(bareListedName);
   const have = new Set(remote);
   const upload: string[] = [];
   const skip: string[] = [];

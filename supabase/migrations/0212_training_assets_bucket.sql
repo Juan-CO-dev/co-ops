@@ -19,7 +19,8 @@
 --     writes (content-addressed, idempotent); lib/training/training-assets.ts mints
 --     60 s signed URLs ONLY after requireSession in
 --     app/api/training/co-scenes/[...path]/route.ts
---   - the DROP POLICY IF EXISTS block makes a re-run converge on the no-policy state
+--   - a re-run CONVERGES: the bucket row is forced back to private/2 MB/png, and the
+--     DROP POLICY IF EXISTS block converges on the no-policy state
 --
 -- WHY ITS OWN BUCKET, not a prefix in `photos`: `photos` objects are location-scoped
 -- (photos/{locationId}/…) and every read is authorised by a public.photos registry
@@ -36,9 +37,14 @@
 -- APPLY-FIRST-SAFE: nothing reads this bucket until the photos are uploaded; the route
 -- falls back to the drawn look (and then the plain step list) when a photo is absent.
 
+-- DO UPDATE, not DO NOTHING: a bucket created by hand with the wrong settings (e.g.
+-- Public=ON via the manual fallback) is forced private and narrowed on re-run.
 insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
 values ('training-assets', 'training-assets', false, 2097152, array['image/png'])
-on conflict (id) do nothing;
+on conflict (id) do update
+  set public = false,
+      file_size_limit = excluded.file_size_limit,
+      allowed_mime_types = excluded.allowed_mime_types;
 
 drop policy if exists training_assets_objects_no_user_select on storage.objects;
 drop policy if exists training_assets_objects_no_user_insert on storage.objects;
