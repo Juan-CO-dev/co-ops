@@ -25,7 +25,7 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 
-import { coScenesAsset, isSafeDistPath } from "./co-scenes-shared";
+import { coScenesAsset, isPhotoName, isSafeDistPath } from "./co-scenes-shared";
 
 export interface CoScenesFile {
   bytes: Uint8Array<ArrayBuffer>;
@@ -35,11 +35,13 @@ export interface CoScenesFile {
 const cache = new Map<string, CoScenesFile>();
 
 /**
- * The ONLY filesystem join. Re-checks the shape (defence in depth behind
- * coScenesAsset) and refuses any result that resolves outside its store.
+ * The ONLY filesystem join. Re-checks the SAME shape coScenesAsset enforces
+ * (defence in depth, since this is exported): photos must be exactly one
+ * `<id>-<sha256>.png` segment (isPhotoName); dist paths must be safe segments
+ * (isSafeDistPath). Then refuses any result that resolves outside its store.
  */
 export function storePath(store: "dist" | "photos", rel: string, root = process.cwd()): string | null {
-  if (store === "photos" ? rel.includes("/") || !isSafeDistPath(rel) : !isSafeDistPath(rel)) return null;
+  if (store === "photos" ? !isPhotoName(rel) : !isSafeDistPath(rel)) return null;
   const base = path.resolve(root, "vendor", "co-scenes", store);
   const full = path.resolve(base, ...rel.split("/"));
   return full.startsWith(base + path.sep) ? full : null;

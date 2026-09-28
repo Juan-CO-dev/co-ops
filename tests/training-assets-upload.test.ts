@@ -90,6 +90,7 @@ describe("Supabase list() name forms are pinned (GLM P2)", () => {
   it("bare and prefixed listings plan identically", () => {
     expect(bareListedName(`co-scenes/${nameA}`)).toBe(nameA);
     expect(bareListedName(nameA)).toBe(nameA);
+    expect(bareListedName(`/co-scenes/${nameA}`)).toBe(nameA);
     expect(planTrainingUpload(photos, [`co-scenes/${nameA}`])).toEqual(planTrainingUpload(photos, [nameA]));
     expect(planTrainingUpload(photos, [`co-scenes/${nameA}`, `co-scenes/${nameB}`]).upload).toEqual([]);
   });

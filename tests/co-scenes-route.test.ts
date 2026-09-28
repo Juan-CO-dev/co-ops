@@ -271,6 +271,8 @@ describe("path shape is enforced at the gate AND at the filesystem join (DeepSee
     expect(storePath("dist", "chunks/a.js", root)).toBe(path.join(root, "vendor", "co-scenes", "dist", "chunks", "a.js"));
     expect(storePath("photos", `cb-ok-${sha}.png`, root)).toBe(path.join(root, "vendor", "co-scenes", "photos", `cb-ok-${sha}.png`));
     for (const bad of ["../x.js", "chunks/../../x.js", "", "a//b.js", "/abs.js", "a\..\b.js"]) expect(storePath("dist", bad, root), bad).toBeNull();
-    for (const bad of ["../x.png", "a/b.png", "..png"]) expect(storePath("photos", bad, root), bad).toBeNull();
+    // Photos: EXACTLY one `<id>-<sha256>.png` segment at the join, not merely "a safe segment".
+    for (const bad of ["../x.png", "a/b.png", "..png", "plain.png", "cb-x.png", `cb-x-${"c".repeat(63)}.png`, `.cb-${sha}.png`, `cb-${sha}.PNG`, `a/cb-${sha}.png`])
+      expect(storePath("photos", bad, root), bad).toBeNull();
   });
 });

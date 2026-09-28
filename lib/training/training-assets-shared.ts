@@ -44,7 +44,8 @@ export interface UploadPlan {
  */
 export function bareListedName(listed: string): string {
   const p = `${TRAINING_ASSETS_PREFIX}/`;
-  return listed.startsWith(p) ? listed.slice(p.length) : listed;
+  const s = listed.replace(/^\/+/, "");
+  return s.startsWith(p) ? s.slice(p.length) : s;
 }
 
 export function planTrainingUpload(photos: Readonly<Record<string, string>>, listed: readonly string[]): UploadPlan {
