@@ -8,11 +8,14 @@ afterEach(() => { vi.resetModules(); vi.doUnmock("@/lib/session"); vi.doUnmock("
 async function setup({ valid = true, local = false, poster = false, known = true, upstreamStatus = 206, upstreamHeaders = {} as Record<string, string> } = {}) {
   vi.resetModules();
   const contentType = poster ? "image/jpeg" : "video/mp4";
-  const fetchMedia = vi.fn<(name: string, range: string | null, signal: AbortSignal) => Promise<Response>>(async () => new Response(new Uint8Array([1, 2]), {
-    status: upstreamStatus, headers: { "content-type": contentType, "content-length": "2", ...(upstreamStatus === 206 ? { "content-range": "bytes 0-1/10" } : {}), "x-secret": "private", location: "https://private.invalid", ...upstreamHeaders },
+  let sessionValid = valid;
+  const requireSession = vi.fn(async () => sessionValid ? { user: { id: "test" } } : NextResponse.json({ error: "unauthorized" }, { status: 401 }));
+  const bytes = upstreamStatus === 200 ? Uint8Array.from({ length: 10 }, (_, i) => i + 1) : new Uint8Array([1, 2]);
+  const fetchMedia = vi.fn<(name: string, range: string | null, signal: AbortSignal) => Promise<Response>>(async () => new Response(bytes, {
+    status: upstreamStatus, headers: { "content-type": contentType, "content-length": String(bytes.length), ...(upstreamStatus === 206 ? { "content-range": "bytes 0-1/10" } : {}), "x-secret": "private", location: "https://private.invalid", ...upstreamHeaders },
   }));
   const readMedia = vi.fn(async () => local ? { body: new ReadableStream({ start(c) { c.enqueue(new Uint8Array([1, 2])); c.close(); } }) } : null);
-  vi.doMock("@/lib/session", () => ({ requireSession: vi.fn(async () => valid ? { user: { id: "test" } } : NextResponse.json({ error: "unauthorized" }, { status: 401 })) }));
+  vi.doMock("@/lib/session", () => ({ requireSession }));
   vi.doMock("@/lib/training/co-scenes-shared", async () => {
     const original = await vi.importActual<typeof import("@/lib/training/co-scenes-shared")>("@/lib/training/co-scenes-shared");
     return { ...original, coScenesAsset: () => known ? { rel: `training-${sha}.${poster ? "jpg" : "mp4"}`, store: "photos", contentType, sha256: sha, bytes: 10 } : null };
@@ -21,7 +24,7 @@ async function setup({ valid = true, local = false, poster = false, known = true
   vi.doMock("@/lib/training/training-assets", () => ({ fetchTrainingMedia: fetchMedia, signTrainingPhoto: vi.fn() }));
   const route = await import("@/app/api/training/co-scenes/[...path]/route");
   const req = (headers: Record<string, string> = {}, method = "GET") => new NextRequest("https://example.com/api/training/co-scenes/media/test", { headers, method });
-  return { ...route, fetchMedia, readMedia, req };
+  return { ...route, fetchMedia, readMedia, req, requireSession, revoke: () => { sessionValid = false; } };
 }
 it.each([false, true])("range response is streamed and sanitized, local=%s", async (local) => {
   const { GET, req, fetchMedia } = await setup({ local });
@@ -38,6 +41,34 @@ it("revoked conditional requests cannot touch local/storage or return 304", asyn
   const { GET, HEAD, req, fetchMedia, readMedia } = await setup({ valid: false });
   for (const method of [GET, HEAD]) expect((await method(req({ "if-none-match": etag }), ctx)).status).toBe(401);
   expect(fetchMedia).not.toHaveBeenCalled(); expect(readMedia).not.toHaveBeenCalled();
+});
+it.each(["range", "conditional", "HEAD"])("rechecks the session after a successful GET before a later %s request", async (next) => {
+  const { GET, HEAD, req, fetchMedia, readMedia, requireSession, revoke } = await setup({ upstreamStatus: 200 });
+  const initial = await GET(req(), ctx);
+  expect(initial.status).toBe(200);
+  expect((await initial.arrayBuffer()).byteLength).toBe(10);
+  expect(fetchMedia).toHaveBeenCalledTimes(1);
+  expect(readMedia).toHaveBeenCalledTimes(1);
+  revoke();
+  const headers: Record<string, string> = next === "range"
+    ? { range: "bytes=0-1" }
+    : { range: "bytes=0-1", "if-none-match": etag };
+  const rejected = await (next === "HEAD" ? HEAD : GET)(req(headers, next === "HEAD" ? "HEAD" : "GET"), ctx);
+  expect(rejected.status).toBe(401);
+  expect(requireSession).toHaveBeenCalledTimes(2);
+  expect(fetchMedia).toHaveBeenCalledTimes(1);
+  expect(readMedia).toHaveBeenCalledTimes(1);
+});
+it("matching If-None-Match takes precedence over Range without opening media", async () => {
+  const { GET, req, fetchMedia, readMedia, requireSession } = await setup();
+  const response = await GET(req({ "if-none-match": etag, range: "bytes=0-1" }), ctx);
+  expect(response.status).toBe(304);
+  expect(response.headers.get("etag")).toBe(etag);
+  expect(response.headers.get("content-range")).toBeNull();
+  expect(await response.text()).toBe("");
+  expect(requireSession).toHaveBeenCalledTimes(1);
+  expect(fetchMedia).not.toHaveBeenCalled();
+  expect(readMedia).not.toHaveBeenCalled();
 });
 it("HEAD ignores Range and has full length, no body and no storage fetch", async () => {
   const { HEAD, req, fetchMedia } = await setup();
@@ -70,6 +101,22 @@ it.each<Record<string, string>>([
 ])("refuses incorrect upstream metadata %j", async (upstreamHeaders) => {
   const { GET, req } = await setup({ upstreamHeaders });
   expect((await GET(req({ range: "bytes=0-1" }), ctx)).status).toBe(502);
+});
+it.each(["wrong range total", "missing full-response length"])("refuses and cancels upstream with %s", async (failure) => {
+  const { GET, req, fetchMedia } = await setup();
+  const cancel = vi.fn();
+  const body = new ReadableStream<Uint8Array>({ cancel });
+  const headers = new Headers({ "content-type": "video/mp4" });
+  if (failure === "wrong range total") {
+    headers.set("content-length", "2");
+    headers.set("content-range", "bytes 0-1/11");
+  }
+  fetchMedia.mockResolvedValueOnce(new Response(body, { status: failure === "wrong range total" ? 206 : 200, headers }));
+  const response = await GET(req(failure === "wrong range total" ? { range: "bytes=0-1" } : {}), ctx);
+  expect(response.status).toBe(502);
+  expect(response.headers.get("cache-control")).toBe("no-store");
+  expect(await response.text()).toBe("");
+  expect(cancel).toHaveBeenCalledTimes(1);
 });
 it("If-Range mismatch sends a full request and 200", async () => {
   const { GET, req, fetchMedia } = await setup({ upstreamStatus: 200, upstreamHeaders: { "content-length": "10" } });

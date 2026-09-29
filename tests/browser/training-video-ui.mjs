@@ -97,7 +97,8 @@ try {
       assert.equal(await video.getAttribute("poster"), "/fixture.svg");
       assert.equal(await page.getByRole("status").textContent(), "Loading the build video…");
       assert.equal(await page.evaluate(() => window.playCount), 0);
-      await video.dispatchEvent("loadeddata");
+      // Metadata-only preload need not decode a frame (especially with reduced motion).
+      await video.dispatchEvent("loadedmetadata");
       await page.getByRole("status").waitFor({state:"detached"});
       assert.equal(await page.getByRole("status").count(), 0);
       await page.evaluate(() => window.importResolves.shift()());
@@ -109,6 +110,7 @@ try {
       const before = await page.evaluate(() => window.pauseCount);
       await page.evaluate(() => window.sceneResolves.shift()({status:"ready"}));
       await video.waitFor({state:"detached"});
+      await page.waitForFunction(count => window.pauseCount > count, before);
       assert.ok(await page.evaluate(() => window.pauseCount) > before);
       assert.equal(await page.locator("crunchy-build").evaluate(el => el.parentElement.inert), false);
 
@@ -120,6 +122,7 @@ try {
       await page.evaluate(() => window.sceneResolves.shift()({status:"failed",error:"fixture"}));
       await page.locator("crunchy-build").waitFor({state:"detached"});
       assert.equal(await video.count(), 1);
+      await page.getByText("Mira el video del armado. Usa los controles para pausar o volver a verlo.", {exact:true}).waitFor();
       await video.dispatchEvent("error");
       await video.waitFor({state:"detached"});
       assert.ok(await page.getByText("1. Primer paso", {exact:true}).isVisible());

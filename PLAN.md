@@ -1,5 +1,51 @@
 # Training build: video first, interactive scene when ready
 
+## PR #382 code-review fix plan (2026-09-29)
+
+User authorizes triage, fixes and commits on the existing branch; CC pushes. Both `pr-video.glm.md` and `pr-video.deepseek.md` read in full. This is the code-review follow-up to the historical plan below.
+
+- Confirmed references: route/session gate, media HTTP helpers, local file reader, TrainingVideo, browser harness, en/es strings, Next tracing docs/config/workflow, migrations 0212/0213 and the service-role uploader. Reviews are the cross-family input for these bounded fixes.
+- Fix one finding per commit, with a failing regression first: metadata-only readiness; failed/unavailable scene intro; corrupt local-copy storage fallback; repeated local hashing; generated deployment-trace CI coverage. Changes touch the component/dictionaries/browser test, local reader/tests, and tracing checker/workflow/tests respectively.
+- Mandatory verification: auth before conditional/range/local/storage paths (including revocation between requests), range boundaries/validators/HEAD/upstream refusal. No auth/range defect was identified by either review; add regression coverage and run existing suites rather than inventing a code change.
+- Preserve integrity checks, bounded memory, private storage, en/es, no production operations. For a local hash cache, use handle identity plus size/mtime/ctime and expected SHA, invalidate on changes, bound entries, and never cache failure.
+- Validation: focused red/green runs, browser Chromium/WebKit, full Vitest, typecheck, ESLint, discipline, build and actual generated trace. Real artifact/iOS checks remain CC's release gates.
+
+### Rejected / corrected review points
+
+- GLM tracing key recommendation: reject restoring the unescaped bracket literal. Installed Next output docs specify picomatch route globs (literal brackets require escaping); prior build verified the wildcard and four required files. Accept the missing automated trace gate instead.
+- DeepSeek missing Content-Length: reject loosening `validMediaResponse`. The approved proxy contract requires upstream metadata to match the manifest before sending its fixed Content-Length. A chunked body without that evidence cannot be declared correct before streaming. Keep 502 and cancellation; no demonstrated supported Storage response violates this contract.
+- Both bucket-cap points: the widening is explicit in the approved plan and 0213, not accidental. Storage has one per-bucket cap. The PNG limit is in the sole server/service-role upload CLI, not client-side validation. Repository search finds no alternate training bucket writer; 0212 has no user Storage policies and 0213 adds none. A hypothetical future permissive policy/writer is not an existing bypass. A separate bucket would change the approved contract. Existing oversized-PNG test checks rejection before any storage operation. No claim of live-schema verification.
+- DeepSeek poster failure: poster is optional presentation; a failed poster must not mark a playable video failed or replace it with steps. Native controls and the loading status remain available. Media errors already produce the step fallback; no new poster-specific UX contract is specified.
+- GLM unused `training.build.failed`: rejected; FallbackSteps consumes it when the scene fails and video is unavailable/failed.
+- DeepSeek retracted/no-finding items verified: HEAD strips all bodies including redirects; date/weak/stale If-Range safely returns full 200; malformed/multipart ranges return full 200; manifest/upstream total mismatch is refused; pause of unplayed video is harmless; media names are validated inside validTrainingMedia; MP4/JPEG cannot enter the PNG branch through manifest lookup; importer/manifest/bucket media caps agree. No fixes needed.
+- GLM/DeepSeek auth, range, memory and visibility positive assessments verified against code; revalidation precedes 304/416/HEAD, production streams, local hashing uses 64 KiB, and scene readiness is the only swap trigger.
+
+Relevant catalog checks: BC-004 gates in both directions; BC-018 en/es; BC-019 actual Next docs and storage contracts; BC-030 synthetic browser evidence limits; BC-040 failure paths; BC-043 CC independent final verification still required.
+
+### Fix evidence and commit handoff
+
+1. Corrupt local fallback: regression expected null but rejected with `training media unavailable`; after closing/refusing local bytes and returning null, local + route suites passed (18 tests).
+2. Repeated local hashing: regression showed both seeks performing two reads; after bounded identity/hash verification cache, local tests passed (2). Same-size corruption with restored mtime is refused; repaired bytes are reverified. Cache uses dev/inode/size/nanosecond mtime/ctime plus expected SHA and a 32-entry bound, not file contents.
+3. Metadata-only loading: browser test timed out waiting for loading status removal after `loadedmetadata`; changing to `onLoadedMetadata` passed Chromium and WebKit. Also made the pause assertion await React's passive cleanup (WebKit exposed a test race).
+4. Failed-scene copy: Spanish browser regression timed out waiting for fallback instructions; added en/es video-only instructions for failed/unavailable scene, then both browsers passed. Synthetic held media and dispatched events verify the component, not genuine decoding/iOS behavior.
+5. Trace gate: 9 tests failed with checker absent, then all 9 passed. CI runs `scripts/check-training-trace.mjs` after build, requiring every manifest dist file plus manifest and refusing ignored media. Existing generated trace passed with four assets plus manifest.
+6. Mandatory auth/range checks: added six characterization cases, all green against existing implementation (23 route tests total). Tests cover valid load then revocation before range/conditional/HEAD, 304-before-range precedence, and cancellation on wrong total/missing full length. These are not claimed as red-to-green fixes. The full-response fixture now has the ten bytes its headers declare.
+
+Focused combined command: `node node_modules/vitest/vitest.mjs run tests/training-media.test.ts tests/training-media-local.test.ts tests/training-media-route.test.ts tests/training-media-upload.test.ts tests/training-trace.test.ts --maxWorkers=1`: **5 files / 53 tests passed**.
+
+Final verification:
+
+- `node node_modules/vitest/vitest.mjs run --maxWorkers=2 --testTimeout=120000 --reporter=json --outputFile=.tmp-pr382-tests.json; exit $LASTEXITCODE`: **exit 0, success true, 205 files, 3,723 passed, zero failed, one skipped**. An earlier full run had identical green counts but PowerShell returned 1 after a Git ignore-file permission warning; the explicit exit-code/JSON rerun removes that ambiguity.
+- `node tests/browser/training-video-ui.mjs`: **Chromium and WebKit passed** after both UI fixes.
+- `node node_modules/typescript/bin/tsc --noEmit`: **passed** on the completed files. An earlier concurrent run saw the component's new key before the en/es write completed and failed; final run passed.
+- Targeted `node node_modules/eslint/bin/eslint.js` for all changed TS/TSX/MJS files: **passed**. `bash scripts/phase2-discipline-check.sh` and `git diff --check`: **passed**.
+- `npm.cmd run build`: **failed fetching DM Sans from Google Fonts**, not a passing ordinary build. Offline diagnostic build using the pre-existing ignored `NEXT_FONT_GOOGLE_MOCKED_RESPONSES` fixture is recorded separately below.
+- With `NEXT_FONT_GOOGLE_MOCKED_RESPONSES` pointing to `.tmp-next-font-mock.cjs`, `node node_modules/next/dist/bin/next build`: **exit 0**, compiled, passed TypeScript, generated **189/189** static pages. This is a diagnostic build with mocked font CSS, not the ordinary release build. `node scripts/check-training-trace.mjs` on its final output: **passed**, all four manifest assets plus manifest included and no ignored media.
+
+Commit blocker: both `git add` and `git commit` failed with `Unable to create 'C:/Users/conta/co-ops/.git/worktrees/co-ops-astra-video/index.lock': Permission denied`. The actual gitdir is outside this session's writable root; approval escalation is disabled. No commit was created. Six ordered, independently apply-checked patches with proposed commit titles are in `.tmp-pr382-patches/README.md`. They reproduce all 11 changed source/test/config files from baseline `361f4db4dee929948d042545b4259127cfd21ee3`; the working tree ALREADY contains them. CC can commit each finding from those patches in a fresh authorized checkout. Final PLAN changes are a separate documentation patch.
+
+## Historical implementation record (before this code-review follow-up)
+
 Status: GLM and DeepSeek reviews read in full; implementation authorized by CC with no further plan round.
 Branch: `astra/training-video-first`. Dedicated clone: `C:/Users/conta/co-ops-astra-video`.
 No push, merge, production writes, upload, or video rendering in this task.

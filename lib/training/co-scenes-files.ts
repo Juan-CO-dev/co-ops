@@ -36,6 +36,11 @@ export interface CoScenesFile {
 }
 
 const cache = new Map<string, CoScenesFile>();
+// Dev-only verification metadata, never media bytes. Bound long-running dev servers.
+const mediaChecks = new Map<string, string>();
+function mediaIdentity(stat: fs.BigIntStats): string {
+  return `${stat.dev}:${stat.ino}:${stat.size}:${stat.mtimeNs}:${stat.ctimeNs}`;
+}
 
 /**
  * The ONLY filesystem join. Re-checks the SAME shape coScenesAsset enforces
@@ -86,22 +91,30 @@ export async function readCoScenesMedia(asset: CoScenesAssetRef & { bytes: numbe
   // The ignored local store must never expand Next's deployment trace.
   try { handle = await open(/*turbopackIgnore: true*/ file, "r"); } catch { return null; }
   try {
-    const stat = await handle.stat();
-    if (!stat.isFile() || stat.size !== asset.bytes) throw new Error("size mismatch");
-    const hash = createHash("sha256");
-    const buffer = Buffer.alloc(64 * 1024);
-    let offset = 0;
-    while (offset < stat.size) {
-      const { bytesRead } = await handle.read(buffer, 0, Math.min(buffer.length, stat.size - offset), offset);
-      if (!bytesRead) throw new Error("truncated media");
-      hash.update(buffer.subarray(0, bytesRead)); offset += bytesRead;
+    const stat = await handle.stat({ bigint: true });
+    if (!stat.isFile() || stat.size !== BigInt(asset.bytes)) throw new Error("size mismatch");
+    const identity = `${asset.sha256}:${mediaIdentity(stat)}`;
+    if (mediaChecks.get(file) !== identity) {
+      mediaChecks.delete(file);
+      const hash = createHash("sha256");
+      const buffer = Buffer.alloc(64 * 1024);
+      let offset = 0;
+      while (offset < asset.bytes) {
+        const { bytesRead } = await handle.read(buffer, 0, Math.min(buffer.length, asset.bytes - offset), offset);
+        if (!bytesRead) throw new Error("truncated media");
+        hash.update(buffer.subarray(0, bytesRead)); offset += bytesRead;
+      }
+      if (hash.digest("hex") !== asset.sha256) throw new Error("hash mismatch");
+      if (mediaIdentity(await handle.stat({ bigint: true })) !== mediaIdentity(stat)) throw new Error("media changed during verification");
+      if (mediaChecks.size >= 32) mediaChecks.delete(mediaChecks.keys().next().value!);
+      mediaChecks.set(file, identity);
     }
-    if (hash.digest("hex") !== asset.sha256) throw new Error("hash mismatch");
-    const stream = handle.createReadStream({ start: range.status === 206 ? range.start : 0, end: range.status === 206 ? range.end : stat.size - 1, autoClose: true });
+    const stream = handle.createReadStream({ start: range.status === 206 ? range.start : 0, end: range.status === 206 ? range.end : asset.bytes - 1, autoClose: true });
     return { body: Readable.toWeb(stream) as ReadableStream<Uint8Array> };
   } catch {
+    mediaChecks.delete(file);
     await handle.close();
-    // A present but corrupt local copy must not silently become a valid local response.
-    throw new Error("training media unavailable");
+    // Refuse the local bytes; the authenticated route may try validated storage.
+    return null;
   }
 }

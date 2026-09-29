@@ -173,7 +173,9 @@ function BuildPresentation({ item, steps, stepRef }: {
       </p>
       <h1 className="m-0 text-base font-bold text-co-text">{item}</h1>
       <p className="mt-1 mb-3 text-xs text-co-text-muted">
-        {t(visible.video ? "training.build.video_intro" : "training.build.intro")}
+        {t(visible.video
+          ? status === "loading" ? "training.build.video_intro" : "training.build.video_fallback_intro"
+          : "training.build.intro")}
       </p>
 
       <div className="mb-3 flex flex-wrap gap-2" role="radiogroup" aria-label={t("user_menu.language")}>
@@ -279,7 +281,7 @@ function TrainingVideo({ src, poster, label, loadingText, onError }: {
         preload="metadata"
         aria-label={label}
         onError={onError}
-        onLoadedData={() => setLoaded(true)}
+        onLoadedMetadata={() => setLoaded(true)}
         className="aspect-[9/16] max-h-[70vh] w-full rounded-lg object-contain"
       />
       {!loaded ? <p className="m-0 py-2 text-center text-sm text-co-text-muted" role="status">{loadingText}</p> : null}

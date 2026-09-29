@@ -560,6 +560,7 @@
   "training.build.video_aria": "Video del armado: {item}",
   "training.build.video_loading": "Cargando el video del armado…",
   "training.build.video_intro": "Mira el armado. Cuando esté listo el visor interactivo, toca Siguiente para seguir cada paso y su cantidad de la hoja de armado.",
+  "training.build.video_fallback_intro": "Mira el video del armado. Usa los controles para pausar o volver a verlo.",
   "training.build.steps_heading": "Pasos",
   "admin.users.title": "Gestión de Usuarios",
   "admin.users.subtitle": "Agrega y administra a las personas de tu equipo.",
