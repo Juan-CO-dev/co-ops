@@ -1,12 +1,12 @@
 {
   "entries": {
-    "training": "crunchy-build-training-S6LG6LKY.js",
-    "data": "crunchy-data-c59b97bb149a498d.json"
+    "training": "crunchy-build-training-4ZBYOZLB.js",
+    "data": "crunchy-data-aabb24282bed27af.json"
   },
   "files": {
-    "crunchy-data-c59b97bb149a498d.json": "c59b97bb149a498dafbf79bc0cc3174d3c7365bf563c37ed366efb296181d58c",
-    "crunchy-build-training-S6LG6LKY.js": "e2c2753bc9feccc82915b3217689fc0dce7e13e1e9628d6b9676bbee143a4d24",
-    "chunks/crunchy-web-5PY42BIY.js": "1f7fc5395434c6afd7abc1d1e350c90857b7fa4ca03da8ef9ba6f2273838cbc9",
+    "crunchy-data-aabb24282bed27af.json": "aabb24282bed27af6eafc89324a0d59ffcd6d3b34c6a47905b7a09cb69389707",
+    "crunchy-build-training-4ZBYOZLB.js": "cce1445bb426340db7e80fd50ae5be869c2a3e0cab09814b7237c922c29218f5",
+    "chunks/crunchy-web-U7FJVWK7.js": "63390a876449fff0e0049767f62dbff8b96d32ddaa918e5968857b980f472e76",
     "card-display.json": "147261df202eea9dee9590b635d96f476b1f30e620ce3a0284c74ff025a1286e"
   },
   "photos": {

@@ -79,3 +79,25 @@ describe("the real-photo scene data (round 3)", () => {
     expect(data.steps.filter((s) => s.ingredient).map((s) => s.ingredient).sort()).toEqual([...lines].sort());
   });
 });
+
+describe("the vendored element is the single-Play build (co-scenes v0.2.0-m2)", () => {
+  // The browser behaviour (Play advances, any input pauses, reduced motion still steps) is
+  // tested in co-scenes; this pins that CO-OPS vendors THAT build and not the retired
+  // separate player (m4-web-training-r3's src/web/player.ts, `.btn.play`).
+  const entry = readFileSync(path.join(DIR, manifest.entries.training), "utf8");
+
+  it("one Play button, driven by the controller's training pacing", () => {
+    expect(entry.match(/class="play"/g)).toHaveLength(1);
+    expect(entry).not.toMatch(/class="btn play"/);
+    expect(entry).toMatch(/playTraining/);
+    expect(entry).toMatch(/aria-pressed/);
+    expect(entry).toMatch(/"Reproducir"/);
+    // hold = the step's beat capped at 4 s, + 2.5 s reading; reduced motion reads only
+    expect(entry).toMatch(/holdMs\(\w+\)\{if\(this\.s\.reducedMotion\|\|!this\.scene\)return 2500/);
+    expect(entry).toMatch(/4e3/);
+  });
+
+  it("the version pin names co-scenes main v0.2.0-m2", () => {
+    expect(readFileSync(path.join("vendor", "co-scenes", "VERSION"), "utf8")).toMatch(/^co-scenes 67afe59[0-9a-f]{33} \(main\)/);
+  });
+});
