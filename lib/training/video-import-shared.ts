@@ -1,7 +1,22 @@
 /** Pure import gates. No renderer, filesystem, or server dependencies. */
+import { buildSteps, formatAmount, type BuildCard, type BuildDef } from "./build-card-shared";
+
 export const APPROVED_RENDERER_REVISION = "6dfa9784e19680e47dc7e38533139085c53cd94f";
 export const MAX_IMPORT_BYTES = 12 * 1024 * 1024;
 type Step = { n: number; key: string; ingredient: string | null; amount: string | null };
+/** Match the pinned renderer's card fields, not the host's display names/count hints. */
+export function buildVideoImportSteps(def: BuildDef, card: BuildCard): Step[] {
+  // Retain the canonical binding, completeness and duplicate-use checks.
+  return buildSteps(def, card, "en").map((step, i) => {
+    const binding = def.steps[i]!.line;
+    const line = binding === null ? null : card.lines.find(l => l.ingredient === binding)!;
+    return {
+      n: step.n, key: step.key, ingredient: line?.ingredient ?? null,
+      // Renderer formatAmount preserves each-unit rules but has no handful count hint.
+      amount: line === null ? null : line.presentation === "handful" ? "a handful" : formatAmount(line, "en"),
+    };
+  });
+}
 export interface ImportSidecar extends Record<string, unknown> {
   look: string; steps: Step[]; step_times: number[]; duration: number;
   poster: string; sources: { url: string; type: string; bytes: number; sha256: string }[];

@@ -4,9 +4,9 @@ import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
-import { buildDefForSlug, buildSteps } from "@/lib/training/build-card-shared";
+import { buildDefForSlug } from "@/lib/training/build-card-shared";
 import { BUILD_SHEET_PATH, exportBuildCard } from "@/lib/training/build-card-export";
-import { assertFaststart, assertRendererRevision, MAX_IMPORT_BYTES, validateTrainingSidecar } from "@/lib/training/video-import-shared";
+import { assertFaststart, assertRendererRevision, buildVideoImportSteps, MAX_IMPORT_BYTES, validateTrainingSidecar } from "@/lib/training/video-import-shared";
 import type { CoScenesManifest } from "@/lib/training/co-scenes-shared";
 
 const sha = (b: Uint8Array | string) => createHash("sha256").update(b).digest("hex");
@@ -53,7 +53,7 @@ export async function importTrainingVideo(args: readonly string[]): Promise<stri
   const csvPath = path.resolve(BUILD_SHEET_PATH);
   const def = buildDefForSlug("crunchy-boi")!;
   const card = exportBuildCard(readFileSync(csvPath, "utf8"), def.item);
-  const steps = buildSteps(def, card, "en");
+  const steps = buildVideoImportSteps(def, card);
   const assetManifestPath = path.join(opts.assets, "assets.json");
   const assetManifest: unknown = JSON.parse(readFileSync(assetManifestPath, "utf8"));
   if (!Array.isArray(assetManifest) || !assetManifest.length) throw new Error("approved asset manifest is empty");

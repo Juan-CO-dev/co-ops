@@ -1,0 +1,405 @@
+{
+  "format": "co-scenes-video/1",
+  "look": "stage",
+  "aspect": "9:16",
+  "width": 720,
+  "height": 1280,
+  "fps": 30,
+  "frames": 541,
+  "duration": 18,
+  "step_times": [
+    0,
+    1.1,
+    2.2,
+    3.3,
+    4.6,
+    7,
+    8.1,
+    9.4,
+    11.1,
+    11.1,
+    12.5,
+    13.7,
+    15
+  ],
+  "steps": [
+    {
+      "n": 1,
+      "key": "whole",
+      "action": "Whole roll",
+      "ingredient": null,
+      "amount": null,
+      "label": "Whole roll",
+      "drawn": false
+    },
+    {
+      "n": 2,
+      "key": "slice",
+      "action": "Slice it open",
+      "ingredient": null,
+      "amount": null,
+      "label": "Slice it open",
+      "drawn": false
+    },
+    {
+      "n": 3,
+      "key": "gut",
+      "action": "Gut the top half",
+      "ingredient": null,
+      "amount": null,
+      "label": "Gut the top half",
+      "drawn": false
+    },
+    {
+      "n": 4,
+      "key": "aioli",
+      "action": "Into the gut",
+      "ingredient": "Aioli",
+      "amount": "1.5 oz",
+      "label": "Aioli · 1.5 oz",
+      "drawn": false
+    },
+    {
+      "n": 5,
+      "key": "chips",
+      "action": "On the opposite half",
+      "ingredient": "Utz Ripples",
+      "amount": "a handful",
+      "label": "Utz Ripples · a handful",
+      "drawn": false,
+      "i18n": {
+        "es": {
+          "label": "Utz Ripples · un puñado",
+          "draft": true
+        }
+      }
+    },
+    {
+      "n": 6,
+      "key": "provolone",
+      "action": "Seals the aioli from the chips",
+      "ingredient": "Provolone",
+      "amount": "2 slices",
+      "label": "Provolone · 2 slices",
+      "drawn": false,
+      "i18n": {
+        "es": {
+          "label": "Provolone · 2 rebanadas",
+          "draft": true
+        }
+      }
+    },
+    {
+      "n": 7,
+      "key": "turkey",
+      "action": "Down the middle",
+      "ingredient": "Turkey",
+      "amount": "4 oz",
+      "label": "Turkey · 4 oz",
+      "drawn": false
+    },
+    {
+      "n": 8,
+      "key": "onions",
+      "action": "On the turkey",
+      "ingredient": "Onions",
+      "amount": "0.25 oz",
+      "label": "Onions · 0.25 oz",
+      "drawn": false
+    },
+    {
+      "n": 9,
+      "key": "pickles",
+      "action": "Down the line",
+      "ingredient": "Pickles",
+      "amount": "0.5 oz",
+      "label": "Pickles · 0.5 oz",
+      "drawn": false
+    },
+    {
+      "n": 10,
+      "key": "shredduce",
+      "action": "Piled on",
+      "ingredient": "Shredduce",
+      "amount": "a handful",
+      "label": "Shredduce · a handful",
+      "drawn": false
+    },
+    {
+      "n": 11,
+      "key": "oil-vinegar",
+      "action": "Drizzled",
+      "ingredient": "Oil/Vin",
+      "amount": "0.25 oz",
+      "label": "Oil and vinegar · 0.25 oz",
+      "drawn": false,
+      "i18n": {
+        "es": {
+          "label": "Aceite y vinagre · 0.25 oz",
+          "draft": true
+        }
+      }
+    },
+    {
+      "n": 12,
+      "key": "oregano",
+      "action": "To finish",
+      "ingredient": "Oregano",
+      "amount": "0.1 oz",
+      "label": "Oregano · 0.1 oz",
+      "drawn": false
+    }
+  ],
+  "illustrated": [],
+  "poster": "media/poster-d85fd6be46c88c312fdda5def013bb0473dabbc09e6c339a55682a92243337fc.jpg",
+  "sources": [
+    {
+      "url": "media/training-04faa085cc5f6f8546b6960a9c77d3761f557bf16e332a4e75552188dab66c2b.mp4",
+      "type": "video/mp4; codecs=\"avc1.640028\"",
+      "bytes": 3282510,
+      "sha256": "04faa085cc5f6f8546b6960a9c77d3761f557bf16e332a4e75552188dab66c2b"
+    }
+  ],
+  "stamps": {
+    "card_revision_sha": "e27dcd6c552ddc3b4475d6c39383f8b44ff8eb0fd3a6d7f0dad749de32126c29",
+    "scene_commit": "ec3058842b84baae47d01ee3017f8984a193c840",
+    "scene_tree": "b2bb089741e24a13381dda5b752ea1a690989268",
+    "code_sha256": "cea921779dab4b5e2d314493a3090469ce608ed666e2738f551490094807fc7c",
+    "packages": {
+      "esbuild": "0.28.2",
+      "fast-png": "8.0.0",
+      "fflate": "0.8.3",
+      "iobuffer": "6.0.1",
+      "playwright": "1.63.0",
+      "three": "0.186.1"
+    },
+    "display_sha256": "716664002b39caf99bb77353058bcfdad2ed7c283bd6d70af4a416f089347530",
+    "photo_manifest_sha256": "d0b956f11983b031f661ad548178885cc3b9a87ca8368047a6baa16bf4592eb3",
+    "render": {
+      "width": 720,
+      "height": 1280,
+      "fps": 30,
+      "three": "186",
+      "encoder": "libx264 slow crf26 yuv420p bt709 g1s"
+    },
+    "env": {
+      "chromium": "chromium-headless-shell 1243 (153.0.8010.12)",
+      "ffmpeg": "ffmpeg version 8.1.1-full_build-www.gyan.dev Copyright (c) 2000-2026 the FFmpeg developers",
+      "fonts_sha256": "ff2b93558100483ea975a39b4c9e4739745dac1d1b59eb9b9e23f96b23555586"
+    }
+  },
+  "encode": {
+    "h264_crf": 26,
+    "tried": [
+      [
+        26,
+        3282510
+      ]
+    ],
+    "max_bytes": null,
+    "fits": true
+  },
+  "renderer_original": {
+    "format": "co-scenes-video/1",
+    "look": "stage",
+    "aspect": "9:16",
+    "width": 720,
+    "height": 1280,
+    "fps": 30,
+    "frames": 541,
+    "duration": 18,
+    "step_times": [
+      0,
+      1.1,
+      2.2,
+      3.3,
+      4.6,
+      7,
+      8.1,
+      9.4,
+      11.1,
+      11.1,
+      12.5,
+      13.7,
+      15
+    ],
+    "steps": [
+      {
+        "n": 1,
+        "key": "whole",
+        "action": "Whole roll",
+        "ingredient": null,
+        "amount": null,
+        "label": "Whole roll",
+        "drawn": false
+      },
+      {
+        "n": 2,
+        "key": "slice",
+        "action": "Slice it open",
+        "ingredient": null,
+        "amount": null,
+        "label": "Slice it open",
+        "drawn": false
+      },
+      {
+        "n": 3,
+        "key": "gut",
+        "action": "Gut the top half",
+        "ingredient": null,
+        "amount": null,
+        "label": "Gut the top half",
+        "drawn": false
+      },
+      {
+        "n": 4,
+        "key": "aioli",
+        "action": "Into the gut",
+        "ingredient": "Aioli",
+        "amount": "1.5 oz",
+        "label": "Aioli · 1.5 oz",
+        "drawn": false
+      },
+      {
+        "n": 5,
+        "key": "chips",
+        "action": "On the opposite half",
+        "ingredient": "Utz Ripples",
+        "amount": "a handful",
+        "label": "Utz Ripples · a handful",
+        "drawn": false,
+        "i18n": {
+          "es": {
+            "label": "Utz Ripples · un puñado",
+            "draft": true
+          }
+        }
+      },
+      {
+        "n": 6,
+        "key": "provolone",
+        "action": "Seals the aioli from the chips",
+        "ingredient": "Provolone",
+        "amount": "2 slices",
+        "label": "Provolone · 2 slices",
+        "drawn": false,
+        "i18n": {
+          "es": {
+            "label": "Provolone · 2 rebanadas",
+            "draft": true
+          }
+        }
+      },
+      {
+        "n": 7,
+        "key": "turkey",
+        "action": "Down the middle",
+        "ingredient": "Turkey",
+        "amount": "4 oz",
+        "label": "Turkey · 4 oz",
+        "drawn": false
+      },
+      {
+        "n": 8,
+        "key": "onions",
+        "action": "On the turkey",
+        "ingredient": "Onions",
+        "amount": "0.25 oz",
+        "label": "Onions · 0.25 oz",
+        "drawn": false
+      },
+      {
+        "n": 9,
+        "key": "pickles",
+        "action": "Down the line",
+        "ingredient": "Pickles",
+        "amount": "0.5 oz",
+        "label": "Pickles · 0.5 oz",
+        "drawn": false
+      },
+      {
+        "n": 10,
+        "key": "shredduce",
+        "action": "Piled on",
+        "ingredient": "Shredduce",
+        "amount": "a handful",
+        "label": "Shredduce · a handful",
+        "drawn": false
+      },
+      {
+        "n": 11,
+        "key": "oil-vinegar",
+        "action": "Drizzled",
+        "ingredient": "Oil/Vin",
+        "amount": "0.25 oz",
+        "label": "Oil and vinegar · 0.25 oz",
+        "drawn": false,
+        "i18n": {
+          "es": {
+            "label": "Aceite y vinagre · 0.25 oz",
+            "draft": true
+          }
+        }
+      },
+      {
+        "n": 12,
+        "key": "oregano",
+        "action": "To finish",
+        "ingredient": "Oregano",
+        "amount": "0.1 oz",
+        "label": "Oregano · 0.1 oz",
+        "drawn": false
+      }
+    ],
+    "illustrated": [],
+    "poster": "stage-720x1280-poster-d85fd6be46c88c31.jpg",
+    "sources": [
+      {
+        "url": "stage-720x1280-04faa085cc5f6f85.mp4",
+        "type": "video/mp4; codecs=\"avc1.640028\"",
+        "bytes": 3282510,
+        "sha256": "04faa085cc5f6f8546b6960a9c77d3761f557bf16e332a4e75552188dab66c2b"
+      }
+    ],
+    "stamps": {
+      "card_revision_sha": "e27dcd6c552ddc3b4475d6c39383f8b44ff8eb0fd3a6d7f0dad749de32126c29",
+      "scene_commit": "ec3058842b84baae47d01ee3017f8984a193c840",
+      "scene_tree": "b2bb089741e24a13381dda5b752ea1a690989268",
+      "code_sha256": "cea921779dab4b5e2d314493a3090469ce608ed666e2738f551490094807fc7c",
+      "packages": {
+        "esbuild": "0.28.2",
+        "fast-png": "8.0.0",
+        "fflate": "0.8.3",
+        "iobuffer": "6.0.1",
+        "playwright": "1.63.0",
+        "three": "0.186.1"
+      },
+      "display_sha256": "716664002b39caf99bb77353058bcfdad2ed7c283bd6d70af4a416f089347530",
+      "photo_manifest_sha256": "d0b956f11983b031f661ad548178885cc3b9a87ca8368047a6baa16bf4592eb3",
+      "render": {
+        "width": 720,
+        "height": 1280,
+        "fps": 30,
+        "three": "186",
+        "encoder": "libx264 slow crf26 yuv420p bt709 g1s"
+      },
+      "env": {
+        "chromium": "chromium-headless-shell 1243 (153.0.8010.12)",
+        "ffmpeg": "ffmpeg version 8.1.1-full_build-www.gyan.dev Copyright (c) 2000-2026 the FFmpeg developers",
+        "fonts_sha256": "ff2b93558100483ea975a39b4c9e4739745dac1d1b59eb9b9e23f96b23555586"
+      }
+    },
+    "encode": {
+      "h264_crf": 26,
+      "tried": [
+        [
+          26,
+          3282510
+        ]
+      ],
+      "max_bytes": null,
+      "fits": true
+    }
+  },
+  "renderer_revision": "6dfa9784e19680e47dc7e38533139085c53cd94f"
+}

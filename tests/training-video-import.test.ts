@@ -1,16 +1,33 @@
 import { describe, expect, it } from "vitest";
-import { validateTrainingSidecar, assertFaststart, assertRendererRevision } from "@/lib/training/video-import-shared";
+import { validateTrainingSidecar, assertFaststart, assertRendererRevision, buildVideoImportSteps } from "@/lib/training/video-import-shared";
 import { immutableWrite, verifyVideoBytes } from "@/scripts/import-training-video";
 import { createHash } from "node:crypto";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { buildDefForSlug } from "@/lib/training/build-card-shared";
+import { BUILD_SHEET_PATH, exportBuildCard } from "@/lib/training/build-card-export";
+import realSidecar from "./fixtures/training-video/stage-720x1280-video-2225f15671fd0c5d.json";
 
 const steps = [{ n: 1, key: "whole", ingredient: null, amount: null, drawn: false }];
 const stamps = { card_revision_sha: "a".repeat(64), scene_tree: "b".repeat(40), code_sha256: "c".repeat(64), display_sha256: "d".repeat(64), photo_manifest_sha256: "e".repeat(64), packages: { three: "1" }, render: { width: 720, height: 1280, fps: 30, three: "1", encoder: "libx264" }, env: { chromium: "1", ffmpeg: "1", fonts_sha256: "f".repeat(64) } };
 const fixture = () => ({ format: "co-scenes-video/1", look: "stage", aspect: "9:16", width: 720, height: 1280, fps: 30, duration: 2, frames: 61, steps, step_times: [0, 2], illustrated: [], poster: `stage-720x1280-poster-${"a".repeat(16)}.jpg`, sources: [{ url: `stage-720x1280-${"b".repeat(16)}.mp4`, type: 'video/mp4; codecs="avc1.640028"', bytes: 10, sha256: "b".repeat(64) }], stamps });
 const check = (sc: unknown) => validateTrainingSidecar(sc, { steps, stepTimes: [0, 2], duration: 2, stamps });
 describe("training import contract", () => {
+  it("accepts the pinned renderer's real raw-card steps", () => {
+    const def = buildDefForSlug("crunchy-boi")!;
+    const card = exportBuildCard(readFileSync(BUILD_SHEET_PATH, "utf8"), def.item);
+    const expected = { steps: buildVideoImportSteps(def, card), stepTimes: realSidecar.step_times, duration: realSidecar.duration, stamps: realSidecar.stamps };
+    expect(realSidecar.steps[4]).toMatchObject({ ingredient: "Utz Ripples", amount: "a handful" });
+    expect(realSidecar.steps[5]).toMatchObject({ ingredient: "Provolone", amount: "2 slices" });
+    expect(realSidecar.steps[10]).toMatchObject({ ingredient: "Oil/Vin", label: "Oil and vinegar · 0.25 oz" });
+    expect(() => validateTrainingSidecar(realSidecar, expected)).not.toThrow();
+    for (const [index, change] of [[4, { amount: "a handful (about 22 chips)" }], [5, { amount: "3 slices" }], [10, { ingredient: "Oil and vinegar" }], [10, { amount: "99 oz" }]] as const) {
+      const altered = structuredClone(realSidecar);
+      Object.assign(altered.steps[index]!, change);
+      expect(() => validateTrainingSidecar(altered, expected)).toThrow(`step ${index + 1} differs from card`);
+    }
+  });
   it("accepts clean canonical stage and rejects drawn/dirty/wrong timing or step amounts", () => {
     expect(check(fixture()).look).toBe("stage");
     for (const change of [{ dirty: true }, { illustrated: [[0, 1]] }, { look: "studio" }, { fps: 24 }, { step_times: [0, 1.9] }, { frames: 60 }, { steps: [{ ...steps[0], amount: "99 oz" }] }, { stamps: { ...stamps, code_sha256: "0".repeat(64) } }]) expect(() => check({ ...fixture(), ...change })).toThrow();
