@@ -17,9 +17,10 @@
 import { NextResponse, type NextRequest } from "next/server";
 
 import { requireSession } from "@/lib/session";
-import { readCoScenesFile } from "@/lib/training/co-scenes-files";
+import { readCoScenesFile, readCoScenesMedia } from "@/lib/training/co-scenes-files";
 import { coScenesAsset, coScenesEtag, ifNoneMatchHits } from "@/lib/training/co-scenes-shared";
-import { signTrainingPhoto } from "@/lib/training/training-assets";
+import { signTrainingPhoto, fetchTrainingMedia } from "@/lib/training/training-assets";
+import { resolveMediaRange, mediaHeaders, validMediaResponse } from "@/lib/training/media-http";
 
 /**
  * EVERY load revalidates through this route, so every load passes requireSession:
@@ -33,6 +34,13 @@ const CACHE_CONTROL = "private, no-cache";
 export const runtime = "nodejs";
 
 export async function GET(req: NextRequest, ctx: { params: Promise<{ path: string[] }> }): Promise<Response> {
+  return serve(req, ctx, false);
+}
+export async function HEAD(req: NextRequest, ctx: { params: Promise<{ path: string[] }> }): Promise<Response> {
+  const response = await serve(req, ctx, true);
+  return new Response(null, { status: response.status, headers: response.headers });
+}
+async function serve(req: NextRequest, ctx: { params: Promise<{ path: string[] }> }, head: boolean): Promise<Response> {
   const auth = await requireSession(req, "/training");
   if (auth instanceof NextResponse) return auth; // 401 (with cleared cookie)
 
@@ -45,8 +53,28 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ path: strin
   if (ifNoneMatchHits(req.headers.get("if-none-match"), etag)) {
     return new Response(null, {
       status: 304,
-      headers: { ETag: etag, "Cache-Control": CACHE_CONTROL, "X-Content-Type-Options": "nosniff" },
+      headers: { ETag: etag, "Cache-Control": CACHE_CONTROL, "X-Content-Type-Options": "nosniff", "Content-Disposition": "inline" },
     });
+  }
+
+  if (asset.bytes !== undefined) {
+    const media = { ...asset, bytes: asset.bytes };
+    const range = resolveMediaRange(!head && asset.contentType === "video/mp4" ? req.headers.get("range") : null,
+      req.headers.get("if-range"), etag, media.bytes);
+    const headers = mediaHeaders(media, range);
+    if (head || range.status === 416) return new Response(null, { status: range.status, headers });
+    try {
+      const local = await readCoScenesMedia(media, range);
+      if (local) return new Response(local.body, { status: range.status, headers });
+      const upstream = await fetchTrainingMedia(asset.rel, range.status === 206 ? `bytes=${range.start}-${range.end}` : null, req.signal);
+      if (!upstream || !validMediaResponse(upstream, media, range)) {
+        await upstream?.body?.cancel();
+        return new Response(null, { status: 502, headers: { "Cache-Control": "no-store" } });
+      }
+      return new Response(upstream.body, { status: range.status, headers });
+    } catch {
+      return new Response(null, { status: 502, headers: { "Cache-Control": "no-store" } });
+    }
   }
 
   const file = readCoScenesFile(rel);
@@ -60,14 +88,14 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ path: strin
       if (signed) {
         return new Response(null, {
           status: 302,
-          headers: { Location: signed, "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff" },
+          headers: { Location: signed, "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff", "Content-Disposition": "inline" },
         });
       }
     }
     return new NextResponse(null, { status: 404 });
   }
 
-  return new Response(file.bytes, {
+  return new Response(head ? null : file.bytes, {
     status: 200,
     headers: {
       "Content-Type": file.contentType,
@@ -75,6 +103,7 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ path: strin
       ETag: etag,
       "Cache-Control": CACHE_CONTROL,
       "X-Content-Type-Options": "nosniff",
+      "Content-Disposition": "inline",
     },
   });
 }

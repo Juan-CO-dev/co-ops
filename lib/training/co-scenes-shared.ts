@@ -14,13 +14,15 @@
  * illustrated. The swap lives INSIDE co-scenes (web/training-entry.ts); here it
  * is a re-vendor (scripts/vendor-co-scenes.ts).
  *
- * TWO KINDS OF VENDORED FILE, one manifest:
+ * One manifest with separate code, photo and optional video metadata:
  *   - `files`  — code + data, COMMITTED under vendor/co-scenes/dist/;
  *   - `photos` — the real food photos, NEVER committed (the photo rule). In a
  *     deploy they live in the private `training-assets` bucket (0212) and the
  *     authenticated route 302s to a 60 s signed URL; locally the vendor script
  *     also drops them in the git-ignored vendor/co-scenes/photos/ (dev store).
  *     docs/runbooks/training-assets.md.
+ *   - `video` — optional source/poster metadata, delivered at media/<name>
+ *     without redirects. Bytes share the ignored local photos store and private bucket.
  */
 
 import rawManifest from "@/vendor/co-scenes/dist/asset-manifest.json";
@@ -29,6 +31,17 @@ export interface CoScenesManifest {
   entries: { training: string; data?: string };
   files: Record<string, string>;
   photos?: Record<string, string>;
+  video?: {
+    sidecar: string;
+    source: TrainingMedia & { contentType: "video/mp4" };
+    poster: TrainingMedia & { contentType: "image/jpeg" };
+  };
+}
+export interface TrainingMedia {
+  name: string;
+  sha256: string;
+  bytes: number;
+  contentType: "video/mp4" | "image/jpeg";
 }
 const manifest = rawManifest as CoScenesManifest;
 
@@ -48,11 +61,21 @@ export interface CoScenesAssetRef {
   store: "dist" | "photos";
   contentType: string;
   sha256: string;
+  bytes?: number;
 }
 
 const PHOTO_PREFIX = "photos/";
 /** A photo name: `<asset id>-<sha256>.png`, one path segment, no dot-leading id (same shape the upload enforces). */
 const PHOTO_NAME = /^[A-Za-z0-9_-][A-Za-z0-9._-]*-([0-9a-f]{64})\.png$/;
+const MEDIA_NAME = /^[A-Za-z0-9_-][A-Za-z0-9._-]*-([0-9a-f]{64})\.(mp4|jpg)$/;
+export function isMediaName(name: string): boolean { return MEDIA_NAME.test(name); }
+export function validTrainingMedia(value: TrainingMedia, type: TrainingMedia["contentType"]): boolean {
+  if (!value || typeof value.name !== "string") return false;
+  const match = MEDIA_NAME.exec(value.name);
+  return !!match && value.sha256 === match[1] && value.contentType === type &&
+    (match[2] === "mp4" ? type === "video/mp4" : type === "image/jpeg") &&
+    Number.isSafeInteger(value.bytes) && value.bytes > 0 && value.bytes <= 12 * 1024 * 1024;
+}
 /** A dist path: `/`-separated segments of safe characters; no empty, `.` or `..` segment, no backslash. */
 const DIST_SEGMENT = /^[A-Za-z0-9_-][A-Za-z0-9._-]*$/;
 
@@ -72,6 +95,14 @@ export function isSafeDistPath(rel: string): boolean {
 }
 
 export function coScenesAsset(rel: string, m: CoScenesManifest = manifest): CoScenesAssetRef | null {
+  if (rel.startsWith("media/")) {
+    const name = rel.slice(6);
+    const video = m.video;
+    if (!video) return null;
+    const a = video.source?.name === name && validTrainingMedia(video.source, "video/mp4") ? video.source
+      : video.poster?.name === name && validTrainingMedia(video.poster, "image/jpeg") ? video.poster : null;
+    return a ? { rel: a.name, store: "photos", contentType: a.contentType, sha256: a.sha256, bytes: a.bytes } : null;
+  }
   if (rel.startsWith(PHOTO_PREFIX)) {
     const name = rel.slice(PHOTO_PREFIX.length);
     const photos = m.photos ?? {};
@@ -91,6 +122,9 @@ export function coScenesAsset(rel: string, m: CoScenesManifest = manifest): CoSc
 
 /** URL of the scene data file (steps, layout, photo list), when the bundle carries one. */
 export const CO_SCENES_DATA_URL: string | null = manifest.entries.data ? `/api/training/co-scenes/${manifest.entries.data}` : null;
+export const CO_SCENES_VIDEO: { src: string; poster: string } | null = manifest.video &&
+  validTrainingMedia(manifest.video.source, "video/mp4") && validTrainingMedia(manifest.video.poster, "image/jpeg")
+  ? { src: `${CO_SCENES_BASE}media/${manifest.video.source.name}`, poster: `${CO_SCENES_BASE}media/${manifest.video.poster.name}` } : null;
 
 /** The strong ETag of an asset: its manifest sha256, quoted. */
 export function coScenesEtag(sha256: string): string {

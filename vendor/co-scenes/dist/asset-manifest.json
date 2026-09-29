@@ -7,7 +7,8 @@
     "crunchy-data-d03f48d1d0ac6984.json": "d03f48d1d0ac69845793612d945cfd11b5aea15f7ce96f53f88585ccb13d3881",
     "crunchy-build-training-4ZBYOZLB.js": "cce1445bb426340db7e80fd50ae5be869c2a3e0cab09814b7237c922c29218f5",
     "chunks/crunchy-web-U7FJVWK7.js": "63390a876449fff0e0049767f62dbff8b96d32ddaa918e5968857b980f472e76",
-    "card-display.json": "147261df202eea9dee9590b635d96f476b1f30e620ce3a0284c74ff025a1286e"
+    "card-display.json": "147261df202eea9dee9590b635d96f476b1f30e620ce3a0284c74ff025a1286e",
+    "training-video-787ac2c65a6ed8b0b04eb99324c3c667d16d07221d103bbd129b914fe9de5016.json": "787ac2c65a6ed8b0b04eb99324c3c667d16d07221d103bbd129b914fe9de5016"
   },
   "photos": {
     "cb-f-built-angle-39b45e35080009e678a26cd8cc8da96b143dac83343d5f67b341dc16afb1c9de.png": "39b45e35080009e678a26cd8cc8da96b143dac83343d5f67b341dc16afb1c9de",
@@ -43,5 +44,20 @@
     "cb-s11-oil-vinegar-760e7db44adc848b65bc93bae256aff2cd4648066c106728ab878b9e51d26563.png": "760e7db44adc848b65bc93bae256aff2cd4648066c106728ab878b9e51d26563",
     "cb-p-oregano-4818b2b005dc4c0bd39287d3e9f43a3d4bb232e8e0b490cdb5203534f9c4646e.png": "4818b2b005dc4c0bd39287d3e9f43a3d4bb232e8e0b490cdb5203534f9c4646e",
     "cb-s12-oregano-bb0f579137472c5f31567506f520cdc8cd504be3da9852eabc01fdb6e0ab6109.png": "bb0f579137472c5f31567506f520cdc8cd504be3da9852eabc01fdb6e0ab6109"
+  },
+  "video": {
+    "sidecar": "training-video-787ac2c65a6ed8b0b04eb99324c3c667d16d07221d103bbd129b914fe9de5016.json",
+    "source": {
+      "name": "training-04faa085cc5f6f8546b6960a9c77d3761f557bf16e332a4e75552188dab66c2b.mp4",
+      "sha256": "04faa085cc5f6f8546b6960a9c77d3761f557bf16e332a4e75552188dab66c2b",
+      "bytes": 3282510,
+      "contentType": "video/mp4"
+    },
+    "poster": {
+      "name": "poster-d85fd6be46c88c312fdda5def013bb0473dabbc09e6c339a55682a92243337fc.jpg",
+      "sha256": "d85fd6be46c88c312fdda5def013bb0473dabbc09e6c339a55682a92243337fc",
+      "bytes": 135634,
+      "contentType": "image/jpeg"
+    }
   }
 }

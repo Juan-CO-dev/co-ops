@@ -4,7 +4,7 @@
  * `server-only`: this reads the filesystem. Code + data live in
  * vendor/co-scenes/dist/ (committed). The real food photos are never committed:
  * in a deploy they come from the private `training-assets` bucket (the route
- * 302s to a 60 s signed URL, lib/training/training-assets.ts);
+ * 302s PNGs to a 60 s signed URL, but streams MP4/JPEG server-side);
  * vendor/co-scenes/photos/ (git-ignored) is only a LOCAL dev store the vendor
  * script fills, read first when present. Nothing is under public/: the only way
  * in is app/api/training/co-scenes/[...path]/route.ts, which runs full session
@@ -24,8 +24,11 @@ import "server-only";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { open } from "node:fs/promises";
+import { Readable } from "node:stream";
 
-import { coScenesAsset, isPhotoName, isSafeDistPath } from "./co-scenes-shared";
+import { coScenesAsset, isPhotoName, isMediaName, isSafeDistPath, type CoScenesAssetRef } from "./co-scenes-shared";
+import type { MediaRange } from "./media-http";
 
 export interface CoScenesFile {
   bytes: Uint8Array<ArrayBuffer>;
@@ -33,15 +36,20 @@ export interface CoScenesFile {
 }
 
 const cache = new Map<string, CoScenesFile>();
+// Dev-only verification metadata, never media bytes. Bound long-running dev servers.
+const mediaChecks = new Map<string, string>();
+function mediaIdentity(stat: fs.BigIntStats): string {
+  return `${stat.dev}:${stat.ino}:${stat.size}:${stat.mtimeNs}:${stat.ctimeNs}`;
+}
 
 /**
  * The ONLY filesystem join. Re-checks the SAME shape coScenesAsset enforces
  * (defence in depth, since this is exported): photos must be exactly one
- * `<id>-<sha256>.png` segment (isPhotoName); dist paths must be safe segments
+ * `<id>-<sha256>.png|mp4|jpg` segment; dist paths must be safe segments
  * (isSafeDistPath). Then refuses any result that resolves outside its store.
  */
 export function storePath(store: "dist" | "photos", rel: string, root = process.cwd()): string | null {
-  if (store === "photos" ? !isPhotoName(rel) : !isSafeDistPath(rel)) return null;
+  if (store === "photos" ? !(isPhotoName(rel) || isMediaName(rel)) : !isSafeDistPath(rel)) return null;
   // turbopackIgnore: these reads are declared in next.config.ts
   // outputFileTracingIncludes (dist/ only). Without the hint, Turbopack sees a
   // dynamic path.resolve and traces the WHOLE project into the route ("Encountered
@@ -61,7 +69,7 @@ export function readCoScenesFile(rel: string): CoScenesFile | null {
   if (!file) return null;
   let bytes: Buffer;
   try {
-    bytes = fs.readFileSync(file);
+    bytes = fs.readFileSync(/* turbopackIgnore: true */ file);
   } catch {
     return null;
   }
@@ -70,4 +78,43 @@ export function readCoScenesFile(rel: string): CoScenesFile | null {
   const out = { bytes: new Uint8Array(bytes), contentType: asset.contentType };
   cache.set(key, out);
   return out;
+}
+
+/** Hash the local dev copy with bounded memory, then stream the selected bytes from the same handle. */
+export async function readCoScenesMedia(asset: CoScenesAssetRef & { bytes: number }, range: Exclude<MediaRange, { status: 416 }>): Promise<{ body: ReadableStream<Uint8Array> } | null> {
+  // These bytes are deliberately absent from production deployments. Compile out
+  // the local FileHandle path so Turbopack cannot trace the ignored dev store.
+  if (process.env.NODE_ENV === "production") return null;
+  const file = storePath("photos", asset.rel);
+  if (!file || !isMediaName(asset.rel)) return null;
+  let handle;
+  // The ignored local store must never expand Next's deployment trace.
+  try { handle = await open(/*turbopackIgnore: true*/ file, "r"); } catch { return null; }
+  try {
+    const stat = await handle.stat({ bigint: true });
+    if (!stat.isFile() || stat.size !== BigInt(asset.bytes)) throw new Error("size mismatch");
+    const identity = `${asset.sha256}:${mediaIdentity(stat)}`;
+    if (mediaChecks.get(file) !== identity) {
+      mediaChecks.delete(file);
+      const hash = createHash("sha256");
+      const buffer = Buffer.alloc(64 * 1024);
+      let offset = 0;
+      while (offset < asset.bytes) {
+        const { bytesRead } = await handle.read(buffer, 0, Math.min(buffer.length, asset.bytes - offset), offset);
+        if (!bytesRead) throw new Error("truncated media");
+        hash.update(buffer.subarray(0, bytesRead)); offset += bytesRead;
+      }
+      if (hash.digest("hex") !== asset.sha256) throw new Error("hash mismatch");
+      if (mediaIdentity(await handle.stat({ bigint: true })) !== mediaIdentity(stat)) throw new Error("media changed during verification");
+      if (mediaChecks.size >= 32) mediaChecks.delete(mediaChecks.keys().next().value!);
+      mediaChecks.set(file, identity);
+    }
+    const stream = handle.createReadStream({ start: range.status === 206 ? range.start : 0, end: range.status === 206 ? range.end : asset.bytes - 1, autoClose: true });
+    return { body: Readable.toWeb(stream) as ReadableStream<Uint8Array> };
+  } catch {
+    mediaChecks.delete(file);
+    await handle.close();
+    // Refuse the local bytes; the authenticated route may try validated storage.
+    return null;
+  }
 }

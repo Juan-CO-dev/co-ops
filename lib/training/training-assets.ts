@@ -36,3 +36,27 @@ export async function signTrainingPhoto(name: string): Promise<string | null> {
     return null;
   }
 }
+
+/** Server-only signed fetch: never hand media credentials/redirects to a native video or poster. */
+export async function fetchTrainingMedia(name: string, range: string | null, signal: AbortSignal): Promise<Response | null> {
+  try {
+    const bounded = AbortSignal.any([signal, AbortSignal.timeout(60_000)]);
+    // The SDK signer has no signal parameter. Bound waiting for it as well as
+    // the fetch; a cancelled request must not wait forever for a signed URL.
+    const signed = await new Promise<string | null>((resolve) => {
+      if (bounded.aborted) { resolve(null); return; }
+      const abort = () => resolve(null);
+      bounded.addEventListener("abort", abort, { once: true });
+      void signTrainingPhoto(name).then((url) => {
+        bounded.removeEventListener("abort", abort);
+        resolve(url);
+      });
+    });
+    if (!signed) return null;
+    return await fetch(signed, {
+      redirect: "error", cache: "no-store",
+      headers: { "Accept-Encoding": "identity", ...(range ? { Range: range } : {}) },
+      signal: bounded,
+    });
+  } catch { return null; }
+}

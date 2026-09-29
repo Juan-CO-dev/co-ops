@@ -54,3 +54,41 @@ So they live in a private Supabase Storage bucket, the same way as receipts (017
   CSP is ever enforced.
 - **Stray objects.** The upload script reports objects under `co-scenes/` that the manifest no longer names and leaves
   them alone. Removing them is a separate, deliberate step.
+
+## Import a reviewed stage video (no rendering or upload)
+
+CC supplies the genuine renderer sidecar, H.264 MP4 and JPEG poster from clean co-scenes revision
+`6dfa9784e19680e47dc7e38533139085c53cd94f`: stage, 720x1280, 30 fps, empty illustrated intervals.
+No placeholder video is registered. Use the renderer's original environment, dependencies and approved
+real-photo asset directory: the importer recomputes the complete code/card/assets/package/render/environment
+stamps, so copying the files to a different rendering environment can correctly refuse the import.
+
+```powershell
+npx tsx scripts/import-training-video.ts --sidecar <renderer-output-sidecar.json> --renderer <co-scenes-checkout> --assets <approved-track-C-assets-directory>
+```
+
+The importer reads this checkout's build sheet in place, requires the actual renderer HEAD (the informational
+`scene_commit` is the last scene edit, not HEAD), validates every step's number/key/ingredient/amount, and compares
+stage beat completion times within half a 30 fps frame. It verifies full MP4 hash and size (12 MiB maximum),
+poster/sidecar hash16 filenames, JPEG signature, faststart atom order, and ffprobe's H.264/dimensions/frame rate.
+`ffprobe` must be on PATH. It never re-encodes food pixels.
+
+Media are copied byte-for-byte into ignored `vendor/co-scenes/photos/`, with full SHA-256 names. The derived,
+committed sidecar retains the original renderer JSON under `renderer_original` and rewrites playback URLs to
+the authenticated `media/` route. The manifest's optional `video` entry holds source and poster metadata;
+its `files` map hashes the derived sidecar. Existing media and sidecars must be byte-identical or import refuses;
+manifest hash collisions also refuse. A repeat import is safe. Commit only the manifest and derived JSON.
+
+After CC reviews/applies the new training-video bucket migration, run the uploader's dry run, then the authorized
+upload. The MP4/poster use private same-origin streaming and never signed-URL redirects. On the PR preview,
+Safari playback and seeking (`bytes=0-1` gives 206 and exactly two bytes), reduced motion, language remount,
+scene failure retention, ready-only swap and revoked-session refusal are release gates. A unit pass does not
+replace this genuine-artifact/device verification.
+
+Migration `0213_training_video_media.sql` is staged only. It sets the bucket's single object-size cap to 12 MiB
+and adds JPEG/MP4 to PNG. The uploader continues to enforce 2 MiB for PNG and 12 MiB for JPEG/MP4, sends each
+file's correct MIME, and never overwrites (`upsert: false`). The bucket stays private with no new object policies.
+GET supports single MP4 byte ranges; unsupported multipart/malformed ranges return a full 200. If-Range matches
+only the exact quoted full SHA-256 ETag; a mismatch returns 200. HEAD ignores Range, returns full-length headers
+without a body, and uses the same session/manifest gate. JPEG is full-body only. Genuine uploaded media must be
+verified in the preview because mocked upstream responses do not prove Storage's deployed range behavior.

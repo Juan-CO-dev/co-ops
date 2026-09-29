@@ -6,8 +6,8 @@
  *
  * Embeds the vendored <crunchy-build mode="training"> element: Back/Next steps,
  * each showing the action, the amount GENERATED from the build card, and the
- * how-to note in the viewer's language. No autoplay; the element loads WebGL
- * lazily and honours prefers-reduced-motion itself.
+ * how-to note in the viewer's language. An optional native video and poster
+ * render immediately while WebGL prepares; autoplay waits for a motion check.
  *
  * LANGUAGE follows the app: the page's TranslationProvider carries the user's
  * saved language, and the toggle here is the same PATCH /api/users/me/language
@@ -23,15 +23,16 @@
  * scene init fails inside the element (it bounds its own load with
  * `prepare-timeout`), or nothing settles by the backstop ceiling
  * (lib/training/viewer-start.ts) — the reason is logged, the element is removed
- * and the same steps render as a plain list, so the page still teaches the
- * build. There is no flat early cut-off while the element is still loading.
+ * and the video remains. If video is absent or fails, the same steps render
+ * as a plain list. There is no flat early cut-off while the element is loading.
  */
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type RefObject } from "react";
 
 import type { BuildLang, WebStep } from "@/lib/training/build-card-shared";
 import {
   CO_SCENES_DATA_URL,
+  CO_SCENES_VIDEO,
   loadCoScenesTraining,
   type CoScenesTraining,
   type CrunchyBuildElementLike,
@@ -46,15 +47,27 @@ import {
 } from "@/lib/training/viewer-start";
 import { useTranslation } from "@/lib/i18n/provider";
 import type { Language } from "@/lib/i18n/types";
+import { bindTrainingPlayback, trainingVisibility } from "@/lib/training/video-visibility";
 
 export function LearnTheBuild({ item, steps }: { item: string; steps: Record<BuildLang, WebStep[]> }) {
+  const { language } = useTranslation();
+  const stepRef = useRef(0);
+  // A new mount resets video/scene outcomes even for a rapid en -> es -> en switch.
+  return <BuildPresentation key={language} item={item} steps={steps} stepRef={stepRef} />;
+}
+
+function BuildPresentation({ item, steps, stepRef }: {
+  item: string;
+  steps: Record<BuildLang, WebStep[]>;
+  stepRef: RefObject<number>;
+}) {
   const { language, t, setLanguage } = useTranslation();
   const hostRef = useRef<HTMLDivElement>(null);
-  const stepRef = useRef(0);
   // The viewer's outcome, tagged with the language it was mounted for: a language
   // switch remounts, and an outcome for another language reads as "loading" (derived
   // during render, so the effect never has to reset state synchronously).
   const [viewer, setViewer] = useState<{ lang: Language; status: "ready" | "failed" } | null>(null);
+  const [videoFailed, setVideoFailed] = useState(false);
   const [updating, setUpdating] = useState(false);
   const [langError, setLangError] = useState<string | null>(null);
   // Follows the element: the stub is all drawn; the real-photo scene (track C) clears it where no drawn food shows.
@@ -65,6 +78,7 @@ export function LearnTheBuild({ item, steps }: { item: string; steps: Record<Bui
   const inputs = useMemo(() => viewerInputs(steps.en, steps.es, CO_SCENES_DATA_URL), [steps]);
   const status: "loading" | "ready" | "failed" | "unavailable" =
     inputs.kind === "unavailable" ? "unavailable" : viewer?.lang === language ? viewer.status : "loading";
+  const visible = trainingVisibility(status, CO_SCENES_VIDEO !== null, videoFailed);
 
   useEffect(() => {
     if (inputs.kind !== "ok") {
@@ -76,6 +90,7 @@ export function LearnTheBuild({ item, steps }: { item: string; steps: Record<Bui
     let el: CrunchyBuildElementLike | null = null;
     const resume = stepRef.current;
     const onStep = (e: Event) => {
+      if (cancelled) return;
       const { step, illustrated: drawn } = (e as CustomEvent<CrunchyStepEventDetail>).detail;
       if (step > 0) stepRef.current = step;
       setIllustrated(drawn);
@@ -109,7 +124,7 @@ export function LearnTheBuild({ item, steps }: { item: string; steps: Record<Bui
       setTimer: (fn, ms) => window.setTimeout(fn, ms),
       clearTimer: (id) => window.clearTimeout(id as number),
       report: (reason) => {
-        if (!cancelled) console.error(`Learn the build: viewer failed, showing the step list (${reason})`);
+        if (!cancelled) console.error(`Learn the build: viewer failed, retaining the fallback (${reason})`);
       },
     }).then((outcome) => {
       if (cancelled) return;
@@ -118,8 +133,7 @@ export function LearnTheBuild({ item, steps }: { item: string; steps: Record<Bui
         setViewer({ lang: language, status: "ready" });
         return;
       }
-      // Failed or hung: drop the element (it would only say "Preview unavailable")
-      // and teach from the plain list instead.
+      // Failed or hung: drop the element and retain the video/list fallback.
       el?.removeEventListener("crunchy-step", onStep);
       el?.remove();
       el = null;
@@ -130,7 +144,7 @@ export function LearnTheBuild({ item, steps }: { item: string; steps: Record<Bui
       el?.removeEventListener("crunchy-step", onStep);
       el?.remove(); // disconnect releases the scene, renderer and GL context
     };
-  }, [language, inputs]);
+  }, [language, inputs, stepRef]);
 
   const selectLanguage = async (next: Language) => {
     if (next === language || updating) return;
@@ -158,7 +172,11 @@ export function LearnTheBuild({ item, steps }: { item: string; steps: Record<Bui
         {t("training.build.eyebrow")}
       </p>
       <h1 className="m-0 text-base font-bold text-co-text">{item}</h1>
-      <p className="mt-1 mb-3 text-xs text-co-text-muted">{t("training.build.intro")}</p>
+      <p className="mt-1 mb-3 text-xs text-co-text-muted">
+        {t(visible.video
+          ? status === "loading" ? "training.build.video_intro" : "training.build.video_fallback_intro"
+          : "training.build.intro")}
+      </p>
 
       <div className="mb-3 flex flex-wrap gap-2" role="radiogroup" aria-label={t("user_menu.language")}>
         {(["en", "es"] as const).map((l) => {
@@ -188,7 +206,7 @@ export function LearnTheBuild({ item, steps }: { item: string; steps: Record<Bui
       {updating ? <p className="-mt-1 mb-2 text-[11px] text-co-text-dim">{t("user_menu.language.updating")}</p> : null}
       {langError ? <p className="-mt-1 mb-2 text-sm text-co-cta-text">{langError}</p> : null}
 
-      {illustrated ? (
+      {visible.scene && illustrated ? (
         <p className="mb-3 rounded-xl border border-co-border bg-co-surface-inset px-3 py-2 text-xs font-medium text-co-text-muted">
           {t("training.build.illustrated_note")}
         </p>
@@ -199,14 +217,28 @@ export function LearnTheBuild({ item, steps }: { item: string; steps: Record<Bui
         </p>
       ) : null}
 
-      <section className="co-card p-3" aria-label={t("training.build.viewer_aria", { item })}>
-        <div ref={hostRef} />
-        {status === "loading" ? (
+      <section className="co-card relative p-3" aria-label={t("training.build.viewer_aria", { item })}>
+        <div
+          ref={hostRef}
+          aria-hidden={!visible.scene}
+          inert={!visible.scene}
+          className={visible.scene ? "min-h-[360px]" : "invisible pointer-events-none absolute inset-3 min-h-[360px]"}
+        />
+        {visible.video && CO_SCENES_VIDEO ? (
+          <TrainingVideo
+            src={CO_SCENES_VIDEO.src}
+            poster={CO_SCENES_VIDEO.poster}
+            label={t("training.build.video_aria", { item })}
+            loadingText={t("training.build.video_loading")}
+            onError={() => setVideoFailed(true)}
+          />
+        ) : null}
+        {status === "loading" && !visible.video ? (
           <p className="m-0 py-6 text-center text-sm text-co-text-muted" role="status">
             {t("training.build.loading")}
           </p>
         ) : null}
-        {status === "failed" || status === "unavailable" ? (
+        {visible.steps ? (
           <FallbackSteps
             steps={langSteps}
             lang={language}
@@ -218,6 +250,42 @@ export function LearnTheBuild({ item, steps }: { item: string; steps: Record<Bui
         ) : null}
       </section>
     </div>
+  );
+}
+
+function TrainingVideo({ src, poster, label, loadingText, onError }: {
+  src: string;
+  poster: string;
+  label: string;
+  loadingText: string;
+  onError: () => void;
+}) {
+  const ref = useRef<HTMLVideoElement>(null);
+  const [loaded, setLoaded] = useState(false);
+  useEffect(() => {
+    const video = ref.current;
+    if (!video) return;
+    if (typeof window.matchMedia !== "function") return () => video.pause();
+    // No server-rendered autoPlay attribute: first check the actual preference.
+    return bindTrainingPlayback(video, window.matchMedia("(prefers-reduced-motion: reduce)"));
+  }, []);
+  return (
+    <>
+      <video
+        ref={ref}
+        src={src}
+        poster={poster}
+        muted
+        playsInline
+        controls
+        preload="metadata"
+        aria-label={label}
+        onError={onError}
+        onLoadedMetadata={() => setLoaded(true)}
+        className="aspect-[9/16] max-h-[70vh] w-full rounded-lg object-contain"
+      />
+      {!loaded ? <p className="m-0 py-2 text-center text-sm text-co-text-muted" role="status">{loadingText}</p> : null}
+    </>
   );
 }
 
