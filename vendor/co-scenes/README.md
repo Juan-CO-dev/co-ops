@@ -18,7 +18,7 @@ photos as a 302 to a 60 s signed URL (or, locally, from the dev store, re-hashed
 
 ## Refreshing it
 
-1. In co-scenes (the web integration branch), build the training bundle from co-scenes `main` (v0.2.0-m2 = 67afe59 at this refresh), reading the CO-OPS sheet in place:
+1. In co-scenes (the web integration branch), build the training bundle from co-scenes (this refresh: `fix/training-data-edge` fd6e3b4 = v0.2.0-m2 67afe59 + the scene data file declaring each photo's edge class; the code files are byte-identical to 67afe59's), reading the CO-OPS sheet in place:
    `CO_SCENES_CARD_CSV=<co-ops>/docs/seed/source/sandwich-build-sheet.csv CO_SCENES_CRUNCHY_ASSETS=<track C .crunchy-assets> npx tsx web/build-training-web.ts`
 2. In CO-OPS: `npx tsx scripts/vendor-co-scenes.ts <co-scenes>/web/dist-training <commit sha> <branch>`.
    It copies `files` into `dist/` and `photos` into the git-ignored `photos/`, checking every sha256.
