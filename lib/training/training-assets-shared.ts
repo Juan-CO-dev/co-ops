@@ -12,8 +12,14 @@ export const TRAINING_ASSETS_BUCKET = "training-assets";
 export const TRAINING_ASSETS_PREFIX = "co-scenes";
 export const TRAINING_SIGNED_URL_TTL_SECONDS = 60;
 
-/** A manifest photo name: `<asset id>-<sha256>.png`. */
-const PHOTO_NAME = /^[A-Za-z0-9._-]+-([0-9a-f]{64})\.png$/;
+/** Content-addressed private media: one safe segment, full hash, explicit MIME suffix. */
+const PHOTO_NAME = /^[A-Za-z0-9_-][A-Za-z0-9._-]*-([0-9a-f]{64})\.(png|mp4|jpg)$/;
+
+export function trainingMediaType(name: string): "image/png" | "video/mp4" | "image/jpeg" {
+  const m = PHOTO_NAME.exec(name);
+  if (!m) throw new Error("training-assets: invalid media name");
+  return m[2] === "mp4" ? "video/mp4" : m[2] === "jpg" ? "image/jpeg" : "image/png";
+}
 
 export function trainingPhotoObjectPath(name: string): string {
   if (!PHOTO_NAME.test(name)) throw new Error(`training-assets: refusing photo name ${name}`);

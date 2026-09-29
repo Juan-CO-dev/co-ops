@@ -1,12 +1,12 @@
 /**
- * Upload the "Learn the build" photos to the private `training-assets` bucket (0212).
+ * Upload "Learn the build" photos and optional video/poster to the private bucket (0212/0213).
  *
  * SERVICE ROLE. Runs against whatever project .env.local points at — prod only on
  * Juan's word (docs/runbooks/training-assets.md). Never run it against a project
  * whose 0212 has not been applied.
  *
  *   - The vendored co-scenes manifest (vendor/co-scenes/dist/asset-manifest.json)
- *     is the source of truth: exactly its `photos` are uploaded.
+ *     is the source of truth: its `photos` plus optional `video` media are uploaded.
  *   - Every photo's bytes are sha256-checked against the manifest BEFORE upload.
  *   - Idempotent: object paths are content-addressed (the name carries the sha256),
  *     so a name already in the bucket is skipped and nothing is ever overwritten
@@ -27,13 +27,15 @@ import {
   TRAINING_ASSETS_BUCKET,
   TRAINING_ASSETS_PREFIX,
   trainingPhotoObjectPath,
+  trainingMediaType,
   type UploadPlan,
 } from "@/lib/training/training-assets-shared";
+import { validTrainingMedia, type CoScenesManifest } from "@/lib/training/co-scenes-shared";
 
 /** The slice of the Supabase storage API this script uses (mocked in tests). */
 export interface TrainingStorage {
   list(prefix: string): Promise<string[]>;
-  upload(objectPath: string, bytes: Uint8Array): Promise<void>;
+  upload(objectPath: string, bytes: Uint8Array, contentType: string): Promise<void>;
 }
 
 export interface UploadResult extends UploadPlan {
@@ -49,7 +51,10 @@ export async function uploadTrainingAssets(opts: {
   // Verify EVERY photo before any upload, so a bad local copy uploads nothing.
   const bytes = new Map<string, Uint8Array>();
   for (const [name, sha] of Object.entries(opts.photos)) {
+    const type = trainingMediaType(name);
     const b = opts.readPhoto(name);
+    const limit = type === "image/png" ? 2 * 1024 * 1024 : 12 * 1024 * 1024;
+    if (!b.length || b.length > limit) throw new Error(`upload-training-assets: ${name} exceeds size limit`);
     if (createHash("sha256").update(b).digest("hex") !== sha) {
       throw new Error(`upload-training-assets: ${name} does not match its manifest sha256`);
     }
@@ -57,7 +62,7 @@ export async function uploadTrainingAssets(opts: {
   }
   const plan = planTrainingUpload(opts.photos, await opts.storage.list(TRAINING_ASSETS_PREFIX));
   if (!opts.dryRun) {
-    for (const name of plan.upload) await opts.storage.upload(trainingPhotoObjectPath(name), bytes.get(name)!);
+    for (const name of plan.upload) await opts.storage.upload(trainingPhotoObjectPath(name), bytes.get(name)!, trainingMediaType(name));
   }
   return { ...plan, dryRun: opts.dryRun };
 }
@@ -81,10 +86,12 @@ export function parseUploadArgs(args: readonly string[]): { dryRun: boolean; fro
 async function main() {
   const { dryRun, from } = parseUploadArgs(process.argv.slice(2));
 
-  const manifest = JSON.parse(readFileSync(path.join("vendor", "co-scenes", "dist", "asset-manifest.json"), "utf8")) as {
-    photos?: Record<string, string>;
-  };
-  const photos = manifest.photos ?? {};
+  const manifest = JSON.parse(readFileSync(path.join("vendor", "co-scenes", "dist", "asset-manifest.json"), "utf8")) as CoScenesManifest;
+  const photos = { ...manifest.photos };
+  if (manifest.video) {
+    if (!validTrainingMedia(manifest.video.source, "video/mp4") || !validTrainingMedia(manifest.video.poster, "image/jpeg")) throw new Error("invalid video manifest");
+    for (const asset of [manifest.video.source, manifest.video.poster]) photos[asset.name] = asset.sha256;
+  }
   if (!Object.keys(photos).length) throw new Error("upload-training-assets: the vendored manifest lists no photos");
 
   const { getServiceRoleClient } = await import("@/lib/supabase-server");
@@ -99,8 +106,8 @@ async function main() {
         if (!data || data.length < 1000) return names;
       }
     },
-    async upload(objectPath, b) {
-      const { error } = await bucket.upload(objectPath, b, { contentType: "image/png", upsert: false });
+    async upload(objectPath, b, contentType) {
+      const { error } = await bucket.upload(objectPath, b, { contentType, upsert: false });
       if (error) throw new Error(`upload ${objectPath}: ${error.message}`);
     },
   };

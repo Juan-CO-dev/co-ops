@@ -39,7 +39,9 @@ const nextConfig: NextConfig = {
     // authenticated route, never served from public/ — same tracing reason.
     // Photos are NOT traced: they are never in git or a deploy; the route serves them
     // from the private `training-assets` bucket (docs/runbooks/training-assets.md).
-    "/api/training/co-scenes/[...path]": ["./vendor/co-scenes/dist/**"],
+    // A route glob, not the bracketed filesystem segment. Verify the generated
+    // route.js.nft.json contains every manifest file after changing this.
+    "/api/training/co-scenes/*": ["./vendor/co-scenes/dist/**"],
   },
 
   // P2-7 — stop announcing the stack. `x-powered-by: Next.js` is free
