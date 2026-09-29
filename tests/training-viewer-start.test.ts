@@ -75,6 +75,20 @@ describe("startViewer", () => {
     expect(report.mock.calls[0]![0]).toContain("401");
   });
 
+  it("a reporter that throws never strands the page: the outcome still settles failed (Astra PR #381 P2)", async () => {
+    const p = startViewer(
+      deps({
+        load: async () => {
+          throw new Error("offline");
+        },
+        report: () => {
+          throw new Error("logging broke");
+        },
+      }),
+    );
+    await vi.runAllTimersAsync();
+    await expect(p).resolves.toBe("failed");
+  });
   it("failed when mounting throws", async () => {
     expect(await outcome(deps({ mount: () => { throw new Error("no custom elements"); } }))).toBe("failed");
   });

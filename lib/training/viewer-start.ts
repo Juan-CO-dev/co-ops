@@ -89,8 +89,15 @@ export function startViewer<M, E>(deps: ViewerStartDeps<M, E>): Promise<ViewerOu
       settled = true;
       deps.clearTimer(ceiling);
       if (importTimer !== null) deps.clearTimer(importTimer);
-      if (o === "failed") deps.report?.(reason ?? "unknown");
       resolve(o);
+      // Settle BEFORE reporting, and isolate the reporter: a throwing logger must never strand the page (Astra #381 P2).
+      if (o === "failed") {
+        try {
+          deps.report?.(reason ?? "unknown");
+        } catch {
+          /* reporting is best-effort; the fallback already happened */
+        }
+      }
     };
     const ceiling = deps.setTimer(() => finish("failed", `viewer did not settle within ${deps.ceilingMs} ms`), deps.ceilingMs);
     importTimer = deps.setTimer(() => finish("failed", `bundle import did not land within ${deps.importTimeoutMs} ms`), deps.importTimeoutMs);
