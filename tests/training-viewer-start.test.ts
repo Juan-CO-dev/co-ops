@@ -1,12 +1,21 @@
 /**
  * Unit spine — lib/training/viewer-start.ts: when "Learn the build" falls back
  * to the plain step list. Every failure shape (import rejects, mount throws,
- * the element reports status "failed", ready rejects, nothing settles in time)
- * must come out "failed"; only an element that reports "ready" in time is ready.
+ * the element reports status "failed", ready rejects, the import hangs, the
+ * element never settles) must come out "failed" WITH a logged reason; an
+ * element that is still working is NOT failed early (2026-09-29: a real phone
+ * needs ~7-20 s for bundle + 33 photos + scene; a flat 8 s cut it off).
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { startViewer, viewerInputs, VIEWER_TIMEOUT_MS, type ViewerStartDeps } from "@/lib/training/viewer-start";
+import {
+  startViewer,
+  viewerInputs,
+  VIEWER_CEILING_MS,
+  VIEWER_IMPORT_TIMEOUT_MS,
+  VIEWER_PREPARE_TIMEOUT_MS,
+  type ViewerStartDeps,
+} from "@/lib/training/viewer-start";
 import { buildCardForSlug } from "@/lib/training/build-cards";
 import { buildDefForSlug, buildSteps } from "@/lib/training/build-card-shared";
 
@@ -14,38 +23,72 @@ beforeEach(() => vi.useFakeTimers());
 afterEach(() => vi.useRealTimers());
 
 const never = <T,>() => new Promise<T>(() => {});
+const after = <T,>(ms: number, v: T) => new Promise<T>((r) => setTimeout(() => r(v), ms));
 
 function deps(over: Partial<ViewerStartDeps<string, string>>): ViewerStartDeps<string, string> {
   return {
     load: async () => "mod",
     mount: () => "el",
     ready: async () => ({ status: "ready" }),
-    timeoutMs: VIEWER_TIMEOUT_MS,
+    importTimeoutMs: VIEWER_IMPORT_TIMEOUT_MS,
+    ceilingMs: VIEWER_CEILING_MS,
     setTimer: (fn, ms) => setTimeout(fn, ms),
     clearTimer: (id) => clearTimeout(id as ReturnType<typeof setTimeout>),
     ...over,
   };
 }
 
-async function outcome(d: ViewerStartDeps<string, string>, advanceMs = VIEWER_TIMEOUT_MS + 1) {
+async function outcome(d: ViewerStartDeps<string, string>, advanceMs = VIEWER_CEILING_MS + 1) {
   const p = startViewer(d);
   await vi.advanceTimersByTimeAsync(advanceMs);
   return p;
 }
 
 describe("startViewer", () => {
-  it("ready when the element reports ready in time", async () => {
+  it("ready when the element reports ready", async () => {
     expect(await outcome(deps({}))).toBe("ready");
   });
 
-  it("failed when the scene init fails inside the element (ready resolves with status failed)", async () => {
-    expect(await outcome(deps({ ready: async () => ({ status: "failed" }) }))).toBe("failed");
+  it("ready when the element takes 20 s (a phone loading 33 photos) — no flat early cut-off", async () => {
+    expect(await outcome(deps({ ready: () => after(20_000, { status: "ready" }) }))).toBe("ready");
   });
 
-  it("failed when the bundle import rejects", async () => {
-    expect(await outcome(deps({ load: () => Promise.reject(new Error("401")) }))).toBe("failed");
+  it("failed when the scene init fails inside the element, and the element's error is reported", async () => {
+    const report = vi.fn();
+    const err = new Error("crunchy loader: cb-f-built-angle breaks the asset law: edge: declared undefined, measured soft");
+    expect(await outcome(deps({ ready: async () => ({ status: "failed", error: err }), report }))).toBe("failed");
+    expect(report).toHaveBeenCalledTimes(1);
+    expect(report.mock.calls[0]![0]).toContain("breaks the asset law");
   });
 
+  it("an element failure is decided at once, not at a timeout", async () => {
+    const p = startViewer(deps({ ready: async () => ({ status: "failed", error: "x" }) }));
+    let got: string | null = null;
+    void p.then((o) => { got = o; });
+    await vi.advanceTimersByTimeAsync(1);
+    expect(got).toBe("failed");
+  });
+
+  it("failed (reported) when the bundle import rejects", async () => {
+    const report = vi.fn();
+    expect(await outcome(deps({ load: () => Promise.reject(new Error("401")), report }))).toBe("failed");
+    expect(report.mock.calls[0]![0]).toContain("401");
+  });
+
+  it("a reporter that throws never strands the page: the outcome still settles failed (Astra PR #381 P2)", async () => {
+    const p = startViewer(
+      deps({
+        load: async () => {
+          throw new Error("offline");
+        },
+        report: () => {
+          throw new Error("logging broke");
+        },
+      }),
+    );
+    await vi.runAllTimersAsync();
+    await expect(p).resolves.toBe("failed");
+  });
   it("failed when mounting throws", async () => {
     expect(await outcome(deps({ mount: () => { throw new Error("no custom elements"); } }))).toBe("failed");
   });
@@ -54,35 +97,45 @@ describe("startViewer", () => {
     expect(await outcome(deps({ ready: () => Promise.reject(new Error("x")) }))).toBe("failed");
   });
 
-  it("failed when the import hangs past the timeout", async () => {
-    expect(await outcome(deps({ load: never }))).toBe("failed");
+  it("failed when the import hangs past the import timeout", async () => {
+    const report = vi.fn();
+    expect(await outcome(deps({ load: never, report }), VIEWER_IMPORT_TIMEOUT_MS + 1)).toBe("failed");
+    expect(report.mock.calls[0]![0]).toMatch(/import/);
   });
 
-  it("failed when scene init hangs past the timeout, and a late ready does not revive it", async () => {
+  it("a slow import that lands in time is not failed by the import timeout", async () => {
+    expect(await outcome(deps({ load: () => after(VIEWER_IMPORT_TIMEOUT_MS - 100, "mod"), ready: () => after(10_000, { status: "ready" }) }))).toBe("ready");
+  });
+
+  it("failed at the ceiling when the element never settles, and a late ready does not revive it", async () => {
     let release!: (v: unknown) => void;
     const p = startViewer(deps({ ready: () => new Promise((r) => { release = r; }) }));
-    await vi.advanceTimersByTimeAsync(VIEWER_TIMEOUT_MS + 1);
+    await vi.advanceTimersByTimeAsync(VIEWER_CEILING_MS + 1);
     release({ status: "ready" });
     expect(await p).toBe("failed");
   });
 
-  it("still loading just before the timeout", async () => {
-    const p = startViewer(deps({ load: never }));
+  it("still loading just before the ceiling", async () => {
+    const p = startViewer(deps({ ready: never }));
     let done = false;
     void p.then(() => { done = true; });
-    await vi.advanceTimersByTimeAsync(VIEWER_TIMEOUT_MS - 1);
+    await vi.advanceTimersByTimeAsync(VIEWER_CEILING_MS - 1);
     expect(done).toBe(false);
   });
 
-  it("a mount after the timeout never happens", async () => {
+  it("a mount after the import timeout never happens", async () => {
     let resolveLoad!: (m: string) => void;
     const mount = vi.fn(() => "el");
     const p = startViewer(deps({ load: () => new Promise((r) => { resolveLoad = r; }), mount }));
-    await vi.advanceTimersByTimeAsync(VIEWER_TIMEOUT_MS + 1);
+    await vi.advanceTimersByTimeAsync(VIEWER_IMPORT_TIMEOUT_MS + 1);
     resolveLoad("mod");
     await vi.advanceTimersByTimeAsync(1);
     expect(await p).toBe("failed");
     expect(mount).not.toHaveBeenCalled();
+  });
+
+  it("the ceiling is only a backstop: it outlasts the import budget plus the element's own prepare timeout", () => {
+    expect(VIEWER_CEILING_MS).toBeGreaterThan(VIEWER_IMPORT_TIMEOUT_MS + VIEWER_PREPARE_TIMEOUT_MS);
   });
 });
 

@@ -50,7 +50,7 @@ describe("the real-photo scene data (round 3)", () => {
   const dataName = manifest.entries.data!;
   const data = JSON.parse(readFileSync(path.join(DIR, dataName), "utf8")) as {
     steps: { key: string; ingredient: string | null; action: string }[];
-    assets: { asset_id: string; sha256: string; url: string }[];
+    assets: { asset_id: string; sha256: string; url: string; edge?: unknown }[];
     inventory: string[];
   };
 
@@ -66,6 +66,20 @@ describe("the real-photo scene data (round 3)", () => {
       return name;
     });
     expect(used.sort()).toEqual(Object.keys(photos).sort());
+  });
+
+  // 2026-09-29 prod regression: the data file carried no `edge`, the vendored loader checks every photo against its
+  // DECLARED edge class, so every photo "broke the asset law", the element failed in ~0.2 s on every device, and the
+  // page showed only the step list. The loader's check is in the vendored chunk; the declaration must be in the data.
+  it("every photo declares its asset-law edge class (the vendored loader refuses a photo without one)", () => {
+    const chunks = Object.keys(manifest.files).filter((f) => f.endsWith(".js"));
+    const loaderChecksEdge = chunks.some((f) => {
+      const src = readFileSync(path.join(DIR, f), "utf8");
+      return src.includes("breaks the asset law") && /edge:[A-Za-z_$][\w$]*\.edge\b/.test(src);
+    });
+    expect(loaderChecksEdge, "the vendored loader passes each photo's declared edge to the asset-law check").toBe(true);
+    const missing = data.assets.filter((a) => a.edge !== "hard" && a.edge !== "rim" && a.edge !== "soft").map((a) => a.asset_id);
+    expect(missing).toEqual([]);
   });
 
   it("the scene's steps are CO-OPS's steps: same keys, same order, same card lines", async () => {
@@ -97,7 +111,11 @@ describe("the vendored element is the single-Play build (co-scenes v0.2.0-m2)", 
     expect(entry).toMatch(/4e3/);
   });
 
-  it("the version pin names co-scenes main v0.2.0-m2", () => {
-    expect(readFileSync(path.join("vendor", "co-scenes", "VERSION"), "utf8")).toMatch(/^co-scenes 67afe59[0-9a-f]{33} \(main\)/);
+  it("the version pin names co-scenes v0.2.0-m2 + the training-data edge fix (fd6e3b4, parent main 67afe59)", () => {
+    // Rebuilt at fd6e3b4 the code files are byte-identical to 67afe59's; only the scene data file changed
+    // (each photo's declared edge class). Re-pin to main once the co-scenes branch is merged there.
+    expect(readFileSync(path.join("vendor", "co-scenes", "VERSION"), "utf8")).toMatch(
+      /^co-scenes fd6e3b4[0-9a-f]{33} \(fix\/training-data-edge\)/,
+    );
   });
 });

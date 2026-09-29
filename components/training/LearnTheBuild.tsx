@@ -19,10 +19,12 @@
  * BEFORE it connects: the element starts its scene as soon as it nears the
  * viewport, and a factory assigned after that would be too late.
  *
- * FALLBACK: if the viewer does not come up — the bundle fails to load, scene
- * init fails inside the element, or nothing is ready within VIEWER_TIMEOUT_MS
- * (lib/training/viewer-start.ts) — the element is removed and the same steps
- * render as a plain list, so the page still teaches the build.
+ * FALLBACK: if the viewer does not come up — the bundle fails to load or hangs,
+ * scene init fails inside the element (it bounds its own load with
+ * `prepare-timeout`), or nothing settles by the backstop ceiling
+ * (lib/training/viewer-start.ts) — the reason is logged, the element is removed
+ * and the same steps render as a plain list, so the page still teaches the
+ * build. There is no flat early cut-off while the element is still loading.
  */
 
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -35,7 +37,13 @@ import {
   type CrunchyBuildElementLike,
   type CrunchyStepEventDetail,
 } from "@/lib/training/co-scenes-shared";
-import { startViewer, viewerInputs, VIEWER_TIMEOUT_MS } from "@/lib/training/viewer-start";
+import {
+  startViewer,
+  viewerInputs,
+  VIEWER_CEILING_MS,
+  VIEWER_IMPORT_TIMEOUT_MS,
+  VIEWER_PREPARE_TIMEOUT_MS,
+} from "@/lib/training/viewer-start";
 import { useTranslation } from "@/lib/i18n/provider";
 import type { Language } from "@/lib/i18n/types";
 
@@ -86,17 +94,23 @@ export function LearnTheBuild({ item, steps }: { item: string; steps: Record<Bui
         made.setAttribute("mode", "training");
         made.setAttribute("look", "stage");
         made.setAttribute("lang", language);
+        // The element's own ceiling for data + photos + scene prepare; past it, it reports "failed".
+        made.setAttribute("prepare-timeout", String(VIEWER_PREPARE_TIMEOUT_MS));
         made.addEventListener("crunchy-step", onStep);
         host.replaceChildren(made);
         el = made;
         return made;
       },
-      // ready() starts the scene and settles with the element's status: "failed"
-      // when scene init failed inside it (no WebGL, a failed lazy chunk).
+      // ready() starts the scene and settles with the element's status (and error): "failed"
+      // when scene init failed inside it (no WebGL, a failed lazy chunk, a refused photo, its prepare-timeout).
       ready: (made) => made.ready(),
-      timeoutMs: VIEWER_TIMEOUT_MS,
+      importTimeoutMs: VIEWER_IMPORT_TIMEOUT_MS,
+      ceilingMs: VIEWER_CEILING_MS,
       setTimer: (fn, ms) => window.setTimeout(fn, ms),
       clearTimer: (id) => window.clearTimeout(id as number),
+      report: (reason) => {
+        if (!cancelled) console.error(`Learn the build: viewer failed, showing the step list (${reason})`);
+      },
     }).then((outcome) => {
       if (cancelled) return;
       if (outcome === "ready") {

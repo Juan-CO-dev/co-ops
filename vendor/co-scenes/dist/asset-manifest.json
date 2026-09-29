@@ -1,10 +1,10 @@
 {
   "entries": {
     "training": "crunchy-build-training-4ZBYOZLB.js",
-    "data": "crunchy-data-aabb24282bed27af.json"
+    "data": "crunchy-data-d03f48d1d0ac6984.json"
   },
   "files": {
-    "crunchy-data-aabb24282bed27af.json": "aabb24282bed27af6eafc89324a0d59ffcd6d3b34c6a47905b7a09cb69389707",
+    "crunchy-data-d03f48d1d0ac6984.json": "d03f48d1d0ac69845793612d945cfd11b5aea15f7ce96f53f88585ccb13d3881",
     "crunchy-build-training-4ZBYOZLB.js": "cce1445bb426340db7e80fd50ae5be869c2a3e0cab09814b7237c922c29218f5",
     "chunks/crunchy-web-U7FJVWK7.js": "63390a876449fff0e0049767f62dbff8b96d32ddaa918e5968857b980f472e76",
     "card-display.json": "147261df202eea9dee9590b635d96f476b1f30e620ce3a0284c74ff025a1286e"

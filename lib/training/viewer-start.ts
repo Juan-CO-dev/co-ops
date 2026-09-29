@@ -4,21 +4,37 @@
  * must still teach the build). Pure (injected load/mount/ready/timers), so the
  * decision is unit-tested without a DOM.
  *
- * FAILED covers every way the viewer can fail to come up:
+ * FAILED covers every way the viewer can fail to come up, each with a reason
+ * handed to `report` (the page logs it — a silent fallback hid the 2026-09-29
+ * prod failure):
  *   - the bundle import rejects (blocked, offline, 404/401);
+ *   - the import does not land within `importTimeoutMs` (a hung import);
  *   - mounting throws;
  *   - the element's ready() settles with a status other than "ready" (the
- *     element catches scene-init failures itself — no WebGL, a failed lazy chunk
- *     — and reports status "failed" rather than rejecting);
+ *     element catches scene-init failures itself — no WebGL, a failed lazy
+ *     chunk, a photo refused by the asset law, its own prepare-timeout — and
+ *     reports status "failed" with the error rather than rejecting);
  *   - ready() rejects;
- *   - NOTHING settles within `timeoutMs` (a hung import or scene init).
- * The first outcome wins; a late "ready" after a timeout stays failed, and the
+ *   - nothing settles within `ceilingMs` (a backstop for a hung element).
+ *
+ * NO FLAT EARLY CUT-OFF once the element is mounted: the element owns the load
+ * (scene data + 33 photos + scene prepare) and bounds it itself with its
+ * `prepare-timeout` (VIEWER_PREPARE_TIMEOUT_MS, set by the page). Measured
+ * 2026-09-29 (iPhone-like WebKit + real signed-URL photos ~6.8 s; Chromium at
+ * 4x CPU on LTE ~19 s; Juan's prod photo fetches alone took 4-7 s), so the old
+ * flat 8 s would cut off a viewer that was about to come up.
+ * The first outcome wins; a late "ready" after a failure stays failed, and the
  * caller tears the element down.
  */
 
 import { toElementSteps, type WebStep } from "./build-card-shared";
 
-export const VIEWER_TIMEOUT_MS = 8000;
+/** The bundle import (entry module, same-origin, behind requireSession) must land within this. */
+export const VIEWER_IMPORT_TIMEOUT_MS = 15_000;
+/** Set on the element as `prepare-timeout`: its own ceiling for data + photos + scene prepare. */
+export const VIEWER_PREPARE_TIMEOUT_MS = 30_000;
+/** Backstop only: past import + the element's own prepare timeout, with a grace for its report. */
+export const VIEWER_CEILING_MS = VIEWER_IMPORT_TIMEOUT_MS + VIEWER_PREPARE_TIMEOUT_MS + 5_000;
 
 /**
  * Whether the viewer can be STARTED at all, decided before any render-time
@@ -46,38 +62,59 @@ export interface ViewerStartDeps<M, E> {
   load(): Promise<M>;
   mount(mod: M): E;
   ready(el: E): Promise<unknown>;
-  timeoutMs: number;
+  importTimeoutMs: number;
+  ceilingMs: number;
   setTimer(fn: () => void, ms: number): unknown;
   clearTimer(id: unknown): void;
+  /** Called once, with why, when the outcome is "failed". */
+  report?(reason: string): void;
 }
 
-function readyStatus(result: unknown): string | null {
-  if (result && typeof result === "object" && "status" in result) {
-    const s = (result as { status: unknown }).status;
-    return typeof s === "string" ? s : null;
-  }
-  return null;
+function readyField(result: unknown, key: "status" | "error"): unknown {
+  return result && typeof result === "object" && key in result ? (result as Record<string, unknown>)[key] : undefined;
+}
+
+function describeError(e: unknown): string {
+  if (e instanceof Error) return e.message;
+  if (typeof e === "string") return e;
+  return e == null ? "no error given" : String(e);
 }
 
 export function startViewer<M, E>(deps: ViewerStartDeps<M, E>): Promise<ViewerOutcome> {
   return new Promise<ViewerOutcome>((resolve) => {
     let settled = false;
-    const finish = (o: ViewerOutcome) => {
+    let importTimer: unknown = null;
+    const finish = (o: ViewerOutcome, reason?: string) => {
       if (settled) return;
       settled = true;
-      deps.clearTimer(timer);
+      deps.clearTimer(ceiling);
+      if (importTimer !== null) deps.clearTimer(importTimer);
       resolve(o);
+      // Settle BEFORE reporting, and isolate the reporter: a throwing logger must never strand the page (Astra #381 P2).
+      if (o === "failed") {
+        try {
+          deps.report?.(reason ?? "unknown");
+        } catch {
+          /* reporting is best-effort; the fallback already happened */
+        }
+      }
     };
-    const timer = deps.setTimer(() => finish("failed"), deps.timeoutMs);
+    const ceiling = deps.setTimer(() => finish("failed", `viewer did not settle within ${deps.ceilingMs} ms`), deps.ceilingMs);
+    importTimer = deps.setTimer(() => finish("failed", `bundle import did not land within ${deps.importTimeoutMs} ms`), deps.importTimeoutMs);
     deps
       .load()
+      .catch((e: unknown) => {
+        throw new Error(`bundle import failed: ${describeError(e)}`);
+      })
       .then((mod) => {
         if (settled) return undefined;
-        return deps.ready(deps.mount(mod));
+        deps.clearTimer(importTimer);
+        importTimer = null;
+        return deps.ready(deps.mount(mod)).then((result) => {
+          if (readyField(result, "status") === "ready") finish("ready");
+          else finish("failed", `element reported ${String(readyField(result, "status"))}: ${describeError(readyField(result, "error"))}`);
+        });
       })
-      .then((result) => {
-        if (!settled) finish(readyStatus(result) === "ready" ? "ready" : "failed");
-      })
-      .catch(() => finish("failed"));
+      .catch((e: unknown) => finish("failed", describeError(e)));
   });
 }
