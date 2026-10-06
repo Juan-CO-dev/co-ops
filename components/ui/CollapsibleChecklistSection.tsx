@@ -40,6 +40,8 @@ export interface CollapsibleChecklistSectionProps {
   onToggle: () => void;
   /** Extra text appended to the progress line (already translated). */
   progressSuffix?: string;
+  /** Heading level the toggle lives in (each form passes its existing level). Default 3. */
+  headingLevel?: 2 | 3;
   /** Controls rendered beside the toggle (never inside it). */
   headerExtras?: ReactNode;
   /** Optional aria-label for the whole <section>. */
@@ -65,6 +67,7 @@ export function CollapsibleChecklistSection({
   onToggle,
   progressSuffix,
   headerExtras,
+  headingLevel = 3,
   ariaLabel,
   className,
   titleClassName,
@@ -77,6 +80,7 @@ export function CollapsibleChecklistSection({
   const buttonId = `${uid}-toggle`;
   const panelId = `${uid}-panel`;
   const finished = total > 0 && done >= total;
+  const Heading = headingLevel === 2 ? "h2" : "h3";
 
   return (
     <section
@@ -85,6 +89,7 @@ export function CollapsibleChecklistSection({
       className={className}
     >
       <div className={["flex items-center gap-2", headerClassName ?? ""].join(" ").trim()}>
+        <Heading className="m-0 min-w-0 flex-1 text-base font-normal">
         <button
           type="button"
           id={buttonId}
@@ -92,7 +97,7 @@ export function CollapsibleChecklistSection({
           aria-expanded={open}
           aria-controls={panelId}
           className="
-            flex min-h-[44px] min-w-0 flex-1 items-center justify-between gap-3
+            flex min-h-[44px] w-full min-w-0 items-center justify-between gap-3
             text-left
             focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60
           "
@@ -124,6 +129,7 @@ export function CollapsibleChecklistSection({
             {open ? "▾" : "▸"}
           </span>
         </button>
+        </Heading>
         {headerExtras}
       </div>
 

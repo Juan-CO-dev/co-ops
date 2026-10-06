@@ -111,6 +111,7 @@ export function MidDayPhase1Form({
         <CollapsibleChecklistSection
           key={g.section}
           formKey="mid-day-phase1"
+          headingLevel={2}
           sectionId={g.section}
           title={resolveSectionLabel(sectionLabels, g.section, language, g.section)}
           titleClassName="text-xs font-bold uppercase tracking-[0.14em] text-co-gold-text"

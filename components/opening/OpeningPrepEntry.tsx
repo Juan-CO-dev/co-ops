@@ -299,6 +299,8 @@ export function OpeningPrepEntry({
     if (showMissingErrors) revealSections(JSON.parse(unfinishedKey) as string[]);
   }, [showMissingErrors, unfinishedKey, revealSections]);
 
+  const hasUnsaved = unfinishedSectionIds(sectionProgress).length > 0;
+
   const overParTarget = overParModalItemId
     ? items.find((it) => it.id === overParModalItemId)
     : null;
@@ -311,6 +313,15 @@ export function OpeningPrepEntry({
 
   return (
     <div className="flex flex-col gap-4">
+      {hasUnsaved && !readOnly ? (
+        <button
+          type="button"
+          onClick={() => revealSections(JSON.parse(unfinishedKey) as string[])}
+          className="inline-flex min-h-[44px] items-center self-start px-3 text-xs font-bold uppercase tracking-[0.12em] text-co-text underline focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/40"
+        >
+          {t("checklist.section.show_problems")}
+        </button>
+      ) : null}
       {Array.from(sectionGroups.entries()).map(([sectionKey, sectionItems]) => {
         const firstItem = sectionItems[0];
         const sectionDisplay = firstItem

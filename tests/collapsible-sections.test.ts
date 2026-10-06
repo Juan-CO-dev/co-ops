@@ -265,3 +265,68 @@ describe("i18n parity", () => {
     }
   });
 });
+
+describe("review fixes (PR 384)", () => {
+  function renderHeading(level?: 2 | 3) {
+    return renderToStaticMarkup(
+      createElement(TranslationProvider, {
+        initialLanguage: "en",
+        children: createElement(CollapsibleChecklistSection, {
+          formKey: "f",
+          sectionId: "s",
+          title: "T",
+          done: 1,
+          total: 2,
+          open: true,
+          onToggle: () => {},
+          headingLevel: level,
+          headerExtras: createElement("button", { id: "extra" }),
+          children: null,
+        }),
+      }),
+    );
+  }
+
+  it("puts the toggle button INSIDE a heading at the requested level, extras beside it", () => {
+    for (const [lvl, tag] of [[2, "h2"], [3, "h3"], [undefined, "h3"]] as const) {
+      const html = renderHeading(lvl);
+      const start = html.indexOf("<" + tag + " ");
+      const end = html.indexOf("</" + tag + ">");
+      const m = [null, html.slice(start, end)];
+      expect(m[1]!).toContain("<button");
+      expect(m[1]!).not.toContain('id="extra"');
+      expect(html).toContain('id="extra"');
+    }
+  });
+
+  it("opening: ticked with a missing count is NOT done; the station stays open", async () => {
+    const { openingStationProgress } = await import("@/components/opening/OpeningVerificationStation");
+    const items = [
+      { id: "a", expectsCount: true, prepMeta: null },
+      { id: "b", expectsCount: false, prepMeta: null },
+    ] as never;
+    const v = (ticked: boolean, countValue: number | null) => ({
+      ticked,
+      countValue,
+      photoId: null,
+      notes: null,
+      openerRecount: null,
+    });
+    const snaps = new Map() as never;
+    const ver = new Map<string, boolean>();
+    const noCount = new Map([["a", v(true, null)], ["b", v(true, null)]]);
+    const p1 = openingStationProgress("S", items, noCount, snaps, ver, false);
+    expect(p1).toEqual({ id: "S", done: 1, total: 2 });
+    const withCount = new Map([["a", v(true, 38)], ["b", v(true, null)]]);
+    expect(openingStationProgress("S", items, withCount, snaps, ver, false).done).toBe(2);
+    // collapsed invalid station: the problem list names it and reveal opens it.
+    const collapsed = defaultOpenMap([
+      { id: "first", done: 0, total: 1 },
+      p1,
+    ]);
+    expect(collapsed.S).toBe(false);
+    const ids = unfinishedSectionIds([{ id: "first", done: 1, total: 1 }, p1]);
+    expect(ids).toEqual(["S"]);
+    expect(revealOpenMap(collapsed, ids).S).toBe(true);
+  });
+});

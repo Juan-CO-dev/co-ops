@@ -1534,17 +1534,7 @@ export function OpeningClient({
       setShowMissingCountErrors(true);
       // Open + scroll to the stations holding the problem (unfinished, or a
       // missing temperature / count) so it is not hidden inside a collapsed card.
-      const problem = new Set<string>(unfinishedSectionIds(stationProgress));
-      for (const [station, items] of stationGroups) {
-        if (
-          items.some(
-            (it) => it.expectsCount && (values.get(it.id)?.countValue ?? null) === null,
-          )
-        ) {
-          problem.add(station);
-        }
-      }
-      stationCollapse.reveal(Array.from(problem));
+      stationCollapse.reveal(unfinishedSectionIds(stationProgress));
       return;
     }
 
@@ -1986,6 +1976,17 @@ export function OpeningClient({
               </p>
             ) : null}
           </div>
+          <div className="flex flex-col gap-1 sm:flex-row sm:items-center">
+          {!submitEnabled && activePhase === "verification" && !verificationLocked &&
+          unfinishedSectionIds(stationProgress).length > 0 ? (
+            <button
+              type="button"
+              onClick={() => stationCollapse.reveal(unfinishedSectionIds(stationProgress))}
+              className="inline-flex min-h-[44px] items-center justify-center px-3 text-xs font-bold uppercase tracking-[0.12em] text-co-text underline focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/40"
+            >
+              {t("checklist.section.show_problems")}
+            </button>
+          ) : null}
           <ActionButton onClick={handleSubmit} disabled={!submitEnabled}>
             {submitState.status === "submitting"
               ? t("opening.submit.submitting")
@@ -1999,6 +2000,7 @@ export function OpeningClient({
                       })
                     : t("opening.finalize.button_label")}
           </ActionButton>
+          </div>
         </div>
       </footer>
     </div>

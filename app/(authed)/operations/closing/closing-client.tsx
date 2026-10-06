@@ -1187,6 +1187,7 @@ function StationGroup({
   return (
     <CollapsibleChecklistSection
       formKey="closing"
+      headingLevel={2}
       sectionId={station}
       // Display string in the user-facing aria-label (system key stays in sectionId).
       ariaLabel={t("closing.station.toggle_aria", { station: stationDisplay })}
