@@ -26,6 +26,10 @@
  * isReadOnly from instance.status and renders the read-only banner +
  * disables all inputs.
  *
+ * Draft restore (0214): on a first submission of a still-open instance, the
+ * shop's autosaved count for the day (am_prep_drafts) hydrates the form, so
+ * leaving the page or the idle timeout no longer throws the count away.
+ *
  * Operational TZ hardcoded to America/New_York per SPEC_AMENDMENTS.md
  * C.23 (locations.timezone column doesn't exist in schema; CO is DC-only).
  */
@@ -42,6 +46,11 @@ import {
   loadChecklistChainAttribution,
   type ChecklistChainEntry,
 } from "@/lib/checklists";
+import {
+  amPrepDraftApplies,
+  loadAmPrepDraft,
+  type AmPrepDraftRestore,
+} from "@/lib/am-prep-draft";
 import { lockLocationContext, type LocationActor } from "@/lib/locations";
 import { serverT } from "@/lib/i18n/server";
 import type { Language } from "@/lib/i18n/types";
@@ -189,6 +198,32 @@ export default async function AmPrepPage({ searchParams }: PageProps) {
         ? "edit"
         : "read_only";
 
+  // 7. 0214 — the shop's autosaved, UNSUBMITTED count for today. Restored only on a first
+  //    submission of a still-open instance whose id the draft belongs to (precedence:
+  //    submitted completions > draft > empty — `amPrepDraftApplies`). The actor was bound
+  //    to this location above, and passed the same role gate the draft writer enforces.
+  let restoredDraft: AmPrepDraftRestore | null = null;
+  if (mode === "submit" && state.instance.status === "open") {
+    const stored = await loadAmPrepDraft(sb, { locationId: locationParam, businessDate: today });
+    if (
+      stored &&
+      amPrepDraftApplies({
+        mode,
+        instanceStatus: state.instance.status,
+        instanceId: state.instance.id,
+        draftInstanceId: stored.instanceId,
+        consumed: false,
+        itemCount: Object.keys(stored.draft.items).length,
+      })
+    ) {
+      restoredDraft = {
+        draft: stored.draft,
+        savedAt: stored.savedAt,
+        savedByName: stored.savedByName,
+      };
+    }
+  }
+
   return (
     <main className="mx-auto max-w-2xl md:max-w-3xl lg:max-w-5xl xl:max-w-6xl px-4 pb-32 pt-4 sm:px-6">
       {/* Back-to-dashboard — the one BackLink primitive (registry-driven). */}
@@ -217,6 +252,7 @@ export default async function AmPrepPage({ searchParams }: PageProps) {
           locationId={locationParam}
           sectionLabels={state.sectionLabels}
           sections={state.sections}
+          restoredDraft={restoredDraft}
         />
       </div>
     </main>
