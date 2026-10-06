@@ -49,6 +49,8 @@ const TENANCY_SCOPED_TABLES = [
   "toast_ingest_exclusions",
   "vendor_delivery_rhythm",
   "vendor_rhythm_skips",
+  // 0214 — the AM prep draft is one shop's unsubmitted count for one day.
+  "am_prep_drafts",
 ];
 
 /** Any of these in a function body counts as "the actor was bound to a location". */
@@ -78,6 +80,8 @@ const FILES = [
   "lib/admin/catering/fulfillment.ts",
   "lib/admin/catering/packages.ts",
   "lib/dynamic-pars.ts",
+  // 0214 — saveAmPrepDraft / consumeAmPrepDraft bind inside the lib (Wave 1 branch A).
+  "lib/am-prep-draft.ts",
 ];
 
 /**
