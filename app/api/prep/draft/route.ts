@@ -14,12 +14,14 @@
  * Response (success): { savedAt: string } — the SERVER's timestamp.
  *
  * Response (error): lib/api-helpers.ts jsonError shape.
+ *   403 bad_origin               — cross-site or missing Origin (checked FIRST)
  *   400 invalid_json / invalid_payload
  *   401 (requireSession)
  *   403 location_access_denied   — actor does not hold the instance's shop
  *   403 prep_role_violation      — below AM_PREP_BASE_LEVEL and no assignment (the submit gate)
  *   404 instance_not_found       — no such AM prep instance
  *   409 prep_instance_not_open   — already submitted; the client stops autosaving
+ *   409 draft_superseded         — a newer AM prep instance owns today's draft (stale tab)
  *   500 internal_error
  *
  * The role floor and the location bind live in `saveAmPrepDraft` (lib/am-prep-draft.ts),
@@ -38,12 +40,20 @@ import { type NextRequest } from "next/server";
 
 import { jsonError, jsonOk, parseJsonBody } from "@/lib/api-helpers";
 import { AmPrepDraftError, parseAmPrepDraft, saveAmPrepDraft } from "@/lib/am-prep-draft";
+import { assertSameOrigin } from "@/lib/portal/csrf";
 import { requireSession } from "@/lib/session";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export async function POST(req: NextRequest) {
+  // Same-origin belt FIRST (review fix, PR #383): this is a beacon-compatible POST with no
+  // Content-Type gate, so the Origin check is what refuses a cross-site form or beacon. A
+  // same-origin `navigator.sendBeacon` sends Origin (and Sec-Fetch-Site: same-origin), so
+  // the app's own flushes pass. Mirrors app/api/admin/vendors/[id]/import/*.
+  const badOrigin = assertSameOrigin(req);
+  if (badOrigin) return badOrigin;
+
   const ctx = await requireSession(req, "/api/prep/draft");
   if (ctx instanceof Response) return ctx;
 
