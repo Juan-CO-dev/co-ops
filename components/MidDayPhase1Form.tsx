@@ -15,6 +15,8 @@ import { useRouter } from "next/navigation";
 import { useTranslation } from "@/lib/i18n/provider";
 import { resolveSectionLabel } from "@/lib/prep-sections";
 import { ActionButton } from "@/components/ActionButton";
+import { CollapsibleChecklistSection } from "@/components/ui/CollapsibleChecklistSection";
+import { useCollapsibleSections } from "@/lib/use-collapsible-sections";
 
 export interface MidDayPhase1Item {
   id: string;
@@ -55,6 +57,19 @@ export function MidDayPhase1Form({
     return out;
   }, [items]);
 
+  // Wave 1 B — collapsible sections. An item is DONE when its count box is non-blank
+  // (the form's own "has a count" rule: blank submits as 0, but the need readout and
+  // the counter treat only a non-blank box as counted). Phase 1 has no client-side
+  // submit validation (blank = 0), so there is no open-on-error hook here.
+  const collapsible = useCollapsibleSections(
+    "mid-day-phase1",
+    groups.map((g) => ({
+      id: g.section,
+      total: g.items.length,
+      done: g.items.filter((it) => (counts[it.id] ?? "").trim() !== "").length,
+    })),
+  );
+
   const onSubmit = async () => {
     if (submitting) return;
     setSubmitting(true);
@@ -93,10 +108,17 @@ export function MidDayPhase1Form({
   return (
     <div className="mt-4 flex flex-col gap-5 lg:block lg:columns-2 lg:[column-gap:1.25rem] lg:[&>*]:break-inside-avoid lg:[&>*]:mb-5">
       {groups.map((g) => (
-        <section key={g.section}>
-          <h2 className="text-xs font-bold uppercase tracking-[0.14em] text-co-gold-text">
-            {resolveSectionLabel(sectionLabels, g.section, language, g.section)}
-          </h2>
+        <CollapsibleChecklistSection
+          key={g.section}
+          formKey="mid-day-phase1"
+          sectionId={g.section}
+          title={resolveSectionLabel(sectionLabels, g.section, language, g.section)}
+          titleClassName="text-xs font-bold uppercase tracking-[0.14em] text-co-gold-text"
+          done={g.items.filter((it) => (counts[it.id] ?? "").trim() !== "").length}
+          total={g.items.length}
+          open={collapsible.isOpen(g.section)}
+          onToggle={() => collapsible.toggle(g.section)}
+        >
           <ul className="mt-2 flex flex-col gap-1.5">
             {g.items.map((it) => {
               const raw = counts[it.id] ?? "";
@@ -138,7 +160,7 @@ export function MidDayPhase1Form({
               );
             })}
           </ul>
-        </section>
+        </CollapsibleChecklistSection>
       ))}
 
       {error ? <p className="px-1 text-[11px] text-co-cta-text">{error}</p> : null}
