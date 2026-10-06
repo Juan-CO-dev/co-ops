@@ -1984,6 +1984,8 @@
   "am_prep.misc.toggle_aria": "{item}: actualmente {state}, toca para cambiar",
   "am_prep.misc.notes_placeholder": "Agrega notas…",
   "am_prep.misc.notes_label": "Notas",
+  "checklist.section.progress": "{done} de {total} listos",
+  "checklist.section.show_problems": "Muéstrame qué hay que corregir",
   "am_prep.section.aria": "Sección de prep {section}",
   "am_prep.section.empty": "No hay ítems en {section}",
   "am_prep.section.loading": "Cargando {section}…",

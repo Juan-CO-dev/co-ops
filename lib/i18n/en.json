@@ -1984,6 +1984,8 @@
   "am_prep.misc.toggle_aria": "{item}: currently {state}, tap to change",
   "am_prep.misc.notes_placeholder": "Add notes…",
   "am_prep.misc.notes_label": "Notes",
+  "checklist.section.progress": "{done} of {total} done",
+  "checklist.section.show_problems": "Show me what needs fixing",
   "am_prep.section.aria": "{section} prep section",
   "am_prep.section.empty": "No items in {section}",
   "am_prep.section.loading": "Loading {section}…",
