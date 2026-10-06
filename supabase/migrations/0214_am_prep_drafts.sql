@@ -70,9 +70,12 @@
 --      refuses when the stored instance is the NEWER one (a stale tab on the old instance
 --      must not reset the live count), else RESETS the lines AND `consumed_at` — a new open
 --      instance must never inherit the old one's "consumed";
---   4. merges the patch line by line (jsonb `||` per template-item key; an empty `{}` line
---      deletes the key; same line → last write wins), caps the line count, stamps
---      saved_by / saved_at, and returns saved_at.
+--   4. merges the patch line by line BY EDIT STAMP: per template-item key, the entry with
+--      the greater `editedAt` wins (a tie goes to the incoming entry), whatever order the
+--      saves and beacons ARRIVE in — a late beacon carrying an older edit can never
+--      overwrite a newer one. A blank line is a stamped tombstone, kept. V1 limit: two
+--      devices editing the SAME line resolve by stamp (their clocks). Caps the line count,
+--      stamps saved_by / saved_at, and returns saved_at.
 -- Role floor, location bind and the "is this an AM prep" check stay in the lib, which runs
 -- them BEFORE calling the RPC. `consumeAmPrepDraft` is bound to the instance id, so an
 -- older instance's submit can never consume a newer instance's draft.
@@ -107,7 +110,8 @@ create table if not exists public.am_prep_drafts (
   instance_id   uuid        not null references public.checklist_instances(id),
   -- The envelope parsed by parseAmPrepDraft (lib/am-prep-draft-shared.ts):
   --   { version: 1,
-  --     items: { <template_item_id>: { onHand?, portioned?, line?, backUp?, total?   -- raw strings
+  --     items: { <template_item_id>: { editedAt,                                     -- per-tab edit stamp
+  --                                    onHand?, portioned?, line?, backUp?, total?   -- raw strings
   --                                    yesNo?, freeText? } } }
   -- Untyped on purpose: one pure TS validator owns the shape and rejects a malformed
   -- draft whole (the 0203 posture).
@@ -138,27 +142,30 @@ revoke all on public.am_prep_drafts from public;
 grant select, insert, update on public.am_prep_drafts to service_role;
 
 -- ── The per-line merge (pure) ────────────────────────────────────────────────────────
--- Lines in p_patch with a non-empty object REPLACE the stored line; lines whose value is
--- `{}` are REMOVED (the line is blank now); every other stored line is untouched. Mirrors
--- mergeAmPrepDraftItems in lib/am-prep-draft-shared.ts.
+-- PER LINE, KEEP THE GREATER `editedAt` (review round 2, PR #383). A line only in one side
+-- is kept as is; a line in both keeps the entry with the greater stamp, the incoming
+-- (p_patch) entry winning a tie; an absent stamp counts as 0. Blank lines (a stamp and no
+-- value) are kept as tombstones so a late, older delivery cannot resurrect a cleared cell.
+-- The pure TS mirror is mergeAmPrepDraftItems in lib/am-prep-draft-shared.ts.
 create or replace function public.am_prep_draft_merge_items(p_base jsonb, p_patch jsonb)
 returns jsonb
 language sql
 immutable
 set search_path = pg_catalog, public
 as $$
-  select (
-    coalesce(p_base, '{}'::jsonb)
-    || coalesce(
-         (select jsonb_object_agg(e.key, e.value)
-            from jsonb_each(coalesce(p_patch, '{}'::jsonb)) e
-           where e.value <> '{}'::jsonb),
-         '{}'::jsonb)
-  ) - coalesce(
-         (select array_agg(e.key)
-            from jsonb_each(coalesce(p_patch, '{}'::jsonb)) e
-           where e.value = '{}'::jsonb),
-         array[]::text[]);
+  select coalesce(jsonb_object_agg(m.k, m.v), '{}'::jsonb)
+    from (
+      select coalesce(p.key, b.key) as k,
+             case
+               when p.key is null then b.value
+               when b.key is null then p.value
+               when coalesce((p.value ->> 'editedAt')::numeric, 0)
+                    >= coalesce((b.value ->> 'editedAt')::numeric, 0) then p.value
+               else b.value
+             end as v
+        from jsonb_each(coalesce(p_base, '{}'::jsonb)) b
+        full outer join jsonb_each(coalesce(p_patch, '{}'::jsonb)) p on p.key = b.key
+    ) m;
 $$;
 
 -- ── The atomic save ──────────────────────────────────────────────────────────────────

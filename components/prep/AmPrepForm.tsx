@@ -57,7 +57,10 @@
 import { useRouter } from "next/navigation";
 import { useCallback, useMemo, useState } from "react";
 
-import type { AmPrepDraftRestore } from "@/lib/am-prep-draft-shared";
+import {
+  amPrepDraftItemsToFormValues,
+  type AmPrepDraftRestore,
+} from "@/lib/am-prep-draft-shared";
 import type { ChecklistChainEntry } from "@/lib/checklists";
 import { formatChainAttribution, formatTime } from "@/lib/i18n/format";
 import { useTranslation } from "@/lib/i18n/provider";
@@ -506,7 +509,7 @@ export function AmPrepForm({
   // values. `initialRawValues` stays the DIRTY baseline (what is already submitted — empty
   // on a first submission), so a restored count is dirty and submittable at once.
   const seedRawValues = useMemo<Record<string, RawPrepInputs>>(
-    () => (restoredDraft ? { ...restoredDraft.draft.items } : initialRawValues),
+    () => (restoredDraft ? amPrepDraftItemsToFormValues(restoredDraft.draft.items) : initialRawValues),
     [restoredDraft, initialRawValues],
   );
   const seedRawValuesString = useMemo(() => stableStringify(seedRawValues), [seedRawValues]);

@@ -19,6 +19,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 
 import {
   amPrepDraftApplies,
+  amPrepDraftLineHasValue,
   canWriteAmPrepDraft,
   parseAmPrepDraft,
   type AmPrepDraft,
@@ -143,7 +144,7 @@ export async function loadRestorableAmPrepDraft(
         instanceId: args.instance.id,
         draftInstanceId: stored.instanceId,
         consumed: false,
-        itemCount: Object.keys(stored.draft.items).length,
+        itemCount: Object.values(stored.draft.items).filter(amPrepDraftLineHasValue).length,
       })
     ) {
       return null;

@@ -18,7 +18,7 @@
  * NEVER BLOCKS TYPING. Failures only change the quiet status line.
  */
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import {
   AmPrepDraftAutosaver,
@@ -84,18 +84,23 @@ export function useAmPrepDraftAutosave(args: {
 }): { status: AmPrepDraftSaveStatus; flushNow: () => void } {
   const { enabled, instanceId, rawValues, serverItems } = args;
   const [status, setStatus] = useState<AmPrepDraftSaveStatus>("idle");
-  // One saver per mounted form, created on first use (state initializer runs once).
-  const [saver] = useState(() => createSaver(instanceId, serverItems, setStatus));
+
+  // The saver lives for exactly one MOUNT: created in the mount effect, disposed in its
+  // cleanup (a disposed saver never fetches or retries again). A remount — React strict
+  // mode in dev — gets a fresh one seeded from what the page loaded, then the current
+  // form state. The latest props ride in refs, written only in effects.
+  const saverRef = useRef<AmPrepDraftAutosaver | null>(null);
+  const latest = useRef({ enabled, instanceId, rawValues, serverItems });
+  useEffect(() => {
+    latest.current = { enabled, instanceId, rawValues, serverItems };
+  });
 
   useEffect(() => {
-    saver.setEnabled(enabled);
-  }, [saver, enabled]);
-
-  useEffect(() => {
-    saver.update(rawValues);
-  }, [saver, rawValues]);
-
-  useEffect(() => {
+    const init = latest.current;
+    const saver = createSaver(init.instanceId, init.serverItems, setStatus);
+    saver.setEnabled(init.enabled);
+    saver.update(init.rawValues);
+    saverRef.current = saver;
     const onVisibility = () => {
       if (document.visibilityState === "hidden") saver.onHidden();
       else if (document.visibilityState === "visible") saver.onVisible();
@@ -107,12 +112,21 @@ export function useAmPrepDraftAutosave(args: {
       document.removeEventListener("visibilitychange", onVisibility);
       window.removeEventListener("pagehide", onPageHide);
       saver.dispose();
+      if (saverRef.current === saver) saverRef.current = null;
     };
-  }, [saver]);
+  }, []);
+
+  useEffect(() => {
+    saverRef.current?.setEnabled(enabled);
+  }, [enabled]);
+
+  useEffect(() => {
+    saverRef.current?.update(rawValues);
+  }, [rawValues]);
 
   const flushNow = useCallback(() => {
-    void saver.flush();
-  }, [saver]);
+    void saverRef.current?.flush();
+  }, []);
 
   return { status, flushNow };
 }

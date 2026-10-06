@@ -31,10 +31,11 @@ import {
   amPrepDraftApplies,
   amPrepDraftRetryDelayMs,
   canWriteAmPrepDraft,
-  diffAmPrepDraftItems,
+  amPrepDraftItemsToFormValues,
+  amPrepDraftStampOf,
+  createAmPrepDraftStamper,
   isRetryableAmPrepDraftFailure,
   mergeAmPrepDraftItems,
-  normalizeAmPrepDraftItems,
   parseAmPrepDraft,
 } from "@/lib/am-prep-draft-shared";
 import {
@@ -185,32 +186,68 @@ describe("the draft shape round-trips and rejects malformed input whole", () => 
   });
 });
 
-describe("the patch/merge rule — a stale tab cannot erase a teammate's count", () => {
-  it("the patch holds only the lines that changed, and a cleared line goes out empty", () => {
-    const saved = normalizeAmPrepDraftItems({ [ITEM_1]: { onHand: "4" }, [ITEM_2]: { onHand: "2" } });
-    const now = normalizeAmPrepDraftItems({ [ITEM_1]: { onHand: "4" }, [ITEM_2]: { onHand: "" }, [ITEM_3]: { line: "1" } });
-    expect(diffAmPrepDraftItems(saved, now)).toEqual({ [ITEM_2]: {}, [ITEM_3]: { line: "1" } });
-  });
-
-  it("nothing changed → an empty patch (a page load that hydrates from the draft posts nothing)", () => {
-    const items = normalizeAmPrepDraftItems({ [ITEM_1]: { onHand: "4", total: "4" } });
-    expect(diffAmPrepDraftItems(items, normalizeAmPrepDraftItems({ ...items }))).toEqual({});
-  });
-
+describe("the merge rule — per line, the greater editedAt wins (TS mirror of the SQL)", () => {
   it("merging a one-line patch keeps every other stored line", () => {
-    const stored = { [ITEM_1]: { onHand: "4" }, [ITEM_2]: { onHand: "2" } };
-    expect(mergeAmPrepDraftItems(stored, { [ITEM_3]: { line: "1" } })).toEqual({
-      [ITEM_1]: { onHand: "4" },
-      [ITEM_2]: { onHand: "2" },
-      [ITEM_3]: { line: "1" },
+    const stored = { [ITEM_1]: { onHand: "4", editedAt: 10 }, [ITEM_2]: { onHand: "2", editedAt: 10 } };
+    expect(mergeAmPrepDraftItems(stored, { [ITEM_3]: { line: "1", editedAt: 11 } })).toEqual({
+      [ITEM_1]: { onHand: "4", editedAt: 10 },
+      [ITEM_2]: { onHand: "2", editedAt: 10 },
+      [ITEM_3]: { line: "1", editedAt: 11 },
     });
   });
 
-  it("an empty patch row removes the line; a filled one replaces it whole", () => {
-    const stored = { [ITEM_1]: { onHand: "4", backUp: "1" }, [ITEM_2]: { onHand: "2" } };
-    expect(mergeAmPrepDraftItems(stored, { [ITEM_1]: { onHand: "5" }, [ITEM_2]: {} })).toEqual({
-      [ITEM_1]: { onHand: "5" },
+  it("a NEWER stamp replaces the line whole; an OLDER one (a late beacon) is ignored", () => {
+    const stored = { [ITEM_1]: { onHand: "5", editedAt: 20 } };
+    expect(mergeAmPrepDraftItems(stored, { [ITEM_1]: { onHand: "3", editedAt: 15 } })).toEqual(stored);
+    expect(mergeAmPrepDraftItems(stored, { [ITEM_1]: { onHand: "6", editedAt: 21 } })).toEqual({
+      [ITEM_1]: { onHand: "6", editedAt: 21 },
     });
+  });
+
+  it("a cleared line is a stamped TOMBSTONE: kept, and an older value cannot resurrect it", () => {
+    const stored = { [ITEM_1]: { onHand: "4", editedAt: 10 } };
+    const cleared = mergeAmPrepDraftItems(stored, { [ITEM_1]: { editedAt: 12 } });
+    expect(cleared).toEqual({ [ITEM_1]: { editedAt: 12 } });
+    expect(mergeAmPrepDraftItems(cleared, { [ITEM_1]: { onHand: "4", editedAt: 11 } })).toEqual(cleared);
+    expect(amPrepDraftItemsToFormValues(cleared)).toEqual({});
+  });
+
+  it("a tie goes to the incoming entry (a re-send of the same edit is idempotent)", () => {
+    expect(mergeAmPrepDraftItems({ [ITEM_1]: { onHand: "4", editedAt: 7 } }, { [ITEM_1]: { onHand: "4", editedAt: 7 } }))
+      .toEqual({ [ITEM_1]: { onHand: "4", editedAt: 7 } });
+  });
+
+  it("two tabs on the same line: the higher stamp wins in EITHER arrival order", () => {
+    const tabA = { [ITEM_1]: { onHand: "3", editedAt: 1_000_001 } };
+    const tabB = { [ITEM_1]: { onHand: "8", editedAt: 1_000_005 } };
+    expect(mergeAmPrepDraftItems(mergeAmPrepDraftItems({}, tabA), tabB)).toEqual(tabB);
+    expect(mergeAmPrepDraftItems(mergeAmPrepDraftItems({}, tabB), tabA)).toEqual(tabB);
+  });
+
+  it("an absent stamp counts as 0 (oldest)", () => {
+    expect(amPrepDraftStampOf({ onHand: "1" })).toBe(0);
+    expect(mergeAmPrepDraftItems({ [ITEM_1]: { onHand: "4", editedAt: 1 } }, { [ITEM_1]: { onHand: "9" } }))
+      .toEqual({ [ITEM_1]: { onHand: "4", editedAt: 1 } });
+  });
+
+  it("the stamper is strictly increasing within a tab, even inside one millisecond or across a clock step back", () => {
+    let t = 1000;
+    const stamp = createAmPrepDraftStamper(() => t);
+    const a = stamp();
+    const b = stamp();
+    t = 900; // clock stepped backwards
+    const c = stamp();
+    t = 5000;
+    const d = stamp();
+    expect([a, b, c, d]).toEqual([1000, 1001, 1002, 5000]);
+  });
+
+  it("the parser keeps a valid stamp and rejects a bad one whole", () => {
+    expect(parseAmPrepDraft({ version: 1, items: { [ITEM_1]: { onHand: "1", editedAt: 5 } } })?.items)
+      .toEqual({ [ITEM_1]: { onHand: "1", editedAt: 5 } });
+    for (const bad of ["5", -1, Number.NaN]) {
+      expect(parseAmPrepDraft({ version: 1, items: { [ITEM_1]: { editedAt: bad } } })).toBeNull();
+    }
   });
 });
 
@@ -297,14 +334,15 @@ describe("saveAmPrepDraft — one atomic RPC merges the patch for the instance's
     });
   });
 
-  it("the SAME line saved twice: last write wins", async () => {
+  it("the SAME line from two tabs: the higher stamp wins, whichever save lands last", async () => {
     const m = rpcModel(null);
     const f = fakeService({ checklist_instances: openInstance(), checklist_templates: amPrepTemplate }, m.impl);
+    // The NEWER edit (stamp 200) is saved first; the older one (stamp 100) lands after it.
     await Promise.all([
-      saveAmPrepDraft(f.service, { actor: keyHolderAtA, instanceId: INSTANCE, patch: { [ITEM_1]: { onHand: "3" } } }),
-      saveAmPrepDraft(f.service, { actor: ownerAnywhere, instanceId: INSTANCE, patch: { [ITEM_1]: { onHand: "5" } } }),
+      saveAmPrepDraft(f.service, { actor: keyHolderAtA, instanceId: INSTANCE, patch: { [ITEM_1]: { onHand: "5", editedAt: 200 } } }),
+      saveAmPrepDraft(f.service, { actor: ownerAnywhere, instanceId: INSTANCE, patch: { [ITEM_1]: { onHand: "3", editedAt: 100 } } }),
     ]);
-    expect(m.store.row?.items).toEqual({ [ITEM_1]: { onHand: "5" } });
+    expect(m.store.row?.items).toEqual({ [ITEM_1]: { onHand: "5", editedAt: 200 } });
   });
 
   it("a NEW instance starting from a CONSUMED row resets the lines AND consumed_at", async () => {
@@ -371,13 +409,21 @@ describe("0214 save_am_prep_draft — the SQL (source-pinned; applied only in th
     expect(fn).toMatch(/draft_superseded[\s\S]*?v_base := '\{\}'::jsonb;\s*v_consumed := null;/);
     expect(fn).toContain("consumed_at = v_consumed");
   });
-  it("the merge is per line: || for filled lines, key removal for empty ones", () => {
+  it("the merge keeps, per line, the entry with the MAX editedAt (incoming wins a tie)", () => {
     const merge = sql.slice(
       sql.indexOf("create or replace function public.am_prep_draft_merge_items"),
       sql.indexOf("create or replace function public.save_am_prep_draft"),
     );
-    expect(merge).toMatch(/\|\|\s*coalesce\(\s*\(select jsonb_object_agg\(e\.key, e\.value\)[\s\S]*?where e\.value <> '\{\}'::jsonb\)/);
-    expect(merge).toMatch(/\)\s*-\s*coalesce\(\s*\(select array_agg\(e\.key\)[\s\S]*?where e\.value = '\{\}'::jsonb\)/);
+    const body = merge.slice(merge.indexOf("as $$"));
+    expect(body).toMatch(/full outer join jsonb_each\(coalesce\(p_patch, '\{\}'::jsonb\)\) p on p\.key = b\.key/);
+    expect(body).toMatch(/when p\.key is null then b\.value/);
+    expect(body).toMatch(/when b\.key is null then p\.value/);
+    expect(body).toMatch(
+      /when coalesce\(\(p\.value ->> 'editedAt'\)::numeric, 0\)\s*>= coalesce\(\(b\.value ->> 'editedAt'\)::numeric, 0\) then p\.value\s*else b\.value/,
+    );
+    // No blind overwrite (`||`) and no key deletion survive from round 1.
+    expect(body).not.toContain("||");
+    expect(body).not.toContain("array_agg");
   });
   it("grants: revoked from public/anon/authenticated, granted to service_role, asserted in a DO block", () => {
     expect(sql).toContain("revoke all on function public.save_am_prep_draft(uuid, jsonb, uuid) from public, anon, authenticated;");

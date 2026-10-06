@@ -19,7 +19,7 @@
  *      the count. `instance_id` rides on the row and a draft whose instance no longer
  *      matches the page's is ignored on load (its item ids belong to another template).
  *
- *   2. PATCH, NOT SNAPSHOT. The client posts only the items that changed since its last
+ *   2. PATCH, NOT SNAPSHOT, STAMPED. The client posts only the items that changed since its last
  *      successful save, and the server merges them into the stored draft item by item.
  *      Opening posts the whole form (last write wins). For AM prep the whole point is that
  *      a SECOND person picks the count up, and a stale tab left open on a first device
@@ -59,10 +59,21 @@ export const AM_PREP_DRAFT_NUMERIC_FIELDS = [
 ] as const;
 
 /**
- * One line's unsubmitted form state. Structurally identical to `RawPrepInputs`
- * (components/prep/types.ts) — numeric fields as strings, `yesNo` boolean, `freeText`
- * string — so the form hands its state in and gets it back without conversion. An
- * absent field is "not entered"; an EMPTY item (`{}`) is "this line is blank".
+ * One line's unsubmitted form state. The value fields are structurally identical to
+ * `RawPrepInputs` (components/prep/types.ts) — numeric fields as strings, `yesNo` boolean,
+ * `freeText` string. An absent field is "not entered"; a line with NO value field is
+ * "this line is blank" (a tombstone, kept so a late older delivery cannot resurrect it).
+ *
+ * `editedAt` — THE PER-LINE EDIT STAMP (review round 2, PR #383). A per-tab monotonic
+ * number (`Date.now()` combined with a per-tab counter, strictly increasing within a tab;
+ * see `createAmPrepDraftStamper`). The merge — `mergeAmPrepDraftItems` here and
+ * `am_prep_draft_merge_items` in 0214, which mirror each other — keeps, PER LINE, the entry
+ * with the greater stamp, so arrival order stops mattering: a late beacon carrying an older
+ * edit can never overwrite a newer acknowledged one. Absent = 0 (oldest).
+ *
+ * V1 LIMIT, stated: two DEVICES editing the SAME line resolve by stamp, i.e. by their
+ * clocks — the later wall-clock edit wins, and a device whose clock runs fast wins ties it
+ * should lose. Different lines never conflict.
  */
 export interface AmPrepDraftItem {
   onHand?: string;
@@ -72,6 +83,7 @@ export interface AmPrepDraftItem {
   total?: string;
   yesNo?: boolean;
   freeText?: string;
+  editedAt?: number;
 }
 
 /** The persisted envelope (and the patch envelope a save posts). */
@@ -95,10 +107,10 @@ export function emptyAmPrepDraft(): AmPrepDraft {
 }
 
 /**
- * Normalize one row: drop empty strings (an emptied cell and a never-touched cell mean the
- * same thing to the validator), cap lengths, keep booleans only when boolean. Key order is
- * fixed so two equal rows serialize identically — the client's change detection compares
- * serialized rows.
+ * Normalize one row's VALUE: drop empty strings (an emptied cell and a never-touched cell
+ * mean the same thing to the validator), cap lengths, keep booleans only when boolean. Key
+ * order is fixed so two equal rows serialize identically. The stamp is NOT part of the
+ * value — see `withStamp`.
  */
 export function normalizeAmPrepDraftItem(raw: AmPrepDraftItem): AmPrepDraftItem {
   const out: AmPrepDraftItem = {};
@@ -113,7 +125,24 @@ export function normalizeAmPrepDraftItem(raw: AmPrepDraftItem): AmPrepDraftItem 
   return out;
 }
 
-/** Normalize a whole form state into draft items, dropping blank rows and bad keys. */
+/** A normalized value plus its stamp (when it has one). */
+function withStamp(raw: AmPrepDraftItem): AmPrepDraftItem {
+  const out = normalizeAmPrepDraftItem(raw);
+  if (typeof raw.editedAt === "number" && Number.isFinite(raw.editedAt) && raw.editedAt >= 0) {
+    out.editedAt = raw.editedAt;
+  }
+  return out;
+}
+
+/** True when the line carries at least one VALUE field (a stamp alone is a blank line). */
+export function amPrepDraftLineHasValue(item: AmPrepDraftItem): boolean {
+  return Object.keys(normalizeAmPrepDraftItem(item)).length > 0;
+}
+
+/**
+ * Normalize a whole FORM state (no stamps) into value-only lines, dropping blank rows and
+ * bad keys. What the autosaver compares to detect an edit.
+ */
 export function normalizeAmPrepDraftItems(
   rows: Record<string, AmPrepDraftItem>,
 ): Record<string, AmPrepDraftItem> {
@@ -131,44 +160,54 @@ export function normalizeAmPrepDraftItems(
 }
 
 /**
- * The PATCH a save posts: every line whose normalized value differs from what this client
- * last saved. A line that was saved and is now blank goes out as `{}` — that is how a
- * cleared cell reaches the server.
+ * Stored draft lines → the form's seed: value fields only, blank (tombstone) lines dropped.
  */
-export function diffAmPrepDraftItems(
-  lastSaved: Record<string, AmPrepDraftItem>,
-  current: Record<string, AmPrepDraftItem>,
+export function amPrepDraftItemsToFormValues(
+  items: Record<string, AmPrepDraftItem>,
 ): Record<string, AmPrepDraftItem> {
-  const patch: Record<string, AmPrepDraftItem> = {};
-  const keys = new Set([...Object.keys(lastSaved), ...Object.keys(current)]);
-  for (const key of [...keys].sort()) {
-    const before = lastSaved[key];
-    const after = current[key];
-    const beforeJson = before ? JSON.stringify(before) : "{}";
-    const afterJson = after ? JSON.stringify(after) : "{}";
-    if (beforeJson !== afterJson) patch[key] = after ?? {};
-  }
-  return patch;
+  return normalizeAmPrepDraftItems(items);
+}
+
+/** A line's stamp; absent counts as 0 (the oldest possible edit). */
+export function amPrepDraftStampOf(item: AmPrepDraftItem | undefined): number {
+  return item && typeof item.editedAt === "number" ? item.editedAt : 0;
 }
 
 /**
- * Merge a patch into a stored set of items, line by line. An empty patch row removes the
- * line (it is blank now). Capped at AM_PREP_DRAFT_MAX_ITEMS so a merge can never grow the
- * row past what the validator accepts on read-back.
+ * THE MERGE — the pure TS mirror of 0214 `am_prep_draft_merge_items`. Per line, keep the
+ * entry with the GREATER `editedAt`; on a tie the incoming entry wins (a re-send of the
+ * same edit is idempotent). Blank lines are kept as stamped tombstones. Capped at
+ * AM_PREP_DRAFT_MAX_ITEMS so a merge never outgrows what the validator reads back.
  */
 export function mergeAmPrepDraftItems(
   base: Record<string, AmPrepDraftItem>,
   patch: Record<string, AmPrepDraftItem>,
 ): Record<string, AmPrepDraftItem> {
   const merged: Record<string, AmPrepDraftItem> = { ...base };
-  for (const [key, item] of Object.entries(patch)) {
-    if (Object.keys(item).length === 0) delete merged[key];
-    else merged[key] = item;
+  for (const [key, incoming] of Object.entries(patch)) {
+    const stored = merged[key];
+    if (stored === undefined || amPrepDraftStampOf(incoming) >= amPrepDraftStampOf(stored)) {
+      merged[key] = incoming;
+    }
   }
   const keys = Object.keys(merged).sort();
   const out: Record<string, AmPrepDraftItem> = {};
   for (const key of keys.slice(0, AM_PREP_DRAFT_MAX_ITEMS)) out[key] = merged[key]!;
   return out;
+}
+
+/**
+ * A per-tab monotonic stamper: `Date.now()` combined with a counter so every stamp is
+ * strictly greater than the previous one from the same tab, even within one millisecond or
+ * across a backwards clock step.
+ */
+export function createAmPrepDraftStamper(now: () => number = Date.now): () => number {
+  let last = 0;
+  return () => {
+    const t = now();
+    last = t > last ? t : last + 1;
+    return last;
+  };
 }
 
 function isPlainRecord(value: unknown): value is Record<string, unknown> {
@@ -179,11 +218,11 @@ function isPlainRecord(value: unknown): value is Record<string, unknown> {
  * Parse an untrusted value (a request body's `draft`, or the jsonb column read back).
  *
  * Returns `null` for ANYTHING malformed — wrong version, a numeric field that is a number
- * rather than the typed string, a `yesNo` that is not boolean. Reject-whole, the 0203 rule:
- * a draft that half-parses hydrates a form with a silently missing cell, and a blank cell
- * the operator believes they counted is the exact failure this exists to end. UNKNOWN
- * fields are dropped (a newer client must not brick an older one). Empty rows are KEPT,
- * because in a patch an empty row means "this line is blank now".
+ * rather than the typed string, a `yesNo` that is not boolean, an `editedAt` that is not a
+ * finite non-negative number. Reject-whole, the 0203 rule: a draft that half-parses
+ * hydrates a form with a silently missing cell. UNKNOWN fields are dropped (a newer client
+ * must not brick an older one). Blank lines are KEPT (with their stamp): a blank line is a
+ * real edit ("this line is empty now").
  */
 export function parseAmPrepDraft(raw: unknown): AmPrepDraft | null {
   if (!isPlainRecord(raw)) return null;
@@ -210,7 +249,14 @@ export function parseAmPrepDraft(raw: unknown): AmPrepDraft | null {
     ) {
       return null;
     }
-    draft.items[key] = normalizeAmPrepDraftItem(value as AmPrepDraftItem);
+    if (
+      value.editedAt !== undefined &&
+      value.editedAt !== null &&
+      (typeof value.editedAt !== "number" || !Number.isFinite(value.editedAt) || value.editedAt < 0)
+    ) {
+      return null;
+    }
+    draft.items[key] = withStamp(value as AmPrepDraftItem);
   }
   return draft;
 }
