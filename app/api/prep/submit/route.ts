@@ -287,6 +287,7 @@ export async function POST(req: NextRequest) {
       try {
         await consumeAmPrepDraft(service, {
           actor: ctx,
+          instanceId: instance.id,
           locationId: instance.location_id,
           businessDate: instance.date,
         });

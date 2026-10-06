@@ -59,13 +59,19 @@ const DAY = "2026-10-06";
 
 interface Recorded {
   table: string;
-  op: "upsert" | "update";
+  op: "upsert" | "update" | "rpc";
   payload: Record<string, unknown>;
   options?: unknown;
   filters: Array<[string, unknown]>;
 }
 
-function fakeService(rows: Partial<Record<string, Record<string, unknown> | null>>) {
+type RpcImpl = (name: string, params: Record<string, unknown>) => Promise<{ data: unknown; error: { message: string } | null }>;
+const SAVED_AT = "2026-10-06T14:00:00.000Z";
+
+function fakeService(
+  rows: Partial<Record<string, Record<string, unknown> | null>>,
+  rpcImpl: RpcImpl = async () => ({ data: SAVED_AT, error: null }),
+) {
   const writes: Recorded[] = [];
   const reads: string[] = [];
   const from = vi.fn((table: string) => {
@@ -107,7 +113,11 @@ function fakeService(rows: Partial<Record<string, Record<string, unknown> | null
     };
     return api;
   });
-  return { service: { from } as unknown as SupabaseClient, from, writes, reads };
+  const rpc = vi.fn(async (name: string, params: Record<string, unknown>) => {
+    writes.push({ table: name, op: "rpc", payload: params, filters: [] });
+    return rpcImpl(name, params);
+  });
+  return { service: { from, rpc } as unknown as SupabaseClient, from, rpc, writes, reads };
 }
 
 const openInstance = (patch: Record<string, unknown> = {}) => ({
@@ -216,54 +226,113 @@ describe("retry policy — blips retry on a backoff, verdicts do not spin", () =
   );
 });
 
-describe("saveAmPrepDraft — merges the patch into the shop's draft for the instance's day", () => {
-  it("upserts on (location_id, business_date) taken from the INSTANCE, merging the stored lines", async () => {
-    const f = fakeService({
-      checklist_instances: openInstance(),
-      checklist_templates: amPrepTemplate,
-      am_prep_drafts: {
-        instance_id: INSTANCE,
-        consumed_at: null,
-        draft: { version: 1, items: { [ITEM_1]: { onHand: "4" } } },
-      },
-    });
+/**
+ * A model of the 0214 `save_am_prep_draft` RPC for the lib-level tests: calls are
+ * SERIALIZED through a lock (the RPC's `for update` on the shop-day row), and each applies
+ * exactly the SQL's rule: reset on a different (newer) instance — lines AND consumed_at —
+ * else merge the patch per line. The SQL itself is source-pinned below; this model proves
+ * the LIB sends a per-line patch (never a TS-merged whole draft) so concurrency is safe.
+ */
+interface ModelRow {
+  instance_id: string;
+  items: Record<string, Record<string, unknown>>;
+  consumed_at: string | null;
+}
+function rpcModel(initial: ModelRow | null) {
+  const store: { row: ModelRow | null } = { row: initial };
+  let chain: Promise<unknown> = Promise.resolve();
+  const impl: RpcImpl = (name, params) => {
+    const run = async () => {
+      expect(name).toBe("save_am_prep_draft");
+      await new Promise((r) => setTimeout(r, 5)); // the RPC "works" while holding the lock
+      const patch = params.p_patch as Record<string, Record<string, unknown>>;
+      const row = store.row;
+      const sameInstance = row !== null && row.instance_id === params.p_instance_id;
+      const base = sameInstance && row.consumed_at === null ? row.items : {};
+      store.row = {
+        instance_id: params.p_instance_id as string,
+        items: mergeAmPrepDraftItems(base, patch) as ModelRow["items"],
+        consumed_at: sameInstance ? row.consumed_at : null,
+      };
+      return { data: SAVED_AT, error: null };
+    };
+    const next = chain.then(run, run);
+    chain = next.catch(() => undefined);
+    return next;
+  };
+  return { store, impl };
+}
+
+describe("saveAmPrepDraft — one atomic RPC merges the patch for the instance's shop-day", () => {
+  it("calls save_am_prep_draft with the instance id, the PATCH and the saver; returns its saved_at", async () => {
+    const f = fakeService({ checklist_instances: openInstance(), checklist_templates: amPrepTemplate });
     const res = await saveAmPrepDraft(f.service, {
       actor: keyHolderAtA,
       instanceId: INSTANCE,
       patch: { [ITEM_2]: { onHand: "2", total: "2" } },
     });
-    expect(f.writes).toHaveLength(1);
-    const w = f.writes[0]!;
-    expect(w.table).toBe("am_prep_drafts");
-    expect(w.options).toEqual({ onConflict: "location_id,business_date" });
-    expect(w.payload).toMatchObject({
-      location_id: SHOP_A,
-      business_date: DAY,
-      instance_id: INSTANCE,
-      saved_by: "u-kh",
-      draft: { version: 1, items: { [ITEM_1]: { onHand: "4" }, [ITEM_2]: { onHand: "2", total: "2" } } },
+    expect(f.rpc).toHaveBeenCalledOnce();
+    expect(f.rpc).toHaveBeenCalledWith("save_am_prep_draft", {
+      p_instance_id: INSTANCE,
+      p_patch: { [ITEM_2]: { onHand: "2", total: "2" } },
+      p_saved_by: "u-kh",
     });
-    // consumed_at is never written by a save: a consumed draft stays consumed.
-    expect(w.payload).not.toHaveProperty("consumed_at");
-    expect(res.savedAt).toBe(w.payload.saved_at);
+    // No read-merge-write in TS any more: no draft read, no upsert.
+    expect(f.reads).not.toContain("am_prep_drafts");
+    expect(f.writes.filter((w) => w.op !== "rpc")).toEqual([]);
+    expect(res.savedAt).toBe(SAVED_AT);
   });
 
-  it("does not merge into a CONSUMED draft or one left by another instance", async () => {
-    for (const existing of [
-      { instance_id: INSTANCE, consumed_at: "2026-10-06T10:00:00Z", draft: { version: 1, items: { [ITEM_1]: { onHand: "9" } } } },
-      { instance_id: OTHER_INSTANCE, consumed_at: null, draft: { version: 1, items: { [ITEM_1]: { onHand: "9" } } } },
-    ]) {
-      const f = fakeService({ checklist_instances: openInstance(), checklist_templates: amPrepTemplate, am_prep_drafts: existing });
-      await saveAmPrepDraft(f.service, { actor: keyHolderAtA, instanceId: INSTANCE, patch: { [ITEM_2]: { onHand: "1" } } });
-      expect(f.writes[0]!.payload.draft).toEqual({ version: 1, items: { [ITEM_2]: { onHand: "1" } } });
-    }
+  it("CONCURRENT saves of DIFFERENT lines from two devices both land", async () => {
+    const m = rpcModel({ instance_id: INSTANCE, items: { [ITEM_1]: { onHand: "4" } }, consumed_at: null });
+    const f = fakeService({ checklist_instances: openInstance(), checklist_templates: amPrepTemplate }, m.impl);
+    await Promise.all([
+      saveAmPrepDraft(f.service, { actor: keyHolderAtA, instanceId: INSTANCE, patch: { [ITEM_2]: { onHand: "2" } } }),
+      saveAmPrepDraft(f.service, { actor: ownerAnywhere, instanceId: INSTANCE, patch: { [ITEM_3]: { line: "7" } } }),
+    ]);
+    expect(m.store.row?.items).toEqual({
+      [ITEM_1]: { onHand: "4" },
+      [ITEM_2]: { onHand: "2" },
+      [ITEM_3]: { line: "7" },
+    });
   });
 
-  it("refuses a submitted instance with 409 and writes nothing", async () => {
+  it("the SAME line saved twice: last write wins", async () => {
+    const m = rpcModel(null);
+    const f = fakeService({ checklist_instances: openInstance(), checklist_templates: amPrepTemplate }, m.impl);
+    await Promise.all([
+      saveAmPrepDraft(f.service, { actor: keyHolderAtA, instanceId: INSTANCE, patch: { [ITEM_1]: { onHand: "3" } } }),
+      saveAmPrepDraft(f.service, { actor: ownerAnywhere, instanceId: INSTANCE, patch: { [ITEM_1]: { onHand: "5" } } }),
+    ]);
+    expect(m.store.row?.items).toEqual({ [ITEM_1]: { onHand: "5" } });
+  });
+
+  it("a NEW instance starting from a CONSUMED row resets the lines AND consumed_at", async () => {
+    const m = rpcModel({ instance_id: OTHER_INSTANCE, items: { [ITEM_1]: { onHand: "9" } }, consumed_at: "2026-10-06T10:00:00Z" });
+    const f = fakeService({ checklist_instances: openInstance(), checklist_templates: amPrepTemplate }, m.impl);
+    await saveAmPrepDraft(f.service, { actor: keyHolderAtA, instanceId: INSTANCE, patch: { [ITEM_2]: { onHand: "1" } } });
+    expect(m.store.row).toEqual({ instance_id: INSTANCE, items: { [ITEM_2]: { onHand: "1" } }, consumed_at: null });
+  });
+
+  it.each([
+    ["am_prep_draft:prep_instance_not_open", 409, "prep_instance_not_open"],
+    ["am_prep_draft:draft_superseded", 409, "draft_superseded"],
+    ["am_prep_draft:instance_not_found", 404, "instance_not_found"],
+    ["am_prep_draft:draft_too_large", 400, "invalid_payload"],
+  ])("maps the RPC's %s to %i %s", async (message, status, code) => {
+    const f = fakeService(
+      { checklist_instances: openInstance(), checklist_templates: amPrepTemplate },
+      async () => ({ data: null, error: { message } }),
+    );
+    await expect(saveAmPrepDraft(f.service, { actor: keyHolderAtA, instanceId: INSTANCE, patch: { [ITEM_1]: { onHand: "1" } } }))
+      .rejects.toMatchObject({ name: "AmPrepDraftError", status, code });
+  });
+
+  it("refuses a submitted instance with 409 before calling the RPC", async () => {
     const f = fakeService({ checklist_instances: openInstance({ status: "confirmed" }), checklist_templates: amPrepTemplate });
     await expect(saveAmPrepDraft(f.service, { actor: keyHolderAtA, instanceId: INSTANCE, patch: {} }))
       .rejects.toMatchObject({ name: "AmPrepDraftError", status: 409, code: "prep_instance_not_open" });
-    expect(f.writes).toEqual([]);
+    expect(f.rpc).not.toHaveBeenCalled();
   });
 
   it("refuses an instance that is not an AM prep (404) and an unknown one (404)", async () => {
@@ -274,6 +343,49 @@ describe("saveAmPrepDraft — merges the patch into the shop's draft for the ins
     await expect(saveAmPrepDraft(missing.service, { actor: keyHolderAtA, instanceId: INSTANCE, patch: {} }))
       .rejects.toMatchObject({ status: 404, code: "instance_not_found" });
     expect([...notPrep.writes, ...missing.writes]).toEqual([]);
+  });
+});
+
+describe("0214 save_am_prep_draft — the SQL (source-pinned; applied only in the sim/prod gate)", () => {
+  const sql = readFileSync("supabase/migrations/0214_am_prep_drafts.sql", "utf8").replace(/\r\n/g, "\n");
+  const fn = sql.slice(
+    sql.indexOf("create or replace function public.save_am_prep_draft"),
+    sql.indexOf("revoke all on function"),
+  );
+
+  it("locks the instance FOR SHARE and rechecks it is open", () => {
+    expect(fn).toMatch(/from public\.checklist_instances\s+where id = p_instance_id\s+for share/);
+    expect(fn).toContain("if v_inst.status <> 'open' then");
+  });
+  it("creates the shop-day row race-safely, then locks it FOR UPDATE before merging", () => {
+    const ins = fn.indexOf("on conflict (location_id, business_date) do nothing");
+    const lock = fn.search(/from public\.am_prep_drafts\s+where location_id = v_inst\.location_id and business_date = v_inst\.date\s+for update/);
+    const merge = fn.indexOf("am_prep_draft_merge_items(v_base, p_patch)");
+    expect(ins).toBeGreaterThan(-1);
+    expect(lock).toBeGreaterThan(ins);
+    expect(merge).toBeGreaterThan(lock);
+  });
+  it("a different instance: refuses an older one, else resets lines AND consumed_at", () => {
+    expect(fn).toContain("if v_row.instance_id <> v_inst.id then");
+    expect(fn).toMatch(/v_stored_created > v_inst\.created_at[\s\S]*draft_superseded/);
+    expect(fn).toMatch(/draft_superseded[\s\S]*?v_base := '\{\}'::jsonb;\s*v_consumed := null;/);
+    expect(fn).toContain("consumed_at = v_consumed");
+  });
+  it("the merge is per line: || for filled lines, key removal for empty ones", () => {
+    const merge = sql.slice(
+      sql.indexOf("create or replace function public.am_prep_draft_merge_items"),
+      sql.indexOf("create or replace function public.save_am_prep_draft"),
+    );
+    expect(merge).toMatch(/\|\|\s*coalesce\(\s*\(select jsonb_object_agg\(e\.key, e\.value\)[\s\S]*?where e\.value <> '\{\}'::jsonb\)/);
+    expect(merge).toMatch(/\)\s*-\s*coalesce\(\s*\(select array_agg\(e\.key\)[\s\S]*?where e\.value = '\{\}'::jsonb\)/);
+  });
+  it("grants: revoked from public/anon/authenticated, granted to service_role, asserted in a DO block", () => {
+    expect(sql).toContain("revoke all on function public.save_am_prep_draft(uuid, jsonb, uuid) from public, anon, authenticated;");
+    expect(sql).toContain("grant execute on function public.save_am_prep_draft(uuid, jsonb, uuid) to service_role;");
+    expect(sql).toContain("revoke all on function public.am_prep_draft_merge_items(jsonb, jsonb) from public, anon, authenticated;");
+    expect(sql).toContain("raise exception '0214: unexpected am_prep_draft execute grant'");
+    expect(fn).toContain("security definer");
+    expect(fn).toContain("set search_path = pg_catalog, public");
   });
 });
 
@@ -293,29 +405,30 @@ describe("the location bind — a draft write lands only in the actor's own shop
   it("lets an all-locations owner write any shop's draft", async () => {
     const f = fakeService({ checklist_instances: openInstance({ location_id: SHOP_B }), checklist_templates: amPrepTemplate });
     await saveAmPrepDraft(f.service, { actor: ownerAnywhere, instanceId: INSTANCE, patch: { [ITEM_1]: { onHand: "1" } } });
-    expect(f.writes[0]!.payload).toMatchObject({ location_id: SHOP_B });
+    expect(f.rpc).toHaveBeenCalledOnce();
+    expect(f.writes[0]!.payload).toMatchObject({ p_instance_id: INSTANCE });
   });
 
   it("consumeAmPrepDraft binds too: foreign shop refused before the UPDATE", async () => {
     const f = fakeService({});
-    await expect(consumeAmPrepDraft(f.service, { actor: keyHolderAtA, locationId: SHOP_B, businessDate: DAY }))
+    await expect(consumeAmPrepDraft(f.service, { actor: keyHolderAtA, instanceId: INSTANCE, locationId: SHOP_B, businessDate: DAY }))
       .rejects.toMatchObject({ status: 403, code: "location_access_denied" });
     expect(f.from).not.toHaveBeenCalled();
   });
 
-  it("consumeAmPrepDraft at the actor's own shop stamps consumed_at on the unconsumed row only", async () => {
+  it("consumeAmPrepDraft stamps consumed_at only on the unconsumed row OF THIS INSTANCE", async () => {
     const f = fakeService({});
-    await expect(consumeAmPrepDraft(f.service, { actor: keyHolderAtA, locationId: SHOP_A, businessDate: DAY }))
+    await expect(consumeAmPrepDraft(f.service, { actor: keyHolderAtA, instanceId: INSTANCE, locationId: SHOP_A, businessDate: DAY }))
       .resolves.toBe(1);
     const w = f.writes[0]!;
     expect(w).toMatchObject({ table: "am_prep_drafts", op: "update" });
     expect(Object.keys(w.payload)).toEqual(["consumed_at"]);
-    expect(w.filters).toEqual([["location_id", SHOP_A], ["business_date", DAY], ["consumed_at", null]]);
+    expect(w.filters).toEqual([["location_id", SHOP_A], ["business_date", DAY], ["instance_id", INSTANCE], ["consumed_at", null]]);
   });
 
   it("source pin: both writers call lockLocationContext BEFORE their write", () => {
     const src = readFileSync("lib/am-prep-draft.ts", "utf8");
-    for (const [fn, write] of [["saveAmPrepDraft", ".upsert("], ["consumeAmPrepDraft", ".update("]] as const) {
+    for (const [fn, write] of [["saveAmPrepDraft", ".rpc("], ["consumeAmPrepDraft", ".update("]] as const) {
       const start = src.indexOf(`export async function ${fn}(`);
       const next = src.indexOf("\nexport ", start + 1);
       const body = src.slice(start, next === -1 ? undefined : next);
@@ -329,6 +442,8 @@ describe("the location bind — a draft write lands only in the actor's own shop
     const src = readFileSync("tests/location-bind-differential.test.ts", "utf8");
     expect(src).toContain('"am_prep_drafts"');
     expect(src).toContain('"lib/am-prep-draft.ts"');
+    // saveAmPrepDraft writes through the RPC, so the RPC must be on the scoped list too.
+    expect(src).toContain('"save_am_prep_draft"');
   });
 });
 

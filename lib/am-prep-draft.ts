@@ -20,8 +20,6 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import {
   amPrepDraftApplies,
   canWriteAmPrepDraft,
-  emptyAmPrepDraft,
-  mergeAmPrepDraftItems,
   parseAmPrepDraft,
   type AmPrepDraft,
   type AmPrepDraftItem,
@@ -171,12 +169,11 @@ export async function loadRestorableAmPrepDraft(
  *   5. the instance is still open              → 409 prep_instance_not_open
  * The location and the day come from the INSTANCE, never from the body.
  *
- * MERGE, then upsert. Line-level last write wins: two people typing into the SAME line at
- * the same second resolve to whoever saved last, and a read-merge-write pair racing another
- * within milliseconds can drop one patch (the next keystroke re-sends it, because the
- * client only advances its baseline on success). A consumed draft, or one left by a
- * different instance (template re-versioned mid-day), is not merged into — its lines belong
- * to a finished count or to another template.
+ * ONE ATOMIC RPC. After the app-layer guards above, the write is `save_am_prep_draft`
+ * (0214), which locks the instance and the shop-day row and merges the patch per line in
+ * SQL. Concurrent saves of different lines both land; the same line is last write wins. A
+ * newer instance resets the row (lines and consumed_at); a stale tab on an OLDER instance
+ * is refused 409 draft_superseded.
  */
 export async function saveAmPrepDraft(
   service: SupabaseClient,
@@ -246,58 +243,58 @@ export async function saveAmPrepDraft(
     throw new AmPrepDraftError(409, "prep_instance_not_open", "AM Prep has already been submitted.");
   }
 
-  const { data: existing, error: readErr } = await service
-    .from("am_prep_drafts")
-    .select("instance_id, draft, consumed_at")
-    .eq("location_id", instance.location_id)
-    .eq("business_date", instance.date)
-    .maybeSingle<{ instance_id: string; draft: unknown; consumed_at: string | null }>();
-  if (readErr) throw new Error(`saveAmPrepDraft: load draft: ${readErr.message}`);
+  // The merge happens IN SQL, atomically (0214 `save_am_prep_draft`): the RPC locks the
+  // instance (and rechecks it is open), locks or creates the shop-day row, resets it for a
+  // newer instance (lines AND consumed_at), merges this patch per line and returns saved_at.
+  // Two devices saving different lines at once therefore both land.
+  const { data, error } = await service.rpc("save_am_prep_draft", {
+    p_instance_id: instance.id,
+    p_patch: args.patch,
+    p_saved_by: actor.user.id,
+  });
+  if (error) {
+    const mapped = mapSaveRpcError(error.message);
+    if (mapped) throw mapped;
+    throw new Error(`saveAmPrepDraft: rpc: ${error.message}`);
+  }
+  if (typeof data !== "string") {
+    throw new Error("saveAmPrepDraft: rpc returned no saved_at");
+  }
+  return { savedAt: data };
+}
 
-  const base =
-    existing && existing.consumed_at === null && existing.instance_id === instance.id
-      ? parseAmPrepDraft(existing.draft) ?? emptyAmPrepDraft()
-      : emptyAmPrepDraft();
-  const merged: AmPrepDraft = {
-    ...emptyAmPrepDraft(),
-    items: mergeAmPrepDraftItems(base.items, args.patch),
-  };
-
-  // saved_at written explicitly: the DEFAULT fires on INSERT only (the 0203 note).
-  const savedAt = new Date().toISOString();
-  const { data, error } = await service
-    .from("am_prep_drafts")
-    .upsert(
-      {
-        location_id: instance.location_id,
-        business_date: instance.date,
-        instance_id: instance.id,
-        draft: merged,
-        saved_by: actor.user.id,
-        saved_at: savedAt,
-      },
-      { onConflict: "location_id,business_date" },
-    )
-    .select("saved_at")
-    .single<{ saved_at: string }>();
-  // Supabase JS swallows constraint violations on the data path — check `error`.
-  if (error) throw new Error(`saveAmPrepDraft: upsert: ${error.message}`);
-  return { savedAt: data?.saved_at ?? savedAt };
+/** The RPC raises `am_prep_draft:<code>`; turn the known codes into HTTP answers. */
+export function mapSaveRpcError(message: string): AmPrepDraftError | null {
+  const m = /am_prep_draft:([a-z_]+)/.exec(message);
+  switch (m?.[1]) {
+    case "instance_not_found":
+      return new AmPrepDraftError(404, "instance_not_found", "AM Prep instance not found.");
+    case "prep_instance_not_open":
+      return new AmPrepDraftError(409, "prep_instance_not_open", "AM Prep has already been submitted.");
+    case "draft_superseded":
+      return new AmPrepDraftError(409, "draft_superseded", "A newer AM Prep instance owns today's draft.");
+    case "draft_too_large":
+    case "invalid_payload":
+      return new AmPrepDraftError(400, "invalid_payload", "draft failed validation.");
+    default:
+      return null;
+  }
 }
 
 /**
- * consumeAmPrepDraft — mark the shop's draft for the day consumed after a SUCCESSFUL submit.
+ * consumeAmPrepDraft — mark the draft consumed after a SUCCESSFUL submit of `instanceId`.
  *
  * Called by POST /api/prep/submit only after `submitAmPrep` returned; a failed submit never
- * reaches it, so a failed submit keeps the draft. Marked, not deleted: the 0203 posture
- * (working state has no delete path) and it leaves a forensic "this count was handed in"
- * stamp. The loader ignores consumed rows, and so would it ignore the row anyway once the
- * instance is confirmed. Returns the number of rows marked (0 = there was no open draft).
+ * reaches it, so a failed submit keeps the draft. BOUND TO THE INSTANCE: the UPDATE matches
+ * `instance_id` as well as the shop-day key, so an older instance's submit can never consume
+ * a newer instance's draft. Marked, not deleted (the 0203 posture). Returns the number of
+ * rows marked (0 = there was no open draft for that instance).
  */
 export async function consumeAmPrepDraft(
   service: SupabaseClient,
   args: {
     actor: AmPrepDraftActor;
+    instanceId: string;
     locationId: string;
     businessDate: string;
   },
@@ -312,6 +309,7 @@ export async function consumeAmPrepDraft(
     .update({ consumed_at: new Date().toISOString() })
     .eq("location_id", args.locationId)
     .eq("business_date", args.businessDate)
+    .eq("instance_id", args.instanceId)
     .is("consumed_at", null)
     .select("location_id");
   if (error) throw new Error(`consumeAmPrepDraft: ${error.message}`);

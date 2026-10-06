@@ -78,6 +78,7 @@ describe("POST /api/prep/submit — the draft is consumed only by a successful s
     expect(res.status).toBe(200);
     expect(consumeAmPrepDraft).toHaveBeenCalledOnce();
     expect(vi.mocked(consumeAmPrepDraft).mock.calls[0]![1]).toMatchObject({
+      instanceId: INSTANCE,
       locationId: SHOP_A,
       businessDate: DAY,
       actor: expect.objectContaining({ locations: [SHOP_A] }),
