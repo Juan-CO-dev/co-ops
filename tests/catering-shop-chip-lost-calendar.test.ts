@@ -23,7 +23,8 @@ const state: {
   undated: number;
   locations: Array<{ id: string; name: string }>;
   scopes: unknown[];
-} = { lost: [], undated: 0, locations: [], scopes: [] };
+  failLost: boolean;
+} = { lost: [], undated: 0, locations: [], scopes: [], failLost: false };
 
 const RPC_WINDOW = {
   leads_new: 4, by_source: { toast: 4 }, by_stage: { confirmed: 2 }, booked_events: 2, booked_value_cents: "123400",
@@ -44,6 +45,9 @@ function query(table: string, head: boolean) {
   q.is = () => { isUndated = true; return q; };
   q.in = (_c: string, ids: unknown) => { state.scopes.push(ids); return q; };
   q.then = (res: (v: unknown) => unknown) => {
+    if (table === "catering_pipeline" && state.failLost) {
+      return Promise.resolve(res({ data: null, count: null, error: { message: "boom" } }));
+    }
     if (table === "catering_pipeline") {
       return Promise.resolve(res(head || isUndated ? { count: state.undated, data: null, error: null } : { data: state.lost, error: null }));
     }
@@ -68,7 +72,7 @@ const actor = (role: string, locations: string[]) =>
   ({ user: { role }, locations }) as unknown as Parameters<typeof loadCateringInsightsV2>[0];
 
 beforeEach(() => {
-  state.lost = []; state.undated = 0; state.locations = []; state.scopes = [];
+  state.lost = []; state.undated = 0; state.locations = []; state.scopes = []; state.failLost = false;
 });
 
 const baseRow = (over: Partial<DbLeadRow> = {}): DbLeadRow => ({
@@ -172,6 +176,18 @@ describe("loader: lost is display only", () => {
     expect(withLost.lostCalendar[0]!.valueCents).toBe(999900);
     expect(withLost.lostUndatedCount).toBe(5);
     expect(without.lostCalendar).toEqual([]);
+  });
+  it("lost reads fail soft: an erroring lost read leaves the v2 figures unchanged and the lost list empty", async () => {
+    const ok = await loadCateringInsightsV2(actor("owner", []), "2026-10-06");
+    state.failLost = true;
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const failed = await loadCateringInsightsV2(actor("owner", []), "2026-10-06");
+    expect(failed.windows).toEqual(ok.windows);
+    expect(failed.calendar).toEqual(ok.calendar);
+    expect(failed.lostCalendar).toEqual([]);
+    expect(failed.lostUndatedCount).toBe(0);
+    expect(spy.mock.calls.some((c) => String(c[0]).startsWith("[catering-insights]"))).toBe(true);
+    spy.mockRestore();
   });
   it("lost reads are location-scoped like the RPC: a GM is scoped, an all-locations owner is not", async () => {
     await loadCateringInsightsV2(actor("owner", []), "2026-10-06");

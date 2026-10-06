@@ -201,16 +201,30 @@ export async function loadCateringInsightsV2(actor: AuthContext, todayEt: string
     .gte("event_date", addDays(todayEt, -30))
     .lte("event_date", addDays(todayEt, 90));
   if (scope) lq = lq.in("location_id", scope);
-  const { data: lostRows, error: lErr } = await lq.order("event_date", { ascending: true }).returns<RawLostRow[]>();
-  if (lErr) throw new Error(`loadCateringInsightsV2 lost: ${lErr.message}`);
+  // FAIL SOFT: lost is display only, so a failed lost read must never take down the page or its
+  // money figures. Log and degrade to an empty list / zero count.
+  let lostRows: RawLostRow[] = [];
+  try {
+    const { data, error: lErr } = await lq.order("event_date", { ascending: true }).returns<RawLostRow[]>();
+    if (lErr) console.error(`[catering-insights] lost read failed: ${lErr.message}`);
+    else lostRows = data ?? [];
+  } catch (e) {
+    console.error(`[catering-insights] lost read failed: ${e instanceof Error ? e.message : String(e)}`);
+  }
   let uq = sb
     .from("catering_pipeline")
     .select("id", { count: "exact", head: true })
     .eq("stage", "lost")
     .is("event_date", null);
   if (scope) uq = uq.in("location_id", scope);
-  const { count: undated, error: uErr } = await uq;
-  if (uErr) throw new Error(`loadCateringInsightsV2 lost-undated: ${uErr.message}`);
+  let undated = 0;
+  try {
+    const { count, error: uErr } = await uq;
+    if (uErr) console.error(`[catering-insights] lost-undated read failed: ${uErr.message}`);
+    else undated = count ?? 0;
+  } catch (e) {
+    console.error(`[catering-insights] lost-undated read failed: ${e instanceof Error ? e.message : String(e)}`);
+  }
 
   return {
     today: todayEt,
@@ -231,8 +245,8 @@ export async function loadCateringInsightsV2(actor: AuthContext, todayEt: string
       locationId: e.location_id,
       valueCents: Number(e.value_cents ?? 0),
     })),
-    lostCalendar: (lostRows ?? []).map(mapLostRow),
-    lostUndatedCount: undated ?? 0,
+    lostCalendar: lostRows.map(mapLostRow),
+    lostUndatedCount: undated,
     averageRating: raw.feedback?.average_rating ?? null,
     feedbackCount: raw.feedback?.count ?? 0,
     recentFeedback: (fbRows ?? []).map((r) => ({
