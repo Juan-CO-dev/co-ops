@@ -34,6 +34,7 @@ import {
   amPrepDraftItemsToFormValues,
   amPrepDraftStampOf,
   createAmPrepDraftStamper,
+  resetAmPrepDraftTabClockForTests,
   isRetryableAmPrepDraftFailure,
   mergeAmPrepDraftItems,
   parseAmPrepDraft,
@@ -231,6 +232,7 @@ describe("the merge rule — per line, the greater editedAt wins (TS mirror of t
   });
 
   it("the stamper is strictly increasing within a tab, even inside one millisecond or across a clock step back", () => {
+    resetAmPrepDraftTabClockForTests();
     let t = 1000;
     const stamp = createAmPrepDraftStamper(() => t);
     const a = stamp();

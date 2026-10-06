@@ -4,8 +4,9 @@
  * around it that wires the browser (fetch, sendBeacon, timers, visibility events).
  *
  * PER-LINE EDIT STAMPS (review round 2, PR #383 — CC's ruling). Every time a line's value
- * changes in this tab it gets a new `editedAt` from a per-tab monotonic stamper
- * (`createAmPrepDraftStamper`). The server merge keeps, per line, the entry with the
+ * changes in this tab it gets a new `editedAt` from the TAB clock (module state in
+ * lib/am-prep-draft-shared.ts, shared by every saver in this JS context — round 3), which
+ * the saver first advances past every restored and acknowledged stamp. The server merge keeps, per line, the entry with the
  * greater stamp, so DELIVERY ORDER NO LONGER MATTERS: a beacon that lands late, after a
  * newer acknowledged fetch, carries an older stamp and loses.
  *
@@ -35,6 +36,7 @@ import {
   amPrepDraftRetryDelayMs,
   amPrepDraftStampOf,
   createAmPrepDraftStamper,
+  observeAmPrepDraftStamp,
   isRetryableAmPrepDraftFailure,
   normalizeAmPrepDraftItem,
   normalizeAmPrepDraftItems,
@@ -100,6 +102,9 @@ export class AmPrepDraftAutosaver {
       const value = normalizeAmPrepDraftItem(item);
       if (Object.keys(value).length > 0) this.values[key] = value;
       this.stamps[key] = amPrepDraftStampOf(item);
+      // Round 3: the TAB clock must run ahead of every restored stamp before any edit is
+      // stamped, or an edit could be stamped below a restored line and never count.
+      observeAmPrepDraftStamp(this.stamps[key]);
     }
     // What the page loaded is, by definition, what the server holds.
     this.acked = { ...this.stamps };
@@ -174,6 +179,7 @@ export class AmPrepDraftAutosaver {
     if (ok) {
       // Acknowledge even after dispose: it is a fact about the server, and harmless.
       this.acked = acknowledgeAmPrepDraftStamps(this.acked, patch);
+      for (const item of Object.values(patch)) observeAmPrepDraftStamp(amPrepDraftStampOf(item));
       this.attempt = 0;
       if (this.disposed) return;
       this.deps.onStatus("saved");

@@ -12,7 +12,7 @@
  *     acknowledged fetch loses;
  *   - DISPOSED: after unmount, an in-flight fetch that fails schedules nothing.
  */
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 
 import {
   AmPrepDraftAutosaver,
@@ -20,7 +20,11 @@ import {
   type AmPrepDraftAutosaveDeps,
   type AmPrepDraftSaveStatus,
 } from "@/lib/am-prep-draft-autosave";
-import { mergeAmPrepDraftItems, type AmPrepDraftItem } from "@/lib/am-prep-draft-shared";
+import {
+  mergeAmPrepDraftItems,
+  resetAmPrepDraftTabClockForTests,
+  type AmPrepDraftItem,
+} from "@/lib/am-prep-draft-shared";
 
 const INSTANCE = "33333333-3333-4333-8333-333333333333";
 const L1 = "55555555-5555-4555-8555-555555555555";
@@ -78,6 +82,9 @@ function harness(serverItems: Items = {}, startAt = 1_000) {
 }
 
 const tick = () => new Promise((r) => setTimeout(r, 0));
+
+// The tab clock is module state (one per JS context, round 3); each test starts a fresh "tab".
+beforeEach(() => resetAmPrepDraftTabClockForTests());
 
 describe("stamps and the acknowledged baseline", () => {
   it("a page load that hydrates from the draft posts nothing", () => {
@@ -270,5 +277,52 @@ describe("disabled (after submit) does nothing", () => {
     await tick();
     expect(h.statuses.at(-1)).toBe("failed");
     expect(h.liveTimers()).toEqual([]);
+  });
+});
+
+describe("the TAB clock outlives a saver (round 3)", () => {
+  it("remount with a backwards clock: the new saver's edit still beats the old saver's late dispose-beacon", async () => {
+    const first = harness({}, 5_000);
+    first.saver.update({ [L1]: { onHand: "3" } }); // @5000
+    first.saver.dispose(); // final beacon(3 @5000), still in the network
+    const lateBeacon = first.beacons[0]!;
+    expect(lateBeacon).toEqual({ [L1]: { onHand: "3", editedAt: 5000 } });
+
+    const second = harness({}, 3_000); // same tab, new mount, wall clock stepped BACK
+    second.saver.update({ [L1]: { onHand: "7" } });
+    const sent = second.saver.pending();
+    expect(sent[L1]!.editedAt).toBeGreaterThan(5000); // 5001: the tab clock, not the wall clock
+    second.fireTimers();
+    second.respond(200);
+    await tick();
+    const server = mergeAmPrepDraftItems(mergeAmPrepDraftItems({}, second.posts[0]!), lateBeacon);
+    expect(server).toEqual({ [L1]: { onHand: "7", editedAt: 5001 } });
+  });
+
+  it("a restored draft with a HIGHER stamp, then an edit: the edit is pending, sent, and wins", async () => {
+    // Another device (clock ahead) saved L1 @9000; this tab's wall clock reads 1000.
+    const restored = { [L1]: { onHand: "4", editedAt: 9_000 } };
+    const h = harness(restored, 1_000);
+    h.saver.update({ [L1]: { onHand: "4" } }); // hydration: no edit, nothing pending
+    expect(h.saver.pending()).toEqual({});
+    h.saver.update({ [L1]: { onHand: "6" } });
+    expect(h.saver.pending()).toEqual({ [L1]: { onHand: "6", editedAt: 9_001 } });
+    h.fireTimers();
+    expect(h.posts[0]).toEqual({ [L1]: { onHand: "6", editedAt: 9_001 } });
+    h.respond(200);
+    await tick();
+    expect(mergeAmPrepDraftItems(restored, h.posts[0]!)).toEqual({ [L1]: { onHand: "6", editedAt: 9_001 } });
+    expect(h.saver.pending()).toEqual({});
+  });
+
+  it("the tab clock carries across savers: a later saver stamps above an earlier acknowledged edit", async () => {
+    const a = harness({}, 2_000);
+    a.saver.update({ [L1]: { onHand: "1" } });
+    a.fireTimers();
+    a.respond(200);
+    await tick();
+    const b = harness({}, 100);
+    b.saver.update({ [L2]: { line: "2" } });
+    expect(b.saver.pending()[L2]!.editedAt).toBe(2_001);
   });
 });

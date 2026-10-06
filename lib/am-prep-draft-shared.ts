@@ -197,17 +197,42 @@ export function mergeAmPrepDraftItems(
 }
 
 /**
- * A per-tab monotonic stamper: `Date.now()` combined with a counter so every stamp is
- * strictly greater than the previous one from the same tab, even within one millisecond or
+ * THE TAB CLOCK (review round 3, PR #383). ONE per tab / JS context — module state, NOT per
+ * saver — so it survives a saver being disposed and a new one mounted (remount, strict
+ * mode, navigating back to the page). Every stamp is `max(Date.now(), last + 1)`: strictly
+ * greater than any stamp this tab has issued OR observed, even within one millisecond or
  * across a backwards clock step.
+ *
+ * OBSERVE before stamping: a saver that starts from a restored draft, and every
+ * acknowledged fetch, calls `observeAmPrepDraftStamp` with the highest stamp it has seen,
+ * so a new edit is always stamped ABOVE it — otherwise an edit stamped below a restored
+ * (e.g. another device's) stamp would never count as pending and would lose the merge.
+ */
+let amPrepDraftTabClock = 0;
+
+/** The next stamp from this tab's clock. `now` is injectable for tests. */
+export function nextAmPrepDraftStamp(now: () => number = Date.now): number {
+  const t = now();
+  amPrepDraftTabClock = t > amPrepDraftTabClock ? t : amPrepDraftTabClock + 1;
+  return amPrepDraftTabClock;
+}
+
+/** Advance this tab's clock to at least `stamp` (a stamp seen from the server). */
+export function observeAmPrepDraftStamp(stamp: number): void {
+  if (Number.isFinite(stamp) && stamp > amPrepDraftTabClock) amPrepDraftTabClock = stamp;
+}
+
+/** TEST-ONLY: reset this context's tab clock. Never called by app code. */
+export function resetAmPrepDraftTabClockForTests(value = 0): void {
+  amPrepDraftTabClock = value;
+}
+
+/**
+ * A stamper bound to the TAB clock (kept for call sites that want a function). Every
+ * stamper in one JS context shares the same monotonic clock.
  */
 export function createAmPrepDraftStamper(now: () => number = Date.now): () => number {
-  let last = 0;
-  return () => {
-    const t = now();
-    last = t > last ? t : last + 1;
-    return last;
-  };
+  return () => nextAmPrepDraftStamp(now);
 }
 
 function isPlainRecord(value: unknown): value is Record<string, unknown> {
