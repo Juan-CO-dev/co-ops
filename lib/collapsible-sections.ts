@@ -72,6 +72,20 @@ export function unfinishedSectionIds(sections: readonly SectionProgress[]): stri
   return sections.filter((s) => !isSectionFinished(s)).map((s) => s.id);
 }
 
+/**
+ * "Show me what needs fixing": turn ON the form's inline error markers (the same state
+ * its submit handler sets) AND open + scroll to the unfinished sections. The submit
+ * button is disabled while a form is incomplete, so this is the only way to see them.
+ */
+export function showProblems(
+  sections: readonly SectionProgress[],
+  setShowErrors: (on: boolean) => void,
+  reveal: (ids: readonly string[]) => void,
+): void {
+  setShowErrors(true);
+  reveal(unfinishedSectionIds(sections));
+}
+
 /** Pure toggle: the next open state for one section (missing = closed). */
 export function toggledOpen(current: Record<string, boolean>, id: string): boolean {
   return !(current[id] === true);

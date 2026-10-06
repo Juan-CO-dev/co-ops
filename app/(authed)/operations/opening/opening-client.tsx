@@ -48,7 +48,7 @@ import {
   OpeningVerificationStation,
   openingStationProgress,
 } from "@/components/opening/OpeningVerificationStation";
-import { unfinishedSectionIds } from "@/lib/collapsible-sections";
+import { showProblems, unfinishedSectionIds } from "@/lib/collapsible-sections";
 import { useCollapsibleSections } from "@/lib/use-collapsible-sections";
 import type { OpeningItemFormValue } from "@/components/opening/OpeningChecklistItem";
 import {
@@ -1864,6 +1864,7 @@ export function OpeningClient({
           language={language}
           showMissingErrors={showMissingPhase2Errors}
           readOnly={phase2AlreadyFinalized}
+          onShowProblems={() => setShowMissingPhase2Errors(true)}
         />
       ) : null}
 
@@ -1981,7 +1982,9 @@ export function OpeningClient({
           unfinishedSectionIds(stationProgress).length > 0 ? (
             <button
               type="button"
-              onClick={() => stationCollapse.reveal(unfinishedSectionIds(stationProgress))}
+              onClick={() =>
+                showProblems(stationProgress, setShowMissingCountErrors, stationCollapse.reveal)
+              }
               className="inline-flex min-h-[44px] items-center justify-center px-3 text-xs font-bold uppercase tracking-[0.12em] text-co-text underline focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/40"
             >
               {t("checklist.section.show_problems")}

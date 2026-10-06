@@ -330,3 +330,21 @@ describe("review fixes (PR 384)", () => {
     expect(revealOpenMap(collapsed, ids).S).toBe(true);
   });
 });
+
+describe("show problems (PR 384 round 2)", () => {
+  it("turns on the inline error state AND opens the incomplete station", async () => {
+    const { showProblems } = await import("@/lib/collapsible-sections");
+    const setShowErrors = vi.fn();
+    const reveal = vi.fn();
+    showProblems(
+      [
+        { id: "done", done: 2, total: 2 },
+        { id: "S", done: 1, total: 2 },
+      ],
+      setShowErrors,
+      reveal,
+    );
+    expect(setShowErrors).toHaveBeenCalledWith(true);
+    expect(reveal).toHaveBeenCalledWith(["S"]);
+  });
+});

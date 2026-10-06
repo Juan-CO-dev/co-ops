@@ -47,7 +47,7 @@ import { ProductionConsumptionPanel } from "@/components/production/ProductionCo
 import type { ChecklistTemplateItem, OpeningPhase2Meta } from "@/lib/types";
 
 import { CollapsibleChecklistSection } from "@/components/ui/CollapsibleChecklistSection";
-import { unfinishedSectionIds } from "@/lib/collapsible-sections";
+import { showProblems, unfinishedSectionIds } from "@/lib/collapsible-sections";
 import { useCollapsibleSections } from "@/lib/use-collapsible-sections";
 
 import { OpeningSectionVerify } from "./OpeningSectionVerify";
@@ -196,6 +196,8 @@ interface OpeningPrepEntryProps {
   managers: ReadonlyArray<ManagerOption>;
   language: Language;
   showMissingErrors: boolean;
+  /** Show-problems also turns on the parent's inline error markers (same state submit sets). */
+  onShowProblems?: () => void;
   /**
    * Locked (read-only) — Phase 2 has been finalized (instance.status past
    * 'phase1_complete'). Renders the prepped values as a static, locked view:
@@ -223,6 +225,7 @@ export function OpeningPrepEntry({
   managers,
   language,
   showMissingErrors,
+  onShowProblems,
   readOnly = false,
 }: OpeningPrepEntryProps) {
   const { t } = useTranslation();
@@ -316,7 +319,13 @@ export function OpeningPrepEntry({
       {hasUnsaved && !readOnly ? (
         <button
           type="button"
-          onClick={() => revealSections(JSON.parse(unfinishedKey) as string[])}
+          onClick={() =>
+            showProblems(
+              sectionProgress,
+              () => onShowProblems?.(),
+              revealSections,
+            )
+          }
           className="inline-flex min-h-[44px] items-center self-start px-3 text-xs font-bold uppercase tracking-[0.12em] text-co-text underline focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/40"
         >
           {t("checklist.section.show_problems")}
