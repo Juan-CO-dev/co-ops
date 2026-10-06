@@ -24,6 +24,7 @@ import {
 } from "@/lib/catering/insights-shared";
 import {
   calendarEventsToPlot,
+  lostUndatedNoteCount,
   readShowLost,
   writeShowLost,
   type LostCalendarEvent,
@@ -49,6 +50,8 @@ export function InsightsCalendar({
   // first client render agree; every storage touch is try/catch inside the helpers.
   const [showLost, setShowLost] = useState(true);
   useEffect(() => {
+    // Post-mount read of device storage (a lazy initializer would mismatch the server render).
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setShowLost(readShowLost());
   }, []);
   const toggleLost = () => {
@@ -111,7 +114,7 @@ export function InsightsCalendar({
           {t("catering.insights.calendar.show_lost")}
           <span aria-hidden className="text-co-text-dim">{showLost ? "✓" : "–"}</span>
         </button>
-        {lostUndatedCount > 0 && (
+        {lostUndatedNoteCount(showLost, lostUndatedCount) > 0 && (
           <span className="text-xs text-co-text-dim" data-testid="lost-undated-note">
             {t("catering.insights.calendar.lost_undated", { n: lostUndatedCount })}
           </span>

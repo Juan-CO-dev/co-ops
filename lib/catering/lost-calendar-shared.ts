@@ -44,3 +44,8 @@ export function calendarEventsToPlot(
 ): Array<CalendarEvent | LostCalendarEvent> {
   return showLost ? [...booked, ...lost] : booked;
 }
+
+/** The "N lost without a date" note: it is part of the lost layer, so it hides with Show lost OFF. 0 = no note. */
+export function lostUndatedNoteCount(showLost: boolean, undatedCount: number): number {
+  return showLost && undatedCount > 0 ? undatedCount : 0;
+}

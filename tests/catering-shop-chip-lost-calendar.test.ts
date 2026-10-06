@@ -9,6 +9,7 @@ import { mapLead, withLocationNames, type DbLeadRow } from "@/lib/catering/pipel
 import {
   SHOW_LOST_STORAGE_KEY,
   calendarEventsToPlot,
+  lostUndatedNoteCount,
   readShowLost,
   writeShowLost,
   type LostCalendarEvent,
@@ -20,11 +21,12 @@ import es from "@/lib/i18n/es.json";
 // A tiny chainable Supabase fake -----------------------------------------------------
 const state: {
   lost: Array<Record<string, unknown>>;
-  undated: number;
+  /** location_id of each lost lead with NO event date. */
+  undatedRows: string[];
   locations: Array<{ id: string; name: string }>;
   scopes: unknown[];
   failLost: boolean;
-} = { lost: [], undated: 0, locations: [], scopes: [], failLost: false };
+} = { lost: [], undatedRows: [], locations: [], scopes: [], failLost: false };
 
 const RPC_WINDOW = {
   leads_new: 4, by_source: { toast: 4 }, by_stage: { confirmed: 2 }, booked_events: 2, booked_value_cents: "123400",
@@ -37,19 +39,39 @@ const RPC = {
   feedback: { average_rating: 4.5, count: 2 },
 };
 
+/**
+ * The fake APPLIES the predicates it is given (stage is implied lost for the pipeline rows in
+ * state): `.in("location_id", ids)`, the event_date window and `.range()`. So a test that
+ * puts a cross-shop row in the fixture proves isolation instead of assuming it.
+ */
 function query(table: string, head: boolean) {
   const q: Record<string, unknown> = {};
-  let isUndated = false;
+  let undated = false;
+  let scope: string[] | null = null;
+  let gte: string | null = null;
+  let lte: string | null = null;
+  let range: [number, number] | null = null;
   const chain = () => q;
-  for (const m of ["select", "eq", "gte", "lte", "not", "order", "returns", "limit"]) q[m] = chain;
-  q.is = () => { isUndated = true; return q; };
-  q.in = (_c: string, ids: unknown) => { state.scopes.push(ids); return q; };
+  for (const m of ["select", "eq", "not", "order", "returns", "limit"]) q[m] = chain;
+  q.is = () => { undated = true; return q; };
+  q.in = (_c: string, ids: unknown) => { state.scopes.push(ids); scope = ids as string[]; return q; };
+  q.gte = (_c: string, v: string) => { gte = v; return q; };
+  q.lte = (_c: string, v: string) => { lte = v; return q; };
+  q.range = (f: number, t: number) => { range = [f, t]; return q; };
   q.then = (res: (v: unknown) => unknown) => {
     if (table === "catering_pipeline" && state.failLost) {
       return Promise.resolve(res({ data: null, count: null, error: { message: "boom" } }));
     }
     if (table === "catering_pipeline") {
-      return Promise.resolve(res(head || isUndated ? { count: state.undated, data: null, error: null } : { data: state.lost, error: null }));
+      const inScope = (loc: unknown) => scope === null || scope.includes(loc as string);
+      if (head || undated) {
+        return Promise.resolve(res({ count: state.undatedRows.filter(inScope).length, data: null, error: null }));
+      }
+      let rows = state.lost.filter(
+        (r) => inScope(r.location_id) && (gte === null || String(r.event_date) >= gte) && (lte === null || String(r.event_date) <= lte),
+      );
+      if (range) rows = rows.slice(range[0], range[1] + 1);
+      return Promise.resolve(res({ data: rows, error: null }));
     }
     if (table === "locations") return Promise.resolve(res({ data: state.locations, error: null }));
     return Promise.resolve(res({ data: [], error: null })); // customer_feedback
@@ -72,7 +94,7 @@ const actor = (role: string, locations: string[]) =>
   ({ user: { role }, locations }) as unknown as Parameters<typeof loadCateringInsightsV2>[0];
 
 beforeEach(() => {
-  state.lost = []; state.undated = 0; state.locations = []; state.scopes = []; state.failLost = false;
+  state.lost = []; state.undatedRows = []; state.locations = []; state.scopes = []; state.failLost = false;
 });
 
 const baseRow = (over: Partial<DbLeadRow> = {}): DbLeadRow => ({
@@ -130,6 +152,11 @@ describe("show-lost toggle storage", () => {
 });
 
 describe("lost on the calendar", () => {
+  it("the undated note follows the toggle: shown only when Show lost is ON and there are undated rows", () => {
+    expect(lostUndatedNoteCount(true, 3)).toBe(3);
+    expect(lostUndatedNoteCount(false, 3)).toBe(0);
+    expect(lostUndatedNoteCount(true, 0)).toBe(0);
+  });
   const booked: CalendarEvent = { id: "b", eventDate: "2026-10-08", timeWindow: null, name: "B", headcount: 1, source: null, stage: "confirmed", locationId: "L", valueCents: 100 };
   const lost: LostCalendarEvent = { id: "l", eventDate: "2026-10-08", timeWindow: null, name: "L", headcount: 1, source: null, stage: "lost", locationId: "L", valueCents: 50 };
   it("plots lost on its event date when shown, hides it when off", () => {
@@ -146,7 +173,7 @@ describe("lost on the calendar", () => {
     const src = readFileSync("components/catering/InsightsCalendar.tsx", "utf8");
     expect(src).toContain("line-through");
     expect(src).toContain("lost-undated-note");
-    expect(src).toContain("lostUndatedCount > 0");
+    expect(src).toContain("lostUndatedNoteCount(showLost, lostUndatedCount)");
     expect(src).toContain("catering.insights.calendar.lost_undated");
   });
   it("new strings exist in en and es", () => {
@@ -167,7 +194,7 @@ describe("loader: lost is display only", () => {
       { id: "l1", event_date: "2026-10-09", time_window: null, event_name: null, company: "Acme", contact_name: "Z", headcount: 50, lead_source: "toast", location_id: "L1", estimated_revenue_cents: "999900" },
       { id: "l2", event_date: "2026-10-12", time_window: null, event_name: "Big", company: null, contact_name: "Y", headcount: 99, lead_source: null, location_id: "L1", estimated_revenue_cents: null },
     ];
-    state.undated = 5;
+    state.undatedRows = ["L1", "L1", "L1", "L1", "L1"];
     const withLost = await loadCateringInsightsV2(actor("owner", []), "2026-10-06");
     expect(withLost.windows).toEqual(without.windows);
     expect(withLost.calendar).toEqual(without.calendar);
@@ -189,11 +216,28 @@ describe("loader: lost is display only", () => {
     expect(spy.mock.calls.some((c) => String(c[0]).startsWith("[catering-insights]"))).toBe(true);
     spy.mockRestore();
   });
-  it("lost reads are location-scoped like the RPC: a GM is scoped, an all-locations owner is not", async () => {
-    await loadCateringInsightsV2(actor("owner", []), "2026-10-06");
-    expect(state.scopes).toEqual([]);
-    await loadCateringInsightsV2(actor("gm", ["L1"]), "2026-10-06");
-    // feedback + lost list + lost undated count all carry the actor's shop list
-    expect(state.scopes).toEqual([["L1"], ["L1"], ["L1"]]);
+  const lostRow = (id: string, date: string, loc: string, name = id) => ({
+    id, event_date: date, time_window: null, event_name: name, company: null, contact_name: null,
+    headcount: 1, lead_source: null, location_id: loc, estimated_revenue_cents: 100,
+  });
+  it("GM isolation: a GM gets only their own shop's dated lost events AND undated count; the owner gets all", async () => {
+    state.lost = [lostRow("mine", "2026-10-09", "L1"), lostRow("theirs", "2026-10-10", "L2"), lostRow("mine2", "2026-10-11", "L1")];
+    state.undatedRows = ["L1", "L2", "L2", "L2"];
+    const gm = await loadCateringInsightsV2(actor("gm", ["L1"]), "2026-10-06");
+    expect(gm.lostCalendar.map((e) => e.id)).toEqual(["mine", "mine2"]);
+    expect(gm.lostUndatedCount).toBe(1);
+    const owner = await loadCateringInsightsV2(actor("owner", []), "2026-10-06");
+    expect(owner.lostCalendar.map((e) => e.id)).toEqual(["mine", "theirs", "mine2"]);
+    expect(owner.lostUndatedCount).toBe(4);
+  });
+  it("the lost window is applied: rows outside -30/+90 days are not plotted", async () => {
+    state.lost = [lostRow("in", "2026-10-09", "L1"), lostRow("old", "2026-08-01", "L1"), lostRow("far", "2027-03-01", "L1")];
+    const out = await loadCateringInsightsV2(actor("owner", []), "2026-10-06");
+    expect(out.lostCalendar.map((e) => e.id)).toEqual(["in"]);
+  });
+  it("the lost read is paged: more than 1000 rows come back whole, none silently truncated", async () => {
+    state.lost = Array.from({ length: 1200 }, (_, i) => lostRow(`r${i}`, "2026-10-09", "L1"));
+    const out = await loadCateringInsightsV2(actor("owner", []), "2026-10-06");
+    expect(out.lostCalendar).toHaveLength(1200);
   });
 });

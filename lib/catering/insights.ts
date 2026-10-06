@@ -18,6 +18,7 @@
  */
 
 import { getServiceRoleClient } from "@/lib/supabase-server";
+import { selectAllRows } from "@/lib/supabase-paginate";
 import { getRoleLevel } from "@/lib/roles";
 import { isAllLocationsAccess } from "@/lib/locations";
 import type { AuthContext } from "@/lib/session";
@@ -194,20 +195,23 @@ export async function loadCateringInsightsV2(actor: AuthContext, todayEt: string
   // LOST leads — display only, scoped EXACTLY like the RPC's calendar (`location_id = any(scope)`;
   // all-locations actors unscoped), over the same −30…+90-day window. Separate reads: nothing
   // below feeds win(), so no money total or count can move.
-  let lq = sb
-    .from("catering_pipeline")
-    .select("id, event_date, time_window, event_name, company, contact_name, headcount, lead_source, location_id, estimated_revenue_cents")
-    .eq("stage", "lost")
-    .gte("event_date", addDays(todayEt, -30))
-    .lte("event_date", addDays(todayEt, 90));
-  if (scope) lq = lq.in("location_id", scope);
+  const lostFrom = addDays(todayEt, -30);
+  const lostTo = addDays(todayEt, 90);
   // FAIL SOFT: lost is display only, so a failed lost read must never take down the page or its
-  // money figures. Log and degrade to an empty list / zero count.
+  // money figures. selectAllRows pages past the 1000-row cap and THROWS on a failed page; the
+  // catch logs and degrades to an empty list / zero count.
   let lostRows: RawLostRow[] = [];
   try {
-    const { data, error: lErr } = await lq.order("event_date", { ascending: true }).returns<RawLostRow[]>();
-    if (lErr) console.error(`[catering-insights] lost read failed: ${lErr.message}`);
-    else lostRows = data ?? [];
+    lostRows = await selectAllRows<RawLostRow>((from, to) => {
+      let lq = sb
+        .from("catering_pipeline")
+        .select("id, event_date, time_window, event_name, company, contact_name, headcount, lead_source, location_id, estimated_revenue_cents")
+        .eq("stage", "lost")
+        .gte("event_date", lostFrom)
+        .lte("event_date", lostTo);
+      if (scope) lq = lq.in("location_id", scope);
+      return lq.order("event_date", { ascending: true }).order("id", { ascending: true }).range(from, to).returns<RawLostRow[]>();
+    });
   } catch (e) {
     console.error(`[catering-insights] lost read failed: ${e instanceof Error ? e.message : String(e)}`);
   }
