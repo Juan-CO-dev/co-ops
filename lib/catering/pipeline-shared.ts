@@ -82,3 +82,14 @@ export function canTransition(from: PipelineStage, to: PipelineStage): boolean {
   const allowed = LEGAL_TRANSITIONS[from];
   return allowed !== undefined && allowed.includes(to);
 }
+
+/**
+ * The text of a lead card's shop chip: the location NAME the loader read from the `locations`
+ * table, trimmed. Null when the lead has no resolvable shop (tenant-wide or unresolved) — the
+ * card then shows the "No shop set" fallback. It NEVER takes a location code: prod codes are
+ * crossed (EM = P Street, MEP = Capitol Hill), so a code-derived label would name the wrong shop.
+ */
+export function shopChipLabel(lead: { locationName?: string | null }): string | null {
+  const n = lead.locationName?.trim();
+  return n ? n : null;
+}
