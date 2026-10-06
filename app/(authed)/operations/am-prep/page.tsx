@@ -46,11 +46,7 @@ import {
   loadChecklistChainAttribution,
   type ChecklistChainEntry,
 } from "@/lib/checklists";
-import {
-  amPrepDraftApplies,
-  loadAmPrepDraft,
-  type AmPrepDraftRestore,
-} from "@/lib/am-prep-draft";
+import { loadRestorableAmPrepDraft } from "@/lib/am-prep-draft";
 import { lockLocationContext, type LocationActor } from "@/lib/locations";
 import { serverT } from "@/lib/i18n/server";
 import type { Language } from "@/lib/i18n/types";
@@ -202,27 +198,14 @@ export default async function AmPrepPage({ searchParams }: PageProps) {
   //    submission of a still-open instance whose id the draft belongs to (precedence:
   //    submitted completions > draft > empty — `amPrepDraftApplies`). The actor was bound
   //    to this location above, and passed the same role gate the draft writer enforces.
-  let restoredDraft: AmPrepDraftRestore | null = null;
-  if (mode === "submit" && state.instance.status === "open") {
-    const stored = await loadAmPrepDraft(sb, { locationId: locationParam, businessDate: today });
-    if (
-      stored &&
-      amPrepDraftApplies({
-        mode,
-        instanceStatus: state.instance.status,
-        instanceId: state.instance.id,
-        draftInstanceId: stored.instanceId,
-        consumed: false,
-        itemCount: Object.keys(stored.draft.items).length,
-      })
-    ) {
-      restoredDraft = {
-        draft: stored.draft,
-        savedAt: stored.savedAt,
-        savedByName: stored.savedByName,
-      };
-    }
-  }
+  //    NEVER THROWS: a failed draft read (0214 not yet applied, a blip) renders the form
+  //    with no draft — losing the page would be worse than the bug the draft fixes.
+  const restoredDraft = await loadRestorableAmPrepDraft(sb, {
+    mode,
+    instance: state.instance,
+    locationId: locationParam,
+    businessDate: today,
+  });
 
   return (
     <main className="mx-auto max-w-2xl md:max-w-3xl lg:max-w-5xl xl:max-w-6xl px-4 pb-32 pt-4 sm:px-6">

@@ -18,12 +18,14 @@ import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import {
+  amPrepDraftApplies,
   canWriteAmPrepDraft,
   emptyAmPrepDraft,
   mergeAmPrepDraftItems,
   parseAmPrepDraft,
   type AmPrepDraft,
   type AmPrepDraftItem,
+  type AmPrepDraftRestore,
 } from "./am-prep-draft-shared";
 import { lockLocationContext } from "./locations";
 import { AM_PREP_BASE_LEVEL, loadAssignmentForToday } from "./prep";
@@ -108,6 +110,52 @@ export async function loadAmPrepDraft(
   }
 
   return { instanceId: data.instance_id, draft, savedAt: data.saved_at, savedByName };
+}
+
+/**
+ * loadRestorableAmPrepDraft — the PAGE's draft read: what (if anything) the form should be
+ * seeded with. NEVER THROWS.
+ *
+ * `loadAmPrepDraft` throws on any Supabase error, which is right for an API caller. The AM
+ * prep page is different: if this deploys before 0214 is applied, or the read blips, a
+ * throw here would take the whole AM prep page down — strictly worse than the reset bug the
+ * draft exists to fix. So any failure is logged with an `[am-prep]` prefix and the page
+ * renders the form with no draft.
+ */
+export async function loadRestorableAmPrepDraft(
+  service: SupabaseClient,
+  args: {
+    mode: "submit" | "edit" | "read_only";
+    instance: { id: string; status: string };
+    locationId: string;
+    businessDate: string;
+  },
+): Promise<AmPrepDraftRestore | null> {
+  if (args.mode !== "submit" || args.instance.status !== "open") return null;
+  try {
+    const stored = await loadAmPrepDraft(service, {
+      locationId: args.locationId,
+      businessDate: args.businessDate,
+    });
+    if (
+      !stored ||
+      !amPrepDraftApplies({
+        mode: args.mode,
+        instanceStatus: args.instance.status,
+        instanceId: args.instance.id,
+        draftInstanceId: stored.instanceId,
+        consumed: false,
+        itemCount: Object.keys(stored.draft.items).length,
+      })
+    ) {
+      return null;
+    }
+    return { draft: stored.draft, savedAt: stored.savedAt, savedByName: stored.savedByName };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(`[am-prep] draft load failed; rendering the form without a draft: ${msg}`);
+    return null;
+  }
 }
 
 /**

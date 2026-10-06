@@ -37,7 +37,12 @@ import {
   normalizeAmPrepDraftItems,
   parseAmPrepDraft,
 } from "@/lib/am-prep-draft-shared";
-import { consumeAmPrepDraft, loadAmPrepDraft, saveAmPrepDraft } from "@/lib/am-prep-draft";
+import {
+  consumeAmPrepDraft,
+  loadAmPrepDraft,
+  loadRestorableAmPrepDraft,
+  saveAmPrepDraft,
+} from "@/lib/am-prep-draft";
 
 const SHOP_A = "11111111-1111-4111-8111-111111111111";
 const SHOP_B = "22222222-2222-4222-8222-222222222222";
@@ -432,3 +437,50 @@ describe("loadAmPrepDraft — the facts the restore line needs", () => {
   });
 });
 
+
+describe("the PAGE's draft read never takes AM prep down (0214 unapplied, or a blip)", () => {
+  const args = { mode: "submit" as const, instance: { id: INSTANCE, status: "open" }, locationId: SHOP_A, businessDate: DAY };
+
+  it("a draft read error degrades to no draft (logged with [am-prep]), never a throw", async () => {
+    const api = {
+      select: () => api,
+      eq: () => api,
+      maybeSingle: async () => ({ data: null, error: { message: 'relation "public.am_prep_drafts" does not exist' } }),
+    };
+    const service = { from: () => api } as unknown as SupabaseClient;
+    // The lib's own loader still throws, so an API caller would surface the error…
+    await expect(loadAmPrepDraft(service, { locationId: SHOP_A, businessDate: DAY })).rejects.toThrow(/does not exist/);
+    // …but the page path renders the form with no draft.
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    await expect(loadRestorableAmPrepDraft(service, args)).resolves.toBeNull();
+    expect(spy).toHaveBeenCalledWith(expect.stringContaining("[am-prep]"));
+    spy.mockRestore();
+  });
+
+  it("a thrown client (not just an error result) also degrades to no draft", async () => {
+    const service = { from: () => { throw new Error("socket hang up"); } } as unknown as SupabaseClient;
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    await expect(loadRestorableAmPrepDraft(service, args)).resolves.toBeNull();
+    spy.mockRestore();
+  });
+
+  it("returns the restore when the draft applies, and reads nothing outside a first submission", async () => {
+    const f = fakeService({
+      am_prep_drafts: { instance_id: INSTANCE, consumed_at: null, saved_by: null, saved_at: "2026-10-06T13:42:00Z", draft: { version: 1, items: { [ITEM_1]: { onHand: "4" } } } },
+    });
+    await expect(loadRestorableAmPrepDraft(f.service, args)).resolves.toEqual({
+      draft: { version: 1, items: { [ITEM_1]: { onHand: "4" } } },
+      savedAt: "2026-10-06T13:42:00Z",
+      savedByName: null,
+    });
+    const g = fakeService({});
+    await expect(loadRestorableAmPrepDraft(g.service, { ...args, mode: "edit" })).resolves.toBeNull();
+    expect(g.from).not.toHaveBeenCalled();
+  });
+
+  it("source pin: the page uses the non-throwing read, never the raw loader", () => {
+    const page = readFileSync("app/(authed)/operations/am-prep/page.tsx", "utf8");
+    expect(page).toContain("loadRestorableAmPrepDraft(");
+    expect(page).not.toMatch(/\bloadAmPrepDraft\(/);
+  });
+});
