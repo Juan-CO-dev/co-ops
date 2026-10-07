@@ -128,6 +128,12 @@ export interface PipelineLead {
   stage: PipelineStage;
   leadSource: string | null;
   locationId: string | null;
+  /**
+   * The shop's NAME, read from the `locations` table (never derived from the code: prod codes
+   * are crossed, EM = P Street and MEP = Capitol Hill). Null for a tenant-wide lead or a
+   * location the name read could not resolve.
+   */
+  locationName: string | null;
   notes: string | null;
   followUpDate: string | null;
   estimatedRevenueCents: number | null;
@@ -138,7 +144,7 @@ export interface PipelineLead {
   updatedAt: string | null;
 }
 
-interface DbLeadRow {
+export interface DbLeadRow {
   id: string;
   customer_id: string | null;
   contact_name: string;
@@ -167,7 +173,7 @@ interface DbLeadRow {
 const LEAD_COLS =
   "id, customer_id, contact_name, company, event_date, headcount, contact_phone, delivery_address, time_window, event_type, dietary_notes, event_name, dropoff_door, stage, lead_source, location_id, notes, follow_up_date, estimated_revenue_cents, assigned_to, created_by, created_at, updated_at";
 
-function mapLead(r: DbLeadRow): PipelineLead {
+export function mapLead(r: DbLeadRow): PipelineLead {
   return {
     id: r.id,
     customerId: r.customer_id,
@@ -185,6 +191,7 @@ function mapLead(r: DbLeadRow): PipelineLead {
     stage: (isPipelineStage(r.stage) ? r.stage : "inquiry"),
     leadSource: r.lead_source,
     locationId: r.location_id,
+    locationName: null,
     notes: r.notes,
     followUpDate: r.follow_up_date,
     estimatedRevenueCents: r.estimated_revenue_cents,
@@ -193,6 +200,27 @@ function mapLead(r: DbLeadRow): PipelineLead {
     createdAt: r.created_at,
     updatedAt: r.updated_at,
   };
+}
+
+/**
+ * Stamp each lead with its shop's NAME from the `locations` table (one extra read over the
+ * distinct location ids; no FK-embed dependency). The label is the table's name, never a map
+ * in code and never derived from the location code.
+ */
+export async function withLocationNames<T extends PipelineLead>(
+  sb: ReturnType<typeof getServiceRoleClient>,
+  leads: T[],
+): Promise<T[]> {
+  const ids = [...new Set(leads.map((l) => l.locationId).filter((x): x is string => x != null))];
+  if (ids.length === 0) return leads;
+  const { data, error } = await sb
+    .from("locations")
+    .select("id, name")
+    .in("id", ids)
+    .returns<Array<{ id: string; name: string }>>();
+  if (error) throw new Error(`withLocationNames: ${error.message}`);
+  const names = new Map((data ?? []).map((r) => [r.id, r.name]));
+  return leads.map((l) => ({ ...l, locationName: l.locationId ? names.get(l.locationId) ?? null : null }));
 }
 
 /** The read-scope `.or()` filter string for the actor, or null when unrestricted (L9+ all-locations). */
@@ -214,7 +242,7 @@ export async function loadPipelineBoard(actor: AuthContext): Promise<PipelineLea
   if (scope) q = q.or(scope);
   const { data, error } = await q.order("created_at", { ascending: false }).returns<DbLeadRow[]>();
   if (error) throw new Error(`loadPipelineBoard: ${error.message}`);
-  return (data ?? []).map(mapLead);
+  return withLocationNames(sb, (data ?? []).map(mapLead));
 }
 
 export interface PipelineSearchResult extends PipelineLead {
@@ -272,7 +300,7 @@ export async function searchPipeline(actor: AuthContext, args: { query: string }
   q = q.or(orParts.join(","));
   const { data: leadRows, error } = await q.order("created_at", { ascending: false }).returns<DbLeadRow[]>();
   if (error) throw new Error(`searchPipeline leads: ${error.message}`);
-  const leads = (leadRows ?? []).map(mapLead);
+  const leads = await withLocationNames(sb, (leadRows ?? []).map(mapLead));
   if (leads.length === 0) return [];
 
   // 3. Enrich: email (per customer) + current quote (latest non-superseded per lead).
@@ -318,7 +346,7 @@ export async function loadFollowUps(actor: AuthContext, throughDate: string): Pr
   if (scope) q = q.or(scope);
   const { data, error } = await q.order("follow_up_date", { ascending: true }).returns<DbLeadRow[]>();
   if (error) throw new Error(`loadFollowUps: ${error.message}`);
-  return (data ?? []).map(mapLead);
+  return withLocationNames(sb, (data ?? []).map(mapLead));
 }
 
 /** One lead by id (scoped). Null if not found / not visible to the actor. */

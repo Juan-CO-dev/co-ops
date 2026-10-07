@@ -18,10 +18,12 @@
  */
 
 import { getServiceRoleClient } from "@/lib/supabase-server";
+import { selectAllRows } from "@/lib/supabase-paginate";
 import { getRoleLevel } from "@/lib/roles";
 import { isAllLocationsAccess } from "@/lib/locations";
 import type { AuthContext } from "@/lib/session";
 import type { CalendarEvent, WindowKey, WindowStats } from "@/lib/catering/insights-shared";
+import type { LostCalendarEvent } from "@/lib/catering/lost-calendar-shared";
 
 export const INSIGHTS_READ_MIN = 5;
 
@@ -39,6 +41,13 @@ export interface CateringInsightsV2 {
   today: string;
   windows: Record<WindowKey, WindowStats>;
   calendar: CalendarEvent[];
+  /**
+   * Lost leads with an event date inside the calendar's window — DISPLAY ONLY (Wave 1 C). Read
+   * separately from the RPC so no window, money or count figure can ever include them.
+   */
+  lostCalendar: LostCalendarEvent[];
+  /** Lost leads (in the actor's scope) with no event date: not plotted, only counted in a note. */
+  lostUndatedCount: number;
   averageRating: number | null;
   feedbackCount: number;
   recentFeedback: FeedbackItem[];
@@ -118,6 +127,41 @@ function win(key: WindowKey, r: RawWindow): WindowStats {
   };
 }
 
+interface RawLostRow {
+  id: string;
+  event_date: string;
+  time_window: string | null;
+  event_name: string | null;
+  company: string | null;
+  contact_name: string | null;
+  headcount: number | null;
+  lead_source: string | null;
+  location_id: string | null;
+  estimated_revenue_cents: number | string | null;
+}
+
+/** PURE: one lost row → the calendar's event shape (name falls back event → company → contact, as the RPC does). */
+export function mapLostRow(r: RawLostRow): LostCalendarEvent {
+  return {
+    id: r.id,
+    eventDate: r.event_date,
+    timeWindow: r.time_window,
+    name: r.event_name ?? r.company ?? r.contact_name ?? "",
+    headcount: r.headcount,
+    source: r.lead_source,
+    stage: "lost",
+    locationId: r.location_id ?? "",
+    valueCents: Number(r.estimated_revenue_cents ?? 0),
+  };
+}
+
+/** Add days to a YYYY-MM-DD calendar date (UTC math on a date-only string: no DST surprises). */
+function addDays(date: string, n: number): string {
+  const d = new Date(`${date}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + n);
+  return d.toISOString().slice(0, 10);
+}
+
 /** `todayEt` = the ET calendar date (caller passes `etCalendarDate(new Date().toISOString())`). */
 export async function loadCateringInsightsV2(actor: AuthContext, todayEt: string): Promise<CateringInsightsV2> {
   if (getRoleLevel(actor.user.role) < INSIGHTS_READ_MIN) {
@@ -148,6 +192,44 @@ export async function loadCateringInsightsV2(actor: AuthContext, todayEt: string
     .returns<Array<{ id: string; rating: number | null; category: string | null; comment: string | null; submitted_at: string | null; follow_up_needed: boolean | null }>>();
   if (fErr) throw new Error(`loadCateringInsightsV2 feedback: ${fErr.message}`);
 
+  // LOST leads — display only, scoped EXACTLY like the RPC's calendar (`location_id = any(scope)`;
+  // all-locations actors unscoped), over the same −30…+90-day window. Separate reads: nothing
+  // below feeds win(), so no money total or count can move.
+  const lostFrom = addDays(todayEt, -30);
+  const lostTo = addDays(todayEt, 90);
+  // FAIL SOFT: lost is display only, so a failed lost read must never take down the page or its
+  // money figures. selectAllRows pages past the 1000-row cap and THROWS on a failed page; the
+  // catch logs and degrades to an empty list / zero count.
+  let lostRows: RawLostRow[] = [];
+  try {
+    lostRows = await selectAllRows<RawLostRow>((from, to) => {
+      let lq = sb
+        .from("catering_pipeline")
+        .select("id, event_date, time_window, event_name, company, contact_name, headcount, lead_source, location_id, estimated_revenue_cents")
+        .eq("stage", "lost")
+        .gte("event_date", lostFrom)
+        .lte("event_date", lostTo);
+      if (scope) lq = lq.in("location_id", scope);
+      return lq.order("event_date", { ascending: true }).order("id", { ascending: true }).range(from, to).returns<RawLostRow[]>();
+    });
+  } catch (e) {
+    console.error(`[catering-insights] lost read failed: ${e instanceof Error ? e.message : String(e)}`);
+  }
+  let uq = sb
+    .from("catering_pipeline")
+    .select("id", { count: "exact", head: true })
+    .eq("stage", "lost")
+    .is("event_date", null);
+  if (scope) uq = uq.in("location_id", scope);
+  let undated = 0;
+  try {
+    const { count, error: uErr } = await uq;
+    if (uErr) console.error(`[catering-insights] lost-undated read failed: ${uErr.message}`);
+    else undated = count ?? 0;
+  } catch (e) {
+    console.error(`[catering-insights] lost-undated read failed: ${e instanceof Error ? e.message : String(e)}`);
+  }
+
   return {
     today: todayEt,
     windows: {
@@ -167,6 +249,8 @@ export async function loadCateringInsightsV2(actor: AuthContext, todayEt: string
       locationId: e.location_id,
       valueCents: Number(e.value_cents ?? 0),
     })),
+    lostCalendar: lostRows.map(mapLostRow),
+    lostUndatedCount: undated,
     averageRating: raw.feedback?.average_rating ?? null,
     feedbackCount: raw.feedback?.count ?? 0,
     recentFeedback: (fbRows ?? []).map((r) => ({

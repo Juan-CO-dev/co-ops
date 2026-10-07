@@ -10,7 +10,7 @@
  * Disclosure doctrine: the day list is the drawer; the grid is the summary row.
  */
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import { useTranslation } from "@/lib/i18n/provider";
 import { formatCents, formatDateLabel, formatMonthLabel, formatWeekday } from "@/lib/i18n/format";
@@ -22,11 +22,43 @@ import {
   stageDot,
   type CalendarEvent,
 } from "@/lib/catering/insights-shared";
+import {
+  calendarEventsToPlot,
+  lostUndatedNoteCount,
+  readShowLost,
+  writeShowLost,
+  type LostCalendarEvent,
+} from "@/lib/catering/lost-calendar-shared";
 import { leadSourceLabelKey } from "@/lib/catering/intake-shared";
 import { timeWindowLabel } from "@/lib/midshift-shared";
 
-export function InsightsCalendar({ events, today }: { events: CalendarEvent[]; today: string }) {
+export function InsightsCalendar({
+  events,
+  today,
+  lostEvents = [],
+  lostUndatedCount = 0,
+}: {
+  events: CalendarEvent[];
+  today: string;
+  /** Lost leads that have an event date — DISPLAY ONLY (greyed, struck through). */
+  lostEvents?: LostCalendarEvent[];
+  /** Lost leads with no event date: not plotted, only named in a note. */
+  lostUndatedCount?: number;
+}) {
   const { t, language } = useTranslation();
+  // "Show lost" defaults ON; the device remembers the choice. Read AFTER mount so server and
+  // first client render agree; every storage touch is try/catch inside the helpers.
+  const [showLost, setShowLost] = useState(true);
+  useEffect(() => {
+    // Post-mount read of device storage (a lazy initializer would mismatch the server render).
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setShowLost(readShowLost());
+  }, []);
+  const toggleLost = () => {
+    const next = !showLost;
+    setShowLost(next);
+    writeShowLost(next);
+  };
   const [month, setMonth] = useState(() => monthKey(today));
   const [selected, setSelected] = useState<string | null>(today);
 
@@ -39,7 +71,11 @@ export function InsightsCalendar({ events, today }: { events: CalendarEvent[]; t
   };
 
   const grid = useMemo(() => monthGrid(month), [month]);
-  const byDate = useMemo(() => groupEventsByDate(events), [events]);
+  const plotted = useMemo(
+    () => calendarEventsToPlot(events, lostEvents, showLost),
+    [events, lostEvents, showLost],
+  );
+  const byDate = useMemo(() => groupEventsByDate(plotted), [plotted]);
   const dayEvents = selected ? byDate.get(selected) ?? [] : [];
   // The first week's seven dates ARE Mon…Sun, whatever month they belong to.
   const weekdays = grid.weeks[0]!.map((d) => formatWeekday(d.date, language).slice(0, 3));
@@ -66,6 +102,25 @@ export function InsightsCalendar({ events, today }: { events: CalendarEvent[]; t
         </button>
       </div>
 
+      <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1">
+        <button
+          type="button"
+          role="switch"
+          aria-checked={showLost}
+          onClick={toggleLost}
+          className="flex min-h-[44px] items-center gap-2 rounded-lg border-2 border-co-border-2 bg-co-surface px-3 text-xs font-bold text-co-text"
+        >
+          <span className={`h-2 w-2 rounded-full ${stageDot("lost")}`} aria-hidden />
+          {t("catering.insights.calendar.show_lost")}
+          <span aria-hidden className="text-co-text-dim">{showLost ? "✓" : "–"}</span>
+        </button>
+        {lostUndatedNoteCount(showLost, lostUndatedCount) > 0 && (
+          <span className="text-xs text-co-text-dim" data-testid="lost-undated-note">
+            {t("catering.insights.calendar.lost_undated", { n: lostUndatedCount })}
+          </span>
+        )}
+      </div>
+
       <p className="mt-2 text-xs text-co-text-dim">{t("catering.insights.calendar.hint")}</p>
 
       <div className="mt-2 grid grid-cols-7 gap-1 text-center text-[10px] font-bold uppercase tracking-[0.12em] text-co-text-dim">
@@ -77,6 +132,8 @@ export function InsightsCalendar({ events, today }: { events: CalendarEvent[]; t
       <div className="mt-1 grid grid-cols-7 gap-1">
         {grid.weeks.flat().map((d) => {
           const evs = byDate.get(d.date) ?? [];
+          const lostN = evs.filter((e) => e.stage === "lost").length;
+          const bookedN = evs.length - lostN;
           const isSel = d.date === selected;
           return (
             <button
@@ -85,8 +142,8 @@ export function InsightsCalendar({ events, today }: { events: CalendarEvent[]; t
               onClick={() => setSelected(d.date)}
               aria-pressed={isSel}
               aria-label={`${formatDateLabel(d.date, language)}${
-                evs.length > 0 ? ` · ${t("catering.insights.calendar_count", { n: evs.length })}` : ""
-              }`}
+                bookedN > 0 ? ` · ${t("catering.insights.calendar_count", { n: bookedN })}` : ""
+              }${lostN > 0 ? ` · ${t("catering.insights.calendar_lost_count", { n: lostN })}` : ""}`}
               className={`flex min-h-[44px] flex-col items-center justify-start gap-0.5 rounded-lg border-2 p-1 text-xs tabular-nums ${
                 isSel ? "border-co-text bg-co-surface-2" : "border-co-border bg-co-surface"
               } ${d.inMonth ? "text-co-text" : "text-co-text-dim"} ${d.date === today ? "font-extrabold" : ""}`}
@@ -122,10 +179,14 @@ export function InsightsCalendar({ events, today }: { events: CalendarEvent[]; t
           // The raw column holds three shapes (Toast "13:15" · ezCater ISO · portal range);
           // timeWindowLabel is the ONLY thing allowed to render it.
           const when = timeWindowLabel(e.timeWindow, language);
+          const isLost = e.stage === "lost";
           return (
             <li
               key={e.id}
-              className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5 rounded-lg border-2 border-co-border-2 bg-co-surface px-3 py-2"
+              data-lost={isLost ? "true" : undefined}
+              className={`flex flex-wrap items-baseline gap-x-2 gap-y-0.5 rounded-lg border-2 border-co-border-2 bg-co-surface px-3 py-2 ${
+                isLost ? "text-co-text-dim line-through opacity-60" : ""
+              }`}
             >
               <span className={`h-2 w-2 shrink-0 rounded-full ${stageDot(e.stage)}`} aria-hidden />
               <span className="text-sm font-extrabold text-co-text">{when ?? t("midshift.catering.no_time")}</span>
@@ -138,6 +199,11 @@ export function InsightsCalendar({ events, today }: { events: CalendarEvent[]; t
                 </span>
               )}
               <span className="text-xs text-co-text-dim">{"key" in src ? t(src.key) : src.verbatim}</span>
+              {isLost && (
+                <span className="text-xs font-bold uppercase tracking-[0.12em] no-underline">
+                  {t("catering.pipeline.stage.lost")}
+                </span>
+              )}
               <span className="ml-auto text-sm font-bold tabular-nums text-co-text">
                 {formatCents(e.valueCents, language)}
               </span>

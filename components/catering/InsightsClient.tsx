@@ -152,7 +152,12 @@ export function InsightsClient({ data }: { data: CateringInsightsV2 }) {
           <LegendDot stage="out" label={t("catering.pipeline.stage.out")} />
           <LegendDot stage="completed" label={t("catering.pipeline.stage.completed")} />
         </div>
-        <InsightsCalendar events={data.calendar} today={data.today} />
+        <InsightsCalendar
+          events={data.calendar}
+          today={data.today}
+          lostEvents={data.lostCalendar}
+          lostUndatedCount={data.lostUndatedCount}
+        />
       </CollapsibleSection>
 
       {/* Feedback — carried over from v1; the RPC still supplies the rollup and the loader
