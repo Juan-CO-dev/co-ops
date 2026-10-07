@@ -40,6 +40,7 @@
  *
  * APPEND-ONLY: par_pass_events / par_pass_lines rows are never DELETEd or mutated.
  */
+import { loadStoreVendorIds } from "@/lib/ordering-sources";
 import { guideKeysFor } from "@/lib/order-guides";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import { selectAllRows } from "@/lib/supabase-paginate";
@@ -748,10 +749,12 @@ export async function loadWalkerData(actor: AuthContext, locationId: string): Pr
     count: 0, skuInactive: 0, vendorInactive: 0, noVendor: 0,
     productUnroutable: 0, productRetired: 0, parReview: 0, reroutedToBackup: 0,
   };
-  const skus = (skuRows ?? []).filter((s) => s.vendor_id != null); // a par'd SKU with no
+  const storeVendorIds = await loadStoreVendorIds();
+  const orderingSkuRows = (skuRows ?? []).filter((s) => s.vendor_id == null || !storeVendorIds.has(s.vendor_id));
+  const skus = orderingSkuRows.filter((s) => s.vendor_id != null); // a par'd SKU with no
   // vendor can't be ordered from anyone → excluded (schema allows null vendor_id, live
   // data has none today; defensive — and now counted rather than silently dropped).
-  unroutable.noVendor = (skuRows ?? []).length - skus.length;
+  unroutable.noVendor = orderingSkuRows.length - skus.length;
   unroutable.count = unroutable.noVendor;
   if (skus.length === 0) {
     // No par'd SKUs anywhere → we return BEFORE the loadOnHand batch below, so
@@ -795,7 +798,7 @@ export async function loadWalkerData(actor: AuthContext, locationId: string): Pr
       loadMeasures(),
       loadSkuUsageRank(sb, locationId),
       loadOnHandDerived(actor, locationId), // ONE advisory on-hand pass for the whole location.
-      sb.from("vendors").select("id, name, order_days").in("id", vendorIds).eq("active", true)
+      sb.from("vendors").select("id, name, order_days").in("id", vendorIds).eq("active", true).eq("source_kind", "vendor")
         .returns<Array<{ id: string; name: string; order_days: number[] | null }>>(),
       loadLatestOrderQtyBySku(sb, skuIds),
       loadOverlayBySku(sb, locationId),
@@ -1508,7 +1511,8 @@ export async function submitParPass(
     .in("id", skuIds)
     .returns<WalkerSkuRow[]>();
   if (sErr) throw new Error(`submitParPass skus: ${sErr.message}`);
-  const skuById = new Map((skuRows ?? []).map((s) => [s.id, s]));
+  const storeVendorIds = await loadStoreVendorIds();
+  const skuById = new Map((skuRows ?? []).filter((s) => s.vendor_id == null || !storeVendorIds.has(s.vendor_id)).map((s) => [s.id, s]));
   for (const id of skuIds) if (!skuById.has(id)) throw new OrderingError(400, "invalid_sku", "A SKU is not found or inactive");
   // Reject two lines naming two MEMBERS of one product (0179), for the same reason
   // duplicate_sku exists: the walk shows ONE row per product, so two lines would
@@ -1770,7 +1774,7 @@ async function buildDraftOrders(
   const vendorSelect = minimumReady ? "id, name, order_minimum" : "id, name";
 
   const [{ data: vendorRows, error: vErr }, { data: detailRows, error: dErr }] = await Promise.all([
-    sb.from("vendors").select(vendorSelect).in("id", vendorIds)
+    sb.from("vendors").select(vendorSelect).in("id", vendorIds).eq("source_kind", "vendor")
       .returns<Array<{ id: string; name: string; order_minimum?: string | null }>>(),
     sb.from("vendor_ordering_details")
       .select("vendor_id, method, value, label, display_order")
@@ -1791,6 +1795,7 @@ async function buildDraftOrders(
 
   const linesByVendor = new Map<string, DraftOrderLine[]>();
   for (const e of withVendor) {
+    if (!vName.has(e.vendorId)) continue;
     const arr = linesByVendor.get(e.vendorId) ?? [];
     arr.push(e.line);
     linesByVendor.set(e.vendorId, arr);
@@ -2229,13 +2234,14 @@ export async function loadOrderingAttention(
 
   // (3) Vendor names for the open set.
   const { data: vendorRows, error: vErr } = await sb.from("vendors")
-    .select("id, name").in("id", openVendorIds)
+    .select("id, name").in("id", openVendorIds).eq("source_kind", "vendor")
     .returns<Array<{ id: string; name: string }>>();
   if (vErr) throw new Error(`loadOrderingAttention vendors: ${vErr.message}`);
   const vName = new Map((vendorRows ?? []).map((v) => [v.id, v.name]));
 
   const vendors: Array<OrderingCutoffAttention & { sortKey: string }> = [];
   for (const vid of openVendorIds) {
+    if (!vName.has(vid)) continue;
     const bare = governingCutoffTime(rowsByVendor.get(vid) ?? [], locationId);
     if (bare == null) continue;
     const iso = cutoffWallClockToUtcIso(dateEt, bare);

@@ -116,6 +116,7 @@ export function IntakeLineRow({
   onForgetCode = null,
   locationId,
   showPrice = false,
+  countUnitLabel,
 }: {
   line: IntakeLine;
   levels: string[];
@@ -131,9 +132,11 @@ export function IntakeLineRow({
    *  the expanded editor has always had its own price field and is unaffected either way.
    *  Defaults false so an omitted prop can never change a caller's rendering. */
   showPrice?: boolean;
+  /** Store-run flat pack label; display only, never an invented chain level. */
+  countUnitLabel?: string | null;
 }) {
   const { t } = useTranslation();
-  const expectedLabel = line.level.trim() || t("receiving.door.level_generic");
+  const expectedLabel = line.level.trim() || countUnitLabel || t("receiving.door.level_generic");
   const suggested = suggestFlag(line.qty, line.expectedQty);
 
   // Collapsed fast path: a line the operator hasn't opened (or confirmed).

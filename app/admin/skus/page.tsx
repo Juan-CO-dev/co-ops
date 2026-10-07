@@ -24,6 +24,8 @@ import { loadSkuPackChains } from "@/lib/prep-consumption";
 import { buildPackChain, isChainUnverified, type PackChainLevel } from "@/lib/pack-chain-shared";
 import type { MeasureUnitFactor } from "@/lib/recipe-math";
 import { SkuCatalogClient } from "@/components/admin/skus/SkuCatalogClient";
+import { PendingStoreItems } from "@/components/admin/skus/PendingStoreItems";
+import { lockLocationContext } from "@/lib/locations";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { loadSkuDataReadiness } from "@/lib/sku-data-readiness-load";
 import type { SkuDataShop } from "@/lib/sku-data-readiness";
@@ -37,7 +39,7 @@ export default async function AdminSkusPage() {
   const sb = getServiceRoleClient();
   const [skus, vendors, packFormats, measureUnits, locRes] = await Promise.all([
     loadSkus(auth),
-    loadVendors(auth),
+    loadVendors(auth, { includeStores: true }),
     loadPackFormats(auth),
     loadMeasureUnits(auth),
     sb.from("locations").select("id, name").eq("active", true).order("name"),
@@ -148,6 +150,7 @@ export default async function AdminSkusPage() {
         title={serverT(lang, "admin.skus.title")}
         subtitle={serverT(lang, "admin.skus.subtitle")}
       />
+      {level >= 7 ? <PendingStoreItems locations={locations.filter((location) => lockLocationContext({ role: auth.user.role, locations: auth.locations }, location.id))} /> : null}
       <SkuCatalogClient
         skus={skus}
         vendors={activeVendors}

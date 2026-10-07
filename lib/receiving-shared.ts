@@ -135,18 +135,38 @@ export interface SkuVendorBinding {
 /**
  * First SKU in `skus` that belongs to a vendor OTHER than `deliveryVendorId`, or null
  * when every line is bindable. Pure. A SKU with a null vendorId is UNASSIGNED and always
- * passes (see the null-tolerance note above); a null/empty `deliveryVendorId` disables
+ * passes for ordinary vendors (see the null-tolerance note above). Store runs
+ * require their own materialized SKU, even for vendorless references, so their
+ * prices cannot leak onto a shared singleton. A null/empty `deliveryVendorId` disables
  * the check entirely (nothing to bind to — never invent a mismatch).
  */
 export function findVendorMismatch(
   deliveryVendorId: string | null | undefined,
   skus: readonly SkuVendorBinding[],
+  sourceKind: "vendor" | "store" = "vendor",
 ): SkuVendorBinding | null {
   if (!deliveryVendorId) return null;
   for (const s of skus) {
-    if (s.vendorId != null && s.vendorId !== deliveryVendorId) return s;
+    if ((sourceKind === "store" || s.vendorId != null) && s.vendorId !== deliveryVendorId) return s;
   }
   return null;
+}
+
+/** Preserve the ordinary receipt row exactly; store prices belong only to the
+ * already validated store SKU, never to the reference selected in the picker. */
+export function receivingPriceRows(
+  lines: readonly { skuId: string; unitPrice?: number | null }[],
+  effectiveDate: string,
+  recordedBy: string,
+  sourceKind: "vendor" | "store",
+) {
+  return lines.filter((line) => line.unitPrice != null).map((line) => ({
+    vendor_item_id: line.skuId,
+    unit_price: line.unitPrice,
+    effective_date: effectiveDate,
+    recorded_by: recordedBy,
+    ...(sourceKind === "store" ? { source: "store_run" } : {}),
+  }));
 }
 
 /** A single line as it lands in a delivery-append batch (identity tuple only). */

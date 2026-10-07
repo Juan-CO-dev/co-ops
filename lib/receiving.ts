@@ -54,6 +54,7 @@ import {
   deriveMissingCreditDrafts,
   disposeAvgFold,
   findVendorMismatch,
+  receivingPriceRows,
   isDuplicateAppend,
   type AppendLine,
   type IntakeLineForCredits,
@@ -185,9 +186,13 @@ export interface ReceivingSkuOption {
    *  when a vendor has no last-delivery template. null = no usage in the window (a SKU never
    *  consumed here → not offered as a pre-filled line; only reachable via the Add-item picker). */
   usageRank: number | null;
+  /** Product names are aliases for searching the store's all-SKU picker. */
+  searchTerms?: string[];
+  locationId?: string | null;
+  pendingReview?: boolean;
 }
 export interface ReceivingFormData {
-  vendors: Array<{ id: string; name: string }>;
+  vendors: Array<{ id: string; name: string; sourceKind: "vendor" | "store" }>;
   skus: ReceivingSkuOption[];
 }
 export type DeliveryMatchState = "counted_only" | "matched" | "discrepant" | "override";
@@ -240,20 +245,34 @@ export async function loadReceivingFormData(actor: AuthContext, locationId: stri
   requireReceive(actor);
   if (!lockLocationContext(actorLoc(actor), locationId)) throw new ReceivingError(404, "not_found", "Location not found");
   const sb = getServiceRoleClient();
-  const { data: vendors, error: vErr } = await sb.from("vendors").select("id, name").eq("active", true).order("name", { ascending: true }).returns<Array<{ id: string; name: string }>>();
-  if (vErr) throw new Error(`loadReceivingFormData vendors: ${vErr.message}`);
-  const { data: skus, error: sErr } = await sb.from("vendor_items").select("id, name, vendor_id, pack_format").eq("active", true).order("name", { ascending: true }).returns<Array<{ id: string; name: string; vendor_id: string | null; pack_format: string | null }>>();
-  if (sErr) throw new Error(`loadReceivingFormData skus: ${sErr.message}`);
-  const skuList = skus ?? [];
+  const vendors = await selectAllRows<{ id: string; name: string; source_kind: "vendor" | "store" }>(async (from, to) => {
+    const { data, error } = await sb.from("vendors").select("id, name, source_kind")
+      .eq("active", true).order("name").order("id").range(from, to);
+    if (error) throw new Error(`loadReceivingFormData vendors: ${error.message}`);
+    return { data };
+  });
+  const skuList = await selectAllRows<{ id: string; name: string; vendor_id: string | null; pack_format: string | null; product_id: string | null; location_id: string | null; pending_review: boolean }>(async (from, to) => {
+    const { data, error } = await sb.from("vendor_items").select("id, name, vendor_id, pack_format, product_id, location_id, pending_review")
+      .eq("active", true).order("name").order("id").range(from, to);
+    if (error) throw new Error(`loadReceivingFormData skus: ${error.message}`);
+    return { data };
+  });
+  const products = await selectAllRows<{ id: string; name: string; name_es: string | null }>(async (from, to) => {
+    const { data, error } = await sb.from("products").select("id, name, name_es")
+      .eq("active", true).order("id").range(from, to);
+    if (error) throw new Error(`loadReceivingFormData products: ${error.message}`);
+    return { data };
+  });
+  const productNames = new Map(products.map((p) => [p.id, [p.name, ...(p.name_es ? [p.name_es] : [])]]));
   // ONE batch query for every active SKU's chain levels (loadRecipeGraph law).
   // Chain labels are ordered root→leaf for the level picker (display_ordinal).
   // Usage rank is a SECOND batch pair (production + sales lanes) — never per-SKU.
   const [chainsBySku, usageBySku] = await Promise.all([
-    loadSkuPackChains(skuList.map((s) => s.id)),
+    loadReceivingChains(skuList.map((s) => s.id)),
     loadSkuUsageRank(sb, locationId),
   ]);
   return {
-    vendors: vendors ?? [],
+    vendors: vendors.map((v) => ({ id: v.id, name: v.name, sourceKind: v.source_kind })),
     skus: skuList.map((s) => ({
       id: s.id,
       name: s.name,
@@ -261,8 +280,22 @@ export async function loadReceivingFormData(actor: AuthContext, locationId: stri
       packFormat: s.pack_format,
       chainLabels: chainLabelsInWalkOrder(chainsBySku.get(s.id) ?? []),
       usageRank: usageBySku.get(s.id) ?? null,
+      searchTerms: s.product_id ? productNames.get(s.product_id) ?? [] : [],
+      locationId: s.location_id,
+      pendingReview: s.pending_review,
     })),
   };
+}
+
+// Stores grow the catalog across vendors. Bound request lines and response sizes
+// when loading the full picker universe (paging SKU rows alone is insufficient).
+async function loadReceivingChains(ids: string[]): Promise<Map<string, PackChainLevel[]>> {
+  const out = new Map<string, PackChainLevel[]>();
+  for (let i = 0; i < ids.length; i += 100) {
+    const chunk = await loadSkuPackChains(ids.slice(i, i + 100));
+    for (const [id, chain] of chunk) out.set(id, chain);
+  }
+  return out;
 }
 
 /**
@@ -418,7 +451,8 @@ export async function recordDelivery(actor: AuthContext, input: RecordDeliveryIn
   }
   const sb = getServiceRoleClient();
 
-  const { data: vend } = await sb.from("vendors").select("id").eq("id", input.vendorId).eq("active", true).maybeSingle<{ id: string }>();
+  const { data: vend, error: vendorError } = await sb.from("vendors").select("id, source_kind").eq("id", input.vendorId).eq("active", true).maybeSingle<{ id: string; source_kind: "vendor" | "store" }>();
+  if (vendorError) throw new Error(`recordDelivery vendor: ${vendorError.message}`);
   if (!vend) throw new ReceivingError(400, "invalid_vendor", "Vendor not found or inactive");
 
   // ── PO linkage validation (spec §3 "received"; optional) ─────────────────
@@ -466,7 +500,7 @@ export async function recordDelivery(actor: AuthContext, input: RecordDeliveryIn
     }
   }
 
-  const resolved = await validateAndResolveDeliveryLines(sb, input.lines, input.vendorId);
+  const resolved = await validateAndResolveDeliveryLines(sb, input.lines, input.vendorId, vend.source_kind, input.locationId);
 
   // Missing-item honesty gate (PO-LINKED ONLY). An expectation is a vendor DEBT only when
   // the vendor was ordered the item; a last-delivery prefill is a habit, not an order. The
@@ -523,7 +557,7 @@ export async function recordDelivery(actor: AuthContext, input: RecordDeliveryIn
   const priced = input.lines.filter((l) => l.unitPrice != null);
   if (priced.length > 0) {
     const { error: pErr } = await sb.from("vendor_price_history").insert(
-      priced.map((l) => ({ vendor_item_id: l.skuId, unit_price: l.unitPrice, effective_date: input.deliveryDate, recorded_by: actor.user.id })),
+      receivingPriceRows(priced, input.deliveryDate, actor.user.id, vend.source_kind),
     );
     if (pErr) throw new Error(`recordDelivery prices: ${pErr.message}`);
   }
@@ -706,6 +740,8 @@ interface ResolvedLines {
  */
 async function validateAndResolveDeliveryLines(
   sb: ServiceClient, lines: DeliveryLineInput[], deliveryVendorId: string | null,
+  sourceKind: "vendor" | "store" = "vendor",
+  deliveryLocationId?: string,
 ): Promise<ResolvedLines> {
   if (!Array.isArray(lines) || lines.length === 0) throw new ReceivingError(400, "no_lines", "At least one line is required");
   for (const l of lines) {
@@ -715,12 +751,16 @@ async function validateAndResolveDeliveryLines(
     if (l.expectedQty != null && (!Number.isFinite(l.expectedQty) || l.expectedQty < 0)) throw new ReceivingError(400, "invalid_expected", "Expected qty must be zero or greater");
   }
   const skuIds = [...new Set(lines.map((l) => l.skuId))];
-  const { data: activeSkus } = await sb.from("vendor_items")
-    .select("id, vendor_id, pack_format, each_container_label, units_per_pack, each_size, each_measure, avg_oz_per_each, weight_class")
+  const { data: activeSkus, error: skuError } = await sb.from("vendor_items")
+    .select("id, vendor_id, location_id, pack_format, each_container_label, units_per_pack, each_size, each_measure, avg_oz_per_each, weight_class")
     .in("id", skuIds).eq("active", true)
-    .returns<Array<{ id: string; vendor_id: string | null; pack_format: string | null; each_container_label: string | null; units_per_pack: number | null; each_size: number | string | null; each_measure: string | null; avg_oz_per_each: number | string | null; weight_class: string | null }>>();
+    .returns<Array<{ id: string; vendor_id: string | null; location_id: string | null; pack_format: string | null; each_container_label: string | null; units_per_pack: number | null; each_size: number | string | null; each_measure: string | null; avg_oz_per_each: number | string | null; weight_class: string | null }>>();
+  if (skuError) throw new Error(`validateAndResolveDeliveryLines skus: ${skuError.message}`);
   const activeSet = new Set((activeSkus ?? []).map((s) => s.id));
   for (const id of skuIds) if (!activeSet.has(id)) throw new ReceivingError(400, "invalid_sku", "A SKU is not found or inactive");
+  if (sourceKind === "store" && (activeSkus ?? []).some((sku) => sku.location_id != null && sku.location_id !== deliveryLocationId)) {
+    throw new ReceivingError(404, "not_found");
+  }
 
   // PRODUCT RETIREMENT DOES NOT REACH HERE, DELIBERATELY (Juan's ruling, 2026-08-21).
   //
@@ -740,7 +780,7 @@ async function validateAndResolveDeliveryLines(
 
   // Vendor binding (P3) — a line for another vendor's twin would write this delivery's
   // price + observed-oz onto a SKU the truck never carried.
-  const mismatch = findVendorMismatch(deliveryVendorId, (activeSkus ?? []).map((s) => ({ id: s.id, vendorId: s.vendor_id })));
+  const mismatch = findVendorMismatch(deliveryVendorId, (activeSkus ?? []).map((s) => ({ id: s.id, vendorId: s.vendor_id })), sourceKind);
   if (mismatch) {
     throw new ReceivingError(400, "sku_vendor_mismatch", "An item belongs to a different vendor than this delivery");
   }
@@ -1160,7 +1200,11 @@ export async function addDeliveryLines(
   if (!lockLocationContext(actorLoc(actor), h.location_id)) throw new ReceivingError(404, "not_found", "Delivery not found");
   if (h.delivery_status !== "in_progress") throw new ReceivingError(409, "delivery_complete", "This delivery is complete — reopen or start a new one");
 
-  const resolved = await validateAndResolveDeliveryLines(sb, lines, h.vendor_id);
+  const { data: source, error: sourceError } = await sb.from("vendors").select("source_kind")
+    .eq("id", h.vendor_id).maybeSingle<{ source_kind: "vendor" | "store" }>();
+  if (sourceError) throw new Error(`addDeliveryLines source: ${sourceError.message}`);
+  if (!source) throw new ReceivingError(400, "invalid_vendor");
+  const resolved = await validateAndResolveDeliveryLines(sb, lines, h.vendor_id, source.source_kind, h.location_id);
 
   // Double-submit guard (P1 pragmatic window): a network retry / double-tap on the
   // append route would duplicate every line (and each dup spawns its own credit).
@@ -1192,7 +1236,7 @@ export async function addDeliveryLines(
   const priced = lines.filter((l) => l.unitPrice != null);
   if (priced.length > 0) {
     const { error: pErr } = await sb.from("vendor_price_history").insert(
-      priced.map((l) => ({ vendor_item_id: l.skuId, unit_price: l.unitPrice, effective_date: h.delivery_date, recorded_by: actor.user.id })),
+      receivingPriceRows(priced, h.delivery_date, actor.user.id, source.source_kind),
     );
     if (pErr) throw new Error(`addDeliveryLines prices: ${pErr.message}`);
   }

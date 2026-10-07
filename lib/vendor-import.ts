@@ -73,7 +73,7 @@ function family(vendor: Vendor): string {
 async function loadVendor(vendorId: string): Promise<Vendor> {
   id(vendorId);
   const { data, error } = await getServiceRoleClient().from("vendors")
-    .select("id,name,active,account_number,portal_url").eq("id", vendorId).maybeSingle<Vendor>();
+    .select("id,name,active,account_number,portal_url").eq("source_kind", "vendor").eq("id", vendorId).maybeSingle<Vendor>();
   check(error);
   if (!data || !data.active) throw new VendorImportError(404, "vendor_not_found");
   return data;
@@ -228,6 +228,7 @@ export async function stageVendorImport(actor: AuthContext, vendorId: string, fi
 
 export async function loadImportBatch(actor: AuthContext, vendorId: string, batchId: string): Promise<ImportBatchView> {
   requireLevel(actor, VENDOR_IMPORT_STAGE_MIN); id(vendorId); id(batchId);
+  await loadVendor(vendorId);
   const sb = getServiceRoleClient();
   const { data: batch, error } = await sb.from("vendor_import_batches").select("*").eq("id", batchId)
     .eq("vendor_id", vendorId).maybeSingle<BatchRow>();
