@@ -1,3 +1,4 @@
+import { auditOperationalTaskOverride, canDoOperationalTask } from "@/lib/operational-task-access";
 /**
  * Par-pass ordering data layer (delivery-intake P3, migration 0172). SERVER-ONLY,
  * service-role client; authorization is APP-LAYER (KH+ gate + location-bind IDOR).
@@ -725,6 +726,7 @@ export async function loadWalkerData(actor: AuthContext, locationId: string): Pr
   if (!lockLocationContext(actorLoc(actor), locationId)) {
     throw new OrderingError(404, "not_found", "Location not found");
   }
+  if (!(await canDoOperationalTask(actor, locationId, "ordering"))) throw new OrderingError(403, "forbidden");
   const sb = getServiceRoleClient();
   // ET-anchored walk day (single authority — etWalkDay()). Never inline this derivation
   // again; all day-rule consumers must call etWalkDay() to stay in sync with the display.
@@ -1479,6 +1481,7 @@ export async function submitParPass(
   if (!lockLocationContext(actorLoc(actor), locationId)) {
     throw new OrderingError(404, "not_found", "Location not found");
   }
+  if (!(await canDoOperationalTask(actor, locationId, "ordering"))) throw new OrderingError(403, "forbidden");
   if (!Array.isArray(lines) || lines.length === 0) {
     throw new OrderingError(400, "no_lines", "At least one line is required");
   }
@@ -1635,6 +1638,7 @@ export async function submitParPass(
   );
   if (lErr) throw new Error(`submitParPass lines: ${lErr.message}`);
 
+  await auditOperationalTaskOverride(actor, locationId, "ordering", "submitParPass");
   await audit({
     actorId: actor.user.id, actorRole: actor.user.role,
     action: "par_pass.submitted", resourceTable: "par_pass_events", resourceId: ev.id,
@@ -2103,6 +2107,7 @@ export async function generateDraftForVendor(
   if (!lockLocationContext(actorLoc(actor), locationId)) {
     throw new OrderingError(404, "not_found", "Location not found");
   }
+  if (!(await canDoOperationalTask(actor, locationId, "ordering"))) throw new OrderingError(403, "forbidden");
   if (typeof vendorId !== "string" || !vendorId) {
     throw new OrderingError(400, "invalid_vendor", "A vendor is required");
   }

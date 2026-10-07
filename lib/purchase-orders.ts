@@ -1,3 +1,4 @@
+import { auditOperationalTaskOverride, canDoOperationalTask } from "@/lib/operational-task-access";
 /**
  * Purchase-order lifecycle data layer (Vendor Ordering V1, migration 0174).
  * SERVER-ONLY, service-role client; authorization is APP-LAYER (KH+ gate +
@@ -207,6 +208,7 @@ export async function createDraftsFromLines(
   if (!lockLocationContext(actorLoc(actor), locationId)) {
     throw new PurchaseOrderError(404, "not_found", "Location not found");
   }
+  if (!(await canDoOperationalTask(actor, locationId, "ordering"))) throw new PurchaseOrderError(403, "forbidden");
   const sb = getServiceRoleClient();
 
   // Only vendors that actually carry ≥1 line get a PO.
@@ -330,6 +332,7 @@ export async function createDraftsFromLines(
   }
 
   // ONE batch audit row (plan header: walker/cutoff births log once per batch).
+  await auditOperationalTaskOverride(actor, locationId, "ordering", "createDraftsFromLines");
   await audit({
     actorId: actor.user.id, actorRole: actor.user.role,
     action: "po.draft_created", resourceTable: "purchase_orders", resourceId: null,
@@ -368,6 +371,7 @@ export async function createAddOnOrder(actor: AuthContext, poId: string, lines: 
   if (!lockLocationContext(actorLoc(actor), parent.location_id)) {
     throw new PurchaseOrderError(404, "not_found", "Purchase order not found");
   }
+  if (!(await canDoOperationalTask(actor, parent.location_id, "ordering"))) throw new PurchaseOrderError(403, "forbidden");
   if (!["placed", "invoiced", "received", "reconciled"].includes(parent.status)) {
     throw new PurchaseOrderError(409, "not_placed", "Only placed orders can have an add-on");
   }
@@ -506,6 +510,7 @@ export async function updateDraftLines(
   if (!lockLocationContext(actorLoc(actor), po.location_id)) {
     throw new PurchaseOrderError(404, "not_found", "Purchase order not found");
   }
+  if (!(await canDoOperationalTask(actor, po.location_id, "ordering"))) throw new PurchaseOrderError(403, "forbidden");
   if (po.status !== "draft") {
     throw new PurchaseOrderError(409, "not_draft", "Only draft orders can be edited");
   }
@@ -584,6 +589,7 @@ export async function updateDraftLines(
       "This order was confirmed while you were editing — your last change did not make it into the confirmed snapshot",
     );
   }
+  await auditOperationalTaskOverride(actor, po.location_id, "ordering", "updateDraftLines");
   return counts;
 }
 
@@ -619,12 +625,14 @@ export async function reopenPO(actor: AuthContext, poId: string): Promise<void> 
   if (!lockLocationContext(actorLoc(actor), po.location_id)) {
     throw new PurchaseOrderError(404, "not_found", "Purchase order not found");
   }
+  if (!(await canDoOperationalTask(actor, po.location_id, "ordering"))) throw new PurchaseOrderError(403, "forbidden");
   if (po.status !== "confirmed") throw new PurchaseOrderError(409, "not_confirmed", "Only confirmed orders can be reopened");
   // Preserve confirmation history. confirmPO replaces all four freeze fields on re-confirm.
   const { error, count } = await sb.from("purchase_orders")
     .update({ status: "draft" }, { count: "exact" }).eq("id", poId).eq("status", "confirmed");
   if (error) throw new Error(`reopenPO update: ${error.message}`);
   if (count === 0) throw new PurchaseOrderError(409, "not_confirmed", "Order is no longer confirmed");
+  await auditOperationalTaskOverride(actor, po.location_id, "ordering", "reopenPO");
   await audit({
     actorId: actor.user.id, actorRole: actor.user.role,
     action: "po.reopened", resourceTable: "purchase_orders", resourceId: poId,
@@ -678,6 +686,7 @@ export async function confirmPO(actor: AuthContext, poId: string): Promise<void>
   if (!lockLocationContext(actorLoc(actor), po.location_id)) {
     throw new PurchaseOrderError(404, "not_found", "Purchase order not found");
   }
+  if (!(await canDoOperationalTask(actor, po.location_id, "ordering"))) throw new PurchaseOrderError(403, "forbidden");
   if (po.status !== "draft") {
     throw new PurchaseOrderError(409, "not_draft", "Only draft orders can be confirmed");
   }
@@ -800,6 +809,7 @@ export async function confirmPO(actor: AuthContext, poId: string): Promise<void>
     else if (count === 0) console.error(`confirmPO: line ${l.id} missing during price freeze (po ${poId}) — continuing`);
   }
 
+  await auditOperationalTaskOverride(actor, po.location_id, "ordering", "confirmPO");
   await audit({
     actorId: actor.user.id, actorRole: actor.user.role,
     action: "po.confirmed", resourceTable: "purchase_orders", resourceId: poId,
@@ -950,6 +960,7 @@ export async function recordPlacement(
   if (!lockLocationContext(actorLoc(actor), po.location_id)) {
     throw new PurchaseOrderError(404, "not_found", "Purchase order not found");
   }
+  if (!(await canDoOperationalTask(actor, po.location_id, "ordering"))) throw new PurchaseOrderError(403, "forbidden");
   if (po.status !== "confirmed") {
     // Name the actual status: already_placed / already_received / already_reconciled
     // for a forward status; not_confirmed for draft (must confirm first).
@@ -997,6 +1008,7 @@ export async function recordPlacement(
     else throw new Error(`recordPlacement transmission: ${tErr.message}`);
   }
 
+  await auditOperationalTaskOverride(actor, po.location_id, "ordering", "recordPlacement");
   await audit({
     actorId: actor.user.id, actorRole: actor.user.role,
     action: "po.placed", resourceTable: "purchase_orders", resourceId: poId,
@@ -1113,6 +1125,7 @@ export async function markReconciled(actor: AuthContext, poId: string): Promise<
   if (!lockLocationContext(actorLoc(actor), po.location_id)) {
     throw new PurchaseOrderError(404, "not_found", "Purchase order not found");
   }
+  if (!(await canDoOperationalTask(actor, po.location_id, "ordering"))) throw new PurchaseOrderError(403, "forbidden");
   if (po.status !== "received") {
     const code = po.status === "reconciled" ? "already_reconciled" : "not_received";
     throw new PurchaseOrderError(409, code, `Order is ${po.status}, not received`);
@@ -1140,6 +1153,7 @@ export async function markReconciled(actor: AuthContext, poId: string): Promise<
   if (uErr) throw new Error(`markReconciled update: ${uErr.message}`);
   if (count === 0) throw new PurchaseOrderError(409, "not_received", "Order is no longer received");
 
+  await auditOperationalTaskOverride(actor, po.location_id, "ordering", "markReconciled");
   await audit({
     actorId: actor.user.id, actorRole: actor.user.role,
     action: "po.reconciled", resourceTable: "purchase_orders", resourceId: poId,

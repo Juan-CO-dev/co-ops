@@ -1,3 +1,4 @@
+import { hasTaskAccess } from "@/lib/assignments";
 /**
  * /cash — Cash Deposit page (Task 10).
  *
@@ -13,7 +14,7 @@
 
 import { redirect } from "next/navigation";
 
-import { CASH_REPORT_BASE_LEVEL, loadCashReport } from "@/lib/cash";
+import { loadCashReport } from "@/lib/cash";
 import { formatCents, formatTime } from "@/lib/i18n/format";
 import { serverT } from "@/lib/i18n/server";
 import type { Language, TranslationKey } from "@/lib/i18n/types";
@@ -55,7 +56,6 @@ export default async function CashPage({ searchParams }: PageProps) {
   const { location: locationParam } = await searchParams;
 
   if (!locationParam) redirect("/dashboard");
-  if (auth.level < CASH_REPORT_BASE_LEVEL) redirect("/dashboard");
 
   const locActor: LocationActor = { role: auth.role, locations: auth.locations };
   if (!lockLocationContext(locActor, locationParam)) redirect("/dashboard");
@@ -63,6 +63,8 @@ export default async function CashPage({ searchParams }: PageProps) {
   const sb = getServiceRoleClient();
   const lang = auth.user.language;
   const today = etCalendarDate(new Date().toISOString());
+
+  if (!(await hasTaskAccess(sb, { userId: auth.user.id, level: auth.level, locationId: locationParam, date: today, task: "cash_report" }))) redirect("/dashboard");
 
   const report = await loadCashReport(sb, { locationId: locationParam, date: today });
 

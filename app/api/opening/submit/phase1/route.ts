@@ -1,3 +1,4 @@
+import { canAccessOpeningInstance } from "@/lib/opening";
 /**
  * POST /api/opening/submit/phase1 — Opening Phase 1 atomic submission per
  * C.53 §3 + C.54 §2.A/§2.B/§2.C + migration 0055.
@@ -352,6 +353,10 @@ export async function POST(req: NextRequest) {
   // Note: NO closingReportRefItemId resolution. Per Triad A 2026-05-26
   // (C.54 §2.A), opening→closing auto-complete lives at Phase 3 submit, not
   // Phase 1. This route does not look up the closing(N-1) ref item.
+
+  if (!(await canAccessOpeningInstance(service, { instanceId: body.instanceId, actor: { userId: ctx.user.id, role: ctx.role, level: ctx.level } }))) {
+    return jsonError(403, "role_level_insufficient", { required: 4, actor_level: ctx.level });
+  }
 
   // 4. Submit. Lib emits the opening.phase1_submit audit row internally per outcome.
   try {

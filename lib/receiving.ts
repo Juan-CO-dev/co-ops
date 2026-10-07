@@ -1,3 +1,4 @@
+import { auditOperationalTaskOverride, canDoOperationalTask } from "@/lib/operational-task-access";
 /**
  * Operational receiving data layer (Item/Inventory Spine — R3). SERVER-ONLY,
  * service-role client; authorization is APP-LAYER (KH+ gate + location-bind IDOR)
@@ -245,6 +246,7 @@ export interface DeliveryDetail extends DeliveryView {
 export async function loadReceivingFormData(actor: AuthContext, locationId: string): Promise<ReceivingFormData> {
   requireReceive(actor);
   if (!lockLocationContext(actorLoc(actor), locationId)) throw new ReceivingError(404, "not_found", "Location not found");
+  if (!(await canDoOperationalTask(actor, locationId, "receiving"))) throw new ReceivingError(403, "forbidden");
   const sb = getServiceRoleClient();
   const vendors = await selectAllRows<{ id: string; name: string; source_kind: "vendor" | "store" }>(async (from, to) => {
     const { data, error } = await sb.from("vendors").select("id, name, source_kind")
@@ -460,6 +462,7 @@ export interface RecordDeliveryResult {
 export async function recordDelivery(actor: AuthContext, input: RecordDeliveryInput): Promise<RecordDeliveryResult> {
   requireReceive(actor);
   if (!lockLocationContext(actorLoc(actor), input.locationId)) throw new ReceivingError(404, "not_found", "Location not found");
+  if (!(await canDoOperationalTask(actor, input.locationId, "receiving"))) throw new ReceivingError(403, "forbidden");
   if (!/^\d{4}-\d{2}-\d{2}$/.test(input.deliveryDate) || Number.isNaN(Date.parse(input.deliveryDate))) {
     throw new ReceivingError(400, "invalid_date", "Delivery date must be YYYY-MM-DD");
   }
@@ -643,6 +646,7 @@ export async function recordDelivery(actor: AuthContext, input: RecordDeliveryIn
     avgUpdated.push(id);
   }
 
+  await auditOperationalTaskOverride(actor, input.locationId, "receiving", "recordDelivery");
   await audit({
     actorId: actor.user.id, actorRole: actor.user.role,
     action: "delivery.received", resourceTable: "vendor_deliveries", resourceId: header.id,
@@ -1226,6 +1230,7 @@ export async function addDeliveryLines(
   if (error) throw new Error(`addDeliveryLines header: ${error.message}`);
   if (!h) throw new ReceivingError(404, "not_found", "Delivery not found");
   if (!lockLocationContext(actorLoc(actor), h.location_id)) throw new ReceivingError(404, "not_found", "Delivery not found");
+  if (!(await canDoOperationalTask(actor, h.location_id, "receiving"))) throw new ReceivingError(403, "forbidden");
   if (h.delivery_status !== "in_progress") throw new ReceivingError(409, "delivery_complete", "This delivery is complete — reopen or start a new one");
 
   const { data: source, error: sourceError } = await sb.from("vendors").select("source_kind")
@@ -1271,6 +1276,7 @@ export async function addDeliveryLines(
 
   await deriveAndUpsertCredits(sb, h.id, h.vendor_id, h.location_id, actor.user.id);
 
+  await auditOperationalTaskOverride(actor, h.location_id, "receiving", "addDeliveryLines");
   await audit({
     actorId: actor.user.id, actorRole: actor.user.role,
     action: "delivery.received", resourceTable: "vendor_deliveries", resourceId: h.id,
@@ -1298,6 +1304,7 @@ export async function completeDelivery(actor: AuthContext, deliveryId: string): 
   if (error) throw new Error(`completeDelivery load: ${error.message}`);
   if (!h) throw new ReceivingError(404, "not_found", "Delivery not found");
   if (!lockLocationContext(actorLoc(actor), h.location_id)) throw new ReceivingError(404, "not_found", "Delivery not found");
+  if (!(await canDoOperationalTask(actor, h.location_id, "receiving"))) throw new ReceivingError(403, "forbidden");
   if (h.delivery_status === "complete") throw new ReceivingError(409, "already_complete", "This delivery is already complete");
   // Guard on the expected prior status, not just the id (silent-UPDATE law): the row must
   // still be 'in_progress' for THIS call to be the one that completed it. Not-found and
@@ -1310,6 +1317,7 @@ export async function completeDelivery(actor: AuthContext, deliveryId: string): 
   if (uErr) throw new Error(`completeDelivery update: ${uErr.message}`);
   if (count === 0) throw new ReceivingError(409, "already_complete", "This delivery is already complete");
 
+  await auditOperationalTaskOverride(actor, h.location_id, "receiving", "completeDelivery");
   await audit({
     actorId: actor.user.id, actorRole: actor.user.role,
     action: "delivery.completed", resourceTable: "vendor_deliveries", resourceId: deliveryId,
@@ -1367,6 +1375,7 @@ export async function attachDeliveryReceipt(
   if (error) throw new Error(`attachDeliveryReceipt load: ${error.message}`);
   if (!h) throw new ReceivingError(404, "not_found", "Delivery not found");
   if (!lockLocationContext(actorLoc(actor), h.location_id)) throw new ReceivingError(404, "not_found", "Delivery not found");
+  if (!(await canDoOperationalTask(actor, h.location_id, "receiving"))) throw new ReceivingError(403, "forbidden");
   if (h.receipt_url !== null) {
     throw new ReceivingError(409, "receipt_already_attached", "This delivery already has a receipt photo");
   }
@@ -1394,6 +1403,7 @@ export async function attachDeliveryReceipt(
     throw new ReceivingError(409, "receipt_already_attached", "This delivery already has a receipt photo");
   }
 
+  await auditOperationalTaskOverride(actor, h.location_id, "receiving", "attachDeliveryReceipt");
   await audit({
     actorId: actor.user.id, actorRole: actor.user.role,
     action: "delivery.receipt_attached", resourceTable: "vendor_deliveries", resourceId: deliveryId,

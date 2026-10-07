@@ -30,6 +30,9 @@ import {
 import { rowToCompletion } from "@/lib/checklist-rows";
 import type { OpeningEntryPhase2 } from "@/lib/types";
 
+// These scenarios begin after task authorization; assignment-gates covers refusal.
+vi.mock("@/lib/assignments", () => ({ hasTaskAccess: vi.fn(async () => true) }));
+
 vi.mock("@/lib/audit", () => ({ audit: vi.fn(async () => {}) }));
 
 const auditMock = vi.mocked(audit);
@@ -113,7 +116,11 @@ function serviceWithRpcError(
   readBack: ReadBack = { rows: [SIBLING_PHASE1_ROW, WINNER_ROW] },
 ) {
   const rpc = vi.fn(async () => ({ data: null, error }));
-  const from = vi.fn(() => {
+  const from = vi.fn((table: string) => {
+    if (table === "checklist_instances") {
+      const instanceQuery = { select: () => instanceQuery, eq: () => instanceQuery, maybeSingle: async () => ({ data: { location_id: "shop", date: "2026-10-07" }, error: null }) };
+      return instanceQuery;
+    }
     if ("throws" in readBack) throw new Error("transport exploded");
     const settled =
       "error" in readBack

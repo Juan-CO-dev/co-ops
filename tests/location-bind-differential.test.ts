@@ -51,6 +51,9 @@ const TENANCY_SCOPED_TABLES = [
   "vendor_rhythm_skips",
   // 0214 — the AM prep draft is one shop's unsubmitted count for one day.
   "am_prep_drafts",
+  "stations",
+  "station_events",
+  "report_assignments",
 ];
 
 /**
@@ -58,7 +61,7 @@ const TENANCY_SCOPED_TABLES = [
  * though it never names the table with .from(…) (0214: save_am_prep_draft merges the AM prep
  * draft atomically, so saveAmPrepDraft has no .from("am_prep_drafts") write of its own).
  */
-const TENANCY_SCOPED_RPCS = ["save_am_prep_draft", "receiving_create_store", "receiving_create_store_item", "receiving_resolve_pending_item", "receiving_manage_store"];
+const TENANCY_SCOPED_RPCS = ["save_am_prep_draft", "write_station_event", "write_task_assignment", "receiving_create_store", "receiving_create_store_item", "receiving_resolve_pending_item", "receiving_manage_store"];
 
 /** Any of these in a function body counts as "the actor was bound to a location". */
 const BIND_PRIMITIVES = [
@@ -90,6 +93,7 @@ const FILES = [
   "lib/dynamic-pars.ts",
   // 0214 — saveAmPrepDraft / consumeAmPrepDraft bind inside the lib (Wave 1 branch A).
   "lib/am-prep-draft.ts",
+  "lib/assignments.ts",
 ];
 
 /**
@@ -139,6 +143,8 @@ function exportedAsyncFunctions(source: string): Fn[] {
 const WRITE_CALLS = [".insert(", ".update(", ".upsert(", ".delete(", ".rpc("];
 
 function writesScopedTable(body: string): string | null {
+  // 0217's stable date resolver is read-only; do not mistake its RPC for a write.
+  body = body.replaceAll('.rpc("station_business_date",', '.readRpc("station_business_date",');
   for (const r of TENANCY_SCOPED_RPCS) {
     if (body.includes(`.rpc("${r}"`)) return `rpc:${r}`;
   }
@@ -171,6 +177,14 @@ describe("differential location-bind check — every actor-taking writer of a te
           for (const n of ["createPackage", "updatePackage", "deactivatePackage", "addPackageLine", "addSlotOption", "setSlotOptionClassic", "removeSlotOption", "removePackageLineItem"]) {
             expect(names, `${n} must be detected as a writer`).toContain(n);
           }
+        });
+      }
+
+      if (rel === "lib/assignments.ts") {
+        it("detects every station and task writer", () => {
+          expect(writers.map(({ f }) => f.name).sort()).toEqual([
+            "assignTask", "retractTask", "saveStation", "writeStationEvent",
+          ]);
         });
       }
 

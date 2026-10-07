@@ -1,3 +1,4 @@
+import { canDoOperationalTask } from "@/lib/operational-task-access";
 /**
  * /pm-report — PM Report fill/submit surface (KH+ only).
  *
@@ -56,6 +57,8 @@ export default async function PmReportPage({ searchParams }: PageProps) {
   const locActor: LocationActor = { role: auth.role, locations: auth.locations };
   if (!lockLocationContext(locActor, locationParam)) redirect("/dashboard");
 
+  if (!(await canDoOperationalTask(auth, locationParam, "pm_report"))) redirect("/dashboard");
+
   const now = new Date();
   const { date, minutesOfDay } = operationalNow(now);
 
@@ -75,7 +78,7 @@ export default async function PmReportPage({ searchParams }: PageProps) {
     date,
     actor: { userId: auth.user.id, role: auth.role, level: auth.level },
   });
-  const report = await loadPmReportForEdit(sb, { locationId, date });
+  const report = await loadPmReportForEdit(sb, { locationId, date, actor });
 
   // Compute timeliness by reusing loadReportStatuses + computeOverdue from midshift.
   // Same composition as loadMidShiftPulse does — reuse the exports, don't re-implement.

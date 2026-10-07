@@ -1,3 +1,5 @@
+import { auditTaskOverride, hasTaskAccess } from "@/lib/assignments";
+import { etCalendarDate } from "@/lib/operational-day";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { RoleCode } from "@/lib/roles";
 
@@ -7,6 +9,11 @@ export interface PmActor {
   userId: string;
   role: RoleCode;
   level: number;
+}
+
+async function requirePmTask(service: SupabaseClient, actor: PmActor, locationId: string): Promise<void> {
+  if (!(await hasTaskAccess(service, { userId: actor.userId, level: actor.level, locationId,
+    date: etCalendarDate(new Date().toISOString()), task: "pm_report" }))) throw new PmReportError(403, "forbidden");
 }
 
 export type Gradient = "great" | "good" | "needs_work";
@@ -131,8 +138,9 @@ export interface PmReportForEdit {
 /** Full report for the KH+ fill/edit surface — includes notes. */
 export async function loadPmReportForEdit(
   service: SupabaseClient,
-  args: { locationId: string; date: string },
+  args: { locationId: string; date: string; actor: PmActor },
 ): Promise<PmReportForEdit | null> {
+  await requirePmTask(service, args.actor, args.locationId);
   const { data: report } = await service
     .from("pm_reports")
     .select("id, status, mvp_user_id, mvp_note, submitted_at, submitted_by")
@@ -230,6 +238,7 @@ export async function getOrCreatePmReport(
   service: SupabaseClient,
   args: { locationId: string; date: string; actor: PmActor },
 ): Promise<{ id: string }> {
+  await requirePmTask(service, args.actor, args.locationId);
   const { data: existing } = await service
     .from("pm_reports")
     .select("id")
@@ -244,6 +253,7 @@ export async function getOrCreatePmReport(
     .select("id")
     .single<{ id: string }>();
   if (error) throw new Error(`getOrCreatePmReport: ${error.message}`);
+  await auditTaskOverride(service, { ...args.actor, locationId: args.locationId, date: args.date, task: "pm_report", operation: "pm_report.create" });
   return { id: data.id };
 }
 
@@ -313,6 +323,7 @@ export async function saveEmployeeEval(
     actor: PmActor;
   },
 ): Promise<{ id: string }> {
+  await requirePmTask(service, args.actor, args.locationId);
   // The status guard, ahead of both writes — see readReportStatus for why it is a
   // pre-check here and an in-UPDATE predicate in setMvp.
   const status = await readReportStatus(service, args.pmReportId);
@@ -340,6 +351,7 @@ export async function saveEmployeeEval(
     .select("id")
     .single<{ id: string }>();
   if (error) throw new Error(`saveEmployeeEval: ${error.message}`);
+  await auditPmOverride(service, args, "pm_report.evaluate");
   return { id: data.id };
 }
 
@@ -357,8 +369,9 @@ export async function saveEmployeeEval(
  */
 export async function setMvp(
   service: SupabaseClient,
-  args: { pmReportId: string; mvpUserId: string | null; mvpNote: string | null },
+  args: { pmReportId: string; mvpUserId: string | null; mvpNote: string | null; actor: PmActor; locationId: string },
 ): Promise<void> {
+  await requirePmTask(service, args.actor, args.locationId);
   const { error, count } = await service
     .from("pm_reports")
     .update({ mvp_user_id: args.mvpUserId, mvp_note: args.mvpNote }, { count: "exact" })
@@ -367,6 +380,7 @@ export async function setMvp(
     .is("superseded_at", null);
   if (error) throw new Error(`setMvp: ${error.message}`);
   if (count === 0) refuseClosedReport(await readReportStatus(service, args.pmReportId));
+  await auditPmOverride(service, args, "pm_report.mvp");
 }
 
 /**
@@ -399,6 +413,7 @@ export async function submitPmReport(
   service: SupabaseClient,
   args: { pmReportId: string; locationId: string; actor: PmActor },
 ): Promise<{ notified: number }> {
+  await requirePmTask(service, args.actor, args.locationId);
   const { error, count } = await service
     .from("pm_reports")
     .update(
@@ -410,6 +425,7 @@ export async function submitPmReport(
     .is("superseded_at", null);
   if (error) throw new Error(`submitPmReport: ${error.message}`);
   if (count === 0) return { notified: 0 };
+  await auditPmOverride(service, args, "pm_report.submit");
 
   // Notify each evaluated employee (one notification, recipients = the evaluated set).
   const { data: evalRows } = await service
@@ -438,4 +454,13 @@ export async function submitPmReport(
     metadata: { notified: employeeIds.length }, ipAddress: null, userAgent: null,
   });
   return { notified: employeeIds.length };
+}
+
+/** Read the stored report date so historical corrections audit the right assignment. */
+async function auditPmOverride(service: SupabaseClient, args: { pmReportId: string; locationId: string; actor: PmActor }, operation: string): Promise<void> {
+  try {
+    const { data, error } = await service.from("pm_reports").select("report_date").eq("id", args.pmReportId).maybeSingle<{ report_date: string }>();
+    if (error || !data) throw new Error("Report audit context unavailable");
+    await auditTaskOverride(service, { ...args.actor, locationId: args.locationId, date: data.report_date, task: "pm_report", operation });
+  } catch { console.error("PM override audit context lookup failed"); }
 }

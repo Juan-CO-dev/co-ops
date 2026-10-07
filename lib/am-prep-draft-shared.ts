@@ -309,19 +309,6 @@ export function amPrepDraftApplies(args: {
   return args.itemCount > 0;
 }
 
-/**
- * The role gate — the SAME one `submitAmPrep` applies (lib/prep.ts): level at or above
- * AM_PREP_BASE_LEVEL, or an active am_prep assignment for this shop and day. The level is
- * a parameter so this module stays free of the server lib.
- */
-export function canWriteAmPrepDraft(args: {
-  actorLevel: number;
-  baseLevel: number;
-  hasAssignment: boolean;
-}): boolean {
-  return args.actorLevel >= args.baseLevel || args.hasAssignment;
-}
-
 /** Backoff for a failed autosave: 2 s, 4 s, 8 s, 16 s, then every 30 s. */
 export function amPrepDraftRetryDelayMs(attempt: number): number {
   const n = Math.max(1, Math.floor(attempt));

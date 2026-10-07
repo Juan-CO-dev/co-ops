@@ -1,3 +1,4 @@
+import { canDoOperationalTask } from "@/lib/operational-task-access";
 import { type NextRequest } from "next/server";
 import { jsonError, jsonOk, parseJsonBody } from "@/lib/api-helpers";
 import { lockLocationContext } from "@/lib/locations";
@@ -80,6 +81,8 @@ export async function POST(req: NextRequest) {
     return jsonError(403, "role_insufficient", { required_level: PM_REPORT_BASE_LEVEL });
   }
 
+  if (!(await canDoOperationalTask(ctx, locationId, "pm_report"))) return jsonError(403, "forbidden");
+
   const actor = { userId: ctx.user.id, role: ctx.role, level: ctx.level };
   // Compute date server-side — never trust client-supplied date as the report key.
   const date = operationalNow(new Date()).date;
@@ -137,6 +140,7 @@ export async function POST(req: NextRequest) {
     try {
       const { id: pmReportId } = await getOrCreatePmReport(service, { locationId, date, actor });
       await setMvp(service, {
+        actor, locationId,
         pmReportId,
         mvpUserId: isUuid(b.mvpUserId) ? b.mvpUserId : null,
         mvpNote: typeof b.mvpNote === "string" ? b.mvpNote : null,
@@ -155,6 +159,7 @@ export async function POST(req: NextRequest) {
       const { notified } = await submitPmReport(service, { pmReportId, locationId, actor });
       return jsonOk({ notified });
     } catch (err) {
+      if (err instanceof PmReportError) return jsonError(err.status, err.code);
       console.error("[/api/pm-report] submit failed:", err instanceof Error ? err.message : err);
       return jsonError(500, "internal_error", { message: "submit failed" });
     }

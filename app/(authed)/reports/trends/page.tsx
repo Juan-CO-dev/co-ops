@@ -7,7 +7,7 @@
 import { redirect } from "next/navigation";
 
 import { serverT } from "@/lib/i18n/server";
-import { lockLocationContext, type LocationActor } from "@/lib/locations";
+import { canReadReportLocation, type LocationActor } from "@/lib/locations";
 import { operationalNow } from "@/lib/midshift";
 import { loadTrendSeries } from "@/lib/reports-trends";
 import { loadTeamOperatingHealth, TEAM_VIEW_LEVEL } from "@/lib/team-metrics";
@@ -26,7 +26,7 @@ export default async function TrendsLandingPage({ searchParams }: PageProps) {
   const { location: locationParam } = await searchParams;
   if (!locationParam) redirect("/dashboard");
   const locActor: LocationActor = { role: auth.role, locations: auth.locations };
-  if (!lockLocationContext(locActor, locationParam)) redirect("/dashboard");
+  if (!canReadReportLocation(locActor, locationParam)) redirect("/dashboard");
 
   const language = auth.user.language;
   const today = operationalNow(new Date()).date;

@@ -1,3 +1,4 @@
+import { auditOperationalTaskOverride, canDoOperationalTask, canTriageUnattributedReceipt } from "@/lib/operational-task-access";
 /**
  * Receipt PARSE engine — the LLM leg of the inbound channel (Vendor Ordering V2 §4;
  * migration 0175 added the doc_kind column). SERVER-ONLY, service-role client; reads
@@ -127,7 +128,7 @@ interface Extraction {
  * NEVER throws for expected conditions (missing row, no content, guarded-write race, API
  * failure) — those become an ok:false / 'failed' outcome. Programmer errors still throw.
  */
-export async function parseReceipt(sb: ServiceClient, receiptId: string): Promise<{ ok: boolean; docKind?: string }> {
+export async function parseReceipt(sb: ServiceClient, receiptId: string, onWritten?: () => Promise<void>): Promise<{ ok: boolean; docKind?: string }> {
   const { data: r, error } = await sb
     .from("email_receipts")
     .select("id, parse_state, source, subject, from_address, location_id, vendor_guess_id, received_at, linked_po_id, raw_storage_path, attachment_paths")
@@ -144,26 +145,26 @@ export async function parseReceipt(sb: ServiceClient, receiptId: string): Promis
 
   if (assets.length === 0) {
     // Nothing to feed the model → honest failure (retryable). Guarded write.
-    return await writeFailed(sb, r.id, "no_content", notes);
+    return await writeFailed(sb, r.id, "no_content", notes, onWritten);
   }
 
   // Build + call the Messages API. A missing key is a caller error (the cron/route gate
   // 503s when ANTHROPIC_API_KEY is unset) — but be defensive: treat it as a failed parse
   // rather than throwing an unhandled error into a per-row loop.
   const apiKey = process.env.ANTHROPIC_API_KEY;
-  if (!apiKey) return await writeFailed(sb, r.id, "no_api_key", notes);
+  if (!apiKey) return await writeFailed(sb, r.id, "no_api_key", notes, onWritten);
   const model = process.env.AI_PARSE_MODEL || DEFAULT_PARSE_MODEL;
 
   let rawText: string | null;
   try {
     rawText = await callAnthropic(apiKey, model, assets);
   } catch (e) {
-    return await writeFailed(sb, r.id, `api_error: ${truncate(e instanceof Error ? e.message : String(e), 200)}`, notes);
+    return await writeFailed(sb, r.id, `api_error: ${truncate(e instanceof Error ? e.message : String(e), 200)}`, notes, onWritten);
   }
-  if (rawText == null) return await writeFailed(sb, r.id, "empty_response", notes);
+  if (rawText == null) return await writeFailed(sb, r.id, "empty_response", notes, onWritten);
 
   const extraction = parseAndValidate(rawText);
-  if (!extraction) return await writeFailed(sb, r.id, "unparseable_json", notes);
+  if (!extraction) return await writeFailed(sb, r.id, "unparseable_json", notes, onWritten);
 
   // GUARDED parsed write (silent-UPDATE + rowcount law): flip only while still 'unparsed'.
   // A raced parse (cron × Parse-now) that lost → count 0 → ok:false, no PO effects, no audit.
@@ -176,13 +177,14 @@ export async function parseReceipt(sb: ServiceClient, receiptId: string): Promis
   if (uErr) {
     console.error(`[receipt-parse] parsed write failed for receipt=${r.id}:`, uErr.message);
     // The write itself errored (not a race). Record the failure so the row is retryable.
-    return await writeFailed(sb, r.id, `write_error: ${truncate(uErr.message, 200)}`, notes);
+    return await writeFailed(sb, r.id, `write_error: ${truncate(uErr.message, 200)}`, notes, onWritten);
   }
   if (count === 0) {
     // A concurrent parse won the row. Do NOT audit, do NOT re-run effects — the winner did.
     return { ok: false };
   }
 
+  await onWritten?.();
   await audit({
     actorId: null, actorRole: null,
     action: "receipt.parsed", resourceTable: "email_receipts", resourceId: r.id,
@@ -229,6 +231,7 @@ async function writeFailed(
   receiptId: string,
   reason: string,
   notes: string[],
+  onWritten?: () => Promise<void>,
 ): Promise<{ ok: boolean }> {
   const parsedJson = { reason, notes, failed_at: new Date().toISOString() };
   const { error, count } = await sb
@@ -241,6 +244,7 @@ async function writeFailed(
     return { ok: false };
   }
   if (count === 0) return { ok: false }; // raced away — winner owns it.
+  await onWritten?.();
   await audit({
     actorId: null, actorRole: null,
     action: "receipt.parsed", resourceTable: "email_receipts", resourceId: receiptId,
@@ -603,19 +607,31 @@ export async function parseReceiptForActor(
     throw new EmailReceiptError(404, "not_found", "Receipt not found");
   }
 
+  const allowed = r.location_id != null
+    ? await canDoOperationalTask(actor, r.location_id, "receiving")
+    : await canTriageUnattributedReceipt(actor);
+  if (!allowed) throw new EmailReceiptError(403, "forbidden");
+
   // MANUAL RETRY (spec §4 "retryable manually, never retried infinitely"): a human tap on a
   // 'failed' row resets it to 'unparsed' (guarded — a raced concurrent reset loses quietly)
   // so parseReceipt will take it. The CRON never does this: its sweep excludes 'failed', so
   // a poison document costs exactly one LLM call per HUMAN decision, never unbounded spend.
+  let overrideRecorded = false;
   if (r.parse_state === "failed") {
-    const { error: rErr } = await sb
+    const { error: rErr, count: resetCount } = await sb
       .from("email_receipts")
-      .update({ parse_state: "unparsed" })
+      .update({ parse_state: "unparsed" }, { count: "exact" })
       .eq("id", receiptId).eq("parse_state", "failed");
     if (rErr) throw new Error(`parseReceiptForActor retry reset: ${rErr.message}`);
+    if (resetCount && r.location_id != null) {
+      await auditOperationalTaskOverride(actor, r.location_id, "receiving", "parseReceiptForActor");
+      overrideRecorded = true;
+    }
   }
 
-  await parseReceipt(sb, receiptId);
+  await parseReceipt(sb, receiptId, async () => {
+    if (!overrideRecorded && r.location_id != null) await auditOperationalTaskOverride(actor, r.location_id, "receiving", "parseReceiptForActor");
+  });
 
   // Report the TRUE post-parse state (parseReceipt may have parsed, failed, or no-op'd on a
   // race). Read it back rather than trust the return so the UI reflects a concurrent winner.

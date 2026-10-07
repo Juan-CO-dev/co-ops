@@ -1,8 +1,9 @@
+import { auditOperationalTaskOverride, canDoOperationalTask } from "@/lib/operational-task-access";
 /**
  * Manager physical-count data layer (pack hierarchy PR 2, migration 0160).
- * SERVER-ONLY, service-role client; authorization is APP-LAYER (AGM+ gate +
- * location-bind IDOR; the WRITE also requires Tier-A step-up, enforced at the
- * route per adjudication A4). Pure math lives in lib/counts-shared.ts.
+ * SERVER-ONLY, service-role client; authorization is APP-LAYER (assigned KH+
+ * writes, AGM+ reads, location bind). The route requires PIN re-entry for
+ * levels 4-5 and Tier-A password step-up for AGM+. Pure math lives in lib/counts-shared.ts.
  *
  * ── ANCHOR SEMANTIC (adversarial review #2, controller-adjudicated F1) ─────────
  *   EVENTS ARE SESSIONS; ANCHORS ARE PER-SKU (latest counted line wins); SPOT
@@ -92,7 +93,7 @@ const INFERRED_WINDOW_DAYS = 28;
 const INFERRED_COVERAGE_DAYS = 7;
 
 export const COUNT_READ_MIN = 6; // AGM+
-export const COUNT_WRITE_MIN = 6; // AGM+ (Tier-A step-up enforced at the route)
+export const COUNT_WRITE_MIN = 4; // Assigned KH+; levels 4-5 re-enter PIN, AGM+ use Tier-A password step-up
 
 export class CountError extends Error {
   /** Structured facts the client can translate (e.g. which line could not be anchored). */
@@ -209,8 +210,20 @@ export interface CountFormData {
 
 /** Load active SKUs + each one's root→leaf chain labels for the count level picker. */
 export async function loadCountFormData(actor: AuthContext, locationId: string): Promise<CountFormData> {
+  requireLevel(actor, COUNT_WRITE_MIN);
+  if (!lockLocationContext(actorLoc(actor), locationId)) throw new CountError(404, "not_found", "Location not found");
+  if (!(await canDoOperationalTask(actor, locationId, "counts"))) throw new CountError(403, "forbidden");
+  return loadCountCatalog(locationId);
+}
+
+/** Reference labels for the AGM+ read-only variance/on-hand panel; never authorizes a count. */
+export async function loadCountReferenceData(actor: AuthContext, locationId: string): Promise<CountFormData> {
   requireLevel(actor, COUNT_READ_MIN);
   if (!lockLocationContext(actorLoc(actor), locationId)) throw new CountError(404, "not_found", "Location not found");
+  return loadCountCatalog(locationId);
+}
+
+async function loadCountCatalog(locationId: string): Promise<CountFormData> {
   const sb = getServiceRoleClient();
   const { data: skus, error } = await sb.from("vendor_items").select("id, name, pack_format, vendor_id, product_id").eq("active", true).order("name", { ascending: true })
     .returns<Array<{ id: string; name: string; pack_format: string | null; vendor_id: string | null; product_id: string | null }>>();
@@ -422,6 +435,7 @@ interface AllocatedProductLine {
 export async function createCountEvent(actor: AuthContext, input: CreateCountEventInput): Promise<{ countEventId: string; advisories: CountAdvisory[] }> {
   requireLevel(actor, COUNT_WRITE_MIN);
   if (!lockLocationContext(actorLoc(actor), input.locationId)) throw new CountError(404, "not_found", "Location not found");
+  if (!(await canDoOperationalTask(actor, input.locationId, "counts"))) throw new CountError(403, "forbidden");
   if (!Array.isArray(input.lines) || input.lines.length === 0) throw new CountError(400, "no_lines", "At least one count line is required");
   // Phase 5: the sheet's default row is a PRODUCT (spec option C); tap-to-split writes
   // the per-SKU lines it always did. Both forms are validated identically below —
@@ -580,6 +594,7 @@ export async function createCountEvent(actor: AuthContext, input: CreateCountEve
     });
   }
 
+  await auditOperationalTaskOverride(actor, input.locationId, "counts", "createCountEvent");
   await audit({
     actorId: actor.user.id, actorRole: actor.user.role,
     action: "sku_count.recorded", resourceTable: "sku_count_events", resourceId: ev.id,
@@ -1733,7 +1748,7 @@ export interface CountsTileState {
  * column) and only exists inside loadOnHand's live drift math, so the tile
  * renders its honest absence rather than a fabricated number.
  *
- * Same gates as the surface it feeds: COUNT_READ_MIN (AGM+) + location-bind.
+ * Location-bound: AGM+ reference reads, or current task access for KH/SL counters.
  * A failed read MUST throw — an empty result is the COLD START signal ("this
  * location was never counted"), so a swallowed error would fabricate it.
  */
@@ -1741,9 +1756,14 @@ export async function loadCountsTileState(
   actor: AuthContext,
   locationId: string,
 ): Promise<CountsTileState> {
-  requireLevel(actor, COUNT_READ_MIN);
+  requireLevel(actor, COUNT_WRITE_MIN);
   if (!lockLocationContext(actorLoc(actor), locationId)) {
     throw new CountError(404, "not_found", "Location not found");
+  }
+  // Assigned counters need the tile's last-count status; detailed variance/history
+  // remains AGM+ in loadOnHand. Existing AGM+ pulse reads keep their read authority.
+  if (getRoleLevel(actor.user.role) < COUNT_READ_MIN && !(await canDoOperationalTask(actor, locationId, "counts"))) {
+    throw new CountError(403, "forbidden");
   }
   const sb = getServiceRoleClient();
 
