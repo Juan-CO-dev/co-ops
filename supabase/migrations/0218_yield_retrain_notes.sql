@@ -1,5 +1,6 @@
 -- Migration 0218_yield_retrain_notes
 -- AUTHORED 2026-10-07. NOT YET APPLIED — GATE (CC/JUAN). Sim first, prod on Juan's word.
+-- APPLIED TO PROD 2026-10-07 (schema_migrations version 20261007211913, name '0218_yield_retrain_notes'; sim first, version 20261007211809). The line above is the authoring-time gate note, kept as history.
 -- Provenance: batch vs bottle PHASE B (GO-coops-bvb-phaseB-2026-10-07 + the plan S r4 §5 addendum).
 --   Juan, 2026-10-07: "Average of 10 batches and a nudge when it's off 15%… also we need to track
 --   it being under and over… since under they are doing something wrong and same if it's over."
