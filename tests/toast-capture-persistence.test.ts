@@ -1,8 +1,10 @@
+import { recordCaptureReconciliation } from "@/lib/toast/capture-reconciliation";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { captureToastDaySystem } from "@/lib/toast/capture";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import { toastConfigured, toastGet, toastGetPage } from "@/lib/toast/client";
 
+vi.mock("@/lib/toast/capture-reconciliation", () => ({ recordCaptureReconciliation: vi.fn() }));
 vi.mock("@/lib/supabase-server", () => ({ getServiceRoleClient: vi.fn() }));
 vi.mock("@/lib/toast/client", async (original) => ({ ...await original<typeof import("@/lib/toast/client")>(), toastConfigured: vi.fn(), toastGet: vi.fn(), toastGetPage: vi.fn() }));
 
@@ -113,4 +115,29 @@ it("aborts in-flight orders at 60s and cannot publish after a late response", as
     await vi.advanceTimersByTimeAsync(1);
     expect(rpc).not.toHaveBeenCalled();
   } finally { vi.useRealTimers(); }
+});
+
+it("reconciles only after publication using the exact normalized quantities saved for this run", async () => {
+  vi.mocked(toastGet).mockResolvedValue([{ guid: "order", businessDate: 20260722,
+    checks: [{ guid: "check", selections: [{ guid: "selection", item: { guid: "item" }, quantity: 2 }] }] }]);
+  vi.mocked(recordCaptureReconciliation).mockImplementation(async () => {
+    expect(rpc.mock.calls.at(-1)?.[0]).toBe("toast_capture_finish");
+    return { status: "mismatch", error: "capture_reconciliation_mismatch" };
+  });
+  const result = await captureToastDaySystem("shadow-shop", "2026-07-22", { reconcile: true });
+  expect(result).toMatchObject({ skipped: false, reconciliation: { status: "mismatch" } });
+  expect(recordCaptureReconciliation).toHaveBeenCalledWith("shadow-shop", "2026-07-22", result.runId,
+    [expect.objectContaining({ order: expect.objectContaining({ selection_units: [expect.objectContaining({ item_guid: "item", quantity: 2 })] }) })], expect.any(AbortSignal));
+  expect(rpc.mock.calls[0]?.[1].p_orders[0].order.selection_units).toMatchObject([{ item_guid: "item", quantity: 2 }]);
+});
+it("a reconciliation write failure preserves the completed capture and returns a safe error", async () => {
+  vi.mocked(recordCaptureReconciliation).mockRejectedValue(new Error("capture_reconciliation_write_failed"));
+  const result = await captureToastDaySystem("shadow-write-failure", "2026-07-22", { reconcile: true });
+  expect(result).toMatchObject({ skipped: false, reconciliation: { status: "skipped", error: "capture_reconciliation_write_failed" } });
+  expect(writes.slice(1)).not.toEqual(expect.arrayContaining([expect.objectContaining({ data: expect.objectContaining({ status: "failed" }) })]));
+});
+it("does not reconcile an unpublished failed capture", async () => {
+  pageError = true;
+  await expect(captureToastDaySystem("shadow-failed", "2026-07-22", { reconcile: true })).rejects.toThrow("capture_page_write_failed");
+  expect(recordCaptureReconciliation).not.toHaveBeenCalled();
 });

@@ -12,6 +12,19 @@ create table public.toast_capture_runs (
  status text not null default 'running' check(status in ('running','completed','failed')), error_code text,
  unique(id,location_id,business_date), check((status = 'running') = (finished_at is null))
 );
+-- Append-only shadow evidence, bound to the exact location/date capture attempt.
+create table public.toast_capture_reconciliations (
+ id uuid primary key default gen_random_uuid(), location_id uuid not null,
+ business_date date not null, run_id uuid not null unique,
+ status text not null check(status in ('match','mismatch','skipped')),
+ old_units numeric, new_units numeric,
+ mismatched_items jsonb not null default '[]'::jsonb,
+ created_at timestamptz not null default now(),
+ foreign key(run_id,location_id,business_date) references public.toast_capture_runs(id,location_id,business_date),
+ check(jsonb_typeof(mismatched_items)='array' and jsonb_array_length(mismatched_items)<=50),
+ check(status='skipped' or (old_units is not null and new_units is not null))
+);
+create index toast_capture_reconciliations_location_date on public.toast_capture_reconciliations(location_id,business_date);
 create index toast_capture_runs_location_date on public.toast_capture_runs(location_id,business_date,status);
 create table public.toast_orders (
  id uuid primary key default gen_random_uuid(), location_id uuid not null references public.locations(id),
@@ -19,7 +32,8 @@ create table public.toast_orders (
  opened_at timestamptz, closed_at timestamptz, paid_at timestamptz, modified_at timestamptz, promised_at timestamptz,
  source text, revenue_center_guid text, dining_option_guid text, server_guid text,
  deleted boolean not null, voided boolean not null, excess_food boolean not null,
- third_party_provider_guid text,
+ third_party_provider_guid text, third_party_provider_name text,
+ selection_units jsonb not null default '[]'::jsonb check(jsonb_typeof(selection_units)='array'),
  unique(location_id,order_guid,content_hash), unique(id,location_id,business_date)
 );
 create index toast_orders_location_date on public.toast_orders(location_id,business_date);
@@ -85,18 +99,17 @@ create table public.sales_channel_map (
 );
 insert into public.sales_channel_map(dining_option_label)
 select distinct dining_option from public.toast_sales_events where dining_option is not null and btrim(dining_option)<>'';
--- All 18 production labels are proposals only. Juan must confirm before reviewed_at
--- and effective channel/provider/fulfillment are set. Missing/unreviewed = Unknown.
+-- All 18 labels reviewed by CC + Juan, 2026-10-07. Other labels remain Unknown.
 insert into public.sales_channel_map(dining_option_label,proposed_channel,proposed_provider,proposed_fulfillment,proposal_note)
 values
  ('Dine In','dine_in','house',null,null),
  ('Take Out','takeout','house',null,null),
  ('Online Ordering - Takeout','online','house','takeout','Toast Online'),
- ('App Pickup','app','house','takeout',null),
- ('App Delivery','app','house','delivery',null),
- ('Delivery','delivery','house','delivery','UNCERTAIN: confirm house provider'),
+ ('App Pickup','app','CO app','takeout',null),
+ ('App Delivery','app','CO app','delivery',null),
+ ('Delivery','third_party',null,'delivery','Unknown provider; order thirdPartyProviderInfo overrides when present'),
  ('Toast Delivery Services','delivery','Toast Delivery Services','delivery',null),
- ('DeliverThat','delivery','DeliverThat','delivery','UNCERTAIN: may be catering courier'),
+ ('DeliverThat','catering','DeliverThat','delivery','Catering courier'),
  ('Uber Eats - Delivery','third_party','Uber Eats','delivery',null),
  ('Uber Eats - Takeout','third_party','Uber Eats','takeout',null),
  ('DoorDash - Delivery','third_party','DoorDash','delivery',null),
@@ -110,13 +123,19 @@ values
 on conflict(dining_option_label) do update set
  proposed_channel=excluded.proposed_channel,proposed_provider=excluded.proposed_provider,
  proposed_fulfillment=excluded.proposed_fulfillment,proposal_note=excluded.proposal_note;
+update public.sales_channel_map set channel=proposed_channel,provider=proposed_provider,
+ fulfillment=proposed_fulfillment,reviewed_at='2026-10-07T00:00:00Z'
+where dining_option_label in ('Dine In','Take Out','Online Ordering - Takeout','App Pickup','App Delivery',
+ 'Delivery','Toast Delivery Services','DeliverThat','Uber Eats - Delivery','Uber Eats - Takeout',
+ 'DoorDash - Delivery','DoorDash - Takeout','Grubhub - Delivery','Grubhub - Takeout',
+ 'Ezcater','EZ Cater','Catering','Catering- Pick Up');
 
 create view public.toast_orders_latest with (security_invoker=true) as
 -- Expose location/date from the pointer so report filters use its composite index.
 select o.id,p.location_id,p.order_guid,p.business_date,o.content_hash,
  o.opened_at,o.closed_at,o.paid_at,o.modified_at,o.promised_at,
  o.source,o.revenue_center_guid,o.dining_option_guid,o.server_guid,
- o.deleted,o.voided,o.excess_food,o.third_party_provider_guid
+ o.deleted,o.voided,o.excess_food,o.third_party_provider_guid,o.third_party_provider_name,o.selection_units
 from public.toast_order_latest_pointers p join public.toast_orders o on o.id=p.snapshot_id;
 
 create function public.toast_capture_page(p_run_id uuid,p_location_id uuid,p_business_date date,p_page integer,p_orders jsonb)
@@ -136,8 +155,8 @@ begin
   v_order := v_entry->'order';
   if (v_order->>'business_date')::date is distinct from p_business_date then raise exception 'toast_capture_date_mismatch'; end if;
   v_snapshot := null;
-  insert into public.toast_orders(location_id,order_guid,business_date,content_hash,opened_at,closed_at,paid_at,modified_at,promised_at,source,revenue_center_guid,dining_option_guid,server_guid,deleted,voided,excess_food,third_party_provider_guid)
-  values(p_location_id,v_order->>'order_guid',p_business_date,v_entry->>'content_hash',(v_order->>'opened_at')::timestamptz,(v_order->>'closed_at')::timestamptz,(v_order->>'paid_at')::timestamptz,(v_order->>'modified_at')::timestamptz,(v_order->>'promised_at')::timestamptz,v_order->>'source',v_order->>'revenue_center_guid',v_order->>'dining_option_guid',v_order->>'server_guid',(v_order->>'deleted')::boolean,(v_order->>'voided')::boolean,(v_order->>'excess_food')::boolean,v_order->>'third_party_provider_guid')
+  insert into public.toast_orders(location_id,order_guid,business_date,content_hash,opened_at,closed_at,paid_at,modified_at,promised_at,source,revenue_center_guid,dining_option_guid,server_guid,deleted,voided,excess_food,third_party_provider_guid,third_party_provider_name,selection_units)
+  values(p_location_id,v_order->>'order_guid',p_business_date,v_entry->>'content_hash',(v_order->>'opened_at')::timestamptz,(v_order->>'closed_at')::timestamptz,(v_order->>'paid_at')::timestamptz,(v_order->>'modified_at')::timestamptz,(v_order->>'promised_at')::timestamptz,v_order->>'source',v_order->>'revenue_center_guid',v_order->>'dining_option_guid',v_order->>'server_guid',(v_order->>'deleted')::boolean,(v_order->>'voided')::boolean,(v_order->>'excess_food')::boolean,v_order->>'third_party_provider_guid',v_order->>'third_party_provider_name',coalesce(v_order->'selection_units','[]'::jsonb))
   on conflict(location_id,order_guid,content_hash) do nothing returning id into v_snapshot;
   v_new := v_snapshot is not null;
   if not v_new then select id into strict v_snapshot from public.toast_orders where location_id=p_location_id and order_guid=v_order->>'order_guid' and content_hash=v_entry->>'content_hash'; end if;
@@ -182,13 +201,14 @@ end $$;
 -- RLS has no allow policies and an explicit DELETE denial. Even service_role
 -- has no destructive table grants.
 do $$ declare t text; begin
- foreach t in array array['toast_capture_runs','toast_orders','toast_order_checks','toast_check_discounts','toast_check_service_charges','toast_payments','toast_capture_pages','toast_capture_run_orders','toast_order_latest_pointers','toast_discounts','toast_revenue_centers','toast_dining_options','sales_channel_map'] loop
+ foreach t in array array['toast_capture_reconciliations','toast_capture_runs','toast_orders','toast_order_checks','toast_check_discounts','toast_check_service_charges','toast_payments','toast_capture_pages','toast_capture_run_orders','toast_order_latest_pointers','toast_discounts','toast_revenue_centers','toast_dining_options','sales_channel_map'] loop
   execute format('alter table public.%I enable row level security',t);
   execute format('create policy %I on public.%I for delete using (false)',t || '_no_user_delete',t);
   execute format('revoke all on public.%I from public,anon,authenticated,service_role',t);
   execute format('grant select on public.%I to service_role',t);
  end loop;
 end $$;
+grant insert on public.toast_capture_reconciliations to service_role;
 grant insert on public.toast_capture_runs to service_role;
 grant update(status,finished_at,error_code) on public.toast_capture_runs to service_role;
 grant insert,update on public.toast_discounts,public.toast_revenue_centers,public.toast_dining_options to service_role;
@@ -197,8 +217,12 @@ grant select on public.toast_orders_latest to service_role;
 revoke all on function public.toast_capture_page(uuid,uuid,date,integer,jsonb),public.toast_capture_finish(uuid,uuid,date,integer) from public,anon,authenticated;
 grant execute on function public.toast_capture_page(uuid,uuid,date,integer,jsonb),public.toast_capture_finish(uuid,uuid,date,integer) to service_role;
 do $$ begin
+ if not has_table_privilege('service_role','public.toast_capture_reconciliations','INSERT')
+ or has_table_privilege('service_role','public.toast_capture_reconciliations','UPDATE')
+ or has_table_privilege('service_role','public.toast_capture_reconciliations','DELETE')
+ or has_table_privilege('service_role','public.toast_capture_reconciliations','TRUNCATE') then raise exception '0221 unexpected reconciliation grant'; end if;
  if exists(select 1 from information_schema.routine_privileges where routine_schema='public' and routine_name in ('toast_capture_page','toast_capture_finish') and grantee in ('PUBLIC','anon','authenticated')) then raise exception '0221 unexpected RPC grant'; end if;
- if exists(select 1 from information_schema.role_table_grants where table_schema='public' and table_name in ('toast_capture_runs','toast_orders','toast_order_checks','toast_check_discounts','toast_check_service_charges','toast_payments','toast_capture_pages','toast_capture_run_orders','toast_order_latest_pointers','toast_discounts','toast_revenue_centers','toast_dining_options','sales_channel_map','toast_orders_latest') and (grantee in ('PUBLIC','anon','authenticated') or (grantee='service_role' and privilege_type in ('DELETE','TRUNCATE')))) then raise exception '0221 unexpected table grant'; end if;
+ if exists(select 1 from information_schema.role_table_grants where table_schema='public' and table_name in ('toast_capture_reconciliations','toast_capture_runs','toast_orders','toast_order_checks','toast_check_discounts','toast_check_service_charges','toast_payments','toast_capture_pages','toast_capture_run_orders','toast_order_latest_pointers','toast_discounts','toast_revenue_centers','toast_dining_options','sales_channel_map','toast_orders_latest') and (grantee in ('PUBLIC','anon','authenticated') or (grantee='service_role' and privilege_type in ('DELETE','TRUNCATE')))) then raise exception '0221 unexpected table grant'; end if;
 end $$;
 commit;
 

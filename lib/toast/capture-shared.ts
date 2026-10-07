@@ -1,3 +1,5 @@
+import type { CaptureSelection } from "./capture-reconciliation-shared";
+
 /** Pure, explicit allowlist for the accounting capture. Never retain a raw object. */
 type Row = Record<string, unknown>;
 const obj = (x: unknown): Row => x !== null && typeof x === "object" && !Array.isArray(x) ? x as Row : {};
@@ -37,7 +39,7 @@ function date(x: unknown): string | null {
   return value;
 }
 export interface ToastCapturedOrder {
-  order: { order_guid: string; business_date: string; opened_at: string | null; closed_at: string | null; paid_at: string | null; modified_at: string | null; promised_at: string | null; source: string | null; revenue_center_guid: string | null; dining_option_guid: string | null; server_guid: string | null; deleted: boolean; voided: boolean; excess_food: boolean; third_party_provider_guid: string | null; };
+  order: { order_guid: string; business_date: string; opened_at: string | null; closed_at: string | null; paid_at: string | null; modified_at: string | null; promised_at: string | null; source: string | null; revenue_center_guid: string | null; dining_option_guid: string | null; server_guid: string | null; deleted: boolean; voided: boolean; excess_food: boolean; third_party_provider_guid: string | null; third_party_provider_name: string | null; selection_units: CaptureSelection[]; };
   checks: { check_guid: string; amount_cents: number | null; tax_cents: number | null; total_cents: number | null; voided: boolean; deleted: boolean }[];
   discounts: { check_guid: string; ordinal: number; selection_guid: string | null; applied_discount_guid: string | null; discount_guid: string | null; name: string | null; amount_cents: number | null; reason_guid: string | null; reason_name: string | null; approver_guid: string | null }[];
   service_charges: { check_guid: string; ordinal: number; service_charge_guid: string | null; name: string | null; amount_cents: number | null; gratuity: boolean; taxable: boolean }[];
@@ -49,7 +51,7 @@ export function normalizeToastOrder(input: unknown, businessDate: string): Toast
   if (!business_date || business_date !== businessDate) throw new Error("toast_capture_business_date_mismatch");
   const provider = obj(raw.thirdPartyProviderInfo);
   const result: ToastCapturedOrder = {
-    order: { order_guid: required(raw.guid), business_date, opened_at: instant(raw.openedDate), closed_at: instant(raw.closedDate), paid_at: instant(raw.paidDate), modified_at: instant(raw.modifiedDate), promised_at: instant(raw.promisedDate), source: text(raw.source), revenue_center_guid: guid(raw.revenueCenter), dining_option_guid: guid(raw.diningOption), server_guid: guid(raw.server), deleted: raw.deleted === true, voided: raw.voided === true, excess_food: raw.excessFood === true, third_party_provider_guid: guid(provider) },
+    order: { order_guid: required(raw.guid), business_date, opened_at: instant(raw.openedDate), closed_at: instant(raw.closedDate), paid_at: instant(raw.paidDate), modified_at: instant(raw.modifiedDate), promised_at: instant(raw.promisedDate), source: text(raw.source), revenue_center_guid: guid(raw.revenueCenter), dining_option_guid: guid(raw.diningOption), server_guid: guid(raw.server), deleted: raw.deleted === true, voided: raw.voided === true, excess_food: raw.excessFood === true, third_party_provider_guid: guid(provider), third_party_provider_name: text(provider.provider) ?? text(provider.providerName) ?? text(provider.name), selection_units: [] },
     checks: [], discounts: [], service_charges: [], payments: [],
   };
   for (const check of rows(raw.checks)) {
@@ -60,8 +62,23 @@ export function normalizeToastOrder(input: unknown, businessDate: string): Toast
       for (const d of rows(owner.appliedDiscounts)) result.discounts.push({ check_guid, ordinal: ordinal++, selection_guid, applied_discount_guid: text(d.guid), discount_guid: guid(d.discount), name: text(d.name), amount_cents: captureCents(d.discountAmount ?? d.amount), reason_guid: guid(obj(d.appliedDiscountReason).discountReason) ?? guid(d.appliedDiscountReason) ?? guid(d.reason), reason_name: text(obj(d.appliedDiscountReason).name), approver_guid: guid(d.approver) });
     };
     discounts(check, null);
-    const selections = (items: unknown) => { for (const s of rows(items)) { discounts(s, required(s.guid)); selections(s.modifiers); } };
-    selections(check.selections);
+    const selections = (items: unknown, parent: string | null, ancestorVoided: boolean, ancestorDeleted: boolean) => {
+      for (const s of rows(items)) {
+        const selection_guid = required(s.guid);
+        discounts(s, selection_guid);
+        const item_guid = guid(s.item);
+        const voided = ancestorVoided || s.voided === true;
+        const deleted = ancestorDeleted || s.deleted === true;
+        // Notes have no item identity: never retain their free-text displayName.
+        if (item_guid) {
+          if (typeof s.quantity !== "number" || !Number.isFinite(s.quantity)) throw new Error("toast_capture_invalid_quantity");
+          result.order.selection_units.push({ check_guid, selection_guid, parent_selection_guid: parent,
+            item_guid, name: text(s.displayName) ?? item_guid, quantity: s.quantity, voided, deleted });
+        }
+        selections(s.modifiers, selection_guid, voided, deleted);
+      }
+    };
+    selections(check.selections, null, result.order.voided || check.voided === true, result.order.deleted || check.deleted === true);
     for (const [index, s] of rows(check.appliedServiceCharges).entries()) result.service_charges.push({ check_guid, ordinal: index, service_charge_guid: guid(s.serviceCharge) ?? text(s.guid), name: text(s.name), amount_cents: captureCents(s.chargeAmount ?? s.amount), gratuity: s.gratuity === true, taxable: s.taxable === true });
     for (const p of rows(check.payments)) {
       const refund = obj(p.refund);

@@ -126,3 +126,14 @@ it("missing capture schema skips capture and alerts independently while selectio
     job: "toast-order-capture", results: expect.arrayContaining([expect.objectContaining({ skipped: true, error: "capture_schema_missing" })]),
   }) }));
 });
+
+ it.each(["mismatch", "skipped"] as const)("shadow %s flags capture heartbeat without failing selections", async (status) => {
+  vi.mocked(captureToastDaySystem).mockResolvedValue({ runId: "run", pages: 1, orders: 1, skipped: false,
+    reconciliation: { status, error: `capture_reconciliation_${status}` } });
+  expect(await runToastSalesPull({ businessDate: "2026-07-23" })).toMatchObject({ healthy: true, metadata: { capture_failures: 2, per_location_failures: 0 } });
+  expect(captureToastDaySystem).toHaveBeenCalledWith("shop1", "2026-07-23", { signal: expect.any(AbortSignal), reconcile: true });
+  expect(materializeDailyDepletion).toHaveBeenCalledTimes(2);
+  expect(runParShadowForLocation).toHaveBeenCalledTimes(2);
+  expect(audit).toHaveBeenCalledWith(expect.objectContaining({ action: "cron.failure", metadata: expect.objectContaining({ job: "toast-order-capture" }) }));
+  expect(audit).not.toHaveBeenCalledWith(expect.objectContaining({ action: "cron.success", metadata: expect.objectContaining({ job: "toast-order-capture" }) }));
+});

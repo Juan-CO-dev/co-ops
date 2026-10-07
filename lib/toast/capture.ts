@@ -5,6 +5,8 @@ import { lockLocationContext } from "@/lib/locations";
 import { getRoleLevel } from "@/lib/roles";
 import type { AuthContext } from "@/lib/session";
 import { toastConfigured, toastGet, toastGetPage } from "./client";
+import { recordCaptureReconciliation } from "./capture-reconciliation";
+import type { QuantityCapture } from "./capture-reconciliation-shared";
 import { normalizeToastOrder } from "./capture-shared";
 import { backfillDates, captureBudget, captureErrorCode, runCapturePages } from "./capture-runner";
 
@@ -17,6 +19,7 @@ export interface CaptureDayResult {
   orders: number;
   skipped: boolean;
   reason?: string;
+  reconciliation?: { status: "match" | "mismatch" | "skipped"; error: string | null };
 }
 const skipped = (reason: string) => ({ runId: "", pages: 0, orders: 0, skipped: true as const, reason });
 type Budget = ReturnType<typeof captureBudget>;
@@ -77,7 +80,7 @@ async function cacheConfig(locationId: string, restaurantGuid: string, budget: B
 }
 
 /** Trusted job-only entry. Restaurant identity is resolved from the location, never supplied. */
-export async function captureToastDaySystem(locationId: string, date: string, options: { resume?: boolean; backfill?: boolean; signal?: AbortSignal } = {}): Promise<CaptureDayResult> {
+export async function captureToastDaySystem(locationId: string, date: string, options: { resume?: boolean; backfill?: boolean; reconcile?: boolean; signal?: AbortSignal } = {}): Promise<CaptureDayResult> {
   if (!captureEnabled()) return skipped("capture_disabled_or_fixture");
   const budget = captureBudget(options.backfill ? 30 * 60_000 : 60_000, options.signal);
   try { return await budget.wait(() => captureDay(locationId, date, options, budget)); }
@@ -87,7 +90,7 @@ export async function captureToastDaySystem(locationId: string, date: string, op
   } finally { budget.close(); }
 }
 
-async function captureDay(locationId: string, date: string, options: { resume?: boolean; backfill?: boolean }, budget: Budget) {
+async function captureDay(locationId: string, date: string, options: { resume?: boolean; backfill?: boolean; reconcile?: boolean }, budget: Budget) {
   backfillDates(date, date);
   budget.check();
   const restaurantGuid = await restaurantForLocation(locationId);
@@ -114,6 +117,7 @@ async function captureDay(locationId: string, date: string, options: { resume?: 
   budget.check();
   const args = { p_run_id: runId, p_location_id: locationId, p_business_date: date };
   let configLoaded = false;
+  const quantities: QuantityCapture[] = [];
   const result = await runCapturePages({
     async page(page) {
       if (!configLoaded) {
@@ -131,6 +135,7 @@ async function captureDay(locationId: string, date: string, options: { resume?: 
       });
       const saved = await sb.rpc("toast_capture_page", { ...args, p_page: page, p_orders: normalized }).abortSignal(budget.signal);
       dbError(saved.error, "capture_page_write_failed");
+      if (options.reconcile) quantities.push(...normalized.map(({ order, checks }) => ({ order, checks })));
     },
     async complete(pages) {
       budget.check();
@@ -144,7 +149,12 @@ async function captureDay(locationId: string, date: string, options: { resume?: 
       if (failed.error || failed.data?.length !== 1) throw new Error("capture_manifest_fail_failed");
     },
   });
-  return { runId, ...result, skipped: false };
+  let reconciliation: CaptureDayResult["reconciliation"];
+  if (options.reconcile) {
+    try { reconciliation = await recordCaptureReconciliation(locationId, date, runId, quantities, budget.signal); }
+    catch (error) { reconciliation = { status: "skipped", error: captureErrorCode(error) }; }
+  }
+  return { runId, ...result, skipped: false, ...(reconciliation ? { reconciliation } : {}) };
 }
 
 /** Read-only retention probe: consumes every page but persists no orders or manifest. */

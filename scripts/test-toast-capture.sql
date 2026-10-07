@@ -17,7 +17,7 @@ begin
  if (loc is not null and other_loc is not null) is not true then raise exception 'sim requires two location fixtures'; end if;
  payload:=jsonb_build_array(jsonb_build_object(
   'content_hash',repeat('a',64),
-  'order',jsonb_build_object('order_guid',order_id,'business_date',day,'modified_at','2026-07-24T12:00:00Z','deleted',false,'voided',false,'excess_food',false),
+  'order',jsonb_build_object('order_guid',order_id,'business_date',day,'modified_at','2026-07-24T12:00:00Z','deleted',false,'voided',false,'excess_food',false,'third_party_provider_name','DoorDash','selection_units',jsonb_build_array(jsonb_build_object('item_guid','synthetic-item','quantity',2))),
   'checks',jsonb_build_array(jsonb_build_object('check_guid','check','amount_cents',1000,'tax_cents',100,'total_cents',1100,'voided',false,'deleted',true)),
   'discounts','[]'::jsonb,'service_charges','[]'::jsonb,
   'payments',jsonb_build_array(jsonb_build_object('check_guid','check','payment_guid','payment','payment_status','CAPTURED','refund_status','PARTIAL','amount_cents',1100,'tip_cents',100,'paid_business_date',day,'refund_amount_cents',300,'refund_tip_cents',20,'refund_business_date','2026-07-25','void_business_date','2026-07-26'))
@@ -45,6 +45,7 @@ begin
  perform public.toast_capture_finish(run_a,loc,day,1);
  perform public.toast_capture_finish(run_a,loc,day,1);
  if (exists(select 1 from public.toast_orders_latest where order_guid=order_id)) is not true then raise exception 'completed capture absent'; end if;
+ if (not exists(select 1 from public.toast_orders_latest where order_guid=order_id and third_party_provider_name='DoorDash' and selection_units->0->>'item_guid'='synthetic-item')) then raise exception 'provider or quantity snapshot lost'; end if;
  if (exists(select 1 from public.toast_payments p join public.toast_orders o on o.id=p.snapshot_id where o.order_guid=order_id and p.refund_business_date='2026-07-25' and p.refund_tip_cents=20)) is not true then raise exception 'refund date or tip lost'; end if;
  if (exists(select 1 from public.toast_order_checks c join public.toast_orders o on o.id=c.snapshot_id where o.order_guid=order_id and c.deleted)) is not true then raise exception 'check deletion lost'; end if;
  if (exists(select 1 from public.toast_payments p join public.toast_orders o on o.id=p.snapshot_id where o.order_guid=order_id and p.payment_status='CAPTURED' and p.refund_status='PARTIAL' and p.void_business_date='2026-07-26')) is not true then raise exception 'payment statuses or void date lost'; end if;
@@ -85,6 +86,26 @@ begin
  if (not has_table_privilege('authenticated','public.toast_orders','select')) is not true then raise exception 'authenticated can read'; end if;
  if (not has_table_privilege('service_role','public.toast_orders','update')) is not true then raise exception 'service can rewrite snapshots'; end if;
  if (not has_table_privilege('service_role','public.toast_orders','delete')) is not true then raise exception 'service can delete snapshots'; end if;
+ insert into public.toast_capture_reconciliations(location_id,business_date,run_id,status,old_units,new_units)
+ values(loc,day,run_a,'match',0,0);
+ if (not has_table_privilege('service_role','public.toast_capture_reconciliations','insert')
+ or has_table_privilege('service_role','public.toast_capture_reconciliations','update')
+ or has_table_privilege('service_role','public.toast_capture_reconciliations','delete')
+ or has_table_privilege('authenticated','public.toast_capture_reconciliations','select')) then raise exception 'reconciliation grants wrong'; end if;
+ begin
+  insert into public.toast_capture_reconciliations(location_id,business_date,run_id,status)
+  values(other_loc,day,run_b,'skipped');
+  raise exception 'reconciliation location spoof accepted';
+ exception when foreign_key_violation then null;
+ end;
+ begin
+  insert into public.toast_capture_reconciliations(location_id,business_date,run_id,status,mismatched_items)
+  values(loc,day,run_b,'skipped',(select jsonb_agg(n) from generate_series(1,51) n));
+  raise exception 'reconciliation cap not enforced';
+ exception when check_violation then null;
+ end;
+ if ((select count(*) from public.sales_channel_map where reviewed_at='2026-10-07T00:00:00Z')<>18) then raise exception 'reviewed labels missing'; end if;
+ if (not exists(select 1 from public.sales_channel_map where dining_option_label='Delivery' and channel='third_party' and provider is null and fulfillment='delivery')) then raise exception 'Delivery ruling missing'; end if;
  raise notice 'Toast capture SQL assertions passed; fixtures will roll back';
 end $$;
 rollback;

@@ -12,8 +12,8 @@ export async function runOrderCapture(locationIds: string[], businessDate: strin
   try {
     const results = await Promise.all([...new Set(locationIds)].map(async (locationId) => {
       try {
-        const result = await budget.wait(() => captureToastDaySystem(locationId, businessDate, { signal: budget.signal }));
-        const error = "reason" in result && result.reason === "capture_schema_missing" ? result.reason : null;
+        const result = await budget.wait(() => captureToastDaySystem(locationId, businessDate, { signal: budget.signal, ...(context === "cron" ? { reconcile: true } : {}) }));
+        const error = "reason" in result && result.reason === "capture_schema_missing" ? result.reason : result.reconciliation?.error ?? null;
         return { locationId, ...result, error };
       } catch (error) {
         return { locationId, error: captureErrorCode(error) };
