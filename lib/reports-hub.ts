@@ -162,7 +162,7 @@ export async function listReportSkeleton(service: SupabaseClient, f: ListFilters
         locationId: r.location_id,
         submitterName: null,
         status: r.status,
-        submitterId: f.viewer.level < 4 ? f.viewer.userId : r.confirmed_by,
+        submitterId: r.confirmed_by,
         submittedAt: r.confirmed_at,
       });
     }

@@ -1,4 +1,4 @@
-import { parseReportRange, reportRangeParams } from "@/lib/report-range";
+import { parseReportRange, reportRangeParams, reportRangeWasShortened } from "@/lib/report-range";
 import type { ReactNode } from "react";
 import { TrendShopPanels } from "@/components/trends/TrendShopPanels";
 /**
@@ -33,7 +33,7 @@ import { UnifiedSearchResults } from "@/components/reports-hub/UnifiedSearchResu
 const ALL_TYPES: ReportTypeKey[] = ["opening", "closing", "am_prep", "mid_day", "cash", "pm", "maintenance"];
 
 interface PageProps {
-  searchParams: Promise<{
+  searchParams: Promise<Record<string, string | undefined> & {
     location?: string;
     range?: string;
     compare?: string;
@@ -54,9 +54,12 @@ interface PageProps {
 }
 
 export default async function ReportsPage({ searchParams }: PageProps): Promise<ReactNode> {
+  return renderReportsPage(await searchParams);
+}
+
+async function renderReportsPage(params: Awaited<PageProps["searchParams"]>, allShops = false): Promise<ReactNode> {
   const auth = await requireSessionFromHeaders("/reports");
   if (auth.level < 2) redirect("/dashboard");
-  const params = await searchParams;
   const {
     location: locationParam,
     type: typeParam,
@@ -72,7 +75,7 @@ export default async function ReportsPage({ searchParams }: PageProps): Promise<
   if (!locationParam) redirect("/dashboard");
   if (locationParam === "all") {
     if (auth.level < REPORT_ALL_LOCATIONS_LEVEL) redirect("/reports");
-    return <TrendShopPanels render={(id) => ReportsPage({ searchParams: Promise.resolve({ ...params, location: id }) })} />;
+    return <TrendShopPanels render={(id) => renderReportsPage({ ...params, location: id }, true)} />;
   }
 
   const locActor: LocationActor = { role: auth.role, locations: auth.locations };
@@ -85,7 +88,8 @@ export default async function ReportsPage({ searchParams }: PageProps): Promise<
   const dateFrom = range.from;
   const dateTo = range.to;
   const context = reportRangeParams(range);
-  for (const [key,value] of Object.entries(params)) if (value && !["cursor","from","to","range","compare","cmp"].includes(key)) context.set(key,value);
+  for (const [key,value] of Object.entries(params)) if (value && !key.startsWith("cursor_") && !["cursor","from","to","range","compare","cmp"].includes(key)) context.set(key,value);
+  if (allShops) context.set("location", "all");
 
   // ── Resolve type filter ──
   // Single-select: one type OR empty/"all" = all the viewer may see.
@@ -130,7 +134,7 @@ export default async function ReportsPage({ searchParams }: PageProps): Promise<
   const page = await listReportsPage(sb, {
     viewer, locationId, dateFrom, dateTo, types: selectedTypes,
     signalFilters: hasSignalFilters ? signalFilters : undefined,
-    cursor: params.cursor, query, context: context.toString(),
+    cursor: allShops ? params[`cursor_${locationId}`] : params.cursor, query, context: context.toString(),
     match: query ? async items => {
       const corpus = await buildSearchCorpus(sb, {viewer, locationId, items});
       return items.filter(it => {
@@ -142,7 +146,10 @@ export default async function ReportsPage({ searchParams }: PageProps): Promise<
   });
   const filteredItems = page.items;
   const nextParams = new URLSearchParams(context);
-  if (page.nextCursor) nextParams.set("cursor", page.nextCursor);
+  if (allShops) {
+    for (const [key, value] of Object.entries(params)) if (key.startsWith("cursor_") && value) nextParams.set(key, value);
+  }
+  if (page.nextCursor) nextParams.set(allShops ? `cursor_${locationId}` : "cursor", page.nextCursor);
 
   // Unified search: People + Pages, only when searching. Each source is its
   // own authorized loader — the matchers filter an already-authorized set.
@@ -189,9 +196,10 @@ export default async function ReportsPage({ searchParams }: PageProps): Promise<
       </div>
 
       {viewerLevel < 4 ? <p className="mb-4 text-sm text-co-text-muted">{serverT(lang, "reports.hub.own_scope")}</p> : null}
-      <ReportRangeControls range={range} locationId={locationId} language={lang} action="/reports/operations" preserve={params} />
+      <ReportRangeControls range={range} locationId={allShops ? "all" : locationId} language={lang} action="/reports/operations" preserve={params}
+        shortened={reportRangeWasShortened(range, params.from)} />
       <ReportFilterBar
-        locationId={locationId}
+        locationId={allShops ? "all" : locationId}
         dateFrom={dateFrom}
         dateTo={dateTo}
         selectedType={typeParam ?? "all"}

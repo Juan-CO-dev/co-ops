@@ -187,7 +187,8 @@ async function loadTeamWindow(
     }
   };
 
-  // location instance ids (for completion attribution + finalizations)
+  // Location instance ids bind completions and oversight events by their event time.
+  // An event in this window can refer to an instance dated before it.
   const instRows = await selectAllRows<{ id: string; confirmed_by: string | null; confirmed_at: string | null }>(
     (from, to) => service
       .from("checklist_instances").select("id, confirmed_by, confirmed_at")
@@ -198,19 +199,22 @@ async function loadTeamWindow(
 
   // 1. TASKS + NOTES (completions: completed_at in span, live, instance at location)
   if (locInstanceIds.size) {
-    const comps = await selectAllRows<{ completed_by: string | null; completed_at: string; notes: string | null }>(
-      (from, to) => service
-        .from("checklist_completions")
-        .select("instance_id, completed_by, completed_at, notes")
-        .in("instance_id", [...locInstanceIds])
-        .gte("completed_at", bounds.start).lt("completed_at", upperTs)
-        .is("superseded_at", null).is("revoked_at", null)
-        .order("completed_at", { ascending: true }).range(from, to),
-    );
-    for (const c of comps) {
-      if (!c.completed_by) continue;
-      place(c.completed_by, c.completed_at, "tasks");
-      if (c.notes && c.notes.trim()) place(c.completed_by, c.completed_at, "notes");
+    const ids = [...locInstanceIds];
+    for (let i = 0; i < ids.length; i += 50) {
+      const comps = await selectAllRows<{ completed_by: string | null; completed_at: string; notes: string | null }>(
+        (from, to) => service
+          .from("checklist_completions")
+          .select("instance_id, completed_by, completed_at, notes")
+          .in("instance_id", ids.slice(i, i + 50))
+          .gte("completed_at", bounds.start).lt("completed_at", upperTs)
+          .is("superseded_at", null).is("revoked_at", null)
+          .order("completed_at", { ascending: true }).range(from, to),
+      );
+      for (const c of comps) {
+        if (!c.completed_by) continue;
+        place(c.completed_by, c.completed_at, "tasks");
+        if (c.notes && c.notes.trim()) place(c.completed_by, c.completed_at, "notes");
+      }
     }
   }
 
@@ -406,6 +410,8 @@ async function computePersonMetrics(
   let lastActive: string | null = null;
   const touch = (d: string) => { if (!lastActive || d > lastActive) lastActive = d; activeDates.add(d); };
 
+  // Keep older instance ids: a completion or oversight event in this window can
+  // refer to an instance dated before the window.
   const instAll = await selectAllRows<{ id: string }>(
     (from, to) => service
       .from("checklist_instances").select("id").eq("location_id", args.locationId)
@@ -414,25 +420,27 @@ async function computePersonMetrics(
   const locInstanceIds = instAll.map((r) => r.id);
 
   if (locInstanceIds.length) {
-    const comps = await selectAllRows<{ completed_at: string; notes: string | null }>(
-      (from, to) => service
-        .from("checklist_completions").select("completed_at, notes")
-        .eq("completed_by", args.personId).in("instance_id", locInstanceIds)
-        .gte("completed_at", bounds.start).lt("completed_at", upperTsP)
-        .is("superseded_at", null).is("revoked_at", null)
-        .order("completed_at", { ascending: true }).range(from, to),
-    );
-    for (const c of comps) {
-      add(c.completed_at, "tasks");
-      if (c.notes && c.notes.trim()) add(c.completed_at, "notes");
-      if (windowOf(c.completed_at) === "cur") {
-        const d = etCalendarDate(c.completed_at);
-        const bs = bucketStart(d, args.granularity);
-        contribBucket.set(bs, (contribBucket.get(bs) ?? 0) + 1);
-        touch(d);
-        dayTaskCounts.set(d, (dayTaskCounts.get(d) ?? 0) + 1);
-        const wd = WEEKDAYS[new Date(`${d}T00:00:00Z`).getUTCDay()]!;
-        weekdayCounts.set(wd, (weekdayCounts.get(wd) ?? 0) + 1);
+    for (let i = 0; i < locInstanceIds.length; i += 50) {
+      const comps = await selectAllRows<{ completed_at: string; notes: string | null }>(
+        (from, to) => service
+          .from("checklist_completions").select("completed_at, notes")
+          .eq("completed_by", args.personId).in("instance_id", locInstanceIds.slice(i, i + 50))
+          .gte("completed_at", bounds.start).lt("completed_at", upperTsP)
+          .is("superseded_at", null).is("revoked_at", null)
+          .order("completed_at", { ascending: true }).range(from, to),
+      );
+      for (const c of comps) {
+        add(c.completed_at, "tasks");
+        if (c.notes && c.notes.trim()) add(c.completed_at, "notes");
+        if (windowOf(c.completed_at) === "cur") {
+          const d = etCalendarDate(c.completed_at);
+          const bs = bucketStart(d, args.granularity);
+          contribBucket.set(bs, (contribBucket.get(bs) ?? 0) + 1);
+          touch(d);
+          dayTaskCounts.set(d, (dayTaskCounts.get(d) ?? 0) + 1);
+          const wd = WEEKDAYS[new Date(`${d}T00:00:00Z`).getUTCDay()]!;
+          weekdayCounts.set(wd, (weekdayCounts.get(wd) ?? 0) + 1);
+        }
       }
     }
   }

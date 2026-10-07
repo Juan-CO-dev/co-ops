@@ -19,13 +19,39 @@ import { fileURLToPath } from "node:url";
 
 import { describe, it, expect } from "vitest";
 
-import { oversightInstanceId, oversightRowAtLocation, OVERSIGHT_ACTIONS } from "@/lib/team-metrics";
+import { loadTeamOperatingHealth, oversightInstanceId, oversightRowAtLocation, OVERSIGHT_ACTIONS } from "@/lib/team-metrics";
+import type { SupabaseClient } from "@supabase/supabase-js";
 
 const HERE = "11111111-1111-4111-8111-111111111111";
 const THERE = "22222222-2222-4222-8222-222222222222";
 const INST_HERE = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const INST_THERE = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
 const hereInstances = new Set([INST_HERE]);
+
+it("chunks more than 220 shop instance ids for team completion metrics", async () => {
+  const ids = Array.from({length: 225}, (_, i) => `instance-${i}`);
+  const chunks: number[] = [];
+  const tables: Record<string, Array<Record<string, unknown>>> = {
+    user_locations:[{user_id:"employee",location_id:HERE,active:true}],
+    users:[{id:"employee",name:"Employee",role:"employee",active:true}],
+    checklist_instances:ids.map(id=>({id,location_id:HERE,confirmed_by:null,confirmed_at:null})),
+    checklist_completions:ids.map((id,i)=>({id:`completion-${i}`,instance_id:id,completed_by:"employee",completed_at:"2026-10-07T16:00:00Z",notes:null,superseded_at:null,revoked_at:null})),
+  };
+  const service={from(table:string) {
+    let rows=[...(tables[table]??[])], start=0, end=Infinity;
+    const q={select:()=>q,eq:(key:string,value:unknown)=>{rows=rows.filter(row=>row[key]===value);return q;},
+      in:(key:string,values:unknown[])=>{if(key==="instance_id") chunks.push(values.length); if(values.length>50) throw new Error("request too long"); rows=rows.filter(row=>values.includes(row[key]));return q;},
+      gte:(key:string,value:string)=>{rows=rows.filter(row=>String(row[key])>=value);return q;},
+      lt:(key:string,value:string)=>{rows=rows.filter(row=>String(row[key])<value);return q;},
+      is:(key:string,value:unknown)=>{rows=rows.filter(row=>(row[key]??null)===value);return q;},
+      order:()=>q,range:(from:number,to:number)=>{start=from;end=to;return q;},
+      then:(resolve:(value:unknown)=>unknown)=>Promise.resolve(resolve({data:rows.slice(start,end===Infinity?undefined:end+1),error:null})),
+    };return q;
+  }} as unknown as SupabaseClient;
+  const result=await loadTeamOperatingHealth(service,{viewer:{userId:"manager",level:8,locations:[HERE]},locationId:HERE,granularity:"day",compare:false,today:"2026-10-07"});
+  expect(chunks).toEqual([50,50,50,50,25]);
+  expect(result?.members[0]?.counts.tasks).toBe(225);
+});
 
 /** checklist_completion.revoke / .revoke_by_authority / .tag_actual_completer */
 const completionRow = (instanceId: string) => ({

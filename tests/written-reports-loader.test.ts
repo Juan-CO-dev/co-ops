@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { createClient } from "@supabase/supabase-js";
 
-import { listWrittenReports, parseWrittenReportCursor } from "@/lib/written-reports";
+import { listWrittenReports, loadWrittenReport, parseWrittenReportCursor } from "@/lib/written-reports";
 
 function emptyService(orFilters: string[]): SupabaseClient {
   return {
@@ -26,6 +26,23 @@ function emptyService(orFilters: string[]): SupabaseClient {
 }
 
 describe("written report loader scope and cursor", () => {
+  it.each([3, 4])("lets an L%s author read a post above their level in list and detail", async level => {
+    const filters: string[] = [];
+    const own = {id:"post",location_id:"shop-a",submitted_by:"author",submitted_by_role:"employee",submitted_at:"2026-10-07T12:00:00Z",last_edited_at:null,edit_count:0,category:null,title:null,body:"Own post",visibility_min_level:5,related_table:null,related_id:null};
+    const service = {from(table:string) {
+      const q = {
+        select:()=>q,not:()=>q,order:()=>q,limit:()=>q,gte:()=>q,lt:()=>q,
+        or:(filter:string)=>{filters.push(filter);return q;},in:()=>q,
+        eq:()=>q,maybeSingle:async()=>({data:table==="written_reports"?own:{name:"Author"},error:null}),
+        then:(resolve:(value:unknown)=>unknown)=>Promise.resolve(resolve({data:table==="written_reports"?[own]:[{id:"author",name:"Author"}],error:null})),
+      };return q;
+    }} as unknown as SupabaseClient;
+    const viewer={userId:"author",level,locations:["shop-a"]};
+    const listed=await listWrittenReports(service,{viewer,now:new Date("2026-10-07T16:00:00Z")});
+    expect(filters[0]).toContain("or(submitted_by.eq.author,visibility_min_level.lte."+level+")");
+    expect(listed.reports.map(report=>report.id)).toEqual(["post"]);
+    expect((await loadWrittenReport(service,{viewer,id:"post"}))?.id).toBe("post");
+  });
   it("rejects below the reports floor before reading data", async () => {
     const service = { from: () => { throw new Error("DATA read"); } } as unknown as SupabaseClient;
     await expect(listWrittenReports(service, {

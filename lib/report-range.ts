@@ -49,6 +49,9 @@ export function parseReportRange(p: Record<string, string | undefined>, today: s
 export function reportRangeParams(r: ReportRange): URLSearchParams {
   return new URLSearchParams({ range: r.range, from: r.from, to: r.to, compare: String(r.compare) });
 }
+export function reportRangeWasShortened(r: ReportRange, requestedFrom: string | undefined): boolean {
+  return r.range === "custom" && validReportDate(requestedFrom) && requestedFrom < r.from;
+}
 export function reportTimestampBounds(from: string, to: string): { start: string; end: string } {
   return { start: operationalDayUtcRange(from).startIso, end: operationalDayUtcRange(shiftReportDate(to, 1)).startIso };
 }

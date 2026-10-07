@@ -131,7 +131,7 @@ export function parseWrittenReportCursor(raw: string | undefined): WrittenReport
  * List written reports the viewer may see, newest first.
  *
  * Visibility is enforced in app code (service-role bypasses RLS): a report is
- * visible iff `viewer.level >= visibility_min_level` AND the location is either
+ * visible iff the viewer authored it or meets `visibility_min_level`, AND the location is either
  * null (all-location), one of the viewer's, or the viewer is level >= 8.
  *
  * `now` is injected for a deterministic canEdit computation (defaults to the
@@ -184,11 +184,9 @@ export async function listWrittenReports(
   q = q.gte("submitted_at", start).lt("submitted_at", end);
 
   const scopeFilters: string[] = [
-    viewer.level < 4 && !EMPLOYEE_WRITTEN_REPORTS_OWN_ONLY
-      ? `or(submitted_by.eq.${viewer.userId},visibility_min_level.lte.${viewer.level})`
-      : viewer.level < 4
-        ? `submitted_by.eq.${viewer.userId}`
-        : `visibility_min_level.lte.${viewer.level}`,
+    viewer.level < 4 && EMPLOYEE_WRITTEN_REPORTS_OWN_ONLY
+      ? `submitted_by.eq.${viewer.userId}`
+      : `or(submitted_by.eq.${viewer.userId},visibility_min_level.lte.${viewer.level})`,
   ];
 
   if (args.locationId) {
@@ -274,9 +272,9 @@ export async function loadWrittenReport(
   if (!data) return null;
 
   // Visibility floor.
-  const isEmployeeOwner = viewer.level < 4 && data.submitted_by === viewer.userId;
-  if (!isEmployeeOwner && viewer.level < data.visibility_min_level) return null;
-  if (viewer.level < 4 && EMPLOYEE_WRITTEN_REPORTS_OWN_ONLY && !isEmployeeOwner) return null;
+  const isAuthor = data.submitted_by === viewer.userId;
+  if (!isAuthor && viewer.level < data.visibility_min_level) return null;
+  if (viewer.level < 4 && EMPLOYEE_WRITTEN_REPORTS_OWN_ONLY && !isAuthor) return null;
   // Location gate: null OR mine OR level>=8.
   if (data.location_id !== null && viewer.level < ALL_LOCATIONS_READ_LEVEL) {
     const locs = viewer.locations;
