@@ -53,6 +53,8 @@ const TENANCY_SCOPED_TABLES = [
   "am_prep_drafts",
   // 0215 — a prep batch session is one shop's (instance, template item) for one business day.
   "prep_batch_sessions",
+  // 0218 — a Retrain note is one shop's verdict about its own batches (location_id NOT NULL).
+  "recipe_yield_retrain_notes",
   "stations",
   "station_events",
   "report_assignments",
@@ -113,6 +115,8 @@ const FILES = [
   // 0214 — saveAmPrepDraft / consumeAmPrepDraft bind inside the lib (Wave 1 branch A).
   "lib/am-prep-draft.ts",
   "lib/assignments.ts",
+  // 0218 — recordYieldRetrain binds inside the lib before any I/O (batch vs bottle Phase B).
+  "lib/yield-stats.ts",
 ];
 
 /**

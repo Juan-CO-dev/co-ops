@@ -146,6 +146,8 @@ const SERVER_TIER_MAP: Record<string, string[]> = {
   "app/api/admin/recipes/edges/route.ts": ["B"],
   "app/api/admin/recipes/full/route.ts": ["B"],
   "app/api/admin/recipes/route.ts": ["B"],
+  // Batch vs bottle Phase B: Update recipe yield from the drift nudge — the recipe-edit gate.
+  "app/api/admin/recipes/yield-nudge/route.ts": ["B"],
   "app/api/admin/skus/[id]/location-settings/route.ts": ["A"],
   "app/api/admin/skus/[id]/pack-chain/route.ts": ["A"],
   "app/api/admin/skus/[id]/price/route.ts": ["A"],

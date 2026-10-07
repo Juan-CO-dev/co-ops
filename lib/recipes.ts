@@ -566,6 +566,41 @@ export async function addRecipeOutput(actor: AuthContext, input: { recipeId: str
   return { id: newId };
 }
 
+/**
+ * Batch vs bottle Phase B (0218): rewrite ONE batch recipe card's yield. GM+ here; the route adds
+ * the Tier-B step-up (the recipe-edit gate). The write goes through update_recipe_output_yield —
+ * the recipe row lock first, then the output row — so it serialises with every other recipe and
+ * output writer (update_recipe_atomic, add_recipe_output, remove_recipe_output, 0215). Called ONLY
+ * from a human tap on the yield-drift nudge (lib/yield-stats.ts); nothing changes a card on its
+ * own. Audited recipe_output.update (destructive) only after the RPC succeeded.
+ */
+export async function updateRecipeOutputYield(actor: AuthContext, input: { recipeId: string; outputItemId: string; yield: number; context: { locationId: string; source: "yield_nudge"; observedSignedDrift: number; batchesInWindow: number } }): Promise<{ outputId: string; before: number | null; after: number }> {
+  requireLevel(actor, RECIPE_WRITE_MIN);
+  if (!(typeof input.yield === "number" && Number.isFinite(input.yield) && input.yield > 0 && input.yield <= 100000)) throw new RecipeError(400, "invalid_yield");
+  const sb = getServiceRoleClient();
+  const { data, error } = await sb.rpc("update_recipe_output_yield", {
+    p_recipe_id: input.recipeId,
+    p_output_item_id: input.outputItemId,
+    p_yield: input.yield,
+    p_actor: actor.user.id,
+  });
+  if (error) {
+    const named = rpcRecipeError(error, { recipe_not_found: 404, recipe_inactive: 409, not_batch_recipe: 409, edge_not_found: 404, ambiguous_output: 409, invalid_yield: 400 });
+    if (named) throw named;
+    throw new Error(`updateRecipeOutputYield: ${error.message}`);
+  }
+  const row = (data ?? {}) as { output_id?: string; before?: number | string | null; after?: number | string };
+  if (!row.output_id) throw new Error("updateRecipeOutputYield returned no output id");
+  const before = num(row.before ?? null);
+  await audit({
+    actorId: actor.user.id, actorRole: actor.user.role, action: "recipe_output.update",
+    resourceTable: "recipe_outputs", resourceId: row.output_id,
+    metadata: { recipe_id: input.recipeId, output_item_id: input.outputItemId, before: { yield: before }, after: { yield: input.yield }, source: input.context.source, location_id: input.context.locationId, observed_signed_drift: input.context.observedSignedDrift, batches_in_window: input.context.batchesInWindow },
+    ipAddress: null, userAgent: null,
+  });
+  return { outputId: row.output_id, before, after: input.yield };
+}
+
 export async function removeRecipeEdge(actor: AuthContext, args: { table: "recipe_inputs" | "recipe_outputs"; id: string }): Promise<void> {
   requireLevel(actor, RECIPE_WRITE_MIN);
   const sb = getServiceRoleClient();
