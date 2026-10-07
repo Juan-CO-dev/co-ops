@@ -66,7 +66,7 @@ export async function catchUpDailyJobs(opts?: { now?: Date }): Promise<{ ran: st
           metadata = result.metadata;
           if (!result.healthy) {
             failureContext = metadata;
-            throw new Error("toast_capture_or_selection_pull_failed");
+            throw new Error("toast_selection_pull_failed");
           }
           break;
         }

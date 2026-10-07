@@ -6,10 +6,22 @@ import { getRoleLevel } from "@/lib/roles";
 import type { AuthContext } from "@/lib/session";
 import { toastConfigured, toastGet, toastGetPage } from "./client";
 import { normalizeToastOrder } from "./capture-shared";
-import { backfillDates, captureRequest, runCapturePages } from "./capture-runner";
+import { backfillDates, captureBudget, captureErrorCode, runCapturePages } from "./capture-runner";
 
-function requireLive(): void {
-  if (!toastConfigured() || process.env.TOAST_FIXTURES === "1") throw new Error("capture_live_credentials_required");
+export function captureEnabled(): boolean {
+  return process.env.TOAST_ORDER_CAPTURE === "1" && process.env.TOAST_FIXTURES !== "1" && toastConfigured();
+}
+export interface CaptureDayResult {
+  runId: string;
+  pages: number;
+  orders: number;
+  skipped: boolean;
+  reason?: string;
+}
+const skipped = (reason: string) => ({ runId: "", pages: 0, orders: 0, skipped: true as const, reason });
+type Budget = ReturnType<typeof captureBudget>;
+function dbError(error: { code?: string } | null, fallback: string) {
+  if (error) throw new Error(["42P01", "42703", "PGRST202", "PGRST204", "PGRST205"].includes(error.code ?? "") ? "capture_schema_missing" : fallback);
 }
 
 async function restaurantForLocation(locationId: string): Promise<string> {
@@ -35,7 +47,7 @@ const configKinds = [
 ] as const;
 const configFreshUntil = new Map<string, number>();
 
-async function cacheConfig(locationId: string, restaurantGuid: string): Promise<void> {
+async function cacheConfig(locationId: string, restaurantGuid: string, budget: Budget, backfill: boolean): Promise<void> {
   const sb = getServiceRoleClient();
   if ((configFreshUntil.get(`${locationId}:${restaurantGuid}`) ?? 0) > Date.now()) return;
   for (const [endpoint, table] of configKinds) {
@@ -43,7 +55,7 @@ async function cacheConfig(locationId: string, restaurantGuid: string): Promise<
     const tokens = new Set<string>();
     let token: string | null = null;
     do {
-      const response = await captureRequest(() => toastGetPage<unknown>(`/config/v2/${endpoint}${token ? `?pageToken=${encodeURIComponent(token)}` : ""}`, restaurantGuid));
+      const response = await budget.request(() => toastGetPage<unknown>(`/config/v2/${endpoint}${token ? `?pageToken=${encodeURIComponent(token)}` : ""}`, restaurantGuid, budget.signal), backfill);
       if (!Array.isArray(response.data)) throw new Error("capture_config_bad_page");
       for (const raw of response.data) {
         if (!raw || typeof raw.guid !== "string" || typeof raw.name !== "string") throw new Error("capture_config_bad_row");
@@ -55,7 +67,8 @@ async function cacheConfig(locationId: string, restaurantGuid: string): Promise<
       if (token) tokens.add(token);
     } while (token);
     for (let i = 0; i < rows.length; i += 100) {
-      const result = await sb.from(table).upsert(rows.slice(i, i + 100), { onConflict: "location_id,guid" });
+      budget.check();
+      const result = await sb.from(table).upsert(rows.slice(i, i + 100), { onConflict: "location_id,guid" }).abortSignal(budget.signal);
       if (result.error) throw new Error("capture_config_write_failed");
     }
   }
@@ -64,44 +77,70 @@ async function cacheConfig(locationId: string, restaurantGuid: string): Promise<
 }
 
 /** Trusted job-only entry. Restaurant identity is resolved from the location, never supplied. */
-export async function captureToastDaySystem(locationId: string, date: string, options: { resume?: boolean } = {}) {
+export async function captureToastDaySystem(locationId: string, date: string, options: { resume?: boolean; backfill?: boolean; signal?: AbortSignal } = {}): Promise<CaptureDayResult> {
+  if (!captureEnabled()) return skipped("capture_disabled_or_fixture");
+  const budget = captureBudget(options.backfill ? 30 * 60_000 : 60_000, options.signal);
+  try { return await budget.wait(() => captureDay(locationId, date, options, budget)); }
+  catch (error) {
+    if (captureErrorCode(error) === "capture_schema_missing") return skipped("capture_schema_missing");
+    throw error;
+  } finally { budget.close(); }
+}
+
+async function captureDay(locationId: string, date: string, options: { resume?: boolean; backfill?: boolean }, budget: Budget) {
   backfillDates(date, date);
-  requireLive();
+  budget.check();
   const restaurantGuid = await restaurantForLocation(locationId);
   const sb = getServiceRoleClient();
+  budget.check();
+  // Interrupted runs never publish. Sweep only this location, without rewriting completed history.
+  const stale = await sb.from("toast_capture_runs").update({ status: "failed", error_code: "capture_stale", finished_at: new Date().toISOString() })
+    .eq("location_id", locationId).eq("status", "running").lt("started_at", new Date(Date.now() - 3600_000).toISOString()).abortSignal(budget.signal);
+  dbError(stale.error, "capture_stale_sweep_failed");
+  budget.check();
   if (options.resume) {
     const previous = await sb.from("toast_capture_runs").select("id,pages,orders")
       .eq("location_id", locationId).eq("business_date", date).eq("status", "completed")
       .order("finished_at", { ascending: false }).limit(1)
       .maybeSingle<{ id: string; pages: number; orders: number }>();
-    if (previous.error) throw new Error("capture_resume_read_failed");
+    dbError(previous.error, "capture_resume_read_failed");
+    budget.check();
     if (previous.data) return { runId: previous.data.id, pages: previous.data.pages, orders: previous.data.orders, skipped: true };
   }
+  budget.check();
   const runId = randomUUID();
-  const started = await sb.from("toast_capture_runs").insert({ id: runId, location_id: locationId, business_date: date, status: "running" });
-  if (started.error) throw new Error("capture_manifest_start_failed");
+  const started = await sb.from("toast_capture_runs").insert({ id: runId, location_id: locationId, business_date: date, status: "running" }).abortSignal(budget.signal);
+  dbError(started.error, "capture_manifest_start_failed");
+  budget.check();
   const args = { p_run_id: runId, p_location_id: locationId, p_business_date: date };
   let configLoaded = false;
   const result = await runCapturePages({
     async page(page) {
-      if (!configLoaded) { await cacheConfig(locationId, restaurantGuid); configLoaded = true; }
-      return captureRequest(() => toastGet<unknown>(`/orders/v2/ordersBulk?businessDate=${date.replaceAll("-", "")}&page=${page}&pageSize=100`, restaurantGuid));
+      if (!configLoaded) {
+        try { await cacheConfig(locationId, restaurantGuid, budget, options.backfill === true); }
+        catch { budget.check(); /* Config names are optional; order GUIDs remain authoritative. */ }
+        configLoaded = true;
+      }
+      return budget.request(() => toastGet<unknown>(`/orders/v2/ordersBulk?businessDate=${date.replaceAll("-", "")}&page=${page}&pageSize=100`, restaurantGuid, budget.signal), options.backfill === true);
     },
     async save(page, orders) {
+      budget.check();
       const normalized = orders.map((raw) => {
         const order = normalizeToastOrder(raw, date);
         return { ...order, content_hash: createHash("sha256").update(JSON.stringify(order)).digest("hex") };
       });
-      const saved = await sb.rpc("toast_capture_page", { ...args, p_page: page, p_orders: normalized });
-      if (saved.error) throw new Error("capture_page_write_failed");
+      const saved = await sb.rpc("toast_capture_page", { ...args, p_page: page, p_orders: normalized }).abortSignal(budget.signal);
+      dbError(saved.error, "capture_page_write_failed");
     },
     async complete(pages) {
-      const completed = await sb.rpc("toast_capture_finish", { ...args, p_pages: pages });
-      if (completed.error) throw new Error("capture_publish_failed");
+      budget.check();
+      const completed = await sb.rpc("toast_capture_finish", { ...args, p_pages: pages }).abortSignal(budget.signal);
+      dbError(completed.error, "capture_publish_failed");
     },
     async fail(code) {
+      if (budget.signal.aborted) return; // swept on the next attempt; never extend the deadline
       const failed = await sb.from("toast_capture_runs").update({ status: "failed", error_code: code, finished_at: new Date().toISOString() })
-        .eq("id", runId).eq("location_id", locationId).eq("business_date", date).eq("status", "running").select("id");
+        .eq("id", runId).eq("location_id", locationId).eq("business_date", date).eq("status", "running").select("id").abortSignal(budget.signal);
       if (failed.error || failed.data?.length !== 1) throw new Error("capture_manifest_fail_failed");
     },
   });
@@ -111,11 +150,14 @@ export async function captureToastDaySystem(locationId: string, date: string, op
 /** Read-only retention probe: consumes every page but persists no orders or manifest. */
 export async function probeToastDate(locationId: string, date = "2025-10-01") {
   backfillDates(date, date);
-  requireLive();
-  const guid = await restaurantForLocation(locationId);
-  return runCapturePages({
-    page: (page) => captureRequest(() => toastGet<unknown>(`/orders/v2/ordersBulk?businessDate=${date.replaceAll("-", "")}&page=${page}&pageSize=100`, guid)),
-    save: async (_page, orders) => { for (const order of orders) normalizeToastOrder(order, date); },
-    complete: async () => {}, fail: async () => {},
-  });
+  if (!captureEnabled()) return skipped("capture_disabled_or_fixture");
+  const budget = captureBudget();
+  try { return await budget.wait(async () => {
+    const guid = await restaurantForLocation(locationId);
+    return runCapturePages({
+      page: (page) => budget.request(() => toastGet<unknown>(`/orders/v2/ordersBulk?businessDate=${date.replaceAll("-", "")}&page=${page}&pageSize=100`, guid, budget.signal)),
+      save: async (_page, orders) => { budget.check(); for (const order of orders) normalizeToastOrder(order, date); },
+      complete: async () => { budget.check(); }, fail: async () => {},
+    });
+  }); } finally { budget.close(); }
 }

@@ -4,8 +4,8 @@ import { decideJobWatch, easternBoundary, easternDay } from "@/lib/job-watch";
 import { JOBS_REGISTRY, type RegisteredJob } from "@/lib/jobs-registry";
 
 const JOB_WATCH_SCHEDULE = "0 17 * * *"; // 12:00 EST / 13:00 EDT — inside the 06–22 ET pinger window either side of DST
-const pinger = JOBS_REGISTRY[3];
-const daily = JOBS_REGISTRY[0];
+const pinger = JOBS_REGISTRY.find((job) => job.job === "toast-catering-scan")!;
+const daily = JOBS_REGISTRY.find((job) => job.job === "toast-sales-pull")!;
 const decide = (now: string, last: string | null, alert: string | null = null) =>
   decideJobWatch(pinger, new Date(now), last, alert);
 
@@ -86,9 +86,9 @@ describe("LRA-228: cadence, Eastern windows, and once-per-day decisions", () => 
     expect(decide("2026-09-10T12:00:00Z", "2026-09-10T13:00:00Z").silent).toBe(false);
   });
 
-  it("keeps six closed registry entries and schedules its own daily check", () => {
+  it("keeps seven closed registry entries and schedules its own daily check", () => {
     expect(JOBS_REGISTRY.map((j) => j.job)).toEqual([
-      "toast-sales-pull", "prune-sessions", "parse-receipts", "toast-catering-scan", "toast-sales-today", "job-watch",
+      "toast-order-capture", "toast-sales-pull", "prune-sessions", "parse-receipts", "toast-catering-scan", "toast-sales-today", "job-watch",
     ]);
     const config = JSON.parse(readFileSync("vercel.json", "utf8"));
     // Vercel Hobby refuses any cron that runs more than once per day at DEPLOY time

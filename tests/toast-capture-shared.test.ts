@@ -1,3 +1,4 @@
+import paymentStates from "./fixtures/toast/order-payment-states.json";
 import { describe, expect, it } from "vitest";
 import { captureBusinessDate, captureCents, normalizeToastOrder } from "@/lib/toast/capture-shared";
 
@@ -57,3 +58,13 @@ describe("Toast accounting allowlist", () => {
 });
 
 
+
+it("maps nested Toast voidInfo, payment/refund states and deleted checks", () => {
+  const row = normalizeToastOrder(paymentStates, "2026-07-23");
+  expect(row.checks[0]).toMatchObject({ deleted: true, voided: false });
+  expect(row.payments).toMatchObject([
+    { payment_status: "VOIDED", refund_status: "NONE", void_business_date: "2026-07-24" },
+    { payment_status: "DENIED", void_business_date: null },
+    { payment_status: "CAPTURED", refund_status: "FULL", paid_business_date: "2026-07-23", refund_business_date: "2026-07-25", refund_amount_cents: 1100, refund_tip_cents: 200 },
+  ]);
+});

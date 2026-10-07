@@ -38,10 +38,10 @@ function date(x: unknown): string | null {
 }
 export interface ToastCapturedOrder {
   order: { order_guid: string; business_date: string; opened_at: string | null; closed_at: string | null; paid_at: string | null; modified_at: string | null; promised_at: string | null; source: string | null; revenue_center_guid: string | null; dining_option_guid: string | null; server_guid: string | null; deleted: boolean; voided: boolean; excess_food: boolean; third_party_provider_guid: string | null; };
-  checks: { check_guid: string; amount_cents: number | null; tax_cents: number | null; total_cents: number | null; voided: boolean }[];
+  checks: { check_guid: string; amount_cents: number | null; tax_cents: number | null; total_cents: number | null; voided: boolean; deleted: boolean }[];
   discounts: { check_guid: string; ordinal: number; selection_guid: string | null; applied_discount_guid: string | null; discount_guid: string | null; name: string | null; amount_cents: number | null; reason_guid: string | null; reason_name: string | null; approver_guid: string | null }[];
   service_charges: { check_guid: string; ordinal: number; service_charge_guid: string | null; name: string | null; amount_cents: number | null; gratuity: boolean; taxable: boolean }[];
-  payments: { check_guid: string; payment_guid: string; type: string | null; amount_cents: number | null; tip_cents: number | null; paid_business_date: string | null; refund_amount_cents: number | null; refund_tip_cents: number | null; refund_business_date: string | null; void_business_date: string | null; server_guid: string | null }[];
+  payments: { check_guid: string; payment_guid: string; payment_status: string | null; refund_status: string | null; type: string | null; amount_cents: number | null; tip_cents: number | null; paid_business_date: string | null; refund_amount_cents: number | null; refund_tip_cents: number | null; refund_business_date: string | null; void_business_date: string | null; server_guid: string | null }[];
 }
 export function normalizeToastOrder(input: unknown, businessDate: string): ToastCapturedOrder {
   const raw = obj(input);
@@ -54,7 +54,7 @@ export function normalizeToastOrder(input: unknown, businessDate: string): Toast
   };
   for (const check of rows(raw.checks)) {
     const check_guid = required(check.guid);
-    result.checks.push({ check_guid, amount_cents: captureCents(check.amount), tax_cents: captureCents(check.taxAmount), total_cents: captureCents(check.totalAmount), voided: check.voided === true });
+    result.checks.push({ check_guid, amount_cents: captureCents(check.amount), tax_cents: captureCents(check.taxAmount), total_cents: captureCents(check.totalAmount), voided: check.voided === true, deleted: check.deleted === true });
     let ordinal = 0;
     const discounts = (owner: Row, selection_guid: string | null) => {
       for (const d of rows(owner.appliedDiscounts)) result.discounts.push({ check_guid, ordinal: ordinal++, selection_guid, applied_discount_guid: text(d.guid), discount_guid: guid(d.discount), name: text(d.name), amount_cents: captureCents(d.discountAmount ?? d.amount), reason_guid: guid(obj(d.appliedDiscountReason).discountReason) ?? guid(d.appliedDiscountReason) ?? guid(d.reason), reason_name: text(obj(d.appliedDiscountReason).name), approver_guid: guid(d.approver) });
@@ -65,7 +65,7 @@ export function normalizeToastOrder(input: unknown, businessDate: string): Toast
     for (const [index, s] of rows(check.appliedServiceCharges).entries()) result.service_charges.push({ check_guid, ordinal: index, service_charge_guid: guid(s.serviceCharge) ?? text(s.guid), name: text(s.name), amount_cents: captureCents(s.chargeAmount ?? s.amount), gratuity: s.gratuity === true, taxable: s.taxable === true });
     for (const p of rows(check.payments)) {
       const refund = obj(p.refund);
-      result.payments.push({ check_guid, payment_guid: required(p.guid), type: text(p.type), amount_cents: captureCents(p.amount), tip_cents: captureCents(p.tipAmount), paid_business_date: date(p.paidBusinessDate), refund_amount_cents: captureCents(refund.refundAmount ?? refund.amount), refund_tip_cents: captureCents(refund.tipRefundAmount), refund_business_date: date(refund.refundBusinessDate), void_business_date: date(p.voidBusinessDate), server_guid: guid(p.server) });
+      result.payments.push({ check_guid, payment_guid: required(p.guid), payment_status: text(p.paymentStatus), refund_status: text(p.refundStatus), type: text(p.type), amount_cents: captureCents(p.amount), tip_cents: captureCents(p.tipAmount), paid_business_date: date(p.paidBusinessDate), refund_amount_cents: captureCents(refund.refundAmount ?? refund.amount), refund_tip_cents: captureCents(refund.tipRefundAmount), refund_business_date: date(refund.refundBusinessDate), void_business_date: date(obj(p.voidInfo).voidBusinessDate), server_guid: guid(p.server) });
     }
   }
   return result;

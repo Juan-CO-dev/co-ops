@@ -148,3 +148,11 @@ it("partial capture failure cannot emit a successful catch-up heartbeat", async 
   expect(toastAudits).toHaveLength(1);
   expect(toastAudits[0]).toMatchObject({ action: "cron.failure", metadata: { capture_failures: 1 } });
 });
+
+it("capture failures do not withhold the selection catch-up success", async () => {
+  const result = await vi.mocked(runToastSalesPull)({ businessDate: "2026-09-11" });
+  vi.mocked(runToastSalesPull).mockClear().mockResolvedValue({ ...result, metadata: { ...result.metadata, capture_failures: 2 } });
+  expect((await catchUpDailyJobs({ now })).ran).toContain("toast-sales-pull");
+  expect(audit).toHaveBeenCalledWith(expect.objectContaining({ action: "cron.success", metadata: expect.objectContaining({ job: "toast-sales-pull", capture_failures: 2 }) }));
+  expect(audit).not.toHaveBeenCalledWith(expect.objectContaining({ action: "cron.failure", metadata: expect.objectContaining({ job: "toast-sales-pull" }) }));
+});

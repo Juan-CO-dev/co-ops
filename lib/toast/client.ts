@@ -41,7 +41,7 @@ function fixtureMode(): boolean {
 // Module-scope token cache (per server instance; Toast tokens are short-lived).
 let cachedToken: { accessToken: string; expiresAtMs: number } | null = null;
 
-async function getToastToken(force = false): Promise<string> {
+async function getToastToken(force = false, signal?: AbortSignal): Promise<string> {
   if (!force && cachedToken && tokenIsFresh(cachedToken.expiresAtMs, Date.now())) {
     return cachedToken.accessToken;
   }
@@ -54,6 +54,7 @@ async function getToastToken(force = false): Promise<string> {
       userAccessType: "TOAST_MACHINE_CLIENT",
     }),
     cache: "no-store",
+    signal,
   });
   if (!res.ok) {
     throw new ToastApiError(res.status, "auth_failed", `Toast auth failed (${res.status})`);
@@ -78,12 +79,12 @@ async function readFixture(key: string): Promise<unknown> {
 }
 
 /** GET a Toast API path scoped to one restaurant. Fixture-mode aware. */
-export async function toastGet<T>(apiPath: string, restaurantGuid: string): Promise<T> {
-  return (await toastGetPage<T>(apiPath, restaurantGuid)).data;
+export async function toastGet<T>(apiPath: string, restaurantGuid: string, signal?: AbortSignal): Promise<T> {
+  return (await toastGetPage<T>(apiPath, restaurantGuid, signal)).data;
 }
 
 /** Config APIs paginate through a response header rather than an array envelope. */
-export async function toastGetPage<T>(apiPath: string, restaurantGuid: string): Promise<{ data: T; nextPageToken: string | null }> {
+export async function toastGetPage<T>(apiPath: string, restaurantGuid: string, signal?: AbortSignal): Promise<{ data: T; nextPageToken: string | null }> {
   if (fixtureMode()) {
     const key = resolveFixtureKey(apiPath);
     if (!key) throw new ToastApiError(500, "not_configured", `No fixture for ${apiPath}`);
@@ -102,11 +103,12 @@ export async function toastGetPage<T>(apiPath: string, restaurantGuid: string): 
         "Toast-Restaurant-External-ID": restaurantGuid,
       },
       cache: "no-store",
+      signal,
     });
 
-  let res = await call(await getToastToken());
+  let res = await call(await getToastToken(false, signal));
   if (res.status === 401) {
-    res = await call(await getToastToken(true)); // one silent re-auth, then fail typed
+    res = await call(await getToastToken(true, signal)); // one silent re-auth, then fail typed
   }
   if (res.status === 429) {
     const retry = res.headers.get("Retry-After");

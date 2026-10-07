@@ -4,11 +4,22 @@ import { backfillDates, captureErrorCode } from "../lib/toast/capture-runner";
 
 export async function main(args = process.argv.slice(2)): Promise<void> {
   const [mode, ...extra] = args;
-  if (!["probe", "backfill", "channel-seed"].includes(mode ?? "") || extra.some((v) => v !== "--retry-completed")) {
-    throw new Error("Usage: backfill-toast-orders.ts probe|backfill|channel-seed [--retry-completed]");
+  let from: string | undefined, through: string | undefined;
+  let retryCompleted = false;
+  if (!["probe", "backfill", "channel-seed"].includes(mode ?? "")) throw new Error("capture_invalid_mode");
+  for (let i = 0; i < extra.length; i++) {
+    const flag = extra[i];
+    if (flag === "--retry-completed" && mode === "backfill") retryCompleted = true;
+    else if ((flag === "--from" || flag === "--through") && mode === "backfill") {
+      const value = extra[++i];
+      if (!value || !/^\d{4}-\d{2}-\d{2}$/.test(value)) throw new Error("capture_invalid_date");
+      if (flag === "--from") from = value; else through = value;
+    } else throw new Error("capture_invalid_flag");
   }
+  const dates = backfillDates(from, through); // Validate before creating a client or writing.
   const { getServiceRoleClient } = await import("../lib/supabase-server");
-  const { captureToastDaySystem, probeToastDate } = await import("../lib/toast/capture");
+  const { captureToastDaySystem, probeToastDate, captureEnabled } = await import("../lib/toast/capture");
+  if (mode !== "channel-seed" && !captureEnabled()) throw new Error("capture_disabled_or_fixture");
   const sb = getServiceRoleClient();
   const locations = await sb.from("locations").select("id").eq("active", true)
     .not("toast_restaurant_guid", "is", null).order("id").returns<{ id: string }[]>();
@@ -42,12 +53,13 @@ export async function main(args = process.argv.slice(2)): Promise<void> {
   process.once("SIGINT", stop);
   process.once("SIGTERM", stop);
   try {
-    // Exact 12-month half-open window ending 2026-07-23, newest first.
-    for (const date of backfillDates()) {
+    // Newest first through yesterday ET unless the operator selects a window.
+    for (const date of dates) {
       for (const location of locations.data) {
         if (stopping) return;
-        const result = await captureToastDaySystem(location.id, date, { resume: !extra.includes("--retry-completed") });
+        const result = await captureToastDaySystem(location.id, date, { resume: !retryCompleted, backfill: true });
         console.log(JSON.stringify({ mode, date, location: location.id, ...result }));
+        if ("reason" in result && typeof result.reason === "string") throw new Error(result.reason);
       }
     }
   } finally {

@@ -22,7 +22,7 @@ import { getRoleLevel } from "@/lib/roles";
 import { lockLocationContext } from "@/lib/locations";
 import { audit } from "@/lib/audit";
 import type { AuthContext } from "@/lib/session";
-import { captureToastDaySystem } from "@/lib/toast/capture";
+import { runOrderCapture } from "@/lib/toast/capture-job";
 import { fetchToastOrders } from "@/lib/toast/orders";
 import { fetchToastMenuItems } from "@/lib/toast/menus";
 import { fetchDiningOptionNames } from "@/lib/toast/config";
@@ -157,7 +157,7 @@ async function resolveLocationGuid(locationId: string): Promise<string> {
 
 export interface PullResult {
   selections: number; appended: number; unchanged: number; voids: number;
-  capture: { ok: true; runId: string; pages: number; orders: number } | { ok: false; error: string };
+  capture?: Awaited<ReturnType<typeof runOrderCapture>>;
 }
 
 /** Core pull (shared by admin route + cron + system triggers). actor null =
@@ -218,15 +218,6 @@ async function doPull(
       throw new Error(`toast-sales append: ${error.message}`);
     }
   }
-  // Capture failure must not prevent the existing depletion projection. The caller
-  // records an unhealthy heartbeat, while successful selection ingest remains usable.
-  let capture: PullResult["capture"];
-  try {
-    capture = { ok: true, ...await captureToastDaySystem(locationId, businessDate) };
-  } catch {
-    // Never copy a Toast response body into audit metadata (it can contain PII).
-    capture = { ok: false, error: "order_capture_failed" };
-  }
   void audit({
     actorId: actor?.user.id ?? null,
     actorRole: actor?.user.role ?? null,
@@ -235,17 +226,18 @@ async function doPull(
     resourceId: locationId,
     metadata: {
       business_date: businessDate, selections: lines.length, appended: inserts.length,
-      unchanged, voids, capture_ok: capture.ok, ...(actor ? {} : { actor_context: systemContext }),
+      unchanged, voids, ...(actor ? {} : { actor_context: systemContext }),
     },
     ipAddress: null, userAgent: null,
   });
-  return { selections: lines.length, appended: inserts.length, unchanged, voids, capture };
+  return { selections: lines.length, appended: inserts.length, unchanged, voids };
 }
 
 export async function pullSales(actor: AuthContext, locationId: string, businessDate: string): Promise<PullResult> {
   requireLevel(actor, TOAST_SALES_WRITE_MIN);
   assertLocationAccess(actor, locationId); // before any I/O — a refused pull touches nothing
-  return doPull(locationId, businessDate, actor);
+  const result = await doPull(locationId, businessDate, actor);
+  return { ...result, capture: await runOrderCapture([locationId], businessDate, "manual") };
 }
 
 /** Cron entry: pull for every active location with a Toast GUID. Never throws per-location. */
@@ -306,8 +298,7 @@ export async function pullSalesSystemTrigger(
       .maybeSingle<{ toast_restaurant_guid: string | null }>();
     if (error) throw new Error("toast_location_lookup_failed");
     if (!data?.toast_restaurant_guid) return true; // no Toast at this location — no-op
-    const result = await doPull(locationId, businessDate, null, opts.context);
-    if (!result.capture.ok) throw new Error(result.capture.error);
+    await doPull(locationId, businessDate, null, opts.context);
     return true;
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
@@ -397,7 +388,7 @@ export async function refreshTodaySalesIfStale(
       Date.now() - new Date(data.occurred_at).getTime() < debounceMs;
     if (attemptedRecently) {
       // Debounce failed attempts without upgrading them to a successful heartbeat.
-      return data.action === "toast_sales.pull_failed" || data.metadata?.capture_ok === false ? "error" : "fresh";
+      return data.action === "toast_sales.pull_failed" ? "error" : "fresh";
     }
     // A location with no Toast GUID is a NO-OP, not a failure (pullSalesSystemTrigger
     // checks this too and stays the authority; this read is what lets the pinger's
