@@ -1,5 +1,6 @@
 -- Migration 0192_toast_catering_orders
 -- AUTHORED 2026-09-04. NOT YET APPLIED — GATE (JUAN).
+-- APPLIED TO PROD 2026-09-04 (schema_migrations version 20260904164043, name '0192_toast_catering_orders'). The line above is the authoring-time gate note, kept as history.
 --
 -- 0192: toast_catering_orders — the Toast catering scan's per-order ledger (catering inbox A1.2).
 --

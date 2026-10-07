@@ -1,5 +1,6 @@
 -- Migration 0186_am_prep_chain_edit_supersede
 -- AUTHORED 2026-08-30. NOT YET APPLIED — GATE (LEAD/JUAN).
+-- APPLIED TO PROD 2026-08-31 (schema_migrations version 20260831021620, name 'am_prep_chain_edit_supersede'). The line above is the authoring-time gate note, kept as history.
 --
 -- 0186: submit_am_prep_atomic supersedes the live completion head before it inserts —
 -- on BOTH of its write paths — so it stops violating 0176's one-live-head index.
