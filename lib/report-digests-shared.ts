@@ -289,7 +289,7 @@ function sortLike(ids: readonly string[], order: readonly string[]): string[] {
 
 /** The (ref, location) pairs a kind expects for a day: per shop for gm_shop, one row otherwise. */
 export function expectedDeliveries(kind: DigestKind, recipients: readonly ResolvedRecipient[]): Array<{ ref: string; locationId: string | null }> {
-  return recipients.flatMap((r) => kind === "gm_shop"
-    ? (r.locationIds.length > 0 ? r.locationIds.map((locationId) => ({ ref: r.ref, locationId })) : [])
+  return recipients.flatMap((r): Array<{ ref: string; locationId: string | null }> => kind === "gm_shop"
+    ? r.locationIds.map((locationId) => ({ ref: r.ref, locationId }))
     : [{ ref: r.ref, locationId: null }]);
 }
