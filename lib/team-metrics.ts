@@ -578,6 +578,19 @@ async function computePersonMetrics(
   };
 }
 
+/** Shops this person can actually be opened at, intersected with the viewer's scope. */
+export async function loadPersonReportLocations(service: SupabaseClient, viewer: Viewer, personId: string): Promise<string[]> {
+  if (viewer.level < TEAM_VIEW_LEVEL) return [];
+  const { data: memberships, error: membershipError } = await service.from("user_locations")
+    .select("location_id").eq("user_id", personId).eq("active", true);
+  if (membershipError) throw new Error(membershipError.message);
+  const ids = (memberships ?? []).map(row => row.location_id as string).filter(id => trendLocationAllowed(viewer, id));
+  if (!ids.length) return [];
+  const { data: locations, error } = await service.from("locations").select("id").in("id", ids).eq("active", true).order("name");
+  if (error) throw new Error(error.message);
+  return (locations ?? []).map(row => row.id as string);
+}
+
 export async function loadPersonDetail(
   service: SupabaseClient,
   args: { viewer: Viewer; personId: string; locationId: string; granularity: TrendGranularity; compare: boolean; today: string; range?: TrendRange },

@@ -35,12 +35,8 @@ async function renderPage(paramsRange: Record<string, string | undefined>, allSh
   if (auth.level < TEAM_VIEW_LEVEL) redirect("/dashboard");
   const { location: locationParam, g } = paramsRange;
   if (!locationParam) redirect("/dashboard");
-  if (locationParam === "all") {
-    if (auth.level < REPORT_ALL_LOCATIONS_LEVEL) redirect("/reports");
-    return <TrendShopPanels render={(id) => renderPage({ ...paramsRange, location: id }, true)} />;
-  }
   const locActor: LocationActor = { role: auth.role, locations: auth.locations };
-  if (!canReadReportLocation(locActor, locationParam)) redirect("/dashboard");
+  if (locationParam !== "all" && !canReadReportLocation(locActor, locationParam)) redirect("/dashboard");
 
   const language = auth.user.language;
   const granularity = parseGranularity(g);
@@ -53,13 +49,7 @@ async function renderPage(paramsRange: Record<string, string | undefined>, allSh
   if (allShops) context.set("returnLocation", "all");
   const sb = getServiceRoleClient();
 
-  const team = await loadTeamOperatingHealth(sb, {
-    viewer: { userId: auth.user.id, level: auth.level, locations: auth.locations },
-    locationId: locationParam, granularity, compare, today, range,
-  });
-
-  return (
-    <main className="mx-auto max-w-2xl md:max-w-3xl lg:max-w-5xl xl:max-w-6xl px-4 pb-32 pt-4 sm:px-6">
+  const header = <>
       <ReportPageNav viewerLevel={auth.level} path="/reports/trends/team" params={{ ...paramsRange, location: allShops || (auth.level >= REPORT_ALL_LOCATIONS_LEVEL && paramsRange.returnLocation === "all") ? "all" : locationParam, returnLocation: undefined }} language={language} />
       <ReportShopTabs path="/reports/trends/team" params={paramsRange} locationId={allShops ? "all" : locationParam} language={language} viewer={auth} />
       <h1 className="text-lg font-bold text-co-text">{serverT(language, "reports.trends.team.title")}</h1>
@@ -67,6 +57,21 @@ async function renderPage(paramsRange: Record<string, string | undefined>, allSh
 
       <TrendControls range={range} locationId={allShops ? "all" : locationParam} granularity={granularity} compare={compare} language={language} basePath="/reports/trends/team" />
 
+  </>;
+  if (locationParam === "all") {
+    if (auth.level < REPORT_ALL_LOCATIONS_LEVEL) redirect("/reports");
+    return <TrendShopPanels header={header} render={(id) => renderPage({ ...paramsRange, location: id }, true)} />;
+  }
+
+  const team = await loadTeamOperatingHealth(sb, {
+    viewer: { userId: auth.user.id, level: auth.level, locations: auth.locations },
+    locationId: locationParam, granularity, compare, today, range,
+  });
+
+  const Container = allShops ? "div" : "main";
+  return (
+    <Container className={allShops ? "pt-4" : "mx-auto max-w-2xl md:max-w-3xl lg:max-w-5xl xl:max-w-6xl px-4 pb-32 pt-4 sm:px-6"}>
+      {!allShops && header}
       {team && team.members.length > 0 ? (
         <>
           <p className="mt-4 mb-3 text-xs text-co-text-muted">
@@ -81,6 +86,6 @@ async function renderPage(paramsRange: Record<string, string | undefined>, allSh
       ) : (
         <p className="mt-6 text-sm text-co-text-muted">{serverT(language, "reports.trends.landing.nothing_urgent")}</p>
       )}
-    </main>
+    </Container>
   );
 }

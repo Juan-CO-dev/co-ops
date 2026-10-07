@@ -1,3 +1,4 @@
+import React from "react";
 import { resolveTrendRange } from "@/lib/reports-trends";
 import { reportRangeParams } from "@/lib/report-range";
 import { readFileSync } from "node:fs";
@@ -104,6 +105,8 @@ describe("per-person team report location boundary", () => {
         parseGranularity: () => "day", operationalNow: () => ({ date: "2026-10-07" }),
         parseReportRange: () => ({ range: "last7", from: "2026-10-01", to: "2026-10-07", compare: false, previous: { from: "2026-09-24", to: "2026-09-30" } }),
         getServiceRoleClient: () => ({}), loadPersonDetail,
+        loadPersonReportLocations: async () => ["mine", "other"],
+        React, ReportPageNav: () => null, ReportShopTabs: () => null, TrendControls: () => null,
       };
       const page = new Function(...Object.keys(deps), `${js}; return PersonDetailPage;`)(...Object.values(deps));
       await expect(page({ params: Promise.resolve({ personId: "employee" }), searchParams: Promise.resolve({ location }) }))

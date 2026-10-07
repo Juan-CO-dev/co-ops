@@ -12,18 +12,23 @@ export interface ReportShopTabsProps {
   language: Language;
   viewer: { level: number; locations: string[] };
   supportsAll?: boolean;
+  allowedLocationIds?: string[];
 }
 
 export async function ReportShopTabs(props: ReportShopTabsProps) {
   let query = getServiceRoleClient().from("locations").select("id,name").eq("active", true).order("name");
   if (props.viewer.level < REPORT_ALL_LOCATIONS_LEVEL) query = query.in("id", props.viewer.locations);
+  if (props.allowedLocationIds) {
+    if (!props.allowedLocationIds.length) return null;
+    query = query.in("id", props.allowedLocationIds);
+  }
   const { data, error } = await query;
   if (error) throw new Error(`report locations: ${error.message}`);
   return <ReportShopTabLinks {...props} shops={data ?? []} />;
 }
 
-export function ReportShopTabLinks({ path, params, locationId, language, viewer, supportsAll = true, shops }: ReportShopTabsProps & { shops: Array<{ id: string; name: string }> }) {
-  const visible = viewer.level >= REPORT_ALL_LOCATIONS_LEVEL ? shops : shops.filter(shop => viewer.locations.includes(shop.id));
+export function ReportShopTabLinks({ path, params, locationId, language, viewer, supportsAll = true, allowedLocationIds, shops }: ReportShopTabsProps & { shops: Array<{ id: string; name: string }> }) {
+  const visible = shops.filter(shop => (!allowedLocationIds || allowedLocationIds.includes(shop.id)) && (viewer.level >= REPORT_ALL_LOCATIONS_LEVEL || viewer.locations.includes(shop.id)));
   const tabs = [...visible, ...(supportsAll && viewer.level >= REPORT_ALL_LOCATIONS_LEVEL ? [{ id: "all", name: serverT(language, "reports.hub.all") }] : [])];
   return <nav className="mb-4 flex flex-wrap gap-2" aria-label={serverT(language, "dashboard.location.switcher_aria")}>
     {tabs.map(shop => <Link key={shop.id} href={reportNavigationHref(path, params, shop.id)} aria-current={shop.id === locationId ? "page" : undefined}

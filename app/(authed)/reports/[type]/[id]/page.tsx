@@ -77,7 +77,7 @@ export default async function ReportDetailPage({ params, searchParams }: PagePro
   const parentContext = { ...context };
   if (context.returnLocation === "all" && level >= REPORT_ALL_LOCATIONS_LEVEL) parentContext.location = "all";
   delete parentContext.returnLocation;
-  const navigation = <ReportPageNav path={`/reports/${type}/${id}`} params={parentContext} language={lang} />;
+  const navigation = <ReportPageNav viewerLevel={level} path={`/reports/${type}/${id}`} params={parentContext} language={lang} />;
 
   // List-visibility gate at detail (defence-in-depth)
   if (type === "cash" && level < REPORTS_HUB_CASH_LEVEL) {
@@ -122,7 +122,7 @@ export default async function ReportDetailPage({ params, searchParams }: PagePro
 
       {/* Task 3: checklist detail view (closing / am_prep / mid_day) */}
       {detail.kind === "checklist" ? (
-        <ChecklistReportDetailView detail={detail as ChecklistReportDetail} language={lang} />
+        <ChecklistReportDetailView detail={detail as ChecklistReportDetail} language={lang} relatedReports={relations.sameDay} />
       ) : null}
 
       {/* Task 4: cash detail view */}

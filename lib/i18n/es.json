@@ -2658,7 +2658,7 @@
   "reports.opening.resolution.section_verify": "Verificado contra la base",
   "reports.opening.resolution.recount": "Reconteado",
   "reports.opening.resolution.recount_no_prior": "Reconteo — sin envío anterior",
-  "reports.opening.baseline.closer": "Base (conteo del cierre): {closer}",
+  "reports.opening.baseline.closer": "Base: conteo de preparación AM {closer}",
   "reports.opening.baseline.none": "Sin base del día anterior",
   "reports.opening.baseline.par": "par {par}",
   "reports.opening.recount_value": "Reconteo: {value}",

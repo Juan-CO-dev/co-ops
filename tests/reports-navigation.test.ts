@@ -96,3 +96,14 @@ it("report rows carry the all-shop return scope, filters and per-shop cursors in
   expect(url.searchParams.get("cursor_shop")).toBe("page2");
   expect(url.searchParams.get("sf_skipped")).toBe("true");
 });
+
+
+import { reportNavigationHref, reportParentContext } from "@/lib/report-navigation";
+it("landing parents whitelist shared context while shop changes reset every cursor", () => {
+  const params = {location:"a",hubLocation:"all",range:"custom",from:"2026-10-01",to:"2026-10-07",compare:"true",type:"closing",q:"milk",sf_underPar:"true",cursor:"old",cursor_a:"old"};
+  expect(reportParentContext("/reports",params,8)).toEqual({location:"all",hubLocation:undefined,range:params.range,from:params.from,to:params.to,compare:"true"});
+  const changed = new URL(reportNavigationHref("/reports/operations",params,"b"),"https://local");
+  expect([...changed.searchParams.keys()].some(k=>k.startsWith("cursor"))).toBe(false);
+  expect(changed.searchParams.get("type")).toBe("closing");
+  expect(reportNavigationHref("/reports/operations",params,"a")).toContain("cursor=old");
+});

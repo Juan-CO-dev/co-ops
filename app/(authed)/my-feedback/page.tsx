@@ -49,36 +49,23 @@ async function renderPage(query: Record<string, string | undefined>, allShops = 
   const selectedParam = location ?? loc; // Keep old ?loc= links working; the shared tabs use ?location=.
   const sb = getServiceRoleClient();
 
-  if (selectedParam === "all") {
-    if (auth.level < REPORT_ALL_LOCATIONS_LEVEL) redirect("/reports");
-    return <TrendShopPanels render={(id) => renderPage({ ...query, location: id, loc: undefined }, true)} />;
-  }
   const access = auth.level >= REPORT_ALL_LOCATIONS_LEVEL ? "all" : auth.locations;
   let locQuery = sb.from("locations").select("id, code").eq("active", true).order("code", { ascending: true });
   if (access !== "all") {
-    if (access.length === 0) return <EmptyShell language={language} />;
+    if (access.length === 0) return <EmptyShell language={language} viewerLevel={auth.level} />;
     locQuery = locQuery.in("id", access);
   }
   const { data: locRows } = await locQuery;
   const locations = (locRows ?? []) as LocLite[];
-  if (locations.length === 0) return <EmptyShell language={language} />;
+  if (locations.length === 0) return <EmptyShell language={language} viewerLevel={auth.level} />;
 
-  const selected = (selectedParam ? locations.find((l) => l.id === selectedParam) : null) ?? locations[0]!;
+  const selected = selectedParam === "all" ? { id: "all", code: "" } : (selectedParam ? locations.find((l) => l.id === selectedParam) : null) ?? locations[0]!;
   const granularity = parseGranularity(g);
   const today = operationalNow(new Date()).date;
   const range = resolveTrendRange(query, today, granularity);
   const compare = range.compare;
 
-  const data = await loadMyPerformance(sb, {
-    viewer: { userId: auth.user.id, level: auth.level, locations: auth.locations },
-    locationId: selected.id, granularity, compare, today, range,
-  });
-
-  const allFeedback = await loadMyFeedback(sb, { userId: auth.user.id });
-  const feedback = allFeedback.filter((f) => f.locationId === selected.id);
-
-  return (
-    <main className="mx-auto max-w-2xl md:max-w-3xl lg:max-w-5xl xl:max-w-6xl px-4 pb-32 pt-4 sm:px-6">
+  const header = <>
       <ReportPageNav viewerLevel={auth.level} path="/my-feedback" params={{ ...query, location: allShops ? "all" : selected.id }} language={language} />
       <div className="mb-1 flex items-center justify-between gap-2">
         <h1 className="text-lg font-bold text-co-text">{serverT(language, "me.title")}</h1>
@@ -89,6 +76,24 @@ async function renderPage(query: Record<string, string | undefined>, allShops = 
         <TrendControls range={range} locationId={allShops ? "all" : selected.id} granularity={granularity} compare={compare} language={language} basePath="/my-feedback" />
       </div>
 
+  </>;
+  if (selectedParam === "all") {
+    if (auth.level < REPORT_ALL_LOCATIONS_LEVEL) redirect("/reports");
+    return <TrendShopPanels header={header} render={(id) => renderPage({ ...query, location: id, loc: undefined }, true)} />;
+  }
+
+  const data = await loadMyPerformance(sb, {
+    viewer: { userId: auth.user.id, level: auth.level, locations: auth.locations },
+    locationId: selected.id, granularity, compare, today, range,
+  });
+
+  const allFeedback = await loadMyFeedback(sb, { userId: auth.user.id });
+  const feedback = allFeedback.filter((f) => f.locationId === selected.id);
+
+  const Container = allShops ? "div" : "main";
+  return (
+    <Container className={allShops ? "pt-4" : "mx-auto max-w-2xl md:max-w-3xl lg:max-w-5xl xl:max-w-6xl px-4 pb-32 pt-4 sm:px-6"}>
+      {!allShops && header}
       {data ? (
         <MyPerformance data={data} feedback={feedback} language={language} />
       ) : (
@@ -96,14 +101,14 @@ async function renderPage(query: Record<string, string | undefined>, allShops = 
           {serverT(language, "me.empty")}
         </p>
       )}
-    </main>
+    </Container>
   );
 }
 
-function EmptyShell({ language }: { language: Language }) {
+function EmptyShell({ language, viewerLevel }: { language: Language; viewerLevel: number }) {
   return (
     <main className="mx-auto max-w-2xl md:max-w-3xl lg:max-w-5xl xl:max-w-6xl px-4 pb-32 pt-4 sm:px-6">
-      <ReportPageNav path="/my-feedback" params={{}} language={language} />
+      <ReportPageNav viewerLevel={viewerLevel} path="/my-feedback" params={{}} language={language} />
       <h1 className="mb-4 text-lg font-bold text-co-text">{serverT(language, "me.title")}</h1>
       <p className="rounded-lg border-2 border-co-border bg-co-surface px-3 py-3 text-sm font-semibold text-co-text">
         {serverT(language, "me.empty")}

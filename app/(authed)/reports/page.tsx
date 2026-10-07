@@ -1,3 +1,4 @@
+import { reportLandingContext } from "@/lib/report-navigation";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { ReportPageNav } from "@/components/reports-hub/ReportPageNav";
@@ -18,7 +19,7 @@ import { getServiceRoleClient } from "@/lib/supabase-server";
 export default async function ReportsPage({ searchParams }: { searchParams: Promise<Record<string, string | undefined>> }) {
   const auth = await requireSessionFromHeaders("/reports");
   if (auth.level < 2) redirect("/dashboard");
-  const params = await searchParams;
+  const params = reportLandingContext(await searchParams);
   const actor = { role: auth.role, locations: auth.locations };
   const locationId = params.location ?? auth.locations[0];
   if (!locationId || (locationId === "all" ? auth.level < REPORT_ALL_LOCATIONS_LEVEL : !canReadReportLocation(actor, locationId))) redirect("/dashboard");

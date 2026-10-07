@@ -2,7 +2,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { listReportSkeleton, type ReportListItem, type ReportTypeKey, type Viewer } from "@/lib/reports-hub";
 import { shiftReportDate } from "@/lib/report-range";
 
-export interface RelatedReport extends Pick<ReportListItem, "type" | "id" | "date"> { href: string }
+export interface RelatedReport extends Pick<ReportListItem, "type" | "id" | "date"> { href: string; submittedAt?: string | null }
 export interface ReportRelations { sameDay: RelatedReport[]; previous: RelatedReport[]; next: RelatedReport[]; baselineHrefs: Record<string, string> }
 
 export function relatedReportHref(report: Pick<ReportListItem, "type" | "id">, locationId: string, context: Record<string, string | undefined>): string {
@@ -20,7 +20,7 @@ export async function loadReportRelations(service: SupabaseClient, args: {
   const previousDate = shiftReportDate(args.date, -1);
   const nextDate = shiftReportDate(args.date, 1);
   const rows = await listReportSkeleton(service, { viewer: args.viewer, locationId: args.locationId, dateFrom: previousDate, dateTo: nextDate });
-  const link = (row: ReportListItem): RelatedReport => ({ type: row.type, id: row.id, date: row.date, href: relatedReportHref(row, args.locationId, args.context) });
+  const link = (row: ReportListItem & { submittedAt?: string | null }): RelatedReport => ({ type: row.type, id: row.id, date: row.date, submittedAt: row.submittedAt, href: relatedReportHref(row, args.locationId, args.context) });
   const baselineHrefs: Record<string, string> = {};
   const sourceDates = new Map<string, ReportListItem[]>();
   for (const id of new Set(args.baselineIds ?? [])) {

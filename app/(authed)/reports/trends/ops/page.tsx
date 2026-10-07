@@ -71,12 +71,8 @@ async function renderPage(paramsRange: Record<string, string | undefined>, allSh
 
   if (auth.level < 4) redirect("/reports");
   if (!locationParam) redirect("/dashboard");
-  if (locationParam === "all") {
-    if (auth.level < REPORT_ALL_LOCATIONS_LEVEL) redirect("/reports");
-    return <TrendShopPanels render={(id) => renderPage({ ...paramsRange, location: id }, true)} />;
-  }
   const locActor: LocationActor = { role: auth.role, locations: auth.locations };
-  if (!canReadReportLocation(locActor, locationParam)) redirect("/dashboard");
+  if (locationParam !== "all" && !canReadReportLocation(locActor, locationParam)) redirect("/dashboard");
 
   const language = auth.user.language;
   const granularity = parseGranularity(g);
@@ -89,6 +85,27 @@ async function renderPage(paramsRange: Record<string, string | undefined>, allSh
   if (allShops) context.set("returnLocation", "all");
 
   const sb = getServiceRoleClient();
+  const header = <>
+      <ReportPageNav viewerLevel={auth.level} path="/reports/trends/ops" params={{ ...paramsRange, location: allShops || (auth.level >= REPORT_ALL_LOCATIONS_LEVEL && paramsRange.returnLocation === "all") ? "all" : locationParam, returnLocation: undefined }} language={language} />
+      <ReportShopTabs path="/reports/trends/ops" params={paramsRange} locationId={allShops ? "all" : locationParam} language={language} viewer={auth} />
+      <h1 className="text-lg font-bold text-co-text">{serverT(language, "reports.trends.title")}</h1>
+      <p className="mb-4 text-xs text-co-text-muted">{serverT(language, "reports.trends.subtitle")}</p>
+
+      <TrendControls
+        locationId={allShops ? "all" : locationParam}
+        range={range}
+        granularity={granularity}
+        compare={compare}
+        language={language}
+        basePath="/reports/trends/ops"
+      />
+
+  </>;
+  if (locationParam === "all") {
+    if (auth.level < REPORT_ALL_LOCATIONS_LEVEL) redirect("/reports");
+    return <TrendShopPanels header={header} render={(id) => renderPage({ ...paramsRange, location: id }, true)} />;
+  }
+
   const series: TrendSeries = await loadTrendSeries(sb, {
     viewer: { userId: auth.user.id, level: auth.level, locations: auth.locations },
     locationId: locationParam,
@@ -114,22 +131,10 @@ async function renderPage(paramsRange: Record<string, string | undefined>, allSh
     </span>)}
   </div> : null;
 
+  const Container = allShops ? "div" : "main";
   return (
-    <main className="mx-auto max-w-2xl md:max-w-3xl lg:max-w-5xl xl:max-w-6xl px-4 pb-32 pt-4 sm:px-6">
-      <ReportPageNav viewerLevel={auth.level} path="/reports/trends/ops" params={{ ...paramsRange, location: allShops || (auth.level >= REPORT_ALL_LOCATIONS_LEVEL && paramsRange.returnLocation === "all") ? "all" : locationParam, returnLocation: undefined }} language={language} />
-      <ReportShopTabs path="/reports/trends/ops" params={paramsRange} locationId={allShops ? "all" : locationParam} language={language} viewer={auth} />
-      <h1 className="text-lg font-bold text-co-text">{serverT(language, "reports.trends.title")}</h1>
-      <p className="mb-4 text-xs text-co-text-muted">{serverT(language, "reports.trends.subtitle")}</p>
-
-      <TrendControls
-        locationId={allShops ? "all" : locationParam}
-        range={range}
-        granularity={granularity}
-        compare={compare}
-        language={language}
-        basePath="/reports/trends/ops"
-      />
-
+    <Container className={allShops ? "pt-4" : "mx-auto max-w-2xl md:max-w-3xl lg:max-w-5xl xl:max-w-6xl px-4 pb-32 pt-4 sm:px-6"}>
+      {!allShops && header}
       <nav className="mt-3 flex flex-wrap gap-2">
         <Link className="inline-flex min-h-[44px] items-center rounded-lg border border-co-border px-3 text-xs" href={drill("underPar")}>{serverT(language, "reports.trends.par_title")}</Link>
         <Link className="inline-flex min-h-[44px] items-center rounded-lg border border-co-border px-3 text-xs" href={drill("tempFlag")}>{serverT(language, "reports.trends.temps_title")}</Link>
@@ -246,7 +251,7 @@ async function renderPage(paramsRange: Record<string, string | undefined>, allSh
           <ChartLegend hasPrev={!!prev} current={legendCurrent} previous={legendPrevious} />
         </TrendCard>
       </div>
-    </main>
+    </Container>
   );
 }
 

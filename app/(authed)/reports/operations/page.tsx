@@ -74,13 +74,9 @@ async function renderReportsPage(params: Awaited<PageProps["searchParams"]>, all
   } = params;
 
   if (!locationParam) redirect("/dashboard");
-  if (locationParam === "all") {
-    if (auth.level < REPORT_ALL_LOCATIONS_LEVEL) redirect("/reports");
-    return <TrendShopPanels render={(id) => renderReportsPage({ ...params, location: id }, true)} />;
-  }
 
   const locActor: LocationActor = { role: auth.role, locations: auth.locations };
-  if (!canReadReportLocation(locActor, locationParam)) redirect("/dashboard");
+  if (locationParam !== "all" && !canReadReportLocation(locActor, locationParam)) redirect("/dashboard");
 
   const lang = auth.user.language;
   const locationId = locationParam;
@@ -131,6 +127,43 @@ async function renderReportsPage(params: Awaited<PageProps["searchParams"]>, all
   const sb = getServiceRoleClient();
   const query = (qParam ?? "").trim();
   const snippets = new Map<string, SearchSnippet>();
+  const header = <>
+      <ReportPageNav viewerLevel={auth.level} path="/reports/operations" params={{ ...params, location: allShops ? "all" : locationId }} language={lang} />
+      <ReportShopTabs path="/reports/operations" params={params} locationId={allShops ? "all" : locationId} language={lang} viewer={auth} />
+      <div className="mb-4 flex items-center justify-between">
+        <h1 className="text-lg font-bold text-co-text">
+          {serverT(lang, "reports.hub.operations")}
+        </h1>
+        {auth.level >= 4 ? <Link
+          href={`/reports/trends/ops?${context}`}
+          className="inline-flex min-h-[44px] items-center rounded-full border-2 border-co-border-2 bg-co-surface px-4 text-xs font-bold uppercase tracking-[0.1em] text-co-text-muted transition hover:border-co-text hover:text-co-text"
+        >
+          {serverT(lang, "reports.trends.nav_label")}
+        </Link> : null}
+      </div>
+
+      {viewerLevel < 4 ? <p className="mb-4 text-sm text-co-text-muted">{serverT(lang, "reports.hub.own_scope")}</p> : null}
+      <ReportRangeControls range={range} locationId={allShops ? "all" : locationId} language={lang} action="/reports/operations" preserve={params}
+        shortened={reportRangeWasShortened(range, params.from)} />
+      <ReportFilterBar
+        locationId={allShops ? "all" : locationId}
+        dateFrom={dateFrom}
+        dateTo={dateTo}
+        selectedType={typeParam ?? "all"}
+        allowedTypes={allowedTypes}
+        language={lang}
+        viewerLevel={viewerLevel}
+        activeSignalFilters={signalFilters}
+        query={qParam ?? ""}
+        compare={range.compare}
+      />
+
+  </>;
+  if (locationParam === "all") {
+    if (auth.level < REPORT_ALL_LOCATIONS_LEVEL) redirect("/reports");
+    return <TrendShopPanels header={header} render={(id) => renderReportsPage({ ...params, location: id }, true)} />;
+  }
+
   const page = await listReportsPage(sb, {
     viewer, locationId, dateFrom, dateTo, types: selectedTypes,
     signalFilters: hasSignalFilters ? signalFilters : undefined,
@@ -168,38 +201,10 @@ async function renderReportsPage(params: Awaited<PageProps["searchParams"]>, all
   const nothingMatched =
     query.length > 0 && people.length === 0 && pages.length === 0 && filteredItems.length === 0;
 
+  const Container = allShops ? "div" : "main";
   return (
-    <main className="mx-auto max-w-2xl md:max-w-3xl lg:max-w-5xl xl:max-w-6xl px-4 pb-32 pt-4 sm:px-6">
-      <ReportPageNav viewerLevel={auth.level} path="/reports/operations" params={{ ...params, location: allShops ? "all" : locationId }} language={lang} />
-      <ReportShopTabs path="/reports/operations" params={params} locationId={allShops ? "all" : locationId} language={lang} viewer={auth} />
-      <div className="mb-4 flex items-center justify-between">
-        <h1 className="text-lg font-bold text-co-text">
-          {serverT(lang, "reports.hub.operations")}
-        </h1>
-        {auth.level >= 4 ? <Link
-          href={`/reports/trends/ops?${context}`}
-          className="inline-flex min-h-[44px] items-center rounded-full border-2 border-co-border-2 bg-co-surface px-4 text-xs font-bold uppercase tracking-[0.1em] text-co-text-muted transition hover:border-co-text hover:text-co-text"
-        >
-          {serverT(lang, "reports.trends.nav_label")}
-        </Link> : null}
-      </div>
-
-      {viewerLevel < 4 ? <p className="mb-4 text-sm text-co-text-muted">{serverT(lang, "reports.hub.own_scope")}</p> : null}
-      <ReportRangeControls range={range} locationId={allShops ? "all" : locationId} language={lang} action="/reports/operations" preserve={params}
-        shortened={reportRangeWasShortened(range, params.from)} />
-      <ReportFilterBar
-        locationId={allShops ? "all" : locationId}
-        dateFrom={dateFrom}
-        dateTo={dateTo}
-        selectedType={typeParam ?? "all"}
-        allowedTypes={allowedTypes}
-        language={lang}
-        viewerLevel={viewerLevel}
-        activeSignalFilters={signalFilters}
-        query={qParam ?? ""}
-        compare={range.compare}
-      />
-
+    <Container className={allShops ? "pt-4" : "mx-auto max-w-2xl md:max-w-3xl lg:max-w-5xl xl:max-w-6xl px-4 pb-32 pt-4 sm:px-6"}>
+      {!allShops && header}
       {query ? (
         <div className="mt-4">
           <UnifiedSearchResults
@@ -230,6 +235,6 @@ async function renderReportsPage(params: Awaited<PageProps["searchParams"]>, all
         </div>
       )}
       {page.nextCursor ? <Link className="inline-flex min-h-[44px] items-center px-4" href={`/reports/operations?${nextParams}`}>{serverT(lang, "reports.pagination.next")}</Link> : null}
-    </main>
+    </Container>
   );
 }

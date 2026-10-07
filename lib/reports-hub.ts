@@ -315,6 +315,8 @@ export async function listReportsPage(service: SupabaseClient, f: ListFilters & 
 }
 
 export interface ChecklistDetailItem {
+  /** Stored target only; the view resolves it against authorized same-day reports. */
+  reportInstanceId?: string | null;
   station: string;
   label: string;
   done: boolean;
@@ -410,10 +412,11 @@ async function loadChecklistDetail(
     count_value: number | null;
     notes: string | null;
     photo_id: string | null;
+    auto_complete_meta: { reportInstanceId?: string } | null;
   }>((from, to) =>
     service
       .from("checklist_completions")
-      .select("template_item_id, completed_by, count_value, notes, photo_id")
+      .select("template_item_id, completed_by, count_value, notes, photo_id, auto_complete_meta")
       .eq("instance_id", args.instanceId)
       .match(args.viewer.level < 4 ? { completed_by: args.viewer.userId } : {})
       .is("superseded_at", null)
@@ -425,7 +428,7 @@ async function loadChecklistDetail(
   if (args.viewer.level < 4 && comps.length === 0) return null;
   const compByItem = new Map<
     string,
-    { completed_by: string | null; count_value: number | null; notes: string | null; photo_id: string | null }
+    { completed_by: string | null; count_value: number | null; notes: string | null; photo_id: string | null; auto_complete_meta: { reportInstanceId?: string } | null }
   >();
   for (const c of comps) {
     compByItem.set(c.template_item_id, c);
@@ -466,6 +469,7 @@ async function loadChecklistDetail(
     const c = compByItem.get(ti.id);
     const countValue = c?.count_value ?? null;
     return {
+      reportInstanceId: c?.auto_complete_meta?.reportInstanceId ?? null,
       station: ti.station,
       label: ti.label,
       done: !!c,

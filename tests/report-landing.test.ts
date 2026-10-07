@@ -1,3 +1,4 @@
+import { reportLandingContext } from "@/lib/report-navigation";
 import { readFileSync } from "node:fs";
 import ts from "typescript";
 import { describe, expect, it, vi } from "vitest";
@@ -28,7 +29,7 @@ async function render(level: number, role: RoleCode, location = "mine", assigned
     redirect: () => { throw new Error("redirect"); }, canReadReportLocation, lockLocationContext, REPORT_ALL_LOCATIONS_LEVEL: 8,
     getServiceRoleClient: () => ({ from: () => query }), serverT: (_language: string, key: string) => key,
     operationalNow: () => ({ date: "2026-10-07" }), formatDateLabel: (date: string) => date,
-    parseReportRange, reportRangeParams, shiftReportDate, composeLastClose, composeReportSummary, reportIsFinalized,
+    reportLandingContext, parseReportRange, reportRangeParams, shiftReportDate, composeLastClose, composeReportSummary, reportIsFinalized,
     canDoOperationalTask, listReports, listReportSkeleton: async () => lastClose ? [{ id: "close-id", type: "closing", status: "submitted" }] : [],
   };
   const page = new Function(...Object.keys(deps), `${js}; return ReportsPage;`)(...Object.values(deps));
@@ -38,16 +39,16 @@ async function render(level: number, role: RoleCode, location = "mine", assigned
   return { hrefs, text: JSON.stringify(tree), canDoOperationalTask, listReports };
 }
 describe("actual reports landing card gates", () => {
-  it("last-close details return to all shops and preserve browse filters/cursors", async () => {
+  it("last-close details preserve hub provenance without inherited list filters/cursors", async () => {
     const result = await render(8, "moo", "all", false, { cursor: "saved", type: "closing", sf_underPar: "true" }, true);
     const link = result.hrefs.find(href => href.startsWith("/reports/closing/close-id?"));
     expect(link).toBeTruthy();
     const query = new URL(link!, "https://local").searchParams;
     expect(query.get("hubLocation")).toBe("all");
     expect(query.get("returnLocation")).toBeNull();
-    expect(query.get("cursor")).toBe("saved");
-    expect(query.get("type")).toBe("closing");
-    expect(query.get("sf_underPar")).toBe("true");
+    expect(query.get("cursor")).toBeNull();
+    expect(query.get("type")).toBeNull();
+    expect(query.get("sf_underPar")).toBeNull();
   });
   it("trainees receive own reports and feedback without aggregate or cash links", async () => {
     const result = await render(2, "trainee");

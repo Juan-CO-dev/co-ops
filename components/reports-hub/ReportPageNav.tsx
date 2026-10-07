@@ -6,7 +6,7 @@ import { parentFor } from "@/lib/nav-parents";
 import { reportNavigationHref, reportParentContext } from "@/lib/report-navigation";
 
 export function ReportPageNav({ path, params, language, viewerLevel = 0 }: { path: string; params: Record<string, string | undefined>; language: Language; viewerLevel?: number }) {
-  const parent = parentFor(path);
+  const parent = viewerLevel < 2 ? { href: "/dashboard", labelKey: "nav.dashboard" as const } : parentFor(path);
   const parentParams = reportParentContext(parent.href, params, viewerLevel);
   const dashboardParams = { ...params, loc: params.location && params.location !== "all" ? params.location : undefined };
   return <div className="mb-3 flex flex-wrap items-center justify-between gap-2">

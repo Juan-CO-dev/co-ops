@@ -105,7 +105,7 @@ it("renders baseline and PM report references as links only when supplied author
   const href="/reports/am_prep/source?location=shop";
   const openingPlain=renderToStaticMarkup(createElement(OpeningReportDetailView,{detail:opening,language:"en"}));
   const openingLink=renderToStaticMarkup(createElement(OpeningReportDetailView,{detail:opening,language:"en",baselineHrefs:{source:href}}));
-  expect(openingPlain).not.toContain('href=');expect(openingLink).toContain(`href="${href}"`);
+  expect(openingPlain).not.toContain('href=');expect(openingLink).toContain("Baseline: AM Prep count");expect(openingLink).toContain(`href="${href}"`);
   const pm:PmReportDetail={kind:"pm",date:args.date,locationId:"shop",status:"submitted",submittedByName:null,submittedAt:null,mvpUserId:null,mvpName:null,mvpNote:null,evals:[],gradientTally:[],wrapUp:[],reportProgress:[{key:"am_prep",reportId:"source",progress:"done",doneAt:null}]};
   expect(renderToStaticMarkup(createElement(PmReportDetailView,{detail:pm,language:"en"}))).not.toContain('href=');
   expect(renderToStaticMarkup(createElement(PmReportDetailView,{detail:pm,language:"en",relatedReports:[{type:"am_prep",id:"wrong",date:args.date,href:"/reports/am_prep/wrong?location=shop"},{type:"am_prep",id:"source",date:args.date,href}]}))).toContain(`href="${href}"`);
@@ -115,4 +115,43 @@ it("keeps a PM reference plain when the actual source is absent even if another 
   const pm:PmReportDetail={kind:"pm",date:args.date,locationId:"shop",status:"submitted",submittedByName:null,submittedAt:null,mvpUserId:null,mvpName:null,mvpNote:null,evals:[],gradientTally:[],wrapUp:[],reportProgress:[{key:"mid_day",reportId:"actual",progress:"done",doneAt:null}]};
   const html=renderToStaticMarkup(createElement(PmReportDetailView,{detail:pm,language:"en",relatedReports:[{type:"mid_day",id:"wrong",date:args.date,href:"/reports/mid_day/wrong"}]}));
   expect(html).not.toContain('href=');
+});
+
+
+import { ChecklistReportDetailView } from "@/components/reports-hub/ChecklistReportDetail";
+import { loadReportDetail } from "@/lib/reports-hub";
+it.each([3,4])("closing inline references use stored IDs and authorized targets at L%s", async level => {
+  const refs = ["am_prep", "opening", "mid_day", "cash", "pm"] as const;
+  const data:Record<string,Row[]> = {
+    checklist_instances:[{id:"closing",template_id:"closing",date:args.date,status:"confirmed",location_id:"shop"}],
+    checklist_templates:[{id:"closing",type:"closing"}],
+    checklist_template_items:refs.map(type=>({id:type,template_id:"closing",station:"Closing Manager",label:type,active:true,input_type:null})),
+    checklist_completions:refs.map(type=>({id:type,instance_id:"closing",template_item_id:type,completed_by:"me",auto_complete_meta:{reportInstanceId:type+"-id"}})),
+  };
+  const detail = await loadReportDetail(fake(data).client,{viewer:{...args.viewer,level},type:"closing",id:"closing",locationId:"shop"});
+  expect(detail?.kind).toBe("checklist");
+  if (detail?.kind !== "checklist") throw new Error("missing detail");
+  expect(detail.items.map(item=>item.reportInstanceId)).toEqual(refs.map(type=>type+"-id"));
+  const relatedReports = refs.filter(type=>level>=4 || type!=="cash").map(type=>({type,id:type+"-id",date:args.date,href:`/reports/${type}/${type}-id`}));
+  const html=renderToStaticMarkup(createElement(ChecklistReportDetailView,{detail,language:"en",relatedReports}));
+  for(const type of refs) expect(html.includes(`href="/reports/${type}/${type}-id"`)).toBe(level>=4 || type!=="cash");
+  expect(html).toContain("cash");
+  const unrelated = renderToStaticMarkup(createElement(ChecklistReportDetailView,{detail,language:"en",relatedReports:[{type:"am_prep",id:"wrong-id",date:args.date,href:"/reports/am_prep/wrong-id"}]}));
+  expect(unrelated).not.toContain('href=');
+});
+it("same-label report links show the stored submission time in the operational timezone",async()=>{
+  const data:Record<string,Row[]>=tables();
+  data.checklist_templates!.push({id:"mid",type:"prep",prep_subtype:"mid_day_prep"});
+  for(const [id,time] of [["first","18:15"],["second","20:30"]]) data.checklist_instances!.push({id,template_id:"mid",location_id:"shop",date:args.date,status:"phase2_complete",confirmed_at:`2026-09-06T${time}:00Z`});
+  const relations=await loadReportRelations(fake(data).client,{...args,viewer:{...args.viewer,level:4}});
+  const html=renderToStaticMarkup(createElement(RelatedReports,{relations,language:"en"}));
+  expect(html).toContain("Mid-Day Prep 2:15 PM");
+  expect(html).toContain("Mid-Day Prep 4:30 PM");
+});
+
+it("historical references without submission times remain distinguishable", () => {
+  const sameDay = ["first","second"].map(id=>({type:"mid_day" as const,id,date:args.date,href:`/reports/mid_day/${id}`}));
+  const html=renderToStaticMarkup(createElement(RelatedReports,{relations:{sameDay,previous:[],next:[],baselineHrefs:{}},language:"en"}));
+  expect(html).toContain("Mid-Day Prep (1)");
+  expect(html).toContain("Mid-Day Prep (2)");
 });

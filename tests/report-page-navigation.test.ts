@@ -2,7 +2,7 @@ import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { TranslationProvider } from "@/lib/i18n/provider";
-const mocks = vi.hoisted(() => ({ auth: vi.fn(), service: vi.fn(), pathname: "/reports" }));
+const mocks = vi.hoisted(() => ({ auth: vi.fn(), service: vi.fn(), personLocations: vi.fn(), pathname: "/reports" }));
 vi.mock("@/lib/session", () => ({ requireSessionFromHeaders: mocks.auth }));
 vi.mock("@/lib/supabase-server", () => ({ getServiceRoleClient: mocks.service }));
 vi.mock("next/navigation", () => ({ usePathname: () => mocks.pathname, redirect: (path: string) => { throw new Error(path); } }));
@@ -10,7 +10,7 @@ vi.mock("@/lib/operational-task-access", () => ({ canDoOperationalTask: async ()
 vi.mock("@/lib/reports-hub", async original => ({ ...await original<typeof import("@/lib/reports-hub")>(), listReports: async () => [], listReportSkeleton: async () => [], listReportsPage: async () => ({ items: [], nextCursor: null }) }));
 vi.mock("@/lib/written-reports", async original => ({ ...await original<typeof import("@/lib/written-reports")>(), listWrittenReports: async () => ({ reports: [], nextCursor: null }) }));
 vi.mock("@/lib/pm-report", async original => ({ ...await original<typeof import("@/lib/pm-report")>(), loadMyFeedback: async () => [] }));
-vi.mock("@/lib/team-metrics", async original => ({ ...await original<typeof import("@/lib/team-metrics")>(), loadTeamOperatingHealth: async () => null, loadPersonDetail: async () => null, loadMyPerformance: async () => null }));
+vi.mock("@/lib/team-metrics", async original => ({ ...await original<typeof import("@/lib/team-metrics")>(), loadPersonReportLocations: mocks.personLocations, loadTeamOperatingHealth: async () => null, loadPersonDetail: async () => null, loadMyPerformance: async () => null }));
 vi.mock("@/lib/reports-trends", async original => ({ ...await original<typeof import("@/lib/reports-trends")>(), loadTrendSeries: async () => ({ current: [], previous: null, cashVisible: false, totals: Object.fromEntries(["par", "temps", "cash", "completion"].map(key => [key, { current: 0, delta: null }])) }) }));
 import Landing from "@/app/(authed)/reports/page";
 import Operations from "@/app/(authed)/reports/operations/page";
@@ -38,7 +38,7 @@ function renderedHref(node: React.ReactNode): URL {
 async function navigation(node: React.ReactNode): Promise<React.ReactNode> {
   if (Array.isArray(node)) return Promise.all(node.map(navigation));
   if (!React.isValidElement(node)) return null;
-  if (node.type === ReportPageNav) return node;
+  if (node.type === ReportPageNav || node.type === "h1") return node;
   if (node.type === ReportShopTabs) return await ReportShopTabs(node.props as React.ComponentProps<typeof ReportShopTabs>);
   if (node.type === TrendShopPanels) return navigation(await TrendShopPanels(node.props as React.ComponentProps<typeof TrendShopPanels>));
   return navigation((node.props as { children?: React.ReactNode }).children);
@@ -51,6 +51,7 @@ const pages = [
 const shops = [{ id: "a", name: "Shop A", code: "A" }, { id: "b", name: "Shop B", code: "B" }];
 describe("actual report pages expose consistent navigation", () => {
   beforeEach(() => {
+    mocks.personLocations.mockResolvedValue(["a", "b"]);
     const query = { select: () => query, eq: () => query, order: () => query, in: () => query, then: (resolve: (value: unknown) => unknown) => resolve({ data: shops, error: null }) };
     mocks.service.mockReturnValue({ from: () => query });
   });
@@ -59,7 +60,9 @@ describe("actual report pages expose consistent navigation", () => {
     const landing = await Landing({ searchParams: Promise.resolve({ location: "all", cursor: "page2", sf_underPar: "true" }) });
     const href = elements(landing).map(element => (element.props as { href?: string }).href).find(href => href?.startsWith("/reports/operations?"))!;
     const listParams = Object.fromEntries(new URL(href, "https://local").searchParams);
-    expect(listParams).toMatchObject({ location: "a", hubLocation: "all", cursor: "page2" });
+    expect(listParams).toMatchObject({ location: "a", hubLocation: "all" });
+    expect(listParams.cursor).toBeUndefined();
+    listParams.cursor = "page2"; // Pagination belongs to the list, not the hub.
     expect(listParams.returnLocation).toBeUndefined();
     const list = await Operations({ searchParams: Promise.resolve(listParams) });
     const reportList = elements(list).find(element => element.type === ReportList)!;
@@ -78,7 +81,7 @@ describe("actual report pages expose consistent navigation", () => {
     expect(hub.pathname).toBe("/reports");
     expect(hub.searchParams.get("location")).toBe("all");
     expect(hub.searchParams.get("hubLocation")).toBeNull();
-    expect(hub.searchParams.get("cursor")).toBe("page2");
+    expect(hub.searchParams.get("cursor")).toBeNull();
   });
   for (const [path, page] of [["/reports/written", Written], ["/my-feedback", Feedback], ["/reports/trends", Trends]] as const) {
     it.each([7, 8])(`${path} consumes hub provenance only for authorized L%s`, async level => {
@@ -101,9 +104,10 @@ describe("actual report pages expose consistent navigation", () => {
       const hrefs = [...html.matchAll(/href="([^"]+)"/g)].map(match => match[1]!);
       expect(hrefs[0]!.split("?")[0]).not.toBe(path);
       expect(hrefs.some(href => href.startsWith("/dashboard?"))).toBe(true);
-      expect(hrefs[0]).toContain("cursor=saved");
+      const landingParent = new URL(hrefs[0]!.replaceAll("&amp;", "&"), "https://local").pathname === "/reports";
+      expect(hrefs[0]!.includes("cursor=saved")).toBe(!landingParent && path !== "/reports");
       if (level < 8) expect(new URL(hrefs[0]!.replaceAll("&amp;", "&"), "https://local").searchParams.get("location")).not.toBe("all");
-      expect(hrefs[0]).toContain("sf_underPar=true");
+      expect(hrefs[0]!.includes("sf_underPar=true")).toBe(!landingParent && path !== "/reports");
       expect(html.includes("All shops")).toBe(level >= 8);
       expect(html).toContain('aria-current="page"');
       expect(html).toContain("bg-co-gold");
@@ -115,15 +119,53 @@ describe("actual report pages expose consistent navigation", () => {
       const tree = await page({ searchParams: Promise.resolve({ location: "all" }), params: Promise.resolve({ personId: "person" }) });
       const html = renderToStaticMarkup(React.createElement(TranslationProvider, { initialLanguage: "en", children: await navigation(tree) }));
       const active = html.match(/<a[^>]*aria-current="page"[^>]*>[^<]*<\/a>/g) ?? [];
-      expect(active.length).toBeGreaterThan(0);
+      expect(active.length).toBe(1);
       expect(active.every(link => link.includes("All shops"))).toBe(true);
+      const hrefs = [...html.matchAll(/href="([^"]+)"/g)].map(match => new URL(match[1]!.replaceAll("&amp;","&"),"https://local"));
+      expect(hrefs.filter(href => href.pathname === "/dashboard")).toHaveLength(1);
+      if (!["/reports/trends/team/person", "/reports/written"].includes(path)) expect(html.match(/<h1/g)).toHaveLength(1);
     });
   }
-  it("shop links preserve filters, range and cursor and normalize the feedback loc alias", () => {
+  it("shop links preserve filters and range, reset cursors and normalize the feedback loc alias", () => {
     const html = renderToStaticMarkup(React.createElement(ReportShopTabLinks, { path: "/my-feedback", locationId: "b", language: "en", viewer: { level: 8, locations: [] }, shops, params: { loc: "a", from: "2026-10-01", q: "hello world", cursor: "saved" } }));
     expect(html).toContain("q=hello+world");
-    expect(html).toContain("cursor=saved");
+    const hrefs = [...html.matchAll(/href="([^"]+)"/g)].map(match => new URL(match[1]!.replaceAll("&amp;", "&"),"https://local"));
+    expect(hrefs.find(href=>href.searchParams.get("location")==="b")!.searchParams.has("cursor")).toBe(false);
+    expect(hrefs.find(href=>href.searchParams.get("location")==="a")!.searchParams.get("cursor")).toBe("saved");
     expect(html).not.toContain("?loc=");
     expect(html).toMatch(/<a aria-current="page"[^>]*location=b"/);
   });
 });
+
+ it("L1 feedback returns to Dashboard", async () => {
+    mocks.pathname = "/my-feedback";
+    mocks.auth.mockResolvedValue({role:"trainee",level:1,locations:["a"],user:{id:"me",language:"en"}});
+    const tree = await Feedback({searchParams:Promise.resolve({location:"a"})});
+    expect(renderedHref(elements(tree).find(el => el.type === ReportPageNav)!).pathname).toBe("/dashboard");
+ });
+ it("landing cards discard inherited list filters and cursors", async () => {
+    mocks.auth.mockResolvedValue({role:"gm",level:7,locations:["a"],user:{id:"me",language:"en"}});
+    const tree = await Landing({searchParams:Promise.resolve({location:"a",type:"closing",q:"milk",sf_underPar:"true",cursor:"old",cursor_a:"old"})});
+    const hrefs = elements(tree).map(el => (el.props as {href?:string}).href).filter((href): href is string => !!href && href.startsWith("/reports/operations?"));
+    expect(hrefs.length).toBeGreaterThan(0);
+    for (const href of hrefs) {
+      const params = new URL(href,"https://local").searchParams;
+      expect(params.has("type")).toBe(false);
+      expect(params.has("q")).toBe(false);
+      expect([...params.keys()].some(key => key.startsWith("cursor"))).toBe(false);
+      // Signal cards intentionally add their own one filter.
+      expect([...params.keys()].filter(key => key.startsWith("sf_")).length).toBeLessThanOrEqual(1);
+    }
+ });
+
+ it.each([7,8])("person tabs intersect membership with L%s viewer scope", async level => {
+   mocks.personLocations.mockResolvedValue(["a"]);
+   mocks.pathname="/reports/trends/team/person";
+   mocks.auth.mockResolvedValue({role:level===8?"moo":"gm",level,locations:["a","b"],user:{id:"me",language:"en"}});
+   const tree = await Person({params:Promise.resolve({personId:"person"}),searchParams:Promise.resolve({location:level===8?"all":"b"})});
+   const html = renderToStaticMarkup(React.createElement(TranslationProvider,{initialLanguage:"en",children:await navigation(tree)}));
+   expect(html).toContain('aria-current="page"');
+   expect(html).toContain("Shop A");
+   expect(html).not.toContain("Shop B");
+   expect(html).not.toContain("All shops");
+ });
