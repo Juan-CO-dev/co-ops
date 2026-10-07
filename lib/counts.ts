@@ -841,6 +841,25 @@ export interface OnHandView {
    * before migration 0180 applies.
    */
   products: ProductOnHandRow[];
+  /**
+   * 0215 batch vs bottle — the bulk backup a prep session TOSSED (prep_batch_sessions
+   * rows with tossed_qty > 0), newest first. ADVISORY: this is counted prep waste, not a
+   * SKU variance — it never enters `rows`. Populated only by `loadOnHand` (the counts
+   * surface); absent on the advisory derivation and before 0215 applies.
+   */
+  prepWaste?: PrepWasteRow[];
+}
+
+/** One tossed bulk container (0215). `tossedQty` is in the item's par unit. */
+export interface PrepWasteRow {
+  templateItemId: string;
+  itemName: string;
+  businessDate: string;
+  tossedQty: number;
+  parUnit: string | null;
+  tossedAt: string | null;
+  tossedByName: string | null;
+  source: "opening_p2" | "mid_day_p2";
 }
 
 /** Re-exported so server consumers keep their `@/lib/counts` paths (the *-shared law). */
@@ -1283,7 +1302,47 @@ export async function loadOnHand(actor: AuthContext, locationId: string, now: nu
   requireLevel(actor, COUNT_READ_MIN);
   // The counts SURFACE gets the product grain; the advisory derivation below does not
   // (see withProducts). This is the only entry point that renders a two-grain panel.
-  return loadOnHandDerived(actor, locationId, now, { withProducts: true, seedBaselines: false });
+  const view = await loadOnHandDerived(actor, locationId, now, { withProducts: true, seedBaselines: false });
+  // 0215 — prep waste rides on the counts surface only (advisory; never in `rows`).
+  return { ...view, prepWaste: await loadPrepWasteRows(getServiceRoleClient(), locationId) };
+}
+
+/**
+ * 0215 batch vs bottle — the bulk backup tossed at prep, newest first (bounded). Every
+ * read throws on error: a dropped read would render "no waste" as a fact.
+ */
+async function loadPrepWasteRows(sb: ReturnType<typeof getServiceRoleClient>, locationId: string, limit = 30): Promise<PrepWasteRow[]> {
+  const { data, error } = await sb
+    .from("prep_batch_sessions")
+    .select("template_item_id, item_id, business_date, source, tossed_qty, tossed_par_unit, tossed_at, tossed_by")
+    .eq("location_id", locationId)
+    .gt("tossed_qty", 0)
+    .order("tossed_at", { ascending: false })
+    .limit(limit)
+    .returns<Array<{ template_item_id: string; item_id: string; business_date: string; source: "opening_p2" | "mid_day_p2"; tossed_qty: number | string; tossed_par_unit: string | null; tossed_at: string | null; tossed_by: string | null }>>();
+  if (error) throw new Error(`loadPrepWasteRows: ${error.message}`);
+  const rows = data ?? [];
+  if (rows.length === 0) return [];
+  const itemIds = [...new Set(rows.map((r) => r.item_id))];
+  const userIds = [...new Set(rows.map((r) => r.tossed_by).filter((v): v is string => !!v))];
+  const [{ data: items, error: iErr }, { data: users, error: uErr }] = await Promise.all([
+    sb.from("items").select("id, name").in("id", itemIds).returns<Array<{ id: string; name: string }>>(),
+    userIds.length ? sb.from("users").select("id, name").in("id", userIds).returns<Array<{ id: string; name: string }>>() : Promise.resolve({ data: [] as Array<{ id: string; name: string }>, error: null }),
+  ]);
+  if (iErr) throw new Error(`loadPrepWasteRows items: ${iErr.message}`);
+  if (uErr) throw new Error(`loadPrepWasteRows users: ${uErr.message}`);
+  const itemName = new Map((items ?? []).map((i) => [i.id, i.name]));
+  const userName = new Map((users ?? []).map((u) => [u.id, u.name]));
+  return rows.map((r) => ({
+    templateItemId: r.template_item_id,
+    itemName: itemName.get(r.item_id) ?? "(item)",
+    businessDate: r.business_date,
+    tossedQty: Number(r.tossed_qty) || 0,
+    parUnit: r.tossed_par_unit,
+    tossedAt: r.tossed_at,
+    tossedByName: r.tossed_by ? (userName.get(r.tossed_by) ?? null) : null,
+    source: r.source,
+  }));
 }
 
 /** KH+ floor for the ADVISORY on-hand derivation — matches the ordering walker's

@@ -236,6 +236,7 @@ export default async function AmPrepPage({ searchParams }: PageProps) {
           sectionLabels={state.sectionLabels}
           sections={state.sections}
           restoredDraft={restoredDraft}
+          batchModeByItem={state.batchModeByItem}
         />
       </div>
     </main>

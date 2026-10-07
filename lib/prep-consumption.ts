@@ -10,8 +10,10 @@
  * nothing downstream can tell that graph from a correct one. A partial recipe graph must
  * never exist, so a failed read is fatal to the whole build rather than survivable by it.
  * Recursively flattens an item's item_components recipe to leaf-SKU oz consumed
- * per par-unit, mirroring recipe-math's per-batch ÷ batch_yield semantics —
- * but ACCUMULATING PER LEAF SKU instead of summing. Returns oz-per-output-unit; callers scale.
+ * per par-unit, mirroring recipe-math's per-batch ÷ output-yield semantics (the divisor is
+ * the output row's `yield` on the graph, not `recipes.batch_yield`) — but ACCUMULATING PER
+ * LEAF SKU instead of summing. Returns oz-per-output-unit; callers scale. 0215's batch fold
+ * (recordBatchProductionFromPrep below) reads the SAME graph and multiplies by that yield.
  */
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import { skuContentOz, type MeasureUnitFactor, type RecipeInputSku } from "@/lib/recipe-math";

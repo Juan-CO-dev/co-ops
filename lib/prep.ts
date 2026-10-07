@@ -624,6 +624,12 @@ export async function loadAmPrepState(
    * the same loadPrepSections map that builds sectionLabels (one load).
    */
   sections: PrepSectionDefn[];
+  /**
+   * 0215 batch vs bottle — TEMPLATE-ITEM id → true when the item's recipe is batch_mode (and
+   * eligible). The AM prep form only HINTS with it ("bulk / not yet bottled" under BACK UP):
+   * the closing count's BACK UP is the bulk container tomorrow's opener starts from.
+   */
+  batchModeByItem: Record<string, boolean>;
 } | null> {
   // Resolve active AM Prep template (most-recent-active per Path A versioning).
   // Per-location scoping via `.eq("location_id", args.locationId)` is LOAD-BEARING
@@ -801,6 +807,15 @@ export async function loadAmPrepState(
     (a, b) => a.displayOrder - b.displayOrder,
   );
 
+  // 0215 — which lines are batch items (hint only; the count itself is unchanged).
+  const amItemIds = resolvedItems.map((t) => t.itemId).filter((x): x is string => !!x);
+  const amBatchContext = await loadBatchContextForItems(amItemIds);
+  const batchModeByItem: Record<string, boolean> = {};
+  for (const tItem of resolvedItems) {
+    const ctx = tItem.itemId ? amBatchContext.get(tItem.itemId) : undefined;
+    if (ctx?.isBatch) batchModeByItem[tItem.id] = true;
+  }
+
   return {
     template: tmplRow,
     templateItems: resolvedItems,
@@ -809,6 +824,7 @@ export async function loadAmPrepState(
     authors,
     sectionLabels,
     sections,
+    batchModeByItem,
   };
 }
 

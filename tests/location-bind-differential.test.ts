@@ -51,14 +51,27 @@ const TENANCY_SCOPED_TABLES = [
   "vendor_rhythm_skips",
   // 0214 — the AM prep draft is one shop's unsubmitted count for one day.
   "am_prep_drafts",
+  // 0215 — a prep batch session is one shop's (instance, template item) for one business day.
+  "prep_batch_sessions",
 ];
 
 /**
  * RPCs that WRITE a tenancy-scoped table in SQL. A body calling one of these is a writer even
  * though it never names the table with .from(…) (0214: save_am_prep_draft merges the AM prep
  * draft atomically, so saveAmPrepDraft has no .from("am_prep_drafts") write of its own).
+ *
+ * 0215: the two Phase 2 save RPCs upsert prep_batch_sessions and the revoke RPC zeroes its toss.
+ * They bind INSIDE SQL — location_id + business_date come from the authorized instance and the
+ * template item must belong to that instance's template (correction 4) — and their callers
+ * (lib/opening.ts, lib/prep.ts) sit behind routes that lockLocationContext the instance's
+ * location before dispatch. Listed so a future lib on FILES that calls them is held to the bind.
  */
-const TENANCY_SCOPED_RPCS = ["save_am_prep_draft"];
+const TENANCY_SCOPED_RPCS = [
+  "save_am_prep_draft",
+  "save_phase2_item_atomic",
+  "save_mid_day_phase2_item_atomic",
+  "revoke_phase2_item_atomic",
+];
 
 /** Any of these in a function body counts as "the actor was bound to a location". */
 const BIND_PRIMITIVES = [

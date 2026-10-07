@@ -61,6 +61,8 @@ export interface GenericPrepSectionProps {
   errors?: Record<string, Partial<Record<keyof RawPrepInputs, string>>>;
   /** DB-backed section labels (slug → { en, es }); preferred over the i18n fallback. */
   sectionLabels?: Record<string, { en: string; es: string | null }>;
+  /** 0215 batch vs bottle — templateItemId → batch item (hint under BACK UP). */
+  batchModeByItem?: Record<string, boolean>;
 }
 
 export function GenericPrepSection({
@@ -73,6 +75,7 @@ export function GenericPrepSection({
   disabled,
   errors,
   sectionLabels,
+  batchModeByItem,
 }: GenericPrepSectionProps) {
   const { t, language } = useTranslation();
 
@@ -137,6 +140,7 @@ export function GenericPrepSection({
             disabled={disabled}
             rowErrors={errors?.[item.id]}
             autoCalcTotal={autoCalcTotal}
+            batchMode={batchModeByItem?.[item.id] === true}
           />
         );
       })}

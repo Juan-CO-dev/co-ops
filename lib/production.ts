@@ -113,6 +113,12 @@ export interface ProductionView {
   itemName: string;
   inputQty: number;
   outputQty: number;
+  /** 0215 batch vs bottle — set on a header written by the batch fold (batches × recipe); null on every other header. */
+  batchesMade: number | null;
+  /** 0215 — the measured output the prepper entered (par units); Phase B's yield numerator. */
+  cameOutTo: number | null;
+  /** 0215 — the MAKER's display name (the session's first saver), when recorded. */
+  madeByName: string | null;
 }
 
 /** Items makeable from each SKU = output items of ACTIVE recipes that take the SKU
@@ -387,13 +393,22 @@ export async function loadRecentProductions(actor: AuthContext, locationId: stri
   requireProduce(actor);
   if (!lockLocationContext(actorLoc(actor), locationId)) throw new ProductionError(404, "not_found", "Location not found");
   const sb = getServiceRoleClient();
-  const { data: rows, error } = await sb.from("productions").select("id, produced_at, output_item_id, output_qty")
+  const { data: rows, error } = await sb.from("productions").select("id, produced_at, output_item_id, output_qty, batches_made, came_out_to, made_by")
     .eq("location_id", locationId).is("superseded_at", null).is("revoked_at", null)
     .order("produced_at", { ascending: false }).limit(limit)
-    .returns<Array<{ id: string; produced_at: string; output_item_id: string; output_qty: number | string }>>();
+    .returns<Array<{ id: string; produced_at: string; output_item_id: string; output_qty: number | string; batches_made: number | string | null; came_out_to: number | string | null; made_by: string | null }>>();
   if (error) throw new Error(`loadRecentProductions: ${error.message}`);
   const list = rows ?? [];
   if (list.length === 0) return [];
+
+  // 0215 — the makers' names (batch headers only; a single-box header has no made_by).
+  const makerIds = [...new Set(list.map((r) => r.made_by).filter((v): v is string => !!v))];
+  const makerName = new Map<string, string>();
+  if (makerIds.length > 0) {
+    const { data: makers, error: mErr } = await sb.from("users").select("id, name").in("id", makerIds).returns<Array<{ id: string; name: string }>>();
+    if (mErr) throw new Error(`loadRecentProductions maker names: ${mErr.message}`);
+    for (const u of makers ?? []) makerName.set(u.id, u.name);
+  }
 
   // Input lines for these headers → skuName (comma-join) + summed input qty.
   const prodIds = list.map((r) => r.id);
@@ -430,5 +445,8 @@ export async function loadRecentProductions(actor: AuthContext, locationId: stri
     skuName: (namesByHdr.get(r.id) ?? []).join(", ") || "(sku)",
     itemName: itemName.get(r.output_item_id) ?? "(item)",
     inputQty: qtyByHdr.get(r.id) ?? 0, outputQty: num(r.output_qty) ?? 0,
+    batchesMade: num(r.batches_made),
+    cameOutTo: num(r.came_out_to),
+    madeByName: r.made_by ? (makerName.get(r.made_by) ?? null) : null,
   }));
 }

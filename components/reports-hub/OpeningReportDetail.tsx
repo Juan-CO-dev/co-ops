@@ -171,6 +171,40 @@ function Phase2Outcome({
         </span>
       )}
 
+      {/* 0215 batch vs bottle — the batch half, when the row was saved by batch. */}
+      {phase2.batch !== null && (
+        <>
+          <span className="text-co-text">
+            {t("reports.opening.batch_line", {
+              batches: phase2.batch.batches,
+              yield: phase2.batch.yieldAtTime ?? "—",
+              actual: phase2.batch.cameOutTo,
+              bottled: phase2.batch.bottled,
+              before: phase2.batch.backupBefore,
+              after: phase2.batch.backupAfter,
+            })}
+          </span>
+          {phase2.batch.tossed > 0 && (
+            <span className="font-semibold text-co-cta-text">
+              {t("reports.opening.batch_tossed", { n: phase2.batch.tossed })}
+            </span>
+          )}
+          {phase2.batch.overBatchReason !== null && (
+            <span className="text-co-text-muted">
+              {t("reports.opening.batch_reason", {
+                reason: t(`prep.batch.reason.${phase2.batch.overBatchReason.code}` as TranslationKey),
+                note: phase2.batch.overBatchReason.note ?? "",
+              })}
+            </span>
+          )}
+          {phase2.madeByName !== null && (
+            <span className="text-co-text-muted">
+              {t("reports.opening.batch_made_by", { name: phase2.madeByName })}
+            </span>
+          )}
+        </>
+      )}
+
       {/* Per-item save provenance (C.52). House time formatter, never toLocale*. */}
       {(phase2.savedByName !== null || phase2.savedAt !== null) && (
         <span className="text-co-text-muted">
