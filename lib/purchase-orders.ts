@@ -37,6 +37,7 @@ import { auditOperationalTaskOverride, canDoOperationalTask } from "@/lib/operat
  * NEVER fabricated. vendor_price_history.unit_price is DOLLARS (numeric); the PO
  * line stores integer cents → Math.round(unit_price * 100).
  */
+import { loadStoreVendorIds } from "@/lib/ordering-sources";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import { selectAllRows } from "@/lib/supabase-paginate";
 import { getRoleLevel } from "@/lib/roles";
@@ -214,6 +215,10 @@ export async function createDraftsFromLines(
   const vendorIds = [...byVendor.keys()].filter((vid) => (byVendor.get(vid)?.length ?? 0) > 0);
   if (vendorIds.length === 0) return [];
 
+  const storeVendorIds = await loadStoreVendorIds();
+  if (vendorIds.some((id) => storeVendorIds.has(id))) {
+    throw new PurchaseOrderError(400, "invalid_vendor", "Stores are receiving sources only");
+  }
   const { dateEt, compactYmd } = etToday();
 
   // Location code for the display code (NOT NULL text on locations).
@@ -227,6 +232,7 @@ export async function createDraftsFromLines(
   // all vendors (one query — never per-SKU/per-vendor). V3-A: the key is snapshotted onto
   // the line so a confirmed order keeps its shape when the guide is edited later.
   const allSkuIds = [...new Set(vendorIds.flatMap((vid) => (byVendor.get(vid) ?? []).map((l) => l.skuId)))];
+  await assertNoStoreSkus(sb, allSkuIds);
   const [{ data: vendorRows, error: vErr }, guideKeys] = await Promise.all([
     sb.from("vendors").select("id, name").in("id", vendorIds).returns<Array<{ id: string; name: string }>>(),
     guideKeysFor(allSkuIds),
@@ -412,6 +418,21 @@ export function partitionDraftLines(
  *  worst case a double-tap can produce; three leaves headroom without spinning. */
 const DRAFT_LINE_LAPS = 3;
 
+async function assertNoStoreSkus(sb: ServiceClient, skuIds: readonly string[]): Promise<void> {
+  const stores = await loadStoreVendorIds();
+  if (stores.size === 0) return;
+  // Chunk the caller-provided ids: keep request lines bounded for large drafts.
+  for (let start = 0; start < skuIds.length; start += 100) {
+    const { data, error } = await sb.from("vendor_items").select("id, vendor_id")
+      .in("id", skuIds.slice(start, start + 100))
+      .returns<Array<{ id: string; vendor_id: string | null }>>();
+    if (error) throw new Error(`assertNoStoreSkus: ${error.message}`);
+    if ((data ?? []).some((sku) => sku.vendor_id != null && stores.has(sku.vendor_id))) {
+      throw new PurchaseOrderError(400, "invalid_sku", "Store items cannot be ordered");
+    }
+  }
+}
+
 /**
  * INSERT genuinely-new draft lines (fetch their current guide positions in one batch).
  * Returns the PostgREST error instead of throwing so the caller can read its `code` —
@@ -493,6 +514,7 @@ export async function updateDraftLines(
   if (po.status !== "draft") {
     throw new PurchaseOrderError(409, "not_draft", "Only draft orders can be edited");
   }
+  await assertNoStoreSkus(sb, skuIds);
 
   // ── THE CREATE-IF-ABSENT LAP (audit v2 F1, BC-037) ───────────────────────────────
   // Read-which-exist → insert-the-rest is a check-then-act, and until migration 0190 there

@@ -19,6 +19,7 @@
  * every rule it applies lives in lib/dynamic-pars-shared.ts. If a change to this file ever
  * needs an INSERT or an UPDATE, it belongs in the nightly engine instead.
  */
+import { loadStoreVendorIds } from "@/lib/ordering-sources";
 import "server-only";
 
 import type { getServiceRoleClient } from "@/lib/supabase-server";
@@ -78,7 +79,8 @@ async function loadParSkuIndex(sb: ServiceClient): Promise<Map<string, ParSkuInd
     .or("weekday_par.not.is.null,weekend_par.not.is.null")
     .returns<Array<{ id: string; name: string; vendor_id: string | null }>>();
   if (error) throw new Error(`loadParSkuIndex: ${error.message}`);
-  return new Map((data ?? []).map((r) => [r.id, { vendorId: r.vendor_id, name: r.name }]));
+  const storeVendorIds = await loadStoreVendorIds();
+  return new Map((data ?? []).filter((r) => r.vendor_id == null || !storeVendorIds.has(r.vendor_id)).map((r) => [r.id, { vendorId: r.vendor_id, name: r.name }]));
 }
 
 /** The `par_auto_moves` columns the walk-time re-selection reads. One spelling. */

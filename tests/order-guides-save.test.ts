@@ -22,6 +22,7 @@ import { audit } from "@/lib/audit";
 import type { AuthContext } from "@/lib/session";
 import type { GuideModel } from "@/lib/order-guides-shared";
 
+vi.mock("@/lib/ordering-sources", () => ({ loadStoreVendorIds: vi.fn(async () => new Set<string>()) }));
 vi.mock("@/lib/supabase-server", () => ({ getServiceRoleClient: vi.fn() }));
 vi.mock("@/lib/audit", () => ({ audit: vi.fn(async () => undefined) }));
 
