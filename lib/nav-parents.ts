@@ -57,6 +57,8 @@ interface ParentRule {
  *   - customer catering sub-pages → /catering
  */
 const RULES: ParentRule[] = [
+  { pattern: "/reports", parent: { href: "/dashboard", labelKey: "nav.dashboard" } },
+  { pattern: "/my-feedback", parent: { href: "/reports", labelKey: "reports.page.title" } },
   { pattern: "/reports/operations", parent: { href: "/reports", labelKey: "reports.page.title" } },
   { pattern: "/reports/written", parent: { href: "/reports", labelKey: "reports.page.title" } },
   // ─── Admin: drill-ins → their section hub ──────────────────────────────
@@ -78,8 +80,9 @@ const RULES: ParentRule[] = [
   { pattern: "/admin", parent: { href: "/dashboard", labelKey: "nav.dashboard" } },
 
   // ─── Operator: drill-ins → their list ──────────────────────────────────
-  { pattern: "/reports/[type]/[id]", parent: { href: "/reports/operations", labelKey: "reports.page.title" } },
-  { pattern: "/reports/trends/team/[personId]", parent: { href: "/reports/trends/team", labelKey: "people.detail.back" } },
+  { pattern: "/reports/[type]/[id]", parent: { href: "/reports/operations", labelKey: "reports.hub.operations" } },
+  { pattern: "/reports/written/[id]", parent: { href: "/reports/written", labelKey: "reports.hub.written" } },
+  { pattern: "/reports/trends/team/[personId]", parent: { href: "/reports/trends/team", labelKey: "reports.trends.team.title" } },
   { pattern: "/reports/trends/team", parent: { href: "/reports/trends", labelKey: "reports.trends.landing.title" } },
   { pattern: "/reports/trends/ops", parent: { href: "/reports/trends", labelKey: "reports.trends.landing.title" } },
   { pattern: "/training/build/[item]", parent: { href: "/training", labelKey: "training.title" } },
@@ -161,4 +164,24 @@ export function parentFor(pathname: string): NavParent {
   }
 
   return best ?? DEFAULT_PARENT;
+}
+
+/** Resolve a back affordance, refusing an override that points at this page. */
+export function resolveBackLink(
+  pathname: string,
+  options: { hrefOverride?: string; labelKey?: TranslationKey; search?: string } = {},
+): NavParent {
+  const parent = parentFor(pathname);
+  const loops = options.hrefOverride !== undefined &&
+    normalizePath(options.hrefOverride) === normalizePath(pathname);
+  const target = !loops && options.hrefOverride ? options.hrefOverride : parent.href;
+  const [path, query = ""] = target.split("?", 2);
+  const params = new URLSearchParams(query);
+  if (options.search) {
+    for (const [key, value] of new URLSearchParams(options.search)) params.set(key, value);
+  }
+  return {
+    href: `${path}${params.size ? `?${params}` : ""}`,
+    labelKey: loops ? parent.labelKey : options.labelKey ?? parent.labelKey,
+  };
 }

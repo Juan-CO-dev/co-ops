@@ -24,7 +24,8 @@ import { getServiceRoleClient } from "@/lib/supabase-server";
 import { loadProfileDirectory } from "@/lib/profiles";
 import { matchPeople, matchPages, type PageResult, type PersonResult } from "@/lib/unified-search";
 
-import { BackLink } from "@/components/nav/BackLink";
+import { ReportPageNav } from "@/components/reports-hub/ReportPageNav";
+import { ReportShopTabs } from "@/components/reports-hub/ReportShopTabs";
 import { ReportRangeControls } from "@/components/reports-hub/ReportRangeControls";
 import { ReportFilterBar } from "@/components/reports-hub/ReportFilterBar";
 import { ReportList } from "@/components/reports-hub/ReportList";
@@ -73,13 +74,9 @@ async function renderReportsPage(params: Awaited<PageProps["searchParams"]>, all
   } = params;
 
   if (!locationParam) redirect("/dashboard");
-  if (locationParam === "all") {
-    if (auth.level < REPORT_ALL_LOCATIONS_LEVEL) redirect("/reports");
-    return <TrendShopPanels render={(id) => renderReportsPage({ ...params, location: id }, true)} />;
-  }
 
   const locActor: LocationActor = { role: auth.role, locations: auth.locations };
-  if (!canReadReportLocation(locActor, locationParam)) redirect("/dashboard");
+  if (locationParam !== "all" && !canReadReportLocation(locActor, locationParam)) redirect("/dashboard");
 
   const lang = auth.user.language;
   const locationId = locationParam;
@@ -88,8 +85,14 @@ async function renderReportsPage(params: Awaited<PageProps["searchParams"]>, all
   const dateFrom = range.from;
   const dateTo = range.to;
   const context = reportRangeParams(range);
-  for (const [key,value] of Object.entries(params)) if (value && !key.startsWith("cursor_") && !["cursor","from","to","range","compare","cmp"].includes(key)) context.set(key,value);
+  for (const [key,value] of Object.entries(params)) if (value && !key.startsWith("cursor_") && !["cursor","from","to","range","compare","cmp","returnLocation"].includes(key)) context.set(key,value);
   if (allShops) context.set("location", "all");
+  // Cursor validation binds the filter context, never the cursor itself. Detail
+  // navigation carries the current cursor separately so Back restores this page.
+  const navigationContext = new URLSearchParams(context);
+  for (const [key, value] of Object.entries(params)) {
+    if ((key === "cursor" || key.startsWith("cursor_")) && value !== undefined) navigationContext.set(key, value);
+  }
 
   // ── Resolve type filter ──
   // Single-select: one type OR empty/"all" = all the viewer may see.
@@ -122,15 +125,45 @@ async function renderReportsPage(params: Awaited<PageProps["searchParams"]>, all
   const hasSignalFilters = Object.keys(signalFilters).length > 0;
 
   const sb = getServiceRoleClient();
-  // Report browsing has a MoO+ all-shop grant independent of task/write scope.
-  let reportLocations: Array<{ id: string; name: string }> = [];
-  if (auth.level >= REPORT_ALL_LOCATIONS_LEVEL) {
-    const { data, error } = await sb.from("locations").select("id, name").eq("active", true).order("name");
-    if (error) throw new Error(`report locations: ${error.message}`);
-    reportLocations = data ?? [];
-  }
   const query = (qParam ?? "").trim();
   const snippets = new Map<string, SearchSnippet>();
+  const header = <>
+      <ReportPageNav viewerLevel={auth.level} path="/reports/operations" params={{ ...params, location: allShops ? "all" : locationId }} language={lang} />
+      <ReportShopTabs path="/reports/operations" params={params} locationId={allShops ? "all" : locationId} language={lang} viewer={auth} />
+      <div className="mb-4 flex items-center justify-between">
+        <h1 className="text-lg font-bold text-co-text">
+          {serverT(lang, "reports.hub.operations")}
+        </h1>
+        {auth.level >= 4 ? <Link
+          href={`/reports/trends/ops?${context}`}
+          className="inline-flex min-h-[44px] items-center rounded-full border-2 border-co-border-2 bg-co-surface px-4 text-xs font-bold uppercase tracking-[0.1em] text-co-text-muted transition hover:border-co-text hover:text-co-text"
+        >
+          {serverT(lang, "reports.trends.nav_label")}
+        </Link> : null}
+      </div>
+
+      {viewerLevel < 4 ? <p className="mb-4 text-sm text-co-text-muted">{serverT(lang, "reports.hub.own_scope")}</p> : null}
+      <ReportRangeControls range={range} locationId={allShops ? "all" : locationId} language={lang} action="/reports/operations" preserve={params}
+        shortened={reportRangeWasShortened(range, params.from)} />
+      <ReportFilterBar
+        locationId={allShops ? "all" : locationId}
+        dateFrom={dateFrom}
+        dateTo={dateTo}
+        selectedType={typeParam ?? "all"}
+        allowedTypes={allowedTypes}
+        language={lang}
+        viewerLevel={viewerLevel}
+        activeSignalFilters={signalFilters}
+        query={qParam ?? ""}
+        compare={range.compare}
+      />
+
+  </>;
+  if (locationParam === "all") {
+    if (auth.level < REPORT_ALL_LOCATIONS_LEVEL) redirect("/reports");
+    return <TrendShopPanels header={header} render={(id) => renderReportsPage({ ...params, location: id }, true)} />;
+  }
+
   const page = await listReportsPage(sb, {
     viewer, locationId, dateFrom, dateTo, types: selectedTypes,
     signalFilters: hasSignalFilters ? signalFilters : undefined,
@@ -168,49 +201,10 @@ async function renderReportsPage(params: Awaited<PageProps["searchParams"]>, all
   const nothingMatched =
     query.length > 0 && people.length === 0 && pages.length === 0 && filteredItems.length === 0;
 
+  const Container = allShops ? "div" : "main";
   return (
-    <main className="mx-auto max-w-2xl md:max-w-3xl lg:max-w-5xl xl:max-w-6xl px-4 pb-32 pt-4 sm:px-6">
-      <div className="mb-3">
-        <BackLink hrefOverride={`/reports?${context}`} />
-      </div>
-      {reportLocations.length > 1 ? (
-        <nav className="mb-4 flex flex-wrap gap-2" aria-label={serverT(lang, "dashboard.location.switcher_aria")}>
-          {reportLocations.map((shop) => (
-            <Link key={shop.id} href={`/reports/operations?${new URLSearchParams({...Object.fromEntries(context), location: shop.id})}`} aria-current={shop.id === locationId ? "page" : undefined}
-              className="inline-flex min-h-[44px] items-center rounded-lg border border-co-border-2 px-3 text-sm font-bold text-co-text hover:bg-co-surface-2">
-              {shop.name}
-            </Link>
-          ))}
-        </nav>
-      ) : null}
-      <div className="mb-4 flex items-center justify-between">
-        <h1 className="text-lg font-bold text-co-text">
-          {serverT(lang, "reports.page.title")}
-        </h1>
-        {auth.level >= 4 ? <Link
-          href={`/reports/trends/ops?${context}`}
-          className="inline-flex min-h-[44px] items-center rounded-full border-2 border-co-border-2 bg-co-surface px-4 text-xs font-bold uppercase tracking-[0.1em] text-co-text-muted transition hover:border-co-text hover:text-co-text"
-        >
-          {serverT(lang, "reports.trends.nav_label")}
-        </Link> : null}
-      </div>
-
-      {viewerLevel < 4 ? <p className="mb-4 text-sm text-co-text-muted">{serverT(lang, "reports.hub.own_scope")}</p> : null}
-      <ReportRangeControls range={range} locationId={allShops ? "all" : locationId} language={lang} action="/reports/operations" preserve={params}
-        shortened={reportRangeWasShortened(range, params.from)} />
-      <ReportFilterBar
-        locationId={allShops ? "all" : locationId}
-        dateFrom={dateFrom}
-        dateTo={dateTo}
-        selectedType={typeParam ?? "all"}
-        allowedTypes={allowedTypes}
-        language={lang}
-        viewerLevel={viewerLevel}
-        activeSignalFilters={signalFilters}
-        query={qParam ?? ""}
-        compare={range.compare}
-      />
-
+    <Container className={allShops ? "pt-4" : "mx-auto max-w-2xl md:max-w-3xl lg:max-w-5xl xl:max-w-6xl px-4 pb-32 pt-4 sm:px-6"}>
+      {!allShops && header}
       {query ? (
         <div className="mt-4">
           <UnifiedSearchResults
@@ -236,11 +230,11 @@ async function renderReportsPage(params: Awaited<PageProps["searchParams"]>, all
             viewerLevel={viewerLevel}
             searchQuery={qParam ?? ""}
             snippets={snippets}
-            context={context.toString()}
+            context={navigationContext.toString()}
           />
         </div>
       )}
       {page.nextCursor ? <Link className="inline-flex min-h-[44px] items-center px-4" href={`/reports/operations?${nextParams}`}>{serverT(lang, "reports.pagination.next")}</Link> : null}
-    </main>
+    </Container>
   );
 }
