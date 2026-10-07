@@ -53,6 +53,8 @@ describe("readPhase2Outcome", () => {
       directedById: "11111111-1111-4111-8111-111111111111",
       savedById: "22222222-2222-4222-8222-222222222222",
       savedAt: "2026-09-15T12:34:56.789+00:00",
+      // 0215 batch vs bottle: the 14-field row has no batch object → null.
+      batch: null,
     });
   });
 
@@ -106,6 +108,8 @@ describe("readPhase2Outcome", () => {
       directedById: null,
       savedById: null,
       savedAt: null,
+      // 0215 batch vs bottle: a single-box row carries no batch object.
+      batch: null,
     });
   });
 

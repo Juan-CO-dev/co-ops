@@ -66,7 +66,7 @@ check("duplicates ride alongside a red row", itemReadiness({ hasProducingRecipe:
 // NOTE: this count is a tripwire, not the real guard. The authoritative check —
 // every KNOWN_REASONS code has an i18n key in BOTH en and es, and no orphan keys
 // exist — lives in tests/readiness.test.ts, which runs in CI. This script does not.
-check("KNOWN_REASONS has 16 codes", KNOWN_REASONS.length === 16);
+check("KNOWN_REASONS has 17 codes", KNOWN_REASONS.length === 17);
 
 // ── Recipe: an unresolved PRODUCT pin is RED, not amber (0179) ──
 const rProd = composeRecipeReadiness({ status: "ready", reasons: [] }, [], [], 2);

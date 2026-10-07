@@ -24,6 +24,12 @@ export interface MidDayPhase1Item {
   section: string;
   parValue: number | null;
   parUnit: string | null;
+  /**
+   * 0215 batch vs bottle (ruling F) — true when the item's recipe is batch_mode and eligible:
+   * the count is TWO boxes (on hand = LINE, plus the bulk BACK UP), both required, and the
+   * server derives the total. Every other item keeps its single box, blank = 0.
+   */
+  batchMode?: boolean;
 }
 
 export function MidDayPhase1Form({
@@ -39,8 +45,20 @@ export function MidDayPhase1Form({
   const { t, language } = useTranslation();
   const router = useRouter();
   const [counts, setCounts] = useState<Record<string, string>>({});
+  /** 0215 — the bulk BACK UP box of a batch item, keyed like `counts`. */
+  const [backUps, setBackUps] = useState<Record<string, string>>({});
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [showBatchErrors, setShowBatchErrors] = useState(false);
+
+  const isBoxBlank = (raw: string | undefined) => raw === undefined || raw.trim() === "";
+  /** A batch item is COUNTED only when both boxes hold a finite number >= 0. */
+  const batchBoxesComplete = (it: MidDayPhase1Item) => {
+    if (!it.batchMode) return true;
+    const a = Number(counts[it.id] ?? "");
+    const b = Number(backUps[it.id] ?? "");
+    return !isBoxBlank(counts[it.id]) && !isBoxBlank(backUps[it.id]) && Number.isFinite(a) && Number.isFinite(b) && a >= 0 && b >= 0;
+  };
 
   const groups = useMemo(() => {
     const out: Array<{ section: string; items: MidDayPhase1Item[] }> = [];
@@ -66,17 +84,30 @@ export function MidDayPhase1Form({
     groups.map((g) => ({
       id: g.section,
       total: g.items.length,
-      done: g.items.filter((it) => (counts[it.id] ?? "").trim() !== "").length,
+      done: g.items.filter((it) => (counts[it.id] ?? "").trim() !== "" && batchBoxesComplete(it)).length,
     })),
   );
 
   const onSubmit = async () => {
     if (submitting) return;
+    // 0215: a batch item with a blank box does not default to 0 — a silent 0 would wipe a
+    // real bulk container from the backup math. Say which rows are missing and stop.
+    const incomplete = items.filter((it) => !batchBoxesComplete(it));
+    if (incomplete.length > 0) {
+      setShowBatchErrors(true);
+      setError(t("mid_day_prep.phase1.error.backup_required"));
+      collapsible.reveal(incomplete.map((it) => it.section));
+      return;
+    }
     setSubmitting(true);
     setError(null);
     const entries = items.map((it) => {
       const raw = counts[it.id];
       const n = raw === undefined || raw.trim() === "" ? 0 : Number(raw);
+      if (it.batchMode) {
+        // Both boxes are present (checked above); the server derives the total.
+        return { templateItemId: it.id, inputs: { onHand: n, backUp: Number(backUps[it.id]) } };
+      }
       return { templateItemId: it.id, inputs: { onHand: Number.isFinite(n) ? n : 0 } };
     });
     try {
@@ -128,10 +159,14 @@ export function MidDayPhase1Form({
                 it.parValue !== null && onHand !== null && Number.isFinite(onHand)
                   ? Math.max(it.parValue - onHand, 0)
                   : null;
+              const batchIncomplete = showBatchErrors && !batchBoxesComplete(it);
               return (
                 <li
                   key={it.id}
-                  className="flex items-center gap-3 rounded-md border-2 border-co-border bg-co-surface px-3 py-2"
+                  className={[
+                    "flex items-center gap-3 rounded-md border-2 bg-co-surface px-3 py-2",
+                    batchIncomplete ? "border-co-cta-text" : "border-co-border",
+                  ].join(" ")}
                 >
                   <div className="min-w-0 flex-1">
                     <p className="truncate text-sm font-semibold text-co-text">{it.label}</p>
@@ -140,7 +175,28 @@ export function MidDayPhase1Form({
                       {it.parUnit ? ` ${it.parUnit}` : ""}
                       {need !== null ? ` · ${t("mid_day_prep.phase1.need")} ${need}` : ""}
                     </p>
+                    {batchIncomplete ? (
+                      <p className="text-[10px] font-bold text-co-cta-text">{t("mid_day_prep.phase1.error.backup_required")}</p>
+                    ) : null}
                   </div>
+                  {it.batchMode ? (
+                    /* 0215 — the bulk BACK UP box sits beside the on-hand (LINE) box. */
+                    <input
+                      type="number"
+                      inputMode="decimal"
+                      min={0}
+                      value={backUps[it.id] ?? ""}
+                      onChange={(e) => setBackUps((c) => ({ ...c, [it.id]: e.target.value }))}
+                      aria-label={`${it.label} — ${t("mid_day_prep.phase1.back_up")}`}
+                      aria-required
+                      placeholder={t("mid_day_prep.phase1.back_up")}
+                      className="
+                        min-h-[44px] w-24 shrink-0 rounded-md border-2 border-co-border-2 bg-co-surface
+                        px-2 text-sm text-co-text focus:border-co-text focus:outline-none
+                        focus-visible:ring-4 focus-visible:ring-co-gold/60
+                      "
+                    />
+                  ) : null}
                   <input
                     type="number"
                     inputMode="decimal"

@@ -23,6 +23,9 @@ export async function POST(req: NextRequest) {
       batchYield: Number(b.batchYield),
       directions: b.directions != null ? (b.directions as string) : undefined,
       directionsEs: b.directionsEs != null ? (b.directionsEs as string) : undefined,
+      // 0215 batch vs bottle (batchMode true is refused here: a header has no output yet)
+      shelfLifeDays: b.shelfLifeDays != null ? Number(b.shelfLifeDays) : undefined,
+      batchMode: b.batchMode === true,
     });
     return jsonOk({ id }, 201);
   } catch (e) {

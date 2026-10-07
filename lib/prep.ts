@@ -68,7 +68,10 @@ import { loadItemDefns, loadItemOverrides, operationalDayOfWeek, pickOverride, r
 import { operationalNow } from "@/lib/midshift";
 import { applyEffectiveResolution, type EffectiveResolvableBuilder } from "@/lib/admin/template-builder-shared";
 import { loadPrepSections } from "@/lib/prep-sections.server";
-import { loadDerivedForItems, recordProductionFromPrep, skuConsumptionForItem, type DerivedSku, type ConfirmedInput } from "@/lib/prep-consumption";
+import { loadBatchDerivedForItems, loadDerivedForItems, recordBatchProductionFromPrep, recordProductionFromPrep, skuConsumptionForItem, type DerivedSku, type ConfirmedInput } from "@/lib/prep-consumption";
+import { loadBatchContextForItems, type BatchItemContext } from "@/lib/batch-prep";
+import { batchContractCodeFromMessage, toBatchPayload, type BatchContractCode, type BatchEntry } from "@/lib/batch-prep-shared";
+import { midDayFinalizeBlockers } from "@/lib/mid-day-shared";
 import type {
   ChecklistCompletion,
   ChecklistInstance,
@@ -617,6 +620,12 @@ export async function loadAmPrepState(
    * the same loadPrepSections map that builds sectionLabels (one load).
    */
   sections: PrepSectionDefn[];
+  /**
+   * 0215 batch vs bottle — TEMPLATE-ITEM id → true when the item's recipe is batch_mode (and
+   * eligible). The AM prep form only HINTS with it ("bulk / not yet bottled" under BACK UP):
+   * the closing count's BACK UP is the bulk container tomorrow's opener starts from.
+   */
+  batchModeByItem: Record<string, boolean>;
 } | null> {
   if (!(await hasTaskAccess(service, { ...args.actor, locationId: args.locationId, date: args.date, task: "am_prep" }))) {
     throw new PrepRoleViolationError("KH+ or active assignment", args.actor.level);
@@ -797,6 +806,15 @@ export async function loadAmPrepState(
     (a, b) => a.displayOrder - b.displayOrder,
   );
 
+  // 0215 — which lines are batch items (hint only; the count itself is unchanged).
+  const amItemIds = resolvedItems.map((t) => t.itemId).filter((x): x is string => !!x);
+  const amBatchContext = await loadBatchContextForItems(amItemIds);
+  const batchModeByItem: Record<string, boolean> = {};
+  for (const tItem of resolvedItems) {
+    const ctx = tItem.itemId ? amBatchContext.get(tItem.itemId) : undefined;
+    if (ctx?.batchMode) batchModeByItem[tItem.id] = true; // identity: the hint follows recipe.batch_mode
+  }
+
   return {
     template: tmplRow,
     templateItems: resolvedItems,
@@ -805,6 +823,7 @@ export async function loadAmPrepState(
     authors,
     sectionLabels,
     sections,
+    batchModeByItem,
   };
 }
 
@@ -826,6 +845,16 @@ export async function loadMidDayPrepState(
   authors: Record<string, string>;
   sectionLabels: Record<string, { en: string; es: string | null }>;
   derived: Record<string, DerivedSku[]>;
+  /**
+   * 0215 batch vs bottle — per TEMPLATE-ITEM id, the item's batch context (producing
+   * recipe's batch_mode / shelf life / yield / eligibility). Absent = single box. Phase 1
+   * renders LINE + BACK UP for eligible items; Phase 2 renders the batch row.
+   */
+  batchContext: Record<string, BatchItemContext>;
+  /** 0215 — per eligible batch TEMPLATE-ITEM id, the panel rows as PER-BATCH quantities. */
+  batchDerived: Record<string, DerivedSku[]>;
+  /** 0215 — per eligible batch TEMPLATE-ITEM id: last batch's produced_at at this location + this instance's recorded toss. */
+  batchState: Record<string, { madeOn: string | null; tossed: number }>;
 } | null> {
   const { data: instanceRow, error: instErr } = await service
     .from("checklist_instances")
@@ -920,6 +949,53 @@ export async function loadMidDayPrepState(
   const derived: Record<string, DerivedSku[]> = {};
   for (const tItem of resolvedItems) derived[tItem.id] = tItem.itemId ? (derivedByItemId.get(tItem.itemId) ?? []) : [];
 
+  // 0215 batch vs bottle — eligibility per template item (the RPCs re-derive it; this only
+  // shapes the row). PURELY ADDITIVE.
+  const batchContextByItemId = await loadBatchContextForItems(itemIds);
+  const batchContext: Record<string, BatchItemContext> = {};
+  for (const tItem of resolvedItems) {
+    const ctx = tItem.itemId ? batchContextByItemId.get(tItem.itemId) : undefined;
+    if (ctx) batchContext[tItem.id] = ctx;
+  }
+
+  // 0215 — per-BATCH panel rows + the ledger facts the batch row shows (last made-on for
+  // the shelf-life state; this instance's recorded toss). Mirrors loadOpeningState.
+  const batchItemIds = Object.values(batchContext).filter((c) => c.isBatch).map((c) => c.itemId);
+  const batchDerivedMap = await loadBatchDerivedForItems(batchItemIds);
+  const batchDerived: Record<string, DerivedSku[]> = {};
+  const batchState: Record<string, { madeOn: string | null; tossed: number }> = {};
+  const madeOnByItem = new Map<string, string>();
+  const tossedByTemplateItem = new Map<string, number>();
+  if (batchItemIds.length > 0) {
+    const { data: prodRows, error: prodErr } = await service
+      .from("productions")
+      .select("output_item_id, produced_at")
+      .eq("location_id", instanceRow.location_id)
+      .in("output_item_id", batchItemIds)
+      .gt("batches_made", 0)
+      .is("revoked_at", null)
+      .is("superseded_at", null)
+      .order("produced_at", { ascending: false });
+    if (prodErr) throw new Error(`loadMidDayPrepState: load batch productions: ${prodErr.message}`);
+    for (const r of (prodRows ?? []) as Array<{ output_item_id: string; produced_at: string }>) {
+      if (!madeOnByItem.has(r.output_item_id)) madeOnByItem.set(r.output_item_id, r.produced_at);
+    }
+    const { data: sessRows, error: sessErr } = await service
+      .from("prep_batch_sessions")
+      .select("template_item_id, tossed_qty")
+      .eq("instance_id", instanceRow.id);
+    if (sessErr) throw new Error(`loadMidDayPrepState: load batch sessions: ${sessErr.message}`);
+    for (const r of (sessRows ?? []) as Array<{ template_item_id: string; tossed_qty: number | string | null }>) {
+      tossedByTemplateItem.set(r.template_item_id, Number(r.tossed_qty ?? 0) || 0);
+    }
+  }
+  for (const tItem of resolvedItems) {
+    const ctx = batchContext[tItem.id];
+    if (!ctx?.isBatch || !tItem.itemId) continue;
+    batchDerived[tItem.id] = batchDerivedMap.get(tItem.itemId)?.skus ?? [];
+    batchState[tItem.id] = { madeOn: madeOnByItem.get(tItem.itemId) ?? null, tossed: tossedByTemplateItem.get(tItem.id) ?? 0 };
+  }
+
   return {
     template: tmplRow,
     templateItems: resolvedItems,
@@ -928,6 +1004,9 @@ export async function loadMidDayPrepState(
     authors,
     sectionLabels,
     derived,
+    batchContext,
+    batchDerived,
+    batchState,
   };
 }
 
@@ -1148,7 +1227,8 @@ export async function loadMidDayPrepDashboardState(
 /** Result of submitMidDayPhase1 — discriminated so the route maps to HTTP without error-class coupling. */
 export type MidDayPhase1Result =
   | { ok: true; instance: ChecklistInstance }
-  | { ok: false; reason: "not_found" | "not_open" | "bad_item"; detail?: string };
+  /** `backup_required` (0215): a batch item arrived without both boxes (LINE + bulk BACK UP, each >= 0). */
+  | { ok: false; reason: "not_found" | "not_open" | "bad_item" | "backup_required"; detail?: string };
 
 /**
  * submitMidDayPhase1 — count-to-par submission (C.43 Phase 1). Builds C.44
@@ -1179,6 +1259,17 @@ export async function submitMidDayPhase1(
     if (!item || !item.prepMeta) {
       return { ok: false, reason: "bad_item", detail: entry.templateItemId };
     }
+    // 0215 batch vs bottle (ruling F): a batch item's mid-day count is TWO boxes — LINE
+    // (onHand) and the bulk BACK UP — both present, both >= 0. The RPC enforces the same
+    // rule under its own eligibility read (mid_day_backup_required / mid_day_count_negative);
+    // this is the named fast path so the form gets a 422 it can point at, not a 500.
+    if (state.batchContext[entry.templateItemId]?.batchMode === true) {
+      const onHand = entry.inputs.onHand;
+      const backUp = entry.inputs.backUp;
+      if (typeof onHand !== "number" || typeof backUp !== "number" || onHand < 0 || backUp < 0) {
+        return { ok: false, reason: "backup_required", detail: entry.templateItemId };
+      }
+    }
     rpcEntries.push({
       templateItemId: entry.templateItemId,
       inputs: entry.inputs,
@@ -1199,6 +1290,12 @@ export async function submitMidDayPhase1(
   });
   if (error) {
     if (error.code === "23514") return { ok: false, reason: "not_open" }; // check_violation
+    // 0215: the RPC's own two-box gates (a recipe flipped to batch_mode between render and
+    // submit, or a stale client) — same named answer as the pre-check above.
+    if (error.code === "P0001" && /mid_day_backup_required|mid_day_count_negative/.test(error.message ?? "")) {
+      const m = /for item ([0-9a-f-]{36})/i.exec(error.message ?? "");
+      return { ok: false, reason: "backup_required", detail: m?.[1] };
+    }
     throw new Error(`submitMidDayPhase1: ${error.message}`);
   }
 
@@ -1227,7 +1324,9 @@ export async function submitMidDayPhase1(
 /** Result of saveMidDayPhase2Item. */
 export type MidDayPhase2SaveResult =
   | { ok: true; completionId: string; savedAt: string }
-  | { ok: false; reason: "not_found" | "not_in_phase2" | "bad_item" };
+  | { ok: false; reason: "not_found" | "not_in_phase2" | "bad_item" }
+  /** 0215: save_mid_day_phase2_item_atomic refused the batch contract (lib/batch-prep-shared.ts BATCH_CONTRACT_CODES). */
+  | { ok: false; reason: "batch_contract"; code: BatchContractCode; templateItemId: string };
 
 /**
  * Structured over/under-prep capture (C.43 Phase 2), mirroring opening's
@@ -1257,6 +1356,12 @@ export async function saveMidDayPhase2Item(
     overUnder?: MidDayOverUnder | null;
     /** Confirmed/edited SKU consumption from the panel; null/absent → record the derived default. */
     confirmedConsumption?: ConfirmedInput[] | null;
+    /**
+     * 0215 batch vs bottle — the batch half on a batch_mode item (null/absent = single box;
+     * the RPC requires it on a batch item and refuses it on any other). `prepped` is then
+     * what was BOTTLED for the line.
+     */
+    batch?: BatchEntry | null;
     actor: PrepActor;
     ipAddress?: string | null;
     userAgent?: string | null;
@@ -1269,6 +1374,16 @@ export async function saveMidDayPhase2Item(
 
   const item = state.templateItems.find((it) => it.id === args.templateItemId);
   if (!item || !item.prepMeta) return { ok: false, reason: "bad_item" };
+
+  // Astra P2 #5 (BC-031): a batch save on a recipe the graph cannot resolve (an unconvertible
+  // ingredient) would commit a completion the fold then refuses — refused HERE, before the RPC,
+  // with the same contract code the RPC uses for the shape it can see.
+  if (args.batch) {
+    const ctx = state.batchContext[args.templateItemId];
+    if (!ctx || ctx.eligibility !== "batched") {
+      return { ok: false, reason: "batch_contract", code: "batch_recipe_unresolved", templateItemId: args.templateItemId };
+    }
+  }
 
   const snapshot: PrepSnapshot = {
     section: item.prepMeta.section,
@@ -1285,9 +1400,16 @@ export async function saveMidDayPhase2Item(
     p_prepped: args.prepped,
     p_snapshot: snapshot,
     p_over_under: args.overUnder ?? null,
+    // 0215: null on every single-box save (the RPC's DEFAULT).
+    p_batch: args.batch ? toBatchPayload(args.batch) : null,
   });
   if (error) {
     if (error.code === "23514") return { ok: false, reason: "not_in_phase2" };
+    if (error.code === "P0001") {
+      // 0215 — the batch contract, named (the route answers 422 with the code).
+      const code = batchContractCodeFromMessage(error.message);
+      if (code) return { ok: false, reason: "batch_contract", code, templateItemId: args.templateItemId };
+    }
     throw new Error(`saveMidDayPhase2Item: ${error.message}`);
   }
 
@@ -1313,7 +1435,52 @@ export async function saveMidDayPhase2Item(
   // (instance, template_item). Untouched panel (confirmedConsumption null) → record the
   // derived theoretical set; edited → record the confirmed set. A failure here must NOT
   // fail the committed completion (sacred flow) — swallow + log; supersede-on-resave heals.
-  if (item.itemId) {
+  // 0215 (Astra P2 #6): every REAL toss change is audited as backup.tossed (set, moved, or
+  // cleared through a correction); an unchanged save emits nothing. The RPC returns both.
+  const rpcOut = data as { completionId: string; savedAt: string; tossPrevious?: number | string | null; tossCurrent?: number | string | null; producedAt?: string | null; madeBy?: string | null };
+  if (args.batch) {
+    const prev = Number(rpcOut.tossPrevious ?? 0) || 0;
+    const cur = Number(rpcOut.tossCurrent ?? 0) || 0;
+    if (prev !== cur) {
+      void audit({
+        actorId: args.actor.userId,
+        actorRole: args.actor.role,
+        action: "backup.tossed",
+        resourceTable: "checklist_completions",
+        resourceId: rpcOut.completionId,
+        metadata: { instance_id: args.instanceId, template_item_id: args.templateItemId, tossed_previous: prev, tossed_current: cur, phase: "mid_day_phase2" },
+        ipAddress: args.ipAddress ?? null,
+        userAgent: args.userAgent ?? null,
+      });
+    }
+  }
+
+  if (item.itemId && args.batch) {
+    // 0215 batch vs bottle — the BATCH fold (ruling 3): batches × the recipe from ONE
+    // graph read. produced_at / made_by are the PERSISTED session facts the RPC returned
+    // (Astra P2 #7) — never this call's clock or editor; missing facts mean no fold, loudly.
+    try {
+      const producedAt = rpcOut.producedAt ?? null;
+      const madeBy = rpcOut.madeBy ?? null;
+      if (producedAt === null || madeBy === null) {
+        throw new Error(`saveMidDayPhase2Item: batch save returned no session attribution for ${args.templateItemId}; fold skipped`);
+      }
+      await recordBatchProductionFromPrep(args.actor, {
+        locationId: state.instance.locationId,
+        instanceId: args.instanceId,
+        templateItemId: args.templateItemId,
+        outputItemId: item.itemId,
+        batches: args.batch.batches,
+        cameOutTo: args.batch.cameOutTo ?? 0,
+        confirmedConsumption: args.confirmedConsumption ?? null,
+        producedAt,
+        madeBy,
+        source: "mid_day_p2",
+      });
+    } catch (e) {
+      console.error(`saveMidDayPhase2Item: batch production capture failed (completion committed):`, e);
+    }
+  } else if (item.itemId) {
     try {
       let consumption = args.confirmedConsumption ?? null;
       if (consumption === null) {
@@ -1343,7 +1510,9 @@ export async function saveMidDayPhase2Item(
 /** Result of finalizeMidDayPhase2. */
 export type MidDayFinalizeResult =
   | { ok: true; instance: ChecklistInstance }
-  | { ok: false; reason: "not_found" | "not_in_phase2" };
+  | { ok: false; reason: "not_found" | "not_in_phase2" }
+  /** 0215 (Astra P1 #2): batch rows whose Phase 2 save is missing — finalize refused. */
+  | { ok: false; reason: "batch_rows_unsaved"; missing: string[] };
 
 /**
  * finalizeMidDayPhase2 — close out a mid-day prep instance (C.43): pessimistic
@@ -1355,6 +1524,31 @@ export async function finalizeMidDayPhase2(
   args: { instanceId: string; actor: PrepActor; ipAddress?: string | null; userAgent?: string | null },
 ): Promise<MidDayFinalizeResult> {
   await requirePrepInstanceTaskAccess(service, args, "mid_day_prep");
+  // Astra P1 #2 (BC-034): a batch item's Phase 1 count is NOT a Phase 2 save. Finalize is
+  // refused while any batch row lacks a `batch` object on its live completion — the same
+  // pure rule the page uses to mark a row saved (lib/mid-day-shared.ts).
+  const state = await loadMidDayPrepState(service, { instanceId: args.instanceId });
+  if (state) {
+    // IDENTITY, not eligibility (Astra r2 P1): keyed on recipe.batch_mode, so an unresolved
+    // batch recipe (isBatch false, batchMode true) still blocks finalize until a GM fixes the
+    // recipe and the row is saved explicitly.
+    const batchModeByItem: Record<string, boolean> = {};
+    for (const [id, ctx] of Object.entries(state.batchContext)) batchModeByItem[id] = ctx.batchMode;
+    const missing = midDayFinalizeBlockers(state.templateItems, state.completions, batchModeByItem);
+    if (missing.length > 0) {
+      void audit({
+        actorId: args.actor.userId,
+        actorRole: args.actor.role,
+        action: "prep.submit",
+        resourceTable: "checklist_instances",
+        resourceId: args.instanceId,
+        metadata: { outcome: "batch_rows_unsaved", phase: "mid_day_phase2_finalize", prep_subtype: "mid_day_prep", missing_template_item_ids: missing },
+        ipAddress: args.ipAddress ?? null,
+        userAgent: args.userAgent ?? null,
+      });
+      return { ok: false, reason: "batch_rows_unsaved", missing };
+    }
+  }
   const nowIso = new Date().toISOString();
   const { data, error } = await service
     .from("checklist_instances")

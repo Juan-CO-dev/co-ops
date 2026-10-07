@@ -57,9 +57,22 @@ export interface RecipeView {
   id: string; name: string; nameEs: string | null; recipeType: RecipeType;
   batchYield: number; directions: string | null; directionsEs: string | null;
   active: boolean; inputs: RecipeInputView[]; outputs: RecipeOutputView[];
+  /**
+   * Batch vs bottle (0215). `batchMode` = the item's prep rows count the bulk backup and
+   * deplete by BATCH (requires exactly one ITEM output; the DB refuses otherwise).
+   * `shelfLifeDays` = how long a made batch stays good in the walk-in (Juan: "Everything
+   * is 5 days"); the prep row turns red past it.
+   */
+  batchMode: boolean; shelfLifeDays: number;
 }
 export interface RecipeListRow {
   id: string; name: string; recipeType: RecipeType; active: boolean;
   outputNames: string[]; hasInputs: boolean; hasOutputs: boolean;
   batchYield: number | null;
+  batchMode: boolean;
+}
+
+/** Shelf life is whole days, at least one. Shared by the lib (before any write) and the builder. */
+export function isValidShelfLifeDays(v: unknown): v is number {
+  return typeof v === "number" && Number.isInteger(v) && v > 0;
 }

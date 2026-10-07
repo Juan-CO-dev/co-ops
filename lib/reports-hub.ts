@@ -15,6 +15,7 @@ import type { ReportKey, ReportProgress } from "@/lib/midshift";
 import type { RoleCode } from "@/lib/roles";
 import { loadOpeningCloserCountSnapshots } from "@/lib/opening";
 import type { OpeningNoPriorDataReason } from "@/lib/types";
+import { parseBatchRecord, type BatchRecord } from "@/lib/batch-prep-shared";
 
 export const REPORTS_HUB_CASH_LEVEL = 4; // cash visible KH+
 export const REPORTS_HUB_NOTES_LEVEL = 5; // notes visible SL+
@@ -568,6 +569,14 @@ export interface OpeningDetailItem {
     directedByName: string | null;
     savedByName: string | null;
     savedAt: string | null;
+    /**
+     * 0215 batch vs bottle — the batch half of a batch_mode item's save (prep_data.phase2.batch):
+     * batches made, what they came out to, bottled, the counted bulk backup before/after, the
+     * toss, the over-batch reason. Null on a single-box row. `madeByName` is the MAKER (the
+     * session's first saver), distinct from `savedByName` (the editor).
+     */
+    batch: BatchRecord | null;
+    madeByName: string | null;
   } | null;
 }
 
@@ -635,6 +644,8 @@ export function readPhase2Outcome(prepData: unknown): {
   directedById: string | null;
   savedById: string | null;
   savedAt: string | null;
+  /** 0215 — the persisted batch object, reject-whole parsed; null on a single-box row. */
+  batch: BatchRecord | null;
 } | null {
   if (prepData == null || typeof prepData !== "object") return null;
   if (!("phase2" in prepData)) return null;
@@ -643,6 +654,7 @@ export function readPhase2Outcome(prepData: unknown): {
 
   const prepped = (p2 as { opener_prepped?: unknown }).opener_prepped;
   if (typeof prepped !== "number" || !Number.isFinite(prepped)) return null;
+  const batch = parseBatchRecord((p2 as { batch?: unknown }).batch);
 
   const delta = (p2 as { delta_vs_prep_need?: unknown }).delta_vs_prep_need;
   const status = (p2 as { over_under_status?: unknown }).over_under_status;
@@ -662,6 +674,7 @@ export function readPhase2Outcome(prepData: unknown): {
     directedById: typeof directedBy === "string" && directedBy !== "" ? directedBy : null,
     savedById: typeof savedBy === "string" && savedBy !== "" ? savedBy : null,
     savedAt: typeof savedAt === "string" && savedAt !== "" ? savedAt : null,
+    batch,
   };
 }
 
@@ -782,7 +795,7 @@ async function loadOpeningDetail(
       [...compByItem.values()]
         .flatMap((e) => {
           const p2 = readPhase2Outcome(e.phase2?.prep_data ?? null);
-          return [e.any.completed_by, p2?.directedById ?? null, p2?.savedById ?? null];
+          return [e.any.completed_by, p2?.directedById ?? null, p2?.savedById ?? null, p2?.batch?.madeBy ?? null];
         })
         .filter((v): v is string => !!v),
     ),
@@ -851,6 +864,8 @@ async function loadOpeningDetail(
               : null,
             savedByName: p2.savedById ? (nameById.get(p2.savedById) ?? null) : null,
             savedAt: p2.savedAt,
+            batch: p2.batch,
+            madeByName: p2.batch?.madeBy ? (nameById.get(p2.batch.madeBy) ?? null) : null,
           }
         : null,
     };

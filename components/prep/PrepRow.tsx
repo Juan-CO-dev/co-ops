@@ -141,6 +141,12 @@ export interface PrepRowProps {
    * SECTIONS_WITH_AUTO_TOTAL slug set.
    */
   autoCalcTotal?: boolean;
+  /**
+   * 0215 batch vs bottle — true for a batch item: the BACK UP column is the bulk container
+   * (unbottled; docs/SPEC_AMENDMENTS.md:56) tomorrow's opener starts from, so the row says
+   * so under the label. Count, parsing and submit are unchanged.
+   */
+  batchMode?: boolean;
 }
 
 export function PrepRow({
@@ -162,6 +168,7 @@ export function PrepRow({
   disabled = false,
   rowErrors,
   autoCalcTotal = false,
+  batchMode = false,
 }: PrepRowProps) {
   const { t } = useTranslation();
   // PAR cell display: "{value} {unit}" — or just the value if unit is null,
@@ -201,6 +208,11 @@ export function PrepRow({
           // display instead (see parDisplay above) — don't double-render.
           <span className="text-[10px] text-co-text-dim italic truncate">
             {specialInstruction}
+          </span>
+        ) : null}
+        {batchMode && inputColumns.includes("back_up") ? (
+          <span className="text-[10px] text-co-gold-text italic truncate">
+            {t("am_prep.back_up.bulk_hint")}
           </span>
         ) : null}
       </div>

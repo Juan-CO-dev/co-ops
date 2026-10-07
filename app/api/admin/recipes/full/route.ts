@@ -23,6 +23,9 @@ export async function POST(req: NextRequest) {
       batchYield: Number(b.batchYield),
       directions: b.directions != null ? (b.directions as string) : undefined,
       directionsEs: b.directionsEs != null ? (b.directionsEs as string) : undefined,
+      // 0215 batch vs bottle
+      batchMode: b.batchMode === true,
+      shelfLifeDays: b.shelfLifeDays != null ? Number(b.shelfLifeDays) : undefined,
       inputs: Array.isArray(b.inputs) ? (b.inputs as Array<Record<string, unknown>>).map((i) => ({
         componentSkuId: i.componentSkuId != null ? (i.componentSkuId as string) : null,
         componentItemId: i.componentItemId != null ? (i.componentItemId as string) : null,

@@ -25,6 +25,9 @@ export async function PATCH(
   if ("batchYield" in b) patch.batchYield = Number(b.batchYield);
   if ("directions" in b) patch.directions = b.directions;
   if ("directionsEs" in b) patch.directionsEs = b.directionsEs;
+  // 0215 batch vs bottle: both validated in updateRecipe before any write.
+  if ("shelfLifeDays" in b) patch.shelfLifeDays = Number(b.shelfLifeDays);
+  if ("batchMode" in b) patch.batchMode = b.batchMode;
 
   try {
     await updateRecipe(ctx, id, patch);

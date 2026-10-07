@@ -386,14 +386,23 @@ describe("0187 / 0188 — authored, gated, and NOT called by shipped code", () =
     }
   });
 
-  it("no shipped code calls either new RPC — an unapplied function has no callers", () => {
-    // A CALL, not a mention: both files name the new functions in comments that explain
+  it("no shipped code calls the still-unwired RPC — an unapplied function has no callers", () => {
+    // A CALL, not a mention: lib/cash.ts names the new function in a comment that explains
     // why the wiring is deferred, and a comment is exactly what should survive here.
-    for (const rpc of ["add_recipe_output", "submit_cash_report_atomic"]) {
-      for (const f of ["lib/recipes.ts", "lib/cash.ts"]) {
-        expect(srcOf(f).includes(`.rpc("${rpc}"`), `${f} → ${rpc}`).toBe(false);
-      }
+    //
+    // add_recipe_output LEFT this list on 2026-10-07 (batch vs bottle, Astra Phase A review
+    // P1 #3): 0215 re-emits it as its latest definer (recipe row lock + the one-output rule
+    // for batch_mode recipes) and lib/recipes.ts now calls it — 0187 is applied (lineage at
+    // 0212) and 0215 deploys before this code. The pin below replaces the old "no caller".
+    for (const f of ["lib/recipes.ts", "lib/cash.ts"]) {
+      expect(srcOf(f).includes('.rpc("submit_cash_report_atomic"'), `${f} → submit_cash_report_atomic`).toBe(false);
     }
+  });
+
+  it("addRecipeOutput calls add_recipe_output (0187, latest definer 0215) and no longer inserts directly", () => {
+    const body = bodyOf(srcOf("lib/recipes.ts"), "export async function addRecipeOutput");
+    expect(body).toContain('.rpc("add_recipe_output"');
+    expect(body).not.toContain('from("recipe_outputs").insert');
   });
 
   it("lib/cash.ts is untouched by the authoring — it still does its three round trips", () => {

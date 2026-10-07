@@ -31,7 +31,11 @@ export default async function ProductionPage({ searchParams }: { searchParams: P
           {recent.map((p) => (
             <li key={p.id} className="rounded-lg border-2 border-co-border-2 bg-co-surface px-3 py-2 text-sm">
               <div className="flex items-center justify-between gap-2">
-                <span className="font-semibold text-co-text">{serverT(lang, "production.recent.line", { input: `${p.inputQty} ${p.skuName}`, output: `${p.outputQty} ${p.itemName}` })}</span>
+                <span className="font-semibold text-co-text">
+                  {p.batchesMade !== null && p.batchesMade > 0
+                    ? serverT(lang, "production.recent.line_batch", { batches: p.batchesMade, output: `${p.outputQty} ${p.itemName}`, actual: p.cameOutTo ?? p.outputQty, name: p.madeByName ?? "—" })
+                    : serverT(lang, "production.recent.line", { input: `${p.inputQty} ${p.skuName}`, output: `${p.outputQty} ${p.itemName}` })}
+                </span>
                 <span className="text-xs text-co-text-muted">{formatDateLabel(etCalendarDate(p.producedAt), lang)}</span>
               </div>
             </li>

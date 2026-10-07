@@ -10,16 +10,21 @@
  * nothing downstream can tell that graph from a correct one. A partial recipe graph must
  * never exist, so a failed read is fatal to the whole build rather than survivable by it.
  * Recursively flattens an item's item_components recipe to leaf-SKU oz consumed
- * per par-unit, mirroring recipe-math's per-batch ÷ batch_yield semantics —
- * but ACCUMULATING PER LEAF SKU instead of summing. Returns oz-per-output-unit; callers scale.
+ * per par-unit, mirroring recipe-math's per-batch ÷ output-yield semantics (the divisor is
+ * the output row's `yield` on the graph, not `recipes.batch_yield`) — but ACCUMULATING PER
+ * LEAF SKU instead of summing. Returns oz-per-output-unit; callers scale. 0215's batch fold
+ * (recordBatchProductionFromPrep below) reads the SAME graph and multiplies by that yield.
  */
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import { skuContentOz, type MeasureUnitFactor, type RecipeInputSku } from "@/lib/recipe-math";
 import type { PackChainLevel } from "@/lib/pack-chain-shared";
 import {
+  batchSkuOzForItemFromGraph,
   buildRecipeGraph,
+  isSingleItemOutputFromGraph,
   perUnitSkuOzForItemFromGraph,
   perUnitSkuOzForMenuItemFromGraph,
+  yieldForItemFromGraph,
   type GraphRecipe,
   type RecipeGraph,
 } from "@/lib/prep-consumption-graph";
@@ -361,4 +366,143 @@ export async function reverseProductionForPrep(actor: { userId: string; role: Ro
   if (rErr) throw new Error(`reverseProductionForPrep revoke: ${rErr.message}`);
   if (count === 0) return;
   await audit({ actorId: actor.userId, actorRole: actor.role, action: "production.revoked", resourceTable: "productions", resourceId: live.id, metadata: { instance_id: args.instanceId, template_item_id: args.templateItemId }, ipAddress: null, userAgent: null });
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 0215 batch vs bottle — the BATCH fold (plan S r4, rulings 3 / 5)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Per batch_mode item, the panel's rows as PER-BATCH quantities (`perUnitOz` holds the oz of
+ * ONE whole batch here — the panel then scales by `batches`, not by bottles), plus the yield
+ * the SAME graph carries for the item. Both come from one `loadRecipeGraph()` so the preview
+ * and the fold cannot disagree about which recipe they are talking about. An item whose
+ * recipe does not resolve is ABSENT from the map (the row BLOCKS; it never falls back to the
+ * single-box engine).
+ */
+export interface BatchDerived { yieldPerBatch: number; singleOutput: boolean; skus: DerivedSku[] }
+
+async function hydrateSkuInfo(
+  graph: RecipeGraph,
+  skuIds: string[],
+): Promise<Map<string, { name: string; unitsPerPack: number | null; contentOz: number | null }>> {
+  const skuInfo = new Map<string, { name: string; unitsPerPack: number | null; contentOz: number | null }>();
+  if (skuIds.length === 0) return skuInfo;
+  const sb = getServiceRoleClient();
+  const { data: skus, error } = await sb.from("vendor_items").select("id, name, units_per_pack, each_size, each_measure, avg_oz_per_each").in("id", skuIds)
+    .returns<Array<{ id: string; name: string; units_per_pack: number | null; each_size: number | string | null; each_measure: string | null; avg_oz_per_each: number | string | null }>>();
+  if (error) throw new Error(`hydrateSkuInfo: ${error.message}`);
+  const chainsBySku = await loadSkuPackChains(skuIds);
+  for (const s of skus ?? []) {
+    const contentOz = skuContentOz({ unitsPerPack: s.units_per_pack, eachSize: num(s.each_size), eachMeasure: s.each_measure, avgOzPerEach: num(s.avg_oz_per_each), packChain: chainsBySku.get(s.id) ?? null }, graph.measures);
+    skuInfo.set(s.id, { name: s.name, unitsPerPack: s.units_per_pack, contentOz });
+  }
+  return skuInfo;
+}
+
+export async function loadBatchDerivedForItems(itemIds: string[]): Promise<Map<string, BatchDerived>> {
+  const out = new Map<string, BatchDerived>();
+  const uniq = [...new Set(itemIds.filter(Boolean))];
+  if (uniq.length === 0) return out;
+  const graph = await loadRecipeGraph();
+  const perItem = new Map<string, { yieldPerBatch: number; singleOutput: boolean; map: Map<string, number> }>();
+  const allSkuIds = new Set<string>();
+  for (const id of uniq) {
+    const yieldPerBatch = yieldForItemFromGraph(graph, id);
+    const m = batchSkuOzForItemFromGraph(graph, id);
+    if (yieldPerBatch == null || m == null) continue;
+    perItem.set(id, { yieldPerBatch, singleOutput: isSingleItemOutputFromGraph(graph, id), map: m });
+    for (const sku of m.keys()) allSkuIds.add(sku);
+  }
+  const skuInfo = await hydrateSkuInfo(graph, [...allSkuIds]);
+  for (const [id, d] of perItem) {
+    const skus: DerivedSku[] = [];
+    for (const [skuId, perBatchOz] of d.map) {
+      const info = skuInfo.get(skuId);
+      skus.push({ skuId, skuName: info?.name ?? "(sku)", perUnitOz: perBatchOz, unitsPerPack: info?.unitsPerPack ?? null, contentOz: info?.contentOz ?? null });
+    }
+    out.set(id, { yieldPerBatch: d.yieldPerBatch, singleOutput: d.singleOutput, skus });
+  }
+  return out;
+}
+
+export interface RecordBatchFromPrepInput {
+  locationId: string; instanceId: string; templateItemId: string;
+  outputItemId: string;
+  /** Whole batches made this session (0 = no production; the prior header is superseded and nothing is inserted). */
+  batches: number;
+  /** Measured output in par units (Phase B's numerator). */
+  cameOutTo: number;
+  /** Confirmed/edited per-SKU consumption from the panel (per SESSION totals), or null = the derived default. */
+  confirmedConsumption: ConfirmedInput[] | null;
+  /** The session's first-save time — carried through every re-save (ruling E / Astra r2 #6). */
+  producedAt: string;
+  /** The MAKER (the session's first saver), not the editor (ruling 5). */
+  madeBy: string;
+  source: "opening_p2" | "mid_day_p2";
+}
+
+/**
+ * The batch fold. ONE graph read: `yield` and the per-batch SKU map come from the same
+ * `loadRecipeGraph()` call, so `output_qty = batches × yield` and the lines
+ * `batches × batchSkuOz` describe the same recipe state (ruling 3 — never a separately read
+ * yield multiplied into a division by another). Same supersede-then-insert seam as
+ * recordProductionFromPrep (the 0107 unique live index is the backstop), same fail-open
+ * posture at the call sites. LIMITATIONS, stated: the graph is still assembled from
+ * separate queries; a failure after the header insert leaves a header without lines until
+ * the next save heals it ("fold integrity check" is the filed follow-up).
+ */
+export async function recordBatchProductionFromPrep(
+  actor: { userId: string; role: RoleCode },
+  input: RecordBatchFromPrepInput,
+): Promise<{ productionId: string | null; yieldAtTime: number | null }> {
+  const sb = getServiceRoleClient();
+  const graph = await loadRecipeGraph();
+  const yieldAtTime = yieldForItemFromGraph(graph, input.outputItemId);
+  const perBatch = batchSkuOzForItemFromGraph(graph, input.outputItemId);
+  if (yieldAtTime == null || perBatch == null || !isSingleItemOutputFromGraph(graph, input.outputItemId)) {
+    throw new Error(`recordBatchProductionFromPrep: batch_recipe_unresolved for item ${input.outputItemId}`);
+  }
+  const { error: supErr } = await sb.from("productions").update({ superseded_at: new Date().toISOString() })
+    .eq("instance_id", input.instanceId).eq("template_item_id", input.templateItemId)
+    .is("superseded_at", null).is("revoked_at", null);
+  if (supErr) throw new Error(`recordBatchProductionFromPrep supersede: ${supErr.message}`);
+  if (!(input.batches > 0)) return { productionId: null, yieldAtTime };
+
+  // Derived = batches × one batch, from THIS graph. A confirmed panel overrides qtyOz per SKU
+  // (the prepper's actual-vs-theoretical, the fold's existing contract); derivedOz is always
+  // this graph's number, and a SKU the recipe does not name is dropped and logged.
+  const derived = new Map<string, number>();
+  for (const [sku, oz] of perBatch) derived.set(sku, oz * input.batches);
+  const lines: ConfirmedInput[] = [];
+  if (input.confirmedConsumption === null) {
+    for (const [skuId, oz] of derived) lines.push({ skuId, qtyOz: oz, qtyEntered: null, unitEntered: null, derivedOz: oz });
+  } else {
+    const seen = new Set<string>();
+    for (const c of input.confirmedConsumption) {
+      const d = derived.get(c.skuId);
+      if (d === undefined) { console.warn(`recordBatchProductionFromPrep: confirmed SKU ${c.skuId} is not in the recipe; dropped`); continue; }
+      seen.add(c.skuId);
+      lines.push({ skuId: c.skuId, qtyOz: c.qtyOz, qtyEntered: c.qtyEntered, unitEntered: c.unitEntered, derivedOz: d });
+    }
+    for (const [skuId, oz] of derived) if (!seen.has(skuId)) lines.push({ skuId, qtyOz: oz, qtyEntered: null, unitEntered: null, derivedOz: oz });
+  }
+  const positive = lines.filter((c) => Number.isFinite(c.qtyOz) && c.qtyOz > 0);
+  if (positive.length === 0) return { productionId: null, yieldAtTime };
+  const outputQty = input.batches * yieldAtTime;
+  const { data: hdr, error: hErr } = await sb.from("productions").insert({
+    location_id: input.locationId, output_item_id: input.outputItemId, output_qty: outputQty,
+    source: input.source, instance_id: input.instanceId, template_item_id: input.templateItemId, created_by: actor.userId,
+    batches_made: input.batches, came_out_to: input.cameOutTo, yield_at_time: yieldAtTime,
+    produced_at: input.producedAt, made_by: input.madeBy,
+  }).select("id").maybeSingle<{ id: string }>();
+  if (hErr) throw new Error(`recordBatchProductionFromPrep header: ${hErr.message}`);
+  if (!hdr) throw new Error("recordBatchProductionFromPrep header returned no row");
+  const { error: lErr } = await sb.from("production_inputs").insert(positive.map((c) => ({
+    production_id: hdr.id, input_sku_id: c.skuId, input_oz: c.qtyOz,
+    qty_entered: c.qtyEntered, unit_entered: c.unitEntered, derived_oz: c.derivedOz,
+  })));
+  if (lErr) throw new Error(`recordBatchProductionFromPrep lines: ${lErr.message}`);
+  await audit({ actorId: actor.userId, actorRole: actor.role, action: "production.recorded", resourceTable: "productions", resourceId: hdr.id, metadata: { source: input.source, instance_id: input.instanceId, template_item_id: input.templateItemId, output_item_id: input.outputItemId, output_qty: outputQty, batches_made: input.batches, came_out_to: input.cameOutTo, yield_at_time: yieldAtTime, made_by: input.madeBy, produced_at: input.producedAt, sku_count: positive.length }, ipAddress: null, userAgent: null });
+  return { productionId: hdr.id, yieldAtTime };
 }

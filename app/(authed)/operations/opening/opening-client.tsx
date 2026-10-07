@@ -35,6 +35,14 @@ import {
 import type { Language, TranslationKey, TranslationParams } from "@/lib/i18n/types";
 import type { OpeningCloserCountSnapshotRow } from "@/lib/opening";
 import type { DerivedSku } from "@/lib/prep-consumption";
+import {
+  batchFormFromRecord,
+  needForLine,
+  readBatchFromPrepData,
+  type BatchItemContext,
+  type BatchRowContext,
+} from "@/lib/batch-prep-shared";
+import { phase2SaveGate } from "@/lib/opening-phase2-gate";
 import type {
   ChecklistCompletion,
   ChecklistInstance,
@@ -88,6 +96,16 @@ interface OpeningClientProps {
    * `derivedByItem`. Record (not Map) to cross the RSC→client JSON boundary.
    */
   derived: Record<string, DerivedSku[]>;
+  /**
+   * 0215 batch vs bottle — per Phase 2 TEMPLATE-ITEM id, the item's batch context
+   * (loadOpeningState). Absent = single box. Decides the Phase 1 two-box recount and the
+   * Phase 2 batch row; the RPCs re-derive eligibility and are the authority.
+   */
+  batchContext: Record<string, BatchItemContext>;
+  /** 0215 — per eligible batch TEMPLATE-ITEM id, the panel rows as PER-BATCH quantities. */
+  batchDerived: Record<string, DerivedSku[]>;
+  /** 0215 — per eligible batch TEMPLATE-ITEM id: last "made on" at this location + this instance's recorded toss. */
+  batchState: Record<string, { madeOn: string | null; tossed: number }>;
   /**
    * Fix #7 — distinct verified section_keys read back from
    * opening_section_verifications (loadOpeningSectionVerifications). Seeds the
@@ -225,6 +243,20 @@ function readPhase1OpenerRecount(prepData: unknown): number | null {
   return typeof recount === "number" ? recount : null;
 }
 
+/** 0215 — the two boxes the Phase 1 RPC persists beside opener_recount on a batch item. */
+function readPhase1RecountSplit(prepData: unknown): { line: number | null; backUp: number | null } {
+  if (prepData == null || typeof prepData !== "object") return { line: null, backUp: null };
+  if (!("phase1" in prepData)) return { line: null, backUp: null };
+  const p1 = (prepData as { phase1: unknown }).phase1;
+  if (p1 == null || typeof p1 !== "object") return { line: null, backUp: null };
+  const line = (p1 as { opener_recount_line?: unknown }).opener_recount_line;
+  const backUp = (p1 as { opener_recount_back_up?: unknown }).opener_recount_back_up;
+  return {
+    line: typeof line === "number" ? line : null,
+    backUp: typeof backUp === "number" ? backUp : null,
+  };
+}
+
 /**
  * C.53 Commit B residual fix — read the PERSISTED Phase 1 ground-truth out of a
  * completion's prep_data->'phase1' sub-object (the 8-key spot-check contract).
@@ -268,7 +300,10 @@ function readPhase1Resolved(
 function saveStateToFormValue(
   s: OpeningPhase2SaveState,
   itemId: string,
+  /** 0215 — the row's whole prep_data, so the persisted batch object (phase2.batch) hydrates too. */
+  prepData?: unknown,
 ): OpeningPhase2FormValue {
+  const batchRecord = prepData === undefined ? null : readBatchFromPrepData(prepData);
   let overPar: OverParCapture | null = null;
   if (s.over_under_status === "over_prep") {
     const cat = s.over_under_reason_category;
@@ -316,6 +351,7 @@ function saveStateToFormValue(
     // shape (it lives on the productions ledger). A hydrated row starts untouched;
     // the server re-derives the default on any subsequent blur-save.
     confirmedConsumption: null,
+    batch: batchRecord ? batchFormFromRecord(batchRecord) : null,
   };
 }
 
@@ -350,6 +386,12 @@ function phase2Signature(v: OpeningPhase2FormValue): string {
     // signature and the value-diff guard silently skips the re-POST that would
     // persist the confirmed consumption.
     confirmedConsumption: v.confirmedConsumption,
+    // 0215 — the batch half rides the signature for the same reason (a stepper tap with
+    // the same bottled number must still POST). null on single-box rows, so their
+    // signature only gains a constant key.
+    batch: v.batch
+      ? { batches: v.batch.batches, cameOutTo: v.batch.cameOutTo, tossed: v.batch.tossed, overBatchReason: v.batch.overBatchReason }
+      : null,
   });
 }
 
@@ -358,6 +400,9 @@ export function OpeningClient({
   templateItems,
   closerSnapshots,
   derived,
+  batchContext,
+  batchDerived,
+  batchState,
   verifiedSections,
   initialDraft,
   completions,
@@ -398,6 +443,16 @@ export function OpeningClient({
     () => new Map(Object.entries(closerSnapshots)),
     [closerSnapshots],
   );
+
+  // 0215 batch vs bottle — templateItemId → batch recipe (IDENTITY: recipe.batch_mode, Astra
+  // r2 P1). Every batch_mode item is recounted as LINE + BACK UP, eligible or not, so the
+  // count is complete the moment a GM fixes an unresolved recipe; the Phase 2 row is where a
+  // blocked recipe is refused, with the message that says why.
+  const batchModeByItem = useMemo(() => {
+    const m = new Map<string, boolean>();
+    for (const [templateItemId, ctx] of Object.entries(batchContext)) m.set(templateItemId, ctx.batchMode);
+    return m;
+  }, [batchContext]);
 
   // Fix #7 — verified section_keys as a Set for O(1) membership in the
   // sectionVerifications seed (path (a): section-verify row exists).
@@ -470,15 +525,19 @@ export function OpeningClient({
       // re-expressed, so the rule this seed follows and the rule the unit spine pins are
       // the same statement and cannot drift apart.
       switch (openingPhase1ValueSource(c !== null, d !== null)) {
-        case "completion":
+        case "completion": {
+          const split = readPhase1RecountSplit(c!.prepData);
           map.set(item.id, {
             countValue: c!.countValue,
             photoId: c!.photoId,
             notes: c!.notes,
             ticked: true,
             openerRecount: readPhase1OpenerRecount(c!.prepData),
+            openerRecountLine: split.line,
+            openerRecountBackUp: split.backUp,
           });
           break;
+        }
         case "draft":
           map.set(item.id, {
             countValue: d!.countValue,
@@ -486,6 +545,8 @@ export function OpeningClient({
             notes: d!.notes,
             ticked: d!.ticked,
             openerRecount: d!.openerRecount,
+            openerRecountLine: d!.openerRecountLine ?? null,
+            openerRecountBackUp: d!.openerRecountBackUp ?? null,
           });
           break;
         case "empty":
@@ -510,9 +571,13 @@ export function OpeningClient({
   // this map. Items with no phase2 save start blank.
   const [phase2Values, setPhase2Values] = useState<Map<string, OpeningPhase2FormValue>>(() => {
     const savedByItem = new Map<string, OpeningPhase2SaveState>();
+    const prepDataByItem = new Map<string, unknown>();
     for (const c of completions) {
       const save = readPhase2SaveState(c.prepData);
-      if (save) savedByItem.set(c.templateItemId, save);
+      if (save) {
+        savedByItem.set(c.templateItemId, save);
+        prepDataByItem.set(c.templateItemId, c.prepData);
+      }
     }
     const map = new Map<string, OpeningPhase2FormValue>();
     for (const item of phase2Items) {
@@ -520,8 +585,8 @@ export function OpeningClient({
       map.set(
         item.id,
         saved
-          ? saveStateToFormValue(saved, item.id)
-          : { openerRecount: null, openerPrepped: null, overPar: null, underPar: null, confirmedConsumption: null },
+          ? saveStateToFormValue(saved, item.id, prepDataByItem.get(item.id))
+          : { openerRecount: null, openerPrepped: null, overPar: null, underPar: null, confirmedConsumption: null, batch: null },
       );
     }
     return map;
@@ -555,6 +620,41 @@ export function OpeningClient({
     }
     return map;
   }, [completions]);
+
+  // 0215 batch vs bottle — the batch row's context per batch_mode item. The counted bulk
+  // backup is the opener's recount BACK UP when there was one (persisted beside
+  // opener_recount by the Phase 1 RPC), else last night's closing BACK UP from the
+  // snapshot; LINE likewise; need_for_line = max(0, par − LINE). The RPC re-derives every
+  // number from the same two sources, so what the row previews is what the server accepts.
+  const batchByItem = useMemo(() => {
+    const map = new Map<string, BatchRowContext>();
+    const splitByItem = new Map<string, { line: number | null; backUp: number | null }>();
+    for (const c of completions) {
+      if (isPhase2Row(c.prepData)) continue;
+      const split = readPhase1RecountSplit(c.prepData);
+      if (split.line !== null || split.backUp !== null) splitByItem.set(c.templateItemId, split);
+    }
+    for (const [templateItemId, ctx] of Object.entries(batchContext)) {
+      if (!ctx.batchMode) continue;
+      const snapshot = closerSnapshotsMap.get(templateItemId) ?? null;
+      const split = splitByItem.get(templateItemId) ?? null;
+      const lineCount = split?.line ?? snapshot?.lineCount ?? null;
+      const backupBefore = split?.backUp ?? snapshot?.backUpCount ?? null;
+      map.set(templateItemId, {
+        recipeName: ctx.recipeName,
+        yieldPerBatch: ctx.yieldPerBatch ?? 0,
+        shelfLifeDays: ctx.shelfLifeDays,
+        backupBefore,
+        lineCount,
+        need: needForLine(snapshot?.parValue ?? null, lineCount),
+        parUnit: snapshot?.parUnit ?? null,
+        madeOn: batchState[templateItemId]?.madeOn ?? null,
+        blocked: ctx.eligibility === "blocked",
+        blockedReason: ctx.blockedReason,
+      });
+    }
+    return map;
+  }, [batchContext, batchState, closerSnapshotsMap, completions]);
 
   // SINGLE SOURCE OF TRUTH for per-row save state (Juan's pre-commit proof).
   // This ONE Map drives BOTH the per-row badges (passed to OpeningPrepEntry as
@@ -788,6 +888,8 @@ export function OpeningClient({
                   notes: v.notes,
                   ticked: v.ticked,
                   openerRecount: v.openerRecount,
+                  openerRecountLine: v.openerRecountLine ?? null,
+                  openerRecountBackUp: v.openerRecountBackUp ?? null,
                 },
               ] as const,
           ),
@@ -1171,44 +1273,33 @@ export function OpeningClient({
     // a started row blocked on a prerequisite (ground truth / reason) goes
     // "incomplete" so the prepper isn't left with a mute dead-spot. opener_prepped
     // is checked FIRST so a genuinely blank row reads "unsaved", not "incomplete".
-    if (valueToSave.openerPrepped === null) return;
-    // C.53 Commit B residual fix — source ground_truth + prep_need from the
-    // PERSISTED Phase 1 contract so this pre-gate's delta matches the server's
-    // delta by construction (the server reads prep_need straight from
-    // prep_data.phase1, never recomputes). Defensive fallback to the old client
-    // derivation only when no phase1 row exists yet. This also closes the
-    // NULL-source finalize wedge: a NULL-source-recounted item has a persisted
-    // non-null ground_truth, so the `needs_ground_truth` bail no longer fires
-    // (closerCount is null but the recount lives in prep_data.phase1), the row
-    // POSTs, and outstandingCount can reach 0.
-    const resolved = phase1ResolvedByItem.get(templateItemId) ?? null;
-    const groundTruth =
-      resolved?.groundTruth ??
-      (valueToSave.openerRecount !== null
-        ? valueToSave.openerRecount
-        : sectionVerified
-          ? closerCount
-          : null);
-    if (groundTruth === null) {
-      markIncomplete("needs_ground_truth");
+    // The gate is ONE pure function (lib/opening-phase2-gate.ts) shared with the unit spine:
+    // persisted Phase 1 ground truth / prep_need first (C.53 Commit B residual fix), today's
+    // over/under gates for a single-box row, and — on a batch row — BOTTLED measured against
+    // the LINE need with no over-prep question (Astra P1 #1; the RPC skips the same gate),
+    // then the batch half's own gates mirrored from the RPC.
+    const gate = phase2SaveGate(
+      {
+        openerPrepped: valueToSave.openerPrepped,
+        openerRecount: valueToSave.openerRecount,
+        overPar: valueToSave.overPar,
+        underPar: valueToSave.underPar,
+        batch: valueToSave.batch,
+      },
+      {
+        sectionVerified,
+        closerCount,
+        parValue,
+        resolved: phase1ResolvedByItem.get(templateItemId) ?? null,
+        batch: batchByItem.get(templateItemId) ?? null,
+      },
+    );
+    if (gate.kind === "blank") return;
+    if (gate.kind === "incomplete") {
+      markIncomplete(gate.reason);
       return;
     }
-    if (parValue !== null) {
-      const prepNeed = resolved?.prepNeed ?? Math.max(0, parValue - groundTruth);
-      const delta = valueToSave.openerPrepped - prepNeed;
-      if (delta > 0 && valueToSave.overPar === null) {
-        markIncomplete("needs_reason");
-        return;
-      }
-      if (delta < 0 && valueToSave.underPar === null) {
-        markIncomplete("needs_reason");
-        return;
-      }
-    }
-    if (valueToSave.underPar && !valueToSave.underPar.freeText.trim()) {
-      markIncomplete("needs_reason");
-      return;
-    }
+    const batchEntry = gate.batchEntry;
 
     // Value-diff guard — skip the round-trip when the persisted value is already
     // current. Reads the same Map the badge renders from.
@@ -1244,6 +1335,8 @@ export function OpeningClient({
             openerPrepped: valueToSave.openerPrepped,
             overPar: valueToSave.overPar,
             underPar: valueToSave.underPar,
+            // 0215 — present only on a batch item (the route accepts absent as single-box).
+            ...(batchEntry ? { batch: batchEntry } : {}),
           },
           // Production-in-prep fold — top-level (sibling to `entry`), matching the
           // route's ValidBody. null = untouched → server records the derived default.
@@ -1277,7 +1370,7 @@ export function OpeningClient({
           const winner = body.completion ?? null;
           const winnerSave = winner ? readPhase2SaveState(winner.prepData) : null;
           if (winnerSave) {
-            const adopted = saveStateToFormValue(winnerSave, templateItemId);
+            const adopted = saveStateToFormValue(winnerSave, templateItemId, winner?.prepData);
             setPhase2Values((prev) => {
               const updated = new Map(prev);
               updated.set(templateItemId, adopted);
@@ -1455,6 +1548,9 @@ export function OpeningClient({
           overPar: null,
           underPar: null,
           confirmedConsumption: null,
+          // 0215 — the batch half is part of the revoked write (the server retracted any
+          // toss with it), so the row re-opens empty.
+          batch: null,
         });
         return updated;
       });
@@ -1565,6 +1661,10 @@ export function OpeningClient({
             : ("matched_via_section_verify" as const)
           : null,
         openerRecount: v.openerRecount,
+        // 0215: the two boxes ride along only for batch items (the RPC ignores them on
+        // every other item, so a non-batch entry is today's payload plus two nulls).
+        openerRecountLine: batchModeByItem.get(item.id) === true ? (v.openerRecountLine ?? null) : null,
+        openerRecountBackUp: batchModeByItem.get(item.id) === true ? (v.openerRecountBackUp ?? null) : null,
         groundTruthCount: null,
         prepNeed: null,
       };
@@ -1769,6 +1869,7 @@ export function OpeningClient({
               verificationLocked={verificationLocked}
               open={stationCollapse.isOpen(station)}
               onToggleOpen={() => stationCollapse.toggle(station)}
+              batchModeByItem={batchModeByItem}
             />
           ))}
         </div>
@@ -1862,6 +1963,9 @@ export function OpeningClient({
           showMissingErrors={showMissingPhase2Errors}
           readOnly={phase2AlreadyFinalized}
           onShowProblems={() => setShowMissingPhase2Errors(true)}
+          batchByItem={batchByItem}
+          batchDerivedByItem={batchDerived}
+          todayIso={instance.date}
         />
       ) : null}
 

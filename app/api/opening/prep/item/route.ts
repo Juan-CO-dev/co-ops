@@ -49,6 +49,7 @@ import { requireSession } from "@/lib/session";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import type { ConfirmedInput } from "@/lib/prep-consumption";
 import type { OpeningEntryPhase2 } from "@/lib/types";
+import { isOverBatchReasonCode, isWholeCount, type BatchEntry } from "@/lib/batch-prep-shared";
 
 import { mapOpeningError } from "../../_helpers";
 
@@ -104,6 +105,41 @@ function parseConfirmedConsumption(raw: unknown): ConfirmedInput[] | null {
     out.push({ skuId: e.skuId, qtyOz: e.qtyOz, qtyEntered, unitEntered, derivedOz });
   }
   return out;
+}
+
+const BATCH_INVALID = Symbol("batch_invalid");
+
+/**
+ * 0215 batch vs bottle — the optional `entry.batch`. SHAPE only (whole batches, finite
+ * numbers, a known reason code); the arithmetic gates (tossed ≤ backup, bottled ≤
+ * available, reason when over the minimum) are the RPC's, which re-derives them from the
+ * counted backup it holds. Absent / null = a single-box save.
+ */
+function parseBatchEntry(raw: unknown): BatchEntry | null | typeof BATCH_INVALID {
+  if (raw === null || raw === undefined) return null;
+  if (typeof raw !== "object") return BATCH_INVALID;
+  const b = raw as Record<string, unknown>;
+  if (!isWholeCount(b.batches)) return BATCH_INVALID;
+  let cameOutTo: number | null = null;
+  if (b.cameOutTo !== null && b.cameOutTo !== undefined) {
+    if (typeof b.cameOutTo !== "number" || !Number.isFinite(b.cameOutTo) || b.cameOutTo < 0) return BATCH_INVALID;
+    cameOutTo = b.cameOutTo;
+  }
+  let tossed = 0;
+  if (b.tossed !== null && b.tossed !== undefined) {
+    if (typeof b.tossed !== "number" || !Number.isFinite(b.tossed) || b.tossed < 0) return BATCH_INVALID;
+    tossed = b.tossed;
+  }
+  let overBatchReason: BatchEntry["overBatchReason"] = null;
+  if (b.overBatchReason !== null && b.overBatchReason !== undefined) {
+    if (typeof b.overBatchReason !== "object") return BATCH_INVALID;
+    const r = b.overBatchReason as Record<string, unknown>;
+    if (!isOverBatchReasonCode(r.code)) return BATCH_INVALID;
+    const note = r.note === null || r.note === undefined ? null : r.note;
+    if (note !== null && typeof note !== "string") return BATCH_INVALID;
+    overBatchReason = { code: r.code, note: typeof note === "string" && note.trim() !== "" ? note.trim() : null };
+  }
+  return { batches: b.batches, cameOutTo, tossed, overBatchReason };
 }
 
 function validateBody(
@@ -180,6 +216,10 @@ function validateBody(
     return { ok: false, field: "entry.overPar|underPar" };
   }
 
+  // 0215 batch vs bottle — optional batch payload (shape only; the RPC owns the gates).
+  const batch = parseBatchEntry(e.batch);
+  if (batch === BATCH_INVALID) return { ok: false, field: "entry.batch" };
+
   return {
     ok: true,
     body: {
@@ -191,6 +231,7 @@ function validateBody(
         deltaVsPrepNeed: null, // client hint unused — server recomputes authoritatively
         overPar,
         underPar,
+        ...(batch !== null ? { batch } : {}),
       },
       confirmedConsumption: parseConfirmedConsumption(r.confirmedConsumption),
     },

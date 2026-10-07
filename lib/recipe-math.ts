@@ -167,7 +167,9 @@ export function ozForRecipeInput(
   return ozFromMeasure(quantity, unit, measuresByLabel, sku.avgOzPerEach);
 }
 
-// ── Cost (R2) — ride the same per-batch ÷ batch_yield math as the oz functions. ──
+// ── Cost (R2) — ride the same per-batch ÷ output-yield math as the oz functions. ──
+// (The divisor is the output row's `yield` on the recipe graph, not `recipes.batch_yield`;
+// 0215's batch fold multiplies by that same yield, which is why the two agree.)
 
 /** Cost of ONE oz of a SKU = pack price ÷ content_oz. Null if price/content missing. */
 export function skuCostPerOz(packPrice: number | null, contentOz: number | null): number | null {

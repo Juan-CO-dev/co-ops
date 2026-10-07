@@ -64,6 +64,28 @@ export function OnHandPanel({ view, lang, twinVendorBySkuId }: {
             : <WeightRow key={r.skuId} r={r} lang={lang} vendorName={twinVendorBySkuId.get(r.skuId) ?? null} />,
         )}
       </ul>
+      {/* 0215 batch vs bottle — tossed bulk backup, ADVISORY and default-collapsed: it is
+          counted prep waste the variance can explain, never a SKU short/over. */}
+      {(view.prepWaste ?? []).length > 0 ? (
+        <details className="mt-3 rounded-lg border-2 border-co-border-2 bg-co-surface px-3 py-2">
+          <summary className="min-h-[44px] cursor-pointer list-none text-xs font-bold uppercase tracking-[0.14em] text-co-text-dim">
+            {serverT(lang, "counts.prep_waste.title", { n: (view.prepWaste ?? []).length })}
+          </summary>
+          <p className="mt-1 text-[11px] text-co-text-muted">{serverT(lang, "counts.prep_waste.hint")}</p>
+          <ul className="mt-2 flex flex-col gap-1">
+            {(view.prepWaste ?? []).map((w) => (
+              <li key={`${w.templateItemId}-${w.businessDate}`} className="text-xs text-co-text">
+                {serverT(lang, "counts.prep_waste.line", {
+                  date: formatDateLabel(w.businessDate, lang),
+                  item: w.itemName,
+                  qty: `${w.tossedQty}${w.parUnit ? ` ${w.parUnit}` : ""}`,
+                  name: w.tossedByName ?? serverT(lang, "opening.phase2.save.saved_by_unknown"),
+                })}
+              </li>
+            ))}
+          </ul>
+        </details>
+      ) : null}
     </div>
   );
 }

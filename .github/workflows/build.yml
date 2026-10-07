@@ -31,6 +31,9 @@ jobs:
       - name: Phase 2 discipline check (C.53 §5 — no auto-complete branch; §8.4 contract)
         run: bash scripts/phase2-discipline-check.sh
 
+      - name: Phase 2 discipline check — 0215 batch vs bottle re-emits save_phase2_item_atomic
+        run: bash scripts/phase2-discipline-check.sh supabase/migrations/0215_batch_vs_bottle.sql
+
       - name: Unit tests (vitest — pure domain spine)
         run: npm test
 

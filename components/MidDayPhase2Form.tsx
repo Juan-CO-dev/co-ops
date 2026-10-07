@@ -32,6 +32,16 @@ import {
 } from "@/components/opening/UnderParModal";
 import type { DerivedSku, ConfirmedInput } from "@/lib/prep-consumption";
 import { ProductionConsumptionPanel } from "@/components/production/ProductionConsumptionPanel";
+import { BatchEntryFields } from "@/components/prep/BatchEntryFields";
+import {
+  batchEntryFromForm,
+  emptyBatchFormValue,
+  isBatchContractCode,
+  validateBatchEntry,
+  type BatchFormValue,
+  type BatchRowContext,
+} from "@/lib/batch-prep-shared";
+import type { TranslationKey } from "@/lib/i18n/types";
 
 export interface MidDayPhase2Item {
   id: string;
@@ -41,6 +51,12 @@ export interface MidDayPhase2Item {
   parUnit: string | null;
   need: number | null;
   initialPrepped: number | null;
+  /**
+   * Astra P1 #2 — true iff a Phase 2 SAVE exists for this row (lib/mid-day-shared.ts
+   * midDayPhase2RowSeed). A Phase 1 count never counts as saved; absent = derive from
+   * initialPrepped (pre-0215 callers).
+   */
+  initialSaved?: boolean;
   initialSavedBy: string | null;
   /** Registry item id (for production capture); null = not registry-linked. */
   itemId: string | null;
@@ -48,6 +64,15 @@ export interface MidDayPhase2Item {
   derived: DerivedSku[];
   /** Structured over/under capture already saved (prep_data.overUnder), or null. */
   initialOverUnder: MidDayOverUnder | null;
+  /**
+   * 0215 batch vs bottle — non-null on a batch_mode item: the row grows the batch half and
+   * `prepped` means BOTTLED for the line. `need` is then need_for_line (par − LINE).
+   */
+  batch?: BatchRowContext | null;
+  /** 0215 — the panel rows as PER-BATCH quantities (outputQty = batches). */
+  batchDerived?: DerivedSku[];
+  /** 0215 — the batch half already saved today (prep_data.batch), or null. */
+  initialBatch?: BatchFormValue | null;
 }
 
 interface SaveState {
@@ -59,6 +84,10 @@ interface SaveState {
   error: string | null;
   /** Panel confirmation; null = untouched (server records the derived default). */
   confirmedConsumption: ConfirmedInput[] | null;
+  /** 0215 — the batch half (ignored on single-box items). */
+  batch: BatchFormValue;
+  /** 0215 — the last refused save's batch contract code (renders prep.batch.error.<code>). */
+  batchErrorCode: string | null;
 }
 
 const EMPTY: SaveState = {
@@ -69,6 +98,8 @@ const EMPTY: SaveState = {
   savedBy: null,
   error: null,
   confirmedConsumption: null,
+  batch: emptyBatchFormValue(),
+  batchErrorCode: null,
 };
 
 function overToOU(c: OverParCapture): MidDayOverUnder {
@@ -95,15 +126,19 @@ export function MidDayPhase2Form({
   items,
   managers,
   sectionLabels = {},
+  todayIso,
 }: {
   instanceId: string;
   items: MidDayPhase2Item[];
   managers: ManagerOption[];
   /** DB-backed section labels (slug → { en, es }); preferred over the raw slug. */
   sectionLabels?: Record<string, { en: string; es: string | null }>;
+  /** 0215 — the instance's operational date (YYYY-MM-DD) for the shelf-life red state. */
+  todayIso?: string;
 }) {
   const { t, language } = useTranslation();
   const router = useRouter();
+  const today = todayIso ?? new Date().toISOString().slice(0, 10);
   const [states, setStates] = useState<Record<string, SaveState>>(() => {
     const init: Record<string, SaveState> = {};
     for (const it of items) {
@@ -111,10 +146,12 @@ export function MidDayPhase2Form({
         value: it.initialPrepped !== null ? String(it.initialPrepped) : "",
         overUnder: it.initialOverUnder,
         modalOpen: false,
-        status: it.initialPrepped !== null ? "saved" : "idle",
+        status: (it.initialSaved ?? it.initialPrepped !== null) ? "saved" : "idle",
         savedBy: it.initialSavedBy,
         error: null,
         confirmedConsumption: null,
+        batch: it.initialBatch ?? emptyBatchFormValue(),
+        batchErrorCode: null,
       };
     }
     return init;
@@ -165,7 +202,24 @@ export function MidDayPhase2Form({
       collapsible.reveal([it.section]);
       return;
     }
-    patch(it.id, { status: "saving", error: null });
+    // 0215 batch vs bottle — mirror the RPC's gates (ruling B + addendum 2) before POSTing.
+    const batchCtx = it.batch ?? null;
+    let batchEntry: ReturnType<typeof batchEntryFromForm> | null = null;
+    if (batchCtx) {
+      if (batchCtx.blocked || batchCtx.backupBefore === null) {
+        patch(it.id, { status: "error", error: t("mid_day_prep.phase2.batch_incomplete" as TranslationKey), batchErrorCode: batchCtx.blocked ? "batch_recipe_unresolved" : "backup_unknown" });
+        collapsible.reveal([it.section]);
+        return;
+      }
+      batchEntry = batchEntryFromForm(st.batch, batchCtx.yieldPerBatch);
+      const check = validateBatchEntry(batchEntry, { bottled: prepped, backupBefore: batchCtx.backupBefore, need: batchCtx.need, yieldPerBatch: batchCtx.yieldPerBatch });
+      if (!check.ok) {
+        patch(it.id, { status: "error", error: t("mid_day_prep.phase2.batch_incomplete" as TranslationKey), batchErrorCode: check.code });
+        collapsible.reveal([it.section]);
+        return;
+      }
+    }
+    patch(it.id, { status: "saving", error: null, batchErrorCode: null });
     try {
       const res = await fetch("/api/prep/mid-day/phase2/item", {
         method: "POST",
@@ -176,21 +230,25 @@ export function MidDayPhase2Form({
           prepped,
           overUnder: offPar ? st.overUnder : null,
           confirmedConsumption: st.confirmedConsumption,
+          // 0215 — present only on a batch item (absent = single box, today's body).
+          ...(batchEntry ? { batch: batchEntry } : {}),
         }),
         redirect: "manual",
       });
       if (res.ok) {
-        patch(it.id, { status: "saved", savedBy: null, error: null });
+        patch(it.id, { status: "saved", savedBy: null, error: null, batchErrorCode: null });
         return;
       }
       let msg = "Save failed.";
+      let code: string | null = null;
       try {
-        const b = (await res.json()) as { message?: string; error?: string };
+        const b = (await res.json()) as { message?: string; error?: string; code?: string };
         msg = b.message ?? b.error ?? msg;
+        code = typeof b.code === "string" ? b.code : null;
       } catch {
         // keep generic
       }
-      patch(it.id, { status: "error", error: msg });
+      patch(it.id, { status: "error", error: isBatchContractCode(code) ? null : msg, batchErrorCode: isBatchContractCode(code) ? code : null });
     } catch (e) {
       patch(it.id, { status: "error", error: e instanceof Error ? e.message : "Network error." });
     }
@@ -213,8 +271,12 @@ export function MidDayPhase2Form({
       }
       let msg = "Finalize failed.";
       try {
-        const b = (await res.json()) as { message?: string; error?: string };
-        msg = b.message ?? b.error ?? msg;
+        const b = (await res.json()) as { message?: string; error?: string; code?: string; missing?: string[] };
+        // Astra P1 #2: finalize is refused while a batch row has no Phase 2 save.
+        msg =
+          b.code === "batch_rows_unsaved"
+            ? t("mid_day_prep.phase2.finalize_batch_rows_unsaved" as TranslationKey, { n: b.missing?.length ?? 0 })
+            : (b.message ?? b.error ?? msg);
       } catch {
         // keep generic
       }
@@ -258,6 +320,20 @@ export function MidDayPhase2Form({
                   key={it.id}
                   className="flex flex-col gap-1.5 rounded-md border-2 border-co-border bg-co-surface px-3 py-2"
                 >
+                  {it.batch ? (
+                    /* 0215 batch vs bottle — the batch half (batch_mode items only). */
+                    <BatchEntryFields
+                      value={st.batch}
+                      onChange={(next) => patch(it.id, { batch: next, status: "idle", error: null, batchErrorCode: null })}
+                      ctx={it.batch}
+                      bottled={preppedNum !== null && Number.isFinite(preppedNum) ? preppedNum : null}
+                      showErrors={st.batchErrorCode !== null}
+                      serverErrorCode={st.batchErrorCode}
+                      language={language}
+                      todayIso={today}
+                      t={t}
+                    />
+                  ) : null}
                   <div className="flex items-center gap-3">
                     <div className="min-w-0 flex-1">
                       <p className="truncate text-sm font-semibold text-co-text">{it.label}</p>
@@ -266,6 +342,7 @@ export function MidDayPhase2Form({
                           ? `${t("mid_day_prep.phase1.need")} ${it.need}`
                           : `${t("mid_day_prep.page.section_par")} ${it.parValue ?? "—"}`}
                         {it.parUnit ? ` ${it.parUnit}` : ""}
+                        {it.batch ? ` · ${t("prep.batch.bottled_label" as TranslationKey)}` : ""}
                       </p>
                     </div>
                     <input
@@ -280,8 +357,8 @@ export function MidDayPhase2Form({
                         // prepped < 0 (defense in depth).
                         patch(it.id, { value: e.target.value.replace(/-/g, ""), status: "idle", error: null })
                       }
-                      aria-label={`${it.label} — ${t("mid_day_prep.phase2.prepped")}`}
-                      placeholder={t("mid_day_prep.phase2.prepped")}
+                      aria-label={`${it.label} — ${it.batch ? t("prep.batch.bottled_label" as TranslationKey) : t("mid_day_prep.phase2.prepped")}`}
+                      placeholder={it.batch ? t("prep.batch.bottled_label" as TranslationKey) : t("mid_day_prep.phase2.prepped")}
                       className="
                         min-h-[44px] w-20 shrink-0 rounded-md border-2 border-co-border-2 bg-co-surface
                         px-2 text-sm text-co-text focus:border-co-text focus:outline-none
@@ -309,10 +386,11 @@ export function MidDayPhase2Form({
                     </ActionButton>
                   ) : null}
 
-                  {it.derived.length > 0 ? (
+                  {/* 0215: a batch item's panel is PER BATCH — one batch's oz × batches made. */}
+                  {(it.batch ? (it.batchDerived ?? []).length > 0 : it.derived.length > 0) ? (
                     <ProductionConsumptionPanel
-                      derived={it.derived}
-                      outputQty={preppedNum ?? 0}
+                      derived={it.batch ? (it.batchDerived ?? []) : it.derived}
+                      outputQty={it.batch ? st.batch.batches : (preppedNum ?? 0)}
                       value={st.confirmedConsumption}
                       onChange={(rows) => patch(it.id, { confirmedConsumption: rows })}
                     />

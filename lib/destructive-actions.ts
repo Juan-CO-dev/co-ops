@@ -133,6 +133,12 @@ export const DESTRUCTIVE_ACTIONS = [
   "recipe_input.remove",
   "recipe_output.add",
   "recipe_output.remove",
+  // Batch vs bottle (0215). Tossing the counted bulk backup is a HUMAN act on the
+  // accountability record — waste that variance reads — and its retraction on revoke is
+  // the same act undone; both belong under "who changed the kitchen?" (Astra r1 Q11,
+  // CC-ruled). Registered BEFORE their first caller so every commit compiles on its own.
+  "backup.tossed",
+  "backup.toss_retracted",
   "menu_item.create",
 
   // Category registry (Vendor Directory v2, Slice A).

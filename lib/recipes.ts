@@ -19,6 +19,7 @@ import {
   type RecipeOutputView,
   type RecipeView,
   type RecipeListRow,
+  isValidShelfLifeDays,
 } from "@/lib/recipes-shared";
 
 // Client-safe surface lives in lib/recipes-shared.ts (see its header for why);
@@ -50,6 +51,30 @@ function num(v: number | string | null): number | null {
 function normStr(s: string | null | undefined): string | null {
   if (typeof s !== "string") return null; const t = s.trim(); return t || null;
 }
+
+/**
+ * The named-raise bridge for the recipe RPCs (0187 / 0215). A SECURITY DEFINER function
+ * refuses with `raise exception '<code>' using errcode = 'P0001'`; PostgREST surfaces that as
+ * `{ code: "P0001", message: "<code>" }`. Each caller lists the codes it expects with the
+ * HTTP status the app-layer check for the same rule already returns, so the two guards are
+ * one answer to the caller (the createRecipeFull idiom). Anything else stays an opaque
+ * throw — a 500 is the honest answer to a raise nobody named.
+ */
+function rpcRecipeError(error: { code?: string; message?: string }, map: Record<string, number>): RecipeError | null {
+  if (error.code !== "P0001") return null;
+  const msg = error.message ?? "";
+  for (const [code, status] of Object.entries(map)) {
+    if (new RegExp(`\\b${code}\\b`).test(msg)) return new RecipeError(status, code);
+  }
+  return null;
+}
+const BATCH_MODE_RPC_ERRORS: Record<string, number> = {
+  duplicate_active_producer: 409,
+  batch_mode_single_output: 422,
+  recipe_not_found: 404,
+  edge_not_found: 404,
+  invalid_shelf_life_days: 400,
+};
 
 /**
  * Validate a PRODUCT-pinned input line at WRITE time (deviation D3).
@@ -124,14 +149,14 @@ function componentTargets(input: {
 export async function loadRecipes(actor: AuthContext, type?: RecipeType): Promise<RecipeListRow[]> {
   requireLevel(actor, RECIPE_READ_MIN);
   const sb = getServiceRoleClient();
-  let q = sb.from("recipes").select("id, name, recipe_type, active, batch_yield").eq("active", true).order("name");
+  let q = sb.from("recipes").select("id, name, recipe_type, active, batch_yield, batch_mode").eq("active", true).order("name");
   if (type) q = q.eq("recipe_type", type);
-  const { data, error } = await q.returns<Array<{ id: string; name: string; recipe_type: RecipeType; active: boolean; batch_yield: number | string | null }>>();
+  const { data, error } = await q.returns<Array<{ id: string; name: string; recipe_type: RecipeType; active: boolean; batch_yield: number | string | null; batch_mode: boolean | null }>>();
   if (error) throw new Error(`loadRecipes: ${error.message}`);
   const ids = (data ?? []).map((r) => r.id);
   const outNames = await outputNamesByRecipe(ids);
   const hasIn = await recipeIdsWithInputs(ids);
-  return (data ?? []).map((r) => ({ id: r.id, name: r.name, recipeType: r.recipe_type, active: r.active, outputNames: outNames.get(r.id) ?? [], hasInputs: hasIn.has(r.id), hasOutputs: (outNames.get(r.id) ?? []).length > 0, batchYield: num(r.batch_yield) }));
+  return (data ?? []).map((r) => ({ id: r.id, name: r.name, recipeType: r.recipe_type, active: r.active, outputNames: outNames.get(r.id) ?? [], hasInputs: hasIn.has(r.id), hasOutputs: (outNames.get(r.id) ?? []).length > 0, batchYield: num(r.batch_yield), batchMode: r.batch_mode === true }));
 }
 
 async function recipeIdsWithInputs(recipeIds: string[]): Promise<Set<string>> {
@@ -195,8 +220,8 @@ async function namesAndActiveById(
 export async function loadRecipe(actor: AuthContext, recipeId: string): Promise<RecipeView | null> {
   requireLevel(actor, RECIPE_READ_MIN);
   const sb = getServiceRoleClient();
-  const { data: r } = await sb.from("recipes").select("id, name, name_es, recipe_type, batch_yield, directions, directions_es, active").eq("id", recipeId)
-    .maybeSingle<{ id: string; name: string; name_es: string | null; recipe_type: RecipeType; batch_yield: number | string; directions: string | null; directions_es: string | null; active: boolean }>();
+  const { data: r } = await sb.from("recipes").select("id, name, name_es, recipe_type, batch_yield, directions, directions_es, active, batch_mode, shelf_life_days").eq("id", recipeId)
+    .maybeSingle<{ id: string; name: string; name_es: string | null; recipe_type: RecipeType; batch_yield: number | string; directions: string | null; directions_es: string | null; active: boolean; batch_mode: boolean | null; shelf_life_days: number | string | null }>();
   if (!r) return null;
   const { data: inRows } = await sb.from("recipe_inputs").select("*").eq("recipe_id", recipeId).order("display_order")
     .returns<Array<{ id: string; component_sku_id: string | null; component_item_id: string | null; component_product_id: string | null; quantity: number | string; unit: string | null; each_container_label: string | null; portioned: boolean; display_order: number }>>();
@@ -215,6 +240,7 @@ export async function loadRecipe(actor: AuthContext, recipeId: string): Promise<
   return {
     id: r.id, name: r.name, nameEs: r.name_es, recipeType: r.recipe_type, batchYield: num(r.batch_yield) ?? 1,
     directions: r.directions, directionsEs: r.directions_es, active: r.active,
+    batchMode: r.batch_mode === true, shelfLifeDays: num(r.shelf_life_days) ?? 5,
     inputs: (inRows ?? []).map((x) => ({ id: x.id, componentSkuId: x.component_sku_id, componentItemId: x.component_item_id,
       componentProductId: x.component_product_id,
       componentName: x.component_product_id
@@ -233,13 +259,17 @@ export async function loadRecipe(actor: AuthContext, recipeId: string): Promise<
   };
 }
 
-export async function createRecipe(actor: AuthContext, input: { name: string; nameEs?: string | null; recipeType: RecipeType; batchYield: number; directions?: string | null; directionsEs?: string | null }): Promise<{ id: string }> {
+export async function createRecipe(actor: AuthContext, input: { name: string; nameEs?: string | null; recipeType: RecipeType; batchYield: number; directions?: string | null; directionsEs?: string | null; shelfLifeDays?: number; batchMode?: boolean }): Promise<{ id: string }> {
   requireLevel(actor, RECIPE_WRITE_MIN);
   if (!normStr(input.name)) throw new RecipeError(400, "invalid_name");
   if (!Number.isFinite(input.batchYield) || input.batchYield <= 0) throw new RecipeError(400, "invalid_batch_yield");
   if (input.recipeType !== "production" && input.recipeType !== "consumer") throw new RecipeError(400, "invalid_type");
+  if (input.shelfLifeDays !== undefined && !isValidShelfLifeDays(input.shelfLifeDays)) throw new RecipeError(400, "invalid_shelf_life_days");
+  // A header-only recipe has no output yet, and batch_mode needs exactly one (0215): the
+  // flag is turned on afterwards, through updateRecipe → set_recipe_batch_mode.
+  if (input.batchMode === true) throw new RecipeError(400, "batch_mode_requires_output");
   const sb = getServiceRoleClient();
-  const { data, error } = await sb.from("recipes").insert({ name: normStr(input.name), name_es: normStr(input.nameEs), recipe_type: input.recipeType, batch_yield: input.batchYield, directions: normStr(input.directions), directions_es: normStr(input.directionsEs), active: true, created_by: actor.user.id })
+  const { data, error } = await sb.from("recipes").insert({ name: normStr(input.name), name_es: normStr(input.nameEs), recipe_type: input.recipeType, batch_yield: input.batchYield, directions: normStr(input.directions), directions_es: normStr(input.directionsEs), active: true, created_by: actor.user.id, ...(input.shelfLifeDays !== undefined ? { shelf_life_days: input.shelfLifeDays } : {}) })
     .select("id").maybeSingle<{ id: string }>();
   if (error) throw new Error(`createRecipe: ${error.message}`);
   if (!data) throw new Error("createRecipe returned no row");
@@ -253,6 +283,10 @@ export interface RecipeDraft {
   name: string; nameEs?: string | null; recipeType: RecipeType; batchYield: number;
   directions?: string | null; directionsEs?: string | null;
   inputs: RecipeDraftInput[]; outputs: RecipeDraftOutput[];
+  /** 0215: on needs exactly one ITEM output (checked here AND inside create_recipe_full). */
+  batchMode?: boolean;
+  /** 0215: whole days > 0; the column defaults to 5 when omitted. */
+  shelfLifeDays?: number;
 }
 
 /** Validate a full recipe draft in TS, then insert header + inputs + outputs atomically
@@ -313,6 +347,13 @@ export async function createRecipeFull(actor: AuthContext, draft: RecipeDraft): 
   if (!(draft.batchYield > 0)) throw new RecipeError(400, "invalid_batch_yield");
   if (draft.recipeType !== "production" && draft.recipeType !== "consumer") throw new RecipeError(400, "invalid_type");
   if (draft.inputs.length === 0 || draft.outputs.length === 0) throw new RecipeError(400, "incomplete_recipe");
+  if (draft.shelfLifeDays !== undefined && !isValidShelfLifeDays(draft.shelfLifeDays)) throw new RecipeError(400, "invalid_shelf_life_days");
+  if (draft.batchMode === true) {
+    // The single-output rule (plan S r4 ruling H): a batch is ONE item's whole recipe. The
+    // RPC re-checks under its row lock; this is the named-422 fast path.
+    const only = draft.outputs.length === 1 ? draft.outputs[0] : null;
+    if (!only || (only.outputItemId ?? null) === null || !(only.yield > 0)) throw new RecipeError(422, "batch_mode_single_output");
+  }
   for (const i of draft.inputs) {
     if (componentTargets(i).count !== 1) throw new RecipeError(400, "invalid_component");
     if (!(i.quantity > 0)) throw new RecipeError(400, "invalid_quantity");
@@ -342,7 +383,7 @@ export async function createRecipeFull(actor: AuthContext, draft: RecipeDraft): 
     }
   }
   const { data, error } = await sb.rpc("create_recipe_full", {
-    p_header: { name: normStr(draft.name), name_es: normStr(draft.nameEs), recipe_type: draft.recipeType, batch_yield: draft.batchYield, directions: normStr(draft.directions), directions_es: normStr(draft.directionsEs) },
+    p_header: { name: normStr(draft.name), name_es: normStr(draft.nameEs), recipe_type: draft.recipeType, batch_yield: draft.batchYield, directions: normStr(draft.directions), directions_es: normStr(draft.directionsEs), batch_mode: draft.batchMode === true, ...(draft.shelfLifeDays !== undefined ? { shelf_life_days: draft.shelfLifeDays } : {}) },
     p_inputs: draft.inputs.map((i, idx) => ({ component_sku_id: i.componentSkuId ?? null, component_item_id: i.componentItemId ?? null, component_product_id: i.componentProductId ?? null, quantity: i.quantity, unit: normStr(i.unit), each_container_label: normStr(i.eachContainerLabel), portioned: i.portioned ?? false, display_order: idx })),
     p_outputs: draft.outputs.map((o, idx) => ({ output_item_id: o.outputItemId ?? null, output_menu_item_id: o.outputMenuItemId ?? null, yield: o.yield, output_container_label: normStr(o.outputContainerLabel), display_order: idx })),
     p_created_by: actor.user.id,
@@ -357,15 +398,19 @@ export async function createRecipeFull(actor: AuthContext, draft: RecipeDraft): 
     if (error.code === "P0001" && /duplicate_active_producer/.test(error.message ?? "")) {
       throw new RecipeError(409, "duplicate_active_producer");
     }
+    // 0215 adds two more named raises to the same function (batch_mode_single_output,
+    // invalid_shelf_life_days); same bridge, same reasoning as the line above.
+    const named = rpcRecipeError(error, BATCH_MODE_RPC_ERRORS);
+    if (named) throw named;
     throw new Error(`createRecipeFull rpc: ${error.message}`);
   }
   const id = typeof data === "string" ? data : (data as { id?: string } | null)?.id;
   if (!id) throw new Error("createRecipeFull returned no id");
-  await audit({ actorId: actor.user.id, actorRole: actor.user.role, action: "recipe.create", resourceTable: "recipes", resourceId: id, metadata: { name: draft.name, recipe_type: draft.recipeType, batch_yield: draft.batchYield, input_count: draft.inputs.length, output_count: draft.outputs.length, component_product_ids: draft.inputs.map((i) => i.componentProductId ?? null).filter((v): v is string => v !== null), atomic: true }, ipAddress: null, userAgent: null });
+  await audit({ actorId: actor.user.id, actorRole: actor.user.role, action: "recipe.create", resourceTable: "recipes", resourceId: id, metadata: { name: draft.name, recipe_type: draft.recipeType, batch_yield: draft.batchYield, batch_mode: draft.batchMode === true, shelf_life_days: draft.shelfLifeDays ?? null, input_count: draft.inputs.length, output_count: draft.outputs.length, component_product_ids: draft.inputs.map((i) => i.componentProductId ?? null).filter((v): v is string => v !== null), atomic: true }, ipAddress: null, userAgent: null });
   return { id };
 }
 
-export async function updateRecipe(actor: AuthContext, id: string, patch: { name?: string; nameEs?: string | null; batchYield?: number; directions?: string | null; directionsEs?: string | null }): Promise<void> {
+export async function updateRecipe(actor: AuthContext, id: string, patch: { name?: string; nameEs?: string | null; batchYield?: number; directions?: string | null; directionsEs?: string | null; shelfLifeDays?: number; batchMode?: boolean }): Promise<void> {
   requireLevel(actor, RECIPE_WRITE_MIN);
   const upd: Record<string, unknown> = { updated_at: new Date().toISOString(), updated_by: actor.user.id };
   if (patch.name !== undefined) { if (!normStr(patch.name)) throw new RecipeError(400, "invalid_name"); upd.name = normStr(patch.name); }
@@ -373,10 +418,30 @@ export async function updateRecipe(actor: AuthContext, id: string, patch: { name
   if (patch.batchYield !== undefined) { if (!(patch.batchYield > 0)) throw new RecipeError(400, "invalid_batch_yield"); upd.batch_yield = patch.batchYield; }
   if (patch.directions !== undefined) upd.directions = normStr(patch.directions);
   if (patch.directionsEs !== undefined) upd.directions_es = normStr(patch.directionsEs);
+  // 0215: shelf life is validated BEFORE any write (a NaN would serialise to null and trip the
+  // CHECK as an opaque 500 — the setItemSoldDirectly class).
+  if (patch.shelfLifeDays !== undefined) { if (!isValidShelfLifeDays(patch.shelfLifeDays)) throw new RecipeError(400, "invalid_shelf_life_days"); upd.shelf_life_days = patch.shelfLifeDays; }
+  if (patch.batchMode !== undefined && typeof patch.batchMode !== "boolean") throw new RecipeError(400, "invalid_payload");
   const sb = getServiceRoleClient();
-  const { error, count } = await sb.from("recipes").update(upd, { count: "exact" }).eq("id", id);
-  if (error) throw new Error(`updateRecipe: ${error.message}`);
-  if (count === 0) throw new RecipeError(404, "recipe_not_found");
+  // Astra P2 #8 (BC-007/033): the header patch and the batch_mode toggle are ONE serialised
+  // transaction — update_recipe_atomic (0215) locks the recipe row, re-validates, and writes a
+  // single UPDATE. A refused toggle (batch_mode_single_output) therefore persists NOTHING, and
+  // the recipe.update audit row is written only after the RPC succeeded. The `upd` object above
+  // keeps the pre-0215 validation order; its columns ride in p_patch (snake_case), the
+  // timestamp/actor are stamped in SQL.
+  const { updated_at: _ts, updated_by: _by, ...columns } = upd;
+  void _ts; void _by;
+  const { error: rpcErr } = await sb.rpc("update_recipe_atomic", {
+    p_recipe_id: id,
+    p_patch: columns,
+    p_batch_mode: patch.batchMode === undefined ? null : patch.batchMode,
+    p_actor: actor.user.id,
+  });
+  if (rpcErr) {
+    const named = rpcRecipeError(rpcErr, { ...BATCH_MODE_RPC_ERRORS, invalid_name: 400, invalid_batch_yield: 400 });
+    if (named) throw named;
+    throw new Error(`updateRecipe update_recipe_atomic: ${rpcErr.message}`);
+  }
   await audit({ actorId: actor.user.id, actorRole: actor.user.role, action: "recipe.update", resourceTable: "recipes", resourceId: id, metadata: { patch }, ipAddress: null, userAgent: null });
 }
 
@@ -479,24 +544,51 @@ export async function addRecipeOutput(actor: AuthContext, input: { recipeId: str
   if (itemId !== null && (await activeProducerExists(sb, itemId, input.recipeId))) {
     throw new RecipeError(409, "duplicate_active_producer");
   }
-  const { data: max } = await sb.from("recipe_outputs").select("display_order").eq("recipe_id", input.recipeId).order("display_order", { ascending: false }).limit(1).maybeSingle<{ display_order: number }>();
-  const { data, error } = await sb.from("recipe_outputs").insert({ recipe_id: input.recipeId, output_item_id: itemId, output_menu_item_id: menuId, yield: input.yield, output_container_label: normStr(input.outputContainerLabel), display_order: (max?.display_order ?? 0) + 1, created_by: actor.user.id })
-    .select("id").maybeSingle<{ id: string }>();
-  if (error) throw new Error(`addRecipeOutput: ${error.message}`);
-  if (!data) throw new Error("addRecipeOutput returned no row");
-  await audit({ actorId: actor.user.id, actorRole: actor.user.role, action: "recipe_output.add", resourceTable: "recipe_outputs", resourceId: data.id, metadata: { recipe_id: input.recipeId, output_item_id: itemId, output_menu_item_id: menuId, yield: input.yield }, ipAddress: null, userAgent: null });
-  return { id: data.id };
+  // The insert goes through add_recipe_output (0187, re-emitted by 0215 — its latest definer):
+  // the per-item advisory lock closes the two-actors window the app-layer check above cannot
+  // see, and the recipe row lock refuses a second output on a batch_mode recipe (Astra P1 #3:
+  // a TS read-then-insert cannot — A reads batch_mode=false, B enables it under the lock, A
+  // inserts output two). The fast-path checks above stay so the common case still answers
+  // with a named status without an exception round-trip. The 0187 "no caller" pin is retired
+  // with this wiring (tests/audit-flags-cleanup.test.ts).
+  const { data, error } = await sb.rpc("add_recipe_output", {
+    p_recipe_id: input.recipeId, p_output_item_id: itemId, p_output_menu_item_id: menuId,
+    p_yield: input.yield, p_output_container_label: normStr(input.outputContainerLabel), p_created_by: actor.user.id,
+  });
+  if (error) {
+    const named = rpcRecipeError(error, BATCH_MODE_RPC_ERRORS);
+    if (named) throw named;
+    throw new Error(`addRecipeOutput: ${error.message}`);
+  }
+  const newId = typeof data === "string" ? data : (data as { id?: string } | null)?.id;
+  if (!newId) throw new Error("addRecipeOutput returned no row");
+  await audit({ actorId: actor.user.id, actorRole: actor.user.role, action: "recipe_output.add", resourceTable: "recipe_outputs", resourceId: newId, metadata: { recipe_id: input.recipeId, output_item_id: itemId, output_menu_item_id: menuId, yield: input.yield }, ipAddress: null, userAgent: null });
+  return { id: newId };
 }
 
 export async function removeRecipeEdge(actor: AuthContext, args: { table: "recipe_inputs" | "recipe_outputs"; id: string }): Promise<void> {
   requireLevel(actor, RECIPE_WRITE_MIN);
   const sb = getServiceRoleClient();
+  if (args.table === "recipe_outputs") {
+    // 0215: an output leaves through remove_recipe_output, under the recipe row lock, so the
+    // sole output of a batch_mode recipe cannot be pulled out from under the flag (the RPC
+    // refuses with batch_mode_single_output; turn batch mode off first). It returns the
+    // deleted row for the same `before` audit the direct delete wrote.
+    const { data: before, error } = await sb.rpc("remove_recipe_output", { p_output_id: args.id, p_actor: actor.user.id });
+    if (error) {
+      const named = rpcRecipeError(error, BATCH_MODE_RPC_ERRORS);
+      if (named) throw named;
+      throw new Error(`removeRecipeEdge: ${error.message}`);
+    }
+    await audit({ actorId: actor.user.id, actorRole: actor.user.role, action: "recipe_output.remove", resourceTable: args.table, resourceId: args.id, metadata: { before: (before as Record<string, unknown> | null) ?? null }, ipAddress: null, userAgent: null });
+    return;
+  }
   const { data: before } = await sb.from(args.table).select("*").eq("id", args.id).maybeSingle<Record<string, unknown>>();
   if (!before) throw new RecipeError(404, "edge_not_found");
   const { error, count } = await sb.from(args.table).delete({ count: "exact" }).eq("id", args.id);
   if (error) throw new Error(`removeRecipeEdge: ${error.message}`);
   if (count === 0) throw new RecipeError(404, "edge_not_found");
-  await audit({ actorId: actor.user.id, actorRole: actor.user.role, action: `${args.table === "recipe_inputs" ? "recipe_input" : "recipe_output"}.remove`, resourceTable: args.table, resourceId: args.id, metadata: { before }, ipAddress: null, userAgent: null });
+  await audit({ actorId: actor.user.id, actorRole: actor.user.role, action: "recipe_input.remove", resourceTable: args.table, resourceId: args.id, metadata: { before }, ipAddress: null, userAgent: null });
 }
 
 export const SOLD_DIRECT_WRITE_MIN = 7;

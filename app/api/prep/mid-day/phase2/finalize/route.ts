@@ -67,6 +67,11 @@ export async function POST(req: NextRequest) {
       if (result.reason === "not_found") {
         return jsonError(404, "instance_not_found", { message: "Mid-day instance not found." });
       }
+      if (result.reason === "batch_rows_unsaved") {
+        // 0215 (Astra P1 #2): a batch item's Phase 1 count is not a Phase 2 save — save every
+        // batch row before finalizing. `missing` = the template item ids still unsaved.
+        return jsonError(422, "batch_rows_unsaved", { message: "Save every batch row before finalizing.", missing: result.missing });
+      }
       return jsonError(409, "not_in_phase2", { message: "This instance isn't in the Phase 2 window." });
     }
     return jsonOk({ instance: result.instance });

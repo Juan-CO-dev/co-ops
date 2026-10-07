@@ -433,6 +433,11 @@ export interface AmPrepFormProps {
    * otherwise.
    */
   restoredDraft?: AmPrepDraftRestore | null;
+  /**
+   * 0215 batch vs bottle — templateItemId → true for batch items. A HINT under the BACK UP
+   * cell ("bulk / not yet bottled"); the count's columns, parsing and submit are unchanged.
+   */
+  batchModeByItem?: Record<string, boolean>;
 }
 
 type SubmitState =
@@ -454,6 +459,7 @@ export function AmPrepForm({
   sectionLabels = {},
   sections,
   restoredDraft = null,
+  batchModeByItem = {},
 }: AmPrepFormProps) {
   const { t, language } = useTranslation();
   const router = useRouter();
@@ -935,6 +941,7 @@ export function AmPrepForm({
             disabled={isReadOnly}
             errors={validation.errors}
             sectionLabels={sectionLabels}
+            batchModeByItem={batchModeByItem}
           />
         );
       })}

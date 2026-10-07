@@ -100,6 +100,13 @@ export interface OpeningPhase1DraftItem {
   ticked: boolean;
   /** C.53 spot-check morning recount. NULL when no recount was entered. */
   openerRecount: number | null;
+  /**
+   * 0215 batch vs bottle — the two boxes of a batch item's recount (LINE / BACK UP).
+   * OPTIONAL and additive to version 1: a draft written before the field existed, or by a
+   * row that is not a batch item, simply lacks the keys; present values must be finite.
+   */
+  openerRecountLine?: number | null;
+  openerRecountBackUp?: number | null;
 }
 
 /** The persisted envelope. One row per instance; `draft` jsonb holds exactly this. */
@@ -181,13 +188,22 @@ export function buildOpeningPhase1Draft(
   for (const [key, value] of items) {
     if (itemCount >= OPENING_DRAFT_MAX_ITEMS) break;
     if (key.length === 0 || key.length > OPENING_DRAFT_MAX_KEY_LENGTH) continue;
-    draft.items[key] = {
+    const built: OpeningPhase1DraftItem = {
       countValue: Number.isFinite(value.countValue) ? value.countValue : null,
       photoId: value.photoId === null ? null : normalizeText(value.photoId),
       notes: value.notes === null ? null : normalizeText(value.notes),
       ticked: value.ticked === true,
       openerRecount: Number.isFinite(value.openerRecount) ? value.openerRecount : null,
     };
+    // 0215: the two boxes are written ONLY when present, so a non-batch item's draft is
+    // byte-identical to the pre-0215 envelope.
+    if (typeof value.openerRecountLine === "number" && Number.isFinite(value.openerRecountLine)) {
+      built.openerRecountLine = value.openerRecountLine;
+    }
+    if (typeof value.openerRecountBackUp === "number" && Number.isFinite(value.openerRecountBackUp)) {
+      built.openerRecountBackUp = value.openerRecountBackUp;
+    }
+    draft.items[key] = built;
     itemCount += 1;
   }
   let sectionCount = 0;
@@ -259,8 +275,17 @@ export function parseOpeningPhase1Draft(raw: unknown): OpeningPhase1Draft | null
     const notes = parseNullableText(value.notes);
     if (notes === INVALID) return null;
     if (typeof value.ticked !== "boolean") return null;
+    // 0215: absent reads as "not a two-box item"; a present non-number rejects the whole
+    // draft like every other field (a half-read box is a wrong backup).
+    const openerRecountLine = parseNullableFiniteNumber(value.openerRecountLine);
+    if (openerRecountLine === INVALID) return null;
+    const openerRecountBackUp = parseNullableFiniteNumber(value.openerRecountBackUp);
+    if (openerRecountBackUp === INVALID) return null;
 
-    draft.items[key] = { countValue, photoId, notes, ticked: value.ticked, openerRecount };
+    const parsedItem: OpeningPhase1DraftItem = { countValue, photoId, notes, ticked: value.ticked, openerRecount };
+    if (openerRecountLine !== null) parsedItem.openerRecountLine = openerRecountLine;
+    if (openerRecountBackUp !== null) parsedItem.openerRecountBackUp = openerRecountBackUp;
+    draft.items[key] = parsedItem;
   }
 
   for (const [key, verified] of sectionEntries) {

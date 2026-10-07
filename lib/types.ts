@@ -10,6 +10,7 @@
  */
 
 import type { RoleCode } from "./roles";
+import type { BatchEntry } from "./batch-prep-shared";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Auth & Access
@@ -996,6 +997,14 @@ export interface OpeningEntryPhase1 {
   /** C.53 §3 — opener's recount when spotCheckStatus='flagged_recount'. NULL otherwise. */
   openerRecount: number | null;
   /**
+   * 0215 batch vs bottle (ruling F) — on a batch_mode item the recount is TWO boxes: LINE
+   * (ready for service) and BACK UP (the bulk container). The RPC derives
+   * opener_recount = line + back_up and refuses a total-only recount on a batch item.
+   * Optional and ignored on every other item, so a pre-0215 client payload is unchanged.
+   */
+  openerRecountLine?: number | null;
+  openerRecountBackUp?: number | null;
+  /**
    * C.53 §3 — frozen ground_truth_count at Phase 1 close. The form derives
    * client-side from (closer_count, section verified, opener_recount); server
    * re-derives + validates. NULL when item has no count semantics
@@ -1062,6 +1071,14 @@ export interface OpeningEntryPhase2 {
     /** REQUIRED per C.50 §4 (always non-empty on under-prep). */
     freeText: string;
   } | null;
+  /**
+   * 0215 batch vs bottle (plan S r4) — present ONLY on a batch_mode item: batches made,
+   * what they came out to, this session's toss of the counted bulk backup, and the
+   * over-batch reason. `openerPrepped` is then what was BOTTLED for the line. The RPC
+   * refuses it on a non-batch item (batch_payload_not_allowed) and requires it on a batch
+   * item (batch_payload_required). Absent / null = today's single-box save, byte-identical.
+   */
+  batch?: BatchEntry | null;
 }
 
 /**
