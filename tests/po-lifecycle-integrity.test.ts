@@ -35,7 +35,7 @@ import { describe, it, expect } from "vitest";
 import { partitionDraftLines, type DraftLineEdit } from "@/lib/purchase-orders";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
-const read = (rel: string) => readFileSync(join(ROOT, rel), "utf8");
+const read = (rel: string) => readFileSync(join(ROOT, rel), "utf8").replace(/\r\n/g, "\n");
 
 const HAM = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const ROLL = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";

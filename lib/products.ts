@@ -41,6 +41,9 @@ import {
   type ReceiptLot,
 } from "@/lib/products-shared";
 import type { ProductIndex } from "@/lib/prep-consumption-graph";
+import { loadMeasures, loadSkuPackChains } from "@/lib/prep-consumption";
+import { skuContentOz } from "@/lib/recipe-math";
+import { storeRunReceiptStreak, type ProductReceiptEvent } from "@/lib/products-shared";
 
 // ── Authority floors (the lib is the authority per-action) ───────────────────
 /** AGM+ — read the registry (the vendor_items read / cost-read floor). */
@@ -124,6 +127,11 @@ interface DbProductRow {
 }
 
 interface DbMemberRow {
+  pending_review: boolean;
+  location_id: string | null;
+  units_per_pack: number | null;
+  each_size: number | string | null;
+  each_measure: string | null;
   id: string;
   name: string;
   vendor_id: string | null;
@@ -297,7 +305,7 @@ export async function listProducts(actor: AuthContext): Promise<ProductView[]> {
 
   const { data: memberRows, error: mErr } = await sb
     .from("vendor_items")
-    .select("id, name, vendor_id, product_id, active, avg_oz_per_each")
+    .select("id, name, vendor_id, product_id, active, avg_oz_per_each, pending_review, location_id, units_per_pack, each_size, each_measure")
     .in("product_id", ids)
     .order("name", { ascending: true })
     .returns<DbMemberRow[]>();
@@ -314,20 +322,24 @@ export async function listProducts(actor: AuthContext): Promise<ProductView[]> {
   if (prErr) throw new Error(`listProducts primaries failed: ${prErr.message}`);
   const primaries = primaryRows ?? [];
 
-  // LABEL-ONLY: a vendors failure leaves the twin rows unlabelled, exactly as they
-  // read before this surface existed. It must never fail the registry.
+  // Vendor kind/activity now govern eligibility; fail closed on lookup errors.
   const vendorIds = [...new Set(members.map((m) => m.vendor_id).filter((v): v is string => v !== null))];
   const vendorNameById = new Map<string, string>();
+  const vendorById = new Map<string, { source_kind: "vendor" | "store"; active: boolean }>();
   if (vendorIds.length > 0) {
     const { data: vs, error: vErr } = await sb
       .from("vendors")
-      .select("id, name")
+      .select("id, name, source_kind, active")
       .in("id", vendorIds)
-      .returns<Array<{ id: string; name: string }>>();
-    if (vErr) console.error("[products] listProducts vendor names lookup failed:", vErr.message);
-    for (const v of vs ?? []) vendorNameById.set(v.id, v.name);
+      .returns<Array<{ id: string; name: string; source_kind: "vendor" | "store"; active: boolean }>>();
+    if (vErr) throw new Error(`listProducts vendor eligibility: ${vErr.message}`);
+    for (const v of vs ?? []) { vendorNameById.set(v.id, v.name); vendorById.set(v.id, v); }
   }
 
+  const [registryMeasures, registryChains] = await Promise.all([
+    loadMeasures(), loadSkuPackChains(members.map((m) => m.id)),
+  ]);
+  const registryUnitOz = new Map(products.map((p) => [p.id, num(p.unit_oz)]));
   const membersByProduct = new Map<string, ProductMemberView[]>();
   for (const m of members) {
     if (m.product_id == null) continue;
@@ -337,7 +349,13 @@ export async function listProducts(actor: AuthContext): Promise<ProductView[]> {
       name: m.name,
       vendorId: m.vendor_id,
       vendorName: m.vendor_id != null ? vendorNameById.get(m.vendor_id) ?? null : null,
-      active: m.active ?? true, // nullable in DB → treat null as active (skus.ts idiom)
+      sourceKind: m.vendor_id ? vendorById.get(m.vendor_id)?.source_kind ?? "vendor" : "vendor",
+      pendingReview: m.pending_review,
+      hasOzBasis: (skuContentOz({ unitsPerPack: m.units_per_pack, eachSize: num(m.each_size),
+        eachMeasure: m.each_measure, avgOzPerEach: num(m.avg_oz_per_each), packChain: registryChains.get(m.id) }, registryMeasures) ??
+        registryUnitOz.get(m.product_id) ?? 0) > 0,
+      vendorActive: m.vendor_id == null || vendorById.get(m.vendor_id)?.active === true,
+      active: m.active ?? true,
       avgOzPerEach: num(m.avg_oz_per_each),
       // Receipt history is a graph-time load (Phase 3), not a registry read.
       lastReceivedAt: null,
@@ -463,13 +481,13 @@ const DELIVERY_AT_LOCATION_EMBED =
 const DELIVERY_LOCATION_COLUMN = "vendor_deliveries.location_id";
 
 /** ISO of the most recent receipt line per member SKU (rung 2's only input). */
-async function loadLastReceivedAt(
+async function loadReceiptHistory(
   sb: ReturnType<typeof getServiceRoleClient>,
   skuIds: string[],
   locationId: string | null,
-): Promise<Map<string, string>> {
+): Promise<{ lastReceived: Map<string, string>; lines: ProductReceiptLine[] }> {
   const out = new Map<string, string>();
-  if (skuIds.length === 0) return out;
+  if (skuIds.length === 0) return { lastReceived: out, lines: [] };
 
   // PAGED (the PR #63 lesson): the delivery ledger crosses the 1000-row cap and a
   // truncated page would silently mis-rank rung 2 — the ladder would answer with a
@@ -482,19 +500,19 @@ async function loadLastReceivedAt(
   // skipped entirely rather than silently reading one shop's ledger as if it were
   // both. A location with nothing ever received simply matches no lines — the same
   // empty map the old explicit early-return produced.
-  const lines = await selectAllRows<{ vendor_item_id: string; created_at: string }>(
+  const lines = await selectAllRows<ProductReceiptLine>(
     async (from, to) => {
       // The embed rides along even with no location: `delivery_id` is NOT NULL with
       // an FK, so `!inner` matches every line and filters nothing — which keeps ONE
       // query shape instead of two divergent ones. Only the `.eq` is conditional.
       let q = sb.from("vendor_delivery_items")
-        .select(`vendor_item_id, created_at, ${DELIVERY_AT_LOCATION_EMBED}`)
+        .select("vendor_item_id, created_at, delivery_id, vendor_deliveries!vendor_delivery_items_delivery_id_fkey!inner(location_id, created_at, vendors!inner(source_kind))")
         .in("vendor_item_id", skuIds);
       if (locationId != null) q = q.eq(DELIVERY_LOCATION_COLUMN, locationId);
       const { data, error } = await q
         .order("id", { ascending: true })
         .range(from, to)
-        .returns<Array<{ vendor_item_id: string; created_at: string }>>();
+        .returns<ProductReceiptLine[]>();
       if (error) throw new Error(`loadLastReceivedAt lines: ${error.message}`);
       return { data };
     },
@@ -503,7 +521,14 @@ async function loadLastReceivedAt(
     const prev = out.get(l.vendor_item_id);
     if (prev == null || l.created_at > prev) out.set(l.vendor_item_id, l.created_at);
   }
-  return out;
+  return { lastReceived: out, lines };
+}
+
+interface ProductReceiptLine {
+  vendor_item_id: string;
+  created_at: string;
+  delivery_id: string;
+  vendor_deliveries: { location_id: string; created_at: string; vendors: { source_kind: "vendor" | "store" } };
 }
 
 /**
@@ -575,7 +600,7 @@ export async function loadProductIndex(
 
   const { data: memberRows, error: mErr } = await sb
     .from("vendor_items")
-    .select("id, name, vendor_id, product_id, active, avg_oz_per_each")
+    .select("id, name, vendor_id, product_id, active, avg_oz_per_each, pending_review, location_id, units_per_pack, each_size, each_measure")
     .in("product_id", presentIds)
     .order("name", { ascending: true })
     .returns<DbMemberRow[]>();
@@ -611,21 +636,41 @@ export async function loadProductIndex(
     for (const r of ovRows ?? []) overlayBySku.set(r.sku_id, r.active_override);
   }
 
-  // LABEL-ONLY (the listProducts precedent): a vendors failure leaves twins
-  // unlabelled; it must never fail costing, ordering or the count sheet.
+  // Vendor kind/activity are resolution inputs: an unavailable lookup must refuse,
+  // rather than silently treating a store as a regular supplier.
   const vendorIds = [...new Set(memberRowList.map((m) => m.vendor_id).filter((v): v is string => v !== null))];
   const vendorNameById = new Map<string, string>();
+  const vendorById = new Map<string, { source_kind: "vendor" | "store"; active: boolean }>();
   if (vendorIds.length > 0) {
     const { data: vs, error: vErr } = await sb
       .from("vendors")
-      .select("id, name")
+      .select("id, name, source_kind, active")
       .in("id", vendorIds)
-      .returns<Array<{ id: string; name: string }>>();
-    if (vErr) console.error("[products] loadProductIndex vendor names lookup failed:", vErr.message);
-    for (const v of vs ?? []) vendorNameById.set(v.id, v.name);
+      .returns<Array<{ id: string; name: string; source_kind: "vendor" | "store"; active: boolean }>>();
+    if (vErr) throw new Error(`loadProductIndex vendor eligibility: ${vErr.message}`);
+    for (const v of vs ?? []) { vendorNameById.set(v.id, v.name); vendorById.set(v.id, v); }
   }
 
-  const lastReceived = await loadLastReceivedAt(sb, memberIds, locationId);
+  const [{ lastReceived, lines: receiptLines }, measures, chains] = await Promise.all([
+    loadReceiptHistory(sb, memberIds, locationId), loadMeasures(), loadSkuPackChains(memberIds),
+  ]);
+  const receiptEventsByProduct = new Map<string, ProductReceiptEvent[]>();
+  const memberProduct = new Map(memberRowList.map((m) => [m.id, m.product_id]));
+  for (const line of receiptLines) {
+    const productId = memberProduct.get(line.vendor_item_id);
+    if (!productId) continue;
+    const events = receiptEventsByProduct.get(productId) ?? [];
+    events.push({ receiptId: line.delivery_id, locationId: line.vendor_deliveries.location_id,
+      receivedAt: line.created_at, sourceKind: line.vendor_deliveries.vendors.source_kind });
+    receiptEventsByProduct.set(productId, events);
+  }
+  const productUnitOz = new Map(products.map((p) => [p.id, num(p.unit_oz)]));
+  const streakByScope = new Map<string, number>();
+  function streakFor(productId: string, shopId: string): number {
+    const key = `${productId}:${shopId}`;
+    if (!streakByScope.has(key)) streakByScope.set(key, storeRunReceiptStreak(receiptEventsByProduct.get(productId) ?? [], shopId));
+    return streakByScope.get(key)!;
+  }
 
   const membersByProduct = new Map<string, ProductMemberView[]>();
   const productBySku = new Map<string, string>();
@@ -638,7 +683,16 @@ export async function loadProductIndex(
       name: m.name,
       vendorId: m.vendor_id,
       vendorName: m.vendor_id != null ? vendorNameById.get(m.vendor_id) ?? null : null,
-      active: resolveActive(overlayBySku.get(m.id) ?? null, m.active ?? true),
+      sourceKind: m.vendor_id ? vendorById.get(m.vendor_id)?.source_kind ?? "vendor" : "vendor",
+      storeRunStreak: m.location_id == null ? 0 : streakFor(m.product_id, m.location_id),
+      pendingReview: m.pending_review,
+      hasOzBasis: (skuContentOz({ unitsPerPack: m.units_per_pack, eachSize: num(m.each_size),
+        eachMeasure: m.each_measure, avgOzPerEach: num(m.avg_oz_per_each), packChain: chains.get(m.id) }, measures) ??
+        productUnitOz.get(m.product_id) ?? 0) > 0,
+      vendorActive: m.vendor_id == null || vendorById.get(m.vendor_id)?.active === true,
+      active: resolveActive(overlayBySku.get(m.id) ?? null, m.active ?? true) &&
+        (vendorById.get(m.vendor_id ?? "")?.source_kind !== "store" ||
+          locationId == null || m.location_id == null || m.location_id === locationId),
       avgOzPerEach: num(m.avg_oz_per_each),
       lastReceivedAt: lastReceived.get(m.id) ?? null,
     });
@@ -666,6 +720,7 @@ export async function loadProductIndex(
     const res = resolveProductMember({
       productId: p.id,
       active: productActive,
+      storeRunStreak: locationId == null ? undefined : streakFor(p.id, locationId),
       primarySkuId: chosen?.primary_sku_id ?? null,
       members,
     });

@@ -29,6 +29,7 @@
  * here sums flattened_oz — it is read only to DETECT prep-mediation (a dark production
  * lane means a half-seen base). No ledger is re-keyed and no ledger row is rewritten.
  */
+import { loadStoreVendorIds } from "@/lib/ordering-sources";
 import "server-only";
 
 import { getServiceRoleClient } from "@/lib/supabase-server";
@@ -369,7 +370,8 @@ export async function loadDemandInputs(
   // scope the batch reads, where a few extra ids cost nothing and dropping one would lose
   // data. The `vendor_id != null` cut is safe here — loadWalkerData makes the identical one
   // (a par'd SKU nobody can be asked for is unorderable) before it builds any id list.
-  const routable = (skuRows ?? []).filter((s) => s.vendor_id != null);
+  const storeVendorIds = await loadStoreVendorIds();
+  const routable = (skuRows ?? []).filter((s) => s.vendor_id != null && !storeVendorIds.has(s.vendor_id));
   const skuIds = routable.map((s) => s.id);
   const vendorIds = [...new Set(routable.map((s) => s.vendor_id as string))];
   const productIds = [...new Set(routable.map((s) => s.product_id).filter((v): v is string => v != null))];
@@ -1138,8 +1140,9 @@ export async function recordParRunSkipped(
 
   const mode: "shadow" | "live" = PAR_AUTO_APPLY_ENABLED ? "live" : "shadow";
   const ledger: LedgerRow[] = [];
+  const storeVendorIds = await loadStoreVendorIds();
   const universe = (data ?? []).filter(
-    (s) => s.vendor_id != null && resolveActive(overlayBySku.get(s.id)?.activeOverride, s.active),
+    (s) => s.vendor_id != null && !storeVendorIds.has(s.vendor_id) && resolveActive(overlayBySku.get(s.id)?.activeOverride, s.active),
   );
   for (const s of universe) {
     const parStep = parStepFor({

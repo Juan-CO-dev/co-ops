@@ -116,6 +116,8 @@ export function IntakeLineRow({
   onForgetCode = null,
   locationId,
   showPrice = false,
+  storeMode = false,
+  countUnitLabel,
 }: {
   line: IntakeLine;
   levels: string[];
@@ -131,9 +133,13 @@ export function IntakeLineRow({
    *  the expanded editor has always had its own price field and is unaffected either way.
    *  Defaults false so an omitted prop can never change a caller's rendering. */
   showPrice?: boolean;
+  storeMode?: boolean;
+  /** Store-run flat pack label; display only, never an invented chain level. */
+  countUnitLabel?: string | null;
 }) {
   const { t } = useTranslation();
-  const expectedLabel = line.level.trim() || t("receiving.door.level_generic");
+  const expectedLabel = line.level.trim() || countUnitLabel || t("receiving.door.level_generic");
+  const storePriceLabel = storeMode ? t("receivingStore.price_per_level", { level: expectedLabel }) : null;
   const suggested = suggestFlag(line.qty, line.expectedQty);
 
   // Collapsed fast path: a line the operator hasn't opened (or confirmed).
@@ -256,7 +262,7 @@ export function IntakeLineRow({
                 what the eye reads (WCAG label-in-name). */}
             <label className="mt-2 flex items-center gap-2">
               <span className="shrink-0 text-[11px] font-bold uppercase tracking-[0.12em] text-co-text-dim">
-                {t("receiving.door.price_label")}
+                {storePriceLabel ?? t("receiving.door.price_label")}
               </span>
               {/* flex, not a bare inline wrapper: an inline-block <input> leaves a
                   baseline descender gap under itself, which would make the absolutely
@@ -278,7 +284,7 @@ export function IntakeLineRow({
                   value={line.unitPrice}
                   disabled={busy}
                   onChange={(e) => onChange({ unitPrice: e.target.value })}
-                  aria-label={t("receiving.door.price_aria", { sku: line.skuName })}
+                  aria-label={storePriceLabel ?? t("receiving.door.price_aria", { sku: line.skuName })}
                 />
               </span>
             </label>
@@ -443,7 +449,7 @@ export function IntakeLineRow({
       <div className="mt-3 grid grid-cols-2 gap-2">
         <label className="block">
           <span className="text-[11px] font-bold uppercase tracking-[0.12em] text-co-text-dim">
-            {t("receiving.form.price")}
+            {storePriceLabel ?? t("receiving.form.price")}
           </span>
           <input
             className={`mt-1 ${field}`}
@@ -454,7 +460,7 @@ export function IntakeLineRow({
             value={line.unitPrice}
             disabled={busy}
             onChange={(e) => onChange({ unitPrice: e.target.value })}
-            aria-label={t("receiving.form.price")}
+            aria-label={storePriceLabel ?? t("receiving.form.price")}
           />
         </label>
         <label className="block">
