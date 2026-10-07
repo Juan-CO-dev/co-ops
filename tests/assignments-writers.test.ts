@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { auditTaskOverride, assignTask, hasTaskAccess, retractTask, saveStation, writeStationEvent, type AssignmentActor } from "@/lib/assignments";
+import { auditTaskOverride, assignTask, hasTaskAccess, retractTask, saveStationSpanish, writeStationEvent, type AssignmentActor } from "@/lib/assignments";
 import { audit } from "@/lib/audit";
 import { ROLES } from "@/lib/roles";
 import { TASK_TYPES, TASK_MIN_LEVEL } from "@/lib/assignments-shared";
@@ -55,7 +55,7 @@ describe("assignment writer front doors", () => {
       () => writeStationEvent(f.service, { ...common, userId: TARGET, stationId: STATION }),
       () => assignTask(f.service, { ...common, userId: TARGET, task: "am_prep" }),
       () => retractTask(f.service, { ...common, assignmentId: ASSIGNMENT }),
-      () => saveStation(f.service, { ...common, name: "Station", nameEs: "Estación", sort: 0, active: true }),
+      () => saveStationSpanish(f.service, { ...common, id: STATION, nameEs: "Spanish" }),
     ];
     for (const call of calls) await expect(call()).rejects.toMatchObject({ code: "location_access_denied" });
     expect(f.from).not.toHaveBeenCalled();
@@ -113,14 +113,14 @@ describe("assignment writer front doors", () => {
     await expect(retractTask(missing.service, { actor, locationId: SHOP, assignmentId: ASSIGNMENT })).rejects.toMatchObject({ status: 404 });
   });
   it("requires GM for registry writes and refuses a zero-row station update", async () => {
-    const args = { actor, locationId: SHOP, id: STATION, name: "Station", nameEs: "Estación", sort: 0, active: false };
+    const args = { actor, locationId: SHOP, id: STATION, nameEs: "Spanish" };
     const f = fake();
-    await expect(saveStation(f.service, args)).rejects.toMatchObject({ code: "role_insufficient" });
+    await expect(saveStationSpanish(f.service, args)).rejects.toMatchObject({ code: "role_insufficient" });
     expect(f.from).not.toHaveBeenCalled();
     const missing = fake({ role: "gm", stationMissing: true });
-    await expect(saveStation(missing.service, { ...args, actor: { ...actor, role: "gm", level: 7 } })).rejects.toMatchObject({ code: "station_unavailable", status: 404 });
+    await expect(saveStationSpanish(missing.service, { ...args, actor: { ...actor, role: "gm", level: 7 } })).rejects.toMatchObject({ code: "station_unavailable", status: 404 });
     expect(missing.filters).toContainEqual(["stations", "location_id", SHOP]);
-    expect(missing.writes).toEqual([{ table: "stations", kind: "update", row: { name: "Station", name_es: "Estación", sort: 0, active: false } }]);
+    expect(missing.writes).toEqual([]);
   });
 });
 

@@ -88,6 +88,8 @@
   "assignments.locations": "Ubicaciones",
   "assignments.noLocation": "No tienes una ubicación disponible.",
   "assignments.stations": "Estaciones",
+  "assignments.stationsFromClosing": "Las estaciones vienen de las secciones de la lista de cierre. Edita la lista de cierre para cambiarlas.",
+  "assignments.editClosing": "Editar lista de cierre",
   "assignments.addStation": "Añadir estación",
   "assignments.nameEn": "Nombre (inglés)",
   "assignments.nameEs": "Nombre (español)",

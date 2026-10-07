@@ -89,6 +89,8 @@
   "assignments.locations": "Locations",
   "assignments.noLocation": "No accessible location.",
   "assignments.stations": "Stations",
+  "assignments.stationsFromClosing": "Stations come from the closing checklist sections. Edit the closing checklist to change them.",
+  "assignments.editClosing": "Edit closing checklist",
   "assignments.addStation": "Add station",
   "assignments.nameEn": "Name (English)",
   "assignments.nameEs": "Name (Spanish)",

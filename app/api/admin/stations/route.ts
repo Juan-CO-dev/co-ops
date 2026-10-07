@@ -1,7 +1,7 @@
 import type { NextRequest } from "next/server";
 import { assertStepUp } from "@/lib/admin/step-up";
 import { jsonError, jsonOk, parseJsonBody } from "@/lib/api-helpers";
-import { AssignmentError, saveStation } from "@/lib/assignments";
+import { AssignmentError, saveStationSpanish } from "@/lib/assignments";
 import { requireSession } from "@/lib/session";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 
@@ -15,12 +15,12 @@ export async function POST(req: NextRequest) {
   if (body instanceof Response) return body;
   if (!body || typeof body !== "object" || Array.isArray(body)) return jsonError(400, "invalid_payload");
   const b = body as Record<string, unknown>;
-  if (typeof b.locationId !== "string" || (b.id !== undefined && typeof b.id !== "string") ||
-      typeof b.name !== "string" || typeof b.nameEs !== "string" || typeof b.sort !== "number" || typeof b.active !== "boolean") return jsonError(400, "invalid_payload");
+  if (typeof b.locationId !== "string" || typeof b.id !== "string" || typeof b.nameEs !== "string" ||
+      Object.keys(b).some((key) => !["locationId", "id", "nameEs"].includes(key))) return jsonError(400, "invalid_payload");
   try {
-    return jsonOk(await saveStation(getServiceRoleClient(), {
+    return jsonOk(await saveStationSpanish(getServiceRoleClient(), {
       actor: { userId: ctx.user.id, role: ctx.role, level: ctx.level, locations: ctx.locations },
-      locationId: b.locationId, id: b.id as string | undefined, name: b.name, nameEs: b.nameEs, sort: b.sort, active: b.active,
+      locationId: b.locationId, id: b.id, nameEs: b.nameEs,
     }));
   } catch (error) {
     if (error instanceof AssignmentError) return jsonError(error.status, error.code);

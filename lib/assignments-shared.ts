@@ -9,7 +9,7 @@ export const TASK_MIN_LEVEL: Record<TaskType, number> = {
 export function isTaskType(value: unknown): value is TaskType {
   return typeof value === "string" && TASK_TYPES.some((task) => task === value);
 }
-export interface Station { id: string; name: string; nameEs: string; sort: number; active: boolean }
+export interface Station { id: string; name: string; nameEs: string | null; sort: number; active: boolean }
 export interface ShiftPerson { id: string; name: string; level: number; hasWork: boolean; available?: boolean }
 export interface StationEvent {
   id: string; sequence: string; locationId: string; businessDate: string;

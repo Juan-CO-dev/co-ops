@@ -152,27 +152,40 @@ export async function retractTask(service: SupabaseClient, args: {
   return { id: result.id };
 }
 
-export async function saveStation(service: SupabaseClient, args: {
-  actor: AssignmentActor; locationId: string; id?: string; name: string; nameEs: string; sort: number; active: boolean;
+export async function saveStationSpanish(service: SupabaseClient, args: {
+  actor: AssignmentActor; locationId: string; id: string; nameEs: string;
 }): Promise<{ id: string }> {
   requireLocation(args.actor, args.locationId);
   if (args.actor.level < 7) throw new AssignmentError("role_insufficient");
-  if (args.id) requireUuid(args.id);
-  if (typeof args.name !== "string" || !args.name.trim() || args.name.length > 100 ||
-      typeof args.nameEs !== "string" || !args.nameEs.trim() || args.nameEs.length > 100 ||
-      !Number.isInteger(args.sort) || args.sort < 0 || args.sort > 10000 || typeof args.active !== "boolean") throw new AssignmentError("invalid_payload", 400);
+  requireUuid(args.id);
+  if (typeof args.nameEs !== "string" || args.nameEs.length > 100) throw new AssignmentError("invalid_payload", 400);
   // Re-read membership/active role before service-role config writes too.
   if (await targetLevel(service, args.actor.userId, args.locationId) < 7) throw new AssignmentError("role_insufficient");
-  const row = { name: args.name.trim(), name_es: args.nameEs.trim(), sort: args.sort, active: args.active };
-  const query = args.id
-    ? service.from("stations").update(row).eq("id", args.id).eq("location_id", args.locationId)
-    : service.from("stations").insert({ ...row, location_id: args.locationId });
-  const { data, error } = await query.select("id").maybeSingle<{ id: string }>();
+  const station = await service.from("stations").select("id,name")
+    .eq("id", args.id).eq("location_id", args.locationId).eq("active", true).maybeSingle();
+  if (station.error) dbError(station.error);
+  if (!station.data) throw new AssignmentError("station_unavailable", 404);
+  const closing = await service.from("checklist_templates").select("id,effective_from,created_at")
+    .eq("location_id", args.locationId).eq("type", "closing").eq("active", true);
+  if (closing.error) dbError(closing.error);
+  const latest = (closing.data ?? []).sort((a, b) =>
+    (b.effective_from ?? "").localeCompare(a.effective_from ?? "") || b.created_at.localeCompare(a.created_at))[0];
+  if (!latest) throw new AssignmentError("station_unavailable", 404);
+  const labels = await service.from("checklist_template_items").select("translations")
+    .eq("template_id", latest.id).eq("station", station.data.name).eq("active", true);
+  if (labels.error) dbError(labels.error);
+  if ((labels.data ?? []).some((item) => {
+    const translations = item.translations as { es?: { station?: string | null } } | null;
+    return !!translations?.es?.station?.trim();
+  })) throw new AssignmentError("station_translation_from_template", 409);
+  const nameEs = args.nameEs.trim() || null;
+  const { data, error } = await service.from("stations").update({ name_es: nameEs })
+    .eq("id", args.id).eq("location_id", args.locationId).select("id").maybeSingle<{ id: string }>();
   if (error) dbError(error);
   if (!data) throw new AssignmentError("station_unavailable", 404);
   await audit({ actorId: args.actor.userId, actorRole: args.actor.role,
-    action: args.id ? "station.update" : "station.create", resourceTable: "stations", resourceId: data.id,
-    metadata: { location_id: args.locationId, ...row }, ipAddress: null, userAgent: null });
+    action: "station.update", resourceTable: "stations", resourceId: data.id,
+    metadata: { location_id: args.locationId, name_es: nameEs }, ipAddress: null, userAgent: null });
   return data;
 }
 

@@ -24,6 +24,7 @@
  */
 
 import "server-only";
+import { syncStationsFromClosing } from "@/lib/closing-stations";
 
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import { audit } from "@/lib/audit";
@@ -1100,6 +1101,9 @@ export async function publishTemplateVersion(
     });
   }
 
+  if (src.type === "closing") await syncStationsFromClosing(src.location_id, {
+    userId: actor.user.id, role: actor.user.role, locations: actor.locations,
+  });
   return { newTemplateId, effectiveFrom, diff };
 }
 
