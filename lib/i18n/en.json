@@ -4741,5 +4741,9 @@
   "digest.catering.unconfirmed": "Unconfirmed ({date})",
   "digest.catering.unpaid": "Unpaid {money} ({date})",
   "digest.catering.awaiting_customer": "{n} open quotes awaiting the customer",
-  "digest.catering.no_shop": "No shop set"
+  "digest.catering.no_shop": "No shop set",
+  "digestWatch.subject": "CO-OPS: the {kind} digest for {day} did not reach {n} recipients",
+  "digestWatch.body": "Digest: {kind}. Business day: {day}. Recipients with no sent or skipped row after the deadline: {n} ({refs}). Check the digest send log and EMAIL_FROM.",
+  "digestWatch.send_failed_subject": "CO-OPS: a {kind} digest send failed ({day})",
+  "digestWatch.send_failed_body": "Digest: {kind}. Business day: {day}. Recipient: {ref}. Error: {error}. The send is logged as failed and the next tick retries it."
 }

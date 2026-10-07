@@ -4740,5 +4740,9 @@
   "digest.catering.unconfirmed": "Sin confirmar ({date})",
   "digest.catering.unpaid": "Sin pagar {money} ({date})",
   "digest.catering.awaiting_customer": "{n} cotizaciones abiertas esperando al cliente",
-  "digest.catering.no_shop": "Sin tienda asignada"
+  "digest.catering.no_shop": "Sin tienda asignada",
+  "digestWatch.subject": "CO-OPS: el resumen {kind} del {day} no llegó a {n} destinatarios",
+  "digestWatch.body": "Resumen: {kind}. Día de negocio: {day}. Destinatarios sin envío ni omisión registrados después del plazo: {n} ({refs}). Revisa el registro de envíos y EMAIL_FROM.",
+  "digestWatch.send_failed_subject": "CO-OPS: falló un envío del resumen {kind} ({day})",
+  "digestWatch.send_failed_body": "Resumen: {kind}. Día de negocio: {day}. Destinatario: {ref}. Error: {error}. El envío queda registrado como fallido y el próximo ciclo lo reintenta."
 }
