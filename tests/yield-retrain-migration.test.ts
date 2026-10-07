@@ -100,3 +100,37 @@ describe("audit vocabulary (registered before any caller)", () => {
     expect(isDestructive("yield.retrain_noted")).toBe(false);
   });
 });
+
+describe("0218 retrain assignment (Juan 2026-10-07) — guarded one-time completion", () => {
+  it("every note carries an assignee and an open/done status with a consistent done shape", () => {
+    expect(sql).toMatch(/assigned_to\s+uuid\s+not null references public\.users\(id\)/);
+    expect(sql).toMatch(/status\s+text\s+not null default 'open' check \(status in \('open', 'done'\)\)/);
+    expect(sql).toMatch(/done_note\s+text\s+null check \(done_note is null or char_length\(done_note\) <= 500\)/);
+    expect(sql).toMatch(/constraint recipe_yield_retrain_notes_done_shape/);
+  });
+  it("service_role still has NO update on the table: completion is only the definer RPC", () => {
+    expect(sql).toMatch(/revoke update, delete, truncate on public\.recipe_yield_retrain_notes from service_role;/);
+    expect(sql).not.toMatch(/grant [^;]*update[^;]*on public\.recipe_yield_retrain_notes/);
+  });
+  it("complete_yield_retrain flips open → done once, bound to the shop, under the row lock", () => {
+    const body = fnBody("complete_yield_retrain");
+    expect(body).toMatch(/security definer set search_path = pg_catalog, public/);
+    expect(body).toMatch(/where n\.id = p_note_id and n\.location_id = p_location_id\s+for update;/);
+    expect(body).toContain("raise exception 'retrain_not_found' using errcode = 'p0001'");
+    expect(body).toContain("raise exception 'retrain_already_done' using errcode = 'p0001'");
+    expect(body).toMatch(/set status = 'done', done_at = v_done_at, done_by = p_actor, done_note = v_note\s+where id = p_note_id and status = 'open';/);
+    // It writes ONLY the done_* columns and status.
+    expect(body).not.toMatch(/set [^;]*(assigned_to|snooze_batches|scope|maker_id|created_)/);
+  });
+  it("is executable by service_role only, and the grant self-check covers it", () => {
+    expect(sql).toMatch(/revoke all on function public\.complete_yield_retrain\(uuid, uuid, uuid, text\) from public, anon, authenticated;/);
+    expect(sql).toMatch(/grant execute on function public\.complete_yield_retrain\(uuid, uuid, uuid, text\) to service_role;/);
+    expect(sql).toMatch(/routine_name in \('update_recipe_output_yield', 'complete_yield_retrain'\)/);
+  });
+  it("the assign and done audit actions are registered, non-destructive", () => {
+    for (const a of ["yield.retrain_assigned", "yield.retrain_done"]) {
+      expect(isKnownAuditAction(a)).toBe(true);
+      expect(isDestructive(a)).toBe(false);
+    }
+  });
+});

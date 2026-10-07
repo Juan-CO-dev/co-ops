@@ -227,6 +227,11 @@ export const NON_DESTRUCTIVE_ACTIONS = [
   // drift is a training question and snoozes that nudge; it changes NO recipe, par or stock, so
   // it is not an answer to "who changed the kitchen?" (the card edit is recipe_output.update).
   "yield.retrain_noted",
+  // Juan 2026-10-07: the GM may assign the retraining to a KH+ (written beside retrain_noted when
+  // the note names an assignee other than the GM), and the assignee or a GM marks it done. Both
+  // are task bookkeeping on the note; neither changes a recipe, par or stock.
+  "yield.retrain_assigned",
+  "yield.retrain_done",
   // Barcode taught at the receiving door (V3-B, 2026-09-16). Teaching a code is a
   // RECOGNITION aid, not a configuration change: nothing about what the kitchen buys, from
   // whom, at what price or in what pack moves — the next scan of that label simply opens the

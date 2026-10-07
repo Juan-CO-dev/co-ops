@@ -14,7 +14,19 @@
 --      accountability record ("who said this was a training problem, about whom, when"), and the
 --      snooze is DERIVED at read time from it (lib/yield-stats-shared.ts snoozeState: the latest
 --      note in scope stays quiet until `snooze_batches` more in-scope batches were produced after
---      `created_at`). No sweeper, no mutable counter, nothing to update.
+--      `created_at`). No sweeper, no mutable counter.
+--      ASSIGNMENT (Juan, 2026-10-07: "Retrain should be a GM option, and maybe he can assign a kh+
+--      to help retrain whoever is not making the recipe right etc"): every note carries
+--      `assigned_to` (the KH+ the GM picked, or the GM himself when he picked nobody) and a
+--      `status` open → done with `done_at` / `done_by` / `done_note`. An open retrain holds the
+--      nudge; it shows on the assignee's "My shift" until marked done.
+--      APPEND-ONLY CHOICE: a GUARDED ONE-TIME UPDATE, not an event row. service_role holds NO
+--      UPDATE on the table at all; the only mutation is complete_yield_retrain (SECURITY
+--      DEFINER), which flips status 'open' → 'done' exactly once, stamps the done_* columns, and
+--      can touch nothing else (a second call raises retrain_already_done). The CHECK below makes
+--      a half-done row unrepresentable. Why not a second "done" event table: the note and its
+--      completion are one fact with one owner, every reader wants them together, and a separate
+--      table would need its own "only one done per note" unique guard to say what this does.
 --   2. update_recipe_output_yield(recipe, output item, yield, actor) — the SERIALISED writer for a
 --      card's yield. Before this, no app path edited recipe_outputs.yield at all (outputs were
 --      added and removed whole, 0187/0215). It takes the recipe row lock FIRST — the same
@@ -42,7 +54,8 @@
 --   select privilege_type from information_schema.role_table_grants
 --    where table_name = 'recipe_yield_retrain_notes' and grantee = 'service_role' order by 1;           -- INSERT, SELECT
 --   select grantee from information_schema.routine_privileges
---    where routine_name = 'update_recipe_output_yield' and grantee in ('anon','authenticated','PUBLIC'); -- NO ROWS
+--    where routine_name in ('update_recipe_output_yield','complete_yield_retrain')
+--      and grantee in ('anon','authenticated','PUBLIC');                                              -- NO ROWS
 
 begin;
 
@@ -82,8 +95,17 @@ create table public.recipe_yield_retrain_notes (
   snooze_batches    integer     not null default 10 check (snooze_batches > 0),
   created_by        uuid        not null references public.users(id),
   created_at        timestamptz not null default now(),
+  -- Who does the retraining: a KH+ at the shop the GM picked (level ≤ the GM's), or the GM.
+  assigned_to       uuid        not null references public.users(id),
+  status            text        not null default 'open' check (status in ('open', 'done')),
+  done_at           timestamptz null,
+  done_by           uuid        null references public.users(id),
+  done_note         text        null check (done_note is null or char_length(done_note) <= 500),
   constraint recipe_yield_retrain_notes_scope_maker
-    check ((scope = 'maker') = (maker_id is not null))
+    check ((scope = 'maker') = (maker_id is not null)),
+  constraint recipe_yield_retrain_notes_done_shape
+    check (case when status = 'done' then done_at is not null and done_by is not null
+                else done_at is null and done_by is null and done_note is null end)
 );
 comment on table public.recipe_yield_retrain_notes is
   '0218 batch vs bottle Phase B: one row per Retrain tap on a yield-drift nudge (recipe scope) or a maker''s retrain item (maker scope). Append-only (service_role holds SELECT + INSERT only). The snooze is derived at read time: the latest note in scope stays quiet until snooze_batches more in-scope batch headers were produced after created_at. Deny-all RLS; written only by lib/yield-stats.ts recordYieldRetrain behind lockLocationContext.';
@@ -94,6 +116,43 @@ alter table public.recipe_yield_retrain_notes enable row level security;
 revoke all on public.recipe_yield_retrain_notes from public, anon, authenticated;
 grant select, insert on public.recipe_yield_retrain_notes to service_role;
 revoke update, delete, truncate on public.recipe_yield_retrain_notes from service_role;
+-- The assignee's "My shift" read: open retrains by (assignee, shop).
+create index recipe_yield_retrain_notes_open_assignee_ix
+  on public.recipe_yield_retrain_notes (assigned_to, location_id) where status = 'open';
+
+-- ── 1b. complete_yield_retrain — the ONE guarded mutation of a note (open → done, once) ─────
+-- Authorization (assignee or GM, bound to the shop) is the lib's (lib/yield-stats.ts
+-- completeYieldRetrain), checked before this runs; this enforces the TRANSITION and the shop:
+-- the row must exist at p_location_id and still be open, under its row lock.
+create or replace function public.complete_yield_retrain(p_note_id uuid, p_location_id uuid, p_actor uuid, p_done_note text)
+returns jsonb
+language plpgsql security definer set search_path = pg_catalog, public as $$
+declare
+  v_status text;
+  v_done_at timestamptz := now();
+  v_note text := nullif(btrim(coalesce(p_done_note, '')), '');
+begin
+  select n.status into v_status from recipe_yield_retrain_notes n
+   where n.id = p_note_id and n.location_id = p_location_id
+   for update;
+  if not found then
+    raise exception 'retrain_not_found' using errcode = 'P0001';
+  end if;
+  if v_status <> 'open' then
+    raise exception 'retrain_already_done' using errcode = 'P0001';
+  end if;
+  if v_note is not null and char_length(v_note) > 500 then
+    raise exception 'invalid_note' using errcode = 'P0001';
+  end if;
+  update recipe_yield_retrain_notes
+     set status = 'done', done_at = v_done_at, done_by = p_actor, done_note = v_note
+   where id = p_note_id and status = 'open';
+  return jsonb_build_object('id', p_note_id, 'done_at', v_done_at);
+end $$;
+comment on function public.complete_yield_retrain(uuid, uuid, uuid, text) is
+  '0218: the only mutation of a recipe_yield_retrain_notes row — status open → done exactly once (row lock; retrain_already_done on a second call), stamping done_at/done_by/done_note. service_role holds no UPDATE on the table. Called only by lib/yield-stats.ts completeYieldRetrain after its assignee-or-GM + location checks.';
+revoke all on function public.complete_yield_retrain(uuid, uuid, uuid, text) from public, anon, authenticated;
+grant execute on function public.complete_yield_retrain(uuid, uuid, uuid, text) to service_role;
 
 -- ── 2. update_recipe_output_yield — the serialised card-yield writer ────────────────────────
 create or replace function public.update_recipe_output_yield(p_recipe_id uuid, p_output_item_id uuid, p_yield numeric, p_actor uuid)
@@ -143,7 +202,7 @@ grant execute on function public.update_recipe_output_yield(uuid, uuid, numeric,
 -- ── Grant self-check (the 0132/0189 law — verify, never assume) ─────────────────────────────
 do $$ begin
   if exists (select 1 from information_schema.routine_privileges
-              where routine_schema = 'public' and routine_name = 'update_recipe_output_yield'
+              where routine_schema = 'public' and routine_name in ('update_recipe_output_yield', 'complete_yield_retrain')
                 and grantee in ('PUBLIC', 'anon', 'authenticated') and privilege_type = 'EXECUTE') then
     raise exception '0218: unexpected update_recipe_output_yield execute grant';
   end if;
