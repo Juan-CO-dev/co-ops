@@ -1,5 +1,6 @@
 -- 0216 receiving store runs / pending new items.
 -- AUTHORED ONLY 2026-10-07. NOT APPLIED. Named CC/Juan approval gate before apply.
+-- APPLIED TO PROD 2026-10-07 (schema_migrations version 20261007155440, name '0216_receiving_store_runs'). The line above is the authoring-time gate note, kept as history.
 -- Preflight: inspect live vendors/vendor_items/sku_pack_levels columns and policy
 -- definitions and routine_privileges; verify lineage 0215 before applying.
 -- 0215 is RESERVED by the in-flight batch-vs-bottle branch; retain 0216 here.

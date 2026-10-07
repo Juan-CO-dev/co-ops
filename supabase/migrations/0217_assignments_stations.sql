@@ -1,4 +1,5 @@
 -- AUTHORED ONLY 2026-10-07. NOT APPLIED. CC sim + review, then Juan's apply gate.
+-- APPLIED TO PROD 2026-10-07 (schema_migrations version 20261007170451, name '0217_assignments_stations'). The line above is the authoring-time gate note, kept as history.
 -- Phase 1: tenant stations, append-only staffing intervals, task assignment-down.
 -- No station seed data and no Toast inference (phase 2). No production data edits.
 -- Pre-0044 migrations are not in this clone. Refuse schema drift before writing.
