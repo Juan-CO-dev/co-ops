@@ -17,6 +17,18 @@ begin
   if v_target not in ('sim', 'prod') or v_target is null then
     raise exception 'set seed42.target explicitly to sim or prod';
   end if;
+  -- Correct Juan's original recipe typo only for the Caesar output item.
+  for v_new in select r.id from public.recipes r
+    join public.recipe_outputs ro on ro.recipe_id = r.id
+    where r.name = 'Cesear Dressing'
+      and ro.output_item_id = '06c1a1b4-a51e-49a8-917a-2ebf6e844205'::uuid
+  loop
+    update public.recipes set name = 'Caesar Dressing' where id = v_new.id;
+    insert into public.audit_log(actor_id, actor_role, action, resource_table, resource_id, destructive, metadata)
+    values(null, null, 'recipe.update', 'recipes', v_new.id, true,
+      jsonb_build_object('actor_context','seed_42','target',v_target,
+        'old_name','Cesear Dressing','new_name','Caesar Dressing'));
+  end loop;
   if (select count(*) from public.checklist_templates where active and
       ((type='opening' and name='Standard Opening v1') or
        (type='prep' and name in ('Standard AM Prep v1','Standard Mid-day Prep v1')))) <> 6 then

@@ -3,12 +3,13 @@ import { audit } from "./audit";
 import { closingStations, stationChanges } from "./closing-stations-shared";
 import { lockLocationContext, type LocationActor } from "./locations";
 import { getServiceRoleClient } from "./supabase-server";
+import { getRoleLevel } from "./roles";
 
 export interface StationSyncActor extends LocationActor { userId: string }
 
 /** Matches the newest active closing version, including a published pending version. */
 export async function syncStationsFromClosing(locationId: string, actor: StationSyncActor): Promise<void> {
-  if (!lockLocationContext(actor, locationId)) throw new Error("location_access_denied");
+  if (getRoleLevel(actor.role) < 8 && !lockLocationContext(actor, locationId)) throw new Error("location_access_denied");
   const service = getServiceRoleClient();
   const templates = await service.from("checklist_templates")
     .select("id,effective_from,created_at").eq("location_id", locationId)
@@ -54,6 +55,29 @@ export async function syncStationsFromClosing(locationId: string, actor: Station
     await audit({ actorId: actor.userId, actorRole: actor.role, action: "station.sync",
       resourceTable: "stations", resourceId: result.data.id,
       metadata: { location_id: locationId, template_id: latest.id, operation: change.operation, ...next },
+      ipAddress: null, userAgent: null });
+  }
+  // Also heals a prior partial sync if the station insert won but its position did not.
+  const [stationRows, positionRows] = await Promise.all([
+    service.from("stations").select("id,name").eq("location_id", locationId).eq("active", true),
+    service.from("station_positions").select("station_id").eq("location_id", locationId),
+  ]);
+  if (stationRows.error) throw stationRows.error;
+  if (positionRows.error) throw positionRows.error;
+  const hasPosition = new Set((positionRows.data ?? []).map((row) => row.station_id));
+  for (const station of stationRows.data ?? []) {
+    if (hasPosition.has(station.id)) continue;
+    const section = desired.find((row) => row.name === station.name);
+    if (!section) continue;
+    const position = await service.from("station_positions").insert({
+      station_id: station.id, location_id: locationId, name: section.name,
+      name_es: section.nameEs, sort: 1,
+    }).select("id").single();
+    if (position.error?.code === "23505") continue;
+    if (position.error) throw position.error;
+    await audit({ actorId: actor.userId, actorRole: actor.role, action: "station.position_create",
+      resourceTable: "station_positions", resourceId: position.data.id,
+      metadata: { location_id: locationId, station_id: station.id, source: "closing_sync" },
       ipAddress: null, userAgent: null });
   }
 }

@@ -208,7 +208,7 @@ describe("differential location-bind check — every actor-taking writer of a te
       if (rel === "lib/assignments.ts") {
         it("detects every station and task writer", () => {
           expect(writers.map(({ f }) => f.name).sort()).toEqual([
-            "assignTask", "retractTask", "saveStationSpanish", "writeStationEvent",
+            "assignTask", "retractTask", "saveStationConfig", "saveStationSpanish", "writeStationEvent",
           ]);
         });
       }

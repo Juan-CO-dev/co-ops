@@ -9,11 +9,12 @@ export const TASK_MIN_LEVEL: Record<TaskType, number> = {
 export function isTaskType(value: unknown): value is TaskType {
   return typeof value === "string" && TASK_TYPES.some((task) => task === value);
 }
-export interface Station { id: string; name: string; nameEs: string | null; sort: number; active: boolean }
+export interface StationPosition { id: string; stationId: string; name: string; nameEs: string | null; duty: string | null; dutyEs: string | null; sort: number; active: boolean }
+export interface Station { id: string; name: string; nameEs: string | null; sort: number; active: boolean; staffed: boolean; positions: StationPosition[] }
 export interface ShiftPerson { id: string; name: string; level: number; hasWork: boolean; available?: boolean }
 export interface StationEvent {
   id: string; sequence: string; locationId: string; businessDate: string;
-  userId: string; stationId: string | null; kind: "assign" | "claim" | "move" | "release";
+  userId: string; stationId: string | null; positionId?: string | null; kind: "assign" | "claim" | "move" | "release";
   actorId: string; actorName: string | null; at: string; source: "assigned" | "claimed" | null;
 }
 export interface TaskAssignment {

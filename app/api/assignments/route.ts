@@ -18,8 +18,11 @@ export async function POST(req: NextRequest) {
   try {
     switch (b.action) {
       case "station": {
-        if (typeof b.userId !== "string" || (b.stationId !== null && typeof b.stationId !== "string") || (b.manage !== undefined && typeof b.manage !== "boolean")) return jsonError(400, "invalid_payload");
-        return jsonOk(await writeStationEvent(service, { actor, locationId: b.locationId, userId: b.userId, stationId: b.stationId, manage: b.manage as boolean | undefined }));
+        if (typeof b.userId !== "string" || (b.stationId !== null && typeof b.stationId !== "string") ||
+          (b.positionId !== null && typeof b.positionId !== "string") ||
+          (b.stationId === null) !== (b.positionId === null) ||
+          (b.manage !== undefined && typeof b.manage !== "boolean")) return jsonError(400, "invalid_payload");
+        return jsonOk(await writeStationEvent(service, { actor, locationId: b.locationId, userId: b.userId, stationId: b.stationId, positionId: b.positionId, manage: b.manage as boolean | undefined }));
       }
       case "task_assign": {
         if (typeof b.userId !== "string" || !isTaskType(b.task) || (b.note != null && typeof b.note !== "string")) return jsonError(400, "invalid_payload");

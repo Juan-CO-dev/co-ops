@@ -32,6 +32,9 @@ export function ShiftBoardClient({ board, compact = false, retrainTasks = [] }: 
           setError("assignments.errorAlreadyActive");
           return;
         }
+        if (response.status === 409 && body && typeof body === "object" && "error" in body && body.error === "position_taken") {
+          setError("assignments.positionTaken"); return;
+        }
         throw new Error("assignment_write_failed");
       }
       startTransition(() => router.refresh());
@@ -39,8 +42,23 @@ export function ShiftBoardClient({ board, compact = false, retrainTasks = [] }: 
   }
   return <section className="co-card space-y-4 p-4" aria-busy={disabled}>
     <h2 className="text-xl font-bold text-co-text">{t(compact || board.viewerLevel < 4 ? "assignments.myShift" : "assignments.team")}</h2>
+    {!compact && <ActionLink variant="secondary" href={`/stations?loc=${board.locationId}`}>{t("assignments.stations")}</ActionLink>}
     {!compact && board.viewerLevel >= 4 && <p className="text-sm text-co-text-muted">{t("assignments.rosterHint")}</p>}
     {error && <p role="alert" className="text-co-cta-text">{t(error)}</p>}
+    {!compact && board.viewerLevel >= 4 && <div className="space-y-3">{board.stations.filter((s) => s.active && s.staffed).map((station) => {
+      const positions = station.positions.filter((p) => p.active);
+      const filled = positions.filter((p) => board.people.some((person) => currentStation(board.events, person.id)?.positionId === p.id)).length;
+      return <div key={station.id} className="rounded-xl border border-co-border p-3">
+        <h3 className="font-bold">{language === "es" ? station.nameEs || station.name : station.name} · {filled} {t("assignments.of")} {positions.length}</h3>
+        <ul className="mt-2 space-y-2">{positions.map((position) => {
+          const occupant = board.people.find((person) => currentStation(board.events, person.id)?.positionId === position.id);
+          return <li key={position.id} className="rounded-lg border border-co-border p-2">
+            <p className="font-bold">{language === "es" ? position.nameEs || position.name : position.name} · {occupant?.name ?? t("assignments.unassigned")}</p>
+            {(language === "es" ? position.dutyEs || position.duty : position.duty) && <p className="text-sm text-co-text-muted">{language === "es" ? position.dutyEs || position.duty : position.duty}</p>}
+          </li>;
+        })}</ul>
+      </div>;
+    })}</div>}
     {compact && retrainTasks.length > 0 && <RetrainTaskList tasks={retrainTasks} />}
     {compact && board.viewerLevel >= 4 && <ul className="space-y-2">{unassigned.map((task) => <li key={task}>
       <ActionLink variant="secondary" href={`/assignments?location=${board.locationId}`}>{t("assignments.unassignedAction", { task: t(`assignments.task.${task}`) })}</ActionLink>
@@ -65,6 +83,7 @@ export function ShiftBoardClient({ board, compact = false, retrainTasks = [] }: 
     {people.map((person) => {
       const current = currentStation(board.events, person.id);
       const station = board.stations.find((s) => s.id === current?.stationId);
+      const position = station?.positions.find((p) => p.id === current?.positionId);
       const tasks = board.tasks.filter((task) => task.assigneeId === person.id && (board.viewerLevel >= 4 || (task.available !== false && person.available !== false && person.level >= TASK_MIN_LEVEL[task.task])));
       const assignableTasks = TASK_TYPES.filter((task) => person.level >= TASK_MIN_LEVEL[task]);
       const managerCanEdit = !compact && board.viewerLevel >= 4 && person.available !== false && person.level <= board.viewerLevel
@@ -74,17 +93,23 @@ export function ShiftBoardClient({ board, compact = false, retrainTasks = [] }: 
       return <article key={person.id} className="space-y-3 rounded-xl border border-co-border p-3">
         {!compact && <h3 className="font-bold text-co-text">{person.name}</h3>}
         {person.available === false && <p className="text-sm text-co-text-muted">{t("assignments.unavailablePerson")}</p>}
-        <p className="font-bold text-co-text">{station ? (language === "es" ? station.nameEs || station.name : station.name) : t("assignments.noStation")}</p>
+        <p className="font-bold text-co-text">{station ? `${language === "es" ? station.nameEs || station.name : station.name} · ${position ? (language === "es" ? position.nameEs || position.name : position.name) : ""}` : t("assignments.noStation")}</p>
+        {position && <p className="text-sm text-co-text-muted">{language === "es" ? position.dutyEs || position.duty : position.duty}</p>}
         {current?.stationId && current.source === "assigned" && <p className="text-sm text-co-text-muted"><span aria-hidden="true">🔒 </span>{t("assignments.assignedBy", { name: current.actorName ?? t("assignments.teamLead") })}</p>}
         {(managerCanEdit || canClaim) && <form className="flex flex-wrap items-end gap-2" onSubmit={(event) => {
           event.preventDefault();
           const data = new FormData(event.currentTarget);
-          void mutate({ action: "station", userId: person.id, stationId: data.get("stationId") || null, manage: managerCanEdit });
+          const positionId = String(data.get("positionId") || "");
+          const target = board.stations.find((s) => s.positions.some((p) => p.id === positionId));
+          void mutate({ action: "station", userId: person.id, stationId: target?.id ?? null, positionId: positionId || null, manage: managerCanEdit });
         }}>
           <label className="grid gap-1 text-[11px] font-bold tracking-[0.12em] text-co-text-dim">{t("assignments.station")}
-            <select key={current?.id ?? "none"} name="stationId" defaultValue={current?.stationId ?? ""} disabled={disabled} className={control}>
+            <select key={current?.id ?? "none"} name="positionId" defaultValue={current?.positionId ?? ""} disabled={disabled} className={control}>
               <option value="">{t("assignments.noStation")}</option>
-              {board.stations.filter((s) => s.active || s.id === current?.stationId).map((s) => <option key={s.id} value={s.id} disabled={!s.active}>{language === "es" ? s.nameEs || s.name : s.name}</option>)}
+              {board.stations.filter((s) => (s.active && s.staffed) || s.id === current?.stationId).flatMap((s) => s.positions.filter((p) => p.active || p.id === current?.positionId).map((p) =>
+                <option key={p.id} value={p.id} disabled={!s.active || !s.staffed || !p.active}>
+                  {language === "es" ? s.nameEs || s.name : s.name} · {language === "es" ? p.nameEs || p.name : p.name}
+                </option>))}
             </select>
           </label>
           <ActionButton type="submit" disabled={disabled}>{t(managerCanEdit ? "assignments.setStation" : "assignments.claimChange")}</ActionButton>
