@@ -54,7 +54,7 @@ beforeEach(() => {
   };
   vi.mocked(getServiceRoleClient).mockReturnValue({ from, rpc } as unknown as ReturnType<typeof getServiceRoleClient>);
   vi.mocked(runPruneSessions).mockResolvedValue({ revoked: 3 });
-  vi.mocked(runToastSalesPull).mockResolvedValue({ businessDate: "2026-09-11", results: [], metadata: {
+  vi.mocked(runToastSalesPull).mockResolvedValue({ businessDate: "2026-09-11", results: [], healthy: true, metadata: { capture_failures: 0,
     job: "toast-sales-pull", business_date: "2026-09-11", rows_pulled: 0, per_location_failures: 0,
     depletion_rows: {}, depletion_failures: 0, par_rows: {}, par_run_failures: 0,
     elapsed_completed: 0, elapsed_failed: 0, elapsed_error: null,
@@ -134,4 +134,25 @@ it.each([
   ["parse-receipts", "runParseReceipts()"],
 ])("%s calls shared work", (job, call) => {
   expect(readFileSync(`app/api/cron/${job}/route.ts`, "utf8")).toContain(`await ${call}`);
+});
+
+
+it("partial capture failure cannot emit a successful catch-up heartbeat", async () => {
+  const baseline = await vi.mocked(runToastSalesPull)({ businessDate: "2026-09-11" });
+  vi.mocked(runToastSalesPull).mockResolvedValue({ ...baseline, healthy: false,
+    metadata: { ...baseline.metadata, capture_failures: 1 },
+  });
+  expect((await catchUpDailyJobs({ now })).skipped).toContain("toast-sales-pull");
+  const toastAudits = vi.mocked(audit).mock.calls.map(([entry]) => entry)
+    .filter((entry) => entry.metadata?.job === "toast-sales-pull");
+  expect(toastAudits).toHaveLength(1);
+  expect(toastAudits[0]).toMatchObject({ action: "cron.failure", metadata: { capture_failures: 1 } });
+});
+
+it("capture failures do not withhold the selection catch-up success", async () => {
+  const result = await vi.mocked(runToastSalesPull)({ businessDate: "2026-09-11" });
+  vi.mocked(runToastSalesPull).mockClear().mockResolvedValue({ ...result, metadata: { ...result.metadata, capture_failures: 2 } });
+  expect((await catchUpDailyJobs({ now })).ran).toContain("toast-sales-pull");
+  expect(audit).toHaveBeenCalledWith(expect.objectContaining({ action: "cron.success", metadata: expect.objectContaining({ job: "toast-sales-pull", capture_failures: 2 }) }));
+  expect(audit).not.toHaveBeenCalledWith(expect.objectContaining({ action: "cron.failure", metadata: expect.objectContaining({ job: "toast-sales-pull" }) }));
 });

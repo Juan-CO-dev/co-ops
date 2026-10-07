@@ -62,7 +62,12 @@ export async function catchUpDailyJobs(opts?: { now?: Date }): Promise<{ ran: st
         case "toast-sales-pull": {
           const businessDate = etYmdMinusDays(etCalendarDate(now.toISOString()), 1);
           failureContext = { business_date: businessDate };
-          ({ metadata } = await runToastSalesPull({ businessDate }));
+          const result = await runToastSalesPull({ businessDate });
+          metadata = result.metadata;
+          if (!result.healthy) {
+            failureContext = metadata;
+            throw new Error("toast_selection_pull_failed");
+          }
           break;
         }
         case "parse-receipts": {

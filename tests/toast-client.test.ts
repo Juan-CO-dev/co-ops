@@ -97,7 +97,7 @@ describe("the fixture branch of toastGet actually consumes the guard", () => {
     const at = src.indexOf("if (fixtureMode())");
     const body = src.slice(at, src.indexOf("readFixture(key)", at));
     expect(at).toBeGreaterThan(-1);
-    expect(body).toContain("if (isExhaustedFixturePage(apiPath)) return [] as T;");
+    expect(body).toContain("if (isExhaustedFixturePage(apiPath)) return { data: [] as T, nextPageToken: null };");
   });
 
   it("still fails loudly on an UNKNOWN path — the key check comes first", () => {
