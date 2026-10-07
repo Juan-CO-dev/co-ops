@@ -1,7 +1,7 @@
 /**
  * ReportFilterBar — server component.
  *
- * A plain `<form method="get">` filter bar for the /reports list page.
+ * A plain `<form action="/reports/operations" method="get">` filter bar for the /reports list page.
  * Preserves the ?location= param via a hidden field so navigation within
  * the page keeps the active location.
  *
@@ -48,6 +48,7 @@ interface ReportFilterBarProps {
   language: Language;
   viewerLevel: number;
   activeSignalFilters?: ActiveSignalFilters;
+  compare?: boolean;
   query?: string; // current free-text quick-find value
 }
 
@@ -61,14 +62,17 @@ export function ReportFilterBar({
   viewerLevel,
   activeSignalFilters = {},
   query = "",
+  compare = false,
 }: ReportFilterBarProps) {
   const t = (key: TranslationKey) => serverT(language, key);
   const canSeeCash = viewerLevel >= REPORTS_HUB_CASH_LEVEL;
 
   return (
-    <form method="get" className="rounded-lg border-2 border-co-border bg-co-surface px-3 py-3">
+    <form action="/reports/operations" method="get" className="rounded-lg border-2 border-co-border bg-co-surface px-3 py-3">
       {/* Preserve active location across filter submits */}
       <input type="hidden" name="location" value={locationId} />
+      <input type="hidden" name="range" value="custom" />
+      <input type="hidden" name="compare" value={String(compare)} />
 
       <div className="flex flex-wrap gap-3">
         {/* Free-text quick-find — matches submitter name + report type */}
@@ -83,7 +87,7 @@ export function ReportFilterBar({
             defaultValue={query}
             placeholder={t("reports.search.placeholder")}
             aria-label={t("reports.search.aria")}
-            className="rounded border border-co-border bg-co-bg px-2 py-1 text-sm text-co-text"
+            className="min-h-[44px] items-center rounded border border-co-border bg-co-bg px-2 py-1 text-sm text-co-text"
           />
         </div>
 
@@ -97,7 +101,7 @@ export function ReportFilterBar({
             type="date"
             name="from"
             defaultValue={dateFrom}
-            className="rounded border border-co-border bg-co-bg px-2 py-1 text-sm text-co-text"
+            className="min-h-[44px] items-center rounded border border-co-border bg-co-bg px-2 py-1 text-sm text-co-text"
           />
         </div>
 
@@ -111,7 +115,7 @@ export function ReportFilterBar({
             type="date"
             name="to"
             defaultValue={dateTo}
-            className="rounded border border-co-border bg-co-bg px-2 py-1 text-sm text-co-text"
+            className="min-h-[44px] items-center rounded border border-co-border bg-co-bg px-2 py-1 text-sm text-co-text"
           />
         </div>
 

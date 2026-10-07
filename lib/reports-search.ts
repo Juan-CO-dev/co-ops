@@ -1,3 +1,5 @@
+import { requireReportScope } from "@/lib/report-scope";
+import { reportTimestampBounds } from "@/lib/report-range";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { selectAllRows } from "@/lib/supabase-paginate";
 import { isPrepData } from "@/lib/prep";
@@ -99,8 +101,9 @@ export function searchReport(
  */
 export async function buildSearchCorpus(
   service: SupabaseClient,
-  args: { viewer: { userId: string; level: number }; locationId: string; items: ReportListItem[] },
+  args: { viewer: { userId: string; level: number; locations?: string[] }; locationId: string; items: ReportListItem[] },
 ): Promise<Map<string, SearchCorpusEntry>> {
+  requireReportScope(args.viewer, args.locationId);
   const corpus = new Map<string, SearchCorpusEntry>();
   const push = (key: string, fieldKey: SearchCorpusField["fieldKey"], text: string | null | undefined) => {
     if (!text || !text.trim()) return;
@@ -112,7 +115,7 @@ export async function buildSearchCorpus(
   const isManager = args.viewer.level >= REPORTS_HUB_CASH_LEVEL;
 
   // ── Checklist reports (opening/closing/am_prep/mid_day) ──
-  const checklistItems = args.items.filter((it) => it.type !== "cash" && it.type !== "pm");
+  const checklistItems = args.items.filter((it) => it.type !== "cash" && it.type !== "pm" && it.type !== "maintenance");
   const instanceIds = checklistItems.map((it) => it.id);
   const keyByInstance = new Map(checklistItems.map((it) => [it.id, `${it.type}:${it.id}`] as const));
   if (instanceIds.length) {
@@ -151,7 +154,7 @@ export async function buildSearchCorpus(
         labelByTemplateItem.set(ti.id, ti.label);
       }
     }
-    for (const inst of insts) {
+    for (const inst of isManager ? insts : []) {
       const key = keyByInstance.get(inst.id);
       if (!key) continue;
       for (const ti of titemsByTemplate.get(inst.template_id) ?? []) {
@@ -163,7 +166,7 @@ export async function buildSearchCorpus(
     const comps = authorizedInstanceIds.length
       ? await selectAllRows<{ instance_id: string; completed_by: string | null; notes: string | null; template_item_id: string; prep_data: unknown }>(
           (from, to) => service.from("checklist_completions").select("instance_id, completed_by, notes, template_item_id, prep_data")
-            .in("instance_id", authorizedInstanceIds).is("superseded_at", null).is("revoked_at", null)
+            .in("instance_id", authorizedInstanceIds).match(!isManager ? {completed_by: args.viewer.userId} : {}).is("superseded_at", null).is("revoked_at", null)
             .order("instance_id", { ascending: true }).range(from, to),
         )
       : [];
@@ -174,6 +177,7 @@ export async function buildSearchCorpus(
       for (const u of (users ?? []) as Array<{ id: string; name: string }>) nameById.set(u.id, u.name);
     }
     for (const c of comps) {
+      if (!isManager) push(keyByInstance.get(c.instance_id)!, "item", labelByTemplateItem.get(c.template_item_id));
       const key = keyByInstance.get(c.instance_id);
       if (!key) continue;
       if (c.completed_by) push(key, "completer", nameById.get(c.completed_by));
@@ -241,6 +245,8 @@ export async function buildSearchCorpus(
   // match the page's lookup; note dates use the operational TZ.
   const maintItems = args.items.filter((it) => it.type === "maintenance");
   if (maintItems.length) {
+    const dates = maintItems.map(i => i.date).sort();
+    const bounds = reportTimestampBounds(dates[0]!, dates[dates.length - 1]!);
     const idByDate = new Map(maintItems.map((it) => [it.date, it.id] as const));
     const equip = await selectAllRows<{ id: string; name: string }>((from, to) =>
       service.from("maintenance_equipment").select("id, name")
@@ -250,6 +256,8 @@ export async function buildSearchCorpus(
     const labelById = new Map(equip.map((e) => [e.id, e.name] as const));
     const notes = await selectAllRows<{ note: string; created_at: string; equipment_id: string | null; other_label: string | null }>((from, to) =>
       service.from("maintenance_notes").select("note, created_at, equipment_id, other_label")
+        .match(!isManager ? {created_by: args.viewer.userId} : {})
+        .gte("created_at",bounds.start).lt("created_at",bounds.end)
         .eq("location_id", args.locationId)
         .order("created_at", { ascending: true }).range(from, to),
     );

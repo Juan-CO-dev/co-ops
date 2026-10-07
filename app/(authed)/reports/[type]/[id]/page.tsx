@@ -46,13 +46,14 @@ function isReportTypeKey(v: string): v is ReportTypeKey {
 
 interface PageProps {
   params: Promise<{ type: string; id: string }>;
-  searchParams: Promise<{ location?: string }>;
+  searchParams: Promise<Record<string, string | undefined>>;
 }
 
 export default async function ReportDetailPage({ params, searchParams }: PageProps) {
   const auth = await requireSessionFromHeaders("/reports");
   const { type: typeParam, id } = await params;
-  const { location: locationParam } = await searchParams;
+  const context = await searchParams;
+  const { location: locationParam } = context;
 
   // Validate type
   if (!isReportTypeKey(typeParam)) redirect("/reports");
@@ -66,11 +67,13 @@ export default async function ReportDetailPage({ params, searchParams }: PagePro
 
   const lang = auth.user.language;
   const level = auth.level;
-  const viewer: Viewer = { userId: auth.user.id, level };
+  const viewer: Viewer = { userId: auth.user.id, level, locations: auth.locations };
 
   const t = (key: TranslationKey) => serverT(lang, key);
 
-  const backHref = `/reports?location=${locationParam}`;
+  const backParams = new URLSearchParams();
+  for (const [key,value] of Object.entries(context)) if (value) backParams.set(key,value);
+  const backHref = `/reports/operations?${backParams}`;
 
   // List-visibility gate at detail (defence-in-depth)
   if (type === "cash" && level < REPORTS_HUB_CASH_LEVEL) {
@@ -104,7 +107,7 @@ export default async function ReportDetailPage({ params, searchParams }: PagePro
 
   return (
     <main className="mx-auto max-w-2xl md:max-w-3xl lg:max-w-5xl xl:max-w-6xl px-4 pb-32 pt-4 sm:px-6">
-      <BackLink search={`?location=${locationParam}`} labelKey="reports.detail.back" />
+      <BackLink hrefOverride={backHref} labelKey="reports.detail.back" />
 
       {/* Opening detail view — surfaces recount numbers + NULL-sentinel indicator */}
       {detail.kind === "opening" ? (

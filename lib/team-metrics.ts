@@ -1,3 +1,4 @@
+import { reportTimestampBounds, reportRangeParams } from "@/lib/report-range";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { ROLES, type RoleCode } from "@/lib/roles";
@@ -8,7 +9,7 @@ import {
 } from "@/lib/team-scoring";
 import { personCardLine, personReadNarrative, teamBannerNarrative, myPerformanceRead, type NarrativeLine } from "@/lib/people-narrative";
 import { etCalendarDate } from "@/lib/operational-day";
-import { computeWindows, bucketStart, type TrendGranularity } from "@/lib/reports-trends";
+import { resolveTrendRange, clippedBucketKeys, trendLocationAllowed, type TrendRange, bucketStart, type TrendGranularity } from "@/lib/reports-trends";
 import { selectAllRows } from "@/lib/supabase-paginate";
 
 export const TEAM_VIEW_LEVEL = 6; // AGM+
@@ -86,23 +87,7 @@ export function oversightRowAtLocation(
   return typeof loc === "string" && loc === locationId;
 }
 
-/**
- * Inclusive UTC upper-bound for a query whose rows are BUCKETED by ET etCalendarDate.
- * The window is [loadFrom, toInclusive] in ET days, but the columns are UTC
- * timestamps. ET-evening work on `toInclusive` (e.g. a 9pm-ET close) has a UTC
- * timestamp on `toInclusive+1` (~01:00-05:00Z), so a `${toInclusive}T23:59:59Z`
- * bound EXCLUDES the whole closing shift until the next day. End-of-ET-day is at
- * most 05:59:59Z the next day (EST; 04:59:59Z EDT), so bound at next-day 05:59:59Z.
- * The extra ~few hours of next-morning ET rows this over-fetches are discarded by
- * the curSet/prevSet bucket-membership check (etCalendarDate not in the window keys).
- */
-function nextDayUtcBound(yyyymmdd: string): string {
-  const d = new Date(`${yyyymmdd}T00:00:00Z`);
-  d.setUTCDate(d.getUTCDate() + 1);
-  return `${d.toISOString().slice(0, 10)}T05:59:59Z`;
-}
-
-export interface Viewer { userId: string; level: number; }
+export interface Viewer { userId: string; level: number; locations?: readonly string[] | "all"; }
 
 export interface TeamMember {
   userId: string;
@@ -131,17 +116,40 @@ interface MemberAcc {
   byBucketScoreActions: Map<string, number>;
 }
 
-export async function loadTeamOperatingHealth(
-  service: SupabaseClient,
-  args: { viewer: Viewer; locationId: string; granularity: TrendGranularity; compare: boolean; today: string },
-): Promise<TeamOperatingHealth | null> {
-  if (args.viewer.level < TEAM_VIEW_LEVEL) return null;
+type TeamArgs = { viewer: Viewer; locationId: string; granularity: TrendGranularity; compare: boolean; today: string; range?: TrendRange };
+export async function loadTeamOperatingHealth(service: SupabaseClient, args: TeamArgs): Promise<TeamOperatingHealth | null> {
+  if (args.viewer.level < TEAM_VIEW_LEVEL || !trendLocationAllowed(args.viewer, args.locationId)) return null;
+  const range = args.range ? resolveTrendRange(Object.fromEntries(reportRangeParams(args.range)), args.today, args.granularity) : resolveTrendRange({ compare: args.compare ? "1" : "0" }, args.today, args.granularity);
+  const current = await loadTeamWindow(service, { ...args, compare: false, range });
+  if (!current || !range.compare) return current;
+  const previous = await loadTeamWindow(service, { ...args, compare: false, range: { ...range, ...range.previous, compare: false } });
+  current.members = current.members.map(m => {
+    const previousScore = previous?.members.find(p => p.userId === m.userId)?.score ?? 0;
+    const { health, reasons } = healthFromCounts(m.role, m.counts, m.score, previousScore);
+    const scoreDeltaPct = previousScore > 0 ? Math.round(((m.score - previousScore) / previousScore) * 100) : null;
+    return { ...m, previousScore, health, reasons, cardLine: personCardLine({ rank: 0, role: m.role, health, reasons, scoreDeltaPct, onTimePct: null }) };
+  });
+  const needsAttention = current.members.filter(m => m.health === "needs_attention");
+  current.summary = { onTrack: current.members.length - needsAttention.length, needsAttention: needsAttention.length };
+  current.banner = teamBannerNarrative({ ...current.summary, attentionNames: needsAttention.slice(0, 3).map(m => m.name) });
+  return current;
+}
 
-  const { currentKeys, previousKeys, loadFrom } = computeWindows(args.today, args.granularity, args.compare);
+async function loadTeamWindow(
+  service: SupabaseClient,
+  args: { viewer: Viewer; locationId: string; granularity: TrendGranularity; compare: boolean; today: string; range?: TrendRange },
+): Promise<TeamOperatingHealth | null> {
+  if (args.viewer.level < TEAM_VIEW_LEVEL || !trendLocationAllowed(args.viewer, args.locationId)) return null;
+
+  const range = args.range ?? resolveTrendRange({ compare: args.compare ? "1" : "0" }, args.today, args.granularity);
+  const currentKeys = clippedBucketKeys(range.from, range.to, args.granularity);
+  const previousKeys = null as string[] | null;
+  const loadFrom = range.from;
   const curSet = new Set(currentKeys);
   const prevSet = new Set(previousKeys ?? []);
-  const loadToInclusive = args.today;
-  const upperTs = nextDayUtcBound(loadToInclusive);
+  const loadToInclusive = range.to;
+  const bounds = reportTimestampBounds(loadFrom, loadToInclusive);
+  const upperTs = bounds.end;
 
   const emptyResult = (): TeamOperatingHealth => ({
     granularity: args.granularity, members: [], summary: { onTrack: 0, needsAttention: 0 },
@@ -168,7 +176,9 @@ export async function loadTeamOperatingHealth(
   const place = (uid: string, tstz: string, category: ActionCategory) => {
     const m = members.get(uid);
     if (!m) return;
-    const bs = bucketStart(etCalendarDate(tstz), args.granularity);
+    const day = etCalendarDate(tstz);
+    if (day < range.from || day > range.to) return;
+    const bs = bucketStart(day, args.granularity);
     if (curSet.has(bs)) {
       m.acc.current[category]++;
       m.acc.byBucketScoreActions.set(bs, (m.acc.byBucketScoreActions.get(bs) ?? 0) + scoreRelevant(m.role, category));
@@ -193,7 +203,7 @@ export async function loadTeamOperatingHealth(
         .from("checklist_completions")
         .select("instance_id, completed_by, completed_at, notes")
         .in("instance_id", [...locInstanceIds])
-        .gte("completed_at", `${loadFrom}T00:00:00Z`).lte("completed_at", upperTs)
+        .gte("completed_at", bounds.start).lt("completed_at", upperTs)
         .is("superseded_at", null).is("revoked_at", null)
         .order("completed_at", { ascending: true }).range(from, to),
     );
@@ -214,7 +224,7 @@ export async function loadTeamOperatingHealth(
     (from, to) => service
       .from("cash_reports").select("signed_by, signed_at, over_short_note")
       .eq("location_id", args.locationId).is("superseded_at", null)
-      .gte("signed_at", `${loadFrom}T00:00:00Z`).lte("signed_at", upperTs)
+      .gte("signed_at", bounds.start).lt("signed_at", upperTs)
       .order("id", { ascending: true }).range(from, to),
   );
   for (const c of cashRows) {
@@ -227,7 +237,7 @@ export async function loadTeamOperatingHealth(
     (from, to) => service
       .from("pm_reports").select("id, submitted_by, submitted_at")
       .eq("location_id", args.locationId).is("superseded_at", null)
-      .gte("submitted_at", `${loadFrom}T00:00:00Z`).lte("submitted_at", upperTs)
+      .gte("submitted_at", bounds.start).lt("submitted_at", upperTs)
       .order("id", { ascending: true }).range(from, to),
   );
   for (const r of pmRows) {
@@ -260,7 +270,7 @@ export async function loadTeamOperatingHealth(
     (from, to) => service
       .from("audit_log").select("actor_id, action, occurred_at, resource_table, resource_id, metadata")
       .in("actor_id", memberIds).in("action", OVERSIGHT_ACTIONS)
-      .gte("occurred_at", `${loadFrom}T00:00:00Z`).lte("occurred_at", upperTs)
+      .gte("occurred_at", bounds.start).lt("occurred_at", upperTs)
       .order("id", { ascending: true }).range(from, to),
   );
   for (const a of auditRows) {
@@ -365,19 +375,23 @@ export interface PersonMetrics {
  */
 async function computePersonMetrics(
   service: SupabaseClient,
-  args: { personId: string; role: RoleCode; createdAt: string; locationId: string; granularity: TrendGranularity; compare: boolean; today: string },
+  args: { personId: string; role: RoleCode; createdAt: string; locationId: string; granularity: TrendGranularity; compare: boolean; today: string; range?: TrendRange },
 ): Promise<PersonMetrics> {
-  const { currentKeys, previousKeys, loadFrom } = computeWindows(args.today, args.granularity, args.compare);
+  const range = args.range ?? resolveTrendRange({ compare: args.compare ? "1" : "0" }, args.today, args.granularity);
+  const currentKeys = clippedBucketKeys(range.from, range.to, args.granularity);
+  const previousKeys = null as string[] | null;
+  const loadFrom = range.from;
   const curSet = new Set(currentKeys);
   const prevSet = new Set(previousKeys ?? []);
-  const toIncl = args.today;
-  const upperTsP = nextDayUtcBound(toIncl);
+  const toIncl = range.to;
+  const bounds = reportTimestampBounds(loadFrom, toIncl);
+  const upperTsP = bounds.end;
 
   const current = emptyCounts();
   const previous = emptyCounts();
   const windowOf = (tstz: string): "cur" | "prev" | null => {
-    const bs = bucketStart(etCalendarDate(tstz), args.granularity);
-    return curSet.has(bs) ? "cur" : prevSet.has(bs) ? "prev" : null;
+    const day = etCalendarDate(tstz);
+    return day >= range.from && day <= range.to ? "cur" : null;
   };
   const add = (tstz: string, cat: ActionCategory) => {
     const w = windowOf(tstz);
@@ -404,7 +418,7 @@ async function computePersonMetrics(
       (from, to) => service
         .from("checklist_completions").select("completed_at, notes")
         .eq("completed_by", args.personId).in("instance_id", locInstanceIds)
-        .gte("completed_at", `${loadFrom}T00:00:00Z`).lte("completed_at", upperTsP)
+        .gte("completed_at", bounds.start).lt("completed_at", upperTsP)
         .is("superseded_at", null).is("revoked_at", null)
         .order("completed_at", { ascending: true }).range(from, to),
     );
@@ -428,7 +442,7 @@ async function computePersonMetrics(
     (from, to) => service
       .from("checklist_instances").select("date, confirmed_at")
       .eq("location_id", args.locationId).eq("confirmed_by", args.personId).not("confirmed_at", "is", null)
-      .gte("confirmed_at", `${loadFrom}T00:00:00Z`).lte("confirmed_at", upperTsP)
+      .gte("confirmed_at", bounds.start).lt("confirmed_at", upperTsP)
       .order("id", { ascending: true }).range(from, to),
   );
   for (const f of finInst) {
@@ -439,7 +453,7 @@ async function computePersonMetrics(
     (from, to) => service
       .from("cash_reports").select("signed_at, over_short_note, report_date")
       .eq("location_id", args.locationId).eq("signed_by", args.personId).is("superseded_at", null)
-      .gte("signed_at", `${loadFrom}T00:00:00Z`).lte("signed_at", upperTsP)
+      .gte("signed_at", bounds.start).lt("signed_at", upperTsP)
       .order("id", { ascending: true }).range(from, to),
   );
   for (const c of cashRows) {
@@ -452,7 +466,7 @@ async function computePersonMetrics(
     (from, to) => service
       .from("pm_reports").select("id, submitted_at, report_date")
       .eq("location_id", args.locationId).eq("submitted_by", args.personId).is("superseded_at", null)
-      .gte("submitted_at", `${loadFrom}T00:00:00Z`).lte("submitted_at", upperTsP)
+      .gte("submitted_at", bounds.start).lt("submitted_at", upperTsP)
       .order("id", { ascending: true }).range(from, to),
   );
   for (const r of pmMine) {
@@ -483,7 +497,7 @@ async function computePersonMetrics(
     (from, to) => service
       .from("audit_log").select("occurred_at, resource_table, resource_id, metadata")
       .eq("actor_id", args.personId).in("action", OVERSIGHT_ACTIONS)
-      .gte("occurred_at", `${loadFrom}T00:00:00Z`).lte("occurred_at", upperTsP)
+      .gte("occurred_at", bounds.start).lt("occurred_at", upperTsP)
       .order("id", { ascending: true }).range(from, to),
   );
   for (const a of auditRows) {
@@ -491,7 +505,8 @@ async function computePersonMetrics(
   }
 
   const score = scoreFromCounts(args.role, current);
-  const previousScore = args.compare ? scoreFromCounts(args.role, previous) : null;
+  const previousMetrics = range.compare ? await computePersonMetrics(service, { ...args, compare: false, range: { ...range, ...range.previous, compare: false } }) : null;
+  const previousScore = previousMetrics?.score ?? null;
   const scoreDeltaPct = previousScore && previousScore > 0 ? Math.round(((score - previousScore) / previousScore) * 100) : null;
 
   finalsChrono.sort((a, b) => (a.at < b.at ? -1 : 1));
@@ -557,9 +572,10 @@ async function computePersonMetrics(
 
 export async function loadPersonDetail(
   service: SupabaseClient,
-  args: { viewer: Viewer; personId: string; locationId: string; granularity: TrendGranularity; compare: boolean; today: string },
+  args: { viewer: Viewer; personId: string; locationId: string; granularity: TrendGranularity; compare: boolean; today: string; range?: TrendRange },
 ): Promise<PersonDetail | null> {
-  if (args.viewer.level < TEAM_VIEW_LEVEL) return null;
+  if (args.range) args = { ...args, range: resolveTrendRange(Object.fromEntries(reportRangeParams(args.range)), args.today, args.granularity) };
+  if (args.viewer.level < TEAM_VIEW_LEVEL || !trendLocationAllowed(args.viewer, args.locationId)) return null;
 
   // IDOR: person must be assigned to this location, active, and rankable (< MoO).
   const { data: ul } = await service
@@ -574,7 +590,7 @@ export async function loadPersonDetail(
 
   const m = await computePersonMetrics(service, {
     personId: u.id, role: u.role, createdAt: u.created_at,
-    locationId: args.locationId, granularity: args.granularity, compare: args.compare, today: args.today,
+    locationId: args.locationId, granularity: args.granularity, compare: args.compare, today: args.today, range: args.range,
   });
   const { health, reasons } = healthFromCounts(u.role, m.counts, m.score, m.previousScore);
   const read = personReadNarrative({ rank: 0, role: u.role, health, reasons, scoreDeltaPct: m.scoreDeltaPct, onTimePct: m.overallOnTime });
@@ -620,8 +636,9 @@ export interface MyPerformanceData {
 
 export async function loadMyPerformance(
   service: SupabaseClient,
-  args: { viewer: Viewer; locationId: string; granularity: TrendGranularity; compare: boolean; today: string },
+  args: { viewer: Viewer; locationId: string; granularity: TrendGranularity; compare: boolean; today: string; range?: TrendRange },
 ): Promise<MyPerformanceData | null> {
+  if (args.range) args = { ...args, range: resolveTrendRange(Object.fromEntries(reportRangeParams(args.range)), args.today, args.granularity) };
   // SECURITY: self only — person is ALWAYS the session user, never a param.
   // IDOR: the viewer must be assigned to the location they're viewing.
   const { data: ul } = await service
@@ -634,7 +651,7 @@ export async function loadMyPerformance(
 
   const m = await computePersonMetrics(service, {
     personId: u.id, role: u.role, createdAt: u.created_at,
-    locationId: args.locationId, granularity: args.granularity, compare: args.compare, today: args.today,
+    locationId: args.locationId, granularity: args.granularity, compare: args.compare, today: args.today, range: args.range,
   });
 
   const read = myPerformanceRead({

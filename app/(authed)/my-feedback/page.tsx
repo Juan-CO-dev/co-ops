@@ -1,3 +1,5 @@
+import { resolveTrendRange } from "@/lib/reports-trends";
+import { reportRangeParams } from "@/lib/report-range";
 /**
  * /my-feedback — "My Performance" (employee self-view).
  *
@@ -25,7 +27,7 @@ import { TrendControls } from "@/components/trends/TrendControls";
 import { MyPerformance } from "@/components/me/MyPerformance";
 
 interface PageProps {
-  searchParams: Promise<{ loc?: string; location?: string; g?: string; cmp?: string }>;
+  searchParams: Promise<Record<string, string | undefined>>;
 }
 
 function parseGranularity(g: string | undefined): TrendGranularity {
@@ -37,7 +39,8 @@ interface LocLite { id: string; code: string }
 export default async function MyPerformancePage({ searchParams }: PageProps) {
   const auth = await requireSessionFromHeaders("/my-feedback");
   const language: Language = auth.user.language;
-  const { loc, location, g, cmp } = await searchParams;
+  const query = await searchParams;
+  const { loc, location, g } = query;
   const selectedParam = loc ?? location; // switcher uses ?loc=, TrendControls uses ?location=
   const sb = getServiceRoleClient();
 
@@ -54,12 +57,13 @@ export default async function MyPerformancePage({ searchParams }: PageProps) {
 
   const selected = (selectedParam ? locations.find((l) => l.id === selectedParam) : null) ?? locations[0]!;
   const granularity = parseGranularity(g);
-  const compare = cmp === "1";
   const today = operationalNow(new Date()).date;
+  const range = resolveTrendRange(query, today, granularity);
+  const compare = range.compare;
 
   const data = await loadMyPerformance(sb, {
-    viewer: { userId: auth.user.id, level: auth.level },
-    locationId: selected.id, granularity, compare, today,
+    viewer: { userId: auth.user.id, level: auth.level, locations: auth.locations },
+    locationId: selected.id, granularity, compare, today, range,
   });
 
   const allFeedback = await loadMyFeedback(sb, { userId: auth.user.id });
@@ -74,7 +78,7 @@ export default async function MyPerformancePage({ searchParams }: PageProps) {
           <nav aria-label={serverT(language, "me.location_aria")} className="flex flex-wrap gap-1.5">
             {locations.map((l) => {
               const on = l.id === selected.id;
-              const href = `/my-feedback?loc=${l.id}&g=${granularity}${compare ? "&cmp=1" : ""}`;
+              const href = `/my-feedback?loc=${l.id}&g=${granularity}&${reportRangeParams(range)}`;
               return (
                 <Link key={l.id} href={href} scroll={false} aria-current={on ? "page" : undefined}
                   className={[
@@ -90,7 +94,7 @@ export default async function MyPerformancePage({ searchParams }: PageProps) {
       </div>
 
       <div className="mb-4">
-        <TrendControls locationId={selected.id} granularity={granularity} compare={compare} language={language} basePath="/my-feedback" />
+        <TrendControls range={range} locationId={selected.id} granularity={granularity} compare={compare} language={language} basePath="/my-feedback" />
       </div>
 
       {data ? (

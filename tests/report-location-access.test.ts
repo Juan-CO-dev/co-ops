@@ -1,3 +1,5 @@
+import { resolveTrendRange } from "@/lib/reports-trends";
+import { reportRangeParams } from "@/lib/report-range";
 import { readFileSync } from "node:fs";
 import ts from "typescript";
 import { describe, expect, it, vi } from "vitest";
@@ -28,14 +30,23 @@ function reportService(visibilityMinLevel: number): SupabaseClient {
   return {
     from: (table: string) => {
       let nullLocationOnly = false;
+      let visibilityCeiling = Number.POSITIVE_INFINITY;
       const query = {
         select: () => query,
         eq: () => query,
-        in: () => query, lte: () => query, order: () => query, limit: () => query,
+        in: () => query, lte: (_column: string, value: number) => { visibilityCeiling = value; return query; }, gte: () => query, lt: () => query,
+        not: () => query, filter: () => query,
+        or: (value: string) => {
+          const match = value.match(/visibility_min_level\.lte\.(\d+)/);
+          if (match) visibilityCeiling = Number(match[1]);
+          if (value.includes("location_id.is.null") && !value.includes("location_id.in.(other)")) nullLocationOnly = true;
+          return query;
+        },
+        order: () => query, limit: () => query,
         is: () => { nullLocationOnly = true; return query; },
         then: async (resolve: (value: unknown) => unknown) => {
           const row = (await query.maybeSingle()).data;
-          return resolve({ error: null, data: table === "users" || nullLocationOnly ? [] : [row] });
+          return resolve({ error: null, data: table === "users" || nullLocationOnly || visibilityMinLevel > visibilityCeiling ? [] : [row] });
         },
         maybeSingle: async () => ({ error: null, data: table === "users" ? { name: "Writer" } : {
           id: "report", location_id: "other", submitted_by: "writer", submitted_by_role: "shift_lead",
@@ -53,10 +64,10 @@ describe("written report reads", () => {
   it("the all-location sentinel cannot grant a GM cross-shop detail or list access", async () => {
     const viewer = { userId: "reader", level: 7, locations: "all" as const };
     expect(await loadWrittenReport(reportService(5), { id: "report", viewer })).toBeNull();
-    expect(await listWrittenReports(reportService(5), { viewer })).toEqual([]);
+    expect((await listWrittenReports(reportService(5), { viewer })).reports).toEqual([]);
     const moo = { ...viewer, level: 8 };
     expect(await loadWrittenReport(reportService(5), { id: "report", viewer: moo })).toMatchObject({ id: "report" });
-    expect(await listWrittenReports(reportService(5), { viewer: moo })).toMatchObject([{ id: "report" }]);
+    expect((await listWrittenReports(reportService(5), { viewer: moo })).reports).toMatchObject([{ id: "report" }]);
   });
   it("MoO reads another shop while GM remains location-bound", async () => {
     const args = { id: "report", viewer: { userId: "reader", level: 8, locations: ["mine"] } };
@@ -65,6 +76,15 @@ describe("written report reads", () => {
   });
   it("the all-shop grant never bypasses a report's visibility floor", async () => {
     expect(await loadWrittenReport(reportService(9), { id: "report", viewer: { userId: "reader", level: 7, locations: [] } })).toBeNull();
+  });
+  it("employees receive visibility-targeted colleague posts while higher-floor data stays absent", async () => {
+    const employee = { userId: "reader", level: 3, locations: ["other"] };
+    expect(await loadWrittenReport(reportService(3), { id: "report", viewer: employee }))
+      .toMatchObject({ id: "report", submittedBy: "writer" });
+    expect(await loadWrittenReport(reportService(4), { id: "report", viewer: employee })).toBeNull();
+    expect((await listWrittenReports(reportService(4), { viewer: employee })).reports).toEqual([]);
+    expect(await loadWrittenReport(reportService(7), { id: "report", viewer: { ...employee, userId: "writer" } }))
+      .toMatchObject({ id: "report", submittedBy: "writer" });
   });
 });
 
@@ -79,9 +99,10 @@ describe("per-person team report location boundary", () => {
       const loadPersonDetail = vi.fn(async () => { throw new Error("authorized metrics read"); });
       const deps = {
         requireSessionFromHeaders: async () => ({ role, level: role === "gm" ? 7 : 8, locations: ["mine"], user: { id: "manager", language: "en" } }),
-        TEAM_VIEW_LEVEL: 6, canReadReportLocation,
+        TEAM_VIEW_LEVEL: 6, canReadReportLocation, resolveTrendRange, reportRangeParams,
         redirect: () => { throw new Error("redirect"); },
         parseGranularity: () => "day", operationalNow: () => ({ date: "2026-10-07" }),
+        parseReportRange: () => ({ range: "last7", from: "2026-10-01", to: "2026-10-07", compare: false, previous: { from: "2026-09-24", to: "2026-09-30" } }),
         getServiceRoleClient: () => ({}), loadPersonDetail,
       };
       const page = new Function(...Object.keys(deps), `${js}; return PersonDetailPage;`)(...Object.values(deps));

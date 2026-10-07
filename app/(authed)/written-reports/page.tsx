@@ -8,46 +8,16 @@
  * keeping the /written-reports URL.
  */
 
-import { serverT } from "@/lib/i18n/server";
-import { REPORT_ALL_LOCATIONS_LEVEL, accessibleLocations, type LocationActor } from "@/lib/locations";
-import { requireSessionFromHeaders } from "@/lib/session";
-import { getRoleLevel } from "@/lib/roles";
-import { getServiceRoleClient } from "@/lib/supabase-server";
-import { listWrittenReports, WRITTEN_REPORT_WRITE_MIN_LEVEL } from "@/lib/written-reports";
-
-import { DashboardBackLink } from "@/components/DashboardBackLink";
-import { PageHeader } from "@/components/ui/PageHeader";
-import { WrittenReportsClient } from "@/components/written-reports/WrittenReportsClient";
+import { redirect } from "next/navigation";
 
 export const dynamic = "force-dynamic";
 
-export default async function WrittenReportsPage() {
-  const auth = await requireSessionFromHeaders("/written-reports");
-  const lang = auth.user.language;
-  const sb = getServiceRoleClient();
-
-  const actor: LocationActor = { role: auth.role, locations: auth.locations };
-  const reports = await listWrittenReports(sb, {
-    viewer: {
-      userId: auth.user.id,
-      level: auth.level,
-      locations: auth.level >= REPORT_ALL_LOCATIONS_LEVEL ? "all" : accessibleLocations(actor),
-    },
-  });
-
-  const canWrite = auth.level >= WRITTEN_REPORT_WRITE_MIN_LEVEL;
-
-  return (
-    <main className="mx-auto max-w-2xl md:max-w-3xl lg:max-w-5xl xl:max-w-6xl px-4 pb-32 pt-4 sm:px-6">
-      <div className="mb-3">
-        <DashboardBackLink />
-      </div>
-      <PageHeader
-        title={serverT(lang, "written_reports.page.title")}
-        subtitle={serverT(lang, "written_reports.page.subtitle")}
-        className="mb-4"
-      />
-      <WrittenReportsClient reports={reports} canWrite={canWrite} viewerLevel={getRoleLevel(auth.user.role)} />
-    </main>
-  );
+export default async function WrittenReportsPage({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> }) {
+  const raw = await searchParams;
+  const params = new URLSearchParams();
+  for (const [key, value] of Object.entries(raw)) {
+    if (typeof value === "string") params.set(key, value);
+    else if (Array.isArray(value)) for (const item of value) params.append(key, item);
+  }
+  redirect(`/reports/written${params.size ? `?${params.toString()}` : ""}`);
 }

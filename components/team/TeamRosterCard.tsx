@@ -17,10 +17,12 @@ import type { Language, TranslationKey } from "@/lib/i18n/types";
 export function TeamRosterCard({
   member,
   locationId,
+  context = "",
   language,
 }: {
   member: TeamMember;
   locationId: string;
+  context?: string;
   language: Language;
 }) {
   const expected = expectedCategoriesFor(member.role);
@@ -31,7 +33,7 @@ export function TeamRosterCard({
 
   return (
     <Link
-      href={`/reports/trends/team/${member.userId}?location=${locationId}`}
+      href={`/reports/trends/team/${member.userId}?location=${locationId}&${context}`}
       className="block rounded-2xl border-2 border-co-border bg-co-surface p-4 shadow-sm transition-colors hover:border-co-border-2 sm:p-5"
     >
       <div className="flex items-baseline justify-between gap-3">

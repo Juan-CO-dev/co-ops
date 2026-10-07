@@ -12,6 +12,7 @@ import type { Language, TranslationKey } from "@/lib/i18n/types";
  */
 export function TrendsLanding({
   locationId,
+  context = "",
   language,
   canSeeTeam,
   ops,
@@ -19,14 +20,15 @@ export function TrendsLanding({
   attention,
 }: {
   locationId: string;
+  context?: string;
   language: Language;
   canSeeTeam: boolean;
   ops: { underPar: number; tempFlags: number } | null;
   team: TeamOperatingHealth | null;
   attention: { kind: "ops" | "team"; titleKey: string; sub: string }[];
 }) {
-  const opsHref = `/reports/trends/ops?location=${locationId}`;
-  const teamHref = `/reports/trends/team?location=${locationId}`;
+  const opsHref = `/reports/trends/ops?location=${locationId}&${context}`;
+  const teamHref = `/reports/trends/team?location=${locationId}&${context}`;
 
   return (
     <div className="mx-auto flex max-w-2xl flex-col gap-5">
