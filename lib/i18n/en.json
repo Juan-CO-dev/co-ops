@@ -1715,6 +1715,8 @@
   "mid_day_prep.page.section_par": "Par",
   "mid_day_prep.page.forms_pending": "The interactive count and prep forms ship in the next build. Items below are the template for this mid-day prep.",
   "mid_day_prep.phase1.on_hand": "On hand",
+  "mid_day_prep.phase1.back_up": "Bulk backup",
+  "mid_day_prep.phase1.error.backup_required": "Batch items need both boxes — on hand and bulk backup.",
   "mid_day_prep.phase1.need": "Need:",
   "mid_day_prep.phase1.submit": "Submit count → Phase 2",
   "mid_day_prep.phase1.submitting": "Submitting…",

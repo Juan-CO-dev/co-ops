@@ -68,6 +68,7 @@ import { operationalNow } from "@/lib/midshift";
 import { applyEffectiveResolution, type EffectiveResolvableBuilder } from "@/lib/admin/template-builder-shared";
 import { loadPrepSections } from "@/lib/prep-sections.server";
 import { loadDerivedForItems, recordProductionFromPrep, skuConsumptionForItem, type DerivedSku, type ConfirmedInput } from "@/lib/prep-consumption";
+import { loadBatchContextForItems, type BatchItemContext } from "@/lib/batch-prep";
 import type {
   ChecklistCompletion,
   ChecklistInstance,
@@ -828,6 +829,12 @@ export async function loadMidDayPrepState(
   authors: Record<string, string>;
   sectionLabels: Record<string, { en: string; es: string | null }>;
   derived: Record<string, DerivedSku[]>;
+  /**
+   * 0215 batch vs bottle — per TEMPLATE-ITEM id, the item's batch context (producing
+   * recipe's batch_mode / shelf life / yield / eligibility). Absent = single box. Phase 1
+   * renders LINE + BACK UP for eligible items; Phase 2 renders the batch row.
+   */
+  batchContext: Record<string, BatchItemContext>;
 } | null> {
   const { data: instanceRow, error: instErr } = await service
     .from("checklist_instances")
@@ -922,6 +929,15 @@ export async function loadMidDayPrepState(
   const derived: Record<string, DerivedSku[]> = {};
   for (const tItem of resolvedItems) derived[tItem.id] = tItem.itemId ? (derivedByItemId.get(tItem.itemId) ?? []) : [];
 
+  // 0215 batch vs bottle — eligibility per template item (the RPCs re-derive it; this only
+  // shapes the row). PURELY ADDITIVE.
+  const batchContextByItemId = await loadBatchContextForItems(itemIds);
+  const batchContext: Record<string, BatchItemContext> = {};
+  for (const tItem of resolvedItems) {
+    const ctx = tItem.itemId ? batchContextByItemId.get(tItem.itemId) : undefined;
+    if (ctx) batchContext[tItem.id] = ctx;
+  }
+
   return {
     template: tmplRow,
     templateItems: resolvedItems,
@@ -930,6 +946,7 @@ export async function loadMidDayPrepState(
     authors,
     sectionLabels,
     derived,
+    batchContext,
   };
 }
 
@@ -1117,7 +1134,8 @@ export async function loadMidDayPrepDashboardState(
 /** Result of submitMidDayPhase1 — discriminated so the route maps to HTTP without error-class coupling. */
 export type MidDayPhase1Result =
   | { ok: true; instance: ChecklistInstance }
-  | { ok: false; reason: "not_found" | "not_open" | "bad_item"; detail?: string };
+  /** `backup_required` (0215): a batch item arrived without both boxes (LINE + bulk BACK UP, each >= 0). */
+  | { ok: false; reason: "not_found" | "not_open" | "bad_item" | "backup_required"; detail?: string };
 
 /**
  * submitMidDayPhase1 — count-to-par submission (C.43 Phase 1). Builds C.44
@@ -1147,6 +1165,17 @@ export async function submitMidDayPhase1(
     if (!item || !item.prepMeta) {
       return { ok: false, reason: "bad_item", detail: entry.templateItemId };
     }
+    // 0215 batch vs bottle (ruling F): a batch item's mid-day count is TWO boxes — LINE
+    // (onHand) and the bulk BACK UP — both present, both >= 0. The RPC enforces the same
+    // rule under its own eligibility read (mid_day_backup_required / mid_day_count_negative);
+    // this is the named fast path so the form gets a 422 it can point at, not a 500.
+    if (state.batchContext[entry.templateItemId]?.isBatch === true) {
+      const onHand = entry.inputs.onHand;
+      const backUp = entry.inputs.backUp;
+      if (typeof onHand !== "number" || typeof backUp !== "number" || onHand < 0 || backUp < 0) {
+        return { ok: false, reason: "backup_required", detail: entry.templateItemId };
+      }
+    }
     rpcEntries.push({
       templateItemId: entry.templateItemId,
       inputs: entry.inputs,
@@ -1167,6 +1196,12 @@ export async function submitMidDayPhase1(
   });
   if (error) {
     if (error.code === "23514") return { ok: false, reason: "not_open" }; // check_violation
+    // 0215: the RPC's own two-box gates (a recipe flipped to batch_mode between render and
+    // submit, or a stale client) — same named answer as the pre-check above.
+    if (error.code === "P0001" && /mid_day_backup_required|mid_day_count_negative/.test(error.message ?? "")) {
+      const m = /for item ([0-9a-f-]{36})/i.exec(error.message ?? "");
+      return { ok: false, reason: "backup_required", detail: m?.[1] };
+    }
     throw new Error(`submitMidDayPhase1: ${error.message}`);
   }
 

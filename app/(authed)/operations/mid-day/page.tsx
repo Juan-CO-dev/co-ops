@@ -189,6 +189,7 @@ export default async function MidDayPrepPage({ searchParams }: PageProps) {
             section: item.prepMeta?.section ?? item.station ?? "Misc",
             parValue: item.prepMeta?.parValue ?? null,
             parUnit: item.prepMeta?.parUnit ?? null,
+            batchMode: state.batchContext[item.id]?.isBatch === true,
           }))}
         />
       ) : state.instance.status === "phase1_complete" ? (

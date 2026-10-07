@@ -1715,6 +1715,8 @@
   "mid_day_prep.page.section_par": "Par",
   "mid_day_prep.page.forms_pending": "Los formularios interactivos de conteo y preparación llegan en la próxima versión. Los artículos abajo son la plantilla de esta preparación de mediodía.",
   "mid_day_prep.phase1.on_hand": "En mano",
+  "mid_day_prep.phase1.back_up": "Respaldo a granel",
+  "mid_day_prep.phase1.error.backup_required": "Los artículos por tandas necesitan ambas casillas — en mano y respaldo a granel.",
   "mid_day_prep.phase1.need": "Falta:",
   "mid_day_prep.phase1.submit": "Enviar conteo → Fase 2",
   "mid_day_prep.phase1.submitting": "Enviando…",
