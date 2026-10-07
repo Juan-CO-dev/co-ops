@@ -10,23 +10,28 @@
  * it's off 15%… also we need to track it being under and over… since under they are doing
  * something wrong and same if it's over." Minimum 6 batches before any nudge (CC). Both
  * directions are ERRORS, never good or bad: "coming out UNDER (−18%)" / "coming out OVER (+22%)".
+ * Juan, later the same day: "Retrain should be a GM option, and maybe he can assign a kh+ to help
+ * retrain whoever is not making the recipe right etc".
  *
- * DEFINITIONS (the builder's stated choices; every one is pinned in tests/yield-stats-shared.test.ts):
- *   · A "batch" in the window is one batch HEADER (one prep session's entry: N batches made →
- *     came out to X). The variance view lists exactly these rows, so "the last 10 batches" is the
- *     last 10 headers, newest `produced_at` first (id breaks a tie, so the window is stable).
- *   · Per header, actual per batch = came_out_to / batches_made, compared with THAT header's own
+ * DEFINITIONS (every one is pinned in tests/yield-stats-shared.test.ts):
+ *   · BATCHES, NOT ENTRIES (Astra r1 #3). One header (one prep session's entry) can carry 2–3
+ *     batches. The window, the 6-batch minimum and the 10-batch snooze all count BATCHES
+ *     (Σ batches_made), never array length.
+ *   · THE WINDOW BOUNDARY IS PROPORTIONAL. Newest entries are taken (produced_at desc, id breaks a
+ *     tie) until they hold 10 batches; the entry that crosses 10 contributes only the fraction
+ *     that fits (`weight` = batches still needed / its batches). So the window is EXACTLY 10
+ *     batches whenever 10 exist, and an older triple batch cannot drag 2 extra batches in.
+ *   · Per entry, actual per batch = came_out_to / batches_made, compared with THAT entry's own
  *     yield_at_time — a card edited mid-window never re-scores the batches made under the old card.
- *   · The window's average is batch-weighted: signedDrift = (Σ came_out_to − Σ batches×card) /
- *     Σ batches×card. A double batch counts twice, as it should; with one card and single batches
- *     it is exactly the plain mean of the per-batch drifts.
- *   · EDGE: exactly 15% off IS a nudge (|drift| ≥ 0.15). A 1e-9 tolerance absorbs float noise so
- *     8.5 against a card of 10 lands on the nudge side, as the arithmetic says it should.
- *   · Recipe level and maker level are computed INDEPENDENTLY: one maker +20% and another −20%
- *     can net to "fine" for the recipe while each maker still raises their own retrain item.
- *   · A Retrain note snoozes its scope (the recipe, or one maker on that recipe) until
- *     YIELD_STATS_WINDOW more batches in that scope were produced AFTER the note — by then the
- *     whole window is post-retrain, so the verdict is about the retrained behaviour only.
+ *   · The window's average is batch-weighted: signedDrift = (Σ w·came_out_to − Σ w·batches·card) /
+ *     Σ w·batches·card.
+ *   · EDGE: exactly 15% off IS a nudge (|drift| ≥ 0.15). A 1e-9 tolerance absorbs float noise.
+ *   · Recipe level and maker level are computed independently for the VERDICT: one maker +20%
+ *     and another −20% can net to "fine" for the recipe while each maker still raises an item.
+ *   · HOLDS. A Retrain note holds its scope's nudge while (a) its 10-batch snooze runs — counted
+ *     in batches produced after the note was recorded — or (b) the retrain is still OPEN (assigned
+ *     and not marked done), whichever is longer. A RECIPE-level note also holds every maker item
+ *     on that recipe, on the recipe's own batch counter (Astra r1 #2, CC ruling (b)).
  */
 
 /** Juan, 2026-10-07: the average is over the last 10 batches. */
@@ -35,10 +40,12 @@ export const YIELD_STATS_WINDOW = 10;
 export const YIELD_NUDGE_MIN_BATCHES = 6;
 /** Juan, 2026-10-07: 15% off the recipe card, in EITHER direction. */
 export const YIELD_NUDGE_DRIFT = 0.15;
-/** Shift lead and up see the variance view, the nudges and the retrain items. */
+/** Shift lead and up SEE the variance view, the nudges and the retrain items (view-only). */
 export const YIELD_STATS_READ_MIN = 5;
-/** GM: Update recipe yield (plus the recipe-edit step-up) and Retrain. */
+/** GM: Update recipe yield (plus the recipe-edit step-up) and Retrain (both scopes). */
 export const YIELD_ACTION_MIN = 7;
+/** Juan: the GM may assign the retraining to a key holder or above. */
+export const RETRAIN_ASSIGNEE_MIN = 4;
 
 const EDGE_EPSILON = 1e-9;
 
@@ -55,7 +62,13 @@ export interface YieldBatch {
   yieldAtTime: number;
 }
 
+/** An entry inside a window: `weight` ∈ (0, 1] is the fraction of its batches the window holds. */
+export interface WindowEntry extends YieldBatch {
+  weight: number;
+}
+
 export type YieldScope = "recipe" | "maker";
+export type RetrainStatus = "open" | "done";
 
 export interface RetrainNoteLite {
   id: string;
@@ -65,14 +78,18 @@ export interface RetrainNoteLite {
   makerId: string | null;
   createdAt: string;
   snoozeBatches: number;
+  status: RetrainStatus;
+  assignedTo: string | null;
+  doneAt: string | null;
+  doneBy: string | null;
 }
 
 export type YieldDirection = "under" | "over" | "on_card";
 
 export interface DriftSummary {
-  /** Headers in the window. */
-  count: number;
-  /** Σ batches_made across the window. */
+  /** Entries (headers) contributing to the window, the boundary one included. */
+  entries: number;
+  /** Batches in the window (Σ weight × batches_made) — ≤ YIELD_STATS_WINDOW. */
   batches: number;
   /** Average measured output per batch. */
   actualPerBatch: number;
@@ -81,7 +98,7 @@ export interface DriftSummary {
   /** (actual − card) / card over the window; negative = UNDER, positive = OVER. */
   signedDrift: number;
   direction: YieldDirection;
-  /** count ≥ YIELD_NUDGE_MIN_BATCHES. */
+  /** batches ≥ YIELD_NUDGE_MIN_BATCHES. */
   enough: boolean;
   /** enough AND |signedDrift| ≥ YIELD_NUDGE_DRIFT. */
   flagged: boolean;
@@ -89,16 +106,28 @@ export interface DriftSummary {
 
 export interface SnoozeState {
   noteId: string;
-  /** Batches in scope still to come before the nudge may speak again; 0 = expired. */
+  /** Batches still to come before the snooze ends; 0 = expired. */
   remaining: number;
   snoozed: boolean;
+  /** The latest note's retrain is still open (assigned, not marked done). */
+  open: boolean;
+  /** snoozed OR open — the note is holding the nudge. */
+  holding: boolean;
+}
+
+export interface Hold extends SnoozeState {
+  /** "own" = this scope's note; "recipe" = a recipe-level note holding a maker item. */
+  via: "own" | "recipe";
 }
 
 export interface ScopeVerdict {
-  window: YieldBatch[];
+  window: WindowEntry[];
   summary: DriftSummary | null;
-  snooze: SnoozeState | null;
-  /** flagged AND not snoozed — the nudge / retrain item renders. */
+  /** The note holding this scope's nudge, if any (own first, then the recipe's for a maker). */
+  hold: Hold | null;
+  /** The latest own note, holding or not (for "Retrained <date> by <KH>" history). */
+  latestNoteId: string | null;
+  /** flagged AND no hold — the nudge / retrain item renders with its buttons. */
   nudge: boolean;
 }
 
@@ -130,7 +159,7 @@ export function batchSignedDrift(b: YieldBatch): number {
 }
 
 /** Newest first by produced_at; id descending breaks a tie so the window never wobbles. */
-export function newestFirst(batches: YieldBatch[]): YieldBatch[] {
+export function newestFirst<T extends YieldBatch>(batches: T[]): T[] {
   return [...batches].sort((a, b) => {
     const ta = Date.parse(a.producedAt);
     const tb = Date.parse(b.producedAt);
@@ -139,9 +168,26 @@ export function newestFirst(batches: YieldBatch[]): YieldBatch[] {
   });
 }
 
-/** The last `size` usable headers, newest first. */
-export function lastWindow(batches: YieldBatch[], size: number = YIELD_STATS_WINDOW): YieldBatch[] {
-  return newestFirst(batches.filter(isUsableBatch)).slice(0, size);
+/** Total batches across entries (whole entries). */
+export function batchCount(batches: YieldBatch[]): number {
+  return batches.filter(isUsableBatch).reduce((n, b) => n + b.batchesMade, 0);
+}
+
+/**
+ * The last `size` BATCHES, newest first. The entry that crosses the boundary carries the
+ * fraction of its batches that fits (proportional weighting).
+ */
+export function lastWindow(batches: YieldBatch[], size: number = YIELD_STATS_WINDOW): WindowEntry[] {
+  const out: WindowEntry[] = [];
+  let have = 0;
+  for (const b of newestFirst(batches.filter(isUsableBatch))) {
+    if (have >= size - EDGE_EPSILON) break;
+    const need = size - have;
+    const weight = b.batchesMade <= need ? 1 : need / b.batchesMade;
+    out.push({ ...b, weight });
+    have += weight * b.batchesMade;
+  }
+  return out;
 }
 
 export function directionOf(signedDrift: number): YieldDirection {
@@ -154,23 +200,24 @@ export function isOffCard(signedDrift: number): boolean {
   return Math.abs(signedDrift) >= YIELD_NUDGE_DRIFT - EDGE_EPSILON;
 }
 
-/** The window's batch-weighted verdict; null when the window is empty. */
-export function summarizeDrift(window: YieldBatch[]): DriftSummary | null {
+/** The window's batch-weighted verdict; null when the window is empty. Unweighted entries count whole. */
+export function summarizeDrift(window: Array<YieldBatch & { weight?: number }>): DriftSummary | null {
   const usable = window.filter(isUsableBatch);
   if (usable.length === 0) return null;
   let actual = 0;
   let expected = 0;
   let batches = 0;
   for (const b of usable) {
-    actual += b.cameOutTo;
-    expected += b.batchesMade * b.yieldAtTime;
-    batches += b.batchesMade;
+    const w = b.weight ?? 1;
+    actual += w * b.cameOutTo;
+    expected += w * b.batchesMade * b.yieldAtTime;
+    batches += w * b.batchesMade;
   }
   const signedDrift = (actual - expected) / expected;
-  const enough = usable.length >= YIELD_NUDGE_MIN_BATCHES;
+  const enough = batches >= YIELD_NUDGE_MIN_BATCHES - EDGE_EPSILON;
   return {
-    count: usable.length,
-    batches,
+    entries: usable.length,
+    batches: Math.round(batches * 1e6) / 1e6,
     actualPerBatch: actual / batches,
     cardPerBatch: expected / batches,
     signedDrift,
@@ -180,29 +227,31 @@ export function summarizeDrift(window: YieldBatch[]): DriftSummary | null {
   };
 }
 
+/** The latest note (created_at desc, id desc). */
+export function latestNote(notes: RetrainNoteLite[]): RetrainNoteLite | null {
+  if (notes.length === 0) return null;
+  return [...notes].sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt) || (a.id < b.id ? 1 : -1))[0]!;
+}
+
 /**
- * The latest note in scope snoozes until `snoozeBatches` more in-scope batches were produced
- * after it. `inScope` must already be filtered to the scope (the recipe's, or one maker's on it).
+ * The latest note in scope holds until `snoozeBatches` more BATCHES in scope were produced after
+ * it was recorded — and, independently, for as long as its retrain is open. `inScope` must
+ * already be filtered to the scope (the recipe's, or one maker's on it).
  */
 export function snoozeState(inScope: YieldBatch[], notes: RetrainNoteLite[]): SnoozeState | null {
-  if (notes.length === 0) return null;
-  const latest = [...notes].sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt) || (a.id < b.id ? 1 : -1))[0]!;
+  const latest = latestNote(notes);
+  if (!latest) return null;
   const at = Date.parse(latest.createdAt);
-  const after = inScope.filter((b) => isUsableBatch(b) && Date.parse(b.producedAt) > at).length;
+  const after = batchCount(inScope.filter((b) => Date.parse(b.producedAt) > at));
   const remaining = Math.max(0, latest.snoozeBatches - after);
-  return { noteId: latest.id, remaining, snoozed: remaining > 0 };
+  const snoozed = remaining > 0;
+  const open = latest.status === "open";
+  return { noteId: latest.id, remaining, snoozed, open, holding: snoozed || open };
 }
 
-function verdict(inScope: YieldBatch[], notes: RetrainNoteLite[]): ScopeVerdict {
-  const window = lastWindow(inScope);
-  const summary = summarizeDrift(window);
-  const snooze = snoozeState(inScope, notes);
-  return { window, summary, snooze, nudge: !!summary?.flagged && !snooze?.snoozed };
-}
-
-/** Makers in `window` whose own headers there are off the card (no minimum: this NAMES, it never nudges). */
-export function outlierMakers(window: YieldBatch[]): string[] {
-  const byMaker = new Map<string, YieldBatch[]>();
+/** Makers in `window` whose own (weighted) batches there are off the card. This NAMES; it never nudges. */
+export function outlierMakers(window: WindowEntry[]): string[] {
+  const byMaker = new Map<string, WindowEntry[]>();
   for (const b of window) {
     if (!b.madeBy) continue;
     const l = byMaker.get(b.madeBy) ?? [];
@@ -219,21 +268,38 @@ export function outlierMakers(window: YieldBatch[]): string[] {
 
 /**
  * Everything for ONE item (= one batch recipe) at ONE location. `batches` and `notes` must
- * already be scoped to that item and location by the loader.
+ * already be scoped to that location; this filters to the item.
  */
 export function evaluateItem(itemId: string, batches: YieldBatch[], notes: RetrainNoteLite[]): ItemYieldVerdict {
   const mine = batches.filter((b) => b.itemId === itemId);
   const myNotes = notes.filter((n) => n.itemId === itemId);
-  const recipe = verdict(mine, myNotes.filter((n) => n.scope === "recipe"));
+  const recipeNotes = myNotes.filter((n) => n.scope === "recipe");
+
+  const recipeWindow = lastWindow(mine);
+  const recipeSummary = summarizeDrift(recipeWindow);
+  const recipeSnooze = snoozeState(mine, recipeNotes);
+  const recipeHold: Hold | null = recipeSnooze?.holding ? { ...recipeSnooze, via: "own" } : null;
+  const recipe = {
+    window: recipeWindow,
+    summary: recipeSummary,
+    hold: recipeHold,
+    latestNoteId: latestNote(recipeNotes)?.id ?? null,
+    nudge: !!recipeSummary?.flagged && !recipeHold,
+    outlierMakerIds: outlierMakers(recipeWindow),
+  };
+
   const makerIds = [...new Set(mine.map((b) => b.madeBy).filter((v): v is string => !!v))].sort();
-  const makers: MakerVerdict[] = makerIds.map((makerId) => ({
-    makerId,
-    ...verdict(
-      mine.filter((b) => b.madeBy === makerId),
-      myNotes.filter((n) => n.scope === "maker" && n.makerId === makerId),
-    ),
-  }));
-  return { itemId, recipe: { ...recipe, outlierMakerIds: outlierMakers(recipe.window) }, makers };
+  const makers: MakerVerdict[] = makerIds.map((makerId) => {
+    const own = mine.filter((b) => b.madeBy === makerId);
+    const ownNotes = myNotes.filter((n) => n.scope === "maker" && n.makerId === makerId);
+    const window = lastWindow(own);
+    const summary = summarizeDrift(window);
+    const ownSnooze = snoozeState(own, ownNotes);
+    // Own note first; else a recipe-level Retrain holds every maker item on the recipe's counter.
+    const hold: Hold | null = ownSnooze?.holding ? { ...ownSnooze, via: "own" } : recipeHold ? { ...recipeHold, via: "recipe" } : null;
+    return { makerId, window, summary, hold, latestNoteId: latestNote(ownNotes)?.id ?? null, nudge: !!summary?.flagged && !hold };
+  });
+  return { itemId, recipe, makers };
 }
 
 /**
@@ -265,4 +331,18 @@ export function normalizeRetrainNote(v: unknown): string | null | "invalid" {
   const t = v.trim();
   if (t.length === 0) return null;
   return t.length > 500 ? "invalid" : t;
+}
+
+/**
+ * The assignee picker's floor (Juan): an ACTIVE key holder or above at the shop, never ranked
+ * above the GM assigning. The server re-checks the chosen id against the same rule.
+ */
+export function isEligibleRetrainAssignee(candidate: { level: number; active: boolean; atShop: boolean }, actorLevel: number): boolean {
+  return candidate.active && candidate.atShop && candidate.level >= RETRAIN_ASSIGNEE_MIN && candidate.level <= actorLevel;
+}
+
+/** Who may mark an open retrain done: its assignee, or a GM+ (the location bind is the server's). */
+export function canMarkRetrainDone(actor: { userId: string; level: number }, note: { assignedTo: string | null; status: RetrainStatus }): boolean {
+  if (note.status !== "open") return false;
+  return actor.userId === note.assignedTo || actor.level >= YIELD_ACTION_MIN;
 }

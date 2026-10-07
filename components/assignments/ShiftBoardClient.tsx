@@ -5,11 +5,15 @@ import { useRouter } from "next/navigation";
 import { ActionButton, ActionLink } from "@/components/ActionButton";
 import type { TranslationKey } from "@/lib/i18n/types";
 import { useTranslation } from "@/lib/i18n/provider";
+import { RetrainTaskList } from "@/components/production/RetrainTaskList";
+import type { RetrainTaskView } from "@/lib/yield-stats";
 import { canSelfClaim, currentStation, TASK_TYPES, TASK_MIN_LEVEL, taskHref, type ShiftBoard, type TaskType } from "@/lib/assignments-shared";
 
 const control = "flex min-h-[44px] items-center rounded-lg border-2 border-co-border bg-co-surface px-3 text-base font-normal tracking-normal text-co-text";
 
-export function ShiftBoardClient({ board, compact = false }: { board: ShiftBoard; compact?: boolean }) {
+/** retrainTasks: the viewer's OWN open yield retrains at this shop (batch vs bottle Phase B) —
+ *  they persist until marked done, so they ride beside the daily tasks, not inside them. */
+export function ShiftBoardClient({ board, compact = false, retrainTasks = [] }: { board: ShiftBoard; compact?: boolean; retrainTasks?: RetrainTaskView[] }) {
   const { t, language } = useTranslation();
   const router = useRouter();
   const [busy, setBusy] = useState(false);
@@ -37,6 +41,7 @@ export function ShiftBoardClient({ board, compact = false }: { board: ShiftBoard
     <h2 className="text-xl font-bold text-co-text">{t(compact || board.viewerLevel < 4 ? "assignments.myShift" : "assignments.team")}</h2>
     {!compact && board.viewerLevel >= 4 && <p className="text-sm text-co-text-muted">{t("assignments.rosterHint")}</p>}
     {error && <p role="alert" className="text-co-cta-text">{t(error)}</p>}
+    {compact && retrainTasks.length > 0 && <RetrainTaskList tasks={retrainTasks} />}
     {compact && board.viewerLevel >= 4 && <ul className="space-y-2">{unassigned.map((task) => <li key={task}>
       <ActionLink variant="secondary" href={`/assignments?location=${board.locationId}`}>{t("assignments.unassignedAction", { task: t(`assignments.task.${task}`) })}</ActionLink>
     </li>)}</ul>}

@@ -76,6 +76,8 @@ const TENANCY_SCOPED_RPCS = [
   "save_phase2_item_atomic",
   "save_mid_day_phase2_item_atomic",
   "revoke_phase2_item_atomic",
+  // 0218 — the guarded one-time completion of a retrain note (lib/yield-stats.ts completeYieldRetrain).
+  "complete_yield_retrain",
   "write_station_event",
   "write_task_assignment",
   "receiving_create_store",

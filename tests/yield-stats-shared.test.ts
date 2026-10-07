@@ -16,9 +16,11 @@ import {
   YIELD_NUDGE_MIN_BATCHES,
   YIELD_STATS_WINDOW,
   batchSignedDrift,
+  canMarkRetrainDone,
   directionKey,
   evaluateItem,
   formatSignedPct,
+  isEligibleRetrainAssignee,
   isOffCard,
   isValidCardYield,
   lastWindow,
@@ -104,7 +106,7 @@ describe("the window is the last 10 headers, newest first", () => {
 describe("minimum 6 batches before any nudge", () => {
   it("5 batches all 40% under: no nudge (enough=false), the drift is still reported", () => {
     const s = summarizeDrift(many(5, 6))!;
-    expect(s.count).toBe(5);
+    expect(s.batches).toBe(5);
     expect(s.enough).toBe(false);
     expect(s.flagged).toBe(false);
     expect(s.signedDrift).toBeCloseTo(-0.4, 12);
@@ -173,7 +175,7 @@ describe("recipe level and maker level are independent", () => {
   it("only that item's batches count", () => {
     const other = many(10, 1, { itemId: "item-other" });
     const v = evaluateItem(ITEM, [...other, ...many(10, 10)], []);
-    expect(v.recipe.summary!.count).toBe(10);
+    expect(v.recipe.summary!.batches).toBe(10);
     expect(v.recipe.nudge).toBe(false);
   });
   it("the recipe nudge names the outlier makers, worst first", () => {
@@ -183,38 +185,117 @@ describe("recipe level and maker level are independent", () => {
   });
 });
 
-describe("Retrain snoozes the nudge for the next 10 batches, then it expires", () => {
-  const bad = many(10, 7, {}, 0); // −30% recipe nudge
+describe("Retrain holds the nudge for the next 10 BATCHES, then it expires", () => {
+  const bad = many(10, 7, {}, 0); // −30% recipe nudge (every batch by u-ana)
   const noteAt = new Date(Date.parse(bad[9]!.producedAt) + 60_000).toISOString();
-  const note: RetrainNoteLite = { id: "n1", itemId: ITEM, scope: "recipe", makerId: null, createdAt: noteAt, snoozeBatches: 10 };
+  // status "done": these pin the 10-batch snooze on its own; open-retrain holds are pinned below.
+  const note: RetrainNoteLite = { id: "n1", itemId: ITEM, scope: "recipe", makerId: null, createdAt: noteAt, snoozeBatches: 10, status: "done", assignedTo: "u-kh", doneAt: noteAt, doneBy: "u-kh" };
 
-  it("right after the note the nudge is snoozed with 10 batches to go", () => {
+  it("right after the note the nudge is held with 10 batches to go", () => {
     const v = evaluateItem(ITEM, bad, [note]);
     expect(v.recipe.summary!.flagged).toBe(true);
-    expect(v.recipe.snooze).toEqual({ noteId: "n1", remaining: 10, snoozed: true });
+    expect(v.recipe.hold).toMatchObject({ noteId: "n1", remaining: 10, snoozed: true, open: false, via: "own" });
     expect(v.recipe.nudge).toBe(false);
   });
-  it("after 9 more (still bad) batches it is still snoozed, 1 to go", () => {
+  it("after 9 more (still bad) batches it is still held, 1 to go", () => {
     const v = evaluateItem(ITEM, [...bad, ...many(9, 7, {}, 100)], [note]);
-    expect(v.recipe.snooze!.remaining).toBe(1);
+    expect(v.recipe.hold!.remaining).toBe(1);
     expect(v.recipe.nudge).toBe(false);
   });
   it("the 10th batch after the note ends the snooze — a still-bad recipe nudges again", () => {
     const v = evaluateItem(ITEM, [...bad, ...many(10, 7, {}, 100)], [note]);
-    expect(v.recipe.snooze!.snoozed).toBe(false);
+    expect(v.recipe.hold).toBeNull();
     expect(v.recipe.nudge).toBe(true);
   });
-  it("a recipe note never snoozes a maker's item, and a maker note never snoozes the recipe", () => {
-    const ana = evaluateItem(ITEM, bad, [note]).makers.find((m) => m.makerId === "u-ana")!;
+  it("double batches after a Retrain use 2 snooze slots each (batches, not entries)", () => {
+    const v = evaluateItem(ITEM, [...bad, ...many(4, 14, { batchesMade: 2 }, 100)], [note]);
+    expect(v.recipe.hold!.remaining).toBe(2);
+    const w = evaluateItem(ITEM, [...bad, ...many(5, 14, { batchesMade: 2 }, 100)], [note]);
+    expect(w.recipe.hold).toBeNull();
+    expect(w.recipe.nudge).toBe(true);
+  });
+  it("a RECIPE-level Retrain holds that recipe's maker items at once, on the recipe's batch counter", () => {
+    const now = evaluateItem(ITEM, bad, [note]).makers.find((m) => m.makerId === "u-ana")!;
+    expect(now.summary!.flagged).toBe(true);
+    expect(now.nudge).toBe(false);
+    expect(now.hold).toMatchObject({ noteId: "n1", via: "recipe" });
+    // Ben makes the next 10 batches: the RECIPE counter reaches 10 and Ana's item comes back,
+    // although Ana herself made nothing after the note.
+    const after = evaluateItem(ITEM, [...bad, ...many(10, 7, { madeBy: "u-ben" }, 100)], [note]);
+    const ana = after.makers.find((m) => m.makerId === "u-ana")!;
+    expect(ana.hold).toBeNull();
     expect(ana.nudge).toBe(true);
+  });
+  it("a maker note never holds the recipe", () => {
     const makerNote: RetrainNoteLite = { ...note, id: "n2", scope: "maker", makerId: "u-ana" };
     const v = evaluateItem(ITEM, bad, [makerNote]);
     expect(v.recipe.nudge).toBe(true);
-    expect(v.makers.find((m) => m.makerId === "u-ana")!.nudge).toBe(false);
+    expect(v.makers.find((m) => m.makerId === "u-ana")!.hold).toMatchObject({ via: "own" });
   });
   it("the LATEST note governs", () => {
     const older: RetrainNoteLite = { ...note, id: "n0", createdAt: bad[0]!.producedAt };
     expect(snoozeState(bad, [older, note])!.noteId).toBe("n1");
+  });
+});
+
+describe("an OPEN (assigned, not done) retrain holds the nudge past the 10-batch snooze", () => {
+  const bad = many(10, 7, {}, 0);
+  const noteAt = new Date(Date.parse(bad[9]!.producedAt) + 60_000).toISOString();
+  const open: RetrainNoteLite = { id: "o1", itemId: ITEM, scope: "recipe", makerId: null, createdAt: noteAt, snoozeBatches: 10, status: "open", assignedTo: "u-kh", doneAt: null, doneBy: null };
+  it("still open after 12 more bad batches: held as open, no nudge", () => {
+    const v = evaluateItem(ITEM, [...bad, ...many(12, 7, {}, 100)], [open]);
+    expect(v.recipe.hold).toMatchObject({ open: true, snoozed: false, holding: true });
+    expect(v.recipe.nudge).toBe(false);
+  });
+  it("marked done after those batches: the expired snooze lets it nudge again", () => {
+    const done = { ...open, status: "done" as const, doneAt: noteAt, doneBy: "u-kh" };
+    const v = evaluateItem(ITEM, [...bad, ...many(12, 7, {}, 100)], [done]);
+    expect(v.recipe.nudge).toBe(true);
+    expect(v.recipe.latestNoteId).toBe("o1");
+  });
+});
+
+describe("batches, not entries: window, minimum and boundary (Astra r1 #3)", () => {
+  it("3 double-batch entries at −20% hold 6 batches and DO nudge", () => {
+    const s = summarizeDrift(lastWindow(many(3, 16, { batchesMade: 2 })))!;
+    expect(s.entries).toBe(3);
+    expect(s.batches).toBe(6);
+    expect(s.enough).toBe(true);
+    expect(s.flagged).toBe(true);
+  });
+  it("the window stops at 10 batches: five double batches fill it, an older entry is out", () => {
+    const older = b(0, 0); // −100%, would poison the window if it got in
+    const w = lastWindow([older, ...many(5, 20, { batchesMade: 2 }, 10)]);
+    expect(w.map((x) => x.id)).not.toContain(older.id);
+    expect(summarizeDrift(w)!.batches).toBe(10);
+  });
+  it("PROPORTIONAL boundary: 9 single batches + an older triple contribute exactly 1/3 of the triple", () => {
+    const triple = b(0, 15, { batchesMade: 3 }); // 5 per batch = −50%
+    const w = lastWindow([triple, ...many(9, 10, {}, 10)]);
+    const t = w.find((x) => x.id === triple.id)!;
+    expect(t.weight).toBeCloseTo(1 / 3, 12);
+    const s = summarizeDrift(w)!;
+    expect(s.batches).toBe(10);
+    // (90 + 15/3 − 100) / 100 = −5%
+    expect(s.signedDrift).toBeCloseTo(-0.05, 12);
+  });
+});
+
+describe("assignee floor and who may mark done", () => {
+  it("an active KH+ at the shop, never above the assigning GM", () => {
+    expect(isEligibleRetrainAssignee({ level: 4, active: true, atShop: true }, 7)).toBe(true);
+    expect(isEligibleRetrainAssignee({ level: 7, active: true, atShop: true }, 7)).toBe(true);
+    expect(isEligibleRetrainAssignee({ level: 3, active: true, atShop: true }, 7)).toBe(false);
+    expect(isEligibleRetrainAssignee({ level: 8, active: true, atShop: true }, 7)).toBe(false);
+    expect(isEligibleRetrainAssignee({ level: 5, active: false, atShop: true }, 7)).toBe(false);
+    expect(isEligibleRetrainAssignee({ level: 5, active: true, atShop: false }, 7)).toBe(false);
+  });
+  it("the assignee or a GM, only while open", () => {
+    const n = { assignedTo: "u-kh", status: "open" as const };
+    expect(canMarkRetrainDone({ userId: "u-kh", level: 4 }, n)).toBe(true);
+    expect(canMarkRetrainDone({ userId: "u-gm", level: 7 }, n)).toBe(true);
+    expect(canMarkRetrainDone({ userId: "u-sl", level: 5 }, n)).toBe(false);
+    expect(canMarkRetrainDone({ userId: "u-kh", level: 4 }, { ...n, status: "done" })).toBe(false);
   });
 });
 

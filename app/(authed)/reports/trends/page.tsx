@@ -7,7 +7,7 @@
 import { redirect } from "next/navigation";
 
 import { serverT } from "@/lib/i18n/server";
-import { canReadReportLocation, lockLocationContext, type LocationActor } from "@/lib/locations";
+import { canReadReportLocation, type LocationActor } from "@/lib/locations";
 import { operationalNow } from "@/lib/midshift";
 import { loadTrendSeries } from "@/lib/reports-trends";
 import { loadTeamOperatingHealth, TEAM_VIEW_LEVEL } from "@/lib/team-metrics";
@@ -43,9 +43,10 @@ export default async function TrendsLandingPage({ searchParams }: PageProps) {
     : null;
 
   // Batch vs bottle Phase B: the yield nudges join the attention strip for level 5+ bound to this
-  // shop (the operational bind, as the yield page itself uses). Fail-soft on a HUB: a yield read
-  // failure must not take the trends landing down with it; the yield page itself throws loudly.
-  const canSeeYield = auth.level >= YIELD_STATS_READ_MIN && lockLocationContext(locActor, locationParam);
+  // shop with the REPORT bind (Astra r1 #4 — level 8 reads every shop, as the yield page does).
+  // Fail-soft on a HUB: a yield read failure must not take the trends landing down with it; the
+  // yield page itself says "unavailable" when 0218 is missing.
+  const canSeeYield = auth.level >= YIELD_STATS_READ_MIN && canReadReportLocation(locActor, locationParam);
   const yieldView = canSeeYield
     ? await loadYieldVariance(auth, locationParam).catch((e: unknown) => {
         console.error("trends landing: yield variance unavailable", e);

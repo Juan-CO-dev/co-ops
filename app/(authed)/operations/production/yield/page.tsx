@@ -1,7 +1,7 @@
 import { redirect } from "next/navigation";
 import { serverT } from "@/lib/i18n/server";
 import { formatDateLabel } from "@/lib/i18n/format";
-import { lockLocationContext, type LocationActor } from "@/lib/locations";
+import { canReadReportLocation, type LocationActor } from "@/lib/locations";
 import { etCalendarDate } from "@/lib/operational-day";
 import { requireSessionFromHeaders } from "@/lib/session";
 import { loadYieldVariance, YIELD_STATS_READ_MIN } from "@/lib/yield-stats";
@@ -10,7 +10,7 @@ import { BackLink } from "@/components/nav/BackLink";
 
 /**
  * /operations/production/yield — batch vs bottle PHASE B variance view + nudges. Level 5+ (shift
- * lead and up), bound to the shop exactly like /operations/production. A computed read over the
+ * lead and up, view-only below GM), report-bound: level 8 reads every shop. A computed read over the
  * batch headers Phase A already captures; nothing new is asked of the crew.
  */
 export default async function YieldVariancePage({ searchParams }: { searchParams: Promise<{ location?: string }> }) {
@@ -19,7 +19,9 @@ export default async function YieldVariancePage({ searchParams }: { searchParams
   if (auth.level < YIELD_STATS_READ_MIN) redirect("/dashboard");
   if (!location) redirect("/dashboard");
   const locActor: LocationActor = { role: auth.role, locations: auth.locations };
-  if (!lockLocationContext(locActor, location)) redirect("/dashboard");
+  // The REPORT bind (Astra r1 #4): level 8 reads every shop; a GM only their own. Writes keep the
+  // operational bind inside lib/yield-stats.ts (view.canAct is false off-shop).
+  if (!canReadReportLocation(locActor, location)) redirect("/dashboard");
   const lang = auth.user.language;
   const view = await loadYieldVariance(auth, location);
   const dateLabels: Record<string, string> = {};
