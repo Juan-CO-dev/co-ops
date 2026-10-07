@@ -26,6 +26,10 @@ export const JOBS_REGISTRY = [
   { job: "toast-catering-scan", cadenceMinutes: 10, window: { startHourET: 6, endHourET: 22 }, source: "pinger" },
   { job: "toast-sales-today", cadenceMinutes: 10, window: { startHourET: 6, endHourET: 22 }, source: "pinger" },
   { job: "job-watch", cadenceMinutes: 1440, source: "vercel" }, // 17:00 UTC
+  // Report digests (0220). Wider window than the other pingers: it starts at 03:00 ET so the
+  // unified digest's 03:00 fallback runs (Hobby: no extra Vercel cron). Must equal
+  // DIGEST_TICK_WINDOW in lib/report-digests-shared.ts (pinned by tests/digest-routes.test.ts).
+  { job: "digest-tick", cadenceMinutes: 10, window: { startHourET: 3, endHourET: 22 }, source: "pinger" },
 ] as const satisfies readonly RegisteredJob[];
 
 export type JobName = (typeof JOBS_REGISTRY)[number]["job"];
