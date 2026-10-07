@@ -3540,6 +3540,7 @@
   "readiness.reason.unresolved_product": "un producto utilizable en {count} línea(s) — ningún artículo de proveedor activo, o nada dice cuánto pesa una unidad",
   "readiness.reason.retired_product": "un producto descontinuado en {count} línea(s) — reapunta la línea a algo que sí compramos",
   "readiness.reason.retired_sku": "{count} SKU(s) descontinuado(s) todavía fijado(s) — reapunta la(s) línea(s)",
+  "readiness.reason.batch_mode_multi_output": "receta por tandas con {count} salida(s) — el modo por tandas necesita exactamente una",
   "readiness.hub.count": "{count} sin alistar",
   "catering.hub.title": "Catering",
   "catering.hub.subtitle": "Flujo, cotizaciones y clientes en un solo lugar.",

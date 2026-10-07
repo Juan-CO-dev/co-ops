@@ -76,7 +76,7 @@ export async function loadSkuReadinessMap(actor: AuthContext): Promise<Map<strin
 }
 
 interface GraphRows {
-  recipes: Array<{ id: string; batch_yield: number | string | null }>;
+  recipes: Array<{ id: string; batch_yield: number | string | null; batch_mode?: boolean | null }>;
   inputs: Array<{ recipe_id: string; component_sku_id: string | null; component_item_id: string | null; component_product_id: string | null; unit: string | null }>;
   outputs: Array<{ recipe_id: string; output_item_id: string | null; output_menu_item_id: string | null }>;
   items: Array<{ id: string; oz_per_par_unit: number | string | null; sold_directly: boolean; sell_portion: number | string | null; sell_portion_unit: string | null; menu_price: number | string | null }>;
@@ -89,7 +89,7 @@ async function loadGraphRows(): Promise<GraphRows> {
   // readiness. Order by the stable primary key `id` for deterministic ranging.
   const [recipes, inputs, outputs, items] = await Promise.all([
     selectAllRows<GraphRows["recipes"][number]>((from, to) =>
-      sb.from("recipes").select("id, batch_yield").eq("active", true)
+      sb.from("recipes").select("id, batch_yield, batch_mode").eq("active", true)
         .order("id", { ascending: true }).range(from, to)),
     // component_product_id is SELECTED, not inferred: without it a re-pointed line
     // is invisible here and readiness would see a recipe with fewer inputs than it
@@ -214,6 +214,9 @@ export async function loadGraphReadiness(actor: AuthContext): Promise<{
       hasInputs: ins.length > 0,
       hasOutputs: (outputsOfRecipe.get(recipeId) ?? 0) > 0,
       batchYield,
+      // 0215: a batch_mode recipe must have exactly one output (display detector only).
+      batchMode: recipeRowById.get(recipeId)?.batch_mode === true,
+      outputCount: outputsOfRecipe.get(recipeId) ?? 0,
     });
     const skuStatuses: ReadinessStatus[] = [];
     const subStatuses: ReadinessStatus[] = [];

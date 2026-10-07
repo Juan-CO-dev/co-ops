@@ -47,6 +47,12 @@ export const KNOWN_REASONS = [
   // ALREADY reads amber through not_ready_skus; this names WHY that SKU is not
   // ready, so the author sees "discontinued" instead of a bare count.
   "retired_sku",
+  // Batch vs bottle (0215): a recipe flagged batch_mode with anything but exactly ONE
+  // output. The toggle and every output writer REFUSE this state under the recipe row lock
+  // (set_recipe_batch_mode / add_recipe_output / remove_recipe_output / create_recipe_full),
+  // so this is a DISPLAY detector for seed drift, never the enforcement. RED: such an item
+  // is blocked from batch saves (batch_recipe_unresolved) until the outputs are fixed.
+  "batch_mode_multi_output",
 ] as const;
 export type ReasonCode = (typeof KNOWN_REASONS)[number];
 
@@ -100,11 +106,14 @@ export function skuReadiness(s: {
 /** Recipe OWN fields only (inputs/outputs/batch_yield). */
 export function recipeOwnReadiness(r: {
   hasInputs: boolean; hasOutputs: boolean; batchYield: number | null;
+  /** 0215 batch vs bottle — optional so every pre-existing caller is byte-identical. */
+  batchMode?: boolean; outputCount?: number;
 }): Readiness {
   const reasons: Reason[] = [];
   if (!r.hasInputs) reasons.push({ code: "no_inputs" });
   if (!r.hasOutputs) reasons.push({ code: "no_outputs" });
   if (!((r.batchYield ?? 0) > 0)) reasons.push({ code: "no_batch_yield" });
+  if (r.batchMode === true && (r.outputCount ?? 0) !== 1) reasons.push({ code: "batch_mode_multi_output", count: r.outputCount ?? 0 });
   return reasons.length === 0 ? READY : { status: "incomplete", reasons };
 }
 
