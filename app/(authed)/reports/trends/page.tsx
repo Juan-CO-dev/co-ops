@@ -7,12 +7,13 @@
 import { redirect } from "next/navigation";
 
 import { serverT } from "@/lib/i18n/server";
-import { canReadReportLocation, type LocationActor } from "@/lib/locations";
+import { canReadReportLocation, lockLocationContext, type LocationActor } from "@/lib/locations";
 import { operationalNow } from "@/lib/midshift";
 import { loadTrendSeries } from "@/lib/reports-trends";
 import { loadTeamOperatingHealth, TEAM_VIEW_LEVEL } from "@/lib/team-metrics";
 import { requireSessionFromHeaders } from "@/lib/session";
 import { getServiceRoleClient } from "@/lib/supabase-server";
+import { loadYieldVariance, YIELD_STATS_READ_MIN } from "@/lib/yield-stats";
 
 import { BackLink } from "@/components/nav/BackLink";
 import { TrendsLanding } from "@/components/team/TrendsLanding";
@@ -41,7 +42,21 @@ export default async function TrendsLandingPage({ searchParams }: PageProps) {
     ? await loadTeamOperatingHealth(sb, { viewer, locationId: locationParam, granularity: "day", compare: true, today })
     : null;
 
-  const attention: { kind: "ops" | "team"; titleKey: string; sub: string }[] = [];
+  // Batch vs bottle Phase B: the yield nudges join the attention strip for level 5+ bound to this
+  // shop (the operational bind, as the yield page itself uses). Fail-soft on a HUB: a yield read
+  // failure must not take the trends landing down with it; the yield page itself throws loudly.
+  const canSeeYield = auth.level >= YIELD_STATS_READ_MIN && lockLocationContext(locActor, locationParam);
+  const yieldView = canSeeYield
+    ? await loadYieldVariance(auth, locationParam).catch((e: unknown) => {
+        console.error("trends landing: yield variance unavailable", e);
+        return null;
+      })
+    : null;
+
+  const attention: { kind: "ops" | "team" | "yield"; titleKey: string; sub: string }[] = [];
+  if (yieldView && yieldView.recipeNudges + yieldView.makerItems > 0) {
+    attention.push({ kind: "yield", titleKey: "reports.trends.yield_title", sub: serverT(language, "reports.trends.yield_sub", { recipes: yieldView.recipeNudges, makers: yieldView.makerItems }) });
+  }
   if (team && team.summary.needsAttention > 0) {
     attention.push({ kind: "team", titleKey: "reports.trends.team.title", sub: serverT(language, team.banner.key as Parameters<typeof serverT>[1], team.banner.params) });
   }
@@ -60,6 +75,7 @@ export default async function TrendsLandingPage({ searchParams }: PageProps) {
         locationId={locationParam}
         language={language}
         canSeeTeam={canSeeTeam}
+        canSeeYield={canSeeYield}
         ops={ops}
         team={team}
         attention={attention}

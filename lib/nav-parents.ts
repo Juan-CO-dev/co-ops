@@ -83,6 +83,7 @@ const RULES: ParentRule[] = [
   { pattern: "/training/build/[item]", parent: { href: "/training", labelKey: "training.title" } },
   { pattern: "/reports/trends", parent: { href: "/reports", labelKey: "reports.page.title" } },
   { pattern: "/operations/receiving/[id]", parent: { href: "/operations/receiving", labelKey: "receiving.page.title" } },
+  { pattern: "/operations/production/yield", parent: { href: "/operations/production", labelKey: "production.page.title" } },
 
   // ─── Customer catering sub-pages → the catering hub ────────────────────
   { pattern: "/catering/[section]", parent: { href: "/catering", labelKey: "nav.catering" } },

@@ -255,6 +255,9 @@ const REACTIVE_STEP_UP_COMPONENTS = [
   "components/catering/quotes/QuotesClient.tsx",
   // Outside /admin's StepUpProvider — carries its own PasswordModal.
   "components/counts/CountForm.tsx",
+  // Outside /admin too (the yield variance page, level 5+); Update recipe yield is the only
+  // step-up action on it and the route asserts Tier B (joined by hand, 2026-10-07).
+  "components/production/YieldVariance.tsx",
 ];
 
 describe("step-up tier map — the server half", () => {
