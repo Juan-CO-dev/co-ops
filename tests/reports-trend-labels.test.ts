@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import React from "react";
 import { formatTrendMonthLabels } from "@/lib/i18n/format";
-import { parseReportRange } from "@/lib/report-range";
+import { parseReportRange, reportRangeWasShortened } from "@/lib/report-range";
 import { TrendControls } from "@/components/trends/TrendControls";
 import { ReportRangeControls } from "@/components/reports-hub/ReportRangeControls";
 
@@ -27,6 +27,12 @@ describe("month trend labels",()=>{
 
 it("states when an operations range was shortened to the 92-day cap",()=>{
   const range=parseReportRange({range:"custom",from:"2026-01-01",to:"2026-10-07"},"2026-10-07");
-  const html=renderToStaticMarkup(React.createElement(ReportRangeControls,{range,locationId:"shop",language:"en",shortened:true}));
+  const html=renderToStaticMarkup(React.createElement(ReportRangeControls,{range,locationId:"shop",language:"en",shortened:reportRangeWasShortened(range,"2026-01-01")}));
   expect(html).toContain("Range shortened to 92 days.");
+});
+
+it("does not claim a preset range was shortened because of a stale from parameter",()=>{
+  const range=parseReportRange({range:"last7",from:"2026-01-01"},"2026-10-07");
+  const html=renderToStaticMarkup(React.createElement(ReportRangeControls,{range,locationId:"shop",language:"en",shortened:reportRangeWasShortened(range,"2026-01-01")}));
+  expect(html).not.toContain("Range shortened to 92 days.");
 });

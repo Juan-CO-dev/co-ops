@@ -1,4 +1,4 @@
-import { parseReportRange, reportRangeParams, validReportDate } from "@/lib/report-range";
+import { parseReportRange, reportRangeParams, reportRangeWasShortened } from "@/lib/report-range";
 import type { ReactNode } from "react";
 import { TrendShopPanels } from "@/components/trends/TrendShopPanels";
 /**
@@ -197,7 +197,7 @@ async function renderReportsPage(params: Awaited<PageProps["searchParams"]>, all
 
       {viewerLevel < 4 ? <p className="mb-4 text-sm text-co-text-muted">{serverT(lang, "reports.hub.own_scope")}</p> : null}
       <ReportRangeControls range={range} locationId={allShops ? "all" : locationId} language={lang} action="/reports/operations" preserve={params}
-        shortened={validReportDate(params.from) && params.from < range.from} />
+        shortened={reportRangeWasShortened(range, params.from)} />
       <ReportFilterBar
         locationId={allShops ? "all" : locationId}
         dateFrom={dateFrom}
