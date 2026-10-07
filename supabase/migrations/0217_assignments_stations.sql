@@ -170,7 +170,9 @@ begin
   if v_user=p_actor_id then raise exception 'self_assignment'; end if;
   v_target := public.assignment_user_level(v_user,p_location_id);
   if v_target>v_actor then raise exception 'role_insufficient'; end if;
-  if v_target < case when v_task in ('am_prep','mid_day_prep','opening_report') then 3 else 4 end then
+  -- Parenthesized: PL/pgSQL reads an IF condition only up to the FIRST "then" token, so a bare
+  -- CASE ... THEN inside the condition is cut in half (sim apply 2026-10-07: syntax error).
+  if v_target < (case when v_task in ('am_prep','mid_day_prep','opening_report') then 3 else 4 end) then
     raise exception 'role_insufficient';
   end if;
   perform pg_advisory_xact_lock(hashtextextended('task/'||p_location_id::text||'/'||v_day::text||'/'||v_user::text||'/'||v_task,0));
@@ -325,7 +327,10 @@ begin
   ) as expected(table_name, policy_name, expression) loop
     select qual into v_qual from pg_policies where schemaname='public'
       and tablename=r.table_name and policyname=r.policy_name and cmd='SELECT';
-    if v_qual is null or translate(lower(v_qual), E' \t\n\r', '')
+    -- Postgres stores the level literals as "(8)::numeric" (current_user_role_level() returns
+    -- numeric; sim probe 2026-10-07), so strip that cast before comparing to the expected text.
+    if v_qual is null
+        or translate(lower(regexp_replace(v_qual, '\((\d+)\)::numeric', '\1', 'g')), E' \t\n\r', '')
         is distinct from translate(lower(r.expression), E' \t\n\r', '') then
       raise exception 'report policy expression mismatch: %.%: %', r.table_name, r.policy_name, v_qual;
     end if;

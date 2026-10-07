@@ -200,7 +200,7 @@ describe("authored migration security contracts (not live SQL integration)", () 
     expect(sql).toContain("report_assignments(location_id,operational_date,assignee_id,report_type) where active");
   });
   it("enforces the assignment floor in SQL as well as the API", () => {
-    expect(sql).toContain("v_target < case when v_task in ('am_prep','mid_day_prep','opening_report') then 3 else 4 end");
+    expect(sql).toContain("v_target < (case when v_task in ('am_prep','mid_day_prep','opening_report') then 3 else 4 end) then");
     for (const task of TASK_TYPES) expect(sql).toContain(`'${task}'`);
   });
 });

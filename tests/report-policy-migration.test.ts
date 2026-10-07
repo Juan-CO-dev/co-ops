@@ -18,7 +18,11 @@ describe("0217 report read scope (authored SQL, not live integration)", () => {
       "checklist_instances_read", "checklist_submissions_read", "pm_evals_read_mgr",
       "pm_reports_read", "written_reports_read",
     ].sort());
-    expect(migration).not.toMatch(/regexp_replace|execute\s+format/i);
+    // No dynamic SQL and no regex REWRITE of policy text. The single regexp_replace allowed is the
+    // read-only "(8)::numeric" cast normalization inside the final-expression assertion
+    // (sim probe 2026-10-07: Postgres stores the level literals with a ::numeric cast).
+    expect(migration).not.toMatch(/execute\s+format/i);
+    expect(migration.match(/regexp_replace/gi) ?? []).toHaveLength(1);
   });
 
   it.each([
@@ -43,7 +47,7 @@ describe("0217 report read scope (authored SQL, not live integration)", () => {
     expect(migration).toContain("and policyname=r.policy_name and cmd='SELECT'");
     expect(migration).toContain("set local search_path = pg_catalog, public");
     // Whitespace only: stripping parentheses would fail to detect precedence drift.
-    expect(migration).toContain("translate(lower(v_qual), E' \\t\\n\\r', '')");
+    expect(migration).toContain("::numeric', '\\1', 'g')), E' \\t\\n\\r', '')");
     expect(migration).toContain("is distinct from translate(lower(r.expression), E' \\t\\n\\r', '')");
   });
 });
