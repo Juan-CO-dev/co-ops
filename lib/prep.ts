@@ -70,6 +70,7 @@ import { loadPrepSections } from "@/lib/prep-sections.server";
 import { loadBatchDerivedForItems, loadDerivedForItems, recordBatchProductionFromPrep, recordProductionFromPrep, skuConsumptionForItem, type DerivedSku, type ConfirmedInput } from "@/lib/prep-consumption";
 import { loadBatchContextForItems, type BatchItemContext } from "@/lib/batch-prep";
 import { batchContractCodeFromMessage, toBatchPayload, type BatchContractCode, type BatchEntry } from "@/lib/batch-prep-shared";
+import { midDayFinalizeBlockers } from "@/lib/mid-day-shared";
 import type {
   ChecklistCompletion,
   ChecklistInstance,
@@ -1472,7 +1473,9 @@ export async function saveMidDayPhase2Item(
 /** Result of finalizeMidDayPhase2. */
 export type MidDayFinalizeResult =
   | { ok: true; instance: ChecklistInstance }
-  | { ok: false; reason: "not_found" | "not_in_phase2" };
+  | { ok: false; reason: "not_found" | "not_in_phase2" }
+  /** 0215 (Astra P1 #2): batch rows whose Phase 2 save is missing — finalize refused. */
+  | { ok: false; reason: "batch_rows_unsaved"; missing: string[] };
 
 /**
  * finalizeMidDayPhase2 — close out a mid-day prep instance (C.43): pessimistic
@@ -1483,6 +1486,28 @@ export async function finalizeMidDayPhase2(
   service: SupabaseClient,
   args: { instanceId: string; actor: PrepActor; ipAddress?: string | null; userAgent?: string | null },
 ): Promise<MidDayFinalizeResult> {
+  // Astra P1 #2 (BC-034): a batch item's Phase 1 count is NOT a Phase 2 save. Finalize is
+  // refused while any batch row lacks a `batch` object on its live completion — the same
+  // pure rule the page uses to mark a row saved (lib/mid-day-shared.ts).
+  const state = await loadMidDayPrepState(service, { instanceId: args.instanceId });
+  if (state) {
+    const isBatchByItem: Record<string, boolean> = {};
+    for (const [id, ctx] of Object.entries(state.batchContext)) isBatchByItem[id] = ctx.isBatch;
+    const missing = midDayFinalizeBlockers(state.templateItems, state.completions, isBatchByItem);
+    if (missing.length > 0) {
+      void audit({
+        actorId: args.actor.userId,
+        actorRole: args.actor.role,
+        action: "prep.submit",
+        resourceTable: "checklist_instances",
+        resourceId: args.instanceId,
+        metadata: { outcome: "batch_rows_unsaved", phase: "mid_day_phase2_finalize", prep_subtype: "mid_day_prep", missing_template_item_ids: missing },
+        ipAddress: args.ipAddress ?? null,
+        userAgent: args.userAgent ?? null,
+      });
+      return { ok: false, reason: "batch_rows_unsaved", missing };
+    }
+  }
   const nowIso = new Date().toISOString();
   const { data, error } = await service
     .from("checklist_instances")

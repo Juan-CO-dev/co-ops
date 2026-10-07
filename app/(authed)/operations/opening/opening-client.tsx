@@ -36,14 +36,13 @@ import type { Language, TranslationKey, TranslationParams } from "@/lib/i18n/typ
 import type { OpeningCloserCountSnapshotRow } from "@/lib/opening";
 import type { DerivedSku } from "@/lib/prep-consumption";
 import {
-  batchEntryFromForm,
   batchFormFromRecord,
   needForLine,
   readBatchFromPrepData,
-  validateBatchEntry,
   type BatchItemContext,
   type BatchRowContext,
 } from "@/lib/batch-prep-shared";
+import { phase2SaveGate } from "@/lib/opening-phase2-gate";
 import type {
   ChecklistCompletion,
   ChecklistInstance,
@@ -1276,69 +1275,33 @@ export function OpeningClient({
     // a started row blocked on a prerequisite (ground truth / reason) goes
     // "incomplete" so the prepper isn't left with a mute dead-spot. opener_prepped
     // is checked FIRST so a genuinely blank row reads "unsaved", not "incomplete".
-    if (valueToSave.openerPrepped === null) return;
-    // C.53 Commit B residual fix — source ground_truth + prep_need from the
-    // PERSISTED Phase 1 contract so this pre-gate's delta matches the server's
-    // delta by construction (the server reads prep_need straight from
-    // prep_data.phase1, never recomputes). Defensive fallback to the old client
-    // derivation only when no phase1 row exists yet. This also closes the
-    // NULL-source finalize wedge: a NULL-source-recounted item has a persisted
-    // non-null ground_truth, so the `needs_ground_truth` bail no longer fires
-    // (closerCount is null but the recount lives in prep_data.phase1), the row
-    // POSTs, and outstandingCount can reach 0.
-    const resolved = phase1ResolvedByItem.get(templateItemId) ?? null;
-    const groundTruth =
-      resolved?.groundTruth ??
-      (valueToSave.openerRecount !== null
-        ? valueToSave.openerRecount
-        : sectionVerified
-          ? closerCount
-          : null);
-    if (groundTruth === null) {
-      markIncomplete("needs_ground_truth");
+    // The gate is ONE pure function (lib/opening-phase2-gate.ts) shared with the unit spine:
+    // persisted Phase 1 ground truth / prep_need first (C.53 Commit B residual fix), today's
+    // over/under gates for a single-box row, and — on a batch row — BOTTLED measured against
+    // the LINE need with no over-prep question (Astra P1 #1; the RPC skips the same gate),
+    // then the batch half's own gates mirrored from the RPC.
+    const gate = phase2SaveGate(
+      {
+        openerPrepped: valueToSave.openerPrepped,
+        openerRecount: valueToSave.openerRecount,
+        overPar: valueToSave.overPar,
+        underPar: valueToSave.underPar,
+        batch: valueToSave.batch,
+      },
+      {
+        sectionVerified,
+        closerCount,
+        parValue,
+        resolved: phase1ResolvedByItem.get(templateItemId) ?? null,
+        batch: batchByItem.get(templateItemId) ?? null,
+      },
+    );
+    if (gate.kind === "blank") return;
+    if (gate.kind === "incomplete") {
+      markIncomplete(gate.reason);
       return;
     }
-    if (parValue !== null) {
-      const prepNeed = resolved?.prepNeed ?? Math.max(0, parValue - groundTruth);
-      const delta = valueToSave.openerPrepped - prepNeed;
-      if (delta > 0 && valueToSave.overPar === null) {
-        markIncomplete("needs_reason");
-        return;
-      }
-      if (delta < 0 && valueToSave.underPar === null) {
-        markIncomplete("needs_reason");
-        return;
-      }
-    }
-    if (valueToSave.underPar && !valueToSave.underPar.freeText.trim()) {
-      markIncomplete("needs_reason");
-      return;
-    }
-
-    // 0215 batch vs bottle — the batch half's gates, mirrored from the RPC (ruling B +
-    // addendum 2) so the row never POSTs what the server would refuse. A blocked recipe
-    // or an unknown backup is "needs_batch" (the row says why); a missing over-batch
-    // reason is "needs_reason" like any other reason gap.
-    const batchCtx = batchByItem.get(templateItemId) ?? null;
-    let batchEntry: ReturnType<typeof batchEntryFromForm> | null = null;
-    if (batchCtx !== null) {
-      if (batchCtx.blocked || batchCtx.backupBefore === null) {
-        markIncomplete("needs_batch");
-        return;
-      }
-      const form = valueToSave.batch ?? { batches: 0, cameOutTo: null, tossed: 0, overBatchReason: null };
-      batchEntry = batchEntryFromForm(form, batchCtx.yieldPerBatch);
-      const check = validateBatchEntry(batchEntry, {
-        bottled: valueToSave.openerPrepped,
-        backupBefore: batchCtx.backupBefore,
-        need: batchCtx.need,
-        yieldPerBatch: batchCtx.yieldPerBatch,
-      });
-      if (!check.ok) {
-        markIncomplete(check.code === "over_batch_reason_missing" || check.code === "over_batch_note_required" ? "needs_reason" : "needs_batch");
-        return;
-      }
-    }
+    const batchEntry = gate.batchEntry;
 
     // Value-diff guard — skip the round-trip when the persisted value is already
     // current. Reads the same Map the badge renders from.

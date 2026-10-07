@@ -641,11 +641,13 @@ function PrepEntryRow({
     prepNeed !== null &&
     prepNeed > 0 &&
     value.openerPrepped === null;
+  // 0215 (Astra P1 #1): a batch row bottling MORE than its LINE need from the counted backup
+  // asks for nothing — the over-prep reason is a single-box question only. Under stays.
   const reasonMissing =
     showMissingErrors &&
     delta !== null &&
     delta !== 0 &&
-    ((delta > 0 && value.overPar === null) ||
+    ((delta > 0 && batch === null && value.overPar === null) ||
       (delta < 0 && value.underPar === null));
 
   const parDisplay =
@@ -770,7 +772,7 @@ function PrepEntryRow({
       ) : null}
 
       {/* Signal banners — modal triggers for over/under-prep capture */}
-      {overDelta !== null ? (
+      {overDelta !== null && batch === null ? (
         <button
           type="button"
           onClick={onOpenOverPar}

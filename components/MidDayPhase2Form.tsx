@@ -51,6 +51,12 @@ export interface MidDayPhase2Item {
   parUnit: string | null;
   need: number | null;
   initialPrepped: number | null;
+  /**
+   * Astra P1 #2 — true iff a Phase 2 SAVE exists for this row (lib/mid-day-shared.ts
+   * midDayPhase2RowSeed). A Phase 1 count never counts as saved; absent = derive from
+   * initialPrepped (pre-0215 callers).
+   */
+  initialSaved?: boolean;
   initialSavedBy: string | null;
   /** Registry item id (for production capture); null = not registry-linked. */
   itemId: string | null;
@@ -140,7 +146,7 @@ export function MidDayPhase2Form({
         value: it.initialPrepped !== null ? String(it.initialPrepped) : "",
         overUnder: it.initialOverUnder,
         modalOpen: false,
-        status: it.initialPrepped !== null ? "saved" : "idle",
+        status: (it.initialSaved ?? it.initialPrepped !== null) ? "saved" : "idle",
         savedBy: it.initialSavedBy,
         error: null,
         confirmedConsumption: null,
@@ -265,8 +271,12 @@ export function MidDayPhase2Form({
       }
       let msg = "Finalize failed.";
       try {
-        const b = (await res.json()) as { message?: string; error?: string };
-        msg = b.message ?? b.error ?? msg;
+        const b = (await res.json()) as { message?: string; error?: string; code?: string; missing?: string[] };
+        // Astra P1 #2: finalize is refused while a batch row has no Phase 2 save.
+        msg =
+          b.code === "batch_rows_unsaved"
+            ? t("mid_day_prep.phase2.finalize_batch_rows_unsaved" as TranslationKey, { n: b.missing?.length ?? 0 })
+            : (b.message ?? b.error ?? msg);
       } catch {
         // keep generic
       }

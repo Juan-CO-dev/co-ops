@@ -17,7 +17,7 @@ import { mapOpeningError } from "@/app/api/opening/_helpers";
 import { audit } from "@/lib/audit";
 import en from "@/lib/i18n/en.json";
 import es from "@/lib/i18n/es.json";
-import { BATCH_CONTRACT_CODES, OVER_BATCH_REASON_CODES } from "@/lib/batch-prep-shared";
+import { BATCH_CONTRACT_CODES, OVER_BATCH_REASON_CODES, type BatchItemContext } from "@/lib/batch-prep-shared";
 import {
   OPENING_BASE_LEVEL,
   OpeningBatchContractError,
@@ -28,7 +28,7 @@ import type { OpeningEntryPhase2 } from "@/lib/types";
 vi.mock("@/lib/audit", () => ({ audit: vi.fn(async () => {}) }));
 // Astra P2 #5: the save consults the batch context (graph resolvability) BEFORE the RPC. The
 // double answers "eligible" by default; one test flips it to "unresolved".
-const batchCtxMock = vi.fn(async (ids: string[]) => new Map(ids.map((id) => [id, { itemId: id, recipeId: "r1", recipeName: "Hot Peppers", batchMode: true, shelfLifeDays: 5, outputCount: 1, yieldPerBatch: 4, isBatch: true, eligibility: "batched" as const, blockedReason: null }])));
+const batchCtxMock = vi.fn(async (ids: string[]): Promise<Map<string, BatchItemContext>> => new Map(ids.map((id) => [id, { itemId: id, recipeId: "r1", recipeName: "Hot Peppers", batchMode: true, shelfLifeDays: 5, outputCount: 1, yieldPerBatch: 4, isBatch: true, eligibility: "batched" as const, blockedReason: null }])));
 vi.mock("@/lib/batch-prep", () => ({ loadBatchContextForItems: (ids: string[]) => batchCtxMock(ids) }));
 // The fold is a separate service-role writer; stubbed so the test observes the ARGUMENTS the
 // save hands it (persisted attribution, never the caller's clock) without a graph.
