@@ -129,8 +129,12 @@ export async function loadManagedStores(actor: AuthContext, locationId: string) 
   const sb = getServiceRoleClient();
   const stores = await selectAllRows<{ id: string; name: string; active: boolean }>((from, to) =>
     sb.from("vendors").select("id,name,active").eq("source_kind", "store").order("id").range(from, to));
-  const members = await selectAllRows<{ vendor_id: string; location_id: string | null }>((from, to) =>
-    sb.from("vendor_items").select("vendor_id,location_id").order("id").range(from, to));
+  const members: Array<{ vendor_id: string; location_id: string | null }> = [];
+  for (let start = 0; start < stores.length; start += 100) {
+    const ids = stores.slice(start, start + 100).map((store) => store.id);
+    members.push(...await selectAllRows<{ vendor_id: string; location_id: string | null }>((from, to) =>
+      sb.from("vendor_items").select("vendor_id,location_id").in("vendor_id", ids).order("id").range(from, to)));
+  }
   // Include shared stores; the writer authorizes every affected shop explicitly.
   return stores.filter((store) => !members.some((m) => m.vendor_id === store.id) || members.some((m) => m.vendor_id === store.id && m.location_id === locationId));
 }

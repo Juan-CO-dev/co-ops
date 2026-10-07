@@ -173,6 +173,7 @@ export function evaluateWave7Tables(tables: LiveTables, overrides = new Map<stri
   for (const shop of liveRows(tables, "locations").filter(r => r.active !== false && (!visibleShopIds || visibleShopIds.has(liveId(r))))) {
     const shopId = liveId(shop), overlays = liveRows(tables, "location_sku_settings").filter(r => r.location_id === shopId);
     const overlayFor = (id: string) => overlays.find(r => r.sku_id === id);
+    // Main's per-shop scope applies to EVERY SKU (regular and store alike); keep it unchanged.
     const active = (sku: LiveRow) => (sku.location_id == null || sku.location_id === shopId) && resolveActive(overlayFor(liveId(sku))?.active_override as boolean | null | undefined, sku.active === true);
     const productIndex: ProductIndex = { resolution: new Map(), basis: new Map() };
     const resolutions = new Map<string, ReturnType<typeof resolveProductMember>>(), productBases = new Map<string, RecipeInputSku>();

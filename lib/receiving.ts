@@ -267,12 +267,17 @@ export async function loadReceivingFormData(actor: AuthContext, locationId: stri
   const productNames = new Map(products.map((p) => [p.id, [p.name, ...(p.name_es ? [p.name_es] : [])]]));
   // Stores are shared identities, but the picker only exposes stores used here.
   // A newly created store is returned directly by the create endpoint.
-  const deliveries = await selectAllRows<{ id: string; vendor_id: string }>(async (from, to) => {
-    const { data, error } = await sb.from("vendor_deliveries").select("id, vendor_id")
-      .eq("location_id", locationId).order("id").range(from, to);
-    if (error) throw new Error(`loadReceivingFormData store scope: ${error.message}`);
-    return { data };
-  });
+  const deliveries: Array<{ id: string; vendor_id: string }> = [];
+  const storeIds = vendors.filter((vendor) => vendor.source_kind === "store").map((vendor) => vendor.id);
+  for (let start = 0; start < storeIds.length; start += 100) {
+    const ids = storeIds.slice(start, start + 100);
+    deliveries.push(...await selectAllRows<{ id: string; vendor_id: string }>(async (from, to) => {
+      const { data, error } = await sb.from("vendor_deliveries").select("id, vendor_id")
+        .eq("location_id", locationId).in("vendor_id", ids).order("id").range(from, to);
+      if (error) throw new Error(`loadReceivingFormData store scope: ${error.message}`);
+      return { data };
+    }));
+  }
   const localStoreIds = new Set([
     ...skuList.filter((sku) => sku.location_id === locationId).map((sku) => sku.vendor_id),
     ...deliveries.map((delivery) => delivery.vendor_id),

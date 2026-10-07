@@ -64,8 +64,9 @@ describe("product loader store eligibility", () => {
   });
   it("uses the vendor-down exception but never another location's store member", async () => {
     fixture.tables.vendors![0]!.active = false;
+    fixture.tables.vendor_delivery_items!.push(receipt("four", "store", "north", 4));
     expect((await loadProductIndex(["product"], "north")).index.resolution.get("product")?.skuId).toBe("store-sku");
-    expect((await loadProductIndex(["product"], "south")).index.resolution.get("product")?.skuId).toBeNull();
+    expect((await loadProductIndex(["product"], "south")).index.resolution.get("product")?.skuId).toBe("regular-sku");
   });
   it("retains received stock membership when a supplier retires or merges", async () => {
     fixture.tables.vendors![1]!.active = false;
@@ -73,5 +74,14 @@ describe("product loader store eligibility", () => {
     expect(loaded.byProduct.get("product")?.members.find(m => m.skuId === "store-sku"))
       .toMatchObject({ active: true, vendorActive: false });
     expect(loaded.index.resolution.get("product")?.skuId).toBe("regular-sku");
+  });
+  it("resolves regular members on inactive vendors and scoped to another shop as before", async () => {
+    fixture.tables.vendors![0]!.active = false;
+    fixture.tables.vendor_items![0]!.location_id = "south";
+    fixture.tables.vendor_items![1]!.active = false;
+    const loaded = await loadProductIndex(["product"], "north");
+    expect(loaded.index.resolution.get("product")?.skuId).toBe("regular-sku");
+    expect(loaded.byProduct.get("product")?.members.find(m => m.skuId === "regular-sku"))
+      .toMatchObject({ active: true, vendorActive: false, sourceKind: "vendor" });
   });
 });

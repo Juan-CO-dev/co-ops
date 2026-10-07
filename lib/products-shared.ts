@@ -164,8 +164,9 @@ export function resolveProductMember(input: ProductResolutionInput): ProductReso
     return { ...base, skuId: null, rung: "unresolved", reason: "retired_product" };
   }
 
-  const hasRegularMember = input.members.some((m) => m.active && m.vendorActive !== false && m.sourceKind !== "store");
-  const active = input.members.filter((m) => m.active && m.vendorActive !== false && !m.pendingReview &&
+  const hasRegularMember = input.members.some((m) => m.active && m.sourceKind !== "store");
+  const active = input.members.filter((m) => m.active &&
+    (m.sourceKind !== "store" || m.vendorActive !== false) && !m.pendingReview &&
     (m.sourceKind !== "store" || (m.hasOzBasis === true &&
       (!hasRegularMember || (input.storeRunStreak ?? m.storeRunStreak ?? 0) >= STORE_RUN_PROMOTION_STREAK))));
   if (active.length === 0) {

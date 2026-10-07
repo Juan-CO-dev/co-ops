@@ -70,10 +70,11 @@ function family(vendor: Vendor): string {
   if (name === "usfoods") return "usfoods";
   return name;
 }
-async function loadVendor(vendorId: string): Promise<Vendor> {
+async function loadVendor(vendorId: string, includeInactive = false): Promise<Vendor> {
   id(vendorId);
-  const { data, error } = await getServiceRoleClient().from("vendors")
-    .select("id,name,active,account_number,portal_url").eq("source_kind", "vendor").eq("id", vendorId).maybeSingle<Vendor>();
+  const query = getServiceRoleClient().from("vendors")
+    .select("id,name,active,account_number,portal_url").eq("source_kind", "vendor").eq("id", vendorId);
+  const { data, error } = await (includeInactive ? query : query.eq("active", true)).maybeSingle<Vendor>();
   check(error);
   if (!data) throw new VendorImportError(404, "vendor_not_found");
   return data;
@@ -228,7 +229,7 @@ export async function stageVendorImport(actor: AuthContext, vendorId: string, fi
 
 export async function loadImportBatch(actor: AuthContext, vendorId: string, batchId: string): Promise<ImportBatchView> {
   requireLevel(actor, VENDOR_IMPORT_STAGE_MIN); id(vendorId); id(batchId);
-  await loadVendor(vendorId);
+  await loadVendor(vendorId, true);
   const sb = getServiceRoleClient();
   const { data: batch, error } = await sb.from("vendor_import_batches").select("*").eq("id", batchId)
     .eq("vendor_id", vendorId).maybeSingle<BatchRow>();
@@ -254,6 +255,7 @@ export async function applyVendorImport(actor: AuthContext, vendorId: string, ba
   if (!decisions || typeof decisions !== "object" || Array.isArray(decisions)
     || Object.values(decisions).some(d => d !== "accept" && d !== "skip")
     || typeof expectedDigest !== "string" || !/^[a-f0-9]{64}$/.test(expectedDigest)) throw new VendorImportError(400, "invalid_payload");
+  await loadVendor(vendorId);
   const view = await loadImportBatch(actor, vendorId, batchId);
   const keys = new Set(view.observations.map(observationKey));
   if (Object.keys(decisions).some(k => !keys.has(k))) throw new VendorImportError(400, "invalid_payload");

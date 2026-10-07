@@ -691,7 +691,8 @@ export async function loadProductIndex(
         productUnitOz.get(m.product_id) ?? 0) > 0,
       vendorActive: m.vendor_id == null || vendorById.get(m.vendor_id)?.active === true,
       active: resolveActive(overlayBySku.get(m.id) ?? null, m.active ?? true) &&
-        (locationId == null || m.location_id == null || m.location_id === locationId),
+        (vendorById.get(m.vendor_id ?? "")?.source_kind !== "store" ||
+          locationId == null || m.location_id == null || m.location_id === locationId),
       avgOzPerEach: num(m.avg_oz_per_each),
       lastReceivedAt: lastReceived.get(m.id) ?? null,
     });

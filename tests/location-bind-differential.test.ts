@@ -58,7 +58,7 @@ const TENANCY_SCOPED_TABLES = [
  * though it never names the table with .from(…) (0214: save_am_prep_draft merges the AM prep
  * draft atomically, so saveAmPrepDraft has no .from("am_prep_drafts") write of its own).
  */
-const TENANCY_SCOPED_RPCS = ["save_am_prep_draft", "receiving_create_store", "receiving_create_store_item", "receiving_resolve_pending_item"];
+const TENANCY_SCOPED_RPCS = ["save_am_prep_draft", "receiving_create_store", "receiving_create_store_item", "receiving_resolve_pending_item", "receiving_manage_store"];
 
 /** Any of these in a function body counts as "the actor was bound to a location". */
 const BIND_PRIMITIVES = [
