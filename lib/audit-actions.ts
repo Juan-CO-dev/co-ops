@@ -223,6 +223,10 @@ export const NON_DESTRUCTIVE_ACTIONS = [
   "receipt.po_linked",
   "recipe.input_unit_normalize",
   "recipe_input.update",
+  // Batch vs bottle Phase B (0218): a Retrain note on a yield-drift nudge. It records that the
+  // drift is a training question and snoozes that nudge; it changes NO recipe, par or stock, so
+  // it is not an answer to "who changed the kitchen?" (the card edit is recipe_output.update).
+  "yield.retrain_noted",
   // Barcode taught at the receiving door (V3-B, 2026-09-16). Teaching a code is a
   // RECOGNITION aid, not a configuration change: nothing about what the kitchen buys, from
   // whom, at what price or in what pack moves — the next scan of that label simply opens the

@@ -133,6 +133,11 @@ export const DESTRUCTIVE_ACTIONS = [
   "recipe_input.remove",
   "recipe_output.add",
   "recipe_output.remove",
+  // Batch vs bottle Phase B (0218): a GM rewrites a batch recipe card's yield from the drift
+  // nudge (update_recipe_output_yield). The card is shared operational config — every shop's
+  // depletion and every future nudge read it — so the edit is destructive. Registered BEFORE
+  // its first caller so every commit compiles on its own.
+  "recipe_output.update",
   // Batch vs bottle (0215). Tossing the counted bulk backup is a HUMAN act on the
   // accountability record — waste that variance reads — and its retraction on revoke is
   // the same act undone; both belong under "who changed the kitchen?" (Astra r1 Q11,
