@@ -21,6 +21,37 @@
  * a null amount is an advisory, never a fabricated number.
  */
 
+import { buildPackChain, chainRootLabel, type PackChainLevel } from "@/lib/pack-chain-shared";
+
+/** Price entered at the received level -> price of one root pack. Structural
+ * conversion does not need a guessed weight for a volume/count leaf. */
+export function storeRootPackPrice(price: number, receivedLevel: string | null,
+  levels: PackChainLevel[] | null, rootLabel: string | null): number | null {
+  if (!Number.isFinite(price) || price <= 0) return null;
+  const label = receivedLevel?.trim() || null;
+  if (!levels?.length) return label == null || label === rootLabel ? price : null;
+  const chain = buildPackChain(levels);
+  const root = chainRootLabel(chain);
+  if (root == null) return null;
+  let current = chain.byLabel.get(root);
+  let multiplier = 1;
+  const seen = new Set<string>();
+  let converted: number | null = null;
+  while (current) {
+    if (seen.has(current.id)) return null;
+    seen.add(current.id);
+    if (current.label === (label ?? root)) {
+      const result = price * multiplier;
+      converted = Number.isFinite(result) ? result : null;
+    }
+    if (!Number.isFinite(current.containsQty) || current.containsQty <= 0) return null;
+    if (!current.containsLevelId) return current.containsMeasureUnit && seen.size === levels.length ? converted : null;
+    multiplier *= current.containsQty;
+    current = chain.byId.get(current.containsLevelId);
+  }
+  return null;
+}
+
 export interface IntakeLineForCredits {
   deliveryItemId: string;
   skuId: string;

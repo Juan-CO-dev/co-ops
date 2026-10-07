@@ -96,6 +96,7 @@ import { useTranslation } from "@/lib/i18n/provider";
 import { formatTime } from "@/lib/i18n/format";
 import { ActionButton, actionButtonClass } from "@/components/ActionButton";
 import { PhotoCapture } from "@/components/photos/PhotoCapture";
+import { storeErrorKey } from "@/lib/receiving-stores-shared";
 import { IntakeLineRow, type IntakeLine } from "@/components/receiving/IntakeLineRow";
 import { ScanField, type ScanFieldEvent } from "@/components/receiving/ScanField";
 import { CollapsibleSection } from "@/components/ui/CollapsibleSection";
@@ -1015,6 +1016,11 @@ export function ReceivingForm({
   //   no template       → POPULATE offered rows from the vendor's usage-ranked SKUs
   //                       (Juan's refinement); if the vendor has none (e.g. packaging
   //                       vendors), keep today's single blank added line.
+  async function storeResponseError(response: Response): Promise<string> {
+    const body = await response.json().catch(() => ({})) as { code?: string; message?: string; error?: string };
+    return body.code ? t(storeErrorKey(body.code)) : body.message ?? body.error ?? t("receivingStore.save_error");
+  }
+
   async function createStore() {
     if (!storeName.trim() || storeBusy) return;
     const token = intakeTokenRef.current;
@@ -1025,12 +1031,13 @@ export function ReceivingForm({
         method: "POST", headers: { "content-type": "application/json" },
         body: JSON.stringify({ locationId, name: storeName.trim() }),
       });
-      if (!response.ok) throw new Error("store");
-      const { store } = await response.json() as { store: ReceivingFormData["vendors"][number] };
+      if (!response.ok) { setErr(await storeResponseError(response)); return; }
+      const { store, regularVendorNameMatch } = await response.json() as { store: ReceivingFormData["vendors"][number]; regularVendorNameMatch?: boolean };
       setAddedStores((previous) => [...previous.filter((v) => v.id !== store.id), store]);
       if (intakeTokenRef.current !== token) return;
       await onVendorChange("");
       setVendorId(store.id);
+      if (regularVendorNameMatch) setErr(t("receivingStore.vendor_name_warning"));
       setNewStore(false);
       setStoreName("");
     } catch { setErr(t("receivingStore.save_error")); }
@@ -1059,7 +1066,7 @@ export function ReceivingForm({
           ? { referenceSkuId }
           : { ...pendingInput, requestId: pendingRequestRef.current!.id }) }),
       });
-      if (!response.ok) throw new Error("item");
+      if (!response.ok) { setErr(await storeResponseError(response)); return; }
       const { sku } = await response.json() as { sku: ReceivingSkuOption };
       if (intakeTokenRef.current !== token) return;
       setAddedSkus((previous) => [...previous.filter((s) => s.id !== sku.id), sku]);
@@ -1239,6 +1246,10 @@ export function ReceivingForm({
       setLinkedPoId(null);
       setLinkedPoCode(null);
       setErr(t(("receiving.error." + j.code) as never));
+      return;
+    }
+    if (res.status === 403 || res.status === 409) {
+      setErr(j.message ?? j.error ?? t("receivingStore.error_forbidden"));
       return;
     }
     setErr(t(("receiving.error." + (j?.code ?? "generic")) as never));
@@ -1585,6 +1596,7 @@ export function ReceivingForm({
                     busy={busy}
                     locationId={locationId}
                     showPrice={priceMode}
+                    storeMode={isStore}
                     onChange={(patch) => setLine(i, patch)}
                     onRemove={lines.length > 1 ? () => setLines((ls) => ls.filter((_, j) => j !== i)) : null}
                     onForgetCode={

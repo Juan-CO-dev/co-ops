@@ -55,6 +55,7 @@ import {
   disposeAvgFold,
   findVendorMismatch,
   receivingPriceRows,
+  storeRootPackPrice,
   isDuplicateAppend,
   type AppendLine,
   type IntakeLineForCredits,
@@ -253,7 +254,7 @@ export async function loadReceivingFormData(actor: AuthContext, locationId: stri
   });
   const skuList = await selectAllRows<{ id: string; name: string; vendor_id: string | null; pack_format: string | null; product_id: string | null; location_id: string | null; pending_review: boolean }>(async (from, to) => {
     const { data, error } = await sb.from("vendor_items").select("id, name, vendor_id, pack_format, product_id, location_id, pending_review")
-      .eq("active", true).order("name").order("id").range(from, to);
+      .eq("active", true).or(`location_id.is.null,location_id.eq.${locationId}`).order("name").order("id").range(from, to);
     if (error) throw new Error(`loadReceivingFormData skus: ${error.message}`);
     return { data };
   });
@@ -264,6 +265,18 @@ export async function loadReceivingFormData(actor: AuthContext, locationId: stri
     return { data };
   });
   const productNames = new Map(products.map((p) => [p.id, [p.name, ...(p.name_es ? [p.name_es] : [])]]));
+  // Stores are shared identities, but the picker only exposes stores used here.
+  // A newly created store is returned directly by the create endpoint.
+  const deliveries = await selectAllRows<{ id: string; vendor_id: string }>(async (from, to) => {
+    const { data, error } = await sb.from("vendor_deliveries").select("id, vendor_id")
+      .eq("location_id", locationId).order("id").range(from, to);
+    if (error) throw new Error(`loadReceivingFormData store scope: ${error.message}`);
+    return { data };
+  });
+  const localStoreIds = new Set([
+    ...skuList.filter((sku) => sku.location_id === locationId).map((sku) => sku.vendor_id),
+    ...deliveries.map((delivery) => delivery.vendor_id),
+  ]);
   // ONE batch query for every active SKU's chain levels (loadRecipeGraph law).
   // Chain labels are ordered root→leaf for the level picker (display_ordinal).
   // Usage rank is a SECOND batch pair (production + sales lanes) — never per-SKU.
@@ -272,7 +285,8 @@ export async function loadReceivingFormData(actor: AuthContext, locationId: stri
     loadSkuUsageRank(sb, locationId),
   ]);
   return {
-    vendors: vendors.map((v) => ({ id: v.id, name: v.name, sourceKind: v.source_kind })),
+    vendors: vendors.filter((v) => v.source_kind === "vendor" || localStoreIds.has(v.id))
+      .map((v) => ({ id: v.id, name: v.name, sourceKind: v.source_kind })),
     skus: skuList.map((s) => ({
       id: s.id,
       name: s.name,
@@ -554,7 +568,7 @@ export async function recordDelivery(actor: AuthContext, input: RecordDeliveryIn
     missingExpected, new Set(input.lines.map((l) => l.skuId)), actor.user.id,
   );
 
-  const priced = input.lines.filter((l) => l.unitPrice != null);
+  const priced = resolved.priceLines;
   if (priced.length > 0) {
     const { error: pErr } = await sb.from("vendor_price_history").insert(
       receivingPriceRows(priced, input.deliveryDate, actor.user.id, vend.source_kind),
@@ -725,6 +739,7 @@ interface ResolvedLines {
    * The guard above has already proven a non-null value equals the delivery's vendor.
    */
   vendorIdBySku: Map<string, string | null>;
+  priceLines: Array<{ skuId: string; unitPrice: number }>;
 }
 
 /**
@@ -791,7 +806,15 @@ async function validateAndResolveDeliveryLines(
   const resolvedOzByLineIdx = lines.map((l) => resolveReceivedOz(l, skuById.get(l.skuId), chainsBySku.get(l.skuId) ?? null, measures));
   const vendorIdBySku = new Map((activeSkus ?? []).map((s) => [s.id, s.vendor_id]));
   const weightClassBySku = new Map((activeSkus ?? []).map((s) => [s.id, s.weight_class]));
-  return { resolvedOzByLineIdx, chained, vendorIdBySku, weightClassBySku };
+  const priceLines = lines.filter((l) => l.unitPrice != null).map((l) => {
+    const unitPrice = sourceKind === "store"
+      ? storeRootPackPrice(l.unitPrice!, l.receivedLevelLabel ?? null,
+          chainsBySku.get(l.skuId) ?? null, skuById.get(l.skuId)?.pack_format ?? null)
+      : l.unitPrice!;
+    if (unitPrice == null) throw new ReceivingError(400, "store_price_conversion", "The received level cannot be converted to a root-pack price");
+    return { skuId: l.skuId, unitPrice };
+  });
+  return { resolvedOzByLineIdx, chained, vendorIdBySku, weightClassBySku, priceLines };
 }
 
 /** Build the vendor_delivery_items rows for a set of input lines (shared shape for
@@ -1233,7 +1256,7 @@ export async function addDeliveryLines(
   );
   if (lErr) throw new Error(`addDeliveryLines lines: ${lErr.message}`);
 
-  const priced = lines.filter((l) => l.unitPrice != null);
+  const priced = resolved.priceLines;
   if (priced.length > 0) {
     const { error: pErr } = await sb.from("vendor_price_history").insert(
       receivingPriceRows(priced, h.delivery_date, actor.user.id, source.source_kind),

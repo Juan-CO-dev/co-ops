@@ -21,8 +21,45 @@ import type { RecipeInputSku } from "@/lib/recipe-math";
 
 // -- Resolution ---------------------------------------------------------------
 
+export const STORE_RUN_PROMOTION_STREAK = 3;
+
+export interface ProductReceiptEvent {
+  receiptId: string;
+  locationId: string;
+  receivedAt: string;
+  sourceKind: "vendor" | "store";
+}
+
+/** Count receipts, not lines; a regular receipt resets the location's streak.
+ * Equal instants are conservative: the vendor event wins over a store event. */
+export function storeRunReceiptStreak(events: readonly ProductReceiptEvent[], locationId: string): number {
+  const receipts = new Map<string, ProductReceiptEvent>();
+  for (const event of events) {
+    if (event.locationId !== locationId || !Number.isFinite(Date.parse(event.receivedAt))) continue;
+    const previous = receipts.get(event.receiptId);
+    if (!previous || event.sourceKind === "vendor" || event.receivedAt < previous.receivedAt) receipts.set(event.receiptId, event);
+  }
+  const sorted = [...receipts.values()].sort((a, b) =>
+    Date.parse(b.receivedAt) - Date.parse(a.receivedAt) ||
+    (a.sourceKind === b.sourceKind ? a.receiptId.localeCompare(b.receiptId) : a.sourceKind === "vendor" ? -1 : 1));
+  let streak = 0;
+  for (const event of sorted) {
+    if (event.sourceKind === "vendor") break;
+    streak++;
+  }
+  return streak;
+}
+
 /** One member SKU of a product, as the resolver needs to see it. */
 export interface ProductMember {
+  sourceKind?: "vendor" | "store";
+  /** Supply eligibility only; retired suppliers' received stock still counts. */
+  vendorActive?: boolean;
+  /** This store SKU's own location streak, for callers resolving without a shop. */
+  storeRunStreak?: number;
+  pendingReview?: boolean;
+  /** Loader proves a usable ounce basis from the pack or product. */
+  hasOzBasis?: boolean;
   skuId: string;
   vendorId: string | null;
   /** Display only — the twin label on count sheets and order walks. */
@@ -38,6 +75,8 @@ export interface ProductMember {
 }
 
 export interface ProductResolutionInput {
+  /** Never pool different shops. Global callers supply each member's own streak. */
+  storeRunStreak?: number;
   productId: string;
   /**
    * `products.active` — is this identity still something the kitchen buys?
@@ -125,7 +164,10 @@ export function resolveProductMember(input: ProductResolutionInput): ProductReso
     return { ...base, skuId: null, rung: "unresolved", reason: "retired_product" };
   }
 
-  const active = input.members.filter((m) => m.active);
+  const hasRegularMember = input.members.some((m) => m.active && m.vendorActive !== false && m.sourceKind !== "store");
+  const active = input.members.filter((m) => m.active && m.vendorActive !== false && !m.pendingReview &&
+    (m.sourceKind !== "store" || (m.hasOzBasis === true &&
+      (!hasRegularMember || (input.storeRunStreak ?? m.storeRunStreak ?? 0) >= STORE_RUN_PROMOTION_STREAK))));
   if (active.length === 0) {
     return { ...base, skuId: null, rung: "unresolved", reason: "no_active_member" };
   }

@@ -37,7 +37,7 @@ export async function POST(req: NextRequest) {
     return jsonError(400, "invalid_payload");
   }
   try {
-    return jsonOk(await resolvePendingStoreItem(ctx, { locationId: b.locationId, skuId: b.skuId, referenceSkuId: b.referenceSkuId }));
+    return jsonOk(await resolvePendingStoreItem(ctx, { locationId: b.locationId, skuId: b.skuId, referenceSkuId: b.referenceSkuId, contentOz: b.contentOz }));
   } catch (e) {
     if (e instanceof ReceivingError) return jsonError(e.status, e.code);
     throw e;

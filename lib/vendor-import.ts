@@ -75,7 +75,7 @@ async function loadVendor(vendorId: string): Promise<Vendor> {
   const { data, error } = await getServiceRoleClient().from("vendors")
     .select("id,name,active,account_number,portal_url").eq("source_kind", "vendor").eq("id", vendorId).maybeSingle<Vendor>();
   check(error);
-  if (!data || !data.active) throw new VendorImportError(404, "vendor_not_found");
+  if (!data) throw new VendorImportError(404, "vendor_not_found");
   return data;
 }
 

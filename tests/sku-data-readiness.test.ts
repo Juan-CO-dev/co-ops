@@ -165,6 +165,41 @@ function tables(): LiveTables {
 }
 
 describe("complete-table evaluation and shop summaries", () => {
+  it("keeps a product recipe on regular pricing until three local store receipts and resets on a vendor receipt", () => {
+    const data = tables();
+    data.products = [{ id: "product", name: "Ingredient", active: true, unit_oz: 1 }];
+    data.vendor_items![0]!.product_id = "product";
+    data.vendor_items!.push({ ...data.vendor_items![0]!, id: "store-sku", vendor_id: "store", location_id: "north" });
+    data.vendors!.push({ id: "store", active: true, source_kind: "store" });
+    data.vendor_price_history!.push({ id: "store-price", vendor_item_id: "store-sku", unit_price: 32, effective_date: "2026-09-01" });
+    data.items = [{ id: "dish", name: "Dish", default_par_unit: "batch", oz_per_par_unit: 1 }];
+    data.recipes = [{ id: "recipe", name: "Dish", active: true, batch_yield: 1 }];
+    data.recipe_inputs = [{ id: "input", recipe_id: "recipe", component_product_id: "product", quantity: 1, unit: "oz" }];
+    data.recipe_outputs = [{ id: "output", recipe_id: "recipe", output_item_id: "dish", yield: 1 }];
+    const receive = (day: number, vendor = "store", location = "north") => {
+      const created_at = `2026-09-${String(day).padStart(2, "0")}T12:00:00Z`;
+      data.vendor_deliveries!.push({ id: `delivery-${day}`, vendor_id: vendor, location_id: location, created_at });
+      data.vendor_delivery_items!.push({ id: `line-${day}`, delivery_id: `delivery-${day}`, vendor_item_id: vendor === "store" ? "store-sku" : "sku", created_at });
+    };
+    const north = () => evaluateWave7Tables(data).shops.find(shop => shop.id === "north")!;
+    receive(1); receive(2); receive(3, "store", "south");
+    expect(north().products[0]?.skuId).toBe("sku");
+    expect(north().recipes[0]?.cost).toBe(10 / 16);
+    receive(4);
+    expect(north().products[0]?.skuId).toBe("store-sku");
+    expect(north().recipes[0]?.cost).toBe(2);
+    receive(5, "vendor");
+    expect(north().products[0]?.skuId).toBe("sku");
+    expect(north().recipes[0]?.cost).toBe(10 / 16);
+  });
+  it("excludes store SKUs from the regular catalog errand lane", () => {
+    const data = tables();
+    data.vendors!.push({ id: "store", active: true, source_kind: "store" });
+    data.vendor_items!.push({ ...data.vendor_items![0]!, id: "store-sku", vendor_id: "store" });
+    for (const shop of evaluateWave7Tables(data).shops) {
+      expect(shop.rows.map((row) => row.id)).toEqual(["sku"]);
+    }
+  });
   it("names direct and transitive unresolved recipe consumers and removes the errand after the line is fixed", () => {
     const data = tables();
     data.items = [{ id: "jus", name: "Jus", default_par_unit: "batch", oz_per_par_unit: 1 }, { id: "sub", name: "Sub", default_par_unit: "each", oz_per_par_unit: 1 }];

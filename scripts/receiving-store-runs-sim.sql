@@ -14,7 +14,7 @@ declare
   v_leaf uuid := gen_random_uuid(); v_root uuid := gen_random_uuid();
   v_request uuid := gen_random_uuid(); v_result jsonb; v_replay jsonb;
   v_name text := 'receiving-sim-' || gen_random_uuid()::text;
-  v_count integer;
+  v_collision uuid; v_collision_product uuid; v_count integer; v_reference_each uuid; v_copy_each uuid; v_unknown uuid; v_second_store uuid; v_merge_sku uuid; v_receipt uuid; v_actor uuid; v_third_store uuid;
 begin
   assert current_setting('co_ops.simulation', true) = 'receiving-store-runs',
     'Explicit simulation session marker required; never run on production';
@@ -31,6 +31,8 @@ begin
   assert (v_replay->>'id')::uuid = v_store and not (v_replay->>'created')::boolean, 'case-insensitive dedupe';
 
   insert into public.vendors(name, active) values (v_name || '-vendor', true) returning id into v_vendor;
+  v_replay := public.receiving_create_store(v_name || '-vendor', null, v_location);
+  assert (v_replay->>'regular_vendor_name_match')::boolean, 'store warns about regular vendor name collision';
   insert into public.vendor_items(vendor_id, location_id, name, pack_format,
     units_per_pack, each_size, each_measure, each_container_label, avg_oz_per_each, active)
   values (v_vendor, v_location, v_name || '-ingredient', 'case', 6, 8, 'oz', 'jar', null, true)
@@ -55,7 +57,18 @@ begin
     and root.label = 'case' and root.contains_qty = 6 and leaf.contains_qty = 8
     and leaf.contains_measure_unit = 'oz' and leaf.id <> v_leaf and root.id <> v_root), 'pointer graph remapped';
   v_replay := public.receiving_create_store_item(v_store, v_location, null, v_reference, null, null, null, null);
-  assert (v_replay->>'id')::uuid = v_new and not (v_replay->>'created')::boolean, 'store product reuse';
+  assert (v_replay->>'id')::uuid = v_new and not (v_replay->>'created')::boolean, 'same reference pack reuse';
+  assert (v_result->>'product_created')::boolean and (v_result->>'reference_attached')::boolean, 'product audit metadata';
+  assert not (v_replay->>'product_created')::boolean, 'replay does not create product audit';
+  assert (select store_reference_sku_id = v_reference and price_basis is null from public.vendor_items where id = v_new), 'reference identity retained without vendor price denomination';
+  insert into public.vendor_items(vendor_id, location_id, product_id, name, pack_format,
+    units_per_pack, each_size, each_measure, active)
+  values (v_vendor, v_location, v_product, v_name || '-each', 'jar', 1, 8, 'oz', true)
+    returning id into v_reference_each;
+  v_replay := public.receiving_create_store_item(v_store, v_location, null, v_reference_each, null, null, null, null);
+  v_copy_each := (v_replay->>'id')::uuid;
+  assert v_copy_each <> v_new and (v_replay->>'product_id')::uuid = v_product, 'same product different reference pack gets different copy';
+  assert (select units_per_pack = 1 from public.vendor_items where id = v_copy_each), 'each copy retains its own basis';
   begin
     perform public.receiving_create_store_item(v_store, v_other_location, null, v_reference, null, null, null, null);
     raise exception 'Expected inaccessible reference to fail';
@@ -79,13 +92,80 @@ begin
     raise exception 'Expected changed request payload to fail' using errcode = '22023';
   exception when raise_exception then null;
   end;
-  assert public.receiving_resolve_pending_item(v_pending, v_reference, v_location, null) = v_product,
+  assert (public.receiving_resolve_pending_item(v_pending, v_reference, v_location, null)->>'product_id')::uuid = v_product,
     'GM resolution joins reference identity';
   assert (select not pending_review and active and vendor_id = v_store and avg_oz_per_each = 12
     and product_id = v_product from public.vendor_items where id = v_pending), 'resolution preserves store basis and history identity';
+  v_result := public.receiving_create_store_item(v_store, v_location, null, null,
+    v_name || '-unknown', 'tub', null, gen_random_uuid());
+  v_unknown := (v_result->>'id')::uuid;
+  begin
+    perform public.receiving_resolve_pending_item(v_unknown, v_reference, v_location, null);
+    raise exception 'Expected conversion_required';
+  exception when invalid_parameter_value then null;
+  end;
+  begin
+    perform public.receiving_resolve_pending_item(v_unknown, v_reference, v_location, null, -1);
+    raise exception 'Expected negative conversion refusal';
+  exception when invalid_parameter_value then null;
+  end;
+  assert (select pending_review and product_id is null from public.vendor_items where id = v_unknown),
+    'failed resolution rolls back membership';
+  v_result := public.receiving_resolve_pending_item(v_unknown, v_reference, v_location, null, 32);
+  assert (v_result->>'product_id')::uuid = v_product, 'explicit GM ounces resolves';
+  assert (select avg_oz_per_each = 32 and not pending_review from public.vendor_items where id = v_unknown),
+    'GM conversion persists on pending SKU';
+
+  -- A name collision creates a readable distinct identity, never UUID suffixes.
+  insert into public.vendor_items(vendor_id, location_id, name, pack_format,
+    units_per_pack, each_size, each_measure, active)
+  values (v_vendor, v_location, v_name || '-ingredient', 'jar', 1, 8, 'oz', true)
+    returning id into v_collision;
+  v_result := public.receiving_create_store_item(v_store, v_location, null, v_collision, null, null, null, null);
+  v_collision_product := (v_result->>'product_id')::uuid;
+  assert v_collision_product <> v_product, 'matching names do not merge identity';
+  assert (select name = v_name || '-ingredient (store run)' from public.products where id = v_collision_product),
+    'readable product collision suffix';
+
+  v_result := public.receiving_create_store(v_name || '-typo', null, v_location);
+  v_second_store := (v_result->>'id')::uuid;
+  perform public.receiving_manage_store(v_second_store, v_location, null, 'rename', v_name || '-fixed');
+  assert (select name = v_name || '-fixed' from public.vendors where id = v_second_store), 'GM renames store';
+  v_result := public.receiving_create_store_item(v_second_store, v_location, null, v_reference, null, null, null, null);
+  v_merge_sku := (v_result->>'id')::uuid;
+  select id into v_actor from public.users where active order by id limit 1;
+  assert v_actor is not null, 'Requires one SIM actor for receipt fixture';
+  insert into public.vendor_deliveries(vendor_id, location_id, delivery_date, received_by, delivery_status)
+    values(v_second_store, v_location, current_date, v_actor, 'complete') returning id into v_receipt;
+  insert into public.vendor_delivery_items(delivery_id, vendor_item_id, vendor_id, qty_received, unit_price)
+    values(v_receipt, v_merge_sku, v_second_store, 1, 6);
+  perform public.receiving_manage_store(v_second_store, v_location, null, 'merge', null, v_store);
+  assert (select vendor_id = v_second_store from public.vendor_items where id = v_merge_sku), 'merge preserves SKU vendor FK';
+  assert (select vendor_id = v_second_store and qty_received = 1 and unit_price = 6 from public.vendor_delivery_items where delivery_id = v_receipt), 'merge preserves receipt';
+  assert (select store_merged_into_id = v_store from public.vendors where id = v_second_store), 'merge records canonical alias';
+  assert (public.receiving_create_store(v_name || '-fixed', null, v_location)->>'id')::uuid = v_store, 'old typo redirects';
+  -- Shared stores stay manageable by actors authorized for every affected shop.
+  perform public.receiving_create_store_item(v_store, v_other_location, null, null, v_name || '-other-shop', 'jar', 8, gen_random_uuid());
+  begin
+    perform public.receiving_manage_store(v_store, v_location, null, 'rename', v_name, null, array[v_location]);
+    raise exception 'Expected other-shop authority refusal';
+  exception when insufficient_privilege then null;
+  end;
+  perform public.receiving_manage_store(v_store, v_location, null, 'rename', v_name, null, array[v_location,v_other_location]);
+  v_third_store := (public.receiving_create_store(v_name || '-canonical', null, v_location)->>'id')::uuid;
+  perform public.receiving_manage_store(v_store, v_location, null, 'merge', null, v_third_store);
+  assert (public.receiving_create_store(v_name || '-fixed', null, v_location)->>'id')::uuid = v_third_store, 'alias chains redirect to canonical';
+  begin
+    perform public.receiving_manage_store(v_third_store, v_location, null, 'merge', null, v_second_store);
+    raise exception 'Expected retired alias target refusal';
+  exception when no_data_found then null;
+  end;
+  assert (select not active from public.vendors where id = v_second_store), 'merge retires typo store';
+  perform public.receiving_manage_store(v_third_store, v_location, null, 'retire');
+  assert (select active from public.vendor_items where id = v_new), 'retirement preserves stock SKU';
   select count(*) into v_count from information_schema.routine_privileges
     where routine_schema = 'public' and routine_name in ('receiving_create_store', 'receiving_store_product',
-      'receiving_create_store_item', 'receiving_resolve_pending_item') and grantee in ('PUBLIC','anon','authenticated');
+      'receiving_create_store_item', 'receiving_resolve_pending_item', 'receiving_manage_store') and grantee in ('PUBLIC','anon','authenticated');
   assert v_count = 0, 'RPCs must be service-only';
   raise notice 'Receiving store run simulation assertions passed; rolling back all fixtures';
 end;

@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
-import { storeName, pendingItemInput } from "@/lib/receiving-stores-shared";
+import { storeName, pendingItemInput, resolutionContentOz } from "@/lib/receiving-stores-shared";
 import { skuContentOz } from "@/lib/recipe-math";
 import type { AuthContext } from "@/lib/session";
 import type { RoleCode } from "@/lib/roles";
@@ -65,7 +65,7 @@ describe("store writer authority before database access", () => {
   }
   it("reused stores do not emit a false creation audit", async () => {
     mocks.rpc.mockResolvedValue({ data: { id: STORE, name: "Market", created: false }, error: null });
-    expect(await createStore(actor("key_holder"), { locationId: SHOP, name: "market" })).toEqual({ store: { id: STORE, name: "Market", sourceKind: "store" } });
+    expect(await createStore(actor("key_holder"), { locationId: SHOP, name: "market" })).toEqual({ store: { id: STORE, name: "Market", sourceKind: "store" }, regularVendorNameMatch: false });
     expect(mocks.audit).not.toHaveBeenCalled();
   });
   it("copies a reference only through the store-scoped transaction", async () => {
@@ -76,15 +76,15 @@ describe("store writer authority before database access", () => {
   });
   it("audits unknown-item creation and successful GM resolution", async () => {
     mocks.rpc.mockResolvedValueOnce({ data: { id: SKU, created: true, product_id: null }, error: null })
-      .mockResolvedValueOnce({ data: REF, error: null });
+      .mockResolvedValueOnce({ data: { product_id: REF, reference_sku_id: REF, product_created: false, reference_attached: false }, error: null });
     await createStoreItem(actor("key_holder"), { locationId: SHOP, storeId: STORE, name: "X", countUnit: "jar", requestId: SKU });
-    await resolvePendingStoreItem(actor("gm"), { locationId: SHOP, skuId: SKU, referenceSkuId: REF });
+    await resolvePendingStoreItem(actor("gm"), { locationId: SHOP, skuId: SKU, referenceSkuId: REF, contentOz: 12 });
     expect(mocks.audit).toHaveBeenCalledWith(expect.objectContaining({ action: "receiving.pending_create" }));
     expect(mocks.audit).toHaveBeenCalledWith(expect.objectContaining({ action: "receiving.pending_resolve" }));
   });
   it("does not audit a transaction rejected by SQL", async () => {
     mocks.rpc.mockResolvedValue({ data: null, error: { code: "P0002", message: "not_found" } });
-    await expect(resolvePendingStoreItem(actor("gm"), { locationId: SHOP, skuId: SKU, referenceSkuId: REF })).rejects.toMatchObject({ status: 404 });
+    await expect(resolvePendingStoreItem(actor("gm"), { locationId: SHOP, skuId: SKU, referenceSkuId: REF, contentOz: 12 })).rejects.toMatchObject({ status: 404 });
     expect(mocks.audit).not.toHaveBeenCalled();
   });
 });
@@ -100,5 +100,24 @@ describe("store migration contract (SQL execution remains a sim gate)", () => {
   it("enforces case-insensitive store identity and leaves historical rows untouched", () => {
     expect(sql).toContain("vendors_store_name_uq on public.vendors (lower(btrim(name)))");
     expect(sql).not.toMatch(/(?:update|delete from) public\.(vendor_delivery_items|vendor_price_history)/i);
+  });
+});
+
+
+describe("pending conversion and product governance", () => {
+  it("requires a finite positive ounce basis", async () => {
+    for (const bad of [undefined, null, 0, -1, NaN, Infinity, "12"]) {
+      expect(resolutionContentOz(bad)).toBeNull();
+      await expect(resolvePendingStoreItem(actor("gm"), { locationId: SHOP, skuId: SKU, referenceSkuId: REF, contentOz: bad })).rejects.toMatchObject({ code: "conversion_required" });
+    }
+    expect(mocks.rpc).not.toHaveBeenCalled();
+    expect(resolutionContentOz(128)).toBe(128);
+  });
+  it("writes the conversion and audits each product membership", async () => {
+    mocks.rpc.mockResolvedValue({ data: { product_id: REF, product_created: true, reference_attached: true, reference_sku_id: REF }, error: null });
+    await resolvePendingStoreItem(actor("gm"), { locationId: SHOP, skuId: SKU, referenceSkuId: REF, contentOz: 128 });
+    expect(mocks.rpc).toHaveBeenCalledWith("receiving_resolve_pending_item", expect.objectContaining({ p_content_oz: 128 }));
+    expect(mocks.audit).toHaveBeenCalledWith(expect.objectContaining({ action: "product.create", resourceId: REF }));
+    for (const id of [REF, SKU]) expect(mocks.audit).toHaveBeenCalledWith(expect.objectContaining({ action: "product.member_attach", resourceId: id }));
   });
 });

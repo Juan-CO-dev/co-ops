@@ -15,7 +15,7 @@ import { requireSessionFromHeaders } from "@/lib/session";
 import { ROLES } from "@/lib/roles";
 import { serverT } from "@/lib/i18n/server";
 import { getServiceRoleClient } from "@/lib/supabase-server";
-import { loadSkus, loadPackFormats, loadMeasureUnits, loadLocationSkuSettings, parsColumnsReady } from "@/lib/admin/skus";
+import { loadSkus, loadPackFormats, loadMeasureUnits, loadLocationSkuSettings, parsColumnsReady, SKU_WRITE_MIN } from "@/lib/admin/skus";
 import { listProducts, ProductError, type ProductView } from "@/lib/products";
 import { loadVendors } from "@/lib/admin/vendors";
 import { loadCurrentSkuPrices, computeSkuCostPerOz, loadSkuUsageMap, loadSkuReceivingLedger, loadSkuConsumption, type SkuConsumption } from "@/lib/admin/cost";
@@ -24,6 +24,7 @@ import { loadSkuPackChains } from "@/lib/prep-consumption";
 import { buildPackChain, isChainUnverified, type PackChainLevel } from "@/lib/pack-chain-shared";
 import type { MeasureUnitFactor } from "@/lib/recipe-math";
 import { SkuCatalogClient } from "@/components/admin/skus/SkuCatalogClient";
+import { StoreManagement } from "@/components/admin/skus/StoreManagement";
 import { PendingStoreItems } from "@/components/admin/skus/PendingStoreItems";
 import { lockLocationContext } from "@/lib/locations";
 import { PageHeader } from "@/components/ui/PageHeader";
@@ -39,7 +40,7 @@ export default async function AdminSkusPage() {
   const sb = getServiceRoleClient();
   const [skus, vendors, packFormats, measureUnits, locRes] = await Promise.all([
     loadSkus(auth),
-    loadVendors(auth, { includeStores: true }),
+    loadVendors(auth),
     loadPackFormats(auth),
     loadMeasureUnits(auth),
     sb.from("locations").select("id, name").eq("active", true).order("name"),
@@ -150,7 +151,8 @@ export default async function AdminSkusPage() {
         title={serverT(lang, "admin.skus.title")}
         subtitle={serverT(lang, "admin.skus.subtitle")}
       />
-      {level >= 7 ? <PendingStoreItems locations={locations.filter((location) => lockLocationContext({ role: auth.user.role, locations: auth.locations }, location.id))} /> : null}
+      {level >= SKU_WRITE_MIN ? <PendingStoreItems locations={locations.filter((location) => lockLocationContext({ role: auth.user.role, locations: auth.locations }, location.id))} /> : null}
+      {level >= ROLES.gm.level ? <StoreManagement locations={locations.filter((location) => lockLocationContext({ role: auth.user.role, locations: auth.locations }, location.id))} /> : null}
       <SkuCatalogClient
         skus={skus}
         vendors={activeVendors}
@@ -170,7 +172,7 @@ export default async function AdminSkusPage() {
         productIdBySku={productIdBySku}
         parsFieldsReady={parsReady}
         actorLevel={level}
-        canManage={level >= 7}
+        canManage={level >= SKU_WRITE_MIN}
       />
     </div>
   );

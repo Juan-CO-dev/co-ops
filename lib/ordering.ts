@@ -79,6 +79,7 @@ import { addDaysEt, minutesOfDayEt } from "@/lib/vendor-rhythm-shared";
 import { deriveCateringSkuDemand } from "@/lib/catering/sku-demand";
 import { loadProductIndex } from "@/lib/products";
 import { rollupUsageByProduct } from "@/lib/products-shared";
+import { orderableMemberRole } from "@/lib/ordering-member-shared";
 import {
   createDraftsFromLines,
   updateDraftLines,
@@ -556,11 +557,9 @@ export interface WalkerSku {
   /** Display label for the product headline ("HAM"). null for a singleton. */
   productName: string | null;
   /**
-   * `solo` = not a member of any product · `primary` = the DESIGNATED primary for
-   * this scope (product_primaries, location row over global) · `backup` = an active
-   * member that is not the designated primary. Deliberately the DESIGNATION, not the
-   * ladder's runtime answer: "Baldor — backup" is what a manager needs to read on a
-   * vendor-down day, and it stays true whichever rung answered.
+   * `solo` = not a member of any product; `primary` = designated primary or the
+   * only active orderable member; `backup` = another orderable member. Store SKUs
+   * never enter this walk. A store copy alone does not demote its reference SKU.
    */
   memberRole: "primary" | "backup" | "solo";
   /**
@@ -956,7 +955,7 @@ export async function loadWalkerData(actor: AuthContext, locationId: string): Pr
       canImplyOz: perUnitOz != null && perUnitOz > 0,
       productId: s.product_id,
       productName: entry?.name ?? null,
-      memberRole: entry == null ? "solo" : entry.primarySkuId === s.id ? "primary" : "backup",
+      memberRole: orderableMemberRole(s.id, entry ?? null),
       reroutedFromSkuId,
     };
   };

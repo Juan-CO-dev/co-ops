@@ -1,5 +1,6 @@
 "use client";
 
+import { storeErrorKey } from "@/lib/receiving-stores-shared";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { useTranslation } from "@/lib/i18n/provider";
@@ -18,6 +19,7 @@ export function PendingStoreItems({ locations }: { locations: Array<{ id: string
   const [items, setItems] = useState<PendingItem[] | null>(null);
   const [skus, setSkus] = useState<ReceivingSkuOption[]>([]);
   const [targets, setTargets] = useState<Record<string, string>>({});
+  const [ounces, setOunces] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [resolved, setResolved] = useState(false);
@@ -27,7 +29,10 @@ export function PendingStoreItems({ locations }: { locations: Array<{ id: string
     setBusy(true); setError(null); setResolved(false);
     try {
       const response = await fetch(`/api/admin/skus/pending?locationId=${encodeURIComponent(locationId)}`);
-      if (!response.ok) throw new Error("load");
+      if (!response.ok) {
+        const body = await response.json() as { code?: string };
+        setError(t(storeErrorKey(body.code))); return;
+      }
       const data = await response.json() as { items: PendingItem[]; skus: ReceivingSkuOption[] };
       setItems(data.items); setSkus(data.skus); setTargets({});
     } catch { setError(t("receivingStore.load_error")); }
@@ -42,9 +47,12 @@ export function PendingStoreItems({ locations }: { locations: Array<{ id: string
       if ((await requestStepUp("B")) !== "ok") return;
       const response = await fetch("/api/admin/skus/pending", {
         method: "POST", headers: { "content-type": "application/json" },
-        body: JSON.stringify({ locationId, skuId, referenceSkuId }),
+        body: JSON.stringify({ locationId, skuId, referenceSkuId, contentOz: Number(ounces[skuId]) }),
       });
-      if (!response.ok) throw new Error("resolve");
+      if (!response.ok) {
+        const body = await response.json() as { code?: string; error?: string };
+        setError(t(storeErrorKey(body.code))); return;
+      }
       setItems((previous) => previous?.filter((item) => item.id !== skuId) ?? null);
       setResolved(true); router.refresh();
     } catch { setError(t("receivingStore.save_error")); }
@@ -80,7 +88,10 @@ export function PendingStoreItems({ locations }: { locations: Array<{ id: string
           {skus.filter((sku) => sku.id !== item.id && !sku.pendingReview && (!sku.locationId || sku.locationId === locationId) && !items.some((pending) => pending.id === sku.id)).map((sku) => <option key={sku.id} value={sku.id}>{sku.name}</option>)}
         </select>
       </label>
-      <button type="button" className={`${control} mt-2 font-bold`} disabled={busy || !targets[item.id]} onClick={() => void resolve(item.id)}>{t("receivingStore.resolve")}</button>
+      <label className="mt-2 flex flex-col gap-1 text-sm">{t("receivingStore.required_oz")}
+        <input type="number" min="0.000001" step="any" className={control} value={ounces[item.id] ?? ""} onChange={(e) => setOunces((previous) => ({ ...previous, [item.id]: e.target.value }))} />
+      </label>
+      <button type="button" className={`${control} mt-2 font-bold`} disabled={busy || !targets[item.id] || !(Number(ounces[item.id]) > 0)} onClick={() => void resolve(item.id)}>{t("receivingStore.resolve")}</button>
     </div>)}
   </details>;
 }

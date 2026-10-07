@@ -13,8 +13,8 @@ import { evaluateWave7Tables, summarizeSkuDataShop, type LiveRow, type SkuDataSh
 // Same relation universe as parity. Inactive parents remain available for FK
 // validation and graph resolution; filtering them during load invents missing pins.
 const COLUMNS = {
-  vendor_items: "id,name,vendor_id,product_id,location_id,active,inventory_only,sku_class,pack_format,each_container_label,units_per_pack,each_size,each_measure,avg_oz_per_each,weight_class,weekday_par,weekend_par",
-  vendors: "id,name,active",
+  vendor_items: "id,name,vendor_id,product_id,location_id,active,pending_review,inventory_only,sku_class,pack_format,each_container_label,units_per_pack,each_size,each_measure,avg_oz_per_each,weight_class,weekday_par,weekend_par",
+  vendors: "id,name,active,source_kind",
   locations: "id,name,active",
   location_sku_settings: "id,sku_id,location_id,active_override,weekday_par,weekend_par,auto_weekday_par,auto_weekend_par,auto_weekday_baseline_par,auto_weekend_baseline_par",
   sku_pack_levels: "id,sku_id,label,contains_qty,contains_level_id,contains_measure_unit,display_ordinal,active",
@@ -22,7 +22,7 @@ const COLUMNS = {
   measure_units: "id,label,dimension,to_base_factor,active",
   products: "id,name,active,unit_oz",
   product_primaries: "id,product_id,primary_sku_id,location_id",
-  vendor_deliveries: "id,location_id",
+  vendor_deliveries: "id,location_id,vendor_id,created_at",
   vendor_delivery_items: "id,vendor_item_id,delivery_id,created_at",
   recipes: "id,name,active,created_at,batch_yield",
   recipe_inputs: "id,recipe_id,quantity,unit,component_sku_id,component_item_id,component_product_id",
