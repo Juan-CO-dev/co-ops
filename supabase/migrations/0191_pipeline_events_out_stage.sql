@@ -1,5 +1,6 @@
 -- Migration 0191_pipeline_events_out_stage
 -- AUTHORED 2026-09-04. NOT YET APPLIED — GATE (JUAN).
+-- APPLIED TO PROD 2026-09-04 (schema_migrations version 20260904154327, name '0191_pipeline_events_out_stage'). The line above is the authoring-time gate note, kept as history.
 --
 -- 0191: catering_pipeline_events.from_stage / to_stage CHECKs learn the 'out' stage.
 --

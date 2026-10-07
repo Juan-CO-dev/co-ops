@@ -1,5 +1,6 @@
 -- Migration 0179_product_identity
 -- AUTHORED 2026-08-20. NOT YET APPLIED — application is a named LEAD/JUAN gate
+-- APPLIED TO PROD 2026-08-21 (schema_migrations version 20260821003836, name 'product_identity'). The line above is the authoring-time gate note, kept as history.
 -- (plan docs/superpowers/plans/2026-08-20-product-identity.md, GATE M1).
 -- Canonical reference: docs/superpowers/specs/2026-08-20-product-identity-design.md §1
 -- Foundation: docs/audits/2026-08-20-multivendor-semantics-audit.md gap P2.

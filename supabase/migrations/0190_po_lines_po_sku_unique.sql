@@ -1,5 +1,6 @@
 -- Migration 0190_po_lines_po_sku_unique
 -- AUTHORED 2026-09-01. NOT YET APPLIED — GATE (LEAD/JUAN).
+-- APPLIED TO PROD 2026-09-01 (schema_migrations version 20260901225117, name '0190_po_lines_po_sku_unique'). The line above is the authoring-time gate note, kept as history.
 --
 -- 0190: po_lines_po_sku_uq — one line per (PO, SKU), so the draft-line create-if-absent
 -- has an arbiter instead of a hope.

@@ -1,5 +1,6 @@
 -- Migration 0214_am_prep_drafts
 -- AUTHORED 2026-10-06. NOT YET APPLIED — GATE (CC/JUAN). Sim first, prod on Juan's word.
+-- APPLIED TO PROD 2026-10-07 (schema_migrations version 20261007041242, name '0214_am_prep_drafts'). The line above is the authoring-time gate note, kept as history.
 -- Provenance: Juan's floor note (Wave 1 branch A, GO-coops-wave1-2026-10-06):
 --   "the AM prep list resets whenever someone exits the am prep, which makes them have to
 --    recount everything. It should just hold its inputs, so that even if the 10 minute

@@ -1,5 +1,6 @@
 -- Migration 0184_vendor_order_minimum
 -- AUTHORED 2026-08-28. NOT YET APPLIED — GATE (LEAD/JUAN).
+-- APPLIED TO PROD 2026-08-29 (schema_migrations version 20260829030427, name 'vendor_order_minimum'). The line above is the authoring-time gate note, kept as history.
 --
 -- 0184: the vendor order minimum — a DISPLAY-ONLY advisory, in the vendor's own words.
 --

@@ -1,5 +1,6 @@
 -- Migration 0196_checklist_completions_live_head_per_phase
 -- AUTHORED 2026-09-09. NOT YET APPLIED TO PROD — GATE (JUAN). Lineage at 0195.
+-- APPLIED TO PROD 2026-09-09 (schema_migrations version 20260909052020, name '0196_checklist_completions_live_head_per_phase'). The line above is the authoring-time gate note, kept as history.
 --
 -- 0196: the one-live-head index (0176) learns that an opening item legitimately carries TWO
 -- live completion rows — its Phase 1 verification row and its Phase 2 prep-entry row — and the
