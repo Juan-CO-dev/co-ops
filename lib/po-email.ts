@@ -363,6 +363,7 @@ export async function sendOrderEmail(actor: AuthContext, poId: string): Promise<
     },
   );
 
+  // recordPlacement also records task.override for the successful send.
   // Send + placement both durable — audit the email leg (fail-open, never blocks).
   await audit({
     actorId: actor.user.id, actorRole: actor.user.role,

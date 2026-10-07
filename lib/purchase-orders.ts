@@ -1,4 +1,4 @@
-import { canDoOperationalTask } from "@/lib/operational-task-access";
+import { auditOperationalTaskOverride, canDoOperationalTask } from "@/lib/operational-task-access";
 /**
  * Purchase-order lifecycle data layer (Vendor Ordering V1, migration 0174).
  * SERVER-ONLY, service-role client; authorization is APP-LAYER (KH+ gate +
@@ -326,6 +326,7 @@ export async function createDraftsFromLines(
   }
 
   // ONE batch audit row (plan header: walker/cutoff births log once per batch).
+  await auditOperationalTaskOverride(actor, locationId, "ordering", "createDraftsFromLines");
   await audit({
     actorId: actor.user.id, actorRole: actor.user.role,
     action: "po.draft_created", resourceTable: "purchase_orders", resourceId: null,
@@ -566,6 +567,7 @@ export async function updateDraftLines(
       "This order was confirmed while you were editing — your last change did not make it into the confirmed snapshot",
     );
   }
+  await auditOperationalTaskOverride(actor, po.location_id, "ordering", "updateDraftLines");
   return counts;
 }
 
@@ -608,6 +610,7 @@ export async function reopenPO(actor: AuthContext, poId: string): Promise<void> 
     .update({ status: "draft" }, { count: "exact" }).eq("id", poId).eq("status", "confirmed");
   if (error) throw new Error(`reopenPO update: ${error.message}`);
   if (count === 0) throw new PurchaseOrderError(409, "not_confirmed", "Order is no longer confirmed");
+  await auditOperationalTaskOverride(actor, po.location_id, "ordering", "reopenPO");
   await audit({
     actorId: actor.user.id, actorRole: actor.user.role,
     action: "po.reopened", resourceTable: "purchase_orders", resourceId: poId,
@@ -784,6 +787,7 @@ export async function confirmPO(actor: AuthContext, poId: string): Promise<void>
     else if (count === 0) console.error(`confirmPO: line ${l.id} missing during price freeze (po ${poId}) — continuing`);
   }
 
+  await auditOperationalTaskOverride(actor, po.location_id, "ordering", "confirmPO");
   await audit({
     actorId: actor.user.id, actorRole: actor.user.role,
     action: "po.confirmed", resourceTable: "purchase_orders", resourceId: poId,
@@ -982,6 +986,7 @@ export async function recordPlacement(
     else throw new Error(`recordPlacement transmission: ${tErr.message}`);
   }
 
+  await auditOperationalTaskOverride(actor, po.location_id, "ordering", "recordPlacement");
   await audit({
     actorId: actor.user.id, actorRole: actor.user.role,
     action: "po.placed", resourceTable: "purchase_orders", resourceId: poId,
@@ -1126,6 +1131,7 @@ export async function markReconciled(actor: AuthContext, poId: string): Promise<
   if (uErr) throw new Error(`markReconciled update: ${uErr.message}`);
   if (count === 0) throw new PurchaseOrderError(409, "not_received", "Order is no longer received");
 
+  await auditOperationalTaskOverride(actor, po.location_id, "ordering", "markReconciled");
   await audit({
     actorId: actor.user.id, actorRole: actor.user.role,
     action: "po.reconciled", resourceTable: "purchase_orders", resourceId: poId,
@@ -1155,7 +1161,6 @@ export async function loadTodaysOrders(actor: AuthContext, locationId: string): 
   if (!lockLocationContext(actorLoc(actor), locationId)) {
     throw new PurchaseOrderError(404, "not_found", "Location not found");
   }
-  if (!(await canDoOperationalTask(actor, locationId, "ordering"))) throw new PurchaseOrderError(403, "forbidden");
   const sb = getServiceRoleClient();
   const { dateEt } = etToday();
   const { startIso, endExclusiveIso } = operationalDayUtcRange(dateEt);
@@ -1215,7 +1220,6 @@ export async function loadPoHistory(actor: AuthContext, locationId: string, limi
   if (!lockLocationContext(actorLoc(actor), locationId)) {
     throw new PurchaseOrderError(404, "not_found", "Location not found");
   }
-  if (!(await canDoOperationalTask(actor, locationId, "ordering"))) throw new PurchaseOrderError(403, "forbidden");
   const sb = getServiceRoleClient();
   const { data: pos, error } = await sb.from("purchase_orders")
     .select("id, display_code, vendor_id, status, created_at, confirmed_at, placed_at")
@@ -1422,7 +1426,6 @@ export async function loadPoDetail(actor: AuthContext, poId: string): Promise<Po
   if (!lockLocationContext(actorLoc(actor), po.location_id)) {
     throw new PurchaseOrderError(404, "not_found", "Purchase order not found");
   }
-  if (!(await canDoOperationalTask(actor, po.location_id, "ordering"))) throw new PurchaseOrderError(403, "forbidden");
 
   // Lines + transmissions + vendor (w/ transmit config) + linked deliveries + the vendor's
   // active contacts + ordering details (batched — the transmit block's read is server-side).

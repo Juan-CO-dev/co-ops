@@ -1,4 +1,4 @@
-import { hasTaskAccess } from "@/lib/assignments";
+import { auditTaskOverride, hasTaskAccess } from "@/lib/assignments";
 /**
  * Prep instance lifecycle — Phase 3 / Module #1 Build #2 PR 1.
  *
@@ -95,7 +95,7 @@ export interface PrepActor {
   level: number;
 }
 
-/** Employee floor for AM/mid-day tasks; every role still needs current task access. */
+/** Employee floor for assigned AM/mid-day work; KH+ retain role-based access. */
 export const AM_PREP_BASE_LEVEL = 3;
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -619,7 +619,7 @@ export async function loadAmPrepState(
   sections: PrepSectionDefn[];
 } | null> {
   if (!(await hasTaskAccess(service, { ...args.actor, locationId: args.locationId, date: args.date, task: "am_prep" }))) {
-    throw new PrepRoleViolationError("Active assignment or unassigned KH+ task", args.actor.level);
+    throw new PrepRoleViolationError("KH+ or active assignment", args.actor.level);
   }
   // Resolve active AM Prep template (most-recent-active per Path A versioning).
   // Per-location scoping via `.eq("location_id", args.locationId)` is LOAD-BEARING
@@ -956,7 +956,25 @@ async function requirePrepInstanceTaskAccess(
     .maybeSingle<{ location_id: string; date: string }>();
   if (error) throw new Error(`prep access: ${error.message}`);
   if (!data || !(await hasTaskAccess(service, { ...args.actor, locationId: data.location_id, date: data.date, task }))) {
-    throw new PrepRoleViolationError("Active assignment or unassigned KH+ task", args.actor.level);
+    throw new PrepRoleViolationError("KH+ or active assignment", args.actor.level);
+  }
+}
+
+async function auditPrepOverride(
+  service: SupabaseClient,
+  args: { instanceId: string; actor: PrepActor },
+  task: "am_prep" | "mid_day_prep",
+  operation: string,
+): Promise<void> {
+  if (args.actor.level < 4) return;
+  try {
+    const { data, error } = await service.from("checklist_instances")
+      .select("location_id, date").eq("id", args.instanceId)
+      .maybeSingle<{ location_id: string; date: string }>();
+    if (error || !data) return; // Audit is fail-open, as with the audit() writer.
+    await auditTaskOverride(service, { ...args.actor, locationId: data.location_id, date: data.date, task, operation });
+  } catch {
+    console.error("task.override instance context lookup failed");
   }
 }
 
@@ -967,7 +985,7 @@ export async function createMidDayPrepInstance(
   | { ok: true; id: string }
   | { ok: false; reason: "cap_reached"; cap: number }
 > {
-  if (!(await hasTaskAccess(service, { ...args.actor, locationId: args.locationId, date: args.date, task: "mid_day_prep" }))) throw new PrepRoleViolationError("Active assignment or unassigned KH+ task", args.actor.level);
+  if (!(await hasTaskAccess(service, { ...args.actor, locationId: args.locationId, date: args.date, task: "mid_day_prep" }))) throw new PrepRoleViolationError("KH+ or active assignment", args.actor.level);
   // Cap enforcement (server-side authority; the tile also hides the New button
   // at cap, but a direct API caller must be blocked too).
   const { count, error: countErr } = await service
@@ -1201,6 +1219,8 @@ export async function submitMidDayPhase1(
   });
 
   const instance = rowToInstance((data as { instance: InstanceRow }).instance);
+  await auditPrepOverride(service, args, "mid_day_prep", "submitMidDayPhase1");
+
   return { ok: true, instance };
 }
 
@@ -1315,6 +1335,8 @@ export async function saveMidDayPhase2Item(
   }
 
   const d = data as { completionId: string; savedAt: string };
+  await auditPrepOverride(service, args, "mid_day_prep", "saveMidDayPhase2Item");
+
   return { ok: true, completionId: d.completionId, savedAt: d.savedAt };
 }
 
@@ -1371,6 +1393,8 @@ export async function finalizeMidDayPhase2(
     midDayInstanceId: args.instanceId,
     actor: args.actor,
   }).catch((e) => console.error("autoCompleteClosingMidDayRef failed:", e));
+
+  await auditPrepOverride(service, args, "mid_day_prep", "finalizeMidDayPhase2");
 
   return { ok: true, instance: rowToInstance(data) };
 }
@@ -2389,8 +2413,8 @@ async function computeChangedFields(
 /**
  * Submits an AM Prep instance atomically via the submit_am_prep_atomic RPC.
  *
- * Pre-flight authorization: employee+ with today's assignment, or KH+ when
- * nobody holds an active assignment for this task at the shop today.
+ * Pre-flight authorization: KH+ may work and correct at any date; employees
+ * need an active assignment for the task and operational day.
  *
  * RPC handles atomicity (per migration 0041): completions + submission +
  * instance confirm + closing auto-complete all in one transaction. Failure
@@ -2436,7 +2460,17 @@ export async function submitAmPrep(
   /** C.46: chain head submission id (null on original; FK on update). */
   originalSubmissionId: string | null;
 }> {
-  await requirePrepInstanceTaskAccess(service, args, "am_prep");
+  try {
+    await requirePrepInstanceTaskAccess(service, args, "am_prep");
+  } catch (error) {
+    if (error instanceof PrepRoleViolationError) {
+      void audit({ actorId: args.actor.userId, actorRole: args.actor.role,
+        action: "prep.submit", resourceTable: "checklist_instances", resourceId: args.instanceId,
+        metadata: { outcome: "role_insufficient", actor_level: args.actor.level, required_level: 4, had_assignment: false },
+        ipAddress: args.ipAddress ?? null, userAgent: args.userAgent ?? null });
+    }
+    throw error;
+  }
   // C.46 update path: delegate to submitAmPrepUpdate before the existing
   // original-submission flow. Original-submission flow is runtime-identical
   // for isUpdate=false (no behavior change on the default path; existing
@@ -2611,6 +2645,8 @@ export async function submitAmPrep(
     ipAddress: args.ipAddress ?? null,
     userAgent: args.userAgent ?? null,
   });
+
+  await auditPrepOverride(service, args, "am_prep", "submitAmPrep");
 
   return {
     instance: rowToInstance(result.instance),
@@ -2909,6 +2945,8 @@ async function submitAmPrepUpdate(
 
   // 8. NO JS-side success audit on update path. RPC emitted report.update
   //    inside its transaction (per C.46 A7) atomically with the chain write.
+
+  await auditPrepOverride(service, args, "am_prep", "submitAmPrepUpdate");
 
   return {
     instance: rowToInstance(result.instance),

@@ -1,5 +1,5 @@
 import "server-only";
-import { hasTaskAccess } from "@/lib/assignments";
+import { auditTaskOverride, hasTaskAccess } from "@/lib/assignments";
 import type { TaskType } from "@/lib/assignments-shared";
 import { accessibleLocations, lockLocationContext } from "@/lib/locations";
 import { etCalendarDate } from "@/lib/operational-day";
@@ -28,4 +28,12 @@ export async function canTriageUnattributedReceipt(actor: AuthContext): Promise<
   } else locationIds = reachable;
   const access = await Promise.all(locationIds.map((id) => canDoOperationalTask(actor, id, "receiving")));
   return access.some(Boolean);
+}
+
+/** Record manager participation only after an operational mutation succeeds. */
+export async function auditOperationalTaskOverride(actor: AuthContext, locationId: string, task: TaskType, operation: string): Promise<void> {
+  await auditTaskOverride(getServiceRoleClient(), {
+    userId: actor.user.id, role: actor.user.role, level: getRoleLevel(actor.user.role), locationId,
+    date: etCalendarDate(new Date().toISOString()), task, operation,
+  });
 }

@@ -46,7 +46,7 @@ export function evaluateLockUpGate(args: {
   return { ok: true };
 }
 
-/** Closing manual work is open to all shift staff; source reports have their own writers. */
+/** Every manual item retains its role floor; source reports have their own writers. */
 export function canCompleteChecklistItem(args: {
   templateType?: string;
   actorLevel: number;
@@ -56,7 +56,5 @@ export function canCompleteChecklistItem(args: {
   referencesTemplateItemId?: string | null;
 }): boolean {
   if (args.reportReferenceType !== null || (args.refTrackItemCompletion && args.referencesTemplateItemId)) return false;
-  return args.templateType === "closing"
-    ? args.actorLevel >= 2
-    : args.actorLevel >= args.itemMinRoleLevel;
+  return args.actorLevel >= args.itemMinRoleLevel;
 }

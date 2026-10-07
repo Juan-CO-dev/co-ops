@@ -233,7 +233,8 @@ export default async function ClosingPage({ searchParams }: PageProps) {
 
   // Load or create the instance.
   let instanceRow: InstanceRow | null = null;
-  if (isHistorical) {
+  if (isHistorical || auth.level < 3) {
+    // Trainees can work an existing close, but cannot create its instance.
     const { data, error } = await sb
       .from("checklist_instances")
       .select(INSTANCE_COLUMNS)

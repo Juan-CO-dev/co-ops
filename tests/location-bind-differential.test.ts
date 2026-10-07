@@ -142,6 +142,8 @@ function exportedAsyncFunctions(source: string): Fn[] {
 const WRITE_CALLS = [".insert(", ".update(", ".upsert(", ".delete(", ".rpc("];
 
 function writesScopedTable(body: string): string | null {
+  // 0217's stable date resolver is read-only; do not mistake its RPC for a write.
+  body = body.replaceAll('.rpc("station_business_date",', '.readRpc("station_business_date",');
   for (const r of TENANCY_SCOPED_RPCS) {
     if (body.includes(`.rpc("${r}"`)) return `rpc:${r}`;
   }

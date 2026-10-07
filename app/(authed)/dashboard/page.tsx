@@ -24,7 +24,7 @@
 
 import { after } from "next/server";
 import Link from "next/link";
-import { loadShiftBoard } from "@/lib/assignments";
+import { loadOwnTaskAssignments, loadShiftBoard } from "@/lib/assignments";
 import { taskVisible, type TaskType } from "@/lib/assignments-shared";
 import { ShiftBoardClient } from "@/components/assignments/ShiftBoardClient";
 
@@ -350,25 +350,42 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
     locations[0] ??
     null;
 
+  // Each optional loader fails independently; never present missing data as empty.
+  const failedWidgets = new Set<TranslationKey>();
+  async function widget<T>(label: TranslationKey, load: () => Promise<T>): Promise<T | null> {
+    try { return await load(); } catch {
+      failedWidgets.add(label);
+      return null;
+    }
+  }
+  const { today: dashboardDate } = todayAndYesterday();
   const operational = selectedLocation
-    ? await loadOperationalState(sb, selectedLocation.id)
+    ? await widget("dashboard.today.closing_label", () => loadOperationalState(sb, selectedLocation.id))
     : null;
 
-  const shiftBoard = selectedLocation && operational
-    ? await loadShiftBoard(sb, { actor: { userId: auth.user.id, role: auth.role, level: auth.level, locations: auth.locations }, locationId: selectedLocation.id, date: operational.todayDate })
+  const shiftBoard = selectedLocation
+    ? await widget("nav.assignments", () => loadShiftBoard(sb, { actor: { userId: auth.user.id, role: auth.role, level: auth.level, locations: auth.locations }, locationId: selectedLocation.id, date: dashboardDate }))
     : null;
-  const ownTasks = shiftBoard?.tasks.filter((task) => task.assigneeId === auth.user.id) ?? [];
+  // Station/roster failures must not hide separately available assigned work.
+  const ownTasks = shiftBoard
+    ? shiftBoard.tasks.filter((task) => task.assigneeId === auth.user.id)
+    : selectedLocation
+      ? await widget("nav.assignments", () => loadOwnTaskAssignments(sb, {
+          actor: { userId: auth.user.id, role: auth.role, level: auth.level, locations: auth.locations },
+          locationId: selectedLocation.id, date: dashboardDate,
+        })) ?? []
+      : [];
   const visible = (task: TaskType) => taskVisible(auth.level, task, ownTasks);
   const dashActor = { userId: auth.user.id, role: auth.role, level: auth.level };
   const [amPrepDashboard, midDayPrepDashboard, cashDashboard, pmDashboard] = await Promise.all([
-    selectedLocation && operational && visible("am_prep")
-      ? loadAmPrepDashboardState(sb, { locationId: selectedLocation.id, date: operational.todayDate, actor: dashActor }) : null,
-    selectedLocation && operational && visible("mid_day_prep")
-      ? loadMidDayPrepDashboardState(sb, { locationId: selectedLocation.id, date: operational.todayDate, actor: dashActor }) : null,
-    selectedLocation && operational && visible("cash_report")
-      ? loadCashDashboardState(sb, { locationId: selectedLocation.id, date: operational.todayDate, actor: dashActor }) : null,
-    selectedLocation && operational && visible("pm_report")
-      ? loadPmDashboardState(sb, { locationId: selectedLocation.id, date: operational.todayDate, actor: dashActor }) : null,
+    selectedLocation && visible("am_prep")
+      ? widget("dashboard.am_prep.tile_label", () => loadAmPrepDashboardState(sb, { locationId: selectedLocation.id, date: dashboardDate, actor: dashActor })) : null,
+    selectedLocation && visible("mid_day_prep")
+      ? widget("assignments.task.mid_day_prep", () => loadMidDayPrepDashboardState(sb, { locationId: selectedLocation.id, date: dashboardDate, actor: dashActor })) : null,
+    selectedLocation && visible("cash_report")
+      ? widget("assignments.task.cash_report", () => loadCashDashboardState(sb, { locationId: selectedLocation.id, date: dashboardDate, actor: dashActor })) : null,
+    selectedLocation && visible("pm_report")
+      ? widget("assignments.task.pm_report", () => loadPmDashboardState(sb, { locationId: selectedLocation.id, date: dashboardDate, actor: dashActor })) : null,
   ]);
 
   // Status-tile payloads (dashboard operational legibility, 2026-08-19). These
@@ -446,46 +463,51 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
         finalizedByName: string | null;
       }
     | null = null;
-  if (selectedLocation && operational) {
-    if (!openingVisible) {
-      openingDashboard = { isVisibleToActor: false, hasTemplate: false, status: null, finalizedAt: null, finalizedByName: null };
-    } else {
-      // PR-3: date-aware resolution on today's operational date (the opening tile
-      // reflects the version effective today; a pending next-day version is hidden).
-      const openingBase = sb
-        .from("checklist_templates")
-        .select("id")
-        .eq("location_id", selectedLocation.id)
-        .eq("type", "opening") as unknown as EffectiveResolvableBuilder;
-      const { data: oTmpl } = await applyEffectiveResolution(openingBase, operational.todayDate).maybeSingle<{ id: string }>();
-      if (!oTmpl) {
-        openingDashboard = { isVisibleToActor: true, hasTemplate: false, status: null, finalizedAt: null, finalizedByName: null };
+  if (selectedLocation) {
+    try {
+      if (!openingVisible) {
+        openingDashboard = { isVisibleToActor: false, hasTemplate: false, status: null, finalizedAt: null, finalizedByName: null };
       } else {
-        const { data: oInst } = await sb
-          .from("checklist_instances")
-          .select("status, confirmed_at, confirmed_by")
-          .eq("template_id", oTmpl.id)
+        // PR-3: date-aware resolution on today's operational date (the opening tile
+        // reflects the version effective today; a pending next-day version is hidden).
+        const openingBase = sb
+          .from("checklist_templates")
+          .select("id")
           .eq("location_id", selectedLocation.id)
-          .eq("date", operational.todayDate)
-          .maybeSingle<{ status: string; confirmed_at: string | null; confirmed_by: string | null }>();
-        let finalizedByName: string | null = null;
-        if (oInst?.confirmed_by) {
-          const { data: u } = await sb
-            .from("users")
-            .select("name")
-            .eq("id", oInst.confirmed_by)
-            .maybeSingle<{ name: string }>();
-          finalizedByName = u?.name ?? null;
+          .eq("type", "opening") as unknown as EffectiveResolvableBuilder;
+        const { data: oTmpl, error: oTmplError } = await applyEffectiveResolution(openingBase, dashboardDate).maybeSingle<{ id: string }>();
+        if (oTmplError) throw oTmplError;
+        if (!oTmpl) {
+          openingDashboard = { isVisibleToActor: true, hasTemplate: false, status: null, finalizedAt: null, finalizedByName: null };
+        } else {
+          const { data: oInst, error: oInstError } = await sb
+            .from("checklist_instances")
+            .select("status, confirmed_at, confirmed_by")
+            .eq("template_id", oTmpl.id)
+            .eq("location_id", selectedLocation.id)
+            .eq("date", dashboardDate)
+            .maybeSingle<{ status: string; confirmed_at: string | null; confirmed_by: string | null }>();
+          if (oInstError) throw oInstError;
+          let finalizedByName: string | null = null;
+          if (oInst?.confirmed_by) {
+            const { data: u, error: userError } = await sb
+              .from("users")
+              .select("name")
+              .eq("id", oInst.confirmed_by)
+              .maybeSingle<{ name: string }>();
+            if (userError) throw userError;
+            finalizedByName = u?.name ?? null;
+          }
+          openingDashboard = {
+            isVisibleToActor: true,
+            hasTemplate: true,
+            status: oInst?.status ?? null,
+            finalizedAt: oInst?.confirmed_at ?? null,
+            finalizedByName,
+          };
         }
-        openingDashboard = {
-          isVisibleToActor: true,
-          hasTemplate: true,
-          status: oInst?.status ?? null,
-          finalizedAt: oInst?.confirmed_at ?? null,
-          finalizedByName,
-        };
       }
-    }
+    } catch { failedWidgets.add("assignments.task.opening_report"); }
   }
 
   const allLocationsBadge = auth.level >= 9 && auth.locations.length === 0;
@@ -497,9 +519,9 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
   // sees their accessible locations + global (location_id IS NULL).
   const locationContextForNotifications =
     allLocationsBadge ? undefined : auth.locations;
-  const unreadNotifications = await loadUnreadForUser(sb, auth.user.id, {
+  const unreadNotifications = await widget("notifications.sheet.heading", () => loadUnreadForUser(sb, auth.user.id, {
     locationContext: locationContextForNotifications,
-  });
+  }));
   // Build a location-id → code map for card rendering. For all-locations-
   // override users the `locations` list already covers every active
   // location; for sub-7 users it's their accessible set. A notification
@@ -568,10 +590,10 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
               {roleLabel}
             </span>
           </div>
-          <NotificationBell
+          {unreadNotifications && <NotificationBell
             notifications={unreadNotifications}
             locationCodes={locationCodes}
-          />
+          />}
         </div>
 
         {/* Location chrome — single non-interactive chip for single-location
@@ -627,6 +649,14 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
         </div>
         </div>
 
+        {Array.from(failedWidgets).map((label) => (
+          <p key={label} className="text-sm text-co-text-muted" role="status">
+            {serverT(language, label)}: {serverT(language, "dashboard.tile.unavailable")}
+          </p>
+        ))}
+        {auth.level >= 4 && selectedLocation && operational?.yesterdayUnconfirmed ? (
+          <YesterdayUnconfirmedAlert location={selectedLocation} yesterdayDate={operational.yesterdayDate} language={language} />
+        ) : null}
         {shiftBoard && <ShiftBoardClient key={shiftBoard.locationId} board={shiftBoard} compact />}
 
         {/* Today's Operations card. */}
@@ -637,10 +667,10 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
             language={language}
           />
         ) : (
-          <NoLocationsState language={language} />
+          !selectedLocation ? <NoLocationsState language={language} /> : null
         )}
 
-        {selectedLocation && operational && ownTasks.some((task) => visible(task.task)) ? (
+        {selectedLocation && ownTasks.some((task) => visible(task.task)) ? (
           <ReportsSection language={language}>
             {openingDashboard?.isVisibleToActor ? (
               <OpeningTile
@@ -679,7 +709,7 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
                 state={midDayPrepDashboard}
                 language={language}
                 locationId={selectedLocation.id}
-                date={operational.todayDate}
+                date={dashboardDate}
               />
             ) : null}
             {visible("receiving") ? (
@@ -687,7 +717,7 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
                 language={language}
                 locationId={selectedLocation.id}
                 deliveries={receivingFacts}
-                today={operational.todayDate}
+                today={dashboardDate}
               />
             ) : null}
             {visible("ordering") ? (
@@ -703,7 +733,7 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
                 language={language}
                 locationId={selectedLocation.id}
                 state={countsState}
-                today={operational.todayDate}
+                today={dashboardDate}
               />
             ) : null}
             {cashDashboard?.isVisibleToActor ? (
@@ -771,6 +801,59 @@ function LocationSwitcher({
         );
       })}
     </nav>
+  );
+}
+
+function YesterdayUnconfirmedAlert({
+  location,
+  yesterdayDate,
+  language,
+}: {
+  location: LocationLite;
+  yesterdayDate: string;
+  language: Language;
+}) {
+  return (
+    <section
+      role="alert"
+      aria-label={serverT(language, "dashboard.yesterday.aria")}
+      className="
+        flex flex-col gap-3 rounded-2xl
+        border-2 border-co-gold-deep bg-co-warning-surface
+        p-4 sm:p-5
+      "
+    >
+      <div className="flex items-start gap-3">
+        <span
+          aria-hidden
+          className="
+            mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center
+            rounded-full bg-co-gold-deep text-co-text
+          "
+        >
+          <WarningIcon />
+        </span>
+        <div className="flex-1 min-w-0">
+          <p className="text-sm font-bold text-co-text">
+            {serverT(language, "dashboard.yesterday.title", { code: location.code })}
+          </p>
+          <p className="mt-1 text-xs text-co-text-muted">
+            {serverT(language, "dashboard.yesterday.body", {
+              date: formatDateLabel(yesterdayDate, language),
+            })}
+          </p>
+        </div>
+      </div>
+      <div className="sm:pl-10">
+        <ActionLink
+          href={`/operations/closing?location=${location.id}&date=${yesterdayDate}`}
+          variant="secondary"
+          className="w-full sm:w-auto"
+        >
+          {serverT(language, "dashboard.yesterday.cta")}
+        </ActionLink>
+      </div>
+    </section>
   );
 }
 
@@ -1047,3 +1130,19 @@ function AmPrepTile({
 // server (Vercel runtime is UTC) — Juan's smoke surfaced "Submitted at
 // 7:17 PM by Juan" for a 3:17 PM EDT submission (4-hour offset = EDT
 // vs UTC). Canonical formatTime always pins to operational TZ.
+
+function WarningIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden>
+      <path
+        d="M8 1.5L15 14H1L8 1.5z"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinejoin="round"
+        fill="none"
+      />
+      <path d="M8 6v3.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+      <circle cx="8" cy="11.5" r="0.75" fill="currentColor" />
+    </svg>
+  );
+}

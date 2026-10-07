@@ -1,0 +1,88 @@
+import { createElement } from "react";
+import { readFileSync } from "node:fs";
+import ts from "typescript";
+import { renderToStaticMarkup } from "react-dom/server";
+import { describe, expect, it, vi } from "vitest";
+import { TranslationProvider } from "@/lib/i18n/provider";
+import { ShiftBoardClient } from "@/components/assignments/ShiftBoardClient";
+import { TASK_TYPES, type ShiftBoard } from "@/lib/assignments-shared";
+
+vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: vi.fn() }) }));
+function board(targetLevel: number, available = true, self = false): ShiftBoard {
+  return {
+    locationId: "shop", date: "2026-10-07", viewerId: "kh", viewerLevel: 4,
+    people: [{ id: self ? "kh" : "target", name: "Target", level: targetLevel, hasWork: true, available }],
+    tasks: [{ id: "assignment", task: "am_prep", assigneeId: self ? "kh" : "target", assignerId: "manager", assignerName: "Manager", note: null, available }],
+    stations: [], events: [],
+  };
+}
+function render(value: ShiftBoard, compact = false) {
+  return renderToStaticMarkup(createElement(TranslationProvider, {
+    initialLanguage: "en", children: createElement(ShiftBoardClient, { board: value, compact }),
+  }));
+}
+describe("assignment board retract and assign controls", () => {
+  it.each([3, 4, 5, 8])("lets KH retract level %s assignments regardless of assign-up permission", (level) => {
+    const html = render(board(level));
+    expect(html).toContain(">Retract<");
+    expect(html.includes('name="task"')).toBe(level <= 4);
+    expect(html.includes('name="stationId"')).toBe(level <= 4);
+  });
+  it("allows retracting the viewer's own assignment", () => {
+    expect(render(board(4, true, true))).toContain(">Retract<");
+    expect(render(board(4, true, true), true)).toContain(">Retract<");
+  });
+  it("keeps an unavailable assignee retractable without assigning new work", () => {
+    const html = render(board(2, false));
+    expect(html).toContain(">Retract<");
+    expect(html).toContain("No longer available at this shop");
+    expect(html).toContain("Needs reassignment");
+    expect(html).not.toContain('name="task"');
+    expect(html).not.toContain('name="stationId"');
+  });
+  it("does not count unavailable assignments as coverage in the safety line", () => {
+    const value = board(3, false);
+    value.tasks = TASK_TYPES.map((task) => ({ ...value.tasks[0]!, task, id: task, available: task !== "am_prep" }));
+    const html = render(value, true);
+    expect(html).toContain("Unassigned: AM prep");
+    expect(html).not.toContain("Unassigned: Mid-day prep");
+  });
+  it("does not give employees links or retract controls for unavailable tasks", () => {
+    const value = board(3, false);
+    value.viewerId = "target";
+    value.viewerLevel = 3;
+    const html = render(value);
+    expect(html).not.toContain('href="/operations/am-prep');
+    expect(html).not.toContain(">Retract<");
+    expect(html).not.toContain('name="task"');
+  });
+});
+
+describe("assignment board conflict feedback", () => {
+  it("turns a duplicate-assignment 409 into specific feedback and unlocks controls", async () => {
+    const source = readFileSync("components/assignments/ShiftBoardClient.tsx", "utf8");
+    const ast = ts.createSourceFile("board.tsx", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+    let mutation: ts.FunctionDeclaration | undefined;
+    function find(node: ts.Node) {
+      if (ts.isFunctionDeclaration(node) && node.name?.text === "mutate") mutation = node;
+      ts.forEachChild(node, find);
+    }
+    find(ast);
+    expect(mutation).toBeDefined();
+    const setError = vi.fn();
+    const setBusy = vi.fn();
+    const refresh = vi.fn();
+    const deps = {
+      board: board(3), setError, setBusy,
+      fetch: vi.fn(async () => Response.json({ error: "assignment_already_active", code: "assignment_already_active" }, { status: 409 })),
+      startTransition: (fn: () => void) => fn(), router: { refresh },
+    };
+    // Execute the actual event handler without a browser; React rendering is covered above.
+    const js = ts.transpile(mutation!.getText(ast), { target: ts.ScriptTarget.ES2022 });
+    const mutate = new Function(...Object.keys(deps), `${js}; return mutate;`)(...Object.values(deps));
+    await mutate({ action: "task_assign", task: "am_prep", userId: "target" });
+    expect(setError).toHaveBeenLastCalledWith("assignments.errorAlreadyActive");
+    expect(setBusy).toHaveBeenLastCalledWith(false);
+    expect(refresh).not.toHaveBeenCalled();
+  });
+});

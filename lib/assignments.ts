@@ -3,7 +3,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { audit } from "./audit";
 import { lockLocationContext, type LocationActor } from "./locations";
 import { etCalendarDate } from "./operational-day";
-import { getRoleLevel, isRoleCode } from "./roles";
+import { getRoleLevel, isRoleCode, type RoleCode } from "./roles";
 import {
   canManageAssignee, isTaskType, TASK_TYPES, TASK_MIN_LEVEL, type ShiftBoard, type Station,
   type StationEvent, type TaskAssignment, type TaskType,
@@ -23,31 +23,52 @@ function requireUuid(value: string): void {
   if (!UUID.test(value)) throw new AssignmentError("invalid_payload", 400);
 }
 function dbError(error: { message: string; code?: string }): never {
+  if (error.code === "23505") throw new AssignmentError("assignment_already_active", 409);
   const known = ["station_locked", "role_insufficient", "location_access_denied", "assignee_unavailable", "self_assignment", "station_unavailable", "assignment_not_found", "invalid_payload"];
   const code = known.find((candidate) => error.message === candidate);
   if (code) throw new AssignmentError(code, code === "assignment_not_found" ? 404 : code === "invalid_payload" ? 400 : 403);
   throw new Error(`assignments database failure: ${error.code ?? "unknown"}`);
 }
 
-/** Assignment permissions are narrow: exact task, person, shop and today's date. */
+/** Callers bind location first. Assignments delegate work; they never remove KH authority. */
 export async function hasTaskAccess(service: SupabaseClient, args: {
   userId: string; level: number; locationId: string; date: string; task: TaskType;
 }): Promise<boolean> {
-  if (!isTaskType(args.task) || args.level < TASK_MIN_LEVEL[args.task] || args.date !== today()) return false;
+  if (!isTaskType(args.task) || args.level < TASK_MIN_LEVEL[args.task]) return false;
+  if (args.level >= 4) return true;
+  if (args.date !== today()) return false;
+  // Stored assignments to inactive or transferred employees confer no access.
+  try { if (await targetLevel(service, args.userId, args.locationId) < TASK_MIN_LEVEL[args.task]) return false; }
+  catch (error) {
+    if (error instanceof AssignmentError && error.code === "assignee_unavailable") return false;
+    throw error;
+  }
   const { data, error } = await service.from("report_assignments").select("id")
     .eq("assignee_id", args.userId).eq("report_type", args.task)
     .eq("location_id", args.locationId).eq("operational_date", args.date)
     .eq("active", true).limit(1).maybeSingle();
   if (error) dbError(error);
-  if (data) return true;
-  if (args.level < 4) return false;
-  // The board's "take it" link opens the task without creating a forbidden
-  // self-assignment. Never treat somebody else's assignment as unassigned.
-  const { data: assigned, error: assignedError } = await service.from("report_assignments").select("id")
-    .eq("report_type", args.task).eq("location_id", args.locationId)
-    .eq("operational_date", args.date).eq("active", true).limit(1).maybeSingle();
-  if (assignedError) dbError(assignedError);
-  return !assigned;
+  return !!data;
+}
+
+/** Called for mutations only, never history reads. One row identifies every overridden assignment. */
+export async function auditTaskOverride(service: SupabaseClient, args: {
+  userId: string; role: RoleCode; level: number; locationId: string; date: string;
+  task: TaskType; operation: string;
+}): Promise<void> {
+  if (args.level < 4) return;
+  // Audit is fail-open, including its context lookup, just like audit() itself.
+  try {
+    const { data, error } = await service.from("report_assignments").select("id,assignee_id")
+      .eq("report_type", args.task).eq("location_id", args.locationId)
+      .eq("operational_date", args.date).eq("active", true).neq("assignee_id", args.userId);
+    if (error) throw error;
+    if (!data?.length) return;
+    await audit({ actorId: args.userId, actorRole: args.role, action: "task.override",
+      resourceTable: "report_assignments", resourceId: null,
+      metadata: { location_id: args.locationId, operational_date: args.date, task: args.task,
+        operation: args.operation, assignments: data }, ipAddress: null, userAgent: null });
+  } catch { console.error("task.override audit context lookup failed"); }
 }
 
 /** Live target validation, repeated by RPC under its transaction lock. */
@@ -118,7 +139,7 @@ export async function retractTask(service: SupabaseClient, args: {
   requireLocation(args.actor, args.locationId);
   if (args.actor.level < 4) throw new AssignmentError("role_insufficient");
   requireUuid(args.assignmentId);
-  // RPC resolves the assignee from the row and checks live level/membership.
+  // Retraction authorizes the actor/shop only; stale or senior assignees cannot lock a task.
   const { data, error } = await service.rpc("write_task_assignment", {
     p_actor_id: args.actor.userId, p_location_id: args.locationId, p_assignment_id: args.assignmentId,
     p_user_id: null, p_task: null, p_note: null,
@@ -155,6 +176,37 @@ export async function saveStation(service: SupabaseClient, args: {
   return data;
 }
 
+/** A station-widget failure must not erase the actor's independently assigned task tiles. */
+export async function loadOwnTaskAssignments(service: SupabaseClient, args: {
+  actor: AssignmentActor; locationId: string; date: string;
+}): Promise<TaskAssignment[]> {
+  requireLocation(args.actor, args.locationId);
+  if (args.date !== today()) throw new AssignmentError("invalid_payload", 400);
+  let level: number;
+  try { level = await targetLevel(service, args.actor.userId, args.locationId); }
+  catch (error) {
+    if (error instanceof AssignmentError && error.code === "assignee_unavailable") return [];
+    throw error;
+  }
+  const tasks: TaskAssignment[] = [];
+  for (let offset = 0; ; offset += 500) {
+    const { data, error } = await service.from("report_assignments")
+      .select("id,report_type,assignee_id,assigner_id,note")
+      .eq("location_id", args.locationId).eq("operational_date", args.date)
+      .eq("assignee_id", args.actor.userId).eq("active", true).order("id")
+      .range(offset, offset + 499);
+    if (error) dbError(error);
+    for (const row of data ?? []) {
+      if (isTaskType(row.report_type) && level >= TASK_MIN_LEVEL[row.report_type]) tasks.push({
+        id: row.id, task: row.report_type, assigneeId: row.assignee_id, assignerId: row.assigner_id,
+        assignerName: null, note: row.note, available: true,
+      });
+    }
+    if ((data ?? []).length < 500) break;
+  }
+  return tasks;
+}
+
 /** Board visibility is enforced here, not by hiding other people's JSX. */
 export async function loadShiftBoard(service: SupabaseClient, args: {
   actor: AssignmentActor; locationId: string; date: string;
@@ -162,6 +214,9 @@ export async function loadShiftBoard(service: SupabaseClient, args: {
   requireLocation(args.actor, args.locationId);
   if (args.date !== today()) throw new AssignmentError("invalid_payload", 400);
   const manager = args.actor.level >= 4;
+  const { data: stationDate, error: dayError } = await service.rpc("station_business_date", { p_location_id: args.locationId });
+  if (dayError) dbError(dayError);
+  if (typeof stationDate !== "string") throw new Error("Station business date unavailable");
   const stationsResult = await service.from("stations").select("id,name,name_es,sort,active")
     .eq("location_id", args.locationId).order("sort").order("name");
   if (stationsResult.error) dbError(stationsResult.error);
@@ -172,7 +227,7 @@ export async function loadShiftBoard(service: SupabaseClient, args: {
   const eventRows: Array<Record<string, unknown>> = [];
   for (let offset = 0; ; offset += 500) {
     let query = service.from("station_events").select("id,sequence::text,location_id,business_date,user_id,station_id,kind,actor_id,at,source")
-      .eq("location_id", args.locationId).eq("business_date", args.date).order("sequence");
+      .eq("location_id", args.locationId).eq("business_date", stationDate).order("sequence");
     if (!manager) query = query.eq("user_id", args.actor.userId);
     const { data, error } = await query.range(offset, offset + 499);
     if (error) dbError(error);
@@ -191,8 +246,10 @@ export async function loadShiftBoard(service: SupabaseClient, args: {
     if ((data ?? []).length < 500) break;
   }
   const taskResult = { data: taskRows };
-  const membership = manager ? await service.from("user_locations").select("user_id")
-    .eq("location_id", args.locationId).eq("active", true) : { data: [{ user_id: args.actor.userId }], error: null };
+  let membershipQuery = service.from("user_locations").select("user_id")
+    .eq("location_id", args.locationId).eq("active", true);
+  if (!manager) membershipQuery = membershipQuery.eq("user_id", args.actor.userId);
+  const membership = await membershipQuery;
   if (membership.error) dbError(membership.error);
   const rosterIds = new Set<string>((membership.data ?? []).map((row) => row.user_id));
   rosterIds.add(args.actor.userId);
@@ -212,13 +269,17 @@ export async function loadShiftBoard(service: SupabaseClient, args: {
     userId: String(row.user_id), stationId: row.station_id as string | null, kind: row.kind as StationEvent["kind"],
     actorId: String(row.actor_id), actorName: names.get(String(row.actor_id)) ?? null, at: String(row.at), source: row.source as StationEvent["source"],
   }));
-  const tasks: TaskAssignment[] = (taskResult.data ?? []).filter((row) => isTaskType(row.report_type)).map((row) => ({
+  const members = new Set((membership.data ?? []).map((row) => row.user_id));
+  const available = new Set(users.filter((user) => user.active && isRoleCode(user.role)
+    && (getRoleLevel(user.role) >= 9 || members.has(user.id))).map((user) => user.id));
+  const tasks: TaskAssignment[] = (taskResult.data ?? []).filter((row) => isTaskType(row.report_type) && (manager || available.has(row.assignee_id))).map((row) => ({
     id: row.id, task: row.report_type as TaskType, assigneeId: row.assignee_id, assignerId: row.assigner_id,
-    assignerName: names.get(row.assigner_id) ?? null, note: row.note,
+    assignerName: names.get(row.assigner_id) ?? null, note: row.note, available: available.has(row.assignee_id),
   }));
   return { locationId: args.locationId, date: args.date, viewerId: args.actor.userId, viewerLevel: args.actor.level,
-    stations, events, tasks, people: users.filter((user) => user.active && rosterIds.has(user.id) && isRoleCode(user.role))
-      .map((user) => ({ id: user.id, name: user.name, level: isRoleCode(user.role) ? getRoleLevel(user.role) : 0,
+    stations, events, tasks, people: users.filter((user) => isRoleCode(user.role) &&
+      (available.has(user.id) || (manager && tasks.some((task) => task.assigneeId === user.id))))
+      .map((user) => ({ id: user.id, name: user.name, available: available.has(user.id), level: isRoleCode(user.role) ? getRoleLevel(user.role) : 0,
         hasWork: events.some((event) => event.userId === user.id) || tasks.some((task) => task.assigneeId === user.id) }))
       .sort((a, b) => a.name.localeCompare(b.name)),
   };

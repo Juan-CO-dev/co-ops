@@ -57,10 +57,10 @@ const order = boundary("ordering", "submitParPass");
 
 describe("operational task enforcement", () => {
   for (const role of ["key_holder", "trainer", "shift_lead", "agm", "gm", "owner"] as const) {
-    it(`${role} cannot submit counts or ordering assigned to somebody else`, async () => {
+    it(`${role} retains count and ordering authority when assigned to somebody else`, async () => {
       assignedToOther = true;
-      await expect(count(actor(role), { locationId, lines: [] })).rejects.toMatchObject({ status: 403 });
-      await expect(order(actor(role), locationId, [])).rejects.toMatchObject({ status: 403 });
+      await expect(count(actor(role), { locationId, lines: [] })).rejects.toMatchObject({ status: 400, code: "no_lines" });
+      await expect(order(actor(role), locationId, [])).rejects.toMatchObject({ status: 400, code: "no_lines" });
       expect(domainRead).not.toHaveBeenCalled();
     });
   }
@@ -103,11 +103,12 @@ function countPost(ctx: AuthContext, writer: (...args: unknown[]) => Promise<unk
 
 describe("count API step-up and assignment boundary", () => {
   const signedIn = (role: RoleCode, unlocked = false) => ({ ...actor(role), session: { stepUpUnlocked: unlocked } }) as AuthContext;
-  it.each(["key_holder", "trainer", "shift_lead"] as const)("%s can submit without unavailable password step-up", async role => {
+  it.each(["key_holder", "trainer", "shift_lead"] as const)("%s must satisfy password step-up before writing", async role => {
     const writer = vi.fn(async () => ({ countEventId: "count", advisories: [] }));
     const res = await countPost(signedIn(role), writer);
-    expect(res.status).toBe(201);
-    expect(writer).toHaveBeenCalledOnce();
+    expect(res.status).toBe(403);
+    expect(await res.json()).toEqual({ code: "step_up_required" });
+    expect(writer).not.toHaveBeenCalled();
   });
   it.each(["agm", "gm", "owner"] as const)("%s retains the password step-up before writing", async role => {
     const writer = vi.fn(async () => ({ countEventId: "count", advisories: [] }));
@@ -119,15 +120,16 @@ describe("count API step-up and assignment boundary", () => {
   it("passes an assigned KH through the actual library authorization gate", async () => {
     ownAssignment = true;
     // Empty lines deliberately stop immediately AFTER authorization, without simulating inventory writes.
-    const res = await countPost(signedIn("key_holder"), (ctx) => count(ctx, { locationId, lines: [] }));
+    const res = await countPost(signedIn("key_holder", true), (ctx) => count(ctx, { locationId, lines: [] }));
     expect(res.status).toBe(400);
     expect(await res.json()).toEqual({ code: "no_lines" });
   });
-  it.each(["key_holder", "owner"] as const)("%s gets a real library assignment refusal through the API", async role => {
+  it.each(["key_holder", "owner"] as const)("%s passes library authorization for another assignee after step-up", async role => {
     assignedToOther = true;
-    const res = await countPost(signedIn(role, true), count);
-    expect(res.status).toBe(403);
-    expect(await res.json()).toEqual({ code: "forbidden" });
+    // Empty lines stop after the real assignment boundary, before inventory writes.
+    const res = await countPost(signedIn(role, true), (ctx) => count(ctx, { locationId, lines: [] }));
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ code: "no_lines" });
     expect(domainRead).not.toHaveBeenCalled();
   });
 });
@@ -181,8 +183,8 @@ describe("count tile metadata", () => {
     ownAssignment = true;
     await expect(tile(actor("key_holder"), locationId)).resolves.toEqual({ lastCountDate: null, anchoredSkuCount: 0 });
   });
-  it("does not expose count metadata to a KH when another person holds the task", async () => {
+  it("retains KH count metadata when another person holds the task", async () => {
     assignedToOther = true;
-    await expect(tile(actor("key_holder"), locationId)).rejects.toMatchObject({ status: 403 });
+    await expect(tile(actor("key_holder"), locationId)).resolves.toEqual({ lastCountDate: null, anchoredSkuCount: 0 });
   });
 });

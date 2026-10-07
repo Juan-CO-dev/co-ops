@@ -1,4 +1,4 @@
-import { canDoOperationalTask } from "@/lib/operational-task-access";
+import { auditOperationalTaskOverride, canDoOperationalTask } from "@/lib/operational-task-access";
 /**
  * lib/barcodes.ts — the receiving door's barcode memory (V3-B §5). DB layer over the pure laws.
  *
@@ -259,6 +259,7 @@ export async function teachBarcode(
   }
   if (!inserted) throw new BarcodeError(500, "teach_failed", "Barcode write failed: insert returned no row");
 
+  await auditOperationalTaskOverride(actor, input.locationId, "receiving", "teachBarcode");
   await audit({
     actorId: actor.user.id,
     actorRole: actor.user.role,
@@ -336,6 +337,7 @@ export async function forgetBarcode(
   if (error) throw new BarcodeError(500, "forget_failed", `Barcode update failed: ${error.message}`);
   if (!count) throw new BarcodeError(404, "not_taught", "That code is not taught on this item");
 
+  await auditOperationalTaskOverride(actor, input.locationId, "receiving", "forgetBarcode");
   await audit({
     actorId: actor.user.id,
     actorRole: actor.user.role,

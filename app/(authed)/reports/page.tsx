@@ -13,7 +13,7 @@ import { redirect } from "next/navigation";
 import { serverT } from "@/lib/i18n/server";
 import type { TranslationKey } from "@/lib/i18n/types";
 import { buildSearchCorpus, searchReport, type SearchSnippet } from "@/lib/reports-search";
-import { canReadReportLocation, type LocationActor } from "@/lib/locations";
+import { REPORT_ALL_LOCATIONS_LEVEL, canReadReportLocation, type LocationActor } from "@/lib/locations";
 import { operationalNow } from "@/lib/midshift";
 import { REPORTS_HUB_CASH_LEVEL, listReports, type ReportTypeKey, type SignalFilters, type Viewer } from "@/lib/reports-hub";
 import { requireSessionFromHeaders } from "@/lib/session";
@@ -122,9 +122,9 @@ export default async function ReportsPage({ searchParams }: PageProps) {
   const hasSignalFilters = Object.keys(signalFilters).length > 0;
 
   const sb = getServiceRoleClient();
-  // Report browsing has a GM+ all-shop grant independent of task/write scope.
+  // Report browsing has a MoO+ all-shop grant independent of task/write scope.
   let reportLocations: Array<{ id: string; name: string }> = [];
-  if (auth.level >= 7) {
+  if (auth.level >= REPORT_ALL_LOCATIONS_LEVEL) {
     const { data, error } = await sb.from("locations").select("id, name").eq("active", true).order("name");
     if (error) throw new Error(`report locations: ${error.message}`);
     reportLocations = data ?? [];

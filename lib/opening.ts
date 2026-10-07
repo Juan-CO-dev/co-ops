@@ -1,4 +1,4 @@
-import { hasTaskAccess } from "@/lib/assignments";
+import { auditTaskOverride, hasTaskAccess } from "@/lib/assignments";
 /**
  * Opening Report Phase 1 + Phase 2 lifecycle — Build #3 PR 2 + PR 3.
  *
@@ -681,6 +681,24 @@ export async function canAccessOpeningInstance(
     .maybeSingle<{ location_id: string; date: string }>();
   if (error) throw new Error(`opening access: ${error.message}`);
   return !!data && hasTaskAccess(service, { ...args.actor, locationId: data.location_id, date: data.date, task: "opening_report" });
+}
+
+async function auditOpeningOverride(
+  service: SupabaseClient,
+  args: { instanceId: string; actor: OpeningActor },
+  operation: string,
+): Promise<void> {
+  if (args.actor.level < 4) return;
+  try {
+    const { data, error } = await service.from("checklist_instances")
+      .select("location_id, date").eq("id", args.instanceId)
+      .maybeSingle<{ location_id: string; date: string }>();
+    if (error || !data) return;
+    await auditTaskOverride(service, { ...args.actor, locationId: data.location_id, date: data.date,
+      task: "opening_report", operation });
+  } catch {
+    console.error("task.override instance context lookup failed");
+  }
 }
 
 export async function loadOpeningState(
@@ -1392,6 +1410,8 @@ export async function saveOpeningPhase1Draft(
   if (error) {
     throw new Error(`saveOpeningPhase1Draft: ${error.message}`);
   }
+  await auditOpeningOverride(service, args, "saveOpeningPhase1Draft");
+
   return { savedAt: data?.saved_at ?? savedAt };
 }
 
@@ -1757,6 +1777,8 @@ export async function submitPhase1Atomic(
     });
   }
 
+  await auditOpeningOverride(service, args, "submitPhase1Atomic");
+
   return {
     instance: rowToInstance(rpcResult.instance),
     submittedCompletionIds: rpcResult.completionIds,
@@ -2043,6 +2065,8 @@ export async function savePhase2Item(
   } catch (e) {
     console.error("savePhase2Item: production capture failed (completion committed):", e);
   }
+
+  await auditOpeningOverride(service, args, "savePhase2Item");
 
   return {
     completion: rowToCompletion(rpcResult.completion),
@@ -2349,6 +2373,8 @@ export async function revokePhase2Completion(
     console.error("revokePhase2Completion: production reverse failed:", e);
   }
 
+  await auditOpeningOverride(service, args, "revokePhase2Completion");
+
   return {
     completion: rowToCompletion(updatedRow),
     templateItemId: updatedRow.template_item_id,
@@ -2482,6 +2508,8 @@ export async function submitPhase2Atomic(
       under_par_notification_count: rpcResult.underParNotificationIds.length,
     },
   });
+
+  await auditOpeningOverride(service, args, "submitPhase2Atomic");
 
   return {
     instance: rowToInstance(rpcResult.instance),

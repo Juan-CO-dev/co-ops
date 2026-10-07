@@ -3,6 +3,7 @@
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { ActionButton, ActionLink } from "@/components/ActionButton";
+import type { TranslationKey } from "@/lib/i18n/types";
 import { useTranslation } from "@/lib/i18n/provider";
 import { currentStation, TASK_TYPES, TASK_MIN_LEVEL, taskHref, type ShiftBoard, type TaskType } from "@/lib/assignments-shared";
 
@@ -13,22 +14,29 @@ export function ShiftBoardClient({ board, compact = false }: { board: ShiftBoard
   const router = useRouter();
   const [busy, setBusy] = useState(false);
   const [refreshing, startTransition] = useTransition();
-  const [error, setError] = useState(false);
+  const [error, setError] = useState<TranslationKey | null>(null);
   const disabled = busy || refreshing;
-  const unassigned = TASK_TYPES.filter((task) => !board.tasks.some((assignment) => assignment.task === task));
+  const unassigned = TASK_TYPES.filter((task) => !board.tasks.some((assignment) => assignment.task === task && assignment.available !== false));
   const people = compact ? board.people.filter((p) => p.id === board.viewerId) : board.people;
   async function mutate(payload: Record<string, unknown>) {
-    setBusy(true); setError(false);
+    setBusy(true); setError(null);
     try {
       const response = await fetch("/api/assignments", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ locationId: board.locationId, ...payload }) });
-      if (!response.ok || response.redirected) throw new Error("assignment_write_failed");
+      if (!response.ok || response.redirected) {
+        const body: unknown = await response.json().catch(() => null);
+        if (response.status === 409 && body && typeof body === "object" && "error" in body && body.error === "assignment_already_active") {
+          setError("assignments.errorAlreadyActive");
+          return;
+        }
+        throw new Error("assignment_write_failed");
+      }
       startTransition(() => router.refresh());
-    } catch { setError(true); } finally { setBusy(false); }
+    } catch { setError("assignments.error"); } finally { setBusy(false); }
   }
   return <section className="co-card space-y-4 p-4" aria-busy={disabled}>
     <h2 className="text-xl font-bold text-co-text">{t(compact || board.viewerLevel < 4 ? "assignments.myShift" : "assignments.team")}</h2>
     {!compact && board.viewerLevel >= 4 && <p className="text-sm text-co-text-muted">{t("assignments.rosterHint")}</p>}
-    {error && <p role="alert" className="text-co-cta-text">{t("assignments.error")}</p>}
+    {error && <p role="alert" className="text-co-cta-text">{t(error)}</p>}
     {compact && board.viewerLevel >= 4 && <ul className="space-y-2">{unassigned.map((task) => <li key={task}>
       <ActionLink variant="secondary" href={`/assignments?location=${board.locationId}`}>{t("assignments.unassignedAction", { task: t(`assignments.task.${task}`) })}</ActionLink>
     </li>)}</ul>}
@@ -38,12 +46,12 @@ export function ShiftBoardClient({ board, compact = false }: { board: ShiftBoard
       <ul className="space-y-3">
         <li className="rounded-xl border border-co-border p-3"><ActionLink variant="secondary" href={`/operations/closing?location=${board.locationId}`}>{t("assignments.closing")}</ActionLink><p className="mt-2 text-sm text-co-text-muted">{t("assignments.everyone")}</p></li>
         {TASK_TYPES.map((task) => {
-          const assignments = board.tasks.filter((assignment) => assignment.task === task);
-          const canOpen = assignments.length === 0 || assignments.some((assignment) => assignment.assigneeId === board.viewerId);
+          const assignments = board.tasks.filter((assignment) => assignment.task === task && assignment.available !== false);
+          const canOpen = board.viewerLevel >= TASK_MIN_LEVEL[task] && (board.viewerLevel >= 4 || assignments.some((assignment) => assignment.assigneeId === board.viewerId));
           return <li key={task} className="rounded-xl border border-co-border p-3">
-            <ActionLink variant="secondary" href={taskHref(task, board.locationId)}>{t(`assignments.task.${task}`)}</ActionLink>
+            {canOpen ? <ActionLink variant="secondary" href={taskHref(task, board.locationId)}>{t(`assignments.task.${task}`)}</ActionLink> : <span>{t(`assignments.task.${task}`)}</span>}
             <p className="mt-2 text-sm text-co-text-muted">{assignments.length === 0 ? t("assignments.unassigned") : assignments.map((assignment) => board.people.find((person) => person.id === assignment.assigneeId)?.name ?? t("assignments.assignedStaff")).join(", ")}</p>
-            {!canOpen && <p className="text-sm text-co-text-muted">{t("assignments.assignedOther")}</p>}
+            {!canOpen && assignments.length > 0 && <p className="text-sm text-co-text-muted">{t("assignments.assignedOther")}</p>}
           </li>;
         })}
       </ul>
@@ -52,12 +60,14 @@ export function ShiftBoardClient({ board, compact = false }: { board: ShiftBoard
     {people.map((person) => {
       const current = currentStation(board.events, person.id);
       const station = board.stations.find((s) => s.id === current?.stationId);
-      const tasks = board.tasks.filter((task) => task.assigneeId === person.id && person.level >= TASK_MIN_LEVEL[task.task]);
+      const tasks = board.tasks.filter((task) => task.assigneeId === person.id && (board.viewerLevel >= 4 || (task.available !== false && person.available !== false && person.level >= TASK_MIN_LEVEL[task.task])));
       const assignableTasks = TASK_TYPES.filter((task) => person.level >= TASK_MIN_LEVEL[task]);
-      const managerCanEdit = !compact && board.viewerLevel >= 4 && person.level <= board.viewerLevel;
-      const canClaim = compact && person.id === board.viewerId && (!current?.stationId || current.source === "claimed");
+      const managerCanEdit = !compact && board.viewerLevel >= 4 && person.available !== false && person.level <= board.viewerLevel;
+      const canRetract = board.viewerLevel >= 4;
+      const canClaim = person.available !== false && compact && person.id === board.viewerId && (!current?.stationId || current.source === "claimed");
       return <article key={person.id} className="space-y-3 rounded-xl border border-co-border p-3">
         {!compact && <h3 className="font-bold text-co-text">{person.name}</h3>}
+        {person.available === false && <p className="text-sm text-co-text-muted">{t("assignments.unavailablePerson")}</p>}
         <p className="font-bold text-co-text">{station ? (language === "es" ? station.nameEs || station.name : station.name) : t("assignments.noStation")}</p>
         {current?.stationId && current.source === "assigned" && <p className="text-sm text-co-text-muted"><span aria-hidden="true">🔒 </span>{t("assignments.assignedBy", { name: current.actorName ?? t("assignments.teamLead") })}</p>}
         {(managerCanEdit || canClaim) && <form className="flex flex-wrap items-end gap-2" onSubmit={(event) => {
@@ -77,8 +87,9 @@ export function ShiftBoardClient({ board, compact = false }: { board: ShiftBoard
         {tasks.length === 0 && <p className="text-sm text-co-text-muted">{t("assignments.noTasks")}</p>}
         <ul className="space-y-2">{tasks.map((assignment) => <li key={assignment.id} className="flex flex-wrap items-center gap-2">
           <ActionLink variant="secondary" href={taskHref(assignment.task, board.locationId)}>{t(`assignments.task.${assignment.task}`)}</ActionLink>
+          {assignment.available === false && <p className="text-sm text-co-text-muted">{t("assignments.unavailableTask")}</p>}
           {assignment.note && <p className="text-sm text-co-text-muted">{assignment.note}</p>}
-          {managerCanEdit && person.id !== board.viewerId && <ActionButton variant="danger" disabled={disabled} onClick={() => void mutate({ action: "task_retract", assignmentId: assignment.id })}>{t("assignments.retract")}</ActionButton>}
+          {canRetract && <ActionButton variant="danger" disabled={disabled} onClick={() => void mutate({ action: "task_retract", assignmentId: assignment.id })}>{t("assignments.retract")}</ActionButton>}
         </li>)}</ul>
         {managerCanEdit && person.id !== board.viewerId && assignableTasks.length > 0 && <form className="flex flex-wrap items-end gap-2" onSubmit={(event) => {
           event.preventDefault(); const data = new FormData(event.currentTarget);

@@ -10,7 +10,7 @@ export function isTaskType(value: unknown): value is TaskType {
   return typeof value === "string" && TASK_TYPES.some((task) => task === value);
 }
 export interface Station { id: string; name: string; nameEs: string; sort: number; active: boolean }
-export interface ShiftPerson { id: string; name: string; level: number; hasWork: boolean }
+export interface ShiftPerson { id: string; name: string; level: number; hasWork: boolean; available?: boolean }
 export interface StationEvent {
   id: string; sequence: string; locationId: string; businessDate: string;
   userId: string; stationId: string | null; kind: "assign" | "claim" | "move" | "release";
@@ -19,6 +19,8 @@ export interface StationEvent {
 export interface TaskAssignment {
   id: string; task: TaskType; assigneeId: string; assignerId: string;
   assignerName: string | null; note: string | null;
+  /** False assignments stay on the manager board for retraction but confer no work/access. */
+  available?: boolean;
 }
 export interface ShiftBoard {
   locationId: string; date: string; viewerId: string; viewerLevel: number;
@@ -47,7 +49,7 @@ export function canSelfClaim(current: StationEvent | null): boolean {
   return !current?.stationId || current.source === "claimed";
 }
 export function taskVisible(level: number, task: TaskType, assignments: readonly TaskAssignment[]): boolean {
-  return level >= TASK_MIN_LEVEL[task] && assignments.some((assignment) => assignment.task === task);
+  return level >= TASK_MIN_LEVEL[task] && assignments.some((assignment) => assignment.task === task && assignment.available !== false);
 }
 export interface StationInterval {
   locationId: string; businessDate: string; userId: string; stationId: string;

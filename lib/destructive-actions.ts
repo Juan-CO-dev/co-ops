@@ -36,6 +36,7 @@
  */
 
 export const DESTRUCTIVE_ACTIONS = [
+  "task.override", // A human acts on another assignee's accountability record.
   "station.create",
   "station.update",
   "station.event",

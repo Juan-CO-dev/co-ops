@@ -1,4 +1,4 @@
-import { canDoOperationalTask } from "@/lib/operational-task-access";
+import { auditOperationalTaskOverride, canDoOperationalTask } from "@/lib/operational-task-access";
 /**
  * Manager physical-count data layer (pack hierarchy PR 2, migration 0160).
  * SERVER-ONLY, service-role client; authorization is APP-LAYER (AGM+ gate +
@@ -594,6 +594,7 @@ export async function createCountEvent(actor: AuthContext, input: CreateCountEve
     });
   }
 
+  await auditOperationalTaskOverride(actor, input.locationId, "counts", "createCountEvent");
   await audit({
     actorId: actor.user.id, actorRole: actor.user.role,
     action: "sku_count.recorded", resourceTable: "sku_count_events", resourceId: ev.id,

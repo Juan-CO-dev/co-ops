@@ -1,4 +1,4 @@
-import { canDoOperationalTask } from "@/lib/operational-task-access";
+import { auditOperationalTaskOverride, canDoOperationalTask } from "@/lib/operational-task-access";
 /**
  * Vendor-credit data layer (Item/Inventory Spine — delivery-intake P1, migration
  * 0168). SERVER-ONLY, service-role client; authorization is APP-LAYER (KH+ read
@@ -80,7 +80,6 @@ export interface OpenCreditVendorSummary {
 export async function loadOpenCreditsSummary(actor: AuthContext, locationId: string): Promise<OpenCreditVendorSummary[]> {
   requireLevel(actor, CREDIT_READ_MIN);
   if (!lockLocationContext(actorLoc(actor), locationId)) throw new CreditError(404, "not_found", "Location not found");
-  if (!(await canDoOperationalTask(actor, locationId, "receiving"))) throw new CreditError(403, "forbidden");
   const sb = getServiceRoleClient();
   const { data: rows, error } = await sb.from("vendor_credits")
     .select("vendor_id, amount_cents, created_at")
@@ -209,7 +208,6 @@ export async function loadCreditsForDelivery(actor: AuthContext, deliveryId: str
   if (dErr) throw new Error(`loadCreditsForDelivery delivery: ${dErr.message}`);
   if (!d) throw new CreditError(404, "not_found", "Delivery not found");
   if (!lockLocationContext(actorLoc(actor), d.location_id)) throw new CreditError(404, "not_found", "Delivery not found");
-  if (!(await canDoOperationalTask(actor, d.location_id, "receiving"))) throw new CreditError(403, "forbidden");
   const { data: rows, error } = await sb.from("vendor_credits")
     .select("id, vendor_id, delivery_id, delivery_item_id, sku_id, reason, qty, amount_cents, status, notes, created_at, resolved_at")
     .eq("delivery_id", deliveryId).order("created_at", { ascending: true })
@@ -260,6 +258,7 @@ export async function resolveCredit(
   if (uErr) throw new Error(`resolveCredit update: ${uErr.message}`);
   if (count === 0) throw new CreditError(404, "not_found", "Credit not found");
 
+  await auditOperationalTaskOverride(actor, c.location_id, "receiving", "resolveCredit");
   await audit({
     actorId: actor.user.id, actorRole: actor.user.role,
     action: "credit.resolved", resourceTable: "vendor_credits", resourceId: creditId,
@@ -305,7 +304,6 @@ export async function loadOpenCreditRowsForVendor(
 ): Promise<OpenCreditRow[]> {
   requireLevel(actor, CREDIT_READ_MIN);
   if (!lockLocationContext(actorLoc(actor), locationId)) throw new CreditError(404, "not_found", "Location not found");
-  if (!(await canDoOperationalTask(actor, locationId, "receiving"))) throw new CreditError(403, "forbidden");
   const sb = getServiceRoleClient();
 
   // status = 'open' ONLY (not in_progress): the redelivery-closure UPDATE targets
@@ -457,6 +455,7 @@ export async function resolveCreditsRedelivered(
   }
 
   // ONE audit row for the whole batch (existing action vocabulary: credit.resolved).
+  if (resolved.length) await auditOperationalTaskOverride(actor, d.location_id, "receiving", "resolveCreditsRedelivered");
   await audit({
     actorId: actor.user.id, actorRole: actor.user.role,
     action: "credit.resolved", resourceTable: "vendor_credits", resourceId: deliveryId,

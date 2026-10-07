@@ -83,6 +83,7 @@ function fakeService(
     const api = {
       select: () => api,
       limit: () => api,
+      neq: () => api,
       eq: (c: string, v: unknown) => {
         filters.push([c, v]);
         return api;
@@ -135,7 +136,7 @@ const openInstance = (patch: Record<string, unknown> = {}) => ({
 const amPrepTemplate = { type: "prep", prep_subtype: "am_prep" };
 
 const keyHolderAtA = { user: { id: "u-kh" }, role: "key_holder" as const, level: 4, locations: [SHOP_A] };
-const employeeAtA = { user: { id: "u-emp" }, role: "employee" as const, level: 3, locations: [SHOP_A] };
+const employeeAtA = { user: { id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa" }, role: "employee" as const, level: 3, locations: [SHOP_A] };
 const ownerAnywhere = { user: { id: "u-own" }, role: "owner" as const, level: 10, locations: [] as string[] };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -507,17 +508,27 @@ describe("drafts use the current task assignment policy for every role", () => {
     expect(f.writes).toEqual([]);
   });
 
-  it("a KH stale tab cannot write yesterday's draft", async () => {
+  it("a KH may correct yesterday's still-open draft", async () => {
     vi.setSystemTime(new Date("2026-10-07T16:00:00Z"));
     const f = fakeService({ checklist_instances: openInstance(), checklist_templates: amPrepTemplate });
     await expect(saveAmPrepDraft(f.service, { actor: keyHolderAtA, instanceId: INSTANCE, patch: {} }))
+      .resolves.toEqual({ savedAt: SAVED_AT });
+    expect(f.writes).toHaveLength(1);
+  });
+
+  it("an employee with no assignment is refused 403 prep_role_violation, nothing written", async () => {
+    const f = fakeService({ checklist_instances: openInstance(), checklist_templates: amPrepTemplate,
+      users: { role: "employee", active: true }, user_locations: { user_id: employeeAtA.user.id }, report_assignments: null });
+    await expect(saveAmPrepDraft(f.service, { actor: employeeAtA, instanceId: INSTANCE, patch: { [ITEM_1]: { onHand: "1" } } }))
       .rejects.toMatchObject({ status: 403, code: "prep_role_violation" });
     expect(f.writes).toEqual([]);
   });
 
-  it("an employee with no assignment is refused 403 prep_role_violation, nothing written", async () => {
-    const f = fakeService({ checklist_instances: openInstance(), checklist_templates: amPrepTemplate, report_assignments: null });
-    await expect(saveAmPrepDraft(f.service, { actor: employeeAtA, instanceId: INSTANCE, patch: { [ITEM_1]: { onHand: "1" } } }))
+  it.each(["inactive", "transferred"])("an assigned employee who is %s cannot save", async (reason) => {
+    const f = fakeService({ checklist_instances: openInstance(), checklist_templates: amPrepTemplate,
+      users: reason === "inactive" ? null : { role: "employee", active: true },
+      user_locations: null, report_assignments: { id: "asg" } });
+    await expect(saveAmPrepDraft(f.service, { actor: employeeAtA, instanceId: INSTANCE, patch: {} }))
       .rejects.toMatchObject({ status: 403, code: "prep_role_violation" });
     expect(f.writes).toEqual([]);
   });
@@ -526,6 +537,8 @@ describe("drafts use the current task assignment policy for every role", () => {
     const f = fakeService({
       checklist_instances: openInstance(),
       checklist_templates: amPrepTemplate,
+      users: { role: "employee", active: true },
+      user_locations: { user_id: employeeAtA.user.id },
       report_assignments: { id: "asg", note: null, assigner_id: "u-gm" },
     });
     await saveAmPrepDraft(f.service, { actor: employeeAtA, instanceId: INSTANCE, patch: { [ITEM_1]: { onHand: "1" } } });
@@ -618,6 +631,7 @@ describe("the PAGE's draft read never takes AM prep down (0214 unapplied, or a b
     const api = {
       select: () => api,
       limit: () => api,
+      neq: () => api,
       eq: () => api,
       maybeSingle: async () => ({ data: null, error: { message: 'relation "public.am_prep_drafts" does not exist' } }),
     };

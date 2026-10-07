@@ -5,12 +5,13 @@
  * the role and the list of assigned location IDs (extracted from the JWT).
  *
  * Level 9+ has implicit operational access to every location regardless of
- * user_locations. Report reads separately grant all-location access at level 7.
+ * user_locations. Report reads separately grant all-location access at level 8.
  */
 
 import { type RoleCode, isRoleAtOrAbove } from "./roles";
 
 const ALL_LOCATIONS_THRESHOLD = 9;
+export const REPORT_ALL_LOCATIONS_LEVEL = 8;
 
 /** Minimal shape for any caller — typically derived from the verified JWT. */
 export interface LocationActor {
@@ -44,5 +45,5 @@ export function lockLocationContext(actor: LocationActor, locationId: string): b
 
 /** Report navigation grant only. Operational writes retain lockLocationContext. */
 export function canReadReportLocation(actor: LocationActor, locationId: string): boolean {
-  return isRoleAtOrAbove(actor.role, 7) || lockLocationContext(actor, locationId);
+  return isRoleAtOrAbove(actor.role, REPORT_ALL_LOCATIONS_LEVEL) || lockLocationContext(actor, locationId);
 }

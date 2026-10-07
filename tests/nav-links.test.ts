@@ -4,7 +4,7 @@ import { MIDSHIFT_BASE_LEVEL } from "@/lib/midshift-shared";
 import { navDestinationsFor, chipHref } from "@/lib/nav-links";
 
 const hrefs = (level: number) => navDestinationsFor(level).map((d) => d.href).sort();
-const everyone = ["/training", "/recipes", "/profile", "/settings", "/my-feedback"];
+const everyone = ["/maintenance", "/training", "/recipes", "/profile", "/settings", "/my-feedback"];
 const kh = ["/mid-shift", "/assignments", "/reports"];
 const lead = ["/catering", "/written-reports"];
 const manager = ["/reports/trends", "/lto", "/admin"];
@@ -21,7 +21,7 @@ describe("role navigation", () => {
   it("satisfies the destination server floors, including Catering's level-5 page", () => {
     // Floors confirmed against destination pages/layouts and their server loaders.
     const pageFloors: Record<string, number> = {
-      "/training": 0, "/recipes": 0, "/profile": 0, "/settings": 0, "/my-feedback": 0,
+      "/maintenance": 0, "/training": 0, "/recipes": 0, "/profile": 0, "/settings": 0, "/my-feedback": 0,
       "/mid-shift": 4, "/assignments": 4, "/reports": 0,
       "/catering": 5, "/written-reports": 0, "/reports/trends": 0, "/lto": 0, "/admin": 6,
     };

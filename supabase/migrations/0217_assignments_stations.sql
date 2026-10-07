@@ -65,6 +65,7 @@ grant select, insert, update on public.stations to service_role;
 grant select, insert on public.station_events to service_role;
 revoke update, delete, truncate on public.station_events from service_role;
 revoke delete, truncate on public.stations from service_role;
+revoke all on sequence public.station_events_sequence_seq from public, anon, authenticated;
 grant usage, select on sequence public.station_events_sequence_seq to service_role;
 
 -- Staff JWTs can call PostgREST directly. Retire legacy direct assignment writes
@@ -96,10 +97,23 @@ begin
   return v_level;
 end $$;
 
+-- Station shifts follow a still-live closing across midnight. Reuse C.48's
+-- shift_start_at + 16-hour expiry (0046), never invent a calendar cutoff.
+create or replace function public.station_business_date(p_location_id uuid)
+returns date language sql stable security definer set search_path=pg_catalog,public as $$
+  select coalesce((select i.date from public.checklist_instances i
+    join public.checklist_templates t on t.id=i.template_id
+    where i.location_id=p_location_id and t.type='closing' and i.status='open'
+      and i.shift_start_at <= now() and i.shift_start_at + interval '16 hours' > now()
+      and i.date <= (now() at time zone 'America/New_York')::date
+    order by i.date desc, i.shift_start_at desc limit 1),
+    (now() at time zone 'America/New_York')::date)
+$$;
+
 create or replace function public.write_station_event(p_actor_id uuid,p_user_id uuid,p_location_id uuid,p_station_id uuid,p_manage boolean default false)
 returns jsonb language plpgsql security definer set search_path=pg_catalog,public as $$
 declare
-  v_day date := (clock_timestamp() at time zone 'America/New_York')::date;
+  v_day date := public.station_business_date(p_location_id);
   v_actor integer; v_target integer; v_previous public.station_events%rowtype;
   v_id uuid; v_kind text; v_source text;
 begin
@@ -117,14 +131,14 @@ begin
     perform 1 from public.stations where id=p_station_id and location_id=p_location_id and active for share;
     if not found then raise exception 'station_unavailable'; end if;
   end if;
-  v_source := case when p_station_id is null then null when not p_manage and p_actor_id=p_user_id then 'claimed' else 'assigned' end;
+  v_source := case when p_station_id is null then null when p_actor_id=p_user_id then 'claimed' else 'assigned' end;
   if v_previous.id is not null and v_previous.station_id is not distinct from p_station_id
      and v_previous.source is not distinct from v_source then
     return jsonb_build_object('id',v_previous.id,'changed',false);
   end if;
   v_kind := case when p_station_id is null then 'release'
     when v_previous.station_id is not null then 'move'
-    when not p_manage and p_actor_id=p_user_id then 'claim' else 'assign' end;
+    when p_actor_id=p_user_id then 'claim' else 'assign' end;
   insert into public.station_events(location_id,business_date,user_id,station_id,kind,actor_id,source,at)
     values(p_location_id,v_day,p_user_id,p_station_id,v_kind,p_actor_id,v_source,clock_timestamp()) returning id into v_id;
   return jsonb_build_object('id',v_id,'changed',true);
@@ -140,9 +154,11 @@ begin
   v_actor := public.assignment_user_level(p_actor_id,p_location_id);
   if v_actor<4 then raise exception 'role_insufficient'; end if;
   if p_assignment_id is not null then
-    select * into v_row from public.report_assignments where id=p_assignment_id and location_id=p_location_id and operational_date=v_day;
+    select * into v_row from public.report_assignments where id=p_assignment_id and location_id=p_location_id for update;
     if not found then raise exception 'assignment_not_found'; end if;
-    v_user := v_row.assignee_id; v_task := v_row.report_type::text;
+    -- Retraction is not assigning up: only actor authority and row shop matter.
+    update public.report_assignments set active=false where id=p_assignment_id and active returning id into v_id;
+    return jsonb_build_object('id',p_assignment_id,'changed',v_id is not null);
   end if;
   if v_task is null or v_task not in ('am_prep','mid_day_prep','cash_report','opening_report','receiving','counts','ordering','pm_report') or v_user is null or length(p_note)>1000 then
     raise exception 'invalid_payload';
@@ -150,16 +166,10 @@ begin
   if v_user=p_actor_id then raise exception 'self_assignment'; end if;
   v_target := public.assignment_user_level(v_user,p_location_id);
   if v_target>v_actor then raise exception 'role_insufficient'; end if;
-  -- Retraction must still work after an assignee drops below the floor.
-  if p_assignment_id is null and v_target < case when v_task in ('am_prep','mid_day_prep','opening_report') then 3 else 4 end then
+  if v_target < case when v_task in ('am_prep','mid_day_prep','opening_report') then 3 else 4 end then
     raise exception 'role_insufficient';
   end if;
   perform pg_advisory_xact_lock(hashtextextended('task/'||p_location_id::text||'/'||v_day::text||'/'||v_user::text||'/'||v_task,0));
-  if p_assignment_id is not null then
-    update public.report_assignments set active=false where id=p_assignment_id and location_id=p_location_id and operational_date=v_day and active returning id into v_id;
-    -- Idempotent retract, but it must still name a real authorized row from today.
-    return jsonb_build_object('id',p_assignment_id,'changed',v_id is not null);
-  end if;
   select id into v_id from public.report_assignments where location_id=p_location_id and operational_date=v_day
     and assignee_id=v_user and report_type::text=v_task and active;
   if v_id is not null then return jsonb_build_object('id',v_id,'changed',false); end if;
@@ -169,20 +179,22 @@ begin
 end $$;
 
 revoke all on function public.assignment_user_level(uuid,uuid) from public,anon,authenticated;
+revoke all on function public.station_business_date(uuid) from public,anon,authenticated;
 revoke all on function public.write_station_event(uuid,uuid,uuid,uuid,boolean) from public,anon,authenticated;
 revoke all on function public.write_task_assignment(uuid,uuid,uuid,text,text,uuid) from public,anon,authenticated;
 grant execute on function public.assignment_user_level(uuid,uuid) to service_role;
+grant execute on function public.station_business_date(uuid) to service_role;
 grant execute on function public.write_station_event(uuid,uuid,uuid,uuid,boolean) to service_role;
 grant execute on function public.write_task_assignment(uuid,uuid,uuid,text,text,uuid) to service_role;
 do $$
 begin
   if exists(select 1 from information_schema.routine_privileges where routine_schema='public'
-    and routine_name in ('assignment_user_level','write_station_event','write_task_assignment')
+    and routine_name in ('assignment_user_level','station_business_date','write_station_event','write_task_assignment')
     and privilege_type='EXECUTE' and grantee in ('PUBLIC','anon','authenticated')) then
     raise exception 'assignment RPC execution grant escaped';
   end if;
 end $$;
--- Closing manual work: trainee+ may participate; KH finalization stays unchanged.
+-- Closing manual work retains each item's floor; instance creation is employee+.
 -- Evidence: Foundation Spec v1.3 checklist_completions_insert plus PHASE_1_RLS_AUDIT
 -- Test 1. Keep the original policies; these INSERT-only alternatives reproduce every
 -- attribution/location/open guard and additionally bind item to instance/template.
@@ -199,7 +211,7 @@ end $$;
 create policy checklist_instances_insert_closing_staff on public.checklist_instances
   for insert to authenticated with check (
     public.current_user_id() is not null
-    and public.current_user_role_level() >= 2
+    and public.current_user_role_level() >= 3
     and location_id = any(public.current_user_locations())
     and status = 'open'
     and date = (now() at time zone 'America/New_York')::date
@@ -219,10 +231,40 @@ create policy checklist_completions_insert_closing_staff on public.checklist_com
         and ti.id = checklist_completions.template_item_id
         and i.location_id = any(public.current_user_locations())
         and i.status = 'open' and t.type = 'closing' and ti.active
+        and public.current_user_role_level() >= ti.min_role_level
         and ti.report_reference_type is null
         and not (coalesce(ti.ref_track_item_completion, false) and ti.references_template_item_id is not null)
     )
   );
+
+-- Report navigation: MoO (8) can read both shops; GM (7) remains shop-bound.
+-- Preserve every existing read qualifier (including written visibility floors).
+-- Only known report SELECT policies change; operational write scope remains 9.
+do $$
+declare r record; v_qual text;
+begin
+  for r in select tablename, policyname, qual from pg_policies
+    where schemaname='public' and cmd='SELECT' and policyname in (
+      'checklist_completions_read','checklist_incomplete_reasons_read',
+      'checklist_instances_read','checklist_submissions_read',
+      'checklist_template_items_read','checklist_templates_read',
+      'prep_list_resolutions_read','written_reports_read',
+      'shift_overlay_corrections_read','shift_overlays_read','shifts_daily_data_read',
+      'training_reports_read','report_views_read','maintenance_tickets_read'
+    ) loop
+    v_qual := regexp_replace(r.qual, '(current_user_role_level\(\)\s*>=\s*)9', '\18', 'g');
+    execute format('alter policy %I on public.%I using (%s)', r.policyname, r.tablename, v_qual);
+  end loop;
+end $$;
+alter policy cash_reports_read on public.cash_reports using (
+  public.current_user_role_level() >= 4 and
+  (location_id = any(public.current_user_locations()) or public.current_user_role_level() >= 8));
+alter policy pm_reports_read on public.pm_reports using (
+  public.current_user_role_level() >= 4 and
+  (location_id = any(public.current_user_locations()) or public.current_user_role_level() >= 8));
+alter policy pm_evals_read_mgr on public.pm_employee_evals using (
+  public.current_user_role_level() >= 4 and
+  (location_id = any(public.current_user_locations()) or public.current_user_role_level() >= 8));
 
 commit;
 

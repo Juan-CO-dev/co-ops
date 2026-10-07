@@ -1,4 +1,4 @@
-import { hasTaskAccess } from "@/lib/assignments";
+import { auditTaskOverride, hasTaskAccess } from "@/lib/assignments";
 import { etCalendarDate } from "@/lib/operational-day";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { RoleCode } from "@/lib/roles";
@@ -253,6 +253,7 @@ export async function getOrCreatePmReport(
     .select("id")
     .single<{ id: string }>();
   if (error) throw new Error(`getOrCreatePmReport: ${error.message}`);
+  await auditTaskOverride(service, { ...args.actor, locationId: args.locationId, date: args.date, task: "pm_report", operation: "pm_report.create" });
   return { id: data.id };
 }
 
@@ -350,6 +351,7 @@ export async function saveEmployeeEval(
     .select("id")
     .single<{ id: string }>();
   if (error) throw new Error(`saveEmployeeEval: ${error.message}`);
+  await auditPmOverride(service, args, "pm_report.evaluate");
   return { id: data.id };
 }
 
@@ -378,6 +380,7 @@ export async function setMvp(
     .is("superseded_at", null);
   if (error) throw new Error(`setMvp: ${error.message}`);
   if (count === 0) refuseClosedReport(await readReportStatus(service, args.pmReportId));
+  await auditPmOverride(service, args, "pm_report.mvp");
 }
 
 /**
@@ -422,6 +425,7 @@ export async function submitPmReport(
     .is("superseded_at", null);
   if (error) throw new Error(`submitPmReport: ${error.message}`);
   if (count === 0) return { notified: 0 };
+  await auditPmOverride(service, args, "pm_report.submit");
 
   // Notify each evaluated employee (one notification, recipients = the evaluated set).
   const { data: evalRows } = await service
@@ -450,4 +454,13 @@ export async function submitPmReport(
     metadata: { notified: employeeIds.length }, ipAddress: null, userAgent: null,
   });
   return { notified: employeeIds.length };
+}
+
+/** Read the stored report date so historical corrections audit the right assignment. */
+async function auditPmOverride(service: SupabaseClient, args: { pmReportId: string; locationId: string; actor: PmActor }, operation: string): Promise<void> {
+  try {
+    const { data, error } = await service.from("pm_reports").select("report_date").eq("id", args.pmReportId).maybeSingle<{ report_date: string }>();
+    if (error || !data) throw new Error("Report audit context unavailable");
+    await auditTaskOverride(service, { ...args.actor, locationId: args.locationId, date: data.report_date, task: "pm_report", operation });
+  } catch { console.error("PM override audit context lookup failed"); }
 }

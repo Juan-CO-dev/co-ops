@@ -1,7 +1,9 @@
 import { readFileSync } from "node:fs";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { assignTask, hasTaskAccess, retractTask, saveStation, writeStationEvent, type AssignmentActor } from "@/lib/assignments";
+import { auditTaskOverride, assignTask, hasTaskAccess, retractTask, saveStation, writeStationEvent, type AssignmentActor } from "@/lib/assignments";
+import { audit } from "@/lib/audit";
+import { ROLES } from "@/lib/roles";
 import { TASK_TYPES, TASK_MIN_LEVEL } from "@/lib/assignments-shared";
 
 vi.mock("@/lib/audit", () => ({ audit: vi.fn(async () => undefined) }));
@@ -14,7 +16,7 @@ const STATION = "55555555-5555-4555-8555-555555555555";
 const ASSIGNMENT = "66666666-6666-4666-8666-666666666666";
 const actor: AssignmentActor = { userId: ACTOR, role: "key_holder", level: 4, locations: [SHOP] };
 
-function fake(options: { role?: string; member?: boolean; assignment?: boolean; otherAssignment?: boolean; queryError?: boolean; rpcError?: string; stationMissing?: boolean } = {}) {
+function fake(options: { role?: string; inactive?: boolean; rpcCode?: string; member?: boolean; assignment?: boolean; otherAssignment?: boolean; queryError?: boolean; rpcError?: string; stationMissing?: boolean } = {}) {
   const filters: Array<[string, string, unknown]> = [];
   const writes: Array<{ table: string; kind: string; row: unknown }> = [];
   const from = vi.fn((table: string) => {
@@ -23,16 +25,18 @@ function fake(options: { role?: string; member?: boolean; assignment?: boolean; 
       select: () => query,
       eq: (key: string, value: unknown) => { filters.push([table, key, value]); if (key === "assignee_id") assigneeFiltered = true; return query; },
       limit: () => query,
+      neq: () => query,
+      then: (resolve: (value: unknown) => unknown) => Promise.resolve({ data: options.otherAssignment ? [{ id: ASSIGNMENT, assignee_id: TARGET }] : [], error: null }).then(resolve),
       update: (row: unknown) => { writes.push({ table, kind: "update", row }); return query; },
       insert: (row: unknown) => { writes.push({ table, kind: "insert", row }); return query; },
-      maybeSingle: async () => ({ data: table === "users" ? { role: options.role ?? "employee" }
+      maybeSingle: async () => ({ data: table === "users" ? (options.inactive ? null : { role: options.role ?? "employee" })
         : table === "user_locations" ? (options.member === false ? null : { user_id: TARGET })
         : table === "report_assignments" ? (options.assignment || (!assigneeFiltered && options.otherAssignment) ? { id: ASSIGNMENT } : null)
         : table === "stations" ? (options.stationMissing ? null : { id: STATION }) : null, error: options.queryError ? { message: "query failed" } : null }),
     };
     return query;
   });
-  const rpc = vi.fn(async () => ({ data: { id: ASSIGNMENT, changed: true }, error: options.rpcError ? { message: options.rpcError } : null }));
+  const rpc = vi.fn(async () => ({ data: { id: ASSIGNMENT, changed: true }, error: options.rpcError ? { message: options.rpcError, code: options.rpcCode } : null }));
   return { service: { from, rpc } as unknown as SupabaseClient, from, rpc, filters, writes };
 }
 
@@ -120,7 +124,7 @@ describe("task enforcement decision", () => {
     const args = { userId: TARGET, level: 3, locationId: SHOP, date: "2026-10-07", task: "mid_day_prep" as const };
     const f = fake({ assignment: true });
     expect(await hasTaskAccess(f.service, args)).toBe(true);
-    expect(f.filters).toEqual([
+    expect(f.filters.filter(([table]) => table === "report_assignments")).toEqual([
       ["report_assignments", "assignee_id", TARGET], ["report_assignments", "report_type", "mid_day_prep"],
       ["report_assignments", "location_id", SHOP], ["report_assignments", "operational_date", "2026-10-07"],
       ["report_assignments", "active", true],
@@ -130,7 +134,7 @@ describe("task enforcement decision", () => {
     expect(await hasTaskAccess(stale.service, { ...args, date: "2026-10-06" })).toBe(false);
     expect(stale.from).not.toHaveBeenCalled();
     expect(await hasTaskAccess(stale.service, { ...args, level: 4 })).toBe(true);
-    expect(stale.from).toHaveBeenCalled();
+    expect(stale.from).not.toHaveBeenCalled();
   });
   it.each(TASK_TYPES)("checks floor at use even with a stored %s assignment", async (task) => {
     vi.useFakeTimers(); vi.setSystemTime(new Date("2026-10-07T16:00:00Z"));
@@ -138,17 +142,17 @@ describe("task enforcement decision", () => {
     expect(await hasTaskAccess(f.service, { userId: TARGET, level: TASK_MIN_LEVEL[task] - 1, locationId: SHOP, date: "2026-10-07", task })).toBe(false);
     expect(f.from).not.toHaveBeenCalled();
   });
-  it.each([4, 5, 6, 7, 9, 10])("level %s can take an unassigned task but cannot do someone else's", async (level) => {
+  it.each([4, 5, 6, 7, 9, 10])("level %s can act on any assignment and historical task", async (level) => {
     vi.useFakeTimers(); vi.setSystemTime(new Date("2026-10-07T16:00:00Z"));
     const args = { userId: TARGET, level, locationId: SHOP, date: "2026-10-07", task: "cash_report" as const };
     expect(await hasTaskAccess(fake().service, args)).toBe(true);
-    expect(await hasTaskAccess(fake({ otherAssignment: true }).service, args)).toBe(false);
+    expect(await hasTaskAccess(fake({ otherAssignment: true }).service, args)).toBe(true);
     expect(await hasTaskAccess(fake({ assignment: true, otherAssignment: true }).service, args)).toBe(true);
-    expect(await hasTaskAccess(fake().service, { ...args, date: "2026-10-06" })).toBe(false);
+    expect(await hasTaskAccess(fake().service, { ...args, date: "2026-10-06" })).toBe(true);
   });
   it("fails closed on a failed assignment read", async () => {
     vi.useFakeTimers(); vi.setSystemTime(new Date("2026-10-07T16:00:00Z"));
-    await expect(hasTaskAccess(fake({ queryError: true }).service, { userId: TARGET, level: 9, locationId: SHOP, date: "2026-10-07", task: "counts" })).rejects.toThrow();
+    await expect(hasTaskAccess(fake({ queryError: true }).service, { userId: TARGET, level: 3, locationId: SHOP, date: "2026-10-07", task: "am_prep" })).rejects.toThrow();
   });
 });
 
@@ -162,11 +166,11 @@ describe("authored migration security contracts (not live SQL integration)", () 
     expect(sql).toContain("update public.report_assignments set active=false");
   });
   it("hardens every new definer RPC and verifies effective grants", () => {
-    for (const fn of ["assignment_user_level", "write_station_event", "write_task_assignment"]) {
+    for (const fn of ["assignment_user_level", "station_business_date", "write_station_event", "write_task_assignment"]) {
       expect(sql).toMatch(new RegExp(`revoke all on function public\\.${fn}\\([^;]+from public,anon,authenticated`));
       expect(sql).toMatch(new RegExp(`grant execute on function public\\.${fn}\\([^;]+to service_role`));
     }
-    expect(sql.match(/security definer set search_path=pg_catalog,public/g)).toHaveLength(3);
+    expect(sql.match(/security definer set search_path=pg_catalog,public/g)).toHaveLength(4);
     expect(sql).toContain("information_schema.routine_privileges");
   });
   it("serializes an empty station head and duplicate task creates, preserving one live task", () => {
@@ -179,5 +183,42 @@ describe("authored migration security contracts (not live SQL integration)", () 
   it("enforces the assignment floor in SQL as well as the API", () => {
     expect(sql).toContain("v_target < case when v_task in ('am_prep','mid_day_prep','opening_report') then 3 else 4 end");
     for (const task of TASK_TYPES) expect(sql).toContain(`'${task}'`);
+  });
+});
+
+
+describe("pass 3 assignment behavior", () => {
+  it.each(["opening_report", "am_prep", "mid_day_prep"] as const)("KH always retains %s, employees need a live assignment", async (task) => {
+    vi.useFakeTimers(); vi.setSystemTime(new Date("2026-10-07T16:00:00Z"));
+    const args = { userId: TARGET, level: 3, locationId: SHOP, date: "2026-10-07", task };
+    expect(await hasTaskAccess(fake().service, args)).toBe(false);
+    expect(await hasTaskAccess(fake({ assignment: true }).service, args)).toBe(true);
+    for (const options of [{ inactive: true }, { member: false }]) {
+      expect(await hasTaskAccess(fake({ ...options, assignment: true }).service, args)).toBe(false);
+    }
+    expect(await hasTaskAccess(fake({ otherAssignment: true }).service, { ...args, level: 4 })).toBe(true);
+  });
+  it("allows KH override and records the other assignee, operation and shop", async () => {
+    const f = fake({ otherAssignment: true });
+    const args = { ...actor, locationId: SHOP, date: "2026-10-06", task: "am_prep" as const, operation: "prep.correct" };
+    expect(await hasTaskAccess(f.service, args)).toBe(true);
+    await auditTaskOverride(f.service, args);
+    expect(audit).toHaveBeenCalledWith(expect.objectContaining({ action: "task.override", actorId: ACTOR,
+      metadata: expect.objectContaining({ operation: "prep.correct", location_id: SHOP, operational_date: "2026-10-06", assignments: [{ id: ASSIGNMENT, assignee_id: TARGET }] }) }));
+  });
+  it.each([{ inactive: true }, { member: false }, { role: "shift_lead" }])("retract never revalidates an unavailable/senior assignee: %o", async (options) => {
+    const f = fake(options);
+    await expect(retractTask(f.service, { actor, locationId: SHOP, assignmentId: ASSIGNMENT })).resolves.toEqual({ id: ASSIGNMENT });
+    expect(f.from).not.toHaveBeenCalled();
+  });
+  it("maps an active-assignment race to a clear 409", async () => {
+    const f = fake({ rpcError: "duplicate key", rpcCode: "23505" });
+    await expect(assignTask(f.service, { actor, locationId: SHOP, userId: TARGET, task: "am_prep" })).rejects.toMatchObject({ code: "assignment_already_active", status: 409 });
+  });
+  it("pins every SQL role mapping to the full canonical roles registry", () => {
+    const sql = readFileSync(new URL("../supabase/migrations/0217_assignments_stations.sql", import.meta.url), "utf8");
+    const body = sql.split("v_level := case v_role")[1]!.split("end;")[0]!;
+    const mapped = Object.fromEntries([...body.matchAll(/when '([^']+)' then (\d+)/g)].map((m) => [m[1], Number(m[2])]));
+    expect(mapped).toEqual(Object.fromEntries(Object.values(ROLES).map((r) => [r.code, r.level])));
   });
 });

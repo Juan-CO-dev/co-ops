@@ -3,10 +3,10 @@ import { requireSession } from "@/lib/session";
 import { ROLES } from "@/lib/roles";
 import { assertStepUp } from "@/lib/admin/step-up";
 import { jsonError, jsonOk, parseJsonBody } from "@/lib/api-helpers";
-import { createCountEvent, CountError, COUNT_WRITE_MIN, COUNT_READ_MIN, type CreateCountEventInput } from "@/lib/counts";
+import { createCountEvent, CountError, COUNT_WRITE_MIN, type CreateCountEventInput } from "@/lib/counts";
 import type { CountLineEntry } from "@/lib/counts-shared";
 
-// Record a physical-count EVENT. Assigned KH+; AGM+ retains Tier-A step-up
+// Record a physical-count EVENT. Requires Tier-A password step-up
 // (A4), location-bound (checked in createCountEvent). One event per POST (council L5).
 export async function POST(req: NextRequest) {
   const parsed = await parseJsonBody(req);
@@ -15,13 +15,9 @@ export async function POST(req: NextRequest) {
   if (ctx instanceof Response) return ctx;
   if (ROLES[ctx.user.role].level < COUNT_WRITE_MIN) return jsonError(403, "forbidden");
 
-  // Preserve the existing AGM+ password step-up. KH/Trainer/SL are PIN-only
-  // roles and cannot use /api/auth/step-up; their current task assignment (or
-  // unassigned coverage) is checked by createCountEvent before every write.
-  if (ROLES[ctx.user.role].level >= COUNT_READ_MIN) {
-    const su = assertStepUp(ctx, "A");
-    if (!su.ok) return jsonError(403, su.code);
-  }
+  // Tier-A password step-up applies to every count write.
+  const su = assertStepUp(ctx, "A");
+  if (!su.ok) return jsonError(403, su.code);
 
   const b = parsed as Record<string, unknown>;
   if (typeof b.locationId !== "string") return jsonError(400, "invalid_payload", { field: "locationId" });

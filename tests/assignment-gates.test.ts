@@ -1,11 +1,12 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-vi.mock("@/lib/assignments", () => ({ hasTaskAccess: vi.fn() }));
+vi.mock("@/lib/assignments", () => ({ hasTaskAccess: vi.fn(), auditTaskOverride: vi.fn() }));
 vi.mock("@/lib/audit", () => ({ audit: vi.fn() }));
 const assignmentService = vi.hoisted(() => ({}));
 vi.mock("@/lib/supabase-server", () => ({ getServiceRoleClient: () => assignmentService }));
-import { hasTaskAccess } from "@/lib/assignments";
+import { audit } from "@/lib/audit";
+import { auditTaskOverride, hasTaskAccess } from "@/lib/assignments";
 import { canAccessOpeningInstance, savePhase2Item, submitPhase1Atomic, submitPhase2Atomic, revokePhase2Completion, OpeningRoleViolationError } from "@/lib/opening";
 import { submitAmPrep, submitMidDayPhase1, saveMidDayPhase2Item, finalizeMidDayPhase2, PrepRoleViolationError } from "@/lib/prep";
 import { submitCashReport } from "@/lib/cash";
@@ -20,7 +21,7 @@ function instanceClient() {
   return { service: { from, rpc } as unknown as SupabaseClient, from, rpc };
 }
 
-beforeEach(() => { vi.clearAllMocks(); vi.mocked(hasTaskAccess).mockResolvedValue(false); });
+beforeEach(() => { vi.clearAllMocks(); vi.mocked(hasTaskAccess).mockResolvedValue(false); vi.mocked(auditTaskOverride).mockReset(); });
 
 describe("assignment gates at the writer boundary", () => {
   it("opening scope comes from the stored instance and allows an assigned employee", async () => {
@@ -28,6 +29,35 @@ describe("assignment gates at the writer boundary", () => {
     vi.mocked(hasTaskAccess).mockResolvedValue(true);
     expect(await canAccessOpeningInstance(service, { instanceId: "instance", actor })).toBe(true);
     expect(hasTaskAccess).toHaveBeenCalledWith(service, { ...actor, locationId: "stored-shop", date: "2026-10-07", task: "opening_report" });
+  });
+
+  it("KH can finish an older assigned opening and the successful write records an override", async () => {
+    const kh = { userId: "kh", role: "key_holder" as const, level: 4 };
+    const instance = { id: "instance", location_id: "stored-shop", date: "2026-09-01", status: "phase2_complete" };
+    const query = { select: vi.fn().mockReturnThis(), eq: vi.fn().mockReturnThis(),
+      maybeSingle: vi.fn().mockResolvedValue({ data: instance, error: null }) };
+    const rpc = vi.fn().mockResolvedValue({ data: { instance, completionIds: [], underParNotificationIds: [],
+      submissionId: "submission", editCount: 0, originalSubmissionId: null, autoCompleteId: null }, error: null });
+    const assignments = { select: vi.fn().mockReturnThis(), eq: vi.fn().mockReturnThis(), neq: vi.fn().mockReturnThis(),
+      then: (resolve: (value: unknown) => unknown) => Promise.resolve({ data: [{ id: "assignment", assignee_id: "employee" }], error: null }).then(resolve) };
+    const service = { from: vi.fn((table: string) => table === "report_assignments" ? assignments : query), rpc } as unknown as SupabaseClient;
+    const actual = await vi.importActual<typeof import("@/lib/assignments")>("@/lib/assignments");
+    vi.mocked(hasTaskAccess).mockImplementation(actual.hasTaskAccess);
+    vi.mocked(auditTaskOverride).mockImplementation(actual.auditTaskOverride);
+    await expect(submitPhase2Atomic(service, { instanceId: "instance", actor: kh })).resolves.toMatchObject({
+      instance: { id: "instance" } });
+    expect(auditTaskOverride).toHaveBeenCalledWith(service, { ...kh, locationId: "stored-shop",
+      date: "2026-09-01", task: "opening_report", operation: "submitPhase2Atomic" });
+    expect(rpc.mock.invocationCallOrder[0]).toBeLessThan(vi.mocked(auditTaskOverride).mock.invocationCallOrder[0]!);
+    expect(audit).toHaveBeenCalledWith(expect.objectContaining({ action: "task.override", actorId: "kh",
+      metadata: expect.objectContaining({ operational_date: "2026-09-01", assignments: [{ id: "assignment", assignee_id: "employee" }] }) }));
+  });
+
+  it("a rejected opening finalization does not record a successful override", async () => {
+    const { service } = instanceClient();
+    await expect(submitPhase2Atomic(service, { instanceId: "instance", actor: { userId: "kh", role: "key_holder", level: 4 } }))
+      .rejects.toBeInstanceOf(OpeningRoleViolationError);
+    expect(auditTaskOverride).not.toHaveBeenCalled();
   });
 
   it("retracted opening assignment blocks original submits, update bypass, saves and revokes before RPC", async () => {
@@ -56,6 +86,8 @@ describe("assignment gates at the writer boundary", () => {
     await expect(submitAmPrep(service, base)).rejects.toBeInstanceOf(PrepRoleViolationError);
     await expect(submitAmPrep(service, { ...base, isUpdate: true, originalSubmissionId: "old" })).rejects.toBeInstanceOf(PrepRoleViolationError);
     expect(rpc).not.toHaveBeenCalled();
+    expect(audit).toHaveBeenCalledWith(expect.objectContaining({ action: "prep.submit",
+      metadata: expect.objectContaining({ outcome: "role_insufficient", actor_level: 3 }) }));
   });
 
   it("cash rejects a revoked assignment before superseding any history", async () => {
@@ -115,14 +147,15 @@ describe("generic checklist routes cannot bypass task assignment", () => {
 });
 
 
-describe("manager roles never bypass a task assigned to somebody else", () => {
-  it.each([4, 5, 6, 7, 9])("refuses level %i across opening, prep, and generic checklist writes", async (level) => {
+describe("KH authority survives assignments and historical dates", () => {
+  it.each([4, 5, 6, 7, 8, 9])("allows level %i through the real task gate for an older opening", async (level) => {
+    const actual = await vi.importActual<typeof import("@/lib/assignments")>("@/lib/assignments");
+    vi.mocked(hasTaskAccess).mockImplementation(actual.hasTaskAccess);
     const elevated = { ...actor, level };
-    const { service, rpc } = instanceClient();
-    expect(await canAccessOpeningInstance(service, { instanceId: "instance", actor: elevated })).toBe(false);
-    await expect(submitAmPrep(service, { instanceId: "instance", actor: elevated, entries: [], activeAssignmentId: null, closingReportRefItemId: null, isUpdate: true })).rejects.toBeInstanceOf(PrepRoleViolationError);
-    await expect(finalizeMidDayPhase2(service, { instanceId: "instance", actor: elevated })).rejects.toBeInstanceOf(PrepRoleViolationError);
-    await expect(requireChecklistTaskAccess(genericClient().service, "instance", elevated)).rejects.toBeInstanceOf(ChecklistRoleViolationError);
-    expect(rpc).not.toHaveBeenCalled();
+    const query = { select: vi.fn().mockReturnThis(), eq: vi.fn().mockReturnThis(),
+      maybeSingle: vi.fn().mockResolvedValue({ data: { location_id: "stored-shop", date: "2026-09-01" }, error: null }) };
+    const service = { from: vi.fn(() => query) } as unknown as SupabaseClient;
+    expect(await canAccessOpeningInstance(service, { instanceId: "instance", actor: elevated })).toBe(true);
+    await expect(requireChecklistTaskAccess(genericClient().service, "instance", elevated)).resolves.toBeUndefined();
   });
 });

@@ -1,4 +1,7 @@
 {
+  "assignments.unavailablePerson": "Ya no está disponible en esta tienda",
+  "assignments.unavailableTask": "Necesita reasignación",
+  "assignments.errorAlreadyActive": "Esta tarea ya está asignada a esa persona. Actualiza para ver la asignación actual.",
   "closing.report_ref.assignment_required": "Necesitas tener asignada esta tarea",
   "closing.report_ref.assignment_required_aria": "{label}: necesitas tener asignada esta tarea",
   "nav.assignments": "Asignaciones",

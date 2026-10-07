@@ -1,4 +1,4 @@
-import { hasTaskAccess } from "@/lib/assignments";
+import { auditTaskOverride, hasTaskAccess } from "@/lib/assignments";
 /**
  * AM Prep DRAFT — the I/O half (migration 0214, `am_prep_drafts`).
  *
@@ -8,10 +8,8 @@ import { hasTaskAccess } from "@/lib/assignments";
  * the app-layer gates in this file ARE the gates — the role floor and the location bind
  * both live in the lib, before any write, with the route as the outer layer.
  *
- * No audit row, deliberately (the 0203 rule): a draft save fires about once a second while
- * someone types; the audit log is the accountability record of human acts, not a keystroke
- * log. The accountability row for AM prep is the one `submitAmPrep` already emits
- * (`prep.submit`). No new audit action is introduced.
+ * Routine draft saves carry no audit row. A KH editing another assignee's task
+ * emits task.override, per Juan's explicit override-accountability rule.
  */
 
 import "server-only";
@@ -219,7 +217,7 @@ export async function saveAmPrepDraft(
     userId: actor.user.id, level: actor.level, task: "am_prep",
     locationId: instance.location_id, date: instance.date,
   }))) {
-    throw new AmPrepDraftError(403, "prep_role_violation", "Active assignment or unassigned KH+ task required.");
+    throw new AmPrepDraftError(403, "prep_role_violation", "KH+ or active task assignment required.");
   }
 
   if (instance.status !== "open") {
@@ -243,6 +241,7 @@ export async function saveAmPrepDraft(
   if (typeof data !== "string") {
     throw new Error("saveAmPrepDraft: rpc returned no saved_at");
   }
+  await auditTaskOverride(service, { userId: actor.user.id, role: actor.role, level: actor.level, locationId: instance.location_id, date: instance.date, task: "am_prep", operation: "am_prep.draft" });
   return { savedAt: data };
 }
 

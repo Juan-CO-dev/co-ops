@@ -1,4 +1,4 @@
-import { hasTaskAccess } from "@/lib/assignments";
+import { auditTaskOverride, hasTaskAccess } from "@/lib/assignments";
 /**
  * Checklist instance lifecycle — Phase 3 / Module #1 Build #1.
  *
@@ -665,6 +665,26 @@ export async function requireChecklistTaskAccess(
   }))) throw new ChecklistRoleViolationError(4, actor.level, "An active assignment is required for this task.");
 }
 
+async function auditChecklistOverride(
+  authed: SupabaseClient, instanceId: string, actor: ChecklistActor, operation: string,
+): Promise<void> {
+  if (actor.level < 4) return;
+  try {
+    const instance = await loadInstanceOrThrow(authed, instanceId);
+    const { data: template, error } = await authed.from("checklist_templates")
+      .select("type, prep_subtype").eq("id", instance.template_id)
+      .maybeSingle<{ type: string; prep_subtype: string | null }>();
+    if (error || !template) return;
+    const task = template.type === "opening" ? "opening_report"
+      : template.type === "prep" && template.prep_subtype === "am_prep" ? "am_prep"
+      : template.type === "prep" && template.prep_subtype === "mid_day_prep" ? "mid_day_prep" : null;
+    if (task) await auditTaskOverride(getServiceRoleClient(), { ...actor, locationId: instance.location_id,
+      date: instance.date, task, operation });
+  } catch {
+    console.error("task.override instance context lookup failed");
+  }
+}
+
 export async function rejectIfPrepLocked(
   authed: SupabaseClient,
   instanceId: string,
@@ -747,6 +767,8 @@ export async function getOrCreateInstance(
   if (existing) {
     return { instance: rowToInstance(existing), created: false };
   }
+  // Reading an existing close is open to staff; starting one retains main's employee floor.
+  if (actor.level < 3) throw new ChecklistRoleViolationError(3, actor.level);
 
   // Build #3 PR 1 — submission gate evaluation. Loads the template's
   // submission_gate_predicate and runs the evaluator if configured. NULL
@@ -1052,6 +1074,8 @@ export async function completeItem(
     userAgent: args.userAgent ?? null,
   });
 
+  await auditChecklistOverride(authed, instanceId, actor, "completeItem");
+
   return { completion: rowToCompletion(inserted) };
 }
 
@@ -1151,6 +1175,8 @@ export async function submitBatch(
     ipAddress: args.ipAddress ?? null,
     userAgent: args.userAgent ?? null,
   });
+
+  await auditChecklistOverride(authed, instanceId, actor, "submitBatch");
 
   return { submission: rowToSubmission(inserted) };
 }
@@ -1598,6 +1624,8 @@ export async function confirmInstance(
     userAgent: args.userAgent ?? null,
   });
 
+  await auditChecklistOverride(authed, instanceId, actor, "confirmInstance");
+
   return {
     instance: rowToInstance(updatedRow),
     status: newStatus,
@@ -1859,6 +1887,8 @@ export async function revokeCompletion(
     userAgent: args.userAgent ?? null,
   });
 
+  await auditChecklistOverride(authed, completion.instance_id, actor, "revokeCompletion");
+
   return { completion: rowToCompletion(updatedRow) };
 }
 
@@ -1973,6 +2003,8 @@ export async function revokeWithReason(
     ipAddress: args.ipAddress ?? null,
     userAgent: args.userAgent ?? null,
   });
+
+  await auditChecklistOverride(authed, completion.instance_id, actor, "revokeWithReason");
 
   return { completion: rowToCompletion(updatedRow) };
 }
@@ -2130,6 +2162,8 @@ export async function markNotDoneByAuthority(
     ipAddress: args.ipAddress ?? null,
     userAgent: args.userAgent ?? null,
   });
+
+  await auditChecklistOverride(authed, completion.instance_id, actor, "markNotDoneByAuthority");
 
   return { completion: rowToCompletion(updatedRow) };
 }
@@ -2303,6 +2337,8 @@ export async function tagActualCompleter(
     ipAddress: args.ipAddress ?? null,
     userAgent: args.userAgent ?? null,
   });
+
+  await auditChecklistOverride(authed, completion.instance_id, actor, "tagActualCompleter");
 
   return { completion: rowToCompletion(updatedRow), replacedPriorTag: replacingPriorTag };
 }
@@ -2755,6 +2791,8 @@ export async function dropInstance(
     ipAddress: args.ipAddress ?? null,
     userAgent: args.userAgent ?? null,
   });
+
+  await auditChecklistOverride(authed, instanceId, actor, "dropInstance");
 
   return { instance: rowToInstance(updated) };
 }

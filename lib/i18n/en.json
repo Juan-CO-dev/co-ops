@@ -1,4 +1,7 @@
 {
+  "assignments.unavailablePerson": "No longer available at this shop",
+  "assignments.unavailableTask": "Needs reassignment",
+  "assignments.errorAlreadyActive": "This task is already assigned to that person. Refresh to see the current assignment.",
   "closing.report_ref.assignment_required": "Assigned shift task required",
   "closing.report_ref.assignment_required_aria": "{label}: assigned shift task required",
   "nav.assignments": "Assignments",

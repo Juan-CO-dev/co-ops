@@ -1,4 +1,4 @@
-import { hasTaskAccess } from "@/lib/assignments";
+import { auditTaskOverride, hasTaskAccess } from "@/lib/assignments";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { audit } from "@/lib/audit";
 import type { RoleCode } from "@/lib/roles";
@@ -245,5 +245,6 @@ export async function submitCashReport(
     metadata: { over_short_cents: overShortCents, deposit_cents: depositCents, superseded: prior?.id ?? null },
     ipAddress: null, userAgent: null,
   });
+  await auditTaskOverride(service, { ...args.actor, locationId: args.locationId, date: args.date, task: "cash_report", operation: prior ? "cash_report.supersede" : "cash_report.submit" });
   return { ok: true, id: inserted.id };
 }

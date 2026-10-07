@@ -27,7 +27,7 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 
 // Task authorization is covered by assignment-gates; these tests exercise rollback.
-vi.mock("@/lib/assignments", () => ({ hasTaskAccess: vi.fn(async () => true) }));
+vi.mock("@/lib/assignments", () => ({ hasTaskAccess: vi.fn(async () => true), auditTaskOverride: vi.fn(async () => {}) }));
 
 import { submitCashReport, type CashActor } from "@/lib/cash";
 
