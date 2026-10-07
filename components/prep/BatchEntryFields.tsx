@@ -147,7 +147,9 @@ export function BatchEntryFields({
       </div>
 
       {ctx.blocked ? (
-        <p role="alert" className="font-semibold text-co-cta-text">{t(bk("prep.batch.blocked"))}</p>
+        <p role="alert" className="font-semibold text-co-cta-text">
+          {t(bk(ctx.blockedReason === "unresolved" ? "prep.batch.blocked_unresolved" : "prep.batch.blocked"))}
+        </p>
       ) : (
         <>
           {/* Stepper */}

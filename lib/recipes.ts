@@ -423,20 +423,24 @@ export async function updateRecipe(actor: AuthContext, id: string, patch: { name
   if (patch.shelfLifeDays !== undefined) { if (!isValidShelfLifeDays(patch.shelfLifeDays)) throw new RecipeError(400, "invalid_shelf_life_days"); upd.shelf_life_days = patch.shelfLifeDays; }
   if (patch.batchMode !== undefined && typeof patch.batchMode !== "boolean") throw new RecipeError(400, "invalid_payload");
   const sb = getServiceRoleClient();
-  const { error, count } = await sb.from("recipes").update(upd, { count: "exact" }).eq("id", id);
-  if (error) throw new Error(`updateRecipe: ${error.message}`);
-  if (count === 0) throw new RecipeError(404, "recipe_not_found");
-  if (patch.batchMode !== undefined) {
-    // The flag never goes through a plain column write: set_recipe_batch_mode (0215) takes
-    // the recipe row lock and refuses `on` unless the recipe has exactly one ITEM output
-    // with a yield — the same serialisation point add_recipe_output / remove_recipe_output
-    // use, so the invariant cannot be raced from either side.
-    const { error: rpcErr } = await sb.rpc("set_recipe_batch_mode", { p_recipe_id: id, p_on: patch.batchMode, p_actor: actor.user.id });
-    if (rpcErr) {
-      const named = rpcRecipeError(rpcErr, BATCH_MODE_RPC_ERRORS);
-      if (named) throw named;
-      throw new Error(`updateRecipe set_recipe_batch_mode: ${rpcErr.message}`);
-    }
+  // Astra P2 #8 (BC-007/033): the header patch and the batch_mode toggle are ONE serialised
+  // transaction — update_recipe_atomic (0215) locks the recipe row, re-validates, and writes a
+  // single UPDATE. A refused toggle (batch_mode_single_output) therefore persists NOTHING, and
+  // the recipe.update audit row is written only after the RPC succeeded. The `upd` object above
+  // keeps the pre-0215 validation order; its columns ride in p_patch (snake_case), the
+  // timestamp/actor are stamped in SQL.
+  const { updated_at: _ts, updated_by: _by, ...columns } = upd;
+  void _ts; void _by;
+  const { error: rpcErr } = await sb.rpc("update_recipe_atomic", {
+    p_recipe_id: id,
+    p_patch: columns,
+    p_batch_mode: patch.batchMode === undefined ? null : patch.batchMode,
+    p_actor: actor.user.id,
+  });
+  if (rpcErr) {
+    const named = rpcRecipeError(rpcErr, { ...BATCH_MODE_RPC_ERRORS, invalid_name: 400, invalid_batch_yield: 400 });
+    if (named) throw named;
+    throw new Error(`updateRecipe update_recipe_atomic: ${rpcErr.message}`);
   }
   await audit({ actorId: actor.user.id, actorRole: actor.user.role, action: "recipe.update", resourceTable: "recipes", resourceId: id, metadata: { patch }, ipAddress: null, userAgent: null });
 }
@@ -540,29 +544,26 @@ export async function addRecipeOutput(actor: AuthContext, input: { recipeId: str
   if (itemId !== null && (await activeProducerExists(sb, itemId, input.recipeId))) {
     throw new RecipeError(409, "duplicate_active_producer");
   }
-  // 0215 batch vs bottle (ruling H): a batch_mode recipe has exactly ONE output. This is the
-  // app-layer fast path (the named 422); the serialised check lives in add_recipe_output
-  // (0187, re-emitted by 0215 with the recipe row lock). The insert below is still the direct
-  // write — tests/audit-flags-cleanup.test.ts pins that shipped code does not call
-  // add_recipe_output while 0187 is gated, and this PR keeps that pin (DEVIATION, noted in
-  // the hand-back): rewiring to the RPC is the named follow-up once CC confirms 0187/0215
-  // are applied. Until then the window is the pre-0215 one — two actors at once.
-  const { data: recipeRow, error: recipeErr } = await sb.from("recipes").select("id, batch_mode").eq("id", input.recipeId)
-    .maybeSingle<{ id: string; batch_mode: boolean | null }>();
-  if (recipeErr) throw new Error(`addRecipeOutput recipe: ${recipeErr.message}`);
-  if (!recipeRow) throw new RecipeError(404, "recipe_not_found");
-  if (recipeRow.batch_mode === true) {
-    const { count: existing, error: cntErr } = await sb.from("recipe_outputs").select("id", { count: "exact", head: true }).eq("recipe_id", input.recipeId);
-    if (cntErr) throw new Error(`addRecipeOutput outputs: ${cntErr.message}`);
-    if ((existing ?? 0) > 0) throw new RecipeError(422, "batch_mode_single_output");
+  // The insert goes through add_recipe_output (0187, re-emitted by 0215 — its latest definer):
+  // the per-item advisory lock closes the two-actors window the app-layer check above cannot
+  // see, and the recipe row lock refuses a second output on a batch_mode recipe (Astra P1 #3:
+  // a TS read-then-insert cannot — A reads batch_mode=false, B enables it under the lock, A
+  // inserts output two). The fast-path checks above stay so the common case still answers
+  // with a named status without an exception round-trip. The 0187 "no caller" pin is retired
+  // with this wiring (tests/audit-flags-cleanup.test.ts).
+  const { data, error } = await sb.rpc("add_recipe_output", {
+    p_recipe_id: input.recipeId, p_output_item_id: itemId, p_output_menu_item_id: menuId,
+    p_yield: input.yield, p_output_container_label: normStr(input.outputContainerLabel), p_created_by: actor.user.id,
+  });
+  if (error) {
+    const named = rpcRecipeError(error, BATCH_MODE_RPC_ERRORS);
+    if (named) throw named;
+    throw new Error(`addRecipeOutput: ${error.message}`);
   }
-  const { data: max } = await sb.from("recipe_outputs").select("display_order").eq("recipe_id", input.recipeId).order("display_order", { ascending: false }).limit(1).maybeSingle<{ display_order: number }>();
-  const { data, error } = await sb.from("recipe_outputs").insert({ recipe_id: input.recipeId, output_item_id: itemId, output_menu_item_id: menuId, yield: input.yield, output_container_label: normStr(input.outputContainerLabel), display_order: (max?.display_order ?? 0) + 1, created_by: actor.user.id })
-    .select("id").maybeSingle<{ id: string }>();
-  if (error) throw new Error(`addRecipeOutput: ${error.message}`);
-  if (!data) throw new Error("addRecipeOutput returned no row");
-  await audit({ actorId: actor.user.id, actorRole: actor.user.role, action: "recipe_output.add", resourceTable: "recipe_outputs", resourceId: data.id, metadata: { recipe_id: input.recipeId, output_item_id: itemId, output_menu_item_id: menuId, yield: input.yield }, ipAddress: null, userAgent: null });
-  return { id: data.id };
+  const newId = typeof data === "string" ? data : (data as { id?: string } | null)?.id;
+  if (!newId) throw new Error("addRecipeOutput returned no row");
+  await audit({ actorId: actor.user.id, actorRole: actor.user.role, action: "recipe_output.add", resourceTable: "recipe_outputs", resourceId: newId, metadata: { recipe_id: input.recipeId, output_item_id: itemId, output_menu_item_id: menuId, yield: input.yield }, ipAddress: null, userAgent: null });
+  return { id: newId };
 }
 
 export async function removeRecipeEdge(actor: AuthContext, args: { table: "recipe_inputs" | "recipe_outputs"; id: string }): Promise<void> {

@@ -26,6 +26,18 @@ import {
 import type { OpeningEntryPhase2 } from "@/lib/types";
 
 vi.mock("@/lib/audit", () => ({ audit: vi.fn(async () => {}) }));
+// Astra P2 #5: the save consults the batch context (graph resolvability) BEFORE the RPC. The
+// double answers "eligible" by default; one test flips it to "unresolved".
+const batchCtxMock = vi.fn(async (ids: string[]) => new Map(ids.map((id) => [id, { itemId: id, recipeId: "r1", recipeName: "Hot Peppers", batchMode: true, shelfLifeDays: 5, outputCount: 1, yieldPerBatch: 4, isBatch: true, eligibility: "batched" as const, blockedReason: null }])));
+vi.mock("@/lib/batch-prep", () => ({ loadBatchContextForItems: (ids: string[]) => batchCtxMock(ids) }));
+// The fold is a separate service-role writer; stubbed so the test observes the ARGUMENTS the
+// save hands it (persisted attribution, never the caller's clock) without a graph.
+const foldMock = vi.fn(async () => ({ productionId: "p1", yieldAtTime: 4 }));
+vi.mock("@/lib/prep-consumption", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/prep-consumption")>();
+  return { ...actual, recordBatchProductionFromPrep: (...a: unknown[]) => foldMock(...(a as [])) };
+});
+const ITEM_ID = "33333333-4444-4555-8666-777777777777";
 vi.mocked(audit);
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -86,7 +98,15 @@ function service(rpcAnswer: { data: unknown; error: { code: string; message: str
 
 beforeEach(() => {
   vi.mocked(audit).mockClear();
+  batchCtxMock.mockClear();
+  foldMock.mockClear();
 });
+
+const BATCH_RPC_OK = (extra: Record<string, unknown> = {}) => ({
+  data: { completion: ROW, templateItemId: TEMPLATE_ITEM_ID, completionId: ROW.id, deltaVsPrepNeed: 0, overUnderStatus: "at_par", tossPrevious: 0, tossCurrent: 0, producedAt: "2026-10-07T10:00:00.000Z", madeBy: "maker-0000-4000-8000-000000000001", ...extra },
+  error: null,
+});
+const TEMPLATE_ITEM_ROW = { item_id: ITEM_ID };
 
 describe("single-box save is byte-identical (plus the RPC's default)", () => {
   it("calls save_phase2_item_atomic with today's arguments and p_batch: null", async () => {
@@ -119,7 +139,7 @@ describe("single-box save is byte-identical (plus the RPC's default)", () => {
 
 describe("batched save", () => {
   it("sends the batch half as p_batch in the RPC's snake_case shape", async () => {
-    const svc = service({ data: { completion: ROW, templateItemId: TEMPLATE_ITEM_ID, completionId: ROW.id, deltaVsPrepNeed: 0, overUnderStatus: "at_par" }, error: null });
+    const svc = service(BATCH_RPC_OK(), TEMPLATE_ITEM_ROW);
     await savePhase2Item(svc.client, {
       instanceId: INSTANCE_ID,
       locationId: "ffffffff-eeee-4ddd-8ccc-bbbbbbbbbbbb",
@@ -131,7 +151,7 @@ describe("batched save", () => {
     expect(call[1].p_batch).toEqual({ batches: 2, came_out_to: 7.5, tossed: 0, over_batch_reason: { code: "catering_order", note: null } });
   });
   it("a zero-batch bottling sends batches 0 / came_out_to 0 and no reason", async () => {
-    const svc = service({ data: { completion: ROW, templateItemId: TEMPLATE_ITEM_ID, completionId: ROW.id, deltaVsPrepNeed: 0, overUnderStatus: "at_par" }, error: null });
+    const svc = service(BATCH_RPC_OK(), TEMPLATE_ITEM_ROW);
     await savePhase2Item(svc.client, {
       instanceId: INSTANCE_ID,
       locationId: "ffffffff-eeee-4ddd-8ccc-bbbbbbbbbbbb",
@@ -143,7 +163,7 @@ describe("batched save", () => {
     expect(call[1].p_batch).toEqual({ batches: 0, came_out_to: 0, tossed: 0, over_batch_reason: null });
   });
   it("a contract refusal from the RPC becomes OpeningBatchContractError → 422 with the item id", async () => {
-    const svc = service({ data: null, error: { code: "P0001", message: `save_phase2_item_atomic: bottled_exceeds_available for item ${TEMPLATE_ITEM_ID} (Hot Peppers) — bottled 9 > available 6` } });
+    const svc = service({ data: null, error: { code: "P0001", message: `save_phase2_item_atomic: bottled_exceeds_available for item ${TEMPLATE_ITEM_ID} (Hot Peppers) — bottled 9 > available 6` } }, TEMPLATE_ITEM_ROW);
     const err = await savePhase2Item(svc.client, {
       instanceId: INSTANCE_ID,
       locationId: "ffffffff-eeee-4ddd-8ccc-bbbbbbbbbbbb",
@@ -158,6 +178,75 @@ describe("batched save", () => {
     expect(body.code).toBe("bottled_exceeds_available");
     expect(body.template_item_id).toBe(TEMPLATE_ITEM_ID);
   });
+  it("an UNRESOLVABLE batch recipe is refused BEFORE the RPC (Astra P2 #5) — no completion is written", async () => {
+    batchCtxMock.mockImplementationOnce(async (ids: string[]) => new Map(ids.map((id) => [id, { itemId: id, recipeId: "r1", recipeName: "Hot Peppers", batchMode: true, shelfLifeDays: 5, outputCount: 1, yieldPerBatch: 4, isBatch: false, eligibility: "blocked" as const, blockedReason: "unresolved" as const }])));
+    const svc = service(BATCH_RPC_OK(), TEMPLATE_ITEM_ROW);
+    const err = await savePhase2Item(svc.client, {
+      instanceId: INSTANCE_ID,
+      locationId: "ffffffff-eeee-4ddd-8ccc-bbbbbbbbbbbb",
+      actor: { userId: ACTOR_ID, role: "key_holder", level: OPENING_BASE_LEVEL },
+      entry: { ...SINGLE_BOX, batch: { batches: 1, cameOutTo: 4, tossed: 0, overBatchReason: null } },
+      confirmedConsumption: null,
+    }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(OpeningBatchContractError);
+    expect((err as OpeningBatchContractError).code).toBe("batch_recipe_unresolved");
+    expect(svc.rpc).not.toHaveBeenCalled();
+    expect(foldMock).not.toHaveBeenCalled();
+  });
+  it("the fold receives the PERSISTED session attribution the RPC returned, never the caller's clock or editor (Astra P2 #7)", async () => {
+    const svc = service(BATCH_RPC_OK({ producedAt: "2026-10-07T09:00:00.000Z", madeBy: "maker-0000-4000-8000-000000000001" }), TEMPLATE_ITEM_ROW);
+    await savePhase2Item(svc.client, {
+      instanceId: INSTANCE_ID,
+      locationId: "ffffffff-eeee-4ddd-8ccc-bbbbbbbbbbbb",
+      actor: { userId: ACTOR_ID, role: "key_holder", level: OPENING_BASE_LEVEL },
+      entry: { ...SINGLE_BOX, batch: { batches: 2, cameOutTo: 8, tossed: 0, overBatchReason: { code: "catering_order", note: null } } },
+      confirmedConsumption: null,
+    });
+    expect(foldMock).toHaveBeenCalledTimes(1);
+    const foldArgs = (foldMock.mock.calls[0] as unknown as [unknown, Record<string, unknown>])[1];
+    expect(foldArgs.producedAt).toBe("2026-10-07T09:00:00.000Z");
+    expect(foldArgs.madeBy).toBe("maker-0000-4000-8000-000000000001");
+    expect(foldArgs.madeBy).not.toBe(ACTOR_ID);
+    expect(foldArgs.batches).toBe(2);
+  });
+  it("without session attribution in the RPC answer the fold is SKIPPED (loudly), the completion still stands", async () => {
+    const svc = service(BATCH_RPC_OK({ producedAt: null, madeBy: null }), TEMPLATE_ITEM_ROW);
+    const result = await savePhase2Item(svc.client, {
+      instanceId: INSTANCE_ID,
+      locationId: "ffffffff-eeee-4ddd-8ccc-bbbbbbbbbbbb",
+      actor: { userId: ACTOR_ID, role: "key_holder", level: OPENING_BASE_LEVEL },
+      entry: { ...SINGLE_BOX, batch: { batches: 1, cameOutTo: 4, tossed: 0, overBatchReason: null } },
+      confirmedConsumption: null,
+    });
+    expect(result.completionId).toBe(ROW.id);
+    expect(foldMock).not.toHaveBeenCalled();
+  });
+  it("audits backup.tossed on every REAL toss change (set and cleared) and never on an unchanged save (Astra P2 #6)", async () => {
+    const base = { instanceId: INSTANCE_ID, locationId: "ffffffff-eeee-4ddd-8ccc-bbbbbbbbbbbb", actor: { userId: ACTOR_ID, role: "key_holder" as const, level: OPENING_BASE_LEVEL }, confirmedConsumption: null };
+    const tossActions = () => vi.mocked(audit).mock.calls.filter((c) => (c[0] as { action: string }).action === "backup.tossed");
+    // set: 0 → 8
+    await savePhase2Item(service(BATCH_RPC_OK({ tossPrevious: 0, tossCurrent: 8 }), TEMPLATE_ITEM_ROW).client, { ...base, entry: { ...SINGLE_BOX, batch: { batches: 1, cameOutTo: 4, tossed: 8, overBatchReason: null } } });
+    expect(tossActions()).toHaveLength(1);
+    expect((tossActions()[0]![0] as { metadata: Record<string, unknown> }).metadata).toMatchObject({ tossed_previous: 0, tossed_current: 8 });
+    // unchanged: 8 → 8
+    vi.mocked(audit).mockClear();
+    await savePhase2Item(service(BATCH_RPC_OK({ tossPrevious: 8, tossCurrent: 8 }), TEMPLATE_ITEM_ROW).client, { ...base, entry: { ...SINGLE_BOX, batch: { batches: 1, cameOutTo: 4, tossed: 8, overBatchReason: null } } });
+    expect(tossActions()).toHaveLength(0);
+    // cleared through a correction: 8 → 0
+    vi.mocked(audit).mockClear();
+    await savePhase2Item(service(BATCH_RPC_OK({ tossPrevious: 8, tossCurrent: 0 }), TEMPLATE_ITEM_ROW).client, { ...base, entry: { ...SINGLE_BOX, batch: { batches: 1, cameOutTo: 4, tossed: 0, overBatchReason: null } } });
+    expect(tossActions()).toHaveLength(1);
+    expect((tossActions()[0]![0] as { metadata: Record<string, unknown> }).metadata).toMatchObject({ tossed_previous: 8, tossed_current: 0 });
+  });
+  it("a fold failure never fails the committed completion, and a re-save re-runs the fold (heals by supersede)", async () => {
+    foldMock.mockImplementationOnce(async () => { throw new Error("lines insert exploded"); });
+    const base = { instanceId: INSTANCE_ID, locationId: "ffffffff-eeee-4ddd-8ccc-bbbbbbbbbbbb", actor: { userId: ACTOR_ID, role: "key_holder" as const, level: OPENING_BASE_LEVEL }, confirmedConsumption: null, entry: { ...SINGLE_BOX, batch: { batches: 1, cameOutTo: 4, tossed: 0, overBatchReason: null } } };
+    const first = await savePhase2Item(service(BATCH_RPC_OK(), TEMPLATE_ITEM_ROW).client, base);
+    expect(first.completionId).toBe(ROW.id); // committed despite the fold error
+    const second = await savePhase2Item(service(BATCH_RPC_OK(), TEMPLATE_ITEM_ROW).client, base);
+    expect(second.completionId).toBe(ROW.id);
+    expect(foldMock).toHaveBeenCalledTimes(2); // the re-save folds again; recordBatchProductionFromPrep supersedes the prior header
+  });
   it("the batch fold is chosen by the ENTRY, and the single-box fold stays the only path without it", () => {
     const src = read("lib", "opening.ts");
     const fn = src.slice(src.indexOf("export async function savePhase2Item("), src.indexOf("// C.53 §8.4 Phase 2 revoke (Lane D)"));
@@ -165,9 +254,12 @@ describe("batched save", () => {
     expect(fn).toMatch(/recordBatchProductionFromPrep\(args\.actor, \{/);
     expect(fn).toMatch(/\} else if \(tItem\?\.item_id\) \{/);
     expect(fn).toContain("outputQty: args.entry.openerPrepped,");
-    // produced_at / made_by come from the session the RPC stamped, never this call's clock.
-    expect(fn).toMatch(/producedAt: record\?\.producedAt \?\? rpcResult\.completion\.completed_at/);
-    expect(fn).toMatch(/madeBy: record\?\.madeBy \?\? args\.actor\.userId/);
+    // produced_at / made_by are the PERSISTED session facts the RPC returned — never this
+    // call's clock or editor (Astra P2 #7); missing facts skip the fold loudly.
+    expect(fn).toMatch(/const producedAt = rpcResult\.producedAt \?\? record\?\.producedAt \?\? null;/);
+    expect(fn).toMatch(/const madeBy = rpcResult\.madeBy \?\? record\?\.madeBy \?\? null;/);
+    expect(fn).not.toMatch(/madeBy: .*args\.actor\.userId/);
+    expect(fn).toContain("fold skipped");
   });
 });
 

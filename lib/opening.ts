@@ -1966,6 +1966,11 @@ interface Phase2ItemSaveRpcResult {
   completionId: string;
   deltaVsPrepNeed: number | null;
   overUnderStatus: "at_par" | "over_prep" | "under_prep";
+  /** 0215 — present ONLY on a batch save (the RPC's batch-only RETURN): the session facts. */
+  tossPrevious?: number | string | null;
+  tossCurrent?: number | string | null;
+  producedAt?: string | null;
+  madeBy?: string | null;
 }
 
 /** Lib-layer result of {@link savePhase2Item}. */
@@ -2093,6 +2098,23 @@ export async function savePhase2Item(
     throw new OpeningRoleViolationError(OPENING_BASE_LEVEL, args.actor.level);
   }
 
+  // Astra P2 #5 (BC-031): a batch save on a recipe the graph cannot resolve (an unconvertible
+  // ingredient) would commit a completion the fold then refuses. Refused HERE, before the RPC,
+  // with the contract code the RPC uses for the shapes it can see (batch_recipe_unresolved).
+  if (args.entry.batch) {
+    const { data: tItemPre, error: tItemErr } = await service
+      .from("checklist_template_items")
+      .select("item_id")
+      .eq("id", args.entry.templateItemId)
+      .maybeSingle<{ item_id: string | null }>();
+    if (tItemErr) throw new Error(`savePhase2Item template item: ${tItemErr.message}`);
+    const ctx = tItemPre?.item_id ? (await loadBatchContextForItems([tItemPre.item_id])).get(tItemPre.item_id) : undefined;
+    if (!ctx || ctx.eligibility !== "batched") {
+      void audit({ ...auditBase, metadata: { outcome: "batch_recipe_unresolved", template_item_id: args.entry.templateItemId, blocked_reason: ctx?.blockedReason ?? "no_recipe" } });
+      throw new OpeningBatchContractError("batch_recipe_unresolved", args.entry.templateItemId);
+    }
+  }
+
   let rpcResult: Phase2ItemSaveRpcResult;
   try {
     const { data, error } = await service.rpc("save_phase2_item_atomic", {
@@ -2191,6 +2213,27 @@ export async function savePhase2Item(
     },
   });
 
+  // 0215 (Astra P2 #6): a toss is a HUMAN act on the accountability record. The RPC returns
+  // the session's toss before and after this save; every REAL change — set, moved, cleared
+  // through a correction — is audited as backup.tossed; an unchanged save emits nothing.
+  if (args.entry.batch) {
+    const prev = Number(rpcResult.tossPrevious ?? 0) || 0;
+    const cur = Number(rpcResult.tossCurrent ?? 0) || 0;
+    if (prev !== cur) {
+      void audit({
+        ...auditBase,
+        action: "backup.tossed",
+        metadata: {
+          instance_id: args.instanceId,
+          template_item_id: args.entry.templateItemId,
+          completion_id: rpcResult.completionId,
+          tossed_previous: prev,
+          tossed_current: cur,
+        },
+      });
+    }
+  }
+
   // Item/Inventory Spine — production-in-prep fold. The completion is committed (RPC
   // succeeded above). Record the SKU depletion as a SEPARATE service-role write,
   // idempotent by (instance, template_item). The registry item id is NOT in the
@@ -2207,9 +2250,15 @@ export async function savePhase2Item(
       .maybeSingle<{ item_id: string | null }>();
     if (tItem?.item_id && args.entry.batch) {
       // 0215 batch vs bottle — the BATCH fold (ruling 3): depletion is batches × the
-      // recipe from ONE graph read; `produced_at` / `made_by` come from the session the RPC
-      // just stamped (first save wins, re-saves carry it), never from this call's clock.
+      // recipe from ONE graph read. `produced_at` / `made_by` are the PERSISTED session facts
+      // the RPC returned (first save wins, re-saves carry it) — never this call's clock or
+      // editor (Astra P2 #7). Missing facts mean no fold, loudly; the next save heals.
       const record = readBatchFromPrepData(rpcResult.completion.prep_data);
+      const producedAt = rpcResult.producedAt ?? record?.producedAt ?? null;
+      const madeBy = rpcResult.madeBy ?? record?.madeBy ?? null;
+      if (producedAt === null || madeBy === null) {
+        throw new Error(`savePhase2Item: batch save returned no session attribution for ${args.entry.templateItemId}; fold skipped`);
+      }
       await recordBatchProductionFromPrep(args.actor, {
         locationId: args.locationId,
         instanceId: args.instanceId,
@@ -2218,8 +2267,8 @@ export async function savePhase2Item(
         batches: record?.batches ?? args.entry.batch.batches,
         cameOutTo: record?.cameOutTo ?? args.entry.batch.cameOutTo ?? 0,
         confirmedConsumption: args.confirmedConsumption ?? null,
-        producedAt: record?.producedAt ?? rpcResult.completion.completed_at,
-        madeBy: record?.madeBy ?? args.actor.userId,
+        producedAt,
+        madeBy,
         source: "opening_p2",
       });
     } else if (tItem?.item_id) {

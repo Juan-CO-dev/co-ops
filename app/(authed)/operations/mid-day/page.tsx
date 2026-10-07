@@ -166,6 +166,7 @@ export default async function MidDayPrepPage({ searchParams }: PageProps) {
           parUnit: item.prepMeta?.parUnit ?? null,
           madeOn: state.batchState[item.id]?.madeOn ?? null,
           blocked: ctx.eligibility === "blocked",
+          blockedReason: ctx.blockedReason,
         }
       : null;
     const batchRecord = batch ? readBatchFromPrepData(comp?.prepData) : null;

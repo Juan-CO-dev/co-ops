@@ -14,6 +14,8 @@
  */
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import { selectAllRows } from "@/lib/supabase-paginate";
+import { loadRecipeGraph } from "@/lib/prep-consumption";
+import { batchSkuOzForItemFromGraph, type RecipeGraph } from "@/lib/prep-consumption-graph";
 import { batchEligibility, type BatchItemContext } from "@/lib/batch-prep-shared";
 
 export type { BatchItemContext };
@@ -29,11 +31,15 @@ function num(v: number | string | null | undefined): number | null {
  * (callers treat absent as single-box: there is nothing to count by batch). Every read
  * throws on `error` (the lib/prep-consumption.ts posture: a smaller answer is a wrong answer).
  */
-export async function loadBatchContextForItems(itemIds: string[]): Promise<Map<string, BatchItemContext>> {
+export async function loadBatchContextForItems(itemIds: string[], graphIn?: RecipeGraph): Promise<Map<string, BatchItemContext>> {
   const out = new Map<string, BatchItemContext>();
   const uniq = [...new Set(itemIds.filter(Boolean))];
   if (uniq.length === 0) return out;
   const sb = getServiceRoleClient();
+  // Astra P2 #5 (BC-031): resolvability comes from the SAME graph the fold will read — a
+  // single-output recipe with an unconvertible ingredient is NOT usable, whatever its flags
+  // say, and the row/save say so instead of committing a completion the fold then refuses.
+  const graph = graphIn ?? (await loadRecipeGraph());
 
   // 1. Every output row naming one of our items → candidate producer recipes.
   const myOutputs = await selectAllRows<{ recipe_id: string; output_item_id: string; yield: number | string | null }>((from, to) =>
@@ -69,7 +75,11 @@ export async function loadBatchContextForItems(itemIds: string[]): Promise<Map<s
       const yieldPerBatch = yieldByRecipeItem.get(`${r.id}:${o.output_item_id}`) ?? null;
       const count = outputCount.get(r.id) ?? 0;
       const batchMode = r.batch_mode === true;
-      const eligibility = batchEligibility({ batchMode, outputCount: count, yieldPerBatch: yieldPerBatch !== null && yieldPerBatch > 0 ? yieldPerBatch : null, resolvable: true });
+      const usableYield = yieldPerBatch !== null && yieldPerBatch > 0 ? yieldPerBatch : null;
+      const resolvable = batchMode ? batchSkuOzForItemFromGraph(graph, o.output_item_id) !== null : true;
+      const eligibility = batchEligibility({ batchMode, outputCount: count, yieldPerBatch: usableYield, resolvable });
+      const blockedReason: BatchItemContext["blockedReason"] =
+        eligibility !== "blocked" ? null : count !== 1 ? "multi_output" : usableYield === null ? "no_yield" : "unresolved";
       out.set(o.output_item_id, {
         itemId: o.output_item_id,
         recipeId: r.id,
@@ -77,9 +87,10 @@ export async function loadBatchContextForItems(itemIds: string[]): Promise<Map<s
         batchMode,
         shelfLifeDays: num(r.shelf_life_days) ?? 5,
         outputCount: count,
-        yieldPerBatch: yieldPerBatch !== null && yieldPerBatch > 0 ? yieldPerBatch : null,
+        yieldPerBatch: usableYield,
         isBatch: eligibility === "batched",
         eligibility,
+        blockedReason,
       });
     }
   }

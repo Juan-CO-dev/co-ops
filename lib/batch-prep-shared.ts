@@ -195,7 +195,11 @@ export interface BatchItemContext {
   isBatch: boolean;
   /** single_box = not batch_mode; batched = isBatch; blocked = batch_mode but ineligible (the row refuses to save). */
   eligibility: BatchEligibility;
+  /** Why it is blocked (Astra P2 #5): the recipe's shape, or an ingredient the graph cannot convert. */
+  blockedReason: BatchBlockedReason | null;
 }
+
+export type BatchBlockedReason = "multi_output" | "no_yield" | "unresolved";
 
 /** Shelf life: "made on" + shelf_life_days is before today → the backup is past its life. */
 export function isPastShelfLife(madeOnIso: string | null, shelfLifeDays: number, todayIso: string): boolean {
@@ -329,6 +333,8 @@ export interface BatchRowContext {
   madeOn: string | null;
   /** batch_mode but ineligible (multi-output / no yield / unresolvable) — the row BLOCKS. */
   blocked: boolean;
+  /** Which of the three it is, for the row's message. */
+  blockedReason?: BatchBlockedReason | null;
 }
 
 /** The P0001 codes save_phase2_item_atomic / save_mid_day_phase2_item_atomic raise for the batch contract (0215). */

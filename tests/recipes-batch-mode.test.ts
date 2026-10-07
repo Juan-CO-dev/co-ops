@@ -47,35 +47,37 @@ describe("isValidShelfLifeDays — whole days, at least one", () => {
   });
 });
 
-describe("updateRecipe — batch_mode goes through the RPC; shelf life is validated before the write", () => {
+describe("updateRecipe — header patch + batch_mode toggle in ONE transaction (Astra P2 #8)", () => {
   const body = fnBody(lib, "updateRecipe");
-  it("calls set_recipe_batch_mode and never writes batch_mode as a column", () => {
-    expect(body).toMatch(/rpc\("set_recipe_batch_mode"/);
-    expect(body).not.toMatch(/upd\.batch_mode/);
+  it("calls update_recipe_atomic and never writes the recipes row directly", () => {
+    expect(body).toMatch(/rpc\("update_recipe_atomic"/);
+    expect(body).not.toMatch(/from\("recipes"\)\.update\(/);
+    expect(body).not.toMatch(/rpc\("set_recipe_batch_mode"/);
   });
-  it("validates shelfLifeDays before `.update(`", () => {
+  it("validates shelfLifeDays before the RPC and audits recipe.update only AFTER it succeeded", () => {
     const validateAt = body.indexOf("invalid_shelf_life_days");
-    const updateAt = body.indexOf(".update(upd");
+    const rpcAt = body.indexOf('rpc("update_recipe_atomic"');
+    const auditAt = body.indexOf('action: "recipe.update"');
     expect(validateAt).toBeGreaterThan(-1);
-    expect(updateAt).toBeGreaterThan(-1);
-    expect(validateAt).toBeLessThan(updateAt);
+    expect(validateAt).toBeLessThan(rpcAt);
+    expect(rpcAt).toBeLessThan(auditAt);
+    // The refusal path throws before the audit line.
+    const throwAt = body.indexOf("if (named) throw named;");
+    expect(throwAt).toBeGreaterThan(rpcAt);
+    expect(throwAt).toBeLessThan(auditAt);
   });
   it("maps the RPC's named raises instead of throwing an opaque error", () => {
-    expect(body).toMatch(/rpcRecipeError\(rpcErr, BATCH_MODE_RPC_ERRORS\)/);
+    expect(body).toMatch(/rpcRecipeError\(rpcErr, \{ \.\.\.BATCH_MODE_RPC_ERRORS/);
   });
 });
 
 describe("outputs: every writer is an RPC under the recipe row lock", () => {
-  it("addRecipeOutput refuses a second output on a batch_mode recipe BEFORE the insert (the RPC rewire is the named follow-up; the 0187 pin stands)", () => {
+  it("addRecipeOutput inserts through add_recipe_output (serialised; Astra P1 #3), never a direct insert", () => {
     const body = fnBody(lib, "addRecipeOutput");
-    // tests/audit-flags-cleanup.test.ts pins that shipped code does not call add_recipe_output
-    // while 0187 is gated; this PR keeps that pin and guards in TS instead.
-    expect(body).not.toMatch(/rpc\("add_recipe_output"/);
-    const checkAt = body.indexOf('throw new RecipeError(422, "batch_mode_single_output")');
-    const insertAt = body.indexOf('from("recipe_outputs").insert');
-    expect(checkAt).toBeGreaterThan(-1);
-    expect(insertAt).toBeGreaterThan(-1);
-    expect(checkAt).toBeLessThan(insertAt);
+    expect(body).toMatch(/rpc\("add_recipe_output"/);
+    expect(body).not.toMatch(/from\("recipe_outputs"\)\.insert/);
+    // The race's loser gets the RPC's named refusal, mapped to the same 422 as the TS check.
+    expect(body).toMatch(/rpcRecipeError\(error, BATCH_MODE_RPC_ERRORS\)/);
   });
   it("removeRecipeEdge deletes an output through remove_recipe_output and keeps the direct path for inputs only", () => {
     const body = fnBody(lib, "removeRecipeEdge");

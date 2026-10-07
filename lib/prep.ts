@@ -69,7 +69,7 @@ import { applyEffectiveResolution, type EffectiveResolvableBuilder } from "@/lib
 import { loadPrepSections } from "@/lib/prep-sections.server";
 import { loadBatchDerivedForItems, loadDerivedForItems, recordBatchProductionFromPrep, recordProductionFromPrep, skuConsumptionForItem, type DerivedSku, type ConfirmedInput } from "@/lib/prep-consumption";
 import { loadBatchContextForItems, type BatchItemContext } from "@/lib/batch-prep";
-import { batchContractCodeFromMessage, readBatchFromPrepData, toBatchPayload, type BatchContractCode, type BatchEntry } from "@/lib/batch-prep-shared";
+import { batchContractCodeFromMessage, toBatchPayload, type BatchContractCode, type BatchEntry } from "@/lib/batch-prep-shared";
 import type {
   ChecklistCompletion,
   ChecklistInstance,
@@ -1339,6 +1339,16 @@ export async function saveMidDayPhase2Item(
   const item = state.templateItems.find((it) => it.id === args.templateItemId);
   if (!item || !item.prepMeta) return { ok: false, reason: "bad_item" };
 
+  // Astra P2 #5 (BC-031): a batch save on a recipe the graph cannot resolve (an unconvertible
+  // ingredient) would commit a completion the fold then refuses — refused HERE, before the RPC,
+  // with the same contract code the RPC uses for the shape it can see.
+  if (args.batch) {
+    const ctx = state.batchContext[args.templateItemId];
+    if (!ctx || ctx.eligibility !== "batched") {
+      return { ok: false, reason: "batch_contract", code: "batch_recipe_unresolved", templateItemId: args.templateItemId };
+    }
+  }
+
   const snapshot: PrepSnapshot = {
     section: item.prepMeta.section,
     itemName: item.label,
@@ -1389,28 +1399,46 @@ export async function saveMidDayPhase2Item(
   // (instance, template_item). Untouched panel (confirmedConsumption null) → record the
   // derived theoretical set; edited → record the confirmed set. A failure here must NOT
   // fail the committed completion (sacred flow) — swallow + log; supersede-on-resave heals.
+  // 0215 (Astra P2 #6): every REAL toss change is audited as backup.tossed (set, moved, or
+  // cleared through a correction); an unchanged save emits nothing. The RPC returns both.
+  const rpcOut = data as { completionId: string; savedAt: string; tossPrevious?: number | string | null; tossCurrent?: number | string | null; producedAt?: string | null; madeBy?: string | null };
+  if (args.batch) {
+    const prev = Number(rpcOut.tossPrevious ?? 0) || 0;
+    const cur = Number(rpcOut.tossCurrent ?? 0) || 0;
+    if (prev !== cur) {
+      void audit({
+        actorId: args.actor.userId,
+        actorRole: args.actor.role,
+        action: "backup.tossed",
+        resourceTable: "checklist_completions",
+        resourceId: rpcOut.completionId,
+        metadata: { instance_id: args.instanceId, template_item_id: args.templateItemId, tossed_previous: prev, tossed_current: cur, phase: "mid_day_phase2" },
+        ipAddress: args.ipAddress ?? null,
+        userAgent: args.userAgent ?? null,
+      });
+    }
+  }
+
   if (item.itemId && args.batch) {
     // 0215 batch vs bottle — the BATCH fold (ruling 3): batches × the recipe from ONE
-    // graph read; produced_at / made_by come from the session the RPC stamped onto the
-    // completion's `batch` object (read back — the mid-day RPC returns only the id).
+    // graph read. produced_at / made_by are the PERSISTED session facts the RPC returned
+    // (Astra P2 #7) — never this call's clock or editor; missing facts mean no fold, loudly.
     try {
-      const d0 = data as { completionId: string; savedAt: string };
-      const { data: saved } = await service
-        .from("checklist_completions")
-        .select("prep_data, completed_at")
-        .eq("id", d0.completionId)
-        .maybeSingle<{ prep_data: unknown; completed_at: string }>();
-      const record = readBatchFromPrepData(saved?.prep_data);
+      const producedAt = rpcOut.producedAt ?? null;
+      const madeBy = rpcOut.madeBy ?? null;
+      if (producedAt === null || madeBy === null) {
+        throw new Error(`saveMidDayPhase2Item: batch save returned no session attribution for ${args.templateItemId}; fold skipped`);
+      }
       await recordBatchProductionFromPrep(args.actor, {
         locationId: state.instance.locationId,
         instanceId: args.instanceId,
         templateItemId: args.templateItemId,
         outputItemId: item.itemId,
-        batches: record?.batches ?? args.batch.batches,
-        cameOutTo: record?.cameOutTo ?? args.batch.cameOutTo ?? 0,
+        batches: args.batch.batches,
+        cameOutTo: args.batch.cameOutTo ?? 0,
         confirmedConsumption: args.confirmedConsumption ?? null,
-        producedAt: record?.producedAt ?? saved?.completed_at ?? d0.savedAt,
-        madeBy: record?.madeBy ?? args.actor.userId,
+        producedAt,
+        madeBy,
         source: "mid_day_p2",
       });
     } catch (e) {

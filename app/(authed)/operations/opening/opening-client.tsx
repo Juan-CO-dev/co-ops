@@ -651,6 +651,7 @@ export function OpeningClient({
         parUnit: snapshot?.parUnit ?? null,
         madeOn: batchState[templateItemId]?.madeOn ?? null,
         blocked: ctx.eligibility === "blocked",
+        blockedReason: ctx.blockedReason,
       });
     }
     return map;

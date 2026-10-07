@@ -71,10 +71,21 @@ describe("saveMidDayPhase2Item", () => {
     expect(body).toMatch(/\} else if \(item\.itemId\) \{/);
     expect(body).toContain("outputQty: args.prepped,");
     expect(body).toMatch(/recordBatchProductionFromPrep\(args\.actor, \{/);
-    // produced_at / made_by come from the row the RPC wrote, read back by id.
-    expect(body).toMatch(/\.select\("prep_data, completed_at"\)/);
-    expect(body).toMatch(/producedAt: record\?\.producedAt \?\? saved\?\.completed_at \?\? d0\.savedAt/);
-    expect(body).toMatch(/madeBy: record\?\.madeBy \?\? args\.actor\.userId/);
+    // produced_at / made_by are the PERSISTED session facts the RPC returned — never the
+    // caller's clock or editor, never a read-back (Astra P2 #7); missing → fold skipped loudly.
+    expect(body).not.toMatch(/\.select\("prep_data, completed_at"\)/);
+    expect(body).toMatch(/const producedAt = rpcOut\.producedAt \?\? null;/);
+    expect(body).toMatch(/const madeBy = rpcOut\.madeBy \?\? null;/);
+    expect(body).toContain("fold skipped");
+    expect(body).not.toMatch(/madeBy: .*args\.actor\.userId/);
+    // Astra P2 #6: every real toss change is audited; an unchanged save emits nothing.
+    expect(body).toContain('action: "backup.tossed"');
+    expect(body).toMatch(/if \(prev !== cur\) \{/);
+    // Astra P2 #5: an unresolvable recipe is refused BEFORE the RPC.
+    const guardAt = body.indexOf('code: "batch_recipe_unresolved"');
+    const rpcAt = body.indexOf('rpc("save_mid_day_phase2_item_atomic"');
+    expect(guardAt).toBeGreaterThan(-1);
+    expect(guardAt).toBeLessThan(rpcAt);
     expect(body).toContain('source: "mid_day_p2",');
   });
   it("never spells the literal 'phase2' into the RPC call (the mid-day pin's reason)", () => {
