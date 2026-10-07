@@ -436,6 +436,7 @@ export function RecipeBuilder({
               min={1}
               step={1}
               inputMode="numeric"
+              aria-label={t(rk("recipes.builder.shelf_life_days"))}
               value={shelfLifeVal}
               disabled={(!canEdit) || patchBusy}
               onChange={(e) => setShelfLifeVal(e.target.value)}
@@ -449,6 +450,7 @@ export function RecipeBuilder({
             <input
               type="checkbox"
               className="mt-1 h-5 w-5 accent-co-gold"
+              aria-label={t(rk("recipes.builder.batch_mode"))}
               checked={batchModeVal}
               disabled={(!canEdit) || patchBusy}
               onChange={(e) => void handleBatchModeChange(e.target.checked)}

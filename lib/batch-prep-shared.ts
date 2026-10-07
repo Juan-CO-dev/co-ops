@@ -177,6 +177,26 @@ export function batchEligibility(ctx: { batchMode: boolean; outputCount: number;
   return "batched";
 }
 
+/**
+ * One registry item's batch context as the forms receive it (loaded server-side by
+ * lib/batch-prep.ts loadBatchContextForItems; the type lives here so client components can
+ * name it without importing the service-role module).
+ */
+export interface BatchItemContext {
+  itemId: string;
+  recipeId: string;
+  recipeName: string;
+  batchMode: boolean;
+  shelfLifeDays: number;
+  outputCount: number;
+  /** The item's own output yield (par units per batch) on that recipe; null when 0 / unknown. */
+  yieldPerBatch: number | null;
+  /** batch_mode AND one output AND it is this item AND yield > 0 — what the RPC calls is_batch. */
+  isBatch: boolean;
+  /** single_box = not batch_mode; batched = isBatch; blocked = batch_mode but ineligible (the row refuses to save). */
+  eligibility: BatchEligibility;
+}
+
 /** Shelf life: "made on" + shelf_life_days is before today → the backup is past its life. */
 export function isPastShelfLife(madeOnIso: string | null, shelfLifeDays: number, todayIso: string): boolean {
   if (madeOnIso === null || !(shelfLifeDays > 0)) return false;

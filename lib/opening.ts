@@ -52,6 +52,7 @@ import {
   type DerivedSku,
 } from "@/lib/prep-consumption";
 import { isPrepData } from "./prep";
+import { loadBatchContextForItems, type BatchItemContext } from "@/lib/batch-prep";
 import type { RoleCode } from "./roles";
 import {
   OPENING_CONFIRM_FLOOR_LEVEL,
@@ -368,6 +369,39 @@ export class OpeningGroundTruthUnresolvedError extends OpeningError {
   }
 }
 
+/** The three P0001 codes submit_phase1_atomic (0215) raises for a batch item's two-box recount. */
+export type OpeningRecountSplitCode =
+  | "recount_split_required"
+  | "recount_split_incomplete"
+  | "recount_split_negative";
+export const OPENING_RECOUNT_SPLIT_CODES: ReadonlySet<string> = new Set<OpeningRecountSplitCode>([
+  "recount_split_required",
+  "recount_split_incomplete",
+  "recount_split_negative",
+]);
+
+/**
+ * 0215 batch vs bottle (plan S r3 ruling F) — a batch_mode item's morning recount is TWO
+ * boxes, LINE (ready) and BACK UP (the bulk container), and the server derives the total.
+ * The RPC refuses a total-only recount on a batch item (`recount_split_required`), one box
+ * without the other (`recount_split_incomplete`) and a negative box
+ * (`recount_split_negative`). Mapped to 422 with the item id so the form can point at the
+ * row; the form never sends these shapes on its own, so a hit means a stale client or a
+ * recipe flipped to batch_mode between render and submit.
+ */
+export class OpeningRecountSplitError extends OpeningError {
+  constructor(
+    public readonly splitCode: OpeningRecountSplitCode,
+    public readonly templateItemId: string,
+  ) {
+    super(
+      `Batch item ${templateItemId}: ${splitCode} — the recount must be entered as line + bulk backup, both present, both >= 0.`,
+      splitCode,
+    );
+    this.name = "OpeningRecountSplitError";
+  }
+}
+
 /**
  * Phase 1 RPC integrity violation — actor row missing from `users` at RPC
  * dispatch time. The route layer pre-checks instance existence before
@@ -640,6 +674,14 @@ export interface CloserCountSnapshot {
   amPrepCompletedAt: string;
   /** C.46 edit_count at the time of read (0 = original; 1-3 = post-edit). UI hint. */
   amPrepEditCount: number;
+  /**
+   * 0215 batch vs bottle: the closer's two boxes behind `total`. `line` is the shape's
+   * primary column (line / on_hand / portioned — whichever the AM prep line carries) and
+   * `backUp` is BACK UP, the unbottled bulk container (docs/SPEC_AMENDMENTS.md:56). Null
+   * when the completion did not carry the box. Only a batch_mode item reads them.
+   */
+  line: number | null;
+  backUp: number | null;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -690,6 +732,12 @@ export async function loadOpeningState(
    * not registry-linked OR its recipe is incomplete (non-convertible → no panel).
    */
   derived: Record<string, DerivedSku[]>;
+  /**
+   * 0215 batch vs bottle — per Phase 2 TEMPLATE-ITEM id, the item's batch context (its
+   * producing recipe's batch_mode / shelf life / yield and the derived eligibility). Absent
+   * = single box. Drives the Phase 1 two-box recount and the Phase 2 batch row.
+   */
+  batchContext: Record<string, BatchItemContext>;
 } | null> {
   // Resolve active opening template (most-recent-active per Path A versioning).
   // The `.eq("location_id", args.locationId)` clause is LOAD-BEARING: templates
@@ -756,6 +804,9 @@ export async function loadOpeningState(
     closer_count: number | null;
     par_value: number | null;
     par_unit: string | null;
+    /** 0215: the closer's LINE and BACK UP boxes; create_opening_instance_atomic stores them beside closer_count. */
+    line_count: number | null;
+    back_up_count: number | null;
   }> = [];
   if (phase2Items.length > 0) {
     const liveSnapshotMap = await materializeCloserCountSnapshots(service, {
@@ -783,6 +834,8 @@ export async function loadOpeningState(
         closer_count: live?.total ?? null,
         par_value: item ? r.par : (meta?.parValue ?? null),
         par_unit: item ? r.parUnit : (meta?.parUnit ?? null),
+        line_count: live?.line ?? null,
+        back_up_count: live?.backUp ?? null,
       };
     });
   }
@@ -916,6 +969,17 @@ export async function loadOpeningState(
     derived[it.id] = it.itemId ? (derivedMap.get(it.itemId) ?? []) : [];
   }
 
+  // 0215 batch vs bottle — which Phase 2 items are batch_mode (and eligible). Keyed by
+  // TEMPLATE-ITEM id like `derived`; a non-linked item or one without an active production
+  // recipe is simply absent (= single box). The RPCs re-derive this under the recipe row
+  // lock, so this map only ever decides what the row LOOKS like, never what it saves.
+  const batchContextMap = await loadBatchContextForItems(phase2DerivedItemIds);
+  const batchContext: Record<string, BatchItemContext> = {};
+  for (const it of phase2ForDerived) {
+    const ctx = it.itemId ? batchContextMap.get(it.itemId) : undefined;
+    if (ctx) batchContext[it.id] = ctx;
+  }
+
   return {
     template: tmplRow,
     templateItems,
@@ -923,6 +987,7 @@ export async function loadOpeningState(
     completions,
     authors,
     derived,
+    batchContext,
   };
 }
 
@@ -1141,6 +1206,10 @@ async function materializeCloserCountSnapshots(
       result.set(openingId, null);
       continue;
     }
+    // 0215: the two boxes behind the total. The AM prep form writes only the columns of
+    // the line's shape, so the primary is whichever numeric box is present.
+    const inputs = canonical.prepData.inputs;
+    const primary = [inputs.line, inputs.onHand, inputs.portioned].find((v) => typeof v === "number");
     result.set(openingId, {
       total,
       parValue: canonical.prepData.snapshot.parValue,
@@ -1149,6 +1218,8 @@ async function materializeCloserCountSnapshots(
       amPrepInstanceId: canonical.instanceId,
       amPrepCompletedAt: canonical.completedAt,
       amPrepEditCount: canonical.editCount,
+      line: typeof primary === "number" ? primary : null,
+      backUp: typeof inputs.backUp === "number" ? inputs.backUp : null,
     });
   }
 
@@ -1216,6 +1287,13 @@ export interface OpeningCloserCountSnapshotRow {
   parValue: number | null;
   parUnit: string | null;
   snapshotTakenAt: string;
+  /**
+   * 0215 batch vs bottle: the closer's LINE and BACK UP boxes behind `closerCount`
+   * (`line_count` / `back_up_count`, nullable). The Phase 2 batch row's opening backup is
+   * `backUpCount` unless the opener recounted; a pre-0215 snapshot carries null.
+   */
+  lineCount: number | null;
+  backUpCount: number | null;
 }
 
 export async function loadOpeningCloserCountSnapshots(
@@ -1225,7 +1303,7 @@ export async function loadOpeningCloserCountSnapshots(
   const { data, error } = await service
     .from("opening_closer_count_snapshots")
     .select(
-      "template_item_id, closing_instance_id, closer_count, par_value, par_unit, snapshot_taken_at",
+      "template_item_id, closing_instance_id, closer_count, par_value, par_unit, snapshot_taken_at, line_count, back_up_count",
     )
     .eq("opening_instance_id", instanceId);
   if (error) {
@@ -1239,7 +1317,11 @@ export async function loadOpeningCloserCountSnapshots(
     par_value: number | null;
     par_unit: string | null;
     snapshot_taken_at: string;
+    line_count: number | string | null;
+    back_up_count: number | string | null;
   }>) {
+    const lineCount = row.line_count === null ? null : Number(row.line_count);
+    const backUpCount = row.back_up_count === null ? null : Number(row.back_up_count);
     result.set(row.template_item_id, {
       templateItemId: row.template_item_id,
       closingInstanceId: row.closing_instance_id,
@@ -1247,6 +1329,8 @@ export async function loadOpeningCloserCountSnapshots(
       parValue: row.par_value,
       parUnit: row.par_unit,
       snapshotTakenAt: row.snapshot_taken_at,
+      lineCount: Number.isFinite(lineCount) ? lineCount : null,
+      backUpCount: Number.isFinite(backUpCount) ? backUpCount : null,
     });
   }
   return result;
@@ -1550,6 +1634,13 @@ export async function submitPhase1Atomic(
     notes: e.notes ?? "",
     spotCheckStatus: e.spotCheckStatus ?? "",
     openerRecount: e.openerRecount === null ? "" : String(e.openerRecount),
+    // 0215 batch vs bottle: the two boxes of a batch item's recount. "" → NULL in the RPC
+    // (same NULLIF idiom as openerRecount); absent on the wire reads the same way, so a
+    // non-batch item's entry is byte-identical to today's apart from two empty strings.
+    openerRecountLine:
+      e.openerRecountLine === null || e.openerRecountLine === undefined ? "" : String(e.openerRecountLine),
+    openerRecountBackUp:
+      e.openerRecountBackUp === null || e.openerRecountBackUp === undefined ? "" : String(e.openerRecountBackUp),
   }));
 
   let rpcResult: Phase1RpcResult;
@@ -1618,6 +1709,27 @@ export async function submitPhase1Atomic(
             userAgent: args.userAgent ?? null,
           });
           throw new OpeningGroundTruthUnresolvedError(itemId);
+        }
+        const splitCode = (["recount_split_required", "recount_split_incomplete", "recount_split_negative"] as const)
+          .find((c) => msg.includes(c));
+        if (splitCode) {
+          // 0215 batch vs bottle — the two-box recount gates (ruling F).
+          const itemId = extractTemplateItemId(msg) ?? "<unknown>";
+          void audit({
+            actorId: args.actor.userId,
+            actorRole: args.actor.role,
+            action: "opening.phase1_submit",
+            resourceTable: "checklist_instances",
+            resourceId: args.instanceId,
+            metadata: {
+              outcome: splitCode,
+              rpc_error: msg,
+              template_item_id: itemId,
+            },
+            ipAddress: args.ipAddress ?? null,
+            userAgent: args.userAgent ?? null,
+          });
+          throw new OpeningRecountSplitError(splitCode, itemId);
         }
         if (msg.includes("phase1_not_eligible")) {
           // RPC's race-loss path. Fetch current status for accurate typed-error

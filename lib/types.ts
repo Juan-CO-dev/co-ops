@@ -993,6 +993,14 @@ export interface OpeningEntryPhase1 {
   /** C.53 §3 — opener's recount when spotCheckStatus='flagged_recount'. NULL otherwise. */
   openerRecount: number | null;
   /**
+   * 0215 batch vs bottle (ruling F) — on a batch_mode item the recount is TWO boxes: LINE
+   * (ready for service) and BACK UP (the bulk container). The RPC derives
+   * opener_recount = line + back_up and refuses a total-only recount on a batch item.
+   * Optional and ignored on every other item, so a pre-0215 client payload is unchanged.
+   */
+  openerRecountLine?: number | null;
+  openerRecountBackUp?: number | null;
+  /**
    * C.53 §3 — frozen ground_truth_count at Phase 1 close. The form derives
    * client-side from (closer_count, section verified, opener_recount); server
    * re-derives + validates. NULL when item has no count semantics

@@ -35,6 +35,7 @@ import {
 import type { Language, TranslationKey, TranslationParams } from "@/lib/i18n/types";
 import type { OpeningCloserCountSnapshotRow } from "@/lib/opening";
 import type { DerivedSku } from "@/lib/prep-consumption";
+import type { BatchItemContext } from "@/lib/batch-prep-shared";
 import type {
   ChecklistCompletion,
   ChecklistInstance,
@@ -88,6 +89,12 @@ interface OpeningClientProps {
    * `derivedByItem`. Record (not Map) to cross the RSC→client JSON boundary.
    */
   derived: Record<string, DerivedSku[]>;
+  /**
+   * 0215 batch vs bottle — per Phase 2 TEMPLATE-ITEM id, the item's batch context
+   * (loadOpeningState). Absent = single box. Decides the Phase 1 two-box recount and the
+   * Phase 2 batch row; the RPCs re-derive eligibility and are the authority.
+   */
+  batchContext: Record<string, BatchItemContext>;
   /**
    * Fix #7 — distinct verified section_keys read back from
    * opening_section_verifications (loadOpeningSectionVerifications). Seeds the
@@ -226,6 +233,20 @@ function readPhase1OpenerRecount(prepData: unknown): number | null {
   return typeof recount === "number" ? recount : null;
 }
 
+/** 0215 — the two boxes the Phase 1 RPC persists beside opener_recount on a batch item. */
+function readPhase1RecountSplit(prepData: unknown): { line: number | null; backUp: number | null } {
+  if (prepData == null || typeof prepData !== "object") return { line: null, backUp: null };
+  if (!("phase1" in prepData)) return { line: null, backUp: null };
+  const p1 = (prepData as { phase1: unknown }).phase1;
+  if (p1 == null || typeof p1 !== "object") return { line: null, backUp: null };
+  const line = (p1 as { opener_recount_line?: unknown }).opener_recount_line;
+  const backUp = (p1 as { opener_recount_back_up?: unknown }).opener_recount_back_up;
+  return {
+    line: typeof line === "number" ? line : null,
+    backUp: typeof backUp === "number" ? backUp : null,
+  };
+}
+
 /**
  * C.53 Commit B residual fix — read the PERSISTED Phase 1 ground-truth out of a
  * completion's prep_data->'phase1' sub-object (the 8-key spot-check contract).
@@ -359,6 +380,7 @@ export function OpeningClient({
   templateItems,
   closerSnapshots,
   derived,
+  batchContext,
   verifiedSections,
   initialDraft,
   completions,
@@ -399,6 +421,15 @@ export function OpeningClient({
     () => new Map(Object.entries(closerSnapshots)),
     [closerSnapshots],
   );
+
+  // 0215 batch vs bottle — templateItemId → eligible batch item. Only `isBatch` decides the
+  // two-box recount; a batch_mode recipe that is NOT eligible (blocked) keeps the single box
+  // here and is refused at the Phase 2 save, where the message can say why.
+  const batchModeByItem = useMemo(() => {
+    const m = new Map<string, boolean>();
+    for (const [templateItemId, ctx] of Object.entries(batchContext)) m.set(templateItemId, ctx.isBatch);
+    return m;
+  }, [batchContext]);
 
   // Fix #7 — verified section_keys as a Set for O(1) membership in the
   // sectionVerifications seed (path (a): section-verify row exists).
@@ -471,15 +502,19 @@ export function OpeningClient({
       // re-expressed, so the rule this seed follows and the rule the unit spine pins are
       // the same statement and cannot drift apart.
       switch (openingPhase1ValueSource(c !== null, d !== null)) {
-        case "completion":
+        case "completion": {
+          const split = readPhase1RecountSplit(c!.prepData);
           map.set(item.id, {
             countValue: c!.countValue,
             photoId: c!.photoId,
             notes: c!.notes,
             ticked: true,
             openerRecount: readPhase1OpenerRecount(c!.prepData),
+            openerRecountLine: split.line,
+            openerRecountBackUp: split.backUp,
           });
           break;
+        }
         case "draft":
           map.set(item.id, {
             countValue: d!.countValue,
@@ -487,6 +522,8 @@ export function OpeningClient({
             notes: d!.notes,
             ticked: d!.ticked,
             openerRecount: d!.openerRecount,
+            openerRecountLine: d!.openerRecountLine ?? null,
+            openerRecountBackUp: d!.openerRecountBackUp ?? null,
           });
           break;
         case "empty":
@@ -789,6 +826,8 @@ export function OpeningClient({
                   notes: v.notes,
                   ticked: v.ticked,
                   openerRecount: v.openerRecount,
+                  openerRecountLine: v.openerRecountLine ?? null,
+                  openerRecountBackUp: v.openerRecountBackUp ?? null,
                 },
               ] as const,
           ),
@@ -1568,6 +1607,10 @@ export function OpeningClient({
             : ("matched_via_section_verify" as const)
           : null,
         openerRecount: v.openerRecount,
+        // 0215: the two boxes ride along only for batch items (the RPC ignores them on
+        // every other item, so a non-batch entry is today's payload plus two nulls).
+        openerRecountLine: batchModeByItem.get(item.id) === true ? (v.openerRecountLine ?? null) : null,
+        openerRecountBackUp: batchModeByItem.get(item.id) === true ? (v.openerRecountBackUp ?? null) : null,
         groundTruthCount: null,
         prepNeed: null,
       };
@@ -1772,6 +1815,7 @@ export function OpeningClient({
               verificationLocked={verificationLocked}
               open={stationCollapse.isOpen(station)}
               onToggleOpen={() => stationCollapse.toggle(station)}
+              batchModeByItem={batchModeByItem}
             />
           ))}
         </div>

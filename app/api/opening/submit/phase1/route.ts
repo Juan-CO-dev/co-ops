@@ -104,6 +104,9 @@ interface WireEntry {
   notes: string | null;
   spotCheckStatus: OpeningSpotCheckStatus | null;
   openerRecount: number | null;
+  /** 0215 batch vs bottle — the two boxes of a batch item's recount (optional; see lib/types.ts). */
+  openerRecountLine?: number | null;
+  openerRecountBackUp?: number | null;
   groundTruthCount: number | null;
   prepNeed: number | null;
 }
@@ -197,6 +200,22 @@ function validateBody(
       }
       openerRecount = er.openerRecount;
     }
+    // 0215 batch vs bottle — two-box recount. Shape-checked here (finite number or
+    // null/absent); the pairing and non-negativity rules are the RPC's (ruling F).
+    let openerRecountLine: number | null = null;
+    if (er.openerRecountLine !== null && er.openerRecountLine !== undefined) {
+      if (typeof er.openerRecountLine !== "number" || !Number.isFinite(er.openerRecountLine)) {
+        return { ok: false, field: `entries[${i}].openerRecountLine` };
+      }
+      openerRecountLine = er.openerRecountLine;
+    }
+    let openerRecountBackUp: number | null = null;
+    if (er.openerRecountBackUp !== null && er.openerRecountBackUp !== undefined) {
+      if (typeof er.openerRecountBackUp !== "number" || !Number.isFinite(er.openerRecountBackUp)) {
+        return { ok: false, field: `entries[${i}].openerRecountBackUp` };
+      }
+      openerRecountBackUp = er.openerRecountBackUp;
+    }
     let groundTruthCount: number | null = null;
     if (er.groundTruthCount !== null && er.groundTruthCount !== undefined) {
       if (
@@ -223,6 +242,8 @@ function validateBody(
       notes,
       spotCheckStatus,
       openerRecount,
+      openerRecountLine,
+      openerRecountBackUp,
       groundTruthCount,
       prepNeed,
     });

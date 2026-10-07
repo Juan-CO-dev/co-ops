@@ -109,6 +109,11 @@ interface OpeningVerificationStationProps {
   /** Wave 1 B — collapse state lifted to OpeningClient (reveal on submit errors). */
   open: boolean;
   onToggleOpen: () => void;
+  /**
+   * 0215 batch vs bottle — templateItemId → true when the item's recipe is batch_mode (and
+   * eligible), so its recount renders as LINE + BACK UP. Absent / missing = single box.
+   */
+  batchModeByItem?: Map<string, boolean>;
 }
 
 export function OpeningVerificationStation({
@@ -125,6 +130,7 @@ export function OpeningVerificationStation({
   verificationLocked,
   open,
   onToggleOpen,
+  batchModeByItem,
 }: OpeningVerificationStationProps) {
   const { t } = useTranslation();
 
@@ -274,6 +280,7 @@ export function OpeningVerificationStation({
               hasMissingCountError={hasMissingCountError}
               closerCount={closerCount}
               verificationLocked={verificationLocked}
+              batchMode={batchModeByItem?.get(item.id) === true}
             />
           );
         })}

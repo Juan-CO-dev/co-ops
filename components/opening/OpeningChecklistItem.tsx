@@ -21,6 +21,8 @@ import { resolveTemplateItemContent } from "@/lib/i18n/content";
 import type { Language } from "@/lib/i18n/types";
 import { useTranslation } from "@/lib/i18n/provider";
 
+import { recountTotal } from "@/lib/batch-prep-shared";
+
 import { OpeningCountInput } from "./OpeningCountInput";
 import { OpeningItemAddon } from "./OpeningItemAddon";
 
@@ -33,6 +35,13 @@ export interface OpeningItemFormValue {
    *  REQUIRED on items where snapshot closer_count IS NULL;
    *  OPTIONAL otherwise (opener-initiated correction). */
   openerRecount: number | null;
+  /**
+   * 0215 batch vs bottle (ruling F) — on a batch_mode item the recount is TWO boxes, LINE
+   * (ready) and BACK UP (the bulk container); `openerRecount` is their sum (null until both
+   * are present). Absent / null on every other item.
+   */
+  openerRecountLine?: number | null;
+  openerRecountBackUp?: number | null;
 }
 
 interface OpeningChecklistItemProps {
@@ -67,6 +76,12 @@ interface OpeningChecklistItemProps {
    * verification beat that's already once-per-instance committed.
    */
   verificationLocked?: boolean;
+  /**
+   * 0215 batch vs bottle — true when the item's recipe is batch_mode (and eligible). The
+   * recount then renders as two boxes (LINE + BACK UP) and the single total box is hidden;
+   * the server refuses a total-only recount on such an item (recount_split_required).
+   */
+  batchMode?: boolean;
 }
 
 export function OpeningChecklistItem({
@@ -77,6 +92,7 @@ export function OpeningChecklistItem({
   hasMissingCountError,
   closerCount,
   verificationLocked,
+  batchMode = false,
 }: OpeningChecklistItemProps) {
   const { t } = useTranslation();
   const [addonOpen, setAddonOpen] = useState<boolean>(
@@ -104,6 +120,27 @@ export function OpeningChecklistItem({
     if (Number.isFinite(parsed)) {
       onChange({ ...value, openerRecount: parsed });
     }
+  };
+
+  // 0215 two-box recount: each box parses like the single one; the total (what the RPC
+  // derives) is kept on openerRecount so every downstream read (attestation count, the
+  // flagged_recount discriminator) sees the same number the server will.
+  const handleSplitChange = (box: "line" | "backUp", raw: string) => {
+    const trimmed = raw.trim();
+    let parsed: number | null = null;
+    if (trimmed !== "") {
+      const n = Number(trimmed);
+      if (!Number.isFinite(n)) return;
+      parsed = n;
+    }
+    const line = box === "line" ? parsed : (value.openerRecountLine ?? null);
+    const backUp = box === "backUp" ? parsed : (value.openerRecountBackUp ?? null);
+    onChange({
+      ...value,
+      openerRecountLine: line,
+      openerRecountBackUp: backUp,
+      openerRecount: recountTotal(line, backUp),
+    });
   };
 
   // Finding A — when the verify beat is locked (Phase 1 already landed), the row
@@ -181,7 +218,67 @@ export function OpeningChecklistItem({
               NULL-source items (closerCount === null) show "—" with danger styling +
               required-state on the recount input. Captured items show the closer
               value + optional-correction styling on the recount input. */}
-          {isSpotCheck ? (
+          {isSpotCheck && batchMode ? (
+            /* 0215 batch vs bottle — the two-box recount (ruling F). LINE is what is ready
+               for service; BACK UP is the bulk container. The total is derived, never typed. */
+            <div
+              className={[
+                "mt-1 flex flex-col gap-2 rounded-md border-2 px-3 py-2 text-sm",
+                isNullSource
+                  ? "border-co-cta-text bg-co-danger-surface"
+                  : "border-co-border-2 bg-co-bg",
+              ].join(" ")}
+            >
+              <div className="flex items-center justify-between gap-3">
+                <span
+                  className={[
+                    "shrink-0 text-xs font-bold uppercase tracking-[0.12em]",
+                    isNullSource ? "text-co-cta-text" : "text-co-text-muted",
+                  ].join(" ")}
+                >
+                  {t("opening.recount.label")}
+                </span>
+                <span className="text-xs font-medium text-co-text-muted tabular-nums">
+                  {closerCount === null ? "—" : String(closerCount)}
+                </span>
+              </div>
+              <div className="flex flex-wrap items-end gap-3">
+                {(["line", "backUp"] as const).map((box) => {
+                  const labelKey = box === "line" ? "opening.phase1.recount_line" : "opening.phase1.recount_back_up";
+                  const current = box === "line" ? (value.openerRecountLine ?? null) : (value.openerRecountBackUp ?? null);
+                  return (
+                    <label key={box} className="flex flex-col gap-1">
+                      <span className="text-xs font-bold text-co-text">{t(labelKey)}</span>
+                      <input
+                        type="number"
+                        inputMode="decimal"
+                        min={0}
+                        value={current === null ? "" : String(current)}
+                        onChange={(e) => handleSplitChange(box, e.target.value)}
+                        disabled={verificationLocked}
+                        aria-label={`${t(labelKey)} — ${resolved.label}`}
+                        aria-required={isNullSource}
+                        className={[
+                          "inline-flex min-h-[44px] w-24 items-center rounded-md border-2 px-2",
+                          "text-base font-semibold text-co-text",
+                          "transition focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60",
+                          verificationLocked ? "cursor-not-allowed opacity-70" : "",
+                          isNullSource
+                            ? "border-co-cta-text bg-co-surface hover:border-co-text"
+                            : "border-co-border-2 bg-co-surface hover:border-co-text",
+                        ].join(" ")}
+                      />
+                    </label>
+                  );
+                })}
+                <span className="pb-3 text-xs font-medium text-co-text-muted tabular-nums">
+                  {value.openerRecount === null
+                    ? t("opening.phase1.recount_two_box_hint")
+                    : t("opening.phase1.recount_total_hint", { total: String(value.openerRecount) })}
+                </span>
+              </div>
+            </div>
+          ) : isSpotCheck ? (
             <div
               className={[
                 "mt-1 flex items-center gap-3 rounded-md border-2 px-3 py-2 text-sm",

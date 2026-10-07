@@ -266,6 +266,7 @@ export default async function OpeningPage({ searchParams }: OpeningPageProps) {
         templateItems={state.templateItems}
         closerSnapshots={closerSnapshots}
         derived={state.derived}
+        batchContext={state.batchContext}
         verifiedSections={verifiedSections}
         initialDraft={initialDraft}
         completions={state.completions}
