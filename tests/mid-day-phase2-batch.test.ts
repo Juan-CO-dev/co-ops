@@ -115,7 +115,7 @@ describe("route, form, page, strings", () => {
     expect(page).toMatch(/backupBefore: comp\?\.prepData\?\.inputs\.backUp \?\? null/);
     expect(page).toMatch(/need: needForLine\(par, onHand\)/);
     // Astra P1 #2: the row seed is the shared pure rule — a Phase 1 count is never a save.
-    expect(page).toContain("midDayPhase2RowSeed(comp?.prepData, ctx?.isBatch === true)");
+    expect(page).toContain("midDayPhase2RowSeed(comp?.prepData, ctx?.batchMode === true)");
     expect(page).toContain("initialPrepped: seed.initialPrepped,");
   });
   it("mid_day_prep.phase2.batch_incomplete exists in en and es", () => {

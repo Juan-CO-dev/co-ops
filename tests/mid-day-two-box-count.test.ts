@@ -38,7 +38,7 @@ describe("submitMidDayPhase1 — two boxes on a batch item", () => {
     const rpcAt = body.indexOf('rpc("submit_mid_day_phase1_atomic"');
     expect(checkAt).toBeGreaterThan(-1);
     expect(checkAt).toBeLessThan(rpcAt);
-    expect(body).toMatch(/state\.batchContext\[entry\.templateItemId\]\?\.isBatch === true/);
+    expect(body).toMatch(/state\.batchContext\[entry\.templateItemId\]\?\.batchMode === true/);
     expect(body).toMatch(/typeof onHand !== "number" \|\| typeof backUp !== "number" \|\| onHand < 0 \|\| backUp < 0/);
   });
   it("maps the RPC's mid_day_backup_required / mid_day_count_negative raises to the same reason", () => {
@@ -68,7 +68,7 @@ describe("route + form", () => {
     expect(guardAt).toBeLessThan(entriesAt);
   });
   it("the page passes batchMode from the loader's batchContext", () => {
-    expect(read("app", "(authed)", "operations", "mid-day", "page.tsx")).toMatch(/batchMode: state\.batchContext\[item\.id\]\?\.isBatch === true/);
+    expect(read("app", "(authed)", "operations", "mid-day", "page.tsx")).toMatch(/batchMode: state\.batchContext\[item\.id\]\?\.batchMode === true/);
   });
   it.each(["mid_day_prep.phase1.back_up", "mid_day_prep.phase1.error.backup_required"])("%s exists in en and es", (key) => {
     expect((en as Record<string, string>)[key]).toBeTruthy();

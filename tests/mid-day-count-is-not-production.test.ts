@@ -43,6 +43,41 @@ describe("midDayPhase2RowSeed", () => {
   });
 });
 
+describe("IDENTITY, not eligibility (Astra r2 P1) — an UNRESOLVED batch recipe is still a batch recipe", () => {
+  /**
+   * A single-output batch_mode recipe with an ingredient the graph cannot convert: the context
+   * loader reports batchMode true, isBatch false, eligibility blocked, blockedReason unresolved.
+   * Phase 1 counted LINE 2 + BACK UP 8 (0215's Phase 1 RPC derives total only when is_batch, but
+   * the stored count must never read as a save either way).
+   */
+  const UNRESOLVED_CTX = { batchMode: true, isBatch: false, eligibility: "blocked" as const, blockedReason: "unresolved" as const };
+  it("the row keyed on batchMode is UNSAVED after the 2 + 8 count — keyed on isBatch it would have read as '10 saved'", () => {
+    const seed = midDayPhase2RowSeed(PHASE1_COUNT, UNRESOLVED_CTX.batchMode);
+    expect(seed).toEqual({ initialPrepped: null, initialBatch: null, saved: false });
+    // The bug, pinned as the counter-example: eligibility would hide the count as production.
+    expect(midDayPhase2RowSeed(PHASE1_COUNT, UNRESOLVED_CTX.isBatch).saved).toBe(true);
+  });
+  it("finalize is REFUSED for the unresolved batch row (keyed on batchMode) until it is explicitly saved", () => {
+    const items = [{ id: "hp" }];
+    const live = [{ templateItemId: "hp", completedAt: "2026-10-07T12:00:00Z", prepData: PHASE1_COUNT }];
+    expect(midDayFinalizeBlockers(items, live, { hp: UNRESOLVED_CTX.batchMode })).toEqual(["hp"]);
+    // ...and the eligibility key would have let it through (the counter-example).
+    expect(midDayFinalizeBlockers(items, live, { hp: UNRESOLVED_CTX.isBatch })).toEqual([]);
+  });
+  it("every decision site keys on batchMode, never isBatch", () => {
+    const page = read("app", "(authed)", "operations", "mid-day", "page.tsx");
+    expect(page).toContain("midDayPhase2RowSeed(comp?.prepData, ctx?.batchMode === true)");
+    expect(page).toContain("batchMode: state.batchContext[item.id]?.batchMode === true");
+    expect(page).not.toMatch(/\?\.isBatch\b/);
+    const lib = read("lib", "prep.ts");
+    expect(lib).toContain("batchModeByItem[id] = ctx.batchMode;");
+    expect(lib).toContain("if (state.batchContext[entry.templateItemId]?.batchMode === true) {");
+    expect(lib).toContain("if (ctx?.batchMode) batchModeByItem[tItem.id] = true;");
+    expect(read("app", "(authed)", "operations", "opening", "opening-client.tsx")).toContain("m.set(templateItemId, ctx.batchMode);");
+    expect(read("lib", "mid-day-shared.ts")).not.toMatch(/isBatch/);
+  });
+});
+
 describe("midDayFinalizeBlockers", () => {
   const items = [{ id: "hp" }, { id: "mayo" }];
   const isBatch = { hp: true };
@@ -65,7 +100,7 @@ describe("midDayFinalizeBlockers", () => {
 describe("wiring", () => {
   it("the page seeds the row through midDayPhase2RowSeed and no longer reads inputs.total as prepped", () => {
     const page = read("app", "(authed)", "operations", "mid-day", "page.tsx");
-    expect(page).toContain("midDayPhase2RowSeed(comp?.prepData, ctx?.isBatch === true)");
+    expect(page).toContain("midDayPhase2RowSeed(comp?.prepData, ctx?.batchMode === true)");
     expect(page).not.toContain("comp?.prepData?.inputs.total");
     expect(page).toContain("initialSaved: seed.saved,");
   });

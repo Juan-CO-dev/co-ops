@@ -814,7 +814,7 @@ export async function loadAmPrepState(
   const batchModeByItem: Record<string, boolean> = {};
   for (const tItem of resolvedItems) {
     const ctx = tItem.itemId ? amBatchContext.get(tItem.itemId) : undefined;
-    if (ctx?.isBatch) batchModeByItem[tItem.id] = true;
+    if (ctx?.batchMode) batchModeByItem[tItem.id] = true; // identity: the hint follows recipe.batch_mode
   }
 
   return {
@@ -1231,7 +1231,7 @@ export async function submitMidDayPhase1(
     // (onHand) and the bulk BACK UP — both present, both >= 0. The RPC enforces the same
     // rule under its own eligibility read (mid_day_backup_required / mid_day_count_negative);
     // this is the named fast path so the form gets a 422 it can point at, not a 500.
-    if (state.batchContext[entry.templateItemId]?.isBatch === true) {
+    if (state.batchContext[entry.templateItemId]?.batchMode === true) {
       const onHand = entry.inputs.onHand;
       const backUp = entry.inputs.backUp;
       if (typeof onHand !== "number" || typeof backUp !== "number" || onHand < 0 || backUp < 0) {
@@ -1491,9 +1491,12 @@ export async function finalizeMidDayPhase2(
   // pure rule the page uses to mark a row saved (lib/mid-day-shared.ts).
   const state = await loadMidDayPrepState(service, { instanceId: args.instanceId });
   if (state) {
-    const isBatchByItem: Record<string, boolean> = {};
-    for (const [id, ctx] of Object.entries(state.batchContext)) isBatchByItem[id] = ctx.isBatch;
-    const missing = midDayFinalizeBlockers(state.templateItems, state.completions, isBatchByItem);
+    // IDENTITY, not eligibility (Astra r2 P1): keyed on recipe.batch_mode, so an unresolved
+    // batch recipe (isBatch false, batchMode true) still blocks finalize until a GM fixes the
+    // recipe and the row is saved explicitly.
+    const batchModeByItem: Record<string, boolean> = {};
+    for (const [id, ctx] of Object.entries(state.batchContext)) batchModeByItem[id] = ctx.batchMode;
+    const missing = midDayFinalizeBlockers(state.templateItems, state.completions, batchModeByItem);
     if (missing.length > 0) {
       void audit({
         actorId: args.actor.userId,

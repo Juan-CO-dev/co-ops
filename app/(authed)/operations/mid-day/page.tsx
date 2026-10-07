@@ -171,7 +171,10 @@ export default async function MidDayPrepPage({ searchParams }: PageProps) {
     // Astra P1 #2: a Phase 1 COUNT is never a Phase 2 save. On a batch item 0215's Phase 1 RPC
     // derives inputs.total (LINE + BACK UP), so only a `batch` object on the live completion
     // counts as saved; every other item keeps the pre-0215 rule (inputs.total = the save).
-    const seed = midDayPhase2RowSeed(comp?.prepData, ctx?.isBatch === true);
+    // IDENTITY, not eligibility (Astra r2 P1): a batch_mode recipe that cannot resolve is still
+    // a batch recipe — its count is never a save, the row stays unsaved (and blocked) until a
+    // GM fixes the recipe and the row is saved explicitly.
+    const seed = midDayPhase2RowSeed(comp?.prepData, ctx?.batchMode === true);
     return {
       id: item.id,
       itemId: item.itemId,
@@ -215,7 +218,8 @@ export default async function MidDayPrepPage({ searchParams }: PageProps) {
             section: item.prepMeta?.section ?? item.station ?? "Misc",
             parValue: item.prepMeta?.parValue ?? null,
             parUnit: item.prepMeta?.parUnit ?? null,
-            batchMode: state.batchContext[item.id]?.isBatch === true,
+            // Identity rule: every batch_mode recipe counts LINE + BACK UP, resolvable or not.
+            batchMode: state.batchContext[item.id]?.batchMode === true,
           }))}
         />
       ) : state.instance.status === "phase1_complete" ? (

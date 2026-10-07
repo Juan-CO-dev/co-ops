@@ -445,12 +445,13 @@ export function OpeningClient({
     [closerSnapshots],
   );
 
-  // 0215 batch vs bottle — templateItemId → eligible batch item. Only `isBatch` decides the
-  // two-box recount; a batch_mode recipe that is NOT eligible (blocked) keeps the single box
-  // here and is refused at the Phase 2 save, where the message can say why.
+  // 0215 batch vs bottle — templateItemId → batch recipe (IDENTITY: recipe.batch_mode, Astra
+  // r2 P1). Every batch_mode item is recounted as LINE + BACK UP, eligible or not, so the
+  // count is complete the moment a GM fixes an unresolved recipe; the Phase 2 row is where a
+  // blocked recipe is refused, with the message that says why.
   const batchModeByItem = useMemo(() => {
     const m = new Map<string, boolean>();
-    for (const [templateItemId, ctx] of Object.entries(batchContext)) m.set(templateItemId, ctx.isBatch);
+    for (const [templateItemId, ctx] of Object.entries(batchContext)) m.set(templateItemId, ctx.batchMode);
     return m;
   }, [batchContext]);
 

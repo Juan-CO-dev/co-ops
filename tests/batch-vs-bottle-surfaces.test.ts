@@ -74,7 +74,7 @@ describe("production log, counts panel, AM prep hint", () => {
     expect(row).toMatch(/batchMode && inputColumns\.includes\("back_up"\)/);
     expect(row).toContain('t("am_prep.back_up.bulk_hint")');
     const lib = read("lib", "prep.ts");
-    expect(lib).toMatch(/if \(ctx\?\.isBatch\) batchModeByItem\[tItem\.id\] = true;/);
+    expect(lib).toMatch(/if \(ctx\?\.batchMode\) batchModeByItem\[tItem\.id\] = true;/);
   });
   it("the tenancy test knows prep_batch_sessions and the three RPCs that write it", () => {
     const t = read("tests", "location-bind-differential.test.ts");

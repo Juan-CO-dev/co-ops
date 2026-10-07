@@ -9,6 +9,11 @@
  * The rule, in one place: on a BATCH item a Phase 2 save exists ONLY when the live completion
  * carries a `batch` object (the Phase 2 RPC writes it; the Phase 1 RPC never does). On every
  * other item the pre-0215 rule stands — `inputs.total` is the Phase 2 write.
+ *
+ * "Batch item" here is IDENTITY — `recipe.batch_mode` — never eligibility (Astra r2 P1): a
+ * batch_mode recipe the graph cannot resolve is still a batch recipe, so its count is never a
+ * save and it blocks finalize (the row shows "recipe needs fixing") until a GM fixes the recipe
+ * and the row is saved explicitly.
  */
 import { batchFormFromRecord, readBatchFromPrepData, type BatchFormValue } from "@/lib/batch-prep-shared";
 
@@ -30,8 +35,8 @@ function readTotal(prepData: unknown): number | null {
 }
 
 /** What the Phase 2 row starts with, from the item's live completion (Phase 1's count row, or a Phase 2 save). */
-export function midDayPhase2RowSeed(prepData: unknown, isBatch: boolean): MidDayPhase2RowSeed {
-  if (isBatch) {
+export function midDayPhase2RowSeed(prepData: unknown, batchMode: boolean): MidDayPhase2RowSeed {
+  if (batchMode) {
     const record = readBatchFromPrepData(prepData);
     return record
       ? { initialPrepped: record.bottled, initialBatch: batchFormFromRecord(record), saved: true }
@@ -43,13 +48,13 @@ export function midDayPhase2RowSeed(prepData: unknown, isBatch: boolean): MidDay
 
 /**
  * The template items whose Phase 2 save is still missing and would be hidden by a count:
- * batch items (per `isBatchByTemplateItemId`) without a `batch` object on their live
- * completion. Finalize refuses while this is non-empty.
+ * batch_mode items (per `batchModeByTemplateItemId` — identity, not eligibility) without a
+ * `batch` object on their live completion. Finalize refuses while this is non-empty.
  */
 export function midDayFinalizeBlockers(
   templateItems: ReadonlyArray<{ id: string }>,
   liveCompletions: ReadonlyArray<{ templateItemId: string; completedAt: string; prepData: unknown }>,
-  isBatchByTemplateItemId: Record<string, boolean>,
+  batchModeByTemplateItemId: Record<string, boolean>,
 ): string[] {
   const latest = new Map<string, { completedAt: string; prepData: unknown }>();
   for (const c of liveCompletions) {
@@ -58,7 +63,7 @@ export function midDayFinalizeBlockers(
   }
   const out: string[] = [];
   for (const it of templateItems) {
-    if (isBatchByTemplateItemId[it.id] !== true) continue;
+    if (batchModeByTemplateItemId[it.id] !== true) continue;
     if (!midDayPhase2RowSeed(latest.get(it.id)?.prepData, true).saved) out.push(it.id);
   }
   return out;
