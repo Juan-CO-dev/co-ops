@@ -35,7 +35,15 @@ import {
 import type { Language, TranslationKey, TranslationParams } from "@/lib/i18n/types";
 import type { OpeningCloserCountSnapshotRow } from "@/lib/opening";
 import type { DerivedSku } from "@/lib/prep-consumption";
-import type { BatchItemContext } from "@/lib/batch-prep-shared";
+import {
+  batchEntryFromForm,
+  batchFormFromRecord,
+  needForLine,
+  readBatchFromPrepData,
+  validateBatchEntry,
+  type BatchItemContext,
+  type BatchRowContext,
+} from "@/lib/batch-prep-shared";
 import type {
   ChecklistCompletion,
   ChecklistInstance,
@@ -95,6 +103,10 @@ interface OpeningClientProps {
    * Phase 2 batch row; the RPCs re-derive eligibility and are the authority.
    */
   batchContext: Record<string, BatchItemContext>;
+  /** 0215 — per eligible batch TEMPLATE-ITEM id, the panel rows as PER-BATCH quantities. */
+  batchDerived: Record<string, DerivedSku[]>;
+  /** 0215 — per eligible batch TEMPLATE-ITEM id: last "made on" at this location + this instance's recorded toss. */
+  batchState: Record<string, { madeOn: string | null; tossed: number }>;
   /**
    * Fix #7 — distinct verified section_keys read back from
    * opening_section_verifications (loadOpeningSectionVerifications). Seeds the
@@ -290,7 +302,10 @@ function readPhase1Resolved(
 function saveStateToFormValue(
   s: OpeningPhase2SaveState,
   itemId: string,
+  /** 0215 — the row's whole prep_data, so the persisted batch object (phase2.batch) hydrates too. */
+  prepData?: unknown,
 ): OpeningPhase2FormValue {
+  const batchRecord = prepData === undefined ? null : readBatchFromPrepData(prepData);
   let overPar: OverParCapture | null = null;
   if (s.over_under_status === "over_prep") {
     const cat = s.over_under_reason_category;
@@ -338,6 +353,7 @@ function saveStateToFormValue(
     // shape (it lives on the productions ledger). A hydrated row starts untouched;
     // the server re-derives the default on any subsequent blur-save.
     confirmedConsumption: null,
+    batch: batchRecord ? batchFormFromRecord(batchRecord) : null,
   };
 }
 
@@ -372,6 +388,12 @@ function phase2Signature(v: OpeningPhase2FormValue): string {
     // signature and the value-diff guard silently skips the re-POST that would
     // persist the confirmed consumption.
     confirmedConsumption: v.confirmedConsumption,
+    // 0215 — the batch half rides the signature for the same reason (a stepper tap with
+    // the same bottled number must still POST). null on single-box rows, so their
+    // signature only gains a constant key.
+    batch: v.batch
+      ? { batches: v.batch.batches, cameOutTo: v.batch.cameOutTo, tossed: v.batch.tossed, overBatchReason: v.batch.overBatchReason }
+      : null,
   });
 }
 
@@ -381,6 +403,8 @@ export function OpeningClient({
   closerSnapshots,
   derived,
   batchContext,
+  batchDerived,
+  batchState,
   verifiedSections,
   initialDraft,
   completions,
@@ -548,9 +572,13 @@ export function OpeningClient({
   // this map. Items with no phase2 save start blank.
   const [phase2Values, setPhase2Values] = useState<Map<string, OpeningPhase2FormValue>>(() => {
     const savedByItem = new Map<string, OpeningPhase2SaveState>();
+    const prepDataByItem = new Map<string, unknown>();
     for (const c of completions) {
       const save = readPhase2SaveState(c.prepData);
-      if (save) savedByItem.set(c.templateItemId, save);
+      if (save) {
+        savedByItem.set(c.templateItemId, save);
+        prepDataByItem.set(c.templateItemId, c.prepData);
+      }
     }
     const map = new Map<string, OpeningPhase2FormValue>();
     for (const item of phase2Items) {
@@ -558,8 +586,8 @@ export function OpeningClient({
       map.set(
         item.id,
         saved
-          ? saveStateToFormValue(saved, item.id)
-          : { openerRecount: null, openerPrepped: null, overPar: null, underPar: null, confirmedConsumption: null },
+          ? saveStateToFormValue(saved, item.id, prepDataByItem.get(item.id))
+          : { openerRecount: null, openerPrepped: null, overPar: null, underPar: null, confirmedConsumption: null, batch: null },
       );
     }
     return map;
@@ -593,6 +621,40 @@ export function OpeningClient({
     }
     return map;
   }, [completions]);
+
+  // 0215 batch vs bottle — the batch row's context per batch_mode item. The counted bulk
+  // backup is the opener's recount BACK UP when there was one (persisted beside
+  // opener_recount by the Phase 1 RPC), else last night's closing BACK UP from the
+  // snapshot; LINE likewise; need_for_line = max(0, par − LINE). The RPC re-derives every
+  // number from the same two sources, so what the row previews is what the server accepts.
+  const batchByItem = useMemo(() => {
+    const map = new Map<string, BatchRowContext>();
+    const splitByItem = new Map<string, { line: number | null; backUp: number | null }>();
+    for (const c of completions) {
+      if (isPhase2Row(c.prepData)) continue;
+      const split = readPhase1RecountSplit(c.prepData);
+      if (split.line !== null || split.backUp !== null) splitByItem.set(c.templateItemId, split);
+    }
+    for (const [templateItemId, ctx] of Object.entries(batchContext)) {
+      if (!ctx.batchMode) continue;
+      const snapshot = closerSnapshotsMap.get(templateItemId) ?? null;
+      const split = splitByItem.get(templateItemId) ?? null;
+      const lineCount = split?.line ?? snapshot?.lineCount ?? null;
+      const backupBefore = split?.backUp ?? snapshot?.backUpCount ?? null;
+      map.set(templateItemId, {
+        recipeName: ctx.recipeName,
+        yieldPerBatch: ctx.yieldPerBatch ?? 0,
+        shelfLifeDays: ctx.shelfLifeDays,
+        backupBefore,
+        lineCount,
+        need: needForLine(snapshot?.parValue ?? null, lineCount),
+        parUnit: snapshot?.parUnit ?? null,
+        madeOn: batchState[templateItemId]?.madeOn ?? null,
+        blocked: ctx.eligibility === "blocked",
+      });
+    }
+    return map;
+  }, [batchContext, batchState, closerSnapshotsMap, completions]);
 
   // SINGLE SOURCE OF TRUTH for per-row save state (Juan's pre-commit proof).
   // This ONE Map drives BOTH the per-row badges (passed to OpeningPrepEntry as
@@ -1252,6 +1314,31 @@ export function OpeningClient({
       return;
     }
 
+    // 0215 batch vs bottle — the batch half's gates, mirrored from the RPC (ruling B +
+    // addendum 2) so the row never POSTs what the server would refuse. A blocked recipe
+    // or an unknown backup is "needs_batch" (the row says why); a missing over-batch
+    // reason is "needs_reason" like any other reason gap.
+    const batchCtx = batchByItem.get(templateItemId) ?? null;
+    let batchEntry: ReturnType<typeof batchEntryFromForm> | null = null;
+    if (batchCtx !== null) {
+      if (batchCtx.blocked || batchCtx.backupBefore === null) {
+        markIncomplete("needs_batch");
+        return;
+      }
+      const form = valueToSave.batch ?? { batches: 0, cameOutTo: null, tossed: 0, overBatchReason: null };
+      batchEntry = batchEntryFromForm(form, batchCtx.yieldPerBatch);
+      const check = validateBatchEntry(batchEntry, {
+        bottled: valueToSave.openerPrepped,
+        backupBefore: batchCtx.backupBefore,
+        need: batchCtx.need,
+        yieldPerBatch: batchCtx.yieldPerBatch,
+      });
+      if (!check.ok) {
+        markIncomplete(check.code === "over_batch_reason_missing" || check.code === "over_batch_note_required" ? "needs_reason" : "needs_batch");
+        return;
+      }
+    }
+
     // Value-diff guard — skip the round-trip when the persisted value is already
     // current. Reads the same Map the badge renders from.
     const newSig = phase2Signature(valueToSave);
@@ -1286,6 +1373,8 @@ export function OpeningClient({
             openerPrepped: valueToSave.openerPrepped,
             overPar: valueToSave.overPar,
             underPar: valueToSave.underPar,
+            // 0215 — present only on a batch item (the route accepts absent as single-box).
+            ...(batchEntry ? { batch: batchEntry } : {}),
           },
           // Production-in-prep fold — top-level (sibling to `entry`), matching the
           // route's ValidBody. null = untouched → server records the derived default.
@@ -1319,7 +1408,7 @@ export function OpeningClient({
           const winner = body.completion ?? null;
           const winnerSave = winner ? readPhase2SaveState(winner.prepData) : null;
           if (winnerSave) {
-            const adopted = saveStateToFormValue(winnerSave, templateItemId);
+            const adopted = saveStateToFormValue(winnerSave, templateItemId, winner?.prepData);
             setPhase2Values((prev) => {
               const updated = new Map(prev);
               updated.set(templateItemId, adopted);
@@ -1497,6 +1586,9 @@ export function OpeningClient({
           overPar: null,
           underPar: null,
           confirmedConsumption: null,
+          // 0215 — the batch half is part of the revoked write (the server retracted any
+          // toss with it), so the row re-opens empty.
+          batch: null,
         });
         return updated;
       });
@@ -1909,6 +2001,9 @@ export function OpeningClient({
           showMissingErrors={showMissingPhase2Errors}
           readOnly={phase2AlreadyFinalized}
           onShowProblems={() => setShowMissingPhase2Errors(true)}
+          batchByItem={batchByItem}
+          batchDerivedByItem={batchDerived}
+          todayIso={instance.date}
         />
       ) : null}
 

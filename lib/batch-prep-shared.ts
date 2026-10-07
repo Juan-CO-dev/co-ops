@@ -275,3 +275,82 @@ export function readBatchFromPrepData(prepData: unknown): BatchRecord | null {
   }
   return parseBatchRecord(p.batch);
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// The row (opening Phase 2 / mid-day Phase 2) — form value + context
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** The batch row's controlled form value. `batches` starts at 0 (= bottling from the backup only). */
+export interface BatchFormValue {
+  batches: number;
+  /** null = untouched → the row pre-fills batches × yield at save. */
+  cameOutTo: number | null;
+  tossed: number;
+  overBatchReason: OverBatchReason | null;
+}
+
+export function emptyBatchFormValue(): BatchFormValue {
+  return { batches: 0, cameOutTo: null, tossed: 0, overBatchReason: null };
+}
+
+/** Hydrate the row from a persisted batch object (a re-opened or reloaded row). */
+export function batchFormFromRecord(r: BatchRecord): BatchFormValue {
+  return { batches: r.batches, cameOutTo: r.cameOutTo, tossed: r.tossed, overBatchReason: r.overBatchReason };
+}
+
+/** The wire entry the row POSTs (`entry.batch`): the form value with came_out_to resolved to the pre-fill. */
+export function batchEntryFromForm(v: BatchFormValue, yieldPerBatch: number): BatchEntry {
+  return {
+    batches: v.batches,
+    cameOutTo: v.batches > 0 ? (v.cameOutTo ?? defaultCameOutTo(v.batches, yieldPerBatch)) : null,
+    tossed: v.tossed,
+    overBatchReason: v.overBatchReason,
+  };
+}
+
+/**
+ * What the row knows about the item before any typing: the recipe, the counted bulk backup
+ * (the opener's recount BACK UP, else last night's closing BACK UP; the mid-day Phase 1 BACK
+ * UP), the LINE count, the need, the last "made on", the session's recorded toss, and whether
+ * the recipe is usable at all. Assembled server-side (loaders) or client-side from the
+ * snapshot + batch context; the RPC re-derives every number and is the authority.
+ */
+export interface BatchRowContext {
+  recipeName: string;
+  yieldPerBatch: number;
+  shelfLifeDays: number;
+  /** The counted bulk container BEFORE this session; null = unknown (the RPC refuses: backup_unknown). */
+  backupBefore: number | null;
+  lineCount: number | null;
+  /** need_for_line = max(0, par − LINE); null on a par-null item (no minimum, no over-batch gate). */
+  need: number | null;
+  parUnit: string | null;
+  /** Last batch's produced_at for this item at this location (shelf-life red state); null = none on record. */
+  madeOn: string | null;
+  /** batch_mode but ineligible (multi-output / no yield / unresolvable) — the row BLOCKS. */
+  blocked: boolean;
+}
+
+/** The P0001 codes save_phase2_item_atomic / save_mid_day_phase2_item_atomic raise for the batch contract (0215). */
+export const BATCH_CONTRACT_CODES = [
+  "batch_payload_required",
+  "batch_payload_not_allowed",
+  "template_item_not_in_instance",
+  "batch_recipe_unresolved",
+  "backup_unknown",
+  "batches_missing",
+  "invalid_batch_count",
+  "came_out_to_missing",
+  "invalid_came_out_to",
+  "invalid_tossed",
+  "tossed_exceeds_backup",
+  "invalid_bottled",
+  "bottled_exceeds_available",
+  "over_batch_reason_missing",
+  "over_batch_note_required",
+  "invalid_over_batch_reason",
+] as const;
+export type BatchContractCode = (typeof BATCH_CONTRACT_CODES)[number];
+export function isBatchContractCode(v: unknown): v is BatchContractCode {
+  return typeof v === "string" && (BATCH_CONTRACT_CODES as readonly string[]).includes(v);
+}

@@ -53,6 +53,7 @@ import {
   OpeningPhase3NotEligibleError,
   OpeningProvenanceRequiredError,
   OpeningNullSourceRequiresRecountError,
+  OpeningBatchContractError,
   OpeningRecountSplitError,
   OpeningRevocationReasonInvalidError,
   OpeningRevokeConflictError,
@@ -102,6 +103,15 @@ export function mapOpeningError(err: OpeningError): NextResponse {
     });
   }
   if (err instanceof OpeningGroundTruthUnresolvedError) {
+    return jsonError(422, err.code, {
+      message: err.message,
+      template_item_id: err.templateItemId,
+    });
+  }
+  if (err instanceof OpeningBatchContractError) {
+    // 422 <batch contract code> — 0215 batch vs bottle: the Phase 2 save's batch payload
+    // was refused by save_phase2_item_atomic (presence, eligibility, counted backup, or an
+    // arithmetic gate). The row renders prep.batch.error.<code>.
     return jsonError(422, err.code, {
       message: err.message,
       template_item_id: err.templateItemId,

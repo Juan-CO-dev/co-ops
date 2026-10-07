@@ -267,6 +267,8 @@ export default async function OpeningPage({ searchParams }: OpeningPageProps) {
         closerSnapshots={closerSnapshots}
         derived={state.derived}
         batchContext={state.batchContext}
+        batchDerived={state.batchDerived}
+        batchState={state.batchState}
         verifiedSections={verifiedSections}
         initialDraft={initialDraft}
         completions={state.completions}

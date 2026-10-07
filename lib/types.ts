@@ -10,6 +10,7 @@
  */
 
 import type { RoleCode } from "./roles";
+import type { BatchEntry } from "./batch-prep-shared";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Auth & Access
@@ -1067,6 +1068,14 @@ export interface OpeningEntryPhase2 {
     /** REQUIRED per C.50 §4 (always non-empty on under-prep). */
     freeText: string;
   } | null;
+  /**
+   * 0215 batch vs bottle (plan S r4) — present ONLY on a batch_mode item: batches made,
+   * what they came out to, this session's toss of the counted bulk backup, and the
+   * over-batch reason. `openerPrepped` is then what was BOTTLED for the line. The RPC
+   * refuses it on a non-batch item (batch_payload_not_allowed) and requires it on a batch
+   * item (batch_payload_required). Absent / null = today's single-box save, byte-identical.
+   */
+  batch?: BatchEntry | null;
 }
 
 /**

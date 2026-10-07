@@ -44,7 +44,9 @@ import {
 } from "./checklist-rows";
 import { loadItemDefns, loadItemOverrides, operationalDayOfWeek, pickOverride, resolveLineDefinition } from "@/lib/items";
 import {
+  loadBatchDerivedForItems,
   loadDerivedForItems,
+  recordBatchProductionFromPrep,
   recordProductionFromPrep,
   reverseProductionForPrep,
   skuConsumptionForItem,
@@ -53,6 +55,12 @@ import {
 } from "@/lib/prep-consumption";
 import { isPrepData } from "./prep";
 import { loadBatchContextForItems, type BatchItemContext } from "@/lib/batch-prep";
+import {
+  isBatchContractCode,
+  readBatchFromPrepData,
+  toBatchPayload,
+  type BatchContractCode,
+} from "@/lib/batch-prep-shared";
 import type { RoleCode } from "./roles";
 import {
   OPENING_CONFIRM_FLOOR_LEVEL,
@@ -403,6 +411,24 @@ export class OpeningRecountSplitError extends OpeningError {
 }
 
 /**
+ * 0215 batch vs bottle — the Phase 2 save's batch contract, refused by
+ * save_phase2_item_atomic with one of BATCH_CONTRACT_CODES (lib/batch-prep-shared.ts):
+ * the payload's presence (required on a batch item, refused on any other), the recipe's
+ * eligibility, the counted backup being known, and the arithmetic gates (tossed ≤ backup,
+ * bottled ≤ backup − tossed + came_out_to, the over-batch reason). 422 with the item id;
+ * the row renders `prep.batch.error.<code>`.
+ */
+export class OpeningBatchContractError extends OpeningError {
+  constructor(
+    public readonly contractCode: BatchContractCode,
+    public readonly templateItemId: string,
+  ) {
+    super(`Batch item ${templateItemId}: ${contractCode}`, contractCode);
+    this.name = "OpeningBatchContractError";
+  }
+}
+
+/**
  * Phase 1 RPC integrity violation — actor row missing from `users` at RPC
  * dispatch time. The route layer pre-checks instance existence before
  * dispatch (404s on missing), so RPC-time 23503 (foreign_key_violation) with
@@ -738,6 +764,10 @@ export async function loadOpeningState(
    * = single box. Drives the Phase 1 two-box recount and the Phase 2 batch row.
    */
   batchContext: Record<string, BatchItemContext>;
+  /** 0215 — per eligible batch TEMPLATE-ITEM id, the panel rows as PER-BATCH quantities. */
+  batchDerived: Record<string, DerivedSku[]>;
+  /** 0215 — per eligible batch TEMPLATE-ITEM id: last batch's produced_at at this location, and this instance's recorded toss. */
+  batchState: Record<string, { madeOn: string | null; tossed: number }>;
 } | null> {
   // Resolve active opening template (most-recent-active per Path A versioning).
   // The `.eq("location_id", args.locationId)` clause is LOAD-BEARING: templates
@@ -980,6 +1010,47 @@ export async function loadOpeningState(
     if (ctx) batchContext[it.id] = ctx;
   }
 
+  // 0215 — per-BATCH panel rows for the eligible items (ONE graph; the fold reads the same
+  // one at save), plus what the row needs from the ledger: the last "made on" for the
+  // shelf-life state and this instance's recorded toss. Every read throws on error.
+  const batchItemIds = Object.values(batchContext).filter((c) => c.isBatch).map((c) => c.itemId);
+  const batchDerivedMap = await loadBatchDerivedForItems(batchItemIds);
+  const batchDerived: Record<string, DerivedSku[]> = {};
+  const batchState: Record<string, { madeOn: string | null; tossed: number }> = {};
+  const madeOnByItem = new Map<string, string>();
+  if (batchItemIds.length > 0) {
+    const { data: prodRows, error: prodErr } = await service
+      .from("productions")
+      .select("output_item_id, produced_at")
+      .eq("location_id", args.locationId)
+      .in("output_item_id", batchItemIds)
+      .gt("batches_made", 0)
+      .is("revoked_at", null)
+      .is("superseded_at", null)
+      .order("produced_at", { ascending: false });
+    if (prodErr) throw new Error(`loadOpeningState: load batch productions: ${prodErr.message}`);
+    for (const r of (prodRows ?? []) as Array<{ output_item_id: string; produced_at: string }>) {
+      if (!madeOnByItem.has(r.output_item_id)) madeOnByItem.set(r.output_item_id, r.produced_at);
+    }
+  }
+  const tossedByTemplateItem = new Map<string, number>();
+  if (batchItemIds.length > 0) {
+    const { data: sessRows, error: sessErr } = await service
+      .from("prep_batch_sessions")
+      .select("template_item_id, tossed_qty")
+      .eq("instance_id", instanceRow.id);
+    if (sessErr) throw new Error(`loadOpeningState: load batch sessions: ${sessErr.message}`);
+    for (const r of (sessRows ?? []) as Array<{ template_item_id: string; tossed_qty: number | string | null }>) {
+      tossedByTemplateItem.set(r.template_item_id, Number(r.tossed_qty ?? 0) || 0);
+    }
+  }
+  for (const it of phase2ForDerived) {
+    const ctx = batchContext[it.id];
+    if (!ctx?.isBatch || !it.itemId) continue;
+    batchDerived[it.id] = batchDerivedMap.get(it.itemId)?.skus ?? [];
+    batchState[it.id] = { madeOn: madeOnByItem.get(it.itemId) ?? null, tossed: tossedByTemplateItem.get(it.id) ?? 0 };
+  }
+
   return {
     template: tmplRow,
     templateItems,
@@ -988,6 +1059,8 @@ export async function loadOpeningState(
     authors,
     derived,
     batchContext,
+    batchDerived,
+    batchState,
   };
 }
 
@@ -2031,10 +2104,22 @@ export async function savePhase2Item(
       p_under_par: args.entry.underPar,
       p_ip_address: args.ipAddress ?? null,
       p_user_agent: args.userAgent ?? null,
+      // 0215 batch vs bottle: null on every single-box save (the RPC's DEFAULT), so a
+      // non-batch item's call is today's call plus one null argument.
+      p_batch: args.entry.batch ? toBatchPayload(args.entry.batch) : null,
     });
     if (error) {
       if (error.code === "P0001") {
         const msg = error.message;
+        const contractCode = isBatchContractCode(msg.replace(/^save_phase2_item_atomic:\s*/, "").split(/[\s—]/)[0])
+          ? (msg.replace(/^save_phase2_item_atomic:\s*/, "").split(/[\s—]/)[0] as BatchContractCode)
+          : null;
+        if (contractCode) {
+          // 0215 — the batch contract (see OpeningBatchContractError). Checked BEFORE the
+          // older branches because `opener_prepped_missing` is shared vocabulary.
+          void audit({ ...auditBase, metadata: { outcome: contractCode, rpc_error: msg, template_item_id: args.entry.templateItemId } });
+          throw new OpeningBatchContractError(contractCode, args.entry.templateItemId);
+        }
         if (msg.includes("phase2_not_eligible")) {
           const { data: row } = await service
             .from("checklist_instances")
@@ -2120,7 +2205,24 @@ export async function savePhase2Item(
       .select("item_id")
       .eq("id", args.entry.templateItemId)
       .maybeSingle<{ item_id: string | null }>();
-    if (tItem?.item_id) {
+    if (tItem?.item_id && args.entry.batch) {
+      // 0215 batch vs bottle — the BATCH fold (ruling 3): depletion is batches × the
+      // recipe from ONE graph read; `produced_at` / `made_by` come from the session the RPC
+      // just stamped (first save wins, re-saves carry it), never from this call's clock.
+      const record = readBatchFromPrepData(rpcResult.completion.prep_data);
+      await recordBatchProductionFromPrep(args.actor, {
+        locationId: args.locationId,
+        instanceId: args.instanceId,
+        templateItemId: args.entry.templateItemId,
+        outputItemId: tItem.item_id,
+        batches: record?.batches ?? args.entry.batch.batches,
+        cameOutTo: record?.cameOutTo ?? args.entry.batch.cameOutTo ?? 0,
+        confirmedConsumption: args.confirmedConsumption ?? null,
+        producedAt: record?.producedAt ?? rpcResult.completion.completed_at,
+        madeBy: record?.madeBy ?? args.actor.userId,
+        source: "opening_p2",
+      });
+    } else if (tItem?.item_id) {
       let consumption = args.confirmedConsumption ?? null;
       if (consumption === null) {
         const m = await skuConsumptionForItem(tItem.item_id, args.entry.openerPrepped);
@@ -2365,51 +2467,121 @@ export async function revokePhase2Completion(
   //    load and write (UPDATE-returns-0-rows is silent in Postgres; the lib
   //    makes it a conflict). 23514 ⇒ revocation_reason CHECK violation
   //    (defense-in-depth; should never fire — values are constraint-valid). ──
-  const nowIso = new Date().toISOString();
-  const { data: updatedRows, error: updateErr } = await service
-    .from("checklist_completions")
-    .update({
-      revoked_at: nowIso,
-      revoked_by: args.actor.userId,
-      revocation_reason: revocationReason,
-      revocation_note: revocationNote,
-    })
-    .eq("id", args.completionId)
+  // ── 0215 batch vs bottle (correction 1): the revoke consults the SESSION KEY, not the
+  //    JSON. If a prep_batch_sessions row exists for (instance, template_item) — this item
+  //    was saved as a batch row at some point today, whatever the revoked completion's own
+  //    shape says (toss 8 → batch_mode off → single-box correction → revoke) — the revoke
+  //    and the toss retraction run in ONE transaction (revoke_phase2_item_atomic). No
+  //    session row → today's UPDATE, byte-identical. ──
+  const { data: sessionRow, error: sessionErr } = await service
+    .from("prep_batch_sessions")
+    .select("instance_id, template_item_id, tossed_qty")
     .eq("instance_id", args.instanceId)
-    .is("revoked_at", null)
-    .is("superseded_at", null)
-    .select(COMPLETION_COLUMNS);
+    .eq("template_item_id", liveRow.template_item_id)
+    .maybeSingle<{ instance_id: string; template_item_id: string; tossed_qty: number | string | null }>();
+  if (sessionErr) {
+    throw new Error(`revokePhase2Completion session lookup: ${sessionErr.message}`);
+  }
 
-  if (updateErr) {
-    if (updateErr.code === "23514") {
+  let updatedRow: CompletionRow;
+  let tossRetracted = 0;
+  if (sessionRow) {
+    const { data: rpcData, error: rpcErr } = await service.rpc("revoke_phase2_item_atomic", {
+      p_instance_id: args.instanceId,
+      p_completion_id: args.completionId,
+      p_actor_id: args.actor.userId,
+      p_revocation_reason: revocationReason,
+      p_revocation_note: revocationNote,
+    });
+    if (rpcErr) {
+      if (rpcErr.code === "23514") {
+        void audit({
+          ...auditBase,
+          metadata: {
+            outcome: "revocation_reason_invalid",
+            instance_id: args.instanceId,
+            attempted_reason: revocationReason,
+          },
+        });
+        throw new OpeningRevocationReasonInvalidError(args.completionId, revocationReason);
+      }
+      if (rpcErr.code === "P0001" && /revoke_conflict/.test(rpcErr.message ?? "")) {
+        void audit({
+          ...auditBase,
+          metadata: { outcome: "revoke_conflict", instance_id: args.instanceId, phase: "rpc" },
+        });
+        throw new OpeningRevokeConflictError(args.completionId);
+      }
+      throw new Error(`revokePhase2Completion revoke_phase2_item_atomic: ${rpcErr.message}`);
+    }
+    const result = rpcData as { completion?: CompletionRow | null; tossRetracted?: number | string | null } | null;
+    if (!result?.completion) {
+      throw new Error("revokePhase2Completion revoke_phase2_item_atomic: empty result");
+    }
+    updatedRow = result.completion;
+    tossRetracted = Number(result.tossRetracted ?? 0) || 0;
+  } else {
+    const nowIso = new Date().toISOString();
+    const { data: updatedRows, error: updateErr } = await service
+      .from("checklist_completions")
+      .update({
+        revoked_at: nowIso,
+        revoked_by: args.actor.userId,
+        revocation_reason: revocationReason,
+        revocation_note: revocationNote,
+      })
+      .eq("id", args.completionId)
+      .eq("instance_id", args.instanceId)
+      .is("revoked_at", null)
+      .is("superseded_at", null)
+      .select(COMPLETION_COLUMNS);
+
+    if (updateErr) {
+      if (updateErr.code === "23514") {
+        void audit({
+          ...auditBase,
+          metadata: {
+            outcome: "revocation_reason_invalid",
+            instance_id: args.instanceId,
+            attempted_reason: revocationReason,
+          },
+        });
+        throw new OpeningRevocationReasonInvalidError(
+          args.completionId,
+          revocationReason,
+        );
+      }
+      throw new Error(`revokePhase2Completion update: ${updateErr.message}`);
+    }
+    if (!updatedRows || updatedRows.length === 0) {
       void audit({
         ...auditBase,
         metadata: {
-          outcome: "revocation_reason_invalid",
+          outcome: "revoke_conflict",
           instance_id: args.instanceId,
-          attempted_reason: revocationReason,
+          phase: "update",
         },
       });
-      throw new OpeningRevocationReasonInvalidError(
-        args.completionId,
-        revocationReason,
-      );
+      throw new OpeningRevokeConflictError(args.completionId);
     }
-    throw new Error(`revokePhase2Completion update: ${updateErr.message}`);
-  }
-  if (!updatedRows || updatedRows.length === 0) {
-    void audit({
-      ...auditBase,
-      metadata: {
-        outcome: "revoke_conflict",
-        instance_id: args.instanceId,
-        phase: "update",
-      },
-    });
-    throw new OpeningRevokeConflictError(args.completionId);
+
+    updatedRow = updatedRows[0] as CompletionRow;
   }
 
-  const updatedRow = updatedRows[0] as CompletionRow;
+  // 0215: a retracted toss is the human act undone — always audited, even on the silent
+  // path, because the waste row it reverses is on the accountability record.
+  if (tossRetracted > 0) {
+    void audit({
+      ...auditBase,
+      action: "backup.toss_retracted",
+      metadata: {
+        instance_id: args.instanceId,
+        template_item_id: updatedRow.template_item_id,
+        tossed_qty: tossRetracted,
+        revoke_path: path,
+      },
+    });
+  }
 
   // ── Audit: STRUCTURED writes a forensic revoke row; SILENT writes NONE
   //    (routine quick self-correction — the quick_reenter sentinel on the row

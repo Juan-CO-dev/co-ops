@@ -44,6 +44,8 @@ import { useTranslation } from "@/lib/i18n/provider";
 import type { OpeningCloserCountSnapshotRow } from "@/lib/opening";
 import type { DerivedSku, ConfirmedInput } from "@/lib/prep-consumption";
 import { ProductionConsumptionPanel } from "@/components/production/ProductionConsumptionPanel";
+import { BatchEntryFields } from "@/components/prep/BatchEntryFields";
+import { emptyBatchFormValue, isBatchContractCode, type BatchFormValue, type BatchRowContext } from "@/lib/batch-prep-shared";
 import type { ChecklistTemplateItem, OpeningPhase2Meta } from "@/lib/types";
 
 import { CollapsibleChecklistSection } from "@/components/ui/CollapsibleChecklistSection";
@@ -73,6 +75,12 @@ export interface OpeningPhase2FormValue {
    * null = untouched (server records the derived default at save).
    */
   confirmedConsumption: ConfirmedInput[] | null;
+  /**
+   * 0215 batch vs bottle — the batch half of the row (batches made, came out to, toss,
+   * over-batch reason) on a batch_mode item; null on every other item and before the first
+   * touch (the row renders the empty form then). `openerPrepped` is BOTTLED for the line.
+   */
+  batch: BatchFormValue | null;
 }
 
 export type { ManagerOption };
@@ -100,7 +108,7 @@ export type Phase2SaveStatus =
  *   - "needs_reason": a non-zero delta_vs_prep_need needs its over/under reason
  *     captured before the row can persist.
  */
-export type Phase2IncompleteReason = "needs_ground_truth" | "needs_reason";
+export type Phase2IncompleteReason = "needs_ground_truth" | "needs_reason" | "needs_batch";
 
 export interface Phase2SaveState {
   status: Phase2SaveStatus;
@@ -207,6 +215,15 @@ interface OpeningPrepEntryProps {
    * edit/reopen path), never by editing a finalized report in place.
    */
   readOnly?: boolean;
+  /**
+   * 0215 batch vs bottle — templateItemId → the batch row's context for batch_mode items
+   * (eligible or blocked). Absent = single-box row, byte-for-byte today's.
+   */
+  batchByItem?: Map<string, BatchRowContext>;
+  /** 0215 — per batch item, the panel rows as PER-BATCH quantities (outputQty = batches). */
+  batchDerivedByItem?: Record<string, DerivedSku[]>;
+  /** 0215 — the opening's operational date (YYYY-MM-DD) for the shelf-life red state. */
+  todayIso?: string;
 }
 
 export function OpeningPrepEntry({
@@ -227,6 +244,9 @@ export function OpeningPrepEntry({
   showMissingErrors,
   onShowProblems,
   readOnly = false,
+  batchByItem,
+  batchDerivedByItem,
+  todayIso,
 }: OpeningPrepEntryProps) {
   const { t } = useTranslation();
 
@@ -375,6 +395,7 @@ export function OpeningPrepEntry({
                   overPar: null,
                   underPar: null,
                   confirmedConsumption: null,
+                  batch: null,
                 };
                 const snapshot = closerSnapshots.get(item.id) ?? null;
                 const saveState =
@@ -413,6 +434,9 @@ export function OpeningPrepEntry({
                     onOpenOverPar={() => setOverParModalItemId(item.id)}
                     onOpenUnderPar={() => setUnderParModalItemId(item.id)}
                     readOnly={readOnly}
+                    batch={batchByItem?.get(item.id) ?? null}
+                    batchDerived={batchDerivedByItem?.[item.id] ?? []}
+                    todayIso={todayIso ?? new Date().toISOString().slice(0, 10)}
                     t={t}
                   />
                 );
@@ -435,6 +459,7 @@ export function OpeningPrepEntry({
               overPar: null,
               underPar: null,
               confirmedConsumption: null,
+              batch: null,
             };
             const next = { ...cur, overPar: capture };
             onChange(overParTarget.id, next);
@@ -457,6 +482,7 @@ export function OpeningPrepEntry({
               overPar: null,
               underPar: null,
               confirmedConsumption: null,
+              batch: null,
             };
             const next = { ...cur, underPar: capture };
             onChange(underParTarget.id, next);
@@ -516,6 +542,11 @@ interface PrepEntryRowProps {
   onOpenUnderPar: () => void;
   /** Locked (read-only) — Phase 2 finalized. Inputs disabled; save/revoke/retry hidden. */
   readOnly: boolean;
+  /** 0215 batch vs bottle — non-null on a batch_mode item: the row grows the batch half. */
+  batch: BatchRowContext | null;
+  /** 0215 — per-BATCH panel rows for a batch item ([] otherwise). */
+  batchDerived: DerivedSku[];
+  todayIso: string;
   t: (key: TranslationKey, params?: Record<string, string | number>) => string;
 }
 
@@ -538,9 +569,13 @@ function PrepEntryRow({
   onOpenOverPar,
   onOpenUnderPar,
   readOnly,
+  batch,
+  batchDerived,
+  todayIso,
   t,
 }: PrepEntryRowProps) {
   const resolved = resolveTemplateItemContent(item, language);
+  const batchValue = value.batch ?? emptyBatchFormValue();
 
   // Live prep_need computation per C.50 §1
   const closerCount = snapshot?.closerCount ?? null;
@@ -564,11 +599,15 @@ function PrepEntryRow({
 
   // prep_need = MAX(0, par_value - ground_truth_count). Persisted value wins;
   // the MAX(0, ...) fallback only fires before phase1 has been persisted.
+  // 0215: on a batch item the need the row works against is need_for_line = par − LINE
+  // (the RPC's prep_need for a batch row), not par − (line + bulk backup).
   const prepNeed =
-    phase1Resolved?.prepNeed ??
-    (groundTruth !== null && parValue !== null
-      ? Math.max(0, parValue - groundTruth)
-      : null);
+    batch !== null
+      ? batch.need
+      : phase1Resolved?.prepNeed ??
+        (groundTruth !== null && parValue !== null
+          ? Math.max(0, parValue - groundTruth)
+          : null);
 
   // delta_vs_prep_need = opener_prepped - prep_need (only when both numeric)
   const delta =
@@ -676,10 +715,27 @@ function PrepEntryRow({
         )}
       </div>
 
-      {/* opener_prepped numeric input */}
-      <div className="flex items-center gap-2">
+      {/* 0215 batch vs bottle — the batch half of the row (batch_mode items only). */}
+      {batch !== null ? (
+        <BatchEntryFields
+          value={batchValue}
+          onChange={(next) => onChange({ ...value, batch: next })}
+          onCommit={readOnly ? undefined : (next) => onSave({ ...value, batch: next })}
+          ctx={batch}
+          bottled={value.openerPrepped}
+          disabled={readOnly}
+          showErrors={showMissingErrors || saveState.incompleteReason === "needs_batch"}
+          serverErrorCode={saveState.status === "failed" && isBatchContractCode(saveState.errorCode) ? saveState.errorCode : null}
+          language={language}
+          todayIso={todayIso}
+          t={t}
+        />
+      ) : null}
+
+      {/* opener_prepped numeric input (on a batch item: BOTTLED for the line) */}
+      <div className="flex flex-wrap items-center gap-2">
         <label className="text-xs font-bold uppercase tracking-[0.12em] text-co-text-muted">
-          {t("opening.phase2.opener_prepped_label")}
+          {batch !== null ? t("prep.batch.bottled_label" as TranslationKey) : t("opening.phase2.opener_prepped_label")}
         </label>
         <NumericInput
           value={value.openerPrepped}
@@ -689,16 +745,21 @@ function PrepEntryRow({
           hasError={!readOnly && prepAmountMissing}
           disabled={readOnly}
         />
+        {batch !== null ? (
+          <span className="text-xs text-co-text-muted">{t("prep.batch.bottled_hint" as TranslationKey)}</span>
+        ) : null}
       </div>
 
       {/* Production-in-prep fold — SKU consumption panel (renders null when
        * derived is empty). Opening saves on blur (no Save button), so a panel
        * edit must persist itself: onChange BOTH updates the value AND fires
-       * onSave(next). Hidden in read-only (finalized) view. */}
-      {!readOnly && derived.length > 0 ? (
+       * onSave(next). Hidden in read-only (finalized) view.
+       * 0215: a batch item's panel is PER BATCH — rows are one batch's oz and the
+       * quantity is batches made, never bottles. */}
+      {!readOnly && (batch !== null ? batchDerived.length > 0 : derived.length > 0) ? (
         <ProductionConsumptionPanel
-          derived={derived}
-          outputQty={value.openerPrepped ?? 0}
+          derived={batch !== null ? batchDerived : derived}
+          outputQty={batch !== null ? batchValue.batches : (value.openerPrepped ?? 0)}
           value={value.confirmedConsumption}
           onChange={(rows) => {
             const next = { ...value, confirmedConsumption: rows };
@@ -850,7 +911,9 @@ function PrepEntryRow({
           <span className="font-medium text-co-info">
             {saveState.incompleteReason === "needs_ground_truth"
               ? t("opening.phase2.save.incomplete_ground_truth")
-              : t("opening.phase2.save.incomplete_reason")}
+              : saveState.incompleteReason === "needs_batch"
+                ? t("opening.phase2.save.incomplete_batch" as TranslationKey)
+                : t("opening.phase2.save.incomplete_reason")}
           </span>
         ) : (
           <span className="font-medium text-co-text-dim">
