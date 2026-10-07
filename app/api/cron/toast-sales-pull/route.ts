@@ -44,11 +44,11 @@ export async function GET(req: NextRequest) {
   const businessDate = req.nextUrl.searchParams.get("date") ?? yesterdayYmd();
   if (!/^\d{4}-\d{2}-\d{2}$/.test(businessDate)) return jsonError(400, "invalid_date");
   try {
-    const { results, metadata } = await runToastSalesPull({ businessDate });
+    const { results, metadata, healthy } = await runToastSalesPull({ businessDate });
     await audit({
       actorId: null,
       actorRole: null,
-      action: "cron.success",
+      action: healthy ? "cron.success" : "cron.failure",
       resourceTable: "cron",
       resourceId: null,
       metadata,
@@ -56,7 +56,7 @@ export async function GET(req: NextRequest) {
       userAgent: null,
     });
     await watchSiblings("toast-sales-pull");
-    return jsonOk({ businessDate, results });
+    return jsonOk({ businessDate, results, healthy });
   } catch (e) {
     // A LIVE failure is otherwise silent (console only). Write a fail-open audit row
     // so the admin hub can surface it (Ops guardrails NOW #3). audit() never throws.

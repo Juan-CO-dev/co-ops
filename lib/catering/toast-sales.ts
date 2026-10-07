@@ -22,6 +22,7 @@ import { getRoleLevel } from "@/lib/roles";
 import { lockLocationContext } from "@/lib/locations";
 import { audit } from "@/lib/audit";
 import type { AuthContext } from "@/lib/session";
+import { captureToastDaySystem } from "@/lib/toast/capture";
 import { fetchToastOrders } from "@/lib/toast/orders";
 import { fetchToastMenuItems } from "@/lib/toast/menus";
 import { fetchDiningOptionNames } from "@/lib/toast/config";
@@ -154,7 +155,10 @@ async function resolveLocationGuid(locationId: string): Promise<string> {
   return data.toast_restaurant_guid ?? ""; // fixture mode tolerates empty
 }
 
-export interface PullResult { selections: number; appended: number; unchanged: number; voids: number }
+export interface PullResult {
+  selections: number; appended: number; unchanged: number; voids: number;
+  capture: { ok: true; runId: string; pages: number; orders: number } | { ok: false; error: string };
+}
 
 /** Core pull (shared by admin route + cron + system triggers). actor null =
  * system context; `systemContext` names WHICH system path in the audit row
@@ -214,6 +218,15 @@ async function doPull(
       throw new Error(`toast-sales append: ${error.message}`);
     }
   }
+  // Capture failure must not prevent the existing depletion projection. The caller
+  // records an unhealthy heartbeat, while successful selection ingest remains usable.
+  let capture: PullResult["capture"];
+  try {
+    capture = { ok: true, ...await captureToastDaySystem(locationId, businessDate) };
+  } catch {
+    // Never copy a Toast response body into audit metadata (it can contain PII).
+    capture = { ok: false, error: "order_capture_failed" };
+  }
   void audit({
     actorId: actor?.user.id ?? null,
     actorRole: actor?.user.role ?? null,
@@ -222,11 +235,11 @@ async function doPull(
     resourceId: locationId,
     metadata: {
       business_date: businessDate, selections: lines.length, appended: inserts.length,
-      unchanged, voids, ...(actor ? {} : { actor_context: systemContext }),
+      unchanged, voids, capture_ok: capture.ok, ...(actor ? {} : { actor_context: systemContext }),
     },
     ipAddress: null, userAgent: null,
   });
-  return { selections: lines.length, appended: inserts.length, unchanged, voids };
+  return { selections: lines.length, appended: inserts.length, unchanged, voids, capture };
 }
 
 export async function pullSales(actor: AuthContext, locationId: string, businessDate: string): Promise<PullResult> {
@@ -283,16 +296,19 @@ export async function pullSalesSystemTrigger(
   locationId: string,
   businessDate: string,
   opts: { context: SystemPullContext },
-): Promise<void> {
+): Promise<boolean> {
   try {
     const sb = getServiceRoleClient();
-    const { data } = await sb
+    const { data, error } = await sb
       .from("locations")
       .select("toast_restaurant_guid")
       .eq("id", locationId)
       .maybeSingle<{ toast_restaurant_guid: string | null }>();
-    if (!data?.toast_restaurant_guid) return; // no Toast at this location — no-op
-    await doPull(locationId, businessDate, null, opts.context);
+    if (error) throw new Error("toast_location_lookup_failed");
+    if (!data?.toast_restaurant_guid) return true; // no Toast at this location — no-op
+    const result = await doPull(locationId, businessDate, null, opts.context);
+    if (!result.capture.ok) throw new Error(result.capture.error);
+    return true;
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     console.error(`[toast-sales ${opts.context}] pull failed for ${locationId} ${businessDate}:`, msg);
@@ -312,6 +328,7 @@ export async function pullSalesSystemTrigger(
       ipAddress: null,
       userAgent: null,
     });
+    return false;
   }
 }
 
@@ -328,7 +345,7 @@ export const PINGER_DEBOUNCE_MS = 8 * 60 * 1000;
 
 /** What one location's freshness pass actually did. `unknown` = the debounce evidence could
  *  not be read, so NOTHING was pulled — never silently reported as "fresh". */
-export type RefreshOutcome = "pulled" | "fresh" | "no_toast" | "unknown";
+export type RefreshOutcome = "pulled" | "fresh" | "no_toast" | "unknown" | "error";
 
 /**
  * Same-day freshness trigger for ONE location: pull today's events IF the last pull
@@ -361,12 +378,12 @@ export async function refreshTodaySalesIfStale(
     // hitting a third-party API on every page load, and it was proven live.
     const { data, error } = await sb
       .from("audit_log")
-      .select("occurred_at, metadata")
+      .select("occurred_at, action, metadata")
       .in("action", ["toast_sales.pull", "toast_sales.pull_failed"])
       .eq("resource_id", locationId)
       .order("occurred_at", { ascending: false })
       .limit(1)
-      .maybeSingle<{ occurred_at: string; metadata: { business_date?: string } | null }>();
+      .maybeSingle<{ occurred_at: string; action: string; metadata: { business_date?: string; capture_ok?: boolean } | null }>();
     if (error) {
       // A failed debounce READ must not be read as "no recent attempt" — that is what
       // turned this into a pull-per-render. Skip the trigger and let the next visit
@@ -378,7 +395,10 @@ export async function refreshTodaySalesIfStale(
       data != null &&
       data.metadata?.business_date === businessDate &&
       Date.now() - new Date(data.occurred_at).getTime() < debounceMs;
-    if (attemptedRecently) return "fresh";
+    if (attemptedRecently) {
+      // Debounce failed attempts without upgrading them to a successful heartbeat.
+      return data.action === "toast_sales.pull_failed" || data.metadata?.capture_ok === false ? "error" : "fresh";
+    }
     // A location with no Toast GUID is a NO-OP, not a failure (pullSalesSystemTrigger
     // checks this too and stays the authority; this read is what lets the pinger's
     // audit row distinguish "nothing to pull" from "pulled").
@@ -392,8 +412,7 @@ export async function refreshTodaySalesIfStale(
       return "unknown";
     }
     if (!loc?.toast_restaurant_guid) return "no_toast";
-    await pullSalesSystemTrigger(locationId, businessDate, { context });
-    return "pulled";
+    return await pullSalesSystemTrigger(locationId, businessDate, { context }) ? "pulled" : "error";
   } catch (e) {
     console.error(
       `[toast-sales ${context}] debounce check failed for ${locationId}:`,

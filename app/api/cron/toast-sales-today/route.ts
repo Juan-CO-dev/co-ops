@@ -42,8 +42,9 @@ export async function GET(req: NextRequest) {
   try {
     const results = await pullTodaySalesForAllLocations(today);
     const n = (k: string) => results.filter((r) => r.result === k).length;
+    const healthy = n("unknown") === 0 && n("error") === 0;
     await audit({
-      actorId: null, actorRole: null, action: "cron.success", resourceTable: "cron", resourceId: null,
+      actorId: null, actorRole: null, action: healthy ? "cron.success" : "cron.failure", resourceTable: "cron", resourceId: null,
       metadata: {
         job: "toast-sales-today", date: today,
         pulled: n("pulled"), fresh: n("fresh"), no_toast: n("no_toast"),
@@ -54,7 +55,7 @@ export async function GET(req: NextRequest) {
       ipAddress: null, userAgent: null,
     });
     await watchSiblings("toast-sales-today");
-    return jsonOk({ date: today, results });
+    return jsonOk({ date: today, results, healthy });
   } catch (e) {
     void audit({
       actorId: null, actorRole: null, action: "cron.failure", resourceTable: "cron", resourceId: null,

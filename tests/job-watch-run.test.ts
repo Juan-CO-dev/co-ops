@@ -51,7 +51,7 @@ it.each(["toast-catering-scan", "toast-sales-today", "toast-sales-pull", "prune-
   "%s awaits its heartbeat before watching siblings", (job) => {
     const source = readFileSync(`app/api/cron/${job}/route.ts`, "utf8");
     const heartbeat = source.indexOf("await audit(");
-    const success = source.indexOf('action: "cron.success"', heartbeat);
+    const success = source.indexOf('"cron.success"', heartbeat);
     const end = source.indexOf("});", success);
     const watch = source.indexOf(`await watchSiblings("${job}")`);
     expect(heartbeat).toBeGreaterThan(0);

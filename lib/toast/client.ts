@@ -20,7 +20,7 @@ import path from "node:path";
 import { tokenIsFresh, resolveFixtureKey, isExhaustedFixturePage } from "./client-shared";
 
 export class ToastApiError extends Error {
-  constructor(public status: number, public code: string, message?: string) {
+  constructor(public status: number, public code: string, message?: string, public retryAfterMs?: number) {
     super(message ?? code);
     this.name = "ToastApiError";
   }
@@ -79,14 +79,19 @@ async function readFixture(key: string): Promise<unknown> {
 
 /** GET a Toast API path scoped to one restaurant. Fixture-mode aware. */
 export async function toastGet<T>(apiPath: string, restaurantGuid: string): Promise<T> {
+  return (await toastGetPage<T>(apiPath, restaurantGuid)).data;
+}
+
+/** Config APIs paginate through a response header rather than an array envelope. */
+export async function toastGetPage<T>(apiPath: string, restaurantGuid: string): Promise<{ data: T; nextPageToken: string | null }> {
   if (fixtureMode()) {
     const key = resolveFixtureKey(apiPath);
     if (!key) throw new ToastApiError(500, "not_configured", `No fixture for ${apiPath}`);
     // A single-page fixture must go EMPTY past page 1, or a paging caller re-reads page 1
     // until its hard cap instead of terminating on a short page (see isExhaustedFixturePage).
     // Ordered AFTER the key check so an unknown path still fails loudly rather than silently.
-    if (isExhaustedFixturePage(apiPath)) return [] as T;
-    return (await readFixture(key)) as T;
+    if (isExhaustedFixturePage(apiPath)) return { data: [] as T, nextPageToken: null };
+    return { data: (await readFixture(key)) as T, nextPageToken: null };
   }
   if (!restaurantGuid) throw new ToastApiError(400, "not_configured", "Location has no Toast restaurant GUID");
 
@@ -103,10 +108,14 @@ export async function toastGet<T>(apiPath: string, restaurantGuid: string): Prom
   if (res.status === 401) {
     res = await call(await getToastToken(true)); // one silent re-auth, then fail typed
   }
-  if (res.status === 429) throw new ToastApiError(429, "rate_limited", "Toast rate limit — try again shortly");
+  if (res.status === 429) {
+    const retry = res.headers.get("Retry-After");
+    const ms = retry == null ? NaN : /^\d+(\.\d+)?$/.test(retry) ? Number(retry) * 1000 : Date.parse(retry) - Date.now();
+    throw new ToastApiError(429, "rate_limited", "Toast rate limit — try again shortly", Number.isFinite(ms) ? Math.max(0, ms) : undefined);
+  }
   if (!res.ok) throw new ToastApiError(res.status, `http_${res.status}`, `Toast GET ${apiPath} failed`);
   try {
-    return (await res.json()) as T;
+    return { data: (await res.json()) as T, nextPageToken: res.headers.get("Toast-Next-Page-Token") || null };
   } catch {
     throw new ToastApiError(502, "bad_payload", `Toast GET ${apiPath}: non-JSON body`);
   }
