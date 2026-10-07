@@ -29,6 +29,16 @@ always-open sections.
   never more default-open content.
 - **D9** Disclosure state = per-session useState only. No localStorage, no
   URL state (the router.refresh/useState law). ?tab= stays where it exists.
+  **EXCEPTION, D9a (Juan-ratified 2026-10-06, PR #384):** operational
+  CHECKLIST sections (AM prep, opening, mid-day, closing) remember their
+  open/closed state per device in localStorage, keyed by form + section
+  (`lib/use-collapsible-sections.ts`). Juan: "Remember for sure." Bounds:
+  collapse state ONLY (a screen preference, never data); every storage read
+  and write in try/catch and correct with storage blocked; the "first
+  unfinished section open" default still applies when nothing is stored;
+  Show-problems and submit-error reveals override stored state. Admin and
+  backend surfaces stay under D9 unchanged. Never extend this to anything
+  but checklist collapse state without a new ruling.
 - **D10** a11y contract: <button> + aria-expanded + aria-controls, i18n'd
   labels. Collapsed content conditional-renders (perf) EXCEPT a drawer with
   unsaved edits — it stays mounted and locked open.
