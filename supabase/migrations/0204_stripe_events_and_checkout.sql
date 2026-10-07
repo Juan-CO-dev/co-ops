@@ -1,5 +1,6 @@
 -- Migration 0204_stripe_events_and_checkout
 -- AUTHORED 2026-09-16. NOT YET APPLIED — GATE (LEAD/JUAN). Sim first, prod on Juan's word.
+-- APPLIED TO PROD 2026-09-16 (schema_migrations version 20260916163907, name '0204_stripe_events_and_checkout'). The line above is the authoring-time gate note, kept as history.
 -- Provenance: launch-readiness audit row LRA-210 (the /order/review copy promised a
 --             provider that was not wired) + lib/catering/payments.ts's provider-agnostic
 --             seam (0127) + its one-due invariant (0130).

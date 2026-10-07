@@ -1,5 +1,6 @@
 -- Migration 0203_opening_phase1_drafts
 -- AUTHORED 2026-09-15. NOT YET APPLIED — GATE (LEAD/JUAN). Sim first, prod on Juan's word.
+-- APPLIED TO PROD 2026-09-15 (schema_migrations version 20260915230324, name '0203_opening_phase1_drafts'). The line above is the authoring-time gate note, kept as history.
 -- Provenance: launch-readiness audit row LRA-121 (STAFF-5), sim journey
 --             `opening.phase1.persist-before-submit`
 --             (scripts/sim/launch-readiness/journeys/opening.spec.ts).

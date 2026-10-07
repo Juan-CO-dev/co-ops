@@ -1,5 +1,6 @@
 -- Migration 0195_catering_insights_money_split
 -- AUTHORED 2026-09-05. NOT YET APPLIED — GATE (JUAN). Lineage at 0194.
+-- APPLIED TO PROD 2026-09-06 (schema_migrations version 20260906011055, name '0195_catering_insights_money_split'). The line above is the authoring-time gate note, kept as history.
 --
 -- 0195: money confirmed vs money completed (Juan 2026-09-05, after smoking #330: "we need money
 -- confirmed and money completed, etc."). `catering_insights_window` gains four keys — the booked
