@@ -354,3 +354,41 @@ export type BatchContractCode = (typeof BATCH_CONTRACT_CODES)[number];
 export function isBatchContractCode(v: unknown): v is BatchContractCode {
   return typeof v === "string" && (BATCH_CONTRACT_CODES as readonly string[]).includes(v);
 }
+
+/** Pull the contract code off a `<fn>: <code> for item …` P0001 message; null when it is not one. */
+export function batchContractCodeFromMessage(message: string | null | undefined): BatchContractCode | null {
+  const head = (message ?? "").replace(/^[a-z0-9_]+:\s*/i, "").split(/[\s—]/)[0];
+  return isBatchContractCode(head) ? head : null;
+}
+
+/**
+ * The wire parser routes share for `batch` (SHAPE only — whole batches, finite numbers, a
+ * known reason code; the arithmetic gates are the RPC's). `null` = absent = single box;
+ * `"invalid"` = a malformed payload the route 400s.
+ */
+export function parseBatchEntryWire(raw: unknown): BatchEntry | null | "invalid" {
+  if (raw === null || raw === undefined) return null;
+  if (typeof raw !== "object") return "invalid";
+  const b = raw as Record<string, unknown>;
+  if (!isWholeCount(b.batches)) return "invalid";
+  let cameOutTo: number | null = null;
+  if (b.cameOutTo !== null && b.cameOutTo !== undefined) {
+    if (typeof b.cameOutTo !== "number" || !Number.isFinite(b.cameOutTo) || b.cameOutTo < 0) return "invalid";
+    cameOutTo = b.cameOutTo;
+  }
+  let tossed = 0;
+  if (b.tossed !== null && b.tossed !== undefined) {
+    if (typeof b.tossed !== "number" || !Number.isFinite(b.tossed) || b.tossed < 0) return "invalid";
+    tossed = b.tossed;
+  }
+  let overBatchReason: OverBatchReason | null = null;
+  if (b.overBatchReason !== null && b.overBatchReason !== undefined) {
+    if (typeof b.overBatchReason !== "object") return "invalid";
+    const r = b.overBatchReason as Record<string, unknown>;
+    if (!isOverBatchReasonCode(r.code)) return "invalid";
+    const note = r.note === null || r.note === undefined ? null : r.note;
+    if (note !== null && typeof note !== "string") return "invalid";
+    overBatchReason = { code: r.code, note: typeof note === "string" && note.trim() !== "" ? note.trim() : null };
+  }
+  return { batches: b.batches, cameOutTo, tossed, overBatchReason };
+}

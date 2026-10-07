@@ -27,6 +27,7 @@ import { etCalendarDate } from "@/lib/operational-day";
 import { requireSessionFromHeaders } from "@/lib/session";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import type { ChecklistTemplateItem } from "@/lib/types";
+import { batchFormFromRecord, needForLine, readBatchFromPrepData, type BatchRowContext } from "@/lib/batch-prep-shared";
 
 import { MidDayPhase1Form } from "@/components/MidDayPhase1Form";
 import { MidDayPhase2Form, type MidDayPhase2Item } from "@/components/MidDayPhase2Form";
@@ -148,8 +149,26 @@ export default async function MidDayPrepPage({ searchParams }: PageProps) {
     const onHand = comp?.prepData?.inputs.onHand ?? null;
     const prepped = comp?.prepData?.inputs.total ?? null;
     const par = item.prepMeta?.parValue ?? null;
+    // 0215: on a batch item Phase 1's onHand is LINE and `total` was derived (line + bulk
+    // backup), so need_for_line = par − LINE is the same expression; the row also receives
+    // the counted BACK UP and the batch context. A non-batch item is untouched.
     const need = par !== null && onHand !== null ? Math.max(par - onHand, 0) : null;
     const savedBy = prepped !== null && comp ? (state.authors[comp.completedBy] ?? null) : null;
+    const ctx = state.batchContext[item.id];
+    const batch: BatchRowContext | null = ctx?.batchMode
+      ? {
+          recipeName: ctx.recipeName,
+          yieldPerBatch: ctx.yieldPerBatch ?? 0,
+          shelfLifeDays: ctx.shelfLifeDays,
+          backupBefore: comp?.prepData?.inputs.backUp ?? null,
+          lineCount: onHand,
+          need: needForLine(par, onHand),
+          parUnit: item.prepMeta?.parUnit ?? null,
+          madeOn: state.batchState[item.id]?.madeOn ?? null,
+          blocked: ctx.eligibility === "blocked",
+        }
+      : null;
+    const batchRecord = batch ? readBatchFromPrepData(comp?.prepData) : null;
     return {
       id: item.id,
       itemId: item.itemId,
@@ -159,10 +178,14 @@ export default async function MidDayPrepPage({ searchParams }: PageProps) {
       parValue: par,
       parUnit: item.prepMeta?.parUnit ?? null,
       need,
-      initialPrepped: prepped,
+      // 0215: a batch row's `total` is the single-box "prepped"; its bottled number lives on the batch object.
+      initialPrepped: batchRecord ? batchRecord.bottled : prepped,
       initialSavedBy: savedBy,
       initialOverUnder:
         (comp?.prepData as { overUnder?: MidDayOverUnder | null } | undefined)?.overUnder ?? null,
+      batch,
+      batchDerived: state.batchDerived[item.id] ?? [],
+      initialBatch: batchRecord ? batchFormFromRecord(batchRecord) : null,
     };
   });
 
@@ -198,6 +221,7 @@ export default async function MidDayPrepPage({ searchParams }: PageProps) {
           items={phase2Items}
           managers={managers}
           sectionLabels={state.sectionLabels}
+          todayIso={state.instance.date}
         />
       ) : (
         <>

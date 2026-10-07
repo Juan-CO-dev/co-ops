@@ -1731,6 +1731,7 @@
   "mid_day_prep.phase2.add_reason": "Add over/under reason",
   "mid_day_prep.phase2.edit_reason": "Edit reason ✓",
   "mid_day_prep.phase2.reason_required": "Add an over/under reason first",
+  "mid_day_prep.phase2.batch_incomplete": "Complete the batch row first",
   "closing.role_badge.cgs_only": "CGS only",
   "closing.role_badge.owner_plus_only": "Owner+ only",
   "closing.role_badge.moo_plus_only": "MoO+ only",

@@ -15,6 +15,7 @@ import { AM_PREP_BASE_LEVEL, saveMidDayPhase2Item, type MidDayOverUnder } from "
 import { requireSession } from "@/lib/session";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import type { ConfirmedInput } from "@/lib/prep-consumption";
+import { parseBatchEntryWire, type BatchEntry } from "@/lib/batch-prep-shared";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -24,6 +25,8 @@ interface ItemBody {
   prepped: number;
   overUnder?: MidDayOverUnder | null;
   confirmedConsumption?: ConfirmedInput[] | null;
+  /** 0215 batch vs bottle — present only on a batch_mode item (shape-checked here; gates are the RPC's). */
+  batch?: BatchEntry | null;
 }
 
 function parseOverUnder(v: unknown): MidDayOverUnder | null {
@@ -75,9 +78,11 @@ function validateBody(
   }
   const overUnder = parseOverUnder(r.overUnder);
   const confirmedConsumption = parseConfirmedConsumption(r.confirmedConsumption);
+  const batch = parseBatchEntryWire(r.batch);
+  if (batch === "invalid") return { ok: false, field: "batch" };
   return {
     ok: true,
-    body: { instanceId: r.instanceId, templateItemId: r.templateItemId, prepped: r.prepped, overUnder, confirmedConsumption },
+    body: { instanceId: r.instanceId, templateItemId: r.templateItemId, prepped: r.prepped, overUnder, confirmedConsumption, batch },
   };
 }
 
@@ -129,6 +134,7 @@ export async function POST(req: NextRequest) {
       prepped: body.prepped,
       overUnder: body.overUnder ?? null,
       confirmedConsumption: body.confirmedConsumption,
+      batch: body.batch ?? null,
       actor: { userId: ctx.user.id, role: ctx.role, level: ctx.level },
       ipAddress: extractIp(req),
       userAgent: req.headers.get("user-agent"),
@@ -139,6 +145,10 @@ export async function POST(req: NextRequest) {
       }
       if (result.reason === "not_in_phase2") {
         return jsonError(409, "not_in_phase2", { message: "This instance isn't in the Phase 2 window." });
+      }
+      if (result.reason === "batch_contract") {
+        // 0215 batch vs bottle — the RPC refused the batch payload; the row renders prep.batch.error.<code>.
+        return jsonError(422, result.code, { message: `Batch row refused: ${result.code}`, template_item_id: result.templateItemId });
       }
       return jsonError(400, "bad_item", { message: "Item not found in this template." });
     }

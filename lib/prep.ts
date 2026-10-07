@@ -67,8 +67,9 @@ import { loadItemDefns, loadItemOverrides, operationalDayOfWeek, pickOverride, r
 import { operationalNow } from "@/lib/midshift";
 import { applyEffectiveResolution, type EffectiveResolvableBuilder } from "@/lib/admin/template-builder-shared";
 import { loadPrepSections } from "@/lib/prep-sections.server";
-import { loadDerivedForItems, recordProductionFromPrep, skuConsumptionForItem, type DerivedSku, type ConfirmedInput } from "@/lib/prep-consumption";
+import { loadBatchDerivedForItems, loadDerivedForItems, recordBatchProductionFromPrep, recordProductionFromPrep, skuConsumptionForItem, type DerivedSku, type ConfirmedInput } from "@/lib/prep-consumption";
 import { loadBatchContextForItems, type BatchItemContext } from "@/lib/batch-prep";
+import { batchContractCodeFromMessage, readBatchFromPrepData, toBatchPayload, type BatchContractCode, type BatchEntry } from "@/lib/batch-prep-shared";
 import type {
   ChecklistCompletion,
   ChecklistInstance,
@@ -835,6 +836,10 @@ export async function loadMidDayPrepState(
    * renders LINE + BACK UP for eligible items; Phase 2 renders the batch row.
    */
   batchContext: Record<string, BatchItemContext>;
+  /** 0215 — per eligible batch TEMPLATE-ITEM id, the panel rows as PER-BATCH quantities. */
+  batchDerived: Record<string, DerivedSku[]>;
+  /** 0215 — per eligible batch TEMPLATE-ITEM id: last batch's produced_at at this location + this instance's recorded toss. */
+  batchState: Record<string, { madeOn: string | null; tossed: number }>;
 } | null> {
   const { data: instanceRow, error: instErr } = await service
     .from("checklist_instances")
@@ -938,6 +943,44 @@ export async function loadMidDayPrepState(
     if (ctx) batchContext[tItem.id] = ctx;
   }
 
+  // 0215 — per-BATCH panel rows + the ledger facts the batch row shows (last made-on for
+  // the shelf-life state; this instance's recorded toss). Mirrors loadOpeningState.
+  const batchItemIds = Object.values(batchContext).filter((c) => c.isBatch).map((c) => c.itemId);
+  const batchDerivedMap = await loadBatchDerivedForItems(batchItemIds);
+  const batchDerived: Record<string, DerivedSku[]> = {};
+  const batchState: Record<string, { madeOn: string | null; tossed: number }> = {};
+  const madeOnByItem = new Map<string, string>();
+  const tossedByTemplateItem = new Map<string, number>();
+  if (batchItemIds.length > 0) {
+    const { data: prodRows, error: prodErr } = await service
+      .from("productions")
+      .select("output_item_id, produced_at")
+      .eq("location_id", instanceRow.location_id)
+      .in("output_item_id", batchItemIds)
+      .gt("batches_made", 0)
+      .is("revoked_at", null)
+      .is("superseded_at", null)
+      .order("produced_at", { ascending: false });
+    if (prodErr) throw new Error(`loadMidDayPrepState: load batch productions: ${prodErr.message}`);
+    for (const r of (prodRows ?? []) as Array<{ output_item_id: string; produced_at: string }>) {
+      if (!madeOnByItem.has(r.output_item_id)) madeOnByItem.set(r.output_item_id, r.produced_at);
+    }
+    const { data: sessRows, error: sessErr } = await service
+      .from("prep_batch_sessions")
+      .select("template_item_id, tossed_qty")
+      .eq("instance_id", instanceRow.id);
+    if (sessErr) throw new Error(`loadMidDayPrepState: load batch sessions: ${sessErr.message}`);
+    for (const r of (sessRows ?? []) as Array<{ template_item_id: string; tossed_qty: number | string | null }>) {
+      tossedByTemplateItem.set(r.template_item_id, Number(r.tossed_qty ?? 0) || 0);
+    }
+  }
+  for (const tItem of resolvedItems) {
+    const ctx = batchContext[tItem.id];
+    if (!ctx?.isBatch || !tItem.itemId) continue;
+    batchDerived[tItem.id] = batchDerivedMap.get(tItem.itemId)?.skus ?? [];
+    batchState[tItem.id] = { madeOn: madeOnByItem.get(tItem.itemId) ?? null, tossed: tossedByTemplateItem.get(tItem.id) ?? 0 };
+  }
+
   return {
     template: tmplRow,
     templateItems: resolvedItems,
@@ -947,6 +990,8 @@ export async function loadMidDayPrepState(
     sectionLabels,
     derived,
     batchContext,
+    batchDerived,
+    batchState,
   };
 }
 
@@ -1228,7 +1273,9 @@ export async function submitMidDayPhase1(
 /** Result of saveMidDayPhase2Item. */
 export type MidDayPhase2SaveResult =
   | { ok: true; completionId: string; savedAt: string }
-  | { ok: false; reason: "not_found" | "not_in_phase2" | "bad_item" };
+  | { ok: false; reason: "not_found" | "not_in_phase2" | "bad_item" }
+  /** 0215: save_mid_day_phase2_item_atomic refused the batch contract (lib/batch-prep-shared.ts BATCH_CONTRACT_CODES). */
+  | { ok: false; reason: "batch_contract"; code: BatchContractCode; templateItemId: string };
 
 /**
  * Structured over/under-prep capture (C.43 Phase 2), mirroring opening's
@@ -1258,6 +1305,12 @@ export async function saveMidDayPhase2Item(
     overUnder?: MidDayOverUnder | null;
     /** Confirmed/edited SKU consumption from the panel; null/absent → record the derived default. */
     confirmedConsumption?: ConfirmedInput[] | null;
+    /**
+     * 0215 batch vs bottle — the batch half on a batch_mode item (null/absent = single box;
+     * the RPC requires it on a batch item and refuses it on any other). `prepped` is then
+     * what was BOTTLED for the line.
+     */
+    batch?: BatchEntry | null;
     actor: PrepActor;
     ipAddress?: string | null;
     userAgent?: string | null;
@@ -1285,9 +1338,16 @@ export async function saveMidDayPhase2Item(
     p_prepped: args.prepped,
     p_snapshot: snapshot,
     p_over_under: args.overUnder ?? null,
+    // 0215: null on every single-box save (the RPC's DEFAULT).
+    p_batch: args.batch ? toBatchPayload(args.batch) : null,
   });
   if (error) {
     if (error.code === "23514") return { ok: false, reason: "not_in_phase2" };
+    if (error.code === "P0001") {
+      // 0215 — the batch contract, named (the route answers 422 with the code).
+      const code = batchContractCodeFromMessage(error.message);
+      if (code) return { ok: false, reason: "batch_contract", code, templateItemId: args.templateItemId };
+    }
     throw new Error(`saveMidDayPhase2Item: ${error.message}`);
   }
 
@@ -1313,7 +1373,34 @@ export async function saveMidDayPhase2Item(
   // (instance, template_item). Untouched panel (confirmedConsumption null) → record the
   // derived theoretical set; edited → record the confirmed set. A failure here must NOT
   // fail the committed completion (sacred flow) — swallow + log; supersede-on-resave heals.
-  if (item.itemId) {
+  if (item.itemId && args.batch) {
+    // 0215 batch vs bottle — the BATCH fold (ruling 3): batches × the recipe from ONE
+    // graph read; produced_at / made_by come from the session the RPC stamped onto the
+    // completion's `batch` object (read back — the mid-day RPC returns only the id).
+    try {
+      const d0 = data as { completionId: string; savedAt: string };
+      const { data: saved } = await service
+        .from("checklist_completions")
+        .select("prep_data, completed_at")
+        .eq("id", d0.completionId)
+        .maybeSingle<{ prep_data: unknown; completed_at: string }>();
+      const record = readBatchFromPrepData(saved?.prep_data);
+      await recordBatchProductionFromPrep(args.actor, {
+        locationId: state.instance.locationId,
+        instanceId: args.instanceId,
+        templateItemId: args.templateItemId,
+        outputItemId: item.itemId,
+        batches: record?.batches ?? args.batch.batches,
+        cameOutTo: record?.cameOutTo ?? args.batch.cameOutTo ?? 0,
+        confirmedConsumption: args.confirmedConsumption ?? null,
+        producedAt: record?.producedAt ?? saved?.completed_at ?? d0.savedAt,
+        madeBy: record?.madeBy ?? args.actor.userId,
+        source: "mid_day_p2",
+      });
+    } catch (e) {
+      console.error(`saveMidDayPhase2Item: batch production capture failed (completion committed):`, e);
+    }
+  } else if (item.itemId) {
     try {
       let consumption = args.confirmedConsumption ?? null;
       if (consumption === null) {
