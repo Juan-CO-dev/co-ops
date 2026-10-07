@@ -1,3 +1,4 @@
+import { hasTaskAccess } from "@/lib/assignments";
 /**
  * Checklist instance lifecycle — Phase 3 / Module #1 Build #1.
  *
@@ -56,7 +57,7 @@ import { getServiceRoleClient } from "./supabase-server";
 import { getRoleLevel, type RoleCode } from "./roles";
 import { lockLocationContext } from "./locations";
 import { CLOSING_CONFIRM_FLOOR_LEVEL } from "./admin/template-builder-shared";
-import { evaluateLockUpGate } from "./checklist-constants";
+import { canCompleteChecklistItem, evaluateLockUpGate } from "./checklist-constants";
 import {
   applyEffectiveResolution,
   type EffectiveResolvableBuilder,
@@ -548,6 +549,9 @@ interface TemplateItemRow {
   id: string;
   template_id: string;
   min_role_level: number;
+  report_reference_type: string | null;
+  ref_track_item_completion: boolean;
+  references_template_item_id: string | null;
   required: boolean;
   expects_count: boolean;
   expects_photo: boolean;
@@ -606,7 +610,7 @@ async function loadTemplateItemOrThrow(
 ): Promise<TemplateItemRow> {
   const { data, error } = await authed
     .from("checklist_template_items")
-    .select("id, template_id, min_role_level, required, expects_count, expects_photo, active, input_type")
+    .select("id, template_id, min_role_level, required, expects_count, expects_photo, active, input_type, report_reference_type, ref_track_item_completion, references_template_item_id")
     .eq("id", templateItemId)
     .maybeSingle<TemplateItemRow>();
   if (error) throw new Error(`load template_item ${templateItemId}: ${error.message}`);
@@ -637,6 +641,30 @@ function ensureInstanceOpen(instance: InstanceRow): void {
  * submitBatch / confirmInstance) writes its own audit, which captures
  * the failed-attempt context if it surfaces a ChecklistLockedError.
  */
+/** Generic checklist endpoints must enforce the task's assignment gate too. */
+export async function requireChecklistTaskAccess(
+  authed: SupabaseClient,
+  instanceId: string,
+  actor: ChecklistActor,
+): Promise<void> {
+  const instance = await loadInstanceOrThrow(authed, instanceId);
+  const { data: template, error } = await authed.from("checklist_templates")
+    .select("type, prep_subtype").eq("id", instance.template_id)
+    .maybeSingle<{ type: string; prep_subtype: string | null }>();
+  if (error) throw new Error(`checklist task access: ${error.message}`);
+  if (!template) throw new ChecklistRoleViolationError(4, actor.level);
+  const task = template.type === "opening" ? "opening_report"
+    : template.type === "prep" && template.prep_subtype === "am_prep" ? "am_prep"
+    : template.type === "prep" && template.prep_subtype === "mid_day_prep" ? "mid_day_prep"
+    : null;
+  // Scope was obtained through the caller's RLS-visible instance. The narrow
+  // assignment lookup uses the same service reader as the dedicated task paths.
+  if (task && !(await hasTaskAccess(getServiceRoleClient(), {
+    userId: actor.userId, level: actor.level, locationId: instance.location_id,
+    date: instance.date, task,
+  }))) throw new ChecklistRoleViolationError(4, actor.level, "An active assignment is required for this task.");
+}
+
 export async function rejectIfPrepLocked(
   authed: SupabaseClient,
   instanceId: string,
@@ -875,10 +903,18 @@ export async function completeItem(
 
   const instance = await loadInstanceOrThrow(authed, instanceId);
   ensureInstanceOpen(instance);
+  await requireChecklistTaskAccess(authed, instanceId, actor);
   await rejectIfPrepLocked(authed, instanceId);
 
   const item = await loadTemplateItemOrThrow(authed, templateItemId);
-  if (actor.level < item.min_role_level) {
+  const { data: template, error: templateError } = await authed.from("checklist_templates")
+    .select("type").eq("id", instance.template_id).maybeSingle<{ type: string }>();
+  if (templateError) throw new Error(`completeItem template: ${templateError.message}`);
+  if (!template || item.template_id !== instance.template_id || !item.active || !canCompleteChecklistItem({
+    templateType: template.type, actorLevel: actor.level, itemMinRoleLevel: item.min_role_level,
+    reportReferenceType: item.report_reference_type,
+    refTrackItemCompletion: item.ref_track_item_completion, referencesTemplateItemId: item.references_template_item_id,
+  })) {
     throw new ChecklistRoleViolationError(item.min_role_level, actor.level);
   }
   if (item.expects_count && (args.countValue === undefined || args.countValue === null)) {
@@ -1054,6 +1090,7 @@ export async function submitBatch(
 
   const instance = await loadInstanceOrThrow(authed, instanceId);
   ensureInstanceOpen(instance);
+  await requireChecklistTaskAccess(authed, instanceId, actor);
   await rejectIfPrepLocked(authed, instanceId);
 
   // Verify every completion exists, belongs to this instance, was authored
@@ -1188,6 +1225,7 @@ export async function confirmInstance(
 
   const instance = await loadInstanceOrThrow(authed, instanceId);
   ensureInstanceOpen(instance);
+  await requireChecklistTaskAccess(authed, instanceId, actor);
   await rejectIfPrepLocked(authed, instanceId);
 
   // Live (non-superseded) completions for this instance.
@@ -1770,6 +1808,7 @@ export async function revokeCompletion(
   const { completionId, actor } = args;
 
   const completion = await loadLiveCompletionOrThrow(authed, completionId);
+  await requireChecklistTaskAccess(authed, completion.instance_id, actor);
 
   if (completion.completed_by !== actor.userId) {
     throw new ChecklistNotSelfError(completionId);
@@ -1876,6 +1915,7 @@ export async function revokeWithReason(
   }
 
   const completion = await loadLiveCompletionOrThrow(authed, completionId);
+  await requireChecklistTaskAccess(authed, completion.instance_id, actor);
 
   if (completion.completed_by !== actor.userId) {
     throw new ChecklistNotSelfError(completionId);
@@ -1993,6 +2033,7 @@ export async function markNotDoneByAuthority(
   }
 
   const completion = await loadLiveCompletionOrThrow(authed, completionId);
+  await requireChecklistTaskAccess(authed, completion.instance_id, actor);
 
   // Cross-user only. Self-correction has its own (C.28) path.
   if (completion.completed_by === actor.userId) {
@@ -2140,6 +2181,7 @@ export async function tagActualCompleter(
   const { completionId, actor, actualCompleterId } = args;
 
   const completion = await loadLiveCompletionOrThrow(authed, completionId);
+  await requireChecklistTaskAccess(authed, completion.instance_id, actor);
 
   // Window check: tagging blocked during the actor's silent-correction window.
   const elapsed = elapsedSinceCompleted(completion.completed_at);
@@ -2295,6 +2337,7 @@ export async function loadPickerCandidatesForCompletion(
   const { completionId, actor } = args;
 
   const completion = await loadLiveCompletionOrThrow(authed, completionId);
+  await requireChecklistTaskAccess(authed, completion.instance_id, actor);
 
   // KH+ = level >= 4 (key_holder, post-renumber). The 0–10 role-model
   // renumber separated key_holder (4) from employee (3), so the KH+ gate
@@ -2650,6 +2693,7 @@ export async function dropInstance(
 
   // Pre-flight: load instance to discriminate the three error cases.
   const inst = await loadInstanceOrThrow(authed, instanceId);
+  await requireChecklistTaskAccess(authed, instanceId, actor);
 
   if (inst.assignment_locked) {
     throw new AssignmentLockedError(instanceId, inst.assigned_to);

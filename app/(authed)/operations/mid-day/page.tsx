@@ -1,3 +1,4 @@
+import { hasTaskAccess } from "@/lib/assignments";
 /**
  * /operations/mid-day — Mid-day Prep instance surface (C.43).
  *
@@ -87,6 +88,8 @@ export default async function MidDayPrepPage({ searchParams }: PageProps) {
       actor: { userId: auth.user.id, role: auth.role, level: auth.level },
     });
 
+    if (!dashState.isVisibleToActor) redirect("/dashboard");
+
     if (dashState.instances.length === 1) {
       redirect(`/operations/mid-day?instance=${dashState.instances[0]!.instanceId}`);
     }
@@ -114,6 +117,8 @@ export default async function MidDayPrepPage({ searchParams }: PageProps) {
 
   const locActor: LocationActor = { role: auth.role, locations: auth.locations };
   if (!lockLocationContext(locActor, state.instance.locationId)) redirect("/dashboard");
+
+  if (!(await hasTaskAccess(sb, { userId: auth.user.id, level: auth.level, locationId: state.instance.locationId, date: state.instance.date, task: "mid_day_prep" }))) redirect("/dashboard");
 
   const lang = auth.user.language;
 

@@ -1,3 +1,4 @@
+import { canDoOperationalTask, canTriageUnattributedReceipt } from "@/lib/operational-task-access";
 /**
  * Receipt PARSE engine — the LLM leg of the inbound channel (Vendor Ordering V2 §4;
  * migration 0175 added the doc_kind column). SERVER-ONLY, service-role client; reads
@@ -602,6 +603,11 @@ export async function parseReceiptForActor(
   if (r.location_id != null && !lockLocationContext(loc, r.location_id)) {
     throw new EmailReceiptError(404, "not_found", "Receipt not found");
   }
+
+  const allowed = r.location_id != null
+    ? await canDoOperationalTask(actor, r.location_id, "receiving")
+    : await canTriageUnattributedReceipt(actor);
+  if (!allowed) throw new EmailReceiptError(403, "forbidden");
 
   // MANUAL RETRY (spec §4 "retryable manually, never retried infinitely"): a human tap on a
   // 'failed' row resets it to 'unparsed' (guarded — a raced concurrent reset loses quietly)

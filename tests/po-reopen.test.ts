@@ -31,7 +31,7 @@ function setup(status = "confirmed", count = 1, bound = true) {
     };
     return query;
   } };
-  const deps = { PurchaseOrderError, PO_MIN: 4, requireLevel, getServiceRoleClient: () => sb, lockLocationContext: () => bound, actorLoc: () => ({}), audit };
+  const deps = { canDoOperationalTask: async () => true, PurchaseOrderError, PO_MIN: 4, requireLevel, getServiceRoleClient: () => sb, lockLocationContext: () => bound, actorLoc: () => ({}), audit };
   const js = ts.transpile(declaration("reopenPO").getText(ast).replace(/^export /, ""), { target: ts.ScriptTarget.ES2022 });
   const reopen = new Function(...Object.keys(deps), `${js}; return reopenPO;`)(...Object.values(deps));
   const actor = { user: { id: "kh", role: "key_holder" } };

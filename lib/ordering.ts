@@ -1,3 +1,4 @@
+import { canDoOperationalTask } from "@/lib/operational-task-access";
 /**
  * Par-pass ordering data layer (delivery-intake P3, migration 0172). SERVER-ONLY,
  * service-role client; authorization is APP-LAYER (KH+ gate + location-bind IDOR).
@@ -725,6 +726,7 @@ export async function loadWalkerData(actor: AuthContext, locationId: string): Pr
   if (!lockLocationContext(actorLoc(actor), locationId)) {
     throw new OrderingError(404, "not_found", "Location not found");
   }
+  if (!(await canDoOperationalTask(actor, locationId, "ordering"))) throw new OrderingError(403, "forbidden");
   const sb = getServiceRoleClient();
   // ET-anchored walk day (single authority — etWalkDay()). Never inline this derivation
   // again; all day-rule consumers must call etWalkDay() to stay in sync with the display.
@@ -1477,6 +1479,7 @@ export async function submitParPass(
   if (!lockLocationContext(actorLoc(actor), locationId)) {
     throw new OrderingError(404, "not_found", "Location not found");
   }
+  if (!(await canDoOperationalTask(actor, locationId, "ordering"))) throw new OrderingError(403, "forbidden");
   if (!Array.isArray(lines) || lines.length === 0) {
     throw new OrderingError(400, "no_lines", "At least one line is required");
   }
@@ -1830,6 +1833,7 @@ export async function loadShrinkageSignals(
   if (!lockLocationContext(actorLoc(actor), locationId)) {
     throw new OrderingError(404, "not_found", "Location not found");
   }
+  if (!(await canDoOperationalTask(actor, locationId, "ordering"))) throw new OrderingError(403, "forbidden");
   const sb = getServiceRoleClient();
   // 72h window: Friday-evening walks must still surface on Monday morning (the
   // Friday→Monday gap is ~60h; 72h clears it with a comfortable buffer).
@@ -1927,6 +1931,7 @@ export async function loadRecentParPasses(
   if (!lockLocationContext(actorLoc(actor), locationId)) {
     throw new OrderingError(404, "not_found", "Location not found");
   }
+  if (!(await canDoOperationalTask(actor, locationId, "ordering"))) throw new OrderingError(403, "forbidden");
   const sb = getServiceRoleClient();
   const { data: events, error } = await sb.from("par_pass_events")
     .select("id, walked_at, walked_by")
@@ -1993,6 +1998,7 @@ export async function loadParPassDetail(actor: AuthContext, eventId: string): Pr
   if (!lockLocationContext(actorLoc(actor), ev.location_id)) {
     throw new OrderingError(404, "not_found", "Par-pass not found");
   }
+  if (!(await canDoOperationalTask(actor, ev.location_id, "ordering"))) throw new OrderingError(403, "forbidden");
 
   const { data: lineRows, error: lErr } = await sb.from("par_pass_lines")
     .select("sku_id, vendor_id, par_qty, order_qty, order_unit_label, implied_on_hand_oz, note")
@@ -2099,6 +2105,7 @@ export async function generateDraftForVendor(
   if (!lockLocationContext(actorLoc(actor), locationId)) {
     throw new OrderingError(404, "not_found", "Location not found");
   }
+  if (!(await canDoOperationalTask(actor, locationId, "ordering"))) throw new OrderingError(403, "forbidden");
   if (typeof vendorId !== "string" || !vendorId) {
     throw new OrderingError(400, "invalid_vendor", "A vendor is required");
   }
@@ -2184,6 +2191,7 @@ export async function loadOrderingAttention(
   if (!lockLocationContext(actorLoc(actor), locationId)) {
     throw new OrderingError(404, "not_found", "Location not found");
   }
+  if (!(await canDoOperationalTask(actor, locationId, "ordering"))) throw new OrderingError(403, "forbidden");
   const sb = getServiceRoleClient();
   const { walkDateEt: dateEt, todayDow: dow } = etWalkDay();
 

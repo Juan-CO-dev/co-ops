@@ -59,6 +59,7 @@
  * async callback props. Parent injects instanceId + actor via closure.
  */
 
+import { canCompleteChecklistItem } from "@/lib/checklist-constants";
 import { useState } from "react";
 
 import { PhotoCapture } from "@/components/photos/PhotoCapture";
@@ -152,6 +153,7 @@ interface ChecklistItemProps {
   actualCompleterAuthor?: { name: string; isSelf: boolean } | null;
   /** Caller's role level — drives the role-gate visual + interaction state. */
   actorLevel: number;
+  templateType?: string;
   /** Caller's user id — drives self-vs-peer logic for revoke and tag affordances. */
   actorUserId: string;
   /** Instance status — disables interaction when not 'open'. */
@@ -384,6 +386,7 @@ export function ChecklistItem({
   completionAuthor,
   actualCompleterAuthor,
   actorLevel,
+  templateType,
   actorUserId,
   instanceStatus,
   locationId,
@@ -458,7 +461,7 @@ export function ChecklistItem({
   const isYesNo = templateItem.inputType === "yes_no";
   const isFreeText = templateItem.inputType === "free_text";
   const isQuestion = isYesNo || isFreeText;
-  const roleGated = actorLevel < templateItem.minRoleLevel;
+  const roleGated = !canCompleteChecklistItem({ templateType, actorLevel, itemMinRoleLevel: templateItem.minRoleLevel, reportReferenceType: templateItem.reportReferenceType, refTrackItemCompletion: templateItem.refTrackItemCompletion, referencesTemplateItemId: templateItem.referencesTemplateItemId });
   const instanceLocked = instanceStatus !== "open";
   const interactable = !roleGated && !instanceLocked && !readOnly && !inFlight;
 

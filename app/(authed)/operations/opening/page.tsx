@@ -1,3 +1,5 @@
+import { redirect } from "next/navigation";
+import { hasTaskAccess } from "@/lib/assignments";
 /**
  * /operations/opening — Build #3 PR 2 Phase 1 Verification Checklist page.
  *
@@ -154,6 +156,8 @@ export default async function OpeningPage({ searchParams }: OpeningPageProps) {
   }
 
   const { today, yesterday } = todayAndYesterday();
+  const canSubmit = await hasTaskAccess(sb, { userId: auth.user.id, level: auth.level, locationId: selectedLocation.id, date: today, task: "opening_report" });
+  if (!canSubmit) redirect("/dashboard");
 
   // Gate check: prior night's closing must be in any non-open state for
   // opening to proceed. Deliberately a direct check (see loadPriorClosingState)
@@ -272,7 +276,7 @@ export default async function OpeningPage({ searchParams }: OpeningPageProps) {
         managers={managers}
         saverNames={{ ...state.authors, [auth.user.id]: auth.user.name }}
         language={language}
-        actorLevel={auth.level}
+        canSubmit={canSubmit}
       />
     </AuthShell>
   );

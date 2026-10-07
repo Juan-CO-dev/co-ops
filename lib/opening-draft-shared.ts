@@ -69,16 +69,9 @@ export const OPENING_DRAFT_ATTESTATION_REASONS: ReadonlySet<OpeningNoPriorDataRe
   new Set<OpeningNoPriorDataReason>(["planned_closure", "missed_or_unknown"]);
 
 /**
- * Role floor for reading AND writing a Phase 1 draft.
- *
- * This is the OPENING PAGE's floor, NOT the submit floor. `OPENING_BASE_LEVEL` (4, KH+)
- * gates `submit_phase1_atomic`; the page itself carries no level gate beyond a live
- * session, and every opening template item is `min_role_level = 3` (lib/opening.ts:107).
- * An employee at level 3 is exactly the actor whose lost work this draft exists to save,
- * so flooring the draft at the SUBMIT level would rebuild the defect in a new table.
- *
- * Exported here (pure) so the route, the lib and migration 0203's RLS quals all name one
- * number.
+ * Historical draft floor, retained for consumers of the original draft contract.
+ * @deprecated Assignments phase 1 replaced this floor with KH+ OR today's active
+ * opening assignment at the page, route and writer. This value grants no access.
  */
 export const OPENING_DRAFT_MIN_LEVEL = 3;
 

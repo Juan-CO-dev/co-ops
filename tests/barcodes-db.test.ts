@@ -28,6 +28,7 @@ import { lockLocationContext } from "@/lib/locations";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import type { AuthContext } from "@/lib/session";
 
+vi.mock("@/lib/operational-task-access", () => ({ canDoOperationalTask: vi.fn(async () => true) }));
 vi.mock("@/lib/audit", () => ({ audit: vi.fn(async () => {}) }));
 vi.mock("@/lib/supabase-server", () => ({ getServiceRoleClient: vi.fn() }));
 vi.mock("@/lib/locations", () => ({ lockLocationContext: vi.fn(() => true) }));

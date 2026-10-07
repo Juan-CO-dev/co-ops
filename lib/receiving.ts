@@ -1,3 +1,4 @@
+import { canDoOperationalTask } from "@/lib/operational-task-access";
 /**
  * Operational receiving data layer (Item/Inventory Spine — R3). SERVER-ONLY,
  * service-role client; authorization is APP-LAYER (KH+ gate + location-bind IDOR)
@@ -239,6 +240,7 @@ export interface DeliveryDetail extends DeliveryView {
 export async function loadReceivingFormData(actor: AuthContext, locationId: string): Promise<ReceivingFormData> {
   requireReceive(actor);
   if (!lockLocationContext(actorLoc(actor), locationId)) throw new ReceivingError(404, "not_found", "Location not found");
+  if (!(await canDoOperationalTask(actor, locationId, "receiving"))) throw new ReceivingError(403, "forbidden");
   const sb = getServiceRoleClient();
   const { data: vendors, error: vErr } = await sb.from("vendors").select("id, name").eq("active", true).order("name", { ascending: true }).returns<Array<{ id: string; name: string }>>();
   if (vErr) throw new Error(`loadReceivingFormData vendors: ${vErr.message}`);
@@ -408,6 +410,7 @@ export interface RecordDeliveryResult {
 export async function recordDelivery(actor: AuthContext, input: RecordDeliveryInput): Promise<RecordDeliveryResult> {
   requireReceive(actor);
   if (!lockLocationContext(actorLoc(actor), input.locationId)) throw new ReceivingError(404, "not_found", "Location not found");
+  if (!(await canDoOperationalTask(actor, input.locationId, "receiving"))) throw new ReceivingError(403, "forbidden");
   if (!/^\d{4}-\d{2}-\d{2}$/.test(input.deliveryDate) || Number.isNaN(Date.parse(input.deliveryDate))) {
     throw new ReceivingError(400, "invalid_date", "Delivery date must be YYYY-MM-DD");
   }
@@ -929,6 +932,7 @@ async function insertMissingExpectedCredits(
 export async function loadRecentDeliveries(actor: AuthContext, locationId: string, limit = 20): Promise<DeliveryView[]> {
   requireReceive(actor);
   if (!lockLocationContext(actorLoc(actor), locationId)) throw new ReceivingError(404, "not_found", "Location not found");
+  if (!(await canDoOperationalTask(actor, locationId, "receiving"))) throw new ReceivingError(403, "forbidden");
   const sb = getServiceRoleClient();
   const { data: rows, error } = await sb.from("vendor_deliveries")
     .select("id, vendor_id, delivery_date, invoice_number, received_by, match_state, delivery_status, receipt_url, email_receipt_id, created_at, purchase_order_id")
@@ -978,6 +982,7 @@ export async function loadDeliveryDetail(actor: AuthContext, deliveryId: string)
   if (error) throw new Error(`loadDeliveryDetail: ${error.message}`);
   if (!h) throw new ReceivingError(404, "not_found", "Delivery not found");
   if (!lockLocationContext(actorLoc(actor), h.location_id)) throw new ReceivingError(404, "not_found", "Delivery not found");
+  if (!(await canDoOperationalTask(actor, h.location_id, "receiving"))) throw new ReceivingError(403, "forbidden");
   const { data: lineRows, error: lErr } = await sb.from("vendor_delivery_items").select("vendor_item_id, qty_received, unit_price, observed_oz_per_each, notes, received_level_label, resolved_oz, photo_url, discrepancy_type").eq("delivery_id", deliveryId).order("created_at", { ascending: true }).returns<Array<{ vendor_item_id: string; qty_received: number | string; unit_price: number | string | null; observed_oz_per_each: number | string | null; notes: string | null; received_level_label: string | null; resolved_oz: number | string | null; photo_url: string | null; discrepancy_type: "short" | "over" | "damaged" | "substitution" | null }>>();
   // A dropped line read renders the delivery with ZERO lines and lineCount 0 — a receipt
   // that reads as reconciled and empty, on the surface used to dispute an invoice.
@@ -1033,6 +1038,7 @@ export async function loadLastDeliveryTemplate(
 ): Promise<LastDeliveryTemplate | null> {
   requireReceive(actor);
   if (!lockLocationContext(actorLoc(actor), locationId)) throw new ReceivingError(404, "not_found", "Location not found");
+  if (!(await canDoOperationalTask(actor, locationId, "receiving"))) throw new ReceivingError(403, "forbidden");
   const sb = getServiceRoleClient();
   const { data: h, error } = await sb.from("vendor_deliveries")
     .select("id")
@@ -1074,6 +1080,7 @@ export async function loadOpenPoTemplate(
 ): Promise<OpenPoTemplate | null> {
   requireReceive(actor);
   if (!lockLocationContext(actorLoc(actor), locationId)) throw new ReceivingError(404, "not_found", "Location not found");
+  if (!(await canDoOperationalTask(actor, locationId, "receiving"))) throw new ReceivingError(403, "forbidden");
   const sb = getServiceRoleClient();
 
   // Latest receivable PO for this vendor+location (most recently placed).
@@ -1158,6 +1165,7 @@ export async function addDeliveryLines(
   if (error) throw new Error(`addDeliveryLines header: ${error.message}`);
   if (!h) throw new ReceivingError(404, "not_found", "Delivery not found");
   if (!lockLocationContext(actorLoc(actor), h.location_id)) throw new ReceivingError(404, "not_found", "Delivery not found");
+  if (!(await canDoOperationalTask(actor, h.location_id, "receiving"))) throw new ReceivingError(403, "forbidden");
   if (h.delivery_status !== "in_progress") throw new ReceivingError(409, "delivery_complete", "This delivery is complete — reopen or start a new one");
 
   const resolved = await validateAndResolveDeliveryLines(sb, lines, h.vendor_id);
@@ -1226,6 +1234,7 @@ export async function completeDelivery(actor: AuthContext, deliveryId: string): 
   if (error) throw new Error(`completeDelivery load: ${error.message}`);
   if (!h) throw new ReceivingError(404, "not_found", "Delivery not found");
   if (!lockLocationContext(actorLoc(actor), h.location_id)) throw new ReceivingError(404, "not_found", "Delivery not found");
+  if (!(await canDoOperationalTask(actor, h.location_id, "receiving"))) throw new ReceivingError(403, "forbidden");
   if (h.delivery_status === "complete") throw new ReceivingError(409, "already_complete", "This delivery is already complete");
   // Guard on the expected prior status, not just the id (silent-UPDATE law): the row must
   // still be 'in_progress' for THIS call to be the one that completed it. Not-found and
@@ -1295,6 +1304,7 @@ export async function attachDeliveryReceipt(
   if (error) throw new Error(`attachDeliveryReceipt load: ${error.message}`);
   if (!h) throw new ReceivingError(404, "not_found", "Delivery not found");
   if (!lockLocationContext(actorLoc(actor), h.location_id)) throw new ReceivingError(404, "not_found", "Delivery not found");
+  if (!(await canDoOperationalTask(actor, h.location_id, "receiving"))) throw new ReceivingError(403, "forbidden");
   if (h.receipt_url !== null) {
     throw new ReceivingError(409, "receipt_already_attached", "This delivery already has a receipt photo");
   }

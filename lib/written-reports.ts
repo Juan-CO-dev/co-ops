@@ -10,7 +10,7 @@
  * these loaders use the service-role client (RLS-bypassing), so every visibility
  * gate is reproduced HERE in app code, matching the live RLS predicates:
  *   READ   : level >= visibility_min_level
- *            AND (location_id IS NULL OR location_id ∈ my locations OR level >= 9)
+ *            AND (location_id IS NULL OR location_id ∈ my locations OR level >= 7)
  *   INSERT : submitted_by = me AND level >= 3
  *   UPDATE : submitted_by = me AND submitted_at > now() - 3h   (self-edit window)
  *   DELETE : false (append-only — never)
@@ -33,7 +33,7 @@ import {
 // Re-export the client-safe surface so server callers import from one place.
 export * from "@/lib/written-reports-shared";
 
-const ALL_LOCATIONS_READ_LEVEL = 9;
+const ALL_LOCATIONS_READ_LEVEL = 7;
 
 /** The DB row shape (snake_case). */
 interface WrittenReportRow {
@@ -76,7 +76,7 @@ const ROW_COLS =
 export interface WrittenReportViewer {
   userId: string;
   level: number;
-  /** The viewer's authorized location ids, or "all" for level >= 9. */
+  /** The viewer's authorized location ids, or "all" for level >= 7. */
   locations: string[] | "all";
 }
 
@@ -92,7 +92,7 @@ export interface WrittenReportListItem extends WrittenReport {
  *
  * Visibility is enforced in app code (service-role bypasses RLS): a report is
  * visible iff `viewer.level >= visibility_min_level` AND the location is either
- * null (all-location), one of the viewer's, or the viewer is level >= 9.
+ * null (all-location), one of the viewer's, or the viewer is level >= 7.
  *
  * `now` is injected for a deterministic canEdit computation (defaults to the
  * request clock).
@@ -106,7 +106,7 @@ export async function listWrittenReports(
   const limit = args.limit ?? 200;
 
   // Base query: visibility floor gate. Location gate is applied below so the
-  // "location IS NULL OR mine OR level>=9" three-way OR is expressed exactly.
+  // "location IS NULL OR mine OR level>=7" three-way OR is expressed exactly.
   let q = service
     .from("written_reports")
     .select(ROW_COLS)
@@ -114,7 +114,7 @@ export async function listWrittenReports(
     .order("submitted_at", { ascending: false })
     .limit(limit);
 
-  // Location scope: level >= 9 sees all; otherwise null-location OR one of mine.
+  // Location scope: level >= 7 sees all; otherwise null-location OR one of mine.
   if (viewer.level < ALL_LOCATIONS_READ_LEVEL && viewer.locations !== "all") {
     const locs = viewer.locations;
     if (locs.length === 0) {
@@ -175,7 +175,7 @@ export async function loadWrittenReport(
 
   // Visibility floor.
   if (viewer.level < data.visibility_min_level) return null;
-  // Location gate: null OR mine OR level>=9.
+  // Location gate: null OR mine OR level>=7.
   if (data.location_id !== null && viewer.level < ALL_LOCATIONS_READ_LEVEL) {
     const locs = viewer.locations;
     const allowed = locs === "all" || locs.includes(data.location_id);

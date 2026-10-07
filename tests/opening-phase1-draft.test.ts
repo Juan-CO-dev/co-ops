@@ -371,10 +371,7 @@ describe("openingPhase1ValueSource — completion beats draft beats empty", () =
 });
 
 describe("OPENING_DRAFT_MIN_LEVEL", () => {
-  it("is the opening PAGE's floor (3), not the submit floor (4)", () => {
-    // The level-3 employee is the actor whose lost work LRA-121 is about. Flooring the
-    // draft at OPENING_BASE_LEVEL would rebuild the defect inside its own fix, so this
-    // number is pinned rather than left to drift with a future role-gate sweep.
+  it("preserves the deprecated draft contract value; assignment gates govern access", () => {
     expect(OPENING_DRAFT_MIN_LEVEL).toBe(3);
   });
 });

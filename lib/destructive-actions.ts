@@ -36,6 +36,11 @@
  */
 
 export const DESTRUCTIVE_ACTIONS = [
+  "station.create",
+  "station.update",
+  "station.event",
+  "assignment.create",
+  "assignment.retract",
   "vendor.import_applied", // A human-approved import changes shared vendor catalog configuration.
   // Purchase-order accountability
   "po.reopened",

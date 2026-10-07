@@ -1,3 +1,4 @@
+import { canAccessOpeningInstance } from "@/lib/opening";
 /**
  * POST /api/opening/submit/phase2 — Opening Phase 2 FINALIZE per C.53 §3 +
  * SPLIT (Question A) + migration 0056.
@@ -89,6 +90,10 @@ export async function POST(req: NextRequest) {
       message: "You don't have access to this location.",
       location_id: instance.location_id,
     });
+  }
+
+  if (!(await canAccessOpeningInstance(service, { instanceId, actor: { userId: ctx.user.id, role: ctx.role, level: ctx.level } }))) {
+    return jsonError(403, "role_level_insufficient", { required: 4, actor_level: ctx.level });
   }
 
   // 4. Finalize. Lib emits the opening.phase2.submit audit row internally.

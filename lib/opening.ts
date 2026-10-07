@@ -1,3 +1,4 @@
+import { hasTaskAccess } from "@/lib/assignments";
 /**
  * Opening Report Phase 1 + Phase 2 lifecycle — Build #3 PR 2 + PR 3.
  *
@@ -670,6 +671,18 @@ export interface CloserCountSnapshot {
  * same idempotent pattern as lib/prep.ts loadAmPrepState. Race-loss path
  * via 23505 unique-violation re-read.
  */
+/** Resolve assignment scope from the stored instance, never from client fields. */
+export async function canAccessOpeningInstance(
+  service: SupabaseClient,
+  args: { instanceId: string; actor: OpeningActor },
+): Promise<boolean> {
+  const { data, error } = await service.from("checklist_instances")
+    .select("location_id, date").eq("id", args.instanceId)
+    .maybeSingle<{ location_id: string; date: string }>();
+  if (error) throw new Error(`opening access: ${error.message}`);
+  return !!data && hasTaskAccess(service, { ...args.actor, locationId: data.location_id, date: data.date, task: "opening_report" });
+}
+
 export async function loadOpeningState(
   service: SupabaseClient,
   args: {
@@ -691,6 +704,7 @@ export async function loadOpeningState(
    */
   derived: Record<string, DerivedSku[]>;
 } | null> {
+  if (!(await hasTaskAccess(service, { ...args.actor, locationId: args.locationId, date: args.date, task: "opening_report" }))) throw new OpeningRoleViolationError(OPENING_BASE_LEVEL, args.actor.level);
   // Resolve active opening template (most-recent-active per Path A versioning).
   // The `.eq("location_id", args.locationId)` clause is LOAD-BEARING: templates
   // are per-location (each location has its own active `type='opening'` rows).
@@ -1352,8 +1366,10 @@ export async function saveOpeningPhase1Draft(
     locationId: string;
     draft: OpeningPhase1Draft;
     savedBy: string | null;
+    actor: OpeningActor;
   },
 ): Promise<{ savedAt: string }> {
+  if (!(await canAccessOpeningInstance(service, args))) throw new OpeningRoleViolationError(OPENING_BASE_LEVEL, args.actor.level);
   // saved_at is written explicitly: the column DEFAULT fires on INSERT only, and an
   // upsert that lands on the UPDATE arm would otherwise keep the first save's timestamp.
   const savedAt = new Date().toISOString();
@@ -1520,7 +1536,7 @@ export async function submitPhase1Atomic(
   // C.46 chain-edit path uses canEditReport which isn't in B2 scope; the
   // `isUpdate` parameter is forward-compat per migration 0055's chain-edit
   // branch but no UI exercises it yet.
-  if (!args.isUpdate && args.actor.level < OPENING_BASE_LEVEL) {
+  if (!(await canAccessOpeningInstance(service, args))) {
     void audit({
       actorId: args.actor.userId,
       actorRole: args.actor.role,
@@ -1895,7 +1911,7 @@ export async function savePhase2Item(
     userAgent: args.userAgent ?? null,
   };
 
-  if (args.actor.level < OPENING_BASE_LEVEL) {
+  if (!(await canAccessOpeningInstance(service, args))) {
     void audit({
       ...auditBase,
       metadata: {
@@ -2104,6 +2120,7 @@ export async function revokePhase2Completion(
     userAgent?: string | null;
   },
 ): Promise<Phase2RevokeResult> {
+  if (!(await canAccessOpeningInstance(service, args))) throw new OpeningRoleViolationError(OPENING_BASE_LEVEL, args.actor.level);
   const auditBase = {
     actorId: args.actor.userId,
     actorRole: args.actor.role,
@@ -2384,7 +2401,7 @@ export async function submitPhase2Atomic(
     userAgent: args.userAgent ?? null,
   };
 
-  if (!args.isUpdate && args.actor.level < OPENING_BASE_LEVEL) {
+  if (!(await canAccessOpeningInstance(service, args))) {
     void audit({
       ...auditBase,
       metadata: {

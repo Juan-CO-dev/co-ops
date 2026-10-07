@@ -1,3 +1,4 @@
+import { canDoOperationalTask } from "@/lib/operational-task-access";
 /**
  * Email-receipt ledger — the vendor-claim side of the two-way match (delivery-intake
  * P2, spec D4/D6; migration 0170). SERVER-ONLY, service-role client; the `receipts`
@@ -376,6 +377,7 @@ export async function uploadManualReceipt(
   if (!lockLocationContext(actorLoc(actor), input.locationId)) {
     throw new EmailReceiptError(404, "not_found", "Location not found");
   }
+  if (!(await canDoOperationalTask(actor, input.locationId, "receiving"))) throw new EmailReceiptError(403, "forbidden");
   if (!isReceiptContentType(input.file.contentType)) {
     throw new EmailReceiptError(400, "unsupported_type", "Unsupported receipt file type");
   }
@@ -866,6 +868,7 @@ export async function listUnlinkedReceipts(actor: AuthContext, locationId: strin
   if (!lockLocationContext(actorLoc(actor), locationId)) {
     throw new EmailReceiptError(404, "not_found", "Location not found");
   }
+  if (!(await canDoOperationalTask(actor, locationId, "receiving"))) throw new EmailReceiptError(403, "forbidden");
   const sb = getServiceRoleClient();
   const { data: rows, error } = await sb
     .from("email_receipts")
@@ -954,9 +957,11 @@ export async function loadPoCandidatesForReceipt(
     throw new EmailReceiptError(404, "not_found", "Receipt not found");
   }
 
+  if (r.location_id != null && !(await canDoOperationalTask(actor, r.location_id, "receiving"))) throw new EmailReceiptError(403, "forbidden");
+
   let q = sb
     .from("purchase_orders")
-    .select("id, display_code, status, vendor_id, created_at")
+    .select("id, display_code, status, vendor_id, created_at, location_id")
     .in("status", ["placed", "invoiced", "received"])
     .order("created_at", { ascending: false })
     .limit(limit);
@@ -973,10 +978,12 @@ export async function loadPoCandidatesForReceipt(
     if (reach !== "all") q = q.in("location_id", reach);
   }
   const { data: pos, error: pErr } = await q.returns<
-    Array<{ id: string; display_code: string; status: string; vendor_id: string; created_at: string }>
+    Array<{ id: string; display_code: string; status: string; vendor_id: string; created_at: string; location_id: string }>
   >();
   if (pErr) throw new Error(`loadPoCandidatesForReceipt pos: ${pErr.message}`);
-  const list = pos ?? [];
+  const candidates = pos ?? [];
+  const permitted = await Promise.all(candidates.map((po) => canDoOperationalTask(actor, po.location_id, "receiving")));
+  const list = candidates.filter((_, index) => permitted[index]);
   if (list.length === 0) return [];
 
   const vendorIds = [...new Set(list.map((p) => p.vendor_id))];
@@ -1031,6 +1038,7 @@ export async function attachReceiptToPo(actor: AuthContext, receiptId: string, p
   if (!po || !lockLocationContext(actorLoc(actor), po.location_id)) {
     throw new EmailReceiptError(404, "not_found", "Order not found");
   }
+  if (!(await canDoOperationalTask(actor, po.location_id, "receiving"))) throw new EmailReceiptError(403, "forbidden");
   if (!["placed", "invoiced", "received"].includes(po.status)) {
     throw new EmailReceiptError(409, "not_attachable", "That order can't take a receipt in its current state");
   }
@@ -1104,6 +1112,7 @@ export async function loadReceiptForDelivery(actor: AuthContext, deliveryId: str
   if (!lockLocationContext(actorLoc(actor), d.location_id)) {
     throw new EmailReceiptError(404, "not_found", "Delivery not found");
   }
+  if (!(await canDoOperationalTask(actor, d.location_id, "receiving"))) throw new EmailReceiptError(403, "forbidden");
   if (!d.email_receipt_id) return null;
 
   const { data: r, error } = await sb
@@ -1156,6 +1165,7 @@ export async function linkReceipt(actor: AuthContext, receiptId: string, deliver
   if (!lockLocationContext(actorLoc(actor), d.location_id)) {
     throw new EmailReceiptError(404, "not_found", "Delivery not found");
   }
+  if (!(await canDoOperationalTask(actor, d.location_id, "receiving"))) throw new EmailReceiptError(403, "forbidden");
   if (d.email_receipt_id) throw new EmailReceiptError(409, "already_linked", "This delivery already has a receipt");
 
   const { data: r, error: rErr } = await sb
@@ -1232,6 +1242,7 @@ async function requireAttestableDelivery(
   if (!lockLocationContext(actorLoc(actor), d.location_id)) {
     throw new EmailReceiptError(404, "not_found", "Delivery not found");
   }
+  if (!(await canDoOperationalTask(actor, d.location_id, "receiving"))) throw new EmailReceiptError(403, "forbidden");
   return d;
 }
 

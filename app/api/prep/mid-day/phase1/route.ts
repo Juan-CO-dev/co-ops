@@ -1,3 +1,5 @@
+import { PrepRoleViolationError } from "@/lib/prep";
+import { hasTaskAccess } from "@/lib/assignments";
 /**
  * POST /api/prep/mid-day/phase1 — submit the Phase 1 count for a mid-day prep
  * instance (C.43). Single-submit: writes one completion per counted item +
@@ -68,9 +70,9 @@ export async function POST(req: NextRequest) {
   // Location access (defense-in-depth) — look up the instance's location.
   const { data: instance, error: instErr } = await service
     .from("checklist_instances")
-    .select("id, location_id")
+    .select("id, location_id, date")
     .eq("id", body.instanceId)
-    .maybeSingle<{ id: string; location_id: string }>();
+    .maybeSingle<{ id: string; location_id: string; date: string }>();
   if (instErr) {
     console.error(`[/api/prep/mid-day/phase1] instance load failed:`, instErr.message);
     return jsonError(500, "internal_error", { message: "instance load failed" });
@@ -84,7 +86,7 @@ export async function POST(req: NextRequest) {
       location_id: instance.location_id,
     });
   }
-  if (ctx.level < AM_PREP_BASE_LEVEL) {
+  if (!(await hasTaskAccess(service, { userId: ctx.user.id, level: ctx.level, locationId: instance.location_id, date: instance.date, task: "mid_day_prep" }))) {
     return jsonError(403, "role_insufficient", {
       message: "Mid-day prep counting is for shift staff.",
       required_level: AM_PREP_BASE_LEVEL,
@@ -110,6 +112,7 @@ export async function POST(req: NextRequest) {
     }
     return jsonOk({ instance: result.instance });
   } catch (err) {
+    if (err instanceof PrepRoleViolationError) return jsonError(403, "role_insufficient", {});
     const msg = err instanceof Error ? err.message : String(err);
     console.error(`[/api/prep/mid-day/phase1] submit failed:`, msg);
     return jsonError(500, "internal_error", { message: "submit failed" });

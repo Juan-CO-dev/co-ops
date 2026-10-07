@@ -1,3 +1,4 @@
+import { canDoOperationalTask } from "@/lib/operational-task-access";
 /**
  * Vendor-ordering OUTBOUND email adapter — the two-tap auto tier (Vendor Ordering V2 §3,
  * V2-D1/D3; §6 rows 1-2). SERVER-ONLY, service-role via lib/purchase-orders.ts's shared
@@ -109,6 +110,7 @@ async function loadPoEmailContext(actor: AuthContext, poId: string): Promise<PoE
   if (!lockLocationContext(actorLoc(actor), po.location_id)) {
     throw new PurchaseOrderError(404, "not_found", "Purchase order not found");
   }
+  if (!(await canDoOperationalTask(actor, po.location_id, "ordering"))) throw new PurchaseOrderError(403, "forbidden");
   if (po.status !== "confirmed") {
     throw new PurchaseOrderError(409, "po_not_confirmed", "Only a confirmed order can be emailed");
   }

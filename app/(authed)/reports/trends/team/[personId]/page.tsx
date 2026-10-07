@@ -1,7 +1,7 @@
 /** /reports/trends/team/[personId] — AGM+ per-person operating-health detail. */
 import { redirect } from "next/navigation";
 
-import { lockLocationContext, type LocationActor } from "@/lib/locations";
+import { canReadReportLocation, type LocationActor } from "@/lib/locations";
 import { operationalNow } from "@/lib/midshift";
 import type { TrendGranularity } from "@/lib/reports-trends";
 import { loadPersonDetail, TEAM_VIEW_LEVEL } from "@/lib/team-metrics";
@@ -27,7 +27,7 @@ export default async function PersonDetailPage({ params, searchParams }: PagePro
   const { location: locationParam, g, cmp } = await searchParams;
   if (!locationParam) redirect("/dashboard");
   const locActor: LocationActor = { role: auth.role, locations: auth.locations };
-  if (!lockLocationContext(locActor, locationParam)) redirect("/dashboard");
+  if (!canReadReportLocation(locActor, locationParam)) redirect("/dashboard");
 
   const language = auth.user.language;
   const granularity = parseGranularity(g);

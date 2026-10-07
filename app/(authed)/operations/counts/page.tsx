@@ -1,8 +1,9 @@
+import { canDoOperationalTask } from "@/lib/operational-task-access";
 import { redirect } from "next/navigation";
 import { serverT } from "@/lib/i18n/server";
 import { lockLocationContext, type LocationActor } from "@/lib/locations";
 import { requireSessionFromHeaders } from "@/lib/session";
-import { loadCountFormData, loadOnHand, COUNT_READ_MIN } from "@/lib/counts";
+import { loadCountFormData, loadCountReferenceData, loadOnHand, COUNT_READ_MIN, COUNT_WRITE_MIN } from "@/lib/counts";
 import { twinVendorLabels } from "@/lib/counts-shared";
 import { CountForm } from "@/components/counts/CountForm";
 import { OnHandPanel } from "@/components/counts/OnHandPanel";
@@ -11,15 +12,20 @@ import { DashboardBackLink } from "@/components/DashboardBackLink";
 export default async function CountsPage({ searchParams }: { searchParams: Promise<{ location?: string }> }) {
   const auth = await requireSessionFromHeaders("/operations/counts");
   const { location } = await searchParams;
-  if (auth.level < COUNT_READ_MIN) redirect("/dashboard");
+  if (auth.level < COUNT_WRITE_MIN) redirect("/dashboard");
   if (!location) redirect("/dashboard");
   const locActor: LocationActor = { role: auth.role, locations: auth.locations };
   if (!lockLocationContext(locActor, location)) redirect("/dashboard");
 
+  const mayCount = await canDoOperationalTask(auth, location, "counts");
+  // Assignment governs the operational form. Existing AGM+ history/variance
+  // visibility remains read-only when somebody else holds today's count task.
+  if (!mayCount && auth.level < COUNT_READ_MIN) redirect("/dashboard");
+
   const lang = auth.user.language;
   const [formData, onHand] = await Promise.all([
-    loadCountFormData(auth, location),
-    loadOnHand(auth, location),
+    mayCount ? loadCountFormData(auth, location) : loadCountReferenceData(auth, location),
+    auth.level >= COUNT_READ_MIN ? loadOnHand(auth, location) : Promise.resolve(null),
   ]);
 
   return (
@@ -35,16 +41,16 @@ export default async function CountsPage({ searchParams }: { searchParams: Promi
       <div className="lg:grid lg:grid-cols-2 lg:items-start lg:gap-8">
       {/* `products` is the C-mode row set (spec option C). It is EMPTY until migration
           0180 applies, and the form then renders exactly as it does on prod today. */}
-      <CountForm skus={formData.skus} products={formData.products} locationId={location} />
+      {mayCount && <CountForm skus={formData.skus} products={formData.products} locationId={location} />}
 
-      <div className="lg:min-w-0">
+      {onHand && <div className="lg:min-w-0">
       <h2 className="mt-6 text-sm font-bold uppercase tracking-[0.14em] text-co-text-dim lg:mt-0">{serverT(lang, "counts.onhand.title")}</h2>
       {/* P8: the ambiguous-name set is derived ONCE, from the count form's option set, and
           shared with the on-hand panel so both halves of this page disambiguate twins the
           same way. An on-hand row for an INACTIVE SKU is not in the option set and simply
           gets no label — honest, since the twin check has no basis to judge it. */}
       <OnHandPanel view={onHand} lang={lang} twinVendorBySkuId={twinVendorLabels(formData.skus)} />
-      </div>
+      </div>}
       </div>
     </main>
   );

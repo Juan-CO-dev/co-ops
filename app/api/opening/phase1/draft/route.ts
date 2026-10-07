@@ -1,3 +1,4 @@
+import { OpeningRoleViolationError, canAccessOpeningInstance } from "@/lib/opening";
 /**
  * POST /api/opening/phase1/draft — autosave the UNSUBMITTED Phase 1 opening form.
  *
@@ -22,17 +23,16 @@
  *   400 invalid_json               — body is not JSON
  *   400 invalid_payload            — instanceId not a uuid, or draft failed the parser
  *   401 (requireSession)           — no live session
- *   403 role_level_insufficient    — actor below OPENING_DRAFT_MIN_LEVEL
+ *   403 role_level_insufficient    — below KH without an active opening assignment
  *   403 location_access_denied     — actor lacks access to the instance's location
  *   404 instance_not_found         — no such instance
  *   409 phase1_not_open            — instance.status !== 'open'
  *   500 internal_error             — unexpected
  *
  * ── THE ROLE FLOOR IS THE PAGE'S, NOT THE SUBMIT'S ───────────────────────────────────
- * `OPENING_DRAFT_MIN_LEVEL` is 3. The opening PAGE carries no level gate beyond a live
- * session and every opening template item is `min_role_level = 3`; the level-3 employee
- * is precisely the actor whose lost work this route exists to save. Flooring here at
- * `OPENING_BASE_LEVEL` (4, the submit floor) would rebuild LRA-121 inside its own fix.
+ * Assignment phase 1: draft access matches submit access (KH+ or today's active
+ * opening assignment). Rechecked on every write so retracting an assignment
+ * also stops draft writes from an already-open tab.
  * Location access is bound with `lockLocationContext` against the instance's own
  * location, exactly as POST /api/opening/submit/phase1 does it.
  *
@@ -73,7 +73,7 @@ import { type NextRequest } from "next/server";
 
 import { jsonError, jsonOk, parseJsonBody } from "@/lib/api-helpers";
 import { lockLocationContext } from "@/lib/locations";
-import { OPENING_DRAFT_MIN_LEVEL, parseOpeningPhase1Draft } from "@/lib/opening-draft-shared";
+import { parseOpeningPhase1Draft } from "@/lib/opening-draft-shared";
 import { saveOpeningPhase1Draft } from "@/lib/opening";
 import { requireSession } from "@/lib/session";
 import { getServiceRoleClient } from "@/lib/supabase-server";
@@ -84,14 +84,6 @@ export async function POST(req: NextRequest) {
   // 1. Auth.
   const ctx = await requireSession(req, "/api/opening/phase1/draft");
   if (ctx instanceof Response) return ctx;
-
-  if (ctx.level < OPENING_DRAFT_MIN_LEVEL) {
-    return jsonError(403, "role_level_insufficient", {
-      message: "Your role cannot record opening work.",
-      required: OPENING_DRAFT_MIN_LEVEL,
-      actor_level: ctx.level,
-    });
-  }
 
   // 2. Parse + validate body. The draft validator is the pure one the loader also runs.
   const parsed = await parseJsonBody(req);
@@ -158,6 +150,10 @@ export async function POST(req: NextRequest) {
     });
   }
 
+  if (!(await canAccessOpeningInstance(service, { instanceId, actor: { userId: ctx.user.id, role: ctx.role, level: ctx.level } }))) {
+    return jsonError(403, "role_level_insufficient", { required: 4, actor_level: ctx.level });
+  }
+
   // 4. Upsert. Last write wins (see saveOpeningPhase1Draft).
   try {
     const { savedAt } = await saveOpeningPhase1Draft(service, {
@@ -165,9 +161,11 @@ export async function POST(req: NextRequest) {
       locationId: instance.location_id,
       draft,
       savedBy: ctx.user.id,
+      actor: { userId: ctx.user.id, role: ctx.role, level: ctx.level },
     });
     return jsonOk({ savedAt });
   } catch (err) {
+    if (err instanceof OpeningRoleViolationError) return jsonError(403, "role_level_insufficient", {});
     const msg = err instanceof Error ? err.message : String(err);
     console.error("[/api/opening/phase1/draft] draft save failed:", msg);
     return jsonError(500, "internal_error", { message: "draft save failed" });

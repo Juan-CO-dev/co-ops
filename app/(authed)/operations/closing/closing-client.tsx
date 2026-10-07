@@ -123,6 +123,7 @@ export interface ClosingInitialState {
    * report-reference template_item_id. Drives Edit affordance rendering.
    */
   reportRefCanEdit: Record<string, boolean>;
+  reportRefCanOpen: Record<string, boolean>;
   /**
    * Fulledit floor cut F — today's AM prep exists with ZERO saved completions
    * (or was never opened). Renders an ADVISORY pill only; never blocks
@@ -238,6 +239,7 @@ export function ClosingClient({ initialState }: { initialState: ClosingInitialSt
     banner: initialBanner,
     reportRefChains,
     reportRefCanEdit,
+    reportRefCanOpen,
     amPrepGap,
     incompleteReasons,
   } = initialState;
@@ -898,6 +900,7 @@ export function ClosingClient({ initialState }: { initialState: ClosingInitialSt
               locationId={location.id}
               reportRefChains={reportRefChains}
               reportRefCanEdit={reportRefCanEdit}
+              reportRefCanOpen={reportRefCanOpen}
               onToggle={() => collapsible.toggle(station)}
               onComplete={handleItemComplete}
               onRevoke={handleItemRevoke}
@@ -959,7 +962,7 @@ export function ClosingClient({ initialState }: { initialState: ClosingInitialSt
       {!readOnly && actor.level >= 4 && walkOutVerificationComplete && !cashDeposited ? (
         <div className="mt-6 rounded-2xl border-2 border-co-cta-text bg-co-danger-surface p-4">
           <p className="text-sm font-bold text-co-text">{t("closing.cash_required.banner")}</p>
-          <div className="mt-3">
+          {templateItems.some((item) => item.reportReferenceType === "cash_report" && reportRefCanOpen[item.id]) ? <div className="mt-3">
             <ActionLink
               href={`/cash?location=${instance.locationId}`}
               variant="primary"
@@ -967,7 +970,7 @@ export function ClosingClient({ initialState }: { initialState: ClosingInitialSt
             >
               {t("closing.cash_required.cta")}
             </ActionLink>
-          </div>
+          </div> : null}
         </div>
       ) : null}
 
@@ -1116,6 +1119,7 @@ function StationGroup({
   locationId,
   reportRefChains,
   reportRefCanEdit,
+  reportRefCanOpen,
   onToggle,
   onComplete,
   onRevoke,
@@ -1154,6 +1158,7 @@ function StationGroup({
   reportRefChains: Record<string, ChecklistChainEntry[]>;
   /** C.46 — canEdit per template_item_id (report-ref items only). */
   reportRefCanEdit: Record<string, boolean>;
+  reportRefCanOpen: Record<string, boolean>;
   onToggle: () => void;
   onComplete: (payload: ChecklistCompletePayload) => Promise<ChecklistCompleteResult>;
   onRevoke: (completionId: string) => Promise<ChecklistRevokeResult>;
@@ -1236,7 +1241,7 @@ function StationGroup({
                   completionAuthor={author}
                   locationId={locationId}
                   readOnly={readOnly}
-                  actorLevel={actor.level}
+                  canOpenTarget={reportRefCanOpen[it.id] ?? false}
                   chainAttribution={reportRefChains[it.id] ?? null}
                   canEdit={reportRefCanEdit[it.id] ?? false}
                 />
@@ -1252,6 +1257,7 @@ function StationGroup({
                 : null;
             return (
               <ChecklistItem
+                templateType="closing"
                 key={it.id}
                 templateItem={it}
                 completion={c}

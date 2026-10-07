@@ -45,3 +45,18 @@ export function evaluateLockUpGate(args: {
   if (walkOut.length > 0 && incompleteItemIds.length > 0) return { ok: false, reason: "walk_out", incompleteItemIds };
   return { ok: true };
 }
+
+/** Closing manual work is open to all shift staff; source reports have their own writers. */
+export function canCompleteChecklistItem(args: {
+  templateType?: string;
+  actorLevel: number;
+  itemMinRoleLevel: number;
+  reportReferenceType: string | null;
+  refTrackItemCompletion?: boolean;
+  referencesTemplateItemId?: string | null;
+}): boolean {
+  if (args.reportReferenceType !== null || (args.refTrackItemCompletion && args.referencesTemplateItemId)) return false;
+  return args.templateType === "closing"
+    ? args.actorLevel >= 2
+    : args.actorLevel >= args.itemMinRoleLevel;
+}

@@ -51,7 +51,7 @@ function setup() {
   const log = vi.fn();
   const deps = {
     OrderingError, PurchaseOrderError, PAR_PASS_MIN: 4, WALKER_SKU_COLUMNS: "id",
-    requireLevel: vi.fn(), lockLocationContext: () => true, actorLoc: () => ({}),
+    requireLevel: vi.fn(), canDoOperationalTask: async () => true, lockLocationContext: () => true, actorLoc: () => ({}),
     getServiceRoleClient: () => sb, etWalkDay: () => ({ weekend: false }),
     loadSkuPackChains: async () => new Map(), loadMeasures: async () => new Map(), loadOverlayBySku: async () => new Map(),
     resolveActive: () => true, num: Number, resolvePar: () => 4,
@@ -183,7 +183,7 @@ describe("LRA-206 / LRA-229: a PO conflict never refuses the walk", () => {
   it("keeps single-vendor cutoff generation's early 409", async () => {
     const loadWalkerData = vi.fn();
     const generate = execute("generateDraftForVendor", {
-      OrderingError, PurchaseOrderError, PAR_PASS_MIN: 4, requireLevel: vi.fn(),
+      OrderingError, PurchaseOrderError, PAR_PASS_MIN: 4, requireLevel: vi.fn(), canDoOperationalTask: async () => true,
       lockLocationContext: () => true, actorLoc: () => ({}), getServiceRoleClient: () => ({}),
       assertNoLivePoToday: async () => { throw new OrderingError(409, "po_exists"); }, loadWalkerData,
     });
@@ -193,7 +193,7 @@ describe("LRA-206 / LRA-229: a PO conflict never refuses the walk", () => {
 
   it("keeps single-vendor cutoff generation's race 409", async () => {
     const generate = execute("generateDraftForVendor", {
-      OrderingError, PurchaseOrderError, PAR_PASS_MIN: 4, requireLevel: vi.fn(),
+      OrderingError, PurchaseOrderError, PAR_PASS_MIN: 4, requireLevel: vi.fn(), canDoOperationalTask: async () => true,
       lockLocationContext: () => true, actorLoc: () => ({}), getServiceRoleClient: () => ({}),
       assertNoLivePoToday: async () => {},
       loadWalkerData: async () => ({ vendors: [{ vendorId: "vendor", skus: [{ skuId: "a", suggestedQty: 2 }] }] }),

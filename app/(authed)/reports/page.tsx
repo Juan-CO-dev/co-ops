@@ -13,7 +13,7 @@ import { redirect } from "next/navigation";
 import { serverT } from "@/lib/i18n/server";
 import type { TranslationKey } from "@/lib/i18n/types";
 import { buildSearchCorpus, searchReport, type SearchSnippet } from "@/lib/reports-search";
-import { lockLocationContext, type LocationActor } from "@/lib/locations";
+import { canReadReportLocation, type LocationActor } from "@/lib/locations";
 import { operationalNow } from "@/lib/midshift";
 import { REPORTS_HUB_CASH_LEVEL, listReports, type ReportTypeKey, type SignalFilters, type Viewer } from "@/lib/reports-hub";
 import { requireSessionFromHeaders } from "@/lib/session";
@@ -64,13 +64,15 @@ export default async function ReportsPage({ searchParams }: PageProps) {
   if (!locationParam) redirect("/dashboard");
 
   const locActor: LocationActor = { role: auth.role, locations: auth.locations };
-  if (!lockLocationContext(locActor, locationParam)) redirect("/dashboard");
+  if (!canReadReportLocation(locActor, locationParam)) redirect("/dashboard");
 
   const lang = auth.user.language;
   const locationId = locationParam;
 
   // ── Default date range: last 14 days ending today (operational TZ) ──
   const todayDate = operationalNow(new Date()).date;
+  // Request-time clock in an async Server Component, not a client render clock.
+  // eslint-disable-next-line react-hooks/purity
   const fourteenDaysAgo = operationalNow(new Date(Date.now() - 14 * 24 * 60 * 60 * 1000)).date;
 
   // Validate + clamp the requested window. from/to are user-supplied and
@@ -120,6 +122,13 @@ export default async function ReportsPage({ searchParams }: PageProps) {
   const hasSignalFilters = Object.keys(signalFilters).length > 0;
 
   const sb = getServiceRoleClient();
+  // Report browsing has a GM+ all-shop grant independent of task/write scope.
+  let reportLocations: Array<{ id: string; name: string }> = [];
+  if (auth.level >= 7) {
+    const { data, error } = await sb.from("locations").select("id, name").eq("active", true).order("name");
+    if (error) throw new Error(`report locations: ${error.message}`);
+    reportLocations = data ?? [];
+  }
   const items = await listReports(sb, {
     viewer,
     locationId,
@@ -173,16 +182,26 @@ export default async function ReportsPage({ searchParams }: PageProps) {
       <div className="mb-3">
         <DashboardBackLink />
       </div>
+      {reportLocations.length > 1 ? (
+        <nav className="mb-4 flex flex-wrap gap-2" aria-label={serverT(lang, "dashboard.location.switcher_aria")}>
+          {reportLocations.map((shop) => (
+            <Link key={shop.id} href={`/reports?location=${shop.id}`} aria-current={shop.id === locationId ? "page" : undefined}
+              className="inline-flex min-h-[44px] items-center rounded-lg border border-co-border-2 px-3 text-sm font-bold text-co-text hover:bg-co-surface-2">
+              {shop.name}
+            </Link>
+          ))}
+        </nav>
+      ) : null}
       <div className="mb-4 flex items-center justify-between">
         <h1 className="text-lg font-bold text-co-text">
           {serverT(lang, "reports.page.title")}
         </h1>
-        <Link
+        {auth.level >= 6 ? <Link
           href={`/reports/trends?location=${locationId}`}
           className="inline-flex min-h-[44px] items-center rounded-full border-2 border-co-border-2 bg-co-surface px-4 text-xs font-bold uppercase tracking-[0.1em] text-co-text-muted transition hover:border-co-text hover:text-co-text"
         >
           {serverT(lang, "reports.trends.nav_label")}
-        </Link>
+        </Link> : null}
       </div>
 
       <ReportFilterBar

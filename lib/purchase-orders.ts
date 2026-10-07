@@ -1,3 +1,4 @@
+import { canDoOperationalTask } from "@/lib/operational-task-access";
 /**
  * Purchase-order lifecycle data layer (Vendor Ordering V1, migration 0174).
  * SERVER-ONLY, service-role client; authorization is APP-LAYER (KH+ gate +
@@ -206,6 +207,7 @@ export async function createDraftsFromLines(
   if (!lockLocationContext(actorLoc(actor), locationId)) {
     throw new PurchaseOrderError(404, "not_found", "Location not found");
   }
+  if (!(await canDoOperationalTask(actor, locationId, "ordering"))) throw new PurchaseOrderError(403, "forbidden");
   const sb = getServiceRoleClient();
 
   // Only vendors that actually carry ≥1 line get a PO.
@@ -362,6 +364,7 @@ export async function createAddOnOrder(actor: AuthContext, poId: string, lines: 
   if (!lockLocationContext(actorLoc(actor), parent.location_id)) {
     throw new PurchaseOrderError(404, "not_found", "Purchase order not found");
   }
+  if (!(await canDoOperationalTask(actor, parent.location_id, "ordering"))) throw new PurchaseOrderError(403, "forbidden");
   if (!["placed", "invoiced", "received", "reconciled"].includes(parent.status)) {
     throw new PurchaseOrderError(409, "not_placed", "Only placed orders can have an add-on");
   }
@@ -485,6 +488,7 @@ export async function updateDraftLines(
   if (!lockLocationContext(actorLoc(actor), po.location_id)) {
     throw new PurchaseOrderError(404, "not_found", "Purchase order not found");
   }
+  if (!(await canDoOperationalTask(actor, po.location_id, "ordering"))) throw new PurchaseOrderError(403, "forbidden");
   if (po.status !== "draft") {
     throw new PurchaseOrderError(409, "not_draft", "Only draft orders can be edited");
   }
@@ -597,6 +601,7 @@ export async function reopenPO(actor: AuthContext, poId: string): Promise<void> 
   if (!lockLocationContext(actorLoc(actor), po.location_id)) {
     throw new PurchaseOrderError(404, "not_found", "Purchase order not found");
   }
+  if (!(await canDoOperationalTask(actor, po.location_id, "ordering"))) throw new PurchaseOrderError(403, "forbidden");
   if (po.status !== "confirmed") throw new PurchaseOrderError(409, "not_confirmed", "Only confirmed orders can be reopened");
   // Preserve confirmation history. confirmPO replaces all four freeze fields on re-confirm.
   const { error, count } = await sb.from("purchase_orders")
@@ -656,6 +661,7 @@ export async function confirmPO(actor: AuthContext, poId: string): Promise<void>
   if (!lockLocationContext(actorLoc(actor), po.location_id)) {
     throw new PurchaseOrderError(404, "not_found", "Purchase order not found");
   }
+  if (!(await canDoOperationalTask(actor, po.location_id, "ordering"))) throw new PurchaseOrderError(403, "forbidden");
   if (po.status !== "draft") {
     throw new PurchaseOrderError(409, "not_draft", "Only draft orders can be confirmed");
   }
@@ -928,6 +934,7 @@ export async function recordPlacement(
   if (!lockLocationContext(actorLoc(actor), po.location_id)) {
     throw new PurchaseOrderError(404, "not_found", "Purchase order not found");
   }
+  if (!(await canDoOperationalTask(actor, po.location_id, "ordering"))) throw new PurchaseOrderError(403, "forbidden");
   if (po.status !== "confirmed") {
     // Name the actual status: already_placed / already_received / already_reconciled
     // for a forward status; not_confirmed for draft (must confirm first).
@@ -1091,6 +1098,7 @@ export async function markReconciled(actor: AuthContext, poId: string): Promise<
   if (!lockLocationContext(actorLoc(actor), po.location_id)) {
     throw new PurchaseOrderError(404, "not_found", "Purchase order not found");
   }
+  if (!(await canDoOperationalTask(actor, po.location_id, "ordering"))) throw new PurchaseOrderError(403, "forbidden");
   if (po.status !== "received") {
     const code = po.status === "reconciled" ? "already_reconciled" : "not_received";
     throw new PurchaseOrderError(409, code, `Order is ${po.status}, not received`);
@@ -1147,6 +1155,7 @@ export async function loadTodaysOrders(actor: AuthContext, locationId: string): 
   if (!lockLocationContext(actorLoc(actor), locationId)) {
     throw new PurchaseOrderError(404, "not_found", "Location not found");
   }
+  if (!(await canDoOperationalTask(actor, locationId, "ordering"))) throw new PurchaseOrderError(403, "forbidden");
   const sb = getServiceRoleClient();
   const { dateEt } = etToday();
   const { startIso, endExclusiveIso } = operationalDayUtcRange(dateEt);
@@ -1206,6 +1215,7 @@ export async function loadPoHistory(actor: AuthContext, locationId: string, limi
   if (!lockLocationContext(actorLoc(actor), locationId)) {
     throw new PurchaseOrderError(404, "not_found", "Location not found");
   }
+  if (!(await canDoOperationalTask(actor, locationId, "ordering"))) throw new PurchaseOrderError(403, "forbidden");
   const sb = getServiceRoleClient();
   const { data: pos, error } = await sb.from("purchase_orders")
     .select("id, display_code, vendor_id, status, created_at, confirmed_at, placed_at")
@@ -1412,6 +1422,7 @@ export async function loadPoDetail(actor: AuthContext, poId: string): Promise<Po
   if (!lockLocationContext(actorLoc(actor), po.location_id)) {
     throw new PurchaseOrderError(404, "not_found", "Purchase order not found");
   }
+  if (!(await canDoOperationalTask(actor, po.location_id, "ordering"))) throw new PurchaseOrderError(403, "forbidden");
 
   // Lines + transmissions + vendor (w/ transmit config) + linked deliveries + the vendor's
   // active contacts + ordering details (batched — the transmit block's read is server-side).

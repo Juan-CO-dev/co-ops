@@ -1,3 +1,5 @@
+import { hasTaskAccess } from "@/lib/assignments";
+import { etCalendarDate } from "@/lib/operational-day";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { RoleCode } from "@/lib/roles";
 
@@ -7,6 +9,11 @@ export interface PmActor {
   userId: string;
   role: RoleCode;
   level: number;
+}
+
+async function requirePmTask(service: SupabaseClient, actor: PmActor, locationId: string): Promise<void> {
+  if (!(await hasTaskAccess(service, { userId: actor.userId, level: actor.level, locationId,
+    date: etCalendarDate(new Date().toISOString()), task: "pm_report" }))) throw new PmReportError(403, "forbidden");
 }
 
 export type Gradient = "great" | "good" | "needs_work";
@@ -131,8 +138,9 @@ export interface PmReportForEdit {
 /** Full report for the KH+ fill/edit surface — includes notes. */
 export async function loadPmReportForEdit(
   service: SupabaseClient,
-  args: { locationId: string; date: string },
+  args: { locationId: string; date: string; actor: PmActor },
 ): Promise<PmReportForEdit | null> {
+  await requirePmTask(service, args.actor, args.locationId);
   const { data: report } = await service
     .from("pm_reports")
     .select("id, status, mvp_user_id, mvp_note, submitted_at, submitted_by")
@@ -230,6 +238,7 @@ export async function getOrCreatePmReport(
   service: SupabaseClient,
   args: { locationId: string; date: string; actor: PmActor },
 ): Promise<{ id: string }> {
+  await requirePmTask(service, args.actor, args.locationId);
   const { data: existing } = await service
     .from("pm_reports")
     .select("id")
@@ -313,6 +322,7 @@ export async function saveEmployeeEval(
     actor: PmActor;
   },
 ): Promise<{ id: string }> {
+  await requirePmTask(service, args.actor, args.locationId);
   // The status guard, ahead of both writes — see readReportStatus for why it is a
   // pre-check here and an in-UPDATE predicate in setMvp.
   const status = await readReportStatus(service, args.pmReportId);
@@ -357,8 +367,9 @@ export async function saveEmployeeEval(
  */
 export async function setMvp(
   service: SupabaseClient,
-  args: { pmReportId: string; mvpUserId: string | null; mvpNote: string | null },
+  args: { pmReportId: string; mvpUserId: string | null; mvpNote: string | null; actor: PmActor; locationId: string },
 ): Promise<void> {
+  await requirePmTask(service, args.actor, args.locationId);
   const { error, count } = await service
     .from("pm_reports")
     .update({ mvp_user_id: args.mvpUserId, mvp_note: args.mvpNote }, { count: "exact" })
@@ -399,6 +410,7 @@ export async function submitPmReport(
   service: SupabaseClient,
   args: { pmReportId: string; locationId: string; actor: PmActor },
 ): Promise<{ notified: number }> {
+  await requirePmTask(service, args.actor, args.locationId);
   const { error, count } = await service
     .from("pm_reports")
     .update(

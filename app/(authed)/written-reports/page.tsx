@@ -31,7 +31,7 @@ export default async function WrittenReportsPage() {
     viewer: {
       userId: auth.user.id,
       level: auth.level,
-      locations: accessibleLocations(actor),
+      locations: auth.level >= 7 ? "all" : accessibleLocations(actor),
     },
   });
 

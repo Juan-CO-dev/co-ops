@@ -22,7 +22,7 @@
 import { readFileSync } from "node:fs";
 
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   AM_PREP_DRAFT_MAX_ITEMS,
@@ -30,7 +30,6 @@ import {
   AM_PREP_DRAFT_TEXT_MAX,
   amPrepDraftApplies,
   amPrepDraftRetryDelayMs,
-  canWriteAmPrepDraft,
   amPrepDraftItemsToFormValues,
   amPrepDraftStampOf,
   createAmPrepDraftStamper,
@@ -54,6 +53,8 @@ const ITEM_1 = "55555555-5555-4555-8555-555555555555";
 const ITEM_2 = "66666666-6666-4666-8666-666666666666";
 const ITEM_3 = "77777777-7777-4777-8777-777777777777";
 const DAY = "2026-10-06";
+beforeEach(() => { vi.useFakeTimers({ toFake: ["Date"] }); vi.setSystemTime(new Date("2026-10-06T16:00:00Z")); });
+afterEach(() => vi.useRealTimers());
 
 // ─────────────────────────────────────────────────────────────────────────────
 // A tiny fake of the supabase-js query builder: rows by table, writes recorded.
@@ -81,6 +82,7 @@ function fakeService(
     let write: Recorded | null = null;
     const api = {
       select: () => api,
+      limit: () => api,
       eq: (c: string, v: unknown) => {
         filters.push([c, v]);
         return api;
@@ -495,11 +497,22 @@ describe("the location bind — a draft write lands only in the actor's own shop
   });
 });
 
-describe("the role gate is AM prep submit's: level >= 4 OR an active assignment", () => {
-  it("the predicate", () => {
-    expect(canWriteAmPrepDraft({ actorLevel: 4, baseLevel: 4, hasAssignment: false })).toBe(true);
-    expect(canWriteAmPrepDraft({ actorLevel: 3, baseLevel: 4, hasAssignment: true })).toBe(true);
-    expect(canWriteAmPrepDraft({ actorLevel: 3, baseLevel: 4, hasAssignment: false })).toBe(false);
+describe("drafts use the current task assignment policy for every role", () => {
+  beforeEach(() => { vi.useFakeTimers({ toFake: ["Date"] }); vi.setSystemTime(new Date("2026-10-06T16:00:00Z")); });
+  afterEach(() => vi.useRealTimers());
+  it("a below-floor actor is refused even with an active assignment", async () => {
+    const f = fakeService({ checklist_instances: openInstance(), checklist_templates: amPrepTemplate, report_assignments: { id: "asg" } });
+    await expect(saveAmPrepDraft(f.service, { actor: { ...employeeAtA, level: 2 }, instanceId: INSTANCE, patch: {} }))
+      .rejects.toMatchObject({ status: 403, code: "prep_role_violation" });
+    expect(f.writes).toEqual([]);
+  });
+
+  it("a KH stale tab cannot write yesterday's draft", async () => {
+    vi.setSystemTime(new Date("2026-10-07T16:00:00Z"));
+    const f = fakeService({ checklist_instances: openInstance(), checklist_templates: amPrepTemplate });
+    await expect(saveAmPrepDraft(f.service, { actor: keyHolderAtA, instanceId: INSTANCE, patch: {} }))
+      .rejects.toMatchObject({ status: 403, code: "prep_role_violation" });
+    expect(f.writes).toEqual([]);
   });
 
   it("an employee with no assignment is refused 403 prep_role_violation, nothing written", async () => {
@@ -519,10 +532,7 @@ describe("the role gate is AM prep submit's: level >= 4 OR an active assignment"
     expect(f.writes).toHaveLength(1);
   });
 
-  it("the gate uses the same constant as submitAmPrep", () => {
-    const src = readFileSync("lib/am-prep-draft.ts", "utf8");
-    expect(src).toMatch(/import \{ AM_PREP_BASE_LEVEL, loadAssignmentForToday \} from "\.\/prep"/);
-  });
+
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -607,6 +617,7 @@ describe("the PAGE's draft read never takes AM prep down (0214 unapplied, or a b
   it("a draft read error degrades to no draft (logged with [am-prep]), never a throw", async () => {
     const api = {
       select: () => api,
+      limit: () => api,
       eq: () => api,
       maybeSingle: async () => ({ data: null, error: { message: 'relation "public.am_prep_drafts" does not exist' } }),
     };

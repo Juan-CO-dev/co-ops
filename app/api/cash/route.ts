@@ -1,3 +1,4 @@
+import { hasTaskAccess } from "@/lib/assignments";
 import { type NextRequest } from "next/server";
 import { jsonError, jsonOk, parseJsonBody } from "@/lib/api-helpers";
 import { lockLocationContext } from "@/lib/locations";
@@ -48,7 +49,8 @@ export async function POST(req: NextRequest) {
   if (!lockLocationContext({ role: ctx.role, locations: ctx.locations }, b.locationId)) {
     return jsonError(403, "location_access_denied", { location_id: b.locationId });
   }
-  if (ctx.level < CASH_REPORT_BASE_LEVEL) {
+  const service = getServiceRoleClient();
+  if (!(await hasTaskAccess(service, { userId: ctx.user.id, level: ctx.level, locationId: b.locationId, date: b.date, task: "cash_report" }))) {
     return jsonError(403, "role_insufficient", { required_level: CASH_REPORT_BASE_LEVEL });
   }
 
@@ -56,7 +58,6 @@ export async function POST(req: NextRequest) {
     return jsonError(401, "pin_invalid", { message: "Incorrect PIN." });
   }
 
-  const service = getServiceRoleClient();
   try {
     const result = await submitCashReport(service, {
       locationId: b.locationId as string, date: b.date as string,
@@ -64,6 +65,7 @@ export async function POST(req: NextRequest) {
       projectedCents: b.projectedCents as number, drawerTotalCents, floatCents,
       countMethod: b.countMethod as "hand" | "denomination", denominations, cashTipsCents: b.cashTipsCents as number, onShift, overShortNote,
     });
+    if (!result.ok && result.reason === "assignment_required") return jsonError(403, "role_insufficient", {});
     if (!result.ok && result.reason === "closing_finalized") {
       return jsonError(409, "closing_finalized", { message: "Today's closing is finalized — the cash deposit is locked." });
     }

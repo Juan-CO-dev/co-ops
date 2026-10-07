@@ -24,6 +24,9 @@
 
 import { after } from "next/server";
 import Link from "next/link";
+import { loadShiftBoard } from "@/lib/assignments";
+import { taskVisible, type TaskType } from "@/lib/assignments-shared";
+import { ShiftBoardClient } from "@/components/assignments/ShiftBoardClient";
 
 import { AuthShell } from "@/components/auth/AuthShell";
 import { BrandMark } from "@/components/BrandMark";
@@ -40,16 +43,11 @@ import { etCalendarDate } from "@/lib/operational-day";
 import { loadAmPrepDashboardState, loadMidDayPrepDashboardState } from "@/lib/prep";
 import { applyEffectiveResolution, type EffectiveResolvableBuilder } from "@/lib/admin/template-builder-shared";
 import { loadCashDashboardState } from "@/lib/cash";
-import { MAINTENANCE_BASE_LEVEL } from "@/lib/maintenance";
 import { loadPmDashboardState } from "@/lib/pm-report";
-import { loadTrendSeries } from "@/lib/reports-trends";
-import { TrendsWidget } from "@/components/trends/TrendsWidget";
-import { loadTeamOperatingHealth, TEAM_VIEW_LEVEL } from "@/lib/team-metrics";
-import { TeamRosterTable } from "@/components/team/TeamRosterTable";
 import { loadRecentDeliveries } from "@/lib/receiving";
 import { loadTodaysOrders } from "@/lib/purchase-orders";
 import { loadOrderingAttention } from "@/lib/ordering";
-import { loadCountsTileState, COUNT_READ_MIN } from "@/lib/counts";
+import { loadCountsTileState } from "@/lib/counts";
 import { OrderingTile } from "@/components/ordering/OrderingTile";
 import {
   deriveCloseState,
@@ -356,39 +354,22 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
     ? await loadOperationalState(sb, selectedLocation.id)
     : null;
 
-  // These six tile loaders depend only on selectedLocation.id + operational.todayDate
-  // (both already resolved above), so run them CONCURRENTLY — page TTFB was the sum
-  // of their latencies, ~25-40 serialized round trips for an AGM+ viewer. The inline
-  // `selectedLocation && operational ?` per element preserves TS narrowing; null
-  // array elements are fine (Promise.all treats them as already-resolved).
-  //  - amPrep: slim tile shape (template existence, today's status + confirmedBy name,
-  //    sub-KH+ assignment which short-circuits inside on actor.level).
-  //  - midDay (C.43): multi-instance list + trigger; visibility gates internally.
-  //  - trends: compact day/no-compare read over the same loadTrendSeries as /reports/trends.
-  //  - teamHealth: AGM+ only (level >= TEAM_VIEW_LEVEL).
+  const shiftBoard = selectedLocation && operational
+    ? await loadShiftBoard(sb, { actor: { userId: auth.user.id, role: auth.role, level: auth.level, locations: auth.locations }, locationId: selectedLocation.id, date: operational.todayDate })
+    : null;
+  const ownTasks = shiftBoard?.tasks.filter((task) => task.assigneeId === auth.user.id) ?? [];
+  const visible = (task: TaskType) => taskVisible(auth.level, task, ownTasks);
   const dashActor = { userId: auth.user.id, role: auth.role, level: auth.level };
-  const dashViewer = { userId: auth.user.id, level: auth.level };
-  const [amPrepDashboard, midDayPrepDashboard, cashDashboard, pmDashboard, trendsSeries, teamHealth] =
-    await Promise.all([
-      selectedLocation && operational
-        ? loadAmPrepDashboardState(sb, { locationId: selectedLocation.id, date: operational.todayDate, actor: dashActor })
-        : null,
-      selectedLocation && operational
-        ? loadMidDayPrepDashboardState(sb, { locationId: selectedLocation.id, date: operational.todayDate, actor: dashActor })
-        : null,
-      selectedLocation && operational
-        ? loadCashDashboardState(sb, { locationId: selectedLocation.id, date: operational.todayDate, actor: dashActor })
-        : null,
-      selectedLocation && operational
-        ? loadPmDashboardState(sb, { locationId: selectedLocation.id, date: operational.todayDate, actor: dashActor })
-        : null,
-      selectedLocation && operational
-        ? loadTrendSeries(sb, { viewer: dashViewer, locationId: selectedLocation.id, granularity: "day", compare: false, today: operational.todayDate })
-        : null,
-      selectedLocation && operational && auth.level >= TEAM_VIEW_LEVEL
-        ? loadTeamOperatingHealth(sb, { viewer: dashViewer, locationId: selectedLocation.id, granularity: "day", compare: false, today: operational.todayDate })
-        : null,
-    ]);
+  const [amPrepDashboard, midDayPrepDashboard, cashDashboard, pmDashboard] = await Promise.all([
+    selectedLocation && operational && visible("am_prep")
+      ? loadAmPrepDashboardState(sb, { locationId: selectedLocation.id, date: operational.todayDate, actor: dashActor }) : null,
+    selectedLocation && operational && visible("mid_day_prep")
+      ? loadMidDayPrepDashboardState(sb, { locationId: selectedLocation.id, date: operational.todayDate, actor: dashActor }) : null,
+    selectedLocation && operational && visible("cash_report")
+      ? loadCashDashboardState(sb, { locationId: selectedLocation.id, date: operational.todayDate, actor: dashActor }) : null,
+    selectedLocation && operational && visible("pm_report")
+      ? loadPmDashboardState(sb, { locationId: selectedLocation.id, date: operational.todayDate, actor: dashActor }) : null,
+  ]);
 
   // Status-tile payloads (dashboard operational legibility, 2026-08-19). These
   // are READ surfaces over existing artifacts — no new capture, no writes.
@@ -399,25 +380,25 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
   // an explicit "couldn't load" — distinct from a genuine empty.
   const tileLocationId = selectedLocation?.id ?? null;
   const [receivingRaw, todaysOrders, cutoffAttention, countsState] = await Promise.all([
-    tileLocationId && auth.level >= 4
+    tileLocationId && visible("receiving")
       ? loadRecentDeliveries(auth, tileLocationId, 20).catch((e) => {
           console.error("dashboard receiving tile load failed", e);
           return null;
         })
       : null,
-    tileLocationId && auth.level >= 4
+    tileLocationId && visible("ordering")
       ? loadTodaysOrders(auth, tileLocationId).catch((e) => {
           console.error("dashboard ordering tile orders load failed", e);
           return null;
         })
       : null,
-    tileLocationId && auth.level >= 4
+    tileLocationId && visible("ordering")
       ? loadOrderingAttention(auth, tileLocationId).catch((e) => {
           console.error("dashboard ordering tile cutoff load failed", e);
           return null;
         })
       : null,
-    tileLocationId && auth.level >= COUNT_READ_MIN
+    tileLocationId && visible("counts")
       ? loadCountsTileState(auth, tileLocationId).catch((e) => {
           console.error("dashboard counts tile load failed", e);
           return null;
@@ -428,6 +409,8 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
   // Project the loader rows into the pure compose functions' fact shapes. The
   // missing-email rule and the arrival-time formatting both read a clock / the
   // viewer's language, so they happen HERE — never inside a compose or a render.
+  // Async server render: evaluate overdue receipts against this request time.
+  // eslint-disable-next-line react-hooks/purity
   const missingEmailIds = receivingRaw ? deriveMissingEmailIds(receivingRaw, Date.now()) : new Set<string>();
   const receivingFacts: ReceivingDeliveryFacts[] | null = receivingRaw
     ? receivingRaw.map((d) => ({
@@ -453,9 +436,7 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
       }))
     : null;
 
-  // Opening Report tile state (C.53) — resolve template + today's status inline
-  // (the /operations/opening page owns the gate + 3-phase flow). Visible to
-  // shift staff (level >= 3).
+  const openingVisible = visible("opening_report");
   let openingDashboard:
     | {
         isVisibleToActor: boolean;
@@ -466,7 +447,7 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
       }
     | null = null;
   if (selectedLocation && operational) {
-    if (auth.level < 3) {
+    if (!openingVisible) {
       openingDashboard = { isVisibleToActor: false, hasTemplate: false, status: null, finalizedAt: null, finalizedByName: null };
     } else {
       // PR-3: date-aware resolution on today's operational date (the opening tile
@@ -646,14 +627,7 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
         </div>
         </div>
 
-        {/* Yesterday-unconfirmed alert — operational concern, not a history view. */}
-        {selectedLocation && operational?.yesterdayUnconfirmed ? (
-          <YesterdayUnconfirmedAlert
-            location={selectedLocation}
-            yesterdayDate={operational.yesterdayDate}
-            language={language}
-          />
-        ) : null}
+        {shiftBoard && <ShiftBoardClient key={shiftBoard.locationId} board={shiftBoard} compact />}
 
         {/* Today's Operations card. */}
         {selectedLocation && operational ? (
@@ -666,27 +640,7 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
           <NoLocationsState language={language} />
         )}
 
-        {/* Reports section — renders only when at least one tile is visible
-         * to the actor. Per C.42: dashboard tiles are action-oriented for
-         * today's operations; the reports HUB (historical browse) is a
-         * separate page that ships in a Build #2 follow-up PR.
-         *
-         * Tile visibility predicate per C.42 + C.41:
-         *   - actor.level >= AM_PREP_BASE_LEVEL (3, KH+ post-C.41), OR
-         *   - active report_assignments row for (user, am_prep, location, today)
-         *
-         * Sub-KH+ users without an assignment see no Reports section at all
-         * (no empty placeholder). Future tiles (Mid-day Prep, Cash report,
-         * Opening report, Special, Training) plug into the same section
-         * under their own visibility predicates. */}
-        {selectedLocation &&
-        operational &&
-        (openingDashboard?.isVisibleToActor ||
-          amPrepDashboard?.isVisibleToActor ||
-          midDayPrepDashboard?.isVisibleToActor ||
-          cashDashboard?.isVisibleToActor ||
-          pmDashboard?.isVisibleToActor ||
-          auth.level >= 4) ? (
+        {selectedLocation && operational && ownTasks.some((task) => visible(task.task)) ? (
           <ReportsSection language={language}>
             {openingDashboard?.isVisibleToActor ? (
               <OpeningTile
@@ -728,7 +682,7 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
                 date={operational.todayDate}
               />
             ) : null}
-            {auth.level >= 4 ? (
+            {visible("receiving") ? (
               <ReceivingTile
                 language={language}
                 locationId={selectedLocation.id}
@@ -736,7 +690,7 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
                 today={operational.todayDate}
               />
             ) : null}
-            {auth.level >= 4 ? (
+            {visible("ordering") ? (
               <OrderingTile
                 language={language}
                 locationId={selectedLocation.id}
@@ -744,7 +698,7 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
                 orders={orderFacts}
               />
             ) : null}
-            {auth.level >= COUNT_READ_MIN ? (
+            {visible("counts") ? (
               <CountsTile
                 language={language}
                 locationId={selectedLocation.id}
@@ -767,30 +721,6 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
               />
             ) : null}
           </ReportsSection>
-        ) : null}
-
-        {selectedLocation && trendsSeries ? (
-          <TrendsWidget series={trendsSeries} locationId={selectedLocation.id} language={language} />
-        ) : null}
-
-        {selectedLocation && teamHealth ? (
-          <TeamRosterTable health={teamHealth} locationId={selectedLocation.id} language={language} />
-        ) : null}
-
-        {/* Maintenance Log nav entry — utility surface, not a daily-status tile.
-         * Always available for level >= MAINTENANCE_BASE_LEVEL (3 = Shift Lead+).
-         * Requires a selected location because the page redirects to /dashboard
-         * without the `location` query param. */}
-        {selectedLocation && auth.level >= MAINTENANCE_BASE_LEVEL ? (
-          <div className="flex flex-col gap-2">
-            <ActionLink
-              href={`/maintenance?location=${selectedLocation.id}`}
-              variant="secondary"
-              className="w-full md:w-auto md:self-start"
-            >
-              {serverT(language, "maintenance.nav_label")}
-            </ActionLink>
-          </div>
         ) : null}
 
         <div className="flex justify-center">
@@ -841,59 +771,6 @@ function LocationSwitcher({
         );
       })}
     </nav>
-  );
-}
-
-function YesterdayUnconfirmedAlert({
-  location,
-  yesterdayDate,
-  language,
-}: {
-  location: LocationLite;
-  yesterdayDate: string;
-  language: Language;
-}) {
-  return (
-    <section
-      role="alert"
-      aria-label={serverT(language, "dashboard.yesterday.aria")}
-      className="
-        flex flex-col gap-3 rounded-2xl
-        border-2 border-co-gold-deep bg-co-warning-surface
-        p-4 sm:p-5
-      "
-    >
-      <div className="flex items-start gap-3">
-        <span
-          aria-hidden
-          className="
-            mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center
-            rounded-full bg-co-gold-deep text-co-text
-          "
-        >
-          <WarningIcon />
-        </span>
-        <div className="flex-1 min-w-0">
-          <p className="text-sm font-bold text-co-text">
-            {serverT(language, "dashboard.yesterday.title", { code: location.code })}
-          </p>
-          <p className="mt-1 text-xs text-co-text-muted">
-            {serverT(language, "dashboard.yesterday.body", {
-              date: formatDateLabel(yesterdayDate, language),
-            })}
-          </p>
-        </div>
-      </div>
-      <div className="sm:pl-10">
-        <ActionLink
-          href={`/operations/closing?location=${location.id}&date=${yesterdayDate}`}
-          variant="secondary"
-          className="w-full sm:w-auto"
-        >
-          {serverT(language, "dashboard.yesterday.cta")}
-        </ActionLink>
-      </div>
-    </section>
   );
 }
 
@@ -1170,19 +1047,3 @@ function AmPrepTile({
 // server (Vercel runtime is UTC) — Juan's smoke surfaced "Submitted at
 // 7:17 PM by Juan" for a 3:17 PM EDT submission (4-hour offset = EDT
 // vs UTC). Canonical formatTime always pins to operational TZ.
-
-function WarningIcon() {
-  return (
-    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden>
-      <path
-        d="M8 1.5L15 14H1L8 1.5z"
-        stroke="currentColor"
-        strokeWidth="1.5"
-        strokeLinejoin="round"
-        fill="none"
-      />
-      <path d="M8 6v3.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-      <circle cx="8" cy="11.5" r="0.75" fill="currentColor" />
-    </svg>
-  );
-}
