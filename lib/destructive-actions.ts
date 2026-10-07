@@ -396,6 +396,16 @@ export const DESTRUCTIVE_ACTIONS = [
   //   the vocabulary stays closed and the row reads destructive=true in the admin hub.
   "catering.test_data_purge",
 
+  // ── Report recipients + digest settings (0220, 2026-10-07) ────────────────
+  // Who receives the closing / unified / catering digests (and, from the exports PR, the
+  // accountant package) is shared operational config: a human adding, editing or switching
+  // off a recipient row, or moving the catering digest time, changes where the business's
+  // numbers go. Forensic-only membership, like every entry here.
+  "report_recipient.create",
+  "report_recipient.update",
+  "report_recipient.deactivate",
+  "report_settings.update",
+
   // Bulk / sensitive
   "reports.bulk_export",
   "reports.bulk_correct",
