@@ -29,6 +29,12 @@ const KNOWN_ERROR_CODES = new Set([
   "would_create_cycle",
   "invalid_output",
   "invalid_sell_portion",
+  // 0215 batch vs bottle (lib/recipes.ts BATCH_MODE_RPC_ERRORS + the app-layer checks)
+  "duplicate_active_producer",
+  "edge_not_found",
+  "batch_mode_single_output",
+  "batch_mode_requires_output",
+  "invalid_shelf_life_days",
 ]);
 
 export function resolveErrorKey(code: string): TranslationKey {

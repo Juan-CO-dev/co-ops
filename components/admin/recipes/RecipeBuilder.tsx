@@ -145,6 +145,10 @@ export function RecipeBuilder({
   const [nameVal, setNameVal] = useState(recipe?.name ?? "");
   const [nameEsVal, setNameEsVal] = useState(recipe?.nameEs ?? "");
   const [batchYieldVal, setBatchYieldVal] = useState(String(recipe?.batchYield ?? "1"));
+  // 0215 batch vs bottle: shelf life (whole days) and the batch_mode flag. LIVE patches on
+  // blur/change like every other header field; DRAFT rides the full POST.
+  const [shelfLifeVal, setShelfLifeVal] = useState(String(recipe?.shelfLifeDays ?? "5"));
+  const [batchModeVal, setBatchModeVal] = useState<boolean>(recipe?.batchMode ?? false);
   const [directionsVal, setDirectionsVal] = useState(recipe?.directions ?? "");
   const [directionsEsVal, setDirectionsEsVal] = useState(recipe?.directionsEs ?? "");
 
@@ -199,6 +203,31 @@ export function RecipeBuilder({
     const n = Number(batchYieldVal);
     if (recipe && Number.isFinite(n) && n > 0 && n !== recipe.batchYield) void patchField("batchYield", n);
   };
+  const handleShelfLifeBlur = () => {
+    const n = Number(shelfLifeVal);
+    if (!recipe) return;
+    if (!Number.isInteger(n) || n <= 0) { setPatchError(t(rk("recipes.error.invalid_shelf_life_days"))); setShelfLifeVal(String(recipe.shelfLifeDays)); return; }
+    if (n !== recipe.shelfLifeDays) void patchField("shelfLifeDays", n);
+  };
+  const handleBatchModeChange = async (on: boolean) => {
+    if (!recipe) { setBatchModeVal(on); return; }
+    // Optimistic flip, reverted on refusal: the server (set_recipe_batch_mode) is the
+    // authority on the one-output rule and the error text says what to fix.
+    const prev = batchModeVal;
+    setBatchModeVal(on);
+    if (!canEdit) return;
+    if ((await requestStepUp("B")) !== "ok") { setBatchModeVal(prev); return; }
+    setPatchError(null);
+    setPatchBusy(true);
+    const result = await postJson(`/api/admin/recipes/${recipe.id}`, { batchMode: on }, "PATCH");
+    setPatchBusy(false);
+    if (result.ok) {
+      router.refresh();
+    } else {
+      setBatchModeVal(prev);
+      setPatchError(t(resolveErrorKey(result.code)));
+    }
+  };
   const handleDirectionsBlur = () => {
     const v = directionsVal.trim() || null;
     if (recipe && v !== (recipe.directions ?? null)) void patchField("directions", v);
@@ -232,8 +261,16 @@ export function RecipeBuilder({
     const batchYield = Number(batchYieldVal);
     if (!name) { setSaveError(t(rk("recipes.error.invalid_name"))); return; }
     if (!Number.isFinite(batchYield) || batchYield <= 0) { setSaveError(t(rk("recipes.error.invalid_batch_yield"))); return; }
+    const shelfLifeDays = Number(shelfLifeVal);
+    if (!Number.isInteger(shelfLifeDays) || shelfLifeDays <= 0) { setSaveError(t(rk("recipes.error.invalid_shelf_life_days"))); return; }
     if (draftInputs.length === 0) { setSaveError(t(rk("recipes.draft.error_no_inputs"))); return; }
     if (draftOutputs.length === 0) { setSaveError(t(rk("recipes.draft.error_no_outputs"))); return; }
+    // 0215: a batch recipe is ONE item's whole recipe — the server refuses anything else; say
+    // it here first so the author fixes the outputs instead of reading a 422.
+    if (batchModeVal && (draftOutputs.length !== 1 || draftOutputs[0]?.kind !== "item" || !(draftOutputs[0]?.yield > 0))) {
+      setSaveError(t(rk("recipes.error.batch_mode_single_output")));
+      return;
+    }
     if ((await requestStepUp("B")) !== "ok") return;
     setSaveBusy(true);
     const result = await postJson("/api/admin/recipes/full", {
@@ -243,6 +280,8 @@ export function RecipeBuilder({
       batchYield,
       directions: directionsVal.trim() || null,
       directionsEs: directionsEsVal.trim() || null,
+      batchMode: batchModeVal,
+      shelfLifeDays,
       inputs: draftInputs.map((inp) => ({
         componentSkuId: inp.componentSkuId ?? undefined,
         componentItemId: inp.componentItemId ?? undefined,
@@ -386,6 +425,38 @@ export function RecipeBuilder({
               onChange={(e) => setBatchYieldVal(e.target.value)}
               onBlur={recipe ? handleBatchYieldBlur : undefined}
             />
+          </label>
+
+          {/* Shelf life (0215 batch vs bottle) */}
+          <label className="block">
+            <span className="text-sm font-bold text-co-text">{t(rk("recipes.builder.shelf_life_days"))}</span>
+            <input
+              className={fieldCls}
+              type="number"
+              min={1}
+              step={1}
+              inputMode="numeric"
+              value={shelfLifeVal}
+              disabled={(!canEdit) || patchBusy}
+              onChange={(e) => setShelfLifeVal(e.target.value)}
+              onBlur={recipe ? handleShelfLifeBlur : undefined}
+            />
+            <span className="mt-1 block text-xs text-co-text-muted">{t(rk("recipes.builder.shelf_life_hint"))}</span>
+          </label>
+
+          {/* Batch mode (0215 batch vs bottle) */}
+          <label className="flex min-h-[44px] items-start gap-3">
+            <input
+              type="checkbox"
+              className="mt-1 h-5 w-5 accent-co-gold"
+              checked={batchModeVal}
+              disabled={(!canEdit) || patchBusy}
+              onChange={(e) => void handleBatchModeChange(e.target.checked)}
+            />
+            <span className="flex flex-col">
+              <span className="text-sm font-bold text-co-text">{t(rk("recipes.builder.batch_mode"))}</span>
+              <span className="text-xs text-co-text-muted">{t(rk("recipes.builder.batch_mode_hint"))}</span>
+            </span>
           </label>
 
           {/* Directions (collapsible) */}
