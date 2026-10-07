@@ -85,6 +85,9 @@ function extract(fn: "assertStepUp" | "requestStepUp", keep: (rel: string) => bo
 // ── THE SERVER HALF: route file → the tiers it asserts ────────────────────────
 const SERVER_TIER_MAP: Record<string, string[]> = {
   "app/api/admin/stations/route.ts": ["B"],
+  // 0220 report recipients: both writers are owner-level config changes (Tier B).
+  "app/api/admin/report-recipients/route.ts": ["B"],
+  "app/api/admin/report-recipients/settings/route.ts": ["B"],
   "app/api/admin/catalog/item-type/[id]/route.ts": ["A"],
   "app/api/admin/categories/route.ts": ["B"],
   "app/api/admin/catering/capacity/[id]/route.ts": ["A", "B"],
@@ -199,6 +202,7 @@ const SERVER_TIER_MAP: Record<string, string[]> = {
 // ── THE CLIENT HALF: component → the tiers it requests ────────────────────────
 const CLIENT_TIER_MAP: Record<string, string[]> = {
   "components/assignments/StationsAdmin.tsx": ["B"],
+  "components/admin/report-recipients/ReportRecipientsAdmin.tsx": ["B"],
   "app/admin/catering/rate-rules/rate-rules-client.tsx": ["B"],
   // The provider itself — the parameter, not a call site.
   "components/admin/StepUpProvider.tsx": ["VAR:tier"],
