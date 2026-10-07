@@ -85,7 +85,7 @@ describe("operational task enforcement", () => {
   }
 });
 
-function countPost(ctx: AuthContext, writer: (...args: unknown[]) => Promise<unknown>) {
+function countPost(ctx: AuthContext, writer: (...args: unknown[]) => Promise<unknown>, pin: string | undefined = "1234") {
   const src = readFileSync("app/api/operations/counts/route.ts", "utf8");
   const ast = ts.createSourceFile("route.ts", src, ts.ScriptTarget.Latest, true);
   const fn = ast.statements.find(node => ts.isFunctionDeclaration(node) && node.name?.text === "POST")!;
@@ -93,7 +93,8 @@ function countPost(ctx: AuthContext, writer: (...args: unknown[]) => Promise<unk
   const deps = {
     ROLES, assertStepUp, COUNT_WRITE_MIN: 4, COUNT_READ_MIN: 6, CountError: DomainError,
     requireSession: async () => ctx,
-    parseJsonBody: async () => ({ locationId, lines: [{ skuId: "sku", levelLabel: "each", qty: 1 }] }),
+    parseJsonBody: async () => ({ locationId, pin, lines: [{ skuId: "sku", levelLabel: "each", qty: 1 }] }),
+    verifyActorPin: async (_userId: string, supplied: string) => supplied === "1234",
     createCountEvent: writer,
     jsonError: (status: number, code: string) => Response.json({ code }, { status }),
     jsonOk: (body: unknown, status: number) => Response.json(body, { status }),
@@ -103,11 +104,11 @@ function countPost(ctx: AuthContext, writer: (...args: unknown[]) => Promise<unk
 
 describe("count API step-up and assignment boundary", () => {
   const signedIn = (role: RoleCode, unlocked = false) => ({ ...actor(role), session: { stepUpUnlocked: unlocked } }) as AuthContext;
-  it.each(["key_holder", "trainer", "shift_lead"] as const)("%s must satisfy password step-up before writing", async role => {
+  it.each(["key_holder", "trainer", "shift_lead"] as const)("%s must re-enter a correct PIN before writing", async role => {
     const writer = vi.fn(async () => ({ countEventId: "count", advisories: [] }));
-    const res = await countPost(signedIn(role), writer);
-    expect(res.status).toBe(403);
-    expect(await res.json()).toEqual({ code: "step_up_required" });
+    const res = await countPost(signedIn(role), writer, "0000");
+    expect(res.status).toBe(401);
+    expect(await res.json()).toEqual({ code: "pin_invalid" });
     expect(writer).not.toHaveBeenCalled();
   });
   it.each(["agm", "gm", "owner"] as const)("%s retains the password step-up before writing", async role => {
@@ -120,11 +121,11 @@ describe("count API step-up and assignment boundary", () => {
   it("passes an assigned KH through the actual library authorization gate", async () => {
     ownAssignment = true;
     // Empty lines deliberately stop immediately AFTER authorization, without simulating inventory writes.
-    const res = await countPost(signedIn("key_holder", true), (ctx) => count(ctx, { locationId, lines: [] }));
+    const res = await countPost(signedIn("key_holder"), (ctx) => count(ctx, { locationId, lines: [] }));
     expect(res.status).toBe(400);
     expect(await res.json()).toEqual({ code: "no_lines" });
   });
-  it.each(["key_holder", "owner"] as const)("%s passes library authorization for another assignee after step-up", async role => {
+  it.each(["key_holder", "owner"] as const)("%s passes library authorization for another assignee after credential confirmation", async role => {
     assignedToOther = true;
     // Empty lines stop after the real assignment boundary, before inventory writes.
     const res = await countPost(signedIn(role, true), (ctx) => count(ctx, { locationId, lines: [] }));
@@ -165,11 +166,18 @@ describe("count read-only view", () => {
     expect(page.form).not.toHaveBeenCalled();
     expect(page.reference).toHaveBeenCalledOnce();
   });
-  it("assigned KH receives the form without the AGM reference view", async () => {
-    const page = await countPage("key_holder", true);
+  it.each(["key_holder", "trainer", "shift_lead"] as const)("assigned %s receives a PIN form without the AGM reference view", async role => {
+    const page = await countPage(role, true);
     expect(page.rendered).toContain("CountForm");
+    expect(page.rendered).toContain('"requiresPin":true');
     expect(page.rendered).not.toContain("OnHandPanel");
     expect(page.onHand).not.toHaveBeenCalled();
+  });
+  it("AGM receives the password confirmation form", async () => {
+    expect((await countPage("agm", true)).rendered).toContain('"requiresPin":false');
+  });
+  it("a below-floor assignee cannot see a count form", async () => {
+    await expect(countPage("employee", true)).rejects.toThrow("redirect");
   });
   it("KH without task permission cannot enter the reference view", async () => {
     await expect(countPage("key_holder", false)).rejects.toThrow("redirect");

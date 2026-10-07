@@ -4,14 +4,14 @@ import { MIDSHIFT_BASE_LEVEL } from "@/lib/midshift-shared";
 import { navDestinationsFor, chipHref } from "@/lib/nav-links";
 
 const hrefs = (level: number) => navDestinationsFor(level).map((d) => d.href).sort();
-const everyone = ["/maintenance", "/training", "/recipes", "/profile", "/settings", "/my-feedback"];
+const everyone = ["/training", "/recipes", "/profile", "/settings", "/my-feedback"];
 const kh = ["/mid-shift", "/assignments", "/reports"];
 const lead = ["/catering", "/written-reports"];
 const manager = ["/reports/trends", "/lto", "/admin"];
 
 describe("role navigation", () => {
   it.each([2, 3, 4, 5, 6, 7, 9])("shows exactly the approved destinations at level %s", (level) => {
-    expect(hrefs(level)).toEqual([...everyone, ...(level >= 4 ? kh : []), ...(level >= 5 ? lead : []), ...(level >= 6 ? manager : [])].sort());
+    expect(hrefs(level)).toEqual([...everyone, ...(level >= 3 ? ["/maintenance"] : []), ...(level >= 4 ? kh : []), ...(level >= 5 ? lead : []), ...(level >= 6 ? manager : [])].sort());
   });
   it("never advertises a placeholder or the ordering task in navigation", () => {
     for (const level of [2, 3, 4, 5, 6, 7, 9, 10]) {
@@ -21,7 +21,7 @@ describe("role navigation", () => {
   it("satisfies the destination server floors, including Catering's level-5 page", () => {
     // Floors confirmed against destination pages/layouts and their server loaders.
     const pageFloors: Record<string, number> = {
-      "/maintenance": 0, "/training": 0, "/recipes": 0, "/profile": 0, "/settings": 0, "/my-feedback": 0,
+      "/maintenance": 3, "/training": 0, "/recipes": 0, "/profile": 0, "/settings": 0, "/my-feedback": 0,
       "/mid-shift": 4, "/assignments": 4, "/reports": 0,
       "/catering": 5, "/written-reports": 0, "/reports/trends": 0, "/lto": 0, "/admin": 6,
     };
@@ -44,6 +44,7 @@ describe("role navigation", () => {
       return Number(value);
     };
     const actualFloors: Record<string, number> = {
+      "/maintenance": declaredNumber(source("lib/maintenance.ts"), /const MAINTENANCE_BASE_LEVEL = (\d+)/),
       "/catering": declaredNumber(catering, /const CATERING_HUB_MIN = (\d+)/),
       "/admin": declaredNumber(admin, /const ADMIN_MIN_LEVEL = (\d+)/),
       "/assignments": declaredNumber(assignments, /if \(auth\.level < (\d+)\) redirect/),

@@ -2,6 +2,7 @@ import { auditTaskOverride, hasTaskAccess } from "@/lib/assignments";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { audit } from "@/lib/audit";
 import type { RoleCode } from "@/lib/roles";
+import { lockLocationContext, type LocationActor } from "@/lib/locations";
 import { applyEffectiveResolution, type EffectiveResolvableBuilder } from "@/lib/admin/template-builder-shared";
 
 import {
@@ -92,7 +93,7 @@ export async function loadCashDashboardState(
 
 export type CashSubmitResult =
   | { ok: true; id: string }
-  | { ok: false; reason: "closing_finalized" | "assignment_required" };
+  | { ok: false; reason: "closing_finalized" | "assignment_required" | "location_access_denied" };
 
 /**
  * Append-only signed write. Recomputes totals server-side (never trusts the
@@ -103,12 +104,15 @@ export type CashSubmitResult =
 export async function submitCashReport(
   service: SupabaseClient,
   args: {
-    locationId: string; date: string; actor: CashActor;
+    locationId: string; date: string; actor: CashActor & LocationActor;
     projectedCents: number; drawerTotalCents: number; floatCents: number;
     countMethod: "hand" | "denomination"; denominations: Denominations | null;
     cashTipsCents: number; onShift: OnShiftEntry[]; overShortNote: string | null;
   },
 ): Promise<CashSubmitResult> {
+  if (!lockLocationContext(args.actor, args.locationId)) {
+    return { ok: false, reason: "location_access_denied" };
+  }
   if (!(await hasTaskAccess(service, { ...args.actor, locationId: args.locationId, date: args.date, task: "cash_report" }))) {
     return { ok: false, reason: "assignment_required" };
   }

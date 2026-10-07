@@ -108,16 +108,18 @@ type Advisory = {
   absorbedByVendorName?: string | null;
 };
 
-export function CountForm({ skus, products, locationId }: {
+export function CountForm({ skus, products, locationId, requiresPin }: {
   skus: CountSkuOption[];
   /** The PRODUCT rows. EMPTY before migration 0180 applies — the sheet then renders
    *  exactly as it did before this arc, which is the point of the gate. */
   products: CountProductOption[];
   locationId: string;
+  requiresPin: boolean;
 }) {
   const { t } = useTranslation();
   const router = useRouter();
   const [note, setNote] = useState("");
+  const [pin, setPin] = useState("");
   const [lines, setLines] = useState<LineDraft[]>([emptyLine()]);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -162,7 +164,7 @@ export function CountForm({ skus, products, locationId }: {
     return { ...l, split: !l.split, members: p.memberSkuIds.map((id) => existing.get(id) ?? emptyMember(id)) };
   }));
 
-  const canSubmit = !busy && lines.some((l) => filledEntries(l) > 0);
+  const canSubmit = !busy && (!requiresPin || /^\d{4}$/.test(pin)) && lines.some((l) => filledEntries(l) > 0);
 
   // What submit() will drop — see incompleteEntryCount's contract above.
   const incompleteCount = incompleteEntryCount(lines);
@@ -185,7 +187,16 @@ export function CountForm({ skus, products, locationId }: {
       const p = productOf(l);
       return p ? [{ productId: p.productId, ...common(l) }] : [{ skuId: l.pick.slice(4), ...common(l) }];
     });
-    const res = await fetch("/api/operations/counts", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ locationId, note: note.trim() || null, lines: payloadLines }) });
+    const body = JSON.stringify({ locationId, note: note.trim() || null, lines: payloadLines, ...(requiresPin ? { pin } : {}) });
+    setPin("");
+    let res: Response;
+    try {
+      res = await fetch("/api/operations/counts", { method: "POST", headers: { "content-type": "application/json" }, body });
+    } catch {
+      setBusy(false);
+      setErr(t("auth.pin_modal.error_network"));
+      return;
+    }
     setBusy(false);
     if (res.ok) {
       const body = await res.json().catch(() => ({} as { advisories?: Advisory[] }));
@@ -197,6 +208,10 @@ export function CountForm({ skus, products, locationId }: {
       return;
     }
     const j = await res.json().catch(() => ({} as { code?: string; detail?: { levelLabel?: string | null; skuName?: string | null; skuId?: string | null } | null }));
+    if (j?.code === "pin_invalid") {
+      setErr(t("auth.pin_modal.error_pin_mismatch"));
+      return;
+    }
     if (j?.code === "step_up_required" || j?.code === "step_up_stale") {
       pendingRef.current = () => void submit();
       setStepUpOpen(true);
@@ -350,6 +365,13 @@ export function CountForm({ skus, products, locationId }: {
         </div>
       ) : null}
       <div className="mt-4 flex justify-end">
+        {requiresPin && <label className="mr-3 block">
+          <span className={subLabel}>{t("auth.pin_modal.pin_label")}</span>
+          <input type="password" inputMode="numeric" autoComplete="off" maxLength={4}
+            className={field} value={pin} disabled={busy}
+            onChange={(e) => setPin(e.target.value.replace(/\D/g, "").slice(0, 4))}
+            aria-label={t("auth.pin_modal.pin_label")} />
+        </label>}
         <ActionButton disabled={!canSubmit} onClick={() => void submit()}>{t("counts.form.submit")}</ActionButton>
       </div>
       {/* PasswordModal posts /api/auth/step-up itself and confirms only on 200. */}

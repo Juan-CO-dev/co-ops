@@ -89,7 +89,7 @@ describe("assignment writer front doors", () => {
     await expect(writeStationEvent(f.service, { actor: employee, locationId: SHOP, userId: ACTOR, stationId: STATION })).rejects.toMatchObject({ code: "station_locked", status: 403 });
     expect(f.rpc).toHaveBeenCalledWith("write_station_event", { p_actor_id: ACTOR, p_user_id: ACTOR, p_location_id: SHOP, p_station_id: STATION, p_manage: false });
   });
-  it("permits KH self management but refuses an employee's manage flag before I/O", async () => {
+  it("permits a KH self claim but refuses an employee's manage flag before I/O", async () => {
     const f = fake();
     await expect(writeStationEvent(f.service, { actor: { ...actor, level: 3, role: "employee" }, locationId: SHOP, userId: ACTOR, stationId: STATION, manage: true })).rejects.toMatchObject({ code: "role_insufficient" });
     expect(f.from).not.toHaveBeenCalled();
@@ -97,6 +97,12 @@ describe("assignment writer front doors", () => {
     const kh = fake({ role: "key_holder" });
     await writeStationEvent(kh.service, { actor, locationId: SHOP, userId: ACTOR, stationId: STATION, manage: true });
     expect(kh.rpc).toHaveBeenCalledWith("write_station_event", expect.objectContaining({ p_actor_id: ACTOR, p_user_id: ACTOR, p_manage: true }));
+  });
+  it.each([false, true])("refuses a KH's own assigned station even with manage=%s", async (manage) => {
+    const f = fake({ role: "key_holder", rpcError: "station_locked" });
+    await expect(writeStationEvent(f.service, { actor, locationId: SHOP, userId: ACTOR, stationId: null, manage }))
+      .rejects.toMatchObject({ code: "station_locked", status: 403 });
+    expect(audit).not.toHaveBeenCalled();
   });
   it("retracts by RPC without deleting history, and propagates missing assignment", async () => {
     const f = fake();
@@ -158,6 +164,19 @@ describe("task enforcement decision", () => {
 
 describe("authored migration security contracts (not live SQL integration)", () => {
   const sql = readFileSync(new URL("../supabase/migrations/0217_assignments_stations.sql", import.meta.url), "utf8").toLowerCase();
+  it("refuses past-shop-day retractions under the row lock before touching history", () => {
+    const retract = sql.split("if p_assignment_id is not null then")[1]!.split("if v_task is null")[0]!;
+    expect(retract).toMatch(/for update;[\s\S]*if v_row\.operational_date < public\.station_business_date\(p_location_id\) then\s+raise exception 'assignment_not_found';\s+end if;[\s\S]*update public\.report_assignments/);
+    // Strict less-than preserves the current operational day and future rows,
+    // including a still-open prior calendar day after midnight.
+    expect(retract).not.toContain("operational_date <=");
+    expect(retract).not.toContain("clock_timestamp()");
+  });
+  it("locks assigned stations for every holder without a management escape", () => {
+    expect(sql).toMatch(/if p_actor_id=p_user_id and v_previous\.station_id is not null and v_previous\.source='assigned' then\s+raise exception 'station_locked'/);
+    expect(sql).not.toContain("if not p_manage and p_actor_id=p_user_id");
+    expect(sql).toContain("when p_actor_id=p_user_id then 'claimed' else 'assigned'");
+  });
   it("denies staff access to the ledgers and service-role mutation of station history", () => {
     expect(sql).toContain("alter table public.station_events enable row level security");
     expect(sql).toContain("revoke all on public.stations, public.station_events from public, anon, authenticated");

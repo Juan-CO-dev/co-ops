@@ -1410,7 +1410,6 @@ export async function saveOpeningPhase1Draft(
   if (error) {
     throw new Error(`saveOpeningPhase1Draft: ${error.message}`);
   }
-  await auditOpeningOverride(service, args, "saveOpeningPhase1Draft");
 
   return { savedAt: data?.saved_at ?? savedAt };
 }

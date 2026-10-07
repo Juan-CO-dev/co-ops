@@ -1,9 +1,9 @@
 import { auditOperationalTaskOverride, canDoOperationalTask } from "@/lib/operational-task-access";
 /**
  * Manager physical-count data layer (pack hierarchy PR 2, migration 0160).
- * SERVER-ONLY, service-role client; authorization is APP-LAYER (AGM+ gate +
- * location-bind IDOR; the WRITE also requires Tier-A step-up, enforced at the
- * route per adjudication A4). Pure math lives in lib/counts-shared.ts.
+ * SERVER-ONLY, service-role client; authorization is APP-LAYER (assigned KH+
+ * writes, AGM+ reads, location bind). The route requires PIN re-entry for
+ * levels 4-5 and Tier-A password step-up for AGM+. Pure math lives in lib/counts-shared.ts.
  *
  * ── ANCHOR SEMANTIC (adversarial review #2, controller-adjudicated F1) ─────────
  *   EVENTS ARE SESSIONS; ANCHORS ARE PER-SKU (latest counted line wins); SPOT
@@ -93,7 +93,7 @@ const INFERRED_WINDOW_DAYS = 28;
 const INFERRED_COVERAGE_DAYS = 7;
 
 export const COUNT_READ_MIN = 6; // AGM+
-export const COUNT_WRITE_MIN = 4; // Assigned KH+; AGM+ retains Tier-A step-up at the route
+export const COUNT_WRITE_MIN = 4; // Assigned KH+; levels 4-5 re-enter PIN, AGM+ use Tier-A password step-up
 
 export class CountError extends Error {
   /** Structured facts the client can translate (e.g. which line could not be anchored). */

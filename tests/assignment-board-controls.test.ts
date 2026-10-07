@@ -22,6 +22,25 @@ function render(value: ShiftBoard, compact = false) {
   }));
 }
 describe("assignment board retract and assign controls", () => {
+  it.each([4, 5, 6, 7, 8, 9, 10])("locks an assigned station for its level %s holder in both board views", (level) => {
+    const value = board(level, true, true);
+    value.viewerLevel = level;
+    value.events = [{ id: "station-event", sequence: "1", locationId: "shop", businessDate: value.date,
+      userId: "kh", stationId: "station", kind: "assign", actorId: "other-kh", actorName: "Other KH",
+      at: "2026-10-07T12:00:00Z", source: "assigned" }];
+    for (const compact of [false, true]) expect(render(value, compact)).not.toContain('name="stationId"');
+    value.events[0]!.source = "claimed";
+    value.events[0]!.kind = "claim";
+    for (const compact of [false, true]) expect(render(value, compact)).toContain('name="stationId"');
+  });
+  it("lets a different KH move an assigned peer and lets an unassigned KH claim", () => {
+    const value = board(4);
+    value.events = [{ id: "station-event", sequence: "1", locationId: "shop", businessDate: value.date,
+      userId: "target", stationId: "station", kind: "assign", actorId: "manager", actorName: "Manager",
+      at: "2026-10-07T12:00:00Z", source: "assigned" }];
+    expect(render(value)).toContain('name="stationId"');
+    expect(render(board(4, true, true))).toContain('name="stationId"');
+  });
   it.each([3, 4, 5, 8])("lets KH retract level %s assignments regardless of assign-up permission", (level) => {
     const html = render(board(level));
     expect(html).toContain(">Retract<");

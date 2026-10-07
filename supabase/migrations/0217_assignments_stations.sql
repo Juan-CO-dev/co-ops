@@ -124,7 +124,7 @@ begin
   if (p_manage or p_actor_id <> p_user_id) and (v_actor<4 or v_target>v_actor) then raise exception 'role_insufficient'; end if;
   select * into v_previous from public.station_events
     where location_id=p_location_id and business_date=v_day and user_id=p_user_id order by sequence desc limit 1;
-  if not p_manage and p_actor_id=p_user_id and v_previous.station_id is not null and v_previous.source='assigned' then
+  if p_actor_id=p_user_id and v_previous.station_id is not null and v_previous.source='assigned' then
     raise exception 'station_locked';
   end if;
   if p_station_id is not null then
@@ -156,6 +156,10 @@ begin
   if p_assignment_id is not null then
     select * into v_row from public.report_assignments where id=p_assignment_id and location_id=p_location_id for update;
     if not found then raise exception 'assignment_not_found'; end if;
+    -- Past operational days are immutable accountability history.
+    if v_row.operational_date < public.station_business_date(p_location_id) then
+      raise exception 'assignment_not_found';
+    end if;
     -- Retraction is not assigning up: only actor authority and row shop matter.
     update public.report_assignments set active=false where id=p_assignment_id and active returning id into v_id;
     return jsonb_build_object('id',p_assignment_id,'changed',v_id is not null);
@@ -238,24 +242,52 @@ create policy checklist_completions_insert_closing_staff on public.checklist_com
   );
 
 -- Report navigation: MoO (8) can read both shops; GM (7) remains shop-bound.
--- Preserve every existing read qualifier (including written visibility floors).
--- Only known report SELECT policies change; operational write scope remains 9.
+-- Source qualifiers: 0058_role_model_renumber.sql (checklist + written),
+-- 0067_cash_reports.sql (cash), 0072_pm_report_tables.sql (PM + manager evals).
+-- Only the location/global-read branch changes; written visibility and KH floors stay.
+-- Config/admin remain at 9: checklist_templates, checklist_template_items,
+-- maintenance_tickets, shifts_daily_data and shift_overlays. Neither shifts table
+-- backs the Reports hub/trends. The hub's template metadata reads use service-role.
+-- Also unchanged: shift_overlay_corrections, training_reports, report_views and
+-- prep_list_resolutions (no readers in the approved report surfaces).
+-- Assert the exact SELECT policy manifest; never silently skip a missing policy.
 do $$
-declare r record; v_qual text;
+declare r record;
 begin
-  for r in select tablename, policyname, qual from pg_policies
-    where schemaname='public' and cmd='SELECT' and policyname in (
-      'checklist_completions_read','checklist_incomplete_reasons_read',
-      'checklist_instances_read','checklist_submissions_read',
-      'checklist_template_items_read','checklist_templates_read',
-      'prep_list_resolutions_read','written_reports_read',
-      'shift_overlay_corrections_read','shift_overlays_read','shifts_daily_data_read',
-      'training_reports_read','report_views_read','maintenance_tickets_read'
-    ) loop
-    v_qual := regexp_replace(r.qual, '(current_user_role_level\(\)\s*>=\s*)9', '\18', 'g');
-    execute format('alter policy %I on public.%I using (%s)', r.policyname, r.tablename, v_qual);
+  for r in select * from (values
+    ('checklist_completions', 'checklist_completions_read'),
+    ('checklist_incomplete_reasons', 'checklist_incomplete_reasons_read'),
+    ('checklist_instances', 'checklist_instances_read'),
+    ('checklist_submissions', 'checklist_submissions_read'),
+    ('written_reports', 'written_reports_read'),
+    ('cash_reports', 'cash_reports_read'),
+    ('pm_reports', 'pm_reports_read'),
+    ('pm_employee_evals', 'pm_evals_read_mgr')
+  ) as expected(table_name, policy_name) loop
+    if not exists (select 1 from pg_policies where schemaname='public'
+      and tablename=r.table_name and policyname=r.policy_name and cmd='SELECT') then
+      raise exception 'expected report SELECT policy missing: %.%', r.table_name, r.policy_name;
+    end if;
   end loop;
 end $$;
+
+alter policy checklist_completions_read on public.checklist_completions
+  using (exists (select 1 from public.checklist_instances i
+    where ((i.id = checklist_completions.instance_id)
+      and ((i.location_id = any (public.current_user_locations())) or (public.current_user_role_level() >= 8)))));
+alter policy checklist_incomplete_reasons_read on public.checklist_incomplete_reasons
+  using (exists (select 1 from public.checklist_instances i
+    where ((i.id = checklist_incomplete_reasons.instance_id)
+      and ((i.location_id = any (public.current_user_locations())) or (public.current_user_role_level() >= 8)))));
+alter policy checklist_instances_read on public.checklist_instances
+  using ((location_id = any (public.current_user_locations())) or (public.current_user_role_level() >= 8));
+alter policy checklist_submissions_read on public.checklist_submissions
+  using (exists (select 1 from public.checklist_instances i
+    where ((i.id = checklist_submissions.instance_id)
+      and ((i.location_id = any (public.current_user_locations())) or (public.current_user_role_level() >= 8)))));
+alter policy written_reports_read on public.written_reports
+  using ((public.current_user_role_level() >= visibility_min_level)
+    and ((location_id is null) or (location_id = any (public.current_user_locations())) or (public.current_user_role_level() >= 8)));
 alter policy cash_reports_read on public.cash_reports using (
   public.current_user_role_level() >= 4 and
   (location_id = any(public.current_user_locations()) or public.current_user_role_level() >= 8));
@@ -265,6 +297,40 @@ alter policy pm_reports_read on public.pm_reports using (
 alter policy pm_evals_read_mgr on public.pm_employee_evals using (
   public.current_user_role_level() >= 4 and
   (location_id = any(public.current_user_locations()) or public.current_user_role_level() >= 8));
+
+-- Compare the full deparsed expressions, preserving every parenthesis/operator.
+-- A fixed search_path makes pg_policies' qualification deterministic; only layout
+-- whitespace/case is normalized, never the live expression used by ALTER POLICY.
+set local search_path = pg_catalog, public;
+do $$
+declare r record; v_qual text;
+begin
+  for r in select * from (values
+    ('checklist_completions', 'checklist_completions_read',
+      '(EXISTS ( SELECT 1 FROM checklist_instances i WHERE ((i.id = checklist_completions.instance_id) AND ((i.location_id = ANY (current_user_locations())) OR (current_user_role_level() >= 8)))))'),
+    ('checklist_incomplete_reasons', 'checklist_incomplete_reasons_read',
+      '(EXISTS ( SELECT 1 FROM checklist_instances i WHERE ((i.id = checklist_incomplete_reasons.instance_id) AND ((i.location_id = ANY (current_user_locations())) OR (current_user_role_level() >= 8)))))'),
+    ('checklist_instances', 'checklist_instances_read',
+      '((location_id = ANY (current_user_locations())) OR (current_user_role_level() >= 8))'),
+    ('checklist_submissions', 'checklist_submissions_read',
+      '(EXISTS ( SELECT 1 FROM checklist_instances i WHERE ((i.id = checklist_submissions.instance_id) AND ((i.location_id = ANY (current_user_locations())) OR (current_user_role_level() >= 8)))))'),
+    ('written_reports', 'written_reports_read',
+      '((current_user_role_level() >= visibility_min_level) AND ((location_id IS NULL) OR (location_id = ANY (current_user_locations())) OR (current_user_role_level() >= 8)))'),
+    ('cash_reports', 'cash_reports_read',
+      '((current_user_role_level() >= 4) AND ((location_id = ANY (current_user_locations())) OR (current_user_role_level() >= 8)))'),
+    ('pm_reports', 'pm_reports_read',
+      '((current_user_role_level() >= 4) AND ((location_id = ANY (current_user_locations())) OR (current_user_role_level() >= 8)))'),
+    ('pm_employee_evals', 'pm_evals_read_mgr',
+      '((current_user_role_level() >= 4) AND ((location_id = ANY (current_user_locations())) OR (current_user_role_level() >= 8)))')
+  ) as expected(table_name, policy_name, expression) loop
+    select qual into v_qual from pg_policies where schemaname='public'
+      and tablename=r.table_name and policyname=r.policy_name and cmd='SELECT';
+    if v_qual is null or translate(lower(v_qual), E' \t\n\r', '')
+        is distinct from translate(lower(r.expression), E' \t\n\r', '') then
+      raise exception 'report policy expression mismatch: %.%: %', r.table_name, r.policy_name, v_qual;
+    end if;
+  end loop;
+end $$;
 
 commit;
 

@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { ActionButton, ActionLink } from "@/components/ActionButton";
 import type { TranslationKey } from "@/lib/i18n/types";
 import { useTranslation } from "@/lib/i18n/provider";
-import { currentStation, TASK_TYPES, TASK_MIN_LEVEL, taskHref, type ShiftBoard, type TaskType } from "@/lib/assignments-shared";
+import { canSelfClaim, currentStation, TASK_TYPES, TASK_MIN_LEVEL, taskHref, type ShiftBoard, type TaskType } from "@/lib/assignments-shared";
 
 const control = "flex min-h-[44px] items-center rounded-lg border-2 border-co-border bg-co-surface px-3 text-base font-normal tracking-normal text-co-text";
 
@@ -62,9 +62,10 @@ export function ShiftBoardClient({ board, compact = false }: { board: ShiftBoard
       const station = board.stations.find((s) => s.id === current?.stationId);
       const tasks = board.tasks.filter((task) => task.assigneeId === person.id && (board.viewerLevel >= 4 || (task.available !== false && person.available !== false && person.level >= TASK_MIN_LEVEL[task.task])));
       const assignableTasks = TASK_TYPES.filter((task) => person.level >= TASK_MIN_LEVEL[task]);
-      const managerCanEdit = !compact && board.viewerLevel >= 4 && person.available !== false && person.level <= board.viewerLevel;
+      const managerCanEdit = !compact && board.viewerLevel >= 4 && person.available !== false && person.level <= board.viewerLevel
+        && (person.id !== board.viewerId || canSelfClaim(current));
       const canRetract = board.viewerLevel >= 4;
-      const canClaim = person.available !== false && compact && person.id === board.viewerId && (!current?.stationId || current.source === "claimed");
+      const canClaim = person.available !== false && compact && person.id === board.viewerId && canSelfClaim(current);
       return <article key={person.id} className="space-y-3 rounded-xl border border-co-border p-3">
         {!compact && <h3 className="font-bold text-co-text">{person.name}</h3>}
         {person.available === false && <p className="text-sm text-co-text-muted">{t("assignments.unavailablePerson")}</p>}

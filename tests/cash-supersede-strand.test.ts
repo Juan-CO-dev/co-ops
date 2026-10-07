@@ -91,7 +91,7 @@ function makeService(answer: (op: RecordedOp) => Answer) {
   return { service: service as never, ops };
 }
 
-const ACTOR: CashActor = { userId: "user-1", role: "gm", level: 7 };
+const ACTOR: CashActor & { locations: string[] } = { userId: "user-1", role: "gm", level: 7, locations: ["loc-1"] };
 const LOC = "loc-1";
 const DATE = "2026-08-29";
 const PRIOR = "prior-report-1";
@@ -242,6 +242,17 @@ describe("submitCashReport — a refused rollback is not proof of a strand", () 
 });
 
 describe("submitCashReport — the paths that already worked still work", () => {
+  it.each(["key_holder", "moo"] as const)("refuses a %s outside their assigned shops before any database work", async (role) => {
+    const { service, ops } = scenarioService({ prior: true });
+    await expect(submitCashReport(service, { ...ARGS, actor: { ...ACTOR, role, level: role === "moo" ? 8 : 4, locations: ["other-shop"] } }))
+      .resolves.toEqual({ ok: false, reason: "location_access_denied" });
+    expect(ops).toEqual([]);
+  });
+  it("retains the owner's all-location operational grant", async () => {
+    const { service } = scenarioService({ prior: false });
+    await expect(submitCashReport(service, { ...ARGS, actor: { ...ACTOR, role: "owner", level: 9, locations: [] } }))
+      .resolves.toEqual({ ok: true, id: "new-report-1" });
+  });
   it("supersedes, inserts, then back-points on an ordinary edit", async () => {
     const { service, ops } = scenarioService({ prior: true });
 

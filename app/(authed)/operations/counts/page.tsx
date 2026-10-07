@@ -41,7 +41,7 @@ export default async function CountsPage({ searchParams }: { searchParams: Promi
       <div className="lg:grid lg:grid-cols-2 lg:items-start lg:gap-8">
       {/* `products` is the C-mode row set (spec option C). It is EMPTY until migration
           0180 applies, and the form then renders exactly as it does on prod today. */}
-      {mayCount && <CountForm skus={formData.skus} products={formData.products} locationId={location} />}
+      {mayCount && <CountForm skus={formData.skus} products={formData.products} locationId={location} requiresPin={auth.level < 6} />}
 
       {onHand && <div className="lg:min-w-0">
       <h2 className="mt-6 text-sm font-bold uppercase tracking-[0.14em] text-co-text-dim lg:mt-0">{serverT(lang, "counts.onhand.title")}</h2>
