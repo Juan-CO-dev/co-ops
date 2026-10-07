@@ -1,3 +1,7 @@
+import { requireReportScope } from "@/lib/report-scope";
+import { parseReportRange } from "@/lib/report-range";
+import { etCalendarDate } from "@/lib/operational-day";
+import { compareReportTuples, decodeReportCursor, encodeReportCursor } from "@/lib/report-pagination";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { selectAllRows } from "@/lib/supabase-paginate";
 import { isPrepData } from "@/lib/prep";
@@ -25,6 +29,7 @@ export type ReportTypeKey = "opening" | "closing" | "am_prep" | "mid_day" | "cas
 export interface Viewer {
   userId: string;
   level: number;
+  locations?: string[];
 }
 
 export interface SignalSummary {
@@ -90,7 +95,16 @@ export function checklistReportType(type: string, prepSubtype: string | null): R
 /** Internal type carries submitterId + submittedAt for sort; both stripped before return. */
 type ReportListItemInternal = ReportListItem & { submitterId: string | null; submittedAt: string | null };
 
-export async function listReports(service: SupabaseClient, f: ListFilters): Promise<ReportListItem[]> {
+// CC ruling (2026-10-07): finished openings have ended at phase2_complete since May;
+// only six reached confirmed (last 2026-05-09), as Phase 3 is unwired.
+// finalizeMidDayPhase2 also writes phase2_complete. Keep it finalized.
+export function isFinalizedReport(status: string): boolean { return ["confirmed", "phase2_complete", "submitted", "completed", "incomplete_confirmed", "auto_finalized", "ok", "flags"].includes(status); }
+
+export async function listReportSkeleton(service: SupabaseClient, f: ListFilters): Promise<ReportListItemInternal[]> {
+  requireReportScope(f.viewer, f.locationId);
+  const today = etCalendarDate(new Date().toISOString());
+  const range = parseReportRange({ from: f.dateFrom, to: f.dateTo }, today);
+  f = { ...f, dateFrom: range.from, dateTo: range.to };
   const want = (t: ReportTypeKey) => !f.types || f.types.includes(t);
   const items: ReportListItemInternal[] = [];
 
@@ -117,16 +131,28 @@ export async function listReports(service: SupabaseClient, f: ListFilters): Prom
     const tmplIds = [...new Set(rows.map((r) => r.template_id))];
     const typeById = new Map<string, ReportTypeKey>();
     if (tmplIds.length) {
-      const { data: tmpls } = await service
+      const { data: tmpls, error: templateError } = await service
         .from("checklist_templates")
         .select("id, type, prep_subtype")
         .in("id", tmplIds);
+    if (templateError) throw new Error(templateError.message);
       for (const t of (tmpls ?? []) as Array<{ id: string; type: string; prep_subtype: string | null }>) {
         const rt = checklistReportType(t.type, t.prep_subtype);
         if (rt) typeById.set(t.id, rt);
       }
     }
+    const ownInstances = new Set<string>();
+    if (f.viewer.level < 4 && rows.length) {
+      for (let i = 0; i < rows.length; i += 50) {
+        const own = await selectAllRows<{ instance_id: string }>((from, to) => service.from("checklist_completions").select("instance_id")
+          .in("instance_id", rows.slice(i, i + 50).map(r => r.id)).eq("completed_by", f.viewer.userId)
+          .is("superseded_at", null).is("revoked_at", null).order("id").range(from, to));
+        for (const c of own) ownInstances.add(c.instance_id);
+      }
+    }
     for (const r of rows) {
+      if (!isFinalizedReport(r.status) && r.date >= today) continue;
+      if (f.viewer.level < 4 && !ownInstances.has(r.id)) continue;
       const rt = typeById.get(r.template_id);
       if (!rt || !want(rt)) continue;
       items.push({
@@ -144,21 +170,22 @@ export async function listReports(service: SupabaseClient, f: ListFilters): Prom
 
   // ── cash — KH+ (L4+) only ──
   if (want("cash") && f.viewer.level >= REPORTS_HUB_CASH_LEVEL) {
-    const { data: cash } = await service
+    const cash = await selectAllRows<{ id: string; location_id: string; report_date: string; signed_by: string; signed_at: string | null }>((from,to) => service
       .from("cash_reports")
       .select("id, location_id, report_date, signed_by, signed_at")
       .eq("location_id", f.locationId)
       .gte("report_date", f.dateFrom)
       .lte("report_date", f.dateTo)
-      .is("superseded_at", null);
+      .is("superseded_at", null).order("id").range(from,to));
     for (const r of (cash ?? []) as Array<{ id: string; location_id: string; report_date: string; signed_by: string; signed_at: string | null }>) {
+      if (!r.signed_at && r.report_date >= today) continue;
       items.push({
         type: "cash",
         id: r.id,
         date: r.report_date,
         locationId: r.location_id,
         submitterName: null,
-        status: "submitted",
+        status: r.signed_at ? "submitted" : "open",
         submitterId: r.signed_by,
         submittedAt: r.signed_at ?? null,
       });
@@ -167,14 +194,14 @@ export async function listReports(service: SupabaseClient, f: ListFilters): Prom
 
   // ── PM — L4+ see all submitted; <L4 sees only reports where the viewer has an eval ──
   if (want("pm")) {
-    const { data: pm } = await service
+    const pm = await selectAllRows<{id:string;location_id:string;report_date:string;status:string;submitted_by:string|null;submitted_at:string|null}>((from,to) => service
       .from("pm_reports")
       .select("id, location_id, report_date, status, submitted_by, submitted_at")
       .eq("location_id", f.locationId)
       .gte("report_date", f.dateFrom)
       .lte("report_date", f.dateTo)
       .is("superseded_at", null)
-      .in("status", ["submitted", "incomplete_confirmed", "auto_finalized"]);
+      .or(`status.in.(submitted,incomplete_confirmed,auto_finalized),report_date.lt.${today}`).order("id").range(from,to));
     let pmRows = (pm ?? []) as Array<{
       id: string;
       location_id: string;
@@ -184,15 +211,16 @@ export async function listReports(service: SupabaseClient, f: ListFilters): Prom
       submitted_at: string | null;
     }>;
     if (f.viewer.level < REPORTS_HUB_CASH_LEVEL) {
-      // employee: keep only reports that contain an eval about them
+      // Employees may read only finalized evaluations about themselves.
+      pmRows = pmRows.filter(r => ["submitted", "incomplete_confirmed", "auto_finalized"].includes(r.status));
       const ids = pmRows.map((r) => r.id);
       const mine = new Set<string>();
-      if (ids.length) {
+      for (let i = 0; i < ids.length; i += 50) {
         const evals = await selectAllRows<{ pm_report_id: string }>((from, to) =>
           service
             .from("pm_employee_evals")
             .select("pm_report_id")
-            .in("pm_report_id", ids)
+            .in("pm_report_id", ids.slice(i, i + 50))
             .eq("employee_id", f.viewer.userId)
             .is("superseded_at", null)
             .order("id", { ascending: true })
@@ -218,106 +246,73 @@ export async function listReports(service: SupabaseClient, f: ListFilters): Prom
 
   // ── resolve submitter names ──
   // Collect all submitter IDs captured during the push loops above.
-  const submitterIds = new Set<string>(
-    items.map((it) => it.submitterId).filter((id): id is string => id !== null),
-  );
-  const nameById = new Map<string, string>();
-  if (submitterIds.size) {
-    const { data: users } = await service
-      .from("users")
-      .select("id, name")
-      .in("id", [...submitterIds]);
-    for (const u of (users ?? []) as Array<{ id: string; name: string }>) nameById.set(u.id, u.name);
-  }
-  // ── Maintenance internal rows (synthesized per-(location,date) digest; L3+
-  // for all). Built as internal rows that carry their OWN signalSummary and
-  // SKIP computeReportSignals — the synthetic id "maintenance-{date}"
-  // doesn't resolve there (its checklist branch would query checklist_instances
-  // by that id, find nothing, and clobber tempFlags to 0). The id is colon-free
-  // so it round-trips safely through the detail-page URL. ──
-  const maintInternal: ReportListItemInternal[] = [];
   if (want("maintenance")) {
-    const dates = await listMaintenanceReportDates(service, f.locationId, f.dateFrom, f.dateTo);
-    for (const d of dates) {
-      maintInternal.push({
-        type: "maintenance",
-        id: `maintenance-${d.date}`,
-        date: d.date,
-        locationId: f.locationId,
-        submitterName: null,
-        submitterId: null,
-        submittedAt: null,
-        status: d.tempFlags > 0 ? "flags" : "ok",
-        signalSummary: { underPar: 0, overPar: 0, skipped: 0, tempFlags: d.tempFlags, cashOverShortCents: null },
-      });
-    }
+    const dates = await listMaintenanceReportDates(service, f.locationId, f.dateFrom, f.dateTo, f.viewer.level < 4 ? f.viewer.userId : undefined, true);
+    for (const d of dates) items.push({ type: "maintenance", id: `maintenance-${d.date}`, date: d.date,
+      locationId: f.locationId, submitterId: null, submittedAt: null, submitterName: null, status: "ok" });
   }
-
-  // Compute signals for the non-maintenance items (maintenance carries its own).
-  const sf = f.signalFilters;
-  const hasSf = sf &&
-    (sf.underPar || sf.overPar || sf.skipped || sf.tempFlag || sf.cashOver || sf.cashShort);
-  const tempItemIds = await loadLocationTempItemIds(service, f.locationId);
-  // Batched signals (council P3, 2026-07-31): one bulk pass instead of ~3
-  // queries per report. Math is identical (shared computeChecklistSignalsFromData).
-  const signalsById = await computeReportSignalsBatch(service, items.map((i) => ({ type: i.type, id: i.id })), tempItemIds);
-  const itemsWithSignals: ReportListItemInternal[] = items.map((item) => {
-    const signals = signalsById.get(item.id) ?? { underPar: 0, overPar: 0, skipped: 0, tempFlags: 0, cashOverShortCents: null };
-    return {
-      ...item,
-      signalSummary: {
-        underPar: signals.underPar,
-        overPar: signals.overPar,
-        skipped: signals.skipped,
-        tempFlags: signals.tempFlags,
-        cashOverShortCents: signals.cashOverShortCents,
-      },
-    };
-  });
-
-  // Merge maintenance + non-maintenance, then apply signal filters uniformly.
-  // The standard filter already yields the right maintenance behavior: a
-  // non-temp filter (underPar/overPar/skipped/cash*) excludes maintenance (its
-  // non-temp signals are 0); the tempFlag filter keeps only flagged days.
-  let combined: ReportListItemInternal[] = [...itemsWithSignals, ...maintInternal];
-  if (hasSf) {
-    combined = combined.filter((item) => {
-      const s = item.signalSummary!;
-      if (sf!.underPar && s.underPar <= 0) return false;
-      if (sf!.overPar && s.overPar <= 0) return false;
-      if (sf!.skipped && s.skipped <= 0) return false;
-      if (sf!.tempFlag && s.tempFlags <= 0) return false;
-      if (sf!.cashOver && (s.cashOverShortCents === null || s.cashOverShortCents <= 0)) return false;
-      if (sf!.cashShort && (s.cashOverShortCents === null || s.cashOverShortCents >= 0)) return false;
-      return true;
-    });
-  }
-
-  // Sort ONCE with the established comparator: submittedAt desc (nulls last)
-  // then date desc. Maintenance rows (submittedAt null) sort among the
-  // null-submittedAt tail by date desc — established ordering preserved.
-  combined.sort((a, b) => {
-    if (a.submittedAt !== null && b.submittedAt !== null) {
-      if (a.submittedAt > b.submittedAt) return -1;
-      if (a.submittedAt < b.submittedAt) return 1;
-    } else if (a.submittedAt !== null) {
-      return -1;
-    } else if (b.submittedAt !== null) {
-      return 1;
-    }
-    return a.date < b.date ? 1 : a.date > b.date ? -1 : 0;
-  });
-
-  // Strip internal fields; resolve submitterName from submitterId.
-  return combined.map(({ submitterId, submittedAt: _sa, ...rest }) => ({
-    ...rest,
-    submitterName: submitterId ? (nameById.get(submitterId) ?? null) : rest.submitterName ?? null,
-  }));
+  return items.sort(compareReportTuples);
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Task 3: Checklist detail loader + dispatcher
-// ─────────────────────────────────────────────────────────────────────────────
+export async function enrichReportItems(service: SupabaseClient, f: ListFilters, items: ReportListItemInternal[]): Promise<ReportListItem[]> {
+  const ids = [...new Set(items.map(i => i.submitterId).filter((id): id is string => !!id))];
+  const names = new Map<string, string>();
+  if (ids.length) {
+    const { data, error } = await service.from("users").select("id, name").in("id", ids);
+    if (error) throw new Error(error.message);
+    for (const u of data ?? []) names.set(u.id, u.name);
+  }
+  const temps = await loadLocationTempItemIds(service, f.locationId);
+  const signals = await computeReportSignalsBatch(service, items.filter(i => i.type !== "maintenance"), temps, f.viewer);
+  const maintenanceDates = items.filter(i => i.type === "maintenance").map(i => i.date).sort();
+  const maintenanceFlags = new Map(maintenanceDates.length
+    ? (await listMaintenanceReportDates(service, f.locationId, maintenanceDates[0]!, maintenanceDates[maintenanceDates.length - 1]!,
+      f.viewer.level < 4 ? f.viewer.userId : undefined)).map(d => [d.date, d.tempFlags])
+    : []);
+  const out: ReportListItem[] = [];
+  for (const {submitterId, submittedAt: _at, ...item} of items) {
+    void _at; // Internal ordering metadata must not enter list rows.
+    if (item.type === "maintenance") {
+      const flagCount = maintenanceFlags.get(item.date) ?? 0;
+      item.signalSummary = {underPar:0,overPar:0,skipped:0,tempFlags:flagCount,cashOverShortCents:null};
+      item.status = flagCount ? "flags" : "ok";
+    } else item.signalSummary = signals.get(item.id);
+    out.push({...item, submitterName: submitterId ? names.get(submitterId) ?? null : null});
+  }
+  return out;
+}
+function matchesSignals(item: ReportListItem, sf?: SignalFilters): boolean {
+  const s = item.signalSummary;
+  if (!sf || !s) return true;
+  return !(sf.underPar && s.underPar <= 0 || sf.overPar && s.overPar <= 0 || sf.skipped && s.skipped <= 0 ||
+    sf.tempFlag && s.tempFlags <= 0 || sf.cashOver && (s.cashOverShortCents ?? 0) <= 0 || sf.cashShort && (s.cashOverShortCents ?? 0) >= 0);
+}
+/** Summary consumers need the whole capped range; list pages use listReportsPage. */
+export async function listReports(service: SupabaseClient, f: ListFilters): Promise<ReportListItem[]> {
+  const skeleton = await listReportSkeleton(service, f);
+  const out: ReportListItem[] = [];
+  for (let i = 0; i < skeleton.length; i += 50) out.push(...await enrichReportItems(service, f, skeleton.slice(i, i + 50)));
+  return out.filter(i => matchesSignals(i, f.signalFilters));
+}
+/** Sparse search/signal worst case enriches the whole capped window, as before. */
+export async function listReportsPage(service: SupabaseClient, f: ListFilters & {
+  cursor?: string; query?: string; context?: string;
+  match?: (items: ReportListItem[]) => Promise<ReportListItem[]>;
+}): Promise<{items: ReportListItem[]; nextCursor: string | null}> {
+  const context = JSON.stringify([f.viewer, f.locationId, f.dateFrom, f.dateTo, f.types, f.signalFilters, f.query, f.context]);
+  const after = decodeReportCursor(f.cursor, context);
+  const skeleton = (await listReportSkeleton(service, f)).filter(i => !after || compareReportTuples(i, after) > 0);
+  const found: ReportListItem[] = [];
+  for (let i = 0; i < skeleton.length && found.length < 51;) {
+    const size = f.match || Object.values(f.signalFilters ?? {}).some(Boolean) ? 50 : Math.min(50, 51 - found.length);
+    let chunk = (await enrichReportItems(service, f, skeleton.slice(i, i + size))).filter(r => matchesSignals(r, f.signalFilters));
+    if (f.match) chunk = await f.match(chunk);
+    found.push(...chunk);
+    i += size;
+  }
+  const items = found.slice(0, 50);
+  return {items, nextCursor: found.length > 50 ? encodeReportCursor(items[49]!, context) : null};
+}
 
 export interface ChecklistDetailItem {
   station: string;
@@ -378,6 +373,7 @@ async function loadChecklistDetail(
   // resource to it prevents a cross-location IDOR (loading another store's
   // report by id while passing a location you DO have access to).
   if (inst.location_id !== args.locationId) return null;
+  if (!isFinalizedReport(inst.status) && inst.date >= etCalendarDate(new Date().toISOString())) return null;
 
   // AFTER the IDOR guard: load temp-item ids and compute signals (derived from
   // already-authorized data — does not bypass cash gate, IDOR guard, or notes redaction).
@@ -386,6 +382,7 @@ async function loadChecklistDetail(
     type: args.type,
     id: args.instanceId,
     tempItemIds,
+    viewer: args.viewer,
   });
 
   const showNotes = args.viewer.level >= REPORTS_HUB_NOTES_LEVEL;
@@ -418,12 +415,14 @@ async function loadChecklistDetail(
       .from("checklist_completions")
       .select("template_item_id, completed_by, count_value, notes, photo_id")
       .eq("instance_id", args.instanceId)
+      .match(args.viewer.level < 4 ? { completed_by: args.viewer.userId } : {})
       .is("superseded_at", null)
       .is("revoked_at", null)
       .order("id", { ascending: true })
       .range(from, to),
   );
 
+  if (args.viewer.level < 4 && comps.length === 0) return null;
   const compByItem = new Map<
     string,
     { completed_by: string | null; count_value: number | null; notes: string | null; photo_id: string | null }
@@ -463,7 +462,7 @@ async function loadChecklistDetail(
 
   // UNION filter (spec §2.2): an inactive item renders ONLY if this instance
   // completed it — never as a phantom skip on instances that never had it.
-  const items: ChecklistDetailItem[] = titems.filter((ti) => ti.active || compByItem.has(ti.id)).map((ti) => {
+  const items: ChecklistDetailItem[] = titems.filter((ti) => args.viewer.level < 4 ? compByItem.has(ti.id) : ti.active || compByItem.has(ti.id)).map((ti) => {
     const c = compByItem.get(ti.id);
     const countValue = c?.count_value ?? null;
     return {
@@ -698,6 +697,7 @@ async function loadOpeningDetail(
   // SECURITY: cross-location IDOR guard — the record must belong to the caller's
   // authorized location (page validated args.locationId via lockLocationContext).
   if (inst.location_id !== args.locationId) return null;
+  if (!isFinalizedReport(inst.status) && inst.date >= etCalendarDate(new Date().toISOString())) return null;
 
   // AFTER the IDOR guard: signals + temp-item ids (derived from already-authorized data).
   const tempItemIds = await loadLocationTempItemIds(service, inst.location_id);
@@ -705,13 +705,14 @@ async function loadOpeningDetail(
     type: "opening",
     id: args.instanceId,
     tempItemIds,
+    viewer: args.viewer,
   });
 
   const showNotes = args.viewer.level >= REPORTS_HUB_NOTES_LEVEL; // SL+ (L5)
 
   // Reuse the canonical opening read path for the closer-count baselines
   // (the same loader loadOpeningState materializes + reads from).
-  const closerSnapshots = await loadOpeningCloserCountSnapshots(service, args.instanceId);
+  const closerSnapshots = args.viewer.level < 4 ? new Map() : await loadOpeningCloserCountSnapshots(service, args.instanceId);
 
   // HISTORICAL read (spec §2.2, UNION semantics): read ALL items by template_id
   // (no active filter), then render each iff active OR completed on THIS
@@ -743,6 +744,7 @@ async function loadOpeningDetail(
       .from("checklist_completions")
       .select("template_item_id, completed_by, count_value, notes, prep_data, photo_id")
       .eq("instance_id", args.instanceId)
+      .match(args.viewer.level < 4 ? { completed_by: args.viewer.userId } : {})
       .is("superseded_at", null)
       .is("revoked_at", null)
       .order("id", { ascending: true })
@@ -762,6 +764,7 @@ async function loadOpeningDetail(
     prep_data: unknown;
     photo_id: string | null;
   };
+  if (args.viewer.level < 4 && comps.length === 0) return null;
   const compByItem = new Map<
     string,
     { phase1: OpeningComp | null; phase2: OpeningComp | null; any: OpeningComp }
@@ -811,7 +814,7 @@ async function loadOpeningDetail(
 
   // UNION filter (spec §2.2): inactive items render only when this instance
   // completed them — never as phantom skips.
-  const items: OpeningDetailItem[] = titems.filter((ti) => ti.active || compByItem.has(ti.id)).map((ti) => {
+  const items: OpeningDetailItem[] = titems.filter((ti) => args.viewer.level < 4 ? compByItem.has(ti.id) : ti.active || compByItem.has(ti.id)).map((ti) => {
     const entry = compByItem.get(ti.id);
     const c = entry?.any;
     const countValue = c?.count_value ?? null;
@@ -883,8 +886,8 @@ async function loadOpeningDetail(
     status: inst.status,
     items,
     signals,
-    isRecountNoPriorSubmission,
-    noPriorDataReason: inst.opener_no_prior_data_reason,
+    isRecountNoPriorSubmission: args.viewer.level >= 4 && isRecountNoPriorSubmission,
+    noPriorDataReason: args.viewer.level < 4 ? null : inst.opener_no_prior_data_reason,
   };
 }
 
@@ -1051,6 +1054,8 @@ async function loadPmDetail(
   if (!report) return null;
   // SECURITY: record must belong to the caller's authorized location (cross-location IDOR guard).
   if (report.location_id !== args.locationId) return null;
+  if (args.viewer.level < 4 && !["submitted", "incomplete_confirmed", "auto_finalized"].includes(report.status)) return null;
+  if ("status" in report && !isFinalizedReport(String(report.status)) && report.report_date >= etCalendarDate(new Date().toISOString())) return null;
 
   // Tier logic: L4+ see all evals; L3- see only their own eval (or null if none)
   const isManager = args.viewer.level >= REPORTS_HUB_CASH_LEVEL; // L4+
@@ -1208,6 +1213,7 @@ export async function loadReportDetail(
   service: SupabaseClient,
   args: { viewer: Viewer; type: ReportTypeKey; id: string; locationId: string },
 ): Promise<ReportDetail | null> {
+  requireReportScope(args.viewer, args.locationId);
   if (args.type === "opening") {
     return loadOpeningDetail(service, { viewer: args.viewer, instanceId: args.id, locationId: args.locationId });
   }
@@ -1232,7 +1238,7 @@ export async function loadReportDetail(
     if (!args.id.startsWith(prefix)) return null;
     const date = args.id.slice(prefix.length);
     if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return null;
-    return loadMaintenanceReportDetail(service, args.locationId, date);
+    return loadMaintenanceReportDetail(service, args.locationId, date, args.viewer.level < 4 ? args.viewer.userId : undefined);
   }
   return null;
 }
@@ -1270,11 +1276,12 @@ export async function loadLocationTempItemIds(
   service: SupabaseClient,
   locationId: string,
 ): Promise<Set<string>> {
-  const { data } = await service
+  const { data, error } = await service
     .from("maintenance_equipment")
     .select("opening_temp_item_id, closing_temp_item_id")
     .eq("location_id", locationId)
     .eq("kind", "fridge");
+  if (error) throw new Error(error.message);
   const ids = new Set<string>();
   for (const r of (data ?? []) as Array<{
     opening_temp_item_id: string | null;
@@ -1299,7 +1306,7 @@ export async function loadLocationTempItemIds(
  */
 export async function computeReportSignals(
   service: SupabaseClient,
-  args: { type: ReportTypeKey; id: string; tempItemIds: Set<string> },
+  args: { type: ReportTypeKey; id: string; tempItemIds: Set<string>; viewer?: Viewer },
 ): Promise<{ signals: ReportSignals; prepValues: PrepValueRow[]; checks: ChecklistCheckRow[] }> {
   const empty: ReportSignals = {
     done: 0,
@@ -1330,7 +1337,7 @@ export async function computeReportSignals(
     };
   }
 
-  if (args.type === "pm") {
+  if (args.type === "pm" || args.type === "maintenance") {
     // pm uses its own gradient tally in the detail loader (Task 2)
     return { signals: empty, prepValues: [], checks: [] };
   }
@@ -1366,12 +1373,15 @@ export async function computeReportSignals(
       .from("checklist_completions")
       .select("template_item_id, count_value, prep_data")
       .eq("instance_id", args.id)
+      .match(args.viewer && args.viewer.level < 4 ? { completed_by: args.viewer.userId } : {})
       .is("superseded_at", null)
       .is("revoked_at", null)
       .order("id", { ascending: true })
       .range(from, to),
   );
-  return computeChecklistSignalsFromData(args.type, items, rows, args.tempItemIds);
+  const scopedItems = args.viewer && args.viewer.level < 4 ? items.filter(i => rows.some(r => r.template_item_id === i.id)) : items;
+  const result = computeChecklistSignalsFromData(args.type, scopedItems, rows, args.tempItemIds);
+  return result;
 }
 
 /**
@@ -1466,6 +1476,7 @@ export async function computeReportSignalsBatch(
   service: SupabaseClient,
   reports: Array<{ type: ReportTypeKey; id: string }>,
   tempItemIds: Set<string>,
+  viewer?: Viewer,
 ): Promise<Map<string, ReportSignals>> {
   const empty: ReportSignals = { done: 0, total: 0, skipped: 0, underPar: 0, overPar: 0, tempFlags: 0, cashOverShortCents: null };
   const out = new Map<string, ReportSignals>();
@@ -1473,9 +1484,10 @@ export async function computeReportSignalsBatch(
   // Cash — one query for all cash reports in the batch.
   const cashIds = reports.filter((r) => r.type === "cash").map((r) => r.id);
   if (cashIds.length > 0) {
-    const { data } = await service.from("cash_reports").select("id, over_short_cents")
+    const { data, error } = await service.from("cash_reports").select("id, over_short_cents")
       .in("id", cashIds).is("superseded_at", null)
       .returns<Array<{ id: string; over_short_cents: number | null }>>();
+    if (error) throw new Error(error.message);
     const byId = new Map((data ?? []).map((r) => [r.id, r.over_short_cents]));
     for (const id of cashIds) out.set(id, { ...empty, total: 1, done: 1, cashOverShortCents: byId.get(id) ?? null });
   }
@@ -1486,8 +1498,9 @@ export async function computeReportSignalsBatch(
   const checklist = reports.filter((r) => r.type === "opening" || r.type === "closing" || r.type === "am_prep" || r.type === "mid_day");
   if (checklist.length > 0) {
     const instanceIds = checklist.map((r) => r.id);
-    const { data: insts } = await service.from("checklist_instances").select("id, template_id")
+    const { data: insts, error } = await service.from("checklist_instances").select("id, template_id")
       .in("id", instanceIds).returns<Array<{ id: string; template_id: string }>>();
+    if (error) throw new Error(error.message);
     const tmplByInstance = new Map((insts ?? []).map((r) => [r.id, r.template_id]));
     const templateIds = [...new Set((insts ?? []).map((r) => r.template_id))];
 
@@ -1500,7 +1513,7 @@ export async function computeReportSignalsBatch(
 
     const allRows = await selectAllRows<{ instance_id: string; template_item_id: string; count_value: number | null; prep_data: unknown }>((from, to) =>
       service.from("checklist_completions").select("instance_id, template_item_id, count_value, prep_data")
-        .in("instance_id", instanceIds).is("superseded_at", null).is("revoked_at", null)
+        .in("instance_id", instanceIds).match(viewer && viewer.level < 4 ? { completed_by: viewer.userId } : {}).is("superseded_at", null).is("revoked_at", null)
         .order("id", { ascending: true }).range(from, to),
     );
     const rowsByInstance = new Map<string, Array<{ template_item_id: string; count_value: number | null; prep_data: unknown }>>();
@@ -1509,7 +1522,9 @@ export async function computeReportSignalsBatch(
     for (const r of checklist) {
       const tmplId = tmplByInstance.get(r.id);
       if (!tmplId) { out.set(r.id, empty); continue; }
-      out.set(r.id, computeChecklistSignalsFromData(r.type, itemsByTemplate.get(tmplId) ?? [], rowsByInstance.get(r.id) ?? [], tempItemIds).signals);
+      const rows = rowsByInstance.get(r.id) ?? [];
+      const items = itemsByTemplate.get(tmplId) ?? [];
+      out.set(r.id, computeChecklistSignalsFromData(r.type, viewer && viewer.level < 4 ? items.filter(i => rows.some(c => c.template_item_id === i.id)) : items, rows, tempItemIds).signals);
     }
   }
 

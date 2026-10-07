@@ -205,3 +205,17 @@ export function formatMonthLabel(yyyymm: string, language: Language): string {
     timeZone: "UTC",
   }).format(new Date(Date.UTC(y, m - 1, 1)));
 }
+
+/** Short axis labels for month buckets; show years when the axis crosses a year. */
+export function formatTrendMonthLabels(keys: string[], language: Language): string[] {
+  const spansYears = new Set(keys.map(key => key.slice(0, 4))).size > 1;
+  const formatter = new Intl.DateTimeFormat(language === "es" ? "es-US" : "en-US", {
+    month: "short", ...(spansYears ? { year: "numeric" } : {}), timeZone: "UTC",
+  });
+  return keys.map(key => {
+    const [year, month] = key.split("-").map(Number);
+    return year && month && month >= 1 && month <= 12
+      ? formatter.format(new Date(Date.UTC(year, month - 1, 1)))
+      : key;
+  });
+}

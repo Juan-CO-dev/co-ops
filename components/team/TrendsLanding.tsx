@@ -12,6 +12,7 @@ import type { Language, TranslationKey } from "@/lib/i18n/types";
  */
 export function TrendsLanding({
   locationId,
+  context = "",
   language,
   canSeeTeam,
   canSeeYield = false,
@@ -20,6 +21,7 @@ export function TrendsLanding({
   attention,
 }: {
   locationId: string;
+  context?: string;
   language: Language;
   canSeeTeam: boolean;
   /** Batch vs bottle Phase B: level 5+ bound to this shop sees the Yield card + its nudges. */
@@ -28,8 +30,8 @@ export function TrendsLanding({
   team: TeamOperatingHealth | null;
   attention: { kind: "ops" | "team" | "yield"; titleKey: string; sub: string }[];
 }) {
-  const opsHref = `/reports/trends/ops?location=${locationId}`;
-  const teamHref = `/reports/trends/team?location=${locationId}`;
+  const opsHref = `/reports/trends/ops?location=${locationId}&${context}`;
+  const teamHref = `/reports/trends/team?location=${locationId}&${context}`;
   const yieldHref = `/operations/production/yield?location=${locationId}`;
 
   return (

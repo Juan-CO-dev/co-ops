@@ -1,3 +1,7 @@
+import type { ReactNode } from "react";
+import { TrendShopPanels } from "@/components/trends/TrendShopPanels";
+import { resolveTrendRange } from "@/lib/reports-trends";
+import { reportRangeParams } from "@/lib/report-range";
 /** /reports/trends/team — AGM+ ranked operating-health roster (layout B cards). */
 import { redirect } from "next/navigation";
 
@@ -14,39 +18,47 @@ import { TrendControls } from "@/components/trends/TrendControls";
 import { TeamRosterCard } from "@/components/team/TeamRosterCard";
 
 interface PageProps {
-  searchParams: Promise<{ location?: string; g?: string; cmp?: string }>;
+  searchParams: Promise<Record<string, string | undefined>>;
 }
 
 function parseGranularity(g: string | undefined): TrendGranularity {
   return g === "week" || g === "month" ? g : "day";
 }
 
-export default async function TeamRosterPage({ searchParams }: PageProps) {
+export default async function TeamRosterPage({ searchParams }: PageProps): Promise<ReactNode> {
   const auth = await requireSessionFromHeaders("/reports/trends/team");
   if (auth.level < TEAM_VIEW_LEVEL) redirect("/dashboard");
-  const { location: locationParam, g, cmp } = await searchParams;
+  const paramsRange = await searchParams;
+  const { location: locationParam, g } = paramsRange;
   if (!locationParam) redirect("/dashboard");
+  if (locationParam === "all") {
+    if (auth.level < 8) redirect("/reports");
+    return <TrendShopPanels render={(id) => TeamRosterPage({ searchParams: Promise.resolve({ ...paramsRange, location: id }) })} />;
+  }
   const locActor: LocationActor = { role: auth.role, locations: auth.locations };
   if (!canReadReportLocation(locActor, locationParam)) redirect("/dashboard");
 
   const language = auth.user.language;
   const granularity = parseGranularity(g);
-  const compare = cmp === "1";
   const today = operationalNow(new Date()).date;
+  const range = resolveTrendRange(paramsRange, today, granularity);
+  const compare = range.compare;
+  const context = reportRangeParams(range);
+  context.set("g", granularity);
   const sb = getServiceRoleClient();
 
   const team = await loadTeamOperatingHealth(sb, {
-    viewer: { userId: auth.user.id, level: auth.level },
-    locationId: locationParam, granularity, compare, today,
+    viewer: { userId: auth.user.id, level: auth.level, locations: auth.locations },
+    locationId: locationParam, granularity, compare, today, range,
   });
 
   return (
     <main className="mx-auto max-w-2xl md:max-w-3xl lg:max-w-5xl xl:max-w-6xl px-4 pb-32 pt-4 sm:px-6">
-      <BackLink search={`?location=${locationParam}`} labelKey="reports.trends.back" />
+      <BackLink search={`?location=${locationParam}&${context}`} labelKey="reports.trends.back" />
       <h1 className="text-lg font-bold text-co-text">{serverT(language, "reports.trends.team.title")}</h1>
       <p className="mb-4 text-xs text-co-text-muted">{serverT(language, "reports.trends.team.subtitle")}</p>
 
-      <TrendControls locationId={locationParam} granularity={granularity} compare={compare} language={language} basePath="/reports/trends/team" />
+      <TrendControls range={range} locationId={locationParam} granularity={granularity} compare={compare} language={language} basePath="/reports/trends/team" />
 
       {team && team.members.length > 0 ? (
         <>
@@ -55,7 +67,7 @@ export default async function TeamRosterPage({ searchParams }: PageProps) {
           </p>
           <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
             {team.members.map((m) => (
-              <TeamRosterCard key={m.userId} member={m} locationId={locationParam} language={language} />
+              <TeamRosterCard context={context.toString()} key={m.userId} member={m} locationId={locationParam} language={language} />
             ))}
           </div>
         </>

@@ -5,13 +5,14 @@ import { navDestinationsFor, chipHref } from "@/lib/nav-links";
 
 const hrefs = (level: number) => navDestinationsFor(level).map((d) => d.href).sort();
 const everyone = ["/training", "/recipes", "/profile", "/settings", "/my-feedback"];
-const kh = ["/mid-shift", "/assignments", "/reports"];
-const lead = ["/catering", "/written-reports"];
-const manager = ["/reports/trends", "/lto", "/admin"];
+const kh = ["/mid-shift", "/assignments", "/reports/trends"];
+const lead = ["/catering"];
+const manager = ["/lto", "/admin"];
 
 describe("role navigation", () => {
+  it("reports begins at trainee level 2", () => { expect(hrefs(1)).not.toContain("/reports"); expect(hrefs(2)).toContain("/reports"); });
   it.each([2, 3, 4, 5, 6, 7, 9])("shows exactly the approved destinations at level %s", (level) => {
-    expect(hrefs(level)).toEqual([...everyone, ...(level >= 3 ? ["/maintenance"] : []), ...(level >= 4 ? kh : []), ...(level >= 5 ? lead : []), ...(level >= 6 ? manager : [])].sort());
+    expect(hrefs(level)).toEqual([...everyone, ...(level >= 2 ? ["/reports", "/reports/written"] : []), ...(level >= 3 ? ["/maintenance"] : []), ...(level >= 4 ? kh : []), ...(level >= 5 ? lead : []), ...(level >= 6 ? manager : [])].sort());
   });
   it("never advertises a placeholder or the ordering task in navigation", () => {
     for (const level of [2, 3, 4, 5, 6, 7, 9, 10]) {
@@ -22,8 +23,8 @@ describe("role navigation", () => {
     // Floors confirmed against destination pages/layouts and their server loaders.
     const pageFloors: Record<string, number> = {
       "/maintenance": 3, "/training": 0, "/recipes": 0, "/profile": 0, "/settings": 0, "/my-feedback": 0,
-      "/mid-shift": 4, "/assignments": 4, "/reports": 0,
-      "/catering": 5, "/written-reports": 0, "/reports/trends": 0, "/lto": 0, "/admin": 6,
+      "/mid-shift": 4, "/assignments": 4, "/reports": 2,
+      "/catering": 5, "/reports/written": 2, "/reports/trends": 4, "/lto": 0, "/admin": 6,
     };
     for (const level of [2, 3, 4, 5, 6, 7, 9]) for (const href of hrefs(level)) {
       expect(pageFloors[href]).toBeDefined();

@@ -81,7 +81,7 @@ describe("parentFor — admin section stubs → /admin", () => {
 describe("parentFor — operator drill-ins", () => {
   it("report detail → /reports", () => {
     const p = parentFor("/reports/opening/instance-id");
-    expect(p.href).toBe("/reports");
+    expect(p.href).toBe("/reports/operations");
     expect(p.labelKey).toBe("reports.page.title");
   });
 
@@ -129,7 +129,7 @@ describe("parentFor — top pages & unknown routes fall back to /dashboard", () 
 describe("parentFor — normalization", () => {
   it("ignores query strings and hashes", () => {
     expect(parentFor("/admin/recipes/abc?tab=x").href).toBe("/admin/recipes");
-    expect(parentFor("/reports/opening/id#section").href).toBe("/reports");
+    expect(parentFor("/reports/opening/id#section").href).toBe("/reports/operations");
   });
 
   it("ignores a trailing slash", () => {

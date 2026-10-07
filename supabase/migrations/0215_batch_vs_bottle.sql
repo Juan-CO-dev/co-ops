@@ -1,5 +1,6 @@
 -- Migration 0215_batch_vs_bottle
 -- AUTHORED 2026-10-07. NOT YET APPLIED — GATE (CC/JUAN). Sim first, prod on Juan's word.
+-- APPLIED TO PROD 2026-10-07 (schema_migrations version 20261007173306, name '0215_batch_vs_bottle'). The line above is the authoring-time gate note, kept as history.
 -- Provenance: Juan's floor notes (2026-10-06): "Prep is conflating 2 things, creating the recipe
 --   batch and getting it ready for service… we make the minimum batch, bottle 2 for service and
 --   leave the other 2 in a single container to bottle when needed. Right now the system recounts
