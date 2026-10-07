@@ -1,4 +1,8 @@
 {
+  "reports.related.same_day": "Mismo día",
+  "reports.related.previous_day": "Día anterior",
+  "reports.related.next_day": "Día siguiente",
+  "reports.related.none": "No hay otros reportes disponibles",
   "reports.not_finalized": "Sin finalizar",
   "reports.pagination.next": "Siguientes 50 informes",
   "reports.trends.range_from": "Desde",
@@ -2670,7 +2674,7 @@
   "reports.opening.resolution.section_verify": "Verificado contra la base",
   "reports.opening.resolution.recount": "Reconteado",
   "reports.opening.resolution.recount_no_prior": "Reconteo — sin envío anterior",
-  "reports.opening.baseline.closer": "Base (conteo del cierre): {closer}",
+  "reports.opening.baseline.closer": "Base: conteo de preparación AM {closer}",
   "reports.opening.baseline.none": "Sin base del día anterior",
   "reports.opening.baseline.par": "par {par}",
   "reports.opening.recount_value": "Reconteo: {value}",

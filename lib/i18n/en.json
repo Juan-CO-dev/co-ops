@@ -1,4 +1,8 @@
 {
+  "reports.related.same_day": "Same day",
+  "reports.related.previous_day": "Previous day",
+  "reports.related.next_day": "Next day",
+  "reports.related.none": "No other reports available",
   "reports.pagination.next": "Next 50 reports",
   "reports.not_finalized": "Not finalized",
 
@@ -2671,7 +2675,7 @@
   "reports.opening.resolution.section_verify": "Verified against baseline",
   "reports.opening.resolution.recount": "Recounted",
   "reports.opening.resolution.recount_no_prior": "Recount — no prior submission",
-  "reports.opening.baseline.closer": "Baseline (closer count): {closer}",
+  "reports.opening.baseline.closer": "Baseline: AM Prep count {closer}",
   "reports.opening.baseline.none": "No prior-day baseline",
   "reports.opening.baseline.par": "par {par}",
   "reports.opening.recount_value": "Recount: {value}",

@@ -1,5 +1,4 @@
 import { resolveTrendRange } from "@/lib/reports-trends";
-import { reportRangeParams } from "@/lib/report-range";
 /**
  * /my-feedback — "My Performance" (employee self-view).
  *
@@ -10,11 +9,12 @@ import { reportRangeParams } from "@/lib/report-range";
  * (never a param); manager notes are never selected.
  */
 
-import Link from "next/link";
+import { redirect } from "next/navigation";
+import type { ReactNode } from "react";
 
+import { REPORT_ALL_LOCATIONS_LEVEL } from "@/lib/locations";
 import { serverT } from "@/lib/i18n/server";
 import type { Language } from "@/lib/i18n/types";
-import { accessibleLocations, type LocationActor } from "@/lib/locations";
 import { operationalNow } from "@/lib/midshift";
 import { loadMyFeedback } from "@/lib/pm-report";
 import { loadMyPerformance } from "@/lib/team-metrics";
@@ -22,7 +22,9 @@ import type { TrendGranularity } from "@/lib/reports-trends";
 import { requireSessionFromHeaders } from "@/lib/session";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 
-import { DashboardBackLink } from "@/components/DashboardBackLink";
+import { ReportPageNav } from "@/components/reports-hub/ReportPageNav";
+import { ReportShopTabs } from "@/components/reports-hub/ReportShopTabs";
+import { TrendShopPanels } from "@/components/trends/TrendShopPanels";
 import { TrendControls } from "@/components/trends/TrendControls";
 import { MyPerformance } from "@/components/me/MyPerformance";
 
@@ -36,30 +38,49 @@ function parseGranularity(g: string | undefined): TrendGranularity {
 
 interface LocLite { id: string; code: string }
 
-export default async function MyPerformancePage({ searchParams }: PageProps) {
+export default async function MyPerformancePage({ searchParams }: PageProps): Promise<ReactNode> {
+  return renderPage(await searchParams);
+}
+
+async function renderPage(query: Record<string, string | undefined>, allShops = false): Promise<ReactNode> {
   const auth = await requireSessionFromHeaders("/my-feedback");
   const language: Language = auth.user.language;
-  const query = await searchParams;
   const { loc, location, g } = query;
-  const selectedParam = loc ?? location; // switcher uses ?loc=, TrendControls uses ?location=
+  const selectedParam = location ?? loc; // Keep old ?loc= links working; the shared tabs use ?location=.
   const sb = getServiceRoleClient();
 
-  const actor: LocationActor = { role: auth.role, locations: auth.locations };
-  const access = accessibleLocations(actor);
+  const access = auth.level >= REPORT_ALL_LOCATIONS_LEVEL ? "all" : auth.locations;
   let locQuery = sb.from("locations").select("id, code").eq("active", true).order("code", { ascending: true });
   if (access !== "all") {
-    if (access.length === 0) return <EmptyShell language={language} />;
+    if (access.length === 0) return <EmptyShell language={language} viewerLevel={auth.level} />;
     locQuery = locQuery.in("id", access);
   }
   const { data: locRows } = await locQuery;
   const locations = (locRows ?? []) as LocLite[];
-  if (locations.length === 0) return <EmptyShell language={language} />;
+  if (locations.length === 0) return <EmptyShell language={language} viewerLevel={auth.level} />;
 
-  const selected = (selectedParam ? locations.find((l) => l.id === selectedParam) : null) ?? locations[0]!;
+  const selected = selectedParam === "all" ? { id: "all", code: "" } : (selectedParam ? locations.find((l) => l.id === selectedParam) : null) ?? locations[0]!;
   const granularity = parseGranularity(g);
   const today = operationalNow(new Date()).date;
   const range = resolveTrendRange(query, today, granularity);
   const compare = range.compare;
+
+  const header = <>
+      <ReportPageNav viewerLevel={auth.level} path="/my-feedback" params={{ ...query, location: allShops ? "all" : selected.id }} language={language} />
+      <div className="mb-1 flex items-center justify-between gap-2">
+        <h1 className="text-lg font-bold text-co-text">{serverT(language, "me.title")}</h1>
+      </div>
+
+      <ReportShopTabs path="/my-feedback" params={query} locationId={allShops ? "all" : selected.id} language={language} viewer={auth} />
+      <div className="mb-4">
+        <TrendControls range={range} locationId={allShops ? "all" : selected.id} granularity={granularity} compare={compare} language={language} basePath="/my-feedback" />
+      </div>
+
+  </>;
+  if (selectedParam === "all") {
+    if (auth.level < REPORT_ALL_LOCATIONS_LEVEL) redirect("/reports");
+    return <TrendShopPanels header={header} render={(id) => renderPage({ ...query, location: id, loc: undefined }, true)} />;
+  }
 
   const data = await loadMyPerformance(sb, {
     viewer: { userId: auth.user.id, level: auth.level, locations: auth.locations },
@@ -69,34 +90,10 @@ export default async function MyPerformancePage({ searchParams }: PageProps) {
   const allFeedback = await loadMyFeedback(sb, { userId: auth.user.id });
   const feedback = allFeedback.filter((f) => f.locationId === selected.id);
 
+  const Container = allShops ? "div" : "main";
   return (
-    <main className="mx-auto max-w-2xl md:max-w-3xl lg:max-w-5xl xl:max-w-6xl px-4 pb-32 pt-4 sm:px-6">
-      <div className="mb-3"><DashboardBackLink /></div>
-      <div className="mb-1 flex items-center justify-between gap-2">
-        <h1 className="text-lg font-bold text-co-text">{serverT(language, "me.title")}</h1>
-        {locations.length > 1 ? (
-          <nav aria-label={serverT(language, "me.location_aria")} className="flex flex-wrap gap-1.5">
-            {locations.map((l) => {
-              const on = l.id === selected.id;
-              const href = `/my-feedback?loc=${l.id}&g=${granularity}&${reportRangeParams(range)}`;
-              return (
-                <Link key={l.id} href={href} scroll={false} aria-current={on ? "page" : undefined}
-                  className={[
-                    "inline-flex min-h-[44px] items-center rounded-full px-3 text-xs font-bold uppercase tracking-[0.1em] transition",
-                    on ? "border-2 border-co-text bg-co-gold text-co-text" : "border-2 border-co-border-2 bg-co-surface text-co-text-muted hover:border-co-text",
-                  ].join(" ")}>
-                  {l.code}
-                </Link>
-              );
-            })}
-          </nav>
-        ) : null}
-      </div>
-
-      <div className="mb-4">
-        <TrendControls range={range} locationId={selected.id} granularity={granularity} compare={compare} language={language} basePath="/my-feedback" />
-      </div>
-
+    <Container className={allShops ? "pt-4" : "mx-auto max-w-2xl md:max-w-3xl lg:max-w-5xl xl:max-w-6xl px-4 pb-32 pt-4 sm:px-6"}>
+      {!allShops && header}
       {data ? (
         <MyPerformance data={data} feedback={feedback} language={language} />
       ) : (
@@ -104,14 +101,14 @@ export default async function MyPerformancePage({ searchParams }: PageProps) {
           {serverT(language, "me.empty")}
         </p>
       )}
-    </main>
+    </Container>
   );
 }
 
-function EmptyShell({ language }: { language: Language }) {
+function EmptyShell({ language, viewerLevel }: { language: Language; viewerLevel: number }) {
   return (
     <main className="mx-auto max-w-2xl md:max-w-3xl lg:max-w-5xl xl:max-w-6xl px-4 pb-32 pt-4 sm:px-6">
-      <div className="mb-3"><DashboardBackLink /></div>
+      <ReportPageNav viewerLevel={viewerLevel} path="/my-feedback" params={{}} language={language} />
       <h1 className="mb-4 text-lg font-bold text-co-text">{serverT(language, "me.title")}</h1>
       <p className="rounded-lg border-2 border-co-border bg-co-surface px-3 py-3 text-sm font-semibold text-co-text">
         {serverT(language, "me.empty")}

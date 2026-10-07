@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { clippedBucketKeys, loadTrendSeries, resolveTrendRange } from "@/lib/reports-trends";
-import { loadPersonDetail, loadTeamOperatingHealth } from "@/lib/team-metrics";
+import { loadPersonDetail, loadPersonReportLocations, loadTeamOperatingHealth } from "@/lib/team-metrics";
 import { parseReportRange } from "@/lib/report-range";
 
 type Row = Record<string, unknown>;
@@ -74,4 +74,19 @@ describe("trends loader scope and independent clipped windows", () => {
     expect(result.current.find(b => b.key === "2026-10-06")?.hasData).toBe(true);
     expect(result.current.find(b => b.key === "2026-10-07")?.hasData).toBe(false);
   });
+});
+
+
+it("person shops require active membership, active shop, and viewer scope", async () => {
+  const f = fake({user_locations:[
+    {user_id:"person",location_id:"a",active:true},
+    {user_id:"person",location_id:"b",active:true},
+    {user_id:"person",location_id:"c",active:false},
+    {user_id:"person",location_id:"closed",active:true},
+    {user_id:"other",location_id:"d",active:true},
+  ],locations:[{id:"a",active:true},{id:"b",active:true},{id:"c",active:true},{id:"closed",active:false},{id:"d",active:true}]});
+  expect(await loadPersonReportLocations(f.service,{userId:"me",level:7,locations:["a","c","d"]},"person")).toEqual(["a"]);
+  expect(await loadPersonReportLocations(f.service,{userId:"me",level:8,locations:[]},"person")).toEqual(["a","b"]);
+  expect(await loadPersonReportLocations(f.service,{userId:"me",level:7,locations:[]},"person")).toEqual([]);
+  expect(await loadPersonReportLocations(f.service,{userId:"me",level:5,locations:["a"]},"person")).toEqual([]);
 });
