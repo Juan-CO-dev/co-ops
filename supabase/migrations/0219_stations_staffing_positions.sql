@@ -1,4 +1,5 @@
 -- AUTHORED ONLY 2026-10-07. NOT APPLIED. CC sim first, then Juan's production gate.
+-- APPLIED TO PROD 2026-10-07 (schema_migrations version 20261007225800, name '0219_stations_staffing_positions'; sim first, version 20261007224611; seed 42 stations + sauces run after it on both). The line above is the authoring-time gate note, kept as history.
 -- Closing sections own stations.active; managers own staffed and positions.
 begin;
 alter table public.stations alter column name_es drop not null;
