@@ -58,6 +58,9 @@ const TENANCY_SCOPED_TABLES = [
   "stations",
   "station_events",
   "report_assignments",
+  // 0220 — a recipient override's location_ids decides which shops' numbers reach a person.
+  // (report_digest_sends is system-written with no actor and deliberately not listed.)
+  "report_recipients",
 ];
 
 /**
