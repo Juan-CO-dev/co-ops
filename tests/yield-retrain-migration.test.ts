@@ -32,9 +32,9 @@ function fnBody(name: string): string {
 }
 
 describe("0218 header", () => {
-  it("is authored only, behind the CC/Juan gate", () => {
+  it("keeps its authoring gate note and carries its prod apply stamp", () => {
     expect(raw).toMatch(/NOT YET APPLIED — GATE \(CC\/JUAN\)/);
-    expect(raw).not.toMatch(/APPLIED TO PROD/);
+    expect(raw).toMatch(/APPLIED TO PROD 2026-10-07 \(schema_migrations version 20261007211913/);
   });
   it("runs in one transaction", () => {
     expect(sql.trim().startsWith("begin;")).toBe(true);
