@@ -115,13 +115,13 @@ export function parseWrittenReportCursor(raw: string | undefined): WrittenReport
     const value = JSON.parse(Buffer.from(raw, "base64url").toString("utf8")) as Partial<WrittenReportCursor>;
     if (
       typeof value.submittedAt !== "string" ||
-      !/^\d{4}-\d{2}-\d{2}T.*Z$/.test(value.submittedAt) ||
+      !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?(?:Z|\+00:00)$/.test(value.submittedAt) ||
       Number.isNaN(Date.parse(value.submittedAt)) ||
       typeof value.id !== "string" ||
       !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value.id) ||
       typeof value.context !== "string"
     ) return null;
-    return { submittedAt: new Date(value.submittedAt).toISOString(), id: value.id, context: value.context };
+    return { submittedAt: value.submittedAt.replace(/\+00:00$/, "Z"), id: value.id, context: value.context };
   } catch {
     return null;
   }
@@ -247,7 +247,7 @@ export async function listWrittenReports(
   return {
     reports,
     nextCursor: hasMore && last?.submitted_at
-      ? encodeCursor({ submittedAt: new Date(last.submitted_at).toISOString(), id: last.id, context: cursorContext })
+      ? encodeCursor({ submittedAt: last.submitted_at.replace(/\+00:00$/, "Z"), id: last.id, context: cursorContext })
       : null,
   };
 }

@@ -53,7 +53,7 @@ export default async function TrendsLandingPage({ searchParams }: PageProps): Pr
   const ops = { underPar: opsSeries.totals.par.current ?? 0, tempFlags: opsSeries.totals.temps.current ?? 0 };
 
   const team = canSeeTeam
-    ? await loadTeamOperatingHealth(sb, { viewer, locationId: locationParam, granularity, compare, today, range })
+    ? await loadTeamOperatingHealth(sb, { viewer, locationId: locationParam, granularity, compare: true, today, range: { ...range, compare: true } })
     : null;
 
   const attention: { kind: "ops" | "team"; titleKey: string; sub: string }[] = [];

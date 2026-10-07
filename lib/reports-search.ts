@@ -192,7 +192,7 @@ export async function buildSearchCorpus(
           const label = labelByTemplateItem.get(c.template_item_id) ?? "";
           const answerText =
             (inputs.yesNo === true ? "Yes" : inputs.yesNo === false ? "No" : "") +
-            (showNotes && inputs.freeText ? ` ${inputs.freeText}` : "");
+            (inputs.freeText ? ` ${inputs.freeText}` : "");
           push(key, "answer", `${label} ${answerText}`.trim());
         }
       }
@@ -222,7 +222,7 @@ export async function buildSearchCorpus(
       .eq("location_id", args.locationId).in("id", pmIds).is("superseded_at", null);
     const repRows = (reps ?? []) as Array<{ id: string; mvp_note: string | null }>;
     const authorizedPmIds = repRows.map((r) => r.id);
-    if (isManager && showNotes) {
+    if (isManager) {
       for (const r of repRows) {
         push(`pm:${r.id}`, "mvp_note", r.mvp_note);
       }
@@ -268,7 +268,7 @@ export async function buildSearchCorpus(
       const key = `maintenance:${itemId}`; // == `${it.type}:${it.id}`
       const label = n.equipment_id ? (labelById.get(n.equipment_id) ?? null) : n.other_label;
       push(key, "equipment", label);
-      if (showNotes) push(key, "maintenance_note", n.note);
+      push(key, "maintenance_note", n.note);
     }
   }
 

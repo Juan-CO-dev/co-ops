@@ -26,6 +26,7 @@ export default async function ReportsWrittenPage({ searchParams }: { searchParam
   const raw = scalarParams(await searchParams);
   const range = parseReportRange(raw, operationalNow(new Date()).date);
   const actor: LocationActor = { role: auth.role, locations: auth.locations };
+  if (raw.location && !/^[a-zA-Z0-9_-]+$/.test(raw.location)) redirect("/reports/written");
   if (raw.location === "all" && auth.level < 8) redirect("/reports/written");
   if (raw.location && raw.location !== "all" && !canReadReportLocation(actor, raw.location)) redirect("/reports/written");
   const selectedLocation = raw.location && raw.location !== "all" ? raw.location : null;

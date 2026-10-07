@@ -95,6 +95,9 @@ export function checklistReportType(type: string, prepSubtype: string | null): R
 /** Internal type carries submitterId + submittedAt for sort; both stripped before return. */
 type ReportListItemInternal = ReportListItem & { submitterId: string | null; submittedAt: string | null };
 
+// CC ruling (2026-10-07): finished openings have ended at phase2_complete since May;
+// only six reached confirmed (last 2026-05-09), as Phase 3 is unwired.
+// finalizeMidDayPhase2 also writes phase2_complete. Keep it finalized.
 export function isFinalizedReport(status: string): boolean { return ["confirmed", "phase2_complete", "submitted", "completed", "incomplete_confirmed", "auto_finalized", "ok", "flags"].includes(status); }
 
 export async function listReportSkeleton(service: SupabaseClient, f: ListFilters): Promise<ReportListItemInternal[]> {
@@ -208,7 +211,8 @@ export async function listReportSkeleton(service: SupabaseClient, f: ListFilters
       submitted_at: string | null;
     }>;
     if (f.viewer.level < REPORTS_HUB_CASH_LEVEL) {
-      // employee: keep only reports that contain an eval about them
+      // Employees may read only finalized evaluations about themselves.
+      pmRows = pmRows.filter(r => ["submitted", "incomplete_confirmed", "auto_finalized"].includes(r.status));
       const ids = pmRows.map((r) => r.id);
       const mine = new Set<string>();
       for (let i = 0; i < ids.length; i += 50) {
@@ -260,13 +264,18 @@ export async function enrichReportItems(service: SupabaseClient, f: ListFilters,
   }
   const temps = await loadLocationTempItemIds(service, f.locationId);
   const signals = await computeReportSignalsBatch(service, items.filter(i => i.type !== "maintenance"), temps, f.viewer);
+  const maintenanceDates = items.filter(i => i.type === "maintenance").map(i => i.date).sort();
+  const maintenanceFlags = new Map(maintenanceDates.length
+    ? (await listMaintenanceReportDates(service, f.locationId, maintenanceDates[0]!, maintenanceDates[maintenanceDates.length - 1]!,
+      f.viewer.level < 4 ? f.viewer.userId : undefined)).map(d => [d.date, d.tempFlags])
+    : []);
   const out: ReportListItem[] = [];
   for (const {submitterId, submittedAt: _at, ...item} of items) {
     void _at; // Internal ordering metadata must not enter list rows.
     if (item.type === "maintenance") {
-      const detail = await loadMaintenanceReportDetail(service, f.locationId, item.date, f.viewer.level < 4 ? f.viewer.userId : undefined, f.viewer.level >= 5);
-      item.signalSummary = {underPar:0,overPar:0,skipped:0,tempFlags:detail.flagCount,cashOverShortCents:null};
-      item.status = detail.flagCount ? "flags" : "ok";
+      const flagCount = maintenanceFlags.get(item.date) ?? 0;
+      item.signalSummary = {underPar:0,overPar:0,skipped:0,tempFlags:flagCount,cashOverShortCents:null};
+      item.status = flagCount ? "flags" : "ok";
     } else item.signalSummary = signals.get(item.id);
     out.push({...item, submitterName: submitterId ? names.get(submitterId) ?? null : null});
   }
@@ -1045,6 +1054,7 @@ async function loadPmDetail(
   if (!report) return null;
   // SECURITY: record must belong to the caller's authorized location (cross-location IDOR guard).
   if (report.location_id !== args.locationId) return null;
+  if (args.viewer.level < 4 && !["submitted", "incomplete_confirmed", "auto_finalized"].includes(report.status)) return null;
   if ("status" in report && !isFinalizedReport(String(report.status)) && report.report_date >= etCalendarDate(new Date().toISOString())) return null;
 
   // Tier logic: L4+ see all evals; L3- see only their own eval (or null if none)
@@ -1180,7 +1190,7 @@ async function loadPmDetail(
     submittedAt: report.submitted_at ?? null,
     mvpUserId: report.mvp_user_id ?? null,
     mvpName,
-    mvpNote: isManager && showNotes ? (report.mvp_note ?? null) : null,
+    mvpNote: isManager ? (report.mvp_note ?? null) : null,
     evals,
     gradientTally,
     wrapUp,
@@ -1228,7 +1238,7 @@ export async function loadReportDetail(
     if (!args.id.startsWith(prefix)) return null;
     const date = args.id.slice(prefix.length);
     if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return null;
-    return loadMaintenanceReportDetail(service, args.locationId, date, args.viewer.level < 4 ? args.viewer.userId : undefined, args.viewer.level >= 5);
+    return loadMaintenanceReportDetail(service, args.locationId, date, args.viewer.level < 4 ? args.viewer.userId : undefined);
   }
   return null;
 }
@@ -1371,7 +1381,6 @@ export async function computeReportSignals(
   );
   const scopedItems = args.viewer && args.viewer.level < 4 ? items.filter(i => rows.some(r => r.template_item_id === i.id)) : items;
   const result = computeChecklistSignalsFromData(args.type, scopedItems, rows, args.tempItemIds);
-  if (args.viewer && args.viewer.level < 5) result.checks = result.checks.map(c => ({...c, freeText: null}));
   return result;
 }
 

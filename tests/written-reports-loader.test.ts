@@ -55,7 +55,7 @@ describe("written report loader scope and cursor", () => {
     ]);
   });
 
-  it("accepts only UTC-Z tuple cursors", () => {
+  it("preserves microseconds and accepts only UTC tuple cursors", () => {
     const encode = (submittedAt: string) => Buffer.from(JSON.stringify({
       submittedAt,
       id: "00000000-0000-4000-8000-000000000001",
@@ -63,6 +63,7 @@ describe("written report loader scope and cursor", () => {
     })).toString("base64url");
     expect(parseWrittenReportCursor(encode("2026-10-07T12:00:00.000Z")))
       .toEqual({ submittedAt: "2026-10-07T12:00:00.000Z", id: "00000000-0000-4000-8000-000000000001", context: "scope" });
+    for (const suffix of ["Z", "+00:00"]) expect(parseWrittenReportCursor(encode(`2026-10-07T12:00:00.123456${suffix}`))?.submittedAt).toBe("2026-10-07T12:00:00.123456Z");
     expect(parseWrittenReportCursor(encode("2026-10-07T08:00:00-04:00"))).toBeNull();
   });
 
@@ -112,4 +113,23 @@ describe("written report loader scope and cursor", () => {
       "(and(or(submitted_by.eq.employee,visibility_min_level.lte.3),or(location_id.is.null,location_id.in.(shop-a)),or(submitted_at.lt.2026-10-07T12:00:00.000Z,and(submitted_at.eq.2026-10-07T12:00:00.000Z,id.gt.00000000-0000-4000-8000-000000000001))))",
     ]);
   });
+});
+
+
+it("keeps the DB microseconds when emitting and reusing a written cursor", async () => {
+  const requests: string[] = [];
+  const service=createClient("http://localhost","test-key",{global:{fetch:async input=>{
+    requests.push(String(input));
+    const data=String(input).includes("/written_reports?") ? Array.from({length:51},(_,n)=>({
+      id:`00000000-0000-4000-8000-${String(n+1).padStart(12,"0")}`,submitted_at:"2026-10-07T12:00:00.123456+00:00",submitted_by:"employee",body:"Report",visibility_min_level:3,
+    })) : [];
+    return new Response(JSON.stringify(data),{status:200,headers:{"content-type":"application/json"}});
+  }}});
+  const args={viewer:{userId:"employee",level:3,locations:["shop-a"]},from:"2026-10-01",to:"2026-10-07",now:new Date("2026-10-07T16:00:00Z")};
+  const first=await listWrittenReports(service,args);
+  expect(parseWrittenReportCursor(first.nextCursor!)?.submittedAt).toBe("2026-10-07T12:00:00.123456Z");
+  await listWrittenReports(service,{...args,cursor:first.nextCursor!});
+  const filter=new URL(requests.filter(r=>r.includes("/written_reports?"))[1]!).searchParams.get("or");
+  expect(filter).toContain("submitted_at.lt.2026-10-07T12:00:00.123456Z");
+  expect(filter).toContain("submitted_at.eq.2026-10-07T12:00:00.123456Z");
 });

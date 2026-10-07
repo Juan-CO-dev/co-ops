@@ -92,7 +92,7 @@ describe("parentFor — operator drill-ins", () => {
   });
 
   it("trends landing → /reports", () => {
-    expect(parentFor("/reports/trends").href).toBe("/reports/operations");
+    expect(parentFor("/reports/trends").href).toBe("/reports");
   });
 
   it("trends ops/team sub-pages → /reports/trends", () => {

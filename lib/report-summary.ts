@@ -2,6 +2,8 @@ import type { ReportListItem, ReportTypeKey, SignalSummary } from "@/lib/reports
 
 export type LastCloseState = "done" | "not_finalized" | "missing";
 export const LAST_CLOSE_TYPES: ReportTypeKey[] = ["opening", "am_prep", "mid_day", "closing", "cash", "pm"];
+// phase2_complete is final: opening Phase 3 is unwired (only six confirmed,
+// last 2026-05-09); finalizeMidDayPhase2 writes it too. CC ruling 2026-10-07.
 export function reportIsFinalized(item: Pick<ReportListItem, "status" | "type">): boolean {
   return item.type === "maintenance" || ["confirmed", "phase2_complete", "submitted", "completed", "incomplete_confirmed", "auto_finalized", "ok", "flags"].includes(item.status);
 }

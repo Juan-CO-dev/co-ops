@@ -495,29 +495,25 @@ export async function listMaintenanceReportDates(
 
 
   if (itemIds.length && boundedInstances.length) {
-    const comps = await selectAllRows<{
-      template_item_id: string; instance_id: string; count_value: number | null;
-    }>((from, to) =>
+    const comps: Array<{ template_item_id: string; instance_id: string; count_value: number | null }> = [];
+    // Bound UUID filters to avoid PostgREST request-line limits on long windows.
+    for (let i = 0; i < boundedInstances.length; i += 50) {
+      comps.push(...await selectAllRows<{
+        template_item_id: string; instance_id: string; count_value: number | null;
+      }>((from, to) =>
       service.from("checklist_completions")
         .select(skeletonOnly ? "template_item_id, instance_id" : "template_item_id, instance_id, count_value")
-        .in("instance_id", boundedInstances.map(i => i.id))
+        .in("instance_id", boundedInstances.slice(i, i + 50).map(instance => instance.id))
         .match(ownUserId ? { completed_by: ownUserId } : {})
         .in("template_item_id", itemIds)
         .is("superseded_at", null).is("revoked_at", null)
+        .not("count_value", "is", null)
         .order("instance_id", { ascending: true }).range(from, to)
         .returns<Array<{template_item_id:string;instance_id:string;count_value:number|null}>>(),
-    );
-    const instIds = [...new Set(comps.map((c) => c.instance_id))];
-    const dateById = new Map<string, string>();
-    if (instIds.length) {
-      const insts = await selectAllRows<{ id: string; date: string }>((from, to) =>
-        service.from("checklist_instances").select("id, date")
-          .eq("location_id", locationId).in("id", instIds)
-          .gte("date", dateFrom).lte("date", dateTo)
-          .order("id", { ascending: true }).range(from, to),
-      );
-      for (const i of insts) dateById.set(i.id, i.date);
+      ));
     }
+    // Already location/date-bound above; do not issue another unbounded ID read.
+    const dateById = new Map(boundedInstances.map(i => [i.id, i.date]));
     for (const c of comps) {
       if (!skeletonOnly && c.count_value === null) continue;
       const date = dateById.get(c.instance_id);
