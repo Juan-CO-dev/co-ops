@@ -17,6 +17,7 @@ import { loadTrendSeries } from "@/lib/reports-trends";
 import { loadTeamOperatingHealth, TEAM_VIEW_LEVEL } from "@/lib/team-metrics";
 import { requireSessionFromHeaders } from "@/lib/session";
 import { getServiceRoleClient } from "@/lib/supabase-server";
+import { loadYieldVariance, YIELD_STATS_READ_MIN } from "@/lib/yield-stats";
 
 import { ReportPageNav } from "@/components/reports-hub/ReportPageNav";
 import { ReportShopTabs } from "@/components/reports-hub/ReportShopTabs";
@@ -68,7 +69,22 @@ async function renderPage(paramsRange: Record<string, string | undefined>, allSh
     ? await loadTeamOperatingHealth(sb, { viewer, locationId: locationParam, granularity, compare: true, today, range: { ...range, compare: true } })
     : null;
 
-  const attention: { kind: "ops" | "team"; titleKey: string; sub: string }[] = [];
+  // Batch vs bottle Phase B: the yield nudges join the attention strip for level 5+ bound to this
+  // shop with the REPORT bind (Astra r1 #4 — level 8 reads every shop, as the yield page does).
+  // Fail-soft on a HUB: a yield read failure must not take the trends landing down with it; the
+  // yield page itself says "unavailable" when 0218 is missing.
+  const canSeeYield = auth.level >= YIELD_STATS_READ_MIN && canReadReportLocation(locActor, locationParam);
+  const yieldView = canSeeYield
+    ? await loadYieldVariance(auth, locationParam).catch((e: unknown) => {
+        console.error("trends landing: yield variance unavailable", e);
+        return null;
+      })
+    : null;
+
+  const attention: { kind: "ops" | "team" | "yield"; titleKey: string; sub: string }[] = [];
+  if (yieldView && yieldView.recipeNudges + yieldView.makerItems > 0) {
+    attention.push({ kind: "yield", titleKey: "reports.trends.yield_title", sub: serverT(language, "reports.trends.yield_sub", { recipes: yieldView.recipeNudges, makers: yieldView.makerItems }) });
+  }
   if (team && team.summary.needsAttention > 0) {
     attention.push({ kind: "team", titleKey: "reports.trends.team.title", sub: serverT(language, team.banner.key as Parameters<typeof serverT>[1], team.banner.params) });
   }
@@ -88,6 +104,7 @@ async function renderPage(paramsRange: Record<string, string | undefined>, allSh
         language={language}
         context={context.toString()}
         canSeeTeam={canSeeTeam}
+        canSeeYield={canSeeYield}
         ops={ops}
         team={team}
         attention={attention}

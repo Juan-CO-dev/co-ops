@@ -27,6 +27,8 @@ import Link from "next/link";
 import { loadOwnTaskAssignments, loadShiftBoard } from "@/lib/assignments";
 import { taskVisible, type TaskType } from "@/lib/assignments-shared";
 import { ShiftBoardClient } from "@/components/assignments/ShiftBoardClient";
+import { RetrainTaskList } from "@/components/production/RetrainTaskList";
+import { loadMyRetrainTasks } from "@/lib/yield-stats";
 
 import { AuthShell } from "@/components/auth/AuthShell";
 import { BrandMark } from "@/components/BrandMark";
@@ -366,6 +368,11 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
   const shiftBoard = selectedLocation
     ? await widget("nav.assignments", () => loadShiftBoard(sb, { actor: { userId: auth.user.id, role: auth.role, level: auth.level, locations: auth.locations }, locationId: selectedLocation.id, date: dashboardDate }))
     : null;
+  // Batch vs bottle Phase B: the viewer's own open yield retrains (assigned by a GM; persist until
+  // marked done). Location-bound in the lib; only the assignee's own rows are read.
+  const retrainTasks = selectedLocation && auth.level >= 4
+    ? (await widget("yield.task.heading", () => loadMyRetrainTasks(auth, selectedLocation.id))) ?? []
+    : [];
   // Station/roster failures must not hide separately available assigned work.
   const ownTasks = shiftBoard
     ? shiftBoard.tasks.filter((task) => task.assigneeId === auth.user.id)
@@ -657,7 +664,8 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
         {auth.level >= 4 && selectedLocation && operational?.yesterdayUnconfirmed ? (
           <YesterdayUnconfirmedAlert location={selectedLocation} yesterdayDate={operational.yesterdayDate} language={language} />
         ) : null}
-        {shiftBoard && <ShiftBoardClient key={shiftBoard.locationId} board={shiftBoard} compact />}
+        {shiftBoard && <ShiftBoardClient key={shiftBoard.locationId} board={shiftBoard} compact retrainTasks={retrainTasks} />}
+        {!shiftBoard && retrainTasks.length > 0 && <section className="co-card p-4"><RetrainTaskList tasks={retrainTasks} /></section>}
 
         {/* Today's Operations card. */}
         {selectedLocation && operational ? (

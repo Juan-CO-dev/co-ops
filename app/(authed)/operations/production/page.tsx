@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { redirect } from "next/navigation";
 import { serverT } from "@/lib/i18n/server";
 import { formatDateLabel } from "@/lib/i18n/format";
@@ -8,6 +9,7 @@ import { loadProductionFormData, loadRecentProductions } from "@/lib/production"
 import { ProductionForm } from "@/components/production/ProductionForm";
 import { DashboardBackLink } from "@/components/DashboardBackLink";
 import { EmptyState } from "@/components/EmptyState";
+import { YIELD_STATS_READ_MIN } from "@/lib/yield-stats-shared";
 
 export default async function ProductionPage({ searchParams }: { searchParams: Promise<{ location?: string }> }) {
   const auth = await requireSessionFromHeaders("/operations/production");
@@ -22,6 +24,11 @@ export default async function ProductionPage({ searchParams }: { searchParams: P
     <main className="mx-auto max-w-2xl md:max-w-3xl lg:max-w-5xl xl:max-w-6xl px-4 pb-32 pt-4 sm:px-6">
       <div className="mb-3"><DashboardBackLink /></div>
       <h1 className="mb-4 text-lg font-bold text-co-text">{serverT(lang, "production.page.title")}</h1>
+      {auth.level >= YIELD_STATS_READ_MIN ? (
+        <Link href={`/operations/production/yield?location=${location}`} className="mb-4 inline-flex min-h-[44px] items-center text-xs font-bold uppercase tracking-[0.1em] text-co-gold-text hover:text-co-text">
+          {serverT(lang, "yield.view.open")}
+        </Link>
+      ) : null}
       <ProductionForm formData={formData} locationId={location} />
       <h2 className="mt-6 text-sm font-bold uppercase tracking-[0.14em] text-co-text-dim">{serverT(lang, "production.page.recent")}</h2>
       {recent.length === 0 ? (

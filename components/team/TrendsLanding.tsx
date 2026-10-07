@@ -15,6 +15,7 @@ export function TrendsLanding({
   context = "",
   language,
   canSeeTeam,
+  canSeeYield = false,
   ops,
   team,
   attention,
@@ -23,12 +24,15 @@ export function TrendsLanding({
   context?: string;
   language: Language;
   canSeeTeam: boolean;
+  /** Batch vs bottle Phase B: level 5+ bound to this shop sees the Yield card + its nudges. */
+  canSeeYield?: boolean;
   ops: { underPar: number; tempFlags: number } | null;
   team: TeamOperatingHealth | null;
-  attention: { kind: "ops" | "team"; titleKey: string; sub: string }[];
+  attention: { kind: "ops" | "team" | "yield"; titleKey: string; sub: string }[];
 }) {
   const opsHref = `/reports/trends/ops?location=${locationId}&${context}`;
   const teamHref = `/reports/trends/team?location=${locationId}&${context}`;
+  const yieldHref = `/operations/production/yield?location=${locationId}`;
 
   return (
     <div className="mx-auto flex max-w-2xl flex-col gap-5">
@@ -66,6 +70,22 @@ export function TrendsLanding({
             </p>
           </Link>
         ) : null}
+        {canSeeYield ? (
+          <Link
+            href={yieldHref}
+            className="flex flex-1 flex-col rounded-2xl border-2 border-co-border bg-co-surface p-4 transition hover:border-co-text"
+          >
+            <p className="font-extrabold text-co-text">
+              {serverT(language, "reports.trends.landing.yield_card")}
+            </p>
+            <p className="text-[11px] text-co-text-muted">
+              {serverT(language, "reports.trends.landing.yield_desc")}
+            </p>
+            <p className="mt-2 text-[10px] font-bold uppercase tracking-[0.08em] text-co-gold-text">
+              {serverT(language, "reports.trends.landing.tap_hint")} →
+            </p>
+          </Link>
+        ) : null}
       </div>
 
       {/* Relevant right now */}
@@ -81,7 +101,7 @@ export function TrendsLanding({
           attention.map((item, i) => (
             <Link
               key={i}
-              href={item.kind === "ops" ? opsHref : teamHref}
+              href={item.kind === "ops" ? opsHref : item.kind === "yield" ? yieldHref : teamHref}
               className="flex items-center gap-2 rounded-lg border border-co-border bg-co-surface p-2.5"
             >
               <span
