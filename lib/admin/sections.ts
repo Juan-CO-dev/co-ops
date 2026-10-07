@@ -59,7 +59,10 @@ export const ADMIN_SECTIONS: AdminSection[] = [
   // en/es; the cast is legacy from before they were added. Prefer registering the
   // key in TranslationKey (lib/i18n/types) and dropping the cast so the compiler
   // enforces en/es parity. Same pattern flagged in RecipesClient.tsx rk().
-  { id: "pars",                i18nKey: "admin.section.pars",                href: "/admin/pars",                minLevel: 7, comingSoon: true },
+  // 0220 — who gets the closing / all-shops / catering digests (and, later, the accountant
+  // package). GM views (7); level 9+ manages (lib/report-recipients.ts).
+  { id: "report-recipients",   i18nKey: "admin.section.report-recipients",   href: "/admin/report-recipients",   minLevel: 7 },
+  { id: "pars",                i18nKey: "admin.section.pars",               href: "/admin/pars",                minLevel: 7, comingSoon: true },
   { id: "locations",           i18nKey: "admin.section.locations",           href: "/admin/locations",           minLevel: 9, comingSoon: true },
   { id: "audit",               i18nKey: "admin.section.audit",               href: "/admin/audit",               minLevel: 9, comingSoon: true },
 ];

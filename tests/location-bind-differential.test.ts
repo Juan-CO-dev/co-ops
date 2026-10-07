@@ -116,6 +116,8 @@ const FILES = [
   "lib/admin/catering/faq.ts",
   "lib/admin/catering/fulfillment.ts",
   "lib/admin/catering/packages.ts",
+  // 0220 — saveReportRecipient binds every location_ids element before any I/O.
+  "lib/report-recipients.ts",
   "lib/dynamic-pars.ts",
   // 0214 — saveAmPrepDraft / consumeAmPrepDraft bind inside the lib (Wave 1 branch A).
   "lib/am-prep-draft.ts",
