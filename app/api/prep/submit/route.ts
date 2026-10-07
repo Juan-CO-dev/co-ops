@@ -39,6 +39,8 @@
  *         load, closing status load, canEditReport gate, snapshot inheritance,
  *         changed_fields diff, and RPC invocation atomically.
  *   - Translates lib's typed errors to HTTP responses via mapPrepError.
+ *   - 0214: after a SUCCESSFUL original submission, stamps the shop's AM prep
+ *     draft for the day consumed (consumeAmPrepDraft). A failed submit keeps it.
  *
  * Authorization (lib-enforced):
  *   - Original-submission path: actor.level >= AM_PREP_BASE_LEVEL (3, per
@@ -72,6 +74,7 @@
 import { type NextRequest } from "next/server";
 
 import { extractIp, jsonError, jsonOk, parseJsonBody } from "@/lib/api-helpers";
+import { consumeAmPrepDraft } from "@/lib/am-prep-draft";
 import { lockLocationContext } from "@/lib/locations";
 import {
   PrepError,
@@ -275,6 +278,24 @@ export async function POST(req: NextRequest) {
       isUpdate: body.isUpdate,
       originalSubmissionId: body.originalSubmissionId,
     });
+    // 0214 — the count is handed in, so the shop's draft for the day is consumed. Only on
+    // the ORIGINAL submission (the draft only ever feeds the first submit), and only here,
+    // after submitAmPrep returned: a failed submit throws above and keeps the draft. A
+    // failure to stamp it is logged, never surfaced — the submit already succeeded, and an
+    // unconsumed draft on a confirmed instance is inert (the page never restores it).
+    if (!body.isUpdate) {
+      try {
+        await consumeAmPrepDraft(service, {
+          actor: ctx,
+          instanceId: instance.id,
+          locationId: instance.location_id,
+          businessDate: instance.date,
+        });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.error(`[/api/prep/submit] draft consume failed (submit succeeded):`, msg);
+      }
+    }
     return jsonOk({
       instance: result.instance,
       submittedCompletionIds: result.submittedCompletionIds,

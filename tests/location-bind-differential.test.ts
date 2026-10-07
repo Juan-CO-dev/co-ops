@@ -49,7 +49,16 @@ const TENANCY_SCOPED_TABLES = [
   "toast_ingest_exclusions",
   "vendor_delivery_rhythm",
   "vendor_rhythm_skips",
+  // 0214 — the AM prep draft is one shop's unsubmitted count for one day.
+  "am_prep_drafts",
 ];
+
+/**
+ * RPCs that WRITE a tenancy-scoped table in SQL. A body calling one of these is a writer even
+ * though it never names the table with .from(…) (0214: save_am_prep_draft merges the AM prep
+ * draft atomically, so saveAmPrepDraft has no .from("am_prep_drafts") write of its own).
+ */
+const TENANCY_SCOPED_RPCS = ["save_am_prep_draft"];
 
 /** Any of these in a function body counts as "the actor was bound to a location". */
 const BIND_PRIMITIVES = [
@@ -78,6 +87,8 @@ const FILES = [
   "lib/admin/catering/fulfillment.ts",
   "lib/admin/catering/packages.ts",
   "lib/dynamic-pars.ts",
+  // 0214 — saveAmPrepDraft / consumeAmPrepDraft bind inside the lib (Wave 1 branch A).
+  "lib/am-prep-draft.ts",
 ];
 
 /**
@@ -127,6 +138,9 @@ function exportedAsyncFunctions(source: string): Fn[] {
 const WRITE_CALLS = [".insert(", ".update(", ".upsert(", ".delete(", ".rpc("];
 
 function writesScopedTable(body: string): string | null {
+  for (const r of TENANCY_SCOPED_RPCS) {
+    if (body.includes(`.rpc("${r}"`)) return `rpc:${r}`;
+  }
   for (const t of TENANCY_SCOPED_TABLES) {
     if (body.includes(`.from("${t}")`) && WRITE_CALLS.some((w) => body.includes(w))) return t;
   }

@@ -38,6 +38,9 @@
  *     after a successful in-session submission)
  *   - success banner with attribution + read-only banner for returning users
  *   - discard-changes affordance (small text-style button under submit)
+ *   - 0214 draft: seeds from the shop's autosaved count (restoredDraft) and
+ *     autosaves every change via useAmPrepDraftAutosave, so leaving the page
+ *     or the idle timeout no longer resets the count
  *
  * Section grouping discipline (per C.38): groups by `prepMeta.section`
  * (typed enum after upstream narrowPrepTemplateItem). Items lacking
@@ -54,6 +57,10 @@
 import { useRouter } from "next/navigation";
 import { useCallback, useMemo, useState } from "react";
 
+import {
+  amPrepDraftItemsToFormValues,
+  type AmPrepDraftRestore,
+} from "@/lib/am-prep-draft-shared";
 import type { ChecklistChainEntry } from "@/lib/checklists";
 import { formatChainAttribution, formatTime } from "@/lib/i18n/format";
 import { useTranslation } from "@/lib/i18n/provider";
@@ -75,6 +82,7 @@ import { MiscSection } from "./sections/MiscSection";
 import { MixedPrepSection } from "./sections/MixedPrepSection";
 import { AmPrepCollapseContext, type AmPrepCollapse } from "./collapse-context";
 import type { RawPrepInputs } from "./types";
+import { useAmPrepDraftAutosave } from "./useAmPrepDraftAutosave";
 
 /**
  * Numeric fields in RawPrepInputs that need parsing at submission time.
@@ -418,6 +426,13 @@ export interface AmPrepFormProps {
    * section to MiscSection (yes_no shape) or GenericPrepSection (numeric).
    */
   sections: PrepSectionDefn[];
+  /**
+   * 0214 — the shop's autosaved, unsubmitted count for today, when the page decided it
+   * applies (`amPrepDraftApplies`: first submission of a still-open instance). Seeds the
+   * form instead of blanks and drives the "Picked up where you left off" line. Null
+   * otherwise.
+   */
+  restoredDraft?: AmPrepDraftRestore | null;
 }
 
 type SubmitState =
@@ -438,6 +453,7 @@ export function AmPrepForm({
   locationId,
   sectionLabels = {},
   sections,
+  restoredDraft = null,
 }: AmPrepFormProps) {
   const { t, language } = useTranslation();
   const router = useRouter();
@@ -492,9 +508,18 @@ export function AmPrepForm({
     [initialRawValues],
   );
 
+  // 0214 — the SEED: the restored draft when the page handed one over, else the submitted
+  // values. `initialRawValues` stays the DIRTY baseline (what is already submitted — empty
+  // on a first submission), so a restored count is dirty and submittable at once.
+  const seedRawValues = useMemo<Record<string, RawPrepInputs>>(
+    () => (restoredDraft ? amPrepDraftItemsToFormValues(restoredDraft.draft.items) : initialRawValues),
+    [restoredDraft, initialRawValues],
+  );
+  const seedRawValuesString = useMemo(() => stableStringify(seedRawValues), [seedRawValues]);
+
   // State.
   const [instance, setInstance] = useState<ChecklistInstance>(initialInstance);
-  const [rawValues, setRawValues] = useState<Record<string, RawPrepInputs>>(initialRawValues);
+  const [rawValues, setRawValues] = useState<Record<string, RawPrepInputs>>(seedRawValues);
   const [submitState, setSubmitState] = useState<SubmitState>({ kind: "idle" });
 
   // Derived: dirty + validation.
@@ -502,6 +527,23 @@ export function AmPrepForm({
     () => stableStringify(rawValues) !== initialRawValuesString,
     [rawValues, initialRawValuesString],
   );
+  // Discard reverts to the SEED (what this page loaded), not to blank: with a shared draft,
+  // blank would erase a teammate's whole count on one tap. Offered only when there is
+  // something since the seed to discard.
+  const hasChangesSinceSeed = useMemo(
+    () => stableStringify(rawValues) !== seedRawValuesString,
+    [rawValues, seedRawValuesString],
+  );
+
+  // 0214 — autosave. Only on a first submission of a still-open instance; `instance` is
+  // local state, so a successful submit (status → confirmed) switches it off.
+  const draftEnabled = mode === "submit" && instance.status === "open";
+  const { status: draftStatus, flushNow: flushDraft } = useAmPrepDraftAutosave({
+    enabled: draftEnabled,
+    instanceId: instance.id,
+    rawValues,
+    serverItems: restoredDraft?.draft.items ?? {},
+  });
 
   const validation = useMemo(
     () => validateRawValues(rawValues, templateItems, lineShapeByItemId, t),
@@ -649,9 +691,9 @@ export function AmPrepForm({
   // ─── Discard changes ────────────────────────────────────────────────────
 
   const handleDiscard = useCallback(() => {
-    setRawValues(initialRawValues);
+    setRawValues(seedRawValues);
     if (submitState.kind === "error") setSubmitState({ kind: "idle" });
-  }, [initialRawValues, submitState.kind]);
+  }, [seedRawValues, submitState.kind]);
 
   // ─── C.46 Cancel (edit mode) ────────────────────────────────────────────
   // Stay on /operations/am-prep, drop ?edit=true → toggles to read_only mode.
@@ -722,6 +764,31 @@ export function AmPrepForm({
     return t("am_prep.banner.read_only", { name: confirmedByName, time });
   })();
 
+  // 0214 — "Picked up where you left off at 9:42 (Maria)". Hidden once the count is
+  // submitted (draftEnabled flips false) — by then the success banner speaks.
+  const restoredLine = (() => {
+    if (!restoredDraft || !draftEnabled) return null;
+    const time = formatTime(restoredDraft.savedAt, language);
+    return restoredDraft.savedByName
+      ? t("am_prep.draft.restored", { time, name: restoredDraft.savedByName })
+      : t("am_prep.draft.restored_no_name", { time });
+  })();
+
+  const draftStatusText = (() => {
+    switch (draftStatus) {
+      case "saving":
+        return t("am_prep.draft.saving");
+      case "saved":
+        return t("am_prep.draft.saved");
+      case "retrying":
+        return t("am_prep.draft.retrying");
+      case "failed":
+        return t("am_prep.draft.failed");
+      default:
+        return null;
+    }
+  })();
+
   // C.46 — editing banner ("Editing AM Prep submitted by [name] at [time]").
   // Renders only in edit mode; uses chain head's attribution.
   const editingBanner = (() => {
@@ -737,7 +804,21 @@ export function AmPrepForm({
   // ─── Render ─────────────────────────────────────────────────────────────
 
   return (
-    <div className="flex flex-col gap-4">
+    <div
+      className="flex flex-col gap-4"
+      // 0214 — save on blur: leaving a cell flushes the pending draft at once instead of
+      // waiting out the debounce. React's onBlur bubbles (focusout), so one handler covers
+      // every input in every section.
+      onBlur={draftEnabled ? flushDraft : undefined}
+    >
+      {/* 0214 — restored-draft line: one quiet sentence, only when the form was seeded
+          from the shop's autosaved count. */}
+      {restoredLine ? (
+        <p role="status" className="text-xs font-semibold text-co-text-muted">
+          {restoredLine}
+        </p>
+      ) : null}
+
       {/* C.46 editing banner (mode === "edit"). */}
       {editingBanner ? (
         <section
@@ -904,11 +985,26 @@ export function AmPrepForm({
             {submitButtonText}
           </ActionButton>
 
-          {/* Discard-changes affordance — visible only when dirty (the
+          {/* 0214 — draft autosave status. Quiet by design: a reassurance, not an alert;
+              even the failure line is a statement, and typing is never blocked. Renders
+              only once a save has been attempted (an "idle" line would be noise). */}
+          {draftEnabled && draftStatusText ? (
+            <p
+              role="status"
+              aria-live="polite"
+              aria-label={t("am_prep.draft.aria")}
+              className="self-center text-[11px] text-co-text-muted"
+            >
+              {draftStatusText}
+            </p>
+          ) : null}
+
+          {/* Discard-changes affordance — visible only when there are changes
+              since the page loaded (the
               !isReadOnly outer guard already excludes in-flight + success
               + server-confirmed states, so submitState.kind here is
               narrowed to "idle" | "error"). Small text-style button. */}
-          {isDirty ? (
+          {hasChangesSinceSeed ? (
             <button
               type="button"
               onClick={handleDiscard}
