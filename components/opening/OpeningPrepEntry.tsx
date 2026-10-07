@@ -35,7 +35,7 @@
  * client-side display-only validation prevents wasted round-trips.
  */
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import { resolveTemplateItemContent } from "@/lib/i18n/content";
 import { formatTime } from "@/lib/i18n/format";
@@ -45,6 +45,10 @@ import type { OpeningCloserCountSnapshotRow } from "@/lib/opening";
 import type { DerivedSku, ConfirmedInput } from "@/lib/prep-consumption";
 import { ProductionConsumptionPanel } from "@/components/production/ProductionConsumptionPanel";
 import type { ChecklistTemplateItem, OpeningPhase2Meta } from "@/lib/types";
+
+import { CollapsibleChecklistSection } from "@/components/ui/CollapsibleChecklistSection";
+import { showProblems, unfinishedSectionIds } from "@/lib/collapsible-sections";
+import { useCollapsibleSections } from "@/lib/use-collapsible-sections";
 
 import { OpeningSectionVerify } from "./OpeningSectionVerify";
 import {
@@ -192,6 +196,8 @@ interface OpeningPrepEntryProps {
   managers: ReadonlyArray<ManagerOption>;
   language: Language;
   showMissingErrors: boolean;
+  /** Show-problems also turns on the parent's inline error markers (same state submit sets). */
+  onShowProblems?: () => void;
   /**
    * Locked (read-only) — Phase 2 has been finalized (instance.status past
    * 'phase1_complete'). Renders the prepped values as a static, locked view:
@@ -219,6 +225,7 @@ export function OpeningPrepEntry({
   managers,
   language,
   showMissingErrors,
+  onShowProblems,
   readOnly = false,
 }: OpeningPrepEntryProps) {
   const { t } = useTranslation();
@@ -278,6 +285,25 @@ export function OpeningPrepEntry({
     return map;
   }, [sectionGroups, closerSnapshots, values]);
 
+  // Wave 1 B — collapsible sections. DONE = the item's save state is "saved" (the
+  // same status the Phase 2 finalize gate counts: outstandingCount). First section
+  // with an unsaved item starts open.
+  const sectionProgress = Array.from(sectionGroups.entries()).map(([id, group]) => ({
+    id,
+    total: group.length,
+    done: group.filter((it) => saveStates.get(it.id)?.status === "saved").length,
+  }));
+  const collapsible = useCollapsibleSections("opening-p2", sectionProgress);
+  // Finalize pressed with problems (showMissingErrors flips true): open + scroll to
+  // every section that still has an unsaved item.
+  const revealSections = collapsible.reveal;
+  const unfinishedKey = JSON.stringify(unfinishedSectionIds(sectionProgress));
+  useEffect(() => {
+    if (showMissingErrors) revealSections(JSON.parse(unfinishedKey) as string[]);
+  }, [showMissingErrors, unfinishedKey, revealSections]);
+
+  const hasUnsaved = unfinishedSectionIds(sectionProgress).length > 0;
+
   const overParTarget = overParModalItemId
     ? items.find((it) => it.id === overParModalItemId)
     : null;
@@ -290,6 +316,21 @@ export function OpeningPrepEntry({
 
   return (
     <div className="flex flex-col gap-4">
+      {hasUnsaved && !readOnly ? (
+        <button
+          type="button"
+          onClick={() =>
+            showProblems(
+              sectionProgress,
+              () => onShowProblems?.(),
+              revealSections,
+            )
+          }
+          className="inline-flex min-h-[44px] items-center self-start px-3 text-xs font-bold uppercase tracking-[0.12em] text-co-text underline focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/40"
+        >
+          {t("checklist.section.show_problems")}
+        </button>
+      ) : null}
       {Array.from(sectionGroups.entries()).map(([sectionKey, sectionItems]) => {
         const firstItem = sectionItems[0];
         const sectionDisplay = firstItem
@@ -298,16 +339,22 @@ export function OpeningPrepEntry({
         const verified = sectionVerifications.get(sectionKey) ?? false;
         const disabled = sectionDisabledMap.get(sectionKey) ?? false;
 
+        const progress = sectionProgress.find((p) => p.id === sectionKey);
+
         return (
-          <section
+          <CollapsibleChecklistSection
             key={sectionKey}
-            aria-label={sectionDisplay}
+            formKey="opening-p2"
+            sectionId={sectionKey}
+            ariaLabel={sectionDisplay}
+            title={sectionDisplay}
+            done={progress?.done ?? 0}
+            total={progress?.total ?? sectionItems.length}
+            open={collapsible.isOpen(sectionKey)}
+            onToggle={() => collapsible.toggle(sectionKey)}
             className="rounded-2xl border-2 border-co-border bg-co-surface p-4 shadow-sm sm:p-5"
-          >
-            <header className="flex items-start justify-between gap-3">
-              <h3 className="text-base font-extrabold uppercase tracking-[0.14em] text-co-text">
-                {sectionDisplay}
-              </h3>
+            titleClassName="text-base font-extrabold uppercase tracking-[0.14em] text-co-text"
+            headerExtras={
               <OpeningSectionVerify
                 sectionKey={sectionKey}
                 sectionDisplay={sectionDisplay}
@@ -317,7 +364,8 @@ export function OpeningPrepEntry({
                 onToggleVerified={() => onSectionVerifyToggle(sectionKey)}
                 language={language}
               />
-            </header>
+            }
+          >
 
             <ul className="mt-3 flex flex-col">
               {sectionItems.map((item) => {
@@ -370,7 +418,7 @@ export function OpeningPrepEntry({
                 );
               })}
             </ul>
-          </section>
+          </CollapsibleChecklistSection>
         );
       })}
 

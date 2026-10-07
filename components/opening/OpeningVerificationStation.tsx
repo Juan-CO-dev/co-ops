@@ -31,6 +31,43 @@ import {
   type OpeningItemFormValue,
 } from "./OpeningChecklistItem";
 import { OpeningSectionVerify } from "./OpeningSectionVerify";
+import { CollapsibleChecklistSection } from "@/components/ui/CollapsibleChecklistSection";
+
+/**
+ * Wave 1 B — progress for a Phase 1 station card, under the form's OWN done rules:
+ *   - tick item   → DONE when ticked (the station tick / per-item tick);
+ *   - spot-check  → DONE when its section is verified (sectionVerifications, keyed on
+ *                   prep_meta.section) — the only way Phase 1 resolves a spot-check item;
+ *   - EITHER kind, when it expectsCount (temperature / count) → additionally needs its
+ *     count present: the same rule as the submit gate (allTicked AND allTempsFilled).
+ *   - verificationLocked (Phase 1 already landed) → everything renders DONE.
+ */
+export function openingStationProgress(
+  station: string,
+  items: ChecklistTemplateItem[],
+  values: Map<string, OpeningItemFormValue>,
+  closerSnapshotsMap: Map<string, OpeningCloserCountSnapshotRow>,
+  sectionVerifications: Map<string, boolean>,
+  verificationLocked: boolean,
+): { id: string; done: number; total: number } {
+  const firstSpotCheck = items.find((it) => closerSnapshotsMap.has(it.id));
+  const sectionKey =
+    (firstSpotCheck?.prepMeta as OpeningPhase2Meta | null)?.section ?? station;
+  const sectionVerified = sectionVerifications.get(sectionKey) ?? false;
+  let done = 0;
+  for (const it of items) {
+    if (verificationLocked) {
+      done += 1;
+      continue;
+    }
+    const base = closerSnapshotsMap.has(it.id)
+      ? sectionVerified
+      : values.get(it.id)?.ticked === true;
+    const countOk = !it.expectsCount || (values.get(it.id)?.countValue ?? null) !== null;
+    if (base && countOk) done += 1;
+  }
+  return { id: station, done, total: items.length };
+}
 
 interface OpeningVerificationStationProps {
   /** System-key match value (English `station` from checklist_template_items). */
@@ -69,6 +106,9 @@ interface OpeningVerificationStationProps {
    * a second opener (whose local form is empty) can't re-tick or re-verify.
    */
   verificationLocked: boolean;
+  /** Wave 1 B — collapse state lifted to OpeningClient (reveal on submit errors). */
+  open: boolean;
+  onToggleOpen: () => void;
 }
 
 export function OpeningVerificationStation({
@@ -83,6 +123,8 @@ export function OpeningVerificationStation({
   sectionVerifications,
   onSectionVerifyToggle,
   verificationLocked,
+  open,
+  onToggleOpen,
 }: OpeningVerificationStationProps) {
   const { t } = useTranslation();
 
@@ -132,59 +174,74 @@ export function OpeningVerificationStation({
     );
   });
 
-  return (
-    <section
-      aria-label={t("opening.station.aria", { station: stationDisplay })}
-      className="co-card mb-4 break-inside-avoid p-4 sm:p-5"
-    >
-      <header className="flex items-start justify-between gap-3">
-        <h3 className="text-base font-extrabold uppercase tracking-[0.14em] text-co-text">
-          {stationDisplay}
-        </h3>
-        {hasTickItems ? (
-          <button
-            type="button"
-            onClick={
-              verificationLocked
-                ? undefined
-                : () => onStationTickChange(items, !allTicked)
-            }
-            disabled={verificationLocked}
-            aria-pressed={displayTicked}
-            aria-disabled={verificationLocked || undefined}
-            aria-label={
-              displayTicked
-                ? t("opening.station.untick_aria", { station: stationDisplay })
-                : t("opening.station.tick_aria", { station: stationDisplay })
-            }
-            className={[
-              "inline-flex min-h-[44px] items-center gap-1.5 rounded-full px-3",
-              "text-xs font-bold uppercase tracking-[0.12em]",
-              "transition focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60",
-              verificationLocked
-                ? "cursor-not-allowed border-2 border-co-text bg-co-gold text-co-text opacity-70"
-                : displayTicked
-                  ? "border-2 border-co-text bg-co-gold text-co-text hover:bg-co-gold-deep"
-                  : "border-2 border-co-border-2 bg-co-surface text-co-text hover:border-co-text",
-            ].join(" ")}
-          >
-            <span aria-hidden>{displayTicked ? "✓" : "○"}</span>
-            {displayTicked ? t("opening.station.ticked_button") : t("opening.station.tick_button")}
-          </button>
-        ) : null}
-        {hasSpotCheckItems ? (
-          <OpeningSectionVerify
-            sectionKey={sectionKey}
-            sectionDisplay={stationDisplay}
-            verified={sectionVerified}
-            disabled={sectionHasUnrecountedNull || verificationLocked}
-            disabledReason={sectionHasUnrecountedNull ? "null_items_unrecounted" : null}
-            onToggleVerified={() => onSectionVerifyToggle(sectionKey)}
-            language={language}
-          />
-        ) : null}
-      </header>
+  const progress = openingStationProgress(
+    station,
+    items,
+    values,
+    closerSnapshotsMap,
+    sectionVerifications,
+    verificationLocked,
+  );
 
+  return (
+    <CollapsibleChecklistSection
+      formKey="opening-p1"
+      sectionId={station}
+      ariaLabel={t("opening.station.aria", { station: stationDisplay })}
+      title={stationDisplay}
+      done={progress.done}
+      total={progress.total}
+      open={open}
+      onToggle={onToggleOpen}
+      className="co-card mb-4 break-inside-avoid p-4 sm:p-5"
+      titleClassName="text-base font-extrabold uppercase tracking-[0.14em] text-co-text"
+      headerExtras={
+        <>
+          {hasTickItems ? (
+            <button
+              type="button"
+              onClick={
+                verificationLocked
+                  ? undefined
+                  : () => onStationTickChange(items, !allTicked)
+              }
+              disabled={verificationLocked}
+              aria-pressed={displayTicked}
+              aria-disabled={verificationLocked || undefined}
+              aria-label={
+                displayTicked
+                  ? t("opening.station.untick_aria", { station: stationDisplay })
+                  : t("opening.station.tick_aria", { station: stationDisplay })
+              }
+              className={[
+                "inline-flex min-h-[44px] items-center gap-1.5 rounded-full px-3",
+                "text-xs font-bold uppercase tracking-[0.12em]",
+                "transition focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60",
+                verificationLocked
+                  ? "cursor-not-allowed border-2 border-co-text bg-co-gold text-co-text opacity-70"
+                  : displayTicked
+                    ? "border-2 border-co-text bg-co-gold text-co-text hover:bg-co-gold-deep"
+                    : "border-2 border-co-border-2 bg-co-surface text-co-text hover:border-co-text",
+              ].join(" ")}
+            >
+              <span aria-hidden>{displayTicked ? "✓" : "○"}</span>
+              {displayTicked ? t("opening.station.ticked_button") : t("opening.station.tick_button")}
+            </button>
+          ) : null}
+          {hasSpotCheckItems ? (
+            <OpeningSectionVerify
+              sectionKey={sectionKey}
+              sectionDisplay={stationDisplay}
+              verified={sectionVerified}
+              disabled={sectionHasUnrecountedNull || verificationLocked}
+              disabledReason={sectionHasUnrecountedNull ? "null_items_unrecounted" : null}
+              onToggleVerified={() => onSectionVerifyToggle(sectionKey)}
+              language={language}
+            />
+          ) : null}
+        </>
+      }
+    >
       <ul className="mt-3 flex flex-col">
         {items.map((item) => {
           // Fix-pass 2026-05-26: default-value fallback now includes
@@ -221,6 +278,6 @@ export function OpeningVerificationStation({
           );
         })}
       </ul>
-    </section>
+    </CollapsibleChecklistSection>
   );
 }
