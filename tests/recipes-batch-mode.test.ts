@@ -66,10 +66,16 @@ describe("updateRecipe — batch_mode goes through the RPC; shelf life is valida
 });
 
 describe("outputs: every writer is an RPC under the recipe row lock", () => {
-  it("addRecipeOutput inserts through add_recipe_output, not a direct insert", () => {
+  it("addRecipeOutput refuses a second output on a batch_mode recipe BEFORE the insert (the RPC rewire is the named follow-up; the 0187 pin stands)", () => {
     const body = fnBody(lib, "addRecipeOutput");
-    expect(body).toMatch(/rpc\("add_recipe_output"/);
-    expect(body).not.toMatch(/from\("recipe_outputs"\)\.insert/);
+    // tests/audit-flags-cleanup.test.ts pins that shipped code does not call add_recipe_output
+    // while 0187 is gated; this PR keeps that pin and guards in TS instead.
+    expect(body).not.toMatch(/rpc\("add_recipe_output"/);
+    const checkAt = body.indexOf('throw new RecipeError(422, "batch_mode_single_output")');
+    const insertAt = body.indexOf('from("recipe_outputs").insert');
+    expect(checkAt).toBeGreaterThan(-1);
+    expect(insertAt).toBeGreaterThan(-1);
+    expect(checkAt).toBeLessThan(insertAt);
   });
   it("removeRecipeEdge deletes an output through remove_recipe_output and keeps the direct path for inputs only", () => {
     const body = fnBody(lib, "removeRecipeEdge");
