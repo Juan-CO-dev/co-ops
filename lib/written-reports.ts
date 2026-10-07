@@ -25,6 +25,8 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { REPORT_ALL_LOCATIONS_LEVEL } from "@/lib/locations";
 import { ROLES, type RoleCode } from "@/lib/roles";
 import type { WrittenReport } from "@/lib/types";
+import { parseReportRange, reportTimestampBounds } from "@/lib/report-range";
+import { etCalendarDate } from "@/lib/operational-day";
 import {
   WRITTEN_REPORT_WRITE_MIN_LEVEL,
   isWithinEditWindow,
@@ -35,6 +37,10 @@ import {
 export * from "@/lib/written-reports-shared";
 
 const ALL_LOCATIONS_READ_LEVEL = REPORT_ALL_LOCATIONS_LEVEL;
+
+/** Juan's pending product choice is intentionally isolated to this switch. */
+export const EMPLOYEE_WRITTEN_REPORTS_OWN_ONLY = false;
+export const WRITTEN_REPORTS_PAGE_SIZE = 50;
 
 /** The DB row shape (snake_case). */
 interface WrittenReportRow {
@@ -88,6 +94,39 @@ export interface WrittenReportListItem extends WrittenReport {
   canEdit: boolean;
 }
 
+export interface WrittenReportCursor {
+  submittedAt: string;
+  id: string;
+  context: string;
+}
+
+export interface WrittenReportPage {
+  reports: WrittenReportListItem[];
+  nextCursor: string | null;
+}
+
+function encodeCursor(cursor: WrittenReportCursor): string {
+  return Buffer.from(JSON.stringify(cursor), "utf8").toString("base64url");
+}
+
+export function parseWrittenReportCursor(raw: string | undefined): WrittenReportCursor | null {
+  if (!raw) return null;
+  try {
+    const value = JSON.parse(Buffer.from(raw, "base64url").toString("utf8")) as Partial<WrittenReportCursor>;
+    if (
+      typeof value.submittedAt !== "string" ||
+      !/^\d{4}-\d{2}-\d{2}T.*Z$/.test(value.submittedAt) ||
+      Number.isNaN(Date.parse(value.submittedAt)) ||
+      typeof value.id !== "string" ||
+      !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value.id) ||
+      typeof value.context !== "string"
+    ) return null;
+    return { submittedAt: new Date(value.submittedAt).toISOString(), id: value.id, context: value.context };
+  } catch {
+    return null;
+  }
+}
+
 /**
  * List written reports the viewer may see, newest first.
  *
@@ -100,37 +139,88 @@ export interface WrittenReportListItem extends WrittenReport {
  */
 export async function listWrittenReports(
   service: SupabaseClient,
-  args: { viewer: WrittenReportViewer; limit?: number; now?: Date },
-): Promise<WrittenReportListItem[]> {
+  args: {
+    viewer: WrittenReportViewer;
+    from?: string;
+    to?: string;
+    locationId?: string;
+    cursor?: string;
+    pageSize?: number;
+    now?: Date;
+  },
+): Promise<WrittenReportPage> {
   const { viewer } = args;
+  if (viewer.level < 2) throw new Error("written_report_scope_forbidden");
   const now = args.now ?? new Date();
-  const limit = args.limit ?? 200;
+  const pageSize = Math.min(Math.max(args.pageSize ?? WRITTEN_REPORTS_PAGE_SIZE, 1), WRITTEN_REPORTS_PAGE_SIZE);
+  const today = etCalendarDate(now.toISOString());
+  const range = parseReportRange(
+    args.from || args.to ? { range: "custom", from: args.from, to: args.to } : {},
+    today,
+  );
+  const cursorContext = JSON.stringify({
+    from: range.from,
+    to: range.to,
+    userId: viewer.userId,
+    level: viewer.level,
+    locations: viewer.locations === "all" ? "all" : [...viewer.locations].sort(),
+    ownOnly: EMPLOYEE_WRITTEN_REPORTS_OWN_ONLY,
+    locationId: args.locationId ?? null,
+  });
+  const parsedCursor = parseWrittenReportCursor(args.cursor);
+  const cursor = parsedCursor?.context === cursorContext ? parsedCursor : null;
 
   // Base query: visibility floor gate. Location gate is applied below so the
   // "location IS NULL OR mine OR level>=8" three-way OR is expressed exactly.
   let q = service
     .from("written_reports")
     .select(ROW_COLS)
-    .lte("visibility_min_level", viewer.level)
+    .not("submitted_at", "is", null)
     .order("submitted_at", { ascending: false })
-    .limit(limit);
+    .order("id", { ascending: true })
+    .limit(pageSize + 1);
 
+  const { start, end } = reportTimestampBounds(range.from, range.to);
+  q = q.gte("submitted_at", start).lt("submitted_at", end);
+
+  const scopeFilters: string[] = [
+    viewer.level < 4 && !EMPLOYEE_WRITTEN_REPORTS_OWN_ONLY
+      ? `or(submitted_by.eq.${viewer.userId},visibility_min_level.lte.${viewer.level})`
+      : viewer.level < 4
+        ? `submitted_by.eq.${viewer.userId}`
+        : `visibility_min_level.lte.${viewer.level}`,
+  ];
+
+  if (args.locationId) {
+    // This value is interpolated into PostgREST's boolean grammar below.
+    if (!/^[a-zA-Z0-9_-]+$/.test(args.locationId) || args.locationId === "all") throw new Error("written_report_scope_forbidden");
+    const authorized = viewer.level >= ALL_LOCATIONS_READ_LEVEL ||
+      (viewer.locations !== "all" && viewer.locations.includes(args.locationId));
+    if (!authorized) throw new Error("written_report_scope_forbidden");
+    scopeFilters.push(`or(location_id.is.null,location_id.eq.${args.locationId})`);
   // Location scope: level >= 8 sees all; otherwise null-location OR one of mine.
-  if (viewer.level < ALL_LOCATIONS_READ_LEVEL) {
+  } else if (viewer.level < ALL_LOCATIONS_READ_LEVEL) {
     // A sentinel cannot grant authority above the viewer's actual role.
     const locs = viewer.locations === "all" ? [] : viewer.locations;
     if (locs.length === 0) {
       // No authorized locations → only all-location (null) reports are visible.
-      q = q.is("location_id", null);
+      scopeFilters.push("location_id.is.null");
     } else {
       const inList = locs.join(",");
-      q = q.or(`location_id.is.null,location_id.in.(${inList})`);
+      scopeFilters.push(`or(location_id.is.null,location_id.in.(${inList}))`);
     }
   }
 
+  if (cursor) scopeFilters.push(
+    `or(submitted_at.lt.${cursor.submittedAt},and(submitted_at.eq.${cursor.submittedAt},id.gt.${cursor.id}))`,
+  );
+  q = q.or(scopeFilters.length === 1 ? scopeFilters[0]! : `and(${scopeFilters.join(",")})`);
+
   const { data, error } = await q;
   if (error) throw new Error(`listWrittenReports failed: ${error.message}`);
-  const rows = (data ?? []) as WrittenReportRow[];
+  const fetched = (data ?? []) as WrittenReportRow[];
+  const hasMore = fetched.length > pageSize;
+  const rows = fetched.slice(0, pageSize);
 
   // Resolve author names (batch).
   const authorIds = [...new Set(rows.map((r) => r.submitted_by))];
@@ -142,7 +232,7 @@ export async function listWrittenReports(
     }
   }
 
-  return rows.map((r) => {
+  const reports = rows.map((r) => {
     const rep = mapRow(r);
     return {
       ...rep,
@@ -153,6 +243,13 @@ export async function listWrittenReports(
         isWithinEditWindow(r.submitted_at, now),
     };
   });
+  const last = rows.at(-1);
+  return {
+    reports,
+    nextCursor: hasMore && last?.submitted_at
+      ? encodeCursor({ submittedAt: new Date(last.submitted_at).toISOString(), id: last.id, context: cursorContext })
+      : null,
+  };
 }
 
 /**
@@ -166,6 +263,7 @@ export async function loadWrittenReport(
   args: { viewer: WrittenReportViewer; id: string; now?: Date },
 ): Promise<WrittenReportListItem | null> {
   const { viewer } = args;
+  if (viewer.level < 2) return null;
   const now = args.now ?? new Date();
 
   const { data } = await service
@@ -176,7 +274,9 @@ export async function loadWrittenReport(
   if (!data) return null;
 
   // Visibility floor.
-  if (viewer.level < data.visibility_min_level) return null;
+  const isEmployeeOwner = viewer.level < 4 && data.submitted_by === viewer.userId;
+  if (!isEmployeeOwner && viewer.level < data.visibility_min_level) return null;
+  if (viewer.level < 4 && EMPLOYEE_WRITTEN_REPORTS_OWN_ONLY && !isEmployeeOwner) return null;
   // Location gate: null OR mine OR level>=8.
   if (data.location_id !== null && viewer.level < ALL_LOCATIONS_READ_LEVEL) {
     const locs = viewer.locations;

@@ -1,3 +1,4 @@
+import { reportTimestampBounds } from "@/lib/report-range";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { RoleCode } from "@/lib/roles";
 import { audit } from "@/lib/audit";
@@ -106,13 +107,30 @@ async function loadFridgeReadings(
   service: SupabaseClient,
   equip: Equipment,
   sinceDate: string,
+  ownUserId?: string,
+  reportContext?: {locationId:string; date:string},
 ): Promise<TempReading[]> {
   const itemIds = [equip.openingTempItemId, equip.closingTempItemId].filter((v): v is string => !!v);
   if (itemIds.length === 0) return [];
+  if (reportContext) {
+    const instances = await selectAllRows<{id:string}>((from,to)=>service.from("checklist_instances").select("id")
+      .eq("location_id",reportContext.locationId).eq("date",reportContext.date).order("id").range(from,to));
+    const result: TempReading[] = [];
+    for (let i=0;i<instances.length;i+=50) {
+      const rows = await selectAllRows<{template_item_id:string;count_value:number|null;completed_at:string;notes:string|null}>((from,to)=>
+        service.from("checklist_completions").select("template_item_id,count_value,completed_at,notes")
+          .in("instance_id",instances.slice(i,i+50).map(r=>r.id)).in("template_item_id",itemIds)
+          .match(ownUserId ? {completed_by:ownUserId} : {}).is("superseded_at",null).is("revoked_at",null).order("id").range(from,to));
+      for (const r of rows) if (r.count_value !== null) result.push({date:reportContext.date,phase:r.template_item_id===equip.openingTempItemId?"AM":"PM",valueF:r.count_value,at:r.completed_at,note:r.notes});
+    }
+    return result.sort((a,b)=>a.at.localeCompare(b.at));
+  }
+
 
   const { data: comps, error } = await service
     .from("checklist_completions")
     .select("template_item_id, instance_id, count_value, completed_at, notes")
+    .match(ownUserId ? { completed_by: ownUserId } : {})
     .in("template_item_id", itemIds)
     .is("superseded_at", null)
     .is("revoked_at", null);
@@ -457,6 +475,8 @@ export async function listMaintenanceReportDates(
   locationId: string,
   dateFrom: string,
   dateTo: string,
+  ownUserId?: string,
+  skeletonOnly = false,
 ): Promise<Array<{ date: string; tempFlags: number }>> {
   const equipment = await loadEquipment(service, locationId);
   const fridges = equipment.filter((e) => e.kind === "fridge");
@@ -469,16 +489,23 @@ export async function listMaintenanceReportDates(
   const itemIds = [...fridgeByItem.keys()];
 
   const byDate = new Map<string, Map<string, TempReading[]>>();
+  const boundedInstances = await selectAllRows<{id:string;date:string}>((from,to) => service.from("checklist_instances")
+    .select("id, date").eq("location_id", locationId).gte("date",dateFrom).lte("date",dateTo).order("id").range(from,to));
+  const bounds = reportTimestampBounds(dateFrom,dateTo);
 
-  if (itemIds.length) {
+
+  if (itemIds.length && boundedInstances.length) {
     const comps = await selectAllRows<{
       template_item_id: string; instance_id: string; count_value: number | null;
     }>((from, to) =>
       service.from("checklist_completions")
-        .select("template_item_id, instance_id, count_value")
+        .select(skeletonOnly ? "template_item_id, instance_id" : "template_item_id, instance_id, count_value")
+        .in("instance_id", boundedInstances.map(i => i.id))
+        .match(ownUserId ? { completed_by: ownUserId } : {})
         .in("template_item_id", itemIds)
         .is("superseded_at", null).is("revoked_at", null)
-        .order("instance_id", { ascending: true }).range(from, to),
+        .order("instance_id", { ascending: true }).range(from, to)
+        .returns<Array<{template_item_id:string;instance_id:string;count_value:number|null}>>(),
     );
     const instIds = [...new Set(comps.map((c) => c.instance_id))];
     const dateById = new Map<string, string>();
@@ -492,7 +519,7 @@ export async function listMaintenanceReportDates(
       for (const i of insts) dateById.set(i.id, i.date);
     }
     for (const c of comps) {
-      if (c.count_value === null) continue;
+      if (!skeletonOnly && c.count_value === null) continue;
       const date = dateById.get(c.instance_id);
       if (!date) continue;
       const f = fridgeByItem.get(c.template_item_id);
@@ -500,7 +527,7 @@ export async function listMaintenanceReportDates(
       const phase: "AM" | "PM" = c.template_item_id === f.openingTempItemId ? "AM" : "PM";
       const dm = byDate.get(date) ?? new Map<string, TempReading[]>();
       const arr = dm.get(f.id) ?? [];
-      arr.push({ date, phase, valueF: c.count_value, at: date, note: null });
+      arr.push({ date, phase, valueF: c.count_value ?? 0, at: date, note: null });
       dm.set(f.id, arr);
       byDate.set(date, dm);
     }
@@ -508,6 +535,8 @@ export async function listMaintenanceReportDates(
 
   const notes = await selectAllRows<{ created_at: string }>((from, to) =>
     service.from("maintenance_notes").select("created_at")
+      .match(ownUserId ? { created_by: ownUserId } : {})
+      .gte("created_at",bounds.start).lt("created_at",bounds.end)
       .eq("location_id", locationId)
       .order("created_at", { ascending: true }).range(from, to),
   );
@@ -543,7 +572,10 @@ export async function loadMaintenanceReportDetail(
   service: SupabaseClient,
   locationId: string,
   date: string,
+  ownUserId?: string,
+  showNotes = true,
 ): Promise<MaintenanceReportDetail> {
+  const bounds = reportTimestampBounds(date,date);
   const equipment = await loadEquipment(service, locationId);
 
   const allNoteRows = await selectAllRows<{
@@ -551,6 +583,8 @@ export async function loadMaintenanceReportDetail(
   }>((from, to) =>
     service.from("maintenance_notes")
       .select("id, note, created_by, created_at, equipment_id, other_label")
+      .match(ownUserId ? { created_by: ownUserId } : {})
+      .gte("created_at",bounds.start).lt("created_at",bounds.end)
       .eq("location_id", locationId)
       .order("created_at", { ascending: false }).range(from, to),
   );
@@ -565,15 +599,15 @@ export async function loadMaintenanceReportDetail(
   for (const n of noteRows) {
     const key = n.equipment_id ?? "__other__";
     const arr = notesByEquip.get(key) ?? [];
-    arr.push({ id: n.id, equipmentId: n.equipment_id, otherLabel: n.other_label, note: n.note, byName: nameById.get(n.created_by) ?? null, at: n.created_at });
+    arr.push({ id: n.id, equipmentId: n.equipment_id, otherLabel: n.other_label, note: showNotes ? n.note : "", byName: nameById.get(n.created_by) ?? null, at: n.created_at });
     notesByEquip.set(key, arr);
   }
 
   const out: MaintenanceReportEquip[] = [];
   let flagCount = 0;
   for (const e of equipment) {
-    const all = e.kind === "fridge" ? await loadFridgeReadings(service, e, date) : [];
-    const readings = all.filter((r) => r.date === date);
+    const all = e.kind === "fridge" ? await loadFridgeReadings(service, e, date, ownUserId, {locationId,date}) : [];
+    const readings = all.filter((r) => r.date === date).map(r => ({...r,note:showNotes ? r.note : null}));
     const safe = e.safeMaxF ?? FRIDGE_DEFAULT_SAFE_MAX_F;
     const status = e.kind === "fridge" ? computeFridgeStatus(readings, safe) : "no_reading_today";
     if (status === "out_of_range") flagCount++;
@@ -582,5 +616,5 @@ export async function loadMaintenanceReportDetail(
       status, readings, notes: notesByEquip.get(e.id) ?? [],
     });
   }
-  return { kind: "maintenance", type: "maintenance", date, locationId, equipment: out, flagCount, otherNotes: notesByEquip.get("__other__") ?? [] };
+  return { kind: "maintenance", type: "maintenance", date, locationId, equipment: ownUserId ? out.filter(e => e.readings.length || e.notes.length) : out, flagCount, otherNotes: notesByEquip.get("__other__") ?? [] };
 }

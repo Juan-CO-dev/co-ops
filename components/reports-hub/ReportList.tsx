@@ -17,7 +17,7 @@ import { EmptyState } from "@/components/EmptyState";
 import { formatDateLabel } from "@/lib/i18n/format";
 import { serverT } from "@/lib/i18n/server";
 import type { Language, TranslationKey } from "@/lib/i18n/types";
-import { REPORTS_HUB_CASH_LEVEL, type ReportListItem, type ReportTypeKey } from "@/lib/reports-hub";
+import { REPORTS_HUB_CASH_LEVEL, isFinalizedReport, type ReportListItem, type ReportTypeKey } from "@/lib/reports-hub";
 import type { SearchSnippet } from "@/lib/reports-search";
 import { reportStatusLabelKey } from "./shared";
 
@@ -48,6 +48,7 @@ function formatCents(cents: number): string {
 
 interface ReportListProps {
   items: ReportListItem[];
+  context?: string;
   locationId: string;
   language: Language;
   viewerLevel: number;
@@ -57,7 +58,7 @@ interface ReportListProps {
   snippets?: Map<string, SearchSnippet>;
 }
 
-export function ReportList({ items, locationId, language, viewerLevel, searchQuery, snippets }: ReportListProps) {
+export function ReportList({ items, locationId, language, viewerLevel, searchQuery, snippets, context }: ReportListProps) {
   const t = (key: TranslationKey) => serverT(language, key);
   const canSeeCash = viewerLevel >= REPORTS_HUB_CASH_LEVEL;
 
@@ -70,16 +71,17 @@ export function ReportList({ items, locationId, language, viewerLevel, searchQue
   return (
     <ul className="grid grid-cols-1 gap-2 lg:grid-cols-2">
       {items.map((item) => {
-        const href = `/reports/${item.type}/${item.id}?location=${locationId}`;
+        const params = new URLSearchParams(context); params.set("location", item.locationId || locationId);
+        const href = `/reports/${item.type}/${item.id}?${params}`;
         const dateLabel = formatDateLabel(item.date, language);
         const typeLabel = t(TYPE_LABEL_KEYS[item.type]);
         const statusKey = reportStatusLabelKey(item.status) ?? MAINT_DIGEST_STATUS_KEYS[item.status];
-        const statusLabel = statusKey ? t(statusKey) : item.status;
+        const statusLabel = !isFinalizedReport(item.status) ? t("reports.not_finalized") : statusKey ? t(statusKey) : item.status;
         const s = item.signalSummary;
         const snip = snippets?.get(`${item.type}:${item.id}`);
 
         return (
-          <li key={item.id}>
+          <li key={`${item.type}:${item.id}:${item.locationId}`}>
             <a
               href={href}
               className="co-card co-card-interactive flex flex-col gap-0.5 px-4 py-3 text-sm"

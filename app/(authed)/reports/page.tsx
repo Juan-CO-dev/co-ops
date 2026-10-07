@@ -1,249 +1,98 @@
-/**
- * /reports — Reports Hub list page (Task 2).
- *
- * Moved from the top-level stub (app/reports/page.tsx) into the (authed)
- * route group so it sits behind the authed layout while keeping the same URL.
- *
- * Auth → location guard → listReports → filter bar + list.
- */
-
 import Link from "next/link";
 import { redirect } from "next/navigation";
-
+import { DashboardBackLink } from "@/components/DashboardBackLink";
+import { ReportRangeControls } from "@/components/reports-hub/ReportRangeControls";
 import { serverT } from "@/lib/i18n/server";
+import { formatDateLabel } from "@/lib/i18n/format";
 import type { TranslationKey } from "@/lib/i18n/types";
-import { buildSearchCorpus, searchReport, type SearchSnippet } from "@/lib/reports-search";
-import { REPORT_ALL_LOCATIONS_LEVEL, canReadReportLocation, type LocationActor } from "@/lib/locations";
+import { canReadReportLocation, lockLocationContext, REPORT_ALL_LOCATIONS_LEVEL } from "@/lib/locations";
 import { operationalNow } from "@/lib/midshift";
-import { REPORTS_HUB_CASH_LEVEL, listReports, type ReportTypeKey, type SignalFilters, type Viewer } from "@/lib/reports-hub";
+import { canDoOperationalTask } from "@/lib/operational-task-access";
+import { parseReportRange, reportRangeParams, shiftReportDate } from "@/lib/report-range";
+import { composeLastClose, composeReportSummary, reportIsFinalized } from "@/lib/report-summary";
+import { listReports, listReportSkeleton, type Viewer } from "@/lib/reports-hub";
 import { requireSessionFromHeaders } from "@/lib/session";
 import { getServiceRoleClient } from "@/lib/supabase-server";
-import { loadProfileDirectory } from "@/lib/profiles";
-import { matchPeople, matchPages, type PageResult, type PersonResult } from "@/lib/unified-search";
 
-import { DashboardBackLink } from "@/components/DashboardBackLink";
-import { ReportFilterBar } from "@/components/reports-hub/ReportFilterBar";
-import { ReportList } from "@/components/reports-hub/ReportList";
-import { UnifiedSearchResults } from "@/components/reports-hub/UnifiedSearchResults";
-
-const ALL_TYPES: ReportTypeKey[] = ["opening", "closing", "am_prep", "mid_day", "cash", "pm", "maintenance"];
-
-interface PageProps {
-  searchParams: Promise<{
-    location?: string;
-    type?: string;
-    from?: string;
-    to?: string;
-    // Signal filter toggles (checkbox GET params — present = "true" string)
-    sf_underPar?: string;
-    sf_overPar?: string;
-    sf_skipped?: string;
-    sf_tempFlag?: string;
-    sf_cashOver?: string;
-    sf_cashShort?: string;
-    q?: string; // free-text quick-find
-  }>;
-}
-
-export default async function ReportsPage({ searchParams }: PageProps) {
+export default async function ReportsPage({ searchParams }: { searchParams: Promise<Record<string, string | undefined>> }) {
   const auth = await requireSessionFromHeaders("/reports");
-  const {
-    location: locationParam,
-    type: typeParam,
-    from: fromParam,
-    to: toParam,
-    sf_underPar,
-    sf_overPar,
-    sf_skipped,
-    sf_tempFlag,
-    sf_cashOver,
-    sf_cashShort,
-    q: qParam,
-  } = await searchParams;
-
-  if (!locationParam) redirect("/dashboard");
-
-  const locActor: LocationActor = { role: auth.role, locations: auth.locations };
-  if (!canReadReportLocation(locActor, locationParam)) redirect("/dashboard");
-
-  const lang = auth.user.language;
-  const locationId = locationParam;
-
-  // ── Default date range: last 14 days ending today (operational TZ) ──
-  const todayDate = operationalNow(new Date()).date;
-  // Request-time clock in an async Server Component, not a client render clock.
-  // eslint-disable-next-line react-hooks/purity
-  const fourteenDaysAgo = operationalNow(new Date(Date.now() - 14 * 24 * 60 * 60 * 1000)).date;
-
-  // Validate + clamp the requested window. from/to are user-supplied and
-  // listReports fans out ~3 queries per report row, so an unclamped ?from=
-  // (e.g. 2026-01-01) lets any authed user force a 1000+-query burst. YYYY-MM-DD
-  // strings compare lexicographically, so ordering checks are valid as-is.
-  const YMD_RE = /^\d{4}-\d{2}-\d{2}$/;
-  const MAX_SPAN_DAYS = 92;
-  const validYmd = (s: string | undefined): string | null =>
-    s && YMD_RE.test(s) && !Number.isNaN(Date.parse(`${s}T00:00:00Z`)) ? s : null;
-  let dateFrom = validYmd(fromParam) ?? fourteenDaysAgo;
-  const dateTo = validYmd(toParam) ?? todayDate;
-  if (dateFrom > dateTo) dateFrom = dateTo;
-  const minFrom = new Date(`${dateTo}T00:00:00Z`);
-  minFrom.setUTCDate(minFrom.getUTCDate() - MAX_SPAN_DAYS);
-  const minFromStr = minFrom.toISOString().slice(0, 10);
-  if (dateFrom < minFromStr) dateFrom = minFromStr;
-
-  // ── Resolve type filter ──
-  // Single-select: one type OR empty/"all" = all the viewer may see.
-  const viewerLevel = auth.level;
-  const allowedTypes: ReportTypeKey[] = ALL_TYPES.filter(
-    (t) => t !== "cash" || viewerLevel >= REPORTS_HUB_CASH_LEVEL,
-  );
-
-  let selectedTypes: ReportTypeKey[] | undefined;
-  if (typeParam && typeParam !== "all" && (ALL_TYPES as string[]).includes(typeParam)) {
-    const t = typeParam as ReportTypeKey;
-    // silently ignore if viewer can't see this type (e.g., L3 trying ?type=cash)
-    if (allowedTypes.includes(t)) {
-      selectedTypes = [t];
-    }
+  if (auth.level < 2) redirect("/dashboard");
+  const params = await searchParams;
+  if (Object.keys(params).some((key) => key === "q" || key === "type" || key.startsWith("sf_"))) {
+    const legacy = new URLSearchParams();
+    for (const [key, value] of Object.entries(params)) if (typeof value === "string") legacy.set(key, value);
+    redirect(`/reports/operations?${legacy}`);
   }
-
-  const viewer: Viewer = { userId: auth.user.id, level: viewerLevel };
-
-  // ── Signal filters (derived toggles from GET params) ──
-  // Cash toggles only respected when viewer is L4+ (cash-visible tier).
-  const signalFilters: SignalFilters = {
-    ...(sf_underPar === "true" ? { underPar: true } : {}),
-    ...(sf_overPar === "true" ? { overPar: true } : {}),
-    ...(sf_skipped === "true" ? { skipped: true } : {}),
-    ...(sf_tempFlag === "true" ? { tempFlag: true } : {}),
-    ...(sf_cashOver === "true" && viewerLevel >= REPORTS_HUB_CASH_LEVEL ? { cashOver: true } : {}),
-    ...(sf_cashShort === "true" && viewerLevel >= REPORTS_HUB_CASH_LEVEL ? { cashShort: true } : {}),
+  const actor = { role: auth.role, locations: auth.locations };
+  const locationId = params.location ?? auth.locations[0];
+  if (!locationId || (locationId === "all" ? auth.level < REPORT_ALL_LOCATIONS_LEVEL : !canReadReportLocation(actor, locationId))) redirect("/dashboard");
+  const service = getServiceRoleClient();
+  let locationsQuery = service.from("locations").select("id,name").eq("active", true).order("name");
+  if (auth.level < REPORT_ALL_LOCATIONS_LEVEL) locationsQuery = locationsQuery.in("id", auth.locations);
+  const { data: shops, error } = await locationsQuery;
+  if (error) throw new Error(`report locations: ${error.message}`);
+  const locations = (shops ?? []) as Array<{ id: string; name: string }>;
+  const selected = locations.filter((shop) => locationId === "all" || shop.id === locationId);
+  if (selected.length === 0) redirect("/dashboard");
+  const language = auth.user.language;
+  const t = (key: TranslationKey, values?: Record<string, string | number>) => serverT(language, key, values);
+  const today = operationalNow(new Date()).date;
+  const yesterday = shiftReportDate(today, -1);
+  const range = parseReportRange(params, today);
+  const viewer: Viewer = { userId: auth.user.id, level: auth.level, locations: auth.locations };
+  const context = (shopId: string, additions: Record<string, string> = {}) => {
+    const query = reportRangeParams(range); query.set("location", shopId);
+    for (const [key, value] of Object.entries(additions)) query.set(key, value);
+    return query.toString();
   };
-  const hasSignalFilters = Object.keys(signalFilters).length > 0;
-
-  const sb = getServiceRoleClient();
-  // Report browsing has a MoO+ all-shop grant independent of task/write scope.
-  let reportLocations: Array<{ id: string; name: string }> = [];
-  if (auth.level >= REPORT_ALL_LOCATIONS_LEVEL) {
-    const { data, error } = await sb.from("locations").select("id, name").eq("active", true).order("name");
-    if (error) throw new Error(`report locations: ${error.message}`);
-    reportLocations = data ?? [];
-  }
-  const items = await listReports(sb, {
-    viewer,
-    locationId,
-    dateFrom,
-    dateTo,
-    types: selectedTypes,
-    signalFilters: hasSignalFilters ? signalFilters : undefined,
-  });
-
-  // Phase-2 deep search: when q is present, build the viewer-authorized corpus
-  // for the listed reports and match q over name/type + authorized deep fields.
-  // The corpus is redacted to the viewer BEFORE matching, so a match/snippet can
-  // never disclose a field the viewer can't see. Built ONLY when q is non-empty.
-  const query = (qParam ?? "").trim();
-  let filteredItems = items;
-  const snippets = new Map<string, SearchSnippet>();
-  if (query) {
-    const corpus = await buildSearchCorpus(sb, { viewer, locationId, items });
-    filteredItems = items.filter((it) => {
-      const typeLabel = serverT(lang, `reports.type.${it.type}` as TranslationKey);
-      const res = searchReport(
-        { submitterName: it.submitterName, type: it.type },
-        typeLabel,
-        corpus.get(`${it.type}:${it.id}`),
-        query,
-      );
-      if (res.matched && res.snippet) snippets.set(`${it.type}:${it.id}`, res.snippet);
-      return res.matched;
-    });
-  }
-
-  // Unified search: People + Pages, only when searching. Each source is its
-  // own authorized loader — the matchers filter an already-authorized set.
-  let people: PersonResult[] = [];
-  let peopleHasMore = false;
-  let pages: PageResult[] = [];
-  if (query) {
-    const directory = await loadProfileDirectory(sb, {
-      viewer: { userId: auth.user.id, locations: auth.locations },
-    });
-    const pm = matchPeople(directory, query, (role) => serverT(lang, `role.${role}` as TranslationKey));
-    people = pm.people;
-    peopleHasMore = pm.hasMore;
-    pages = matchPages(viewerLevel, query, (key) => serverT(lang, key));
-  }
-  const nothingMatched =
-    query.length > 0 && people.length === 0 && pages.length === 0 && filteredItems.length === 0;
-
-  return (
-    <main className="mx-auto max-w-2xl md:max-w-3xl lg:max-w-5xl xl:max-w-6xl px-4 pb-32 pt-4 sm:px-6">
-      <div className="mb-3">
-        <DashboardBackLink />
-      </div>
-      {reportLocations.length > 1 ? (
-        <nav className="mb-4 flex flex-wrap gap-2" aria-label={serverT(lang, "dashboard.location.switcher_aria")}>
-          {reportLocations.map((shop) => (
-            <Link key={shop.id} href={`/reports?location=${shop.id}`} aria-current={shop.id === locationId ? "page" : undefined}
-              className="inline-flex min-h-[44px] items-center rounded-lg border border-co-border-2 px-3 text-sm font-bold text-co-text hover:bg-co-surface-2">
-              {shop.name}
-            </Link>
-          ))}
-        </nav>
-      ) : null}
-      <div className="mb-4 flex items-center justify-between">
-        <h1 className="text-lg font-bold text-co-text">
-          {serverT(lang, "reports.page.title")}
-        </h1>
-        {auth.level >= 6 ? <Link
-          href={`/reports/trends?location=${locationId}`}
-          className="inline-flex min-h-[44px] items-center rounded-full border-2 border-co-border-2 bg-co-surface px-4 text-xs font-bold uppercase tracking-[0.1em] text-co-text-muted transition hover:border-co-text hover:text-co-text"
-        >
-          {serverT(lang, "reports.trends.nav_label")}
-        </Link> : null}
-      </div>
-
-      <ReportFilterBar
-        locationId={locationId}
-        dateFrom={dateFrom}
-        dateTo={dateTo}
-        selectedType={typeParam ?? "all"}
-        allowedTypes={allowedTypes}
-        language={lang}
-        viewerLevel={viewerLevel}
-        activeSignalFilters={signalFilters}
-        query={qParam ?? ""}
-      />
-
-      {query ? (
-        <div className="mt-4">
-          <UnifiedSearchResults
-            people={people}
-            peopleHasMore={peopleHasMore}
-            pages={pages}
-            locationId={locationId}
-            language={lang}
-          />
+  // Summary counts intentionally aggregate the bounded authorized window, unlike paged lists.
+  const panels = await Promise.all(selected.map(async (shop) => {
+    const load = (from: string, to: string) => listReports(service, { viewer, locationId: shop.id, dateFrom: from, dateTo: to });
+    const [current, previous, lastDay, receiving, ordering] = await Promise.all([
+      load(range.from, range.to), range.compare ? load(range.previous.from, range.previous.to) : Promise.resolve([]),
+      listReportSkeleton(service, { viewer, locationId: shop.id, dateFrom: yesterday, dateTo: yesterday }),
+      auth.level >= 4 && lockLocationContext(actor, shop.id) ? canDoOperationalTask(auth, shop.id, "receiving") : false,
+      auth.level >= 4 && lockLocationContext(actor, shop.id) ? canDoOperationalTask(auth, shop.id, "ordering") : false,
+    ]);
+    return { shop, current: composeReportSummary(current), previous: composeReportSummary(previous), close: composeLastClose(lastDay, auth.level), receiving, ordering };
+  }));
+  const linkClass = "inline-flex min-h-[44px] items-center rounded-lg border border-co-border-2 px-3 py-2 text-sm font-bold hover:bg-co-surface-2";
+  return <main className="mx-auto max-w-2xl px-4 pb-32 pt-4 sm:px-6 lg:max-w-5xl">
+    <DashboardBackLink />
+    <h1 className="mb-4 text-lg font-bold text-co-text">{t("reports.page.title")}</h1>
+    <nav className="mb-4 flex flex-wrap gap-2" aria-label={t("dashboard.location.switcher_aria")}>
+      {locations.map((shop) => <Link className={linkClass} key={shop.id} href={`/reports?${context(shop.id)}`} aria-current={locationId === shop.id ? "page" : undefined}>{shop.name}</Link>)}
+      {auth.level >= REPORT_ALL_LOCATIONS_LEVEL && <Link className={linkClass} href={`/reports?${context("all")}`} aria-current={locationId === "all" ? "page" : undefined}>{t("reports.hub.all")}</Link>}
+    </nav>
+    <ReportRangeControls range={range} locationId={locationId} language={language} />
+    {auth.level < 4 && <p className="mb-4 text-sm text-co-text-muted">{t("reports.hub.own_scope")}</p>}
+    {panels.map(({ shop, current, previous, close, receiving, ordering }) => {
+      const dayContext = context(shop.id, { range: "custom", from: yesterday, to: yesterday });
+      const signals = { underPar: current.signals.underPar, overPar: current.signals.overPar, skipped: current.signals.skipped, tempFlag: current.signals.tempFlags, ...(auth.level >= 4 ? { cashOver: current.cashOver, cashShort: current.cashShort } : {}) };
+      const priorSignals = { underPar: previous.signals.underPar, overPar: previous.signals.overPar, skipped: previous.signals.skipped, tempFlag: previous.signals.tempFlags, cashOver: previous.cashOver, cashShort: previous.cashShort };
+      return <section key={shop.id} className="mb-6 rounded-xl border border-co-border bg-co-surface p-4">
+        <h2 className="text-base font-bold">{shop.name}</h2>
+        <h3 className="mt-3 text-sm font-bold">{t(close.ownScope ? "reports.hub.your_submissions" : "reports.hub.last_close", { date: formatDateLabel(yesterday, language) })}</h3>
+        {close.noActivity ? <p className="py-3 text-sm text-co-text-muted">{t("reports.hub.no_activity")}</p> : close.ownScope ? <ul>
+          {close.submissions.map((item) => <li key={`${item.type}:${item.id}`}><Link className="inline-flex min-h-[44px] items-center gap-2 text-sm underline" href={`/reports/${item.type}/${item.id}?${dayContext}`}>{t(`reports.type.${item.type}` as TranslationKey)} · {t(reportIsFinalized(item) ? "reports.hub.done" : "reports.hub.not_finalized")}</Link></li>)}
+        </ul> : <ul className="mt-2 grid gap-2 sm:grid-cols-2">
+          {close.reports.map(({ type, state, item }) => <li key={type}><Link className={`${linkClass} w-full justify-between gap-3`} href={item ? `/reports/${type}/${item.id}?${dayContext}` : `/reports/operations?${dayContext}&type=${type}`}><span>{t(`reports.type.${type}` as TranslationKey)}</span><span>{t(`reports.hub.${state}` as TranslationKey)}</span></Link></li>)}
+        </ul>}
+        <div className="mt-4 flex flex-wrap gap-2">
+          <Link className={linkClass} href={`/reports/operations?${context(shop.id)}`}>{t("reports.hub.total", { n: current.total })}</Link>
+          {range.compare && <span className="inline-flex min-h-[44px] items-center text-sm">{t("reports.hub.previous", { n: previous.total })}</span>}
+          {Object.entries(signals).map(([signal, n]) => <Link className={linkClass} key={signal} href={`/reports/operations?${context(shop.id, { [`sf_${signal}`]: "true" })}`}>{t(`reports.hub.${signal}` as TranslationKey, { n })}{range.compare ? ` · ${t("reports.hub.previous", { n: priorSignals[signal as keyof typeof priorSignals] })}` : ""}</Link>)}
         </div>
-      ) : null}
-
-      {nothingMatched ? (
-        <p className="mt-4 rounded-lg border-2 border-co-border bg-co-surface px-3 py-3 text-sm font-semibold text-co-text">
-          {serverT(lang, "reports.search.no_matches", { q: query })}
-        </p>
-      ) : (
-        <div className="mt-4">
-          <ReportList
-            items={filteredItems}
-            locationId={locationId}
-            language={lang}
-            viewerLevel={viewerLevel}
-            searchQuery={qParam ?? ""}
-            snippets={snippets}
-          />
+        <div className="mt-4 grid gap-3 sm:grid-cols-2">
+          <section className="rounded-lg border border-co-border p-3"><h3 className="mb-2 font-bold">{t("reports.hub.operations")}</h3><div className="flex flex-wrap gap-2"><Link className={linkClass} href={`/reports/operations?${context(shop.id)}`}>{t("reports.hub.operations")}</Link>{auth.level >= 4 && <Link className={linkClass} href={`/reports/trends/ops?${context(shop.id)}`}>{t("reports.hub.trends")}</Link>}</div></section>
+          <Link className={linkClass} href={`/reports/written?${context(shop.id)}`}>{t("reports.hub.written")}</Link>
+          <section className="rounded-lg border border-co-border p-3"><h3 className="mb-2 font-bold">{t("reports.hub.people")}</h3><div className="flex flex-wrap gap-2"><Link className={linkClass} href={`/my-feedback?${context(shop.id)}`}>{t("reports.hub.feedback")}</Link>{auth.level >= 6 && <Link className={linkClass} href={`/reports/trends/team?${context(shop.id)}`}>{t("reports.hub.team")}</Link>}</div></section>
+          {auth.level >= 6 && <section className="rounded-lg border border-co-border p-3"><h3 className="font-bold">{t("reports.hub.sales")}</h3><p className="text-sm text-co-text-muted">{t("reports.hub.coming_next")}</p></section>}
+          {lockLocationContext(actor, shop.id) && (auth.level >= 6 || receiving || ordering) && <section className="rounded-lg border border-co-border p-3"><h3 className="mb-2 font-bold">{t("reports.hub.inventory")}</h3><div className="flex flex-wrap gap-2">{auth.level >= 6 && <Link className={linkClass} href={`/operations/counts?location=${shop.id}`}>{t("reports.hub.counts")}</Link>}{receiving && <Link className={linkClass} href={`/operations/receiving?location=${shop.id}`}>{t("receiving.page.title")}</Link>}{ordering && <Link className={linkClass} href={`/ordering?location=${shop.id}`}>{t("nav.ordering")}</Link>}</div></section>}
+          {auth.level >= 5 && lockLocationContext(actor, shop.id) && <Link className={linkClass} href="/catering/insights">{t("nav.catering")}</Link>}
+          {auth.level >= 6 && <Link className={linkClass} href="/admin/menu-costing">{t("reports.hub.costing")}</Link>}
         </div>
-      )}
-    </main>
-  );
+      </section>;
+    })}
+  </main>;
 }

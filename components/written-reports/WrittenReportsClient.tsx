@@ -11,6 +11,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 
 import { useTranslation } from "@/lib/i18n/provider";
 import type { TranslationKey } from "@/lib/i18n/types";
@@ -21,6 +22,7 @@ import type { WrittenReportListItem } from "@/lib/written-reports";
 import { ActionButton } from "@/components/ActionButton";
 import { AlertPill, type AlertPillTone } from "@/components/ui/AlertPill";
 import { EmptyState } from "@/components/EmptyState";
+import { SummaryRow } from "@/components/ui/SummaryRow";
 import { WrittenReportForm, type WrittenReportFormValues } from "./WrittenReportForm";
 
 /** Category → pill tone (incident = danger; the rest informational/warn). */
@@ -51,10 +53,12 @@ export function WrittenReportsClient({
   reports,
   canWrite,
   viewerLevel,
+  nextHref,
 }: {
   reports: WrittenReportListItem[];
   canWrite: boolean;
   viewerLevel: number;
+  nextHref?: string | null;
 }) {
   const { t, language } = useTranslation();
   const router = useRouter();
@@ -63,6 +67,7 @@ export function WrittenReportsClient({
   const [editingId, setEditingId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
 
   const translateRole = (role: RoleCode) => t(`role.${role}` as TranslationKey);
 
@@ -158,9 +163,9 @@ export function WrittenReportsClient({
           {reports.map((r) => {
             const isEditing = editingId === r.id;
             return (
-              <li key={r.id} className="co-card p-4">
+              <li key={r.id}>
                 {isEditing ? (
-                  <WrittenReportForm
+                  <div className="co-card p-4"><WrittenReportForm
                     initial={{
                       title: r.title,
                       body: r.body,
@@ -177,8 +182,23 @@ export function WrittenReportsClient({
                       setEditingId(null);
                       setErrorMsg(null);
                     }}
-                  />
+                  /></div>
                 ) : (
+                  <SummaryRow
+                    expanded={expanded.has(r.id)}
+                    onToggle={() => setExpanded((current) => {
+                      const next = new Set(current);
+                      if (next.has(r.id)) next.delete(r.id); else next.add(r.id);
+                      return next;
+                    })}
+                    drawerId={`written-report-${r.id}`}
+                    toggleLabel={expanded.has(r.id) ? t("written_reports.hide_details") : t("written_reports.show_details")}
+                    summary={<div className="flex flex-col gap-1"><span className="text-base font-extrabold text-co-text">{r.title ?? t("written_reports.untitled")}</span><span className="text-xs text-co-text-muted">{r.submittedByName ?? "—"} · {stampLabel(r.submittedAt, language)}</span></div>}
+                    badges={<div className="flex flex-wrap items-center gap-2">
+                      {r.category ? <AlertPill tone={categoryTone(r.category)}>{t(`written_reports.category.${r.category}` as TranslationKey)}</AlertPill> : null}
+                      {r.visibilityMinLevel > 3 ? <span className="text-xs text-co-text-muted">{t("written_reports.restricted")}</span> : null}
+                    </div>}
+                  >
                   <div className="flex flex-col gap-1.5">
                     <div className="flex flex-wrap items-center gap-2">
                       {r.category ? (
@@ -201,12 +221,6 @@ export function WrittenReportsClient({
                           <span>{t("written_reports.edited")}</span>
                         </>
                       ) : null}
-                      {r.visibilityMinLevel > 3 ? (
-                        <>
-                          <span aria-hidden>·</span>
-                          <span>{t("written_reports.restricted")}</span>
-                        </>
-                      ) : null}
                       {r.canEdit ? (
                         <button
                           type="button"
@@ -222,12 +236,18 @@ export function WrittenReportsClient({
                       ) : null}
                     </div>
                   </div>
+                  </SummaryRow>
                 )}
               </li>
             );
           })}
         </ul>
       )}
+      {nextHref ? (
+        <Link href={nextHref} className="inline-flex min-h-[44px] items-center justify-center rounded-xl border-2 border-co-text px-4 text-sm font-bold uppercase tracking-[0.1em] text-co-text">
+          {t("written_reports.next_page")}
+        </Link>
+      ) : null}
     </div>
   );
 }

@@ -45,10 +45,12 @@ function tenureLabel(tenureDays: number, language: Language): string {
 export function PersonDetail({
   detail,
   locationId,
+  context = "",
   language,
 }: {
   detail: PersonDetailData;
   locationId: string;
+  context?: string;
   language: Language;
 }) {
   const tally = detail.gradientTally;
@@ -58,7 +60,7 @@ export function PersonDetail({
     <div className="space-y-3">
       {/* 1. Back link — the registry primitive (polish PR-A; one idiom, 44px). */}
       <BackLink
-        hrefOverride={`/reports/trends/team?location=${locationId}`}
+        hrefOverride={`/reports/trends/team?location=${locationId}&${context}`}
         labelKey="people.detail.back"
       />
 

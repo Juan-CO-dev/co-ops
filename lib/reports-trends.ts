@@ -1,8 +1,10 @@
+import { parseReportRange, reportRangeParams } from "@/lib/report-range";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { selectAllRows } from "@/lib/supabase-paginate";
 import { isPrepData } from "@/lib/prep";
 import {
   REPORTS_HUB_CASH_LEVEL,
+  isFinalizedReport,
   checklistReportType,
   loadLocationTempItemIds,
   type ReportTypeKey,
@@ -19,6 +21,7 @@ export type TrendFamily = "par" | "temps" | "cash" | "completion";
 export interface Viewer {
   userId: string;
   level: number;
+  locations?: readonly string[] | "all";
 }
 
 /**
@@ -135,18 +138,9 @@ export function computeWindows(today: string, g: TrendGranularity, compare: bool
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// loadTrendSeries — bulk-load the window once, aggregate per bucket in memory.
-//
-// NOT a per-date loop over computeReportSignals (that is the N+1 / fetch-all-
-// then-filter trap). We load all in-scope instances, their templates + required
-// items + live completions, and cash reports for the FULL span (current ∪
-// previous) in a handful of location-scoped queries, then fold each row into
-// its bucket.
-//
-// SECURITY: every query filters location_id = args.locationId (the IDOR "bind
-// the record" half; the page validated the param via lockLocationContext).
-// Cash is omitted entirely for viewers below REPORTS_HUB_CASH_LEVEL.
-// ─────────────────────────────────────────────────────────────────────────────
+// Each bounded current/previous range is queried independently. A partial week
+// or month may share a bucket key across ranges, but never its accumulator.
+// The public loader enforces both the KH+ floor and authenticated shop scope.
 
 interface BucketAcc {
   hasData: boolean;
@@ -163,7 +157,41 @@ function emptyAcc(): BucketAcc {
   return { hasData: false, underPar: 0, overPar: 0, tempFlags: 0, doneSum: 0, reqSum: 0, cashSum: 0, cashCount: 0 };
 }
 
-export async function loadTrendSeries(
+export const OPS_TRENDS_LEVEL = 4;
+export type TrendRange = ReturnType<typeof parseReportRange>;
+export function resolveTrendRange(params: Record<string, string | undefined>, today: string, granularity: TrendGranularity): TrendRange {
+  if (params.range || params.from || params.to) return parseReportRange(params, today, granularity);
+  const defaults = computeWindows(today, granularity, false);
+  return parseReportRange({ ...params, range: "custom", from: defaults.loadFrom, to: defaults.loadTo }, today, granularity);
+}
+
+export function trendLocationAllowed(viewer: Viewer, locationId: string): boolean {
+  return locationId !== "all" && (viewer.level >= 8 || (Array.isArray(viewer.locations) && viewer.locations.includes(locationId)));
+}
+export function clippedBucketKeys(from: string, to: string, granularity: TrendGranularity): string[] {
+  const keys = new Set<string>();
+  for (let day = from; day <= to; day = addDays(day, 1)) keys.add(bucketStart(day, granularity));
+  return [...keys];
+}
+interface TrendArgs {
+  viewer: Viewer; locationId: string; granularity: TrendGranularity;
+  compare: boolean; today: string; range?: TrendRange;
+}
+export async function loadTrendSeries(service: SupabaseClient, args: TrendArgs): Promise<TrendSeries> {
+  if (args.viewer.level < OPS_TRENDS_LEVEL || !trendLocationAllowed(args.viewer, args.locationId)) throw new Error("Forbidden report trends scope");
+  const range = args.range ? resolveTrendRange(Object.fromEntries(reportRangeParams(args.range)), args.today, args.granularity) : resolveTrendRange({ compare: args.compare ? "1" : "0" }, args.today, args.granularity);
+  const current = await loadTrendWindow(service, { ...args, compare: false, window: range });
+  if (!range.compare) return current;
+  const previous = await loadTrendWindow(service, { ...args, compare: false, window: range.previous });
+  for (const family of ["par", "temps", "cash", "completion"] as const) {
+    const cur = current.totals[family].current;
+    const prev = previous.totals[family].current;
+    current.totals[family] = { current: cur, previous: prev, delta: cur !== null && prev !== null ? cur - prev : null };
+  }
+  return { ...current, previous: previous.current };
+}
+
+async function loadTrendWindow(
   service: SupabaseClient,
   args: {
     viewer: Viewer;
@@ -171,14 +199,14 @@ export async function loadTrendSeries(
     granularity: TrendGranularity;
     compare: boolean;
     today: string; // operationalNow(new Date()).date
+    window: { from: string; to: string };
   },
 ): Promise<TrendSeries> {
   const cashVisible = args.viewer.level >= REPORTS_HUB_CASH_LEVEL;
-  const { currentKeys, previousKeys, loadFrom, loadTo } = computeWindows(
-    args.today,
-    args.granularity,
-    args.compare,
-  );
+  const currentKeys = clippedBucketKeys(args.window.from, args.window.to, args.granularity);
+  const previousKeys = null as string[] | null;
+  const loadFrom = args.window.from;
+  const loadTo = args.window.to;
 
   const acc = new Map<string, BucketAcc>();
   const bump = (key: string): BucketAcc => {
@@ -191,15 +219,16 @@ export async function loadTrendSeries(
   };
 
   // ── 1. Instances in span (IDOR-bound) ──
-  const instances = await selectAllRows<{
+  const candidates = await selectAllRows<{
     id: string;
     location_id: string;
     date: string;
     template_id: string;
+    status: string;
   }>((from, to) =>
     service
       .from("checklist_instances")
-      .select("id, location_id, date, template_id")
+      .select("id, location_id, date, template_id, status")
       .eq("location_id", args.locationId)
       .gte("date", loadFrom)
       .lte("date", loadTo)
@@ -208,6 +237,7 @@ export async function loadTrendSeries(
   );
 
   // ── 2. Template → ReportTypeKey + required-item ids ──
+  const instances = candidates.filter(i => i.date < args.today || isFinalizedReport(i.status));
   const tmplIds = [...new Set(instances.map((i) => i.template_id))];
   const typeByTmpl = new Map<string, ReportTypeKey>();
   // Required ids per template, SPLIT active/inactive (spec §2.2 UNION semantics):
@@ -336,11 +366,11 @@ export async function loadTrendSeries(
 
   // ── 6. Cash reports (KH+ only) ──
   if (cashVisible) {
-    const cash = await selectAllRows<{ location_id: string; report_date: string; over_short_cents: number | null }>(
+    const cash = await selectAllRows<{ location_id: string; report_date: string; over_short_cents: number | null; signed_at: string | null }>(
       (from, to) =>
         service
           .from("cash_reports")
-          .select("location_id, report_date, over_short_cents")
+          .select("location_id, report_date, over_short_cents, signed_at")
           .eq("location_id", args.locationId)
           .gte("report_date", loadFrom)
           .lte("report_date", loadTo)
@@ -349,6 +379,7 @@ export async function loadTrendSeries(
           .range(from, to),
     );
     for (const r of cash) {
+      if (!r.signed_at && r.report_date >= args.today) continue;
       const key = bucketStart(r.report_date, args.granularity);
       const a = bump(key);
       a.hasData = true;
