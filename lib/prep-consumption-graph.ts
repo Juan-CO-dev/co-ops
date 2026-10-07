@@ -286,13 +286,14 @@ function batchOz(graph: RecipeGraph, outItemId: string, visiting: Set<string>): 
   return out;
 }
 
-function perUnitFromNode(graph: RecipeGraph, outItemId: string, visiting: Set<string>): Map<string, number> | null {
-  const node = graph.byOutputItem.get(outItemId) ?? null;
-  if (!node) return null;
-  const batch = batchOz(graph, outItemId, visiting);
-  if (batch == null) return null;
-  // ITEM engine: weight universe = ITEM outputs only (original filtered
-  // .not("output_item_id","is",null) at load time).
+/**
+ * The ITEM engine's fan-out share for one output of a node, and that output's own row.
+ * Weight universe = ITEM outputs only (the original filtered `.not("output_item_id","is",
+ * null)` at load time). Extracted (0215 batch vs bottle) so the per-unit engine and the
+ * per-BATCH engine below cannot drift: both multiply the same `batchOz` by the same share;
+ * only the per-unit one then divides by the output's yield.
+ */
+function itemOutputShare(node: GraphRecipe, outItemId: string): { me: GraphOutput; share: number } | null {
   const itemOuts = node.outputs.filter((o) => o.outputItemId != null);
   const totalWeight = itemOuts.reduce((s, o) => {
     const w = itemOzWeight(o);
@@ -302,8 +303,59 @@ function perUnitFromNode(graph: RecipeGraph, outItemId: string, visiting: Set<st
   if (!me || me.yield <= 0) return null;
   const myW = itemOzWeight(me);
   const share = totalWeight > 0 ? (myW > 0 ? myW : 0) / totalWeight : 1 / Math.max(itemOuts.length, 1);
+  return { me, share };
+}
+
+function perUnitFromNode(graph: RecipeGraph, outItemId: string, visiting: Set<string>): Map<string, number> | null {
+  const node = graph.byOutputItem.get(outItemId) ?? null;
+  if (!node) return null;
+  const batch = batchOz(graph, outItemId, visiting);
+  if (batch == null) return null;
+  const s = itemOutputShare(node, outItemId);
+  if (s == null) return null;
   const out = new Map<string, number>();
-  for (const [sku, oz] of batch) out.set(sku, (oz * share) / me.yield);
+  for (const [sku, oz] of batch) out.set(sku, (oz * s.share) / s.me.yield);
+  return out;
+}
+
+/**
+ * 0215 batch vs bottle — ONE graph, ONE yield (Astra r3 #3 / CC ruling 3).
+ *
+ * The batch prep save deplete-by-BATCH: `batches × the recipe`, never
+ * `batches × yield ÷ yield` through two separate graph loads. These three helpers
+ * read everything from the SAME graph object the caller already holds:
+ *   - yieldForItemFromGraph: the output row's own `yield` — the exact number the
+ *     per-unit engine divides by (perUnitFromNode), so `output_qty = batches × yield`
+ *     and the depletion agree by construction;
+ *   - batchSkuOzForItemFromGraph: the per-SKU oz of ONE whole batch, i.e. the flatten
+ *     × the item's fan-out share and NOT ÷ yield (invariant, test-pinned:
+ *     batchSkuOz = perUnitSkuOz × yield, per SKU);
+ *   - isSingleItemOutputFromGraph: the single-output restriction plan S r4 ruled for
+ *     v1 (share is exactly 1 there, so a batch consumes the whole recipe).
+ */
+export function yieldForItemFromGraph(graph: RecipeGraph, itemId: string): number | null {
+  const node = graph.byOutputItem.get(itemId) ?? null;
+  if (!node) return null;
+  const me = node.outputs.find((o) => o.outputItemId === itemId);
+  if (!me || me.yield <= 0) return null;
+  return me.yield;
+}
+
+export function isSingleItemOutputFromGraph(graph: RecipeGraph, itemId: string): boolean {
+  const node = graph.byOutputItem.get(itemId) ?? null;
+  if (!node) return false;
+  return node.outputs.length === 1 && node.outputs[0]?.outputItemId === itemId;
+}
+
+export function batchSkuOzForItemFromGraph(graph: RecipeGraph, itemId: string): Map<string, number> | null {
+  const node = graph.byOutputItem.get(itemId) ?? null;
+  if (!node) return null;
+  const batch = batchOz(graph, itemId, new Set());
+  if (batch == null) return null;
+  const s = itemOutputShare(node, itemId);
+  if (s == null) return null;
+  const out = new Map<string, number>();
+  for (const [sku, oz] of batch) out.set(sku, oz * s.share);
   return out;
 }
 
