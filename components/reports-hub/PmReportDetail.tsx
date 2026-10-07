@@ -1,3 +1,5 @@
+import { ReportReference } from "./RelatedReports";
+import type { RelatedReport } from "@/lib/report-related";
 /**
  * PmReportDetail — server component (Task 4).
  *
@@ -126,11 +128,12 @@ function EvalCard({ ev, t }: EvalCardProps) {
 }
 
 interface Props {
+  relatedReports?: RelatedReport[];
   detail: PmReportDetail;
   language: Language;
 }
 
-export function PmReportDetailView({ detail, language }: Props) {
+export function PmReportDetailView({ detail, language, relatedReports = [] }: Props) {
   const t = (key: TranslationKey) => serverT(language, key);
   const dateLabel = formatDateLabel(detail.date, language);
 
@@ -197,7 +200,7 @@ export function PmReportDetailView({ detail, language }: Props) {
               <ul className="flex flex-col gap-1 text-xs text-co-text-muted">
                 {detail.reportProgress.map((r) => (
                   <li key={r.key} className="flex items-center justify-between gap-2">
-                    <span>{t(`midshift.report.${r.key}` as Parameters<typeof t>[0])}</span>
+                    <ReportReference href={relatedReports.find(report => report.type === r.key && report.id === r.reportId)?.href}>{t(`midshift.report.${r.key}` as Parameters<typeof t>[0])}</ReportReference>
                     <span className={r.progress === "done" ? "font-semibold text-co-confirm-text" : r.progress === "in_progress" ? "font-semibold text-co-text" : "text-co-text-muted"}>
                       {t(`midshift.progress.${r.progress}` as Parameters<typeof t>[0])}
                       {r.doneAt !== null && r.progress === "done" && (

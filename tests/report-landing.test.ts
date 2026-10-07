@@ -13,7 +13,7 @@ function flatten(value: unknown): Node[] {
   const node = value as Node;
   return [node, ...flatten(node.children)];
 }
-async function render(level: number, role: RoleCode, location = "mine", assigned = false) {
+async function render(level: number, role: RoleCode, location = "mine", assigned = false, extra: Record<string, string> = {}, lastClose = false) {
   const source = readFileSync("app/(authed)/reports/page.tsx", "utf8");
   const ast = ts.createSourceFile("page.tsx", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
   const declaration = ast.statements.find(node => ts.isFunctionDeclaration(node) && node.name?.text === "ReportsPage")!;
@@ -23,21 +23,32 @@ async function render(level: number, role: RoleCode, location = "mine", assigned
   const listReports = vi.fn(async () => []);
   const deps = {
     React: { createElement: (type: unknown, props: Record<string, unknown> | null, ...children: unknown[]): Node => ({ type, props: props ?? {}, children }) },
-    Link: "link", DashboardBackLink: "back", ReportRangeControls: "range",
+    Link: "link", ReportPageNav: "back", ReportShopTabs: "tabs", ReportRangeControls: "range",
     requireSessionFromHeaders: async () => ({ role, level, locations: ["mine"], user: { id: "viewer", language: "en" } }),
     redirect: () => { throw new Error("redirect"); }, canReadReportLocation, lockLocationContext, REPORT_ALL_LOCATIONS_LEVEL: 8,
     getServiceRoleClient: () => ({ from: () => query }), serverT: (_language: string, key: string) => key,
     operationalNow: () => ({ date: "2026-10-07" }), formatDateLabel: (date: string) => date,
     parseReportRange, reportRangeParams, shiftReportDate, composeLastClose, composeReportSummary, reportIsFinalized,
-    canDoOperationalTask, listReports, listReportSkeleton: async () => [],
+    canDoOperationalTask, listReports, listReportSkeleton: async () => lastClose ? [{ id: "close-id", type: "closing", status: "submitted" }] : [],
   };
   const page = new Function(...Object.keys(deps), `${js}; return ReportsPage;`)(...Object.values(deps));
-  const tree = await page({ searchParams: Promise.resolve({ location }) });
+  const tree = await page({ searchParams: Promise.resolve({ location, ...extra }) });
   const nodes = flatten(tree);
   const hrefs = nodes.filter(node => node.type === "link").map(node => String(node.props.href));
   return { hrefs, text: JSON.stringify(tree), canDoOperationalTask, listReports };
 }
 describe("actual reports landing card gates", () => {
+  it("last-close details return to all shops and preserve browse filters/cursors", async () => {
+    const result = await render(8, "moo", "all", false, { cursor: "saved", type: "closing", sf_underPar: "true" }, true);
+    const link = result.hrefs.find(href => href.startsWith("/reports/closing/close-id?"));
+    expect(link).toBeTruthy();
+    const query = new URL(link!, "https://local").searchParams;
+    expect(query.get("hubLocation")).toBe("all");
+    expect(query.get("returnLocation")).toBeNull();
+    expect(query.get("cursor")).toBe("saved");
+    expect(query.get("type")).toBe("closing");
+    expect(query.get("sf_underPar")).toBe("true");
+  });
   it("trainees receive own reports and feedback without aggregate or cash links", async () => {
     const result = await render(2, "trainee");
     expect(result.hrefs.some(href => href.startsWith("/reports/operations?"))).toBe(true);

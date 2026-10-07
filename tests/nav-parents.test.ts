@@ -82,7 +82,7 @@ describe("parentFor — operator drill-ins", () => {
   it("report detail → /reports", () => {
     const p = parentFor("/reports/opening/instance-id");
     expect(p.href).toBe("/reports/operations");
-    expect(p.labelKey).toBe("reports.page.title");
+    expect(p.labelKey).toBe("reports.hub.operations");
   });
 
   it("receiving/[id] → /operations/receiving (the list, not dashboard)", () => {

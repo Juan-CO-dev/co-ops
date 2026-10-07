@@ -23,6 +23,7 @@ import { formatDateLabel, formatTime } from "@/lib/i18n/format";
 import { serverT } from "@/lib/i18n/server";
 import type { Language, TranslationKey } from "@/lib/i18n/types";
 import type { OpeningDetailItem, OpeningReportDetail } from "@/lib/reports-hub";
+import { ReportReference } from "./RelatedReports";
 import { reportStatusLabel } from "./shared";
 
 /**
@@ -218,11 +219,12 @@ function Phase2Outcome({
 }
 
 interface Props {
+  baselineHrefs?: Record<string, string>;
   detail: OpeningReportDetail;
   language: Language;
 }
 
-export function OpeningReportDetailView({ detail, language }: Props) {
+export function OpeningReportDetailView({ detail, language, baselineHrefs = {} }: Props) {
   const t = (key: TranslationKey, params?: Record<string, string | number>) =>
     serverT(language, key, params);
 
@@ -357,8 +359,8 @@ export function OpeningReportDetailView({ detail, language }: Props) {
                             : t("reports.opening.resolution.section_verify")}
                         </span>
 
-                        {/* Baseline */}
-                        <span className="text-co-text-muted">
+                        {/* Baseline: the frozen source is AM prep, not the closing checklist. */}
+                        <ReportReference href={item.baseline?.sourceInstanceId ? baselineHrefs[item.baseline.sourceInstanceId] : undefined}>
                           {baselineNull
                             ? t("reports.opening.baseline.none")
                             : t("reports.opening.baseline.closer", {
@@ -368,7 +370,7 @@ export function OpeningReportDetailView({ detail, language }: Props) {
                             ? " · " +
                               t("reports.opening.baseline.par", { par: item.baseline!.par })
                             : ""}
-                        </span>
+                        </ReportReference>
 
                         {/* Recount value (when the opener recounted) */}
                         {item.openerRecount !== null && (

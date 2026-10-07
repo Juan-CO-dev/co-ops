@@ -31,7 +31,10 @@ import {
 import { requireSessionFromHeaders } from "@/lib/session";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 
-import { BackLink } from "@/components/nav/BackLink";
+import { ReportPageNav } from "@/components/reports-hub/ReportPageNav";
+import { RelatedReports } from "@/components/reports-hub/RelatedReports";
+import { loadReportRelations } from "@/lib/report-related";
+import { REPORT_ALL_LOCATIONS_LEVEL } from "@/lib/locations";
 import { CashReportDetailView } from "@/components/reports-hub/CashReportDetail";
 import { ChecklistReportDetailView } from "@/components/reports-hub/ChecklistReportDetail";
 import { MaintenanceReportDetailView } from "@/components/reports-hub/MaintenanceReportDetail";
@@ -71,17 +74,16 @@ export default async function ReportDetailPage({ params, searchParams }: PagePro
 
   const t = (key: TranslationKey) => serverT(lang, key);
 
-  const backParams = new URLSearchParams();
-  for (const [key,value] of Object.entries(context)) if (value) backParams.set(key,value);
-  const backHref = `/reports/operations?${backParams}`;
+  const parentContext = { ...context };
+  if (context.returnLocation === "all" && level >= REPORT_ALL_LOCATIONS_LEVEL) parentContext.location = "all";
+  delete parentContext.returnLocation;
+  const navigation = <ReportPageNav path={`/reports/${type}/${id}`} params={parentContext} language={lang} />;
 
   // List-visibility gate at detail (defence-in-depth)
   if (type === "cash" && level < REPORTS_HUB_CASH_LEVEL) {
     return (
       <main className="mx-auto max-w-2xl md:max-w-3xl lg:max-w-5xl xl:max-w-6xl px-4 pb-32 pt-4 sm:px-6">
-        <a href={backHref} className="mb-4 block text-sm text-co-text-muted hover:underline">
-          {t("reports.detail.back")}
-        </a>
+        {navigation}
         <p className="rounded-lg border-2 border-co-border bg-co-surface px-3 py-3 text-sm font-semibold text-co-text">
           {t("reports.not_available")}
         </p>
@@ -95,9 +97,7 @@ export default async function ReportDetailPage({ params, searchParams }: PagePro
   if (!detail) {
     return (
       <main className="mx-auto max-w-2xl md:max-w-3xl lg:max-w-5xl xl:max-w-6xl px-4 pb-32 pt-4 sm:px-6">
-        <a href={backHref} className="mb-4 block text-sm text-co-text-muted hover:underline">
-          {t("reports.detail.back")}
-        </a>
+        {navigation}
         <p className="rounded-lg border-2 border-co-border bg-co-surface px-3 py-3 text-sm font-semibold text-co-text">
           {t("reports.not_available")}
         </p>
@@ -105,13 +105,19 @@ export default async function ReportDetailPage({ params, searchParams }: PagePro
     );
   }
 
+  const relations = await loadReportRelations(sb, {
+    viewer, locationId: locationParam, date: detail.date, type, id, context,
+    baselineIds: detail.kind === "opening" ? detail.items.flatMap(item => item.baseline?.sourceInstanceId ? [item.baseline.sourceInstanceId] : []) : [],
+  });
+
   return (
     <main className="mx-auto max-w-2xl md:max-w-3xl lg:max-w-5xl xl:max-w-6xl px-4 pb-32 pt-4 sm:px-6">
-      <BackLink hrefOverride={backHref} labelKey="reports.detail.back" />
+      {navigation}
+      <RelatedReports relations={relations} language={lang} />
 
       {/* Opening detail view — surfaces recount numbers + NULL-sentinel indicator */}
       {detail.kind === "opening" ? (
-        <OpeningReportDetailView detail={detail as OpeningReportDetail} language={lang} />
+        <OpeningReportDetailView detail={detail as OpeningReportDetail} language={lang} baselineHrefs={relations.baselineHrefs} />
       ) : null}
 
       {/* Task 3: checklist detail view (closing / am_prep / mid_day) */}
@@ -126,7 +132,7 @@ export default async function ReportDetailPage({ params, searchParams }: PagePro
 
       {/* Task 4: PM detail view */}
       {detail.kind === "pm" ? (
-        <PmReportDetailView detail={detail as PmReportDetail} language={lang} />
+        <PmReportDetailView detail={detail as PmReportDetail} language={lang} relatedReports={relations.sameDay} />
       ) : null}
 
       {/* Maintenance detail view — per-equipment readings, status, notes */}

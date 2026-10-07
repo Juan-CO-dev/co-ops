@@ -26,7 +26,7 @@ import { usePathname } from "next/navigation";
 
 import { useTranslation } from "@/lib/i18n/provider";
 import type { TranslationKey } from "@/lib/i18n/types";
-import { parentFor } from "@/lib/nav-parents";
+import { resolveBackLink } from "@/lib/nav-parents";
 
 export function BackLink({
   hrefOverride,
@@ -44,10 +44,9 @@ export function BackLink({
   const pathname = usePathname();
   const { t } = useTranslation();
 
-  const parent = parentFor(pathname ?? "/");
-  const baseHref = hrefOverride ?? parent.href;
-  const href = search ? `${baseHref}${search}` : baseHref;
-  const label = t(labelKey ?? parent.labelKey);
+  const parent = resolveBackLink(pathname ?? "/", { hrefOverride, labelKey, search });
+  const href = parent.href;
+  const label = t(parent.labelKey);
 
   return (
     <Link

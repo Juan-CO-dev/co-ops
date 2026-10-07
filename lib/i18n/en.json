@@ -1,4 +1,8 @@
 {
+  "reports.related.same_day": "Same day",
+  "reports.related.previous_day": "Previous day",
+  "reports.related.next_day": "Next day",
+  "reports.related.none": "No other reports available",
   "reports.pagination.next": "Next 50 reports",
   "reports.not_finalized": "Not finalized",
 
