@@ -13,11 +13,15 @@ begin
   if v_target not in ('sim', 'prod') or v_target is null then
     raise exception 'set seed42.target explicitly to sim or prod';
   end if;
+  if exists (select 1 from public.users where email='maya@sim.co-ops') is distinct from (v_target='sim') then
+    raise exception 'seed42 target % does not match database sim persona marker', v_target;
+  end if;
   lock table public.stations in share row exclusive mode;
   for v_template in
     select distinct on (location_id) id, location_id
     from public.checklist_templates
     where type = 'closing' and active
+      and (effective_from is null or effective_from <= (now() at time zone 'America/New_York')::date)
     order by location_id, effective_from desc nulls last, created_at desc
   loop
     for v_section in

@@ -106,10 +106,16 @@ export function ShiftBoardClient({ board, compact = false, retrainTasks = [] }: 
           <label className="grid gap-1 text-[11px] font-bold tracking-[0.12em] text-co-text-dim">{t("assignments.station")}
             <select key={current?.id ?? "none"} name="positionId" defaultValue={current?.positionId ?? ""} disabled={disabled} className={control}>
               <option value="">{t("assignments.noStation")}</option>
-              {board.stations.filter((s) => (s.active && s.staffed) || s.id === current?.stationId).flatMap((s) => s.positions.filter((p) => p.active || p.id === current?.positionId).map((p) =>
-                <option key={p.id} value={p.id} disabled={!s.active || !s.staffed || !p.active}>
-                  {language === "es" ? s.nameEs || s.name : s.name} · {language === "es" ? p.nameEs || p.name : p.name}
-                </option>))}
+              {board.stations.filter((s) => (s.active && s.staffed) || s.id === current?.stationId).flatMap((s) =>
+                s.positions.filter((p) => p.active || p.id === current?.positionId).sort((a, b) => a.sort - b.sort || a.name.localeCompare(b.name)).map((p) => {
+                  const holder = board.occupiedPositions?.find((entry) => entry.positionId === p.id);
+                  const taken = !!holder && p.id !== current?.positionId;
+                  return <option key={p.id} value={p.id} disabled={!s.active || !s.staffed || !p.active || (board.viewerLevel < 4 && taken)}>
+                    {language === "es" ? s.nameEs || s.name : s.name} · {language === "es" ? p.nameEs || p.name : p.name}
+                    {p.sort === 1 ? ` · ${t("assignments.fillFirst")}` : ""}
+                    {holder ? ` · ${t("assignments.takenBy", { name: holder.firstName })}` : ""}
+                  </option>;
+                }))}
             </select>
           </label>
           <ActionButton type="submit" disabled={disabled}>{t(managerCanEdit ? "assignments.setStation" : "assignments.claimChange")}</ActionButton>

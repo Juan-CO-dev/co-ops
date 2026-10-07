@@ -25,7 +25,8 @@ export default async function StationsPage({ searchParams }: { searchParams: Pro
   const board = selected ? await loadShiftBoard(sb, { actor: auth.level >= 8 ? { ...actor, locations: [...actor.locations, selected.id] } : actor,
     locationId: selected.id, date: etCalendarDate(new Date().toISOString()) }) : null;
   const closingTemplates = selected ? await sb.from("checklist_templates").select("id,effective_from,created_at")
-    .eq("location_id", selected.id).eq("type", "closing").eq("active", true) : null;
+    .eq("location_id", selected.id).eq("type", "closing").eq("active", true)
+    .or(`effective_from.is.null,effective_from.lte.${etCalendarDate(new Date().toISOString())}`) : null;
   if (closingTemplates?.error) throw closingTemplates.error;
   const latest = (closingTemplates?.data ?? []).sort((a, b) =>
     (b.effective_from ?? "").localeCompare(a.effective_from ?? "") || b.created_at.localeCompare(a.created_at))[0];

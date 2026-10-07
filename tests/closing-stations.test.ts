@@ -44,7 +44,7 @@ describe("closing section stations", () => {
     const builder = readFileSync(new URL("../lib/admin/template-builder.ts", import.meta.url), "utf8");
     const route = readFileSync(new URL("../app/api/admin/stations/route.ts", import.meta.url), "utf8");
     const page = readFileSync(new URL("../app/admin/stations/page.tsx", import.meta.url), "utf8");
-    expect(builder).toContain('if (src.type === "closing") await syncStationsFromClosing');
+    expect(builder).toContain('await syncStationsFromClosing(src.location_id');
     expect(route).toContain('!["locationId", "id", "nameEs"].includes(key)');
     expect(page).toContain("await syncStationsFromClosing(selected.id, actor)");
   });

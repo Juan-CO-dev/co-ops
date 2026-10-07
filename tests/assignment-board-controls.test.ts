@@ -93,6 +93,20 @@ describe("assignment board retract and assign controls", () => {
     expect(html).not.toContain(">Retract<");
     expect(html).not.toContain('name="task"');
   });
+  it("shows held positions to staff, disables them, and cues the first position", () => {
+    const value = board(3, true, true);
+    value.viewerLevel = 3;
+    value.stations = [{ id: "walk", name: "Walk Ins", nameEs: null, sort: 1, active: true, staffed: true,
+      positions: [
+        { id: "second", stationId: "walk", name: "Online", nameEs: null, duty: null, dutyEs: null, sort: 2, active: true },
+        { id: "first", stationId: "walk", name: "Walk-ins", nameEs: null, duty: null, dutyEs: null, sort: 1, active: true },
+      ] }];
+    value.occupiedPositions = [{ positionId: "second", firstName: "Maya" }];
+    const html = render(value, true);
+    expect(html.indexOf('value="first"')).toBeLessThan(html.indexOf('value="second"'));
+    expect(html).toContain('Walk-ins · fill first');
+    expect(html).toMatch(/<option[^>]*value="second"[^>]*disabled[^>]*>[^<]*taken by Maya/);
+  });
 });
 
 describe("assignment board conflict feedback", () => {

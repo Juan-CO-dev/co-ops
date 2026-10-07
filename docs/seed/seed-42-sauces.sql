@@ -17,6 +17,9 @@ begin
   if v_target not in ('sim', 'prod') or v_target is null then
     raise exception 'set seed42.target explicitly to sim or prod';
   end if;
+  if exists (select 1 from public.users where email='maya@sim.co-ops') is distinct from (v_target='sim') then
+    raise exception 'seed42 target % does not match database sim persona marker', v_target;
+  end if;
   -- Correct Juan's original recipe typo only for the Caesar output item.
   for v_new in select r.id from public.recipes r
     join public.recipe_outputs ro on ro.recipe_id = r.id
@@ -42,26 +45,15 @@ begin
       order by location_id
     loop
       select * into v_sauce from public.checklist_template_items
-      where template_id = v_template.id and active and station='Sauces' and label='Salsa Verde'
+      where template_id = v_template.id and active and station='Sauces' and label='Vin'
       limit 1;
-      if v_sauce.id is null then raise exception 'Salsa Verde sibling missing on %', v_template.id; end if;
-      v_base := case v_kind when 'Standard Opening v1' then 166
-        when 'Standard AM Prep v1' then 23 else 12 end;
-      -- Make the requested adjacent positions for Caesar and Lemon Oil. Only
-      -- Sauce rows shift; refuse if another section would collide.
-      if not exists (select 1 from public.checklist_template_items
-          where template_id=v_template.id and item_id='06c1a1b4-a51e-49a8-917a-2ebf6e844205'::uuid)
-        and exists (select 1 from public.checklist_template_items i
-        where i.template_id=v_template.id and i.active and i.station<>'Sauces'
-          and i.display_order in (select s.display_order+2 from public.checklist_template_items s
-            where s.template_id=v_template.id and s.active and s.station='Sauces' and s.display_order>=v_base)) then
-        raise exception 'Sauces order needs review on template %: no free integer span', v_template.id;
-      end if;
+      if v_sauce.id is null then raise exception 'Vin sibling missing on %', v_template.id; end if;
+      v_base := v_sauce.display_order + 1;
       -- Shift only once: a rerun has both inserted rows and skips this block.
       if not exists (select 1 from public.checklist_template_items
         where template_id=v_template.id and item_id='06c1a1b4-a51e-49a8-917a-2ebf6e844205'::uuid) then
         update public.checklist_template_items set display_order=display_order+2
-        where template_id=v_template.id and active and station='Sauces' and display_order>=v_base;
+        where template_id=v_template.id and display_order>=v_base;
       end if;
       for v_new in select * from (values
         ('Caesar Dressing','Aderezo César','06c1a1b4-a51e-49a8-917a-2ebf6e844205'::uuid,0),
@@ -104,6 +96,11 @@ begin
           jsonb_build_object('actor_context','seed_42','target',v_target,'template_id',v_template.id,
             'location_id',v_template.location_id,'item_id',v_new.item_id,'label',v_new.label));
       end loop;
+      if exists (select 1 from public.checklist_template_items
+        where template_id=v_template.id and active
+        group by display_order having count(*) > 1) then
+        raise exception 'active display_order collision on template %', v_template.id;
+      end if;
     end loop;
   end loop;
 end $seed42$;

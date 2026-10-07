@@ -26,6 +26,7 @@ export interface TaskAssignment {
 export interface ShiftBoard {
   locationId: string; date: string; viewerId: string; viewerLevel: number;
   stations: Station[]; people: ShiftPerson[]; events: StationEvent[]; tasks: TaskAssignment[];
+  occupiedPositions?: { positionId: string; firstName: string }[];
 }
 export function taskHref(task: TaskType, locationId: string): string {
   const paths: Record<TaskType, string> = {

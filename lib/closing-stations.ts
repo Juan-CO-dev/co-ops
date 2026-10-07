@@ -4,16 +4,19 @@ import { closingStations, stationChanges } from "./closing-stations-shared";
 import { lockLocationContext, type LocationActor } from "./locations";
 import { getServiceRoleClient } from "./supabase-server";
 import { getRoleLevel } from "./roles";
+import { etCalendarDate } from "./operational-day";
 
 export interface StationSyncActor extends LocationActor { userId: string }
 
-/** Matches the newest active closing version, including a published pending version. */
+/** Matches the currently effective closing version for this shop. */
 export async function syncStationsFromClosing(locationId: string, actor: StationSyncActor): Promise<void> {
   if (getRoleLevel(actor.role) < 8 && !lockLocationContext(actor, locationId)) throw new Error("location_access_denied");
   const service = getServiceRoleClient();
+  const today = etCalendarDate(new Date().toISOString());
   const templates = await service.from("checklist_templates")
     .select("id,effective_from,created_at").eq("location_id", locationId)
-    .eq("type", "closing").eq("active", true);
+    .eq("type", "closing").eq("active", true)
+    .or(`effective_from.is.null,effective_from.lte.${today}`);
   if (templates.error) throw templates.error;
   const latest = (templates.data ?? []).sort((a, b) =>
     (b.effective_from ?? "").localeCompare(a.effective_from ?? "") ||

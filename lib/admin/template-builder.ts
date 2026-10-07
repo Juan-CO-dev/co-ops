@@ -1101,9 +1101,15 @@ export async function publishTemplateVersion(
     });
   }
 
-  if (src.type === "closing") await syncStationsFromClosing(src.location_id, {
-    userId: actor.user.id, role: actor.user.role, locations: actor.locations,
-  });
+  if (src.type === "closing") {
+    try {
+      await syncStationsFromClosing(src.location_id, {
+        userId: actor.user.id, role: actor.user.role, locations: actor.locations,
+      });
+    } catch (error) {
+      console.error("Closing station sync failed after publish", error);
+    }
+  }
   return { newTemplateId, effectiveFrom, diff };
 }
 

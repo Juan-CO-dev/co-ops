@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { useTranslation } from "@/lib/i18n/provider";
 import { useStepUp } from "@/components/admin/StepUpProvider";
 import type { Station } from "@/lib/assignments-shared";
+import type { TranslationKey } from "@/lib/i18n/types";
 
 export function StationsAdmin({ locationId, stations, translatedNames, canEdit }: {
   locationId: string; stations: Station[]; translatedNames: string[]; canEdit: boolean;
@@ -13,24 +14,31 @@ export function StationsAdmin({ locationId, stations, translatedNames, canEdit }
   const router = useRouter();
   const [busy, setBusy] = useState(false);
   const [refreshing, startTransition] = useTransition();
-  const [error, setError] = useState(false);
+  const [error, setError] = useState<TranslationKey | null>(null);
   async function savePayload(payload: Record<string, unknown>) {
-    setBusy(true); setError(false);
+    setBusy(true); setError(null);
     try {
       if (await requestStepUp("B") !== "ok") return;
       const send = () => fetch("/api/admin/stations", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ locationId, ...payload }) });
       let response = await send();
+      let body: { code?: string } = {};
       if (!response.ok) {
-        const body = await response.json().catch(() => ({})) as { code?: string };
-        if ((body.code === "step_up_required" || body.code === "step_up_stale") && await requestStepUp("B") === "ok") response = await send();
+        body = await response.json().catch(() => ({})) as { code?: string };
+        if ((body.code === "step_up_required" || body.code === "step_up_stale") && await requestStepUp("B") === "ok") {
+          response = await send();
+          if (!response.ok) body = await response.json().catch(() => ({})) as { code?: string };
+        }
       }
-      if (!response.ok || response.redirected) throw new Error("station_save_failed");
+      if (!response.ok || response.redirected) {
+        if (body.code === "position_name_taken") { setError("assignments.positionNameTaken"); return; }
+        throw new Error("station_save_failed");
+      }
       startTransition(() => router.refresh());
-    } catch { setError(true); } finally { setBusy(false); }
+    } catch { setError("assignments.error"); } finally { setBusy(false); }
   }
   const save = (id: string, nameEs: string) => savePayload({ id, nameEs });
   return <div className="space-y-3" aria-busy={busy || refreshing}>
-    {error && <p role="alert" className="text-co-cta-text">{t("assignments.error")}</p>}
+    {error && <p role="alert" className="text-co-cta-text">{t(error)}</p>}
     {stations.filter((station) => station.active).map((station) =>
       <div key={station.id} className="co-card space-y-2 p-4">
         <h2 className="font-bold text-co-text">{station.name}</h2>
