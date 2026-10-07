@@ -22,6 +22,7 @@
  * edit module directly — the AGENTS.md § Module boundaries split, one file further along the
  * arc that already ships `lib/order-guide-sort.ts` as its pure comparator.
  */
+import { loadStoreVendorIds } from "@/lib/ordering-sources";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import { audit } from "@/lib/audit";
 import type { AuthContext } from "@/lib/session";
@@ -55,6 +56,7 @@ type LineRow = { id: string; section_id: string; position: number; sku_id: strin
 
 /** The vendor's guide, or null when none exists yet. */
 export async function loadOrderGuide(vendorId: string): Promise<GuideModel | null> {
+  if ((await loadStoreVendorIds()).has(vendorId)) return null;
   const sb = getServiceRoleClient();
   const { data: g, error: gErr } = await sb.from("vendor_order_guides").select("id, vendor_id, name, updated_at").eq("vendor_id", vendorId).maybeSingle<GuideRow>();
   if (gErr) throw new Error(`loadOrderGuide: ${gErr.message}`);
@@ -109,7 +111,7 @@ export async function createEmptyGuide(actor: AuthContext, vendorId: string): Pr
   const existing = await loadOrderGuide(vendorId);
   if (existing) throw new OrderGuideError(409, "exists", "This vendor already has an order guide");
 
-  const { data: vendor, error: vErr } = await sb.from("vendors").select("name").eq("id", vendorId).maybeSingle<{ name: string }>();
+  const { data: vendor, error: vErr } = await sb.from("vendors").select("name").eq("source_kind", "vendor").eq("id", vendorId).maybeSingle<{ name: string }>();
   if (vErr) throw new Error(`createEmptyGuide vendor: ${vErr.message}`);
   if (!vendor) throw new OrderGuideError(404, "vendor_not_found", "No such vendor");
 

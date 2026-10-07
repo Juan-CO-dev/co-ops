@@ -23,7 +23,7 @@ class OrderingError extends Error {
 class PurchaseOrderError extends Error {
   constructor(public status: number, public code: string, message?: string, public displayCode?: string) { super(message); }
 }
-function setup() {
+function setup(storeIds: string[] = []) {
   const writes: { table: string; data: unknown }[] = [];
   const filters: [string, unknown][] = [];
   const skus = ["a", "b", "c"].map(id => ({ id, vendor_id: id, active: true, weekday_par: 4, name: id, product_id: null }));
@@ -51,8 +51,9 @@ function setup() {
   const log = vi.fn();
   const deps = {
     OrderingError, PurchaseOrderError, PAR_PASS_MIN: 4, WALKER_SKU_COLUMNS: "id",
-    requireLevel: vi.fn(), lockLocationContext: () => true, actorLoc: () => ({}),
+    requireLevel: vi.fn(), canDoOperationalTask: async () => true, auditOperationalTaskOverride: vi.fn(async () => {}), lockLocationContext: () => true, actorLoc: () => ({}),
     getServiceRoleClient: () => sb, etWalkDay: () => ({ weekend: false }),
+    loadStoreVendorIds: async () => new Set(storeIds),
     loadSkuPackChains: async () => new Map(), loadMeasures: async () => new Map(), loadOverlayBySku: async () => new Map(),
     resolveActive: () => true, num: Number, resolvePar: () => 4,
     perOrderUnitOz: () => 1, orderUnitLabelFor: () => "case",
@@ -67,6 +68,13 @@ function setup() {
 }
 
 describe("LRA-206 / LRA-229: a PO conflict never refuses the walk", () => {
+  it("refuses a store SKU before recording any par-pass or creating a PO", async () => {
+    const f = setup(["b"]);
+    await expect(f.run()).rejects.toMatchObject({ code: "invalid_sku" });
+    expect(f.writes).toEqual([]);
+    expect(f.create).not.toHaveBeenCalled();
+  });
+
   it("merges a draft only after the walk and audit land, returning line counts", async () => {
     const f = setup();
     f.guard.mockImplementation(async (_sb, _loc, vendor) => {
@@ -183,7 +191,7 @@ describe("LRA-206 / LRA-229: a PO conflict never refuses the walk", () => {
   it("keeps single-vendor cutoff generation's early 409", async () => {
     const loadWalkerData = vi.fn();
     const generate = execute("generateDraftForVendor", {
-      OrderingError, PurchaseOrderError, PAR_PASS_MIN: 4, requireLevel: vi.fn(),
+      OrderingError, PurchaseOrderError, PAR_PASS_MIN: 4, requireLevel: vi.fn(), canDoOperationalTask: async () => true, auditOperationalTaskOverride: vi.fn(async () => {}),
       lockLocationContext: () => true, actorLoc: () => ({}), getServiceRoleClient: () => ({}),
       assertNoLivePoToday: async () => { throw new OrderingError(409, "po_exists"); }, loadWalkerData,
     });
@@ -193,7 +201,7 @@ describe("LRA-206 / LRA-229: a PO conflict never refuses the walk", () => {
 
   it("keeps single-vendor cutoff generation's race 409", async () => {
     const generate = execute("generateDraftForVendor", {
-      OrderingError, PurchaseOrderError, PAR_PASS_MIN: 4, requireLevel: vi.fn(),
+      OrderingError, PurchaseOrderError, PAR_PASS_MIN: 4, requireLevel: vi.fn(), canDoOperationalTask: async () => true, auditOperationalTaskOverride: vi.fn(async () => {}),
       lockLocationContext: () => true, actorLoc: () => ({}), getServiceRoleClient: () => ({}),
       assertNoLivePoToday: async () => {},
       loadWalkerData: async () => ({ vendors: [{ vendorId: "vendor", skus: [{ skuId: "a", suggestedQty: 2 }] }] }),

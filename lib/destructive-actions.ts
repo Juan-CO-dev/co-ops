@@ -36,6 +36,16 @@
  */
 
 export const DESTRUCTIVE_ACTIONS = [
+  "task.override", // A human acts on another assignee's accountability record.
+  "station.create",
+  "station.update",
+  "station.event",
+  "assignment.create",
+  "assignment.retract",
+  "receiving.store_create",
+  "receiving.store_sku_create",
+  "receiving.pending_create",
+  "receiving.pending_resolve",
   "vendor.import_applied", // A human-approved import changes shared vendor catalog configuration.
   // Purchase-order accountability
   "po.reopened",

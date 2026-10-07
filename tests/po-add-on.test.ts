@@ -24,7 +24,7 @@ function setup(status = "placed", bound = true) {
     };
     return query;
   } };
-  const deps = { PurchaseOrderError, PO_MIN: 4, requireLevel, getServiceRoleClient: () => sb, lockLocationContext: () => bound, actorLoc: () => ({}), createDraftsFromLines: create };
+  const deps = { canDoOperationalTask: async () => true, PurchaseOrderError, PO_MIN: 4, requireLevel, getServiceRoleClient: () => sb, lockLocationContext: () => bound, actorLoc: () => ({}), createDraftsFromLines: create };
   const js = ts.transpile(declaration("createAddOnOrder").getText(ast).replace(/^export /, ""), { target: ts.ScriptTarget.ES2022 });
   const addOn = new Function(...Object.keys(deps), `${js}; return createAddOnOrder;`)(...Object.values(deps));
   const actor = { user: { id: "kh", role: "key_holder" } };

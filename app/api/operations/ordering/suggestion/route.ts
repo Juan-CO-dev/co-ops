@@ -1,3 +1,4 @@
+import { canDoOperationalTask } from "@/lib/operational-task-access";
 import { type NextRequest } from "next/server";
 import { requireSession } from "@/lib/session";
 import { jsonError, jsonOk, parseJsonBody } from "@/lib/api-helpers";
@@ -67,6 +68,7 @@ export async function POST(req: NextRequest) {
   if (typeof b.action !== "string" || !ACTIONS.has(b.action)) {
     return jsonError(400, "invalid_payload", { field: "action" });
   }
+  if (!(await canDoOperationalTask(ctx, b.locationId, "ordering"))) return jsonError(403, "forbidden");
   const action = b.action as Action;
   const postedDayClass: DayClass = b.dayClass;
 

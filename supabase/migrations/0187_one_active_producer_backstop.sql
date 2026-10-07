@@ -1,5 +1,6 @@
 -- Migration 0187_one_active_producer_backstop
 -- AUTHORED 2026-08-30. NOT YET APPLIED — GATE (LEAD/JUAN).
+-- APPLIED TO PROD 2026-08-31 (schema_migrations version 20260831070404, name 'one_active_producer_backstop'). The line above is the authoring-time gate note, kept as history.
 --
 -- 0187: the one-active-producer invariant gets a DB backstop — a per-item advisory
 -- lock taken inside the writing transaction, in create_recipe_full and in a new

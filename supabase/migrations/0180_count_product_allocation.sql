@@ -1,5 +1,6 @@
 -- Migration 0180_count_product_allocation
 -- AUTHORED 2026-08-20. NOT YET APPLIED — GATE M2 (LEAD/JUAN).
+-- APPLIED TO PROD 2026-08-21 (schema_migrations version 20260821033354, name 'count_product_allocation'). The line above is the authoring-time gate note, kept as history.
 -- Canonical reference: docs/superpowers/specs/2026-08-20-product-identity-design.md
 --   section "Counting UX (locked: option C)".
 -- Plan: docs/superpowers/plans/2026-08-20-product-identity.md, Phase 5 · Task 5.1.

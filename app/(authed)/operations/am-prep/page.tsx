@@ -1,9 +1,10 @@
+import { hasTaskAccess } from "@/lib/assignments";
 /**
  * /operations/am-prep — Build #2 PR 1 page Server Component.
  *
  * The AM Prep submission surface. Server Component does the initial data
  * load (auth check, location-access validation, authorization gate via
- * AM_PREP_BASE_LEVEL OR active assignment, template + items + instance +
+ * current assignment/unassigned-task access, template + items + instance +
  * existing completions); AmPrepForm owns the interactive lifecycle
  * (state, validation, submit, banners).
  *
@@ -17,9 +18,8 @@
  * browse of prior AM Preps lands in the Reports hub (Build #2 follow-up
  * PR per C.42).
  *
- * Authorization (per SPEC_AMENDMENTS.md C.42 + C.41):
- *   - actor.level >= AM_PREP_BASE_LEVEL (3, "KH+" semantic post-C.41), OR
- *   - active report_assignments row for (user, am_prep, location, date)
+ * Authorization: employee+ with today's assignment, or KH+ when the task
+ * has no active assignment today. The location is checked independently.
  *
  * Read-only mode kicks in when the loaded instance is already confirmed
  * (returning user OR re-load after submission); AmPrepForm derives
@@ -37,9 +37,7 @@
 import { redirect } from "next/navigation";
 
 import {
-  AM_PREP_BASE_LEVEL,
   loadAmPrepState,
-  loadAssignmentForToday,
 } from "@/lib/prep";
 import {
   canEditReport,
@@ -96,23 +94,11 @@ export default async function AmPrepPage({ searchParams }: PageProps) {
 
   const today = etCalendarDate(new Date().toISOString());
 
-  // 3. Authorization gate — AM_PREP_BASE_LEVEL OR active assignment.
-  //    Sub-KH+ users without an assignment redirect to /dashboard (mirrors
-  //    closing-page's redirect-on-no-access convention).
-  const hasBaseAccess = auth.level >= AM_PREP_BASE_LEVEL;
-  let hasAssignment = false;
-  if (!hasBaseAccess) {
-    const assignment = await loadAssignmentForToday(sb, {
-      userId: auth.user.id,
-      reportType: "am_prep",
-      locationId: locationParam,
-      date: today,
-    });
-    hasAssignment = assignment !== null;
-  }
-  if (!hasBaseAccess && !hasAssignment) {
-    redirect("/dashboard");
-  }
+  // Resolve today's assignment for every role, including managers and owners.
+  if (!(await hasTaskAccess(sb, {
+    userId: auth.user.id, level: auth.level, locationId: locationParam,
+    date: today, task: "am_prep",
+  }))) redirect("/dashboard");
 
   // 4. Load AM Prep state.
   const state = await loadAmPrepState(sb, {

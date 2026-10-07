@@ -88,7 +88,7 @@ async function requireVendorRow(vendorId: string): Promise<void> {
   const { data, error } = await sb
     .from("vendors")
     .select("id")
-    .eq("id", vendorId)
+    .eq("source_kind", "vendor").eq("id", vendorId)
     .maybeSingle<{ id: string }>();
   if (error) throw new Error(`requireVendorRow failed: ${error.message}`);
   if (!data) throw new VendorRhythmError(404, "vendor_not_found", "Vendor not found");

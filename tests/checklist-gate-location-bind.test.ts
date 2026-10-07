@@ -25,3 +25,14 @@ it("LRA-227: own-shop GMs and all-location owners reach the existing read", asyn
     expect(from).toHaveBeenCalledOnce();
   }
 });
+
+it("trainees can read an existing closing but cannot create one", async () => {
+  const actor = { userId: "actor", role: "trainee" as const, level: 2, locations: ["own"] };
+  const query = { select: vi.fn().mockReturnThis(), eq: vi.fn().mockReturnThis(),
+    maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }) };
+  const service = { from: vi.fn(() => query) } as unknown as SupabaseClient;
+  const args = { templateId: "template", locationId: "own", date: "2026-10-07", actor };
+  await expect(getOrCreateInstance(service, args)).rejects.toMatchObject({ code: "role_level_insufficient" });
+  query.maybeSingle.mockResolvedValue({ data: { id: "existing" } as never, error: null });
+  await expect(getOrCreateInstance(service, args)).resolves.toMatchObject({ created: false, instance: { id: "existing" } });
+});

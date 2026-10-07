@@ -21,6 +21,11 @@ const member = (over: Partial<ProductMember> & { skuId: string }): ProductMember
 });
 
 describe("resolveProductMember", () => {
+  it("keeps inactive-vendor regular members eligible", () => {
+    const r = resolveProductMember({ productId: "P", active: true, primarySkuId: "regular",
+      members: [member({ skuId: "regular", sourceKind: "vendor", vendorActive: false })] });
+    expect(r).toMatchObject({ skuId: "regular", rung: "primary" });
+  });
   it("(1) the flagged primary wins when active", () => {
     const r = resolveProductMember({
       productId: "P",

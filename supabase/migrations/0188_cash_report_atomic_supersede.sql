@@ -1,5 +1,6 @@
 -- Migration 0188_cash_report_atomic_supersede
 -- AUTHORED 2026-08-30. NOT YET APPLIED — GATE (LEAD/JUAN).
+-- APPLIED TO PROD 2026-08-31 (schema_migrations version 20260831070629, name 'cash_report_atomic_supersede'). The line above is the authoring-time gate note, kept as history.
 --
 -- 0188: submit_cash_report_atomic — supersede + insert + back-point in ONE transaction,
 -- so the cash-report strand window stops existing rather than being narrowed and reported.

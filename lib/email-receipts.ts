@@ -1,3 +1,4 @@
+import { auditOperationalTaskOverride, canDoOperationalTask } from "@/lib/operational-task-access";
 /**
  * Email-receipt ledger — the vendor-claim side of the two-way match (delivery-intake
  * P2, spec D4/D6; migration 0170). SERVER-ONLY, service-role client; the `receipts`
@@ -376,6 +377,7 @@ export async function uploadManualReceipt(
   if (!lockLocationContext(actorLoc(actor), input.locationId)) {
     throw new EmailReceiptError(404, "not_found", "Location not found");
   }
+  if (!(await canDoOperationalTask(actor, input.locationId, "receiving"))) throw new EmailReceiptError(403, "forbidden");
   if (!isReceiptContentType(input.file.contentType)) {
     throw new EmailReceiptError(400, "unsupported_type", "Unsupported receipt file type");
   }
@@ -446,6 +448,7 @@ export async function uploadManualReceipt(
     });
   }
 
+  await auditOperationalTaskOverride(actor, input.locationId, "receiving", "uploadManualReceipt");
   return { receiptId: inserted.id };
 }
 
@@ -954,9 +957,10 @@ export async function loadPoCandidatesForReceipt(
     throw new EmailReceiptError(404, "not_found", "Receipt not found");
   }
 
+
   let q = sb
     .from("purchase_orders")
-    .select("id, display_code, status, vendor_id, created_at")
+    .select("id, display_code, status, vendor_id, created_at, location_id")
     .in("status", ["placed", "invoiced", "received"])
     .order("created_at", { ascending: false })
     .limit(limit);
@@ -973,7 +977,7 @@ export async function loadPoCandidatesForReceipt(
     if (reach !== "all") q = q.in("location_id", reach);
   }
   const { data: pos, error: pErr } = await q.returns<
-    Array<{ id: string; display_code: string; status: string; vendor_id: string; created_at: string }>
+    Array<{ id: string; display_code: string; status: string; vendor_id: string; created_at: string; location_id: string }>
   >();
   if (pErr) throw new Error(`loadPoCandidatesForReceipt pos: ${pErr.message}`);
   const list = pos ?? [];
@@ -1031,6 +1035,7 @@ export async function attachReceiptToPo(actor: AuthContext, receiptId: string, p
   if (!po || !lockLocationContext(actorLoc(actor), po.location_id)) {
     throw new EmailReceiptError(404, "not_found", "Order not found");
   }
+  if (!(await canDoOperationalTask(actor, po.location_id, "receiving"))) throw new EmailReceiptError(403, "forbidden");
   if (!["placed", "invoiced", "received"].includes(po.status)) {
     throw new EmailReceiptError(409, "not_attachable", "That order can't take a receipt in its current state");
   }
@@ -1056,6 +1061,7 @@ export async function attachReceiptToPo(actor: AuthContext, receiptId: string, p
   const { data: kindRow } = await sb
     .from("email_receipts").select("doc_kind").eq("id", receiptId)
     .maybeSingle<{ doc_kind: string | null }>();
+  await auditOperationalTaskOverride(actor, po.location_id, "receiving", "attachReceiptToPo");
   await audit({
     actorId: actor.user.id, actorRole: actor.user.role,
     action: "receipt.po_linked", resourceTable: "email_receipts", resourceId: receiptId,
@@ -1156,6 +1162,7 @@ export async function linkReceipt(actor: AuthContext, receiptId: string, deliver
   if (!lockLocationContext(actorLoc(actor), d.location_id)) {
     throw new EmailReceiptError(404, "not_found", "Delivery not found");
   }
+  if (!(await canDoOperationalTask(actor, d.location_id, "receiving"))) throw new EmailReceiptError(403, "forbidden");
   if (d.email_receipt_id) throw new EmailReceiptError(409, "already_linked", "This delivery already has a receipt");
 
   const { data: r, error: rErr } = await sb
@@ -1202,6 +1209,7 @@ export async function linkReceipt(actor: AuthContext, receiptId: string, deliver
     throw new EmailReceiptError(409, "already_linked", "This delivery already has a receipt");
   }
 
+  await auditOperationalTaskOverride(actor, d.location_id, "receiving", "linkReceipt");
   await audit({
     actorId: actor.user.id, actorRole: actor.user.role,
     action: "delivery.receipt_linked", resourceTable: "vendor_deliveries", resourceId: deliveryId,
@@ -1232,6 +1240,7 @@ async function requireAttestableDelivery(
   if (!lockLocationContext(actorLoc(actor), d.location_id)) {
     throw new EmailReceiptError(404, "not_found", "Delivery not found");
   }
+  if (!(await canDoOperationalTask(actor, d.location_id, "receiving"))) throw new EmailReceiptError(403, "forbidden");
   return d;
 }
 
@@ -1280,6 +1289,7 @@ export async function attestMatch(
   if (uErr) throw new Error(`attestMatch update: ${uErr.message}`);
   if (count === 0) throw new EmailReceiptError(404, "not_found", "Delivery not found");
 
+  await auditOperationalTaskOverride(actor, d.location_id, "receiving", "attestMatch");
   await audit({
     actorId: actor.user.id, actorRole: actor.user.role,
     action: "delivery.match_attested", resourceTable: "vendor_deliveries", resourceId: deliveryId,
@@ -1308,6 +1318,7 @@ export async function overrideMatch(actor: AuthContext, deliveryId: string, note
   if (uErr) throw new Error(`overrideMatch update: ${uErr.message}`);
   if (count === 0) throw new EmailReceiptError(404, "not_found", "Delivery not found");
 
+  await auditOperationalTaskOverride(actor, d.location_id, "receiving", "overrideMatch");
   await audit({
     actorId: actor.user.id, actorRole: actor.user.role,
     action: "delivery.match_overridden", resourceTable: "vendor_deliveries", resourceId: deliveryId,

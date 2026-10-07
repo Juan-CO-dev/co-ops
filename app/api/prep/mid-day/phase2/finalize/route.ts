@@ -1,3 +1,5 @@
+import { PrepRoleViolationError } from "@/lib/prep";
+import { hasTaskAccess } from "@/lib/assignments";
 /**
  * POST /api/prep/mid-day/phase2/finalize — close out a mid-day prep instance
  * (C.43): transition phase1_complete → phase2_complete. Shift staff; location-gated.
@@ -31,9 +33,9 @@ export async function POST(req: NextRequest) {
   const service = getServiceRoleClient();
   const { data: instance, error: instErr } = await service
     .from("checklist_instances")
-    .select("id, location_id")
+    .select("id, location_id, date")
     .eq("id", instanceId)
-    .maybeSingle<{ id: string; location_id: string }>();
+    .maybeSingle<{ id: string; location_id: string; date: string }>();
   if (instErr) {
     console.error(`[/api/prep/mid-day/phase2/finalize] instance load failed:`, instErr.message);
     return jsonError(500, "internal_error", { message: "instance load failed" });
@@ -47,7 +49,7 @@ export async function POST(req: NextRequest) {
       location_id: instance.location_id,
     });
   }
-  if (ctx.level < AM_PREP_BASE_LEVEL) {
+  if (!(await hasTaskAccess(service, { userId: ctx.user.id, level: ctx.level, locationId: instance.location_id, date: instance.date, task: "mid_day_prep" }))) {
     return jsonError(403, "role_insufficient", {
       message: "Mid-day prep is for shift staff.",
       required_level: AM_PREP_BASE_LEVEL,
@@ -74,6 +76,7 @@ export async function POST(req: NextRequest) {
     }
     return jsonOk({ instance: result.instance });
   } catch (err) {
+    if (err instanceof PrepRoleViolationError) return jsonError(403, "role_insufficient", {});
     const msg = err instanceof Error ? err.message : String(err);
     console.error(`[/api/prep/mid-day/phase2/finalize] finalize failed:`, msg);
     return jsonError(500, "internal_error", { message: "finalize failed" });

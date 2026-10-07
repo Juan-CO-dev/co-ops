@@ -83,12 +83,17 @@ const SINGLE_BOX: OpeningEntryPhase2 = {
 /** A service double: `rpc` answers as given; `from(...)` is a thenable builder whose maybeSingle yields `row`. */
 function service(rpcAnswer: { data: unknown; error: { code: string; message: string } | null }, row: unknown = null) {
   const rpc = vi.fn(async () => rpcAnswer);
-  const from = vi.fn(() => {
+  const from = vi.fn((table: string) => {
     const builder: Record<string, unknown> = {
       select: () => builder,
       eq: () => builder,
       is: () => builder,
-      maybeSingle: async () => ({ data: row, error: null }),
+      // #388 merged the task-access gate: savePhase2Item first reads the instance's shop + date
+      // (canAccessOpeningInstance). Answer that read like prod so a KH+ actor passes.
+      maybeSingle: async () => ({
+        data: table === "checklist_instances" ? { location_id: "ffffffff-eeee-4ddd-8ccc-bbbbbbbbbbbb", date: "2026-10-07" } : row,
+        error: null,
+      }),
       then: (resolve: (v: unknown) => unknown) => Promise.resolve({ data: [], error: null }).then(resolve),
     };
     return builder;

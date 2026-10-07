@@ -2,11 +2,12 @@ import { type NextRequest } from "next/server";
 import { requireSession } from "@/lib/session";
 import { ROLES } from "@/lib/roles";
 import { assertStepUp } from "@/lib/admin/step-up";
+import { verifyActorPin } from "@/lib/auth-flows";
 import { jsonError, jsonOk, parseJsonBody } from "@/lib/api-helpers";
 import { createCountEvent, CountError, COUNT_WRITE_MIN, type CreateCountEventInput } from "@/lib/counts";
 import type { CountLineEntry } from "@/lib/counts-shared";
 
-// Record a physical-count EVENT (pack hierarchy PR 2). AGM+ (>=6), Tier-A step-up
+// Record a physical-count EVENT. Levels 4-5 re-enter a PIN; AGM+ use Tier-A password step-up
 // (A4), location-bound (checked in createCountEvent). One event per POST (council L5).
 export async function POST(req: NextRequest) {
   const parsed = await parseJsonBody(req);
@@ -15,11 +16,14 @@ export async function POST(req: NextRequest) {
   if (ctx instanceof Response) return ctx;
   if (ROLES[ctx.user.role].level < COUNT_WRITE_MIN) return jsonError(403, "forbidden");
 
-  // Tier-A step-up on write (A4).
-  const su = assertStepUp(ctx, "A");
-  if (!su.ok) return jsonError(403, su.code);
-
   const b = parsed as Record<string, unknown>;
+  if (ROLES[ctx.user.role].level < 6) {
+    if (typeof b.pin !== "string") return jsonError(400, "invalid_payload", { field: "pin" });
+    if (!(await verifyActorPin(ctx.user.id, b.pin))) return jsonError(401, "pin_invalid");
+  } else {
+    const su = assertStepUp(ctx, "A");
+    if (!su.ok) return jsonError(403, su.code);
+  }
   if (typeof b.locationId !== "string") return jsonError(400, "invalid_payload", { field: "locationId" });
   if (!Array.isArray(b.lines)) return jsonError(400, "no_lines");
 

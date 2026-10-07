@@ -9,7 +9,7 @@
  */
 
 import { serverT } from "@/lib/i18n/server";
-import { accessibleLocations, type LocationActor } from "@/lib/locations";
+import { REPORT_ALL_LOCATIONS_LEVEL, accessibleLocations, type LocationActor } from "@/lib/locations";
 import { requireSessionFromHeaders } from "@/lib/session";
 import { getRoleLevel } from "@/lib/roles";
 import { getServiceRoleClient } from "@/lib/supabase-server";
@@ -31,7 +31,7 @@ export default async function WrittenReportsPage() {
     viewer: {
       userId: auth.user.id,
       level: auth.level,
-      locations: accessibleLocations(actor),
+      locations: auth.level >= REPORT_ALL_LOCATIONS_LEVEL ? "all" : accessibleLocations(actor),
     },
   });
 

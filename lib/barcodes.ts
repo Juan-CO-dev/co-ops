@@ -1,3 +1,4 @@
+import { auditOperationalTaskOverride, canDoOperationalTask } from "@/lib/operational-task-access";
 /**
  * lib/barcodes.ts — the receiving door's barcode memory (V3-B §5). DB layer over the pure laws.
  *
@@ -101,10 +102,11 @@ function actorLoc(actor: AuthContext): LocationActor {
   return { role: actor.user.role, locations: actor.locations };
 }
 
-function bind(actor: AuthContext, locationId: string): void {
+async function bind(actor: AuthContext, locationId: string): Promise<void> {
   if (!lockLocationContext(actorLoc(actor), locationId)) {
     throw new BarcodeError(404, "not_found", "Location not found");
   }
+  if (!(await canDoOperationalTask(actor, locationId, "receiving"))) throw new BarcodeError(403, "forbidden", "Receiving assignment required");
 }
 
 function normalizeOrRefuse(code: string): NormalizedCode {
@@ -135,7 +137,7 @@ export async function lookupScan(
   actor: AuthContext,
   input: { vendorId: string; locationId: string; code: string; lineSkuIds: string[] },
 ): Promise<ScanMatch & { normalized: NormalizedCode }> {
-  bind(actor, input.locationId);
+  await bind(actor, input.locationId);
   const normalized = normalizeOrRefuse(input.code);
 
   const sb = getServiceRoleClient();
@@ -191,7 +193,7 @@ export async function teachBarcode(
     confirmLevelChange?: boolean;
   },
 ): Promise<{ created: boolean }> {
-  bind(actor, input.locationId);
+  await bind(actor, input.locationId);
   const normalized = normalizeOrRefuse(input.code);
 
   const sb = getServiceRoleClient();
@@ -257,6 +259,7 @@ export async function teachBarcode(
   }
   if (!inserted) throw new BarcodeError(500, "teach_failed", "Barcode write failed: insert returned no row");
 
+  await auditOperationalTaskOverride(actor, input.locationId, "receiving", "teachBarcode");
   await audit({
     actorId: actor.user.id,
     actorRole: actor.user.role,
@@ -304,7 +307,7 @@ export async function forgetBarcode(
   actor: AuthContext,
   input: { vendorId: string; locationId: string; code: string; skuId: string; level: Level },
 ): Promise<void> {
-  bind(actor, input.locationId);
+  await bind(actor, input.locationId);
   // Same normalisation as lookup/teach: the client may hold the RAW scan (a GTIN-14 with its
   // leading zero, a GS1 string) while the row stores the GTIN. First sim run proved it (09-17).
   const normalized = normalizeCode(input.code);
@@ -334,6 +337,7 @@ export async function forgetBarcode(
   if (error) throw new BarcodeError(500, "forget_failed", `Barcode update failed: ${error.message}`);
   if (!count) throw new BarcodeError(404, "not_taught", "That code is not taught on this item");
 
+  await auditOperationalTaskOverride(actor, input.locationId, "receiving", "forgetBarcode");
   await audit({
     actorId: actor.user.id,
     actorRole: actor.user.role,

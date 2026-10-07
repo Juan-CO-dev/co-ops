@@ -3,7 +3,7 @@
  * Existing product/recipe Readiness semantics remain unchanged.
  */
 import { buildRecipeGraph, perUnitSkuOzForItemFromGraph, perUnitSkuOzForMenuItemFromGraph, type GraphRecipe, type ProductIndex } from "@/lib/prep-consumption-graph";
-import { productInputBasis, resolveProductMember } from "@/lib/products-shared";
+import { productInputBasis, resolveProductMember, storeRunReceiptStreak, type ProductMember, type ProductReceiptEvent } from "@/lib/products-shared";
 import { skuContentOz, type RecipeInputSku, type MeasureUnitFactor } from "@/lib/recipe-math";
 import { buildPackChain, chainRootLabel, validateChainStructure, firstLabelMeasureCollision, type PackChainLevel } from "@/lib/pack-chain-shared";
 import { resolveCountLineDim } from "@/lib/counts-shared";
@@ -173,18 +173,32 @@ export function evaluateWave7Tables(tables: LiveTables, overrides = new Map<stri
   for (const shop of liveRows(tables, "locations").filter(r => r.active !== false && (!visibleShopIds || visibleShopIds.has(liveId(r))))) {
     const shopId = liveId(shop), overlays = liveRows(tables, "location_sku_settings").filter(r => r.location_id === shopId);
     const overlayFor = (id: string) => overlays.find(r => r.sku_id === id);
+    // Main's per-shop scope applies to EVERY SKU (regular and store alike); keep it unchanged.
     const active = (sku: LiveRow) => (sku.location_id == null || sku.location_id === shopId) && resolveActive(overlayFor(liveId(sku))?.active_override as boolean | null | undefined, sku.active === true);
     const productIndex: ProductIndex = { resolution: new Map(), basis: new Map() };
     const resolutions = new Map<string, ReturnType<typeof resolveProductMember>>(), productBases = new Map<string, RecipeInputSku>();
     const productReport: Wave7ReadinessReport["shops"][number]["products"] = [];
-    const deliveries = new Set(liveRows(tables, "vendor_deliveries").filter(r => r.location_id === shopId).map(liveId));
+    const deliveries = liveIndex(liveRows(tables, "vendor_deliveries").filter(r => r.location_id === shopId));
     for (const product of products) {
-      const id = liveId(product), members = skus.filter(s => s.product_id === id).map(s => ({ skuId: liveId(s), vendorId: liveText(s.vendor_id), vendorName: liveText(vendors.get(String(s.vendor_id))?.name), active: active(s), avgOzPerEach: liveNum(s.avg_oz_per_each),
+      const id = liveId(product), members: ProductMember[] = skus.filter(s => s.product_id === id).map(s => ({ skuId: liveId(s), vendorId: liveText(s.vendor_id), vendorName: liveText(vendors.get(String(s.vendor_id))?.name), active: active(s), avgOzPerEach: liveNum(s.avg_oz_per_each),
+        sourceKind: vendors.get(String(s.vendor_id))?.source_kind === "store" ? "store" : "vendor",
+        vendorActive: s.vendor_id == null || vendors.get(String(s.vendor_id))?.active === true,
+        pendingReview: s.pending_review === true,
+        hasOzBasis: (skuContentOz(bases.get(liveId(s))!, measures) ?? liveNum(product.unit_oz) ?? 0) > 0,
         lastReceivedAt: liveRows(tables, "vendor_delivery_items").filter(l => l.vendor_item_id === s.id && deliveries.has(String(l.delivery_id))).map(l => String(l.created_at)).sort().at(-1) ?? null }));
+      const memberIds = new Set(members.map(member => member.skuId));
+      const events: ProductReceiptEvent[] = [];
+      for (const line of liveRows(tables, "vendor_delivery_items")) {
+        const delivery = deliveries.get(String(line.delivery_id));
+        if (!delivery || !memberIds.has(String(line.vendor_item_id))) continue;
+        events.push({ receiptId: liveId(delivery), locationId: shopId, receivedAt: String(line.created_at),
+          sourceKind: vendors.get(String(delivery.vendor_id))?.source_kind === "store" ? "store" : "vendor" });
+      }
       const primaries = liveRows(tables, "product_primaries").filter(p => p.product_id === id);
       const primary = primaries.find(p => p.location_id === shopId) ?? primaries.find(p => p.location_id == null);
       if (primary && !members.some(m => m.skuId === primary.primary_sku_id)) throw new Error("INCOMPLETE_GRAPH: product primary membership");
-      const resolution = resolveProductMember({ productId: id, active: product.active === true, primarySkuId: liveText(primary?.primary_sku_id), members });
+      const resolution = resolveProductMember({ productId: id, active: product.active === true, primarySkuId: liveText(primary?.primary_sku_id), members,
+        storeRunStreak: storeRunReceiptStreak(events, shopId) });
       const basis = productInputBasis({ productId: id, unitOz: liveNum(product.unit_oz) }, members.find(m => m.skuId === resolution.skuId) ?? null);
       resolutions.set(id, resolution); productBases.set(id, basis);
       productReport.push({ id, name: String(product.name), skuId: resolution.skuId, sku: liveText(skuIndex.get(resolution.skuId ?? "")?.name), basis: basis.avgOzPerEach });
@@ -229,6 +243,8 @@ export function evaluateWave7Tables(tables: LiveTables, overrides = new Map<stri
     const launch: LiveLaunchRow[] = [];
     const day = new Date(`${asOf}T12:00:00Z`).getUTCDay(), weekend = day === 5 || day === 6 || day === 0;
     for (const sku of skus.filter(active)) {
+      // Store runs retain their graph/cost facts, but are not regular catalog errands.
+      if (vendors.get(String(sku.vendor_id))?.source_kind === "store") continue;
       const id = liveId(sku), overlay = overlayFor(id), basis = bases.get(id)!;
       const par = resolvePar(overlay ? { weekdayPar: liveNum(overlay.weekday_par), weekendPar: liveNum(overlay.weekend_par), autoWeekdayPar: liveNum(overlay.auto_weekday_par), autoWeekendPar: liveNum(overlay.auto_weekend_par), autoWeekdayBaselinePar: liveNum(overlay.auto_weekday_baseline_par), autoWeekendBaselinePar: liveNum(overlay.auto_weekend_baseline_par) } : null, { weekdayPar: liveNum(sku.weekday_par), weekendPar: liveNum(sku.weekend_par) }, weekend);
       if (!dependencies.has(id) && par == null && sku.inventory_only !== true) continue;
@@ -246,4 +262,3 @@ export function evaluateWave7Tables(tables: LiveTables, overrides = new Map<stri
   }
   return report;
 }
-

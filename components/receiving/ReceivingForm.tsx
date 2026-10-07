@@ -96,6 +96,7 @@ import { useTranslation } from "@/lib/i18n/provider";
 import { formatTime } from "@/lib/i18n/format";
 import { ActionButton, actionButtonClass } from "@/components/ActionButton";
 import { PhotoCapture } from "@/components/photos/PhotoCapture";
+import { storeErrorKey } from "@/lib/receiving-stores-shared";
 import { IntakeLineRow, type IntakeLine } from "@/components/receiving/IntakeLineRow";
 import { ScanField, type ScanFieldEvent } from "@/components/receiving/ScanField";
 import { CollapsibleSection } from "@/components/ui/CollapsibleSection";
@@ -346,6 +347,18 @@ export function ReceivingForm({
   const { t, language } = useTranslation();
   const router = useRouter();
   const [vendorId, setVendorId] = useState("");
+  const [addedStores, setAddedStores] = useState<ReceivingFormData["vendors"]>([]);
+  const [addedSkus, setAddedSkus] = useState<ReceivingSkuOption[]>([]);
+  const [newStore, setNewStore] = useState(false);
+  const [storeName, setStoreName] = useState("");
+  const [storeBusy, setStoreBusy] = useState(false);
+  const [pendingName, setPendingName] = useState("");
+  const [pendingUnit, setPendingUnit] = useState("");
+  const [pendingOz, setPendingOz] = useState("");
+  const pendingRequestRef = useRef<{ signature: string; id: string } | null>(null);
+  const vendors = [...formData.vendors, ...addedStores.filter((s) => !formData.vendors.some((v) => v.id === s.id))];
+  const allSkus = [...formData.skus, ...addedSkus.filter((s) => !formData.skus.some((v) => v.id === s.id))];
+  const isStore = vendors.find((v) => v.id === vendorId)?.sourceKind === "store";
   const [date, setDate] = useState(today);
   const [invoiceNumber, setInvoiceNumber] = useState("");
   const [invoiceTotal, setInvoiceTotal] = useState("");
@@ -561,12 +574,13 @@ export function ReceivingForm({
     };
   }, [vendorId, date, invoiceNumber, invoiceTotal, notes, photoLater, receiptPhotoId, lines, locationId, pendingDrafts]);
 
-  const skuById = new Map<string, ReceivingSkuOption>(formData.skus.map((s) => [s.id, s]));
-  // Picker + fallback are ALWAYS scoped to the selected vendor's OWN SKUs (never the
-  // cross-vendor catalog, never null-vendor SKUs), usage-ranked then name (Juan's
-  // door refinement). Empty until a vendor is picked.
+  const skuById = new Map<string, ReceivingSkuOption>(allSkus.map((s) => [s.id, s]));
+  // Ordinary vendors keep their own catalog; a store can source any active SKU.
+  // A cross-vendor selection is materialized as a store SKU before adding the line.
   const vendorSkus = vendorId
-    ? formData.skus.filter((s) => s.vendorId === vendorId).sort(byUsageThenName)
+    ? allSkus.filter((s) => isStore
+      ? (!s.locationId || s.locationId === locationId) && (!s.pendingReview || s.vendorId === vendorId)
+      : s.vendorId === vendorId).sort(byUsageThenName)
     : [];
   const levelsFor = (skuId: string): string[] => (skuId ? (skuById.get(skuId)?.chainLabels ?? []) : []);
 
@@ -590,7 +604,7 @@ export function ReceivingForm({
   );
 
   const canSubmit =
-    vendorId !== "" && date !== "" && readyLines.length > 0 && orphanLines.length === 0 && (receiptPhotoId !== null || photoLater) && !busy;
+    vendorId !== "" && date !== "" && readyLines.length > 0 && orphanLines.length === 0 && (receiptPhotoId !== null || photoLater) && !busy && !storeBusy;
 
   // How many lines carry a price the server will accept. Rendered beside the toggle in
   // BOTH states — it is what keeps an entered price from ever being invisible while the
@@ -928,6 +942,8 @@ export function ReceivingForm({
 
   const resetForm = () => {
     setVendorId("");
+    setNewStore(false);
+    setPendingName(""); setPendingUnit(""); setPendingOz("");
     setDate(today);
     setInvoiceNumber("");
     setInvoiceTotal("");
@@ -960,6 +976,8 @@ export function ReceivingForm({
    *  keeps the resumed draft in its own slot rather than opening a second one. */
   const resumeDraft = (draft: IntakeDraft) => {
     setVendorId(draft.vendorId);
+    setNewStore(false);
+    setPendingName(""); setPendingUnit(""); setPendingOz("");
     setDate(draft.date);
     setInvoiceNumber(draft.invoiceNumber);
     setInvoiceTotal(draft.invoiceTotal);
@@ -998,6 +1016,68 @@ export function ReceivingForm({
   //   no template       → POPULATE offered rows from the vendor's usage-ranked SKUs
   //                       (Juan's refinement); if the vendor has none (e.g. packaging
   //                       vendors), keep today's single blank added line.
+  async function storeResponseError(response: Response): Promise<string> {
+    const body = await response.json().catch(() => ({})) as { code?: string; message?: string; error?: string };
+    return body.code ? t(storeErrorKey(body.code)) : body.message ?? body.error ?? t("receivingStore.save_error");
+  }
+
+  async function createStore() {
+    if (!storeName.trim() || storeBusy) return;
+    const token = intakeTokenRef.current;
+    setStoreBusy(true);
+    setErr(null);
+    try {
+      const response = await fetch("/api/operations/receiving/stores", {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ locationId, name: storeName.trim() }),
+      });
+      if (!response.ok) { setErr(await storeResponseError(response)); return; }
+      const { store, regularVendorNameMatch } = await response.json() as { store: ReceivingFormData["vendors"][number]; regularVendorNameMatch?: boolean };
+      setAddedStores((previous) => [...previous.filter((v) => v.id !== store.id), store]);
+      if (intakeTokenRef.current !== token) return;
+      await onVendorChange("");
+      setVendorId(store.id);
+      if (regularVendorNameMatch) setErr(t("receivingStore.vendor_name_warning"));
+      setNewStore(false);
+      setStoreName("");
+    } catch { setErr(t("receivingStore.save_error")); }
+    finally { setStoreBusy(false); }
+  }
+
+  async function addStoreItem(referenceSkuId?: string) {
+    if (storeBusy) return;
+    const token = intakeTokenRef.current;
+    setStoreBusy(true);
+    setErr(null);
+    try {
+      const pendingInput = {
+        name: pendingName.trim(), countUnit: pendingUnit.trim(),
+        contentOz: pendingOz.trim() ? Number(pendingOz) : null,
+      };
+      if (!referenceSkuId) {
+        const signature = JSON.stringify({ locationId, storeId: vendorId, ...pendingInput });
+        if (pendingRequestRef.current?.signature !== signature) {
+          pendingRequestRef.current = { signature, id: crypto.randomUUID() };
+        }
+      }
+      const response = await fetch("/api/operations/receiving/store-items", {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ locationId, storeId: vendorId, ...(referenceSkuId
+          ? { referenceSkuId }
+          : { ...pendingInput, requestId: pendingRequestRef.current!.id }) }),
+      });
+      if (!response.ok) { setErr(await storeResponseError(response)); return; }
+      const { sku } = await response.json() as { sku: ReceivingSkuOption };
+      if (intakeTokenRef.current !== token) return;
+      setAddedSkus((previous) => [...previous.filter((s) => s.id !== sku.id), sku]);
+      setLines((previous) => [...previous.filter((line) => line.skuId !== "" || line.qty !== "" || line.note !== "" || line.unitPrice !== ""),
+        { ...addedLine(), skuId: sku.id, skuName: sku.name, level: "" }]);
+      setPendingName(""); setPendingUnit(""); setPendingOz("");
+      pendingRequestRef.current = null;
+    } catch { if (intakeTokenRef.current === token) setErr(t("receivingStore.save_error")); }
+    finally { setStoreBusy(false); }
+  }
+
   const onVendorChange = async (nextVendorId: string) => {
     setVendorId(nextVendorId);
     setErr(null);
@@ -1015,7 +1095,10 @@ export function ReceivingForm({
     setArmComplete(false);
     setNotArrived({});
     clearScanState();
-    if (!nextVendorId) return;
+    setPendingName("");
+    setPendingUnit("");
+    setPendingOz("");
+    if (!nextVendorId || vendors.find((v) => v.id === nextVendorId)?.sourceKind === "store") return;
     setPrefilling(true);
     // Fallback we drop to whenever there's no usable template: the vendor's usage-ranked
     // SKUs as empty offered rows, else the single blank added line.
@@ -1165,6 +1248,10 @@ export function ReceivingForm({
       setErr(t(("receiving.error." + j.code) as never));
       return;
     }
+    if (res.status === 403 || res.status === 409) {
+      setErr(j.message ?? j.error ?? t("receivingStore.error_forbidden"));
+      return;
+    }
     setErr(t(("receiving.error." + (j?.code ?? "generic")) as never));
   };
 
@@ -1198,7 +1285,7 @@ export function ReceivingForm({
           className="mb-3 flex flex-col gap-2 rounded-xl border-2 border-co-gold-deep bg-co-warning-surface px-4 py-3"
         >
           {pendingDrafts.map((d) => {
-            const vendor = formData.vendors.find((v) => v.id === d.vendorId)?.name ?? null;
+            const vendor = vendors.find((v) => v.id === d.vendorId)?.name ?? null;
             const time = formatTime(d.savedAt, language);
             return (
               <div key={`${d.vendorId}:${d.startedAt}`} className="flex items-center justify-between gap-3">
@@ -1263,19 +1350,39 @@ export function ReceivingForm({
           <span className="text-sm font-bold text-co-text">{t("receiving.form.vendor")}</span>
           <select
             className={`mt-1 ${field}`}
-            value={vendorId}
-            disabled={busy}
-            onChange={(e) => void onVendorChange(e.target.value)}
+            value={newStore ? "__new_store" : vendorId}
+            disabled={busy || storeBusy || prefilling}
+            onChange={(e) => {
+              const value = e.target.value;
+              setNewStore(value === "__new_store");
+              void onVendorChange(value === "__new_store" ? "" : value);
+            }}
             aria-label={t("receiving.form.vendor")}
           >
             <option value="">{t("receiving.form.pick_vendor")}</option>
-            {formData.vendors.map((v) => (
-              <option key={v.id} value={v.id}>
-                {v.name}
-              </option>
+            {vendors.filter((v) => v.sourceKind !== "store").map((v) => (
+              <option key={v.id} value={v.id}>{v.name}</option>
             ))}
+            <optgroup label={t("receivingStore.group")}>
+              {vendors.filter((v) => v.sourceKind === "store").map((v) => (
+                <option key={v.id} value={v.id}>{v.name}</option>
+              ))}
+              <option value="__new_store">{t("receivingStore.new_store")}</option>
+            </optgroup>
           </select>
         </label>
+
+        {newStore ? <div className="mt-3 flex flex-col gap-2">
+          <label className="block text-sm font-bold text-co-text">
+            {t("receivingStore.store_name")}
+            <input className={field} value={storeName} maxLength={160} disabled={busy || storeBusy}
+              onChange={(e) => setStoreName(e.target.value)} />
+          </label>
+          <ActionButton type="button" disabled={busy || storeBusy || !storeName.trim()} onClick={() => void createStore()}>
+            {t("receivingStore.save_store")}
+          </ActionButton>
+        </div> : null}
+        {isStore ? <p className="mt-2 text-sm text-co-text-dim">{t("receivingStore.price_help")}</p> : null}
 
         <div className="mt-3 grid grid-cols-2 gap-2">
           <label className="block">
@@ -1333,18 +1440,18 @@ export function ReceivingForm({
                   listener has to be mounted before the first trigger — the receiver with a
                   gun never taps anything. `disabled` while submitting: past the submit the
                   lines are gone, and a stray beep must not step a row that is being filed. */}
-              <ScanField
+              {!isStore ? <ScanField
                 vendorId={vendorId}
                 locationId={locationId}
                 lineSkuIds={lineSkuIds}
                 intakeToken={intakeToken}
                 invoiceNumber={invoiceNumber.trim() || null}
-                disabled={busy}
+                disabled={busy || storeBusy}
                 lines={scanLines}
                 skuNameFor={skuNameFor}
                 resolveRef={resolveScanRef}
                 onScanEvent={onScanEvent}
-              />
+              /> : null}
 
               {/* The scan's one-line answer: taught, not remembered, forgotten. Advisory
                   tone (role="status"), never an error — every one of them describes
@@ -1485,9 +1592,11 @@ export function ReceivingForm({
                     key={l.key}
                     line={l}
                     levels={levelsFor(l.skuId)}
+                    countUnitLabel={isStore ? skuById.get(l.skuId)?.packFormat : undefined}
                     busy={busy}
                     locationId={locationId}
                     showPrice={priceMode}
+                    storeMode={isStore}
                     onChange={(patch) => setLine(i, patch)}
                     onRemove={lines.length > 1 ? () => setLines((ls) => ls.filter((_, j) => j !== i)) : null}
                     onForgetCode={
@@ -1528,11 +1637,25 @@ export function ReceivingForm({
                 </div>
               ) : null}
               <AddItemPicker
+                key={vendorId}
                 options={vendorSkus}
-                busy={busy}
+                searchable={isStore}
+                busy={busy || storeBusy}
                 pickLabel={t("receiving.form.pick_sku")}
                 addLabel={t("receiving.form.add_line")}
                 onAdd={(sku) => {
+                  if (isStore) {
+                    if (activeScan?.stage === "picker") finishScan(activeScan.token, activeScan.eventId);
+                    // Already-owned pending items can be received again before GM review.
+                    // They need no cross-vendor product materialization.
+                    if (sku.vendorId === vendorId) {
+                      setLines((previous) => [...previous,
+                        { ...addedLine(), skuId: sku.id, skuName: sku.name, level: "" }]);
+                      return;
+                    }
+                    void addStoreItem(sku.id);
+                    return;
+                  }
                   const pending = activeScan?.stage === "picker" ? activeScan : null;
                   // A waiting code from a truck that has since left teaches nothing — but the
                   // tap is still a real "add this item", so it falls through rather than
@@ -1551,6 +1674,22 @@ export function ReceivingForm({
                   ]);
                 }}
               />
+              {isStore ? <details className="mt-3 rounded-lg border-2 border-co-border p-3">
+                <summary className="flex min-h-[44px] cursor-pointer items-center font-bold">{t("receivingStore.not_found")}</summary>
+                <p className="mb-2 text-sm text-co-text-dim">{t("receivingStore.pending_help")}</p>
+                <label className="block text-sm font-bold">{t("receivingStore.item_name")}
+                  <input className={field} value={pendingName} maxLength={160} disabled={busy || storeBusy} onChange={(e) => setPendingName(e.target.value)} />
+                </label>
+                <label className="mt-2 block text-sm font-bold">{t("receivingStore.count_unit")}
+                  <input className={field} value={pendingUnit} maxLength={40} disabled={busy || storeBusy} onChange={(e) => setPendingUnit(e.target.value)} />
+                </label>
+                <label className="mt-2 block text-sm font-bold">{t("receivingStore.content_oz")}
+                  <input className={field} type="number" min="0.000001" step="any" value={pendingOz} disabled={busy || storeBusy} onChange={(e) => setPendingOz(e.target.value)} />
+                </label>
+                <ActionButton type="button" disabled={busy || storeBusy || !pendingName.trim() || !pendingUnit.trim() || (!!pendingOz.trim() && !(Number(pendingOz) > 0))} onClick={() => void addStoreItem()}>
+                  {t("receivingStore.add_pending")}
+                </ActionButton>
+              </details> : null}
             </div>
           ) : null}
         </div>
@@ -1823,18 +1962,22 @@ export function ReceivingForm({
  */
 function AddItemPicker({
   options,
+  searchable = false,
   busy,
   pickLabel,
   addLabel,
   onAdd,
 }: {
   options: ReceivingSkuOption[];
+  searchable?: boolean;
   busy: boolean;
   pickLabel: string;
   addLabel: string;
   onAdd: (sku: ReceivingSkuOption) => void;
 }) {
   const [skuId, setSkuId] = useState("");
+  const [query, setQuery] = useState("");
+  const { t } = useTranslation();
   const skuById = new Map(options.map((s) => [s.id, s]));
   const add = () => {
     const sku = skuById.get(skuId);
@@ -1843,7 +1986,10 @@ function AddItemPicker({
     setSkuId("");
   };
   return (
-    <div className="flex flex-col gap-2 rounded-lg border-2 border-dashed border-co-border-2 p-3 sm:flex-row">
+    <div className="flex flex-col gap-2 rounded-lg border-2 border-dashed border-co-border-2 p-3 sm:flex-row sm:flex-wrap">
+      {searchable ? <input className={field} type="search" value={query} disabled={busy}
+        aria-label={t("receivingStore.search")} placeholder={t("receivingStore.search")}
+        onChange={(e) => { setQuery(e.target.value); setSkuId(""); }} /> : null}
       <select
         className="min-h-[44px] flex-1 rounded-lg border-2 border-co-border bg-co-surface px-3 text-base text-co-text focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60 disabled:opacity-60"
         value={skuId}
@@ -1852,7 +1998,7 @@ function AddItemPicker({
         aria-label={pickLabel}
       >
         <option value="">{pickLabel}</option>
-        {options.map((s) => (
+        {options.filter((s) => !searchable || [s.name, ...(s.searchTerms ?? [])].some((term) => term.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase()))).map((s) => (
           <option key={s.id} value={s.id}>
             {s.name}
           </option>

@@ -31,11 +31,11 @@ function setup(status = "confirmed", count = 1, bound = true) {
     };
     return query;
   } };
-  const deps = { PurchaseOrderError, PO_MIN: 4, requireLevel, getServiceRoleClient: () => sb, lockLocationContext: () => bound, actorLoc: () => ({}), audit };
+  const deps = { canDoOperationalTask: async () => true, auditOperationalTaskOverride: vi.fn(async () => {}), PurchaseOrderError, PO_MIN: 4, requireLevel, getServiceRoleClient: () => sb, lockLocationContext: () => bound, actorLoc: () => ({}), audit };
   const js = ts.transpile(declaration("reopenPO").getText(ast).replace(/^export /, ""), { target: ts.ScriptTarget.ES2022 });
   const reopen = new Function(...Object.keys(deps), `${js}; return reopenPO;`)(...Object.values(deps));
   const actor = { user: { id: "kh", role: "key_holder" } };
-  return { updates, filters, audit, requireLevel, actor, run: () => reopen(actor, "po") };
+  return { updates, filters, audit, overrideAudit: deps.auditOperationalTaskOverride, requireLevel, actor, run: () => reopen(actor, "po") };
 }
 
 describe("LRA-229: confirmed PO unlock", () => {
@@ -43,6 +43,7 @@ describe("LRA-229: confirmed PO unlock", () => {
     const f = setup();
     await f.run();
     expect(f.requireLevel).toHaveBeenCalledWith(f.actor, 4);
+    expect(f.overrideAudit).toHaveBeenCalledWith(f.actor, "shop", "ordering", "reopenPO");
     expect(f.updates).toEqual([{ status: "draft" }]);
     expect(f.filters).toContainEqual(["status", "confirmed"]);
     expect(f.audit).toHaveBeenCalledWith(expect.objectContaining({
@@ -56,6 +57,7 @@ describe("LRA-229: confirmed PO unlock", () => {
     await expect(f.run()).rejects.toMatchObject({ status: 409, code: "not_confirmed" });
     expect(f.updates).toEqual([]);
     expect(f.audit).not.toHaveBeenCalled();
+    expect(f.overrideAudit).not.toHaveBeenCalled();
   });
 
   it("refuses another location without a write", async () => {
@@ -68,6 +70,7 @@ describe("LRA-229: confirmed PO unlock", () => {
     const f = setup("confirmed", 0);
     await expect(f.run()).rejects.toMatchObject({ status: 409, code: "not_confirmed" });
     expect(f.audit).not.toHaveBeenCalled();
+    expect(f.overrideAudit).not.toHaveBeenCalled();
   });
 
   it("pins both status guards, rowcount and all history fields remaining outside the write", () => {

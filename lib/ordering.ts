@@ -1,3 +1,4 @@
+import { auditOperationalTaskOverride, canDoOperationalTask } from "@/lib/operational-task-access";
 /**
  * Par-pass ordering data layer (delivery-intake P3, migration 0172). SERVER-ONLY,
  * service-role client; authorization is APP-LAYER (KH+ gate + location-bind IDOR).
@@ -40,6 +41,7 @@
  *
  * APPEND-ONLY: par_pass_events / par_pass_lines rows are never DELETEd or mutated.
  */
+import { loadStoreVendorIds } from "@/lib/ordering-sources";
 import { guideKeysFor } from "@/lib/order-guides";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import { selectAllRows } from "@/lib/supabase-paginate";
@@ -78,6 +80,7 @@ import { addDaysEt, minutesOfDayEt } from "@/lib/vendor-rhythm-shared";
 import { deriveCateringSkuDemand } from "@/lib/catering/sku-demand";
 import { loadProductIndex } from "@/lib/products";
 import { rollupUsageByProduct } from "@/lib/products-shared";
+import { orderableMemberRole } from "@/lib/ordering-member-shared";
 import {
   createDraftsFromLines,
   updateDraftLines,
@@ -555,11 +558,9 @@ export interface WalkerSku {
   /** Display label for the product headline ("HAM"). null for a singleton. */
   productName: string | null;
   /**
-   * `solo` = not a member of any product · `primary` = the DESIGNATED primary for
-   * this scope (product_primaries, location row over global) · `backup` = an active
-   * member that is not the designated primary. Deliberately the DESIGNATION, not the
-   * ladder's runtime answer: "Baldor — backup" is what a manager needs to read on a
-   * vendor-down day, and it stays true whichever rung answered.
+   * `solo` = not a member of any product; `primary` = designated primary or the
+   * only active orderable member; `backup` = another orderable member. Store SKUs
+   * never enter this walk. A store copy alone does not demote its reference SKU.
    */
   memberRole: "primary" | "backup" | "solo";
   /**
@@ -725,6 +726,7 @@ export async function loadWalkerData(actor: AuthContext, locationId: string): Pr
   if (!lockLocationContext(actorLoc(actor), locationId)) {
     throw new OrderingError(404, "not_found", "Location not found");
   }
+  if (!(await canDoOperationalTask(actor, locationId, "ordering"))) throw new OrderingError(403, "forbidden");
   const sb = getServiceRoleClient();
   // ET-anchored walk day (single authority — etWalkDay()). Never inline this derivation
   // again; all day-rule consumers must call etWalkDay() to stay in sync with the display.
@@ -748,10 +750,12 @@ export async function loadWalkerData(actor: AuthContext, locationId: string): Pr
     count: 0, skuInactive: 0, vendorInactive: 0, noVendor: 0,
     productUnroutable: 0, productRetired: 0, parReview: 0, reroutedToBackup: 0,
   };
-  const skus = (skuRows ?? []).filter((s) => s.vendor_id != null); // a par'd SKU with no
+  const storeVendorIds = await loadStoreVendorIds();
+  const orderingSkuRows = (skuRows ?? []).filter((s) => s.vendor_id == null || !storeVendorIds.has(s.vendor_id));
+  const skus = orderingSkuRows.filter((s) => s.vendor_id != null); // a par'd SKU with no
   // vendor can't be ordered from anyone → excluded (schema allows null vendor_id, live
   // data has none today; defensive — and now counted rather than silently dropped).
-  unroutable.noVendor = (skuRows ?? []).length - skus.length;
+  unroutable.noVendor = orderingSkuRows.length - skus.length;
   unroutable.count = unroutable.noVendor;
   if (skus.length === 0) {
     // No par'd SKUs anywhere → we return BEFORE the loadOnHand batch below, so
@@ -795,7 +799,7 @@ export async function loadWalkerData(actor: AuthContext, locationId: string): Pr
       loadMeasures(),
       loadSkuUsageRank(sb, locationId),
       loadOnHandDerived(actor, locationId), // ONE advisory on-hand pass for the whole location.
-      sb.from("vendors").select("id, name, order_days").in("id", vendorIds).eq("active", true)
+      sb.from("vendors").select("id, name, order_days").in("id", vendorIds).eq("active", true).eq("source_kind", "vendor")
         .returns<Array<{ id: string; name: string; order_days: number[] | null }>>(),
       loadLatestOrderQtyBySku(sb, skuIds),
       loadOverlayBySku(sb, locationId),
@@ -953,7 +957,7 @@ export async function loadWalkerData(actor: AuthContext, locationId: string): Pr
       canImplyOz: perUnitOz != null && perUnitOz > 0,
       productId: s.product_id,
       productName: entry?.name ?? null,
-      memberRole: entry == null ? "solo" : entry.primarySkuId === s.id ? "primary" : "backup",
+      memberRole: orderableMemberRole(s.id, entry ?? null),
       reroutedFromSkuId,
     };
   };
@@ -1477,6 +1481,7 @@ export async function submitParPass(
   if (!lockLocationContext(actorLoc(actor), locationId)) {
     throw new OrderingError(404, "not_found", "Location not found");
   }
+  if (!(await canDoOperationalTask(actor, locationId, "ordering"))) throw new OrderingError(403, "forbidden");
   if (!Array.isArray(lines) || lines.length === 0) {
     throw new OrderingError(400, "no_lines", "At least one line is required");
   }
@@ -1508,7 +1513,8 @@ export async function submitParPass(
     .in("id", skuIds)
     .returns<WalkerSkuRow[]>();
   if (sErr) throw new Error(`submitParPass skus: ${sErr.message}`);
-  const skuById = new Map((skuRows ?? []).map((s) => [s.id, s]));
+  const storeVendorIds = await loadStoreVendorIds();
+  const skuById = new Map((skuRows ?? []).filter((s) => s.vendor_id == null || !storeVendorIds.has(s.vendor_id)).map((s) => [s.id, s]));
   for (const id of skuIds) if (!skuById.has(id)) throw new OrderingError(400, "invalid_sku", "A SKU is not found or inactive");
   // Reject two lines naming two MEMBERS of one product (0179), for the same reason
   // duplicate_sku exists: the walk shows ONE row per product, so two lines would
@@ -1632,6 +1638,7 @@ export async function submitParPass(
   );
   if (lErr) throw new Error(`submitParPass lines: ${lErr.message}`);
 
+  await auditOperationalTaskOverride(actor, locationId, "ordering", "submitParPass");
   await audit({
     actorId: actor.user.id, actorRole: actor.user.role,
     action: "par_pass.submitted", resourceTable: "par_pass_events", resourceId: ev.id,
@@ -1770,7 +1777,7 @@ async function buildDraftOrders(
   const vendorSelect = minimumReady ? "id, name, order_minimum" : "id, name";
 
   const [{ data: vendorRows, error: vErr }, { data: detailRows, error: dErr }] = await Promise.all([
-    sb.from("vendors").select(vendorSelect).in("id", vendorIds)
+    sb.from("vendors").select(vendorSelect).in("id", vendorIds).eq("source_kind", "vendor")
       .returns<Array<{ id: string; name: string; order_minimum?: string | null }>>(),
     sb.from("vendor_ordering_details")
       .select("vendor_id, method, value, label, display_order")
@@ -1791,6 +1798,7 @@ async function buildDraftOrders(
 
   const linesByVendor = new Map<string, DraftOrderLine[]>();
   for (const e of withVendor) {
+    if (!vName.has(e.vendorId)) continue;
     const arr = linesByVendor.get(e.vendorId) ?? [];
     arr.push(e.line);
     linesByVendor.set(e.vendorId, arr);
@@ -2099,6 +2107,7 @@ export async function generateDraftForVendor(
   if (!lockLocationContext(actorLoc(actor), locationId)) {
     throw new OrderingError(404, "not_found", "Location not found");
   }
+  if (!(await canDoOperationalTask(actor, locationId, "ordering"))) throw new OrderingError(403, "forbidden");
   if (typeof vendorId !== "string" || !vendorId) {
     throw new OrderingError(400, "invalid_vendor", "A vendor is required");
   }
@@ -2229,13 +2238,14 @@ export async function loadOrderingAttention(
 
   // (3) Vendor names for the open set.
   const { data: vendorRows, error: vErr } = await sb.from("vendors")
-    .select("id, name").in("id", openVendorIds)
+    .select("id, name").in("id", openVendorIds).eq("source_kind", "vendor")
     .returns<Array<{ id: string; name: string }>>();
   if (vErr) throw new Error(`loadOrderingAttention vendors: ${vErr.message}`);
   const vName = new Map((vendorRows ?? []).map((v) => [v.id, v.name]));
 
   const vendors: Array<OrderingCutoffAttention & { sortKey: string }> = [];
   for (const vid of openVendorIds) {
+    if (!vName.has(vid)) continue;
     const bare = governingCutoffTime(rowsByVendor.get(vid) ?? [], locationId);
     if (bare == null) continue;
     const iso = cutoffWallClockToUtcIso(dateEt, bare);

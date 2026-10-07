@@ -144,9 +144,8 @@ interface OpeningClientProps {
    */
   saverNames: Record<string, string>;
   language: Language;
-  /** Viewer's role level. Submit Opening is key holder and up (OPENING_BASE_LEVEL = 4); the
-   *  server refuses below it, and since 2026-09-09 the button says so instead of 403ing. */
-  actorLevel: number;
+  /** Server-resolved KH+ or active opening assignment; rechecked on every write. */
+  canSubmit: boolean;
 }
 
 /**
@@ -410,7 +409,7 @@ export function OpeningClient({
   managers,
   saverNames,
   language,
-  actorLevel,
+  canSubmit,
 }: OpeningClientProps) {
   const { t } = useTranslation();
   const router = useRouter();
@@ -1168,10 +1167,8 @@ export function OpeningClient({
     instance.status === "phase1_complete" &&
     outstandingCount === 0 &&
     submitState.status !== "submitting";
-  // Phase 1 submit floor mirrors the server (submitPhase1Atomic: actor.level < OPENING_BASE_LEVEL
-  // → role_level_insufficient). An employee fills the walk in and hands the tablet over; the
-  // button tells them that instead of letting them tap into a 403 (guide-walk finding).
-  const roleCanSubmitPhase1 = actorLevel >= 4;
+  // The page resolves task access; every save/submit rechecks it server-side.
+  const roleCanSubmitPhase1 = canSubmit;
   const submitEnabled =
     activePhase === "verification" ? phase1SubmitEnabled && roleCanSubmitPhase1 : phase2SubmitEnabled;
 

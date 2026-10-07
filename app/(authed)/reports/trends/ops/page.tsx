@@ -1,7 +1,7 @@
 /**
  * /reports/trends — operational-signal trend charts (layout A, stacked cards).
  *
- * Auth → location guard (lockLocationContext) → loadTrendSeries → controls +
+ * Auth → location guard (canReadReportLocation) → loadTrendSeries → controls +
  * one stacked TrendCard per visible family. Cash family rendered only when the
  * loader reports cashVisible (KH+). Chart type per family follows the spec
  * mapping: par = line (day) / grouped bars (week-month); temps = bars; cash =
@@ -12,7 +12,7 @@ import { redirect } from "next/navigation";
 
 import { serverT } from "@/lib/i18n/server";
 import type { Language, TranslationKey } from "@/lib/i18n/types";
-import { lockLocationContext, type LocationActor } from "@/lib/locations";
+import { canReadReportLocation, type LocationActor } from "@/lib/locations";
 import { operationalNow } from "@/lib/midshift";
 import { formatCents } from "@/lib/i18n/format";
 import { loadTrendSeries, type TrendGranularity, type TrendSeries } from "@/lib/reports-trends";
@@ -61,7 +61,7 @@ export default async function OpsTrendsPage({ searchParams }: PageProps) {
 
   if (!locationParam) redirect("/dashboard");
   const locActor: LocationActor = { role: auth.role, locations: auth.locations };
-  if (!lockLocationContext(locActor, locationParam)) redirect("/dashboard");
+  if (!canReadReportLocation(locActor, locationParam)) redirect("/dashboard");
 
   const language = auth.user.language;
   const granularity = parseGranularity(g);

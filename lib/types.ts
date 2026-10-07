@@ -282,6 +282,9 @@ export type ReportType =
   | "opening_report"
   | "training_report"
   | "special_report"
+  | "receiving"
+  | "counts"
+  | "ordering"
   | "pm_report";
 
 /**

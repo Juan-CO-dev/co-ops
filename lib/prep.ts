@@ -1,3 +1,4 @@
+import { auditTaskOverride, hasTaskAccess } from "@/lib/assignments";
 /**
  * Prep instance lifecycle — Phase 3 / Module #1 Build #2 PR 1.
  *
@@ -97,17 +98,8 @@ export interface PrepActor {
   level: number;
 }
 
-/**
- * Per C.42: AM Prep base-tile-visible at "KH+" = level >= 4 (key_holder's
- * level after the 0–10 role-model renumber). Matches C.26's "KH+ can
- * finalize" intent — the closing finalize gate sits at the same level.
- * Below this, assignment-down via report_assignments is the path.
- *
- * The 0–10 role-model renumber (KH=4, SL=5 per spec C.33 intent) landed in
- * this change; this constant moved from 3 to 4 with the closing finalize
- * gate in lockstep, separating key_holder from employee (which stays 3).
- */
-export const AM_PREP_BASE_LEVEL = 4;
+/** Employee floor for assigned AM/mid-day work; KH+ retain role-based access. */
+export const AM_PREP_BASE_LEVEL = 3;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Runtime validators (narrowing predicates)
@@ -120,6 +112,9 @@ const REPORT_TYPE_VALUES: readonly ReportType[] = [
   "opening_report",
   "training_report",
   "special_report",
+  "receiving",
+  "counts",
+  "ordering",
   "pm_report",
 ];
 
@@ -632,6 +627,9 @@ export async function loadAmPrepState(
    */
   batchModeByItem: Record<string, boolean>;
 } | null> {
+  if (!(await hasTaskAccess(service, { ...args.actor, locationId: args.locationId, date: args.date, task: "am_prep" }))) {
+    throw new PrepRoleViolationError("KH+ or active assignment", args.actor.level);
+  }
   // Resolve active AM Prep template (most-recent-active per Path A versioning).
   // Per-location scoping via `.eq("location_id", args.locationId)` is LOAD-BEARING
   // — prep templates exist per-location, so omitting the filter would pick the
@@ -1027,6 +1025,38 @@ export async function loadMidDayPrepState(
  */
 export const MAX_MID_DAY_PREP_PER_DAY = 2;
 
+async function requirePrepInstanceTaskAccess(
+  service: SupabaseClient,
+  args: { instanceId: string; actor: PrepActor },
+  task: "am_prep" | "mid_day_prep",
+): Promise<void> {
+  const { data, error } = await service.from("checklist_instances")
+    .select("location_id, date").eq("id", args.instanceId)
+    .maybeSingle<{ location_id: string; date: string }>();
+  if (error) throw new Error(`prep access: ${error.message}`);
+  if (!data || !(await hasTaskAccess(service, { ...args.actor, locationId: data.location_id, date: data.date, task }))) {
+    throw new PrepRoleViolationError("KH+ or active assignment", args.actor.level);
+  }
+}
+
+async function auditPrepOverride(
+  service: SupabaseClient,
+  args: { instanceId: string; actor: PrepActor },
+  task: "am_prep" | "mid_day_prep",
+  operation: string,
+): Promise<void> {
+  if (args.actor.level < 4) return;
+  try {
+    const { data, error } = await service.from("checklist_instances")
+      .select("location_id, date").eq("id", args.instanceId)
+      .maybeSingle<{ location_id: string; date: string }>();
+    if (error || !data) return; // Audit is fail-open, as with the audit() writer.
+    await auditTaskOverride(service, { ...args.actor, locationId: data.location_id, date: data.date, task, operation });
+  } catch {
+    console.error("task.override instance context lookup failed");
+  }
+}
+
 export async function createMidDayPrepInstance(
   service: SupabaseClient,
   args: { templateId: string; locationId: string; date: string; actor: PrepActor },
@@ -1034,6 +1064,7 @@ export async function createMidDayPrepInstance(
   | { ok: true; id: string }
   | { ok: false; reason: "cap_reached"; cap: number }
 > {
+  if (!(await hasTaskAccess(service, { ...args.actor, locationId: args.locationId, date: args.date, task: "mid_day_prep" }))) throw new PrepRoleViolationError("KH+ or active assignment", args.actor.level);
   // Cap enforcement (server-side authority; the tile also hides the New button
   // at cap, but a direct API caller must be blocked too).
   const { count, error: countErr } = await service
@@ -1123,7 +1154,7 @@ export interface MidDayPrepInstanceLite {
 
 /** Dashboard-tile state for mid-day prep (C.43). */
 export interface MidDayPrepDashboardState {
-  /** Shift staff (level >= AM_PREP_BASE_LEVEL) see the tile; others don't. */
+  /** Current task access; the dashboard additionally requires own assignment. */
   isVisibleToActor: boolean;
   /** False when no mid-day template is seeded for the location yet. */
   hasTemplate: boolean;
@@ -1142,7 +1173,7 @@ export async function loadMidDayPrepDashboardState(
   service: SupabaseClient,
   args: { locationId: string; date: string; actor: PrepActor },
 ): Promise<MidDayPrepDashboardState> {
-  const isVisibleToActor = args.actor.level >= AM_PREP_BASE_LEVEL;
+  const isVisibleToActor = await hasTaskAccess(service, { ...args.actor, locationId: args.locationId, date: args.date, task: "mid_day_prep" });
   if (!isVisibleToActor) {
     return { isVisibleToActor: false, hasTemplate: false, templateId: null, instances: [] };
   }
@@ -1216,6 +1247,7 @@ export async function submitMidDayPhase1(
     userAgent?: string | null;
   },
 ): Promise<MidDayPhase1Result> {
+  await requirePrepInstanceTaskAccess(service, args, "mid_day_prep");
   const state = await loadMidDayPrepState(service, { instanceId: args.instanceId });
   if (!state) return { ok: false, reason: "not_found" };
   if (state.instance.status !== "open") return { ok: false, reason: "not_open" };
@@ -1284,6 +1316,8 @@ export async function submitMidDayPhase1(
   });
 
   const instance = rowToInstance((data as { instance: InstanceRow }).instance);
+  await auditPrepOverride(service, args, "mid_day_prep", "submitMidDayPhase1");
+
   return { ok: true, instance };
 }
 
@@ -1333,6 +1367,7 @@ export async function saveMidDayPhase2Item(
     userAgent?: string | null;
   },
 ): Promise<MidDayPhase2SaveResult> {
+  await requirePrepInstanceTaskAccess(service, args, "mid_day_prep");
   const state = await loadMidDayPrepState(service, { instanceId: args.instanceId });
   if (!state) return { ok: false, reason: "not_found" };
   if (state.instance.status !== "phase1_complete") return { ok: false, reason: "not_in_phase2" };
@@ -1467,6 +1502,8 @@ export async function saveMidDayPhase2Item(
   }
 
   const d = data as { completionId: string; savedAt: string };
+  await auditPrepOverride(service, args, "mid_day_prep", "saveMidDayPhase2Item");
+
   return { ok: true, completionId: d.completionId, savedAt: d.savedAt };
 }
 
@@ -1486,6 +1523,7 @@ export async function finalizeMidDayPhase2(
   service: SupabaseClient,
   args: { instanceId: string; actor: PrepActor; ipAddress?: string | null; userAgent?: string | null },
 ): Promise<MidDayFinalizeResult> {
+  await requirePrepInstanceTaskAccess(service, args, "mid_day_prep");
   // Astra P1 #2 (BC-034): a batch item's Phase 1 count is NOT a Phase 2 save. Finalize is
   // refused while any batch row lacks a `batch` object on its live completion — the same
   // pure rule the page uses to mark a row saved (lib/mid-day-shared.ts).
@@ -1549,6 +1587,8 @@ export async function finalizeMidDayPhase2(
     midDayInstanceId: args.instanceId,
     actor: args.actor,
   }).catch((e) => console.error("autoCompleteClosingMidDayRef failed:", e));
+
+  await auditPrepOverride(service, args, "mid_day_prep", "finalizeMidDayPhase2");
 
   return { ok: true, instance: rowToInstance(data) };
 }
@@ -2175,16 +2215,9 @@ export async function loadAssignmentForToday(
  *     progress / submitted) via instance.status
  *   - confirmedByName: pre-resolved name for the "Submitted at {time} by
  *     {name}" subtitle
- *   - assignment: pre-resolved with assigner name for the assignment
- *     indicator on sub-KH+ tiles
- *   - isVisibleToActor: hasBaseAccess || (assignment !== null) — single
- *     truth value for the dashboard's "should the tile render" gate
- *
- * The assignment join + assignerName lookup ONLY fire for sub-KH+ users
- * (caller passes in the actor.level and the function short-circuits
- * the assignment query when level >= AM_PREP_BASE_LEVEL). KH+ users
- * always have base access; the assignment field comes back as null for
- * them regardless of whether one exists in the DB.
+ *   - assignment: today's own assignment and assigner attribution for any role
+ *   - isVisibleToActor: today's task permission. Dashboard tiles additionally
+ *     require an own assignment; KH+ can open unassigned work from the board.
  *
  * Does NOT load templateItems or completions — that's loadAmPrepState's
  * job for the page surface.
@@ -2295,8 +2328,7 @@ export async function loadAmPrepDashboardState(
     assignerName: string;
   } | null = null;
 
-  const hasBaseAccess = args.actor.level >= AM_PREP_BASE_LEVEL;
-  if (!hasBaseAccess) {
+  {
     const raw = await loadAssignmentForToday(service, {
       userId: args.actor.userId,
       reportType: "am_prep",
@@ -2327,7 +2359,7 @@ export async function loadAmPrepDashboardState(
     }
   }
 
-  const isVisibleToActor = hasBaseAccess || assignment !== null;
+  const isVisibleToActor = await hasTaskAccess(service, { ...args.actor, locationId: args.locationId, date: args.date, task: "am_prep" });
 
   // C.46 — load chain head submission id + max edit_count + closing status
   // for today's AM Prep instance. Used by the dashboard tile + page loader
@@ -2575,10 +2607,8 @@ async function computeChangedFields(
 /**
  * Submits an AM Prep instance atomically via the submit_am_prep_atomic RPC.
  *
- * Pre-flight authorization (per locked surface):
- *   - actor.level >= AM_PREP_BASE_LEVEL (4 = SL+ in implementation, "KH+"
- *     in C.42 spec text per C.41 documented divergence), OR
- *   - active report_assignment for (user, am_prep, location, date)
+ * Pre-flight authorization: KH+ may work and correct at any date; employees
+ * need an active assignment for the task and operational day.
  *
  * RPC handles atomicity (per migration 0041): completions + submission +
  * instance confirm + closing auto-complete all in one transaction. Failure
@@ -2624,6 +2654,17 @@ export async function submitAmPrep(
   /** C.46: chain head submission id (null on original; FK on update). */
   originalSubmissionId: string | null;
 }> {
+  try {
+    await requirePrepInstanceTaskAccess(service, args, "am_prep");
+  } catch (error) {
+    if (error instanceof PrepRoleViolationError) {
+      void audit({ actorId: args.actor.userId, actorRole: args.actor.role,
+        action: "prep.submit", resourceTable: "checklist_instances", resourceId: args.instanceId,
+        metadata: { outcome: "role_insufficient", actor_level: args.actor.level, required_level: 4, had_assignment: false },
+        ipAddress: args.ipAddress ?? null, userAgent: args.userAgent ?? null });
+    }
+    throw error;
+  }
   // C.46 update path: delegate to submitAmPrepUpdate before the existing
   // original-submission flow. Original-submission flow is runtime-identical
   // for isUpdate=false (no behavior change on the default path; existing
@@ -2642,31 +2683,6 @@ export async function submitAmPrep(
       ipAddress: args.ipAddress ?? null,
       userAgent: args.userAgent ?? null,
     });
-  }
-
-  // 1. Authorization gate.
-  const isAuthorized =
-    args.actor.level >= AM_PREP_BASE_LEVEL || args.activeAssignmentId !== null;
-  if (!isAuthorized) {
-    void audit({
-      actorId: args.actor.userId,
-      actorRole: args.actor.role,
-      action: "prep.submit",
-      resourceTable: "checklist_instances",
-      resourceId: args.instanceId,
-      metadata: {
-        outcome: "role_insufficient",
-        actor_level: args.actor.level,
-        required_level: AM_PREP_BASE_LEVEL,
-        had_assignment: false,
-      },
-      ipAddress: args.ipAddress ?? null,
-      userAgent: args.userAgent ?? null,
-    });
-    throw new PrepRoleViolationError(
-      `level >= ${AM_PREP_BASE_LEVEL} OR active assignment`,
-      args.actor.level,
-    );
   }
 
   // 2. Pre-flight: load the instance + template items so we can build snapshots
@@ -2823,6 +2839,8 @@ export async function submitAmPrep(
     ipAddress: args.ipAddress ?? null,
     userAgent: args.userAgent ?? null,
   });
+
+  await auditPrepOverride(service, args, "am_prep", "submitAmPrep");
 
   return {
     instance: rowToInstance(result.instance),
@@ -3121,6 +3139,8 @@ async function submitAmPrepUpdate(
 
   // 8. NO JS-side success audit on update path. RPC emitted report.update
   //    inside its transaction (per C.46 A7) atomically with the chain write.
+
+  await auditPrepOverride(service, args, "am_prep", "submitAmPrepUpdate");
 
   return {
     instance: rowToInstance(result.instance),

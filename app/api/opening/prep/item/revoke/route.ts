@@ -1,3 +1,4 @@
+import { canAccessOpeningInstance } from "@/lib/opening";
 /**
  * POST /api/opening/prep/item/revoke — Phase 2 per-item §8.4 REVOKE (C.53 Lane D).
  *
@@ -134,6 +135,10 @@ export async function POST(req: NextRequest) {
       message: "You don't have access to this location.",
       location_id: instance.location_id,
     });
+  }
+
+  if (!(await canAccessOpeningInstance(service, { instanceId, actor: { userId: ctx.user.id, role: ctx.role, level: ctx.level } }))) {
+    return jsonError(403, "role_level_insufficient", { required: 4, actor_level: ctx.level });
   }
 
   // 4. Revoke. Lib decides silent-vs-structured and emits audit (structured only).

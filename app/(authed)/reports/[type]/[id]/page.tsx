@@ -15,7 +15,7 @@ import { redirect } from "next/navigation";
 
 import { serverT } from "@/lib/i18n/server";
 import type { TranslationKey } from "@/lib/i18n/types";
-import { lockLocationContext, type LocationActor } from "@/lib/locations";
+import { canReadReportLocation, type LocationActor } from "@/lib/locations";
 import type { MaintenanceReportDetail } from "@/lib/maintenance";
 import {
   REPORTS_HUB_CASH_LEVEL,
@@ -62,7 +62,7 @@ export default async function ReportDetailPage({ params, searchParams }: PagePro
   // Location guard
   if (!locationParam) redirect("/dashboard");
   const locActor: LocationActor = { role: auth.role, locations: auth.locations };
-  if (!lockLocationContext(locActor, locationParam)) redirect("/dashboard");
+  if (!canReadReportLocation(locActor, locationParam)) redirect("/dashboard");
 
   const lang = auth.user.language;
   const level = auth.level;

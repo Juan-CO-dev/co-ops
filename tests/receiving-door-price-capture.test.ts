@@ -156,7 +156,7 @@ describe("IntakeLineRow — the collapsed row now carries the price box", () => 
   it("gives every price box a SKU-named accessible label", () => {
     // Eight identical "$" boxes down a list are indistinguishable to a screen reader
     // without the item name in the label.
-    expect(src).toContain('aria-label={t("receiving.door.price_aria", { sku: line.skuName })}');
+    expect(src).toContain('aria-label={storePriceLabel ?? t("receiving.door.price_aria", { sku: line.skuName })}');
     // The "$" itself is decoration, not content.
     expect(src).toContain('aria-hidden="true"');
   });
@@ -165,7 +165,7 @@ describe("IntakeLineRow — the collapsed row now carries the price box", () => 
     // The expanded row's own inputs use the untouched `field` const and the shared
     // two-column grid; the collapsed strip is an addition beside them, never a move.
     expect(src).toContain('<div className="mt-3 grid grid-cols-2 gap-2">');
-    expect(src).toContain('{t("receiving.form.price")}');
+    expect(src).toContain('{storePriceLabel ?? t("receiving.form.price")}');
     expect(src).toContain('{t("receiving.form.observed")}');
     expect(src).toContain("const field =");
   });

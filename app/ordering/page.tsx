@@ -1,3 +1,4 @@
+import { canDoOperationalTask } from "@/lib/operational-task-access";
 /**
  * /ordering — The Par-Pass Ordering walk (delivery-intake P3, spec D5/D6).
  *
@@ -91,6 +92,9 @@ export default async function OrderingPage({
     );
   }
 
+  if (!(await canDoOperationalTask(auth, locationId, "ordering"))) redirect("/dashboard");
+
+  const mayReceive = await canDoOperationalTask(auth, locationId, "receiving");
   const loc = accessible.find((l) => l.id === locationId) ?? null;
   const [walker, recent, todaysOrders, poHistory, cutoffAttention] = await Promise.all([
     loadWalkerData(auth, locationId),
@@ -114,13 +118,13 @@ export default async function OrderingPage({
             uppercase idiom as BackLink, chevron trailing instead of leading. */}
         <div className="mb-3 flex items-center justify-between gap-2">
           <DashboardBackLink />
-          <Link
+          {mayReceive && <Link
             href={`/operations/receiving?location=${encodeURIComponent(locationId)}`}
             className="-mr-2 mb-3 inline-flex min-h-[44px] items-center gap-1.5 rounded-md px-2 py-2 text-xs font-bold uppercase tracking-[0.14em] text-co-text-muted transition hover:text-co-text focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60"
           >
             <span>{serverT(language, "nav.receiving")}</span>
             <span aria-hidden>›</span>
-          </Link>
+          </Link>}
         </div>
 
         <div>

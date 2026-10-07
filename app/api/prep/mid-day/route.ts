@@ -1,3 +1,5 @@
+import { PrepRoleViolationError } from "@/lib/prep";
+import { hasTaskAccess } from "@/lib/assignments";
 /**
  * POST /api/prep/mid-day — trigger a NEW mid-day prep instance (C.43 / C.21).
  *
@@ -80,20 +82,20 @@ export async function POST(req: NextRequest) {
   }
 
   // 4. Shift-staff gate (C.21 — mid-day prep init open to level >= AM_PREP_BASE_LEVEL).
-  if (ctx.level < AM_PREP_BASE_LEVEL) {
+  const service = getServiceRoleClient();
+  if (!(await hasTaskAccess(service, { userId: ctx.user.id, level: ctx.level, locationId: body.locationId, date: body.date, task: "mid_day_prep" }))) {
     return jsonError(403, "role_insufficient", {
       message: "Mid-day prep can be started by shift staff only.",
       required_level: AM_PREP_BASE_LEVEL,
     });
   }
 
-  const service = getServiceRoleClient();
-
   // 5. Resolve the location's active mid-day prep template.
   let template: { id: string; name: string } | null;
   try {
     template = await resolveMidDayPrepTemplate(service, body.locationId);
   } catch (err) {
+    if (err instanceof PrepRoleViolationError) return jsonError(403, "role_insufficient", {});
     const msg = err instanceof Error ? err.message : String(err);
     console.error(`[/api/prep/mid-day] template resolve failed:`, msg);
     return jsonError(500, "internal_error", { message: "template resolve failed" });
@@ -121,6 +123,7 @@ export async function POST(req: NextRequest) {
     }
     return jsonOk({ instanceId: result.id });
   } catch (err) {
+    if (err instanceof PrepRoleViolationError) return jsonError(403, "role_insufficient", {});
     const msg = err instanceof Error ? err.message : String(err);
     console.error(`[/api/prep/mid-day] create failed:`, msg);
     return jsonError(500, "internal_error", { message: "instance create failed" });

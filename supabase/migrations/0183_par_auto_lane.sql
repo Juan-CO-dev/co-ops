@@ -1,5 +1,6 @@
 -- Migration 0183_par_auto_lane
 -- AUTHORED 2026-08-22. NOT YET APPLIED — GATE M2 (LEAD/JUAN).
+-- APPLIED TO PROD 2026-08-25 (schema_migrations version 20260825142638, name 'par_auto_lane'). The line above is the authoring-time gate note, kept as history.
 --
 -- 0183: Dynamic Pars — the machine's own par lane on the per-location overlay
 -- Spec:  docs/superpowers/specs/2026-08-21-dynamic-pars-design.md (r1 #4, r2 #6, r3 PIN)

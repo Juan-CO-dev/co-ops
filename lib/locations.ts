@@ -4,13 +4,14 @@
  * Pure functions. No DB. Operate on a session-derived actor shape carrying
  * the role and the list of assigned location IDs (extracted from the JWT).
  *
- * Level 7+ (Owner / CGS) has implicit access to every location regardless of
- * their user_locations rows. Below 7, access is the explicit assignment list.
+ * Level 9+ has implicit operational access to every location regardless of
+ * user_locations. Report reads separately grant all-location access at level 8.
  */
 
 import { type RoleCode, isRoleAtOrAbove } from "./roles";
 
 const ALL_LOCATIONS_THRESHOLD = 9;
+export const REPORT_ALL_LOCATIONS_LEVEL = 8;
 
 /** Minimal shape for any caller — typically derived from the verified JWT. */
 export interface LocationActor {
@@ -34,10 +35,15 @@ export function accessibleLocations(actor: LocationActor): string[] | "all" {
 
 /**
  * Authorizes that the actor may operate inside a specific location context.
- * Returns true for level 7+ unconditionally; otherwise true only when the
+ * Returns true for level 9+ unconditionally; otherwise true only when the
  * locationId is in the actor's assignment list.
  */
 export function lockLocationContext(actor: LocationActor, locationId: string): boolean {
   if (isAllLocationsAccess(actor)) return true;
   return actor.locations.includes(locationId);
+}
+
+/** Report navigation grant only. Operational writes retain lockLocationContext. */
+export function canReadReportLocation(actor: LocationActor, locationId: string): boolean {
+  return isRoleAtOrAbove(actor.role, REPORT_ALL_LOCATIONS_LEVEL) || lockLocationContext(actor, locationId);
 }

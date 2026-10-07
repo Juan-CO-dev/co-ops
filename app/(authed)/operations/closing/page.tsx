@@ -1,3 +1,5 @@
+import { hasTaskAccess } from "@/lib/assignments";
+import { isTaskType } from "@/lib/assignments-shared";
 /**
  * /operations/closing — Module #1 Build #1 step 9.
  *
@@ -231,7 +233,8 @@ export default async function ClosingPage({ searchParams }: PageProps) {
 
   // Load or create the instance.
   let instanceRow: InstanceRow | null = null;
-  if (isHistorical) {
+  if (isHistorical || auth.level < 3) {
+    // Trainees can work an existing close, but cannot create its instance.
     const { data, error } = await sb
       .from("checklist_instances")
       .select(INSTANCE_COLUMNS)
@@ -539,6 +542,16 @@ export default async function ClosingPage({ searchParams }: PageProps) {
     incompleteReasons = [...byItem.values()];
   }
 
+  const reportRefCanOpen: Record<string, boolean> = {};
+  await Promise.all(templateItems.map(async (item) => {
+    const task = item.reportReferenceType;
+    if (!isTaskType(task)) return;
+    reportRefCanOpen[item.id] = await hasTaskAccess(sb, {
+      userId: auth.user.id, level: auth.level, locationId: locationParam,
+      date: targetDate, task,
+    });
+  }));
+
   const initialState: ClosingInitialState = {
     location: locationRow,
     instance: rowToInstance(instanceRow),
@@ -552,6 +565,7 @@ export default async function ClosingPage({ searchParams }: PageProps) {
     todayDate: today,
     reportRefChains,
     reportRefCanEdit,
+    reportRefCanOpen,
     amPrepGap,
     incompleteReasons,
   };

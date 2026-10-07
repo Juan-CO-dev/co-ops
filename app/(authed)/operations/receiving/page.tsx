@@ -1,3 +1,4 @@
+import { canDoOperationalTask } from "@/lib/operational-task-access";
 import { redirect } from "next/navigation";
 import Link from "next/link";
 import { serverT } from "@/lib/i18n/server";
@@ -21,6 +22,9 @@ export default async function ReceivingPage({ searchParams }: { searchParams: Pr
   const locActor: LocationActor = { role: auth.role, locations: auth.locations };
   if (!lockLocationContext(locActor, location)) redirect("/dashboard");
 
+  if (!(await canDoOperationalTask(auth, location, "receiving"))) redirect("/dashboard");
+
+  const mayOrder = await canDoOperationalTask(auth, location, "ordering");
   const lang = auth.user.language;
   const [formData, recent, openCredits] = await Promise.all([
     loadReceivingFormData(auth, location),
@@ -30,6 +34,8 @@ export default async function ReceivingPage({ searchParams }: { searchParams: Pr
   // Missing-email flags derived once per request — the ONE rule, shared with the
   // dashboard's receiving tile (lib/dashboard-status-shared.ts). The clock is read
   // here so no impure call lands in the render tree (react-hooks/purity).
+  // Request-time clock in an async Server Component.
+  // eslint-disable-next-line react-hooks/purity
   const missingEmailIds = deriveMissingEmailIds(recent, Date.now());
 
   return (
@@ -38,13 +44,13 @@ export default async function ReceivingPage({ searchParams }: { searchParams: Pr
           thread). The active location travels so the destination resolves the same shop. */}
       <div className="mb-3 flex items-center justify-between gap-2">
         <DashboardBackLink />
-        <Link
+        {mayOrder && <Link
           href={`/ordering?location=${encodeURIComponent(location)}`}
           className="-mr-2 mb-3 inline-flex min-h-[44px] items-center gap-1.5 rounded-md px-2 py-2 text-xs font-bold uppercase tracking-[0.14em] text-co-text-muted transition hover:text-co-text focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60"
         >
           <span>{serverT(lang, "nav.ordering")}</span>
           <span aria-hidden>›</span>
-        </Link>
+        </Link>}
       </div>
       <h1 className="mb-4 text-lg font-bold text-co-text">{serverT(lang, "receiving.page.title")}</h1>
       {/* Recomposition PR 3: phone keeps the stack (form → credits → history);

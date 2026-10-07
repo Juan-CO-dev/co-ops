@@ -45,3 +45,16 @@ export function evaluateLockUpGate(args: {
   if (walkOut.length > 0 && incompleteItemIds.length > 0) return { ok: false, reason: "walk_out", incompleteItemIds };
   return { ok: true };
 }
+
+/** Every manual item retains its role floor; source reports have their own writers. */
+export function canCompleteChecklistItem(args: {
+  templateType?: string;
+  actorLevel: number;
+  itemMinRoleLevel: number;
+  reportReferenceType: string | null;
+  refTrackItemCompletion?: boolean;
+  referencesTemplateItemId?: string | null;
+}): boolean {
+  if (args.reportReferenceType !== null || (args.refTrackItemCompletion && args.referencesTemplateItemId)) return false;
+  return args.actorLevel >= args.itemMinRoleLevel;
+}

@@ -653,12 +653,16 @@ async function hydrateVendors(rows: DbVendorRow[]): Promise<VendorView[]> {
   });
 }
 
-export async function loadVendors(actor: AuthContext): Promise<VendorView[]> {
+export async function loadVendors(actor: AuthContext, options: { includeStores?: boolean } = {}): Promise<VendorView[]> {
   requireLevel(actor, READ_MIN);
   const sb = getServiceRoleClient();
-  const { data, error } = await sb
+  let query = sb
     .from("vendors")
-    .select(await vendorCols())
+    .select(await vendorCols());
+  // SKU catalog attribution/assignment includes every source. Ordering directories
+  // use the default vendor-only universe.
+  if (!options.includeStores) query = query.eq("source_kind", "vendor");
+  const { data, error } = await query
     .order("name", { ascending: true })
     .returns<DbVendorRow[]>();
   if (error) throw new Error(`loadVendors failed: ${error.message}`);
@@ -686,6 +690,7 @@ export async function loadVendorOrderingWeek(actor: AuthContext): Promise<Vendor
   const { data, error } = await sb
     .from("vendors")
     .select("id, name, color, order_days, delivery_days")
+    .eq("source_kind", "vendor")
     .eq("active", true)
     .order("name", { ascending: true })
     .returns<Array<{ id: string; name: string; color: string | null; order_days: number[] | null; delivery_days: number[] | null }>>();
@@ -701,6 +706,7 @@ export async function getVendor(actor: AuthContext, id: string): Promise<VendorV
   const { data, error } = await sb
     .from("vendors")
     .select(await vendorCols())
+    .eq("source_kind", "vendor")
     .eq("id", id)
     .maybeSingle<DbVendorRow>();
   if (error) throw new Error(`getVendor failed: ${error.message}`);
@@ -790,6 +796,7 @@ async function requireVendorRow(id: string): Promise<{ id: string }> {
   const { data, error } = await sb
     .from("vendors")
     .select("id")
+    .eq("source_kind", "vendor")
     .eq("id", id)
     .maybeSingle<{ id: string }>();
   if (error) throw new Error(`requireVendorRow failed: ${error.message}`);

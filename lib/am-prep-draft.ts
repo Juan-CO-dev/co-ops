@@ -1,3 +1,4 @@
+import { hasTaskAccess } from "@/lib/assignments";
 /**
  * AM Prep DRAFT — the I/O half (migration 0214, `am_prep_drafts`).
  *
@@ -7,10 +8,8 @@
  * the app-layer gates in this file ARE the gates — the role floor and the location bind
  * both live in the lib, before any write, with the route as the outer layer.
  *
- * No audit row, deliberately (the 0203 rule): a draft save fires about once a second while
- * someone types; the audit log is the accountability record of human acts, not a keystroke
- * log. The accountability row for AM prep is the one `submitAmPrep` already emits
- * (`prep.submit`). No new audit action is introduced.
+ * Draft saves carry no audit row, including overrides. Accountability is recorded
+ * on submission, never on autosave (0203).
  */
 
 import "server-only";
@@ -20,14 +19,12 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import {
   amPrepDraftApplies,
   amPrepDraftLineHasValue,
-  canWriteAmPrepDraft,
   parseAmPrepDraft,
   type AmPrepDraft,
   type AmPrepDraftItem,
   type AmPrepDraftRestore,
 } from "./am-prep-draft-shared";
 import { lockLocationContext } from "./locations";
-import { AM_PREP_BASE_LEVEL, loadAssignmentForToday } from "./prep";
 import type { RoleCode } from "./roles";
 
 export * from "./am-prep-draft-shared";
@@ -216,28 +213,11 @@ export async function saveAmPrepDraft(
     throw new AmPrepDraftError(404, "instance_not_found", `Instance ${args.instanceId} is not an AM prep`);
   }
 
-  let hasAssignment = false;
-  if (actor.level < AM_PREP_BASE_LEVEL) {
-    const assignment = await loadAssignmentForToday(service, {
-      userId: actor.user.id,
-      reportType: "am_prep",
-      locationId: instance.location_id,
-      date: instance.date,
-    });
-    hasAssignment = assignment !== null;
-  }
-  if (
-    !canWriteAmPrepDraft({
-      actorLevel: actor.level,
-      baseLevel: AM_PREP_BASE_LEVEL,
-      hasAssignment,
-    })
-  ) {
-    throw new AmPrepDraftError(
-      403,
-      "prep_role_violation",
-      `level >= ${AM_PREP_BASE_LEVEL} OR active assignment`,
-    );
+  if (!(await hasTaskAccess(service, {
+    userId: actor.user.id, level: actor.level, task: "am_prep",
+    locationId: instance.location_id, date: instance.date,
+  }))) {
+    throw new AmPrepDraftError(403, "prep_role_violation", "KH+ or active task assignment required.");
   }
 
   if (instance.status !== "open") {

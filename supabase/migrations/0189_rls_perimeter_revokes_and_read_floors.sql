@@ -1,5 +1,6 @@
 -- Migration 0189_rls_perimeter_revokes_and_read_floors
 -- AUTHORED 2026-09-01. NOT YET APPLIED — GATE (LEAD/JUAN). Rehearsed on the sim sandbox first.
+-- APPLIED TO PROD 2026-09-01 (schema_migrations version 20260901223957, name '0189_rls_perimeter_revokes_and_read_floors'). The line above is the authoring-time gate note, kept as history.
 --
 -- 0189: close the three direct-PostgREST perimeter holes the 2026-09-01 full audit
 -- confirmed live (ledger P2-1 partial, P2-2, P2-3, P3-4 — .claude/council/2026-09-01-full-audit-v2/LEDGER.md).
