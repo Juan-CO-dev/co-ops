@@ -1,5 +1,6 @@
 -- Migration 0185_phase1_chain_edit_supersede
 -- AUTHORED 2026-08-29. NOT YET APPLIED — GATE (LEAD/JUAN).
+-- APPLIED TO PROD 2026-08-30 (schema_migrations version 20260830181753, name 'phase1_chain_edit_supersede'). The line above is the authoring-time gate note, kept as history.
 --
 -- 0185: submit_phase1_atomic's chain-edit branch supersedes the live completion head
 -- before it inserts, so it stops violating 0176's one-live-head index.

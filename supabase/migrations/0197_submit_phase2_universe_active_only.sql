@@ -1,5 +1,6 @@
 -- Migration 0197_submit_phase2_universe_active_only
 -- NOT YET APPLIED to prod at authoring time (2026-09-09); applied to the SIM project first
+-- APPLIED TO PROD 2026-09-10 (schema_migrations version 20260910063949, name '0197_submit_phase2_universe_active_only'). The line above is the authoring-time gate note, kept as history.
 -- (jepgzucrvklhqpthowsc) and proven by the Launch-Readiness Audit opening contract.
 -- Canonical reference: lib/opening.ts submitPhase2Atomic; LRA ledger row LRA-202
 -- (.claude/council/2026-09-09-launch-readiness/LEDGER.md).

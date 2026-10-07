@@ -1,5 +1,6 @@
 -- Migration 0182_par_rhythm_and_ledger
 -- AUTHORED 2026-08-22. NOT YET APPLIED — GATE M1 (LEAD/JUAN).
+-- APPLIED TO PROD 2026-08-22 (schema_migrations version 20260822201818, name 'par_rhythm_and_ledger'). The line above is the authoring-time gate note, kept as history.
 --
 -- 0182: Dynamic Pars — vendor rhythm, the par-move ledger, and the day-grain sales signal
 -- Spec:  docs/superpowers/specs/2026-08-21-dynamic-pars-design.md (four layers, final at 2389f5e)

@@ -1,5 +1,6 @@
 -- Migration 0181_template_item_equipment_link
 -- AUTHORED 2026-08-21. NOT YET APPLIED — GATE M3 (LEAD/JUAN).
+-- APPLIED TO PROD 2026-08-21 (schema_migrations version 20260821114213, name 'template_item_equipment_link'). The line above is the authoring-time gate note, kept as history.
 -- Canonical reference: docs/superpowers/specs/2026-08-20-product-identity-design.md
 --   section "Equipment identity (the same pattern, cold side)".
 -- Plan: docs/superpowers/plans/2026-08-20-product-identity.md, Phase 6 / Task 6.7.
