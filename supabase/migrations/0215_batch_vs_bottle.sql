@@ -32,7 +32,7 @@
 --        submit_phase2_atomic           ← 0197 + need_for_line coalesce (cti.active intact)
 --        create_recipe_full             ← 0187 + batch_mode/shelf_life_days + one-ITEM-output rule
 --        add_recipe_output              ← 0187 + the recipe-row lock + single-output refusal
---      New: set_recipe_batch_mode, remove_recipe_output, revoke_phase2_item_atomic.
+--      New: set_recipe_batch_mode, remove_recipe_output, update_recipe_atomic, revoke_phase2_item_atomic.
 --
 -- ROLLOUT: batch_mode is false on every recipe after this applies, so NOTHING changes until a
 --   GM flips a recipe (the data step is a separate reviewed PR). Every re-emitted RPC takes its
@@ -55,7 +55,7 @@
 --    where table_name = 'prep_batch_sessions' and grantee in ('anon','authenticated','PUBLIC');  -- NO ROWS
 --   select policyname from pg_policies where tablename = 'prep_batch_sessions';                  -- NO ROWS
 --   select routine_name, grantee from information_schema.routine_privileges
---    where routine_name in ('prep_batch_context','set_recipe_batch_mode','remove_recipe_output',
+--    where routine_name in ('prep_batch_context','set_recipe_batch_mode','remove_recipe_output','update_recipe_atomic',
 --      'revoke_phase2_item_atomic','save_phase2_item_atomic','save_mid_day_phase2_item_atomic',
 --      'submit_phase1_atomic','submit_mid_day_phase1_atomic','submit_phase2_atomic',
 --      'create_opening_instance_atomic','create_recipe_full','add_recipe_output')
@@ -237,6 +237,57 @@ comment on function public.remove_recipe_output(uuid, uuid) is
   '0215: delete one recipe_outputs row under its recipe''s row lock; refuses the sole output of a batch_mode recipe (P0001 batch_mode_single_output). Returns the deleted row for the lib''s audit (recipe_output.remove).';
 revoke execute on function public.remove_recipe_output(uuid, uuid) from public, anon, authenticated;
 grant execute on function public.remove_recipe_output(uuid, uuid) to service_role;
+
+-- ── update_recipe_atomic — header patch + batch_mode toggle in ONE serialised transaction ────
+-- Astra P2 #8 (BC-007/033): the lib used to write the header columns and THEN call
+-- set_recipe_batch_mode; a refused toggle left the header changed and unaudited. Here the recipe
+-- row is locked first, every validation runs, and one UPDATE writes everything — or nothing.
+-- p_patch keys (all optional): name, name_es, batch_yield, directions, directions_es,
+-- shelf_life_days. p_batch_mode NULL = leave the flag alone.
+create or replace function public.update_recipe_atomic(p_recipe_id uuid, p_patch jsonb, p_batch_mode boolean, p_actor uuid)
+returns void
+language plpgsql security definer set search_path = pg_catalog, public as $$
+declare v_active boolean; v_item_outputs integer; v_outputs integer; v_patch jsonb := coalesce(p_patch, '{}'::jsonb);
+begin
+  select r.active into v_active from recipes r where r.id = p_recipe_id for update;
+  if not found then
+    raise exception 'recipe_not_found' using errcode = 'P0001';
+  end if;
+  if v_patch ? 'name' and nullif(btrim(v_patch->>'name'), '') is null then
+    raise exception 'invalid_name' using errcode = 'P0001';
+  end if;
+  if v_patch ? 'batch_yield' and coalesce((v_patch->>'batch_yield')::numeric, 0) <= 0 then
+    raise exception 'invalid_batch_yield' using errcode = 'P0001';
+  end if;
+  if v_patch ? 'shelf_life_days' and (v_patch->>'shelf_life_days' is null or (v_patch->>'shelf_life_days')::integer <= 0) then
+    raise exception 'invalid_shelf_life_days' using errcode = 'P0001';
+  end if;
+  if p_batch_mode is true then
+    select count(*), count(*) filter (where ro.output_item_id is not null and ro.yield > 0)
+    into v_outputs, v_item_outputs
+    from recipe_outputs ro where ro.recipe_id = p_recipe_id;
+    if v_outputs <> 1 or v_item_outputs <> 1 then
+      raise exception 'batch_mode_single_output'
+        using errcode = 'P0001',
+              detail  = format('recipe %s has %s output(s); batch_mode needs exactly one ITEM output with yield > 0', p_recipe_id, v_outputs);
+    end if;
+  end if;
+  update recipes set
+    name            = case when v_patch ? 'name' then btrim(v_patch->>'name') else name end,
+    name_es         = case when v_patch ? 'name_es' then nullif(btrim(v_patch->>'name_es'), '') else name_es end,
+    batch_yield     = case when v_patch ? 'batch_yield' then (v_patch->>'batch_yield')::numeric else batch_yield end,
+    directions      = case when v_patch ? 'directions' then nullif(btrim(v_patch->>'directions'), '') else directions end,
+    directions_es   = case when v_patch ? 'directions_es' then nullif(btrim(v_patch->>'directions_es'), '') else directions_es end,
+    shelf_life_days = case when v_patch ? 'shelf_life_days' then (v_patch->>'shelf_life_days')::integer else shelf_life_days end,
+    batch_mode      = case when p_batch_mode is null then batch_mode else p_batch_mode end,
+    updated_at      = now(),
+    updated_by      = p_actor
+  where id = p_recipe_id;
+end $$;
+comment on function public.update_recipe_atomic(uuid, jsonb, boolean, uuid) is
+  '0215 (Astra P2 #8): recipe header patch + batch_mode toggle under the recipe row lock, one UPDATE; a refused toggle (P0001 batch_mode_single_output) persists nothing. The audit row is the lib''s (recipe.update), written only on success.';
+revoke execute on function public.update_recipe_atomic(uuid, jsonb, boolean, uuid) from public, anon, authenticated;
+grant execute on function public.update_recipe_atomic(uuid, jsonb, boolean, uuid) to service_role;
 
 -- ═════════════════════════════════════════════════════════════════════════════════════════════
 -- 6a. submit_phase1_atomic ← 0185 (both branches + three chain-edit blocks) + two-box recount
@@ -1500,6 +1551,8 @@ DECLARE
   v_output_count integer;
   v_recipe_yield numeric;
   v_is_batch boolean := false;
+  v_batch_mode boolean := false;   -- Astra P1 #4: read separately; batch_mode AND NOT is_batch is REFUSED
+  v_prev_toss numeric;             -- Astra P2 #6: the session's toss before this save (audit delta)
   v_b_batches integer;
   v_b_came_out numeric;
   v_b_tossed numeric;
@@ -1564,10 +1617,18 @@ BEGIN
   SELECT ci.location_id, ci.date, ci.template_id
   INTO v_location_id, v_business_date, v_template_id
   FROM checklist_instances ci WHERE ci.id = p_opening_instance_id;
-  SELECT c.item_id, c.recipe_id, c.output_count, c.yield, c.is_batch
-  INTO v_item_id, v_batch_recipe_id, v_output_count, v_recipe_yield, v_is_batch
+  SELECT c.item_id, c.recipe_id, c.output_count, c.yield, c.is_batch, c.batch_mode
+  INTO v_item_id, v_batch_recipe_id, v_output_count, v_recipe_yield, v_is_batch, v_batch_mode
   FROM public.prep_batch_context(p_template_item_id) c;
   v_is_batch := COALESCE(v_is_batch, false);
+  v_batch_mode := COALESCE(v_batch_mode, false);
+  -- Astra P1 #4 (BC-004/042): a batch_mode recipe that is NOT eligible (two outputs, no yield)
+  -- must never fall through to the single-box path by omitting p_batch. Refused BEFORE payload
+  -- dispatch, whatever the payload says.
+  IF v_batch_mode AND NOT v_is_batch THEN
+    RAISE EXCEPTION 'save_phase2_item_atomic: batch_recipe_unresolved for item % — batch_mode needs exactly one item output with yield > 0 (recipe %, outputs %)',
+      p_template_item_id, v_batch_recipe_id, v_output_count USING ERRCODE = 'P0001';
+  END IF;
   IF v_is_batch AND (p_batch IS NULL OR p_batch = 'null'::jsonb) THEN
     RAISE EXCEPTION 'save_phase2_item_atomic: batch_payload_required for item % — batch_mode item saved without the batch object',
       p_template_item_id USING ERRCODE = 'P0001';
@@ -1682,6 +1743,12 @@ BEGIN
     -- Session row (ruling 1; corrections 1, 3, 4): keyed by (instance_id, template_item_id).
     -- produced_at + made_by are set at the FIRST batch save and NEVER updated (not in the SET
     -- list). tossed_at / tossed_by move ONLY when the tossed qty itself changes (ELSE keeps them).
+    -- Astra P2 #6: the toss BEFORE this save, under the row lock, so the caller can audit
+    -- backup.tossed on every real change (set, moved, cleared) and nothing on an unchanged save.
+    SELECT s.tossed_qty INTO v_prev_toss
+    FROM prep_batch_sessions s
+    WHERE s.instance_id = p_opening_instance_id AND s.template_item_id = p_template_item_id
+    FOR UPDATE;
     INSERT INTO prep_batch_sessions (
       instance_id, template_item_id, location_id, item_id, business_date, source,
       produced_at, made_by, tossed_qty, tossed_par_unit, tossed_at, tossed_by, updated_at
@@ -1830,6 +1897,23 @@ BEGIN
   SELECT to_jsonb(cc) INTO v_completion_row
   FROM checklist_completions cc WHERE cc.id = v_completion_id;
 
+  -- 0215 (Astra P2 #6/#7): a BATCH row returns the session facts the caller audits/folds on —
+  -- never re-derived client-side, never invented. Inserted BEFORE the 0056 RETURN so a
+  -- single-box save returns exactly what it always did.
+  IF v_is_batch THEN
+    RETURN jsonb_build_object(
+      'completion', v_completion_row,
+      'templateItemId', p_template_item_id,
+      'completionId', v_completion_id,
+      'deltaVsPrepNeed', v_delta,
+      'overUnderStatus', v_over_under_status,
+      'tossPrevious', COALESCE(v_prev_toss, 0),
+      'tossCurrent', v_b_tossed,
+      'producedAt', to_jsonb(v_session_produced_at),
+      'madeBy', to_jsonb(v_session_made_by)
+    );
+  END IF;
+
   RETURN jsonb_build_object(
     'completion', v_completion_row,
     'templateItemId', p_template_item_id,
@@ -1872,6 +1956,8 @@ DECLARE
   v_output_count integer;
   v_recipe_yield numeric;
   v_is_batch boolean := false;
+  v_batch_mode boolean := false;   -- Astra P1 #4: read separately; batch_mode AND NOT is_batch is REFUSED
+  v_prev_toss numeric;             -- Astra P2 #6: the session's toss before this save (audit delta)
   v_b_batches integer;
   v_b_came_out numeric;
   v_b_tossed numeric;
@@ -1914,10 +2000,18 @@ BEGIN
   SELECT ci.location_id, ci.date, ci.template_id
   INTO v_location_id, v_business_date, v_template_id
   FROM checklist_instances ci WHERE ci.id = p_instance_id;
-  SELECT c.item_id, c.recipe_id, c.output_count, c.yield, c.is_batch
-  INTO v_item_id, v_batch_recipe_id, v_output_count, v_recipe_yield, v_is_batch
+  SELECT c.item_id, c.recipe_id, c.output_count, c.yield, c.is_batch, c.batch_mode
+  INTO v_item_id, v_batch_recipe_id, v_output_count, v_recipe_yield, v_is_batch, v_batch_mode
   FROM public.prep_batch_context(p_template_item_id) c;
   v_is_batch := COALESCE(v_is_batch, false);
+  v_batch_mode := COALESCE(v_batch_mode, false);
+  -- Astra P1 #4 (BC-004/042): a batch_mode recipe that is NOT eligible (two outputs, no yield)
+  -- must never fall through to the single-box path by omitting p_batch. Refused BEFORE payload
+  -- dispatch, whatever the payload says.
+  IF v_batch_mode AND NOT v_is_batch THEN
+    RAISE EXCEPTION 'save_mid_day_phase2_item_atomic: batch_recipe_unresolved for item % — batch_mode needs exactly one item output with yield > 0 (recipe %, outputs %)',
+      p_template_item_id, v_batch_recipe_id, v_output_count USING ERRCODE = 'P0001';
+  END IF;
   IF v_is_batch AND (p_batch IS NULL OR p_batch = 'null'::jsonb) THEN
     RAISE EXCEPTION 'save_mid_day_phase2_item_atomic: batch_payload_required for item % — batch_mode item saved without the batch object',
       p_template_item_id USING ERRCODE = 'P0001';
@@ -2030,6 +2124,12 @@ BEGIN
     -- Session row (ruling 1; corrections 1, 3, 4): keyed by (instance_id, template_item_id).
     -- produced_at + made_by are set at the FIRST batch save and NEVER updated (not in the SET
     -- list). tossed_at / tossed_by move ONLY when the tossed qty itself changes (ELSE keeps them).
+    -- Astra P2 #6: the toss BEFORE this save, under the row lock, so the caller can audit
+    -- backup.tossed on every real change (set, moved, cleared) and nothing on an unchanged save.
+    SELECT s.tossed_qty INTO v_prev_toss
+    FROM prep_batch_sessions s
+    WHERE s.instance_id = p_instance_id AND s.template_item_id = p_template_item_id
+    FOR UPDATE;
     INSERT INTO prep_batch_sessions (
       instance_id, template_item_id, location_id, item_id, business_date, source,
       produced_at, made_by, tossed_qty, tossed_par_unit, tossed_at, tossed_by, updated_at
@@ -2116,6 +2216,20 @@ BEGIN
     UPDATE checklist_completions
     SET superseded_by = v_new_id
     WHERE id = v_prior_id;
+  END IF;
+
+  -- 0215 (Astra P2 #6/#7): a BATCH row returns the session facts with the id — the lib audits
+  -- the toss delta and folds with the PERSISTED maker/time, never a read-back it could get
+  -- wrong. Inserted BEFORE the 0199 RETURN so a single-box save returns exactly what it did.
+  IF v_is_batch THEN
+    RETURN jsonb_build_object(
+      'completionId', v_new_id,
+      'savedAt', to_jsonb(v_saved_at),
+      'tossPrevious', COALESCE(v_prev_toss, 0),
+      'tossCurrent', v_b_tossed,
+      'producedAt', to_jsonb(v_session_produced_at),
+      'madeBy', to_jsonb(v_session_made_by)
+    );
   END IF;
 
   RETURN jsonb_build_object('completionId', v_new_id, 'savedAt', to_jsonb(v_saved_at));

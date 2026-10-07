@@ -185,6 +185,31 @@ describe("0215 — the batch contract inside BOTH save RPCs", () => {
     expect(body).toContain("batch_recipe_unresolved");
   });
 
+  it.each(both)("%s: a batch_mode recipe that is NOT eligible is refused BEFORE payload dispatch (Astra P1 #4)", (_n, body) => {
+    expect(body).toContain("SELECT c.item_id, c.recipe_id, c.output_count, c.yield, c.is_batch, c.batch_mode");
+    const backstopAt = body.indexOf("IF v_batch_mode AND NOT v_is_batch THEN");
+    const requiredAt = body.indexOf("batch_payload_required");
+    expect(backstopAt).toBeGreaterThan(-1);
+    expect(backstopAt).toBeLessThan(requiredAt);
+    // The raise in that block names the contract code.
+    expect(body.slice(backstopAt, backstopAt + 400)).toContain("batch_recipe_unresolved");
+  });
+
+  it.each(both)("%s: the prior toss is read under the row lock and the session facts ride back (Astra P2 #6/#7)", (_n, body) => {
+    const prevAt = body.indexOf("SELECT s.tossed_qty INTO v_prev_toss");
+    const insertAt = body.indexOf("INSERT INTO prep_batch_sessions");
+    expect(prevAt).toBeGreaterThan(-1);
+    expect(prevAt).toBeLessThan(insertAt);
+    expect(body.slice(prevAt, insertAt)).toContain("FOR UPDATE;");
+    for (const k of ["'tossPrevious'", "'tossCurrent'", "'producedAt'", "'madeBy'"]) expect(body).toContain(k);
+    // The batch RETURN is an INSERTION before the source RETURN (a single-box save answers as before).
+    const batchReturnAt = body.indexOf("'tossPrevious', COALESCE(v_prev_toss, 0)");
+    const sourceReturnAt = body.lastIndexOf("RETURN jsonb_build_object(");
+    expect(batchReturnAt).toBeGreaterThan(-1);
+    expect(batchReturnAt).toBeLessThan(sourceReturnAt);
+    expect(body.slice(0, batchReturnAt)).toMatch(/IF v_is_batch THEN\s*RETURN jsonb_build_object\(\s*$/m);
+  });
+
   it.each(both)("%s: batches, came_out_to and the Other note are NULL-refused with the 0056:184 idiom (ruling G)", (_n, body) => {
     expect(body).toContain("p_batch->'batches' IS NULL OR p_batch->'batches' = 'null'::jsonb");
     expect(body).toContain("p_batch->'came_out_to' IS NULL OR p_batch->'came_out_to' = 'null'::jsonb");
@@ -250,6 +275,21 @@ describe("0215 — revoke retracts the toss by SESSION KEY (correction 1)", () =
   });
 });
 
+describe("0215 — update_recipe_atomic (Astra P2 #8): lock, validate, ONE update", () => {
+  const body = extract(src0215, "create or replace function public.update_recipe_atomic(", "$$;");
+  it("locks the recipe row first, validates the patch and the toggle, then writes once", () => {
+    const lockAt = body.indexOf("for update;");
+    const checkAt = body.indexOf("batch_mode_single_output");
+    const updateAt = body.indexOf("update recipes set");
+    expect(lockAt).toBeGreaterThan(-1);
+    expect(lockAt).toBeLessThan(checkAt);
+    expect(checkAt).toBeLessThan(updateAt);
+    expect(body.split("update recipes set").length - 1).toBe(1);
+    expect(body).toContain("invalid_shelf_life_days");
+    expect(body).toContain("batch_mode      = case when p_batch_mode is null then batch_mode else p_batch_mode end");
+  });
+});
+
 describe("0215 — schema, posture and grants", () => {
   it("adds the three column sets with their comments and the pre-flight guard", () => {
     expect(src0215).toContain("add column batch_mode boolean not null default false");
@@ -280,6 +320,7 @@ describe("0215 — schema, posture and grants", () => {
       "prep_batch_context(uuid)",
       "set_recipe_batch_mode(uuid, boolean, uuid)",
       "remove_recipe_output(uuid, uuid)",
+      "update_recipe_atomic(uuid, jsonb, boolean, uuid)",
       "revoke_phase2_item_atomic(uuid, uuid, uuid, text, text)",
       "submit_phase1_atomic(uuid, uuid, jsonb, jsonb, text, boolean, uuid, jsonb, text, text)",
       "submit_mid_day_phase1_atomic(uuid, uuid, jsonb)",
