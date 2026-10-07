@@ -25,8 +25,9 @@
  * vs display-string discipline):
  *   - Mustard-deep border-b accent under the title
  *   - text-lg font-bold uppercase tracking-[0.14em]
- *   - Non-interactive (no chevron, no collapse — AM Prep is single-page-
- *     single-submit; collapse isn't a feature)
+ *   - Wave 1 B: the header is now a collapse toggle (shared
+ *     CollapsibleChecklistSection) when AmPrepForm provides the collapse
+ *     context; without it the section renders always-open as before.
  *
  * SYSTEM-KEY DISCIPLINE: `section` prop is the system key (English source-
  * of-truth from prep_meta.section); `sectionDisplay` is the rendered text
@@ -39,9 +40,12 @@
  * with no items wouldn't be seeded) but the shell stays predictable.
  */
 
-import type { ReactNode } from "react";
+import { useContext, type ReactNode } from "react";
 
+import { CollapsibleChecklistSection } from "@/components/ui/CollapsibleChecklistSection";
 import { useTranslation } from "@/lib/i18n/provider";
+
+import { AmPrepCollapseContext } from "./collapse-context";
 
 export interface PrepSectionProps {
   /** SECTION SYSTEM-KEY (English source-of-truth). Used for ARIA + data attrs. */
@@ -72,57 +76,80 @@ export function PrepSection({
   // same grid track shape.
   const gridTemplateColumns = `minmax(0, 1fr) repeat(${columnHeaders.length}, minmax(48px, 56px))`;
 
+  const collapse = useContext(AmPrepCollapseContext);
+  const progress = collapse?.progress[section];
+
+  const content =
+    templateItemCount === 0 ? (
+      <div className="px-4 pb-3 text-sm text-co-text-dim italic">
+        {t("am_prep.section.empty", { section: sectionDisplay })}
+      </div>
+    ) : (
+      <div className="px-3 pb-3">
+        {/* Column headers — same grid track shape as PrepRow. Numeric
+            sections render the header strip; sections with no columns
+            (Misc) skip it and let their internal row layout speak for
+            itself. */}
+        {columnHeaders.length > 0 ? (
+          <div
+            className="
+              grid items-end gap-1.5 pb-1 border-b-2 border-co-border-2
+              text-[10px] sm:text-[11px] font-bold uppercase tracking-[0.12em] text-co-text-dim
+            "
+            style={{ gridTemplateColumns }}
+          >
+            {/* First grid cell is empty — aligns under the row label column. */}
+            <div />
+            {columnHeaders.map((col) => (
+              <div key={col.key} className="text-center">
+                {col.label}
+              </div>
+            ))}
+          </div>
+        ) : null}
+
+        {/* Rows. */}
+        <div className="flex flex-col">{children}</div>
+      </div>
+    );
+
+  const sectionClass = "rounded-2xl border-2 border-co-border bg-co-surface";
+  const titleClass = `
+    inline-block text-lg font-bold uppercase tracking-[0.14em] text-co-text
+    border-b-2 border-co-gold-deep pb-0.5
+  `;
+
+  if (collapse && progress) {
+    return (
+      <CollapsibleChecklistSection
+        formKey={collapse.formKey}
+        sectionId={section}
+        title={sectionDisplay}
+        done={progress.done}
+        total={progress.total}
+        open={collapse.isOpen(section)}
+        onToggle={() => collapse.toggle(section)}
+        ariaLabel={t("am_prep.section.aria", { section: sectionDisplay })}
+        className={sectionClass}
+        headerClassName="px-4 pt-1 pb-1"
+        titleClassName={titleClass}
+      >
+        {content}
+      </CollapsibleChecklistSection>
+    );
+  }
+
   return (
     <section
       data-section={section}
       aria-label={t("am_prep.section.aria", { section: sectionDisplay })}
-      className="rounded-2xl border-2 border-co-border bg-co-surface"
+      className={sectionClass}
     >
-      {/* Section header — non-interactive; mustard-deep accent line per
-          SPEC_AMENDMENTS.md C.30 (matches StationGroup style). */}
+      {/* Section header — non-interactive when no collapse context. */}
       <div className="px-4 pt-3 pb-2">
-        <h3
-          className="
-            inline-block text-lg font-bold uppercase tracking-[0.14em] text-co-text
-            border-b-2 border-co-gold-deep pb-0.5
-          "
-        >
-          {sectionDisplay}
-        </h3>
+        <h3 className={titleClass}>{sectionDisplay}</h3>
       </div>
-
-      {templateItemCount === 0 ? (
-        <div className="px-4 pb-3 text-sm text-co-text-dim italic">
-          {t("am_prep.section.empty", { section: sectionDisplay })}
-        </div>
-      ) : (
-        <div className="px-3 pb-3">
-          {/* Column headers — same grid track shape as PrepRow. Numeric
-              sections render the header strip; sections with no columns
-              (Misc) skip it and let their internal row layout speak for
-              itself. */}
-          {columnHeaders.length > 0 ? (
-            <div
-              className="
-                grid items-end gap-1.5 pb-1 border-b-2 border-co-border-2
-                text-[10px] sm:text-[11px] font-bold uppercase tracking-[0.12em] text-co-text-dim
-              "
-              style={{ gridTemplateColumns }}
-            >
-              {/* First grid cell is empty — aligns under the row label column. */}
-              <div />
-              {columnHeaders.map((col) => (
-                <div key={col.key} className="text-center">
-                  {col.label}
-                </div>
-              ))}
-            </div>
-          ) : null}
-
-          {/* Rows. */}
-          <div className="flex flex-col">{children}</div>
-        </div>
-      )}
+      {content}
     </section>
   );
 }

@@ -16,6 +16,9 @@ import { useTranslation } from "@/lib/i18n/provider";
 import { resolveSectionLabel } from "@/lib/prep-sections";
 import type { MidDayOverUnder } from "@/lib/prep";
 import { ActionButton } from "@/components/ActionButton";
+import { CollapsibleChecklistSection } from "@/components/ui/CollapsibleChecklistSection";
+import { unfinishedSectionIds } from "@/lib/collapsible-sections";
+import { useCollapsibleSections } from "@/lib/use-collapsible-sections";
 import {
   OverParModal,
   type ManagerOption,
@@ -134,6 +137,15 @@ export function MidDayPhase2Form({
     return out;
   }, [items]);
 
+  // Wave 1 B — collapsible sections. An item is DONE when its save state is "saved"
+  // (the same status that renders the "Saved" line on the row).
+  const sectionProgress = groups.map((g) => ({
+    id: g.section,
+    total: g.items.length,
+    done: g.items.filter((it) => (states[it.id] ?? EMPTY).status === "saved").length,
+  }));
+  const collapsible = useCollapsibleSections("mid-day-phase2", sectionProgress);
+
   const patch = (id: string, p: Partial<SaveState>) =>
     setStates((s) => ({ ...s, [id]: { ...(s[id] ?? EMPTY), ...p } }));
 
@@ -144,11 +156,13 @@ export function MidDayPhase2Form({
     const prepped = raw === "" ? NaN : Number(raw);
     if (!Number.isFinite(prepped) || prepped < 0) {
       patch(it.id, { status: "error", error: t("mid_day_prep.phase2.required") });
+      collapsible.reveal([it.section]);
       return;
     }
     const offPar = it.need !== null && prepped !== it.need;
     if (offPar && !st.overUnder) {
       patch(it.id, { status: "error", error: t("mid_day_prep.phase2.reason_required") });
+      collapsible.reveal([it.section]);
       return;
     }
     patch(it.id, { status: "saving", error: null });
@@ -206,6 +220,8 @@ export function MidDayPhase2Form({
       }
       setFinalizeError(msg);
       setFinalizing(false);
+      // Finalize refused: open the sections that still have unsaved items.
+      collapsible.reveal(unfinishedSectionIds(sectionProgress));
     } catch (e) {
       setFinalizeError(e instanceof Error ? e.message : "Network error.");
       setFinalizing(false);
@@ -215,10 +231,18 @@ export function MidDayPhase2Form({
   return (
     <div className="mt-4 flex flex-col gap-5 lg:block lg:columns-2 lg:[column-gap:1.25rem] lg:[&>*]:break-inside-avoid lg:[&>*]:mb-5">
       {groups.map((g) => (
-        <section key={g.section}>
-          <h2 className="text-xs font-bold uppercase tracking-[0.14em] text-co-gold-text">
-            {resolveSectionLabel(sectionLabels, g.section, language, g.section)}
-          </h2>
+        <CollapsibleChecklistSection
+          key={g.section}
+          formKey="mid-day-phase2"
+          headingLevel={2}
+          sectionId={g.section}
+          title={resolveSectionLabel(sectionLabels, g.section, language, g.section)}
+          titleClassName="text-xs font-bold uppercase tracking-[0.14em] text-co-gold-text"
+          done={g.items.filter((it) => (states[it.id] ?? EMPTY).status === "saved").length}
+          total={g.items.length}
+          open={collapsible.isOpen(g.section)}
+          onToggle={() => collapsible.toggle(g.section)}
+        >
           <ul className="mt-2 flex flex-col gap-1.5">
             {g.items.map((it) => {
               const st = states[it.id] ?? EMPTY;
@@ -327,7 +351,7 @@ export function MidDayPhase2Form({
               );
             })}
           </ul>
-        </section>
+        </CollapsibleChecklistSection>
       ))}
 
       {finalizeError ? <p className="px-1 text-[11px] text-co-cta-text">{finalizeError}</p> : null}

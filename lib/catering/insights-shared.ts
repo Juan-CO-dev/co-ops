@@ -85,12 +85,12 @@ export function monthGrid(month: string): MonthGrid {
 }
 
 /** Events keyed by date (insertion order = ascending date), chronological within a day. */
-export function groupEventsByDate(events: CalendarEvent[]): Map<string, CalendarEvent[]> {
+export function groupEventsByDate<E extends Pick<CalendarEvent, "eventDate" | "timeWindow">>(events: E[]): Map<string, E[]> {
   const sorted = [...events].sort((a, b) =>
     a.eventDate.localeCompare(b.eventDate) ||
     timeWindowMinutes(a.timeWindow) - timeWindowMinutes(b.timeWindow) ||
     (a.timeWindow ?? "").localeCompare(b.timeWindow ?? ""));
-  const out = new Map<string, CalendarEvent[]>();
+  const out = new Map<string, E[]>();
   for (const e of sorted) {
     const day = out.get(e.eventDate);
     if (day) day.push(e);
@@ -100,6 +100,8 @@ export function groupEventsByDate(events: CalendarEvent[]): Map<string, Calendar
 }
 
 /** Dot fill per stage — FILL roles only (co-success is a fill/dot role, never text). */
-export function stageDot(stage: BookedStage): string {
+export function stageDot(stage: BookedStage | "lost"): string {
+  // Lost is a muted grey dot — display only, never a money/count signal.
+  if (stage === "lost") return "bg-co-text-dim opacity-50";
   return stage === "confirmed" ? "bg-co-gold" : stage === "out" ? "bg-co-text" : "bg-co-success";
 }

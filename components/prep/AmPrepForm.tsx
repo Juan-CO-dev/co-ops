@@ -67,6 +67,8 @@ import { useTranslation } from "@/lib/i18n/provider";
 import type { Language, TranslationKey, TranslationParams } from "@/lib/i18n/types";
 import { ActionButton } from "@/components/ActionButton";
 import { shapeFromColumns, totalSourcesForShape } from "@/lib/prep-sections";
+import { unfinishedSectionIds } from "@/lib/collapsible-sections";
+import { useCollapsibleSections } from "@/lib/use-collapsible-sections";
 import type {
   ChecklistInstance,
   ChecklistTemplateItem,
@@ -78,6 +80,7 @@ import type {
 import { GenericPrepSection } from "./sections/GenericPrepSection";
 import { MiscSection } from "./sections/MiscSection";
 import { MixedPrepSection } from "./sections/MixedPrepSection";
+import { AmPrepCollapseContext, type AmPrepCollapse } from "./collapse-context";
 import type { RawPrepInputs } from "./types";
 import { useAmPrepDraftAutosave } from "./useAmPrepDraftAutosave";
 
@@ -547,6 +550,41 @@ export function AmPrepForm({
     [rawValues, templateItems, lineShapeByItemId, t],
   );
 
+  // Wave 1 B — collapsible sections. A row is DONE iff validateRawValues found no
+  // error on it (the form's own completeness rule, reused verbatim); a section's
+  // progress is rows-without-errors over rows. The first section with an
+  // unfinished row starts open, the rest collapsed; the device remembers toggles.
+  const sectionProgress = useMemo(
+    () =>
+      sections.map((s) => {
+        const rows = itemsBySection.get(s.slug) ?? [];
+        return {
+          id: s.slug,
+          total: rows.length,
+          done: rows.filter((r) => !validation.errors[r.id]).length,
+        };
+      }),
+    [sections, itemsBySection, validation.errors],
+  );
+  const collapsible = useCollapsibleSections("am-prep", sectionProgress);
+  const collapseCtx = useMemo<AmPrepCollapse>(
+    () => ({
+      formKey: "am-prep",
+      isOpen: collapsible.isOpen,
+      toggle: collapsible.toggle,
+      progress: Object.fromEntries(
+        sectionProgress.map((p) => [p.id, { done: p.done, total: p.total }]),
+      ),
+    }),
+    [collapsible.isOpen, collapsible.toggle, sectionProgress],
+  );
+  // Submit is disabled while any row has an error, so "submit finds a problem"
+  // surfaces here: the summary banner's button opens every section that still
+  // has a row with an error and scrolls to the first.
+  const revealProblemSections = useCallback(() => {
+    collapsible.reveal(unfinishedSectionIds(sectionProgress));
+  }, [collapsible, sectionProgress]);
+
   // C.46 — read-only is now derived from the explicit `mode` prop (replaces
   // the former instance.status-based derivation). Mode is computed once in
   // the page Server Component and passed down. In-session flips during
@@ -846,6 +884,7 @@ export function AmPrepForm({
           the 6 seeded sections). */}
       {/* Recomposition PR 4b: section cards flow into two columns at lg (the
           proven opening/closing idiom — break-guarded, phone stack unchanged). */}
+      <AmPrepCollapseContext.Provider value={collapseCtx}>
       <div className="flex flex-col gap-4 lg:block lg:columns-2 lg:[column-gap:1rem] lg:[&>*]:break-inside-avoid lg:[&>*]:mb-4">
       {sections.map((s) => {
         const sectionItems = itemsBySection.get(s.slug) ?? [];
@@ -900,6 +939,7 @@ export function AmPrepForm({
         );
       })}
       </div>
+      </AmPrepCollapseContext.Provider>
 
       {/* Form-level error summary — accessibility-driven (per locked
           decision: BOTH per-row inline AND form-level summary). Renders
@@ -916,6 +956,17 @@ export function AmPrepForm({
           {validation.errorCount === 1
             ? t("am_prep.error.summary_one")
             : t("am_prep.error.summary_other", { count: validation.errorCount })}
+          <button
+            type="button"
+            onClick={revealProblemSections}
+            className="
+              mt-2 inline-flex min-h-[44px] items-center rounded-md px-3 text-xs
+              font-bold uppercase tracking-[0.12em] text-co-text underline
+              focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/40
+            "
+          >
+            {t("checklist.section.show_problems")}
+          </button>
         </section>
       ) : null}
 

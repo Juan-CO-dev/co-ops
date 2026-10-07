@@ -68,6 +68,9 @@ import { resolveTemplateItemContent } from "@/lib/i18n/content";
 import { formatTime } from "@/lib/i18n/format";
 import { useTranslation } from "@/lib/i18n/provider";
 import type { Language } from "@/lib/i18n/types";
+import { unfinishedSectionIds } from "@/lib/collapsible-sections";
+import { useCollapsibleSections } from "@/lib/use-collapsible-sections";
+import { CollapsibleChecklistSection } from "@/components/ui/CollapsibleChecklistSection";
 import type {
   ChecklistCompletion,
   ChecklistInstance,
@@ -265,11 +268,16 @@ export function ClosingClient({ initialState }: { initialState: ClosingInitialSt
   // Per-station collapse state. Initial: all expanded.
   const stationGroups = useMemo(() => groupByStation(templateItems), [templateItems]);
   const stationKeys = useMemo(() => Array.from(stationGroups.keys()), [stationGroups]);
-  const [stationExpanded, setStationExpanded] = useState<Map<string, boolean>>(() => {
-    const m = new Map<string, boolean>();
-    for (const k of stationKeys) m.set(k, true);
-    return m;
+  // Wave 1 B — collapsible stations via the shared hook. DONE = the closing's own
+  // rule (every REQUIRED item has a live completion: countRequiredComplete /
+  // isStationFullyComplete). First unfinished station starts open; the rest collapsed;
+  // the device remembers toggles. (Was: all expanded, no memory.)
+  const stationProgress = stationKeys.map((k) => {
+    const c = countRequiredComplete(stationGroups.get(k) ?? [], completions);
+    return { id: k, done: c.completed, total: c.required };
   });
+  const collapsible = useCollapsibleSections("closing", stationProgress);
+  const revealStations = collapsible.reveal;
 
   // Progress.
   const totalCount = useMemo(
@@ -681,6 +689,11 @@ export function ClosingClient({ initialState }: { initialState: ClosingInitialSt
     // let the page reflect updated state (e.g., instance_closed → re-fetch
     // would show the page in read-only mode if the user reloads).
     setPinOpen(false);
+    // Wave 1 B — a refused lock-up (missing reasons / counts / photos) points at the
+    // stations that still have incomplete required items: open them and scroll.
+    if (err.code !== "instance_closed") {
+      revealStations(unfinishedSectionIds(stationProgress));
+    }
     if (err.code === "instance_closed") {
       // Best signal we can give without a re-fetch: show the historical-style
       // banner so the closer knows their attempt landed on an already-closed
@@ -691,7 +704,7 @@ export function ClosingClient({ initialState }: { initialState: ClosingInitialSt
         message: t("closing.error.concurrent_modification"),
       });
     }
-  }, []);
+  }, [t, stationProgress, revealStations]);
 
   // ─── Auto-collapse on scroll-past via IntersectionObserver ──────────────
 
@@ -699,6 +712,7 @@ export function ClosingClient({ initialState }: { initialState: ClosingInitialSt
   // bottom edge scrolls above the viewport top (intersectionRatio === 0
   // AND boundingClientRect.bottom < 0), we treat the station as
   // "scrolled past." If it's also fully complete, collapse it.
+  const { setOpenTransient } = collapsible;
   const stationRefs = useRef<Map<string, HTMLElement>>(new Map());
   // Snapshot of completion fullness per station, read inside the IO callback
   // to avoid stale closures.
@@ -731,12 +745,8 @@ export function ClosingClient({ initialState }: { initialState: ClosingInitialSt
           // Scrolled past = bottom of element is above viewport top.
           const rect = e.boundingClientRect;
           if (rect.bottom < 0) {
-            setStationExpanded((prev) => {
-              if (prev.get(station) === false) return prev;
-              const next = new Map(prev);
-              next.set(station, false);
-              return next;
-            });
+            // Transient: an automatic collapse is not the user's saved preference.
+            setOpenTransient(station, false);
           }
         }
       },
@@ -748,7 +758,7 @@ export function ClosingClient({ initialState }: { initialState: ClosingInitialSt
       if (el) observer.observe(el);
     }
     return () => observer.disconnect();
-  }, [stationGroups, readOnly]);
+  }, [stationGroups, readOnly, setOpenTransient]);
 
   const setStationRef = useCallback((station: string) => {
     return (el: HTMLElement | null) => {
@@ -757,13 +767,6 @@ export function ClosingClient({ initialState }: { initialState: ClosingInitialSt
     };
   }, []);
 
-  const toggleStation = useCallback((station: string) => {
-    setStationExpanded((prev) => {
-      const next = new Map(prev);
-      next.set(station, !(prev.get(station) ?? true));
-      return next;
-    });
-  }, []);
 
   // ─── Review section gate ────────────────────────────────────────────────
 
@@ -891,11 +894,11 @@ export function ClosingClient({ initialState }: { initialState: ClosingInitialSt
               actor={actor}
               instanceStatus={instance.status}
               readOnly={readOnly}
-              expanded={stationExpanded.get(station) ?? true}
+              expanded={collapsible.isOpen(station)}
               locationId={location.id}
               reportRefChains={reportRefChains}
               reportRefCanEdit={reportRefCanEdit}
-              onToggle={() => toggleStation(station)}
+              onToggle={() => collapsible.toggle(station)}
               onComplete={handleItemComplete}
               onRevoke={handleItemRevoke}
               onRevokeWithReason={handleItemRevokeWithReason}
@@ -1174,7 +1177,6 @@ function StationGroup({
   const requiredItems = items.filter((it) => it.required);
   const completedRequired = requiredItems.filter((it) => completions.has(it.id)).length;
   const totalRequired = requiredItems.length;
-  const fullyComplete = totalRequired > 0 && completedRequired === totalRequired;
 
   // Items above the actor's level — surface count so closer knows what's
   // still pending from a higher role even when the station "looks done."
@@ -1183,52 +1185,30 @@ function StationGroup({
   ).length;
 
   return (
-    <section
-      // System-key on data-station for IntersectionObserver auto-collapse
-      // detection (per SPEC_AMENDMENTS.md C.38 — never translate keys).
-      data-station={station}
-      ref={setRef}
-      // Display string in the user-facing aria-label.
-      aria-label={t("closing.station.toggle_aria", { station: stationDisplay })}
+    <CollapsibleChecklistSection
+      formKey="closing"
+      headingLevel={2}
+      sectionId={station}
+      // Display string in the user-facing aria-label (system key stays in sectionId).
+      ariaLabel={t("closing.station.toggle_aria", { station: stationDisplay })}
+      title={stationDisplay}
+      done={completedRequired}
+      total={totalRequired}
+      open={expanded}
+      onToggle={onToggle}
+      progressSuffix={
+        aboveRoleCount > 0 ? t("closing.station.awaiting_higher_role", { count: aboveRoleCount }) : ""
+      }
       className="co-card mb-4 break-inside-avoid"
+      headerClassName="px-4 py-1"
+      // Station header prominence per SPEC_AMENDMENTS.md C.30: text-lg + Mustard-deep
+      // accent line, font-bold preserved.
+      titleClassName="text-lg font-bold uppercase tracking-[0.14em] text-co-text border-b-2 border-co-gold-deep pb-0.5"
     >
-      <button
-        type="button"
-        onClick={onToggle}
-        aria-expanded={expanded}
-        className="
-          flex min-h-[44px] w-full items-center justify-between gap-3 px-4 py-3
-          text-left
-          focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60
-        "
+      <div
+        data-station={station}
+        ref={setRef}
       >
-        <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-          <span className="flex items-center gap-2">
-            {fullyComplete ? (
-              <span aria-hidden className="text-co-success">
-                <SmallCheckIcon />
-              </span>
-            ) : null}
-            {/* Station header prominence per SPEC_AMENDMENTS.md C.30. text-lg
-                bump + Mustard-deep accent line; font-bold preserved (existing
-                baseline already at upper bound; spec's font-semibold would
-                regress weight). border-b-2 over spec's ~1px guideline because
-                text-lg at operational arm's length needs the confident anchor. */}
-            <span className="text-lg font-bold uppercase tracking-[0.14em] text-co-text border-b-2 border-co-gold-deep pb-0.5">
-              {stationDisplay}
-            </span>
-          </span>
-          <span className="text-[11px] text-co-text-muted">
-            {t("closing.station.progress_required", { completed: completedRequired, total: totalRequired })}
-            {aboveRoleCount > 0 ? t("closing.station.awaiting_higher_role", { count: aboveRoleCount }) : ""}
-          </span>
-        </div>
-        <span aria-hidden className="text-co-text-muted">
-          {expanded ? <ChevronUpIcon /> : <ChevronDownIcon />}
-        </span>
-      </button>
-
-      {expanded ? (
         <div className="flex flex-col gap-2 px-3 pb-3">
           {items.map((it) => {
             const c = completions.get(it.id) ?? null;
@@ -1293,8 +1273,8 @@ function StationGroup({
             );
           })}
         </div>
-      ) : null}
-    </section>
+      </div>
+    </CollapsibleChecklistSection>
   );
 }
 
@@ -1490,29 +1470,3 @@ function InfoIcon() {
     </svg>
   );
 }
-
-function SmallCheckIcon() {
-  return (
-    <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden>
-      <circle cx="7" cy="7" r="6" fill="currentColor" />
-      <path d="M4 7.2L6 9.2L10 5" stroke="white" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
-  );
-}
-
-function ChevronDownIcon() {
-  return (
-    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden>
-      <path d="M3 6L8 11L13 6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
-  );
-}
-
-function ChevronUpIcon() {
-  return (
-    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden>
-      <path d="M3 10L8 5L13 10" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
-  );
-}
-

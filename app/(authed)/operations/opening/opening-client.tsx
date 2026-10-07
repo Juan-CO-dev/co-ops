@@ -44,7 +44,12 @@ import type {
 } from "@/lib/types";
 
 import { ActionButton } from "@/components/ActionButton";
-import { OpeningVerificationStation } from "@/components/opening/OpeningVerificationStation";
+import {
+  OpeningVerificationStation,
+  openingStationProgress,
+} from "@/components/opening/OpeningVerificationStation";
+import { showProblems, unfinishedSectionIds } from "@/lib/collapsible-sections";
+import { useCollapsibleSections } from "@/lib/use-collapsible-sections";
 import type { OpeningItemFormValue } from "@/components/opening/OpeningChecklistItem";
 import {
   OpeningPrepEntry,
@@ -875,6 +880,21 @@ export function OpeningClient({
     return groups;
   }, [phase1Items]);
 
+  // Wave 1 B — collapsible Phase 1 stations. DONE per station comes from the form's
+  // own rules (openingStationProgress: ticked tick-items, section-verified spot-check
+  // items, everything when verificationLocked). First unfinished station starts open.
+  const stationProgress = Array.from(stationGroups.entries()).map(([station, items]) =>
+    openingStationProgress(
+      station,
+      items,
+      values,
+      closerSnapshotsMap,
+      sectionVerifications,
+      verificationLocked,
+    ),
+  );
+  const stationCollapse = useCollapsibleSections("opening-p1", stationProgress);
+
   // C.53 §10 — partition Phase 1 items. Spot-check items (in the closer-count-
   // snapshot universe) are resolved via section-verify/recount, NOT the tick
   // affordance; the rest are cleanliness/temp tick rows. Splitting here lets the
@@ -1512,6 +1532,9 @@ export function OpeningClient({
   const handlePhase1Submit = async () => {
     if (!phase1SubmitEnabled) {
       setShowMissingCountErrors(true);
+      // Open + scroll to the stations holding the problem (unfinished, or a
+      // missing temperature / count) so it is not hidden inside a collapsed card.
+      stationCollapse.reveal(unfinishedSectionIds(stationProgress));
       return;
     }
 
@@ -1747,6 +1770,8 @@ export function OpeningClient({
               sectionVerifications={sectionVerifications}
               onSectionVerifyToggle={handleSectionVerifyToggle}
               verificationLocked={verificationLocked}
+              open={stationCollapse.isOpen(station)}
+              onToggleOpen={() => stationCollapse.toggle(station)}
             />
           ))}
         </div>
@@ -1839,6 +1864,7 @@ export function OpeningClient({
           language={language}
           showMissingErrors={showMissingPhase2Errors}
           readOnly={phase2AlreadyFinalized}
+          onShowProblems={() => setShowMissingPhase2Errors(true)}
         />
       ) : null}
 
@@ -1951,6 +1977,19 @@ export function OpeningClient({
               </p>
             ) : null}
           </div>
+          <div className="flex flex-col gap-1 sm:flex-row sm:items-center">
+          {!submitEnabled && activePhase === "verification" && !verificationLocked &&
+          unfinishedSectionIds(stationProgress).length > 0 ? (
+            <button
+              type="button"
+              onClick={() =>
+                showProblems(stationProgress, setShowMissingCountErrors, stationCollapse.reveal)
+              }
+              className="inline-flex min-h-[44px] items-center justify-center px-3 text-xs font-bold uppercase tracking-[0.12em] text-co-text underline focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/40"
+            >
+              {t("checklist.section.show_problems")}
+            </button>
+          ) : null}
           <ActionButton onClick={handleSubmit} disabled={!submitEnabled}>
             {submitState.status === "submitting"
               ? t("opening.submit.submitting")
@@ -1964,6 +2003,7 @@ export function OpeningClient({
                       })
                     : t("opening.finalize.button_label")}
           </ActionButton>
+          </div>
         </div>
       </footer>
     </div>
