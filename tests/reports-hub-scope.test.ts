@@ -45,6 +45,15 @@ const tables = () => ({
 });
 afterEach(()=>{vi.useRealTimers();vi.restoreAllMocks();});
 describe("operations loader data boundaries",()=>{
+  it("shows the true confirmer on an employee's shared report", async () => {
+    const data: Record<string,Row[]> = tables();
+    data.checklist_instances![0] = {...instance, status:"confirmed", confirmed_by:"colleague", confirmed_at:"2026-10-06T21:00:00Z"};
+    const {client} = fake(data);
+    const rows = await listReportSkeleton(client,{viewer,locationId:"shop",dateFrom:instance.date,dateTo:instance.date});
+    const enriched = await enrichReportItems(client,{viewer,locationId:"shop",dateFrom:instance.date,dateTo:instance.date},rows);
+    expect(enriched.find(row=>row.id==="shared")?.submitterName).toBe("Private colleague");
+    expect(enriched.find(row=>row.id==="shared")?.submitterName).not.toBe("Me");
+  });
   it("throws failed skeleton reads instead of reporting missing activity",async()=>{
     const {client}=fake(tables(),"checklist_instances");
     await expect(listReportSkeleton(client,{viewer,locationId:"shop",dateFrom:instance.date,dateTo:instance.date})).rejects.toThrow("read failed");

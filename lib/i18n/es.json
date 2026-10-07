@@ -36,6 +36,7 @@
   "reports.hub.compare": "Comparar con el período anterior",
   "reports.hub.apply": "Aplicar",
   "reports.hub.cap": "Hasta 92 días inclusive. La comparación se aplica a los totales y las tendencias.",
+  "reports.hub.range_shortened": "El rango se acortó a 92 días.",
   "reports.hub.feedback": "Mis comentarios",
   "reports.hub.team": "Tendencias del equipo",
   "reports.hub.trends": "Tendencias de operaciones",

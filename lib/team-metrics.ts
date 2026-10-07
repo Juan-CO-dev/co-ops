@@ -198,19 +198,22 @@ async function loadTeamWindow(
 
   // 1. TASKS + NOTES (completions: completed_at in span, live, instance at location)
   if (locInstanceIds.size) {
-    const comps = await selectAllRows<{ completed_by: string | null; completed_at: string; notes: string | null }>(
-      (from, to) => service
-        .from("checklist_completions")
-        .select("instance_id, completed_by, completed_at, notes")
-        .in("instance_id", [...locInstanceIds])
-        .gte("completed_at", bounds.start).lt("completed_at", upperTs)
-        .is("superseded_at", null).is("revoked_at", null)
-        .order("completed_at", { ascending: true }).range(from, to),
-    );
-    for (const c of comps) {
-      if (!c.completed_by) continue;
-      place(c.completed_by, c.completed_at, "tasks");
-      if (c.notes && c.notes.trim()) place(c.completed_by, c.completed_at, "notes");
+    const ids = [...locInstanceIds];
+    for (let i = 0; i < ids.length; i += 50) {
+      const comps = await selectAllRows<{ completed_by: string | null; completed_at: string; notes: string | null }>(
+        (from, to) => service
+          .from("checklist_completions")
+          .select("instance_id, completed_by, completed_at, notes")
+          .in("instance_id", ids.slice(i, i + 50))
+          .gte("completed_at", bounds.start).lt("completed_at", upperTs)
+          .is("superseded_at", null).is("revoked_at", null)
+          .order("completed_at", { ascending: true }).range(from, to),
+      );
+      for (const c of comps) {
+        if (!c.completed_by) continue;
+        place(c.completed_by, c.completed_at, "tasks");
+        if (c.notes && c.notes.trim()) place(c.completed_by, c.completed_at, "notes");
+      }
     }
   }
 

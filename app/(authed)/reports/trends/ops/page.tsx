@@ -19,8 +19,8 @@ import { serverT } from "@/lib/i18n/server";
 import type { Language, TranslationKey } from "@/lib/i18n/types";
 import { canReadReportLocation, type LocationActor } from "@/lib/locations";
 import { operationalNow } from "@/lib/midshift";
-import { formatCents } from "@/lib/i18n/format";
-import { loadTrendSeries, type TrendGranularity, type TrendSeries } from "@/lib/reports-trends";
+import { formatCents, formatTrendMonthLabels } from "@/lib/i18n/format";
+import { addDays, bucketStart, loadTrendSeries, type TrendGranularity, type TrendSeries } from "@/lib/reports-trends";
 import { requireSessionFromHeaders } from "@/lib/session";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 
@@ -99,6 +99,14 @@ export default async function OpsTrendsPage({ searchParams }: PageProps): Promis
   const drill = (signal: string) => `/reports/operations?location=${locationParam}&${context}&sf_${signal}=true`;
   const cur = series.current;
   const prev = series.previous;
+  const monthLabels = granularity === "month" ? formatTrendMonthLabels(cur.map(bucket => bucket.key), language) : [];
+  const partialFirst = granularity === "month" && bucketStart(range.from, "month") !== range.from;
+  const partialLast = granularity === "month" && bucketStart(addDays(range.to, 1), "month") === bucketStart(range.to, "month");
+  const monthAxis = monthLabels.length ? <div className="mt-1 flex text-[10px] text-co-text-dim" aria-label={serverT(language, "reports.trends.gran_month")}>
+    {monthLabels.map((label, index) => <span key={`${cur[index]?.key}-${index}`} className="min-w-0 flex-1 text-center">{label}
+      {(index === 0 && partialFirst || index === monthLabels.length - 1 && partialLast) ? <span className="block">{serverT(language, "reports.trends.partial")}</span> : null}
+    </span>)}
+  </div> : null;
 
   return (
     <main className="mx-auto max-w-2xl md:max-w-3xl lg:max-w-5xl xl:max-w-6xl px-4 pb-32 pt-4 sm:px-6">
@@ -151,6 +159,7 @@ export default async function OpsTrendsPage({ searchParams }: PageProps): Promis
               colorCurrent="var(--co-danger)"
             />
           )}
+          {monthAxis}
           <ChartLegend hasPrev={!!prev} current={legendCurrent} previous={legendPrevious} />
         </TrendCard>
 
@@ -171,6 +180,7 @@ export default async function OpsTrendsPage({ searchParams }: PageProps): Promis
             previous={prev ? prev.map((b) => (b.hasData ? b.tempFlags : null)) : undefined}
             colorCurrent="var(--co-info)"
           />
+          {monthAxis}
           <ChartLegend hasPrev={!!prev} current={legendCurrent} previous={legendPrevious} />
         </TrendCard>
 
@@ -200,6 +210,7 @@ export default async function OpsTrendsPage({ searchParams }: PageProps): Promis
                   : []),
               ]}
             />
+            {monthAxis}
             <ChartLegend hasPrev={!!prev} current={legendCurrent} previous={legendPrevious} />
           </TrendCard>
         ) : null}
@@ -224,6 +235,7 @@ export default async function OpsTrendsPage({ searchParams }: PageProps): Promis
                 : []),
             ]}
           />
+          {monthAxis}
           <ChartLegend hasPrev={!!prev} current={legendCurrent} previous={legendPrevious} />
         </TrendCard>
       </div>

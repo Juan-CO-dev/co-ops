@@ -37,6 +37,7 @@
   "reports.hub.compare": "Compare with previous period",
   "reports.hub.apply": "Apply",
   "reports.hub.cap": "Up to 92 inclusive days. Comparison applies to summary counts and trends.",
+  "reports.hub.range_shortened": "Range shortened to 92 days.",
   "reports.hub.feedback": "My feedback",
   "reports.hub.team": "Team trends",
   "reports.hub.trends": "Operations trends",
