@@ -220,14 +220,18 @@ export interface YieldVarianceView {
   makerItems: number;
 }
 
-/** Active KH+ at the shop, level ≤ the actor's (the picker floor), the actor first-class too. */
+/**
+ * Active KH+ with an ACTIVE MEMBERSHIP at the shop, level ≤ the actor's (the picker floor). CC r2:
+ * memberships only — the acting user is never added unconditionally, so a level-9 owner with no
+ * membership row stays out. Self-retraining is the separate default path ("Me"), not a picker row.
+ */
 async function loadAssigneeOptions(sb: Sb, actor: AuthContext, locationId: string): Promise<RetrainAssigneeOption[]> {
   const { data: members, error: mErr } = await sb.from("user_locations").select("user_id")
     .eq("location_id", locationId).eq("active", true).returns<Array<{ user_id: string }>>();
   if (mErr) throw new Error(`loadAssigneeOptions members: ${mErr.message}`);
   const atShop = new Set((members ?? []).map((m) => m.user_id));
-  atShop.add(actor.user.id);
   const ids = [...atShop];
+  if (ids.length === 0) return [];
   const users: Array<{ id: string; name: string; role: string; active: boolean }> = [];
   for (let i = 0; i < ids.length; i += 100) {
     const { data, error } = await sb.from("users").select("id, name, role, active").in("id", ids.slice(i, i + 100))
@@ -368,8 +372,9 @@ async function assertAssignable(sb: Sb, actor: AuthContext, locationId: string, 
 
 /**
  * Retrain (GM 7, both scopes): records a note naming the outlier makers (recipe scope) or the one
- * maker (maker scope), assigned to a KH+ or the GM, and so holds that scope's nudge — and, for a
- * recipe note, the recipe's maker items — for its next YIELD_STATS_WINDOW batches and while open.
+ * maker (maker scope) and so holds that scope's nudge — and, for a recipe note, the recipe's maker
+ * items — for its next YIELD_STATS_WINDOW batches. Assigned to a KH+ other than the GM: an OPEN task
+ * (My shift) that also holds the nudge until marked done. No assignee / the GM: done at once.
  * Bound to the shop BEFORE any I/O. Changes no recipe.
  */
 export async function recordYieldRetrain(actor: AuthContext, input: RetrainInput, now: Date = new Date()): Promise<{ id: string }> {
@@ -385,7 +390,11 @@ export async function recordYieldRetrain(actor: AuthContext, input: RetrainInput
 
   const sb = getServiceRoleClient();
   const assignedTo = input.assignedTo || actor.user.id;
-  await assertAssignable(sb, actor, input.locationId, assignedTo);
+  // CC r2: a SELF-retrain (no assignee, or the GM picked himself) is recorded DONE at once, by the
+  // GM, now — no My shift task, and the nudge returns after the 10-batch snooze. Only a KH+ OTHER
+  // than the GM opens a task that holds the nudge until it is marked done.
+  const selfRetrain = assignedTo === actor.user.id;
+  if (!selfRetrain) await assertAssignable(sb, actor, input.locationId, assignedTo);
   const verdict = await currentVerdict(sb, input.locationId, input.itemId, now);
   const scopeVerdict = input.scope === "recipe" ? verdict.recipe : verdict.makers.find((m) => m.makerId === makerId);
   if (!scopeVerdict || !scopeVerdict.nudge || !scopeVerdict.summary) throw new YieldStatsError(409, "no_active_nudge");
@@ -406,21 +415,23 @@ export async function recordYieldRetrain(actor: AuthContext, input: RetrainInput
     snooze_batches: YIELD_STATS_WINDOW,
     created_by: actor.user.id,
     assigned_to: assignedTo,
-    status: "open",
+    ...(selfRetrain
+      ? { status: "done", done_at: now.toISOString(), done_by: actor.user.id }
+      : { status: "open" }),
   }).select("id").maybeSingle<{ id: string }>();
   if (error) {
     if (isMissingRetrainTable(error)) throw new YieldStatsError(503, "yield_unavailable");
     throw new Error(`recordYieldRetrain: ${error.message}`);
   }
   if (!data) throw new Error("recordYieldRetrain returned no row");
-  const meta = { location_id: input.locationId, recipe_id: ctx.recipeId, item_id: input.itemId, scope: input.scope, maker_id: makerId, outlier_user_ids: outliers, assigned_to: assignedTo };
+  const meta = { location_id: input.locationId, recipe_id: ctx.recipeId, item_id: input.itemId, scope: input.scope, maker_id: makerId, outlier_user_ids: outliers, assigned_to: assignedTo, self_retrain: selfRetrain };
   await audit({
     actorId: actor.user.id, actorRole: actor.user.role, action: "yield.retrain_noted",
     resourceTable: "recipe_yield_retrain_notes", resourceId: data.id,
     metadata: { ...meta, signed_drift: scopeVerdict.summary.signedDrift, batches_in_window: scopeVerdict.summary.batches, snooze_batches: YIELD_STATS_WINDOW, has_note: note !== null },
     ipAddress: null, userAgent: null,
   });
-  if (assignedTo !== actor.user.id) {
+  if (!selfRetrain) {
     await audit({
       actorId: actor.user.id, actorRole: actor.user.role, action: "yield.retrain_assigned",
       resourceTable: "recipe_yield_retrain_notes", resourceId: data.id, metadata: meta,

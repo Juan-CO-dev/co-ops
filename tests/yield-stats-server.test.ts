@@ -212,7 +212,8 @@ describe("Retrain — GM only, bound, one append-only note, then snoozed", () =>
     expect(vi.mocked(audit).mock.calls[0]![0]).toMatchObject({ action: "yield.retrain_noted" });
     const v = await loadYieldVariance(GM_A, SHOP_A, NOW);
     expect(v.items[0]!.verdict.recipe.nudge).toBe(false);
-    expect(v.items[0]!.verdict.recipe.hold).toMatchObject({ snoozed: true, remaining: 10, open: true });
+    // No assignee = a self-retrain, done at once (CC r2): held by the 10-batch snooze only.
+    expect(v.items[0]!.verdict.recipe.hold).toMatchObject({ snoozed: true, remaining: 10, open: false });
   });
   it("refuses 409 no_active_nudge when the server sees no live nudge (shop B is on the card)", async () => {
     const ownerB = actor("owner", 9, []);
@@ -344,10 +345,50 @@ describe("assignee picker — active KH+ at that shop, level ≤ the GM's", () =
     expect(writes[0]!.payload).toMatchObject({ assigned_to: KH1, status: "open" });
     expect(vi.mocked(audit).mock.calls.map((c) => c[0].action)).toEqual(["yield.retrain_noted", "yield.retrain_assigned"]);
   });
-  it("with no pick the GM owns it (assigned_to = the GM, only retrain_noted is audited)", async () => {
+  it("with no pick the GM did it: assigned_to = the GM, recorded DONE at once, only retrain_noted is audited", async () => {
     await recordYieldRetrain(GM_A, { locationId: SHOP_A, itemId: RANCH, scope: "recipe" }, NOW);
-    expect(writes[0]!.payload).toMatchObject({ assigned_to: "u-actor" });
+    expect(writes[0]!.payload).toMatchObject({ assigned_to: "u-actor", status: "done", done_by: "u-actor" });
+    expect(typeof (writes[0]!.payload as Row).done_at).toBe("string");
     expect(vi.mocked(audit).mock.calls.map((c) => c[0].action)).toEqual(["yield.retrain_noted"]);
+  });
+  it("an owner with no membership row at the shop is NOT in the picker (memberships only)", async () => {
+    const OWNER_X = actor("owner", 9, [], false, "u-owner");
+    db.users!.push({ id: "u-owner", name: "Olive Owner", role: "owner", active: true });
+    const v = await loadYieldVariance(OWNER_X, SHOP_A, NOW);
+    expect(v.canAct).toBe(true);
+    expect(v.assignees.map((a) => a.id)).not.toContain("u-owner");
+    expect(v.assignees.map((a) => a.id)).toContain(KH1);
+  });
+});
+
+describe("self-retrain (no assignee, or the GM picked) is DONE at once — CC r2 ruling", () => {
+  const KH1_A = actor("key_holder", 4, [SHOP_A], false, KH1);
+  for (const [label, assignedTo] of [["no assignee", undefined], ["the GM as assignee", "u-actor"]] as const) {
+    it(`${label}: recorded done, no My shift task, nudge-eligible again after 10 later batches`, async () => {
+      await recordYieldRetrain(GM_A, { locationId: SHOP_A, itemId: RANCH, scope: "recipe", assignedTo }, NOW);
+      const note = db.recipe_yield_retrain_notes![0]!;
+      expect(note).toMatchObject({ status: "done", done_by: "u-actor", assigned_to: "u-actor" });
+      // No My shift task for anyone — the GM included.
+      expect(await loadMyRetrainTasks(GM_A, SHOP_A)).toEqual([]);
+      expect(await loadMyRetrainTasks(KH1_A, SHOP_A)).toEqual([]);
+      // Right after: held by the snooze only (not open).
+      let v = await loadYieldVariance(GM_A, SHOP_A, NOW);
+      expect(v.items[0]!.verdict.recipe.hold).toMatchObject({ open: false, snoozed: true, remaining: 10 });
+      expect(v.items[0]!.verdict.recipe.nudge).toBe(false);
+      // 10 more (still under) batches AFTER the note: the nudge comes back — never suppressed forever.
+      const after = Date.parse(String(note.created_at)) + 60_000;
+      for (let i = 0; i < 10; i++) {
+        db.productions!.push({ ...header(SHOP_A, 0, 7.5, ANA), produced_at: new Date(after + i * 60_000).toISOString() });
+      }
+      v = await loadYieldVariance(GM_A, SHOP_A, new Date(after + 3_600_000));
+      expect(v.items[0]!.verdict.recipe.hold).toBeNull();
+      expect(v.items[0]!.verdict.recipe.nudge).toBe(true);
+    });
+  }
+  it("only a KH+ OTHER than the GM creates an open task", async () => {
+    await recordYieldRetrain(GM_A, { locationId: SHOP_A, itemId: RANCH, scope: "recipe", assignedTo: KH1 }, NOW);
+    expect(db.recipe_yield_retrain_notes![0]).toMatchObject({ status: "open", done_by: null });
+    expect(await loadMyRetrainTasks(KH1_A, SHOP_A)).toHaveLength(1);
   });
 });
 

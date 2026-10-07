@@ -3532,7 +3532,7 @@
   "yield.view.unavailable": "Las estadísticas de rendimiento no están disponibles ahora, así que aquí no se puede cambiar nada. Inténtalo más tarde.",
   "yield.view.partial": "{n} de estas tandas cuentan en la ventana",
   "yield.retrain.assign_label": "¿Quién los va a reentrenar?",
-  "yield.retrain.assign_self": "Yo",
+  "yield.retrain.assign_self": "Yo (hecho ahora)",
   "yield.retrain.status_open": "Reentrenamiento asignado a {name} - abierto",
   "yield.retrain.status_done": "Reentrenado el {date} por {name}",
   "yield.retrain.batches_left": "En pausa por {n} tandas más",

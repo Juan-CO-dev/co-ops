@@ -18,8 +18,10 @@
 --      ASSIGNMENT (Juan, 2026-10-07: "Retrain should be a GM option, and maybe he can assign a kh+
 --      to help retrain whoever is not making the recipe right etc"): every note carries
 --      `assigned_to` (the KH+ the GM picked, or the GM himself when he picked nobody) and a
---      `status` open → done with `done_at` / `done_by` / `done_note`. An open retrain holds the
---      nudge; it shows on the assignee's "My shift" until marked done.
+--      `status` open → done with `done_at` / `done_by` / `done_note`. A KH+ assignee other than
+--      the GM gets an OPEN note: it holds the nudge and shows on their "My shift" until marked done.
+--      A SELF-retrain (no assignee, or the GM) is INSERTED already done (done_by = the GM,
+--      done_at = now; CC r2): no task, and the nudge returns after the 10-batch snooze.
 --      APPEND-ONLY CHOICE: a GUARDED ONE-TIME UPDATE, not an event row. service_role holds NO
 --      UPDATE on the table at all; the only mutation is complete_yield_retrain (SECURITY
 --      DEFINER), which flips status 'open' → 'done' exactly once, stamps the done_* columns, and

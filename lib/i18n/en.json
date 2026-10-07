@@ -3532,7 +3532,7 @@
   "yield.view.unavailable": "Yield statistics are unavailable right now, so nothing can be changed here. Try again later.",
   "yield.view.partial": "{n} of these batches count in the window",
   "yield.retrain.assign_label": "Who will retrain them?",
-  "yield.retrain.assign_self": "Me",
+  "yield.retrain.assign_self": "Me (done now)",
   "yield.retrain.status_open": "Retrain assigned to {name} - open",
   "yield.retrain.status_done": "Retrained {date} by {name}",
   "yield.retrain.batches_left": "Paused for {n} more batches",
