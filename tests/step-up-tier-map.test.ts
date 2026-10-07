@@ -146,6 +146,8 @@ const SERVER_TIER_MAP: Record<string, string[]> = {
   "app/api/admin/recipes/edges/route.ts": ["B"],
   "app/api/admin/recipes/full/route.ts": ["B"],
   "app/api/admin/recipes/route.ts": ["B"],
+  // Batch vs bottle Phase B: Update recipe yield from the drift nudge — the recipe-edit gate.
+  "app/api/admin/recipes/yield-nudge/route.ts": ["B"],
   "app/api/admin/skus/[id]/location-settings/route.ts": ["A"],
   "app/api/admin/skus/[id]/pack-chain/route.ts": ["A"],
   "app/api/admin/skus/[id]/price/route.ts": ["A"],
@@ -253,6 +255,9 @@ const REACTIVE_STEP_UP_COMPONENTS = [
   "components/catering/quotes/QuotesClient.tsx",
   // Outside /admin's StepUpProvider — carries its own PasswordModal.
   "components/counts/CountForm.tsx",
+  // Outside /admin too (the yield variance page, level 5+); Update recipe yield is the only
+  // step-up action on it and the route asserts Tier B (joined by hand, 2026-10-07).
+  "components/production/YieldVariance.tsx",
 ];
 
 describe("step-up tier map — the server half", () => {
