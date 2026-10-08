@@ -25,7 +25,8 @@
 import { after } from "next/server";
 import Link from "next/link";
 import { loadOwnTaskAssignments, loadShiftBoard } from "@/lib/assignments";
-import { taskVisible, type TaskType } from "@/lib/assignments-shared";
+import { currentStation, taskVisible, type TaskType } from "@/lib/assignments-shared";
+import { closingStationAnchor, dashboardWorkVisibility } from "@/lib/assignment-sections";
 import { ShiftBoardClient } from "@/components/assignments/ShiftBoardClient";
 import { RetrainTaskList } from "@/components/production/RetrainTaskList";
 import { loadMyRetrainTasks } from "@/lib/yield-stats";
@@ -382,7 +383,9 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
           locationId: selectedLocation.id, date: dashboardDate,
         })) ?? []
       : [];
-  const visible = (task: TaskType) => taskVisible(auth.level, task, ownTasks);
+  const visible = (task: TaskType) => shiftBoard ? dashboardWorkVisibility(shiftBoard, task).taskTile : taskVisible(auth.level, task, ownTasks);
+  const heldStationId = shiftBoard ? currentStation(shiftBoard.events, auth.user.id)?.stationId : null;
+  const heldStation = shiftBoard?.stations.find((station) => station.id === heldStationId);
   const dashActor = { userId: auth.user.id, role: auth.role, level: auth.level };
   const [amPrepDashboard, midDayPrepDashboard, cashDashboard, pmDashboard] = await Promise.all([
     selectedLocation && visible("am_prep")
@@ -664,7 +667,7 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
         {auth.level >= 4 && selectedLocation && operational?.yesterdayUnconfirmed ? (
           <YesterdayUnconfirmedAlert location={selectedLocation} yesterdayDate={operational.yesterdayDate} language={language} />
         ) : null}
-        {shiftBoard && <ShiftBoardClient key={shiftBoard.locationId} board={shiftBoard} compact retrainTasks={retrainTasks} />}
+        {shiftBoard && <ShiftBoardClient key={`${shiftBoard.locationId}:${ownTasks.length}:${heldStationId ?? "none"}`} board={shiftBoard} compact retrainTasks={retrainTasks} />}
         {!shiftBoard && retrainTasks.length > 0 && <section className="co-card p-4"><RetrainTaskList tasks={retrainTasks} /></section>}
 
         {/* Today's Operations card. */}
@@ -678,8 +681,12 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
           !selectedLocation ? <NoLocationsState language={language} /> : null
         )}
 
-        {selectedLocation && ownTasks.some((task) => visible(task.task)) ? (
+        {selectedLocation && (ownTasks.some((task) => visible(task.task)) || !!heldStation) ? (
           <ReportsSection language={language}>
+            {heldStation && <Link href={`/operations/closing?location=${selectedLocation.id}#${closingStationAnchor(heldStation.name)}`}
+              className="co-card flex min-h-[48px] min-w-0 items-center p-4 font-bold text-co-text" title={language === "es" ? heldStation.nameEs || heldStation.name : heldStation.name}>
+              <span className="truncate">{serverT(language, "assignments.stationCard", { station: language === "es" ? heldStation.nameEs || heldStation.name : heldStation.name })}</span>
+            </Link>}
             {openingDashboard?.isVisibleToActor ? (
               <OpeningTile
                 locationId={selectedLocation.id}

@@ -249,6 +249,18 @@ describe("CollapsibleChecklistSection markup", () => {
     );
   });
 
+  it("accepts a stable URL fragment for a station checklist", () => {
+    const html = renderToStaticMarkup(createElement(TranslationProvider, {
+      initialLanguage: "en",
+      children: createElement(CollapsibleChecklistSection, {
+        formKey: "closing", sectionId: "Walk-Out Verification",
+        anchorId: "closing-station-Walk-Out%20Verification", title: "Walk-Out Verification",
+        done: 0, total: 1, open: false, onToggle: () => {}, children: null,
+      }),
+    }));
+    expect(html).toContain('id="closing-station-Walk-Out%20Verification"');
+  });
+
   it("hides the progress line when a section has no items", () => {
     expect(render(true, "en", 0, 0)).not.toContain("data-section-progress");
   });

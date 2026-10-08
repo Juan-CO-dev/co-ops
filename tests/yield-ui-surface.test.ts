@@ -117,7 +117,7 @@ describe("retrain assignment surfaces (Juan 2026-10-07)", () => {
   });
   it("My shift: the dashboard loads ONLY the viewer's own retrains and the compact board renders them", () => {
     expect(dashboard).toMatch(/loadMyRetrainTasks\(auth, selectedLocation\.id\)/);
-    expect(dashboard).toMatch(/<ShiftBoardClient key=\{shiftBoard\.locationId\} board=\{shiftBoard\} compact retrainTasks=\{retrainTasks\} \/>/);
+    expect(dashboard).toMatch(/<ShiftBoardClient key=\{`\$\{shiftBoard\.locationId\}:\$\{ownTasks\.length\}:\$\{heldStationId \?\? "none"\}`\} board=\{shiftBoard\} compact retrainTasks=\{retrainTasks\} \/>/);
     expect(shiftBoard).toMatch(/\{compact && retrainTasks\.length > 0 && <RetrainTaskList tasks=\{retrainTasks\} \/>\}/);
     expect(taskList).toContain('fetch("/api/operations/production/yield/retrain/done"');
   });

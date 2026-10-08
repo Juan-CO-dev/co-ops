@@ -39,8 +39,9 @@ export interface CollapsibleSections {
 export function useCollapsibleSections(
   formKey: string,
   sections: readonly SectionProgress[],
+  initialOpen?: Record<string, boolean>,
 ): CollapsibleSections {
-  const [open, setOpen] = useState<Record<string, boolean>>(() => defaultOpenMap(sections));
+  const [open, setOpen] = useState<Record<string, boolean>>(() => initialOpen ?? defaultOpenMap(sections));
   const idsRef = useRef<string[]>([]);
   const openRef = useRef(open);
   // Mirror latest values for the stable callbacks below (written after commit, never during render).

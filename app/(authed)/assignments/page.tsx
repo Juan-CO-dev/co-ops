@@ -26,11 +26,11 @@ export default async function AssignmentsPage({ searchParams }: { searchParams: 
   const date = etCalendarDate(new Date().toISOString());
   const board = selected ? await loadShiftBoard(sb, { actor, locationId: selected.id, date }) : null;
   const language = auth.user.language;
-  return <AuthShell width="wide"><div className="space-y-4">
+  return <AuthShell width="wide"><div className="min-w-0 max-w-full space-y-4">
     <Link className="inline-flex min-h-[44px] items-center text-co-text" href={`/dashboard${selected ? `?loc=${selected.id}` : ""}`}>{serverT(language, "assignments.dashboard")}</Link>
     <h1 className="text-2xl font-bold text-co-text">{serverT(language, "assignments.title")}</h1>
     <p className="text-co-text-muted">{formatDateLabel(date, language)}</p>
-    <nav className="flex flex-wrap gap-2" aria-label={serverT(language, "assignments.locations")}>{locations.map((location) => <Link key={location.id} href={`/assignments?location=${location.id}`} aria-current={location.id === selected?.id ? "page" : undefined} className="inline-flex min-h-[44px] items-center rounded-xl border-2 border-co-border bg-co-surface px-3 font-bold text-co-text aria-[current=page]:border-co-text">{location.name}</Link>)}</nav>
-    {board ? <ShiftBoardClient board={board} /> : <p>{serverT(language, "assignments.noLocation")}</p>}
+    <nav className="flex min-w-0 flex-wrap gap-2" aria-label={serverT(language, "assignments.locations")}>{locations.map((location) => <Link key={location.id} href={`/assignments?location=${location.id}`} aria-current={location.id === selected?.id ? "page" : undefined} title={location.name} className="inline-flex min-h-[44px] max-w-full items-center truncate rounded-xl border-2 border-co-border bg-co-surface px-3 font-bold text-co-text aria-[current=page]:border-co-text">{location.name}</Link>)}</nav>
+    {board ? <ShiftBoardClient key={`${board.locationId}:${board.tasks.length}:${board.events.length}`} board={board} /> : <p>{serverT(language, "assignments.noLocation")}</p>}
   </div></AuthShell>;
 }
