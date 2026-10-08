@@ -1,18 +1,19 @@
 "use client";
+import { formatDateLabel } from "@/lib/i18n/format";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { useStepUp } from "@/components/admin/StepUpProvider";
 import { useTranslation } from "@/lib/i18n/provider";
-import type { DirectMappingTarget, MappingCandidate, MappingTarget, ToastReview } from "@/lib/admin/ezcater-review";
+import type { DirectMappingTarget, MappingCandidate, MappingTarget, ToastReview, ReconciliationReview } from "@/lib/admin/ezcater-review";
 
 const button = "min-h-[44px] rounded-lg border border-co-gold-deep px-3 text-co-text disabled:opacity-50";
 const field = "block min-h-[44px] w-full rounded-lg border p-2";
 const reasons = ["not_ezcater", "duplicate", "test", "other"] as const;
 type DismissReason = typeof reasons[number];
-export function EzcaterReviewClient({ candidates, targets, directTargets, toastReviews }: {
-  candidates: MappingCandidate[]; targets: MappingTarget[]; directTargets: DirectMappingTarget[]; toastReviews: ToastReview[];
+export function EzcaterReviewClient({ candidates, targets, directTargets, toastReviews, reconciliationReviews }: {
+  candidates: MappingCandidate[]; targets: MappingTarget[]; directTargets: DirectMappingTarget[]; toastReviews: ToastReview[]; reconciliationReviews: ReconciliationReview[];
 }) {
-  const { t } = useTranslation();
+  const { t, language } = useTranslation();
   const router = useRouter();
   const { requestStepUp } = useStepUp();
   const [search, setSearch] = useState("");
@@ -84,6 +85,14 @@ export function EzcaterReviewClient({ candidates, targets, directTargets, toastR
           </div>}
         </article>;
       })}
+    </section>
+    <section aria-labelledby="toast-cross-check-heading" className="space-y-3">
+      <h2 id="toast-cross-check-heading" className="font-semibold">{t("admin.ezcaterReview.reconciliation")}</h2>
+      {reconciliationReviews.filter((row) => matches(`${row.order_number ?? ""} ${row.locationName}`)).map((row) => <article key={row.order_id} className="co-card space-y-2 p-3">
+        <p className="font-semibold">{row.order_number ? t("admin.ezcaterReview.order", { number: row.order_number }) : t("admin.ezcaterReview.noCode")} · {row.locationName}</p>
+        <p>{formatDateLabel(row.event_date, language)} · {t(`admin.ezcaterReview.status.${row.status}`)}</p>
+        {row.rule && <p>{t(`admin.ezcaterReview.rule.${row.rule}`)}</p>}
+      </article>)}
     </section>
     <section aria-labelledby="toast-review-heading" className="space-y-3">
       <h2 id="toast-review-heading" className="font-semibold">{t("admin.ezcaterReview.toastSection")}</h2>

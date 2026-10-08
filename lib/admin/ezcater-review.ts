@@ -1,4 +1,5 @@
 import "server-only";
+import type { ToastCrossCheckOrder } from "@/lib/report-digests-catering-shared";
 import type { AuthContext } from "@/lib/session";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import { selectAllRows } from "@/lib/supabase-paginate";
@@ -14,6 +15,7 @@ export interface MappingCandidate {
 }
 export interface MappingTarget { id: string; location_id: string; toast_item_name: string; toast_item_guid: string }
 export interface DirectMappingTarget { id: string; kind: "menu_item" | "item" | "package"; name: string; location_id: string | null }
+export interface ReconciliationReview extends ToastCrossCheckOrder { locationName: string }
 export interface ToastReview { reviewId: string; locationId: string; locationName: string; code: string; identity: string; orderNumber: string | null }
 
 async function authorize(actor: AuthContext) {
@@ -86,7 +88,12 @@ export async function loadEzcaterMappingReview(actor: AuthContext) {
     locationName: locations.find((location) => location.id === row.location_id)?.name ?? row.location_id,
     code: row.code, identity: row.identity_key, orderNumber: orders.find((order) => order.id === row.order_id)?.order_number ?? null,
   }));
-  return { candidates, targets, directTargets, toastReviews };
+  const reconciliation = await selectAllRows<ToastCrossCheckOrder>((from, to) => sb.from("ezcater_reconciliation_status")
+    .select("order_id,location_id,event_date,order_number,status,rule").order("event_date", { ascending: false }).order("order_id").range(from, to));
+  const reconciliationReviews: ReconciliationReview[] = reconciliation.map((row) => ({ ...row,
+    locationName: locations.find((location) => location.id === row.location_id)?.name ?? row.location_id,
+  }));
+  return { candidates, targets, directTargets, toastReviews, reconciliationReviews };
 }
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;

@@ -10,6 +10,7 @@ vi.mock("@/lib/toast/capture", () => ({ captureEnabled: () => true, captureToast
 vi.mock("@/lib/supabase-server", () => ({ getServiceRoleClient: vi.fn() }));
 vi.mock("@/lib/audit", () => ({ audit: vi.fn(async () => {}) }));
 vi.mock("@/lib/job-watch-run", () => ({ watchSiblings: vi.fn(async () => {}) }));
+const reconcile = vi.fn();
 beforeEach(() => {
   vi.clearAllMocks();
   vi.stubEnv("DEPLETION_SOURCE", "capture");
@@ -18,7 +19,8 @@ beforeEach(() => {
   vi.stubEnv("CATERING_SCAN_SECRET", "synthetic-test-secret");
   const query = { select: () => query, eq: () => query, not: () => query,
     abortSignal: async () => ({ data: [{ id: "shop" }], error: null }) };
-  vi.mocked(getServiceRoleClient).mockReturnValue({ from: () => query } as unknown as ReturnType<typeof getServiceRoleClient>);
+  reconcile.mockReturnValue({ abortSignal: async () => ({ error: null }) });
+  vi.mocked(getServiceRoleClient).mockReturnValue({ from: () => query, rpc: reconcile } as unknown as ReturnType<typeof getServiceRoleClient>);
   vi.mocked(captureToastDaySystem).mockImplementation(() => new Promise(() => {}));
 });
 afterEach(() => { vi.useRealTimers(); vi.unstubAllEnvs(); });
@@ -58,4 +60,5 @@ it.each([undefined, "capture"])("today uses %s writer mode and runs additive cap
   expect(await response.json()).toMatchObject({ healthy: true });
   expect(pullTodaySalesForAllLocations).toHaveBeenCalledTimes(flag === "capture" ? 0 : 1);
   expect(captureToastDaySystem).toHaveBeenCalledTimes(2);
+  expect(reconcile).toHaveBeenCalledWith("reconcile_ezcater_toast", expect.objectContaining({ p_from: expect.any(String), p_to: expect.any(String) }));
 });

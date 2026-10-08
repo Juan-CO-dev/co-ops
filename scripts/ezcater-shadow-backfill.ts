@@ -2,7 +2,7 @@
 import { pathToFileURL } from "node:url";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import { selectAllRows } from "@/lib/supabase-paginate";
-import { materializeEzcaterShadow } from "@/lib/ezcater/pass2";
+import { materializeEzcaterReconciliation } from "@/lib/ezcater/reconcile";
 import { etYmdMinusDays } from "@/lib/operational-day";
 
 export function parseShadowArgs(args: string[]) {
@@ -30,7 +30,7 @@ export async function runShadowBackfill(options: ReturnType<typeof parseShadowAr
   if (orders.length !== options.expect) throw new Error("shadow_expected_count_mismatch");
   const runs = [];
   for (let date = options.from; date <= options.to; date = etYmdMinusDays(date, -1)) {
-    const result = await materializeEzcaterShadow(date, date, Date.now() + 60_000);
+    const result = await materializeEzcaterReconciliation(date, date, Date.now() + 60_000);
     runs.push({ date, ...result });
     if (result.failed || result.deferred || "skipped" in result) throw new Error("shadow_backfill_incomplete");
   }

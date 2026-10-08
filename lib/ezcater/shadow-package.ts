@@ -33,9 +33,10 @@ export async function packageShadowAmounts(sb: ReturnType<typeof getServiceRoleC
       const amounts = shadowAmounts(graph, target, target.units, locationId, eventDate, productions, transfers);
       if (target.units > 0 && !amounts.length) return [];
       for (const amount of amounts) {
-        const previous = totals.get(amount.sku_id) ?? { sku_id: amount.sku_id, sales_oz: 0, suppressed_oz: 0, shadow_oz: 0 };
+        const previous = totals.get(amount.sku_id) ?? { sku_id: amount.sku_id, sales_oz: 0, suppressed_oz: 0, shadow_oz: 0, flattened_oz: 0 };
         totals.set(amount.sku_id, { sku_id: amount.sku_id, sales_oz: previous.sales_oz + amount.sales_oz,
-          suppressed_oz: previous.suppressed_oz + amount.suppressed_oz, shadow_oz: previous.shadow_oz + amount.shadow_oz });
+          suppressed_oz: previous.suppressed_oz + amount.suppressed_oz, shadow_oz: previous.shadow_oz + amount.shadow_oz,
+          flattened_oz: previous.flattened_oz + amount.flattened_oz });
       }
     }
   }

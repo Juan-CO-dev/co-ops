@@ -21,6 +21,7 @@ import { listReports } from "@/lib/reports-hub";
 import { loadShopV2Facts } from "@/lib/report-digests-v2";
 import { selectAllRows } from "@/lib/supabase-paginate";
 import { etCalendarDate } from "@/lib/operational-day";
+import { readNotInToast } from "@/lib/catering/not-in-toast";
 import { resolveRefs } from "@/lib/catering/prep-demand";
 import { serverT } from "@/lib/i18n/server";
 import { isTaskType, type TaskType } from "@/lib/assignments-shared";
@@ -44,6 +45,8 @@ import {
   type CateringReadiness,
   type StaffRoster,
   type StaffSource,
+  type ToastCrossCheckOrder,
+  type ToastCrossCheckOrphan,
 } from "@/lib/report-digests-catering-shared";
 import type { StationEvent } from "@/lib/assignments-shared";
 import { deriveCateringSkuDemand } from "@/lib/catering/sku-demand";
@@ -201,6 +204,9 @@ interface LeadRow {
 const LEAD_SELECT = "id, contact_name, company, event_date, time_window, headcount, stage, lead_source, location_id, created_at, follow_up_date, external_ref, delivery_address, estimated_revenue_cents, notes";
 
 export async function loadCateringFacts(sb: Sb, today: string, now: Date): Promise<CateringFacts> {
+  const activeShops = await selectAllRows<{ id: string }>((from, to) =>
+    sb.from("locations").select("id").eq("active", true).order("id").range(from, to));
+  const toRingInToast = await readNotInToast(sb, activeShops.map((shop) => shop.id), { from: today, through: today });
   const yesterday = addDays(today, -1);
   const tomorrow = addDays(today, 1);
   // Two independent Eastern midnights (Astra P2): 23 h / 25 h on the DST transition days.
@@ -294,7 +300,17 @@ export async function loadCateringFacts(sb: Sb, today: string, now: Date): Promi
   await Promise.all(todayShops.map(async (loc) => {
     [readiness[loc], staff[loc]] = await Promise.all([loadCateringReadiness(loc, today), loadStaffRoster(sb, loc, today)]);
   }));
+  const [reconciliation, orphans] = await Promise.all([
+    selectAllRows<ToastCrossCheckOrder>((from, to) => sb.from("ezcater_reconciliation_status")
+      .select("order_id,location_id,event_date,order_number,status,rule").eq("event_date", yesterday)
+      .order("order_id").range(from, to)),
+    selectAllRows<ToastCrossCheckOrphan>((from, to) => sb.from("ezcater_toast_orphans")
+      .select("location_id,business_date,order_guid,check_guid,amount_cents").eq("business_date", yesterday)
+      .order("location_id").order("order_guid").order("check_guid").range(from, to)),
+  ]);
   return {
+    toastCrossCheck: { orders: reconciliation, orphans },
+    toRingInToast,
     today, leads: facts, lostYesterdayIds: lostIds,
     quotesSentYesterday: sentYesterday.map((q) => ({ id: q.id, locationId: q.location_id, totalCents: q.total_cents })),
     openQuotes: openQuotes.filter((q) => !q.expires_at || Date.parse(q.expires_at) > now.getTime()).map((q) => ({ id: q.id, locationId: q.location_id })),

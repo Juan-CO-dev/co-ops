@@ -41,6 +41,7 @@ import {
   type AssortmentKind,
 } from "@/lib/toast/platter-shared";
 import { loadCapturedToastDay, type CapturedToastDay } from "@/lib/toast/captured-day";
+import { reconciledToastOrders, type DepletionLink } from "@/lib/ezcater/depletion-shared";
 
 export const TOAST_SALES_WRITE_MIN = 7; // GM+ — pull + exclusions (mirrors toast-map)
 export const TOAST_SALES_READ_MIN = 6;  // AGM+ — consumption readout (prep-demand page floor)
@@ -767,12 +768,13 @@ export async function deriveSalesConsumption(locationId: string, businessDate: s
   return deriveSalesConsumptionFrom(locationId, businessDate, await loadLatestVersions(locationId, businessDate));
 }
 
-export async function deriveCapturedSalesConsumption(locationId: string, businessDate: string, capturedDay?: CapturedToastDay): Promise<SalesConsumption & { captureRunId: string; sourceOrderCount: number; configDegraded: boolean; missingPointerCount: number }> {
+export async function deriveCapturedSalesConsumption(locationId: string, businessDate: string, capturedDay?: CapturedToastDay,
+  reconciliationLinks?: DepletionLink[]): Promise<SalesConsumption & { captureRunId: string; sourceOrderCount: number; configDegraded: boolean; missingPointerCount: number }> {
   const day = capturedDay ?? await loadCapturedToastDay(locationId, businessDate);
   if (!day) throw new Error("toast_capture_day_incomplete");
   const rows = new Map<string, LedgerRow>();
   let cateringExcludedUnits = 0;
-  for (const order of day.orders) {
+  for (const order of reconciliationLinks ? reconciledToastOrders(day.orders, reconciliationLinks) : day.orders) {
     if (order.deleted || order.voided || order.excessFood) continue;
     const catering = order.salesChannel === "catering" || order.salesChannel === "gift_card";
     const eligibleChecks = new Set(order.checks.filter((c) => !c.deleted && !c.voided).map((c) => c.checkGuid));

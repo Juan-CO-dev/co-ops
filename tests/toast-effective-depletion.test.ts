@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { loadEffectiveSalesCoverage, loadEffectiveSalesRows, loadEffectiveSalesWindow } from "@/lib/toast/effective-depletion";
+import { loadEffectiveSalesCoverage, loadEffectiveSalesRows, loadEffectiveSalesWindow, loadRawToastSalesRows } from "@/lib/toast/effective-depletion";
 import type { getServiceRoleClient } from "@/lib/supabase-server";
 
 type Row = Record<string, unknown>;
@@ -43,6 +43,11 @@ beforeEach(() => {
 afterEach(() => vi.unstubAllEnvs());
 
 describe("effective capture depletion", () => {
+  it("keeps the explicit raw shadow baseline independent of PASS 3 activation", async () => {
+    vi.stubEnv("EZCATER_DEPLETION_ENABLED", "1");
+    expect(await loadRawToastSalesRows(db(), window)).toEqual([{ ...day, sku_id: "sku", direct_oz: 12, flattened_oz: 10 }]);
+    expect(queried).not.toContain("ezcater_current_toast_links");
+  });
   it("returns atomic pars signals only for current successful coverage", async () => {
     Object.assign(tables.toast_depletion_day_coverage![0]!, {
       suspect_check_count: 2, suspect_qty: 40, counted_qty: 100,

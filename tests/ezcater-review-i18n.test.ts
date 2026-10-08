@@ -9,6 +9,8 @@ const prefix = "admin.ezcaterReview.";
 const source = readFileSync(new URL("../app/admin/catering/ezcater-review/review-client.tsx", import.meta.url), "utf8");
 const staticKeys = [...source.matchAll(/t\("(admin\.ezcaterReview\.[^"]+)"/g)].map((match) => match[1]!);
 const dynamicKeys = [
+  ...["matched", "amount_mismatch", "not_rung_in_toast"].map((status) => `${prefix}status.${status}`),
+  ...["normalized_code", "late_code", "daily_batch"].map((rule) => `${prefix}rule.${rule}`),
   ...["item", "menu_item", "package"].map((kind) => `${prefix}kind.${kind}`),
   ...["not_ezcater", "duplicate", "test", "other"].map((reason) => `${prefix}reason.${reason}`),
 ];
