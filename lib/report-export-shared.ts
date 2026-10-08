@@ -143,7 +143,7 @@ export const SALES_EXPORT_COLUMNS: Record<SalesExportView, readonly ExportColumn
     col("refunds_captured_count", "int"), col("ezcater_sales", "money"), col("ezcater_orders", "int"), col("sales_before_refunds", "money"),
     col("amount_missing", "int"), col("unknown_tax", "int"), col("unknown_tips", "int"), col("unknown_discounts", "int"), col("gift_cards_excluded", "money"), col("gift_card_checks_excluded", "int"),
     col("ezcater_linked_toast_excluded", "money"), col("ezcater_linked_checks_excluded", "int"), col("void_checks", "int"),
-    col("currency", "currency"),
+    col("currency", "currency"), col("sales_basis"), col("refunds_basis"),
   ],
   items: [...PERIOD, ...SHOP, col("item_guid"), col("item"), col("units", "number"), col("checks", "int")],
   modifiers: [...PERIOD, ...SHOP, col("item_guid"), col("modifier"), col("units", "number"), col("checks", "int")],
@@ -337,6 +337,10 @@ export function salesNotYetAvailableRows(shops: readonly ShopRef[], period: { fr
 type Period = { from: string; to: string };
 const periodCells = (p: Period): ExportRow => ({ period_start: p.from, period_end: p.to });
 
+/** Astra r2 (CC): an export must carry the same caveats the Sales screen shows. */
+export const SALES_BASIS_NOTE = "Toast check totals before refunds plus ezCater subtotals as reported; NOT reconciled net sales (gift cards sold on a regular check, house-account payments and fundraising round-ups are not separated yet; whole E-Gift Card checks excluded).";
+export const REFUNDS_BASIS_NOTE = "Refunds captured so far, shown separately and never subtracted; a late refund on an older order may not be captured yet.";
+
 function salesTotalsCells(t: SalesTotals): ExportRow {
   // A missing coverage day leaves the money as what was captured, labelled by coverage_status +
   // covered_days; a window with NO capture at all exports empty metrics, never zeros.
@@ -349,6 +353,7 @@ function salesTotalsCells(t: SalesTotals): ExportRow {
     refunds_captured_count: v(t.refundCount), ezcater_sales: v(t.ezcaterCents), ezcater_orders: v(t.ezcaterOrders), sales_before_refunds: v(t.totalCents),
     amount_missing: t.amountMissing, unknown_tax: t.taxMissing, unknown_tips: t.tipMissing, unknown_discounts: t.discountMissing, gift_cards_excluded: v(t.giftCardCents), gift_card_checks_excluded: v(t.giftCardChecks),
     ezcater_linked_toast_excluded: v(t.ezcaterLinkedCents), ezcater_linked_checks_excluded: v(t.ezcaterLinkedChecks), void_checks: v(t.voidChecks),
+    sales_basis: SALES_BASIS_NOTE, refunds_basis: REFUNDS_BASIS_NOTE,
   };
 }
 

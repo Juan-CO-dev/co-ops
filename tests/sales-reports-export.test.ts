@@ -86,6 +86,9 @@ describe("sales export = the screen", () => {
     expect(cell("ezcater_linked_toast_excluded")).toBe("300.00");
     expect(cell("ezcater_sales")).toBe("280.00");
     expect(cell("sales_before_refunds")).toBe("360.00"); // 80 Toast + 280 ezCater; the 300 linked ring and the 50 gift card are not added
+    // Astra r2: the export carries the screen's caveats (basis columns are last, so earlier cells stay indexable).
+    expect(out[out.length - 1]).toContain("NOT reconciled net sales");
+    expect(out[out.length - 1]).toContain("Refunds captured so far");
   });
   it("discounts export one row per NAME", async () => {
     session(7, [A]);
