@@ -51,8 +51,8 @@ describe("shop digest lines", () => {
     const by = (label: string) => lines.find((l) => l.label === label)!;
     expect(by("Opening")).toMatchObject({ text: "Not submitted", tone: "issue", href: `${BASE}/reports/operations?location=${LOC}&range=custom&from=${DAY}&to=${DAY}&type=opening` });
     expect(by("Closing")).toMatchObject({ text: "Not finalized", tone: "issue" });
-    expect(by("AM Prep")).toMatchObject({ text: "3 issues: 2 under par, 1 temperature flags", tone: "issue" });
-    expect(by("Cash")).toMatchObject({ text: "1 issues: cash short $12.50", tone: "issue" });
+    expect(by("AM Prep")).toMatchObject({ text: "1 issue: 1 temperature flag · 2 under par", tone: "issue" });
+    expect(by("Cash")).toMatchObject({ text: "1 issue: cash short $12.50", tone: "issue" });
     expect(by("Maintenance")).toMatchObject({ text: "Nothing logged", tone: "info" });
   });
 
@@ -103,7 +103,7 @@ describe("shop + unified emails", () => {
       notFinalized: [{ id: "l2", name: "Shop B" }],
     }, { language: "en", baseUrl: BASE });
     expect(mail.subject).toBe("All shops digest — Wed, Oct 7");
-    expect(mail.text).toContain("! Closing: Closing not finalized: Shop B");
+    expect(mail.text).toContain("! Closing not finalized: Shop B");
     expect(mail.text).toContain("Shop A");
   });
 
