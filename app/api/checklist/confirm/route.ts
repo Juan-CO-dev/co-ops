@@ -37,6 +37,7 @@ import { after, type NextRequest } from "next/server";
 
 import { ChecklistError, confirmInstance } from "@/lib/checklists";
 import { pullSalesSystemTrigger } from "@/lib/catering/toast-sales";
+import { runClosingDigests } from "@/lib/report-digests";
 import { extractIp, jsonError, jsonOk, parseJsonBody } from "@/lib/api-helpers";
 import { requireSession, SESSION_COOKIE_NAME } from "@/lib/session";
 import { createAuthedClient } from "@/lib/supabase-server";
@@ -104,6 +105,11 @@ export async function POST(req: NextRequest) {
     if (result.templateType === "closing") {
       const confirmed = result.instance;
       after(() => pullSalesSystemTrigger(confirmed.locationId, confirmed.date, { context: "closing_confirm" }));
+      // Reports digests (0220): "Once the shop officially closes" — the shop's GM digest now,
+      // and the unified digest when this was the last shop. Never throws; latency only: the
+      // digest-tick pinger reconciles any finalized closing with no sent digest (opener
+      // release, release_overdue_closings, or an after() that died).
+      after(() => runClosingDigests(confirmed.locationId, confirmed.date));
     }
 
     return jsonOk({

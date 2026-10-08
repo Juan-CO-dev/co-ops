@@ -58,6 +58,9 @@ const TENANCY_SCOPED_TABLES = [
   "stations",
   "station_events",
   "report_assignments",
+  // 0220 — a recipient override's location_ids decides which shops' numbers reach a person.
+  // (report_digest_sends is system-written with no actor and deliberately not listed.)
+  "report_recipients",
 ];
 
 /**
@@ -113,6 +116,8 @@ const FILES = [
   "lib/admin/catering/faq.ts",
   "lib/admin/catering/fulfillment.ts",
   "lib/admin/catering/packages.ts",
+  // 0220 — saveReportRecipient binds every location_ids element before any I/O.
+  "lib/report-recipients.ts",
   "lib/dynamic-pars.ts",
   // 0214 — saveAmPrepDraft / consumeAmPrepDraft bind inside the lib (Wave 1 branch A).
   "lib/am-prep-draft.ts",

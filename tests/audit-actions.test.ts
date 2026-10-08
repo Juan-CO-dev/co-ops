@@ -166,6 +166,24 @@ describe("the 2026-08-21 sweep — the filed gap is closed and stays closed", ()
   });
 });
 
+describe("0220 report digests — registered before any caller", () => {
+  it.each(["report_recipient.create", "report_recipient.update", "report_recipient.deactivate", "report_settings.update"])(
+    "%s is a human config change → destructive",
+    (action) => {
+      expect(isDestructive(action)).toBe(true);
+    },
+  );
+
+  it("digest.run is a system observation → non-destructive", () => {
+    expect(NON_DESTRUCTIVE_ACTIONS).toContain("digest.run");
+    expect(isDestructive("digest.run")).toBe(false);
+  });
+
+  it("reports.bulk_export stays reserved and untouched", () => {
+    expect(RESERVED_ACTIONS).toContain("reports.bulk_export");
+  });
+});
+
 describe("the type is the primary guard", () => {
   it("rejects an unlisted action at COMPILE time", () => {
     const ok: AuditAction = "product.set_active";

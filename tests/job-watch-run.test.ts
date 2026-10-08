@@ -29,9 +29,9 @@ beforeEach(() => {
 
 it("skips self before any lookup, including the watcher itself", async () => {
   const result = await runJobWatch({ self: "job-watch", now: new Date("2026-09-10T12:00:00Z") });
-  expect(result).toEqual({ alerted: 5, checked: 5 });
+  expect(result).toEqual({ alerted: 6, checked: 6 });
   expect(jobs).not.toContain("job-watch");
-  expect(new Set(jobs).size).toBe(5);
+  expect(new Set(jobs).size).toBe(6);
 });
 
 it("siblings can detect a silent job-watch and retain the ET claim key", async () => {
@@ -49,7 +49,7 @@ it("watchSiblings swallows a thrown lookup", async () => {
   expect(sendEmail).not.toHaveBeenCalled();
 });
 
-it.each(["toast-catering-scan", "toast-sales-today", "toast-sales-pull", "prune-sessions", "parse-receipts"])(
+it.each(["toast-catering-scan", "toast-sales-today", "toast-sales-pull", "prune-sessions", "parse-receipts", "digest-tick"])(
   "%s awaits its heartbeat before watching siblings", (job) => {
     const source = readFileSync(`app/api/cron/${job}/route.ts`, "utf8");
     const heartbeat = source.indexOf("await audit(");

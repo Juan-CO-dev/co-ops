@@ -285,7 +285,10 @@ export const NON_DESTRUCTIVE_ACTIONS = [
   "cron.success",
   "ezcater.set_location_uuid",
   "maintenance.note",
-  "photo.upload",] as const;
+  "photo.upload",
+  // 0220 digests: one system row per digest run that did work (counts sent / skipped / failed
+  // by kind). A system observation with no actor; the per-send record is report_digest_sends.
+  "digest.run",] as const;
 
 /**
  * Registered as destructive but with NO emitter in the codebase today.
