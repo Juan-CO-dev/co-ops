@@ -36,6 +36,7 @@ import {
 import type { CateringFacts, CateringLeadFact, PrepLoadLine, ShopDayFacts } from "@/lib/report-digests-compose";
 import type { Loaded } from "@/lib/report-digests-v2-shared";
 import {
+  countAnchoredBalances,
   paymentState,
   readinessFrom,
   specialInstructions,
@@ -46,6 +47,7 @@ import {
 } from "@/lib/report-digests-catering-shared";
 import type { StationEvent } from "@/lib/assignments-shared";
 import { deriveCateringSkuDemand } from "@/lib/catering/sku-demand";
+import { deriveOnHand } from "@/lib/counts";
 import {
   runClosingDigestsWith,
   runDigestTickWith,
@@ -289,7 +291,7 @@ export async function loadCateringFacts(sb: Sb, today: string, now: Date): Promi
   const readiness: NonNullable<CateringFacts["readiness"]> = {};
   const staff: NonNullable<CateringFacts["staff"]> = {};
   await Promise.all(todayShops.map(async (loc) => {
-    [readiness[loc], staff[loc]] = await Promise.all([loadCateringReadiness(sb, loc, today), loadStaffRoster(sb, loc, today)]);
+    [readiness[loc], staff[loc]] = await Promise.all([loadCateringReadiness(loc, today), loadStaffRoster(sb, loc, today)]);
   }));
   return {
     today, leads: facts, lostYesterdayIds: lostIds,
@@ -305,23 +307,15 @@ export async function loadCateringFacts(sb: Sb, today: string, now: Date): Promi
  * same flatten + advisory on-hand the prep-demand surface shows) plus which SKUs were EVER counted
  * here, so an uncounted SKU says so instead of showing invented stock. Never throws.
  */
-async function loadCateringReadiness(sb: Sb, locationId: string, day: string): Promise<Loaded<CateringReadiness>> {
+async function loadCateringReadiness(locationId: string, day: string): Promise<Loaded<CateringReadiness>> {
   try {
-    const w4b = await deriveCateringSkuDemand({ locationId, from: day, to: day });
-    const skuIds = w4b.rows.map((r) => r.skuId);
-    const counted = new Set<string>();
-    for (let i = 0; i < skuIds.length; i += 100) {
-      const lines = await selectAllRows<{ count_event_id: string; sku_id: string }>((from, to) =>
-        sb.from("sku_count_lines").select("count_event_id, sku_id").in("sku_id", skuIds.slice(i, i + 100)).order("id").range(from, to));
-      const eventIds = [...new Set(lines.map((l) => l.count_event_id))];
-      for (let j = 0; j < eventIds.length; j += 100) {
-        const events = await selectAllRows<{ id: string }>((from, to) =>
-          sb.from("sku_count_events").select("id").in("id", eventIds.slice(j, j + 100)).eq("location_id", locationId).eq("active", true).order("id").range(from, to));
-        const here = new Set(events.map((e) => e.id));
-        for (const l of lines) if (here.has(l.count_event_id)) counted.add(l.sku_id);
-      }
-    }
-    return { kind: "ok", value: readinessFrom(w4b, counted) };
+    // Demand: the W4b flatten (oz per SKU). Stock: the counts reader's count-anchored balance —
+    // read-only (seedBaselines: false never persists an inferred baseline).
+    const [w4b, onHand] = await Promise.all([
+      deriveCateringSkuDemand({ locationId, from: day, to: day }),
+      deriveOnHand(locationId, Date.now(), { seedBaselines: false }),
+    ]);
+    return { kind: "ok", value: readinessFrom(w4b, countAnchoredBalances(onHand.rows)) };
   } catch (error) {
     console.error("[digests] catering readiness failed:", error instanceof Error ? error.message : String(error));
     return { kind: "error" };

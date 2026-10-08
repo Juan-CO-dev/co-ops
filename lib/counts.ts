@@ -1380,9 +1380,24 @@ export async function loadOnHandDerived(
   opts: { withProducts?: boolean; seedBaselines?: boolean } = {},
 ): Promise<OnHandView> {
   requireLevel(actor, ON_HAND_DERIVED_MIN);
+  if (!lockLocationContext(actorLoc(actor), locationId)) throw new CountError(404, "not_found", "Location not found");
+  return deriveOnHand(locationId, now, opts);
+}
+
+/**
+ * THE ACTOR-LESS CORE of loadOnHandDerived (the deriveCateringSkuDemand / deriveSalesConsumption
+ * split): for callers that are already system-authorized and location-bound — the catering morning
+ * digest's count-anchored readiness (digest v2 r2). Pure refactor: the gated wrapper above keeps its
+ * floor and bind and behaves byte-identically. A system caller MUST pass seedBaselines: false (a
+ * read never writes).
+ */
+export async function deriveOnHand(
+  locationId: string,
+  now: number = Date.now(),
+  opts: { withProducts?: boolean; seedBaselines?: boolean } = {},
+): Promise<OnHandView> {
   const withProducts = opts.withProducts === true;
   const seedBaselines = opts.seedBaselines ?? true;
-  if (!lockLocationContext(actorLoc(actor), locationId)) throw new CountError(404, "not_found", "Location not found");
   const sb = getServiceRoleClient();
   const salesThrough = await loadDepletionWatermark(locationId, sb);
 
