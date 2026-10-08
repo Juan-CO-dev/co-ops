@@ -83,7 +83,8 @@ export async function childRows<T>(
   return inChunks(ids.filter(Boolean), (chunk) => selectAllRows<T>((f, t) => {
     let q = sb.from(table).select(select).in(column, chunk);
     if (filter) q = filter(q);
-    return q.order("id").range(f, t);
+    // A runtime select string types as GenericStringError; the rows are T by the select above.
+    return q.order("id").range(f, t) as unknown as PromiseLike<{ data: T[] | null; error: { message: string } | null }>;
   }));
 }
 

@@ -82,7 +82,7 @@ describe("nothing is truncated (Astra P2): cells wrap, tall rows continue, wide 
       pageLabel: label, partLabel: (i, n) => `Columns ${i} of ${n}`, compress: false,
     });
     const text = squash(pdfText(pdf));
-    for (const r of rows) for (const c of cols) expect(text).toContain(centsToDollars(r[c.key as keyof typeof r] as number));
+    for (const r of rows) for (const c of cols) expect(text).toContain(centsToDollars((r as Record<string, unknown>)[c.key] as number));
     const parts = Number(/Columns1of(\d+)/.exec(text)?.[1]);
     expect(parts).toBeGreaterThan(1);
     for (let i = 1; i <= parts; i++) expect(text).toContain(`Columns${i}of${parts}`);
