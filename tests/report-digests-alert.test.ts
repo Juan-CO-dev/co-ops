@@ -97,6 +97,16 @@ describe("supabaseSendStore", () => {
     expect(c.updates[0]!.filters).toEqual([["id", "r1"], ["outcome", ["claimed", "ambiguous"]]]);
   });
 
+  it("the retry lock is ambiguous → claimed, only without a recorded provider id; failed only if never attempted", async () => {
+    const c = client(null);
+    expect(await supabaseSendStore(c.sb).reclaim("r1", { attempted_at: "t" })).toBe(true);
+    expect(c.updates[0]).toEqual({ patch: { attempted_at: "t", outcome: "claimed" }, filters: [["id", "r1"], ["outcome", "ambiguous"], ["provider_message_id", null]] });
+    await supabaseSendStore(c.sb).finish("r1", ["claimed"], { outcome: "failed" }, { neverAttempted: true });
+    expect(c.updates[1]!.filters).toEqual([["id", "r1"], ["outcome", ["claimed"]], ["first_attempt_at", null]]);
+    await supabaseSendStore(c.sb).finish("r1", ["ambiguous"], { outcome: "failed_ambiguous" }, { noMessageId: true });
+    expect(c.updates[2]!.filters).toEqual([["id", "r1"], ["outcome", ["ambiguous"]], ["provider_message_id", null]]);
+  });
+
   it("an attempt is recorded only once, on a claimed row; the provider id only on claimed|ambiguous", async () => {
     const c = client(null);
     expect(await supabaseSendStore(c.sb).markAttempt("r1", { first_attempt_at: "t", idempotency_key: "k" })).toBe(true);

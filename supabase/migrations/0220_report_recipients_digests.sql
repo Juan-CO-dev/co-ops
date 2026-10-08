@@ -142,7 +142,11 @@ create table public.report_digest_sends (
   revision      integer     not null default 1 check (revision >= 1),
   -- preview = delivered to the operator address instead of the recipient (digest_delivery_mode).
   mode          text        not null default 'live' check (mode in ('preview', 'live')),
-  -- claimed → (attempt recorded) → sent | failed | ambiguous; ambiguous → sent | failed | failed_ambiguous.
+  -- State machine (CC r4): claimed → failed ONLY while no attempt is recorded (the provider was never
+  -- reached; the one state that releases the key). Once first_attempt_at is set the row ends only as
+  -- sent (a provider_message_id exists, from any attempt) or failed_ambiguous; every refusal or error
+  -- in between keeps it ambiguous with its ORIGINAL first_attempt_at. A retry re-takes the claim
+  -- (ambiguous → claimed, guarded on no message id) exactly like a fresh send.
   --   ambiguous        = the provider was called and the outcome is unknown (timeout / transport /
   --                      no response). Holds the key; retried with the SAME provider key only while
   --                      now - first_attempt_at < 23 h (Resend keeps idempotency keys 24 h).
@@ -170,7 +174,7 @@ create table public.report_digest_sends (
   constraint report_digest_sends_accepted_shape check ((provider_message_id is null) = (sent_at is null))
 );
 comment on table public.report_digest_sends is
-  '0220: every digest send attempt and every deliberate skip. The partial unique index report_digest_sends_once IS the idempotency guard (claim = INSERT outcome claimed; 23505 = already held). claimed, sent, ambiguous and failed_ambiguous hold the key; only failed releases it (a definitive provider refusal, or a stale claim that never reached the provider). provider_message_id is persisted before finish, so an accepted send is never resent; an ambiguous send is retried with the same provider key only within 23 h of first_attempt_at. System-written by lib/report-digests.ts (service-role, no actor). Deny-all RLS.';
+  '0220: every digest send attempt and every deliberate skip. The partial unique index report_digest_sends_once IS the idempotency guard (claim = INSERT outcome claimed; 23505 = already held). claimed, sent, ambiguous and failed_ambiguous hold the key; only failed releases it, and failed is reachable only while no attempt is recorded (the provider was never reached). provider_message_id is persisted before finish, so an accepted send is never resent; an ambiguous send is retried with the same provider key only within 23 h of first_attempt_at. System-written by lib/report-digests.ts (service-role, no actor). Deny-all RLS.';
 -- THE idempotency key: at most one live claim / send / unresolved attempt per recipient × kind ×
 -- day × revision × mode. ambiguous and failed_ambiguous hold it too, so an unknown outcome is never
 -- re-claimed as a fresh send.
