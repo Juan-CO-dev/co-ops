@@ -76,6 +76,7 @@ import type { TranslationKey, TranslationParams } from "./i18n/types";
  * with the old type are aged out (or migrated).
  */
 export const NOTIFICATION_TYPES = {
+  ASSIGNMENT_OVERRIDE: "assignment_override",
   UNDER_PAR_ALERT: "under_par_alert",
   OPENING_NO_PRIOR_DATA_ALERT: "opening_no_prior_data_alert",
   SHIFT_FEEDBACK: "shift_feedback",

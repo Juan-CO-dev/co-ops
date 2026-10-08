@@ -4,7 +4,7 @@ import { defaultOpenMap, type SectionProgress } from "@/lib/collapsible-sections
 export function assignmentSectionDefaults(board: ShiftBoard, compact: boolean): Record<string, boolean> {
   const ownTaskCount = board.tasks.filter((task) => task.assigneeId === board.viewerId && task.available !== false).length;
   const hasStation = !!currentStation(board.events, board.viewerId)?.stationId;
-  if (compact) return { tasks: !ownTaskCount && !hasStation, stations: !ownTaskCount && !hasStation };
+  if (compact) return { tasks: !ownTaskCount && !hasStation, stations: !ownTaskCount && !hasStation, team: false };
   const positions = board.stations.filter((station) => station.active && station.staffed).flatMap((station) => station.positions.filter((position) => position.active));
   const assignedStations = positions.filter((position) => board.people.some((person) => currentStation(board.events, person.id)?.positionId === position.id)).length;
   const progress: SectionProgress[] = [

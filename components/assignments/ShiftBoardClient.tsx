@@ -1,8 +1,9 @@
 "use client";
 
-import { useState, useTransition, type ReactNode } from "react";
+import { useEffect, useRef, useState, useTransition, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import { ActionButton, ActionLink } from "@/components/ActionButton";
+import { formatTime } from "@/lib/i18n/format";
 import type { TranslationKey } from "@/lib/i18n/types";
 import { useTranslation } from "@/lib/i18n/provider";
 import { RetrainTaskList } from "@/components/production/RetrainTaskList";
@@ -10,7 +11,7 @@ import { CollapsibleChecklistSection } from "@/components/ui/CollapsibleChecklis
 import { useCollapsibleSections } from "@/lib/use-collapsible-sections";
 import { assignmentSectionDefaults } from "@/lib/assignment-sections";
 import type { RetrainTaskView } from "@/lib/yield-stats";
-import { canSelfClaim, currentStation, TASK_TYPES, TASK_MIN_LEVEL, taskHref, type ShiftBoard, type TaskType } from "@/lib/assignments-shared";
+import { canSelfClaim, currentStation, formatAssignmentAttribution, requiresOverrideReason, OVERRIDE_REASON_CODES, type OverrideReasonCode, type TaskAssignment, type AssignmentChange, type StationEvent, TASK_TYPES, TASK_MIN_LEVEL, taskHref, type ShiftBoard, type TaskType } from "@/lib/assignments-shared";
 
 const control = "flex min-h-[44px] w-full max-w-full min-w-0 items-center rounded-lg border-2 border-co-border bg-co-surface px-3 text-base font-normal tracking-normal text-co-text";
 
@@ -22,7 +23,47 @@ export function ShiftBoardClient({ board, compact = false, retrainTasks = [] }: 
   const [busy, setBusy] = useState(false);
   const [refreshing, startTransition] = useTransition();
   const [error, setError] = useState<TranslationKey | null>(null);
+  const [pending, setPending] = useState<{ payload: Record<string, unknown>; required: boolean } | null>(null);
+  const [reasonCode, setReasonCode] = useState<OverrideReasonCode | "">("");
+  const [reasonNote, setReasonNote] = useState("");
+  const reasonDialog = useRef<HTMLDialogElement>(null);
   const disabled = busy || refreshing;
+  useEffect(() => {
+    if (pending) reasonDialog.current?.showModal();
+    else reasonDialog.current?.close();
+  }, [pending]);
+  useEffect(() => {
+    const refresh = () => { if (document.visibilityState === "visible") startTransition(() => router.refresh()); };
+    window.addEventListener("focus", refresh);
+    document.addEventListener("visibilitychange", refresh);
+    const interval = window.setInterval(refresh, 60_000);
+    return () => {
+      window.removeEventListener("focus", refresh);
+      document.removeEventListener("visibilitychange", refresh);
+      window.clearInterval(interval);
+    };
+  }, [router]);
+  const changeLine = (change?: AssignmentChange) => change && <p className="text-sm text-co-text-muted">{t(change.reasonCode || change.reasonNote ? "assignments.attribution.changed" : "assignments.attribution.changedWithoutReason", {
+    name: change.actorName ?? t("assignments.teamLead"),
+    reason: change.reasonCode ? t(`assignments.reason.${change.reasonCode}`) : change.reasonNote ?? "",
+    time: formatTime(change.at, language),
+  })}{change.reasonCode && change.reasonNote ? ` · ${change.reasonNote}` : ""}</p>;
+  const taskLine = (assignment: TaskAssignment) => <div key={assignment.id} className="text-sm text-co-text-muted">
+    <p>{formatAssignmentAttribution({ source: assignment.source ?? "assigned", holderName: assignment.assigneeName ?? board.people.find((person) => person.id === assignment.assigneeId)?.name ?? t("assignments.assignedStaff"), actorName: assignment.assignerName, at: assignment.at ?? "" }, language, t)}</p>
+    {changeLine(assignment.change)}
+  </div>;
+  const stationLine = (event: StationEvent | null, name: string) => <div className="text-sm text-co-text-muted">
+    <p>{formatAssignmentAttribution(event?.stationId && event.source ? { source: event.source, holderName: name, actorName: event.actorName, at: event.at } : null, language, t)}</p>
+    {changeLine(event?.change)}
+  </div>;
+  const stationOverrideLevel = (userId: string) => {
+    const current = currentStation(board.events, userId);
+    return current?.source === "assigned" ? current.actorLevel ?? 0 : 0;
+  };
+  function requestMutation(payload: Record<string, unknown>, assignerLevel?: number) {
+    setReasonCode(""); setReasonNote(""); setError(null);
+    setPending({ payload, required: requiresOverrideReason(board.viewerLevel, assignerLevel) });
+  }
   const unassigned = TASK_TYPES.filter((task) => !board.tasks.some((assignment) => assignment.task === task && assignment.available !== false));
   const people = compact ? board.people.filter((p) => p.id === board.viewerId) : board.people;
   const ownTasks = board.tasks.filter((task) => task.assigneeId === board.viewerId && task.available !== false);
@@ -33,8 +74,9 @@ export function ShiftBoardClient({ board, compact = false, retrainTasks = [] }: 
     { id: "stations", done: compact ? Number(!!currentStation(board.events, board.viewerId)?.stationId) : filledStations, total: compact ? 1 : positions.length },
     { id: "people", done: board.people.filter((person) => person.hasWork).length, total: board.people.length },
     { id: "unassigned", done: 0, total: unassigned.length },
+    { id: "team", done: board.people.filter((person) => person.hasWork).length, total: board.people.length },
   ], assignmentSectionDefaults(board, compact));
-  const section = (id: "tasks" | "stations" | "people" | "unassigned", title: TranslationKey, done: number, total: number, children: ReactNode) =>
+  const section = (id: "tasks" | "stations" | "people" | "unassigned" | "team", title: TranslationKey, done: number, total: number, children: ReactNode) =>
     <CollapsibleChecklistSection formKey="assignment-board" sectionId={id} title={t(title)} done={done} total={total}
       progressText={id === "unassigned" ? t("assignments.unassignedCount", { count: total }) : t("assignments.assignedCount", { done, total })}
       open={sections.isOpen(id)} onToggle={() => sections.toggle(id)} headingLevel={3}
@@ -46,6 +88,9 @@ export function ShiftBoardClient({ board, compact = false, retrainTasks = [] }: 
       const response = await fetch("/api/assignments", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ locationId: board.locationId, ...payload }) });
       if (!response.ok || response.redirected) {
         const body: unknown = await response.json().catch(() => null);
+        if (body && typeof body === "object" && "error" in body && body.error === "override_reason_required") {
+          setPending({ payload, required: true }); setError("assignments.reasonRequired"); return;
+        }
         if (response.status === 409 && body && typeof body === "object" && "error" in body && body.error === "assignment_already_active") {
           setError("assignments.errorAlreadyActive");
           return;
@@ -55,15 +100,16 @@ export function ShiftBoardClient({ board, compact = false, retrainTasks = [] }: 
         }
         throw new Error("assignment_write_failed");
       }
+      setPending(null);
       startTransition(() => router.refresh());
     } catch { setError("assignments.error"); } finally { setBusy(false); }
   }
   return <section className="co-card min-w-0 max-w-full space-y-4 break-words p-4 [&_a]:max-w-full [&_a]:whitespace-normal [&_button]:max-w-full [&_button]:whitespace-normal" aria-busy={disabled}>
-    <h2 className="text-xl font-bold text-co-text">{t(compact || board.viewerLevel < 4 ? "assignments.myShift" : "assignments.team")}</h2>
+    <h2 className="text-xl font-bold text-co-text">{t(compact ? "assignments.myShift" : "assignments.team")}</h2>
     {!compact && <ActionLink variant="secondary" href={`/stations?loc=${board.locationId}`}>{t("assignments.stations")}</ActionLink>}
     {!compact && board.viewerLevel >= 4 && <p className="text-sm text-co-text-muted">{t("assignments.rosterHint")}</p>}
     {error && <p role="alert" className="text-co-cta-text">{t(error)}</p>}
-    {!compact && board.viewerLevel >= 4 && section("stations", "assignments.takeAssignStations", filledStations, positions.length, <div className="space-y-3">{board.stations.filter((s) => s.active && s.staffed).map((station) => {
+    {!compact && section("stations", "assignments.takeAssignStations", filledStations, positions.length, <div className="space-y-3">{board.stations.filter((s) => s.active && s.staffed).map((station) => {
       const positions = station.positions.filter((p) => p.active);
       const filled = positions.filter((p) => board.people.some((person) => currentStation(board.events, person.id)?.positionId === p.id)).length;
       return <div key={station.id} className="rounded-xl border border-co-border p-3">
@@ -73,10 +119,11 @@ export function ShiftBoardClient({ board, compact = false, retrainTasks = [] }: 
           return <li key={position.id} className="rounded-lg border border-co-border p-2">
             <p className="truncate font-bold" title={language === "es" ? position.nameEs || position.name : position.name}>{language === "es" ? position.nameEs || position.name : position.name} · {occupant?.name ?? t("assignments.unassigned")}</p>
             {(language === "es" ? position.dutyEs || position.duty : position.duty) && <p className="text-sm text-co-text-muted">{language === "es" ? position.dutyEs || position.duty : position.duty}</p>}
-            <form className="mt-2 flex min-w-0 flex-wrap items-end gap-2" onSubmit={(event) => {
+            {stationLine(occupant ? currentStation(board.events, occupant.id) : null, occupant?.name ?? t("assignments.assignedStaff"))}
+            {board.viewerLevel >= 4 && <form className="mt-2 flex min-w-0 flex-wrap items-end gap-2" onSubmit={(event) => {
               event.preventDefault();
               const userId = String(new FormData(event.currentTarget).get("userId") || "");
-              if (userId) void mutate({ action: "station", userId, stationId: station.id, positionId: position.id, manage: true });
+              if (userId) requestMutation({ action: "station", userId, stationId: station.id, positionId: position.id, manage: true }, stationOverrideLevel(userId));
             }}>
               <label className="grid min-w-0 max-w-full flex-1 basis-[14rem] gap-1 text-[11px] font-bold text-co-text-dim">{t("assignments.person")}
                 <select name="userId" className={control} disabled={disabled} defaultValue="">
@@ -86,7 +133,7 @@ export function ShiftBoardClient({ board, compact = false, retrainTasks = [] }: 
                 </select>
               </label>
               <ActionButton type="submit" disabled={disabled}>{t("assignments.setStation")}</ActionButton>
-            </form>
+            </form>}
           </li>;
         })}</ul>
       </div>;
@@ -94,17 +141,19 @@ export function ShiftBoardClient({ board, compact = false, retrainTasks = [] }: 
     {compact && retrainTasks.length > 0 && <RetrainTaskList tasks={retrainTasks} />}
     {compact && section("tasks", "assignments.takeAssignTasks", ownTasks.length, TASK_TYPES.length, <div className="space-y-3"><ul className="space-y-2">{board.viewerLevel >= 4 && unassigned.filter((task) => board.viewerLevel >= TASK_MIN_LEVEL[task] && board.people.find((person) => person.id === board.viewerId)?.available !== false).map((task) => <li key={task}>
       <ActionLink variant="secondary" className="max-w-full whitespace-normal text-left" href={board.viewerLevel >= 4 ? `/assignments?location=${board.locationId}` : taskHref(task, board.locationId)}>{t("assignments.unassignedAction", { task: t(`assignments.task.${task}`) })}</ActionLink>
-    </li>)}</ul>{ownTasks.filter((task) => board.viewerLevel >= TASK_MIN_LEVEL[task.task]).map((task) => <ActionLink key={task.id} variant="secondary" href={taskHref(task.task, board.locationId)}>{t(`assignments.task.${task.task}`)}</ActionLink>)}</div>)}
+    </li>)}</ul>{ownTasks.filter((task) => board.viewerLevel >= TASK_MIN_LEVEL[task.task]).map((task) => <div key={task.id}>{board.viewerLevel >= 4 || task.source !== "taken" ? <ActionLink variant="secondary" href={taskHref(task.task, board.locationId)}>{t(`assignments.task.${task.task}`)}</ActionLink> : <span>{t(`assignments.task.${task.task}`)}</span>}{taskLine(task)}</div>)}</div>)}
     {!compact && section("tasks", "assignments.takeAssignTasks", TASK_TYPES.length - unassigned.length, TASK_TYPES.length, <div className="space-y-3">
-      <p className="text-sm text-co-text-muted">{t("assignments.takeHint")}</p>
+      {board.viewerLevel >= 4 && <p className="text-sm text-co-text-muted">{t("assignments.takeHint")}</p>}
       <ul className="space-y-3">
         <li className="rounded-xl border border-co-border p-3"><ActionLink variant="secondary" href={`/operations/closing?location=${board.locationId}`}>{t("assignments.closing")}</ActionLink><p className="mt-2 text-sm text-co-text-muted">{t("assignments.everyone")}</p></li>
         {TASK_TYPES.map((task) => {
           const assignments = board.tasks.filter((assignment) => assignment.task === task && assignment.available !== false);
-          const canOpen = board.viewerLevel >= TASK_MIN_LEVEL[task] && (board.viewerLevel >= 4 || assignments.some((assignment) => assignment.assigneeId === board.viewerId));
+          const canOpen = board.viewerLevel >= TASK_MIN_LEVEL[task] && (board.viewerLevel >= 4 || assignments.some((assignment) => assignment.assigneeId === board.viewerId && assignment.source !== "taken"));
           return <li key={task} className="rounded-xl border border-co-border p-3">
             {canOpen ? <ActionLink variant="secondary" href={taskHref(task, board.locationId)}>{t(`assignments.task.${task}`)}</ActionLink> : <span>{t(`assignments.task.${task}`)}</span>}
-            <p className="mt-2 text-sm text-co-text-muted">{assignments.length === 0 ? t("assignments.unassigned") : assignments.map((assignment) => board.people.find((person) => person.id === assignment.assigneeId)?.name ?? t("assignments.assignedStaff")).join(", ")}</p>
+            <div className="mt-2">{assignments.length === 0 ? <p className="text-sm text-co-text-muted">{t("assignments.attribution.unassigned")}</p> : assignments.map(taskLine)}
+              {board.taskChanges?.filter((entry) => entry.task === task).map((entry) => <div key={entry.change.at}>{changeLine(entry.change)}</div>)}
+            </div>
             {!canOpen && assignments.length > 0 && <p className="text-sm text-co-text-muted">{t("assignments.assignedOther")}</p>}
           </li>;
         })}
@@ -117,7 +166,7 @@ export function ShiftBoardClient({ board, compact = false, retrainTasks = [] }: 
       const current = currentStation(board.events, person.id);
       const station = board.stations.find((s) => s.id === current?.stationId);
       const position = station?.positions.find((p) => p.id === current?.positionId);
-      const tasks = board.tasks.filter((task) => task.assigneeId === person.id && (board.viewerLevel >= 4 || (task.available !== false && person.available !== false && person.level >= TASK_MIN_LEVEL[task.task])));
+      const tasks = board.tasks.filter((task) => task.assigneeId === person.id);
       const assignableTasks = TASK_TYPES.filter((task) => person.level >= TASK_MIN_LEVEL[task]);
       const managerCanEdit = !compact && board.viewerLevel >= 4 && person.available !== false && person.level <= board.viewerLevel
         && (person.id !== board.viewerId || canSelfClaim(current));
@@ -128,13 +177,13 @@ export function ShiftBoardClient({ board, compact = false, retrainTasks = [] }: 
         {person.available === false && <p className="text-sm text-co-text-muted">{t("assignments.unavailablePerson")}</p>}
         <p className="truncate font-bold text-co-text" title={station?.name}>{station ? `${language === "es" ? station.nameEs || station.name : station.name} · ${position ? (language === "es" ? position.nameEs || position.name : position.name) : ""}` : t("assignments.noStation")}</p>
         {position && <p className="text-sm text-co-text-muted">{language === "es" ? position.dutyEs || position.duty : position.duty}</p>}
-        {current?.stationId && current.source === "assigned" && <p className="text-sm text-co-text-muted"><span aria-hidden="true">🔒 </span>{t("assignments.assignedBy", { name: current.actorName ?? t("assignments.teamLead") })}</p>}
+        {stationLine(current, person.name)}
         {(managerCanEdit || canClaim) && <form className="flex flex-wrap items-end gap-2" onSubmit={(event) => {
           event.preventDefault();
           const data = new FormData(event.currentTarget);
           const positionId = String(data.get("positionId") || "");
           const target = board.stations.find((s) => s.positions.some((p) => p.id === positionId));
-          void mutate({ action: "station", userId: person.id, stationId: target?.id ?? null, positionId: positionId || null, manage: managerCanEdit });
+          requestMutation({ action: "station", userId: person.id, stationId: target?.id ?? null, positionId: positionId || null, manage: managerCanEdit }, stationOverrideLevel(person.id));
         }}>
           <label className="grid min-w-0 max-w-full flex-1 basis-[14rem] gap-1 text-[11px] font-bold tracking-[0.12em] text-co-text-dim">{t("assignments.station")}
             <select key={current?.id ?? "none"} name="positionId" defaultValue={current?.positionId ?? ""} disabled={disabled} className={control}>
@@ -156,14 +205,15 @@ export function ShiftBoardClient({ board, compact = false, retrainTasks = [] }: 
         <h4 className="text-xs font-bold tracking-wide text-co-text-muted">{t("assignments.tasks")}</h4>
         {tasks.length === 0 && <p className="text-sm text-co-text-muted">{t("assignments.noTasks")}</p>}
         <ul className="space-y-2">{tasks.map((assignment) => <li key={assignment.id} className="flex flex-wrap items-center gap-2">
-          <ActionLink variant="secondary" href={taskHref(assignment.task, board.locationId)}>{t(`assignments.task.${assignment.task}`)}</ActionLink>
+          {board.viewerLevel >= TASK_MIN_LEVEL[assignment.task] && (board.viewerLevel >= 4 || (person.id === board.viewerId && assignment.source !== "taken" && assignment.available !== false && person.available !== false)) ? <ActionLink variant="secondary" href={taskHref(assignment.task, board.locationId)}>{t(`assignments.task.${assignment.task}`)}</ActionLink> : <span>{t(`assignments.task.${assignment.task}`)}</span>}
+          <div className="w-full">{taskLine(assignment)}</div>
           {assignment.available === false && <p className="text-sm text-co-text-muted">{t("assignments.unavailableTask")}</p>}
           {assignment.note && <p className="text-sm text-co-text-muted">{assignment.note}</p>}
-          {canRetract && <ActionButton variant="danger" disabled={disabled} onClick={() => void mutate({ action: "task_retract", assignmentId: assignment.id })}>{t("assignments.retract")}</ActionButton>}
+          {canRetract && assignment.source !== "taken" && <ActionButton variant="danger" disabled={disabled} onClick={() => requestMutation({ action: "task_retract", assignmentId: assignment.id }, assignment.assignerLevel)}>{t("assignments.retract")}</ActionButton>}
         </li>)}</ul>
         {managerCanEdit && person.id !== board.viewerId && assignableTasks.length > 0 && <form className="flex flex-wrap items-end gap-2" onSubmit={(event) => {
           event.preventDefault(); const data = new FormData(event.currentTarget);
-          void mutate({ action: "task_assign", userId: person.id, task: data.get("task") as TaskType, note: data.get("note") });
+          requestMutation({ action: "task_assign", userId: person.id, task: data.get("task") as TaskType, note: data.get("note") });
         }}>
           <label className="grid min-w-0 max-w-full flex-1 basis-[14rem] gap-1 text-[11px] font-bold tracking-[0.12em] text-co-text-dim">{t("assignments.task")}
             <select name="task" className={control} disabled={disabled}>{assignableTasks.map((task) => <option key={task} value={task}>{t(`assignments.task.${task}`)}</option>)}</select>
@@ -173,6 +223,40 @@ export function ShiftBoardClient({ board, compact = false, retrainTasks = [] }: 
         </form>}
       </article>;
     })}</div>)}
-    {compact && board.viewerLevel >= 4 && <ActionLink variant="secondary" href={`/assignments?location=${board.locationId}`}>{t(board.viewerLevel >= 4 ? "assignments.title" : "assignments.viewDay")}</ActionLink>}
+    {compact && section("team", "assignments.teamToday", board.people.filter((person) => person.hasWork).length, board.people.length, <div className="space-y-4">
+      <ul className="space-y-3">{TASK_TYPES.map((task) => {
+        const assignments = board.tasks.filter((assignment) => assignment.task === task && assignment.available !== false);
+        return <li key={task}><h4 className="font-bold">{t(`assignments.task.${task}`)}</h4>{assignments.length ? assignments.map(taskLine) : <p className="text-sm text-co-text-muted">{t("assignments.attribution.unassigned")}</p>}
+          {board.taskChanges?.filter((entry) => entry.task === task).map((entry) => <div key={entry.change.at}>{changeLine(entry.change)}</div>)}</li>;
+      })}</ul>
+      {board.stations.filter((station) => station.active && station.staffed).map((station) => <div key={station.id}>
+        <h4 className="font-bold">{language === "es" ? station.nameEs || station.name : station.name}</h4>
+        <ul className="space-y-2">{station.positions.filter((position) => position.active).map((position) => {
+          const occupant = board.people.find((person) => currentStation(board.events, person.id)?.positionId === position.id);
+          return <li key={position.id}><p>{language === "es" ? position.nameEs || position.name : position.name}</p>{stationLine(occupant ? currentStation(board.events, occupant.id) : null, occupant?.name ?? t("assignments.assignedStaff"))}</li>;
+        })}</ul>
+      </div>)}
+      {board.people.map((person) => <div key={person.id}><h4 className="font-bold">{person.name}</h4>{stationLine(currentStation(board.events, person.id), person.name)}{board.tasks.filter((task) => task.assigneeId === person.id).map((task) => <div key={task.id}><p>{t(`assignments.task.${task.task}`)}</p>{taskLine(task)}</div>)}</div>)}
+    </div>)}
+    <dialog ref={reasonDialog} aria-label={t("assignments.confirmChange")} className="m-auto max-h-[85dvh] w-[calc(100%-2rem)] max-w-lg overflow-y-auto rounded-xl border-2 border-co-border bg-co-surface p-4 text-co-text backdrop:bg-black/50" onCancel={(event) => { event.preventDefault(); if (!busy) setPending(null); }}>
+    {pending && <form className="space-y-3" onSubmit={(event) => {
+      event.preventDefault();
+      void mutate({ ...pending.payload, reasonCode: reasonCode || null, reasonNote: reasonNote.trim() || null });
+    }}>
+      <h3 className="font-bold">{t("assignments.confirmChange")}</h3>
+      {error && <p role="alert" className="text-co-cta-text">{t(error)}</p>}
+      {pending.required && <p>{t("assignments.reasonRequired")}</p>}
+      <label className="grid min-w-0 gap-1 text-sm">{t("assignments.reasonLabel")}
+        <select className={control} name="reasonCode" value={reasonCode} required={pending.required} disabled={disabled} onChange={(event) => setReasonCode(event.target.value as OverrideReasonCode | "")}>
+          <option value="">{t("assignments.reasonNone")}</option>{OVERRIDE_REASON_CODES.map((code) => <option key={code} value={code}>{t(`assignments.reason.${code}`)}</option>)}
+        </select>
+      </label>
+      <label className="grid min-w-0 gap-1 text-sm">{t(reasonCode === "other" ? "assignments.reasonNoteRequired" : "assignments.note")}
+        <textarea className={control} name="reasonNote" maxLength={500} required={reasonCode === "other"} value={reasonNote} disabled={disabled} onChange={(event) => setReasonNote(event.target.value)} />
+      </label>
+      <div className="flex flex-wrap gap-2"><ActionButton type="submit" disabled={disabled || (pending.required && !reasonCode) || (reasonCode === "other" && !reasonNote.trim())}>{t("assignments.confirmChange")}</ActionButton><ActionButton type="button" variant="secondary" disabled={disabled} onClick={() => setPending(null)}>{t("assignments.cancelChange")}</ActionButton></div>
+    </form>}
+    </dialog>
+    {compact && <ActionLink variant="secondary" href={`/assignments?location=${board.locationId}`}>{t(board.viewerLevel >= 4 ? "assignments.title" : "assignments.viewDay")}</ActionLink>}
   </section>;
 }

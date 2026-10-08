@@ -10,15 +10,15 @@ const board = (): ShiftBoard => ({ locationId: "shop", date: "2026-10-08", viewe
 describe("assignment disclosure defaults", () => {
   it("opens both dashboard rows without held work and collapses both after a claim", () => {
     const b = board();
-    expect(assignmentSectionDefaults(b, true)).toEqual({ tasks: true, stations: true });
+    expect(assignmentSectionDefaults(b, true)).toEqual({ tasks: true, stations: true, team: false });
     b.tasks.push({ id: "a", task: "receiving", assigneeId: "me", assignerId: "lead", assignerName: null, note: null });
-    expect(assignmentSectionDefaults(b, true)).toEqual({ tasks: false, stations: false });
+    expect(assignmentSectionDefaults(b, true)).toEqual({ tasks: false, stations: false, team: false });
   });
   it("collapses both dashboard rows for a station without a task", () => {
     const b = board();
     b.events.push({ id: "e", sequence: "1", locationId: "shop", businessDate: b.date, userId: "me",
       stationId: "station", positionId: "position", kind: "assign", actorId: "lead", actorName: "Lead", at: "2026-10-08T12:00:00Z", source: "assigned" });
-    expect(assignmentSectionDefaults(b, true)).toEqual({ tasks: false, stations: false });
+    expect(assignmentSectionDefaults(b, true)).toEqual({ tasks: false, stations: false, team: false });
   });
   it("opens the first incomplete assignments section only", () => {
     const b = board();
