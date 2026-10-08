@@ -317,7 +317,7 @@ class Run {
   async sendOnce(kind: SendKind, day: string, r: ResolvedRecipient, locationId: string | null, compose: (env: Envelope) => Promise<ComposedSend> | ComposedSend): Promise<"sent" | "skipped" | "failed" | "ambiguous" | "not_due"> {
     if (this.settled(kind, day, r.ref, locationId)) return "not_due";
     const resumed = this.retryable(kind, day, r.ref, locationId);
-    if (!resumed && r.skip) { await this.skip(kind, day, r, locationId, r.skip); return "skipped"; }
+    if (r.skip && !resumed) { await this.skip(kind, day, r, locationId, r.skip); return "skipped"; }
     const row: ClaimRow = { kind, business_day: day, recipient_ref: r.ref, location_id: locationId, revision: 1, mode: this.mode };
     const key = digestIdempotencyKey(row);
     let entry: SendLogRow;
@@ -329,6 +329,10 @@ class Run {
         }
         return "not_due";
       }
+      // Eligibility is re-checked on every retry: a recipient disabled, deactivated or narrowed out
+      // since the ambiguous attempt is never sent to again. The ambiguous row stays as it is, so a
+      // late provider acceptance still reconciles and the 23 h expiry still freezes it + alerts.
+      if (r.skip) return "not_due";
       let locked = false;
       const takenAt = this.io.now.toISOString();
       try { locked = await this.io.store.reclaim(resumed.id!, { attempted_at: takenAt }, { attempted_at: resumed.attempted_at }); } catch { locked = false; }
