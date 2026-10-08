@@ -38,7 +38,7 @@ beforeEach(() => {
 });
 afterEach(() => { vi.useRealTimers(); vi.unstubAllEnvs(); });
 
-it("finishes both shops' selection, depletion and pars before a hung capture, then returns healthy at the shared 60s deadline", async () => {
+it("finishes both shops' selection, depletion and pars before a hung capture, then returns healthy at the shared 150s deadline", async () => {
   vi.useFakeTimers();
   const signals: AbortSignal[] = [];
   vi.mocked(captureToastDaySystem).mockImplementation((id, _date, opts) => {
@@ -53,7 +53,7 @@ it("finishes both shops' selection, depletion and pars before a hung capture, th
   expect(sequence).toEqual(["pull:shop1", "pull:shop2", "depletion:shop1", "depletion:shop2", "pars:shop1", "pars:shop2", "capture:shop1", "capture:shop2"]);
   expect(signals).toHaveLength(2);
   expect(signals[0]).toBe(signals[1]);
-  await vi.advanceTimersByTimeAsync(59_999);
+  await vi.advanceTimersByTimeAsync(149_999);
   expect(settled).toBe(false);
   await vi.advanceTimersByTimeAsync(1);
   expect(await pending).toMatchObject({ healthy: true, metadata: {
@@ -110,7 +110,7 @@ it("authenticated nightly GET stays HTTP 200 with selection cron.success when ac
   await vi.advanceTimersByTimeAsync(0);
   expect(materializeDailyDepletion).toHaveBeenCalledTimes(2);
   expect(runParShadowForLocation).toHaveBeenCalledTimes(2);
-  await vi.advanceTimersByTimeAsync(60_000);
+  await vi.advanceTimersByTimeAsync(150_000);
   const response = await pending;
   expect(response.status).toBe(200);
   expect(await response.json()).toMatchObject({ businessDate: "2026-07-23", healthy: true });
@@ -139,4 +139,23 @@ it("missing capture schema skips capture and alerts independently while selectio
   expect(runParShadowForLocation).toHaveBeenCalledTimes(2);
   expect(audit).toHaveBeenCalledWith(expect.objectContaining({ action: "cron.failure", metadata: expect.objectContaining({ job: "toast-order-capture" }) }));
   expect(audit).not.toHaveBeenCalledWith(expect.objectContaining({ action: "cron.success", metadata: expect.objectContaining({ job: "toast-order-capture" }) }));
+});
+
+it("shares 150 seconds across dates rather than restarting the budget for each", async () => {
+  vi.useFakeTimers();
+  vi.mocked(captureToastDaySystem).mockImplementation(async (_id, date) => {
+    if (date === "2026-07-21") return new Promise(() => {});
+    await new Promise((resolve) => setTimeout(resolve, 45_000));
+    return { runId: "run", pages: 1, orders: 0, skipped: false };
+  });
+  let done = false;
+  const pending = runToastSalesPull({ businessDate: "2026-07-23" }).then((r) => { done = true; return r; });
+  await vi.advanceTimersByTimeAsync(90_000);
+  expect(vi.mocked(captureToastDaySystem).mock.calls.map((c) => c[1])).toEqual([
+    "2026-07-23", "2026-07-23", "2026-07-22", "2026-07-22", "2026-07-21", "2026-07-21",
+  ]);
+  await vi.advanceTimersByTimeAsync(59_999);
+  expect(done).toBe(false);
+  await vi.advanceTimersByTimeAsync(1);
+  expect(await pending).toMatchObject({ healthy: true, metadata: { capture_failures: 2 } });
 });

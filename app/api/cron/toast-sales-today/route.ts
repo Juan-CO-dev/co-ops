@@ -35,6 +35,7 @@ function secretOk(req: NextRequest): boolean {
 }
 
 export async function GET(req: NextRequest) {
+  const startedAt = Date.now();
   if (!process.env.CATERING_SCAN_SECRET) return jsonError(503, "cron_disabled");
   if (!secretOk(req)) return jsonError(401, "unauthorized");
   // No `?date=` override: this route exists to keep TODAY warm, and a backfill belongs to
@@ -42,7 +43,7 @@ export async function GET(req: NextRequest) {
   const today = etCalendarDate(new Date().toISOString());
   try {
     const results = await pullTodaySalesForAllLocations(today);
-    const capture = await captureIntraday(today, req.signal);
+    const capture = await captureIntraday(today, req.signal, Math.max(0, maxDuration * 1000 - (Date.now() - startedAt) - 10_000));
     const n = (k: string) => results.filter((r) => r.result === k).length;
     const healthy = n("unknown") === 0 && n("error") === 0;
     await audit({

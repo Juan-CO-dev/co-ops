@@ -24,7 +24,7 @@ beforeEach(() => {
   vi.mocked(toastConfigured).mockReturnValue(true);
   vi.mocked(toastGetPage).mockResolvedValue({ data: [], nextPageToken: null });
   vi.mocked(toastGet).mockResolvedValue([{ guid: "order", businessDate: 20260722, checks: [] }]);
-  rpc = vi.fn((name: string) => ({ abortSignal: async () => ({ error: name === "toast_capture_page" && pageError ? { message: "private" } : null }) }));
+  rpc = vi.fn((name: string) => ({ abortSignal: async () => ({ error: name === "toast_capture_page" && pageError ? { code: "P0001", message: "private" } : null }) }));
   const from = (table: string) => {
     const query = {
       select: () => query, lt: () => query, abortSignal: () => query,
@@ -157,4 +157,48 @@ it("does not reconcile an unpublished failed capture", async () => {
   pageError = true;
   await expect(captureToastDaySystem("shadow-failed", "2026-07-22", { reconcile: true })).rejects.toThrow("capture_page_write_failed");
   expect(recordCaptureReconciliation).not.toHaveBeenCalled();
+});
+
+it.each(["returned", "thrown"])("replays the identical page once after a %s transport error", async (kind) => {
+  let pages = 0;
+  rpc.mockImplementation((name: string) => ({ abortSignal: async () => {
+    if (name === "toast_capture_page" && ++pages === 1) {
+      if (kind === "thrown") throw new TypeError("private socket detail");
+      return { status: 0, error: { code: "", message: "private socket detail" } };
+    }
+    return { status: 200, error: null };
+  } }));
+  expect(await captureToastDaySystem("retry-shop", "2026-07-22")).toMatchObject({ orders: 1 });
+  const calls = rpc.mock.calls.filter((c) => c[0] === "toast_capture_page");
+  expect(calls).toHaveLength(2);
+  expect(calls[0]![1]).toEqual(calls[1]![1]);
+  expect(rpc.mock.calls.at(-1)![0]).toBe("toast_capture_finish");
+});
+it("classifies persistent transport failure after exactly one retry without publishing", async () => {
+  rpc.mockImplementation(() => ({ abortSignal: async () => ({ status: 0, error: { code: "", message: "private" } }) }));
+  await expect(captureToastDaySystem("transport-fail-shop", "2026-07-22")).rejects.toThrow("capture_page_transport_failed");
+  expect(rpc.mock.calls.map((c) => c[0])).toEqual(["toast_capture_page", "toast_capture_page"]);
+  expect(writes.at(-1)).toMatchObject({ data: { status: "failed", error_code: "capture_page_transport_failed" } });
+  expect(JSON.stringify(writes)).not.toContain("private");
+});
+it("does not retry a status-bearing HTTP failure", async () => {
+  rpc.mockImplementation(() => ({ abortSignal: async () => ({ status: 503, error: { code: "", message: "private" } }) }));
+  await expect(captureToastDaySystem("http-fail-shop", "2026-07-22")).rejects.toThrow("capture_page_write_failed");
+  expect(rpc).toHaveBeenCalledTimes(1);
+});
+it("passes the hourly interval to the claim RPC", async () => {
+  rpc.mockImplementation(() => ({ abortSignal: async () => ({ data: false, error: null }) }));
+  await captureToastDaySystem("hourly-shop", "2026-07-22", { debounce: true, minInterval: "1 hour" });
+  expect(rpc).toHaveBeenCalledWith("toast_capture_claim", expect.objectContaining({ p_min_interval: "1 hour" }));
+});
+
+it("does not replay a transport failure once the parent deadline is aborted", async () => {
+  const parent = new AbortController();
+  rpc.mockImplementation(() => ({ abortSignal: async () => {
+    parent.abort();
+    return { status: 0, error: { code: "", message: "private" } };
+  } }));
+  await expect(captureToastDaySystem("aborted-retry-shop", "2026-07-22", { signal: parent.signal }))
+    .rejects.toThrow("capture_deadline");
+  expect(rpc.mock.calls.map((c) => c[0])).toEqual(["toast_capture_page"]);
 });

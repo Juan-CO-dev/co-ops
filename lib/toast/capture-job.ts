@@ -8,7 +8,7 @@ import { captureBudget, captureErrorCode } from "./capture-runner";
  */
 export async function runOrderCapture(locationIds: string[], businessDate: string, context: "cron" | "manual", dates = [businessDate]) {
   if (!captureEnabled()) return { failures: 0, skipped: true, results: [] };
-  const budget = captureBudget();
+  const budget = captureBudget(context === "cron" ? 150_000 : 60_000);
   try {
     const results: { locationId: string; businessDate: string; error: string | null }[] = [];
     for (const date of [...new Set(dates)]) {

@@ -5,9 +5,10 @@ import { captureEnabled, captureToastDaySystem } from "./capture";
 import { captureBudget, captureErrorCode } from "./capture-runner";
 
 /** Additive best-effort capture. One deadline includes location reads and both dates. */
-export async function captureIntraday(today: string, signal?: AbortSignal) {
+export async function captureIntraday(today: string, signal?: AbortSignal, remainingMs = 45_000) {
   if (!captureEnabled()) return { failures: 0, results: [], skipped: true };
-  const budget = captureBudget(45_000, signal);
+  if (remainingMs <= 0) return { failures: 0, results: [], skipped: true, reason: "capture_route_time_exhausted" };
+  const budget = captureBudget(Math.min(45_000, remainingMs), signal);
   const results: { locationId: string; date: string; error: string | null; skipped?: boolean }[] = [];
   try {
     const locations = await budget.wait(() => getServiceRoleClient().from("locations")
@@ -16,7 +17,7 @@ export async function captureIntraday(today: string, signal?: AbortSignal) {
     for (const date of [today, etYmdMinusDays(today, 1)]) {
       const day = await Promise.all((locations.data ?? []).map(async (location: { id: string }) => {
         try {
-          const result = await budget.wait(() => captureToastDaySystem(location.id, date, { debounce: true, signal: budget.signal }));
+          const result = await budget.wait(() => captureToastDaySystem(location.id, date, { debounce: true, minInterval: date === today ? "5 minutes" : "1 hour", signal: budget.signal }));
           return { locationId: location.id, date, skipped: result.skipped,
             error: result.reason === "capture_schema_missing" ? result.reason : null };
         } catch (error) { return { locationId: location.id, date, error: captureErrorCode(error) }; }

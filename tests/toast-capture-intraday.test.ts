@@ -16,7 +16,8 @@ afterEach(() => vi.useRealTimers());
 it("captures today then yesterday with atomic debounce requested on each", async () => {
   expect(await captureIntraday("2026-10-07")).toMatchObject({ failures: 0 });
   expect(vi.mocked(captureToastDaySystem).mock.calls.map((c) => c[1])).toEqual(["2026-10-07", "2026-10-06"]);
-  expect(captureToastDaySystem).toHaveBeenCalledWith("shop", "2026-10-07", { debounce: true, signal: expect.any(AbortSignal) });
+  expect(captureToastDaySystem).toHaveBeenCalledWith("shop", "2026-10-07", { debounce: true, minInterval: "5 minutes", signal: expect.any(AbortSignal) });
+  expect(captureToastDaySystem).toHaveBeenCalledWith("shop", "2026-10-06", { debounce: true, minInterval: "1 hour", signal: expect.any(AbortSignal) });
 });
 it("accepts a recently completed or running day as a debounce skip", async () => {
   vi.mocked(captureToastDaySystem).mockResolvedValue({ runId: "", pages: 0, orders: 0, skipped: true, reason: "capture_debounced" });
@@ -34,4 +35,15 @@ it("kill switch causes no database or provider work", async () => {
   vi.mocked(captureEnabled).mockReturnValue(false);
   expect(await captureIntraday("2026-10-07")).toMatchObject({ skipped: true });
   expect(getServiceRoleClient).not.toHaveBeenCalled();
+});
+
+it("uses the smaller remaining route budget and skips when it is exhausted", async () => {
+  expect(await captureIntraday("2026-10-07", undefined, 0)).toMatchObject({ skipped: true });
+  expect(getServiceRoleClient).not.toHaveBeenCalled();
+  vi.useFakeTimers();
+  vi.mocked(captureToastDaySystem).mockImplementation(() => new Promise(() => {}));
+  const pending = captureIntraday("2026-10-07", undefined, 2_000);
+  await vi.advanceTimersByTimeAsync(2_000);
+  expect(await pending).toMatchObject({ failures: 1, results: [{ error: "capture_deadline" }] });
+  expect(captureToastDaySystem).toHaveBeenCalledTimes(1);
 });
