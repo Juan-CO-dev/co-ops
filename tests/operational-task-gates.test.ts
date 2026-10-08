@@ -150,7 +150,7 @@ async function countPage(role: RoleCode, mayCount: boolean) {
     redirect: () => { throw new Error("redirect"); },
     loadCountFormData: form, loadCountReferenceData: reference, loadOnHand: onHand,
     serverT: () => "label", twinVendorLabels: () => new Map(),
-    CountForm: "CountForm", OnHandPanel: "OnHandPanel", DashboardBackLink: "DashboardBackLink",
+    CountForm: "CountForm", OnHandPanel: "OnHandPanel", DashboardBackLink: "DashboardBackLink", ExportLinks: "ExportLinks",
     React: { createElement: (type: unknown, props: unknown, ...children: unknown[]) => ({ type, props, children }) },
   };
   const page = new Function(...Object.keys(deps), `${js}; return CountsPage;`)(...Object.values(deps));

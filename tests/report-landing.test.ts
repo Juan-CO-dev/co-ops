@@ -23,7 +23,7 @@ async function render(level: number, role: RoleCode, location = "mine", assigned
   const listReports = vi.fn(async () => []);
   const deps = {
     React: { createElement: (type: unknown, props: Record<string, unknown> | null, ...children: unknown[]): Node => ({ type, props: props ?? {}, children }) },
-    Link: "link", DashboardBackLink: "back", ReportRangeControls: "range",
+    Link: "link", DashboardBackLink: "back", ReportRangeControls: "range", ExportLinks: "export",
     requireSessionFromHeaders: async () => ({ role, level, locations: ["mine"], user: { id: "viewer", language: "en" } }),
     redirect: () => { throw new Error("redirect"); }, canReadReportLocation, lockLocationContext, REPORT_ALL_LOCATIONS_LEVEL: 8,
     getServiceRoleClient: () => ({ from: () => query }), serverT: (_language: string, key: string) => key,
