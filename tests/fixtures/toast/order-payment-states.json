@@ -1,0 +1,54 @@
+{
+  "guid": "synthetic-status-order",
+  "businessDate": 20260723,
+  "checks": [
+    {
+      "guid": "deleted-check",
+      "deleted": true,
+      "voided": false,
+      "amount": 30,
+      "taxAmount": 3,
+      "totalAmount": 33,
+      "payments": [
+        {
+          "guid": "voided-payment",
+          "type": "CREDIT",
+          "paymentStatus": "VOIDED",
+          "refundStatus": "NONE",
+          "amount": 11,
+          "tipAmount": 0,
+          "paidBusinessDate": 20260723,
+          "voidInfo": {
+            "voidBusinessDate": 20260724,
+            "voidReason": {
+              "guid": "reason"
+            }
+          }
+        },
+        {
+          "guid": "denied-payment",
+          "type": "CREDIT",
+          "paymentStatus": "DENIED",
+          "refundStatus": "NONE",
+          "amount": 11,
+          "tipAmount": 0,
+          "paidBusinessDate": 20260723
+        },
+        {
+          "guid": "refunded-payment",
+          "type": "CREDIT",
+          "paymentStatus": "CAPTURED",
+          "refundStatus": "FULL",
+          "amount": 11,
+          "tipAmount": 2,
+          "paidBusinessDate": 20260723,
+          "refund": {
+            "refundAmount": 11,
+            "tipRefundAmount": 2,
+            "refundBusinessDate": 20260725
+          }
+        }
+      ]
+    }
+  ]
+}

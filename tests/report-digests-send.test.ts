@@ -1,34 +1,81 @@
 /**
+ * A fake provider with Resend's idempotency semantics INCLUDING THE 24 h KEY EXPIRY (Astra r2: a
+ * fake that keeps keys forever hides the late-retry double send). A live key with the SAME payload
+ * returns the original id without a new email; with a DIFFERENT payload it is a 409
+ * invalid_idempotent_request; an expired key is forgotten and sends again. `deliveries` holds only
+ * emails that really went out. `lose(n)` makes the next n calls deliver but report a timeout (the
+ * accepted-but-lost case); `drop(n)` makes them time out without delivering.
+ */
+export class Provider {
+  deliveries: Array<{ to: string; subject: string; text: string; key: string; at: string }> = [];
+  calls: Array<{ key: string; at: string }> = [];
+  private keys = new Map<string, { body: string; id: string; at: number }>();
+  private lost = 0;
+  private dropped = 0;
+  lose(n = 1) { this.lost += n; return this; }
+  drop(n = 1) { this.dropped += n; return this; }
+  send(m: { to: string; subject: string; html: string; text: string; idempotencyKey: string }, now: Date): { id: string } | { error: string; code?: string } {
+    this.calls.push({ key: m.idempotencyKey, at: now.toISOString() });
+    if (this.dropped > 0) { this.dropped--; return { error: "timeout" }; }
+    const body = `${m.to}|${m.subject}|${m.html}`;
+    const seen = this.keys.get(m.idempotencyKey);
+    const live = seen && now.getTime() - seen.at < 24 * 3_600_000;
+    if (seen && live) return seen.body === body ? { id: seen.id } : { error: "same key, different payload", code: "invalid_idempotent_request" };
+    const id = `mail-${this.deliveries.length + 1}`;
+    this.keys.set(m.idempotencyKey, { body, id, at: now.getTime() });
+    this.deliveries.push({ to: m.to, subject: m.subject, text: m.text, key: m.idempotencyKey, at: now.toISOString() });
+    if (this.lost > 0) { this.lost--; return { error: "socket hang up" }; }
+    return { id };
+  }
+}
+
+/**
  * The digest engine against an in-memory send log that enforces 0220's partial unique index the
- * way Postgres does (a second claimed|sent row for the same key is a "duplicate" = 23505).
+ * way Postgres does (a second claimed|sent|ambiguous|failed_ambiguous row for the same key is a
+ * "duplicate" = 23505), with the r3 attempt / accepted columns and guarded transitions.
  */
 import { describe, expect, it, vi } from "vitest";
-import { runClosingDigestsWith, runDigestTickWith, type ClaimRow, type DigestAlert, type DigestIO } from "@/lib/report-digests-engine";
-import { DEFAULT_DIGEST_SETTINGS, type DigestSettings, type SendLogRow } from "@/lib/report-digests-shared";
+import { classifyProviderResult, runClosingDigestsWith, runDigestTickWith, type ClaimRow, type DigestAlert, type DigestIO, type SendOutcome } from "@/lib/report-digests-engine";
+import { DEFAULT_DIGEST_SETTINGS, type DigestSettings, type RecipientOverride, type SendLogRow } from "@/lib/report-digests-shared";
 import type { CateringFacts, ShopDayFacts } from "@/lib/report-digests-compose";
 
 const A = { id: "aaaaaaaa-0000-4000-8000-000000000001", name: "Shop A" };
 const B = { id: "bbbbbbbb-0000-4000-8000-000000000002", name: "Shop B" };
 const DAY = "2026-10-07";
+const HOLDS = new Set(["claimed", "sent", "ambiguous", "failed_ambiguous"]);
 
+type StoreRow = SendLogRow & { id: string; error: string | null; idempotency_key: string | null; sent_at: string | null };
 class Store {
-  rows: Array<SendLogRow & { id: string; email_id: string | null; error: string | null }> = [];
+  rows: StoreRow[] = [];
+  now = "2026-10-07T12:00:00Z";
   private seq = 0;
   private key(r: ClaimRow) { return [r.recipient_ref, r.kind, r.business_day, r.revision, r.mode, r.location_id ?? ""].join("|"); }
   async claim(r: ClaimRow) {
-    if (this.rows.some((x) => (x.outcome === "claimed" || x.outcome === "sent") && this.key(x as ClaimRow) === this.key(r))) return "duplicate" as const;
+    if (this.rows.some((x) => HOLDS.has(x.outcome) && this.key(x as ClaimRow) === this.key(r))) return "duplicate" as const;
     const id = `row-${++this.seq}`;
-    this.rows.push({ ...r, id, outcome: "claimed", skip_reason: null, attempted_at: "2026-10-07T12:00:00Z", email_id: null, error: null });
+    this.rows.push({ ...r, id, outcome: "claimed", skip_reason: null, attempted_at: this.now, error: null, first_attempt_at: null, provider_message_id: null, idempotency_key: null, sent_at: null });
     return { id };
   }
-  async finish(id: string, patch: { outcome: "sent" | "failed"; email_id?: string | null; error?: string | null }) {
-    const row = this.rows.find((x) => x.id === id && x.outcome === "claimed");
+  async markAttempt(id: string, patch: { first_attempt_at: string; idempotency_key: string }) {
+    const row = this.rows.find((x) => x.id === id && x.outcome === "claimed" && !x.first_attempt_at);
     if (!row) return false;
-    Object.assign(row, { outcome: patch.outcome, email_id: patch.email_id ?? null, error: patch.error ?? null });
+    Object.assign(row, patch);
+    return true;
+  }
+  async recordAccepted(id: string, patch: { provider_message_id: string; sent_at: string }) {
+    const row = this.rows.find((x) => x.id === id && (x.outcome === "claimed" || x.outcome === "ambiguous"));
+    if (!row) return false;
+    Object.assign(row, patch);
+    return true;
+  }
+  async finish(id: string, from: SendOutcome[], patch: { outcome: string; error?: string | null }) {
+    const row = this.rows.find((x) => x.id === id && (from as string[]).includes(x.outcome));
+    if (!row) return false;
+    Object.assign(row, { outcome: patch.outcome, error: patch.error ?? null });
     return true;
   }
   async skip(r: ClaimRow & { skip_reason: string }) {
-    this.rows.push({ ...r, id: `row-${++this.seq}`, outcome: "skipped", attempted_at: "2026-10-07T12:00:00Z", email_id: null, error: null });
+    this.rows.push({ ...r, id: `row-${++this.seq}`, outcome: "skipped", attempted_at: this.now, error: null, first_attempt_at: null, provider_message_id: null, idempotency_key: null, sent_at: null });
   }
   of(outcome: string) { return this.rows.filter((r) => r.outcome === outcome); }
 }
@@ -42,36 +89,39 @@ const users = [
 ];
 
 function shopFacts(location: { id: string; name: string }, day: string): ShopDayFacts {
-  return { location, day, reports: [], receiving: { deliveries: 0, discrepant: 0, missingReceipt: 0 }, tosses: 0, storeRunsPending: 0, tasks: [] };
+  return { location, day, reports: [], receiving: { deliveries: 0, discrepant: 0, missingReceipt: 0 }, tosses: 0, storeRunsPending: 0, tasks: [], pmFindings: null };
 }
 const noCatering = (today: string): CateringFacts => ({ today, leads: [], lostYesterdayIds: [], quotesSentYesterday: [], openQuotes: [], refundsYesterday: [] });
 
 function makeIO(opts: {
   now: string; store?: Store; settings?: Partial<DigestSettings>;
   finalized?: Record<string, string[]>; sendFails?: (to: string, subject: string) => boolean;
+  provider?: Provider; previewRecipient?: string | null; overrides?: RecipientOverride[];
+  memberships?: Array<{ userId: string; locationId: string }>;
 }) {
   const store = opts.store ?? new Store();
-  const sent: Array<{ to: string; subject: string; text: string }> = [];
+  store.now = new Date(opts.now).toISOString();
+  const provider = opts.provider ?? new Provider();
+  const sent = provider.deliveries;
   const alerts: DigestAlert[] = [];
   const claimedAlerts = new Set<string>();
   const runs: unknown[] = [];
   const io: DigestIO = {
-    now: new Date(opts.now), baseUrl: "https://ops.example.com", previewTo: "operator@example.com",
+    now: new Date(opts.now), baseUrl: "https://ops.example.com",
+    previewRecipient: async () => (opts.previewRecipient === undefined ? "operator@example.com" : opts.previewRecipient),
     settings: async () => ({ ...DEFAULT_DIGEST_SETTINGS, mode: "live", ...opts.settings }),
     directory: async () => ({
-      dir: { users, memberships: [{ userId: "gm-a", locationId: A.id }, { userId: "gm-b", locationId: B.id }], overrides: [], locationIds: [A.id, B.id] },
+      dir: { users, memberships: opts.memberships ?? [{ userId: "gm-a", locationId: A.id }, { userId: "gm-b", locationId: B.id }], overrides: opts.overrides ?? [], locationIds: [A.id, B.id] },
       locations: [A, B],
     }),
     sendLog: async (days) => store.rows.filter((r) => days.includes(r.business_day)).map((r) => ({ ...r })),
     finalizedClosings: async (days) => new Map(days.map((d) => [d, new Set(opts.finalized?.[d] ?? [])])),
     shopFacts: async (l, d) => shopFacts(l, d),
     cateringFacts: async (today) => noCatering(today),
-    expireStaleClaims: async () => 0,
     store,
-    sendEmail: vi.fn(async (m: { to: string; subject: string; html: string; text: string }) => {
-      if (opts.sendFails?.(m.to, m.subject)) return { error: "422 domain not verified" };
-      sent.push({ to: m.to, subject: m.subject, text: m.text });
-      return { id: `mail-${sent.length}` };
+    sendEmail: vi.fn(async (m: { to: string; subject: string; html: string; text: string; idempotencyKey: string }) => {
+      if (opts.sendFails?.(m.to, m.subject)) return { error: "422 domain not verified", code: "validation_error" };
+      return provider.send(m, new Date(opts.now));
     }),
     sha: (c) => String(c.length),
     alert: async (a) => {
@@ -83,7 +133,7 @@ function makeIO(opts: {
     },
     recordRun: async (s) => { runs.push(s); },
   };
-  return { io, store, sent, alerts, runs };
+  return { io, store, sent, alerts, runs, provider };
 }
 
 describe("off by default", () => {
@@ -238,5 +288,167 @@ describe("preview mode", () => {
     const live = makeIO({ now: "2026-10-07T11:10:00Z", store: p.store });
     await runDigestTickWith(live.io);
     expect(live.sent.map((m) => m.to)).toContain("pete@example.com");
+  });
+});
+
+describe("P1 (Astra r2): send-once survives the provider's 24 h key window", () => {
+  const cateringTo = (p: Provider, to: string) => p.deliveries.filter((m) => m.to === to && m.subject.startsWith("Catering — Wed, Oct 7"));
+
+  it("the fake provider really forgets keys after 24 h (so the tests below are not toothless)", () => {
+    const p = new Provider();
+    const m = { to: "a@x.co", subject: "s", html: "h", text: "t", idempotencyKey: "k" };
+    p.send(m, new Date("2026-10-07T11:00:00Z"));
+    p.send(m, new Date("2026-10-08T10:59:00Z"));
+    expect(p.deliveries).toHaveLength(1);
+    p.send(m, new Date("2026-10-08T11:00:00Z"));
+    expect(p.deliveries).toHaveLength(2);
+  });
+
+  it("accepted + finish fails + retry at 25 h = ONE send (the message id was persisted before finish)", async () => {
+    const store = new Store();
+    const provider = new Provider();
+    const first = makeIO({ now: "2026-10-07T11:00:00Z", store, provider });
+    const realFinish = store.finish.bind(store);
+    store.finish = async () => { throw new Error("connection reset"); };
+    await runDigestTickWith(first.io);
+    expect(cateringTo(provider, "pete@example.com")).toHaveLength(1);
+    const pete = store.rows.find((r) => r.kind === "catering" && r.recipient_ref === "user:own")!;
+    expect(pete).toMatchObject({ outcome: "claimed", provider_message_id: expect.stringMatching(/^mail-/), sent_at: "2026-10-07T11:00:00.000Z" });
+    expect(first.alerts.some((a) => a.detector === "digest-send" && a.error?.startsWith("finish_unrecorded:sent"))).toBe(true);
+
+    store.finish = realFinish;
+    // 25 h later: the provider has FORGOTTEN the key; only the log can stop a second email.
+    const late = makeIO({ now: "2026-10-08T12:00:00Z", store, provider });
+    const s = await runDigestTickWith(late.io);
+    expect(cateringTo(provider, "pete@example.com")).toHaveLength(1);
+    expect(pete.outcome).toBe("sent");
+    expect(store.rows.filter((r) => r.kind === "catering" && r.business_day === DAY && r.outcome !== "skipped").map((r) => r.outcome)).toEqual(["sent", "sent", "sent", "sent"]);
+    expect(s?.reconciled).toBeGreaterThanOrEqual(4);
+    // A closing hook for that old day does not resend either.
+    expect(provider.calls.filter((c) => c.key === "co-digest/live/catering/2026-10-07/r1/user:own/all")).toHaveLength(1);
+  });
+
+  it("ambiguous (delivered, answer lost) + retry at 2 h = the SAME key, still one send", async () => {
+    const store = new Store();
+    const provider = new Provider();
+    const first = makeIO({ now: "2026-10-07T11:00:00Z", store, provider });
+    provider.lose(6); // every send this tick (2 unified fallbacks + 4 catering) goes out, answer lost
+    await runDigestTickWith(first.io);
+    const amb = store.of("ambiguous").filter((r) => r.kind === "catering");
+    expect(amb).toHaveLength(4);
+    expect(amb.every((r) => r.first_attempt_at === "2026-10-07T11:00:00.000Z")).toBe(true);
+    expect(first.alerts.some((a) => a.detector === "digest-send" && a.error?.startsWith("ambiguous:"))).toBe(true);
+
+    const retry = makeIO({ now: "2026-10-07T13:00:00Z", store, provider });
+    await runDigestTickWith(retry.io);
+    const key = "co-digest/live/catering/2026-10-07/r1/user:own/all";
+    expect(provider.calls.filter((c) => c.key === key)).toHaveLength(2); // retried, with the same key
+    expect(cateringTo(provider, "pete@example.com")).toHaveLength(1);   // and delivered once
+    expect(store.of("sent").filter((r) => r.kind === "catering")).toHaveLength(4);
+    expect(store.of("sent").every((r) => r.first_attempt_at === "2026-10-07T11:00:00.000Z" || r.kind !== "catering")).toBe(true);
+  });
+
+  it("ambiguous at 25 h = NO send, frozen failed_ambiguous, and an alert for a human", async () => {
+    const store = new Store();
+    const provider = new Provider();
+    // The closing hook on Oct 7 22:00 ET; Alex's GM digest times out without an answer.
+    const hook = makeIO({ now: "2026-10-08T02:00:00Z", store, provider, finalized: { [DAY]: [A.id] } });
+    provider.drop(1);
+    await runClosingDigestsWith(hook.io, A.id, DAY);
+    const alex = store.rows.find((r) => r.kind === "gm_shop" && r.recipient_ref === "user:gm-a")!;
+    expect(alex.outcome).toBe("ambiguous");
+
+    // 25 h later (Oct 8 23:00 ET) Oct 7 is still "yesterday" for the tick — and must NOT be resent.
+    const late = makeIO({ now: "2026-10-09T03:00:00Z", store, provider, finalized: { [DAY]: [A.id, B.id] } });
+    const s = await runDigestTickWith(late.io);
+    expect(alex.outcome).toBe("failed_ambiguous");
+    expect(provider.calls.filter((c) => c.key === `co-digest/live/gm_shop/${DAY}/r1/user:gm-a/${A.id}`)).toHaveLength(1);
+    expect(provider.deliveries.some((m) => m.to === "alex@example.com" && m.key.includes(DAY))).toBe(false);
+    expect(late.alerts).toContainEqual(expect.objectContaining({ detector: "digest-watch", kind: "gm_shop", day: DAY, ref: "user:gm-a", error: expect.stringContaining("failed_ambiguous") }));
+    expect(s?.ambiguousExpired).toBe(1);
+    // and it stays frozen on every later tick
+    await runDigestTickWith(makeIO({ now: "2026-10-09T03:10:00Z", store, provider, finalized: { [DAY]: [A.id, B.id] } }).io);
+    expect(provider.calls.filter((c) => c.key === `co-digest/live/gm_shop/${DAY}/r1/user:gm-a/${A.id}`)).toHaveLength(1);
+  });
+
+  it("only a claim that never reached the provider is released by the stale sweep", async () => {
+    const store = new Store();
+    const provider = new Provider();
+    const first = makeIO({ now: "2026-10-07T11:00:00Z", store, provider });
+    store.markAttempt = async () => false; // the attempt could not be recorded → nothing is sent
+    await runDigestTickWith(first.io);
+    expect(provider.calls).toHaveLength(0);
+    expect(store.of("claimed").filter((r) => r.kind === "catering").every((r) => r.first_attempt_at === null)).toBe(true);
+    delete (store as { markAttempt?: unknown }).markAttempt;
+    const later = makeIO({ now: "2026-10-07T11:20:00Z", store, provider });
+    const s = await runDigestTickWith(later.io);
+    expect(s?.staleClaims).toBeGreaterThanOrEqual(4);
+    expect(cateringTo(provider, "pete@example.com")).toHaveLength(1);
+  });
+
+  it("a retry whose content changed is reconciled as sent from the provider's 409, never re-sent", async () => {
+    const store = new Store();
+    const provider = new Provider();
+    const first = makeIO({ now: "2026-10-07T11:00:00Z", store, provider });
+    // Neither the provider id nor the finish reaches the log: only the attempt is on the row.
+    store.recordAccepted = async () => false;
+    store.finish = async () => false;
+    await runDigestTickWith(first.io);
+    const before = provider.deliveries.length;
+    delete (store as { recordAccepted?: unknown }).recordAccepted;
+    delete (store as { finish?: unknown }).finish;
+    const retry = makeIO({ now: "2026-10-07T11:20:00Z", store, provider });
+    retry.io.cateringFacts = async (today) => ({ ...noCatering(today), openQuotes: [{ id: "q", locationId: A.id }] });
+    await runDigestTickWith(retry.io);
+    expect(provider.deliveries.length).toBe(before);
+    const sent = store.of("sent").filter((r) => r.kind === "catering");
+    expect(sent).toHaveLength(4);
+    // Shop A content changed (409 → reconciled); Shop B content did not (same id back, no new email).
+    expect(sent.filter((r) => r.error?.startsWith("reconciled:")).map((r) => r.recipient_ref).sort()).toEqual(["user:gm-a", "user:moo", "user:own"]);
+  });
+
+  it("every send carries a stable provider idempotency key (recipient × kind × day × revision)", async () => {
+    const { io, provider } = makeIO({ now: "2026-10-07T11:00:00Z" });
+    await runDigestTickWith(io);
+    expect(provider.deliveries.find((m) => m.to === "pete@example.com" && m.subject.startsWith("Catering"))?.key)
+      .toBe("co-digest/live/catering/2026-10-07/r1/user:own/all");
+  });
+});
+
+describe("P1 (Astra): an override never discloses another shop", () => {
+  it("a GM of A with an override naming B gets neither B's closing nor B's catering digest", async () => {
+    const override: RecipientOverride = { id: "ov", kind: "internal", userId: "gm-a", email: null, displayName: "Alex", active: true, cateringDigest: true, shopDigest: true, locationIds: [B.id] };
+    const store = new Store();
+    const run = makeIO({ now: "2026-10-08T11:00:00Z", store, overrides: [override], finalized: { [DAY]: [A.id, B.id] } });
+    await runDigestTickWith(run.io);
+    const toAlex = run.sent.filter((m) => m.to === "alex@example.com");
+    expect(toAlex.some((m) => m.text.includes("Shop B"))).toBe(false);
+    expect(store.rows.filter((r) => r.recipient_ref === "user:gm-a" && r.kind === "catering").map((r) => [r.outcome, r.skip_reason]))
+      .toEqual([["skipped", "out_of_scope"]]);
+    expect(store.rows.some((r) => r.recipient_ref === "user:gm-a" && r.location_id === B.id)).toBe(false);
+  });
+});
+
+describe("P2 (Astra): preview goes to the operator's own account or nowhere", () => {
+  it("no resolvable CGS account → fail closed: nothing sent, one alert", async () => {
+    const p = makeIO({ now: "2026-10-07T11:00:00Z", settings: { mode: "preview" }, previewRecipient: null });
+    const s = await runDigestTickWith(p.io);
+    expect(p.sent).toEqual([]);
+    expect(p.store.rows).toEqual([]);
+    expect(p.alerts).toEqual([expect.objectContaining({ detector: "digest-preview", error: "preview_recipient_unresolved" })]);
+    expect(s?.alerts).toBe(1);
+  });
+});
+
+describe("provider outcome classification", () => {
+  it("accepted / reconcile / refused / ambiguous", () => {
+    expect(classifyProviderResult({ id: "m" })).toBe("accepted");
+    expect(classifyProviderResult({ id: "" })).toBe("ambiguous");
+    expect(classifyProviderResult({ error: "x", code: "invalid_idempotent_request" })).toBe("reconcile");
+    expect(classifyProviderResult({ error: "x", code: "validation_error" })).toBe("refused");
+    expect(classifyProviderResult({ error: "x", code: "rate_limit_exceeded" })).toBe("refused");
+    for (const code of ["concurrent_idempotent_requests", "application_error", "internal_server_error", undefined]) {
+      expect(classifyProviderResult({ error: "timeout", ...(code ? { code } : {}) })).toBe("ambiguous");
+    }
   });
 });

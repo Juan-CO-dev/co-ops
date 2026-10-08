@@ -344,7 +344,7 @@ export function packageIO(sb: Sb, now: Date): PackageIO {
       const files = await renderPackageFiles({ tables, recipient: r, shops: input.shops, from, to, cadence, at: now });
       return packageEmail({ recipient: r, cadence, from, to, files, sections: r.sections, env });
     },
-    async recordSend(entry: { kind: PackageKind; day: string; ref: string; outcome: "sent" | "failed" }) {
+    async recordSend(entry: { kind: PackageKind; day: string; ref: string; outcome: "sent" | "failed" | "ambiguous" }) {
       await audit({
         actorId: null, actorRole: null, action: "report_package.send", resourceTable: "report_digest_sends", resourceId: null,
         metadata: { kind: entry.kind, business_day: entry.day, recipient_ref: entry.ref, outcome: entry.outcome },

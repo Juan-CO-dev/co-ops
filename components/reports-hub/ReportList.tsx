@@ -13,6 +13,7 @@
  * Mirrors maintenance card token styling.
  */
 
+import Link from "next/link";
 import { EmptyState } from "@/components/EmptyState";
 import { formatDateLabel } from "@/lib/i18n/format";
 import { serverT } from "@/lib/i18n/server";
@@ -71,7 +72,10 @@ export function ReportList({ items, locationId, language, viewerLevel, searchQue
   return (
     <ul className="grid grid-cols-1 gap-2 lg:grid-cols-2">
       {items.map((item) => {
-        const params = new URLSearchParams(context); params.set("location", item.locationId || locationId);
+        const params = new URLSearchParams(context);
+        if (params.get("location") === "all") params.set("returnLocation", "all");
+        else params.delete("returnLocation");
+        params.set("location", item.locationId || locationId);
         const href = `/reports/${item.type}/${item.id}?${params}`;
         const dateLabel = formatDateLabel(item.date, language);
         const typeLabel = t(TYPE_LABEL_KEYS[item.type]);
@@ -82,7 +86,7 @@ export function ReportList({ items, locationId, language, viewerLevel, searchQue
 
         return (
           <li key={`${item.type}:${item.id}:${item.locationId}`}>
-            <a
+            <Link
               href={href}
               className="co-card co-card-interactive flex flex-col gap-0.5 px-4 py-3 text-sm"
             >
@@ -128,7 +132,7 @@ export function ReportList({ items, locationId, language, viewerLevel, searchQue
                   ) : null}
                 </div>
               ) : null}
-            </a>
+            </Link>
             {snip ? (
               <p className="mt-1 px-1 text-xs text-co-text-muted">
                 <span className="font-semibold text-co-text-dim">

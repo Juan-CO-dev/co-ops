@@ -481,5 +481,5 @@ export interface PackageIO {
   recipients(): Promise<PackageRecipientRow[]>;
   compose(r: PackageRecipient, cadence: PackageCadence, day: string, env: Envelope): Promise<ComposedSend>;
   /** One report_package.send audit row per attempt that reached the sender. Never throws. */
-  recordSend(entry: { kind: PackageKind; day: string; ref: string; outcome: "sent" | "failed" }): Promise<void>;
+  recordSend(entry: { kind: PackageKind; day: string; ref: string; outcome: "sent" | "failed" | "ambiguous" }): Promise<void>;
 }

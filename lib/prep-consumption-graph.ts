@@ -205,6 +205,74 @@ export function perUnitSkuOzForItemFromGraph(graph: RecipeGraph, itemId: string)
   return perUnitFromNode(graph, itemId, new Set()) ?? new Map();
 }
 
+/** Flatten an item while treating logged descendant prep items as depletion boundaries. */
+export function perUnitSkuOzForItemStoppingAt(
+  graph: RecipeGraph, itemId: string, stopItemIds: ReadonlySet<string>,
+): Map<string, number> {
+  if (stopItemIds.has(itemId)) return new Map();
+  const walk = (current: string, visiting: Set<string>): Map<string, number> | null => {
+    if (visiting.has(current)) return null;
+    const node = graph.byOutputItem.get(current);
+    if (!node || node.batchYield == null || node.batchYield <= 0) return null;
+    const batch = new Map<string, number>();
+    const next = new Set(visiting).add(current);
+    for (const input of node.inputs) {
+      if (input.componentProductId != null) {
+        const line = productLineOz(graph, input); if (!line) return null;
+        batch.set(line.skuId, (batch.get(line.skuId) ?? 0) + line.oz);
+      } else if (input.componentSkuId != null) {
+        const sku = graph.skuPack.get(input.componentSkuId);
+        const oz = sku ? ozForRecipeInput(input.quantity, input.unit, sku, graph.measures) : null;
+        if (oz == null) return null;
+        batch.set(input.componentSkuId, (batch.get(input.componentSkuId) ?? 0) + oz);
+      } else if (input.componentItemId != null) {
+        const full = perUnitSkuOzForItemFromGraph(graph, input.componentItemId);
+        if (full.size === 0) return null;
+        const units = itemRefParUnits(graph, input, full); if (units == null) return null;
+        if (stopItemIds.has(input.componentItemId)) continue;
+        const sub = walk(input.componentItemId, next); if (sub == null) return null;
+        for (const [skuId, oz] of sub) batch.set(skuId, (batch.get(skuId) ?? 0) + oz * units);
+      } else return null;
+    }
+    const share = itemOutputShare(node, current); if (!share) return null;
+    const out = new Map<string, number>();
+    for (const [skuId, oz] of batch) out.set(skuId, oz * share.share / share.me.yield);
+    return out;
+  };
+  return walk(itemId, new Set()) ?? new Map();
+}
+
+export interface ItemSkuAttribution { skuId: string; itemPath: string[]; oz: number }
+/** Raw leaf contributions with every prep boundary retained for read-time replacement. */
+export function perUnitSkuAttributionsForItem(graph: RecipeGraph, itemId: string): ItemSkuAttribution[] {
+  const walk = (current: string, visiting: Set<string>): ItemSkuAttribution[] | null => {
+    if (visiting.has(current)) return null;
+    const node = graph.byOutputItem.get(current); if (!node || node.batchYield == null || node.batchYield <= 0) return null;
+    const share = itemOutputShare(node, current); if (!share) return null;
+    const scale = share.share / share.me.yield;
+    const out: ItemSkuAttribution[] = [];
+    const next = new Set(visiting).add(current);
+    for (const input of node.inputs) {
+      if (input.componentProductId != null) {
+        const line = productLineOz(graph, input); if (!line) return null;
+        out.push({ skuId: line.skuId, itemPath: [current], oz: line.oz * scale });
+      } else if (input.componentSkuId != null) {
+        const sku = graph.skuPack.get(input.componentSkuId);
+        const oz = sku ? ozForRecipeInput(input.quantity, input.unit, sku, graph.measures) : null;
+        if (oz == null) return null;
+        out.push({ skuId: input.componentSkuId, itemPath: [current], oz: oz * scale });
+      } else if (input.componentItemId != null) {
+        const full = perUnitSkuOzForItemFromGraph(graph, input.componentItemId); if (full.size === 0) return null;
+        const units = itemRefParUnits(graph, input, full); if (units == null) return null;
+        const child = walk(input.componentItemId, next); if (!child) return null;
+        for (const row of child) out.push({ skuId: row.skuId, itemPath: [current, ...row.itemPath], oz: row.oz * units * scale });
+      } else return null;
+    }
+    return out;
+  };
+  return walk(itemId, new Set()) ?? [];
+}
+
 /**
  * Total leaf-SKU ounces going INTO one whole batch of the recipe that produces
  * `itemId` — i.e. the flatten BEFORE the fan-out share and the ÷ yield. Null

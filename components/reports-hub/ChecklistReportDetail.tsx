@@ -11,6 +11,8 @@
  * Prep values table: per-item label / par / on-hand / total (prep only).
  */
 
+import type { RelatedReport } from "@/lib/report-related";
+import { ReportReference } from "./RelatedReports";
 import { interpretAnswer } from "@/lib/checklist-answers";
 import { formatDateLabel } from "@/lib/i18n/format";
 import { serverT } from "@/lib/i18n/server";
@@ -145,11 +147,12 @@ function ChecksTable({ rows, t }: ChecksTableProps) {
 }
 
 interface Props {
+  relatedReports?: RelatedReport[];
   detail: ChecklistReportDetail;
   language: Language;
 }
 
-export function ChecklistReportDetailView({ detail, language }: Props) {
+export function ChecklistReportDetailView({ detail, language, relatedReports = [] }: Props) {
   const t = (key: TranslationKey, params?: Record<string, string | number>) =>
     serverT(language, key, params);
 
@@ -268,7 +271,7 @@ export function ChecklistReportDetailView({ detail, language }: Props) {
                   className="rounded-lg border-2 border-co-border bg-co-surface px-3 py-2 text-sm"
                 >
                   <div className="flex items-start justify-between gap-2">
-                    <span className="font-medium text-co-text">{item.label}</span>
+                    <span className="font-medium text-co-text"><ReportReference href={relatedReports.find(report => report.id === item.reportInstanceId)?.href}>{item.label}</ReportReference></span>
                     <span
                       className={
                         item.done

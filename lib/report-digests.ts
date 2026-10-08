@@ -19,18 +19,20 @@ import { DEFAULT_OPS_ALERT_EMAIL } from "@/lib/jobs-registry";
 import { easternBoundary, easternDay } from "@/lib/job-watch";
 import { listReports } from "@/lib/reports-hub";
 import { selectAllRows } from "@/lib/supabase-paginate";
-import { etCalendarDate, operationalDayUtcRange } from "@/lib/operational-day";
+import { etCalendarDate } from "@/lib/operational-day";
+import { resolveRefs } from "@/lib/catering/prep-demand";
 import { serverT } from "@/lib/i18n/server";
 import { isTaskType, type TaskType } from "@/lib/assignments-shared";
 import {
   addDays,
+  etDayRange,
   parseDigestSettings,
   type DigestDirectory,
   type DigestSettings,
   type RecipientOverride,
   type SendLogRow,
 } from "@/lib/report-digests-shared";
-import type { CateringFacts, CateringLeadFact, ShopDayFacts } from "@/lib/report-digests-compose";
+import type { CateringFacts, CateringLeadFact, PrepLoadLine, ShopDayFacts } from "@/lib/report-digests-compose";
 import {
   runClosingDigestsWith,
   runDigestTickWith,
@@ -49,9 +51,19 @@ const auditBase = { actorId: null, actorRole: null, resourceId: null, ipAddress:
 const SYSTEM_VIEWER = { userId: "00000000-0000-0000-0000-000000000000", level: 8 };
 const FINALIZED_CLOSING = ["confirmed", "incomplete_confirmed", "auto_finalized"];
 
-/** Preview mode delivers here: DIGEST_PREVIEW_EMAIL, else the ops alert address (Juan). */
-export function digestPreviewAddress(): string {
-  return process.env.DIGEST_PREVIEW_EMAIL?.trim() || process.env.OPS_ALERT_EMAIL?.trim() || DEFAULT_OPS_ALERT_EMAIL;
+/**
+ * Preview mode delivers ONLY to the operator's own account: the single active CGS (level 10) user
+ * with an email, read from the users table. Anything else — none, several, no email — is null and
+ * preview FAILS CLOSED. Deliberately no env-var fallback (Astra P2: OPS_ALERT_EMAIL is an alert
+ * destination, not an identity, and a distribution list there would receive every shop's digest).
+ */
+export async function loadPreviewRecipient(sb: Sb): Promise<string | null> {
+  const { data, error } = await sb.from("users").select("id, email").eq("role", "cgs").eq("active", true);
+  if (error) throw new Error(`preview recipient: ${error.message}`);
+  const rows = (data ?? []) as Array<{ id: string; email: string | null }>;
+  if (rows.length !== 1) return null;
+  const email = rows[0]!.email?.trim().toLowerCase();
+  return email ? email : null;
 }
 
 export async function loadDigestSettings(sb: Sb): Promise<DigestSettings> {
@@ -97,7 +109,7 @@ export async function loadDigestDirectory(sb: Sb): Promise<{ dir: DigestDirector
 async function loadSendLog(sb: Sb, days: string[]): Promise<SendLogRow[]> {
   return selectAllRows<SendLogRow>((from, to) =>
     sb.from("report_digest_sends")
-      .select("recipient_ref, kind, business_day, location_id, revision, mode, outcome, skip_reason, attempted_at")
+      .select("id, recipient_ref, kind, business_day, location_id, revision, mode, outcome, skip_reason, attempted_at, first_attempt_at, provider_message_id")
       .in("business_day", days).order("id").range(from, to));
 }
 
@@ -132,8 +144,25 @@ export async function loadShopDayFacts(sb: Sb, location: { id: string; name: str
     selectAllRows<{ report_type: string }>((from, to) =>
       sb.from("report_assignments").select("report_type").eq("location_id", location.id).eq("operational_date", day).eq("active", true).order("id").range(from, to)),
   ]);
+  // PM findings (Astra P2): the list loader carries no PM signals, so read the live evaluations of
+  // the day's PM report(s) here. A failed read is "not assessed", never "All good".
+  let pmFindings: ShopDayFacts["pmFindings"] = null;
+  const pmIds = reports.filter((r) => r.type === "pm").map((r) => r.id);
+  if (pmIds.length > 0) {
+    try {
+      const evals = await selectAllRows<{ arrived_ready: string; attitude: string; production: string; team_player: string }>((from, to) =>
+        sb.from("pm_employee_evals").select("arrived_ready, attitude, production, team_player")
+          .in("pm_report_id", pmIds).is("superseded_at", null).order("id").range(from, to));
+      pmFindings = {
+        evaluations: evals.length,
+        needsWork: evals.reduce((n, e) => n + [e.arrived_ready, e.attitude, e.production, e.team_player].filter((g) => g === "needs_work").length, 0),
+      };
+    } catch {
+      pmFindings = null;
+    }
+  }
   return {
-    location, day, reports,
+    location, day, reports, pmFindings,
     receiving: {
       deliveries: deliveries.length,
       discrepant: deliveries.filter((d) => d.match_state === "discrepant").length,
@@ -154,7 +183,8 @@ const LEAD_SELECT = "id, contact_name, company, event_date, time_window, headcou
 export async function loadCateringFacts(sb: Sb, today: string, now: Date): Promise<CateringFacts> {
   const yesterday = addDays(today, -1);
   const tomorrow = addDays(today, 1);
-  const y = operationalDayUtcRange(yesterday);
+  // Two independent Eastern midnights (Astra P2): 23 h / 25 h on the DST transition days.
+  const y = etDayRange(yesterday);
   const leads = new Map<string, LeadRow>();
   const add = (rows: LeadRow[]) => { for (const r of rows) leads.set(r.id, r); };
   const leadsQuery = () => sb.from("catering_pipeline").select(LEAD_SELECT);
@@ -177,7 +207,7 @@ export async function loadCateringFacts(sb: Sb, today: string, now: Date): Promi
   const leadIds = [...leads.keys()];
   const accepted = new Map<string, { id: string; total_cents: number; is_delivery: boolean; version: number }>();
   const due = new Map<string, number>();
-  const prep = new Map<string, number>();
+  const prep = new Map<string, PrepLoadLine[]>();
   if (leadIds.length > 0) {
     const quotes = await selectAllRows<{ id: string; pipeline_id: string; total_cents: number; is_delivery: boolean; version: number }>((from, to) =>
       sb.from("catering_quotes").select("id, pipeline_id, total_cents, is_delivery, version").in("pipeline_id", leadIds)
@@ -191,14 +221,15 @@ export async function loadCateringFacts(sb: Sb, today: string, now: Date): Promi
     const [payments, demand] = await Promise.all([
       quoteIds.length === 0 ? Promise.resolve([]) : selectAllRows<{ quote_id: string; amount_cents: number }>((from, to) =>
         sb.from("catering_payments").select("quote_id, amount_cents").in("quote_id", quoteIds).eq("status", "due").order("id").range(from, to)),
-      selectAllRows<{ pipeline_id: string }>((from, to) =>
-        sb.from("catering_prep_demand").select("pipeline_id").in("pipeline_id", leadIds).in("status", ["reserved", "consumed"]).order("id").range(from, to)),
+      selectAllRows<DemandRow>((from, to) =>
+        sb.from("catering_prep_demand").select("pipeline_id, need_date, item_id, menu_item_id, choice_package_item_id, portion, qty")
+          .in("pipeline_id", leadIds).in("status", ["reserved", "consumed"]).order("id").range(from, to)),
     ]);
     for (const p of payments) {
       const pid = pipelineByQuote.get(p.quote_id);
       if (pid) due.set(pid, (due.get(pid) ?? 0) + p.amount_cents);
     }
-    for (const d of demand) prep.set(d.pipeline_id, (prep.get(d.pipeline_id) ?? 0) + 1);
+    for (const [pid, lines] of await summarizePrepDemand(sb, demand)) prep.set(pid, lines);
   }
 
   const [sentYesterday, openQuotes, refunds] = await Promise.all([
@@ -227,7 +258,7 @@ export async function loadCateringFacts(sb: Sb, today: string, now: Date): Promi
       isDelivery: !!l.delivery_address?.trim() || !!q?.is_delivery,
       valueCents: q?.total_cents ?? l.estimated_revenue_cents ?? 0,
       dueCents: due.get(l.id) ?? 0,
-      prepLines: prep.has(l.id) ? prep.get(l.id)! : null,
+      prep: prep.get(l.id) ?? null,
     };
   });
   return {
@@ -236,6 +267,42 @@ export async function loadCateringFacts(sb: Sb, today: string, now: Date): Promi
     openQuotes: openQuotes.filter((q) => !q.expires_at || Date.parse(q.expires_at) > now.getTime()).map((q) => ({ id: q.id, locationId: q.location_id })),
     refundsYesterday: refunds.map((r) => ({ locationId: refundLoc.get(r.quote_id) ?? null, amountCents: r.amount_cents })),
   };
+}
+
+interface DemandRow {
+  pipeline_id: string; need_date: string; item_id: string | null; menu_item_id: string | null;
+  choice_package_item_id: string | null; portion: "quarter" | "half" | "whole" | null; qty: number | string;
+}
+
+/**
+ * The W4a ledger per lead, aggregated by (need date, ref, portion) with QUANTITIES and units — not
+ * row counts (Astra P2). Names come from the same resolver the prep-demand surface uses.
+ */
+export async function summarizePrepDemand(sb: Sb, rows: DemandRow[]): Promise<Map<string, PrepLoadLine[]>> {
+  const out = new Map<string, PrepLoadLine[]>();
+  if (rows.length === 0) return out;
+  const itemIds = new Set<string>(); const menuIds = new Set<string>(); const choiceIds = new Set<string>();
+  const groups = new Map<string, { pid: string; needDate: string; kind: "item" | "menu_item" | "choice"; id: string; portion: DemandRow["portion"]; qty: number }>();
+  for (const r of rows) {
+    const kind = r.item_id ? "item" as const : r.menu_item_id ? "menu_item" as const : "choice" as const;
+    const id = (r.item_id ?? r.menu_item_id ?? r.choice_package_item_id)!;
+    (kind === "item" ? itemIds : kind === "menu_item" ? menuIds : choiceIds).add(id);
+    const key = `${r.pipeline_id}|${r.need_date}|${kind}:${id}|${r.portion ?? ""}`;
+    const g = groups.get(key) ?? { pid: r.pipeline_id, needDate: r.need_date, kind, id, portion: r.portion, qty: 0 };
+    g.qty += typeof r.qty === "string" ? Number(r.qty) : r.qty;
+    groups.set(key, g);
+  }
+  const refs = await resolveRefs(sb, itemIds, menuIds, choiceIds);
+  for (const g of groups.values()) {
+    const defn = g.kind === "item" ? refs.itemDefns.get(g.id) : undefined;
+    const line: PrepLoadLine = {
+      needDate: g.needDate, name: refs.name(g.kind, g.id), nameEs: defn?.nameEs ?? null, qty: g.qty,
+      unit: g.kind === "item" ? defn?.defaultParUnit ?? null : null, portion: g.portion,
+    };
+    out.set(g.pid, [...(out.get(g.pid) ?? []), line]);
+  }
+  for (const list of out.values()) list.sort((x, y) => x.needDate.localeCompare(y.needDate) || x.name.localeCompare(y.name));
+  return out;
 }
 
 export function supabaseSendStore(sb: Sb): SendStore {
@@ -248,10 +315,23 @@ export function supabaseSendStore(sb: Sb): SendStore {
       }
       return { id: data.id };
     },
-    async finish(id, patch) {
+    async markAttempt(id, patch) {
+      const { data, error } = await sb.from("report_digest_sends").update(patch)
+        .eq("id", id).eq("outcome", "claimed").is("first_attempt_at", null).select("id");
+      if (error) throw new Error(`digest attempt: ${error.message}`);
+      return (data ?? []).length === 1;
+    },
+    async recordAccepted(id, patch) {
+      const { data, error } = await sb.from("report_digest_sends").update(patch)
+        .eq("id", id).in("outcome", ["claimed", "ambiguous"]).select("id");
+      if (error) throw new Error(`digest accepted: ${error.message}`);
+      return (data ?? []).length === 1;
+    },
+    async finish(id, from, patch) {
+      const terminal = patch.outcome !== "ambiguous";
       const { data, error } = await sb.from("report_digest_sends")
-        .update({ ...patch, completed_at: new Date().toISOString() })
-        .eq("id", id).eq("outcome", "claimed").select("id");
+        .update({ ...patch, ...(terminal ? { completed_at: new Date().toISOString() } : {}) })
+        .eq("id", id).in("outcome", from).select("id");
       if (error) throw new Error(`digest finish: ${error.message}`);
       return (data ?? []).length === 1;
     },
@@ -279,8 +359,8 @@ export async function alertDigestProblem(sb: Sb, a: DigestAlert, now: Date): Pro
     if (claim.error || claim.data !== true) return false;
     const params = { kind: a.kind, day: a.day, n: a.missing?.length ?? 0, refs: (a.missing ?? []).slice(0, 10).join(", "), ref: a.ref ?? "", error: a.error ?? "" };
     const messages = (["en", "es"] as const).map((language) => ({
-      subject: serverT(language, a.detector === "digest-send" ? "digestWatch.send_failed_subject" : "digestWatch.subject", params),
-      body: serverT(language, a.detector === "digest-send" ? "digestWatch.send_failed_body" : "digestWatch.body", params),
+      subject: serverT(language, a.detector === "digest-send" ? "digestWatch.send_failed_subject" : a.detector === "digest-preview" ? "digestWatch.preview_subject" : "digestWatch.subject", params),
+      body: serverT(language, a.detector === "digest-send" ? "digestWatch.send_failed_body" : a.detector === "digest-preview" ? "digestWatch.preview_body" : "digestWatch.body", params),
     }));
     const text = messages.map((m) => m.body).join("\n\n");
     let emailError: string | null = null;
@@ -305,21 +385,13 @@ function buildIO(now: Date): DigestIO {
   return {
     now,
     baseUrl: appUrl(),
-    previewTo: digestPreviewAddress(),
+    previewRecipient: () => loadPreviewRecipient(sb),
     settings: () => loadDigestSettings(sb),
     directory: () => loadDigestDirectory(sb),
     sendLog: (days) => loadSendLog(sb, days),
     finalizedClosings: (days) => loadFinalizedClosings(sb, days),
     shopFacts: (location, day) => loadShopDayFacts(sb, location, day),
     cateringFacts: (today) => loadCateringFacts(sb, today, now),
-    async expireStaleClaims() {
-      const cutoff = new Date(now.getTime() - 15 * 60_000).toISOString();
-      const { data, error } = await sb.from("report_digest_sends")
-        .update({ outcome: "failed", error: "stale_claim", completed_at: now.toISOString() })
-        .eq("outcome", "claimed").lt("attempted_at", cutoff).select("id");
-      if (error) throw new Error(`stale claims: ${error.message}`);
-      return (data ?? []).length;
-    },
     store: supabaseSendStore(sb),
     sendEmail: (m) => sendEmail({ ...m, from: teamFrom() }),
     sha: (content) => createHash("sha256").update(content).digest("hex"),

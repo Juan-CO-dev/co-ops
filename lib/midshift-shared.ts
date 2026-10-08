@@ -52,6 +52,8 @@ export type OverdueState = "ok" | "overdue" | "not_due_yet" | "due_now" | "waiti
 
 export interface ReportStatusRow {
   key: ReportKey;
+  /** Exact instance/report represented by this status, when one exists. */
+  reportId?: string | null;
   progress: ReportProgress;
   doneAt: string | null; // ISO timestamp when finalized, if done
   doneByName: string | null;

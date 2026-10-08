@@ -1,4 +1,5 @@
-import Link from "next/link";
+import { ReportPageNav } from "@/components/reports-hub/ReportPageNav";
+import { ReportShopTabs } from "@/components/reports-hub/ReportShopTabs";
 import { redirect } from "next/navigation";
 
 import { WrittenReportsClient } from "@/components/written-reports/WrittenReportsClient";
@@ -6,7 +7,7 @@ import { PageHeader } from "@/components/ui/PageHeader";
 import { ExportLinks } from "@/components/reports-export/ExportLinks";
 import { ReportRangeControls } from "@/components/reports-hub/ReportRangeControls";
 import { serverT } from "@/lib/i18n/server";
-import { canReadReportLocation, type LocationActor } from "@/lib/locations";
+import { REPORT_ALL_LOCATIONS_LEVEL, canReadReportLocation, type LocationActor } from "@/lib/locations";
 import { operationalNow } from "@/lib/midshift-shared";
 import { parseReportRange, reportRangeParams } from "@/lib/report-range";
 import { requireSessionFromHeaders } from "@/lib/session";
@@ -28,12 +29,12 @@ export default async function ReportsWrittenPage({ searchParams }: { searchParam
   const range = parseReportRange(raw, operationalNow(new Date()).date);
   const actor: LocationActor = { role: auth.role, locations: auth.locations };
   if (raw.location && !/^[a-zA-Z0-9_-]+$/.test(raw.location)) redirect("/reports/written");
-  if (raw.location === "all" && auth.level < 8) redirect("/reports/written");
+  if (raw.location === "all" && auth.level < REPORT_ALL_LOCATIONS_LEVEL) redirect("/reports/written");
   if (raw.location && raw.location !== "all" && !canReadReportLocation(actor, raw.location)) redirect("/reports/written");
-  const selectedLocation = raw.location && raw.location !== "all" ? raw.location : null;
+  const selectedLocation = raw.location && raw.location !== "all" ? raw.location : auth.level >= REPORT_ALL_LOCATIONS_LEVEL ? null : auth.locations[0] ?? null;
   const viewerLocations = selectedLocation
     ? [selectedLocation]
-    : auth.level >= 8 ? "all" as const : auth.locations;
+    : auth.level >= REPORT_ALL_LOCATIONS_LEVEL ? "all" as const : auth.locations;
 
   const page = await listWrittenReports(getServiceRoleClient(), {
     viewer: { userId: auth.user.id, level: auth.level, locations: viewerLocations },
@@ -43,23 +44,23 @@ export default async function ReportsWrittenPage({ searchParams }: { searchParam
     cursor: raw.cursor,
   });
 
-  const contextParams = reportRangeParams(range);
+  const contextParams = new URLSearchParams(Object.entries(raw).filter((entry): entry is [string, string] => entry[1] !== undefined));
+  for (const [key, value] of reportRangeParams(range)) contextParams.set(key, value);
   if (selectedLocation) contextParams.set("location", selectedLocation);
-  else if (auth.level >= 8) contextParams.set("location", "all");
+  else if (auth.level >= REPORT_ALL_LOCATIONS_LEVEL) contextParams.set("location", "all");
   const nextParams = new URLSearchParams(contextParams);
   if (page.nextCursor) nextParams.set("cursor", page.nextCursor);
 
   return (
     <main className="mx-auto max-w-2xl px-4 pb-32 pt-4 sm:px-6 md:max-w-3xl lg:max-w-5xl xl:max-w-6xl">
-      <Link href={`/reports?${contextParams.toString()}`} className="mb-3 inline-flex min-h-[44px] items-center text-sm font-bold text-co-text-muted">
-        ← {serverT(auth.user.language, "nav.reports_hub")}
-      </Link>
+      <ReportPageNav viewerLevel={auth.level} path="/reports/written" params={Object.fromEntries(contextParams)} language={auth.user.language} />
+      <ReportShopTabs path="/reports/written" params={raw} locationId={selectedLocation ?? "all"} language={auth.user.language} viewer={auth} />
       <PageHeader
         title={serverT(auth.user.language, "written_reports.page.title")}
         subtitle={serverT(auth.user.language, "written_reports.page.subtitle")}
         className="mb-4"
       />
-      <ReportRangeControls range={range} locationId={selectedLocation ?? (auth.level >= 8 ? "all" : "")} language={auth.user.language} action="/reports/written" />
+      <ReportRangeControls range={range} locationId={selectedLocation ?? (auth.level >= REPORT_ALL_LOCATIONS_LEVEL ? "all" : "")} language={auth.user.language} action="/reports/written" />
       {/* Exports are one shop at a time (the route refuses "all"). */}
       {selectedLocation ? <ExportLinks className="mb-4" family="written" language={auth.user.language}
         query={{ location: selectedLocation, range: range.range, from: range.from, to: range.to }} /> : null}

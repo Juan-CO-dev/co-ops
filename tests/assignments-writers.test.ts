@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { auditTaskOverride, assignTask, hasTaskAccess, retractTask, saveStation, writeStationEvent, type AssignmentActor } from "@/lib/assignments";
+import { auditTaskOverride, assignTask, hasTaskAccess, retractTask, saveStationConfig, saveStationSpanish, writeStationEvent, type AssignmentActor } from "@/lib/assignments";
 import { audit } from "@/lib/audit";
 import { ROLES } from "@/lib/roles";
 import { TASK_TYPES, TASK_MIN_LEVEL } from "@/lib/assignments-shared";
@@ -13,6 +13,7 @@ const OTHER_SHOP = "22222222-2222-4222-8222-222222222222";
 const ACTOR = "33333333-3333-4333-8333-333333333333";
 const TARGET = "44444444-4444-4444-8444-444444444444";
 const STATION = "55555555-5555-4555-8555-555555555555";
+const POSITION = "77777777-7777-4777-8777-777777777777";
 const ASSIGNMENT = "66666666-6666-4666-8666-666666666666";
 const actor: AssignmentActor = { userId: ACTOR, role: "key_holder", level: 4, locations: [SHOP] };
 
@@ -43,6 +44,23 @@ function fake(options: { role?: string; inactive?: boolean; rpcCode?: string; me
 afterEach(() => { vi.useRealTimers(); vi.clearAllMocks(); });
 
 describe("assignment writer front doors", () => {
+  it("requires GM and binds position edits to the selected shop", async () => {
+    const f = fake({ role: "gm" });
+    const base = { actor, locationId: SHOP, stationId: STATION, operation: "staffed" as const, staffed: false };
+    await expect(saveStationConfig(f.service, base)).rejects.toMatchObject({ code: "role_insufficient" });
+    expect(f.from).not.toHaveBeenCalled();
+    await expect(saveStationConfig(f.service, { ...base, actor: { ...actor, role: "gm", level: 7 }, locationId: OTHER_SHOP }))
+      .rejects.toMatchObject({ code: "location_access_denied" });
+    expect(f.from).not.toHaveBeenCalled();
+    await expect(saveStationConfig(f.service, { ...base, actor: { ...actor, role: "gm", level: 7 } }))
+      .resolves.toEqual({ id: STATION });
+    expect(f.writes).toContainEqual({ table: "stations", kind: "update", row: { staffed: false } });
+  });
+  it("maps a taken position to conflict", async () => {
+    const f = fake({ rpcError: "position_taken" });
+    await expect(writeStationEvent(f.service, { actor, locationId: SHOP, userId: ACTOR,
+      stationId: STATION, positionId: POSITION })).rejects.toMatchObject({ code: "position_taken", status: 409 });
+  });
   it.each(TASK_TYPES)("refuses assigning %s below its floor before RPC", async (task) => {
     const f = fake({ role: TASK_MIN_LEVEL[task] === 4 ? "employee" : "trainee" });
     await expect(assignTask(f.service, { actor, locationId: SHOP, userId: TARGET, task })).rejects.toMatchObject({ code: "role_insufficient" });
@@ -52,10 +70,10 @@ describe("assignment writer front doors", () => {
     const f = fake();
     const common = { actor, locationId: OTHER_SHOP };
     const calls = [
-      () => writeStationEvent(f.service, { ...common, userId: TARGET, stationId: STATION }),
+      () => writeStationEvent(f.service, { ...common, userId: TARGET, stationId: STATION, positionId: POSITION }),
       () => assignTask(f.service, { ...common, userId: TARGET, task: "am_prep" }),
       () => retractTask(f.service, { ...common, assignmentId: ASSIGNMENT }),
-      () => saveStation(f.service, { ...common, name: "Station", nameEs: "Estación", sort: 0, active: true }),
+      () => saveStationSpanish(f.service, { ...common, id: STATION, nameEs: "Spanish" }),
     ];
     for (const call of calls) await expect(call()).rejects.toMatchObject({ code: "location_access_denied" });
     expect(f.from).not.toHaveBeenCalled();
@@ -64,7 +82,7 @@ describe("assignment writer front doors", () => {
   it("refuses employee assignment of others and self task assignment before I/O", async () => {
     const f = fake();
     const employee: AssignmentActor = { ...actor, level: 3, role: "employee" };
-    await expect(writeStationEvent(f.service, { actor: employee, locationId: SHOP, userId: TARGET, stationId: STATION })).rejects.toMatchObject({ code: "role_insufficient" });
+    await expect(writeStationEvent(f.service, { actor: employee, locationId: SHOP, userId: TARGET, stationId: STATION, positionId: POSITION })).rejects.toMatchObject({ code: "role_insufficient" });
     await expect(assignTask(f.service, { actor: employee, locationId: SHOP, userId: TARGET, task: "am_prep" })).rejects.toMatchObject({ code: "role_insufficient" });
     await expect(retractTask(f.service, { actor: employee, locationId: SHOP, assignmentId: ASSIGNMENT })).rejects.toMatchObject({ code: "role_insufficient" });
     await expect(assignTask(f.service, { actor, locationId: SHOP, userId: ACTOR, task: "am_prep" })).rejects.toMatchObject({ code: "self_assignment" });
@@ -86,21 +104,21 @@ describe("assignment writer front doors", () => {
   it("allows a self claim but honors the serialized RPC assignment lock on a stale claim", async () => {
     const employee: AssignmentActor = { ...actor, level: 3, role: "employee" };
     const f = fake({ rpcError: "station_locked" });
-    await expect(writeStationEvent(f.service, { actor: employee, locationId: SHOP, userId: ACTOR, stationId: STATION })).rejects.toMatchObject({ code: "station_locked", status: 403 });
-    expect(f.rpc).toHaveBeenCalledWith("write_station_event", { p_actor_id: ACTOR, p_user_id: ACTOR, p_location_id: SHOP, p_station_id: STATION, p_manage: false });
+    await expect(writeStationEvent(f.service, { actor: employee, locationId: SHOP, userId: ACTOR, stationId: STATION, positionId: POSITION })).rejects.toMatchObject({ code: "station_locked", status: 403 });
+    expect(f.rpc).toHaveBeenCalledWith("write_station_event", { p_actor_id: ACTOR, p_user_id: ACTOR, p_location_id: SHOP, p_station_id: STATION, p_position_id: POSITION, p_manage: false });
   });
   it("permits a KH self claim but refuses an employee's manage flag before I/O", async () => {
     const f = fake();
-    await expect(writeStationEvent(f.service, { actor: { ...actor, level: 3, role: "employee" }, locationId: SHOP, userId: ACTOR, stationId: STATION, manage: true })).rejects.toMatchObject({ code: "role_insufficient" });
+    await expect(writeStationEvent(f.service, { actor: { ...actor, level: 3, role: "employee" }, locationId: SHOP, userId: ACTOR, stationId: STATION, positionId: POSITION, manage: true })).rejects.toMatchObject({ code: "role_insufficient" });
     expect(f.from).not.toHaveBeenCalled();
     expect(f.rpc).not.toHaveBeenCalled();
     const kh = fake({ role: "key_holder" });
-    await writeStationEvent(kh.service, { actor, locationId: SHOP, userId: ACTOR, stationId: STATION, manage: true });
+    await writeStationEvent(kh.service, { actor, locationId: SHOP, userId: ACTOR, stationId: STATION, positionId: POSITION, manage: true });
     expect(kh.rpc).toHaveBeenCalledWith("write_station_event", expect.objectContaining({ p_actor_id: ACTOR, p_user_id: ACTOR, p_manage: true }));
   });
   it.each([false, true])("refuses a KH's own assigned station even with manage=%s", async (manage) => {
     const f = fake({ role: "key_holder", rpcError: "station_locked" });
-    await expect(writeStationEvent(f.service, { actor, locationId: SHOP, userId: ACTOR, stationId: null, manage }))
+    await expect(writeStationEvent(f.service, { actor, locationId: SHOP, userId: ACTOR, stationId: null, positionId: null, manage }))
       .rejects.toMatchObject({ code: "station_locked", status: 403 });
     expect(audit).not.toHaveBeenCalled();
   });
@@ -113,14 +131,14 @@ describe("assignment writer front doors", () => {
     await expect(retractTask(missing.service, { actor, locationId: SHOP, assignmentId: ASSIGNMENT })).rejects.toMatchObject({ status: 404 });
   });
   it("requires GM for registry writes and refuses a zero-row station update", async () => {
-    const args = { actor, locationId: SHOP, id: STATION, name: "Station", nameEs: "Estación", sort: 0, active: false };
+    const args = { actor, locationId: SHOP, id: STATION, nameEs: "Spanish" };
     const f = fake();
-    await expect(saveStation(f.service, args)).rejects.toMatchObject({ code: "role_insufficient" });
+    await expect(saveStationSpanish(f.service, args)).rejects.toMatchObject({ code: "role_insufficient" });
     expect(f.from).not.toHaveBeenCalled();
     const missing = fake({ role: "gm", stationMissing: true });
-    await expect(saveStation(missing.service, { ...args, actor: { ...actor, role: "gm", level: 7 } })).rejects.toMatchObject({ code: "station_unavailable", status: 404 });
+    await expect(saveStationSpanish(missing.service, { ...args, actor: { ...actor, role: "gm", level: 7 } })).rejects.toMatchObject({ code: "station_unavailable", status: 404 });
     expect(missing.filters).toContainEqual(["stations", "location_id", SHOP]);
-    expect(missing.writes).toEqual([{ table: "stations", kind: "update", row: { name: "Station", name_es: "Estación", sort: 0, active: false } }]);
+    expect(missing.writes).toEqual([]);
   });
 });
 

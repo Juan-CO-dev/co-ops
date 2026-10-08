@@ -72,9 +72,13 @@ export interface SendEmailInput {
   /** File attachments (Resend `attachments`). Used by the scheduled report package (CSV + PDF).
    *  Omitted = no attachments, i.e. today's behavior for every existing caller. */
   attachments?: Array<{ filename: string; content: Buffer; contentType: string }>;
+  /** Resend `Idempotency-Key` (24 h): a retry with the same key never produces a second email.
+   *  Omitted = no header = exactly today's behavior for every existing caller. */
+  idempotencyKey?: string;
 }
 
-export type SendEmailResult = { id: string } | { error: string };
+/** `code` carries Resend's error name when it gave one (e.g. invalid_idempotent_request). */
+export type SendEmailResult = { id: string } | { error: string; code?: string };
 
 /** A stable log label for `to` whether it's one address or an array. */
 function toLabel(to: string | string[]): string {
@@ -98,10 +102,10 @@ export async function sendEmail(input: SendEmailInput): Promise<SendEmailResult>
       text: input.text,
       ...(input.replyTo ? { replyTo: input.replyTo } : {}),
       ...(input.attachments?.length ? { attachments: input.attachments } : {}),
-    });
+    }, input.idempotencyKey ? { idempotencyKey: input.idempotencyKey } : undefined);
     if (error) {
       console.error(`[email] send failed for to=${label}:`, error.message);
-      return { error: error.message };
+      return { error: error.message, ...(error.name ? { code: error.name } : {}) };
     }
     if (!data?.id) {
       console.error(`[email] send returned no id for to=${label}`);

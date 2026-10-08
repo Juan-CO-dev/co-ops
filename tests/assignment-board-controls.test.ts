@@ -22,30 +22,48 @@ function render(value: ShiftBoard, compact = false) {
   }));
 }
 describe("assignment board retract and assign controls", () => {
+  it("shows named positions, duties, and partial staffing without warning", () => {
+    const value = board(3);
+    value.stations = [{ id: "walk", name: "Walk Ins Station", nameEs: null, sort: 1, active: true, staffed: true,
+      positions: [
+        { id: "primary", stationId: "walk", name: "Walk-ins", nameEs: null, duty: "Walk-in orders", dutyEs: null, sort: 1, active: true },
+        { id: "secondary", stationId: "walk", name: "Walk-ins / Online", nameEs: null, duty: "Online orders", dutyEs: null, sort: 2, active: true },
+      ] }];
+    value.events = [{ id: "claim", sequence: "1", locationId: "shop", businessDate: value.date,
+      userId: "target", stationId: "walk", positionId: "primary", kind: "claim", actorId: "target", actorName: null,
+      at: "2026-10-07T12:00:00Z", source: "claimed" }];
+    const html = render(value);
+    expect(html).toContain("1 of 2");
+    expect(html).toContain("Walk-ins / Online");
+    expect(html).toContain("Online orders");
+    expect(html).not.toContain("warning");
+    value.stations[0]!.staffed = false;
+    expect(render(value)).not.toContain("Online orders");
+  });
   it.each([4, 5, 6, 7, 8, 9, 10])("locks an assigned station for its level %s holder in both board views", (level) => {
     const value = board(level, true, true);
     value.viewerLevel = level;
     value.events = [{ id: "station-event", sequence: "1", locationId: "shop", businessDate: value.date,
       userId: "kh", stationId: "station", kind: "assign", actorId: "other-kh", actorName: "Other KH",
       at: "2026-10-07T12:00:00Z", source: "assigned" }];
-    for (const compact of [false, true]) expect(render(value, compact)).not.toContain('name="stationId"');
+    for (const compact of [false, true]) expect(render(value, compact)).not.toContain('name="positionId"');
     value.events[0]!.source = "claimed";
     value.events[0]!.kind = "claim";
-    for (const compact of [false, true]) expect(render(value, compact)).toContain('name="stationId"');
+    for (const compact of [false, true]) expect(render(value, compact)).toContain('name="positionId"');
   });
   it("lets a different KH move an assigned peer and lets an unassigned KH claim", () => {
     const value = board(4);
     value.events = [{ id: "station-event", sequence: "1", locationId: "shop", businessDate: value.date,
       userId: "target", stationId: "station", kind: "assign", actorId: "manager", actorName: "Manager",
       at: "2026-10-07T12:00:00Z", source: "assigned" }];
-    expect(render(value)).toContain('name="stationId"');
-    expect(render(board(4, true, true))).toContain('name="stationId"');
+    expect(render(value)).toContain('name="positionId"');
+    expect(render(board(4, true, true))).toContain('name="positionId"');
   });
   it.each([3, 4, 5, 8])("lets KH retract level %s assignments regardless of assign-up permission", (level) => {
     const html = render(board(level));
     expect(html).toContain(">Retract<");
     expect(html.includes('name="task"')).toBe(level <= 4);
-    expect(html.includes('name="stationId"')).toBe(level <= 4);
+    expect(html.includes('name="positionId"')).toBe(level <= 4);
   });
   it("allows retracting the viewer's own assignment", () => {
     expect(render(board(4, true, true))).toContain(">Retract<");
@@ -57,7 +75,7 @@ describe("assignment board retract and assign controls", () => {
     expect(html).toContain("No longer available at this shop");
     expect(html).toContain("Needs reassignment");
     expect(html).not.toContain('name="task"');
-    expect(html).not.toContain('name="stationId"');
+    expect(html).not.toContain('name="positionId"');
   });
   it("does not count unavailable assignments as coverage in the safety line", () => {
     const value = board(3, false);
@@ -74,6 +92,20 @@ describe("assignment board retract and assign controls", () => {
     expect(html).not.toContain('href="/operations/am-prep');
     expect(html).not.toContain(">Retract<");
     expect(html).not.toContain('name="task"');
+  });
+  it("shows held positions to staff, disables them, and cues the first position", () => {
+    const value = board(3, true, true);
+    value.viewerLevel = 3;
+    value.stations = [{ id: "walk", name: "Walk Ins", nameEs: null, sort: 1, active: true, staffed: true,
+      positions: [
+        { id: "second", stationId: "walk", name: "Online", nameEs: null, duty: null, dutyEs: null, sort: 2, active: true },
+        { id: "first", stationId: "walk", name: "Walk-ins", nameEs: null, duty: null, dutyEs: null, sort: 1, active: true },
+      ] }];
+    value.occupiedPositions = [{ positionId: "second", firstName: "Maya" }];
+    const html = render(value, true);
+    expect(html.indexOf('value="first"')).toBeLessThan(html.indexOf('value="second"'));
+    expect(html).toContain('Walk-ins · fill first');
+    expect(html).toMatch(/<option[^>]*value="second"[^>]*disabled[^>]*>[^<]*taken by Maya/);
   });
 });
 

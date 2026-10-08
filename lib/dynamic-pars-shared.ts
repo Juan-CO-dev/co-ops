@@ -222,6 +222,8 @@ export interface BaseRateInput {
   flattenedOzByDate: ReadonlyMap<string, number>;
   /** The first ET date this SKU's lane could produce data at this location. null = never. */
   laneStartAt: string | null;
+  /** Capture directOz already includes item/day-selected sales fallback. */
+  salesFallbackComplete?: boolean;
 }
 
 export interface DayClassRate {
@@ -296,7 +298,7 @@ export function computeBaseRate(input: BaseRateInput): BaseRateResult {
   const prepMediated = flattenedSeen > 0;
   return {
     byDayClass,
-    laneComplete: !prepMediated || productionSeen > 0,
+    laneComplete: input.salesFallbackComplete === true || !prepMediated || productionSeen > 0,
     laneNeverStarted: false,
     series,
   };

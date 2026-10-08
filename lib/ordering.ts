@@ -1,3 +1,4 @@
+import { loadEffectiveSalesWindow, type SalesCoverage } from "@/lib/toast/effective-depletion";
 import { auditOperationalTaskOverride, canDoOperationalTask } from "@/lib/operational-task-access";
 /**
  * Par-pass ordering data layer (delivery-intake P3, migration 0172). SERVER-ONLY,
@@ -369,7 +370,7 @@ const PRODUCTION_ID_CHUNK = 150;
 async function loadSkuUsageRank(
   sb: ReturnType<typeof getServiceRoleClient>,
   locationId: string,
-): Promise<Map<string, number>> {
+): Promise<{ usage: Map<string, number>; coverage: SalesCoverage }> {
   const usage = new Map<string, number>();
   const add = (skuId: string, oz: number) => {
     if (!Number.isFinite(oz) || oz <= 0) return;
@@ -432,22 +433,10 @@ async function loadSkuUsageRank(
   // 30 days at (location, business_date, sku) grain overruns PostgREST's 1000-row
   // default cap, and an unordered truncated page would silently drop usage from the
   // rank (the PR #63 lesson) — page it under a stable total order (`id`, the PK).
-  const sales = await selectAllRows<{ sku_id: string; direct_oz: number | string }>(
-    async (from, to) => {
-      const { data, error } = await sb.from("toast_daily_depletion")
-        .select("sku_id, direct_oz")
-        .eq("location_id", locationId)
-        .gte("business_date", cutoffDate)
-        .order("id", { ascending: true })
-        .range(from, to)
-        .returns<Array<{ sku_id: string; direct_oz: number | string }>>();
-      if (error) throw new Error(`loadSkuUsageRank toast_daily_depletion: ${error.message}`);
-      return { data };
-    },
-  );
-  for (const r of sales) add(r.sku_id, num(r.direct_oz) ?? 0);
+  const sales = await loadEffectiveSalesWindow(sb, { locationId, fromDate: cutoffDate });
+  for (const r of sales.rows) add(r.sku_id, num(r.direct_oz) ?? 0);
 
-  return usage;
+  return { usage, coverage: sales.coverage };
 }
 
 /**
@@ -585,6 +574,7 @@ export interface WalkerVendor {
   skus: WalkerSku[];
 }
 export interface WalkerData {
+  salesCoverage?: SalesCoverage;
   /** The walk date (server local). Its getDay drives the weekend-par rule + isOrderDay. */
   walkDate: string; // ISO
   isWeekendPar: boolean;
@@ -837,7 +827,7 @@ export async function loadWalkerData(actor: AuthContext, locationId: string): Pr
   // twin stops sorting dead last (`?? -Infinity`) just because every pin points at
   // its sibling. Applied at the call site so the two loads stay parallel; the
   // rollup itself is pure and test-pinned (tests/products-rollup.test.ts).
-  const usageBySku = rollupUsageByProduct(rawUsageBySku, productIndex.productBySku);
+  const usageBySku = rollupUsageByProduct(rawUsageBySku.usage, productIndex.productBySku);
 
   // Advisory blackout (council UX finding 2026-08-08): the depletion ledger lags the
   // register by a day — the nightly cron materializes T-1. If it has materialized
@@ -1267,6 +1257,7 @@ export async function loadWalkerData(actor: AuthContext, locationId: string): Pr
   });
 
   return {
+    salesCoverage: rawUsageBySku.coverage,
     walkDate: walkDateEt, isWeekendPar: weekend, advisoryPaused, unroutable,
     parSilence, shadowMode: parSilence.shadowMode, vendors,
   };

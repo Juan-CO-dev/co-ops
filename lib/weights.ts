@@ -1,3 +1,4 @@
+import { loadEffectiveSalesWindow, type SalesCoverage } from "@/lib/toast/effective-depletion";
 /**
  * Weight & trim audit — SERVER layer (spec 2026-08-20, "Weight & trim audit").
  *
@@ -191,6 +192,7 @@ export interface TrimBoardRow {
 }
 
 export interface WeightBoard {
+  salesCoverage?: SalesCoverage;
   rows: WeightBoardRow[];
   trim: TrimBoardRow[];
   /** The ranked suggestion list. ADVISORY — an order, never a schedule. */
@@ -313,15 +315,7 @@ export async function loadWeightBoard(actor: AuthContext): Promise<WeightBoard> 
       // THE SALES LANE — direct_oz ONLY. flattened_oz is production-covered and is
       // never summed; the double-count law is not in play here and must not become
       // so (lib/counts.ts:697-707).
-      selectAllRows<{ sku_id: string; direct_oz: number | string }>((from, to) =>
-        sb
-          .from("toast_daily_depletion")
-          .select("sku_id, direct_oz")
-          .gte("business_date", windowStartDate)
-          .order("id", { ascending: true })
-          .range(from, to)
-          .returns<Array<{ sku_id: string; direct_oz: number | string }>>(),
-      ),
+      loadEffectiveSalesWindow(sb, { fromDate: windowStartDate }),
       // THE PRODUCTION LANE — live headers only (superseded/revoked excluded).
       selectAllRows<{ id: string; output_item_id: string | null; output_qty: number | string | null }>(
         (from, to) =>
@@ -388,7 +382,7 @@ export async function loadWeightBoard(actor: AuthContext): Promise<WeightBoard> 
     if (!(oz > 0)) return;
     usageOz.set(skuId, (usageOz.get(skuId) ?? 0) + oz);
   };
-  for (const r of salesRows) addUsage(r.sku_id, num(r.direct_oz) ?? 0);
+  for (const r of salesRows.rows) addUsage(r.sku_id, num(r.direct_oz) ?? 0);
   const liveProductionIds = new Set(liveProductions.map((p) => p.id));
   for (const l of productionInputs) {
     if (!liveProductionIds.has(l.production_id)) continue;
@@ -695,6 +689,7 @@ export async function loadWeightBoard(actor: AuthContext): Promise<WeightBoard> 
     observedTrimAvailable: liveProductions.length > 0,
     generatedAt,
     usageWindowDays: USAGE_WINDOW_DAYS,
+    salesCoverage: salesRows.coverage,
   };
 }
 

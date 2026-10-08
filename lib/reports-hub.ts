@@ -315,6 +315,8 @@ export async function listReportsPage(service: SupabaseClient, f: ListFilters & 
 }
 
 export interface ChecklistDetailItem {
+  /** Stored target only; the view resolves it against authorized same-day reports. */
+  reportInstanceId?: string | null;
   station: string;
   label: string;
   done: boolean;
@@ -410,10 +412,11 @@ async function loadChecklistDetail(
     count_value: number | null;
     notes: string | null;
     photo_id: string | null;
+    auto_complete_meta: { reportInstanceId?: string } | null;
   }>((from, to) =>
     service
       .from("checklist_completions")
-      .select("template_item_id, completed_by, count_value, notes, photo_id")
+      .select("template_item_id, completed_by, count_value, notes, photo_id, auto_complete_meta")
       .eq("instance_id", args.instanceId)
       .match(args.viewer.level < 4 ? { completed_by: args.viewer.userId } : {})
       .is("superseded_at", null)
@@ -425,7 +428,7 @@ async function loadChecklistDetail(
   if (args.viewer.level < 4 && comps.length === 0) return null;
   const compByItem = new Map<
     string,
-    { completed_by: string | null; count_value: number | null; notes: string | null; photo_id: string | null }
+    { completed_by: string | null; count_value: number | null; notes: string | null; photo_id: string | null; auto_complete_meta: { reportInstanceId?: string } | null }
   >();
   for (const c of comps) {
     compByItem.set(c.template_item_id, c);
@@ -466,6 +469,7 @@ async function loadChecklistDetail(
     const c = compByItem.get(ti.id);
     const countValue = c?.count_value ?? null;
     return {
+      reportInstanceId: c?.auto_complete_meta?.reportInstanceId ?? null,
       station: ti.station,
       label: ti.label,
       done: !!c,
@@ -536,7 +540,7 @@ export interface OpeningDetailItem {
    *   - closerCount: null   → NO prior-day submission (recount established truth)
    * `null` for the whole field means this is not a spot-check item.
    */
-  baseline: { closerCount: number | null; par: number | null } | null;
+  baseline: { closerCount: number | null; par: number | null; sourceInstanceId?: string | null } | null;
   /** Opener's recount value (prep_data->phase1.opener_recount); null when none. */
   openerRecount: number | null;
   /** Resolved ground truth (prep_data->phase1.ground_truth_count); null when none. */
@@ -847,7 +851,7 @@ async function loadOpeningDetail(
       note: showNotes ? (c?.notes ?? null) : null, // REDACTED below L5
       isTempFlag:
         tempItemIds.has(ti.id) && countValue !== null && countValue > FRIDGE_DEFAULT_SAFE_MAX_F,
-      baseline: isSpotCheck ? { closerCount: snap.closerCount, par: snap.parValue } : null,
+      baseline: isSpotCheck ? { closerCount: snap.closerCount, par: snap.parValue, sourceInstanceId: snap.closingInstanceId } : null,
       openerRecount: p1?.openerRecount ?? null,
       groundTruth: p1?.groundTruth ?? null,
       prepNeed: p1?.prepNeed ?? null,
@@ -1029,7 +1033,7 @@ export interface PmReportDetail {
    * overdue is intentionally OMITTED — a live overdue flag is misleading when viewing a historical report.
    */
   wrapUp: ShiftWrapUpRow[];
-  reportProgress: { key: ReportKey; progress: ReportProgress; doneAt: string | null }[];
+  reportProgress: { key: ReportKey; reportId?: string | null; progress: ReportProgress; doneAt: string | null }[];
 }
 
 async function loadPmDetail(
@@ -1165,7 +1169,7 @@ async function loadPmDetail(
   // Shift activity — managers only; empty arrays for employees (< L4).
   // overdue intentionally omitted: a live overdue flag is misleading when viewing a historical report.
   let wrapUp: ShiftWrapUpRow[] = [];
-  let reportProgress: { key: ReportKey; progress: ReportProgress; doneAt: string | null }[] = [];
+  let reportProgress: { key: ReportKey; reportId?: string | null; progress: ReportProgress; doneAt: string | null }[] = [];
   if (isManager) {
     wrapUp = await loadShiftWrapUp(service, { locationId: report.location_id, date: report.report_date });
     const actor = {
@@ -1178,7 +1182,7 @@ async function loadPmDetail(
       date: report.report_date,
       actor,
     });
-    reportProgress = statusRows.map((r) => ({ key: r.key, progress: r.progress, doneAt: r.doneAt }));
+    reportProgress = statusRows.map((r) => ({ key: r.key, reportId: r.reportId, progress: r.progress, doneAt: r.doneAt }));
   }
 
   return {

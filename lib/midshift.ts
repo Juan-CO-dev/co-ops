@@ -80,7 +80,7 @@ export interface MidShiftActor {
 async function loadInstanceStatus(
   service: SupabaseClient,
   args: { locationId: string; date: string; type: "opening" | "closing" },
-): Promise<{ status: string | null; confirmedAt: string | null; confirmedBy: string | null }> {
+): Promise<{ reportId: string | null; status: string | null; confirmedAt: string | null; confirmedBy: string | null }> {
   // PLURAL template lookup (PR-3 adversarial review H1): under template
   // versioning a lineage can hold current + pending active rows — a
   // created_at-DESC single resolver would grab the PENDING version and report
@@ -100,11 +100,11 @@ async function loadInstanceStatus(
   // report would read as never begun, at 6 AM, to the manager checking whether it was.
   if (tErr) throw new Error(`loadInstanceStatus checklist_templates: ${tErr.message}`);
   const tmplIds = (tmpls ?? []).map((t) => t.id);
-  if (tmplIds.length === 0) return { status: null, confirmedAt: null, confirmedBy: null };
+  if (tmplIds.length === 0) return { reportId: null, status: null, confirmedAt: null, confirmedBy: null };
 
   const { data: inst, error: iErr } = await service
     .from("checklist_instances")
-    .select("status, confirmed_at, confirmed_by")
+    .select("id, status, confirmed_at, confirmed_by")
     .in("template_id", tmplIds)
     .eq("location_id", args.locationId)
     .eq("date", args.date)
@@ -112,10 +112,10 @@ async function loadInstanceStatus(
     // maybeSingle would THROW on 2 rows — degrade deterministically instead).
     .order("created_at", { ascending: false })
     .limit(1)
-    .maybeSingle<{ status: string; confirmed_at: string | null; confirmed_by: string | null }>();
+    .maybeSingle<{ id: string; status: string; confirmed_at: string | null; confirmed_by: string | null }>();
   if (iErr) throw new Error(`loadInstanceStatus checklist_instances: ${iErr.message}`);
-  if (!inst) return { status: null, confirmedAt: null, confirmedBy: null };
-  return { status: inst.status ?? null, confirmedAt: inst.confirmed_at ?? null, confirmedBy: inst.confirmed_by ?? null };
+  if (!inst) return { reportId: null, status: null, confirmedAt: null, confirmedBy: null };
+  return { reportId: inst.id, status: inst.status ?? null, confirmedAt: inst.confirmed_at ?? null, confirmedBy: inst.confirmed_by ?? null };
 }
 
 function progressFor(status: string | null, hasAny: boolean): ReportProgress {
@@ -161,18 +161,21 @@ export async function loadReportStatuses(
   const rows: Omit<ReportStatusRow, "overdue">[] = [
     {
       key: "opening",
+      reportId: opening.reportId,
       progress: progressFor(opening.status, false),
       doneAt: opening.confirmedAt,
       doneByName: opening.confirmedBy ? nameById.get(opening.confirmedBy) ?? null : null,
     },
     {
       key: "am_prep",
+      reportId: amPrep.todayInstance?.id ?? null,
       progress: progressFor(amPrep.todayInstance?.status ?? null, amPrep.todayInstance != null),
       doneAt: amPrep.todayInstance?.confirmedAt ?? null,
       doneByName: amPrep.confirmedByName,
     },
     {
       key: "mid_day",
+      reportId: midDayLatestDone?.instanceId ?? midDay.instances.at(-1)?.instanceId ?? null,
       progress: midDayDoneCount > 0 ? "done" : midDay.instances.length > 0 ? "in_progress" : "not_started",
       doneAt: midDayLatestDone?.confirmedAt ?? null,
       doneByName: midDayLatestDone?.confirmedByName ?? null,
@@ -180,12 +183,14 @@ export async function loadReportStatuses(
     },
     {
       key: "cash",
+      reportId: cash.report?.id ?? null,
       progress: cash.report ? "done" : "not_started",
       doneAt: cash.report?.signedAt ?? null,
       doneByName: cash.report?.signedByName ?? null,
     },
     {
       key: "closing",
+      reportId: closing.reportId,
       progress: progressFor(closing.status, false),
       doneAt: closing.confirmedAt,
       doneByName: closing.confirmedBy ? nameById.get(closing.confirmedBy) ?? null : null,

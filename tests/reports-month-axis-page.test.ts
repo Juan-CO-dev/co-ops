@@ -6,6 +6,7 @@ vi.mock("@/lib/session",()=>({requireSessionFromHeaders:mocks.auth}));
 vi.mock("@/lib/supabase-server",()=>({getServiceRoleClient:()=>({})}));
 vi.mock("@/lib/reports-trends",async original=>({...await original<typeof import("@/lib/reports-trends")>(),loadTrendSeries:mocks.load}));
 vi.mock("@/components/nav/BackLink",()=>({BackLink:()=>null}));
+vi.mock("@/components/reports-hub/ReportShopTabs",()=>({ReportShopTabs:()=>null}));
 
 import OpsTrendsPage from "@/app/(authed)/reports/trends/ops/page";
 

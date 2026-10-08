@@ -1,3 +1,4 @@
+import React from "react";
 import { resolveTrendRange } from "@/lib/reports-trends";
 import { reportRangeParams } from "@/lib/report-range";
 import { readFileSync } from "node:fs";
@@ -94,16 +95,18 @@ describe("per-person team report location boundary", () => {
     "%s reading %s: allowed=%s", async (role, location, allowed) => {
       const source = readFileSync("app/(authed)/reports/trends/team/[personId]/page.tsx", "utf8");
       const ast = ts.createSourceFile("page.tsx", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
-      const declaration = ast.statements.find(node => ts.isFunctionDeclaration(node) && node.name?.text === "PersonDetailPage")!;
-      const js = ts.transpile(declaration.getText(ast).replace("export default ", ""), { target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.React });
+      const declarations = ast.statements.filter(node => ts.isFunctionDeclaration(node) && ["PersonDetailPage", "renderPage"].includes(node.name?.text ?? ""));
+      const js = ts.transpile(declarations.map(node => node.getText(ast).replace("export default ", "")).join("\n"), { target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.React });
       const loadPersonDetail = vi.fn(async () => { throw new Error("authorized metrics read"); });
       const deps = {
         requireSessionFromHeaders: async () => ({ role, level: role === "gm" ? 7 : 8, locations: ["mine"], user: { id: "manager", language: "en" } }),
-        TEAM_VIEW_LEVEL: 6, canReadReportLocation, resolveTrendRange, reportRangeParams,
+        TEAM_VIEW_LEVEL: 6, REPORT_ALL_LOCATIONS_LEVEL: 8, canReadReportLocation, resolveTrendRange, reportRangeParams,
         redirect: () => { throw new Error("redirect"); },
         parseGranularity: () => "day", operationalNow: () => ({ date: "2026-10-07" }),
         parseReportRange: () => ({ range: "last7", from: "2026-10-01", to: "2026-10-07", compare: false, previous: { from: "2026-09-24", to: "2026-09-30" } }),
         getServiceRoleClient: () => ({}), loadPersonDetail,
+        loadPersonReportLocations: async () => ["mine", "other"],
+        React, ReportPageNav: () => null, ReportShopTabs: () => null, TrendControls: () => null,
       };
       const page = new Function(...Object.keys(deps), `${js}; return PersonDetailPage;`)(...Object.values(deps));
       await expect(page({ params: Promise.resolve({ personId: "employee" }), searchParams: Promise.resolve({ location }) }))

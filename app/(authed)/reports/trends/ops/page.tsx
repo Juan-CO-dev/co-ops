@@ -17,14 +17,15 @@ import { redirect } from "next/navigation";
 
 import { serverT } from "@/lib/i18n/server";
 import type { Language, TranslationKey } from "@/lib/i18n/types";
-import { canReadReportLocation, type LocationActor } from "@/lib/locations";
+import { REPORT_ALL_LOCATIONS_LEVEL, canReadReportLocation, type LocationActor } from "@/lib/locations";
 import { operationalNow } from "@/lib/midshift";
 import { formatCents, formatTrendMonthLabels } from "@/lib/i18n/format";
 import { addDays, bucketStart, loadTrendSeries, type TrendGranularity, type TrendSeries } from "@/lib/reports-trends";
 import { requireSessionFromHeaders } from "@/lib/session";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 
-import { BackLink } from "@/components/nav/BackLink";
+import { ReportPageNav } from "@/components/reports-hub/ReportPageNav";
+import { ReportShopTabs } from "@/components/reports-hub/ReportShopTabs";
 import { LineChart } from "@/components/trends/LineChart";
 import type { LineSeries } from "@/components/trends/LineChart";
 import { BarChart } from "@/components/trends/BarChart";
@@ -62,18 +63,17 @@ function deltaPill(
 }
 
 export default async function OpsTrendsPage({ searchParams }: PageProps): Promise<ReactNode> {
+  return renderPage(await searchParams);
+}
+
+async function renderPage(paramsRange: Record<string, string | undefined>, allShops = false): Promise<ReactNode> {
   const auth = await requireSessionFromHeaders("/reports/trends/ops");
-  const paramsRange = await searchParams;
   const { location: locationParam, g } = paramsRange;
 
   if (auth.level < 4) redirect("/reports");
   if (!locationParam) redirect("/dashboard");
-  if (locationParam === "all") {
-    if (auth.level < 8) redirect("/reports");
-    return <TrendShopPanels render={(id) => OpsTrendsPage({ searchParams: Promise.resolve({ ...paramsRange, location: id }) })} />;
-  }
   const locActor: LocationActor = { role: auth.role, locations: auth.locations };
-  if (!canReadReportLocation(locActor, locationParam)) redirect("/dashboard");
+  if (locationParam !== "all" && !canReadReportLocation(locActor, locationParam)) redirect("/dashboard");
 
   const language = auth.user.language;
   const granularity = parseGranularity(g);
@@ -82,8 +82,31 @@ export default async function OpsTrendsPage({ searchParams }: PageProps): Promis
   const compare = range.compare;
   const context = reportRangeParams(range);
   context.set("g", granularity);
+  for (const [key, value] of Object.entries(paramsRange)) if (value !== undefined && !["location", "loc", "g", "range", "from", "to", "compare", "cmp"].includes(key)) context.set(key, value);
+  if (allShops) context.set("returnLocation", "all");
 
   const sb = getServiceRoleClient();
+  const header = <>
+      <ReportPageNav viewerLevel={auth.level} path="/reports/trends/ops" params={{ ...paramsRange, location: allShops || (auth.level >= REPORT_ALL_LOCATIONS_LEVEL && paramsRange.returnLocation === "all") ? "all" : locationParam, returnLocation: undefined }} language={language} />
+      <ReportShopTabs path="/reports/trends/ops" params={paramsRange} locationId={allShops ? "all" : locationParam} language={language} viewer={auth} />
+      <h1 className="text-lg font-bold text-co-text">{serverT(language, "reports.trends.title")}</h1>
+      <p className="mb-4 text-xs text-co-text-muted">{serverT(language, "reports.trends.subtitle")}</p>
+
+      <TrendControls
+        locationId={allShops ? "all" : locationParam}
+        range={range}
+        granularity={granularity}
+        compare={compare}
+        language={language}
+        basePath="/reports/trends/ops"
+      />
+
+  </>;
+  if (locationParam === "all") {
+    if (auth.level < REPORT_ALL_LOCATIONS_LEVEL) redirect("/reports");
+    return <TrendShopPanels header={header} render={(id) => renderPage({ ...paramsRange, location: id }, true)} />;
+  }
+
   const series: TrendSeries = await loadTrendSeries(sb, {
     viewer: { userId: auth.user.id, level: auth.level, locations: auth.locations },
     locationId: locationParam,
@@ -109,23 +132,12 @@ export default async function OpsTrendsPage({ searchParams }: PageProps): Promis
     </span>)}
   </div> : null;
 
+  const Container = allShops ? "div" : "main";
   return (
-    <main className="mx-auto max-w-2xl md:max-w-3xl lg:max-w-5xl xl:max-w-6xl px-4 pb-32 pt-4 sm:px-6">
-      <BackLink search={`?location=${locationParam}&${context}`} labelKey="reports.trends.back" />
-      <h1 className="text-lg font-bold text-co-text">{serverT(language, "reports.trends.title")}</h1>
-      <p className="mb-4 text-xs text-co-text-muted">{serverT(language, "reports.trends.subtitle")}</p>
-
-      <TrendControls
-        locationId={locationParam}
-        range={range}
-        granularity={granularity}
-        compare={compare}
-        language={language}
-        basePath="/reports/trends/ops"
-      />
+    <Container className={allShops ? "pt-4" : "mx-auto max-w-2xl md:max-w-3xl lg:max-w-5xl xl:max-w-6xl px-4 pb-32 pt-4 sm:px-6"}>
+      {!allShops && header}
       <ExportLinks className="mt-3" family="trends_ops" language={language}
         query={{ location: locationParam, range: range.range, from: range.from, to: range.to, g: granularity }} />
-
       <nav className="mt-3 flex flex-wrap gap-2">
         <Link className="inline-flex min-h-[44px] items-center rounded-lg border border-co-border px-3 text-xs" href={drill("underPar")}>{serverT(language, "reports.trends.par_title")}</Link>
         <Link className="inline-flex min-h-[44px] items-center rounded-lg border border-co-border px-3 text-xs" href={drill("tempFlag")}>{serverT(language, "reports.trends.temps_title")}</Link>
@@ -242,7 +254,7 @@ export default async function OpsTrendsPage({ searchParams }: PageProps): Promis
           <ChartLegend hasPrev={!!prev} current={legendCurrent} previous={legendPrevious} />
         </TrendCard>
       </div>
-    </main>
+    </Container>
   );
 }
 

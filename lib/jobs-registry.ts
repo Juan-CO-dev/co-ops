@@ -20,6 +20,10 @@ export interface RegisteredJob {
 }
 
 export const JOBS_REGISTRY = [
+  // Cutover keeps scheduler identities stable: capture is the provider writer;
+  // sales-pull now proves T-1..T-3 capture -> depletion -> shadow pars.
+  // sales-today captures today/yesterday; catering-scan checks the persisted sink.
+  { job: "toast-order-capture", cadenceMinutes: 1440, source: "vercel" },
   { job: "toast-sales-pull", cadenceMinutes: 1440, source: "vercel", catchUp: { job: "toast-sales-pull", dueUtc: "09:00" } }, // 09:00 UTC
   { job: "prune-sessions", cadenceMinutes: 1440, source: "vercel", catchUp: { job: "prune-sessions", dueUtc: "08:30" } }, // 08:30 UTC
   { job: "parse-receipts", cadenceMinutes: 1440, source: "vercel", catchUp: { job: "parse-receipts", dueUtc: "09:45" } }, // 09:45 UTC

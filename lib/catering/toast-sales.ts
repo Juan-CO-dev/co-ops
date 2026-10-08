@@ -1,31 +1,27 @@
 /**
- * Toast sales ingest + depletion projection (read-track 2). SERVER-ONLY,
- * service-role; level floors AND the location bind re-checked here (see
- * assertLocationAccess — neither floor is all-locations), Tier-A step-up at
- * the routes.
+ * Toast capture triggers and depletion projection. Server-only, service-role;
+ * actor entry points retain role and location checks plus route step-up.
  *
- * Ledger law: toast_sales_events is APPEND-ONLY and snapshot-versioned per
- * (location, check, selection) — a re-pull appends version+1 only when the
- * selection state changed (quantity/void/price/name); voids arrive as new
- * versions. Depletion is a DERIVED projection (latest non-void versions →
- * exclusions → crosswalk → graph engines) — no stored on-hand is ever mutated.
- *
- * Double-count rule (Juan 2026-07-23, catering is MIXED): admin-curated
- * toast_ingest_exclusions decide which Toast lines are "regular sales";
- * excluded parents exclude their modifier children; a suspected-catering
- * advisory keeps misconfiguration visible. Outside-platform catering that
- * never touches Toast or CO-OPS is a NAMED gap until spec #2b's punch-in.
+ * Legacy ingestion remains active until CC enables DEPLETION_SOURCE=capture;
+ * unsetting the flag restores its writers and readers. Both adapters
+ * share current mapping/recipe derivation; no stored on-hand is mutated.
+ * Capture dining exclusions use reviewed channel mappings. Sales prep fallback is
+ * selected per item/day against live production by the shared depletion reader.
  */
+import { fetchToastOrders } from "@/lib/toast/orders";
+import { fetchToastMenuItems } from "@/lib/toast/menus";
+import { fetchDiningOptionNames } from "@/lib/toast/config";
+import { selectionChanged } from "@/lib/toast/orders-shared";
+import { createHash } from "node:crypto";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import { selectAllRows } from "@/lib/supabase-paginate";
 import { getRoleLevel } from "@/lib/roles";
 import { lockLocationContext } from "@/lib/locations";
 import { audit } from "@/lib/audit";
 import type { AuthContext } from "@/lib/session";
-import { fetchToastOrders } from "@/lib/toast/orders";
-import { fetchToastMenuItems } from "@/lib/toast/menus";
-import { fetchDiningOptionNames } from "@/lib/toast/config";
-import { selectionChanged, type ToastSaleLine } from "@/lib/toast/orders-shared";
+import { runOrderCapture } from "@/lib/toast/capture-job";
+import { captureToastDaySystem } from "@/lib/toast/capture";
+import { captureBudget, captureErrorCode } from "@/lib/toast/capture-runner";
 import {
   matchesExclusion, SUSPECT_NAME_RE, SUSPECT_CHECK_QTY,
   type IngestExclusion, type ExclusionTarget,
@@ -34,16 +30,21 @@ import { loadRecipeGraph } from "@/lib/prep-consumption";
 import { recordResolutionFlipsForLocation } from "@/lib/products";
 import { salesSignalsReady } from "@/lib/dynamic-pars-probes";
 import {
-  perUnitSkuOzForItemFromGraph, perUnitDirectSkuOzForMenuItem, firstLevelItemConsumption,
+  perUnitSkuOzForItemFromGraph, perUnitSkuOzForMenuItemFromGraph, perUnitSkuAttributionsForItem, perUnitDirectSkuOzForMenuItem, firstLevelItemConsumption,
 } from "@/lib/prep-consumption-graph";
+import { operationalDayUtcRange } from "@/lib/operational-day";
+import { findNestedProductionDuplicates } from "@/lib/depletion-shared";
 import { modifierParUnits, removalAmount, skuPortionOz } from "@/lib/toast/modifiers-shared";
 import {
   selectAssortmentPool, evenMixPerOption, MENU_ITEM_MODIFIER_PORTION_WHOLE_SUBS,
   type AssortmentKind,
 } from "@/lib/toast/platter-shared";
+import { loadCapturedToastDay, type CapturedToastDay } from "@/lib/toast/captured-day";
 
 export const TOAST_SALES_WRITE_MIN = 7; // GM+ — pull + exclusions (mirrors toast-map)
 export const TOAST_SALES_READ_MIN = 6;  // AGM+ — consumption readout (prep-demand page floor)
+
+export const captureDepletionEnabled = (): boolean => process.env.DEPLETION_SOURCE === "capture";
 
 export class AdminToastSalesError extends Error {
   constructor(public status: number, public code: string, message?: string) {
@@ -85,7 +86,7 @@ function requireYmd(d: string): void {
   if (!YMD_RE.test(d) || Number.isNaN(Date.parse(d))) throw new AdminToastSalesError(400, "invalid_date", "businessDate must be YYYY-MM-DD");
 }
 
-interface LedgerRow {
+export interface LedgerRow {
   check_guid: string; selection_guid: string; parent_selection_guid: string | null;
   toast_item_guid: string; item_name: string; quantity: number | string;
   price_cents: number | null; voided: boolean; dining_option: string | null;
@@ -154,12 +155,14 @@ async function resolveLocationGuid(locationId: string): Promise<string> {
   return data.toast_restaurant_guid ?? ""; // fixture mode tolerates empty
 }
 
-export interface PullResult { selections: number; appended: number; unchanged: number; voids: number }
+export interface PullResult {
+  // Capture has no legacy selection append counters.
+  selections: number; appended: number; unchanged: number; voids: number;
+  capture?: Awaited<ReturnType<typeof runOrderCapture>>;
+}
 
-/** Core pull (shared by admin route + cron + system triggers). actor null =
- * system context; `systemContext` names WHICH system path in the audit row
- * ("cron" default · "closing_confirm" · "midshift_on_visit"). */
-async function doPull(
+/** Legacy selection writer retained for env-only rollback. */
+async function doLegacyPull(
   locationId: string,
   businessDate: string,
   actor: AuthContext | null,
@@ -229,70 +232,76 @@ async function doPull(
   return { selections: lines.length, appended: inserts.length, unchanged, voids };
 }
 
-export async function pullSales(actor: AuthContext, locationId: string, businessDate: string): Promise<PullResult> {
-  requireLevel(actor, TOAST_SALES_WRITE_MIN);
-  assertLocationAccess(actor, locationId); // before any I/O — a refused pull touches nothing
-  return doPull(locationId, businessDate, actor);
+/** Select the operational writer with the same flag as the readers. */
+async function doPull(
+  locationId: string,
+  businessDate: string,
+  actor: AuthContext | null,
+  systemContext: string = "cron",
+): Promise<PullResult> {
+  if (!captureDepletionEnabled()) return doLegacyPull(locationId, businessDate, actor, systemContext);
+  requireYmd(businessDate);
+  const budget = captureBudget(45_000);
+  try {
+    const guid = await budget.wait(() => resolveLocationGuid(locationId));
+    if (!guid) throw new AdminToastSalesError(409, "capture_no_toast");
+    const result = await budget.wait(() => captureToastDaySystem(locationId, businessDate, {
+      debounce: true, signal: budget.signal,
+    }));
+    if (result.catering?.ok === false) throw new AdminToastSalesError(503, result.catering.error ?? "capture_catering_degraded");
+    if (result.skipped && result.reason !== "capture_debounced") {
+      throw new AdminToastSalesError(503, result.reason ?? "capture_unavailable");
+    }
+    void audit({ actorId: actor?.user.id ?? null, actorRole: actor?.user.role ?? null,
+      action: "toast_sales.pull", resourceTable: "toast_capture_runs", resourceId: locationId,
+      metadata: { business_date: businessDate, source: "capture", run_id: result.runId,
+        skipped: result.skipped, actor_context: actor ? "manual" : systemContext },
+      ipAddress: null, userAgent: null });
+    return { selections: 0, appended: 0, unchanged: 0, voids: 0,
+      capture: { failures: 0, skipped: result.skipped,
+        results: [{ locationId, businessDate, ...result, complete: !result.skipped, error: null }] } };
+  } finally { budget.close(); }
 }
 
-/** Cron entry: pull for every active location with a Toast GUID. Never throws per-location. */
+export async function pullSales(actor: AuthContext, locationId: string, businessDate: string): Promise<PullResult> {
+  requireLevel(actor, TOAST_SALES_WRITE_MIN);
+  assertLocationAccess(actor, locationId);
+  const result = await doPull(locationId, businessDate, actor);
+  return captureDepletionEnabled() ? result : { ...result, capture: await runOrderCapture([locationId], businessDate, "manual") };
+}
+
+/** Compatibility entry for administrative callers; each location fails independently. */
 export async function pullSalesForAllLocations(businessDate: string): Promise<Array<{ locationId: string; ok: boolean; error?: string; result?: PullResult }>> {
   requireYmd(businessDate);
   const sb = getServiceRoleClient();
   const { data, error } = await sb.from("locations").select("id, toast_restaurant_guid").eq("active", true)
     .not("toast_restaurant_guid", "is", null)
     .returns<Array<{ id: string; toast_restaurant_guid: string }>>();
-  if (error) throw new Error(`toast-sales cron locations: ${error.message}`);
+  if (error) throw new Error("capture_location_unavailable");
   const out: Array<{ locationId: string; ok: boolean; error?: string; result?: PullResult }> = [];
   for (const loc of data ?? []) {
-    try {
-      out.push({ locationId: loc.id, ok: true, result: await doPull(loc.id, businessDate, null) });
-    } catch (e) {
-      out.push({ locationId: loc.id, ok: false, error: e instanceof Error ? e.message : String(e) });
-    }
+    try { out.push({ locationId: loc.id, ok: true, result: await doPull(loc.id, businessDate, null) }); }
+    catch (error) { out.push({ locationId: loc.id, ok: false, error: captureErrorCode(error) }); }
   }
   return out;
 }
 
-// ─── System pull triggers (mid-shift pulse, council 2026-07-31) ──────────────
-
-/**
- * Best-effort system-triggered pull for ONE location — the same-day lanes of
- * the mid-shift pulse. NEVER throws (runs inside next/server after(), post-
- * response; a Toast hiccup must not surface anywhere user-facing). Skips
- * locations without a Toast GUID. The actorless path is a DELIBERATE call
- * (council 2026-07-31, Fable seat): the trigger's effect is read-only ingest
- * on behalf of a viewer below TOAST_SALES_WRITE_MIN, debounced upstream, and
- * audited with a distinct actor_context.
- *
- * System triggers are EVENTS-ONLY — they NEVER materialize the depletion
- * ledger (adversarial review 2026-07-31 C1): the nightly T-1 cron is the SOLE
- * ledger materializer, so a ledger row can only ever describe a CLOSED
- * business day. An open-day row — even from a "day is over" closing confirm —
- * is one wrong-tap away from a partial row that drift would read as trusted
- * (the open date is excluded from gap-taint by design), silently overstating
- * on-hand. Display reads events; drift reads final-day ledger rows. Law.
- *
- * A FAILED attempt writes a `toast_sales.pull_failed` audit row (review C2):
- * the on-visit debounce keys off the latest pull attempt — success OR failure
- * — so a Toast outage cannot storm the API on every page load.
- */
-export type SystemPullContext = "closing_confirm" | "midshift_on_visit" | "pinger";
-
-export async function pullSalesSystemTrigger(
+async function pullLegacySalesSystemTrigger(
   locationId: string,
   businessDate: string,
   opts: { context: SystemPullContext },
-): Promise<void> {
+): Promise<boolean> {
   try {
     const sb = getServiceRoleClient();
-    const { data } = await sb
+    const { data, error } = await sb
       .from("locations")
       .select("toast_restaurant_guid")
       .eq("id", locationId)
       .maybeSingle<{ toast_restaurant_guid: string | null }>();
-    if (!data?.toast_restaurant_guid) return; // no Toast at this location — no-op
+    if (error) throw new Error("toast_location_lookup_failed");
+    if (!data?.toast_restaurant_guid) return true; // no Toast at this location — no-op
     await doPull(locationId, businessDate, null, opts.context);
+    return true;
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     console.error(`[toast-sales ${opts.context}] pull failed for ${locationId} ${businessDate}:`, msg);
@@ -312,38 +321,12 @@ export async function pullSalesSystemTrigger(
       ipAddress: null,
       userAgent: null,
     });
+    return false;
   }
 }
 
-/** Debounce window for the mid-shift on-visit refresh. */
-const ON_VISIT_DEBOUNCE_MS = 45 * 60 * 1000;
 
-/**
- * Debounce window for the same-day pinger (catering-truth arc 2026-09-05). The CO desktop
- * calls the route every 10 minutes; 8 minutes lets every cycle through while still refusing
- * a second pull if the pinger is ever run twice inside one cycle (or a manager's /mid-shift
- * visit and the pinger land together).
- */
-export const PINGER_DEBOUNCE_MS = 8 * 60 * 1000;
-
-/** What one location's freshness pass actually did. `unknown` = the debounce evidence could
- *  not be read, so NOTHING was pulled — never silently reported as "fresh". */
-export type RefreshOutcome = "pulled" | "fresh" | "no_toast" | "unknown";
-
-/**
- * Same-day freshness trigger for ONE location: pull today's events IF the last pull
- * ATTEMPT for this location is older than `debounceMs` (or was for a different business
- * date). The marker is the latest `toast_sales.pull` OR `toast_sales.pull_failed` audit
- * row — independent of whether rows were inserted (a zero-sales morning doesn't re-pull
- * per load) AND of outcome (a Toast outage doesn't storm the API per load — review C2).
- *
- * EVENTS-ONLY, always: this path never materializes the depletion ledger (see
- * `pullSalesSystemTrigger` — the nightly T-1 cron is the sole materializer).
- *
- * Best-effort; NEVER throws (the mid-shift caller runs it inside `after()`), so every
- * failure mode is reported through the return value instead.
- */
-export async function refreshTodaySalesIfStale(
+async function refreshLegacyTodaySalesIfStale(
   locationId: string,
   businessDate: string,
   debounceMs: number,
@@ -361,12 +344,12 @@ export async function refreshTodaySalesIfStale(
     // hitting a third-party API on every page load, and it was proven live.
     const { data, error } = await sb
       .from("audit_log")
-      .select("occurred_at, metadata")
+      .select("occurred_at, action, metadata")
       .in("action", ["toast_sales.pull", "toast_sales.pull_failed"])
       .eq("resource_id", locationId)
       .order("occurred_at", { ascending: false })
       .limit(1)
-      .maybeSingle<{ occurred_at: string; metadata: { business_date?: string } | null }>();
+      .maybeSingle<{ occurred_at: string; action: string; metadata: { business_date?: string; capture_ok?: boolean } | null }>();
     if (error) {
       // A failed debounce READ must not be read as "no recent attempt" — that is what
       // turned this into a pull-per-render. Skip the trigger and let the next visit
@@ -378,7 +361,10 @@ export async function refreshTodaySalesIfStale(
       data != null &&
       data.metadata?.business_date === businessDate &&
       Date.now() - new Date(data.occurred_at).getTime() < debounceMs;
-    if (attemptedRecently) return "fresh";
+    if (attemptedRecently) {
+      // Debounce failed attempts without upgrading them to a successful heartbeat.
+      return data.action === "toast_sales.pull_failed" ? "error" : "fresh";
+    }
     // A location with no Toast GUID is a NO-OP, not a failure (pullSalesSystemTrigger
     // checks this too and stays the authority; this read is what lets the pinger's
     // audit row distinguish "nothing to pull" from "pulled").
@@ -392,8 +378,7 @@ export async function refreshTodaySalesIfStale(
       return "unknown";
     }
     if (!loc?.toast_restaurant_guid) return "no_toast";
-    await pullSalesSystemTrigger(locationId, businessDate, { context });
-    return "pulled";
+    return await pullLegacySalesSystemTrigger(locationId, businessDate, { context }) ? "pulled" : "error";
   } catch (e) {
     console.error(
       `[toast-sales ${context}] debounce check failed for ${locationId}:`,
@@ -403,47 +388,60 @@ export async function refreshTodaySalesIfStale(
   }
 }
 
-/**
- * Mid-shift on-visit freshness trigger — the 45-minute-debounced wrapper the pulse page
- * calls inside `after()`. Signature unchanged; the body is `refreshTodaySalesIfStale`.
- */
-export async function maybeRefreshTodaySales(locationId: string, businessDate: string): Promise<void> {
-  await refreshTodaySalesIfStale(locationId, businessDate, ON_VISIT_DEBOUNCE_MS, "midshift_on_visit");
+
+export type SystemPullContext = "closing_confirm" | "midshift_on_visit" | "pinger";
+export const PINGER_DEBOUNCE_MS = 8 * 60 * 1000;
+export type RefreshOutcome = "pulled" | "fresh" | "no_toast" | "unknown" | "error";
+
+/** Best-effort capture only. Intraday never materializes the final-day depletion rows. */
+export async function pullSalesSystemTrigger(
+  locationId: string,
+  businessDate: string,
+  opts: { context: SystemPullContext },
+): Promise<boolean> {
+  const result = await refreshTodaySalesIfStale(locationId, businessDate, PINGER_DEBOUNCE_MS, opts.context);
+  return result === "pulled" || result === "fresh" || result === "no_toast";
 }
 
-/**
- * Pinger entry: every active Toast-configured location, TODAY, events-only, pinger-debounced.
- * Serial (like the nightly cron) — two locations, and a burst of parallel Toast calls buys
- * nothing. Never throws per location: a failure is reported as `error` on that row so one
- * shop's outage cannot hide the other shop's pull.
- */
+/** The atomic capture claim owns debounce; old audit attempts cannot mask capture gaps.
+ * debounceMs is retained for compatibility; the shared database window is five minutes. */
+export async function refreshTodaySalesIfStale(
+  locationId: string,
+  businessDate: string,
+  _debounceMs: number,
+  context: SystemPullContext,
+): Promise<RefreshOutcome> {
+  if (!captureDepletionEnabled()) return refreshLegacyTodaySalesIfStale(locationId, businessDate, _debounceMs, context);
+  try {
+    const result = await doPull(locationId, businessDate, null, context);
+    return result.capture?.skipped ? "fresh" : "pulled";
+  } catch (error) {
+    if (error instanceof AdminToastSalesError && error.code === "capture_no_toast") return "no_toast";
+    if (error instanceof AdminToastSalesError && error.code === "capture_running") return "unknown";
+    const code = error instanceof AdminToastSalesError ? error.code : captureErrorCode(error);
+    void audit({ actorId: null, actorRole: null, action: "toast_sales.pull_failed",
+      resourceTable: "toast_capture_runs", resourceId: locationId,
+      metadata: { business_date: businessDate, actor_context: context, error: code },
+      ipAddress: null, userAgent: null });
+    return "error";
+  }
+}
+
+export async function maybeRefreshTodaySales(locationId: string, businessDate: string): Promise<void> {
+  await refreshTodaySalesIfStale(locationId, businessDate, 45 * 60 * 1000, "midshift_on_visit");
+}
+
 export async function pullTodaySalesForAllLocations(
   todayEt: string,
 ): Promise<Array<{ locationId: string; result: RefreshOutcome | "error"; error?: string }>> {
   requireYmd(todayEt);
-  const sb = getServiceRoleClient();
-  const { data, error } = await sb
-    .from("locations")
-    .select("id")
-    .eq("active", true)
-    .not("toast_restaurant_guid", "is", null)
+  const { data, error } = await getServiceRoleClient().from("locations").select("id")
+    .eq("active", true).not("toast_restaurant_guid", "is", null)
     .returns<Array<{ id: string }>>();
-  if (error) throw new Error(`pullTodaySalesForAllLocations locations: ${error.message}`);
-  const out: Array<{ locationId: string; result: RefreshOutcome | "error"; error?: string }> = [];
-  for (const loc of data ?? []) {
-    try {
-      out.push({
-        locationId: loc.id,
-        result: await refreshTodaySalesIfStale(loc.id, todayEt, PINGER_DEBOUNCE_MS, "pinger"),
-      });
-    } catch (e) {
-      out.push({ locationId: loc.id, result: "error", error: e instanceof Error ? e.message : String(e) });
-    }
-  }
-  return out;
+  if (error) throw new Error("capture_location_unavailable");
+  return Promise.all((data ?? []).map(async (loc) => ({ locationId: loc.id,
+    result: await refreshTodaySalesIfStale(loc.id, todayEt, PINGER_DEBOUNCE_MS, "pinger") })));
 }
-
-// ─── Daily depletion materializer (drift spec 2026-07-31) ────────────────────
 
 /**
  * Materialize one (location, business_date) day of the sales-consumption
@@ -524,6 +522,100 @@ export async function materializeDailyDepletion(
   // fail-open + `void`: forensic, and it may never fail the materialization.
   void recordResolutionFlipsForLocation(locationId);
   return { rows: rows.length };
+}
+
+/** Preserve the non-ledger effects of the legacy materializer after capture publication. */
+async function recordCapturedMaterializationEffects(
+  locationId: string,
+  businessDate: string,
+  rows: number,
+  emitAudit = true,
+): Promise<void> {
+  if (emitAudit) await audit({
+    actorId: null, actorRole: null,
+    action: "toast_depletion.materialize", resourceTable: "toast_capture_daily_depletion", resourceId: locationId,
+    metadata: { business_date: businessDate, rows, actor_context: "cron", source: "capture" },
+    ipAddress: null, userAgent: null,
+  });
+  void recordResolutionFlipsForLocation(locationId);
+}
+
+/** Build the capture-backed current-recipe estimate and publish the whole day atomically. */
+export async function materializeCapturedDepletion(
+  locationId: string, businessDate: string,
+  options: { audit?: boolean } = {},
+): Promise<{ rows: number; runId: string; status: "success" | "degraded"; reason: string | null }> {
+  requireYmd(businessDate);
+  const consumption = await deriveCapturedSalesConsumption(locationId, businessDate);
+  const sb = getServiceRoleClient();
+  const range = operationalDayUtcRange(businessDate);
+  const productions = await selectAllRows<{ id: string; output_item_id: string }>(async (from, to) => {
+    const { data, error } = await sb.from("productions")
+      .select("id, output_item_id").eq("location_id", locationId)
+      .is("superseded_at", null).is("revoked_at", null)
+      .gte("produced_at", range.startIso).lt("produced_at", range.endExclusiveIso)
+      .order("id", { ascending: true }).range(from, to)
+      .returns<Array<{ id: string; output_item_id: string }>>();
+    if (error) throw new Error(`capture depletion productions: ${error.message}`);
+    return { data };
+  });
+  const produced = new Set(productions.map((p) => p.output_item_id));
+  const graph = await loadRecipeGraph({ locationId });
+  const descendants = new Map<string, ReadonlySet<string>>();
+  const visit = (itemId: string, seen = new Set<string>()): Set<string> => {
+    if (seen.has(itemId)) return new Set();
+    const out = new Set<string>(); const next = new Set(seen).add(itemId);
+    for (const input of graph.byOutputItem.get(itemId)?.inputs ?? []) if (input.componentItemId != null) {
+      out.add(input.componentItemId); for (const child of visit(input.componentItemId, next)) out.add(child);
+    }
+    return out;
+  };
+  for (const itemId of produced) descendants.set(itemId, visit(itemId));
+  const nestedProductionConflicts = findNestedProductionDuplicates(produced, descendants);
+  const attributionMap = new Map<string, { item_id: string; item_path: string[]; sku_id: string; sales_oz: number }>();
+  const unresolvedPrepItems: string[] = [];
+  for (const item of consumption.prepConsumed) {
+    if (item.units <= 0) continue;
+    const itemAttributions = perUnitSkuAttributionsForItem(graph, item.itemId);
+    if (itemAttributions.length === 0) {
+      unresolvedPrepItems.push(item.itemId);
+      continue;
+    }
+    for (const row of itemAttributions) {
+      const salesOz = row.oz * item.units;
+      const key = `${item.itemId}:${row.itemPath.join(">")}:${row.skuId}`;
+      if (salesOz > 0) {
+        const existing = attributionMap.get(key);
+        if (existing) existing.sales_oz += salesOz;
+        else attributionMap.set(key, { item_id: item.itemId, item_path: row.itemPath, sku_id: row.skuId, sales_oz: salesOz });
+      }
+    }
+  }
+  const attributions = [...attributionMap.values()];
+  // Keep the independent derivation so SQL can diagnose attribution disagreement.
+  const flattened = new Map(consumption.skuConsumed.map((r) => [r.skuId, r.flattenedOz]));
+  const direct = new Map(consumption.skuConsumed.filter((r) => r.directOz > 0).map((r) => [r.skuId, r.directOz]));
+  const aggregates = [...new Set([...direct.keys(), ...flattened.keys()])].map((skuId) => ({
+    sku_id: skuId, direct_oz: direct.get(skuId) ?? 0, flattened_oz: flattened.get(skuId) ?? 0,
+  }));
+  const reason = consumption.configDegraded ? "toast_capture_config_degraded" : null;
+  const status = reason ? "degraded" as const : "success" as const;
+  const { error } = await sb.rpc("replace_toast_depletion_day", {
+    p_location_id: locationId, p_business_date: businessDate, p_run_id: consumption.captureRunId,
+    p_aggregates: aggregates, p_attributions: attributions,
+    p_source_order_count: consumption.sourceOrderCount, p_algorithm_version: "capture-v1-current-recipe",
+    p_nested_production_conflict_count: nestedProductionConflicts.length,
+    // Same formulas as the legacy toast_daily_sales_signals materializer.
+    p_suspect_check_count: consumption.suspectedCatering.length,
+    p_suspect_qty: consumption.suspectedCatering.reduce((n, check) => n + check.totalQty, 0),
+    p_counted_qty: consumption.soldLines.reduce((n, line) => n + line.quantity, 0),
+    p_diagnostics: { ...consumption.diagnostics, unresolved_prep_items: unresolvedPrepItems,
+      deletion_by_absence_count: consumption.missingPointerCount },
+    p_status: status, p_reason: reason,
+  });
+  if (error) throw new Error(`capture depletion replace: ${error.message}`);
+  await recordCapturedMaterializationEffects(locationId, businessDate, aggregates.length, options.audit !== false);
+  return { rows: aggregates.length, runId: consumption.captureRunId, status, reason };
 }
 
 // ─── Exclusions (append-only active-flag config) ─────────────────────────────
@@ -644,6 +736,7 @@ export async function deactivateExclusion(actor: AuthContext, id: string): Promi
 // ─── Consumption projection (derived; advisory) ──────────────────────────────
 
 export interface SalesConsumption {
+  diagnostics?: { unmapped_units: number; excluded_units: number; poisoned_recipes: string[]; mapping_fingerprint: string };
   soldLines: Array<{ name: string; quantity: number; kind: "menu_item" | "item" | "package" }>;
   prepConsumed: Array<{ itemId: string; name: string; units: number; removedUnits: number }>;
   /** oz = directOz + flattenedOz. directOz = at-sale consumption (the ONLY lane
@@ -663,18 +756,44 @@ export interface SalesConsumption {
 export async function salesConsumption(actor: AuthContext, locationId: string, businessDate: string): Promise<SalesConsumption> {
   requireLevel(actor, TOAST_SALES_READ_MIN);
   assertLocationAccess(actor, locationId);
-  return deriveSalesConsumption(locationId, businessDate);
+  return captureDepletionEnabled() ? deriveCapturedSalesConsumption(locationId, businessDate) : deriveSalesConsumption(locationId, businessDate);
 }
 
 /** Actor-less derivation core — the admin surface gates via salesConsumption;
  *  the daily-depletion materializer (cron/backfill) calls this directly. */
 export async function deriveSalesConsumption(locationId: string, businessDate: string): Promise<SalesConsumption> {
+  return deriveSalesConsumptionFrom(locationId, businessDate, await loadLatestVersions(locationId, businessDate));
+}
+
+export async function deriveCapturedSalesConsumption(locationId: string, businessDate: string, capturedDay?: CapturedToastDay): Promise<SalesConsumption & { captureRunId: string; sourceOrderCount: number; configDegraded: boolean; missingPointerCount: number }> {
+  const day = capturedDay ?? await loadCapturedToastDay(locationId, businessDate);
+  if (!day) throw new Error("toast_capture_day_incomplete");
+  const rows = new Map<string, LedgerRow>();
+  let cateringExcludedUnits = 0;
+  for (const order of day.orders) {
+    if (order.deleted || order.voided || order.excessFood) continue;
+    const catering = order.salesChannel === "catering" || order.salesChannel === "gift_card";
+    const eligibleChecks = new Set(order.checks.filter((c) => !c.deleted && !c.voided).map((c) => c.checkGuid));
+    for (const s of order.selections) {
+      if (!eligibleChecks.has(s.check_guid)) continue;
+      if (catering && !s.voided && !s.deleted) cateringExcludedUnits += s.quantity;
+      rows.set(`${s.check_guid}:${s.selection_guid}`, {
+      check_guid: s.check_guid, selection_guid: s.selection_guid, parent_selection_guid: s.parent_selection_guid,
+      toast_item_guid: s.item_guid, item_name: s.name, quantity: s.quantity, price_cents: null,
+      voided: s.voided || s.deleted || catering, dining_option: null, menu_group: null, snapshot_version: 1,
+    });
+    }
+  }
+  const consumption = await deriveSalesConsumptionFrom(locationId, businessDate, rows);
+  if (consumption.diagnostics) consumption.diagnostics.excluded_units += cateringExcludedUnits;
+  return { ...consumption, captureRunId: day.coverage.runId, sourceOrderCount: day.coverage.orderCount,
+    configDegraded: day.coverage.configDegraded, missingPointerCount: day.coverage.missingPointerCount };
+}
+
+export async function deriveSalesConsumptionFrom(locationId: string, businessDate: string, latest: Map<string, LedgerRow>): Promise<SalesConsumption> {
   requireYmd(businessDate);
   const sb = getServiceRoleClient();
-  const [latest, exclusions] = await Promise.all([
-    loadLatestVersions(locationId, businessDate),
-    loadActiveExclusions(),
-  ]);
+  const exclusions = await loadActiveExclusions();
 
   const live = [...latest.values()].filter((r) => !r.voided);
 
@@ -760,6 +879,7 @@ export async function deriveSalesConsumption(locationId: string, businessDate: s
   // locationId scopes product resolution (0179): this shop's primary designation,
   // its activation overlay and its receipt history — never another shop's.
   const graph = await loadRecipeGraph({ locationId });
+  const poisonedRecipes = new Set<string>();
   const menuItemUnits = new Map<string, number>();   // signed whole-sub units per menu_item
   const itemUnits = new Map<string, number>();       // signed par-units per item
   const removedByItem = new Map<string, number>();   // visible removal truth
@@ -926,6 +1046,10 @@ export async function deriveSalesConsumption(locationId: string, businessDate: s
   for (const [menuItemId, units] of menuItemUnits) {
     const clamped = Math.max(units, 0);
     if (clamped > 0) {
+      if (perUnitSkuOzForMenuItemFromGraph(graph, menuItemId).size === 0) {
+        const recipe = graph.byOutputMenuItem.get(menuItemId);
+        if (recipe) poisonedRecipes.add(recipe.recipeId);
+      }
       for (const [skuId, oz] of perUnitDirectSkuOzForMenuItem(graph, menuItemId)) skuDirect.set(skuId, (skuDirect.get(skuId) ?? 0) + oz * clamped);
       for (const [itemId, units2] of firstLevelItemConsumption(graph, menuItemId)) itemUnits.set(itemId, (itemUnits.get(itemId) ?? 0) + units2 * clamped);
     }
@@ -937,6 +1061,10 @@ export async function deriveSalesConsumption(locationId: string, businessDate: s
     const clamped = Math.max(units, 0);
     prep.set(itemId, clamped);
     if (clamped > 0) {
+      if (perUnitSkuOzForItemFromGraph(graph, itemId).size === 0) {
+        const recipe = graph.byOutputItem.get(itemId);
+        if (recipe) poisonedRecipes.add(recipe.recipeId);
+      }
       // FLATTENED lane — production-covered raw SKUs; never feeds drift.
       for (const [skuId, oz] of perUnitSkuOzForItemFromGraph(graph, itemId)) skuFlattened.set(skuId, (skuFlattened.get(skuId) ?? 0) + oz * clamped);
     }
@@ -1027,6 +1155,13 @@ export async function deriveSalesConsumption(locationId: string, businessDate: s
       .map(([toastItemGuid, u]) => ({ name: u.name, quantity: u.quantity, toastItemGuid, isModifier: u.isModifier }))
       .sort((a, b) => b.quantity - a.quantity),
     excludedCount: excluded.size,
+    diagnostics: {
+      unmapped_units: [...unmapped.values()].reduce((n, row) => n + row.quantity, 0),
+      excluded_units: live.filter((row) => excluded.has(row.selection_guid)).reduce((n, row) => n + Number(row.quantity), 0),
+      poisoned_recipes: [...poisonedRecipes].sort(),
+      mapping_fingerprint: createHash("sha256").update(JSON.stringify((mapRows ?? [])
+        .map((row) => JSON.stringify(row)).sort())).digest("hex"),
+    },
     suspectedCatering,
     modifierStats: {
       depleted: modifierStats.depleted,
