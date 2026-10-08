@@ -20,6 +20,7 @@ import { watchSiblings } from "@/lib/job-watch-run";
 import { audit } from "@/lib/audit";
 import { pullTodaySalesForAllLocations } from "@/lib/catering/toast-sales";
 import { etCalendarDate } from "@/lib/operational-day";
+import { captureIntraday } from "@/lib/toast/capture-intraday";
 
 export const runtime = "nodejs";
 export const maxDuration = 120;
@@ -41,12 +42,14 @@ export async function GET(req: NextRequest) {
   const today = etCalendarDate(new Date().toISOString());
   try {
     const results = await pullTodaySalesForAllLocations(today);
+    const capture = await captureIntraday(today, req.signal);
     const n = (k: string) => results.filter((r) => r.result === k).length;
     const healthy = n("unknown") === 0 && n("error") === 0;
     await audit({
       actorId: null, actorRole: null, action: healthy ? "cron.success" : "cron.failure", resourceTable: "cron", resourceId: null,
       metadata: {
         job: "toast-sales-today", date: today,
+        capture_failures: capture.failures,
         pulled: n("pulled"), fresh: n("fresh"), no_toast: n("no_toast"),
         // `unknown` = the debounce/location read failed, so nothing was pulled. Counted
         // separately from `error` so a silent skip can never read as a healthy cycle.
@@ -55,7 +58,7 @@ export async function GET(req: NextRequest) {
       ipAddress: null, userAgent: null,
     });
     await watchSiblings("toast-sales-today");
-    return jsonOk({ date: today, results, healthy });
+    return jsonOk({ date: today, results, healthy, capture });
   } catch (e) {
     void audit({
       actorId: null, actorRole: null, action: "cron.failure", resourceTable: "cron", resourceId: null,

@@ -53,6 +53,23 @@ it("resume skips only a completed date scoped to the requested shop", async () =
   expect(toastGet).not.toHaveBeenCalled();
 });
 
+it("a refused debounce claim never fetches orders or creates a second manifest", async () => {
+  rpc.mockImplementation(() => ({ abortSignal: async () => ({ data: false, error: null }) }));
+  expect(await captureToastDaySystem("debounced-shop", "2026-07-22", { debounce: true }))
+    .toMatchObject({ skipped: true, reason: "capture_debounced" });
+  expect(rpc.mock.calls.map((c) => c[0])).toEqual(["toast_capture_claim"]);
+  expect(toastGet).not.toHaveBeenCalled();
+  expect(writes.filter((w) => (w.data as { status?: string }).status === "running")).toEqual([]);
+});
+
+it("an accepted debounce claim uses its exact run identity for page and finish", async () => {
+  rpc.mockImplementation((name: string) => ({ abortSignal: async () => ({ data: name === "toast_capture_claim" ? true : null, error: null }) }));
+  const result = await captureToastDaySystem("claimed-shop", "2026-07-22", { debounce: true });
+  expect(result.skipped).toBe(false);
+  expect(rpc.mock.calls.map((c) => c[0])).toEqual(["toast_capture_claim", "toast_capture_page", "toast_capture_finish"]);
+  expect(rpc.mock.calls.every((c) => (c[1] as { p_run_id: string }).p_run_id === result.runId)).toBe(true);
+});
+
 it("unfinished date creates a new run at page one and binds each RPC to that location/date", async () => {
   const result = await captureToastDaySystem("new-shop", "2026-07-22", { resume: true });
   expect(result).toMatchObject({ pages: 1, orders: 1, skipped: false });

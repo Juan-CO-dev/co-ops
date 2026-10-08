@@ -80,7 +80,7 @@ async function cacheConfig(locationId: string, restaurantGuid: string, budget: B
 }
 
 /** Trusted job-only entry. Restaurant identity is resolved from the location, never supplied. */
-export async function captureToastDaySystem(locationId: string, date: string, options: { resume?: boolean; backfill?: boolean; reconcile?: boolean; signal?: AbortSignal } = {}): Promise<CaptureDayResult> {
+export async function captureToastDaySystem(locationId: string, date: string, options: { resume?: boolean; backfill?: boolean; reconcile?: boolean; debounce?: boolean; signal?: AbortSignal } = {}): Promise<CaptureDayResult> {
   if (!captureEnabled()) return skipped("capture_disabled_or_fixture");
   const budget = captureBudget(options.backfill ? 30 * 60_000 : 60_000, options.signal);
   try { return await budget.wait(() => captureDay(locationId, date, options, budget)); }
@@ -90,7 +90,7 @@ export async function captureToastDaySystem(locationId: string, date: string, op
   } finally { budget.close(); }
 }
 
-async function captureDay(locationId: string, date: string, options: { resume?: boolean; backfill?: boolean; reconcile?: boolean }, budget: Budget) {
+async function captureDay(locationId: string, date: string, options: { resume?: boolean; backfill?: boolean; reconcile?: boolean; debounce?: boolean }, budget: Budget) {
   backfillDates(date, date);
   budget.check();
   const restaurantGuid = await restaurantForLocation(locationId);
@@ -112,8 +112,11 @@ async function captureDay(locationId: string, date: string, options: { resume?: 
   }
   budget.check();
   const runId = randomUUID();
-  const started = await sb.from("toast_capture_runs").insert({ id: runId, location_id: locationId, business_date: date, status: "running" }).abortSignal(budget.signal);
+  const started = options.debounce
+    ? await sb.rpc("toast_capture_claim", { p_run_id: runId, p_location_id: locationId, p_business_date: date }).abortSignal(budget.signal)
+    : await sb.from("toast_capture_runs").insert({ id: runId, location_id: locationId, business_date: date, status: "running" }).abortSignal(budget.signal);
   dbError(started.error, "capture_manifest_start_failed");
+  if (options.debounce && started.data !== true) return skipped("capture_debounced");
   budget.check();
   const args = { p_run_id: runId, p_location_id: locationId, p_business_date: date };
   let configLoaded = false;

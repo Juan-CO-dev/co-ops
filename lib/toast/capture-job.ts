@@ -6,19 +6,24 @@ import { captureBudget, captureErrorCode } from "./capture-runner";
 /** Independent accounting heartbeat; never changes selection pipeline health.
  * One deadline across ALL shops, including a transport that fails to honor abort.
  */
-export async function runOrderCapture(locationIds: string[], businessDate: string, context: "cron" | "manual") {
+export async function runOrderCapture(locationIds: string[], businessDate: string, context: "cron" | "manual", dates = [businessDate]) {
   if (!captureEnabled()) return { failures: 0, skipped: true, results: [] };
   const budget = captureBudget();
   try {
-    const results = await Promise.all([...new Set(locationIds)].map(async (locationId) => {
+    const results: { locationId: string; businessDate: string; error: string | null }[] = [];
+    for (const date of [...new Set(dates)]) {
+    const dayResults = await Promise.all([...new Set(locationIds)].map(async (locationId) => {
       try {
-        const result = await budget.wait(() => captureToastDaySystem(locationId, businessDate, { signal: budget.signal, ...(context === "cron" ? { reconcile: true } : {}) }));
+        const result = await budget.wait(() => captureToastDaySystem(locationId, date, { signal: budget.signal, ...(context === "cron" ? { reconcile: true } : {}) }));
         const error = "reason" in result && result.reason === "capture_schema_missing" ? result.reason : result.reconciliation?.error ?? null;
-        return { locationId, ...result, error };
+        return { locationId, businessDate: date, ...result, error };
       } catch (error) {
-        return { locationId, error: captureErrorCode(error) };
+        return { locationId, businessDate: date, error: captureErrorCode(error) };
       }
     }));
+    results.push(...dayResults);
+    if (budget.signal.aborted) break;
+    }
     const failures = results.filter((r) => r.error !== null).length;
     // Manual repairs must not mask a missing nightly all-location heartbeat.
     const heartbeat = audit({ actorId: null, actorRole: null,

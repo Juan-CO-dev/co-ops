@@ -72,7 +72,7 @@ it("a capture 429 produces its own sanitized failure heartbeat without poisoning
   expect(materializeDailyDepletion).toHaveBeenCalledTimes(2);
   expect(runParShadowForLocation).toHaveBeenCalledTimes(2);
   expect(audit).toHaveBeenCalledWith(expect.objectContaining({ action: "cron.failure", metadata: expect.objectContaining({
-    job: "toast-order-capture", results: expect.arrayContaining([{ locationId: "shop1", error: "toast_http_429" }]),
+    job: "toast-order-capture", results: expect.arrayContaining([expect.objectContaining({ locationId: "shop1", error: "toast_http_429" })]),
   }) }));
   expect(JSON.stringify(vi.mocked(audit).mock.calls)).not.toContain("PRIVATE");
 });
@@ -80,6 +80,9 @@ it("a capture 429 produces its own sanitized failure heartbeat without poisoning
 it("successful capture writes an independent nightly heartbeat", async () => {
   expect(await runToastSalesPull({ businessDate: "2026-07-23" })).toMatchObject({ healthy: true, metadata: { capture_failures: 0 } });
   expect(audit).toHaveBeenCalledWith(expect.objectContaining({ action: "cron.success", metadata: expect.objectContaining({ job: "toast-order-capture" }) }));
+  expect(vi.mocked(captureToastDaySystem).mock.calls.map((c) => c[1])).toEqual([
+    "2026-07-23", "2026-07-23", "2026-07-22", "2026-07-22", "2026-07-21", "2026-07-21",
+  ]);
 });
 
 it("selection failures remain unhealthy and do not materialize", async () => {
@@ -119,7 +122,7 @@ it("authenticated nightly GET stays HTTP 200 with selection cron.success when ac
 
 it("missing capture schema skips capture and alerts independently while selections stay healthy", async () => {
   vi.mocked(captureToastDaySystem).mockResolvedValue({ runId: "", pages: 0, orders: 0, skipped: true, reason: "capture_schema_missing" });
-  expect(await runToastSalesPull({ businessDate: "2026-07-23" })).toMatchObject({ healthy: true, metadata: { capture_failures: 2, per_location_failures: 0 } });
+  expect(await runToastSalesPull({ businessDate: "2026-07-23" })).toMatchObject({ healthy: true, metadata: { capture_failures: 6, per_location_failures: 0 } });
   expect(materializeDailyDepletion).toHaveBeenCalledTimes(2);
   expect(runParShadowForLocation).toHaveBeenCalledTimes(2);
   expect(audit).toHaveBeenCalledWith(expect.objectContaining({ action: "cron.failure", metadata: expect.objectContaining({
@@ -130,7 +133,7 @@ it("missing capture schema skips capture and alerts independently while selectio
  it.each(["mismatch", "skipped"] as const)("shadow %s flags capture heartbeat without failing selections", async (status) => {
   vi.mocked(captureToastDaySystem).mockResolvedValue({ runId: "run", pages: 1, orders: 1, skipped: false,
     reconciliation: { status, error: `capture_reconciliation_${status}` } });
-  expect(await runToastSalesPull({ businessDate: "2026-07-23" })).toMatchObject({ healthy: true, metadata: { capture_failures: 2, per_location_failures: 0 } });
+  expect(await runToastSalesPull({ businessDate: "2026-07-23" })).toMatchObject({ healthy: true, metadata: { capture_failures: 6, per_location_failures: 0 } });
   expect(captureToastDaySystem).toHaveBeenCalledWith("shop1", "2026-07-23", { signal: expect.any(AbortSignal), reconcile: true });
   expect(materializeDailyDepletion).toHaveBeenCalledTimes(2);
   expect(runParShadowForLocation).toHaveBeenCalledTimes(2);
