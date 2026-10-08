@@ -49,8 +49,16 @@ describe("capture catering coverage health", () => {
     expect(cateringCaptureRunError(run, "2026-10-07", now)).toBeNull();
     const old = { ...run, finished_at: new Date(now - 20 * 60_000 - 1).toISOString() };
     expect(cateringCaptureRunError(old, "2026-10-07", now)).toBe("capture_catering_stale");
-    expect(cateringCaptureRunError(old, "2026-10-06", now)).toBe("capture_catering_stale");
     expect(cateringCaptureRunError(old, "2026-10-05", now)).toBeNull();
+  });
+  it("treats a yesterday captured after its close as final, not stale (CC 10-08)", () => {
+    // now = 2026-10-07 18:00Z (14:00 ET). 10-06 closed at 2026-10-07T04:00Z (ET midnight).
+    const afterClose = { ...run, finished_at: "2026-10-07T14:00:00Z" }; // the 10:00 ET catch-up, 4 h old
+    expect(cateringCaptureRunError(afterClose, "2026-10-06", now)).toBeNull();
+    const beforeClose = { ...run, finished_at: "2026-10-07T03:30:00Z" }; // last capture while 10-06 was still open
+    expect(cateringCaptureRunError(beforeClose, "2026-10-06", now)).toBe("capture_catering_stale");
+    // Today is never final: the same 4-hour-old run is stale for 10-07.
+    expect(cateringCaptureRunError(afterClose, "2026-10-07", now)).toBe("capture_catering_stale");
   });
 });
 

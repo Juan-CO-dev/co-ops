@@ -1,5 +1,5 @@
 import type { ToastOrderClass, ToastOrderSummary } from "./catering-orders-shared";
-import { etCalendarDate, etYmdMinusDays } from "../operational-day";
+import { etCalendarDate, etYmdMinusDays, operationalDayUtcRange } from "../operational-day";
 
 export interface CachedDiningOption { guid: string; name: string; updated_at: string }
 export interface CateringChannel { dining_option_label: string; channel: string; provider: string | null; reviewed_at: string | null }
@@ -12,7 +12,13 @@ export function cateringCaptureRunError(run: CateringCaptureRun, businessDate: s
   }
   const finishedAt = Date.parse(run.finished_at);
   const yesterday = etYmdMinusDays(etCalendarDate(new Date(now).toISOString()), 1);
-  if (!Number.isFinite(finishedAt) || finishedAt > now || (businessDate >= yesterday && now - finishedAt > 20 * 60_000)) return "capture_catering_stale";
+  if (!Number.isFinite(finishedAt) || finishedAt > now) return "capture_catering_stale";
+  // The 20-minute freshness bar is for a day that can still change. The writer recaptures only
+  // TODAY each tick, so a capture that finished after its business day ended is final; demanding
+  // fresh re-captures of a closed yesterday failed every tick from ~20 min after the morning
+  // catch-up (CC 2026-10-08). A yesterday whose last capture predates its close still must be fresh.
+  const closedAt = Date.parse(operationalDayUtcRange(businessDate).endExclusiveIso);
+  if (businessDate >= yesterday && finishedAt < closedAt && now - finishedAt > 20 * 60_000) return "capture_catering_stale";
   return null;
 }
 
