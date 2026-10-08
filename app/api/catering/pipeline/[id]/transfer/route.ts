@@ -24,7 +24,11 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     });
     return jsonOk({ ok: true, result });
   } catch (error) {
-    if (error instanceof CateringPipelineError) return jsonError(error.status, error.code);
+    if (error instanceof CateringPipelineError) {
+      const response = jsonError(error.status, error.code);
+      if (error.status === 503) response.headers.set("Retry-After", "60");
+      return response;
+    }
     throw error;
   }
 }

@@ -1,4 +1,4 @@
-/** Operator-only comparison run; dry-run by default. No provider requests or operational depletion writes. */
+/** Operator-only comparison run; dry-run by default. Execute may READ Toast notes transiently; no operational depletion writes. */
 import { pathToFileURL } from "node:url";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import { selectAllRows } from "@/lib/supabase-paginate";
@@ -32,7 +32,7 @@ export async function runShadowBackfill(options: ReturnType<typeof parseShadowAr
   for (let date = options.from; date <= options.to; date = etYmdMinusDays(date, -1)) {
     const result = await materializeEzcaterShadow(date, date, Date.now() + 60_000);
     runs.push({ date, ...result });
-    if (result.failed || result.deferred) throw new Error("shadow_backfill_incomplete");
+    if (result.failed || result.deferred || "skipped" in result) throw new Error("shadow_backfill_incomplete");
   }
   return { dryRun: false, orders: orders.length, runs };
 }

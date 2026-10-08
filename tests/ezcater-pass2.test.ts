@@ -32,14 +32,25 @@ describe("ezCater selection identity", () => {
   it("retains bounded code tokens per parent selection without copying free-text notes", () => {
     expect(orderCodeTokens("ezCater AB-1234 call customer")).toEqual(["AB1234"]);
     const captured = normalizeToastOrder({ guid: "ring", businessDate: 20261008, checks: [{ guid: "c", selections: [{ guid: "s", item: { guid: "i" }, quantity: 1, modifiers: [{ guid: "note", selectionType: "SPECIAL_REQUEST", displayName: "ezCater AB-1234" }] }] }] }, "2026-10-08");
-    expect(captured.order.selection_units[0]?.ezcater_codes).toEqual(["AB1234"]);
+    expect(captured.order.selection_units[0]).not.toHaveProperty("ezcater_codes");
+    expect(JSON.stringify(captured)).not.toContain("AB1234");
     expect(JSON.stringify(captured)).not.toContain("SPECIAL_REQUEST");
   });
 });
 describe("ezCater map evidence", () => {
-  it("separates sizes and rejects a missing provider identity", () => {
+  it("keys customization IDs and quantities deterministically, never display names", () => {
+    const a = { customizationId: "a", quantity: 1, name: "first" };
+    const b = { customizationId: "b", quantity: 2, name: "second" };
+    expect(itemIdentity({ ...item, options: [a, b] })).toBe(itemIdentity({ ...item, options: [b, { ...a, name: "renamed" }] }));
+    expect(itemIdentity({ ...item, options: [a] })).not.toBe(itemIdentity({ ...item, options: [b] }));
+    expect(itemIdentity({ ...item, options: [a] })).not.toBe(itemIdentity({ ...item, options: [{ ...a, quantity: 2 }] }));
+    expect(itemIdentity({ ...item, options: [{ name: "no stable ID" }] })).toBeNull();
+  });
+  it("uses stable size identity across lines and rejects a missing size", () => {
     expect(itemIdentity(item)).not.toBe(itemIdentity({ ...item, menu_item_size_id: "small" }));
-    expect(itemIdentity({ ...item, provider_item_uuid: null })).toBeNull();
+    expect(itemIdentity({ ...item, provider_item_uuid: null })).toBe(itemIdentity(item));
+    expect(itemIdentity({ ...item, provider_item_uuid: "different-line" })).toBe(itemIdentity(item));
+    expect(itemIdentity({ ...item, menu_item_size_id: null })).toBeNull();
   });
   it("only exact POS identity confirms; names and collisions go to review", () => {
     expect(probeItemMap(item, [target]).confirmed).toEqual(target);
@@ -49,6 +60,15 @@ describe("ezCater map evidence", () => {
   });
 });
 describe("comparison-only sales fallback", () => {
+  it("suppresses at both shops after D-1 transfers, including multi-hop and ET boundary", () => {
+    const prep = [{ location_id: "old", output_item_id: "prep", produced_at: "2026-10-07T20:00:00Z" }];
+    const move = { created_at: "2026-10-07T04:00:00Z", metadata: { from_location_id: "old", to_location_id: "L" } };
+    expect(shadowAmounts(graph, target, 3, "L", "2026-10-08", prep, [move])[0]?.shadow_oz).toBe(0);
+    expect(shadowAmounts(graph, target, 3, "L", "2026-10-08", prep, [{ ...move, created_at: "2026-10-07T03:59:59Z" }])[0]?.shadow_oz).toBe(12);
+    expect(shadowAmounts(graph, target, 3, "third", "2026-10-08", prep, [move,
+      { ...move, created_at: "2026-10-08T12:00:00Z", metadata: { from_location_id: "L", to_location_id: "third" } }])[0]?.shadow_oz).toBe(0);
+    expect(shadowAmounts(graph, target, 3, "L", "2026-10-08", [{ ...prep[0]!, location_id: "unrelated" }], [move])[0]?.shadow_oz).toBe(12);
+  });
   it("counts sales until prep is logged, including prep on the previous ET day", () => {
     expect(shadowAmounts(graph, target, 3, "L", "2026-10-08", [])[0]).toMatchObject({ sales_oz: 12, suppressed_oz: 0, shadow_oz: 12 });
     const prep = { location_id: "L", output_item_id: "prep", produced_at: "2026-10-08T01:00:00Z" }; // October 7 ET

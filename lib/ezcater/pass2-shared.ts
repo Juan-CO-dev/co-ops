@@ -19,12 +19,22 @@ export function matchSelection(selection: LinkSelection, orders: LinkOrder[]) {
   return { orderId: candidates.length === 1 ? candidates[0]!.id : null,
     candidates: candidates.map((o) => o.id), reason: candidates.length === 1 ? "normalized_code" : candidates.length ? "ambiguous_code" : "unmatched_code" };
 }
-export interface ItemIdentity { provider_item_uuid: string | null; menu_item_size_id: string | null; pos_item_id: string | null; name: string }
+export interface ItemIdentity { provider_item_uuid: string | null; menu_item_size_id: string | null; pos_item_id: string | null; name: string; options?: unknown[] }
 export function itemIdentity(item: ItemIdentity): string | null {
-  // A size alone or a display name cannot identify a provider menu item.
-  return item.provider_item_uuid ? JSON.stringify([item.provider_item_uuid, item.menu_item_size_id]) : null;
+  // uuid identifies an ORDER LINE. Only the menu size and selected customization
+  // IDs repeat across orders. Names must never silently collapse distinct options.
+  if (!item.menu_item_size_id?.trim()) return null;
+  const options: Array<[string, number | null]> = [];
+  for (const raw of item.options ?? []) {
+    if (!raw || typeof raw !== "object") return null;
+    const option = raw as { customizationId?: unknown; quantity?: unknown };
+    if (typeof option.customizationId !== "string" || !option.customizationId.trim()) return null;
+    options.push([option.customizationId, typeof option.quantity === "number" ? option.quantity : null]);
+  }
+  options.sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b), "en"));
+  return JSON.stringify([item.menu_item_size_id, options]);
 }
-export interface ToastMap { toast_item_guid: string; toast_item_name: string; item_id: string | null; menu_item_id: string | null }
+export interface ToastMap { id?: string; toast_item_guid: string; toast_item_name: string; item_id: string | null; menu_item_id: string | null; package_id?: string | null }
 export function probeItemMap(item: ItemIdentity, maps: ToastMap[]) {
   const exact = item.pos_item_id ? maps.filter((m) => m.toast_item_guid.toLowerCase() === item.pos_item_id!.toLowerCase()) : [];
   const names = maps.filter((m) => m.toast_item_name.trim().toLowerCase() === item.name.trim().toLowerCase());
@@ -33,12 +43,25 @@ export function probeItemMap(item: ItemIdentity, maps: ToastMap[]) {
     reason: exact.length > 1 ? "ambiguous_pos_guid" : names.length ? "name_candidate" : "unmapped_item" };
 }
 export interface ProductionEvidence { location_id: string; output_item_id: string; produced_at: string }
+export interface TransferEvidence { created_at: string; metadata: { from_location_id?: string | null; to_location_id?: string | null; result?: string } }
+/** PASS 3 prerequisite: late transfers retain prep evidence at every former shop. */
+export function productionLocations(locationId: string, eventDate: string, transfers: TransferEvidence[]): Set<string> {
+  const locations = new Set([locationId]);
+  const cutoff = etYmdMinusDays(eventDate, 1);
+  for (const transfer of transfers) {
+    if (etCalendarDate(transfer.created_at) < cutoff) continue;
+    if (transfer.metadata.from_location_id) locations.add(transfer.metadata.from_location_id);
+    if (transfer.metadata.to_location_id) locations.add(transfer.metadata.to_location_id);
+  }
+  return locations;
+}
 export interface ShadowAmount { sku_id: string; sales_oz: number; suppressed_oz: number; shadow_oz: number }
 /** Comparison only. D-1 preparation counts at its actual shop; no production is moved. */
 export function shadowAmounts(graph: RecipeGraph, target: Pick<ToastMap, "item_id" | "menu_item_id">,
-  quantity: number, locationId: string, eventDate: string, productions: ProductionEvidence[]): ShadowAmount[] {
+  quantity: number, locationId: string, eventDate: string, productions: ProductionEvidence[], transfers: TransferEvidence[] = []): ShadowAmount[] {
   if (!Number.isFinite(quantity) || quantity < 0) throw new Error("ezcater_invalid_quantity");
-  const produced = new Set(productions.filter((p) => p.location_id === locationId &&
+  const locations = productionLocations(locationId, eventDate, transfers);
+  const produced = new Set(productions.filter((p) => locations.has(p.location_id) &&
     [eventDate, etYmdMinusDays(eventDate, 1)].includes(etCalendarDate(p.produced_at))).map((p) => p.output_item_id));
   const amounts = new Map<string, ShadowAmount>();
   function add(sku_id: string, amount: number, suppressed: boolean) {

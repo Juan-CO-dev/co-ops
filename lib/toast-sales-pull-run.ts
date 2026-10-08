@@ -1,5 +1,6 @@
 import "server-only";
 import { getServiceRoleClient } from "@/lib/supabase-server";
+import { audit } from "@/lib/audit";
 import { runOrderCapture } from "@/lib/toast/capture-job";
 import { materializeCapturedDepletion } from "@/lib/toast/depletion";
 import { completeElapsedCateringEvents } from "@/lib/catering/system-intake";
@@ -9,7 +10,7 @@ import { etCalendarDate, etYmdMinusDays } from "@/lib/operational-day";
 import { pullSalesForAllLocations, materializeDailyDepletion } from "@/lib/catering/toast-sales";
 import { loadDepletionWatermark } from "@/lib/counts";
 import { runParShadowForLocation, recordParRunSkipped } from "@/lib/dynamic-pars";
-import { captureErrorCode } from "@/lib/toast/capture-runner";
+import { captureBudget, captureErrorCode } from "@/lib/toast/capture-runner";
 
 /** The flag switches readers AND writers; unset restores Stage A's legacy pipeline. */
 export async function runToastSalesPull(opts: { businessDate: string; deadlineAt?: number; signal?: AbortSignal }) {
@@ -93,9 +94,19 @@ export async function runToastSalesPull(opts: { businessDate: string; deadlineAt
   try {
     ezcaterShadow = await materializeEzcaterShadow(etYmdMinusDays(businessDate, 2), businessDate, Math.min(deadlineAt, Date.now() + 20_000));
   } catch { ezcaterShadow.failed++; }
+  // This additive shadow has its own health signal; it cannot fail operational sales.
+  const heartbeatBudget = captureBudget(1_000);
+  try {
+    await heartbeatBudget.wait(() => audit({ actorId: null, actorRole: null,
+      action: ezcaterShadow.failed ? "cron.failure" : "cron.success",
+      resourceTable: "cron", resourceId: null,
+      metadata: { job: "ezcater-shadow", business_date: businessDate, ...ezcaterShadow },
+      ipAddress: null, userAgent: null }));
+  } catch { /* Heartbeat persistence is fail-open, independent of sales health. */ }
+  finally { heartbeatBudget.close(); }
   const perLocationFailures = results.filter((r) => !r.ok).length;
   const healthy = (!captureMode || (!capture.skipped && capture.failures === 0)) && perLocationFailures === 0
-    && depletionFailures === 0 && parRunFailures === 0 && elapsedFailed === 0 && elapsedError === null && ezcaterShadow.failed === 0;
+    && depletionFailures === 0 && parRunFailures === 0 && elapsedFailed === 0 && elapsedError === null;
   const metadata = {
     job: "toast-sales-pull", source: captureMode ? "capture" : "legacy", business_date: businessDate, dates: captureMode ? dates : [businessDate],
     capture_failures: capture.failures, capture_skipped: capture.skipped,

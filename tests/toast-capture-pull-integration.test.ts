@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { runToastSalesPull } from "@/lib/toast-sales-pull-run";
+import { materializeEzcaterShadow } from "@/lib/ezcater/pass2";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import { runOrderCapture } from "@/lib/toast/capture-job";
 import { materializeCapturedDepletion } from "@/lib/toast/depletion";
@@ -76,6 +77,31 @@ it("finishes every requested capture, then every materialization, then shadow pa
   expect(pullSalesForAllLocations).not.toHaveBeenCalled();
   expect(materializeDailyDepletion).not.toHaveBeenCalled();
   expect(result).toMatchObject({ healthy: true, metadata: { capture_failures: 0, depletion_failures: 0, par_run_failures: 0 } });
+});
+
+it("shadow failure gets an independent heartbeat and cannot fail sales health", async () => {
+  vi.mocked(materializeEzcaterShadow).mockResolvedValueOnce({ processed: 1, failed: 1, deferred: false });
+  const result = await runToastSalesPull({ businessDate: DAYS[0]! });
+  expect(result).toMatchObject({ healthy: true, metadata: { ezcater_shadow: { failed: 1 } } });
+  expect(audit).toHaveBeenCalledWith(expect.objectContaining({ action: "cron.failure",
+    metadata: expect.objectContaining({ job: "ezcater-shadow", processed: 1, failed: 1 }) }));
+});
+
+it("a shadow exception is counted without leaking its payload or failing sales", async () => {
+  vi.mocked(materializeEzcaterShadow).mockRejectedValueOnce(new Error("PRIVATE provider payload"));
+  const result = await runToastSalesPull({ businessDate: DAYS[0]! });
+  expect(result.healthy).toBe(true);
+  expect(audit).toHaveBeenCalledWith(expect.objectContaining({ action: "cron.failure",
+    metadata: expect.objectContaining({ job: "ezcater-shadow", failed: 1 }) }));
+  expect(JSON.stringify(vi.mocked(audit).mock.calls)).not.toContain("PRIVATE");
+});
+
+it("healthy shadow emits its own success heartbeat even when audit rejects", async () => {
+  vi.mocked(audit).mockImplementationOnce(async () => { throw new Error("audit unavailable"); });
+  const result = await runToastSalesPull({ businessDate: DAYS[0]! });
+  expect(result.healthy).toBe(true);
+  expect(audit).toHaveBeenCalledWith(expect.objectContaining({ action: "cron.success",
+    metadata: expect.objectContaining({ job: "ezcater-shadow", failed: 0 }) }));
 });
 
 it("cannot materialize while the shared capture phase remains pending", async () => {

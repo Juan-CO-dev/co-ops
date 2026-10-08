@@ -27,6 +27,12 @@ beforeEach(() => {
   queues.catering_pipeline = [{ data: { location_id: "shop" }, error: null }];
 });
 describe("reconciliation diagnostics authorization and disclosure", () => {
+  it("shows the intentional manual shop choice as information, including during shadow outage", async () => {
+    queues.ezcater_orders = [{ data: { id: "order", snapshot_id: "snapshot", location_conflict: false, location_manual_override: true, caterer_uuid: "provider" }, error: null }];
+    queues.locations = [{ data: { name: "Provider shop" }, error: null }, { data: { name: "Manual shop" }, error: null }];
+    queues.ezcater_review_queue = [{ data: null, error: { code: "42P01" } }];
+    expect(await loadEzcaterReconciliation(actor, "lead")).toMatchObject({ available: false, locationConflict: false, manualLocation: { provider: "Provider shop", kept: "Manual shop" } });
+  });
   it("does not read diagnostics for a reader whose fresh authorization fails", async () => {
     canRead.mockResolvedValue(false);
     await expect(loadEzcaterReconciliation(actor, "lead")).rejects.toMatchObject({ status: 403 });

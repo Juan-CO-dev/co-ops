@@ -20,7 +20,7 @@ export interface EzcaterOrderItem {
   noteToCaterer: string | null;
   totalCents: number | null;
   unitPriceCents: number | null;
-  customizations: Array<{ name: string; quantity: number | null; typeName: string | null }>;
+  customizations: Array<{ customizationId?: string | null; name: string; quantity: number | null; typeName: string | null }>;
 }
 
 export interface EzcaterOrder {
@@ -120,13 +120,14 @@ export function normalizeEzcaterOrder(json: unknown): EzcaterOrder {
       // Unit prices are provider facts; a line total may include options/discounts.
       unitPriceCents: cents(it.unitPrice),
       noteToCaterer: text(it.noteToCaterer),
-      posItemId: typeof it.posItemId === "string" ? it.posItemId : null,
+      posItemId: text(it.posItemId)?.trim() || null,
       menuItemSizeId: typeof it.menuItemSizeId === "string" ? it.menuItemSizeId : null,
       specialInstructions: typeof it.specialInstructions === "string" && it.specialInstructions.length > 0 ? it.specialInstructions : null,
       customizations: rawCustom
-        .filter((c) => typeof c?.name === "string" && (c.name as string).length > 0)
+        .filter((c) => text(c?.name) !== null || text(c?.customizationId) !== null)
         .map((c) => ({
-          name: c.name as string,
+          customizationId: text(c.customizationId),
+          name: text(c.name) ?? text(c.customizationId)!,
           quantity: typeof c.quantity === "number" && Number.isFinite(c.quantity) ? c.quantity : null,
           typeName: typeof c.customizationTypeName === "string" ? c.customizationTypeName : null,
         })),

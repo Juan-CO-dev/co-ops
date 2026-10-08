@@ -7,7 +7,7 @@ declare a uuid; b uuid; lead uuid; manager uuid; denied uuid; q uuid; item uuid;
 begin
   if not exists(select 1 from public.users where email = 'maya@sim.co-ops') then raise exception 'SIM ONLY'; end if;
   select (array_agg(id order by id))[1],(array_agg(id order by id))[2] into a,b from public.locations where active;
-  select id into manager from public.users where active and role in ('catering_mgr','moo','owner','cgs') limit 1;
+  select id into manager from public.users where active and role = 'catering_mgr' limit 1;
   select id into denied from public.users where active and role not in ('catering_mgr','moo','owner','cgs') limit 1;
   select id into item from public.items limit 1;
   assert a is not null and b is not null and manager is not null and denied is not null and item is not null, 'sim fixtures required';
@@ -39,12 +39,25 @@ begin
   assert not exists(select 1 from public.catering_prep_demand where pipeline_id = lead and location_id = a and status = 'reserved'), 'stale writer stranded demand';
   perform public.apply_ezcater_order(provider,'sim-transfer-a',body,'sim-repeat','updated');
   assert (select location_id = b from public.catering_pipeline where id = lead), 'recent manual assignment lost';
-  assert (select location_conflict from public.ezcater_orders where provider_uuid = provider), 'conflict missing';
+  assert not (select location_conflict from public.ezcater_orders where provider_uuid = provider), 'manual choice is not a conflict';
+  assert (select location_manual_override from public.ezcater_orders where provider_uuid = provider), 'manual choice information missing';
+  -- Stable provider refreshes must not append the same informational event forever.
+  select count(*) into n from public.catering_pipeline_events where pipeline_id = lead and note like 'ezCater lists %';
+  perform public.apply_ezcater_order(provider,'sim-transfer-a',body,'sim-repeat-2','updated');
+  assert (select count(*) = n from public.catering_pipeline_events where pipeline_id = lead and note like 'ezCater lists %'), 'repeat informational event';
   update public.catering_pipeline set location_manually_moved_at = null, stage = 'completed' where id = lead;
   perform public.apply_ezcater_order(provider,'sim-transfer-a',body,'sim-reassigned','updated');
   assert (select location_id = a and stage = 'completed' from public.catering_pipeline where id = lead), 'completed transfer';
   assert not (select location_conflict from public.ezcater_orders where provider_uuid = provider);
   assert exists(select 1 from public.audit_log where resource_id = lead and action = 'ezcater.location_reassigned' and actor_id is null and not destructive);
+  -- Keith's catering_mgr role may correct revenue attribution after completion or loss.
+  perform public.transfer_catering_lead(lead,b,manager,'capacity');
+  assert (select stage = 'completed' and location_id = b from public.catering_pipeline where id = lead), 'manager completed correction';
+  assert (select location_id = b from public.catering_quotes where id = q), 'completed revenue follows';
+  update public.catering_pipeline set stage = 'lost' where id = lead;
+  perform public.transfer_catering_lead(lead,a,manager,'capacity');
+  assert (select stage = 'lost' and location_id = a from public.catering_pipeline where id = lead), 'manager lost correction';
+  assert (select location_id = a from public.catering_quotes where id = q), 'lost revenue follows';
 end $$;
 set local role authenticated;
 do $$ begin

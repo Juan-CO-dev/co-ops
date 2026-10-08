@@ -8,7 +8,6 @@ export interface CaptureSelection {
   quantity: number;
   voided: boolean;
   deleted: boolean;
-  ezcater_codes?: string[];
 }
 export interface LegacyCaptureSelection {
   check_guid: string;

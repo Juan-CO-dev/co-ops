@@ -25,11 +25,13 @@ export function EzcaterReconciliationPanel({ leadId }: { leadId: string }) {
   if (!current) return null;
   const data = current.data;
   if (!data?.available) return <div role="status" className="mt-3 text-xs text-co-warning-text">
+    {data?.manualLocation && <p className="text-co-text-muted">{t("catering.pipeline.transfer.manual_info", data.manualLocation)}</p>}
     {data?.locationConflict && <p>{t("catering.pipeline.transfer.conflict")}</p>}
     <p>{t("catering.reconciliation.unavailable" as TranslationKey)}</p>
   </div>;
-  if (!data.reviews.length && !data.linkCount && !data.shadowRows && !data.locationConflict) return null;
+  if (!data.reviews.length && !data.linkCount && !data.shadowRows && !data.locationConflict && !data.manualLocation) return null;
   return <section className="mt-3 border-t border-co-border pt-2">
+    {data.manualLocation && <p className="text-xs text-co-text-muted">{t("catering.pipeline.transfer.manual_info", data.manualLocation)}</p>}
     {data.locationConflict && <p role="alert" className="text-xs text-co-warning-text">{t("catering.pipeline.transfer.conflict")}</p>}
     {data.reviews.length > 0 && <p role="status" className="text-xs text-co-warning-text">{t("catering.reconciliation.needs_review" as TranslationKey, { n: data.reviews.length })}</p>}
     <button type="button" className="min-h-[44px] w-full text-left text-sm font-bold text-co-text"

@@ -40,3 +40,19 @@ it.each([["transfer_forbidden", 403], ["transfer_lead_not_found", 404], ["transf
   rpc.mockResolvedValue({ data: null, error: { message } });
   await expect(transferCateringLead(actor(), "lead", { locationId: target, reason: "capacity" })).rejects.toMatchObject({ status });
 });
+it.each(["PGRST202", "42883", "42P01", "42703", "PGRST204", "PGRST205"])("makes missing schema retryable (%s)", async (code) => {
+  rpc.mockResolvedValue({ data: null, error: { code } });
+  await expect(transferCateringLead(actor(), "lead", { locationId: target, reason: "capacity" })).rejects.toMatchObject({ status: 503, code: "catering_transfer_unavailable" });
+  expect(rpc).toHaveBeenCalledTimes(1);
+});
+it("retries an aborted deadlock transaction with identical arguments", async () => {
+  rpc.mockResolvedValueOnce({ data: null, error: { code: "40P01" } });
+  await expect(transferCateringLead(actor(), "lead", { locationId: target, reason: "capacity" })).resolves.toMatchObject({ result: "moved" });
+  expect(rpc).toHaveBeenCalledTimes(2);
+  expect(rpc.mock.calls[1]).toEqual(rpc.mock.calls[0]);
+});
+it("bounds deadlock retries and asks caller to retry", async () => {
+  rpc.mockResolvedValue({ data: null, error: { code: "40P01" } });
+  await expect(transferCateringLead(actor(), "lead", { locationId: target, reason: "capacity" })).rejects.toMatchObject({ status: 503, code: "catering_transfer_retry" });
+  expect(rpc).toHaveBeenCalledTimes(3);
+});

@@ -20,6 +20,12 @@ beforeEach(() => {
   vi.mocked(transferCateringLead).mockResolvedValue({} as never);
 });
 describe("catering transfer route", () => {
+  it("returns retryable 503 until transfer schema is deployed", async () => {
+    vi.mocked(transferCateringLead).mockRejectedValue(new CateringPipelineError(503, "catering_transfer_unavailable"));
+    const response = await POST(request({ locationId: "shop", reason: "capacity" }), ctx);
+    expect(response.status).toBe(503);
+    expect(response.headers.get("Retry-After")).toBe("60");
+  });
   it("uses the exact step-up-preserving path and delegates to the lib authority", async () => {
     const body = { locationId: "destination", reason: "capacity", note: "Kitchen capacity" };
     expect((await POST(request(body), ctx)).status).toBe(200);

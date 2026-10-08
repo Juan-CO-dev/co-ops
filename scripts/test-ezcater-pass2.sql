@@ -9,6 +9,10 @@ set local role authenticated;
 do $$ begin
  begin perform public.publish_ezcater_shadow(gen_random_uuid(),gen_random_uuid(),gen_random_uuid(),'{}');
   raise exception 'staff RPC allowed'; exception when insufficient_privilege then null; end;
+ begin perform public.decide_ezcater_mapping(gen_random_uuid(),null,'ignore',gen_random_uuid());
+  raise exception 'staff decision RPC allowed'; exception when insufficient_privilege then null; end;
+ begin perform 1 from public.ezcater_mapping_decisions;
+  raise exception 'staff decision read allowed'; exception when insufficient_privilege then null; end;
  begin perform 1 from public.ezcater_item_map;
   raise exception 'staff map read allowed'; exception when insufficient_privilege then null; end;
 end $$;
@@ -57,10 +61,68 @@ begin
  exception when unique_violation then null; end;
  perform public.publish_ezcater_shadow(o.id,o.snapshot_id,loc,'{"links":[],"maps":[],"shadow":[],"reviews":[]}');
  assert not exists(select 1 from public.ezcater_toast_links where order_id=o.id and is_current),'empty generation retires links';
- assert not exists(select 1 from public.ezcater_review_queue where order_id=o.id and resolved_at is null),'resolved queue';
+ assert exists(select 1 from public.ezcater_review_queue where order_id=o.id and resolved_at is null),'publish must not silently resolve queue';
+end $$;
+-- Approval, ignore, history, publisher preservation and live authorization.
+do $$
+declare loc uuid; actor uuid; ordinary uuid; q uuid; sibling uuid; fixture_item uuid; target public.toast_menu_map%rowtype;
+ o public.ezcater_orders%rowtype; related public.ezcater_orders%rowtype; payload jsonb; key text := '["sim-review-size",[]]';
+begin
+ select * into o from public.ezcater_orders where provider_uuid like 'pass2-sim-%' and snapshot_id is not null and lead_id is not null limit 1;
+ assert o.id is not null,'requires order fixture from previous block';
+ loc:=o.location_id;
+ select id into fixture_item from public.items limit 1;
+ assert fixture_item is not null,'requires one SIM item';
+ insert into public.toast_menu_map(location_id,item_id,toast_item_guid,toast_item_name,match_status)
+ values(loc,fixture_item,'sim-review-'||gen_random_uuid(),'SIM review fixture','confirmed') returning * into target;
+ select id into actor from public.users where active and role in ('catering_mgr','moo','owner','cgs') limit 1;
+ select id into ordinary from public.users where active and role not in ('catering_mgr','moo','owner','cgs') limit 1;
+ assert actor is not null and ordinary is not null,'requires SIM approver and ordinary user';
+ insert into public.ezcater_item_map(location_id,identity_key,menu_item_size_id,status)
+ values(loc,key,'sim-review-size','review');
+ insert into public.ezcater_review_queue(order_id,snapshot_id,location_id,source,code,identity_key)
+ values(o.id,o.snapshot_id,loc,'ezcater','unmapped_item',key) returning id into q;
+ select * into related from public.ezcater_orders where provider_uuid like 'pass2-sim-%' and id<>o.id and location_id=loc and snapshot_id is not null limit 1;
+ assert related.id is not null,'requires sibling order fixture';
+ insert into public.ezcater_review_queue(order_id,snapshot_id,location_id,source,code,identity_key)
+ values(related.id,related.snapshot_id,loc,'ezcater','ambiguous_name',key) returning id into sibling;
+ begin perform public.decide_ezcater_mapping(q,target.id,'approve',ordinary); raise exception 'ordinary actor approved';
+ exception when raise_exception then if sqlerrm<>'ezcater_mapping_forbidden' then raise; end if; end;
+ begin perform public.decide_ezcater_mapping(q,gen_random_uuid(),'approve',actor); raise exception 'unknown target approved';
+ exception when raise_exception then if sqlerrm<>'ezcater_mapping_target_invalid' then raise; end if; end;
+ update public.toast_menu_map set active=false where id=target.id;
+ begin perform public.decide_ezcater_mapping(q,target.id,'approve',actor); raise exception 'inactive target approved';
+ exception when raise_exception then if sqlerrm<>'ezcater_mapping_target_invalid' then raise; end if; end;
+ update public.toast_menu_map set active=true where id=target.id;
+ perform public.decide_ezcater_mapping(q,target.id,'approve',actor);
+ assert (select status='confirmed' and evidence='reviewed' and toast_map_id=target.id from public.ezcater_item_map where location_id=loc and identity_key=key),'approval target';
+ assert (select count(*)=1 from public.ezcater_mapping_decisions where review_id=q),'decision appended';
+ assert (select resolved_at is not null from public.ezcater_review_queue where id=sibling),'approval resolves sibling identity review';
+ assert exists(select 1 from public.audit_log where action='ezcater.item_map.approve' and destructive and metadata->>'review_id'=q::text),'destructive approval audit';
+ payload:=jsonb_build_object('links','[]'::jsonb,'shadow','[]'::jsonb,
+ 'maps',jsonb_build_array(jsonb_build_object('identity_key',key,'menu_item_size_id','sim-review-size','status','review','candidates','[]'::jsonb)),
+ 'reviews',jsonb_build_array(jsonb_build_object('identity_key',key,'source','ezcater','code','unmapped_item','candidates','[]'::jsonb),
+ jsonb_build_object('identity_key',key,'source','ezcater','code','new_stale_worker_candidate','candidates','[]'::jsonb)));
+ perform public.publish_ezcater_shadow(o.id,o.snapshot_id,loc,payload);
+ assert (select status='confirmed' from public.ezcater_item_map where location_id=loc and identity_key=key),'publisher preserves confirmation';
+ assert (select resolved_at is not null from public.ezcater_review_queue where id=q),'publisher never reopens decision';
+ assert not exists(select 1 from public.ezcater_review_queue where location_id=loc and identity_key=key and resolved_at is null),'publisher cannot insert new open review for confirmed identity';
+ perform public.decide_ezcater_mapping(q,null,'ignore',actor);
+ perform public.publish_ezcater_shadow(o.id,o.snapshot_id,loc,payload);
+ assert (select status='ignored' from public.ezcater_item_map where location_id=loc and identity_key=key),'publisher preserves ignore';
+ assert not exists(select 1 from public.ezcater_review_queue where location_id=loc and identity_key=key and resolved_at is null),'publisher cannot insert new open review for ignored identity';
+ assert (select count(*)=2 from public.ezcater_mapping_decisions where review_id=q),'both decisions retained';
+ assert exists(select 1 from public.audit_log where action='ezcater.item_map.ignore' and destructive and metadata->>'review_id'=q::text),'destructive ignore audit';
+ update public.users set active=false where id=actor;
+ begin perform public.decide_ezcater_mapping(q,target.id,'approve',actor); raise exception 'deactivated actor approved';
+ exception when raise_exception then if sqlerrm<>'ezcater_mapping_forbidden' then raise; end if; end;
 end $$;
 set local role service_role;
 do $$ begin
+ begin update public.ezcater_mapping_decisions set decision='ignore';
+  raise exception 'decision history mutable'; exception when insufficient_privilege then null; end;
+ begin delete from public.ezcater_mapping_decisions;
+  raise exception 'decision history deletable'; exception when insufficient_privilege then null; end;
  begin insert into public.ezcater_review_queue(order_id,snapshot_id,location_id,source,code,identity_key)
   values(gen_random_uuid(),gen_random_uuid(),gen_random_uuid(),'ezcater','test','test');
   raise exception 'direct service write allowed'; exception when insufficient_privilege then null; end;

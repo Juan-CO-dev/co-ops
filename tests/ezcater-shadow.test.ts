@@ -6,14 +6,19 @@ import { loadCapturedToastDay } from "@/lib/toast/captured-day";
 import { loadEffectiveSalesRows } from "@/lib/toast/effective-depletion";
 import { buildRecipeGraph } from "@/lib/prep-consumption-graph";
 import { parseShadowArgs } from "../scripts/ezcater-shadow-backfill";
+import { loadKnownToastOrderCodes, toastCodeSelectionKey } from "@/lib/ezcater/toast-codes";
 vi.mock("@/lib/supabase-server", () => ({ getServiceRoleClient: vi.fn() }));
 vi.mock("@/lib/prep-consumption", () => ({ loadRecipeGraph: vi.fn() }));
 vi.mock("@/lib/toast/captured-day", () => ({ loadCapturedToastDay: vi.fn() }));
 vi.mock("@/lib/toast/effective-depletion", () => ({ loadEffectiveSalesRows: vi.fn() }));
+vi.mock("@/lib/ezcater/toast-codes", () => ({ loadKnownToastOrderCodes: vi.fn(), toastCodeSelectionKey: (...ids: string[]) => JSON.stringify(ids) }));
 let rows: Record<string, unknown[]>;
+let errors: Record<string, { code: string; message: string }>;
 const rpc = vi.fn();
 beforeEach(() => {
   vi.clearAllMocks();
+  vi.unstubAllEnvs();
+  errors = {};
   rows = {
     ezcater_orders: [{ id: "ez", lead_id: "lead", location_id: "L", event_date: "2026-10-08", order_number: "AB1234", snapshot_id: "ez-snapshot", status: "ACCEPTED" }],
     catering_pipeline: [{ id: "lead", location_id: "L", stage: "confirmed" }],
@@ -24,7 +29,7 @@ beforeEach(() => {
   };
   const from = (table: string) => {
     const q = { select: () => q, not: () => q, gte: () => q, lte: () => q, lt: () => q, eq: () => q, is: () => q, order: () => q,
-      range: () => q, abortSignal: async () => ({ data: rows[table], error: null }) };
+      in: () => q, range: () => q, abortSignal: async () => ({ data: rows[table], error: errors[table] ?? null }) };
     return q;
   };
   rpc.mockReturnValue({ abortSignal: async () => ({ data: null, error: null }) });
@@ -43,6 +48,58 @@ beforeEach(() => {
   }));
 });
 describe("shadow materializer", () => {
+  it("skips with a code before 0225 and does not load graph or publish", async () => {
+    errors.ezcater_item_map = { code: "42P01", message: "missing" };
+    expect(await materializeEzcaterShadow("2026-10-08", "2026-10-08")).toEqual({ processed: 0, failed: 0, deferred: false, skipped: "ezcater_schema_missing" });
+    expect(loadRecipeGraph).not.toHaveBeenCalled();
+    expect(rpc).not.toHaveBeenCalled();
+  });
+  it("consumes reviewed mappings across different order line UUIDs, and respects ignore", async () => {
+    rows.toast_menu_map = [{ id: "map", location_id: "L", toast_item_guid: "guid", toast_item_name: "Salad", item_id: "prep", menu_item_id: null }];
+    rows.ezcater_order_items = [{ ordinal: 1, provider_item_uuid: "new-line-uuid", menu_item_size_id: "size", pos_item_id: "", name: "Salad", quantity: 2, options: [] }];
+    rows.ezcater_item_map = [{ location_id: "L", identity_key: '["size",[]]', status: "confirmed", toast_map_id: "map" }];
+    await materializeEzcaterShadow("2026-10-08", "2026-10-08");
+    expect(rpc.mock.calls[0]![1].p_payload.maps[0]).toMatchObject({ evidence: "reviewed", pos_item_id: null });
+    expect(rpc.mock.calls[0]![1].p_payload.shadow[0]).toMatchObject({ sales_oz: 8, shadow_oz: 0 });
+    rows.ezcater_item_map = [{ location_id: "L", identity_key: '["size",[]]', status: "ignored", toast_map_id: null }];
+    rpc.mockClear();
+    await materializeEzcaterShadow("2026-10-08", "2026-10-08");
+    expect(rpc.mock.calls[0]![1].p_payload).toMatchObject({ maps: [], shadow: [] });
+  });
+  it("checks D-1/D production at both shops with PASS-3 flag enabled and refuses missing audit evidence", async () => {
+    vi.stubEnv("EZCATER_DEPLETION_ENABLED", "1");
+    rows.productions = [{ location_id: "old", output_item_id: "prep", produced_at: "2026-10-07T20:00:00Z" }];
+    rows.audit_log = [{ resource_id: "lead", created_at: "2026-10-08T12:00:00Z", metadata: { from_location_id: "old", to_location_id: "L" } },
+      { resource_id: "lead", created_at: "2026-10-08T12:01:00Z", metadata: { result: "manual_location_kept" } }];
+    await materializeEzcaterShadow("2026-10-08", "2026-10-08");
+    expect(rpc.mock.calls[0]![1].p_payload.shadow[0]).toMatchObject({ sales_oz: 8, suppressed_oz: 8, shadow_oz: 0 });
+    errors.audit_log = { code: "503", message: "not available" };
+    rpc.mockClear();
+    await expect(materializeEzcaterShadow("2026-10-08", "2026-10-08")).rejects.toThrow();
+    expect(rpc).not.toHaveBeenCalled();
+    delete errors.audit_log;
+    rows.audit_log = [{ resource_id: "lead", created_at: "2026-10-08T12:00:00Z", metadata: {} }];
+    await expect(materializeEzcaterShadow("2026-10-08", "2026-10-08")).rejects.toThrow("ezcater_transfer_evidence_incomplete");
+    vi.unstubAllEnvs();
+  });
+  it("uses transient known codes only for scoped catering snapshots without changing capture", async () => {
+    rows.locations = [{ id: "L", toast_restaurant_guid: "restaurant" }];
+    const day = await loadCapturedToastDay("L", "2026-10-08");
+    const ring = day!.orders[0]!;
+    ring.salesChannel = "Catering"; ring.modifiedAt = "2026-10-08T10:00:00Z";
+    ring.selections[0]!.name = "Catering order";
+    vi.mocked(loadCapturedToastDay).mockResolvedValue(day);
+    vi.mocked(loadKnownToastOrderCodes).mockResolvedValue(new Map([[toastCodeSelectionKey("ring", "check", "selection"), ["AB1234"]]]));
+    await materializeEzcaterShadow("2026-10-08", "2026-10-08");
+    expect(loadKnownToastOrderCodes).toHaveBeenCalledWith("restaurant", expect.any(String), ["AB1234"], expect.objectContaining({ expectedVersions: new Map([["ring", "2026-10-08T10:00:00Z"]]) }));
+    expect(rpc.mock.calls[0]![1].p_payload.links.length).toBeGreaterThan(0);
+    expect(ring.selections[0]).not.toHaveProperty("ezcater_codes");
+    ring.salesChannel = "In Store";
+    vi.mocked(loadKnownToastOrderCodes).mockClear(); rpc.mockClear();
+    await materializeEzcaterShadow("2026-10-08", "2026-10-08");
+    expect(loadKnownToastOrderCodes).not.toHaveBeenCalled();
+    expect(rpc.mock.calls[0]![1].p_payload.links).toEqual([]);
+  });
   it("publishes selection proof, duplicate lead review and D-1 suppression atomically to shadow only", async () => {
     expect(await materializeEzcaterShadow("2026-10-08", "2026-10-08")).toEqual({ processed: 1, failed: 0, deferred: false });
     expect(rpc).toHaveBeenCalledTimes(1);
