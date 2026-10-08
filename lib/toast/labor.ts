@@ -14,6 +14,9 @@
  * and each await is also raced against the deadline, so a driver that ignores the signal cannot
  * stall the run; a shop that fails is reported and the others still land; the heartbeat itself is
  * bounded. Gated by TOAST_LABOR_PULL=1 (nothing runs before 0224 is applied).
+ *
+ * LINKS (0233, WHOS_HERE=1): the employees read also feeds exact full-name auto links; user_id on
+ * every upserted row is then filled by the 0233 trigger from the active link (never by name here).
  */
 import "server-only";
 import { audit } from "@/lib/audit";
@@ -22,6 +25,7 @@ import { etCalendarDate } from "@/lib/operational-day";
 import { toastGet } from "./client";
 import { toastBusinessDate } from "./orders";
 import { employeeFirstNames, jobTitles, normalizeTimeEntries, type LaborEntryRow } from "./labor-shared";
+import { runAutoLinks, whosHereEnabled } from "./employee-links";
 
 export function laborPullEnabled(): boolean {
   return process.env.TOAST_LABOR_PULL === "1";
@@ -119,7 +123,16 @@ export async function runToastLaborPull(
     const get = (path: string) => withDeadline(toastGet<unknown>(path, loc.toast_restaurant_guid, signal), signal);
     const ctx = async () => {
       jobs ??= jobTitles(await get("/labor/v1/jobs"));
-      employees ??= employeeFirstNames(await get("/labor/v1/employees"));
+      if (!employees) {
+        const raw = await get("/labor/v1/employees");
+        employees = employeeFirstNames(raw);
+        // 0233 (WHOS_HERE=1): exact full-name auto links from the SAME payload, before any entry is
+        // written, so the link trigger fills user_id on this very pull. Fail-soft: never blocks labor.
+        if (whosHereEnabled()) {
+          try { await withDeadline(runAutoLinks(getServiceRoleClient(), { locationId: loc.id, rawEmployees: raw }), signal); }
+          catch (e) { out.results.push({ locationId: loc.id, businessDate: "autolink", ok: false, rows: 0, skipped: 0, error: code(e) }); }
+        }
+      }
       return { jobs, employees };
     };
     for (const day of dates) {

@@ -1,6 +1,7 @@
 /** Client-safe assignment contracts and station history. No I/O. */
 import { formatTime } from "./i18n/format";
 import type { Language, TranslationKey, TranslationParams } from "./i18n/types";
+import type { PresenceView } from "./presence-shared";
 
 export const OVERRIDE_REASON_CODES = ["coverage_change", "unavailable", "skill_fit", "correction", "other"] as const;
 export type OverrideReasonCode = (typeof OVERRIDE_REASON_CODES)[number];
@@ -40,12 +41,16 @@ export function isTaskType(value: unknown): value is TaskType {
 }
 export interface StationPosition { id: string; stationId: string; name: string; nameEs: string | null; duty: string | null; dutyEs: string | null; sort: number; active: boolean; usuallyTrimsAt?: string | null }
 export interface Station { id: string; name: string; nameEs: string | null; sort: number; active: boolean; staffed: boolean; positions: StationPosition[]; closedAt?: string | null; usuallyClosesAt?: string | null }
-export interface ShiftPerson { id: string; name: string; level: number; hasWork: boolean; available?: boolean; onBreak?: boolean }
+export interface ShiftPerson { id: string; name: string; level: number; hasWork: boolean; available?: boolean; onBreak?: boolean;
+  /** 0233 (WHOS_HERE=1): on shift today and how we know. Absent when the feature is off. */
+  presence?: PresenceView;
+  /** Highest level that gave this person the work they hold (station assigned / open tasks). */
+  heldFromLevel?: number }
 export interface StationEvent {
   id: string; sequence: string; locationId: string; businessDate: string;
   userId: string; stationId: string | null; positionId?: string | null; kind: "assign" | "claim" | "move" | "release";
   actorId: string | null; actorName: string | null; at: string; source: "assigned" | "claimed" | null;
-  releaseReason?: "station_closed" | "clocked_out" | "on_break";
+  releaseReason?: "station_closed" | "clocked_out" | "on_break" | "ended_shift" | "shop_closed";
   priorPositionId?: string | null; effectiveAt?: string | null;
   actorLevel?: number; change?: AssignmentChange;
 }
@@ -62,8 +67,10 @@ export interface ShiftBoard {
   stations: Station[]; people: ShiftPerson[]; events: StationEvent[]; tasks: TaskAssignment[];
   occupiedPositions?: { positionId: string; firstName: string }[];
   taskChanges?: { task: TaskType; change: AssignmentChange }[];
-  positionVacancies?: { positionId: string; userId: string; name: string; reason: "clocked_out" | "on_break"; at: string }[];
-  taskVacancies?: { task: TaskType; userId: string; name: string; at: string }[];
+  positionVacancies?: { positionId: string; userId: string; name: string; reason: "clocked_out" | "on_break" | "ended_shift"; at: string }[];
+  taskVacancies?: { task: TaskType; userId: string; name: string; at: string; reason?: "clocked_out" | "ended_shift" }[];
+  /** 0233 (WHOS_HERE=1): presence + End my shift are live. */
+  whosHere?: boolean;
 }
 export function taskHref(task: TaskType, locationId: string): string {
   const paths: Record<TaskType, string> = {

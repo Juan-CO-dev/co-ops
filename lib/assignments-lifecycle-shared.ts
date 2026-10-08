@@ -8,7 +8,7 @@ export function positionVacancies(events: readonly StationEvent[], breaks: Reado
     const previous = heads.get(event.userId);
     if (previous?.positionId) vacancies.delete(previous.positionId);
     if (event.positionId) vacancies.delete(event.positionId);
-    if (event.priorPositionId && (event.releaseReason === "clocked_out" ||
+    if (event.priorPositionId && (event.releaseReason === "clocked_out" || event.releaseReason === "ended_shift" ||
       (event.releaseReason === "on_break" && breaks.get(event.userId)))) {
       vacancies.set(event.priorPositionId, { positionId: event.priorPositionId, userId: event.userId,
         name: names.get(event.userId) ?? "", reason: event.releaseReason, at: event.effectiveAt ?? event.at });

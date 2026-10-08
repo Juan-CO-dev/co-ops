@@ -9,6 +9,8 @@ import { dedupeTakenTasks } from "./assignment-taken-shared";
 import { lockLocationContext, type LocationActor } from "./locations";
 import { etCalendarDate } from "./operational-day";
 import { getRoleLevel, isRoleCode, type RoleCode } from "./roles";
+import { loadPresenceFacts, loadSignedInAt, whosHereEnabled } from "./whos-here";
+import { personPresence } from "./presence-shared";
 import {
   canManageAssignee, isTaskType, TASK_TYPES, TASK_MIN_LEVEL, type ShiftBoard, type Station,
   validOverrideReason, type OverrideReason, type OverrideReasonCode, type AssignmentChange,
@@ -28,6 +30,8 @@ function requireLocation(actor: AssignmentActor, locationId: string): void {
 function requireUuid(value: string): void {
   if (!UUID.test(value)) throw new AssignmentError("invalid_payload", 400);
 }
+/** Releases the system writes (0230 + 0233); their reason is a trail, never an override reason. */
+const SYSTEM_RELEASES = ["station_closed", "clocked_out", "on_break", "ended_shift", "shop_closed"];
 function dbError(error: { message: string; code?: string }, context?: "position_name"): never {
   if (error.code === "23505" && context === "position_name") throw new AssignmentError("position_name_taken", 409);
   if (error.code === "23505") throw new AssignmentError("assignment_already_active", 409);
@@ -168,6 +172,35 @@ export async function writeStationBreak(service: SupabaseClient, args: {
     action: "station.break", resourceTable: "station_break_events", resourceId: result.id,
     metadata: { location_id: args.locationId, user_id: args.userId, on_break: args.onBreak }, ipAddress: null, userAgent: null });
   return { id: result.id };
+}
+
+/**
+ * "End my shift" (self) or a KH+ ends someone else's (0233). Releases the station and unassigns open
+ * tasks with the "Left open · X ended shift" trail. Same authority as a break; the 0228 reason rule
+ * applies when the target holds work given by a higher level (the RPC decides under its lock).
+ */
+export async function endShift(service: SupabaseClient, args: {
+  actor: AssignmentActor; locationId: string; userId: string;
+} & OverrideReason): Promise<{ id: string; changed: boolean }> {
+  if (!whosHereEnabled()) throw new AssignmentError("not_enabled", 404);
+  requireLocation(args.actor, args.locationId);
+  requireUuid(args.userId);
+  const self = args.actor.userId === args.userId;
+  if (!self && args.actor.level < 4) throw new AssignmentError("role_insufficient");
+  const reason = reasonParams(args);
+  const level = await targetLevel(service, args.userId, args.locationId);
+  if (!self && !canManageAssignee(args.actor.level, level)) throw new AssignmentError("role_insufficient");
+  const { data, error } = await service.rpc("end_shift", {
+    p_actor_id: args.actor.userId, p_user_id: args.userId, p_location_id: args.locationId, ...reason,
+  });
+  if (error) dbError(error);
+  const result = data as AssignmentWriteResult & { released_station?: boolean; released_tasks?: number };
+  if (result.changed) await audit({ actorId: args.actor.userId, actorRole: args.actor.role,
+    action: "shift.end", resourceTable: "shift_ends", resourceId: result.id,
+    metadata: { location_id: args.locationId, user_id: args.userId, self, released_station: result.released_station ?? false,
+      released_tasks: result.released_tasks ?? 0, ...overrideMetadata(result) }, ipAddress: null, userAgent: null });
+  await notifyOverride(service, args.actor, args.locationId, "shift_ends", result);
+  return { id: result.id, changed: result.changed };
 }
 
 /** KH+ may edit advisory hours; this does not widen the GM configuration gate. */
@@ -411,6 +444,14 @@ export async function loadShiftBoard(service: SupabaseClient, args: {
     service.from("station_departures").select("user_id,out_at").eq("location_id", args.locationId)
       .eq("business_date", args.date).order("out_at").order("user_id").range(from, to));
   const departures = new Map(departureRows.map((row) => [row.user_id, row.out_at]));
+  const departureReason = new Map<string, "clocked_out" | "ended_shift">(departureRows.map((row) => [row.user_id, "clocked_out"]));
+  // 0233: "End my shift" is a departure too (taken tasks before it stop counting as held).
+  const whosHere = whosHereEnabled();
+  const presenceFacts = whosHere ? await loadPresenceFacts(service, { locationId: args.locationId, stationDate, date: args.date }) : null;
+  for (const [userId, at] of presenceFacts?.endedAt ?? []) {
+    const prior = departures.get(userId);
+    if (!prior || Date.parse(at) > Date.parse(prior)) { departures.set(userId, at); departureReason.set(userId, "ended_shift"); }
+  }
   const stations: Station[] = (stationsResult.data ?? []).map((row) => ({
     id: row.id, name: row.name, nameEs: row.name_es, sort: row.sort, active: row.active, staffed: row.staffed, usuallyClosesAt: row.usually_closes_at, closedAt: closures.get(row.id) ?? null,
     positions: (positionsResult.data ?? []).filter((p) => p.station_id === row.id).map((p) => ({
@@ -440,7 +481,7 @@ export async function loadShiftBoard(service: SupabaseClient, args: {
   }
   const taskResult = { data: taskRows };
   const changes: Array<{ assignment_id: string; report_type: string; actor_id: string | null; kind: string; created_at: string; subject_user_id: string | null; effective_at: string | null;
-    reason_code: OverrideReasonCode | null; reason_note: string | null; overridden_assigner_id: string | null }> = [];
+    reason_code: OverrideReasonCode | "clocked_out" | "ended_shift" | "shop_closed" | null; reason_note: string | null; overridden_assigner_id: string | null }> = [];
   for (let offset = 0; ; offset += 500) {
     const result = await service.from("assignment_changes")
       .select("assignment_id,report_type,actor_id,kind,created_at,reason_code,reason_note,overridden_assigner_id,subject_user_id,effective_at")
@@ -464,6 +505,8 @@ export async function loadShiftBoard(service: SupabaseClient, args: {
   for (const event of eventRows) rosterIds.add(String(event.user_id));
   for (const row of breakRows) rosterIds.add(row.user_id);
   for (const row of departureRows) rosterIds.add(row.user_id);
+  // A linked, clocked-in all-shops account (no membership row) still belongs on today's board.
+  for (const userId of presenceFacts?.toast.keys() ?? []) rosterIds.add(userId);
   const namesNeeded = new Set([...rosterIds, ...eventRows.flatMap((row) => row.actor_id ? [String(row.actor_id)] : []),
     ...eventRows.map((row) => String(row.user_id)), ...changes.flatMap((row) => row.actor_id ? [row.actor_id] : []),
     ...(taskResult.data ?? []).map((row) => String(row.assigner_id))]);
@@ -476,9 +519,9 @@ export async function loadShiftBoard(service: SupabaseClient, args: {
   }
   const names = new Map(users.map((user) => [user.id, user.name]));
   const levels = new Map(users.map((user) => [user.id, isRoleCode(user.role) ? getRoleLevel(user.role) : 0]));
-  const changeView = (row: { actor_id: string | null; reason_code: OverrideReasonCode | null; reason_note: string | null;
+  const changeView = (row: { actor_id: string | null; reason_code: string | null; reason_note: string | null;
     overridden_assigner_id: string | null }, at: string): AssignmentChange => ({
-    actorName: (row.actor_id ? names.get(row.actor_id) : null) ?? null, at, reasonCode: row.reason_code,
+    actorName: (row.actor_id ? names.get(row.actor_id) : null) ?? null, at, reasonCode: row.reason_code as OverrideReasonCode | null,
     reasonNote: row.reason_note, overriddenAssignerId: row.overridden_assigner_id,
   });
   const events: StationEvent[] = eventRows.map((row) => ({
@@ -487,8 +530,8 @@ export async function loadShiftBoard(service: SupabaseClient, args: {
     actorId: row.actor_id ? String(row.actor_id) : null, actorName: names.get(String(row.actor_id)) ?? null, at: String(row.at), source: row.source as StationEvent["source"],
     actorLevel: levels.get(String(row.actor_id)),
     priorPositionId: row.prior_position_id as string | null, effectiveAt: row.effective_at as string | null,
-    releaseReason: ["station_closed", "clocked_out", "on_break"].includes(String(row.reason_code)) ? row.reason_code as StationEvent["releaseReason"] : undefined,
-    change: !["station_closed", "clocked_out", "on_break"].includes(String(row.reason_code)) && (row.reason_code || row.reason_note) ? changeView({ actor_id: String(row.actor_id),
+    releaseReason: SYSTEM_RELEASES.includes(String(row.reason_code)) ? row.reason_code as StationEvent["releaseReason"] : undefined,
+    change: !SYSTEM_RELEASES.includes(String(row.reason_code)) && (row.reason_code || row.reason_note) ? changeView({ actor_id: String(row.actor_id),
       reason_code: row.reason_code as OverrideReasonCode | null, reason_note: row.reason_note as string | null,
       overridden_assigner_id: row.overridden_assigner_id as string | null }, String(row.at)) : undefined,
   }));
@@ -513,20 +556,45 @@ export async function loadShiftBoard(service: SupabaseClient, args: {
       assigneeName: names.get(row.userId) ?? null, assignerName: null, note: null,
       source: "taken", at: row.at, available: available.has(row.userId) });
   }
-  return { locationId: args.locationId, date: args.date, viewerId: args.actor.userId, viewerLevel: args.actor.level,
-    stations, events, positionVacancies: positionVacancies(events, breaks, names),
-    taskVacancies: [...[...new Map(changes.map((row) => [row.report_type, row])).values()]
-      .filter((row) => row.kind === "auto_release" && isTaskType(row.report_type) && row.subject_user_id && row.effective_at)
-      .map((row) => ({ task: row.report_type as TaskType, userId: row.subject_user_id!, name: names.get(row.subject_user_id!) ?? "", at: row.effective_at! })),
-      ...dedupeTakenTasks(takenHistory.filter((row) => !takenSurvivesDeparture(row.at, departures.get(row.userId))))
-        .filter((row) => !changes.some((change) => change.report_type === row.task))
-        .map((row) => ({ task: row.task, userId: row.userId, name: names.get(row.userId) ?? "", at: departures.get(row.userId)! }))],
-    taskChanges: changes.filter((row) => row.kind === "retract" && isTaskType(row.report_type))
-      .map((row) => ({ task: row.report_type as TaskType, change: changeView(row, row.created_at) })),
-    occupiedPositions, tasks, people: users.filter((user) => isRoleCode(user.role) &&
-      (available.has(user.id) || tasks.some((task) => task.assigneeId === user.id) || events.some((event) => event.userId === user.id)))
+  const people = users.filter((user) => isRoleCode(user.role) &&
+      (available.has(user.id) || tasks.some((task) => task.assigneeId === user.id) || events.some((event) => event.userId === user.id)
+        || !!presenceFacts?.toast.has(user.id)))
       .map((user) => ({ id: user.id, name: user.name, available: available.has(user.id), onBreak: breaks.get(user.id) ?? false, level: isRoleCode(user.role) ? getRoleLevel(user.role) : 0,
         hasWork: !!heads.get(user.id)?.stationId || tasks.some((task) => task.assigneeId === user.id) }))
-      .sort((a, b) => a.name.localeCompare(b.name)),
+      .sort((a, b) => a.name.localeCompare(b.name));
+  let presentPeople: ShiftBoard["people"] = people;
+  if (presenceFacts) {
+    const signedIn = await loadSignedInAt(service, { locationId: args.locationId, stationDate, date: args.date, userIds: people.map((p) => p.id) });
+    const latest = (values: Array<string | undefined>) => values.filter((v): v is string => !!v).sort((a, b) => Date.parse(b) - Date.parse(a))[0] ?? null;
+    presentPeople = people.map((person) => {
+      const head = heads.get(person.id);
+      const held = tasks.filter((task) => task.assigneeId === person.id && task.available !== false);
+      // Who gave them what they hold: an assigned station's author and every open assigned task's assigner.
+      const givers = [head?.stationId && head.source === "assigned" ? head.actorLevel : undefined,
+        ...held.filter((task) => task.source !== "taken").map((task) => task.assignerLevel)].filter((v): v is number => typeof v === "number");
+      return { ...person,
+        heldFromLevel: givers.length ? Math.max(...givers) : undefined,
+        presence: personPresence({ entries: presenceFacts.toast.get(person.id) ?? [] }, {
+          stationAt: head?.stationId ? head.at : null, taskAt: latest(held.map((task) => task.at)),
+          signedInAt: signedIn.get(person.id) ?? null, endedAt: presenceFacts.endedAt.get(person.id) ?? null,
+          shopClosedAt: presenceFacts.shopClosedAt,
+        }) };
+    });
+  }
+  return { locationId: args.locationId, date: args.date, viewerId: args.actor.userId, viewerLevel: args.actor.level,
+    ...(whosHere ? { whosHere: true } : {}),
+    stations, events, positionVacancies: positionVacancies(events, breaks, names),
+    taskVacancies: [...[...new Map(changes.map((row) => [row.report_type, row])).values()]
+      // The shop's close is not a vacancy: nobody is expected to cover a closed shop.
+      .filter((row) => row.kind === "auto_release" && row.reason_code !== "shop_closed" && isTaskType(row.report_type) && row.subject_user_id && row.effective_at)
+      .map((row) => ({ task: row.report_type as TaskType, userId: row.subject_user_id!, name: names.get(row.subject_user_id!) ?? "", at: row.effective_at!,
+        reason: row.reason_code === "ended_shift" ? "ended_shift" as const : "clocked_out" as const })),
+      ...dedupeTakenTasks(takenHistory.filter((row) => !takenSurvivesDeparture(row.at, departures.get(row.userId))))
+        .filter((row) => !changes.some((change) => change.report_type === row.task))
+        .map((row) => ({ task: row.task, userId: row.userId, name: names.get(row.userId) ?? "", at: departures.get(row.userId)!,
+          reason: departureReason.get(row.userId) ?? "clocked_out" }))],
+    taskChanges: changes.filter((row) => row.kind === "retract" && isTaskType(row.report_type))
+      .map((row) => ({ task: row.report_type as TaskType, change: changeView(row, row.created_at) })),
+    occupiedPositions, tasks, people: presentPeople,
   };
 }

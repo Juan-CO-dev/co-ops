@@ -1,6 +1,6 @@
 import type { NextRequest } from "next/server";
 import { jsonError, jsonOk, parseJsonBody } from "@/lib/api-helpers";
-import { AssignmentError, assignTask, retractTask, writeStationEvent, writeStationBreak } from "@/lib/assignments";
+import { AssignmentError, assignTask, endShift, retractTask, writeStationEvent, writeStationBreak } from "@/lib/assignments";
 import { isTaskType, validOverrideReason, type OverrideReason } from "@/lib/assignments-shared";
 import { requireSession } from "@/lib/session";
 import { getServiceRoleClient } from "@/lib/supabase-server";
@@ -29,6 +29,10 @@ export async function POST(req: NextRequest) {
           (b.stationId === null) !== (b.positionId === null) ||
           (b.manage !== undefined && typeof b.manage !== "boolean")) return jsonError(400, "invalid_payload");
         return jsonOk(await writeStationEvent(service, { actor, locationId: b.locationId, userId: b.userId, stationId: b.stationId, positionId: b.positionId, manage: b.manage as boolean | undefined, ...reason }));
+      }
+      case "end_shift": {
+        if (typeof b.userId !== "string") return jsonError(400, "invalid_payload");
+        return jsonOk(await endShift(service, { actor, locationId: b.locationId, userId: b.userId, ...reason }));
       }
       case "task_assign": {
         if (typeof b.userId !== "string" || !isTaskType(b.task) || (b.note != null && typeof b.note !== "string")) return jsonError(400, "invalid_payload");

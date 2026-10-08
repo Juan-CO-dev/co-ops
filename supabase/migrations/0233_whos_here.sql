@@ -11,8 +11,10 @@
 --    is append-only: unlink flips active=false, a re-link is a new row. An auto link is an exact
 --    full-name match at the same shop, decided in lib/toast/employee-links-shared.ts (never on a first
 --    name alone); it stays reviewable and unlinkable.
---    toast_time_entries.user_id is DERIVED from the active link by a BEFORE trigger: the labor pull's
+--    toast_time_entries.user_id FOLLOWS the active link through a BEFORE trigger: the labor pull's
 --    upserts fill it going forward, and a link/unlink backfills or clears every date for that employee.
+--    Without an active link the written value stands (so an unlink's explicit NULL sticks and 0230's
+--    sim harness, which writes user_id directly, keeps its meaning).
 --    That makes 0230's clock-out releases fire and lets the digest labor section name people.
 -- B. shift_ends: "End my shift" (self) / a KH+ ending someone else's shift (0228 reason rule when the
 --    work was given by a higher level), and one shop-closed marker per shop/day. end_shift releases the
@@ -76,12 +78,12 @@ revoke all on public.toast_employee_links from public,anon,authenticated,service
 grant select on public.toast_employee_links to service_role;
 
 -- user_id follows the active link on every write: the pull fills it going forward, and the RPCs'
--- touch below backfills / clears all dates. Never inferred from a name here.
+-- updates below backfill / clear all dates. No active link: the written value stands. Never a name.
 create function public.toast_time_entry_link_user()
 returns trigger language plpgsql security definer set search_path=pg_catalog,public as $$
 begin
-  new.user_id := (select l.user_id from public.toast_employee_links l
-    where l.location_id=new.location_id and l.employee_guid=new.employee_guid and l.active);
+  new.user_id := coalesce((select l.user_id from public.toast_employee_links l
+    where l.location_id=new.location_id and l.employee_guid=new.employee_guid and l.active),new.user_id);
   return new;
 end $$;
 create trigger toast_time_entries_link_user before insert or update on public.toast_time_entries
@@ -129,7 +131,7 @@ begin
   end if;
   insert into public.toast_employee_links(location_id,employee_guid,user_id,source,linked_by)
     values(p_location_id,p_employee_guid,p_user_id,p_source,p_actor_id) returning id into v_id;
-  -- Backfill every date; the BEFORE trigger re-derives the same value from the link.
+  -- Backfill every date (the BEFORE trigger agrees: it reads the link just inserted).
   update public.toast_time_entries set user_id=p_user_id
     where location_id=p_location_id and employee_guid=p_employee_guid and user_id is distinct from p_user_id;
   get diagnostics v_rows = row_count;
@@ -285,8 +287,9 @@ begin
     values(p_location_id,v_station_day,p_user_id,'ended_shift',p_actor_id,p_reason_code,nullif(btrim(p_reason_note),''),v_overridden,v_at)
     returning id into v_id;
   if h.station_id is not null or (h.reason_code='on_break' and h.prior_position_id is not null) then
-    insert into public.station_events(location_id,business_date,user_id,kind,actor_id,reason_code,prior_position_id,effective_at)
-      values(p_location_id,v_station_day,p_user_id,'release',p_actor_id,'ended_shift',coalesce(h.position_id,h.prior_position_id),v_at);
+    -- Stamped with the shift end's own instant, so a repeat tap compares equal and stays a no-op.
+    insert into public.station_events(location_id,business_date,user_id,kind,actor_id,reason_code,prior_position_id,effective_at,at)
+      values(p_location_id,v_station_day,p_user_id,'release',p_actor_id,'ended_shift',coalesce(h.position_id,h.prior_position_id),v_at,v_at);
     v_station:=true;
   end if;
   -- Leaving ends a break, too.
