@@ -52,7 +52,7 @@ function cutoffLabel(c: Ctx, time: string): string {
 function notLoaded(c: Ctx, label: string, href: string, l: Loaded<unknown>): DigestLine | null {
   if (l.kind === "error") return { label, text: c.t("digest.v2.could_not_load"), tone: "issue", href };
   if (l.kind === "unavailable") {
-    const key = l.reason === "no_capture" ? "digest.v2.sales.no_capture" : l.reason === "no_labor" ? "digest.v2.labor.no_entries" : "digest.v2.not_available";
+    const key = l.reason === "no_capture" ? "digest.v2.sales.no_capture" : l.reason === "no_labor" || l.reason === "labor_off" || l.reason === "labor_pull_failed" ? "digest.v2.labor.no_entries" : "digest.v2.not_available";
     return { label, text: c.t(key as TranslationKey), tone: "info", href };
   }
   return null;

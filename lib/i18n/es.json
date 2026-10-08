@@ -5071,7 +5071,7 @@
   "digest.catering.schedule_not_connected": "horario no conectado",
   "digest.v2.section.labor": "Mano de obra",
   "digest.v2.labor.label": "Mano de obra (Toast)",
-  "digest.v2.labor.no_entries": "Aún no hay registros de horas de Toast para este día",
+  "digest.v2.labor.no_entries": "Mano de obra aún no disponible",
   "digest.v2.labor.none": "Nadie marcó entrada",
   "digest.v2.labor.total": "{hours} h trabajadas",
   "digest.v2.labor.splh": "{money} de ventas por hora de trabajo",

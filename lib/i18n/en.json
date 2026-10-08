@@ -5071,7 +5071,7 @@
   "digest.catering.schedule_not_connected": "schedule not connected",
   "digest.v2.section.labor": "Labor",
   "digest.v2.labor.label": "Labor (Toast)",
-  "digest.v2.labor.no_entries": "No Toast time entries pulled for this day yet",
+  "digest.v2.labor.no_entries": "Labor not available yet",
   "digest.v2.labor.none": "No one clocked in",
   "digest.v2.labor.total": "{hours} h clocked",
   "digest.v2.labor.splh": "{money} sales per labor hour",

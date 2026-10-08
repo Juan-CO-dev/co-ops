@@ -9,6 +9,7 @@ import { getServiceRoleClient } from "@/lib/supabase-server";
 import { selectAllRows } from "@/lib/supabase-paginate";
 import { loadCapturedToastDay } from "@/lib/toast/captured-day";
 import { summarizeLabor, weekStart, type LaborEntryFact, type LaborSummary } from "@/lib/toast/labor-shared";
+import { laborPullEnabled, runToastLaborPull } from "@/lib/toast/labor";
 import { addDays, etDayRange } from "@/lib/report-digests-shared";
 import {
   cutoffsTomorrow,
@@ -289,6 +290,24 @@ async function loadPeople(sb: Sb, locationId: string, day: string): Promise<Load
 
 // ── Labor (Toast time entries, 0224) ─────────────────────────────────────────────────────────
 
+/**
+ * Day D's labor for the digest (Astra r2 P1). Closing digests and the 03:00 fallback send BEFORE the
+ * 09:00 UTC nightly, so the digest pulls D for this shop itself, bounded (20 s) and fail-soft, just
+ * before composing; the nightly pull stays the backstop. A pull that is off or fails = "labor not
+ * available yet" — never zero, never yesterday's partial rows dressed as the day.
+ */
+export const DIGEST_LABOR_PULL_MS = 20_000;
+export async function laborForDigest(
+  locationId: string, day: string,
+  deps: { enabled: () => boolean; pull: (day: string, locationId: string) => Promise<{ ok: boolean }>; read: () => Promise<Loaded<LaborSummary>> },
+): Promise<Loaded<LaborSummary>> {
+  if (!deps.enabled()) return unavailable("labor_off");
+  let pulled = false;
+  try { pulled = (await deps.pull(day, locationId)).ok; } catch { pulled = false; }
+  if (!pulled) return unavailable("labor_pull_failed");
+  return deps.read();
+}
+
 export async function loadLabor(sb: Sb, locationId: string, day: string, sales: Loaded<SalesFacts>): Promise<Loaded<LaborSummary>> {
   // Week-to-date (Mon..D) for the 40 h flag; D for everything else.
   const rows = await selectAllRows<{ employee_guid: string; employee_first_name: string | null; job_name: string | null; business_date: string; hours: number | string | null; overtime_hours: number | string | null; out_at: string | null }>((f, t) =>
@@ -315,6 +334,13 @@ export async function loadShopV2Facts(sb: Sb, locationId: string, day: string, n
     settle(() => loadInventory(sb, deliveries, s, locationId, day), "inventory"),
     settle(() => loadPeople(sb, locationId, day), "people"),
   ]);
-  const labor = await settle(() => loadLabor(sb, locationId, day, sales), "labor");
+  const labor = await settle(() => laborForDigest(locationId, day, {
+    enabled: laborPullEnabled,
+    pull: async (d, loc) => {
+      const r = await runToastLaborPull([d], { deadlineMs: DIGEST_LABOR_PULL_MS, context: "digest", locationIds: [loc] });
+      return { ok: r.ran && r.results.length > 0 && r.results.every((x) => x.ok) };
+    },
+    read: () => loadLabor(sb, locationId, day, sales),
+  }), "labor");
   return { lookahead: lookaheadDay(day), sales, catering, ordering, receiving, inventory, people, labor };
 }
