@@ -160,9 +160,16 @@ export interface LaborSummary {
   /** Entries still clocked in (no out time) — their hours are not in the total. */
   openEntries: number;
   byJob: Array<{ job: string | null; hours: number }>;
-  people: Array<{ employeeGuid: string; firstName: string | null; hours: number }>;
-  /** Net sales pre-tax / clocked hours; null when either side is unknown or hours are 0. */
+  /** People with known hours, and how many of their CLOSED shifts on D have unknown hours. */
+  people: Array<{ employeeGuid: string; firstName: string | null; hours: number; unknownShifts: number }>;
+  /** Closed shifts on D whose hours are unknown (Astra r3): never dropped, never zero. */
+  unknownHoursEntries: number;
+  /** Any unknown hours on D or week-to-date: the totals are a lower bound and conclusions are withheld. */
+  partial: boolean;
+  /** Net sales pre-tax / clocked hours; null when either side is unknown, hours are 0, or hours are partial. */
   salesPerLaborHourCents: number | null;
+  /** False when partial: overtime is not assessed (no "no overtime" conclusion, no flags). */
+  overtimeAssessed: boolean;
   /** More than 10 h in the day. */
   dayOvertime: Array<{ firstName: string | null; hours: number }>;
   /** More than 40 h week-to-date (Mon..D, a LOWER bound: only what was pulled), or Toast's own OT. */
@@ -183,34 +190,48 @@ const round2 = (n: number) => Math.round(n * 100) / 100;
 export function summarizeLabor(day: string, entries: readonly LaborEntryFact[], netSalesCents: number | null): LaborSummary {
   const today = entries.filter((e) => e.businessDate === day);
   const closed = today.filter((e) => !e.open && e.hours !== null);
+  const unknownToday = today.filter((e) => !e.open && e.hours === null);
   const totalHours = round2(closed.reduce((a, e) => a + e.hours!, 0));
   const byJob = new Map<string | null, number>();
-  const byPerson = new Map<string, { firstName: string | null; hours: number }>();
+  const byPerson = new Map<string, { firstName: string | null; hours: number; unknownShifts: number }>();
   for (const e of closed) {
     byJob.set(e.jobName, (byJob.get(e.jobName) ?? 0) + e.hours!);
-    const p = byPerson.get(e.employeeGuid) ?? { firstName: e.firstName, hours: 0 };
+    const p = byPerson.get(e.employeeGuid) ?? { firstName: e.firstName, hours: 0, unknownShifts: 0 };
     p.hours += e.hours!;
+    byPerson.set(e.employeeGuid, p);
+  }
+  for (const e of unknownToday) {
+    const p = byPerson.get(e.employeeGuid) ?? { firstName: e.firstName, hours: 0, unknownShifts: 0 };
+    p.unknownShifts += 1;
     byPerson.set(e.employeeGuid, p);
   }
   const ws = weekStart(day);
   const week = new Map<string, { firstName: string | null; hours: number; toastOt: boolean }>();
+  let weekUnknown = 0;
   for (const e of entries) {
-    if (e.businessDate < ws || e.businessDate > day || e.hours === null) continue;
+    if (e.businessDate < ws || e.businessDate > day) continue;
+    if (e.hours === null) { if (!e.open) weekUnknown += 1; continue; }
     const w = week.get(e.employeeGuid) ?? { firstName: e.firstName, hours: 0, toastOt: false };
     w.hours += e.hours;
     if ((e.overtimeHours ?? 0) > 0 && e.businessDate === day) w.toastOt = true;
     week.set(e.employeeGuid, w);
   }
-  const people = [...byPerson].map(([employeeGuid, p]) => ({ employeeGuid, firstName: p.firstName, hours: round2(p.hours) }))
+  const people = [...byPerson].map(([employeeGuid, p]) => ({ employeeGuid, firstName: p.firstName, hours: round2(p.hours), unknownShifts: p.unknownShifts }))
     .sort((a, b) => b.hours - a.hours || String(a.firstName).localeCompare(String(b.firstName)));
+  // Unknown hours make every total a lower bound: rates and overtime conclusions are withheld.
+  const partial = unknownToday.length > 0 || weekUnknown > 0;
+  const splhPartial = unknownToday.length > 0;
   return {
     totalHours,
     openEntries: today.filter((e) => e.open).length,
     byJob: [...byJob].map(([job, hours]) => ({ job, hours: round2(hours) })).sort((a, b) => b.hours - a.hours || String(a.job).localeCompare(String(b.job))),
     people,
-    salesPerLaborHourCents: netSalesCents === null || totalHours <= 0 ? null : Math.round(netSalesCents / totalHours),
-    dayOvertime: people.filter((p) => p.hours > DAY_OVERTIME_HOURS).map((p) => ({ firstName: p.firstName, hours: p.hours })),
-    weekOvertime: [...week.values()].filter((w) => w.hours > WEEK_OVERTIME_HOURS || w.toastOt)
+    unknownHoursEntries: unknownToday.length,
+    partial,
+    salesPerLaborHourCents: splhPartial || netSalesCents === null || totalHours <= 0 ? null : Math.round(netSalesCents / totalHours),
+    overtimeAssessed: !partial,
+    dayOvertime: partial ? [] : people.filter((p) => p.hours > DAY_OVERTIME_HOURS).map((p) => ({ firstName: p.firstName, hours: p.hours })),
+    weekOvertime: partial ? [] : [...week.values()].filter((w) => w.hours > WEEK_OVERTIME_HOURS || w.toastOt)
       .map((w) => ({ firstName: w.firstName, hours: round2(w.hours) })).sort((a, b) => b.hours - a.hours),
   };
 }

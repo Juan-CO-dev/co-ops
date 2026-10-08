@@ -101,7 +101,7 @@ describe("the digest's labor math", () => {
     expect(s.totalHours).toBe(17.5);
     expect(s.openEntries).toBe(1);
     expect(s.byJob).toEqual([{ job: "Line Cook", hours: 8 }, { job: "Cashier", hours: 6.5 }, { job: "Catering", hours: 3 }]);
-    expect(s.people).toEqual([{ employeeGuid: "a", firstName: "Ana", hours: 11 }, { employeeGuid: "l", firstName: "Luis", hours: 6.5 }]);
+    expect(s.people).toEqual([{ employeeGuid: "a", firstName: "Ana", hours: 11, unknownShifts: 0 }, { employeeGuid: "l", firstName: "Luis", hours: 6.5, unknownShifts: 0 }]);
   });
   it("sales per labor hour = net pre-tax / clocked hours; unknown sales or zero hours = null", () => {
     expect(s.salesPerLaborHourCents).toBe(14286);
@@ -137,5 +137,54 @@ describe("the nightly digest's Labor section", () => {
     const none = composeShopSections({ ...base, v2: v2Fixture({ labor: unavailable("no_labor") }) }, "en", "https://x.test", false);
     expect(none.find((x) => x.title === "Labor")!.lines[0]!.text).toBe("Labor not available yet");
     expect(composeShopSections({ ...base, v2: v2Fixture() }, "en", "https://x.test", false).some((x) => x.title === "Labor")).toBe(false);
+  });
+});
+
+describe("unknown labor hours survive aggregation and rendering (Astra r3)", () => {
+  const e = (employeeGuid: string, firstName: string, hours: number | null, open = false, businessDate = "2026-10-07"): LaborEntryFact =>
+    ({ employeeGuid, firstName, jobName: "Line Cook", businessDate, hours, overtimeHours: 0, open });
+
+  it("an unknown-hours shift is counted, the totals are partial, and rates/overtime are withheld", () => {
+    const s = summarizeLabor("2026-10-07", [e("a", "Ana", 8), e("l", "Lu", null), e("k", "Kim", null, true)], 100_000);
+    expect(s).toMatchObject({ totalHours: 8, unknownHoursEntries: 1, openEntries: 1, partial: true, salesPerLaborHourCents: null, overtimeAssessed: false, dayOvertime: [], weekOvertime: [] });
+    expect(s.people).toEqual([
+      { employeeGuid: "a", firstName: "Ana", hours: 8, unknownShifts: 0 },
+      { employeeGuid: "l", firstName: "Lu", hours: 0, unknownShifts: 1 },
+    ]);
+  });
+
+  it("an unknown shift earlier in the week withholds overtime but not today's rate", () => {
+    const s = summarizeLabor("2026-10-07", [e("a", "Ana", 11), e("a", "Ana", null, false, "2026-10-06")], 110_000);
+    expect(s).toMatchObject({ partial: true, overtimeAssessed: false, dayOvertime: [], salesPerLaborHourCents: 10_000 });
+  });
+
+  it("all known = assessed as before", () => {
+    expect(summarizeLabor("2026-10-07", [e("a", "Ana", 11)], 110_000)).toMatchObject({ partial: false, overtimeAssessed: true, dayOvertime: [{ firstName: "Ana", hours: 11 }] });
+  });
+
+  it("renders the unknown count and says partial, never 'No one clocked in' — en + es", async () => {
+    const { composeShopSections } = await import("@/lib/report-digests-compose");
+    const { ok } = await import("@/lib/report-digests-v2-shared");
+    const { v2Fixture } = await import("./fixtures/digest-v2");
+    const base = { location: { id: LOC, name: "Shop A" }, day: "2026-10-07", reports: [], receiving: { deliveries: 0, discrepant: 0, missingReceipt: 0 }, tosses: 0, storeRunsPending: 0, tasks: [], pmFindings: null };
+    const mixed = summarizeLabor("2026-10-07", [e("a", "Ana", 8), e("l", "Lu", null)], 100_000);
+    const lines = (lang: "en" | "es", s = mixed) => composeShopSections({ ...base, v2: v2Fixture({ labor: ok(s) }) }, lang, "https://x.test", false)
+      .find((x) => x.title === (lang === "en" ? "Labor" : "Mano de obra"))!.lines.map((l) => `${l.tone}|${l.label}|${l.text}`);
+    expect(lines("en")).toEqual([
+      "info|Labor (Toast)|8 h clocked · 1 shift with unknown hours · sales per labor hour not available (partial hours)",
+      "info|Hours by job|Line Cook 8 h",
+      "info|Who worked|Ana 8 h, Lu 0 h (+1 shift, hours unknown)",
+      "info|Overtime|Not assessed — partial hours",
+    ]);
+    expect(lines("es")).toEqual([
+      "info|Mano de obra (Toast)|8 h trabajadas · 1 turno con horas desconocidas · ventas por hora de trabajo no disponibles (horas parciales)",
+      "info|Horas por puesto|Line Cook 8 h",
+      "info|Quién trabajó|Ana 8 h, Lu 0 h (+1 turno, horas desconocidas)",
+      "info|Horas extra|Sin evaluar — horas parciales",
+    ]);
+    // Only unknown-hour shifts: still not "No one clocked in".
+    const onlyUnknown = summarizeLabor("2026-10-07", [e("l", "Lu", null), e("m", "Mo", null)], 100_000);
+    expect(lines("en", onlyUnknown)[0]).toBe("info|Labor (Toast)|0 h clocked · 2 shifts with unknown hours · sales per labor hour not available (partial hours)");
+    expect(lines("en", onlyUnknown).join("\n")).not.toContain("No one clocked in");
   });
 });

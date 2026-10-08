@@ -339,17 +339,24 @@ export function laborLines(c: Ctx, v: ShopV2Facts): DigestLine[] {
   const s = v.labor.value;
   const hours = (h: number) => new Intl.NumberFormat(c.language === "es" ? "es-US" : "en-US", { maximumFractionDigits: 1 }).format(h);
   const lines: DigestLine[] = [];
-  if (s.people.length === 0 && s.openEntries === 0) return [{ label, text: c.t("digest.v2.labor.none"), tone: "info", href }];
+  // "No one clocked in" only when there are NO entries at all — unknown-hour shifts are still shifts.
+  if (s.people.length === 0 && s.openEntries === 0 && s.unknownHoursEntries === 0) return [{ label, text: c.t("digest.v2.labor.none"), tone: "info", href }];
   lines.push({
     label, href, tone: "info",
     text: [
       c.t("digest.v2.labor.total", { hours: hours(s.totalHours) }),
-      s.salesPerLaborHourCents === null ? c.t("digest.v2.labor.splh_unavailable") : c.t("digest.v2.labor.splh", { money: formatCents(s.salesPerLaborHourCents, c.language) }),
+      s.unknownHoursEntries > 0 ? plural(c.t, s.unknownHoursEntries, "digest.v2.labor.unknown_one", "digest.v2.labor.unknown_other") : null,
+      s.unknownHoursEntries > 0 ? c.t("digest.v2.labor.splh_partial")
+        : s.salesPerLaborHourCents === null ? c.t("digest.v2.labor.splh_unavailable") : c.t("digest.v2.labor.splh", { money: formatCents(s.salesPerLaborHourCents, c.language) }),
       s.openEntries > 0 ? plural(c.t, s.openEntries, "digest.v2.labor.open_one", "digest.v2.labor.open_other") : null,
     ].filter((x): x is string => x !== null).join(" · "),
   });
   if (s.byJob.length > 0) lines.push({ label: c.t("digest.v2.labor.by_job_label"), href, tone: "info", text: s.byJob.map((j) => `${j.job ?? c.t("digest.v2.labor.no_job")} ${hours(j.hours)} h`).join(", ") });
-  if (s.people.length > 0) lines.push({ label: c.t("digest.v2.labor.people_label"), href, tone: "info", text: s.people.map((p) => `${p.firstName ?? "—"} ${hours(p.hours)} h`).join(", ") });
+  if (s.people.length > 0) lines.push({ label: c.t("digest.v2.labor.people_label"), href, tone: "info", text: s.people.map((p) => `${p.firstName ?? "—"} ${hours(p.hours)} h${p.unknownShifts > 0 ? ` ${plural(c.t, p.unknownShifts, "digest.v2.labor.person_unknown_one", "digest.v2.labor.person_unknown_other")}` : ""}`).join(", ") });
+  if (!s.overtimeAssessed) {
+    lines.push({ label: c.t("digest.v2.labor.overtime_label"), href, tone: "info", text: c.t("digest.v2.labor.overtime_partial") });
+    return lines;
+  }
   lines.push(s.dayOvertime.length === 0 && s.weekOvertime.length === 0
     ? { label: c.t("digest.v2.labor.overtime_label"), href, tone: "ok", text: c.t("digest.v2.labor.no_overtime") }
     : {
