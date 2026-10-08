@@ -32,6 +32,12 @@ export const CATERING_DIGEST_FLAG_MIN = 5; // PIPELINE_READ_MIN — shift lead+ 
 export const DIGEST_TICK_WINDOW = { startHourET: 3, endHourET: 22 } as const;
 /** A claim older than this that never became sent|failed is a dead function; free the key. */
 export const DIGEST_STALE_CLAIM_MINUTES = 15;
+/**
+ * Resend keeps an Idempotency-Key for 24 h. An ambiguous attempt is retried with the SAME key only
+ * while now - first_attempt_at < 23 h (an hour of margin); after that it is never resent
+ * automatically (failed_ambiguous + alert).
+ */
+export const AMBIGUOUS_RETRY_HOURS = 23;
 
 // ── Settings ────────────────────────────────────────────────────────────────────────────────
 
@@ -165,6 +171,12 @@ export function digestWatchAt(kind: DigestKind, day: string, settings: DigestSet
 export interface SendLogRow {
   recipient_ref: string; kind: string; business_day: string; location_id: string | null;
   revision: number; mode: string; outcome: string; skip_reason: string | null; attempted_at: string;
+  /** Present on rows read from the database (the engine needs them to resume / reconcile). */
+  id?: string;
+  /** Set immediately before the first provider call; null = never reached the provider. */
+  first_attempt_at?: string | null;
+  /** Persisted the moment the provider accepted, before the row was finished. */
+  provider_message_id?: string | null;
 }
 
 /** Expected (ref, location) pairs with no sent|skipped row = what digest-watch alerts on. */

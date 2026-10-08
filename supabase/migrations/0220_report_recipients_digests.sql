@@ -142,24 +142,42 @@ create table public.report_digest_sends (
   revision      integer     not null default 1 check (revision >= 1),
   -- preview = delivered to the operator address instead of the recipient (digest_delivery_mode).
   mode          text        not null default 'live' check (mode in ('preview', 'live')),
-  outcome       text        not null check (outcome in ('claimed', 'sent', 'skipped', 'failed')),
+  -- claimed → (attempt recorded) → sent | failed | ambiguous; ambiguous → sent | failed | failed_ambiguous.
+  --   ambiguous        = the provider was called and the outcome is unknown (timeout / transport /
+  --                      no response). Holds the key; retried with the SAME provider key only while
+  --                      now - first_attempt_at < 23 h (Resend keeps idempotency keys 24 h).
+  --   failed_ambiguous = still unknown after 23 h: never resent automatically; holds the key and
+  --                      is alerted (digest-watch) so a human decides.
+  outcome       text        not null check (outcome in ('claimed', 'sent', 'skipped', 'failed', 'ambiguous', 'failed_ambiguous')),
   skip_reason   text        null check (skip_reason is null or skip_reason in
                   ('no_email', 'inactive', 'recipient_disabled', 'no_locations', 'already_sent', 'not_due', 'shop_not_finalized', 'out_of_scope')),
-  email_id      text        null,
+  -- The provider's message id, written as its OWN update the moment the provider accepts and BEFORE
+  -- the row is finished: a claim carrying one is never resent; the sweep reconciles it to sent.
+  provider_message_id text  null,
+  sent_at       timestamptz null,
+  -- The Resend Idempotency-Key used for every attempt of this claim (stable per claim).
+  idempotency_key text      null check (idempotency_key is null or char_length(idempotency_key) <= 256),
+  -- Set (once) immediately BEFORE the first provider call. null = the claim never reached the
+  -- provider, and only such claims may be released by the stale-claim sweep.
+  first_attempt_at timestamptz null,
   error         text        null check (error is null or char_length(error) <= 500),
   content_sha   text        null,
   attempted_at  timestamptz not null default now(),
   completed_at  timestamptz null,
   constraint report_digest_sends_shop_kind check ((kind = 'gm_shop') = (location_id is not null)),
-  constraint report_digest_sends_skip_reason check ((outcome = 'skipped') = (skip_reason is not null))
+  constraint report_digest_sends_skip_reason check ((outcome = 'skipped') = (skip_reason is not null)),
+  constraint report_digest_sends_ambiguous_attempted check (outcome not in ('ambiguous', 'failed_ambiguous') or first_attempt_at is not null),
+  constraint report_digest_sends_accepted_shape check ((provider_message_id is null) = (sent_at is null))
 );
 comment on table public.report_digest_sends is
-  '0220: every digest send attempt and every deliberate skip. The partial unique index report_digest_sends_once IS the idempotency guard (claim = INSERT outcome claimed; 23505 = already claimed/sent). Failed rows release the key so the next tick retries. System-written by lib/report-digests.ts (service-role, no actor). Deny-all RLS.';
--- THE idempotency key: at most one live claim-or-send per recipient × kind × day × revision.
+  '0220: every digest send attempt and every deliberate skip. The partial unique index report_digest_sends_once IS the idempotency guard (claim = INSERT outcome claimed; 23505 = already held). claimed, sent, ambiguous and failed_ambiguous hold the key; only failed releases it (a definitive provider refusal, or a stale claim that never reached the provider). provider_message_id is persisted before finish, so an accepted send is never resent; an ambiguous send is retried with the same provider key only within 23 h of first_attempt_at. System-written by lib/report-digests.ts (service-role, no actor). Deny-all RLS.';
+-- THE idempotency key: at most one live claim / send / unresolved attempt per recipient × kind ×
+-- day × revision × mode. ambiguous and failed_ambiguous hold it too, so an unknown outcome is never
+-- re-claimed as a fresh send.
 -- location_id is part of the key so a GM of two shops gets one per-shop digest for each.
 create unique index report_digest_sends_once
   on public.report_digest_sends (recipient_ref, kind, business_day, revision, mode, coalesce(location_id, '00000000-0000-0000-0000-000000000000'::uuid))
-  where outcome in ('claimed', 'sent');
+  where outcome in ('claimed', 'sent', 'ambiguous', 'failed_ambiguous');
 create index report_digest_sends_day_kind_ix on public.report_digest_sends (business_day, kind);
 create index report_digest_sends_recipient_ix on public.report_digest_sends (recipient_ref, attempted_at desc);
 

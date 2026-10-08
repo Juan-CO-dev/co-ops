@@ -108,7 +108,7 @@ export async function loadDigestDirectory(sb: Sb): Promise<{ dir: DigestDirector
 async function loadSendLog(sb: Sb, days: string[]): Promise<SendLogRow[]> {
   return selectAllRows<SendLogRow>((from, to) =>
     sb.from("report_digest_sends")
-      .select("recipient_ref, kind, business_day, location_id, revision, mode, outcome, skip_reason, attempted_at")
+      .select("id, recipient_ref, kind, business_day, location_id, revision, mode, outcome, skip_reason, attempted_at, first_attempt_at, provider_message_id")
       .in("business_day", days).order("id").range(from, to));
 }
 
@@ -314,10 +314,23 @@ export function supabaseSendStore(sb: Sb): SendStore {
       }
       return { id: data.id };
     },
-    async finish(id, patch) {
+    async markAttempt(id, patch) {
+      const { data, error } = await sb.from("report_digest_sends").update(patch)
+        .eq("id", id).eq("outcome", "claimed").is("first_attempt_at", null).select("id");
+      if (error) throw new Error(`digest attempt: ${error.message}`);
+      return (data ?? []).length === 1;
+    },
+    async recordAccepted(id, patch) {
+      const { data, error } = await sb.from("report_digest_sends").update(patch)
+        .eq("id", id).in("outcome", ["claimed", "ambiguous"]).select("id");
+      if (error) throw new Error(`digest accepted: ${error.message}`);
+      return (data ?? []).length === 1;
+    },
+    async finish(id, from, patch) {
+      const terminal = patch.outcome !== "ambiguous";
       const { data, error } = await sb.from("report_digest_sends")
-        .update({ ...patch, completed_at: new Date().toISOString() })
-        .eq("id", id).eq("outcome", "claimed").select("id");
+        .update({ ...patch, ...(terminal ? { completed_at: new Date().toISOString() } : {}) })
+        .eq("id", id).in("outcome", from).select("id");
       if (error) throw new Error(`digest finish: ${error.message}`);
       return (data ?? []).length === 1;
     },
@@ -378,14 +391,6 @@ function buildIO(now: Date): DigestIO {
     finalizedClosings: (days) => loadFinalizedClosings(sb, days),
     shopFacts: (location, day) => loadShopDayFacts(sb, location, day),
     cateringFacts: (today) => loadCateringFacts(sb, today, now),
-    async expireStaleClaims() {
-      const cutoff = new Date(now.getTime() - 15 * 60_000).toISOString();
-      const { data, error } = await sb.from("report_digest_sends")
-        .update({ outcome: "failed", error: "stale_claim", completed_at: now.toISOString() })
-        .eq("outcome", "claimed").lt("attempted_at", cutoff).select("id");
-      if (error) throw new Error(`stale claims: ${error.message}`);
-      return (data ?? []).length;
-    },
     store: supabaseSendStore(sb),
     sendEmail: (m) => sendEmail({ ...m, from: teamFrom() }),
     sha: (content) => createHash("sha256").update(content).digest("hex"),

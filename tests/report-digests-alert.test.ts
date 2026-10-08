@@ -70,7 +70,12 @@ describe("supabaseSendStore", () => {
       update: (patch: unknown) => {
         const entry = { patch, filters: [] as Array<[string, unknown]> };
         updates.push(entry);
-        const q = { eq: (k: string, v: unknown) => { entry.filters.push([k, v]); return q; }, select: async () => ({ data: updated, error: null }) };
+        const q = {
+          eq: (k: string, v: unknown) => { entry.filters.push([k, v]); return q; },
+          in: (k: string, v: unknown) => { entry.filters.push([k, v]); return q; },
+          is: (k: string, v: unknown) => { entry.filters.push([k, v]); return q; },
+          select: async () => ({ data: updated, error: null }),
+        };
         return q;
       },
     });
@@ -86,10 +91,18 @@ describe("supabaseSendStore", () => {
     expect(ok.inserted[0]).toMatchObject({ ...row, outcome: "claimed" });
   });
 
-  it("finish is guarded on outcome='claimed' and reports a lost row", async () => {
+  it("finish is guarded on the allowed from-outcomes and reports a lost row", async () => {
     const c = client(null, []);
-    expect(await supabaseSendStore(c.sb).finish("r1", { outcome: "sent", email_id: "m" })).toBe(false);
-    expect(c.updates[0]!.filters).toEqual([["id", "r1"], ["outcome", "claimed"]]);
+    expect(await supabaseSendStore(c.sb).finish("r1", ["claimed", "ambiguous"], { outcome: "sent" })).toBe(false);
+    expect(c.updates[0]!.filters).toEqual([["id", "r1"], ["outcome", ["claimed", "ambiguous"]]]);
+  });
+
+  it("an attempt is recorded only once, on a claimed row; the provider id only on claimed|ambiguous", async () => {
+    const c = client(null);
+    expect(await supabaseSendStore(c.sb).markAttempt("r1", { first_attempt_at: "t", idempotency_key: "k" })).toBe(true);
+    expect(c.updates[0]).toEqual({ patch: { first_attempt_at: "t", idempotency_key: "k" }, filters: [["id", "r1"], ["outcome", "claimed"], ["first_attempt_at", null]] });
+    await supabaseSendStore(c.sb).recordAccepted("r1", { provider_message_id: "m", sent_at: "t" });
+    expect(c.updates[1]!.filters).toEqual([["id", "r1"], ["outcome", ["claimed", "ambiguous"]]]);
   });
 });
 

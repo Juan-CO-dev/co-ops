@@ -29,8 +29,15 @@ describe("0220 posture", () => {
 
   it("the idempotency key is a partial unique index over claimed|sent, including revision and mode", () => {
     expect(flat).toContain(
-      "create unique index report_digest_sends_once on public.report_digest_sends (recipient_ref, kind, business_day, revision, mode, coalesce(location_id, '00000000-0000-0000-0000-000000000000'::uuid)) where outcome in ('claimed', 'sent');",
+      "create unique index report_digest_sends_once on public.report_digest_sends (recipient_ref, kind, business_day, revision, mode, coalesce(location_id, '00000000-0000-0000-0000-000000000000'::uuid)) where outcome in ('claimed', 'sent', 'ambiguous', 'failed_ambiguous');",
     );
+  });
+
+  it("send-once columns: provider id before finish, first attempt, ambiguous shape (Astra r2 P1)", () => {
+    for (const col of ["provider_message_id text  null", "sent_at       timestamptz null", "idempotency_key text", "first_attempt_at timestamptz null"]) expect(sql).toContain(col);
+    expect(flat).toContain("check (outcome in ('claimed', 'sent', 'skipped', 'failed', 'ambiguous', 'failed_ambiguous'))");
+    expect(flat).toContain("check (outcome not in ('ambiguous', 'failed_ambiguous') or first_attempt_at is not null)");
+    expect(sql).not.toContain("email_id");
   });
 
   it("an external row with no email can never be active (the accountant row)", () => {
