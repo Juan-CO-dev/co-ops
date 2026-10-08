@@ -6,9 +6,9 @@ import type { NextRequest } from "next/server";
 import { audit } from "@/lib/audit";
 import { extractIp, jsonError } from "@/lib/api-helpers";
 import { serverT } from "@/lib/i18n/server";
-import { EXPORT_TITLE_KEY, ExportError, loadExportTable, pdfHeaderLines } from "@/lib/report-export";
+import { EXPORT_TITLE_KEY, ExportError, loadExportTable } from "@/lib/report-export";
 import { exportFilename, isExportFamily, isExportFormat, toCsv } from "@/lib/report-export-shared";
-import { renderReportPdf } from "@/lib/report-pdf";
+import { pdfHeaderLines, renderReportPdf } from "@/lib/report-pdf";
 import { requireSession } from "@/lib/session";
 
 export async function GET(req: NextRequest) {
