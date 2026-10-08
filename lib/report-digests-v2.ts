@@ -143,7 +143,7 @@ function sharedReads(sb: Sb, locationId: string, day: string) {
     return {
       walks: events.map((e): WalkFact => ({ eventId: e.id, walkedAt: e.walked_at })),
       lines: lines.map((l): WalkLineFact => ({
-        eventId: l.event_id, vendorId: l.vendor_id, orderQty: Number(l.order_qty) || 0, parQty: num(l.par_qty),
+        eventId: l.event_id, skuId: l.sku_id, vendorId: l.vendor_id, orderQty: Number(l.order_qty) || 0, parQty: num(l.par_qty),
         impliedOnHandOz: num(l.implied_on_hand_oz), skuName: skuName.get(l.sku_id) ?? "—",
       })),
     };

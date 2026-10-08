@@ -22,4 +22,3 @@ export function v2Fixture(over: Partial<ShopV2Facts> = {}): ShopV2Facts {
     ...over,
   };
 }
-

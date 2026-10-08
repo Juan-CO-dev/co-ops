@@ -157,7 +157,25 @@ export interface PoFact {
 export interface VendorFact { id: string; name: string; sourceKind: "vendor" | "store"; active: boolean }
 export interface VendorCutoff extends CutoffRow { vendorId: string }
 export interface WalkFact { eventId: string; walkedAt: string }
-export interface WalkLineFact { eventId: string; vendorId: string | null; orderQty: number; parQty: number | null; impliedOnHandOz: number | null; skuName: string }
+export interface WalkLineFact { eventId: string; skuId: string; vendorId: string | null; orderQty: number; parQty: number | null; impliedOnHandOz: number | null; skuName: string }
+
+/**
+ * The LATEST observation per SKU across a set of walks (Astra r2 P2): a 09:00 walk that finds a
+ * SKU stocked clears the 07:00 walk that found it short. A SKU a later walk did not cover (a
+ * partial walk) keeps its earlier observation. Ties on the walk instant break on event id.
+ */
+export function latestPerSku(walks: readonly WalkFact[], lines: readonly WalkLineFact[]): WalkLineFact[] {
+  const at = new Map(walks.map((w) => [w.eventId, Date.parse(w.walkedAt)]));
+  const latest = new Map<string, WalkLineFact>();
+  for (const l of lines) {
+    const t = at.get(l.eventId);
+    if (t === undefined) continue;
+    const prev = latest.get(l.skuId);
+    const pt = prev ? at.get(prev.eventId)! : -Infinity;
+    if (!prev || t > pt || (t === pt && l.eventId > prev.eventId)) latest.set(l.skuId, l);
+  }
+  return [...latest.values()];
+}
 
 export interface OrderingInput {
   day: string;
@@ -229,9 +247,9 @@ export function orderingForDay(input: OrderingInput): OrderingDay {
     const name = vendorName.get(v.id) ?? v.name;
     const after = orders.sort((a, b) => orderedAt(a) - orderedAt(b))[0];
     if (after) { late.push({ vendorId: v.id, vendorName: name, cutoffTime: cut.time, displayCode: after.displayCode }); continue; }
-    const walks = new Set(input.walks.filter((w) => { const t = Date.parse(w.walkedAt); return t > from && t <= cut.at.getTime(); }).map((w) => w.eventId));
-    if (walks.size === 0) { unverified.push({ vendorId: v.id, vendorName: name, cutoffTime: cut.time }); continue; }
-    const suggested = input.walkLines.filter((l) => walks.has(l.eventId) && l.vendorId === v.id && l.orderQty > 0).length;
+    const inWindow = input.walks.filter((w) => { const t = Date.parse(w.walkedAt); return t > from && t <= cut.at.getTime(); });
+    if (inWindow.length === 0) { unverified.push({ vendorId: v.id, vendorName: name, cutoffTime: cut.time }); continue; }
+    const suggested = latestPerSku(inWindow, input.walkLines.filter((l) => l.vendorId === v.id)).filter((l) => l.orderQty > 0).length;
     if (suggested > 0) missed.push({ vendorId: v.id, vendorName: name, cutoffTime: cut.time, suggestedLines: suggested });
   }
   const byTime = <T extends { cutoffTime: string; vendorName: string }>(a: T, b: T) => a.cutoffTime.localeCompare(b.cutoffTime) || a.vendorName.localeCompare(b.vendorName);
@@ -341,8 +359,7 @@ export interface InventoryFacts {
 /** The walk lines of D's walks → below par (order suggested) and out (implied on hand 0). */
 export function walkSnapshot(walks: readonly WalkFact[], lines: readonly WalkLineFact[]): InventoryFacts["walk"] {
   if (walks.length === 0) return null;
-  const ids = new Set(walks.map((w) => w.eventId));
-  const mine = lines.filter((l) => ids.has(l.eventId));
+  const mine = latestPerSku(walks, lines);
   const uniq = (xs: string[]) => [...new Set(xs)].sort((a, b) => a.localeCompare(b)).map((name) => ({ name }));
   return {
     walks: walks.length,
@@ -383,51 +400,67 @@ export interface ShopV2Facts {
   people: Loaded<PeopleFacts>;
 }
 
-/** The all-shops totals the level-8+ unified digest adds (only what can honestly be summed). */
+/** How many shops an aggregate covers: a shop whose area failed or is unavailable is NOT a zero. */
+export interface Coverage { covered: number; total: number }
+
+/**
+ * The all-shop totals the level-8+ unified digest adds (Astra r2 P2). EVERY aggregate carries its
+ * coverage — the composer renders "not available" when no shop is covered and "partial (1 of 2
+ * shops)" when some are — and every money sum carries the count of rows whose amount is unknown.
+ * A failed read never becomes an authoritative $0 / 0.
+ */
 export interface AllShopTotals {
   shops: number;
-  /** Shops whose sales are known; the totals cover exactly these. */
-  salesShops: number;
-  netCents: number; checks: number; lastWeekCents: number | null; thirdPartyCents: number;
-  cateringCompletedCents: number; cateringConfirmedCents: number;
-  posPlaced: number; posPlacedCents: number;
-  missedCutoffs: number;
-  deliveries: number; deliveriesCents: number;
-  dueTomorrow: number;
+  sales: Coverage & { netCents: number; checks: number; thirdPartyCents: number; lastWeekCents: number | null };
+  catering: Coverage & { completedCents: number; confirmedCents: number };
+  ordering: Coverage & { placed: number; placedCents: number; unpriced: number; missed: number; dueTomorrow: number };
+  receiving: Coverage & { deliveries: number; cents: number; unknownCents: number };
 }
 
 export function allShopTotals(shops: ReadonlyArray<ShopV2Facts | undefined>): AllShopTotals {
+  const total = shops.length;
   const t: AllShopTotals = {
-    shops: shops.length, salesShops: 0, netCents: 0, checks: 0, lastWeekCents: 0, thirdPartyCents: 0,
-    cateringCompletedCents: 0, cateringConfirmedCents: 0, posPlaced: 0, posPlacedCents: 0, missedCutoffs: 0,
-    deliveries: 0, deliveriesCents: 0, dueTomorrow: 0,
+    shops: total,
+    sales: { covered: 0, total, netCents: 0, checks: 0, thirdPartyCents: 0, lastWeekCents: 0 },
+    catering: { covered: 0, total, completedCents: 0, confirmedCents: 0 },
+    ordering: { covered: 0, total, placed: 0, placedCents: 0, unpriced: 0, missed: 0, dueTomorrow: 0 },
+    receiving: { covered: 0, total, deliveries: 0, cents: 0, unknownCents: 0 },
   };
   let lastWeekComplete = true;
   for (const s of shops) {
     if (!s) continue;
     if (s.sales.kind === "ok") {
-      t.salesShops += 1;
-      t.netCents += s.sales.value.today.netCents;
-      t.checks += s.sales.value.today.checks;
-      t.thirdPartyCents += s.sales.value.today.thirdPartyCents;
-      if (s.sales.value.lastWeek) t.lastWeekCents! += s.sales.value.lastWeek.netCents; else lastWeekComplete = false;
+      t.sales.covered += 1;
+      t.sales.netCents += s.sales.value.today.netCents;
+      t.sales.checks += s.sales.value.today.checks;
+      t.sales.thirdPartyCents += s.sales.value.today.thirdPartyCents;
+      if (s.sales.value.lastWeek) t.sales.lastWeekCents! += s.sales.value.lastWeek.netCents; else lastWeekComplete = false;
     }
     if (s.catering.kind === "ok") {
-      t.cateringCompletedCents += s.catering.value.day.completedCents;
-      t.cateringConfirmedCents += s.catering.value.day.confirmedCents;
+      t.catering.covered += 1;
+      t.catering.completedCents += s.catering.value.day.completedCents;
+      t.catering.confirmedCents += s.catering.value.day.confirmedCents;
     }
     if (s.ordering.kind === "ok") {
-      t.posPlaced += s.ordering.value.day.placed.length;
-      t.posPlacedCents += sumKnown(s.ordering.value.day.placed.map((p) => p.totalCents)).cents;
-      t.missedCutoffs += s.ordering.value.day.missed.length;
-      t.dueTomorrow += s.ordering.value.deliveries.due.length;
+      t.ordering.covered += 1;
+      const placed = s.ordering.value.day.placed;
+      const money = sumKnown(placed.map((p) => p.totalCents));
+      t.ordering.placed += placed.length;
+      t.ordering.placedCents += money.cents;
+      t.ordering.unpriced += money.unknown + placed.filter((p) => p.totalCents !== null && p.unpricedLines > 0).length;
+      t.ordering.missed += s.ordering.value.day.missed.length;
+      t.ordering.dueTomorrow += s.ordering.value.deliveries.due.length;
     }
     if (s.receiving.kind === "ok") {
+      t.receiving.covered += 1;
       const regular = s.receiving.value.deliveries.filter((d) => d.sourceKind === "vendor");
-      t.deliveries += regular.length;
-      t.deliveriesCents += sumKnown(regular.map((d) => d.cents)).cents;
+      const money = sumKnown(regular.map((d) => d.cents));
+      t.receiving.deliveries += regular.length;
+      t.receiving.cents += money.cents;
+      t.receiving.unknownCents += money.unknown;
     }
   }
-  if (!lastWeekComplete || t.salesShops === 0) t.lastWeekCents = null;
+  // A combined week-over-week delta needs EVERY covered shop's last week; partial would mislead.
+  if (!lastWeekComplete || t.sales.covered === 0 || t.sales.covered < total) t.sales.lastWeekCents = null;
   return t;
 }
