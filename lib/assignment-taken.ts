@@ -10,7 +10,7 @@ import { selectAllRows } from "./supabase-paginate";
  * Assignments take precedence at the board integration layer.
  */
 export async function loadTakenTasks(service: SupabaseClient, args: {
-  locationId: string; date: string;
+  locationId: string; date: string; includeHistory?: boolean;
 }): Promise<TakenTask[]> {
   const { start, end } = takenDayRange(args.date);
   const [templates, instances, cash, pm, deliveries, counts, orders] = await Promise.all([
@@ -57,5 +57,7 @@ export async function loadTakenTasks(service: SupabaseClient, args: {
   for (const row of deliveries) add(row.id, "receiving", row.received_by, row.created_at);
   for (const row of counts) add(row.id, "counts", row.counted_by, row.counted_at);
   for (const row of orders) add(row.id, "ordering", row.created_by, row.created_at);
-  return dedupeTakenTasks(rows);
+  // Lifecycle callers filter departure boundaries BEFORE deduplication, so a
+  // later start after re-clock-in isn't hidden by this user's first report.
+  return args.includeHistory ? rows : dedupeTakenTasks(rows);
 }

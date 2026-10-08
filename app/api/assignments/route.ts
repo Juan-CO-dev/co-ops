@@ -1,6 +1,6 @@
 import type { NextRequest } from "next/server";
 import { jsonError, jsonOk, parseJsonBody } from "@/lib/api-helpers";
-import { AssignmentError, assignTask, retractTask, writeStationEvent } from "@/lib/assignments";
+import { AssignmentError, assignTask, retractTask, writeStationEvent, writeStationBreak } from "@/lib/assignments";
 import { isTaskType, validOverrideReason, type OverrideReason } from "@/lib/assignments-shared";
 import { requireSession } from "@/lib/session";
 import { getServiceRoleClient } from "@/lib/supabase-server";
@@ -19,6 +19,10 @@ export async function POST(req: NextRequest) {
   const service = getServiceRoleClient();
   try {
     switch (b.action) {
+      case "break": {
+        if (typeof b.userId !== "string" || typeof b.onBreak !== "boolean") return jsonError(400, "invalid_payload");
+        return jsonOk(await writeStationBreak(service, { actor, locationId: b.locationId, userId: b.userId, onBreak: b.onBreak }));
+      }
       case "station": {
         if (typeof b.userId !== "string" || (b.stationId !== null && typeof b.stationId !== "string") ||
           (b.positionId !== null && typeof b.positionId !== "string") ||

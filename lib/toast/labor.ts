@@ -18,12 +18,18 @@
 import "server-only";
 import { audit } from "@/lib/audit";
 import { getServiceRoleClient } from "@/lib/supabase-server";
+import { etCalendarDate } from "@/lib/operational-day";
 import { toastGet } from "./client";
 import { toastBusinessDate } from "./orders";
 import { employeeFirstNames, jobTitles, normalizeTimeEntries, type LaborEntryRow } from "./labor-shared";
 
 export function laborPullEnabled(): boolean {
   return process.env.TOAST_LABOR_PULL === "1";
+}
+
+/** Separate from the labor reader so the app may deploy safely before migration 0230 is applied. */
+export function stationLifecycleEnabled(): boolean {
+  return process.env.STATION_LIFECYCLE === "1";
 }
 
 export type LaborPullContext = "cron" | "manual" | "digest";
@@ -68,11 +74,23 @@ export function toastModifiedParam(at: Date): string {
 
 export async function runToastLaborPull(
   dates: readonly string[],
-  opts: { deadlineMs: number; context: LaborPullContext; locationIds?: readonly string[]; now?: Date },
+  opts: {
+    deadlineMs: number;
+    context: LaborPullContext;
+    locationIds?: readonly string[];
+    now?: Date;
+    /** Today's ET day only. Reconciliation runs after both its date pull and corrections succeed. */
+    reconcileDate?: string;
+  },
 ): Promise<LaborPullResult> {
   if (!laborPullEnabled()) return { ran: false, results: [], modified: 0 };
   const signal = AbortSignal.timeout(Math.max(1_000, opts.deadlineMs));
   const now = opts.now ?? new Date();
+  const todayEt = etCalendarDate(now.toISOString());
+  // The module owns the safety boundary: every successful TODAY pull reconciles, while even an
+  // explicit stale option cannot make a historical pull release current work.
+  const reconcileDate = dates.includes(todayEt) && (opts.reconcileDate === undefined || opts.reconcileDate === todayEt)
+    ? todayEt : undefined;
   const out: LaborPullResult = { ran: true, results: [], modified: 0 };
   let locations: Array<{ id: string; toast_restaurant_guid: string }> = [];
   try {
@@ -86,6 +104,8 @@ export async function runToastLaborPull(
     out.results.push({ locationId: "*", businessDate: dates[0] ?? "", ok: false, rows: 0, skipped: 0, error: code(e) });
   }
   for (const loc of locations) {
+    let reconcileDaySucceeded = false;
+    let correctionsSucceeded = false;
     let jobs: Map<string, string> | null = null;
     let employees: Map<string, string> | null = null;
     const write = async (rows: LaborEntryRow[]) => {
@@ -109,6 +129,7 @@ export async function runToastLaborPull(
         const { rows, skipped } = normalizeTimeEntries(raw, { locationId: loc.id, businessDate: day, ...c });
         await write(rows);
         out.results.push({ locationId: loc.id, businessDate: day, ok: true, rows: rows.length, skipped });
+        if (day === reconcileDate) reconcileDaySucceeded = true;
       } catch (e) {
         out.results.push({ locationId: loc.id, businessDate: day, ok: false, rows: 0, skipped: 0, error: code(e) });
       }
@@ -121,8 +142,20 @@ export async function runToastLaborPull(
       const { rows } = normalizeTimeEntries(raw, { locationId: loc.id, businessDate: null, ...c });
       await write(rows);
       out.modified += rows.length;
+      correctionsSucceeded = true;
     } catch (e) {
       out.results.push({ locationId: loc.id, businessDate: "modified", ok: false, rows: 0, skipped: 0, error: code(e) });
+    }
+    if (reconcileDate && stationLifecycleEnabled() && reconcileDaySucceeded && correctionsSucceeded) {
+      try {
+        const { error } = await withDeadline(getServiceRoleClient().rpc("reconcile_station_lifecycle", {
+          p_location_id: loc.id,
+          p_day: reconcileDate,
+        }).abortSignal(signal), signal);
+        if (error) throw new Error(signal.aborted ? "toast_labor_deadline" : "toast_labor_reconcile_failed");
+      } catch (e) {
+        out.results.push({ locationId: loc.id, businessDate: "reconcile", ok: false, rows: 0, skipped: 0, error: code(e) });
+      }
     }
   }
   const failures = out.results.filter((r) => !r.ok).length;

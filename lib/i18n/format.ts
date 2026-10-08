@@ -56,6 +56,15 @@ import type { Language, TranslationKey, TranslationParams } from "@/lib/i18n/typ
  */
 const OPERATIONAL_TZ = "America/New_York";
 
+/** A database time is a wall-clock hint, not an instant: never shift it by timezone. */
+export function formatClockTime(time: string, language: Language): string {
+  if (!/^([01]\d|2[0-3]):[0-5]\d(?::[0-5]\d)?$/.test(time)) return "";
+  const [hour, minute] = time.split(":").map(Number);
+  return new Intl.DateTimeFormat(language === "es" ? "es-US" : "en-US", {
+    hour: "numeric", minute: "2-digit", timeZone: "UTC",
+  }).format(new Date(Date.UTC(2000, 0, 1, hour, minute)));
+}
+
 /**
  * Format an ISO timestamp into a localized time string in the
  * operational timezone. Empty string on parse failure (defensive —

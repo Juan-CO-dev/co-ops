@@ -7,6 +7,7 @@ import { audit } from "@/lib/audit";
 import { etCalendarDate } from "@/lib/operational-day";
 import { pullTodaySalesForAllLocations } from "@/lib/catering/toast-sales";
 import { captureIntraday } from "@/lib/toast/capture-intraday";
+import { laborPullEnabled, runToastLaborPull } from "@/lib/toast/labor";
 
 export const runtime = "nodejs";
 export const maxDuration = 120;
@@ -30,7 +31,15 @@ export async function GET(req: NextRequest) {
   try {
     const captureMode = process.env.DEPLETION_SOURCE === "capture";
     const legacy = captureMode ? [] : await pullTodaySalesForAllLocations(today);
-    const capture = await captureIntraday(today, req.signal, Math.max(0, maxDuration * 1000 - (Date.now() - startedAt) - 10_000));
+    const availableMs = Math.max(0, maxDuration * 1000 - (Date.now() - startedAt) - 10_000);
+    const laborReserveMs = laborPullEnabled() ? Math.min(30_000, availableMs) : 0;
+    const capture = await captureIntraday(today, req.signal, Math.max(0, availableMs - laborReserveMs));
+    // Labor is additive and fail-soft. It shares this route's wall-clock budget, and its own single
+    // deadline also covers 0230 reconciliation after the full today + corrections pull succeeds.
+    const laborBudgetMs = Math.min(30_000, Math.max(0, maxDuration * 1000 - (Date.now() - startedAt) - 10_000));
+    const labor = laborBudgetMs >= 1_000
+      ? await runToastLaborPull([today], { deadlineMs: laborBudgetMs, context: "cron", reconcileDate: today })
+      : { ran: false, results: [], modified: 0 };
     const results = captureMode ? capture.results : legacy;
     const n = (k: string) => legacy.filter((r) => r.result === k).length;
     const healthy = captureMode ? !capture.skipped && capture.failures === 0 : n("unknown") === 0 && n("error") === 0;
@@ -47,7 +56,7 @@ export async function GET(req: NextRequest) {
       ipAddress: null, userAgent: null,
     });
     await watchSiblings("toast-sales-today");
-    return jsonOk({ date: today, results, healthy, capture });
+    return jsonOk({ date: today, results, healthy, capture, labor });
   } catch (e) {
     void audit({
       actorId: null, actorRole: null, action: "cron.failure", resourceTable: "cron", resourceId: null,
