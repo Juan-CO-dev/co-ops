@@ -30,7 +30,7 @@ export function SalesPanel({ pulse, language }: { pulse: SalesPulse; language: L
   return (
     <section>
       <h2 className="mb-2 flex flex-wrap items-baseline gap-2 text-[11px] font-bold uppercase tracking-[0.12em] text-co-gold-text">
-        {serverT(language, "midshift.sales.heading")}
+        {serverT(language, pulse.source === "capture" ? "midshift.sales.net_heading" : "midshift.sales.heading")}
         {lastPulledAt && (
           <span className="normal-case font-semibold tracking-normal text-co-text-dim">
             {serverT(language, "midshift.sales.as_of", { time: formatTime(lastPulledAt, language) })}

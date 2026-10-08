@@ -41,12 +41,13 @@ export async function GET(req: NextRequest) {
   try {
     const results = await scanToastCateringForAllLocations(dates);
     const sum = (k: "seen" | "catering" | "attributed" | "createdLeads" | "lostLeads" | "refreshed" | "skipped" | "errors" | "unparsedAmounts") => results.reduce((n, r) => n + r[k], 0);
-    await audit({ actorId: null, actorRole: null, action: "cron.success", resourceTable: "cron", resourceId: null,
+    const healthy = results.every((result) => result.ok);
+    await audit({ actorId: null, actorRole: null, action: healthy ? "cron.success" : "cron.failure", resourceTable: "cron", resourceId: null,
       metadata: { job: "toast-catering-scan", dates, seen: sum("seen"), catering: sum("catering"), attributed: sum("attributed"), created_leads: sum("createdLeads"), lost_leads: sum("lostLeads"), refreshed: sum("refreshed"), skipped: sum("skipped"), errors: sum("errors"), unparsed_amounts: sum("unparsedAmounts"), per_location_failures: results.filter((r) => !r.ok).length },
       ipAddress: null, userAgent: null });
     await catchUpDailyJobs();
     await watchSiblings("toast-catering-scan");
-    return jsonOk({ dates, results });
+    return jsonOk({ dates, results, healthy });
   } catch (e) {
     void audit({ actorId: null, actorRole: null, action: "cron.failure", resourceTable: "cron", resourceId: null, metadata: { job: "toast-catering-scan", dates, error: truncateErr(e) }, ipAddress: null, userAgent: null });
     return jsonError(500, "scan_failed");

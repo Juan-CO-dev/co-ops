@@ -1,3 +1,4 @@
+import { loadEffectiveSalesWindow, type SalesCoverage } from "@/lib/toast/effective-depletion";
 import { auditOperationalTaskOverride, canDoOperationalTask } from "@/lib/operational-task-access";
 /**
  * Operational receiving data layer (Item/Inventory Spine — R3). SERVER-ONLY,
@@ -194,6 +195,7 @@ export interface ReceivingSkuOption {
   pendingReview?: boolean;
 }
 export interface ReceivingFormData {
+  salesCoverage?: SalesCoverage;
   vendors: Array<{ id: string; name: string; sourceKind: "vendor" | "store" }>;
   skus: ReceivingSkuOption[];
 }
@@ -292,6 +294,7 @@ export async function loadReceivingFormData(actor: AuthContext, locationId: stri
     loadSkuUsageRank(sb, locationId),
   ]);
   return {
+    salesCoverage: usageBySku.coverage,
     vendors: vendors.filter((v) => v.source_kind === "vendor" || localStoreIds.has(v.id))
       .map((v) => ({ id: v.id, name: v.name, sourceKind: v.source_kind })),
     skus: skuList.map((s) => ({
@@ -300,7 +303,7 @@ export async function loadReceivingFormData(actor: AuthContext, locationId: stri
       vendorId: s.vendor_id,
       packFormat: s.pack_format,
       chainLabels: chainLabelsInWalkOrder(chainsBySku.get(s.id) ?? []),
-      usageRank: usageBySku.get(s.id) ?? null,
+      usageRank: usageBySku.usage.get(s.id) ?? null,
       searchTerms: s.product_id ? productNames.get(s.product_id) ?? [] : [],
       locationId: s.location_id,
       pendingReview: s.pending_review,
@@ -344,7 +347,7 @@ const PRODUCTION_ID_CHUNK = 150;
 async function loadSkuUsageRank(
   sb: ReturnType<typeof getServiceRoleClient>,
   locationId: string,
-): Promise<Map<string, number>> {
+): Promise<{ usage: Map<string, number>; coverage: SalesCoverage }> {
   const usage = new Map<string, number>();
   const add = (skuId: string, oz: number) => {
     if (!Number.isFinite(oz) || oz <= 0) return;
@@ -406,22 +409,10 @@ async function loadSkuUsageRank(
   }
 
   // Sales direct lane — the materialized depletion ledger over the window (0166).
-  const sales = await selectAllRows<{ sku_id: string; direct_oz: number | string }>(
-    async (from, to) => {
-      const { data, error } = await sb.from("toast_daily_depletion")
-        .select("sku_id, direct_oz")
-        .eq("location_id", locationId)
-        .gte("business_date", cutoffDate)
-        .order("id", { ascending: true })
-        .range(from, to)
-        .returns<Array<{ sku_id: string; direct_oz: number | string }>>();
-      if (error) throw new Error(`loadSkuUsageRank toast_daily_depletion: ${error.message}`);
-      return { data };
-    },
-  );
-  for (const r of sales) add(r.sku_id, num(r.direct_oz) ?? 0);
+  const sales = await loadEffectiveSalesWindow(sb, { locationId, fromDate: cutoffDate });
+  for (const r of sales.rows) add(r.sku_id, num(r.direct_oz) ?? 0);
 
-  return usage;
+  return { usage, coverage: sales.coverage };
 }
 
 /** Chain level labels ordered root→leaf by following contains_level_id (falls back
