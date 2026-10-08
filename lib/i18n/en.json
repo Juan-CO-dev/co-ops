@@ -4859,5 +4859,18 @@
   "digest.catering.portion.whole": "whole",
   "digestWatch.preview_subject": "CO-OPS: digest preview is ON but no operator account could be resolved",
   "digestWatch.preview_body": "Digests are in preview mode, but there is not exactly one active CGS account with an email. Nothing was sent ({day}). Fix the account or switch the mode.",
-  "reportRecipients.skip.out_of_scope": "Outside their shops"
+  "reportRecipients.skip.out_of_scope": "Outside their shops",
+  "catering.ezcater.title": "ezCater order",
+  "catering.ezcater.event": "Event (shop time)",
+  "catering.ezcater.handoff": "Handoff (shop time)",
+  "catering.ezcater.fulfillment": "Fulfillment",
+  "catering.ezcater.payment": "Payment status",
+  "catering.ezcater.subtotal": "Subtotal",
+  "catering.ezcater.tax": "Tax",
+  "catering.ezcater.tip": "Tip",
+  "catering.ezcater.fees": "Fees",
+  "catering.ezcater.discounts": "Discounts",
+  "catering.ezcater.total": "Total",
+  "catering.ezcater.items": "Order items",
+  "catering.ezcater.contact": "Contact"
 }

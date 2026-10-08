@@ -1,5 +1,6 @@
 import { type NextRequest } from "next/server";
 import { requireSession } from "@/lib/session";
+import { loadEzcaterOrderDetail } from "@/lib/catering/ezcater-detail";
 import { ROLES } from "@/lib/roles";
 import { jsonError, jsonOk, parseJsonBody } from "@/lib/api-helpers";
 import {
@@ -24,7 +25,8 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     const lead = await loadLead(ctx, id);
     if (!lead) return jsonError(404, "not_found");
     const capacity = await leadCapacity(ctx, id);
-    return jsonOk({ lead, capacity });
+    const ezcater = await loadEzcaterOrderDetail(ctx, id);
+    return jsonOk({ lead, capacity, ezcater });
   } catch (e) {
     if (e instanceof CateringPipelineError) return jsonError(e.status, e.code);
     throw e;

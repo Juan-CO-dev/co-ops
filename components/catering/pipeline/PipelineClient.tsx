@@ -9,6 +9,9 @@ import { LEGAL_TRANSITIONS, PIPELINE_STAGES, shopChipLabel, type PipelineStage }
 import type { PipelineLead, PipelineSearchResult, AssignableStaff } from "@/lib/catering/pipeline";
 import { LEAD_SOURCES, leadSourceKey } from "@/lib/catering/intake-shared";
 import type { CateringCapacityResult } from "@/lib/catering/capacity";
+import { EzcaterDetail } from "./EzcaterDetail";
+import type { EzcaterOrderDetail } from "@/lib/catering/ezcater-detail-shared";
+import { humanEzcaterNotes } from "@/lib/catering/ezcater-detail-shared";
 import { postJson, resolveErrorKey } from "./shared";
 
 interface LocationOpt {
@@ -358,7 +361,10 @@ function LeadDetail({
 }) {
   const { t, language } = useTranslation();
   const router = useRouter();
-  const [capacity, setCapacity] = useState<CateringCapacityResult | null>(null);
+  const [detail, setDetail] = useState<{ leadId: string; ezcater: EzcaterOrderDetail | null; capacity: CateringCapacityResult | null } | null>(null);
+  // Key the response to its lead: a switch hides old details before the next effect runs.
+  const ezcater = detail?.leadId === lead.id ? detail.ezcater : null;
+  const capacity = detail?.leadId === lead.id ? detail.capacity : null;
   const [busy, setBusy] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
@@ -366,10 +372,10 @@ function LeadDetail({
     let alive = true;
     void fetch(`/api/catering/pipeline/${lead.id}`)
       .then((r) => (r.ok ? r.json() : null))
-      .then((d: { capacity?: CateringCapacityResult } | null) => {
-        if (alive && d?.capacity) setCapacity(d.capacity);
+      .then((d: { capacity?: CateringCapacityResult; ezcater?: EzcaterOrderDetail | null } | null) => {
+        if (alive) setDetail({ leadId: lead.id, capacity: d?.capacity ?? null, ezcater: d?.ezcater ?? null });
       })
-      .catch(() => {});
+      .catch(() => { if (alive) setDetail(null); });
     return () => {
       alive = false;
     };
@@ -394,6 +400,7 @@ function LeadDetail({
   const rev = money(lead.estimatedRevenueCents);
   // Only the moves the server will accept (LEGAL_TRANSITIONS); a closed lead (Completed / Lost) has none.
   const otherStages: readonly PipelineStage[] = LEGAL_TRANSITIONS[lead.stage] ?? [];
+  const visibleNotes = ezcater ? humanEzcaterNotes(lead.notes) : lead.notes;
 
   return (
     <div className="mt-3 border-t border-co-border pt-3 text-sm">
@@ -409,10 +416,10 @@ function LeadDetail({
       )}
 
       <dl className="grid grid-cols-2 gap-x-3 gap-y-1 text-xs">
-        {lead.notes && (
+        {visibleNotes?.trim() && (
           <>
             <dt className="text-co-text-muted">{t("catering.pipeline.field.notes")}</dt>
-            <dd className="text-co-text">{lead.notes}</dd>
+            <dd className="text-co-text">{visibleNotes}</dd>
           </>
         )}
         {lead.followUpDate && (
@@ -428,6 +435,8 @@ function LeadDetail({
           </>
         )}
       </dl>
+
+      {ezcater && <EzcaterDetail detail={ezcater} />}
 
       {canWrite && (
         <div className="mt-3">

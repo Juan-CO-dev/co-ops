@@ -51,10 +51,16 @@ export async function ezcaterGraphql<T>(
   operationName: string,
   query: string,
   variables?: Record<string, unknown>,
+  options: { deadlineMs?: number; signal?: AbortSignal } = {},
 ): Promise<T> {
+  const remaining = Math.min(10_000, (options.deadlineMs ?? Date.now() + 10_000) - Date.now());
+  if (remaining <= 0 || options.signal?.aborted) throw new EzcaterApiError(504, "timeout");
   if (fixtureMode()) return (await readFixture(operationName)) as T;
 
-  const res = await fetch(ENDPOINT, {
+  const timeout = AbortSignal.timeout(Math.max(1, Math.floor(remaining)));
+  const signal = options.signal ? AbortSignal.any([timeout, options.signal]) : timeout;
+  let res: Response;
+  try { res = await fetch(ENDPOINT, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -64,7 +70,10 @@ export async function ezcaterGraphql<T>(
     },
     body: JSON.stringify({ operationName, query, variables: variables ?? {} }),
     cache: "no-store",
-  });
+    signal,
+  }); } catch {
+    throw new EzcaterApiError(502, signal.aborted ? "timeout" : "network_error");
+  }
   if (res.status === 401 || res.status === 403) {
     throw new EzcaterApiError(res.status, "auth_failed", `ezCater auth failed (${res.status})`);
   }
@@ -75,8 +84,10 @@ export async function ezcaterGraphql<T>(
   } catch {
     throw new EzcaterApiError(502, "bad_payload", `ezCater ${operationName}: non-JSON body`);
   }
+  if (body == null || typeof body !== "object" || Array.isArray(body)) throw new EzcaterApiError(502, "bad_payload");
   if (Array.isArray(body.errors) && body.errors.length > 0) {
-    throw new EzcaterApiError(502, "graphql_error", `ezCater ${operationName}: ${JSON.stringify(body.errors).slice(0, 300)}`);
+    // Provider error messages can echo contact values and arguments. Persist codes only.
+    throw new EzcaterApiError(502, "graphql_error");
   }
   return body as T;
 }

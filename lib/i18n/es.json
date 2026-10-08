@@ -4858,5 +4858,18 @@
   "digest.catering.portion.whole": "entera",
   "digestWatch.preview_subject": "CO-OPS: la vista previa de resúmenes está activa pero no se encontró la cuenta del operador",
   "digestWatch.preview_body": "Los resúmenes están en modo vista previa, pero no hay exactamente una cuenta CGS activa con correo. No se envió nada ({day}). Corrige la cuenta o cambia el modo.",
-  "reportRecipients.skip.out_of_scope": "Fuera de sus tiendas"
+  "reportRecipients.skip.out_of_scope": "Fuera de sus tiendas",
+  "catering.ezcater.title": "Pedido de ezCater",
+  "catering.ezcater.event": "Evento (hora de la tienda)",
+  "catering.ezcater.handoff": "Entrega (hora de la tienda)",
+  "catering.ezcater.fulfillment": "Tipo de entrega",
+  "catering.ezcater.payment": "Estado del pago",
+  "catering.ezcater.subtotal": "Subtotal",
+  "catering.ezcater.tax": "Impuesto",
+  "catering.ezcater.tip": "Propina",
+  "catering.ezcater.fees": "Cargos",
+  "catering.ezcater.discounts": "Descuentos",
+  "catering.ezcater.total": "Total",
+  "catering.ezcater.items": "Artículos del pedido",
+  "catering.ezcater.contact": "Contacto"
 }

@@ -52,10 +52,10 @@ it("LRA-228: overlapping/retried runs produce one email and one failure per sile
   const responses = await Promise.all([GET(request()), GET(request({ "x-cron-secret": "test-cron" }))]);
   expect(responses.map((r) => r.status)).toEqual([200, 200]);
   await GET(request());
-  expect(sendEmail).toHaveBeenCalledTimes(6);
+  expect(sendEmail).toHaveBeenCalledTimes(7);
   const failures = vi.mocked(audit).mock.calls.map(([row]) => row).filter((row) => row.action === "cron.failure");
-  expect(failures).toHaveLength(6);
-  expect(new Set(failures.map((row) => row.metadata.job)).size).toBe(6);
+  expect(failures).toHaveLength(7);
+  expect(new Set(failures.map((row) => row.metadata.job)).size).toBe(7);
   expect(failures.every((row) => row.metadata.detector === "job-watch" && row.metadata.expected_by)).toBe(true);
   expect(sendEmail).toHaveBeenCalledWith(expect.objectContaining({ to: "operator@example.com", from: "team@example.com" }));
   expect(vi.mocked(sendEmail).mock.calls[0]![0].text).toContain("Última señal");
@@ -66,7 +66,7 @@ it("LRA-228: an email error is recorded in that job's sole failure row and does 
   vi.mocked(sendEmail).mockResolvedValueOnce({ error: "transport unavailable" });
   expect((await GET(request())).status).toBe(200);
   const failures = vi.mocked(audit).mock.calls.map(([row]) => row).filter((row) => row.action === "cron.failure");
-  expect(failures).toHaveLength(6);
+  expect(failures).toHaveLength(7);
   expect(failures[0]!.metadata.email_error).toBe("transport unavailable");
 });
 
