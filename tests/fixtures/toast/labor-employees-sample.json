@@ -1,0 +1,4 @@
+[
+  { "guid": "emp-ana", "entityType": "RestaurantUser", "externalId": null, "createdDate": "2026-01-02T15:00:00.000+0000", "modifiedDate": "2026-09-01T15:00:00.000+0000", "deleted": false, "deletedDate": null, "firstName": "Ana María", "chosenName": null, "lastName": "López", "email": "ana@example.test", "phoneNumber": "2025550100", "externalEmployeeId": "A1", "jobReferences": [{ "guid": "job-line", "entityType": "RestaurantJob" }], "wageOverrides": [{ "wage": 19.0, "jobReference": { "guid": "job-line" } }] },
+  { "guid": "emp-luis", "entityType": "RestaurantUser", "externalId": null, "createdDate": "2026-01-02T15:00:00.000+0000", "modifiedDate": "2026-09-01T15:00:00.000+0000", "deleted": false, "deletedDate": null, "firstName": "Luis", "chosenName": "Lu", "lastName": "Pérez", "email": "luis@example.test", "phoneNumber": null, "externalEmployeeId": "L2", "jobReferences": [], "wageOverrides": [] }
+]

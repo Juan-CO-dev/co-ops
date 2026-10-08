@@ -73,3 +73,12 @@ it("watches capture independently only while its kill switch is enabled", async 
   expect(jobs).toContain("toast-order-capture");
   expect(rpc).toHaveBeenCalledWith("portal_rate_limit_hit", expect.objectContaining({ p_bucket_key: "job-watch:toast-order-capture:2026-09-10" }));
 });
+
+it("watches the labor pull only while TOAST_LABOR_PULL is on (0224 applied)", async () => {
+  await runJobWatch({ self: "job-watch", now: new Date("2026-09-10T12:00:00Z") });
+  expect(jobs).not.toContain("toast-labor-pull");
+  vi.stubEnv("TOAST_LABOR_PULL", "1");
+  jobs.length = 0;
+  await runJobWatch({ self: "job-watch", now: new Date("2026-09-10T12:00:00Z") });
+  expect(jobs).toContain("toast-labor-pull");
+});

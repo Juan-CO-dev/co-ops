@@ -21,6 +21,7 @@ export async function runJobWatch(opts: { self?: JobName; now?: Date }): Promise
   for (const job of JOBS_REGISTRY) {
     if (job.job === opts.self) continue;
     if (job.job === "toast-order-capture" && (process.env.TOAST_ORDER_CAPTURE !== "1" || process.env.TOAST_FIXTURES === "1")) continue;
+    if (job.job === "toast-labor-pull" && (process.env.TOAST_LABOR_PULL !== "1" || process.env.TOAST_FIXTURES === "1")) continue;
     checked++;
     const [success, failure] = await Promise.all([
       sb.from("audit_log").select("occurred_at").eq("action", "cron.success")
