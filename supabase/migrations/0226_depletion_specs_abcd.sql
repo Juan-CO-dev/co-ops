@@ -1,5 +1,5 @@
 -- AUTHORED ONLY; CC applies sim then prod.
--- 0226: depletion specs A/B/D. No data flips; see SEED-FLIP-45.sql.
+-- 0226: depletion specs A/B/D. No data flips; see docs/seed/seed-46-depletion-specs.sql.
 begin;
 
 alter table public.toast_menu_map

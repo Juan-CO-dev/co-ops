@@ -745,7 +745,8 @@ export interface SalesConsumption {
    *  flattenedOz = production-covered raw SKUs via the item flatten (display/
    *  forecast only). */
   skuConsumed: Array<{ skuId: string; name: string; oz: number; directOz: number; flattenedOz: number; removedOz: number }>;
-  unmappedToastItems: Array<{ name: string; quantity: number; toastItemGuid: string; isModifier: boolean }>;
+  /** isOpenItem: a typed line on the shop's shared open-item guid — resolved by alias, never mapped by guid. */
+  unmappedToastItems: Array<{ name: string; quantity: number; toastItemGuid: string; isModifier: boolean; isOpenItem: boolean }>;
   excludedCount: number;
   suspectedCatering: Array<{ checkGuid: string; diningOption: string | null; totalQty: number; reason: "name" | "quantity" }>;
   /** Modifier lane (spec 2026-07-24): applications counted / subtracted / skipped. */
@@ -882,11 +883,12 @@ export async function deriveSalesConsumptionFrom(locationId: string, businessDat
   const modifierLines = counted.filter((r) => r.parent_selection_guid != null);
 
   const qtyByEntity = new Map<string, { kind: "menu_item" | "item" | "package"; id: string; quantity: number }>();
-  const unmapped = new Map<string, { name: string; quantity: number; isModifier: boolean; toastItemGuid: string }>();
+  const unmapped = new Map<string, { name: string; quantity: number; isModifier: boolean; toastItemGuid: string; isOpenItem: boolean }>();
   function addUnmapped(r: LedgerRow, isModifier: boolean) {
     // Open-item misses retain their actual text; one shared GUID is not one item.
-    const key = `${isModifier}:${r.toast_item_guid}:${openItemGuids.has(r.toast_item_guid) ? r.item_name : ""}`;
-    const u = unmapped.get(key) ?? { name: r.item_name, quantity: 0, isModifier, toastItemGuid: r.toast_item_guid };
+    const isOpenItem = openItemGuids.has(r.toast_item_guid);
+    const key = `${isModifier}:${r.toast_item_guid}:${isOpenItem ? r.item_name : ""}`;
+    const u = unmapped.get(key) ?? { name: r.item_name, quantity: 0, isModifier, toastItemGuid: r.toast_item_guid, isOpenItem };
     u.quantity += Number(r.quantity);
     unmapped.set(key, u);
   }
@@ -1067,13 +1069,13 @@ export async function deriveSalesConsumptionFrom(locationId: string, businessDat
     const parentKey = r.parent_selection_guid == null ? null : selectionKey(r.check_guid, r.parent_selection_guid);
     const parentEnt = parentKey == null ? undefined : entityBySelection.get(parentKey);
     const parentMenuItemId = parentEnt?.kind === "menu_item" ? parentEnt.id : null;
+    // Stats stay one per LINE (as before effects): a 4-cheese No Cheese is one removal, a GF
+    // swap is one deplete + one removal, and portion-needed is listed once per line.
+    const outcome = { ignored: false, portionNeeded: false, removed: false, depleted: false };
     for (const effect of effectsByGuid.get(r.toast_item_guid) ?? [resolved.effect]) {
       const application = applyModifierEffect(graph, effect, parentMenuItemId, qty);
-      if (application.kind === "ignored") { modifierStats.ignored += qty; continue; }
-      if (application.kind === "portion_needed") {
-        modifierStats.portionNeeded.set(r.item_name, (modifierStats.portionNeeded.get(r.item_name) ?? 0) + qty);
-        continue;
-      }
+      if (application.kind === "ignored") { outcome.ignored = true; continue; }
+      if (application.kind === "portion_needed") { outcome.portionNeeded = true; continue; }
       if (application.kind === "sku") {
         if (application.portion.qty !== 0) skuModApplications.push({ skuId: application.targetId, portion: application.portion,
           sign: application.sign, qty: application.qty, itemName: r.item_name });
@@ -1085,9 +1087,12 @@ export async function deriveSalesConsumptionFrom(locationId: string, businessDat
       if (application.kind === "item" && application.removed > 0) {
         removedByItem.set(application.targetId, (removedByItem.get(application.targetId) ?? 0) + application.removed);
       }
-      if (effect.disposition === "remove") modifierStats.removed += qty;
-      else modifierStats.depleted += qty;
+      if (effect.disposition === "remove") outcome.removed = true; else outcome.depleted = true;
     }
+    if (outcome.ignored) modifierStats.ignored += qty;
+    if (outcome.portionNeeded) modifierStats.portionNeeded.set(r.item_name, (modifierStats.portionNeeded.get(r.item_name) ?? 0) + qty);
+    if (outcome.removed) modifierStats.removed += qty;
+    if (outcome.depleted) modifierStats.depleted += qty;
   }
 
   // ── Clamp menu_item whole-sub totals at ≥0, THEN flatten each unit exactly
@@ -1202,7 +1207,7 @@ export async function deriveSalesConsumptionFrom(locationId: string, businessDat
       .filter((r) => r.oz > 0 || r.removedOz > 0)
       .sort((a, b) => b.oz - a.oz),
     unmappedToastItems: [...unmapped.values()]
-      .map((u) => ({ name: u.name, quantity: u.quantity, toastItemGuid: u.toastItemGuid, isModifier: u.isModifier }))
+      .map((u) => ({ name: u.name, quantity: u.quantity, toastItemGuid: u.toastItemGuid, isModifier: u.isModifier, isOpenItem: u.isOpenItem }))
       .sort((a, b) => b.quantity - a.quantity),
     excludedCount: excluded.size,
     diagnostics: {

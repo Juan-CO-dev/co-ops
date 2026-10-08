@@ -28,6 +28,7 @@ const graph = buildRecipeGraph([
   recipe("a", [sku("raw-a"), item("prov", 2), sku("roll", 6)]),
   recipe("b", [sku("raw-b"), item("mozz", 3)]),
   recipe("c", [sku("raw-c")]), recipe("d", [sku("raw-d")]),
+  recipe("pm", [item("prov", 1), item("mozz", 1)]),
 ], new Map(skuIds.map((id) => [id, pack])), new Map<string, MeasureUnitFactor>([["oz", { dimension: "weight", toBaseFactor: 1 }], ["each", { dimension: "count", toBaseFactor: 1 }]]));
 
 function mapping(guid: string, values: Row = {}): Row {
@@ -106,6 +107,14 @@ describe("A: shared projection modifier effects", () => {
       line("n1", "no-cheese", "a1"), line("n2", "no-cheese", "b1"), line("n3", "no-cheese", "c1"));
     expect(result.prepConsumed).toEqual([{ itemId: "prov", name: "prov", units: 2, removedUnits: 2 }, { itemId: "mozz", name: "mozz", units: 0, removedUnits: 3 }]);
     expect(reads.filter((r) => r === "toast_map_effects")).toHaveLength(1);
+  });
+  it("counts one removal per line even when several effects apply (CC review)", async () => {
+    tables.toast_menu_map!.push(mapping("pm", { menu_item_id: "pm" }),
+      mapping("no-cheese", { is_modifier: true, item_id: "prov", disposition: "remove", parent_only: true, portion_qty: 50 }));
+    tables.toast_map_effects = [{ id: "effect", map_id: "map-no-cheese", ordinal: 1, active: true, item_id: "mozz", menu_item_id: null, sku_id: null, disposition: "remove", parent_only: true, portion_qty: 50, portion_unit: null }];
+    const result = await derive(line("p1", "pm"), line("n1", "no-cheese", "p1"));
+    expect(result.prepConsumed.map((r) => [r.itemId, r.removedUnits])).toEqual([["prov", 1], ["mozz", 1]]);
+    expect(result.modifierStats.removed).toBe(1);
   });
   it("GF swap on breadless parent does not steal another sale's roll", async () => {
     swapSetup();
@@ -228,8 +237,8 @@ describe("D: typed open items", () => {
     openSetup();
     const result = await derive(line("o1", "open", null, 2, "Unrecognized one"), line("o2", "open", null, 1, "Unrecognized two"));
     expect(result.unmappedToastItems).toEqual([
-      { name: "Unrecognized one", quantity: 2, toastItemGuid: "open", isModifier: false },
-      { name: "Unrecognized two", quantity: 1, toastItemGuid: "open", isModifier: false },
+      { name: "Unrecognized one", quantity: 2, toastItemGuid: "open", isModifier: false, isOpenItem: true },
+      { name: "Unrecognized two", quantity: 1, toastItemGuid: "open", isModifier: false, isOpenItem: true },
     ]); expect(result.diagnostics?.unmapped_units).toBe(3);
   });
   it("skips ezCater codes, catering descriptions and date-only entries", async () => {

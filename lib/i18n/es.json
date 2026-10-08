@@ -4194,6 +4194,7 @@
   "admin.toastsales.portion_needed_heading": "Modificadores sin porción (aún no cuentan)",
   "admin.toastsales.removed_tag": "restado",
   "admin.toastsales.modifier_tag": "modificador",
+  "admin.toastsales.open_item_hint": "artículo escrito a mano: se empareja por alias, no se mapea aquí",
   "admin.toastsales.menu_tag": "menú",
   "admin.toastsales.package_tag": "paquete",
   "admin.toastsales.raw_tag": "crudo",

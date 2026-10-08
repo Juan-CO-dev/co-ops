@@ -314,11 +314,14 @@ export async function confirmMapping(actor: AuthContext, mapId: string): Promise
   const entityId = row.menu_item_id ?? row.item_id ?? row.package_id ?? row.sku_id ?? null;
   // Supersede competitors claiming this GUID (each guid maps to ONE entity).
   // Same-entity rows are NOT rivals anymore — multi-guid law (0151).
-  const { data: rivals, error: rErr } = await sb.from("toast_menu_map").select("id")
+  const { data: rivals, error: rErr } = await sb.from("toast_menu_map").select("id, disposition")
     .eq("location_id", row.location_id).eq("active", true).neq("id", mapId)
     .eq("toast_item_guid", row.toast_item_guid)
-    .returns<Array<{ id: string }>>();
+    .returns<Array<{ id: string; disposition: string }>>();
   if (rErr) throw new Error(`toast-map rivals: ${rErr.message}`);
+  if ((rivals ?? []).some((r) => r.disposition === "open_item")) {
+    throw new AdminToastMapError(409, "open_item_guid", "Typed (open) items are matched by alias, not mapped by guid");
+  }
   for (const rival of rivals ?? []) {
     const { error, count } = await sb.from("toast_menu_map")
       .update({ active: false }, { count: "exact" }).eq("id", rival.id).eq("active", true);
@@ -564,10 +567,15 @@ export async function manualMap(
   }
 
   // Supersede any active rival claiming this guid at this location.
-  const { data: rivals, error: rErr } = await sb.from("toast_menu_map").select("id")
+  const { data: rivals, error: rErr } = await sb.from("toast_menu_map").select("id, disposition")
     .eq("location_id", input.locationId).eq("active", true).eq("toast_item_guid", input.toastItemGuid)
-    .returns<Array<{ id: string }>>();
+    .returns<Array<{ id: string; disposition: string }>>();
   if (rErr) throw new Error(`toast-map manual rivals: ${rErr.message}`);
+  // The shop's shared typed-item guid carries every open item; mapping it would send all of
+  // them to one entity. Typed items resolve through toast_open_item_aliases instead.
+  if ((rivals ?? []).some((r) => r.disposition === "open_item")) {
+    throw new AdminToastMapError(409, "open_item_guid", "Typed (open) items are matched by alias, not mapped by guid");
+  }
   for (const rival of rivals ?? []) {
     const { error, count } = await sb.from("toast_menu_map")
       .update({ active: false }, { count: "exact" }).eq("id", rival.id).eq("active", true);

@@ -1,8 +1,11 @@
--- CC SIM ONLY: run after 0226 + SEED-FLIP-45.sql. Entire harness rolls back.
+-- CC SIM ONLY: run after 0226 + docs/seed/seed-46-depletion-specs.sql. Entire harness rolls back.
 -- This verifies DB contracts and the data flip; npm test verifies consumption math.
+-- CC 2026-10-08: the sim lacks prod's seed-43 GUIDs (no lunch picks), so seed 46 cannot run there. The schema half
+-- passed on the sim; the data half passed on PROD inside a single rolled-back transaction
+-- (0226 + seed 46 twice + these assertions; 153 audit rows, idempotent).
 -- To verify flip idempotence, execute the flip again in a NEW transaction first:
--- BEGIN; SET LOCAL seed45.target='sim'; <SEED-FLIP-45.sql>; COMMIT;
--- It must emit zero new seed_45 audit rows. Do not reapply migration 0226.
+-- BEGIN; SET LOCAL seed46.target='sim'; <docs/seed/seed-46-depletion-specs.sql>; COMMIT;
+-- It must emit zero new seed_46 audit rows. Do not reapply migration 0226.
 begin;
 do $harness$
 declare
@@ -73,17 +76,17 @@ begin
     where m.active and m.match_status='confirmed' and not m.is_modifier and p.slug='light-lunch' and p.active
       and exists(select 1 from public.catering_package_items l where l.package_id=p.id and l.active
         and l.slot_type='choice' and l.quantity=1 and l.depletion_qty=0.5);
-  if v_n<>2 then raise exception 'Light Lunch mapping count % != 2',v_n; end if;
-  if exists(select 1 from public.audit_log a where a.metadata->>'actor_context'='seed_45'
+  if v_n<>1 then raise exception 'Light Lunch mapping count % != 1 (MEP only)',v_n; end if;
+  if exists(select 1 from public.audit_log a where a.metadata->>'actor_context'='seed_46'
     and (lower(coalesce(a.after_state->>'toast_item_name','')) like '3 foot %'
       or lower(coalesce(a.before_state->>'toast_item_name','')) like '3 foot %'
       or a.resource_id in (select l.id from public.catering_package_items l join public.catering_packages p on p.id=l.package_id
-        where p.slug='three-footer'))) then raise exception 'seed45 unexpectedly touched Three Footer'; end if;
+        where p.slug='three-footer'))) then raise exception 'seed46 unexpectedly touched Three Footer'; end if;
   select count(*) into v_n from public.toast_menu_map where active and match_status='confirmed' and disposition='open_item'
     and toast_item_guid in ('2c3c26f1-87ef-4d86-b760-67c96ddd2ca2','398bbb87-223f-414c-a2b1-960edaf3fa6b');
   if v_n<>2 then raise exception 'open-item marks % != 2',v_n; end if;
   select count(*) into v_n from public.toast_open_item_aliases a where a.active and a.location_id is null
-    and exists(select 1 from public.audit_log x where x.resource_id=a.id and x.metadata->>'actor_context'='seed_45');
+    and exists(select 1 from public.audit_log x where x.resource_id=a.id and x.metadata->>'actor_context'='seed_46');
   if v_n<>18 then raise exception 'alias count % != 18',v_n; end if;
 
   -- Real constraint attempts inside PL/pgSQL exception subtransactions.
@@ -138,6 +141,6 @@ begin
   -- Same text at a specific location is valid and outranks the global alias.
   insert into public.toast_open_item_aliases(location_id,normalized_text,item_id) values(v_location,'harness scoped',v_item);
   insert into public.toast_open_item_aliases(normalized_text,item_id) values('harness scoped',v_item);
-  raise notice 'PASS: 0226 schema, grants, constraints and seed45 data assertions (all rolled back)';
+  raise notice 'PASS: 0226 schema, grants, constraints and seed46 data assertions (all rolled back)';
 end $harness$;
 rollback;

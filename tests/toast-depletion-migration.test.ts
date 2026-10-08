@@ -33,3 +33,14 @@ describe("0222 capture depletion publication", () => {
   // Unresolved prep attribution is diagnostic-only; behavioral coverage lives in
   // toast-capture-materialization.test.ts (CC build-pass-2 ruling).
 });
+
+describe("CC review: the shared open-item guid is never superseded by a guid mapping", () => {
+  const src = readFileSync("lib/admin/toast-map.ts", "utf8");
+  it.each(["manualMap", "confirmMapping"])("%s refuses before it supersedes any rival", (fn) => {
+    const body = src.slice(src.indexOf(`export async function ${fn}(`));
+    const guard = body.indexOf('r.disposition === "open_item"');
+    const supersede = body.indexOf(".update({ active: false }");
+    expect(guard).toBeGreaterThan(0);
+    expect(guard).toBeLessThan(supersede);
+  });
+});

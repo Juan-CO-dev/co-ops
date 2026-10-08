@@ -181,9 +181,10 @@ export function SalesTab({ locationId, canPull }: { locationId: string | null; c
                   <p className="text-sm font-semibold text-co-text">{t("admin.toastsales.unmapped_heading")}</p>
                   <ul className="flex flex-col gap-1 text-sm text-co-text-muted">
                     {report.unmappedToastItems.map((u) => (
-                      <li key={u.toastItemGuid} className="flex flex-wrap items-center gap-2">
+                      <li key={`${u.isModifier}:${u.toastItemGuid}:${u.isOpenItem ? u.name : ""}`} className="flex flex-wrap items-center gap-2">
                         <span>{u.name} × {u.quantity}{u.isModifier ? ` (${t("admin.toastsales.modifier_tag")})` : ""}</span>
-                        {canPull && locationId && (
+                        {u.isOpenItem && <span className="text-xs">{t("admin.toastsales.open_item_hint")}</span>}
+                        {canPull && locationId && !u.isOpenItem && (
                           <>
                             <select
                               aria-label={t("admin.toastsales.map_to_label")}

@@ -4194,6 +4194,7 @@
   "admin.toastsales.portion_needed_heading": "Modifiers needing a portion (not counted yet)",
   "admin.toastsales.removed_tag": "removed",
   "admin.toastsales.modifier_tag": "modifier",
+  "admin.toastsales.open_item_hint": "typed item: matched by alias, not mapped here",
   "admin.toastsales.menu_tag": "menu",
   "admin.toastsales.package_tag": "package",
   "admin.toastsales.raw_tag": "raw",
