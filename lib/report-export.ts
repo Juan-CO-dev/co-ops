@@ -21,7 +21,7 @@ import { OPS_TRENDS_LEVEL, loadTrendSeries, resolveTrendRange, trendLocationAllo
 import { TEAM_VIEW_LEVEL, loadTeamOperatingHealth } from "@/lib/team-metrics";
 import { listWrittenReports } from "@/lib/written-reports";
 import { INSIGHTS_READ_MIN, loadCateringInsightsV2 } from "@/lib/catering/insights";
-import { RECEIVE_MIN, ReceivingError, loadRecentDeliveries } from "@/lib/receiving";
+import { RECEIVE_MIN, ReceivingError, loadDeliveriesForExport } from "@/lib/receiving";
 import { COUNT_READ_MIN, loadOnHand } from "@/lib/counts";
 import { MENU_COSTING_READ_MIN, loadMenuCostingBoard } from "@/lib/admin/menu-costing";
 import { canDoOperationalTask } from "@/lib/operational-task-access";
@@ -135,7 +135,6 @@ async function salesExportTable(auth: AuthContext, params: Params, shop: ShopRef
 }
 /** Bounded like every hub list: written reports page 50 at a time; 40 pages = 2,000 rows max. */
 const WRITTEN_MAX_PAGES = 40;
-const RECEIVING_EXPORT_LIMIT = 1000;
 
 const ORG_WIDE: readonly ExportFamily[] = ["costing"];
 const OPTIONAL_SHOP: readonly ExportFamily[] = ["catering"];
@@ -289,8 +288,8 @@ export async function loadExportTable(auth: AuthContext, family: ExportFamily, p
       case "receiving": {
         if (!lockLocationContext(actorOf(auth), locationId!)) throw new ExportError(403, "location_forbidden");
         if (!(await canDoOperationalTask(auth, locationId!, "receiving"))) throw new ExportError(403, "task_forbidden");
-        const list = await loadRecentDeliveries(auth, locationId!, RECEIVING_EXPORT_LIMIT);
-        return { ...base, rows: receivingRows(list.filter((d) => d.deliveryDate >= range.from && d.deliveryDate <= range.to), shop!) };
+        const list = await loadDeliveriesForExport(auth, locationId!, range);
+        return { ...base, rows: receivingRows(list, shop!) };
       }
       case "counts": {
         if (!lockLocationContext(actorOf(auth), locationId!)) throw new ExportError(403, "location_forbidden");

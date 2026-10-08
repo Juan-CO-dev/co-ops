@@ -25,7 +25,7 @@ export const NAV_LINKS: NavLink[] = [
   { key: "nav.catering", href: "/catering", scoped: true, minLevel: 5 },
   { key: "maintenance.nav_label", href: "/maintenance", scoped: true, minLevel: 3 }, // MAINTENANCE_BASE_LEVEL
   { key: "nav.training", href: "/training", scoped: false },
-  { key: "nav.recipes", href: "/recipes", scoped: false },
+  { key: "nav.recipes", href: "/admin/recipes", scoped: false, minLevel: 6 },
   { key: "nav.profile", href: "/profile", scoped: false },
   { key: "nav.settings", href: "/settings", scoped: false },
   { key: "nav.my_feedback", href: "/my-feedback", scoped: false },

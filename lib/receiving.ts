@@ -989,6 +989,8 @@ async function insertMissingExpectedCredits(
   return drafts.length;
 }
 
+type DeliveryListRow = { id: string; vendor_id: string; delivery_date: string; invoice_number: string | null; received_by: string | null; match_state: DeliveryMatchState; delivery_status: DeliveryStatus; receipt_url: string | null; email_receipt_id: string | null; created_at: string; purchase_order_id: string | null };
+
 export async function loadRecentDeliveries(actor: AuthContext, locationId: string, limit = 20): Promise<DeliveryView[]> {
   requireReceive(actor);
   if (!lockLocationContext(actorLoc(actor), locationId)) throw new ReceivingError(404, "not_found", "Location not found");
@@ -998,24 +1000,47 @@ export async function loadRecentDeliveries(actor: AuthContext, locationId: strin
     .eq("location_id", locationId).order("delivery_date", { ascending: false }).order("created_at", { ascending: false }).limit(limit)
     .returns<Array<{ id: string; vendor_id: string; delivery_date: string; invoice_number: string | null; received_by: string | null; match_state: DeliveryMatchState; delivery_status: DeliveryStatus; receipt_url: string | null; email_receipt_id: string | null; created_at: string; purchase_order_id: string | null }>>();
   if (error) throw new Error(`loadRecentDeliveries: ${error.message}`);
-  const list = rows ?? [];
+  return hydrateDeliveryList(sb, rows ?? []);
+}
+
+/** Export the entire requested date window, never a capped lifetime prefix. */
+export async function loadDeliveriesForExport(
+  actor: AuthContext, locationId: string, range: { from: string; to: string },
+): Promise<DeliveryView[]> {
+  requireReceive(actor);
+  if (!lockLocationContext(actorLoc(actor), locationId)) throw new ReceivingError(404, "not_found", "Location not found");
+  const sb = getServiceRoleClient();
+  const rows = await selectAllRows<DeliveryListRow>((from, to) => sb.from("vendor_deliveries")
+    .select("id, vendor_id, delivery_date, invoice_number, received_by, match_state, delivery_status, receipt_url, email_receipt_id, created_at, purchase_order_id")
+    .eq("location_id", locationId).gte("delivery_date", range.from).lte("delivery_date", range.to)
+    .order("delivery_date", { ascending: false }).order("created_at", { ascending: false }).order("id")
+    .range(from, to).returns<DeliveryListRow[]>(), 500);
+  return hydrateDeliveryList(sb, rows);
+}
+
+async function hydrateDeliveryList(sb: ServiceClient, list: DeliveryListRow[]): Promise<DeliveryView[]> {
   if (list.length === 0) return [];
   const vendorIds = [...new Set(list.map((r) => r.vendor_id))];
   const userIds = [...new Set(list.map((r) => r.received_by).filter((v): v is string => v !== null))];
   const deliveryIds = list.map((r) => r.id);
-  // PO codes for the id-thread column: ONE batched .in() over the distinct linked POs
-  // (never a per-row lookup — loadRecipeGraph law). Empty when nothing on this page is
-  // PO-linked, in which case the query is skipped entirely.
   const poIds = [...new Set(list.map((r) => r.purchase_order_id).filter((v): v is string => v !== null))];
-  const [{ data: vs }, { data: us }, { data: lines }, { data: pos, error: pErr }] = await Promise.all([
-    sb.from("vendors").select("id, name").in("id", vendorIds).returns<Array<{ id: string; name: string }>>(),
-    userIds.length ? sb.from("users").select("id, name").in("id", userIds).returns<Array<{ id: string; name: string }>>() : Promise.resolve({ data: [] as Array<{ id: string; name: string }> }),
-    sb.from("vendor_delivery_items").select("delivery_id").in("delivery_id", deliveryIds).returns<Array<{ delivery_id: string }>>(),
-    poIds.length
-      ? sb.from("purchase_orders").select("id, display_code").in("id", poIds).returns<Array<{ id: string; display_code: string }>>()
-      : Promise.resolve({ data: [] as Array<{ id: string; display_code: string }>, error: null }),
+  // Bound both the request line (UUID chunks) and response size (ordered pages).
+  // All pages must succeed: a failed child read is not a zero-line delivery.
+  async function related<T>(table: string, columns: string, column: string, ids: string[]): Promise<T[]> {
+    const rows: T[] = [];
+    for (let offset = 0; offset < ids.length; offset += 100) {
+      const chunk = ids.slice(offset, offset + 100);
+      rows.push(...await selectAllRows<T>((from, to) => sb.from(table).select(columns)
+        .in(column, chunk).order("id").range(from, to).returns<T[]>(), 500));
+    }
+    return rows;
+  }
+  const [vs, us, lines, pos] = await Promise.all([
+    related<{ id: string; name: string }>("vendors", "id, name", "id", vendorIds),
+    related<{ id: string; name: string }>("users", "id, name", "id", userIds),
+    related<{ delivery_id: string }>("vendor_delivery_items", "id, delivery_id", "delivery_id", deliveryIds),
+    related<{ id: string; display_code: string }>("purchase_orders", "id, display_code", "id", poIds),
   ]);
-  if (pErr) throw new Error(`loadRecentDeliveries purchase_orders: ${pErr.message}`);
   const vName = new Map((vs ?? []).map((v) => [v.id, v.name]));
   const uName = new Map((us ?? []).map((u) => [u.id, u.name]));
   const poCode = new Map((pos ?? []).map((p) => [p.id, p.display_code]));

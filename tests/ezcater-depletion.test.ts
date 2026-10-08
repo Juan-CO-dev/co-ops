@@ -7,10 +7,10 @@ import { loadReconciledSalesWindow } from "@/lib/ezcater/depletion";
 import { loadEffectiveSalesWindow } from "@/lib/toast/effective-depletion";
 import type { getServiceRoleClient } from "@/lib/supabase-server";
 
-const mocks = vi.hoisted(() => ({ day: vi.fn(), graph: vi.fn(), derive: vi.fn() }));
-vi.mock("@/lib/toast/captured-day", () => ({ loadCapturedToastDay: mocks.day }));
+const mocks = vi.hoisted(() => ({ day: vi.fn(), graph: vi.fn(), derive: vi.fn(), context: vi.fn(), window: vi.fn() }));
+vi.mock("@/lib/toast/captured-window", () => ({ loadCapturedToastWindow: mocks.window }));
 vi.mock("@/lib/prep-consumption", () => ({ loadRecipeGraph: mocks.graph }));
-vi.mock("@/lib/catering/toast-sales", () => ({ deriveCapturedSalesConsumption: mocks.derive }));
+vi.mock("@/lib/catering/toast-sales", () => ({ deriveCapturedSalesConsumption: mocks.derive, loadSalesConsumptionContext: mocks.context }));
 type Row = Record<string, unknown>;
 let tables: Record<string, Row[]>;
 let queries: string[];
@@ -40,6 +40,7 @@ const ring = { snapshotId: "snap", orderGuid: "toast", diningOption: "Ezcater", 
 } as CapturedToastOrder;
 const link = { location_id: "shop", business_date: "2026-10-06", toast_snapshot_id: "snap", toast_order_guid: "toast", check_guid: "check" };
 beforeEach(() => {
+  vi.clearAllMocks();
   vi.stubEnv("DEPLETION_SOURCE", "capture");
   vi.stubEnv("EZCATER_DEPLETION_ENABLED", "");
   queries = [];
@@ -56,6 +57,16 @@ beforeEach(() => {
     outputs: [{ outputItemId: "prep", outputMenuItemId: null, yield: 1, ozPerParUnit: null }],
   }], new Map([["sku", { packFormat: null, eachContainerLabel: null, unitsPerPack: null, eachSize: null, eachMeasure: null, avgOzPerEach: null }]]), new Map([["oz", { dimension: "weight", toBaseFactor: 1 }]])));
   mocks.day.mockResolvedValue({ coverage: { runId: "run", finishedAt: "2026-10-07T06:00:00Z" }, orders: [ring] });
+  mocks.context.mockImplementation(async (locationId, graph) => ({ locationId, graph }));
+  mocks.window.mockImplementation(async (_sb, locationId, fromDate, end) => {
+    const days = new Map();
+    for (let date = fromDate; date < end;) {
+      const day = await mocks.day(locationId, date);
+      if (day) days.set(date, day);
+      const next = new Date(`${date}T12:00:00Z`); next.setUTCDate(next.getUTCDate() + 1); date = next.toISOString().slice(0, 10);
+    }
+    return days;
+  });
   mocks.derive.mockImplementation(async (_location, _date, day: CapturedToastDay, links) => {
     const orders = reconciledToastOrders(day.orders, links);
     const oz = orders.filter((o) => o.salesChannel !== "catering").flatMap((o) => o.selections).reduce((sum, s) => sum + s.quantity, 0);
@@ -119,5 +130,43 @@ describe("ezCater authoritative depletion", () => {
   });
   it("permits shadow comparisons with the operational flag OFF", async () => {
     expect((await loadReconciledSalesWindow(db(), window, { includeEzcater: false })).rows[0]!.direct_oz).toBe(0);
+  });
+  it("reuses each shop's graph for Toast attribution and ezCater items/packages across days", async () => {
+    const graphFor = (sku: string) => buildRecipeGraph([{ recipeId: "recipe", batchYield: 1,
+      inputs: [{ componentSkuId: sku, componentItemId: null, quantity: 4, unit: "oz" }],
+      outputs: [{ outputItemId: "prep", outputMenuItemId: null, yield: 1, ozPerParUnit: null }],
+    }], new Map([[sku, { packFormat: null, eachContainerLabel: null, unitsPerPack: null, eachSize: null, eachMeasure: null, avgOzPerEach: null }]]), new Map([["oz", { dimension: "weight", toBaseFactor: 1 }]]));
+    mocks.graph.mockImplementation(async ({ locationId }: { locationId: string }) => graphFor(`sku-${locationId}`));
+    mocks.derive.mockImplementation(async (locationId, _date, _day, _links, context) => {
+      expect(context.locationId).toBe(locationId);
+      return { skuConsumed: [], prepConsumed: [{ itemId: "prep", units: 1 }], unmappedToastItems: [], packageIssues: [],
+        modifierStats: { portionNeeded: [] }, suspectedCatering: [], captureRunId: "run", configDegraded: false, missingPointerCount: 0 };
+    });
+    tables.locations!.push({ id: "second", active: true, toast_restaurant_guid: "second" });
+    tables.ezcater_orders!.push({ ...tables.ezcater_orders![0], id: "ez2", lead_id: "lead2", location_id: "second" });
+    tables.catering_pipeline!.push({ id: "lead2", location_id: "second", stage: "confirmed", lead_source: "ezcater" });
+    tables.ezcater_order_items!.push({ ...tables.ezcater_order_items![0], order_id: "ez2" });
+    tables.ezcater_item_map!.push({ ...tables.ezcater_item_map![0], location_id: "second", item_id: null, package_id: "pack" });
+    tables.catering_package_items = [{ id: "line", package_id: "pack", slot_type: "fixed", item_id: "prep", menu_item_id: null, quantity: 1, active: true }];
+    const result = await loadReconciledSalesWindow(db(), { fromDate: "2026-10-06", untilDateExclusive: "2026-10-08" });
+    expect(mocks.graph.mock.calls).toEqual([[{ locationId: "shop" }], [{ locationId: "second" }]]);
+    expect(mocks.context).toHaveBeenCalledTimes(2);
+    expect(result.rows.filter((row) => row.location_id === "shop").map((row) => [row.sku_id, row.direct_oz]))
+      .toEqual([["sku-shop", 16], ["sku-shop", 4]]);
+    expect(result.rows.filter((row) => row.location_id === "second").map((row) => [row.sku_id, row.direct_oz]))
+      .toEqual([["sku-second", 16], ["sku-second", 4]]);
+  });
+  it("batches 30 days of ezCater items and loads shop config/capture window once", async () => {
+    tables.ezcater_orders = Array.from({ length: 30 }, (_, i) => ({ id: `ez${i}`, snapshot_id: `snapshot${i}`, lead_id: `lead${i}`,
+      location_id: "shop", event_date: `2026-09-${String(i + 1).padStart(2, "0")}`, status: "accepted" }));
+    tables.catering_pipeline = tables.ezcater_orders.map((order) => ({ id: order.lead_id, location_id: "shop", stage: "confirmed", lead_source: "ezcater" }));
+    tables.ezcater_order_items = tables.ezcater_orders.map((order) => ({ ...item, order_id: order.id, snapshot_id: order.snapshot_id, is_current: true }));
+    await loadReconciledSalesWindow(db(), { locationId: "shop", fromDate: "2026-09-01", untilDateExclusive: "2026-10-01" });
+    expect(queries.length).toBeLessThanOrEqual(13);
+    expect(queries.filter((table) => table === "ezcater_order_items")).toHaveLength(1);
+    expect(mocks.window).toHaveBeenCalledTimes(1);
+    expect(mocks.graph).toHaveBeenCalledTimes(1);
+    expect(mocks.context).toHaveBeenCalledTimes(1);
+    expect(mocks.derive).toHaveBeenCalledTimes(30);
   });
 });
