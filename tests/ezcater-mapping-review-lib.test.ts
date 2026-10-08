@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AuthContext } from "@/lib/session";
 import type { RoleCode } from "@/lib/roles";
-import { decideEzcaterMapping, loadEzcaterMappingReview } from "@/lib/admin/ezcater-review";
+import { decideEzcaterMapping, decideEzcaterMappingDirect, dismissEzcaterToastReview, loadEzcaterMappingReview } from "@/lib/admin/ezcater-review";
 import { loadCateringReader } from "@/lib/catering/ezcater-detail";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import { selectAllRows } from "@/lib/supabase-paginate";
@@ -60,8 +60,28 @@ describe("ezCater mapping review authorization", () => {
     expect(rpc).not.toHaveBeenCalled();
   });
   it("allows authorized list reads without step-up", async () => {
-    await expect(loadEzcaterMappingReview(actor(false))).resolves.toEqual({ candidates: [], targets: [] });
+    await expect(loadEzcaterMappingReview(actor(false))).resolves.toEqual({ candidates: [], targets: [], directTargets: [], toastReviews: [] });
     expect(rpc).not.toHaveBeenCalled();
+  });
+  it("queries the package label columns and only open unmatched Toast reviews", async () => {
+    const selects: Record<string, string> = {};
+    const filters: unknown[] = [];
+    const from = (table: string) => {
+      const query = { select: (columns: string) => { selects[table] = columns; return query; },
+        eq: (column: string, value: unknown) => { filters.push([table, column, value]); return query; },
+        is: (column: string, value: unknown) => { filters.push([table, column, value]); return query; },
+        order: () => query, range: () => query, returns: () => query,
+        then: (resolve: (value: { data: never[]; error: null }) => unknown) => Promise.resolve(resolve({ data: [], error: null })) };
+      return query;
+    };
+    vi.mocked(getServiceRoleClient).mockReturnValue({ from, rpc } as unknown as ReturnType<typeof getServiceRoleClient>);
+    vi.mocked(selectAllRows).mockImplementation(async (query) => { await query(0, 999); return []; });
+    await loadEzcaterMappingReview(actor());
+    expect(selects.catering_packages).toBe("id,name:label_en,name_es:label_es,location_id");
+    expect(filters).toContainEqual(["catering_packages", "active", true]);
+    expect(filters).toContainEqual(["ezcater_review_queue", "source", "toast"]);
+    expect(filters).toContainEqual(["ezcater_review_queue", "code", "unmatched_code"]);
+    expect(filters).toContainEqual(["ezcater_review_queue", "resolved_at", null]);
   });
   it("groups repeated line identities at their current shop and excludes a stale transfer candidate", async () => {
     const identity = '["size",[]]';
@@ -87,6 +107,39 @@ describe("ezCater mapping review authorization", () => {
 });
 
 describe("mapping decisions", () => {
+  it.each(["menu_item", "item", "package"])("delegates direct %s approval to SQL", async (kind) => {
+    await decideEzcaterMappingDirect(actor(), review, kind, target);
+    expect(rpc).toHaveBeenCalledWith("decide_ezcater_mapping_direct", {
+      p_review_id: review, p_entity_kind: kind, p_entity_id: target, p_actor_id: "actor",
+    });
+  });
+  it.each(["not_ezcater", "duplicate", "test", "other"])("delegates %s dismissal atomically with its reason", async (reason) => {
+    await dismissEzcaterToastReview(actor(), review, reason, "  reviewed fixture  ");
+    expect(rpc).toHaveBeenCalledWith("dismiss_ezcater_toast_review", {
+      p_review_id: review, p_reason: reason, p_note: "reviewed fixture", p_actor_id: "actor",
+    });
+  });
+  it.each<RoleCode>(["gm", "agm", "prep_mgr", "social_media_mgr", "shift_lead", "key_holder", "employee"])("refuses direct approval and dismissal for %s", async (role) => {
+    vi.mocked(loadCateringReader).mockResolvedValue({ role, active: true, locations: [] });
+    await expect(decideEzcaterMappingDirect(actor(), review, "item", target)).rejects.toMatchObject({ status: 403 });
+    await expect(dismissEzcaterToastReview(actor(), review, "test", null)).rejects.toMatchObject({ status: 403 });
+    expect(rpc).not.toHaveBeenCalled();
+  });
+  it.each<RoleCode>(["catering_mgr", "moo", "owner", "cgs"])("allows dismissal for fresh %s", async (role) => {
+    vi.mocked(loadCateringReader).mockResolvedValue({ role, active: true, locations: [] });
+    await dismissEzcaterToastReview(actor(), review, "test", null);
+    expect(rpc).toHaveBeenCalledOnce();
+  });
+  it("requires step-up and validates new decision payloads before SQL", async () => {
+    await expect(decideEzcaterMappingDirect(actor(false), review, "item", target)).rejects.toMatchObject({ code: "step_up_required" });
+    await expect(dismissEzcaterToastReview(actor(false), review, "test", null)).rejects.toMatchObject({ code: "step_up_required" });
+    await expect(decideEzcaterMappingDirect(actor(), review, "sku", target)).rejects.toMatchObject({ status: 400 });
+    await expect(decideEzcaterMappingDirect(actor(), "bad", "item", target)).rejects.toMatchObject({ status: 400 });
+    await expect(dismissEzcaterToastReview(actor(), review, "other", " ")).rejects.toMatchObject({ status: 400 });
+    await expect(dismissEzcaterToastReview(actor(), review, "unknown", null)).rejects.toMatchObject({ status: 400 });
+    await expect(dismissEzcaterToastReview(actor(), review, "test", "a".repeat(501))).rejects.toMatchObject({ status: 400 });
+    expect(rpc).not.toHaveBeenCalled();
+  });
   it.each([ ["approve", target], ["ignore", null] ] as const)("delegates %s atomically to the audited SQL authority", async (decision, targetId) => {
     await decideEzcaterMapping(actor(), review, decision, targetId);
     expect(rpc).toHaveBeenCalledOnce();
