@@ -14,7 +14,15 @@ export interface EzcaterApplyResult {
 }
 
 function missingApply(error: { code?: string } | null): boolean {
-  return error?.code === "PGRST202" || error?.code === "42883";
+  return !!error?.code && ["PGRST202", "42883", "42P01", "42703", "PGRST204", "PGRST205"].includes(error.code);
+}
+
+/** 0223 rejects reassigned orders before 0225 exists. Probe without writing. */
+async function assertReassignmentSchema(sb: ReturnType<typeof getServiceRoleClient>, error: { message?: string } | null): Promise<void> {
+  if (error?.message !== "location_mismatch") return;
+  const probe = await sb.from("ezcater_orders").select("location_manual_override").limit(0)
+    .abortSignal(AbortSignal.timeout(1_000));
+  if (missingApply(probe.error)) throw new Error("ezcater_schema_unavailable");
 }
 
 function auditApplied(result: EzcaterApplyResult, providerUuid: string): void {
@@ -46,16 +54,18 @@ export async function syncEzcaterOrder(providerUuid: string, catererUuid: string
   const sb = getServiceRoleClient();
   const signal = options.signal ?? AbortSignal.timeout(25_000);
   const eventKey = EZCATER_ORDER_EVENT_KEYS.find((k) => k === options.eventKey) ?? null;
+  const locationObservedAt = new Date().toISOString();
   try {
     const snapshot = await fetchEzcaterOrder(providerUuid, { deadlineMs: options.deadlineMs, signal });
-    if (!snapshot.catererUuid || snapshot.catererUuid !== catererUuid) throw new Error("location_mismatch");
+    if (!snapshot.catererUuid) throw new Error("location_mismatch");
     // Normalizer fixes property order. Transport timestamps never enter this digest.
     const digest = createHash("sha256").update(JSON.stringify({ snapshot, eventKey })).digest("hex");
     const { data, error } = await sb.rpc("apply_ezcater_order", {
-      p_provider_uuid: providerUuid, p_caterer_uuid: catererUuid,
-      p_snapshot: snapshot, p_digest: digest, p_event_key: eventKey, p_error: null,
+      p_provider_uuid: providerUuid, p_caterer_uuid: snapshot.catererUuid,
+      p_snapshot: { ...snapshot, locationObservedAt }, p_digest: digest, p_event_key: eventKey, p_error: null,
     }).abortSignal(signal);
     if (missingApply(error)) throw new Error("ezcater_schema_unavailable");
+    await assertReassignmentSchema(sb, error);
     if (error || !data) throw new Error("apply_failed");
     const result = data as EzcaterApplyResult;
     auditApplied(result, providerUuid);
@@ -73,6 +83,7 @@ export async function syncEzcaterOrder(providerUuid: string, catererUuid: string
       p_snapshot: null, p_digest: null, p_event_key: eventKey, p_error: code,
     }).abortSignal(AbortSignal.timeout(1_000));
     if (missingApply(saved.error)) throw new Error("ezcater_schema_unavailable");
+    await assertReassignmentSchema(sb, saved.error);
     if (saved.error || !saved.data) throw new Error("apply_failed");
     const result = saved.data as EzcaterApplyResult;
     auditApplied(result, providerUuid);

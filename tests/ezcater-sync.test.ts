@@ -42,9 +42,10 @@ it("stores a retry code and original lifecycle event when provider fetch fails",
   expect(JSON.stringify(rpc.mock.calls)).not.toContain("PRIVATE CUSTOMER");
 });
 
-it("does not apply an order from a different caterer", async () => {
-  expect(await syncEzcaterOrder(uuid, "foreign")).toMatchObject({ result: "error:location_mismatch" });
-  expect(rpc.mock.calls[0]?.[1].p_snapshot).toBeNull();
+it("uses freshly fetched caterer on reassignment; the RPC binds it to an active shop", async () => {
+  expect(await syncEzcaterOrder(uuid, "former-caterer")).toMatchObject({ result: "refreshed" });
+  expect(rpc.mock.calls[0]?.[1]).toMatchObject({ p_caterer_uuid: "caterer" });
+  expect(rpc.mock.calls[0]?.[1].p_snapshot.locationObservedAt).toBeTruthy();
 });
 
 it("failed retry persistence propagates for webhook retry", async () => {
@@ -104,4 +105,24 @@ it("missing RPC after failed provider fetch still requests deployment retry", as
   vi.mocked(fetchEzcaterOrder).mockRejectedValue(new EzcaterApiError(502, "network_error"));
   rpc.mockImplementation(() => ({ abortSignal: async () => ({ error: { code: "PGRST202" } }) }));
   await expect(syncEzcaterOrder(uuid, "caterer", { eventKey: "cancelled" })).rejects.toThrow("ezcater_schema_unavailable");
+});
+
+it.each([false, true])("0223 location_mismatch without 0225 requests retry without a 500 loop (provider failure %s)", async (fetchFails) => {
+  if (fetchFails) vi.mocked(fetchEzcaterOrder).mockRejectedValue(new EzcaterApiError(502, "network_error"));
+  rpc.mockImplementation(() => ({ abortSignal: async () => ({ data: null, error: { code: "P0001", message: "location_mismatch" } }) }));
+  const probe = { select: vi.fn(() => probe), limit: vi.fn(() => probe), abortSignal: vi.fn(async () => ({ error: { code: "42703" } })) };
+  const from = vi.fn(() => probe);
+  vi.mocked(getServiceRoleClient).mockReturnValue({ rpc, from } as unknown as ReturnType<typeof getServiceRoleClient>);
+  await expect(syncEzcaterOrder(uuid, "caterer")).rejects.toThrow("ezcater_schema_unavailable");
+  expect(rpc).toHaveBeenCalledTimes(1);
+  expect(from).toHaveBeenCalledWith("ezcater_orders");
+  expect(probe.select).toHaveBeenCalledWith("location_manual_override");
+  expect(probe.limit).toHaveBeenCalledWith(0);
+});
+
+it("does not call a genuine 0225 identity mismatch missing schema", async () => {
+  rpc.mockImplementation(() => ({ abortSignal: async () => ({ data: null, error: { code: "P0001", message: "location_mismatch" } }) }));
+  const probe = { select: () => probe, limit: () => probe, abortSignal: async () => ({ error: null }) };
+  vi.mocked(getServiceRoleClient).mockReturnValue({ rpc, from: () => probe } as unknown as ReturnType<typeof getServiceRoleClient>);
+  await expect(syncEzcaterOrder(uuid, "caterer")).rejects.toThrow("apply_failed");
 });

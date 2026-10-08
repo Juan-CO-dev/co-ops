@@ -19,6 +19,7 @@ import { loadPerishableSurplus, SURPLUS_READ_MIN } from "@/lib/catering/surplus"
 import { etCalendarDate, etYmdMinusDays } from "@/lib/operational-day";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { AlertPill } from "@/components/ui/AlertPill";
+import { canTransferCatering } from "@/lib/catering/transfers-shared";
 
 const EDITORS: { id: string; i18nKey: TranslationKey; href: string; minLevel: number }[] = [
   { id: "packages",    i18nKey: "admin.catering.hub.packages",    href: "/admin/catering/packages",    minLevel: 6 },
@@ -69,6 +70,9 @@ export default async function AdminCateringHubPage() {
         subtitle={serverT(lang, "admin.catering.subtitle")}
       />
       <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+        {canTransferCatering(auth.user.role) && <Link href="/admin/catering/ezcater-review" className="co-card co-card-interactive p-4 font-semibold text-co-text">
+          {serverT(lang, "admin.ezcaterReview.title")}
+        </Link>}
         {visible.map((e) => (
           <Link key={e.id} href={e.href} className="co-card co-card-interactive flex items-center justify-between gap-2 p-4 text-co-text">
             <span className="font-semibold">{serverT(lang, e.i18nKey)}</span>
