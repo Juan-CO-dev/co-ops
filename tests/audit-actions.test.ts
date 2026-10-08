@@ -184,6 +184,18 @@ describe("0220 report digests — registered before any caller", () => {
   });
 });
 
+describe("exports PR — registered before any caller", () => {
+  it.each(["report.export", "report_package.send"])("%s is non-destructive (a read / a system send)", (action) => {
+    expect(NON_DESTRUCTIVE_ACTIONS).toContain(action);
+    expect(isDestructive(action)).toBe(false);
+  });
+
+  it("reports.bulk_export is still reserved, not reused", () => {
+    expect(RESERVED_ACTIONS).toContain("reports.bulk_export");
+    expect(NON_DESTRUCTIVE_ACTIONS).not.toContain("reports.bulk_export");
+  });
+});
+
 describe("the type is the primary guard", () => {
   it("rejects an unlisted action at COMPILE time", () => {
     const ok: AuditAction = "product.set_active";
