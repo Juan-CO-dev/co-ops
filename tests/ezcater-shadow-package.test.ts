@@ -36,7 +36,7 @@ const signal = new AbortController().signal;
 
 it("multiplies fixed package composition by the sold line quantity", async () => {
   expect(await packageShadowAmounts(client([fixed]), graph, "package", 3, "new", "2026-10-08", [], [], signal))
-    .toEqual([{ sku_id: "filling", sales_oz: 24, suppressed_oz: 0, shadow_oz: 24 }]);
+    .toEqual([{ sku_id: "filling", sales_oz: 24, suppressed_oz: 0, shadow_oz: 24, flattened_oz: 24 }]);
 });
 
 it("uses an even mix of all enabled choice options, including non-classics, without halving whole-sub slots", async () => {
@@ -47,8 +47,8 @@ it("uses an even mix of all enabled choice options, including non-classics, with
   const result = await packageShadowAmounts(client([fixed, choice], options), graph, "package", 3, "new", "2026-10-08", [], [], signal);
   // Fixed: 6 prep units. Choice: 12 whole units / 2 options = 6 each.
   expect(result).toEqual(expect.arrayContaining([
-    { sku_id: "filling", sales_oz: 72, suppressed_oz: 0, shadow_oz: 72 },
-    { sku_id: "bread", sales_oz: 12, suppressed_oz: 0, shadow_oz: 12 },
+    { sku_id: "filling", sales_oz: 72, suppressed_oz: 0, shadow_oz: 72, flattened_oz: 72 },
+    { sku_id: "bread", sales_oz: 12, suppressed_oz: 0, shadow_oz: 12, flattened_oz: 0 },
   ]));
   expect(result).toHaveLength(2);
 });
@@ -59,8 +59,8 @@ it("a late transfer suppresses package prep from the old shop but preserves raw 
   const transfers = [{ occurred_at: "2026-10-07T04:00:00Z", metadata: { from_location_id: "old", to_location_id: "new" } }];
   const result = await packageShadowAmounts(client([menu]), graph, "package", 3, "new", "2026-10-08", production, transfers, signal);
   expect(result).toEqual(expect.arrayContaining([
-    { sku_id: "filling", sales_oz: 12, suppressed_oz: 12, shadow_oz: 0 },
-    { sku_id: "bread", sales_oz: 6, suppressed_oz: 0, shadow_oz: 6 },
+    { sku_id: "filling", sales_oz: 12, suppressed_oz: 12, shadow_oz: 0, flattened_oz: 12 },
+    { sku_id: "bread", sales_oz: 6, suppressed_oz: 0, shadow_oz: 6, flattened_oz: 0 },
   ]));
   const early = [{ ...transfers[0]!, occurred_at: "2026-10-07T03:59:59Z" }];
   const beforeCutoff = await packageShadowAmounts(client([menu]), graph, "package", 3, "new", "2026-10-08", production, early, signal);

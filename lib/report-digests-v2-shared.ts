@@ -18,6 +18,7 @@ import { cutoffForOrderDay, cutoffMinutes, type CutoffRow, type RhythmRow, type 
 import { etDayFromDate } from "@/lib/et-day-shared";
 import { addDays, etClock, etWallTime } from "@/lib/report-digests-shared";
 import type { LaborSummary } from "@/lib/toast/labor-shared";
+import type { NotInToastOrder } from "@/lib/catering/not-in-toast-shared";
 
 /** A loaded area: the value, a source that is not there (yet), or a read that failed. */
 export type Loaded<T> = { kind: "ok"; value: T } | { kind: "unavailable"; reason: string } | { kind: "error" };
@@ -138,6 +139,8 @@ export interface SalesFacts {
 // ── 1 + 7. Catering money (0195 split) and tomorrow ──────────────────────────────────────────
 
 export interface CateringNightFacts {
+  /** Unlinked ezCater orders for D+1 at this shop, captured at compose time. */
+  toRingInToast?: NotInToastOrder[];
   /** Events dated D at the shop: the 0195 split by real stage. Never added to POS net. */
   day: { orders: number; completedCents: number; confirmedCents: number };
   /** Booked (confirmed/out) for D+1. */

@@ -13,11 +13,14 @@ export interface LinkOrder { id: string; location_id: string; event_date: string
 export interface LinkSelection { location_id: string; business_date: string; order_guid: string; snapshot_id: string; check_guid: string; selection_guid: string; codes: string[] }
 export function matchSelection(selection: LinkSelection, orders: LinkOrder[]) {
   const codes = new Set(selection.codes.map(normalizeOrderCode));
-  const candidates = orders.filter((o) => o.location_id === selection.location_id && o.event_date &&
-    Math.abs(Date.parse(o.event_date) - Date.parse(selection.business_date)) <= 86_400_000 &&
+  const sameCode = orders.filter((o) => o.location_id === selection.location_id && o.event_date &&
     o.order_number && codes.has(normalizeOrderCode(o.order_number)));
+  const daysAfter = (o: LinkOrder) => (Date.parse(selection.business_date) - Date.parse(o.event_date!)) / 86_400_000;
+  const onTime = sameCode.filter((o) => Math.abs(daysAfter(o)) <= 1);
+  // Rule order is significant: a late code never steals an on-time match.
+  const candidates = onTime.length ? onTime : sameCode.filter((o) => daysAfter(o) >= 2 && daysAfter(o) <= 7);
   return { orderId: candidates.length === 1 ? candidates[0]!.id : null,
-    candidates: candidates.map((o) => o.id), reason: candidates.length === 1 ? "normalized_code" : candidates.length ? "ambiguous_code" : "unmatched_code" };
+    candidates: candidates.map((o) => o.id), reason: candidates.length === 1 ? (onTime.length ? "normalized_code" : "late_code") : candidates.length ? "ambiguous_code" : "unmatched_code" };
 }
 export interface ItemIdentity { provider_item_uuid: string | null; menu_item_size_id: string | null; pos_item_id: string | null; name: string; options?: unknown[] }
 export function itemIdentity(item: ItemIdentity): string | null {
@@ -55,7 +58,7 @@ export function productionLocations(locationId: string, eventDate: string, trans
   }
   return locations;
 }
-export interface ShadowAmount { sku_id: string; sales_oz: number; suppressed_oz: number; shadow_oz: number }
+export interface ShadowAmount { sku_id: string; sales_oz: number; suppressed_oz: number; shadow_oz: number; flattened_oz: number }
 /** Comparison only. D-1 preparation counts at its actual shop; no production is moved. */
 export function shadowAmounts(graph: RecipeGraph, target: Pick<ToastMap, "item_id" | "menu_item_id">,
   quantity: number, locationId: string, eventDate: string, productions: ProductionEvidence[], transfers: TransferEvidence[] = []): ShadowAmount[] {
@@ -64,14 +67,15 @@ export function shadowAmounts(graph: RecipeGraph, target: Pick<ToastMap, "item_i
   const produced = new Set(productions.filter((p) => locations.has(p.location_id) &&
     [eventDate, etYmdMinusDays(eventDate, 1)].includes(etCalendarDate(p.produced_at))).map((p) => p.output_item_id));
   const amounts = new Map<string, ShadowAmount>();
-  function add(sku_id: string, amount: number, suppressed: boolean) {
-    const r = amounts.get(sku_id) ?? { sku_id, sales_oz: 0, suppressed_oz: 0, shadow_oz: 0 };
+  function add(sku_id: string, amount: number, suppressed: boolean, flattened = false) {
+    const r = amounts.get(sku_id) ?? { sku_id, sales_oz: 0, suppressed_oz: 0, shadow_oz: 0, flattened_oz: 0 };
     r.sales_oz += amount; r.suppressed_oz += suppressed ? amount : 0; r.shadow_oz += suppressed ? 0 : amount;
+    r.flattened_oz += flattened ? amount : 0;
     amounts.set(sku_id, r);
   }
   const items = target.item_id ? new Map([[target.item_id, 1]]) : target.menu_item_id ? firstLevelItemConsumption(graph, target.menu_item_id) : new Map<string, number>();
   if (target.menu_item_id) for (const [sku, oz] of perUnitDirectSkuOzForMenuItem(graph, target.menu_item_id)) add(sku, oz * quantity, false);
   for (const [item, units] of items) for (const row of perUnitSkuAttributionsForItem(graph, item))
-    add(row.skuId, row.oz * units * quantity, row.itemPath.some((id) => produced.has(id)));
+    add(row.skuId, row.oz * units * quantity, row.itemPath.some((id) => produced.has(id)), true);
   return [...amounts.values()];
 }

@@ -5,7 +5,7 @@ import { runOrderCapture } from "@/lib/toast/capture-job";
 import { materializeCapturedDepletion } from "@/lib/toast/depletion";
 import { completeElapsedCateringEvents } from "@/lib/catering/system-intake";
 import { refreshKnownEzcaterOrders } from "@/lib/ezcater/refresh";
-import { materializeEzcaterShadow } from "@/lib/ezcater/pass2";
+import { materializeEzcaterReconciliation } from "@/lib/ezcater/reconcile";
 import { etCalendarDate, etYmdMinusDays } from "@/lib/operational-day";
 import { pullSalesForAllLocations, materializeDailyDepletion } from "@/lib/catering/toast-sales";
 import { loadDepletionWatermark } from "@/lib/counts";
@@ -18,6 +18,15 @@ export async function runToastSalesPull(opts: { businessDate: string; deadlineAt
   const { businessDate } = opts;
   const deadlineAt = opts.deadlineAt ?? Date.now() + 300_000;
   const captureMode = process.env.DEPLETION_SOURCE === "capture";
+  const ezcaterEnabled = process.env.EZCATER_DEPLETION_ENABLED === "1";
+  if (ezcaterEnabled && !captureMode) throw new Error("ezcater_depletion_requires_capture");
+  let ezcaterShadow = { processed: 0, failed: 0, deferred: false };
+  const reconcile = async () => {
+    try {
+      const result = await materializeEzcaterReconciliation(etYmdMinusDays(businessDate, 7), businessDate, Math.min(deadlineAt, Date.now() + 60_000));
+      ezcaterShadow = { ...result, deferred: result.deferred || "skipped" in result };
+    } catch { ezcaterShadow.failed++; }
+  };
   const dates = [businessDate, etYmdMinusDays(businessDate, 1), etYmdMinusDays(businessDate, 2)];
   const results: { locationId: string; ok: boolean; error?: string }[] = [];
   const depletionRows: Record<string, number> = {};
@@ -66,6 +75,8 @@ export async function runToastSalesPull(opts: { businessDate: string; deadlineAt
     if (locations.error) throw new Error("capture_location_unavailable");
     const ids = (locations.data ?? []).map((r: { id: string }) => r.id);
     capture = await runOrderCapture(ids, businessDate, "cron", dates, Math.max(0, deadlineAt - Date.now()), opts.signal);
+    // PASS 3 pars must see this capture's links, including late code/batch matches.
+    if (ezcaterEnabled) await reconcile();
     const completed = new Set<string>();
     for (const date of dates) {
       for (const locationId of ids) {
@@ -82,6 +93,7 @@ export async function runToastSalesPull(opts: { businessDate: string; deadlineAt
     // T-2/T-3 are capture repairs only. Pars are computed once, for T-1.
     for (const locationId of ids) {
       if (!completed.has(`${locationId}:${businessDate}`)) continue;
+      if (ezcaterEnabled && (ezcaterShadow.failed || ezcaterShadow.deferred)) { parRunFailures++; continue; }
       try {
         parRows[`${locationId}:${businessDate}`] = (await runParShadowForLocation(locationId, businessDate)).rows;
       } catch { parRunFailures++; }
@@ -91,15 +103,12 @@ export async function runToastSalesPull(opts: { businessDate: string; deadlineAt
       results.push({ locationId, ok, ...(!ok ? { error: "capture_day_incomplete" } : {}) });
     }
   }
-  let ezcaterShadow = { processed: 0, failed: 0, deferred: false };
-  try {
-    ezcaterShadow = await materializeEzcaterShadow(etYmdMinusDays(businessDate, 2), businessDate, Math.min(deadlineAt, Date.now() + 20_000));
-  } catch { ezcaterShadow.failed++; }
-  // This additive shadow has its own health signal; it cannot fail operational sales.
+  if (!ezcaterEnabled) await reconcile();
+  // OFF shadow is independent; enabled reconciliation gates operational pars.
   const heartbeatBudget = captureBudget(1_000);
   try {
     await heartbeatBudget.wait(() => audit({ actorId: null, actorRole: null,
-      action: ezcaterShadow.failed ? "cron.failure" : "cron.success",
+      action: ezcaterShadow.failed || ezcaterShadow.deferred ? "cron.failure" : "cron.success",
       resourceTable: "cron", resourceId: null,
       metadata: { job: "ezcater-shadow", business_date: businessDate, ...ezcaterShadow },
       ipAddress: null, userAgent: null }));
@@ -107,6 +116,7 @@ export async function runToastSalesPull(opts: { businessDate: string; deadlineAt
   finally { heartbeatBudget.close(); }
   const perLocationFailures = results.filter((r) => !r.ok).length;
   const healthy = (!captureMode || (!capture.skipped && capture.failures === 0)) && perLocationFailures === 0
+    && (!ezcaterEnabled || (!ezcaterShadow.failed && !ezcaterShadow.deferred))
     && depletionFailures === 0 && parRunFailures === 0 && elapsedFailed === 0 && elapsedError === null;
   const metadata = {
     job: "toast-sales-pull", source: captureMode ? "capture" : "legacy", business_date: businessDate, dates: captureMode ? dates : [businessDate],

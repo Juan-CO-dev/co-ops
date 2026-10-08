@@ -19,6 +19,7 @@ import {
   type ShopV2Facts,
 } from "@/lib/report-digests-v2-shared";
 import { etWallTime } from "@/lib/report-digests-shared";
+import { toastRingLines } from "@/lib/report-digests-toast-shared";
 import { cutoffMinutes } from "@/lib/vendor-rhythm-shared";
 import type { DigestLine, DigestSection, DigestTone } from "@/lib/report-digests-compose";
 
@@ -382,6 +383,7 @@ export interface V2Extras {
 export function composeV2Sections(args: { shopName: string; locationId: string; day: string; v: ShopV2Facts; extras: V2Extras; prefix: boolean }, language: Language, baseUrl: string): DigestSection[] {
   const c: Ctx = { t: translator(language), language, baseUrl, locationId: args.locationId, day: args.day };
   const title = (key: TranslationKey, params?: Params) => (args.prefix ? `${args.shopName} · ` : "") + c.t(key, params);
+  const toRing = toastRingLines(args.v.catering.kind === "ok" ? args.v.catering.value.toRingInToast ?? [] : [], args.locationId, args.v.lookahead, language, baseUrl);
   return [
     { title: title("digest.v2.section.headline"), lines: headlineLines(c, args.v) },
     { title: title("digest.v2.section.ordering"), lines: orderingLines(c, args.v) },
@@ -392,6 +394,7 @@ export function composeV2Sections(args: { shopName: string; locationId: string; 
     ...(args.v.labor ? [{ title: title("digest.v2.section.labor"), lines: laborLines(c, args.v) }] : []),
     { title: title("digest.v2.section.people"), lines: peopleLines(c, args.v, args.extras.who, args.extras.pmLine) },
     { title: title("digest.v2.section.tomorrow", { date: formatDateLabel(args.v.lookahead, language) }), lines: tomorrowLines(c, args.v) },
+    ...(toRing.length > 0 ? [{ title: title("digest.catering.to_ring.tomorrow"), lines: toRing }] : []),
   ];
 }
 

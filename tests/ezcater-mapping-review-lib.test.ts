@@ -60,7 +60,7 @@ describe("ezCater mapping review authorization", () => {
     expect(rpc).not.toHaveBeenCalled();
   });
   it("allows authorized list reads without step-up", async () => {
-    await expect(loadEzcaterMappingReview(actor(false))).resolves.toEqual({ candidates: [], targets: [], directTargets: [], toastReviews: [] });
+    await expect(loadEzcaterMappingReview(actor(false))).resolves.toEqual({ candidates: [], targets: [], directTargets: [], toastReviews: [], reconciliationReviews: [] });
     expect(rpc).not.toHaveBeenCalled();
   });
   it("queries the package label columns and only open unmatched Toast reviews", async () => {
@@ -78,6 +78,7 @@ describe("ezCater mapping review authorization", () => {
     vi.mocked(selectAllRows).mockImplementation(async (query) => { await query(0, 999); return []; });
     await loadEzcaterMappingReview(actor());
     expect(selects.catering_packages).toBe("id,name:label_en,name_es:label_es,location_id");
+    expect(selects.ezcater_reconciliation_status).toBe("order_id,location_id,event_date,order_number,status,rule");
     expect(filters).toContainEqual(["catering_packages", "active", true]);
     expect(filters).toContainEqual(["ezcater_review_queue", "source", "toast"]);
     expect(filters).toContainEqual(["ezcater_review_queue", "code", "unmatched_code"]);
@@ -103,6 +104,20 @@ describe("ezCater mapping review authorization", () => {
       name: "Sub", size: "size", lineCount: 2, suggestedId: target }]);
     expect(JSON.stringify(result)).not.toContain("PRIVATE CUSTOMER");
     expect(JSON.stringify(result)).not.toContain("old-review");
+  });
+  it("lists all reconciled orders even after their review rows auto-resolve", async () => {
+    vi.mocked(selectAllRows)
+      .mockResolvedValueOnce([]).mockResolvedValueOnce([])
+      .mockResolvedValueOnce([{ id: "order", location_id: "shop", order_number: "ABC123" }])
+      .mockResolvedValueOnce([{ id: "shop", name: "Current shop" }])
+      .mockResolvedValueOnce([]).mockResolvedValueOnce([]).mockResolvedValueOnce([])
+      .mockResolvedValueOnce([]).mockResolvedValueOnce([])
+      .mockResolvedValueOnce([{ order_id: "order", location_id: "shop", order_number: "ABC123",
+        event_date: "2026-10-07", status: "amount_mismatch", rule: "daily_batch" }]);
+    const result = await loadEzcaterMappingReview(actor());
+    expect(result.toastReviews).toEqual([]);
+    expect(result.reconciliationReviews).toEqual([{ order_id: "order", location_id: "shop", order_number: "ABC123",
+      event_date: "2026-10-07", status: "amount_mismatch", rule: "daily_batch", locationName: "Current shop" }]);
   });
 });
 

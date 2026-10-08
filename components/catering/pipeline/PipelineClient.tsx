@@ -15,12 +15,15 @@ import { EzcaterDetail } from "./EzcaterDetail";
 import type { EzcaterOrderDetail } from "@/lib/catering/ezcater-detail-shared";
 import { humanEzcaterNotes } from "@/lib/catering/ezcater-detail-shared";
 import { postJson, resolveErrorKey } from "./shared";
+import { NotInToast, NotInToastChip } from "./NotInToast";
+import type { PipelineToastOrder } from "@/lib/catering/not-in-toast";
 
 interface LocationOpt {
   id: string;
   name: string;
 }
 interface Props {
+  notInToast: PipelineToastOrder[] | null;
   staff: AssignableStaff[];
   leads: PipelineLead[];
   followUps: PipelineLead[];
@@ -61,9 +64,10 @@ function stageKey(s: PipelineStage): TranslationKey {
   return `catering.pipeline.stage.${s}` as TranslationKey;
 }
 
-export function PipelineClient({ staff, leads, followUps, locations, createLocations, actorLevel, canTransfer, writeMin, searchQuery, results }: Props) {
+export function PipelineClient({ notInToast, staff, leads, followUps, locations, createLocations, actorLevel, canTransfer, writeMin, searchQuery, results }: Props) {
   const { t, language } = useTranslation();
   const canWrite = actorLevel >= writeMin;
+  const pendingIds = new Set((notInToast ?? []).flatMap((r) => r.lead_id ? [r.lead_id] : []));
 
   const money = (cents: number | null) => (cents == null ? null : formatCents(cents, language));
 
@@ -92,10 +96,11 @@ export function PipelineClient({ staff, leads, followUps, locations, createLocat
     <div className="mt-4 space-y-6">
       {/* Search box — always visible */}
       <SearchBox searchQuery={searchQuery} />
+      <NotInToast rows={notInToast} locations={locations} />
 
       {results != null ? (
         /* SEARCH MODE */
-        <SearchResults results={results} searchQuery={searchQuery} money={money} />
+        <SearchResults results={results} searchQuery={searchQuery} money={money} pendingIds={pendingIds} />
       ) : (
         /* BOARD MODE */
         <>
@@ -149,7 +154,7 @@ export function PipelineClient({ staff, leads, followUps, locations, createLocat
                   {byStage[stage].length === 0 ? (
                     <p className="px-1 text-xs text-co-text-muted">{t("catering.pipeline.empty_stage")}</p>
                   ) : (
-                    byStage[stage].map((lead) => <LeadCard key={lead.id} lead={lead} money={money} canWrite={canWrite} canTransfer={canTransfer} locations={locations} staffNames={staffNames} />)
+                    byStage[stage].map((lead) => <LeadCard key={lead.id} lead={lead} notInToast={pendingIds.has(lead.id)} money={money} canWrite={canWrite} canTransfer={canTransfer} locations={locations} staffNames={staffNames} />)
                   )}
                 </div>
               </div>
@@ -222,10 +227,12 @@ function SearchBox({ searchQuery }: { searchQuery: string }) {
 
 // ── Search results ────────────────────────────────────────────────────────────
 function SearchResults({
+  pendingIds,
   results,
   searchQuery,
   money,
 }: {
+  pendingIds: ReadonlySet<string>;
   results: PipelineSearchResult[];
   searchQuery: string;
   money: (cents: number | null) => string | null;
@@ -251,7 +258,7 @@ function SearchResults({
       <p className="mb-3 text-sm font-semibold text-co-text">{header}</p>
       <div className="space-y-3">
         {results.map((r) => (
-          <SearchResultCard key={r.id} result={r} money={money} />
+          <SearchResultCard key={r.id} result={r} money={money} notInToast={pendingIds.has(r.id)} />
         ))}
       </div>
     </div>
@@ -259,9 +266,11 @@ function SearchResults({
 }
 
 function SearchResultCard({
+  notInToast,
   result: r,
   money,
 }: {
+  notInToast: boolean;
   result: PipelineSearchResult;
   money: (cents: number | null) => string | null;
 }) {
@@ -277,7 +286,7 @@ function SearchResultCard({
         <div>
           <span className="font-semibold text-co-text">{r.contactName}</span>
           {r.company && <span className="ml-2 text-sm text-co-text-muted">{r.company}</span>}
-          <div><ShopChip lead={r} /></div>
+          <div><ShopChip lead={r} />{notInToast && <NotInToastChip />}</div>
         </div>
         <span className="inline-block rounded-md bg-co-surface px-2 py-0.5 text-xs font-medium text-co-text-muted border border-co-border">
           {t(stageKey(r.stage))}
@@ -313,6 +322,7 @@ function SearchResultCard({
 
 // ── Lead card + expandable detail ─────────────────────────────────────────────
 function LeadCard({
+  notInToast,
   lead,
   money,
   canWrite,
@@ -320,6 +330,7 @@ function LeadCard({
   locations,
   staffNames,
 }: {
+  notInToast: boolean;
   lead: PipelineLead;
   money: (c: number | null) => string | null;
   canWrite: boolean;
@@ -341,6 +352,7 @@ function LeadCard({
         <div className="font-semibold text-co-text">{lead.contactName}</div>
         {lead.company && <div className="text-xs text-co-text-muted">{lead.company}</div>}
         <ShopChip lead={lead} />
+        {notInToast && <NotInToastChip />}
         <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 text-xs text-co-text-muted">
           {lead.eventDate && <span>{formatDateLabel(lead.eventDate, language)}</span>}
           {lead.headcount != null && <span>{t("catering.pipeline.headcount_short").replace("{n}", String(lead.headcount))}</span>}

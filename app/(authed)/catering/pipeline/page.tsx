@@ -26,6 +26,7 @@ import {
 } from "@/lib/catering/pipeline";
 import { PipelineClient } from "@/components/catering/pipeline/PipelineClient";
 import { BackLink } from "@/components/nav/BackLink";
+import { loadNotInToast, type PipelineToastOrder } from "@/lib/catering/not-in-toast";
 
 export default async function CateringPipelinePage({
   searchParams,
@@ -66,6 +67,8 @@ export default async function CateringPipelinePage({
   let leads: Parameters<typeof PipelineClient>[0]["leads"] = [];
   let followUps: Parameters<typeof PipelineClient>[0]["followUps"] = [];
   let results: PipelineSearchResult[] | null = null;
+  let notInToast: PipelineToastOrder[] | null = null;
+  try { notInToast = await loadNotInToast(auth); } catch { /* Visible unavailable state below. */ }
 
   if (q.trim()) {
     // SEARCH MODE: skip the board/follow-up loads entirely.
@@ -93,6 +96,7 @@ export default async function CateringPipelinePage({
       <p className="mt-1 text-sm text-co-text-muted">{serverT(lang, "catering.pipeline.subtitle")}</p>
       <StepUpProvider unlocked={auth.session.stepUpUnlocked} unlockedAt={auth.session.stepUpUnlockedAt}>
       <PipelineClient
+        notInToast={notInToast}
         staff={await loadAssignableStaff(auth)}
         leads={leads}
         followUps={followUps}

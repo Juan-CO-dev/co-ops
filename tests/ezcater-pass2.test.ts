@@ -29,6 +29,17 @@ describe("ezCater selection identity", () => {
     expect(matchSelection(selection, orders).orderId).toBe("ez1");
     expect(matchSelection({ ...selection, selection_guid: "second", codes: ["cd-5678"] }, orders).orderId).toBe("ez2");
   });
+  it("accepts late codes only two through seven days AFTER the event", () => {
+    for (const date of ["2026-10-01", "2026-10-06"]) {
+      expect(matchSelection(selection, [{ ...order, event_date: date }])).toMatchObject({ orderId: "ez1", reason: "late_code" });
+    }
+    for (const date of ["2026-09-30", "2026-10-10", "2026-10-15"]) {
+      expect(matchSelection(selection, [{ ...order, event_date: date }]).orderId).toBeNull();
+    }
+    expect(matchSelection(selection, [order, { ...order, id: "late", event_date: "2026-10-06" }]))
+      .toMatchObject({ orderId: "ez1", reason: "normalized_code" });
+    expect(matchSelection(selection, [{ ...order, event_date: "2026-10-06" }, { ...order, id: "duplicate", event_date: "2026-10-05" }]).reason).toBe("ambiguous_code");
+  });
   it("retains bounded code tokens per parent selection without copying free-text notes", () => {
     expect(orderCodeTokens("ezCater AB-1234 call customer")).toEqual(["AB1234"]);
     const captured = normalizeToastOrder({ guid: "ring", businessDate: 20261008, checks: [{ guid: "c", selections: [{ guid: "s", item: { guid: "i" }, quantity: 1, modifiers: [{ guid: "note", selectionType: "SPECIAL_REQUEST", displayName: "ezCater AB-1234" }] }] }] }, "2026-10-08");

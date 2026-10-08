@@ -144,3 +144,17 @@ export function stationRoster(
   }
   return out.sort((a, b) => a.station.localeCompare(b.station) || a.firstName.localeCompare(b.firstName));
 }
+
+/** Safe reconciliation projection: order codes and amounts, never customer payloads. */
+export interface ToastCrossCheckOrder {
+  order_id: string; location_id: string; event_date: string; order_number: string | null;
+  status: "matched" | "amount_mismatch" | "not_rung_in_toast";
+  rule: "normalized_code" | "late_code" | "daily_batch" | null;
+}
+export interface ToastCrossCheckOrphan {
+  location_id: string; business_date: string; order_guid: string; check_guid: string; amount_cents: number;
+}
+export interface ToastCrossCheck {
+  orders: ToastCrossCheckOrder[];
+  orphans: ToastCrossCheckOrphan[];
+}
