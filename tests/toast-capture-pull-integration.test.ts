@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { runToastSalesPull } from "@/lib/toast-sales-pull-run";
-import { materializeEzcaterShadow } from "@/lib/ezcater/pass2";
+import { materializeEzcaterReconciliation } from "@/lib/ezcater/reconcile";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import { runOrderCapture } from "@/lib/toast/capture-job";
 import { materializeCapturedDepletion } from "@/lib/toast/depletion";
@@ -14,7 +14,7 @@ import { GET, maxDuration } from "@/app/api/cron/toast-sales-pull/route";
 import { NextRequest } from "next/server";
 
 vi.mock("@/lib/supabase-server", () => ({ getServiceRoleClient: vi.fn() }));
-vi.mock("@/lib/ezcater/pass2", () => ({ materializeEzcaterShadow: vi.fn(async () => ({ processed: 0, failed: 0, deferred: false })) }));
+vi.mock("@/lib/ezcater/reconcile", () => ({ materializeEzcaterReconciliation: vi.fn(async () => ({ processed: 0, failed: 0, deferred: false })) }));
 vi.mock("@/lib/toast/capture-job", () => ({ runOrderCapture: vi.fn() }));
 vi.mock("@/lib/toast/depletion", () => ({ materializeCapturedDepletion: vi.fn() }));
 vi.mock("@/lib/dynamic-pars", () => ({ runParShadowForLocation: vi.fn(), recordParRunSkipped: vi.fn() }));
@@ -37,6 +37,7 @@ let sequence: string[];
 let captureResult: CaptureResult;
 beforeEach(() => {
   vi.clearAllMocks();
+  vi.stubEnv("EZCATER_DEPLETION_ENABLED", "");
   vi.stubEnv("DEPLETION_SOURCE", "capture");
   sequence = [];
   vi.mocked(pullSalesForAllLocations).mockImplementation(async () => {
@@ -80,15 +81,29 @@ it("finishes every requested capture, then every materialization, then shadow pa
 });
 
 it("shadow failure gets an independent heartbeat and cannot fail sales health", async () => {
-  vi.mocked(materializeEzcaterShadow).mockResolvedValueOnce({ processed: 1, failed: 1, deferred: false });
+  vi.mocked(materializeEzcaterReconciliation).mockResolvedValueOnce({ processed: 1, failed: 1, deferred: false });
   const result = await runToastSalesPull({ businessDate: DAYS[0]! });
   expect(result).toMatchObject({ healthy: true, metadata: { ezcater_shadow: { failed: 1 } } });
   expect(audit).toHaveBeenCalledWith(expect.objectContaining({ action: "cron.failure",
     metadata: expect.objectContaining({ job: "ezcater-shadow", processed: 1, failed: 1 }) }));
 });
 
+it("enabled reconciliation precedes pars and its failure prevents operational par estimates", async () => {
+  vi.stubEnv("EZCATER_DEPLETION_ENABLED", "1");
+  vi.mocked(materializeEzcaterReconciliation).mockImplementationOnce(async () => {
+    sequence.push("reconciled");
+    return { processed: 1, failed: 0, deferred: false };
+  });
+  expect((await runToastSalesPull({ businessDate: DAYS[0]! })).healthy).toBe(true);
+  expect(sequence.indexOf("reconciled")).toBeLessThan(sequence.indexOf(`pars:shop1:${DAYS[0]}`));
+  vi.mocked(runParShadowForLocation).mockClear();
+  vi.mocked(materializeEzcaterReconciliation).mockResolvedValueOnce({ processed: 1, failed: 1, deferred: false });
+  expect((await runToastSalesPull({ businessDate: DAYS[0]! })).healthy).toBe(false);
+  expect(runParShadowForLocation).not.toHaveBeenCalled();
+});
+
 it("a shadow exception is counted without leaking its payload or failing sales", async () => {
-  vi.mocked(materializeEzcaterShadow).mockRejectedValueOnce(new Error("PRIVATE provider payload"));
+  vi.mocked(materializeEzcaterReconciliation).mockRejectedValueOnce(new Error("PRIVATE provider payload"));
   const result = await runToastSalesPull({ businessDate: DAYS[0]! });
   expect(result.healthy).toBe(true);
   expect(audit).toHaveBeenCalledWith(expect.objectContaining({ action: "cron.failure",

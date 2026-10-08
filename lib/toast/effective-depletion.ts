@@ -64,8 +64,8 @@ export async function loadEffectiveSalesRows(sb: Client, window: Window): Promis
 }
 
 /** Gap disclosure is independent of returned amounts; one shop never hides another. */
-export async function loadSalesCoverageDisclosure(sb: Client, window: Window, manifests?: Coverage[]): Promise<SalesCoverage> {
-  if (process.env.DEPLETION_SOURCE !== "capture") return { source: "legacy", hasGaps: false, degraded: false, byLocation: {} };
+export async function loadSalesCoverageDisclosure(sb: Client, window: Window, manifests?: Coverage[], forceCapture = false): Promise<SalesCoverage> {
+  if (!forceCapture && process.env.DEPLETION_SOURCE !== "capture") return { source: "legacy", hasGaps: false, degraded: false, byLocation: {} };
   const end = window.untilDateExclusive ?? etCalendarDate(new Date().toISOString());
   const coverage = manifests ?? await loadEffectiveSalesCoverage(sb, window);
   let locationIds = window.locationId ? [window.locationId] : [];
@@ -95,6 +95,20 @@ export async function loadSalesCoverageDisclosure(sb: Client, window: Window, ma
 }
 
 export async function loadEffectiveSalesWindow(sb: Client, window: Window): Promise<EffectiveSalesWindow> {
+  if (process.env.EZCATER_DEPLETION_ENABLED === "1") {
+    if (process.env.DEPLETION_SOURCE !== "capture") throw new Error("ezcater_depletion_requires_capture");
+    const { loadReconciledSalesWindow } = await import("@/lib/ezcater/depletion");
+    return loadReconciledSalesWindow(sb, window);
+  }
+  return loadRawToastSalesWindow(sb, window);
+}
+
+/** Explicit comparison baseline stays raw Toast even after PASS 3 activation. */
+export async function loadRawToastSalesRows(sb: Client, window: Window): Promise<EffectiveSalesRow[]> {
+  return (await loadRawToastSalesWindow(sb, window)).rows;
+}
+
+async function loadRawToastSalesWindow(sb: Client, window: Window): Promise<EffectiveSalesWindow> {
   const capture = process.env.DEPLETION_SOURCE === "capture";
   const end = window.untilDateExclusive ?? (capture ? etCalendarDate(new Date().toISOString()) : null);
   const before = capture ? await loadEffectiveSalesCoverage(sb, { ...window, untilDateExclusive: end }) : [];

@@ -3,7 +3,7 @@ import { getServiceRoleClient } from "@/lib/supabase-server";
 import { selectAllRows } from "@/lib/supabase-paginate";
 import { loadRecipeGraph } from "@/lib/prep-consumption";
 import { loadCapturedToastDay } from "@/lib/toast/captured-day";
-import { loadEffectiveSalesRows } from "@/lib/toast/effective-depletion";
+import { loadRawToastSalesRows } from "@/lib/toast/effective-depletion";
 import { etYmdMinusDays } from "@/lib/operational-day";
 import { captureBudget } from "@/lib/toast/capture-runner";
 import { loadKnownToastOrderCodes, toastCodeSelectionKey } from "./toast-codes";
@@ -15,7 +15,7 @@ type Order = LinkOrder & { snapshot_id: string; lead_id: string; status: string 
 type Item = ItemIdentity & { ordinal: number; quantity: number; options: unknown[] };
 type Review = { source: "ezcater" | "toast"; code: string; identity_key: string; candidates: string[] };
 
-/** Only this SHADOW writer runs after capture. No operational depletion call consumes its tables. */
+/** Mapped-item SHADOW writer. Operational PASS 3 independently reads current source evidence. */
 export async function materializeEzcaterShadow(fromDate: string, toDate: string, deadlineAt = Date.now() + 20_000) {
   if (deadlineAt <= Date.now()) return { processed: 0, failed: 0, deferred: true };
   const budget = captureBudget(deadlineAt - Date.now());
@@ -37,7 +37,7 @@ async function materialize(fromDate: string, toDate: string, deadlineAt: number,
   const orders = await selectAllRows<Order>((from, to) => sb.from("ezcater_orders")
     .select("id,location_id,event_date,order_number,snapshot_id,lead_id,status")
     .not("snapshot_id", "is", null).not("lead_id", "is", null)
-    .gte("event_date", etYmdMinusDays(fromDate, 2)).lte("event_date", etYmdMinusDays(toDate, -2))
+    .gte("event_date", etYmdMinusDays(fromDate, 8)).lte("event_date", etYmdMinusDays(toDate, -8))
     .order("id").range(from, to).abortSignal(signal));
   const leads = await selectAllRows<{ id: string; location_id: string; stage: string }>((from, to) => sb.from("catering_pipeline")
     .select("id,location_id,stage").eq("lead_source", "ezcater").order("id").range(from, to).abortSignal(signal));
@@ -75,24 +75,26 @@ async function materialize(fromDate: string, toDate: string, deadlineAt: number,
     .order("id").range(from, to).abortSignal(signal));
   const toastLeads = await selectAllRows<{ order_guid: string; lead_id: string | null; location_id: string }>((from, to) => sb.from("toast_catering_orders")
     .select("order_guid,lead_id,location_id").not("lead_id", "is", null).eq("voided", false)
-    .gte("business_date", etYmdMinusDays(fromDate, 1)).lte("business_date", etYmdMinusDays(toDate, -1))
+    .gte("business_date", etYmdMinusDays(fromDate, 1)).lte("business_date", etYmdMinusDays(toDate, -7))
     .order("id").range(from, to).abortSignal(signal));
   const dayCache = new Map<string, Awaited<ReturnType<typeof loadCapturedToastDay>>>();
   const codeCache = new Map<string, Map<string, string[]>>();
-  const baseline = await loadEffectiveSalesRows(sb, { fromDate, untilDateExclusive: etYmdMinusDays(toDate, -1) });
+  const baseline = await loadRawToastSalesRows(sb, { fromDate, untilDateExclusive: etYmdMinusDays(toDate, -1) });
   let processed = 0, failed = 0;
   for (const order of targets) {
     if (Date.now() >= deadlineAt || signal.aborted) break;
     try {
       const reviews: Review[] = [];
-      const links: Array<LinkSelection & { toast_snapshot_id: string }> = [];
+      const links: Array<LinkSelection & { toast_snapshot_id: string; evidence: string }> = [];
       const active = byLead.get(order.lead_id)?.stage !== "lost" && !/cancel|reject|fail/i.test(order.status ?? "");
       let covered = true;
-      for (const delta of [1, 0, -1]) {
+      for (const delta of [1, 0, -1, -2, -3, -4, -5, -6, -7]) {
         const date = etYmdMinusDays(order.event_date!, delta), key = `${order.location_id}:${date}`;
         if (!dayCache.has(key)) dayCache.set(key, await loadCapturedToastDay(order.location_id, date));
         const day = dayCache.get(key);
-        if (!day) { covered = false; continue; }
+        // Future late-ring days do not exist yet. Missing event-day capture is
+        // the actionable coverage issue; absence of future evidence is normal.
+        if (!day) { if (delta === 0) covered = false; continue; }
         if (!codeCache.has(key)) {
           const restaurant = locations.find((l) => l.id === order.location_id)?.toast_restaurant_guid;
           const catering = day.orders.filter((r) => r.salesChannel?.toLowerCase() === "catering" && !r.voided && !r.deleted && !r.excessFood);
@@ -109,8 +111,8 @@ async function materialize(fromDate: string, toDate: string, deadlineAt: number,
               selection_guid: selection.selection_guid, codes: [selection.name, ...orderCodeTokens(selection.name),
                 ...(codeCache.get(key)?.get(toastCodeSelectionKey(ring.orderGuid, selection.check_guid, selection.selection_guid)) ?? [])] };
             const match = matchSelection(candidate, orders);
-            if (match.orderId === order.id && active) links.push({ ...candidate, toast_snapshot_id: ring.snapshotId });
-            else if (active && match.reason !== "normalized_code" && match.candidates.includes(order.id)) reviews.push({ source: "toast", code: match.reason,
+            if (match.orderId === order.id && active) links.push({ ...candidate, toast_snapshot_id: ring.snapshotId, evidence: match.reason });
+            else if (active && match.reason === "ambiguous_code" && match.candidates.includes(order.id)) reviews.push({ source: "toast", code: match.reason,
               identity_key: `${ring.orderGuid}:${selection.selection_guid}`, candidates: match.candidates });
           }
         }

@@ -20,7 +20,9 @@ import { timeWindowLabel, timeWindowMinutes } from "@/lib/midshift-shared";
 import type { ShopV2Facts } from "@/lib/report-digests-v2-shared";
 import { allShopsSection, composeV2Sections, plural } from "@/lib/report-digests-v2-compose";
 import type { Loaded } from "@/lib/report-digests-v2-shared";
-import type { CateringReadiness, PaymentState, StaffRoster } from "@/lib/report-digests-catering-shared";
+import type { CateringReadiness, PaymentState, StaffRoster, ToastCrossCheck } from "@/lib/report-digests-catering-shared";
+import type { NotInToastOrder } from "@/lib/catering/not-in-toast-shared";
+import { toastRingLines } from "@/lib/report-digests-toast-shared";
 
 export type DigestTone = "ok" | "issue" | "info";
 export interface DigestLine { label: string; text: string; tone: DigestTone; href: string }
@@ -315,6 +317,8 @@ export interface PrepLoadLine {
 }
 
 export interface CateringFacts {
+  toRingInToast?: NotInToastOrder[];
+  toastCrossCheck?: ToastCrossCheck;
   today: string;
   leads: CateringLeadFact[];
   /** Leads moved to lost during yesterday (ET), from catering_pipeline_events. */
@@ -572,11 +576,27 @@ export function composeCateringSections(
     if (open > 0) action.push({ label: t("digest.catering.quotes_label"), tone: "info", href: quotesHref, text: plural(t, open, "digest.catering.awaiting_customer_one", "digest.catering.awaiting_customer_other") });
     if (action.length === 0) action.push({ label: t("digest.catering.needs_action"), text: t("digest.catering.none_action"), tone: "ok", href: pipeline });
 
+    const crossCheck: DigestLine[] = [];
+    const toRing = toastRingLines(f.toRingInToast ?? [], shop.id, f.today, language, baseUrl);
+    const crossHref = `${baseUrl}/catering/pipeline`;
+    const orders = (f.toastCrossCheck?.orders ?? []).filter((o) => o.location_id === shop.id && o.event_date === yesterday);
+    for (const status of ["not_rung_in_toast", "amount_mismatch"] as const) {
+      const affected = orders.filter((o) => o.status === status);
+      if (affected.length > 0) crossCheck.push({
+        label: shop.name, tone: "issue", href: crossHref,
+        text: t(`digest.catering.cross_check.${status}`, { n: affected.length, codes: affected.map((o) => o.order_number ?? t("digest.catering.cross_check.no_code")).join(", ") }),
+      });
+    }
+    const orphans = (f.toastCrossCheck?.orphans ?? []).filter((o) => o.location_id === shop.id && o.business_date === yesterday);
+    if (orphans.length > 0) crossCheck.push({ label: shop.name, tone: "issue", href: crossHref,
+      text: t("digest.catering.cross_check.orphans", { n: orphans.length, money: money(orphans.reduce((sum, o) => sum + o.amount_cents, 0)) }) });
     sections.push(
       { title: `${shop.name} · ${t("digest.catering.yesterday", { date: formatDateLabel(yesterday, language) })}`, lines: y },
       { title: `${shop.name} · ${t("digest.catering.today", { date: formatDateLabel(f.today, language) })}`, lines: outlook(f.today, "digest.catering.none_today", "digest.catering.today_label") },
       { title: `${shop.name} · ${t("digest.catering.tomorrow", { date: formatDateLabel(tomorrow, language) })}`, lines: outlook(tomorrow, "digest.catering.none_tomorrow", "digest.catering.tomorrow_label") },
       { title: `${shop.name} · ${t("digest.catering.needs_action")}`, lines: action },
+      ...(crossCheck.length > 0 ? [{ title: `${shop.name} · ${t("digest.catering.cross_check.title", { date: formatDateLabel(yesterday, language) })}`, lines: crossCheck }] : []),
+      ...(toRing.length > 0 ? [{ title: `${shop.name} · ${t("digest.catering.to_ring.title")}`, lines: toRing }] : []),
     );
   }
   return sections;

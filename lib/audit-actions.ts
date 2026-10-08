@@ -46,6 +46,7 @@ export const NON_DESTRUCTIVE_ACTIONS = [
   "station.system_release", // 0230 SQL: observed closure / Toast departure.
   "assignment.system_release", // 0230 SQL: observed Toast departure.
   "ezcater.location_reassigned", // Provider shop observation, including a manual-location conflict.
+  "ezcater.toast_reconciled", // SQL-only provider cross-check observation; non-destructive.
   "ezcater.order_synced", // Provider observation; metadata contains identities/codes only.
   "vendor.import_staged", // Vendor evidence only; staging does not change the catalog.
 

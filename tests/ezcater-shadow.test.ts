@@ -3,14 +3,14 @@ import { materializeEzcaterShadow } from "@/lib/ezcater/pass2";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import { loadRecipeGraph } from "@/lib/prep-consumption";
 import { loadCapturedToastDay } from "@/lib/toast/captured-day";
-import { loadEffectiveSalesRows } from "@/lib/toast/effective-depletion";
+import { loadRawToastSalesRows } from "@/lib/toast/effective-depletion";
 import { buildRecipeGraph } from "@/lib/prep-consumption-graph";
 import { parseShadowArgs } from "../scripts/ezcater-shadow-backfill";
 import { loadKnownToastOrderCodes, toastCodeSelectionKey } from "@/lib/ezcater/toast-codes";
 vi.mock("@/lib/supabase-server", () => ({ getServiceRoleClient: vi.fn() }));
 vi.mock("@/lib/prep-consumption", () => ({ loadRecipeGraph: vi.fn() }));
 vi.mock("@/lib/toast/captured-day", () => ({ loadCapturedToastDay: vi.fn() }));
-vi.mock("@/lib/toast/effective-depletion", () => ({ loadEffectiveSalesRows: vi.fn() }));
+vi.mock("@/lib/toast/effective-depletion", () => ({ loadRawToastSalesRows: vi.fn() }));
 vi.mock("@/lib/ezcater/toast-codes", () => ({ loadKnownToastOrderCodes: vi.fn(), toastCodeSelectionKey: (...ids: string[]) => JSON.stringify(ids) }));
 let rows: Record<string, unknown[]>;
 let errors: Record<string, { code: string; message: string }>;
@@ -39,7 +39,7 @@ beforeEach(() => {
     outputs: [{ outputItemId: "prep", outputMenuItemId: null, yield: 1, ozPerParUnit: null }] }],
   new Map([["sku", { packFormat: null, eachContainerLabel: null, unitsPerPack: null, eachSize: null, eachMeasure: null, avgOzPerEach: null }]]),
   new Map([["oz", { dimension: "weight", toBaseFactor: 1 }]])));
-  vi.mocked(loadEffectiveSalesRows).mockResolvedValue([{ location_id: "L", business_date: "2026-10-08", sku_id: "sku", direct_oz: 25, flattened_oz: 0 }]);
+  vi.mocked(loadRawToastSalesRows).mockResolvedValue([{ location_id: "L", business_date: "2026-10-08", sku_id: "sku", direct_oz: 25, flattened_oz: 0 }]);
   vi.mocked(loadCapturedToastDay).mockImplementation(async (_shop, day) => ({
     coverage: { runId: "run", finishedAt: "now", orderCount: 1, missingPointerCount: 0, absenceRemovalApplied: false, configDegraded: false },
     orders: day === "2026-10-08" ? [{ snapshotId: "toast-snapshot", orderGuid: "ring", modifiedAt: null, diningOptionGuid: null, diningOption: null, salesChannel: null,

@@ -7,6 +7,7 @@
 import "server-only";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import { selectAllRows } from "@/lib/supabase-paginate";
+import { readNotInToast } from "@/lib/catering/not-in-toast";
 import { loadCapturedToastDay } from "@/lib/toast/captured-day";
 import { summarizeLabor, weekStart, type LaborEntryFact, type LaborSummary } from "@/lib/toast/labor-shared";
 import { laborPullEnabled, runToastLaborPull } from "@/lib/toast/labor";
@@ -105,6 +106,7 @@ export async function loadCateringNight(sb: Sb, locationId: string, day: string)
   const value = (l: (typeof leads)[number]) => accepted.get(l.id)?.total_cents ?? l.estimated_revenue_cents ?? 0;
   const onDay = leads.filter((l) => l.event_date === day);
   return ok({
+    toRingInToast: await readNotInToast(sb, [locationId], { from: tomorrow, through: tomorrow }),
     day: {
       orders: onDay.length,
       completedCents: onDay.filter((l) => l.stage === "completed").reduce((a, l) => a + value(l), 0),
