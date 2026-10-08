@@ -1,6 +1,8 @@
 -- 0223 ezCater enrichment PASS 1. AUTHORED 2026-10-08; NOT APPLIED -- GATE CC/Juan.
 -- Current provider snapshot; historical item snapshots; contacts read only through the
 -- existing catering authorization policy in the server loader. No Toast identity claim.
+-- Column lineage checked: 0108/0109/0129/0148/0149 pipeline; 0110/0113/0191 events.
+-- 0113 removed events.location_id: every event binds through pipeline_id only.
 begin;
 
 create table public.ezcater_orders (
@@ -36,6 +38,16 @@ create index ezcater_orders_refresh on public.ezcater_orders(event_date);
 create index ezcater_orders_retry on public.ezcater_orders(provider_uuid) where last_sync_error is not null;
 create index ezcater_orders_lead on public.ezcater_orders(lead_id);
 
+-- Keep historical snapshot ownership independently of the order's current pointer.
+create table public.ezcater_order_snapshots (
+  id uuid primary key,
+  order_id uuid not null references public.ezcater_orders(id),
+  unique(order_id, id)
+);
+alter table public.ezcater_orders add constraint ezcater_orders_snapshot_owner
+  foreign key(id, snapshot_id) references public.ezcater_order_snapshots(order_id, id)
+  deferrable initially deferred;
+
 create table public.ezcater_order_items (
   order_id uuid not null references public.ezcater_orders(id),
   snapshot_id uuid not null,
@@ -51,15 +63,21 @@ create table public.ezcater_order_items (
   options jsonb not null default '[]'::jsonb check (jsonb_typeof(options) = 'array'),
   special_instructions text,
   note_to_caterer text,
-  primary key (snapshot_id, ordinal)
+  primary key (snapshot_id, ordinal),
+  foreign key(order_id, snapshot_id) references public.ezcater_order_snapshots(order_id, id)
 );
 create unique index ezcater_order_items_current on public.ezcater_order_items(order_id, ordinal) where is_current;
 create table public.ezcater_order_contacts (
   order_id uuid primary key references public.ezcater_orders(id),
   snapshot_id uuid not null,
-  contact jsonb not null check (jsonb_typeof(contact) = 'object')
+  contact jsonb not null check (jsonb_typeof(contact) = 'object'),
+  foreign key(order_id, snapshot_id) references public.ezcater_order_snapshots(order_id, id)
 );
 
+alter table public.ezcater_order_snapshots enable row level security;
+create policy ezcater_order_snapshots_no_user_insert on public.ezcater_order_snapshots for insert with check(false);
+create policy ezcater_order_snapshots_no_user_update on public.ezcater_order_snapshots for update using(false);
+create policy ezcater_order_snapshots_no_user_delete on public.ezcater_order_snapshots for delete using(false);
 alter table public.ezcater_orders enable row level security;
 alter table public.ezcater_order_items enable row level security;
 alter table public.ezcater_order_contacts enable row level security;
@@ -72,8 +90,8 @@ create policy ezcater_order_items_no_user_delete on public.ezcater_order_items f
 create policy ezcater_order_contacts_no_user_insert on public.ezcater_order_contacts for insert with check(false);
 create policy ezcater_order_contacts_no_user_update on public.ezcater_order_contacts for update using(false);
 create policy ezcater_order_contacts_no_user_delete on public.ezcater_order_contacts for delete using(false);
-revoke all on public.ezcater_orders, public.ezcater_order_items, public.ezcater_order_contacts from public, anon, authenticated, service_role;
-grant select on public.ezcater_orders, public.ezcater_order_items, public.ezcater_order_contacts to service_role;
+revoke all on public.ezcater_orders, public.ezcater_order_items, public.ezcater_order_contacts, public.ezcater_order_snapshots from public, anon, authenticated, service_role;
+grant select on public.ezcater_orders, public.ezcater_order_items, public.ezcater_order_contacts, public.ezcater_order_snapshots to service_role;
 
 create function public.apply_ezcater_order(
   p_provider_uuid text, p_caterer_uuid text, p_snapshot jsonb, p_digest text,
@@ -91,6 +109,8 @@ declare
   v_result text;
   v_created boolean := false;
   v_illegal boolean := false;
+  v_timestamp timestamptz;
+  v_code text;
 begin
   if nullif(btrim(p_provider_uuid), '') is null then raise exception 'invalid_provider_uuid'; end if;
   perform pg_advisory_xact_lock(hashtext(p_provider_uuid));
@@ -105,16 +125,44 @@ begin
     or (v_lead.id is not null and (v_lead.location_id is distinct from v_location or v_lead.lead_source is distinct from 'ezcater')) then
     raise exception 'location_mismatch';
   end if;
+  -- A signed lifecycle notification is actionable even when the provider fetch failed.
+  v_target := case
+    when p_event_key in ('cancelled','rejected','failed') then 'lost'
+    when p_error is null and lower(coalesce(p_snapshot->>'status','')) in ('cancelled','canceled','rejected','failed') then 'lost'
+    when p_event_key = 'accepted' then 'confirmed'
+    when p_error is null and lower(coalesce(p_snapshot->>'status','')) = 'accepted' then 'confirmed'
+    else null end;
+  -- Same guard for fetched snapshots and fetch failures. Old acceptance is a refresh;
+  -- resurrection of a lost lead and cancellation after completion remain real conflicts.
+  if v_target = 'confirmed' and v_lead.stage in ('out','completed') then
+    v_target := null;
+  elsif v_target is not null and v_target <> v_lead.stage and v_lead.stage in ('completed','lost') then
+    v_illegal := true;
+    v_target := null;
+  end if;
   if p_error is not null then
     -- Code only: never store an upstream error message, payload, contact or SQL detail.
-    if p_error not in ('auth_failed','graphql_error','bad_payload','deadline_exceeded','ezcater_disabled','location_mismatch','apply_failed','identity_invalid','sync_failed') then
+    if p_error not in ('auth_failed','graphql_error','bad_payload','deadline_exceeded','timeout','network_error','ezcater_disabled','location_mismatch','apply_failed','identity_invalid','sync_failed') then
       p_error := 'sync_failed';
     end if;
     insert into public.ezcater_orders(provider_uuid,caterer_uuid,location_id,lead_id,last_sync_error,pending_event_key)
       values(p_provider_uuid,p_caterer_uuid,v_location,v_lead.id,p_error,p_event_key)
-      on conflict(provider_uuid) do update set last_sync_error = excluded.last_sync_error,last_attempt_at = clock_timestamp(),
+      on conflict(provider_uuid) do update set lead_id = excluded.lead_id,last_sync_error = excluded.last_sync_error,last_attempt_at = clock_timestamp(),
         pending_event_key = coalesce(excluded.pending_event_key,ezcater_orders.pending_event_key);
-    return jsonb_build_object('lead_id',v_lead.id,'result','sync_error');
+    v_result := case when v_illegal then 'illegal_transition'
+      when v_target is not null and v_target <> v_lead.stage then 'stage_moved'
+      when v_lead.id is not null and p_event_key = 'accepted' then 'refreshed'
+      else 'sync_error' end;
+    if v_result = 'stage_moved' then
+      update public.catering_pipeline set stage = v_target, updated_at = clock_timestamp() where id = v_lead.id;
+    end if;
+    if v_lead.id is not null and v_result in ('stage_moved','illegal_transition') then
+      insert into public.catering_pipeline_events(pipeline_id,from_stage,to_stage,note,actor_id)
+        values(v_lead.id,v_lead.stage,coalesce(v_target,v_lead.stage),
+          'EZCater lifecycle after fetch failure: ' || v_result,null);
+    end if;
+    return jsonb_build_object('lead_id',v_lead.id,'result',v_result,'sync_error',p_error,
+      'created',false,'from_stage',v_lead.stage,'to_stage',coalesce(v_target,v_lead.stage),'location_id',v_location);
   end if;
   if jsonb_typeof(p_snapshot) is distinct from 'object' or nullif(p_snapshot->>'orderNumber','') is null
     or nullif(p_digest,'') is null or jsonb_typeof(p_snapshot->'items') is distinct from 'array' then
@@ -128,31 +176,26 @@ begin
     return jsonb_build_object('lead_id',v_order.lead_id,'result','duplicate');
   end if;
   -- Derive the business date from the instant again at the transaction boundary.
-  v_date := ((p_snapshot->>'eventTimestamp')::timestamptz at time zone 'America/New_York')::date;
-  v_target := case
-    when lower(coalesce(p_snapshot->>'status','')) in ('cancelled','canceled','rejected','failed') then 'lost'
-    when lower(coalesce(p_snapshot->>'status','')) = 'accepted' then 'confirmed'
-    when p_event_key in ('cancelled','rejected','failed') then 'lost'
-    when p_event_key = 'accepted' then 'confirmed'
-    else null end;
+  begin
+    v_timestamp := nullif(p_snapshot->>'eventTimestamp','')::timestamptz;
+  exception when invalid_datetime_format or datetime_field_overflow then
+    v_timestamp := null;
+  end;
+  v_date := (v_timestamp at time zone 'America/New_York')::date;
+  if v_date is null then v_code := 'timestamp_unparsed'; end if;
   if v_lead.id is null and (p_event_key is null or p_event_key in ('submitted','accepted','modified','updated')) then
     select u.id into v_manager from public.users u where u.active and u.role = 'catering_mgr'
       order by exists(select 1 from public.user_locations ul where ul.user_id = u.id and ul.location_id = v_location and ul.active) desc,
         u.created_at, u.id limit 1;
     insert into public.catering_pipeline(contact_name,stage,lead_source,external_ref,location_id,assigned_to,created_by)
-      values('EZCater order ' || (p_snapshot->>'orderNumber'),coalesce(v_target,'inquiry'),'ezcater',p_provider_uuid,v_location,v_manager,null)
+      values(coalesce(nullif(btrim(p_snapshot#>>'{contact,name}'),''),'EZCater order ' || (p_snapshot->>'orderNumber')),coalesce(v_target,'inquiry'),'ezcater',p_provider_uuid,v_location,v_manager,null)
       returning * into v_lead;
     v_created := true;
   end if;
-  -- Never resurrect terminal leads; out -> confirmed is also forbidden by canTransition.
-  if v_target is not null and v_target <> v_lead.stage and
-    (v_lead.stage in ('completed','lost') or (v_lead.stage = 'out' and v_target = 'confirmed')) then
-    v_illegal := true;
-    v_target := null;
-  end if;
   update public.catering_pipeline set
+    contact_name = coalesce(nullif(btrim(p_snapshot#>>'{contact,name}'),''),v_lead.contact_name),
     headcount = (p_snapshot->>'headcount')::integer,
-    event_date = v_date,
+    event_date = coalesce(v_date, v_lead.event_date),
     time_window = case when p_snapshot->>'handoffTime' is null then null
       else to_char((p_snapshot->>'handoffTime')::timestamptz at time zone 'America/New_York','FMHH12:MI AM') end,
     estimated_revenue_cents = (p_snapshot->>'totalDueCents')::integer,
@@ -163,7 +206,7 @@ begin
       order_number,event_date,event_timestamp,handoff_time,status,headcount,fulfillment,
       subtotal_cents,tax_cents,tip_cents,fees_cents,discounts_cents,total_cents,payment_status)
     values(p_provider_uuid,p_caterer_uuid,v_location,v_lead.id,v_snapshot,p_digest,clock_timestamp(),
-      p_snapshot->>'orderNumber',v_date,(p_snapshot->>'eventTimestamp')::timestamptz,p_snapshot->>'handoffTime',
+      p_snapshot->>'orderNumber',coalesce(v_date,v_lead.event_date),v_timestamp,p_snapshot->>'handoffTime',
       p_snapshot->>'status',(p_snapshot->>'headcount')::integer,p_snapshot->>'orderType',
       (p_snapshot->>'subtotalCents')::bigint,(p_snapshot->>'taxCents')::bigint,(p_snapshot->>'tipCents')::bigint,
       (p_snapshot->>'feesCents')::bigint,(p_snapshot->>'discountsCents')::bigint,(p_snapshot->>'totalDueCents')::bigint,p_snapshot->>'paymentStatus')
@@ -180,6 +223,7 @@ begin
       total_cents = excluded.total_cents,
       payment_status = case when p_snapshot->'enrichmentFields' ? 'paymentStatus' then excluded.payment_status else ezcater_orders.payment_status end
       returning * into v_order;
+  insert into public.ezcater_order_snapshots(id,order_id) values(v_snapshot,v_order.id);
   update public.ezcater_order_items set is_current = false where order_id = v_order.id and is_current;
   insert into public.ezcater_order_items(order_id,snapshot_id,ordinal,provider_item_uuid,name,quantity,
       unit_price_cents,total_cents,pos_item_id,menu_item_size_id,options,special_instructions,note_to_caterer)
@@ -204,7 +248,7 @@ begin
   else
     update public.ezcater_order_contacts set snapshot_id = v_snapshot where order_id = v_order.id;
   end if;
-  if v_lead.id is null then return jsonb_build_object('lead_id',null,'result','unmatched'); end if;
+  if v_lead.id is null then return jsonb_build_object('lead_id',null,'result','unmatched','code',v_code); end if;
   v_result := case when v_created and coalesce(v_target,v_lead.stage) = 'confirmed' then 'created_lead_confirmed'
     when v_created then 'created_lead'
     when p_event_key = 'uncancelled' then 'uncancelled_needs_human'
@@ -212,10 +256,11 @@ begin
     when v_target is not null and v_target <> v_lead.stage then 'stage_moved'
     when p_event_key in ('succeeded','succeeded_with_warnings','relish_finalized') then 'noted'
     else 'refreshed' end;
-  insert into public.catering_pipeline_events(pipeline_id,location_id,from_stage,to_stage,note,actor_id)
-    values(v_lead.id,v_location,case when v_created then null else v_lead.stage end,coalesce(v_target,v_lead.stage),
+  insert into public.catering_pipeline_events(pipeline_id,from_stage,to_stage,note,actor_id)
+    values(v_lead.id,case when v_created then null else v_lead.stage end,coalesce(v_target,v_lead.stage),
       'EZCater snapshot synchronized: ' || v_result,null);
-  return jsonb_build_object('lead_id',v_lead.id,'result',v_result);
+  return jsonb_build_object('lead_id',v_lead.id,'result',v_result,'code',v_code,'created',v_created,
+    'from_stage',case when v_created then null else v_lead.stage end,'to_stage',coalesce(v_target,v_lead.stage),'location_id',v_location);
 end $$;
 revoke all on function public.apply_ezcater_order(text,text,jsonb,text,text,text) from public,anon,authenticated;
 grant execute on function public.apply_ezcater_order(text,text,jsonb,text,text,text) to service_role;
@@ -224,7 +269,7 @@ do $$
 declare v_role text; v_table text;
   v_function regprocedure := 'public.apply_ezcater_order(text,text,jsonb,text,text,text)'::regprocedure;
 begin
-  foreach v_table in array array['ezcater_orders','ezcater_order_items','ezcater_order_contacts'] loop
+  foreach v_table in array array['ezcater_orders','ezcater_order_items','ezcater_order_contacts','ezcater_order_snapshots'] loop
     foreach v_role in array array['anon','authenticated','service_role'] loop
       if has_table_privilege(v_role,'public.' || v_table,'INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER')
         or has_any_column_privilege(v_role,'public.' || v_table,'INSERT,UPDATE,REFERENCES')

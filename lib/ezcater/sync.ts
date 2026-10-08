@@ -7,11 +7,32 @@ import { EzcaterApiError, ezcaterConfigured } from "./client";
 import { fetchEzcaterOrder } from "./orders";
 import { EZCATER_ORDER_EVENT_KEYS } from "./lifecycle-shared";
 
-export interface EzcaterApplyResult { lead_id: string | null; result: string }
+export interface EzcaterApplyResult {
+  lead_id: string | null; result: string; created?: boolean;
+  from_stage?: string | null; to_stage?: string | null; location_id?: string | null;
+  code?: string | null; sync_error?: string | null;
+}
+
+function missingApply(error: { code?: string } | null): boolean {
+  return error?.code === "PGRST202" || error?.code === "42883";
+}
+
+function auditApplied(result: EzcaterApplyResult, providerUuid: string): void {
+  const common = { actorId: null, actorRole: null, resourceTable: "catering_pipeline",
+    resourceId: result.lead_id, ipAddress: null, userAgent: null };
+  if (result.created && result.lead_id) void audit({ ...common, action: "catering.pipeline.create",
+    metadata: { actor_context: "ezcater", source: "ezcater", location_id: result.location_id } });
+  if (result.lead_id && result.from_stage && result.to_stage && result.from_stage !== result.to_stage) {
+    void audit({ ...common, action: "catering.pipeline.stage_move",
+      metadata: { actor_context: "ezcater", from_stage: result.from_stage, to_stage: result.to_stage } });
+  }
+  void audit({ ...common, action: "ezcater.order_synced", resourceTable: "ezcater_orders", resourceId: null,
+    metadata: { provider_uuid: providerUuid, result: result.result, code: result.code ?? null } });
+}
 
 /** Provider messages, GraphQL extensions and SQL details are never diagnostic data. */
 export function ezcaterSyncError(error: unknown): string {
-  if (error instanceof EzcaterApiError && ["auth_failed", "graphql_error", "bad_payload", "deadline_exceeded"].includes(error.code)) return error.code;
+  if (error instanceof EzcaterApiError && ["auth_failed", "graphql_error", "bad_payload", "deadline_exceeded", "timeout", "network_error"].includes(error.code)) return error.code;
   if (error instanceof Error && ["ezcater_disabled", "location_mismatch", "apply_failed", "identity_invalid"].includes(error.message)) return error.message;
   return "sync_failed";
 }
@@ -34,25 +55,27 @@ export async function syncEzcaterOrder(providerUuid: string, catererUuid: string
       p_provider_uuid: providerUuid, p_caterer_uuid: catererUuid,
       p_snapshot: snapshot, p_digest: digest, p_event_key: eventKey, p_error: null,
     }).abortSignal(signal);
+    if (missingApply(error)) throw new Error("ezcater_schema_unavailable");
     if (error || !data) throw new Error("apply_failed");
     const result = data as EzcaterApplyResult;
-    // The transactional trail is in the RPC. Audit is deliberately fail-open.
-    void audit({ actorId: null, actorRole: null, action: "ezcater.order_synced",
-      resourceTable: "ezcater_orders", resourceId: null,
-      metadata: { provider_uuid: providerUuid, result: result.result }, ipAddress: null, userAgent: null });
+    auditApplied(result, providerUuid);
     return result;
   } catch (error) {
+    if (error instanceof Error && error.message === "ezcater_schema_unavailable") throw error;
     const code = ezcaterSyncError(error);
     // A failed first fetch also leaves a known UUID for the nightly retry sweep.
     // If the DB is down this throws: the webhook must return 500 and be retried.
     // Reserve a separate, short persistence bound: an expired provider deadline
     // must not prevent recording the retry marker/attempt time. This branch cannot
-    // change a lead or snapshot and never extends the outer nightly phase deadline.
+    // overwrite a snapshot; lifecycle moves still apply when fetching failed.
     const saved = await sb.rpc("apply_ezcater_order", {
       p_provider_uuid: providerUuid, p_caterer_uuid: catererUuid,
       p_snapshot: null, p_digest: null, p_event_key: eventKey, p_error: code,
     }).abortSignal(AbortSignal.timeout(1_000));
-    if (saved.error) throw new Error("apply_failed");
-    return { lead_id: null, result: `error:${code}` };
+    if (missingApply(saved.error)) throw new Error("ezcater_schema_unavailable");
+    if (saved.error || !saved.data) throw new Error("apply_failed");
+    const result = saved.data as EzcaterApplyResult;
+    auditApplied(result, providerUuid);
+    return result;
   }
 }

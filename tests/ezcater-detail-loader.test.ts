@@ -60,7 +60,7 @@ describe("ezCater detail service-role read boundary", () => {
   it("bounds retries if the provider keeps updating the snapshot", async () => {
     authorizedRead("first", "second");
     authorizedRead("second", "third");
-    await expect(loadEzcaterOrderDetail(actor, "lead")).rejects.toThrow("ezcater_detail_snapshot_changed");
+    expect(await loadEzcaterOrderDetail(actor, "lead")).toBeNull();
     expect(from.mock.calls.filter(([table]) => table === "ezcater_orders")).toHaveLength(4);
   });
   it("does not expose a pending failed-sync row before its first snapshot", async () => {
@@ -85,4 +85,21 @@ describe("ezCater detail service-role read boundary", () => {
     }
     expect(scopeFilter).not.toHaveBeenCalled();
   });
+});
+
+it("missing 0223 fails soft and logs only a stable code", async () => {
+  authorizedRead("snapshot", "snapshot");
+  queues.ezcater_orders = [{ data: null, error: { code: "42P01", message: "PRIVATE" } }];
+  const logged = vi.spyOn(console, "error").mockImplementation(() => {});
+  expect(await loadEzcaterOrderDetail(actor, "lead")).toBeNull();
+  expect(logged).toHaveBeenCalledWith("[ezcater-detail]", "ezcater_detail_order_read_failed");
+  logged.mockRestore();
+});
+
+it("does not log arbitrary error strings sharing the diagnostic prefix", async () => {
+  from.mockImplementationOnce(() => { throw new Error("ezcater_detail_secret"); });
+  const logged = vi.spyOn(console, "error").mockImplementation(() => {});
+  expect(await loadEzcaterOrderDetail(actor, "lead")).toBeNull();
+  expect(logged).toHaveBeenCalledWith("[ezcater-detail]", "ezcater_detail_unavailable");
+  logged.mockRestore();
 });

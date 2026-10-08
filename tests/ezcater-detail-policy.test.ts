@@ -17,3 +17,9 @@ describe("ezCater existing catering contact policy", () => {
     }
   });
 });
+
+it.each(["catering_mgr", "moo"] as const)("CC cross-shop ruling holds without any memberships for %s", (role) => {
+  for (const locationId of ["shop-a", "shop-b"]) {
+    expect(canReadCateringContact({ role, active: true, locations: [] }, locationId)).toBe(true);
+  }
+});

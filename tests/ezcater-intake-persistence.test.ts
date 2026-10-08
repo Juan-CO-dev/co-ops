@@ -13,7 +13,10 @@ beforeEach(() => {
   vi.clearAllMocks(); rows.length = 0;
   vi.mocked(getServiceRoleClient).mockReturnValue({ from: () => ({ insert: (row: Record<string, unknown>) => {
     rows.push(row); return { select: () => ({ maybeSingle: async () => ({ data: { id: "receipt" }, error: null }) }) };
-  } }) } as unknown as ReturnType<typeof getServiceRoleClient>);
+  }, update: (patch: Record<string, unknown>) => ({ eq: (_key: string, id: string) => {
+    expect(id).toBe("receipt"); Object.assign(rows[0]!, patch);
+    return { select: () => ({ maybeSingle: async () => ({ data: { id }, error: null }) }) };
+  } }) }) } as unknown as ReturnType<typeof getServiceRoleClient>);
   vi.mocked(syncEzcaterOrder).mockImplementation(async () => {
     expect(rows).toHaveLength(1);
     expect(rows[0]?.processing_result).toBe("error:sync_pending");
@@ -23,7 +26,8 @@ beforeEach(() => {
 
 it("persists a sanitized receipt before provider work and links its resulting lead", async () => {
   expect(await processEzcaterDelivery(body, true)).toEqual({ result: "created_lead_confirmed" });
-  expect(rows[1]).toMatchObject({ processing_result: "created_lead_confirmed", lead_id: "lead" });
+  expect(rows).toHaveLength(1);
+  expect(rows[0]).toMatchObject({ processing_result: "created_lead_confirmed", lead_id: "lead" });
   expect(JSON.stringify(rows)).not.toContain("private@example.test");
 });
 it("invalid signatures never fetch or retain untrusted payload text", async () => {

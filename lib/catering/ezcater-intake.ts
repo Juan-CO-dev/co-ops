@@ -17,6 +17,7 @@ export type EzcaterProcessingResult =
   | "illegal_transition"      // canTransition refused; left for the human
   | "unmapped_location"
   | "invalid_signature"
+  | "sync_error"
   | "ignored_event"
   | `error:${string}`;
 
@@ -70,9 +71,13 @@ export async function processEzcaterDelivery(rawBody: string, signatureValid: bo
     await appendEvent({ ...ctx, result: "ignored_event" });
     return { result: "ignored_event" };
   }
-  await appendEvent({ ...ctx, result: "error:sync_pending" });
+  const receiptId = await appendEvent({ ...ctx, result: "error:sync_pending" });
+  if (!receiptId) throw new Error("ezcater_events_append_failed");
   const applied = await syncEzcaterOrder(notification.entityId, notification.parentId, { eventKey: notification.key });
   const result = applied.result as EzcaterProcessingResult;
-  await appendEvent({ ...ctx, result, leadId: applied.lead_id });
+  const { data, error } = await getServiceRoleClient().from("ezcater_events")
+    .update({ processing_result: result, lead_id: applied.lead_id })
+    .eq("id", receiptId).select("id").maybeSingle<{ id: string }>();
+  if (error || !data) throw new Error("ezcater_events_update_failed");
   return { result };
 }

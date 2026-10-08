@@ -9,6 +9,7 @@ import { syncEzcaterOrder } from "./sync";
 /** A bounded best-effort phase. Its failure never gates elapsed-event completion. */
 export async function refreshKnownEzcaterOrders(todayEt: string, deadlineAt = Date.now() + 20_000, parent?: AbortSignal) {
   const result = { attempted: 0, failed: 0, deferred: false, disabled: false };
+  let succeeded = 0;
   const budget = captureBudget(Math.max(1, Math.min(20_000, deadlineAt - Date.now())), parent);
   try {
     if (!ezcaterConfigured() || process.env.EZCATER_FIXTURES === "1") {
@@ -30,15 +31,25 @@ export async function refreshKnownEzcaterOrders(todayEt: string, deadlineAt = Da
       try {
         const synced = await budget.wait(() => syncEzcaterOrder(row.provider_uuid, row.caterer_uuid,
           { eventKey: row.pending_event_key, deadlineMs: deadlineAt, signal: budget.signal }));
-        if (synced.result.startsWith("error:")) result.failed++;
-      } catch { result.failed++; }
+        if (synced.sync_error || synced.result === "sync_error" || synced.result.startsWith("error:")) result.failed++;
+        else succeeded++;
+      } catch (error) {
+        if (budget.signal.aborted && error instanceof Error && error.message === "capture_deadline") {
+          result.deferred = true;
+          // The run used its allotted time; progress remains healthy. No progress still alerts.
+          if (succeeded === 0) result.failed++;
+          break;
+        }
+        result.failed++;
+      }
     }
     if (candidates.length === 100 || result.attempted < candidates.length) result.deferred = true;
   } catch { result.failed++; result.deferred = true; }
   finally {
     budget.close();
     const heartbeat = audit({ actorId: null, actorRole: null,
-      action: result.failed || result.deferred ? "cron.failure" : "cron.success",
+      // Deferral is normal for a bounded sweep that made progress.
+      action: result.failed || (result.deferred && succeeded === 0) ? "cron.failure" : "cron.success",
       resourceTable: "cron", resourceId: null,
       metadata: { job: "ezcater-refresh", business_date: todayEt, ...result }, ipAddress: null, userAgent: null });
     // Heartbeat failure is fail-open too; reserve no provider time from completion.

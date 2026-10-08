@@ -23,7 +23,16 @@ export async function canReadCateringLead(actor: AuthContext, locationId: string
 
 /** Reusable by the pipeline and catering digest. No contacts in audit/log/diagnostic data. */
 export async function loadEzcaterOrderDetail(actor: AuthContext, leadId: string): Promise<EzcaterOrderDetail | null> {
-  return loadDetail(actor, leadId, 1);
+  try { return await loadDetail(actor, leadId, 1); }
+  catch (error) {
+    // Optional enrichment must not take down the pipeline during deployment.
+    const safeCodes = ["ezcater_detail_lead_read_failed", "ezcater_detail_order_read_failed",
+      "ezcater_detail_children_read_failed", "ezcater_detail_snapshot_read_failed", "ezcater_detail_snapshot_changed"];
+    const code = error instanceof Error && safeCodes.includes(error.message)
+      ? error.message : "ezcater_detail_unavailable";
+    console.error("[ezcater-detail]", code);
+    return null;
+  }
 }
 
 async function loadDetail(actor: AuthContext, leadId: string, retries: number): Promise<EzcaterOrderDetail | null> {

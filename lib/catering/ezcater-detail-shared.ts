@@ -13,6 +13,7 @@ export function humanEzcaterNotes(notes: string | null): string | null {
 
 /** The existing catering contact policy; operational writes keep their own scope. */
 export function canReadCateringContact(actor: { role: RoleCode; active: boolean; locations: string[] }, locationId: string | null): boolean {
+  // CC confirmed: catering manager and level 8+ read every shop across the pipeline.
   return actor.active && getRoleLevel(actor.role) >= 5 &&
     (actor.role === "catering_mgr" || getRoleLevel(actor.role) >= 8 || locationId == null || actor.locations.includes(locationId));
 }

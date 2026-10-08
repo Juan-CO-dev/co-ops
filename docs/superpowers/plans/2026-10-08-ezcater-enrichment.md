@@ -5,9 +5,9 @@ This replaces the original review draft with CC's APPROVED WITH CHANGES scope. P
 
 ## Binding corrections
 
-- Nightly auto-completion works (75 completions since September 6, per reviewer evidence). No completion repair. ezCater stays in `completeElapsedCateringEvents` unchanged. Refresh known UUIDs best-effort BEFORE it; newly discovered cancellation becomes lost first. API failure/deadline never gates completion.
+- Nightly auto-completion works (75 completions since September 6, per reviewer evidence). No completion repair. ezCater stays in `completeElapsedCateringEvents`, with a backstop that skips pending cancelled/rejected/failed lifecycle events. Refresh known UUIDs best-effort BEFORE it; cancellations become lost even when the provider fetch fails. API failure/deadline does not globally gate completion.
 - The real date bug is UTC slicing in intake and refresh. Derive `event_date` in America/New_York from the timestamp, including DST. Both writes now go through the same apply RPC, which independently derives the date.
-- Historical scope is the 66 webhook UUIDs since September 4, not July. No verified list/search API exists. Backfill reads the reviewed historical receipt interval through October 8, lists identities in dry-run, and refuses execution if count differs from 66. Earlier Toast rings stay unresolved.
+- Historical scope is 68 distinct signed webhook UUIDs since September 4 (66 existing leads plus two accepted UUIDs from September 4 graphql_error deliveries). No verified list/search API exists. Dry-run lists all identities and both lead-less orders for review; execution refreshes existing leads only and never creates historical leads. Supply the reviewed count with --expect N; a mismatch refuses execution. Earlier Toast rings stay unresolved.
 - Keep the proven `orderByID -> order(id:)` base query. Probe actual schema before a SEPARATE enriched request; unknown fields/errors fall back to base. Store subtotal/tip already present. Error diagnostics contain fixed codes only.
 - `posItemId` is raw provider identity, NOT a verified Toast GUID.
 - One SECURITY DEFINER apply RPC, advisory transaction lock by provider UUID, digest skip, atomic snapshot/items/contact/lead/stage-event publication. Failed syncs leave `last_sync_error` and pending lifecycle key for nightly retry. No job, lease, fencing, or cursor tables.
@@ -39,11 +39,15 @@ This replaces the original review draft with CC's APPROVED WITH CHANGES scope. P
 
 ## Verification and handoff
 
+**PR gate: apply fixed migration 0223 before merge.**
+
 Required commands: `npm.cmd test`, `npm.cmd run typecheck`; targeted tests during implementation. Review `git diff --check` and Next build as a separate gate when locally available. Full outcomes and file:line map belong in `docs/superpowers/plans/2026-10-08-ezcater-enrichment-pr-body.md`.
 
 CC sim commands (connection supplied privately by operator; never paste credentials):
 
 ```sh
+# SIM ONLY: guards maya@sim.co-ops and removes the original sim-applied 0223.
+psql -v ON_ERROR_STOP=1 -f scripts/sim-revert-0223.sql
 psql -v ON_ERROR_STOP=1 -f supabase/migrations/0223_ezcater_enrichment.sql
 psql -v ON_ERROR_STOP=1 -f scripts/test-ezcater-enrichment.sql
 ```
@@ -52,7 +56,10 @@ Backfill commands after reviewed schema application, in an approved environment:
 
 ```sh
 npx tsx --conditions=react-server --env-file=.env.local scripts/ezcater-backfill.ts
-npx tsx --conditions=react-server --env-file=.env.local scripts/ezcater-backfill.ts --execute
+# Use N from the reviewed dry run (current evidence: 68); smoke one existing-lead UUID first.
+npx tsx --conditions=react-server --env-file=.env.local scripts/ezcater-backfill.ts --execute --expect 68 --uuid <reviewed-existing-lead-uuid>
+# Verify the smoke result, event date, stage and contact name before full execution.
+npx tsx --conditions=react-server --env-file=.env.local scripts/ezcater-backfill.ts --execute --expect 68
 ```
 
-Risks/gates: runtime probe has not been executed against the live provider in this dispatch; unsupported enrichment stays unavailable and base intake continues. Sim execution and real-schema grant evidence are CC's remaining verification. Transaction locking serializes apply, not provider fetches; absent an upstream revision field, a slower earlier fetch can arrive after a newer one (terminal stages cannot reopen). Bounded nightly work can defer orders; heartbeat reports that outcome and oldest-attempt ordering rotates the next run. The 66 count is reviewer-provided; dry-run must verify it before execution. No customer data, credentials or raw GraphQL errors belong in the review packet.
+Risks/gates: runtime probe has not been executed against the live provider in this dispatch; unsupported enrichment stays unavailable and base intake continues. Sim execution and real-schema grant evidence are CC's remaining verification. Transaction locking serializes apply, not provider fetches; absent an upstream revision field, a slower earlier fetch can arrive after a newer one (terminal stages cannot reopen). Bounded nightly work can defer orders; heartbeat reports that outcome and oldest-attempt ordering rotates the next run. The 68 count is reviewer-provided; dry-run must verify it before execution and supply it via --expect N. The two lead-less accepted UUIDs remain review-only. No customer data, credentials or raw GraphQL errors belong in the review packet.

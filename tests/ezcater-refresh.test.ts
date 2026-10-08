@@ -124,3 +124,30 @@ describe("sales pull keeps generic completion after best-effort refresh", () => 
     expect(result.metadata.elapsed_completed).toBe(1);
   });
 });
+
+it("a capped sweep making progress is a success, with deferral metadata", async () => {
+  rows = Array.from({ length: 100 }, (_, i) => row(String(i)));
+  expect(await refresh.refreshKnownEzcaterOrders("2026-10-08")).toMatchObject({ attempted: 100, failed: 0, deferred: true });
+  expect(audit).toHaveBeenCalledWith(expect.objectContaining({ action: "cron.success", metadata: expect.objectContaining({ deferred: true }) }));
+});
+
+it("a successful refresh followed by overall deadline exhaustion stays healthy", async () => {
+  rows.push(row("hung"), row("later"));
+  vi.mocked(syncEzcaterOrder).mockResolvedValueOnce({ lead_id: "lead", result: "refreshed" })
+    .mockImplementationOnce(() => new Promise(() => {}));
+  const pending = refresh.refreshKnownEzcaterOrders("2026-10-08", Date.now() + 50);
+  await vi.advanceTimersByTimeAsync(50);
+  expect(await pending).toEqual({ attempted: 2, failed: 0, deferred: true, disabled: false });
+  expect(syncEzcaterOrder).toHaveBeenCalledTimes(2);
+  expect(audit).toHaveBeenCalledWith(expect.objectContaining({ action: "cron.success", metadata: expect.objectContaining({ deferred: true }) }));
+});
+it("a genuine failure still alerts despite progress before budget exhaustion", async () => {
+  rows.push(row("failed"), row("hung"));
+  vi.mocked(syncEzcaterOrder).mockResolvedValueOnce({ lead_id: "lead", result: "refreshed" })
+    .mockRejectedValueOnce(new Error("apply_failed"))
+    .mockImplementationOnce(() => new Promise(() => {}));
+  const pending = refresh.refreshKnownEzcaterOrders("2026-10-08", Date.now() + 50);
+  await vi.advanceTimersByTimeAsync(50);
+  expect(await pending).toMatchObject({ attempted: 3, failed: 1, deferred: true });
+  expect(audit).toHaveBeenCalledWith(expect.objectContaining({ action: "cron.failure" }));
+});
