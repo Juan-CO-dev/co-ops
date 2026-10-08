@@ -15,7 +15,7 @@ import es from "@/lib/i18n/es.json";
 import { GET } from "@/app/api/reports/export/route";
 import { requireSession } from "@/lib/session";
 import { getServiceRoleClient } from "@/lib/supabase-server";
-import { CSV_BOM, SALES_EXPORT_COLUMNS, salesBreakdownRows } from "@/lib/report-export-shared";
+import { SALES_EXPORT_COLUMNS, salesBreakdownRows } from "@/lib/report-export-shared";
 import {
   loadSalesCatering, mergeBreakdown, mergeCateringValues, resolveSalesRange, rowAverageCents, salesDayParams, salesDeltaPct,
   salesHasData, shownCents, summarizeSales, toCheckDetail, unknownComponents, type DailyRaw,
@@ -38,7 +38,6 @@ function client() {
   };
 }
 const get = (q: string) => GET(new NextRequest(`https://example.test/api/reports/export?${q}`));
-const lines = async (res: Response) => (await res.text()).replace(CSV_BOM, "").trim().split("\r\n");
 
 beforeEach(() => {
   vi.clearAllMocks();
