@@ -9,6 +9,7 @@ import { recordCaptureReconciliation } from "./capture-reconciliation";
 import type { QuantityCapture } from "./capture-reconciliation-shared";
 import { normalizeToastOrder } from "./capture-shared";
 import { backfillDates, captureBudget, captureErrorCode, runCapturePages } from "./capture-runner";
+import { persistCapturedCatering } from "./capture-catering";
 
 export function captureEnabled(): boolean {
   return process.env.TOAST_ORDER_CAPTURE === "1" && process.env.TOAST_FIXTURES !== "1" && toastConfigured();
@@ -20,6 +21,7 @@ export interface CaptureDayResult {
   skipped: boolean;
   reason?: string;
   reconciliation?: { status: "match" | "mismatch" | "skipped"; error: string | null };
+  catering?: { ok: boolean; error: string | null };
 }
 const skipped = (reason: string) => ({ runId: "", pages: 0, orders: 0, skipped: true as const, reason });
 type Budget = ReturnType<typeof captureBudget>;
@@ -116,16 +118,28 @@ async function captureDay(locationId: string, date: string, options: { resume?: 
     ? await sb.rpc("toast_capture_claim", { p_run_id: runId, p_location_id: locationId, p_business_date: date, p_min_interval: options.minInterval ?? "5 minutes" }).abortSignal(budget.signal)
     : await sb.from("toast_capture_runs").insert({ id: runId, location_id: locationId, business_date: date, status: "running" }).abortSignal(budget.signal);
   dbError(started.error, "capture_manifest_start_failed");
-  if (options.debounce && started.data !== true) return skipped("capture_debounced");
+  if (options.debounce && started.data !== true) {
+    const latest = await sb.from("toast_capture_runs").select("status,catering_status,catering_error_code")
+      .eq("location_id", locationId).eq("business_date", date).order("started_at", { ascending: false })
+      .order("id", { ascending: false }).limit(1).abortSignal(budget.signal)
+      .maybeSingle<{ status: string; catering_status: string; catering_error_code: string | null }>();
+    dbError(latest.error, "capture_debounce_read_failed");
+    if (latest.data?.status === "running") return skipped("capture_running");
+    if (latest.data?.status !== "completed") return skipped("capture_recent_failure");
+    return { ...skipped("capture_debounced"), catering: { ok: latest.data.catering_status === "complete",
+      error: latest.data.catering_status === "complete" ? null : "capture_catering_degraded" } };
+  }
   budget.check();
   const args = { p_run_id: runId, p_location_id: locationId, p_business_date: date };
   let configLoaded = false;
+  let configFresh = true;
+  const cateringOrders: unknown[] = [];
   const quantities: QuantityCapture[] = [];
   const result = await runCapturePages({
     async page(page) {
       if (!configLoaded) {
         try { await cacheConfig(locationId, restaurantGuid, budget, options.backfill === true); }
-        catch { budget.check(); /* Config names are optional; order GUIDs remain authoritative. */ }
+        catch { budget.check(); configFresh = false; }
         configLoaded = true;
       }
       return budget.request(() => toastGet<unknown>(`/orders/v2/ordersBulk?businessDate=${date.replaceAll("-", "")}&page=${page}&pageSize=100`, restaurantGuid, budget.signal), options.backfill === true);
@@ -160,6 +174,7 @@ async function captureDay(locationId: string, date: string, options: { resume?: 
         dbError(saved.error, "capture_page_write_failed");
         break;
       }
+      cateringOrders.push(...orders);
       if (options.reconcile) quantities.push(...normalized.map(({ order, checks }) => ({ order, checks })));
     },
     async complete(pages) {
@@ -174,12 +189,25 @@ async function captureDay(locationId: string, date: string, options: { resume?: 
       if (failed.error || failed.data?.length !== 1) throw new Error("capture_manifest_fail_failed");
     },
   });
+  // PII stays in this request. No catering write is attempted before successful finish.
+  let catering: NonNullable<CaptureDayResult["catering"]>;
+  try {
+    const result = await budget.wait(() => persistCapturedCatering(locationId, cateringOrders, { configFresh, signal: budget.signal }));
+    catering = { ok: result.ok, error: result.ok ? null : result.error ?? "capture_catering_processing_failed" };
+    const stored = await sb.from("toast_capture_runs").update({
+      catering_status: catering.ok ? "complete" : "degraded", catering_error_code: catering.error,
+    }).eq("id", runId).eq("location_id", locationId).eq("status", "completed").select("id").abortSignal(budget.signal);
+    if (stored.error || stored.data?.length !== 1) catering = { ok: false, error: "capture_catering_status_write_failed" };
+  } catch {
+    // An interrupted sink leaves pending, which scan explicitly treats as degraded.
+    catering = { ok: false, error: budget.signal.aborted ? "capture_catering_deadline" : "capture_catering_processing_failed" };
+  }
   let reconciliation: CaptureDayResult["reconciliation"];
   if (options.reconcile) {
     try { reconciliation = await recordCaptureReconciliation(locationId, date, runId, quantities, budget.signal); }
     catch (error) { reconciliation = { status: "skipped", error: captureErrorCode(error) }; }
   }
-  return { runId, ...result, skipped: false, ...(reconciliation ? { reconciliation } : {}) };
+  return { runId, ...result, skipped: false, catering, ...(reconciliation ? { reconciliation } : {}) };
 }
 
 /** Read-only retention probe: consumes every page but persists no orders or manifest. */

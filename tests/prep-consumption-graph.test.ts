@@ -9,6 +9,7 @@ import { describe, it, expect } from "vitest";
 import {
   buildRecipeGraph,
   perUnitSkuOzForItemFromGraph,
+  perUnitSkuAttributionsForItem,
   perUnitSkuOzForMenuItemFromGraph,
   perUnitDirectSkuOzForMenuItem,
   firstLevelItemConsumption,
@@ -48,6 +49,15 @@ function graphOf(recipes: GraphRecipe[]) {
 }
 
 describe("perUnitSkuOzForItemFromGraph", () => {
+  it("retains every nested prep boundary on raw SKU attribution", () => {
+    const g = graphOf([
+      { recipeId: "rA", batchYield: 2, inputs: [ozIn(8, "sku1")], outputs: [itemOut("A", 2)] },
+      { recipeId: "rB", batchYield: 1, inputs: [itemIn(1, "A")], outputs: [itemOut("B", 1)] },
+    ]);
+    expect(perUnitSkuAttributionsForItem(g, "B")).toEqual([
+      { skuId: "sku1", itemPath: ["B", "A"], oz: 4 },
+    ]);
+  });
   it("flattens a single-level recipe: batch oz ÷ batch yield per SKU", () => {
     const g = graphOf([
       { recipeId: "r1", batchYield: 10, inputs: [ozIn(20, "sku1"), ozIn(5, "sku2")], outputs: [itemOut("A", 10)] },

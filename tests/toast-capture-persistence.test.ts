@@ -1,14 +1,16 @@
 import { recordCaptureReconciliation } from "@/lib/toast/capture-reconciliation";
+import { persistCapturedCatering } from "@/lib/toast/capture-catering";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { captureToastDaySystem } from "@/lib/toast/capture";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import { toastConfigured, toastGet, toastGetPage } from "@/lib/toast/client";
 
 vi.mock("@/lib/toast/capture-reconciliation", () => ({ recordCaptureReconciliation: vi.fn() }));
+vi.mock("@/lib/toast/capture-catering", () => ({ persistCapturedCatering: vi.fn() }));
 vi.mock("@/lib/supabase-server", () => ({ getServiceRoleClient: vi.fn() }));
 vi.mock("@/lib/toast/client", async (original) => ({ ...await original<typeof import("@/lib/toast/client")>(), toastConfigured: vi.fn(), toastGet: vi.fn(), toastGetPage: vi.fn() }));
 
-let previous: { id: string; pages: number; orders: number } | null;
+let previous: { id: string; pages: number; orders: number; status?: string; catering_status?: string; catering_error_code?: string } | null;
 let rpc: ReturnType<typeof vi.fn>;
 let writes: { table: string; data: unknown }[];
 let filters: [string, string, unknown][];
@@ -21,6 +23,10 @@ beforeEach(() => {
   vi.stubEnv("TOAST_FIXTURES", "0");
   schemaMissing = false;
   previous = null; writes = []; filters = []; pageError = false;
+  vi.mocked(persistCapturedCatering).mockImplementation(async (locationId) => {
+    expect(rpc.mock.calls.some((call) => call[0] === "toast_capture_finish")).toBe(true);
+    return { locationId, ok: true, seen: 0, catering: 0, attributed: 0, createdLeads: 0, lostLeads: 0, refreshed: 0, skipped: 0, errors: 0, unparsedAmounts: 0 };
+  });
   vi.mocked(toastConfigured).mockReturnValue(true);
   vi.mocked(toastGetPage).mockResolvedValue({ data: [], nextPageToken: null });
   vi.mocked(toastGet).mockResolvedValue([{ guid: "order", businessDate: 20260722, checks: [] }]);
@@ -54,6 +60,7 @@ it("resume skips only a completed date scoped to the requested shop", async () =
 });
 
 it("a refused debounce claim never fetches orders or creates a second manifest", async () => {
+  previous = { id: "prior", pages: 1, orders: 0, status: "completed", catering_status: "complete" };
   rpc.mockImplementation(() => ({ abortSignal: async () => ({ data: false, error: null }) }));
   expect(await captureToastDaySystem("debounced-shop", "2026-07-22", { debounce: true }))
     .toMatchObject({ skipped: true, reason: "capture_debounced" });
@@ -83,6 +90,7 @@ it("write failure leaves a failed manifest and never calls finish", async () => 
   pageError = true;
   await expect(captureToastDaySystem("failed-shop", "2026-07-22")).rejects.toThrow("capture_page_write_failed");
   expect(rpc.mock.calls.map(c => c[0])).toEqual(["toast_capture_page"]);
+  expect(persistCapturedCatering).not.toHaveBeenCalled();
   expect(writes.at(-1)).toMatchObject({ table: "toast_capture_runs", data: { status: "failed", error_code: "capture_page_write_failed" } });
   expect(JSON.stringify(writes)).not.toContain("private");
 });
@@ -113,6 +121,27 @@ it("optional config errors do not fail order publication", async () => {
   vi.mocked(toastGetPage).mockRejectedValue(new Error("optional names unavailable"));
   await expect(captureToastDaySystem("config-failure-shop", "2026-07-22")).resolves.toMatchObject({ orders: 1, skipped: false });
   expect(rpc).toHaveBeenCalledWith("toast_capture_finish", expect.anything());
+  expect(persistCapturedCatering).toHaveBeenCalledWith("config-failure-shop", expect.any(Array), { configFresh: false, signal: expect.any(AbortSignal) });
+});
+
+it.each([
+  ["running", "pending", "capture_running"],
+  ["failed", "pending", "capture_recent_failure"],
+  ["completed", "degraded", "capture_debounced"],
+])("debounce preserves %s/%s as degraded evidence", async (status, catering_status, reason) => {
+  previous = { id: "prior", pages: 1, orders: 0, status, catering_status };
+  rpc.mockImplementation(() => ({ abortSignal: async () => ({ data: false, error: null }) }));
+  const result = await captureToastDaySystem("shop", "2026-07-22", { debounce: true });
+  expect(result).toMatchObject({ skipped: true, reason });
+  if (status === "completed") expect(result.catering?.ok).toBe(false);
+  expect(persistCapturedCatering).not.toHaveBeenCalled();
+});
+
+it("catering failure preserves publication and records degraded status", async () => {
+  vi.mocked(persistCapturedCatering).mockResolvedValue({ locationId: "shop", ok: false, error: "capture_catering_config_stale", seen: 0, catering: 0, attributed: 0, createdLeads: 0, lostLeads: 0, refreshed: 0, skipped: 0, errors: 1, unparsedAmounts: 0 });
+  await expect(captureToastDaySystem("shop", "2026-07-22")).resolves.toMatchObject({ skipped: false, catering: { ok: false, error: "capture_catering_config_stale" } });
+  expect(writes.at(-1)).toMatchObject({ table: "toast_capture_runs", data: { catering_status: "degraded", catering_error_code: "capture_catering_config_stale" } });
+  expect(writes.slice(1).some((write) => (write.data as { status?: string }).status === "failed")).toBe(false);
 });
 
 it("aborts in-flight orders at 60s and cannot publish after a late response", async () => {

@@ -19,7 +19,8 @@ export async function captureIntraday(today: string, signal?: AbortSignal, remai
         try {
           const result = await budget.wait(() => captureToastDaySystem(location.id, date, { debounce: true, minInterval: date === today ? "5 minutes" : "1 hour", signal: budget.signal }));
           return { locationId: location.id, date, skipped: result.skipped,
-            error: result.reason === "capture_schema_missing" ? result.reason : null };
+            error: result.catering?.ok === false ? result.catering.error ?? "capture_catering_degraded"
+              : result.skipped && result.reason !== "capture_debounced" ? result.reason ?? "capture_incomplete" : null };
         } catch (error) { return { locationId: location.id, date, error: captureErrorCode(error) }; }
       }));
       results.push(...day);

@@ -24,17 +24,17 @@ import type { PipelineStage } from "@/lib/catering/pipeline-shared";
  * (3) else the first from (1) — the spec'd (A1.3) cross-location fallback, deliberately
  * reached ONLY when the scoped lookup returned zero rows without error.
  */
-export async function resolveCateringManager(sb: ReturnType<typeof getServiceRoleClient>, locationId: string): Promise<string | null> {
+export async function resolveCateringManager(sb: ReturnType<typeof getServiceRoleClient>, locationId: string, signal: AbortSignal = new AbortController().signal): Promise<string | null> {
   const { data: activeMgrs, error: mgrErr } = await sb.from("users").select("id")
     .eq("role", "catering_mgr").eq("active", true)
-    .order("created_at", { ascending: true }).returns<Array<{ id: string }>>();
+    .order("created_at", { ascending: true }).returns<Array<{ id: string }>>().abortSignal(signal);
   if (mgrErr) return null;
   if (!activeMgrs || activeMgrs.length === 0) return null;
 
   const mgrIds = activeMgrs.map((m) => m.id);
   const { data: scoped, error: scopedErr } = await sb.from("user_locations")
     .select("user_id").eq("location_id", locationId).eq("active", true)
-    .in("user_id", mgrIds).returns<Array<{ user_id: string }>>();
+    .in("user_id", mgrIds).returns<Array<{ user_id: string }>>().abortSignal(signal);
   if (scopedErr) return null;
   if (scoped && scoped.length > 0) {
     const scopedIds = new Set(scoped.map((r) => r.user_id));
@@ -66,13 +66,14 @@ export async function systemMoveStage(
   toStage: PipelineStage,
   note: string,
   actorContext: string,
+  signal: AbortSignal = new AbortController().signal,
 ): Promise<SystemMoveOutcome> {
   const { error, count } = await sb.from("catering_pipeline")
     .update({ stage: toStage, updated_at: new Date().toISOString() }, { count: "exact" })
-    .eq("id", lead.id).eq("stage", lead.stage);
+    .eq("id", lead.id).eq("stage", lead.stage).abortSignal(signal);
   if (error) return "update_failed";
   if (count === 0) return "stage_changed"; // a concurrent delivery already moved it
-  const { error: evErr } = await sb.from("catering_pipeline_events").insert({ pipeline_id: lead.id, from_stage: lead.stage, to_stage: toStage, note, actor_id: null });
+  const { error: evErr } = await sb.from("catering_pipeline_events").insert({ pipeline_id: lead.id, from_stage: lead.stage, to_stage: toStage, note, actor_id: null }).abortSignal(signal);
   // The UPDATE above already committed — the stage genuinely moved. The ledger row failing to
   // land is a trail gap, never a failed move, so the caller must not claim "error:stage_move".
   if (evErr) return "event_failed";

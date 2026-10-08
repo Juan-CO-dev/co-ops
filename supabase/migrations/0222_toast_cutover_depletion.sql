@@ -1,6 +1,6 @@
 -- Migration 0222: launch cutover. AUTHORED 2026-10-07, NOT APPLIED -- GATE CC/JUAN.
 -- The authoring-time gate above is retained as history.
--- APPLIED TO SIM 20261008005718; NOT on prod. Revised in place: revert SIM before re-applying.
+-- APPLIED TO SIM 20261008011108; NOT on prod. Revised in place: revert SIM before re-applying.
 -- Stage A section: atomic debounce; no cursor, lease or fencing protocol.
 begin;
 create table public.toast_capture_debounce (

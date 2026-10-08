@@ -1,161 +1,207 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { runToastSalesPull } from "@/lib/toast-sales-pull-run";
-import { materializeDailyDepletion, pullSalesForAllLocations } from "@/lib/catering/toast-sales";
-import { runParShadowForLocation } from "@/lib/dynamic-pars";
-import { captureToastDaySystem, captureEnabled } from "@/lib/toast/capture";
-import { ToastApiError } from "@/lib/toast/client";
+import { getServiceRoleClient } from "@/lib/supabase-server";
+import { runOrderCapture } from "@/lib/toast/capture-job";
+import { materializeCapturedDepletion } from "@/lib/toast/depletion";
+import { pullSalesForAllLocations, materializeDailyDepletion } from "@/lib/catering/toast-sales";
+import { loadDepletionWatermark } from "@/lib/counts";
+import { runParShadowForLocation, recordParRunSkipped } from "@/lib/dynamic-pars";
+import { completeElapsedCateringEvents } from "@/lib/catering/system-intake";
 import { audit } from "@/lib/audit";
-import { NextRequest } from "next/server";
-import { GET } from "@/app/api/cron/toast-sales-pull/route";
 import { watchSiblings } from "@/lib/job-watch-run";
+import { GET, maxDuration } from "@/app/api/cron/toast-sales-pull/route";
+import { NextRequest } from "next/server";
 
-vi.mock("@/lib/catering/toast-sales", () => ({ pullSalesForAllLocations: vi.fn(), materializeDailyDepletion: vi.fn() }));
-vi.mock("@/lib/catering/system-intake", () => ({ completeElapsedCateringEvents: vi.fn(async () => ({ completed: [], failed: [] })) }));
-vi.mock("@/lib/counts", () => ({ loadDepletionWatermark: vi.fn(async () => null) }));
+vi.mock("@/lib/supabase-server", () => ({ getServiceRoleClient: vi.fn() }));
+vi.mock("@/lib/toast/capture-job", () => ({ runOrderCapture: vi.fn() }));
+vi.mock("@/lib/toast/depletion", () => ({ materializeCapturedDepletion: vi.fn() }));
 vi.mock("@/lib/dynamic-pars", () => ({ runParShadowForLocation: vi.fn(), recordParRunSkipped: vi.fn() }));
-vi.mock("@/lib/toast/capture", () => ({ captureToastDaySystem: vi.fn(), captureEnabled: vi.fn(() => true) }));
+vi.mock("@/lib/catering/toast-sales", () => ({ pullSalesForAllLocations: vi.fn(), materializeDailyDepletion: vi.fn() }));
+vi.mock("@/lib/counts", () => ({ loadDepletionWatermark: vi.fn() }));
+vi.mock("@/lib/catering/system-intake", () => ({ completeElapsedCateringEvents: vi.fn() }));
 vi.mock("@/lib/audit", () => ({ audit: vi.fn(async () => {}) }));
-
 vi.mock("@/lib/job-watch-run", () => ({ watchSiblings: vi.fn(async () => {}) }));
 
+const DAYS = ["2026-10-06", "2026-10-05", "2026-10-04"];
+const SHOPS = ["shop1", "shop2"];
+type CaptureResult = Awaited<ReturnType<typeof runOrderCapture>>;
+const fullCapture = (): CaptureResult => ({ failures: 0, skipped: false,
+  results: DAYS.flatMap((businessDate) => SHOPS.map((locationId) => ({
+    locationId, businessDate, runId: `${locationId}:${businessDate}`, skipped: false,
+    orders: 0, pages: 1, error: null, complete: true,
+  }))),
+});
 let sequence: string[];
+let captureResult: CaptureResult;
 beforeEach(() => {
   vi.clearAllMocks();
+  vi.stubEnv("DEPLETION_SOURCE", "capture");
   sequence = [];
-  vi.mocked(captureEnabled).mockReturnValue(true);
-  vi.mocked(captureToastDaySystem).mockResolvedValue({ runId: "run", pages: 1, orders: 0, skipped: false });
   vi.mocked(pullSalesForAllLocations).mockImplementation(async () => {
-    sequence.push("pull:shop1", "pull:shop2");
-    return ["shop1", "shop2"].map((locationId) => ({ locationId, ok: true,
-      result: { selections: 3, appended: 2, unchanged: 1, voids: 0 } }));
+    sequence.push("legacy-pull");
+    return SHOPS.map((locationId) => ({ locationId, ok: true }));
   });
-  vi.mocked(materializeDailyDepletion).mockImplementation(async (id) => {
-    sequence.push(`depletion:${id}`); return { rows: 2 };
+  vi.mocked(materializeDailyDepletion).mockImplementation(async (id, date) => {
+    sequence.push(`legacy-depletion:${id}:${date}`);
+    return { rows: 0 };
   });
-  vi.mocked(runParShadowForLocation).mockImplementation(async (id) => {
-    sequence.push(`pars:${id}`); return { rows: 1 } as Awaited<ReturnType<typeof runParShadowForLocation>>;
+  vi.mocked(loadDepletionWatermark).mockResolvedValue(null);
+  vi.mocked(recordParRunSkipped).mockResolvedValue({ rows: 0 } as Awaited<ReturnType<typeof recordParRunSkipped>>);
+  captureResult = fullCapture();
+  const query = { select: () => query, eq: () => query,
+    not: async () => ({ data: SHOPS.map((id) => ({ id })), error: null }) };
+  vi.mocked(getServiceRoleClient).mockReturnValue({ from: () => query } as unknown as ReturnType<typeof getServiceRoleClient>);
+  vi.mocked(runOrderCapture).mockImplementation(async () => {
+    sequence.push(...DAYS.flatMap((date) => SHOPS.map((id) => `capture:${id}:${date}`)));
+    return captureResult;
   });
-});
-afterEach(() => { vi.useRealTimers(); vi.unstubAllEnvs(); });
-
-it("finishes both shops' selection, depletion and pars before a hung capture, then returns healthy at the shared 150s deadline", async () => {
-  vi.useFakeTimers();
-  const signals: AbortSignal[] = [];
-  vi.mocked(captureToastDaySystem).mockImplementation((id, _date, opts) => {
-    sequence.push(`capture:${id}`);
-    signals.push(opts!.signal!);
-    // Deliberately ignore abort: the orchestrator must still bound the route.
-    return new Promise(() => {});
+  vi.mocked(materializeCapturedDepletion).mockImplementation(async (id, date) => {
+    sequence.push(`depletion:${id}:${date}`);
+    return { rows: 2 } as Awaited<ReturnType<typeof materializeCapturedDepletion>>;
   });
-  let settled = false;
-  const pending = runToastSalesPull({ businessDate: "2026-07-23" }).then((result) => { settled = true; return result; });
-  await vi.advanceTimersByTimeAsync(0);
-  expect(sequence).toEqual(["pull:shop1", "pull:shop2", "depletion:shop1", "depletion:shop2", "pars:shop1", "pars:shop2", "capture:shop1", "capture:shop2"]);
-  expect(signals).toHaveLength(2);
-  expect(signals[0]).toBe(signals[1]);
-  await vi.advanceTimersByTimeAsync(149_999);
-  expect(settled).toBe(false);
-  await vi.advanceTimersByTimeAsync(1);
-  expect(await pending).toMatchObject({ healthy: true, metadata: {
-    capture_failures: 2, per_location_failures: 0, depletion_rows: { shop1: 2, shop2: 2 }, par_rows: { shop1: 1, shop2: 1 },
-  } });
-  expect(signals.every((signal) => signal.aborted)).toBe(true);
-  expect(audit).toHaveBeenCalledWith(expect.objectContaining({ action: "cron.failure", metadata: expect.objectContaining({
-    job: "toast-order-capture", failures: 2, results: expect.arrayContaining([expect.objectContaining({ error: "capture_deadline" })]),
-  }) }));
+  vi.mocked(runParShadowForLocation).mockImplementation(async (id, date) => {
+    sequence.push(`pars:${id}:${date}`);
+    return { rows: 1 } as Awaited<ReturnType<typeof runParShadowForLocation>>;
+  });
+  vi.mocked(completeElapsedCateringEvents).mockResolvedValue({ completed: [], failed: [], stageChanged: 0 });
 });
+afterEach(() => vi.unstubAllEnvs());
 
-it("a capture 429 produces its own sanitized failure heartbeat without poisoning selection health", async () => {
-  vi.mocked(captureToastDaySystem).mockRejectedValueOnce(new ToastApiError(429, "rate_limited", "PRIVATE provider payload", 60_000));
-  const result = await runToastSalesPull({ businessDate: "2026-07-23" });
-  expect(result).toMatchObject({ healthy: true, metadata: { job: "toast-sales-pull", capture_failures: 1, per_location_failures: 0 } });
-  expect(materializeDailyDepletion).toHaveBeenCalledTimes(2);
-  expect(runParShadowForLocation).toHaveBeenCalledTimes(2);
-  expect(audit).toHaveBeenCalledWith(expect.objectContaining({ action: "cron.failure", metadata: expect.objectContaining({
-    job: "toast-order-capture", results: expect.arrayContaining([expect.objectContaining({ locationId: "shop1", error: "toast_http_429" })]),
-  }) }));
-  expect(JSON.stringify(vi.mocked(audit).mock.calls)).not.toContain("PRIVATE");
-});
-
-it("successful capture writes an independent nightly heartbeat", async () => {
-  expect(await runToastSalesPull({ businessDate: "2026-07-23" })).toMatchObject({ healthy: true, metadata: { capture_failures: 0 } });
-  expect(audit).toHaveBeenCalledWith(expect.objectContaining({ action: "cron.success", metadata: expect.objectContaining({ job: "toast-order-capture" }) }));
-  expect(vi.mocked(captureToastDaySystem).mock.calls.map((c) => c[1])).toEqual([
-    "2026-07-23", "2026-07-23", "2026-07-22", "2026-07-22", "2026-07-21", "2026-07-21",
-  ]);
-});
-
-it("selection failures remain unhealthy and do not materialize", async () => {
-  vi.mocked(pullSalesForAllLocations).mockResolvedValue([{ locationId: "shop", ok: false, error: "selection_failed" }]);
-  expect(await runToastSalesPull({ businessDate: "2026-07-23" })).toMatchObject({ healthy: false, metadata: { per_location_failures: 1 } });
+it("finishes every requested capture, then every materialization, then shadow pars", async () => {
+  const result = await runToastSalesPull({ businessDate: DAYS[0]! });
+  expect(runOrderCapture).toHaveBeenCalledExactlyOnceWith(SHOPS, DAYS[0], "cron", DAYS, expect.any(Number), undefined);
+  const expected = (stage: string) => DAYS.flatMap((date) => SHOPS.map((id) => `${stage}:${id}:${date}`));
+  expect(sequence).toEqual([...expected("capture"), ...expected("depletion"), ...SHOPS.map((id) => `pars:${id}:${DAYS[0]}`)]);
+  expect(pullSalesForAllLocations).not.toHaveBeenCalled();
   expect(materializeDailyDepletion).not.toHaveBeenCalled();
+  expect(result).toMatchObject({ healthy: true, metadata: { capture_failures: 0, depletion_failures: 0, par_run_failures: 0 } });
+});
+
+it("cannot materialize while the shared capture phase remains pending", async () => {
+  let finish: (result: CaptureResult) => void = () => {};
+  vi.mocked(runOrderCapture).mockImplementation(() => new Promise((resolve) => { finish = resolve; }));
+  const pending = runToastSalesPull({ businessDate: DAYS[0]! });
+  await vi.waitFor(() => expect(runOrderCapture).toHaveBeenCalledTimes(1));
+  expect(materializeCapturedDepletion).not.toHaveBeenCalled();
   expect(runParShadowForLocation).not.toHaveBeenCalled();
+  finish(fullCapture());
+  await expect(pending).resolves.toMatchObject({ healthy: true });
 });
 
-it("kill switch leaves the selection pipeline healthy without an accounting heartbeat", async () => {
-  vi.mocked(captureEnabled).mockReturnValue(false);
-  expect(await runToastSalesPull({ businessDate: "2026-07-23" })).toMatchObject({ healthy: true });
-  expect(captureToastDaySystem).not.toHaveBeenCalled();
-  expect(audit).not.toHaveBeenCalled();
+it("a capture failure excludes exactly its location-day while other dates continue", async () => {
+  captureResult = { ...captureResult, failures: 1,
+    results: captureResult.results.map((r) => r.locationId === "shop1" && r.businessDate === DAYS[1]
+      ? { ...r, complete: false, error: "capture_deadline" } : r) };
+  const result = await runToastSalesPull({ businessDate: DAYS[0]! });
+  expect(materializeCapturedDepletion).toHaveBeenCalledTimes(5);
+  expect(materializeCapturedDepletion).not.toHaveBeenCalledWith("shop1", DAYS[1]);
+  expect(runParShadowForLocation).toHaveBeenCalledTimes(2);
+  expect(runParShadowForLocation).not.toHaveBeenCalledWith("shop1", DAYS[1]);
+  expect(runParShadowForLocation).toHaveBeenCalledWith("shop1", DAYS[0]);
+  expect(runParShadowForLocation).not.toHaveBeenCalledWith("shop1", DAYS[2]);
+  expect(result).toMatchObject({ healthy: false, metadata: { capture_failures: 1, per_location_failures: 1 } });
 });
 
-it("authenticated nightly GET stays HTTP 200 with selection cron.success when accounting times out", async () => {
-  vi.useFakeTimers();
+it("missing result coverage cannot be replaced by an older successful watermark", async () => {
+  captureResult.results = captureResult.results.filter((r) => !(r.locationId === "shop2" && r.businessDate === DAYS[2]));
+  const result = await runToastSalesPull({ businessDate: DAYS[0]! });
+  expect(materializeCapturedDepletion).not.toHaveBeenCalledWith("shop2", DAYS[2]);
+  expect(runParShadowForLocation).not.toHaveBeenCalledWith("shop2", DAYS[2]);
+  expect(result.healthy).toBe(false);
+});
+
+it("successful zero-row materialization authorizes pars for that same day", async () => {
+  vi.mocked(materializeCapturedDepletion).mockResolvedValue({ rows: 0 } as Awaited<ReturnType<typeof materializeCapturedDepletion>>);
+  const result = await runToastSalesPull({ businessDate: DAYS[0]! });
+  expect(result.healthy).toBe(true);
+  expect(result.metadata.depletion_rows["shop1:2026-10-06"]).toBe(0);
+  expect(runParShadowForLocation).toHaveBeenCalledTimes(2);
+});
+
+it("a failed replacement prevents that day from authorizing pars", async () => {
+  vi.mocked(materializeCapturedDepletion).mockRejectedValueOnce(new Error("replacement failed"));
+  const result = await runToastSalesPull({ businessDate: DAYS[0]! });
+  expect(runParShadowForLocation).not.toHaveBeenCalledWith("shop1", DAYS[0]);
+  expect(runParShadowForLocation).toHaveBeenCalledTimes(1);
+  expect(result).toMatchObject({ healthy: false, metadata: { depletion_failures: 1, per_location_failures: 1 } });
+});
+
+it("degraded materialization counts as a day and authorizes T-1 pars", async () => {
+  vi.mocked(materializeCapturedDepletion).mockResolvedValueOnce({ rows: 0, runId: "run",
+    status: "degraded", reason: "toast_capture_config_degraded" });
+  const result = await runToastSalesPull({ businessDate: DAYS[0]! });
+  expect(result).toMatchObject({ healthy: true, metadata: { depletion_failures: 0 } });
+  expect(runParShadowForLocation).toHaveBeenCalledWith("shop1", DAYS[0]);
+  expect(runParShadowForLocation).toHaveBeenCalledTimes(2);
+});
+
+it("passes remaining route time and cancellation into capture", async () => {
+  const now = Date.now();
+  const parent = new AbortController();
+  await runToastSalesPull({ businessDate: DAYS[0]!, deadlineAt: now + 22_000, signal: parent.signal });
+  const call = vi.mocked(runOrderCapture).mock.calls[0]!;
+  expect(call[4]).toBeGreaterThan(0);
+  expect(call[4]).toBeLessThanOrEqual(22_000);
+  expect(call[5]).toBe(parent.signal);
+});
+
+it.each([undefined, "legacy"])("flag %s preserves legacy pull, materializer, pars, then additive capture", async (flag) => {
+  vi.stubEnv("DEPLETION_SOURCE", flag);
+  const result = await runToastSalesPull({ businessDate: DAYS[0]! });
+  expect(pullSalesForAllLocations).toHaveBeenCalledExactlyOnceWith(DAYS[0]);
+  expect(materializeCapturedDepletion).not.toHaveBeenCalled();
+  expect(sequence.slice(0, 5)).toEqual(["legacy-pull", ...SHOPS.map((id) => `legacy-depletion:${id}:${DAYS[0]}`), ...SHOPS.map((id) => `pars:${id}:${DAYS[0]}`)]);
+  expect(runOrderCapture).toHaveBeenCalledExactlyOnceWith(SHOPS, DAYS[0], "cron", [DAYS[0]], expect.any(Number), undefined);
+  expect(result).toMatchObject({ healthy: true, metadata: { source: "legacy", pars_pending_activation: false } });
+});
+it("disabled additive capture leaves the flag-OFF operational pipeline healthy", async () => {
+  vi.stubEnv("DEPLETION_SOURCE", undefined);
+  captureResult = { failures: 0, skipped: true, results: [] };
+  const result = await runToastSalesPull({ businessDate: DAYS[0]! });
+  expect(result.healthy).toBe(true);
+  expect(runParShadowForLocation).toHaveBeenCalledTimes(2);
+});
+it("flag-OFF legacy materialization failure records a skipped par when no watermark covers T-1", async () => {
+  vi.stubEnv("DEPLETION_SOURCE", undefined);
+  vi.mocked(materializeDailyDepletion).mockRejectedValueOnce(new Error("write failed"));
+  const result = await runToastSalesPull({ businessDate: DAYS[0]! });
+  expect(recordParRunSkipped).toHaveBeenCalledExactlyOnceWith("shop1", DAYS[0], null);
+  expect(runParShadowForLocation).toHaveBeenCalledExactlyOnceWith("shop2", DAYS[0]);
+  expect(result.metadata.depletion_failures).toBe(1);
+});
+
+it("the kill switch cannot report a healthy nightly run", async () => {
+  captureResult = { failures: 0, skipped: true, results: [] };
+  const result = await runToastSalesPull({ businessDate: DAYS[0]! });
+  expect(materializeCapturedDepletion).not.toHaveBeenCalled();
+  expect(runParShadowForLocation).not.toHaveBeenCalled();
+  expect(result).toMatchObject({ healthy: false, metadata: { capture_skipped: true, per_location_failures: 2 } });
+});
+
+it("par failures degrade health and do not stop other days", async () => {
+  vi.mocked(runParShadowForLocation).mockRejectedValueOnce(new Error("par failed"));
+  const result = await runToastSalesPull({ businessDate: DAYS[0]! });
+  expect(runParShadowForLocation).toHaveBeenCalledTimes(2);
+  expect(result).toMatchObject({ healthy: false, metadata: { par_run_failures: 1 } });
+});
+
+it("catering rollover errors are sanitized and degrade health", async () => {
+  vi.mocked(completeElapsedCateringEvents).mockRejectedValue(new Error("PRIVATE customer payload"));
+  const result = await runToastSalesPull({ businessDate: DAYS[0]! });
+  expect(result).toMatchObject({ healthy: false, metadata: { elapsed_error: "capture_failed" } });
+  expect(JSON.stringify(result)).not.toContain("PRIVATE");
+});
+
+it("the authenticated route has a 300-second budget and reports failed capture health", async () => {
   vi.stubEnv("CRON_SECRET", "synthetic-cron-test-secret");
-  vi.mocked(captureToastDaySystem).mockImplementation(() => new Promise(() => {}));
-  const request = new NextRequest("http://localhost/api/cron/toast-sales-pull?date=2026-07-23", {
+  captureResult = { failures: 0, skipped: true, results: [] };
+  const request = new NextRequest("http://localhost/api/cron/toast-sales-pull?date=2026-10-06", {
     headers: { authorization: "Bearer synthetic-cron-test-secret" },
   });
-  const pending = GET(request);
-  await vi.advanceTimersByTimeAsync(0);
-  expect(materializeDailyDepletion).toHaveBeenCalledTimes(2);
-  expect(runParShadowForLocation).toHaveBeenCalledTimes(2);
-  await vi.advanceTimersByTimeAsync(150_000);
-  const response = await pending;
-  expect(response.status).toBe(200);
-  expect(await response.json()).toMatchObject({ businessDate: "2026-07-23", healthy: true });
-  expect(audit).toHaveBeenCalledWith(expect.objectContaining({ action: "cron.failure", metadata: expect.objectContaining({ job: "toast-order-capture", failures: 2 }) }));
-  expect(audit).toHaveBeenCalledWith(expect.objectContaining({ action: "cron.success", metadata: expect.objectContaining({ job: "toast-sales-pull", per_location_failures: 0 }) }));
-  expect(audit).not.toHaveBeenCalledWith(expect.objectContaining({ action: "cron.failure", metadata: expect.objectContaining({ job: "toast-sales-pull" }) }));
+  const response = await GET(request);
+  expect(maxDuration).toBe(300);
+  expect(await response.json()).toMatchObject({ healthy: false });
+  expect(audit).toHaveBeenCalledWith(expect.objectContaining({ action: "cron.failure",
+    metadata: expect.objectContaining({ job: "toast-sales-pull", capture_skipped: true }) }));
   expect(watchSiblings).toHaveBeenCalledWith("toast-sales-pull");
-});
-
-it("missing capture schema skips capture and alerts independently while selections stay healthy", async () => {
-  vi.mocked(captureToastDaySystem).mockResolvedValue({ runId: "", pages: 0, orders: 0, skipped: true, reason: "capture_schema_missing" });
-  expect(await runToastSalesPull({ businessDate: "2026-07-23" })).toMatchObject({ healthy: true, metadata: { capture_failures: 6, per_location_failures: 0 } });
-  expect(materializeDailyDepletion).toHaveBeenCalledTimes(2);
-  expect(runParShadowForLocation).toHaveBeenCalledTimes(2);
-  expect(audit).toHaveBeenCalledWith(expect.objectContaining({ action: "cron.failure", metadata: expect.objectContaining({
-    job: "toast-order-capture", results: expect.arrayContaining([expect.objectContaining({ skipped: true, error: "capture_schema_missing" })]),
-  }) }));
-});
-
- it.each(["mismatch", "skipped"] as const)("shadow %s flags capture heartbeat without failing selections", async (status) => {
-  vi.mocked(captureToastDaySystem).mockResolvedValue({ runId: "run", pages: 1, orders: 1, skipped: false,
-    reconciliation: { status, error: `capture_reconciliation_${status}` } });
-  expect(await runToastSalesPull({ businessDate: "2026-07-23" })).toMatchObject({ healthy: true, metadata: { capture_failures: 6, per_location_failures: 0 } });
-  expect(captureToastDaySystem).toHaveBeenCalledWith("shop1", "2026-07-23", { signal: expect.any(AbortSignal), reconcile: true });
-  expect(materializeDailyDepletion).toHaveBeenCalledTimes(2);
-  expect(runParShadowForLocation).toHaveBeenCalledTimes(2);
-  expect(audit).toHaveBeenCalledWith(expect.objectContaining({ action: "cron.failure", metadata: expect.objectContaining({ job: "toast-order-capture" }) }));
-  expect(audit).not.toHaveBeenCalledWith(expect.objectContaining({ action: "cron.success", metadata: expect.objectContaining({ job: "toast-order-capture" }) }));
-});
-
-it("shares 150 seconds across dates rather than restarting the budget for each", async () => {
-  vi.useFakeTimers();
-  vi.mocked(captureToastDaySystem).mockImplementation(async (_id, date) => {
-    if (date === "2026-07-21") return new Promise(() => {});
-    await new Promise((resolve) => setTimeout(resolve, 45_000));
-    return { runId: "run", pages: 1, orders: 0, skipped: false };
-  });
-  let done = false;
-  const pending = runToastSalesPull({ businessDate: "2026-07-23" }).then((r) => { done = true; return r; });
-  await vi.advanceTimersByTimeAsync(90_000);
-  expect(vi.mocked(captureToastDaySystem).mock.calls.map((c) => c[1])).toEqual([
-    "2026-07-23", "2026-07-23", "2026-07-22", "2026-07-22", "2026-07-21", "2026-07-21",
-  ]);
-  await vi.advanceTimersByTimeAsync(59_999);
-  expect(done).toBe(false);
-  await vi.advanceTimersByTimeAsync(1);
-  expect(await pending).toMatchObject({ healthy: true, metadata: { capture_failures: 2 } });
 });
