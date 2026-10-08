@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { captureCateringContext, cateringCaptureRunError } from "@/lib/toast/capture-catering-shared";
+import { captureCateringContext, cateringCaptureRunError, cateringCoverage } from "@/lib/toast/capture-catering-shared";
 import { extractToastOrders } from "@/lib/toast/catering-orders-shared";
 
 const now = Date.parse("2026-10-07T18:00:00Z");
@@ -67,5 +67,23 @@ describe("capture catering cancellation", () => {
       { totalAmount: 10, selections: [] },
     ] }]);
     expect(summary).toMatchObject({ totalCents: 1000, items: [], customer: null });
+  });
+});
+
+describe("cateringCoverage (digest polish item 12)", () => {
+  const now = Date.parse("2026-10-08T14:00:00Z");
+  it("no run, or a pending pass with no named error, is pending", () => {
+    expect(cateringCoverage(null, "2026-10-08", now)).toEqual({ state: "pending" });
+    expect(cateringCoverage({ finished_at: "2026-10-08T13:55:00Z", catering_status: "pending", catering_error_code: null }, "2026-10-08", now)).toEqual({ state: "pending" });
+  });
+  it("a pending pass WITH a named error, a degraded pass, or a stale capture is an error", () => {
+    expect(cateringCoverage({ finished_at: "2026-10-08T13:55:00Z", catering_status: "pending", catering_error_code: "capture_catering_deadline" }, "2026-10-08", now))
+      .toEqual({ state: "error", code: "capture_catering_deadline" });
+    expect(cateringCoverage({ finished_at: "2026-10-08T13:55:00Z", catering_status: "degraded", catering_error_code: null }, "2026-10-08", now).state).toBe("error");
+    expect(cateringCoverage({ finished_at: "2026-10-08T10:00:00Z", catering_status: "complete", catering_error_code: null }, "2026-10-08", now))
+      .toEqual({ state: "error", code: "capture_catering_stale" });
+  });
+  it("a fresh complete pass is ready", () => {
+    expect(cateringCoverage({ finished_at: "2026-10-08T13:55:00Z", catering_status: "complete", catering_error_code: null }, "2026-10-08", now)).toEqual({ state: "ready" });
   });
 });

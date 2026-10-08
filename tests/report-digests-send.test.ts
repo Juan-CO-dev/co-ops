@@ -217,7 +217,7 @@ describe("03:00 ET fallback", () => {
     const late = makeIO({ now: "2026-10-08T07:00:00Z", store, finalized: { [DAY]: [A.id] } });
     await runDigestTickWith(late.io);
     expect(late.sent.map((m) => m.to).sort()).toEqual(["cristian@example.com", "pete@example.com"]);
-    expect(late.sent.find((m) => m.to === "pete@example.com")?.text).toContain("! Closing: Closing not finalized: Shop B");
+    expect(late.sent.find((m) => m.to === "pete@example.com")?.text).toContain("! Closing not finalized: Shop B");
     expect(store.of("skipped").map((r) => [r.recipient_ref, r.location_id, r.skip_reason])).toEqual([["user:gm-b", B.id, "shop_not_finalized"]]);
   });
 });

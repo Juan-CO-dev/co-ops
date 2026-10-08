@@ -1,5 +1,10 @@
 /** Pure heartbeat decisions. Nights pause a pinger's clock; days/dedupe use Eastern time. */
-import type { RegisteredJob } from "./jobs-registry";
+import { DAILY_DUE_GRACE_MINUTES, type RegisteredJob } from "./jobs-registry";
+
+/** The scheduled UTC time of a daily job: its own dueUtc, else its catch-up entry's. */
+export function dailyDueUtc(job: RegisteredJob): string | null {
+  return job.dueUtc ?? job.catchUp?.dueUtc ?? null;
+}
 
 const MINUTE = 60_000;
 const DAY = 86_400_000;
@@ -59,12 +64,16 @@ export function decideJobWatch(
   lastAlertAt: string | null,
 ): { silent: boolean; shouldAlert: boolean; expectedBy: string } {
   const day = easternDay(now);
-  // No history: allow the opening grace for pingers; daily jobs have already missed a heartbeat.
+  // No history: allow the opening grace for pingers; a daily job with a known scheduled time is
+  // expected by today's (UTC) run + the Hobby grace; any other daily job has already missed one.
+  const due = dailyDueUtc(job);
   const expected = lastSuccessAt
     ? deadline(job, new Date(lastSuccessAt))
     : job.window
       ? deadline(job, easternBoundary(day, job.window.startHourET))
-      : easternBoundary(day, 0);
+      : due
+        ? new Date(Date.parse(`${now.toISOString().slice(0, 10)}T${due}:00Z`) + DAILY_DUE_GRACE_MINUTES * MINUTE)
+        : easternBoundary(day, 0);
   const inWindow = !job.window || (
     now >= easternBoundary(day, job.window.startHourET) &&
     now < easternBoundary(day, job.window.endHourET)

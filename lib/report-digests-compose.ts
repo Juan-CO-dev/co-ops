@@ -16,6 +16,11 @@ import type { Language, TranslationKey } from "@/lib/i18n/types";
 import { escapeHtml, renderEmailLayout } from "@/lib/email-templates/_layout";
 import { TENANT_NAME } from "@/lib/tenant";
 import { LEAD_SOURCES } from "@/lib/catering/intake-shared";
+import { timeWindowLabel, timeWindowMinutes } from "@/lib/midshift-shared";
+import type { ShopV2Facts } from "@/lib/report-digests-v2-shared";
+import { allShopsSection, composeV2Sections, plural } from "@/lib/report-digests-v2-compose";
+import type { Loaded } from "@/lib/report-digests-v2-shared";
+import type { CateringReadiness, PaymentState, StaffRoster } from "@/lib/report-digests-catering-shared";
 
 export type DigestTone = "ok" | "issue" | "info";
 export interface DigestLine { label: string; text: string; tone: DigestTone; href: string }
@@ -39,6 +44,11 @@ export interface ShopDayFacts {
    * gradient tally is detail-only). null = not loaded → the line says "not assessed", never "All good".
    */
   pmFindings: { evaluations: number; needsWork: number } | null;
+  /**
+   * Digest v2 (the management summary, GO 2026-10-08). Optional so a fact set without it (the
+   * engine's own fixtures, a v2 load that never ran) renders the v1 layout unchanged.
+   */
+  v2?: ShopV2Facts;
 }
 
 export const SHOP_REPORT_FAMILIES: readonly ReportTypeKey[] = ["opening", "am_prep", "mid_day", "closing", "cash", "pm", "maintenance"];
@@ -53,11 +63,39 @@ function dayQuery(locationId: string, day: string, extra: Record<string, string>
   return q.toString();
 }
 
-export function composeShopLines(f: ShopDayFacts, language: Language, baseUrl: string): DigestLine[] {
-  const t = (key: TranslationKey, params?: Record<string, string | number>) => serverT(language, key, params);
+type Tr = (key: TranslationKey, params?: Record<string, string | number>) => string;
+
+/** The PM report's line (Operations in v1; People in v2). */
+function pmLine(f: ShopDayFacts, t: Tr, baseUrl: string): DigestLine {
+  const label = t("reports.type.pm");
+  const listHref = `${baseUrl}/reports/operations?${dayQuery(f.location.id, f.day, { type: "pm" })}`;
+  const items = f.reports.filter((r) => r.type === "pm");
+  const item = items.find(reportIsFinalized) ?? items[0];
+  if (!item) return { label, text: t("digest.line.not_submitted"), tone: "issue", href: listHref };
+  const itemHref = items.length === 1 ? `${baseUrl}/reports/pm/${item.id}?${dayQuery(f.location.id, f.day)}` : listHref;
+  if (!reportIsFinalized(item)) return { label, text: t("digest.line.not_finalized"), tone: "issue", href: itemHref };
+  const pm = f.pmFindings;
+  return pm === null ? { label, text: t("digest.pm.not_assessed"), tone: "info", href: itemHref }
+    : pm.needsWork > 0 ? { label, text: plural(t, pm.needsWork, "digest.pm.needs_work_one", "digest.pm.needs_work_other", { evals: pm.evaluations }), tone: "issue", href: itemHref }
+      : pm.evaluations === 0 ? { label, text: t("digest.pm.no_evals"), tone: "info", href: itemHref }
+        : { label, text: plural(t, pm.evaluations, "digest.pm.all_good_one", "digest.pm.all_good_other"), tone: "ok", href: itemHref };
+}
+
+/**
+ * The report-family lines (Operations). `v2Layout` moves PM to People and leaves receiving,
+ * tosses and store runs to their own v2 sections, and adds WHO confirmed each report and LATE
+ * (the system finalized it). Juan's rulings 10-08: AM prep counts ONLY skipped items as issues
+ * (under/over par is a neutral line); cash flags ANY over/short.
+ */
+export function composeShopLines(f: ShopDayFacts, language: Language, baseUrl: string, opts: { v2Layout?: boolean } = {}): DigestLine[] {
+  const t: Tr = (key, params) => serverT(language, key, params);
   const loc = f.location.id;
   const lines: DigestLine[] = [];
   for (const type of SHOP_REPORT_FAMILIES) {
+    if (type === "pm") {
+      if (!opts.v2Layout) lines.push(pmLine(f, t, baseUrl));
+      continue;
+    }
     const label = t(`reports.type.${type}` as TranslationKey);
     const listHref = `${baseUrl}/reports/operations?${dayQuery(loc, f.day, { type })}`;
     const items = f.reports.filter((r) => r.type === type);
@@ -73,28 +111,26 @@ export function composeShopLines(f: ShopDayFacts, language: Language, baseUrl: s
       lines.push({ label, text: t("digest.line.not_finalized"), tone: "issue", href: itemHref });
       continue;
     }
-    if (type === "pm") {
-      const pm = f.pmFindings;
-      lines.push(pm === null ? { label, text: t("digest.pm.not_assessed"), tone: "info", href: itemHref }
-        : pm.needsWork > 0 ? { label, text: t("digest.pm.needs_work", { n: pm.needsWork, evals: pm.evaluations }), tone: "issue", href: itemHref }
-          : pm.evaluations === 0 ? { label, text: t("digest.pm.no_evals"), tone: "info", href: itemHref }
-            : { label, text: t("digest.pm.all_good", { n: pm.evaluations }), tone: "ok", href: itemHref });
-      continue;
-    }
+    const who = opts.v2Layout && item.submitterName ? t("digest.v2.ops.by", { name: item.submitterName }) : null;
+    const lateNote = opts.v2Layout && item.status === "auto_finalized" ? t("digest.v2.ops.auto_finalized") : null;
     // "All good" needs evidence: an item whose signals were never computed is not assessed.
     const assessed = items.every((r) => r.signalSummary !== undefined);
     const detail: string[] = [];
+    const info: string[] = [];
     let n = 0;
     let filter: string | null = null;
     const sum = (k: "underPar" | "overPar" | "skipped" | "tempFlags") => items.reduce((acc, r) => acc + (r.signalSummary?.[k] ?? 0), 0);
-    const add = (count: number, key: TranslationKey, sf: string) => {
+    const add = (count: number, one: TranslationKey, other: TranslationKey, sf: string, asIssue = true) => {
       if (count <= 0) return;
-      n += count; detail.push(t(key, { n: count })); filter ??= sf;
+      if (!asIssue) { info.push(plural(t, count, one, other)); return; }
+      n += count; detail.push(plural(t, count, one, other)); filter ??= sf;
     };
-    add(sum("underPar"), "digest.signal.under_par", "sf_underPar");
-    add(sum("overPar"), "digest.signal.over_par", "sf_overPar");
-    add(sum("skipped"), "digest.signal.skipped", "sf_skipped");
-    add(sum("tempFlags"), "digest.signal.temp_flags", "sf_tempFlag");
+    // AM prep (Juan 10-08): under/over par is information; only a SKIPPED item is an issue.
+    const parIsIssue = type !== "am_prep";
+    add(sum("underPar"), "digest.signal.under_par_one", "digest.signal.under_par_other", "sf_underPar", parIsIssue);
+    add(sum("overPar"), "digest.signal.over_par_one", "digest.signal.over_par_other", "sf_overPar", parIsIssue);
+    add(sum("skipped"), "digest.signal.skipped_one", "digest.signal.skipped_other", "sf_skipped");
+    add(sum("tempFlags"), "digest.signal.temp_flags_one", "digest.signal.temp_flags_other", "sf_tempFlag");
     for (const r of items) {
       const cents = r.signalSummary?.cashOverShortCents ?? 0;
       if (cents === 0) continue;
@@ -102,34 +138,38 @@ export function composeShopLines(f: ShopDayFacts, language: Language, baseUrl: s
       detail.push(t(cents > 0 ? "digest.signal.cash_over" : "digest.signal.cash_short", { amount: formatCents(Math.abs(cents), language) }));
       filter ??= cents > 0 ? "sf_cashOver" : "sf_cashShort";
     }
-    if (n === 0) lines.push(assessed ? { label, text: t("digest.line.all_good"), tone: "ok", href: itemHref } : { label, text: t("digest.line.not_assessed"), tone: "info", href: itemHref });
-    else lines.push({
-      label, text: t("digest.line.issues", { n, detail: detail.join(", ") }), tone: "issue",
+    const tail = (text: string) => [lateNote, text, info.length > 0 ? info.join(", ") : null, who].filter((x): x is string => !!x).join(" · ");
+    if (n === 0) {
+      lines.push(!assessed ? { label, text: tail(t("digest.line.not_assessed")), tone: lateNote ? "issue" : "info", href: itemHref }
+        : { label, text: tail(t("digest.line.all_good")), tone: lateNote ? "issue" : info.length > 0 ? "info" : "ok", href: itemHref });
+    } else lines.push({
+      label, text: tail(plural(t, n, "digest.line.issues_one", "digest.line.issues_other", { detail: detail.join(", ") })), tone: "issue",
       href: items.length === 1 ? itemHref : `${baseUrl}/reports/operations?${dayQuery(loc, f.day, { type, [filter ?? "sf_underPar"]: "true" })}`,
     });
   }
 
   const receivingHref = `${baseUrl}/operations/receiving?location=${encodeURIComponent(loc)}`;
   const rec = f.receiving;
-  const recIssues = [
-    rec.discrepant > 0 ? t("digest.receiving.discrepant", { n: rec.discrepant }) : null,
-    rec.missingReceipt > 0 ? t("digest.receiving.no_receipt", { n: rec.missingReceipt }) : null,
-  ].filter((x): x is string => x !== null);
-  lines.push({
-    label: t("digest.family.receiving"), href: receivingHref,
-    ...(rec.deliveries === 0 ? { text: t("digest.receiving.none"), tone: "info" as const }
-      : recIssues.length > 0 ? { text: recIssues.join(", "), tone: "issue" as const }
-        : { text: t("digest.receiving.ok", { n: rec.deliveries }), tone: "ok" as const }),
-  });
-
-  lines.push({
-    label: t("digest.family.tosses"), href: `${baseUrl}/operations/counts?location=${encodeURIComponent(loc)}`,
-    ...(f.tosses > 0 ? { text: t("digest.tosses.some", { n: f.tosses }), tone: "issue" as const } : { text: t("digest.tosses.none"), tone: "ok" as const }),
-  });
-  lines.push({
-    label: t("digest.family.store_runs"), href: receivingHref,
-    ...(f.storeRunsPending > 0 ? { text: t("digest.store_runs.some", { n: f.storeRunsPending }), tone: "issue" as const } : { text: t("digest.store_runs.none"), tone: "ok" as const }),
-  });
+  if (!opts.v2Layout) {
+    const recIssues = [
+      rec.discrepant > 0 ? plural(t, rec.discrepant, "digest.receiving.discrepant_one", "digest.receiving.discrepant_other") : null,
+      rec.missingReceipt > 0 ? plural(t, rec.missingReceipt, "digest.receiving.no_receipt_one", "digest.receiving.no_receipt_other") : null,
+    ].filter((x): x is string => x !== null);
+    lines.push({
+      label: t("digest.family.receiving"), href: receivingHref,
+      ...(rec.deliveries === 0 ? { text: t("digest.receiving.none"), tone: "info" as const }
+        : recIssues.length > 0 ? { text: recIssues.join(", "), tone: "issue" as const }
+          : { text: plural(t, rec.deliveries, "digest.receiving.ok_one", "digest.receiving.ok_other"), tone: "ok" as const }),
+    });
+    lines.push({
+      label: t("digest.family.tosses"), href: `${baseUrl}/operations/counts?location=${encodeURIComponent(loc)}`,
+      ...(f.tosses > 0 ? { text: plural(t, f.tosses, "digest.tosses.some_one", "digest.tosses.some_other"), tone: "issue" as const } : { text: t("digest.tosses.none"), tone: "ok" as const }),
+    });
+    lines.push({
+      label: t("digest.family.store_runs"), href: receivingHref,
+      ...(f.storeRunsPending > 0 ? { text: plural(t, f.storeRunsPending, "digest.store_runs.some_one", "digest.store_runs.some_other"), tone: "issue" as const } : { text: t("digest.store_runs.none"), tone: "ok" as const }),
+    });
+  }
 
   // Three states (Astra P2): DONE only with evidence (a finalized report of that family, or a
   // recorded delivery for receiving); NOT DONE when the report that proves it is missing or open;
@@ -146,14 +186,14 @@ export function composeShopLines(f: ShopDayFacts, language: Language, baseUrl: s
   }
   const names = (list: TaskType[]) => list.map((x) => t(`assignments.task.${x}` as TranslationKey)).join(", ");
   const parts = [
-    notDone.length > 0 ? t("digest.tasks.not_done", { n: notDone.length, tasks: names(notDone) }) : null,
-    unverified.length > 0 ? t("digest.tasks.unverified", { n: unverified.length, tasks: names(unverified) }) : null,
-    done.length > 0 && (notDone.length > 0 || unverified.length > 0) ? t("digest.tasks.done_some", { n: done.length }) : null,
+    notDone.length > 0 ? plural(t, notDone.length, "digest.tasks.not_done_one", "digest.tasks.not_done_other", { tasks: names(notDone) }) : null,
+    unverified.length > 0 ? plural(t, unverified.length, "digest.tasks.unverified_one", "digest.tasks.unverified_other", { tasks: names(unverified) }) : null,
+    done.length > 0 && (notDone.length > 0 || unverified.length > 0) ? plural(t, done.length, "digest.tasks.done_some_one", "digest.tasks.done_some_other") : null,
   ].filter((x): x is string => x !== null);
   lines.push({
     label: t("digest.family.tasks"), href: `${baseUrl}/reports?${dayQuery(loc, f.day)}`,
     ...(f.tasks.length === 0 ? { text: t("digest.tasks.none"), tone: "info" as const }
-      : parts.length === 0 ? { text: t("digest.tasks.all_done", { n: done.length }), tone: "ok" as const }
+      : parts.length === 0 ? { text: plural(t, done.length, "digest.tasks.all_done_one", "digest.tasks.all_done_other"), tone: "ok" as const }
         : { text: parts.join("; "), tone: notDone.length > 0 ? "issue" as const : "info" as const }),
   });
   return lines;
@@ -170,17 +210,46 @@ export interface Envelope {
   previewFor?: { name: string; email: string | null } | null;
 }
 
+/**
+ * One shop's sections: the v2 management layout when its facts carry v2, else the v1 single
+ * section. `prefix` puts the shop name in front of every v2 title (the unified digest).
+ */
+export function composeShopSections(f: ShopDayFacts, language: Language, baseUrl: string, prefix: boolean): DigestSection[] {
+  if (!f.v2) return [{ title: f.location.name, lines: composeShopLines(f, language, baseUrl) }];
+  const t: Tr = (key, params) => serverT(language, key, params);
+  const reportHref = (type: ReportTypeKey) => {
+    const items = f.reports.filter((r) => r.type === type);
+    const item = items.find(reportIsFinalized) ?? items[0];
+    return items.length === 1 && item ? `${baseUrl}/reports/${type}/${item.id}?${dayQuery(f.location.id, f.day)}`
+      : `${baseUrl}/reports/operations?${dayQuery(f.location.id, f.day, { type })}`;
+  };
+  const finalizedBy = (type: ReportTypeKey) => f.reports.find((r) => r.type === type && reportIsFinalized(r))?.submitterName ?? null;
+  return composeV2Sections({
+    shopName: f.location.name, locationId: f.location.id, day: f.day, v: f.v2, prefix,
+    extras: {
+      operations: composeShopLines(f, language, baseUrl, { v2Layout: true }),
+      pmLine: pmLine(f, t, baseUrl),
+      pendingItems: f.storeRunsPending,
+      who: { openedBy: finalizedBy("opening"), closedBy: finalizedBy("closing"), openingHref: reportHref("opening"), closingHref: reportHref("closing") },
+    },
+  }, language, baseUrl);
+}
+
+function issueCount(sections: readonly DigestSection[]): number {
+  return sections.reduce((n, s) => n + countIssues(s.lines), 0);
+}
+
 export function renderShopDigest(f: ShopDayFacts, env: Envelope): ComposedEmail {
-  const t = (key: TranslationKey, params?: Record<string, string | number>) => serverT(env.language, key, params);
-  const lines = composeShopLines(f, env.language, env.baseUrl);
+  const t: Tr = (key, params) => serverT(env.language, key, params);
+  const sections = composeShopSections(f, env.language, env.baseUrl, false);
   const date = formatDateLabel(f.day, env.language);
-  const issues = countIssues(lines);
+  const issues = issueCount(sections);
   return renderDigest(env, {
     subject: t("digest.shop.subject", { shop: f.location.name, date }),
     heading: t("digest.shop.heading", { shop: f.location.name, date }),
-    preheader: issues === 0 ? t("digest.shop.preheader_ok", { shop: f.location.name }) : t("digest.shop.preheader_issues", { n: issues }),
+    preheader: issues === 0 ? t("digest.shop.preheader_ok", { shop: f.location.name }) : plural(t, issues, "digest.shop.preheader_issues_one", "digest.shop.preheader_issues_other"),
     intro: [],
-    sections: [{ title: f.location.name, lines }],
+    sections,
     cta: { label: t("digest.cta.open_reports"), url: `${env.baseUrl}/reports?${dayQuery(f.location.id, f.day)}` },
   });
 }
@@ -188,17 +257,23 @@ export function renderShopDigest(f: ShopDayFacts, env: Envelope): ComposedEmail 
 export function renderUnifiedDigest(args: {
   day: string; shops: ShopDayFacts[]; notFinalized: Array<{ id: string; name: string }>;
 }, env: Envelope): ComposedEmail {
-  const t = (key: TranslationKey, params?: Record<string, string | number>) => serverT(env.language, key, params);
+  const t: Tr = (key, params) => serverT(env.language, key, params);
   const date = formatDateLabel(args.day, env.language);
-  const sections = args.shops.map((f) => ({ title: f.location.name, lines: composeShopLines(f, env.language, env.baseUrl) }));
-  const issues = sections.reduce((n, s) => n + countIssues(s.lines), 0);
+  const v2 = args.shops.some((f) => f.v2);
+  const sections = [
+    ...(v2 ? [allShopsSection(args.shops, env.language, env.baseUrl)] : []),
+    ...args.shops.flatMap((f) => composeShopSections(f, env.language, env.baseUrl, true)),
+  ];
+  const issues = issueCount(sections);
+  // Polish item 1: the label is said ONCE ("Closing not finalized: Capitol Hill, P Street").
   const intro: DigestLine[] = [args.notFinalized.length === 0
     ? { label: t("reports.type.closing"), text: t("digest.unified.all_finalized"), tone: "ok", href: `${env.baseUrl}/reports` }
-    : { label: t("reports.type.closing"), text: t("digest.unified.not_finalized", { shops: args.notFinalized.map((s) => s.name).join(", ") }), tone: "issue", href: `${env.baseUrl}/reports?${dayQuery("all", args.day)}` }];
+    : { label: t("digest.unified.not_finalized_label"), text: args.notFinalized.map((s) => s.name).join(", "), tone: "issue", href: `${env.baseUrl}/reports?${dayQuery("all", args.day)}` }];
+  const total = issues + (args.notFinalized.length > 0 ? 1 : 0);
   return renderDigest(env, {
     subject: t("digest.unified.subject", { date }),
     heading: t("digest.unified.heading", { date }),
-    preheader: issues + (args.notFinalized.length > 0 ? 1 : 0) === 0 ? t("digest.unified.preheader_ok") : t("digest.shop.preheader_issues", { n: issues }),
+    preheader: total === 0 ? t("digest.unified.preheader_ok") : plural(t, total, "digest.shop.preheader_issues_one", "digest.shop.preheader_issues_other"),
     intro, sections,
     cta: { label: t("digest.cta.open_reports"), url: `${env.baseUrl}/reports?${dayQuery("all", args.day)}` },
   });
@@ -222,6 +297,12 @@ export interface CateringLeadFact {
   /** The W4a prep-demand ledger for the event (reserved|consumed), aggregated per need date + ref +
    *  portion with quantities and units; null = no ledger rows. */
   prep: PrepLoadLine[] | null;
+  /** Machine-line special instructions (Toast / ezCater), never a human's free notes. */
+  instructions?: string[];
+  /** Payment status of the order (platform-paid, paid, due, none). */
+  payment?: PaymentState;
+  /** Shown ONLY to the catering manager and level 8+ (scope.showAddresses). */
+  deliveryAddress?: string | null;
 }
 export interface PrepLoadLine {
   needDate: string;
@@ -242,11 +323,53 @@ export interface CateringFacts {
   /** status sent, live, not expired. */
   openQuotes: Array<{ id: string; locationId: string }>;
   refundsYesterday: Array<{ locationId: string | null; amountCents: number }>;
+  /** Today's inventory readiness per shop (W4b demand vs on-hand); absent = not loaded. */
+  readiness?: Record<string, Loaded<CateringReadiness>>;
+  /** Today's staff per shop (stations; the schedule is not connected yet); absent = not loaded. */
+  staff?: Record<string, Loaded<StaffRoster>>;
+}
+
+/** Who may see what in the catering digest. */
+export interface CateringScope {
+  locations: Array<{ id: string; name: string }>;
+  includeUnassigned: boolean;
+  /** Delivery addresses: the catering manager and level 8+ only (GO addendum 10-08). */
+  showAddresses?: boolean;
 }
 
 const UPCOMING = new Set(["confirmed", "out"]);
 const RAN = new Set(["confirmed", "out", "completed"]);
 const OPEN = new Set(["inquiry", "quote_sent"]);
+/** Orders a platform took and paid for (the scan / webhook tributaries). */
+const PLATFORM = new Set(["ezcater", "toast_catering"]);
+
+/**
+ * Polish item 9: a platform order (ezCater / Toast catering, paid on the platform) whose date has
+ * passed is moved to `completed` by the nightly rollover (completeElapsedCateringEvents, which
+ * selects by stage, so scanned leads are covered). Until that run, the digest does not call it a
+ * problem: money still splits by the REAL stage (0195), only the tone stops crying wolf.
+ */
+export function awaitingAutoComplete(l: Pick<CateringLeadFact, "leadSource" | "stage">): boolean {
+  return !!l.leadSource && PLATFORM.has(l.leadSource) && UPCOMING.has(l.stage);
+}
+
+/**
+ * Polish item 6: machine placeholder names never reach a manager as a name. "EZCater order
+ * VPCTM5" → "ezCater #VPCTM5"; "Toast order <guid>" → "Toast order". A real name stays.
+ */
+export function cateringDisplayName(l: Pick<CateringLeadFact, "contactName" | "company" | "leadSource">): string {
+  const ez = /^ezcater order\s+(\S+)$/i.exec(l.contactName.trim());
+  const base = ez ? `ezCater #${ez[1]}`
+    : /^toast order\s+\S+$/i.test(l.contactName.trim()) ? "Toast order"
+      : l.contactName;
+  return l.company ? `${base} (${l.company})` : base;
+}
+
+/** The order code a manager can find on the platform (polish item 4): never a raw UUID. */
+export function cateringOrderCode(l: Pick<CateringLeadFact, "contactName" | "leadSource">): string | null {
+  const ez = /^ezcater order\s+(\S+)$/i.exec(l.contactName.trim());
+  return ez ? `#${ez[1]}` : null;
+}
 
 export interface CateringShopSummary {
   locationId: string | null;
@@ -279,7 +402,7 @@ function addDay(day: string, n: number): string {
 
 export function composeCateringSections(
   f: CateringFacts,
-  scope: { locations: Array<{ id: string; name: string }>; includeUnassigned: boolean },
+  scope: CateringScope,
   language: Language,
   baseUrl: string,
 ): DigestSection[] {
@@ -290,9 +413,10 @@ export function composeCateringSections(
   const pipeline = `${baseUrl}/catering/pipeline`;
   const leadHref = (l: CateringLeadFact) => `${pipeline}?q=${encodeURIComponent(l.contactName)}`;
   const quotesHref = `${baseUrl}/catering/quotes`;
-  const who = (l: CateringLeadFact) => l.company ? `${l.contactName} (${l.company})` : l.contactName;
-  const size = (l: CateringLeadFact) => l.headcount !== null ? t("digest.catering.size", { n: l.headcount }) : t("digest.catering.size_unknown");
-  const time = (l: CateringLeadFact) => l.timeWindow?.trim() || t("digest.catering.time_unknown");
+  const who = (l: CateringLeadFact) => cateringDisplayName(l);
+  const size = (l: CateringLeadFact) => l.headcount !== null ? plural(t, l.headcount, "digest.catering.size_one", "digest.catering.size_other") : t("digest.catering.size_unknown");
+  // Polish item 3: one clock format for Toast "16:00", ezCater labels and ISO instants.
+  const time = (l: CateringLeadFact) => timeWindowLabel(l.timeWindow?.trim() || null, language) ?? t("digest.catering.time_unknown");
   const source = (s: string | null) => t(`catering.intake.source.${s && (LEAD_SOURCES as readonly string[]).includes(s) ? s : "other"}` as TranslationKey);
 
   const shops: Array<{ id: string | null; name: string }> = [
@@ -304,19 +428,24 @@ export function composeCateringSections(
     const leads = f.leads.filter((l) => l.locationId === shop.id);
     const s = summarizeCateringShop(f, shop.id);
     const y: DigestLine[] = [];
-    const ran = leads.filter((l) => l.eventDate === yesterday && RAN.has(l.stage));
+    const ran = leads.filter((l) => l.eventDate === yesterday && RAN.has(l.stage))
+      .sort((a, b) => timeWindowMinutes(a.timeWindow) - timeWindowMinutes(b.timeWindow));
     if (ran.length === 0) y.push({ label: t("digest.catering.yesterday_label"), text: t("digest.catering.none_yesterday"), tone: "info", href: pipeline });
     else {
+      const problem = ran.some((l) => l.stage !== "completed" && !awaitingAutoComplete(l));
       y.push({
-        label: t("digest.catering.yesterday_label"), tone: s.confirmedCents > 0 || ran.some((l) => l.stage !== "completed") ? "issue" : "ok", href: pipeline,
-        text: t("digest.catering.ran_summary", {
-          n: s.ran, guests: s.guests === null ? "—" : s.guests, completed: money(s.completedCents), confirmed: money(s.confirmedCents),
+        label: t("digest.catering.yesterday_label"), tone: problem ? "issue" : "ok", href: pipeline,
+        text: plural(t, s.ran, "digest.catering.ran_summary_one", "digest.catering.ran_summary_other", {
+          guests: s.guests === null ? "—" : s.guests, completed: money(s.completedCents), confirmed: money(s.confirmedCents),
         }),
       });
-      for (const l of ran) y.push({
-        label: who(l), href: leadHref(l), tone: l.stage === "completed" ? "ok" : "issue",
-        text: `${time(l)} · ${size(l)} · ${money(l.valueCents)} · ${t(l.stage === "completed" ? "digest.catering.fulfilled" : "digest.catering.not_completed")}`,
-      });
+      for (const l of ran) {
+        const status = l.stage === "completed" ? "digest.catering.fulfilled" : awaitingAutoComplete(l) ? "digest.catering.auto_completes" : "digest.catering.not_completed";
+        y.push({
+          label: who(l), href: leadHref(l), tone: l.stage === "completed" ? "ok" : awaitingAutoComplete(l) ? "info" : "issue",
+          text: `${time(l)} · ${size(l)} · ${money(l.valueCents)} · ${t(status)}`,
+        });
+      }
     }
     for (const l of leads.filter((x) => f.lostYesterdayIds.includes(x.id))) {
       y.push({ label: who(l), text: t("digest.catering.lost"), tone: "issue", href: leadHref(l) });
@@ -328,28 +457,33 @@ export function composeCateringSections(
       for (const l of created) bySource.set(source(l.leadSource), (bySource.get(source(l.leadSource)) ?? 0) + 1);
       y.push({
         label: t("digest.catering.inquiries_label"), tone: "info", href: pipeline,
-        text: t("digest.catering.new_inquiries", { n: created.length, sources: [...bySource].map(([k, v]) => `${k} ${v}`).join(", ") }),
+        text: plural(t, created.length, "digest.catering.new_inquiries_one", "digest.catering.new_inquiries_other", { sources: [...bySource].map(([k, v]) => `${k} ${v}`).join(", ") }),
       });
     }
     const quotes = f.quotesSentYesterday.filter((q) => q.locationId === shop.id);
     if (quotes.length > 0) y.push({
       label: t("digest.catering.quotes_label"), tone: "info", href: quotesHref,
-      text: t("digest.catering.quotes_sent", { n: quotes.length, money: money(quotes.reduce((a, q) => a + q.totalCents, 0)) }),
+      text: plural(t, quotes.length, "digest.catering.quotes_sent_one", "digest.catering.quotes_sent_other", { money: money(quotes.reduce((a, q) => a + q.totalCents, 0)) }),
     });
-    for (const l of leads.filter((x) => (x.leadSource === "ezcater" || x.leadSource === "toast_catering") && (x.createdDay === yesterday || x.eventDate === yesterday))) {
-      y.push({ label: source(l.leadSource), tone: "info", href: leadHref(l), text: t("digest.catering.scan_order", { ref: l.externalRef ?? "—", contact: who(l) }) });
+    // Polish item 4: the order code + customer, never "toast:<uuid>"; an order already listed
+    // under "ran" is not repeated here.
+    const ranIds = new Set(ran.map((l) => l.id));
+    for (const l of leads.filter((x) => x.leadSource && PLATFORM.has(x.leadSource) && !ranIds.has(x.id) && (x.createdDay === yesterday || x.eventDate === yesterday))) {
+      const code = cateringOrderCode(l);
+      y.push({ label: source(l.leadSource), tone: "info", href: leadHref(l), text: code ? t("digest.catering.scan_order", { ref: code, contact: who(l) }) : t("digest.catering.scan_order_nocode", { contact: who(l) }) });
     }
     const refunds = f.refundsYesterday.filter((r) => r.locationId === shop.id);
     if (refunds.length > 0) y.push({
       label: t("digest.catering.issues_label"), tone: "issue", href: pipeline,
-      text: t("digest.catering.refunds", { n: refunds.length, money: money(refunds.reduce((a, r) => a + r.amountCents, 0)) }),
+      text: plural(t, refunds.length, "digest.catering.refunds_one", "digest.catering.refunds_other", { money: money(refunds.reduce((a, r) => a + r.amountCents, 0)) }),
     });
     const overdue = leads.filter((l) => OPEN.has(l.stage) && l.followUpDate !== null && l.followUpDate < f.today);
-    if (overdue.length > 0) y.push({ label: t("digest.catering.issues_label"), tone: "issue", href: pipeline, text: t("digest.catering.overdue_followups", { n: overdue.length }) });
+    if (overdue.length > 0) y.push({ label: t("digest.catering.issues_label"), tone: "issue", href: pipeline, text: plural(t, overdue.length, "digest.catering.overdue_followups_one", "digest.catering.overdue_followups_other") });
 
     const qty = (n: number) => new Intl.NumberFormat(language === "es" ? "es-US" : "en-US", { maximumFractionDigits: 2 }).format(n);
-    const prepText = (l: CateringLeadFact): string => {
-      if (l.prep === null || l.prep.length === 0) return t("digest.catering.no_prep");
+    /** The prep ledger for one order, or null when it has none (said ONCE per list — item 5). */
+    const prepText = (l: CateringLeadFact): string | null => {
+      if (l.prep === null || l.prep.length === 0) return null;
       const byDate = new Map<string, PrepLoadLine[]>();
       for (const p of l.prep) byDate.set(p.needDate, [...(byDate.get(p.needDate) ?? []), p]);
       return [...byDate].sort(([a], [b]) => a.localeCompare(b)).map(([date, list]) => {
@@ -364,13 +498,68 @@ export function composeCateringSections(
     };
     const outlook = (day: string, emptyKey: TranslationKey, label: TranslationKey): DigestLine[] => {
       const list = leads.filter((l) => l.eventDate === day && UPCOMING.has(l.stage))
-        .sort((a, b) => (a.timeWindow ?? "").localeCompare(b.timeWindow ?? ""));
+        .sort((a, b) => timeWindowMinutes(a.timeWindow) - timeWindowMinutes(b.timeWindow));
       if (list.length === 0) return [{ label: t(label), text: t(emptyKey), tone: "info", href: pipeline }];
-      return list.map((l) => ({
-        label: who(l), href: leadHref(l), tone: "info" as const,
-        text: `${time(l)} · ${size(l)} · ${t(l.isDelivery ? "digest.catering.delivery" : "digest.catering.pickup")} · ${prepText(l)}`,
+      const isToday = day === f.today;
+      const out: DigestLine[] = list.map((l) => ({
+        label: who(l), href: leadHref(l), tone: isToday && l.payment?.kind === "due" ? "issue" as const : "info" as const,
+        text: (isToday ? [
+          l.timeWindow?.trim() ? t("digest.catering.ready_by", { time: time(l) }) : t("digest.catering.time_unknown"),
+          size(l),
+          t(l.isDelivery ? "digest.catering.delivery" : "digest.catering.pickup"),
+          l.isDelivery && scope.showAddresses && l.deliveryAddress?.trim() ? l.deliveryAddress.trim() : null,
+          paymentText(l.payment),
+          l.instructions && l.instructions.length > 0 ? t("digest.catering.instructions", { text: l.instructions.map((x) => `"${x}"`).join(", ") }) : null,
+          prepText(l),
+        ] : [time(l), size(l), t(l.isDelivery ? "digest.catering.delivery" : "digest.catering.pickup"), prepText(l)]).filter((x): x is string => !!x).join(" · "),
       }));
+      if (isToday && shop.id !== null) out.push(...readinessLines(shop.id), ...staffLines(shop.id));
+      const noPrep = list.filter((l) => prepText(l) === null).length;
+      if (noPrep > 0) out.push({ label: t(label), href: pipeline, tone: "info", text: plural(t, noPrep, "digest.catering.no_prep_footnote_one", "digest.catering.no_prep_footnote_other") });
+      return out;
     };
+
+    function paymentText(p: PaymentState | undefined): string | null {
+      if (!p) return null;
+      return p.kind === "platform" ? t("digest.catering.pay_platform") : p.kind === "paid" ? t("digest.catering.pay_paid", { money: money(p.cents) })
+        : p.kind === "due" ? t("digest.catering.pay_due", { money: money(p.cents) }) : t("digest.catering.pay_none");
+    }
+    const ozText = (oz: number) => new Intl.NumberFormat(language === "es" ? "es-US" : "en-US", { maximumFractionDigits: 1 }).format(oz);
+    function readinessLines(locationId: string): DigestLine[] {
+      const r = f.readiness?.[locationId];
+      const label = t("digest.catering.readiness_label");
+      const href = `${baseUrl}/admin/catering/prep-demand`;
+      if (!r) return [];
+      if (r.kind === "error") return [{ label, text: t("digest.v2.could_not_load"), tone: "issue", href }];
+      if (r.kind === "unavailable") return [{ label, text: t("digest.v2.not_available"), tone: "info", href }];
+      const v = r.value;
+      const lines: DigestLine[] = [];
+      if (v.rows.length === 0 && v.unresolvedChoiceLines === 0 && v.noRecipeLines === 0) return [{ label, text: t("digest.catering.readiness_none"), tone: "info", href }];
+      for (const row of v.rows) {
+        if (!row.counted) { lines.push({ label: row.skuName, href, tone: "info", text: t("digest.catering.readiness_uncounted", { need: ozText(row.needOz) }) }); continue; }
+        if ((row.shortOz ?? 0) > 0) lines.push({
+          label: row.skuName, href, tone: "issue",
+          text: t("digest.catering.readiness_short", { need: ozText(row.needOz), have: ozText(row.onHandOz ?? 0), short: ozText(row.shortOz!) })
+            + (row.orderPacks ? ` · ${plural(t, row.orderPacks, "digest.catering.readiness_order_one", "digest.catering.readiness_order_other")}` : ""),
+        });
+      }
+      const covered = v.rows.filter((row) => row.counted && row.shortOz !== null && row.shortOz <= 0).length;
+      const unsized = v.rows.filter((row) => row.counted && row.shortOz === null).length;
+      if (covered > 0) lines.push({ label, href, tone: "ok", text: plural(t, covered, "digest.catering.readiness_covered_one", "digest.catering.readiness_covered_other") });
+      if (unsized > 0) lines.push({ label, href, tone: "info", text: plural(t, unsized, "digest.catering.readiness_unsized_one", "digest.catering.readiness_unsized_other") });
+      const unchecked = v.unresolvedChoiceLines + v.noRecipeLines;
+      if (unchecked > 0) lines.push({ label, href, tone: "info", text: plural(t, unchecked, "digest.catering.readiness_unchecked_one", "digest.catering.readiness_unchecked_other") });
+      return lines;
+    }
+    function staffLines(locationId: string): DigestLine[] {
+      const r = f.staff?.[locationId];
+      const label = t("digest.catering.staff_label");
+      const href = `${baseUrl}/stations?location=${encodeURIComponent(locationId)}`;
+      if (!r) return [];
+      if (r.kind !== "ok") return [{ label, text: t(r.kind === "error" ? "digest.v2.could_not_load" : "digest.v2.not_available"), tone: r.kind === "error" ? "issue" : "info", href }];
+      const onStation = r.value.onStation.map((p) => `${p.firstName} (${p.station})`).join(", ");
+      return [{ label, href, tone: "info", text: [onStation || t("digest.catering.staff_none"), t("digest.catering.schedule_not_connected")].join(" · ") }];
+    }
 
     const action: DigestLine[] = [];
     for (const l of leads.filter((x) => OPEN.has(x.stage) && x.eventDate !== null && x.eventDate >= f.today && x.eventDate <= tomorrow)) {
@@ -380,7 +569,7 @@ export function composeCateringSections(
       action.push({ label: who(l), tone: "issue", href: leadHref(l), text: t("digest.catering.unpaid", { money: money(l.dueCents), date: formatDateLabel(l.eventDate!, language) }) });
     }
     const open = f.openQuotes.filter((q) => q.locationId === shop.id).length;
-    if (open > 0) action.push({ label: t("digest.catering.quotes_label"), tone: "info", href: quotesHref, text: t("digest.catering.awaiting_customer", { n: open }) });
+    if (open > 0) action.push({ label: t("digest.catering.quotes_label"), tone: "info", href: quotesHref, text: plural(t, open, "digest.catering.awaiting_customer_one", "digest.catering.awaiting_customer_other") });
     if (action.length === 0) action.push({ label: t("digest.catering.needs_action"), text: t("digest.catering.none_action"), tone: "ok", href: pipeline });
 
     sections.push(
@@ -395,7 +584,7 @@ export function composeCateringSections(
 
 export function renderCateringDigest(
   f: CateringFacts,
-  scope: { locations: Array<{ id: string; name: string }>; includeUnassigned: boolean },
+  scope: CateringScope,
   env: Envelope,
 ): ComposedEmail {
   const t = (key: TranslationKey, params?: Record<string, string | number>) => serverT(env.language, key, params);

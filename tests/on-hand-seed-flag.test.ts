@@ -8,7 +8,10 @@
  * app/(authed)/operations/counts/page.tsx -> loadOnHand      | counts-panel read (wrapper)
  * scripts/sim/product-identity/day2-two-vendor-count.ts      | panel verification read (false)
  *   -> loadOnHandDerived
- * lib/counts.ts loadOnHandDerived -> loadInferredRows (x3)   | forwards flag in every branch
+ * lib/counts.ts loadOnHandDerived -> onHandCore (private)     | gated wrapper (floor + bind), forwards opts
+ * lib/counts.ts deriveOnHand -> onHandCore                   | PUBLIC actor-less read: ALWAYS seedBaselines false, no option
+ * lib/report-digests.ts loadCateringReadiness -> deriveOnHand | digest read (read-only by construction)
+ * lib/counts.ts onHandCore -> loadInferredRows (x3)          | forwards flag in every branch
  */
 import { readFileSync } from "node:fs";
 import ts from "typescript";
@@ -32,7 +35,8 @@ describe("LRA-217: inference persistence is explicit", () => {
     for (const name of ["loadWalkerData", "submitParPass"]) {
       expect(fn(ordering, name).text).toContain("loadOnHandDerived(actor, locationId)");
     }
-    expect(fn(counts, "loadOnHandDerived").text).toContain("const seedBaselines = opts.seedBaselines ?? true");
+    expect(fn(counts, "onHandCore").text).toContain("const seedBaselines = opts.seedBaselines ?? true");
+    expect(fn(counts, "loadOnHandDerived").text).toContain("return onHandCore(locationId, now, opts)");
   });
 
   it("disables seeds for the counts panel and its simulation read", () => {
@@ -41,8 +45,27 @@ describe("LRA-217: inference persistence is explicit", () => {
     expect(readFileSync("scripts/sim/product-identity/day2-two-vendor-count.ts", "utf8")).toContain("loadOnHandDerived(actor, loc.id, Date.now(), { withProducts: true, seedBaselines: false })");
   });
 
+  it("the digest's actor-less read opts out (a read never writes)", () => {
+    expect(readFileSync("lib/report-digests.ts", "utf8")).toContain("deriveOnHand(locationId, Date.now())");
+  });
+
+  it("deriveOnHand is intrinsically read-only: no seedBaselines option, always false, and the core is private (Astra r3)", () => {
+    const { ast, node, text } = fn(counts, "deriveOnHand");
+    // The public signature carries no seedBaselines option at all.
+    const params = node.parameters.map((p) => p.getText(ast)).join(", ");
+    expect(params).not.toContain("seedBaselines");
+    // Its single statement calls the core with a LITERAL false and never forwards caller options.
+    const body = node.body!.statements;
+    expect(body).toHaveLength(1);
+    expect(text).toContain("onHandCore(locationId, now, { withProducts: opts.withProducts === true, seedBaselines: false })");
+    expect(text).not.toMatch(/\.\.\.opts|seedBaselines: opts|seedBaselines \?\?/);
+    // The seeding core is NOT exported: the only public paths are the gated wrapper and this read.
+    expect(counts).toMatch(/\nasync function onHandCore\(/);
+    expect(counts).not.toMatch(/export (async )?function onHandCore/);
+  });
+
   it("forwards the flag through cold, empty-anchor, and anchored branches", () => {
-    const calls = fn(counts, "loadOnHandDerived").text.match(/await loadInferredRows\([^;]+;/g);
+    const calls = fn(counts, "onHandCore").text.match(/await loadInferredRows\([^;]+;/g);
     expect(calls).toHaveLength(3);
     for (const call of calls!) expect(call).toContain(", now, { seedBaselines })");
   });
