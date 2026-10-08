@@ -8,6 +8,7 @@ import "server-only";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import { selectAllRows } from "@/lib/supabase-paginate";
 import { loadCapturedToastDay } from "@/lib/toast/captured-day";
+import { summarizeLabor, weekStart, type LaborEntryFact, type LaborSummary } from "@/lib/toast/labor-shared";
 import { addDays, etDayRange } from "@/lib/report-digests-shared";
 import {
   cutoffsTomorrow,
@@ -286,6 +287,22 @@ async function loadPeople(sb: Sb, locationId: string, day: string): Promise<Load
   return ok({ retrains: { assignedToday: assigned.count ?? 0, open: open.count ?? 0 } });
 }
 
+// ── Labor (Toast time entries, 0224) ─────────────────────────────────────────────────────────
+
+export async function loadLabor(sb: Sb, locationId: string, day: string, sales: Loaded<SalesFacts>): Promise<Loaded<LaborSummary>> {
+  // Week-to-date (Mon..D) for the 40 h flag; D for everything else.
+  const rows = await selectAllRows<{ employee_guid: string; employee_first_name: string | null; job_name: string | null; business_date: string; hours: number | string | null; overtime_hours: number | string | null; out_at: string | null }>((f, t) =>
+    sb.from("toast_time_entries").select("employee_guid, employee_first_name, job_name, business_date, hours, overtime_hours, out_at")
+      .eq("location_id", locationId).eq("deleted", false).gte("business_date", weekStart(day)).lte("business_date", day)
+      .order("business_date").order("time_entry_guid").range(f, t));
+  if (!rows.some((r) => r.business_date === day)) return unavailable("no_labor");
+  const entries: LaborEntryFact[] = rows.map((r) => ({
+    employeeGuid: r.employee_guid, firstName: r.employee_first_name, jobName: r.job_name, businessDate: r.business_date,
+    hours: r.hours === null ? null : Number(r.hours), overtimeHours: r.overtime_hours === null ? null : Number(r.overtime_hours), open: r.out_at === null,
+  }));
+  return ok(summarizeLabor(day, entries, sales.kind === "ok" ? sales.value.today.netCents : null));
+}
+
 /** Every v2 area for one shop and business day. Never throws. */
 export async function loadShopV2Facts(sb: Sb, locationId: string, day: string, now: Date): Promise<ShopV2Facts> {
   const s = sharedReads(sb, locationId, day);
@@ -298,5 +315,6 @@ export async function loadShopV2Facts(sb: Sb, locationId: string, day: string, n
     settle(() => loadInventory(sb, deliveries, s, locationId, day), "inventory"),
     settle(() => loadPeople(sb, locationId, day), "people"),
   ]);
-  return { lookahead: lookaheadDay(day), sales, catering, ordering, receiving, inventory, people };
+  const labor = await settle(() => loadLabor(sb, locationId, day, sales), "labor");
+  return { lookahead: lookaheadDay(day), sales, catering, ordering, receiving, inventory, people, labor };
 }

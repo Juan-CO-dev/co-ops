@@ -51,7 +51,7 @@ function cutoffLabel(c: Ctx, time: string): string {
 function notLoaded(c: Ctx, label: string, href: string, l: Loaded<unknown>): DigestLine | null {
   if (l.kind === "error") return { label, text: c.t("digest.v2.could_not_load"), tone: "issue", href };
   if (l.kind === "unavailable") {
-    const key = l.reason === "no_capture" ? "digest.v2.sales.no_capture" : "digest.v2.not_available";
+    const key = l.reason === "no_capture" ? "digest.v2.sales.no_capture" : l.reason === "no_labor" ? "digest.v2.labor.no_entries" : "digest.v2.not_available";
     return { label, text: c.t(key as TranslationKey), tone: "info", href };
   }
   return null;
@@ -318,6 +318,41 @@ export function tomorrowLines(c: Ctx, v: ShopV2Facts): DigestLine[] {
   return lines;
 }
 
+// ── Labor (Toast time entries, D) ── appended to lib/report-digests-v2-compose.ts ────────────
+
+export function laborLines(c: Ctx, v: ShopV2Facts): DigestLine[] {
+  const href = `${c.baseUrl}/reports/trends/team?${q(c.locationId)}`;
+  const label = c.t("digest.v2.labor.label");
+  if (!v.labor) return [];
+  const nl = notLoaded(c, label, href, v.labor);
+  if (nl) return [nl];
+  if (v.labor.kind !== "ok") return [];
+  const s = v.labor.value;
+  const hours = (h: number) => new Intl.NumberFormat(c.language === "es" ? "es-US" : "en-US", { maximumFractionDigits: 1 }).format(h);
+  const lines: DigestLine[] = [];
+  if (s.people.length === 0 && s.openEntries === 0) return [{ label, text: c.t("digest.v2.labor.none"), tone: "info", href }];
+  lines.push({
+    label, href, tone: "info",
+    text: [
+      c.t("digest.v2.labor.total", { hours: hours(s.totalHours) }),
+      s.salesPerLaborHourCents === null ? c.t("digest.v2.labor.splh_unavailable") : c.t("digest.v2.labor.splh", { money: formatCents(s.salesPerLaborHourCents, c.language) }),
+      s.openEntries > 0 ? plural(c.t, s.openEntries, "digest.v2.labor.open_one", "digest.v2.labor.open_other") : null,
+    ].filter((x): x is string => x !== null).join(" · "),
+  });
+  if (s.byJob.length > 0) lines.push({ label: c.t("digest.v2.labor.by_job_label"), href, tone: "info", text: s.byJob.map((j) => `${j.job ?? c.t("digest.v2.labor.no_job")} ${hours(j.hours)} h`).join(", ") });
+  if (s.people.length > 0) lines.push({ label: c.t("digest.v2.labor.people_label"), href, tone: "info", text: s.people.map((p) => `${p.firstName ?? "—"} ${hours(p.hours)} h`).join(", ") });
+  lines.push(s.dayOvertime.length === 0 && s.weekOvertime.length === 0
+    ? { label: c.t("digest.v2.labor.overtime_label"), href, tone: "ok", text: c.t("digest.v2.labor.no_overtime") }
+    : {
+      label: c.t("digest.v2.labor.overtime_label"), href, tone: "issue",
+      text: [
+        ...s.dayOvertime.map((p) => c.t("digest.v2.labor.over_day", { name: p.firstName ?? "—", hours: hours(p.hours) })),
+        ...s.weekOvertime.map((p) => c.t("digest.v2.labor.over_week", { name: p.firstName ?? "—", hours: hours(p.hours) })),
+      ].join(", "),
+    });
+  return lines;
+}
+
 // ── Assembly ─────────────────────────────────────────────────────────────────────────────────
 
 export interface V2Extras {
@@ -338,6 +373,7 @@ export function composeV2Sections(args: { shopName: string; locationId: string; 
     { title: title("digest.v2.section.inventory"), lines: inventoryLines(c, args.v, args.extras.pendingItems) },
     { title: title("digest.v2.section.operations"), lines: args.extras.operations },
     { title: title("digest.v2.section.sales"), lines: salesDetailLines(c, args.v) },
+    ...(args.v.labor ? [{ title: title("digest.v2.section.labor"), lines: laborLines(c, args.v) }] : []),
     { title: title("digest.v2.section.people"), lines: peopleLines(c, args.v, args.extras.who, args.extras.pmLine) },
     { title: title("digest.v2.section.tomorrow", { date: formatDateLabel(args.v.lookahead, language) }), lines: tomorrowLines(c, args.v) },
   ];
