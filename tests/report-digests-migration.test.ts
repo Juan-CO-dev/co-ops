@@ -14,9 +14,9 @@ const sql = readFileSync(join(dir, "0220_report_recipients_digests.sql"), "utf8"
 const flat = sql.replace(/\s+/g, " ");
 
 describe("0220 posture", () => {
-  it("is authored only, with the gate line", () => {
+  it("keeps its authoring gate line and carries the prod apply stamp (AGENTS.md: stamp, never delete the gate)", () => {
     expect(sql).toMatch(/AUTHORED 2026-10-07\. NOT YET APPLIED — GATE \(CC\/JUAN\)/);
-    expect(sql).not.toMatch(/APPLIED TO PROD/);
+    expect(sql).toMatch(/APPLIED TO PROD 2026-10-08 \(schema_migrations version 20261008045759; sim 20261008045739\)/);
   });
 
   it.each(["report_recipients", "report_digest_sends", "report_settings"])("%s is deny-all and service-role only, never deletable", (table) => {
