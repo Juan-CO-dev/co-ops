@@ -57,6 +57,7 @@ beforeEach(() => {
   vi.mocked(runToastSalesPull).mockResolvedValue({ businessDate: "2026-09-11", results: [], healthy: true, metadata: { capture_failures: 0,
     job: "toast-sales-pull", business_date: "2026-09-11", source: "capture", dates: [], capture_skipped: false, pars_pending_activation: false, per_location_failures: 0,
     depletion_rows: {}, depletion_failures: 0, par_rows: {}, par_run_failures: 0,
+    ezcater_shadow: { processed: 0, failed: 0, deferred: false },
     elapsed_completed: 0, elapsed_failed: 0, elapsed_error: null,
   } });
   vi.mocked(runParseReceipts).mockResolvedValue({ dormant: false, swept: 0, parsed: 0, failed: 0,

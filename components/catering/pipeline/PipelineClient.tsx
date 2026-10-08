@@ -9,6 +9,11 @@ import { LEGAL_TRANSITIONS, PIPELINE_STAGES, shopChipLabel, type PipelineStage }
 import type { PipelineLead, PipelineSearchResult, AssignableStaff } from "@/lib/catering/pipeline";
 import { LEAD_SOURCES, leadSourceKey } from "@/lib/catering/intake-shared";
 import type { CateringCapacityResult } from "@/lib/catering/capacity";
+import { EzcaterReconciliationPanel } from "./EzcaterReconciliationPanel";
+import { TransferLead } from "./TransferLead";
+import { EzcaterDetail } from "./EzcaterDetail";
+import type { EzcaterOrderDetail } from "@/lib/catering/ezcater-detail-shared";
+import { humanEzcaterNotes } from "@/lib/catering/ezcater-detail-shared";
 import { postJson, resolveErrorKey } from "./shared";
 
 interface LocationOpt {
@@ -20,7 +25,9 @@ interface Props {
   leads: PipelineLead[];
   followUps: PipelineLead[];
   locations: LocationOpt[];
+  createLocations: LocationOpt[];
   actorLevel: number;
+  canTransfer: boolean;
   writeMin: number;
   searchQuery: string;
   results: PipelineSearchResult[] | null;
@@ -54,7 +61,7 @@ function stageKey(s: PipelineStage): TranslationKey {
   return `catering.pipeline.stage.${s}` as TranslationKey;
 }
 
-export function PipelineClient({ staff, leads, followUps, locations, actorLevel, writeMin, searchQuery, results }: Props) {
+export function PipelineClient({ staff, leads, followUps, locations, createLocations, actorLevel, canTransfer, writeMin, searchQuery, results }: Props) {
   const { t, language } = useTranslation();
   const canWrite = actorLevel >= writeMin;
 
@@ -92,7 +99,7 @@ export function PipelineClient({ staff, leads, followUps, locations, actorLevel,
       ) : (
         /* BOARD MODE */
         <>
-          {canWrite && <AddLeadRow locations={locations} staff={staff} />}
+          {canWrite && <AddLeadRow locations={createLocations} staff={staff} />}
 
           <div className="flex flex-wrap items-center gap-2">
             <label className="text-xs text-co-text-muted" htmlFor="pl-f-assignee">{t("catering.intake.filter.assignee")}</label>
@@ -142,7 +149,7 @@ export function PipelineClient({ staff, leads, followUps, locations, actorLevel,
                   {byStage[stage].length === 0 ? (
                     <p className="px-1 text-xs text-co-text-muted">{t("catering.pipeline.empty_stage")}</p>
                   ) : (
-                    byStage[stage].map((lead) => <LeadCard key={lead.id} lead={lead} money={money} canWrite={canWrite} staffNames={staffNames} />)
+                    byStage[stage].map((lead) => <LeadCard key={lead.id} lead={lead} money={money} canWrite={canWrite} canTransfer={canTransfer} locations={locations} staffNames={staffNames} />)
                   )}
                 </div>
               </div>
@@ -309,11 +316,15 @@ function LeadCard({
   lead,
   money,
   canWrite,
+  canTransfer,
+  locations,
   staffNames,
 }: {
   lead: PipelineLead;
   money: (c: number | null) => string | null;
   canWrite: boolean;
+  canTransfer: boolean;
+  locations: LocationOpt[];
   staffNames: Record<string, string>;
 }) {
   const { t, language } = useTranslation();
@@ -340,7 +351,7 @@ function LeadCard({
           {rev && <span>{rev}</span>}
         </div>
       </button>
-      {open && <LeadDetail lead={lead} money={money} canWrite={canWrite} onClose={() => setOpen(false)} />}
+      {open && <LeadDetail lead={lead} money={money} canWrite={canWrite} canTransfer={canTransfer} locations={locations} onClose={() => setOpen(false)} />}
     </div>
   );
 }
@@ -349,16 +360,23 @@ function LeadDetail({
   lead,
   money,
   canWrite,
+  canTransfer,
+  locations,
   onClose,
 }: {
   lead: PipelineLead;
   money: (c: number | null) => string | null;
   canWrite: boolean;
+  canTransfer: boolean;
+  locations: LocationOpt[];
   onClose: () => void;
 }) {
   const { t, language } = useTranslation();
   const router = useRouter();
-  const [capacity, setCapacity] = useState<CateringCapacityResult | null>(null);
+  const [detail, setDetail] = useState<{ leadId: string; ezcater: EzcaterOrderDetail | null; capacity: CateringCapacityResult | null } | null>(null);
+  // Key the response to its lead: a switch hides old details before the next effect runs.
+  const ezcater = detail?.leadId === lead.id ? detail.ezcater : null;
+  const capacity = detail?.leadId === lead.id ? detail.capacity : null;
   const [busy, setBusy] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
@@ -366,10 +384,10 @@ function LeadDetail({
     let alive = true;
     void fetch(`/api/catering/pipeline/${lead.id}`)
       .then((r) => (r.ok ? r.json() : null))
-      .then((d: { capacity?: CateringCapacityResult } | null) => {
-        if (alive && d?.capacity) setCapacity(d.capacity);
+      .then((d: { capacity?: CateringCapacityResult; ezcater?: EzcaterOrderDetail | null } | null) => {
+        if (alive) setDetail({ leadId: lead.id, capacity: d?.capacity ?? null, ezcater: d?.ezcater ?? null });
       })
-      .catch(() => {});
+      .catch(() => { if (alive) setDetail(null); });
     return () => {
       alive = false;
     };
@@ -394,6 +412,7 @@ function LeadDetail({
   const rev = money(lead.estimatedRevenueCents);
   // Only the moves the server will accept (LEGAL_TRANSITIONS); a closed lead (Completed / Lost) has none.
   const otherStages: readonly PipelineStage[] = LEGAL_TRANSITIONS[lead.stage] ?? [];
+  const visibleNotes = ezcater ? humanEzcaterNotes(lead.notes) : lead.notes;
 
   return (
     <div className="mt-3 border-t border-co-border pt-3 text-sm">
@@ -409,10 +428,10 @@ function LeadDetail({
       )}
 
       <dl className="grid grid-cols-2 gap-x-3 gap-y-1 text-xs">
-        {lead.notes && (
+        {visibleNotes?.trim() && (
           <>
             <dt className="text-co-text-muted">{t("catering.pipeline.field.notes")}</dt>
-            <dd className="text-co-text">{lead.notes}</dd>
+            <dd className="text-co-text">{visibleNotes}</dd>
           </>
         )}
         {lead.followUpDate && (
@@ -428,6 +447,12 @@ function LeadDetail({
           </>
         )}
       </dl>
+
+      {ezcater && <EzcaterDetail detail={ezcater} />}
+
+      <EzcaterReconciliationPanel leadId={lead.id} />
+
+      {canTransfer && <TransferLead leadId={lead.id} locationId={lead.locationId} locations={locations} onMoved={onClose} />}
 
       {canWrite && (
         <div className="mt-3">

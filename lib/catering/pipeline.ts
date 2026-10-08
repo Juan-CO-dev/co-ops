@@ -15,8 +15,9 @@
 
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import { getRoleLevel, type RoleCode } from "@/lib/roles";
-import { lockLocationContext, isAllLocationsAccess } from "@/lib/locations";
+import { lockLocationContext } from "@/lib/locations";
 import { audit } from "@/lib/audit";
+import { canReadCateringLead, loadCateringReader } from "./ezcater-detail";
 import type { AuthContext } from "@/lib/session";
 import { checkCateringCapacity, type CateringCapacityResult } from "@/lib/catering/capacity";
 import { reservePrepDemand, consumePrepDemand, releasePrepDemand } from "@/lib/catering/prep-demand";
@@ -223,10 +224,12 @@ export async function withLocationNames<T extends PipelineLead>(
   return leads.map((l) => ({ ...l, locationName: l.locationId ? names.get(l.locationId) ?? null : null }));
 }
 
-/** The read-scope `.or()` filter string for the actor, or null when unrestricted (L9+ all-locations). */
-function readScopeOr(actor: AuthContext): string | null {
-  if (isAllLocationsAccess(locActor(actor))) return null;
-  const ids = actor.locations;
+/** Catering reads: catering manager and level 8+ see all shops; writes retain their own scope. */
+async function readScopeOr(actor: AuthContext): Promise<string | null> {
+  const reader = await loadCateringReader(actor);
+  if (!reader || getRoleLevel(reader.role) < PIPELINE_READ_MIN) throw new CateringPipelineError(403, "forbidden");
+  if (reader.role === "catering_mgr" || getRoleLevel(reader.role) >= 8) return null;
+  const ids = reader.locations;
   return ids.length === 0
     ? "location_id.is.null"
     : `location_id.is.null,location_id.in.(${ids.join(",")})`;
@@ -238,7 +241,7 @@ export async function loadPipelineBoard(actor: AuthContext): Promise<PipelineLea
   requireLevel(actor, PIPELINE_READ_MIN);
   const sb = getServiceRoleClient();
   let q = sb.from("catering_pipeline").select(LEAD_COLS);
-  const scope = readScopeOr(actor);
+  const scope = await readScopeOr(actor);
   if (scope) q = q.or(scope);
   const { data, error } = await q.order("created_at", { ascending: false }).returns<DbLeadRow[]>();
   if (error) throw new Error(`loadPipelineBoard: ${error.message}`);
@@ -295,7 +298,7 @@ export async function searchPipeline(actor: AuthContext, args: { query: string }
   const orParts = [`contact_name.ilike.${term}`, `company.ilike.${term}`, `contact_phone.ilike.${term}`, `event_name.ilike.${term}`];
   if (matchedCustomerIds.size) orParts.push(`customer_id.in.(${[...matchedCustomerIds].join(",")})`);
   let q = sb.from("catering_pipeline").select(LEAD_COLS);
-  const scope = readScopeOr(actor);
+  const scope = await readScopeOr(actor);
   if (scope) q = q.or(scope); // AND-ed with the identity OR-group below (two .or() calls = AND of groups)
   q = q.or(orParts.join(","));
   const { data: leadRows, error } = await q.order("created_at", { ascending: false }).returns<DbLeadRow[]>();
@@ -342,7 +345,7 @@ export async function loadFollowUps(actor: AuthContext, throughDate: string): Pr
     .not("follow_up_date", "is", null)
     .lte("follow_up_date", throughDate)
     .not("stage", "in", `(${TERMINAL_STAGES.join(",")})`);
-  const scope = readScopeOr(actor);
+  const scope = await readScopeOr(actor);
   if (scope) q = q.or(scope);
   const { data, error } = await q.order("follow_up_date", { ascending: true }).returns<DbLeadRow[]>();
   if (error) throw new Error(`loadFollowUps: ${error.message}`);
@@ -357,11 +360,7 @@ export async function loadLead(actor: AuthContext, id: string): Promise<Pipeline
   if (error) throw new Error(`loadLead: ${error.message}`);
   if (!data) return null;
   // Visibility: global, or in the actor's locations, or all-locations.
-  if (
-    data.location_id != null &&
-    !isAllLocationsAccess(locActor(actor)) &&
-    !actor.locations.includes(data.location_id)
-  ) {
+  if (!await canReadCateringLead(actor, data.location_id)) {
     return null;
   }
   return mapLead(data);

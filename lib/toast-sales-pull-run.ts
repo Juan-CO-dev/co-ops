@@ -1,13 +1,16 @@
 import "server-only";
 import { getServiceRoleClient } from "@/lib/supabase-server";
+import { audit } from "@/lib/audit";
 import { runOrderCapture } from "@/lib/toast/capture-job";
 import { materializeCapturedDepletion } from "@/lib/toast/depletion";
 import { completeElapsedCateringEvents } from "@/lib/catering/system-intake";
+import { refreshKnownEzcaterOrders } from "@/lib/ezcater/refresh";
+import { materializeEzcaterShadow } from "@/lib/ezcater/pass2";
 import { etCalendarDate, etYmdMinusDays } from "@/lib/operational-day";
 import { pullSalesForAllLocations, materializeDailyDepletion } from "@/lib/catering/toast-sales";
 import { loadDepletionWatermark } from "@/lib/counts";
 import { runParShadowForLocation, recordParRunSkipped } from "@/lib/dynamic-pars";
-import { captureErrorCode } from "@/lib/toast/capture-runner";
+import { captureBudget, captureErrorCode } from "@/lib/toast/capture-runner";
 
 /** The flag switches readers AND writers; unset restores Stage A's legacy pipeline. */
 export async function runToastSalesPull(opts: { businessDate: string; deadlineAt?: number; signal?: AbortSignal }) {
@@ -23,8 +26,13 @@ export async function runToastSalesPull(opts: { businessDate: string; deadlineAt
   let capture: Awaited<ReturnType<typeof runOrderCapture>>;
   let elapsedCompleted = 0, elapsedFailed = 0;
   let elapsedError: string | null = null;
+  const todayEt = etCalendarDate(new Date().toISOString());
+  // Cancellation discovered here becomes lost before generic completion. An API failure
+  // never excludes ezCater from that existing loop or consumes the sales-pull budget.
+  try { await refreshKnownEzcaterOrders(todayEt, Math.min(Date.now() + 20_000, deadlineAt - 10_000), opts.signal); }
+  catch { /* Independent heartbeat reports failure; completion still runs. */ }
   try {
-    const elapsed = await completeElapsedCateringEvents(etCalendarDate(new Date().toISOString()));
+    const elapsed = await completeElapsedCateringEvents(todayEt);
     elapsedCompleted = elapsed.completed.length;
     elapsedFailed = elapsed.failed.length;
   } catch (error) { elapsedError = captureErrorCode(error); }
@@ -82,12 +90,27 @@ export async function runToastSalesPull(opts: { businessDate: string; deadlineAt
       results.push({ locationId, ok, ...(!ok ? { error: "capture_day_incomplete" } : {}) });
     }
   }
+  let ezcaterShadow = { processed: 0, failed: 0, deferred: false };
+  try {
+    ezcaterShadow = await materializeEzcaterShadow(etYmdMinusDays(businessDate, 2), businessDate, Math.min(deadlineAt, Date.now() + 20_000));
+  } catch { ezcaterShadow.failed++; }
+  // This additive shadow has its own health signal; it cannot fail operational sales.
+  const heartbeatBudget = captureBudget(1_000);
+  try {
+    await heartbeatBudget.wait(() => audit({ actorId: null, actorRole: null,
+      action: ezcaterShadow.failed ? "cron.failure" : "cron.success",
+      resourceTable: "cron", resourceId: null,
+      metadata: { job: "ezcater-shadow", business_date: businessDate, ...ezcaterShadow },
+      ipAddress: null, userAgent: null }));
+  } catch { /* Heartbeat persistence is fail-open, independent of sales health. */ }
+  finally { heartbeatBudget.close(); }
   const perLocationFailures = results.filter((r) => !r.ok).length;
   const healthy = (!captureMode || (!capture.skipped && capture.failures === 0)) && perLocationFailures === 0
     && depletionFailures === 0 && parRunFailures === 0 && elapsedFailed === 0 && elapsedError === null;
   const metadata = {
     job: "toast-sales-pull", source: captureMode ? "capture" : "legacy", business_date: businessDate, dates: captureMode ? dates : [businessDate],
     capture_failures: capture.failures, capture_skipped: capture.skipped,
+    ezcater_shadow: ezcaterShadow,
     per_location_failures: perLocationFailures, depletion_rows: depletionRows,
     depletion_failures: depletionFailures, par_rows: parRows, par_run_failures: parRunFailures,
     pars_pending_activation: false,

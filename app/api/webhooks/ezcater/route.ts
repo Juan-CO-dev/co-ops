@@ -3,9 +3,8 @@
 // the X-Ezcater-Signature HMAC (mandatory in our build even though ezCater
 // documents it as optional). EZCATER_WEBHOOK_SECRET unset → 503 dormant-safe,
 // nothing stored. Invalid signature → recorded on the ledger + 401. Valid →
-// processed; ALWAYS 200 on recorded outcomes (providers retry non-2xx; a
-// duplicate/skip is a success from their perspective). 500 only when the
-// ledger append itself fails — that's when we WANT their retry.
+// processed; 200 on recorded outcomes. Failed persistence asks the provider
+// to retry: missing 0223 returns 503 + Retry-After; other failures return 500.
 import { type NextRequest } from "next/server";
 import { jsonError, jsonOk } from "@/lib/api-helpers";
 import { verifyEzcaterSignature } from "@/lib/ezcater/webhook-shared";
@@ -36,7 +35,12 @@ export async function POST(req: NextRequest) {
     if (result === "invalid_signature") return jsonError(401, "invalid_signature");
     return jsonOk({ result });
   } catch (e) {
-    console.error("[/api/webhooks/ezcater] ledger append failed:", e instanceof Error ? e.message : e);
+    if (e instanceof Error && e.message === "ezcater_schema_unavailable") {
+      const response = jsonError(503, "ezcater_schema_unavailable");
+      response.headers.set("Retry-After", "60");
+      return response;
+    }
+    console.error("[/api/webhooks/ezcater]", "delivery_persistence_failed");
     return jsonError(500, "ledger_failed");
   }
 }
