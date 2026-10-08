@@ -54,16 +54,6 @@ export default async function SettingsPage() {
             {serverT(lang, "settings.profile.link")}
           </Link>
         </section>
-
-        {/* Honest placeholder for the deferred notification-prefs surface. */}
-        <section className="co-card p-4">
-          <h2 className="text-base font-extrabold text-co-text">
-            {serverT(lang, "settings.more.title")}
-          </h2>
-          <p className="mt-0.5 text-sm text-co-text-muted">
-            {serverT(lang, "settings.more.sub")}
-          </p>
-        </section>
       </div>
     </main>
   );
