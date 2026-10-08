@@ -3,7 +3,7 @@
  * mocked service client. No database: the mocks stand in for PostgREST's answers.
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { alertDigestProblem, supabaseSendStore } from "@/lib/report-digests";
+import { alertDigestProblem, loadPreviewRecipient, supabaseSendStore } from "@/lib/report-digests";
 import { audit } from "@/lib/audit";
 import { sendEmail } from "@/lib/email";
 
@@ -90,5 +90,24 @@ describe("supabaseSendStore", () => {
     const c = client(null, []);
     expect(await supabaseSendStore(c.sb).finish("r1", { outcome: "sent", email_id: "m" })).toBe(false);
     expect(c.updates[0]!.filters).toEqual([["id", "r1"], ["outcome", "claimed"]]);
+  });
+});
+
+describe("loadPreviewRecipient (P2: Juan's own account, from the users table, or nothing)", () => {
+  const users = (rows: Array<{ id: string; email: string | null }>) => {
+    const filters: Array<[string, unknown]> = [];
+    const q = { select: () => q, eq: (k: string, v: unknown) => { filters.push([k, v]); return q; }, then: (ok: (v: unknown) => unknown) => ok({ data: rows, error: null }) };
+    return { sb: { from: () => q } as never, filters };
+  };
+  it("the single active CGS with an email, lowercased; the query asks for exactly that", async () => {
+    const u = users([{ id: "j", email: " Juan@Example.com " }]);
+    expect(await loadPreviewRecipient(u.sb)).toBe("juan@example.com");
+    expect(u.filters).toEqual([["role", "cgs"], ["active", true]]);
+  });
+  it("fails closed on none, several, or no email — and ignores OPS_ALERT_EMAIL / DIGEST_PREVIEW_EMAIL", async () => {
+    vi.stubEnv("DIGEST_PREVIEW_EMAIL", "list@example.com");
+    expect(await loadPreviewRecipient(users([]).sb)).toBeNull();
+    expect(await loadPreviewRecipient(users([{ id: "a", email: "a@x.co" }, { id: "b", email: "b@x.co" }]).sb)).toBeNull();
+    expect(await loadPreviewRecipient(users([{ id: "a", email: null }]).sb)).toBeNull();
   });
 });

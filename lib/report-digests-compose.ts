@@ -34,6 +34,11 @@ export interface ShopDayFacts {
   storeRunsPending: number;
   /** Active report_assignments for the day. */
   tasks: TaskType[];
+  /**
+   * The PM report's findings (its employee evaluations — the list loader carries NO PM signals, its
+   * gradient tally is detail-only). null = not loaded → the line says "not assessed", never "All good".
+   */
+  pmFindings: { evaluations: number; needsWork: number } | null;
 }
 
 export const SHOP_REPORT_FAMILIES: readonly ReportTypeKey[] = ["opening", "am_prep", "mid_day", "closing", "cash", "pm", "maintenance"];
@@ -68,6 +73,16 @@ export function composeShopLines(f: ShopDayFacts, language: Language, baseUrl: s
       lines.push({ label, text: t("digest.line.not_finalized"), tone: "issue", href: itemHref });
       continue;
     }
+    if (type === "pm") {
+      const pm = f.pmFindings;
+      lines.push(pm === null ? { label, text: t("digest.pm.not_assessed"), tone: "info", href: itemHref }
+        : pm.needsWork > 0 ? { label, text: t("digest.pm.needs_work", { n: pm.needsWork, evals: pm.evaluations }), tone: "issue", href: itemHref }
+          : pm.evaluations === 0 ? { label, text: t("digest.pm.no_evals"), tone: "info", href: itemHref }
+            : { label, text: t("digest.pm.all_good", { n: pm.evaluations }), tone: "ok", href: itemHref });
+      continue;
+    }
+    // "All good" needs evidence: an item whose signals were never computed is not assessed.
+    const assessed = items.every((r) => r.signalSummary !== undefined);
     const detail: string[] = [];
     let n = 0;
     let filter: string | null = null;
@@ -87,7 +102,7 @@ export function composeShopLines(f: ShopDayFacts, language: Language, baseUrl: s
       detail.push(t(cents > 0 ? "digest.signal.cash_over" : "digest.signal.cash_short", { amount: formatCents(Math.abs(cents), language) }));
       filter ??= cents > 0 ? "sf_cashOver" : "sf_cashShort";
     }
-    if (n === 0) lines.push({ label, text: t("digest.line.all_good"), tone: "ok", href: itemHref });
+    if (n === 0) lines.push(assessed ? { label, text: t("digest.line.all_good"), tone: "ok", href: itemHref } : { label, text: t("digest.line.not_assessed"), tone: "info", href: itemHref });
     else lines.push({
       label, text: t("digest.line.issues", { n, detail: detail.join(", ") }), tone: "issue",
       href: items.length === 1 ? itemHref : `${baseUrl}/reports/operations?${dayQuery(loc, f.day, { type, [filter ?? "sf_underPar"]: "true" })}`,
@@ -116,17 +131,30 @@ export function composeShopLines(f: ShopDayFacts, language: Language, baseUrl: s
     ...(f.storeRunsPending > 0 ? { text: t("digest.store_runs.some", { n: f.storeRunsPending }), tone: "issue" as const } : { text: t("digest.store_runs.none"), tone: "ok" as const }),
   });
 
-  const notDone = f.tasks.filter((task) => {
-    if (task === "receiving") return rec.deliveries === 0;
+  // Three states (Astra P2): DONE only with evidence (a finalized report of that family, or a
+  // recorded delivery for receiving); NOT DONE when the report that proves it is missing or open;
+  // UNVERIFIED when nothing in the day's data can prove it either way (counts, ordering, a
+  // receiving task on a day with no delivery). "All done" requires evidence for EVERY task.
+  const done: TaskType[] = [];
+  const notDone: TaskType[] = [];
+  const unverified: TaskType[] = [];
+  for (const task of f.tasks) {
+    if (task === "receiving") { (rec.deliveries > 0 ? done : unverified).push(task); continue; }
     const type = TASK_REPORT[task];
-    if (!type) return false; // counts / ordering leave no report to prove them — never guessed
-    return !f.reports.some((r) => r.type === type && reportIsFinalized(r));
-  });
+    if (!type) { unverified.push(task); continue; }
+    (f.reports.some((r) => r.type === type && reportIsFinalized(r)) ? done : notDone).push(task);
+  }
+  const names = (list: TaskType[]) => list.map((x) => t(`assignments.task.${x}` as TranslationKey)).join(", ");
+  const parts = [
+    notDone.length > 0 ? t("digest.tasks.not_done", { n: notDone.length, tasks: names(notDone) }) : null,
+    unverified.length > 0 ? t("digest.tasks.unverified", { n: unverified.length, tasks: names(unverified) }) : null,
+    done.length > 0 && (notDone.length > 0 || unverified.length > 0) ? t("digest.tasks.done_some", { n: done.length }) : null,
+  ].filter((x): x is string => x !== null);
   lines.push({
     label: t("digest.family.tasks"), href: `${baseUrl}/reports?${dayQuery(loc, f.day)}`,
     ...(f.tasks.length === 0 ? { text: t("digest.tasks.none"), tone: "info" as const }
-      : notDone.length === 0 ? { text: t("digest.tasks.all_done", { n: f.tasks.length }), tone: "ok" as const }
-        : { text: t("digest.tasks.not_done", { n: notDone.length, tasks: notDone.map((x) => t(`assignments.task.${x}` as TranslationKey)).join(", ") }), tone: "issue" as const }),
+      : parts.length === 0 ? { text: t("digest.tasks.all_done", { n: done.length }), tone: "ok" as const }
+        : { text: parts.join("; "), tone: notDone.length > 0 ? "issue" as const : "info" as const }),
   });
   return lines;
 }
@@ -191,9 +219,20 @@ export interface CateringLeadFact {
   valueCents: number;
   /** Sum of catering_payments due on the live accepted quote. */
   dueCents: number;
-  /** Prep-demand ledger lines (reserved|consumed) for the event; null = no ledger rows. */
-  prepLines: number | null;
+  /** The W4a prep-demand ledger for the event (reserved|consumed), aggregated per need date + ref +
+   *  portion with quantities and units; null = no ledger rows. */
+  prep: PrepLoadLine[] | null;
 }
+export interface PrepLoadLine {
+  needDate: string;
+  name: string;
+  nameEs: string | null;
+  qty: number;
+  /** The item's par unit for an item ref (e.g. "qt"); null for a sub or a choice slot. */
+  unit: string | null;
+  portion: "quarter" | "half" | "whole" | null;
+}
+
 export interface CateringFacts {
   today: string;
   leads: CateringLeadFact[];
@@ -308,13 +347,28 @@ export function composeCateringSections(
     const overdue = leads.filter((l) => OPEN.has(l.stage) && l.followUpDate !== null && l.followUpDate < f.today);
     if (overdue.length > 0) y.push({ label: t("digest.catering.issues_label"), tone: "issue", href: pipeline, text: t("digest.catering.overdue_followups", { n: overdue.length }) });
 
+    const qty = (n: number) => new Intl.NumberFormat(language === "es" ? "es-US" : "en-US", { maximumFractionDigits: 2 }).format(n);
+    const prepText = (l: CateringLeadFact): string => {
+      if (l.prep === null || l.prep.length === 0) return t("digest.catering.no_prep");
+      const byDate = new Map<string, PrepLoadLine[]>();
+      for (const p of l.prep) byDate.set(p.needDate, [...(byDate.get(p.needDate) ?? []), p]);
+      return [...byDate].sort(([a], [b]) => a.localeCompare(b)).map(([date, list]) => {
+        const shown = list.slice(0, 6).map((p) => {
+          const name = language === "es" && p.nameEs ? p.nameEs : p.name;
+          if (p.portion) return `${qty(p.qty)} × ${name} (${t(`digest.catering.portion.${p.portion}` as TranslationKey)})`;
+          return p.unit ? `${qty(p.qty)} ${p.unit} ${name}` : `${qty(p.qty)} × ${name}`;
+        });
+        if (list.length > 6) shown.push(t("digest.catering.prep_more", { n: list.length - 6 }));
+        return t("digest.catering.prep_load", { date: formatDateLabel(date, language), items: shown.join(", ") });
+      }).join(" · ");
+    };
     const outlook = (day: string, emptyKey: TranslationKey, label: TranslationKey): DigestLine[] => {
       const list = leads.filter((l) => l.eventDate === day && UPCOMING.has(l.stage))
         .sort((a, b) => (a.timeWindow ?? "").localeCompare(b.timeWindow ?? ""));
       if (list.length === 0) return [{ label: t(label), text: t(emptyKey), tone: "info", href: pipeline }];
       return list.map((l) => ({
         label: who(l), href: leadHref(l), tone: "info" as const,
-        text: `${time(l)} · ${size(l)} · ${t(l.isDelivery ? "digest.catering.delivery" : "digest.catering.pickup")} · ${l.prepLines !== null ? t("digest.catering.prep_lines", { n: l.prepLines }) : t("digest.catering.no_prep")}`,
+        text: `${time(l)} · ${size(l)} · ${t(l.isDelivery ? "digest.catering.delivery" : "digest.catering.pickup")} · ${prepText(l)}`,
       }));
     };
 

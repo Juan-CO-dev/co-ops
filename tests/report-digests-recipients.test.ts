@@ -73,8 +73,8 @@ describe("catering digest", () => {
     expect(r.map((x) => [x.userId, x.locationIds])).toEqual([["gm1", [A]], ["moo", [A, B]]]);
   });
 
-  it("the catering_digest flag adds anyone, scoped to location_ids when set", () => {
-    const d = dir([user("sl", "shift_lead")], [["sl", A]], [override("sl", { cateringDigest: true, locationIds: [B] })]);
+  it("the catering_digest flag adds a shift lead+, scoped to location_ids within their memberships", () => {
+    const d = dir([user("sl", "shift_lead")], [["sl", A], ["sl", B]], [override("sl", { cateringDigest: true, locationIds: [B] })]);
     expect(resolveDigestRecipients("catering", d)[0]?.locationIds).toEqual([B]);
   });
 
@@ -101,5 +101,40 @@ describe("skips are named, never silent", () => {
     const ext: RecipientOverride = { ...override("x"), id: "ext", kind: "external", userId: null, email: "acct@example.com", cateringDigest: false };
     const d = dir([user("sl", "shift_lead", { active: false })], [], [override("sl", { cateringDigest: true }), ext]);
     expect(resolveDigestRecipients("catering", d)).toEqual([expect.objectContaining({ userId: "sl", skip: "inactive" })]);
+  });
+});
+
+describe("P1 (Astra): an override never widens a recipient past their OWN scope", () => {
+  it("a GM of A with an override naming B is skipped out_of_scope and never resolves to B (closing + catering)", () => {
+    const d = dir([user("gm1", "gm")], [["gm1", A]], [override("gm1", { locationIds: [B] })]);
+    for (const kind of ["gm_shop", "catering"] as const) {
+      const r = resolveDigestRecipients(kind, d)[0]!;
+      expect(r).toMatchObject({ locationIds: [], skip: "out_of_scope", allShops: false });
+      expect(expectedDeliveries(kind, [r]).some((e) => e.locationId === B)).toBe(false);
+    }
+  });
+
+  it("an override naming A and B for a GM of A keeps only A", () => {
+    const d = dir([user("gm1", "gm")], [["gm1", A]], [override("gm1", { locationIds: [A, B] })]);
+    expect(resolveDigestRecipients("gm_shop", d)[0]).toMatchObject({ locationIds: [A], skip: null });
+  });
+
+  it("a flag never grants a role what it may not read (eligibility is independent of the flag)", () => {
+    const d = dir([user("emp", "employee"), user("kh", "key_holder")], [["emp", A], ["kh", A]],
+      [override("emp", { cateringDigest: true, shopDigest: true }), override("kh", { shopDigest: true })]);
+    expect(resolveDigestRecipients("catering", d)).toEqual([expect.objectContaining({ userId: "emp", skip: "out_of_scope", locationIds: [] })]);
+    expect(resolveDigestRecipients("gm_shop", d).map((r) => [r.userId, r.skip])).toEqual([["emp", "out_of_scope"], ["kh", "out_of_scope"]]);
+  });
+
+  it("Keith is a catering recipient only — never a per-shop or unified one, even when flagged", () => {
+    const d = dir([user("keith", "catering_mgr")], [["keith", A]], [override("keith", { shopDigest: true, locationIds: [B] })]);
+    expect(resolveDigestRecipients("gm_shop", d)[0]).toMatchObject({ skip: "out_of_scope", locationIds: [] });
+    expect(resolveDigestRecipients("unified", d)).toEqual([]);
+    expect(resolveDigestRecipients("catering", d)[0]).toMatchObject({ skip: "out_of_scope", locationIds: [] });
+  });
+
+  it("level 8+ keeps all shops; an override may narrow them", () => {
+    const d = dir([user("moo", "moo")], [], [override("moo", { cateringDigest: true, locationIds: [B] })]);
+    expect(resolveDigestRecipients("catering", d)[0]).toMatchObject({ locationIds: [B], skip: null, allShops: false });
   });
 });

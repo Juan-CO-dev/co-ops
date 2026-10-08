@@ -1,10 +1,29 @@
 /**
+ * A fake provider with Resend's idempotency semantics: a key seen before with the SAME payload
+ * returns the original id without a new email; with a DIFFERENT payload it is a 409
+ * invalid_idempotent_request. `deliveries` holds only emails that really went out.
+ */
+export class Provider {
+  deliveries: Array<{ to: string; subject: string; text: string; key: string }> = [];
+  private keys = new Map<string, { body: string; id: string }>();
+  send(m: { to: string; subject: string; html: string; text: string; idempotencyKey: string }): { id: string } | { error: string; code?: string } {
+    const body = `${m.to}|${m.subject}|${m.html}`;
+    const seen = this.keys.get(m.idempotencyKey);
+    if (seen) return seen.body === body ? { id: seen.id } : { error: "same key, different payload", code: "invalid_idempotent_request" };
+    const id = `mail-${this.deliveries.length + 1}`;
+    this.keys.set(m.idempotencyKey, { body, id });
+    this.deliveries.push({ to: m.to, subject: m.subject, text: m.text, key: m.idempotencyKey });
+    return { id };
+  }
+}
+
+/**
  * The digest engine against an in-memory send log that enforces 0220's partial unique index the
  * way Postgres does (a second claimed|sent row for the same key is a "duplicate" = 23505).
  */
 import { describe, expect, it, vi } from "vitest";
 import { runClosingDigestsWith, runDigestTickWith, type ClaimRow, type DigestAlert, type DigestIO } from "@/lib/report-digests-engine";
-import { DEFAULT_DIGEST_SETTINGS, type DigestSettings, type SendLogRow } from "@/lib/report-digests-shared";
+import { DEFAULT_DIGEST_SETTINGS, type DigestSettings, type RecipientOverride, type SendLogRow } from "@/lib/report-digests-shared";
 import type { CateringFacts, ShopDayFacts } from "@/lib/report-digests-compose";
 
 const A = { id: "aaaaaaaa-0000-4000-8000-000000000001", name: "Shop A" };
@@ -42,36 +61,44 @@ const users = [
 ];
 
 function shopFacts(location: { id: string; name: string }, day: string): ShopDayFacts {
-  return { location, day, reports: [], receiving: { deliveries: 0, discrepant: 0, missingReceipt: 0 }, tosses: 0, storeRunsPending: 0, tasks: [] };
+  return { location, day, reports: [], receiving: { deliveries: 0, discrepant: 0, missingReceipt: 0 }, tosses: 0, storeRunsPending: 0, tasks: [], pmFindings: null };
 }
 const noCatering = (today: string): CateringFacts => ({ today, leads: [], lostYesterdayIds: [], quotesSentYesterday: [], openQuotes: [], refundsYesterday: [] });
 
 function makeIO(opts: {
   now: string; store?: Store; settings?: Partial<DigestSettings>;
   finalized?: Record<string, string[]>; sendFails?: (to: string, subject: string) => boolean;
+  provider?: Provider; previewRecipient?: string | null; overrides?: RecipientOverride[];
+  memberships?: Array<{ userId: string; locationId: string }>;
 }) {
   const store = opts.store ?? new Store();
-  const sent: Array<{ to: string; subject: string; text: string }> = [];
+  const provider = opts.provider ?? new Provider();
+  const sent = provider.deliveries;
   const alerts: DigestAlert[] = [];
   const claimedAlerts = new Set<string>();
   const runs: unknown[] = [];
   const io: DigestIO = {
-    now: new Date(opts.now), baseUrl: "https://ops.example.com", previewTo: "operator@example.com",
+    now: new Date(opts.now), baseUrl: "https://ops.example.com",
+    previewRecipient: async () => (opts.previewRecipient === undefined ? "operator@example.com" : opts.previewRecipient),
     settings: async () => ({ ...DEFAULT_DIGEST_SETTINGS, mode: "live", ...opts.settings }),
     directory: async () => ({
-      dir: { users, memberships: [{ userId: "gm-a", locationId: A.id }, { userId: "gm-b", locationId: B.id }], overrides: [], locationIds: [A.id, B.id] },
+      dir: { users, memberships: opts.memberships ?? [{ userId: "gm-a", locationId: A.id }, { userId: "gm-b", locationId: B.id }], overrides: opts.overrides ?? [], locationIds: [A.id, B.id] },
       locations: [A, B],
     }),
     sendLog: async (days) => store.rows.filter((r) => days.includes(r.business_day)).map((r) => ({ ...r })),
     finalizedClosings: async (days) => new Map(days.map((d) => [d, new Set(opts.finalized?.[d] ?? [])])),
     shopFacts: async (l, d) => shopFacts(l, d),
     cateringFacts: async (today) => noCatering(today),
-    expireStaleClaims: async () => 0,
+    // The test stands in for "15 minutes later": every still-claimed row is stale.
+    expireStaleClaims: async () => {
+      const stale = store.rows.filter((r) => r.outcome === "claimed");
+      for (const r of stale) Object.assign(r, { outcome: "failed", error: "stale_claim" });
+      return stale.length;
+    },
     store,
-    sendEmail: vi.fn(async (m: { to: string; subject: string; html: string; text: string }) => {
+    sendEmail: vi.fn(async (m: { to: string; subject: string; html: string; text: string; idempotencyKey: string }) => {
       if (opts.sendFails?.(m.to, m.subject)) return { error: "422 domain not verified" };
-      sent.push({ to: m.to, subject: m.subject, text: m.text });
-      return { id: `mail-${sent.length}` };
+      return provider.send(m);
     }),
     sha: (c) => String(c.length),
     alert: async (a) => {
@@ -83,7 +110,7 @@ function makeIO(opts: {
     },
     recordRun: async (s) => { runs.push(s); },
   };
-  return { io, store, sent, alerts, runs };
+  return { io, store, sent, alerts, runs, provider };
 }
 
 describe("off by default", () => {
@@ -238,5 +265,81 @@ describe("preview mode", () => {
     const live = makeIO({ now: "2026-10-07T11:10:00Z", store: p.store });
     await runDigestTickWith(live.io);
     expect(live.sent.map((m) => m.to)).toContain("pete@example.com");
+  });
+});
+
+describe("P1 (Astra): send-once survives a lost success", () => {
+  it("accepted send + failed finish + stale-claim retry = ONE provider send, and the row ends sent", async () => {
+    const store = new Store();
+    const provider = new Provider();
+    const first = makeIO({ now: "2026-10-07T11:00:00Z", store, provider });
+    const realFinish = store.finish.bind(store);
+    // The database drops every finish of this tick AFTER the provider accepted the email.
+    store.finish = async () => { throw new Error("connection reset"); };
+    await runDigestTickWith(first.io);
+    const catering = () => provider.deliveries.filter((m) => m.subject.startsWith("Catering"));
+    const delivered = catering().length;
+    expect(delivered).toBe(4);
+    // never released: the claims still hold the key, and the operator was told
+    expect(store.of("claimed").filter((r) => r.kind === "catering")).toHaveLength(4);
+    expect(first.alerts.some((a) => a.detector === "digest-send" && a.error?.startsWith("finish_unrecorded:sent"))).toBe(true);
+
+    store.finish = realFinish;
+    const retry = makeIO({ now: "2026-10-07T11:20:00Z", store, provider });
+    await runDigestTickWith(retry.io);
+    expect(catering()).toHaveLength(delivered); // ONE email per recipient, ever
+    expect(store.of("sent").filter((r) => r.kind === "catering").map((r) => r.recipient_ref).sort())
+      .toEqual(["user:gm-a", "user:gm-b", "user:moo", "user:own"]);
+  });
+
+  it("a retry whose content changed is reconciled as sent from the provider's 409, never re-sent", async () => {
+    const store = new Store();
+    const provider = new Provider();
+    const first = makeIO({ now: "2026-10-07T11:00:00Z", store, provider });
+    store.finish = async () => false; // the row was not updated (e.g. swept) after the accept
+    await runDigestTickWith(first.io);
+    const before = provider.deliveries.length;
+    delete (store as { finish?: unknown }).finish;
+    // A later tick composes different content (the clock moved, so the facts and html differ).
+    const retry = makeIO({ now: "2026-10-07T11:20:00Z", store, provider });
+    retry.io.cateringFacts = async (today) => ({ ...noCatering(today), openQuotes: [{ id: "q", locationId: A.id }] });
+    await runDigestTickWith(retry.io);
+    expect(provider.deliveries.length).toBe(before);
+    const reconciled = store.of("sent").filter((r) => r.kind === "catering");
+    expect(reconciled).toHaveLength(4);
+    // Shop A content changed (409 → reconciled); Shop B content did not (same id back, no new email).
+    expect(reconciled.filter((r) => r.error?.startsWith("reconciled:")).map((r) => r.recipient_ref).sort()).toEqual(["user:gm-a", "user:moo", "user:own"]);
+  });
+
+  it("every send carries a stable provider idempotency key (recipient × kind × day × revision)", async () => {
+    const { io, provider } = makeIO({ now: "2026-10-07T11:00:00Z" });
+    await runDigestTickWith(io);
+    expect(provider.deliveries.find((m) => m.to === "pete@example.com" && m.subject.startsWith("Catering"))?.key)
+      .toBe("co-digest/live/catering/2026-10-07/r1/user:own/all");
+  });
+});
+
+describe("P1 (Astra): an override never discloses another shop", () => {
+  it("a GM of A with an override naming B gets neither B's closing nor B's catering digest", async () => {
+    const override: RecipientOverride = { id: "ov", kind: "internal", userId: "gm-a", email: null, displayName: "Alex", active: true, cateringDigest: true, shopDigest: true, locationIds: [B.id] };
+    const store = new Store();
+    const run = makeIO({ now: "2026-10-08T11:00:00Z", store, overrides: [override], finalized: { [DAY]: [A.id, B.id] } });
+    await runDigestTickWith(run.io);
+    const toAlex = run.sent.filter((m) => m.to === "alex@example.com");
+    expect(toAlex.some((m) => m.text.includes("Shop B"))).toBe(false);
+    expect(store.rows.filter((r) => r.recipient_ref === "user:gm-a" && r.kind === "catering").map((r) => [r.outcome, r.skip_reason]))
+      .toEqual([["skipped", "out_of_scope"]]);
+    expect(store.rows.some((r) => r.recipient_ref === "user:gm-a" && r.location_id === B.id)).toBe(false);
+  });
+});
+
+describe("P2 (Astra): preview goes to the operator's own account or nowhere", () => {
+  it("no resolvable CGS account → fail closed: nothing sent, one alert", async () => {
+    const p = makeIO({ now: "2026-10-07T11:00:00Z", settings: { mode: "preview" }, previewRecipient: null });
+    const s = await runDigestTickWith(p.io);
+    expect(p.sent).toEqual([]);
+    expect(p.store.rows).toEqual([]);
+    expect(p.alerts).toEqual([expect.objectContaining({ detector: "digest-preview", error: "preview_recipient_unresolved" })]);
+    expect(s?.alerts).toBe(1);
   });
 });

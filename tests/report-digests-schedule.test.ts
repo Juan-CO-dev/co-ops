@@ -4,6 +4,7 @@ import {
   decideCatering,
   decideUnified,
   digestWatchAt,
+  etDayRange,
   etWallTime,
   isStaleClaim,
   missingDeliveries,
@@ -107,5 +108,30 @@ describe("tick days, digest-watch and stale claims", () => {
     expect(isStaleClaim({ outcome: "claimed", attempted_at: "2026-10-07T11:44:00Z" }, now)).toBe(true);
     expect(isStaleClaim({ outcome: "claimed", attempted_at: "2026-10-07T11:50:00Z" }, now)).toBe(false);
     expect(isStaleClaim({ outcome: "sent", attempted_at: "2026-10-07T10:00:00Z" }, now)).toBe(false);
+  });
+});
+
+describe("P2 (Astra): an ET day is two independent Eastern midnights", () => {
+  it("spring forward (2026-03-08) is 23 hours and never reaches into the next day", () => {
+    expect(etDayRange("2026-03-08")).toEqual({ startIso: "2026-03-08T05:00:00.000Z", endExclusiveIso: "2026-03-09T04:00:00.000Z" });
+  });
+  it("fall back (2026-11-01) is 25 hours and keeps its own last hour", () => {
+    expect(etDayRange("2026-11-01")).toEqual({ startIso: "2026-11-01T04:00:00.000Z", endExclusiveIso: "2026-11-02T05:00:00.000Z" });
+  });
+  it("an ordinary day is 24 hours", () => {
+    expect(etDayRange("2026-10-06")).toEqual({ startIso: "2026-10-06T04:00:00.000Z", endExclusiveIso: "2026-10-07T04:00:00.000Z" });
+  });
+});
+
+describe("P2 (Astra): a contention skip never satisfies digest-watch", () => {
+  it("a race loser's already_sent beside a winner that died (failed claim) is still missing", () => {
+    const base = { kind: "catering", business_day: "2026-10-07", location_id: null, revision: 1, mode: "live", attempted_at: "2026-10-07T11:00:00Z" };
+    const log: SendLogRow[] = [
+      { ...base, recipient_ref: "user:1", outcome: "failed", skip_reason: null },
+      { ...base, recipient_ref: "user:1", outcome: "skipped", skip_reason: "already_sent" },
+      { ...base, recipient_ref: "user:2", outcome: "skipped", skip_reason: "already_sent" },
+      { ...base, recipient_ref: "user:2", outcome: "sent", skip_reason: null },
+    ];
+    expect(missingDeliveries([{ ref: "user:1", locationId: null }, { ref: "user:2", locationId: null }], log, "live")).toEqual([{ ref: "user:1", locationId: null }]);
   });
 });

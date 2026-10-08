@@ -21,7 +21,7 @@ function lead(over: Partial<CateringLeadFact>): CateringLeadFact {
   return {
     id: `lead-${n}`, contactName: `Contact ${n}`, company: null, eventDate: null, timeWindow: null, headcount: null,
     stage: "inquiry", leadSource: "phone", locationId: A, createdDay: "2026-09-01", followUpDate: null, externalRef: null,
-    isDelivery: false, valueCents: 0, dueCents: 0, prepLines: null, ...over,
+    isDelivery: false, valueCents: 0, dueCents: 0, prep: null, ...over,
   };
 }
 const empty = (leads: CateringLeadFact[] = []): CateringFacts =>
@@ -101,7 +101,10 @@ describe("composed sections", () => {
   it("today and early tomorrow: time, size, pickup/delivery, prep load; then what needs action", () => {
     const f: CateringFacts = {
       ...empty([
-        lead({ contactName: "Late", eventDate: TODAY, stage: "confirmed", timeWindow: "17:00", headcount: 40, isDelivery: true, prepLines: 6 }),
+        lead({ contactName: "Late", eventDate: TODAY, stage: "confirmed", timeWindow: "17:00", headcount: 40, isDelivery: true, prep: [
+          { needDate: TODAY, name: "Chicken salad", nameEs: "Ensalada de pollo", qty: 3.5, unit: "qt", portion: null },
+          { needDate: TODAY, name: "Turkey", nameEs: null, qty: 12, unit: null, portion: "whole" },
+        ] }),
         lead({ contactName: "Early", eventDate: TODAY, stage: "out", timeWindow: "08:00", headcount: 12, dueCents: 15000 }),
         lead({ contactName: "Tmrw", eventDate: TOMORROW, stage: "confirmed", headcount: 25, isDelivery: true }),
         lead({ contactName: "Maybe", eventDate: TOMORROW, stage: "quote_sent" }),
@@ -112,7 +115,7 @@ describe("composed sections", () => {
     const out = texts(f);
     expect(out[1]![1]).toEqual([
       `info|Early|08:00 · 12 guests · Pickup · no prep ledger|${BASE}/catering/pipeline?q=Early`,
-      `info|Late|17:00 · 40 guests · Delivery · 6 prep lines on the ledger|${BASE}/catering/pipeline?q=Late`,
+      `info|Late|17:00 · 40 guests · Delivery · prep for Wed, Oct 7: 3.5 qt Chicken salad, 12 × Turkey (whole)|${BASE}/catering/pipeline?q=Late`,
     ]);
     expect(out[2]![1]).toEqual([`info|Tmrw|time not set · 25 guests · Delivery · no prep ledger|${BASE}/catering/pipeline?q=Tmrw`]);
     expect(out[3]![1]).toEqual([
@@ -137,5 +140,28 @@ describe("composed sections", () => {
     expect(mail.text).not.toContain("OtherShop");
     expect(mail.text).toContain("Nothing booked today");
     expect(mail.subject).toBe("Catering — Wed, Oct 7: 0 yesterday, 0 today");
+  });
+});
+
+describe("P2 (Astra): the outlook shows the prep LOAD — quantities, units, demand dates", () => {
+  it("one row needing 100 is not the same as one needing 1; dates group; Spanish names and portions", () => {
+    const f = empty([lead({
+      contactName: "Big", eventDate: TOMORROW, stage: "confirmed", prep: [
+        { needDate: TODAY, name: "Chicken salad", nameEs: "Ensalada de pollo", qty: 100, unit: "qt", portion: null },
+        { needDate: TOMORROW, name: "Turkey", nameEs: null, qty: 1, unit: null, portion: "half" },
+      ],
+    })]);
+    const en = composeCateringSections(f, { locations: [shops[0]!], includeUnassigned: false }, "en", BASE)[2]!.lines[0]!.text;
+    expect(en).toBe("time not set · size not set · Pickup · prep for Wed, Oct 7: 100 qt Chicken salad · prep for Thu, Oct 8: 1 × Turkey (half)");
+    const es = composeCateringSections(f, { locations: [shops[0]!], includeUnassigned: false }, "es", BASE)[2]!.lines[0]!.text;
+    expect(es).toContain("100 qt Ensalada de pollo");
+    expect(es).toContain("1 × Turkey (media)");
+  });
+
+  it("more than six lines per date are summarised, never dropped silently", () => {
+    const prep = Array.from({ length: 8 }, (_, i) => ({ needDate: TODAY, name: `Item ${i}`, nameEs: null, qty: i + 1, unit: "ea", portion: null }));
+    const f = empty([lead({ contactName: "Many", eventDate: TODAY, stage: "confirmed", prep })]);
+    const text = composeCateringSections(f, { locations: [shops[0]!], includeUnassigned: false }, "en", BASE)[1]!.lines[0]!.text;
+    expect(text).toContain("6 ea Item 5, +2 more");
   });
 });

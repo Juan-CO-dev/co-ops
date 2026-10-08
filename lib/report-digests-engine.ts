@@ -54,15 +54,19 @@ export interface SendStore {
 }
 
 export interface DigestAlert {
-  kind: DigestKind; day: string; detector: "digest-watch" | "digest-send";
+  kind: DigestKind | "all"; day: string; detector: "digest-watch" | "digest-send" | "digest-preview";
   missing?: string[]; error?: string; ref?: string;
 }
 
 export interface DigestIO {
   now: Date;
   baseUrl: string;
-  /** Where preview mode delivers every digest (the operator). */
-  previewTo: string;
+  /**
+   * Where preview mode delivers every digest: Juan's OWN account email, resolved from the users
+   * table (the single active CGS). null = unresolvable → preview FAILS CLOSED (nothing is sent).
+   * No env-var fallback (Astra P2: an alert address is not an identity).
+   */
+  previewRecipient(): Promise<string | null>;
   settings(): Promise<DigestSettings>;
   directory(): Promise<{ dir: DigestDirectory; locations: Array<{ id: string; name: string }> }>;
   sendLog(days: string[]): Promise<SendLogRow[]>;
@@ -72,7 +76,8 @@ export interface DigestIO {
   cateringFacts(today: string): Promise<CateringFacts>;
   expireStaleClaims(): Promise<number>;
   store: SendStore;
-  sendEmail(input: { to: string; subject: string; html: string; text: string }): Promise<{ id: string } | { error: string }>;
+  /** idempotencyKey is passed to the provider (Resend Idempotency-Key): one email per key, ever. */
+  sendEmail(input: { to: string; subject: string; html: string; text: string; idempotencyKey: string }): Promise<{ id: string } | { error: string; code?: string }>;
   sha(content: string): string;
   /** Ops alert, claimed once per detector × kind × ET day. true = this call sent it. Never throws. */
   alert(a: DigestAlert): Promise<boolean>;
@@ -89,6 +94,14 @@ export interface DigestRunSummary {
   alerts: number;
 }
 
+/**
+ * The provider idempotency key: one email per recipient × kind × business day × revision (plus the
+ * delivery mode and, for a per-shop digest, the shop — each is a different email by design).
+ */
+export function digestIdempotencyKey(row: ClaimRow): string {
+  return ["co-digest", row.mode, row.kind, row.business_day, `r${row.revision}`, row.recipient_ref, row.location_id ?? "all"].join("/");
+}
+
 function emptyCounts(): Record<DigestKind, KindCounts> {
   return { gm_shop: { sent: 0, skipped: 0, failed: 0 }, unified: { sent: 0, skipped: 0, failed: 0 }, catering: { sent: 0, skipped: 0, failed: 0 } };
 }
@@ -100,6 +113,7 @@ class Run {
 
   constructor(
     readonly io: DigestIO,
+    readonly previewTo: string | null,
     readonly settings: DigestSettings,
     readonly mode: DeliveryMode,
     readonly dir: DigestDirectory,
@@ -168,20 +182,41 @@ class Run {
     let error: string | null = null;
     let emailId: string | null = null;
     let sha: string | null = null;
+    let reconciled = false;
     try {
       const env: Envelope = { language: r.language, baseUrl: this.io.baseUrl, previewFor: this.mode === "preview" ? { name: r.name, email: r.email } : null };
       const mail = await compose(env);
       sha = this.io.sha(mail.html);
-      const to = this.mode === "preview" ? this.io.previewTo : r.email!;
-      const res = await this.io.sendEmail({ to, subject: mail.subject, html: mail.html, text: mail.text });
-      if ("error" in res) error = res.error || "send_failed";
-      else emailId = res.id;
+      const to = this.mode === "preview" ? this.previewTo! : r.email!;
+      const res = await this.io.sendEmail({ to, subject: mail.subject, html: mail.html, text: mail.text, idempotencyKey: digestIdempotencyKey(row) });
+      if ("error" in res) {
+        if (res.code === "invalid_idempotent_request") {
+          // The provider already ACCEPTED this key (an earlier attempt whose outcome we lost, with
+          // content that has since changed). That is a delivery: reconcile as sent, never resend.
+          reconciled = true;
+        } else error = res.error || "send_failed";
+      } else emailId = res.id;
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
     }
     const outcome = error === null ? "sent" : "failed";
-    await this.io.store.finish(claim.id, { outcome, email_id: emailId, error: error?.slice(0, 500) ?? null, content_sha: sha });
+    let recorded = false;
+    try {
+      recorded = await this.io.store.finish(claim.id, {
+        outcome, email_id: emailId, content_sha: sha,
+        error: reconciled ? "reconciled: provider already accepted this idempotency key" : error?.slice(0, 500) ?? null,
+      });
+    } catch {
+      recorded = false;
+    }
     const last = this.log[this.log.length - 1]!;
+    if (!recorded) {
+      // The send log could not be updated. The claim is NOT released here: it stays 'claimed',
+      // keeps the key, and only the stale-claim sweep frees it — whose retry reuses the SAME
+      // provider idempotency key, so an email that did go out is never sent twice.
+      if (await this.io.alert({ kind, day, detector: "digest-send", ref: r.ref, error: `finish_unrecorded:${outcome}${error ? `:${error.slice(0, 200)}` : ""}` })) this.summary.alerts++;
+      return outcome;
+    }
     last.outcome = outcome;
     this.summary.counts[kind][outcome]++;
     if (error !== null) {
@@ -240,13 +275,26 @@ class Run {
   }
 }
 
-async function openRun(io: DigestIO, days: string[], trigger: "tick" | "closing", beforeLog?: () => Promise<number>): Promise<Run | null> {
+async function openRun(io: DigestIO, days: string[], trigger: "tick" | "closing", beforeLog?: () => Promise<number>): Promise<Run | DigestRunSummary | null> {
   const settings = await io.settings();
   if (settings.mode === "off") return null;
   // Stale claims are freed BEFORE the log is read, so their retry below is not mistaken for "settled".
   const staleClaims = beforeLog ? await beforeLog() : 0;
+  let previewTo: string | null = null;
+  if (settings.mode === "preview") {
+    previewTo = await io.previewRecipient();
+    if (!previewTo) {
+      // Fail closed: no resolvable operator identity → nothing is composed or sent, and it is said.
+      const summary: DigestRunSummary = { trigger, mode: "preview", counts: emptyCounts(), staleClaims, alerts: 0 };
+      if (await io.alert({ kind: "all", day: etClock(io.now).day, detector: "digest-preview", error: "preview_recipient_unresolved" })) {
+        summary.alerts = 1;
+        await io.recordRun(summary);
+      }
+      return summary;
+    }
+  }
   const [{ dir, locations }, log] = await Promise.all([io.directory(), io.sendLog(days)]);
-  const run = new Run(io, settings, settings.mode, dir, locations, log, trigger);
+  const run = new Run(io, previewTo, settings, settings.mode, dir, locations, log, trigger);
   run.summary.staleClaims = staleClaims;
   return run;
 }
@@ -260,7 +308,7 @@ export async function runDigestTickWith(io: DigestIO): Promise<DigestRunSummary 
   const days = tickBusinessDays(io.now);
   const today = etClock(io.now).day;
   const run = await openRun(io, days, "tick", () => io.expireStaleClaims());
-  if (!run) return null;
+  if (!(run instanceof Run)) return run;
   return finishTick(run, days, today);
 }
 
@@ -294,7 +342,7 @@ async function finishTick(run: Run, days: string[], today: string): Promise<Dige
  */
 export async function runClosingDigestsWith(io: DigestIO, locationId: string, day: string): Promise<DigestRunSummary | null> {
   const run = await openRun(io, [day], "closing");
-  if (!run) return null;
+  if (!(run instanceof Run)) return run;
   const finalized = (await io.finalizedClosings([day])).get(day) ?? new Set<string>();
   const location = run.locations.find((l) => l.id === locationId);
   if (location && finalized.has(locationId)) await run.shop(day, location);

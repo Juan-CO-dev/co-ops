@@ -21,7 +21,7 @@ function facts(over: Partial<ShopDayFacts> = {}): ShopDayFacts {
       report("opening", "phase2_complete"), report("am_prep", "submitted"), report("mid_day", "phase2_complete"),
       report("closing", "confirmed"), report("cash", "ok"), report("pm", "submitted"), report("maintenance", "ok"),
     ],
-    receiving: { deliveries: 2, discrepant: 0, missingReceipt: 0 }, tosses: 0, storeRunsPending: 0, tasks: [],
+    receiving: { deliveries: 2, discrepant: 0, missingReceipt: 0 }, tosses: 0, storeRunsPending: 0, tasks: [], pmFindings: { evaluations: 3, needsWork: 0 },
     ...over,
   };
 }
@@ -57,8 +57,8 @@ describe("shop digest lines", () => {
   });
 
   it("two reports of one family link to the filtered operations list, not to one of them", () => {
-    const lines = composeShopLines(facts({ reports: [report("pm", "submitted", { ...clean, skipped: 1 }, "a"), report("pm", "submitted", clean, "b")] }), "en", BASE);
-    expect(lines.find((l) => l.label === "PM Report")?.href).toBe(`${BASE}/reports/operations?location=${LOC}&range=custom&from=${DAY}&to=${DAY}&type=pm&sf_skipped=true`);
+    const lines = composeShopLines(facts({ reports: [report("am_prep", "submitted", { ...clean, skipped: 1 }, "a"), report("am_prep", "submitted", clean, "b")] }), "en", BASE);
+    expect(lines.find((l) => l.label === "AM Prep")?.href).toBe(`${BASE}/reports/operations?location=${LOC}&range=custom&from=${DAY}&to=${DAY}&type=am_prep&sf_skipped=true`);
   });
 
   it("receiving, tosses, store runs and assigned tasks speak explicitly", () => {
@@ -71,7 +71,7 @@ describe("shop digest lines", () => {
     expect(by("Tosses / waste")).toMatchObject({ text: "4 items tossed", tone: "issue" });
     expect(by("Store runs pending review")).toMatchObject({ text: "2 items pending review", tone: "issue" });
     // counts leaves no report to prove it, so it is never called "not done"
-    expect(by("Assigned tasks")).toMatchObject({ text: "1 not done: AM prep", tone: "issue" });
+    expect(by("Assigned tasks")).toMatchObject({ text: "1 not done: AM prep; 1 not verified: Counts; 1 done", tone: "issue" });
   });
 
   it("empty receiving and no tasks are info lines, never silence", () => {
@@ -111,5 +111,32 @@ describe("shop + unified emails", () => {
     const mail = renderShopDigest(facts(), { language: "en", baseUrl: BASE, previewFor: { name: "Alex", email: "alex@example.com" } });
     expect(mail.subject.startsWith("[Preview] ")).toBe(true);
     expect(mail.text).toContain("PREVIEW of the digest for Alex (alex@example.com)");
+  });
+});
+
+describe("P2 (Astra): never All good without evidence", () => {
+  const byLabel = (f: ShopDayFacts, label: string) => composeShopLines(f, "en", BASE).find((l) => l.label === label)!;
+
+  it("PM: the list carries no PM signals, so the evaluations decide — or the line says not assessed", () => {
+    expect(byLabel(facts({ pmFindings: null }), "PM Report")).toMatchObject({ text: "Submitted · PM issues not assessed", tone: "info" });
+    expect(byLabel(facts({ pmFindings: { evaluations: 4, needsWork: 3 } }), "PM Report")).toMatchObject({ text: "3 needs-work ratings across 4 evaluations", tone: "issue" });
+    expect(byLabel(facts({ pmFindings: { evaluations: 0, needsWork: 0 } }), "PM Report")).toMatchObject({ text: "Submitted · no evaluations recorded", tone: "info" });
+    expect(byLabel(facts({ pmFindings: { evaluations: 4, needsWork: 0 } }), "PM Report")).toMatchObject({ text: "All good (4 evaluations)", tone: "ok" });
+  });
+
+  it("a report whose signals were never computed is not assessed, not All good", () => {
+    const unsignalled = { ...report("opening", "phase2_complete"), signalSummary: undefined };
+    expect(byLabel(facts({ reports: [unsignalled] }), "Opening")).toMatchObject({ text: "Submitted · issues not assessed", tone: "info" });
+  });
+
+  it("tasks: counts + ordering with no evidence are NOT 'All done (2)' (the reproduced case)", () => {
+    expect(byLabel(facts({ tasks: ["counts", "ordering"] }), "Assigned tasks")).toMatchObject({ text: "2 not verified: Counts, Ordering", tone: "info" });
+  });
+
+  it("tasks: All done only when every task has evidence", () => {
+    const f = facts({ tasks: ["cash_report", "receiving"] });
+    expect(byLabel(f, "Assigned tasks")).toMatchObject({ text: "All done (2)", tone: "ok" });
+    const noTruck = facts({ tasks: ["cash_report", "receiving"], receiving: { deliveries: 0, discrepant: 0, missingReceipt: 0 } });
+    expect(byLabel(noTruck, "Assigned tasks")).toMatchObject({ text: "1 not verified: Receiving; 1 done", tone: "info" });
   });
 });

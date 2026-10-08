@@ -17,13 +17,16 @@ export const DIGEST_KINDS: readonly DigestKind[] = ["gm_shop", "unified", "cater
 
 export type DigestSkipReason =
   | "no_email" | "inactive" | "recipient_disabled" | "no_locations"
-  | "already_sent" | "not_due" | "shop_not_finalized";
+  | "already_sent" | "not_due" | "shop_not_finalized" | "out_of_scope";
 
 export type DigestDeliveryMode = "off" | "preview" | "live";
 export const DIGEST_DELIVERY_MODES: readonly DigestDeliveryMode[] = ["off", "preview", "live"];
 
 /** Level at and above which a user gets the unified digest and the all-shops catering digest. */
 export const DIGEST_ALL_SHOPS_LEVEL = 8;
+/** A subscription flag never grants a role what it may not read: the floor for each flag. */
+export const SHOP_DIGEST_FLAG_MIN = 6;    // AGM and up (Q2's "add an AGM via the override row")
+export const CATERING_DIGEST_FLAG_MIN = 5; // PIPELINE_READ_MIN — shift lead+ may view the pipeline
 
 /** The pinger window for digest-tick (ET hours). Starts at 03:00 so the unified fallback runs. */
 export const DIGEST_TICK_WINDOW = { startHourET: 3, endHourET: 22 } as const;
@@ -102,6 +105,15 @@ export function etWallTime(day: string, minutes: number): Date {
   return new Date(instant);
 }
 
+/**
+ * The UTC instants [start, endExclusive) of one ET calendar day, from TWO independent Eastern
+ * midnights — 23 h on the spring-forward day, 25 h on the fall-back day (Astra P2: midnight + 24 h
+ * misbuckets an hour on both transition days).
+ */
+export function etDayRange(day: string): { startIso: string; endExclusiveIso: string } {
+  return { startIso: etWallTime(day, 0).toISOString(), endExclusiveIso: etWallTime(addDays(day, 1), 0).toISOString() };
+}
+
 // ── Due decisions ───────────────────────────────────────────────────────────────────────────
 
 /** When the unified fallback for business day `day` becomes due: (day + 1) at the fallback time. */
@@ -161,7 +173,9 @@ export function missingDeliveries(
   log: readonly SendLogRow[],
   mode: "preview" | "live",
 ): Array<{ ref: string; locationId: string | null }> {
-  const done = new Set(log.filter((r) => r.mode === mode && (r.outcome === "sent" || r.outcome === "skipped"))
+  // A contention skip (already_sent: the LOSER of a claim race) proves nothing about delivery —
+  // only the winner's own row does, so it never satisfies the watch (Astra P2).
+  const done = new Set(log.filter((r) => r.mode === mode && (r.outcome === "sent" || (r.outcome === "skipped" && r.skip_reason !== "already_sent")))
     .map((r) => `${r.recipient_ref}|${r.location_id ?? ""}`));
   return expected.filter((e) => !done.has(`${e.ref}|${e.locationId ?? ""}`));
 }
@@ -238,32 +252,50 @@ export function resolveDigestRecipients(kind: DigestKind, dir: DigestDirectory):
     }
     const level = roleLevel(u.role);
     const mem = memberships.get(u.id) ?? [];
-    let shops: string[] | null = null;
-    switch (kind) {
-      case "gm_shop":
-        if (u.role === "gm") shops = mem;
-        break;
-      case "unified":
-        if (level >= DIGEST_ALL_SHOPS_LEVEL) shops = all;
-        break;
-      case "catering":
-        if (level >= DIGEST_ALL_SHOPS_LEVEL) shops = all;
-        else if (u.role === "gm") shops = mem;
-        else if (u.role === "catering_mgr") shops = mem.length > 0 ? mem : all;
-        break;
+    const scope = authorizedScope(kind, u.role, level, mem, all, flagged);
+    if (scope === null) {
+      // A flag on a role that may not read this digest grants nothing; it is logged, never sent.
+      if (flagged) out.push(base(u, [], "out_of_scope", false));
+      continue;
     }
-    if (flagged) shops = union(shops ?? [], kind === "catering" && mem.length === 0 ? all : mem);
-    if (shops === null) continue;
-    if (ov?.locationIds && kind !== "unified") shops = ov.locationIds.filter((id) => active.has(id));
-    const allShops = all.length > 0 && all.every((id) => shops!.includes(id));
+    // Overrides only ever NARROW: requested shops are intersected with the recipient's OWN
+    // authorized scope at send time (Astra P1: an admin's reach is not the recipient's).
+    const requested = ov?.locationIds && kind !== "unified" ? ov.locationIds.filter((id) => active.has(id)) : scope;
+    const shops = requested.filter((id) => scope.includes(id));
+    const allShops = all.length > 0 && all.every((id) => shops.includes(id));
     const skip: DigestSkipReason | null =
       ov && !ov.active ? "recipient_disabled"
         : !normEmail(u.email) ? "no_email"
-          : shops.length === 0 ? "no_locations"
-            : null;
+          : shops.length === 0 && requested.length > 0 ? "out_of_scope"
+            : shops.length === 0 ? "no_locations"
+              : null;
     out.push(base(u, sortLike(shops, all), skip, allShops));
   }
   return out.sort((a, b) => a.ref.localeCompare(b.ref));
+}
+
+/**
+ * The shops a person may receive for a digest kind, from their ROLE and MEMBERSHIPS alone —
+ * independent of any subscription flag. null = not eligible for this kind at all.
+ *   gm_shop  — role gm, or the shop_digest flag at level ≥ 6; level ≥ 8 → all shops, else memberships.
+ *   unified  — level ≥ 8 → all shops.
+ *   catering — level ≥ 8 → all; gm → memberships; catering_mgr (Keith) → memberships, else all
+ *              (resolveCateringManager's fallback); the catering_digest flag at level ≥ 5 → memberships.
+ */
+export function authorizedScope(kind: DigestKind, role: string, level: number, memberships: readonly string[], all: readonly string[], flagged: boolean): string[] | null {
+  switch (kind) {
+    case "unified":
+      return level >= DIGEST_ALL_SHOPS_LEVEL ? [...all] : null;
+    case "gm_shop":
+      if (role !== "gm" && !(flagged && level >= SHOP_DIGEST_FLAG_MIN)) return null;
+      return level >= DIGEST_ALL_SHOPS_LEVEL ? [...all] : [...memberships];
+    case "catering":
+      if (level >= DIGEST_ALL_SHOPS_LEVEL) return [...all];
+      if (role === "gm") return [...memberships];
+      if (role === "catering_mgr") return memberships.length > 0 ? [...memberships] : [...all];
+      if (flagged && level >= CATERING_DIGEST_FLAG_MIN) return [...memberships];
+      return null;
+  }
 }
 
 function base(u: DirectoryUser, locationIds: string[], skip: DigestSkipReason | null, allShops: boolean): ResolvedRecipient {
@@ -276,10 +308,6 @@ function base(u: DirectoryUser, locationIds: string[], skip: DigestSkipReason | 
 export function normEmail(email: string | null | undefined): string | null {
   const e = email?.trim().toLowerCase();
   return e ? e : null;
-}
-
-function union(a: readonly string[], b: readonly string[]): string[] {
-  return [...new Set([...a, ...b])];
 }
 
 /** Keep the active-locations order so digests list shops the same way for everyone. */

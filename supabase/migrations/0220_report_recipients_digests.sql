@@ -144,7 +144,7 @@ create table public.report_digest_sends (
   mode          text        not null default 'live' check (mode in ('preview', 'live')),
   outcome       text        not null check (outcome in ('claimed', 'sent', 'skipped', 'failed')),
   skip_reason   text        null check (skip_reason is null or skip_reason in
-                  ('no_email', 'inactive', 'recipient_disabled', 'no_locations', 'already_sent', 'not_due', 'shop_not_finalized')),
+                  ('no_email', 'inactive', 'recipient_disabled', 'no_locations', 'already_sent', 'not_due', 'shop_not_finalized', 'out_of_scope')),
   email_id      text        null,
   error         text        null check (error is null or char_length(error) <= 500),
   content_sha   text        null,

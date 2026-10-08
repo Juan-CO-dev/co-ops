@@ -51,7 +51,7 @@ describe("0220 posture", () => {
   });
 
   it("every skip reason the code writes is allowed by the CHECK", () => {
-    for (const reason of ["no_email", "inactive", "recipient_disabled", "no_locations", "already_sent", "not_due", "shop_not_finalized"]) {
+    for (const reason of ["no_email", "inactive", "recipient_disabled", "no_locations", "already_sent", "not_due", "shop_not_finalized", "out_of_scope"]) {
       expect(flat).toContain(`'${reason}'`);
     }
   });
