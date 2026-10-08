@@ -30,6 +30,8 @@ export interface CollapsibleChecklistSectionProps {
   formKey: string;
   /** Stable system key of the section. */
   sectionId: string;
+  /** Optional URL fragment target for direct navigation to this section. */
+  anchorId?: string;
   /** Already-translated title (caller owns display resolution). */
   title: ReactNode;
   /** Items done under the host form's own rule. */
@@ -40,6 +42,8 @@ export interface CollapsibleChecklistSectionProps {
   onToggle: () => void;
   /** Extra text appended to the progress line (already translated). */
   progressSuffix?: string;
+  /** Optional translated progress wording for non-checklist disclosures. */
+  progressText?: string;
   /** Heading level the toggle lives in (each form passes its existing level). Default 3. */
   headingLevel?: 2 | 3;
   /** Controls rendered beside the toggle (never inside it). */
@@ -60,12 +64,14 @@ export interface CollapsibleChecklistSectionProps {
 export function CollapsibleChecklistSection({
   formKey,
   sectionId,
+  anchorId,
   title,
   done,
   total,
   open,
   onToggle,
   progressSuffix,
+  progressText,
   headerExtras,
   headingLevel = 3,
   ariaLabel,
@@ -84,6 +90,7 @@ export function CollapsibleChecklistSection({
 
   return (
     <section
+      id={anchorId}
       data-collapsible-section={sectionDomKey(formKey, sectionId)}
       aria-label={ariaLabel}
       className={className}
@@ -118,9 +125,9 @@ export function CollapsibleChecklistSection({
                 {title}
               </span>
             </span>
-            {total > 0 ? (
+            {total > 0 || progressText ? (
               <span data-section-progress className="text-[11px] text-co-text-muted">
-                {t("checklist.section.progress", { done, total })}
+                {progressText ?? t("checklist.section.progress", { done, total })}
                 {progressSuffix ?? ""}
               </span>
             ) : null}

@@ -69,6 +69,7 @@ import { formatTime } from "@/lib/i18n/format";
 import { useTranslation } from "@/lib/i18n/provider";
 import type { Language } from "@/lib/i18n/types";
 import { unfinishedSectionIds } from "@/lib/collapsible-sections";
+import { closingStationAnchor } from "@/lib/assignment-sections";
 import { useCollapsibleSections } from "@/lib/use-collapsible-sections";
 import { CollapsibleChecklistSection } from "@/components/ui/CollapsibleChecklistSection";
 import type {
@@ -280,6 +281,11 @@ export function ClosingClient({ initialState }: { initialState: ClosingInitialSt
   });
   const collapsible = useCollapsibleSections("closing", stationProgress);
   const revealStations = collapsible.reveal;
+  useEffect(() => {
+    const anchor = window.location.hash.slice(1);
+    const station = stationKeys.find((key) => closingStationAnchor(key) === anchor);
+    if (station) revealStations([station]);
+  }, [stationKeys, revealStations]);
 
   // Progress.
   const totalCount = useMemo(
@@ -1194,6 +1200,7 @@ function StationGroup({
       formKey="closing"
       headingLevel={2}
       sectionId={station}
+      anchorId={closingStationAnchor(station)}
       // Display string in the user-facing aria-label (system key stays in sectionId).
       ariaLabel={t("closing.station.toggle_aria", { station: stationDisplay })}
       title={stationDisplay}
