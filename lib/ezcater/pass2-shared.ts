@@ -43,13 +43,13 @@ export function probeItemMap(item: ItemIdentity, maps: ToastMap[]) {
     reason: exact.length > 1 ? "ambiguous_pos_guid" : names.length ? "name_candidate" : "unmapped_item" };
 }
 export interface ProductionEvidence { location_id: string; output_item_id: string; produced_at: string }
-export interface TransferEvidence { created_at: string; metadata: { from_location_id?: string | null; to_location_id?: string | null; result?: string } }
+export interface TransferEvidence { occurred_at: string; metadata: { from_location_id?: string | null; to_location_id?: string | null; result?: string } }
 /** PASS 3 prerequisite: late transfers retain prep evidence at every former shop. */
 export function productionLocations(locationId: string, eventDate: string, transfers: TransferEvidence[]): Set<string> {
   const locations = new Set([locationId]);
   const cutoff = etYmdMinusDays(eventDate, 1);
   for (const transfer of transfers) {
-    if (etCalendarDate(transfer.created_at) < cutoff) continue;
+    if (etCalendarDate(transfer.occurred_at) < cutoff) continue;
     if (transfer.metadata.from_location_id) locations.add(transfer.metadata.from_location_id);
     if (transfer.metadata.to_location_id) locations.add(transfer.metadata.to_location_id);
   }

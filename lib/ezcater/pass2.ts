@@ -54,9 +54,9 @@ async function materialize(fromDate: string, toDate: string, deadlineAt: number,
     .select("location_id,identity_key,status,toast_map_id").order("location_id").order("identity_key").range(from, to).abortSignal(signal));
   // Read failures abort the run: enabling PASS 3 cannot bypass old-shop evidence.
   const transferAudit = await selectAllRows<TransferEvidence & { resource_id: string }>((from, to) => sb.from("audit_log")
-    .select("resource_id,created_at,metadata").eq("resource_table", "catering_pipeline")
+    .select("resource_id,occurred_at,metadata").eq("resource_table", "catering_pipeline")
     .in("action", ["catering.pipeline.transfer_location", "ezcater.location_reassigned"])
-    .gte("created_at", `${etYmdMinusDays(fromDate, 1)}T00:00:00Z`).order("id").range(from, to).abortSignal(signal));
+    .gte("occurred_at", `${etYmdMinusDays(fromDate, 1)}T00:00:00Z`).order("id").range(from, to).abortSignal(signal));
   // The observation shares an audit action with provider transfers but moved
   // nothing. Do not invent a transfer or fail the gate for its intentional shape.
   const transfers = transferAudit.filter((t) => !["manual_location_kept", "manual_location_conflict"].includes(t.metadata?.result ?? ""));

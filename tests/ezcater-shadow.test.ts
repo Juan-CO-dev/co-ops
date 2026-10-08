@@ -69,8 +69,8 @@ describe("shadow materializer", () => {
   it("checks D-1/D production at both shops with PASS-3 flag enabled and refuses missing audit evidence", async () => {
     vi.stubEnv("EZCATER_DEPLETION_ENABLED", "1");
     rows.productions = [{ location_id: "old", output_item_id: "prep", produced_at: "2026-10-07T20:00:00Z" }];
-    rows.audit_log = [{ resource_id: "lead", created_at: "2026-10-08T12:00:00Z", metadata: { from_location_id: "old", to_location_id: "L" } },
-      { resource_id: "lead", created_at: "2026-10-08T12:01:00Z", metadata: { result: "manual_location_kept" } }];
+    rows.audit_log = [{ resource_id: "lead", occurred_at: "2026-10-08T12:00:00Z", metadata: { from_location_id: "old", to_location_id: "L" } },
+      { resource_id: "lead", occurred_at: "2026-10-08T12:01:00Z", metadata: { result: "manual_location_kept" } }];
     await materializeEzcaterShadow("2026-10-08", "2026-10-08");
     expect(rpc.mock.calls[0]![1].p_payload.shadow[0]).toMatchObject({ sales_oz: 8, suppressed_oz: 8, shadow_oz: 0 });
     errors.audit_log = { code: "503", message: "not available" };
@@ -78,7 +78,7 @@ describe("shadow materializer", () => {
     await expect(materializeEzcaterShadow("2026-10-08", "2026-10-08")).rejects.toThrow();
     expect(rpc).not.toHaveBeenCalled();
     delete errors.audit_log;
-    rows.audit_log = [{ resource_id: "lead", created_at: "2026-10-08T12:00:00Z", metadata: {} }];
+    rows.audit_log = [{ resource_id: "lead", occurred_at: "2026-10-08T12:00:00Z", metadata: {} }];
     await expect(materializeEzcaterShadow("2026-10-08", "2026-10-08")).rejects.toThrow("ezcater_transfer_evidence_incomplete");
     vi.unstubAllEnvs();
   });
@@ -135,5 +135,17 @@ describe("shadow materializer", () => {
     expect(parseShadowArgs(["--from", "2026-09-04", "--to", "2026-10-08"]).execute).toBe(false);
     expect(() => parseShadowArgs(["--from", "2026-09-03", "--to", "2026-10-08"])).toThrow();
     expect(() => parseShadowArgs(["--execute", "--from", "2026-09-04", "--to", "2026-10-08"])).toThrow("shadow_expected_count_required");
+  });
+});
+
+// Pin: prod audit_log's timestamp column is occurred_at (there is no created_at). A wrong
+// name fails every nightly shadow run with 42703 while mocked unit tests stay green.
+import { readFileSync } from "node:fs";
+describe("audit_log column pin", () => {
+  it("transfer evidence reads audit_log.occurred_at, never created_at", () => {
+    const src = readFileSync("lib/ezcater/pass2.ts", "utf8");
+    const block = src.slice(src.indexOf('from("audit_log")'), src.indexOf('from("audit_log")') + 400);
+    expect(block).toContain("occurred_at");
+    expect(block).not.toContain("created_at");
   });
 });

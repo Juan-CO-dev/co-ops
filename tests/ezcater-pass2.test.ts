@@ -62,11 +62,11 @@ describe("ezCater map evidence", () => {
 describe("comparison-only sales fallback", () => {
   it("suppresses at both shops after D-1 transfers, including multi-hop and ET boundary", () => {
     const prep = [{ location_id: "old", output_item_id: "prep", produced_at: "2026-10-07T20:00:00Z" }];
-    const move = { created_at: "2026-10-07T04:00:00Z", metadata: { from_location_id: "old", to_location_id: "L" } };
+    const move = { occurred_at: "2026-10-07T04:00:00Z", metadata: { from_location_id: "old", to_location_id: "L" } };
     expect(shadowAmounts(graph, target, 3, "L", "2026-10-08", prep, [move])[0]?.shadow_oz).toBe(0);
-    expect(shadowAmounts(graph, target, 3, "L", "2026-10-08", prep, [{ ...move, created_at: "2026-10-07T03:59:59Z" }])[0]?.shadow_oz).toBe(12);
+    expect(shadowAmounts(graph, target, 3, "L", "2026-10-08", prep, [{ ...move, occurred_at: "2026-10-07T03:59:59Z" }])[0]?.shadow_oz).toBe(12);
     expect(shadowAmounts(graph, target, 3, "third", "2026-10-08", prep, [move,
-      { ...move, created_at: "2026-10-08T12:00:00Z", metadata: { from_location_id: "L", to_location_id: "third" } }])[0]?.shadow_oz).toBe(0);
+      { ...move, occurred_at: "2026-10-08T12:00:00Z", metadata: { from_location_id: "L", to_location_id: "third" } }])[0]?.shadow_oz).toBe(0);
     expect(shadowAmounts(graph, target, 3, "L", "2026-10-08", [{ ...prep[0]!, location_id: "unrelated" }], [move])[0]?.shadow_oz).toBe(12);
   });
   it("counts sales until prep is logged, including prep on the previous ET day", () => {

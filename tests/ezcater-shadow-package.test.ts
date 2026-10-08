@@ -56,13 +56,13 @@ it("uses an even mix of all enabled choice options, including non-classics, with
 it("a late transfer suppresses package prep from the old shop but preserves raw menu ingredients", async () => {
   const menu = { ...fixed, item_id: null, menu_item_id: "sandwich", quantity: 1 };
   const production = [{ location_id: "old", output_item_id: "prep", produced_at: "2026-10-08T01:00:00Z" }];
-  const transfers = [{ created_at: "2026-10-07T04:00:00Z", metadata: { from_location_id: "old", to_location_id: "new" } }];
+  const transfers = [{ occurred_at: "2026-10-07T04:00:00Z", metadata: { from_location_id: "old", to_location_id: "new" } }];
   const result = await packageShadowAmounts(client([menu]), graph, "package", 3, "new", "2026-10-08", production, transfers, signal);
   expect(result).toEqual(expect.arrayContaining([
     { sku_id: "filling", sales_oz: 12, suppressed_oz: 12, shadow_oz: 0 },
     { sku_id: "bread", sales_oz: 6, suppressed_oz: 0, shadow_oz: 6 },
   ]));
-  const early = [{ ...transfers[0]!, created_at: "2026-10-07T03:59:59Z" }];
+  const early = [{ ...transfers[0]!, occurred_at: "2026-10-07T03:59:59Z" }];
   const beforeCutoff = await packageShadowAmounts(client([menu]), graph, "package", 3, "new", "2026-10-08", production, early, signal);
   expect(beforeCutoff.find((amount) => amount.sku_id === "filling")?.shadow_oz).toBe(12);
 });

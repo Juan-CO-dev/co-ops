@@ -1,4 +1,5 @@
 -- 0225 ezCater PASS 2 + catering shop transfers. AUTHORED 2026-10-08; NOT APPLIED -- GATE CC/Juan.
+-- APPLIED TO PROD 2026-10-08 (schema_migrations name '0225_ezcater_pass2'; sim first, version 20261008075532). Prod version 20261008075848.
 -- 0224 is reserved for digest v2. Apply in sim and run the supplied harness first.
 -- Original 0225 applied to SIM ONLY: version 20261008073152. Revert with scripts/sim-revert-0225.sql before re-applying.
 -- PR DEPLOY GATE: apply reviewed 0225 before deploying PASS 2.
