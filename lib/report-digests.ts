@@ -18,6 +18,7 @@ import { appUrl } from "@/lib/email-templates/_layout";
 import { DEFAULT_OPS_ALERT_EMAIL } from "@/lib/jobs-registry";
 import { easternBoundary, easternDay } from "@/lib/job-watch";
 import { listReports } from "@/lib/reports-hub";
+import { loadShopV2Facts } from "@/lib/report-digests-v2";
 import { selectAllRows } from "@/lib/supabase-paginate";
 import { etCalendarDate } from "@/lib/operational-day";
 import { resolveRefs } from "@/lib/catering/prep-demand";
@@ -33,6 +34,20 @@ import {
   type SendLogRow,
 } from "@/lib/report-digests-shared";
 import type { CateringFacts, CateringLeadFact, PrepLoadLine, ShopDayFacts } from "@/lib/report-digests-compose";
+import type { Loaded } from "@/lib/report-digests-v2-shared";
+import {
+  countAnchoredBalances,
+  paymentState,
+  readinessFrom,
+  specialInstructions,
+  stationRoster,
+  type CateringReadiness,
+  type StaffRoster,
+  type StaffSource,
+} from "@/lib/report-digests-catering-shared";
+import type { StationEvent } from "@/lib/assignments-shared";
+import { deriveCateringSkuDemand } from "@/lib/catering/sku-demand";
+import { deriveOnHand } from "@/lib/counts";
 import {
   runClosingDigestsWith,
   runDigestTickWith,
@@ -132,8 +147,8 @@ async function count(q: PromiseLike<{ count: number | null; error: { message: st
   return n ?? 0;
 }
 
-export async function loadShopDayFacts(sb: Sb, location: { id: string; name: string }, day: string): Promise<ShopDayFacts> {
-  const [reports, deliveries, tosses, storeRunsPending, tasks] = await Promise.all([
+export async function loadShopDayFacts(sb: Sb, location: { id: string; name: string }, day: string, now: Date = new Date()): Promise<ShopDayFacts> {
+  const [reports, deliveries, tosses, storeRunsPending, tasks, v2] = await Promise.all([
     listReports(sb, { viewer: SYSTEM_VIEWER, locationId: location.id, dateFrom: day, dateTo: day }),
     selectAllRows<{ match_state: string; receipt_url: string | null }>((from, to) =>
       sb.from("vendor_deliveries").select("match_state, receipt_url").eq("location_id", location.id).eq("delivery_date", day).order("id").range(from, to)),
@@ -143,6 +158,8 @@ export async function loadShopDayFacts(sb: Sb, location: { id: string; name: str
       .eq("location_id", location.id).eq("pending_review", true).eq("active", true), "store runs"),
     selectAllRows<{ report_type: string }>((from, to) =>
       sb.from("report_assignments").select("report_type").eq("location_id", location.id).eq("operational_date", day).eq("active", true).order("id").range(from, to)),
+    // Digest v2 (GO 2026-10-08): fail-soft per area, never throws, never writes.
+    loadShopV2Facts(sb, location.id, day, now),
   ]);
   // PM findings (Astra P2): the list loader carries no PM signals, so read the live evaluations of
   // the day's PM report(s) here. A failed read is "not assessed", never "All good".
@@ -162,7 +179,7 @@ export async function loadShopDayFacts(sb: Sb, location: { id: string; name: str
     }
   }
   return {
-    location, day, reports, pmFindings,
+    location, day, reports, pmFindings, v2,
     receiving: {
       deliveries: deliveries.length,
       discrepant: deliveries.filter((d) => d.match_state === "discrepant").length,
@@ -177,8 +194,11 @@ interface LeadRow {
   id: string; contact_name: string; company: string | null; event_date: string | null; time_window: string | null;
   headcount: number | null; stage: string; lead_source: string | null; location_id: string | null; created_at: string;
   follow_up_date: string | null; external_ref: string | null; delivery_address: string | null; estimated_revenue_cents: number | null;
+  notes: string | null;
 }
-const LEAD_SELECT = "id, contact_name, company, event_date, time_window, headcount, stage, lead_source, location_id, created_at, follow_up_date, external_ref, delivery_address, estimated_revenue_cents";
+// notes is read ONLY to lift the machine special-instruction lines (specialInstructions); the free
+// text itself never reaches an email.
+const LEAD_SELECT = "id, contact_name, company, event_date, time_window, headcount, stage, lead_source, location_id, created_at, follow_up_date, external_ref, delivery_address, estimated_revenue_cents, notes";
 
 export async function loadCateringFacts(sb: Sb, today: string, now: Date): Promise<CateringFacts> {
   const yesterday = addDays(today, -1);
@@ -207,6 +227,7 @@ export async function loadCateringFacts(sb: Sb, today: string, now: Date): Promi
   const leadIds = [...leads.keys()];
   const accepted = new Map<string, { id: string; total_cents: number; is_delivery: boolean; version: number }>();
   const due = new Map<string, number>();
+  const paymentsByLead = new Map<string, Array<{ status: string; amountCents: number }>>();
   const prep = new Map<string, PrepLoadLine[]>();
   if (leadIds.length > 0) {
     const quotes = await selectAllRows<{ id: string; pipeline_id: string; total_cents: number; is_delivery: boolean; version: number }>((from, to) =>
@@ -219,15 +240,17 @@ export async function loadCateringFacts(sb: Sb, today: string, now: Date): Promi
     const quoteIds = [...accepted.values()].map((q) => q.id);
     const pipelineByQuote = new Map([...accepted].map(([pid, q]) => [q.id, pid]));
     const [payments, demand] = await Promise.all([
-      quoteIds.length === 0 ? Promise.resolve([]) : selectAllRows<{ quote_id: string; amount_cents: number }>((from, to) =>
-        sb.from("catering_payments").select("quote_id, amount_cents").in("quote_id", quoteIds).eq("status", "due").order("id").range(from, to)),
+      quoteIds.length === 0 ? Promise.resolve([]) : selectAllRows<{ quote_id: string; amount_cents: number; status: string }>((from, to) =>
+        sb.from("catering_payments").select("quote_id, amount_cents, status").in("quote_id", quoteIds).in("status", ["due", "paid"]).order("id").range(from, to)),
       selectAllRows<DemandRow>((from, to) =>
         sb.from("catering_prep_demand").select("pipeline_id, need_date, item_id, menu_item_id, choice_package_item_id, portion, qty")
           .in("pipeline_id", leadIds).in("status", ["reserved", "consumed"]).order("id").range(from, to)),
     ]);
     for (const p of payments) {
       const pid = pipelineByQuote.get(p.quote_id);
-      if (pid) due.set(pid, (due.get(pid) ?? 0) + p.amount_cents);
+      if (!pid) continue;
+      if (p.status === "due") due.set(pid, (due.get(pid) ?? 0) + p.amount_cents);
+      paymentsByLead.set(pid, [...(paymentsByLead.get(pid) ?? []), { status: p.status, amountCents: p.amount_cents }]);
     }
     for (const [pid, lines] of await summarizePrepDemand(sb, demand)) prep.set(pid, lines);
   }
@@ -259,14 +282,74 @@ export async function loadCateringFacts(sb: Sb, today: string, now: Date): Promi
       valueCents: q?.total_cents ?? l.estimated_revenue_cents ?? 0,
       dueCents: due.get(l.id) ?? 0,
       prep: prep.get(l.id) ?? null,
+      instructions: specialInstructions(l.notes),
+      payment: paymentState(l.lead_source, paymentsByLead.get(l.id) ?? []),
+      deliveryAddress: l.delivery_address,
     };
   });
+  // The shops with orders booked today get inventory readiness + staff (GO addendum 10-08).
+  const todayShops = [...new Set(facts.filter((l) => l.eventDate === today && (l.stage === "confirmed" || l.stage === "out") && l.locationId).map((l) => l.locationId!))];
+  const readiness: NonNullable<CateringFacts["readiness"]> = {};
+  const staff: NonNullable<CateringFacts["staff"]> = {};
+  await Promise.all(todayShops.map(async (loc) => {
+    [readiness[loc], staff[loc]] = await Promise.all([loadCateringReadiness(loc, today), loadStaffRoster(sb, loc, today)]);
+  }));
   return {
     today, leads: facts, lostYesterdayIds: lostIds,
     quotesSentYesterday: sentYesterday.map((q) => ({ id: q.id, locationId: q.location_id, totalCents: q.total_cents })),
     openQuotes: openQuotes.filter((q) => !q.expires_at || Date.parse(q.expires_at) > now.getTime()).map((q) => ({ id: q.id, locationId: q.location_id })),
     refundsYesterday: refunds.map((r) => ({ locationId: refundLoc.get(r.quote_id) ?? null, amountCents: r.amount_cents })),
+    readiness, staff,
   };
+}
+
+/**
+ * Today's catering ingredients vs on-hand at one shop: the W4b actor-less core (read-only; the
+ * same flatten + advisory on-hand the prep-demand surface shows) plus which SKUs were EVER counted
+ * here, so an uncounted SKU says so instead of showing invented stock. Never throws.
+ */
+async function loadCateringReadiness(locationId: string, day: string): Promise<Loaded<CateringReadiness>> {
+  try {
+    // Demand: the W4b flatten (oz per SKU). Stock: the counts reader's count-anchored balance —
+    // read-only (seedBaselines: false never persists an inferred baseline).
+    const [w4b, onHand] = await Promise.all([
+      deriveCateringSkuDemand({ locationId, from: day, to: day }),
+      deriveOnHand(locationId, Date.now()),
+    ]);
+    return { kind: "ok", value: readinessFrom(w4b, countAnchoredBalances(onHand.rows)) };
+  } catch (error) {
+    console.error("[digests] catering readiness failed:", error instanceof Error ? error.message : String(error));
+    return { kind: "error" };
+  }
+}
+
+/** The stations StaffSource: today's assignments + claims. A schedule (7shifts) plugs in beside it. */
+export const stationsStaffSource = (sb: Sb): StaffSource => ({
+  async roster(locationId, businessDate) {
+    const events = await selectAllRows<{ id: string; sequence: number | string; location_id: string; business_date: string; user_id: string; station_id: string | null; position_id: string | null; kind: StationEvent["kind"]; actor_id: string; at: string; source: StationEvent["source"] }>((from, to) =>
+      sb.from("station_events").select("id, sequence, location_id, business_date, user_id, station_id, position_id, kind, actor_id, at, source")
+        .eq("location_id", locationId).eq("business_date", businessDate).order("sequence").range(from, to));
+    const userIds = [...new Set(events.map((e) => e.user_id))];
+    const stationIds = [...new Set(events.map((e) => e.station_id).filter((x): x is string => !!x))];
+    const [users, stations] = await Promise.all([
+      userIds.length === 0 ? [] : selectAllRows<{ id: string; name: string }>((from, to) => sb.from("users").select("id, name").in("id", userIds).order("id").range(from, to)),
+      stationIds.length === 0 ? [] : selectAllRows<{ id: string; name: string }>((from, to) => sb.from("stations").select("id, name").in("id", stationIds).order("id").range(from, to)),
+    ]);
+    const mapped: StationEvent[] = events.map((e) => ({
+      id: e.id, sequence: String(e.sequence), locationId: e.location_id, businessDate: e.business_date, userId: e.user_id,
+      stationId: e.station_id, positionId: e.position_id, kind: e.kind, actorId: e.actor_id, actorName: null, at: e.at, source: e.source,
+    }));
+    return { source: "stations", scheduleConnected: false, onStation: stationRoster(mapped, new Map(users.map((u) => [u.id, u.name])), new Map(stations.map((st) => [st.id, st.name]))) };
+  },
+});
+
+async function loadStaffRoster(sb: Sb, locationId: string, day: string): Promise<Loaded<StaffRoster>> {
+  try {
+    return { kind: "ok", value: await stationsStaffSource(sb).roster(locationId, day) };
+  } catch (error) {
+    console.error("[digests] staff roster failed:", error instanceof Error ? error.message : String(error));
+    return { kind: "error" };
+  }
 }
 
 interface DemandRow {
@@ -404,7 +487,7 @@ function buildIO(now: Date): DigestIO {
     directory: () => loadDigestDirectory(sb),
     sendLog: (days) => loadSendLog(sb, days),
     finalizedClosings: (days) => loadFinalizedClosings(sb, days),
-    shopFacts: (location, day) => loadShopDayFacts(sb, location, day),
+    shopFacts: (location, day) => loadShopDayFacts(sb, location, day, now),
     cateringFacts: (today) => loadCateringFacts(sb, today, now),
     store: supabaseSendStore(sb),
     sendEmail: (m) => sendEmail({ ...m, from: teamFrom() }),
