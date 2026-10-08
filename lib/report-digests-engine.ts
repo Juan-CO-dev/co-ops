@@ -50,15 +50,30 @@ import {
   renderShopDigest,
   renderUnifiedDigest,
   type CateringFacts,
-  type ComposedEmail,
   type Envelope,
   type ShopDayFacts,
 } from "@/lib/report-digests-compose";
+import {
+  PACKAGE_KINDS,
+  packageKindFor,
+  periodicPackageDue,
+  resolvePackageRecipients,
+  type ComposedSend,
+  type EmailAttachment,
+  type PackageIO,
+  type PackageKind,
+  type PackageRecipientRow,
+} from "@/lib/report-package-shared";
+import type { PackageCadence } from "@/lib/report-recipients-shared";
+export type { ComposedSend, EmailAttachment, PackageIO };
+
+/** Everything the send log keys: the three digests and (exports PR) the three package cadences. */
+export type SendKind = DigestKind | PackageKind;
 
 export type DeliveryMode = "preview" | "live";
 
 export interface ClaimRow {
-  kind: DigestKind; business_day: string; recipient_ref: string; location_id: string | null;
+  kind: SendKind; business_day: string; recipient_ref: string; location_id: string | null;
   revision: number; mode: DeliveryMode;
 }
 
@@ -103,7 +118,7 @@ export interface FinishGuard {
 }
 
 export interface DigestAlert {
-  kind: DigestKind | "all"; day: string; detector: "digest-watch" | "digest-send" | "digest-preview";
+  kind: SendKind | "all"; day: string; detector: "digest-watch" | "digest-send" | "digest-preview";
   missing?: string[]; error?: string; ref?: string;
 }
 
@@ -126,10 +141,12 @@ export interface DigestIO {
   cateringFacts(today: string): Promise<CateringFacts>;
   store: SendStore;
   /** idempotencyKey is passed to the provider (Resend Idempotency-Key, kept 24 h by the provider). */
-  sendEmail(input: { to: string; subject: string; html: string; text: string; idempotencyKey: string }): Promise<{ id: string } | { error: string; code?: string }>;
+  sendEmail(input: { to: string; subject: string; html: string; text: string; idempotencyKey: string; attachments?: EmailAttachment[] }): Promise<{ id: string } | { error: string; code?: string }>;
   sha(content: string): string;
   /** Ops alert, claimed once per detector × kind × ET day. true = this call sent it. Never throws. */
   alert(a: DigestAlert): Promise<boolean>;
+  /** Exports PR: the scheduled CSV/PDF package, sent through THIS engine's send-once path. Absent = no package sends. */
+  packages?: PackageIO;
   /** One digest.run audit row. Never throws. */
   recordRun(summary: DigestRunSummary): Promise<void>;
 }
@@ -138,7 +155,7 @@ export interface KindCounts { sent: number; skipped: number; failed: number; amb
 export interface DigestRunSummary {
   trigger: "tick" | "closing";
   mode: DeliveryMode | "off";
-  counts: Record<DigestKind, KindCounts>;
+  counts: Record<SendKind, KindCounts>;
   /** Claims released by the sweep (they never reached the provider). */
   staleClaims: number;
   /** Claims with a recorded provider_message_id reconciled to sent by the sweep (no resend). */
@@ -169,9 +186,9 @@ export function classifyProviderResult(res: { id: string } | { error: string; co
   return "refused";
 }
 
-function emptyCounts(): Record<DigestKind, KindCounts> {
+function emptyCounts(): Record<SendKind, KindCounts> {
   const c = () => ({ sent: 0, skipped: 0, failed: 0, ambiguous: 0 });
-  return { gm_shop: c(), unified: c(), catering: c() };
+  return { gm_shop: c(), unified: c(), catering: c(), package_daily: c(), package_weekly: c(), package_monthly: c() };
 }
 
 const HOUR = 3_600_000;
@@ -197,31 +214,31 @@ class Run {
 
   get didWork(): boolean {
     return this.summary.alerts > 0 || this.summary.staleClaims > 0 || this.summary.reconciled > 0 || this.summary.ambiguousExpired > 0 ||
-      DIGEST_KINDS.some((k) => { const c = this.summary.counts[k]; return c.sent + c.skipped + c.failed + c.ambiguous > 0; });
+      [...DIGEST_KINDS, ...PACKAGE_KINDS].some((k) => { const c = this.summary.counts[k]; return c.sent + c.skipped + c.failed + c.ambiguous > 0; });
   }
 
-  logFor(kind: DigestKind, day: string): SendLogRow[] {
+  logFor(kind: SendKind, day: string): SendLogRow[] {
     return this.log.filter((r) => r.kind === kind && r.business_day === day && r.mode === this.mode);
   }
 
-  private rowsFor(kind: DigestKind, day: string, ref: string, locationId: string | null): SendLogRow[] {
+  private rowsFor(kind: SendKind, day: string, ref: string, locationId: string | null): SendLogRow[] {
     return this.logFor(kind, day).filter((r) => r.recipient_ref === ref && (r.location_id ?? null) === locationId && r.revision === 1);
   }
 
   /** Sent, in flight, or frozen for a human: never touched again automatically. */
-  private settled(kind: DigestKind, day: string, ref: string, locationId: string | null): boolean {
+  private settled(kind: SendKind, day: string, ref: string, locationId: string | null): boolean {
     // An ambiguous row past its 23 h window is settled too (frozen by the sweep, never re-claimed).
     return this.rowsFor(kind, day, ref, locationId).some((r) => r.outcome === "sent" || r.outcome === "claimed" || r.outcome === "failed_ambiguous" ||
       (r.outcome === "ambiguous" && (!r.first_attempt_at || this.io.now.getTime() - Date.parse(r.first_attempt_at) >= AMBIGUOUS_RETRY_HOURS * HOUR)));
   }
 
   /** An ambiguous attempt still inside the 23 h same-key retry window. */
-  private retryable(kind: DigestKind, day: string, ref: string, locationId: string | null): SendLogRow | undefined {
+  private retryable(kind: SendKind, day: string, ref: string, locationId: string | null): SendLogRow | undefined {
     return this.rowsFor(kind, day, ref, locationId).find((r) => r.outcome === "ambiguous" && !!r.id && !!r.first_attempt_at &&
       this.io.now.getTime() - Date.parse(r.first_attempt_at) < AMBIGUOUS_RETRY_HOURS * HOUR);
   }
 
-  private skippedAlready(kind: DigestKind, day: string, ref: string, locationId: string | null, reason: DigestSkipReason): boolean {
+  private skippedAlready(kind: SendKind, day: string, ref: string, locationId: string | null, reason: DigestSkipReason): boolean {
     return this.rowsFor(kind, day, ref, locationId).some((r) => r.outcome === "skipped" && r.skip_reason === reason);
   }
 
@@ -275,14 +292,14 @@ class Run {
       if (r.outcome === "ambiguous" && r.first_attempt_at && now - Date.parse(r.first_attempt_at) >= AMBIGUOUS_RETRY_HOURS * HOUR) {
         if (await this.io.store.finish(r.id, ["ambiguous"], { outcome: "failed_ambiguous", error: "ambiguous_past_provider_key_window" }, { noMessageId: true, observedAttemptedAt: r.attempted_at })) {
           r.outcome = "failed_ambiguous"; this.summary.ambiguousExpired++;
-          if (await this.io.alert({ kind: r.kind as DigestKind, day: r.business_day, detector: "digest-watch", ref: r.recipient_ref, error: "failed_ambiguous: delivery unknown after 23 h; not resent — decide by hand" })) this.summary.alerts++;
+          if (await this.io.alert({ kind: r.kind as SendKind, day: r.business_day, detector: "digest-watch", ref: r.recipient_ref, error: "failed_ambiguous: delivery unknown after 23 h; not resent — decide by hand" })) this.summary.alerts++;
         }
       }
     }
   }
 
   /** Log a deliberate non-send once per (recipient, kind, day, location, reason). */
-  async skip(kind: DigestKind, day: string, r: ResolvedRecipient, locationId: string | null, reason: DigestSkipReason): Promise<void> {
+  async skip(kind: SendKind, day: string, r: ResolvedRecipient, locationId: string | null, reason: DigestSkipReason): Promise<void> {
     if (this.settled(kind, day, r.ref, locationId) || this.retryable(kind, day, r.ref, locationId) || this.skippedAlready(kind, day, r.ref, locationId, reason)) return;
     const row: ClaimRow = { kind, business_day: day, recipient_ref: r.ref, location_id: locationId, revision: 1, mode: this.mode };
     await this.io.store.skip({ ...row, skip_reason: reason });
@@ -297,10 +314,10 @@ class Run {
    * ambiguous → claimed transition (no message id, first_attempt_at kept). Two ticks can never both
    * call the provider for one key.
    */
-  async sendOnce(kind: DigestKind, day: string, r: ResolvedRecipient, locationId: string | null, compose: (env: Envelope) => Promise<ComposedEmail> | ComposedEmail): Promise<"sent" | "skipped" | "failed" | "ambiguous" | "not_due"> {
+  async sendOnce(kind: SendKind, day: string, r: ResolvedRecipient, locationId: string | null, compose: (env: Envelope) => Promise<ComposedSend> | ComposedSend): Promise<"sent" | "skipped" | "failed" | "ambiguous" | "not_due"> {
     if (this.settled(kind, day, r.ref, locationId)) return "not_due";
     const resumed = this.retryable(kind, day, r.ref, locationId);
-    if (!resumed && r.skip) { await this.skip(kind, day, r, locationId, r.skip); return "skipped"; }
+    if (r.skip && !resumed) { await this.skip(kind, day, r, locationId, r.skip); return "skipped"; }
     const row: ClaimRow = { kind, business_day: day, recipient_ref: r.ref, location_id: locationId, revision: 1, mode: this.mode };
     const key = digestIdempotencyKey(row);
     let entry: SendLogRow;
@@ -312,6 +329,10 @@ class Run {
         }
         return "not_due";
       }
+      // Eligibility is re-checked on every retry: a recipient disabled, deactivated or narrowed out
+      // since the ambiguous attempt is never sent to again. The ambiguous row stays as it is, so a
+      // late provider acceptance still reconciles and the 23 h expiry still freezes it + alerts.
+      if (r.skip) return "not_due";
       let locked = false;
       const takenAt = this.io.now.toISOString();
       try { locked = await this.io.store.reclaim(resumed.id!, { attempted_at: takenAt }, { attempted_at: resumed.attempted_at }); } catch { locked = false; }
@@ -342,7 +363,7 @@ class Run {
     };
 
     // Compose BEFORE a FRESH attempt is recorded: a compose failure never reached the provider.
-    let mail: ComposedEmail;
+    let mail: ComposedSend;
     try {
       const env: Envelope = { language: r.language, baseUrl: this.io.baseUrl, previewFor: this.mode === "preview" ? { name: r.name, email: r.email } : null };
       mail = await compose(env);
@@ -374,7 +395,7 @@ class Run {
     const to = this.mode === "preview" ? this.previewTo! : r.email!;
     let res: { id: string } | { error: string; code?: string };
     try {
-      res = await this.io.sendEmail({ to, subject: mail.subject, html: mail.html, text: mail.text, idempotencyKey: key });
+      res = await this.io.sendEmail({ to, subject: mail.subject, html: mail.html, text: mail.text, idempotencyKey: key, ...(mail.attachments ? { attachments: mail.attachments } : {}) });
     } catch (e) {
       res = { error: e instanceof Error ? e.message : String(e) };
     }
@@ -455,6 +476,55 @@ class Run {
     }
   }
 
+  /**
+   * The scheduled package for one cadence and business day (exports PR). Recipients are the
+   * report_recipients rows with packages + this cadence (Pete; the accountant row, a logged
+   * recipient_disabled skip until its email is plugged in). It goes through sendOnce like every
+   * digest, so it gets the SAME guarantees: the claim, the attempt recorded before the provider,
+   * the provider Idempotency-Key, provider_message_id before finish, ambiguous same-key retries
+   * inside 23 h then failed_ambiguous, and the never-silent alert. Nothing here bypasses them.
+   */
+  private packageRows: Promise<PackageRecipientRow[]> | null = null;
+  /**
+   * Weekly / monthly package sends still OUTSTANDING in the loaded log (Astra P2): an ambiguous
+   * attempt (the same-key retry window is checked by sendOnce), or a released 'failed' row (a
+   * compose / pre-attempt failure) under 23 h old, with no sent row for that recipient. These are
+   * retried on later days too — independently of periodicPackageDue, which only starts NEW sends.
+   */
+  outstandingPeriodic(): Array<{ cadence: PackageCadence; day: string; refs: Set<string> }> {
+    const now = this.io.now.getTime();
+    const byKey = new Map<string, { cadence: PackageCadence; day: string; refs: Set<string> }>();
+    for (const r of this.log) {
+      if (r.mode !== this.mode || (r.kind !== "package_weekly" && r.kind !== "package_monthly")) continue;
+      const open = r.outcome === "ambiguous" || (r.outcome === "failed" && now - Date.parse(r.attempted_at) < AMBIGUOUS_RETRY_HOURS * HOUR);
+      if (!open) continue;
+      const done = this.log.some((x) => x.kind === r.kind && x.business_day === r.business_day && x.recipient_ref === r.recipient_ref &&
+        x.mode === this.mode && (x.outcome === "sent" || x.outcome === "failed_ambiguous"));
+      if (done) continue;
+      const cadence: PackageCadence = r.kind === "package_weekly" ? "weekly_mon" : "monthly_1st";
+      const key = `${cadence}|${r.business_day}`;
+      const entry = byKey.get(key) ?? { cadence, day: r.business_day, refs: new Set<string>() };
+      entry.refs.add(r.recipient_ref);
+      byKey.set(key, entry);
+    }
+    return [...byKey.values()];
+  }
+
+  async packages(cadence: PackageCadence, day: string, onlyRefs?: ReadonlySet<string>): Promise<void> {
+    const pio = this.io.packages;
+    if (!pio) return;
+    this.packageRows ??= pio.recipients();
+    const recipients = resolvePackageRecipients({
+      rows: await this.packageRows, users: this.dir.users, memberships: this.dir.memberships, locationIds: this.dir.locationIds, cadence,
+    });
+    const kind = packageKindFor(cadence);
+    for (const r of recipients) {
+      if (onlyRefs && !onlyRefs.has(r.ref)) continue;
+      const outcome = await this.sendOnce(kind, day, r, null, (env) => pio.compose(r, cadence, day, env));
+      if (outcome === "sent" || outcome === "failed" || outcome === "ambiguous") await pio.recordSend({ kind, day, ref: r.ref, outcome });
+    }
+  }
+
   /** Every expected recipient must have a sent or deliberately-skipped row once the deadline passed. */
   async watch(kind: DigestKind, day: string): Promise<void> {
     if (this.io.now.getTime() < digestWatchAt(kind, day, this.settings).getTime()) return;
@@ -514,9 +584,18 @@ async function finishTick(run: Run, days: string[], today: string): Promise<Dige
     }
     const decision = decideUnified({ day, activeLocationIds: activeIds, finalizedLocationIds: done, now: io.now, settings: run.settings });
     if (decision.due) await run.unified(day, decision.missing);
+    // Pete (and the accountant, once enabled) get the day's CSV + PDF "at close": with the unified digest.
+    if (decision.due) await run.packages("daily_close", day);
   }
   const catering = decideCatering(io.now, run.settings);
   if (catering.due) await run.catering(catering.day);
+  const due = periodicPackageDue(io.now);
+  for (const periodic of due) await run.packages(periodic.cadence, periodic.day);
+  // Retries of earlier weekly/monthly sends run whatever today is (Astra P2: Monday's failure retries Tuesday).
+  for (const open of run.outstandingPeriodic()) {
+    if (due.some((d) => d.cadence === open.cadence && d.day === open.day)) continue;
+    await run.packages(open.cadence, open.day, open.refs);
+  }
 
   const yesterday = addDays(today, -1);
   await run.watch("gm_shop", yesterday);
@@ -538,6 +617,7 @@ export async function runClosingDigestsWith(io: DigestIO, locationId: string, da
   if (location && finalized.has(locationId)) await run.shop(day, location);
   const decision = decideUnified({ day, activeLocationIds: run.locations.map((l) => l.id), finalizedLocationIds: finalized, now: io.now, settings: run.settings });
   if (decision.due) await run.unified(day, decision.missing);
+  if (decision.due) await run.packages("daily_close", day);
   if (run.didWork) await io.recordRun(run.summary);
   return run.summary;
 }

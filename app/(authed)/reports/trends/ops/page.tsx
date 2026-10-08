@@ -31,6 +31,7 @@ import type { LineSeries } from "@/components/trends/LineChart";
 import { BarChart } from "@/components/trends/BarChart";
 import { TrendCard } from "@/components/trends/TrendCard";
 import { TrendControls } from "@/components/trends/TrendControls";
+import { ExportLinks } from "@/components/reports-export/ExportLinks";
 
 interface PageProps {
   searchParams: Promise<Record<string, string | undefined>>;
@@ -135,6 +136,8 @@ async function renderPage(paramsRange: Record<string, string | undefined>, allSh
   return (
     <Container className={allShops ? "pt-4" : "mx-auto max-w-2xl md:max-w-3xl lg:max-w-5xl xl:max-w-6xl px-4 pb-32 pt-4 sm:px-6"}>
       {!allShops && header}
+      <ExportLinks className="mt-3" family="trends_ops" language={language}
+        query={{ location: locationParam, range: range.range, from: range.from, to: range.to, g: granularity }} />
       <nav className="mt-3 flex flex-wrap gap-2">
         <Link className="inline-flex min-h-[44px] items-center rounded-lg border border-co-border px-3 text-xs" href={drill("underPar")}>{serverT(language, "reports.trends.par_title")}</Link>
         <Link className="inline-flex min-h-[44px] items-center rounded-lg border border-co-border px-3 text-xs" href={drill("tempFlag")}>{serverT(language, "reports.trends.temps_title")}</Link>

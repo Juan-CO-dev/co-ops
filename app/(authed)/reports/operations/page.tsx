@@ -30,6 +30,7 @@ import { ReportRangeControls } from "@/components/reports-hub/ReportRangeControl
 import { ReportFilterBar } from "@/components/reports-hub/ReportFilterBar";
 import { ReportList } from "@/components/reports-hub/ReportList";
 import { UnifiedSearchResults } from "@/components/reports-hub/UnifiedSearchResults";
+import { ExportLinks } from "@/components/reports-export/ExportLinks";
 
 const ALL_TYPES: ReportTypeKey[] = ["opening", "closing", "am_prep", "mid_day", "cash", "pm", "maintenance"];
 
@@ -205,6 +206,9 @@ async function renderReportsPage(params: Awaited<PageProps["searchParams"]>, all
   return (
     <Container className={allShops ? "pt-4" : "mx-auto max-w-2xl md:max-w-3xl lg:max-w-5xl xl:max-w-6xl px-4 pb-32 pt-4 sm:px-6"}>
       {!allShops && header}
+      {/* Exports: per shop (also inside each all-shops panel), same filters, same loader (lib/report-export.ts). */}
+      <ExportLinks className="mt-3" family={selectedTypes?.[0] === "cash" ? "cash" : "operations"} language={lang}
+        query={{ ...params, location: locationId, range: range.range, from: dateFrom, to: dateTo }} />
       {query ? (
         <div className="mt-4">
           <UnifiedSearchResults

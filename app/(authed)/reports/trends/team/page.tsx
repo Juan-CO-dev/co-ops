@@ -17,6 +17,7 @@ import { ReportPageNav } from "@/components/reports-hub/ReportPageNav";
 import { ReportShopTabs } from "@/components/reports-hub/ReportShopTabs";
 import { TrendControls } from "@/components/trends/TrendControls";
 import { TeamRosterCard } from "@/components/team/TeamRosterCard";
+import { ExportLinks } from "@/components/reports-export/ExportLinks";
 
 interface PageProps {
   searchParams: Promise<Record<string, string | undefined>>;
@@ -72,6 +73,8 @@ async function renderPage(paramsRange: Record<string, string | undefined>, allSh
   return (
     <Container className={allShops ? "pt-4" : "mx-auto max-w-2xl md:max-w-3xl lg:max-w-5xl xl:max-w-6xl px-4 pb-32 pt-4 sm:px-6"}>
       {!allShops && header}
+      <ExportLinks className="mt-3" family="team" language={language}
+        query={{ location: locationParam, range: range.range, from: range.from, to: range.to, g: granularity }} />
       {team && team.members.length > 0 ? (
         <>
           <p className="mt-4 mb-3 text-xs text-co-text-muted">

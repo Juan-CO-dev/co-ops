@@ -1,5 +1,6 @@
 -- Migration 0220_report_recipients_digests
 -- AUTHORED 2026-10-07. NOT YET APPLIED — GATE (CC/JUAN). Sim first, prod on Juan's word.
+-- APPLIED TO PROD 2026-10-08 (schema_migrations version 20261008045759; sim 20261008045739). The line above is the authoring-time gate note, kept as history.
 -- Provenance: Reports hub v2 pieces 2 + 3 (GO-coops-reports-digests-exports-2026-10-07 + the spec
 --   2026-10-07-spec-reports-h2-h3-digest-export + the plan 2026-10-07-reports-digests-plan §2).
 --   Juan, 2026-10-07: digest = "a summary and then a link to each report saying things like all good,

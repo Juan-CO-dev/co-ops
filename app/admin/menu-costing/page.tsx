@@ -26,6 +26,7 @@ import { serverT } from "@/lib/i18n/server";
 import { loadMenuCostingBoard, MENU_COSTING_READ_MIN } from "@/lib/admin/menu-costing";
 import { MenuCostingClient } from "@/components/admin/menu-costing/MenuCostingClient";
 import { PageHeader } from "@/components/ui/PageHeader";
+import { ExportLinks } from "@/components/reports-export/ExportLinks";
 
 export default async function AdminMenuCostingPage() {
   const auth = await requireSessionFromHeaders("/admin");
@@ -41,6 +42,7 @@ export default async function AdminMenuCostingPage() {
         title={serverT(lang, "admin.menu_costing.title")}
         subtitle={serverT(lang, "admin.menu_costing.subtitle")}
       />
+      <ExportLinks className="mb-4" family="costing" language={lang} query={{}} />
       <MenuCostingClient
         rows={rows}
         totals={totals}

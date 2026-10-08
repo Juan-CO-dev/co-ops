@@ -362,6 +362,29 @@ describe("P1 (Astra r2): send-once survives the provider's 24 h key window", () 
     expect(store.of("sent").every((r) => r.first_attempt_at === "2026-10-07T11:00:00.000Z" || r.kind !== "catering")).toBe(true);
   });
 
+  it("P1 (Astra r2): a recipient disabled after an ambiguous attempt is never retried; the row is kept for expiry", async () => {
+    const store = new Store();
+    const provider = new Provider();
+    const first = makeIO({ now: "2026-10-07T11:00:00Z", store, provider });
+    provider.lose(6);
+    await runDigestTickWith(first.io);
+    const key = "co-digest/live/catering/2026-10-07/r1/user:own/all";
+    expect(provider.calls.filter((c) => c.key === key)).toHaveLength(1);
+
+    const peteOff: RecipientOverride = { id: "ov-pete", kind: "internal", userId: "own", email: null, displayName: "Pete", active: false, cateringDigest: true, shopDigest: false, locationIds: null };
+    const retry = makeIO({ now: "2026-10-07T13:00:00Z", store, provider, overrides: [peteOff] });
+    await runDigestTickWith(retry.io);
+    expect(provider.calls.filter((c) => c.key === key)).toHaveLength(1); // no second provider call
+    const pete = store.rows.filter((r) => r.recipient_ref === "user:own" && r.kind === "catering");
+    expect(pete.map((r) => r.outcome)).toEqual(["ambiguous"]);             // preserved, not skipped over
+    expect(store.of("sent").filter((r) => r.kind === "catering" && r.recipient_ref !== "user:own").length).toBeGreaterThan(0);
+
+    const late = makeIO({ now: "2026-10-08T11:00:00Z", store, provider, overrides: [peteOff] });
+    await runDigestTickWith(late.io);
+    expect(provider.calls.filter((c) => c.key === key)).toHaveLength(1);
+    expect(store.rows.find((r) => r.recipient_ref === "user:own" && r.kind === "catering" && r.business_day === "2026-10-07")?.outcome).toBe("failed_ambiguous");
+  });
+
   it("ambiguous at 25 h = NO send, frozen failed_ambiguous, and an alert for a human", async () => {
     const store = new Store();
     const provider = new Provider();

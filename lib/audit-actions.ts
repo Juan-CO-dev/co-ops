@@ -290,7 +290,14 @@ export const NON_DESTRUCTIVE_ACTIONS = [
   "photo.upload",
   // 0220 digests: one system row per digest run that did work (counts sent / skipped / failed
   // by kind). A system observation with no actor; the per-send record is report_digest_sends.
-  "digest.run",] as const;
+  "digest.run",
+  // Exports PR (Reports hub v2 piece 3): a human CSV/PDF download of a report family, through
+  // the same loaders and scope gates as the screen. Reading changes nothing in the kitchen, so it
+  // is findable, not destructive. One row per download (family, format, rows, range, shop).
+  "report.export",
+  // The scheduled package send (Pete at close; the accountant once his email exists). A system
+  // send with no actor; the per-send record is report_digest_sends (kind package_*).
+  "report_package.send",] as const;
 
 /**
  * Registered as destructive but with NO emitter in the codebase today.

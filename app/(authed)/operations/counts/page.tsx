@@ -8,6 +8,7 @@ import { twinVendorLabels } from "@/lib/counts-shared";
 import { CountForm } from "@/components/counts/CountForm";
 import { OnHandPanel } from "@/components/counts/OnHandPanel";
 import { DashboardBackLink } from "@/components/DashboardBackLink";
+import { ExportLinks } from "@/components/reports-export/ExportLinks";
 
 export default async function CountsPage({ searchParams }: { searchParams: Promise<{ location?: string }> }) {
   const auth = await requireSessionFromHeaders("/operations/counts");
@@ -45,6 +46,7 @@ export default async function CountsPage({ searchParams }: { searchParams: Promi
 
       {onHand && <div className="lg:min-w-0">
       <h2 className="mt-6 text-sm font-bold uppercase tracking-[0.14em] text-co-text-dim lg:mt-0">{serverT(lang, "counts.onhand.title")}</h2>
+      <ExportLinks className="mt-2" family="counts" language={lang} query={{ location }} />
       {/* P8: the ambiguous-name set is derived ONCE, from the count form's option set, and
           shared with the on-hand panel so both halves of this page disambiguate twins the
           same way. An on-hand row for an INACTIVE SKU is not in the option set and simply

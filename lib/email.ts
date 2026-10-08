@@ -69,6 +69,9 @@ export interface SendEmailInput {
    *  replies go to the from address — exactly today's behavior for every caller
    *  that doesn't set it. */
   replyTo?: string;
+  /** File attachments (Resend `attachments`). Used by the scheduled report package (CSV + PDF).
+   *  Omitted = no attachments, i.e. today's behavior for every existing caller. */
+  attachments?: Array<{ filename: string; content: Buffer; contentType: string }>;
   /** Resend `Idempotency-Key` (24 h): a retry with the same key never produces a second email.
    *  Omitted = no header = exactly today's behavior for every existing caller. */
   idempotencyKey?: string;
@@ -98,6 +101,7 @@ export async function sendEmail(input: SendEmailInput): Promise<SendEmailResult>
       html: input.html,
       text: input.text,
       ...(input.replyTo ? { replyTo: input.replyTo } : {}),
+      ...(input.attachments?.length ? { attachments: input.attachments } : {}),
     }, input.idempotencyKey ? { idempotencyKey: input.idempotencyKey } : undefined);
     if (error) {
       console.error(`[email] send failed for to=${label}:`, error.message);
