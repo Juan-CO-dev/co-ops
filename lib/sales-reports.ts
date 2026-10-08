@@ -23,9 +23,9 @@ import { getServiceRoleClient } from "@/lib/supabase-server";
 import {
   SALES_PAGE_SIZE, SALES_READ_MIN, SALES_WINDOW_CONCURRENCY, mergeBreakdown, mergeEzcaterSummaries, salesDeltaPct,
   salesListContext, salesWindows, summarizeSales, toCheckDetail, toCheckRow, toEzcaterRow,
-  type BreakdownRaw, type BreakdownRow, type DailyRaw, type EzcaterSummary, type EzcaterSummaryRaw, type SalesBucket,
+  type BreakdownRaw, type BreakdownRow, type DailyRaw, type EzcaterSummary, type EzcaterSummaryRaw,
   type SalesCheckDetail, type SalesCheckFilters, type SalesCheckRow, type SalesDimension, type SalesEzcaterRow,
-  type SalesRange, type SalesTotals,
+  type SalesRange, type SalesSummaryDto,
 } from "@/lib/sales-reports-shared";
 
 export * from "@/lib/sales-reports-shared";
@@ -80,16 +80,6 @@ function windowArgs(locationId: string, w: { from: string; to: string }) {
 
 // ── Summary ─────────────────────────────────────────────────────────────────────────────────
 
-export interface SalesSummaryDto {
-  locationId: string;
-  range: SalesRange;
-  buckets: SalesBucket[];
-  totals: SalesTotals;
-  previous: SalesTotals | null;
-  deltaPct: number | null;
-  /** Explicit "today" only: when the latest completed capture of today finished (null = none yet). */
-  capturedAt: string | null;
-}
 
 async function dailyTotals(sb: Client, locationId: string, from: string, to: string, grain: SalesRange["grain"]) {
   const raws = await mapBounded(salesWindows(from, to), SALES_WINDOW_CONCURRENCY,

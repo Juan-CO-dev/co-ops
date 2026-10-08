@@ -577,3 +577,14 @@ export function mergeEzcaterSummaries(raws: readonly EzcaterSummaryRaw[]): Ezcat
 export function serverRef(guid: string | null | undefined): string {
   return guid ? guid.slice(-4) : "";
 }
+
+export interface SalesSummaryDto {
+  locationId: string;
+  range: SalesRange;
+  buckets: SalesBucket[];
+  totals: SalesTotals;
+  previous: SalesTotals | null;
+  deltaPct: number | null;
+  /** Explicit "today" only: when the latest completed capture of today finished (null = none yet). */
+  capturedAt: string | null;
+}
