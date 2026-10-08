@@ -5,13 +5,13 @@
 > severely stale — do not plan from it). Update this file at every arc-close; keep NOW
 > capped at 3 builds. Dated entries; delete, don't strikethrough.
 >
-> **Last refreshed 2026-08-28** (Dynamic Pars arc close). Every figure in the
-> 2026-08-20 and 2026-08-28 blocks was re-verified live against prod, not carried from
-> a handoff.
+> **Last refreshed 2026-10-08.** Launch queue and errands updated from the
+> 2026-10-06..08 merged list and Juan's current direction. Older dated arc notes below
+> remain historical; their live counts are not a current production probe.
 
-**The strategic read (unanimous):** the center of gravity has moved from BUILDING to
-LIGHTING UP. The deepest stacks (Toast depletion, the catering moat, pack chains) are
-built and dormant behind owner externals. Converting dormant→live outranks new builds.
+**Launch read (2026-10-08):** Toast capture and cutover, the catering pipeline, shift
+assignments, and the reports foundation are shipped. The first real inventory count is
+the immediate launch gate; Sales and who's here are the two active builds.
 
 > ### ⭐ THE FIRST PHYSICAL COUNT IS UNBLOCKED (2026-08-20)
 >
@@ -22,16 +22,23 @@ built and dormant behind owner externals. Converting dormant→live outranks new
 > "became" a 34.4 oz bundle at ratios from 4.2× to 113.8×). Count today and the variance
 > is arithmetic; count last week and it was noise.
 >
-> This does **not** revive the mandatory-count gate — the 2026-08-02 truth-model reframe
-> below still stands, the shop still never census-counts, and the page is still the
-> owner-invoked **Inventory Audit tool**. What changed is that running it is now worth
-> doing: it lays the first `census` anchor (live: `sku_count_events` = **0**), and every
-> downstream signal that waits on one — variance, the queued low-stock item, `loadOnHand`
-> batching — fires off the back of it.
+> The 2026-08-02 truth-model reframe below still stands: the shop does not do routine
+> census counts, and the page is the owner-invoked **Inventory Audit tool**. Juan now
+> needs its first real count as a launch gate. It lays the first `census` anchor
+> (`sku_count_events` was **0** on 2026-10-08) for downstream inventory signals.
 
 ---
 
-## JUAN'S ERRANDS (the highest-leverage list in this file)
+## JUAN'S ERRANDS (2026-10-08)
+
+1. **Supabase Pro:** database size was 456/500 MB on 2026-10-08. Upgrade before the limit becomes a launch incident.
+2. **Alex's login:** get Alex signed in and verify the right shop and role.
+3. **Weigh two items:** GF roll and whole pickle; enter measured weights so counts and costing use real values.
+4. **Station timing:** confirm Crunchy Boi closes around 2 PM, 3rd Party around 4 PM, and the trim times for Expo and Walk-ins.
+5. **Meta second admin:** add a second administrator to the business account.
+6. **Crunchy Boi shoot:** capture the real product photography needed for launch assets.
+
+### Older errands (pre-2026-10-06, kept verbatim for triage)
 
 1. ✅ **DONE — Toast is LIVE (verified 2026-07-31 against prod: live auth probe +
    daily cron.success + ~8k toast_sales_events since 07-23, both shops; GUIDs set
@@ -131,68 +138,22 @@ the agreement was one failed sync away from a silent, permanent split. With a st
 the old code reported HALF the true $/oz. Pure math split to `lib/admin/cost-shared.ts` per
 the `*-shared` law so it is finally testable (10 tests incl. a board-parity oracle).
 
-## NOW (build — small, unblocked, dormant→live)
+## NOW (2026-10-08; at most three builds)
 
-**🟡 VENDOR ORDERING V3-C — the export importer (opened 2026-09-16, in flight 2026-09-20):**
-V3-A order guides ✅ (#370, 0205) · V3-B barcode at the door ✅ (#371, 0206) · **V3-C-1
-catalog repair ✅ (seed 38 + 0210 on prod 2026-09-20: Thompson Delivers, 17 item numbers,
-15 pack roots, 13 prices, 53 purchase bases)** · **V3-C-2 v1 importer 🟡 (branch
-`feat/v3c-2-importer`, plan `docs/superpowers/plans/2026-09-20-v3c-2-vendor-importer.md`,
-mig 0211): stage a PFG / US Foods / receipts export on the vendor page, dry-run report,
-row decisions, one transactional apply; guide writes + SKU creation stay human.** After
-merge: second export cycle (October) is the acceptance; then v2 (guide RPC in the
-transaction, staged SKU creation, receipts OCR). Evidence: `docs/seed/source/vendor-exports/`.
+1. **First physical count — launch gate (2026-10-08).** Production still has **0 `sku_count_events`**. Run the first real Inventory Audit count and verify the count anchor before launch.
+2. **Sales section (2026-10-08; CO CC building).** Finish the Reports Hub sales section against the Toast capture and reconciliation already shipped. Keep it out of user guidance until released.
+3. **Who's here (2026-10-08; CO CC building).** Connect Toast employee links and manager presence. Keep it out of user guidance until released.
 
-**✅ NOW COLUMN COMPLETE (2026-07-30):** photo uploader (#211, mig 0164), Written
-Reports + Settings (#212), ops guardrails (#213 — cron visibility, backup runbook,
-adoption card, mark-paid wiring, orphaned-mirror check). The board now waits on the
-owner keystones below; the next NOW column gets written when one of them turns.
+## NEXT (2026-10-08)
 
-**✅ OWNER-INTERRUPT ARC (2026-07-30, same day):** the checklist FULL-EDIT arc —
-meatball-question hotfix (#214) → prep full-edit floor (#215) → question input
-types for closing lists (#216, mig 0165) → prep overview + Doctor in the builder
-(#217). Council session `.claude/council/2026-07-30-checklist-fulledit/`. Named
-follow-up with trigger: question input types on OPENING lists (fire when the
-opening Phase-1 answer path learns input_type). Trust-recovery errand (Juan):
-paper-audit the AM prep template + walk the opener through it once.
+- **Customer profiles and consent.** More than 6,000 opted-in emails are live in Toast. Keep profiles internal-only unless the customer has opted in; upload to Meta only after Pete's OK.
+- **ezCater options.** GF roll, extra mozzarella, lettuce bed, and Light Lunch picks count as base today; map the actual selections.
+- **Mid-shift redesign.** Rework the shift view after launch use shows the real handoff pattern.
+- **Toast cutover week-1 cleanup.** Retire the legacy sales ledger and purge cutover check fixtures after the first week is verified.
+- **Digest and export email delivery.** Turn delivery on only after the 2026-10-13 launch, per Juan. On-screen digests and file downloads are separate shipped features.
+- **7shifts API.** Integrate when Juan receives access.
 
-**✅ QUALITY-HARDENING PASS (2026-07-31):** 8-seat whole-app council → 5 fix
-batches ALL merged (#224–#233): security/correctness (finalize gate, toast-map
-IDOR, operational-day UTC family, sales silent-zero taint), visible breakage
-(order-review cart-loss), the batching pass (reports-hub ~182→~5 queries),
-seam hygiene (honest toast/shifts stubs, prune-sessions cron), UX/i18n
-(IdleTimeoutWarning app-wide, /lto into (authed), specific link errors).
-Q1/Q2 owner decisions closed in #234 (toast_daily_data KEPT + annotated;
-gate-predicate engine kept, stale comments fixed). Register:
-`.claude/council/2026-07-31-quality-hardening/report.md`. Deferred w/ triggers
-→ DEBT table below.
-
-**✅ MID-SHIFT PULSE ARC (2026-07-31/08-01):** 7-seat council (incl. a blind
-Fable seat that caught the open-day gap-taint interaction) → 3 PRs ALL merged:
-#235 live Toast sales panel + same-day pull triggers (closing-confirm +
-45-min-debounced on-visit; EVENTS-ONLY law — nightly cron stays the sole
-ledger materializer; open-day gap guardrail) · #236 location tabs +
-active-today attribution + parallel loaders (~3-4×) + named overdue states ·
-#237 Pulse Score (green/yellow/red) + catering-due-today strip (quiet when
-empty — owner-confirmed) + unchecked-fridge alert. Session:
-`.claude/council/2026-07-31-midshift-pulse/report.md`.
-
-**✅ POST-HANDOFF AUDIT (2026-08-01):** full verification pass over the
-2026-07-31 work (the arc was finished by a different model after a
-mid-session handoff). 3 adversarial reviews (#235/#236/#237) + 1 review
-(#232–#234) + a Batch A–D survivorship sweep: **every load-bearing law
-verified CLEAN** (events-only lane, open-day guardrail × taint, price SUM,
-IDOR binds, *-shared split, i18n parity) and **A–D ALL-INTACT**. Four real
-P2s fixed in #238 (`ec7de7c`, deployed): sales-lane isolation (a Toast read
-error no longer 500s /mid-shift), paginated+ordered day reads (snapshot-
-versioned table vs the 1000-row cap), chronological catering-strip sort
-(`timeWindowMinutes`, test-pinned — lexicographic put 1 PM before 10 AM),
-and the **names-at-KH ratification** (owner 2026-08-01: strip shows
-event/customer names at level 4, a deliberate exception to the pipeline's
-level-5 floor; revenue stays 5+; recorded in `loadCateringDueToday`).
-Logged-deferred → DEBT table.
-
-## NEXT
+### Older NEXT backlog (pre-2026-10-06, kept verbatim for triage - delete items as they are confirmed shipped)
 
 - ✅ **Toast-depletion-into-drift DONE (PR #220 `a2ec9bd`, 2026-07-31; mig 0166).**
   Register sales now feed counts' consumed side via the direct-lane daily ledger
@@ -399,6 +360,14 @@ Logged-deferred → DEBT table.
   the table therefore costs drift detection unless a `weight_ruled_oz` column lands first**
   — a migration plus a `rulingStatus` rewrite, not a mechanical swap. Do it as its own
   piece of work, or not at all.
+
+## SHIPPED (2026-10-06..08)
+
+- **Shift work:** assignments and the read-only team board for every level; station positions and On/Off setup from closing sections; take/assign controls, attribution and override reasons; breaks, cover, clock-out releases, and station closure when its closing section finishes.
+- **Checklists and prep:** collapsible checklist sections; shared AM prep drafts; batch versus bottle recording, shelf life, yield nudges, and GM retraining with KH+ assignment.
+- **Inventory and catalog:** store runs with pending new items; seed 43/44 menu and SKU additions; migration apply stamps and Toast cutover runbook updates.
+- **Catering and ezCater:** pipeline shop chips and lost orders on Insights; shop transfers; enriched ezCater orders, direct item mapping and Toast-side Dismiss review; ezCater as order source with Toast cross-check and **Not in Toast yet**.
+- **Reports and Toast:** Reports Hub families, shop/range navigation, paging, CSV/PDF exports and accountant package; on-screen digest views and recipients setup; Toast order capture, backfill, reconciliation and capture-fed cutover. Email delivery remains off until after launch.
 
 ## LATER (sequenced, not forgotten)
 

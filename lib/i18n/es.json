@@ -781,7 +781,7 @@
   "training.contents.count": "{n} secciones",
   "training.section_link_aria": "Enlace a esta sección: {section}",
   "training.back_to_top": "Volver arriba",
-  "training.spanish_note": "La edición en español de las guías viene en camino. Mientras tanto, abajo está la guía en inglés.",
+  "training.spanish_note": "La guía principal sigue en inglés. Las novedades del 8 de octubre están en español al final de cada guía.",
   "training.none": "Todavía no hay una guía escrita para tu puesto. Pregúntale a tu gerente qué leer.",
   "training.build.entry.title": "Aprende el armado",
   "training.build.entry.sub": "Paso a paso: qué va, cuánto y cómo.",
