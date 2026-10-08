@@ -93,3 +93,11 @@ Assume a 12-hour pinger window, roughly uniform arrivals within it, and one nigh
 
 For a 24-hour/five-minute schedule with arrivals spread over that window, `345 * (288/2 + 24 + 3) = 58,995` memberships gives about **20.4 MB/day**. Capturing full days after closing increases the half-day assumption further. Do not read five-minute debounce as a promise of low storage: 77 MB free at the supplied 423/500 MB usage is only roughly **7-11 days** at the 12-hour estimates before other growth. CC should measure per-table `pg_total_relation_size` deltas over a normal day before relying on this forecast. No retention/deletion policy is introduced by this change.
 Week 1 / 0223: modifiedDate cursor, durable backlog, lease/fencing, immutable generations, selection schema v2 and snapshot-linked catering projection. Week 2 / 0224, day 7+: revoke legacy grants after CC closes rollback. Full-day API volume, retention and deployment timing remain operational checks. Local unit tests do not claim live/provider or SQL execution.
+
+## Cutover record (2026-10-07)
+
+- 0222 applied to prod (20261008013030); Stage A (#401) + Stages B/C (#403) merged; seed 45 (7 channel labels) on prod; all 25 dining labels reviewed.
+- Depletion rebuilt from capture for 2026-07-23..2026-10-06: 152/152 shop-days success, 0 degraded (~13 MB).
+- Gate: 150/152 passed. The 2 failures (MEP 2026-08-01, EM 2026-08-06) are test-fixture rows in the legacy ledger (check_guid `check-1`..`check-4`, generic items, written in one instant): the capture is correct and the legacy ledger over-counted those days. Purge them when legacy write grants are retired (0224).
+- Intraday capture verified live before the flip (today + yesterday captured at 21:40 ET).
+- **Flipped:** Vercel production `DEPLETION_SOURCE=capture` (Juan's word: "switch now"). Rollback = delete the var + redeploy; backfill gap days with the legacy nightly `?date=`.
