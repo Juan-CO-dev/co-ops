@@ -12,13 +12,17 @@
  * not used):
  *   GET /labor/v1/timeEntries?businessDate=YYYYMMDD → TimeEntry[]
  *     guid, deleted, businessDate ("yyyyMMdd"), inDate / outDate (ISO, "+0000" offsets),
- *     employeeReference.guid, jobReference.guid, regularHours, overtimeHours, unpaidBreakTime,
- *     autoClockedOut, modifiedDate — and hourlyWage / tips / sales, which are dropped.
+ *     employeeReference.guid, jobReference.guid, regularHours, overtimeHours, breaks[] (inDate,
+ *     outDate, paid, missed), autoClockedOut, modifiedDate — and hourlyWage / tips / sales, which
+ *     are dropped. With modifiedStartDate/modifiedEndDate + includeArchived=true it also returns
+ *     archived entries (deleted=true) — the only way an archive reaches us (Astra r2 P2).
  *   GET /labor/v1/jobs → Job[] (guid, title, deleted)
  *   GET /labor/v1/employees → Employee[] (guid, firstName, chosenName; nothing else is read)
- * UNSURE (noted for CC): whether regularHours excludes unpaid breaks in every config (we prefer
- * Toast's regular + overtime and fall back to (out − in) − unpaidBreakTime); whether timeEntries
- * paginates past a large day (CO days are ~8-9 rows per shop; no paging header is followed).
+ * Hours: Toast's regular + overtime when present; otherwise (out − in) minus the UNPAID breaks in
+ * the documented breaks[] (paid=false, not missed, both instants present). Anything insufficient —
+ * no out time, no breaks array, an unpaid break with a missing instant — is hours = unavailable
+ * (null), never a guess. UNSURE (for CC's probe): whether timeEntries paginates past a large day
+ * (CO days are ~8-9 rows per shop; no paging header is followed).
  */
 
 export interface LaborEntryRow {
@@ -79,22 +83,43 @@ export function employeeFirstNames(raw: unknown): Map<string, string> {
   return out;
 }
 
-/** Hours for one entry: Toast's regular + overtime, else (out − in) − unpaid break; open = null. */
+/**
+ * Unpaid break hours from the documented breaks[]: paid === false and not missed, with both
+ * instants. null when it cannot be known (no array, or an unpaid break missing an instant).
+ */
+export function unpaidBreakHours(breaks: unknown): number | null {
+  if (!Array.isArray(breaks)) return null;
+  let h = 0;
+  for (const b of breaks.map(obj)) {
+    if (b.paid !== false || b.missed === true) continue;
+    const i = toastInstant(b.inDate); const o = toastInstant(b.outDate);
+    if (!i || !o) return null;
+    const d = (Date.parse(o) - Date.parse(i)) / 3_600_000;
+    if (d < 0) return null;
+    h += d;
+  }
+  return h;
+}
+
+/** Hours for one entry: Toast's regular + overtime, else (out − in) − unpaid breaks[]; unknown = null. */
 export function entryHours(e: Row, inAt: string, outAt: string | null): number | null {
   const reg = num(e.regularHours); const ot = num(e.overtimeHours);
   if (reg !== null) return Math.round((reg + (ot ?? 0)) * 100) / 100;
   if (!outAt) return null;
-  const h = (Date.parse(outAt) - Date.parse(inAt)) / 3_600_000 - (num(e.unpaidBreakTime) ?? 0);
+  const unpaid = unpaidBreakHours(e.breaks);
+  if (unpaid === null) return null;
+  const h = (Date.parse(outAt) - Date.parse(inAt)) / 3_600_000 - unpaid;
   return h >= 0 ? Math.round(h * 100) / 100 : null;
 }
 
 /**
- * Raw timeEntries → the minimal rows we store. An entry on another business date is refused (the
- * endpoint was asked for one day); an entry with no guid / employee / in time is skipped and
- * counted, never guessed.
+ * Raw timeEntries → the minimal rows we store. With a businessDate (the day query) an entry on
+ * another date is refused; with null (the modification window) every entry is accepted under ITS
+ * OWN business date, which it must carry. An entry with no guid / employee / in time / date is
+ * skipped and counted, never guessed. An archived entry (deleted=true) is kept as a tombstone row.
  */
 export function normalizeTimeEntries(
-  raw: unknown, ctx: { locationId: string; businessDate: string; jobs: ReadonlyMap<string, string>; employees: ReadonlyMap<string, string> },
+  raw: unknown, ctx: { locationId: string; businessDate: string | null; jobs: ReadonlyMap<string, string>; employees: ReadonlyMap<string, string> },
 ): { rows: LaborEntryRow[]; skipped: number } {
   if (!Array.isArray(raw)) throw new Error("toast_labor_bad_payload");
   const rows: LaborEntryRow[] = [];
@@ -104,8 +129,8 @@ export function normalizeTimeEntries(
     const employee = text(obj(e.employeeReference).guid);
     const inAt = toastInstant(e.inDate);
     const day = laborBusinessDate(e.businessDate) ?? ctx.businessDate;
-    if (!guid || !employee || !inAt) { skipped += 1; continue; }
-    if (day !== ctx.businessDate) throw new Error("toast_labor_business_date_mismatch");
+    if (!guid || !employee || !inAt || !day) { skipped += 1; continue; }
+    if (ctx.businessDate !== null && day !== ctx.businessDate) throw new Error("toast_labor_business_date_mismatch");
     const outAt = toastInstant(e.outDate);
     const job = text(obj(e.jobReference).guid);
     rows.push({

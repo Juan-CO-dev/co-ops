@@ -28,7 +28,7 @@ describe("Toast labor normalizer (fixtures shaped like the real timeEntries / jo
   });
 
   it("keeps only the minimal fields: no wage, tips or sales survive normalisation", () => {
-    expect(rows).toHaveLength(4);
+    expect(rows).toHaveLength(5);
     expect(skipped).toBe(1);
     const json = JSON.stringify(rows);
     for (const banned of ["hourlyWage", "Tips", "Sales", "wage", "16.5", "López"]) expect(json).not.toContain(banned);
@@ -37,6 +37,27 @@ describe("Toast labor normalizer (fixtures shaped like the real timeEntries / jo
       job_guid: "job-line", job_name: "Line Cook", in_at: "2026-10-07T12:00:00.000Z", out_at: "2026-10-07T20:30:00.000Z",
       hours: 8, overtime_hours: 0, auto_clocked_out: false, deleted: false, source_modified_at: "2026-10-07T20:31:00.000Z",
     });
+  });
+
+  it("no regularHours: (out - in) minus the UNPAID breaks[] only (Astra r2 P2) — 8 h with a 30-min unpaid + 15-min paid break = 7.5", () => {
+    expect(rows.find((r) => r.time_entry_guid === "te-5")!.hours).toBe(7.5);
+  });
+
+  it("insufficient break data = hours unavailable, never a guess", () => {
+    const at = ["2026-10-07T12:00:00.000Z", "2026-10-07T20:00:00.000Z"] as const;
+    expect(entryHours({ breaks: [] }, ...at)).toBe(8);
+    expect(entryHours({}, ...at)).toBeNull(); // no breaks array at all
+    expect(entryHours({ breaks: [{ paid: false, inDate: "2026-10-07T16:00:00.000+0000", outDate: null, missed: false }] }, ...at)).toBeNull();
+    expect(entryHours({ breaks: [{ paid: false, inDate: "2026-10-07T16:00:00.000+0000", outDate: null, missed: true }] }, ...at)).toBe(8); // a missed break was not taken
+    expect(entryHours({ unpaidBreakTime: 0.5, breaks: [] }, ...at)).toBe(8); // the undocumented field is never read
+  });
+
+  it("the modification window accepts any business date and keeps archive tombstones (deleted=true)", () => {
+    const { rows: m } = normalizeTimeEntries([
+      { guid: "te-old", deleted: true, businessDate: "20261005", employeeReference: { guid: "emp-ana" }, jobReference: { guid: "job-line" }, inDate: "2026-10-05T12:00:00.000+0000", outDate: "2026-10-05T20:00:00.000+0000", regularHours: 8, overtimeHours: 0 },
+      { guid: "te-nodate", deleted: true, employeeReference: { guid: "emp-ana" }, inDate: "2026-10-05T12:00:00.000+0000" },
+    ], { locationId: LOC, businessDate: null, jobs, employees });
+    expect(m.map((r) => [r.time_entry_guid, r.business_date, r.deleted])).toEqual([["te-old", "2026-10-05", true]]);
   });
 
   it("an open entry (still clocked in) has no hours yet; Toast's regular + overtime win over clock math", () => {
@@ -58,7 +79,6 @@ describe("Toast labor normalizer (fixtures shaped like the real timeEntries / jo
     expect(toastInstant(null)).toBeNull();
     expect(() => toastInstant("nope")).toThrow("toast_labor_invalid_timestamp");
     expect(laborBusinessDate(20261007)).toBe("2026-10-07");
-    expect(entryHours({ unpaidBreakTime: 0.5 }, "2026-10-07T12:00:00.000Z", "2026-10-07T18:00:00.000Z")).toBe(5.5);
     expect(weekStart("2026-10-07")).toBe("2026-10-05"); // Wed → Mon
     expect(weekStart("2026-10-11")).toBe("2026-10-05"); // Sun → Mon
     expect(weekStart("2026-10-05")).toBe("2026-10-05");
@@ -115,7 +135,7 @@ describe("the nightly digest's Labor section", () => {
       "issue|Overtime|Ana 11 h today (over 10 h)",
     ]);
     const none = composeShopSections({ ...base, v2: v2Fixture({ labor: unavailable("no_labor") }) }, "en", "https://x.test", false);
-    expect(none.find((x) => x.title === "Labor")!.lines[0]!.text).toBe("No Toast time entries pulled for this day yet");
+    expect(none.find((x) => x.title === "Labor")!.lines[0]!.text).toBe("Labor not available yet");
     expect(composeShopSections({ ...base, v2: v2Fixture() }, "en", "https://x.test", false).some((x) => x.title === "Labor")).toBe(false);
   });
 });
