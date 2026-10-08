@@ -15,15 +15,26 @@ export interface RegisteredJob {
   job: string;
   cadenceMinutes: number;
   catchUp?: DailyCatchUpEntry;
+  /**
+   * A daily job's scheduled UTC run ("HH:MM") when it has NO catch-up entry of its own. With no
+   * heartbeat on record the watch expects the first one by this time + the 90-minute Hobby grace
+   * (the catch-up grace), not by Eastern midnight (digest polish item 13: toast-order-capture
+   * alerted at 01:46 ET before its first 09:00 UTC nightly had run).
+   */
+  dueUtc?: string;
   window?: { startHourET: number; endHourET: number };
   source: "vercel" | "pinger";
 }
+
+/** The Hobby grace after a daily job's scheduled time (shared by catch-up and the watch). */
+export const DAILY_DUE_GRACE_MINUTES = 90;
 
 export const JOBS_REGISTRY = [
   // Cutover keeps scheduler identities stable: capture is the provider writer;
   // sales-pull now proves T-1..T-3 capture -> depletion -> shadow pars.
   // sales-today captures today/yesterday; catering-scan checks the persisted sink.
-  { job: "toast-order-capture", cadenceMinutes: 1440, source: "vercel" },
+  // Its cron heartbeat is written by the capture inside the 09:00 UTC sales pull.
+  { job: "toast-order-capture", cadenceMinutes: 1440, source: "vercel", dueUtc: "09:00" },
   { job: "toast-sales-pull", cadenceMinutes: 1440, source: "vercel", catchUp: { job: "toast-sales-pull", dueUtc: "09:00" } }, // 09:00 UTC
   { job: "prune-sessions", cadenceMinutes: 1440, source: "vercel", catchUp: { job: "prune-sessions", dueUtc: "08:30" } }, // 08:30 UTC
   { job: "parse-receipts", cadenceMinutes: 1440, source: "vercel", catchUp: { job: "parse-receipts", dueUtc: "09:45" } }, // 09:45 UTC

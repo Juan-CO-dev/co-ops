@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { decideJobWatch, easternBoundary, easternDay } from "@/lib/job-watch";
+import { dailyDueUtc, decideJobWatch, easternBoundary, easternDay } from "@/lib/job-watch";
 import { JOBS_REGISTRY, type RegisteredJob } from "@/lib/jobs-registry";
 
 const JOB_WATCH_SCHEDULE = "0 17 * * *"; // 12:00 EST / 13:00 EDT — inside the 06–22 ET pinger window either side of DST
@@ -116,5 +116,29 @@ describe("LRA-228: cadence, Eastern windows, and once-per-day decisions", () => 
     // Daily cron: last success 09:00 UTC on the 8th; the deadline is 48 h later, so the 9th's check is quiet and the 10th's alerts.
     expect(decideJobWatch(daily, new Date("2026-09-09T17:00:00Z"), "2026-09-08T09:00:00Z", null).silent).toBe(false);
     expect(decideJobWatch(daily, new Date("2026-09-10T17:00:00Z"), "2026-09-08T09:00:00Z", null).silent).toBe(true);
+  });
+});
+
+describe("digest polish item 13: a daily job with no history is expected after its first scheduled run", () => {
+  const capture = JOBS_REGISTRY.find((job) => job.job === "toast-order-capture")!;
+
+  it("toast-order-capture is scheduled like the nightly (09:00 UTC) it rides inside", () => {
+    expect(dailyDueUtc(capture)).toBe("09:00");
+    expect(dailyDueUtc(daily)).toBe("09:00");
+  });
+
+  it("01:46 ET before the first nightly is NOT silent (the 10-08 false alarm)", () => {
+    const d = decideJobWatch(capture, new Date("2026-10-08T05:46:00Z"), null, null);
+    expect(d.silent).toBe(false);
+    expect(d.expectedBy).toBe("2026-10-08T10:30:00.000Z");
+  });
+
+  it("past 09:00 UTC + 90 min with still no heartbeat, it alerts", () => {
+    expect(decideJobWatch(capture, new Date("2026-10-08T10:30:01Z"), null, null).shouldAlert).toBe(true);
+  });
+
+  it("once the nightly has written a heartbeat, the 2x-cadence rule applies as before", () => {
+    expect(decideJobWatch(capture, new Date("2026-10-09T17:00:00Z"), "2026-10-08T09:02:00Z", null).silent).toBe(false);
+    expect(decideJobWatch(capture, new Date("2026-10-10T09:03:00Z"), "2026-10-08T09:02:00Z", null).silent).toBe(true);
   });
 });
