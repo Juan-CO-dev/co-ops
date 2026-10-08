@@ -19,6 +19,7 @@ import {
 } from "@/lib/report-recipients-shared";
 import { DIGEST_KINDS, resolveDigestRecipients, type DigestKind, type DigestSettings, type DigestSkipReason } from "@/lib/report-digests-shared";
 import { loadDigestDirectory, loadDigestSettings } from "@/lib/report-digests";
+import { isPackageEligibleRole } from "@/lib/report-package-shared";
 
 type Sb = ReturnType<typeof getServiceRoleClient>;
 
@@ -56,9 +57,11 @@ export async function saveReportRecipient(sb: Sb, args: { actor: RecipientActor;
     if ((data ?? []).length !== input.locationIds.length) throw new RecipientError(400, "invalid_location");
   }
   if (input.kind === "internal") {
-    const { data, error } = await sb.from("users").select("id").eq("id", input.userId!).maybeSingle();
+    const { data, error } = await sb.from("users").select("id, role").eq("id", input.userId!).maybeSingle<{ id: string; role: string }>();
     if (error) throw new Error(`users: ${error.message}`);
     if (!data) throw new RecipientError(400, "user_required");
+    // CC ruling (Astra P1): staff package rows are for the owner only; the send path re-checks it.
+    if (input.packages.length > 0 && !isPackageEligibleRole(data.role)) throw new RecipientError(400, "package_owner_only");
   }
 
   const audited = { actorId: actor.userId, actorRole: actor.role, resourceTable: "report_recipients", ipAddress: args.ipAddress ?? null, userAgent: args.userAgent ?? null };

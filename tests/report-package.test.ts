@@ -7,6 +7,7 @@ import {
   cashSection,
   cateringSection,
   inventorySection,
+  PLATFORM_PAID_INFERRED,
   packagePeriod,
   periodicPackageDue,
   purchasesSection,
@@ -19,13 +20,20 @@ import {
 import { PACKAGE_SECTIONS } from "@/lib/report-recipients-shared";
 import { packageEmail, renderPackageFiles } from "@/lib/report-package";
 
+/** The text pdfkit wrote (uncompressed): every <hex> string in order. Wrapping drops break spaces, so compare squashed. */
+function pdfText(pdf: Buffer): string {
+  return [...pdf.toString("latin1").matchAll(/<([0-9a-fA-F]+)>/g)].map((m) => Buffer.from(m[1]!, "hex").toString("latin1")).join("");
+}
+const squash = (t: string) => t.replace(/\s+/g, "");
+
 const A: ShopRef = { id: "aaaaaaaa-0000-4000-8000-000000000001", code: "MEP", name: "Capitol Hill" };
 const B: ShopRef = { id: "bbbbbbbb-0000-4000-8000-000000000002", code: "EM", name: "P Street" };
 
 function input(over: Partial<PackageInput> = {}): PackageInput {
   return {
     shops: [A, B], from: "2026-10-06", to: "2026-10-06", cash: [], leads: [], quotes: [], payments: [], deliveries: [], deliveryLines: [],
-    credits: [], waste: [], inventoryEvents: [], inventoryLines: [], baseUrl: "https://ops.example.com", ...over,
+    credits: [], waste: [], inventoryEvents: [], inventoryLines: [], baseUrl: "https://ops.example.com",
+    loaded: ["sales", "cash", "catering", "purchases", "waste", "inventory"], ...over,
   };
 }
 const csvLines = (key: keyof typeof PACKAGE_COLUMNS, rows: ReturnType<typeof salesSection>) =>
@@ -45,17 +53,17 @@ describe("the accountant contract (column names are pinned)", () => {
     const keys = (s: keyof typeof PACKAGE_COLUMNS) => PACKAGE_COLUMNS[s].map((c) => c.key);
     expect(keys("sales")).toEqual(expect.arrayContaining(["gross", "discounts", "comps", "voids", "refunds", "net", "sales_tax", "tips", "service_fees", "delivery_fees", "gift_cards", "payment_type", "channel"]));
     expect(keys("cash")).toEqual(expect.arrayContaining(["projected", "drawer_total", "float", "deposit", "over_short", "cash_tips", "paid_ins", "paid_outs", "payment_type"]));
-    expect(keys("catering")).toEqual(expect.arrayContaining(["subtotal", "delivery_fee", "service_charge", "gratuity", "tax", "total", "deposit", "paid_stripe", "paid_platform", "refunded", "outstanding", "payment_type"]));
-    expect(keys("purchases")).toEqual(expect.arrayContaining(["invoice_total", "lines_total", "credit_amount"]));
+    expect(keys("catering")).toEqual(expect.arrayContaining(["subtotal", "delivery_fee", "service_charge", "gratuity", "tax", "total", "deposit", "paid_stripe", "platform_paid_inferred", "payment_basis", "refunded", "outstanding", "payment_type"]));
+    expect(keys("purchases")).toEqual(expect.arrayContaining(["invoice_total", "lines_total", "sku", "qty", "unit", "unit_price", "extended", "receipt_link", "credit_amount", "credit_id"]));
   });
 
   it("snapshot", () => {
     expect(Object.fromEntries(Object.entries(PACKAGE_COLUMNS).map(([k, cols]) => [k, cols.map((c) => c.key).join(",")]))).toMatchInlineSnapshot(`
       {
         "cash": "business_date,location_code,location_name,currency,report_id,projected,drawer_total,float,deposit,over_short,cash_tips,count_method,paid_ins,paid_outs,paid_ins_outs_status,closer,signed_at,payment_type",
-        "catering": "business_date,location_code,location_name,currency,lead_id,external_ref,lead_source,stage,money_status,customer,headcount,quote_id,quote_version,subtotal,delivery_fee,service_charge,gratuity,tax,total,deposit,value,value_basis,paid_total,paid_stripe,paid_manual,paid_platform,refunded,outstanding,payment_type",
+        "catering": "business_date,location_code,location_name,currency,lead_id,external_ref,lead_source,stage,money_status,customer,headcount,quote_id,quote_version,subtotal,delivery_fee,service_charge,gratuity,tax,total,deposit,value,value_basis,paid_total,paid_stripe,paid_manual,platform_paid_inferred,payment_basis,refunded,outstanding,payment_type",
         "inventory": "business_date,location_code,location_name,currency,row_type,count_event_id,counted_at,counted_by,sku_id,sku,level_label,qty,resolved_oz,cost_per_oz,value,cost_status",
-        "purchases": "business_date,location_code,location_name,currency,kind,delivery_id,vendor_or_store,invoice_number,invoice_total,line_count,priced_line_count,lines_total,has_receipt_photo,detail_link,po_code,match_state,delivery_status,received_by,credit_count,credit_amount,credit_status",
+        "purchases": "business_date,location_code,location_name,currency,row_type,kind,delivery_id,vendor_or_store,invoice_number,invoice_total,line_count,priced_line_count,lines_total,line_id,sku_id,sku,qty,unit,unit_price,extended,has_receipt_photo,receipt_link,detail_link,po_code,match_state,delivery_status,received_by,credit_id,credit_reason,credit_amount,credit_status,credit_delivery_date",
         "rollup_cash_variance": "period_start,period_end,location_code,location_name,currency,cash_reports,deposits,over_short_total,over_total,short_total,cash_tips",
         "rollup_purchases_by_vendor": "period_start,period_end,location_code,location_name,currency,kind,vendor_or_store,deliveries,invoice_total,lines_total,credits_total",
         "rollup_sales_by_tax_category": "period_start,period_end,location_code,location_name,currency,tax_category,status,net_sales,sales_tax",
@@ -113,32 +121,67 @@ describe("catering (0195 money split)", () => {
     });
   });
 
-  it("an ezCater order with no app quote is paid on the platform: value = estimate, outstanding 0", () => {
-    expect(rows[1]).toMatchObject({ money_status: "to_earn", value: 45000, value_basis: "estimated_revenue", paid_platform: 45000, paid_total: 45000, outstanding: 0, payment_type: "ezcater", total: null, tax: null });
+  it("an ezCater order with no app quote: the platform payment is INFERRED, labelled, and never counted as paid", () => {
+    expect(rows[1]).toMatchObject({
+      money_status: "to_earn", value: 45000, value_basis: "estimated_revenue", platform_paid_inferred: 45000,
+      payment_basis: PLATFORM_PAID_INFERRED, paid_total: 0, outstanding: null, payment_type: "ezcater", total: null, tax: null,
+    });
+    expect(PLATFORM_PAID_INFERRED).toBe("platform-paid (inferred)");
+    expect(rows[0]).toMatchObject({ payment_basis: "recorded", platform_paid_inferred: null });
+  });
+
+  it("the inferred label reaches the CSV and the PDF", async () => {
+    const csv = toCsv(PACKAGE_COLUMNS.catering, rows);
+    expect(csv).toContain(",platform-paid (inferred),");
+    const [pdf] = (await renderPackageFiles({
+      tables: [{ key: "catering", columns: PACKAGE_COLUMNS.catering, rows }], recipient: { formats: ["pdf"], language: "en", allShops: true, name: "Pete" },
+      shops: [A, B], from: "2026-10-06", to: "2026-10-06", cadence: "daily_close", at: new Date("2026-10-07T03:00:00Z"), compress: false,
+    }))!;
+    expect(squash(pdfText(pdf!.content))).toContain(squash("platform-paid (inferred)"));
   });
 });
 
-describe("purchases: deliveries AND store runs, with credits", () => {
-  const rows = purchasesSection(input({
-    deliveries: [
-      { id: "d1", location_id: A.id, delivery_date: "2026-10-06", vendor_name: "Baldor", source_kind: "vendor", invoice_number: "INV-1", invoice_total: 412.37, match_state: "discrepant", delivery_status: "complete", receipt_url: "receipts/x.jpg", received_by: "Ana", po_code: "MEP-20261005-BALDOR" },
-      { id: "d2", location_id: B.id, delivery_date: "2026-10-06", vendor_name: "Costco", source_kind: "store", invoice_number: null, invoice_total: null, match_state: "counted_only", delivery_status: "complete", receipt_url: null, received_by: "Bo", po_code: null },
-    ],
-    deliveryLines: [
-      { delivery_id: "d1", qty_received: 2, unit_price: 100.5 }, { delivery_id: "d1", qty_received: 1, unit_price: null },
-      { delivery_id: "d2", qty_received: 3, unit_price: 4.99 },
-    ],
-    credits: [
-      { id: "cr1", location_id: A.id, delivery_id: "d1", vendor_name: "Baldor", source_kind: "vendor", amount_cents: 2010, status: "open", created_day: "2026-10-06" },
-      { id: "cr2", location_id: A.id, delivery_id: null, vendor_name: "Baldor", source_kind: "vendor", amount_cents: 999, status: "resolved_credit", created_day: "2026-10-06" },
-    ],
-  }));
-  it("each delivery: invoice total, priced lines total, receipt flag, detail link, credits", () => {
-    expect(rows[0]).toMatchObject({ kind: "vendor", invoice_total: 41237, line_count: 2, priced_line_count: 1, lines_total: 20100, has_receipt_photo: true, detail_link: "https://ops.example.com/operations/receiving/d1", credit_count: 1, credit_amount: 2010, credit_status: "open" });
+describe("purchases: deliveries AND store runs, line detail, credits as their own ledger rows", () => {
+  const d1 = { id: "d1", location_id: A.id, delivery_date: "2026-10-06", vendor_name: "Baldor", source_kind: "vendor" as const, invoice_number: "INV-1", invoice_total: 412.37, match_state: "discrepant", delivery_status: "complete", receipt_url: "/api/photos/p-1", received_by: "Ana", po_code: "MEP-20261005-BALDOR" };
+  const d2 = { id: "d2", location_id: B.id, delivery_date: "2026-10-06", vendor_name: "Costco", source_kind: "store" as const, invoice_number: null, invoice_total: null, match_state: "counted_only", delivery_status: "complete", receipt_url: null, received_by: "Bo", po_code: null };
+  const line = (id: string, delivery_id: string, sku: string, qty: number, unit_price: number | null, unit: string | null = "case") => ({ id, delivery_id, sku_id: `sku-${sku}`, sku, unit, qty_received: qty, unit_price });
+  const credit = (id: string, delivery_id: string | null, amount: number, created_day: string, delivery_date: string | null = null) => ({
+    id, location_id: A.id, delivery_id, delivery_date, vendor_name: "Baldor", source_kind: "vendor" as const, reason: "short", amount_cents: amount, status: "open", created_day,
   });
-  it("a store run is kind store_run; a credit filed with no delivery is its own row", () => {
-    expect(rows[1]).toMatchObject({ kind: "store_run", vendor_or_store: "Costco", lines_total: 1497, has_receipt_photo: false, invoice_total: null, credit_amount: null });
-    expect(rows[2]).toMatchObject({ kind: "credit", vendor_or_store: "Baldor", credit_amount: 999, credit_status: "resolved_credit" });
+  const rows = purchasesSection(input({
+    deliveries: [d1, d2],
+    deliveryLines: [line("l1", "d1", "Ham", 2, 100.5), line("l2", "d1", "Turkey", 1, null), line("l3", "d2", "Bags", 3, 4.99, null)],
+    credits: [credit("cr1", "d1", 2010, "2026-10-06", "2026-10-06"), credit("cr2", null, 999, "2026-10-06")],
+  }));
+  const of = (type: string) => rows.filter((r) => r.row_type === type);
+
+  it("each delivery row: invoice total, priced lines total, the authenticated receipt link and the detail link", () => {
+    expect(of("delivery")[0]).toMatchObject({ kind: "vendor", invoice_total: 41237, line_count: 2, priced_line_count: 1, lines_total: 20100, has_receipt_photo: true,
+      receipt_link: "https://ops.example.com/api/photos/p-1", detail_link: "https://ops.example.com/operations/receiving/d1" });
+    expect(of("delivery")[0]).not.toHaveProperty("credit_amount");
+    expect(of("delivery")[1]).toMatchObject({ kind: "store_run", vendor_or_store: "Costco", lines_total: 1497, has_receipt_photo: false, receipt_link: null });
+  });
+
+  it("each line: SKU, qty, unit, unit price, extended (empty, not 0, when unpriced)", () => {
+    expect(of("line").map((r) => [r.delivery_id, r.sku, r.qty, r.unit, r.unit_price, r.extended])).toEqual([
+      ["d1", "Ham", 2, "case", 10050, 20100], ["d1", "Turkey", 1, "case", null, null], ["d2", "Bags", 3, null, 499, 1497],
+    ]);
+  });
+
+  it("every credit is its own row dated by filing, keeping its delivery reference", () => {
+    expect(of("credit")).toMatchObject([
+      { credit_id: "cr1", delivery_id: "d1", credit_delivery_date: "2026-10-06", credit_amount: 2010, business_date: "2026-10-06", credit_reason: "short" },
+      { credit_id: "cr2", delivery_id: null, credit_amount: 999 },
+    ]);
+  });
+
+  it("an October credit against a September delivery lands in October, once; the rollup does not double count", () => {
+    const october = input({ from: "2026-10-01", to: "2026-10-31", deliveries: [], deliveryLines: [], credits: [credit("cr9", "d-sep", 1500, "2026-10-03", "2026-09-28")] });
+    const rowsOct = purchasesSection(october);
+    expect(rowsOct).toMatchObject([{ row_type: "credit", business_date: "2026-10-03", delivery_id: "d-sep", credit_delivery_date: "2026-09-28" }]);
+    const both = input({ from: "2026-10-01", to: "2026-10-31", deliveries: [d1], deliveryLines: [line("l1", "d1", "Ham", 2, 100.5)], credits: [credit("cr1", "d1", 2010, "2026-10-06", "2026-10-06")] });
+    const rollup = buildPackageTables(both, ["purchases"], "monthly_1st").find((t) => t.key === "rollup_purchases_by_vendor")!.rows;
+    expect(rollup[0]).toMatchObject({ vendor_or_store: "Baldor", deliveries: 1, invoice_total: 41237, lines_total: 20100, credits_total: 2010 });
   });
 });
 
@@ -209,8 +252,23 @@ describe("package recipients", () => {
     expect(resolve([{ ...accountant, active: true, email: "books@example.com", location_ids: [B.id] }])[0]).toMatchObject({ locationIds: [B.id], allShops: false });
   });
 
-  it("a GM's own row covers only their shops; an inactive user is skipped; the cadence must match; no packages = not a recipient", () => {
-    expect(resolve([row({ user_id: "alex" })])[0]).toMatchObject({ locationIds: [A.id], language: "es", skip: null });
+  it("CC ruling: only the owner gets a staff package — a GM row is an out_of_scope skip with NO shops", () => {
+    expect(resolve([row({ user_id: "alex" })])[0]).toMatchObject({ skip: "out_of_scope", locationIds: [] });
+    expect(resolve([row({ user_id: "alex", location_ids: [B.id] })])[0]).toMatchObject({ skip: "out_of_scope", locationIds: [] });
+  });
+
+  it("current authorization is re-derived on every send: configured shops only NARROW it; a demoted owner loses the files", () => {
+    const narrowed = resolvePackageRecipients({ rows: [row({ location_ids: [B.id] })], users, memberships: [], locationIds: [A.id, B.id], cadence: "daily_close" });
+    expect(narrowed[0]).toMatchObject({ locationIds: [B.id], skip: null });
+    const demoted = users.map((u) => (u.id === "pete" ? { ...u, role: "gm" } : u));
+    const after = resolvePackageRecipients({ rows: [row({ location_ids: [A.id, B.id] })], users: demoted, memberships: [{ userId: "pete", locationId: A.id }], locationIds: [A.id, B.id], cadence: "daily_close" });
+    expect(after[0]).toMatchObject({ skip: "out_of_scope", locationIds: [] });
+    // a stored shop that is no longer active is dropped, never sent
+    const closed = resolvePackageRecipients({ rows: [row({ location_ids: [B.id] })], users, memberships: [], locationIds: [A.id], cadence: "daily_close" });
+    expect(closed[0]).toMatchObject({ skip: "no_locations", locationIds: [] });
+  });
+
+  it("an inactive user is skipped; the cadence must match; no packages = not a recipient", () => {
     expect(resolve([row({ user_id: "gone" })])[0]).toMatchObject({ skip: "inactive" });
     expect(resolve([row({})], "weekly_mon")).toEqual([]);
     expect(resolve([row({ packages: [] })])).toEqual([]);
@@ -218,14 +276,18 @@ describe("package recipients", () => {
 });
 
 describe("tables and files", () => {
-  it("daily = the recipient's sections only; weekly/monthly add the four rollups", () => {
+  it("daily = the recipient's sections only; weekly/monthly add ONLY the rollups of selected AND loaded sections", () => {
     expect(buildPackageTables(input(), ["sales", "cash"], "daily_close").map((t) => t.key)).toEqual(["sales", "cash"]);
-    expect(buildPackageTables(input(), ["cash"], "weekly_mon").map((t) => t.key)).toEqual(["cash", ...ROLLUP_SECTIONS]);
+    expect(buildPackageTables(input(), ["cash"], "weekly_mon").map((t) => t.key)).toEqual(["cash", "rollup_cash_variance"]);
+    expect(buildPackageTables(input(), ["inventory"], "weekly_mon").map((t) => t.key)).toEqual(["inventory"]);
+    expect(buildPackageTables(input(), [...PACKAGE_SECTIONS], "monthly_1st").map((t) => t.key)).toEqual([...PACKAGE_SECTIONS, ...ROLLUP_SECTIONS]);
+    // a section that was asked for but did not load produces no rollup ("zero activity" would be a lie)
+    expect(buildPackageTables(input({ loaded: ["sales"] }), ["sales", "cash"], "weekly_mon").map((t) => t.key)).toEqual(["sales", "cash", "rollup_sales_by_tax_category"]);
   });
 
   it("rollup cash variance sums per shop; sales by tax category is not_yet_available", () => {
     const c = (id: string, os: number) => ({ id, location_id: A.id, report_date: "2026-10-05", projected_cents: 0, drawer_total_cents: 0, float_cents: 0, deposit_cents: 1000, over_short_cents: os, cash_tips_cents: 100, count_method: "hand", closer: null, signed_at: "2026-10-06T00:00:00Z" });
-    const tables = buildPackageTables(input({ from: "2026-10-05", to: "2026-10-11", cash: [c("1", 300), c("2", -500)] }), ["cash"], "weekly_mon");
+    const tables = buildPackageTables(input({ from: "2026-10-05", to: "2026-10-11", cash: [c("1", 300), c("2", -500)] }), ["sales", "cash"], "weekly_mon");
     const variance = tables.find((t) => t.key === "rollup_cash_variance")!.rows;
     expect(variance[0]).toMatchObject({ location_code: "MEP", cash_reports: 2, deposits: 2000, over_short_total: -200, over_total: 300, short_total: -500, cash_tips: 200 });
     expect(variance[1]).toMatchObject({ location_code: "EM", cash_reports: 0, over_short_total: 0 });

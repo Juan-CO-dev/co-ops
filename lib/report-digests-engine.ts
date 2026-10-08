@@ -481,7 +481,32 @@ class Run {
    * inside 23 h then failed_ambiguous, and the never-silent alert. Nothing here bypasses them.
    */
   private packageRows: Promise<PackageRecipientRow[]> | null = null;
-  async packages(cadence: PackageCadence, day: string): Promise<void> {
+  /**
+   * Weekly / monthly package sends still OUTSTANDING in the loaded log (Astra P2): an ambiguous
+   * attempt (the same-key retry window is checked by sendOnce), or a released 'failed' row (a
+   * compose / pre-attempt failure) under 23 h old, with no sent row for that recipient. These are
+   * retried on later days too — independently of periodicPackageDue, which only starts NEW sends.
+   */
+  outstandingPeriodic(): Array<{ cadence: PackageCadence; day: string; refs: Set<string> }> {
+    const now = this.io.now.getTime();
+    const byKey = new Map<string, { cadence: PackageCadence; day: string; refs: Set<string> }>();
+    for (const r of this.log) {
+      if (r.mode !== this.mode || (r.kind !== "package_weekly" && r.kind !== "package_monthly")) continue;
+      const open = r.outcome === "ambiguous" || (r.outcome === "failed" && now - Date.parse(r.attempted_at) < AMBIGUOUS_RETRY_HOURS * HOUR);
+      if (!open) continue;
+      const done = this.log.some((x) => x.kind === r.kind && x.business_day === r.business_day && x.recipient_ref === r.recipient_ref &&
+        x.mode === this.mode && (x.outcome === "sent" || x.outcome === "failed_ambiguous"));
+      if (done) continue;
+      const cadence: PackageCadence = r.kind === "package_weekly" ? "weekly_mon" : "monthly_1st";
+      const key = `${cadence}|${r.business_day}`;
+      const entry = byKey.get(key) ?? { cadence, day: r.business_day, refs: new Set<string>() };
+      entry.refs.add(r.recipient_ref);
+      byKey.set(key, entry);
+    }
+    return [...byKey.values()];
+  }
+
+  async packages(cadence: PackageCadence, day: string, onlyRefs?: ReadonlySet<string>): Promise<void> {
     const pio = this.io.packages;
     if (!pio) return;
     this.packageRows ??= pio.recipients();
@@ -490,6 +515,7 @@ class Run {
     });
     const kind = packageKindFor(cadence);
     for (const r of recipients) {
+      if (onlyRefs && !onlyRefs.has(r.ref)) continue;
       const outcome = await this.sendOnce(kind, day, r, null, (env) => pio.compose(r, cadence, day, env));
       if (outcome === "sent" || outcome === "failed" || outcome === "ambiguous") await pio.recordSend({ kind, day, ref: r.ref, outcome });
     }
@@ -559,7 +585,13 @@ async function finishTick(run: Run, days: string[], today: string): Promise<Dige
   }
   const catering = decideCatering(io.now, run.settings);
   if (catering.due) await run.catering(catering.day);
-  for (const periodic of periodicPackageDue(io.now)) await run.packages(periodic.cadence, periodic.day);
+  const due = periodicPackageDue(io.now);
+  for (const periodic of due) await run.packages(periodic.cadence, periodic.day);
+  // Retries of earlier weekly/monthly sends run whatever today is (Astra P2: Monday's failure retries Tuesday).
+  for (const open of run.outstandingPeriodic()) {
+    if (due.some((d) => d.cadence === open.cadence && d.day === open.day)) continue;
+    await run.packages(open.cadence, open.day, open.refs);
+  }
 
   const yesterday = addDays(today, -1);
   await run.watch("gm_shop", yesterday);

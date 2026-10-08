@@ -105,6 +105,7 @@ type SendFn = DigestIO["sendEmail"];
 function makeIO(opts: {
   now: string; store?: Store; provider?: Provider; settings?: Partial<DigestSettings>; finalized?: Record<string, string[]>;
   rows?: PackageRecipientRow[]; sendFails?: (subject: string) => boolean; composeThrows?: string; previewRecipient?: string | null;
+  composeFails?: (ref: string) => boolean;
   /** Called before the provider for each package send (to make that one call lost / dropped). */
   beforePackage?: (p: Provider) => void;
 }) {
@@ -118,6 +119,7 @@ function makeIO(opts: {
     recipients: async () => opts.rows ?? [peteRow, accountantRow],
     compose: async (r, cadence, day, env) => {
       if (opts.composeThrows) throw new Error(opts.composeThrows);
+      if (opts.composeFails?.(r.ref)) throw new Error("compose failed: transient read error");
       composed.push({ ref: r.ref, cadence, day, locations: r.locationIds });
       return {
         subject: `PACKAGE ${cadence} ${day}${env.previewFor ? " preview" : ""}`, html: "<p>files</p>", text: "files",
@@ -368,5 +370,55 @@ describe("cadences and the switch", () => {
     await runClosingDigestsWith(io, B.id, DAY);
     expect(packageMail(provider)).toEqual([]);
     expect(provider.deliveries.length).toBeGreaterThan(0);
+  });
+});
+
+describe("periodic retries continue past midnight (Astra P2)", () => {
+  const weekly = { ...peteRow, cadence: "weekly_mon" };
+  const second = { ...peteRow, id: "44444444-4444-4444-8444-444444444444", user_id: "own2", cadence: "weekly_mon" };
+  const weeklyMail = (p: Provider) => p.deliveries.filter((m) => m.subject === "PACKAGE weekly_mon 2026-10-12");
+
+  it("a Monday weekly that is ambiguous (no answer) is retried on TUESDAY with the same key — one email", async () => {
+    const store = new Store();
+    const provider = new Provider();
+    let dropped = false;
+    await runDigestTickWith(makeIO({ now: "2026-10-12T10:30:00Z", store, provider, rows: [weekly], beforePackage: (p) => { if (!dropped) { dropped = true; p.drop(1); } } }).io);
+    expect(store.pkg("2026-10-12")).toMatchObject([{ kind: "package_weekly", outcome: "ambiguous" }]);
+    const tuesday = makeIO({ now: "2026-10-13T08:00:00Z", store, provider, rows: [weekly] });
+    await runDigestTickWith(tuesday.io);
+    expect(weeklyMail(provider)).toHaveLength(1);
+    expect(store.pkg("2026-10-12").map((r) => r.outcome)).toEqual(["sent"]);
+    expect(new Set(provider.calls.filter((c) => c.key.includes("package_weekly")).map((c) => c.key)).size).toBe(1);
+  });
+
+  it("a Monday compose failure (never reached the provider) is retried on Tuesday", async () => {
+    const store = new Store();
+    const provider = new Provider();
+    await runDigestTickWith(makeIO({ now: "2026-10-12T10:30:00Z", store, provider, rows: [weekly], composeFails: () => true }).io);
+    expect(store.pkg("2026-10-12")).toMatchObject([{ outcome: "failed" }]);
+    await runDigestTickWith(makeIO({ now: "2026-10-13T08:00:00Z", store, provider, rows: [weekly] }).io);
+    expect(weeklyMail(provider)).toHaveLength(1);
+  });
+
+  it("Tuesday retries only the OUTSTANDING Monday sends: it never starts a new weekly for someone else", async () => {
+    const store = new Store();
+    const provider = new Provider();
+    await runDigestTickWith(makeIO({ now: "2026-10-12T10:30:00Z", store, provider, rows: [weekly], composeFails: () => true }).io);
+    const users2 = makeIO({ now: "2026-10-13T08:00:00Z", store, provider, rows: [weekly, second] });
+    // the second owner row only appears on Tuesday: it is not owed Monday's package by a retry
+    (users2.io as { directory: DigestIO["directory"] }).directory = async () => ({
+      dir: { users: [...users, { id: "own2", name: "Pete 2", email: "pete2@example.com", role: "owner", language: "en", active: true }], memberships: [], overrides: [], locationIds: [A.id, B.id] },
+      locations: [A, B],
+    });
+    await runDigestTickWith(users2.io);
+    expect(weeklyMail(provider).map((m) => m.to)).toEqual(["pete@example.com"]);
+  });
+
+  it("past 23 h a failed periodic send is no longer retried by the day-after tick", async () => {
+    const store = new Store();
+    const provider = new Provider();
+    await runDigestTickWith(makeIO({ now: "2026-10-12T10:30:00Z", store, provider, rows: [weekly], composeFails: () => true }).io);
+    await runDigestTickWith(makeIO({ now: "2026-10-13T10:40:00Z", store, provider, rows: [weekly] }).io);
+    expect(weeklyMail(provider)).toHaveLength(0);
   });
 });

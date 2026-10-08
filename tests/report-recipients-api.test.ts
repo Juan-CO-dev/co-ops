@@ -87,6 +87,37 @@ describe("location bind inside the lib writer", () => {
   });
 });
 
+describe("CC ruling: staff package rows are for the owner only (Astra P1)", () => {
+  const fakeUsers = (role: string) => {
+    const inserts: unknown[] = [];
+    const q = {
+      select: () => q, eq: () => q,
+      maybeSingle: async () => ({ data: { id: USER, role }, error: null }),
+      insert: (row: unknown) => { inserts.push(row); return { select: () => ({ single: async () => ({ data: { id: "new" }, error: null }) }) }; },
+    };
+    return { sb: { from: vi.fn(() => q) } as never, inserts };
+  };
+  const owner = { userId: "a", role: "owner" as const, level: 9, locations: [] };
+
+  it("a GM (or any non-owner) package row is refused by the writer with package_owner_only", async () => {
+    const parsed = validateRecipientInput({ ...accountant, kind: "internal", userId: USER, active: true, packages: ["cash"], cadence: "daily_close" });
+    if (!parsed.ok) throw new Error("fixture");
+    for (const role of ["gm", "moo", "cgs", "agm"]) {
+      const { sb, inserts } = fakeUsers(role);
+      await expect(saveReportRecipient(sb, { actor: owner, input: parsed.value })).rejects.toMatchObject({ status: 400, code: "package_owner_only" });
+      expect(inserts).toEqual([]);
+    }
+  });
+
+  it("the owner's own package row and a GM's digest-only override row are still accepted", async () => {
+    const pkg = validateRecipientInput({ ...accountant, kind: "internal", userId: USER, active: true, packages: ["cash"], cadence: "daily_close" });
+    const digestOnly = validateRecipientInput({ ...accountant, kind: "internal", userId: USER, active: true, packages: [], cadence: null, cateringDigest: true });
+    if (!pkg.ok || !digestOnly.ok) throw new Error("fixture");
+    await expect(saveReportRecipient(fakeUsers("owner").sb, { actor: owner, input: pkg.value })).resolves.toEqual({ id: "new" });
+    await expect(saveReportRecipient(fakeUsers("gm").sb, { actor: owner, input: digestOnly.value })).resolves.toEqual({ id: "new" });
+  });
+});
+
 describe("settings", () => {
   it("the switch takes off | preview | live only; times must sit inside the 03:00-22:00 pinger window", () => {
     expect(validateSettingsPatch({ mode: "preview" })).toEqual({ ok: true, value: { mode: "preview" } });

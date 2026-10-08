@@ -60,13 +60,18 @@ export const PACKAGE_COLUMNS: Record<PackageTableKey, readonly ExportColumn[]> =
     col("headcount", "int"), col("quote_id"), col("quote_version", "int"), col("subtotal", "money"), col("delivery_fee", "money"),
     col("service_charge", "money"), col("gratuity", "money"), col("tax", "money"), col("total", "money"), col("deposit", "money"),
     col("value", "money"), col("value_basis"), col("paid_total", "money"), col("paid_stripe", "money"), col("paid_manual", "money"),
-    col("paid_platform", "money"), col("refunded", "money"), col("outstanding", "money"), col("payment_type"),
+    col("platform_paid_inferred", "money"), col("payment_basis"), col("refunded", "money"), col("outstanding", "money"), col("payment_type"),
   ],
+  // One table, three row types (row_type): `delivery` (header: invoice + line totals), `line` (one per
+  // delivery line: SKU, qty, unit, unit price, extended), `credit` (a vendor credit as its own
+  // ledger row, dated by when it was filed, keeping its delivery reference). Sum invoice_total over
+  // delivery rows, extended over line rows, credit_amount over credit rows: nothing is counted twice.
   purchases: [
-    ...DAY, col("kind"), col("delivery_id"), col("vendor_or_store"), col("invoice_number"), col("invoice_total", "money"),
-    col("line_count", "int"), col("priced_line_count", "int"), col("lines_total", "money"), col("has_receipt_photo", "bool"),
-    col("detail_link"), col("po_code"), col("match_state"), col("delivery_status"), col("received_by"),
-    col("credit_count", "int"), col("credit_amount", "money"), col("credit_status"),
+    ...DAY, col("row_type"), col("kind"), col("delivery_id"), col("vendor_or_store"), col("invoice_number"), col("invoice_total", "money"),
+    col("line_count", "int"), col("priced_line_count", "int"), col("lines_total", "money"),
+    col("line_id"), col("sku_id"), col("sku"), col("qty", "number"), col("unit"), col("unit_price", "money"), col("extended", "money"),
+    col("has_receipt_photo", "bool"), col("receipt_link"), col("detail_link"), col("po_code"), col("match_state"), col("delivery_status"),
+    col("received_by"), col("credit_id"), col("credit_reason"), col("credit_amount", "money"), col("credit_status"), col("credit_delivery_date", "date"),
   ],
   waste: [
     ...DAY, col("item"), col("category"), col("tossed_qty", "number"), col("par_unit"), col("tossed_at", "datetime"),
@@ -155,6 +160,18 @@ export interface PackageRecipient {
  *   external — the row's email; shops = location_ids, else every shop. No email or active=false →
  *              a logged skip (the accountant row stays a recipient_disabled skip until it is enabled).
  */
+/**
+ * CC ruling (Astra review P1, 2026-10-08): package recipients are the OWNER (Pete) and the
+ * external accountant only, for now. No GM / MoO / CGS package rows: a staff row for any other role
+ * is refused by the writer (lib/report-recipients.ts, package_owner_only) and, if one exists or the
+ * person is later demoted, resolved here as a logged out_of_scope skip. The role set is a product
+ * invariant (AGENTS.md T0), so this names a role code, never a person.
+ */
+export const PACKAGE_INTERNAL_ROLES: readonly string[] = ["owner"];
+export function isPackageEligibleRole(role: string): boolean {
+  return PACKAGE_INTERNAL_ROLES.includes(role);
+}
+
 export function resolvePackageRecipients(args: {
   rows: readonly PackageRecipientRow[]; users: readonly DirectoryUser[]; memberships: readonly DirectoryMembership[];
   locationIds: readonly string[]; cadence: PackageCadence;
@@ -181,12 +198,17 @@ export function resolvePackageRecipients(args: {
     }
     const u = row.user_id ? users.get(row.user_id) : undefined;
     if (!u) continue;
+    // THE SCOPE IS RE-DERIVED ON EVERY SEND (Astra P1). A stored location_ids can only NARROW the
+    // shops the person may read TODAY, never widen them: configured ∩ current authorization. A
+    // demoted user (role no longer eligible, or a lost membership) loses the files on the next send.
     const memberships = args.memberships.filter((m) => m.userId === u.id).map((m) => m.locationId);
-    const shops = row.location_ids ? pick(row.location_ids) : roleLevel(u.role) >= DIGEST_ALL_SHOPS_LEVEL ? all : pick(memberships);
+    const authorized = roleLevel(u.role) >= DIGEST_ALL_SHOPS_LEVEL ? all : pick(memberships);
+    const shops = row.location_ids ? authorized.filter((id) => row.location_ids!.includes(id)) : authorized;
     const email = normEmail(u.email);
+    const eligible = isPackageEligibleRole(u.role);
     out.push({
-      ref: `user:${u.id}`, userId: u.id, name: u.name, email, language: u.language === "es" ? "es" : "en", locationIds: shops,
-      skip: !u.active ? "inactive" : !row.active ? "recipient_disabled" : !email ? "no_email" : shops.length === 0 ? "no_locations" : null,
+      ref: `user:${u.id}`, userId: u.id, name: u.name, email, language: u.language === "es" ? "es" : "en", locationIds: eligible ? shops : [],
+      skip: !u.active ? "inactive" : !eligible ? "out_of_scope" : !row.active ? "recipient_disabled" : !email ? "no_email" : shops.length === 0 ? "no_locations" : null,
       allShops: all.length > 0 && shops.length === all.length, external: false, sections, formats,
     });
   }
@@ -213,10 +235,14 @@ export interface DeliveryRaw {
   invoice_number: string | null; invoice_total: number | null; match_state: string; delivery_status: string;
   receipt_url: string | null; received_by: string | null; po_code: string | null;
 }
-export interface DeliveryLineRaw { delivery_id: string; qty_received: number; unit_price: number | null }
+export interface DeliveryLineRaw {
+  id: string; delivery_id: string; sku_id: string; sku: string;
+  /** The level the line was received at (case, each…); null = the SKU's base unit. */
+  unit: string | null; qty_received: number; unit_price: number | null;
+}
 export interface CreditRaw {
-  id: string; location_id: string; delivery_id: string | null; vendor_name: string; source_kind: "vendor" | "store";
-  amount_cents: number | null; status: string; created_day: string;
+  id: string; location_id: string; delivery_id: string | null; delivery_date: string | null; vendor_name: string; source_kind: "vendor" | "store";
+  reason: string | null; amount_cents: number | null; status: string; created_day: string;
 }
 export interface WasteRaw {
   location_id: string; business_date: string; item: string; category: string | null; tossed_qty: number; par_unit: string | null;
@@ -247,6 +273,8 @@ export interface PackageInput {
   inventoryLines: readonly InventoryLineRaw[];
   /** Absolute app base URL for detail links (they require a login: a link never grants access). */
   baseUrl: string;
+  /** The sections whose reads completed (the loader pushes each one). Rollups exist only for these. */
+  loaded: PackageSection[];
 }
 
 // ── Section builders ────────────────────────────────────────────────────────────────────────
@@ -276,15 +304,19 @@ export function cashSection(input: PackageInput): ExportRow[] {
 }
 
 const PLATFORM_SOURCES = ["ezcater", "toast_catering"];
+/** CC's required label for an inferred platform payment (CSV and PDF render the same cell). */
+export const PLATFORM_PAID_INFERRED = "platform-paid (inferred)";
 
 /**
  * Catering, per event (0195 money split): stage completed = earned, confirmed/out = to earn; lost
  * never enters money and is not listed. The value is the live accepted quote total, else the
  * lead's estimated_revenue_cents (the platform actual for ezCater/Toast orders).
- *   paid_* — catering_payments with status paid, split by provider (stripe | everything else);
- *   paid_platform — an ezCater/Toast order with no app quote is paid on the platform at order time;
- *   outstanding = quote total − paid_total (never below 0); 0 for platform orders; empty when
- *   there is no quote (an estimate has no balance).
+ *   paid_* / paid_total — RECORDED payments only (catering_payments status paid, split by provider).
+ *   platform_paid_inferred — an ezCater/Toast order with no app quote is presumed paid on the
+ *     platform at order time. That is an INFERENCE, not a recorded payment (Astra P2, CC ruling):
+ *     it never enters paid_total, and payment_basis says "platform-paid (inferred)" in the CSV and
+ *     the PDF alike. outstanding stays EMPTY for it: no balance is known.
+ *   outstanding = quote total − recorded paid (never below 0); empty when there is no quote.
  */
 export function cateringSection(input: PackageInput): ExportRow[] {
   const shops = new Map(input.shops.map((s) => [s.id, s]));
@@ -305,12 +337,13 @@ export function cateringSection(input: PackageInput): ExportRow[] {
     const refunded = sum(pays.filter((p) => p.status === "refunded").map((p) => p.amount_cents));
     const platform = !q && PLATFORM_SOURCES.includes(l.lead_source ?? "");
     const value = q?.total_cents ?? l.estimated_revenue_cents ?? null;
-    const paidPlatform = platform ? value : null;
-    const paidTotal = paidStripe + paidManual + (paidPlatform ?? 0);
+    const inferred = platform ? value : null;
+    const paidTotal = paidStripe + paidManual;
     const types = [...new Set([
       ...paid.map((p) => p.provider === "stripe" ? "stripe" : (p.provider ?? "manual")),
       ...(platform ? [l.lead_source!] : []),
     ])];
+    const basis = platform ? PLATFORM_PAID_INFERRED : paid.length > 0 ? "recorded" : "none";
     rows.push({
       business_date: l.event_date, ...shopCells(l.location_id ? shops.get(l.location_id) : undefined), lead_id: l.id,
       external_ref: l.external_ref, lead_source: l.lead_source, stage: l.stage, money_status: moneyStatus(l.stage),
@@ -318,40 +351,64 @@ export function cateringSection(input: PackageInput): ExportRow[] {
       quote_id: q?.id ?? null, quote_version: q?.version ?? null, subtotal: q?.subtotal_cents ?? null, delivery_fee: q?.delivery_fee_cents ?? null,
       service_charge: q?.service_charge_cents ?? null, gratuity: q?.gratuity_cents ?? null, tax: q?.tax_cents ?? null,
       total: q?.total_cents ?? null, deposit: q?.deposit_cents ?? null, value, value_basis: q ? "accepted_quote" : "estimated_revenue",
-      paid_total: paidTotal, paid_stripe: paidStripe, paid_manual: paidManual, paid_platform: paidPlatform, refunded,
-      outstanding: q ? Math.max(0, q.total_cents - (paidStripe + paidManual)) : platform ? 0 : null,
+      paid_total: paidTotal, paid_stripe: paidStripe, paid_manual: paidManual, platform_paid_inferred: inferred, payment_basis: basis, refunded,
+      outstanding: q ? Math.max(0, q.total_cents - paidTotal) : null,
       payment_type: types.length === 0 ? "none" : types.length === 1 ? types[0] : "mixed",
     });
   }
   return rows;
 }
 
-/** Purchases: every delivery AND store run (vendors.source_kind='store'), with its credits; plus credits filed with no delivery. */
+/** A receipt photo is served by the authenticated /api/photos/<id> route (login + location bind). */
+function receiptLink(baseUrl: string, receiptUrl: string | null): string | null {
+  if (!receiptUrl) return null;
+  return receiptUrl.startsWith("/") ? `${baseUrl}${receiptUrl}` : receiptUrl.startsWith(baseUrl) ? receiptUrl : null;
+}
+
+/**
+ * Purchases (Astra P2): every delivery AND store run (vendors.source_kind='store') as a `delivery`
+ * row, each of its lines as a `line` row (SKU, qty, unit, unit price, extended), and every vendor
+ * credit filed in the period as its own `credit` row, dated by its filing day and carrying its
+ * delivery reference (a credit against last month's delivery belongs to this month's package).
+ * Links need a login: receipt_link is the authenticated photo route, detail_link the delivery page.
+ */
 export function purchasesSection(input: PackageInput): ExportRow[] {
   const shops = new Map(input.shops.map((s) => [s.id, s]));
   const rows: ExportRow[] = [];
   for (const d of [...input.deliveries].sort((a, b) => a.delivery_date.localeCompare(b.delivery_date) || a.id.localeCompare(b.id))) {
-    const lines = input.deliveryLines.filter((l) => l.delivery_id === d.id);
+    const lines = input.deliveryLines.filter((l) => l.delivery_id === d.id).sort((a, b) => a.sku.localeCompare(b.sku) || a.id.localeCompare(b.id));
     const priced = lines.filter((l) => l.unit_price !== null);
-    const credits = input.credits.filter((c) => c.delivery_id === d.id);
+    const kind = d.source_kind === "store" ? "store_run" : "vendor";
+    const base = { business_date: d.delivery_date, ...shopCells(shops.get(d.location_id)), kind, delivery_id: d.id, vendor_or_store: d.vendor_name };
     rows.push({
-      business_date: d.delivery_date, ...shopCells(shops.get(d.location_id)), kind: d.source_kind === "store" ? "store_run" : "vendor",
-      delivery_id: d.id, vendor_or_store: d.vendor_name, invoice_number: d.invoice_number, invoice_total: dollarsToCents(d.invoice_total),
+      ...base, row_type: "delivery", invoice_number: d.invoice_number, invoice_total: dollarsToCents(d.invoice_total),
       line_count: lines.length, priced_line_count: priced.length,
-      lines_total: priced.length ? Math.round(sum(priced.map((l) => l.qty_received * (l.unit_price ?? 0))) * 100) : null,
-      has_receipt_photo: !!d.receipt_url, detail_link: `${input.baseUrl}/operations/receiving/${d.id}`, po_code: d.po_code,
+      lines_total: priced.length ? sum(priced.map((l) => extendedCents(l))) : null,
+      has_receipt_photo: !!d.receipt_url, receipt_link: receiptLink(input.baseUrl, d.receipt_url),
+      detail_link: `${input.baseUrl}/operations/receiving/${d.id}`, po_code: d.po_code,
       match_state: d.match_state, delivery_status: d.delivery_status, received_by: d.received_by,
-      credit_count: credits.length, credit_amount: credits.length ? sum(credits.map((c) => c.amount_cents)) : null,
-      credit_status: [...new Set(credits.map((c) => c.status))].sort().join("; ") || null,
     });
+    for (const l of lines) {
+      rows.push({
+        ...base, row_type: "line", line_id: l.id, sku_id: l.sku_id, sku: l.sku, qty: l.qty_received, unit: l.unit,
+        unit_price: dollarsToCents(l.unit_price), extended: l.unit_price === null ? null : extendedCents(l),
+      });
+    }
   }
-  for (const c of input.credits.filter((x) => !x.delivery_id).sort((a, b) => a.created_day.localeCompare(b.created_day) || a.id.localeCompare(b.id))) {
+  for (const c of [...input.credits].sort((a, b) => a.created_day.localeCompare(b.created_day) || a.id.localeCompare(b.id))) {
     rows.push({
-      business_date: c.created_day, ...shopCells(shops.get(c.location_id)), kind: "credit", delivery_id: null,
-      vendor_or_store: c.vendor_name, credit_count: 1, credit_amount: c.amount_cents, credit_status: c.status,
+      business_date: c.created_day, ...shopCells(shops.get(c.location_id)), row_type: "credit", kind: c.source_kind === "store" ? "store_run" : "vendor",
+      delivery_id: c.delivery_id, vendor_or_store: c.vendor_name, credit_id: c.id, credit_reason: c.reason, credit_amount: c.amount_cents,
+      credit_status: c.status, credit_delivery_date: c.delivery_date,
+      detail_link: c.delivery_id ? `${input.baseUrl}/operations/receiving/${c.delivery_id}` : null,
     });
   }
   return rows;
+}
+
+/** qty × unit price, in integer cents. */
+function extendedCents(l: DeliveryLineRaw): number {
+  return Math.round(l.qty_received * (l.unit_price ?? 0) * 100);
 }
 
 /** Waste: each toss × the cost of one par unit of the item (complete rollup only; else empty + why). */
@@ -408,12 +465,14 @@ export function rollupSections(input: PackageInput): Record<RollupSection, Expor
     }
     for (const [key, rs] of [...groups].sort(([a], [b]) => a.localeCompare(b))) {
       const [kind, vendor] = key.split("|");
-      const deliveries = rs.filter((r) => r.kind !== "credit");
+      // Each figure sums exactly ONE row type, so nothing is counted twice: invoices and line
+      // totals from delivery rows, credits from credit rows (dated by filing, not by delivery).
+      const deliveries = rs.filter((r) => r.row_type === "delivery");
       out.rollup_purchases_by_vendor.push({
         ...period, ...shopCells(shop), kind, vendor_or_store: vendor, deliveries: deliveries.length,
         invoice_total: sum(deliveries.map((r) => r.invoice_total as number | null)),
         lines_total: sum(deliveries.map((r) => r.lines_total as number | null)),
-        credits_total: sum(rs.map((r) => r.credit_amount as number | null)),
+        credits_total: sum(rs.filter((r) => r.row_type === "credit").map((r) => r.credit_amount as number | null)),
       });
     }
     const cats = new Map<string, ExportRow[]>();
@@ -439,6 +498,14 @@ export function rollupSections(input: PackageInput): Record<RollupSection, Expor
   return out;
 }
 
+/** The detail section each rollup is computed from. */
+export const ROLLUP_SOURCE: Record<RollupSection, PackageSection> = {
+  rollup_sales_by_tax_category: "sales",
+  rollup_purchases_by_vendor: "purchases",
+  rollup_waste_by_category: "waste",
+  rollup_cash_variance: "cash",
+};
+
 export interface PackageTable { key: PackageTableKey; columns: readonly ExportColumn[]; rows: ExportRow[] }
 
 /** The tables of one package, in a fixed order: the recipient's sections, then (weekly/monthly) the rollups. */
@@ -449,8 +516,13 @@ export function buildPackageTables(input: PackageInput, sections: readonly Packa
   const tables: PackageTable[] = PACKAGE_SECTIONS.filter((s) => sections.includes(s))
     .map((key) => ({ key, columns: PACKAGE_COLUMNS[key], rows: builders[key](input) }));
   if (cadence !== "daily_close") {
+    // Only rollups whose source section was SELECTED and LOADED (Astra P2): an unread dataset must
+    // never print as "zero activity".
     const rollups = rollupSections(input);
-    for (const key of ROLLUP_SECTIONS) tables.push({ key, columns: PACKAGE_COLUMNS[key], rows: rollups[key] });
+    for (const key of ROLLUP_SECTIONS) {
+      const source = ROLLUP_SOURCE[key];
+      if (sections.includes(source) && input.loaded.includes(source)) tables.push({ key, columns: PACKAGE_COLUMNS[key], rows: rollups[key] });
+    }
   }
   return tables;
 }
