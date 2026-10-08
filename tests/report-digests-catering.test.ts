@@ -114,8 +114,8 @@ describe("composed sections", () => {
     };
     const out = texts(f);
     expect(out[1]![1]).toEqual([
-      `info|Early|8:00 AM · 12 guests · Pickup|${BASE}/catering/pipeline?q=Early`,
-      `info|Late|5:00 PM · 40 guests · Delivery · prep for Wed, Oct 7: 3.5 qt Chicken salad, 12 × Turkey (whole)|${BASE}/catering/pipeline?q=Late`,
+      `info|Early|ready by 8:00 AM · 12 guests · Pickup|${BASE}/catering/pipeline?q=Early`,
+      `info|Late|ready by 5:00 PM · 40 guests · Delivery · prep for Wed, Oct 7: 3.5 qt Chicken salad, 12 × Turkey (whole)|${BASE}/catering/pipeline?q=Late`,
       `info|Today|1 order has no prep ledger yet|${BASE}/catering/pipeline`,
     ]);
     expect(out[2]![1]).toEqual([`info|Tmrw|time not set · 25 guests · Delivery|${BASE}/catering/pipeline?q=Tmrw`, `info|Tomorrow|1 order has no prep ledger yet|${BASE}/catering/pipeline`]);

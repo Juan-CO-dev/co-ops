@@ -450,7 +450,7 @@ class Run {
       await this.sendOnce("catering", day, r, null, async (env) => {
         facts ??= this.io.cateringFacts(day);
         const locations = this.locations.filter((l) => r.locationIds.includes(l.id));
-        return renderCateringDigest(await facts, { locations, includeUnassigned: r.allShops }, env);
+        return renderCateringDigest(await facts, { locations, includeUnassigned: r.allShops, showAddresses: r.addressAccess === true }, env);
       });
     }
   }

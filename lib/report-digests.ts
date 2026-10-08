@@ -34,6 +34,18 @@ import {
   type SendLogRow,
 } from "@/lib/report-digests-shared";
 import type { CateringFacts, CateringLeadFact, PrepLoadLine, ShopDayFacts } from "@/lib/report-digests-compose";
+import type { Loaded } from "@/lib/report-digests-v2-shared";
+import {
+  paymentState,
+  readinessFrom,
+  specialInstructions,
+  stationRoster,
+  type CateringReadiness,
+  type StaffRoster,
+  type StaffSource,
+} from "@/lib/report-digests-catering-shared";
+import type { StationEvent } from "@/lib/assignments-shared";
+import { deriveCateringSkuDemand } from "@/lib/catering/sku-demand";
 import {
   runClosingDigestsWith,
   runDigestTickWith,
@@ -179,8 +191,11 @@ interface LeadRow {
   id: string; contact_name: string; company: string | null; event_date: string | null; time_window: string | null;
   headcount: number | null; stage: string; lead_source: string | null; location_id: string | null; created_at: string;
   follow_up_date: string | null; external_ref: string | null; delivery_address: string | null; estimated_revenue_cents: number | null;
+  notes: string | null;
 }
-const LEAD_SELECT = "id, contact_name, company, event_date, time_window, headcount, stage, lead_source, location_id, created_at, follow_up_date, external_ref, delivery_address, estimated_revenue_cents";
+// notes is read ONLY to lift the machine special-instruction lines (specialInstructions); the free
+// text itself never reaches an email.
+const LEAD_SELECT = "id, contact_name, company, event_date, time_window, headcount, stage, lead_source, location_id, created_at, follow_up_date, external_ref, delivery_address, estimated_revenue_cents, notes";
 
 export async function loadCateringFacts(sb: Sb, today: string, now: Date): Promise<CateringFacts> {
   const yesterday = addDays(today, -1);
@@ -209,6 +224,7 @@ export async function loadCateringFacts(sb: Sb, today: string, now: Date): Promi
   const leadIds = [...leads.keys()];
   const accepted = new Map<string, { id: string; total_cents: number; is_delivery: boolean; version: number }>();
   const due = new Map<string, number>();
+  const paymentsByLead = new Map<string, Array<{ status: string; amountCents: number }>>();
   const prep = new Map<string, PrepLoadLine[]>();
   if (leadIds.length > 0) {
     const quotes = await selectAllRows<{ id: string; pipeline_id: string; total_cents: number; is_delivery: boolean; version: number }>((from, to) =>
@@ -221,15 +237,17 @@ export async function loadCateringFacts(sb: Sb, today: string, now: Date): Promi
     const quoteIds = [...accepted.values()].map((q) => q.id);
     const pipelineByQuote = new Map([...accepted].map(([pid, q]) => [q.id, pid]));
     const [payments, demand] = await Promise.all([
-      quoteIds.length === 0 ? Promise.resolve([]) : selectAllRows<{ quote_id: string; amount_cents: number }>((from, to) =>
-        sb.from("catering_payments").select("quote_id, amount_cents").in("quote_id", quoteIds).eq("status", "due").order("id").range(from, to)),
+      quoteIds.length === 0 ? Promise.resolve([]) : selectAllRows<{ quote_id: string; amount_cents: number; status: string }>((from, to) =>
+        sb.from("catering_payments").select("quote_id, amount_cents, status").in("quote_id", quoteIds).in("status", ["due", "paid"]).order("id").range(from, to)),
       selectAllRows<DemandRow>((from, to) =>
         sb.from("catering_prep_demand").select("pipeline_id, need_date, item_id, menu_item_id, choice_package_item_id, portion, qty")
           .in("pipeline_id", leadIds).in("status", ["reserved", "consumed"]).order("id").range(from, to)),
     ]);
     for (const p of payments) {
       const pid = pipelineByQuote.get(p.quote_id);
-      if (pid) due.set(pid, (due.get(pid) ?? 0) + p.amount_cents);
+      if (!pid) continue;
+      if (p.status === "due") due.set(pid, (due.get(pid) ?? 0) + p.amount_cents);
+      paymentsByLead.set(pid, [...(paymentsByLead.get(pid) ?? []), { status: p.status, amountCents: p.amount_cents }]);
     }
     for (const [pid, lines] of await summarizePrepDemand(sb, demand)) prep.set(pid, lines);
   }
@@ -261,14 +279,82 @@ export async function loadCateringFacts(sb: Sb, today: string, now: Date): Promi
       valueCents: q?.total_cents ?? l.estimated_revenue_cents ?? 0,
       dueCents: due.get(l.id) ?? 0,
       prep: prep.get(l.id) ?? null,
+      instructions: specialInstructions(l.notes),
+      payment: paymentState(l.lead_source, paymentsByLead.get(l.id) ?? []),
+      deliveryAddress: l.delivery_address,
     };
   });
+  // The shops with orders booked today get inventory readiness + staff (GO addendum 10-08).
+  const todayShops = [...new Set(facts.filter((l) => l.eventDate === today && (l.stage === "confirmed" || l.stage === "out") && l.locationId).map((l) => l.locationId!))];
+  const readiness: NonNullable<CateringFacts["readiness"]> = {};
+  const staff: NonNullable<CateringFacts["staff"]> = {};
+  await Promise.all(todayShops.map(async (loc) => {
+    [readiness[loc], staff[loc]] = await Promise.all([loadCateringReadiness(sb, loc, today), loadStaffRoster(sb, loc, today)]);
+  }));
   return {
     today, leads: facts, lostYesterdayIds: lostIds,
     quotesSentYesterday: sentYesterday.map((q) => ({ id: q.id, locationId: q.location_id, totalCents: q.total_cents })),
     openQuotes: openQuotes.filter((q) => !q.expires_at || Date.parse(q.expires_at) > now.getTime()).map((q) => ({ id: q.id, locationId: q.location_id })),
     refundsYesterday: refunds.map((r) => ({ locationId: refundLoc.get(r.quote_id) ?? null, amountCents: r.amount_cents })),
+    readiness, staff,
   };
+}
+
+/**
+ * Today's catering ingredients vs on-hand at one shop: the W4b actor-less core (read-only; the
+ * same flatten + advisory on-hand the prep-demand surface shows) plus which SKUs were EVER counted
+ * here, so an uncounted SKU says so instead of showing invented stock. Never throws.
+ */
+async function loadCateringReadiness(sb: Sb, locationId: string, day: string): Promise<Loaded<CateringReadiness>> {
+  try {
+    const w4b = await deriveCateringSkuDemand({ locationId, from: day, to: day });
+    const skuIds = w4b.rows.map((r) => r.skuId);
+    const counted = new Set<string>();
+    for (let i = 0; i < skuIds.length; i += 100) {
+      const lines = await selectAllRows<{ count_event_id: string; sku_id: string }>((from, to) =>
+        sb.from("sku_count_lines").select("count_event_id, sku_id").in("sku_id", skuIds.slice(i, i + 100)).order("id").range(from, to));
+      const eventIds = [...new Set(lines.map((l) => l.count_event_id))];
+      for (let j = 0; j < eventIds.length; j += 100) {
+        const events = await selectAllRows<{ id: string }>((from, to) =>
+          sb.from("sku_count_events").select("id").in("id", eventIds.slice(j, j + 100)).eq("location_id", locationId).eq("active", true).order("id").range(from, to));
+        const here = new Set(events.map((e) => e.id));
+        for (const l of lines) if (here.has(l.count_event_id)) counted.add(l.sku_id);
+      }
+    }
+    return { kind: "ok", value: readinessFrom(w4b, counted) };
+  } catch (error) {
+    console.error("[digests] catering readiness failed:", error instanceof Error ? error.message : String(error));
+    return { kind: "error" };
+  }
+}
+
+/** The stations StaffSource: today's assignments + claims. A schedule (7shifts) plugs in beside it. */
+export const stationsStaffSource = (sb: Sb): StaffSource => ({
+  async roster(locationId, businessDate) {
+    const events = await selectAllRows<{ id: string; sequence: number | string; location_id: string; business_date: string; user_id: string; station_id: string | null; position_id: string | null; kind: StationEvent["kind"]; actor_id: string; at: string; source: StationEvent["source"] }>((from, to) =>
+      sb.from("station_events").select("id, sequence, location_id, business_date, user_id, station_id, position_id, kind, actor_id, at, source")
+        .eq("location_id", locationId).eq("business_date", businessDate).order("sequence").range(from, to));
+    const userIds = [...new Set(events.map((e) => e.user_id))];
+    const stationIds = [...new Set(events.map((e) => e.station_id).filter((x): x is string => !!x))];
+    const [users, stations] = await Promise.all([
+      userIds.length === 0 ? [] : selectAllRows<{ id: string; name: string }>((from, to) => sb.from("users").select("id, name").in("id", userIds).order("id").range(from, to)),
+      stationIds.length === 0 ? [] : selectAllRows<{ id: string; name: string }>((from, to) => sb.from("stations").select("id, name").in("id", stationIds).order("id").range(from, to)),
+    ]);
+    const mapped: StationEvent[] = events.map((e) => ({
+      id: e.id, sequence: String(e.sequence), locationId: e.location_id, businessDate: e.business_date, userId: e.user_id,
+      stationId: e.station_id, positionId: e.position_id, kind: e.kind, actorId: e.actor_id, actorName: null, at: e.at, source: e.source,
+    }));
+    return { source: "stations", scheduleConnected: false, onStation: stationRoster(mapped, new Map(users.map((u) => [u.id, u.name])), new Map(stations.map((st) => [st.id, st.name]))) };
+  },
+});
+
+async function loadStaffRoster(sb: Sb, locationId: string, day: string): Promise<Loaded<StaffRoster>> {
+  try {
+    return { kind: "ok", value: await stationsStaffSource(sb).roster(locationId, day) };
+  } catch (error) {
+    console.error("[digests] staff roster failed:", error instanceof Error ? error.message : String(error));
+    return { kind: "error" };
+  }
 }
 
 interface DemandRow {

@@ -224,6 +224,11 @@ export interface ResolvedRecipient {
   skip: DigestSkipReason | null;
   /** Covers every active shop (also sees leads with no shop set in the catering digest). */
   allShops: boolean;
+  /**
+   * May see customer delivery addresses in the catering digest: the catering manager and level 8+
+   * only (GO addendum 10-08). Set for the catering kind; absent = no.
+   */
+  addressAccess?: boolean;
 }
 
 export function roleLevel(role: string): number {
@@ -281,7 +286,9 @@ export function resolveDigestRecipients(kind: DigestKind, dir: DigestDirectory):
           : shops.length === 0 && requested.length > 0 ? "out_of_scope"
             : shops.length === 0 ? "no_locations"
               : null;
-    out.push(base(u, sortLike(shops, all), skip, allShops));
+    const r = base(u, sortLike(shops, all), skip, allShops);
+    if (kind === "catering" && (level >= DIGEST_ALL_SHOPS_LEVEL || u.role === "catering_mgr")) r.addressAccess = true;
+    out.push(r);
   }
   return out.sort((a, b) => a.ref.localeCompare(b.ref));
 }

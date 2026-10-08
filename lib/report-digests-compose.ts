@@ -19,6 +19,8 @@ import { LEAD_SOURCES } from "@/lib/catering/intake-shared";
 import { timeWindowLabel, timeWindowMinutes } from "@/lib/midshift-shared";
 import type { ShopV2Facts } from "@/lib/report-digests-v2-shared";
 import { allShopsSection, composeV2Sections, plural } from "@/lib/report-digests-v2-compose";
+import type { Loaded } from "@/lib/report-digests-v2-shared";
+import type { CateringReadiness, PaymentState, StaffRoster } from "@/lib/report-digests-catering-shared";
 
 export type DigestTone = "ok" | "issue" | "info";
 export interface DigestLine { label: string; text: string; tone: DigestTone; href: string }
@@ -295,6 +297,12 @@ export interface CateringLeadFact {
   /** The W4a prep-demand ledger for the event (reserved|consumed), aggregated per need date + ref +
    *  portion with quantities and units; null = no ledger rows. */
   prep: PrepLoadLine[] | null;
+  /** Machine-line special instructions (Toast / ezCater), never a human's free notes. */
+  instructions?: string[];
+  /** Payment status of the order (platform-paid, paid, due, none). */
+  payment?: PaymentState;
+  /** Shown ONLY to the catering manager and level 8+ (scope.showAddresses). */
+  deliveryAddress?: string | null;
 }
 export interface PrepLoadLine {
   needDate: string;
@@ -315,6 +323,18 @@ export interface CateringFacts {
   /** status sent, live, not expired. */
   openQuotes: Array<{ id: string; locationId: string }>;
   refundsYesterday: Array<{ locationId: string | null; amountCents: number }>;
+  /** Today's inventory readiness per shop (W4b demand vs on-hand); absent = not loaded. */
+  readiness?: Record<string, Loaded<CateringReadiness>>;
+  /** Today's staff per shop (stations; the schedule is not connected yet); absent = not loaded. */
+  staff?: Record<string, Loaded<StaffRoster>>;
+}
+
+/** Who may see what in the catering digest. */
+export interface CateringScope {
+  locations: Array<{ id: string; name: string }>;
+  includeUnassigned: boolean;
+  /** Delivery addresses: the catering manager and level 8+ only (GO addendum 10-08). */
+  showAddresses?: boolean;
 }
 
 const UPCOMING = new Set(["confirmed", "out"]);
@@ -382,7 +402,7 @@ function addDay(day: string, n: number): string {
 
 export function composeCateringSections(
   f: CateringFacts,
-  scope: { locations: Array<{ id: string; name: string }>; includeUnassigned: boolean },
+  scope: CateringScope,
   language: Language,
   baseUrl: string,
 ): DigestSection[] {
@@ -480,14 +500,66 @@ export function composeCateringSections(
       const list = leads.filter((l) => l.eventDate === day && UPCOMING.has(l.stage))
         .sort((a, b) => timeWindowMinutes(a.timeWindow) - timeWindowMinutes(b.timeWindow));
       if (list.length === 0) return [{ label: t(label), text: t(emptyKey), tone: "info", href: pipeline }];
+      const isToday = day === f.today;
       const out: DigestLine[] = list.map((l) => ({
-        label: who(l), href: leadHref(l), tone: "info" as const,
-        text: [time(l), size(l), t(l.isDelivery ? "digest.catering.delivery" : "digest.catering.pickup"), prepText(l)].filter((x): x is string => !!x).join(" · "),
+        label: who(l), href: leadHref(l), tone: isToday && l.payment?.kind === "due" ? "issue" as const : "info" as const,
+        text: (isToday ? [
+          l.timeWindow?.trim() ? t("digest.catering.ready_by", { time: time(l) }) : t("digest.catering.time_unknown"),
+          size(l),
+          t(l.isDelivery ? "digest.catering.delivery" : "digest.catering.pickup"),
+          l.isDelivery && scope.showAddresses && l.deliveryAddress?.trim() ? l.deliveryAddress.trim() : null,
+          paymentText(l.payment),
+          l.instructions && l.instructions.length > 0 ? t("digest.catering.instructions", { text: l.instructions.map((x) => `"${x}"`).join(", ") }) : null,
+          prepText(l),
+        ] : [time(l), size(l), t(l.isDelivery ? "digest.catering.delivery" : "digest.catering.pickup"), prepText(l)]).filter((x): x is string => !!x).join(" · "),
       }));
+      if (isToday && shop.id !== null) out.push(...readinessLines(shop.id), ...staffLines(shop.id));
       const noPrep = list.filter((l) => prepText(l) === null).length;
       if (noPrep > 0) out.push({ label: t(label), href: pipeline, tone: "info", text: plural(t, noPrep, "digest.catering.no_prep_footnote_one", "digest.catering.no_prep_footnote_other") });
       return out;
     };
+
+    function paymentText(p: PaymentState | undefined): string | null {
+      if (!p) return null;
+      return p.kind === "platform" ? t("digest.catering.pay_platform") : p.kind === "paid" ? t("digest.catering.pay_paid", { money: money(p.cents) })
+        : p.kind === "due" ? t("digest.catering.pay_due", { money: money(p.cents) }) : t("digest.catering.pay_none");
+    }
+    const ozText = (oz: number) => new Intl.NumberFormat(language === "es" ? "es-US" : "en-US", { maximumFractionDigits: 1 }).format(oz);
+    function readinessLines(locationId: string): DigestLine[] {
+      const r = f.readiness?.[locationId];
+      const label = t("digest.catering.readiness_label");
+      const href = `${baseUrl}/admin/catering/prep-demand`;
+      if (!r) return [];
+      if (r.kind === "error") return [{ label, text: t("digest.v2.could_not_load"), tone: "issue", href }];
+      if (r.kind === "unavailable") return [{ label, text: t("digest.v2.not_available"), tone: "info", href }];
+      const v = r.value;
+      const lines: DigestLine[] = [];
+      if (v.rows.length === 0 && v.unresolvedChoiceLines === 0 && v.noRecipeLines === 0) return [{ label, text: t("digest.catering.readiness_none"), tone: "info", href }];
+      for (const row of v.rows) {
+        if (!row.counted) { lines.push({ label: row.skuName, href, tone: "info", text: t("digest.catering.readiness_uncounted", { need: ozText(row.needOz) }) }); continue; }
+        if ((row.shortOz ?? 0) > 0) lines.push({
+          label: row.skuName, href, tone: "issue",
+          text: t("digest.catering.readiness_short", { need: ozText(row.needOz), have: ozText(row.onHandOz ?? 0), short: ozText(row.shortOz!) })
+            + (row.orderPacks ? ` · ${plural(t, row.orderPacks, "digest.catering.readiness_order_one", "digest.catering.readiness_order_other")}` : ""),
+        });
+      }
+      const covered = v.rows.filter((row) => row.counted && row.shortOz !== null && row.shortOz <= 0).length;
+      const unsized = v.rows.filter((row) => row.counted && row.shortOz === null).length;
+      if (covered > 0) lines.push({ label, href, tone: "ok", text: plural(t, covered, "digest.catering.readiness_covered_one", "digest.catering.readiness_covered_other") });
+      if (unsized > 0) lines.push({ label, href, tone: "info", text: plural(t, unsized, "digest.catering.readiness_unsized_one", "digest.catering.readiness_unsized_other") });
+      const unchecked = v.unresolvedChoiceLines + v.noRecipeLines;
+      if (unchecked > 0) lines.push({ label, href, tone: "info", text: plural(t, unchecked, "digest.catering.readiness_unchecked_one", "digest.catering.readiness_unchecked_other") });
+      return lines;
+    }
+    function staffLines(locationId: string): DigestLine[] {
+      const r = f.staff?.[locationId];
+      const label = t("digest.catering.staff_label");
+      const href = `${baseUrl}/stations?location=${encodeURIComponent(locationId)}`;
+      if (!r) return [];
+      if (r.kind !== "ok") return [{ label, text: t(r.kind === "error" ? "digest.v2.could_not_load" : "digest.v2.not_available"), tone: r.kind === "error" ? "issue" : "info", href }];
+      const onStation = r.value.onStation.map((p) => `${p.firstName} (${p.station})`).join(", ");
+      return [{ label, href, tone: "info", text: [onStation || t("digest.catering.staff_none"), t("digest.catering.schedule_not_connected")].join(" · ") }];
+    }
 
     const action: DigestLine[] = [];
     for (const l of leads.filter((x) => OPEN.has(x.stage) && x.eventDate !== null && x.eventDate >= f.today && x.eventDate <= tomorrow)) {
@@ -512,7 +584,7 @@ export function composeCateringSections(
 
 export function renderCateringDigest(
   f: CateringFacts,
-  scope: { locations: Array<{ id: string; name: string }>; includeUnassigned: boolean },
+  scope: CateringScope,
   env: Envelope,
 ): ComposedEmail {
   const t = (key: TranslationKey, params?: Record<string, string | number>) => serverT(env.language, key, params);
