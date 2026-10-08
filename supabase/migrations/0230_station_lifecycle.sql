@@ -1,4 +1,5 @@
 -- AUTHORED ONLY 2026-10-08. NOT APPLIED. CC sim + review, then Juan's apply gate.
+-- APPLIED TO PROD 2026-10-08 (schema_migrations version 20261008193621, name '0230_station_lifecycle'; sim first, version 20261008192908; harness PASS; prod rolled-back dry run PASS). CC review: checklist trigger made fail-open.
 -- 0229 belongs to ezCater. No seed values, no restoration of released work.
 -- Closing state is derived from the latest non-dropped closing instance for the
 -- station business day. Its active section items must ALL have live completions.
@@ -223,7 +224,15 @@ begin
     join public.checklist_templates t on t.id=i.template_id where i.id=new.instance_id and t.type='closing';
   if v_location is not null and v_day=public.station_business_date(v_location) then
     perform pg_advisory_xact_lock(hashtextextended('station/day/'||v_location::text||'/'||v_day::text,0));
-    if tg_when='AFTER' then perform public.release_closed_stations(v_location,v_day); end if;
+    -- Fail-open (CC review): a station release must never block a closing-checklist
+    -- check-off; reconcile_station_lifecycle (10-minute tick) re-runs the same release.
+    if tg_when='AFTER' then
+      begin
+        perform public.release_closed_stations(v_location,v_day);
+      exception when others then
+        raise warning 'station lifecycle release deferred: %', sqlerrm;
+      end;
+    end if;
   end if;
   return new;
 end $$;
