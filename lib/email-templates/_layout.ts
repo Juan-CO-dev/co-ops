@@ -41,8 +41,13 @@ export const COLORS = {
   red: "#FF3A44",
 } as const;
 
-const FONT_STACK =
-  '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+/**
+ * Interpolated into DOUBLE-quoted style attributes, so it must never contain a double quote:
+ * "Segoe UI" in double quotes ended the body's style attribute early and the font never applied
+ * in any email (digest polish item 8, 2026-10-08). Single quotes are valid CSS and attribute-safe.
+ */
+export const FONT_STACK =
+  "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif";
 
 export function appUrl(): string {
   const u = process.env.NEXT_PUBLIC_APP_URL;
