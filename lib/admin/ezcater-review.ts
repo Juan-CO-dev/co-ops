@@ -13,6 +13,8 @@ export interface MappingCandidate {
   name: string; size: string; lineCount: number; suggestedId: string | null;
 }
 export interface MappingTarget { id: string; location_id: string; toast_item_name: string; toast_item_guid: string }
+export interface DirectMappingTarget { id: string; kind: "menu_item" | "item" | "package"; name: string; location_id: string | null }
+export interface ToastReview { reviewId: string; locationId: string; locationName: string; code: string; identity: string; orderNumber: string | null }
 
 async function authorize(actor: AuthContext) {
   const reader = await loadCateringReader(actor);
@@ -29,8 +31,8 @@ export async function loadEzcaterMappingReview(actor: AuthContext) {
   const targets = await selectAllRows<MappingTarget>((from, to) => sb.from("toast_menu_map")
     .select("id,location_id,toast_item_name,toast_item_guid").eq("active", true).eq("match_status", "confirmed")
     .eq("is_modifier", false).eq("disposition", "deplete").order("id").range(from, to));
-  const orders = await selectAllRows<{ id: string; location_id: string }>((from, to) => sb.from("ezcater_orders")
-    .select("id,location_id").order("id").range(from, to));
+  const orders = await selectAllRows<{ id: string; location_id: string; order_number: string | null }>((from, to) => sb.from("ezcater_orders")
+    .select("id,location_id,order_number").order("id").range(from, to));
   const locations = await selectAllRows<{ id: string; name: string }>((from, to) => sb.from("locations")
     .select("id,name").order("id").range(from, to));
   const items = await selectAllRows<ItemIdentity & { order_id: string; options: unknown[] }>((from, to) => sb.from("ezcater_order_items")
@@ -66,7 +68,54 @@ export async function loadEzcaterMappingReview(actor: AuthContext) {
       name: [group.item.name, ...optionNames].join(" · "), size: group.item.menu_item_size_id!, lineCount: group.count,
       suggestedId: suggestions.length === 1 ? suggestions[0]!.id : null });
   }
-  return { candidates, targets };
+  const directTargets: DirectMappingTarget[] = [];
+  type Entity = { id: string; name: string; name_es: string | null; location_id?: string | null };
+  for (const [table, kind] of [["menu_items", "menu_item"], ["items", "item"], ["catering_packages", "package"]] as const) {
+    const entities = await selectAllRows<Entity>((from, to) => sb.from(table)
+      .select(kind === "package" ? "id,name:label_en,name_es:label_es,location_id" : "id,name,name_es")
+      .eq("active", true).order("id").range(from, to).returns<Entity[]>());
+    directTargets.push(...entities.map((entity) => ({ id: entity.id,
+      name: actor.user.language === "es" ? entity.name_es ?? entity.name : entity.name,
+      kind, location_id: entity.location_id ?? null })));
+  }
+  const toastRows = await selectAllRows<{ id: string; order_id: string; location_id: string; identity_key: string; code: string }>((from, to) => sb.from("ezcater_review_queue")
+    .select("id,order_id,location_id,identity_key,code").eq("source", "toast").eq("code", "unmatched_code").is("resolved_at", null)
+    .order("id").range(from, to));
+  const toastReviews: ToastReview[] = toastRows.filter((row) => orderLocations.get(row.order_id) === row.location_id).map((row) => ({
+    reviewId: row.id, locationId: row.location_id,
+    locationName: locations.find((location) => location.id === row.location_id)?.name ?? row.location_id,
+    code: row.code, identity: row.identity_key, orderNumber: orders.find((order) => order.id === row.order_id)?.order_number ?? null,
+  }));
+  return { candidates, targets, directTargets, toastReviews };
+}
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+async function authorizeDecision(actor: AuthContext) {
+  await authorize(actor);
+  const step = assertStepUp(actor, "B");
+  if (!step.ok) throw new CateringPipelineError(403, step.code);
+}
+
+export async function decideEzcaterMappingDirect(actor: AuthContext, reviewId: string, entityKind: string, entityId: string) {
+  await authorizeDecision(actor);
+  if (!UUID.test(reviewId) || !["menu_item", "item", "package"].includes(entityKind) || !UUID.test(entityId)) {
+    throw new CateringPipelineError(400, "invalid_payload");
+  }
+  return mappingRpc("decide_ezcater_mapping_direct", {
+    p_review_id: reviewId, p_entity_kind: entityKind, p_entity_id: entityId, p_actor_id: actor.user.id,
+  });
+}
+
+export async function dismissEzcaterToastReview(actor: AuthContext, reviewId: string, reason: string, note: string | null) {
+  await authorizeDecision(actor);
+  if (!UUID.test(reviewId) || !["not_ezcater", "duplicate", "test", "other"].includes(reason) ||
+      (note !== null && (typeof note !== "string" || note.trim().length > 500)) || (reason === "other" && !note?.trim())) {
+    throw new CateringPipelineError(400, "invalid_payload");
+  }
+  return mappingRpc("dismiss_ezcater_toast_review", {
+    p_review_id: reviewId, p_reason: reason, p_note: note?.trim() || null, p_actor_id: actor.user.id,
+  });
 }
 
 export async function decideEzcaterMapping(actor: AuthContext, reviewId: string, decision: "approve" | "ignore", targetId: string | null) {
@@ -78,9 +127,13 @@ export async function decideEzcaterMapping(actor: AuthContext, reviewId: string,
       (decision === "approve" ? !targetId || !uuid.test(targetId) : targetId !== null)) {
     throw new CateringPipelineError(400, "invalid_payload");
   }
-  const { data, error } = await getServiceRoleClient().rpc("decide_ezcater_mapping", {
+  return mappingRpc("decide_ezcater_mapping", {
     p_review_id: reviewId, p_toast_map_id: targetId, p_decision: decision, p_actor_id: actor.user.id,
   });
+}
+
+async function mappingRpc(name: string, args: Record<string, string | null>) {
+  const { data, error } = await getServiceRoleClient().rpc(name, args);
   if (error) {
     if (["42883", "42P01", "42703", "PGRST202", "PGRST205"].includes(error.code)) throw new CateringPipelineError(503, "ezcater_schema_unavailable");
     if (error.message === "ezcater_mapping_forbidden") throw new CateringPipelineError(403, "forbidden");

@@ -310,6 +310,7 @@ export const NON_DESTRUCTIVE_ACTIONS = [
  * which would otherwise look identical.
  */
 export const RESERVED_ACTIONS = [
+  "ezcater.review.dismiss", // SQL-only, append-only Toast review decision.
   "ezcater.item_map.approve", // SQL-only, atomic mapping decision.
   "ezcater.item_map.ignore",
   // Emitted from SQL only (submit_am_prep_atomic and friends set destructive=true
