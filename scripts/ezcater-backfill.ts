@@ -31,6 +31,7 @@ export async function backfillEzcater(options: BackfillOptions = {}) {
   const execute = options.execute === true;
   const sb = getServiceRoleClient();
   const known = new Map<string, { caterer: string; eventKey: string | null }>();
+  const reassigned = new Set<string>();
   let offset = 0;
   // Fixed reviewed historical interval. The dry-run count must be supplied on execution.
   while (true) {
@@ -45,7 +46,9 @@ export async function backfillEzcater(options: BackfillOptions = {}) {
       if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(row.entity_id)) continue;
       const uuid = row.entity_id.toLowerCase();
       const prior = known.get(uuid);
-      if (prior && prior.caterer !== row.parent_id) throw new Error("backfill_parent_conflict");
+      // An order ezCater moved between our shops arrives under two caterer ids: list it for
+      // human review and never auto-apply it (its lead stays where it is).
+      if (prior && prior.caterer !== row.parent_id) { reassigned.add(uuid); }
       // Latest lifecycle evidence must survive subsequent modified/advisory deliveries.
       const lifecycle = ["accepted", "cancelled", "rejected", "failed"].includes(row.event_key);
       known.set(uuid, { caterer: row.parent_id, eventKey: lifecycle ? row.event_key : prior?.eventKey ?? null });
@@ -68,7 +71,7 @@ export async function backfillEzcater(options: BackfillOptions = {}) {
     const hasLead = existing.has(uuid);
     if (!hasLead) leadless++;
     console.log(JSON.stringify({ provider_uuid: uuid, event_key: row.eventKey,
-      result: hasLead ? "existing_lead" : "leadless_review_required" }));
+      result: reassigned.has(uuid) ? "shop_reassigned_review_required" : hasLead ? "existing_lead" : "leadless_review_required" }));
   }
   let unresolved = 0;
   for (let start = 0; ; start += 500) {
@@ -82,21 +85,22 @@ export async function backfillEzcater(options: BackfillOptions = {}) {
     }
     if ((page.data?.length ?? 0) < 500) break;
   }
-  if (!execute) return { known: known.size, leadless, unresolved, applied: 0, failed: 0 };
+  if (!execute) return { known: known.size, leadless, reassigned: reassigned.size, unresolved, applied: 0, failed: 0 };
   if (!Number.isSafeInteger(options.expect) || (options.expect ?? 0) <= 0) throw new Error("backfill_expected_count_required");
   if (known.size !== options.expect) throw new Error("backfill_manifest_count_changed_review_required");
   if (options.uuid && !known.has(options.uuid)) throw new Error("backfill_uuid_outside_manifest");
   if (options.uuid && !existing.has(options.uuid)) throw new Error("backfill_uuid_has_no_lead");
+  if (options.uuid && reassigned.has(options.uuid)) throw new Error("backfill_uuid_shop_reassigned");
   let applied = 0, failed = 0;
   for (const [uuid, row] of known) {
-    if (!existing.has(uuid) || (options.uuid && uuid !== options.uuid)) continue;
+    if (!existing.has(uuid) || reassigned.has(uuid) || (options.uuid && uuid !== options.uuid)) continue;
     try {
       const result = await syncEzcaterOrder(uuid, row.caterer, { eventKey: row.eventKey });
       if (result.sync_error || result.result === "sync_error" || result.result.startsWith("error:")) failed++; else applied++;
       console.log(JSON.stringify({ provider_uuid: uuid, result: result.result }));
     } catch { failed++; console.log(JSON.stringify({ provider_uuid: uuid, result: "sync_failed" })); }
   }
-  return { known: known.size, leadless, unresolved, applied, failed };
+  return { known: known.size, leadless, reassigned: reassigned.size, unresolved, applied, failed };
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
