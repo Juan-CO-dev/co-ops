@@ -30,6 +30,10 @@ import type { TranslationKey } from "@/lib/i18n/types";
 import type { AuthContext } from "@/lib/session";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import {
+  SALES_EXPORT_MAX_ROWS, SALES_READ_MIN, SalesReportError, VIEW_DIMENSION, isSalesExportView, loadSalesBreakdown,
+  loadSalesCheckPage, loadSalesEzcaterOrders, loadSalesSummary, parseSalesCheckFilters, resolveSalesRange,
+} from "@/lib/sales-reports";
+import {
   EXPORT_COLUMNS,
   cashRows,
   cateringRows,
@@ -37,7 +41,12 @@ import {
   countRows,
   operationsRows,
   receivingRows,
+  SALES_EXPORT_COLUMNS,
+  salesBreakdownRows,
+  salesCateringRows,
+  salesCheckRows,
   salesNotYetAvailableRows,
+  salesSummaryRows,
   teamRows,
   trendRows,
   writtenRows,
@@ -62,12 +71,66 @@ export interface ExportTable {
   shop: ShopRef | null;
   from: string;
   to: string;
+  /** File-name family when one family has several tables (sales views: `sales-items`). */
+  fileFamily?: string;
 }
 
 type Params = Record<string, string | undefined>;
 const ALL_TYPES: ReportTypeKey[] = ["opening", "closing", "am_prep", "mid_day", "cash", "pm", "maintenance"];
-/** The landing page shows Sales ("coming next") from level 6. */
-export const SALES_EXPORT_MIN = 6;
+/** Sales is GM+ (Juan 2026-10-08), the same floor as every Sales page loader. */
+export const SALES_EXPORT_MIN = SALES_READ_MIN;
+
+/**
+ * The Sales family: the page's own loaders (lib/sales-reports.ts) with the page's own range
+ * wrapper and filters, one table per `view`. Lists page through EVERY page at the same cursor
+ * context; past SALES_EXPORT_MAX_ROWS the export refuses (413) instead of truncating.
+ */
+async function salesExportTable(auth: AuthContext, params: Params, shop: ShopRef, today: string): Promise<Pick<ExportTable, "columns" | "rows" | "from" | "to" | "fileFamily">> {
+  const view = isSalesExportView(params.view) ? params.view : "summary";
+  const range = resolveSalesRange(params, today);
+  const viewer = { userId: auth.user.id, level: auth.level, locations: auth.locations };
+  const period = { from: range.from, to: range.to };
+  const out = { columns: SALES_EXPORT_COLUMNS[view], from: range.from, to: range.to, fileFamily: view === "summary" ? "sales" : `sales-${view}` };
+  const pages = async <T,>(load: (cursor: string | undefined) => Promise<{ rows: T[]; nextCursor: string | null }>) => {
+    const all: T[] = [];
+    let cursor: string | undefined;
+    for (;;) {
+      const page = await load(cursor);
+      all.push(...page.rows);
+      if (all.length > SALES_EXPORT_MAX_ROWS) throw new ExportError(413, "export_too_large");
+      if (!page.nextCursor) return all;
+      cursor = page.nextCursor;
+    }
+  };
+  try {
+    switch (view) {
+      case "summary": {
+        const s = await loadSalesSummary(viewer, { locationId: shop.id, range: { ...range, compare: false } });
+        return { ...out, rows: salesSummaryRows(s.buckets, s.totals, period, shop) };
+      }
+      case "checks": {
+        const filters = parseSalesCheckFilters(params);
+        const rows = await pages((cursor) => loadSalesCheckPage(viewer, { locationId: shop.id, range, filters, cursor, pageSize: 100 }));
+        return { ...out, rows: salesCheckRows(rows, shop) };
+      }
+      case "catering": {
+        const rows = await pages((cursor) => loadSalesEzcaterOrders(viewer, { locationId: shop.id, range, cursor, pageSize: 100 }));
+        return { ...out, rows: salesCateringRows(rows, shop) };
+      }
+      default: {
+        const rows = await loadSalesBreakdown(viewer, { locationId: shop.id, range, dimension: VIEW_DIMENSION[view] });
+        return { ...out, rows: salesBreakdownRows(view, rows, period, shop) };
+      }
+    }
+  } catch (error) {
+    if (error instanceof SalesReportError) {
+      // 0232 not applied yet: the summary says "not yet available" (never zeros); other views refuse.
+      if (error.code === "sales_reads_not_installed" && view === "summary") return { ...out, rows: salesNotYetAvailableRows([shop], period) };
+      throw new ExportError(error.status, error.code);
+    }
+    throw error;
+  }
+}
 /** Bounded like every hub list: written reports page 50 at a time; 40 pages = 2,000 rows max. */
 const WRITTEN_MAX_PAGES = 40;
 const RECEIVING_EXPORT_LIMIT = 1000;
@@ -237,7 +300,7 @@ export async function loadExportTable(auth: AuthContext, family: ExportFamily, p
         return { ...base, from: today, to: today, rows: costingRows(board.rows) };
       }
       case "sales":
-        return { ...base, rows: salesNotYetAvailableRows([shop!], null) };
+        return { ...base, ...(await salesExportTable(auth, params, shop!, today)) };
     }
   } catch (error) {
     if (error instanceof ExportError) throw error;
