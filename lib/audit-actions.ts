@@ -43,6 +43,8 @@ import { DESTRUCTIVE_ACTIONS } from "@/lib/destructive-actions";
  * to filter for.
  */
 export const NON_DESTRUCTIVE_ACTIONS = [
+  "ezcater.location_reassigned", // Provider shop observation, including a manual-location conflict.
+  "ezcater.order_synced", // Provider observation; metadata contains identities/codes only.
   "vendor.import_staged", // Vendor evidence only; staging does not change the catalog.
 
   // ── AUTH & SESSION ────────────────────────────────────────────────────
@@ -301,6 +303,8 @@ export const NON_DESTRUCTIVE_ACTIONS = [
  * which would otherwise look identical.
  */
 export const RESERVED_ACTIONS = [
+  "ezcater.item_map.approve", // SQL-only, atomic mapping decision.
+  "ezcater.item_map.ignore",
   // Emitted from SQL only (submit_am_prep_atomic and friends set destructive=true
   // directly on the INSERT) — real, live, and invisible to a JS-side scan.
   "report.update",

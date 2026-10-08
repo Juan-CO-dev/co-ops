@@ -231,3 +231,34 @@ describe("catering digest polish", () => {
     expect(y[1]).toMatchObject({ tone: "issue", text: "time not set · size not set · $0.00 · Not marked completed" });
   });
 });
+
+describe("unified totals never turn a failed read into zero (Astra r2 P2)", () => {
+  const b = (v2: ReturnType<typeof v2Fixture>) => ({ ...facts({ v2 }), location: { id: "22222222-2222-4222-8222-222222222222", name: "Shop B" } });
+  const allShops = (shops: ShopDayFacts[], language: "en" | "es") =>
+    renderUnifiedDigest({ day: DAY, shops, notFinalized: [] }, { language, baseUrl: BASE }).text.split("\nShop A · Headline")[0]!;
+
+  it("every area failed in every shop: each total says not available (en + es)", () => {
+    const dead = v2Fixture({ sales: failed(), catering: failed(), ordering: failed(), receiving: failed() });
+    const en = allShops([facts({ v2: dead }), b(dead)], "en");
+    expect(en).not.toMatch(/\$0\.00|0 POs placed|0 missed|0 deliveries/);
+    expect(en.match(/Not yet available/g)).toHaveLength(5);
+    const es = allShops([facts({ v2: dead }), b(dead)], "es");
+    expect(es).not.toMatch(/0,00|\$0\.00|0 pedidos enviados/);
+    expect(es.match(/Aún no disponible/g)).toHaveLength(5);
+  });
+
+  it("mixed coverage: the totals say partial (1 of 2 shops), en + es", () => {
+    const half = v2Fixture({ ordering: failed(), receiving: failed(), sales: failed() });
+    const en = allShops([facts(), b(half)], "en");
+    expect(en).toContain("POs placed: 1 PO placed · $25.00 · 0 missed cutoffs · partial (1 of 2 shops)");
+    expect(en).toContain("Net sales (pre-tax): $100.00 · last week not available · 1 check · avg $100.00 · 3rd-party 0% · partial (1 of 2 shops)");
+    expect(allShops([facts(), b(half)], "es")).toContain("parcial (1 de 2 tiendas)");
+  });
+
+  it("an unknown credit amount is never $0", () => {
+    const f = facts({ v2: v2Fixture({ receiving: ok({ deliveries: [], credits: [{ vendorName: "T", reason: "short", amountCents: null }, { vendorName: "T", reason: "short", amountCents: 500 }], invoicesPendingReview: 0 }) }) });
+    expect(lineIn(f, "Receiving", "Shorts and credits")!.text).toBe("2 credits opened · $5.00 · + 1 amount not recorded");
+    const all = facts({ v2: v2Fixture({ receiving: ok({ deliveries: [], credits: [{ vendorName: "T", reason: "short", amountCents: null }], invoicesPendingReview: 0 }) }) });
+    expect(lineIn(all, "Receiving", "Shorts and credits")!.text).toBe("1 credit opened · amount not recorded");
+  });
+});

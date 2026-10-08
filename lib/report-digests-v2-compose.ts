@@ -13,13 +13,14 @@ import { timeWindowLabel, timeWindowMinutes } from "@/lib/midshift-shared";
 import {
   allShopTotals,
   salesDeltaPct,
+  type Coverage,
   sumKnown,
   type Loaded,
   type ShopV2Facts,
 } from "@/lib/report-digests-v2-shared";
 import { etWallTime } from "@/lib/report-digests-shared";
 import { cutoffMinutes } from "@/lib/vendor-rhythm-shared";
-import type { DigestLine, DigestSection } from "@/lib/report-digests-compose";
+import type { DigestLine, DigestSection, DigestTone } from "@/lib/report-digests-compose";
 
 type Params = Record<string, string | number>;
 export type T = (key: TranslationKey, params?: Params) => string;
@@ -163,7 +164,15 @@ export function receivingLines(c: Ctx, v: ShopV2Facts): DigestLine[] {
   const credits = sumKnown(r.credits.map((x) => x.amountCents));
   lines.push(r.credits.length === 0
     ? { label: c.t("digest.v2.receiving.credits_label"), text: c.t("digest.v2.receiving.no_credits"), tone: "ok", href }
-    : { label: c.t("digest.v2.receiving.credits_label"), tone: "issue", href, text: `${plural(c.t, r.credits.length, "digest.v2.receiving.credits_one", "digest.v2.receiving.credits_other")} · ${money(c, credits.cents)}` });
+    : {
+      label: c.t("digest.v2.receiving.credits_label"), tone: "issue", href,
+      // An unknown credit amount is never $0 (Astra r2 P2).
+      text: [
+        plural(c.t, r.credits.length, "digest.v2.receiving.credits_one", "digest.v2.receiving.credits_other"),
+        credits.unknown === r.credits.length ? c.t("digest.v2.receiving.credit_amount_unknown") : money(c, credits.cents),
+        credits.unknown > 0 && credits.unknown < r.credits.length ? plural(c.t, credits.unknown, "digest.v2.totals.unknown_one", "digest.v2.totals.unknown_other") : null,
+      ].filter(Boolean).join(" · "),
+    });
   lines.push(r.invoicesPendingReview === 0
     ? { label: c.t("digest.v2.receiving.invoices_label"), text: c.t("digest.v2.receiving.no_invoices"), tone: "ok", href }
     : { label: c.t("digest.v2.receiving.invoices_label"), tone: "issue", href, text: plural(c.t, r.invoicesPendingReview, "digest.v2.receiving.invoices_one", "digest.v2.receiving.invoices_other") });
@@ -379,31 +388,41 @@ export function composeV2Sections(args: { shopName: string; locationId: string; 
   ];
 }
 
-/** The level-8+ all-shop totals section of the unified digest. */
+/** The level-8+ all-shop totals section: "not available" / "partial (n of m shops)", never a false 0. */
 export function allShopsSection(shops: ReadonlyArray<{ v2?: ShopV2Facts }>, language: Language, baseUrl: string): DigestSection {
   const t = translator(language);
   const m = (cents: number) => formatCents(cents, language);
   const tot = allShopTotals(shops.map((s) => s.v2));
   const href = `${baseUrl}/reports`;
   const lines: DigestLine[] = [];
-  if (tot.salesShops === 0) lines.push({ label: t("digest.v2.sales.net_label"), text: t("digest.v2.sales.no_capture"), tone: "info", href });
-  else {
-    const delta = tot.lastWeekCents === null ? null : tot.lastWeekCents > 0 ? Math.round(((tot.netCents - tot.lastWeekCents) / tot.lastWeekCents) * 100) : null;
-    lines.push({
-      label: t("digest.v2.sales.net_label"), href, tone: "info",
-      text: [
-        m(tot.netCents),
-        delta === null ? t("digest.v2.sales.vs_unavailable") : t("digest.v2.totals.vs_last_week", { pct: `${delta > 0 ? "+" : ""}${delta}%` }),
-        plural(t, tot.checks, "digest.v2.sales.checks_one", "digest.v2.sales.checks_other"),
-        tot.checks > 0 ? t("digest.v2.sales.avg_check", { money: m(Math.round(tot.netCents / tot.checks)) }) : null,
-        tot.netCents > 0 ? t("digest.v2.sales.third_party", { pct: `${Math.round((tot.thirdPartyCents / tot.netCents) * 100)}%` }) : null,
-        tot.salesShops < tot.shops ? t("digest.v2.totals.shops_covered", { n: tot.salesShops, total: tot.shops }) : null,
-      ].filter((x): x is string => x !== null).join(" · "),
-    });
-  }
-  lines.push({ label: t("digest.v2.catering.revenue_label"), href: `${baseUrl}/catering/pipeline`, tone: "info", text: `${t("digest.v2.catering.split", { completed: m(tot.cateringCompletedCents), confirmed: m(tot.cateringConfirmedCents) })} · ${t("digest.v2.catering.not_in_pos")}` });
-  lines.push({ label: t("digest.v2.ordering.placed_label"), href, tone: tot.missedCutoffs > 0 ? "issue" : "info", text: `${plural(t, tot.posPlaced, "digest.v2.ordering.placed_one", "digest.v2.ordering.placed_other")} · ${m(tot.posPlacedCents)} · ${plural(t, tot.missedCutoffs, "digest.v2.totals.missed_one", "digest.v2.totals.missed_other")}` });
-  lines.push({ label: t("digest.family.receiving"), href, tone: "info", text: `${plural(t, tot.deliveries, "digest.v2.totals.deliveries_one", "digest.v2.totals.deliveries_other")} · ${m(tot.deliveriesCents)}` });
-  lines.push({ label: t("digest.v2.tomorrow.deliveries_label"), href, tone: "info", text: plural(t, tot.dueTomorrow, "digest.v2.totals.due_one", "digest.v2.totals.due_other") });
+  /** null = nothing covered; else the parts plus a "partial" note when some shops are missing. */
+  const covered = (cov: Coverage, parts: Array<string | null>): string | null => cov.covered === 0 ? null
+    : [...parts, cov.covered < cov.total ? t("digest.v2.totals.partial", { n: cov.covered, total: cov.total }) : null].filter((x): x is string => x !== null).join(" · ");
+  const unknown = (n: number) => n > 0 ? plural(t, n, "digest.v2.totals.unknown_one", "digest.v2.totals.unknown_other") : null;
+  const push = (label: string, text: string | null, tone: DigestTone, link = href) =>
+    lines.push(text === null ? { label, text: t("digest.v2.not_available"), tone: "info", href: link } : { label, text, tone, href: link });
+
+  const s = tot.sales;
+  const delta = s.lastWeekCents !== null && s.lastWeekCents > 0 ? Math.round(((s.netCents - s.lastWeekCents) / s.lastWeekCents) * 100) : null;
+  push(t("digest.v2.sales.net_label"), covered(s, [
+    m(s.netCents),
+    delta === null ? t("digest.v2.sales.vs_unavailable") : t("digest.v2.totals.vs_last_week", { pct: `${delta > 0 ? "+" : ""}${delta}%` }),
+    plural(t, s.checks, "digest.v2.sales.checks_one", "digest.v2.sales.checks_other"),
+    s.checks > 0 ? t("digest.v2.sales.avg_check", { money: m(Math.round(s.netCents / s.checks)) }) : null,
+    s.netCents > 0 ? t("digest.v2.sales.third_party", { pct: `${Math.round((s.thirdPartyCents / s.netCents) * 100)}%` }) : null,
+  ]), "info");
+  push(t("digest.v2.catering.revenue_label"), covered(tot.catering, [
+    t("digest.v2.catering.split", { completed: m(tot.catering.completedCents), confirmed: m(tot.catering.confirmedCents) }), t("digest.v2.catering.not_in_pos"),
+  ]), "info", `${baseUrl}/catering/pipeline`);
+  const o = tot.ordering;
+  push(t("digest.v2.ordering.placed_label"), covered(o, [
+    plural(t, o.placed, "digest.v2.ordering.placed_one", "digest.v2.ordering.placed_other"), m(o.placedCents), unknown(o.unpriced),
+    plural(t, o.missed, "digest.v2.totals.missed_one", "digest.v2.totals.missed_other"),
+  ]), o.missed > 0 ? "issue" : "info");
+  const r = tot.receiving;
+  push(t("digest.family.receiving"), covered(r, [
+    plural(t, r.deliveries, "digest.v2.totals.deliveries_one", "digest.v2.totals.deliveries_other"), m(r.cents), unknown(r.unknownCents),
+  ]), "info");
+  push(t("digest.v2.tomorrow.deliveries_label"), covered(o, [plural(t, o.dueTomorrow, "digest.v2.totals.due_one", "digest.v2.totals.due_other")]), "info");
   return { title: t("digest.v2.section.all_shops"), lines };
 }

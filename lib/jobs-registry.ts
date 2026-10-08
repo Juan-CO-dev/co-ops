@@ -30,6 +30,7 @@ export interface RegisteredJob {
 export const DAILY_DUE_GRACE_MINUTES = 90;
 
 export const JOBS_REGISTRY = [
+  { job: "ezcater-refresh", cadenceMinutes: 1440, source: "vercel" },
   // Cutover keeps scheduler identities stable: capture is the provider writer;
   // sales-pull now proves T-1..T-3 capture -> depletion -> shadow pars.
   // sales-today captures today/yesterday; catering-scan checks the persisted sink.

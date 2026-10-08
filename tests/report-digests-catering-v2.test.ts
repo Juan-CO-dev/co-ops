@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  countAnchoredBalances,
   firstName,
   paymentState,
   readinessFrom,
@@ -35,20 +36,37 @@ describe("logistics helpers", () => {
     expect(paymentState("phone", [])).toEqual({ kind: "none" });
   });
 
-  it("readiness never shows stock for a SKU that was never counted at the shop", () => {
+  it("readiness reads ONLY a census-anchored oz balance; anything else is not counted yet", () => {
+    const balances = countAnchoredBalances([
+      { skuId: "ham", dimension: "weight", anchorSource: "census", onHandOz: 20 },
+      { skuId: "rolls", dimension: "weight", anchorSource: "census", onHandOz: 100 },
+      { skuId: "mayo", dimension: "weight", anchorSource: "inferred", onHandOz: 50 },
+      { skuId: "cups", dimension: "count", anchorSource: "census" },
+      { skuId: "tuna", dimension: "weight", anchorSource: "census", onHandOz: null },
+    ]);
+    expect([...balances]).toEqual([["ham", 20], ["rolls", 100]]);
     const r = readinessFrom({
       rows: [
-        { skuId: "ham", skuName: "Ham", totalOz: 64, onHandOz: 20, shortfallOz: 44, suggestOrderPacks: 1 },
-        { skuId: "rolls", skuName: "Rolls", totalOz: 30, onHandOz: 100, shortfallOz: 0, suggestOrderPacks: null },
-        { skuId: "mayo", skuName: "Mayo", totalOz: 8, onHandOz: 50, shortfallOz: 0, suggestOrderPacks: null },
+        { skuId: "ham", skuName: "Ham", totalOz: 64, contentOz: 32 },
+        { skuId: "rolls", skuName: "Rolls", totalOz: 30, contentOz: null },
+        { skuId: "mayo", skuName: "Mayo", totalOz: 8, contentOz: 128 },
       ],
       unresolvedChoiceLines: 1, noRecipeLines: 2,
-    }, new Set(["ham", "rolls"]));
+    }, balances);
     expect(r.rows).toEqual([
-      { skuName: "Ham", needOz: 64, onHandOz: 20, shortOz: 44, orderPacks: 1, counted: true },
+      { skuName: "Ham", needOz: 64, onHandOz: 20, shortOz: 44, orderPacks: 2, counted: true },
       { skuName: "Mayo", needOz: 8, onHandOz: null, shortOz: null, orderPacks: null, counted: false },
       { skuName: "Rolls", needOz: 30, onHandOz: 100, shortOz: 0, orderPacks: null, counted: true },
     ]);
+  });
+
+  it("regression (Astra r2): 10 cases received and 64 oz used is a count-anchored oz balance, never -54 'packs'", () => {
+    // The W4b stock side subtracted entered oz from received packs: 10 - 64 = -54. Readiness no
+    // longer reads it at all; the counts reader's balance is in oz: counted 0 + 10 cases x 16 oz - 64 oz.
+    const w4bRowWithBogusStock = { skuId: "ham", skuName: "Ham", totalOz: 40, contentOz: 16, onHandPacks: -54, onHandOz: -864, shortfallOz: 904, suggestOrderPacks: 57 };
+    const balances = countAnchoredBalances([{ skuId: "ham", dimension: "weight", anchorSource: "census", onHandOz: 0 + 10 * 16 - 64 }]);
+    const r = readinessFrom({ rows: [w4bRowWithBogusStock], unresolvedChoiceLines: 0, noRecipeLines: 0 }, balances);
+    expect(r.rows[0]).toEqual({ skuName: "Ham", needOz: 40, onHandOz: 96, shortOz: 0, orderPacks: null, counted: true });
   });
 
   it("the station roster is the latest event per person; a release takes them off", () => {
@@ -103,7 +121,7 @@ describe("catering morning digest: today's orders", () => {
 
   it("inventory readiness: shortfalls highlighted, uncounted SKUs say so, covered rolled up, unchecked lines disclosed", () => {
     const lines = todayLines(f, false);
-    expect(lines).toContain("issue|Ham|need 64 oz · on hand ~20 oz · short 44 oz · order 2 packs");
+    expect(lines).toContain("issue|Ham|need 64 oz · on hand 20 oz · short 44 oz · order 2 packs");
     expect(lines).toContain("info|Mayo|need 8 oz · on hand not counted yet");
     expect(lines).toContain("ok|Inventory for today|1 ingredient covered");
     expect(lines).toContain("info|Inventory for today|1 order line cannot be checked (no recipe, or a customer choice)");

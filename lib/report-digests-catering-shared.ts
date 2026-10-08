@@ -53,7 +53,8 @@ export function paymentState(leadSource: string | null, payments: ReadonlyArray<
 export interface ReadinessRow {
   skuName: string;
   needOz: number;
-  /** Advisory on-hand (received − used); null when the SKU was never counted here or has no pack size. */
+  /** The COUNT-ANCHORED on-hand in oz (last census count + received − consumed since, all in oz);
+   *  null when the SKU has no valid count-anchored balance at the shop. */
   onHandOz: number | null;
   shortOz: number | null;
   orderPacks: number | null;
@@ -68,22 +69,37 @@ export interface CateringReadiness {
 }
 
 /**
- * The W4b rows → readiness. A SKU with no count EVER at the shop keeps its need and loses its
- * on-hand number (the advisory received − used is not a count, and before the first physical count
- * it would be a guess dressed as stock).
+ * The count-anchored balance per SKU from the counts reader's rows (deriveOnHand, the same family
+ * as the counts / variance surface): ONLY a weight row anchored by a real census count with a
+ * derivable balance qualifies. A par-estimate or inferred anchor, a count-dimension (units) row, or
+ * a null balance is NOT a balance in oz, so the SKU reads "on hand not counted yet".
+ */
+export function countAnchoredBalances(rows: ReadonlyArray<{ skuId: string; dimension: string; anchorSource?: string | null; onHandOz?: number | null }>): Map<string, number> {
+  const out = new Map<string, number>();
+  for (const r of rows) {
+    if (r.dimension !== "weight" || r.anchorSource !== "census" || r.onHandOz == null || !Number.isFinite(r.onHandOz)) continue;
+    out.set(r.skuId, r.onHandOz);
+  }
+  return out;
+}
+
+/**
+ * W4b DEMAND (oz per SKU, the flatten) + the count-anchored BALANCE → readiness. The W4b stock side
+ * (loadInStockPacks: packs received minus entered quantities, unit-mixed) is deliberately NOT read —
+ * 10 cases received and 64 oz used is not -54 of anything (Astra r2 P2).
  */
 export function readinessFrom(
-  w4b: { rows: ReadonlyArray<{ skuName: string; skuId: string; totalOz: number; onHandOz: number | null; shortfallOz: number | null; suggestOrderPacks: number | null }>; unresolvedChoiceLines: number; noRecipeLines: number },
-  countedSkuIds: ReadonlySet<string>,
+  w4b: { rows: ReadonlyArray<{ skuName: string; skuId: string; totalOz: number; contentOz: number | null }>; unresolvedChoiceLines: number; noRecipeLines: number },
+  balances: ReadonlyMap<string, number>,
 ): CateringReadiness {
   return {
     rows: w4b.rows.map((r) => {
-      const counted = countedSkuIds.has(r.skuId);
+      const onHand = balances.get(r.skuId);
+      if (onHand === undefined) return { skuName: r.skuName, needOz: r.totalOz, counted: false, onHandOz: null, shortOz: null, orderPacks: null };
+      const shortOz = Math.max(0, r.totalOz - Math.max(0, onHand));
       return {
-        skuName: r.skuName, needOz: r.totalOz, counted,
-        onHandOz: counted ? r.onHandOz : null,
-        shortOz: counted ? r.shortfallOz : null,
-        orderPacks: counted ? r.suggestOrderPacks : null,
+        skuName: r.skuName, needOz: r.totalOz, counted: true, onHandOz: onHand, shortOz,
+        orderPacks: shortOz > 0 && r.contentOz && r.contentOz > 0 ? Math.ceil(shortOz / r.contentOz) : null,
       };
     }).sort((a, b) => Number((b.shortOz ?? 0) > 0) - Number((a.shortOz ?? 0) > 0) || a.skuName.localeCompare(b.skuName)),
     unresolvedChoiceLines: w4b.unresolvedChoiceLines,

@@ -19,6 +19,17 @@ const fixture = () => ({
 });
 
 describe("Toast accounting allowlist", () => {
+  it.each(["Catering", "In Store"])("never persists free-text tokens or resnapshots note edits on %s orders", (source) => {
+    const raw = (note: string) => ({ guid: "order", businessDate: 20260723, source,
+      checks: [{ guid: "check", selections: [{ guid: "selection", item: { guid: "item" },
+        displayName: "Lunch box", quantity: 1,
+        modifiers: [{ guid: "note", selectionType: "SPECIAL_REQUEST", displayName: note }] }] }] });
+    const first = normalizeToastOrder(raw("ezCater AB-1234 customer PRIVATE phone 202-555-0199"), "2026-07-23");
+    const edited = normalizeToastOrder(raw("ez cater XY-9876 corrected PRIVATE note"), "2026-07-23");
+    expect(first).toEqual(edited);
+    expect(JSON.stringify(first)).not.toMatch(/ezcater_codes|AB1234|AB-1234|PRIVATE|202-555/);
+    expect(first.order.selection_units).toHaveLength(1);
+  });
   it("captures cents, UTC instants, source business date and both employee GUIDs", () => {
     const row = normalizeToastOrder(fixture(), "2026-07-23");
     expect(row.order).toMatchObject({ business_date: "2026-07-23", opened_at: "2026-07-23T15:15:00.000Z", server_guid: "order-server" });

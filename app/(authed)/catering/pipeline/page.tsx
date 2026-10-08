@@ -6,13 +6,15 @@
  * locations server-side via the lib loaders, then hands to the client board.
  */
 
+import { StepUpProvider } from "@/components/admin/StepUpProvider";
+import { canTransferCatering } from "@/lib/catering/transfers-shared";
 import { redirect } from "next/navigation";
 
 import { requireSessionFromHeaders } from "@/lib/session";
 import { getRoleLevel } from "@/lib/roles";
 import { serverT } from "@/lib/i18n/server";
 import { getServiceRoleClient } from "@/lib/supabase-server";
-import { isAllLocationsAccess } from "@/lib/locations";
+import { isAllLocationsAccess, lockLocationContext } from "@/lib/locations";
 import {
   loadAssignableStaff,
   loadPipelineBoard,
@@ -38,11 +40,11 @@ export default async function CateringPipelinePage({
   const sp = await searchParams;
   const q = typeof sp["q"] === "string" ? sp["q"] : "";
 
-  // Locations for the add-form select (the actor's accessible locations, by name).
+  // Transfer authority spans shops; creation retains its existing membership bind.
   const sb = getServiceRoleClient();
   const locActor = { role: auth.user.role, locations: auth.locations };
   let locations: Array<{ id: string; name: string }> = [];
-  if (isAllLocationsAccess(locActor)) {
+  if (canTransferCatering(auth.user.role) || isAllLocationsAccess(locActor)) {
     const { data } = await sb
       .from("locations")
       .select("id, name")
@@ -89,16 +91,20 @@ export default async function CateringPipelinePage({
       </div>
       <h1 className="text-lg font-bold text-co-text">{serverT(lang, "catering.pipeline.title")}</h1>
       <p className="mt-1 text-sm text-co-text-muted">{serverT(lang, "catering.pipeline.subtitle")}</p>
+      <StepUpProvider unlocked={auth.session.stepUpUnlocked} unlockedAt={auth.session.stepUpUnlockedAt}>
       <PipelineClient
         staff={await loadAssignableStaff(auth)}
         leads={leads}
         followUps={followUps}
         locations={locations}
+        createLocations={locations.filter((location) => lockLocationContext(locActor, location.id))}
         actorLevel={level}
+        canTransfer={canTransferCatering(auth.user.role)}
         writeMin={PIPELINE_WRITE_MIN}
         searchQuery={q}
         results={results}
       />
+      </StepUpProvider>
     </main>
   );
 }

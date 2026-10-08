@@ -7,6 +7,7 @@ import {
   dollarsToCents,
   groupWaste,
   lookaheadDay,
+  failed,
   ok,
   orderingForDay,
   salesDeltaPct,
@@ -110,9 +111,9 @@ describe("ordering: placed, drafts never sent, missed cutoffs", () => {
   const cutoffs = ["v1", "v2", "v3", "v4", "v5", "store"].map((v) => ({ vendorId: v, locationId: null, orderDay: wed, cutoffTime: v === "v5" ? "23:00:00" : "10:00:00" }));
   const walks = [{ eventId: "w1", walkedAt: "2026-10-06T23:00:00Z" }]; // Tue 19:00 ET, inside the 24 h window
   const walkLines = [
-    { eventId: "w1", vendorId: "v1", orderQty: 2, parQty: 4, impliedOnHandOz: 10, skuName: "Ham" },
-    { eventId: "w1", vendorId: "v1", orderQty: 1, parQty: 2, impliedOnHandOz: 0, skuName: "Rolls" },
-    { eventId: "w1", vendorId: "v3", orderQty: 0, parQty: 2, impliedOnHandOz: 20, skuName: "Mayo" },
+    { eventId: "w1", skuId: "ham", vendorId: "v1", orderQty: 2, parQty: 4, impliedOnHandOz: 10, skuName: "Ham" },
+    { eventId: "w1", skuId: "rolls", vendorId: "v1", orderQty: 1, parQty: 2, impliedOnHandOz: 0, skuName: "Rolls" },
+    { eventId: "w1", skuId: "mayo", vendorId: "v3", orderQty: 0, parQty: 2, impliedOnHandOz: 20, skuName: "Mayo" },
   ];
   const res = orderingForDay(input({
     vendors: [vendor("v1"), vendor("v2"), vendor("v3"), vendor("v4"), vendor("v5"), vendor("store", { sourceKind: "store" })],
@@ -227,11 +228,11 @@ describe("money and inventory helpers", () => {
     expect(sumKnown([100, null, 250])).toEqual({ cents: 350, unknown: 1 });
   });
   it("the walk snapshot: below par = suggested order, out = implied on hand 0; no walk = null", () => {
-    const w = walkSnapshot([{ eventId: "w", walkedAt: "x" }], [
-      { eventId: "w", vendorId: "v", orderQty: 2, parQty: 4, impliedOnHandOz: 0, skuName: "Rolls" },
-      { eventId: "w", vendorId: "v", orderQty: 1, parQty: 4, impliedOnHandOz: 3, skuName: "Ham" },
-      { eventId: "w", vendorId: "v", orderQty: 0, parQty: 4, impliedOnHandOz: 30, skuName: "Mayo" },
-      { eventId: "other", vendorId: "v", orderQty: 5, parQty: 4, impliedOnHandOz: 0, skuName: "Elsewhere" },
+    const w = walkSnapshot([{ eventId: "w", walkedAt: "2026-10-07T12:00:00Z" }], [
+      { eventId: "w", skuId: "rolls", vendorId: "v", orderQty: 2, parQty: 4, impliedOnHandOz: 0, skuName: "Rolls" },
+      { eventId: "w", skuId: "ham", vendorId: "v", orderQty: 1, parQty: 4, impliedOnHandOz: 3, skuName: "Ham" },
+      { eventId: "w", skuId: "mayo", vendorId: "v", orderQty: 0, parQty: 4, impliedOnHandOz: 30, skuName: "Mayo" },
+      { eventId: "other", skuId: "elsewhere", vendorId: "v", orderQty: 5, parQty: 4, impliedOnHandOz: 0, skuName: "Elsewhere" },
     ]);
     expect(w).toEqual({ walks: 1, belowPar: [{ name: "Ham" }, { name: "Rolls" }], out: [{ name: "Rolls" }] });
     expect(walkSnapshot([], [])).toBeNull();
@@ -244,14 +245,57 @@ describe("money and inventory helpers", () => {
 
 // ── All-shop totals (level 8+) ───────────────────────────────────────────────────────────────
 
-describe("all-shop totals", () => {
-  it("sums only what is known, and says how many shops the sales cover", () => {
-    const t = allShopTotals([v2Fixture(), v2Fixture({ sales: unavailable("no_capture") })]);
-    expect(t).toMatchObject({ shops: 2, salesShops: 1, netCents: 10000, checks: 1, lastWeekCents: 8000, cateringCompletedCents: 10000, posPlaced: 2, posPlacedCents: 5000 });
+describe("all-shop totals carry coverage and unknown counts (Astra r2 P2)", () => {
+  it("sums only covered shops and says how many are covered, per aggregate", () => {
+    const t = allShopTotals([v2Fixture(), v2Fixture({ sales: unavailable("no_capture"), ordering: failed() })]);
+    expect(t.sales).toMatchObject({ covered: 1, total: 2, netCents: 10000, checks: 1, lastWeekCents: null });
+    expect(t.ordering).toMatchObject({ covered: 1, total: 2, placed: 1, placedCents: 2500, unpriced: 0 });
+    expect(t.catering).toMatchObject({ covered: 2, total: 2, completedCents: 10000 });
   });
-  it("a shop with no last-week capture makes the combined delta unavailable, never a partial comparison", () => {
-    const one = v2Fixture();
-    const noLast = v2Fixture({ sales: ok({ today: (one.sales as { kind: "ok"; value: { today: ReturnType<typeof summarizeSalesDay> } }).value.today, lastWeek: null }) });
-    expect(allShopTotals([one, noLast]).lastWeekCents).toBeNull();
+  it("every area failed = nothing covered (never an authoritative zero)", () => {
+    const t = allShopTotals([v2Fixture({ sales: failed(), catering: failed(), ordering: failed(), receiving: failed() })]);
+    expect([t.sales.covered, t.catering.covered, t.ordering.covered, t.receiving.covered]).toEqual([0, 0, 0, 0]);
+  });
+  it("unpriced POs and deliveries with no $ are counted, not summed as $0", () => {
+    const t = allShopTotals([v2Fixture({
+      ordering: ok({ day: { placed: [po("a", "v", { placedAt: "2026-10-07T13:00:00Z", totalCents: null }), po("b", "v", { placedAt: "2026-10-07T13:00:00Z", totalCents: 500, unpricedLines: 1 })], unsent: [], missed: [], unverified: [], late: [] }, deliveries: { due: [], overdue: [], undated: [] }, cutoffsTomorrow: [], vendorNames: {} }),
+      receiving: ok({ deliveries: [{ id: "d", vendorId: "v", vendorName: "V", sourceKind: "vendor", cents: null, matchState: "matched", hasReceipt: true, poDisplayCode: null, discrepancies: { short: 0, over: 0, damaged: 0, substitution: 0 } }], credits: [], invoicesPendingReview: 0 }),
+    })]);
+    expect(t.ordering).toMatchObject({ placed: 2, placedCents: 500, unpriced: 2 });
+    expect(t.receiving).toMatchObject({ deliveries: 1, cents: 0, unknownCents: 1 });
+  });
+});
+
+describe("walks: the LATEST observation per SKU decides (Astra r2 P2)", () => {
+  const wed = 3;
+  const cutoffs = [{ vendorId: "v1", locationId: null, orderDay: wed, cutoffTime: "10:00:00" }];
+  const l = (eventId: string, skuId: string, orderQty: number, impliedOnHandOz: number | null) =>
+    ({ eventId, skuId, vendorId: "v1", orderQty, parQty: 4, impliedOnHandOz, skuName: skuId.toUpperCase() });
+  const w07 = { eventId: "w07", walkedAt: "2026-10-07T11:00:00Z" }; // 07:00 ET
+  const w09 = { eventId: "w09", walkedAt: "2026-10-07T13:00:00Z" }; // 09:00 ET
+
+  it("a 09:00 walk that finds the SKU stocked clears the 07:00 shortage: no missed cutoff, nothing out", () => {
+    const lines = [l("w07", "ham", 2, 0), l("w09", "ham", 0, 40)];
+    const r = orderingForDay(input({ vendors: [vendor("v1")], cutoffs, walks: [w07, w09], walkLines: lines }));
+    expect(r.missed).toEqual([]);
+    expect(walkSnapshot([w07, w09], lines)).toEqual({ walks: 2, belowPar: [], out: [] });
+  });
+
+  it("the reverse order still counts: a later walk that finds a NEW shortage is missed", () => {
+    const lines = [l("w07", "ham", 0, 40), l("w09", "ham", 3, 0)];
+    expect(orderingForDay(input({ vendors: [vendor("v1")], cutoffs, walks: [w07, w09], walkLines: lines })).missed[0]!.suggestedLines).toBe(1);
+  });
+
+  it("a partial later walk leaves the SKUs it did not cover at their earlier observation", () => {
+    const lines = [l("w07", "ham", 2, 0), l("w07", "rolls", 1, 5), l("w09", "ham", 0, 40)];
+    const r = orderingForDay(input({ vendors: [vendor("v1")], cutoffs, walks: [w07, w09], walkLines: lines }));
+    expect(r.missed).toEqual([{ vendorId: "v1", vendorName: "V1", cutoffTime: "10:00:00", suggestedLines: 1 }]);
+    expect(walkSnapshot([w07, w09], lines)).toEqual({ walks: 2, belowPar: [{ name: "ROLLS" }], out: [] });
+  });
+
+  it("a walk AFTER the cutoff does not rescue a cutoff already missed", () => {
+    const w11 = { eventId: "w11", walkedAt: "2026-10-07T15:00:00Z" }; // 11:00 ET, after the 10:00 cutoff
+    const lines = [l("w07", "ham", 2, 0), l("w11", "ham", 0, 40)];
+    expect(orderingForDay(input({ vendors: [vendor("v1")], cutoffs, walks: [w07, w11], walkLines: lines })).missed).toHaveLength(1);
   });
 });
