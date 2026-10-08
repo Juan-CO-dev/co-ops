@@ -116,14 +116,44 @@ export async function completeElapsedCateringEvents(todayEt: string): Promise<El
   // Rows with a null event_date never match (`null < x` is null), which is the right answer:
   // an undated lead has no elapsed date to pass.
   const { data, error } = await sb.from("catering_pipeline")
-    .select("id, stage, location_id")
+    .select("id, stage, location_id, lead_source")
     .in("stage", ["confirmed", "out"])
     .lt("event_date", todayEt)
-    .returns<Array<{ id: string; stage: PipelineStage; location_id: string }>>();
+    .returns<Array<{ id: string; stage: PipelineStage; location_id: string; lead_source: string }>>();
   if (error) throw new Error(`completeElapsedCateringEvents select: ${error.message}`);
 
   const out: ElapsedCompletionResult = { completed: [], stageChanged: 0, failed: [] };
+  const pendingCancellationLeads = new Set<string>();
+  let cancellationReadFailed = false;
+  if (data?.some((lead) => lead.lead_source === "ezcater")) {
+    try {
+      // A signed cancellation remains authoritative even when fetching its detail failed.
+      // Bound each lead-ID filter to keep the URL and result set below API limits.
+      const providerIds = data.filter((lead) => lead.lead_source === "ezcater").map((lead) => lead.id);
+      for (let offset = 0; offset < providerIds.length; offset += 100) {
+        const { data: pending, error: pendingError } = await sb.from("ezcater_orders")
+          .select("lead_id")
+          .in("lead_id", providerIds.slice(offset, offset + 100))
+          .in("pending_event_key", ["cancelled", "rejected", "failed"])
+          .returns<Array<{ lead_id: string | null }>>();
+        if (pendingError) { cancellationReadFailed = true; break; }
+        for (const order of pending ?? []) {
+          if (order.lead_id) pendingCancellationLeads.add(order.lead_id);
+        }
+      }
+    } catch {
+      cancellationReadFailed = true;
+    }
+    if (cancellationReadFailed) console.error("[catering rollover] ezCater pending lifecycle lookup failed; deferring ezCater completion");
+  }
   for (const lead of data ?? []) {
+    if (lead.lead_source === "ezcater") {
+      if (cancellationReadFailed) {
+        out.failed.push({ id: lead.id, result: "pending_lifecycle_unavailable" });
+        continue;
+      }
+      if (pendingCancellationLeads.has(lead.id)) continue;
+    }
     let outcome: SystemMoveOutcome;
     try {
       outcome = await systemMoveStage(sb, { id: lead.id, stage: lead.stage }, "completed", "auto: event date passed", "cron_rollover");

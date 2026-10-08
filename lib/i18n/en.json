@@ -4906,5 +4906,18 @@
   "digestWatch.preview_body": "Digests are in preview mode, but there is not exactly one active CGS account with an email. Nothing was sent ({day}). Fix the account or switch the mode.",
   "reportRecipients.skip.out_of_scope": "Outside their shops",
   "reports.export.part": "Columns {i} of {n}",
-  "reportRecipients.error.package_owner_only": "Packages go to the owner and the outside accountant only."
+  "reportRecipients.error.package_owner_only": "Packages go to the owner and the outside accountant only.",
+  "catering.ezcater.title": "ezCater order",
+  "catering.ezcater.event": "Event (shop time)",
+  "catering.ezcater.handoff": "Handoff (shop time)",
+  "catering.ezcater.fulfillment": "Fulfillment",
+  "catering.ezcater.payment": "Payment status",
+  "catering.ezcater.subtotal": "Subtotal",
+  "catering.ezcater.tax": "Tax",
+  "catering.ezcater.tip": "Tip",
+  "catering.ezcater.fees": "Fees",
+  "catering.ezcater.discounts": "Discounts",
+  "catering.ezcater.total": "Total",
+  "catering.ezcater.items": "Order items",
+  "catering.ezcater.contact": "Contact"
 }

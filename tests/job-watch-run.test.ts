@@ -29,9 +29,9 @@ beforeEach(() => {
 
 it("skips self before any lookup, including the watcher itself", async () => {
   const result = await runJobWatch({ self: "job-watch", now: new Date("2026-09-10T12:00:00Z") });
-  expect(result).toEqual({ alerted: 6, checked: 6 });
+  expect(result).toEqual({ alerted: 7, checked: 7 });
   expect(jobs).not.toContain("job-watch");
-  expect(new Set(jobs).size).toBe(6);
+  expect(new Set(jobs).size).toBe(7);
 });
 
 it("siblings can detect a silent job-watch and retain the ET claim key", async () => {

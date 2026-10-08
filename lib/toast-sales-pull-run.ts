@@ -3,6 +3,7 @@ import { getServiceRoleClient } from "@/lib/supabase-server";
 import { runOrderCapture } from "@/lib/toast/capture-job";
 import { materializeCapturedDepletion } from "@/lib/toast/depletion";
 import { completeElapsedCateringEvents } from "@/lib/catering/system-intake";
+import { refreshKnownEzcaterOrders } from "@/lib/ezcater/refresh";
 import { etCalendarDate, etYmdMinusDays } from "@/lib/operational-day";
 import { pullSalesForAllLocations, materializeDailyDepletion } from "@/lib/catering/toast-sales";
 import { loadDepletionWatermark } from "@/lib/counts";
@@ -23,8 +24,13 @@ export async function runToastSalesPull(opts: { businessDate: string; deadlineAt
   let capture: Awaited<ReturnType<typeof runOrderCapture>>;
   let elapsedCompleted = 0, elapsedFailed = 0;
   let elapsedError: string | null = null;
+  const todayEt = etCalendarDate(new Date().toISOString());
+  // Cancellation discovered here becomes lost before generic completion. An API failure
+  // never excludes ezCater from that existing loop or consumes the sales-pull budget.
+  try { await refreshKnownEzcaterOrders(todayEt, Math.min(Date.now() + 20_000, deadlineAt - 10_000), opts.signal); }
+  catch { /* Independent heartbeat reports failure; completion still runs. */ }
   try {
-    const elapsed = await completeElapsedCateringEvents(etCalendarDate(new Date().toISOString()));
+    const elapsed = await completeElapsedCateringEvents(todayEt);
     elapsedCompleted = elapsed.completed.length;
     elapsedFailed = elapsed.failed.length;
   } catch (error) { elapsedError = captureErrorCode(error); }
