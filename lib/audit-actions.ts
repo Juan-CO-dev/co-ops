@@ -43,6 +43,7 @@ import { DESTRUCTIVE_ACTIONS } from "@/lib/destructive-actions";
  * to filter for.
  */
 export const NON_DESTRUCTIVE_ACTIONS = [
+  "ezcater.order_synced", // Provider observation; metadata contains identities/codes only.
   "vendor.import_staged", // Vendor evidence only; staging does not change the catalog.
 
   // ── AUTH & SESSION ────────────────────────────────────────────────────
