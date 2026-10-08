@@ -61,8 +61,15 @@ class Store {
     Object.assign(row, patch);
     return true;
   }
-  async finish(id: string, from: SendOutcome[], patch: { outcome: string; error?: string | null }) {
-    const row = this.rows.find((x) => x.id === id && (from as string[]).includes(x.outcome));
+  async reclaim(id: string, patch: { attempted_at: string }) {
+    const row = this.rows.find((x) => x.id === id && x.outcome === "ambiguous" && !x.provider_message_id);
+    if (!row) return false;
+    Object.assign(row, { ...patch, outcome: "claimed" });
+    return true;
+  }
+  async finish(id: string, from: SendOutcome[], patch: { outcome: string; error?: string | null }, guard?: { noMessageId?: boolean; neverAttempted?: boolean }) {
+    const row = this.rows.find((x) => x.id === id && (from as string[]).includes(x.outcome) &&
+      (!guard?.noMessageId || !x.provider_message_id) && (!guard?.neverAttempted || !x.first_attempt_at));
     if (!row) return false;
     Object.assign(row, { outcome: patch.outcome, error: patch.error ?? null });
     return true;
@@ -247,16 +254,65 @@ describe("send-once: packages get the digest engine's guarantees, not a copy of 
     expect(packageMail(provider)).toHaveLength(0);
   });
 
-  it("a definitive refusal is failed + alerted + audited, releases the key, and the next tick sends", async () => {
+  it("a provider refusal after the attempt keeps the row AMBIGUOUS (key held), alerts + audits, and the next tick sends the SAME row", async () => {
     const store = new Store();
     const provider = new Provider();
     const failing = makeIO({ now: "2026-10-08T02:30:00Z", store, provider, finalized: closed, sendFails: (s) => s.startsWith("PACKAGE") });
     await runClosingDigestsWith(failing.io, B.id, DAY);
-    expect(store.pkg().filter((r) => r.outcome === "failed")).toMatchObject([{ kind: "package_daily", recipient_ref: "user:own", error: "422 domain not verified" }]);
+    expect(store.pkg().filter((r) => r.recipient_ref === "user:own")).toMatchObject([{ kind: "package_daily", outcome: "ambiguous", error: "refused: 422 domain not verified" }]);
+    expect(store.pkg().filter((r) => r.outcome === "failed")).toEqual([]);
     expect(failing.alerts).toEqual(expect.arrayContaining([expect.objectContaining({ kind: "package_daily", detector: "digest-send", ref: "user:own" })]));
     expect(failing.audits).toEqual([{ kind: "package_daily", day: DAY, ref: "user:own", outcome: "failed" }]);
     await runDigestTickWith(makeIO({ now: "2026-10-08T02:40:00Z", store, provider, finalized: closed }).io);
     expect(packageMail(provider).map((m) => m.to)).toEqual(["pete@example.com"]);
+    expect(store.pkg().filter((r) => r.recipient_ref === "user:own").map((r) => [r.outcome, r.first_attempt_at])).toEqual([["sent", "2026-10-08T02:30:00.000Z"]]);
+  });
+
+  it("r4: accept-lost, then a retry REFUSED, then 25 h: still ONE package email, frozen failed_ambiguous with its original first attempt", async () => {
+    const store = new Store();
+    const provider = new Provider();
+    let lostOnce = false;
+    await runClosingDigestsWith(makeIO({
+      now: "2026-10-08T02:30:00Z", store, provider, finalized: closed, rows: [peteRow],
+      beforePackage: (p) => { if (!lostOnce) { lostOnce = true; p.lose(1); } },
+    }).io, B.id, DAY);
+    const row = store.pkg().find((r) => r.recipient_ref === "user:own")!;
+    expect(row.outcome).toBe("ambiguous");
+    const refused = makeIO({ now: "2026-10-08T04:30:00Z", store, provider, finalized: closed, rows: [peteRow], sendFails: (s) => s.startsWith("PACKAGE") });
+    await runDigestTickWith(refused.io);
+    expect(row).toMatchObject({ outcome: "ambiguous", first_attempt_at: "2026-10-08T02:30:00.000Z" });
+    await runDigestTickWith(makeIO({ now: "2026-10-09T03:30:00Z", store, provider, finalized: closed, rows: [peteRow] }).io);
+    expect(row.outcome).toBe("failed_ambiguous");
+    expect(packageMail(provider)).toHaveLength(1);
+    expect(store.pkg().filter((r) => r.recipient_ref === "user:own")).toHaveLength(1);
+  });
+
+  it("r4: an ambiguous package with a persisted provider id is reconciled to sent with ZERO provider calls", async () => {
+    const store = new Store();
+    const provider = new Provider();
+    await runClosingDigestsWith(makeIO({ now: "2026-10-08T02:30:00Z", store, provider, finalized: closed, rows: [peteRow] }).io, B.id, DAY);
+    const row = store.pkg().find((r) => r.recipient_ref === "user:own")!;
+    Object.assign(row, { outcome: "ambiguous", provider_message_id: "mail-x" });
+    const before = provider.calls.filter((c) => c.key.includes("package_daily")).length;
+    await runDigestTickWith(makeIO({ now: "2026-10-08T03:00:00Z", store, provider, finalized: closed, rows: [peteRow] }).io);
+    expect(row.outcome).toBe("sent");
+    expect(provider.calls.filter((c) => c.key.includes("package_daily") && c.key.includes(DAY)).length).toBe(before);
+  });
+
+  it("r4: two concurrent ticks retrying the same ambiguous package re-take ONE claim: one provider call", async () => {
+    const store = new Store();
+    const provider = new Provider();
+    let droppedOnce = false;
+    await runClosingDigestsWith(makeIO({
+      now: "2026-10-08T02:30:00Z", store, provider, finalized: closed, rows: [peteRow],
+      beforePackage: (p) => { if (!droppedOnce) { droppedOnce = true; p.drop(1); } },
+    }).io, B.id, DAY);
+    const a = makeIO({ now: "2026-10-08T03:30:00Z", store, provider, finalized: closed, rows: [peteRow] });
+    const b = makeIO({ now: "2026-10-08T03:30:00Z", store, provider, finalized: closed, rows: [peteRow] });
+    await Promise.all([runDigestTickWith(a.io), runDigestTickWith(b.io)]);
+    expect(provider.calls.filter((c) => c.key.includes("package_daily") && c.key.includes(DAY) && c.at === "2026-10-08T03:30:00.000Z")).toHaveLength(1);
+    expect(packageMail(provider)).toHaveLength(1);
+    expect(store.pkg().filter((r) => r.recipient_ref === "user:own").map((r) => r.outcome)).toEqual(["sent"]);
   });
 
   it("a compose failure (e.g. too_large) is a failed row + alert and never reaches the provider", async () => {

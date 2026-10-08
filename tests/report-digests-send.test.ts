@@ -68,8 +68,17 @@ class Store {
     Object.assign(row, patch);
     return true;
   }
-  async finish(id: string, from: SendOutcome[], patch: { outcome: string; error?: string | null }) {
-    const row = this.rows.find((x) => x.id === id && (from as string[]).includes(x.outcome));
+  reclaims = 0;
+  async reclaim(id: string, patch: { attempted_at: string }) {
+    const row = this.rows.find((x) => x.id === id && x.outcome === "ambiguous" && !x.provider_message_id);
+    if (!row) return false;
+    this.reclaims++;
+    Object.assign(row, { ...patch, outcome: "claimed" });
+    return true;
+  }
+  async finish(id: string, from: SendOutcome[], patch: { outcome: string; error?: string | null }, guard?: { noMessageId?: boolean; neverAttempted?: boolean }) {
+    const row = this.rows.find((x) => x.id === id && (from as string[]).includes(x.outcome) &&
+      (!guard?.noMessageId || !x.provider_message_id) && (!guard?.neverAttempted || !x.first_attempt_at));
     if (!row) return false;
     Object.assign(row, { outcome: patch.outcome, error: patch.error ?? null });
     return true;
@@ -235,19 +244,22 @@ describe("catering morning digest", () => {
 });
 
 describe("failures are never silent", () => {
-  it("a failed send is logged failed with the error, alerts at once, does not hold the key, and the next tick retries", async () => {
+  it("a refused send is logged (ambiguous, key held — the provider WAS reached), alerts at once, and the next tick retries the same row", async () => {
     const store = new Store();
     const failing = makeIO({ now: "2026-10-07T11:00:00Z", store, sendFails: (to, subject) => to === "pete@example.com" && subject.startsWith("Catering") });
     const s = await runDigestTickWith(failing.io);
-    const failed = store.of("failed").filter((r) => r.kind === "catering");
-    expect(failed.map((r) => [r.kind, r.recipient_ref, r.error])).toEqual([["catering", "user:own", "422 domain not verified"]]);
-    expect(failing.alerts.filter((a) => a.kind === "catering")).toEqual([expect.objectContaining({ detector: "digest-send", kind: "catering", ref: "user:own", error: "422 domain not verified" })]);
+    const held = store.of("ambiguous").filter((r) => r.kind === "catering");
+    expect(held.map((r) => [r.kind, r.recipient_ref, r.error])).toEqual([["catering", "user:own", "refused: 422 domain not verified"]]);
+    expect(store.of("failed").filter((r) => r.kind === "catering")).toEqual([]);
+    expect(failing.alerts.filter((a) => a.kind === "catering")).toEqual([expect.objectContaining({ detector: "digest-send", kind: "catering", ref: "user:own", error: "refused: 422 domain not verified" })]);
     expect(s?.counts.catering.failed).toBe(1);
     expect(failing.runs).toHaveLength(1);
 
     const retry = makeIO({ now: "2026-10-07T11:10:00Z", store });
     await runDigestTickWith(retry.io);
     expect(retry.sent.filter((m) => m.subject.startsWith("Catering")).map((m) => m.to)).toEqual(["pete@example.com"]);
+    expect(store.rows.filter((r) => r.kind === "catering" && r.recipient_ref === "user:own").map((r) => [r.outcome, r.first_attempt_at]))
+      .toEqual([["sent", "2026-10-07T11:00:00.000Z"]]); // the same row, its original first attempt
   });
 
   it("digest-watch alerts when an expected recipient has no sent/skipped row after time + grace", async () => {
@@ -450,5 +462,77 @@ describe("provider outcome classification", () => {
     for (const code of ["concurrent_idempotent_requests", "application_error", "internal_server_error", undefined]) {
       expect(classifyProviderResult({ error: "timeout", ...(code ? { code } : {}) })).toBe("ambiguous");
     }
+  });
+});
+
+describe("P1/P2 (Astra r3): the r4 state machine — after an attempt, only sent or failed_ambiguous", () => {
+  const KEY = "co-digest/live/catering/2026-10-07/r1/user:own/all";
+  const toPete = (p: Provider) => p.deliveries.filter((m) => m.key === KEY);
+
+  it("accept-lost + retry REFUSED at 2 h + tick at 25 h = still ONE delivery, frozen and alerted, no second send", async () => {
+    const store = new Store();
+    const provider = new Provider();
+    const first = makeIO({ now: "2026-10-07T11:00:00Z", store, provider });
+    provider.lose(6); // delivered, answers lost
+    await runDigestTickWith(first.io);
+    const pete = store.rows.find((r) => r.kind === "catering" && r.recipient_ref === "user:own")!;
+    expect(pete.outcome).toBe("ambiguous");
+
+    // 2 h later the retry is REFUSED (rate limit) — that proves nothing about the first call.
+    const refused = makeIO({ now: "2026-10-07T13:00:00Z", store, provider, sendFails: (to, subject) => subject.startsWith("Catering") });
+    refused.io.sendEmail = vi.fn(async () => ({ error: "too many requests", code: "rate_limit_exceeded" }));
+    await runDigestTickWith(refused.io);
+    expect(pete).toMatchObject({ outcome: "ambiguous", first_attempt_at: "2026-10-07T11:00:00.000Z" });
+    expect(store.of("failed").filter((r) => r.kind === "catering")).toEqual([]);
+
+    // 25 h after the first attempt the provider has forgotten the key — and nothing is resent.
+    const late = makeIO({ now: "2026-10-08T12:00:00Z", store, provider });
+    const s = await runDigestTickWith(late.io);
+    expect(toPete(provider)).toHaveLength(1);
+    expect(pete.outcome).toBe("failed_ambiguous");
+    expect(store.rows.filter((r) => r.kind === "catering" && r.business_day === DAY && r.recipient_ref === "user:own")).toHaveLength(1);
+    expect(late.alerts).toContainEqual(expect.objectContaining({ detector: "digest-watch", kind: "catering", day: DAY, ref: "user:own", error: expect.stringContaining("failed_ambiguous") }));
+    expect(s?.ambiguousExpired).toBeGreaterThanOrEqual(1);
+  });
+
+  it("an ambiguous row with a persisted provider id is reconciled to sent with ZERO provider calls (before retry or expiry)", async () => {
+    for (const at of ["2026-10-07T13:00:00Z", "2026-10-08T12:00:00Z"]) { // inside the window, and past it
+      const store = new Store();
+      const provider = new Provider();
+      await runDigestTickWith(makeIO({ now: "2026-10-07T11:00:00Z", store, provider }).io);
+      const pete = store.rows.find((r) => r.kind === "catering" && r.recipient_ref === "user:own")!;
+      // The r3 hole: an accepted retry persisted its id, then its finish failed → still ambiguous.
+      Object.assign(pete, { outcome: "ambiguous", provider_message_id: "mail-x", sent_at: "2026-10-07T12:00:00.000Z" });
+      const callsBefore = provider.calls.length;
+      const later = makeIO({ now: at, store, provider });
+      await runDigestTickWith(later.io);
+      expect(pete.outcome).toBe("sent");
+      expect(provider.calls.filter((c) => c.key === KEY).length).toBe(1);
+      expect(provider.calls.length - callsBefore).toBe(provider.calls.filter((c) => c.at === new Date(at).toISOString()).length);
+      expect(provider.calls.some((c) => c.key === KEY && c.at === new Date(at).toISOString())).toBe(false);
+    }
+  });
+
+  it("two concurrent ticks retrying the same ambiguous row make ONE provider call (same lock as fresh sends)", async () => {
+    const store = new Store();
+    const provider = new Provider();
+    provider.drop(6); // first tick: nothing delivered, every answer lost
+    await runDigestTickWith(makeIO({ now: "2026-10-07T11:00:00Z", store, provider }).io);
+    expect(store.of("ambiguous").filter((r) => r.kind === "catering")).toHaveLength(4);
+    const a = makeIO({ now: "2026-10-07T13:00:00Z", store, provider });
+    const b = makeIO({ now: "2026-10-07T13:00:00Z", store, provider });
+    await Promise.all([runDigestTickWith(a.io), runDigestTickWith(b.io)]);
+    expect(provider.calls.filter((c) => c.key === KEY && c.at === "2026-10-07T13:00:00.000Z")).toHaveLength(1);
+    expect(toPete(provider)).toHaveLength(1);
+    expect(store.rows.filter((r) => r.kind === "catering" && r.recipient_ref === "user:own").map((r) => r.outcome)).toEqual(["sent"]);
+  });
+
+  it("`failed` (key released) only ever comes from a claim that never reached the provider", async () => {
+    const store = new Store();
+    const provider = new Provider();
+    const io = makeIO({ now: "2026-10-07T11:00:00Z", store, provider, sendFails: () => true });
+    await runDigestTickWith(io.io);
+    expect(store.of("failed").every((r) => !r.first_attempt_at)).toBe(true);
+    expect(store.rows.filter((r) => r.first_attempt_at).every((r) => r.outcome === "ambiguous" || r.outcome === "sent")).toBe(true);
   });
 });

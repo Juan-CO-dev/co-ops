@@ -18,7 +18,11 @@
  *   3. A timeout / transport error / no response is AMBIGUOUS: the row keeps the key as
  *      'ambiguous' and is retried with the SAME key only while now - first_attempt_at < 23 h. After
  *      that it becomes 'failed_ambiguous' — never resent automatically — and digest-watch alerts.
- *   4. A definitive provider refusal is 'failed': it releases the key, and the next tick retries.
+ *   4. A refusal or error on ANY call after the attempt is recorded keeps the row ambiguous with its
+ *      ORIGINAL first_attempt_at (r4): a refusal of one call proves nothing about an earlier one.
+ *      'failed' — the only state that releases the key — is reserved for claims that never reached
+ *      the provider. A recorded provider_message_id always wins: claimed or ambiguous → sent.
+ *   5. Ambiguous retries take the same lock as fresh sends (ambiguous → claimed, guarded).
  */
 import {
   AMBIGUOUS_RETRY_HOURS,
@@ -78,12 +82,21 @@ export type SendOutcome = "claimed" | "sent" | "failed" | "ambiguous" | "failed_
 export interface SendStore {
   /** INSERT outcome='claimed'. "duplicate" = the unique index refused it (23505). Throws on any other error. */
   claim(row: ClaimRow): Promise<{ id: string } | "duplicate">;
+  /**
+   * The retry lock: ambiguous → claimed, guarded on outcome='ambiguous' AND provider_message_id IS
+   * NULL. first_attempt_at is kept; attempted_at restarts the stale clock. false = not ours.
+   */
+  reclaim(id: string, patch: { attempted_at: string }): Promise<boolean>;
   /** Recorded immediately BEFORE the first provider call (guarded: outcome claimed, no attempt yet). */
   markAttempt(id: string, patch: { first_attempt_at: string; idempotency_key: string }): Promise<boolean>;
   /** The provider accepted: its OWN write, before finish (guarded: outcome claimed | ambiguous). */
   recordAccepted(id: string, patch: { provider_message_id: string; sent_at: string }): Promise<boolean>;
-  /** Transition, guarded on the row's current outcome being one of `from`. false = not transitioned. */
-  finish(id: string, from: SendOutcome[], patch: { outcome: Exclude<SendOutcome, "claimed">; error?: string | null; content_sha?: string | null }): Promise<boolean>;
+  /**
+   * Transition, guarded on the row's current outcome being one of `from`. false = not transitioned.
+   * guard.noMessageId: only if provider_message_id IS NULL (never freeze or re-ambiguate a delivery).
+   * guard.neverAttempted: only if first_attempt_at IS NULL (the ONLY way to reach the releasing `failed`).
+   */
+  finish(id: string, from: SendOutcome[], patch: { outcome: Exclude<SendOutcome, "claimed">; error?: string | null; content_sha?: string | null }, guard?: { noMessageId?: boolean; neverAttempted?: boolean }): Promise<boolean>;
   skip(row: ClaimRow & { skip_reason: DigestSkipReason }): Promise<void>;
 }
 
@@ -197,7 +210,9 @@ class Run {
 
   /** Sent, in flight, or frozen for a human: never touched again automatically. */
   private settled(kind: SendKind, day: string, ref: string, locationId: string | null): boolean {
-    return this.rowsFor(kind, day, ref, locationId).some((r) => r.outcome === "sent" || r.outcome === "claimed" || r.outcome === "failed_ambiguous");
+    // An ambiguous row past its 23 h window is settled too (frozen by the sweep, never re-claimed).
+    return this.rowsFor(kind, day, ref, locationId).some((r) => r.outcome === "sent" || r.outcome === "claimed" || r.outcome === "failed_ambiguous" ||
+      (r.outcome === "ambiguous" && (!r.first_attempt_at || this.io.now.getTime() - Date.parse(r.first_attempt_at) >= AMBIGUOUS_RETRY_HOURS * HOUR)));
   }
 
   /** An ambiguous attempt still inside the 23 h same-key retry window. */
@@ -224,34 +239,37 @@ class Run {
   }
 
   /**
-   * The sweep, BEFORE any send (every mode, every loaded day):
-   *   claimed + provider_message_id           → sent (reconciled; the provider accepted it — never resend)
-   *   claimed, stale, no attempt recorded      → failed/stale_claim (never reached the provider: key released)
-   *   claimed, stale, attempt recorded         → ambiguous (outcome unknown: keep the key)
-   *   ambiguous, first_attempt_at ≥ 23 h ago   → failed_ambiguous + digest-watch alert (a human decides)
+   * The sweep, BEFORE any send (every mode, every loaded day). CC's state machine (r4): once an
+   * attempt is recorded a row ends only as `sent` (a provider_message_id exists, from ANY attempt)
+   * or `failed_ambiguous` (23 h after first_attempt_at with no id). `failed` — the only state that
+   * releases the key — is reserved for claims that never reached the provider.
+   *   claimed|ambiguous + provider_message_id → sent (reconciled first, ALWAYS: no provider call)
+   *   claimed, stale, no attempt recorded     → failed/stale_claim (never reached the provider)
+   *   claimed, stale, attempt recorded        → ambiguous (outcome unknown; first_attempt_at kept)
+   *   ambiguous, no id, first_attempt_at ≥ 23 h ago → failed_ambiguous + digest-watch alert
    */
   async sweep(): Promise<void> {
     const now = this.io.now.getTime();
     for (const r of this.log) {
       if (!r.id) continue;
-      if (r.outcome === "claimed" && r.provider_message_id) {
-        if (await this.io.store.finish(r.id, ["claimed"], { outcome: "sent", error: "reconciled: provider accepted (message id recorded before finish)" })) {
+      if ((r.outcome === "claimed" || r.outcome === "ambiguous") && r.provider_message_id) {
+        if (await this.io.store.finish(r.id, ["claimed", "ambiguous"], { outcome: "sent", error: "reconciled: provider accepted (message id recorded before finish)" })) {
           r.outcome = "sent"; this.summary.reconciled++;
         }
         continue;
       }
       const stale = r.outcome === "claimed" && now - Date.parse(r.attempted_at) > DIGEST_STALE_CLAIM_MINUTES * 60_000;
       if (stale && !r.first_attempt_at) {
-        if (await this.io.store.finish(r.id, ["claimed"], { outcome: "failed", error: "stale_claim" })) {
+        if (await this.io.store.finish(r.id, ["claimed"], { outcome: "failed", error: "stale_claim" }, { neverAttempted: true })) {
           r.outcome = "failed"; this.summary.staleClaims++;
         }
         continue;
       }
       if (stale && r.first_attempt_at) {
-        if (await this.io.store.finish(r.id, ["claimed"], { outcome: "ambiguous", error: "stale_claim_after_attempt" })) r.outcome = "ambiguous";
+        if (await this.io.store.finish(r.id, ["claimed"], { outcome: "ambiguous", error: "stale_claim_after_attempt" }, { noMessageId: true })) r.outcome = "ambiguous";
       }
       if (r.outcome === "ambiguous" && r.first_attempt_at && now - Date.parse(r.first_attempt_at) >= AMBIGUOUS_RETRY_HOURS * HOUR) {
-        if (await this.io.store.finish(r.id, ["ambiguous"], { outcome: "failed_ambiguous", error: "ambiguous_past_provider_key_window" })) {
+        if (await this.io.store.finish(r.id, ["ambiguous"], { outcome: "failed_ambiguous", error: "ambiguous_past_provider_key_window" }, { noMessageId: true })) {
           r.outcome = "failed_ambiguous"; this.summary.ambiguousExpired++;
           if (await this.io.alert({ kind: r.kind as SendKind, day: r.business_day, detector: "digest-watch", ref: r.recipient_ref, error: "failed_ambiguous: delivery unknown after 23 h; not resent — decide by hand" })) this.summary.alerts++;
         }
@@ -268,7 +286,13 @@ class Run {
     this.summary.counts[kind].skipped++;
   }
 
-  /** Claim (or resume an ambiguous claim) → compose → record attempt → send → record. Never throws for a send problem. */
+  /**
+   * Claim (fresh) or re-claim (an ambiguous row) → compose → record attempt → send → record.
+   * Never throws for a send problem. Both paths take the SAME lock: the row must be ours in state
+   * `claimed` before the provider is called — a fresh INSERT (unique index) or the guarded
+   * ambiguous → claimed transition (no message id, first_attempt_at kept). Two ticks can never both
+   * call the provider for one key.
+   */
   async sendOnce(kind: SendKind, day: string, r: ResolvedRecipient, locationId: string | null, compose: (env: Envelope) => Promise<ComposedSend> | ComposedSend): Promise<"sent" | "skipped" | "failed" | "ambiguous" | "not_due"> {
     if (this.settled(kind, day, r.ref, locationId)) return "not_due";
     const resumed = this.retryable(kind, day, r.ref, locationId);
@@ -277,6 +301,17 @@ class Run {
     const key = digestIdempotencyKey(row);
     let entry: SendLogRow;
     if (resumed) {
+      // Reconcile before any retry: a recorded acceptance is a delivery (no provider call).
+      if (resumed.provider_message_id) {
+        if (await this.io.store.finish(resumed.id!, ["ambiguous", "claimed"], { outcome: "sent", error: "reconciled: provider accepted (message id recorded before finish)" })) {
+          resumed.outcome = "sent"; this.summary.reconciled++;
+        }
+        return "not_due";
+      }
+      let locked = false;
+      try { locked = await this.io.store.reclaim(resumed.id!, { attempted_at: this.io.now.toISOString() }); } catch { locked = false; }
+      if (!locked) return "not_due"; // another tick holds it, or it was reconciled meanwhile
+      resumed.outcome = "claimed";
       entry = resumed;
     } else {
       const claim = await this.io.store.claim(row);
@@ -290,28 +325,36 @@ class Run {
       entry = this.push(row, "claimed", { id: claim.id });
     }
     const id = entry.id!;
-    const from: SendOutcome[] = resumed ? ["ambiguous"] : ["claimed"];
     const alertSend = async (error: string) => {
       if (await this.io.alert({ kind, day, detector: "digest-send", ref: r.ref, error: error.slice(0, 300) })) this.summary.alerts++;
     };
+    /** After an attempt exists, every non-delivery ends here: ambiguous, ORIGINAL first_attempt_at, key held. */
+    const backToAmbiguous = async (why: string) => {
+      try {
+        if (await this.io.store.finish(id, ["claimed"], { outcome: "ambiguous", error: why.slice(0, 500) }, { noMessageId: true })) entry.outcome = "ambiguous";
+      } catch { /* stays claimed with an attempt → the sweep marks it ambiguous */ }
+    };
 
-    // Compose BEFORE the attempt is recorded: a compose failure never reached the provider.
+    // Compose BEFORE a FRESH attempt is recorded: a compose failure never reached the provider.
     let mail: ComposedSend;
     try {
       const env: Envelope = { language: r.language, baseUrl: this.io.baseUrl, previewFor: this.mode === "preview" ? { name: r.name, email: r.email } : null };
       mail = await compose(env);
     } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      if (!resumed && await this.io.store.finish(id, from, { outcome: "failed", error: `compose: ${msg}`.slice(0, 500) })) {
+      const msg = `compose: ${e instanceof Error ? e.message : String(e)}`;
+      if (resumed) {
+        await backToAmbiguous(msg);
+        this.summary.counts[kind].ambiguous++;
+      } else if (await this.io.store.finish(id, ["claimed"], { outcome: "failed", error: msg.slice(0, 500) }, { neverAttempted: true })) {
         entry.outcome = "failed"; this.summary.counts[kind].failed++;
       }
-      await alertSend(`compose: ${msg}`);
+      await alertSend(msg);
       return resumed ? "ambiguous" : "failed";
     }
     const sha = this.io.sha(mail.html);
 
     if (!resumed) {
-      // Rule 1: the attempt is on the row BEFORE the provider sees it. No record → no send.
+      // The attempt is on the row BEFORE the provider sees it. No record → no send.
       let marked = false;
       const at = this.io.now.toISOString();
       try { marked = await this.io.store.markAttempt(id, { first_attempt_at: at, idempotency_key: key }); } catch { marked = false; }
@@ -333,7 +376,7 @@ class Run {
 
     if (verdict === "accepted" || verdict === "reconcile") {
       if (verdict === "accepted") {
-        // Rule 2: the provider's id is persisted FIRST, on its own. From here this claim is never resent.
+        // The provider's id is persisted FIRST, on its own. From here this row can only become sent.
         const messageId = (res as { id: string }).id;
         try {
           if (await this.io.store.recordAccepted(id, { provider_message_id: messageId, sent_at: this.io.now.toISOString() })) entry.provider_message_id = messageId;
@@ -341,7 +384,7 @@ class Run {
       }
       let finished = false;
       try {
-        finished = await this.io.store.finish(id, from, {
+        finished = await this.io.store.finish(id, ["claimed"], {
           outcome: "sent", content_sha: sha,
           error: verdict === "reconcile" ? "reconciled: provider already accepted this idempotency key" : null,
         });
@@ -355,24 +398,16 @@ class Run {
       return "sent";
     }
 
+    // Refused or ambiguous: the provider WAS reached (an attempt is recorded), so a refusal of THIS
+    // call proves nothing about an earlier one. The row stays ambiguous with its original
+    // first_attempt_at and keeps the key; it is retried with the same key inside the 23 h window,
+    // then frozen as failed_ambiguous. It never becomes `failed` (r4 rule).
     const error = ("error" in res ? res.error : "") || "send_failed";
-    if (verdict === "ambiguous") {
-      // Rule 3: unknown outcome keeps the key; same-key retries only inside the 23 h window.
-      try {
-        if (resumed || await this.io.store.finish(id, from, { outcome: "ambiguous", error: `ambiguous: ${error}`.slice(0, 500), content_sha: sha })) entry.outcome = "ambiguous";
-      } catch { /* stays claimed with an attempt recorded → the sweep marks it ambiguous */ }
-      this.summary.counts[kind].ambiguous++;
-      await alertSend(`ambiguous: ${error}`);
-      return "ambiguous";
-    }
-
-    // Rule 4: a definitive refusal releases the key; the next tick retries.
-    try {
-      if (await this.io.store.finish(id, from, { outcome: "failed", error: error.slice(0, 500), content_sha: sha })) entry.outcome = "failed";
-    } catch { /* stays claimed with an attempt → ambiguous via the sweep: never a blind resend */ }
-    this.summary.counts[kind].failed++;
-    await alertSend(error);
-    return "failed";
+    await backToAmbiguous(`${verdict}: ${error}`);
+    if (verdict === "refused") this.summary.counts[kind].failed++;
+    else this.summary.counts[kind].ambiguous++;
+    await alertSend(`${verdict}: ${error}`);
+    return verdict === "refused" ? "failed" : "ambiguous";
   }
 
   // ── per kind ───────────────────────────────────────────────────────────────────────────
