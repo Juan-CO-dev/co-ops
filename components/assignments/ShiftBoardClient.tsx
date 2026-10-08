@@ -56,6 +56,29 @@ export function ShiftBoardClient({ board, compact = false, retrainTasks = [] }: 
     <p>{formatAssignmentAttribution(event?.stationId && event.source ? { source: event.source, holderName: name, actorName: event.actorName, at: event.at } : null, language, t)}</p>
     {changeLine(event?.change)}
   </div>;
+  // Under a person's name: say WHAT they hold, then who gave it / when (never repeat their name).
+  const byText = (source: "assigned" | "claimed" | "taken", actorName: string | null, at: string) =>
+    t(`assignments.by.${source}`, { by: actorName ?? t("assignments.teamLead"), time: formatTime(at, language) });
+  const stationLabel = (event: StationEvent | null) => {
+    const s = event?.stationId ? board.stations.find((x) => x.id === event.stationId) : undefined;
+    const p = s?.positions.find((x) => x.id === event?.positionId);
+    if (!s) return null;
+    const sn = language === "es" ? s.nameEs || s.name : s.name;
+    return p ? `${sn} · ${language === "es" ? p.nameEs || p.name : p.name}` : sn;
+  };
+  const personStationLine = (event: StationEvent | null) => {
+    const label = stationLabel(event);
+    return <div className="text-sm text-co-text-muted">
+      <p>{label && event?.source ? `${label}: ${byText(event.source, event.actorName, event.at)}` : t("assignments.noStation")}</p>
+      {changeLine(event?.change)}
+    </div>;
+  };
+  const personTaskLine = (assignment: TaskAssignment) => <div key={assignment.id} className="text-sm text-co-text-muted">
+    <p>{`${t(`assignments.task.${assignment.task}`)}: ${byText(assignment.source ?? "assigned", assignment.assignerName, assignment.at ?? "")}`}</p>
+    {changeLine(assignment.change)}
+  </div>;
+  const byLine = (source: "assigned" | "claimed" | "taken" | null | undefined, actorName: string | null, at: string | null | undefined) =>
+    source ? <p className="text-sm text-co-text-muted">{byText(source, actorName, at ?? "")}</p> : null;
   const stationOverrideLevel = (userId: string) => {
     const current = currentStation(board.events, userId);
     return current?.source === "assigned" ? current.actorLevel ?? 0 : 0;
@@ -177,7 +200,8 @@ export function ShiftBoardClient({ board, compact = false, retrainTasks = [] }: 
         {person.available === false && <p className="text-sm text-co-text-muted">{t("assignments.unavailablePerson")}</p>}
         <p className="truncate font-bold text-co-text" title={station?.name}>{station ? `${language === "es" ? station.nameEs || station.name : station.name} · ${position ? (language === "es" ? position.nameEs || position.name : position.name) : ""}` : t("assignments.noStation")}</p>
         {position && <p className="text-sm text-co-text-muted">{language === "es" ? position.dutyEs || position.duty : position.duty}</p>}
-        {stationLine(current, person.name)}
+        {current?.stationId ? byLine(current.source, current.actorName, current.at) : null}
+        {changeLine(current?.change)}
         {(managerCanEdit || canClaim) && <form className="flex flex-wrap items-end gap-2" onSubmit={(event) => {
           event.preventDefault();
           const data = new FormData(event.currentTarget);
@@ -206,7 +230,7 @@ export function ShiftBoardClient({ board, compact = false, retrainTasks = [] }: 
         {tasks.length === 0 && <p className="text-sm text-co-text-muted">{t("assignments.noTasks")}</p>}
         <ul className="space-y-2">{tasks.map((assignment) => <li key={assignment.id} className="flex flex-wrap items-center gap-2">
           {board.viewerLevel >= TASK_MIN_LEVEL[assignment.task] && (board.viewerLevel >= 4 || (person.id === board.viewerId && assignment.source !== "taken" && assignment.available !== false && person.available !== false)) ? <ActionLink variant="secondary" href={taskHref(assignment.task, board.locationId)}>{t(`assignments.task.${assignment.task}`)}</ActionLink> : <span>{t(`assignments.task.${assignment.task}`)}</span>}
-          <div className="w-full">{taskLine(assignment)}</div>
+          <div className="w-full">{byLine(assignment.source ?? "assigned", assignment.assignerName, assignment.at)}{changeLine(assignment.change)}</div>
           {assignment.available === false && <p className="text-sm text-co-text-muted">{t("assignments.unavailableTask")}</p>}
           {assignment.note && <p className="text-sm text-co-text-muted">{assignment.note}</p>}
           {canRetract && assignment.source !== "taken" && <ActionButton variant="danger" disabled={disabled} onClick={() => requestMutation({ action: "task_retract", assignmentId: assignment.id }, assignment.assignerLevel)}>{t("assignments.retract")}</ActionButton>}
@@ -236,7 +260,7 @@ export function ShiftBoardClient({ board, compact = false, retrainTasks = [] }: 
           return <li key={position.id}><p>{language === "es" ? position.nameEs || position.name : position.name}</p>{stationLine(occupant ? currentStation(board.events, occupant.id) : null, occupant?.name ?? t("assignments.assignedStaff"))}</li>;
         })}</ul>
       </div>)}
-      {board.people.map((person) => <div key={person.id}><h4 className="font-bold">{person.name}</h4>{stationLine(currentStation(board.events, person.id), person.name)}{board.tasks.filter((task) => task.assigneeId === person.id).map((task) => <div key={task.id}><p>{t(`assignments.task.${task.task}`)}</p>{taskLine(task)}</div>)}</div>)}
+      {board.people.map((person) => { const held = board.tasks.filter((task) => task.assigneeId === person.id && task.available !== false); return <div key={person.id}><h4 className="font-bold">{person.name}</h4>{personStationLine(currentStation(board.events, person.id))}{held.length ? held.map(personTaskLine) : <p className="text-sm text-co-text-muted">{t("assignments.noTasks")}</p>}</div>; })}
     </div>)}
     <dialog ref={reasonDialog} aria-label={t("assignments.confirmChange")} className="m-auto max-h-[85dvh] w-[calc(100%-2rem)] max-w-lg overflow-y-auto rounded-xl border-2 border-co-border bg-co-surface p-4 text-co-text backdrop:bg-black/50" onCancel={(event) => { event.preventDefault(); if (!busy) setPending(null); }}>
     {pending && <form className="space-y-3" onSubmit={(event) => {
