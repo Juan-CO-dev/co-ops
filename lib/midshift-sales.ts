@@ -1,18 +1,9 @@
 /**
- * Mid-shift sales pulse — the READ layer (council 2026-07-31). Two honest
- * lanes over `toast_sales_events` (never the depletion ledger — the
- * double-count law keeps drift ledger-side, display event-side):
- *
- *   TODAY-SO-FAR — whatever the same-day triggers (closing-confirm /
- *     debounced on-visit pull) have landed; "as of" = max pulled_at.
- *   YESTERDAY & PACE — yesterday's final numbers + Δ% vs the same weekday
- *     last week, and a trailing same-weekday baseline for today's context.
- *
- * One indexed read per business date (7 total, parallel) — typical days are
- * a few hundred rows, but the table is append-only snapshot-versioned (edits/
- * voids append new versions), so each read pages past the PostgREST 1000-row
- * cap on a stable order rather than trusting the typical case (the PR #63
- * lesson). The pure math lives in midshift-sales-shared (tested).
+ * Mid-shift sales pulse: legacy selection events remain the default until CC
+ * enables DEPLETION_SOURCE=capture. Capture reads completed day coverage,
+ * check amounts for pre-tax net sales, and top-level selection units.
+ * Completed empty days are zero; absent coverage or missing money is unknown.
+ * Yesterday and the trailing same-weekday baseline use the same source.
  */
 
 import type { SupabaseClient } from "@supabase/supabase-js";
@@ -28,12 +19,16 @@ import {
   type TopItem,
 } from "@/lib/midshift-sales-shared";
 
+import { loadCapturedToastDay } from "@/lib/toast/depletion";
+import { capturedDayPulse } from "@/lib/toast/capture-pulse-shared";
+
 export type { DaySalesAgg, TopItem };
 
 const BASELINE_WEEKS = 4;
 const TOP_ITEMS_LIMIT = 3;
 
 export interface SalesPulse {
+  source?: "legacy" | "capture";
   todayYmd: string;
   /** Today's aggregate, or null when no events have been pulled for today yet. */
   today: DaySalesAgg | null;
@@ -60,7 +55,16 @@ async function loadDayRows(
   service: SupabaseClient,
   locationId: string,
   businessDate: string,
-): Promise<{ rows: SalesEventRow[]; maxPulledAt: string | null }> {
+): Promise<{ rows: SalesEventRow[]; maxPulledAt: string | null; aggregate?: DaySalesAgg }> {
+  if (process.env.DEPLETION_SOURCE === "capture") {
+    const captured = await loadCapturedToastDay(locationId, businessDate);
+    if (!captured) return { rows: [], maxPulledAt: null };
+    try { return { ...capturedDayPulse(businessDate, captured.orders), maxPulledAt: captured.coverage.finishedAt }; }
+    catch (error) {
+      if (error instanceof Error && error.message === "capture_pulse_amount_missing") return { rows: [], maxPulledAt: null };
+      throw error;
+    }
+  }
   // Inline pagination (not selectAllRows) to preserve the error throw — the
   // page boundary catches it and degrades to the honest empty panel.
   const raw: QueriedRow[] = [];
@@ -93,6 +97,7 @@ async function loadDayRows(
  *  empty state instead of taking down the operational pulse. */
 export function emptySalesPulse(todayYmd: string): SalesPulse {
   return {
+    source: process.env.DEPLETION_SOURCE === "capture" ? "capture" : "legacy",
     todayYmd,
     today: null,
     yesterday: null,
@@ -120,13 +125,13 @@ export async function loadSalesPulse(
     ...baselineDates.map((d) => loadDayRows(service, locationId, d)),
   ]);
 
-  const todayAgg = today.rows.length > 0 ? aggregateDaySales(todayYmd, today.rows) : null;
-  const yesterdayAgg = yesterday.rows.length > 0 ? aggregateDaySales(yesterdayYmd, yesterday.rows) : null;
+  const todayAgg = today.aggregate ?? (today.rows.length > 0 ? aggregateDaySales(todayYmd, today.rows) : null);
+  const yesterdayAgg = yesterday.aggregate ?? (yesterday.rows.length > 0 ? aggregateDaySales(yesterdayYmd, yesterday.rows) : null);
   const yesterdayBaseAgg =
-    yesterdayBase.rows.length > 0 ? aggregateDaySales(yesterdayBaseYmd, yesterdayBase.rows) : null;
+    yesterdayBase.aggregate ?? (yesterdayBase.rows.length > 0 ? aggregateDaySales(yesterdayBaseYmd, yesterdayBase.rows) : null);
 
   const baselineAggs = baseline
-    .map((b, i) => (b.rows.length > 0 ? aggregateDaySales(baselineDates[i]!, b.rows) : null))
+    .map((b, i) => (b.aggregate ?? (b.rows.length > 0 ? aggregateDaySales(baselineDates[i]!, b.rows) : null)))
     .filter((a): a is DaySalesAgg => a !== null);
   const baselineAvgCents =
     baselineAggs.length > 0
@@ -134,6 +139,7 @@ export async function loadSalesPulse(
       : null;
 
   return {
+    source: process.env.DEPLETION_SOURCE === "capture" ? "capture" : "legacy",
     todayYmd,
     today: todayAgg,
     yesterday: yesterdayAgg,

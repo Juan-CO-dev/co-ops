@@ -6,7 +6,7 @@
 begin;
 do $$
 declare
- loc uuid; other_loc uuid; run_a uuid:=gen_random_uuid(); run_b uuid:=gen_random_uuid();
+ loc uuid; other_loc uuid; fixture_item uuid; fixture_sku uuid; run_a uuid:=gen_random_uuid(); run_b uuid:=gen_random_uuid();
  run_failed uuid:=gen_random_uuid(); run_stale uuid:=gen_random_uuid();
  run_tie uuid:=gen_random_uuid(); run_null uuid:=gen_random_uuid();
  day date:='2026-07-23'; payload jsonb; changed jsonb; total integer;
@@ -15,6 +15,9 @@ begin
  select id into loc from public.locations order by id limit 1;
  select id into other_loc from public.locations where id<>loc order by id limit 1;
  if (loc is not null and other_loc is not null) is not true then raise exception 'sim requires two location fixtures'; end if;
+ select id into fixture_item from public.items order by id limit 1;
+ select id into fixture_sku from public.vendor_items order by id limit 1;
+ if (fixture_item is not null and fixture_sku is not null) is not true then raise exception 'sim requires item and sku fixtures'; end if;
  payload:=jsonb_build_array(jsonb_build_object(
   'content_hash',repeat('a',64),
   'order',jsonb_build_object('order_guid',order_id,'business_date',day,'modified_at','2026-07-24T12:00:00Z','deleted',false,'voided',false,'excess_food',false,'third_party_provider_name','DoorDash','selection_units',jsonb_build_array(jsonb_build_object('item_guid','synthetic-item','quantity',2))),
@@ -106,6 +109,37 @@ begin
  end;
  if ((select count(*) from public.sales_channel_map where reviewed_at='2026-10-07T00:00:00Z')<>18) then raise exception 'reviewed labels missing'; end if;
  if (not exists(select 1 from public.sales_channel_map where dining_option_label='Delivery' and channel='third_party' and provider is null and fulfillment='delivery')) then raise exception 'Delivery ruling missing'; end if;
+ perform public.replace_toast_depletion_day(loc,day,run_null,
+   jsonb_build_array(jsonb_build_object('sku_id',fixture_sku,'direct_oz',3.25,'flattened_oz',7.5)),
+   jsonb_build_array(jsonb_build_object('item_id',fixture_item,'item_path',jsonb_build_array(fixture_item),'sku_id',fixture_sku,'sales_oz',7.5)),
+   1,'sql-fixture',0);
+ if (not exists(select 1 from public.toast_capture_daily_depletion where location_id=loc and business_date=day
+   and sku_id=fixture_sku and direct_oz=3.25 and flattened_oz=7.5)) then raise exception 'nonzero depletion aggregate missing'; end if;
+ if (not exists(select 1 from public.toast_depletion_item_attribution where location_id=loc and business_date=day
+   and item_id=fixture_item and item_path=array[fixture_item] and sku_id=fixture_sku and sales_oz=7.5)) then raise exception 'nonzero depletion attribution missing'; end if;
+ begin
+  perform public.replace_toast_depletion_day(loc,day,run_null,
+    jsonb_build_array(jsonb_build_object('sku_id',fixture_sku,'direct_oz',-1,'flattened_oz',0)),
+    '[]'::jsonb,1,'sql-fixture-invalid',0);
+  raise exception 'invalid depletion payload accepted';
+ exception when check_violation then null;
+ end;
+ if (not exists(select 1 from public.toast_capture_daily_depletion where location_id=loc and business_date=day
+   and sku_id=fixture_sku and direct_oz=3.25)) then raise exception 'invalid replacement did not roll back atomically'; end if;
+ perform public.replace_toast_depletion_day(loc,day,run_null,'[]'::jsonb,'[]'::jsonb,1,'sql-fixture-zero',0);
+ if (not exists(select 1 from public.toast_depletion_day_coverage where location_id=loc and business_date=day
+   and run_id=run_null and status='success' and aggregate_count=0 and attribution_count=0)) then
+   raise exception 'page/finish to atomic empty depletion coverage failed';
+ end if;
+ if exists(select 1 from public.toast_capture_daily_depletion where location_id=loc and business_date=day) then raise exception 'zero replacement left aggregates'; end if;
+ if exists(select 1 from public.toast_depletion_item_attribution where location_id=loc and business_date=day) then raise exception 'zero replacement left attributions'; end if;
+ if has_table_privilege('service_role','public.toast_capture_daily_depletion','INSERT,UPDATE,DELETE')
+ or has_table_privilege('service_role','public.toast_depletion_item_attribution','INSERT,UPDATE,DELETE')
+ or has_table_privilege('service_role','public.toast_depletion_day_coverage','INSERT,UPDATE,DELETE')
+ or has_table_privilege('authenticated','public.toast_depletion_day_coverage','SELECT')
+ or has_function_privilege('authenticated','public.replace_toast_depletion_day(uuid,date,uuid,jsonb,jsonb,integer,text,integer)','EXECUTE')
+ or has_function_privilege('anon','public.replace_toast_depletion_day(uuid,date,uuid,jsonb,jsonb,integer,text,integer)','EXECUTE')
+ then raise exception 'depletion RPC boundary grants wrong'; end if;
  raise notice 'Toast capture SQL assertions passed; fixtures will roll back';
 end $$;
 rollback;

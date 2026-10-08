@@ -10,6 +10,8 @@ import { watchSiblings } from "@/lib/job-watch-run";
 import { audit } from "@/lib/audit";
 import { etCalendarDate, etYmdMinusDays } from "@/lib/operational-day";
 
+export const maxDuration = 300;
+
 /** Truncate a caught error message so a giant stack never bloats the audit row. */
 function truncateErr(e: unknown): string {
   const msg = e instanceof Error ? e.message : String(e);

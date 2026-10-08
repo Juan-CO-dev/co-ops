@@ -1,3 +1,4 @@
+import { loadEffectiveSalesRows } from "@/lib/toast/effective-depletion";
 import { auditOperationalTaskOverride, canDoOperationalTask } from "@/lib/operational-task-access";
 /**
  * Par-pass ordering data layer (delivery-intake P3, migration 0172). SERVER-ONLY,
@@ -432,19 +433,7 @@ async function loadSkuUsageRank(
   // 30 days at (location, business_date, sku) grain overruns PostgREST's 1000-row
   // default cap, and an unordered truncated page would silently drop usage from the
   // rank (the PR #63 lesson) — page it under a stable total order (`id`, the PK).
-  const sales = await selectAllRows<{ sku_id: string; direct_oz: number | string }>(
-    async (from, to) => {
-      const { data, error } = await sb.from("toast_daily_depletion")
-        .select("sku_id, direct_oz")
-        .eq("location_id", locationId)
-        .gte("business_date", cutoffDate)
-        .order("id", { ascending: true })
-        .range(from, to)
-        .returns<Array<{ sku_id: string; direct_oz: number | string }>>();
-      if (error) throw new Error(`loadSkuUsageRank toast_daily_depletion: ${error.message}`);
-      return { data };
-    },
-  );
+  const sales = await loadEffectiveSalesRows(sb, { locationId, fromDate: cutoffDate });
   for (const r of sales) add(r.sku_id, num(r.direct_oz) ?? 0);
 
   return usage;

@@ -1,3 +1,4 @@
+import { loadEffectiveSalesRows, loadEffectiveSalesCoverage } from "@/lib/toast/effective-depletion";
 /**
  * DYNAMIC PARS — the SERVER layer: the batched nightly loader, the shadow engine, and
  * THE ONE PAR-WRITE AUTHORITY.
@@ -386,24 +387,13 @@ export async function loadDemandInputs(
     // ② the per-location overlay, machine lane + pins included when 0183 has landed.
     loadParOverlay(sb, locationId, autoLane),
     // ③ the direct + flattened lanes, paged under `id`.
-    selectAllRows<{ sku_id: string; business_date: string; direct_oz: number | string | null; flattened_oz: number | string | null }>(
-      async (from, to) => {
-        const { data, error } = await sb.from("toast_daily_depletion")
-          .select("sku_id, business_date, direct_oz, flattened_oz")
-          .eq("location_id", locationId)
-          .gte("business_date", windowStart)
-          .lte("business_date", runDateEt)
-          .order("id", { ascending: true })
-          .range(from, to)
-          .returns<Array<{ sku_id: string; business_date: string; direct_oz: number | string | null; flattened_oz: number | string | null }>>();
-        if (error) throw new Error(`loadDemandInputs depletion: ${error.message}`);
-        return { data };
-      },
-    ),
+    loadEffectiveSalesRows(sb, { locationId, fromDate: windowStart, untilDateExclusive: addDaysEt(runDateEt, 1), allowGaps: true }),
     // ④ THE FULL-GAP ORACLE (plan D10): the register RAN that day. A day with events but
     //    no depletion row for a SKU is a TRUE ZERO; a day with no events at all is a GAP
     //    and leaves the denominator entirely.
-    selectAllRows<{ business_date: string }>(
+    process.env.DEPLETION_SOURCE === "capture"
+      ? loadEffectiveSalesCoverage(sb, { locationId, fromDate: windowStart, untilDateExclusive: addDaysEt(runDateEt, 1) })
+      : selectAllRows<{ business_date: string }>(
       async (from, to) => {
         const { data, error } = await sb.from("toast_sales_events")
           .select("business_date")
@@ -831,6 +821,7 @@ export async function runParShadowForLocation(
       productionOzByDate: perSkuSeries(inputs.productionOzByDate, sku.skuId),
       flattenedOzByDate: perSkuSeries(inputs.flattenedOzByDate, sku.skuId),
       laneStartAt: inputs.laneStartByGrain.get(sku.grainKey) ?? null,
+      salesFallbackComplete: process.env.DEPLETION_SOURCE === "capture",
     });
 
     const velocitySeries: VelocityDay[] = base.series.map((d) => ({

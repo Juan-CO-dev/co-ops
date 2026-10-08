@@ -1,3 +1,4 @@
+import { loadEffectiveSalesRows } from "@/lib/toast/effective-depletion";
 /**
  * Weight & trim audit — SERVER layer (spec 2026-08-20, "Weight & trim audit").
  *
@@ -313,15 +314,7 @@ export async function loadWeightBoard(actor: AuthContext): Promise<WeightBoard> 
       // THE SALES LANE — direct_oz ONLY. flattened_oz is production-covered and is
       // never summed; the double-count law is not in play here and must not become
       // so (lib/counts.ts:697-707).
-      selectAllRows<{ sku_id: string; direct_oz: number | string }>((from, to) =>
-        sb
-          .from("toast_daily_depletion")
-          .select("sku_id, direct_oz")
-          .gte("business_date", windowStartDate)
-          .order("id", { ascending: true })
-          .range(from, to)
-          .returns<Array<{ sku_id: string; direct_oz: number | string }>>(),
-      ),
+      loadEffectiveSalesRows(sb, { fromDate: windowStartDate }),
       // THE PRODUCTION LANE — live headers only (superseded/revoked excluded).
       selectAllRows<{ id: string; output_item_id: string | null; output_qty: number | string | null }>(
         (from, to) =>

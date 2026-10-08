@@ -1,33 +1,36 @@
-import "server-only";
+﻿import "server-only";
 import { audit } from "@/lib/audit";
 import { captureToastDaySystem, captureEnabled } from "./capture";
 import { captureBudget, captureErrorCode } from "./capture-runner";
 
-/** Independent accounting heartbeat; never changes selection pipeline health.
- * One deadline across ALL shops, including a transport that fails to honor abort.
- */
-export async function runOrderCapture(locationIds: string[], businessDate: string, context: "cron" | "manual") {
-  if (!captureEnabled()) return { failures: 0, skipped: true, results: [] };
-  const budget = captureBudget();
+export interface CaptureJobResult {
+  locationId: string; businessDate: string; complete: boolean; error: string | null;
+  runId?: string; skipped?: boolean;
+}
+/** One bounded capture phase for all shops/dates. Legacy parity is an operator gate,
+ * not a nightly health dependency after the old ledger stops receiving writes. */
+export async function runOrderCapture(locationIds: string[], businessDate: string, context: "cron" | "manual", dates = [businessDate]) {
+  if (!captureEnabled()) return { failures: 0, skipped: true, results: [] as CaptureJobResult[] };
+  const budget = captureBudget(context === "cron" ? 180_000 : 60_000);
+  const results: CaptureJobResult[] = [];
   try {
-    const results = await Promise.all([...new Set(locationIds)].map(async (locationId) => {
-      try {
-        const result = await budget.wait(() => captureToastDaySystem(locationId, businessDate, { signal: budget.signal, ...(context === "cron" ? { reconcile: true } : {}) }));
-        const error = "reason" in result && result.reason === "capture_schema_missing" ? result.reason : result.reconciliation?.error ?? null;
-        return { locationId, ...result, error };
-      } catch (error) {
-        return { locationId, error: captureErrorCode(error) };
-      }
-    }));
+    for (const date of [...new Set(dates)]) {
+      results.push(...await Promise.all([...new Set(locationIds)].map(async (locationId): Promise<CaptureJobResult> => {
+        try {
+          const result = await budget.wait(() => captureToastDaySystem(locationId, date, { signal: budget.signal }));
+          const complete = !result.skipped && !!result.runId;
+          const error = !complete ? result.reason ?? "capture_incomplete"
+            : result.catering?.ok === false ? result.catering.error ?? "capture_catering_degraded" : null;
+          return { locationId, businessDate: date, ...result, complete, error };
+        } catch (error) { return { locationId, businessDate: date, complete: false, error: captureErrorCode(error) }; }
+      })));
+    }
     const failures = results.filter((r) => r.error !== null).length;
-    // Manual repairs must not mask a missing nightly all-location heartbeat.
     const heartbeat = audit({ actorId: null, actorRole: null,
       action: failures ? "cron.failure" : "cron.success", resourceTable: "cron", resourceId: null,
       metadata: { job: context === "cron" ? "toast-order-capture" : "toast-order-capture-manual",
-        business_date: businessDate, actor_context: context, failures, results },
+        business_date: businessDate, dates, actor_context: context, failures, results },
       ipAddress: null, userAgent: null });
-    // audit() is fail-open, but also bound its latency; on timeout enqueue the failure
-    // heartbeat immediately without extending the capture phase's wall-clock budget.
     try { await budget.wait(() => heartbeat); } catch { void heartbeat.catch(() => {}); }
     return { failures, skipped: false, results };
   } finally { budget.close(); }

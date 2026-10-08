@@ -1,3 +1,4 @@
+import { loadEffectiveSalesRows, loadEffectiveSalesCoverage } from "@/lib/toast/effective-depletion";
 import { auditOperationalTaskOverride, canDoOperationalTask } from "@/lib/operational-task-access";
 /**
  * Manager physical-count data layer (pack hierarchy PR 2, migration 0160).
@@ -965,19 +966,7 @@ async function loadInferredConsumedOz(
   // 28 days × the SKU roster overruns PostgREST's 1000-row default cap, and an
   // unordered truncated page would silently understate the run-rate (the PR #63
   // lesson) — page it under a stable total order (`id`, the primary key).
-  const sales = await selectAllRows<{ sku_id: string; direct_oz: number | string }>(
-    async (from, to) => {
-      const { data, error } = await sb.from("toast_daily_depletion")
-        .select("sku_id, direct_oz")
-        .eq("location_id", locationId)
-        .gte("business_date", cutoffDate)
-        .order("id", { ascending: true })
-        .range(from, to)
-        .returns<Array<{ sku_id: string; direct_oz: number | string }>>();
-      if (error) throw new Error(`loadInferredConsumedOz toast_daily_depletion: ${error.message}`);
-      return { data };
-    },
-  );
+  const sales = await loadEffectiveSalesRows(sb, { locationId, fromDate: cutoffDate });
   for (const r of sales) addDirect(r.sku_id, num(r.direct_oz) ?? 0);
 
   return lanes;
@@ -2098,22 +2087,7 @@ async function sumSalesDirectOzWindow(
   // window over the ~163-SKU roster is ~4.5k rows — a truncated page would silently
   // UNDERSTATE the sales lane, inflating computed on-hand. `id` (the PK) gives the
   // stable total order paging requires; the per-SKU sum is order-insensitive.
-  const rows = await selectAllRows<{ sku_id: string; direct_oz: number | string }>(
-    async (from, to) => {
-      let q = sb.from("toast_daily_depletion")
-        .select("sku_id, direct_oz")
-        .eq("location_id", locationId)
-        .in("sku_id", skuIds)
-        .gte("business_date", fromDate);
-      if (untilDateExclusive != null) q = q.lt("business_date", untilDateExclusive);
-      const { data, error } = await q
-        .order("id", { ascending: true })
-        .range(from, to)
-        .returns<Array<{ sku_id: string; direct_oz: number | string }>>();
-      if (error) throw new Error(`sumSalesDirectOzWindow: ${error.message}`);
-      return { data };
-    },
-  );
+  const rows = await loadEffectiveSalesRows(sb, { locationId, fromDate, untilDateExclusive, skuIds });
   for (const r of rows) {
     out.set(r.sku_id, (out.get(r.sku_id) ?? 0) + (num(r.direct_oz) ?? 0));
   }
@@ -2162,6 +2136,19 @@ async function loadSalesGapDates(
   sinceDate: string,
   openEtDate: string,
 ): Promise<Set<string>> {
+  if (process.env.DEPLETION_SOURCE === "capture") {
+    const manifests = await loadEffectiveSalesCoverage(sb, { locationId, fromDate: sinceDate, untilDateExclusive: openEtDate });
+    const covered = new Set(manifests.map((r) => r.business_date));
+    const gaps = new Set<string>();
+    const cursor = new Date(`${sinceDate}T12:00:00Z`);
+    const end = new Date(`${openEtDate}T12:00:00Z`);
+    while (cursor < end) {
+      const date = cursor.toISOString().slice(0, 10);
+      if (!covered.has(date)) gaps.add(date);
+      cursor.setUTCDate(cursor.getUTCDate() + 1);
+    }
+    return gaps;
+  }
   const [evRes, deplRes] = await Promise.all([
     sb.from("toast_sales_events").select("business_date").eq("location_id", locationId).gte("business_date", sinceDate)
       .returns<Array<{ business_date: string }>>(),
@@ -2204,6 +2191,10 @@ export async function loadDepletionWatermark(
   locationId: string,
   sb: ReturnType<typeof getServiceRoleClient> = getServiceRoleClient(),
 ): Promise<string | null> {
+  if (process.env.DEPLETION_SOURCE === "capture") {
+    const covered = await loadEffectiveSalesCoverage(sb, { locationId, fromDate: "1900-01-01" });
+    return covered.map((r) => r.business_date).sort().at(-1) ?? null;
+  }
   const { data, error } = await sb.from("toast_daily_depletion")
     .select("business_date")
     .eq("location_id", locationId)

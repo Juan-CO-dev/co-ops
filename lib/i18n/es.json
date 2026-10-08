@@ -1726,6 +1726,7 @@
   "midshift.active.none": "Aún no hay actividad de reportes hoy.",
   "midshift.active.proxy_note": "Según actividad de reportes (el roster llega con 7shifts).",
   "midshift.sales.heading": "Ventas",
+  "midshift.sales.net_heading": "Ventas netas (antes de impuestos)",
   "midshift.sales.as_of": "hasta las {time}",
   "midshift.sales.empty": "Aún no hay datos de ventas de Toast.",
   "midshift.sales.today_line": "Hoy hasta ahora: {amount} · {checks}",

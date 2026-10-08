@@ -1,25 +1,11 @@
-// GET same-day Toast sales pinger (catering-truth arc 2026-09-05). Toast has no push for
-// sales, so the mid-shift Sales panel was only ever as fresh as the last manager to open the
-// page; an external pinger (the CO desktop Task Scheduler, same job that calls the catering
-// scan) calls this every 10 minutes in business hours so today's numbers are already warm.
-//
-// EVENTS-ONLY: this route pulls toast_sales_events for TODAY and NEVER materializes the
-// depletion ledger — the nightly T-1 cron stays the sole ledger materializer, so a ledger row
-// can only ever describe a CLOSED business day (toast-sales.ts, review C1). Each location is
-// debounced on its own last pull ATTEMPT (success or failure) — a Toast outage cannot storm
-// the API, and a doubled pinger cycle is a no-op.
-//
-// Auth: x-cron-secret header (or Authorization: Bearer) must equal env CATERING_SCAN_SECRET —
-// the same DEDICATED, low-blast secret the catering scan uses (it can only trigger an
-// idempotent, read-only-to-us ingest), so it may live on the pinger machine without exposing
-// CRON_SECRET. 503 no-op when unset (dormant-safe).
+// Existing pinger URL: full-day capture for today/yesterday, bounded and debounced.
 import { timingSafeEqual } from "node:crypto";
 import { type NextRequest } from "next/server";
 import { jsonError, jsonOk } from "@/lib/api-helpers";
 import { watchSiblings } from "@/lib/job-watch-run";
 import { audit } from "@/lib/audit";
-import { pullTodaySalesForAllLocations } from "@/lib/catering/toast-sales";
 import { etCalendarDate } from "@/lib/operational-day";
+import { captureIntraday } from "@/lib/toast/capture-intraday";
 
 export const runtime = "nodejs";
 export const maxDuration = 120;
@@ -40,22 +26,22 @@ export async function GET(req: NextRequest) {
   // the nightly cron, which is the only path allowed to touch the ledger.
   const today = etCalendarDate(new Date().toISOString());
   try {
-    const results = await pullTodaySalesForAllLocations(today);
-    const n = (k: string) => results.filter((r) => r.result === k).length;
-    const healthy = n("unknown") === 0 && n("error") === 0;
+    const capture = await captureIntraday(today, req.signal);
+    const results = capture.results;
+    const healthy = !capture.skipped && capture.failures === 0;
     await audit({
       actorId: null, actorRole: null, action: healthy ? "cron.success" : "cron.failure", resourceTable: "cron", resourceId: null,
       metadata: {
         job: "toast-sales-today", date: today,
-        pulled: n("pulled"), fresh: n("fresh"), no_toast: n("no_toast"),
-        // `unknown` = the debounce/location read failed, so nothing was pulled. Counted
-        // separately from `error` so a silent skip can never read as a healthy cycle.
-        stale_check_failed: n("unknown"), errors: n("error"),
+        capture_failures: capture.failures,
+        captured: results.filter((r) => !r.skipped && !r.error).length,
+        skipped: results.filter((r) => r.skipped).length,
+        errors: capture.failures, capture_disabled: capture.skipped,
       },
       ipAddress: null, userAgent: null,
     });
     await watchSiblings("toast-sales-today");
-    return jsonOk({ date: today, results, healthy });
+    return jsonOk({ date: today, results, healthy, capture });
   } catch (e) {
     void audit({
       actorId: null, actorRole: null, action: "cron.failure", resourceTable: "cron", resourceId: null,

@@ -1,3 +1,4 @@
+import { loadEffectiveSalesRows } from "@/lib/toast/effective-depletion";
 import { auditOperationalTaskOverride, canDoOperationalTask } from "@/lib/operational-task-access";
 /**
  * Operational receiving data layer (Item/Inventory Spine — R3). SERVER-ONLY,
@@ -406,19 +407,7 @@ async function loadSkuUsageRank(
   }
 
   // Sales direct lane — the materialized depletion ledger over the window (0166).
-  const sales = await selectAllRows<{ sku_id: string; direct_oz: number | string }>(
-    async (from, to) => {
-      const { data, error } = await sb.from("toast_daily_depletion")
-        .select("sku_id, direct_oz")
-        .eq("location_id", locationId)
-        .gte("business_date", cutoffDate)
-        .order("id", { ascending: true })
-        .range(from, to)
-        .returns<Array<{ sku_id: string; direct_oz: number | string }>>();
-      if (error) throw new Error(`loadSkuUsageRank toast_daily_depletion: ${error.message}`);
-      return { data };
-    },
-  );
+  const sales = await loadEffectiveSalesRows(sb, { locationId, fromDate: cutoffDate });
   for (const r of sales) add(r.sku_id, num(r.direct_oz) ?? 0);
 
   return usage;

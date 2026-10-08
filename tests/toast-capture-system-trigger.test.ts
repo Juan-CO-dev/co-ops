@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { readFileSync } from "node:fs";
 import { refreshTodaySalesIfStale, pullSalesSystemTrigger, pullSales } from "@/lib/catering/toast-sales";
 import { captureToastDaySystem } from "@/lib/toast/capture";
 import { getServiceRoleClient } from "@/lib/supabase-server";
@@ -6,66 +7,64 @@ import { audit } from "@/lib/audit";
 
 vi.mock("@/lib/supabase-server", () => ({ getServiceRoleClient: vi.fn() }));
 vi.mock("@/lib/toast/capture", () => ({ captureToastDaySystem: vi.fn(), captureEnabled: vi.fn(() => true) }));
-vi.mock("@/lib/toast/orders", () => ({ fetchToastOrders: vi.fn(async () => []) }));
-vi.mock("@/lib/toast/menus", () => ({ fetchToastMenuItems: vi.fn(async () => []) }));
-vi.mock("@/lib/toast/config", () => ({ fetchDiningOptionNames: vi.fn(async () => new Map()) }));
 vi.mock("@/lib/audit", () => ({ audit: vi.fn(async () => {}) }));
 
-let lastAttempt: unknown = null;
 beforeEach(() => {
   vi.clearAllMocks();
-  lastAttempt = null;
   vi.mocked(captureToastDaySystem).mockResolvedValue({ runId: "run", pages: 1, orders: 0, skipped: false });
   const from = (table: string) => {
-    const query = {
-      select: () => query, eq: () => query, in: () => query,
-      order: () => query, limit: () => query, range: () => query,
-      returns: async () => ({ data: [], error: null }),
-      maybeSingle: async () => ({ data: table === "audit_log" ? lastAttempt : { id: "shop", toast_restaurant_guid: "toast-shop" }, error: null }),
-    };
+    if (table !== "locations") throw new Error(`Unexpected I/O: ${table}`);
+    const query = { select: () => query, eq: () => query,
+      maybeSingle: async () => ({ data: { id: "shop", toast_restaurant_guid: "toast-shop" }, error: null }) };
     return query;
   };
   vi.mocked(getServiceRoleClient).mockReturnValue({ from } as unknown as ReturnType<typeof getServiceRoleClient>);
 });
+afterEach(() => { vi.useRealTimers(); vi.unstubAllEnvs(); });
 
-afterEach(() => vi.useRealTimers());
-
-it.each(["pinger", "midshift_on_visit", "closing_confirm"] as const)("%s stays events-only even when order capture would fail", async (context) => {
-  vi.mocked(captureToastDaySystem).mockRejectedValue(new Error("PRIVATE payload"));
+it.each(["pinger", "midshift_on_visit", "closing_confirm"] as const)("%s captures a full day with the atomic debounce", async (context) => {
   await expect(pullSalesSystemTrigger("shop", "2026-07-23", { context })).resolves.toBe(true);
-  expect(captureToastDaySystem).not.toHaveBeenCalled();
-  expect(audit).toHaveBeenCalledWith(expect.objectContaining({ action: "toast_sales.pull", metadata: expect.objectContaining({ actor_context: context }) }));
-  expect(audit).not.toHaveBeenCalledWith(expect.objectContaining({ action: "cron.failure" }));
+  expect(captureToastDaySystem).toHaveBeenCalledExactlyOnceWith("shop", "2026-07-23", {
+    debounce: true, signal: expect.any(AbortSignal),
+  });
+  expect(audit).toHaveBeenCalledWith(expect.objectContaining({ action: "toast_sales.pull",
+    metadata: expect.objectContaining({ actor_context: context, source: "capture" }) }));
 });
 
-it.each(["pinger", "midshift_on_visit"] as const)("%s freshness pulls only selections", async (context) => {
-  await expect(refreshTodaySalesIfStale("shop", "2026-07-23", 60_000, context)).resolves.toBe("pulled");
-  expect(captureToastDaySystem).not.toHaveBeenCalled();
+it("reports upstream failures without leaking provider payloads or reading the legacy ledger", async () => {
+  vi.mocked(captureToastDaySystem).mockRejectedValue(new Error("PRIVATE provider payload"));
+  await expect(pullSalesSystemTrigger("shop", "2026-07-23", { context: "closing_confirm" })).resolves.toBe(false);
+  expect(audit).toHaveBeenCalledWith(expect.objectContaining({ action: "toast_sales.pull_failed",
+    metadata: expect.objectContaining({ error: "capture_failed" }) }));
+  expect(JSON.stringify(vi.mocked(audit).mock.calls)).not.toContain("PRIVATE");
 });
 
-it("a legacy capture_ok false does not turn a successful recent selection pull unhealthy", async () => {
-  lastAttempt = { action: "toast_sales.pull", metadata: { business_date: "2026-07-23", capture_ok: false }, occurred_at: new Date().toISOString() };
-  await expect(refreshTodaySalesIfStale("shop", "2026-07-23", 60_000, "pinger")).resolves.toBe("fresh");
-  expect(captureToastDaySystem).not.toHaveBeenCalled();
+it.each([
+  ["capture_debounced", "fresh"], ["capture_running", "unknown"],
+  ["capture_recent_failure", "error"], ["capture_disabled", "error"], ["capture_schema_missing", "error"],
+] as const)("%s remains %s instead of inventing a completed capture", async (reason, expected) => {
+  vi.mocked(captureToastDaySystem).mockResolvedValue({ runId: "", pages: 0, orders: 0, skipped: true, reason });
+  await expect(refreshTodaySalesIfStale("shop", "2026-07-23", 60_000, "pinger")).resolves.toBe(expected);
 });
 
-it("debounces actual selection failures without reporting a healthy fresh cycle", async () => {
-  lastAttempt = { action: "toast_sales.pull_failed", metadata: { business_date: "2026-07-23" }, occurred_at: new Date().toISOString() };
-  await expect(refreshTodaySalesIfStale("shop", "2026-07-23", 60_000, "pinger")).resolves.toBe("error");
-  expect(captureToastDaySystem).not.toHaveBeenCalled();
-});
-
-it("manual capture is bounded and cannot invalidate a successful bound selection pull", async () => {
+it("bounds a hung transport and aborts the signal at 45 seconds", async () => {
   vi.useFakeTimers();
   vi.mocked(captureToastDaySystem).mockImplementation(() => new Promise(() => {}));
-  const actor = { user: { id: "gm", role: "gm" }, locations: ["shop"] } as unknown as Parameters<typeof pullSales>[0];
-  const pending = pullSales(actor, "shop", "2026-07-23");
+  const pending = pullSalesSystemTrigger("shop", "2026-07-23", { context: "midshift_on_visit" });
   await vi.advanceTimersByTimeAsync(0);
-  expect(captureToastDaySystem).toHaveBeenCalledWith("shop", "2026-07-23", { signal: expect.any(AbortSignal) });
-  await vi.advanceTimersByTimeAsync(60_000);
-  expect(await pending).toMatchObject({ selections: 0, appended: 0, capture: { failures: 1 } });
-  expect(audit).toHaveBeenCalledWith(expect.objectContaining({ action: "cron.failure", metadata: expect.objectContaining({ job: "toast-order-capture-manual" }) }));
-  expect(audit).not.toHaveBeenCalledWith(expect.objectContaining({ action: "cron.success", metadata: expect.objectContaining({ job: "toast-order-capture" }) }));
+  const signal = vi.mocked(captureToastDaySystem).mock.calls[0]![2]!.signal!;
+  await vi.advanceTimersByTimeAsync(45_000);
+  await expect(pending).resolves.toBe(false);
+  expect(signal.aborted).toBe(true);
+});
+
+it("manual captures even while depletion readers retain their legacy default", async () => {
+  vi.stubEnv("DEPLETION_SOURCE", "legacy");
+  const actor = { user: { id: "gm", role: "gm" }, locations: ["shop"] } as unknown as Parameters<typeof pullSales>[0];
+  await expect(pullSales(actor, "shop", "2026-07-23")).resolves.toMatchObject({
+    selections: 0, appended: 0, unchanged: 0, voids: 0, capture: { failures: 0, skipped: false },
+  });
+  expect(captureToastDaySystem).toHaveBeenCalledTimes(1);
 });
 
 it("manual pull refuses an unbound location before capture or database I/O", async () => {
@@ -73,4 +72,11 @@ it("manual pull refuses an unbound location before capture or database I/O", asy
   await expect(pullSales(actor, "shop", "2026-07-23")).rejects.toMatchObject({ status: 403 });
   expect(captureToastDaySystem).not.toHaveBeenCalled();
   expect(getServiceRoleClient).not.toHaveBeenCalled();
+});
+
+it("retires the legacy writer while preserving its paged evidence reader", () => {
+  const source = readFileSync("lib/catering/toast-sales.ts", "utf8");
+  expect(source).not.toContain("fetchToastOrders");
+  expect(source).not.toContain("selectionChanged");
+  expect(source).toContain("async function loadLatestVersions");
 });

@@ -1,52 +1,50 @@
-/**
- * One-shot backfill of toast_daily_depletion for the banked sales days (drift
- * spec 2026-07-31, adversarial B1). Loads .env.local itself, then runs
- * materializeDailyDepletion (idempotent delete-day + insert) for every ACTIVE
- * location × each date in the range. Run with the react-server condition so the
- * lib's `server-only` guard resolves:
- *   npx tsx --conditions=react-server scripts/backfill-toast-depletion.ts 2026-07-23 2026-07-30
- */
-import { readFileSync } from "node:fs";
+/** Rebuild capture depletion for completed, closed capture days. Never reads env files. */
+import { pathToFileURL } from "node:url";
+import { etCalendarDate } from "../lib/operational-day";
 
-// Env BEFORE lib imports (dynamic import below) — dotenv isn't installed.
-for (const line of readFileSync(".env.local", "utf-8").split(/\r?\n/)) {
-  const m = /^([A-Z_]+)=(.*)$/.exec(line);
-  if (m && m[1] && m[2] !== undefined && process.env[m[1]] === undefined) process.env[m[1]] = m[2].trim();
+const YMD = /^\d{4}-\d{2}-\d{2}$/;
+function validDate(value: string): boolean {
+  if (!YMD.test(value)) return false;
+  const date = new Date(`${value}T00:00:00Z`);
+  return Number.isFinite(date.valueOf()) && date.toISOString().slice(0, 10) === value;
 }
 
-const [fromArg, toArg] = process.argv.slice(2);
-if (!fromArg || !toArg || !/^\d{4}-\d{2}-\d{2}$/.test(fromArg) || !/^\d{4}-\d{2}-\d{2}$/.test(toArg)) {
-  console.error("Usage: npx tsx --conditions=react-server scripts/backfill-toast-depletion.ts <from YYYY-MM-DD> <to YYYY-MM-DD>");
-  process.exit(1);
-}
-
-function* dates(from: string, to: string): Generator<string> {
-  const d = new Date(`${from}T12:00:00Z`);
-  const end = new Date(`${to}T12:00:00Z`);
-  while (d <= end) {
-    yield d.toISOString().slice(0, 10);
-    d.setUTCDate(d.getUTCDate() + 1);
+export async function main(args = process.argv.slice(2)): Promise<void> {
+  const [from, through, ...extra] = args;
+  if (!from || !through || extra.length || !validDate(from) || !validDate(through) || from > through) {
+    throw new Error("depletion_backfill_invalid_window");
   }
-}
-
-async function main() {
-  const { materializeDailyDepletion } = await import("@/lib/catering/toast-sales");
-  const { getServiceRoleClient } = await import("@/lib/supabase-server");
+  if (through >= etCalendarDate(new Date().toISOString())) throw new Error("depletion_backfill_open_day");
+  const [{ getServiceRoleClient }, { selectAllRows }, { materializeCapturedDepletion }] = await Promise.all([
+    import("../lib/supabase-server"), import("../lib/supabase-paginate"), import("../lib/catering/toast-sales"),
+  ]);
   const sb = getServiceRoleClient();
-  const { data: locs, error } = await sb.from("locations").select("id, name").eq("active", true)
-    .returns<Array<{ id: string; name: string }>>();
-  if (error) throw new Error(`locations: ${error.message}`);
-
-  for (const date of dates(fromArg!, toArg!)) {
-    for (const loc of locs ?? []) {
-      try {
-        const { rows } = await materializeDailyDepletion(loc.id, date);
-        console.log(`${date}  ${loc.name.padEnd(14)} rows=${rows}`);
-      } catch (e) {
-        console.log(`${date}  ${loc.name.padEnd(14)} FAILED: ${e instanceof Error ? e.message : String(e)}`);
-      }
+  const runs = await selectAllRows<{ id: string; location_id: string; business_date: string }>(async (start, end) => {
+    const { data, error } = await sb.from("toast_capture_runs").select("id,location_id,business_date")
+      .eq("status", "completed").gte("business_date", from).lte("business_date", through)
+      .order("id", { ascending: true }).range(start, end)
+      .returns<Array<{ id: string; location_id: string; business_date: string }>>();
+    if (error) throw new Error("depletion_backfill_coverage_unavailable");
+    return { data };
+  });
+  const pairs = new Map<string, { locationId: string; businessDate: string }>();
+  for (const row of runs) pairs.set(`${row.location_id}:${row.business_date}`, { locationId: row.location_id, businessDate: row.business_date });
+  let failures = 0;
+  for (const pair of [...pairs.values()].sort((a, b) => a.businessDate.localeCompare(b.businessDate) || a.locationId.localeCompare(b.locationId))) {
+    try {
+      const result = await materializeCapturedDepletion(pair.locationId, pair.businessDate);
+      console.log(JSON.stringify({ status: "ok", location_id: pair.locationId, business_date: pair.businessDate, rows: result.rows, run_id: result.runId }));
+    } catch {
+      failures += 1;
+      console.error(JSON.stringify({ status: "failed", location_id: pair.locationId, business_date: pair.businessDate, code: "depletion_materialize_failed" }));
     }
   }
+  if (failures) throw new Error(`depletion_backfill_failed_days:${failures}`);
 }
 
-main().catch((e) => { console.error(e); process.exit(1); });
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  main().catch((error: unknown) => {
+    console.error(error instanceof Error ? error.message.split(":", 1)[0] : "depletion_backfill_failed");
+    process.exitCode = 1;
+  });
+}
