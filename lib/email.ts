@@ -69,6 +69,9 @@ export interface SendEmailInput {
    *  replies go to the from address — exactly today's behavior for every caller
    *  that doesn't set it. */
   replyTo?: string;
+  /** File attachments (Resend `attachments`). Used by the scheduled report package (CSV + PDF).
+   *  Omitted = no attachments, i.e. today's behavior for every existing caller. */
+  attachments?: Array<{ filename: string; content: Buffer; contentType: string }>;
 }
 
 export type SendEmailResult = { id: string } | { error: string };
@@ -94,6 +97,7 @@ export async function sendEmail(input: SendEmailInput): Promise<SendEmailResult>
       html: input.html,
       text: input.text,
       ...(input.replyTo ? { replyTo: input.replyTo } : {}),
+      ...(input.attachments?.length ? { attachments: input.attachments } : {}),
     });
     if (error) {
       console.error(`[email] send failed for to=${label}:`, error.message);

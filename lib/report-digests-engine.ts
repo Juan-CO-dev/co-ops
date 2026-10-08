@@ -33,15 +33,30 @@ import {
   renderShopDigest,
   renderUnifiedDigest,
   type CateringFacts,
-  type ComposedEmail,
   type Envelope,
   type ShopDayFacts,
 } from "@/lib/report-digests-compose";
+import {
+  PACKAGE_KINDS,
+  packageKindFor,
+  periodicPackageDue,
+  resolvePackageRecipients,
+  type PackageKind,
+  type PackageRecipientRow,
+  type ComposedSend,
+  type EmailAttachment,
+  type PackageIO,
+} from "@/lib/report-package-shared";
+export type { ComposedSend, EmailAttachment, PackageIO };
+import type { PackageCadence } from "@/lib/report-recipients-shared";
+
+/** Everything the send log keys: the three digests and (exports PR) the three package cadences. */
+export type SendKind = DigestKind | PackageKind;
 
 export type DeliveryMode = "preview" | "live";
 
 export interface ClaimRow {
-  kind: DigestKind; business_day: string; recipient_ref: string; location_id: string | null;
+  kind: SendKind; business_day: string; recipient_ref: string; location_id: string | null;
   revision: number; mode: DeliveryMode;
 }
 
@@ -54,7 +69,7 @@ export interface SendStore {
 }
 
 export interface DigestAlert {
-  kind: DigestKind; day: string; detector: "digest-watch" | "digest-send";
+  kind: SendKind; day: string; detector: "digest-watch" | "digest-send";
   missing?: string[]; error?: string; ref?: string;
 }
 
@@ -72,10 +87,12 @@ export interface DigestIO {
   cateringFacts(today: string): Promise<CateringFacts>;
   expireStaleClaims(): Promise<number>;
   store: SendStore;
-  sendEmail(input: { to: string; subject: string; html: string; text: string }): Promise<{ id: string } | { error: string }>;
+  sendEmail(input: { to: string; subject: string; html: string; text: string; attachments?: EmailAttachment[] }): Promise<{ id: string } | { error: string }>;
   sha(content: string): string;
   /** Ops alert, claimed once per detector × kind × ET day. true = this call sent it. Never throws. */
   alert(a: DigestAlert): Promise<boolean>;
+  /** Exports PR: the scheduled CSV/PDF package. Absent = no package sends. */
+  packages?: PackageIO;
   /** One digest.run audit row. Never throws. */
   recordRun(summary: DigestRunSummary): Promise<void>;
 }
@@ -84,13 +101,17 @@ export interface KindCounts { sent: number; skipped: number; failed: number }
 export interface DigestRunSummary {
   trigger: "tick" | "closing";
   mode: DeliveryMode | "off";
-  counts: Record<DigestKind, KindCounts>;
+  counts: Record<SendKind, KindCounts>;
   staleClaims: number;
   alerts: number;
 }
 
-function emptyCounts(): Record<DigestKind, KindCounts> {
-  return { gm_shop: { sent: 0, skipped: 0, failed: 0 }, unified: { sent: 0, skipped: 0, failed: 0 }, catering: { sent: 0, skipped: 0, failed: 0 } };
+function emptyCounts(): Record<SendKind, KindCounts> {
+  const zero = (): KindCounts => ({ sent: 0, skipped: 0, failed: 0 });
+  return {
+    gm_shop: zero(), unified: zero(), catering: zero(),
+    ...Object.fromEntries(PACKAGE_KINDS.map((k) => [k, zero()])) as Record<PackageKind, KindCounts>,
+  };
 }
 
 class Run {
@@ -113,20 +134,20 @@ class Run {
 
   get didWork(): boolean {
     return this.summary.alerts > 0 || this.summary.staleClaims > 0 ||
-      DIGEST_KINDS.some((k) => { const c = this.summary.counts[k]; return c.sent + c.skipped + c.failed > 0; });
+      [...DIGEST_KINDS, ...PACKAGE_KINDS].some((k) => { const c = this.summary.counts[k]; return c.sent + c.skipped + c.failed > 0; });
   }
 
-  logFor(kind: DigestKind, day: string): SendLogRow[] {
+  logFor(kind: SendKind, day: string): SendLogRow[] {
     return this.log.filter((r) => r.kind === kind && r.business_day === day && r.mode === this.mode);
   }
 
   /** A live claim or a send already exists: not due, nothing to log. */
-  private settled(kind: DigestKind, day: string, ref: string, locationId: string | null): boolean {
+  private settled(kind: SendKind, day: string, ref: string, locationId: string | null): boolean {
     return this.logFor(kind, day).some((r) => r.recipient_ref === ref && (r.location_id ?? null) === locationId &&
       r.revision === 1 && (r.outcome === "sent" || r.outcome === "claimed"));
   }
 
-  private skippedAlready(kind: DigestKind, day: string, ref: string, locationId: string | null, reason: DigestSkipReason): boolean {
+  private skippedAlready(kind: SendKind, day: string, ref: string, locationId: string | null, reason: DigestSkipReason): boolean {
     return this.logFor(kind, day).some((r) => r.recipient_ref === ref && (r.location_id ?? null) === locationId &&
       r.outcome === "skipped" && r.skip_reason === reason);
   }
@@ -143,7 +164,7 @@ class Run {
   }
 
   /** Log a deliberate non-send once per (recipient, kind, day, location, reason). */
-  async skip(kind: DigestKind, day: string, r: ResolvedRecipient, locationId: string | null, reason: DigestSkipReason): Promise<void> {
+  async skip(kind: SendKind, day: string, r: ResolvedRecipient, locationId: string | null, reason: DigestSkipReason): Promise<void> {
     if (this.settled(kind, day, r.ref, locationId) || this.skippedAlready(kind, day, r.ref, locationId, reason)) return;
     const row: ClaimRow = { kind, business_day: day, recipient_ref: r.ref, location_id: locationId, revision: 1, mode: this.mode };
     await this.io.store.skip({ ...row, skip_reason: reason });
@@ -152,7 +173,7 @@ class Run {
   }
 
   /** Claim → compose → send → record. Returns the outcome; never throws for a send problem. */
-  async sendOnce(kind: DigestKind, day: string, r: ResolvedRecipient, locationId: string | null, compose: (env: Envelope) => Promise<ComposedEmail> | ComposedEmail): Promise<"sent" | "skipped" | "failed" | "not_due"> {
+  async sendOnce(kind: SendKind, day: string, r: ResolvedRecipient, locationId: string | null, compose: (env: Envelope) => Promise<ComposedSend> | ComposedSend): Promise<"sent" | "skipped" | "failed" | "not_due"> {
     if (this.settled(kind, day, r.ref, locationId)) return "not_due";
     if (r.skip) { await this.skip(kind, day, r, locationId, r.skip); return "skipped"; }
     const row: ClaimRow = { kind, business_day: day, recipient_ref: r.ref, location_id: locationId, revision: 1, mode: this.mode };
@@ -173,7 +194,7 @@ class Run {
       const mail = await compose(env);
       sha = this.io.sha(mail.html);
       const to = this.mode === "preview" ? this.io.previewTo : r.email!;
-      const res = await this.io.sendEmail({ to, subject: mail.subject, html: mail.html, text: mail.text });
+      const res = await this.io.sendEmail({ to, subject: mail.subject, html: mail.html, text: mail.text, ...(mail.attachments ? { attachments: mail.attachments } : {}) });
       if ("error" in res) error = res.error || "send_failed";
       else emailId = res.id;
     } catch (e) {
@@ -230,6 +251,27 @@ class Run {
     }
   }
 
+  /**
+   * The scheduled package for one cadence and business day (exports PR). Recipients are the
+   * report_recipients rows with packages + this cadence (Pete; the accountant row, which stays a
+   * logged recipient_disabled skip until its email is plugged in). Same claim/send/record path as
+   * every digest: one per recipient × kind × day × mode, failures logged + alerted, never silent.
+   */
+  private packageRows: Promise<PackageRecipientRow[]> | null = null;
+  async packages(cadence: PackageCadence, day: string): Promise<void> {
+    const pio = this.io.packages;
+    if (!pio) return;
+    this.packageRows ??= pio.recipients();
+    const recipients = resolvePackageRecipients({
+      rows: await this.packageRows, users: this.dir.users, memberships: this.dir.memberships, locationIds: this.dir.locationIds, cadence,
+    });
+    const kind = packageKindFor(cadence);
+    for (const r of recipients) {
+      const outcome = await this.sendOnce(kind, day, r, null, (env) => pio.compose(r, cadence, day, env));
+      if (outcome === "sent" || outcome === "failed") await pio.recordSend({ kind, day, ref: r.ref, outcome });
+    }
+  }
+
   /** Every expected recipient must have a sent or skipped row once the deadline passed. */
   async watch(kind: DigestKind, day: string): Promise<void> {
     if (this.io.now.getTime() < digestWatchAt(kind, day, this.settings).getTime()) return;
@@ -276,9 +318,12 @@ async function finishTick(run: Run, days: string[], today: string): Promise<Dige
     }
     const decision = decideUnified({ day, activeLocationIds: activeIds, finalizedLocationIds: done, now: io.now, settings: run.settings });
     if (decision.due) await run.unified(day, decision.missing);
+    // Pete (and the accountant, once enabled) get the day's CSV + PDF "at close": with the unified digest.
+    if (decision.due) await run.packages("daily_close", day);
   }
   const catering = decideCatering(io.now, run.settings);
   if (catering.due) await run.catering(catering.day);
+  for (const periodic of periodicPackageDue(io.now)) await run.packages(periodic.cadence, periodic.day);
 
   const yesterday = addDays(today, -1);
   await run.watch("gm_shop", yesterday);
@@ -300,6 +345,7 @@ export async function runClosingDigestsWith(io: DigestIO, locationId: string, da
   if (location && finalized.has(locationId)) await run.shop(day, location);
   const decision = decideUnified({ day, activeLocationIds: run.locations.map((l) => l.id), finalizedLocationIds: finalized, now: io.now, settings: run.settings });
   if (decision.due) await run.unified(day, decision.missing);
+  if (decision.due) await run.packages("daily_close", day);
   if (run.didWork) await io.recordRun(run.summary);
   return run.summary;
 }

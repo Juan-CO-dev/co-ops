@@ -14,7 +14,9 @@ export async function captureEmail(input: SendEmailInput): Promise<SendEmailResu
     }
     const links = Array.from(input.html.matchAll(/\bhref\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/gi), match =>
       (match[1] ?? match[2] ?? match[3] ?? "").replace(/&amp;/gi, "&").replace(/&quot;/gi, '"').replace(/&#39;/g, "'"));
-    const message = JSON.stringify({ to: input.to, subject: input.subject, text: input.text, html: input.html, links });
+    // Attachments are recorded by name, type and size only (the report package's CSV/PDF files).
+    const attachments = (input.attachments ?? []).map((a) => ({ filename: a.filename, contentType: a.contentType, bytes: a.content.length }));
+    const message = JSON.stringify({ to: input.to, subject: input.subject, text: input.text, html: input.html, links, attachments });
     const sha8 = createHash("sha256").update(message).update(randomUUID()).digest("hex").slice(0, 8);
     await mkdir(dir, { recursive: true, mode: 0o700 });
     await writeFile(join(dir, `${Date.now()}-${sha8}.json`), message, { flag: "wx", mode: 0o600 });

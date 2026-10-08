@@ -39,6 +39,7 @@ import {
   type DigestRunSummary,
   type SendStore,
 } from "@/lib/report-digests-engine";
+import { packageIO } from "@/lib/report-package";
 
 type Sb = ReturnType<typeof getServiceRoleClient>;
 
@@ -323,6 +324,8 @@ function buildIO(now: Date): DigestIO {
     sendEmail: (m) => sendEmail({ ...m, from: teamFrom() }),
     sha: (content) => createHash("sha256").update(content).digest("hex"),
     alert: (a) => alertDigestProblem(sb, a, now),
+    // Exports PR: the scheduled CSV/PDF package (Pete at close; the accountant once enabled).
+    packages: packageIO(sb, now),
     async recordRun(summary: DigestRunSummary) {
       await audit({ ...auditBase, action: "digest.run", resourceTable: "report_digest_sends", metadata: { ...summary } });
     },
