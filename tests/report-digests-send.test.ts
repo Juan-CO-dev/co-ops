@@ -35,7 +35,7 @@ export class Provider {
  * "duplicate" = 23505), with the r3 attempt / accepted columns and guarded transitions.
  */
 import { describe, expect, it, vi } from "vitest";
-import { classifyProviderResult, runClosingDigestsWith, runDigestTickWith, type ClaimRow, type DigestAlert, type DigestIO, type SendOutcome } from "@/lib/report-digests-engine";
+import { classifyProviderResult, runClosingDigestsWith, runDigestTickWith, type ClaimRow, type DigestAlert, type DigestIO, type FinishGuard, type SendOutcome } from "@/lib/report-digests-engine";
 import { DEFAULT_DIGEST_SETTINGS, type DigestSettings, type RecipientOverride, type SendLogRow } from "@/lib/report-digests-shared";
 import type { CateringFacts, ShopDayFacts } from "@/lib/report-digests-compose";
 
@@ -69,16 +69,18 @@ class Store {
     return true;
   }
   reclaims = 0;
-  async reclaim(id: string, patch: { attempted_at: string }) {
-    const row = this.rows.find((x) => x.id === id && x.outcome === "ambiguous" && !x.provider_message_id);
+  async reclaim(id: string, patch: { attempted_at: string }, observed: { attempted_at: string }) {
+    const row = this.rows.find((x) => x.id === id && x.outcome === "ambiguous" && !x.provider_message_id && x.attempted_at === observed.attempted_at);
     if (!row) return false;
     this.reclaims++;
     Object.assign(row, { ...patch, outcome: "claimed" });
     return true;
   }
-  async finish(id: string, from: SendOutcome[], patch: { outcome: string; error?: string | null }, guard?: { noMessageId?: boolean; neverAttempted?: boolean }) {
+  async finish(id: string, from: SendOutcome[], patch: { outcome: string; error?: string | null }, guard?: FinishGuard) {
     const row = this.rows.find((x) => x.id === id && (from as string[]).includes(x.outcome) &&
-      (!guard?.noMessageId || !x.provider_message_id) && (!guard?.neverAttempted || !x.first_attempt_at));
+      (!guard?.noMessageId || !x.provider_message_id) && (!guard?.neverAttempted || !x.first_attempt_at) &&
+      (!guard?.observedAttemptedAt || x.attempted_at === guard.observedAttemptedAt) &&
+      (!guard?.staleBefore || Date.parse(x.attempted_at) < Date.parse(guard.staleBefore)));
     if (!row) return false;
     Object.assign(row, { outcome: patch.outcome, error: patch.error ?? null });
     return true;
@@ -534,5 +536,52 @@ describe("P1/P2 (Astra r3): the r4 state machine — after an attempt, only sent
     await runDigestTickWith(io.io);
     expect(store.of("failed").every((r) => !r.first_attempt_at)).toBe(true);
     expect(store.rows.filter((r) => r.first_attempt_at).every((r) => r.outcome === "ambiguous" || r.outcome === "sent")).toBe(true);
+  });
+});
+
+describe("P2 (Astra r4): stale recovery is a compare-and-set on the observed row version", () => {
+  it("A sweeps + reclaims + is in flight; B's stale-snapshot sweep is a no-op; ONE provider call", async () => {
+    const KEY = "co-digest/live/catering/2026-10-07/r1/user:own/all";
+    const store = new Store();
+    const provider = new Provider();
+    // A claim whose attempt was recorded and whose process died: stale `claimed` at 11:00.
+    const first = makeIO({ now: "2026-10-07T11:00:00Z", store, provider });
+    store.finish = async () => false; // the first tick dies after the attempt: rows stay `claimed`
+    provider.drop(6); // 2 unified fallbacks + 4 catering: none delivered
+    await runDigestTickWith(first.io);
+    delete (store as { finish?: unknown }).finish;
+    const pete = store.rows.find((r) => r.kind === "catering" && r.recipient_ref === "user:own")!;
+    expect(pete).toMatchObject({ outcome: "claimed", first_attempt_at: "2026-10-07T11:00:00.000Z", attempted_at: "2026-10-07T11:00:00.000Z" });
+
+    // Both ticks read the SAME stale snapshot at 11:20.
+    const snapshot = store.rows.map((r) => ({ ...r }));
+    const a = makeIO({ now: "2026-10-07T11:20:00Z", store, provider });
+    const b = makeIO({ now: "2026-10-07T11:20:30Z", store, provider });
+    b.io.sendLog = async (days) => snapshot.filter((r) => days.includes(r.business_day)).map((r) => ({ ...r }));
+
+    // A's provider call hangs until B has fully run.
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const real = a.io.sendEmail;
+    let aInFlight!: () => void;
+    const inFlight = new Promise<void>((resolve) => { aInFlight = resolve; });
+    a.io.sendEmail = vi.fn(async (m) => {
+      if (m.idempotencyKey === KEY) { aInFlight(); await gate; }
+      return real(m);
+    });
+    const aRun = runDigestTickWith(a.io);
+    await inFlight;
+    expect(pete).toMatchObject({ outcome: "claimed", attempted_at: "2026-10-07T11:20:00.000Z" }); // A holds it
+
+    await runDigestTickWith(b.io); // B sweeps its stale snapshot: compare-and-set fails, row untouched
+    expect(pete).toMatchObject({ outcome: "claimed", attempted_at: "2026-10-07T11:20:00.000Z" });
+    release();
+    await aRun;
+
+    const callsFor = (ra: string) => provider.calls.filter((c) => c.key === KEY && c.at === ra);
+    expect(callsFor("2026-10-07T11:20:30.000Z")).toHaveLength(0); // B never called the provider
+    expect(callsFor("2026-10-07T11:20:00.000Z")).toHaveLength(1); // A did, once
+    expect(provider.deliveries.filter((m) => m.key === KEY)).toHaveLength(1);
+    expect(pete.outcome).toBe("sent");
   });
 });

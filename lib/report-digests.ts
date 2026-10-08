@@ -326,11 +326,12 @@ export function supabaseSendStore(sb: Sb): SendStore {
       if (error) throw new Error(`digest accepted: ${error.message}`);
       return (data ?? []).length === 1;
     },
-    async reclaim(id, patch) {
-      // The retry lock: the same "claimed" state a fresh send holds. Guarded so only one tick wins,
-      // and never on a row whose acceptance is already recorded.
+    async reclaim(id, patch, observed) {
+      // The retry lock: the same "claimed" state a fresh send holds. A compare-and-set on the row
+      // version this tick observed (attempted_at), never on a row whose acceptance is recorded.
       const { data, error } = await sb.from("report_digest_sends").update({ ...patch, outcome: "claimed" })
-        .eq("id", id).eq("outcome", "ambiguous").is("provider_message_id", null).select("id");
+        .eq("id", id).eq("outcome", "ambiguous").eq("attempted_at", observed.attempted_at)
+        .is("provider_message_id", null).select("id");
       if (error) throw new Error(`digest reclaim: ${error.message}`);
       return (data ?? []).length === 1;
     },
@@ -341,6 +342,8 @@ export function supabaseSendStore(sb: Sb): SendStore {
         .eq("id", id).in("outcome", from);
       if (guard?.noMessageId) q = q.is("provider_message_id", null);
       if (guard?.neverAttempted) q = q.is("first_attempt_at", null);
+      if (guard?.observedAttemptedAt) q = q.eq("attempted_at", guard.observedAttemptedAt);
+      if (guard?.staleBefore) q = q.lt("attempted_at", guard.staleBefore);
       const { data, error } = await q.select("id");
       if (error) throw new Error(`digest finish: ${error.message}`);
       return (data ?? []).length === 1;

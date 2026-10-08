@@ -74,6 +74,7 @@ describe("supabaseSendStore", () => {
           eq: (k: string, v: unknown) => { entry.filters.push([k, v]); return q; },
           in: (k: string, v: unknown) => { entry.filters.push([k, v]); return q; },
           is: (k: string, v: unknown) => { entry.filters.push([k, v]); return q; },
+          lt: (k: string, v: unknown) => { entry.filters.push([k, v]); return q; },
           select: async () => ({ data: updated, error: null }),
         };
         return q;
@@ -99,10 +100,10 @@ describe("supabaseSendStore", () => {
 
   it("the retry lock is ambiguous → claimed, only without a recorded provider id; failed only if never attempted", async () => {
     const c = client(null);
-    expect(await supabaseSendStore(c.sb).reclaim("r1", { attempted_at: "t" })).toBe(true);
-    expect(c.updates[0]).toEqual({ patch: { attempted_at: "t", outcome: "claimed" }, filters: [["id", "r1"], ["outcome", "ambiguous"], ["provider_message_id", null]] });
-    await supabaseSendStore(c.sb).finish("r1", ["claimed"], { outcome: "failed" }, { neverAttempted: true });
-    expect(c.updates[1]!.filters).toEqual([["id", "r1"], ["outcome", ["claimed"]], ["first_attempt_at", null]]);
+    expect(await supabaseSendStore(c.sb).reclaim("r1", { attempted_at: "t2" }, { attempted_at: "t1" })).toBe(true);
+    expect(c.updates[0]).toEqual({ patch: { attempted_at: "t2", outcome: "claimed" }, filters: [["id", "r1"], ["outcome", "ambiguous"], ["attempted_at", "t1"], ["provider_message_id", null]] });
+    await supabaseSendStore(c.sb).finish("r1", ["claimed"], { outcome: "failed" }, { neverAttempted: true, observedAttemptedAt: "t1", staleBefore: "t0" });
+    expect(c.updates[1]!.filters).toEqual([["id", "r1"], ["outcome", ["claimed"]], ["first_attempt_at", null], ["attempted_at", "t1"], ["attempted_at", "t0"]]);
     await supabaseSendStore(c.sb).finish("r1", ["ambiguous"], { outcome: "failed_ambiguous" }, { noMessageId: true });
     expect(c.updates[2]!.filters).toEqual([["id", "r1"], ["outcome", ["ambiguous"]], ["provider_message_id", null]]);
   });

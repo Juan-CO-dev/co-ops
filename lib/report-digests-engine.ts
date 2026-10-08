@@ -71,7 +71,7 @@ export interface SendStore {
    * The retry lock: ambiguous → claimed, guarded on outcome='ambiguous' AND provider_message_id IS
    * NULL. first_attempt_at is kept; attempted_at restarts the stale clock. false = not ours.
    */
-  reclaim(id: string, patch: { attempted_at: string }): Promise<boolean>;
+  reclaim(id: string, patch: { attempted_at: string }, observed: { attempted_at: string }): Promise<boolean>;
   /** Recorded immediately BEFORE the first provider call (guarded: outcome claimed, no attempt yet). */
   markAttempt(id: string, patch: { first_attempt_at: string; idempotency_key: string }): Promise<boolean>;
   /** The provider accepted: its OWN write, before finish (guarded: outcome claimed | ambiguous). */
@@ -81,8 +81,25 @@ export interface SendStore {
    * guard.noMessageId: only if provider_message_id IS NULL (never freeze or re-ambiguate a delivery).
    * guard.neverAttempted: only if first_attempt_at IS NULL (the ONLY way to reach the releasing `failed`).
    */
-  finish(id: string, from: SendOutcome[], patch: { outcome: Exclude<SendOutcome, "claimed">; error?: string | null; content_sha?: string | null }, guard?: { noMessageId?: boolean; neverAttempted?: boolean }): Promise<boolean>;
+  finish(id: string, from: SendOutcome[], patch: { outcome: Exclude<SendOutcome, "claimed">; error?: string | null; content_sha?: string | null }, guard?: FinishGuard): Promise<boolean>;
   skip(row: ClaimRow & { skip_reason: DigestSkipReason }): Promise<void>;
+}
+
+/**
+ * Compare-and-set guards for the sweep and the retry lock (Astra r4 P2). Every recovery UPDATE is
+ * pinned to the row VERSION the caller observed (its attempted_at), and a stale recovery also to a
+ * database-side staleness predicate — so a tick working from an old snapshot can never reset a
+ * claim another tick has just (re)taken. Zero rows = someone else owns it: skip.
+ */
+export interface FinishGuard {
+  /** provider_message_id IS NULL. */
+  noMessageId?: boolean;
+  /** first_attempt_at IS NULL (the ONLY way to the releasing `failed`). */
+  neverAttempted?: boolean;
+  /** attempted_at = this exact value (the version the caller read). */
+  observedAttemptedAt?: string;
+  /** attempted_at < this instant (the row is genuinely stale in the database). */
+  staleBefore?: string;
 }
 
 export interface DigestAlert {
@@ -236,23 +253,27 @@ class Run {
     for (const r of this.log) {
       if (!r.id) continue;
       if ((r.outcome === "claimed" || r.outcome === "ambiguous") && r.provider_message_id) {
-        if (await this.io.store.finish(r.id, ["claimed", "ambiguous"], { outcome: "sent", error: "reconciled: provider accepted (message id recorded before finish)" })) {
+        if (await this.io.store.finish(r.id, ["claimed", "ambiguous"], { outcome: "sent", error: "reconciled: provider accepted (message id recorded before finish)" }, { observedAttemptedAt: r.attempted_at })) {
           r.outcome = "sent"; this.summary.reconciled++;
         }
         continue;
       }
+      const staleBefore = new Date(now - DIGEST_STALE_CLAIM_MINUTES * 60_000).toISOString();
       const stale = r.outcome === "claimed" && now - Date.parse(r.attempted_at) > DIGEST_STALE_CLAIM_MINUTES * 60_000;
       if (stale && !r.first_attempt_at) {
-        if (await this.io.store.finish(r.id, ["claimed"], { outcome: "failed", error: "stale_claim" }, { neverAttempted: true })) {
+        if (await this.io.store.finish(r.id, ["claimed"], { outcome: "failed", error: "stale_claim" }, { neverAttempted: true, observedAttemptedAt: r.attempted_at, staleBefore })) {
           r.outcome = "failed"; this.summary.staleClaims++;
         }
         continue;
       }
       if (stale && r.first_attempt_at) {
-        if (await this.io.store.finish(r.id, ["claimed"], { outcome: "ambiguous", error: "stale_claim_after_attempt" }, { noMessageId: true })) r.outcome = "ambiguous";
+        // Compare-and-set on the observed version: if another tick has re-taken this claim since our
+        // snapshot (attempted_at moved), this is a no-op and we leave the row alone for this run.
+        if (await this.io.store.finish(r.id, ["claimed"], { outcome: "ambiguous", error: "stale_claim_after_attempt" }, { noMessageId: true, observedAttemptedAt: r.attempted_at, staleBefore })) r.outcome = "ambiguous";
+        else { r.outcome = "claimed"; continue; }
       }
       if (r.outcome === "ambiguous" && r.first_attempt_at && now - Date.parse(r.first_attempt_at) >= AMBIGUOUS_RETRY_HOURS * HOUR) {
-        if (await this.io.store.finish(r.id, ["ambiguous"], { outcome: "failed_ambiguous", error: "ambiguous_past_provider_key_window" }, { noMessageId: true })) {
+        if (await this.io.store.finish(r.id, ["ambiguous"], { outcome: "failed_ambiguous", error: "ambiguous_past_provider_key_window" }, { noMessageId: true, observedAttemptedAt: r.attempted_at })) {
           r.outcome = "failed_ambiguous"; this.summary.ambiguousExpired++;
           if (await this.io.alert({ kind: r.kind as DigestKind, day: r.business_day, detector: "digest-watch", ref: r.recipient_ref, error: "failed_ambiguous: delivery unknown after 23 h; not resent — decide by hand" })) this.summary.alerts++;
         }
@@ -292,9 +313,11 @@ class Run {
         return "not_due";
       }
       let locked = false;
-      try { locked = await this.io.store.reclaim(resumed.id!, { attempted_at: this.io.now.toISOString() }); } catch { locked = false; }
+      const takenAt = this.io.now.toISOString();
+      try { locked = await this.io.store.reclaim(resumed.id!, { attempted_at: takenAt }, { attempted_at: resumed.attempted_at }); } catch { locked = false; }
       if (!locked) return "not_due"; // another tick holds it, or it was reconciled meanwhile
       resumed.outcome = "claimed";
+      resumed.attempted_at = takenAt;
       entry = resumed;
     } else {
       const claim = await this.io.store.claim(row);
