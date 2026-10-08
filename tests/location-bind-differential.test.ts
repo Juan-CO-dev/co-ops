@@ -56,6 +56,8 @@ const TENANCY_SCOPED_TABLES = [
   // 0218 — a Retrain note is one shop's verdict about its own batches (location_id NOT NULL).
   "recipe_yield_retrain_notes",
   "stations",
+  "station_positions",
+  "station_break_events",
   "station_events",
   "report_assignments",
   // 0220 — a recipient override's location_ids decides which shops' numbers reach a person.
@@ -82,6 +84,7 @@ const TENANCY_SCOPED_RPCS = [
   // 0218 — the guarded one-time completion of a retrain note (lib/yield-stats.ts completeYieldRetrain).
   "complete_yield_retrain",
   "write_station_event",
+  "write_station_break",
   "write_task_assignment",
   "receiving_create_store",
   "receiving_create_store_item",
@@ -213,7 +216,9 @@ describe("differential location-bind check — every actor-taking writer of a te
       if (rel === "lib/assignments.ts") {
         it("detects every station and task writer", () => {
           expect(writers.map(({ f }) => f.name).sort()).toEqual([
-            "assignTask", "retractTask", "saveStationConfig", "saveStationSpanish", "writeStationEvent",
+            // The scanner conservatively includes the read-only closures RPC;
+            // loadShiftBoard also binds its actor before that read.
+            "assignTask", "loadShiftBoard", "retractTask", "saveStationConfig", "saveStationSpanish", "saveStationTiming", "writeStationBreak", "writeStationEvent",
           ]);
         });
       }

@@ -15,9 +15,15 @@ const LOC = "loc-1";
 /** A tiny in-memory toast_time_entries keyed like the table (location, entry guid). */
 const table = new Map<string, LaborEntryRow>();
 let stallLocations = false;
+const reconciliations: Array<{ p_location_id: string; p_day: string }> = [];
 
 function client() {
   return {
+    rpc(name: string, args: { p_location_id: string; p_day: string }) {
+      expect(name).toBe("reconcile_station_lifecycle");
+      reconciliations.push(args);
+      return { abortSignal: async () => ({ error: null }) };
+    },
     from(name: string) {
       if (name === "locations") {
         const q = {
@@ -52,7 +58,7 @@ const entry = (over: Record<string, unknown> = {}) => ({
 let toast: Array<Record<string, unknown>> = [];
 beforeEach(() => {
   vi.clearAllMocks();
-  table.clear(); stallLocations = false; toast = [];
+  table.clear(); reconciliations.length = 0; stallLocations = false; toast = [];
   vi.stubEnv("TOAST_LABOR_PULL", "1");
   vi.mocked(getServiceRoleClient).mockReturnValue(client());
   vi.mocked(toastGet).mockImplementation(async (path: string) => {
@@ -64,6 +70,50 @@ beforeEach(() => {
   });
 });
 afterEach(() => vi.unstubAllEnvs());
+
+describe("today lifecycle reconciliation", () => {
+  it("runs once per location only after today's pull and modified corrections both succeed", async () => {
+    vi.stubEnv("STATION_LIFECYCLE", "1");
+    toast = [entry()];
+    const result = await runToastLaborPull(["2026-10-07"], {
+      deadlineMs: 10_000, context: "cron", reconcileDate: "2026-10-07", now: new Date("2026-10-07T15:00:00Z"),
+    });
+    expect(result.results.every((r) => r.ok)).toBe(true);
+    expect(reconciliations).toEqual([{ p_location_id: LOC, p_day: "2026-10-07" }]);
+  });
+
+  it("defaults reconciliation to ET today and rejects an explicit historical reconcile day", async () => {
+    vi.stubEnv("STATION_LIFECYCLE", "1");
+    toast = [entry({ businessDate: "20261008" })];
+    await runToastLaborPull(["2026-10-08"], {
+      deadlineMs: 10_000, context: "manual", now: new Date("2026-10-08T15:00:00Z"),
+    });
+    expect(reconciliations).toEqual([{ p_location_id: LOC, p_day: "2026-10-08" }]);
+    reconciliations.length = 0;
+    await runToastLaborPull(["2026-10-07"], {
+      deadlineMs: 10_000, context: "manual", now: new Date("2026-10-08T15:00:00Z"), reconcileDate: "2026-10-07",
+    });
+    expect(reconciliations).toEqual([]);
+  });
+
+  it("does not reconcile an old date or a location whose corrections pull failed", async () => {
+    vi.stubEnv("STATION_LIFECYCLE", "1");
+    toast = [entry()];
+    await runToastLaborPull(["2026-10-06"], { deadlineMs: 10_000, context: "cron" });
+    expect(reconciliations).toEqual([]);
+
+    vi.mocked(toastGet).mockImplementation(async (path: string) => {
+      if (path.startsWith("/labor/v1/jobs")) return [{ guid: "job-line", title: "Line Cook" }];
+      if (path.startsWith("/labor/v1/employees")) return [{ guid: "emp-ana", firstName: "Ana" }];
+      if (path.includes("businessDate=")) return toast;
+      throw Object.assign(new Error("provider detail"), { name: "ToastApiError", code: "http_500" });
+    });
+    await runToastLaborPull(["2026-10-07"], {
+      deadlineMs: 10_000, context: "cron", reconcileDate: "2026-10-07",
+    });
+    expect(reconciliations).toEqual([]);
+  });
+});
 
 describe("archived shifts (Astra r2 P2): import → archive → refresh", () => {
   it("an entry archived after import is marked deleted through the modification window", async () => {
