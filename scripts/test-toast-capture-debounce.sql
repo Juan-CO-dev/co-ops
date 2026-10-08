@@ -1,4 +1,4 @@
-﻿-- SIM ONLY after 0221 + 0222. Synthetic, real claim/page/finish RPCs; rolls back.
+-- SIM ONLY after 0221 + 0222. Synthetic, real claim/page/finish RPCs; rolls back.
 begin;
 do $$
 declare
