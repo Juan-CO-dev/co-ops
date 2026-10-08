@@ -1,5 +1,6 @@
 -- Migration 0221_toast_order_capture
 -- AUTHORED 2026-10-07. NOT YET APPLIED -- GATE CC/JUAN: sim first, then prod.
+-- APPLIED TO PROD 2026-10-07 (schema_migrations version 20261007234649, name '0221_toast_order_capture'; sim first, version 20261007234410; SQL harness 29/29 on sim). The line above is the authoring-time gate note, kept as history.
 -- Immutable order versions preserve history. Only completed run membership publishes a
 -- snapshot; source modified_at wins, then run start time. Config tables are mutable caches.
 -- No raw payloads/customer fields. Free-text discount notes deliberately excluded.
