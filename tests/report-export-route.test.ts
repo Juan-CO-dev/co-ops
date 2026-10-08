@@ -45,7 +45,9 @@ function fakeClient() {
     eq: (_c: string, v: string) => { chain.id = v; return q; },
     maybeSingle: async () => ({ data: SHOPS[chain.id] ?? null, error: null }),
   };
-  return { from: (table: string) => { if (table !== "locations") throw new Error(`unexpected read: ${table}`); return q; } };
+  // Sales reads (0232) answer "not installed" here: the export must say not_yet_available, never zeros.
+  return { from: (table: string) => { if (table !== "locations") throw new Error(`unexpected read: ${table}`); return q; },
+    rpc: async () => ({ data: null, error: { message: "missing", code: "PGRST202" } }) };
 }
 
 const get = (query: string) => GET(new NextRequest(`https://example.test/api/reports/export?${query}`));

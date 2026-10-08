@@ -30,7 +30,7 @@ async function render(level: number, role: RoleCode, location = "mine", assigned
     getServiceRoleClient: () => ({ from: () => query }), serverT: (_language: string, key: string) => key,
     operationalNow: () => ({ date: "2026-10-07" }), formatDateLabel: (date: string) => date,
     reportLandingContext, parseReportRange, reportRangeParams, shiftReportDate, composeLastClose, composeReportSummary, reportIsFinalized,
-    canDoOperationalTask, listReports, listReportSkeleton: async () => lastClose ? [{ id: "close-id", type: "closing", status: "submitted" }] : [],
+    canDoOperationalTask, listReports, SALES_READ_MIN: 7, listReportSkeleton: async () => lastClose ? [{ id: "close-id", type: "closing", status: "submitted" }] : [],
   };
   const page = new Function(...Object.keys(deps), `${js}; return ReportsPage;`)(...Object.values(deps));
   const tree = await page({ searchParams: Promise.resolve({ location, ...extra }) });
@@ -71,11 +71,20 @@ describe("actual reports landing card gates", () => {
     expect(result.hrefs.some(href => href.startsWith("/ordering?"))).toBe(true);
     expect(result.hrefs.some(href => href.startsWith("/operations/receiving?"))).toBe(true);
   });
-  it("AGM gets readonly counts, team and unnumbered sales card", async () => {
+  it("AGM gets readonly counts and team, but no Sales (Juan 2026-10-08: GM+)", async () => {
     const result = await render(6, "agm");
     expect(result.hrefs.some(href => href.startsWith("/operations/counts?"))).toBe(true);
     expect(result.hrefs.some(href => href.startsWith("/reports/trends/team?"))).toBe(true);
-    expect(result.text).toContain("reports.hub.coming_next");
+    expect(result.hrefs.some(href => href.startsWith("/reports/sales"))).toBe(false);
+    expect(result.text).not.toContain("reports.hub.coming_next");
+  });
+  it("a GM gets the Sales root, checks and catering links for their shop", async () => {
+    const result = await render(7, "gm");
+    for (const path of ["/reports/sales?", "/reports/sales/checks?", "/reports/sales/catering?"]) {
+      const link = result.hrefs.find(href => href.startsWith(path));
+      expect(link, path).toBeTruthy();
+      expect(new URL(link!, "https://local").searchParams.get("location")).toBe("mine");
+    }
   });
   it("MoO report grant never grants operational or catering access to an unassigned shop", async () => {
     const result = await render(8, "moo", "other", true);
