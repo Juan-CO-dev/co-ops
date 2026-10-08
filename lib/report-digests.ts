@@ -313,7 +313,7 @@ async function loadCateringReadiness(locationId: string, day: string): Promise<L
     // read-only (seedBaselines: false never persists an inferred baseline).
     const [w4b, onHand] = await Promise.all([
       deriveCateringSkuDemand({ locationId, from: day, to: day }),
-      deriveOnHand(locationId, Date.now(), { seedBaselines: false }),
+      deriveOnHand(locationId, Date.now()),
     ]);
     return { kind: "ok", value: readinessFrom(w4b, countAnchoredBalances(onHand.rows)) };
   } catch (error) {
