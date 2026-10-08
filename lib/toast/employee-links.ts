@@ -35,9 +35,8 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const GUID = /^[A-Za-z0-9-]{1,64}$/;
 const KNOWN = ["employee_already_linked", "user_already_linked", "link_not_found", "role_insufficient",
   "location_access_denied", "assignee_unavailable", "invalid_payload", "link_rejected"] as const;
-/** Every PostgREST builder we touch accepts an AbortSignal; this keeps reads bounded when one is given. */
-type Abortable<T> = T & { abortSignal: (signal: AbortSignal) => T };
-const bounded = <T>(q: Abortable<T>, signal?: AbortSignal): T => (signal ? q.abortSignal(signal) : q);
+/** A signal that never fires, for callers without a deadline (reads stay written one way). */
+const NEVER = new AbortController().signal;
 
 function rpcError(error: { message: string; code?: string }): never {
   const code = KNOWN.find((c) => c === error.message);
@@ -61,16 +60,17 @@ const ALL_SHOP_ROLES = (Object.values(ROLES).filter((r) => r.level >= 9).map((r)
 
 /** Who may be linked at a shop: active members, plus all-shops (9+) accounts — as the RPC allows. */
 export async function linkableUsers(service: SupabaseClient, locationId: string, signal?: AbortSignal): Promise<Array<LinkCandidateUser & { level: number }>> {
-  const members = await selectAllRows<{ user_id: string }>((from, to) => bounded(service.from("user_locations").select("user_id")
-    .eq("location_id", locationId).eq("active", true).order("user_id").range(from, to), signal));
+  const sig = signal ?? NEVER;
+  const members = await selectAllRows<{ user_id: string }>((from, to) => service.from("user_locations").select("user_id")
+    .eq("location_id", locationId).eq("active", true).order("user_id").range(from, to).abortSignal(sig));
   const ids = [...new Set(members.map((m) => m.user_id))];
   const rows: Array<{ id: string; name: string; role: string }> = [];
   for (let i = 0; i < ids.length; i += 100) {
-    const r = await bounded(service.from("users").select("id,name,role").eq("active", true).in("id", ids.slice(i, i + 100)), signal);
+    const r = await service.from("users").select("id,name,role").eq("active", true).in("id", ids.slice(i, i + 100)).abortSignal(sig);
     if (r.error) throw new Error("toast employee links: users read failed");
     rows.push(...(r.data ?? []));
   }
-  const top = await bounded(service.from("users").select("id,name,role").eq("active", true).in("role", ALL_SHOP_ROLES), signal);
+  const top = await service.from("users").select("id,name,role").eq("active", true).in("role", ALL_SHOP_ROLES).abortSignal(sig);
   if (top.error) throw new Error("toast employee links: users read failed");
   const seen = new Set<string>();
   return [...rows, ...(top.data ?? [])].filter((u) => isRoleCode(u.role) && !seen.has(u.id) && seen.add(u.id))
@@ -80,8 +80,8 @@ export async function linkableUsers(service: SupabaseClient, locationId: string,
 /** EVERY link row for the shop, active and inactive: an inactive row is a rejected pair (r1 P1-2). */
 export async function loadLinks(service: SupabaseClient, locationId: string, signal?: AbortSignal): Promise<ExistingLink[]> {
   const rows = await selectAllRows<{ id: string; employee_guid: string; user_id: string; active: boolean; source: "auto" | "manual" }>((from, to) =>
-    bounded(service.from("toast_employee_links").select("id,employee_guid,user_id,active,source")
-      .eq("location_id", locationId).order("linked_at").order("id").range(from, to), signal));
+    service.from("toast_employee_links").select("id,employee_guid,user_id,active,source")
+      .eq("location_id", locationId).order("linked_at").order("id").range(from, to).abortSignal(signal ?? NEVER));
   return rows.map((r) => ({ id: r.id, employeeGuid: r.employee_guid, userId: r.user_id, active: r.active, source: r.source }));
 }
 
@@ -185,7 +185,7 @@ export async function runAutoLinks(service: SupabaseClient, args: { locationId: 
     const call = service.rpc("link_toast_employee", {
       p_actor_id: null, p_location_id: args.locationId, p_employee_guid: a.employeeGuid, p_user_id: a.userId, p_source: "auto",
     });
-    const { data, error } = await (args.signal ? call.abortSignal(args.signal) : call);
+    const { data, error } = await call.abortSignal(args.signal ?? NEVER);
     if (error) {
       if (KNOWN.some((c) => c === error.message)) { skipped += 1; continue; }
       throw new Error(args.signal?.aborted ? "toast_autolink_deadline" : "toast_autolink_failed");
