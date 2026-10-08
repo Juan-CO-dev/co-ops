@@ -1,4 +1,4 @@
-import { loadEffectiveSalesRows, loadEffectiveSalesCoverage, loadSalesCoverageDisclosure, type SalesCoverage } from "@/lib/toast/effective-depletion";
+import { loadEffectiveSalesRows, loadEffectiveSalesWindow, loadEffectiveSalesCoverage, loadSalesCoverageDisclosure, type SalesCoverage, type EffectiveSalesWindow } from "@/lib/toast/effective-depletion";
 import { auditOperationalTaskOverride, canDoOperationalTask } from "@/lib/operational-task-access";
 /**
  * Manager physical-count data layer (pack hierarchy PR 2, migration 0160).
@@ -48,7 +48,7 @@ import { getServiceRoleClient } from "@/lib/supabase-server";
 import { selectAllRows } from "@/lib/supabase-paginate";
 import { getRoleLevel } from "@/lib/roles";
 import { lockLocationContext, type LocationActor } from "@/lib/locations";
-import { etCalendarDate } from "@/lib/operational-day";
+import { etCalendarDate, etYmdMinusDays } from "@/lib/operational-day";
 import { audit } from "@/lib/audit";
 import type { AuthContext } from "@/lib/session";
 import { loadMeasures, loadSkuPackChains } from "@/lib/prep-consumption";
@@ -2098,10 +2098,19 @@ async function sumConsumedOzBetween(
  * ONLY the direct lane (the double-count law: flattened_oz depletes at
  * production, never here). Day-grain window per etBusinessDate's tiling:
  * business_date >= fromDate, and < untilDateExclusive when given. Absence of
- * rows = 0 (a materialized day with no direct sales for a SKU writes no row);
- * this term is never null — null-tainting stays the production term's job.
+ * rows = 0 only for covered days (a materialized day with no direct sales for
+ * a SKU writes no row); missing coverage makes the sales term unknown.
  */
-async function sumSalesDirectOzWindow(
+// Scoped to the caller's gap read, never retained across requests. All anchor
+// groups share the same generation of amounts and coverage for this interval.
+class CapturedSalesGapDates extends Set<string> {
+  constructor(readonly locationId: string, readonly fromDate: string, readonly end: string,
+    readonly snapshot: EffectiveSalesWindow) {
+    super(snapshot.coverage.byLocation[locationId]?.missingDates ?? []);
+  }
+}
+
+export async function sumSalesDirectOzWindow(
   sb: ReturnType<typeof getServiceRoleClient>,
   skuIds: string[],
   locationId: string,
@@ -2119,8 +2128,21 @@ async function sumSalesDirectOzWindow(
   // window over the ~163-SKU roster is ~4.5k rows — a truncated page would silently
   // UNDERSTATE the sales lane, inflating computed on-hand. `id` (the PK) gives the
   // stable total order paging requires; the per-SKU sum is order-insensitive.
-  const rows = await loadEffectiveSalesRows(sb, { locationId, fromDate, untilDateExclusive, skuIds });
-  for (const r of rows) {
+  const capture = process.env.DEPLETION_SOURCE === "capture";
+  const end = untilDateExclusive ?? (capture ? etCalendarDate(new Date().toISOString()) : null);
+  const cached = gapDates instanceof CapturedSalesGapDates && gapDates.locationId === locationId &&
+    fromDate >= gapDates.fromDate && end !== null && end <= gapDates.end ? gapDates.snapshot : null;
+  const snapshot = cached ?? await loadEffectiveSalesWindow(sb, { locationId, fromDate, untilDateExclusive, skuIds });
+  // A refresh can invalidate a day after an earlier gap probe. Never turn that
+  // new gap into a zero-sales amount by discarding the same read's disclosure.
+  const currentGaps = new Set(snapshot.coverage.byLocation[locationId]?.missingDates ?? []);
+  if (salesWindowUntrustworthy(currentGaps, fromDate, untilDateExclusive)) {
+    return new Map<string, number | null>(skuIds.map((id) => [id, null]));
+  }
+  const selected = new Set(skuIds);
+  for (const r of snapshot.rows) {
+    if (r.location_id !== locationId || !selected.has(r.sku_id) || r.business_date < fromDate ||
+      (end !== null && r.business_date >= end)) continue;
     out.set(r.sku_id, (out.get(r.sku_id) ?? 0) + (num(r.direct_oz) ?? 0));
   }
   return out;
@@ -2162,24 +2184,15 @@ async function sumSalesDirectOzBetween(
  * the close/nightly materialize — counting today as a gap would advisory-null
  * every SKU all afternoon. See isGapEligibleDate (counts-shared).
  */
-async function loadSalesGapDates(
+export async function loadSalesGapDates(
   sb: ReturnType<typeof getServiceRoleClient>,
   locationId: string,
   sinceDate: string,
   openEtDate: string,
 ): Promise<Set<string>> {
   if (process.env.DEPLETION_SOURCE === "capture") {
-    const manifests = await loadEffectiveSalesCoverage(sb, { locationId, fromDate: sinceDate, untilDateExclusive: openEtDate });
-    const covered = new Set(manifests.map((r) => r.business_date));
-    const gaps = new Set<string>();
-    const cursor = new Date(`${sinceDate}T12:00:00Z`);
-    const end = new Date(`${openEtDate}T12:00:00Z`);
-    while (cursor < end) {
-      const date = cursor.toISOString().slice(0, 10);
-      if (!covered.has(date)) gaps.add(date);
-      cursor.setUTCDate(cursor.getUTCDate() + 1);
-    }
-    return gaps;
+    const snapshot = await loadEffectiveSalesWindow(sb, { locationId, fromDate: sinceDate, untilDateExclusive: openEtDate });
+    return new CapturedSalesGapDates(locationId, sinceDate, openEtDate, snapshot);
   }
   const [evRes, deplRes] = await Promise.all([
     sb.from("toast_sales_events").select("business_date").eq("location_id", locationId).gte("business_date", sinceDate)
@@ -2223,6 +2236,20 @@ export async function loadDepletionWatermark(
   locationId: string,
   sb: ReturnType<typeof getServiceRoleClient> = getServiceRoleClient(),
 ): Promise<string | null> {
+  if (process.env.EZCATER_DEPLETION_ENABLED === "1") {
+    if (process.env.DEPLETION_SOURCE !== "capture") throw new Error("ezcater_depletion_requires_capture");
+    const end = etCalendarDate(new Date().toISOString());
+    const { data, error } = await sb.from("toast_capture_runs").select("business_date")
+      .eq("location_id", locationId).eq("status", "completed").lt("business_date", end)
+      .order("business_date", { ascending: false }).limit(1).maybeSingle<{ business_date: string }>();
+    if (error) throw new Error("capture_depletion_runs_unavailable");
+    if (!data) return null;
+    // Validate just the newest candidate, never derive all historical sales for
+    // a watermark. A concurrent changed read remains conservatively unknown.
+    const coverage = await loadSalesCoverageDisclosure(sb, { locationId, fromDate: data.business_date,
+      untilDateExclusive: etYmdMinusDays(data.business_date, -1) });
+    return coverage.byLocation[locationId]?.hasGaps === false ? data.business_date : null;
+  }
   if (process.env.DEPLETION_SOURCE === "capture") {
     const covered = await loadEffectiveSalesCoverage(sb, { locationId, fromDate: "1900-01-01" });
     return covered.map((r) => r.business_date).sort().at(-1) ?? null;

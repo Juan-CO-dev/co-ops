@@ -26,8 +26,9 @@ const numeric = (n: number | string | null): number => {
   return Number(n);
 };
 
-/** Success and degraded manifests are valid for the latest completed full-day capture.
- * Empty successful days count; stale manifests and unmaterialized days do not. */
+/** A manifest represents its own completed full-day capture. A newer hourly
+ * capture does not erase that materialized generation; atomic replacement and
+ * the before/after manifest fence below protect readers during a refresh. */
 export async function loadEffectiveSalesCoverage(sb: Client, window: Window): Promise<Coverage[]> {
   const end = window.untilDateExclusive ?? etCalendarDate(new Date().toISOString());
   const [coverage, runs] = await Promise.all([
@@ -48,13 +49,8 @@ export async function loadEffectiveSalesCoverage(sb: Client, window: Window): Pr
       return { data };
     }),
   ]);
-  const latest = new Map<string, Run>();
-  for (const run of runs) {
-    const previous = latest.get(key(run));
-    if (!previous || run.finished_at > previous.finished_at ||
-      (run.finished_at === previous.finished_at && run.id > previous.id)) latest.set(key(run), run);
-  }
-  return coverage.filter((row) => latest.get(key(row))?.id === row.run_id);
+  const completed = new Set(runs.map((run) => `${key(run)}:${run.id}`));
+  return coverage.filter((row) => completed.has(`${key(row)}:${row.run_id}`));
 }
 
 /** Sales fallback is selected against LIVE production by ET item/day. Production
@@ -65,6 +61,11 @@ export async function loadEffectiveSalesRows(sb: Client, window: Window): Promis
 
 /** Gap disclosure is independent of returned amounts; one shop never hides another. */
 export async function loadSalesCoverageDisclosure(sb: Client, window: Window, manifests?: Coverage[], forceCapture = false): Promise<SalesCoverage> {
+  // Reconciled depletion derives from current provider snapshots, independently
+  // of the raw Toast materialization. Its own manifests enter below explicitly.
+  if (manifests === undefined && process.env.EZCATER_DEPLETION_ENABLED === "1") {
+    return (await loadEffectiveSalesWindow(sb, window)).coverage;
+  }
   if (!forceCapture && process.env.DEPLETION_SOURCE !== "capture") return { source: "legacy", hasGaps: false, degraded: false, byLocation: {} };
   const end = window.untilDateExclusive ?? etCalendarDate(new Date().toISOString());
   const coverage = manifests ?? await loadEffectiveSalesCoverage(sb, window);

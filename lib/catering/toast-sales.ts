@@ -30,7 +30,7 @@ import { loadRecipeGraph } from "@/lib/prep-consumption";
 import { recordResolutionFlipsForLocation } from "@/lib/products";
 import { salesSignalsReady } from "@/lib/dynamic-pars-probes";
 import {
-  perUnitSkuOzForItemFromGraph, perUnitSkuOzForMenuItemFromGraph, perUnitSkuAttributionsForItem, perUnitDirectSkuOzForMenuItem, firstLevelItemConsumption,
+  type RecipeGraph, perUnitSkuOzForItemFromGraph, perUnitSkuOzForMenuItemFromGraph, perUnitSkuAttributionsForItem, perUnitDirectSkuOzForMenuItem, firstLevelItemConsumption,
 } from "@/lib/prep-consumption-graph";
 import { operationalDayUtcRange } from "@/lib/operational-day";
 import { findNestedProductionDuplicates } from "@/lib/depletion-shared";
@@ -768,8 +768,74 @@ export async function deriveSalesConsumption(locationId: string, businessDate: s
   return deriveSalesConsumptionFrom(locationId, businessDate, await loadLatestVersions(locationId, businessDate));
 }
 
+type MapRow = { id: string; menu_item_id: string | null; item_id: string | null; package_id: string | null; sku_id: string | null; toast_item_guid: string; is_modifier: boolean; disposition: "deplete" | "remove" | "ignore" | "assortment_full" | "assortment_classics" | "open_item"; portion_qty: number | string | null; portion_unit: string | null; parent_only: boolean };
+type EffectRow = { id: string; map_id: string; ordinal: number; item_id: string | null; sku_id: string | null; menu_item_id: string | null; disposition: "deplete" | "remove"; portion_qty: number | string | null; portion_unit: string | null; parent_only: boolean };
+type AliasRow = { id: string; location_id: string | null; normalized_text: string; menu_item_id: string | null; item_id: string | null; qty_multiplier: number | string };
+type PackageRow = { id: string; label_en: string };
+type PackageLineRow = { id: string; package_id: string; slot_type: string; item_id: string | null; menu_item_id: string | null; quantity: number | string; depletion_qty: number | string | null; display_order: number };
+type PackageOptionRow = { package_item_id: string; item_id: string | null; menu_item_id: string | null; classic: boolean };
+type NameRow = { id: string; name: string };
+type SkuNameRow = NameRow & { avg_oz_per_each: number | string | null };
+
+/** Request-scoped configuration reused across every day of one shop's window. */
+export interface SalesConsumptionContext {
+  locationId: string;
+  graph: RecipeGraph;
+  exclusions: ExclusionView[];
+  mapRows: MapRow[];
+  effectRows: EffectRow[];
+  aliasRows: AliasRow[];
+  packageRows: PackageRow[];
+  packageLines: PackageLineRow[];
+  packageOptions: PackageOptionRow[];
+  menuNames: NameRow[];
+  itemNames: NameRow[];
+  skuNames: SkuNameRow[];
+}
+
+export async function loadSalesConsumptionContext(locationId: string, graph?: RecipeGraph): Promise<SalesConsumptionContext> {
+  const sb = getServiceRoleClient();
+  const mapRows = await selectAllRows<MapRow>((from, to) => sb.from("toast_menu_map")
+    .select("id, menu_item_id, item_id, package_id, sku_id, toast_item_guid, is_modifier, disposition, portion_qty, portion_unit, parent_only")
+    .eq("location_id", locationId).eq("active", true).eq("match_status", "confirmed")
+    .order("id").range(from, to).returns<MapRow[]>(), 500);
+  async function related<T>(table: string, columns: string, column: string, ids: string[], active = false): Promise<T[]> {
+    const out: T[] = [];
+    for (let offset = 0; offset < ids.length; offset += 100) {
+      const chunk = ids.slice(offset, offset + 100);
+      out.push(...await selectAllRows<T>((from, to) => {
+        let q = sb.from(table).select(columns).in(column, chunk);
+        if (active) q = q.eq("active", true);
+        return q.order("id").range(from, to).returns<T[]>();
+      }, 500));
+    }
+    return out;
+  }
+  const packageIds = [...new Set(mapRows.flatMap((r) => r.package_id == null ? [] : [r.package_id]))];
+  const [resolvedGraph, effectRows, exclusionRows, aliasRows, packageRows, packageLines, menuNames, itemNames, skuNames] = await Promise.all([
+    graph ?? loadRecipeGraph({ locationId }),
+    related<EffectRow>("toast_map_effects", "id, map_id, ordinal, item_id, sku_id, menu_item_id, disposition, portion_qty, portion_unit, parent_only, toast_menu_map!inner(location_id, active, match_status)", "map_id", mapRows.filter((r) => r.is_modifier).map((r) => r.id), true),
+    selectAllRows<{ id: string; location_id: string | null; kind: IngestExclusion["kind"]; value: string; note: string | null; created_at: string }>((from, to) => sb.from("toast_ingest_exclusions")
+      .select("id, location_id, kind, value, note, created_at").eq("active", true).or(`location_id.is.null,location_id.eq.${locationId}`).order("id").range(from, to), 500),
+    mapRows.some((r) => !r.is_modifier && r.disposition === "open_item") ? selectAllRows<AliasRow>((from, to) => sb.from("toast_open_item_aliases")
+      .select("id, location_id, normalized_text, menu_item_id, item_id, qty_multiplier").eq("active", true)
+      .or(`location_id.is.null,location_id.eq.${locationId}`).order("id").range(from, to), 500) : [],
+    related<PackageRow>("catering_packages", "id, label_en", "id", packageIds),
+    related<PackageLineRow>("catering_package_items", "id, package_id, slot_type, item_id, menu_item_id, quantity, depletion_qty, display_order", "package_id", packageIds, true),
+    selectAllRows<NameRow>((from, to) => sb.from("menu_items").select("id, name").order("id").range(from, to), 500),
+    selectAllRows<NameRow>((from, to) => sb.from("items").select("id, name").order("id").range(from, to), 500),
+    selectAllRows<SkuNameRow>((from, to) => sb.from("vendor_items").select("id, name, avg_oz_per_each").order("id").range(from, to), 500),
+  ]);
+  const packageOptions = await related<PackageOptionRow>("catering_package_slot_options", "package_item_id, item_id, menu_item_id, classic", "package_item_id", packageLines.filter((r) => r.slot_type === "choice").map((r) => r.id), true);
+  // Preserve the legacy fingerprint's map/ordinal/id effect ordering.
+  effectRows.sort((a, b) => a.map_id.localeCompare(b.map_id) || a.ordinal - b.ordinal || a.id.localeCompare(b.id));
+  return { locationId, graph: resolvedGraph, mapRows, effectRows, aliasRows, packageRows, packageLines, packageOptions, menuNames, itemNames, skuNames,
+    exclusions: exclusionRows.map((r) => ({ id: r.id, locationId: r.location_id, kind: r.kind, value: r.value, note: r.note, createdAt: r.created_at })) };
+}
+
 export async function deriveCapturedSalesConsumption(locationId: string, businessDate: string, capturedDay?: CapturedToastDay,
-  reconciliationLinks?: DepletionLink[]): Promise<SalesConsumption & { captureRunId: string; sourceOrderCount: number; configDegraded: boolean; missingPointerCount: number }> {
+  reconciliationLinks?: DepletionLink[], context?: SalesConsumptionContext): Promise<SalesConsumption & { captureRunId: string; sourceOrderCount: number; configDegraded: boolean; missingPointerCount: number }> {
+  if (context && context.locationId !== locationId) throw new Error("sales_consumption_context_location_mismatch");
   const day = capturedDay ?? await loadCapturedToastDay(locationId, businessDate);
   if (!day) throw new Error("toast_capture_day_incomplete");
   const rows = new Map<string, LedgerRow>();
@@ -788,16 +854,17 @@ export async function deriveCapturedSalesConsumption(locationId: string, busines
     });
     }
   }
-  const consumption = await deriveSalesConsumptionFrom(locationId, businessDate, rows);
+  const consumption = await deriveSalesConsumptionFrom(locationId, businessDate, rows, context);
   if (consumption.diagnostics) consumption.diagnostics.excluded_units += cateringExcludedUnits;
   return { ...consumption, captureRunId: day.coverage.runId, sourceOrderCount: day.coverage.orderCount,
     configDegraded: day.coverage.configDegraded, missingPointerCount: day.coverage.missingPointerCount };
 }
 
-export async function deriveSalesConsumptionFrom(locationId: string, businessDate: string, latest: Map<string, LedgerRow>): Promise<SalesConsumption> {
+export async function deriveSalesConsumptionFrom(locationId: string, businessDate: string, latest: Map<string, LedgerRow>, context?: SalesConsumptionContext): Promise<SalesConsumption> {
+  if (context && context.locationId !== locationId) throw new Error("sales_consumption_context_location_mismatch");
   requireYmd(businessDate);
   const sb = getServiceRoleClient();
-  const exclusions = await loadActiveExclusions();
+  const exclusions = context?.exclusions ?? await loadActiveExclusions();
 
   const live = [...latest.values()].filter((r) => !r.voided);
 
@@ -821,7 +888,7 @@ export async function deriveSalesConsumptionFrom(locationId: string, businessDat
   // spec 2026-07-25: base entities (menu_item/item/PACKAGE), assortment
   // markers (modifier guid → pool behavior), and portioned modifiers
   // (item- or menu_item-target).
-  const { data: mapRows, error: mErr } = await sb.from("toast_menu_map")
+  const { data: mapRows, error: mErr } = context ? { data: context.mapRows, error: null } : await sb.from("toast_menu_map")
     .select("id, menu_item_id, item_id, package_id, sku_id, toast_item_guid, is_modifier, disposition, portion_qty, portion_unit, parent_only")
     .eq("location_id", locationId).eq("active", true).eq("match_status", "confirmed")
     .returns<Array<{ id: string; menu_item_id: string | null; item_id: string | null; package_id: string | null; sku_id: string | null; toast_item_guid: string; is_modifier: boolean; disposition: "deplete" | "remove" | "ignore" | "assortment_full" | "assortment_classics" | "open_item"; portion_qty: number | string | null; portion_unit: string | null; parent_only: boolean }>>();
@@ -853,8 +920,7 @@ export async function deriveSalesConsumptionFrom(locationId: string, businessDat
 
   // One batched effect read, scoped by the service-role join rather than an
   // unbounded UUID list in the request URL. Paging prevents silent truncation.
-  type EffectRow = { id: string; map_id: string; ordinal: number; item_id: string | null; sku_id: string | null; menu_item_id: string | null; disposition: "deplete" | "remove"; portion_qty: number | string | null; portion_unit: string | null; parent_only: boolean };
-  const effectRows = await selectAllRows<EffectRow>((from, to) => sb.from("toast_map_effects")
+  const effectRows = context?.effectRows ?? await selectAllRows<EffectRow>((from, to) => sb.from("toast_map_effects")
     .select("id, map_id, ordinal, item_id, sku_id, menu_item_id, disposition, portion_qty, portion_unit, parent_only, toast_menu_map!inner(location_id, active, match_status)")
     .eq("active", true).eq("toast_menu_map.location_id", locationId)
     .eq("toast_menu_map.active", true).eq("toast_menu_map.match_status", "confirmed")
@@ -871,8 +937,7 @@ export async function deriveSalesConsumptionFrom(locationId: string, businessDat
       portionQty: row.portion_qty == null ? null : Number(row.portion_qty), portionUnit: row.portion_unit, parentOnly: row.parent_only });
   }
   const openItemGuids = new Set((mapRows ?? []).filter((m) => !m.is_modifier && m.disposition === "open_item").map((m) => m.toast_item_guid));
-  type AliasRow = { id: string; location_id: string | null; normalized_text: string; menu_item_id: string | null; item_id: string | null; qty_multiplier: number | string };
-  const aliasRows = openItemGuids.size ? await selectAllRows<AliasRow>((from, to) => sb.from("toast_open_item_aliases")
+  const aliasRows = context ? context.aliasRows : openItemGuids.size ? await selectAllRows<AliasRow>((from, to) => sb.from("toast_open_item_aliases")
     .select("id, location_id, normalized_text, menu_item_id, item_id, qty_multiplier")
     .eq("active", true).or(`location_id.is.null,location_id.eq.${locationId}`).order("id").range(from, to)) : [];
   const aliases = new Map<string, AliasRow>();
@@ -934,7 +999,7 @@ export async function deriveSalesConsumptionFrom(locationId: string, businessDat
   //    (PR #180 invariant: recombination === full flatten, no 2× SKUs). ─────
   // locationId scopes product resolution (0179): this shop's primary designation,
   // its activation overlay and its receipt history — never another shop's.
-  const graph = await loadRecipeGraph({ locationId });
+  const graph = context?.graph ?? await loadRecipeGraph({ locationId });
   const poisonedRecipes = new Set<string>();
   const menuItemUnits = new Map<string, number>();   // signed whole-sub units per menu_item
   const itemUnits = new Map<string, number>();       // signed par-units per item
@@ -967,7 +1032,7 @@ export async function deriveSalesConsumptionFrom(locationId: string, businessDat
   //    assortment pick selects (classics subset vs full enabled options). ────
   if (packageSales.length > 0) {
     const pkgIds = [...new Set(packageSales.map((p) => p.packageId))];
-    const [{ data: pkgRows, error: pnErr }, { data: lineRows, error: plErr }] = await Promise.all([
+    const [{ data: pkgRows, error: pnErr }, { data: lineRows, error: plErr }] = context ? [{ data: context.packageRows, error: null }, { data: context.packageLines, error: null }] : await Promise.all([
       sb.from("catering_packages").select("id, label_en").in("id", pkgIds)
         .returns<Array<{ id: string; label_en: string }>>(),
       sb.from("catering_package_items")
@@ -985,7 +1050,7 @@ export async function deriveSalesConsumptionFrom(locationId: string, businessDat
       linesByPackage.set(l.package_id, arr);
     }
     const choiceLineIds = (lineRows ?? []).filter((l) => l.slot_type === "choice").map((l) => l.id);
-    const { data: optRows, error: poErr } = choiceLineIds.length
+    const { data: optRows, error: poErr } = context ? { data: context.packageOptions, error: null } : choiceLineIds.length
       ? await sb.from("catering_package_slot_options")
           .select("package_item_id, item_id, menu_item_id, classic")
           .in("package_item_id", choiceLineIds).eq("active", true)
@@ -1135,7 +1200,10 @@ export async function deriveSalesConsumptionFrom(locationId: string, businessDat
   // (whose ids may not appear in the flatten yet — a pure "No bread" removal on
   // a check with no other SKU demand). avg_oz_per_each rides here (each→oz).
   const skuIds = [...new Set([...skuDirect.keys(), ...skuFlattened.keys(), ...skuModApplications.map((a) => a.skuId)])];
-  const [menuNames, itemNames, skuNames, packageNames] = await Promise.all([
+  const [menuNames, itemNames, skuNames, packageNames] = context ? [
+    { data: context.menuNames, error: null }, { data: context.itemNames, error: null },
+    { data: context.skuNames, error: null }, { data: context.packageRows, error: null },
+  ] as const : await Promise.all([
     menuItemIds.length ? sb.from("menu_items").select("id, name").in("id", menuItemIds).returns<Array<{ id: string; name: string }>>() : Promise.resolve({ data: [], error: null }),
     itemIds.length ? sb.from("items").select("id, name").in("id", itemIds).returns<Array<{ id: string; name: string }>>() : Promise.resolve({ data: [], error: null }),
     skuIds.length ? sb.from("vendor_items").select("id, name, avg_oz_per_each").in("id", skuIds).returns<Array<{ id: string; name: string; avg_oz_per_each: number | string | null }>>() : Promise.resolve({ data: [], error: null }),

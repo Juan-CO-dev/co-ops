@@ -1046,7 +1046,7 @@ export async function loadOpeningState(
   // one at save), plus what the row needs from the ledger: the last "made on" for the
   // shelf-life state and this instance's recorded toss. Every read throws on error.
   const batchItemIds = Object.values(batchContext).filter((c) => c.isBatch).map((c) => c.itemId);
-  const batchDerivedMap = await loadBatchDerivedForItems(batchItemIds);
+  const batchDerivedMap = await loadBatchDerivedForItems(batchItemIds, args.locationId);
   const batchDerived: Record<string, DerivedSku[]> = {};
   const batchState: Record<string, { madeOn: string | null; tossed: number }> = {};
   const madeOnByItem = new Map<string, string>();

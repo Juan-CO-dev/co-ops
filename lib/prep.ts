@@ -961,7 +961,7 @@ export async function loadMidDayPrepState(
   // 0215 — per-BATCH panel rows + the ledger facts the batch row shows (last made-on for
   // the shelf-life state; this instance's recorded toss). Mirrors loadOpeningState.
   const batchItemIds = Object.values(batchContext).filter((c) => c.isBatch).map((c) => c.itemId);
-  const batchDerivedMap = await loadBatchDerivedForItems(batchItemIds);
+  const batchDerivedMap = await loadBatchDerivedForItems(batchItemIds, instanceRow.location_id);
   const batchDerived: Record<string, DerivedSku[]> = {};
   const batchState: Record<string, { madeOn: string | null; tossed: number }> = {};
   const madeOnByItem = new Map<string, string>();

@@ -29,6 +29,7 @@ const window = { locationId: "shop", fromDate: "2026-10-06", untilDateExclusive:
 const day = { location_id: "shop", business_date: "2026-10-06" };
 beforeEach(() => {
   vi.stubEnv("DEPLETION_SOURCE", "capture");
+  vi.stubEnv("EZCATER_DEPLETION_ENABLED", "0");
   queried = [];
   selected = [];
   onRead = undefined;
@@ -107,10 +108,20 @@ describe("effective capture depletion", () => {
     expect(await loadEffectiveSalesCoverage(db(), window)).toMatchObject([{ ...day, run_id: "run1", status: "success" }]);
   });
 
-  it("a newer completed capture invalidates the old manifest until replacement succeeds", async () => {
+  it("hourly recapture preserves the last valid materialized generation until atomic replacement", async () => {
     tables.toast_capture_runs!.push({ ...day, id: "run2", status: "completed", finished_at: "2026-10-07T06:00:00Z" });
+    expect(await loadEffectiveSalesCoverage(db(), window)).toMatchObject([{ run_id: "run1" }]);
+    expect(await loadEffectiveSalesWindow(db(), window)).toMatchObject({ rows: [{ direct_oz: 12 }], coverage: { hasGaps: false } });
+    tables.toast_depletion_day_coverage![0]!.run_id = "run2";
+    expect(await loadEffectiveSalesCoverage(db(), window)).toMatchObject([{ run_id: "run2" }]);
+  });
+
+  it("does not validate a manifest against another shop's or day's completed run", async () => {
+    tables.toast_capture_runs![0]!.location_id = "other";
     expect(await loadEffectiveSalesCoverage(db(), window)).toEqual([]);
-    expect(await loadEffectiveSalesWindow(db(), window)).toMatchObject({ rows: [], coverage: { hasGaps: true } });
+    tables.toast_capture_runs![0]!.location_id = "shop";
+    tables.toast_capture_runs![0]!.business_date = "2026-10-05";
+    expect(await loadEffectiveSalesCoverage(db(), window)).toEqual([]);
   });
 
   it("a running or failed retry does not invalidate a completed authoritative snapshot", async () => {

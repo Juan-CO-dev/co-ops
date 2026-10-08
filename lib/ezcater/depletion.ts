@@ -5,11 +5,11 @@ import { loadRecipeGraph } from "@/lib/prep-consumption";
 import { perUnitSkuAttributionsForItem } from "@/lib/prep-consumption-graph";
 import { selectSalesDepletion } from "@/lib/depletion-shared";
 import { etCalendarDate, etYmdMinusDays } from "@/lib/operational-day";
-import { deriveCapturedSalesConsumption } from "@/lib/catering/toast-sales";
-import { loadCapturedToastDay } from "@/lib/toast/captured-day";
+import { deriveCapturedSalesConsumption, loadSalesConsumptionContext } from "@/lib/catering/toast-sales";
+import { loadCapturedToastWindow } from "@/lib/toast/captured-window";
 import { loadSalesCoverageDisclosure, type EffectiveSalesWindow, type EffectiveSalesRow } from "@/lib/toast/effective-depletion";
 import { itemIdentity, probeItemMap, shadowAmounts, type ItemIdentity, type ProductionEvidence, type ToastMap, type TransferEvidence } from "./pass2-shared";
-import { packageShadowAmounts } from "./shadow-package";
+import { packageShadowAmounts, loadPackageShadowContext } from "./shadow-package";
 import type { DepletionLink } from "./depletion-shared";
 
 type Client = ReturnType<typeof getServiceRoleClient>;
@@ -22,26 +22,43 @@ type Decision = Omit<ToastMap, "toast_item_name"> & { location_id: string; ident
 export async function loadReconciledSalesWindow(sb: Client, window: ReconciledWindow,
   options: { includeEzcater?: boolean } = {}): Promise<EffectiveSalesWindow> {
   const end = window.untilDateExclusive ?? etCalendarDate(new Date().toISOString());
-  const graph = await loadRecipeGraph();
   const readOrders = () => selectAllRows<Order>((from, to) => sb.from("ezcater_orders")
     .select("id,snapshot_id,lead_id,location_id,event_date,status").not("snapshot_id", "is", null).not("lead_id", "is", null)
-    .gte("event_date", window.fromDate).lt("event_date", end).order("id").range(from, to));
+    .gte("event_date", window.fromDate).lt("event_date", end).order("id").range(from, to), 250);
   const readLinks = () => selectAllRows<DepletionLink & { location_id: string; business_date: string }>((from, to) => {
     let q = sb.from("ezcater_current_toast_links").select("location_id,business_date,toast_snapshot_id,toast_order_guid,check_guid")
       .gte("business_date", window.fromDate).lt("business_date", end);
     if (window.locationId) q = q.eq("location_id", window.locationId);
     return q.order("location_id").order("business_date").order("toast_snapshot_id").order("check_guid").range(from, to);
-  });
-  const readLeads = () => selectAllRows<{ id: string; location_id: string; stage: string }>((from, to) => sb.from("catering_pipeline")
-    .select("id,location_id,stage").eq("lead_source", "ezcater").order("id").range(from, to));
-  const [orders, links, leads, productions, transfers, locations] = await Promise.all([
-    readOrders(), readLinks(), readLeads(),
+  }, 250);
+  const orders = await readOrders();
+  const leadIds = [...new Set(orders.map((order) => order.lead_id))];
+  const readLeads = async () => {
+    const rows: { id: string; location_id: string; stage: string }[] = [];
+    for (let start = 0; start < leadIds.length; start += 100) {
+      rows.push(...await selectAllRows<{ id: string; location_id: string; stage: string }>((from, to) => sb.from("catering_pipeline")
+        .select("id,location_id,stage").eq("lead_source", "ezcater").in("id", leadIds.slice(start, start + 100))
+        .order("id").range(from, to), 250));
+    }
+    return rows;
+  };
+  const readTransfers = async () => {
+    const rows: (TransferEvidence & { resource_id: string })[] = [];
+    for (let start = 0; start < leadIds.length; start += 100) {
+      rows.push(...await selectAllRows<TransferEvidence & { resource_id: string }>((from, to) => sb.from("audit_log")
+        .select("resource_id,occurred_at,metadata").eq("resource_table", "catering_pipeline")
+        .in("resource_id", leadIds.slice(start, start + 100))
+        .in("action", ["catering.pipeline.transfer_location", "ezcater.location_reassigned"])
+        .gte("occurred_at", `${etYmdMinusDays(window.fromDate, 1)}T00:00:00Z`).order("id").range(from, to), 250));
+    }
+    return rows;
+  };
+  const [links, leads, productions, transfers, locations] = await Promise.all([
+    readLinks(), readLeads(),
     selectAllRows<ProductionEvidence>((from, to) => sb.from("productions").select("location_id,output_item_id,produced_at")
       .is("revoked_at", null).is("superseded_at", null).gte("produced_at", `${etYmdMinusDays(window.fromDate, 2)}T00:00:00Z`)
-      .lt("produced_at", `${etYmdMinusDays(end, -1)}T00:00:00Z`).order("id").range(from, to)),
-    selectAllRows<TransferEvidence & { resource_id: string }>((from, to) => sb.from("audit_log").select("resource_id,occurred_at,metadata")
-      .eq("resource_table", "catering_pipeline").in("action", ["catering.pipeline.transfer_location", "ezcater.location_reassigned"])
-      .gte("occurred_at", `${etYmdMinusDays(window.fromDate, 1)}T00:00:00Z`).order("id").range(from, to)),
+      .lt("produced_at", `${etYmdMinusDays(end, -1)}T00:00:00Z`).order("id").range(from, to), 250),
+    readTransfers(),
     selectAllRows<{ id: string }>((from, to) => sb.from("locations").select("id").eq("active", true)
       .not("toast_restaurant_guid", "is", null).order("id").range(from, to)),
   ]);
@@ -54,14 +71,23 @@ export async function loadReconciledSalesWindow(sb: Client, window: ReconciledWi
   const unresolvedDays = new Set<string>();
   const manifests: Parameters<typeof loadSalesCoverageDisclosure>[2] = [];
   const locationIds = window.locationId ? [window.locationId] : [...new Set([...locations.map((r) => r.id), ...leads.map((r) => r.location_id)])];
-  // Source-day loader performs its own generation fence. Derive afresh so a late
+  const graphs = new Map<string, Awaited<ReturnType<typeof loadRecipeGraph>>>();
+  const graphFor = async (locationId: string) => {
+    let graph = graphs.get(locationId);
+    if (!graph) { graph = await loadRecipeGraph({ locationId }); graphs.set(locationId, graph); }
+    return graph;
+  };
+  // Window loader performs its own generation fence. Derive afresh so a late
   // link removes all of a check's base selections AND modifiers immediately.
   for (const locationId of locationIds) {
-    for (let date = window.fromDate; date < end; date = etYmdMinusDays(date, -1)) {
-      const day = await loadCapturedToastDay(locationId, date);
-      if (!day) continue;
+    const graph = await graphFor(locationId);
+    const [days, context] = await Promise.all([
+      loadCapturedToastWindow(sb, locationId, window.fromDate, end),
+      loadSalesConsumptionContext(locationId, graph),
+    ]);
+    for (const [date, day] of days) {
       const consumption = await deriveCapturedSalesConsumption(locationId, date, day,
-        links.filter((link) => link.location_id === locationId && link.business_date === date));
+        links.filter((link) => link.location_id === locationId && link.business_date === date), context);
       const produced = new Set(productions.filter((p) => p.location_id === locationId && etCalendarDate(p.produced_at) === date).map((p) => p.output_item_id));
       const attributed = consumption.prepConsumed.flatMap((item) => perUnitSkuAttributionsForItem(graph, item.itemId)
         .map((row) => ({ ...row, itemId: item.itemId, oz: row.oz * item.units })));
@@ -78,21 +104,41 @@ export async function loadReconciledSalesWindow(sb: Client, window: ReconciledWi
   }
   if (options.includeEzcater !== false) {
     const [maps, decisions] = await Promise.all([
-      selectAllRows<ToastMap & { location_id: string }>((from, to) => sb.from("toast_menu_map")
-        .select("id,location_id,toast_item_guid,toast_item_name,item_id,menu_item_id,package_id").eq("active", true)
-        .eq("match_status", "confirmed").eq("is_modifier", false).eq("disposition", "deplete").order("id").range(from, to)),
-      selectAllRows<Decision>((from, to) => sb.from("ezcater_item_map")
-        .select("location_id,identity_key,status,evidence,toast_item_guid,item_id,menu_item_id,package_id")
-        .order("location_id").order("identity_key").range(from, to)),
+      selectAllRows<ToastMap & { location_id: string }>((from, to) => {
+        let q = sb.from("toast_menu_map")
+          .select("id,location_id,toast_item_guid,toast_item_name,item_id,menu_item_id,package_id").eq("active", true)
+          .eq("match_status", "confirmed").eq("is_modifier", false).eq("disposition", "deplete");
+        if (window.locationId) q = q.eq("location_id", window.locationId);
+        return q.order("id").range(from, to);
+      }, 250),
+      selectAllRows<Decision>((from, to) => {
+        let q = sb.from("ezcater_item_map").select("location_id,identity_key,status,evidence,toast_item_guid,item_id,menu_item_id,package_id");
+        if (window.locationId) q = q.eq("location_id", window.locationId);
+        return q.order("location_id").order("identity_key").range(from, to);
+      }, 250),
     ]);
-    for (const order of orders) {
+    const eligibleOrders = orders.filter((order) => {
+      const lead = byLead.get(order.lead_id);
+      return lead && lead.stage !== "lost" && !/cancel|reject|fail/i.test(order.status ?? "") &&
+        (!window.locationId || lead.location_id === window.locationId);
+    });
+    type OrderItem = ItemIdentity & { order_id: string; snapshot_id: string; quantity: number; ordinal: number };
+    const orderItems: OrderItem[] = [];
+    for (let start = 0; start < eligibleOrders.length; start += 100) {
+      orderItems.push(...await selectAllRows<OrderItem>((from, to) => sb.from("ezcater_order_items")
+        .select("order_id,snapshot_id,ordinal,provider_item_uuid,menu_item_size_id,pos_item_id,name,quantity,options")
+        .in("order_id", eligibleOrders.slice(start, start + 100).map((order) => order.id)).eq("is_current", true)
+        .order("order_id").order("ordinal").range(from, to), 250));
+    }
+    const packageContext = await loadPackageShadowContext(sb,
+      [...maps, ...decisions].flatMap((target) => target.package_id ? [target.package_id] : []));
+    for (const order of eligibleOrders) {
       const lead = byLead.get(order.lead_id);
       if (!lead || lead.stage === "lost" || /cancel|reject|fail/i.test(order.status ?? "")) continue;
       const locationId = lead.location_id;
       if (window.locationId && locationId !== window.locationId) continue;
-      const items = await selectAllRows<ItemIdentity & { quantity: number; ordinal: number }>((from, to) => sb.from("ezcater_order_items")
-        .select("ordinal,provider_item_uuid,menu_item_size_id,pos_item_id,name,quantity,options")
-        .eq("order_id", order.id).eq("snapshot_id", order.snapshot_id).eq("is_current", true).order("ordinal").range(from, to));
+      const graph = await graphFor(locationId);
+      const items = orderItems.filter((item) => item.order_id === order.id && item.snapshot_id === order.snapshot_id);
       const unresolved = () => unresolvedDays.add(`${locationId}:${order.event_date}`);
       if (!items.length) unresolved();
       for (const item of items) {
@@ -106,7 +152,7 @@ export async function loadReconciledSalesWindow(sb: Client, window: ReconciledWi
         if (item.options?.length && decision?.evidence !== "reviewed" && decision?.evidence !== "reviewed_direct") { unresolved(); continue; }
         const evidence = actualTransfers.filter((t) => t.resource_id === order.lead_id);
         const amounts = target.package_id
-          ? await packageShadowAmounts(sb, graph, target.package_id, Number(item.quantity), locationId, order.event_date, productions, evidence, new AbortController().signal)
+          ? await packageShadowAmounts(sb, graph, target.package_id, Number(item.quantity), locationId, order.event_date, productions, evidence, new AbortController().signal, packageContext)
           : shadowAmounts(graph, target, Number(item.quantity), locationId, order.event_date, productions, evidence);
         if (!amounts.length && Number(item.quantity) > 0) unresolved();
         for (const amount of amounts) rows.push({ location_id: locationId, business_date: order.event_date, sku_id: amount.sku_id,
