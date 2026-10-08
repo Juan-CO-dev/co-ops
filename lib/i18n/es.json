@@ -4200,6 +4200,7 @@
   "admin.toastsales.assortment_full": "Surtido — Our Favorites (pool completo)",
   "admin.toastsales.assortment_classics": "Surtido — The Classics",
   "admin.toastsales.package_issues_heading": "Huecos de cableado de paquetes",
+  "admin.toastsales.issue.excess_picks": "las selecciones superan la cantidad del grupo — no se descuentan las selecciones de más",
   "admin.toastsales.issue.empty_pool": "el slot no tiene opciones elegibles",
   "admin.toastsales.issue.freeform_line": "línea libre (sin vincular al spine) — no se descuenta",
   "admin.toastsales.map_to_label": "Vincular a…",

@@ -4200,6 +4200,7 @@
   "admin.toastsales.assortment_full": "Assortment — Our Favorites (full pool)",
   "admin.toastsales.assortment_classics": "Assortment — The Classics",
   "admin.toastsales.package_issues_heading": "Package wiring gaps",
+  "admin.toastsales.issue.excess_picks": "named picks exceed the slot quantity — excess picks are not depleted",
   "admin.toastsales.issue.empty_pool": "no eligible options in the slot pool",
   "admin.toastsales.issue.freeform_line": "freeform line (not spine-linked) — not depleted",
   "admin.toastsales.map_to_label": "Map to…",

@@ -34,9 +34,10 @@ import {
 } from "@/lib/prep-consumption-graph";
 import { operationalDayUtcRange } from "@/lib/operational-day";
 import { findNestedProductionDuplicates } from "@/lib/depletion-shared";
-import { modifierParUnits, removalAmount, skuPortionOz } from "@/lib/toast/modifiers-shared";
+import { applyModifierEffect, skuPortionOz, type ModifierEffect } from "@/lib/toast/modifiers-shared";
+import { resolveLineTarget, normalizeOpenItemText, shouldSkipOpenItem } from "@/lib/toast/line-target-shared";
 import {
-  selectAssortmentPool, evenMixPerOption, MENU_ITEM_MODIFIER_PORTION_WHOLE_SUBS,
+  selectAssortmentPool, evenMixPerOption, allocatePackagePicks,
   type AssortmentKind,
 } from "@/lib/toast/platter-shared";
 import { loadCapturedToastDay, type CapturedToastDay } from "@/lib/toast/captured-day";
@@ -750,7 +751,7 @@ export interface SalesConsumption {
   /** Modifier lane (spec 2026-07-24): applications counted / subtracted / skipped. */
   modifierStats: { depleted: number; removed: number; ignored: number; portionNeeded: Array<{ name: string; quantity: number }> };
   /** Platter lane (spec 2026-07-25): package composition gaps that block full depletion. */
-  packageIssues: Array<{ name: string; issue: "empty_pool" | "freeform_line" }>;
+  packageIssues: Array<{ name: string; issue: "empty_pool" | "freeform_line" | "excess_picks" }>;
 }
 
 export async function salesConsumption(actor: AuthContext, locationId: string, businessDate: string): Promise<SalesConsumption> {
@@ -818,9 +819,9 @@ export async function deriveSalesConsumptionFrom(locationId: string, businessDat
   // markers (modifier guid → pool behavior), and portioned modifiers
   // (item- or menu_item-target).
   const { data: mapRows, error: mErr } = await sb.from("toast_menu_map")
-    .select("menu_item_id, item_id, package_id, sku_id, toast_item_guid, is_modifier, disposition, portion_qty, portion_unit")
+    .select("id, menu_item_id, item_id, package_id, sku_id, toast_item_guid, is_modifier, disposition, portion_qty, portion_unit, parent_only")
     .eq("location_id", locationId).eq("active", true).eq("match_status", "confirmed")
-    .returns<Array<{ menu_item_id: string | null; item_id: string | null; package_id: string | null; sku_id: string | null; toast_item_guid: string; is_modifier: boolean; disposition: "deplete" | "remove" | "ignore" | "assortment_full" | "assortment_classics"; portion_qty: number | string | null; portion_unit: string | null }>>();
+    .returns<Array<{ id: string; menu_item_id: string | null; item_id: string | null; package_id: string | null; sku_id: string | null; toast_item_guid: string; is_modifier: boolean; disposition: "deplete" | "remove" | "ignore" | "assortment_full" | "assortment_classics" | "open_item"; portion_qty: number | string | null; portion_unit: string | null; parent_only: boolean }>>();
   if (mErr) throw new Error(`toast-sales crosswalk: ${mErr.message}`);
   const entityByGuid = new Map(
     (mapRows ?? []).filter((m) => !m.is_modifier && (m.menu_item_id ?? m.item_id ?? m.package_id) != null)
@@ -834,37 +835,88 @@ export async function deriveSalesConsumptionFrom(locationId: string, businessDat
     (mapRows ?? []).filter((m) => m.is_modifier && (m.disposition === "assortment_full" || m.disposition === "assortment_classics"))
       .map((m) => [m.toast_item_guid, m.disposition === "assortment_classics" ? "classics" as const : "full" as const]),
   );
-  const modifierByGuid = new Map(
+  const modifierByGuid = new Map<string, ModifierEffect>(
     (mapRows ?? [])
-      .filter((m) => m.is_modifier && (m.item_id != null || m.menu_item_id != null || m.sku_id != null))
+      .filter((m) => m.is_modifier && (m.disposition === "deplete" || m.disposition === "remove" || m.disposition === "ignore") && (m.item_id != null || m.menu_item_id != null || m.sku_id != null))
       .map((m) => [m.toast_item_guid, {
         targetKind: m.item_id != null ? ("item" as const) : m.menu_item_id != null ? ("menu_item" as const) : ("sku" as const),
         targetId: (m.item_id ?? m.menu_item_id ?? m.sku_id)!,
-        disposition: m.disposition,
+        disposition: m.disposition as ModifierEffect["disposition"],
         portionQty: m.portion_qty != null ? Number(m.portion_qty) : null,
         portionUnit: m.portion_unit,
+        parentOnly: m.parent_only,
       }]),
   );
+
+  // One batched effect read, scoped by the service-role join rather than an
+  // unbounded UUID list in the request URL. Paging prevents silent truncation.
+  type EffectRow = { id: string; map_id: string; ordinal: number; item_id: string | null; sku_id: string | null; menu_item_id: string | null; disposition: "deplete" | "remove"; portion_qty: number | string | null; portion_unit: string | null; parent_only: boolean };
+  const effectRows = await selectAllRows<EffectRow>((from, to) => sb.from("toast_map_effects")
+    .select("id, map_id, ordinal, item_id, sku_id, menu_item_id, disposition, portion_qty, portion_unit, parent_only, toast_menu_map!inner(location_id, active, match_status)")
+    .eq("active", true).eq("toast_menu_map.location_id", locationId)
+    .eq("toast_menu_map.active", true).eq("toast_menu_map.match_status", "confirmed")
+    .order("map_id").order("ordinal").order("id").range(from, to));
+  const effectsByGuid = new Map<string, ModifierEffect[]>();
+  for (const [guid, primary] of modifierByGuid) effectsByGuid.set(guid, [primary]);
+  const guidByMapId = new Map((mapRows ?? []).filter((m) => m.is_modifier).map((m) => [m.id, m.toast_item_guid]));
+  for (const row of effectRows) {
+    const guid = guidByMapId.get(row.map_id);
+    const effects = guid == null ? undefined : effectsByGuid.get(guid);
+    if (!effects) continue;
+    effects.push({ targetKind: row.item_id != null ? "item" : row.sku_id != null ? "sku" : "menu_item",
+      targetId: (row.item_id ?? row.sku_id ?? row.menu_item_id)!, disposition: row.disposition,
+      portionQty: row.portion_qty == null ? null : Number(row.portion_qty), portionUnit: row.portion_unit, parentOnly: row.parent_only });
+  }
+  const openItemGuids = new Set((mapRows ?? []).filter((m) => !m.is_modifier && m.disposition === "open_item").map((m) => m.toast_item_guid));
+  type AliasRow = { id: string; location_id: string | null; normalized_text: string; menu_item_id: string | null; item_id: string | null; qty_multiplier: number | string };
+  const aliasRows = openItemGuids.size ? await selectAllRows<AliasRow>((from, to) => sb.from("toast_open_item_aliases")
+    .select("id, location_id, normalized_text, menu_item_id, item_id, qty_multiplier")
+    .eq("active", true).or(`location_id.is.null,location_id.eq.${locationId}`).order("id").range(from, to)) : [];
+  const aliases = new Map<string, AliasRow>();
+  for (const row of aliasRows) {
+    if (row.location_id !== null && row.location_id !== locationId) continue;
+    if (!aliases.has(row.normalized_text) || row.location_id === locationId) aliases.set(row.normalized_text, row);
+  }
 
   const baseLines = counted.filter((r) => r.parent_selection_guid == null);
   const modifierLines = counted.filter((r) => r.parent_selection_guid != null);
 
   const qtyByEntity = new Map<string, { kind: "menu_item" | "item" | "package"; id: string; quantity: number }>();
-  const unmapped = new Map<string, { name: string; quantity: number; isModifier: boolean }>();
+  const unmapped = new Map<string, { name: string; quantity: number; isModifier: boolean; toastItemGuid: string }>();
+  function addUnmapped(r: LedgerRow, isModifier: boolean) {
+    // Open-item misses retain their actual text; one shared GUID is not one item.
+    const key = `${isModifier}:${r.toast_item_guid}:${openItemGuids.has(r.toast_item_guid) ? r.item_name : ""}`;
+    const u = unmapped.get(key) ?? { name: r.item_name, quantity: 0, isModifier, toastItemGuid: r.toast_item_guid };
+    u.quantity += Number(r.quantity);
+    unmapped.set(key, u);
+  }
+  const parentlessModifiers: LedgerRow[] = [];
+  const entityBySelection = new Map<string, { kind: "menu_item" | "item" | "package"; id: string }>();
+  const selectionKey = (checkGuid: string, selectionGuid: string) => `${checkGuid}:${selectionGuid}`;
   // Package sales keep PER-SELECTION grain: the assortment pick is a child of
   // the specific platter line, so two platters on one check resolve distinctly.
-  const packageSales: Array<{ packageId: string; qty: number; selectionGuid: string }> = [];
+  const packageSales: Array<{ packageId: string; qty: number; selectionGuid: string; checkGuid: string }> = [];
   for (const r of baseLines) {
-    const qty = Number(r.quantity);
+    let qty = Number(r.quantity);
     if (assortmentByGuid.has(r.toast_item_guid)) continue; // structural marker mis-rung as a base line — mapped, no demand of its own
-    const ent = entityByGuid.get(r.toast_item_guid);
+    let ent = entityByGuid.get(r.toast_item_guid);
+    if (openItemGuids.has(r.toast_item_guid)) {
+      if (shouldSkipOpenItem(r.item_name)) continue;
+      const alias = aliases.get(normalizeOpenItemText(r.item_name));
+      if (alias) {
+        ent = alias.menu_item_id != null ? { kind: "menu_item", id: alias.menu_item_id } : { kind: "item", id: alias.item_id! };
+        qty *= Number(alias.qty_multiplier);
+      }
+    } else {
+      const resolved = resolveLineTarget(false, ent, modifierByGuid.get(r.toast_item_guid));
+      if (resolved?.kind === "modifier") { parentlessModifiers.push(r); continue; }
+    }
     if (!ent) {
-      const u = unmapped.get(r.toast_item_guid) ?? { name: r.item_name, quantity: 0, isModifier: false };
-      u.quantity += qty;
-      unmapped.set(r.toast_item_guid, u);
+      addUnmapped(r, false);
       continue;
     }
-    if (ent.kind === "package") packageSales.push({ packageId: ent.id, qty, selectionGuid: r.selection_guid });
+    entityBySelection.set(selectionKey(r.check_guid, r.selection_guid), ent);
+    if (ent.kind === "package") packageSales.push({ packageId: ent.id, qty, selectionGuid: r.selection_guid, checkGuid: r.check_guid });
     const key = `${ent.kind}:${ent.id}`;
     const cur = qtyByEntity.get(key);
     if (cur) cur.quantity += qty; else qtyByEntity.set(key, { ...ent, quantity: qty });
@@ -897,7 +949,8 @@ export async function deriveSalesConsumptionFrom(locationId: string, businessDat
   // here (portion + sign) and converted to oz AFTER the SKU avg_oz_per_each
   // batch-load in the names phase — no per-row queries in the loop.
   const skuModApplications: Array<{ skuId: string; portion: { qty: number; unit: string | null }; sign: 1 | -1; qty: number; itemName: string }> = [];
-  const packageIssues = new Map<string, { name: string; issue: "empty_pool" | "freeform_line" }>();
+  const packageIssues = new Map<string, SalesConsumption["packageIssues"][number]>();
+  const consumedPicks = new Set<string>();
   for (const e of qtyByEntity.values()) {
     if (e.kind === "menu_item") menuItemUnits.set(e.id, (menuItemUnits.get(e.id) ?? 0) + e.quantity);
     else if (e.kind === "item") itemUnits.set(e.id, (itemUnits.get(e.id) ?? 0) + e.quantity);
@@ -914,9 +967,9 @@ export async function deriveSalesConsumptionFrom(locationId: string, businessDat
       sb.from("catering_packages").select("id, label_en").in("id", pkgIds)
         .returns<Array<{ id: string; label_en: string }>>(),
       sb.from("catering_package_items")
-        .select("id, package_id, slot_type, item_id, menu_item_id, quantity")
+        .select("id, package_id, slot_type, item_id, menu_item_id, quantity, depletion_qty, display_order")
         .in("package_id", pkgIds).eq("active", true)
-        .returns<Array<{ id: string; package_id: string; slot_type: string; item_id: string | null; menu_item_id: string | null; quantity: number | string }>>(),
+        .returns<Array<{ id: string; package_id: string; slot_type: string; item_id: string | null; menu_item_id: string | null; quantity: number | string; depletion_qty: number | string | null; display_order: number }>>(),
     ]);
     if (pnErr) throw new Error(`toast-sales package names: ${pnErr.message}`);
     if (plErr) throw new Error(`toast-sales package lines: ${plErr.message}`);
@@ -947,21 +1000,37 @@ export async function deriveSalesConsumptionFrom(locationId: string, businessDat
       const kind = assortmentByGuid.get(r.toast_item_guid);
       if (kind != null && r.parent_selection_guid != null) {
         // classics wins a (weird) double-pick — the narrower pool is the safer read
-        const prev = assortBySelection.get(r.parent_selection_guid);
-        assortBySelection.set(r.parent_selection_guid, prev === "classics" ? prev : kind);
+        const key = selectionKey(r.check_guid, r.parent_selection_guid);
+        const prev = assortBySelection.get(key);
+        assortBySelection.set(key, prev === "classics" ? prev : kind);
       }
     }
     for (const sale of packageSales) {
       const name = pkgName.get(sale.packageId) ?? "(package)";
       const lines = linesByPackage.get(sale.packageId) ?? [];
       if (lines.length === 0) { packageIssues.set(`${name}:empty_pool`, { name, issue: "empty_pool" }); continue; }
+      const picks = modifierLines.filter((r) => r.check_guid === sale.checkGuid && r.parent_selection_guid === sale.selectionGuid)
+        .flatMap((r) => {
+          const mod = modifierByGuid.get(r.toast_item_guid);
+          return mod?.targetKind === "menu_item" && mod.disposition === "deplete"
+            ? [{ id: selectionKey(r.check_guid, r.selection_guid), menuItemId: mod.targetId, qty: Number(r.quantity) }] : [];
+        });
+      const allocation = allocatePackagePicks(lines.filter((l) => l.slot_type === "choice").map((l) => ({
+        id: l.id, quantity: Number(l.quantity), depletionQty: Number(l.depletion_qty ?? l.quantity), displayOrder: l.display_order,
+        menuItemIds: (optsByLine.get(l.id) ?? []).flatMap((o) => o.menu_item_id == null ? [] : [o.menu_item_id]),
+      })), picks, sale.qty);
+      for (const key of allocation.consumed) consumedPicks.add(key);
       for (const line of lines) {
-        const lineQty = Number(line.quantity);
+        const lineQty = Number(line.depletion_qty ?? line.quantity);
         if (line.slot_type === "choice") {
-          const kind = assortBySelection.get(sale.selectionGuid) ?? "full"; // no pick punched → Our-Favorites behavior
+          const slot = allocation.bySlot.get(line.id)!;
+          for (const pick of slot.picks) menuItemUnits.set(pick.menuItemId, (menuItemUnits.get(pick.menuItemId) ?? 0) + pick.units);
+          if (slot.excess) packageIssues.set(`${name}:excess_picks`, { name, issue: "excess_picks" });
+          if (slot.remaining <= 0) continue;
+          const kind = assortBySelection.get(selectionKey(sale.checkGuid, sale.selectionGuid)) ?? "full"; // no pick punched → Our-Favorites behavior
           const pool = selectAssortmentPool(optsByLine.get(line.id) ?? [], kind);
           if (pool.length === 0) { packageIssues.set(`${name}:empty_pool`, { name, issue: "empty_pool" }); continue; }
-          const per = evenMixPerOption(lineQty * sale.qty, pool.length);
+          const per = evenMixPerOption(slot.remaining, pool.length);
           for (const o of pool) {
             if (o.menu_item_id != null) menuItemUnits.set(o.menu_item_id, (menuItemUnits.get(o.menu_item_id) ?? 0) + per);
             else if (o.item_id != null) itemUnits.set(o.item_id, (itemUnits.get(o.item_id) ?? 0) + per);
@@ -982,61 +1051,42 @@ export async function deriveSalesConsumptionFrom(locationId: string, businessDat
   //    parent sub recipe's own contribution) with portion fallback — Juan:
   //    removals COUNT. Assortment markers were consumed by the platter lane. ─
   const modifierStats = { depleted: 0, removed: 0, ignored: 0, portionNeeded: new Map<string, number>() };
-  const parentGuidBySelection = new Map(counted.map((r) => [r.selection_guid, r.toast_item_guid]));
-  for (const r of modifierLines) {
+  for (const r of [...modifierLines, ...parentlessModifiers]) {
     const qty = Number(r.quantity);
-    if (assortmentByGuid.has(r.toast_item_guid)) continue; // pool marker, not demand
-    const mod = modifierByGuid.get(r.toast_item_guid);
-    if (!mod) {
-      const u = unmapped.get(r.toast_item_guid) ?? { name: r.item_name, quantity: 0, isModifier: true };
-      u.quantity += qty;
-      unmapped.set(r.toast_item_guid, u);
-      continue;
-    }
-    if (mod.disposition === "ignore") { modifierStats.ignored += qty; continue; }
-    if (mod.targetKind === "menu_item") {
-      // Named-sub pick under a platter: portion is whole subs per application
-      // (halves doctrine default 0.5) — no unit conversion needed.
-      const wholeSubs = (mod.portionQty ?? MENU_ITEM_MODIFIER_PORTION_WHOLE_SUBS) * qty;
-      if (mod.disposition === "deplete") {
-        menuItemUnits.set(mod.targetId, (menuItemUnits.get(mod.targetId) ?? 0) + wholeSubs);
-        modifierStats.depleted += qty;
-      } else {
-        menuItemUnits.set(mod.targetId, (menuItemUnits.get(mod.targetId) ?? 0) - wholeSubs);
-        modifierStats.removed += qty;
-      }
-      continue;
-    }
-    if (mod.targetKind === "sku") {
-      // Raw-SKU target (Part 2): a Sub Roll removed for salad conversion, or a
-      // raw condiment added. Portion→oz needs the SKU's avg_oz_per_each, batch-
-      // loaded in the names phase — collect the application now, convert after.
-      if (mod.portionQty == null) { modifierStats.portionNeeded.set(r.item_name, (modifierStats.portionNeeded.get(r.item_name) ?? 0) + qty); continue; }
-      skuModApplications.push({
-        skuId: mod.targetId,
-        portion: { qty: mod.portionQty, unit: mod.portionUnit },
-        sign: mod.disposition === "deplete" ? 1 : -1,
-        qty,
-        itemName: r.item_name,
-      });
-      continue;
-    }
-    const portion = mod.portionQty != null ? { qty: mod.portionQty, unit: mod.portionUnit } : null;
-    const portionUnits = portion != null ? modifierParUnits(graph, mod.targetId, portion) : null;
-    if (mod.disposition === "deplete") {
-      if (portionUnits == null) { modifierStats.portionNeeded.set(r.item_name, (modifierStats.portionNeeded.get(r.item_name) ?? 0) + qty); continue; }
-      itemUnits.set(mod.targetId, (itemUnits.get(mod.targetId) ?? 0) + portionUnits * qty);
+    if (assortmentByGuid.has(r.toast_item_guid) || consumedPicks.has(selectionKey(r.check_guid, r.selection_guid))) continue;
+    const resolved = resolveLineTarget(r.parent_selection_guid != null, entityByGuid.get(r.toast_item_guid), modifierByGuid.get(r.toast_item_guid));
+    if (!resolved) { addUnmapped(r, r.parent_selection_guid != null); continue; }
+    if (resolved.kind === "base") {
+      // A base entity under a bundle is one unit per selection quantity.
+      const target = resolved.target;
+      if (target.kind === "menu_item") menuItemUnits.set(target.id, (menuItemUnits.get(target.id) ?? 0) + qty);
+      else if (target.kind === "item") itemUnits.set(target.id, (itemUnits.get(target.id) ?? 0) + qty);
       modifierStats.depleted += qty;
-    } else {
-      // remove: parent-aware first, portion fallback.
-      const parentToastGuid = r.parent_selection_guid != null ? parentGuidBySelection.get(r.parent_selection_guid) : undefined;
-      const parentEnt = parentToastGuid != null ? entityByGuid.get(parentToastGuid) : undefined;
-      const parentAmount = parentEnt?.kind === "menu_item" ? removalAmount(graph, parentEnt.id, mod.targetId) : null;
-      const amount = parentAmount ?? portionUnits;
-      if (amount == null) { modifierStats.portionNeeded.set(r.item_name, (modifierStats.portionNeeded.get(r.item_name) ?? 0) + qty); continue; }
-      itemUnits.set(mod.targetId, (itemUnits.get(mod.targetId) ?? 0) - amount * qty);
-      removedByItem.set(mod.targetId, (removedByItem.get(mod.targetId) ?? 0) + amount * qty);
-      modifierStats.removed += qty;
+      continue;
+    }
+    const parentKey = r.parent_selection_guid == null ? null : selectionKey(r.check_guid, r.parent_selection_guid);
+    const parentEnt = parentKey == null ? undefined : entityBySelection.get(parentKey);
+    const parentMenuItemId = parentEnt?.kind === "menu_item" ? parentEnt.id : null;
+    for (const effect of effectsByGuid.get(r.toast_item_guid) ?? [resolved.effect]) {
+      const application = applyModifierEffect(graph, effect, parentMenuItemId, qty);
+      if (application.kind === "ignored") { modifierStats.ignored += qty; continue; }
+      if (application.kind === "portion_needed") {
+        modifierStats.portionNeeded.set(r.item_name, (modifierStats.portionNeeded.get(r.item_name) ?? 0) + qty);
+        continue;
+      }
+      if (application.kind === "sku") {
+        if (application.portion.qty !== 0) skuModApplications.push({ skuId: application.targetId, portion: application.portion,
+          sign: application.sign, qty: application.qty, itemName: r.item_name });
+        continue;
+      }
+      if (application.amount === 0) continue;
+      const units = application.kind === "item" ? itemUnits : menuItemUnits;
+      units.set(application.targetId, (units.get(application.targetId) ?? 0) + application.amount);
+      if (application.kind === "item" && application.removed > 0) {
+        removedByItem.set(application.targetId, (removedByItem.get(application.targetId) ?? 0) + application.removed);
+      }
+      if (effect.disposition === "remove") modifierStats.removed += qty;
+      else modifierStats.depleted += qty;
     }
   }
 
@@ -1151,8 +1201,8 @@ export async function deriveSalesConsumptionFrom(locationId: string, businessDat
       })
       .filter((r) => r.oz > 0 || r.removedOz > 0)
       .sort((a, b) => b.oz - a.oz),
-    unmappedToastItems: [...unmapped.entries()]
-      .map(([toastItemGuid, u]) => ({ name: u.name, quantity: u.quantity, toastItemGuid, isModifier: u.isModifier }))
+    unmappedToastItems: [...unmapped.values()]
+      .map((u) => ({ name: u.name, quantity: u.quantity, toastItemGuid: u.toastItemGuid, isModifier: u.isModifier }))
       .sort((a, b) => b.quantity - a.quantity),
     excludedCount: excluded.size,
     diagnostics: {
@@ -1160,7 +1210,9 @@ export async function deriveSalesConsumptionFrom(locationId: string, businessDat
       excluded_units: live.filter((row) => excluded.has(row.selection_guid)).reduce((n, row) => n + Number(row.quantity), 0),
       poisoned_recipes: [...poisonedRecipes].sort(),
       mapping_fingerprint: createHash("sha256").update(JSON.stringify((mapRows ?? [])
-        .map((row) => JSON.stringify(row)).sort())).digest("hex"),
+        .map(({ id: _id, parent_only: parentOnly, ...row }) => JSON.stringify(parentOnly ? { ...row, parent_only: true } : row)).sort())
+        + (effectRows.length ? JSON.stringify(effectRows) : "")
+        + (aliasRows.length ? JSON.stringify(aliasRows) : "")).digest("hex"),
     },
     suspectedCatering,
     modifierStats: {
