@@ -9,7 +9,7 @@
  * also records attachment names.
  */
 import { describe, expect, it, vi } from "vitest";
-import { digestIdempotencyKey, runClosingDigestsWith, runDigestTickWith, type ClaimRow, type DigestAlert, type DigestIO, type SendOutcome } from "@/lib/report-digests-engine";
+import { digestIdempotencyKey, runClosingDigestsWith, runDigestTickWith, type ClaimRow, type DigestAlert, type DigestIO, type FinishGuard, type SendOutcome } from "@/lib/report-digests-engine";
 import { DEFAULT_DIGEST_SETTINGS, type DigestSettings, type SendLogRow } from "@/lib/report-digests-shared";
 import type { PackageIO, PackageRecipientRow } from "@/lib/report-package-shared";
 
@@ -61,15 +61,17 @@ class Store {
     Object.assign(row, patch);
     return true;
   }
-  async reclaim(id: string, patch: { attempted_at: string }) {
-    const row = this.rows.find((x) => x.id === id && x.outcome === "ambiguous" && !x.provider_message_id);
+  async reclaim(id: string, patch: { attempted_at: string }, observed: { attempted_at: string }) {
+    const row = this.rows.find((x) => x.id === id && x.outcome === "ambiguous" && !x.provider_message_id && x.attempted_at === observed.attempted_at);
     if (!row) return false;
     Object.assign(row, { ...patch, outcome: "claimed" });
     return true;
   }
-  async finish(id: string, from: SendOutcome[], patch: { outcome: string; error?: string | null }, guard?: { noMessageId?: boolean; neverAttempted?: boolean }) {
+  async finish(id: string, from: SendOutcome[], patch: { outcome: string; error?: string | null }, guard?: FinishGuard) {
     const row = this.rows.find((x) => x.id === id && (from as string[]).includes(x.outcome) &&
-      (!guard?.noMessageId || !x.provider_message_id) && (!guard?.neverAttempted || !x.first_attempt_at));
+      (!guard?.noMessageId || !x.provider_message_id) && (!guard?.neverAttempted || !x.first_attempt_at) &&
+      (!guard?.observedAttemptedAt || x.attempted_at === guard.observedAttemptedAt) &&
+      (!guard?.staleBefore || Date.parse(x.attempted_at) < Date.parse(guard.staleBefore)));
     if (!row) return false;
     Object.assign(row, { outcome: patch.outcome, error: patch.error ?? null });
     return true;
