@@ -400,11 +400,11 @@ async function hydrateSkuInfo(
   return skuInfo;
 }
 
-export async function loadBatchDerivedForItems(itemIds: string[]): Promise<Map<string, BatchDerived>> {
+export async function loadBatchDerivedForItems(itemIds: string[], locationId: string): Promise<Map<string, BatchDerived>> {
   const out = new Map<string, BatchDerived>();
   const uniq = [...new Set(itemIds.filter(Boolean))];
   if (uniq.length === 0) return out;
-  const graph = await loadRecipeGraph();
+  const graph = await loadRecipeGraph({ locationId });
   const perItem = new Map<string, { yieldPerBatch: number; singleOutput: boolean; map: Map<string, number> }>();
   const allSkuIds = new Set<string>();
   for (const id of uniq) {
@@ -457,7 +457,7 @@ export async function recordBatchProductionFromPrep(
   input: RecordBatchFromPrepInput,
 ): Promise<{ productionId: string | null; yieldAtTime: number | null }> {
   const sb = getServiceRoleClient();
-  const graph = await loadRecipeGraph();
+  const graph = await loadRecipeGraph({ locationId: input.locationId });
   const yieldAtTime = yieldForItemFromGraph(graph, input.outputItemId);
   const perBatch = batchSkuOzForItemFromGraph(graph, input.outputItemId);
   if (yieldAtTime == null || perBatch == null || !isSingleItemOutputFromGraph(graph, input.outputItemId)) {

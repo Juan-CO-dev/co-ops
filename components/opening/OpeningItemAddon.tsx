@@ -1,22 +1,6 @@
 "use client";
 
-/**
- * OpeningItemAddon — combined per-item discrepancy add-on (comment +
- * disabled photo button). Used inside OpeningChecklistItem when expanded.
- *
- * Per Surface 3 + the Phase 6 photo-deferral decision:
- *   - Comment: live textarea bound to parent state (notes column on
- *     checklist_completions).
- *   - Photo: visible-but-disabled icon button with translated tooltip.
- *     Phase 6 ships PhotoUploader as the only surface change; form state
- *     shape stays forward-compatible (photoId: string | null in
- *     OpeningEntry remains today, always null in PR 2).
- *
- * Tick state independence (per Q-B refinement): this add-on only writes
- * `notes` (and, in Phase 6, `photoId`). It NEVER reads or writes `ticked`.
- * Photo + comment persist through any tick state changes — opener can
- * untick → re-tick a station and the comment they typed stays.
- */
+/** Per-item discrepancy comment; photo upload stays hidden until it is available. */
 
 import { useTranslation } from "@/lib/i18n/provider";
 
@@ -28,7 +12,7 @@ interface OpeningItemAddonProps {
    * C.53 Finding D — when the verify beat is locked (Phase 1 already landed),
    * the discrepancy comment is a persisted value shown read-only: a second
    * opener sees opener A's note but can't edit a once-per-instance-committed
-   * field. The photo button is already a Phase 6 disabled stub.
+   * field.
    */
   disabled?: boolean;
 }
@@ -68,39 +52,6 @@ export function OpeningItemAddon({
           "
         />
       </label>
-
-      {/* Photo button — disabled with Phase 6 tooltip per Surface 3 +
-          photo-deferral decision. Form state shape stays forward-compat;
-          Phase 6 swaps the disabled button for a real PhotoUploader. */}
-      <div className="flex justify-end">
-        <button
-          type="button"
-          disabled
-          aria-label={t("opening.item.photo_pending_label")}
-          title={t("opening.item.photo_pending_tooltip")}
-          className="
-            inline-flex h-11 w-11 items-center justify-center rounded-md
-            border border-co-border-2 bg-co-surface text-co-text-dim
-            opacity-40 cursor-not-allowed
-          "
-        >
-          <CameraIcon />
-        </button>
-      </div>
     </div>
-  );
-}
-
-function CameraIcon() {
-  return (
-    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden>
-      <path
-        d="M4 7h3l2-2h6l2 2h3a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V8a1 1 0 0 1 1-1z"
-        stroke="currentColor"
-        strokeWidth="1.5"
-        strokeLinejoin="round"
-      />
-      <circle cx="12" cy="13" r="3.5" stroke="currentColor" strokeWidth="1.5" />
-    </svg>
   );
 }

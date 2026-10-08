@@ -8,7 +8,6 @@ import { loadPerishableSurplus, SURPLUS_READ_MIN } from "@/lib/catering/surplus"
 import { listLtoEvents } from "@/lib/catering/lto";
 import { etCalendarDate } from "@/lib/operational-day";
 import { BackLink } from "@/components/nav/BackLink";
-import { PlaceholderCard } from "@/components/PlaceholderCard";
 import { AlertPill } from "@/components/ui/AlertPill";
 
 export const dynamic = "force-dynamic";
@@ -167,20 +166,6 @@ export default async function LtoPage() {
           )}
         </section>
       )}
-
-      {/* ─── Module #17 placeholder ──────────────────────────────────── */}
-      <PlaceholderCard
-        showBackLink={false}
-        title={serverT(lang, "lto.ph.title")}
-        description={serverT(lang, "lto.ph.description")}
-        features={[
-          serverT(lang, "lto.ph.feature.units_revenue"),
-          serverT(lang, "lto.ph.feature.food_cost"),
-          serverT(lang, "lto.ph.feature.rating"),
-          serverT(lang, "lto.ph.feature.compare"),
-        ]}
-        shippingIn={serverT(lang, "lto.ph.shipping")}
-      />
     </main>
   );
 }
