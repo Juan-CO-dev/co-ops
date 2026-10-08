@@ -46,6 +46,15 @@ export async function postJson(
 
 const KNOWN_ERROR_CODES = new Set([
   "forbidden",
+  "step_up_required",
+  "step_up_stale",
+  "invalid_location",
+  "same_location",
+  "invalid_reason",
+  "invalid_transfer_reason",
+  "note_required",
+  "location_changed",
+
   "not_found",
   "invalid_payload",
   "invalid_source",

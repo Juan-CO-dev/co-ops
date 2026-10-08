@@ -13,6 +13,22 @@ const fixture = JSON.parse(
 ) as unknown;
 
 describe("normalizeEzcaterOrder", () => {
+  it("stores blank POS identifiers as null while retaining stable customization IDs", () => {
+    for (const posItemId of ["", "   "]) {
+      const normalized = normalizeEzcaterOrder({ orderNumber: "TEST", catererCart: { orderItems: [
+        { uuid: "order-line", name: "Sub", quantity: 1, posItemId, menuItemSizeId: "stable-size",
+          customizations: [{ customizationId: "stable-option", name: "Option", quantity: 1 }] },
+      ] } });
+      expect(normalized.items[0]?.posItemId).toBeNull();
+      expect(normalized.items[0]?.customizations[0]?.customizationId).toBe("stable-option");
+    }
+  });
+  it("does not erase a stable customization identity when its display name is absent", () => {
+    const normalized = normalizeEzcaterOrder({ orderNumber: "TEST", catererCart: { orderItems: [
+      { name: "Sub", quantity: 1, customizations: [{ customizationId: "option-without-label", quantity: 1 }] },
+    ] } });
+    expect(normalized.items[0]?.customizations[0]).toMatchObject({ customizationId: "option-without-label", name: "option-without-label" });
+  });
   const o = normalizeEzcaterOrder(fixture);
 
   it("extracts header, event, caterer, and money (subunits = cents)", () => {
@@ -37,7 +53,7 @@ describe("normalizeEzcaterOrder", () => {
       specialInstructions: "3 no onions",
       totalCents: 18000, unitPriceCents: null,
     });
-    expect(o.items[0]!.customizations[0]).toEqual({ name: "Add Hot Peppers", quantity: 3, typeName: "Add-ons" });
+    expect(o.items[0]!.customizations[0]).toEqual({ customizationId: "c1", name: "Add Hot Peppers", quantity: 3, typeName: "Add-ons" });
     expect(o.items[1]!.posItemId).toBeNull();
     expect(o.items[1]!.customizations).toEqual([]);
   });
