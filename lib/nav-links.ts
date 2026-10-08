@@ -18,7 +18,7 @@ export interface NavLink {
 /** Built destinations and their navigation role floors, in display order. */
 export const NAV_LINKS: NavLink[] = [
   { key: "nav.reports_hub", href: "/reports", scoped: true, minLevel: 2 },
-  { key: "nav.assignments", href: "/assignments", scoped: true, minLevel: 4 },
+  { key: "nav.assignments", href: "/assignments", scoped: true },
   { key: "nav.trends", href: "/reports/trends", scoped: true, minLevel: 4 },
   { key: "nav.lto", href: "/lto", scoped: true, minLevel: 6 },
   { key: "nav.written_reports", href: "/reports/written", scoped: true, minLevel: 2 },

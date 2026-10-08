@@ -4,8 +4,8 @@ import { MIDSHIFT_BASE_LEVEL } from "@/lib/midshift-shared";
 import { navDestinationsFor, chipHref } from "@/lib/nav-links";
 
 const hrefs = (level: number) => navDestinationsFor(level).map((d) => d.href).sort();
-const everyone = ["/training", "/recipes", "/profile", "/settings", "/my-feedback"];
-const kh = ["/mid-shift", "/assignments", "/reports/trends"];
+const everyone = ["/training", "/recipes", "/profile", "/settings", "/my-feedback", "/assignments"];
+const kh = ["/mid-shift", "/reports/trends"];
 const lead = ["/catering"];
 const manager = ["/lto", "/admin"];
 
@@ -23,7 +23,7 @@ describe("role navigation", () => {
     // Floors confirmed against destination pages/layouts and their server loaders.
     const pageFloors: Record<string, number> = {
       "/maintenance": 3, "/training": 0, "/recipes": 0, "/profile": 0, "/settings": 0, "/my-feedback": 0,
-      "/mid-shift": 4, "/assignments": 4, "/reports": 2,
+      "/mid-shift": 4, "/assignments": 0, "/reports": 2,
       "/catering": 5, "/reports/written": 2, "/reports/trends": 4, "/lto": 0, "/admin": 6,
     };
     for (const level of [2, 3, 4, 5, 6, 7, 9]) for (const href of hrefs(level)) {
@@ -36,6 +36,7 @@ describe("role navigation", () => {
     const catering = source("app/(authed)/catering/page.tsx");
     const admin = source("app/admin/layout.tsx");
     const assignments = source("app/(authed)/assignments/page.tsx");
+    expect(assignments).not.toMatch(/auth\.level < .*redirect/);
     expect(catering).toMatch(/if \(level < CATERING_HUB_MIN\)/);
     expect(admin).toMatch(/if \(auth\.level < ADMIN_MIN_LEVEL\)/);
     expect(source("app/(authed)/mid-shift/page.tsx")).toMatch(/if \(auth\.level < MIDSHIFT_BASE_LEVEL\)/);
@@ -48,7 +49,7 @@ describe("role navigation", () => {
       "/maintenance": declaredNumber(source("lib/maintenance.ts"), /const MAINTENANCE_BASE_LEVEL = (\d+)/),
       "/catering": declaredNumber(catering, /const CATERING_HUB_MIN = (\d+)/),
       "/admin": declaredNumber(admin, /const ADMIN_MIN_LEVEL = (\d+)/),
-      "/assignments": declaredNumber(assignments, /if \(auth\.level < (\d+)\) redirect/),
+      "/assignments": 0,
       "/mid-shift": MIDSHIFT_BASE_LEVEL,
     };
     for (const [href, floor] of Object.entries(actualFloors)) {

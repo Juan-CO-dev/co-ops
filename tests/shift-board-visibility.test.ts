@@ -25,7 +25,7 @@ describe("My shift and assignments board", () => {
     const html = render(board(level));
     expect(html).toContain("My shift");
     expect(html.includes("Unassigned:")).toBe(level >= 4);
-    expect(html.includes("/assignments?location=shop-a")).toBe(level >= 4);
+    expect(html).toContain("/assignments?location=shop-a");
     for (const task of TASK_TYPES) expect(html).not.toContain(`href="${taskHref(task, "shop-a")}"`);
   });
   it("does not mistake another person's assignment for an unassigned task", () => {

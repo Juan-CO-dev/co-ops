@@ -1,5 +1,4 @@
 import Link from "next/link";
-import { redirect } from "next/navigation";
 import { AuthShell } from "@/components/auth/AuthShell";
 import { ShiftBoardClient } from "@/components/assignments/ShiftBoardClient";
 import { requireSessionFromHeaders } from "@/lib/session";
@@ -12,7 +11,6 @@ import { formatDateLabel } from "@/lib/i18n/format";
 
 export default async function AssignmentsPage({ searchParams }: { searchParams: Promise<{ loc?: string; location?: string }> }) {
   const auth = await requireSessionFromHeaders("/assignments");
-  if (auth.level < 4) redirect("/dashboard");
   const sb = getServiceRoleClient();
   const actor = { userId: auth.user.id, role: auth.role, level: auth.level, locations: auth.locations };
   const scope = accessibleLocations(actor);
@@ -31,6 +29,6 @@ export default async function AssignmentsPage({ searchParams }: { searchParams: 
     <h1 className="text-2xl font-bold text-co-text">{serverT(language, "assignments.title")}</h1>
     <p className="text-co-text-muted">{formatDateLabel(date, language)}</p>
     <nav className="flex min-w-0 flex-wrap gap-2" aria-label={serverT(language, "assignments.locations")}>{locations.map((location) => <Link key={location.id} href={`/assignments?location=${location.id}`} aria-current={location.id === selected?.id ? "page" : undefined} title={location.name} className="inline-flex min-h-[44px] max-w-full items-center truncate rounded-xl border-2 border-co-border bg-co-surface px-3 font-bold text-co-text aria-[current=page]:border-co-text">{location.name}</Link>)}</nav>
-    {board ? <ShiftBoardClient key={`${board.locationId}:${board.tasks.length}:${board.events.length}`} board={board} /> : <p>{serverT(language, "assignments.noLocation")}</p>}
+    {board ? <ShiftBoardClient key={board.locationId} board={board} /> : <p>{serverT(language, "assignments.noLocation")}</p>}
   </div></AuthShell>;
 }

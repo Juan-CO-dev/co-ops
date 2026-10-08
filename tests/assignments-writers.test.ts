@@ -105,7 +105,7 @@ describe("assignment writer front doors", () => {
     const employee: AssignmentActor = { ...actor, level: 3, role: "employee" };
     const f = fake({ rpcError: "station_locked" });
     await expect(writeStationEvent(f.service, { actor: employee, locationId: SHOP, userId: ACTOR, stationId: STATION, positionId: POSITION })).rejects.toMatchObject({ code: "station_locked", status: 403 });
-    expect(f.rpc).toHaveBeenCalledWith("write_station_event", { p_actor_id: ACTOR, p_user_id: ACTOR, p_location_id: SHOP, p_station_id: STATION, p_position_id: POSITION, p_manage: false });
+    expect(f.rpc).toHaveBeenCalledWith("write_station_event", { p_actor_id: ACTOR, p_user_id: ACTOR, p_location_id: SHOP, p_station_id: STATION, p_position_id: POSITION, p_manage: false, p_reason_code: null, p_reason_note: null });
   });
   it("permits a KH self claim but refuses an employee's manage flag before I/O", async () => {
     const f = fake();

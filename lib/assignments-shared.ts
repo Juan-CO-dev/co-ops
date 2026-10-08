@@ -1,4 +1,33 @@
 /** Client-safe assignment contracts and station history. No I/O. */
+import { formatTime } from "./i18n/format";
+import type { Language, TranslationKey, TranslationParams } from "./i18n/types";
+
+export const OVERRIDE_REASON_CODES = ["coverage_change", "unavailable", "skill_fit", "correction", "other"] as const;
+export type OverrideReasonCode = (typeof OVERRIDE_REASON_CODES)[number];
+export interface OverrideReason { reasonCode?: OverrideReasonCode | null; reasonNote?: string | null }
+export interface AssignmentChange {
+  actorName: string | null; at: string; reasonCode: OverrideReasonCode | null;
+  reasonNote: string | null; overriddenAssignerId: string | null;
+}
+export function requiresOverrideReason(actorLevel: number, assignerLevel: number | null | undefined): boolean {
+  return assignerLevel != null && assignerLevel > actorLevel;
+}
+/** Shared shape validation; the current assigner is resolved under the RPC lock. */
+export function validOverrideReason(code: unknown, note: unknown): boolean {
+  return (code == null || OVERRIDE_REASON_CODES.some((value) => value === code))
+    && (note == null || (typeof note === "string" && [...note].length <= 500))
+    && (code !== "other" || (typeof note === "string" && note.trim().length > 0));
+}
+export function formatAssignmentAttribution(
+  attribution: { source: "assigned" | "claimed" | "taken"; holderName: string; actorName: string | null; at: string } | null,
+  language: Language, t: (key: TranslationKey, params?: TranslationParams) => string,
+): string {
+  if (!attribution) return t("assignments.unassigned");
+  return t(`assignments.attribution.${attribution.source}`, {
+    name: attribution.holderName, by: attribution.actorName ?? t("assignments.teamLead"),
+    time: formatTime(attribution.at, language),
+  });
+}
 export const TASK_TYPES = ["am_prep", "mid_day_prep", "cash_report", "opening_report", "receiving", "counts", "ordering", "pm_report"] as const;
 export type TaskType = (typeof TASK_TYPES)[number];
 /** Floor means eligibility, never visibility or permission by itself. */
@@ -16,10 +45,13 @@ export interface StationEvent {
   id: string; sequence: string; locationId: string; businessDate: string;
   userId: string; stationId: string | null; positionId?: string | null; kind: "assign" | "claim" | "move" | "release";
   actorId: string; actorName: string | null; at: string; source: "assigned" | "claimed" | null;
+  actorLevel?: number; change?: AssignmentChange;
 }
 export interface TaskAssignment {
   id: string; task: TaskType; assigneeId: string; assignerId: string;
   assignerName: string | null; note: string | null;
+  source?: "assigned" | "taken"; at?: string; assigneeName?: string | null; assignerLevel?: number;
+  change?: AssignmentChange;
   /** False assignments stay on the manager board for retraction but confer no work/access. */
   available?: boolean;
 }
@@ -27,6 +59,7 @@ export interface ShiftBoard {
   locationId: string; date: string; viewerId: string; viewerLevel: number;
   stations: Station[]; people: ShiftPerson[]; events: StationEvent[]; tasks: TaskAssignment[];
   occupiedPositions?: { positionId: string; firstName: string }[];
+  taskChanges?: { task: TaskType; change: AssignmentChange }[];
 }
 export function taskHref(task: TaskType, locationId: string): string {
   const paths: Record<TaskType, string> = {
@@ -51,7 +84,8 @@ export function canSelfClaim(current: StationEvent | null): boolean {
   return !current?.stationId || current.source === "claimed";
 }
 export function taskVisible(level: number, task: TaskType, assignments: readonly TaskAssignment[]): boolean {
-  return level >= TASK_MIN_LEVEL[task] && assignments.some((assignment) => assignment.task === task && assignment.available !== false);
+  return level >= TASK_MIN_LEVEL[task] && assignments.some((assignment) => assignment.task === task
+    && assignment.available !== false && (level >= 4 || assignment.source !== "taken"));
 }
 export interface StationInterval {
   locationId: string; businessDate: string; userId: string; stationId: string;
