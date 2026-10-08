@@ -1,4 +1,5 @@
 -- Migration 0224_toast_time_entries
+-- APPLIED TO PROD 2026-10-08 (schema_migrations version 20261008133144, name '0224_toast_time_entries'; sim first, version 20261008133105). Authoring-gate notes kept as history.
 -- AUTHORED 2026-10-08 (digest v2 labor, CO Claude builder). NOT YET APPLIED -- GATE CC/JUAN: sim first, then prod.
 -- Number per CC's note GO-coops-digest-v2-migration-note.md (0223 = the ezCater enrichment build).
 --
