@@ -74,6 +74,16 @@ describe("team attribution for every role", () => {
     expect(html).toContain("Requested swap");
   });
 
+  it("under a person's name, says WHAT they hold and who gave it, without repeating their name (Juan 10-08 smoke)", () => {
+    const html = render(board(3), true);
+    const team = html.slice(html.indexOf('data-collapsible-section="assignment-board:team"'));
+    // The per-person block is the last part of Team today: from the last person heading on.
+    const people = team.slice(team.lastIndexOf('<h4 class="font-bold">Holder'));
+    expect(people).toMatch(/: Assigned by Lead · \d/);
+    expect(people).not.toMatch(/Assigned to Holder/);
+    expect(people).not.toMatch(/Claimed by Holder/);
+  });
+
   it("does not invent a correction reason for an ordinary release", () => {
     const value = board(3);
     value.events[0]!.stationId = null;
