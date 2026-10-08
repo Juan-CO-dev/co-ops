@@ -62,15 +62,17 @@ it("defaults to read-only dry run, deduplicates receipts, and lists pre-webhook 
   rings = [{ id: "old", order_guid: "pre-webhook-ring", location_id: "synthetic-shop",
     business_date: "2026-09-03", classification: "ezcater" },
   { id: "new", order_guid: "in-history-ring", business_date: "2026-09-04", classification: "ezcater" }];
-  expect(await backfillEzcater()).toEqual({ known: 1, leadless: 0, unresolved: 1, applied: 0, failed: 0 });
+  expect(await backfillEzcater()).toEqual({ known: 1, leadless: 0, reassigned: 0, unresolved: 1, applied: 0, failed: 0 });
   expect(syncEzcaterOrder).not.toHaveBeenCalled();
   expect(console.log).toHaveBeenCalledWith(expect.stringContaining('"result":"unresolved_pre_webhook_history"'));
   expect(JSON.stringify(vi.mocked(console.log).mock.calls)).not.toContain("in-history-ring");
 });
 
-it("refuses conflicting caterer parents before any synchronization", async () => {
+it("lists an order ezCater moved between shops for review and never synchronizes it", async () => {
   events = [receipt(1), receipt(1, { parent_id: "foreign-caterer" })];
-  await expect(backfillEzcater({ execute: true, expect: 66 })).rejects.toThrow("backfill_parent_conflict");
+  const result = await backfillEzcater({ execute: true, expect: 1 });
+  expect(result.reassigned).toBe(1);
+  expect(result.applied).toBe(0);
   expect(syncEzcaterOrder).not.toHaveBeenCalled();
 });
 
@@ -88,7 +90,7 @@ it("executes exactly the 66 signed historical UUIDs, never unresolved rings or o
     receipt(105, { "raw->>entity_type": "Caterer" }));
   rings = [{ id: "old", order_guid: uuid(104), location_id: "synthetic-shop",
     business_date: "2026-09-03", classification: "ezcater" }];
-  expect(await backfillEzcater({ execute: true, expect: 66 })).toEqual({ known: 66, leadless: 0, unresolved: 1, applied: 66, failed: 0 });
+  expect(await backfillEzcater({ execute: true, expect: 66 })).toEqual({ known: 66, leadless: 0, reassigned: 0, unresolved: 1, applied: 66, failed: 0 });
   expect(syncEzcaterOrder).toHaveBeenCalledTimes(66);
   expect(vi.mocked(syncEzcaterOrder).mock.calls.map(([id]) => id)).toEqual(
     Array.from({ length: 66 }, (_, i) => uuid(i)));
@@ -120,7 +122,7 @@ it("continues after per-order failures and reports errors without their payloads
   events = Array.from({ length: 66 }, (_, i) => receipt(i));
   vi.mocked(syncEzcaterOrder).mockRejectedValueOnce(new Error("PRIVATE ERROR PAYLOAD"))
     .mockResolvedValueOnce({ lead_id: null, result: "error:graphql_error" });
-  expect(await backfillEzcater({ execute: true, expect: 66 })).toEqual({ known: 66, leadless: 0, unresolved: 0, applied: 64, failed: 2 });
+  expect(await backfillEzcater({ execute: true, expect: 66 })).toEqual({ known: 66, leadless: 0, reassigned: 0, unresolved: 0, applied: 64, failed: 2 });
   expect(syncEzcaterOrder).toHaveBeenCalledTimes(66);
   expect(JSON.stringify(vi.mocked(console.log).mock.calls)).not.toContain("PRIVATE ERROR PAYLOAD");
 });
@@ -129,7 +131,7 @@ it("continues after per-order failures and reports errors without their payloads
 it("counts all 68 signed UUIDs but lists and skips the two accepted lead-less failures", async () => {
   events = Array.from({ length: 68 }, (_, i) => receipt(i));
   leads = events.slice(0, 66).map((r) => ({ id: r.id!, external_ref: r.entity_id!, lead_source: "ezcater" }));
-  expect(await backfillEzcater({ execute: true, expect: 68 })).toEqual({ known: 68, leadless: 2, unresolved: 0, applied: 66, failed: 0 });
+  expect(await backfillEzcater({ execute: true, expect: 68 })).toEqual({ known: 68, leadless: 2, reassigned: 0, unresolved: 0, applied: 66, failed: 0 });
   expect(syncEzcaterOrder).toHaveBeenCalledTimes(66);
   expect(console.log).toHaveBeenCalledWith(JSON.stringify({ provider_uuid: uuid(66), event_key: "accepted", result: "leadless_review_required" }));
   expect(console.log).toHaveBeenCalledWith(JSON.stringify({ provider_uuid: uuid(67), event_key: "accepted", result: "leadless_review_required" }));
@@ -166,6 +168,6 @@ it.each([
   events = [receipt(1)];
   vi.mocked(syncEzcaterOrder).mockResolvedValueOnce({ lead_id: "synthetic-lead", ...result });
   expect(await backfillEzcater({ execute: true, expect: 1 })).toEqual({
-    known: 1, leadless: 0, unresolved: 0, applied: 0, failed: 1,
+    known: 1, leadless: 0, reassigned: 0, unresolved: 0, applied: 0, failed: 1,
   });
 });
