@@ -48,6 +48,34 @@ beforeEach(() => {
   }));
 });
 describe("shadow materializer", () => {
+  it.each(["item", "menu_item", "package"])("uses direct %s decisions with options and no Toast base row", async (kind) => {
+    rows.toast_menu_map = [];
+    rows.ezcater_order_items = [{ ordinal: 1, provider_item_uuid: "new-line", menu_item_size_id: "size", pos_item_id: null,
+      name: "Salad", quantity: 2, options: [{ customizationId: "salad", quantity: 1 }] }];
+    rows.ezcater_item_map = [{ location_id: "L", identity_key: '["size",[["salad",1]]]', status: "confirmed",
+      evidence: "reviewed_direct", toast_map_id: null, toast_item_guid: null,
+      item_id: kind === "item" ? "prep" : null, menu_item_id: kind === "menu_item" ? "menu" : null, package_id: kind === "package" ? "package" : null }];
+    rows.catering_package_items = [{ id: "line", slot_type: "fixed", item_id: "prep", menu_item_id: null, quantity: 1 }];
+    if (kind === "menu_item") {
+      vi.mocked(loadRecipeGraph).mockResolvedValue(buildRecipeGraph([{ recipeId: "menu-recipe", batchYield: 1,
+        inputs: [{ componentSkuId: "sku", componentItemId: null, quantity: 4, unit: "oz" }],
+        outputs: [{ outputItemId: null, outputMenuItemId: "menu", yield: 1, ozPerParUnit: null }] }],
+      new Map([["sku", { packFormat: null, eachContainerLabel: null, unitsPerPack: null, eachSize: null, eachMeasure: null, avgOzPerEach: null }]]),
+      new Map([["oz", { dimension: "weight", toBaseFactor: 1 }]])));
+    }
+    expect(await materializeEzcaterShadow("2026-10-08", "2026-10-08")).toMatchObject({ processed: 1, failed: 0 });
+    const payload = rpc.mock.calls[0]![1].p_payload;
+    expect(payload.maps[0]).toMatchObject({ evidence: "reviewed_direct", toast_map_id: null, toast_item_guid: null });
+    expect(payload.shadow[0]).toMatchObject({ sales_oz: 8, shadow_oz: kind === "menu_item" ? 8 : 0 });
+    expect(payload.reviews.filter((row: { source: string }) => row.source === "ezcater")).toEqual([]);
+    expect(payload.links[0]).toMatchObject({ selection_guid: "selection" });
+  });
+  it("keeps decisions at their own shop", async () => {
+    rows.toast_menu_map = [];
+    rows.ezcater_item_map = [{ location_id: "other", identity_key: '["size",[]]', status: "confirmed", evidence: "reviewed_direct", item_id: "prep" }];
+    await materializeEzcaterShadow("2026-10-08", "2026-10-08");
+    expect(rpc.mock.calls[0]![1].p_payload.shadow).toEqual([]);
+  });
   it("skips with a code before 0225 and does not load graph or publish", async () => {
     errors.ezcater_item_map = { code: "42P01", message: "missing" };
     expect(await materializeEzcaterShadow("2026-10-08", "2026-10-08")).toEqual({ processed: 0, failed: 0, deferred: false, skipped: "ezcater_schema_missing" });
@@ -57,7 +85,7 @@ describe("shadow materializer", () => {
   it("consumes reviewed mappings across different order line UUIDs, and respects ignore", async () => {
     rows.toast_menu_map = [{ id: "map", location_id: "L", toast_item_guid: "guid", toast_item_name: "Salad", item_id: "prep", menu_item_id: null }];
     rows.ezcater_order_items = [{ ordinal: 1, provider_item_uuid: "new-line-uuid", menu_item_size_id: "size", pos_item_id: "", name: "Salad", quantity: 2, options: [] }];
-    rows.ezcater_item_map = [{ location_id: "L", identity_key: '["size",[]]', status: "confirmed", toast_map_id: "map" }];
+    rows.ezcater_item_map = [{ location_id: "L", identity_key: '["size",[]]', status: "confirmed", evidence: "reviewed", toast_map_id: "map", toast_item_guid: "guid", item_id: "prep", menu_item_id: null, package_id: null }];
     await materializeEzcaterShadow("2026-10-08", "2026-10-08");
     expect(rpc.mock.calls[0]![1].p_payload.maps[0]).toMatchObject({ evidence: "reviewed", pos_item_id: null });
     expect(rpc.mock.calls[0]![1].p_payload.shadow[0]).toMatchObject({ sales_oz: 8, shadow_oz: 0 });

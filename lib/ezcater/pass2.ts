@@ -50,8 +50,10 @@ async function materialize(fromDate: string, toDate: string, deadlineAt: number,
   const maps = await selectAllRows<ToastMap & { location_id: string }>((from, to) => sb.from("toast_menu_map")
     .select("id,location_id,toast_item_guid,toast_item_name,item_id,menu_item_id,package_id").eq("active", true).eq("match_status", "confirmed").eq("is_modifier", false).eq("disposition", "deplete")
     .order("id").range(from, to).abortSignal(signal));
-  const decisions = await selectAllRows<{ location_id: string; identity_key: string; status: string; toast_map_id: string | null }>((from, to) => sb.from("ezcater_item_map")
-    .select("location_id,identity_key,status,toast_map_id").order("location_id").order("identity_key").range(from, to).abortSignal(signal));
+  const decisions = await selectAllRows<{ location_id: string; identity_key: string; status: string; evidence: string | null;
+    toast_map_id: string | null; toast_item_guid: string | null; item_id: string | null; menu_item_id: string | null; package_id: string | null }>((from, to) => sb.from("ezcater_item_map")
+    .select("location_id,identity_key,status,evidence,toast_map_id,toast_item_guid,item_id,menu_item_id,package_id")
+    .order("location_id").order("identity_key").range(from, to).abortSignal(signal));
   // Read failures abort the run: enabling PASS 3 cannot bypass old-shop evidence.
   const transferAudit = await selectAllRows<TransferEvidence & { resource_id: string }>((from, to) => sb.from("audit_log")
     .select("resource_id,occurred_at,metadata").eq("resource_table", "catering_pipeline")
@@ -133,17 +135,22 @@ async function materialize(fromDate: string, toDate: string, deadlineAt: number,
         const probe = probeItemMap(item, localMaps);
         // A base POS target cannot establish the meaning of selected options.
         if (item.options.length) { probe.confirmed = null; probe.evidence = null; }
-        if (decision?.status === "confirmed" && decision.toast_map_id) {
-          probe.confirmed = localMaps.find((m) => m.id === decision.toast_map_id) ?? null;
-          probe.evidence = probe.confirmed ? "reviewed" : null;
+        if (decision?.status === "confirmed") {
+          // The map owns the approved entity. A Toast menu edit or absent Toast
+          // base row must not reinterpret a human decision (including options).
+          probe.confirmed = {
+            toast_item_guid: decision.toast_item_guid ?? "", toast_item_name: item.name,
+            item_id: decision.item_id, menu_item_id: decision.menu_item_id, package_id: decision.package_id,
+          };
+          probe.evidence = decision.evidence;
         }
         itemMaps.push({ identity_key: identity, provider_item_uuid: item.provider_item_uuid, menu_item_size_id: item.menu_item_size_id,
-          pos_item_id: item.pos_item_id?.trim() || null, toast_item_guid: probe.confirmed?.toast_item_guid ?? null,
-          toast_map_id: probe.confirmed?.id ?? null, package_id: probe.confirmed?.package_id ?? null,
+          pos_item_id: item.pos_item_id?.trim() || null, toast_item_guid: probe.confirmed?.toast_item_guid || null,
+          toast_map_id: decision?.status === "confirmed" ? decision.toast_map_id : probe.confirmed?.id ?? null, package_id: probe.confirmed?.package_id ?? null,
           item_id: probe.confirmed?.item_id ?? null, menu_item_id: probe.confirmed?.menu_item_id ?? null,
           status: probe.confirmed ? "confirmed" : "review", evidence: probe.evidence, candidates: probe.candidates });
         if (!probe.confirmed) { reviews.push({ source: "ezcater", code: probe.reason, identity_key: identity, candidates: probe.candidates }); continue; }
-        if (item.options.length && probe.evidence !== "reviewed") {
+        if (item.options.length && probe.evidence !== "reviewed" && probe.evidence !== "reviewed_direct") {
           reviews.push({ source: "ezcater", code: "options_unmapped", identity_key: identity, candidates: [] });
           continue;
         }

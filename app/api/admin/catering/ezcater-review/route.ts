@@ -2,7 +2,7 @@ import type { NextRequest } from "next/server";
 import { requireSession } from "@/lib/session";
 import { jsonError, jsonOk, parseJsonBody } from "@/lib/api-helpers";
 import { CateringPipelineError } from "@/lib/catering/pipeline";
-import { decideEzcaterMapping } from "@/lib/admin/ezcater-review";
+import { decideEzcaterMapping, decideEzcaterMappingDirect, dismissEzcaterToastReview } from "@/lib/admin/ezcater-review";
 
 export async function POST(req: NextRequest) {
   const actor = await requireSession(req, "/api/admin/catering/ezcater-review");
@@ -11,10 +11,23 @@ export async function POST(req: NextRequest) {
   if (body instanceof Response) return body;
   if (!body || typeof body !== "object" || Array.isArray(body)) return jsonError(400, "invalid_payload");
   const b = body as Record<string, unknown>;
-  if (typeof b.reviewId !== "string" || (b.decision !== "approve" && b.decision !== "ignore") ||
-      (b.targetId !== null && typeof b.targetId !== "string")) return jsonError(400, "invalid_payload");
+  if (typeof b.reviewId !== "string") return jsonError(400, "invalid_payload");
   try {
-    return jsonOk({ ok: true, result: await decideEzcaterMapping(actor, b.reviewId, b.decision, b.targetId) });
+    let result: unknown;
+    if (b.decision === "approve_direct") {
+      if ((b.entityKind !== "menu_item" && b.entityKind !== "item" && b.entityKind !== "package") ||
+          typeof b.entityId !== "string") return jsonError(400, "invalid_payload");
+      result = await decideEzcaterMappingDirect(actor, b.reviewId, b.entityKind, b.entityId);
+    } else if (b.decision === "dismiss") {
+      if ((b.reason !== "not_ezcater" && b.reason !== "duplicate" && b.reason !== "test" && b.reason !== "other") ||
+          (b.note !== null && typeof b.note !== "string")) return jsonError(400, "invalid_payload");
+      result = await dismissEzcaterToastReview(actor, b.reviewId, b.reason, b.note);
+    } else {
+      if ((b.decision !== "approve" && b.decision !== "ignore") ||
+          (b.targetId !== null && typeof b.targetId !== "string")) return jsonError(400, "invalid_payload");
+      result = await decideEzcaterMapping(actor, b.reviewId, b.decision, b.targetId);
+    }
+    return jsonOk({ ok: true, result });
   } catch (error) {
     if (!(error instanceof CateringPipelineError)) throw error;
     const response = jsonError(error.status, error.code);
