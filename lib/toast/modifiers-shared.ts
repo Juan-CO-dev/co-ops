@@ -15,8 +15,63 @@ import {
   itemRefParUnits,
   itemOzWeight,
   perUnitSkuOzForItemFromGraph,
+  perUnitDirectSkuOzForMenuItem,
   type RecipeGraph,
 } from "@/lib/prep-consumption-graph";
+import { MENU_ITEM_MODIFIER_PORTION_WHOLE_SUBS } from "./platter-shared";
+
+export interface ModifierEffect {
+  targetKind: "item" | "sku" | "menu_item";
+  targetId: string;
+  disposition: "deplete" | "remove" | "ignore";
+  portionQty: number | null;
+  portionUnit: string | null;
+  parentOnly: boolean;
+}
+
+export type ModifierApplication =
+  | { kind: "item" | "menu_item"; targetId: string; amount: number; removed: number }
+  | { kind: "sku"; targetId: string; portion: Portion; sign: 1 | -1; qty: number }
+  | { kind: "ignored" }
+  | { kind: "portion_needed" };
+
+/** Resolve one effect independently against its own sale's parent, never daily totals. */
+export function applyModifierEffect(
+  graph: RecipeGraph, effect: ModifierEffect, parentMenuItemId: string | null, qty: number,
+): ModifierApplication {
+  if (effect.disposition === "ignore") return { kind: "ignored" };
+  const sign = effect.disposition === "remove" ? -1 : 1;
+  if (effect.targetKind === "menu_item") {
+    if (sign < 0 && effect.parentOnly && parentMenuItemId !== effect.targetId) {
+      return { kind: "menu_item", targetId: effect.targetId, amount: 0, removed: 0 };
+    }
+    const amount = (effect.portionQty ?? MENU_ITEM_MODIFIER_PORTION_WHOLE_SUBS) * qty;
+    return { kind: "menu_item", targetId: effect.targetId, amount: sign * amount, removed: sign < 0 ? amount : 0 };
+  }
+  if (effect.targetKind === "sku") {
+    if (sign < 0) {
+      const parentAmount = parentMenuItemId == null ? undefined
+        : perUnitDirectSkuOzForMenuItem(graph, parentMenuItemId).get(effect.targetId);
+      if (parentAmount != null || effect.parentOnly) {
+        return { kind: "sku", targetId: effect.targetId, portion: { qty: parentAmount ?? 0, unit: "oz" }, sign, qty };
+      }
+    }
+    if (effect.portionQty == null) return { kind: "portion_needed" };
+    return { kind: "sku", targetId: effect.targetId,
+      portion: { qty: effect.portionQty, unit: effect.portionUnit }, sign, qty };
+  }
+  let perUnit = sign < 0 && parentMenuItemId != null ? removalAmount(graph, parentMenuItemId, effect.targetId) : null;
+  if (perUnit == null && sign < 0 && effect.parentOnly) perUnit = 0;
+  if (perUnit == null) {
+    const portion = effect.portionQty == null ? null
+      : { qty: effect.portionQty, unit: effect.portionUnit };
+    if (portion == null) return { kind: "portion_needed" };
+    perUnit = modifierParUnits(graph, effect.targetId, portion);
+  }
+  if (perUnit == null) return { kind: "portion_needed" };
+  const amount = perUnit * qty;
+  return { kind: "item", targetId: effect.targetId, amount: sign * amount, removed: sign < 0 ? amount : 0 };
+}
 
 export type ModifierDisposition = "deplete" | "remove" | "ignore";
 

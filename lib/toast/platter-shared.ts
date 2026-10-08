@@ -44,3 +44,40 @@ export function evenMixPerOption(wholeSubs: number, poolSize: number): number {
   if (poolSize <= 0 || !Number.isFinite(wholeSubs)) return 0;
   return wholeSubs / poolSize;
 }
+
+export interface PackagePickSlot {
+  id: string;
+  quantity: number;
+  depletionQty: number;
+  displayOrder: number;
+  menuItemIds: string[];
+}
+
+export interface PackagePickAllocation {
+  picks: Array<{ menuItemId: string; units: number }>;
+  remaining: number;
+  excess: boolean;
+}
+
+/** Bind in ledger order to the first eligible slot, then spend only its capacity. */
+export function allocatePackagePicks(
+  slots: PackagePickSlot[], picks: Array<{ id: string; menuItemId: string; qty: number }>, saleQty: number,
+): { bySlot: Map<string, PackagePickAllocation>; consumed: Set<string> } {
+  const ordered = slots.slice().sort((a, b) => a.displayOrder - b.displayOrder);
+  const bySlot = new Map<string, PackagePickAllocation>(slots.map((slot) => [slot.id, {
+    picks: [], remaining: slot.depletionQty * saleQty, excess: false,
+  }]));
+  const consumed = new Set<string>();
+  for (const pick of picks) {
+    const slot = ordered.find((candidate) => candidate.menuItemIds.includes(pick.menuItemId));
+    if (!slot) continue;
+    const allocation = bySlot.get(slot.id)!;
+    const requested = pick.qty * (slot.depletionQty / slot.quantity);
+    const units = Math.min(requested, allocation.remaining);
+    if (units > 0) allocation.picks.push({ menuItemId: pick.menuItemId, units });
+    allocation.remaining -= units;
+    if (requested > units) allocation.excess = true;
+    consumed.add(pick.id);
+  }
+  return { bySlot, consumed };
+}
