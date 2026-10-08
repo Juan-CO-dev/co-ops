@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import {
   canManageAssignee, canSelfClaim, currentStation, stationTimeline,
@@ -14,6 +15,17 @@ function event(overrides: Partial<StationEvent> = {}): StationEvent {
 }
 
 describe("station authority", () => {
+  it("pins the position claim lock and guarded seed duties", () => {
+    const migration = readFileSync(new URL("../supabase/migrations/0219_stations_staffing_positions.sql", import.meta.url), "utf8");
+    const seed = readFileSync(new URL("../docs/seed/seed-42-stations.sql", import.meta.url), "utf8");
+    expect(migration).toContain("'position_taken'");
+    expect(migration).toContain("s.staffed");
+    expect(migration).toContain("p.active");
+    expect(migration).toContain("foreign key (position_id, station_id, location_id)");
+    expect(seed).toContain("Walk-ins / Online");
+    expect(seed).toContain("Register & Delivery");
+    expect(seed).toContain("where v_section.name not in ('Walk Ins Station', 'Expo Station')");
+  });
   it("allows KH+ to manage peers and lower levels, never higher levels", () => {
     for (const actor of [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]) {
       for (const target of [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]) {

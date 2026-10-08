@@ -1,6 +1,8 @@
+import { reportLandingContext } from "@/lib/report-navigation";
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { DashboardBackLink } from "@/components/DashboardBackLink";
+import { ReportPageNav } from "@/components/reports-hub/ReportPageNav";
+import { ReportShopTabs } from "@/components/reports-hub/ReportShopTabs";
 import { ReportRangeControls } from "@/components/reports-hub/ReportRangeControls";
 import { serverT } from "@/lib/i18n/server";
 import { formatDateLabel } from "@/lib/i18n/format";
@@ -17,12 +19,7 @@ import { getServiceRoleClient } from "@/lib/supabase-server";
 export default async function ReportsPage({ searchParams }: { searchParams: Promise<Record<string, string | undefined>> }) {
   const auth = await requireSessionFromHeaders("/reports");
   if (auth.level < 2) redirect("/dashboard");
-  const params = await searchParams;
-  if (Object.keys(params).some((key) => key === "q" || key === "type" || key.startsWith("sf_"))) {
-    const legacy = new URLSearchParams();
-    for (const [key, value] of Object.entries(params)) if (typeof value === "string") legacy.set(key, value);
-    redirect(`/reports/operations?${legacy}`);
-  }
+  const params = reportLandingContext(await searchParams);
   const actor = { role: auth.role, locations: auth.locations };
   const locationId = params.location ?? auth.locations[0];
   if (!locationId || (locationId === "all" ? auth.level < REPORT_ALL_LOCATIONS_LEVEL : !canReadReportLocation(actor, locationId))) redirect("/dashboard");
@@ -41,7 +38,11 @@ export default async function ReportsPage({ searchParams }: { searchParams: Prom
   const range = parseReportRange(params, today);
   const viewer: Viewer = { userId: auth.user.id, level: auth.level, locations: auth.locations };
   const context = (shopId: string, additions: Record<string, string> = {}) => {
-    const query = reportRangeParams(range); query.set("location", shopId);
+    const query = new URLSearchParams(Object.entries(params).filter((entry): entry is [string, string] => entry[1] !== undefined));
+    for (const [key, value] of reportRangeParams(range)) query.set(key, value);
+    query.set("location", shopId);
+    query.delete("returnLocation");
+    if (locationId === "all") query.set("hubLocation", "all");
     for (const [key, value] of Object.entries(additions)) query.set(key, value);
     return query.toString();
   };
@@ -58,12 +59,9 @@ export default async function ReportsPage({ searchParams }: { searchParams: Prom
   }));
   const linkClass = "inline-flex min-h-[44px] items-center rounded-lg border border-co-border-2 px-3 py-2 text-sm font-bold hover:bg-co-surface-2";
   return <main className="mx-auto max-w-2xl px-4 pb-32 pt-4 sm:px-6 lg:max-w-5xl">
-    <DashboardBackLink />
+    <ReportPageNav viewerLevel={auth.level} path="/reports" params={{ ...params, location: locationId }} language={language} />
     <h1 className="mb-4 text-lg font-bold text-co-text">{t("reports.page.title")}</h1>
-    <nav className="mb-4 flex flex-wrap gap-2" aria-label={t("dashboard.location.switcher_aria")}>
-      {locations.map((shop) => <Link className={linkClass} key={shop.id} href={`/reports?${context(shop.id)}`} aria-current={locationId === shop.id ? "page" : undefined}>{shop.name}</Link>)}
-      {auth.level >= REPORT_ALL_LOCATIONS_LEVEL && <Link className={linkClass} href={`/reports?${context("all")}`} aria-current={locationId === "all" ? "page" : undefined}>{t("reports.hub.all")}</Link>}
-    </nav>
+    <ReportShopTabs path="/reports" params={params} locationId={locationId} language={language} viewer={auth} />
     <ReportRangeControls range={range} locationId={locationId} language={language} />
     {auth.level < 4 && <p className="mb-4 text-sm text-co-text-muted">{t("reports.hub.own_scope")}</p>}
     {panels.map(({ shop, current, previous, close, receiving, ordering }) => {

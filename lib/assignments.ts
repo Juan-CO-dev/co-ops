@@ -22,11 +22,12 @@ function requireLocation(actor: AssignmentActor, locationId: string): void {
 function requireUuid(value: string): void {
   if (!UUID.test(value)) throw new AssignmentError("invalid_payload", 400);
 }
-function dbError(error: { message: string; code?: string }): never {
+function dbError(error: { message: string; code?: string }, context?: "position_name"): never {
+  if (error.code === "23505" && context === "position_name") throw new AssignmentError("position_name_taken", 409);
   if (error.code === "23505") throw new AssignmentError("assignment_already_active", 409);
-  const known = ["station_locked", "role_insufficient", "location_access_denied", "assignee_unavailable", "self_assignment", "station_unavailable", "assignment_not_found", "invalid_payload"];
+  const known = ["position_taken", "station_locked", "role_insufficient", "location_access_denied", "assignee_unavailable", "self_assignment", "station_unavailable", "assignment_not_found", "invalid_payload"];
   const code = known.find((candidate) => error.message === candidate);
-  if (code) throw new AssignmentError(code, code === "assignment_not_found" ? 404 : code === "invalid_payload" ? 400 : 403);
+  if (code) throw new AssignmentError(code, code === "position_taken" ? 409 : code === "assignment_not_found" ? 404 : code === "invalid_payload" ? 400 : 403);
   throw new Error(`assignments database failure: ${error.code ?? "unknown"}`);
 }
 
@@ -89,11 +90,12 @@ async function targetLevel(service: SupabaseClient, userId: string, locationId: 
 }
 
 export async function writeStationEvent(service: SupabaseClient, args: {
-  actor: AssignmentActor; locationId: string; userId: string; stationId: string | null; manage?: boolean;
+  actor: AssignmentActor; locationId: string; userId: string; stationId: string | null; positionId: string | null; manage?: boolean;
 }): Promise<{ id: string }> {
   requireLocation(args.actor, args.locationId);
   requireUuid(args.userId);
   if (args.stationId !== null) requireUuid(args.stationId);
+  if (args.positionId !== null) requireUuid(args.positionId);
   if ((args.manage || args.userId !== args.actor.userId) && args.actor.level < 4) throw new AssignmentError("role_insufficient");
   const level = await targetLevel(service, args.userId, args.locationId);
   if ((args.manage || args.userId !== args.actor.userId) && !canManageAssignee(args.actor.level, level)) throw new AssignmentError("role_insufficient");
@@ -102,13 +104,14 @@ export async function writeStationEvent(service: SupabaseClient, args: {
   const { data, error } = await service.rpc("write_station_event", {
     p_actor_id: args.actor.userId, p_user_id: args.userId,
     p_location_id: args.locationId, p_station_id: args.stationId,
+    p_position_id: args.positionId,
     p_manage: args.manage ?? false,
   });
   if (error) dbError(error);
   const result = data as { id: string; changed: boolean };
   if (result.changed) await audit({ actorId: args.actor.userId, actorRole: args.actor.role,
     action: "station.event", resourceTable: "station_events", resourceId: result.id,
-    metadata: { location_id: args.locationId, user_id: args.userId, station_id: args.stationId }, ipAddress: null, userAgent: null });
+    metadata: { location_id: args.locationId, user_id: args.userId, station_id: args.stationId, position_id: args.positionId }, ipAddress: null, userAgent: null });
   return { id: result.id };
 }
 
@@ -152,28 +155,115 @@ export async function retractTask(service: SupabaseClient, args: {
   return { id: result.id };
 }
 
-export async function saveStation(service: SupabaseClient, args: {
-  actor: AssignmentActor; locationId: string; id?: string; name: string; nameEs: string; sort: number; active: boolean;
+export async function saveStationSpanish(service: SupabaseClient, args: {
+  actor: AssignmentActor; locationId: string; id: string; nameEs: string;
 }): Promise<{ id: string }> {
-  requireLocation(args.actor, args.locationId);
+  if (!UUID.test(args.locationId) || (args.actor.level < 8 && !lockLocationContext(args.actor, args.locationId)))
+    throw new AssignmentError("location_access_denied");
   if (args.actor.level < 7) throw new AssignmentError("role_insufficient");
-  if (args.id) requireUuid(args.id);
-  if (typeof args.name !== "string" || !args.name.trim() || args.name.length > 100 ||
-      typeof args.nameEs !== "string" || !args.nameEs.trim() || args.nameEs.length > 100 ||
-      !Number.isInteger(args.sort) || args.sort < 0 || args.sort > 10000 || typeof args.active !== "boolean") throw new AssignmentError("invalid_payload", 400);
+  requireUuid(args.id);
+  if (typeof args.nameEs !== "string" || args.nameEs.length > 100) throw new AssignmentError("invalid_payload", 400);
   // Re-read membership/active role before service-role config writes too.
-  if (await targetLevel(service, args.actor.userId, args.locationId) < 7) throw new AssignmentError("role_insufficient");
-  const row = { name: args.name.trim(), name_es: args.nameEs.trim(), sort: args.sort, active: args.active };
-  const query = args.id
-    ? service.from("stations").update(row).eq("id", args.id).eq("location_id", args.locationId)
-    : service.from("stations").insert({ ...row, location_id: args.locationId });
-  const { data, error } = await query.select("id").maybeSingle<{ id: string }>();
+  if (args.actor.level >= 8) {
+    const user = await service.from("users").select("role").eq("id", args.actor.userId).eq("active", true).maybeSingle();
+    if (user.error) dbError(user.error);
+    if (!user.data || !isRoleCode(user.data.role) || getRoleLevel(user.data.role) < 8)
+      throw new AssignmentError("role_insufficient");
+  } else if (await targetLevel(service, args.actor.userId, args.locationId) < 7)
+    throw new AssignmentError("role_insufficient");
+  const station = await service.from("stations").select("id,name")
+    .eq("id", args.id).eq("location_id", args.locationId).eq("active", true).maybeSingle();
+  if (station.error) dbError(station.error);
+  if (!station.data) throw new AssignmentError("station_unavailable", 404);
+  const closing = await service.from("checklist_templates").select("id,effective_from,created_at")
+    .eq("location_id", args.locationId).eq("type", "closing").eq("active", true);
+  if (closing.error) dbError(closing.error);
+  const latest = (closing.data ?? []).sort((a, b) =>
+    (b.effective_from ?? "").localeCompare(a.effective_from ?? "") || b.created_at.localeCompare(a.created_at))[0];
+  if (!latest) throw new AssignmentError("station_unavailable", 404);
+  const labels = await service.from("checklist_template_items").select("translations")
+    .eq("template_id", latest.id).eq("station", station.data.name).eq("active", true);
+  if (labels.error) dbError(labels.error);
+  if ((labels.data ?? []).some((item) => {
+    const translations = item.translations as { es?: { station?: string | null } } | null;
+    return !!translations?.es?.station?.trim();
+  })) throw new AssignmentError("station_translation_from_template", 409);
+  const nameEs = args.nameEs.trim() || null;
+  const { data, error } = await service.from("stations").update({ name_es: nameEs })
+    .eq("id", args.id).eq("location_id", args.locationId).select("id").maybeSingle<{ id: string }>();
   if (error) dbError(error);
   if (!data) throw new AssignmentError("station_unavailable", 404);
   await audit({ actorId: args.actor.userId, actorRole: args.actor.role,
-    action: args.id ? "station.update" : "station.create", resourceTable: "stations", resourceId: data.id,
-    metadata: { location_id: args.locationId, ...row }, ipAddress: null, userAgent: null });
+    action: "station.update", resourceTable: "stations", resourceId: data.id,
+    metadata: { location_id: args.locationId, name_es: nameEs }, ipAddress: null, userAgent: null });
   return data;
+}
+
+/** GM configuration is location-bound even though the service client bypasses RLS. */
+export async function saveStationConfig(service: SupabaseClient, args: {
+  actor: AssignmentActor; locationId: string; stationId: string;
+  operation: "staffed" | "position_create" | "position_update";
+  staffed?: boolean; positionId?: string;
+  name?: string; nameEs?: string | null; duty?: string | null; dutyEs?: string | null;
+  sort?: number; active?: boolean;
+}): Promise<{ id: string }> {
+  if (!UUID.test(args.locationId) || (args.actor.level < 8 && !lockLocationContext(args.actor, args.locationId)))
+    throw new AssignmentError("location_access_denied");
+  requireUuid(args.stationId);
+  if (args.actor.level < 7) throw new AssignmentError("role_insufficient");
+  if (args.actor.level >= 8) {
+    const user = await service.from("users").select("role").eq("id", args.actor.userId).eq("active", true).maybeSingle();
+    if (user.error) dbError(user.error);
+    if (!user.data || !isRoleCode(user.data.role) || getRoleLevel(user.data.role) < 8)
+      throw new AssignmentError("role_insufficient");
+  } else if (await targetLevel(service, args.actor.userId, args.locationId) < 7)
+    throw new AssignmentError("role_insufficient");
+  const station = await service.from("stations").select("id,staffed")
+    .eq("id", args.stationId).eq("location_id", args.locationId).eq("active", true).maybeSingle();
+  if (station.error) dbError(station.error);
+  if (!station.data) throw new AssignmentError("station_unavailable", 404);
+  let id: string;
+  let action: "station.staffing_update" | "station.position_create" | "station.position_update";
+  let changedFields: Record<string, unknown> = {};
+  if (args.operation === "staffed") {
+    if (typeof args.staffed !== "boolean") throw new AssignmentError("invalid_payload", 400);
+    const result = await service.from("stations").update({ staffed: args.staffed })
+      .eq("id", args.stationId).eq("location_id", args.locationId).select("id").maybeSingle();
+    if (result.error) dbError(result.error);
+    if (!result.data) throw new AssignmentError("station_unavailable", 404);
+    id = result.data.id; action = "station.staffing_update";
+    // Turning a station off keeps current holders through the shift; new claims are refused.
+  } else {
+    const name = args.name?.trim();
+    const nameEs = args.nameEs?.trim() || null;
+    const duty = args.duty?.trim() || null;
+    const dutyEs = args.dutyEs?.trim() || null;
+    if (!name || name.length > 100 || (nameEs?.length ?? 0) > 100 ||
+      (duty?.length ?? 0) > 500 || (dutyEs?.length ?? 0) > 500 ||
+      !Number.isInteger(args.sort) || args.sort! < 1 || args.sort! > 100 ||
+      typeof args.active !== "boolean") throw new AssignmentError("invalid_payload", 400);
+    const fields = { name, name_es: nameEs, duty, duty_es: dutyEs, sort: args.sort, active: args.active };
+    // Deactivating a position keeps its current holder; new claims are refused.
+    if (args.operation === "position_update") {
+      if (!args.positionId) throw new AssignmentError("invalid_payload", 400);
+      requireUuid(args.positionId);
+    }
+    const result = args.operation === "position_create"
+      ? await service.from("station_positions").insert({ ...fields, station_id: args.stationId, location_id: args.locationId }).select("id").single()
+      : await service.from("station_positions").update(fields).eq("id", args.positionId!)
+        .eq("station_id", args.stationId).eq("location_id", args.locationId).select("id").maybeSingle();
+    if (result.error) dbError(result.error, "position_name");
+    if (!result.data) throw new AssignmentError("station_unavailable", 404);
+    id = result.data.id;
+    action = args.operation === "position_create" ? "station.position_create" : "station.position_update";
+    changedFields = fields;
+  }
+  await audit({ actorId: args.actor.userId, actorRole: args.actor.role, action,
+    resourceTable: action === "station.staffing_update" ? "stations" : "station_positions", resourceId: id,
+    metadata: { location_id: args.locationId, station_id: args.stationId, operation: args.operation,
+      staffed: args.operation === "staffed" ? args.staffed : station.data.staffed,
+      position_id: id, ...changedFields }, ipAddress: null, userAgent: null });
+  return { id };
 }
 
 /** A station-widget failure must not erase the actor's independently assigned task tiles. */
@@ -217,18 +307,24 @@ export async function loadShiftBoard(service: SupabaseClient, args: {
   const { data: stationDate, error: dayError } = await service.rpc("station_business_date", { p_location_id: args.locationId });
   if (dayError) dbError(dayError);
   if (typeof stationDate !== "string") throw new Error("Station business date unavailable");
-  const stationsResult = await service.from("stations").select("id,name,name_es,sort,active")
+  const stationsResult = await service.from("stations").select("id,name,name_es,sort,active,staffed")
     .eq("location_id", args.locationId).order("sort").order("name");
   if (stationsResult.error) dbError(stationsResult.error);
+  const positionsResult = await service.from("station_positions").select("id,station_id,name,name_es,duty,duty_es,sort,active")
+    .eq("location_id", args.locationId).order("sort").order("name");
+  if (positionsResult.error) dbError(positionsResult.error);
   const stations: Station[] = (stationsResult.data ?? []).map((row) => ({
-    id: row.id, name: row.name, nameEs: row.name_es, sort: row.sort, active: row.active,
+    id: row.id, name: row.name, nameEs: row.name_es, sort: row.sort, active: row.active, staffed: row.staffed,
+    positions: (positionsResult.data ?? []).filter((p) => p.station_id === row.id).map((p) => ({
+      id: p.id, stationId: p.station_id, name: p.name, nameEs: p.name_es, duty: p.duty,
+      dutyEs: p.duty_es, sort: p.sort, active: p.active,
+    })),
   }));
   // Paginate history so the API row limit cannot quietly restore an old head.
   const eventRows: Array<Record<string, unknown>> = [];
   for (let offset = 0; ; offset += 500) {
-    let query = service.from("station_events").select("id,sequence::text,location_id,business_date,user_id,station_id,kind,actor_id,at,source")
+    let query = service.from("station_events").select("id,sequence::text,location_id,business_date,user_id,station_id,position_id,kind,actor_id,at,source")
       .eq("location_id", args.locationId).eq("business_date", stationDate).order("sequence");
-    if (!manager) query = query.eq("user_id", args.actor.userId);
     const { data, error } = await query.range(offset, offset + 499);
     if (error) dbError(error);
     eventRows.push(...(data ?? []));
@@ -255,7 +351,8 @@ export async function loadShiftBoard(service: SupabaseClient, args: {
   rosterIds.add(args.actor.userId);
   // An all-location owner may be assigned here without a user_locations row.
   for (const task of taskRows) rosterIds.add(task.assignee_id);
-  const namesNeeded = new Set([...rosterIds, ...eventRows.map((row) => String(row.actor_id)), ...(taskResult.data ?? []).map((row) => String(row.assigner_id))]);
+  const namesNeeded = new Set([...rosterIds, ...eventRows.map((row) => String(row.actor_id)),
+    ...eventRows.map((row) => String(row.user_id)), ...(taskResult.data ?? []).map((row) => String(row.assigner_id))]);
   const users: Array<{ id: string; name: string; role: string; active: boolean }> = [];
   const ids = [...namesNeeded];
   for (let i = 0; i < ids.length; i += 100) {
@@ -266,8 +363,13 @@ export async function loadShiftBoard(service: SupabaseClient, args: {
   const names = new Map(users.map((user) => [user.id, user.name]));
   const events: StationEvent[] = eventRows.map((row) => ({
     id: String(row.id), sequence: String(row.sequence), locationId: String(row.location_id), businessDate: String(row.business_date),
-    userId: String(row.user_id), stationId: row.station_id as string | null, kind: row.kind as StationEvent["kind"],
+    userId: String(row.user_id), stationId: row.station_id as string | null, positionId: row.position_id as string | null, kind: row.kind as StationEvent["kind"],
     actorId: String(row.actor_id), actorName: names.get(String(row.actor_id)) ?? null, at: String(row.at), source: row.source as StationEvent["source"],
+  }));
+  const heads = new Map<string, StationEvent>();
+  for (const event of events) heads.set(event.userId, event);
+  const occupiedPositions = [...heads.values()].filter((event) => event.positionId).map((event) => ({
+    positionId: event.positionId!, firstName: (names.get(event.userId) ?? "").trim().split(/\s+/)[0] || "?",
   }));
   const members = new Set((membership.data ?? []).map((row) => row.user_id));
   const available = new Set(users.filter((user) => user.active && isRoleCode(user.role)
@@ -277,7 +379,8 @@ export async function loadShiftBoard(service: SupabaseClient, args: {
     assignerName: names.get(row.assigner_id) ?? null, note: row.note, available: available.has(row.assignee_id),
   }));
   return { locationId: args.locationId, date: args.date, viewerId: args.actor.userId, viewerLevel: args.actor.level,
-    stations, events, tasks, people: users.filter((user) => isRoleCode(user.role) &&
+    stations, events: manager ? events : events.filter((event) => event.userId === args.actor.userId),
+    occupiedPositions, tasks, people: users.filter((user) => isRoleCode(user.role) &&
       (available.has(user.id) || (manager && tasks.some((task) => task.assigneeId === user.id))))
       .map((user) => ({ id: user.id, name: user.name, available: available.has(user.id), level: isRoleCode(user.role) ? getRoleLevel(user.role) : 0,
         hasWork: events.some((event) => event.userId === user.id) || tasks.some((task) => task.assigneeId === user.id) }))

@@ -1,4 +1,5 @@
 import "server-only";
+import { runOrderCapture } from "@/lib/toast/capture-job";
 import { pullSalesForAllLocations, materializeDailyDepletion } from "@/lib/catering/toast-sales";
 import { completeElapsedCateringEvents } from "@/lib/catering/system-intake";
 import { etCalendarDate } from "@/lib/operational-day";
@@ -112,6 +113,10 @@ export async function runToastSalesPull(opts: { businessDate: string }) {
   // batch itself succeeded, but a per-location failure is still worth surfacing).
   const rowsPulled = results.reduce((n, r) => n + (r.result?.appended ?? 0), 0);
   const perLocationFailures = results.filter((r) => !r.ok).length;
-  const metadata = { job: "toast-sales-pull", business_date: businessDate, rows_pulled: rowsPulled, per_location_failures: perLocationFailures, depletion_rows: depletionRows, depletion_failures: depletionFailures, par_rows: parRows, par_run_failures: parRunFailures, elapsed_completed: elapsedCompleted, elapsed_failed: elapsedFailed, elapsed_error: elapsedError };
-  return { businessDate, results, metadata };
+  // The selection, depletion and par loops have ALL finished before capture starts.
+  const capture = await runOrderCapture(results.map((r) => r.locationId), businessDate, "cron");
+  const captureFailures = capture.failures;
+  const healthy = perLocationFailures === 0;
+  const metadata = { capture_failures: captureFailures, job: "toast-sales-pull", business_date: businessDate, rows_pulled: rowsPulled, per_location_failures: perLocationFailures, depletion_rows: depletionRows, depletion_failures: depletionFailures, par_rows: parRows, par_run_failures: parRunFailures, elapsed_completed: elapsedCompleted, elapsed_failed: elapsedFailed, elapsed_error: elapsedError };
+  return { businessDate, results, metadata, healthy };
 }
