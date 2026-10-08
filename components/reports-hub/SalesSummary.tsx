@@ -9,7 +9,7 @@ import type { ReactNode } from "react";
 import { CollapsibleSection } from "@/components/ui/CollapsibleSection";
 import { formatDateLabel, formatMonthLabel } from "@/lib/i18n/format";
 import type { Language } from "@/lib/i18n/types";
-import type { SalesSummaryDto } from "@/lib/sales-reports-shared";
+import { salesHasData, shownCents, unknownComponents, type SalesSummaryDto, type SalesTotals } from "@/lib/sales-reports-shared";
 import { CoverageBadge, Money, salesCard, salesLink, tFor } from "@/components/reports-hub/SalesParts";
 
 export function SalesSummary({ summary, language, checksHref }: {
@@ -20,6 +20,10 @@ export function SalesSummary({ summary, language, checksHref }: {
   const t = tFor(language);
   const { totals, previous, range } = summary;
   const partial = totals.amountMissing > 0;
+  // No capture and no row at all = unavailable ("—"), never $0.00 (Astra P2-9); same rule as the export.
+  const m = (tt: SalesTotals, cents: number | null) => <Money cents={shownCents(tt, cents)} language={language} />;
+  const count = (tt: SalesTotals, value: number) => (salesHasData(tt) ? value : "—");
+  const unknown = unknownComponents(totals);
   const card = (label: string, value: ReactNode, sub?: ReactNode) => <div className="rounded-lg border border-co-border bg-co-surface-inset p-3">
     <div className="text-[11px] font-bold tracking-[0.12em] text-co-text-dim">{label}</div>
     <div className="text-lg font-bold text-co-text">{value}</div>
@@ -34,26 +38,29 @@ export function SalesSummary({ summary, language, checksHref }: {
     <div className="mb-3 flex flex-wrap items-center gap-2">
       <CoverageBadge status={totals.coverage} covered={totals.coveredDays} expected={totals.expectedDays} language={language} />
       {partial ? <span className="text-xs font-bold text-co-warning-text">{t("reports.sales.amount_missing", { n: totals.amountMissing })}</span> : null}
+      {unknown ? <span className="text-xs font-bold text-co-warning-text">{t("reports.sales.unknown_components", { tax: totals.taxMissing, tips: totals.tipMissing, discounts: totals.discountMissing })}</span> : null}
     </div>
     {totals.coverage === "missing" ? <p className="mb-3 text-sm text-co-text-muted">{t("reports.sales.no_sales_recorded")}</p> : null}
     <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4">
-      {card(t("reports.sales.total"), <Money cents={totals.totalCents} language={language} />,
-        previous ? <>{t("reports.sales.previous")}: <Money cents={previous.totalCents} language={language} />{summary.deltaPct !== null ? ` (${summary.deltaPct > 0 ? "+" : ""}${summary.deltaPct}%)` : ""}</> : undefined)}
-      {card(t("reports.sales.toast_net"), <Link className={salesLink} href={checksHref(range.from, range.to)}><Money cents={totals.toastNetCents} language={language} /></Link>, t("reports.sales.toast_net_hint"))}
-      {card(t("reports.sales.ezcater"), <Money cents={totals.ezcaterCents} language={language} />, t("reports.sales.ezcater_orders", { n: totals.ezcaterOrders }))}
-      {card(t("reports.sales.checks"), totals.checks, previous ? `${t("reports.sales.previous")}: ${previous.checks}` : undefined)}
-      {card(t("reports.sales.avg_check"), <Money cents={totals.avgCheckCents} language={language} />)}
-      {card(t("reports.sales.discounts"), <Money cents={totals.discountCents} language={language} />, t("reports.sales.discount_count", { n: totals.discountCount }))}
-      {card(t("reports.sales.tax"), <Money cents={totals.taxCents} language={language} />)}
-      {card(t("reports.sales.tips"), <Money cents={totals.tipCents} language={language} />)}
-      {card(t("reports.sales.refunds"), <Money cents={totals.refundCents} language={language} />, t("reports.sales.refunds_hint", { n: totals.refundCount }))}
+      {card(t("reports.sales.total"), m(totals, totals.totalCents),
+        previous ? <>{t("reports.sales.previous")}: {m(previous, previous.totalCents)}{summary.deltaPct !== null ? ` (${summary.deltaPct > 0 ? "+" : ""}${summary.deltaPct}%)` : ""}</> : undefined)}
+      {card(t("reports.sales.toast_checks"), <Link className={salesLink} href={checksHref(range.from, range.to)}>{m(totals, totals.toastChecksCents)}</Link>, t("reports.sales.toast_checks_hint"))}
+      {card(t("reports.sales.ezcater"), m(totals, totals.ezcaterCents), t("reports.sales.ezcater_orders", { n: totals.ezcaterOrders }))}
+      {card(t("reports.sales.checks"), count(totals, totals.checks), previous ? `${t("reports.sales.previous")}: ${count(previous, previous.checks)}` : undefined)}
+      {card(t("reports.sales.avg_check"), m(totals, totals.avgCheckCents))}
+      {card(t("reports.sales.discounts"), m(totals, totals.discountCents), t("reports.sales.discount_count", { n: totals.discountCount }))}
+      {card(t("reports.sales.tax"), m(totals, totals.taxCents))}
+      {card(t("reports.sales.tips"), m(totals, totals.tipCents))}
+      {card(t("reports.sales.refunds"), m(totals, totals.refundCents), t("reports.sales.refunds_hint", { n: totals.refundCount }))}
     </div>
+    {/* What the numbers are (Astra P1-1/P1-2): check totals before refunds, not reconciled net sales. */}
+    <p className="mt-3 text-xs text-co-text-muted" role="note">{t("reports.sales.caveat")}</p>
     <div className="mt-3">
       <CollapsibleSection idBase={`sales-excluded-${summary.locationId}`} title={t("reports.sales.excluded.title")}
         count={t("reports.sales.excluded.count", { n: totals.giftCardChecks + totals.ezcaterLinkedChecks + totals.voidChecks + totals.excessFoodChecks })}>
         <ul className="grid gap-1 py-2 text-sm">
-          <li>{t("reports.sales.excluded.gift_cards", { n: totals.giftCardChecks })}: <Money cents={totals.giftCardCents} language={language} /></li>
-          <li>{t("reports.sales.excluded.ezcater_linked", { n: totals.ezcaterLinkedChecks })}: <Money cents={totals.ezcaterLinkedCents} language={language} /></li>
+          <li>{t("reports.sales.excluded.gift_cards", { n: totals.giftCardChecks })}: {m(totals, totals.giftCardCents)}</li>
+          <li>{t("reports.sales.excluded.ezcater_linked", { n: totals.ezcaterLinkedChecks })}: {m(totals, totals.ezcaterLinkedCents)}</li>
           <li>{t("reports.sales.excluded.voids", { n: totals.voidChecks })}</li>
           <li>{t("reports.sales.excluded.excess_food", { n: totals.excessFoodChecks })}</li>
         </ul>
@@ -65,15 +72,15 @@ export function SalesSummary({ summary, language, checksHref }: {
           <table className="w-full min-w-[520px] text-sm">
             <thead><tr className="text-left text-xs text-co-text-muted">
               <th className="py-2 pr-2">{t("reports.sales.period")}</th><th className="py-2 pr-2 text-right">{t("reports.sales.total")}</th>
-              <th className="py-2 pr-2 text-right">{t("reports.sales.toast_net")}</th><th className="py-2 pr-2 text-right">{t("reports.sales.ezcater")}</th>
+              <th className="py-2 pr-2 text-right">{t("reports.sales.toast_checks")}</th><th className="py-2 pr-2 text-right">{t("reports.sales.ezcater")}</th>
               <th className="py-2 pr-2 text-right">{t("reports.sales.checks")}</th><th className="py-2">{t("reports.sales.coverage.label")}</th>
             </tr></thead>
             <tbody>{summary.buckets.slice().reverse().map((b) => <tr key={b.key} className="border-t border-co-border">
               <td className="py-1 pr-2"><Link className={salesLink} href={checksHref(b.from, b.to)}>{bucketLabel(b.from, b.to)}</Link></td>
-              <td className="py-1 pr-2 text-right"><Money cents={b.totalCents} language={language} /></td>
-              <td className="py-1 pr-2 text-right"><Money cents={b.toastNetCents} language={language} /></td>
-              <td className="py-1 pr-2 text-right"><Money cents={b.ezcaterCents} language={language} /></td>
-              <td className="py-1 pr-2 text-right">{b.checks}</td>
+              <td className="py-1 pr-2 text-right">{m(b, b.totalCents)}</td>
+              <td className="py-1 pr-2 text-right">{m(b, b.toastChecksCents)}</td>
+              <td className="py-1 pr-2 text-right">{m(b, b.ezcaterCents)}</td>
+              <td className="py-1 pr-2 text-right">{count(b, b.checks)}</td>
               <td className="py-1"><CoverageBadge status={b.coverage} covered={b.coveredDays} expected={b.expectedDays} language={language} /></td>
             </tr>)}</tbody>
           </table>

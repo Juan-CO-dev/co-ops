@@ -80,12 +80,12 @@ describe("sales export = the screen", () => {
     const cell = (k: string) => total[header.indexOf(k)];
     const screen = await loadSalesSummary({ userId: "viewer", level: 7, locations: [A] }, { locationId: A, range: resolveSalesRange({ range: "last7" }, "2026-10-08") }, { client: client() as never });
     expect(cell("row_type")).toBe("total");
-    expect(cell("toast_net_sales")).toBe((screen.totals.toastNetCents / 100).toFixed(2));
-    expect(cell("total_sales")).toBe((screen.totals.totalCents / 100).toFixed(2));
+    expect(cell("toast_check_totals")).toBe((screen.totals.toastChecksCents / 100).toFixed(2));
+    expect(cell("sales_before_refunds")).toBe((screen.totals.totalCents / 100).toFixed(2));
     expect(cell("gift_cards_excluded")).toBe("50.00");
     expect(cell("ezcater_linked_toast_excluded")).toBe("300.00");
     expect(cell("ezcater_sales")).toBe("280.00");
-    expect(cell("total_sales")).toBe("360.00"); // 80 Toast + 280 ezCater; the 300 linked ring and the 50 gift card are not added
+    expect(cell("sales_before_refunds")).toBe("360.00"); // 80 Toast + 280 ezCater; the 300 linked ring and the 50 gift card are not added
   });
   it("discounts export one row per NAME", async () => {
     session(7, [A]);

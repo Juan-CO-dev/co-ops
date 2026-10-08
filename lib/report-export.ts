@@ -102,11 +102,13 @@ async function salesExportTable(auth: AuthContext, params: Params, shop: ShopRef
       cursor = page.nextCursor;
     }
   };
+  // EVERY view refuses past the cap (Astra P2-7), not only the paged lists.
+  const capped = <T,>(rows: T[]): T[] => { if (rows.length > SALES_EXPORT_MAX_ROWS) throw new ExportError(413, "export_too_large"); return rows; };
   try {
     switch (view) {
       case "summary": {
         const s = await loadSalesSummary(viewer, { locationId: shop.id, range: { ...range, compare: false } });
-        return { ...out, rows: salesSummaryRows(s.buckets, s.totals, period, shop) };
+        return { ...out, rows: capped(salesSummaryRows(s.buckets, s.totals, period, shop)) };
       }
       case "checks": {
         const filters = parseSalesCheckFilters(params);
@@ -119,7 +121,7 @@ async function salesExportTable(auth: AuthContext, params: Params, shop: ShopRef
       }
       default: {
         const rows = await loadSalesBreakdown(viewer, { locationId: shop.id, range, dimension: VIEW_DIMENSION[view] });
-        return { ...out, rows: salesBreakdownRows(view, rows, period, shop) };
+        return { ...out, rows: salesBreakdownRows(view, capped(rows), period, shop) };
       }
     }
   } catch (error) {

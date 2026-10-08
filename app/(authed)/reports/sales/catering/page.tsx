@@ -85,10 +85,12 @@ export default async function SalesCateringPage({ searchParams }: { searchParams
 
         <section className={salesCard} aria-label={t("reports.sales.catering.pipeline")}>
           <h2 className="mb-2 font-bold">{t("reports.sales.catering.pipeline")}</h2>
-          {data.pipeline ? <ul className="text-sm">
-            <li>{t("reports.sales.catering.completed", { n: data.pipeline.completedEvents })}: <Money cents={data.pipeline.completedCents} language={language} /></li>
-            <li>{t("reports.sales.catering.confirmed", { n: data.pipeline.confirmedEvents })}: <Money cents={data.pipeline.confirmedCents} language={language} /></li>
-          </ul> : <p className="text-sm text-co-text-muted">{t("reports.sales.no_rows")}</p>}
+          <ul className="text-sm">
+            <li>{t("reports.sales.catering.completed", { n: data.pipeline.completedEvents })}: <Money cents={data.pipeline.completedCents} language={language} />
+              {data.pipeline.completedUnvalued ? ` · ${t("reports.sales.catering.unvalued", { n: data.pipeline.completedUnvalued })}` : ""}</li>
+            <li>{t("reports.sales.catering.confirmed", { n: data.pipeline.confirmedEvents })}: <Money cents={data.pipeline.confirmedCents} language={language} />
+              {data.pipeline.confirmedUnvalued ? ` · ${t("reports.sales.catering.unvalued", { n: data.pipeline.confirmedUnvalued })}` : ""}</li>
+          </ul>
           <p className="mt-1 text-xs text-co-text-muted">{t("reports.sales.catering.pipeline_basis")}</p>
         </section>
 

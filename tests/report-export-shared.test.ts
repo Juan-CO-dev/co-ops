@@ -96,7 +96,7 @@ describe("the column registry is the documented contract", () => {
         "counts": "location_code,location_name,sku_id,sku,dimension,anchor_at,anchor_age_days,anchor_qty,on_hand_qty,unit,anchor_stale",
         "operations": "business_date,location_code,location_name,report_type,report_id,status,submitted_by,under_par,over_par,skipped,temp_flags,cash_over_short,currency",
         "receiving": "delivery_date,location_code,location_name,delivery_id,vendor_or_store,invoice_number,line_count,received_by,match_state,delivery_status,has_receipt_photo,po_code",
-        "sales": "row_type,period_start,period_end,location_code,location_name,coverage_status,covered_days,expected_days,toast_net_sales,checks,average_check,discounts,discount_count,sales_tax,tips,refunds,refund_count,ezcater_sales,ezcater_orders,total_sales,amount_missing,gift_cards_excluded,gift_card_checks_excluded,ezcater_linked_toast_excluded,ezcater_linked_checks_excluded,void_checks,currency",
+        "sales": "row_type,period_start,period_end,location_code,location_name,coverage_status,covered_days,expected_days,toast_check_totals,checks,average_check,discounts,discount_count,sales_tax,tips,refunds_captured_so_far,refunds_captured_count,ezcater_sales,ezcater_orders,sales_before_refunds,amount_missing,unknown_tax,unknown_tips,unknown_discounts,gift_cards_excluded,gift_card_checks_excluded,ezcater_linked_toast_excluded,ezcater_linked_checks_excluded,void_checks,currency",
         "team": "period_from,period_to,location_code,location_name,name,role,score,previous_score,health,tasks,finalizations,people_mgmt,oversight,notes",
         "trends_ops": "bucket_start,location_code,location_name,granularity,has_data,under_par,over_par,temp_flags,completion_pct,cash_over_short,currency",
         "written": "submitted_at,location_code,location_name,report_id,category,title,body,submitted_by,submitted_by_role,edit_count,last_edited_at",
@@ -146,7 +146,7 @@ describe("row mappers", () => {
 
   it("sales: a not_yet_available row per shop, every money cell empty (never 0)", () => {
     const csv = toCsv(EXPORT_COLUMNS.sales, salesNotYetAvailableRows([SHOP], { from: "2026-10-06", to: "2026-10-06" }));
-    expect(csv).toContain(`total,2026-10-06,2026-10-06,MEP,Capitol Hill,${NOT_YET_AVAILABLE}${",".repeat(21)}USD`);
+    expect(csv).toContain(`total,2026-10-06,2026-10-06,MEP,Capitol Hill,${NOT_YET_AVAILABLE}${",".repeat(24)}USD`);
     expect(csv).not.toMatch(/,0\.00/);
   });
 });

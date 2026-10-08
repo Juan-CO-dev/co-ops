@@ -72,7 +72,7 @@ describe("summary: only `sale` checks are sales; exclusions are named; ezCater c
   });
   const { totals, buckets } = summarizeSales([raw], "2026-10-06", "2026-10-07", "day");
   it("gift cards are excluded from sales and shown as their own line", () => {
-    expect(totals.toastNetCents).toBe(21000);
+    expect(totals.toastChecksCents).toBe(21000);
     expect(totals.giftCardCents).toBe(5000);
     expect(totals.giftCardChecks).toBe(2);
   });
@@ -108,7 +108,7 @@ describe("summary: only `sale` checks are sales; exclusions are named; ezCater c
   it("disjoint windows add, never double count", () => {
     const a = day({ classes: [{ business_date: "2026-10-01", sale_class: "sale", checks: 1, amount_cents: 100, tax_cents: 0, amount_missing: 0 }] });
     const b = day({ classes: [{ business_date: "2026-09-01", sale_class: "sale", checks: 2, amount_cents: 300, tax_cents: 0, amount_missing: 0 }] });
-    expect(summarizeSales([a, b], "2026-09-01", "2026-10-01", "month").totals).toMatchObject({ toastNetCents: 400, checks: 3 });
+    expect(summarizeSales([a, b], "2026-09-01", "2026-10-01", "month").totals).toMatchObject({ toastChecksCents: 400, checks: 3 });
   });
   it("a non-numeric amount from the database throws instead of becoming 0", () => {
     expect(() => summarizeSales([day({ classes: [{ business_date: "2026-10-06", sale_class: "sale", checks: 1, amount_cents: "abc", tax_cents: 0, amount_missing: 0 }] })], "2026-10-06", "2026-10-06", "day")).toThrow("sales_amount_invalid");

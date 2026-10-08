@@ -30,6 +30,7 @@ import type { TeamOperatingHealth } from "@/lib/team-metrics";
 import type { CalendarEvent } from "@/lib/catering/insights-shared";
 import type { MenuCostRow } from "@/lib/menu-costing-shared";
 import type { BreakdownRow, SalesBucket, SalesCheckRow, SalesExportView, SalesEzcaterRow, SalesTotals } from "@/lib/sales-reports-shared";
+import { rowAverageCents, salesHasData } from "@/lib/sales-reports-shared";
 
 // ── Cells ───────────────────────────────────────────────────────────────────────────────────
 
@@ -137,10 +138,10 @@ const PERIOD = [col("period_start", "date"), col("period_end", "date")];
 export const SALES_EXPORT_COLUMNS: Record<SalesExportView, readonly ExportColumn[]> = {
   summary: [
     col("row_type"), ...PERIOD, ...SHOP, col("coverage_status"), col("covered_days", "int"), col("expected_days", "int"),
-    col("toast_net_sales", "money"), col("checks", "int"), col("average_check", "money"), col("discounts", "money"),
-    col("discount_count", "int"), col("sales_tax", "money"), col("tips", "money"), col("refunds", "money"),
-    col("refund_count", "int"), col("ezcater_sales", "money"), col("ezcater_orders", "int"), col("total_sales", "money"),
-    col("amount_missing", "int"), col("gift_cards_excluded", "money"), col("gift_card_checks_excluded", "int"),
+    col("toast_check_totals", "money"), col("checks", "int"), col("average_check", "money"), col("discounts", "money"),
+    col("discount_count", "int"), col("sales_tax", "money"), col("tips", "money"), col("refunds_captured_so_far", "money"),
+    col("refunds_captured_count", "int"), col("ezcater_sales", "money"), col("ezcater_orders", "int"), col("sales_before_refunds", "money"),
+    col("amount_missing", "int"), col("unknown_tax", "int"), col("unknown_tips", "int"), col("unknown_discounts", "int"), col("gift_cards_excluded", "money"), col("gift_card_checks_excluded", "int"),
     col("ezcater_linked_toast_excluded", "money"), col("ezcater_linked_checks_excluded", "int"), col("void_checks", "int"),
     col("currency", "currency"),
   ],
@@ -157,12 +158,12 @@ export const SALES_EXPORT_COLUMNS: Record<SalesExportView, readonly ExportColumn
   ],
   servers: [
     ...PERIOD, ...SHOP, col("server_first_name"), col("server_ref"), col("checks", "int"), col("sales", "money"),
-    col("average_check", "money"), col("currency", "currency"),
+    col("amount_missing", "int"), col("average_check", "money"), col("currency", "currency"),
   ],
   checks: [
     col("business_date", "date"), ...SHOP, col("check_guid"), col("opened_at", "datetime"), col("channel"), col("provider"),
     col("dining_option"), col("server_first_name"), col("units", "number"), col("discounts", "money"),
-    col("net_sales", "money"), col("sales_tax", "money"), col("currency", "currency"),
+    col("check_total", "money"), col("sales_tax", "money"), col("currency", "currency"),
   ],
   catering: [
     col("event_date", "date"), ...SHOP, col("ezcater_order_number"), col("headcount", "int"), col("subtotal", "money"),
@@ -339,14 +340,14 @@ const periodCells = (p: Period): ExportRow => ({ period_start: p.from, period_en
 function salesTotalsCells(t: SalesTotals): ExportRow {
   // A missing coverage day leaves the money as what was captured, labelled by coverage_status +
   // covered_days; a window with NO capture at all exports empty metrics, never zeros.
-  const none = t.coveredDays === 0 && t.checks === 0 && t.ezcaterOrders === 0;
+  const none = !salesHasData(t);
   const v = (x: number | null) => (none ? null : x);
   return {
     coverage_status: t.coverage, covered_days: t.coveredDays, expected_days: t.expectedDays,
-    toast_net_sales: v(t.toastNetCents), checks: v(t.checks), average_check: v(t.avgCheckCents), discounts: v(t.discountCents),
-    discount_count: v(t.discountCount), sales_tax: v(t.taxCents), tips: v(t.tipCents), refunds: v(t.refundCents),
-    refund_count: v(t.refundCount), ezcater_sales: v(t.ezcaterCents), ezcater_orders: v(t.ezcaterOrders), total_sales: v(t.totalCents),
-    amount_missing: t.amountMissing, gift_cards_excluded: v(t.giftCardCents), gift_card_checks_excluded: v(t.giftCardChecks),
+    toast_check_totals: v(t.toastChecksCents), checks: v(t.checks), average_check: v(t.avgCheckCents), discounts: v(t.discountCents),
+    discount_count: v(t.discountCount), sales_tax: v(t.taxCents), tips: v(t.tipCents), refunds_captured_so_far: v(t.refundCents),
+    refunds_captured_count: v(t.refundCount), ezcater_sales: v(t.ezcaterCents), ezcater_orders: v(t.ezcaterOrders), sales_before_refunds: v(t.totalCents),
+    amount_missing: t.amountMissing, unknown_tax: t.taxMissing, unknown_tips: t.tipMissing, unknown_discounts: t.discountMissing, gift_cards_excluded: v(t.giftCardCents), gift_card_checks_excluded: v(t.giftCardChecks),
     ezcater_linked_toast_excluded: v(t.ezcaterLinkedCents), ezcater_linked_checks_excluded: v(t.ezcaterLinkedChecks), void_checks: v(t.voidChecks),
   };
 }
@@ -374,7 +375,7 @@ export function salesBreakdownRows(view: Exclude<SalesExportView, "summary" | "c
       case "discounts": return { ...base, discount_name: r.label ?? "", applications: r.count, checks: r.checks, amount: r.cents, amount_missing: r.amountMissing };
       case "servers": return {
         ...base, server_first_name: r.label, server_ref: r.key ? r.key.slice(-4) : null, checks: r.checks, sales: r.cents,
-        average_check: r.checks > 0 ? Math.round(r.cents / r.checks) : null,
+        amount_missing: r.amountMissing, average_check: rowAverageCents(r),
       };
     }
   });
@@ -384,7 +385,7 @@ export function salesCheckRows(rows: readonly SalesCheckRow[], shop: ShopRef): E
   return rows.map((r) => ({
     business_date: r.businessDate, ...shopCells(shop), check_guid: r.checkGuid, opened_at: r.openedAt, channel: r.channel,
     provider: r.provider, dining_option: r.diningOption, server_first_name: r.serverName, units: r.units,
-    discounts: r.discountCents, net_sales: r.amountCents, sales_tax: r.taxCents,
+    discounts: r.discountCents, check_total: r.amountCents, sales_tax: r.taxCents,
   }));
 }
 

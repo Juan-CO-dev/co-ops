@@ -15,7 +15,8 @@ import { formatDateLabel, formatQuantity, formatTime } from "@/lib/i18n/format";
 import type { TranslationKey } from "@/lib/i18n/types";
 import { reportNavigationHref } from "@/lib/report-navigation";
 import { canReadScopedReport } from "@/lib/report-scope";
-import { SALES_READ_MIN, SalesReportError, loadSalesCheckDetail, type SalesCheckDetail } from "@/lib/sales-reports";
+import { SALES_READ_MIN, SalesReportError, loadSalesCheckDetail, salesDayParams, type SalesCheckDetail } from "@/lib/sales-reports";
+import { operationalNow } from "@/lib/midshift";
 import { requireSessionFromHeaders } from "@/lib/session";
 
 type Params = Record<string, string | undefined>;
@@ -47,7 +48,8 @@ export default async function SalesCheckPage({ params, searchParams }: { params:
 
   // Back goes to the list page the viewer came from (range, filters, cursor and shop preserved).
   const navParams: Params = { ...query, date: undefined };
-  const dayContext: Params = { location: locationId, hubLocation: query.hubLocation, range: "custom", from: detail.businessDate, to: detail.businessDate, g: "day" };
+  // Same-day links keep Today semantics for today's check (Astra P2-8).
+  const dayContext: Params = { location: locationId, hubLocation: query.hubLocation, ...salesDayParams(detail.businessDate, detail.businessDate, operationalNow(new Date()).date) };
   const paymentType = (type: string | null) => type && PAYMENT_TYPES.includes(type) ? t(`reports.sales.payment.${type}` as TranslationKey) : t("reports.sales.payment.OTHER");
   const row = (label: string, value: ReactNode) => <div className="flex min-h-[32px] items-baseline justify-between gap-3 border-t border-co-border py-1 text-sm"><span className="text-co-text-muted">{label}</span><span className="text-right font-semibold">{value}</span></div>;
 
@@ -70,7 +72,7 @@ export default async function SalesCheckPage({ params, searchParams }: { params:
       {row(t("reports.sales.col.servers"), serverLabel(language, detail.serverGuid ?? "", detail.serverName))}
       {row(t("reports.sales.check.opened"), detail.openedAt ? formatTime(detail.openedAt, language) : "—")}
       {row(t("reports.sales.check.closed"), detail.closedAt ? formatTime(detail.closedAt, language) : "—")}
-      {row(t("reports.sales.toast_net"), <Money cents={detail.amountCents} language={language} />)}
+      {row(t("reports.sales.toast_checks"), <Money cents={detail.amountCents} language={language} />)}
       {row(t("reports.sales.tax"), <Money cents={detail.taxCents} language={language} />)}
       {row(t("reports.sales.check.total"), <Money cents={detail.totalCents} language={language} />)}
     </section>
@@ -84,7 +86,7 @@ export default async function SalesCheckPage({ params, searchParams }: { params:
 
     <section className={`${salesCard} mb-3`} aria-label={t("reports.sales.view.discounts")}>
       <h2 className="mb-2 text-xs font-bold tracking-wide text-co-text-muted">{t("reports.sales.view.discounts")}</h2>
-      {detail.discounts.length ? detail.discounts.map((d) => <div key={d.ordinal}>{row(`${discountLabel(language, d.name)}${d.itemName ? ` · ${d.itemName}` : ""}`, <Money cents={d.amountCents} language={language} />)}</div>)
+      {detail.discounts.length ? detail.discounts.map((d) => <div key={d.ordinal}>{row(`${discountLabel(language, d.name)}${d.itemName ? ` · ${d.itemName}` : ""}${d.counted ? "" : ` · ${t("reports.sales.check.discount_not_counted")}`}`, <Money cents={d.amountCents} language={language} />)}</div>)
         : <p className="text-sm text-co-text-muted">{t("reports.sales.check.no_discounts")}</p>}
     </section>
 

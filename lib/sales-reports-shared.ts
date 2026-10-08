@@ -189,9 +189,9 @@ const n = (v: Num): number => {
 };
 
 export interface DailyRaw {
-  classes: Array<{ business_date: string; sale_class: SaleClass; checks: Num; amount_cents: Num; tax_cents: Num; amount_missing: Num }>;
-  tips: Array<{ business_date: string; tip_cents: Num }>;
-  discounts: Array<{ business_date: string; count: Num; cents: Num }>;
+  classes: Array<{ business_date: string; sale_class: SaleClass; checks: Num; amount_cents: Num; tax_cents: Num; amount_missing: Num; tax_missing?: Num }>;
+  tips: Array<{ business_date: string; tip_cents: Num; tip_missing?: Num }>;
+  discounts: Array<{ business_date: string; count: Num; cents: Num; amount_missing?: Num }>;
   refunds: Array<{ business_date: string; count: Num; refund_cents: Num; refund_tip_cents: Num }>;
   captured_days: string[];
   ezcater: Array<{ business_date: string; orders: Num; subtotal_cents: Num; amount_missing: Num }>;
@@ -204,8 +204,13 @@ export function coverageStatus(covered: number, expected: number): CoverageStatu
 }
 
 export interface SalesTotals {
-  /** Toast net sales: eligible (`sale`) check amounts, pre-tax, pre-tip, after discounts. */
-  toastNetCents: number;
+  /**
+   * Toast CHECK TOTALS of eligible (`sale`) checks: pre-tax, pre-tip, after discounts, BEFORE refunds.
+   * NOT reconciled net sales (Astra P1-1): Toast's contract also removes deferred gift-card /
+   * house-account selections and fundraising charges, which the capture does not record. Whole
+   * E-Gift Card checks are excluded by channel; a gift card sold on a normal check is not.
+   */
+  toastChecksCents: number;
   checks: number;
   /** Eligible check sales / eligible checks (never an average of averages). */
   avgCheckCents: number | null;
@@ -213,13 +218,21 @@ export interface SalesTotals {
   tipCents: number;
   discountCents: number;
   discountCount: number;
-  /** Refunds dated by their REFUND business date (shown beside sales, never netted silently). */
+  /**
+   * Refunds CAPTURED SO FAR, dated by their REFUND business date and classified like sales (shown
+   * beside sales, never netted). Capture polls recent business dates only, so a refund today against
+   * an older order appears only once that order's day is re-captured (Astra P1-2; follow-up filed).
+   */
   refundCents: number;
   refundCount: number;
-  /** ezCater orders (source of truth), subtotal by event date. */
+  /**
+   * ezCater orders (source of truth): subtotal AS REPORTED by ezCater, by event date. Whether that
+   * subtotal is before or after ezCater's own discounts is unverified (no discounted order yet), so
+   * nothing is subtracted speculatively.
+   */
   ezcaterCents: number;
   ezcaterOrders: number;
-  /** Toast net + ezCater: the one total, with nothing counted twice. */
+  /** Sales BEFORE refunds: Toast check totals + ezCater subtotals, with nothing counted twice. */
   totalCents: number;
   /** Named exclusions (never in any total). */
   giftCardCents: number;
@@ -230,6 +243,10 @@ export interface SalesTotals {
   excessFoodChecks: number;
   /** Eligible checks / ezCater orders with no amount: the total above is then PARTIAL. */
   amountMissing: number;
+  /** Unknown tax / tip / discount amounts (Astra P2-10): counted, never read as $0. */
+  taxMissing: number;
+  tipMissing: number;
+  discountMissing: number;
   coveredDays: number;
   expectedDays: number;
   coverage: CoverageStatus;
@@ -238,10 +255,10 @@ export interface SalesBucket extends SalesTotals { key: string; from: string; to
 
 function emptyTotals(expectedDays: number): SalesTotals {
   return {
-    toastNetCents: 0, checks: 0, avgCheckCents: null, taxCents: 0, tipCents: 0, discountCents: 0, discountCount: 0,
+    toastChecksCents: 0, checks: 0, avgCheckCents: null, taxCents: 0, tipCents: 0, discountCents: 0, discountCount: 0,
     refundCents: 0, refundCount: 0, ezcaterCents: 0, ezcaterOrders: 0, totalCents: 0, giftCardCents: 0, giftCardChecks: 0,
     ezcaterLinkedCents: 0, ezcaterLinkedChecks: 0, voidChecks: 0, excessFoodChecks: 0, amountMissing: 0,
-    coveredDays: 0, expectedDays, coverage: "missing",
+    taxMissing: 0, tipMissing: 0, discountMissing: 0, coveredDays: 0, expectedDays, coverage: "missing",
   };
 }
 
@@ -252,7 +269,8 @@ function addDay(t: SalesTotals, day: DayFacts): void {
     const checks = n(c.checks);
     switch (c.sale_class) {
       case "sale":
-        t.toastNetCents += cents; t.checks += checks; t.taxCents += n(c.tax_cents); t.amountMissing += n(c.amount_missing);
+        t.toastChecksCents += cents; t.checks += checks; t.taxCents += n(c.tax_cents); t.amountMissing += n(c.amount_missing);
+        t.taxMissing += n(c.tax_missing);
         break;
       case "gift_card": t.giftCardCents += cents; t.giftCardChecks += checks; break;
       case "ezcater_linked": t.ezcaterLinkedCents += cents; t.ezcaterLinkedChecks += checks; break;
@@ -260,21 +278,22 @@ function addDay(t: SalesTotals, day: DayFacts): void {
       case "excess_food": t.excessFoodChecks += checks; break;
     }
   }
-  t.tipCents += day.tipCents;
-  t.discountCents += day.discountCents; t.discountCount += day.discountCount;
+  t.tipCents += day.tipCents; t.tipMissing += day.tipMissing;
+  t.discountCents += day.discountCents; t.discountCount += day.discountCount; t.discountMissing += day.discountMissing;
   t.refundCents += day.refundCents; t.refundCount += day.refundCount;
   t.ezcaterCents += day.ezcaterCents; t.ezcaterOrders += day.ezcaterOrders; t.amountMissing += day.ezcaterMissing;
   if (day.captured) t.coveredDays += 1;
 }
 function finish(t: SalesTotals): SalesTotals {
-  t.totalCents = t.toastNetCents + t.ezcaterCents;
-  t.avgCheckCents = t.checks > 0 ? Math.round(t.toastNetCents / t.checks) : null;
+  t.totalCents = t.toastChecksCents + t.ezcaterCents;
+  // An average over a sum with unknown amounts is not an average (Astra P2-11): suppressed.
+  t.avgCheckCents = t.checks > 0 && t.amountMissing === 0 ? Math.round(t.toastChecksCents / t.checks) : null;
   t.coverage = coverageStatus(t.coveredDays, t.expectedDays);
   return t;
 }
 
 interface DayFacts {
-  classes: DailyRaw["classes"]; tipCents: number; discountCents: number; discountCount: number;
+  classes: DailyRaw["classes"]; tipCents: number; tipMissing: number; discountCents: number; discountCount: number; discountMissing: number;
   refundCents: number; refundCount: number; ezcaterCents: number; ezcaterOrders: number; ezcaterMissing: number; captured: boolean;
 }
 
@@ -284,15 +303,15 @@ function dayIndex(raws: readonly DailyRaw[]): Map<string, DayFacts> {
   const day = (d: string) => {
     let f = days.get(d);
     if (!f) {
-      f = { classes: [], tipCents: 0, discountCents: 0, discountCount: 0, refundCents: 0, refundCount: 0, ezcaterCents: 0, ezcaterOrders: 0, ezcaterMissing: 0, captured: false };
+      f = { classes: [], tipCents: 0, tipMissing: 0, discountCents: 0, discountCount: 0, discountMissing: 0, refundCents: 0, refundCount: 0, ezcaterCents: 0, ezcaterOrders: 0, ezcaterMissing: 0, captured: false };
       days.set(d, f);
     }
     return f;
   };
   for (const raw of raws) {
     for (const c of raw.classes ?? []) day(c.business_date).classes.push(c);
-    for (const r of raw.tips ?? []) day(r.business_date).tipCents += n(r.tip_cents);
-    for (const r of raw.discounts ?? []) { const f = day(r.business_date); f.discountCents += n(r.cents); f.discountCount += n(r.count); }
+    for (const r of raw.tips ?? []) { const f = day(r.business_date); f.tipCents += n(r.tip_cents); f.tipMissing += n(r.tip_missing); }
+    for (const r of raw.discounts ?? []) { const f = day(r.business_date); f.discountCents += n(r.cents); f.discountCount += n(r.count); f.discountMissing += n(r.amount_missing); }
     for (const r of raw.refunds ?? []) { const f = day(r.business_date); f.refundCents += n(r.refund_cents); f.refundCount += n(r.count); }
     for (const r of raw.ezcater ?? []) { const f = day(r.business_date); f.ezcaterCents += n(r.subtotal_cents); f.ezcaterOrders += n(r.orders); f.ezcaterMissing += n(r.amount_missing); }
     for (const d of raw.captured_days ?? []) day(d).captured = true;
@@ -328,6 +347,7 @@ export function summarizeSales(raws: readonly DailyRaw[], from: string, to: stri
 export function salesDeltaPct(current: SalesTotals, previous: SalesTotals | null): number | null {
   if (!previous || current.coverage !== "complete" || previous.coverage !== "complete") return null;
   if (current.amountMissing > 0 || previous.amountMissing > 0 || previous.totalCents <= 0) return null;
+  if (unknownComponents(current) > 0 || unknownComponents(previous) > 0) return null;
   return Math.round(((current.totalCents - previous.totalCents) / previous.totalCents) * 100);
 }
 
@@ -476,7 +496,8 @@ export interface SalesCheckDetail {
   channel: string; provider: string | null; diningOption: string | null; saleClass: SaleClass;
   serverName: string | null; serverGuid: string | null; ezcaterOrderNumber: string | null;
   amountCents: number | null; taxCents: number | null; totalCents: number | null;
-  discounts: Array<{ ordinal: number; name: string | null; amountCents: number | null; itemName: string | null }>;
+  /** `counted` = false for a discount on a voided/deleted line (shown, never summed). */
+  discounts: Array<{ ordinal: number; name: string | null; amountCents: number | null; itemName: string | null; counted: boolean }>;
   serviceCharges: Array<{ ordinal: number; name: string | null; amountCents: number | null; gratuity: boolean }>;
   payments: Array<{ type: string | null; status: string | null; amountCents: number | null; tipCents: number | null;
     paidBusinessDate: string | null; refundAmountCents: number | null; refundBusinessDate: string | null }>;
@@ -534,6 +555,7 @@ export function toCheckDetail(r: Record<string, unknown>): SalesCheckDetail {
     discounts: ((r.discounts as Array<Record<string, unknown>>) ?? []).map((d) => ({
       ordinal: n(d.ordinal as Num), name: (d.name as string | null) ?? null, amountCents: centsOrNull(d.amount_cents as Num),
       itemName: d.selection_guid ? nameBySelection.get(String(d.selection_guid)) ?? null : null,
+      counted: d.counted === undefined ? true : !!d.counted,
     })),
     serviceCharges: ((r.service_charges as Array<Record<string, unknown>>) ?? []).map((s) => ({
       ordinal: n(s.ordinal as Num), name: (s.name as string | null) ?? null, amountCents: centsOrNull(s.amount_cents as Num), gratuity: !!s.gratuity,
@@ -587,4 +609,53 @@ export interface SalesSummaryDto {
   deltaPct: number | null;
   /** Explicit "today" only: when the latest completed capture of today finished (null = none yet). */
   capturedAt: string | null;
+}
+
+/** Unknown tax/tip/discount amounts in a total (each is shown as partial, never as a measured $0). */
+export function unknownComponents(t: Pick<SalesTotals, "taxMissing" | "tipMissing" | "discountMissing">): number {
+  return t.taxMissing + t.tipMissing + t.discountMissing;
+}
+
+/**
+ * Does a total have ANY source behind it? No completed capture day and no row at all = unavailable
+ * (Astra P2-9): the screen and the export both render it as "—"/blank, never as $0.00.
+ */
+export function salesHasData(t: Pick<SalesTotals, "coveredDays" | "checks" | "ezcaterOrders">): boolean {
+  return !(t.coveredDays === 0 && t.checks === 0 && t.ezcaterOrders === 0);
+}
+/** A money value as it may be SHOWN: null (unavailable) when the total has no source behind it. */
+export function shownCents(t: Pick<SalesTotals, "coveredDays" | "checks" | "ezcaterOrders">, cents: number | null): number | null {
+  return salesHasData(t) ? cents : null;
+}
+
+/**
+ * Drill params for a business-date window (Astra P2-8). A window that is exactly TODAY keeps
+ * `range=today` (today-so-far semantics); a custom range would clamp to yesterday and drill empty.
+ */
+export function salesDayParams(from: string, to: string, today: string, grain: ReportGrain = "day"): Record<string, string> {
+  if (from === today && to === today) return { range: "today", from: today, to: today, g: "day" };
+  return { range: "custom", from, to, g: grain };
+}
+
+/** Average of a breakdown row only when every amount is known (Astra P2-11): else null, never a partial mean. */
+export function rowAverageCents(r: { cents: number; checks: number; amountMissing: number }): number | null {
+  return r.checks > 0 && r.amountMissing === 0 ? Math.round(r.cents / r.checks) : null;
+}
+
+/** Catering pipeline value (0195 valuation) for one window; unvalued leads are counted, not $0. */
+export interface CateringValuesRaw {
+  completed_events: Num; completed_value_cents: Num; completed_unvalued: Num;
+  confirmed_events: Num; confirmed_value_cents: Num; confirmed_unvalued: Num;
+}
+export interface CateringValues {
+  completedEvents: number; completedCents: number; completedUnvalued: number;
+  confirmedEvents: number; confirmedCents: number; confirmedUnvalued: number;
+}
+export function mergeCateringValues(raws: readonly CateringValuesRaw[]): CateringValues {
+  const out: CateringValues = { completedEvents: 0, completedCents: 0, completedUnvalued: 0, confirmedEvents: 0, confirmedCents: 0, confirmedUnvalued: 0 };
+  for (const r of raws) {
+    out.completedEvents += n(r.completed_events); out.completedCents += n(r.completed_value_cents); out.completedUnvalued += n(r.completed_unvalued);
+    out.confirmedEvents += n(r.confirmed_events); out.confirmedCents += n(r.confirmed_value_cents); out.confirmedUnvalued += n(r.confirmed_unvalued);
+  }
+  return out;
 }

@@ -26,7 +26,7 @@ import { reportNavigationHref } from "@/lib/report-navigation";
 import { canReadScopedReport } from "@/lib/report-scope";
 import {
   SALES_EMPTY_KEY, SALES_GRAINS, SALES_RANGES, SALES_READ_MIN, SalesReportError, VIEW_DIMENSION, isSalesView, loadSalesBreakdown,
-  loadSalesSummary, pageRows, resolveSalesRange, salesRangeParams, type BreakdownRow, type SalesView,
+  loadSalesSummary, pageRows, resolveSalesRange, salesDayParams, salesRangeParams, type BreakdownRow, type SalesView,
 } from "@/lib/sales-reports";
 import { requireSessionFromHeaders } from "@/lib/session";
 
@@ -43,7 +43,8 @@ export default async function SalesPage({ searchParams }: { searchParams: Promis
 
   const language = auth.user.language;
   const t = tFor(language);
-  const range = resolveSalesRange(params, operationalNow(new Date()).date);
+  const today = operationalNow(new Date()).date;
+  const range = resolveSalesRange(params, today);
   const view: SalesView = isSalesView(params.view) ? params.view : "summary";
   // Canonical context: the effective range, the view, the hub provenance. Cursors/offsets never ride along.
   const context: Params = { ...salesRangeParams(range), view, hubLocation: params.hubLocation, location: locationId };
@@ -66,7 +67,8 @@ export default async function SalesPage({ searchParams }: { searchParams: Promis
 
   const panel = async (shopId: string): Promise<ReactNode> => {
     const shopHref = (path: string, extra: Params = {}) => href(path, { view: undefined, ...extra }, shopId);
-    const checksHref = (from: string, to: string) => shopHref("/reports/sales/checks", { range: "custom", from, to });
+    // A window that is exactly today keeps today-so-far semantics (Astra P2-8).
+    const checksHref = (from: string, to: string) => shopHref("/reports/sales/checks", salesDayParams(from, to, today, range.grain));
     let body: ReactNode;
     try {
       if (view === "summary") {

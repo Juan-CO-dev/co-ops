@@ -21,9 +21,9 @@ import { canReadScopedReport, type ReportScopeViewer } from "@/lib/report-scope"
 import { validReportDate } from "@/lib/report-range";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import {
-  SALES_PAGE_SIZE, SALES_READ_MIN, SALES_WINDOW_CONCURRENCY, mergeBreakdown, mergeEzcaterSummaries, salesDeltaPct,
+  SALES_PAGE_SIZE, SALES_READ_MIN, SALES_WINDOW_CONCURRENCY, mergeBreakdown, mergeCateringValues, mergeEzcaterSummaries, salesDeltaPct,
   salesListContext, salesWindows, summarizeSales, toCheckDetail, toCheckRow, toEzcaterRow,
-  type BreakdownRaw, type BreakdownRow, type DailyRaw, type EzcaterSummary, type EzcaterSummaryRaw,
+  type BreakdownRaw, type BreakdownRow, type CateringValues, type CateringValuesRaw, type DailyRaw, type EzcaterSummary, type EzcaterSummaryRaw,
   type SalesCheckDetail, type SalesCheckFilters, type SalesCheckRow, type SalesDimension, type SalesEzcaterRow,
   type SalesRange, type SalesSummaryDto,
 } from "@/lib/sales-reports-shared";
@@ -225,8 +225,8 @@ export interface SalesCateringDto {
   toastCatering: BreakdownRow[];
   /** ezCater orders (source of truth) and how they line up with Toast. */
   ezcater: EzcaterSummary;
-  /** 0195 pipeline values by EVENT date: what was earned vs what is still to earn. Never POS sales. */
-  pipeline: { completedCents: number; completedEvents: number; confirmedCents: number; confirmedEvents: number } | null;
+  /** 0195 valuation by EVENT date, read per <=31-day window (never all history): earned vs to earn. Never POS sales. */
+  pipeline: CateringValues;
   orders: SalesEzcaterPage;
 }
 
@@ -234,23 +234,21 @@ export async function loadSalesCatering(viewer: ReportScopeViewer, args: { locat
   assertSalesScope(viewer, args.locationId);
   const sb = deps.client ?? getServiceRoleClient();
   const { locationId, range } = args;
-  if (range.empty) return { locationId, toastCatering: [], ezcater: mergeEzcaterSummaries([]), pipeline: null, orders: { rows: [], nextCursor: null } };
+  if (range.empty) return { locationId, toastCatering: [], ezcater: mergeEzcaterSummaries([]), pipeline: mergeCateringValues([]), orders: { rows: [], nextCursor: null } };
+  const windows = salesWindows(range.from, range.to);
   const [channels, summaries, pipeline, orders] = await Promise.all([
     loadSalesBreakdown(viewer, { locationId, range, dimension: "channel" }, { client: sb }),
-    mapBounded(salesWindows(range.from, range.to), SALES_WINDOW_CONCURRENCY,
+    mapBounded(windows, SALES_WINDOW_CONCURRENCY,
       (w) => call<EzcaterSummaryRaw>(sb, "sales_report_ezcater_summary", windowArgs(locationId, w))),
-    call<Record<string, unknown> | null>(sb, "catering_insights_window", { p_location_ids: [locationId], p_from: range.from, p_to: range.to }),
+    mapBounded(windows, SALES_WINDOW_CONCURRENCY,
+      (w) => call<CateringValuesRaw>(sb, "sales_report_catering_values", windowArgs(locationId, w))),
     loadSalesEzcaterOrders(viewer, { locationId, range, cursor: args.cursor, pageSize: args.pageSize }, { client: sb }),
   ]);
-  const num = (v: unknown) => (typeof v === "number" ? v : Number(v ?? 0));
   return {
     locationId,
     toastCatering: channels.filter((r) => r.channel === "catering" && r.saleClass === "sale"),
     ezcater: mergeEzcaterSummaries(summaries),
-    pipeline: pipeline ? {
-      completedCents: num(pipeline.completed_value_cents), completedEvents: num(pipeline.completed_events),
-      confirmedCents: num(pipeline.confirmed_value_cents), confirmedEvents: num(pipeline.confirmed_events),
-    } : null,
+    pipeline: mergeCateringValues(pipeline),
     orders,
   };
 }
