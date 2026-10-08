@@ -1,20 +1,12 @@
 /**
- * Mid-shift sales pulse — the READ layer (council 2026-07-31). Two honest
- * lanes over `toast_sales_events` (never the depletion ledger — the
- * double-count law keeps drift ledger-side, display event-side):
- *
- *   TODAY-SO-FAR — whatever the same-day triggers (closing-confirm /
- *     debounced on-visit pull) have landed; "as of" = max pulled_at.
- *   YESTERDAY & PACE — yesterday's final numbers + Δ% vs the same weekday
- *     last week, and a trailing same-weekday baseline for today's context.
- *
- * One indexed read per business date (7 total, parallel) — typical days are
- * a few hundred rows, but the table is append-only snapshot-versioned (edits/
- * voids append new versions), so each read pages past the PostgREST 1000-row
- * cap on a stable order rather than trusting the typical case (the PR #63
- * lesson). The pure math lives in midshift-sales-shared (tested).
+ * Mid-shift sales pulse: legacy selection events remain the default until CC
+ * enables DEPLETION_SOURCE=capture. Capture reads completed day coverage,
+ * check amounts for pre-tax net sales, and top-level selection units.
+ * Completed empty days are zero; absent coverage or missing money is unknown.
+ * Yesterday and the trailing same-weekday baseline use the same source.
  */
 
+import { cache } from "react";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import {
@@ -28,12 +20,18 @@ import {
   type TopItem,
 } from "@/lib/midshift-sales-shared";
 
+import { loadCapturedToastDay } from "@/lib/toast/depletion";
+import { capturedDayPulse } from "@/lib/toast/capture-pulse-shared";
+
 export type { DaySalesAgg, TopItem };
 
 const BASELINE_WEEKS = 4;
 const TOP_ITEMS_LIMIT = 3;
 
 export interface SalesPulse {
+  source?: "legacy" | "capture";
+  /** A requested capture day is missing or has unreviewed channel coverage. */
+  coverageDegraded?: boolean;
   todayYmd: string;
   /** Today's aggregate, or null when no events have been pulled for today yet. */
   today: DaySalesAgg | null;
@@ -56,36 +54,38 @@ interface QueriedRow extends Omit<SalesEventRow, "quantity"> {
 
 const PAGE_SIZE = 1000;
 
-async function loadDayRows(
-  service: SupabaseClient,
-  locationId: string,
-  businessDate: string,
-): Promise<{ rows: SalesEventRow[]; maxPulledAt: string | null }> {
-  // Inline pagination (not selectAllRows) to preserve the error throw — the
-  // page boundary catches it and degrades to the honest empty panel.
-  const raw: QueriedRow[] = [];
+type PulseDayRows = { rows: SalesEventRow[]; maxPulledAt: string | null; aggregate?: DaySalesAgg; coverageDegraded?: boolean };
+
+async function loadDaysRows(service: SupabaseClient, locationId: string, dates: readonly string[]): Promise<PulseDayRows[]> {
+  if (process.env.DEPLETION_SOURCE === "capture") {
+    return Promise.all(dates.map(async (businessDate): Promise<PulseDayRows> => {
+      const captured = await loadCapturedToastDay(locationId, businessDate);
+      if (!captured) return { rows: [], maxPulledAt: null, coverageDegraded: true };
+      try { return { ...capturedDayPulse(businessDate, captured.orders), maxPulledAt: captured.coverage.finishedAt, coverageDegraded: captured.coverage.configDegraded }; }
+      catch (error) {
+        if (error instanceof Error && error.message === "capture_pulse_amount_missing") return { rows: [], maxPulledAt: null, coverageDegraded: true };
+        throw error;
+      }
+    }));
+  }
+  // All seven requested dates share one paged query, including sparse baseline days.
+  const byDate = new Map(dates.map(date => [date, { rows: [], maxPulledAt: null } as PulseDayRows]));
   for (let from = 0; ; from += PAGE_SIZE) {
-    const { data, error } = await service
-      .from("toast_sales_events")
-      .select(
-        "business_date, check_guid, selection_guid, parent_selection_guid, item_name, quantity, price_cents, voided, snapshot_version, pulled_at",
-      )
-      .eq("location_id", locationId)
-      .eq("business_date", businessDate)
-      .order("id", { ascending: true })
-      .range(from, from + PAGE_SIZE - 1)
-      .returns<QueriedRow[]>();
-    if (error) throw new Error(`midshift sales ${businessDate}: ${error.message}`);
+    const { data, error } = await service.from("toast_sales_events")
+      .select("business_date, check_guid, selection_guid, parent_selection_guid, item_name, quantity, price_cents, voided, snapshot_version, pulled_at")
+      .eq("location_id", locationId).in("business_date", [...byDate.keys()])
+      .order("id", { ascending: true }).range(from, from + PAGE_SIZE - 1).returns<QueriedRow[]>();
+    if (error) throw new Error(`midshift sales: ${error.message}`);
     const page = data ?? [];
-    raw.push(...page);
+    for (const row of page) {
+      const day = byDate.get(row.business_date);
+      if (!day) continue;
+      day.rows.push({ ...row, quantity: Number(row.quantity) });
+      if (day.maxPulledAt === null || row.pulled_at > day.maxPulledAt) day.maxPulledAt = row.pulled_at;
+    }
     if (page.length < PAGE_SIZE) break;
   }
-  let maxPulledAt: string | null = null;
-  const rows = raw.map((r) => {
-    if (maxPulledAt == null || r.pulled_at > maxPulledAt) maxPulledAt = r.pulled_at;
-    return { ...r, quantity: Number(r.quantity) };
-  });
-  return { rows, maxPulledAt };
+  return dates.map(date => byDate.get(date)!);
 }
 
 /** The all-null pulse — the render fallback when the sales read fails, so a
@@ -93,6 +93,7 @@ async function loadDayRows(
  *  empty state instead of taking down the operational pulse. */
 export function emptySalesPulse(todayYmd: string): SalesPulse {
   return {
+    source: process.env.DEPLETION_SOURCE === "capture" ? "capture" : "legacy",
     todayYmd,
     today: null,
     yesterday: null,
@@ -104,29 +105,29 @@ export function emptySalesPulse(todayYmd: string): SalesPulse {
   };
 }
 
-export async function loadSalesPulse(
-  service: SupabaseClient,
-  args: { locationId: string; todayYmd: string },
-): Promise<SalesPulse> {
-  const { locationId, todayYmd } = args;
+export function loadSalesPulse(service: SupabaseClient, args: { locationId: string; todayYmd: string }): Promise<SalesPulse> {
+  return loadSalesPulseForRender(service, args.locationId, args.todayYmd);
+}
+
+// Primitive keys deduplicate the seven-day read when multiple panels share a render.
+const loadSalesPulseForRender = cache(async (service: SupabaseClient, locationId: string, todayYmd: string): Promise<SalesPulse> => {
   const yesterdayYmd = addDaysYmd(todayYmd, -1);
   const yesterdayBaseYmd = addDaysYmd(todayYmd, -8); // yesterday's same weekday, one week prior
   const baselineDates = sameWeekdayBaselineDates(todayYmd, BASELINE_WEEKS);
 
-  const [today, yesterday, yesterdayBase, ...baseline] = await Promise.all([
-    loadDayRows(service, locationId, todayYmd),
-    loadDayRows(service, locationId, yesterdayYmd),
-    loadDayRows(service, locationId, yesterdayBaseYmd),
-    ...baselineDates.map((d) => loadDayRows(service, locationId, d)),
-  ]);
+  const loaded = await loadDaysRows(service, locationId, [todayYmd, yesterdayYmd, yesterdayBaseYmd, ...baselineDates]);
+  const today = loaded[0]!;
+  const yesterday = loaded[1]!;
+  const yesterdayBase = loaded[2]!;
+  const baseline = loaded.slice(3);
 
-  const todayAgg = today.rows.length > 0 ? aggregateDaySales(todayYmd, today.rows) : null;
-  const yesterdayAgg = yesterday.rows.length > 0 ? aggregateDaySales(yesterdayYmd, yesterday.rows) : null;
+  const todayAgg = today.aggregate ?? (today.rows.length > 0 ? aggregateDaySales(todayYmd, today.rows) : null);
+  const yesterdayAgg = yesterday.aggregate ?? (yesterday.rows.length > 0 ? aggregateDaySales(yesterdayYmd, yesterday.rows) : null);
   const yesterdayBaseAgg =
-    yesterdayBase.rows.length > 0 ? aggregateDaySales(yesterdayBaseYmd, yesterdayBase.rows) : null;
+    yesterdayBase.aggregate ?? (yesterdayBase.rows.length > 0 ? aggregateDaySales(yesterdayBaseYmd, yesterdayBase.rows) : null);
 
   const baselineAggs = baseline
-    .map((b, i) => (b.rows.length > 0 ? aggregateDaySales(baselineDates[i]!, b.rows) : null))
+    .map((b, i) => (b.aggregate ?? (b.rows.length > 0 ? aggregateDaySales(baselineDates[i]!, b.rows) : null)))
     .filter((a): a is DaySalesAgg => a !== null);
   const baselineAvgCents =
     baselineAggs.length > 0
@@ -134,7 +135,9 @@ export async function loadSalesPulse(
       : null;
 
   return {
+    source: process.env.DEPLETION_SOURCE === "capture" ? "capture" : "legacy",
     todayYmd,
+    coverageDegraded: loaded.some(day => day.coverageDegraded),
     today: todayAgg,
     yesterday: yesterdayAgg,
     yesterdayDeltaPct:
@@ -144,4 +147,4 @@ export async function loadSalesPulse(
     topToday: topItemsForDay(today.rows, TOP_ITEMS_LIMIT),
     lastPulledAt: today.maxPulledAt,
   };
-}
+});

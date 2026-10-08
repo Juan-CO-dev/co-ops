@@ -20,10 +20,23 @@ import {
   PAR_REASON_CODES,
   SILENCING_REASONS,
   classifyParReason,
+  computeBaseRate,
   shouldBadgeSilencePerRow,
   type ParReasonCode,
   type ParReasonInput,
 } from "../lib/dynamic-pars-shared";
+
+it("capture sales fallback lights the prep-dependent reason lane without production", () => {
+  const baseInput = { window: [{ dateEt: "2026-10-06", dayClass: "weekday" as const, salesObserved: true, productionObserved: false }],
+    directOzByDate: new Map([["2026-10-06", 12]]), productionOzByDate: new Map<string, number>(),
+    flattenedOzByDate: new Map([["2026-10-06", 12]]), laneStartAt: "2026-10-06" };
+  const legacy = computeBaseRate(baseInput);
+  const capture = computeBaseRate({ ...baseInput, salesFallbackComplete: true });
+  expect(classifyParReason(input({ laneComplete: legacy.laneComplete }))).toBe("no_production_capture");
+  expect(classifyParReason(input({ laneComplete: capture.laneComplete }))).toBe("ok");
+  expect(capture.series[0]?.oz).toBe(12); // no second flattened sum
+  expect(computeBaseRate({ ...baseInput, salesFallbackComplete: true, laneStartAt: null }).laneNeverStarted).toBe(true);
+});
 
 /**
  * The compiler is the closure guard: adding a member to `ParReasonCode` fails to typecheck

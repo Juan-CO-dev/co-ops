@@ -70,6 +70,7 @@ export function extractToastOrders(json: unknown): ToastOrderSummary[] {
     const items: ToastOrderItem[] = [];
     const specialRequests: string[] = [];
     for (const c of checks) {
+      if (c.deleted === true) continue;
       const checkVoided = c.voided === true;
       if (!checkVoided) {
         const cents = dollarsToCents(c.totalAmount);
@@ -85,7 +86,7 @@ export function extractToastOrders(json: unknown): ToastOrderSummary[] {
         const hasItem = !!(s.item && typeof s.item === "object" && str((s.item as Record<string, unknown>).guid));
         if (!hasItem) { if (s.selectionType === "SPECIAL_REQUEST" && str(s.displayName)) specialRequests.push(name); continue; }
         const quantity = typeof s.quantity === "number" && Number.isFinite(s.quantity) ? s.quantity : 1;
-        items.push({ name, quantity, priceCents: dollarsToCents(s.price), voided: checkVoided || s.voided === true || raw.voided === true });
+        items.push({ name, quantity, priceCents: dollarsToCents(s.price), voided: checkVoided || s.voided === true || s.deleted === true || raw.voided === true || raw.deleted === true || raw.excessFood === true });
       }
     }
     out.push({
@@ -94,7 +95,7 @@ export function extractToastOrders(json: unknown): ToastOrderSummary[] {
       openedAt: str(raw.openedDate),
       modifiedAt: str(raw.modifiedDate),
       promisedAt: str(raw.promisedDate),
-      voided: raw.voided === true,
+      voided: raw.voided === true || raw.deleted === true || raw.excessFood === true,
       voidedAt: str(raw.voidDate),
       source: str(raw.source),
       diningOptionGuid: str((raw.diningOption as Record<string, unknown> | null | undefined)?.guid),

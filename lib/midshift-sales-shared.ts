@@ -29,9 +29,11 @@ export interface SalesEventRow {
 
 export interface DaySalesAgg {
   businessDate: string;
-  /** Sum of latest non-void selection prices (item gross, pre-tax/discount). */
+  /** Capture: net check amount pre-tax. Legacy fallback: summed selection prices. */
   netCents: number;
-  /** Distinct checks with at least one non-void latest selection. */
+  /** Capture-only top-level item units; modifiers never inflate this count. */
+  units?: number;
+  /** Live check count (legacy fallback requires a live selection). */
   checks: number;
   /** netCents / checks; null when no checks. */
   avgTicketCents: number | null;

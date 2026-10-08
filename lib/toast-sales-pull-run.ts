@@ -1,123 +1,97 @@
 import "server-only";
+import { getServiceRoleClient } from "@/lib/supabase-server";
 import { runOrderCapture } from "@/lib/toast/capture-job";
-import { pullSalesForAllLocations, materializeDailyDepletion } from "@/lib/catering/toast-sales";
+import { materializeCapturedDepletion } from "@/lib/toast/depletion";
 import { completeElapsedCateringEvents } from "@/lib/catering/system-intake";
 import { etCalendarDate, etYmdMinusDays } from "@/lib/operational-day";
+import { pullSalesForAllLocations, materializeDailyDepletion } from "@/lib/catering/toast-sales";
 import { loadDepletionWatermark } from "@/lib/counts";
 import { runParShadowForLocation, recordParRunSkipped } from "@/lib/dynamic-pars";
+import { captureErrorCode } from "@/lib/toast/capture-runner";
 
-function truncateErr(e: unknown): string {
-  const msg = e instanceof Error ? e.message : String(e);
-  return msg.length > 500 ? `${msg.slice(0, 500)}…` : msg;
-}
-
-function todayYmd(): string {
-  return etCalendarDate(new Date().toISOString());
-}
-
-export async function runToastSalesPull(opts: { businessDate: string }) {
+/** The flag switches readers AND writers; unset restores Stage A's legacy pipeline. */
+export async function runToastSalesPull(opts: { businessDate: string; deadlineAt?: number; signal?: AbortSignal }) {
   const { businessDate } = opts;
-  // ── Catering: elapsed events complete themselves (spec 2026-09-05 §1) ────────────
-  // FIRST, before the sales pull: this is the ET day rollover, and a confirmed/out lead whose
-  // event date has passed is a served event nobody clicked done on. Juan: "if it's passed, it
-  // already completed." Chained here rather than scheduled — the nightly cron already IS the
-  // rollover, so no second vercel.json entry, no second secret, no clock to keep in sync.
-  //
-  // TODAY, not `businessDate`: the predicate is "the event date is behind us", which is about
-  // the wall clock, not the sales day being pulled. On a `?date=` backfill run this still
-  // completes today's elapsed events — correct and idempotent (a second pass finds nothing).
-  //
-  // BEST-EFFORT, exactly like the depletion and par steps below: a failure here is caught,
-  // recorded in the heartbeat as `elapsed_error`, and never aborts the sales pull it precedes.
-  let elapsedCompleted = 0;
-  let elapsedFailed = 0;
+  const deadlineAt = opts.deadlineAt ?? Date.now() + 300_000;
+  const captureMode = process.env.DEPLETION_SOURCE === "capture";
+  const dates = [businessDate, etYmdMinusDays(businessDate, 1), etYmdMinusDays(businessDate, 2)];
+  const results: { locationId: string; ok: boolean; error?: string }[] = [];
+  const depletionRows: Record<string, number> = {};
+  const parRows: Record<string, number> = {};
+  let depletionFailures = 0;
+  let parRunFailures = 0;
+  let capture: Awaited<ReturnType<typeof runOrderCapture>>;
+  let elapsedCompleted = 0, elapsedFailed = 0;
   let elapsedError: string | null = null;
   try {
-    const elapsed = await completeElapsedCateringEvents(todayYmd());
+    const elapsed = await completeElapsedCateringEvents(etCalendarDate(new Date().toISOString()));
     elapsedCompleted = elapsed.completed.length;
     elapsedFailed = elapsed.failed.length;
-  } catch (e) {
-    elapsedError = truncateErr(e);
-    console.error("[cron toast-sales-pull] catering elapsed completion failed:", elapsedError);
-  }
-
-  const results = await pullSalesForAllLocations(businessDate);
-
-  // Drift spec 2026-07-31: materialize the day's depletion ledger for every
-  // location whose pull succeeded. Best-effort per location — a materialize
-  // failure NEVER fails the pull (the ledger is a re-derivable cache; the
-  // next run or a manual backfill recovers it) but is surfaced in the
-  // heartbeat metadata.
-  let depletionFailures = 0;
-  const depletionRows: Record<string, number> = {};
-  for (const r of results) {
-    if (!r.ok) continue;
-    try {
-      const { rows } = await materializeDailyDepletion(r.locationId, businessDate);
-      depletionRows[r.locationId] = rows;
-    } catch (e) {
-      depletionFailures += 1;
-      console.error(`[cron toast-sales-pull] depletion materialize failed for ${r.locationId}:`, truncateErr(e));
+  } catch (error) { elapsedError = captureErrorCode(error); }
+  if (!captureMode) {
+    // Preserve main's pipeline, including zero-row and backfill watermark handling.
+    results.push(...await pullSalesForAllLocations(businessDate));
+    for (const result of results) {
+      if (!result.ok) continue;
+      try {
+        depletionRows[result.locationId] = (await materializeDailyDepletion(result.locationId, businessDate)).rows;
+      } catch { depletionFailures++; }
     }
-  }
-
-  // ── Dynamic Pars: the nightly shadow computation (spec 2026-08-21) ───────────
-  // CHAINED, NOT SCHEDULED. It runs here so the ordering is structural: the pars engine
-  // reads the ledger this handler just materialized, in the same request, for the same
-  // business date. No vercel.json entry, no second secret, no clock to keep in sync.
-  //
-  // GATED ON "DID THE MATERIALIZATION SUCCEED" (r3): a location whose depletion is not
-  // current through this business date is SKIPPED with an advisory-null run, never
-  // computed on a stale day. Recomputing yesterday's rates as today's is how a phantom
-  // velocity signal is born, and the pull is verifiably best-effort (the loop above
-  // swallows per-location failures by design).
-  //
-  // ⚠ THE ORACLE IS THE MATERIALIZE LOOP'S OWN RESULT, NOT `watermark === businessDate`.
-  // Two ways the strict equality is wrong, and both of them WRITE — recordParRunSkipped
-  // replaces the day's ledger rows, so a false skip is data loss, not a no-op:
-  //   · A ZERO-CONSUMPTION DAY materializes successfully with zero rows
-  //     (materializeDailyDepletion only inserts when rows.length > 0), so the watermark
-  //     stays on yesterday even though tonight succeeded. `depletionRows` has the key.
-  //   · A BACKFILL (`?date=` for a past date, which this route supports) has a watermark
-  //     LATER than the target date. "More than current" is not stale.
-  // So: the location is current if tonight's materialization succeeded for it, OR the
-  // ledger already reaches this business date. The watermark is still read — it is the
-  // evidence recorded on the skip row — but it is compared with `>=`, never `!==`.
-  //
-  // A par-step failure must NEVER fail the pull or the depletion materialization — the
-  // try/catch mirrors the depletion loop's own best-effort posture exactly.
-  let parRunFailures = 0;
-  const parRows: Record<string, number> = {};
-  for (const r of results) {
-    if (!r.ok) continue;
-    try {
-      const materialized = Object.prototype.hasOwnProperty.call(depletionRows, r.locationId);
-      const watermark = await loadDepletionWatermark(r.locationId);
-      const depletionCurrent = materialized || (watermark != null && watermark >= businessDate);
-      if (!depletionCurrent) {
-        const skipped = await recordParRunSkipped(r.locationId, businessDate, watermark);
-        parRows[r.locationId] = skipped.rows;
-        continue;
+    for (const result of results) {
+      if (!result.ok) continue;
+      try {
+        const watermark = await loadDepletionWatermark(result.locationId);
+        const current = Object.hasOwn(depletionRows, result.locationId) || (watermark != null && watermark >= businessDate);
+        const par = current
+          ? await runParShadowForLocation(result.locationId, businessDate)
+          : await recordParRunSkipped(result.locationId, businessDate, watermark);
+        parRows[result.locationId] = par.rows;
+      } catch { parRunFailures++; }
+    }
+    // Additive Stage A capture runs only after the operational legacy work finishes.
+    capture = await runOrderCapture(results.map((r) => r.locationId), businessDate, "cron", [businessDate], Math.max(0, deadlineAt - Date.now()), opts.signal);
+  } else {
+    const sb = getServiceRoleClient();
+    const locations = await sb.from("locations").select("id").eq("active", true)
+      .not("toast_restaurant_guid", "is", null);
+    if (locations.error) throw new Error("capture_location_unavailable");
+    const ids = (locations.data ?? []).map((r: { id: string }) => r.id);
+    capture = await runOrderCapture(ids, businessDate, "cron", dates, Math.max(0, deadlineAt - Date.now()), opts.signal);
+    const completed = new Set<string>();
+    for (const date of dates) {
+      for (const locationId of ids) {
+        const run = capture.results.find((r) => r.locationId === locationId && r.businessDate === date);
+        if (!run?.complete) continue;
+        try {
+          const result = await materializeCapturedDepletion(locationId, date);
+          depletionRows[`${locationId}:${date}`] = result.rows;
+          // Reviewed-label gaps disclose partial data; they do not invalidate a day.
+          completed.add(`${locationId}:${date}`);
+        } catch { depletionFailures++; }
       }
-      const { rows } = await runParShadowForLocation(r.locationId, businessDate);
-      parRows[r.locationId] = rows;
-    } catch (e) {
-      parRunFailures += 1;
-      console.error(`[cron toast-sales-pull] par shadow failed for ${r.locationId}:`, truncateErr(e));
+    }
+    // T-2/T-3 are capture repairs only. Pars are computed once, for T-1.
+    for (const locationId of ids) {
+      if (!completed.has(`${locationId}:${businessDate}`)) continue;
+      try {
+        parRows[`${locationId}:${businessDate}`] = (await runParShadowForLocation(locationId, businessDate)).rows;
+      } catch { parRunFailures++; }
+    }
+    for (const locationId of ids) {
+      const ok = dates.every((date) => completed.has(`${locationId}:${date}`));
+      results.push({ locationId, ok, ...(!ok ? { error: "capture_day_incomplete" } : {}) });
     }
   }
-
-  // Heartbeat (fail-open): a cron.success row lets the admin hub show "last run OK".
-  // rowsPulled = total appended selections across locations (a cheap "did it do work"
-  // signal); perLocationFailures counts locations that errored inside the batch (the
-  // batch itself succeeded, but a per-location failure is still worth surfacing).
-  const rowsPulled = results.reduce((n, r) => n + (r.result?.appended ?? 0), 0);
   const perLocationFailures = results.filter((r) => !r.ok).length;
-  // The selection, depletion and par loops have ALL finished before capture starts.
-  const capture = await runOrderCapture(results.map((r) => r.locationId), businessDate, "cron",
-    [businessDate, etYmdMinusDays(businessDate, 1), etYmdMinusDays(businessDate, 2)]);
-  const captureFailures = capture.failures;
-  const healthy = perLocationFailures === 0;
-  const metadata = { capture_failures: captureFailures, job: "toast-sales-pull", business_date: businessDate, rows_pulled: rowsPulled, per_location_failures: perLocationFailures, depletion_rows: depletionRows, depletion_failures: depletionFailures, par_rows: parRows, par_run_failures: parRunFailures, elapsed_completed: elapsedCompleted, elapsed_failed: elapsedFailed, elapsed_error: elapsedError };
+  const healthy = (!captureMode || (!capture.skipped && capture.failures === 0)) && perLocationFailures === 0
+    && depletionFailures === 0 && parRunFailures === 0 && elapsedFailed === 0 && elapsedError === null;
+  const metadata = {
+    job: "toast-sales-pull", source: captureMode ? "capture" : "legacy", business_date: businessDate, dates: captureMode ? dates : [businessDate],
+    capture_failures: capture.failures, capture_skipped: capture.skipped,
+    per_location_failures: perLocationFailures, depletion_rows: depletionRows,
+    depletion_failures: depletionFailures, par_rows: parRows, par_run_failures: parRunFailures,
+    pars_pending_activation: false,
+    elapsed_completed: elapsedCompleted, elapsed_failed: elapsedFailed, elapsed_error: elapsedError,
+  };
   return { businessDate, results, metadata, healthy };
 }

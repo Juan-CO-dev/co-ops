@@ -1,10 +1,10 @@
 # Toast launch cutover — reduced implementation plan
 
-Status: BUILD GO, cross-family APPROVED WITH CHANGES by Claude Opus + CC, 2026-10-07. Launch Tuesday 2026-10-13. Dedicated clone `C:/Users/conta/co-ops-reports-h1`, branch `feat/toast-cutover-depletion`. Leave edits uncommitted; no fetch, rebase, push, merge, deployment or production writes.
+Status: BUILD GO, cross-family APPROVED WITH CHANGES by Claude Opus + CC, 2026-10-07. Launch Tuesday 2026-10-13. Dedicated clone `C:/Users/conta/co-ops-reports-h1`, branch `feat/toast-cutover-bc`. Leave edits uncommitted; no fetch, rebase, push, merge, deployment or production writes.
 
 ## Stage A — additive, ship first
 
-Reuse tested full business-day capture. Pinger captures today then yesterday under one bounded deadline, with a database-serialized claim that skips running or finished-within-five-minutes runs. Failure never changes legacy sales success. Nightly captures T-1 through T-3 under a shared deadline; route explicitly exports maxDuration=300. Legacy pull, depletion and pars remain source of truth.
+Reuse tested full business-day capture. Pinger captures today then yesterday under one bounded deadline, with a database-serialized claim that recovers claims older than two minutes and skips running or recently finished runs (today: five minutes; yesterday: one hour). Failure never changes legacy sales success. Nightly captures T-1 through T-3 under `min(150 seconds, remaining route time - 10 seconds)`; route explicitly exports maxDuration=300. Legacy pull, depletion and pars remain source of truth.
 
 Stage A files: `lib/toast/capture.ts`, `lib/toast/capture-job.ts`, new `lib/toast/capture-intraday.ts`, `lib/toast-sales-pull-run.ts`, both `app/api/cron/toast-sales-{today,pull}/route.ts`, `supabase/migrations/0222_toast_cutover_depletion.sql`, `scripts/test-toast-capture{,-debounce}.sql`, `tests/toast-capture-{intraday,persistence,pull-integration}.test.ts`, and this plan. Preserve a Stage A patch before B/C touch shared files so CC can ship it separately. Ship the whole final additive 0222 once (B tables remain dormant); do not apply a partial migration and later change its contents under the same number.
 
@@ -49,3 +49,7 @@ Run requested full tests + typecheck, source-closure checks, and prepare final P
 ## Risks and verification boundaries
 
 No live DB schema or provider data is inspected here. SQL migration/harness authored locally and not applied by Astra. Mapping incompleteness and provider retention remain explicit coverage/gate findings. Full-day request volume and deployment duration require CC operational verification. No approval inferred from elapsed time or aggregate parity.
+
+## B/C merge onto reviewed Stage A (2026-10-07)
+
+Stage A `7cad2da` / PR #401 is approved; final 0222 is applied to SIM as `20261008011108`. Preserve its SQL and all three reviewed SQL scripts, correcting only the migration SIM header. Keep the pass-2 transport retry, claim intervals and route deadlines while layering B/C onto capture. B/C sends the legacy-equivalent suspect/count signals, unmapped/excluded units, poisoned recipe IDs, mapping fingerprint and absence count to the final replacement RPC; SQL computes attribution mismatch. Stale dining configuration publishes degraded coverage, which cannot authorize pars. Pars reads validated capture coverage signals only after the reader flag flips. Keep the runbook's today/yesterday backfill exclusion while the pinger runs.

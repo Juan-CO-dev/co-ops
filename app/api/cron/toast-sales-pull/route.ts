@@ -41,12 +41,13 @@ function yesterdayYmd(): string {
 }
 
 export async function GET(req: NextRequest) {
+  const deadlineAt = Date.now() + maxDuration * 1000;
   if (!process.env.CRON_SECRET) return jsonError(503, "cron_disabled");
   if (!secretOk(req)) return jsonError(401, "unauthorized");
   const businessDate = req.nextUrl.searchParams.get("date") ?? yesterdayYmd();
   if (!/^\d{4}-\d{2}-\d{2}$/.test(businessDate)) return jsonError(400, "invalid_date");
   try {
-    const { results, metadata, healthy } = await runToastSalesPull({ businessDate });
+    const { results, metadata, healthy } = await runToastSalesPull({ businessDate, deadlineAt, signal: req.signal });
     await audit({
       actorId: null,
       actorRole: null,
