@@ -4,6 +4,7 @@ import { runOrderCapture } from "@/lib/toast/capture-job";
 import { materializeCapturedDepletion } from "@/lib/toast/depletion";
 import { completeElapsedCateringEvents } from "@/lib/catering/system-intake";
 import { refreshKnownEzcaterOrders } from "@/lib/ezcater/refresh";
+import { materializeEzcaterShadow } from "@/lib/ezcater/pass2";
 import { etCalendarDate, etYmdMinusDays } from "@/lib/operational-day";
 import { pullSalesForAllLocations, materializeDailyDepletion } from "@/lib/catering/toast-sales";
 import { loadDepletionWatermark } from "@/lib/counts";
@@ -88,12 +89,17 @@ export async function runToastSalesPull(opts: { businessDate: string; deadlineAt
       results.push({ locationId, ok, ...(!ok ? { error: "capture_day_incomplete" } : {}) });
     }
   }
+  let ezcaterShadow = { processed: 0, failed: 0, deferred: false };
+  try {
+    ezcaterShadow = await materializeEzcaterShadow(etYmdMinusDays(businessDate, 2), businessDate, Math.min(deadlineAt, Date.now() + 20_000));
+  } catch { ezcaterShadow.failed++; }
   const perLocationFailures = results.filter((r) => !r.ok).length;
   const healthy = (!captureMode || (!capture.skipped && capture.failures === 0)) && perLocationFailures === 0
-    && depletionFailures === 0 && parRunFailures === 0 && elapsedFailed === 0 && elapsedError === null;
+    && depletionFailures === 0 && parRunFailures === 0 && elapsedFailed === 0 && elapsedError === null && ezcaterShadow.failed === 0;
   const metadata = {
     job: "toast-sales-pull", source: captureMode ? "capture" : "legacy", business_date: businessDate, dates: captureMode ? dates : [businessDate],
     capture_failures: capture.failures, capture_skipped: capture.skipped,
+    ezcater_shadow: ezcaterShadow,
     per_location_failures: perLocationFailures, depletion_rows: depletionRows,
     depletion_failures: depletionFailures, par_rows: parRows, par_run_failures: parRunFailures,
     pars_pending_activation: false,

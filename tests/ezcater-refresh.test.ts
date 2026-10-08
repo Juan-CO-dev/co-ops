@@ -10,6 +10,7 @@ import { runOrderCapture } from "@/lib/toast/capture-job";
 import { pullSalesForAllLocations } from "@/lib/catering/toast-sales";
 
 vi.mock("@/lib/ezcater/sync", () => ({ syncEzcaterOrder: vi.fn() }));
+vi.mock("@/lib/ezcater/pass2", () => ({ materializeEzcaterShadow: vi.fn(async () => ({ processed: 0, failed: 0, deferred: false })) }));
 vi.mock("@/lib/ezcater/client", () => ({ ezcaterConfigured: vi.fn() }));
 vi.mock("@/lib/supabase-server", () => ({ getServiceRoleClient: vi.fn() }));
 vi.mock("@/lib/audit", () => ({ audit: vi.fn() }));

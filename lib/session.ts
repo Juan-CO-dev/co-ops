@@ -255,13 +255,13 @@ export function isAdminPath(currentPath: string): boolean {
  * step-up-gated money action that lives OUTSIDE /admin (catering is under (authed), not
  * the admin surface). Its own requireSession must therefore preserve the step-up flag set
  * by the immediately-preceding POST /api/auth/step-up — same load-bearing reason the
- * /api/admin/* arm exists in isAdminPath. Scoped to the send route ONLY: no other catering
- * path keeps step-up, so the flag is consumed by the send and cleared on the next
- * navigation. Widening this predicate is a security decision (Triad A) — added for catering
- * v1.3 slice 1E with Juan's explicit sign-off.
+ * /api/admin/* arm exists in isAdminPath. Catering shop transfers also require a fresh
+ * password: preserve the unlock on that exact action endpoint only. Navigation and
+ * ordinary catering reads still clear it. Both money actions are explicitly authorized.
  */
 export function isCateringStepUpPath(currentPath: string): boolean {
-  return currentPath.startsWith("/api/catering/quotes/") && currentPath.endsWith("/send");
+  return (currentPath.startsWith("/api/catering/quotes/") && currentPath.endsWith("/send")) ||
+    /^\/api\/catering\/pipeline\/[^/]+\/transfer$/.test(currentPath);
 }
 
 /** The physical-count surface is Tier-A (council A4) but lives OUTSIDE /admin —

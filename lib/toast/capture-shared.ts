@@ -1,4 +1,5 @@
 import type { CaptureSelection } from "./capture-reconciliation-shared";
+import { orderCodeTokens } from "@/lib/ezcater/pass2-shared";
 
 /** Pure, explicit allowlist for the accounting capture. Never retain a raw object. */
 type Row = Record<string, unknown>;
@@ -72,8 +73,11 @@ export function normalizeToastOrder(input: unknown, businessDate: string): Toast
         // Notes have no item identity: never retain their free-text displayName.
         if (item_guid) {
           if (typeof s.quantity !== "number" || !Number.isFinite(s.quantity)) throw new Error("toast_capture_invalid_quantity");
+          const codes = rows(s.modifiers).filter((m) => !guid(m.item) && m.selectionType === "SPECIAL_REQUEST" && m.voided !== true && m.deleted !== true)
+            .flatMap((m) => orderCodeTokens(text(m.displayName) ?? ""));
           result.order.selection_units.push({ check_guid, selection_guid, parent_selection_guid: parent,
-            item_guid, name: text(s.displayName) ?? item_guid, quantity: s.quantity, voided, deleted });
+            item_guid, name: text(s.displayName) ?? item_guid, quantity: s.quantity, voided, deleted,
+            ...(codes.length ? { ezcater_codes: [...new Set(codes)] } : {}) });
         }
         selections(s.modifiers, selection_guid, voided, deleted);
       }

@@ -42,9 +42,10 @@ it("stores a retry code and original lifecycle event when provider fetch fails",
   expect(JSON.stringify(rpc.mock.calls)).not.toContain("PRIVATE CUSTOMER");
 });
 
-it("does not apply an order from a different caterer", async () => {
-  expect(await syncEzcaterOrder(uuid, "foreign")).toMatchObject({ result: "error:location_mismatch" });
-  expect(rpc.mock.calls[0]?.[1].p_snapshot).toBeNull();
+it("uses freshly fetched caterer on reassignment; the RPC binds it to an active shop", async () => {
+  expect(await syncEzcaterOrder(uuid, "former-caterer")).toMatchObject({ result: "refreshed" });
+  expect(rpc.mock.calls[0]?.[1]).toMatchObject({ p_caterer_uuid: "caterer" });
+  expect(rpc.mock.calls[0]?.[1].p_snapshot.locationObservedAt).toBeTruthy();
 });
 
 it("failed retry persistence propagates for webhook retry", async () => {

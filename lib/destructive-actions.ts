@@ -36,6 +36,7 @@
  */
 
 export const DESTRUCTIVE_ACTIONS = [
+  "catering.pipeline.transfer_location", // Human reassignment of a catering order and its demand.
   "task.override", // A human acts on another assignee's accountability record.
   "station.create",
   "station.update",

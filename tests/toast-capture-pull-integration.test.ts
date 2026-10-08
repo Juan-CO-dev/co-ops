@@ -13,6 +13,7 @@ import { GET, maxDuration } from "@/app/api/cron/toast-sales-pull/route";
 import { NextRequest } from "next/server";
 
 vi.mock("@/lib/supabase-server", () => ({ getServiceRoleClient: vi.fn() }));
+vi.mock("@/lib/ezcater/pass2", () => ({ materializeEzcaterShadow: vi.fn(async () => ({ processed: 0, failed: 0, deferred: false })) }));
 vi.mock("@/lib/toast/capture-job", () => ({ runOrderCapture: vi.fn() }));
 vi.mock("@/lib/toast/depletion", () => ({ materializeCapturedDepletion: vi.fn() }));
 vi.mock("@/lib/dynamic-pars", () => ({ runParShadowForLocation: vi.fn(), recordParRunSkipped: vi.fn() }));

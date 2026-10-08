@@ -46,14 +46,15 @@ export async function syncEzcaterOrder(providerUuid: string, catererUuid: string
   const sb = getServiceRoleClient();
   const signal = options.signal ?? AbortSignal.timeout(25_000);
   const eventKey = EZCATER_ORDER_EVENT_KEYS.find((k) => k === options.eventKey) ?? null;
+  const locationObservedAt = new Date().toISOString();
   try {
     const snapshot = await fetchEzcaterOrder(providerUuid, { deadlineMs: options.deadlineMs, signal });
-    if (!snapshot.catererUuid || snapshot.catererUuid !== catererUuid) throw new Error("location_mismatch");
+    if (!snapshot.catererUuid) throw new Error("location_mismatch");
     // Normalizer fixes property order. Transport timestamps never enter this digest.
     const digest = createHash("sha256").update(JSON.stringify({ snapshot, eventKey })).digest("hex");
     const { data, error } = await sb.rpc("apply_ezcater_order", {
-      p_provider_uuid: providerUuid, p_caterer_uuid: catererUuid,
-      p_snapshot: snapshot, p_digest: digest, p_event_key: eventKey, p_error: null,
+      p_provider_uuid: providerUuid, p_caterer_uuid: snapshot.catererUuid,
+      p_snapshot: { ...snapshot, locationObservedAt }, p_digest: digest, p_event_key: eventKey, p_error: null,
     }).abortSignal(signal);
     if (missingApply(error)) throw new Error("ezcater_schema_unavailable");
     if (error || !data) throw new Error("apply_failed");
