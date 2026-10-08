@@ -2,7 +2,7 @@
 
 Three guides, one per job. They are written for people who know sandwiches, not software.
 
-Content updated as of 2026-09-11: ordering edits and add-ons, SKU data readiness, customer deposit wording, sign-out behavior and catering updates. Existing screenshots are retained; some show earlier screens.
+The base guides retain their earlier screenshots. The short October 8 launch sections are text only and live in `launch-<role>.<en|es>.md`; `/training` appends the matching language to each role guide. The base guides remain in English while the Spanish edition is being completed.
 
 | Guide | Who reads it |
 |---|---|
