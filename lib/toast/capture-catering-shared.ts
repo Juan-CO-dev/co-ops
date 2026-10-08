@@ -48,3 +48,19 @@ export function captureCateringContext(
   }
   return { names, classifications, diagnostics };
 }
+
+/**
+ * Whether the catering scan can read a captured day yet (digest polish item 12, CC 10-08).
+ * "No completed capture for that date yet" — no completed run at all, or only runs whose catering
+ * pass is still `pending` with no named error (the pre-flip runs) — is PENDING: the scan skips that
+ * date and is healthy, because the capture writer has its own heartbeat and the first tick of each
+ * day would otherwise alert. A named catering error, a degraded pass, or a stale capture stays a
+ * failure exactly as before.
+ */
+export type CateringCoverage = { state: "ready" } | { state: "pending" } | { state: "error"; code: string };
+export function cateringCoverage(run: CateringCaptureRun | null, businessDate: string, now = Date.now()): CateringCoverage {
+  if (!run) return { state: "pending" };
+  if (run.catering_status === "pending" && run.catering_error_code === null) return { state: "pending" };
+  const code = cateringCaptureRunError(run, businessDate, now);
+  return code ? { state: "error", code } : { state: "ready" };
+}

@@ -8,7 +8,7 @@ import { resolveCateringManager, systemMoveStage, type ExistingLead } from "@/li
 import { isPipelineStage } from "@/lib/catering/pipeline";
 import { canTransition } from "@/lib/catering/pipeline-shared";
 
-import { cateringCaptureRunError, type CateringCaptureRun } from "@/lib/toast/capture-catering-shared";
+import { cateringCoverage, type CateringCaptureRun } from "@/lib/toast/capture-catering-shared";
 import { selectAllRows } from "@/lib/supabase-paginate";
 const ACTOR_CONTEXT = "toast_catering_scan";
 
@@ -20,6 +20,8 @@ export interface ScanLocationResult {
   /** Checks whose totalAmount did not parse — the lead total is short by that much and this says so. */
   unparsedAmounts: number;
   diagnostics?: Record<string, number>;
+  /** Dates skipped because no completed capture exists for them yet (pending, not a failure). */
+  pendingDates?: string[];
 }
 
 type ServiceClient = ReturnType<typeof getServiceRoleClient>;
@@ -244,9 +246,11 @@ export async function scanToastCateringForAllLocations(dates: string[]): Promise
           .eq("location_id", location.id).eq("business_date", date).eq("status", "completed")
           .order("finished_at", { ascending: false }).limit(1)
           .maybeSingle<CateringCaptureRun>();
-        if (run.error || !run.data) throw new Error("capture_catering_coverage_missing");
-        const runError = cateringCaptureRunError(run.data, date);
-        if (runError) throw new Error(runError);
+        // A failed READ is still a failure; a date with no completed capture yet is pending (item 12).
+        if (run.error) throw new Error("capture_catering_coverage_missing");
+        const coverage = cateringCoverage(run.data ?? null, date);
+        if (coverage.state === "pending") { (result.pendingDates ??= []).push(date); continue; }
+        if (coverage.state === "error") throw new Error(coverage.code);
         const rows = await selectAllRows<{ classification: string; processing_result: string }>((from, to) => sb
           .from("toast_catering_orders").select("classification,processing_result")
           .eq("location_id", location.id).eq("business_date", date).order("id").range(from, to));
