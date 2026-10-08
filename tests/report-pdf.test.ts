@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { pdfSafe, renderReportPdf } from "@/lib/report-pdf";
-import { EXPORT_COLUMNS } from "@/lib/report-export-shared";
+import { pdfSafe, renderReportPdf, splitColumns } from "@/lib/report-pdf";
+import { EXPORT_COLUMNS, centsToDollars } from "@/lib/report-export-shared";
 
 /** The text pdfkit wrote: every <hex> string in the (uncompressed) content streams, in order. */
 function pdfText(pdf: Buffer): string {
@@ -52,4 +52,46 @@ it("pdfSafe keeps Spanish and replaces what WinAnsi cannot draw", () => {
   expect(pdfSafe("Año ñ ¿qué? ¡sí!")).toBe("Año ñ ¿qué? ¡sí!");
   expect(pdfSafe("ok 🙂 →")).toBe("ok ?? ?");
   expect(pdfSafe("a\nb\tc")).toBe("a b c");
+});
+
+describe("nothing is truncated (Astra P2): cells wrap, tall rows continue, wide tables split", () => {
+  const squash = (t: string) => t.replace(/\s+/g, "");
+
+  it("a long written-report body survives in full, across pages if it must", async () => {
+    const body = Array.from({ length: 900 }, (_, i) => `word${i}`).join(" ");
+    const pdf = await renderReportPdf(header, [{
+      heading: null, columns: EXPORT_COLUMNS.written, emptyText: "-",
+      rows: [{ submitted_at: "2026-10-06T12:00:00Z", location_code: "MEP", location_name: "Capitol Hill", report_id: "w1", title: "Long one", body }],
+    }], { pageLabel: label, compress: false });
+    const text = squash(pdfText(pdf));
+    // A row taller than a page continues on the next page, so check every word arrived, in order.
+    const seen = [...text.matchAll(/word(\d+)/g)].map((m) => Number(m[1]));
+    expect(seen).toEqual(Array.from({ length: 900 }, (_, i) => i));
+    expect(pageCount(pdf)).toBeGreaterThan(1);
+    expect(text.split(squash("Shop: Capitol Hill")).length - 1).toBe(pageCount(pdf));
+  });
+
+  it("a wide accountant table is split into column parts that each repeat the key columns; every id and amount survives", async () => {
+    const cols = Array.from({ length: 30 }, (_, i) => ({ key: `amount_column_${i}`, kind: "money" as const }));
+    const columns = [{ key: "business_date", kind: "date" as const }, { key: "location_code", kind: "text" as const }, { key: "location_name", kind: "text" as const }, ...cols];
+    const rows = Array.from({ length: 3 }, (_, r) => ({
+      business_date: "2026-10-06", location_code: "MEP", location_name: "Capitol Hill",
+      ...Object.fromEntries(cols.map((c, i) => [c.key, 1_000_000 + r * 1000 + i])),
+    }));
+    const pdf = await renderReportPdf(header, [{ heading: "Purchases", columns, rows, emptyText: "-" }], {
+      pageLabel: label, partLabel: (i, n) => `Columns ${i} of ${n}`, compress: false,
+    });
+    const text = squash(pdfText(pdf));
+    for (const r of rows) for (const c of cols) expect(text).toContain(centsToDollars(r[c.key as keyof typeof r] as number));
+    const parts = Number(/Columns1of(\d+)/.exec(text)?.[1]);
+    expect(parts).toBeGreaterThan(1);
+    for (let i = 1; i <= parts; i++) expect(text).toContain(`Columns${i}of${parts}`);
+  });
+
+  it("splitColumns packs parts that fit and repeats the identifying columns", () => {
+    expect(splitColumns([50, 50, 50], 200, 2)).toEqual([[0, 1, 2]]);
+    const parts = splitColumns([40, 40, 100, 100, 100, 100], 300, 2);
+    expect(parts).toEqual([[0, 1, 2, 3], [0, 1, 4, 5]]);
+    for (const p of parts) expect(p.slice(0, 2)).toEqual([0, 1]);
+  });
 });

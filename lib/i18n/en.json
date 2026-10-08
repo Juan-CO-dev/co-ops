@@ -4904,5 +4904,7 @@
   "digest.catering.portion.whole": "whole",
   "digestWatch.preview_subject": "CO-OPS: digest preview is ON but no operator account could be resolved",
   "digestWatch.preview_body": "Digests are in preview mode, but there is not exactly one active CGS account with an email. Nothing was sent ({day}). Fix the account or switch the mode.",
-  "reportRecipients.skip.out_of_scope": "Outside their shops"
+  "reportRecipients.skip.out_of_scope": "Outside their shops",
+  "reports.export.part": "Columns {i} of {n}",
+  "reportRecipients.error.package_owner_only": "Packages go to the owner and the outside accountant only."
 }

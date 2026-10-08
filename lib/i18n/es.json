@@ -4903,5 +4903,7 @@
   "digest.catering.portion.whole": "entera",
   "digestWatch.preview_subject": "CO-OPS: la vista previa de resúmenes está activa pero no se encontró la cuenta del operador",
   "digestWatch.preview_body": "Los resúmenes están en modo vista previa, pero no hay exactamente una cuenta CGS activa con correo. No se envió nada ({day}). Corrige la cuenta o cambia el modo.",
-  "reportRecipients.skip.out_of_scope": "Fuera de sus tiendas"
+  "reportRecipients.skip.out_of_scope": "Fuera de sus tiendas",
+  "reports.export.part": "Columnas {i} de {n}",
+  "reportRecipients.error.package_owner_only": "Los paquetes van solo al dueño y al contador externo."
 }

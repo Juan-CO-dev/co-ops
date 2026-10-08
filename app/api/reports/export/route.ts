@@ -38,7 +38,7 @@ export async function GET(req: NextRequest) {
       : await renderReportPdf(
         { title: serverT(language, EXPORT_TITLE_KEY[family]), lines: pdfHeaderLines(language, { shop: shopLabel, from: table.from, to: table.to, at: new Date(), by: ctx.user.name }) },
         [{ heading: null, columns: table.columns, rows: table.rows, emptyText: serverT(language, "reports.export.empty") }],
-        { pageLabel: (n, total) => serverT(language, "reports.export.page", { n, total }) },
+        { pageLabel: (n, total) => serverT(language, "reports.export.page", { n, total }), partLabel: (i, n) => serverT(language, "reports.export.part", { i, n }) },
       );
   } catch (error) {
     console.error("[/api/reports/export] render", error instanceof Error ? error.message : String(error));

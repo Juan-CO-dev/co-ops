@@ -47,17 +47,25 @@ export interface PdfTable {
 export interface PdfOptions {
   /** "Page {n} / {total}" formatter (translated by the caller). */
   pageLabel: (n: number, total: number) => string;
+  /** "Columns {i} of {n}" label for a wide table split across pages (translated by the caller). */
+  partLabel?: (i: number, n: number) => string;
   /** Tests turn compression off so the content stream can be read. */
   compress?: boolean;
 }
 
 const MARGIN = 32;
 const FONT_SIZE = 7;
-const ROW_HEIGHT = 11;
+/** One text line at FONT_SIZE, the gap under a row, the cell padding, the footer band. */
+const LINE = 9;
+const ROW_GAP = 3;
+const CELL_PAD = 1.5;
+const FOOTER_SPACE = 14;
+/** Columns repeated in every part of a wide table (the identifying ones come first in every registry). */
+const KEY_COLUMNS = 3;
 const HEADER_FONT = "Helvetica-Bold";
 const BODY_FONT = "Helvetica";
-const MIN_COL = 28;
-const MAX_COL = 220;
+const MIN_COL = 34;
+const MAX_COL = 200;
 
 /** WinAnsi-safe text: keep printable ASCII, Latin-1 and the ellipsis; replace everything else. */
 export function pdfSafe(text: string): string {
@@ -83,20 +91,41 @@ function fit(doc: Doc, text: string, width: number): string {
   return `${text.slice(0, lo)}…`;
 }
 
-/** Natural width per column (header vs the first 200 cells), scaled to fit the page width. */
-function columnWidths(doc: Doc, table: PdfTable, available: number): number[] {
-  const natural = table.columns.map((c) => {
+/** Natural width per column (header vs the first 200 cells), clamped to [MIN_COL, MAX_COL]. */
+function naturalWidths(doc: Doc, table: PdfTable): number[] {
+  return table.columns.map((c) => {
     doc.font(HEADER_FONT).fontSize(FONT_SIZE);
-    let w = doc.widthOfString(headerLabel(c.key));
+    let w = Math.min(doc.widthOfString(headerLabel(c.key)), 90);
     doc.font(BODY_FONT).fontSize(FONT_SIZE);
     for (const row of table.rows.slice(0, 200)) w = Math.max(w, doc.widthOfString(pdfSafe(formatCell(c.kind, row[c.key]))));
-    return Math.min(MAX_COL, Math.max(MIN_COL, w + 6));
+    return Math.min(MAX_COL, Math.max(MIN_COL, w + CELL_PAD * 2));
   });
-  const total = natural.reduce((a, b) => a + b, 0);
-  return total <= available ? natural : natural.map((w) => (w / total) * available);
 }
 
-/** Render a report: header block on every page, one or more tables, "Page n / N" footers. */
+/**
+ * WIDE TABLES SPLIT ACROSS PAGES (Astra P2), never squeezed into illegibility: the columns are
+ * packed into parts that each fit the page width; every part repeats the identifying columns
+ * (the first ones, e.g. business_date + shop) so a part on its own still says which row it is.
+ */
+export function splitColumns(widths: number[], available: number, keyCount: number): number[][] {
+  const all = widths.map((_, i) => i);
+  if (widths.reduce((a, b) => a + b, 0) <= available) return [all];
+  let keys = all.slice(0, keyCount);
+  if (keys.reduce((a, i) => a + widths[i]!, 0) > available * 0.4) keys = [];
+  const keyWidth = keys.reduce((a, i) => a + widths[i]!, 0);
+  const parts: number[][] = [];
+  let current: number[] = [];
+  let used = keyWidth;
+  for (const i of all.slice(keys.length)) {
+    if (current.length > 0 && used + widths[i]! > available) { parts.push([...keys, ...current]); current = []; used = keyWidth; }
+    current.push(i);
+    used += widths[i]!;
+  }
+  if (current.length > 0) parts.push([...keys, ...current]);
+  return parts;
+}
+
+/** Render a report: header block on every page, wrapped cells with variable row heights, "Page n / N". */
 export async function renderReportPdf(header: PdfHeader, tables: readonly PdfTable[], options: PdfOptions): Promise<Buffer> {
   const doc: Doc = new PDFDocument({
     size: "LETTER", layout: "landscape", margin: MARGIN, bufferPages: true, compress: options.compress ?? true,
@@ -110,7 +139,7 @@ export async function renderReportPdf(header: PdfHeader, tables: readonly PdfTab
   });
 
   const width = doc.page.width - MARGIN * 2;
-  const bottom = () => doc.page.height - MARGIN - ROW_HEIGHT * 2;
+  const bottom = () => doc.page.height - MARGIN - FOOTER_SPACE;
 
   const drawHeader = () => {
     doc.font(HEADER_FONT).fontSize(12).fillColor("#000").text(pdfSafe(header.title), MARGIN, MARGIN, { width, lineBreak: false });
@@ -124,42 +153,90 @@ export async function renderReportPdf(header: PdfHeader, tables: readonly PdfTab
     return y + 8;
   };
 
-  const drawColumnHeader = (y: number, table: PdfTable, widths: number[]) => {
-    doc.font(HEADER_FONT).fontSize(FONT_SIZE).fillColor("#000");
+  const cellHeight = (text: string, w: number) => (text === "" ? LINE : doc.heightOfString(text, { width: w - CELL_PAD * 2 }));
+  const rowHeight = (texts: string[], ws: number[], font: string) => {
+    doc.font(font).fontSize(FONT_SIZE);
+    return Math.max(LINE, ...texts.map((t, i) => cellHeight(t, ws[i]!))) + ROW_GAP;
+  };
+  const drawRow = (texts: string[], ws: number[], y: number, font: string, h: number) => {
+    doc.font(font).fontSize(FONT_SIZE).fillColor("#000");
     let x = MARGIN;
-    table.columns.forEach((c, i) => {
-      doc.text(fit(doc, headerLabel(c.key), widths[i]! - 3), x, y, { width: widths[i]! - 3, lineBreak: false });
-      x += widths[i]!;
+    texts.forEach((t, i) => {
+      if (t !== "") doc.text(t, x + CELL_PAD, y, { width: ws[i]! - CELL_PAD * 2 });
+      x += ws[i]!;
     });
-    doc.moveTo(MARGIN, y + ROW_HEIGHT - 2).lineTo(MARGIN + width, y + ROW_HEIGHT - 2).strokeColor("#ccc").lineWidth(0.5).stroke();
-    return y + ROW_HEIGHT;
+    doc.moveTo(MARGIN, y + h - 1).lineTo(MARGIN + ws.reduce((a, b) => a + b, 0), y + h - 1).strokeColor("#e2e2e2").lineWidth(0.3).stroke();
+  };
+  /** The longest word-boundary prefix of `text` that fits `maxH` at width `w`, and the rest. */
+  const prefixFitting = (text: string, w: number, maxH: number): [string, string] => {
+    if (cellHeight(text, w) <= maxH) return [text, ""];
+    const words = text.split(" ");
+    let lo = 0;
+    let hi = words.length;
+    while (lo < hi) {
+      const mid = Math.ceil((lo + hi) / 2);
+      if (cellHeight(words.slice(0, mid).join(" "), w) <= maxH) lo = mid;
+      else hi = mid - 1;
+    }
+    if (lo === 0) {
+      // One word longer than the cell: cut by characters.
+      let c = text.length;
+      while (c > 1 && cellHeight(text.slice(0, c), w) > maxH) c = Math.floor(c / 2);
+      return [text.slice(0, c), text.slice(c)];
+    }
+    return [words.slice(0, lo).join(" "), words.slice(lo).join(" ")];
   };
 
   let y = drawHeader();
+  const headerBottom = y;
   for (const [index, table] of tables.entries()) {
-    const widths = columnWidths(doc, table, width);
-    if (index > 0 && y + ROW_HEIGHT * 4 > bottom()) { doc.addPage(); y = drawHeader(); }
-    if (table.heading) {
-      doc.font(HEADER_FONT).fontSize(9).fillColor("#000").text(pdfSafe(table.heading), MARGIN, y + 4, { width, lineBreak: false });
-      y += 16;
+    const natural = naturalWidths(doc, table);
+    const parts = splitColumns(natural, width, KEY_COLUMNS);
+    for (const [p, part] of parts.entries()) {
+      const cols = part.map((i) => table.columns[i]!);
+      const nat = part.map((i) => natural[i]!);
+      const total = nat.reduce((a, b) => a + b, 0);
+      const ws = total > width ? nat.map((w) => (w / total) * width) : nat;
+      const headers = cols.map((c) => headerLabel(c.key));
+      const headerH = rowHeight(headers, ws, HEADER_FONT);
+      const partText = parts.length > 1 ? (options.partLabel ? options.partLabel(p + 1, parts.length) : `(${p + 1}/${parts.length})`) : "";
+      const heading = [table.heading ? pdfSafe(table.heading) : "", pdfSafe(partText)].filter(Boolean).join(" · ");
+      if ((index > 0 || p > 0) && y + 16 + headerH + LINE * 3 > bottom()) { doc.addPage(); y = drawHeader(); }
+      if (heading) {
+        doc.font(HEADER_FONT).fontSize(9).fillColor("#000").text(heading, MARGIN, y + 4, { width, lineBreak: false });
+        y += 16;
+      }
+      drawRow(headers, ws, y, HEADER_FONT, headerH);
+      y += headerH;
+      const newPage = () => {
+        doc.addPage();
+        y = drawHeader();
+        drawRow(headers, ws, y, HEADER_FONT, headerH);
+        y += headerH;
+      };
+      if (table.rows.length === 0) {
+        doc.font(BODY_FONT).fontSize(FONT_SIZE).fillColor("#555").text(pdfSafe(table.emptyText), MARGIN, y, { width, lineBreak: false });
+        y += LINE + ROW_GAP;
+      }
+      for (const row of table.rows) {
+        let texts = cols.map((c) => pdfSafe(formatCell(c.kind, row[c.key])));
+        // Every cell WRAPS (nothing is ellipsized): a row is as tall as its tallest cell. A row
+        // taller than a whole page continues on the next one, so long text survives in full.
+        for (;;) {
+          const h = rowHeight(texts, ws, BODY_FONT);
+          if (y + h <= bottom()) { drawRow(texts, ws, y, BODY_FONT, h); y += h; break; }
+          const fresh = bottom() - (headerBottom + headerH);
+          if (h <= fresh || bottom() - y < LINE * 3) { newPage(); continue; }
+          doc.font(BODY_FONT).fontSize(FONT_SIZE);
+          const avail = bottom() - y - ROW_GAP;
+          const split = texts.map((t, i) => prefixFitting(t, ws[i]!, avail));
+          drawRow(split.map(([a]) => a), ws, y, BODY_FONT, bottom() - y);
+          texts = split.map(([, rest]) => rest);
+          newPage();
+        }
+      }
+      y += LINE;
     }
-    y = drawColumnHeader(y, table, widths);
-    if (table.rows.length === 0) {
-      doc.font(BODY_FONT).fontSize(FONT_SIZE).fillColor("#555").text(pdfSafe(table.emptyText), MARGIN, y, { width, lineBreak: false });
-      y += ROW_HEIGHT;
-    }
-    for (const row of table.rows) {
-      if (y > bottom()) { doc.addPage(); y = drawColumnHeader(drawHeader(), table, widths); }
-      doc.font(BODY_FONT).fontSize(FONT_SIZE).fillColor("#000");
-      let x = MARGIN;
-      table.columns.forEach((c, i) => {
-        const text = pdfSafe(formatCell(c.kind, row[c.key]));
-        doc.text(fit(doc, text, widths[i]! - 3), x, y, { width: widths[i]! - 3, lineBreak: false });
-        x += widths[i]!;
-      });
-      y += ROW_HEIGHT;
-    }
-    y += ROW_HEIGHT;
   }
 
   // Footer pass. Writing below the bottom margin makes pdfkit add a page, so the margin is lifted
