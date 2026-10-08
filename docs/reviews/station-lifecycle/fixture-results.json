@@ -1,0 +1,42 @@
+[
+  {
+    "name": "board-crew-en-360",
+    "width": 360,
+    "language": "en",
+    "level": 3,
+    "admin": false,
+    "viewport": 360,
+    "scrollWidth": 360,
+    "source": "renderToStaticMarkup of actual component; app/globals.css compiled with Tailwind; no live state"
+  },
+  {
+    "name": "board-crew-es-360",
+    "width": 360,
+    "language": "es",
+    "level": 3,
+    "admin": false,
+    "viewport": 360,
+    "scrollWidth": 360,
+    "source": "renderToStaticMarkup of actual component; app/globals.css compiled with Tailwind; no live state"
+  },
+  {
+    "name": "board-kh-en-1280",
+    "width": 1280,
+    "language": "en",
+    "level": 4,
+    "admin": false,
+    "viewport": 1280,
+    "scrollWidth": 1280,
+    "source": "renderToStaticMarkup of actual component; app/globals.css compiled with Tailwind; no live state"
+  },
+  {
+    "name": "timing-kh-es-360",
+    "width": 360,
+    "language": "es",
+    "level": 4,
+    "admin": true,
+    "viewport": 360,
+    "scrollWidth": 360,
+    "source": "renderToStaticMarkup of actual component; app/globals.css compiled with Tailwind; no live state"
+  }
+]

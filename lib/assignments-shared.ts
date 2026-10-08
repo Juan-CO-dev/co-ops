@@ -38,13 +38,15 @@ export const TASK_MIN_LEVEL: Record<TaskType, number> = {
 export function isTaskType(value: unknown): value is TaskType {
   return typeof value === "string" && TASK_TYPES.some((task) => task === value);
 }
-export interface StationPosition { id: string; stationId: string; name: string; nameEs: string | null; duty: string | null; dutyEs: string | null; sort: number; active: boolean }
-export interface Station { id: string; name: string; nameEs: string | null; sort: number; active: boolean; staffed: boolean; positions: StationPosition[] }
-export interface ShiftPerson { id: string; name: string; level: number; hasWork: boolean; available?: boolean }
+export interface StationPosition { id: string; stationId: string; name: string; nameEs: string | null; duty: string | null; dutyEs: string | null; sort: number; active: boolean; usuallyTrimsAt?: string | null }
+export interface Station { id: string; name: string; nameEs: string | null; sort: number; active: boolean; staffed: boolean; positions: StationPosition[]; closedAt?: string | null; usuallyClosesAt?: string | null }
+export interface ShiftPerson { id: string; name: string; level: number; hasWork: boolean; available?: boolean; onBreak?: boolean }
 export interface StationEvent {
   id: string; sequence: string; locationId: string; businessDate: string;
   userId: string; stationId: string | null; positionId?: string | null; kind: "assign" | "claim" | "move" | "release";
-  actorId: string; actorName: string | null; at: string; source: "assigned" | "claimed" | null;
+  actorId: string | null; actorName: string | null; at: string; source: "assigned" | "claimed" | null;
+  releaseReason?: "station_closed" | "clocked_out" | "on_break";
+  priorPositionId?: string | null; effectiveAt?: string | null;
   actorLevel?: number; change?: AssignmentChange;
 }
 export interface TaskAssignment {
@@ -60,6 +62,8 @@ export interface ShiftBoard {
   stations: Station[]; people: ShiftPerson[]; events: StationEvent[]; tasks: TaskAssignment[];
   occupiedPositions?: { positionId: string; firstName: string }[];
   taskChanges?: { task: TaskType; change: AssignmentChange }[];
+  positionVacancies?: { positionId: string; userId: string; name: string; reason: "clocked_out" | "on_break"; at: string }[];
+  taskVacancies?: { task: TaskType; userId: string; name: string; at: string }[];
 }
 export function taskHref(task: TaskType, locationId: string): string {
   const paths: Record<TaskType, string> = {

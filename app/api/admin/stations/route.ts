@@ -1,20 +1,37 @@
 import type { NextRequest } from "next/server";
 import { assertStepUp } from "@/lib/admin/step-up";
 import { jsonError, jsonOk, parseJsonBody } from "@/lib/api-helpers";
-import { AssignmentError, saveStationSpanish, saveStationConfig } from "@/lib/assignments";
+import { AssignmentError, saveStationSpanish, saveStationConfig, saveStationTiming } from "@/lib/assignments";
 import { requireSession } from "@/lib/session";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 
 export async function POST(req: NextRequest) {
   const ctx = await requireSession(req, "/api/admin/stations");
   if (ctx instanceof Response) return ctx;
-  if (ctx.level < 7) return jsonError(403, "role_insufficient");
-  const stepUp = assertStepUp(ctx, "B");
-  if (!stepUp.ok) return jsonError(403, stepUp.code);
   const body = await parseJsonBody(req);
   if (body instanceof Response) return body;
   if (!body || typeof body !== "object" || Array.isArray(body)) return jsonError(400, "invalid_payload");
   const b = body as Record<string, unknown>;
+  if (b.operation === "timing") {
+    if (ctx.level < 4) return jsonError(403, "role_insufficient");
+    if (typeof b.locationId !== "string" || typeof b.stationId !== "string" ||
+      (b.positionId !== undefined && typeof b.positionId !== "string") ||
+      Object.keys(b).some((key) => !["operation", "locationId", "stationId", "positionId", "usuallyClosesAt", "usuallyTrimsAt"].includes(key)))
+      return jsonError(400, "invalid_payload");
+    try {
+      return jsonOk(await saveStationTiming(getServiceRoleClient(), {
+        actor: { userId: ctx.user.id, role: ctx.role, level: ctx.level, locations: ctx.locations },
+        locationId: b.locationId, stationId: b.stationId, positionId: b.positionId as string | undefined,
+        usuallyClosesAt: b.usuallyClosesAt as string | null | undefined, usuallyTrimsAt: b.usuallyTrimsAt as string | null | undefined,
+      }));
+    } catch (error) {
+      if (error instanceof AssignmentError) return jsonError(error.status, error.code);
+      return jsonError(500, "internal_error");
+    }
+  }
+  if (ctx.level < 7) return jsonError(403, "role_insufficient");
+  const stepUp = assertStepUp(ctx, "B");
+  if (!stepUp.ok) return jsonError(403, stepUp.code);
   if (b.operation === "staffed" || b.operation === "position_create" || b.operation === "position_update") {
     if (typeof b.locationId !== "string" || typeof b.stationId !== "string" ||
       (b.operation === "staffed" && typeof b.staffed !== "boolean") ||

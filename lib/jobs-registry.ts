@@ -37,8 +37,8 @@ export const JOBS_REGISTRY = [
   // Its cron heartbeat is written by the capture inside the 09:00 UTC sales pull.
   { job: "toast-order-capture", cadenceMinutes: 1440, source: "vercel", dueUtc: "09:00" },
   { job: "toast-sales-pull", cadenceMinutes: 1440, source: "vercel", catchUp: { job: "toast-sales-pull", dueUtc: "09:00" } }, // 09:00 UTC
-  // Labor (0224): a bounded, fail-soft pull at the end of the nightly; watched only while TOAST_LABOR_PULL=1.
-  { job: "toast-labor-pull", cadenceMinutes: 1440, source: "vercel", dueUtc: "09:00" },
+  // Labor (0224/0230): today's bounded, fail-soft pull rides the 10-minute pinger; nightly remains a backstop.
+  { job: "toast-labor-pull", cadenceMinutes: 10, window: { startHourET: 6, endHourET: 22 }, source: "pinger" },
   { job: "prune-sessions", cadenceMinutes: 1440, source: "vercel", catchUp: { job: "prune-sessions", dueUtc: "08:30" } }, // 08:30 UTC
   { job: "parse-receipts", cadenceMinutes: 1440, source: "vercel", catchUp: { job: "parse-receipts", dueUtc: "09:45" } }, // 09:45 UTC
   { job: "toast-catering-scan", cadenceMinutes: 10, window: { startHourET: 6, endHourET: 22 }, source: "pinger" },

@@ -5226,5 +5226,18 @@
   "catering.reconciliation.capture_missing": "Toast capture is missing for this date",
   "catering.reconciliation.missing_item_identity": "Provider item identity is missing",
   "catering.reconciliation.ambiguous_pos_guid": "POS identity matches more than one item",
-  "catering.reconciliation.options_unmapped": "Item options need ingredient mapping"
+  "catering.reconciliation.options_unmapped": "Item options need ingredient mapping",
+  "assignments.lifecycle.closed": "Closed · {time}",
+  "assignments.lifecycle.positionClosed": "Closed",
+  "assignments.lifecycle.usuallyCloses": "Usually closes ~{time}",
+  "assignments.lifecycle.usuallyTrims": "Usually trims ~{time}",
+  "assignments.lifecycle.usuallyClosesLabel": "Usually closes around (optional)",
+  "assignments.lifecycle.usuallyTrimsLabel": "Usually trims around (optional)",
+  "assignments.lifecycle.timingHint": "Hints only. Closing checklist items close stations; these times do not.",
+  "assignments.lifecycle.leftOpen": "Left open · {name} clocked out {time}",
+  "assignments.lifecycle.openCover": "Open for cover · {name} on break",
+  "assignments.lifecycle.onBreak": "On break",
+  "assignments.lifecycle.startBreak": "Start break",
+  "assignments.lifecycle.backFromBreak": "Back from break",
+  "assignments.lifecycle.breakHelp": "Return from break to claim an open spot. Your previous spot is not reserved."
 }

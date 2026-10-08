@@ -5226,5 +5226,18 @@
   "catering.reconciliation.capture_missing": "Falta la captura de Toast para esta fecha",
   "catering.reconciliation.missing_item_identity": "Falta la identidad del artículo del proveedor",
   "catering.reconciliation.ambiguous_pos_guid": "La identidad POS coincide con más de un artículo",
-  "catering.reconciliation.options_unmapped": "Las opciones del artículo necesitan ingredientes asignados"
+  "catering.reconciliation.options_unmapped": "Las opciones del artículo necesitan ingredientes asignados",
+  "assignments.lifecycle.closed": "Cerrada · {time}",
+  "assignments.lifecycle.positionClosed": "Cerrado",
+  "assignments.lifecycle.usuallyCloses": "Suele cerrar ~{time}",
+  "assignments.lifecycle.usuallyTrims": "Suele reducir personal ~{time}",
+  "assignments.lifecycle.usuallyClosesLabel": "Suele cerrar a las (opcional)",
+  "assignments.lifecycle.usuallyTrimsLabel": "Suele reducir personal a las (opcional)",
+  "assignments.lifecycle.timingHint": "Solo son referencias. Las tareas de cierre cierran las estaciones; estas horas no.",
+  "assignments.lifecycle.leftOpen": "Quedó libre · {name} marcó su salida a las {time}",
+  "assignments.lifecycle.openCover": "Libre para cubrir · {name} está en descanso",
+  "assignments.lifecycle.onBreak": "En descanso",
+  "assignments.lifecycle.startBreak": "Iniciar descanso",
+  "assignments.lifecycle.backFromBreak": "Volver del descanso",
+  "assignments.lifecycle.breakHelp": "Vuelve del descanso para ocupar un puesto libre. Tu puesto anterior no está reservado."
 }

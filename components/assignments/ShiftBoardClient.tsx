@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState, useTransition, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import { ActionButton, ActionLink } from "@/components/ActionButton";
-import { formatTime } from "@/lib/i18n/format";
+import { formatTime, formatClockTime } from "@/lib/i18n/format";
 import type { TranslationKey } from "@/lib/i18n/types";
 import { useTranslation } from "@/lib/i18n/provider";
 import { RetrainTaskList } from "@/components/production/RetrainTaskList";
@@ -48,6 +48,18 @@ export function ShiftBoardClient({ board, compact = false, retrainTasks = [] }: 
     reason: change.reasonCode ? t(`assignments.reason.${change.reasonCode}`) : change.reasonNote ?? "",
     time: formatTime(change.at, language),
   })}{change.reasonCode && change.reasonNote ? ` · ${change.reasonNote}` : ""}</p>;
+  const taskVacancyLine = (task: TaskType) => board.taskVacancies?.filter((entry) => entry.task === task).map((entry) =>
+    <p key={`${entry.userId}:${entry.at}`} className="text-sm text-co-text-muted">{t("assignments.lifecycle.leftOpen", { name: entry.name, time: formatTime(entry.at, language) })}</p>);
+  const positionVacancyLine = (positionId: string) => {
+    const vacancy = board.positionVacancies?.find((entry) => entry.positionId === positionId);
+    return vacancy ? <p className="text-sm text-co-text-muted">{t(vacancy.reason === "on_break" ? "assignments.lifecycle.openCover" : "assignments.lifecycle.leftOpen", { name: vacancy.name, time: formatTime(vacancy.at, language) })}</p> : null;
+  };
+  const stationStatus = (station: ShiftBoard["stations"][number]) => <>
+    {station.closedAt && <p className="font-bold text-co-text-muted">{t("assignments.lifecycle.closed", { time: formatTime(station.closedAt, language) })}</p>}
+    {station.usuallyClosesAt && <p className="text-sm text-co-text-muted">{t("assignments.lifecycle.usuallyCloses", { time: formatClockTime(station.usuallyClosesAt, language) })}</p>}
+  </>;
+  const trimHint = (position: ShiftBoard["stations"][number]["positions"][number]) => position.sort > 1 && position.usuallyTrimsAt
+    ? <p className="text-sm text-co-text-muted">{t("assignments.lifecycle.usuallyTrims", { time: formatClockTime(position.usuallyTrimsAt, language) })}</p> : null;
   const taskLine = (assignment: TaskAssignment) => <div key={assignment.id} className="text-sm text-co-text-muted">
     <p>{formatAssignmentAttribution({ source: assignment.source ?? "assigned", holderName: assignment.assigneeName ?? board.people.find((person) => person.id === assignment.assigneeId)?.name ?? t("assignments.assignedStaff"), actorName: assignment.assignerName, at: assignment.at ?? "" }, language, t)}</p>
     {changeLine(assignment.change)}
@@ -90,7 +102,7 @@ export function ShiftBoardClient({ board, compact = false, retrainTasks = [] }: 
   const unassigned = TASK_TYPES.filter((task) => !board.tasks.some((assignment) => assignment.task === task && assignment.available !== false));
   const people = compact ? board.people.filter((p) => p.id === board.viewerId) : board.people;
   const ownTasks = board.tasks.filter((task) => task.assigneeId === board.viewerId && task.available !== false);
-  const positions = board.stations.filter((station) => station.active && station.staffed).flatMap((station) => station.positions.filter((position) => position.active));
+  const positions = board.stations.filter((station) => station.active && station.staffed && !station.closedAt).flatMap((station) => station.positions.filter((position) => position.active));
   const filledStations = positions.filter((position) => board.people.some((person) => currentStation(board.events, person.id)?.positionId === position.id)).length;
   const sections = useCollapsibleSections(`assignments:${board.viewerId}:${board.locationId}:${compact ? "dashboard" : "page"}`, [
     { id: "tasks", done: compact ? ownTasks.length : TASK_TYPES.length - unassigned.length, total: TASK_TYPES.length },
@@ -136,14 +148,17 @@ export function ShiftBoardClient({ board, compact = false, retrainTasks = [] }: 
       const positions = station.positions.filter((p) => p.active);
       const filled = positions.filter((p) => board.people.some((person) => currentStation(board.events, person.id)?.positionId === p.id)).length;
       return <div key={station.id} className="rounded-xl border border-co-border p-3">
-        <h4 className="min-w-0 truncate font-bold" title={language === "es" ? station.nameEs || station.name : station.name}>{language === "es" ? station.nameEs || station.name : station.name} · {filled} {t("assignments.of")} {positions.length}</h4>
+        <h4 className="min-w-0 truncate font-bold" title={language === "es" ? station.nameEs || station.name : station.name}>{language === "es" ? station.nameEs || station.name : station.name}{!station.closedAt && <> · {filled} {t("assignments.of")} {positions.length}</>}</h4>
+        {stationStatus(station)}
         <ul className="mt-2 space-y-2">{positions.map((position) => {
           const occupant = board.people.find((person) => currentStation(board.events, person.id)?.positionId === position.id);
           return <li key={position.id} className="rounded-lg border border-co-border p-2">
-            <p className="truncate font-bold" title={language === "es" ? position.nameEs || position.name : position.name}>{language === "es" ? position.nameEs || position.name : position.name} · {occupant?.name ?? t("assignments.unassigned")}</p>
+            <p className="truncate font-bold" title={language === "es" ? position.nameEs || position.name : position.name}>{language === "es" ? position.nameEs || position.name : position.name} · {station.closedAt ? t("assignments.lifecycle.positionClosed") : occupant?.name ?? t("assignments.unassigned")}</p>
             {(language === "es" ? position.dutyEs || position.duty : position.duty) && <p className="text-sm text-co-text-muted">{language === "es" ? position.dutyEs || position.duty : position.duty}</p>}
-            {stationLine(occupant ? currentStation(board.events, occupant.id) : null, occupant?.name ?? t("assignments.assignedStaff"))}
-            {board.viewerLevel >= 4 && <form className="mt-2 flex min-w-0 flex-wrap items-end gap-2" onSubmit={(event) => {
+            {trimHint(position)}
+            {!occupant && !station.closedAt && positionVacancyLine(position.id)}
+            {!station.closedAt && stationLine(occupant ? currentStation(board.events, occupant.id) : null, occupant?.name ?? t("assignments.assignedStaff"))}
+            {board.viewerLevel >= 4 && !station.closedAt && <form className="mt-2 flex min-w-0 flex-wrap items-end gap-2" onSubmit={(event) => {
               event.preventDefault();
               const userId = String(new FormData(event.currentTarget).get("userId") || "");
               if (userId) requestMutation({ action: "station", userId, stationId: station.id, positionId: position.id, manage: true }, stationOverrideLevel(userId));
@@ -151,7 +166,7 @@ export function ShiftBoardClient({ board, compact = false, retrainTasks = [] }: 
               <label className="grid min-w-0 max-w-full flex-1 basis-[14rem] gap-1 text-[11px] font-bold text-co-text-dim">{t("assignments.person")}
                 <select name="userId" className={control} disabled={disabled} defaultValue="">
                   <option value="" disabled>{t("assignments.person")}</option>
-                  {board.people.filter((person) => person.available !== false && person.level <= board.viewerLevel && (person.id !== board.viewerId || canSelfClaim(currentStation(board.events, person.id))))
+                  {board.people.filter((person) => person.available !== false && !person.onBreak && person.level <= board.viewerLevel && (person.id !== board.viewerId || canSelfClaim(currentStation(board.events, person.id))))
                     .map((person) => <option key={person.id} value={person.id}>{person.name}</option>)}
                 </select>
               </label>
@@ -174,7 +189,7 @@ export function ShiftBoardClient({ board, compact = false, retrainTasks = [] }: 
           const canOpen = board.viewerLevel >= TASK_MIN_LEVEL[task] && (board.viewerLevel >= 4 || assignments.some((assignment) => assignment.assigneeId === board.viewerId && assignment.source !== "taken"));
           return <li key={task} className="rounded-xl border border-co-border p-3">
             {canOpen ? <ActionLink variant="secondary" href={taskHref(task, board.locationId)}>{t(`assignments.task.${task}`)}</ActionLink> : <span>{t(`assignments.task.${task}`)}</span>}
-            <div className="mt-2">{assignments.length === 0 ? <p className="text-sm text-co-text-muted">{t("assignments.attribution.unassigned")}</p> : assignments.map(taskLine)}
+            <div className="mt-2">{assignments.length === 0 ? <><p className="text-sm text-co-text-muted">{t("assignments.attribution.unassigned")}</p>{taskVacancyLine(task)}</> : assignments.map(taskLine)}
               {board.taskChanges?.filter((entry) => entry.task === task).map((entry) => <div key={entry.change.at}>{changeLine(entry.change)}</div>)}
             </div>
             {!canOpen && assignments.length > 0 && <p className="text-sm text-co-text-muted">{t("assignments.assignedOther")}</p>}
@@ -194,15 +209,17 @@ export function ShiftBoardClient({ board, compact = false, retrainTasks = [] }: 
       const managerCanEdit = !compact && board.viewerLevel >= 4 && person.available !== false && person.level <= board.viewerLevel
         && (person.id !== board.viewerId || canSelfClaim(current));
       const canRetract = board.viewerLevel >= 4;
-      const canClaim = person.available !== false && compact && person.id === board.viewerId && canSelfClaim(current);
+      const canClaim = person.available !== false && !person.onBreak && compact && person.id === board.viewerId && canSelfClaim(current);
       return <article key={person.id} className="min-w-0 space-y-3 rounded-xl border border-co-border p-3">
         {!compact && <h4 className="truncate font-bold text-co-text" title={person.name}>{person.name}</h4>}
+        {person.onBreak && <><p className="font-bold text-co-text-muted">{t("assignments.lifecycle.onBreak")}</p><p className="text-sm text-co-text-muted">{t("assignments.lifecycle.breakHelp")}</p></>}
+        {person.available !== false && (person.id === board.viewerId || (!compact && board.viewerLevel >= 4 && person.level <= board.viewerLevel)) && <ActionButton variant="secondary" disabled={disabled} onClick={() => void mutate({ action: "break", userId: person.id, onBreak: !person.onBreak })}>{t(person.onBreak ? "assignments.lifecycle.backFromBreak" : "assignments.lifecycle.startBreak")}</ActionButton>}
         {person.available === false && <p className="text-sm text-co-text-muted">{t("assignments.unavailablePerson")}</p>}
         <p className="truncate font-bold text-co-text" title={station?.name}>{station ? `${language === "es" ? station.nameEs || station.name : station.name} · ${position ? (language === "es" ? position.nameEs || position.name : position.name) : ""}` : t("assignments.noStation")}</p>
         {position && <p className="text-sm text-co-text-muted">{language === "es" ? position.dutyEs || position.duty : position.duty}</p>}
         {current?.stationId ? byLine(current.source, current.actorName, current.at) : null}
         {changeLine(current?.change)}
-        {(managerCanEdit || canClaim) && <form className="flex flex-wrap items-end gap-2" onSubmit={(event) => {
+        {!person.onBreak && (managerCanEdit || canClaim) && <form className="flex flex-wrap items-end gap-2" onSubmit={(event) => {
           event.preventDefault();
           const data = new FormData(event.currentTarget);
           const positionId = String(data.get("positionId") || "");
@@ -212,11 +229,11 @@ export function ShiftBoardClient({ board, compact = false, retrainTasks = [] }: 
           <label className="grid min-w-0 max-w-full flex-1 basis-[14rem] gap-1 text-[11px] font-bold tracking-[0.12em] text-co-text-dim">{t("assignments.station")}
             <select key={current?.id ?? "none"} name="positionId" defaultValue={current?.positionId ?? ""} disabled={disabled} className={control}>
               <option value="">{t("assignments.noStation")}</option>
-              {board.stations.filter((s) => (s.active && s.staffed) || s.id === current?.stationId).flatMap((s) =>
+              {board.stations.filter((s) => (s.active && s.staffed && !s.closedAt) || s.id === current?.stationId).flatMap((s) =>
                 s.positions.filter((p) => p.active || p.id === current?.positionId).sort((a, b) => a.sort - b.sort || a.name.localeCompare(b.name)).map((p) => {
                   const holder = board.occupiedPositions?.find((entry) => entry.positionId === p.id);
                   const taken = !!holder && p.id !== current?.positionId;
-                  return <option key={p.id} value={p.id} disabled={!s.active || !s.staffed || !p.active || (board.viewerLevel < 4 && taken)}>
+                  return <option key={p.id} value={p.id} disabled={!s.active || !s.staffed || !!s.closedAt || !p.active || (board.viewerLevel < 4 && taken)}>
                     {language === "es" ? s.nameEs || s.name : s.name} · {language === "es" ? p.nameEs || p.name : p.name}
                     {p.sort === 1 ? ` · ${t("assignments.fillFirst")}` : ""}
                     {holder ? ` · ${t("assignments.takenBy", { name: holder.firstName })}` : ""}
@@ -250,17 +267,18 @@ export function ShiftBoardClient({ board, compact = false, retrainTasks = [] }: 
     {compact && section("team", "assignments.teamToday", board.people.filter((person) => person.hasWork).length, board.people.length, <div className="space-y-4">
       <ul className="space-y-3">{TASK_TYPES.map((task) => {
         const assignments = board.tasks.filter((assignment) => assignment.task === task && assignment.available !== false);
-        return <li key={task}><h4 className="font-bold">{t(`assignments.task.${task}`)}</h4>{assignments.length ? assignments.map(taskLine) : <p className="text-sm text-co-text-muted">{t("assignments.attribution.unassigned")}</p>}
+        return <li key={task}><h4 className="font-bold">{t(`assignments.task.${task}`)}</h4>{assignments.length ? assignments.map(taskLine) : <><p className="text-sm text-co-text-muted">{t("assignments.attribution.unassigned")}</p>{taskVacancyLine(task)}</>}
           {board.taskChanges?.filter((entry) => entry.task === task).map((entry) => <div key={entry.change.at}>{changeLine(entry.change)}</div>)}</li>;
       })}</ul>
       {board.stations.filter((station) => station.active && station.staffed).map((station) => <div key={station.id}>
         <h4 className="font-bold">{language === "es" ? station.nameEs || station.name : station.name}</h4>
+        {stationStatus(station)}
         <ul className="space-y-2">{station.positions.filter((position) => position.active).map((position) => {
           const occupant = board.people.find((person) => currentStation(board.events, person.id)?.positionId === position.id);
-          return <li key={position.id}><p>{language === "es" ? position.nameEs || position.name : position.name}</p>{stationLine(occupant ? currentStation(board.events, occupant.id) : null, occupant?.name ?? t("assignments.assignedStaff"))}</li>;
+          return <li key={position.id}><p>{language === "es" ? position.nameEs || position.name : position.name}</p>{trimHint(position)}{!occupant && !station.closedAt && positionVacancyLine(position.id)}{!station.closedAt && stationLine(occupant ? currentStation(board.events, occupant.id) : null, occupant?.name ?? t("assignments.assignedStaff"))}</li>;
         })}</ul>
       </div>)}
-      {board.people.map((person) => { const held = board.tasks.filter((task) => task.assigneeId === person.id && task.available !== false); return <div key={person.id}><h4 className="font-bold">{person.name}</h4>{personStationLine(currentStation(board.events, person.id))}{held.length ? held.map(personTaskLine) : <p className="text-sm text-co-text-muted">{t("assignments.noTasks")}</p>}</div>; })}
+      {board.people.map((person) => { const held = board.tasks.filter((task) => task.assigneeId === person.id && task.available !== false); return <div key={person.id}><h4 className="font-bold">{person.name}</h4>{person.onBreak && <p className="text-sm text-co-text-muted">{t("assignments.lifecycle.onBreak")}</p>}{personStationLine(currentStation(board.events, person.id))}{held.length ? held.map(personTaskLine) : <p className="text-sm text-co-text-muted">{t("assignments.noTasks")}</p>}</div>; })}
     </div>)}
     <dialog ref={reasonDialog} aria-label={t("assignments.confirmChange")} className="m-auto max-h-[85dvh] w-[calc(100%-2rem)] max-w-lg overflow-y-auto rounded-xl border-2 border-co-border bg-co-surface p-4 text-co-text backdrop:bg-black/50" onCancel={(event) => { event.preventDefault(); if (!busy) setPending(null); }}>
     {pending && <form className="space-y-3" onSubmit={(event) => {

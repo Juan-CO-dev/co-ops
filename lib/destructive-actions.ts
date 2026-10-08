@@ -48,6 +48,8 @@ export const DESTRUCTIVE_ACTIONS = [
   "station.position_update",
   "station.sync",
   "station.event",
+  "station.break", // A human changes the shift's availability record.
+  "station.timing_update", // Advisory station / position configuration.
   "assignment.create",
   "assignment.retract",
   "receiving.store_create",

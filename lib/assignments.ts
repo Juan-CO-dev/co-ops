@@ -3,6 +3,9 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { audit } from "./audit";
 import { enqueueNotification } from "./notifications";
 import { loadTakenTasks } from "./assignment-taken";
+import { positionVacancies, takenSurvivesDeparture, validStationTime } from "./assignments-lifecycle-shared";
+import { selectAllRows } from "./supabase-paginate";
+import { dedupeTakenTasks } from "./assignment-taken-shared";
 import { lockLocationContext, type LocationActor } from "./locations";
 import { etCalendarDate } from "./operational-day";
 import { getRoleLevel, isRoleCode, type RoleCode } from "./roles";
@@ -28,7 +31,7 @@ function requireUuid(value: string): void {
 function dbError(error: { message: string; code?: string }, context?: "position_name"): never {
   if (error.code === "23505" && context === "position_name") throw new AssignmentError("position_name_taken", 409);
   if (error.code === "23505") throw new AssignmentError("assignment_already_active", 409);
-  const known = ["override_reason_required", "position_taken", "station_locked", "role_insufficient", "location_access_denied", "assignee_unavailable", "self_assignment", "station_unavailable", "assignment_not_found", "invalid_payload"];
+  const known = ["station_closed", "clocked_out", "on_break", "override_reason_required", "position_taken", "station_locked", "role_insufficient", "location_access_denied", "assignee_unavailable", "self_assignment", "station_unavailable", "assignment_not_found", "invalid_payload"];
   const code = known.find((candidate) => error.message === candidate);
   if (code) throw new AssignmentError(code, code === "override_reason_required" ? 422 : code === "position_taken" ? 409 : code === "assignment_not_found" ? 404 : code === "invalid_payload" ? 400 : 403);
   throw new Error(`assignments database failure: ${error.code ?? "unknown"}`);
@@ -144,6 +147,54 @@ export async function writeStationEvent(service: SupabaseClient, args: {
     metadata: { location_id: args.locationId, user_id: args.userId, station_id: args.stationId, position_id: args.positionId, ...overrideMetadata(result) }, ipAddress: null, userAgent: null });
   await notifyOverride(service, args.actor, args.locationId, "station_events", result);
   return { id: result.id };
+}
+
+/** Break is a availability transition, not an assignment override or task edit. */
+export async function writeStationBreak(service: SupabaseClient, args: {
+  actor: AssignmentActor; locationId: string; userId: string; onBreak: boolean;
+}): Promise<{ id: string | null }> {
+  requireLocation(args.actor, args.locationId);
+  requireUuid(args.userId);
+  if (typeof args.onBreak !== "boolean") throw new AssignmentError("invalid_payload", 400);
+  if (args.actor.userId !== args.userId && args.actor.level < 4) throw new AssignmentError("role_insufficient");
+  const level = await targetLevel(service, args.userId, args.locationId);
+  if (args.actor.userId !== args.userId && !canManageAssignee(args.actor.level, level)) throw new AssignmentError("role_insufficient");
+  const { data, error } = await service.rpc("write_station_break", {
+    p_actor_id: args.actor.userId, p_user_id: args.userId, p_location_id: args.locationId, p_on_break: args.onBreak,
+  });
+  if (error) dbError(error);
+  const result = data as { id: string | null; changed: boolean };
+  if (result.changed) await audit({ actorId: args.actor.userId, actorRole: args.actor.role,
+    action: "station.break", resourceTable: "station_break_events", resourceId: result.id,
+    metadata: { location_id: args.locationId, user_id: args.userId, on_break: args.onBreak }, ipAddress: null, userAgent: null });
+  return { id: result.id };
+}
+
+/** KH+ may edit advisory hours; this does not widen the GM configuration gate. */
+export async function saveStationTiming(service: SupabaseClient, args: {
+  actor: AssignmentActor; locationId: string; stationId: string; positionId?: string;
+  usuallyClosesAt?: string | null; usuallyTrimsAt?: string | null;
+}): Promise<{ id: string }> {
+  requireLocation(args.actor, args.locationId);
+  requireUuid(args.stationId);
+  if (args.actor.level < 4) throw new AssignmentError("role_insufficient");
+  if (await targetLevel(service, args.actor.userId, args.locationId) < 4) throw new AssignmentError("role_insufficient");
+  const isPosition = args.positionId !== undefined;
+  if (isPosition) requireUuid(args.positionId!);
+  const value = isPosition ? args.usuallyTrimsAt : args.usuallyClosesAt;
+  if (!validStationTime(value) || (isPosition ? args.usuallyClosesAt !== undefined : args.usuallyTrimsAt !== undefined))
+    throw new AssignmentError("invalid_payload", 400);
+  let query = isPosition
+    ? service.from("station_positions").update({ usually_trims_at: value }).eq("id", args.positionId!).eq("station_id", args.stationId)
+    : service.from("stations").update({ usually_closes_at: value }).eq("id", args.stationId);
+  if (isPosition && value !== null) query = query.gt("sort", 1);
+  const { data, error } = await query.eq("location_id", args.locationId).select("id").maybeSingle();
+  if (error) dbError(error);
+  if (!data) throw new AssignmentError("station_unavailable", 404);
+  await audit({ actorId: args.actor.userId, actorRole: args.actor.role, action: "station.timing_update",
+    resourceTable: isPosition ? "station_positions" : "stations", resourceId: data.id,
+    metadata: { location_id: args.locationId, time: value }, ipAddress: null, userAgent: null });
+  return data;
 }
 
 export async function assignTask(service: SupabaseClient, args: {
@@ -279,7 +330,7 @@ export async function saveStationConfig(service: SupabaseClient, args: {
       (duty?.length ?? 0) > 500 || (dutyEs?.length ?? 0) > 500 ||
       !Number.isInteger(args.sort) || args.sort! < 1 || args.sort! > 100 ||
       typeof args.active !== "boolean") throw new AssignmentError("invalid_payload", 400);
-    const fields = { name, name_es: nameEs, duty, duty_es: dutyEs, sort: args.sort, active: args.active };
+    const fields = { name, name_es: nameEs, duty, duty_es: dutyEs, sort: args.sort, active: args.active, ...(args.sort === 1 ? { usually_trims_at: null } : {}) };
     // Deactivating a position keeps its current holder; new claims are refused.
     if (args.operation === "position_update") {
       if (!args.positionId) throw new AssignmentError("invalid_payload", 400);
@@ -343,23 +394,34 @@ export async function loadShiftBoard(service: SupabaseClient, args: {
   const { data: stationDate, error: dayError } = await service.rpc("station_business_date", { p_location_id: args.locationId });
   if (dayError) dbError(dayError);
   if (typeof stationDate !== "string") throw new Error("Station business date unavailable");
-  const stationsResult = await service.from("stations").select("id,name,name_es,sort,active,staffed")
+  const stationsResult = await service.from("stations").select("id,name,name_es,sort,active,staffed,usually_closes_at")
     .eq("location_id", args.locationId).order("sort").order("name");
   if (stationsResult.error) dbError(stationsResult.error);
-  const positionsResult = await service.from("station_positions").select("id,station_id,name,name_es,duty,duty_es,sort,active")
+  const positionsResult = await service.from("station_positions").select("id,station_id,name,name_es,duty,duty_es,sort,active,usually_trims_at")
     .eq("location_id", args.locationId).order("sort").order("name");
   if (positionsResult.error) dbError(positionsResult.error);
+  const closureResult = await service.rpc("station_closures", { p_location_id: args.locationId, p_day: stationDate });
+  if (closureResult.error) dbError(closureResult.error);
+  const closures = new Map<string, string>((closureResult.data ?? []).map((row: { station_id: string; closed_at: string }) => [row.station_id, row.closed_at]));
+  const breakRows = await selectAllRows<{ user_id: string; on_break: boolean }>((from, to) =>
+    service.from("station_break_events").select("user_id,on_break").eq("location_id", args.locationId)
+      .eq("business_date", stationDate).order("sequence").range(from, to));
+  const breaks = new Map(breakRows.map((row) => [row.user_id, row.on_break]));
+  const departureRows = await selectAllRows<{ user_id: string; out_at: string }>((from, to) =>
+    service.from("station_departures").select("user_id,out_at").eq("location_id", args.locationId)
+      .eq("business_date", args.date).order("out_at").order("user_id").range(from, to));
+  const departures = new Map(departureRows.map((row) => [row.user_id, row.out_at]));
   const stations: Station[] = (stationsResult.data ?? []).map((row) => ({
-    id: row.id, name: row.name, nameEs: row.name_es, sort: row.sort, active: row.active, staffed: row.staffed,
+    id: row.id, name: row.name, nameEs: row.name_es, sort: row.sort, active: row.active, staffed: row.staffed, usuallyClosesAt: row.usually_closes_at, closedAt: closures.get(row.id) ?? null,
     positions: (positionsResult.data ?? []).filter((p) => p.station_id === row.id).map((p) => ({
       id: p.id, stationId: p.station_id, name: p.name, nameEs: p.name_es, duty: p.duty,
-      dutyEs: p.duty_es, sort: p.sort, active: p.active,
+      dutyEs: p.duty_es, sort: p.sort, active: p.active, usuallyTrimsAt: p.usually_trims_at,
     })),
   }));
   // Paginate history so the API row limit cannot quietly restore an old head.
   const eventRows: Array<Record<string, unknown>> = [];
   for (let offset = 0; ; offset += 500) {
-    const query = service.from("station_events").select("id,sequence::text,location_id,business_date,user_id,station_id,position_id,kind,actor_id,at,source,reason_code,reason_note,overridden_assigner_id")
+    const query = service.from("station_events").select("id,sequence::text,location_id,business_date,user_id,station_id,position_id,kind,actor_id,at,source,reason_code,reason_note,overridden_assigner_id,prior_position_id,effective_at")
       .eq("location_id", args.locationId).eq("business_date", stationDate).order("sequence");
     const { data, error } = await query.range(offset, offset + 499);
     if (error) dbError(error);
@@ -377,18 +439,19 @@ export async function loadShiftBoard(service: SupabaseClient, args: {
     if ((data ?? []).length < 500) break;
   }
   const taskResult = { data: taskRows };
-  const changes: Array<{ assignment_id: string; report_type: string; actor_id: string; kind: string; created_at: string;
+  const changes: Array<{ assignment_id: string; report_type: string; actor_id: string | null; kind: string; created_at: string; subject_user_id: string | null; effective_at: string | null;
     reason_code: OverrideReasonCode | null; reason_note: string | null; overridden_assigner_id: string | null }> = [];
   for (let offset = 0; ; offset += 500) {
     const result = await service.from("assignment_changes")
-      .select("assignment_id,report_type,actor_id,kind,created_at,reason_code,reason_note,overridden_assigner_id")
+      .select("assignment_id,report_type,actor_id,kind,created_at,reason_code,reason_note,overridden_assigner_id,subject_user_id,effective_at")
       .eq("location_id", args.locationId).eq("operational_date", args.date).order("created_at").order("id")
       .range(offset, offset + 499);
     if (result.error) dbError(result.error);
     changes.push(...(result.data ?? []));
     if ((result.data ?? []).length < 500) break;
   }
-  const taken = await loadTakenTasks(service, { locationId: args.locationId, date: args.date });
+  const takenHistory = await loadTakenTasks(service, { locationId: args.locationId, date: args.date, includeHistory: true });
+  const taken = dedupeTakenTasks(takenHistory.filter((row) => takenSurvivesDeparture(row.at, departures.get(row.userId))));
   const membershipQuery = service.from("user_locations").select("user_id")
     .eq("location_id", args.locationId).eq("active", true);
   const membership = await membershipQuery;
@@ -399,8 +462,10 @@ export async function loadShiftBoard(service: SupabaseClient, args: {
   for (const task of taskRows) rosterIds.add(task.assignee_id);
   for (const task of taken) rosterIds.add(task.userId);
   for (const event of eventRows) rosterIds.add(String(event.user_id));
-  const namesNeeded = new Set([...rosterIds, ...eventRows.map((row) => String(row.actor_id)),
-    ...eventRows.map((row) => String(row.user_id)), ...changes.map((row) => row.actor_id),
+  for (const row of breakRows) rosterIds.add(row.user_id);
+  for (const row of departureRows) rosterIds.add(row.user_id);
+  const namesNeeded = new Set([...rosterIds, ...eventRows.flatMap((row) => row.actor_id ? [String(row.actor_id)] : []),
+    ...eventRows.map((row) => String(row.user_id)), ...changes.flatMap((row) => row.actor_id ? [row.actor_id] : []),
     ...(taskResult.data ?? []).map((row) => String(row.assigner_id))]);
   const users: Array<{ id: string; name: string; role: string; active: boolean }> = [];
   const ids = [...namesNeeded];
@@ -411,17 +476,19 @@ export async function loadShiftBoard(service: SupabaseClient, args: {
   }
   const names = new Map(users.map((user) => [user.id, user.name]));
   const levels = new Map(users.map((user) => [user.id, isRoleCode(user.role) ? getRoleLevel(user.role) : 0]));
-  const changeView = (row: { actor_id: string; reason_code: OverrideReasonCode | null; reason_note: string | null;
+  const changeView = (row: { actor_id: string | null; reason_code: OverrideReasonCode | null; reason_note: string | null;
     overridden_assigner_id: string | null }, at: string): AssignmentChange => ({
-    actorName: names.get(row.actor_id) ?? null, at, reasonCode: row.reason_code,
+    actorName: (row.actor_id ? names.get(row.actor_id) : null) ?? null, at, reasonCode: row.reason_code,
     reasonNote: row.reason_note, overriddenAssignerId: row.overridden_assigner_id,
   });
   const events: StationEvent[] = eventRows.map((row) => ({
     id: String(row.id), sequence: String(row.sequence), locationId: String(row.location_id), businessDate: String(row.business_date),
     userId: String(row.user_id), stationId: row.station_id as string | null, positionId: row.position_id as string | null, kind: row.kind as StationEvent["kind"],
-    actorId: String(row.actor_id), actorName: names.get(String(row.actor_id)) ?? null, at: String(row.at), source: row.source as StationEvent["source"],
+    actorId: row.actor_id ? String(row.actor_id) : null, actorName: names.get(String(row.actor_id)) ?? null, at: String(row.at), source: row.source as StationEvent["source"],
     actorLevel: levels.get(String(row.actor_id)),
-    change: row.reason_code || row.reason_note ? changeView({ actor_id: String(row.actor_id),
+    priorPositionId: row.prior_position_id as string | null, effectiveAt: row.effective_at as string | null,
+    releaseReason: ["station_closed", "clocked_out", "on_break"].includes(String(row.reason_code)) ? row.reason_code as StationEvent["releaseReason"] : undefined,
+    change: !["station_closed", "clocked_out", "on_break"].includes(String(row.reason_code)) && (row.reason_code || row.reason_note) ? changeView({ actor_id: String(row.actor_id),
       reason_code: row.reason_code as OverrideReasonCode | null, reason_note: row.reason_note as string | null,
       overridden_assigner_id: row.overridden_assigner_id as string | null }, String(row.at)) : undefined,
   }));
@@ -447,13 +514,19 @@ export async function loadShiftBoard(service: SupabaseClient, args: {
       source: "taken", at: row.at, available: available.has(row.userId) });
   }
   return { locationId: args.locationId, date: args.date, viewerId: args.actor.userId, viewerLevel: args.actor.level,
-    stations, events,
+    stations, events, positionVacancies: positionVacancies(events, breaks, names),
+    taskVacancies: [...[...new Map(changes.map((row) => [row.report_type, row])).values()]
+      .filter((row) => row.kind === "auto_release" && isTaskType(row.report_type) && row.subject_user_id && row.effective_at)
+      .map((row) => ({ task: row.report_type as TaskType, userId: row.subject_user_id!, name: names.get(row.subject_user_id!) ?? "", at: row.effective_at! })),
+      ...dedupeTakenTasks(takenHistory.filter((row) => !takenSurvivesDeparture(row.at, departures.get(row.userId))))
+        .filter((row) => !changes.some((change) => change.report_type === row.task))
+        .map((row) => ({ task: row.task, userId: row.userId, name: names.get(row.userId) ?? "", at: departures.get(row.userId)! }))],
     taskChanges: changes.filter((row) => row.kind === "retract" && isTaskType(row.report_type))
       .map((row) => ({ task: row.report_type as TaskType, change: changeView(row, row.created_at) })),
     occupiedPositions, tasks, people: users.filter((user) => isRoleCode(user.role) &&
       (available.has(user.id) || tasks.some((task) => task.assigneeId === user.id) || events.some((event) => event.userId === user.id)))
-      .map((user) => ({ id: user.id, name: user.name, available: available.has(user.id), level: isRoleCode(user.role) ? getRoleLevel(user.role) : 0,
-        hasWork: events.some((event) => event.userId === user.id) || tasks.some((task) => task.assigneeId === user.id) }))
+      .map((user) => ({ id: user.id, name: user.name, available: available.has(user.id), onBreak: breaks.get(user.id) ?? false, level: isRoleCode(user.role) ? getRoleLevel(user.role) : 0,
+        hasWork: !!heads.get(user.id)?.stationId || tasks.some((task) => task.assigneeId === user.id) }))
       .sort((a, b) => a.name.localeCompare(b.name)),
   };
 }
