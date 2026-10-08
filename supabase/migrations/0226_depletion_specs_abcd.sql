@@ -1,4 +1,4 @@
--- AUTHORED ONLY; CC applies sim then prod.
+-- APPLIED TO PROD 2026-10-08 (schema_migrations version 20261008141901, name '0226_depletion_specs_abcd'; sim first, version 20261008141439). Data flip = docs/seed/seed-46-depletion-specs.sql, run AFTER the code deploys.
 -- 0226: depletion specs A/B/D. No data flips; see docs/seed/seed-46-depletion-specs.sql.
 begin;
 
