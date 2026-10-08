@@ -1381,20 +1381,33 @@ export async function loadOnHandDerived(
 ): Promise<OnHandView> {
   requireLevel(actor, ON_HAND_DERIVED_MIN);
   if (!lockLocationContext(actorLoc(actor), locationId)) throw new CountError(404, "not_found", "Location not found");
-  return deriveOnHand(locationId, now, opts);
+  return onHandCore(locationId, now, opts);
 }
 
 /**
- * THE ACTOR-LESS CORE of loadOnHandDerived (the deriveCateringSkuDemand / deriveSalesConsumption
- * split): for callers that are already system-authorized and location-bound — the catering morning
- * digest's count-anchored readiness (digest v2 r2). Pure refactor: the gated wrapper above keeps its
- * floor and bind and behaves byte-identically. A system caller MUST pass seedBaselines: false (a
- * read never writes).
+ * The ACTOR-LESS, INTRINSICALLY READ-ONLY on-hand read (the deriveCateringSkuDemand /
+ * deriveSalesConsumption split) for callers that are already system-authorized and location-bound —
+ * the catering morning digest's count-anchored readiness. It has NO seedBaselines option: it always
+ * passes false, so no option, default or future caller can reach the inferred-baseline upsert
+ * (Astra r3). Seeding stays reachable only through the authorized loadOnHandDerived wrapper.
  */
 export async function deriveOnHand(
   locationId: string,
   now: number = Date.now(),
-  opts: { withProducts?: boolean; seedBaselines?: boolean } = {},
+  opts: { withProducts?: boolean } = {},
+): Promise<OnHandView> {
+  return onHandCore(locationId, now, { withProducts: opts.withProducts === true, seedBaselines: false });
+}
+
+/**
+ * PRIVATE core of loadOnHandDerived (pure refactor: the gated wrapper behaves byte-identically).
+ * Not exported — the only public paths are the gated wrapper (may seed, ordering walk default) and
+ * the read-only deriveOnHand above.
+ */
+async function onHandCore(
+  locationId: string,
+  now: number,
+  opts: { withProducts?: boolean; seedBaselines?: boolean },
 ): Promise<OnHandView> {
   const withProducts = opts.withProducts === true;
   const seedBaselines = opts.seedBaselines ?? true;
