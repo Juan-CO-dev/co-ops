@@ -45,6 +45,13 @@ const nextConfig: NextConfig = {
     "/api/training/co-scenes/*": ["./vendor/co-scenes/dist/**"],
   },
 
+  // Report exports (PDF): pdfkit reads its standard-font metric files (.afm) from its own package
+  // directory at runtime. Bundled, those reads point at files the tracer never copied — a PDF that
+  // renders locally and 500s on Vercel. External = a plain Node require, so the whole package
+  // directory ships with the function. tests/report-pdf.test.ts renders a real document in CI,
+  // and tests/report-export-route.test.ts pins this entry.
+  serverExternalPackages: ["pdfkit"],
+
   // P2-7 — stop announcing the stack. `x-powered-by: Next.js` is free
   // reconnaissance and buys nothing.
   poweredByHeader: false,
