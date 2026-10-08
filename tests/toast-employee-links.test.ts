@@ -89,3 +89,26 @@ describe("auto links: exact full name at the same shop, unique both ways", () =>
       .toEqual([{ userId: "a", kind: "full_name" }, { userId: "b", kind: "last_name" }, { userId: "c", kind: "first_name" }]);
   });
 });
+
+describe("r1: Astra P1-1 / P1-2", () => {
+  // BC-031: ambiguity over the WHOLE roster, before linked people are set aside.
+  it("P1-1: two Sam Lee records + two Sam Lee users stay ambiguous after a manager links one pair", () => {
+    const employees = [emp("e1", "Sam", "Lee"), emp("e2", "Sam", "Lee")];
+    const users = [{ id: "u1", name: "Sam Lee" }, { id: "u2", name: "Sam Lee" }];
+    const links = [{ id: "l1", employeeGuid: "e1", userId: "u1", active: true, source: "manual" as const }];
+    const plan = planLinks(employees, users, links);
+    expect(plan.auto).toEqual([]);
+    expect(plan.review.map((r) => r.employee.guid)).toEqual(["e2"]);
+    expect(plan.review[0]!.suggestions).toEqual([{ userId: "u2", kind: "full_name" }]); // a hint for a human, never a link
+  });
+  it("P1-1: an archived duplicate Toast record still makes the name ambiguous", () => {
+    expect(planLinks([emp("e1", "Ana", "Ruiz"), emp("e0", "Ana", "Ruiz", { deleted: true })], [{ id: "u1", name: "Ana Ruiz" }], []).auto).toEqual([]);
+  });
+  // BC-036: unlinking a wrong automatic match persists.
+  it("P1-2: an unlinked (inactive) exact-name pair is never proposed again; other pairs still are", () => {
+    const rejected = [{ id: "l0", employeeGuid: "e1", userId: "u1", active: false, source: "auto" as const }];
+    const plan = planLinks([emp("e1", "Ana", "Ruiz"), emp("e2", "Bo", "Diaz")], [{ id: "u1", name: "Ana Ruiz" }, { id: "u2", name: "Bo Diaz" }], rejected);
+    expect(plan.auto).toEqual([{ employeeGuid: "e2", userId: "u2" }]);
+    expect(plan.review.map((r) => r.employee.guid)).toEqual(["e1"]);
+  });
+});

@@ -43,8 +43,8 @@ describe("0233 who's here: migration discipline", () => {
     expect(sql).not.toMatch(/create or replace function/i);
     expect(sql).not.toMatch(/drop function/i);
     const created = [...sql.matchAll(/create function public\.([a-z_]+)\(/g)].map((m) => m[1]);
-    expect(created).toEqual(["toast_time_entry_link_user", "toast_link_actor_level", "link_toast_employee", "unlink_toast_employee",
-      "whos_here_audit", "end_shift", "release_shop_closed", "checklist_shop_closed_release"]);
+    expect(created).toEqual(["toast_time_entry_link_user", "toast_time_entries_link_lock", "toast_link_actor_level", "link_toast_employee",
+      "unlink_toast_employee", "whos_here_audit", "end_shift", "reconcile_shop_closed"]);
     for (const existing of ["write_station_event", "write_task_assignment", "reconcile_station_lifecycle", "write_station_break", "release_closed_stations"])
       expect(sql).not.toMatch(new RegExp(`create function public\\.${existing}\\(`));
   });
@@ -112,14 +112,52 @@ describe("0233 who's here: migration discipline", () => {
     expect(sql).toContain("create unique index toast_employee_links_one_active_user on public.toast_employee_links(location_id,user_id) where active;");
   });
 
-  it("the shop-closed net fires only on a CLOSING leaving 'open', and never blocks the finalize", () => {
-    expect(sql).toContain("after update of status on public.checklist_instances\n  for each row when (old.status='open' and new.status is distinct from 'open')");
-    const trig = between(sql, "create function public.checklist_shop_closed_release", "$$;\n");
-    expect(trig).toContain("t.type='closing'");
-    expect(trig).toMatch(/exception when others then\s+raise warning/);
-    const net = between(sql, "create function public.release_shop_closed", "$$;\n");
+  // r1 Astra P2-8 (BC-038): no database object can release work on its own; the APP calls the RPC
+  // behind WHOS_HERE, so turning the flag off turns the behaviour off.
+  it("P2-8: 0233 installs NO trigger on checklist_instances (the flag-gated app path calls the release)", () => {
+    expect(sql).not.toMatch(/create trigger[^;]*on public\.checklist_instances/i);
+    expect(sql).not.toMatch(/release_shop_closed|checklist_shop_closed_release/);
+    const triggers = [...sql.matchAll(/create trigger (\w+)[^;]* on public\.(\w+)/g)].map((m) => `${m[1]} on ${m[2]}`);
+    expect(triggers).toEqual(["toast_time_entries_link_user on toast_time_entries", "toast_time_entries_link_lock on toast_time_entries"]);
+  });
+
+  // r1 Astra P1-4 (BC-040): never wait on a lock, and a cancel/lock timeout is caught by NAME
+  // (query_canceled is not covered by OTHERS).
+  it("P1-4: reconcile_shop_closed never blocks: try-lock, short lock_timeout, lock_not_available/query_canceled caught", () => {
+    const net = between(sql, "create function public.reconcile_shop_closed", "$$;\n");
+    expect(net).toContain("pg_try_advisory_xact_lock(hashtextextended('station/day/'||p_location_id::text||'/'||p_day::text,0))");
+    expect(net).not.toMatch(/perform pg_advisory_xact_lock\(/);
+    expect(net).toContain("set_config('lock_timeout','2000',true)");
+    expect(net).toContain("exception when lock_not_available or query_canceled then");
+    expect(net).toContain("'skipped','busy'");
+  });
+
+  // r1 Astra P1-5 (BC-042): only a DURABLE finalize releases; a compensated confirm never does.
+  it("P1-5: acts only on a durable finalize (status re-read; a fresh confirm waits unless settled)", () => {
+    const net = between(sql, "create function public.reconcile_shop_closed", "$$;\n");
+    expect(net).toContain("if not found or v_inst.status='open' then return jsonb_build_object('ok',true,'closed',false)");
+    expect(net).toContain("v_inst.status in ('confirmed','incomplete_confirmed') and not p_settled");
+    expect(net).toContain("interval '2 minutes'");
+    // Only holds made at or before the close instant are released.
+    expect(net).toContain("where h.at<=v_close and");
+    expect(net).toContain("and active and created_at<=v_close");
     expect(net).toContain("on conflict (location_id,business_date) where kind='shop_closed' do nothing");
     expect(net).toContain("'release',null,'shop_closed'");
     expect(net).toContain("'auto_release','shop_closed'");
+  });
+
+  // r1 Astra P1-3 (BC-007): link/unlink and labor writes serialize on one lock, statement-first.
+  it("P1-3: link/unlink hold the global link lock exclusively; every entry-writing statement takes it shared first", () => {
+    expect(sql.match(/perform pg_advisory_xact_lock\(hashtextextended\('toast-link',0\)\);/g)).toHaveLength(2);
+    expect(sql).not.toContain("'toast-link/'");
+    expect(sql).toContain("perform pg_advisory_xact_lock_shared(hashtextextended('toast-link',0));");
+    expect(sql).toContain("create trigger toast_time_entries_link_lock before insert or update on public.toast_time_entries\n  for each statement");
+  });
+
+  // r1 Astra P1-2 (BC-036): an unlinked pair is a rejection the machine can never re-link.
+  it("P1-2: the RPC refuses an AUTO link for a pair that was unlinked (manual stays possible)", () => {
+    const link = between(sql, "create function public.link_toast_employee", "$$;\n");
+    expect(link).toContain("if p_source='auto' and exists(select 1 from public.toast_employee_links where location_id=p_location_id");
+    expect(link).toContain("and employee_guid=p_employee_guid and user_id=p_user_id and not active) then\n    raise exception 'link_rejected';");
   });
 });

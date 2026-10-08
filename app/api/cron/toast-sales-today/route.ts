@@ -8,6 +8,7 @@ import { etCalendarDate } from "@/lib/operational-day";
 import { pullTodaySalesForAllLocations } from "@/lib/catering/toast-sales";
 import { captureIntraday } from "@/lib/toast/capture-intraday";
 import { laborPullEnabled, runToastLaborPull } from "@/lib/toast/labor";
+import { runWhosHereTick } from "@/lib/whos-here-tick";
 
 export const runtime = "nodejs";
 export const maxDuration = 120;
@@ -40,6 +41,12 @@ export async function GET(req: NextRequest) {
     const labor = laborBudgetMs >= 1_000
       ? await runToastLaborPull([today], { deadlineMs: laborBudgetMs, context: "cron", reconcileDate: today })
       : { ran: false, results: [], modified: 0 };
+    // Who's here (0233, WHOS_HERE=1): its OWN bounded step AFTER labor, never inside labor's budget
+    // (r1 P2-6). Shop-closed reconcile + auto links; fail-soft, nothing it does can stall the route.
+    const whosHereBudgetMs = Math.min(15_000, Math.max(0, maxDuration * 1000 - (Date.now() - startedAt) - 5_000));
+    const whosHere = whosHereBudgetMs >= 2_000
+      ? await runWhosHereTick({ deadlineMs: whosHereBudgetMs, autolink: laborPullEnabled() })
+      : { ran: false, results: [] };
     const results = captureMode ? capture.results : legacy;
     const n = (k: string) => legacy.filter((r) => r.result === k).length;
     const healthy = captureMode ? !capture.skipped && capture.failures === 0 : n("unknown") === 0 && n("error") === 0;
@@ -56,7 +63,7 @@ export async function GET(req: NextRequest) {
       ipAddress: null, userAgent: null,
     });
     await watchSiblings("toast-sales-today");
-    return jsonOk({ date: today, results, healthy, capture, labor });
+    return jsonOk({ date: today, results, healthy, capture, labor, whosHere });
   } catch (e) {
     void audit({
       actorId: null, actorRole: null, action: "cron.failure", resourceTable: "cron", resourceId: null,

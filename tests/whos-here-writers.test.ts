@@ -18,18 +18,24 @@ const kh: AssignmentActor = { userId: ACTOR, role: "key_holder", level: 4, locat
 const crew: AssignmentActor = { userId: TARGET, role: "employee", level: 3, locations: [SHOP] };
 
 function fake(opts: { role?: string; rpcData?: unknown; rpcError?: string; tables?: Record<string, unknown[]> } = {}) {
-  const rpc = vi.fn(async (_name: string, _args: Record<string, unknown>) => ({ data: opts.rpcData ?? { id: LINK, changed: true }, error: opts.rpcError ? { message: opts.rpcError } : null }));
+  const signals: AbortSignal[] = [];
+  const rpc = vi.fn((name: string, args: Record<string, unknown>) => {
+    void name; void args; // typed for mock.calls
+    const pending = Promise.resolve({ data: opts.rpcData ?? { id: LINK, changed: true }, error: opts.rpcError ? { message: opts.rpcError } : null });
+    return Object.assign(pending, { abortSignal: (s: AbortSignal) => { signals.push(s); return pending; } });
+  });
   const from = vi.fn((table: string) => {
     const rows = opts.tables?.[table] ?? [];
     const q = {
       select: () => q, eq: () => q, in: () => q, order: () => q, not: () => q, gte: () => q,
-      range: async () => ({ data: rows, error: null }),
+      abortSignal: (s: AbortSignal) => { signals.push(s); return q; },
+      range: () => q,
       maybeSingle: async () => ({ data: table === "users" ? { role: opts.role ?? "employee" } : table === "user_locations" ? { user_id: TARGET } : rows[0] ?? null, error: null }),
       then: (resolve: (v: unknown) => unknown) => Promise.resolve({ data: rows, error: null }).then(resolve),
     };
     return q;
   });
-  return { service: { from, rpc } as unknown as SupabaseClient, from, rpc };
+  return { service: { from, rpc } as unknown as SupabaseClient, from, rpc, signals };
 }
 
 beforeEach(() => vi.stubEnv("WHOS_HERE", "1"));
@@ -113,7 +119,7 @@ describe("Toast employee links: who may link, where", () => {
   });
 });
 
-describe("auto links from the labor pull's employees payload", () => {
+describe("auto links (the who's-here tick's own step)", () => {
   const employees = [
     { guid: "emp-ana", firstName: "Ana", lastName: "López", deleted: false },
     { guid: "emp-maya", firstName: "Maya", lastName: "Stone", deleted: false },
@@ -132,6 +138,24 @@ describe("auto links from the labor pull's employees payload", () => {
   it("a lost race (already linked) is skipped, an unknown failure throws a fixed code", async () => {
     const tables = { user_locations: [{ user_id: "u-ana" }], users: [{ id: "u-ana", name: "Ana López", role: "employee" }], toast_employee_links: [] };
     await expect(runAutoLinks(fake({ rpcError: "user_already_linked", tables }).service, { locationId: SHOP, rawEmployees: employees })).resolves.toEqual({ linked: 0, skipped: 1 });
-    await expect(runAutoLinks(fake({ rpcError: "boom", tables }).service, { locationId: SHOP, rawEmployees: employees })).rejects.toThrow("toast_labor_autolink_failed");
+    await expect(runAutoLinks(fake({ rpcError: "boom", tables }).service, { locationId: SHOP, rawEmployees: employees })).rejects.toThrow("toast_autolink_failed");
+    // r1 P1-2: a rejection the RPC enforces is a skip, not a failure.
+    await expect(runAutoLinks(fake({ rpcError: "link_rejected", tables }).service, { locationId: SHOP, rawEmployees: employees })).resolves.toEqual({ linked: 0, skipped: 1 });
+  });
+  it("r1 P1-2: an unlinked (inactive) pair is never proposed again", async () => {
+    const f = fake({ tables: { user_locations: [{ user_id: "u-ana" }], users: [{ id: "u-ana", name: "Ana López", role: "employee" }],
+      toast_employee_links: [{ id: LINK, employee_guid: "emp-ana", user_id: "u-ana", active: false, source: "auto" }] } });
+    await expect(runAutoLinks(f.service, { locationId: SHOP, rawEmployees: employees })).resolves.toEqual({ linked: 0, skipped: 0 });
+    expect(f.rpc).not.toHaveBeenCalled();
+  });
+  it("r1 P2-6: every read and RPC carries the step's signal; an aborted step stops with a fixed code", async () => {
+    const tables = { user_locations: [{ user_id: "u-ana" }], users: [{ id: "u-ana", name: "Ana López", role: "employee" }], toast_employee_links: [] };
+    const f = fake({ tables, rpcData: { id: LINK, changed: true, backfilled: 0 } });
+    const controller = new AbortController();
+    await runAutoLinks(f.service, { locationId: SHOP, rawEmployees: employees, signal: controller.signal });
+    expect(f.signals.length).toBeGreaterThanOrEqual(5); // members, users x2, links, the RPC
+    expect(f.signals.every((s) => s === controller.signal)).toBe(true);
+    controller.abort();
+    await expect(runAutoLinks(f.service, { locationId: SHOP, rawEmployees: employees, signal: controller.signal })).rejects.toThrow("toast_autolink_deadline");
   });
 });

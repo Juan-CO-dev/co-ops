@@ -3,7 +3,9 @@
 -- Do not run against production. Requires the existing named sim sentinel.
 -- Covers: A links (gates, uniqueness, backfill, trigger, unlink, 0230 clock-out release through a
 -- link), B end_shift (self, KH+ with the 0228 reason rule, breaks, idempotency), C the shop-closed
--- net (closing finalize trigger, idempotent re-run, non-closing flips ignored).
+-- reconcile (r1: no trigger; open / compensated confirms release nothing; durable close releases what
+-- was held at the close; later holds survive; idempotent). The two-session fail-open and link-lock
+-- serialization checks live in scripts/test-whos-here-concurrency.sh (they need a second connection).
 begin;
 set local plpgsql.check_asserts=on;
 do $$ begin
@@ -13,7 +15,7 @@ do $$ begin
   assert to_regprocedure('public.end_shift(uuid,uuid,uuid,text,text)') is not null,'0233 required';
   assert not exists(select 1 from information_schema.routine_privileges
     where routine_schema='public' and routine_name in
-      ('link_toast_employee','unlink_toast_employee','end_shift','release_shop_closed','toast_link_actor_level','whos_here_audit')
+      ('link_toast_employee','unlink_toast_employee','end_shift','reconcile_shop_closed','toast_link_actor_level','whos_here_audit')
       and grantee in ('PUBLIC','anon','authenticated') and privilege_type='EXECUTE'), 'RPC grants';
   assert (select relrowsecurity from pg_class where oid='public.toast_employee_links'::regclass),'links RLS';
   assert (select relrowsecurity from pg_class where oid='public.shift_ends'::regclass),'shift ends RLS';
@@ -36,7 +38,7 @@ end $$;
 reset role;
 set local role anon;
 do $$ begin
-  begin perform public.release_shop_closed(gen_random_uuid(),current_date);
+  begin perform public.reconcile_shop_closed(gen_random_uuid(),current_date,false);
     raise exception 'anon shop-closed RPC allowed'; exception when insufficient_privilege then null; end;
   begin perform public.unlink_toast_employee(gen_random_uuid(),gen_random_uuid(),gen_random_uuid());
     raise exception 'anon unlink RPC allowed'; exception when insufficient_privilege then null; end;
@@ -123,6 +125,12 @@ begin
     raise exception 'KH unlinked'; exception when raise_exception then if sqlerrm<>'role_insufficient' then raise; end if; end;
   update public.toast_time_entries set pulled_at=clock_timestamp() where location_id=loc and time_entry_guid=e2;
   assert (select user_id from public.toast_time_entries where location_id=loc and time_entry_guid=e2) is null,'no stale user after unlink';
+  -- r1 P1-2: the unlinked pair is a rejection: the machine can never re-link it.
+  begin perform public.link_toast_employee(null,loc,g1,crew,'auto');
+    raise exception 'rejected pair auto-relinked'; exception when raise_exception then if sqlerrm<>'link_rejected' then raise; end if; end;
+  -- r1 P1-3: every writing statement on toast_time_entries takes the shared link lock first.
+  assert exists(select 1 from pg_trigger where tgrelid='public.toast_time_entries'::regclass and tgname='toast_time_entries_link_lock'
+    and (tgtype & 1)=0),'statement-level link lock trigger';
   result:=public.link_toast_employee(hi,loc,g1,crew,'manual');
   assert (select count(*) from public.toast_employee_links where location_id=loc and employee_guid=g1)=2,'re-link is a new row';
   -- Keep the open entry from blocking B (clocked_out guards); B uses CO-OPS presence only.
@@ -176,27 +184,46 @@ begin
   select * into head from public.station_events where location_id=loc and business_date=day and user_id=crew order by sequence desc limit 1;
   assert head.reason_code='ended_shift' and head.prior_position_id=p1,'break vacancy becomes ended-shift evidence';
 
-  -- ── C. Shop closed: finalizing the closing releases everything still held ─────────────────
+  -- ── C. Shop closed (r1): app-called reconcile, durable finalize only, holds before the close ───
+  assert not exists(select 1 from pg_trigger where tgrelid='public.checklist_instances'::regclass and not tgisinternal
+    and tgname like '%shop_closed%'),'no shop-closed trigger on checklist_instances (P1-4/P2-8)';
   perform public.write_station_event(crew,crew,loc,s,p1,false);
   perform public.write_station_event(lo,lo,loc,s,p2,false);
   perform public.write_station_break(lo,lo,loc,true);
   result:=public.write_task_assignment(hi,loc,crew,'am_prep',null,null);
   task:=(result->>'id')::uuid;
   perform public.write_task_assignment(hi,loc,lo,'counts',null,null);
-  -- A NON-closing instance leaving 'open' fires nothing.
+  -- Explicit created_at: now() is the fixture transaction's start, so stamp the hold time for real.
+  update public.report_assignments set created_at=clock_timestamp() where location_id=loc and operational_date=day and active;
+  -- A NON-closing instance leaving 'open' changes nothing.
   insert into public.checklist_templates(location_id,type,name,active,single_submission_only,created_by)
     values(loc,'opening',station_name,true,false,hi) returning id into other_template;
   insert into public.checklist_instances(template_id,location_id,date,shift_start_at,status,triggered_by_user_id,triggered_at)
     values(other_template,loc,day,clock_timestamp(),'open',hi,clock_timestamp()) returning id into other_instance;
   update public.checklist_instances set status='auto_finalized',finalized_at_actor_type='system_auto' where id=other_instance;
-  assert not exists(select 1 from public.shift_ends where location_id=loc and business_date=day and kind='shop_closed'),'opening flip ignored';
-  assert (select active from public.report_assignments where id=task),'opening flip released nothing';
-  -- The closing finalize (any path: here the system auto-release shape).
+  -- An OPEN closing: nothing.
   insert into public.checklist_templates(location_id,type,name,active,single_submission_only,created_by)
     values(loc,'closing',station_name,true,false,hi) returning id into template;
   insert into public.checklist_instances(template_id,location_id,date,shift_start_at,status,triggered_by_user_id,triggered_at)
     values(template,loc,day,clock_timestamp(),'open',hi,clock_timestamp()) returning id into instance;
+  result:=public.reconcile_shop_closed(loc,day);
+  assert result->>'closed'='false','open closing releases nothing';
+  -- P1-5 compensation: a confirm flips, the dependent insert fails, the route reverts to 'open'.
+  -- A fresh, unsettled confirm is NOT acted on, and the revert leaves nothing behind.
+  update public.checklist_instances set status='confirmed',confirmed_at=clock_timestamp(),confirmed_by=hi where id=instance;
+  result:=public.reconcile_shop_closed(loc,day);
+  assert result->>'closed'='true' and result->>'settled'='false','fresh unsettled confirm waits';
+  update public.checklist_instances set status='open',confirmed_at=null,confirmed_by=null where id=instance;
+  result:=public.reconcile_shop_closed(loc,day,true);
+  assert result->>'closed'='false','reverted (compensated) confirm releases nothing, even when called settled';
+  assert not exists(select 1 from public.shift_ends where location_id=loc and business_date=day and kind='shop_closed'),'no marker after compensation';
+  assert (select active from public.report_assignments where id=task),'task still held after compensation';
+  select * into head from public.station_events where location_id=loc and business_date=day and user_id=crew order by sequence desc limit 1;
+  assert head.station_id is not null,'station still held after compensation';
+  -- The durable finalize (system auto shape) releases everything held at the close.
   update public.checklist_instances set status='auto_finalized',finalized_at_actor_type='system_auto' where id=instance;
+  result:=public.reconcile_shop_closed(loc,day);
+  assert result->>'settled'='true' and (result->>'stations_released')::int>=1 and (result->>'tasks_released')::int>=2,'durable close releases';
   assert (select count(*) from public.shift_ends where location_id=loc and business_date=day and kind='shop_closed'
     and user_id is null and actor_id is null)=1,'one shop-closed marker';
   select * into head from public.station_events where location_id=loc and business_date=day and user_id=crew order by sequence desc limit 1;
@@ -211,8 +238,15 @@ begin
     and actor_id is null and subject_user_id=crew),'shop_closed task trail';
   assert exists(select 1 from public.audit_log where action='shift.system_end' and actor_id is null and destructive=false
     and metadata->>'reason'='shop_closed' and (metadata->>'location_id')::uuid=loc),'one system audit row';
-  result:=public.release_shop_closed(loc,day);
+  -- Re-run: nothing more; work started AFTER the close is never released by a later tick.
+  result:=public.reconcile_shop_closed(loc,day);
   assert (result->>'stations_released')::int=0 and (result->>'tasks_released')::int=0 and (result->>'breaks_ended')::int=0,'re-run is a no-op';
+  perform public.write_station_event(crew,crew,loc,s,p1,false);
+  result:=public.reconcile_shop_closed(loc,day);
+  assert (result->>'stations_released')::int=0,'a hold made after the close survives the tick';
+  select * into head from public.station_events where location_id=loc and business_date=day and user_id=crew order by sequence desc limit 1;
+  assert head.station_id=s,'post-close claim kept';
+  perform public.write_station_event(crew,crew,loc,null,null,false);
   assert (select count(*) from public.shift_ends where location_id=loc and business_date=day and kind='shop_closed')=1,'marker stays unique';
 
   -- ── A (end). Through the link, a Toast clock-out now releases via 0230's reconcile ──────────

@@ -16,12 +16,23 @@
 --    Without an active link the written value stands (so an unlink's explicit NULL sticks and 0230's
 --    sim harness, which writes user_id directly, keeps its meaning).
 --    That makes 0230's clock-out releases fire and lets the digest labor section name people.
+--    r1 (Astra P1-3): link/unlink take the GLOBAL 'toast-link' advisory lock exclusively; every
+--    statement writing toast_time_entries takes it SHARED in a BEFORE STATEMENT trigger (before any row
+--    lock, so no lock cycle). A labor write therefore sees a committed link state, and an unlink's clear
+--    sees every committed labor row: attribution can never outlive its link.
+--    r1 (Astra P1-2): an unlinked pair stays as inactive history and link_toast_employee REFUSES an auto
+--    link for it ('link_rejected'); only a manager can link that pair again.
 -- B. shift_ends: "End my shift" (self) / a KH+ ending someone else's shift (0228 reason rule when the
 --    work was given by a higher level), and one shop-closed marker per shop/day. end_shift releases the
 --    station and unassigns open tasks with the same trail shape as a Toast clock-out
---    (station_events / assignment_changes reason 'ended_shift'). release_shop_closed runs from an AFTER
---    trigger when a CLOSING instance leaves 'open' (closer confirm, opener release, system auto): anyone
---    still holding a station or an open task is released with reason 'shop_closed'.
+--    (station_events / assignment_changes reason 'ended_shift').
+--    r1 (Astra P1-4/P1-5/P2-8): there is NO trigger on checklist_instances. reconcile_shop_closed is
+--    called by the APP, only when WHOS_HERE=1: right after a successful closer confirm (settled), and
+--    from the 10-minute tick for today + yesterday (it covers opener release and system auto). It only
+--    acts on a DURABLE finalize (a closer confirm counts once it is 2 minutes old or the caller says it
+--    settled), only releases holds made before the close instant, never waits on a lock
+--    (pg_try_advisory_xact_lock + a 2 s lock_timeout; lock_not_available / query_canceled return
+--    'skipped'), and its caller is a separate request, so a finalize can never be blocked or undone.
 -- Backward compatibility (0228/0230 discipline): NO existing RPC is re-emitted. Constraint changes only
 -- ADD allowed values/branches; every row valid under 0230 stays valid (tests/whos-here-migration.test.ts).
 begin;
@@ -33,6 +44,7 @@ do $$ declare entry text; tab text; col text; begin
     'station_break_events.reason_code','assignment_changes.subject_user_id','assignment_changes.effective_at',
     'report_assignments.assigner_id','report_assignments.operational_date','report_assignments.active',
     'checklist_instances.status','checklist_instances.template_id','checklist_instances.date','checklist_instances.location_id',
+    'checklist_instances.confirmed_at','checklist_instances.dropped_at','checklist_instances.shift_start_at','checklist_instances.triggered_at',
     'checklist_templates.type','sessions.user_id','sessions.created_at','user_locations.user_id','user_locations.active'
   ] loop
     tab:=split_part(entry,'.',1); col:=split_part(entry,'.',2);
@@ -88,6 +100,15 @@ begin
 end $$;
 create trigger toast_time_entries_link_user before insert or update on public.toast_time_entries
   for each row execute function public.toast_time_entry_link_user();
+-- r1 P1-3: one SHARED global link lock per writing statement, taken before any row is locked.
+create function public.toast_time_entries_link_lock()
+returns trigger language plpgsql security definer set search_path=pg_catalog,public as $$
+begin
+  perform pg_advisory_xact_lock_shared(hashtextextended('toast-link',0));
+  return null;
+end $$;
+create trigger toast_time_entries_link_lock before insert or update on public.toast_time_entries
+  for each statement execute function public.toast_time_entries_link_lock();
 
 -- GM (7) for a shop they belong to; level 8+ for every shop. Active accounts only.
 create function public.toast_link_actor_level(p_actor_id uuid,p_location_id uuid)
@@ -113,7 +134,7 @@ begin
     or (p_source='auto') <> (p_actor_id is null) then
     raise exception 'invalid_payload';
   end if;
-  perform pg_advisory_xact_lock(hashtextextended('toast-link/'||p_location_id::text,0));
+  perform pg_advisory_xact_lock(hashtextextended('toast-link',0));
   -- The linked person must belong to this shop (or be all-shops, level 9+), exactly like an assignee.
   v_target:=public.assignment_user_level(p_user_id,p_location_id);
   if p_source='manual' then
@@ -128,6 +149,11 @@ begin
   end if;
   if exists(select 1 from public.toast_employee_links where location_id=p_location_id and user_id=p_user_id and active) then
     raise exception 'user_already_linked';
+  end if;
+  -- r1 P1-2: a pair a person unlinked is a rejection. The machine never re-links it; a manager may.
+  if p_source='auto' and exists(select 1 from public.toast_employee_links where location_id=p_location_id
+    and employee_guid=p_employee_guid and user_id=p_user_id and not active) then
+    raise exception 'link_rejected';
   end if;
   insert into public.toast_employee_links(location_id,employee_guid,user_id,source,linked_by)
     values(p_location_id,p_employee_guid,p_user_id,p_source,p_actor_id) returning id into v_id;
@@ -144,7 +170,7 @@ returns jsonb language plpgsql security definer set search_path=pg_catalog,publi
 declare v_link public.toast_employee_links%rowtype; v_rows integer;
 begin
   if p_actor_id is null or p_location_id is null or p_link_id is null then raise exception 'invalid_payload'; end if;
-  perform pg_advisory_xact_lock(hashtextextended('toast-link/'||p_location_id::text,0));
+  perform pg_advisory_xact_lock(hashtextextended('toast-link',0));
   perform public.toast_link_actor_level(p_actor_id,p_location_id);
   select * into v_link from public.toast_employee_links where id=p_link_id and location_id=p_location_id for update;
   if not found then raise exception 'link_not_found'; end if;
@@ -177,7 +203,7 @@ create table public.shift_ends (
 create index shift_ends_head on public.shift_ends(location_id,business_date,user_id,sequence desc);
 create unique index shift_ends_one_shop_close on public.shift_ends(location_id,business_date) where kind='shop_closed';
 comment on table public.shift_ends is
-  '0233: append-only shift-end ledger (End my shift / KH+ ends a shift; one shop_closed marker per shop/day). Written only by end_shift / release_shop_closed. Deny-all RLS.';
+  '0233: append-only shift-end ledger (End my shift / KH+ ends a shift; one shop_closed marker per shop/day). Written only by end_shift / reconcile_shop_closed. Deny-all RLS.';
 alter table public.shift_ends enable row level security;
 create policy shift_ends_no_user_select on public.shift_ends for select using (false);
 create policy shift_ends_no_user_insert on public.shift_ends for insert with check (false);
@@ -308,71 +334,81 @@ begin
     'overridden_assigner_id',v_overridden,'reason_code',p_reason_code,'reason_note',nullif(btrim(p_reason_note),''));
 end $$;
 
--- The safety net: nothing stays held overnight. Idempotent (heads only; the marker is unique).
-create function public.release_shop_closed(p_location_id uuid,p_day date)
+-- The safety net: nothing stays held overnight. Called by the app (WHOS_HERE=1 only), never by a
+-- trigger, so it can neither block nor roll back a finalize. Idempotent: one marker per shop/day, and
+-- only holds made at or before the close instant are released (work started after the close stays).
+create function public.reconcile_shop_closed(p_location_id uuid,p_day date,p_settled boolean default false)
 returns jsonb language plpgsql security definer set search_path=pg_catalog,public as $$
-declare r record; a record; v_at timestamptz:=clock_timestamp(); v_stations integer:=0; v_tasks integer:=0; v_breaks integer:=0; v_marker uuid;
+declare r record; a record; v_inst record; v_close timestamptz; v_at timestamptz:=clock_timestamp();
+  v_stations integer:=0; v_tasks integer:=0; v_breaks integer:=0; v_marker uuid;
 begin
-  if p_location_id is null or p_day is null then raise exception 'invalid_payload'; end if;
-  perform pg_advisory_xact_lock(hashtextextended('station/day/'||p_location_id::text||'/'||p_day::text,0));
-  insert into public.shift_ends(location_id,business_date,user_id,kind,actor_id,at)
-    values(p_location_id,p_day,null,'shop_closed',null,v_at)
-    on conflict (location_id,business_date) where kind='shop_closed' do nothing returning id into v_marker;
-  for r in select * from (select distinct on (e.user_id) e.* from public.station_events e
-      where e.location_id=p_location_id and e.business_date=p_day order by e.user_id,e.sequence desc) h
-    where h.station_id is not null or (h.reason_code='on_break' and h.prior_position_id is not null) loop
-    insert into public.station_events(location_id,business_date,user_id,kind,actor_id,reason_code,prior_position_id,effective_at)
-      values(p_location_id,p_day,r.user_id,'release',null,'shop_closed',coalesce(r.position_id,r.prior_position_id),v_at);
-    v_stations:=v_stations+1;
-  end loop;
-  for r in select * from (select distinct on (b.user_id) b.* from public.station_break_events b
-      where b.location_id=p_location_id and b.business_date=p_day order by b.user_id,b.sequence desc) h where h.on_break loop
-    insert into public.station_break_events(location_id,business_date,user_id,actor_id,on_break,reason_code)
-      values(p_location_id,p_day,r.user_id,null,false,'shop_closed');
-    v_breaks:=v_breaks+1;
-  end loop;
-  for a in update public.report_assignments set active=false where location_id=p_location_id
-    and operational_date=p_day and active returning * loop
-    insert into public.assignment_changes(assignment_id,location_id,operational_date,report_type,actor_id,kind,reason_code,subject_user_id,effective_at)
-      values(a.id,p_location_id,p_day,a.report_type,null,'auto_release','shop_closed',a.assignee_id,v_at);
-    v_tasks:=v_tasks+1;
-  end loop;
-  if v_marker is not null or v_stations>0 or v_tasks>0 or v_breaks>0 then
-    perform public.whos_here_audit('shift.system_end','shift_ends',v_marker,jsonb_build_object('reason','shop_closed',
-      'location_id',p_location_id,'business_date',p_day,'stations_released',v_stations,'tasks_released',v_tasks,'breaks_ended',v_breaks));
-  end if;
-  return jsonb_build_object('ok',true,'stations_released',v_stations,'tasks_released',v_tasks,'breaks_ended',v_breaks);
+  if p_location_id is null or p_day is null or p_settled is null then raise exception 'invalid_payload'; end if;
+  begin
+    -- Never wait: a busy shop/day is retried by the next tick.
+    perform set_config('lock_timeout','2000',true);
+    if not pg_try_advisory_xact_lock(hashtextextended('station/day/'||p_location_id::text||'/'||p_day::text,0)) then
+      return jsonb_build_object('ok',false,'skipped','busy');
+    end if;
+    -- The same closing instance station_closures reads (0230).
+    select i.id,i.status,i.confirmed_at into v_inst from public.checklist_instances i
+      join public.checklist_templates t on t.id=i.template_id
+      where i.location_id=p_location_id and i.date=p_day and t.type='closing' and i.dropped_at is null
+      order by i.shift_start_at desc nulls last,i.triggered_at desc nulls last,i.id desc limit 1;
+    if not found or v_inst.status='open' then return jsonb_build_object('ok',true,'closed',false); end if;
+    -- A closer confirm can still be compensated back to 'open' inside its own request (dependent
+    -- insert failure): act only once the caller says it settled, or once it is 2 minutes old.
+    if v_inst.status in ('confirmed','incomplete_confirmed') and not p_settled
+      and coalesce(v_inst.confirmed_at>clock_timestamp()-interval '2 minutes',true) then
+      return jsonb_build_object('ok',true,'closed',true,'settled',false);
+    end if;
+    insert into public.shift_ends(location_id,business_date,user_id,kind,actor_id,at)
+      values(p_location_id,p_day,null,'shop_closed',null,least(coalesce(v_inst.confirmed_at,v_at),v_at))
+      on conflict (location_id,business_date) where kind='shop_closed' do nothing returning id into v_marker;
+    select e.at into v_close from public.shift_ends e where e.location_id=p_location_id and e.business_date=p_day and e.kind='shop_closed';
+    for r in select * from (select distinct on (e.user_id) e.* from public.station_events e
+        where e.location_id=p_location_id and e.business_date=p_day order by e.user_id,e.sequence desc) h
+      where h.at<=v_close and (h.station_id is not null or (h.reason_code='on_break' and h.prior_position_id is not null)) loop
+      insert into public.station_events(location_id,business_date,user_id,kind,actor_id,reason_code,prior_position_id,effective_at)
+        values(p_location_id,p_day,r.user_id,'release',null,'shop_closed',coalesce(r.position_id,r.prior_position_id),v_close);
+      v_stations:=v_stations+1;
+    end loop;
+    for r in select * from (select distinct on (b.user_id) b.* from public.station_break_events b
+        where b.location_id=p_location_id and b.business_date=p_day order by b.user_id,b.sequence desc) h
+      where h.on_break and h.at<=v_close loop
+      insert into public.station_break_events(location_id,business_date,user_id,actor_id,on_break,reason_code)
+        values(p_location_id,p_day,r.user_id,null,false,'shop_closed');
+      v_breaks:=v_breaks+1;
+    end loop;
+    for a in update public.report_assignments set active=false where location_id=p_location_id
+      and operational_date=p_day and active and created_at<=v_close returning * loop
+      insert into public.assignment_changes(assignment_id,location_id,operational_date,report_type,actor_id,kind,reason_code,subject_user_id,effective_at)
+        values(a.id,p_location_id,p_day,a.report_type,null,'auto_release','shop_closed',a.assignee_id,v_close);
+      v_tasks:=v_tasks+1;
+    end loop;
+    if v_marker is not null or v_stations>0 or v_tasks>0 or v_breaks>0 then
+      perform public.whos_here_audit('shift.system_end','shift_ends',v_marker,jsonb_build_object('reason','shop_closed',
+        'location_id',p_location_id,'business_date',p_day,'closed_at',v_close,'settled',p_settled,
+        'stations_released',v_stations,'tasks_released',v_tasks,'breaks_ended',v_breaks));
+    end if;
+    return jsonb_build_object('ok',true,'closed',true,'settled',true,'closed_at',v_close,
+      'stations_released',v_stations,'tasks_released',v_tasks,'breaks_ended',v_breaks);
+  exception when lock_not_available or query_canceled then
+    -- Fail-open by construction: everything above is undone, the next tick retries.
+    return jsonb_build_object('ok',false,'skipped','lock');
+  end;
 end $$;
-
--- A CLOSING instance leaving 'open' (confirm, opener release, system auto) fires the net.
--- Fail-open, like 0230's checklist trigger: a release must never block a finalize.
-create function public.checklist_shop_closed_release()
-returns trigger language plpgsql security definer set search_path=pg_catalog,public as $$
-begin
-  if exists(select 1 from public.checklist_templates t where t.id=new.template_id and t.type='closing') then
-    begin
-      perform public.release_shop_closed(new.location_id,new.date);
-    exception when others then
-      raise warning 'shop_closed release deferred: %', sqlerrm;
-    end;
-  end if;
-  return null;
-end $$;
-create trigger checklist_shop_closed_release after update of status on public.checklist_instances
-  for each row when (old.status='open' and new.status is distinct from 'open')
-  execute function public.checklist_shop_closed_release();
 
 -- Definer helpers are private even on Supabase's default ACLs.
 do $$ declare f regprocedure; r text; tab text; begin
   foreach f in array array[
     'public.toast_time_entry_link_user()'::regprocedure,
+    'public.toast_time_entries_link_lock()'::regprocedure,
     'public.toast_link_actor_level(uuid,uuid)'::regprocedure,
     'public.link_toast_employee(uuid,uuid,text,uuid,text)'::regprocedure,
     'public.unlink_toast_employee(uuid,uuid,uuid)'::regprocedure,
     'public.whos_here_audit(text,text,uuid,jsonb)'::regprocedure,
     'public.end_shift(uuid,uuid,uuid,text,text)'::regprocedure,
-    'public.release_shop_closed(uuid,date)'::regprocedure,
-    'public.checklist_shop_closed_release()'::regprocedure
+    'public.reconcile_shop_closed(uuid,date,boolean)'::regprocedure
   ] loop
     execute format('revoke all on function %s from public,anon,authenticated',f);
     execute format('grant execute on function %s to service_role',f);

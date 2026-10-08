@@ -89,30 +89,37 @@ export function suggestUsers(e: ToastEmployee, users: readonly LinkCandidateUser
 }
 
 /**
- * Decide auto links and the review list for ONE shop. `users` = the people who may be linked at
- * that shop (active, member). Linked employees/users are out of both lists.
+ * Decide auto links and the review list for ONE shop. `users` = everyone who may be linked at that
+ * shop (active, member); `links` = EVERY link row for the shop, active and inactive.
+ *
+ * r1 (Astra P1-1, BC-031): ambiguity is judged over the COMPLETE roster — every Toast record (archived
+ * ones too) and every user, linked or not — BEFORE linked ones are set aside. Two "Sam Lee" records and
+ * two "Sam Lee" users stay ambiguous forever, even after a manager links one pair.
+ * r1 (Astra P1-2, BC-036): an inactive link is a REJECTION of that exact pair; the machine never
+ * proposes it again (the RPC refuses it too, 'link_rejected'). A manager may still link it by hand.
  */
 export function planLinks(employees: readonly ToastEmployee[], users: readonly LinkCandidateUser[], links: readonly ExistingLink[]): LinkPlan {
   const active = links.filter((l) => l.active);
+  const rejected = new Set(links.filter((l) => !l.active).map((l) => `${l.employeeGuid}|${l.userId}`));
   const linkedEmployees = new Set(active.map((l) => l.employeeGuid));
   const linkedUsers = new Set(active.map((l) => l.userId));
-  const openEmployees = employees.filter((e) => !linkedEmployees.has(e.guid));
-  const openUsers = users.filter((u) => !linkedUsers.has(u.id));
-  const exact = new Map<string, string[]>(); // employee guid → users whose full name matches exactly
-  const reverse = new Map<string, string[]>(); // user id → employees matching it exactly
-  for (const e of openEmployees) {
-    if (e.deleted) continue;
+  const exact = new Map<string, string[]>(); // employee guid → ALL users whose full name matches exactly
+  const reverse = new Map<string, string[]>(); // user id → ALL employees matching it exactly
+  for (const e of employees) {
     const names = new Set(toastFullNames(e));
-    const hits = openUsers.filter((u) => tokens(u.name).length >= 2 && names.has(normalizeName(u.name))).map((u) => u.id);
+    const hits = users.filter((u) => tokens(u.name).length >= 2 && names.has(normalizeName(u.name))).map((u) => u.id);
     exact.set(e.guid, hits);
     for (const id of hits) reverse.set(id, [...(reverse.get(id) ?? []), e.guid]);
   }
+  const openEmployees = employees.filter((e) => !linkedEmployees.has(e.guid));
+  const openUsers = users.filter((u) => !linkedUsers.has(u.id));
   const auto: LinkPlan["auto"] = [];
   const review: ReviewRow[] = [];
   for (const e of openEmployees) {
     const hits = exact.get(e.guid) ?? [];
     const only = hits.length === 1 ? hits[0]! : null;
-    if (!e.deleted && only && (reverse.get(only) ?? []).length === 1) { auto.push({ employeeGuid: e.guid, userId: only }); continue; }
+    if (!e.deleted && only && !linkedUsers.has(only) && (reverse.get(only) ?? []).length === 1
+      && !rejected.has(`${e.guid}|${only}`)) { auto.push({ employeeGuid: e.guid, userId: only }); continue; }
     review.push({ employee: e, suggestions: suggestUsers(e, openUsers) });
   }
   review.sort((a, b) => Number(a.employee.deleted) - Number(b.employee.deleted)

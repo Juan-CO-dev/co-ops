@@ -1,6 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { afterEach, expect, it, vi } from "vitest";
 import { loadShiftBoard } from "@/lib/assignments";
+import { loadTakenTasks } from "@/lib/assignment-taken";
 
 vi.mock("@/lib/audit", () => ({ audit: vi.fn() }));
 vi.mock("@/lib/assignment-taken", () => ({ loadTakenTasks: vi.fn(async () => []) }));
@@ -14,7 +15,7 @@ const moo = "66666666-6666-4666-8666-666666666666";
 
 afterEach(() => { vi.useRealTimers(); vi.unstubAllEnvs(); });
 
-function client() {
+function client(extraEnds: unknown[] = []) {
   const filters: Array<[string, string, unknown]> = [];
   const rows: Record<string, unknown[]> = {
     users: [
@@ -42,7 +43,7 @@ function client() {
         reason_note: null, overridden_assigner_id: null, subject_user_id: cook, effective_at: "2026-10-08T17:30:00Z" },
     ],
     toast_time_entries: [{ user_id: cook, in_at: "2026-10-08T13:58:00Z", out_at: null }],
-    shift_ends: [{ user_id: closer, kind: "ended_shift", at: "2026-10-08T17:00:00Z" }],
+    shift_ends: [{ user_id: closer, kind: "ended_shift", at: "2026-10-08T17:00:00Z" }, ...extraEnds],
     sessions: [
       { user_id: closer, created_at: "2026-10-08T12:00:00Z" },
       { user_id: moo, created_at: "2026-10-08T12:30:00Z" },
@@ -98,4 +99,19 @@ it("End my shift leaves the 'ended shift' trail; the shop's close is not a vacan
   expect(board.taskVacancies).toEqual([{ task: "counts", userId: closer, name: "Cleo Closer", at: "2026-10-08T17:00:00Z", reason: "ended_shift" }]);
   expect(board.positionVacancies).toEqual([{ positionId: "position2", userId: closer, name: "Cleo Closer", reason: "ended_shift", at: "2026-10-08T17:00:00Z" }]);
   expect(board.events.find((e) => e.id === "e2")).toMatchObject({ releaseReason: "ended_shift", change: undefined });
+});
+
+// r1 Astra P2-7 (BC-042): the close ends "taken" ownership too, without a vacancy.
+it("P2-7: a task TAKEN before the shop closed is no longer held after it (no vacancy); one taken after stays", async () => {
+  vi.stubEnv("WHOS_HERE", "1");
+  vi.useFakeTimers(); vi.setSystemTime(new Date("2026-10-09T02:30:00Z"));
+  vi.mocked(loadTakenTasks).mockResolvedValueOnce([
+    { id: "taken-before", task: "cash_report", userId: cook, at: "2026-10-09T01:00:00Z" },
+    { id: "taken-after", task: "pm_report", userId: gm, at: "2026-10-09T02:15:00Z" },
+  ]);
+  const board = await loadShiftBoard(client([{ user_id: null, kind: "shop_closed", at: "2026-10-09T02:00:00Z" }]).service,
+    { actor: { userId: gm, role: "gm", level: 7, locations: [shop] }, locationId: shop, date: "2026-10-08" });
+  expect(board.tasks.some((t) => t.id === "taken-before")).toBe(false);
+  expect(board.tasks.some((t) => t.id === "taken-after")).toBe(true);
+  expect(board.taskVacancies?.some((v) => v.task === "cash_report")).toBe(false);
 });

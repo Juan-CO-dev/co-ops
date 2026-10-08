@@ -38,6 +38,7 @@ import { after, type NextRequest } from "next/server";
 import { ChecklistError, confirmInstance } from "@/lib/checklists";
 import { pullSalesSystemTrigger } from "@/lib/catering/toast-sales";
 import { runClosingDigests } from "@/lib/report-digests";
+import { releaseAfterSettledClose } from "@/lib/whos-here-tick";
 import { extractIp, jsonError, jsonOk, parseJsonBody } from "@/lib/api-helpers";
 import { requireSession, SESSION_COOKIE_NAME } from "@/lib/session";
 import { createAuthedClient } from "@/lib/supabase-server";
@@ -110,6 +111,9 @@ export async function POST(req: NextRequest) {
       // digest-tick pinger reconciles any finalized closing with no sent digest (opener
       // release, release_overdue_closings, or an after() that died).
       after(() => runClosingDigests(confirmed.locationId, confirmed.date));
+      // Who's here (0233, WHOS_HERE=1 only): the finalize has SUCCEEDED — no compensation can follow —
+      // so release what is still held. Never throws; the 10-minute tick retries (r1 P1-4/P1-5/P2-8).
+      after(() => releaseAfterSettledClose(confirmed.locationId, confirmed.date));
     }
 
     return jsonOk({

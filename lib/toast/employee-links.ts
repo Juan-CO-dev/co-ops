@@ -34,7 +34,10 @@ export class LinkError extends Error {
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const GUID = /^[A-Za-z0-9-]{1,64}$/;
 const KNOWN = ["employee_already_linked", "user_already_linked", "link_not_found", "role_insufficient",
-  "location_access_denied", "assignee_unavailable", "invalid_payload"] as const;
+  "location_access_denied", "assignee_unavailable", "invalid_payload", "link_rejected"] as const;
+/** Every PostgREST builder we touch accepts an AbortSignal; this keeps reads bounded when one is given. */
+type Abortable<T> = T & { abortSignal: (signal: AbortSignal) => T };
+const bounded = <T>(q: Abortable<T>, signal?: AbortSignal): T => (signal ? q.abortSignal(signal) : q);
 
 function rpcError(error: { message: string; code?: string }): never {
   const code = KNOWN.find((c) => c === error.message);
@@ -57,33 +60,34 @@ function requireAdmin(actor: LinkActor, locationId: string): void {
 const ALL_SHOP_ROLES = (Object.values(ROLES).filter((r) => r.level >= 9).map((r) => r.code)) as RoleCode[];
 
 /** Who may be linked at a shop: active members, plus all-shops (9+) accounts — as the RPC allows. */
-export async function linkableUsers(service: SupabaseClient, locationId: string): Promise<Array<LinkCandidateUser & { level: number }>> {
-  const members = await selectAllRows<{ user_id: string }>((from, to) => service.from("user_locations").select("user_id")
-    .eq("location_id", locationId).eq("active", true).order("user_id").range(from, to));
+export async function linkableUsers(service: SupabaseClient, locationId: string, signal?: AbortSignal): Promise<Array<LinkCandidateUser & { level: number }>> {
+  const members = await selectAllRows<{ user_id: string }>((from, to) => bounded(service.from("user_locations").select("user_id")
+    .eq("location_id", locationId).eq("active", true).order("user_id").range(from, to), signal));
   const ids = [...new Set(members.map((m) => m.user_id))];
   const rows: Array<{ id: string; name: string; role: string }> = [];
   for (let i = 0; i < ids.length; i += 100) {
-    const r = await service.from("users").select("id,name,role").eq("active", true).in("id", ids.slice(i, i + 100));
+    const r = await bounded(service.from("users").select("id,name,role").eq("active", true).in("id", ids.slice(i, i + 100)), signal);
     if (r.error) throw new Error("toast employee links: users read failed");
     rows.push(...(r.data ?? []));
   }
-  const top = await service.from("users").select("id,name,role").eq("active", true).in("role", ALL_SHOP_ROLES);
+  const top = await bounded(service.from("users").select("id,name,role").eq("active", true).in("role", ALL_SHOP_ROLES), signal);
   if (top.error) throw new Error("toast employee links: users read failed");
   const seen = new Set<string>();
   return [...rows, ...(top.data ?? [])].filter((u) => isRoleCode(u.role) && !seen.has(u.id) && seen.add(u.id))
     .map((u) => ({ id: u.id, name: u.name, level: getRoleLevel(u.role as RoleCode) }));
 }
 
-export async function loadActiveLinks(service: SupabaseClient, locationId: string): Promise<ExistingLink[]> {
+/** EVERY link row for the shop, active and inactive: an inactive row is a rejected pair (r1 P1-2). */
+export async function loadLinks(service: SupabaseClient, locationId: string, signal?: AbortSignal): Promise<ExistingLink[]> {
   const rows = await selectAllRows<{ id: string; employee_guid: string; user_id: string; active: boolean; source: "auto" | "manual" }>((from, to) =>
-    service.from("toast_employee_links").select("id,employee_guid,user_id,active,source")
-      .eq("location_id", locationId).eq("active", true).order("linked_at").range(from, to));
+    bounded(service.from("toast_employee_links").select("id,employee_guid,user_id,active,source")
+      .eq("location_id", locationId).order("linked_at").order("id").range(from, to), signal));
   return rows.map((r) => ({ id: r.id, employeeGuid: r.employee_guid, userId: r.user_id, active: r.active, source: r.source }));
 }
 
 /** Bounded Toast read of one shop's employees; a failure names a fixed code, never provider text. */
-async function fetchEmployees(service: SupabaseClient, locationId: string, signal: AbortSignal): Promise<ToastEmployee[]> {
-  const loc = await service.from("locations").select("toast_restaurant_guid").eq("id", locationId).maybeSingle<{ toast_restaurant_guid: string | null }>();
+export async function fetchEmployees(service: SupabaseClient, locationId: string, signal: AbortSignal): Promise<ToastEmployee[]> {
+  const loc = await service.from("locations").select("toast_restaurant_guid").eq("id", locationId).abortSignal(signal).maybeSingle<{ toast_restaurant_guid: string | null }>();
   if (loc.error) throw new Error("toast_employees_location_failed");
   if (!loc.data?.toast_restaurant_guid) throw new Error("toast_employees_not_connected");
   return parseToastEmployees(await toastGet<unknown>("/labor/v1/employees", loc.data.toast_restaurant_guid, signal));
@@ -103,7 +107,8 @@ export interface LinkReview {
 
 export async function loadLinkReview(service: SupabaseClient, args: { actor: LinkActor; locationId: string; deadlineMs?: number }): Promise<LinkReview> {
   requireAdmin(args.actor, args.locationId);
-  const [users, links] = await Promise.all([linkableUsers(service, args.locationId), loadActiveLinks(service, args.locationId)]);
+  const [users, allLinks] = await Promise.all([linkableUsers(service, args.locationId), loadLinks(service, args.locationId)]);
+  const links = allLinks.filter((l) => l.active);
   let employees: ToastEmployee[] = [];
   let toastError: string | null = null;
   try { employees = await fetchEmployees(service, args.locationId, AbortSignal.timeout(args.deadlineMs ?? 8_000)); }
@@ -114,12 +119,15 @@ export async function loadLinkReview(service: SupabaseClient, args: { actor: Lin
   const pickable = users.filter((u) => u.level <= args.actor.level);
   const names = new Map(users.map((u) => [u.id, u.name]));
   const byGuid = new Map(employees.map((e) => [e.guid, e]));
-  const plan = planLinks(employees, pickable, links);
-  // A pending auto match shows as a full-name suggestion until the next pull links it.
+  // Ambiguity and rejections are judged over the whole roster and every link row (r1 P1-1/P1-2);
+  // what the VIEWER may pick is narrowed only afterwards.
+  const plan = planLinks(employees, users, allLinks);
+  const canPick = new Set(pickable.map((u) => u.id));
+  // A pending auto match shows as a full-name suggestion until the next tick links it.
   const autoRows = plan.auto.map((a) => ({ employee: byGuid.get(a.employeeGuid)!, suggestions: [{ userId: a.userId, kind: "full_name" as const }] }));
   const unlinked = [...autoRows, ...plan.review].map((r) => ({
     guid: r.employee.guid, name: toastDisplayName(r.employee), deleted: r.employee.deleted,
-    suggestions: r.suggestions.map((s) => ({ ...s, name: names.get(s.userId) ?? "" })),
+    suggestions: r.suggestions.filter((s) => canPick.has(s.userId)).map((s) => ({ ...s, name: names.get(s.userId) ?? "" })),
   }));
   return {
     locationId: args.locationId, toastError, unlinked,
@@ -162,21 +170,25 @@ export async function unlinkToastEmployee(service: SupabaseClient, args: { actor
 }
 
 /**
- * System auto links from the labor pull's employees read (same payload, no extra Toast call).
- * Exact full-name matches only (planLinks). A link that loses a race (already linked) is skipped.
+ * System auto links for ONE shop (r1 P2-6: its own step on the who's-here tick, never inside the labor
+ * pull's budget). Exact full-name matches only, ambiguity over the whole roster, rejected pairs never
+ * re-proposed (planLinks). Every query and RPC carries the caller's signal; a lost race or a
+ * rejection the RPC enforces ('link_rejected') is skipped, anything else is a fixed code.
  */
-export async function runAutoLinks(service: SupabaseClient, args: { locationId: string; rawEmployees: unknown }): Promise<{ linked: number; skipped: number }> {
+export async function runAutoLinks(service: SupabaseClient, args: { locationId: string; rawEmployees: unknown; signal?: AbortSignal }): Promise<{ linked: number; skipped: number }> {
   const employees = parseToastEmployees(args.rawEmployees);
-  const [users, links] = await Promise.all([linkableUsers(service, args.locationId), loadActiveLinks(service, args.locationId)]);
+  const [users, links] = await Promise.all([linkableUsers(service, args.locationId, args.signal), loadLinks(service, args.locationId, args.signal)]);
   const plan = planLinks(employees, users, links);
   let linked = 0; let skipped = 0;
   for (const a of plan.auto) {
-    const { data, error } = await service.rpc("link_toast_employee", {
+    if (args.signal?.aborted) throw new Error("toast_autolink_deadline");
+    const call = service.rpc("link_toast_employee", {
       p_actor_id: null, p_location_id: args.locationId, p_employee_guid: a.employeeGuid, p_user_id: a.userId, p_source: "auto",
     });
+    const { data, error } = await (args.signal ? call.abortSignal(args.signal) : call);
     if (error) {
       if (KNOWN.some((c) => c === error.message)) { skipped += 1; continue; }
-      throw new Error("toast_labor_autolink_failed");
+      throw new Error(args.signal?.aborted ? "toast_autolink_deadline" : "toast_autolink_failed");
     }
     const result = data as { id: string; changed: boolean; backfilled: number };
     if (!result.changed) continue;

@@ -492,7 +492,10 @@ export async function loadShiftBoard(service: SupabaseClient, args: {
     if ((result.data ?? []).length < 500) break;
   }
   const takenHistory = await loadTakenTasks(service, { locationId: args.locationId, date: args.date, includeHistory: true });
-  const taken = dedupeTakenTasks(takenHistory.filter((row) => takenSurvivesDeparture(row.at, departures.get(row.userId))));
+  // r1 P2-7: the shop's close ends "taken" ownership too (no vacancy: nobody covers a closed shop).
+  const shopClosedAt = presenceFacts?.shopClosedAt ?? undefined;
+  const taken = dedupeTakenTasks(takenHistory.filter((row) => takenSurvivesDeparture(row.at, departures.get(row.userId))
+    && takenSurvivesDeparture(row.at, shopClosedAt)));
   const membershipQuery = service.from("user_locations").select("user_id")
     .eq("location_id", args.locationId).eq("active", true);
   const membership = await membershipQuery;
