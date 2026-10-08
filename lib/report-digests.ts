@@ -18,6 +18,7 @@ import { appUrl } from "@/lib/email-templates/_layout";
 import { DEFAULT_OPS_ALERT_EMAIL } from "@/lib/jobs-registry";
 import { easternBoundary, easternDay } from "@/lib/job-watch";
 import { listReports } from "@/lib/reports-hub";
+import { loadShopV2Facts } from "@/lib/report-digests-v2";
 import { selectAllRows } from "@/lib/supabase-paginate";
 import { etCalendarDate } from "@/lib/operational-day";
 import { resolveRefs } from "@/lib/catering/prep-demand";
@@ -131,8 +132,8 @@ async function count(q: PromiseLike<{ count: number | null; error: { message: st
   return n ?? 0;
 }
 
-export async function loadShopDayFacts(sb: Sb, location: { id: string; name: string }, day: string): Promise<ShopDayFacts> {
-  const [reports, deliveries, tosses, storeRunsPending, tasks] = await Promise.all([
+export async function loadShopDayFacts(sb: Sb, location: { id: string; name: string }, day: string, now: Date = new Date()): Promise<ShopDayFacts> {
+  const [reports, deliveries, tosses, storeRunsPending, tasks, v2] = await Promise.all([
     listReports(sb, { viewer: SYSTEM_VIEWER, locationId: location.id, dateFrom: day, dateTo: day }),
     selectAllRows<{ match_state: string; receipt_url: string | null }>((from, to) =>
       sb.from("vendor_deliveries").select("match_state, receipt_url").eq("location_id", location.id).eq("delivery_date", day).order("id").range(from, to)),
@@ -142,6 +143,8 @@ export async function loadShopDayFacts(sb: Sb, location: { id: string; name: str
       .eq("location_id", location.id).eq("pending_review", true).eq("active", true), "store runs"),
     selectAllRows<{ report_type: string }>((from, to) =>
       sb.from("report_assignments").select("report_type").eq("location_id", location.id).eq("operational_date", day).eq("active", true).order("id").range(from, to)),
+    // Digest v2 (GO 2026-10-08): fail-soft per area, never throws, never writes.
+    loadShopV2Facts(sb, location.id, day, now),
   ]);
   // PM findings (Astra P2): the list loader carries no PM signals, so read the live evaluations of
   // the day's PM report(s) here. A failed read is "not assessed", never "All good".
@@ -161,7 +164,7 @@ export async function loadShopDayFacts(sb: Sb, location: { id: string; name: str
     }
   }
   return {
-    location, day, reports, pmFindings,
+    location, day, reports, pmFindings, v2,
     receiving: {
       deliveries: deliveries.length,
       discrepant: deliveries.filter((d) => d.match_state === "discrepant").length,
@@ -403,7 +406,7 @@ function buildIO(now: Date): DigestIO {
     directory: () => loadDigestDirectory(sb),
     sendLog: (days) => loadSendLog(sb, days),
     finalizedClosings: (days) => loadFinalizedClosings(sb, days),
-    shopFacts: (location, day) => loadShopDayFacts(sb, location, day),
+    shopFacts: (location, day) => loadShopDayFacts(sb, location, day, now),
     cateringFacts: (today) => loadCateringFacts(sb, today, now),
     store: supabaseSendStore(sb),
     sendEmail: (m) => sendEmail({ ...m, from: teamFrom() }),
