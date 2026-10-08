@@ -1,4 +1,5 @@
 -- Migration 0232_reports_sales_reads
+-- APPLIED TO PROD 2026-10-08 (schema_migrations version 20261008235041, name '0232_reports_sales_reads'; sim first, version 20261008234252). CC timed every RPC on prod (31 days, MEP): all < 0.7 s; no index needed.
 -- AUTHORED 2026-10-08 (Reports hub piece 4, Phase 2b: the Sales UI). NOT YET APPLIED -- GATE CC/JUAN: sim first, then prod.
 -- r1 (2026-10-08, Astra review of PR #422): every internal read is bounded by the caller's shop + window
 -- (ezCater links, labor names, catering values); refunds and discounts go through the same eligibility as
