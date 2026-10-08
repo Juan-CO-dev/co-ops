@@ -1,0 +1,5 @@
+[
+  { "guid": "job-line", "entityType": "RestaurantJob", "externalId": null, "createdDate": "2026-01-02T15:00:00.000+0000", "modifiedDate": "2026-09-01T15:00:00.000+0000", "deleted": false, "deletedDate": null, "title": "Line Cook", "code": "LC", "wageFrequency": "HOURLY", "defaultWage": 18.0, "tipped": false, "excludeFromReporting": false },
+  { "guid": "job-cash", "entityType": "RestaurantJob", "externalId": null, "createdDate": "2026-01-02T15:00:00.000+0000", "modifiedDate": "2026-09-01T15:00:00.000+0000", "deleted": false, "deletedDate": null, "title": "Cashier", "code": "CS", "wageFrequency": "HOURLY", "defaultWage": 17.0, "tipped": true, "excludeFromReporting": false },
+  { "guid": "job-old", "entityType": "RestaurantJob", "externalId": null, "createdDate": "2025-01-02T15:00:00.000+0000", "modifiedDate": "2026-03-01T15:00:00.000+0000", "deleted": true, "deletedDate": "2026-03-01T15:00:00.000+0000", "title": "Prep (retired)", "code": "PR", "wageFrequency": "HOURLY", "defaultWage": 16.0, "tipped": false, "excludeFromReporting": false }
+]

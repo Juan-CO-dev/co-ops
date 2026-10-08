@@ -18,6 +18,9 @@ export const FIXTURE_KEYS: ReadonlyArray<{ prefix: string; key: string }> = [
   { prefix: "/menus/v2/menus", key: "menus-v2-sample" },
   { prefix: "/orders/v2/ordersBulk", key: "orders-v2-sample" },
   { prefix: "/config/v2/diningOptions", key: "dining-options-sample" },
+  { prefix: "/labor/v1/timeEntries", key: "labor-time-entries-sample" },
+  { prefix: "/labor/v1/jobs", key: "labor-jobs-sample" },
+  { prefix: "/labor/v1/employees", key: "labor-employees-sample" },
 ];
 
 export function resolveFixtureKey(path: string): string | null {

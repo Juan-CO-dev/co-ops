@@ -17,6 +17,7 @@ import { pctDelta } from "@/lib/midshift-sales-shared";
 import { cutoffForOrderDay, cutoffMinutes, type CutoffRow, type RhythmRow, type RhythmSkip } from "@/lib/vendor-rhythm-shared";
 import { etDayFromDate } from "@/lib/et-day-shared";
 import { addDays, etClock, etWallTime } from "@/lib/report-digests-shared";
+import type { LaborSummary } from "@/lib/toast/labor-shared";
 
 /** A loaded area: the value, a source that is not there (yet), or a read that failed. */
 export type Loaded<T> = { kind: "ok"; value: T } | { kind: "unavailable"; reason: string } | { kind: "error" };
@@ -398,6 +399,8 @@ export interface ShopV2Facts {
   receiving: Loaded<ReceivingFacts>;
   inventory: Loaded<InventoryFacts>;
   people: Loaded<PeopleFacts>;
+  /** Toast time entries for D (0224). Absent = labor not loaded on this branch of the build. */
+  labor?: Loaded<LaborSummary>;
 }
 
 /** How many shops an aggregate covers: a shop whose area failed or is unavailable is NOT a zero. */

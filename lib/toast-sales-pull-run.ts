@@ -11,6 +11,7 @@ import { pullSalesForAllLocations, materializeDailyDepletion } from "@/lib/cater
 import { loadDepletionWatermark } from "@/lib/counts";
 import { runParShadowForLocation, recordParRunSkipped } from "@/lib/dynamic-pars";
 import { captureBudget, captureErrorCode } from "@/lib/toast/capture-runner";
+import { runToastLaborPull } from "@/lib/toast/labor";
 
 /** The flag switches readers AND writers; unset restores Stage A's legacy pipeline. */
 export async function runToastSalesPull(opts: { businessDate: string; deadlineAt?: number; signal?: AbortSignal }) {
@@ -116,5 +117,12 @@ export async function runToastSalesPull(opts: { businessDate: string; deadlineAt
     pars_pending_activation: false,
     elapsed_completed: elapsedCompleted, elapsed_failed: elapsedFailed, elapsed_error: elapsedError,
   };
+  // Labor (0224) LAST, inside what is left of the deadline (at most 45 s), fail-soft: its own
+  // heartbeat (toast-labor-pull) reports it, and it never changes this run's health. Off until
+  // TOAST_LABOR_PULL=1 (after 0224 is applied).
+  try {
+    const left = deadlineAt - Date.now() - 5_000;
+    if (left > 5_000) await runToastLaborPull(dates, { deadlineMs: Math.min(45_000, left), context: "cron" });
+  } catch (error) { console.error("[toast labor] pull threw:", captureErrorCode(error)); }
   return { businessDate, results, metadata, healthy };
 }
