@@ -1,4 +1,5 @@
 -- 0223 ezCater enrichment PASS 1. AUTHORED 2026-10-08; NOT APPLIED -- GATE CC/Juan.
+-- APPLIED TO PROD 2026-10-08 (schema_migrations version 20261008065145, name '0223_ezcater_enrichment'; sim first, version 20261008064956). The line(s) above/below describing the authoring gate are kept as history.
 -- Current provider snapshot; historical item snapshots; contacts read only through the
 -- existing catering authorization policy in the server loader. No Toast identity claim.
 -- Column lineage checked: 0108/0109/0129/0148/0149 pipeline; 0110/0113/0191 events.
