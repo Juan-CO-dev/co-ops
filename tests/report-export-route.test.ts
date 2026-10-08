@@ -5,6 +5,11 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("@/lib/session", () => ({ requireSession: vi.fn() }));
 vi.mock("@/lib/audit", () => ({ audit: vi.fn(async () => {}) }));
 vi.mock("@/lib/supabase-server", () => ({ getServiceRoleClient: vi.fn() }));
+// The search corpus reads the database; the stand-in matches on the report id (the filter PATH is what is under test).
+vi.mock("@/lib/reports-search", () => ({
+  buildSearchCorpus: vi.fn(async () => new Map()),
+  searchReport: vi.fn((item: { id: string }, _label: string, _corpus: unknown, q: string) => ({ matched: item.id.includes(q), snippet: null })),
+}));
 vi.mock("@/lib/reports-hub", async (orig) => ({
   ...(await orig<typeof import("@/lib/reports-hub")>()),
   listReports: vi.fn(),
@@ -166,4 +171,37 @@ describe("the export matches the screen", () => {
 
 it("next.config keeps pdfkit external (its font files must ship with the function)", () => {
   expect(readFileSync("next.config.ts", "utf8")).toMatch(/serverExternalPackages:\s*\[[^\]]*"pdfkit"/);
+});
+
+describe("cash export = the cash screen (Astra P2)", () => {
+  const cashItems = (locationId: string): ReportListItem[] => ["c-short-1", "c-over-2", "c-short-3"].map((id, i) => ({
+    type: "cash", id, date: `2026-10-0${i + 1}`, locationId, submitterName: "Ana", status: "flags",
+    signalSummary: { underPar: 0, overPar: 0, skipped: 0, tempFlags: 0, cashOverShortCents: id.includes("short") ? -100 : 100 },
+  }));
+  const detail = (id: string) => ({
+    kind: "cash" as const, date: "2026-10-01", locationId: SHOP_A, projectedCents: 0, drawerTotalCents: 0, floatCents: 0, depositCents: 0,
+    overShortCents: id.includes("short") ? -100 : 100, cashTipsCents: 0, countMethod: "hand" as const, onShift: [], signedByName: null,
+    signedAt: "2026-10-02T00:00:00Z", overShortNote: null, signals: {} as never,
+  });
+  const ids = (csv: string, col: number) => csv.replace(CSV_BOM, "").trim().split("\r\n").slice(1).map((l) => l.split(",")[col]);
+
+  it("the sf_* toggles and the q search reach the cash loader; the page's row ids equal the export's", async () => {
+    session("key_holder", 4, [SHOP_A]);
+    // listReports applies the signal filter (as the real loader does); the stand-in honours cashShort.
+    vi.mocked(listReports).mockImplementation(async (_sb, f) => cashItems(f.locationId)
+      .filter((i) => !f.signalFilters?.cashShort || (i.signalSummary?.cashOverShortCents ?? 0) < 0));
+    vi.mocked(loadReportDetail).mockImplementation(async (_sb, a) => detail(a.id));
+    const query = `location=${SHOP_A}&range=custom&from=2026-10-01&to=2026-10-03&sf_cashShort=true&q=3`;
+    // The page: the operations list with type=cash (what /reports/operations renders for this URL).
+    const page = await (await get(`family=operations&format=csv&type=cash&${query}`)).text();
+    const cash = await (await get(`family=cash&format=csv&${query}`)).text();
+    expect(vi.mocked(listReports).mock.calls[1]![1]).toMatchObject({ types: ["cash"], signalFilters: { cashShort: true } });
+    expect(ids(page, 4)).toEqual(["c-short-3"]);
+    expect(ids(cash, 3)).toEqual(ids(page, 4));
+    expect(vi.mocked(loadReportDetail).mock.calls.map((c) => c[1].id)).toEqual(["c-short-3"]);
+  });
+
+  it("below key holder the cash toggles are ignored exactly as on the screen", () => {
+    expect(operationsFilters({ type: "cash", sf_cashShort: "true" }, 3).signals).toBeUndefined();
+  });
 });

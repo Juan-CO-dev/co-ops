@@ -144,20 +144,29 @@ export async function loadExportTable(auth: AuthContext, family: ExportFamily, p
   const range = parseReportRange(params, today);
   const base = { family, columns: EXPORT_COLUMNS[family], shop, from: range.from, to: range.to };
 
+  /** The operations page's list: listReports with its type + signal filters, then its q search. */
+  const screenItems = async (types: ReportTypeKey[] | undefined, signals: SignalFilters | undefined) => {
+    let items = await listReports(sb, { viewer, locationId: locationId!, dateFrom: range.from, dateTo: range.to, types, signalFilters: signals });
+    const query = (params.q ?? "").trim();
+    if (query) {
+      const corpus = await buildSearchCorpus(sb, { viewer, locationId: locationId!, items });
+      items = items.filter((it) => searchReport(it, serverT(auth.user.language, `reports.type.${it.type}` as TranslationKey), corpus.get(`${it.type}:${it.id}`), query).matched);
+    }
+    return items;
+  };
+
   try {
     switch (family) {
       case "operations": {
         const { types, signals } = operationsFilters(params, auth.level);
-        let items = await listReports(sb, { viewer, locationId: locationId!, dateFrom: range.from, dateTo: range.to, types, signalFilters: signals });
-        const query = (params.q ?? "").trim();
-        if (query) {
-          const corpus = await buildSearchCorpus(sb, { viewer, locationId: locationId!, items });
-          items = items.filter((it) => searchReport(it, serverT(auth.user.language, `reports.type.${it.type}` as TranslationKey), corpus.get(`${it.type}:${it.id}`), query).matched);
-        }
+        const items = await screenItems(types, signals);
         return { ...base, rows: operationsRows(items, shops) };
       }
       case "cash": {
-        const items = await listReports(sb, { viewer, locationId: locationId!, dateFrom: range.from, dateTo: range.to, types: ["cash"] });
+        // The SAME list the screen shows with type=cash (Astra P2): its sf_* signal toggles and its q
+        // search, then one detail read per listed report — never the unfiltered cash range.
+        const { signals } = operationsFilters({ ...params, type: "cash" }, auth.level);
+        const items = await screenItems(["cash"], signals);
         const details: Array<CashReportDetail & { id: string }> = [];
         for (const item of items) {
           const d = await loadReportDetail(sb, { viewer, type: "cash", id: item.id, locationId: locationId! });
