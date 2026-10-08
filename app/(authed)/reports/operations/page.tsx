@@ -29,6 +29,7 @@ import { ReportRangeControls } from "@/components/reports-hub/ReportRangeControl
 import { ReportFilterBar } from "@/components/reports-hub/ReportFilterBar";
 import { ReportList } from "@/components/reports-hub/ReportList";
 import { UnifiedSearchResults } from "@/components/reports-hub/UnifiedSearchResults";
+import { ExportLinks } from "@/components/reports-export/ExportLinks";
 
 const ALL_TYPES: ReportTypeKey[] = ["opening", "closing", "am_prep", "mid_day", "cash", "pm", "maintenance"];
 
@@ -210,6 +211,9 @@ async function renderReportsPage(params: Awaited<PageProps["searchParams"]>, all
         query={qParam ?? ""}
         compare={range.compare}
       />
+      {/* Exports: the same filters, through the same loader (lib/report-export.ts). */}
+      <ExportLinks className="mt-3" family={selectedTypes?.[0] === "cash" ? "cash" : "operations"} language={lang}
+        query={{ ...params, location: locationId, range: range.range, from: dateFrom, to: dateTo }} />
 
       {query ? (
         <div className="mt-4">

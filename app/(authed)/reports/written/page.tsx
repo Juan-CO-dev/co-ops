@@ -3,6 +3,7 @@ import { redirect } from "next/navigation";
 
 import { WrittenReportsClient } from "@/components/written-reports/WrittenReportsClient";
 import { PageHeader } from "@/components/ui/PageHeader";
+import { ExportLinks } from "@/components/reports-export/ExportLinks";
 import { ReportRangeControls } from "@/components/reports-hub/ReportRangeControls";
 import { serverT } from "@/lib/i18n/server";
 import { canReadReportLocation, type LocationActor } from "@/lib/locations";
@@ -59,6 +60,9 @@ export default async function ReportsWrittenPage({ searchParams }: { searchParam
         className="mb-4"
       />
       <ReportRangeControls range={range} locationId={selectedLocation ?? (auth.level >= 8 ? "all" : "")} language={auth.user.language} action="/reports/written" />
+      {/* Exports are one shop at a time (the route refuses "all"). */}
+      {selectedLocation ? <ExportLinks className="mb-4" family="written" language={auth.user.language}
+        query={{ location: selectedLocation, range: range.range, from: range.from, to: range.to }} /> : null}
       <WrittenReportsClient
         reports={page.reports}
         canWrite={auth.level >= WRITTEN_REPORT_WRITE_MIN_LEVEL}

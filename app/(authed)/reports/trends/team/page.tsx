@@ -16,6 +16,7 @@ import { getServiceRoleClient } from "@/lib/supabase-server";
 import { BackLink } from "@/components/nav/BackLink";
 import { TrendControls } from "@/components/trends/TrendControls";
 import { TeamRosterCard } from "@/components/team/TeamRosterCard";
+import { ExportLinks } from "@/components/reports-export/ExportLinks";
 
 interface PageProps {
   searchParams: Promise<Record<string, string | undefined>>;
@@ -59,6 +60,8 @@ export default async function TeamRosterPage({ searchParams }: PageProps): Promi
       <p className="mb-4 text-xs text-co-text-muted">{serverT(language, "reports.trends.team.subtitle")}</p>
 
       <TrendControls range={range} locationId={locationParam} granularity={granularity} compare={compare} language={language} basePath="/reports/trends/team" />
+      <ExportLinks className="mt-3" family="team" language={language}
+        query={{ location: locationParam, range: range.range, from: range.from, to: range.to, g: granularity }} />
 
       {team && team.members.length > 0 ? (
         <>

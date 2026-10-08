@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { DashboardBackLink } from "@/components/DashboardBackLink";
+import { ExportLinks } from "@/components/reports-export/ExportLinks";
 import { ReportRangeControls } from "@/components/reports-hub/ReportRangeControls";
 import { serverT } from "@/lib/i18n/server";
 import { formatDateLabel } from "@/lib/i18n/format";
@@ -87,7 +88,7 @@ export default async function ReportsPage({ searchParams }: { searchParams: Prom
           <section className="rounded-lg border border-co-border p-3"><h3 className="mb-2 font-bold">{t("reports.hub.operations")}</h3><div className="flex flex-wrap gap-2"><Link className={linkClass} href={`/reports/operations?${context(shop.id)}`}>{t("reports.hub.operations")}</Link>{auth.level >= 4 && <Link className={linkClass} href={`/reports/trends/ops?${context(shop.id)}`}>{t("reports.hub.trends")}</Link>}</div></section>
           <Link className={linkClass} href={`/reports/written?${context(shop.id)}`}>{t("reports.hub.written")}</Link>
           <section className="rounded-lg border border-co-border p-3"><h3 className="mb-2 font-bold">{t("reports.hub.people")}</h3><div className="flex flex-wrap gap-2"><Link className={linkClass} href={`/my-feedback?${context(shop.id)}`}>{t("reports.hub.feedback")}</Link>{auth.level >= 6 && <Link className={linkClass} href={`/reports/trends/team?${context(shop.id)}`}>{t("reports.hub.team")}</Link>}</div></section>
-          {auth.level >= 6 && <section className="rounded-lg border border-co-border p-3"><h3 className="font-bold">{t("reports.hub.sales")}</h3><p className="text-sm text-co-text-muted">{t("reports.hub.coming_next")}</p></section>}
+          {auth.level >= 6 && <section className="rounded-lg border border-co-border p-3"><h3 className="font-bold">{t("reports.hub.sales")}</h3><p className="text-sm text-co-text-muted">{t("reports.hub.coming_next")}</p><ExportLinks className="mt-2" family="sales" language={language} query={Object.fromEntries(new URLSearchParams(context(shop.id)))} /></section>}
           {lockLocationContext(actor, shop.id) && (auth.level >= 6 || receiving || ordering) && <section className="rounded-lg border border-co-border p-3"><h3 className="mb-2 font-bold">{t("reports.hub.inventory")}</h3><div className="flex flex-wrap gap-2">{auth.level >= 6 && <Link className={linkClass} href={`/operations/counts?location=${shop.id}`}>{t("reports.hub.counts")}</Link>}{receiving && <Link className={linkClass} href={`/operations/receiving?location=${shop.id}`}>{t("receiving.page.title")}</Link>}{ordering && <Link className={linkClass} href={`/ordering?location=${shop.id}`}>{t("nav.ordering")}</Link>}</div></section>}
           {auth.level >= 5 && lockLocationContext(actor, shop.id) && <Link className={linkClass} href="/catering/insights">{t("nav.catering")}</Link>}
           {auth.level >= 6 && <Link className={linkClass} href="/admin/menu-costing">{t("reports.hub.costing")}</Link>}

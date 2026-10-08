@@ -13,6 +13,7 @@ import { OpenCreditsPanel } from "@/components/receiving/OpenCreditsPanel";
 import { AlertPill } from "@/components/ui/AlertPill";
 import { DashboardBackLink } from "@/components/DashboardBackLink";
 import { EmptyState } from "@/components/EmptyState";
+import { ExportLinks } from "@/components/reports-export/ExportLinks";
 
 export default async function ReceivingPage({ searchParams }: { searchParams: Promise<{ location?: string }> }) {
   const auth = await requireSessionFromHeaders("/operations/receiving");
@@ -67,6 +68,8 @@ export default async function ReceivingPage({ searchParams }: { searchParams: Pr
       <OpenCreditsPanel summary={openCredits} />
 
       <h2 className="mt-6 text-sm font-bold uppercase tracking-[0.14em] text-co-text-dim">{serverT(lang, "receiving.page.recent")}</h2>
+      {/* The file covers the last 30 days by default (the export's range), not just these 20. */}
+      <ExportLinks className="mt-2" family="receiving" language={lang} query={{ location, range: "last30" }} />
       {recent.length === 0 ? (
         <EmptyState message={serverT(lang, "receiving.page.none")} />
       ) : (
