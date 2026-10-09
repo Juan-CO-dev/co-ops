@@ -13,7 +13,7 @@ do $$ begin
   end if;
   assert to_regprocedure('public.vault_write_secret(uuid,uuid,integer,text,text,text,text,text,text,text)') is not null,'0235 required';
   assert not exists(select 1 from information_schema.routine_privileges
-    where routine_schema='public' and routine_name in ('vault_write_secret','vault_take_reveal_slot','vault_scrub_expired_secrets')
+    where routine_schema='public' and routine_name in ('vault_write_secret','vault_update_entry','vault_take_reveal_slot','vault_scrub_expired_secrets')
       and grantee in ('PUBLIC','anon','authenticated') and privilege_type='EXECUTE'), 'RPC grants';
   assert (select bool_and(relrowsecurity) from pg_class where oid in
     ('public.vault_entries'::regclass,'public.vault_secrets'::regclass,'public.vault_reveals'::regclass,'public.vault_reveal_counters'::regclass)),'vault RLS';
@@ -31,6 +31,8 @@ set local role authenticated;
 do $$ begin
   begin perform public.vault_write_secret(gen_random_uuid(),gen_random_uuid(),1,'a','b','c','d','e','f','v1');
     raise exception 'staff write RPC allowed'; exception when insufficient_privilege then null; end;
+  begin perform public.vault_update_entry(gen_random_uuid(),gen_random_uuid(),1,'{}'::jsonb,null,null);
+    raise exception 'staff edit RPC allowed'; exception when insufficient_privilege then null; end;
   begin perform public.vault_take_reveal_slot(gen_random_uuid());
     raise exception 'staff slot RPC allowed'; exception when insufficient_privilege then null; end;
   begin perform 1 from public.vault_entries; raise exception 'staff entries read allowed'; exception when insufficient_privilege then null; end;
@@ -89,6 +91,30 @@ begin
   begin
     perform public.vault_write_secret(gen_random_uuid(),actor,1,f_ct,f_iv,f_tag,f_key,f_iv,f_tag,'v1');
     raise exception 'unknown entry accepted'; exception when others then assert sqlerrm='entry_not_found', sqlerrm; end;
+
+  -- Review regressions #1/#3: failed rotations roll metadata back; stale metadata edits refuse.
+  update public.vault_entries set min_level=9 where id=entry;
+  begin
+    perform public.vault_update_entry(entry,actor,1,'{"min_level":4}'::jsonb,2,
+      jsonb_build_object('ciphertext',f_ct,'iv',f_iv,'tag',f_tag,'wrappedKey',f_key,'keyIv',f_iv,'keyTag',f_tag,'masterKeyId','v1'));
+    raise exception 'conflicting rotation accepted';
+  exception when others then assert sqlerrm='version_conflict',sqlerrm; end;
+  assert (select min_level=9 and revision=1 from public.vault_entries where id=entry),'failed rotation changed access';
+  assert (select version=2 from public.vault_secrets where entry_id=entry and superseded_at is null),'failed rotation changed secret';
+  -- Even a constraint failure after the inner secret write rolls the whole transaction back.
+  begin
+    perform public.vault_update_entry(entry,actor,1,'{"min_level":3}'::jsonb,3,
+      jsonb_build_object('ciphertext',f_ct,'iv',f_iv,'tag',f_tag,'wrappedKey',f_key,'keyIv',f_iv,'keyTag',f_tag,'masterKeyId','v1'));
+    raise exception 'invalid floor accepted';
+  exception when check_violation then null; end;
+  assert (select count(*) from public.vault_secrets where entry_id=entry)=2,'rotation escaped rollback';
+  r:=public.vault_update_entry(entry,actor,1,'{"name":"Newer"}'::jsonb,null,null);
+  assert (r->>'revision')::int=2,'revision did not advance';
+  begin
+    perform public.vault_update_entry(entry,actor,1,'{"name":"Stale"}'::jsonb,null,null);
+    raise exception 'stale metadata accepted';
+  exception when others then assert sqlerrm='version_conflict',sqlerrm; end;
+  assert (select name='Newer' and revision=2 from public.vault_entries where id=entry),'stale editor overwrote metadata';
 
   -- C. the 30-day scrub: age v1 artificially, write v3 -> v1 is a scrubbed shell, v2 (fresh) stays whole
   update public.vault_secrets set superseded_at=clock_timestamp()-interval '31 days' where entry_id=entry and version=1;

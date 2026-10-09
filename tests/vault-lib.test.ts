@@ -60,10 +60,10 @@ function baseTables() {
 }
 
 const shared = (over: Partial<VaultEntryInput> = {}): VaultEntryInput => ({
-  kind: "shared", name: "Toast back-office", entryType: "login", username: "ops@co", secret: "toast-pw-1", url: null, notes: null, locationId: EM, minLevel: 4, ...over,
+  expectedRevision: 1, kind: "shared", name: "Toast back-office", entryType: "login", username: "ops@co", secret: "toast-pw-1", url: null, notes: null, locationId: EM, minLevel: 4, ...over,
 });
 const personal = (over: Partial<VaultEntryInput> = {}): VaultEntryInput => ({
-  kind: "personal", name: "My bank", entryType: "login", username: "maya", secret: "mine-1", url: null, notes: null, locationId: null, minLevel: null, ...over,
+  expectedRevision: 1, kind: "personal", name: "My bank", entryType: "login", username: "maya", secret: "mine-1", url: null, notes: null, locationId: null, minLevel: null, ...over,
 });
 
 let f: FakeVaultClient;
@@ -275,7 +275,7 @@ describe("update and deactivate", () => {
     expect(audited()[0]).toMatchObject({ action: "vault_entry.update", metadata: expect.objectContaining({ changed: ["name"], secret_rotated: false, name: "Toast BOH" }) });
     expect(notified()[0]).toMatchObject({ titleKey: "notifications.vault_entry_change.title.update", bodyKey: "notifications.vault_entry_change.body.metadata", bodyParams: expect.objectContaining({ changed: "name" }) });
     vi.clearAllMocks();
-    await updateVaultEntry(f.client, gmEm, id, shared({ name: "Toast BOH", secret: "toast-pw-2" }), META);
+    await updateVaultEntry(f.client, gmEm, id, shared({ expectedRevision: 2, name: "Toast BOH", secret: "toast-pw-2" }), META);
     expect(f.rpcCalls.at(-1)).toMatchObject({ name: "vault_write_secret", args: { p_version: 2 } });
     expect(audited().map((a) => a.action)).toEqual(["vault_entry.update", "vault_secret.rotate"]);
     expect(JSON.stringify(audited())).not.toContain("toast-pw-2");
@@ -351,5 +351,66 @@ describe("lists", () => {
     expect((await managementRecipients(f.client, EM, null)).sort()).toEqual([U.cristian, U.gmEm, U.juan, U.pete].sort());
     expect((await managementRecipients(f.client, MEP, U.pete)).sort()).toEqual([U.cristian, U.gmMep, U.juan].sort());
     expect((await managementRecipients(f.client, null, null)).sort()).toEqual([U.cristian, U.gmEm, U.gmMep, U.juan, U.pete].sort());
+  });
+});
+
+
+describe("security review regressions", () => {
+  it("P1 #1: failed floor-9 to floor-4 rotation changes neither metadata nor current secret", async () => {
+    const entry = await createVaultEntry(f.client, pete, shared({ minLevel: 9 }), META);
+    vi.clearAllMocks();
+    const before = structuredClone(f.tables.vault_entries);
+    const secrets = structuredClone(f.tables.vault_secrets);
+    f.failRpc.set("vault_write_secret", "version_conflict");
+    await expect(updateVaultEntry(f.client, pete, entry.id, shared({ minLevel: 4, secret: "new-secret" }), META))
+      .rejects.toMatchObject({ code: "version_conflict", status: 409 });
+    expect(f.tables.vault_entries).toEqual(before);
+    expect(f.tables.vault_secrets).toEqual(secrets);
+    expect(audit).not.toHaveBeenCalled();
+    expect(enqueueNotification).not.toHaveBeenCalled();
+    await expect(revealVaultSecret(f.client, maya, entry.id, { burst: false }, META)).rejects.toMatchObject({ status: 404 });
+  });
+  it.each([null, "replacement"])("P2 #3: stale sequential metadata/secret edit (%s) is refused", async (secret) => {
+    const original = await createVaultEntry(f.client, gmEm, shared(), META);
+    const updated = await updateVaultEntry(f.client, gmEm, original.id, shared({ name: "Newer", secret }), META);
+    expect(updated.revision).toBe(original.revision + 1);
+    vi.clearAllMocks();
+    const before = structuredClone(f.tables);
+    await expect(updateVaultEntry(f.client, gmEm, original.id, shared({ name: "Stale", secret: "stale-secret", expectedRevision: original.revision }), META))
+      .rejects.toMatchObject({ code: "version_conflict", status: 409 });
+    expect(f.tables).toEqual(before);
+    expect(audit).not.toHaveBeenCalled();
+  });
+  it("P2 #3: the atomic boundary also refuses a writer that loses after its read", async () => {
+    const entry = await createVaultEntry(f.client, gmEm, shared(), META);
+    const before = structuredClone(f.tables);
+    f.failRpc.set("vault_update_entry", "version_conflict");
+    await expect(updateVaultEntry(f.client, gmEm, entry.id, shared({ name: "Race", secret: null }), META)).rejects.toMatchObject({ status: 409 });
+    expect(f.tables).toEqual(before);
+  });
+  it("P2 #5: scopes before capped pages and retrieves all own, recovery and previous-version rows", async () => {
+    const seed = await createVaultEntry(f.client, gmEm, shared(), META);
+    const template = f.tables.vault_entries![0]!;
+    const rows: Record<string, unknown>[] = [];
+    for (let i = 0; i < 1205; i++) {
+      rows.push({ ...template, id: `a-other-${String(i).padStart(5, "0")}`, location_id: MEP });
+      rows.push({ ...template, id: `b-floor-${String(i).padStart(5, "0")}`, min_level: 9 });
+    }
+    for (let i = 0; i < 207; i++) {
+      const suffix = String(i).padStart(5, "0");
+      rows.push({ ...template, id: `s-${suffix}`, name: `Shared ${suffix}` });
+      rows.push({ ...template, id: `p-${suffix}`, kind: "personal", owner_id: U.maya, location_id: null, min_level: null });
+    }
+    const secrets = Array.from({ length: 1205 }, (_, i) => ({ id: `v-${String(i).padStart(5, "0")}`, entry_id: i === 1204 ? "s-00001" : "s-00000", superseded_at: new Date().toISOString(), scrubbed_at: null }));
+    f = fakeVaultClient({ ...baseTables(), vault_entries: rows, vault_secrets: secrets }, 17);
+    const asMaya = await listVaultEntries(f.client, maya);
+    expect(asMaya.shared).toHaveLength(207);
+    expect(asMaya.personal).toHaveLength(207);
+    expect(asMaya.shared.every((r) => r.locationId === EM && r.minLevel === 4)).toBe(true);
+    expect(await listPersonalEntriesForRecovery(f.client, pete, U.maya)).toHaveLength(207);
+    const asManager = await listVaultEntries(f.client, cristian);
+    expect(asManager.shared.find((r) => r.id === "s-00001")?.canRecoverPrevious).toBe(true);
+    expect(asManager.shared.some((r) => r.minLevel === 9)).toBe(false);
+    expect(seed.revision).toBe(1);
   });
 });

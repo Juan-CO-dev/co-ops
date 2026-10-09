@@ -73,7 +73,7 @@ describe("the switch and the front door", () => {
     for (const fn of Object.values(vault)) expect(fn).not.toHaveBeenCalled();
   });
   it("state-changing routes fail closed on a missing or foreign Origin (CSRF); reads do not need one", async () => {
-    for (const headers of [{}, { origin: "https://evil.example" }]) {
+    for (const headers of [{}, { origin: "https://evil.example" }] as Record<string, string>[]) {
       expect((await reveal(req("/api/vault/entries/e1/reveal", "POST", { pin: "1234" }, headers), params("e1"))).status).toBe(403);
       expect((await createOrList(req("/api/vault/entries", "POST", {}, headers))).status).toBe(403);
       expect((await patch(req("/api/vault/entries/e1", "PATCH", {}, headers), params("e1"))).status).toBe(403);
@@ -154,7 +154,7 @@ describe("recover", () => {
 });
 
 describe("entries", () => {
-  const good = { kind: "shared", name: "Toast", entryType: "login", username: "ops", secret: "CANARY-new", locationId: "11111111-1111-4111-8111-111111111111", minLevel: 4 };
+  const good = { expectedRevision: 1, kind: "shared", name: "Toast", entryType: "login", username: "ops", secret: "CANARY-new", locationId: "11111111-1111-4111-8111-111111111111", minLevel: 4 };
   it("GET lists through the lib with the session actor", async () => {
     const r = await list(req("/api/vault/entries", "GET", undefined, {}));
     expect(await r.json()).toEqual({ shared: [], personal: [] });

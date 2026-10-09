@@ -60,12 +60,12 @@ describe("44 px tap floor, always with items-center", () => {
 });
 
 describe("the revealed secret", () => {
-  it("hides after exactly VAULT_AUTO_HIDE_SECONDS (30) from the one constant, and the timer dies with the component", () => {
+  it("owns the 30-second expiry in the parent, independently of row mounting", () => {
     expect(VAULT_AUTO_HIDE_SECONDS).toBe(30);
     expect(src.reveal).toContain('import { VAULT_AUTO_HIDE_SECONDS } from "@/lib/vault-shared";');
-    expect(src.reveal).toContain("window.setTimeout(onHide, VAULT_AUTO_HIDE_SECONDS * 1000)");
-    expect(src.reveal).toContain("window.clearTimeout(hide)");
-    expect(src.reveal.match(/setTimeout\(/g)).toHaveLength(1); // one timer, no second literal one
+    expect(src.reveal).not.toContain("setTimeout(");
+    expect(src.client).toContain("createVaultRevealLifetime(() => setRevealed(null))");
+    expect(src.client).toContain("revealLifetime.accept(requestGeneration, () => setRevealed(nextReveal))");
     for (const source of clientFiles) expect(source).not.toMatch(/\b30_?000\b|\b30 \* 1000\b/);
   });
   it("is never cached client-side: no storage, no cookies, no URL, no logging; navigation drops it", () => {
@@ -73,7 +73,7 @@ describe("the revealed secret", () => {
       expect(source).not.toMatch(/localStorage|sessionStorage|indexedDB|document\.cookie|URLSearchParams|router\.push\([^)]*secret/);
       expect(source).not.toMatch(/console\./);
     }
-    expect(src.client).toContain("useEffect(() => () => setRevealed(null), []);");
+    expect(src.client).toMatch(/return \(\) => \{\s*document.removeEventListener[\s\S]*?clearView\(\);/);
     expect(src.client).toContain('fetch("/api/vault/entries"');
     expect(src.client).not.toMatch(/secret[^\n]*\bcache\b/i);
   });

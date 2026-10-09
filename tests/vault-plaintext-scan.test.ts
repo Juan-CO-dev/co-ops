@@ -51,7 +51,7 @@ const pete: VaultServerActor = { userId: U.pete, role: "owner", level: 9, locati
 
 const sinks: Array<{ sink: string; text: string }> = [];
 const consoleLines: string[] = [];
-const sink = (name: string, value: unknown) => sinks.push({ sink: name, text: typeof value === "string" ? value : JSON.stringify(value, (_k, v) => (v instanceof Error ? { name: v.name, message: v.message, stack: v.stack, ...v } : v)) });
+const sink = (name: string, value: unknown) => sinks.push({ sink: name, text: typeof value === "string" ? value : JSON.stringify(value, (_k, v) => (v instanceof Error ? { ...v, name: v.name, message: v.message, stack: v.stack } : v)) });
 async function capture<T>(name: string, fn: () => Promise<T>): Promise<T | undefined> {
   try { return await fn(); } catch (e) { sink(`${name} (thrown)`, e); return undefined; }
 }
@@ -89,7 +89,7 @@ beforeAll(async () => {
   const r2 = await capture("reveal personal", () => revealVaultSecret(f.client, maya, personalId, { burst: false }, META));
   if (r2) revealed.push(r2.secret);
   await capture("reveal personal by other", () => revealVaultSecret(f.client, gm, personalId, { burst: false }, META));
-  await capture("update secret", () => updateVaultEntry(f.client, gm, sharedId, { ...shared, name: "Toast BOH", secret: CANARY_2 }, META).then((v) => sink("update view", v)));
+  await capture("update secret", () => updateVaultEntry(f.client, gm, sharedId, { ...shared, expectedRevision: 1, name: "Toast BOH", secret: CANARY_2 }, META).then((v) => sink("update view", v)));
   const r3 = await capture("recover previous", () => recoverPreviousSecret(f.client, moo, sharedId, { burst: false }, META));
   if (r3) revealed.push(r3.secret);
   const r4 = await capture("owner recovery", () => recoverPersonalSecret(f.client, pete, personalId, { burst: true }, META));

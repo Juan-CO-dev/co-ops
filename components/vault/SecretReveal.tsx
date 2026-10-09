@@ -6,9 +6,8 @@
  * Spec (Reveal flow): banner "This view is recorded. Management has been notified." (shared),
  * the secret with Copy, auto-hide after 30 s or on navigation, never cached client-side.
  *
- * The secret lives in this component's props/state only; unmounting (navigation, Hide now, the
- * parent dropping it) discards it. The timer is `VAULT_AUTO_HIDE_SECONDS` from lib/vault-shared.ts
- * (the response's `autoHideSeconds` carries the same number) and is cleared on unmount.
+ * VaultClient owns the secret and its expiry; row visibility cannot cancel auto-hide.
+ * This component only displays the countdown and requests early dismissal.
  * Nothing here logs, stores, or sends the secret anywhere.
  */
 
@@ -35,19 +34,17 @@ export function SecretReveal({ entryName, secret, version, mode, previous = fals
   const [secondsLeft, setSecondsLeft] = useState(VAULT_AUTO_HIDE_SECONDS);
   const [copied, setCopied] = useState(false);
 
-  // One countdown, one auto-hide; both die with the component.
+  // Display-only countdown; the parent lifetime controls actual plaintext expiry.
   useEffect(() => {
     const started = Date.now();
     const tick = window.setInterval(() => {
       const left = VAULT_AUTO_HIDE_SECONDS - Math.floor((Date.now() - started) / 1000);
       setSecondsLeft(left > 0 ? left : 0);
     }, 250);
-    const hide = window.setTimeout(onHide, VAULT_AUTO_HIDE_SECONDS * 1000);
     return () => {
       window.clearInterval(tick);
-      window.clearTimeout(hide);
     };
-  }, [onHide]);
+  }, []);
 
   const copy = useCallback(async () => {
     try {

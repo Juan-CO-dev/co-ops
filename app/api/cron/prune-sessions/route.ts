@@ -11,6 +11,7 @@ import { jsonError, jsonOk } from "@/lib/api-helpers";
 import { watchSiblings } from "@/lib/job-watch-run";
 import { audit } from "@/lib/audit";
 import { runPruneSessions } from "@/lib/prune-sessions-run";
+import { runVaultScrub } from "@/lib/vault-scrub-run";
 
 /** Truncate a caught error message so a giant stack never bloats the audit row. */
 function truncateErr(e: unknown): string {
@@ -33,6 +34,7 @@ export async function GET(req: NextRequest) {
   if (!process.env.CRON_SECRET) return jsonError(503, "cron_disabled");
   if (!secretOk(req)) return jsonError(401, "unauthorized");
   try {
+    const vault = await runVaultScrub();
     const { revoked } = await runPruneSessions();
     // Heartbeat (fail-open): a cron.success row lets the admin hub show "last run OK".
     await audit({
@@ -41,12 +43,12 @@ export async function GET(req: NextRequest) {
       action: "cron.success",
       resourceTable: "cron",
       resourceId: null,
-      metadata: { job: "prune-sessions", revoked },
+      metadata: { job: "prune-sessions", revoked, vault },
       ipAddress: null,
       userAgent: null,
     });
     await watchSiblings("prune-sessions");
-    return jsonOk({ revoked });
+    return jsonOk({ revoked, vault });
   } catch (e) {
     // A LIVE failure is otherwise silent (console only). Write a fail-open audit row
     // so the admin hub can surface it. audit() never throws.

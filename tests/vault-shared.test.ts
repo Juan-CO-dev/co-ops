@@ -126,8 +126,8 @@ describe("entry input validation", () => {
     expect(validateEntryInput({ ...good, kind: "personal" }, { requireSecret: true })).toMatchObject({ kind: "personal", locationId: null, minLevel: null });
   });
   it("an edit may leave the secret out; a create may not", () => {
-    expect(validateEntryInput({ ...good, kind: "personal", secret: undefined }, { requireSecret: false }).secret).toBeNull();
-    expect(() => validateEntryInput({ ...good, kind: "personal", secret: undefined }, { requireSecret: true })).toThrow(VaultError);
+    expect(validateEntryInput({ ...good, kind: "personal", secret: undefined, expectedRevision: 1 }, { requireSecret: false }).secret).toBeNull();
+    expect(() => validateEntryInput({ ...good, kind: "personal", secret: undefined, expectedRevision: 1 }, { requireSecret: true })).toThrow(VaultError);
   });
   it.each([
     ["name", { name: "" }], ["name", { name: "x".repeat(121) }], ["entryType", { entryType: "token" }],
@@ -156,5 +156,16 @@ describe("the switch", () => {
     expect(vaultEnabled()).toBe(false);
     process.env.VAULT_ENABLED = "1";
     expect(vaultEnabled()).toBe(true);
+  });
+});
+
+
+describe("edit revisions", () => {
+  const input = { kind: "personal", name: "Login", entryType: "login" };
+  it("requires a positive integer client revision on every edit", () => {
+    for (const expectedRevision of [undefined, null, 0, -1, 1.5, "1"]) {
+      expect(() => validateEntryInput({ ...input, expectedRevision }, { requireSecret: false })).toThrow("invalid_payload");
+    }
+    expect(validateEntryInput({ ...input, expectedRevision: 3 }, { requireSecret: false }).expectedRevision).toBe(3);
   });
 });

@@ -18,6 +18,7 @@ import { useTranslation } from "@/lib/i18n/provider";
 import type { TranslationKey } from "@/lib/i18n/types";
 import type { RoleCode } from "@/lib/roles";
 import type { VaultEntryKind, VaultEntryView } from "@/lib/vault-shared";
+import { createVaultRevealLifetime } from "@/lib/vault-reveal-lifetime";
 
 type Tab = "shared" | "personal" | "recover";
 interface Pending { action: "reveal" | "previous" | "owner"; entry: VaultEntryView }
@@ -48,21 +49,41 @@ export function VaultClient({ initial, shops, createShops, canCreateBoth, canRec
   const [notice, setNotice] = useState<string | null>(null);
   const [person, setPerson] = useState<string>("");
   const [personEntries, setPersonEntries] = useState<VaultEntryView[] | null>(null);
+  const [revealLifetime] = useState(() => createVaultRevealLifetime(() => setRevealed(null)));
+  const hide = useCallback(() => revealLifetime.clear(), [revealLifetime]);
+  const clearView = useCallback(() => {
+    hide();
+    setPending(null);
+    setForm(null);
+  }, [hide]);
+
+  // The parent owns expiry even when a row disappears. Invalidate pending responses too.
+  useEffect(() => {
+    const onVisibility = () => { if (document.visibilityState === "hidden") clearView(); };
+    document.addEventListener("visibilitychange", onVisibility);
+    window.addEventListener("pagehide", clearView);
+    return () => {
+      document.removeEventListener("visibilitychange", onVisibility);
+      window.removeEventListener("pagehide", clearView);
+      clearView();
+    };
+  }, [clearView]);
 
   const shopCode = useCallback((id: string | null) => (id === null ? t("vault.shop.both") : shops.find((s) => s.id === id)?.code ?? "?"), [shops, t]);
 
   const refresh = useCallback(async () => {
+    clearView();
     try {
       const res = await fetch("/api/vault/entries", { redirect: "manual" });
-      if (res.ok) setEntries((await res.json()) as VaultClientProps["initial"]);
+      if (res.ok) {
+        const next = (await res.json()) as VaultClientProps["initial"];
+        clearView();
+        setEntries(next);
+      }
     } catch {
       // The list simply stays as it was; the next action refreshes again.
     }
-  }, []);
-
-  // Navigation (unmount) and tab changes drop any revealed secret.
-  useEffect(() => () => setRevealed(null), []);
-  const hide = useCallback(() => setRevealed(null), []);
+  }, [clearView]);
 
   const visibleShared = useMemo(
     () => entries.shared.filter((e) => shopFilter === "all" || e.locationId === null || e.locationId === shopFilter),
@@ -71,6 +92,7 @@ export function VaultClient({ initial, shops, createShops, canCreateBoth, canRec
 
   const submitPin = async (pin: string): Promise<{ ok: true } | { ok: false; error: PinKeypadError }> => {
     if (!pending) return { ok: false, error: { kind: "network", message: t("vault.error.generic") } };
+    const requestGeneration = revealLifetime.begin();
     const path = pending.action === "reveal" ? `/api/vault/entries/${pending.entry.id}/reveal` : `/api/vault/entries/${pending.entry.id}/recover`;
     const body = pending.action === "reveal" ? { pin } : { pin, mode: pending.action };
     try {
@@ -82,8 +104,9 @@ export function VaultClient({ initial, shops, createShops, canCreateBoth, canRec
         return { ok: false, error: { kind: "network", message: t(key, { field: "" }) } };
       }
       const mode: RevealMode = pending.action !== "reveal" ? "recovery" : pending.entry.kind === "personal" ? "personal" : "shared";
-      setRevealed({ entry: pending.entry, secret: json.secret, version: json.version, mode, previous: pending.action === "previous" });
-      setPending(null);
+      if (document.visibilityState === "hidden") clearView();
+      const nextReveal = { entry: pending.entry, secret: json.secret, version: json.version, mode, previous: pending.action === "previous" };
+      if (revealLifetime.accept(requestGeneration, () => setRevealed(nextReveal))) setPending(null);
       return { ok: true };
     } catch {
       return { ok: false, error: { kind: "network", message: t("vault.error.generic") } };
@@ -91,6 +114,7 @@ export function VaultClient({ initial, shops, createShops, canCreateBoth, canRec
   };
 
   const remove = async (entry: VaultEntryView) => {
+    clearView();
     if (!window.confirm(t("vault.action.deactivate_confirm", { name: entry.name }))) return;
     try {
       const res = await fetch(`/api/vault/entries/${entry.id}/deactivate`, { method: "POST", headers: { "Content-Type": "application/json" }, redirect: "manual", body: "{}" });
@@ -105,12 +129,14 @@ export function VaultClient({ initial, shops, createShops, canCreateBoth, canRec
   };
 
   const loadPerson = async () => {
+    clearView();
     if (!person) return;
     setPersonEntries(null);
     try {
       const res = await fetch(`/api/vault/personal/${person}`, { redirect: "manual" });
       const json = (await res.json().catch(() => ({}))) as { entries?: VaultEntryView[]; code?: string };
       if (!res.ok || !json.entries) { setNotice(t(vaultErrorKey(json.code), { field: "" })); return; }
+      clearView();
       setPersonEntries(json.entries);
     } catch {
       setNotice(t("vault.error.generic"));
@@ -137,30 +163,30 @@ export function VaultClient({ initial, shops, createShops, canCreateBoth, canRec
       {entry.notes ? <p className="text-sm text-co-text">{entry.notes}</p> : null}
       <div className="flex flex-wrap items-center gap-2">
         {actions === "list" ? (
-          <ActionButton type="button" variant="primary" onClick={() => { setRevealed(null); setPending({ action: "reveal", entry }); }}
+          <ActionButton type="button" variant="primary" onClick={() => { clearView(); setPending({ action: "reveal", entry }); }}
             aria-label={t("vault.action.reveal_aria", { name: entry.name })} className="min-h-[44px] items-center">
             {t("vault.action.reveal")}
           </ActionButton>
         ) : (
-          <ActionButton type="button" variant="primary" onClick={() => { setRevealed(null); setPending({ action: "owner", entry }); }}
+          <ActionButton type="button" variant="primary" onClick={() => { clearView(); setPending({ action: "owner", entry }); }}
             aria-label={t("vault.action.recover_owner_aria", { name: entry.name })} className="min-h-[44px] items-center">
             {t("vault.action.recover_owner")}
           </ActionButton>
         )}
         {entry.url ? (
-          <a href={entry.url} target="_blank" rel="noopener noreferrer" className={SMALL} aria-label={t("vault.action.open_link_aria", { name: entry.name })}>
+          <a href={entry.url} target="_blank" rel="noopener noreferrer" onClick={clearView} className={SMALL} aria-label={t("vault.action.open_link_aria", { name: entry.name })}>
             {t("vault.action.open_link")}
           </a>
         ) : null}
         {actions === "list" && entry.canRecoverPrevious ? (
-          <button type="button" className={SMALL} onClick={() => { setRevealed(null); setPending({ action: "previous", entry }); }}
+          <button type="button" className={SMALL} onClick={() => { clearView(); setPending({ action: "previous", entry }); }}
             aria-label={t("vault.action.recover_previous_aria", { name: entry.name })}>
             {t("vault.action.recover_previous")}
           </button>
         ) : null}
         {actions === "list" && entry.canManage ? (
           <>
-            <button type="button" className={SMALL} onClick={() => setForm({ kind: entry.kind, initial: entry })} aria-label={t("vault.action.edit_aria", { name: entry.name })}>
+            <button type="button" className={SMALL} onClick={() => { clearView(); setForm({ kind: entry.kind, initial: entry }); }} aria-label={t("vault.action.edit_aria", { name: entry.name })}>
               {t("vault.action.edit")}
             </button>
             <button type="button" className={`${SMALL} border-co-cta-text text-co-cta-text`} onClick={() => remove(entry)} aria-label={t("vault.action.deactivate_aria", { name: entry.name })}>
@@ -170,7 +196,7 @@ export function VaultClient({ initial, shops, createShops, canCreateBoth, canRec
         ) : null}
       </div>
       {revealed && revealed.entry.id === entry.id ? (
-        <SecretReveal entryName={entry.name} secret={revealed.secret} version={revealed.version} mode={revealed.mode} previous={revealed.previous} onHide={hide} />
+        <SecretReveal key={`${revealed.entry.id}:${revealed.version}`} entryName={entry.name} secret={revealed.secret} version={revealed.version} mode={revealed.mode} previous={revealed.previous} onHide={hide} />
       ) : null}
     </li>
   );
@@ -179,7 +205,7 @@ export function VaultClient({ initial, shops, createShops, canCreateBoth, canRec
     <div className="flex flex-col gap-4">
       <div role="tablist" aria-label={t("vault.a11y.tabs")} className="flex flex-wrap gap-2">
         {tabs.map((tb) => (
-          <button key={tb.id} role="tab" type="button" aria-selected={tab === tb.id} onClick={() => { setTab(tb.id); setRevealed(null); }}
+          <button key={tb.id} role="tab" type="button" aria-selected={tab === tb.id} onClick={() => { clearView(); setTab(tb.id); }}
             className={`${CHIP} ${tab === tb.id ? "border-co-text bg-co-gold text-co-text" : "border-co-border bg-co-surface text-co-text"}`}>
             {t(tb.key)}
           </button>
@@ -193,12 +219,12 @@ export function VaultClient({ initial, shops, createShops, canCreateBoth, canRec
           <div className="flex flex-wrap items-center gap-2">
             {shops.length > 1 ? (
               <div role="group" aria-label={t("vault.a11y.shop_filter")} className="flex flex-wrap gap-2">
-                <button type="button" aria-pressed={shopFilter === "all"} onClick={() => setShopFilter("all")}
+                <button type="button" aria-pressed={shopFilter === "all"} onClick={() => { clearView(); setShopFilter("all"); }}
                   className={`${CHIP} ${shopFilter === "all" ? "border-co-text bg-co-surface-2" : "border-co-border bg-co-surface"} text-co-text`}>
                   {t("vault.filter.all_shops")}
                 </button>
                 {shops.map((s) => (
-                  <button key={s.id} type="button" aria-pressed={shopFilter === s.id} onClick={() => setShopFilter(s.id)}
+                  <button key={s.id} type="button" aria-pressed={shopFilter === s.id} onClick={() => { clearView(); setShopFilter(s.id); }}
                     className={`${CHIP} ${shopFilter === s.id ? "border-co-text bg-co-surface-2" : "border-co-border bg-co-surface"} text-co-text`}>
                     {s.code}
                   </button>
@@ -206,7 +232,7 @@ export function VaultClient({ initial, shops, createShops, canCreateBoth, canRec
               </div>
             ) : null}
             {createShops.length > 0 || canCreateBoth ? (
-              <ActionButton type="button" variant="secondary" onClick={() => setForm({ kind: "shared" })} className="ml-auto min-h-[44px] items-center">
+              <ActionButton type="button" variant="secondary" onClick={() => { clearView(); setForm({ kind: "shared" }); }} className="ml-auto min-h-[44px] items-center">
                 {t("vault.action.add_shared")}
               </ActionButton>
             ) : null}
@@ -222,7 +248,7 @@ export function VaultClient({ initial, shops, createShops, canCreateBoth, canRec
       {tab === "personal" ? (
         <section className="flex flex-col gap-3">
           <div className="flex items-center">
-            <ActionButton type="button" variant="secondary" onClick={() => setForm({ kind: "personal" })} className="ml-auto min-h-[44px] items-center">
+            <ActionButton type="button" variant="secondary" onClick={() => { clearView(); setForm({ kind: "personal" }); }} className="ml-auto min-h-[44px] items-center">
               {t("vault.action.add_personal")}
             </ActionButton>
           </div>
@@ -239,7 +265,7 @@ export function VaultClient({ initial, shops, createShops, canCreateBoth, canRec
           <p className="rounded-md bg-co-surface-inset px-3 py-2 text-sm text-co-text">{t("vault.recover.notice")}</p>
           <label className="flex flex-col gap-1">
             <span className="text-[11px] font-bold uppercase tracking-[0.12em] text-co-text-dim">{t("vault.recover.pick_user")}</span>
-            <select aria-label={t("vault.a11y.user_select")} value={person} onChange={(e) => { setPerson(e.target.value); setPersonEntries(null); }}
+            <select aria-label={t("vault.a11y.user_select")} value={person} onChange={(e) => { clearView(); setPerson(e.target.value); setPersonEntries(null); }}
               className="min-h-[44px] w-full rounded-lg border-2 border-co-gold-deep bg-co-surface px-3 text-sm text-co-text">
               <option value="">—</option>
               {people.map((p) => <option key={p.id} value={p.id}>{p.name}{p.active ? "" : ` (${t("vault.recover.inactive_badge")})`}</option>)}
@@ -264,7 +290,7 @@ export function VaultClient({ initial, shops, createShops, canCreateBoth, canRec
         <div role="dialog" aria-modal="true" aria-label={t("vault.reveal.pin_title")} className="fixed inset-0 z-50 flex items-center justify-center bg-co-text/60 px-4 py-6 backdrop-blur-sm">
           <div className="w-full max-w-md rounded-2xl border-2 border-co-border bg-co-surface p-6 shadow-2xl">
             <p className="mb-2 text-center text-sm font-bold text-co-text">{t("vault.reveal.pin_title")}</p>
-            <PinKeypad userName={actor.name} role={actor.role} onSubmit={submitPin} onBack={() => setPending(null)} />
+            <PinKeypad userName={actor.name} role={actor.role} onSubmit={submitPin} onBack={clearView} />
           </div>
         </div>
       ) : null}
@@ -274,7 +300,7 @@ export function VaultClient({ initial, shops, createShops, canCreateBoth, canRec
           <div className="w-full max-w-md rounded-2xl border-2 border-co-border bg-co-surface p-6 shadow-2xl">
             <VaultEntryForm
               kind={form.kind} initial={form.initial} shops={shops} createShops={createShops} canCreateBoth={canCreateBoth} actorLevel={actor.level}
-              onSaved={async () => { setForm(null); await refresh(); }} onCancel={() => setForm(null)}
+              onSaved={async () => { clearView(); await refresh(); }} onCancel={clearView}
             />
           </div>
         </div>

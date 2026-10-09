@@ -81,6 +81,7 @@ export function VaultEntryForm({ kind, initial, shops, createShops, canCreateBot
     setSaving(true);
     setError(null);
     const body: Record<string, unknown> = {
+      ...(initial ? { expectedRevision: initial.revision } : {}),
       kind, name: name.trim(), entryType, username: username.trim() || null, url: url.trim() || null, notes: notes.trim() || null,
       secret: secret.length > 0 ? secret : undefined,
     };

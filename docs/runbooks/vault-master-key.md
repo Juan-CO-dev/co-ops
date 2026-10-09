@@ -40,7 +40,7 @@ Rotating the master key means re-wrapping every data key; the secrets themselves
 
 ## The 30-day scrub
 
-On every secret change the previous version stays recoverable for 30 days by level 8+ (`recover previous` in the UI, recorded + notified). `vault_write_secret` scrubs the entry's older versions when a new one is written; `select public.vault_scrub_expired_secrets();` is the same sweep for every entry and is safe to schedule nightly (service role). Rows are kept as history; only the envelope bytes are nulled (`scrubbed_at` set).
+On every secret change the previous version stays recoverable for 30 days by level 8+ (`recover previous` in the UI, recorded + notified). `vault_write_secret` scrubs the entry's older versions when a new one is written; `select public.vault_scrub_expired_secrets();` is the same sweep for every entry. The existing `/api/cron/prune-sessions` Vercel cron calls it daily at 08:30 UTC using the service role, after verifying `Authorization: Bearer CRON_SECRET`. It runs even when `VAULT_ENABLED` is off and does not need the master key. Expired versions are removed on the next daily sweep (up to one scheduling interval after expiry). Before 0235 is applied, an absent RPC is reported as `vault.migrationPending: true`; other failures produce `cron.failure` with the fixed `vault_scrub_failed` code. Successful cron responses and heartbeat metadata include the scrub count. Rows are kept as history; only the envelope bytes are nulled (`scrubbed_at` set).
 
 ## Never
 

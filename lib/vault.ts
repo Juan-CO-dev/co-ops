@@ -45,6 +45,7 @@ export interface VaultRequestMeta {
 
 interface EntryRow {
   id: string;
+  revision: number;
   kind: VaultEntryKind;
   entry_type: VaultEntryType;
   name: string;
@@ -58,7 +59,7 @@ interface EntryRow {
   updated_at: string | null;
   created_at: string;
 }
-const ENTRY_COLS = "id,kind,entry_type,name,username,url,notes,location_id,min_level,owner_id,active,updated_at,created_at";
+const ENTRY_COLS = "id,revision,kind,entry_type,name,username,url,notes,location_id,min_level,owner_id,active,updated_at,created_at";
 
 interface SecretRow {
   id: string;
@@ -96,7 +97,7 @@ function assertEnabled(): void {
 function toView(row: EntryRow, actor: VaultActor, previous: Set<string>): VaultEntryView {
   const a = access(row);
   return {
-    id: row.id, kind: row.kind, entryType: row.entry_type, name: row.name, username: row.username, url: row.url, notes: row.notes,
+    id: row.id, revision: row.revision, kind: row.kind, entryType: row.entry_type, name: row.name, username: row.username, url: row.url, notes: row.notes,
     locationId: row.location_id, minLevel: row.min_level, ownerId: row.owner_id, updatedAt: row.updated_at ?? row.created_at,
     canManage: canManageEntry(actor, a),
     canRecoverPrevious: row.kind === "shared" && actor.level >= VAULT_PREVIOUS_RECOVERY_LEVEL && previous.has(row.id),
@@ -109,16 +110,36 @@ async function loadEntry(service: SupabaseClient, entryId: string): Promise<Entr
   return data ?? null;
 }
 
+/** Keyset pages continue until empty, even when PostgREST caps a page below 100. */
+async function allPages<T extends { id: string }>(page: (after: string | null) => PromiseLike<{ data: unknown[] | null; error: unknown }>): Promise<T[]> {
+  const rows: T[] = [];
+  let after: string | null = null;
+  for (;;) {
+    const { data, error } = await page(after);
+    if (error) throw new VaultError("write_failed", 500);
+    const batch = (data ?? []) as T[];
+    if (batch.length === 0) return rows;
+    const last = batch[batch.length - 1]!.id;
+    if (last === after) throw new VaultError("write_failed", 500);
+    rows.push(...batch);
+    after = last;
+  }
+}
+
 /** The entries with a recoverable previous version (level 8+ only asks). */
 async function previousAvailable(service: SupabaseClient, entryIds: string[]): Promise<Set<string>> {
   const out = new Set<string>();
   if (entryIds.length === 0) return out;
   const cutoff = new Date(Date.now() - VAULT_PREVIOUS_SECRET_RETENTION_DAYS * 86_400_000).toISOString();
   for (let i = 0; i < entryIds.length; i += 100) {
-    const { data, error } = await service.from("vault_secrets").select("entry_id,superseded_at,scrubbed_at")
-      .in("entry_id", entryIds.slice(i, i + 100)).not("superseded_at", "is", null).is("scrubbed_at", null).gte("superseded_at", cutoff);
-    if (error) throw new VaultError("write_failed", 500);
-    for (const r of (data ?? []) as Array<{ entry_id: string; superseded_at: string | null; scrubbed_at: string | null }>) {
+    const rows = await allPages<{ id: string; entry_id: string; superseded_at: string | null; scrubbed_at: string | null }>((after) => {
+      let q = service.from("vault_secrets").select("id,entry_id,superseded_at,scrubbed_at")
+        .in("entry_id", entryIds.slice(i, i + 100)).not("superseded_at", "is", null).is("scrubbed_at", null).gte("superseded_at", cutoff)
+        .order("id").limit(100);
+      if (after !== null) q = q.gt("id", after);
+      return q;
+    });
+    for (const r of rows) {
       if (previousSecretRecoverable({ supersededAt: r.superseded_at, scrubbedAt: r.scrubbed_at })) out.add(r.entry_id);
     }
   }
@@ -129,15 +150,22 @@ async function previousAvailable(service: SupabaseClient, entryIds: string[]): P
 
 export async function listVaultEntries(service: SupabaseClient, actor: VaultActor): Promise<{ shared: VaultEntryView[]; personal: VaultEntryView[] }> {
   assertEnabled();
-  const sharedQ = await service.from("vault_entries").select(ENTRY_COLS).eq("kind", "shared").eq("active", true).order("name");
-  if (sharedQ.error) throw new VaultError("write_failed", 500);
-  const personalQ = await service.from("vault_entries").select(ENTRY_COLS).eq("kind", "personal").eq("active", true).eq("owner_id", actor.userId).order("name");
-  if (personalQ.error) throw new VaultError("write_failed", 500);
-  const shared = ((sharedQ.data ?? []) as EntryRow[]).filter((r) => canSeeSharedEntry(actor, access(r)));
+  const shared = await allPages<EntryRow>((after) => {
+    let q = service.from("vault_entries").select(ENTRY_COLS).eq("kind", "shared").eq("active", true)
+      .lte("min_level", actor.level).order("id").limit(100);
+    if (actor.level < VAULT_MANAGE_ALL_LEVEL) {
+      q = actor.locations.length === 0 ? q.is("location_id", null)
+        : q.or(`location_id.is.null,location_id.in.(${actor.locations.join(",")})`);
+    }
+    if (after !== null) q = q.gt("id", after);
+    return q;
+  });
+  const personal = await personalEntries(service, actor.userId);
+  shared.sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id));
   const previous = actor.level >= VAULT_PREVIOUS_RECOVERY_LEVEL ? await previousAvailable(service, shared.map((r) => r.id)) : new Set<string>();
   return {
     shared: shared.map((r) => toView(r, actor, previous)),
-    personal: ((personalQ.data ?? []) as EntryRow[]).map((r) => toView(r, actor, new Set())),
+    personal: personal.map((r) => toView(r, actor, new Set())),
   };
 }
 
@@ -145,9 +173,17 @@ export async function listVaultEntries(service: SupabaseClient, actor: VaultActo
 export async function listPersonalEntriesForRecovery(service: SupabaseClient, actor: VaultActor, ownerId: string): Promise<VaultEntryView[]> {
   assertEnabled();
   if (actor.level < VAULT_OWNER_RECOVERY_LEVEL) throw new VaultError("forbidden", 403);
-  const { data, error } = await service.from("vault_entries").select(ENTRY_COLS).eq("kind", "personal").eq("active", true).eq("owner_id", ownerId).order("name");
-  if (error) throw new VaultError("write_failed", 500);
-  return ((data ?? []) as EntryRow[]).map((r) => toView(r, actor, new Set()));
+  return (await personalEntries(service, ownerId)).map((r) => toView(r, actor, new Set()));
+}
+
+async function personalEntries(service: SupabaseClient, ownerId: string): Promise<EntryRow[]> {
+  const rows = await allPages<EntryRow>((after) => {
+    let q = service.from("vault_entries").select(ENTRY_COLS).eq("kind", "personal").eq("active", true)
+      .eq("owner_id", ownerId).order("id").limit(100);
+    if (after !== null) q = q.gt("id", after);
+    return q;
+  });
+  return rows.sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id));
 }
 
 // ── Recipients and labels ─────────────────────────────────────────────────────────────────────
@@ -328,7 +364,9 @@ export async function recoverPreviousSecret(service: SupabaseClient, actor: Vaul
   const entry = await loadEntry(service, entryId);
   if (!entry || !entry.active || entry.kind !== "shared" || !canSeeSharedEntry(actor, access(entry))) throw new VaultError("entry_not_found", 404);
   const { data, error } = await service.from("vault_secrets").select(SECRET_COLS).eq("entry_id", entry.id)
-    .not("superseded_at", "is", null).order("version", { ascending: false }).limit(5);
+    .not("superseded_at", "is", null).is("scrubbed_at", null)
+    .gte("superseded_at", new Date(Date.now() - VAULT_PREVIOUS_SECRET_RETENTION_DAYS * 86_400_000).toISOString())
+    .order("version", { ascending: false }).limit(1);
   if (error) throw new VaultError("write_failed", 500);
   const row = ((data ?? []) as SecretRow[]).find((r) => previousSecretRecoverable({ supersededAt: r.superseded_at, scrubbedAt: r.scrubbed_at }));
   if (!row) throw new VaultError("no_previous_secret", 404);
@@ -432,17 +470,30 @@ export async function updateVaultEntry(service: SupabaseClient, actor: VaultServ
     const next = input[inKey];
     if (next !== entry[col]) { changed.push(col); patch[col] = next; }
   }
-  if (changed.length > 0) {
-    const { data, error } = await service.from("vault_entries").update({ ...patch, updated_by: actor.userId, updated_at: new Date().toISOString() })
-      .eq("id", entry.id).eq("active", true).select("id").maybeSingle<{ id: string }>();
-    if (error || !data) throw new VaultError("write_failed", 500);
-  }
+  if (!Number.isSafeInteger(input.expectedRevision) || (input.expectedRevision ?? 0) < 1) throw new VaultError("invalid_payload", 400, "expectedRevision");
+  if (input.expectedRevision !== entry.revision) throw new VaultError("version_conflict", 409);
   let secretVersion: number | null = null;
+  let encrypted: EncryptedSecret | null = null;
   if (input.secret) {
     const current = await currentVersion(service, entry.id);
-    secretVersion = await writeSecret(service, actor, entry, (current?.version ?? 0) + 1, input.secret, meta);
+    secretVersion = (current?.version ?? 0) + 1;
+    try {
+      encrypted = encryptSecret(input.secret, loadMasterKey(), secretAad(entry.id, secretVersion));
+    } catch (e) {
+      return failClosed(service, actor, entry, secretVersion, e instanceof VaultCryptoError ? e.code : "master_key_invalid", meta);
+    }
   }
-  const after: EntryRow = { ...entry, ...(patch as Partial<EntryRow>) };
+  const { data, error } = await service.rpc("vault_update_entry", {
+    p_entry_id: entry.id, p_actor_id: actor.userId, p_expected_revision: input.expectedRevision,
+    p_patch: patch, p_version: secretVersion, p_envelope: encrypted,
+  });
+  if (error) {
+    if (error.message.includes("version_conflict")) throw new VaultError("version_conflict", 409);
+    if (error.message.includes("entry_not_found")) throw new VaultError("entry_not_found", 404);
+    throw new VaultError("write_failed", 500);
+  }
+  const after = data as EntryRow | null;
+  if (!after || after.id !== entry.id || after.revision !== entry.revision + 1) throw new VaultError("write_failed", 500);
   if (changed.length > 0 || secretVersion !== null) {
     await audit({
       actorId: actor.userId, actorRole: actor.role, action: "vault_entry.update", resourceTable: "vault_entries", resourceId: entry.id,

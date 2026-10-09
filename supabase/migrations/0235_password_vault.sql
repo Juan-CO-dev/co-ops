@@ -17,7 +17,7 @@
 --    (partial unique index). Written ONLY by vault_write_secret (service_role holds SELECT only): it supersedes the
 --    current version, appends the next, and crypto-shreds (scrubs in place) this entry's versions superseded more than
 --    30 days ago. A scrubbed row keeps its history (version, who, when) and loses every byte of the envelope.
---    vault_scrub_expired_secrets() is the same sweep for every entry (for a scheduled job; not wired here).
+--    vault_scrub_expired_secrets() is the same sweep for every entry (called daily by /api/cron/prune-sessions, independently of VAULT_ENABLED).
 -- C. vault_reveals: append-only record of SHARED reveals and of recoveries (viewer, entry, shop, time, version, burst
 --    flag). Never the secret. service_role SELECT + INSERT only = append-only by grant (0218 pattern).
 --    CHECK: a kind='reveal' row must be a SHARED entry -> a personal reveal cannot be recorded (spec: no record).
@@ -45,6 +45,7 @@ end $$;
 -- ── A. Entries (metadata only) ───────────────────────────────────────────────────────────────
 create table public.vault_entries (
   id uuid primary key default gen_random_uuid(),
+  revision integer not null default 1 check (revision >= 1),
   kind text not null check (kind in ('shared','personal')),
   entry_type text not null check (entry_type in ('login','code','ai_key')),
   name text not null check (char_length(btrim(name)) between 1 and 120),
@@ -190,6 +191,37 @@ begin
   return jsonb_build_object('version',v_version,'superseded',v_superseded>0,'scrubbed',v_scrubbed);
 end $$;
 
+-- Metadata and optional rotation are one transaction. The client-observed revision guards
+-- metadata-only edits as well as rotations; the entry lock serializes all secret writers.
+create function public.vault_update_entry(p_entry_id uuid,p_actor_id uuid,p_expected_revision integer,
+  p_patch jsonb,p_version integer,p_envelope jsonb)
+returns jsonb language plpgsql security definer set search_path=pg_catalog,public as $$
+declare v_entry public.vault_entries%rowtype;
+begin
+  if p_expected_revision is null or p_expected_revision < 1 or p_patch is null
+    or jsonb_typeof(p_patch) <> 'object' then raise exception 'invalid_payload'; end if;
+  if not exists(select 1 from public.users where id=p_actor_id and active) then raise exception 'role_insufficient'; end if;
+  if exists(select 1 from jsonb_object_keys(p_patch) as k(key)
+    where key not in ('name','entry_type','username','url','notes','location_id','min_level')) then
+    raise exception 'invalid_payload';
+  end if;
+  select * into v_entry from public.vault_entries where id=p_entry_id for update;
+  if not found or not v_entry.active then raise exception 'entry_not_found'; end if;
+  if v_entry.revision <> p_expected_revision then raise exception 'version_conflict'; end if;
+  if (p_version is null) <> (p_envelope is null) then raise exception 'invalid_payload'; end if;
+  if p_version is not null then
+    perform public.vault_write_secret(p_entry_id,p_actor_id,p_version,
+      p_envelope->>'ciphertext',p_envelope->>'iv',p_envelope->>'tag',
+      p_envelope->>'wrappedKey',p_envelope->>'keyIv',p_envelope->>'keyTag',p_envelope->>'masterKeyId');
+  end if;
+  v_entry := jsonb_populate_record(v_entry,p_patch);
+  update public.vault_entries set name=v_entry.name,entry_type=v_entry.entry_type,
+    username=v_entry.username,url=v_entry.url,notes=v_entry.notes,location_id=v_entry.location_id,
+    min_level=v_entry.min_level,revision=revision+1,updated_by=p_actor_id,updated_at=clock_timestamp()
+    where id=p_entry_id returning * into v_entry;
+  return to_jsonb(v_entry);
+end $$;
+
 -- One attempt in the caller's current hour-bucket; returns the count INCLUDING this attempt.
 -- The app decides the verdict (cap, burst) from the count; the table never learns what was revealed.
 create function public.vault_take_reveal_slot(p_user_id uuid)
@@ -218,6 +250,7 @@ end $$;
 do $$ declare f regprocedure; r text; tab text; begin
   foreach f in array array[
     'public.vault_write_secret(uuid,uuid,integer,text,text,text,text,text,text,text)'::regprocedure,
+    'public.vault_update_entry(uuid,uuid,integer,jsonb,integer,jsonb)'::regprocedure,
     'public.vault_take_reveal_slot(uuid)'::regprocedure,
     'public.vault_scrub_expired_secrets()'::regprocedure
   ] loop

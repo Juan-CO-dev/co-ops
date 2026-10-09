@@ -25,7 +25,7 @@ export interface FakeVaultClient {
 let seq = 0;
 const nextId = (table: string) => `${table}-${++seq}`;
 
-export function fakeVaultClient(tables: Record<string, Row[]>): FakeVaultClient {
+export function fakeVaultClient(tables: Record<string, Row[]>, rowLimit = 1000): FakeVaultClient {
   const writes: Write[] = [];
   const rpcCalls: RpcCall[] = [];
   const failInsert = new Set<string>();
@@ -47,7 +47,7 @@ export function fakeVaultClient(tables: Record<string, Row[]>): FakeVaultClient 
         const arr = (Array.isArray(payload) ? payload : [payload]) as Row[];
         // Column defaults the migration supplies (the lib relies on them exactly as it would on Postgres).
         const defaults: Row = table === "vault_entries"
-          ? { active: true, updated_by: null, updated_at: null, deactivated_by: null, deactivated_at: null }
+          ? { revision: 1, active: true, updated_by: null, updated_at: null, deactivated_by: null, deactivated_at: null }
           : table === "vault_reveals" ? { burst: false, at: new Date().toISOString() } : {};
         const inserted = arr.map((p) => ({ id: nextId(table), created_at: new Date().toISOString(), ...defaults, ...p }));
         rowsOf().push(...inserted);
@@ -64,7 +64,7 @@ export function fakeVaultClient(tables: Record<string, Row[]>): FakeVaultClient 
         out.sort((a, b) => (String(a[col]) < String(b[col]) ? -1 : String(a[col]) > String(b[col]) ? 1 : 0) * (asc ? 1 : -1));
       }
       if (limitN !== null) out = out.slice(0, limitN);
-      return { data: out, error: null };
+      return { data: out.slice(0, rowLimit).map((r) => ({ ...r })), error: null };
     };
     const q = {
       select: () => q,
@@ -72,6 +72,13 @@ export function fakeVaultClient(tables: Record<string, Row[]>): FakeVaultClient 
       is: (c: string, v: unknown) => { filters.push((r) => (v === null ? r[c] === null || r[c] === undefined : r[c] === v)); return q; },
       in: (c: string, vs: unknown[]) => { filters.push((r) => vs.includes(r[c])); return q; },
       not: (c: string, _operator: string, v: unknown) => { filters.push((r) => !(v === null ? r[c] === null || r[c] === undefined : r[c] === v)); return q; },
+      gt: (c: string, v: unknown) => { filters.push((r) => String(r[c]) > String(v)); return q; },
+      lte: (c: string, v: number) => { filters.push((r) => typeof r[c] === "number" && Number(r[c]) <= v); return q; },
+      or: (expression: string) => {
+        const ids = expression.match(/location_id\.in\.\(([^)]*)\)/)?.[1]?.split(",") ?? [];
+        filters.push((r) => r.location_id === null || ids.includes(String(r.location_id)));
+        return q;
+      },
       gte: (c: string, v: unknown) => { filters.push((r) => String(r[c]) >= String(v)); return q; },
       order: (c: string, o?: { ascending?: boolean }) => { orderBy = { col: c, asc: o?.ascending !== false }; return q; },
       limit: (n: number) => { limitN = n; return q; },
@@ -83,7 +90,7 @@ export function fakeVaultClient(tables: Record<string, Row[]>): FakeVaultClient 
     return q;
   }
 
-  const rpc = async (name: string, args: Record<string, unknown>) => {
+  const rpc = async (name: string, args: Record<string, unknown>): Promise<{ data: unknown; error: { message: string } | null }> => {
     rpcCalls.push({ name, args });
     const fail = failRpc.get(name);
     if (fail) return { data: null, error: { message: fail } };
@@ -92,6 +99,22 @@ export function fakeVaultClient(tables: Record<string, Row[]>): FakeVaultClient 
       const attempts = (counters.get(key) ?? 0) + 1;
       counters.set(key, attempts);
       return { data: { attempts, bucket_start: "2026-10-08T12:00:00Z" }, error: null };
+    }
+    if (name === "vault_update_entry") {
+      const entry = (tables.vault_entries ?? []).find((r) => r.id === args.p_entry_id);
+      if (!entry || !entry.active) return { data: null, error: { message: "entry_not_found" } };
+      if (entry.revision !== args.p_expected_revision) return { data: null, error: { message: "version_conflict" } };
+      if (args.p_version !== null) {
+        const enc = args.p_envelope as Row;
+        const result = await rpc("vault_write_secret", {
+          p_entry_id: args.p_entry_id, p_actor_id: args.p_actor_id, p_version: args.p_version,
+          p_ciphertext: enc.ciphertext, p_iv: enc.iv, p_tag: enc.tag, p_wrapped_key: enc.wrappedKey,
+          p_key_iv: enc.keyIv, p_key_tag: enc.keyTag, p_master_key_id: enc.masterKeyId,
+        });
+        if (result.error) return result;
+      }
+      Object.assign(entry, args.p_patch, { revision: Number(entry.revision) + 1, updated_by: args.p_actor_id, updated_at: new Date().toISOString() });
+      return { data: { ...entry }, error: null };
     }
     if (name === "vault_write_secret") {
       const secrets = (tables.vault_secrets ??= []);

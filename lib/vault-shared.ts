@@ -70,6 +70,7 @@ export interface VaultEntryAccess {
 /** What the page and the list route see. Never a secret. */
 export interface VaultEntryView {
   id: string;
+  revision: number;
   kind: VaultEntryKind;
   entryType: VaultEntryType;
   name: string;
@@ -170,6 +171,8 @@ export function previousSecretRecoverable(v: { supersededAt: string | null; scru
 }
 
 export interface VaultEntryInput {
+  /** Required on edits; omitted on creation. */
+  expectedRevision?: number;
   kind: VaultEntryKind;
   name: string;
   entryType: VaultEntryType;
@@ -197,6 +200,10 @@ function optionalText(raw: Record<string, unknown>, field: "username" | "url" | 
  * to owner/cgs) and a shop or null for both.
  */
 export function validateEntryInput(raw: Record<string, unknown>, opts: { requireSecret: boolean }): VaultEntryInput {
+  const expectedRevision = raw.expectedRevision;
+  if (!opts.requireSecret && (!Number.isSafeInteger(expectedRevision) || (expectedRevision as number) < 1)) {
+    throw new VaultError("invalid_payload", 400, "expectedRevision");
+  }
   const kind = raw.kind;
   if (kind !== "shared" && kind !== "personal") throw new VaultError("invalid_payload", 400, "kind");
   if (typeof raw.name !== "string") throw new VaultError("invalid_payload", 400, "name");
@@ -222,7 +229,8 @@ export function validateEntryInput(raw: Record<string, unknown>, opts: { require
   if (kind === "personal") {
     if (raw.locationId !== undefined && raw.locationId !== null) throw new VaultError("invalid_payload", 400, "locationId");
     if (raw.minLevel !== undefined && raw.minLevel !== null) throw new VaultError("invalid_payload", 400, "minLevel");
-    return { kind, name, entryType, username, secret, url, notes, locationId: null, minLevel: null };
+    return { kind, name, entryType, username, secret, url, notes, locationId: null, minLevel: null,
+      ...(!opts.requireSecret ? { expectedRevision: expectedRevision as number } : {}) };
   }
 
   let locationId: string | null = null;
@@ -239,5 +247,6 @@ export function validateEntryInput(raw: Record<string, unknown>, opts: { require
   } else {
     throw new VaultError("invalid_payload", 400, "minLevel");
   }
-  return { kind, name, entryType, username, secret, url, notes, locationId, minLevel };
+  return { kind, name, entryType, username, secret, url, notes, locationId, minLevel,
+    ...(!opts.requireSecret ? { expectedRevision: expectedRevision as number } : {}) };
 }

@@ -38,7 +38,7 @@ describe("0235 password vault: migration discipline", () => {
     expect(sql).not.toMatch(/drop (function|table|policy|index)/i);
     expect(sql).not.toMatch(/alter table public\.(?!vault_)/);
     const created = [...sql.matchAll(/create function public\.([a-z_]+)\(/g)].map((m) => m[1]);
-    expect(created).toEqual(["vault_write_secret", "vault_take_reveal_slot", "vault_scrub_expired_secrets"]);
+    expect(created).toEqual(["vault_write_secret", "vault_update_entry", "vault_take_reveal_slot", "vault_scrub_expired_secrets"]);
     for (const body of sql.split("create function ").slice(1)) expect(body.slice(0, 400)).toContain("security definer set search_path=pg_catalog,public");
   });
 
@@ -139,4 +139,21 @@ describe("0235 password vault: migration discipline", () => {
     expect(fn).not.toMatch(/\bdelete\b/);
     expect(sql).not.toMatch(/\bdelete from\b/i);
   });
+});
+
+
+it("BC-007/033: atomic edits lock and check the revision before either write, with no exception swallowing", () => {
+  const fn = between(sql, "create function public.vault_update_entry", "$$;\n");
+  expect(tableBody("vault_entries")).toContain("revision integer not null default 1");
+  const lock = fn.indexOf("where id=p_entry_id for update");
+  const check = fn.indexOf("if v_entry.revision <> p_expected_revision");
+  const rotation = fn.indexOf("perform public.vault_write_secret");
+  const metadata = fn.indexOf("update public.vault_entries");
+  expect(lock).toBeGreaterThan(0);
+  expect(check).toBeGreaterThan(lock);
+  expect(rotation).toBeGreaterThan(check);
+  expect(metadata).toBeGreaterThan(rotation);
+  expect(fn).toContain("revision=revision+1");
+  expect(fn).not.toMatch(/exception when|commit;/);
+  expect(sql).toContain("'public.vault_update_entry(uuid,uuid,integer,jsonb,integer,jsonb)'::regprocedure");
 });
