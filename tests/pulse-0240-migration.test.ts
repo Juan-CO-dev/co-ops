@@ -7,9 +7,9 @@ const sql = readFileSync("supabase/migrations/0240_pulse_v2.sql", "utf8").replac
 const TABLES = ["pulse_handoff_notes", "pulse_handoff_acks", "pulse_station_layouts"] as const;
 
 describe("0240 pulse v2: migration discipline", () => {
-  it("is numbered 0240, AUTHORED ONLY, one transaction, and leaves 0238/0239 alone", () => {
+  it("is numbered 0240, stamped applied, one transaction, and leaves 0238/0239 alone", () => {
     expect(sql.split("\n")[0]).toBe("-- Migration 0240_pulse_v2");
-    expect(sql).toMatch(/AUTHORED ONLY 2026-10-09.*NOT APPLIED/);
+    expect(sql).toMatch(/AUTHORED 2026-10-09.*APPLIED TO PROD/);
     expect(sql).not.toMatch(/APPLIED TO PROD/);
     expect(sql).toMatch(/\nbegin;\n/);
     expect(sql.trimEnd().endsWith("commit;")).toBe(true);

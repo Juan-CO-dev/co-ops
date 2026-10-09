@@ -1,5 +1,5 @@
 -- Migration 0240_pulse_v2
--- AUTHORED ONLY 2026-10-09 (CO Claude builder, feat/pulse-v2). NOT APPLIED. GATE: CC sim + review, then Juan's apply gate.
+-- AUTHORED 2026-10-09 (CO Claude builder, feat/pulse-v2). APPLIED TO PROD 2026-10-09 (20261009190456; sim 20261009185827, real-PG posture verified; prod dry run pass).
 -- 0238 (station schedules) and 0239 (Sales true net) are Astra's lanes; nothing here touches them.
 --
 -- Mid-shift Pulse v2 (Juan 2026-10-09: "let's supercharge mid shift pulse"; spec
