@@ -23,7 +23,7 @@ import type { AuthContext } from "@/lib/session";
 import { getRoleLevel } from "@/lib/roles";
 import { currentStation, taskHref, TASK_TYPES, type ShiftBoard, type TaskType } from "@/lib/assignments-shared";
 import { loadShiftBoard } from "@/lib/assignments";
-import { loadMaintenanceOverview, type OverviewFridge } from "@/lib/maintenance";
+import { loadFridgesToday, type FridgeToday } from "@/lib/pulse/fridges";
 import {
   computeOverdue, EXPECTED_BY, loadCateringDueToday, loadCateringTomorrow, loadReportStatuses, operationalNow,
   type CateringDueItem, type CateringTomorrow, type ReportKey, type ReportProgress, type ReportStatusRow,
@@ -80,7 +80,8 @@ export interface SalesFacts {
 export interface PulseDeps {
   board(ctx: PulseCtx): Promise<ShiftBoard>;
   reports(ctx: PulseCtx): Promise<{ rows: Array<Omit<ReportStatusRow, "overdue">>; closingDone: boolean; midDayDoneCount: number }>;
-  fridges(ctx: PulseCtx): Promise<OverviewFridge[]>;
+  /** Astra #3: ONE batched, location/day-scoped read (3 queries for any number of fridges). */
+  fridges(ctx: PulseCtx): Promise<FridgeToday[]>;
   cateringToday(ctx: PulseCtx): Promise<CateringDueItem[]>;
   cateringTomorrow(ctx: PulseCtx): Promise<CateringTomorrow>;
   notRung(ctx: PulseCtx): Promise<NotInToastOrder[]>;
@@ -221,7 +222,7 @@ async function attention(deps: PulseDeps, ctx: PulseCtx): Promise<AttentionData>
   }
   const fridges = got("fridges");
   if (fridges) {
-    for (const f of fridges) if (f.status === "out_of_range") rows.push({ key: `fridge_out_of_range:${f.equip.id}`, kind: "fridge_out_of_range", severity: severityOf("fridge_out_of_range"), params: { fridge: f.equip.name, temp: f.latest?.valueF ?? "" }, href: `/maintenance?location=${loc}`, action: "check", shopWide: true });
+    for (const f of fridges) if (f.status === "out_of_range") rows.push({ key: `fridge_out_of_range:${f.id}`, kind: "fridge_out_of_range", severity: severityOf("fridge_out_of_range"), params: { fridge: f.name, temp: f.latestF ?? "" }, href: `/maintenance?location=${loc}`, action: "check", shopWide: true });
     const unchecked = fridges.filter((f) => f.status === "no_reading_today").length;
     if (unchecked > 0 && minutesOfDay > EXPECTED_BY.openingOverdueAfter) rows.push({ key: "fridge_unchecked", kind: "fridge_unchecked", severity: severityOf("fridge_unchecked"), params: { count: unchecked }, href: `/maintenance?location=${loc}`, action: "check", shopWide: true });
   }
@@ -496,7 +497,7 @@ async function foodSafety(deps: PulseDeps, ctx: PulseCtx): Promise<FoodSafetyDat
   };
   return {
     counts,
-    fridges: crew ? [] : fridges.map((f) => ({ id: f.equip.id, name: f.equip.name, latestF: f.status === "no_reading_today" ? null : f.latest?.valueF ?? null, status: f.status, spark: f.spark })),
+    fridges: crew ? [] : fridges.map((f) => ({ id: f.id, name: f.name, latestF: f.status === "no_reading_today" ? null : f.latestF, status: f.status, spark: f.readings })),
     reminder: counts.unchecked > 0 && minutesOfDay > EXPECTED_BY.openingOverdueAfter,
   };
 }
@@ -555,7 +556,7 @@ export function defaultPulseDeps(service: SupabaseClient): PulseDeps {
   return {
     board: (ctx) => loadShiftBoard(service, { actor: actorOf(ctx), locationId: ctx.locationId, date: ctx.date }),
     reports: (ctx) => loadReportStatuses(service, { locationId: ctx.locationId, date: ctx.date, actor: { userId: ctx.auth.user.id, role: ctx.auth.role, level: ctx.auth.level } }),
-    fridges: async (ctx) => (await loadMaintenanceOverview(service, { locationId: ctx.locationId, today: ctx.date, sinceDate: ctx.date })).fridges,
+    fridges: (ctx) => loadFridgesToday(service, { locationId: ctx.locationId, date: ctx.date }),
     cateringToday: (ctx) => loadCateringDueToday(service, { locationId: ctx.locationId, date: ctx.date }),
     cateringTomorrow: (ctx) => loadCateringTomorrow(service, { locationId: ctx.locationId, date: ctx.date }),
     notRung: (ctx) => readNotInToast(service, [ctx.locationId], { through: ctx.date }),

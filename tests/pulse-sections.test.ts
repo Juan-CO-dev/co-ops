@@ -60,8 +60,8 @@ function deps(over: Partial<PulseDeps> = {}): PulseDeps {
       closingDone: true, midDayDoneCount: 0,
     })),
     fridges: vi.fn(async () => [
-      { equip: { id: "f1", name: "Walk-in A" } as never, latest: { valueF: 44 } as never, status: "out_of_range" as const, spark: [40, 44] },
-      { equip: { id: "f2", name: "Reach-in" } as never, latest: null, status: "no_reading_today" as const, spark: [] },
+      { id: "f1", name: "Walk-in A", latestF: 44, status: "out_of_range" as const, readings: [40, 44] },
+      { id: "f2", name: "Reach-in", latestF: null, status: "no_reading_today" as const, readings: [] },
     ]),
     cateringToday: vi.fn(async () => [{ id: "c1", timeWindow: "4:00 PM", name: "Acme lunch", headcount: 20, isDelivery: true, stage: "confirmed" as const, source: "ezcater" }]),
     cateringTomorrow: vi.fn(async () => ({ count: 1, firstWindow: "11:00 AM" })),
