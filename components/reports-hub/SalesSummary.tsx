@@ -24,7 +24,7 @@ export function SalesSummary({ summary, language, checksHref }: {
   const m = (tt: SalesTotals, cents: number | null) => <Money cents={shownCents(tt, cents)} language={language} />;
   const count = (tt: SalesTotals, value: number) => (salesHasData(tt) ? value : "—");
   const unknown = unknownComponents(totals);
-  const card = (label: string, value: ReactNode, sub?: ReactNode) => <div className="rounded-lg border border-co-border bg-co-surface-inset p-3">
+  const card = (label: string, value: ReactNode, sub?: ReactNode) => <div className="min-w-0 break-words rounded-lg border border-co-border bg-co-surface-inset p-3">
     <div className="text-[11px] font-bold tracking-[0.12em] text-co-text-dim">{label}</div>
     <div className="text-lg font-bold text-co-text">{value}</div>
     {sub ? <div className="text-xs text-co-text-muted">{sub}</div> : null}
@@ -41,7 +41,7 @@ export function SalesSummary({ summary, language, checksHref }: {
       {unknown ? <span className="text-xs font-bold text-co-warning-text">{t("reports.sales.unknown_components", { tax: totals.taxMissing, tips: totals.tipMissing, discounts: totals.discountMissing })}</span> : null}
     </div>
     {totals.coverage === "missing" ? <p className="mb-3 text-sm text-co-text-muted">{t("reports.sales.no_sales_recorded")}</p> : null}
-    <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4">
+    <div className="grid grid-cols-1 gap-2 min-[420px]:grid-cols-2 sm:grid-cols-3 lg:grid-cols-4">
       {card(t("reports.sales.total"), m(totals, totals.totalCents),
         previous ? <>{t("reports.sales.previous")}: {m(previous, previous.totalCents)}{summary.deltaPct !== null ? ` (${summary.deltaPct > 0 ? "+" : ""}${summary.deltaPct}%)` : ""}</> : undefined)}
       {card(t("reports.sales.toast_checks"), <Link className={salesLink} href={checksHref(range.from, range.to)}>{m(totals, totals.toastChecksCents)}</Link>, t("reports.sales.toast_checks_hint"))}
@@ -68,7 +68,7 @@ export function SalesSummary({ summary, language, checksHref }: {
     </div>
     {summary.buckets.length > 1 ? <div className="mt-3">
       <CollapsibleSection idBase={`sales-buckets-${summary.locationId}`} title={t(`reports.sales.by_${range.grain}`)} count={t("reports.sales.rows", { n: summary.buckets.length })}>
-        <div className="overflow-x-auto">
+        <div className="min-w-0 max-w-full overflow-x-auto">
           <table className="w-full min-w-[520px] text-sm">
             <thead><tr className="text-left text-xs text-co-text-muted">
               <th className="py-2 pr-2">{t("reports.sales.period")}</th><th className="py-2 pr-2 text-right">{t("reports.sales.total")}</th>

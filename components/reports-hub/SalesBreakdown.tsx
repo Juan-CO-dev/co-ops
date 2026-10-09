@@ -26,8 +26,8 @@ export function SalesBreakdown({ view, rows, offset, language, drillHref, nextHr
     {units ? <p className="mb-2 text-xs text-co-text-muted">{t("reports.sales.units_only")}</p> : null}
     {view === "discounts" ? <p className="mb-2 text-xs text-co-text-muted">{t("reports.sales.discounts_by_name")}</p> : null}
     {view === "servers" ? <p className="mb-2 text-xs text-co-text-muted">{t("reports.sales.server_basis")}</p> : null}
-    <div className="overflow-x-auto">
-      <table className="w-full text-sm">
+    <div className="min-w-0 max-w-full overflow-x-auto">
+      <table className="w-full min-w-[520px] text-sm">
         <thead><tr className="text-left text-xs text-co-text-muted">
           <th className="py-2 pr-2">#</th>
           <th className="py-2 pr-2">{t(`reports.sales.col.${view}`)}</th>
@@ -40,7 +40,7 @@ export function SalesBreakdown({ view, rows, offset, language, drillHref, nextHr
           const href = drillHref(r);
           return <tr key={r.key} className="border-t border-co-border">
             <td className="py-1 pr-2 text-co-text-muted">{offset + i + 1}</td>
-            <td className="py-1 pr-2">{href ? <Link className={salesLink} href={href}>{label(r)}</Link> : label(r)}</td>
+            <td className="max-w-48 py-1 pr-2"><span className="block truncate" title={label(r)}>{href ? <Link className={salesLink} href={href}>{label(r)}</Link> : label(r)}</span></td>
             {units ? <td className="py-1 pr-2 text-right">{formatQuantity(r.units, language)}</td> : null}
             {view === "discounts" ? <td className="py-1 pr-2 text-right">{r.count}</td> : null}
             <td className="py-1 pr-2 text-right">{r.checks}</td>
@@ -57,8 +57,8 @@ export function SalesBreakdown({ view, rows, offset, language, drillHref, nextHr
 function ChannelTables({ rows, language, drillHref }: { rows: readonly BreakdownRow[]; language: Language; drillHref: (row: BreakdownRow) => string | null }) {
   const t = tFor(language);
   const { included, excluded, includedCents } = channelView(rows);
-  const table = (list: readonly BreakdownRow[], caption: string) => <div className="overflow-x-auto">
-    <table className="w-full text-sm">
+  const table = (list: readonly BreakdownRow[], caption: string) => <div className="min-w-0 max-w-full overflow-x-auto">
+    <table className="w-full min-w-[560px] text-sm">
       <caption className="py-2 text-left text-xs font-bold tracking-wide text-co-text-muted">{caption}</caption>
       <thead><tr className="text-left text-xs text-co-text-muted">
         <th className="py-2 pr-2">{t("reports.sales.col.channel")}</th><th className="py-2 pr-2">{t("reports.sales.col.provider")}</th>

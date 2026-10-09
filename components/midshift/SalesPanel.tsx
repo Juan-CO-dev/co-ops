@@ -12,10 +12,20 @@
  * translate-from-day-one law).
  */
 
+import Link from "next/link";
 import type { Language } from "@/lib/i18n/types";
 import { serverT } from "@/lib/i18n/server";
 import { formatCents, formatTime, formatWeekday } from "@/lib/i18n/format";
 import type { SalesPulse } from "@/lib/midshift-sales";
+import { SALES_READ_MIN } from "@/lib/sales-reports-shared";
+
+export function SalesReportLink({ viewerLevel, locationId, language }: { viewerLevel: number; locationId: string; language: Language }) {
+  if (viewerLevel < SALES_READ_MIN) return null;
+  return <Link href={`/reports/sales?location=${encodeURIComponent(locationId)}`}
+    className="inline-flex min-h-[44px] items-center rounded-lg border border-co-border-2 px-3 text-sm font-semibold text-co-text underline underline-offset-2">
+    {serverT(language, "midshift.sales.report_link")}
+  </Link>;
+}
 
 function checksLabel(count: number, language: Language): string {
   return count === 1
@@ -23,7 +33,7 @@ function checksLabel(count: number, language: Language): string {
     : serverT(language, "midshift.sales.checks_other", { count });
 }
 
-export function SalesPanel({ pulse, language }: { pulse: SalesPulse; language: Language }) {
+export function SalesPanel({ pulse, language, viewerLevel, locationId }: { pulse: SalesPulse; language: Language; viewerLevel: number; locationId: string }) {
   const { today, yesterday, yesterdayDeltaPct, baselineAvgCents, baselineWeeks, topToday, lastPulledAt } = pulse;
   const empty = today == null && yesterday == null;
 
@@ -37,6 +47,7 @@ export function SalesPanel({ pulse, language }: { pulse: SalesPulse; language: L
           </span>
         )}
       </h2>
+      <SalesReportLink viewerLevel={viewerLevel} locationId={locationId} language={language} />
 
       {empty ? (
         <p className="text-sm text-co-text-muted">{serverT(language, "midshift.sales.empty")}</p>
