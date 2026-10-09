@@ -11,6 +11,7 @@ import { etCalendarDate } from "./operational-day";
 import { getRoleLevel, isRoleCode, type RoleCode } from "./roles";
 import { loadPresenceFacts, loadSignedInAt, whosHereEnabled } from "./whos-here";
 import { personPresence } from "./presence-shared";
+import { validStationTrims, type StationTrim } from "./station-schedule-shared";
 import {
   canManageAssignee, isTaskType, TASK_TYPES, TASK_MIN_LEVEL, type ShiftBoard, type Station,
   validOverrideReason, type OverrideReason, type OverrideReasonCode, type AssignmentChange,
@@ -203,30 +204,37 @@ export async function endShift(service: SupabaseClient, args: {
   return { id: result.id, changed: result.changed };
 }
 
-/** KH+ may edit advisory hours; this does not widen the GM configuration gate. */
+/** GM+ daily schedule settings; level 8+ may configure any shop. */
 export async function saveStationTiming(service: SupabaseClient, args: {
   actor: AssignmentActor; locationId: string; stationId: string; positionId?: string;
-  usuallyClosesAt?: string | null; usuallyTrimsAt?: string | null;
+  usuallyClosesAt?: string | null; usuallyTrimsAt?: string | null; trims?: StationTrim[];
 }): Promise<{ id: string }> {
-  requireLocation(args.actor, args.locationId);
+  requireUuid(args.locationId);
   requireUuid(args.stationId);
-  if (args.actor.level < 4) throw new AssignmentError("role_insufficient");
-  if (await targetLevel(service, args.actor.userId, args.locationId) < 4) throw new AssignmentError("role_insufficient");
+  if (args.actor.level < 7) throw new AssignmentError("role_insufficient");
+  if (args.actor.level < 8) requireLocation(args.actor, args.locationId);
+  const user = await service.from("users").select("role").eq("id", args.actor.userId).eq("active", true).maybeSingle();
+  if (user.error) dbError(user.error);
+  if (!user.data || !isRoleCode(user.data.role) || getRoleLevel(user.data.role) < 7)
+    throw new AssignmentError("role_insufficient");
+  if (getRoleLevel(user.data.role) < 8 && await targetLevel(service, args.actor.userId, args.locationId) < 7)
+    throw new AssignmentError("role_insufficient");
   const isPosition = args.positionId !== undefined;
   if (isPosition) requireUuid(args.positionId!);
   const value = isPosition ? args.usuallyTrimsAt : args.usuallyClosesAt;
+  if (args.trims !== undefined && (isPosition || !validStationTrims(args.trims))) throw new AssignmentError("invalid_payload", 400);
   if (!validStationTime(value) || (isPosition ? args.usuallyClosesAt !== undefined : args.usuallyTrimsAt !== undefined))
     throw new AssignmentError("invalid_payload", 400);
   let query = isPosition
     ? service.from("station_positions").update({ usually_trims_at: value }).eq("id", args.positionId!).eq("station_id", args.stationId)
-    : service.from("stations").update({ usually_closes_at: value }).eq("id", args.stationId);
+    : service.from("stations").update({ usually_closes_at: value, ...(args.trims !== undefined ? { trims: args.trims } : {}) }).eq("id", args.stationId);
   if (isPosition && value !== null) query = query.gt("sort", 1);
   const { data, error } = await query.eq("location_id", args.locationId).select("id").maybeSingle();
   if (error) dbError(error);
   if (!data) throw new AssignmentError("station_unavailable", 404);
   await audit({ actorId: args.actor.userId, actorRole: args.actor.role, action: "station.timing_update",
     resourceTable: isPosition ? "station_positions" : "stations", resourceId: data.id,
-    metadata: { location_id: args.locationId, time: value }, ipAddress: null, userAgent: null });
+    metadata: { location_id: args.locationId, time: value, ...(args.trims !== undefined ? { trims: args.trims } : {}) }, ipAddress: null, userAgent: null });
   return data;
 }
 
@@ -427,7 +435,7 @@ export async function loadShiftBoard(service: SupabaseClient, args: {
   const { data: stationDate, error: dayError } = await service.rpc("station_business_date", { p_location_id: args.locationId });
   if (dayError) dbError(dayError);
   if (typeof stationDate !== "string") throw new Error("Station business date unavailable");
-  const stationsResult = await service.from("stations").select("id,name,name_es,sort,active,staffed,usually_closes_at")
+  const stationsResult = await service.from("stations").select("id,name,name_es,sort,active,staffed,usually_closes_at,trims")
     .eq("location_id", args.locationId).order("sort").order("name");
   if (stationsResult.error) dbError(stationsResult.error);
   const positionsResult = await service.from("station_positions").select("id,station_id,name,name_es,duty,duty_es,sort,active,usually_trims_at")
@@ -453,7 +461,7 @@ export async function loadShiftBoard(service: SupabaseClient, args: {
     if (!prior || Date.parse(at) > Date.parse(prior)) { departures.set(userId, at); departureReason.set(userId, "ended_shift"); }
   }
   const stations: Station[] = (stationsResult.data ?? []).map((row) => ({
-    id: row.id, name: row.name, nameEs: row.name_es, sort: row.sort, active: row.active, staffed: row.staffed, usuallyClosesAt: row.usually_closes_at, closedAt: closures.get(row.id) ?? null,
+    id: row.id, name: row.name, nameEs: row.name_es, sort: row.sort, active: row.active, staffed: row.staffed, usuallyClosesAt: row.usually_closes_at, trims: row.trims ?? [], closedAt: closures.get(row.id) ?? null,
     positions: (positionsResult.data ?? []).filter((p) => p.station_id === row.id).map((p) => ({
       id: p.id, stationId: p.station_id, name: p.name, nameEs: p.name_es, duty: p.duty,
       dutyEs: p.duty_es, sort: p.sort, active: p.active, usuallyTrimsAt: p.usually_trims_at,
@@ -584,7 +592,7 @@ export async function loadShiftBoard(service: SupabaseClient, args: {
         }) };
     });
   }
-  return { locationId: args.locationId, date: args.date, viewerId: args.actor.userId, viewerLevel: args.actor.level,
+  return { locationId: args.locationId, date: args.date, stationDate, viewerId: args.actor.userId, viewerLevel: args.actor.level,
     ...(whosHere ? { whosHere: true } : {}),
     stations, events, positionVacancies: positionVacancies(events, breaks, names),
     taskVacancies: [...[...new Map(changes.map((row) => [row.report_type, row])).values()]
