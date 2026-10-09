@@ -62,6 +62,8 @@ export function floorStations(board: ShiftBoard, args: { nowMinutes: number; vie
       trimAt: facts.trimAt,
       trimTo: facts.trimTo,
       closedAt: facts.closedAt,
+      closeDue: facts.closeDue,
+      trimDue: facts.trimDue && facts.trimTo !== null && covering.length > facts.trimTo,
       tasksLeft: here.reduce((n, p) => n + (openTasksBy.get(p.id) ?? 0), 0),
     };
   });

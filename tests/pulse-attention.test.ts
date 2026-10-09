@@ -46,10 +46,10 @@ describe("severity + score", () => {
 describe("crewAttention", () => {
   it("keeps rows about the viewer and shop-wide reminders; drops everyone else's and anything with money", () => {
     const rows = [
-      row("task_late", { key: "mine", subjectUserId: "me" }),
-      row("task_late", { key: "theirs", subjectUserId: "them" }),
+      row("task_late", { key: "mine", subjectUserIds: ["me"] }),
+      row("task_late", { key: "theirs", subjectUserIds: ["them"] }),
       row("fridge_unchecked", { key: "shop", shopWide: true }),
-      row("station_closing_soon", { key: "my-station", subjectUserId: "me" }),
+      row("station_closing_soon", { key: "my-station", subjectUserIds: ["them", "me"] }),
       row("catering_not_rung", { key: "money", params: { total: "$120.00" } }),
       row("clockin_unlinked", { key: "names", params: { names: "Pat" } }),
     ];

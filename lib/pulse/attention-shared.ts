@@ -47,5 +47,5 @@ export function attentionScore(rows: readonly AttentionRow[]): PulseScore {
 
 /** Crew (<4): only what concerns THEM, plus shop-wide reminders. Never other people, never money. */
 export function crewAttention(rows: readonly AttentionRow[], viewerId: string): AttentionRow[] {
-  return rows.filter((r) => r.shopWide === true || (r.subjectUserId != null && r.subjectUserId === viewerId));
+  return rows.filter((r) => r.shopWide === true || (r.subjectUserIds?.includes(viewerId) ?? false));
 }

@@ -46,8 +46,8 @@ export interface AttentionRow {
   href: string;
   /** i18n key suffix under `pulse.attention.action.` */
   action: string;
-  /** Who this is about (user id) — the crew filter keeps only their own rows. */
-  subjectUserId?: string | null;
+  /** Who this is about (user ids) — the crew filter keeps only rows naming them. */
+  subjectUserIds?: string[];
   /** Shop-wide rows crew may see (food-safety reminders). */
   shopWide?: boolean;
 }
@@ -78,6 +78,9 @@ export interface FloorStation {
   trimAt: string | null;
   trimTo: number | null;
   closedAt: string | null;
+  /** Past the close / trim time and still open or over the trim count. */
+  closeDue: boolean;
+  trimDue: boolean;
   /** Open (not done) tasks tied to this station's people — count only. */
   tasksLeft: number;
 }
