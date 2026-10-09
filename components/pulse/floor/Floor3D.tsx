@@ -18,7 +18,7 @@ import { STATUS_FILL } from "@/components/pulse/shared";
 
 type Three = typeof import("three");
 
-export default function Floor3D({ stations, layout, selectedId, onSelect, arranging, onMove, statusLabel }: {
+export default function Floor3D({ stations, layout, selectedId, onSelect, arranging, onMove, statusLabel, nameLabel, onFailure }: {
   stations: FloorStation[];
   layout: FloorLayout;
   selectedId: string | null;
@@ -26,11 +26,15 @@ export default function Floor3D({ stations, layout, selectedId, onSelect, arrang
   arranging: boolean;
   onMove: (id: string, x: number, y: number) => void;
   statusLabel: (s: FloorStation) => string;
+  /** The station's display name in the viewer's language (Astra #10: `nameEs` when Spanish). */
+  nameLabel: (s: FloorStation) => string;
+  /** Astra #8: a failed chunk load or renderer init hands control back to the parent → Floor2D. */
+  onFailure: (reason: string) => void;
 }) {
   const host = useRef<HTMLDivElement>(null);
   const sceneRef = useRef<{ THREE: Three; scene: import("three").Scene; camera: import("three").PerspectiveCamera; renderer: import("three").WebGLRenderer; boxes: Map<string, import("three").Mesh>; labels: Map<string, import("three").Sprite>; raycaster: import("three").Raycaster; dispose: () => void } | null>(null);
-  const propsRef = useRef({ stations, layout, selectedId, onSelect, arranging, onMove, statusLabel });
-  propsRef.current = { stations, layout, selectedId, onSelect, arranging, onMove, statusLabel };
+  const propsRef = useRef({ stations, layout, selectedId, onSelect, arranging, onMove, statusLabel, nameLabel, onFailure });
+  propsRef.current = { stations, layout, selectedId, onSelect, arranging, onMove, statusLabel, nameLabel, onFailure };
 
   // Mount once: load three, build the renderer, run the loop, clean up fully on unmount.
   useEffect(() => {
@@ -125,7 +129,11 @@ export default function Floor3D({ stations, layout, selectedId, onSelect, arrang
       frame = requestAnimationFrame(loop);
       sync();
       sceneRef.current.dispose = () => { observer.disconnect(); cancelAnimationFrame(frame); renderer.domElement.removeEventListener("pointerdown", onDown); renderer.domElement.removeEventListener("pointermove", onMovePtr); renderer.domElement.removeEventListener("pointerup", onUp); renderer.domElement.removeEventListener("pointercancel", onUp); dispose(); };
-    })().catch((err) => console.error("pulse floor 3d failed", err));
+    })().catch((err) => {
+      // Never leave an empty hero: the parent swaps in the 2D map (Astra #8).
+      console.error("pulse floor 3d failed", err);
+      if (!cancelled) propsRef.current.onFailure(err instanceof Error ? err.message : String(err));
+    });
     return () => { cancelled = true; sceneRef.current?.dispose(); sceneRef.current = null; };
   }, []);
 
@@ -134,7 +142,7 @@ export default function Floor3D({ stations, layout, selectedId, onSelect, arrang
     const s = sceneRef.current;
     if (!s) return;
     const { THREE, scene, boxes, labels, camera } = s;
-    const { stations, layout, selectedId, statusLabel } = propsRef.current;
+    const { stations, layout, selectedId, statusLabel, nameLabel } = propsRef.current;
     const keep = new Set(stations.map((st) => st.id));
     for (const [id, box] of boxes) if (!keep.has(id)) { scene.remove(box); box.geometry.dispose(); (box.material as import("three").Material).dispose(); boxes.delete(id); const l = labels.get(id); if (l) { scene.remove(l); l.material.map?.dispose(); l.material.dispose(); labels.delete(id); } }
     for (const st of stations) {
@@ -155,7 +163,7 @@ export default function Floor3D({ stations, layout, selectedId, onSelect, arrang
       box.position.set(p.x, 0.25, p.y);
       box.scale.setScalar(st.id === selectedId ? 1.15 : 1);
       // Label sprite (canvas texture): name + who is on it + the status word.
-      const text = `${st.name}\n${st.people.join(" · ") || (st.filled > 0 ? "•".repeat(Math.min(3, st.filled)) : "")}\n${statusLabel(st).toUpperCase()}`;
+      const text = `${nameLabel(st)}\n${st.people.join(" · ") || (st.filled > 0 ? "•".repeat(Math.min(3, st.filled)) : "")}\n${statusLabel(st).toUpperCase()}`;
       let label = labels.get(st.id);
       if (!label || label.userData.text !== text) {
         if (label) { scene.remove(label); label.material.map?.dispose(); label.material.dispose(); }
@@ -187,7 +195,7 @@ export default function Floor3D({ stations, layout, selectedId, onSelect, arrang
     camera.lookAt(cx, 0, cz);
   }
 
-  useEffect(() => { sync(); }, [stations, layout, selectedId, arranging, statusLabel]);
+  useEffect(() => { sync(); }, [stations, layout, selectedId, arranging, statusLabel, nameLabel]);
 
   return <div ref={host} className="h-[300px] w-full min-w-0 overflow-hidden rounded-lg bg-co-surface-inset sm:h-[340px]" />;
 }

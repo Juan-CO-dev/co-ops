@@ -108,3 +108,13 @@ export function mergeLayout(ids: readonly string[], saved: FloorLayout | null): 
 export function choose3D(d: { webgl: boolean; reducedMotion: boolean; lowPower: boolean; saveData: boolean }): boolean {
   return d.webgl && !d.reducedMotion && !d.lowPower && !d.saveData;
 }
+
+/**
+ * Which floor renders (Astra #8): a three.js failure (chunk load, renderer init, a render-time throw)
+ * forces the 2D map for the rest of the mount, whatever the device or the user's toggle said;
+ * otherwise the user's toggle wins over the device decision; `null` (server) is the 2D map too.
+ */
+export function floorMode(d: { deviceWants3D: boolean | null; override: boolean | null; failed: boolean }): "3d" | "2d" {
+  if (d.failed) return "2d";
+  return (d.override ?? d.deviceWants3D) === true ? "3d" : "2d";
+}

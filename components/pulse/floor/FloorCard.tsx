@@ -11,9 +11,10 @@ import dynamic from "next/dynamic";
 import { useCallback, useMemo, useState, useSyncExternalStore } from "react";
 import { ActionButton } from "@/components/ActionButton";
 import { useTranslation } from "@/lib/i18n/provider";
-import { choose3D } from "@/lib/pulse/floor-shared";
+import { choose3D, floorMode } from "@/lib/pulse/floor-shared";
 import type { FloorData, FloorLayout, FloorStation } from "@/lib/pulse/types";
 import { Floor2D } from "@/components/pulse/floor/Floor2D";
+import { Floor3DBoundary } from "@/components/pulse/floor/Floor3DBoundary";
 import { StationDrawer } from "@/components/pulse/floor/StationDrawer";
 import { STATUS_KEY } from "@/components/pulse/shared";
 
@@ -47,10 +48,14 @@ const readDetected = () => { if (detected === null) detected = detect3D(); retur
 const serverSnapshot = () => null;
 
 export function FloorCard({ data, mode, onSaved }: { data: FloorData; mode: "card" | "detail"; onSaved: () => Promise<void> }) {
-  const { t } = useTranslation();
+  const { t, language } = useTranslation();
   const deviceWants3D = useSyncExternalStore(subscribeNever, readDetected, serverSnapshot);
   const [override, setOverride] = useState<boolean | null>(null);
-  const use3D: boolean | null = override ?? deviceWants3D;
+  const [failed, setFailed] = useState(false);
+  const mode3D = floorMode({ deviceWants3D, override, failed }) === "3d";
+  const use3D: boolean | null = failed ? false : override ?? deviceWants3D;
+  const onFailure = useCallback((reason: string) => { console.error("pulse floor: 3D unavailable, showing the map", reason); setFailed(true); }, []);
+  const nameLabel = useCallback((s: FloorStation) => (language === "es" ? s.nameEs || s.name : s.name), [language]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [arranging, setArranging] = useState(false);
   const [draft, setDraft] = useState<FloorLayout | null>(null);
@@ -78,7 +83,7 @@ export function FloorCard({ data, mode, onSaved }: { data: FloorData; mode: "car
       <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
         <p className="text-xs text-co-text-muted">{arranging ? t("pulse.floor.arrange_hint") : t("pulse.floor.tap_hint")}</p>
         <div className="flex flex-wrap items-center gap-2">
-          {use3D !== null && (
+          {use3D !== null && !failed && (
             <button type="button" onClick={() => setOverride(!use3D)} className="inline-flex min-h-[44px] items-center rounded-lg border border-co-border-2 px-3 text-xs font-bold uppercase tracking-[0.1em] text-co-text" aria-pressed={use3D}>
               {t(use3D ? "pulse.floor.mode_2d" : "pulse.floor.mode_3d")}
             </button>
@@ -90,15 +95,17 @@ export function FloorCard({ data, mode, onSaved }: { data: FloorData; mode: "car
           </>}
         </div>
       </div>
-      {use3D === true ? <Floor3D {...common} statusLabel={statusLabel} /> : <Floor2D {...common} showNames={data.showNames} />}
-      {use3D === false && <p className="mt-1 text-[11px] text-co-text-dim">{t("pulse.floor.fallback_note")}</p>}
+      {mode3D
+        ? <Floor3DBoundary onFailure={onFailure}><Floor3D {...common} statusLabel={statusLabel} nameLabel={nameLabel} onFailure={onFailure} /></Floor3DBoundary>
+        : <Floor2D {...common} showNames={data.showNames} />}
+      {!mode3D && deviceWants3D !== null && <p className="mt-1 text-[11px] text-co-text-dim">{t("pulse.floor.fallback_note")}</p>}
       <p className="mt-1 text-[11px] text-co-text-dim">{t("pulse.floor.legend")}</p>
       {saveState === "saved" && <p role="status" className="mt-1 text-xs text-co-confirm-text">{t("pulse.floor.arrange_saved")}</p>}
       {saveState === "failed" && <p role="alert" className="mt-1 text-xs text-co-cta-text">{t("pulse.floor.arrange_failed")}</p>}
       {selected && <StationDrawer station={selected} locationId={data.locationId} canAct={data.showNames} onClose={() => setSelectedId(null)} />}
       {mode === "detail" && (
         <ul className="mt-3 grid gap-1 text-sm sm:grid-cols-2">
-          {data.stations.map((s) => <li key={s.id} className="flex min-h-[28px] items-center justify-between gap-2"><span className="font-semibold text-co-text">{s.name}</span><span className="text-co-text-muted">{statusLabel(s)}{s.people.length ? ` · ${s.people.join(", ")}` : ""}</span></li>)}
+          {data.stations.map((s) => <li key={s.id} className="flex min-h-[28px] items-center justify-between gap-2"><span className="font-semibold text-co-text">{nameLabel(s)}</span><span className="text-co-text-muted">{statusLabel(s)}{s.people.length ? ` · ${s.people.join(", ")}` : ""}</span></li>)}
         </ul>
       )}
     </div>

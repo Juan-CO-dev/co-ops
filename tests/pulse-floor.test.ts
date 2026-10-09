@@ -7,6 +7,7 @@ import {
   autoArrange,
   choose3D,
   FLOOR_COLS,
+  floorMode,
   floorStations,
   mergeLayout,
   stationStatus,
@@ -115,5 +116,16 @@ describe("choose3D", () => {
     expect(choose3D({ webgl: true, reducedMotion: true, lowPower: false, saveData: false })).toBe(false);
     expect(choose3D({ webgl: true, reducedMotion: false, lowPower: true, saveData: false })).toBe(false);
     expect(choose3D({ webgl: true, reducedMotion: false, lowPower: false, saveData: true })).toBe(false);
+  });
+});
+
+describe("floorMode (Astra #8)", () => {
+  it("a three.js failure forces the 2D map regardless of device or toggle; otherwise toggle beats device; server = 2D", () => {
+    expect(floorMode({ deviceWants3D: true, override: null, failed: true })).toBe("2d");
+    expect(floorMode({ deviceWants3D: true, override: true, failed: true })).toBe("2d");
+    expect(floorMode({ deviceWants3D: true, override: null, failed: false })).toBe("3d");
+    expect(floorMode({ deviceWants3D: false, override: true, failed: false })).toBe("3d");
+    expect(floorMode({ deviceWants3D: true, override: false, failed: false })).toBe("2d");
+    expect(floorMode({ deviceWants3D: null, override: null, failed: false })).toBe("2d");
   });
 });

@@ -83,3 +83,19 @@ describe("Astra #12 / #10 — tap targets and translated vocabularies", () => {
     expect(es).not.toContain("in_progress");
   });
 });
+
+describe("Floor3DBoundary (Astra #8)", () => {
+  it("a throw inside the 3D subtree flips the boundary to failed and reports the reason to the parent", async () => {
+    const { Floor3DBoundary } = await import("@/components/pulse/floor/Floor3DBoundary");
+    const reasons: string[] = [];
+    expect(Floor3DBoundary.getDerivedStateFromError()).toEqual({ failed: true });
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const instance = new Floor3DBoundary({ onFailure: (r: string) => reasons.push(r), children: null });
+    instance.componentDidCatch(new Error("chunk load failed"), { componentStack: "" } as never);
+    spy.mockRestore();
+    expect(reasons).toEqual(["chunk load failed"]);
+    // Once failed the boundary renders nothing, so FloorCard's floorMode() puts the 2D map in its place.
+    instance.state = { failed: true };
+    expect(instance.render()).toBeNull();
+  });
+});

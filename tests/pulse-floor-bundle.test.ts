@@ -35,6 +35,18 @@ describe("three.js lazy-load invariant", () => {
     expect(card).toMatch(/dynamic\(\(\) => import\("@\/components\/pulse\/floor\/Floor3D"\), \{\s*ssr: false/);
     expect(card).not.toMatch(/from ["']@\/components\/pulse\/floor\/Floor3D["']/);
   });
+  it("Astra #8/#10: Floor3D reports import/renderer failure through onFailure, is wrapped in the error boundary, and labels with nameLabel", () => {
+    const floor3d = readFileSync("components/pulse/floor/Floor3D.tsx", "utf8");
+    expect(floor3d).toMatch(/\.catch\(\(err\) => \{[\s\S]*propsRef\.current\.onFailure\(/);
+    expect(floor3d).toContain("nameLabel(st)");
+    expect(floor3d).not.toMatch(/\$\{st\.name\}/);
+    const card = readFileSync("components/pulse/floor/FloorCard.tsx", "utf8");
+    expect(card).toMatch(/<Floor3DBoundary onFailure=\{onFailure\}><Floor3D /);
+    expect(card).toContain("floorMode({ deviceWants3D, override, failed })");
+    const boundary = readFileSync("components/pulse/floor/Floor3DBoundary.tsx", "utf8");
+    expect(boundary).toContain("getDerivedStateFromError");
+    expect(boundary).toContain("this.props.onFailure(error.message)");
+  });
   it("Floor3D is a client component and the pulse shell never imports it directly", () => {
     expect(readFileSync("components/pulse/floor/Floor3D.tsx", "utf8").startsWith('"use client"')).toBe(true);
     for (const f of ["components/pulse/PulseClient.tsx", "components/pulse/SectionBody.tsx", "app/(authed)/mid-shift/page.tsx"]) {
