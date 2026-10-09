@@ -20,10 +20,12 @@
 -- D. customer_consent_events: APPEND-ONLY (service_role SELECT + INSERT only). The current status of a
 --    (customer, channel) is its latest event (effective_at, an opt-out wins a tie). subject_sha256 names
 --    the exact email/phone the consent is about, so an export only ever uses the opted-in address.
--- E. customer_consent_imports (+ members): the Toast Web Marketing CSV path (and the seam for a Toast
---    API sync, source toast_marketing_api). Idempotent by (source, sha256 of the normalised rows);
---    diffed against the previous import; the FIRST import of a source is the baseline and never shows
---    as "newly opted in".
+-- E. customer_consent_imports (+ chunks, members): the Toast Web Marketing CSV path (and the seam for
+--    a Toast API sync, source toast_marketing_api). begin -> chunk (<= 1000 rows, so no statement nears
+--    the 8 s timeout) -> finish. Idempotent by (source, sha256 of the normalised rows): a completed
+--    import replays, a half-applied one resumes. Diffed against the previous COMPLETED import (absence =
+--    opted out unless the file carries a status column; a wave over 10% / 25 people needs a human yes).
+--    The FIRST import of a source is the baseline and never shows as "newly opted in".
 -- F. customer_suppressions: sha256 of every identifier a person asked us to delete. Ingest and import
 --    skip a suppressed email/phone, so a deleted person is never silently re-created.
 -- G. Delete-on-request (customer_erase) and retention (customer_retention_sweep): identifiers and
@@ -650,9 +652,9 @@ end $$;
 -- The ONLY marketing read. Latest event opted_in, the subject address only, live people only.
 -- There is deliberately no parameter that could include anyone else.
 create function public.customer_marketing_export(p_channel text)
-returns table(customer_id uuid, value text, first_name text, last_name text, opted_in_at timestamptz, source text)
+returns table(customer_id uuid, value text, first_name text, last_name text, opted_in_at timestamptz, source text, status text)
 language sql stable security definer set search_path = pg_catalog, public as $$
-  select k.customer_id, i.value, c.first_name, c.last_name, k.effective_at, k.source
+  select k.customer_id, i.value, c.first_name, c.last_name, k.effective_at, k.source, k.status
   from public.customer_consent_current k
   join public.customers c on c.id = k.customer_id and c.merged_into is null and c.erased_at is null
   join public.customer_identifiers i on i.value_sha256 = k.subject_sha256

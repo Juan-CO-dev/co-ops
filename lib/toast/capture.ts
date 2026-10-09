@@ -10,6 +10,7 @@ import type { QuantityCapture } from "./capture-reconciliation-shared";
 import { normalizeToastOrder } from "./capture-shared";
 import { backfillDates, captureBudget, captureErrorCode, runCapturePages } from "./capture-runner";
 import { persistCapturedCatering } from "./capture-catering";
+import { persistCapturedCustomers } from "@/lib/customers/capture";
 
 export function captureEnabled(): boolean {
   return process.env.TOAST_ORDER_CAPTURE === "1" && process.env.TOAST_FIXTURES !== "1" && toastConfigured();
@@ -22,6 +23,7 @@ export interface CaptureDayResult {
   reason?: string;
   reconciliation?: { status: "match" | "mismatch" | "skipped"; error: string | null };
   catering?: { ok: boolean; error: string | null };
+  customers?: { ok: boolean; linked: number; error: string | null };
 }
 const skipped = (reason: string) => ({ runId: "", pages: 0, orders: 0, skipped: true as const, reason });
 type Budget = ReturnType<typeof captureBudget>;
@@ -202,12 +204,21 @@ async function captureDay(locationId: string, date: string, options: { resume?: 
     // An interrupted sink leaves pending, which scan explicitly treats as degraded.
     catering = { ok: false, error: budget.signal.aborted ? "capture_catering_deadline" : "capture_catering_processing_failed" };
   }
+  // 0234: customer profiles from the same request-memory orders (off unless CUSTOMER_PROFILES=1).
+  // Never fails the capture; the next tick re-captures today and links again.
+  let customers: CaptureDayResult["customers"];
+  try {
+    const r = await budget.wait(() => persistCapturedCustomers(locationId, cateringOrders, { signal: budget.signal }));
+    customers = { ok: r.ok, linked: r.linked, error: r.error };
+  } catch {
+    customers = { ok: false, linked: 0, error: budget.signal.aborted ? "customer_capture_deadline" : "customer_capture_failed" };
+  }
   let reconciliation: CaptureDayResult["reconciliation"];
   if (options.reconcile) {
     try { reconciliation = await recordCaptureReconciliation(locationId, date, runId, quantities, budget.signal); }
     catch (error) { reconciliation = { status: "skipped", error: captureErrorCode(error) }; }
   }
-  return { runId, ...result, skipped: false, catering, ...(reconciliation ? { reconciliation } : {}) };
+  return { runId, ...result, skipped: false, catering, customers, ...(reconciliation ? { reconciliation } : {}) };
 }
 
 /** Read-only retention probe: consumes every page but persists no orders or manifest. */

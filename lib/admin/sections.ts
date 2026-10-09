@@ -33,6 +33,8 @@ export const ADMIN_SECTIONS: AdminSection[] = [
   { id: "stations", i18nKey: "assignments.stations", href: "/admin/stations", minLevel: 7 },
   // 0233: Toast employee -> CO-OPS user links (GM own shop, level 8+ every shop).
   { id: "toast-employees", i18nKey: "toastLinks.title", href: "/admin/toast-employees", minLevel: 7 },
+  // 0234: customer profiles (stats GM+ own shop / 8+ every shop; contact + consent desk 9+).
+  { id: "customers", i18nKey: "customers.title", href: "/admin/customers", minLevel: 7 },
   { id: "users",               i18nKey: "admin.section.users",               href: "/admin/users",               minLevel: 8 },
   { id: "vendors",             i18nKey: "admin.section.vendors",             href: "/admin/vendors",             minLevel: 6 },
   { id: "skus",                i18nKey: "admin.section.skus",                href: "/admin/skus",                minLevel: 6 },
