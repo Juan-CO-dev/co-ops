@@ -52,6 +52,9 @@ export const DESTRUCTIVE_ACTIONS = [
   "station.timing_update", // Advisory station / position configuration.
   "assignment.create",
   "assignment.retract",
+  "shift.end", // 0233: a human ends a shift — releases the station and unassigns open tasks.
+  "toast_employee_link.create", // 0233: a human links a Toast employee to a CO-OPS user (attribution).
+  "toast_employee_link.deactivate", // 0233: a human unlinks one (attribution is cleared).
   "receiving.store_create",
   "receiving.store_sku_create",
   "receiving.pending_create",

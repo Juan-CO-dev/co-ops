@@ -85,6 +85,9 @@ function extract(fn: "assertStepUp" | "requestStepUp", keep: (rel: string) => bo
 // ── THE SERVER HALF: route file → the tiers it asserts ────────────────────────
 const SERVER_TIER_MAP: Record<string, string[]> = {
   "app/api/admin/stations/route.ts": ["B"],
+  // 0233 Toast employee links: link/unlink is an attribution change (Tier B); its only client,
+  // ToastEmployeeLinks, asks B proactively and retries on step_up_required/stale (joined by hand).
+  "app/api/admin/toast-employees/route.ts": ["B"],
   // 0220 report recipients: both writers are owner-level config changes (Tier B).
   "app/api/admin/report-recipients/route.ts": ["B"],
   "app/api/admin/report-recipients/settings/route.ts": ["B"],
@@ -205,6 +208,7 @@ const CLIENT_TIER_MAP: Record<string, string[]> = {
   "app/admin/catering/ezcater-review/review-client.tsx": ["B"],
   "components/catering/pipeline/TransferLead.tsx": ["B"],
   "components/assignments/StationsAdmin.tsx": ["B"],
+  "components/admin/toast-employees/ToastEmployeeLinks.tsx": ["B"],
   "components/admin/report-recipients/ReportRecipientsAdmin.tsx": ["B"],
   "app/admin/catering/rate-rules/rate-rules-client.tsx": ["B"],
   // The provider itself — the parameter, not a call site.

@@ -45,6 +45,8 @@ import { DESTRUCTIVE_ACTIONS } from "@/lib/destructive-actions";
 export const NON_DESTRUCTIVE_ACTIONS = [
   "station.system_release", // 0230 SQL: observed closure / Toast departure.
   "assignment.system_release", // 0230 SQL: observed Toast departure.
+  "shift.system_end", // 0233 SQL: the closing was finalized; held work released (shop_closed).
+  "toast_employee_link.auto_create", // 0233: system exact full-name match from the labor pull.
   "ezcater.location_reassigned", // Provider shop observation, including a manual-location conflict.
   "ezcater.toast_reconciled", // SQL-only provider cross-check observation; non-destructive.
   "ezcater.order_synced", // Provider observation; metadata contains identities/codes only.

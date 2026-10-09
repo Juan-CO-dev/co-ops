@@ -11,6 +11,7 @@ import { CollapsibleChecklistSection } from "@/components/ui/CollapsibleChecklis
 import { useCollapsibleSections } from "@/lib/use-collapsible-sections";
 import { assignmentSectionDefaults } from "@/lib/assignment-sections";
 import type { RetrainTaskView } from "@/lib/yield-stats";
+import type { PresenceView } from "@/lib/presence-shared";
 import { canSelfClaim, currentStation, formatAssignmentAttribution, requiresOverrideReason, OVERRIDE_REASON_CODES, type OverrideReasonCode, type TaskAssignment, type AssignmentChange, type StationEvent, TASK_TYPES, TASK_MIN_LEVEL, taskHref, type ShiftBoard, type TaskType } from "@/lib/assignments-shared";
 
 const control = "flex min-h-[44px] w-full max-w-full min-w-0 items-center rounded-lg border-2 border-co-border bg-co-surface px-3 text-base font-normal tracking-normal text-co-text";
@@ -49,10 +50,39 @@ export function ShiftBoardClient({ board, compact = false, retrainTasks = [] }: 
     time: formatTime(change.at, language),
   })}{change.reasonCode && change.reasonNote ? ` · ${change.reasonNote}` : ""}</p>;
   const taskVacancyLine = (task: TaskType) => board.taskVacancies?.filter((entry) => entry.task === task).map((entry) =>
-    <p key={`${entry.userId}:${entry.at}`} className="text-sm text-co-text-muted">{t("assignments.lifecycle.leftOpen", { name: entry.name, time: formatTime(entry.at, language) })}</p>);
+    <p key={`${entry.userId}:${entry.at}`} className="text-sm text-co-text-muted">{t(entry.reason === "ended_shift" ? "assignments.lifecycle.leftOpenEnded" : "assignments.lifecycle.leftOpen", { name: entry.name, time: formatTime(entry.at, language) })}</p>);
   const positionVacancyLine = (positionId: string) => {
     const vacancy = board.positionVacancies?.find((entry) => entry.positionId === positionId);
-    return vacancy ? <p className="text-sm text-co-text-muted">{t(vacancy.reason === "on_break" ? "assignments.lifecycle.openCover" : "assignments.lifecycle.leftOpen", { name: vacancy.name, time: formatTime(vacancy.at, language) })}</p> : null;
+    return vacancy ? <p className="text-sm text-co-text-muted">{t(vacancy.reason === "on_break" ? "assignments.lifecycle.openCover" : vacancy.reason === "ended_shift" ? "assignments.lifecycle.leftOpenEnded" : "assignments.lifecycle.leftOpen", { name: vacancy.name, time: formatTime(vacancy.at, language) })}</p> : null;
+  };
+  // 0233 who's here: on shift and HOW we know (the Toast clock, or activity in CO-OPS).
+  const presenceText = (presence: PresenceView | undefined): string | null => {
+    if (!presence) return null;
+    if (presence.onShift) return `${t("whosHere.onShift")} · ${presence.source === "toast_clock" && presence.since
+      ? t("whosHere.clockedIn", { time: formatTime(presence.since, language) }) : t("whosHere.activeInCoops")}`;
+    if (!presence.off) return null;
+    const key = presence.off.reason === "clocked_out" ? "whosHere.clockedOut" : presence.off.reason === "ended_shift" ? "whosHere.endedShift" : "whosHere.shopClosed";
+    return t(key, { time: formatTime(presence.off.at, language) });
+  };
+  const presenceLine = (presence: PresenceView | undefined) => {
+    const text = presenceText(presence);
+    return text ? <p className={presence?.onShift ? "text-sm font-bold text-co-confirm-text" : "text-sm text-co-text-muted"}>{text}</p> : null;
+  };
+  const hereNow = board.whosHere ? board.people.filter((person) => person.presence?.onShift) : [];
+  const hereNowList = board.whosHere ? <div className="space-y-1">
+    <h4 className="text-xs font-bold tracking-wide text-co-text-muted">{t("whosHere.hereNow", { count: hereNow.length })}</h4>
+    {hereNow.length === 0 ? <p className="text-sm text-co-text-muted">{t("whosHere.nobody")}</p>
+      : <ul className="space-y-1">{hereNow.map((person) => <li key={person.id} className="min-w-0 text-sm"><span className="font-bold">{person.name}</span> · <span className="text-co-text-muted">{presenceText(person.presence)}</span></li>)}</ul>}
+  </div> : null;
+  const endShiftButton = (person: ShiftBoard["people"][number]) => {
+    if (!board.whosHere || person.available === false) return null;
+    const self = person.id === board.viewerId;
+    if (!self && (compact || board.viewerLevel < 4 || person.level > board.viewerLevel)) return null;
+    // Nothing to end: not on shift and holding nothing (an ended shift does not offer itself again).
+    if (!person.presence?.onShift && !person.hasWork && !person.onBreak) return null;
+    return <ActionButton variant={self ? "secondary" : "danger"} disabled={disabled}
+      onClick={() => requestMutation({ action: "end_shift", userId: person.id }, self ? undefined : person.heldFromLevel)}>
+      {t(self ? "whosHere.endMyShift" : "whosHere.endShift")}</ActionButton>;
   };
   const stationStatus = (station: ShiftBoard["stations"][number]) => <>
     {station.closedAt && <p className="font-bold text-co-text-muted">{t("assignments.lifecycle.closed", { time: formatTime(station.closedAt, language) })}</p>}
@@ -199,6 +229,7 @@ export function ShiftBoardClient({ board, compact = false, retrainTasks = [] }: 
     </div>)}
     {!compact && board.viewerLevel >= 4 && section("unassigned", "assignments.unassigned", 0, unassigned.length, <ul className="space-y-2">{unassigned.map((task) => <li key={task}>{board.viewerLevel >= TASK_MIN_LEVEL[task] ? <ActionLink variant="secondary" href={taskHref(task, board.locationId)}>{t(`assignments.task.${task}`)}</ActionLink> : <span>{t(`assignments.task.${task}`)}</span>}</li>)}</ul>)}
     {section(compact ? "stations" : "people", compact ? "assignments.takeAssignStations" : "assignments.people", compact ? Number(!!currentStation(board.events, board.viewerId)?.stationId) : board.people.filter((person) => person.hasWork).length, compact ? 1 : board.people.length, <div className="space-y-3">
+    {!compact && hereNowList}
     {people.length === 0 && <p>{t("assignments.empty")}</p>}
     {people.map((person) => {
       const current = currentStation(board.events, person.id);
@@ -212,8 +243,10 @@ export function ShiftBoardClient({ board, compact = false, retrainTasks = [] }: 
       const canClaim = person.available !== false && !person.onBreak && compact && person.id === board.viewerId && canSelfClaim(current);
       return <article key={person.id} className="min-w-0 space-y-3 rounded-xl border border-co-border p-3">
         {!compact && <h4 className="truncate font-bold text-co-text" title={person.name}>{person.name}</h4>}
+        {presenceLine(person.presence)}
         {person.onBreak && <><p className="font-bold text-co-text-muted">{t("assignments.lifecycle.onBreak")}</p><p className="text-sm text-co-text-muted">{t("assignments.lifecycle.breakHelp")}</p></>}
         {person.available !== false && (person.id === board.viewerId || (!compact && board.viewerLevel >= 4 && person.level <= board.viewerLevel)) && <ActionButton variant="secondary" disabled={disabled} onClick={() => void mutate({ action: "break", userId: person.id, onBreak: !person.onBreak })}>{t(person.onBreak ? "assignments.lifecycle.backFromBreak" : "assignments.lifecycle.startBreak")}</ActionButton>}
+        {endShiftButton(person)}
         {person.available === false && <p className="text-sm text-co-text-muted">{t("assignments.unavailablePerson")}</p>}
         <p className="truncate font-bold text-co-text" title={station?.name}>{station ? `${language === "es" ? station.nameEs || station.name : station.name} · ${position ? (language === "es" ? position.nameEs || position.name : position.name) : ""}` : t("assignments.noStation")}</p>
         {position && <p className="text-sm text-co-text-muted">{language === "es" ? position.dutyEs || position.duty : position.duty}</p>}
@@ -265,6 +298,7 @@ export function ShiftBoardClient({ board, compact = false, retrainTasks = [] }: 
       </article>;
     })}</div>)}
     {compact && section("team", "assignments.teamToday", board.people.filter((person) => person.hasWork).length, board.people.length, <div className="space-y-4">
+      {hereNowList}
       <ul className="space-y-3">{TASK_TYPES.map((task) => {
         const assignments = board.tasks.filter((assignment) => assignment.task === task && assignment.available !== false);
         return <li key={task}><h4 className="font-bold">{t(`assignments.task.${task}`)}</h4>{assignments.length ? assignments.map(taskLine) : <><p className="text-sm text-co-text-muted">{t("assignments.attribution.unassigned")}</p>{taskVacancyLine(task)}</>}
@@ -278,7 +312,7 @@ export function ShiftBoardClient({ board, compact = false, retrainTasks = [] }: 
           return <li key={position.id}><p>{language === "es" ? position.nameEs || position.name : position.name}</p>{trimHint(position)}{!occupant && !station.closedAt && positionVacancyLine(position.id)}{!station.closedAt && stationLine(occupant ? currentStation(board.events, occupant.id) : null, occupant?.name ?? t("assignments.assignedStaff"))}</li>;
         })}</ul>
       </div>)}
-      {board.people.map((person) => { const held = board.tasks.filter((task) => task.assigneeId === person.id && task.available !== false); return <div key={person.id}><h4 className="font-bold">{person.name}</h4>{person.onBreak && <p className="text-sm text-co-text-muted">{t("assignments.lifecycle.onBreak")}</p>}{personStationLine(currentStation(board.events, person.id))}{held.length ? held.map(personTaskLine) : <p className="text-sm text-co-text-muted">{t("assignments.noTasks")}</p>}</div>; })}
+      {board.people.map((person) => { const held = board.tasks.filter((task) => task.assigneeId === person.id && task.available !== false); return <div key={person.id}><h4 className="font-bold">{person.name}</h4>{presenceLine(person.presence)}{person.onBreak && <p className="text-sm text-co-text-muted">{t("assignments.lifecycle.onBreak")}</p>}{personStationLine(currentStation(board.events, person.id))}{held.length ? held.map(personTaskLine) : <p className="text-sm text-co-text-muted">{t("assignments.noTasks")}</p>}</div>; })}
     </div>)}
     <dialog ref={reasonDialog} aria-label={t("assignments.confirmChange")} className="m-auto max-h-[85dvh] w-[calc(100%-2rem)] max-w-lg overflow-y-auto rounded-xl border-2 border-co-border bg-co-surface p-4 text-co-text backdrop:bg-black/50" onCancel={(event) => { event.preventDefault(); if (!busy) setPending(null); }}>
     {pending && <form className="space-y-3" onSubmit={(event) => {
@@ -287,6 +321,7 @@ export function ShiftBoardClient({ board, compact = false, retrainTasks = [] }: 
     }}>
       <h3 className="font-bold">{t("assignments.confirmChange")}</h3>
       {error && <p role="alert" className="text-co-cta-text">{t(error)}</p>}
+      {pending.payload.action === "end_shift" && <p>{t(pending.payload.userId === board.viewerId ? "whosHere.endMyShiftConfirm" : "whosHere.endShiftConfirm")}</p>}
       {pending.required && <p>{t("assignments.reasonRequired")}</p>}
       <label className="grid min-w-0 gap-1 text-sm">{t("assignments.reasonLabel")}
         <select className={control} name="reasonCode" value={reasonCode} required={pending.required} disabled={disabled} onChange={(event) => setReasonCode(event.target.value as OverrideReasonCode | "")}>
