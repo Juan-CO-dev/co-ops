@@ -63,3 +63,23 @@ describe("PulseClient (server-rendered first paint)", () => {
     expect((html.match(/aria-label="Loading…"/g) ?? []).length).toBe(2);
   });
 });
+
+describe("Astra #12 / #10 — tap targets and translated vocabularies", () => {
+  it("every task link is itself a 44 px target (not just its row)", async () => {
+    const { StationsSection } = await import("@/components/pulse/sections/StationsSection");
+    const data = { counts: { covered: 1, short: 0, closingSoon: 0, closeDue: 0, uncovered: 0, closed: 0 }, stations: [], tasks: [{ task: "am_prep", href: "/operations/am-prep?location=loc", done: false, assigneeName: "Ana" }], tasksDone: 0, tasksLeft: 1, mine: null };
+    const html = render(createElement(StationsSection, { data, mode: "detail", locationId: "loc" }));
+    const link = html.match(/<a[^>]*href="\/operations\/am-prep\?location=loc"[^>]*>/)?.[0] ?? "";
+    expect(link).toContain("min-h-[44px]");
+    expect(link).toContain("inline-flex");
+  });
+  it("inventory receiving rows print translated match/delivery words in Spanish, never the raw codes", async () => {
+    const { InventorySection } = await import("@/components/pulse/sections/InventorySection");
+    const data = { lastWalk: null, low: [], risk86: 0, receiving: [{ id: "d1", vendorName: "Baldor", at: "2026-10-09T14:00:00Z", matchState: "discrepant" as const, status: "in_progress" as const }], cutoffs: [] };
+    const es = render(createElement(InventorySection, { data, mode: "detail", locationId: "loc" }), "es");
+    expect(es).toContain("con diferencias");
+    expect(es).toContain("en curso");
+    expect(es).not.toContain("discrepant");
+    expect(es).not.toContain("in_progress");
+  });
+});

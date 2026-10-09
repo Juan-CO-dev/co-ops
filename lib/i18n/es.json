@@ -5571,7 +5571,7 @@
   "pulse.status.uncovered": "Sin cubrir",
   "pulse.status.closed": "Cerrada",
   "pulse.status.inactive": "Inactiva",
-  "pulse.floor.legend": "Verde cubierta · ámbar falta gente o cierra pronto · rojo sin cubrir · gris cerrada",
+  "pulse.floor.legend": "Verde cubierta · ámbar falta gente, cierra pronto o pasó su hora de cierre · rojo sin cubrir · gris cerrada",
   "pulse.floor.mode_3d": "Vista 3D",
   "pulse.floor.mode_2d": "Vista de mapa",
   "pulse.floor.arrange": "Organizar",
@@ -5613,7 +5613,7 @@
   "pulse.people.event.release": "dejó la estación",
   "pulse.people.event.break_start": "empezó descanso",
   "pulse.people.event.break_end": "volvió del descanso",
-  "pulse.stations.counts": "{covered} cubiertas · {short} con falta · {closingSoon} cierran pronto · {uncovered} sin cubrir · {closed} cerradas",
+  "pulse.stations.counts": "{covered} cubiertas · {short} con falta · {closingSoon} cierran pronto · {closeDue} por cerrar ya · {uncovered} sin cubrir · {closed} cerradas",
   "pulse.stations.tasks": "Tareas: {done} hechas · {left} pendientes",
   "pulse.stations.mine": "Mi turno",
   "pulse.stations.mine_none": "No estás en una estación ahora.",
@@ -5813,5 +5813,12 @@
   "customers.import.basis": "Toast arma esta lista solo con clientes que aceptaron explícitamente. Cada fila se registra como una aceptación explícita de la exportación de la lista de Toast, con la fecha de exportación.",
   "customers.imports.cancel": "Cancelar esta importación",
   "customers.imports.cancelled": "Cancelada: ninguno de sus cambios cuenta",
-  "customers.imports.failed": "Falló"
+  "customers.imports.failed": "Falló",
+  "pulse.status.close_due": "Cerrar ya",
+  "pulse.inventory.match.counted_only": "solo contado",
+  "pulse.inventory.match.matched": "coincide",
+  "pulse.inventory.match.discrepant": "con diferencias",
+  "pulse.inventory.match.override": "anulado",
+  "pulse.inventory.delivery.in_progress": "en curso",
+  "pulse.inventory.delivery.complete": "completa"
 }

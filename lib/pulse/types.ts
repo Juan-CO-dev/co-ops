@@ -61,7 +61,7 @@ export interface AttentionData {
 
 // ── Floor ───────────────────────────────────────────────────────────────────────────────────
 
-export type FloorStatus = "covered" | "short" | "closing_soon" | "uncovered" | "closed" | "inactive";
+export type FloorStatus = "covered" | "short" | "closing_soon" | "close_due" | "uncovered" | "closed" | "inactive";
 
 export interface FloorStation {
   id: string;
@@ -143,7 +143,7 @@ export interface StationRow {
 }
 
 export interface StationsData {
-  counts: { covered: number; short: number; closingSoon: number; uncovered: number; closed: number };
+  counts: { covered: number; short: number; closingSoon: number; closeDue: number; uncovered: number; closed: number };
   stations: StationRow[];
   tasks: StationTaskRow[];
   tasksDone: number;
@@ -214,7 +214,7 @@ export interface InventoryData {
   lastWalk: { at: string; byName: string | null; lineCount: number } | null;
   low: InventoryLowRow[];
   risk86: number;
-  receiving: Array<{ id: string; vendorName: string; at: string; matchState: string; status: string }>;
+  receiving: Array<{ id: string; vendorName: string; at: string; matchState: "counted_only" | "matched" | "discrepant" | "override"; status: "in_progress" | "complete" }>;
   cutoffs: Array<{ vendorName: string; time: string; hasDraft: boolean }>;
 }
 

@@ -26,7 +26,7 @@ describe("pulse.* i18n", () => {
   it("every section, status and attention kind/action has its label", () => {
     const has = (k: string) => expect(k in en, k).toBe(true);
     for (const s of PULSE_SECTIONS) has(`pulse.section.${s}`);
-    for (const s of ["covered", "short", "closing_soon", "uncovered", "closed", "inactive"]) has(`pulse.status.${s}`);
+    for (const s of ["covered", "short", "closing_soon", "close_due", "uncovered", "closed", "inactive"]) has(`pulse.status.${s}`);
     for (const k of ATTENTION_ORDER) {
       if (["fridge_unchecked", "item_low", "clockin_unlinked"].includes(k)) { has(`pulse.attention.${k}_one`); has(`pulse.attention.${k}_other`); }
       else has(`pulse.attention.${k}`);
@@ -35,5 +35,8 @@ describe("pulse.* i18n", () => {
     for (const a of ["crew", "managers", "all"]) has(`pulse.handoff.audience.${a}`);
     for (const k of ["clock_in", "clock_out", "end_shift", "station", "release", "break_start", "break_end"]) has(`pulse.people.event.${k}`);
     for (const k of ["upcoming", "due", "overdue", "opening_unknown"]) has(`pulse.catering.timing.${k}`);
+    // Astra #10: the inventory status vocabularies are translated, never printed as codes.
+    for (const k of ["counted_only", "matched", "discrepant", "override"]) has(`pulse.inventory.match.${k}`);
+    for (const k of ["in_progress", "complete"]) has(`pulse.inventory.delivery.${k}`);
   });
 });

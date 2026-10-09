@@ -15,7 +15,7 @@ function TaskList({ tasks, withNames }: { tasks: StationTaskRow[]; withNames: bo
     <ul className="flex flex-col divide-y divide-co-border/50">
       {tasks.map((task, i) => (
         <li key={`${task.task}-${task.assigneeName ?? ""}-${i}`} className="flex min-h-[44px] flex-wrap items-center justify-between gap-2 py-1">
-          <Link href={task.href} className="min-w-0 text-sm font-semibold text-co-text underline underline-offset-2">
+          <Link href={task.href} className="inline-flex min-h-[44px] min-w-0 items-center text-sm font-semibold text-co-text underline underline-offset-2">
             {t(`assignments.task.${task.task}` as TranslationKey)}{withNames && task.assigneeName ? <span className="font-normal text-co-text-muted"> · {task.assigneeName}</span> : null}
           </Link>
           <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-[0.12em] ${task.done === true ? "bg-co-success-surface text-co-confirm-text" : task.done === false ? "bg-co-warning-surface text-co-warning-text" : "bg-co-surface-2 text-co-text-dim"}`}>

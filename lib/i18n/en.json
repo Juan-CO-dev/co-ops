@@ -5571,7 +5571,7 @@
   "pulse.status.uncovered": "Uncovered",
   "pulse.status.closed": "Closed",
   "pulse.status.inactive": "Inactive",
-  "pulse.floor.legend": "Green covered · amber short or closing soon · red uncovered · grey closed",
+  "pulse.floor.legend": "Green covered · amber short, closing soon or past its close time · red uncovered · grey closed",
   "pulse.floor.mode_3d": "3D view",
   "pulse.floor.mode_2d": "Map view",
   "pulse.floor.arrange": "Arrange",
@@ -5613,7 +5613,7 @@
   "pulse.people.event.release": "released station",
   "pulse.people.event.break_start": "started break",
   "pulse.people.event.break_end": "back from break",
-  "pulse.stations.counts": "{covered} covered · {short} short · {closingSoon} closing soon · {uncovered} uncovered · {closed} closed",
+  "pulse.stations.counts": "{covered} covered · {short} short · {closingSoon} closing soon · {closeDue} to close now · {uncovered} uncovered · {closed} closed",
   "pulse.stations.tasks": "Tasks: {done} done · {left} left",
   "pulse.stations.mine": "My shift",
   "pulse.stations.mine_none": "You're not on a station right now.",
@@ -5813,5 +5813,12 @@
   "customers.import.basis": "Toast builds this list only from guests who explicitly opted in. Each row is recorded as an explicit opt-in from the Toast list export, dated by the export date.",
   "customers.imports.cancel": "Cancel this import",
   "customers.imports.cancelled": "Cancelled: none of its changes count",
-  "customers.imports.failed": "Failed"
+  "customers.imports.failed": "Failed",
+  "pulse.status.close_due": "Close now",
+  "pulse.inventory.match.counted_only": "counted only",
+  "pulse.inventory.match.matched": "matched",
+  "pulse.inventory.match.discrepant": "discrepant",
+  "pulse.inventory.match.override": "override",
+  "pulse.inventory.delivery.in_progress": "in progress",
+  "pulse.inventory.delivery.complete": "complete"
 }

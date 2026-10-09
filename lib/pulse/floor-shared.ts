@@ -17,7 +17,7 @@ export const FLOOR_COLS = 3;
 export const FLOOR_MAX_COORD = 12;
 
 export function stationStatus(f: {
-  active: boolean; staffed: boolean; closed: boolean; filled: number; positions: number; closingSoon: boolean; onBreak: number;
+  active: boolean; staffed: boolean; closed: boolean; filled: number; positions: number; closingSoon: boolean; closeDue: boolean; onBreak: number;
 }): FloorStatus {
   if (f.closed) return "closed";
   if (!f.active) return "inactive";
@@ -25,6 +25,8 @@ export function stationStatus(f: {
   const covering = Math.max(0, f.filled - f.onBreak);
   if (covering === 0) return "uncovered";
   if (f.positions > 0 && covering < f.positions) return "short";
+  // Past its close time and still open is never green again (Astra #9): the floor and the attention list agree.
+  if (f.closeDue) return "close_due";
   if (f.closingSoon) return "closing_soon";
   return "covered";
 }
@@ -53,7 +55,7 @@ export function floorStations(board: ShiftBoard, args: { nowMinutes: number; vie
       sort: station.sort,
       status: stationStatus({
         active: station.active, staffed: station.staffed, closed: facts.closedAt !== null,
-        filled: here.length, positions, closingSoon: facts.closingSoon || facts.trimDue, onBreak: here.length - covering.length,
+        filled: here.length, positions, closingSoon: facts.closingSoon || facts.trimDue, closeDue: facts.closeDue, onBreak: here.length - covering.length,
       }),
       people: names,
       positions,

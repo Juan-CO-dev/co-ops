@@ -4,6 +4,7 @@
 import Link from "next/link";
 import { formatTime } from "@/lib/i18n/format";
 import { useTranslation } from "@/lib/i18n/provider";
+import type { TranslationKey } from "@/lib/i18n/types";
 import type { InventoryData } from "@/lib/pulse/types";
 import { Bars } from "@/components/pulse/charts/Bars";
 import { subHeading, tapLink } from "@/components/pulse/shared";
@@ -40,7 +41,7 @@ export function InventorySection({ data, mode, locationId }: { data: InventoryDa
           <div>
             <h3 className={subHeading}>{t("pulse.inventory.receiving")}</h3>
             {data.receiving.length === 0 ? <p className="text-sm text-co-text-muted">{t("pulse.inventory.receiving_none")}</p> : (
-              <ul className="text-sm text-co-text">{data.receiving.map((r) => <li key={r.id} className="min-h-[28px]"><span className="font-semibold">{r.vendorName}</span> · {formatTime(r.at, language)} · <span className="text-co-text-muted">{r.matchState} · {r.status}</span></li>)}</ul>
+              <ul className="text-sm text-co-text">{data.receiving.map((r) => <li key={r.id} className="min-h-[28px]"><span className="font-semibold">{r.vendorName}</span> · {formatTime(r.at, language)} · <span className="text-co-text-muted">{t(`pulse.inventory.match.${r.matchState}` as TranslationKey)} · {t(`pulse.inventory.delivery.${r.status}` as TranslationKey)}</span></li>)}</ul>
             )}
           </div>
           <Link href={`/ordering?location=${encodeURIComponent(locationId)}`} className={tapLink}>{t("pulse.inventory.ordering_link")}</Link>

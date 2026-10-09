@@ -365,11 +365,12 @@ async function stations(deps: PulseDeps, ctx: PulseCtx): Promise<StationsData> {
       closesAt: f.closesAt, trimAt: f.trimAt, closedAt: f.closedAt,
     };
   });
-  const counts = { covered: 0, short: 0, closingSoon: 0, uncovered: 0, closed: 0 };
+  const counts = { covered: 0, short: 0, closingSoon: 0, closeDue: 0, uncovered: 0, closed: 0 };
   for (const r of rows) {
     if (r.status === "covered") counts.covered++;
     else if (r.status === "short") counts.short++;
     else if (r.status === "closing_soon") counts.closingSoon++;
+    else if (r.status === "close_due") counts.closeDue++;
     else if (r.status === "uncovered") counts.uncovered++;
     else if (r.status === "closed") counts.closed++;
   }
