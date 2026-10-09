@@ -30,7 +30,7 @@ export async function GET(req: NextRequest) {
 
   const language = ctx.user.language;
   const shopLabel = table.shop ? table.shop.name : serverT(language, "reports.export.header.all_shops");
-  const filename = exportFilename(family, table.shop?.code ?? "all", table.from, table.to, format);
+  const filename = exportFilename(table.fileFamily ?? family, table.shop?.code ?? "all", table.from, table.to, format);
   let body: string | Buffer;
   try {
     body = format === "csv"

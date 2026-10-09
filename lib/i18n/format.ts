@@ -198,6 +198,21 @@ export function formatCents(cents: number, language: Language): string {
   }).format(cents / 100);
 }
 
+/** Whole dollars for dense grids (the Sales heatmap cell); the exact cents live in the cell's label. */
+export function formatCentsWhole(cents: number, language: Language): string {
+  return new Intl.NumberFormat(language === "es" ? "es-US" : "en-US", {
+    style: "currency",
+    currency: "USD",
+    maximumFractionDigits: 0,
+    minimumFractionDigits: 0,
+  }).format(Math.round(cents / 100));
+}
+
+/** A quantity (units sold can be fractional: by-weight items). Up to 2 decimals, locale-aware. */
+export function formatQuantity(value: number, language: Language): string {
+  return new Intl.NumberFormat(language === "es" ? "es-US" : "en-US", { maximumFractionDigits: 2 }).format(value);
+}
+
 /**
  * Month + year header label for a "YYYY-MM" key ("September 2026" / "septiembre de 2026").
  * Language-aware and UTC-pinned like formatDateLabel — the key IS the calendar month, so no

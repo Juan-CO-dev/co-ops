@@ -61,6 +61,10 @@ const RULES: ParentRule[] = [
   { pattern: "/my-feedback", parent: { href: "/reports", labelKey: "reports.page.title" } },
   { pattern: "/reports/operations", parent: { href: "/reports", labelKey: "reports.page.title" } },
   { pattern: "/reports/written", parent: { href: "/reports", labelKey: "reports.page.title" } },
+  { pattern: "/reports/sales", parent: { href: "/reports", labelKey: "reports.page.title" } },
+  { pattern: "/reports/sales/checks", parent: { href: "/reports/sales", labelKey: "reports.hub.sales" } },
+  { pattern: "/reports/sales/catering", parent: { href: "/reports/sales", labelKey: "reports.hub.sales" } },
+  { pattern: "/reports/sales/checks/[checkGuid]", parent: { href: "/reports/sales/checks", labelKey: "reports.sales.checks.title" } },
   // ─── Admin: drill-ins → their section hub ──────────────────────────────
   { pattern: "/admin/recipes/new", parent: { href: "/admin/recipes", labelKey: "admin.section.recipes" } },
   { pattern: "/admin/recipes/[id]", parent: { href: "/admin/recipes", labelKey: "admin.section.recipes" } },

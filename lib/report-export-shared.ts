@@ -29,6 +29,8 @@ import type { TrendSeries } from "@/lib/reports-trends";
 import type { TeamOperatingHealth } from "@/lib/team-metrics";
 import type { CalendarEvent } from "@/lib/catering/insights-shared";
 import type { MenuCostRow } from "@/lib/menu-costing-shared";
+import type { BreakdownRow, SalesBucket, SalesCheckRow, SalesExportView, SalesEzcaterRow, SalesTotals } from "@/lib/sales-reports-shared";
+import { rowAverageCents, salesHasData } from "@/lib/sales-reports-shared";
 
 // ── Cells ───────────────────────────────────────────────────────────────────────────────────
 
@@ -126,6 +128,50 @@ export function isExportFormat(v: unknown): v is ExportFormat {
 const SHOP = [col("location_code"), col("location_name")];
 
 /**
+ * SALES (piece 4, Phase 2b). One column set per Sales view, because each view is its own table
+ * (lib/sales-reports-shared.ts SALES_EXPORT_VIEWS). Juan 2026-10-08: discounts BY NAME (one row
+ * per name, no comp/discount partition); E-Gift Cards and ezCater-linked Toast rings are named
+ * EXCLUSIONS, never sales; ezCater orders are their own source; server = the order's server, by
+ * Toast first name. No customer, card or comment field exists in any of them.
+ */
+const PERIOD = [col("period_start", "date"), col("period_end", "date")];
+export const SALES_EXPORT_COLUMNS: Record<SalesExportView, readonly ExportColumn[]> = {
+  summary: [
+    col("row_type"), ...PERIOD, ...SHOP, col("coverage_status"), col("covered_days", "int"), col("expected_days", "int"),
+    col("toast_check_totals", "money"), col("checks", "int"), col("average_check", "money"), col("discounts", "money"),
+    col("discount_count", "int"), col("sales_tax", "money"), col("tips", "money"), col("refunds_captured_so_far", "money"),
+    col("refunds_captured_count", "int"), col("ezcater_sales", "money"), col("ezcater_orders", "int"), col("sales_before_refunds", "money"),
+    col("amount_missing", "int"), col("unknown_tax", "int"), col("unknown_tips", "int"), col("unknown_discounts", "int"), col("gift_cards_excluded", "money"), col("gift_card_checks_excluded", "int"),
+    col("ezcater_linked_toast_excluded", "money"), col("ezcater_linked_checks_excluded", "int"), col("void_checks", "int"),
+    col("currency", "currency"), col("sales_basis"), col("refunds_basis"),
+  ],
+  items: [...PERIOD, ...SHOP, col("item_guid"), col("item"), col("units", "number"), col("checks", "int")],
+  modifiers: [...PERIOD, ...SHOP, col("item_guid"), col("modifier"), col("units", "number"), col("checks", "int")],
+  channels: [
+    ...PERIOD, ...SHOP, col("channel"), col("provider"), col("source"), col("counted", "bool"), col("class"),
+    col("checks_or_orders", "int"), col("sales", "money"), col("amount_missing", "int"), col("currency", "currency"),
+  ],
+  heatmap: [...PERIOD, ...SHOP, col("weekday", "int"), col("hour_et", "int"), col("checks", "int"), col("sales", "money"), col("currency", "currency")],
+  discounts: [
+    ...PERIOD, ...SHOP, col("discount_name"), col("applications", "int"), col("checks", "int"), col("amount", "money"),
+    col("amount_missing", "int"), col("currency", "currency"),
+  ],
+  servers: [
+    ...PERIOD, ...SHOP, col("server_first_name"), col("server_ref"), col("checks", "int"), col("sales", "money"),
+    col("amount_missing", "int"), col("average_check", "money"), col("currency", "currency"),
+  ],
+  checks: [
+    col("business_date", "date"), ...SHOP, col("check_guid"), col("opened_at", "datetime"), col("channel"), col("provider"),
+    col("dining_option"), col("server_first_name"), col("units", "number"), col("discounts", "money"),
+    col("check_total", "money"), col("sales_tax", "money"), col("currency", "currency"),
+  ],
+  catering: [
+    col("event_date", "date"), ...SHOP, col("ezcater_order_number"), col("headcount", "int"), col("subtotal", "money"),
+    col("toast_status"), col("currency", "currency"),
+  ],
+};
+
+/**
  * THE CONTRACT. Stable snake_case names; money in dollars with an explicit currency column.
  * Pinned by tests/report-export-shared.test.ts; listed in the PR body for the accountant.
  */
@@ -172,12 +218,8 @@ export const EXPORT_COLUMNS: Record<ExportFamily, readonly ExportColumn[]> = {
     col("menu_item_id"), col("menu_item"), col("section"), col("menu_price", "money"), col("food_cost", "money"),
     col("food_cost_pct", "number"), col("margin", "money"), col("cost_status"), col("currency", "currency"),
   ],
-  sales: [
-    col("business_date", "date"), ...SHOP, col("status"), col("gross", "money"), col("discounts", "money"),
-    col("comps", "money"), col("voids", "money"), col("refunds", "money"), col("net", "money"),
-    col("sales_tax", "money"), col("tips", "money"), col("service_fees", "money"), col("delivery_fees", "money"),
-    col("gift_cards", "money"), col("payment_type"), col("channel"), col("currency", "currency"),
-  ],
+  /** The default Sales file is the summary; `view=` picks another SALES_EXPORT_COLUMNS table. */
+  sales: SALES_EXPORT_COLUMNS.summary,
 };
 
 export interface ShopRef { id: string; code: string | null; name: string }
@@ -283,12 +325,80 @@ export function costingRows(rows: readonly MenuCostRow[]): ExportRow[] {
 }
 
 /**
- * Sales (piece 4) has no source yet: Toast payments/checks are not captured. The family states it
- * with the header and ONE not_yet_available row per shop: every money cell empty, never a zero
- * (CC answers Q7: "show it as coming soon, no fake numbers").
+ * A shop/period whose Sales source is not there yet (0232 not applied, or no capture in the
+ * window): ONE row with every metric empty, never a zero (CC answers Q7: "no fake numbers").
  */
-export function salesNotYetAvailableRows(shops: readonly ShopRef[], businessDate: string | null): ExportRow[] {
-  return shops.map((s) => ({ business_date: businessDate, ...shopCells(s), status: NOT_YET_AVAILABLE }));
+export function salesNotYetAvailableRows(shops: readonly ShopRef[], period: { from: string; to: string } | null): ExportRow[] {
+  return shops.map((s) => ({ row_type: "total", period_start: period?.from, period_end: period?.to, ...shopCells(s), coverage_status: NOT_YET_AVAILABLE }));
+}
+
+// ── Sales rows (pure projections of the SAME DTOs the Sales pages render) ──────────────────────
+
+type Period = { from: string; to: string };
+const periodCells = (p: Period): ExportRow => ({ period_start: p.from, period_end: p.to });
+
+/** Astra r2 (CC): an export must carry the same caveats the Sales screen shows. */
+export const SALES_BASIS_NOTE = "Toast check totals before refunds plus ezCater subtotals as reported; NOT reconciled net sales (gift cards sold on a regular check, house-account payments and fundraising round-ups are not separated yet; whole E-Gift Card checks excluded).";
+export const REFUNDS_BASIS_NOTE = "Refunds captured so far, shown separately and never subtracted; a late refund on an older order may not be captured yet.";
+
+function salesTotalsCells(t: SalesTotals): ExportRow {
+  // A missing coverage day leaves the money as what was captured, labelled by coverage_status +
+  // covered_days; a window with NO capture at all exports empty metrics, never zeros.
+  const none = !salesHasData(t);
+  const v = (x: number | null) => (none ? null : x);
+  return {
+    coverage_status: t.coverage, covered_days: t.coveredDays, expected_days: t.expectedDays,
+    toast_check_totals: v(t.toastChecksCents), checks: v(t.checks), average_check: v(t.avgCheckCents), discounts: v(t.discountCents),
+    discount_count: v(t.discountCount), sales_tax: v(t.taxCents), tips: v(t.tipCents), refunds_captured_so_far: v(t.refundCents),
+    refunds_captured_count: v(t.refundCount), ezcater_sales: v(t.ezcaterCents), ezcater_orders: v(t.ezcaterOrders), sales_before_refunds: v(t.totalCents),
+    amount_missing: t.amountMissing, unknown_tax: t.taxMissing, unknown_tips: t.tipMissing, unknown_discounts: t.discountMissing, gift_cards_excluded: v(t.giftCardCents), gift_card_checks_excluded: v(t.giftCardChecks),
+    ezcater_linked_toast_excluded: v(t.ezcaterLinkedCents), ezcater_linked_checks_excluded: v(t.ezcaterLinkedChecks), void_checks: v(t.voidChecks),
+    sales_basis: SALES_BASIS_NOTE, refunds_basis: REFUNDS_BASIS_NOTE,
+  };
+}
+
+/** One row per bucket (day/week/month) and a closing `total` row: the screen's cards, exactly. */
+export function salesSummaryRows(buckets: readonly SalesBucket[], totals: SalesTotals, period: Period, shop: ShopRef): ExportRow[] {
+  return [
+    ...buckets.map((b) => ({ row_type: "bucket", ...periodCells(b), ...shopCells(shop), ...salesTotalsCells(b) })),
+    { row_type: "total", ...periodCells(period), ...shopCells(shop), ...salesTotalsCells(totals) },
+  ];
+}
+
+export function salesBreakdownRows(view: Exclude<SalesExportView, "summary" | "checks" | "catering">, rows: readonly BreakdownRow[], period: Period, shop: ShopRef): ExportRow[] {
+  const base = { ...periodCells(period), ...shopCells(shop) };
+  return rows.map((r) => {
+    switch (view) {
+      case "items": return { ...base, item_guid: r.key, item: r.label, units: r.units, checks: r.checks };
+      case "modifiers": return { ...base, item_guid: r.key, modifier: r.label, units: r.units, checks: r.checks };
+      case "channels": return {
+        ...base, channel: r.channel, provider: r.provider, source: r.saleClass === "ezcater_source" ? "ezcater" : "toast",
+        counted: r.saleClass === "sale" || r.saleClass === "ezcater_source", class: r.saleClass,
+        checks_or_orders: r.checks, sales: r.cents, amount_missing: r.amountMissing,
+      };
+      case "heatmap": return { ...base, weekday: r.dow, hour_et: r.hour !== undefined && r.hour >= 0 ? r.hour : null, checks: r.checks, sales: r.cents };
+      case "discounts": return { ...base, discount_name: r.label ?? "", applications: r.count, checks: r.checks, amount: r.cents, amount_missing: r.amountMissing };
+      case "servers": return {
+        ...base, server_first_name: r.label, server_ref: r.key ? r.key.slice(-4) : null, checks: r.checks, sales: r.cents,
+        amount_missing: r.amountMissing, average_check: rowAverageCents(r),
+      };
+    }
+  });
+}
+
+export function salesCheckRows(rows: readonly SalesCheckRow[], shop: ShopRef): ExportRow[] {
+  return rows.map((r) => ({
+    business_date: r.businessDate, ...shopCells(shop), check_guid: r.checkGuid, opened_at: r.openedAt, channel: r.channel,
+    provider: r.provider, dining_option: r.diningOption, server_first_name: r.serverName, units: r.units,
+    discounts: r.discountCents, check_total: r.amountCents, sales_tax: r.taxCents,
+  }));
+}
+
+export function salesCateringRows(rows: readonly SalesEzcaterRow[], shop: ShopRef): ExportRow[] {
+  return rows.map((r) => ({
+    event_date: r.eventDate, ...shopCells(shop), ezcater_order_number: r.orderNumber, headcount: r.headcount,
+    subtotal: r.subtotalCents, toast_status: r.status,
+  }));
 }
 
 /** `{family}_{shop-code}_{from}_{to}.{ext}`, filesystem-safe. */

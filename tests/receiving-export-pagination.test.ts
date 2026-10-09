@@ -78,4 +78,3 @@ describe("receiving export history completeness (BC-006, BC-010, BC-032)", () =>
     expect(source).not.toContain("RECEIVING_EXPORT_LIMIT");
   });
 });
-
