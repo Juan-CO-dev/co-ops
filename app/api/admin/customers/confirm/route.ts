@@ -2,13 +2,13 @@ import type { NextRequest } from "next/server";
 import { assertStepUp } from "@/lib/admin/step-up";
 import { extractIp, jsonError, jsonOk, parseJsonBody } from "@/lib/api-helpers";
 import {
-  CUSTOMER_STATS_MIN, CustomerError, confirmMerge, customerProfilesEnabled, eraseCustomer, importConsentCsv, runRetention,
+  CUSTOMER_STATS_MIN, CustomerError, cancelConsentImport, confirmMerge, customerProfilesEnabled, eraseCustomer, importConsentCsv, runRetention,
 } from "@/lib/customers/customers";
 import { requireSession } from "@/lib/session";
 
 /**
  * 0234 customer profiles — the Tier B lane (irreversible acts): confirm a merge (GM+ bound),
- * delete-on-request (9+), the retention sweep (9+), the Toast marketing CSV import (9+).
+ * delete-on-request (9+), the retention sweep (9+), the Toast marketing CSV import and its cancel (9+).
  * Role floors and the shop bind are enforced again inside lib/customers before any I/O.
  */
 export async function POST(req: NextRequest) {
@@ -31,6 +31,9 @@ export async function POST(req: NextRequest) {
     }
     if (b.operation === "erase" && typeof b.customerId === "string" && only("customerId")) {
       return jsonOk(await eraseCustomer(actor, b.customerId, meta));
+    }
+    if (b.operation === "cancel_import" && typeof b.importId === "string" && only("importId")) {
+      return jsonOk(await cancelConsentImport(actor, b.importId, meta));
     }
     if (b.operation === "retention" && only()) {
       return jsonOk(await runRetention(actor, meta));

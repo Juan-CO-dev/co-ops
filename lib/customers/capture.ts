@@ -60,15 +60,20 @@ export async function suggestFromCards(sb: Client, customerIds: readonly string[
   let filed = 0;
   for (const chunk of chunkRows(customerIds, 200)) {
     if (chunk.length === 0) continue;
+    signal?.throwIfAborted();
     let q = sb.rpc("customer_card_candidates", { p_customer_ids: chunk });
     if (signal) q = q.abortSignal(signal);
     const { data, error } = await q;
     if (error) throw new Error("customer_candidates_failed");
     for (const c of (data ?? []) as { customer_id: string; other_id: string; name_key: string | null; other_name_key: string | null; same_shop: boolean; shared_cards: number }[]) {
+      // r1 (Astra BC-040): a cancelled capture does no further work, and every write carries the signal.
+      signal?.throwIfAborted();
       const verdict = likelySamePerson({ nameA: c.name_key, nameB: c.other_name_key, sharedCards: c.shared_cards, sameShop: c.same_shop });
       if (!verdict) continue;
-      const { data: inserted, error: se } = await sb.rpc("customer_suggest_merge", {
+      let write = sb.rpc("customer_suggest_merge", {
         p_a: c.customer_id, p_b: c.other_id, p_confidence: verdict.confidence, p_reasons: verdict.reasons });
+      if (signal) write = write.abortSignal(signal);
+      const { data: inserted, error: se } = await write;
       if (se) throw new Error("customer_suggest_failed");
       if (inserted === true) filed++;
     }

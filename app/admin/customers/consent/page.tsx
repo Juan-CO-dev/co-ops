@@ -6,6 +6,7 @@ import { formatDateLabel } from "@/lib/i18n/format";
 import { operationalNow } from "@/lib/midshift";
 import { CUSTOMER_CONTACT_MIN, customerProfilesEnabled, loadConsentOverview } from "@/lib/customers/customers";
 import { ConsentTools } from "@/components/admin/customers/ConsentTools";
+import { CancelImportButton } from "@/components/admin/customers/CancelImportButton";
 
 /**
  * 0234 consent desk (level 9+): the Toast Web Marketing list import, the opted-in-only exports (Meta
@@ -39,7 +40,9 @@ export default async function ConsentPage() {
       {overview.imports.length === 0 ? <p className="text-sm text-co-text-muted">{t("customers.imports.none")}</p>
         : <ul className="space-y-2">{overview.imports.map((i) => <li key={i.id} className="rounded-xl border border-co-border p-3 text-co-text">
           <p className="font-bold">{t("customers.imports.row", { date: formatDateLabel(i.exportDate, language), rows: i.rowsTotal })}</p>
-          <p className="text-sm text-co-text-muted">{t(i.status === "completed" ? "customers.import.summary" : "customers.imports.running", { in: i.newOptIns, out: i.optOuts })}{i.baseline ? ` · ${t("customers.imports.baseline")}` : ""}</p>
+          <p className="text-sm text-co-text-muted">{i.status === "cancelled" ? t("customers.imports.cancelled") : i.status === "failed" ? t("customers.imports.failed")
+            : t(i.status === "completed" ? "customers.import.summary" : "customers.imports.running", { in: i.newOptIns, out: i.optOuts })}{i.baseline ? ` · ${t("customers.imports.baseline")}` : ""}</p>
+          {i.status === "running" && <CancelImportButton importId={i.id} />}
         </li>)}</ul>}
     </section>
   </div>;

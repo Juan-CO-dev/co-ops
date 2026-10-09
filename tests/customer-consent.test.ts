@@ -76,12 +76,12 @@ describe("merging one export's files + the idempotency key", () => {
   it("the same rows in any order (and any file split) give the same key", () => {
     const a = mergeConsentFiles([parseConsentCsv("email\nbo@example.com\nana@example.com\n")]);
     const b = mergeConsentFiles([parseConsentCsv("email\nana@example.com\n"), parseConsentCsv("email\nbo@example.com\n")]);
-    expect(canonicalImportPayload(a.rows, a.explicitStatus)).toBe(canonicalImportPayload(b.rows, b.explicitStatus));
+    expect(canonicalImportPayload(a.rows, a.explicitStatus, "2026-10-08")).toBe(canonicalImportPayload(b.rows, b.explicitStatus, "2026-10-08"));
   });
   it("a changed row changes the key", () => {
     const a = mergeConsentFiles([parseConsentCsv("email\nana@example.com\n")]);
     const b = mergeConsentFiles([parseConsentCsv("email\nana2@example.com\n")]);
-    expect(canonicalImportPayload(a.rows, false)).not.toBe(canonicalImportPayload(b.rows, false));
+    expect(canonicalImportPayload(a.rows, false, "2026-10-08")).not.toBe(canonicalImportPayload(b.rows, false, "2026-10-08"));
   });
   it("chunks stay within the SQL's 1000-row bound", () => {
     const rows = Array.from({ length: 2501 }, (_, i) => i);

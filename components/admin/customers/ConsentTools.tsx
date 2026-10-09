@@ -27,7 +27,7 @@ const ERRORS: Record<string, TranslationKey> = {
   invalid_contact: "customers.lookup.invalid",
 };
 
-interface Summary { replay: boolean; baseline: boolean; rowsTotal: number; newOptIns: number; optOuts: number; unchanged: number; stale: number; suppressed: number; newCustomers: number; invalid: number; explicitStatus: boolean }
+interface Summary { replay: boolean; baseline: boolean; rowsTotal: number; newOptIns: number; optOuts: number; unchanged: number; stale: number; suppressed: number; newCustomers: number; masked: number; invalid: number; explicitStatus: boolean }
 
 /** Level 9+ consent desk: the Toast list import, the two opted-in-only exports, the delete-request intake, retention. */
 export function ConsentTools({ metaEnabled, today }: { metaEnabled: boolean; today: string }) {
@@ -128,6 +128,7 @@ export function ConsentTools({ metaEnabled, today }: { metaEnabled: boolean; tod
     <section className="co-card min-w-0 space-y-3 p-4">
       <h2 className="text-lg font-bold text-co-text">{t("customers.import.title")}</h2>
       <p className="text-sm text-co-text-muted">{t("customers.import.hint")}</p>
+      <p className="text-sm text-co-text">{t("customers.import.basis")}</p>
       <form className="flex min-w-0 flex-wrap items-end gap-3" onSubmit={(e) => { e.preventDefault(); void onImport(e.currentTarget); }}>
         <label className={`${label} flex-1 basis-[14rem]`}>{t("customers.import.files")}
           <input name="files" aria-label={t("customers.import.files")} type="file" accept=".csv,text/csv" multiple className={control} disabled={disabled} />
@@ -143,7 +144,7 @@ export function ConsentTools({ metaEnabled, today }: { metaEnabled: boolean; tod
       </label>}
       {summary && <div role="status" className="space-y-1 rounded-xl border border-co-border p-3 text-co-text">
         <p className="font-bold">{t(summary.replay ? "customers.import.replay" : "customers.import.summary", { in: summary.newOptIns, out: summary.optOuts })}</p>
-        <p className="text-sm text-co-text-muted">{t("customers.import.detail", { rows: summary.rowsTotal, same: summary.unchanged, stale: summary.stale, suppressed: summary.suppressed, created: summary.newCustomers, invalid: summary.invalid })}</p>
+        <p className="text-sm text-co-text-muted">{t("customers.import.detail", { rows: summary.rowsTotal, same: summary.unchanged, stale: summary.stale, suppressed: summary.suppressed, created: summary.newCustomers, invalid: summary.invalid, masked: summary.masked })}</p>
         {summary.baseline && <p className="text-sm text-co-text-muted">{t("customers.import.baseline")}</p>}
         <p className="text-sm text-co-text-muted">{t(summary.explicitStatus ? "customers.import.modeExplicit" : "customers.import.modeAbsence")}</p>
       </div>}

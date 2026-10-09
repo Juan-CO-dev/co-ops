@@ -5562,13 +5562,13 @@
   "customers.import.allowLarge": "Sí, estas personas realmente salieron de la lista. Darlas de baja.",
   "customers.import.summary": "{in} nuevas altas, {out} bajas",
   "customers.import.replay": "Ya importado: {in} nuevas altas, {out} bajas",
-  "customers.import.detail": "{rows} filas · {same} sin cambios · {stale} más viejas que lo que tenemos · {suppressed} borradas a pedido · {created} perfiles nuevos · {invalid} ilegibles",
+  "customers.import.detail": "{rows} filas · {same} sin cambios · {stale} más viejas que lo que tenemos · {suppressed} borradas a pedido · {masked} direcciones de reenvío o de relleno omitidas · {created} perfiles nuevos · {invalid} ilegibles",
   "customers.import.baseline": "Primera importación: es la lista inicial, así que nadie aparece como nueva alta.",
   "customers.import.modeExplicit": "El archivo tenía columna de estado, así que se usó el estado de cada fila.",
   "customers.import.modeAbsence": "El archivo solo lista suscriptores: quien estaba en la lista anterior y ya no está se dio de baja.",
-  "customers.import.error.largeOptOut": "Este archivo daría de baja a buena parte de la lista. Revisa que subiste todos los archivos y confirma abajo.",
+  "customers.import.error.largeOptOut": "Este archivo daría de baja a buena parte de la lista. Si subiste un archivo equivocado o incompleto, cancélalo en Importaciones recientes y sube el correcto. Si de verdad se fueron, confirma abajo.",
   "customers.import.error.older": "Esta exportación es más vieja que la última importada.",
-  "customers.import.error.busy": "Otra importación sigue en curso. Inténtalo en un minuto.",
+  "customers.import.error.busy": "Otra importación no terminó. Termínala o cancélala en Importaciones recientes y vuelve a intentar.",
   "customers.import.error.future": "La fecha de exportación no puede ser futura.",
   "customers.import.error.noEmail": "No se encontró una columna de correo en el archivo.",
   "customers.import.error.status": "Un estado del archivo no es suscrito ni dado de baja.",
@@ -5604,5 +5604,9 @@
   "customers.newly.none": "Nadie nuevo en los últimos 30 días.",
   "customers.newly.wasOut": "antes se había dado de baja",
   "customers.newly.wasNone": "primera vez",
-  "customers.newly.hadOrders": "ya era cliente"
+  "customers.newly.hadOrders": "ya era cliente",
+  "customers.import.basis": "Toast arma esta lista solo con clientes que aceptaron explícitamente. Cada fila se registra como una aceptación explícita de la exportación de la lista de Toast, con la fecha de exportación.",
+  "customers.imports.cancel": "Cancelar esta importación",
+  "customers.imports.cancelled": "Cancelada: ninguno de sus cambios cuenta",
+  "customers.imports.failed": "Falló"
 }

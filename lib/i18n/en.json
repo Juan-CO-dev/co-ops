@@ -5562,13 +5562,13 @@
   "customers.import.allowLarge": "Yes, these people really left the list. Opt them out.",
   "customers.import.summary": "{in} new opt-ins, {out} opt-outs",
   "customers.import.replay": "Already imported: {in} new opt-ins, {out} opt-outs",
-  "customers.import.detail": "{rows} rows · {same} unchanged · {stale} older than what we have · {suppressed} deleted on request · {created} new profiles · {invalid} unreadable",
+  "customers.import.detail": "{rows} rows · {same} unchanged · {stale} older than what we have · {suppressed} deleted on request · {masked} relay or placeholder addresses skipped · {created} new profiles · {invalid} unreadable",
   "customers.import.baseline": "First import: this is the starting list, so nobody shows as newly opted in.",
   "customers.import.modeExplicit": "The file had a status column, so each row's status was used.",
   "customers.import.modeAbsence": "The file lists subscribers only: anyone on the last list and missing now was opted out.",
-  "customers.import.error.largeOptOut": "This file would opt out a large part of the list. Check you uploaded every file, then confirm below.",
+  "customers.import.error.largeOptOut": "This file would opt out a large part of the list. If you uploaded the wrong or a partial file, cancel it under Recent imports and upload the right one. If the people really left, confirm below.",
   "customers.import.error.older": "This export is older than the last one imported.",
-  "customers.import.error.busy": "Another import is still running. Try again in a minute.",
+  "customers.import.error.busy": "Another import is not finished. Finish it, or cancel it under Recent imports, then try again.",
   "customers.import.error.future": "The export date can't be in the future.",
   "customers.import.error.noEmail": "No email column found in the file.",
   "customers.import.error.status": "A status in the file is not subscribed or unsubscribed.",
@@ -5604,5 +5604,9 @@
   "customers.newly.none": "Nobody new in the last 30 days.",
   "customers.newly.wasOut": "had opted out before",
   "customers.newly.wasNone": "first time",
-  "customers.newly.hadOrders": "already a customer"
+  "customers.newly.hadOrders": "already a customer",
+  "customers.import.basis": "Toast builds this list only from guests who explicitly opted in. Each row is recorded as an explicit opt-in from the Toast list export, dated by the export date.",
+  "customers.imports.cancel": "Cancel this import",
+  "customers.imports.cancelled": "Cancelled: none of its changes count",
+  "customers.imports.failed": "Failed"
 }

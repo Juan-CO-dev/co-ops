@@ -299,7 +299,7 @@ export async function importConsentCsv(
   let merged;
   try { merged = mergeConsentFiles(args.files.map((f) => parseConsentCsv(f.text))); }
   catch (e) { if (e instanceof ConsentCsvError) throw new CustomerError(400, e.code); throw e; }
-  const sha = createHash("sha256").update(canonicalImportPayload(merged.rows, merged.explicitStatus), "utf8").digest("hex");
+  const sha = createHash("sha256").update(canonicalImportPayload(merged.rows, merged.explicitStatus, args.exportDate), "utf8").digest("hex");
   const chunks = chunkRows(merged.rows);
   const sb = deps.client ?? getServiceRoleClient();
   const begun = await rpc<{ import_id: string; state: "started" | "resumed" | "completed" }>(sb, "customer_consent_import_begin", {
@@ -317,9 +317,29 @@ export async function importConsentCsv(
       resourceId: finished.importId, metadata: { source: "toast_csv_import", export_date: args.exportDate, files: args.files.length,
         rows: finished.rowsTotal, new_opt_ins: finished.newOptIns, opt_outs: finished.optOuts, unchanged: finished.unchanged,
         stale: finished.stale, suppressed: finished.suppressed, new_customers: finished.newCustomers, baseline: finished.baseline,
+        masked: finished.masked + merged.masked, consent_basis: "toast_list_explicit_opt_in",
         explicit_status: merged.explicitStatus, invalid: merged.invalid, rows_sha256: sha }, ...meta });
   }
-  return { ...finished, invalid: merged.invalid, duplicates: merged.duplicates, explicitStatus: merged.explicitStatus };
+  // Relay addresses dropped by the parser count with the ones SQL refused.
+  return { ...finished, masked: finished.masked + merged.masked, invalid: merged.invalid, duplicates: merged.duplicates, explicitStatus: merged.explicitStatus };
+}
+
+/**
+ * Cancel a half-applied import (r1 BC-036): a wrong file that hit the opt-out-wave guard, or a run that
+ * died. Its events were pending and now never count; nothing is deleted. A corrected file can then begin.
+ */
+export async function cancelConsentImport(actor: CustomerActor, importId: string, meta: RequestMeta, deps: CustomerDeps = {}) {
+  requireEnabled();
+  requireContact(actor);
+  requireId(importId);
+  const sb = deps.client ?? getServiceRoleClient();
+  const r = await rpc<{ import_id: string; changed: boolean; neutralised_events?: number }>(sb, "customer_consent_import_cancel", {
+    p_actor_id: actor.userId, p_import_id: importId });
+  if (r.changed) {
+    await audit({ actorId: actor.userId, actorRole: actor.role, action: "customer.consent_import_cancel", resourceTable: "customer_consent_imports",
+      resourceId: importId, metadata: { neutralised_events: r.neutralised_events ?? 0 }, ...meta });
+  }
+  return { changed: r.changed };
 }
 
 export interface ConsentOverview {

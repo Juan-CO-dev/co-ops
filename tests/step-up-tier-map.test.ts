@@ -214,6 +214,7 @@ const CLIENT_TIER_MAP: Record<string, string[]> = {
   "components/catering/pipeline/TransferLead.tsx": ["B"],
   "components/assignments/StationsAdmin.tsx": ["B"],
   "components/admin/toast-employees/ToastEmployeeLinks.tsx": ["B"],
+  "components/admin/customers/CancelImportButton.tsx": ["B"],
   "components/admin/customers/ConsentTools.tsx": ["A", "B"],
   "components/admin/customers/CustomerContactPanel.tsx": ["A", "B"],
   "components/admin/customers/CustomerSuggestions.tsx": ["A", "B"],

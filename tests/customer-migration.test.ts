@@ -35,7 +35,8 @@ describe("0234 discipline", () => {
     expect(fns.length).toBeGreaterThanOrEqual(18);
     for (const [, name, body] of fns) {
       expect(body, name).toContain("set search_path = pg_catalog, public");
-      if (name !== "customer_sha256") expect(body, name).toContain("security definer");
+      // Ungranted helpers that only run inside definer RPCs (hash, relay test, identity lock) need no definer.
+      if (!["customer_sha256", "customer_email_is_relay", "customer_identity_lock"].includes(name!)) expect(body, name).toContain("security definer");
     }
   });
   it("cards hold brand + last4 only, and identifiers are normalised by constraint", () => {
@@ -71,7 +72,8 @@ describe("0234 discipline", () => {
       expect(harness, s).toContain(s);
     }
     expect(harness.trimEnd().endsWith("rollback;")).toBe(true);
-    expect(harness).not.toMatch(/@(?!example\.com)[a-z0-9-]+\.[a-z]/i);
+    // Only invented example.com guests, plus the relay fixtures r1 proves are refused.
+    expect(harness.replace(/fixture@relay\.toasttab\.com|x1@doordash\.com/g, "")).not.toMatch(/@(?!example\.com)[a-z0-9-]+\.[a-z]/i);
   });
 });
 

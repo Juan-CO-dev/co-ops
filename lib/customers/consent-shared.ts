@@ -12,8 +12,15 @@
  * column by header, takes first/last name and phone when present, and treats a status column
  * (subscribed / unsubscribed …) as EXPLICIT. Without one, being listed = subscribed and the diff
  * against the previous import infers opt-outs (SQL, with a guard on large waves).
+ *
+ * Juan 2026-10-09: the Toast marketing list is built ONLY from explicit opt-ins (it is not auto-fed from
+ * transactions), so every listed row is recorded as an explicit opt-in, source toast_csv_import, dated by
+ * the export date.
+ *
+ * r1 (Astra BC-031 P2): rows go through classifyEmail, so a marketplace relay or a placeholder address is
+ * counted as `masked` and dropped here (SQL refuses it again).
  */
-import { normalizeEmail, normalizePhoneE164 } from "./identity-shared";
+import { classifyEmail, normalizeEmail, normalizePhoneE164 } from "./identity-shared";
 
 export type ConsentStatus = "opted_in" | "opted_out";
 export type ConsentChannel = "email" | "sms";
@@ -42,6 +49,8 @@ export interface ParsedConsentFile {
   explicitStatus: boolean;
   invalid: number;
   duplicates: number;
+  /** Relay / placeholder addresses dropped (never stored, never opted in). */
+  masked: number;
   columns: { email: string; firstName: string | null; lastName: string | null; phone: string | null; status: string | null };
 }
 export class ConsentCsvError extends Error {
@@ -131,9 +140,12 @@ function finish(body: string[][], ei: number, fi: number | null, li: number | nu
   const byEmail = new Map<string, ConsentImportRow>();
   let invalid = 0;
   let duplicates = 0;
+  let masked = 0;
   for (const r of body) {
-    const email = normalizeEmail(r[ei] ?? "");
-    if (!email) { invalid++; continue; }
+    const cls = classifyEmail(r[ei] ?? "");
+    if (cls.kind === "invalid") { invalid++; continue; }
+    if (cls.kind !== "ok") { masked++; continue; }
+    const email = cls.email;
     const row: ConsentImportRow = { email };
     const phone = pi === null ? null : normalizePhoneE164(r[pi] ?? "");
     if (phone) row.phone = phone;
@@ -155,19 +167,21 @@ function finish(body: string[][], ei: number, fi: number | null, li: number | nu
     }
     byEmail.set(email, row);
   }
-  return { rows: [...byEmail.values()], explicitStatus: si !== null, invalid, duplicates, columns };
+  return { rows: [...byEmail.values()], explicitStatus: si !== null, invalid, duplicates, masked, columns };
 }
 
 /** Several files of ONE export (Toast splits multi-shop lists per shop) become one list. */
-export function mergeConsentFiles(files: readonly ParsedConsentFile[]): { rows: ConsentImportRow[]; explicitStatus: boolean; invalid: number; duplicates: number } {
+export function mergeConsentFiles(files: readonly ParsedConsentFile[]): { rows: ConsentImportRow[]; explicitStatus: boolean; invalid: number; duplicates: number; masked: number } {
   if (files.length === 0) throw new ConsentCsvError("csv_empty");
   const explicit = files[0]!.explicitStatus;
   if (files.some((f) => f.explicitStatus !== explicit)) throw new ConsentCsvError("csv_mixed_status");
   const byEmail = new Map<string, ConsentImportRow>();
   let invalid = 0;
   let duplicates = 0;
+  let masked = 0;
   for (const f of files) {
     invalid += f.invalid;
+    masked += f.masked;
     duplicates += f.duplicates;
     for (const r of f.rows) {
       const prev = byEmail.get(r.email);
@@ -182,14 +196,18 @@ export function mergeConsentFiles(files: readonly ParsedConsentFile[]): { rows: 
   const rows = [...byEmail.values()].sort((a, b) => a.email.localeCompare(b.email));
   if (rows.length === 0) throw new ConsentCsvError("csv_no_rows");
   if (rows.length > CONSENT_IMPORT_MAX_ROWS) throw new ConsentCsvError("csv_too_large");
-  return { rows, explicitStatus: explicit, invalid, duplicates };
+  return { rows, explicitStatus: explicit, invalid, duplicates, masked };
 }
 
-/** The idempotency key's input: sorted rows + the status mode, in one canonical spelling. */
-export function canonicalImportPayload(rows: readonly ConsentImportRow[], explicitStatus: boolean): string {
+/**
+ * The snapshot key's input: export date + status mode + sorted rows, in one canonical spelling. The date
+ * is part of the identity (r1 BC-031 P1): the same rows on another day are another snapshot. SQL also
+ * replays only the LATEST completed snapshot, so an old list can never shadow a newer one.
+ */
+export function canonicalImportPayload(rows: readonly ConsentImportRow[], explicitStatus: boolean, exportDate: string): string {
   const sorted = [...rows].sort((a, b) => a.email.localeCompare(b.email))
     .map((r) => [r.email, r.phone ?? "", r.first_name ?? "", r.last_name ?? "", explicitStatus ? r.status ?? "" : ""]);
-  return JSON.stringify({ v: 1, explicitStatus, rows: sorted });
+  return JSON.stringify({ v: 2, exportDate, explicitStatus, rows: sorted });
 }
 
 export function chunkRows<T>(rows: readonly T[], size = CONSENT_IMPORT_CHUNK): T[][] {
@@ -209,11 +227,12 @@ export interface ConsentImportSummary {
   stale: number;
   suppressed: number;
   newCustomers: number;
+  masked: number;
 }
 
 export function summaryFromRpc(r: Record<string, unknown>): ConsentImportSummary {
   const n = (k: string) => (typeof r[k] === "number" ? (r[k] as number) : Number(r[k] ?? 0)) || 0;
   return { importId: String(r.import_id ?? ""), replay: r.replay === true, baseline: r.baseline === true, rowsTotal: n("rows_total"),
     newOptIns: n("new_opt_ins"), optOuts: n("opt_outs"), unchanged: n("unchanged"), stale: n("stale"), suppressed: n("suppressed"),
-    newCustomers: n("new_customers") };
+    newCustomers: n("new_customers"), masked: n("masked") };
 }
