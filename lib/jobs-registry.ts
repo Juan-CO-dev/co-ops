@@ -1,10 +1,10 @@
 /** Closed heartbeat registry. Daily cadences follow vercel.json (UTC schedules).
  * Every successful scheduled route watches its siblings after its own heartbeat.
- * The 10-minute pinger catches up missing daily work after 90 minutes of Hobby grace;
- * the four daily Vercel routes provide independent chances to check a dead pinger
+ * The 10-minute pinger catches up missing daily work after 90 minutes of grace;
+ * the Vercel routes provide independent chances to check a dead pinger
  * (alerts still require its active ET window; dormant parsing does not check).
  * Detection retains the 2x-cadence/window rules; checks run every pinger cycle in
- * 06:00-22:00 ET, not just the 17:00 UTC job-watch cron. No extra cron or secret.
+ * 06:00-22:00 ET, not just the 17:00 UTC job-watch cron.
  */
 export interface DailyCatchUpEntry {
   job: "prune-sessions" | "toast-sales-pull" | "parse-receipts";
@@ -44,10 +44,10 @@ export const JOBS_REGISTRY = [
   { job: "toast-catering-scan", cadenceMinutes: 10, window: { startHourET: 6, endHourET: 22 }, source: "pinger" },
   { job: "toast-sales-today", cadenceMinutes: 10, window: { startHourET: 6, endHourET: 22 }, source: "pinger" },
   { job: "job-watch", cadenceMinutes: 1440, source: "vercel" }, // 17:00 UTC
-  // Report digests (0220). Wider window than the other pingers: it starts at 03:00 ET so the
-  // unified digest's 03:00 fallback runs (Hobby: no extra Vercel cron). Must equal
+  // Report digests (0220). The hourly Vercel backup covers 03:00 ET in both DST states;
+  // allow two hourly intervals before job-watch calls it silent. Must equal
   // DIGEST_TICK_WINDOW in lib/report-digests-shared.ts (pinned by tests/digest-routes.test.ts).
-  { job: "digest-tick", cadenceMinutes: 10, window: { startHourET: 3, endHourET: 22 }, source: "pinger" },
+  { job: "digest-tick", cadenceMinutes: 60, window: { startHourET: 3, endHourET: 22 }, source: "pinger" },
 ] as const satisfies readonly RegisteredJob[];
 
 export type JobName = (typeof JOBS_REGISTRY)[number]["job"];

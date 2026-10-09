@@ -559,7 +559,7 @@ async function openRun(io: DigestIO, days: string[], trigger: "tick" | "closing"
 }
 
 /**
- * The 10-minute pinger tick (03:00-22:00 ET). Reconciles every digest that is due and not sent,
+ * The digest tick (desktop pinger and hourly Vercel backup). Reconciles every digest that is due and not sent,
  * runs the 03:00 fallback, sends the catering digest at its time, and watches for misses.
  * Returns null when the switch is OFF (no work, nothing expected, nothing alerted).
  */
