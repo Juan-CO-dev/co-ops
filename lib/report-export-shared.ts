@@ -144,6 +144,9 @@ export const SALES_EXPORT_COLUMNS: Record<SalesExportView, readonly ExportColumn
     col("amount_missing", "int"), col("unknown_tax", "int"), col("unknown_tips", "int"), col("unknown_discounts", "int"), col("gift_cards_excluded", "money"), col("gift_card_checks_excluded", "int"),
     col("ezcater_linked_toast_excluded", "money"), col("ezcater_linked_checks_excluded", "int"), col("void_checks", "int"),
     col("currency", "currency"), col("sales_basis"), col("refunds_basis"),
+    col("toast_gross", "money"), col("toast_discounts_comps", "money"), col("toast_item_voids", "money"),
+    col("toast_service_charges", "money"), col("toast_sales_refunds", "money"), col("toast_item_sales_net", "money"),
+    col("accounting_missing", "int"), col("sales_refund_missing", "int"), col("toast_net_basis"),
   ],
   items: [...PERIOD, ...SHOP, col("item_guid"), col("item"), col("units", "number"), col("checks", "int")],
   modifiers: [...PERIOD, ...SHOP, col("item_guid"), col("modifier"), col("units", "number"), col("checks", "int")],
@@ -338,8 +341,9 @@ type Period = { from: string; to: string };
 const periodCells = (p: Period): ExportRow => ({ period_start: p.from, period_end: p.to });
 
 /** Astra r2 (CC): an export must carry the same caveats the Sales screen shows. */
-export const SALES_BASIS_NOTE = "Toast check totals before refunds plus ezCater subtotals as reported; NOT reconciled net sales (gift cards sold on a regular check, house-account payments and fundraising round-ups are not separated yet; whole E-Gift Card checks excluded).";
-export const REFUNDS_BASIS_NOTE = "Refunds captured so far, shown separately and never subtracted; a late refund on an older order may not be captured yet.";
+export const SALES_BASIS_NOTE = "Toast check totals before refunds plus ezCater subtotals as reported; NOT reconciled net sales. These legacy columns retain non-sales check amounts; exact captured Toast item-sales net is separate.";
+export const REFUNDS_BASIS_NOTE = "Refunds captured so far are payment refunds by refund date; never subtracted from the legacy totals. Reconciled item-sales refunds alone reduce Toast item-sales net. Late refunds may not yet be captured.";
+export const TOAST_NET_BASIS_NOTE = "Captured Toast item-sales net = gross minus discounts/comps minus item voids minus reconciled sales refunds by refund date. All non-gratuity service charges are removed; gratuities, tax, deferred and house-account sales are outside sales. Comps are not inferred from discount names. Missing accounting or unreconciled refunds leave exact amounts empty. ezCater remains a reported subtotal; capture coverage still applies.";
 
 function salesTotalsCells(t: SalesTotals): ExportRow {
   // A missing coverage day leaves the money as what was captured, labelled by coverage_status +
@@ -354,6 +358,9 @@ function salesTotalsCells(t: SalesTotals): ExportRow {
     amount_missing: t.amountMissing, unknown_tax: t.taxMissing, unknown_tips: t.tipMissing, unknown_discounts: t.discountMissing, gift_cards_excluded: v(t.giftCardCents), gift_card_checks_excluded: v(t.giftCardChecks),
     ezcater_linked_toast_excluded: v(t.ezcaterLinkedCents), ezcater_linked_checks_excluded: v(t.ezcaterLinkedChecks), void_checks: v(t.voidChecks),
     sales_basis: SALES_BASIS_NOTE, refunds_basis: REFUNDS_BASIS_NOTE,
+    toast_gross: v(t.grossCents), toast_discounts_comps: v(t.discountsCompsCents), toast_item_voids: v(t.voidsCents),
+    toast_service_charges: v(t.serviceChargesCents), toast_sales_refunds: v(t.salesRefundsCents), toast_item_sales_net: v(t.toastNetCents),
+    accounting_missing: t.accountingMissing, sales_refund_missing: t.salesRefundMissing, toast_net_basis: TOAST_NET_BASIS_NOTE,
   };
 }
 
