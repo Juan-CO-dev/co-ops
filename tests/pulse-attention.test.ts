@@ -8,7 +8,7 @@ import { ATTENTION_ORDER, attentionScore, crewAttention, rankAttention, severity
 import type { AttentionRow } from "@/lib/pulse/types";
 
 const row = (kind: AttentionRow["kind"], over: Partial<AttentionRow> = {}): AttentionRow => ({
-  key: `${kind}:${over.key ?? "x"}`, kind, severity: severityOf(kind), params: {}, href: "/x", action: "open", ...over,
+  kind, severity: severityOf(kind), params: {}, href: "/x", action: "open", ...over, key: `${kind}:${over.key ?? "x"}`,
 });
 
 describe("rankAttention", () => {
