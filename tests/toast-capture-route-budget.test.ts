@@ -70,7 +70,7 @@ it("modified discovery runs after capture and its failure leaves labor and respo
   expect(await response.json()).toMatchObject({ healthy: true, modified: { failures: 1 }, labor: { ran: false } });
   expect(vi.mocked(captureModified).mock.invocationCallOrder[0]).toBeGreaterThan(vi.mocked(captureToastDaySystem).mock.invocationCallOrder[1]!);
   expect(vi.mocked(runToastLaborPull).mock.invocationCallOrder[0]).toBeGreaterThan(vi.mocked(captureModified).mock.invocationCallOrder[0]!);
-  expect(audit).toHaveBeenCalledWith(expect.objectContaining({ metadata: expect.objectContaining({ modified_failures: 1 }) }));
+  expect(audit).toHaveBeenCalledWith(expect.objectContaining({ metadata: expect.objectContaining({ modified_failures: 1, modified_errors: ["capture_schema_missing"] }) }));
 });
 
 it.each([undefined, "capture"])("today uses %s writer mode and runs additive capture", async (flag) => {
@@ -98,4 +98,18 @@ it("keeps the pinger healthy when the additive labor pull fails soft", async () 
   }));
   expect(response.status).toBe(200);
   expect(await response.json()).toMatchObject({ healthy: true, labor: { ran: true, results: [{ ok: false }] } });
+});
+
+it("audits each shop failure code and omits successful shops", async () => {
+  vi.mocked(captureToastDaySystem).mockResolvedValue({ skipped: false, runId: "run" } as Awaited<ReturnType<typeof captureToastDaySystem>>);
+  vi.mocked(captureModified).mockResolvedValue({ failures: 2, skipped: false, results: [
+    { locationId: "shop", windows: 0, pages: 0, changed: 0, error: "toast_http_400" },
+    { locationId: "second", windows: 0, pages: 0, changed: 0, error: "toast_http_400" },
+    { locationId: "third", windows: 1, pages: 1, changed: 0, error: null },
+  ] });
+  const response = await GET(new NextRequest("http://localhost/api/cron/toast-sales-today", { headers: { "x-cron-secret": "synthetic-test-secret" } }));
+  expect(response.status).toBe(200);
+  expect(audit).toHaveBeenCalledWith(expect.objectContaining({ metadata: expect.objectContaining({
+    modified_failures: 2, modified_errors: ["toast_http_400", "toast_http_400"],
+  }) }));
 });
