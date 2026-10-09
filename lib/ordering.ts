@@ -51,6 +51,7 @@ import { getRoleLevel } from "@/lib/roles";
 import { lockLocationContext, type LocationActor } from "@/lib/locations";
 import { audit } from "@/lib/audit";
 import type { AuthContext } from "@/lib/session";
+import { isPulseReadActor, requirePulseReadScope, type PulseScopedReadActor } from "@/lib/pulse/read-actor";
 import { loadMeasures, loadSkuPackChains } from "@/lib/prep-consumption";
 import {
   ozForRecipeInput,
@@ -121,6 +122,7 @@ function num(v: number | string | null): number | null {
   return Number.isFinite(n) ? n : null;
 }
 function requireLevel(actor: AuthContext, min: number): void {
+  if (isPulseReadActor(actor)) throw new OrderingError(403, "read_only_actor");
   if (getRoleLevel(actor.user.role) < min) {
     throw new OrderingError(403, "forbidden", "Insufficient role level for the par-pass");
   }
@@ -2177,12 +2179,18 @@ export interface OrderingCutoffAttention {
  * on the list with hasDraft true ("draft ready"). Earliest cutoff first (the binding deadline).
  */
 export async function loadOrderingAttention(
-  actor: AuthContext,
+  actor: AuthContext | PulseScopedReadActor,
   locationId: string,
 ): Promise<{ count: number; vendors: OrderingCutoffAttention[] }> {
-  requireLevel(actor, PAR_PASS_MIN);
-  if (!lockLocationContext(actorLoc(actor), locationId)) {
-    throw new OrderingError(404, "not_found", "Location not found");
+  let language: AuthContext["user"]["language"];
+  if (isPulseReadActor(actor)) {
+    language = requirePulseReadScope(actor, locationId, PAR_PASS_MIN).language;
+  } else {
+    requireLevel(actor, PAR_PASS_MIN);
+    if (!lockLocationContext(actorLoc(actor), locationId)) {
+      throw new OrderingError(404, "not_found", "Location not found");
+    }
+    language = actor.user.language;
   }
   const sb = getServiceRoleClient();
   const { walkDateEt: dateEt, todayDow: dow } = etWalkDay();
@@ -2244,7 +2252,7 @@ export async function loadOrderingAttention(
     vendors.push({
       vendorId: vid,
       vendorName: vName.get(vid) ?? "(vendor)",
-      cutoffTime: formatTime(iso, actor.user.language),
+      cutoffTime: formatTime(iso, language),
       hasDraft: hasDraftVendors.has(vid),
       // sortKey (bare governing time, "HH:MM:SS") sorts lexically = chronologically for
       // one ET day; kept out of the returned shape (stripped below).
