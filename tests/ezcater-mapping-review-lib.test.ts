@@ -60,7 +60,7 @@ describe("ezCater mapping review authorization", () => {
     expect(rpc).not.toHaveBeenCalled();
   });
   it("allows authorized list reads without step-up", async () => {
-    await expect(loadEzcaterMappingReview(actor(false))).resolves.toEqual({ candidates: [], targets: [], directTargets: [], toastReviews: [], reconciliationReviews: [] });
+    await expect(loadEzcaterMappingReview(actor(false))).resolves.toEqual({ candidates: [], customizationCandidates: [], targets: [], directTargets: [], toastReviews: [], reconciliationReviews: [] });
     expect(rpc).not.toHaveBeenCalled();
   });
   it("queries the package label columns and only open unmatched Toast reviews", async () => {
@@ -83,6 +83,34 @@ describe("ezCater mapping review authorization", () => {
     expect(filters).toContainEqual(["ezcater_review_queue", "source", "toast"]);
     expect(filters).toContainEqual(["ezcater_review_queue", "code", "unmatched_code"]);
     expect(filters).toContainEqual(["ezcater_review_queue", "resolved_at", null]);
+  });
+  it("keeps customization rows out of the base queue and aggregates raw IDs without private fields", async () => {
+    vi.mocked(selectAllRows)
+      .mockResolvedValueOnce([{ id: review, order_id: "order", location_id: "shop", identity_key: "provider-customization", candidates: [], code: "customization_unmapped" }]).mockResolvedValueOnce([])
+      .mockResolvedValueOnce([{ id: "order", snapshot_id: "snapshot-current", location_id: "shop", order_number: "PRIVATE ORDER NUMBER" }])
+      .mockResolvedValueOnce([{ id: "shop", name: "Current shop" }])
+      .mockResolvedValueOnce([{ order_id: "order", snapshot_id: "snapshot-current", provider_item_uuid: "line", menu_item_size_id: "size", pos_item_id: null,
+        name: "Sub", options: [{ customizationId: "provider-customization", name: "Add Mozzarella", quantity: 2, privateNote: "PRIVATE" }] }])
+      .mockResolvedValueOnce([]).mockResolvedValueOnce([]).mockResolvedValueOnce([])
+      .mockResolvedValueOnce([]).mockResolvedValueOnce([]).mockResolvedValueOnce([])
+      .mockResolvedValueOnce([{ id: review, order_id: "order", snapshot_id: "snapshot-current", location_id: "shop", identity_key: "provider-customization" }]);
+    const result = await loadEzcaterMappingReview(actor());
+    expect(result.candidates).toEqual([]);
+    expect(result.customizationCandidates).toEqual([{ reviewId: review, customizationId: "provider-customization",
+      locationId: "shop", locationName: "Current shop", name: "Add Mozzarella", typeName: null, lineCount: 1 }]);
+    expect(JSON.stringify(result)).not.toContain("PRIVATE");
+  });
+  it("does not offer a customization review from an older snapshot", async () => {
+    vi.mocked(selectAllRows)
+      .mockResolvedValueOnce([]).mockResolvedValueOnce([])
+      .mockResolvedValueOnce([{ id: "order", snapshot_id: "snapshot-current", location_id: "shop" }])
+      .mockResolvedValueOnce([{ id: "shop", name: "Shop" }])
+      .mockResolvedValueOnce([{ order_id: "order", snapshot_id: "snapshot-current", provider_item_uuid: "line",
+        menu_item_size_id: "size", pos_item_id: null, name: "Sub", options: [{ customizationId: "custom", name: "Current option" }] }])
+      .mockResolvedValueOnce([]).mockResolvedValueOnce([]).mockResolvedValueOnce([])
+      .mockResolvedValueOnce([]).mockResolvedValueOnce([]).mockResolvedValueOnce([])
+      .mockResolvedValueOnce([{ id: review, order_id: "order", snapshot_id: "snapshot-old", location_id: "shop", identity_key: "custom" }]);
+    expect((await loadEzcaterMappingReview(actor())).customizationCandidates).toEqual([]);
   });
   it("groups repeated line identities at their current shop and excludes a stale transfer candidate", async () => {
     const identity = '["size",[]]';

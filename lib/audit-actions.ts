@@ -318,6 +318,8 @@ export const RESERVED_ACTIONS = [
   "ezcater.review.dismiss", // SQL-only, append-only Toast review decision.
   "ezcater.item_map.approve", // SQL-only, atomic mapping decision.
   "ezcater.item_map.ignore",
+  "ezcater.customization_map.approve", // SQL-only, atomic customization decision.
+  "ezcater.customization_map.ignore",
   // Emitted from SQL only (submit_am_prep_atomic and friends set destructive=true
   // directly on the INSERT) — real, live, and invisible to a JS-side scan.
   "report.update",

@@ -8,8 +8,10 @@ import { etCalendarDate, etYmdMinusDays } from "@/lib/operational-day";
 import { deriveCapturedSalesConsumption, loadSalesConsumptionContext } from "@/lib/catering/toast-sales";
 import { loadCapturedToastWindow } from "@/lib/toast/captured-window";
 import { loadSalesCoverageDisclosure, type EffectiveSalesWindow, type EffectiveSalesRow } from "@/lib/toast/effective-depletion";
-import { itemIdentity, probeItemMap, shadowAmounts, type ItemIdentity, type ProductionEvidence, type ToastMap, type TransferEvidence } from "./pass2-shared";
-import { packageShadowAmounts, loadPackageShadowContext } from "./shadow-package";
+import { itemIdentity, probeItemMap, type ItemIdentity, type ProductionEvidence, type ToastMap, type TransferEvidence } from "./pass2-shared";
+import { loadPackageShadowContext } from "./shadow-package";
+import { loadCustomizationContext } from "./customizations";
+import { customizedLineAmounts } from "./customizations-shared";
 import type { DepletionLink } from "./depletion-shared";
 
 type Client = ReturnType<typeof getServiceRoleClient>;
@@ -132,6 +134,8 @@ export async function loadReconciledSalesWindow(sb: Client, window: ReconciledWi
     }
     const packageContext = await loadPackageShadowContext(sb,
       [...maps, ...decisions].flatMap((target) => target.package_id ? [target.package_id] : []));
+    const hasOptions = orderItems.some((item) => item.options?.length);
+    const customizations = hasOptions ? await loadCustomizationContext(sb, window.locationId) : { maps: [], skuWeights: new Map<string, number | null>() };
     for (const order of eligibleOrders) {
       const lead = byLead.get(order.lead_id);
       if (!lead || lead.stage === "lost" || /cancel|reject|fail/i.test(order.status ?? "")) continue;
@@ -147,16 +151,22 @@ export async function loadReconciledSalesWindow(sb: Client, window: ReconciledWi
         const decision = decisions.find((d) => d.location_id === locationId && d.identity_key === identity);
         if (decision?.status === "ignored") continue;
         const probe = probeItemMap(item, maps.filter((m) => m.location_id === locationId));
-        const target = decision?.status === "confirmed" ? decision : (item.options?.length ? null : probe.confirmed);
+        const target = decision?.status === "confirmed" ? decision : probe.confirmed;
         if (!target) { unresolved(); continue; }
-        if (item.options?.length && decision?.evidence !== "reviewed" && decision?.evidence !== "reviewed_direct") { unresolved(); continue; }
         const evidence = actualTransfers.filter((t) => t.resource_id === order.lead_id);
-        const amounts = target.package_id
-          ? await packageShadowAmounts(sb, graph, target.package_id, Number(item.quantity), locationId, order.event_date, productions, evidence, new AbortController().signal, packageContext)
-          : shadowAmounts(graph, target, Number(item.quantity), locationId, order.event_date, productions, evidence);
+        const { amounts, issues } = customizedLineAmounts({ graph, target, quantity: Number(item.quantity),
+          options: item.options ?? [], maps: customizations.maps, skuWeights: customizations.skuWeights,
+          locationId, eventDate: order.event_date, productions, transfers: evidence, packages: packageContext });
+        if (issues.length) unresolved();
         if (!amounts.length && Number(item.quantity) > 0) unresolved();
         for (const amount of amounts) rows.push({ location_id: locationId, business_date: order.event_date, sku_id: amount.sku_id,
           direct_oz: amount.shadow_oz, flattened_oz: amount.flattened_oz });
+      }
+    }
+    if (hasOptions) {
+      const after = await loadCustomizationContext(sb, window.locationId);
+      if (JSON.stringify([customizations.maps, [...customizations.skuWeights]]) !== JSON.stringify([after.maps, [...after.skuWeights]])) {
+        throw new Error("ezcater_customization_read_changed");
       }
     }
   }
