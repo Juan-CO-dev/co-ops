@@ -55,9 +55,10 @@ describe("paceDeltaPct", () => {
 });
 
 describe("dowOf / sameWeekdayCoverage", () => {
-  it("weekday from a Y-M-D (0 = Sunday), no timezone", () => {
+  it("ISO weekday from a Y-M-D (1 = Monday … 7 = Sunday, matching 0232's isodow), no timezone", () => {
     expect(dowOf("2026-10-09")).toBe(5); // Friday
-    expect(dowOf("2026-10-11")).toBe(0);
+    expect(dowOf("2026-10-11")).toBe(7); // Sunday
+    expect(dowOf("2026-10-12")).toBe(1); // Monday
   });
   it("counts covered same-weekday buckets inside the trailing window", () => {
     const buckets = [

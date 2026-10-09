@@ -46,10 +46,10 @@ export function paceDeltaPct(today: ReadonlyArray<number | null>, baseline: Read
   return Math.round(((t - b) / b) * 100);
 }
 
-/** 0 = Sunday … 6 = Saturday, from a Y-M-D string with no timezone involvement. */
+/** ISO weekday (1 = Monday … 7 = Sunday) — the 0232 `extract(isodow …)` convention — from a Y-M-D, no timezone. */
 export function dowOf(ymd: string): number {
   const [y, m, d] = ymd.split("-").map(Number);
-  return new Date(Date.UTC(y ?? 1970, (m ?? 1) - 1, d ?? 1)).getUTCDay();
+  return ((new Date(Date.UTC(y ?? 1970, (m ?? 1) - 1, d ?? 1)).getUTCDay() + 6) % 7) + 1;
 }
 
 /** How many daily buckets of this weekday were covered (a completed capture) — the chart's basis. */
