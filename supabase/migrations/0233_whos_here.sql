@@ -356,9 +356,12 @@ begin
       order by i.shift_start_at desc nulls last,i.triggered_at desc nulls last,i.id desc limit 1;
     if not found or v_inst.status='open' then return jsonb_build_object('ok',true,'closed',false); end if;
     -- A closer confirm can still be compensated back to 'open' inside its own request (dependent
-    -- insert failure): act only once the caller says it settled, or once it is 2 minutes old.
+    -- insert failure). Unless the caller says it settled, act only on DURABLE evidence: the final-
+    -- confirmation submission written after the flip (Astra r2, CC: age alone is not durability).
+    -- 'auto_finalized' (system) is a single committed update with no compensation path.
     if v_inst.status in ('confirmed','incomplete_confirmed') and not p_settled
-      and coalesce(v_inst.confirmed_at>clock_timestamp()-interval '2 minutes',true) then
+      and not exists(select 1 from public.checklist_submissions sub
+        where sub.instance_id=v_inst.id and sub.is_final_confirmation) then
       return jsonb_build_object('ok',true,'closed',true,'settled',false);
     end if;
     insert into public.shift_ends(location_id,business_date,user_id,kind,actor_id,at)

@@ -137,7 +137,9 @@ describe("0233 who's here: migration discipline", () => {
     const net = between(sql, "create function public.reconcile_shop_closed", "$$;\n");
     expect(net).toContain("if not found or v_inst.status='open' then return jsonb_build_object('ok',true,'closed',false)");
     expect(net).toContain("v_inst.status in ('confirmed','incomplete_confirmed') and not p_settled");
-    expect(net).toContain("interval '2 minutes'");
+    // Astra r2: durability = the final-confirmation submission, never elapsed time.
+    expect(net).toContain("sub.instance_id=v_inst.id and sub.is_final_confirmation");
+    expect(net).not.toContain("interval '2 minutes'");
     // Only holds made at or before the close instant are released.
     expect(net).toContain("where h.at<=v_close and");
     expect(net).toContain("and active and created_at<=v_close");

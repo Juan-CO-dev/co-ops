@@ -220,6 +220,13 @@ begin
   assert (select active from public.report_assignments where id=task),'task still held after compensation';
   select * into head from public.station_events where location_id=loc and business_date=day and user_id=crew order by sequence desc limit 1;
   assert head.station_id is not null,'station still held after compensation';
+  -- Astra r2: an OLD confirmed status with NO final-confirmation submission (process died after
+  -- the flip) must release nothing on the unsettled tick path.
+  update public.checklist_instances set status='confirmed',confirmed_at=clock_timestamp()-interval '30 minutes',confirmed_by=hi where id=instance;
+  result:=public.reconcile_shop_closed(loc,day);
+  assert result->>'settled'='false','old confirm without a final submission is not durable';
+  assert not exists(select 1 from public.shift_ends where location_id=loc and business_date=day and kind='shop_closed'),'no marker without durable evidence';
+  update public.checklist_instances set status='open',confirmed_at=null,confirmed_by=null where id=instance;
   -- The durable finalize (system auto shape) releases everything held at the close.
   update public.checklist_instances set status='auto_finalized',finalized_at_actor_type='system_auto' where id=instance;
   result:=public.reconcile_shop_closed(loc,day);

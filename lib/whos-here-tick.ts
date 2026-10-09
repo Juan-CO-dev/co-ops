@@ -8,7 +8,7 @@
  *    reaches this call, and the RPC re-reads the durable status anyway.
  * 2. runWhosHereTick (the 10-minute pinger, AFTER the labor pull, on its OWN budget):
  *    a. reconcile_shop_closed for today + yesterday per shop (catches opener release, system auto,
- *       and any confirm whose after() died; a fresh confirm waits 2 minutes to be durable);
+ *       and any confirm whose after() died; an unsettled confirm acts only once its final-confirmation submission exists);
  *    b. auto-links per Toast shop from a fresh /labor/v1/employees read. Every query and RPC carries
  *       the step's AbortSignal, so nothing outlives the budget and the labor pull never pays for it.
  * Fail-soft: each shop/step reports a fixed code; nothing throws to the caller.
