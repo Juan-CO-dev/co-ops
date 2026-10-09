@@ -1,4 +1,5 @@
 -- Migration 0233_whos_here
+-- APPLIED TO PROD 2026-10-08 (name '0233_whos_here'; sim first via sim-undo-0233 + re-apply, harness PASS; prod rolled-back dry run PASS). App features behind WHOS_HERE=1.
 -- AUTHORED ONLY 2026-10-08 (CO Claude builder, feat/whos-here). NOT APPLIED. GATE: CC sim + review, then Juan's apply gate.
 -- 0232 is reserved for the parallel Sales build; nothing here touches it.
 --
