@@ -58,6 +58,8 @@ interface ParentRule {
  */
 const RULES: ParentRule[] = [
   { pattern: "/reports", parent: { href: "/dashboard", labelKey: "nav.dashboard" } },
+  // Mid-shift Pulse v2: a section's own page goes back to the pulse (the shop rides in `search`).
+  { pattern: "/mid-shift/[section]", parent: { href: "/mid-shift", labelKey: "pulse.page.back" } },
   { pattern: "/my-feedback", parent: { href: "/reports", labelKey: "reports.page.title" } },
   { pattern: "/reports/operations", parent: { href: "/reports", labelKey: "reports.page.title" } },
   { pattern: "/reports/written", parent: { href: "/reports", labelKey: "reports.page.title" } },

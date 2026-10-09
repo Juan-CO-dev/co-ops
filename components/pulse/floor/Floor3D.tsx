@@ -127,7 +127,6 @@ export default function Floor3D({ stations, layout, selectedId, onSelect, arrang
       sceneRef.current.dispose = () => { observer.disconnect(); cancelAnimationFrame(frame); renderer.domElement.removeEventListener("pointerdown", onDown); renderer.domElement.removeEventListener("pointermove", onMovePtr); renderer.domElement.removeEventListener("pointerup", onUp); renderer.domElement.removeEventListener("pointercancel", onUp); dispose(); };
     })().catch((err) => console.error("pulse floor 3d failed", err));
     return () => { cancelled = true; sceneRef.current?.dispose(); sceneRef.current = null; };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   /** Rebuild boxes/labels from the current props (cheap: a handful of stations). */
@@ -188,8 +187,7 @@ export default function Floor3D({ stations, layout, selectedId, onSelect, arrang
     camera.lookAt(cx, 0, cz);
   }
 
-  useEffect(() => { sync(); // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [stations, layout, selectedId, arranging, statusLabel]);
+  useEffect(() => { sync(); }, [stations, layout, selectedId, arranging, statusLabel]);
 
   return <div ref={host} className="h-[300px] w-full min-w-0 overflow-hidden rounded-lg bg-co-surface-inset sm:h-[340px]" />;
 }

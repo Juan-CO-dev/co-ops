@@ -22,7 +22,7 @@ export function Heatmap({ cells, language, ariaLabel, noData }: {
   const grid = heatmapGrid(rows);
   const hours = Array.from({ length: 15 }, (_, i) => 8 + i);
   return (
-    <div className="min-w-0 max-w-full overflow-x-auto" tabIndex={0} aria-label={ariaLabel}>
+    <div className="min-w-0 max-w-full overflow-x-auto" role="group" tabIndex={0} aria-label={ariaLabel}>
       <table className="w-full min-w-[420px] border-collapse text-[10px]">
         <caption className="sr-only">{ariaLabel}</caption>
         <thead>

@@ -66,13 +66,13 @@ export function HandoffSection({ data, mode, locationId, onChanged }: { data: Ha
           <h3 className={subHeading}>{t("pulse.handoff.write")}</h3>
           <label className="flex flex-col gap-1 text-xs font-bold text-co-text-muted">
             {t("pulse.handoff.audience_label")}
-            <select value={audience} onChange={(e) => setAudience(e.target.value as HandoffAudience)} className={control}>
+            <select aria-label={t("pulse.handoff.audience_label")} value={audience} onChange={(e) => setAudience(e.target.value as HandoffAudience)} className={control}>
               {(["all", "crew", "managers"] as const).map((a) => <option key={a} value={a}>{t(`pulse.handoff.audience.${a}` as TranslationKey)}</option>)}
             </select>
           </label>
           <label className="flex flex-col gap-1 text-xs font-bold text-co-text-muted">
             {t("pulse.handoff.body_label")}
-            <textarea value={body} onChange={(e) => setBody(e.target.value)} maxLength={1000} rows={3} className={`${control} py-2`} />
+            <textarea aria-label={t("pulse.handoff.body_label")} value={body} onChange={(e) => setBody(e.target.value)} maxLength={1000} rows={3} className={`${control} py-2`} />
           </label>
           {failed && <p role="alert" className="text-sm text-co-cta-text">{t("pulse.handoff.failed")}</p>}
           <ActionButton type="submit" disabled={busy || body.trim().length === 0}>{t("pulse.handoff.send")}</ActionButton>

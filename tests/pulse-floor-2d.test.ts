@@ -13,6 +13,8 @@ const st = (id: string, status: FloorStation["status"], people: string[]): Floor
   id, name: `Station ${id}`, nameEs: `Estación ${id}`, sort: 1, status, people, positions: 2, filled: people.length, closesAt: null, trimAt: null, trimTo: null, closedAt: null, closeDue: false, trimDue: false, tasksLeft: 0,
 });
 const render = (node: ReturnType<typeof createElement>, language: "en" | "es" = "en") =>
+  // The provider types `children` as a required prop (the house test idiom, e.g. tests/station-lifecycle-ui.test.ts).
+  // eslint-disable-next-line react/no-children-prop
   renderToStaticMarkup(createElement(TranslationProvider, { initialLanguage: language, children: node }));
 
 describe("Floor2D", () => {

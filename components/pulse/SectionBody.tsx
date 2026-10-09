@@ -14,12 +14,12 @@ import { PeopleSection } from "@/components/pulse/sections/PeopleSection";
 import { SalesSection } from "@/components/pulse/sections/SalesSection";
 import { StationsSection } from "@/components/pulse/sections/StationsSection";
 
-export function SectionBody({ section, data, mode, locationId, date, viewerLevel, refresh }: {
+export function SectionBody({ section, data, mode, locationId, date, refresh }: {
   section: PulseSection; data: unknown; mode: "card" | "detail"; locationId: string; date: string; viewerLevel: number; refresh: () => Promise<void>;
 }): ReactNode {
   switch (section) {
     case "attention": return <AttentionList data={data as AttentionData} mode={mode} />;
-    case "floor": return <FloorCard data={data as FloorData} mode={mode} viewerLevel={viewerLevel} onSaved={refresh} />;
+    case "floor": return <FloorCard data={data as FloorData} mode={mode} onSaved={refresh} />;
     case "people": return <PeopleSection data={data as PeopleData} mode={mode} locationId={locationId} />;
     case "stations": return <StationsSection data={data as StationsData} mode={mode} locationId={locationId} />;
     case "sales": return <SalesSection data={data as SalesData} mode={mode} locationId={locationId} date={date} />;

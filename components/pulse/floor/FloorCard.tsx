@@ -8,7 +8,7 @@
  * and save the layout (POST /api/pulse/layout, audited server-side).
  */
 import dynamic from "next/dynamic";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useMemo, useState, useSyncExternalStore } from "react";
 import { ActionButton } from "@/components/ActionButton";
 import { useTranslation } from "@/lib/i18n/provider";
 import { choose3D } from "@/lib/pulse/floor-shared";
@@ -39,16 +39,24 @@ export function detect3D(): boolean {
   });
 }
 
-export function FloorCard({ data, mode, viewerLevel: _viewerLevel, onSaved }: { data: FloorData; mode: "card" | "detail"; viewerLevel: number; onSaved: () => Promise<void> }) {
+// The device decision is an EXTERNAL fact, read once per page: null on the server (the 2D map renders
+// first), the real answer on the client. useSyncExternalStore keeps it out of an effect.
+let detected: boolean | null = null;
+const subscribeNever = () => () => {};
+const readDetected = () => { if (detected === null) detected = detect3D(); return detected; };
+const serverSnapshot = () => null;
+
+export function FloorCard({ data, mode, onSaved }: { data: FloorData; mode: "card" | "detail"; onSaved: () => Promise<void> }) {
   const { t } = useTranslation();
-  const [use3D, setUse3D] = useState<boolean | null>(null);
+  const deviceWants3D = useSyncExternalStore(subscribeNever, readDetected, serverSnapshot);
+  const [override, setOverride] = useState<boolean | null>(null);
+  const use3D: boolean | null = override ?? deviceWants3D;
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [arranging, setArranging] = useState(false);
   const [draft, setDraft] = useState<FloorLayout | null>(null);
   const [saveState, setSaveState] = useState<"idle" | "saving" | "saved" | "failed">("idle");
-  useEffect(() => { setUse3D(detect3D()); }, []);
 
-  const layout = draft ?? data.layout ?? {};
+  const layout = useMemo(() => draft ?? data.layout ?? {}, [draft, data.layout]);
   const selected = data.stations.find((s) => s.id === selectedId) ?? null;
   const statusLabel = useCallback((s: FloorStation) => t(STATUS_KEY[s.status]), [t]);
   const onMove = useCallback((id: string, x: number, y: number) => setDraft((prev) => ({ ...(prev ?? data.layout ?? {}), [id]: { x, y } })), [data.layout]);
@@ -71,7 +79,7 @@ export function FloorCard({ data, mode, viewerLevel: _viewerLevel, onSaved }: { 
         <p className="text-xs text-co-text-muted">{arranging ? t("pulse.floor.arrange_hint") : t("pulse.floor.tap_hint")}</p>
         <div className="flex flex-wrap items-center gap-2">
           {use3D !== null && (
-            <button type="button" onClick={() => setUse3D((v) => !v)} className="inline-flex min-h-[44px] items-center rounded-lg border border-co-border-2 px-3 text-xs font-bold uppercase tracking-[0.1em] text-co-text" aria-pressed={use3D}>
+            <button type="button" onClick={() => setOverride(!use3D)} className="inline-flex min-h-[44px] items-center rounded-lg border border-co-border-2 px-3 text-xs font-bold uppercase tracking-[0.1em] text-co-text" aria-pressed={use3D}>
               {t(use3D ? "pulse.floor.mode_2d" : "pulse.floor.mode_3d")}
             </button>
           )}
