@@ -12,6 +12,7 @@ import { useCollapsibleSections } from "@/lib/use-collapsible-sections";
 import { assignmentSectionDefaults } from "@/lib/assignment-sections";
 import type { RetrainTaskView } from "@/lib/yield-stats";
 import type { PresenceView } from "@/lib/presence-shared";
+import { StationNudges } from "./StationNudges";
 import { canSelfClaim, currentStation, formatAssignmentAttribution, requiresOverrideReason, OVERRIDE_REASON_CODES, type OverrideReasonCode, type TaskAssignment, type AssignmentChange, type StationEvent, TASK_TYPES, TASK_MIN_LEVEL, taskHref, type ShiftBoard, type TaskType } from "@/lib/assignments-shared";
 
 const control = "flex min-h-[44px] w-full max-w-full min-w-0 items-center rounded-lg border-2 border-co-border bg-co-surface px-3 text-base font-normal tracking-normal text-co-text";
@@ -86,9 +87,10 @@ export function ShiftBoardClient({ board, compact = false, retrainTasks = [] }: 
   };
   const stationStatus = (station: ShiftBoard["stations"][number]) => <>
     {station.closedAt && <p className="font-bold text-co-text-muted">{t("assignments.lifecycle.closed", { time: formatTime(station.closedAt, language) })}</p>}
-    {station.usuallyClosesAt && <p className="text-sm text-co-text-muted">{t("assignments.lifecycle.usuallyCloses", { time: formatClockTime(station.usuallyClosesAt, language) })}</p>}
+    {station.usuallyClosesAt && <p className="text-sm text-co-text-muted">{t("assignments.schedule.closes", { time: formatClockTime(station.usuallyClosesAt, language) })}</p>}
+    {board.viewerLevel >= 4 && (station.trims ?? []).map(trim => <p key={trim.at} className="text-sm text-co-text-muted">{t("assignments.schedule.trimLabel", { count: trim.to_count, time: formatClockTime(trim.at, language) })}</p>)}
   </>;
-  const trimHint = (position: ShiftBoard["stations"][number]["positions"][number]) => position.sort > 1 && position.usuallyTrimsAt
+  const trimHint = (position: ShiftBoard["stations"][number]["positions"][number]) => board.viewerLevel >= 4 && position.sort > 1 && position.usuallyTrimsAt
     ? <p className="text-sm text-co-text-muted">{t("assignments.lifecycle.usuallyTrims", { time: formatClockTime(position.usuallyTrimsAt, language) })}</p> : null;
   const taskLine = (assignment: TaskAssignment) => <div key={assignment.id} className="text-sm text-co-text-muted">
     <p>{formatAssignmentAttribution({ source: assignment.source ?? "assigned", holderName: assignment.assigneeName ?? board.people.find((person) => person.id === assignment.assigneeId)?.name ?? t("assignments.assignedStaff"), actorName: assignment.assignerName, at: assignment.at ?? "" }, language, t)}</p>
@@ -171,6 +173,7 @@ export function ShiftBoardClient({ board, compact = false, retrainTasks = [] }: 
   }
   return <section className="co-card min-w-0 max-w-full space-y-4 break-words p-4 [&_a]:max-w-full [&_a]:whitespace-normal [&_button]:max-w-full [&_button]:whitespace-normal" aria-busy={disabled}>
     <h2 className="text-xl font-bold text-co-text">{t(compact ? "assignments.myShift" : "assignments.team")}</h2>
+    <StationNudges key={`${board.locationId}:${board.stationDate ?? board.date}`} board={board} disabled={disabled} release={payload => requestMutation(payload, stationOverrideLevel(payload.userId))} />
     {!compact && <ActionLink variant="secondary" href={`/stations?loc=${board.locationId}`}>{t("assignments.stations")}</ActionLink>}
     {!compact && board.viewerLevel >= 4 && <p className="text-sm text-co-text-muted">{t("assignments.rosterHint")}</p>}
     {error && <p role="alert" className="text-co-cta-text">{t(error)}</p>}
@@ -250,6 +253,7 @@ export function ShiftBoardClient({ board, compact = false, retrainTasks = [] }: 
         {person.available === false && <p className="text-sm text-co-text-muted">{t("assignments.unavailablePerson")}</p>}
         <p className="truncate font-bold text-co-text" title={station?.name}>{station ? `${language === "es" ? station.nameEs || station.name : station.name} · ${position ? (language === "es" ? position.nameEs || position.name : position.name) : ""}` : t("assignments.noStation")}</p>
         {position && <p className="text-sm text-co-text-muted">{language === "es" ? position.dutyEs || position.duty : position.duty}</p>}
+        {station && stationStatus(station)}
         {current?.stationId ? byLine(current.source, current.actorName, current.at) : null}
         {changeLine(current?.change)}
         {!person.onBreak && (managerCanEdit || canClaim) && <form className="flex flex-wrap items-end gap-2" onSubmit={(event) => {

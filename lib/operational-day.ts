@@ -13,6 +13,13 @@
 
 const OPERATIONAL_TZ = "America/New_York";
 
+/** Operational wall-clock HH:mm, independent of browser timezone and DST offset. */
+export function etClockTime(iso: string): string {
+  const parts = new Intl.DateTimeFormat("en-GB", { timeZone: OPERATIONAL_TZ,
+    hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).formatToParts(new Date(iso));
+  return `${parts.find(part => part.type === "hour")!.value}:${parts.find(part => part.type === "minute")!.value}`;
+}
+
 /** The ET calendar date (YYYY-MM-DD) an ISO/UTC instant falls on. en-CA → always
  *  zero-padded + lexicographically sortable. */
 export function etCalendarDate(iso: string): string {

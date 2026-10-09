@@ -78,13 +78,14 @@ describe("writeStationBreak", () => {
 });
 
 describe("saveStationTiming", () => {
+  const actor: AssignmentActor = { userId: ACTOR, role: "gm", level: 7, locations: [SHOP] };
   it("writes station close and later-position trim hints with location and parent binds", async () => {
-    const station = fake({ role: "key_holder" });
+    const station = fake({ role: "gm" });
     await saveStationTiming(station.service, { actor, locationId: SHOP, stationId: STATION, usuallyClosesAt: "14:00" });
     expect(station.updates).toEqual([{ table: "stations", row: { usually_closes_at: "14:00" } }]);
     expect(station.filters).toContainEqual(["stations", "location_id", SHOP]);
 
-    const position = fake({ role: "key_holder" });
+    const position = fake({ role: "gm" });
     await saveStationTiming(position.service, { actor, locationId: SHOP, stationId: STATION, positionId: POSITION, usuallyTrimsAt: "16:00:00" });
     expect(position.updates).toEqual([{ table: "station_positions", row: { usually_trims_at: "16:00:00" } }]);
     expect(position.filters).toEqual(expect.arrayContaining([
@@ -93,17 +94,32 @@ describe("saveStationTiming", () => {
     ]));
   });
 
-  it("requires a live KH+, rejects crossed/invalid fields, and maps zero rows and DB errors", async () => {
+  it("requires a live GM+, rejects crossed/invalid fields, and maps zero rows and DB errors", async () => {
     await expect(saveStationTiming(fake().service, { actor: { ...actor, level: 3, role: "employee" }, locationId: SHOP, stationId: STATION, usuallyClosesAt: "14:00" }))
       .rejects.toMatchObject({ code: "role_insufficient" });
     for (const args of [
       { actor, locationId: SHOP, stationId: STATION, usuallyClosesAt: "2 PM" },
       { actor, locationId: SHOP, stationId: STATION, usuallyTrimsAt: "14:00" },
       { actor, locationId: SHOP, stationId: STATION, positionId: POSITION, usuallyClosesAt: "14:00" },
-    ]) await expect(saveStationTiming(fake({ role: "key_holder" }).service, args)).rejects.toMatchObject({ code: "invalid_payload" });
-    await expect(saveStationTiming(fake({ role: "key_holder", updateMissing: true }).service,
+    ]) await expect(saveStationTiming(fake({ role: "gm" }).service, args)).rejects.toMatchObject({ code: "invalid_payload" });
+    await expect(saveStationTiming(fake({ role: "gm", updateMissing: true }).service,
       { actor, locationId: SHOP, stationId: STATION, usuallyClosesAt: null })).rejects.toMatchObject({ code: "station_unavailable", status: 404 });
-    await expect(saveStationTiming(fake({ role: "key_holder", queryError: true }).service,
+    await expect(saveStationTiming(fake({ role: "gm", queryError: true }).service,
       { actor, locationId: SHOP, stationId: STATION, usuallyClosesAt: null })).rejects.toThrow("assignments database failure");
+  });
+  it("binds GM settings to membership, rejects stale roles, and allows live level 8 across shops", async () => {
+    const args = { actor, locationId: SHOP, stationId: STATION, usuallyClosesAt: "14:00", trims: [{ at: "13:00", to_count: 1 }] };
+    for (const role of ["key_holder", "agm", "employee"]) {
+      const f = fake({ role });
+      await expect(saveStationTiming(f.service, args)).rejects.toThrow();
+      expect(f.updates).toEqual([]);
+    }
+    await expect(saveStationTiming(fake({ role: "gm" }).service, { ...args, locationId: OTHER })).rejects.toThrow("location_access_denied");
+    await expect(saveStationTiming(fake({ role: "gm", member: false }).service, args)).rejects.toThrow("assignee_unavailable");
+    const f = fake({ role: "moo", member: false });
+    await saveStationTiming(f.service, { ...args, locationId: OTHER, actor: { ...actor, role: "moo", level: 8 } });
+    expect(f.updates).toEqual([{ table: "stations", row: { usually_closes_at: "14:00", trims: args.trims } }]);
+    expect(f.filters).toContainEqual(["stations", "location_id", OTHER]);
+    expect(audit).toHaveBeenCalledWith(expect.objectContaining({ action: "station.timing_update", metadata: expect.objectContaining({ trims: args.trims }) }));
   });
 });

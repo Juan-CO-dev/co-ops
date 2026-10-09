@@ -6,6 +6,7 @@ import { useTranslation } from "@/lib/i18n/provider";
 import { useStepUp } from "@/components/admin/StepUpProvider";
 import type { Station } from "@/lib/assignments-shared";
 import type { TranslationKey } from "@/lib/i18n/types";
+import { StationScheduleEditor } from "./StationScheduleEditor";
 
 export function StationsAdmin({ locationId, stations, translatedNames, canEdit, canEditTiming = canEdit }: {
   locationId: string; stations: Station[]; translatedNames: string[]; canEdit: boolean; canEditTiming?: boolean;
@@ -19,7 +20,7 @@ export function StationsAdmin({ locationId, stations, translatedNames, canEdit, 
   async function savePayload(payload: Record<string, unknown>) {
     setBusy(true); setError(null);
     try {
-      if (payload.operation !== "timing" && await requestStepUp("B") !== "ok") return;
+      if (await requestStepUp("B") !== "ok") return;
       const send = () => fetch("/api/admin/stations", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ locationId, ...payload }) });
       let response = await send();
       let body: { code?: string } = {};
@@ -56,7 +57,7 @@ export function StationsAdmin({ locationId, stations, translatedNames, canEdit, 
       <div key={station.id} className="co-card space-y-2 p-4">
         <h2 className="font-bold text-co-text">{language === "es" ? station.nameEs || station.name : station.name}</h2>
         {station.closedAt && <p className="font-bold text-co-text-muted">{t("assignments.lifecycle.closed", { time: formatTime(station.closedAt, language) })}</p>}
-        {timingForm(station.id, station.usuallyClosesAt)}
+        <StationScheduleEditor station={station} canEdit={canEditTiming} disabled={busy || refreshing} save={savePayload} />
         {canEditTiming && <p className="text-sm text-co-text-muted">{t("assignments.lifecycle.timingHint")}</p>}
         {canEdit ? <label className="flex min-h-[44px] items-center gap-2 font-bold text-co-text">
           <input type="checkbox" checked={station.staffed} disabled={busy || refreshing}
