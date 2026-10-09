@@ -51,7 +51,7 @@ export default async function SalesCheckPage({ params, searchParams }: { params:
   // Same-day links keep Today semantics for today's check (Astra P2-8).
   const dayContext: Params = { location: locationId, hubLocation: query.hubLocation, ...salesDayParams(detail.businessDate, detail.businessDate, operationalNow(new Date()).date) };
   const paymentType = (type: string | null) => type && PAYMENT_TYPES.includes(type) ? t(`reports.sales.payment.${type}` as TranslationKey) : t("reports.sales.payment.OTHER");
-  const row = (label: string, value: ReactNode) => <div className="flex min-h-[32px] items-baseline justify-between gap-3 border-t border-co-border py-1 text-sm"><span className="text-co-text-muted">{label}</span><span className="text-right font-semibold">{value}</span></div>;
+  const row = (label: string, value: ReactNode) => <div className="flex min-h-[44px] min-w-0 items-center justify-between gap-3 border-t border-co-border py-1 text-sm"><span className="min-w-0 flex-1 truncate text-co-text-muted" title={label}>{label}</span><span className="min-w-0 max-w-[55%] truncate text-right font-semibold">{value}</span></div>;
 
   return <main className="mx-auto max-w-2xl px-4 pb-32 pt-4 sm:px-6">
     <ReportPageNav viewerLevel={auth.level} path={`/reports/sales/checks/${encodeURIComponent(checkGuid)}`} params={navParams} language={language} />
@@ -79,8 +79,8 @@ export default async function SalesCheckPage({ params, searchParams }: { params:
 
     <section className={`${salesCard} mb-3`} aria-label={t("reports.sales.check.items")}>
       <h2 className="mb-2 text-xs font-bold tracking-wide text-co-text-muted">{t("reports.sales.check.items")}</h2>
-      {detail.selections.length ? <ul className="text-sm">{detail.selections.map((s) => <li key={s.selectionGuid} className={`flex justify-between gap-3 py-1 ${s.voided ? "text-co-text-dim line-through" : ""}`} style={{ paddingLeft: `${Math.min(s.depth, 4) * 16}px` }}>
-        <span>{s.name}{s.voided ? ` · ${t("reports.sales.check.voided")}` : ""}</span><span>{formatQuantity(s.quantity, language)}</span>
+      {detail.selections.length ? <ul className="text-sm">{detail.selections.map((s) => <li key={s.selectionGuid} className={`flex min-w-0 justify-between gap-3 py-1 ${s.voided ? "text-co-text-dim line-through" : ""}`} style={{ paddingLeft: `${Math.min(s.depth, 4) * 16}px` }}>
+        <span className="min-w-0 truncate" title={s.name}>{s.name}{s.voided ? ` · ${t("reports.sales.check.voided")}` : ""}</span><span className="shrink-0">{formatQuantity(s.quantity, language)}</span>
       </li>)}</ul> : <p className="text-sm text-co-text-muted">{t("reports.sales.no_rows")}</p>}
     </section>
 

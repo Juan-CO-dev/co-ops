@@ -9,7 +9,7 @@ import { serverT } from "@/lib/i18n/server";
 import type { Language, TranslationKey } from "@/lib/i18n/types";
 import { SALES_CHANNELS, SALES_VIEWS, serverRef, type CoverageStatus, type SalesView } from "@/lib/sales-reports-shared";
 
-export const salesCard = "rounded-xl border border-co-border bg-co-surface p-4";
+export const salesCard = "min-w-0 max-w-full break-words rounded-xl border border-co-border bg-co-surface p-4";
 export const salesLink = "inline-flex min-h-[44px] items-center underline underline-offset-2";
 export const salesPill = "inline-flex min-h-[44px] items-center rounded-full border-2 px-3 py-1.5 text-sm font-semibold transition";
 

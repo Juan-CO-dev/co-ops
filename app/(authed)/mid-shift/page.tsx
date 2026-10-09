@@ -245,7 +245,7 @@ export default async function MidShiftPage({
       <ActiveToday staff={pulse.activeToday} language={language} />
       {/* Live Toast sales (council 2026-07-31) — replaces the pre-Toast
           placeholder; open by default now that it carries real content. */}
-      <SalesPanel pulse={salesPulse} language={language} />
+      <SalesPanel pulse={salesPulse} language={language} viewerLevel={auth.level} locationId={locationId} />
     </main>
   );
 }

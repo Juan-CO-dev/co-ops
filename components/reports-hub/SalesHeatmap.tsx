@@ -23,22 +23,22 @@ export function SalesHeatmap({ rows, language, cellHref }: { rows: readonly Brea
   if (!rows.length) return <p className={`${salesCard} text-sm text-co-text-muted`}>{t("reports.sales.no_rows")}</p>;
   return <section className={salesCard} aria-label={t("reports.sales.view.heatmap")}>
     <p className="mb-2 text-xs text-co-text-muted">{t("reports.sales.heatmap.definition")}</p>
-    <div className="max-w-full overflow-x-auto">
+    <div className="min-w-0 max-w-full overflow-x-auto" tabIndex={0} aria-label={t("reports.sales.heatmap.caption")}>
       <table className="min-w-[960px] border-collapse text-[11px]">
         <caption className="sr-only">{t("reports.sales.heatmap.caption")}</caption>
         <thead><tr>
-          <th scope="col" className="p-1 text-left">{t("reports.sales.heatmap.weekday")}</th>
+          <th scope="col" className="sticky left-0 z-10 bg-co-surface p-1 text-left">{t("reports.sales.heatmap.weekday")}</th>
           {hours.map((h) => <th key={h} scope="col" className="p-1 text-center font-bold text-co-text-muted">{h}</th>)}
         </tr></thead>
         <tbody>{grid.cents.map((row, d) => {
           const day = formatWeekday(shiftReportDate(MONDAY, d), language);
           return <tr key={d}>
-            <th scope="row" className="p-1 text-left font-bold">{day}</th>
+            <th scope="row" className="sticky left-0 z-10 bg-co-surface p-1 text-left font-bold">{day}</th>
             {row.map((cents, h) => {
               const checks = grid.checks[d]![h];
-              if (cents === null) return <td key={h} className="h-11 min-w-[40px] border border-co-border text-center text-co-text-dim" aria-label={t("reports.sales.heatmap.empty_cell", { day, hour: h })}>·</td>;
-              return <td key={h} className={`h-11 min-w-[40px] border border-co-border p-0 text-center ${TINT[heatLevel(cents, grid.maxCents)]}`}>
-                <Link href={cellHref(d + 1, h)} className="flex h-11 min-w-[40px] items-center justify-center font-semibold text-co-text"
+              if (cents === null) return <td key={h} className="h-11 min-w-11 border border-co-border text-center text-co-text-dim" aria-label={t("reports.sales.heatmap.empty_cell", { day, hour: h })}>·</td>;
+              return <td key={h} className={`h-11 min-w-11 border border-co-border p-0 text-center ${TINT[heatLevel(cents, grid.maxCents)]}`}>
+                <Link href={cellHref(d + 1, h)} className="flex h-11 min-w-11 items-center justify-center font-semibold text-co-text"
                   aria-label={t("reports.sales.heatmap.cell", { day, hour: h, sales: formatCents(cents, language), checks: checks ?? 0 })}>
                   {formatCentsWhole(cents, language)}
                 </Link>
