@@ -46,15 +46,28 @@ export interface AttentionRow {
   href: string;
   /** i18n key suffix under `pulse.attention.action.` */
   action: string;
+}
+
+/**
+ * The server-side row BEFORE serialization: carries the authorization-only metadata the crew filter
+ * needs. `stripAttentionRows` removes it before any payload leaves the server (Astra #4: a crew payload
+ * once carried every occupant's user id through `subjectUserIds`).
+ */
+export interface AttentionRowScoped extends AttentionRow {
   /** Who this is about (user ids) — the crew filter keeps only rows naming them. */
   subjectUserIds?: string[];
-  /** Shop-wide rows crew may see (food-safety reminders). */
+  /** Shop-wide rows crew may see (food-safety reminders, shop catering timing). */
   shopWide?: boolean;
 }
 
+export type AttentionEvidence = "complete" | "partial" | "unavailable";
+
 export interface AttentionData {
   items: AttentionRow[];
-  score: PulseScore;
+  /** Null when the list cannot claim anything (no evidence, or partial evidence with no rows). */
+  score: PulseScore | null;
+  /** complete = every source answered; partial = some failed (never an all-clear); unavailable = all failed. */
+  evidence: AttentionEvidence;
   /** Sources that failed and were omitted (honest partial list). */
   partial: string[];
 }
@@ -121,7 +134,8 @@ export interface PeopleData {
   stationsCovered: number;
   stationsOpen: number;
   freed: Array<{ name: string; stationName: string | null; at: string; reason: string }>;
-  unlinked: { count: number; names: string[] };
+  /** Null = the Toast clock-in read failed (unavailable, never "0 unlinked"). */
+  unlinked: { count: number; names: string[] } | null;
   /** Clock-ins/outs/breaks/covers as one timeline (detail page). */
   timeline: Array<{ at: string; kind: "clock_in" | "clock_out" | "break_start" | "break_end" | "station" | "release" | "end_shift"; name: string; detail: string | null }>;
 }
@@ -183,17 +197,22 @@ export interface SalesData {
 
 export interface CateringEventRow {
   id: string;
-  name: string;
+  /** Null in the crew payload (Astra #11: timing only — no customer names). */
+  name: string | null;
   timeWindow: string | null;
   headcount: number | null;
   isDelivery: boolean;
   stage: "confirmed" | "out";
+  /** Null in the crew payload. */
   source: string | null;
 }
 
 export interface CateringData {
+  /** Crew (<4) receive the server-redacted timing summary: when, how many, stage — no names, contacts or money. */
+  redacted: boolean;
   today: CateringEventRow[];
   tomorrow: { count: number; firstWindow: string | null };
+  /** Empty for crew (ezCater order numbers are not shop-level timing). */
   notRung: Array<{ orderId: string; orderNumber: string | null; readyAt: string | null; headcount: number | null; timing: string; totalCents?: number | null }>;
   prep: { amPrep: ReportProgress; midDay: ReportProgress };
 }
@@ -214,8 +233,9 @@ export interface InventoryData {
   lastWalk: { at: string; byName: string | null; lineCount: number } | null;
   low: InventoryLowRow[];
   risk86: number;
-  receiving: Array<{ id: string; vendorName: string; at: string; matchState: "counted_only" | "matched" | "discrepant" | "override"; status: "in_progress" | "complete" }>;
-  cutoffs: Array<{ vendorName: string; time: string; hasDraft: boolean }>;
+  /** Null = that read failed (unavailable), never an empty "nothing recorded". */
+  receiving: Array<{ id: string; vendorName: string; at: string; matchState: "counted_only" | "matched" | "discrepant" | "override"; status: "in_progress" | "complete" }> | null;
+  cutoffs: Array<{ vendorName: string; time: string; hasDraft: boolean }> | null;
 }
 
 // ── Food safety ─────────────────────────────────────────────────────────────────────────────

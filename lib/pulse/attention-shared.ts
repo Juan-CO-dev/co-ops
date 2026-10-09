@@ -4,7 +4,7 @@
  * score (same three states as v1's pulseScore) and the crew filter.
  */
 import type { PulseScore } from "@/lib/midshift-shared";
-import type { AttentionKind, AttentionRow, AttentionSeverity } from "@/lib/pulse/types";
+import type { AttentionEvidence, AttentionKind, AttentionRow, AttentionRowScoped, AttentionSeverity } from "@/lib/pulse/types";
 
 /** Spec order. The index is the rank. */
 export const ATTENTION_ORDER: readonly AttentionKind[] = [
@@ -29,9 +29,9 @@ export function severityOf(kind: AttentionKind): AttentionSeverity {
   return RED.has(kind) ? "red" : "yellow";
 }
 
-export function rankAttention(rows: readonly AttentionRow[]): AttentionRow[] {
+export function rankAttention<T extends AttentionRow>(rows: readonly T[]): T[] {
   const seen = new Set<string>();
-  const out: AttentionRow[] = [];
+  const out: T[] = [];
   for (const r of rows) {
     if (seen.has(r.key)) continue;
     seen.add(r.key);
@@ -40,12 +40,26 @@ export function rankAttention(rows: readonly AttentionRow[]): AttentionRow[] {
   return out.sort((a, b) => ATTENTION_ORDER.indexOf(a.kind) - ATTENTION_ORDER.indexOf(b.kind) || a.key.localeCompare(b.key));
 }
 
-export function attentionScore(rows: readonly AttentionRow[]): PulseScore {
-  if (rows.length === 0) return "green";
+/**
+ * The score, honest about evidence (Astra #7): with every source answering, an empty list is green;
+ * with sources missing, an empty list claims NOTHING (null) — rows that did arrive still colour it.
+ */
+export function attentionScore(rows: readonly AttentionRow[], evidence: AttentionEvidence = "complete"): PulseScore | null {
+  if (rows.length === 0) return evidence === "complete" ? "green" : null;
   return rows.some((r) => r.severity === "red") ? "red" : "yellow";
 }
 
+export function attentionEvidence(attempted: number, failed: number): AttentionEvidence {
+  if (failed === 0) return "complete";
+  return failed >= attempted ? "unavailable" : "partial";
+}
+
 /** Crew (<4): only what concerns THEM, plus shop-wide reminders. Never other people, never money. */
-export function crewAttention(rows: readonly AttentionRow[], viewerId: string): AttentionRow[] {
+export function crewAttention(rows: readonly AttentionRowScoped[], viewerId: string): AttentionRowScoped[] {
   return rows.filter((r) => r.shopWide === true || (r.subjectUserIds?.includes(viewerId) ?? false));
+}
+
+/** Authorization-only metadata never leaves the server (Astra #4). */
+export function stripAttentionRows(rows: readonly AttentionRowScoped[]): AttentionRow[] {
+  return rows.map(({ subjectUserIds: _s, shopWide: _w, ...row }) => row);
 }

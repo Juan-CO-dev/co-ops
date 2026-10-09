@@ -35,7 +35,7 @@ export default async function PulseSectionPage({ params, searchParams }: {
   const { location } = await searchParams;
   const service = getServiceRoleClient();
   const accessible = await loadAccessibleLocations(service, auth);
-  const locationId = resolveRequestedLocation({ requested: location, accessible, actor: { role: auth.role, locations: auth.locations } });
+  const locationId = resolveRequestedLocation({ requested: location, accessible, actor: { role: auth.role, locations: auth.locations, level: auth.level } });
   if (!locationId) {
     return (
       <main className={shell}>

@@ -60,6 +60,17 @@ describe("0240 pulse v2: migration discipline", () => {
     expect(sql).toContain("has_column_privilege('service_role','public.pulse_handoff_notes','body','UPDATE')");
   });
 
+  it("Astra #6: a BEFORE UPDATE trigger allows a supersede only by the author or a HIGHER level, keeps content immutable, and reuses 0228's oracle", () => {
+    expect(sql).toContain("to_regprocedure('public.assignment_author_level(uuid)') is null");
+    expect(sql).toContain("create function public.pulse_handoff_notes_supersede_guard() returns trigger");
+    expect(sql).not.toMatch(/pulse_handoff_notes_supersede_guard\(\) returns trigger[\s\S]{0,120}security definer/);
+    expect(sql).toContain("raise exception 'supersede_forbidden'");
+    expect(sql).toContain("raise exception 'handoff_note_immutable'");
+    expect(sql).toContain("new.superseded_by <> old.author_id");
+    expect(sql).toContain("coalesce(public.assignment_author_level(new.superseded_by), -1) <= coalesce(public.assignment_author_level(old.author_id), 1000)");
+    expect(sql).toContain("create trigger pulse_handoff_notes_supersede_guard before update on public.pulse_handoff_notes");
+    expect(sql).toContain("revoke all on function public.pulse_handoff_notes_supersede_guard() from public, anon, authenticated;");
+  });
   it("the human acts it records are registered destructive audit actions", () => {
     for (const action of ["station.layout_update", "handoff.note_create", "handoff.note_supersede", "handoff.note_ack"]) {
       expect(DESTRUCTIVE_ACTIONS as readonly string[]).toContain(action);

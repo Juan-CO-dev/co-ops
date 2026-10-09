@@ -11,8 +11,9 @@ import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { audit } from "@/lib/audit";
 import { lockLocationContext } from "@/lib/locations";
+import { getRoleLevel, isRoleCode } from "@/lib/roles";
 import type { AuthContext } from "@/lib/session";
-import { canAuthorHandoff, crewScoped, PULSE_V2_BASE_LEVEL } from "@/lib/pulse/scope-shared";
+import { canAuthorHandoff, canReadPulseLocation, crewScoped, PULSE_V2_BASE_LEVEL } from "@/lib/pulse/scope-shared";
 import type { HandoffAudience, HandoffNote } from "@/lib/pulse/types";
 
 export class PulseNotInstalledError extends Error {
@@ -39,6 +40,14 @@ export function audiencesFor(level: number): HandoffAudience[] {
   return crewScoped(level) ? ["crew", "all"] : ["crew", "managers", "all"];
 }
 
+/** READ bind: the pulse read grant (8+ any shop — Astra #5), else membership. */
+function bindRead(actor: AuthContext, locationId: string): void {
+  if (actor.level < PULSE_V2_BASE_LEVEL) throw new HandoffError(403, "role_insufficient");
+  if (!UUID.test(locationId) || !canReadPulseLocation({ role: actor.role, locations: actor.locations, level: actor.level }, locationId)) {
+    throw new HandoffError(403, "location_access_denied");
+  }
+}
+/** WRITE bind: the operational grant, unchanged (9+ all-locations, else membership). */
 function bind(actor: AuthContext, locationId: string): void {
   if (actor.level < PULSE_V2_BASE_LEVEL) throw new HandoffError(403, "role_insufficient");
   if (!UUID.test(locationId) || !lockLocationContext({ role: actor.role, locations: actor.locations }, locationId)) {
@@ -49,7 +58,7 @@ function bind(actor: AuthContext, locationId: string): void {
 interface NoteRow { id: string; author_id: string; audience: HandoffAudience; body: string; created_at: string }
 
 export async function loadHandoffNotes(service: SupabaseClient, actor: AuthContext, args: { locationId: string; date: string }): Promise<HandoffNote[]> {
-  bind(actor, args.locationId);
+  bindRead(actor, args.locationId);
   const { data, error } = await service.from("pulse_handoff_notes")
     .select("id, author_id, audience, body, created_at")
     .eq("location_id", args.locationId).eq("business_date", args.date).is("superseded_at", null)
@@ -142,6 +151,21 @@ export async function supersedeHandoffNote(service: SupabaseClient, actor: AuthC
   bind(actor, args.locationId);
   if (!canAuthorHandoff(actor.level)) throw new HandoffError(403, "role_insufficient");
   if (!UUID.test(args.noteId)) throw new HandoffError(400, "invalid_payload");
+  // Astra #6: only the AUTHOR or a HIGHER level may retract (0240's trigger enforces the same rule in SQL).
+  const { data: note, error: nErr } = await service.from("pulse_handoff_notes").select("id, author_id").eq("id", args.noteId)
+    .eq("location_id", args.locationId).is("superseded_at", null).maybeSingle<{ id: string; author_id: string }>();
+  if (nErr) {
+    if (isMissingTable(nErr)) throw new PulseNotInstalledError("pulse_handoff_notes");
+    throw new Error(`handoff supersede lookup: ${nErr.message}`);
+  }
+  if (!note) throw new HandoffError(404, "not_found");
+  if (note.author_id !== actor.user.id) {
+    const { data: author, error: aErr } = await service.from("users").select("role").eq("id", note.author_id).maybeSingle<{ role: string }>();
+    if (aErr) throw new Error(`handoff supersede author: ${aErr.message}`);
+    // An unknown author level refuses (never a silent grant).
+    const authorLevel = author && isRoleCode(author.role) ? getRoleLevel(author.role) : Number.POSITIVE_INFINITY;
+    if (!(actor.level > authorLevel)) throw new HandoffError(403, "not_author_or_higher");
+  }
   const { data, error } = await service.from("pulse_handoff_notes")
     .update({ superseded_at: new Date().toISOString(), superseded_by: actor.user.id })
     .eq("id", args.noteId).eq("location_id", args.locationId).is("superseded_at", null)

@@ -31,8 +31,8 @@ export async function PulseHome({ auth, requested }: { auth: AuthContext; reques
 
   const service = getServiceRoleClient();
   const accessible = await loadAccessibleLocations(service, auth);
-  const actor = { role: auth.role, locations: auth.locations };
-  const shops = resolvePulsePanels({ requested, accessible, actor, level: auth.level });
+  const actor = { role: auth.role, locations: auth.locations, level: auth.level };
+  const shops = resolvePulsePanels({ requested, accessible, actor });
   if (!shops || shops.length === 0) {
     return (
       <main className={shell}>

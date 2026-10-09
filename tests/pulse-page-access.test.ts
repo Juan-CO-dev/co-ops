@@ -6,8 +6,9 @@ import { resolveBackLink } from "@/lib/nav-parents";
 
 const A = { id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", code: "MEP", name: "Capitol Hill" };
 const B = { id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", code: "EM", name: "P Street" };
-const gm = { role: "gm" as const, locations: [A.id] };
-const owner = { role: "owner" as const, locations: [] as string[] };
+const gm = { role: "gm" as const, locations: [A.id], level: 7 };
+const owner = { role: "owner" as const, locations: [] as string[], level: 9 };
+const moo = { role: "moo" as const, locations: [A.id], level: 8 };
 
 describe("resolveRequestedLocation", () => {
   it("defaults to the first accessible shop; refuses a shop outside the bind or the listed set", () => {
@@ -16,19 +17,24 @@ describe("resolveRequestedLocation", () => {
     expect(resolveRequestedLocation({ requested: B.id, accessible: [A, B], actor: gm })).toBeNull(); // listed but not bound
     expect(resolveRequestedLocation({ requested: B.id, accessible: [A, B], actor: owner })).toBe(B.id); // 9+ grant
     expect(resolveRequestedLocation({ requested: undefined, accessible: [], actor: owner })).toBeNull();
+    // Astra #5: a level-8 moo assigned to A may read B through the PULSE read grant.
+    expect(resolveRequestedLocation({ requested: B.id, accessible: [A, B], actor: moo })).toBe(B.id);
   });
 });
 
 describe("resolvePulsePanels", () => {
   it("GM: always one panel, their shop", () => {
-    expect(resolvePulsePanels({ requested: undefined, accessible: [A], actor: gm, level: 7 })).toEqual([A]);
-    expect(resolvePulsePanels({ requested: BOTH, accessible: [A], actor: gm, level: 7 })).toEqual([A]);
+    expect(resolvePulsePanels({ requested: undefined, accessible: [A], actor: gm })).toEqual([A]);
+    expect(resolvePulsePanels({ requested: BOTH, accessible: [A], actor: gm })).toEqual([A]);
   });
   it("8+ with two shops: both by default or on ?location=both; one shop when a shop is named", () => {
-    expect(resolvePulsePanels({ requested: undefined, accessible: [A, B], actor: owner, level: 9 })).toEqual([A, B]);
-    expect(resolvePulsePanels({ requested: BOTH, accessible: [A, B], actor: owner, level: 9 })).toEqual([A, B]);
-    expect(resolvePulsePanels({ requested: B.id, accessible: [A, B], actor: owner, level: 9 })).toEqual([B]);
-    expect(resolvePulsePanels({ requested: undefined, accessible: [A], actor: owner, level: 9 })).toEqual([A]);
+    expect(resolvePulsePanels({ requested: undefined, accessible: [A, B], actor: owner })).toEqual([A, B]);
+    expect(resolvePulsePanels({ requested: BOTH, accessible: [A, B], actor: owner })).toEqual([A, B]);
+    expect(resolvePulsePanels({ requested: B.id, accessible: [A, B], actor: owner })).toEqual([B]);
+    expect(resolvePulsePanels({ requested: undefined, accessible: [A], actor: owner })).toEqual([A]);
+    // Astra #5: level 8 (Dir. of Ops) with one membership still gets BOTH shops side by side.
+    expect(resolvePulsePanels({ requested: undefined, accessible: [A, B], actor: moo })).toEqual([A, B]);
+    expect(resolvePulsePanels({ requested: B.id, accessible: [A, B], actor: moo })).toEqual([B]);
   });
 });
 

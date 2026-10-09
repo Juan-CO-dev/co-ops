@@ -52,9 +52,11 @@ describe("GET /api/pulse/section", () => {
     expect((await get(`section=sales&location=all`)).status).toBe(400);
     expect(mocks.loadSection).not.toHaveBeenCalled();
   });
-  it("403 for crew asking for sales/people/catering/inventory; 403 for a shop not theirs", async () => {
+  it("403 for crew asking for sales/people/inventory (catering timing is theirs, Astra #11); 403 for a shop not theirs", async () => {
     mocks.session.mockResolvedValue(ctx(3));
-    for (const s of ["sales", "people", "catering", "inventory"]) expect((await get(`section=${s}&location=${SHOP}`)).status).toBe(403);
+    for (const s of ["sales", "people", "inventory"]) expect((await get(`section=${s}&location=${SHOP}`)).status).toBe(403);
+    expect((await get(`section=catering&location=${SHOP}`)).status).toBe(200);
+    mocks.loadSection.mockClear();
     mocks.session.mockResolvedValue(ctx(7, [OTHER]));
     expect((await get(`section=sales&location=${SHOP}`)).status).toBe(403);
     expect(mocks.loadSection).not.toHaveBeenCalled();
@@ -71,6 +73,12 @@ describe("GET /api/pulse/section", () => {
     expect(mocks.loadSection).toHaveBeenCalledWith({}, expect.objectContaining({ locationId: SHOP, auth: expect.objectContaining({ level: 7 }) }), "sales");
     mocks.session.mockResolvedValue(ctx(3));
     expect((await get(`section=stations&location=${SHOP}`)).status).toBe(200);
+  });
+  it("Astra #5: a level-8 moo assigned to the other shop reads this shop's pulse (pulse read grant); a GM of the other shop still cannot", async () => {
+    mocks.session.mockResolvedValue({ ...ctx(8, [OTHER]), role: "moo" });
+    expect((await get(`section=sales&location=${SHOP}`)).status).toBe(200);
+    mocks.session.mockResolvedValue(ctx(7, [OTHER]));
+    expect((await get(`section=sales&location=${SHOP}`)).status).toBe(403);
   });
   it("level 9 reads any shop (the all-locations grant)", async () => {
     mocks.session.mockResolvedValue({ ...ctx(9, []), role: "owner" });

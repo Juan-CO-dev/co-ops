@@ -5820,5 +5820,12 @@
   "pulse.inventory.match.discrepant": "discrepant",
   "pulse.inventory.match.override": "override",
   "pulse.inventory.delivery.in_progress": "in progress",
-  "pulse.inventory.delivery.complete": "complete"
+  "pulse.inventory.delivery.complete": "complete",
+  "pulse.attention.unavailable": "Needs attention could not be assessed right now: {sources} did not answer. This is not an all-clear.",
+  "pulse.attention.partial_no_claim": "Nothing from the sources that answered — not an all-clear: {sources} did not answer.",
+  "pulse.attention.catering_unprepped_crew": "Catering at {time}: AM prep not done",
+  "pulse.inventory.receiving_unavailable": "Receiving could not be read right now.",
+  "pulse.inventory.cutoffs_unavailable": "Order cutoffs could not be read right now.",
+  "pulse.people.unlinked_unavailable": "Toast clock-ins could not be checked right now.",
+  "pulse.catering.crew_note": "Timing only: names and details are on the catering board for managers."
 }

@@ -8,10 +8,9 @@
  */
 import type { NextRequest } from "next/server";
 import { jsonError, jsonOk } from "@/lib/api-helpers";
-import { lockLocationContext } from "@/lib/locations";
 import { operationalNow } from "@/lib/midshift-shared";
 import { pulseV2Enabled } from "@/lib/pulse/flag";
-import { isPulseSection, sectionAccess } from "@/lib/pulse/scope-shared";
+import { canReadPulseLocation, isPulseSection, sectionAccess } from "@/lib/pulse/scope-shared";
 import { defaultPulseDeps, loadPulseSection } from "@/lib/pulse/sections";
 import { requireSession } from "@/lib/session";
 import { getServiceRoleClient } from "@/lib/supabase-server";
@@ -27,7 +26,8 @@ export async function GET(req: NextRequest) {
   if (!isPulseSection(section)) return jsonError(400, "invalid_section");
   if (!locationId || !UUID.test(locationId)) return jsonError(400, "invalid_location");
   if (sectionAccess({ flagOn: true, level: ctx.level, section }) !== "ok") return jsonError(403, "role_insufficient");
-  if (!lockLocationContext({ role: ctx.role, locations: ctx.locations }, locationId)) return jsonError(403, "location_access_denied");
+  // The PULSE read grant (Astra #5): 8+ any shop, otherwise membership. Writes elsewhere keep lockLocationContext.
+  if (!canReadPulseLocation({ role: ctx.role, locations: ctx.locations, level: ctx.level }, locationId)) return jsonError(403, "location_access_denied");
 
   const now = new Date();
   const { date } = operationalNow(now);

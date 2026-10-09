@@ -39,6 +39,8 @@ function rowText(row: AttentionRow, t: ReturnType<typeof useTranslation>["t"]): 
       return count === 1 ? t("pulse.attention.item_low_one", { items: String(p.items ?? "") }) : t("pulse.attention.item_low_other", { count, items: String(p.items ?? "") });
     case "clockin_unlinked":
       return count === 1 ? t("pulse.attention.clockin_unlinked_one", { names: String(p.names ?? "") }) : t("pulse.attention.clockin_unlinked_other", { count, names: String(p.names ?? "") });
+    case "catering_unprepped":
+      return p.event == null ? t("pulse.attention.catering_unprepped_crew", { time: String(p.time ?? "") }) : t("pulse.attention.catering_unprepped", p);
     default:
       return t(`pulse.attention.${row.kind}` as TranslationKey, p);
   }
@@ -47,14 +49,21 @@ function rowText(row: AttentionRow, t: ReturnType<typeof useTranslation>["t"]): 
 export function AttentionList({ data, mode }: { data: AttentionData; mode: "card" | "detail" }) {
   const { t } = useTranslation();
   const rows = mode === "card" ? data.items.slice(0, 8) : data.items;
+  const sources = data.partial.join(", ");
+  // Astra #7: an all-clear is claimed ONLY on complete evidence. Missing evidence is said out loud.
+  if (data.evidence === "unavailable") {
+    return <p role="alert" className="text-sm font-semibold text-co-cta-text">{t("pulse.attention.unavailable", { sources })}</p>;
+  }
   return (
     <div>
       <div className="mb-2 flex flex-wrap items-center gap-2">
-        <ScoreChip score={data.score} />
-        {data.partial.length > 0 && <p className="text-xs text-co-warning-text">{t("pulse.attention.partial", { sources: data.partial.join(", ") })}</p>}
+        {data.score && <ScoreChip score={data.score} />}
+        {data.evidence === "partial" && rows.length > 0 && <p className="text-xs text-co-warning-text">{t("pulse.attention.partial", { sources })}</p>}
       </div>
       {rows.length === 0 ? (
-        <p role="status" className="text-sm text-co-confirm-text">{t("pulse.attention.all_clear")}</p>
+        data.evidence === "complete"
+          ? <p role="status" className="text-sm text-co-confirm-text">{t("pulse.attention.all_clear")}</p>
+          : <p role="alert" className="text-sm font-semibold text-co-warning-text">{t("pulse.attention.partial_no_claim", { sources })}</p>
       ) : (
         <ul className="flex flex-col divide-y divide-co-border/50" aria-label={t("pulse.section.attention")}>
           {rows.map((row) => (

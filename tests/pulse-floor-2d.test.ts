@@ -42,7 +42,7 @@ describe("Floor2D", () => {
 describe("PulseClient (server-rendered first paint)", () => {
   it("renders an ok card, an error card and a not-installed card side by side — one failure never blanks the others", () => {
     const initial: SectionStates = {
-      attention: { state: "ok", asOf: "2026-10-09T19:30:00Z", data: { items: [], score: "green", partial: [] } },
+      attention: { state: "ok", asOf: "2026-10-09T19:30:00Z", data: { items: [], score: "green", evidence: "complete", partial: [] } },
       food_safety: { state: "error", asOf: "2026-10-09T19:30:00Z", code: "timeout" },
       handoff: { state: "not_installed", asOf: "2026-10-09T19:30:00Z" },
     };

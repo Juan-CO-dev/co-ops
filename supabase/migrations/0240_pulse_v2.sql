@@ -10,10 +10,14 @@
 --    author (AGM+ in the app, level 6), a body and an AUDIENCE ('crew' | 'managers' | 'all') so crew
 --    only ever read notes addressed to them. Append-only: a note is never edited or deleted; the
 --    author (or a higher level) SUPERSEDES it (superseded_at/by), and the pulse shows live notes only.
+--    r1 (Astra #6): a BEFORE UPDATE trigger refuses a supersede by anyone but the author or a HIGHER
+--    level (0228's assignment_author_level oracle) and refuses any change to the note's content.
 -- B. pulse_handoff_acks — the incoming manager's "Got it": one row per (note, user), insert-only.
 -- C. pulse_station_layouts — the 3D floor's saved arrangement (GM+ drags once; spec "3D shop floor:
 --    saved per shop, audited"): one row per (location, station) with grid-unit coordinates. The ONLY
 --    table here that UPDATEs (a re-drag moves the point); the audit row carries before/after.
+--    r1 (Astra #1): the writer INSERTs new rows and UPDATEs existing rows with exactly (x, y,
+--    updated_by, updated_at) — never an upsert, whose merge would need UPDATE on the key columns.
 --
 -- RLS: deny-all on every table (the staff JWT is a valid PostgREST bearer; nothing here is readable
 -- on the curl path). Writes go through the service role from lib/pulse/handoff.ts and
@@ -37,6 +41,10 @@ do $$ begin
   end if;
   if to_regclass('public.stations') is null or to_regclass('public.locations') is null or to_regclass('public.users') is null then
     raise exception '0240: requires stations, locations, users';
+  end if;
+  -- The supersede guard reuses 0228's level oracle (SECURITY DEFINER, service_role-only EXECUTE).
+  if to_regprocedure('public.assignment_author_level(uuid)') is null then
+    raise exception '0240: requires assignment_author_level(uuid) (0228)';
   end if;
 end $$;
 
@@ -65,6 +73,34 @@ create policy pulse_handoff_notes_no_user_delete on public.pulse_handoff_notes f
 revoke all on public.pulse_handoff_notes from public, anon, authenticated, service_role;
 grant select, insert on public.pulse_handoff_notes to service_role;
 grant update (superseded_at, superseded_by) on public.pulse_handoff_notes to service_role;
+
+-- Supersede guard (Astra #6, r1): only the AUTHOR or a HIGHER level may retract a note, and a note's
+-- content is immutable once written (the column grant already limits the writer; this closes the
+-- "any AGM retracts an owner's instruction" hole at the row level, mirroring lib/pulse/handoff.ts).
+-- Plain plpgsql (no SECURITY DEFINER): it runs as the writer (service_role), which already holds
+-- EXECUTE on 0228's definer oracle assignment_author_level(uuid).
+create function public.pulse_handoff_notes_supersede_guard() returns trigger
+language plpgsql set search_path = pg_catalog, public as $$
+begin
+  if new.body <> old.body or new.audience <> old.audience or new.author_id <> old.author_id
+     or new.location_id <> old.location_id or new.business_date <> old.business_date or new.created_at <> old.created_at then
+    raise exception 'handoff_note_immutable';
+  end if;
+  if old.superseded_at is not null then
+    raise exception 'handoff_note_already_superseded';
+  end if;
+  if new.superseded_at is not null then
+    if new.superseded_by is null then raise exception 'supersede_actor_required'; end if;
+    if new.superseded_by <> old.author_id
+       and coalesce(public.assignment_author_level(new.superseded_by), -1) <= coalesce(public.assignment_author_level(old.author_id), 1000) then
+      raise exception 'supersede_forbidden';
+    end if;
+  end if;
+  return new;
+end $$;
+create trigger pulse_handoff_notes_supersede_guard before update on public.pulse_handoff_notes
+  for each row execute function public.pulse_handoff_notes_supersede_guard();
+revoke all on function public.pulse_handoff_notes_supersede_guard() from public, anon, authenticated;
 
 -- ── B. Handoff acknowledgements ("Got it") ───────────────────────────────────────────────────
 create table public.pulse_handoff_acks (

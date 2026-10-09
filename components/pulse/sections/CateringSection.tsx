@@ -28,15 +28,15 @@ export function CateringSection({ data, mode }: { data: CateringData; mode: "car
           <ul className="flex flex-col gap-1.5">
             {rows.map((ev) => {
               const chip = stageChip(ev.stage);
-              const src = leadSourceLabelKey(ev.source);
+              const src = ev.source === null && data.redacted ? null : leadSourceLabelKey(ev.source);
               return (
                 <li key={ev.id} className="flex min-h-[44px] flex-wrap items-center gap-x-2 gap-y-0.5 rounded-lg border border-co-gold/50 bg-co-surface px-3 py-1.5">
                   <span className="text-sm font-extrabold text-co-text">{timeWindowLabel(ev.timeWindow, language) ?? t("midshift.catering.no_time")}</span>
                   <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-[0.12em] ${chip.className}`}>{t(chip.labelKey)}</span>
-                  <span className="min-w-0 text-sm font-semibold text-co-text">{ev.name}</span>
+                  {ev.name !== null && <span className="min-w-0 text-sm font-semibold text-co-text">{ev.name}</span>}
                   {ev.headcount != null && <span className="text-xs text-co-text-muted">{ev.headcount === 1 ? t("midshift.catering.covers_one") : t("midshift.catering.covers_other", { count: ev.headcount })}</span>}
                   <span className="text-xs font-semibold text-co-text-muted">{t(ev.isDelivery ? "midshift.catering.delivery" : "midshift.catering.pickup")}</span>
-                  <span className="text-xs text-co-text-dim">{"key" in src ? t(src.key) : src.verbatim}</span>
+                  {src && <span className="text-xs text-co-text-dim">{"key" in src ? t(src.key) : src.verbatim}</span>}
                 </li>
               );
             })}
@@ -45,7 +45,8 @@ export function CateringSection({ data, mode }: { data: CateringData; mode: "car
         <p className="mt-1 text-xs text-co-text-muted">{tomorrow}</p>
       </div>
       <p className="text-xs text-co-text-muted">{t("pulse.catering.prep", { am: t(PROGRESS_KEY[data.prep.amPrep]!), mid: t(PROGRESS_KEY[data.prep.midDay]!) })}</p>
-      <div>
+      {data.redacted && <p className="text-[11px] text-co-text-dim">{t("pulse.catering.crew_note")}</p>}
+      {!data.redacted && <div>
         <h3 className={subHeading}>{t("pulse.catering.not_rung")}</h3>
         {data.notRung.length === 0 ? <p className="text-sm text-co-confirm-text">{t("pulse.catering.not_rung_none")}</p> : (
           <ul className="flex flex-col divide-y divide-co-border/50">
@@ -57,8 +58,8 @@ export function CateringSection({ data, mode }: { data: CateringData; mode: "car
             ))}
           </ul>
         )}
-      </div>
-      {mode === "detail" && <Link href="/catering/pipeline" className={tapLink}>{t("pulse.catering.pipeline_link")}</Link>}
+      </div>}
+      {mode === "detail" && !data.redacted && <Link href="/catering/pipeline" className={tapLink}>{t("pulse.catering.pipeline_link")}</Link>}
     </div>
   );
 }

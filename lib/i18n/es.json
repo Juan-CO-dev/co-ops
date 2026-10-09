@@ -5820,5 +5820,12 @@
   "pulse.inventory.match.discrepant": "con diferencias",
   "pulse.inventory.match.override": "anulado",
   "pulse.inventory.delivery.in_progress": "en curso",
-  "pulse.inventory.delivery.complete": "completa"
+  "pulse.inventory.delivery.complete": "completa",
+  "pulse.attention.unavailable": "No se pudo evaluar lo que requiere atención ahora: {sources} no respondieron. Esto no es un visto bueno.",
+  "pulse.attention.partial_no_claim": "Nada de las fuentes que respondieron; no es un visto bueno: {sources} no respondieron.",
+  "pulse.attention.catering_unprepped_crew": "Catering a las {time}: preparación AM sin hacer",
+  "pulse.inventory.receiving_unavailable": "No se pudo leer la recepción ahora.",
+  "pulse.inventory.cutoffs_unavailable": "No se pudieron leer los cortes de pedido ahora.",
+  "pulse.people.unlinked_unavailable": "No se pudieron revisar las entradas de Toast ahora.",
+  "pulse.catering.crew_note": "Solo horarios: nombres y detalles están en el tablero de catering para gerentes."
 }

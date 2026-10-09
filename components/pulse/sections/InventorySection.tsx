@@ -28,10 +28,11 @@ export function InventorySection({ data, mode, locationId }: { data: InventoryDa
         )}
         {data.low.length > 0 && <p className="mt-1 text-[11px] text-co-text-dim">{t("pulse.inventory.estimate_note")}</p>}
       </div>
-      {(mode === "detail" || data.cutoffs.length > 0) && (
+      {(mode === "detail" || data.cutoffs === null || data.cutoffs.length > 0) && (
         <div>
           <h3 className={subHeading}>{t("pulse.inventory.cutoffs")}</h3>
-          {data.cutoffs.length === 0 ? <p className="text-sm text-co-text-muted">{t("pulse.card.empty")}</p> : (
+          {data.cutoffs === null ? <p className="text-sm text-co-warning-text">{t("pulse.inventory.cutoffs_unavailable")}</p>
+            : data.cutoffs.length === 0 ? <p className="text-sm text-co-text-muted">{t("pulse.card.empty")}</p> : (
             <ul className="text-sm text-co-text">{data.cutoffs.map((c) => <li key={c.vendorName} className="min-h-[28px]"><span className="font-semibold">{c.vendorName}</span> · {c.time} · <span className="text-co-text-muted">{t(c.hasDraft ? "pulse.inventory.cutoff_draft" : "pulse.inventory.cutoff_nodraft")}</span></li>)}</ul>
           )}
         </div>
@@ -40,7 +41,8 @@ export function InventorySection({ data, mode, locationId }: { data: InventoryDa
         <>
           <div>
             <h3 className={subHeading}>{t("pulse.inventory.receiving")}</h3>
-            {data.receiving.length === 0 ? <p className="text-sm text-co-text-muted">{t("pulse.inventory.receiving_none")}</p> : (
+            {data.receiving === null ? <p className="text-sm text-co-warning-text">{t("pulse.inventory.receiving_unavailable")}</p>
+              : data.receiving.length === 0 ? <p className="text-sm text-co-text-muted">{t("pulse.inventory.receiving_none")}</p> : (
               <ul className="text-sm text-co-text">{data.receiving.map((r) => <li key={r.id} className="min-h-[28px]"><span className="font-semibold">{r.vendorName}</span> · {formatTime(r.at, language)} · <span className="text-co-text-muted">{t(`pulse.inventory.match.${r.matchState}` as TranslationKey)} · {t(`pulse.inventory.delivery.${r.status}` as TranslationKey)}</span></li>)}</ul>
             )}
           </div>

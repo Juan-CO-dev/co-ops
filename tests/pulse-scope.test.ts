@@ -16,6 +16,8 @@ import {
   visibleSections,
   pulsePageAccess,
   sectionAccess,
+  canReadPulseLocation,
+  PULSE_READ_ALL_LEVEL,
 } from "@/lib/pulse/scope-shared";
 import { pulseV2Enabled } from "@/lib/pulse/flag";
 
@@ -33,12 +35,12 @@ describe("PULSE_V2 flag", () => {
 });
 
 describe("section matrix", () => {
-  const crewOnly = ["attention", "floor", "stations", "food_safety", "handoff"];
-  it.each([2, 3])("crew level %i sees shop status, own work and handoff — never people, money, inventory", (level) => {
+  const crewOnly = ["attention", "floor", "stations", "catering", "food_safety", "handoff"];
+  it.each([2, 3])("crew level %i sees shop status, own work, catering TIMING (loader-redacted) and handoff — never people, money, inventory", (level) => {
     expect(visibleSections(level)).toEqual(crewOnly);
     expect(canViewSection(level, "people")).toBe(false);
     expect(canViewSection(level, "sales")).toBe(false);
-    expect(canViewSection(level, "catering")).toBe(false);
+    expect(canViewSection(level, "catering")).toBe(true); // Astra #11: the section is theirs; the loader redacts
     expect(canViewSection(level, "inventory")).toBe(false);
     expect(crewScoped(level)).toBe(true);
     expect(moneyVisible(level)).toBe(false);
@@ -67,6 +69,15 @@ describe("section matrix", () => {
   it("8+ sees everything and both shops side by side", () => {
     expect(visibleSections(8)).toEqual([...PULSE_SECTIONS]);
     expect(BOTH_SHOPS_LEVEL).toBe(8);
+  });
+  it("Astra #5: the PULSE read grant — level 8 reads any shop; 7 and below only their memberships; 9+ as before", () => {
+    expect(PULSE_READ_ALL_LEVEL).toBe(8);
+    const A = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"; const B = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+    expect(canReadPulseLocation({ role: "moo", locations: [A], level: 8 }, B)).toBe(true);
+    expect(canReadPulseLocation({ role: "gm", locations: [A], level: 7 }, B)).toBe(false);
+    expect(canReadPulseLocation({ role: "gm", locations: [A], level: 7 }, A)).toBe(true);
+    expect(canReadPulseLocation({ role: "employee", locations: [A], level: 3 }, B)).toBe(false);
+    expect(canReadPulseLocation({ role: "owner", locations: [], level: 9 }, B)).toBe(true);
   });
   it("the attention list is first in the canonical order (needs attention loads first)", () => {
     expect(PULSE_SECTIONS[0]).toBe("attention");

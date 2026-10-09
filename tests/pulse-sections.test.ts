@@ -10,7 +10,7 @@ import {
 } from "@/lib/pulse/sections";
 import { PulseNotInstalledError } from "@/lib/pulse/handoff";
 import { SalesReportError } from "@/lib/sales-reports";
-import type { AttentionData, CateringData, FloorData, FoodSafetyData, HandoffNote, StationsData } from "@/lib/pulse/types";
+import type { AttentionData, CateringData, FloorData, FoodSafetyData, HandoffNote, InventoryData, PeopleData, StationsData } from "@/lib/pulse/types";
 
 const LOC = "11111111-1111-4111-8111-111111111111";
 const auth = (level: number, id = "me"): AuthContext => ({
@@ -82,7 +82,7 @@ function deps(over: Partial<PulseDeps> = {}): PulseDeps {
 describe("scope before any read", () => {
   it("crew asking for sales/people/catering/inventory are refused without touching a dep", async () => {
     const d = deps();
-    for (const section of ["sales", "people", "catering", "inventory"] as const) {
+    for (const section of ["sales", "people", "inventory"] as const) {
       expect(await loadPulseSection(d, ctx(3), section)).toMatchObject({ state: "error", code: "forbidden" });
     }
     for (const fn of Object.values(d)) expect(fn).not.toHaveBeenCalled();
@@ -165,6 +165,8 @@ describe("crew stripping", () => {
   });
   it("catering: money only at 7+", async () => {
     const kh = (await loadPulseSection(deps(), ctx(5), "catering")) as { data: CateringData };
+    expect(kh.data.redacted).toBe(false);
+    expect(kh.data.today[0]!.name).toBe("Acme lunch");
     expect(kh.data.notRung[0]).not.toHaveProperty("totalCents");
     expect(kh.data.prep).toEqual({ amPrep: "not_started", midDay: "not_started" });
     const gm = (await loadPulseSection(deps(), ctx(7), "catering")) as { data: CateringData };
@@ -189,13 +191,82 @@ describe("needs attention", () => {
     const d = deps();
     const r = (await loadPulseSection(d, ctx(3), "attention")) as { data: AttentionData };
     // Their own station (Expo) closes at 16:00 and it is 15:30: that row is THEIRS; the uncovered Line is not.
-    expect(r.data.items.map((i) => i.kind)).toEqual(["station_closing_soon", "task_late", "fridge_out_of_range", "fridge_unchecked"]);
+    expect(r.data.items.map((i) => i.kind)).toEqual(["station_closing_soon", "task_late", "fridge_out_of_range", "fridge_unchecked", "catering_unprepped"]);
     expect(r.data.items[1]!.params).not.toHaveProperty("name");
     expect(JSON.stringify(r.data)).not.toContain("Ana");
     expect(d.notRung).not.toHaveBeenCalled();
     expect(d.lastParPass).not.toHaveBeenCalled();
     expect(d.unlinkedClockIns).not.toHaveBeenCalled();
-    expect(d.cateringToday).not.toHaveBeenCalled();
+    // Astra #11: shop catering timing reaches crew, with no event name.
+    expect(r.data.items[4]!.params).toEqual({ time: "4:00 PM" });
+    expect(JSON.stringify(r.data)).not.toContain("Acme");
+    expect(d.cateringToday).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("Astra #4 — authorization metadata never leaves the server", () => {
+  it("no attention row carries subjectUserIds or shopWide, for crew or KH", async () => {
+    for (const level of [3, 5]) {
+      const r = (await loadPulseSection(deps(), ctx(level), "attention")) as { data: AttentionData };
+      expect(r.data.items.length).toBeGreaterThan(0);
+      for (const row of r.data.items) {
+        expect(row).not.toHaveProperty("subjectUserIds");
+        expect(row).not.toHaveProperty("shopWide");
+      }
+    }
+    const crew = (await loadPulseSection(deps(), ctx(3), "attention")) as { data: AttentionData };
+    expect(JSON.stringify(crew.data)).not.toContain("other"); // the coworker's id never rides along
+  });
+});
+
+describe("Astra #7 — failed sources never produce a reassuring state", () => {
+  const failing = () => vi.fn(async () => { throw new Error("down"); });
+  const quietDeps = (over: Partial<PulseDeps> = {}) => deps({
+    board: vi.fn(async () => ({ ...board(), stations: [], events: [], tasks: [] })),
+    reports: vi.fn(async () => ({ rows: [], closingDone: false, midDayDoneCount: 0 })),
+    fridges: vi.fn(async () => []), cateringToday: vi.fn(async () => []), notRung: vi.fn(async () => []),
+    lastParPass: vi.fn(async () => null), unlinkedClockIns: vi.fn(async () => ({ count: 0, names: [] })),
+    ...over,
+  });
+  it("every attention source failing → evidence unavailable, score null, no items", async () => {
+    const d = deps({ board: failing(), reports: failing(), fridges: failing(), cateringToday: failing(), notRung: failing(), lastParPass: failing(), unlinkedClockIns: failing() });
+    const r = (await loadPulseSection(d, ctx(5), "attention")) as { data: AttentionData };
+    expect(r.data).toMatchObject({ items: [], score: null, evidence: "unavailable" });
+    expect([...r.data.partial].sort()).toEqual(["board", "cateringToday", "fridges", "notRung", "parPass", "reports", "unlinked"]);
+  });
+  it("a quiet shop with one source down → partial, score null (no all-clear); rows present → partial but scored; all up → green", async () => {
+    const partial = (await loadPulseSection(quietDeps({ unlinkedClockIns: failing() }), ctx(5), "attention")) as { data: AttentionData };
+    expect(partial.data).toMatchObject({ items: [], score: null, evidence: "partial", partial: ["unlinked"] });
+    const loud = (await loadPulseSection(deps({ unlinkedClockIns: failing() }), ctx(5), "attention")) as { data: AttentionData };
+    expect(loud.data.evidence).toBe("partial");
+    expect(loud.data.score).toBe("red");
+    const complete = (await loadPulseSection(quietDeps(), ctx(5), "attention")) as { data: AttentionData };
+    expect(complete.data).toMatchObject({ items: [], score: "green", evidence: "complete", partial: [] });
+  });
+  it("inventory: failed receiving/cutoff reads are null (unavailable), never empty lists", async () => {
+    const r = (await loadPulseSection(deps({ deliveries: failing(), cutoffs: failing() }), ctx(5), "inventory")) as { data: InventoryData };
+    expect(r.data.receiving).toBeNull();
+    expect(r.data.cutoffs).toBeNull();
+    const ok = (await loadPulseSection(deps(), ctx(5), "inventory")) as { data: InventoryData };
+    expect(ok.data.receiving).toEqual([]);
+    expect(ok.data.cutoffs).toEqual([]);
+  });
+  it("people: a failed clock-in read is null, never 0 unlinked", async () => {
+    const r = (await loadPulseSection(deps({ unlinkedClockIns: failing() }), ctx(5), "people")) as { data: PeopleData };
+    expect(r.data.unlinked).toBeNull();
+  });
+});
+
+describe("Astra #11 — crew catering timing, server-redacted", () => {
+  it("crew get when / how many / stage; no names, sources, order numbers or money; not-rung orders are not even read", async () => {
+    const d = deps();
+    const r = (await loadPulseSection(d, ctx(3), "catering")) as { data: CateringData };
+    expect(r.data.redacted).toBe(true);
+    expect(r.data.today).toEqual([{ id: "c1", name: null, timeWindow: "4:00 PM", headcount: 20, isDelivery: true, stage: "confirmed", source: null }]);
+    expect(r.data.notRung).toEqual([]);
+    expect(r.data.tomorrow).toEqual({ count: 1, firstWindow: "11:00 AM" });
+    expect(JSON.stringify(r.data)).not.toMatch(/Acme|EZ-1|12000|ezcater/);
+    expect(d.notRung).not.toHaveBeenCalled();
   });
 });
 

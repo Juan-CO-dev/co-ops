@@ -4,10 +4,10 @@
  * not prepped, unlinked clock-in). Crew see only rows about themselves plus shop-wide reminders.
  */
 import { describe, expect, it } from "vitest";
-import { ATTENTION_ORDER, attentionScore, crewAttention, rankAttention, severityOf } from "@/lib/pulse/attention-shared";
-import type { AttentionRow } from "@/lib/pulse/types";
+import { ATTENTION_ORDER, attentionEvidence, attentionScore, crewAttention, rankAttention, severityOf, stripAttentionRows } from "@/lib/pulse/attention-shared";
+import type { AttentionRow, AttentionRowScoped } from "@/lib/pulse/types";
 
-const row = (kind: AttentionRow["kind"], over: Partial<AttentionRow> = {}): AttentionRow => ({
+const row = (kind: AttentionRow["kind"], over: Partial<AttentionRowScoped> = {}): AttentionRowScoped => ({
   kind, severity: severityOf(kind), params: {}, href: "/x", action: "open", ...over, key: `${kind}:${over.key ?? "x"}`,
 });
 
@@ -40,6 +40,22 @@ describe("severity + score", () => {
     expect(attentionScore([])).toBe("green");
     expect(attentionScore([row("item_low")])).toBe("yellow");
     expect(attentionScore([row("item_low"), row("task_late")])).toBe("red");
+  });
+});
+
+describe("evidence (Astra #7) + stripping (Astra #4)", () => {
+  it("an empty list is green only with complete evidence; partial/unavailable evidence yields null", () => {
+    expect(attentionScore([], "complete")).toBe("green");
+    expect(attentionScore([], "partial")).toBeNull();
+    expect(attentionScore([], "unavailable")).toBeNull();
+    expect(attentionScore([row("item_low")], "partial")).toBe("yellow");
+    expect(attentionEvidence(7, 0)).toBe("complete");
+    expect(attentionEvidence(7, 1)).toBe("partial");
+    expect(attentionEvidence(7, 7)).toBe("unavailable");
+  });
+  it("stripAttentionRows removes subjectUserIds and shopWide and nothing else", () => {
+    const [out] = stripAttentionRows([row("task_late", { subjectUserIds: ["me"], shopWide: true, params: { task: "am_prep" } })]);
+    expect(out).toEqual({ key: "task_late:x", kind: "task_late", severity: "red", params: { task: "am_prep" }, href: "/x", action: "open" });
   });
 });
 

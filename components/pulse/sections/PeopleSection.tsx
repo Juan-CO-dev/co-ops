@@ -38,7 +38,8 @@ export function PeopleSection({ data, mode, locationId }: { data: PeopleData; mo
           ))}
         </ul>
       )}
-      {data.unlinked.count > 0 && (
+      {data.unlinked === null && <p className="text-xs text-co-warning-text">{t("pulse.people.unlinked_unavailable")}</p>}
+      {data.unlinked && data.unlinked.count > 0 && (
         <p className="text-xs font-semibold text-co-warning-text">
           {data.unlinked.count === 1 ? t("pulse.people.unlinked_one", { names: data.unlinked.names.join(", ") }) : t("pulse.people.unlinked_other", { count: data.unlinked.count, names: data.unlinked.names.join(", ") })}
         </p>

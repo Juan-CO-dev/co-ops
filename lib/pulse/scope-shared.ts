@@ -6,14 +6,17 @@
  * question. Enforcement is server-side in lib/pulse/sections.ts (the loader refuses BEFORE any I/O);
  * the client only uses this to decide what to render.
  *
- *   crew   (<4): own tasks/stations, shop status (stations, catering timing, food-safety reminders),
- *                handoff notes addressed to them. NO money, NO other people's details.
+ *   crew   (<4): own tasks/stations, shop status (stations, catering TIMING — when/how many/stage,
+ *                server-redacted — food-safety reminders), handoff notes addressed to them. NO money,
+ *                NO other people's details.
  *   KH/SL (4–5): + Needs attention (full), People, Stations & tasks (names + actions), Inventory,
- *                Catering (no money), Food safety (per fridge).
+ *                Catering (names, not-rung orders; no money), Food safety (per fridge).
  *   AGM     (6): + Handoff authoring / "Got it" acknowledgement.
  *   GM      (7): + Sales / money for their shop (lib/sales-reports assertSalesScope re-checks).
  *   8+         : both shops side by side, all sections.
  */
+import { lockLocationContext } from "@/lib/locations";
+import type { RoleCode } from "@/lib/roles";
 
 export const PULSE_SECTIONS = [
   "attention",
@@ -44,6 +47,16 @@ export const PULSE_MONEY_LEVEL = 7;
 export const FLOOR_ARRANGE_LEVEL = 7;
 /** Both shops side by side (matches REPORT_ALL_LOCATIONS_LEVEL). */
 export const BOTH_SHOPS_LEVEL = 8;
+/**
+ * The PULSE-SPECIFIC read grant (Astra #5, CC ruling): level 8 (Dir. of Ops) reads every shop's pulse
+ * — the spec's "8+ both shops side by side" — without widening any OPERATIONAL grant. Writes (layout
+ * save, handoff authoring) keep `lockLocationContext` (9+ all-locations, else membership).
+ */
+export const PULSE_READ_ALL_LEVEL = 8;
+export interface PulseReadActor { role: RoleCode; locations: string[]; level: number }
+export function canReadPulseLocation(actor: PulseReadActor, locationId: string): boolean {
+  return actor.level >= PULSE_READ_ALL_LEVEL || lockLocationContext({ role: actor.role, locations: actor.locations }, locationId);
+}
 
 export const SECTION_MIN_LEVEL: Record<PulseSection, number> = {
   attention: PULSE_V2_BASE_LEVEL,
@@ -51,7 +64,9 @@ export const SECTION_MIN_LEVEL: Record<PulseSection, number> = {
   people: PULSE_FULL_LEVEL,
   stations: PULSE_V2_BASE_LEVEL,
   sales: PULSE_MONEY_LEVEL,
-  catering: PULSE_FULL_LEVEL,
+  // Spec: crew get shop-level catering TIMING (when, how many, stage). The loader redacts names,
+  // contacts, order numbers and money below PULSE_FULL_LEVEL (Astra #11) — the gate alone is not the scope.
+  catering: PULSE_V2_BASE_LEVEL,
   inventory: PULSE_FULL_LEVEL,
   food_safety: PULSE_V2_BASE_LEVEL,
   handoff: PULSE_V2_BASE_LEVEL,

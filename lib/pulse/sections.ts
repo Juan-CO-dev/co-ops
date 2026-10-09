@@ -40,12 +40,12 @@ import {
 import { shiftReportDate } from "@/lib/report-range";
 import { loadHandoffNotes, PulseNotInstalledError } from "@/lib/pulse/handoff";
 import { loadStationLayout } from "@/lib/pulse/layout";
-import { attentionScore, crewAttention, rankAttention, severityOf } from "@/lib/pulse/attention-shared";
+import { attentionEvidence, attentionScore, crewAttention, rankAttention, severityOf, stripAttentionRows } from "@/lib/pulse/attention-shared";
 import { baselineCumulative, cumulativeByHour, dowOf, hourCurve, paceDeltaPct, sameWeekdayCoverage } from "@/lib/pulse/baseline-shared";
 import { floorStations, mergeLayout } from "@/lib/pulse/floor-shared";
 import { canArrangeFloor, canAuthorHandoff, canViewSection, crewScoped, moneyVisible, type PulseSection } from "@/lib/pulse/scope-shared";
 import type {
-  AttentionData, AttentionRow, CateringData, FloorData, FloorLayout, FoodSafetyData, HandoffData, HandoffNote, InventoryData,
+  AttentionData, AttentionRowScoped, CateringData, FloorData, FloorLayout, FoodSafetyData, HandoffData, HandoffNote, InventoryData,
   InventoryLowRow, PeopleData, PersonRow, SalesData, SectionState, StationRow, StationsData, StationTaskRow,
 } from "@/lib/pulse/types";
 
@@ -163,24 +163,27 @@ async function attention(deps: PulseDeps, ctx: PulseCtx): Promise<AttentionData>
   const crew = crewScoped(level);
   const { minutesOfDay } = operationalNow(ctx.now);
   const loc = encodeURIComponent(ctx.locationId);
-  const rows: AttentionRow[] = [];
+  const rows: AttentionRowScoped[] = [];
   const partial: string[] = [];
 
-  // Crew may only pull the sources whose libs admit them; the rest are not theirs to see anyway.
+  // Crew may only pull the sources whose libs admit them (catering timing is theirs — Astra #11);
+  // the rest are not theirs to see anyway and are not attempted, so they never count as "failed".
   const sources = {
     board: deps.board(ctx),
     reports: deps.reports(ctx),
     fridges: deps.fridges(ctx),
-    cateringToday: crew ? Promise.resolve<CateringDueItem[]>([]) : deps.cateringToday(ctx),
-    notRung: crew ? Promise.resolve<NotInToastOrder[]>([]) : deps.notRung(ctx),
-    parPass: crew ? Promise.resolve<ParPassFacts | null>(null) : deps.lastParPass(ctx),
-    unlinked: crew ? Promise.resolve({ count: 0, names: [] as string[] }) : deps.unlinkedClockIns(ctx),
+    cateringToday: deps.cateringToday(ctx),
+    notRung: crew ? null : deps.notRung(ctx),
+    parPass: crew ? null : deps.lastParPass(ctx),
+    unlinked: crew ? null : deps.unlinkedClockIns(ctx),
   };
-  const settled = await Promise.allSettled(Object.values(sources));
-  const names = Object.keys(sources) as Array<keyof typeof sources>;
-  const got = <K extends keyof typeof sources>(key: K): Awaited<(typeof sources)[K]> | null => {
-    const r = settled[names.indexOf(key)]!;
-    if (r.status === "fulfilled") return r.value as Awaited<(typeof sources)[K]>;
+  const names = (Object.keys(sources) as Array<keyof typeof sources>).filter((k) => sources[k] !== null);
+  const settled = await Promise.allSettled(names.map((k) => sources[k] as Promise<unknown>));
+  const got = <K extends keyof typeof sources>(key: K): Awaited<NonNullable<(typeof sources)[K]>> | null => {
+    const i = names.indexOf(key);
+    if (i < 0) return null;
+    const r = settled[i]!;
+    if (r.status === "fulfilled") return r.value as Awaited<NonNullable<(typeof sources)[K]>>;
     partial.push(key);
     console.error(`pulse attention ${key} failed`, r.reason);
     return null;
@@ -243,7 +246,8 @@ async function attention(deps: PulseDeps, ctx: PulseCtx): Promise<AttentionData>
         if (e.stage !== "confirmed") continue;
         const due = timeWindowMinutes(e.timeWindow);
         if (due !== Infinity && due - minutesOfDay > 180) continue;
-        rows.push({ key: `catering_unprepped:${e.id}`, kind: "catering_unprepped", severity: severityOf("catering_unprepped"), params: { event: e.name, time: e.timeWindow ?? "" }, href: taskHref("am_prep", ctx.locationId), action: "prep" });
+        // Crew see the shop-level timing only (no event / customer name) — the row is shop-wide for them.
+        rows.push({ key: `catering_unprepped:${e.id}`, kind: "catering_unprepped", severity: severityOf("catering_unprepped"), params: crew ? { time: e.timeWindow ?? "" } : { event: e.name, time: e.timeWindow ?? "" }, href: taskHref("am_prep", ctx.locationId), action: "prep", shopWide: true });
       }
     }
   }
@@ -251,7 +255,10 @@ async function attention(deps: PulseDeps, ctx: PulseCtx): Promise<AttentionData>
   if (unlinked && unlinked.count > 0) rows.push({ key: "clockin_unlinked", kind: "clockin_unlinked", severity: severityOf("clockin_unlinked"), params: { count: unlinked.count, names: unlinked.names.join(", ") }, href: `/admin/toast-employees?location=${loc}`, action: "link" });
 
   const ranked = rankAttention(crew ? crewAttention(rows, ctx.auth.user.id) : rows);
-  return { items: ranked, score: attentionScore(ranked), partial };
+  const evidence = attentionEvidence(names.length, partial.length);
+  // Astra #4: authorization-only metadata (subject ids, shop-wide flags) never leaves the server.
+  const items = stripAttentionRows(ranked);
+  return { items, score: attentionScore(items, evidence), evidence, partial };
 }
 
 // ── Floor ───────────────────────────────────────────────────────────────────────────────────
@@ -280,7 +287,8 @@ async function floor(deps: PulseDeps, ctx: PulseCtx): Promise<FloorData> {
 async function people(deps: PulseDeps, ctx: PulseCtx): Promise<PeopleData> {
   const [board, unlinked] = await Promise.all([
     deps.board(ctx),
-    deps.unlinkedClockIns(ctx).catch((err) => { console.error("pulse unlinked clock-ins failed", err); return { count: 0, names: [] }; }),
+    // A failed clock-in read is UNAVAILABLE (null), never "0 unlinked" (Astra #7).
+    deps.unlinkedClockIns(ctx).catch((err) => { console.error("pulse unlinked clock-ins failed", err); return null; }),
   ]);
   const positionName = new Map(board.stations.flatMap((s) => s.positions.map((p) => [p.id, p.name] as const)));
   const rows: PersonRow[] = board.people.map((p) => {
@@ -424,10 +432,17 @@ async function sales(deps: PulseDeps, ctx: PulseCtx): Promise<SalesData> {
 
 async function catering(deps: PulseDeps, ctx: PulseCtx): Promise<CateringData> {
   const money = moneyVisible(ctx.auth.level);
-  const [today, tomorrow, notRung, reports] = await Promise.all([deps.cateringToday(ctx), deps.cateringTomorrow(ctx), deps.notRung(ctx), deps.reports(ctx)]);
+  const crew = crewScoped(ctx.auth.level);
+  // Crew (Astra #11): shop-level TIMING only — the not-rung orders (order numbers, money) are not read for them.
+  const [today, tomorrow, notRung, reports] = await Promise.all([
+    deps.cateringToday(ctx), deps.cateringTomorrow(ctx), crew ? Promise.resolve<NotInToastOrder[]>([]) : deps.notRung(ctx), deps.reports(ctx),
+  ]);
   const progress = (key: ReportKey): ReportProgress => reports.rows.find((r) => r.key === key)?.progress ?? "not_started";
   return {
-    today: today.map((e) => ({ id: e.id, name: e.name, timeWindow: e.timeWindow, headcount: e.headcount, isDelivery: e.isDelivery, stage: e.stage, source: e.source })),
+    redacted: crew,
+    today: today.map((e) => ({
+      id: e.id, name: crew ? null : e.name, timeWindow: e.timeWindow, headcount: e.headcount, isDelivery: e.isDelivery, stage: e.stage, source: crew ? null : e.source,
+    })),
     tomorrow,
     notRung: notRung.map((o) => ({
       orderId: o.order_id, orderNumber: o.order_number, readyAt: toastReadyAt(o), headcount: o.headcount,
@@ -451,18 +466,19 @@ export function parPassLow(facts: ParPassFacts): InventoryLowRow[] {
 }
 
 async function inventory(deps: PulseDeps, ctx: PulseCtx): Promise<InventoryData> {
+  // Secondary reads that fail are UNAVAILABLE (null), never an empty "nothing recorded" (Astra #7).
   const [parPass, deliveries, cutoffs] = await Promise.all([
     deps.lastParPass(ctx),
-    deps.deliveries(ctx).catch((err) => { console.error("pulse deliveries failed", err); return [] as DeliveryView[]; }),
-    deps.cutoffs(ctx).catch((err) => { console.error("pulse cutoffs failed", err); return { count: 0, vendors: [] as OrderingCutoffAttention[] }; }),
+    deps.deliveries(ctx).catch((err): DeliveryView[] | null => { console.error("pulse deliveries failed", err); return null; }),
+    deps.cutoffs(ctx).catch((err): { count: number; vendors: OrderingCutoffAttention[] } | null => { console.error("pulse cutoffs failed", err); return null; }),
   ]);
   const low = parPass ? parPassLow(parPass) : [];
   return {
     lastWalk: parPass ? { at: parPass.at, byName: parPass.byName, lineCount: parPass.lines.length } : null,
     low,
     risk86: low.filter((l) => l.risk86).length,
-    receiving: deliveries.slice(0, 5).map((d) => ({ id: d.id, vendorName: d.vendorName, at: d.createdAt, matchState: d.matchState, status: d.deliveryStatus })),
-    cutoffs: cutoffs.vendors.map((v) => ({ vendorName: v.vendorName, time: v.cutoffTime, hasDraft: v.hasDraft })),
+    receiving: deliveries ? deliveries.slice(0, 5).map((d) => ({ id: d.id, vendorName: d.vendorName, at: d.createdAt, matchState: d.matchState, status: d.deliveryStatus })) : null,
+    cutoffs: cutoffs ? cutoffs.vendors.map((v) => ({ vendorName: v.vendorName, time: v.cutoffTime, hasDraft: v.hasDraft })) : null,
   };
 }
 
