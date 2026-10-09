@@ -12,6 +12,7 @@ import type { AuthContext } from "@/lib/session";
 import { validLayout } from "@/lib/pulse/floor-shared";
 import { isMissingTable } from "@/lib/pulse/handoff";
 import { canArrangeFloor } from "@/lib/pulse/scope-shared";
+import { invalidateSource } from "@/lib/pulse/source-cache";
 import type { FloorLayout } from "@/lib/pulse/types";
 
 export class LayoutError extends Error {
@@ -77,6 +78,7 @@ export async function saveStationLayout(service: SupabaseClient, actor: AuthCont
     // UPDATE denials are silent: a zero rowcount is an error, never a silent success.
     if ((data ?? []).length === 0) throw new Error(`station layout update: no row for ${id}`);
   }
+  invalidateSource(`layout|${args.locationId}|`);
   await audit({
     actorId: actor.user.id, actorRole: actor.role, action: "station.layout_update", resourceTable: "pulse_station_layouts", resourceId: args.locationId,
     metadata: { location_id: args.locationId, before: before ?? {}, after: layout, stations: ids.length },

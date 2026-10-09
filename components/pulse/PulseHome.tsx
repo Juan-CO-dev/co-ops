@@ -17,7 +17,8 @@ import { operationalNow } from "@/lib/midshift-shared";
 import { loadAccessibleLocations } from "@/lib/pulse/page";
 import { BOTH, resolvePulsePanels } from "@/lib/pulse/page-shared";
 import { BOTH_SHOPS_LEVEL, pulsePageAccess, visibleSections } from "@/lib/pulse/scope-shared";
-import { defaultPulseDeps, loadPulseSections } from "@/lib/pulse/sections";
+import { withAbort } from "@/lib/pulse/abort";
+import { loadPulseSections, pulseDeps, SECTION_DEADLINE_MS } from "@/lib/pulse/sections";
 import type { AuthContext } from "@/lib/session";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 
@@ -46,7 +47,8 @@ export async function PulseHome({ auth, requested }: { auth: AuthContext; reques
   const now = new Date();
   const { date } = operationalNow(now);
   const sections = visibleSections(auth.level);
-  const deps = defaultPulseDeps(service);
+  // Shared across polls (cachedPulseDeps) and cancellable (one deadline signal into every query).
+  const deps = pulseDeps(withAbort(service, AbortSignal.timeout(SECTION_DEADLINE_MS)));
   const panels: PulsePanel[] = await Promise.all(shops.map(async (shop) => ({
     locationId: shop.id,
     locationName: shop.name,

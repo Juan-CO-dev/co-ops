@@ -14,6 +14,7 @@ import { lockLocationContext } from "@/lib/locations";
 import { getRoleLevel, isRoleCode } from "@/lib/roles";
 import type { AuthContext } from "@/lib/session";
 import { canAuthorHandoff, canReadPulseLocation, crewScoped, PULSE_V2_BASE_LEVEL } from "@/lib/pulse/scope-shared";
+import { invalidateSource } from "@/lib/pulse/source-cache";
 import type { HandoffAudience, HandoffNote } from "@/lib/pulse/types";
 
 export class PulseNotInstalledError extends Error {
@@ -57,12 +58,18 @@ function bind(actor: AuthContext, locationId: string): void {
 
 interface NoteRow { id: string; author_id: string; audience: HandoffAudience; body: string; created_at: string }
 
-export async function loadHandoffNotes(service: SupabaseClient, actor: AuthContext, args: { locationId: string; date: string }): Promise<HandoffNote[]> {
-  bindRead(actor, args.locationId);
+/** The shop's live notes for the day, every audience, with acks and names — the CACHEABLE unit (one per shop per poll). */
+export interface HandoffRaw {
+  notes: NoteRow[];
+  acks: Array<{ note_id: string; user_id: string; acked_at: string }>;
+  names: Record<string, string>;
+}
+
+/** Service-role read, no viewer in it: the caller (the section loader) has already scoped the request. */
+export async function loadHandoffRaw(service: SupabaseClient, args: { locationId: string; date: string }): Promise<HandoffRaw> {
   const { data, error } = await service.from("pulse_handoff_notes")
     .select("id, author_id, audience, body, created_at")
     .eq("location_id", args.locationId).eq("business_date", args.date).is("superseded_at", null)
-    .in("audience", audiencesFor(actor.level))
     .order("created_at", { ascending: false }).limit(50)
     .returns<NoteRow[]>();
   if (error) {
@@ -70,7 +77,7 @@ export async function loadHandoffNotes(service: SupabaseClient, actor: AuthConte
     throw new Error(`handoff notes: ${error.message}`);
   }
   const notes = data ?? [];
-  if (notes.length === 0) return [];
+  if (notes.length === 0) return { notes: [], acks: [], names: {} };
   const { data: ackRows, error: ackErr } = await service.from("pulse_handoff_acks")
     .select("note_id, user_id, acked_at").in("note_id", notes.map((n) => n.id))
     .returns<Array<{ note_id: string; user_id: string; acked_at: string }>>();
@@ -82,19 +89,33 @@ export async function loadHandoffNotes(service: SupabaseClient, actor: AuthConte
   const userIds = [...new Set([...notes.map((n) => n.author_id), ...acks.map((a) => a.user_id)])];
   const { data: users, error: uErr } = await service.from("users").select("id, name").in("id", userIds).returns<Array<{ id: string; name: string }>>();
   if (uErr) throw new Error(`handoff users: ${uErr.message}`);
-  const name = new Map((users ?? []).map((u) => [u.id, u.name]));
-  // Crew never see who acknowledged (other people's details); they see their own notes only.
-  const showPeople = !crewScoped(actor.level);
-  return notes.map((n) => {
-    const mine = acks.filter((a) => a.note_id === n.id);
+  const names: Record<string, string> = {};
+  for (const u of users ?? []) names[u.id] = u.name;
+  return { notes, acks, names };
+}
+
+/** PURE projection for one viewer: audience filter, crew stripping (no author/ack names), ackedByMe. */
+export function projectHandoffNotes(raw: HandoffRaw, viewer: { userId: string; level: number }): HandoffNote[] {
+  const audiences = audiencesFor(viewer.level);
+  const showPeople = !crewScoped(viewer.level);
+  return raw.notes.filter((n) => audiences.includes(n.audience)).map((n) => {
+    const mine = raw.acks.filter((a) => a.note_id === n.id);
     return {
       id: n.id, body: n.body, audience: n.audience, at: n.created_at,
-      authorName: showPeople ? (name.get(n.author_id) ?? null) : null,
-      acks: showPeople ? mine.map((a) => ({ name: name.get(a.user_id) ?? "—", at: a.acked_at })) : [],
-      ackedByMe: mine.some((a) => a.user_id === actor.user.id),
+      authorName: showPeople ? (raw.names[n.author_id] ?? null) : null,
+      acks: showPeople ? mine.map((a) => ({ name: raw.names[a.user_id] ?? "—", at: a.acked_at })) : [],
+      ackedByMe: mine.some((a) => a.user_id === viewer.userId),
     };
   });
 }
+
+export async function loadHandoffNotes(service: SupabaseClient, actor: AuthContext, args: { locationId: string; date: string }): Promise<HandoffNote[]> {
+  bindRead(actor, args.locationId);
+  return projectHandoffNotes(await loadHandoffRaw(service, args), { userId: actor.user.id, level: actor.level });
+}
+
+/** Writers call this so the next poll re-reads the shop's notes instead of serving the cached set. */
+function invalidateHandoff(locationId: string): void { invalidateSource(`handoff|${locationId}|`); }
 
 export async function createHandoffNote(service: SupabaseClient, actor: AuthContext, args: {
   locationId: string; date: string; audience: HandoffAudience; body: string; ip: string | null; userAgent: string | null;
@@ -110,6 +131,7 @@ export async function createHandoffNote(service: SupabaseClient, actor: AuthCont
     if (isMissingTable(error)) throw new PulseNotInstalledError("pulse_handoff_notes");
     throw new Error(`handoff create: ${error?.message ?? "no row"}`);
   }
+  invalidateHandoff(args.locationId);
   await audit({
     actorId: actor.user.id, actorRole: actor.role, action: "handoff.note_create", resourceTable: "pulse_handoff_notes", resourceId: data.id,
     metadata: { location_id: args.locationId, business_date: args.date, audience: args.audience, length: body.length },
@@ -138,6 +160,7 @@ export async function ackHandoffNote(service: SupabaseClient, actor: AuthContext
     if (isMissingTable(error)) throw new PulseNotInstalledError("pulse_handoff_acks");
     throw new Error(`handoff ack: ${error.message}`);
   }
+  invalidateHandoff(args.locationId);
   await audit({
     actorId: actor.user.id, actorRole: actor.role, action: "handoff.note_ack", resourceTable: "pulse_handoff_acks", resourceId: args.noteId,
     metadata: { location_id: args.locationId }, ipAddress: args.ip, userAgent: args.userAgent,
@@ -176,6 +199,7 @@ export async function supersedeHandoffNote(service: SupabaseClient, actor: AuthC
   }
   // UPDATE denials are silent: a zero rowcount is an explicit 404, never a success.
   if ((data ?? []).length === 0) throw new HandoffError(404, "not_found");
+  invalidateHandoff(args.locationId);
   await audit({
     actorId: actor.user.id, actorRole: actor.role, action: "handoff.note_supersede", resourceTable: "pulse_handoff_notes", resourceId: args.noteId,
     metadata: { location_id: args.locationId }, ipAddress: args.ip, userAgent: args.userAgent,

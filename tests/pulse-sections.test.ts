@@ -8,9 +8,9 @@ import type { ShiftBoard } from "@/lib/assignments-shared";
 import {
   loadPulseSection, loadPulseSections, memoDeps, parPassLow, withDeadline, type PulseCtx, type PulseDeps,
 } from "@/lib/pulse/sections";
-import { PulseNotInstalledError } from "@/lib/pulse/handoff";
+import { PulseNotInstalledError, type HandoffRaw } from "@/lib/pulse/handoff";
 import { SalesReportError } from "@/lib/sales-reports";
-import type { AttentionData, CateringData, FloorData, FoodSafetyData, HandoffNote, InventoryData, PeopleData, StationsData } from "@/lib/pulse/types";
+import type { AttentionData, CateringData, FloorData, FoodSafetyData, HandoffData, InventoryData, PeopleData, StationsData } from "@/lib/pulse/types";
 
 const LOC = "11111111-1111-4111-8111-111111111111";
 const auth = (level: number, id = "me"): AuthContext => ({
@@ -73,7 +73,7 @@ function deps(over: Partial<PulseDeps> = {}): PulseDeps {
     deliveries: vi.fn(async () => []),
     cutoffs: vi.fn(async () => ({ count: 0, vendors: [] })),
     sales: vi.fn(async () => { throw new Error("sales should not be read in this test"); }),
-    handoff: vi.fn(async () => []),
+    handoff: vi.fn(async () => ({ notes: [], acks: [], names: {} })),
     layout: vi.fn(async () => null),
     ...over,
   };
@@ -113,7 +113,7 @@ describe("isolation + deadline + not installed", () => {
   });
   it("a slow source times out with its own code", async () => {
     await expect(withDeadline(new Promise(() => {}), 5)).rejects.toThrow("timeout");
-    const d = deps({ handoff: vi.fn(() => new Promise<HandoffNote[]>(() => {})) });
+    const d = deps({ handoff: vi.fn(() => new Promise<HandoffRaw>(() => {})) });
     vi.useFakeTimers();
     const p = loadPulseSection(d, ctx(5), "handoff");
     await vi.advanceTimersByTimeAsync(7_100);
@@ -267,6 +267,27 @@ describe("Astra #11 — crew catering timing, server-redacted", () => {
     expect(r.data.tomorrow).toEqual({ count: 1, firstWindow: "11:00 AM" });
     expect(JSON.stringify(r.data)).not.toMatch(/Acme|EZ-1|12000|ezcater/);
     expect(d.notRung).not.toHaveBeenCalled();
+  });
+});
+
+describe("handoff projection per viewer over the shop-shared raw set", () => {
+  const raw: HandoffRaw = {
+    notes: [
+      { id: "n1", author_id: "mgr", audience: "managers", body: "Walk-in compressor is loud", created_at: "2026-10-09T18:00:00Z" },
+      { id: "n2", author_id: "mgr", audience: "crew", body: "Use the back fryer only", created_at: "2026-10-09T18:05:00Z" },
+    ],
+    acks: [{ note_id: "n2", user_id: "me", acked_at: "2026-10-09T18:10:00Z" }],
+    names: { mgr: "Morgan GM", me: "Val Viewer" },
+  };
+  it("crew get crew/all notes with no author or ack names; KH+ get every audience with names; ackedByMe is per viewer", async () => {
+    const d = deps({ handoff: vi.fn(async () => raw) });
+    const crew = (await loadPulseSection(d, ctx(3), "handoff")) as { data: HandoffData };
+    expect(crew.data.notes.map((n) => n.id)).toEqual(["n2"]);
+    expect(crew.data.notes[0]).toMatchObject({ authorName: null, acks: [], ackedByMe: true });
+    expect(JSON.stringify(crew.data)).not.toContain("Morgan");
+    const kh = (await loadPulseSection(d, ctx(5, "you"), "handoff")) as { data: HandoffData };
+    expect(kh.data.notes.map((n) => n.id)).toEqual(["n1", "n2"]);
+    expect(kh.data.notes[1]).toMatchObject({ authorName: "Morgan GM", acks: [{ name: "Val Viewer", at: "2026-10-09T18:10:00Z" }], ackedByMe: false });
   });
 });
 

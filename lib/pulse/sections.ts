@@ -38,14 +38,15 @@ import {
   type BreakdownRow, type SalesSummaryDto,
 } from "@/lib/sales-reports";
 import { shiftReportDate } from "@/lib/report-range";
-import { loadHandoffNotes, PulseNotInstalledError } from "@/lib/pulse/handoff";
+import { loadHandoffRaw, projectHandoffNotes, PulseNotInstalledError, type HandoffRaw } from "@/lib/pulse/handoff";
 import { loadStationLayout } from "@/lib/pulse/layout";
+import { cachedSource, sourceKey } from "@/lib/pulse/source-cache";
 import { attentionEvidence, attentionScore, crewAttention, rankAttention, severityOf, stripAttentionRows } from "@/lib/pulse/attention-shared";
 import { baselineCumulative, cumulativeByHour, dowOf, hourCurve, paceDeltaPct, sameWeekdayCoverage } from "@/lib/pulse/baseline-shared";
 import { floorStations, mergeLayout } from "@/lib/pulse/floor-shared";
 import { canArrangeFloor, canAuthorHandoff, canViewSection, crewScoped, moneyVisible, type PulseSection } from "@/lib/pulse/scope-shared";
 import type {
-  AttentionData, AttentionRowScoped, CateringData, FloorData, FloorLayout, FoodSafetyData, HandoffData, HandoffNote, InventoryData,
+  AttentionData, AttentionRowScoped, CateringData, FloorData, FloorLayout, FoodSafetyData, HandoffData, InventoryData,
   InventoryLowRow, PeopleData, PersonRow, SalesData, SectionState, StationRow, StationsData, StationTaskRow,
 } from "@/lib/pulse/types";
 
@@ -90,8 +91,40 @@ export interface PulseDeps {
   deliveries(ctx: PulseCtx): Promise<DeliveryView[]>;
   cutoffs(ctx: PulseCtx): Promise<{ count: number; vendors: OrderingCutoffAttention[] }>;
   sales(ctx: PulseCtx): Promise<SalesFacts>;
-  handoff(ctx: PulseCtx): Promise<HandoffNote[]>;
+  /** The shop's raw notes (every audience); the section projects per viewer. */
+  handoff(ctx: PulseCtx): Promise<HandoffRaw>;
   layout(ctx: PulseCtx): Promise<FloorLayout | null>;
+}
+
+/**
+ * The SCOPE part of a source's cache key (Astra #2, scope-safe sharing). Most sources are shop facts
+ * every viewer of the shop may share. Two are not: report statuses below KH depend on the viewer's
+ * assignments (keyed per viewer), and the board carries viewer fields (patched on read, see
+ * `cachedPulseDeps`). Handoff is cached RAW (all audiences) and projected per viewer in the section.
+ */
+export function sourceScope(source: keyof PulseDeps, ctx: PulseCtx): string {
+  if (source === "reports") return ctx.auth.level >= 4 ? "full" : `user:${ctx.auth.user.id}`;
+  return "shop";
+}
+
+/**
+ * Share each source across viewers and refreshes for SOURCE_TTL_MS (just under the 60 s poll): one
+ * load per source per shop per poll, however many people are watching. Sits UNDER memoDeps (which
+ * dedupes within one request).
+ */
+export function cachedPulseDeps(deps: PulseDeps, opts: { ttlMs?: number; now?: () => number } = {}): PulseDeps {
+  const wrap = <K extends keyof PulseDeps>(key: K): PulseDeps[K] => ((ctx: PulseCtx) =>
+    cachedSource(sourceKey({ source: key, locationId: ctx.locationId, date: ctx.date, scope: sourceScope(key, ctx) }),
+      () => (deps[key] as (c: PulseCtx) => Promise<unknown>)(ctx), { ttlMs: opts.ttlMs, now: opts.now?.() })) as PulseDeps[K];
+  const board = wrap("board");
+  return {
+    // The board is a shop fact; only its viewer fields differ, so patch them for the asking viewer.
+    board: async (ctx) => ({ ...(await board(ctx)), viewerId: ctx.auth.user.id, viewerLevel: ctx.auth.level }),
+    reports: wrap("reports"), fridges: wrap("fridges"), cateringToday: wrap("cateringToday"),
+    cateringTomorrow: wrap("cateringTomorrow"), notRung: wrap("notRung"), unlinkedClockIns: wrap("unlinkedClockIns"),
+    lastParPass: wrap("lastParPass"), deliveries: wrap("deliveries"), cutoffs: wrap("cutoffs"), sales: wrap("sales"),
+    handoff: wrap("handoff"), layout: wrap("layout"),
+  };
 }
 
 export class PulseScopeError extends Error {
@@ -107,7 +140,7 @@ export function withDeadline<T>(p: Promise<T>, ms: number): Promise<T> {
   return Promise.race([p, deadline]).finally(() => { if (timer) clearTimeout(timer); }) as Promise<T>;
 }
 
-/** One request = one read per source, however many sections ask. */
+/** One request = one read per source, however many sections ask (cachedPulseDeps shares across requests). */
 export function memoDeps(deps: PulseDeps): PulseDeps {
   const cache = new Map<string, Promise<unknown>>();
   const wrap = <K extends keyof PulseDeps>(key: K): PulseDeps[K] => ((ctx: PulseCtx) => {
@@ -505,10 +538,11 @@ async function foodSafety(deps: PulseDeps, ctx: PulseCtx): Promise<FoodSafetyDat
 // ── Handoff ─────────────────────────────────────────────────────────────────────────────────
 
 async function handoff(deps: PulseDeps, ctx: PulseCtx): Promise<HandoffData> {
-  const [notes, reports] = await Promise.all([deps.handoff(ctx), deps.reports(ctx)]);
+  const [raw, reports] = await Promise.all([deps.handoff(ctx), deps.reports(ctx)]);
   const rows = reports.rows.map((r) => ({ key: r.key, progress: r.progress }));
   return {
-    notes,
+    // Audience filter + crew stripping + ackedByMe happen HERE, per viewer, over the shop-shared raw set.
+    notes: projectHandoffNotes(raw, { userId: ctx.auth.user.id, level: ctx.auth.level }),
     canAuthor: canAuthorHandoff(ctx.auth.level),
     reports: rows,
     done: rows.filter((r) => r.progress === "done").length,
@@ -614,7 +648,12 @@ export function defaultPulseDeps(service: SupabaseClient): PulseDeps {
       ]);
       return { today: summary, items, channels, discounts, servers, hoursToday, heatTrailing, trailing: trailingSummary };
     },
-    handoff: (ctx) => loadHandoffNotes(service, ctx.auth, { locationId: ctx.locationId, date: ctx.date }),
+    handoff: (ctx) => loadHandoffRaw(service, { locationId: ctx.locationId, date: ctx.date }),
     layout: (ctx) => loadStationLayout(service, ctx.locationId),
   };
+}
+
+/** The production wiring: real readers, shared across polls (cachedPulseDeps). Pass a `withAbort` client so every query carries the deadline. */
+export function pulseDeps(service: SupabaseClient): PulseDeps {
+  return cachedPulseDeps(defaultPulseDeps(service));
 }

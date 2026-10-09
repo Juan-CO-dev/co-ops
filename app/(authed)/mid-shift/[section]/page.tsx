@@ -15,7 +15,8 @@ import { pulseV2Enabled } from "@/lib/pulse/flag";
 import { loadAccessibleLocations } from "@/lib/pulse/page";
 import { resolveRequestedLocation } from "@/lib/pulse/page-shared";
 import { isPulseSection, sectionAccess } from "@/lib/pulse/scope-shared";
-import { defaultPulseDeps, loadPulseSections } from "@/lib/pulse/sections";
+import { withAbort } from "@/lib/pulse/abort";
+import { loadPulseSections, pulseDeps, SECTION_DEADLINE_MS } from "@/lib/pulse/sections";
 import { requireSessionFromHeaders } from "@/lib/session";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 
@@ -46,7 +47,7 @@ export default async function PulseSectionPage({ params, searchParams }: {
   }
   const now = new Date();
   const { date } = operationalNow(now);
-  const states = await loadPulseSections(defaultPulseDeps(service), { auth, locationId, date, now }, [section]);
+  const states = await loadPulseSections(pulseDeps(withAbort(service, AbortSignal.timeout(SECTION_DEADLINE_MS))), { auth, locationId, date, now }, [section]);
   const shop = accessible.find((l) => l.id === locationId);
   return (
     <main className={shell}>

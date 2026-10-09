@@ -10,7 +10,7 @@ const mocks = vi.hoisted(() => ({
 }));
 vi.mock("@/lib/session", () => ({ requireSession: mocks.session }));
 vi.mock("@/lib/supabase-server", () => ({ getServiceRoleClient: () => ({}) }));
-vi.mock("@/lib/pulse/sections", () => ({ defaultPulseDeps: () => ({}), loadPulseSection: mocks.loadSection }));
+vi.mock("@/lib/pulse/sections", () => ({ pulseDeps: () => ({}), loadPulseSection: mocks.loadSection, SECTION_DEADLINE_MS: 7_000 }));
 vi.mock("@/lib/pulse/layout", async (importOriginal) => ({ ...(await importOriginal<typeof import("@/lib/pulse/layout")>()), saveStationLayout: mocks.saveLayout }));
 vi.mock("@/lib/pulse/handoff", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/pulse/handoff")>()),

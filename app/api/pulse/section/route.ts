@@ -10,8 +10,9 @@ import type { NextRequest } from "next/server";
 import { jsonError, jsonOk } from "@/lib/api-helpers";
 import { operationalNow } from "@/lib/midshift-shared";
 import { pulseV2Enabled } from "@/lib/pulse/flag";
+import { withAbort } from "@/lib/pulse/abort";
 import { canReadPulseLocation, isPulseSection, sectionAccess } from "@/lib/pulse/scope-shared";
-import { defaultPulseDeps, loadPulseSection } from "@/lib/pulse/sections";
+import { loadPulseSection, pulseDeps, SECTION_DEADLINE_MS } from "@/lib/pulse/sections";
 import { requireSession } from "@/lib/session";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 
@@ -31,7 +32,9 @@ export async function GET(req: NextRequest) {
 
   const now = new Date();
   const { date } = operationalNow(now);
-  const result = await loadPulseSection(defaultPulseDeps(getServiceRoleClient()), { auth: ctx, locationId, date, now }, section);
+  // The deadline signal rides into every query (Astra #2): the DB stops working when the race is lost.
+  const service = withAbort(getServiceRoleClient(), AbortSignal.timeout(SECTION_DEADLINE_MS));
+  const result = await loadPulseSection(pulseDeps(service), { auth: ctx, locationId, date, now }, section);
   const res = jsonOk({ section, ...result });
   res.headers.set("cache-control", "private, no-store");
   return res;
