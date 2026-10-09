@@ -1,5 +1,5 @@
 -- Migration 0234_customer_profiles
--- AUTHORED 2026-10-08. NOT YET APPLIED -- GATE CC/JUAN: sim first, then prod. Nothing writes until
+-- AUTHORED 2026-10-08. APPLIED TO PROD 2026-10-09 (20261009061108; sim 20261009060704, harness + race pass; prod dry run pass). Nothing writes until
 -- CUSTOMER_PROFILES=1 is set after the apply (the app deploys before this migration).
 --
 -- Customer profiles + marketing consent (Juan 2026-10-07/08, GO-coops-customer-profiles):
