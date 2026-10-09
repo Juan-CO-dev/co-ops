@@ -91,9 +91,11 @@ export async function loadSalesSummary(viewer: ReportScopeViewer, args: { locati
   assertSalesScope(viewer, args.locationId);
   const sb = deps.client ?? getServiceRoleClient();
   const { range, locationId } = args;
+  // Read this first: totals loaded afterward cannot predate the watermark advertised beside them.
+  const modifiedCoverage = await loadModifiedCoverage(sb, locationId);
   if (range.empty) {
     const empty = summarizeSales([], range.from, range.from > range.to ? range.from : range.to, range.grain);
-    return { locationId, range, buckets: [], totals: { ...empty.totals, expectedDays: 0, coverage: "missing" }, previous: null, deltaPct: null, capturedAt: null };
+    return { locationId, range, buckets: [], totals: { ...empty.totals, expectedDays: 0, coverage: "missing" }, previous: null, deltaPct: null, capturedAt: null, modifiedCoverage };
   }
   const [current, previous, capturedAt] = await Promise.all([
     dailyTotals(sb, locationId, range.from, range.to, range.grain),
@@ -102,8 +104,21 @@ export async function loadSalesSummary(viewer: ReportScopeViewer, args: { locati
   ]);
   return {
     locationId, range, buckets: current.buckets, totals: current.totals, previous: previous?.totals ?? null,
-    deltaPct: salesDeltaPct(current.totals, previous?.totals ?? null), capturedAt,
+    deltaPct: salesDeltaPct(current.totals, previous?.totals ?? null), capturedAt, modifiedCoverage,
   };
+}
+
+async function loadModifiedCoverage(sb: Client, locationId: string): Promise<SalesSummaryDto["modifiedCoverage"]> {
+  try {
+    const { data, error } = await sb.from("toast_modified_cursors").select("coverage_start,watermark")
+      .eq("location_id", locationId).abortSignal(AbortSignal.timeout(6_000))
+      .maybeSingle<{ coverage_start: string; watermark: string | null }>();
+    // Discovery is an optional, fail-soft layer. Its absence must not hide established Sales totals.
+    if (error || !data) return null;
+    return { start: data.coverage_start, through: data.watermark };
+  } catch {
+    return null;
+  }
 }
 
 async function latestCapture(sb: Client, locationId: string, businessDate: string): Promise<string | null> {

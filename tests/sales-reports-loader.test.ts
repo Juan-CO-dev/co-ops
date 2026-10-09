@@ -16,12 +16,15 @@ const agm = { userId: "u-agm", level: 6, locations: [A] };
 const moo = { userId: "u-moo", level: 8, locations: [] as string[] };
 
 type Call = { fn: string; args: Record<string, unknown> };
-function fakeClient(handler: (fn: string, args: Record<string, unknown>) => unknown) {
+function fakeClient(handler: (fn: string, args: Record<string, unknown>) => unknown,
+  tableHandler: (table: string) => { data: unknown; error: unknown } = () => ({ data: null, error: null })) {
   const calls: Call[] = [];
+  const events: string[] = [];
   let inFlight = 0;
   let maxInFlight = 0;
   const client = {
     rpc: async (fn: string, args: Record<string, unknown>) => {
+      events.push(`rpc:${fn}`);
       calls.push({ fn, args });
       inFlight++; maxInFlight = Math.max(maxInFlight, inFlight);
       await new Promise((r) => setTimeout(r, 1));
@@ -29,9 +32,16 @@ function fakeClient(handler: (fn: string, args: Record<string, unknown>) => unkn
       const out = handler(fn, args);
       return out instanceof Error ? { data: null, error: { message: out.message, code: (out as Error & { code?: string }).code } } : { data: out, error: null };
     },
-    from: () => { throw new Error("unexpected table read"); },
+    from: (table: string) => {
+      events.push(`table:${table}`);
+      const query = {
+        select: () => query, eq: () => query, order: () => query, limit: () => query, abortSignal: () => query,
+        maybeSingle: async () => tableHandler(table),
+      };
+      return query;
+    },
   };
-  return { client: client as never, calls, maxInFlight: () => maxInFlight };
+  return { client: client as never, calls, events, maxInFlight: () => maxInFlight };
 }
 const emptyDaily = { classes: [], tips: [], discounts: [], refunds: [], captured_days: [], ezcater: [] };
 
@@ -102,11 +112,33 @@ describe("range windowing: 12 months is twelve-ish bounded statements, two at a 
     const f = fakeClient(() => new Error("statement timeout"));
     await expect(loadSalesBreakdown(gm, { locationId: A, range: resolveSalesRange({}, TODAY), dimension: "item" }, { client: f.client })).rejects.toThrow(/statement timeout/);
   });
-  it("an empty range makes no call", async () => {
+  it("an empty range reads only optional refund coverage", async () => {
     const f = fakeClient(() => emptyDaily);
     const range = resolveSalesRange({ range: "this_month" }, "2026-10-01");
     expect((await loadSalesSummary(gm, { locationId: A, range }, { client: f.client })).buckets).toEqual([]);
     expect(f.calls).toEqual([]);
+    expect(f.events).toEqual(["table:toast_modified_cursors"]);
+  });
+  it("reads modified coverage before totals and returns its successful exclusive watermark", async () => {
+    const f = fakeClient(() => emptyDaily, (table) => table === "toast_modified_cursors"
+      ? { data: { coverage_start: "2026-10-08T12:00:00Z", watermark: "2026-10-08T13:00:00Z" }, error: null }
+      : { data: null, error: null });
+    const summary = await loadSalesSummary(gm, { locationId: A, range: resolveSalesRange({}, TODAY) }, { client: f.client });
+    expect(f.events[0]).toBe("table:toast_modified_cursors");
+    expect(f.events.findIndex((event) => event.startsWith("rpc:"))).toBeGreaterThan(0);
+    expect(summary.modifiedCoverage).toEqual({ start: "2026-10-08T12:00:00Z", through: "2026-10-08T13:00:00Z" });
+  });
+  it("keeps Sales available when the optional modified cursor schema is unavailable", async () => {
+    const f = fakeClient(() => emptyDaily, () => ({ data: null, error: { code: "42P01", message: "missing" } }));
+    const summary = await loadSalesSummary(gm, { locationId: A, range: resolveSalesRange({}, TODAY) }, { client: f.client });
+    expect(summary.modifiedCoverage).toBeNull();
+    expect(f.calls.some((call) => call.fn === "sales_report_daily")).toBe(true);
+  });
+  it("keeps Sales available when the optional cursor transport rejects", async () => {
+    const f = fakeClient(() => emptyDaily, () => { throw new Error("socket closed"); });
+    const summary = await loadSalesSummary(gm, { locationId: A, range: resolveSalesRange({}, TODAY) }, { client: f.client });
+    expect(summary.modifiedCoverage).toBeNull();
+    expect(f.calls.some((call) => call.fn === "sales_report_daily")).toBe(true);
   });
 });
 
