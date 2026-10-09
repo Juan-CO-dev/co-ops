@@ -5565,5 +5565,6 @@
   "vault.a11y.tabs": "Secciones de la bóveda",
   "vault.a11y.shop_filter": "Filtrar por tienda",
   "vault.a11y.close_pin": "Cancelar el PIN",
-  "vault.a11y.user_select": "Persona"
+  "vault.a11y.user_select": "Persona",
+  "notifications.vault_entry_change.body.create": "Una entrada compartida nueva. Cada revelado queda registrado."
 }

@@ -5565,5 +5565,6 @@
   "vault.a11y.tabs": "Vault sections",
   "vault.a11y.shop_filter": "Filter by shop",
   "vault.a11y.close_pin": "Cancel PIN entry",
-  "vault.a11y.user_select": "Person"
+  "vault.a11y.user_select": "Person",
+  "notifications.vault_entry_change.body.create": "A new shared entry. Every reveal of it is recorded."
 }
