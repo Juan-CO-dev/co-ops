@@ -3,6 +3,8 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { ShiftBoardClient } from "@/components/assignments/ShiftBoardClient";
 import { TranslationProvider } from "@/lib/i18n/provider";
+import en from "@/lib/i18n/en.json";
+import es from "@/lib/i18n/es.json";
 import { TASK_TYPES, taskHref, type ShiftBoard } from "@/lib/assignments-shared";
 
 vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: vi.fn() }) }));
@@ -14,13 +16,30 @@ function board(level: number, assigned = false): ShiftBoard {
     tasks: assigned ? TASK_TYPES.map((task) => ({ id: task, task, assigneeId: "viewer", assignerId: "lead", assignerName: "Lead", note: null })) : [],
   };
 }
-function render(value: ShiftBoard, compact = true) {
+function render(value: ShiftBoard, compact = true, language: "en" | "es" = "en") {
   // Required children prop preserves the provider's strict React.createElement type.
   // eslint-disable-next-line react/no-children-prop
-  return renderToStaticMarkup(createElement(TranslationProvider, { initialLanguage: "en", children: createElement(ShiftBoardClient, { board: value, compact }) }));
+  return renderToStaticMarkup(createElement(TranslationProvider, { initialLanguage: language, children: createElement(ShiftBoardClient, { board: value, compact }) }));
 }
 
 describe("My shift and assignments board", () => {
+  it.each([
+    [3, "en", "Tasks", "Stations"],
+    [3, "es", "Tareas", "Estaciones"],
+    [4, "en", "Take or assign tasks", "Take or assign stations"],
+    [4, "es", "Tomar o asignar tareas", "Tomar o asignar estaciones"],
+  ] as const)("uses permission-accurate section titles at level %s in %s", (level, language, tasks, stations) => {
+    for (const compact of [true, false]) {
+      const html = render(board(level), compact, language);
+      expect(html).toContain(`<span class="min-w-0 truncate text-sm font-bold text-co-text">${tasks}</span>`);
+      expect(html).toContain(`<span class="min-w-0 truncate text-sm font-bold text-co-text">${stations}</span>`);
+      if (level < 4) expect(html).not.toContain(language === "en" ? "Take or assign" : "Tomar o asignar");
+    }
+  });
+  it("keeps the short board titles present and exact in both dictionaries", () => {
+    expect([en["assignments.tasks"], en["assignments.stations"]]).toEqual(["Tasks", "Stations"]);
+    expect([es["assignments.tasks"], es["assignments.stations"]]).toEqual(["Tareas", "Estaciones"]);
+  });
   it.each([2, 3, 4, 5, 6, 7, 9])("shows the unassigned safety line only to KH+ at level %s", (level) => {
     const html = render(board(level));
     expect(html).toContain("My shift");

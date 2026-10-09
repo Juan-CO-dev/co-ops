@@ -174,7 +174,7 @@ export function ShiftBoardClient({ board, compact = false, retrainTasks = [] }: 
     {!compact && <ActionLink variant="secondary" href={`/stations?loc=${board.locationId}`}>{t("assignments.stations")}</ActionLink>}
     {!compact && board.viewerLevel >= 4 && <p className="text-sm text-co-text-muted">{t("assignments.rosterHint")}</p>}
     {error && <p role="alert" className="text-co-cta-text">{t(error)}</p>}
-    {!compact && section("stations", "assignments.takeAssignStations", filledStations, positions.length, <div className="space-y-3">{board.stations.filter((s) => s.active && s.staffed).map((station) => {
+    {!compact && section("stations", board.viewerLevel >= 4 ? "assignments.takeAssignStations" : "assignments.stations", filledStations, positions.length, <div className="space-y-3">{board.stations.filter((s) => s.active && s.staffed).map((station) => {
       const positions = station.positions.filter((p) => p.active);
       const filled = positions.filter((p) => board.people.some((person) => currentStation(board.events, person.id)?.positionId === p.id)).length;
       return <div key={station.id} className="rounded-xl border border-co-border p-3">
@@ -207,10 +207,10 @@ export function ShiftBoardClient({ board, compact = false, retrainTasks = [] }: 
       </div>;
     })}</div>)}
     {compact && retrainTasks.length > 0 && <RetrainTaskList tasks={retrainTasks} />}
-    {compact && section("tasks", "assignments.takeAssignTasks", ownTasks.length, TASK_TYPES.length, <div className="space-y-3"><ul className="space-y-2">{board.viewerLevel >= 4 && unassigned.filter((task) => board.viewerLevel >= TASK_MIN_LEVEL[task] && board.people.find((person) => person.id === board.viewerId)?.available !== false).map((task) => <li key={task}>
+    {compact && section("tasks", board.viewerLevel >= 4 ? "assignments.takeAssignTasks" : "assignments.tasks", ownTasks.length, TASK_TYPES.length, <div className="space-y-3"><ul className="space-y-2">{board.viewerLevel >= 4 && unassigned.filter((task) => board.viewerLevel >= TASK_MIN_LEVEL[task] && board.people.find((person) => person.id === board.viewerId)?.available !== false).map((task) => <li key={task}>
       <ActionLink variant="secondary" className="max-w-full whitespace-normal text-left" href={board.viewerLevel >= 4 ? `/assignments?location=${board.locationId}` : taskHref(task, board.locationId)}>{t("assignments.unassignedAction", { task: t(`assignments.task.${task}`) })}</ActionLink>
     </li>)}</ul>{ownTasks.filter((task) => board.viewerLevel >= TASK_MIN_LEVEL[task.task]).map((task) => <div key={task.id}>{board.viewerLevel >= 4 || task.source !== "taken" ? <ActionLink variant="secondary" href={taskHref(task.task, board.locationId)}>{t(`assignments.task.${task.task}`)}</ActionLink> : <span>{t(`assignments.task.${task.task}`)}</span>}{taskLine(task)}</div>)}</div>)}
-    {!compact && section("tasks", "assignments.takeAssignTasks", TASK_TYPES.length - unassigned.length, TASK_TYPES.length, <div className="space-y-3">
+    {!compact && section("tasks", board.viewerLevel >= 4 ? "assignments.takeAssignTasks" : "assignments.tasks", TASK_TYPES.length - unassigned.length, TASK_TYPES.length, <div className="space-y-3">
       {board.viewerLevel >= 4 && <p className="text-sm text-co-text-muted">{t("assignments.takeHint")}</p>}
       <ul className="space-y-3">
         <li className="rounded-xl border border-co-border p-3"><ActionLink variant="secondary" href={`/operations/closing?location=${board.locationId}`}>{t("assignments.closing")}</ActionLink><p className="mt-2 text-sm text-co-text-muted">{t("assignments.everyone")}</p></li>
@@ -228,7 +228,7 @@ export function ShiftBoardClient({ board, compact = false, retrainTasks = [] }: 
       </ul>
     </div>)}
     {!compact && board.viewerLevel >= 4 && section("unassigned", "assignments.unassigned", 0, unassigned.length, <ul className="space-y-2">{unassigned.map((task) => <li key={task}>{board.viewerLevel >= TASK_MIN_LEVEL[task] ? <ActionLink variant="secondary" href={taskHref(task, board.locationId)}>{t(`assignments.task.${task}`)}</ActionLink> : <span>{t(`assignments.task.${task}`)}</span>}</li>)}</ul>)}
-    {section(compact ? "stations" : "people", compact ? "assignments.takeAssignStations" : "assignments.people", compact ? Number(!!currentStation(board.events, board.viewerId)?.stationId) : board.people.filter((person) => person.hasWork).length, compact ? 1 : board.people.length, <div className="space-y-3">
+    {section(compact ? "stations" : "people", compact ? (board.viewerLevel >= 4 ? "assignments.takeAssignStations" : "assignments.stations") : "assignments.people", compact ? Number(!!currentStation(board.events, board.viewerId)?.stationId) : board.people.filter((person) => person.hasWork).length, compact ? 1 : board.people.length, <div className="space-y-3">
     {!compact && hereNowList}
     {people.length === 0 && <p>{t("assignments.empty")}</p>}
     {people.map((person) => {
