@@ -97,6 +97,21 @@ describe("ezCater authoritative depletion", () => {
     tables.ezcater_current_toast_links = [link];
     expect((await loadReconciledSalesWindow(db(), window)).rows[0]!.direct_oz).toBe(12);
   });
+  it("counts customizations once alongside the reviewed base and excludes linked Toast modifiers", async () => {
+    const customized = { ...item, options: [{ customizationId: "extra", quantity: 2 }] };
+    tables.ezcater_order_items = [{ ...customized, order_id: "ez", snapshot_id: "ezsnap", is_current: true }];
+    tables.ezcater_item_map = [{ ...tables.ezcater_item_map![0], identity_key: itemIdentity(customized) }];
+    tables.ezcater_customization_map = [{ location_id: "shop", customization_id: "extra", status: "confirmed", pick_menu_item_id: null,
+      effects: [{ targetKind: "sku", targetId: "sku", disposition: "deplete", portionQty: 2, portionUnit: "oz", parentOnly: false }] }];
+    tables.vendor_items = [{ id: "sku", avg_oz_per_each: null }];
+    const result = await loadReconciledSalesWindow(db(), window);
+    expect(result.rows[0]!.direct_oz).toBe(16); // 3 base x 4 oz + 2 selected x 2 oz, Toast check excluded.
+    expect(result.coverage.degraded).toBe(false);
+    tables.ezcater_customization_map = [];
+    const unresolved = await loadReconciledSalesWindow(db(), window);
+    expect(unresolved.rows[0]!.direct_oz).toBe(0);
+    expect(unresolved.coverage.degraded).toBe(true);
+  });
   it.each(["Ezcater", "EZ Cater", "ez-cater"])("retains an unlinked %s dining ring regardless of catering channel", (diningOption) => {
     expect(reconciledToastOrders([{ ...ring, diningOption }], [])[0]!.salesChannel).toBeNull();
     expect(reconciledToastOrders([{ ...ring, diningOption }], [])[0]!.selections).toHaveLength(2);

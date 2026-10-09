@@ -7,8 +7,10 @@ import { loadRawToastSalesRows } from "@/lib/toast/effective-depletion";
 import { etYmdMinusDays } from "@/lib/operational-day";
 import { captureBudget } from "@/lib/toast/capture-runner";
 import { loadKnownToastOrderCodes, toastCodeSelectionKey } from "./toast-codes";
-import { packageShadowAmounts } from "./shadow-package";
-import { itemIdentity, matchSelection, orderCodeTokens, probeItemMap, shadowAmounts,
+import { loadPackageShadowContext } from "./shadow-package";
+import { loadCustomizationContext } from "./customizations";
+import { customizedLineAmounts, resolveCustomizations } from "./customizations-shared";
+import { itemIdentity, matchSelection, orderCodeTokens, probeItemMap,
   type ItemIdentity, type LinkOrder, type LinkSelection, type ProductionEvidence, type ToastMap, type TransferEvidence } from "./pass2-shared";
 
 type Order = LinkOrder & { snapshot_id: string; lead_id: string; status: string | null };
@@ -46,7 +48,13 @@ async function materialize(fromDate: string, toDate: string, deadlineAt: number,
   for (const order of orders) order.location_id = byLead.get(order.lead_id)?.location_id ?? order.location_id;
   const targets = orders.filter((o) => o.event_date! >= fromDate && o.event_date! <= toDate);
   if (!targets.length) return { processed: 0, failed: 0, deferred: false };
-  const graph = await loadRecipeGraph();
+  const graphs = new Map<string, Awaited<ReturnType<typeof loadRecipeGraph>>>();
+  const graphFor = async (locationId: string) => {
+    let graph = graphs.get(locationId);
+    if (!graph) { graph = await loadRecipeGraph({ locationId }); graphs.set(locationId, graph); }
+    return graph;
+  };
+  let customizations: Awaited<ReturnType<typeof loadCustomizationContext>> | undefined;
   const maps = await selectAllRows<ToastMap & { location_id: string }>((from, to) => sb.from("toast_menu_map")
     .select("id,location_id,toast_item_guid,toast_item_name,item_id,menu_item_id,package_id").eq("active", true).eq("match_status", "confirmed").eq("is_modifier", false).eq("disposition", "deplete")
     .order("id").range(from, to).abortSignal(signal));
@@ -54,6 +62,8 @@ async function materialize(fromDate: string, toDate: string, deadlineAt: number,
     toast_map_id: string | null; toast_item_guid: string | null; item_id: string | null; menu_item_id: string | null; package_id: string | null }>((from, to) => sb.from("ezcater_item_map")
     .select("location_id,identity_key,status,evidence,toast_map_id,toast_item_guid,item_id,menu_item_id,package_id")
     .order("location_id").order("identity_key").range(from, to).abortSignal(signal));
+  const packages = await loadPackageShadowContext(sb,
+    [...maps, ...decisions].flatMap((target) => target.package_id ? [target.package_id] : []), signal);
   // Read failures abort the run: enabling PASS 3 cannot bypass old-shop evidence.
   const transferAudit = await selectAllRows<TransferEvidence & { resource_id: string }>((from, to) => sb.from("audit_log")
     .select("resource_id,occurred_at,metadata").eq("resource_table", "catering_pipeline")
@@ -134,9 +144,11 @@ async function materialize(fromDate: string, toDate: string, deadlineAt: number,
         const localMaps = maps.filter((m) => m.location_id === order.location_id);
         const decision = decisions.find((m) => m.location_id === order.location_id && m.identity_key === identity);
         if (decision?.status === "ignored") continue;
+        if (item.options.length && !customizations) customizations = await loadCustomizationContext(sb, undefined, signal);
+        const customizationIssues = resolveCustomizations(item.options, customizations?.maps ?? [], order.location_id).issues;
+        if (active) for (const issue of customizationIssues) reviews.push({ source: "ezcater", ...issue, candidates: [] });
         const probe = probeItemMap(item, localMaps);
-        // A base POS target cannot establish the meaning of selected options.
-        if (item.options.length) { probe.confirmed = null; probe.evidence = null; }
+        // Base identity and customization semantics are independent decisions.
         if (decision?.status === "confirmed") {
           // The map owns the approved entity. A Toast menu edit or absent Toast
           // base row must not reinterpret a human decision (including options).
@@ -152,15 +164,14 @@ async function materialize(fromDate: string, toDate: string, deadlineAt: number,
           item_id: probe.confirmed?.item_id ?? null, menu_item_id: probe.confirmed?.menu_item_id ?? null,
           status: probe.confirmed ? "confirmed" : "review", evidence: probe.evidence, candidates: probe.candidates });
         if (!probe.confirmed) { reviews.push({ source: "ezcater", code: probe.reason, identity_key: identity, candidates: probe.candidates }); continue; }
-        if (item.options.length && probe.evidence !== "reviewed" && probe.evidence !== "reviewed_direct") {
-          reviews.push({ source: "ezcater", code: "options_unmapped", identity_key: identity, candidates: [] });
-          continue;
-        }
+        if (customizationIssues.length) continue;
         if (!active) continue;
         const evidence = transfers.filter((t) => t.resource_id === order.lead_id);
-        const amounts = probe.confirmed.package_id
-          ? await packageShadowAmounts(sb, graph, probe.confirmed.package_id, Number(item.quantity), order.location_id, order.event_date!, productions, evidence, signal)
-          : shadowAmounts(graph, probe.confirmed, Number(item.quantity), order.location_id, order.event_date!, productions, evidence);
+        const graph = await graphFor(order.location_id);
+        const { amounts, issues } = customizedLineAmounts({ graph, target: probe.confirmed, quantity: Number(item.quantity),
+          options: item.options, maps: customizations?.maps ?? [], skuWeights: customizations?.skuWeights,
+          locationId: order.location_id, eventDate: order.event_date!, productions, transfers: evidence, packages });
+        for (const issue of issues) reviews.push({ source: "ezcater", ...issue, candidates: [] });
         if (!amounts.length && Number(item.quantity) > 0) reviews.push({ source: "ezcater", code: "recipe_unresolved", identity_key: identity, candidates: [] });
         for (const amount of amounts) {
           const current = baseline.find((r) => r.location_id === order.location_id && r.business_date === order.event_date && r.sku_id === amount.sku_id);

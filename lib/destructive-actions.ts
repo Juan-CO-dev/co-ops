@@ -39,6 +39,8 @@ export const DESTRUCTIVE_ACTIONS = [
   "ezcater.review.dismiss",
   "ezcater.item_map.approve",
   "ezcater.item_map.ignore",
+  "ezcater.customization_map.approve",
+  "ezcater.customization_map.ignore",
   "catering.pipeline.transfer_location", // Human reassignment of a catering order and its demand.
   "task.override", // A human acts on another assignee's accountability record.
   "station.create",
