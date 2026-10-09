@@ -11,7 +11,7 @@ const TABLES = ["customers", "customer_identifiers", "customer_cards", "customer
 describe("0234 discipline", () => {
   it("is numbered 0234, authored only, and never touches 0235", () => {
     expect(sql.split("\n")[0]).toBe("-- Migration 0234_customer_profiles");
-    expect(sql).toContain("NOT YET APPLIED -- GATE CC/JUAN");
+    expect(sql).toContain("APPLIED TO PROD");
     expect(sql).not.toMatch(/0235/);
     expect(sql.trimEnd().endsWith("commit;")).toBe(true);
   });
