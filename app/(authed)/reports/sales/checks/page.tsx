@@ -55,7 +55,7 @@ export default async function SalesChecksPage({ searchParams }: { searchParams: 
       capKey="reports.sales.cap" shortened={range.shortened} shortenedKey="reports.sales.range_shortened" />
     {chips.length ? <div className="mb-3 flex flex-wrap items-center gap-2 text-sm">
       <span className="text-xs font-bold tracking-wide text-co-text-muted">{t("reports.sales.filters")}</span>
-      {chips.map((c) => <span key={c} className="rounded-full border border-co-border-2 bg-co-surface px-3 py-1">{c}</span>)}
+      {chips.map((c) => <span key={c} className="min-w-0 max-w-full break-words rounded-full border border-co-border-2 bg-co-surface px-3 py-1">{c}</span>)}
       <Link className={salesLink} href={reportNavigationHref("/reports/sales/checks", { ...salesRangeParams(range), hubLocation: params.hubLocation, location: locationId })}>{t("reports.sales.clear_filters")}</Link>
     </div> : null}
   </>;
@@ -73,10 +73,10 @@ export default async function SalesChecksPage({ searchParams }: { searchParams: 
         {page.cursorReset ? <p className="mb-2 text-xs text-co-warning-text">{t("reports.sales.cursor_reset")}</p> : null}
         {page.rows.length === 0 ? <p className="text-sm text-co-text-muted">{t("reports.sales.no_checks")}</p> : <ul className="divide-y divide-co-border">
           {page.rows.map((r) => <li key={`${r.businessDate}|${r.checkGuid}`}>
-            <Link href={detailHref(r.businessDate, r.checkGuid)} className="flex min-h-[44px] flex-wrap items-center justify-between gap-x-3 gap-y-1 py-2 hover:bg-co-surface-2">
-              <span className="min-w-0">
+            <Link href={detailHref(r.businessDate, r.checkGuid)} className="flex min-h-[44px] min-w-0 flex-wrap items-center justify-between gap-x-3 gap-y-1 py-2 hover:bg-co-surface-2">
+              <span className="min-w-0 flex-1">
                 <span className="block font-semibold">{formatDateLabel(r.businessDate, language)}{r.openedAt ? ` · ${formatTime(r.openedAt, language)}` : ""}</span>
-                <span className="block text-xs text-co-text-muted">{channelLabel(language, r.channel)} · {providerLabel(language, r.provider)} · {serverLabel(language, r.serverGuid ?? "", r.serverName)} · {t("reports.sales.units_n", { n: formatQuantity(r.units, language) })}</span>
+                <span className="block truncate text-xs text-co-text-muted" title={`${channelLabel(language, r.channel)} · ${providerLabel(language, r.provider)} · ${serverLabel(language, r.serverGuid ?? "", r.serverName)}`}>{channelLabel(language, r.channel)} · {providerLabel(language, r.provider)} · {serverLabel(language, r.serverGuid ?? "", r.serverName)} · {t("reports.sales.units_n", { n: formatQuantity(r.units, language) })}</span>
               </span>
               <span className="text-right font-bold"><Money cents={r.amountCents} language={language} />
                 {r.discountCents ? <span className="block text-xs font-normal text-co-text-muted">{t("reports.sales.discounts")}: <Money cents={r.discountCents} language={language} /></span> : null}

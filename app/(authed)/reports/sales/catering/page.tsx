@@ -63,13 +63,13 @@ export default async function SalesCateringPage({ searchParams }: { searchParams
       const nextHref = data.orders.nextCursor ? reportNavigationHref("/reports/sales/catering", { ...context, ...cursors, [cursorKey]: data.orders.nextCursor }) : null;
       const toastTotal = data.toastCatering.reduce((s, r) => s + r.cents, 0);
       const checksHref = (provider: string | null) => reportNavigationHref("/reports/sales/checks", { ...context, channel: "catering", provider: provider ?? SALES_EMPTY_KEY }, shopId);
-      body = <div className="grid gap-3">
+      body = <div className="grid min-w-0 gap-3">
         <section className={salesCard} aria-label={t("reports.sales.catering.ezcater")}>
           <h2 className="mb-2 font-bold">{t("reports.sales.catering.ezcater")}</h2>
           <p className="text-sm">{t("reports.sales.ezcater_orders", { n: data.ezcater.orders })} · <Money cents={data.ezcater.subtotalCents} language={language} />
             {data.ezcater.amountMissing ? ` · ${t("reports.sales.amount_missing", { n: data.ezcater.amountMissing })}` : ""}</p>
           <p className="mb-2 text-xs text-co-text-muted">{t("reports.sales.catering.ezcater_basis")}</p>
-          <ul className="flex flex-wrap gap-2 text-sm">{STATUSES.map((s) => <li key={s} className="rounded-full border border-co-border-2 px-3 py-1">
+          <ul className="flex flex-wrap gap-2 text-sm">{STATUSES.map((s) => <li key={s} className="min-w-0 max-w-full break-words rounded-full border border-co-border-2 px-3 py-1">
             {t(`reports.sales.catering.status.${s}` as TranslationKey)}: {data.ezcater.statuses[s]}</li>)}</ul>
           {data.ezcater.orphanChecks ? <p className="mt-2 text-sm text-co-warning-text">{t("reports.sales.catering.orphans", { n: data.ezcater.orphanChecks })} · <Money cents={data.ezcater.orphanCents} language={language} /></p> : null}
         </section>
@@ -77,8 +77,8 @@ export default async function SalesCateringPage({ searchParams }: { searchParams
         <section className={salesCard} aria-label={t("reports.sales.catering.toast")}>
           <h2 className="mb-2 font-bold">{t("reports.sales.catering.toast")}</h2>
           <p className="mb-2 text-sm">{t("reports.sales.total")}: <Money cents={toastTotal} language={language} /></p>
-          {data.toastCatering.length ? <ul className="text-sm">{data.toastCatering.map((r) => <li key={r.key} className="flex justify-between gap-3 border-t border-co-border">
-            <Link className={salesLink} href={checksHref(r.provider ?? null)}>{providerLabel(language, r.provider)}</Link>
+          {data.toastCatering.length ? <ul className="text-sm">{data.toastCatering.map((r) => <li key={r.key} className="flex min-w-0 flex-wrap items-center justify-between gap-3 border-t border-co-border">
+            <Link className={`${salesLink} min-w-0 max-w-full truncate`} title={providerLabel(language, r.provider)} href={checksHref(r.provider ?? null)}>{providerLabel(language, r.provider)}</Link>
             <span className="inline-flex items-center"><Money cents={r.cents} language={language} /> · {t("reports.sales.checks_n", { n: r.checks })}</span>
           </li>)}</ul> : <p className="text-sm text-co-text-muted">{t("reports.sales.no_rows")}</p>}
         </section>
@@ -96,7 +96,7 @@ export default async function SalesCateringPage({ searchParams }: { searchParams
 
         <section className={salesCard} aria-label={t("reports.sales.catering.orders")}>
           <h2 className="mb-2 font-bold">{t("reports.sales.catering.orders")}</h2>
-          {data.orders.rows.length ? <div className="overflow-x-auto"><table className="w-full text-sm">
+          {data.orders.rows.length ? <div className="min-w-0 max-w-full overflow-x-auto"><table className="w-full min-w-[620px] text-sm">
             <thead><tr className="text-left text-xs text-co-text-muted">
               <th className="py-2 pr-2">{t("reports.sales.catering.event_date")}</th><th className="py-2 pr-2">{t("reports.sales.catering.order_number")}</th>
               <th className="py-2 pr-2 text-right">{t("reports.sales.catering.headcount")}</th><th className="py-2 pr-2 text-right">{t("reports.sales.catering.subtotal")}</th>
