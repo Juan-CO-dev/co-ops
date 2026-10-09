@@ -11,7 +11,7 @@ do $$ begin
   if not exists(select 1 from public.users where email='maya@sim.co-ops') then
     raise exception 'SIM ONLY';
   end if;
-  assert to_regprocedure('public.vault_write_secret(uuid,uuid,text,text,text,text,text,text,text)') is not null,'0235 required';
+  assert to_regprocedure('public.vault_write_secret(uuid,uuid,integer,text,text,text,text,text,text,text)') is not null,'0235 required';
   assert not exists(select 1 from information_schema.routine_privileges
     where routine_schema='public' and routine_name in ('vault_write_secret','vault_take_reveal_slot','vault_scrub_expired_secrets')
       and grantee in ('PUBLIC','anon','authenticated') and privilege_type='EXECUTE'), 'RPC grants';
@@ -29,7 +29,7 @@ do $$ begin
 end $$;
 set local role authenticated;
 do $$ begin
-  begin perform public.vault_write_secret(gen_random_uuid(),gen_random_uuid(),'a','b','c','d','e','f','v1');
+  begin perform public.vault_write_secret(gen_random_uuid(),gen_random_uuid(),1,'a','b','c','d','e','f','v1');
     raise exception 'staff write RPC allowed'; exception when insufficient_privilege then null; end;
   begin perform public.vault_take_reveal_slot(gen_random_uuid());
     raise exception 'staff slot RPC allowed'; exception when insufficient_privilege then null; end;
@@ -70,9 +70,12 @@ begin
   insert into public.vault_entries(kind,entry_type,name,owner_id,created_by) values('personal','login','SIM mine',owner_user,owner_user) returning id into personal;
 
   -- B. versions: v1, then v2 supersedes v1; one current per entry
-  r:=public.vault_write_secret(entry,actor,f_ct,f_iv,f_tag,f_key,f_iv,f_tag,'v1');
+  r:=public.vault_write_secret(entry,actor,1,f_ct,f_iv,f_tag,f_key,f_iv,f_tag,'v1');
   assert (r->>'version')::int=1 and (r->>'superseded')::boolean=false, 'v1: '||r::text;
-  r:=public.vault_write_secret(entry,actor,f_ct,f_iv,f_tag,f_key,f_iv,f_tag,'v1');
+  begin
+    perform public.vault_write_secret(entry,actor,1,f_ct,f_iv,f_tag,f_key,f_iv,f_tag,'v1');
+    raise exception 'stale version accepted'; exception when others then assert sqlerrm='version_conflict', sqlerrm; end;
+  r:=public.vault_write_secret(entry,actor,2,f_ct,f_iv,f_tag,f_key,f_iv,f_tag,'v1');
   assert (r->>'version')::int=2 and (r->>'superseded')::boolean=true, 'v2: '||r::text;
   assert (select count(*) from public.vault_secrets where entry_id=entry and superseded_at is null)=1,'one current';
   assert (select count(*) from public.vault_secrets where entry_id=entry)=2,'two versions kept';
@@ -81,15 +84,15 @@ begin
       values(entry,3,f_ct,f_iv,f_tag,f_key,f_iv,f_tag,'v1',actor);
     raise exception 'second current version accepted'; exception when unique_violation then null; end;
   begin
-    perform public.vault_write_secret(entry,actor,f_ct,'short',f_tag,f_key,f_iv,f_tag,'v1');
+    perform public.vault_write_secret(entry,actor,3,f_ct,'short',f_tag,f_key,f_iv,f_tag,'v1');
     raise exception 'malformed iv accepted'; exception when check_violation then null; end;
   begin
-    perform public.vault_write_secret(gen_random_uuid(),actor,f_ct,f_iv,f_tag,f_key,f_iv,f_tag,'v1');
+    perform public.vault_write_secret(gen_random_uuid(),actor,1,f_ct,f_iv,f_tag,f_key,f_iv,f_tag,'v1');
     raise exception 'unknown entry accepted'; exception when others then assert sqlerrm='entry_not_found', sqlerrm; end;
 
   -- C. the 30-day scrub: age v1 artificially, write v3 -> v1 is a scrubbed shell, v2 (fresh) stays whole
   update public.vault_secrets set superseded_at=clock_timestamp()-interval '31 days' where entry_id=entry and version=1;
-  r:=public.vault_write_secret(entry,actor,f_ct,f_iv,f_tag,f_key,f_iv,f_tag,'v1');
+  r:=public.vault_write_secret(entry,actor,3,f_ct,f_iv,f_tag,f_key,f_iv,f_tag,'v1');
   assert (r->>'version')::int=3 and (r->>'scrubbed')::int=1, 'v3 scrub: '||r::text;
   assert (select ciphertext is null and wrapped_key is null and scrubbed_at is not null from public.vault_secrets where entry_id=entry and version=1),'v1 scrubbed';
   assert (select ciphertext is not null and scrubbed_at is null from public.vault_secrets where entry_id=entry and version=2),'v2 whole';

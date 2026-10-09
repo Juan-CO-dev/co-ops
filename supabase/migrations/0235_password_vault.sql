@@ -162,22 +162,26 @@ grant select on public.vault_reveal_counters to service_role;
 -- ── Writers ──────────────────────────────────────────────────────────────────────────────────
 -- Appends the next envelope version for an entry under the entry row lock: supersedes the current
 -- version, inserts the new one, scrubs this entry's versions superseded more than 30 days ago.
+-- p_version is the version the app encrypted FOR (the AAD binds the ciphertext to it): when it is not
+-- the next version, a concurrent write got there first and this one is refused ('version_conflict')
+-- rather than stored under a version it cannot decrypt as.
 -- Field shapes are checked by the table; the function never inspects a byte of the envelope.
-create function public.vault_write_secret(p_entry_id uuid,p_actor_id uuid,p_ciphertext text,p_iv text,p_tag text,
+create function public.vault_write_secret(p_entry_id uuid,p_actor_id uuid,p_version integer,p_ciphertext text,p_iv text,p_tag text,
   p_wrapped_key text,p_key_iv text,p_key_tag text,p_master_key_id text)
 returns jsonb language plpgsql security definer set search_path=pg_catalog,public as $$
 declare v_entry public.vault_entries%rowtype; v_version integer; v_superseded integer; v_scrubbed integer;
 begin
-  if p_entry_id is null or p_actor_id is null or p_ciphertext is null or p_iv is null or p_tag is null
+  if p_entry_id is null or p_actor_id is null or p_version is null or p_ciphertext is null or p_iv is null or p_tag is null
     or p_wrapped_key is null or p_key_iv is null or p_key_tag is null or p_master_key_id is null then
     raise exception 'invalid_payload';
   end if;
   if not exists(select 1 from public.users where id=p_actor_id and active) then raise exception 'role_insufficient'; end if;
   select * into v_entry from public.vault_entries where id=p_entry_id for update;
   if not found or not v_entry.active then raise exception 'entry_not_found'; end if;
+  select coalesce(max(version),0)+1 into v_version from public.vault_secrets where entry_id=p_entry_id;
+  if p_version <> v_version then raise exception 'version_conflict'; end if;
   update public.vault_secrets set superseded_at=clock_timestamp() where entry_id=p_entry_id and superseded_at is null;
   get diagnostics v_superseded = row_count;
-  select coalesce(max(version),0)+1 into v_version from public.vault_secrets where entry_id=p_entry_id;
   insert into public.vault_secrets(entry_id,version,ciphertext,iv,tag,wrapped_key,key_iv,key_tag,master_key_id,created_by)
     values(p_entry_id,v_version,p_ciphertext,p_iv,p_tag,p_wrapped_key,p_key_iv,p_key_tag,p_master_key_id,p_actor_id);
   update public.vault_secrets set ciphertext=null,iv=null,tag=null,wrapped_key=null,key_iv=null,key_tag=null,scrubbed_at=clock_timestamp()
@@ -213,7 +217,7 @@ end $$;
 -- Definer helpers are private even on Supabase's default ACLs.
 do $$ declare f regprocedure; r text; tab text; begin
   foreach f in array array[
-    'public.vault_write_secret(uuid,uuid,text,text,text,text,text,text,text)'::regprocedure,
+    'public.vault_write_secret(uuid,uuid,integer,text,text,text,text,text,text,text)'::regprocedure,
     'public.vault_take_reveal_slot(uuid)'::regprocedure,
     'public.vault_scrub_expired_secrets()'::regprocedure
   ] loop

@@ -44,7 +44,7 @@ describe("0235 password vault: migration discipline", () => {
 
   it("every definer function is private: revoked from public/anon/authenticated, granted to service_role, asserted", () => {
     const grantList = between(sql, "-- Definer helpers are private", "commit;");
-    for (const f of ["vault_write_secret(uuid,uuid,text,text,text,text,text,text,text)", "vault_take_reveal_slot(uuid)", "vault_scrub_expired_secrets()"]) {
+    for (const f of ["vault_write_secret(uuid,uuid,integer,text,text,text,text,text,text,text)", "vault_take_reveal_slot(uuid)", "vault_scrub_expired_secrets()"]) {
       expect(grantList).toContain(`'public.${f}'::regprocedure`);
     }
     expect(grantList).toContain("revoke all on function %s from public,anon,authenticated");
@@ -116,6 +116,9 @@ describe("0235 password vault: migration discipline", () => {
     expect(fn.indexOf("set superseded_at=clock_timestamp() where entry_id=p_entry_id and superseded_at is null"))
       .toBeLessThan(fn.indexOf("insert into public.vault_secrets"));
     expect(fn).toContain("coalesce(max(version),0)+1");
+    // The app encrypted for p_version (AAD); a concurrent writer makes this a refusal, never a mis-versioned row.
+    expect(fn).toContain("if p_version <> v_version then raise exception 'version_conflict'");
+    expect(fn.indexOf("raise exception 'version_conflict'")).toBeLessThan(fn.indexOf("set superseded_at=clock_timestamp()"));
     expect(fn).toContain(`superseded_at < clock_timestamp() - interval '${VAULT_PREVIOUS_SECRET_RETENTION_DAYS} days'`);
     expect(fn).toContain("set ciphertext=null,iv=null,tag=null,wrapped_key=null,key_iv=null,key_tag=null,scrubbed_at=clock_timestamp()");
     expect(fn).not.toMatch(/decode|decrypt|pgp_|convert_from/);
