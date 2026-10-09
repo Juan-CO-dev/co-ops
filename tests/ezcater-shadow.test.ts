@@ -52,10 +52,11 @@ describe("shadow materializer", () => {
     rows.toast_menu_map = [];
     rows.ezcater_order_items = [{ ordinal: 1, provider_item_uuid: "new-line", menu_item_size_id: "size", pos_item_id: null,
       name: "Salad", quantity: 2, options: [{ customizationId: "salad", quantity: 1 }] }];
+    rows.ezcater_customization_map = [{ location_id: "L", customization_id: "salad", status: "ignored", effects: [], pick_menu_item_id: null }];
     rows.ezcater_item_map = [{ location_id: "L", identity_key: '["size",[["salad",1]]]', status: "confirmed",
       evidence: "reviewed_direct", toast_map_id: null, toast_item_guid: null,
       item_id: kind === "item" ? "prep" : null, menu_item_id: kind === "menu_item" ? "menu" : null, package_id: kind === "package" ? "package" : null }];
-    rows.catering_package_items = [{ id: "line", slot_type: "fixed", item_id: "prep", menu_item_id: null, quantity: 1 }];
+    rows.catering_package_items = [{ id: "line", package_id: "package", slot_type: "fixed", item_id: "prep", menu_item_id: null, quantity: 1 }];
     if (kind === "menu_item") {
       vi.mocked(loadRecipeGraph).mockResolvedValue(buildRecipeGraph([{ recipeId: "menu-recipe", batchYield: 1,
         inputs: [{ componentSkuId: "sku", componentItemId: null, quantity: 4, unit: "oz" }],
@@ -75,6 +76,57 @@ describe("shadow materializer", () => {
     rows.ezcater_item_map = [{ location_id: "other", identity_key: '["size",[]]', status: "confirmed", evidence: "reviewed_direct", item_id: "prep" }];
     await materializeEzcaterShadow("2026-10-08", "2026-10-08");
     expect(rpc.mock.calls[0]![1].p_payload.shadow).toEqual([]);
+  });
+  it("does not review options or load customization data for an ignored base item", async () => {
+    rows.ezcater_order_items = [{ ordinal: 1, provider_item_uuid: "ignored-line", menu_item_size_id: "size", pos_item_id: null,
+      name: "Ignored", quantity: 2, options: [{ customizationId: "option", quantity: 2 }] }];
+    rows.ezcater_item_map = [{ location_id: "L", identity_key: '["size",[["option",2]]]', status: "ignored" }];
+    errors.ezcater_customization_map = { code: "503", message: "must not be loaded" };
+    expect(await materializeEzcaterShadow("2026-10-08", "2026-10-08")).toMatchObject({ processed: 1, failed: 0 });
+    const payload = rpc.mock.calls[0]![1].p_payload;
+    expect(payload).toMatchObject({ maps: [], shadow: [] });
+    expect(payload.reviews.filter((row: { source: string }) => row.source === "ezcater")).toEqual([]);
+  });
+  it("queues an unmapped customization even after the parent was explicitly reviewed", async () => {
+    rows.ezcater_order_items = [{ ordinal: 1, provider_item_uuid: "new-line", menu_item_size_id: "size", pos_item_id: null,
+      name: "Salad", quantity: 2, options: [{ customizationId: "option", quantity: 2 }] }];
+    rows.ezcater_item_map = [{ location_id: "L", identity_key: '["size",[["option",2]]]', status: "confirmed",
+      evidence: "reviewed_direct", item_id: "prep", menu_item_id: null, package_id: null }];
+    expect(await materializeEzcaterShadow("2026-10-08", "2026-10-08")).toMatchObject({ processed: 1, failed: 0 });
+    expect(rpc.mock.calls[0]![1].p_payload).toMatchObject({ shadow: [expect.objectContaining({ sales_oz: 8, suppressed_oz: 8, shadow_oz: 0 })], reviews: expect.arrayContaining([
+      { source: "ezcater", code: "customization_unmapped", identity_key: "option", candidates: [] },
+    ]) });
+    expect(rpc.mock.calls[0]![1].p_payload.reviews.filter((row: { code: string }) => row.code === "customization_unmapped")).toHaveLength(1);
+  });
+  it("applies mapped effects to shadow using the shop graph and line-level selected count", async () => {
+    rows.ezcater_order_items = [{ ordinal: 1, provider_item_uuid: "line", menu_item_size_id: "size", pos_item_id: "guid",
+      name: "Salad", quantity: 2, options: [{ customizationId: "extra", quantity: 3 }] }];
+    rows.ezcater_customization_map = [{ location_id: "L", customization_id: "extra", status: "confirmed", pick_menu_item_id: null,
+      effects: [{ targetKind: "sku", targetId: "extra-sku", disposition: "deplete", portionQty: 2, portionUnit: "each", parentOnly: false }] }];
+    rows.vendor_items = [{ id: "extra-sku", avg_oz_per_each: 4 }];
+    await materializeEzcaterShadow("2026-10-08", "2026-10-08");
+    expect(loadRecipeGraph).toHaveBeenCalledWith({ locationId: "L" });
+    expect(rpc.mock.calls[0]![1].p_payload.shadow).toContainEqual(expect.objectContaining({ sku_id: "extra-sku", sales_oz: 24, shadow_oz: 24 }));
+  });
+  it("resolves product-backed prep through each shop graph instead of a global primary", async () => {
+    rows.ezcater_orders = [
+      { id: "ez", lead_id: "lead", location_id: "L", event_date: "2026-10-08", order_number: "AB1234", snapshot_id: "s1", status: "ACCEPTED" },
+      { id: "ez2", lead_id: "lead2", location_id: "L2", event_date: "2026-10-08", order_number: "AB5678", snapshot_id: "s2", status: "ACCEPTED" },
+    ];
+    rows.catering_pipeline = [{ id: "lead", location_id: "L", stage: "confirmed" }, { id: "lead2", location_id: "L2", stage: "confirmed" }];
+    rows.toast_menu_map = ["L", "L2"].map((location_id) => ({ location_id, toast_item_guid: "guid", toast_item_name: "Salad", item_id: "prep", menu_item_id: null }));
+    rows.productions = [];
+    vi.mocked(loadRecipeGraph).mockImplementation(async (options) => {
+      const skuId = `sku-${options?.locationId}`;
+      return buildRecipeGraph([{ recipeId: "recipe", batchYield: 1,
+        inputs: [{ componentSkuId: skuId, componentItemId: null, quantity: 4, unit: "oz" }],
+        outputs: [{ outputItemId: "prep", outputMenuItemId: null, yield: 1, ozPerParUnit: null }] }],
+      new Map([[skuId, { packFormat: null, eachContainerLabel: null, unitsPerPack: null, eachSize: null, eachMeasure: null, avgOzPerEach: null }]]),
+      new Map([["oz", { dimension: "weight", toBaseFactor: 1 }]]));
+    });
+    expect(await materializeEzcaterShadow("2026-10-08", "2026-10-08")).toMatchObject({ processed: 2, failed: 0 });
+    expect(vi.mocked(loadRecipeGraph).mock.calls).toEqual([[{ locationId: "L" }], [{ locationId: "L2" }]]);
+    expect(rpc.mock.calls.map((call) => call[1].p_payload.shadow[0].sku_id)).toEqual(["sku-L", "sku-L2"]);
   });
   it("skips with a code before 0225 and does not load graph or publish", async () => {
     errors.ezcater_item_map = { code: "42P01", message: "missing" };

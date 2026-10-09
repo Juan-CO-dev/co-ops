@@ -35,6 +35,7 @@ beforeEach(() => {
     const query = {
       select: () => query, lt: () => query, abortSignal: () => query,
       eq: (field: string, value: unknown) => { filters.push([table, field, value]); return query; },
+      neq: (field: string, value: unknown) => { filters.push([table, `not:${field}`, value]); return query; },
       order: () => query, limit: () => query,
       maybeSingle: async () => ({ data: table === "locations" ? { toast_restaurant_guid: "bound-restaurant" } : previous, error: null }),
       insert: (data: unknown) => { writes.push({ table, data }); return query; },
@@ -67,6 +68,7 @@ it("a refused debounce claim never fetches orders or creates a second manifest",
   expect(rpc.mock.calls.map((c) => c[0])).toEqual(["toast_capture_claim"]);
   expect(toastGet).not.toHaveBeenCalled();
   expect(writes.filter((w) => (w.data as { status?: string }).status === "running")).toEqual([]);
+  expect(filters).toContainEqual(["toast_capture_runs", "not:status", "modified_completed"]);
 });
 
 it("an accepted debounce claim uses its exact run identity for page and finish", async () => {

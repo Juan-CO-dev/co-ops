@@ -609,6 +609,8 @@ export interface SalesSummaryDto {
   deltaPct: number | null;
   /** Explicit "today" only: when the latest completed capture of today finished (null = none yet). */
   capturedAt: string | null;
+  /** Late-refund discovery coverage. Null while the optional cursor schema is unavailable. */
+  modifiedCoverage: { start: string; through: string | null } | null;
 }
 
 /** Unknown tax/tip/discount amounts in a total (each is shown as partial, never as a measured $0). */
