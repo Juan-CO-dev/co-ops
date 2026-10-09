@@ -90,6 +90,13 @@ update public.catering_package_items set depletion_qty = .5
 where id = '77b890b6-4160-4f70-a5aa-eaa15611e195' and package_id = '5f82f5c2-257c-472f-811e-74f46f001f55'
   and slot_type = 'choice' and depletion_qty is null
   and current_setting('seed47.target', true) = 'prod';
+insert into public.audit_log(actor_id,actor_role,action,resource_table,resource_id,metadata,destructive)
+select null,null,'catering.kb.packages.line_item_update','catering_package_items','77b890b6-4160-4f70-a5aa-eaa15611e195'::uuid,
+ jsonb_build_object('actor_context','seed_47','target','prod','field','depletion_qty','before',null,'after',0.5,
+  'reason','Light Lunch Box = half a sub (Juan-approved 0226 spec B); EM slot was NULL while MEP had 0.5'),false
+where current_setting('seed47.target', true) = 'prod'
+ and not exists(select 1 from public.audit_log where action='catering.kb.packages.line_item_update'
+  and resource_id='77b890b6-4160-4f70-a5aa-eaa15611e195'::uuid and metadata->>'actor_context'='seed_47');
 do $$ declare r record; v_pkg uuid; v_menu uuid; n integer; begin
  for r in select distinct * from s47_observed
    -- Full Lunch Box is NOT a package: each box+sub combination is already confirmed per identity to its sub (prod 10-09), so its Sub: picks must not be seeded (double count).
