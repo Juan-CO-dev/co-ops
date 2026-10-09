@@ -24,12 +24,23 @@ function render(value: ShiftBoard, compact = false, language: "en" | "es" = "en"
   return renderToStaticMarkup(createElement(TranslationProvider, { initialLanguage: language, children: createElement(ShiftBoardClient, { board: value, compact }) }));
 }
 describe("station lifecycle board", () => {
+  it.each([false, true])("shows trim labels only to KH+ (compact=%s)", (compact) => {
+    const value = board();
+    value.stations[0]!.trims = [{ at: "15:00", to_count: 1 }];
+    for (const level of [3, 4]) {
+      value.viewerLevel = level;
+      const html = render(value, compact);
+      expect(html).toContain("Closes ~2:00 PM");
+      expect(html.includes("Goes to 1 at 3:00 PM")).toBe(level >= 4);
+      expect(html.includes("Usually trims ~4:00 PM")).toBe(level >= 4);
+    }
+  });
   it.each([false, true])("shows closures, time hints and task clock-outs to crew (compact=%s)", (compact) => {
     const value = board(); value.stations[0]!.closedAt = "2026-10-08T18:07:00Z";
     const html = render(value, compact);
     expect(html).toContain("Closed · 2:07 PM");
-    expect(html).toContain("Usually closes ~2:00 PM");
-    expect(html).toContain("Usually trims ~4:00 PM");
+    expect(html).toContain("Closes ~2:00 PM");
+    expect(html).not.toContain("Usually trims ~4:00 PM");
     expect(html).toContain("Left open · Pat clocked out 3:12 PM");
     expect(html).not.toContain('<option value="position"');
     expect(html).not.toContain('name="userId"');
@@ -62,12 +73,13 @@ describe("station lifecycle board", () => {
   it("localizes the lifecycle messages", () => {
     const value = board(); value.stations[0]!.closedAt = "2026-10-08T18:07:00Z";
     const html = render(value, true, "es");
-    expect(html).toContain("Cerrada ·"); expect(html).toContain("Suele cerrar ~"); expect(html).toContain("marcó su salida");
+    expect(html).toContain("Cerrada ·"); expect(html).toContain("Cierra ~"); expect(html).toContain("marcó su salida");
   });
-  it("gives KH timing-only forms, with no primary-position trim control", () => {
+  it("triggers GM schedule editing, with no primary-position legacy trim control", () => {
     const value = board(); value.stations[0]!.positions.push({ ...value.stations[0]!.positions[0]!, id: "first", sort: 1 });
     const html = renderToStaticMarkup(createElement(TranslationProvider, { initialLanguage: "en", children: createElement(StationsAdmin, { locationId: "shop", stations: value.stations, translatedNames: [], canEdit: false, canEditTiming: true }) }));
-    expect(html.match(/type="time"/g)).toHaveLength(2);
+    expect(html.match(/type="time"/g)).toHaveLength(1);
+    expect(html).toContain("Edit daily schedule");
     expect(html).not.toContain('name="sort"'); expect(html).not.toContain('name="name"');
     expect(html).toContain("Hints only.");
   });
