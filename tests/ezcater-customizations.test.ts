@@ -172,3 +172,39 @@ describe("shadow evidence parity", () => {
     expect(amount(result.amounts, "roll")).toMatchObject({ sales_oz: 12, suppressed_oz: 0, shadow_oz: 12 });
   });
 });
+
+
+describe("safe customization rollout", () => {
+  it("retains base amounts and flags unknown options, including non-package Sub picks", () => {
+    const result = run({ options: [option("just-cheeses"), option("tuna"), option("big-sub-pick")] });
+    expect(result.amounts).toEqual(run().amounts);
+    expect(result.issues).toEqual(["just-cheeses", "tuna", "big-sub-pick"].map(identity_key => ({ code: "customization_unmapped", identity_key })));
+  });
+  it("applies confirmed effects once alongside unknown options; ignored options retain base", () => {
+    const options = [option("new"), option("mozz", 2)];
+    const confirmed = run({ options, maps: [map("mozz", [effect({})])] });
+    expect(amount(confirmed.amounts, "roll")?.sales_oz).toBe(6);
+    expect(amount(confirmed.amounts, "raw-mozz")?.sales_oz).toBe(4);
+    expect(confirmed.issues).toEqual([{ code: "customization_unmapped", identity_key: "new" }]);
+    const ignored = run({ options: [option("new")], maps: [map("new", [], { status: "ignored" })] });
+    expect(ignored).toEqual(run());
+  });
+  it("does not loosen invalid confirmed quantities when an unknown option coexists", () => {
+    const result = run({ options: [option("new"), option("mozz", -1)], maps: [map("mozz", [effect({})])] });
+    expect(result.amounts).toEqual([]);
+    expect(result.issues).toContainEqual({ code: "customization_quantity_invalid", identity_key: "mozz" });
+  });
+  it("uses package default mix until a pick is confirmed, without adding extra capacity", () => {
+    const packages: PackageComposition = {
+      lines: [{ id: "slot", package_id: "pkg", slot_type: "choice", item_id: null, menu_item_id: null, quantity: 1, depletion_qty: 0.5 }],
+      options: ["a", "b"].map(menu_item_id => ({ package_item_id: "slot", item_id: null, menu_item_id, classic: true })),
+    };
+    const input = { target: { item_id: null, menu_item_id: null, package_id: "pkg" }, quantity: 4, packages, options: [option("pick", 4)] };
+    const fallback = run(input);
+    expect(fallback.amounts).toEqual(run({ ...input, options: [] }).amounts);
+    const confirmed = run({ ...input, maps: [map("pick", [], { pick_menu_item_id: "a" })] });
+    expect(confirmed.issues).toEqual([]);
+    expect(confirmed.amounts).toHaveLength(1);
+    expect(amount(confirmed.amounts, "raw-a")?.sales_oz).toBe(2);
+  });
+});

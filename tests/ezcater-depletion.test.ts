@@ -109,7 +109,7 @@ describe("ezCater authoritative depletion", () => {
     expect(result.coverage.degraded).toBe(false);
     tables.ezcater_customization_map = [];
     const unresolved = await loadReconciledSalesWindow(db(), window);
-    expect(unresolved.rows[0]!.direct_oz).toBe(0);
+    expect(unresolved.rows[0]!.direct_oz).toBe(12);
     expect(unresolved.coverage.degraded).toBe(true);
   });
   it.each(["Ezcater", "EZ Cater", "ez-cater"])("retains an unlinked %s dining ring regardless of catering channel", (diningOption) => {

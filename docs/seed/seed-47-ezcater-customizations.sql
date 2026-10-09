@@ -33,11 +33,14 @@ do $$ begin
   if exists(select 1 from s47_observed group by location_id,customization_id
     having count(distinct (option_name,type_name))>1) then
     raise exception 'seed47: provider customization identity changed meaning'; end if;
-  if (select count(*) from s47_observed where rendered_name='Sub Bread: District Bakery''s Gluten-Free Roll')=0
-   or (select count(*) from s47_observed where rendered_name='Add: Fresh Mozzarella')=0
-   or (select count(*) from s47_observed where rendered_name in ('Please Serve On: Bed of Shredded Lettuce','Sub Bread: Shredduce'))=0
-   or (select count(*) from s47_observed where type_name='Sub' and parent_name in ('Light Lunch','Full Lunch'))=0 then
-   raise exception 'seed47: one or more known customization families were not observed'; end if;
+  if not exists(select 1 from s47_observed where rendered_name='Sub Bread: District Bakery''s Gluten-Free Roll') then
+   raise notice 'seed47: GF family has zero observations; skipped'; end if;
+  if not exists(select 1 from s47_observed where rendered_name='Add: Fresh Mozzarella') then
+   raise notice 'seed47: mozzarella family has zero observations; skipped'; end if;
+  if not exists(select 1 from s47_observed where rendered_name in ('Please Serve On: Bed of Shredded Lettuce','Sub Bread: Shredduce')) then
+   raise notice 'seed47: lettuce family has zero observations; skipped'; end if;
+  if not exists(select 1 from s47_observed where type_name='Sub' and parent_name in ('Light Lunch Box','Full Lunch Box')) then
+   raise notice 'seed47: package-pick family has zero observations; skipped'; end if;
 end $$;
 
 create temp table s47_effect_targets(location_id uuid, customization_id text, effects jsonb,
@@ -80,9 +83,17 @@ end $$;
 
 create temp table s47_picks(location_id uuid, customization_id text, menu_item_id uuid,
  primary key(location_id,customization_id)) on commit drop;
+
+-- Light Lunch Box = half a sub (Juan-approved 0226 spec B). Prod 10-09: the MEP slot had 0.5 but the
+-- EM slot (package 5f82f5c2..., item 77b890b6...) was NULL. Align EM; guarded to that exact row.
+update public.catering_package_items set depletion_qty = .5
+where id = '77b890b6-4160-4f70-a5aa-eaa15611e195' and package_id = '5f82f5c2-257c-472f-811e-74f46f001f55'
+  and slot_type = 'choice' and depletion_qty is null
+  and current_setting('seed47.target', true) = 'prod';
 do $$ declare r record; v_pkg uuid; v_menu uuid; n integer; begin
  for r in select distinct * from s47_observed
-   where parent_name in ('Light Lunch','Full Lunch') and type_name='Sub' loop
+   -- Full Lunch Box is NOT a package: each box+sub combination is already confirmed per identity to its sub (prod 10-09), so its Sub: picks must not be seeded (double count).
+   where parent_name = 'Light Lunch Box' and type_name='Sub' loop
   select count(*),(array_agg(m.package_id))[1] into n,v_pkg
    from public.ezcater_item_map m join public.catering_packages p on p.id=m.package_id and p.active
     and (p.location_id is null or p.location_id=r.location_id)
@@ -103,12 +114,20 @@ do $$ declare r record; v_pkg uuid; v_menu uuid; n integer; begin
    join public.catering_package_slot_options so on so.package_item_id=pi.id and so.active
    join public.menu_items mi on mi.id=so.menu_item_id and mi.active
    where pi.package_id=v_pkg and pi.active and pi.slot_type='choice'
-    and mi.name=r.option_name;
+    -- Explicit provider aliases only, still constrained to this bound package.
+    and (mi.name=r.option_name or mi.name=case r.option_name
+      when 'Crunchy Boi Sub' then 'Crunchy Boi'
+      when 'Farmers Market After Dark Sub' then 'Farmers Market After Dark'
+      when 'Marissa Tomei Eats Free Sub' then 'Marisa Tomei Eats Free'
+      when 'Never Been Cheddar Sub' then 'Never Been Cheddar'
+      when 'Sicky Wicky Club Sub' then 'Sicky Wicky Club'
+      when 'The Teamster Sub' then 'The Teamster'
+      else r.option_name end);
   if n<>1 then raise exception 'seed47: expected one active package choice for %, found %',r.rendered_name,n; end if;
-  if r.parent_name='Light Lunch' then
+  if r.parent_name='Light Lunch Box' or exists(select 1 from public.catering_packages where id=v_pkg and slug='light-lunch') then
    if (select count(*) from public.catering_package_items where package_id=v_pkg and active
      and slot_type='choice' and depletion_qty=.5)<>1 then
-    raise exception 'seed47: Light Lunch choice slot is not uniquely configured at depletion_qty 0.5'; end if;
+    raise exception 'seed47: Light Lunch Box choice slot is not uniquely configured at depletion_qty 0.5'; end if;
   end if;
   if exists(select 1 from s47_picks where location_id=r.location_id and customization_id=r.customization_id
     and menu_item_id<>v_menu) then raise exception 'seed47: customization identity maps to differing package picks'; end if;
@@ -117,6 +136,9 @@ do $$ declare r record; v_pkg uuid; v_menu uuid; n integer; begin
 end $$;
 
 do $$ begin
+ if exists(select 1 from s47_picks p join s47_observed o using(location_id,customization_id)
+   where o.type_name='Sub' and o.parent_name <> 'Light Lunch Box') then
+  raise exception 'seed47: package pick identity also appears on an unreviewed non-package parent'; end if;
  if exists(select 1 from s47_effect_targets e join s47_picks p using(location_id,customization_id)) then
   raise exception 'seed47: customization identity is both effect and package pick'; end if;
  if exists(select 1 from public.ezcater_customization_map m join (
@@ -152,6 +174,24 @@ select location_id,customization_id,status,effects,pick_menu_item_id
 from public.ezcater_customization_map where (location_id,customization_id) in (
  select location_id,customization_id from s47_effect_targets union all select location_id,customization_id from s47_picks)
 order by location_id,customization_id;
+
+-- Observation counts are not unique mapping counts: one ID may occur on many lines.
+-- The non-package Sub options are deliberately not seeded and remain reviewable.
+select
+ count(*) as observed_options,
+ count(*) filter(where rendered_name='Sub Bread: District Bakery''s Gluten-Free Roll') as gf_observations,
+ count(*) filter(where rendered_name='Add: Fresh Mozzarella') as mozzarella_observations,
+ count(*) filter(where rendered_name in ('Please Serve On: Bed of Shredded Lettuce','Sub Bread: Shredduce')) as lettuce_observations,
+ count(*) filter(where type_name='Sub' and parent_name='Full Lunch Box') as full_lunch_pick_observations,
+ count(*) filter(where type_name='Sub' and parent_name='Light Lunch Box') as light_lunch_pick_observations,
+ count(*) filter(where type_name='Sub' and parent_name not in ('Light Lunch Box','Full Lunch Box')) as unseeded_sub_observations,
+ (select count(*) from s47_effect_targets) as effect_mappings,
+ (select count(*) from s47_picks) as pick_mappings,
+ (select count(distinct (x.location_id,x.customization_id)) from s47_observed x
+  where not exists(select 1 from public.ezcater_customization_map m
+   where m.location_id=x.location_id and m.customization_id=x.customization_id)) as pending_review_identities,
+ 'ROLLBACK (dry run)'::text as outcome
+from s47_observed;
 
 -- Safety default: CC's required prod-shaped discovery run cannot persist.
 rollback;

@@ -1,5 +1,5 @@
 -- 0236 ezCater customization effects. AUTHORED 2026-10-08; NOT APPLIED -- GATE CC/Juan.
--- Requires 0225, 0226 and 0227. Apply in sim and run scripts/test-ezcater-customizations.sql first.
+-- AUTHORED 2026-10-08. APPLIED TO PROD 2026-10-09 (20261009024112; sim harness pass).
 begin;
 
 create table public.ezcater_customization_map (

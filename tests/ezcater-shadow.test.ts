@@ -93,9 +93,10 @@ describe("shadow materializer", () => {
     rows.ezcater_item_map = [{ location_id: "L", identity_key: '["size",[["option",2]]]', status: "confirmed",
       evidence: "reviewed_direct", item_id: "prep", menu_item_id: null, package_id: null }];
     expect(await materializeEzcaterShadow("2026-10-08", "2026-10-08")).toMatchObject({ processed: 1, failed: 0 });
-    expect(rpc.mock.calls[0]![1].p_payload).toMatchObject({ shadow: [], reviews: expect.arrayContaining([
+    expect(rpc.mock.calls[0]![1].p_payload).toMatchObject({ shadow: [expect.objectContaining({ sales_oz: 8, suppressed_oz: 8, shadow_oz: 0 })], reviews: expect.arrayContaining([
       { source: "ezcater", code: "customization_unmapped", identity_key: "option", candidates: [] },
     ]) });
+    expect(rpc.mock.calls[0]![1].p_payload.reviews.filter((row: { code: string }) => row.code === "customization_unmapped")).toHaveLength(1);
   });
   it("applies mapped effects to shadow using the shop graph and line-level selected count", async () => {
     rows.ezcater_order_items = [{ ordinal: 1, provider_item_uuid: "line", menu_item_size_id: "size", pos_item_id: "guid",

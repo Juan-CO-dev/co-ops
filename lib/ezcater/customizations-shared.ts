@@ -82,13 +82,13 @@ export interface CustomizedLineInput {
   packages?: PackageComposition; skuWeights?: ReadonlyMap<string, number | null>;
 }
 
-/** One pure resolver feeds both live counting and the shadow ledger. Unresolved
- * customizations refuse the whole line; linked Toast checks never fill that gap. */
+/** One pure resolver feeds live counting and the shadow ledger. Unmapped options
+ * retain base depletion with review flags; invalid confirmed effects still refuse. */
 export function customizedLineAmounts(input: CustomizedLineInput): { amounts: ShadowAmount[]; issues: CustomizationIssue[] } {
   const { graph, target, quantity, locationId, eventDate, productions, transfers = [] } = input;
   const resolved = resolveCustomizations(input.options, input.maps, locationId);
-  if (resolved.issues.length) return { amounts: [], issues: resolved.issues };
-  const issues: CustomizationIssue[] = [];
+  if (resolved.issues.some((issue) => issue.code !== "customization_unmapped")) return { amounts: [], issues: resolved.issues };
+  const issues: CustomizationIssue[] = [...resolved.issues];
   const failure = (code: string, identity_key: string) => ({ amounts: [], issues: [...issues, { code, identity_key }] });
   if (!Number.isFinite(quantity) || quantity < 0) return failure("customization_quantity_invalid", "line");
   const composition = target.package_id

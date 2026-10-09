@@ -22,7 +22,15 @@ CC pre-approved this bounded build in the dispatch. Branch `feat/ezcater-options
 ## Risks and deployment contract
 
 - Selected option counts are line totals, never multiplied by the parent line count. Missing/invalid quantities refuse counting for that line.
-- Unmapped customizations refuse the line and mark coverage degraded; they do not restore the linked Toast check or silently count the base. Apply/review migration and seed before deploying with counting enabled.
+- FIX 3, CC rollout decision: unmapped customizations retain base depletion and mark coverage degraded/review pending; confirmed options apply their effects on subsequent reads. Linked Toast checks remain excluded. Invalid confirmed effects still refuse the line.
 - Package picks spend `depletion_qty / quantity` per selected pick; excess is capped and disclosed. Unbound picks refuse the package.
 - A package-level removal lacks an individual parent association in the flat provider option shape. Such a combination is explicitly unresolved instead of guessing which sub loses an ingredient.
 - Live reads fence concurrent customization changes. SQL runtime/grant behavior and production-shaped seed identity discovery remain CC's sim/dry-run gates; no SQL execution is claimed here.
+
+## FIX 3 implementation plan (CC-directed)
+
+- Change `customizations-shared.ts` and `pass2.ts` to preserve base amounts alongside unmapped review issues; retain invalid-effect refusal and linked Toast suppression.
+- Correct seed 47 Box parent names, retain full identity/package binding, use explicit provider-to-menu pick aliases, and keep every uniqueness/conflict guard. Missing families emit notices. Add deterministic observation/mapping summary before ROLLBACK.
+- Update pure, live, shadow and SQL publication regressions for fallback, approval, ignored options, repeated publication and no double count. Run npm test and typecheck.
+- SQL inspection: 0229 publisher accepts review and shadow rows together; 0236 guard only suppresses decided reviews. No function/body or schema change is needed; no 0238 migration unless verification identifies a SQL blocker.
+- Risks: exact production mapping counts require CC's dry run; SQL harness remains sim-only. No historical ledger rewrite is introduced; later reads/recomputations use current confirmed mappings.

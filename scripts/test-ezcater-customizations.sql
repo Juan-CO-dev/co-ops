@@ -114,4 +114,45 @@ begin
   raise exception '0236 RPC ACL failure'; end if;
  raise notice '0236 ezCater customization harness PASS';
 end $$;
+-- SQL publishes resolver-produced amounts; TypeScript tests prove the arithmetic.
+-- Unmapped reviews and base amounts must coexist, and repeat runs replace the
+-- current ledger instead of summing the base a second time.
+do $$
+declare loc uuid; actor uuid; sku uuid; q uuid; o public.ezcater_orders%rowtype;
+ provider text:='fallback-sim-'||gen_random_uuid(); caterer text:='fallback-cat-'||gen_random_uuid();
+ cid text:='fallback-option-'||gen_random_uuid(); payload jsonb;
+begin
+ select id into loc from public.locations where active order by id limit 1;
+ select id into actor from public.users where active and role in ('catering_mgr','moo','owner','cgs') order by id limit 1;
+ select id into sku from public.vendor_items where active order by id limit 1;
+ assert loc is not null and actor is not null and sku is not null,'fallback harness requires shop, reviewer and SKU';
+ update public.locations set ezcater_caterer_uuid=caterer where id=loc;
+ perform public.apply_ezcater_order(provider,caterer,
+  '{"orderNumber":"FALLBACK-SIM","eventTimestamp":"2026-10-08T16:00:00Z","items":[]}',provider,'submitted');
+ select * into o from public.ezcater_orders where provider_uuid=provider;
+ insert into public.ezcater_order_items(order_id,snapshot_id,ordinal,name,quantity,menu_item_size_id,options)
+ values(o.id,o.snapshot_id,1,'Fallback harness',1,'fallback-size',
+  jsonb_build_array(jsonb_build_object('customizationId',cid,'name','Unknown extra','quantity',1)));
+ payload:=jsonb_build_object('links','[]'::jsonb,'maps','[]'::jsonb,
+  'reviews',jsonb_build_array(jsonb_build_object('source','ezcater','code','customization_unmapped','identity_key',cid,'candidates','[]'::jsonb)),
+  'shadow',jsonb_build_array(jsonb_build_object('ordinal',1,'sku_id',sku,'sales_oz',8,'suppressed_oz',0,'shadow_oz',8)));
+ perform public.publish_ezcater_shadow(o.id,o.snapshot_id,loc,payload);
+ perform public.publish_ezcater_shadow(o.id,o.snapshot_id,loc,payload);
+ assert (select count(*)=1 and sum(shadow_oz)=8 from public.ezcater_shadow_depletion where order_id=o.id and is_current),
+  'unmapped base missing or double counted';
+ assert (select count(*)=1 from public.ezcater_review_queue where order_id=o.id and code='customization_unmapped' and resolved_at is null),
+  'unmapped fallback review missing or duplicated';
+ select id into q from public.ezcater_review_queue where order_id=o.id and code='customization_unmapped' and identity_key=cid;
+ perform public.decide_ezcater_customization(q,'approve',jsonb_build_array(jsonb_build_object(
+  'targetKind','sku','targetId',sku,'disposition','deplete','portionQty',2,'portionUnit','oz','parentOnly',false)),null,actor);
+ assert (select resolved_at is not null from public.ezcater_review_queue where id=q),'confirmed fallback review still open';
+ payload:=jsonb_set(jsonb_set(payload,'{shadow,0,sales_oz}','10'),'{shadow,0,shadow_oz}','10');
+ perform public.publish_ezcater_shadow(o.id,o.snapshot_id,loc,payload);
+ perform public.publish_ezcater_shadow(o.id,o.snapshot_id,loc,payload);
+ assert (select count(*)=1 and sum(shadow_oz)=10 from public.ezcater_shadow_depletion where order_id=o.id and is_current),
+  'confirmed amounts added to old fallback instead of replacing it';
+ assert not exists(select 1 from public.ezcater_review_queue where order_id=o.id and code='customization_unmapped' and resolved_at is null),
+  'decided customization was requeued';
+ raise notice 'ezCater fallback publication harness PASS: base + review, confirmed replacement, no double count';
+end $$;
 rollback;

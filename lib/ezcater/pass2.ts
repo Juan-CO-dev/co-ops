@@ -164,14 +164,17 @@ async function materialize(fromDate: string, toDate: string, deadlineAt: number,
           item_id: probe.confirmed?.item_id ?? null, menu_item_id: probe.confirmed?.menu_item_id ?? null,
           status: probe.confirmed ? "confirmed" : "review", evidence: probe.evidence, candidates: probe.candidates });
         if (!probe.confirmed) { reviews.push({ source: "ezcater", code: probe.reason, identity_key: identity, candidates: probe.candidates }); continue; }
-        if (customizationIssues.length) continue;
         if (!active) continue;
         const evidence = transfers.filter((t) => t.resource_id === order.lead_id);
         const graph = await graphFor(order.location_id);
         const { amounts, issues } = customizedLineAmounts({ graph, target: probe.confirmed, quantity: Number(item.quantity),
           options: item.options, maps: customizations?.maps ?? [], skuWeights: customizations?.skuWeights,
           locationId: order.location_id, eventDate: order.event_date!, productions, transfers: evidence, packages });
-        for (const issue of issues) reviews.push({ source: "ezcater", ...issue, candidates: [] });
+        for (const issue of issues) {
+          if (!customizationIssues.some((existing) => existing.code === issue.code && existing.identity_key === issue.identity_key)) {
+            reviews.push({ source: "ezcater", ...issue, candidates: [] });
+          }
+        }
         if (!amounts.length && Number(item.quantity) > 0) reviews.push({ source: "ezcater", code: "recipe_unresolved", identity_key: identity, candidates: [] });
         for (const amount of amounts) {
           const current = baseline.find((r) => r.location_id === order.location_id && r.business_date === order.event_date && r.sku_id === amount.sku_id);
