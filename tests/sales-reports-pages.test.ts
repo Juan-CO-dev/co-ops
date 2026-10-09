@@ -5,6 +5,7 @@ import es from "@/lib/i18n/es.json";
 import { parentFor } from "@/lib/nav-parents";
 import { reportNavigationHref } from "@/lib/report-navigation";
 import { SALES_CHANNELS, SALES_GRAINS, SALES_RANGES, SALES_VIEWS } from "@/lib/sales-reports-shared";
+import { formatSalesCoverageMoment } from "@/components/reports-hub/SalesSummary";
 
 const E = en as Record<string, string>;
 const S = es as Record<string, string>;
@@ -41,6 +42,13 @@ describe("Sales strings ship en + es together", () => {
       ...["sale", "void", "excess_food", "gift_card", "ezcater_linked"].map((c) => `reports.sales.check.class.${c}`),
     ];
     for (const k of need) expect(E[k], k).toBeTruthy();
+  });
+});
+
+describe("Sales modified-refund coverage", () => {
+  it("renders the date and time in the same operational day near UTC midnight", () => {
+    expect(formatSalesCoverageMoment("2026-10-08T00:30:00Z", "en")).toBe("Wed, Oct 7, 8:30 PM");
+    expect(formatSalesCoverageMoment("2026-10-08T00:30:00Z", "es")).toContain("7 de oct");
   });
 });
 

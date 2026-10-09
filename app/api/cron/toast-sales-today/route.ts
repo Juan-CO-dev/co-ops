@@ -7,6 +7,8 @@ import { audit } from "@/lib/audit";
 import { etCalendarDate } from "@/lib/operational-day";
 import { pullTodaySalesForAllLocations } from "@/lib/catering/toast-sales";
 import { captureIntraday } from "@/lib/toast/capture-intraday";
+import { captureModified } from "@/lib/toast/capture-modified";
+import { modifiedRouteBudget } from "@/lib/toast/capture-modified-shared";
 import { laborPullEnabled, runToastLaborPull } from "@/lib/toast/labor";
 import { runWhosHereTick } from "@/lib/whos-here-tick";
 
@@ -35,6 +37,7 @@ export async function GET(req: NextRequest) {
     const availableMs = Math.max(0, maxDuration * 1000 - (Date.now() - startedAt) - 10_000);
     const laborReserveMs = laborPullEnabled() ? Math.min(30_000, availableMs) : 0;
     const capture = await captureIntraday(today, req.signal, Math.max(0, availableMs - laborReserveMs));
+    const modified = await captureModified(req.signal, modifiedRouteBudget(startedAt, Date.now(), laborPullEnabled()));
     // Labor is additive and fail-soft. It shares this route's wall-clock budget, and its own single
     // deadline also covers 0230 reconciliation after the full today + corrections pull succeeds.
     const laborBudgetMs = Math.min(30_000, Math.max(0, maxDuration * 1000 - (Date.now() - startedAt) - 10_000));
@@ -56,6 +59,8 @@ export async function GET(req: NextRequest) {
         job: "toast-sales-today", date: today, source: captureMode ? "capture" : "legacy",
         pulled: n("pulled"), fresh: n("fresh"), no_toast: n("no_toast"), stale_check_failed: n("unknown"),
         capture_failures: capture.failures,
+        modified_failures: modified.failures,
+        modified_changed: modified.results.reduce((sum, r) => sum + r.changed, 0),
         captured: capture.results.filter((r) => !r.skipped && !r.error).length,
         skipped: capture.results.filter((r) => r.skipped).length,
         errors: captureMode ? capture.failures : n("error"), capture_disabled: capture.skipped,
@@ -63,7 +68,7 @@ export async function GET(req: NextRequest) {
       ipAddress: null, userAgent: null,
     });
     await watchSiblings("toast-sales-today");
-    return jsonOk({ date: today, results, healthy, capture, labor, whosHere });
+    return jsonOk({ date: today, results, healthy, capture, modified, labor, whosHere });
   } catch (e) {
     void audit({
       actorId: null, actorRole: null, action: "cron.failure", resourceTable: "cron", resourceId: null,

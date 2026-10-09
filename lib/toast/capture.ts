@@ -120,7 +120,7 @@ async function captureDay(locationId: string, date: string, options: { resume?: 
   dbError(started.error, "capture_manifest_start_failed");
   if (options.debounce && started.data !== true) {
     const latest = await sb.from("toast_capture_runs").select("status,catering_status,catering_error_code")
-      .eq("location_id", locationId).eq("business_date", date).order("started_at", { ascending: false })
+      .eq("location_id", locationId).eq("business_date", date).neq("status", "modified_completed").order("started_at", { ascending: false })
       .order("id", { ascending: false }).limit(1).abortSignal(budget.signal)
       .maybeSingle<{ status: string; catering_status: string; catering_error_code: string | null }>();
     dbError(latest.error, "capture_debounce_read_failed");

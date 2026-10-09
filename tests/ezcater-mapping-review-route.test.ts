@@ -2,11 +2,12 @@ import { NextRequest, NextResponse } from "next/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { POST } from "@/app/api/admin/catering/ezcater-review/route";
 import { requireSession } from "@/lib/session";
-import { decideEzcaterMapping } from "@/lib/admin/ezcater-review";
+import { decideEzcaterCustomization, decideEzcaterMapping } from "@/lib/admin/ezcater-review";
 import { CateringPipelineError } from "@/lib/catering/pipeline";
 
 vi.mock("@/lib/session", () => ({ requireSession: vi.fn() }));
-vi.mock("@/lib/admin/ezcater-review", () => ({ decideEzcaterMapping: vi.fn() }));
+vi.mock("@/lib/admin/ezcater-review", () => ({ decideEzcaterMapping: vi.fn(), decideEzcaterCustomization: vi.fn(),
+  decideEzcaterMappingDirect: vi.fn(), dismissEzcaterToastReview: vi.fn() }));
 const actor = { user: { id: "actor", role: "catering_mgr" } };
 function request(body: unknown) {
   return new NextRequest("https://example.test/api/admin/catering/ezcater-review", {
@@ -17,6 +18,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   vi.mocked(requireSession).mockResolvedValue(actor as never);
   vi.mocked(decideEzcaterMapping).mockResolvedValue({ decision: "approve" });
+  vi.mocked(decideEzcaterCustomization).mockResolvedValue({ decision: "approve" });
 });
 
 describe("ezCater mapping review route", () => {
@@ -32,6 +34,13 @@ describe("ezCater mapping review route", () => {
     vi.mocked(requireSession).mockResolvedValue(refusal);
     expect(await POST(request({ reviewId: "review", decision: "ignore", targetId: null }))).toBe(refusal);
     expect(decideEzcaterMapping).not.toHaveBeenCalled();
+  });
+  it("validates and delegates a customization decision", async () => {
+    const targetId = "00000000-0000-4000-8000-000000000002";
+    const effects = [{ targetKind: "sku", targetId, disposition: "remove", portionQty: null, portionUnit: null, parentOnly: true }];
+    const response = await POST(request({ reviewId: "review", kind: "customization", decision: "approve", effects, pickMenuItemId: null }));
+    expect(response.status).toBe(200);
+    expect(decideEzcaterCustomization).toHaveBeenCalledWith(actor, "review", "approve", effects, null);
   });
   it.each([null, [], {}, { reviewId: 4, decision: "ignore", targetId: null },
     { reviewId: "review", decision: "reopen", targetId: null },
