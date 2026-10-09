@@ -67,6 +67,25 @@ export interface VaultEntryAccess {
   active: boolean;
 }
 
+/** What the page and the list route see. Never a secret. */
+export interface VaultEntryView {
+  id: string;
+  kind: VaultEntryKind;
+  entryType: VaultEntryType;
+  name: string;
+  username: string | null;
+  url: string | null;
+  notes: string | null;
+  locationId: string | null;
+  minLevel: number | null;
+  ownerId: string | null;
+  updatedAt: string | null;
+  /** The viewer may edit/remove it. */
+  canManage: boolean;
+  /** Level 8+, shared, a previous version inside the 30-day window exists. */
+  canRecoverPrevious: boolean;
+}
+
 export type VaultErrorCode =
   | "not_enabled" | "invalid_payload" | "forbidden" | "location_access_denied" | "entry_not_found"
   | "reveal_cap" | "no_previous_secret" | "vault_unavailable" | "write_failed" | "version_conflict";

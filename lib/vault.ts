@@ -30,7 +30,7 @@ import {
   VAULT_MANAGE_ALL_LEVEL, VAULT_OWNER_RECOVERY_LEVEL, VAULT_PREVIOUS_RECOVERY_LEVEL, VAULT_PREVIOUS_SECRET_RETENTION_DAYS,
   VAULT_REVEAL_BURST_THRESHOLD, VAULT_REVEAL_HOURLY_CAP, VaultError, canAccessVaultLocation, canCreateShared, canManageEntry,
   canRevealEntry, canSeeSharedEntry, previousSecretRecoverable, revealCapVerdict,
-  type RevealCapVerdict, type VaultActor, type VaultEntryInput, type VaultEntryKind, type VaultEntryType,
+  type RevealCapVerdict, type VaultActor, type VaultEntryInput, type VaultEntryKind, type VaultEntryType, type VaultEntryView,
 } from "@/lib/vault-shared";
 
 export interface VaultServerActor extends VaultActor {
@@ -76,24 +76,7 @@ interface SecretRow {
 }
 const SECRET_COLS = "id,entry_id,version,ciphertext,iv,tag,wrapped_key,key_iv,key_tag,master_key_id,superseded_at,scrubbed_at";
 
-/** What the page and the list route see. Never a secret. */
-export interface VaultEntryView {
-  id: string;
-  kind: VaultEntryKind;
-  entryType: VaultEntryType;
-  name: string;
-  username: string | null;
-  url: string | null;
-  notes: string | null;
-  locationId: string | null;
-  minLevel: number | null;
-  ownerId: string | null;
-  updatedAt: string | null;
-  /** The viewer may edit/remove it. */
-  canManage: boolean;
-  /** Level 8+, shared, a previous version inside the 30-day window exists. */
-  canRecoverPrevious: boolean;
-}
+export type { VaultEntryView };
 
 export interface RevealResult {
   secret: string;
