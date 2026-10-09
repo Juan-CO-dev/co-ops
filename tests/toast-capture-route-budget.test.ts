@@ -6,6 +6,8 @@ import { getServiceRoleClient } from "@/lib/supabase-server";
 import { pullTodaySalesForAllLocations } from "@/lib/catering/toast-sales";
 import { audit } from "@/lib/audit";
 import { runToastLaborPull } from "@/lib/toast/labor";
+import { captureModified } from "@/lib/toast/capture-modified";
+vi.mock("@/lib/toast/capture-modified", () => ({ captureModified: vi.fn() }));
 vi.mock("@/lib/catering/toast-sales", () => ({ pullTodaySalesForAllLocations: vi.fn() }));
 vi.mock("@/lib/toast/capture", () => ({ captureEnabled: () => true, captureToastDaySystem: vi.fn() }));
 vi.mock("@/lib/supabase-server", () => ({ getServiceRoleClient: vi.fn() }));
@@ -15,6 +17,7 @@ vi.mock("@/lib/toast/labor", () => ({ laborPullEnabled: vi.fn(() => true), runTo
 const reconcile = vi.fn();
 beforeEach(() => {
   vi.clearAllMocks();
+  vi.mocked(captureModified).mockResolvedValue({ failures: 0, results: [], skipped: false });
   vi.stubEnv("DEPLETION_SOURCE", "capture");
   vi.mocked(pullTodaySalesForAllLocations).mockResolvedValue([{ locationId: "shop", result: "pulled" }]);
   vi.useFakeTimers();
@@ -53,6 +56,21 @@ it.each([0, 100_000, 111_000])("reserves response time after %ims elapsed before
     metadata: expect.objectContaining({ job: "toast-sales-today", capture_failures: allowance ? 1 : 0 }),
   }));
   expect(captureToastDaySystem).toHaveBeenCalledTimes(allowance ? 1 : 0);
+  expect(captureModified).toHaveBeenCalledWith(expect.any(AbortSignal), Math.min(20_000,
+    Math.max(0, 110_000 - elapsedMs - allowance - 30_000)));
+});
+
+it("modified discovery runs after capture and its failure leaves labor and response available", async () => {
+  vi.mocked(captureToastDaySystem).mockResolvedValue({ skipped: false, runId: "run" } as Awaited<ReturnType<typeof captureToastDaySystem>>);
+  vi.mocked(captureModified).mockResolvedValue({ failures: 1, results: [], skipped: false, error: "capture_schema_missing" });
+  const response = await GET(new NextRequest("http://localhost/api/cron/toast-sales-today", {
+    headers: { "x-cron-secret": "synthetic-test-secret" },
+  }));
+  expect(response.status).toBe(200);
+  expect(await response.json()).toMatchObject({ healthy: true, modified: { failures: 1 }, labor: { ran: false } });
+  expect(vi.mocked(captureModified).mock.invocationCallOrder[0]).toBeGreaterThan(vi.mocked(captureToastDaySystem).mock.invocationCallOrder[1]!);
+  expect(vi.mocked(runToastLaborPull).mock.invocationCallOrder[0]).toBeGreaterThan(vi.mocked(captureModified).mock.invocationCallOrder[0]!);
+  expect(audit).toHaveBeenCalledWith(expect.objectContaining({ metadata: expect.objectContaining({ modified_failures: 1 }) }));
 });
 
 it.each([undefined, "capture"])("today uses %s writer mode and runs additive capture", async (flag) => {

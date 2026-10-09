@@ -7,8 +7,9 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
 import { CollapsibleSection } from "@/components/ui/CollapsibleSection";
-import { formatDateLabel, formatMonthLabel } from "@/lib/i18n/format";
+import { formatDateLabel, formatMonthLabel, formatTime } from "@/lib/i18n/format";
 import type { Language } from "@/lib/i18n/types";
+import { etCalendarDate } from "@/lib/operational-day";
 import { salesHasData, shownCents, unknownComponents, type SalesSummaryDto, type SalesTotals } from "@/lib/sales-reports-shared";
 import { CoverageBadge, Money, salesCard, salesLink, tFor } from "@/components/reports-hub/SalesParts";
 
@@ -24,6 +25,13 @@ export function SalesSummary({ summary, language, checksHref }: {
   const m = (tt: SalesTotals, cents: number | null) => <Money cents={shownCents(tt, cents)} language={language} />;
   const count = (tt: SalesTotals, value: number) => (salesHasData(tt) ? value : "—");
   const unknown = unknownComponents(totals);
+  const coverageMoment = (iso: string) => formatSalesCoverageMoment(iso, language);
+  const refundHint = summary.modifiedCoverage
+    ? <>{summary.modifiedCoverage.through
+      ? t("reports.sales.refunds_coverage", { n: totals.refundCount, start: coverageMoment(summary.modifiedCoverage.start), through: coverageMoment(summary.modifiedCoverage.through) })
+      : t("reports.sales.refunds_coverage_pending", { n: totals.refundCount, start: coverageMoment(summary.modifiedCoverage.start) })}
+      {" "}{t("reports.sales.refunds_bootstrap_caveat")}</>
+    : t("reports.sales.refunds_hint", { n: totals.refundCount });
   const card = (label: string, value: ReactNode, sub?: ReactNode) => <div className="min-w-0 break-words rounded-lg border border-co-border bg-co-surface-inset p-3">
     <div className="text-[11px] font-bold tracking-[0.12em] text-co-text-dim">{label}</div>
     <div className="text-lg font-bold text-co-text">{value}</div>
@@ -51,7 +59,7 @@ export function SalesSummary({ summary, language, checksHref }: {
       {card(t("reports.sales.discounts"), m(totals, totals.discountCents), t("reports.sales.discount_count", { n: totals.discountCount }))}
       {card(t("reports.sales.tax"), m(totals, totals.taxCents))}
       {card(t("reports.sales.tips"), m(totals, totals.tipCents))}
-      {card(t("reports.sales.refunds"), m(totals, totals.refundCents), t("reports.sales.refunds_hint", { n: totals.refundCount }))}
+      {card(t("reports.sales.refunds"), m(totals, totals.refundCents), refundHint)}
     </div>
     {/* What the numbers are (Astra P1-1/P1-2): check totals before refunds, not reconciled net sales. */}
     <p className="mt-3 text-xs text-co-text-muted" role="note">{t("reports.sales.caveat")}</p>
@@ -88,4 +96,9 @@ export function SalesSummary({ summary, language, checksHref }: {
       </CollapsibleSection>
     </div> : null}
   </section>;
+}
+
+/** One instant rendered wholly in the operational timezone, including near UTC midnight. */
+export function formatSalesCoverageMoment(iso: string, language: Language): string {
+  return `${formatDateLabel(etCalendarDate(iso), language)}, ${formatTime(iso, language)}`;
 }
