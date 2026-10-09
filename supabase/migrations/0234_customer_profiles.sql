@@ -26,6 +26,19 @@
 --    import replays, a half-applied one resumes. Diffed against the previous COMPLETED import (absence =
 --    opted out unless the file carries a status column; a wave over 10% / 25 people needs a human yes).
 --    The FIRST import of a source is the baseline and never shows as "newly opted in".
+--    Juan 2026-10-09: the Toast marketing list is built ONLY from explicit opt-ins (not auto-fed from
+--    transactions), so a listed row IS an explicit opt-in event, source toast_csv_import, dated by the
+--    export date.
+--    r1 (Astra BC-031 P1): replay identity = rows + export date + mode, and only the LATEST completed
+--    import can replay; an older identical list is a NEW snapshot that diffs against the latest.
+--    r1 (Astra BC-036): an import's events are PENDING until finish completes it (every consent read
+--    counts only events of completed imports), so customer_consent_import_cancel neutralises a bad
+--    half-applied import without touching the append-only history, and a corrected file can proceed.
+--    r1 (Astra BC-031 P2): relay/placeholder addresses are refused in SQL too (customer_email_is_relay),
+--    whatever path they arrive by.
+--    r1 (Astra BC-037): identity resolution is serialised (one transaction-scoped advisory lock taken by
+--    every identity writer), and an identifier owned by anyone else after the insert is a loud error,
+--    never a silent second profile.
 -- F. customer_suppressions: sha256 of every identifier a person asked us to delete. Ingest and import
 --    skip a suppressed email/phone, so a deleted person is never silently re-created.
 -- G. Delete-on-request (customer_erase) and retention (customer_retention_sweep): identifiers and
@@ -131,7 +144,7 @@ create table public.customer_consent_imports (
   is_baseline boolean not null,
   explicit_status boolean not null,
   chunk_count integer not null check (chunk_count between 1 and 100),
-  status text not null default 'running' check (status in ('running','completed','failed')),
+  status text not null default 'running' check (status in ('running','completed','failed','cancelled')),
   rows_total integer not null default 0 check (rows_total >= 0),
   new_opt_ins integer not null default 0 check (new_opt_ins >= 0),
   opt_outs integer not null default 0 check (opt_outs >= 0),
@@ -139,13 +152,17 @@ create table public.customer_consent_imports (
   stale integer not null default 0 check (stale >= 0),
   suppressed integer not null default 0 check (suppressed >= 0),
   new_customers integer not null default 0 check (new_customers >= 0),
+  masked integer not null default 0 check (masked >= 0),
   actor_id uuid references public.users(id),
+  cancelled_by uuid references public.users(id),
   created_at timestamptz not null default clock_timestamp(),
   finished_at timestamptz,
   check ((status = 'running') = (finished_at is null)),
-  unique (source, rows_sha256)
+  check ((status = 'cancelled') = (cancelled_by is not null))
 );
+-- No uniqueness on the rows hash: the same list on a later date is a NEW snapshot (r1 BC-031).
 create index customer_consent_imports_order on public.customer_consent_imports(source, status, export_date desc, created_at desc);
+create unique index customer_consent_imports_one_running on public.customer_consent_imports(source) where status = 'running';
 
 -- One row per applied chunk (<= 1000 rows each, so no statement nears the 8 s timeout). A retried chunk
 -- replays its stored counts instead of being applied twice.
@@ -153,7 +170,7 @@ create table public.customer_consent_import_chunks (
   import_id uuid not null references public.customer_consent_imports(id),
   chunk_index integer not null check (chunk_index >= 0),
   rows_total integer not null, new_opt_ins integer not null, opt_outs integer not null, unchanged integer not null,
-  stale integer not null, suppressed integer not null, new_customers integer not null,
+  stale integer not null, suppressed integer not null, new_customers integer not null, masked integer not null,
   primary key (import_id, chunk_index)
 );
 
@@ -217,6 +234,9 @@ select distinct on (r.root_id, e.channel)
   r.root_id as customer_id, e.channel, e.status, e.source, e.subject_sha256, e.effective_at, e.import_run_id, e.id as event_id
 from public.customer_consent_events e
 join (select id, coalesce(merged_into, id) as root_id from public.customers) r on r.id = e.customer_id
+-- An import's events count only once the import COMPLETED (pending while running; never if cancelled).
+where e.import_run_id is null
+   or exists(select 1 from public.customer_consent_imports i where i.id = e.import_run_id and i.status = 'completed')
 order by r.root_id, e.channel, e.effective_at desc, (e.status = 'opted_out') desc, e.recorded_at desc, e.id desc;
 
 -- ───────────────────────────── private helpers (no grants) ─────────────────────────────
@@ -231,6 +251,27 @@ language sql stable security definer set search_path = pg_catalog, public as $$
   select coalesce(merged_into, id) from public.customers where id = p_id
 $$;
 
+-- Relay / placeholder addresses a marketplace or a hurried till hands us: never a person's email. The
+-- domain list is MASKED_EMAIL_DOMAINS in lib/customers/identity-shared.ts (pinned equal by a test).
+create function public.customer_email_is_relay(p_email text) returns boolean
+language sql immutable set search_path = pg_catalog, public as $$
+  select split_part(p_email,'@',2) = any(array['doordash.com','ubereats.com','uber.com','grubhub.com','seamless.com','postmates.com',
+      'caviar.com','ezcater.com','marketplace.amazon.com','relay.toasttab.com','toasttab.com']::text[])
+    or exists(select 1 from unnest(array['doordash.com','ubereats.com','uber.com','grubhub.com','seamless.com','postmates.com',
+      'caviar.com','ezcater.com','marketplace.amazon.com','relay.toasttab.com','toasttab.com']::text[]) d
+      where split_part(p_email,'@',2) like '%.' || d)
+    or split_part(p_email,'@',2) ~ '(^|\.)(relay|masked|anonymi[sz]ed|proxy)\.'
+    or split_part(p_email,'@',1) ~ '^(relay|masked)[+.-]'
+    or split_part(p_email,'@',1) ~ '^(no-?e?mail|none|na|n/a|noreply|no-reply|test|null|x+)$'
+$$;
+
+-- Every identity writer takes this ONE transaction-scoped lock first (r1 BC-037): two captures of the
+-- same new email can no longer both see "no owner" and create two people. Re-entrant within a txn.
+create function public.customer_identity_lock() returns void
+language sql volatile set search_path = pg_catalog, public as $$
+  select pg_advisory_xact_lock(hashtextextended('customer-identity',0))
+$$;
+
 -- Resolve (or create) the person behind one contact record. Email first, then phone. Returns null when
 -- there is nothing to identify by or every identifier is suppressed.
 create function public.customer_resolve(
@@ -241,9 +282,12 @@ language plpgsql security definer set search_path = pg_catalog, public as $$
 declare
   v_email text := nullif(lower(btrim(coalesce(p_email,''))),'');
   v_phone text := nullif(btrim(coalesce(p_phone,'')),'');
-  v_by_email uuid; v_by_phone uuid; v_a uuid; v_b uuid; v_name text;
+  v_by_email uuid; v_by_phone uuid; v_a uuid; v_b uuid; v_name text; v_owner uuid;
 begin
   created := false; suppressed := false; customer_id := null;
+  perform public.customer_identity_lock();
+  -- A relay or placeholder address is not the person's: never stored, never consent (r1 BC-031 P2).
+  if v_email is not null and public.customer_email_is_relay(v_email) then v_email := null; end if;
   if v_email is not null and exists(select 1 from public.customer_suppressions s where s.kind='email' and s.value_sha256=public.customer_sha256(v_email)) then
     v_email := null; suppressed := true;
   end if;
@@ -296,11 +340,20 @@ begin
     insert into public.customer_identifiers(customer_id, kind, value, value_sha256, source, first_seen_at, last_seen_at)
     values (customer_id, 'email', v_email, public.customer_sha256(v_email), p_source, coalesce(p_seen_at, now()), coalesce(p_seen_at, now()))
     on conflict (kind, value) do update set last_seen_at = greatest(customer_identifiers.last_seen_at, excluded.last_seen_at);
+    -- Reconcile (r1 BC-037): the email must now belong to THIS person, or nothing attaches to anyone.
+    select public.customer_root(i.customer_id) into v_owner from public.customer_identifiers i where i.kind='email' and i.value=v_email;
+    if v_owner is distinct from customer_id then raise exception 'customer_identity_conflict'; end if;
   end if;
   if v_phone is not null then
     insert into public.customer_identifiers(customer_id, kind, value, value_sha256, source, first_seen_at, last_seen_at)
     values (customer_id, 'phone', v_phone, public.customer_sha256(v_phone), p_source, coalesce(p_seen_at, now()), coalesce(p_seen_at, now()))
     on conflict (kind, value) do update set last_seen_at = greatest(customer_identifiers.last_seen_at, excluded.last_seen_at);
+    -- A phone already owned by someone else stays theirs (the split is a suggestion above); a phone that
+    -- resolved this person must be theirs.
+    if v_by_email is null then
+      select public.customer_root(i.customer_id) into v_owner from public.customer_identifiers i where i.kind='phone' and i.value=v_phone;
+      if v_owner is distinct from customer_id then raise exception 'customer_identity_conflict'; end if;
+    end if;
   end if;
 end $$;
 
@@ -397,6 +450,8 @@ create function public.customer_consent_latest(p_root uuid, p_channel text,
 language sql stable security definer set search_path = pg_catalog, public as $$
   select e.status, e.subject_sha256, e.effective_at from public.customer_consent_events e
   where e.customer_id in (select c.id from public.customers c where c.id = p_root or c.merged_into = p_root) and e.channel = p_channel
+    and (e.import_run_id is null
+         or exists(select 1 from public.customer_consent_imports i where i.id = e.import_run_id and i.status = 'completed'))
   order by e.effective_at desc, (e.status = 'opted_out') desc, e.recorded_at desc, e.id desc limit 1
 $$;
 
@@ -416,22 +471,23 @@ begin
   end if;
   if p_export_date > (now() at time zone 'America/New_York')::date + 1 then raise exception 'consent_import_future_date'; end if;
   perform pg_advisory_xact_lock(hashtextextended('customer-consent-import',0));
-  select * into v_existing from public.customer_consent_imports where source = p_source and rows_sha256 = p_rows_sha256 for update;
+  -- A half-applied import of this source: resume it if it is THIS snapshot, otherwise refuse (cancel it first).
+  select * into v_existing from public.customer_consent_imports where source = p_source and status = 'running' for update;
   if found then
-    if v_existing.status = 'completed' then return jsonb_build_object('import_id', v_existing.id, 'state', 'completed'); end if;
-    if v_existing.export_date <> p_export_date or v_existing.explicit_status <> p_explicit_status or v_existing.chunk_count <> p_chunk_count then
-      raise exception 'consent_import_mismatch';
+    if v_existing.rows_sha256 = p_rows_sha256 and v_existing.export_date = p_export_date
+       and v_existing.explicit_status = p_explicit_status and v_existing.chunk_count = p_chunk_count then
+      return jsonb_build_object('import_id', v_existing.id, 'state', 'resumed');
     end if;
-    update public.customer_consent_imports set status = 'running', finished_at = null where id = v_existing.id;
-    return jsonb_build_object('import_id', v_existing.id, 'state', 'resumed');
-  end if;
-  -- A different file may not start while another one is half-applied (it would move the diff baseline).
-  if exists(select 1 from public.customer_consent_imports where source = p_source and status = 'running') then
     raise exception 'consent_import_busy';
   end if;
   select * into v_last from public.customer_consent_imports where source = p_source and status = 'completed'
   order by export_date desc, created_at desc limit 1;
   if found and p_export_date < v_last.export_date then raise exception 'consent_import_older_than_last'; end if;
+  -- Replay ONLY when this exact snapshot (rows + export date + mode) is the LATEST completed import. The
+  -- same rows seen before an intervening import are a new snapshot and must diff (r1 BC-031 P1).
+  if found and v_last.rows_sha256 = p_rows_sha256 and v_last.export_date = p_export_date and v_last.explicit_status = p_explicit_status then
+    return jsonb_build_object('import_id', v_last.id, 'state', 'completed');
+  end if;
   insert into public.customer_consent_imports(source, rows_sha256, export_date, is_baseline, explicit_status, chunk_count, actor_id)
   values (p_source, p_rows_sha256, p_export_date, v_last.id is null, p_explicit_status, p_chunk_count, p_actor_id) returning id into v_id;
   return jsonb_build_object('import_id', v_id, 'state', 'started');
@@ -443,6 +499,7 @@ declare
   v_imp public.customer_consent_imports%rowtype; v_done public.customer_consent_import_chunks%rowtype;
   v_row jsonb; v_res record; v_email text; v_status text; v_cur record; v_effective timestamptz;
   v_new_in int := 0; v_out int := 0; v_same int := 0; v_stale int := 0; v_supp int := 0; v_created int := 0; v_total int := 0;
+  v_masked int := 0;
 begin
   perform pg_advisory_xact_lock(hashtextextended('customer-consent-import',0));
   select * into v_imp from public.customer_consent_imports where id = p_import_id for update;
@@ -462,6 +519,8 @@ begin
     if v_email is null then raise exception 'consent_import_invalid'; end if;
     v_status := case when v_imp.explicit_status then v_row->>'status' else 'opted_in' end;
     if v_status is null or v_status not in ('opted_in','opted_out') then raise exception 'consent_import_invalid'; end if;
+    -- A relay/placeholder address is never stored nor opted in (r1 BC-031 P2).
+    if public.customer_email_is_relay(v_email) then v_masked := v_masked + 1; continue; end if;
     select * into v_res from public.customer_resolve(v_email, v_row->>'phone',
       nullif(btrim(concat_ws(' ', v_row->>'first_name', v_row->>'last_name')),''), v_row->>'first_name', v_row->>'last_name',
       null, v_effective, v_imp.source, null);
@@ -479,8 +538,8 @@ begin
     values (v_res.customer_id, 'email', v_status, v_imp.source, public.customer_sha256(v_email), v_effective, p_import_id, p_actor_id);
     if v_status = 'opted_in' then v_new_in := v_new_in + 1; else v_out := v_out + 1; end if;
   end loop;
-  insert into public.customer_consent_import_chunks(import_id, chunk_index, rows_total, new_opt_ins, opt_outs, unchanged, stale, suppressed, new_customers)
-  values (p_import_id, p_chunk_index, v_total, v_new_in, v_out, v_same, v_stale, v_supp, v_created) returning * into v_done;
+  insert into public.customer_consent_import_chunks(import_id, chunk_index, rows_total, new_opt_ins, opt_outs, unchanged, stale, suppressed, new_customers, masked)
+  values (p_import_id, p_chunk_index, v_total, v_new_in, v_out, v_same, v_stale, v_supp, v_created, v_masked) returning * into v_done;
   return to_jsonb(v_done) || jsonb_build_object('replay', false);
 end $$;
 
@@ -498,7 +557,7 @@ begin
   if v_imp.status = 'completed' then
     return jsonb_build_object('import_id', v_imp.id, 'replay', true, 'rows_total', v_imp.rows_total, 'new_opt_ins', v_imp.new_opt_ins,
       'opt_outs', v_imp.opt_outs, 'unchanged', v_imp.unchanged, 'stale', v_imp.stale, 'suppressed', v_imp.suppressed,
-      'new_customers', v_imp.new_customers, 'baseline', v_imp.is_baseline);
+      'new_customers', v_imp.new_customers, 'masked', v_imp.masked, 'baseline', v_imp.is_baseline);
   end if;
   if v_imp.status <> 'running' then raise exception 'consent_import_not_running'; end if;
   if (select count(*) from public.customer_consent_import_chunks where import_id = p_import_id) <> v_imp.chunk_count then
@@ -531,14 +590,34 @@ begin
     end if;
   end if;
   select coalesce(sum(c.rows_total),0) as r, coalesce(sum(c.new_opt_ins),0) as i, coalesce(sum(c.opt_outs),0) as o,
-    coalesce(sum(c.unchanged),0) as u, coalesce(sum(c.stale),0) as s, coalesce(sum(c.suppressed),0) as p, coalesce(sum(c.new_customers),0) as n
+    coalesce(sum(c.unchanged),0) as u, coalesce(sum(c.stale),0) as s, coalesce(sum(c.suppressed),0) as p, coalesce(sum(c.new_customers),0) as n,
+    coalesce(sum(c.masked),0) as m
   into v_sum from public.customer_consent_import_chunks c where c.import_id = v_imp.id;
   update public.customer_consent_imports set status = 'completed', finished_at = clock_timestamp(), rows_total = v_sum.r,
     new_opt_ins = v_sum.i, opt_outs = v_sum.o + v_absent, unchanged = v_sum.u, stale = v_sum.s + v_absent_stale,
-    suppressed = v_sum.p, new_customers = v_sum.n where id = v_imp.id;
+    suppressed = v_sum.p, new_customers = v_sum.n, masked = v_sum.m where id = v_imp.id;
   return jsonb_build_object('import_id', v_imp.id, 'replay', false, 'rows_total', v_sum.r, 'new_opt_ins', v_sum.i,
     'opt_outs', v_sum.o + v_absent, 'absent_opt_outs', v_absent, 'unchanged', v_sum.u, 'stale', v_sum.s + v_absent_stale,
-    'suppressed', v_sum.p, 'new_customers', v_sum.n, 'baseline', v_imp.is_baseline);
+    'suppressed', v_sum.p, 'new_customers', v_sum.n, 'masked', v_sum.m, 'baseline', v_imp.is_baseline);
+end $$;
+
+-- Cancel a half-applied import (r1 BC-036): a wrong file that hit the opt-out-wave guard, or a run that
+-- died. Its events were never counted (pending) and now never will be; its members never become the
+-- diff baseline. Nothing is deleted: the append-only history keeps what was attempted. A corrected file
+-- can then begin.
+create function public.customer_consent_import_cancel(p_actor_id uuid, p_import_id uuid)
+returns jsonb language plpgsql security definer set search_path = pg_catalog, public as $$
+declare v_imp public.customer_consent_imports%rowtype; v_events int;
+begin
+  perform pg_advisory_xact_lock(hashtextextended('customer-consent-import',0));
+  select * into v_imp from public.customer_consent_imports where id = p_import_id for update;
+  if not found then raise exception 'consent_import_not_found'; end if;
+  if v_imp.status = 'cancelled' then return jsonb_build_object('import_id', v_imp.id, 'changed', false); end if;
+  if v_imp.status <> 'running' then raise exception 'consent_import_not_running'; end if;
+  if p_actor_id is null then raise exception 'consent_import_invalid'; end if;
+  update public.customer_consent_imports set status = 'cancelled', finished_at = clock_timestamp(), cancelled_by = p_actor_id where id = v_imp.id;
+  select count(*) into v_events from public.customer_consent_events where import_run_id = v_imp.id;
+  return jsonb_build_object('import_id', v_imp.id, 'changed', true, 'neutralised_events', v_events);
 end $$;
 
 -- A manager confirms a suggestion: p_keep survives, the other is merged into it (identifiers, cards,
@@ -547,6 +626,7 @@ create function public.customer_merge(p_actor_id uuid, p_suggestion_id uuid, p_k
 returns jsonb language plpgsql security definer set search_path = pg_catalog, public as $$
 declare v_s public.customer_merge_suggestions%rowtype; v_keep uuid; v_gone uuid; v_k public.customers%rowtype; v_g public.customers%rowtype;
 begin
+  perform public.customer_identity_lock();
   select * into v_s from public.customer_merge_suggestions where id = p_suggestion_id for update;
   if not found then raise exception 'suggestion_not_found'; end if;
   if v_s.status <> 'open' then raise exception 'suggestion_already_decided'; end if;
@@ -599,8 +679,10 @@ end $$;
 -- them lose identifiers, cards and names; their hashes are suppressed; an opt-out is appended per channel.
 create function public.customer_erase(p_actor_id uuid, p_customer_id uuid, p_reason text)
 returns jsonb language plpgsql security definer set search_path = pg_catalog, public as $$
-declare v_root uuid := public.customer_root(p_customer_id); v_ids uuid[]; v_idents int; v_channel text;
+declare v_root uuid; v_ids uuid[]; v_idents int; v_channel text;
 begin
+  perform public.customer_identity_lock();
+  v_root := public.customer_root(p_customer_id);
   if v_root is null then raise exception 'customer_not_found'; end if;
   if p_reason not in ('delete_request','retention') then raise exception 'erase_invalid'; end if;
   if exists(select 1 from public.customers where id = v_root and erased_at is not null) then
@@ -673,6 +755,7 @@ language sql stable security definer set search_path = pg_catalog, public as $$
   select k.customer_id, c.full_name, k.effective_at, k.source,
     coalesce((select e.status from public.customer_consent_events e join public.customers x on x.id = e.customer_id
               where coalesce(x.merged_into, x.id) = k.customer_id and e.channel = 'email' and e.id <> k.event_id
+                and (e.import_run_id is null or exists(select 1 from public.customer_consent_imports ci where ci.id = e.import_run_id and ci.status = 'completed'))
                 and (e.effective_at, e.recorded_at) < (k.effective_at, (select recorded_at from public.customer_consent_events where id = k.event_id))
               order by e.effective_at desc, e.recorded_at desc limit 1), 'none'),
     exists(select 1 from public.customer_orders o where o.customer_id = k.customer_id)
@@ -732,10 +815,12 @@ grant select on public.customer_consent_current to service_role;
 
 revoke all on function public.customer_sha256(text), public.customer_root(uuid),
   public.customer_resolve(text,text,text,text,text,uuid,timestamptz,text,text),
-  public.customer_consent_latest(uuid,text) from public, anon, authenticated, service_role;
+  public.customer_consent_latest(uuid,text), public.customer_email_is_relay(text), public.customer_identity_lock()
+  from public, anon, authenticated, service_role;
 revoke all on function public.customer_ingest_orders(uuid,jsonb), public.customer_link_catering(jsonb),
   public.customer_suggest_merge(uuid,uuid,numeric,text[]), public.customer_consent_import_begin(uuid,text,text,date,boolean,integer),
   public.customer_consent_import_chunk(uuid,uuid,integer,jsonb), public.customer_consent_import_finish(uuid,uuid,boolean),
+  public.customer_consent_import_cancel(uuid,uuid),
   public.customer_merge(uuid,uuid,uuid), public.customer_merge_dismiss(uuid,uuid), public.customer_erase(uuid,uuid,text),
   public.customer_retention_sweep(uuid,timestamptz,integer), public.customer_marketing_export(text),
   public.customer_newly_opted_in(timestamptz,integer), public.customer_profile_page(uuid[],text,integer,integer),
@@ -743,6 +828,7 @@ revoke all on function public.customer_ingest_orders(uuid,jsonb), public.custome
 grant execute on function public.customer_ingest_orders(uuid,jsonb), public.customer_link_catering(jsonb),
   public.customer_suggest_merge(uuid,uuid,numeric,text[]), public.customer_consent_import_begin(uuid,text,text,date,boolean,integer),
   public.customer_consent_import_chunk(uuid,uuid,integer,jsonb), public.customer_consent_import_finish(uuid,uuid,boolean),
+  public.customer_consent_import_cancel(uuid,uuid),
   public.customer_merge(uuid,uuid,uuid), public.customer_merge_dismiss(uuid,uuid), public.customer_erase(uuid,uuid,text),
   public.customer_retention_sweep(uuid,timestamptz,integer), public.customer_marketing_export(text),
   public.customer_newly_opted_in(timestamptz,integer), public.customer_profile_page(uuid[],text,integer,integer),
@@ -760,7 +846,7 @@ do $$ begin
     raise exception '0234: RPC grant escaped';
   end if;
   if exists(select 1 from information_schema.routine_privileges where routine_schema='public'
-    and routine_name in ('customer_resolve','customer_root','customer_sha256','customer_consent_latest') and grantee = 'service_role') then
+    and routine_name in ('customer_resolve','customer_root','customer_sha256','customer_consent_latest','customer_email_is_relay','customer_identity_lock') and grantee = 'service_role') then
     raise exception '0234: private helper granted';
   end if;
 end $$;

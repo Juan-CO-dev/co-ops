@@ -158,6 +158,84 @@ begin
   r := public.customer_retention_sweep(actor, now() - interval '3 years', 10);
   assert (r->>'erased')::int = 1 and (select erase_reason from public.customers where id = c) = 'retention', 'retention ' || r::text;
 
+  -- 11. r1 BC-031 P1: {A} day 1, {A,B} day 2, {A} day 3 (B unsubscribed) must NOT replay day 1.
+  r := public.customer_consent_import_begin(actor, 'toast_csv_import', repeat('1',64), '2026-10-08', false, 1);
+  imp := (r->>'import_id')::uuid;
+  perform public.customer_consent_import_chunk(actor, imp, 0, jsonb_build_array(jsonb_build_object('email','seq.a@example.com')));
+  r := public.customer_consent_import_finish(actor, imp, true);
+  r := public.customer_consent_import_begin(actor, 'toast_csv_import', repeat('2',64), '2026-10-08', false, 1);
+  imp := (r->>'import_id')::uuid;
+  perform public.customer_consent_import_chunk(actor, imp, 0, jsonb_build_array(jsonb_build_object('email','seq.a@example.com'), jsonb_build_object('email','seq.b@example.com')));
+  r := public.customer_consent_import_finish(actor, imp, false);
+  assert exists(select 1 from public.customer_marketing_export('email') where value = 'seq.b@example.com'), 'B opted in on day 2';
+  r := public.customer_consent_import_begin(actor, 'toast_csv_import', repeat('1',64), '2026-10-08', false, 1);
+  assert r->>'state' = 'started', 'the same rows as day 1 after an intervening import are a NEW snapshot, not a replay: ' || r::text;
+  imp := (r->>'import_id')::uuid;
+  perform public.customer_consent_import_chunk(actor, imp, 0, jsonb_build_array(jsonb_build_object('email','seq.a@example.com')));
+  r := public.customer_consent_import_finish(actor, imp, false);
+  assert (r->>'opt_outs')::int = 1, 'day 3 opts B out ' || r::text;
+  select k.status into s from public.customer_consent_current k join public.customer_identifiers i on i.customer_id = k.customer_id
+    where i.value = 'seq.b@example.com' and k.channel = 'email';
+  assert s = 'opted_out', 'B ends opted_out';
+  assert not exists(select 1 from public.customer_marketing_export('email') where value = 'seq.b@example.com'), 'B is not exportable';
+
+  -- 12. r1 BC-037: resolution is serialised and one email is one person; erasure removes everything.
+  r := public.customer_ingest_orders(loc, jsonb_build_array(
+    jsonb_build_object('order_guid','HARNESS-G1','business_date','2026-10-01','email','race@example.com','full_name','Race One','source','toast_online','channel','online','total_cents',100,
+      'cards',jsonb_build_array(jsonb_build_object('brand','AMEX','last4','1111'))),
+    jsonb_build_object('order_guid','HARNESS-G2','business_date','2026-10-01','email','RACE@example.com','phone','+12025550177','full_name','Race One','source','toast_pos','channel','takeout','total_cents',200)));
+  assert (select count(distinct customer_id) from public.customer_identifiers where value in ('race@example.com','+12025550177')) = 1, 'one profile per email';
+  -- (PGlite reports pid null for its single backend.)
+    assert exists(select 1 from pg_locks where locktype = 'advisory' and granted and (pid = pg_backend_pid() or pid is null)), 'the identity lock is held for the txn';
+  select customer_id into c from public.customer_identifiers where value = 'race@example.com';
+  r := public.customer_erase(actor, c, 'delete_request');
+  assert not exists(select 1 from public.customer_identifiers where value in ('race@example.com','+12025550177')), 'erasure removed every identifier';
+  assert not exists(select 1 from public.customer_cards where customer_id = c), 'and the cards';
+  assert not exists(select 1 from public.customers where full_name = 'Race One'), 'and the names on every profile';
+
+  -- 13. r1 BC-031 P2: a relay address through the CSV path is never stored, opted in or exported.
+  r := public.customer_consent_import_begin(actor, 'toast_csv_import', repeat('3',64), '2026-10-08', true, 1);
+  imp := (r->>'import_id')::uuid;
+  r := public.customer_consent_import_chunk(actor, imp, 0, jsonb_build_array(jsonb_build_object('email','fixture@relay.toasttab.com','status','opted_in'),
+    jsonb_build_object('email','noemail@example.com','status','opted_in')));
+  assert (r->>'masked')::int = 2 and (r->>'new_opt_ins')::int = 0, 'relay rows refused ' || r::text;
+  r := public.customer_consent_import_finish(actor, imp, false);
+  assert not exists(select 1 from public.customer_identifiers where value in ('fixture@relay.toasttab.com','noemail@example.com')), 'relay never stored';
+  r := public.customer_ingest_orders(loc, jsonb_build_array(jsonb_build_object('order_guid','HARNESS-G3','business_date','2026-10-01',
+    'email','x1@doordash.com','source','toast_third_party','channel','third_party','total_cents',100)));
+  assert (r->>'linked')::int = 0 and not exists(select 1 from public.customer_identifiers where value = 'x1@doordash.com'), 'relay never stored via capture either';
+
+  -- 14. r1 BC-036: baseline 100, an accidental 50 trips the guard, cancel, the corrected file proceeds.
+  r := public.customer_consent_import_begin(actor, 'toast_csv_import', repeat('4',64), '2026-10-09', false, 1);
+  imp := (r->>'import_id')::uuid;
+  perform public.customer_consent_import_chunk(actor, imp, 0, (select jsonb_agg(jsonb_build_object('email','q'||g||'@example.com')) from generate_series(1,100) g));
+  r := public.customer_consent_import_finish(actor, imp, true);
+  r := public.customer_consent_import_begin(actor, 'toast_csv_import', repeat('5',64), '2026-10-09', false, 1);
+  imp := (r->>'import_id')::uuid;
+  perform public.customer_consent_import_chunk(actor, imp, 0, (select jsonb_agg(jsonb_build_object('email','q'||g||'@example.com','first_name','Wrong')) from generate_series(1,50) g));
+  failed := false;
+  begin perform public.customer_consent_import_finish(actor, imp, false); exception when raise_exception then failed := true; end;
+  assert failed, 'the wave guard trips';
+  failed := false;
+  begin perform public.customer_consent_import_begin(actor, 'toast_csv_import', repeat('6',64), '2026-10-09', false, 1); exception when raise_exception then failed := true; end;
+  assert failed, 'while it runs, another file is busy';
+  r := public.customer_consent_import_cancel(actor, imp);
+  assert (r->>'changed')::boolean, 'cancelled';
+  assert (select count(*) from public.customer_marketing_export('email') where value like 'q%@example.com') = 100, 'cancelled import changed nobody';
+  r := public.customer_consent_import_begin(actor, 'toast_csv_import', repeat('6',64), '2026-10-09', false, 1);
+  assert r->>'state' = 'started', 'the corrected file can begin';
+  imp := (r->>'import_id')::uuid;
+  perform public.customer_consent_import_chunk(actor, imp, 0, (select jsonb_agg(jsonb_build_object('email','q'||g||'@example.com')) from generate_series(1,101) g));
+  r := public.customer_consent_import_finish(actor, imp, false);
+  assert (r->>'opt_outs')::int = 0 and (r->>'new_opt_ins')::int = 1, 'corrected import ' || r::text;
+  assert (select count(*) from public.customer_marketing_export('email') where value like 'q%@example.com') = 101, 'all 101 exportable';
+  -- pending events of a running import never count
+  r := public.customer_consent_import_begin(actor, 'toast_csv_import', repeat('7',64), '2026-10-09', true, 1);
+  imp := (r->>'import_id')::uuid;
+  perform public.customer_consent_import_chunk(actor, imp, 0, jsonb_build_array(jsonb_build_object('email','q1@example.com','status','opted_out')));
+  assert exists(select 1 from public.customer_marketing_export('email') where value = 'q1@example.com'), 'a running import is pending';
+  perform public.customer_consent_import_cancel(actor, imp);
+
   -- 10. Append-only and grants.
   assert not has_table_privilege('service_role', 'public.customer_consent_events', 'UPDATE'), 'no update on events';
   assert not has_table_privilege('service_role', 'public.customer_consent_events', 'DELETE'), 'no delete on events';
