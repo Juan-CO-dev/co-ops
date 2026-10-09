@@ -60,6 +60,8 @@ export async function GET(req: NextRequest) {
         pulled: n("pulled"), fresh: n("fresh"), no_toast: n("no_toast"), stale_check_failed: n("unknown"),
         capture_failures: capture.failures,
         modified_failures: modified.failures,
+        modified_errors: [...modified.results.flatMap((r) => r.error ? [r.error] : []),
+          ...(modified.error ? [modified.error] : [])],
         modified_changed: modified.results.reduce((sum, r) => sum + r.changed, 0),
         captured: capture.results.filter((r) => !r.skipped && !r.error).length,
         skipped: capture.results.filter((r) => r.skipped).length,

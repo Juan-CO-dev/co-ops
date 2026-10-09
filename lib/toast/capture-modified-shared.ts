@@ -1,4 +1,5 @@
 import { captureBusinessDate, normalizeToastOrder } from "./capture-shared";
+import { toastModifiedParam } from "./dates-shared";
 
 export const MODIFIED_MAX_WINDOWS = 4;
 export const MODIFIED_MAX_PAGES = 10;
@@ -33,16 +34,28 @@ export function modifiedWindow(input: unknown): ModifiedWindow | null {
   return { start, end };
 }
 
-/** Preserve the original business date, even for a refund months after sale. */
+/** Widen only the HTTP bounds; the database CAS retains the original strings. */
+export function modifiedRequestDates(window: ModifiedWindow): { startDate: string; endDate: string } {
+  const start = microseconds(window.start), end = microseconds(window.end);
+  if (start === null || end === null) throw new Error("capture_modified_bad_cursor");
+  const startMs = Date.parse(window.start), endMs = Date.parse(window.end);
+  return {
+    startDate: toastModifiedParam(new Date(startMs)),
+    endDate: toastModifiedParam(new Date(endMs + (end > BigInt(endMs) * BigInt(1_000) ? 1 : 0))),
+  };
+}
+
+/** Preserve the original business date; adjacent windows own out-of-range orders. */
 export function normalizeModifiedOrder(raw: unknown, window: ModifiedWindow) {
+  // Compare before normalization, which reduces provider timestamps to milliseconds.
+  const modified = microseconds(raw && typeof raw === "object" ? (raw as Record<string, unknown>).modifiedDate : null);
+  const start = microseconds(window.start), end = microseconds(window.end);
+  if (modified === null) throw new Error("capture_modified_bad_date");
+  if (start === null || end === null) throw new Error("capture_modified_bad_cursor");
+  if (modified < start || modified >= end) return null;
   const date = captureBusinessDate(raw && typeof raw === "object" ? (raw as Record<string, unknown>).businessDate : null);
   if (!date) throw new Error("capture_modified_bad_date");
   const order = normalizeToastOrder(raw, date);
-  const modified = microseconds(order.order.modified_at);
-  const start = microseconds(window.start), end = microseconds(window.end);
-  if (modified === null || start === null || end === null || modified < start || modified >= end) {
-    throw new Error("capture_modified_outside_window");
-  }
   order.payments.sort((a, b) => a.payment_guid < b.payment_guid ? -1 : a.payment_guid > b.payment_guid ? 1 : 0);
   return order;
 }

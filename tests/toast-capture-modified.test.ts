@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { captureModified } from "@/lib/toast/capture-modified";
-import { modifiedRouteBudget, modifiedWindow, normalizeModifiedOrder } from "@/lib/toast/capture-modified-shared";
+import { modifiedRequestDates, modifiedRouteBudget, modifiedWindow, normalizeModifiedOrder } from "@/lib/toast/capture-modified-shared";
 import { captureEnabled } from "@/lib/toast/capture";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import { toastGet } from "@/lib/toast/client";
@@ -46,7 +46,7 @@ it("finds an old-order refund with modified bounds, preserves sale/refund dates 
   expect(await run()).toMatchObject({ failures: 0, results: [{ windows: 1, changed: 1 }] });
   const path = vi.mocked(toastGet).mock.calls[0]![0];
   const params = new URL(path, "https://example.test").searchParams;
-  expect(params.get("startDate")).toBe(start); expect(params.get("endDate")).toBe(end);
+  expect(params.get("startDate")).toBe("2026-10-08T10:00:00.000+0000"); expect(params.get("endDate")).toBe("2026-10-08T11:00:00.000+0000");
   expect(params.has("businessDate")).toBe(false);
   const saved = rpc.mock.calls.find((c) => c[0] === "toast_modified_save")![1];
   expect(saved).toMatchObject({ p_location_id: "shop", p_orders: [{ order: { business_date: "2026-01-02" },
@@ -139,8 +139,8 @@ it("validates fixed windows and normalizes boundary timestamps", () => {
   expect(modifiedWindow({ ...cursor, pending_start: null, pending_end: null })).toBeNull();
   expect(() => modifiedWindow({ ...cursor, pending_end: "2026-10-08T11:00:01Z" })).toThrow();
   expect(() => modifiedWindow({ ...cursor, pending_start: "bad" })).toThrow();
-  expect(normalizeModifiedOrder(raw(), window).order.modified_at).toBe(start);
-  expect(() => normalizeModifiedOrder({ ...raw(), modifiedDate: end }, window)).toThrow("capture_modified_outside_window");
+  expect(normalizeModifiedOrder(raw(), window)?.order.modified_at).toBe(start);
+  expect(normalizeModifiedOrder({ ...raw(), modifiedDate: end }, window)).toBeNull();
 });
 it("completes a microsecond-ended window containing an order in its final millisecond", async () => {
   const preciseEnd = "2026-10-08T11:00:00.123456+00:00";
@@ -164,8 +164,8 @@ it.each([
 ])("compares %s against microsecond bounds (accepted: %s)", (modifiedDate, accepted) => {
   const precise = { start: "2026-10-08T10:00:00.123456Z", end: "2026-10-08T11:00:00.123456Z" };
   const normalize = () => normalizeModifiedOrder({ ...raw(), modifiedDate }, precise);
-  if (accepted) expect(normalize).not.toThrow();
-  else expect(normalize).toThrow("capture_modified_outside_window");
+  if (accepted) expect(normalize()).not.toBeNull();
+  else expect(normalize()).toBeNull();
 });
 it("validates cursor ordering and the hour limit without dropping microseconds", () => {
   const preciseStart = "2026-10-08T10:00:00.123456Z";
@@ -185,3 +185,35 @@ it.each([[0, true, 20_000], [70_000, true, 10_000], [80_000, true, 0], [100_000,
   "respects route/labor reserves at %ims", (elapsed, labor, expected) => {
     expect(modifiedRouteBudget(1_000, 1_000 + (elapsed as number), labor as boolean)).toBe(expected);
   });
+
+it.each([
+  ["2026-10-08T10:00:12.51345+00:00", "2026-10-08T10:00:12.513+0000", "2026-10-08T10:00:12.514+0000"],
+  ["2026-10-08T10:00:12.513000+00:00", "2026-10-08T10:00:12.513+0000", "2026-10-08T10:00:12.513+0000"],
+  ["2026-10-08T23:59:59.999999+00:00", "2026-10-08T23:59:59.999+0000", "2026-10-09T00:00:00.000+0000"],
+  ["2026-10-08T06:00:12.513001-04:00", "2026-10-08T10:00:12.513+0000", "2026-10-08T10:00:12.514+0000"],
+])("rounds HTTP bounds outward for %s", (instant, floor, ceil) => {
+  const dates = modifiedRequestDates({ start: instant, end: instant });
+  expect(decodeURIComponent(dates.startDate)).toBe(floor);
+  expect(decodeURIComponent(dates.endDate)).toBe(ceil);
+});
+it("skips both widened edges, pages by raw length, and completes with exact CAS strings", async () => {
+  const precise = { start: "2026-10-08T10:00:12.51345+00:00", end: "2026-10-08T11:00:12.51345+00:00" };
+  const normal = dispatch;
+  dispatch = async (name, args) => name === "toast_modified_begin" && !completed
+    ? { data: { ...cursor, pending_start: precise.start, pending_end: precise.end }, error: null }
+    : normal(name, args);
+  vi.mocked(toastGet).mockResolvedValueOnce(Array.from({ length: 100 }, () => ({ ...raw(), modifiedDate: "2026-10-08T10:00:12.513+0000" })))
+    .mockResolvedValueOnce([{ ...raw(), modifiedDate: precise.end }, { ...raw(), modifiedDate: "2026-10-08T11:00:12.514+0000" },
+      { ...raw(), modifiedDate: precise.start }]);
+  expect(await run()).toMatchObject({ failures: 0, results: [{ windows: 1, pages: 2, changed: 1 }] });
+  const params = new URL(vi.mocked(toastGet).mock.calls[0]![0], "https://example.test").searchParams;
+  expect(params.get("startDate")).toBe("2026-10-08T10:00:12.513+0000");
+  expect(params.get("endDate")).toBe("2026-10-08T11:00:12.514+0000");
+  expect(rpc.mock.calls.filter(c => c[0] === "toast_modified_save")).toHaveLength(1);
+  expect(rpc).toHaveBeenCalledWith("toast_modified_complete", { p_location_id: "shop", p_start: precise.start, p_end: precise.end });
+});
+it.each([null, "", "bad", "2026-10-08T10:00:00", "2026-13-08T10:00:00Z"])("malformed modifiedDate %s fails without advancing", async (modifiedDate) => {
+  vi.mocked(toastGet).mockResolvedValue([{ ...raw(), modifiedDate }]);
+  expect(await run()).toMatchObject({ failures: 1, results: [{ error: "capture_modified_bad_date" }] });
+  expect(completed).toBe(false);
+});
