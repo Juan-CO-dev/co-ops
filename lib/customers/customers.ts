@@ -387,16 +387,15 @@ export async function linkCateringOrders(actor: CustomerActor, meta: RequestMeta
   requireEnabled();
   requireContact(actor);
   const sb = deps.client ?? getServiceRoleClient();
-  const catering = await selectAllRows<{ id: string; location_id: string; order_date: string; amount_cents: number | null; catering_customers: { name: string | null; email: string | null; phone: string | null } | null }>(
+  const catering = await selectAllRows<{ id: string; location_id: string; order_date: string; amount_cents: number | null; catering_customers: unknown }>(
     (from, to) => sb.from("catering_orders").select("id,location_id,order_date,amount_cents,catering_customers!inner(name,email,phone)").order("id").range(from, to));
-  const ez = await selectAllRows<{ id: string; location_id: string; event_date: string | null; total_cents: number | null; ezcater_order_contacts: { contact: Record<string, unknown> } | null }>(
+  const ez = await selectAllRows<{ id: string; location_id: string; event_date: string | null; total_cents: number | null; ezcater_order_contacts: unknown }>(
     (from, to) => sb.from("ezcater_orders").select("id,location_id,event_date,total_cents,ezcater_order_contacts(contact)").order("id").range(from, to));
   const rows = [
-    ...catering.map((o) => cateringRow("catering", o.id, o.location_id, o.order_date, o.amount_cents, o.catering_customers)),
+    ...catering.map((o) => cateringRow("catering", o.id, o.location_id, o.order_date, o.amount_cents, contactOf(one(o.catering_customers)))),
     ...ez.filter((o) => o.event_date).map((o) => {
-      const c = o.ezcater_order_contacts?.contact ?? {};
-      return cateringRow("ezcater", o.id, o.location_id, o.event_date!, o.total_cents,
-        { name: typeof c.name === "string" ? c.name : null, email: typeof c.email === "string" ? c.email : null, phone: typeof c.phone === "string" ? c.phone : null });
+      const c = one(one(o.ezcater_order_contacts)?.contact);
+      return cateringRow("ezcater", o.id, o.location_id, o.event_date!, o.total_cents, contactOf(c));
     }),
   ].filter((r): r is NonNullable<typeof r> => r !== null);
   let linked = 0;
@@ -410,6 +409,17 @@ export async function linkCateringOrders(actor: CustomerActor, meta: RequestMeta
   await audit({ actorId: actor.userId, actorRole: actor.role, action: "customer.catering_link", resourceTable: "customer_orders", resourceId: null,
     metadata: { linked, skipped, candidates: rows.length }, ...meta });
   return { linked, skipped };
+}
+
+/** PostgREST embeds arrive as an object or a one-element array depending on the FK shape. */
+function one(x: unknown): Record<string, unknown> | null {
+  const v = Array.isArray(x) ? x[0] : x;
+  return v !== null && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : null;
+}
+function contactOf(c: Record<string, unknown> | null) {
+  if (!c) return null;
+  const s = (k: string) => (typeof c[k] === "string" ? (c[k] as string) : null);
+  return { name: s("name"), email: s("email"), phone: s("phone") };
 }
 
 function cateringRow(kind: "catering" | "ezcater", id: string, locationId: string, date: string, totalCents: number | null,
