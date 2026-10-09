@@ -8,8 +8,8 @@ declare
   failed boolean;
 begin
   select id into loc from public.locations order by id limit 1;
-  insert into public.locations(id, name) values (gen_random_uuid(), 'Harness shop 2') returning id into loc2;
-  insert into public.users(id, name, role) values (gen_random_uuid(), 'Harness owner', 'owner') returning id into actor;
+  insert into public.locations(id, name, code, type) values (gen_random_uuid(), 'Harness shop 2', 'HZ2', 'permanent') returning id into loc2;
+  select id into actor from public.users order by (role in ('owner','cgs')) desc, id limit 1; -- real sim user (users.pin_hash is NOT NULL on Postgres)
 
   -- Capture fixtures: pointers exist for G1..G4 at loc, G5 does not.
   insert into public.toast_capture_runs(id, location_id, business_date, status, finished_at)
