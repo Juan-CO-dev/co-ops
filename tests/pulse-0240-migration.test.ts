@@ -10,7 +10,6 @@ describe("0240 pulse v2: migration discipline", () => {
   it("is numbered 0240, stamped applied, one transaction, and leaves 0238/0239 alone", () => {
     expect(sql.split("\n")[0]).toBe("-- Migration 0240_pulse_v2");
     expect(sql).toMatch(/AUTHORED 2026-10-09.*APPLIED TO PROD/);
-    expect(sql).not.toMatch(/APPLIED TO PROD/);
     expect(sql).toMatch(/\nbegin;\n/);
     expect(sql.trimEnd().endsWith("commit;")).toBe(true);
     expect(sql.match(/\b0238\b/g)).toHaveLength(1);
