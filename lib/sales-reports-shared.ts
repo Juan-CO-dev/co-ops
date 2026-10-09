@@ -189,10 +189,11 @@ const n = (v: Num): number => {
 };
 
 export interface DailyRaw {
-  classes: Array<{ business_date: string; sale_class: SaleClass; checks: Num; amount_cents: Num; tax_cents: Num; amount_missing: Num; tax_missing?: Num }>;
+  classes: Array<{ business_date: string; sale_class: SaleClass; checks: Num; amount_cents: Num; tax_cents: Num; amount_missing: Num; tax_missing?: Num;
+    gross_cents?: Num; discounts_comps_cents?: Num; voids_cents?: Num; service_charges_cents?: Num; accounting_missing?: Num }>;
   tips: Array<{ business_date: string; tip_cents: Num; tip_missing?: Num }>;
   discounts: Array<{ business_date: string; count: Num; cents: Num; amount_missing?: Num }>;
-  refunds: Array<{ business_date: string; count: Num; refund_cents: Num; refund_tip_cents: Num }>;
+  refunds: Array<{ business_date: string; count: Num; refund_cents: Num; refund_tip_cents: Num; sales_refund_cents?: Num; sales_refund_missing?: Num }>;
   captured_days: string[];
   ezcater: Array<{ business_date: string; orders: Num; subtotal_cents: Num; amount_missing: Num }>;
 }
@@ -204,11 +205,18 @@ export function coverageStatus(covered: number, expected: number): CoverageStatu
 }
 
 export interface SalesTotals {
+  /** Exact item-sales components of captured Toast data; never combined with ezCater estimates. */
+  grossCents: number | null;
+  discountsCompsCents: number | null;
+  voidsCents: number | null;
+  serviceChargesCents: number | null;
+  salesRefundsCents: number | null;
+  toastNetCents: number | null;
+  accountingMissing: number;
+  salesRefundMissing: number;
   /**
    * Toast CHECK TOTALS of eligible (`sale`) checks: pre-tax, pre-tip, after discounts, BEFORE refunds.
-   * NOT reconciled net sales (Astra P1-1): Toast's contract also removes deferred gift-card /
-   * house-account selections and fundraising charges, which the capture does not record. Whole
-   * E-Gift Card checks are excluded by channel; a gift card sold on a normal check is not.
+   * Retained legacy basis, separate from the exact item-sales components above.
    */
   toastChecksCents: number;
   checks: number;
@@ -220,8 +228,8 @@ export interface SalesTotals {
   discountCount: number;
   /**
    * Refunds CAPTURED SO FAR, dated by their REFUND business date and classified like sales (shown
-   * beside sales, never netted). Capture polls recent business dates only, so a refund today against
-   * an older order appears only once that order's day is re-captured (Astra P1-2; follow-up filed).
+   * beside legacy totals). The separate salesRefundsCents amount is netted from item sales only.
+   * Late-refund discovery is subject to the modified-order watermark shown by the summary.
    */
   refundCents: number;
   refundCount: number;
@@ -255,12 +263,17 @@ export interface SalesBucket extends SalesTotals { key: string; from: string; to
 
 function emptyTotals(expectedDays: number): SalesTotals {
   return {
+    grossCents: 0, discountsCompsCents: 0, voidsCents: 0, serviceChargesCents: 0, salesRefundsCents: 0,
+    toastNetCents: null, accountingMissing: 0, salesRefundMissing: 0,
     toastChecksCents: 0, checks: 0, avgCheckCents: null, taxCents: 0, tipCents: 0, discountCents: 0, discountCount: 0,
     refundCents: 0, refundCount: 0, ezcaterCents: 0, ezcaterOrders: 0, totalCents: 0, giftCardCents: 0, giftCardChecks: 0,
     ezcaterLinkedCents: 0, ezcaterLinkedChecks: 0, voidChecks: 0, excessFoodChecks: 0, amountMissing: 0,
     taxMissing: 0, tipMissing: 0, discountMissing: 0, coveredDays: 0, expectedDays, coverage: "missing",
   };
 }
+
+/** Unlike legacy partial sums, an exact component cannot silently absorb an unknown. */
+const addExact = (a: number | null, b: Num): number | null => a === null || b == null ? null : a + n(b);
 
 /** Folds one business day's raw facts into a running total (the ONE place a class is summed). */
 function addDay(t: SalesTotals, day: DayFacts): void {
@@ -269,6 +282,11 @@ function addDay(t: SalesTotals, day: DayFacts): void {
     const checks = n(c.checks);
     switch (c.sale_class) {
       case "sale":
+        t.grossCents = addExact(t.grossCents, c.gross_cents);
+        t.discountsCompsCents = addExact(t.discountsCompsCents, c.discounts_comps_cents);
+        t.voidsCents = addExact(t.voidsCents, c.voids_cents);
+        t.serviceChargesCents = addExact(t.serviceChargesCents, c.service_charges_cents);
+        t.accountingMissing += c.accounting_missing == null ? checks : n(c.accounting_missing);
         t.toastChecksCents += cents; t.checks += checks; t.taxCents += n(c.tax_cents); t.amountMissing += n(c.amount_missing);
         t.taxMissing += n(c.tax_missing);
         break;
@@ -281,6 +299,8 @@ function addDay(t: SalesTotals, day: DayFacts): void {
   t.tipCents += day.tipCents; t.tipMissing += day.tipMissing;
   t.discountCents += day.discountCents; t.discountCount += day.discountCount; t.discountMissing += day.discountMissing;
   t.refundCents += day.refundCents; t.refundCount += day.refundCount;
+  t.salesRefundsCents = addExact(t.salesRefundsCents, day.salesRefundsCents);
+  t.salesRefundMissing += day.salesRefundMissing;
   t.ezcaterCents += day.ezcaterCents; t.ezcaterOrders += day.ezcaterOrders; t.amountMissing += day.ezcaterMissing;
   if (day.captured) t.coveredDays += 1;
 }
@@ -289,10 +309,17 @@ function finish(t: SalesTotals): SalesTotals {
   // An average over a sum with unknown amounts is not an average (Astra P2-11): suppressed.
   t.avgCheckCents = t.checks > 0 && t.amountMissing === 0 ? Math.round(t.toastChecksCents / t.checks) : null;
   t.coverage = coverageStatus(t.coveredDays, t.expectedDays);
+  if (t.coverage !== "complete") {
+    t.grossCents = t.discountsCompsCents = t.voidsCents = t.serviceChargesCents = t.salesRefundsCents = null;
+  }
+  t.toastNetCents = t.accountingMissing === 0 && t.salesRefundMissing === 0 && t.grossCents !== null &&
+    t.discountsCompsCents !== null && t.voidsCents !== null && t.salesRefundsCents !== null
+    ? t.grossCents - t.discountsCompsCents - t.voidsCents - t.salesRefundsCents : null;
   return t;
 }
 
 interface DayFacts {
+  salesRefundsCents: number | null; salesRefundMissing: number;
   classes: DailyRaw["classes"]; tipCents: number; tipMissing: number; discountCents: number; discountCount: number; discountMissing: number;
   refundCents: number; refundCount: number; ezcaterCents: number; ezcaterOrders: number; ezcaterMissing: number; captured: boolean;
 }
@@ -303,7 +330,7 @@ function dayIndex(raws: readonly DailyRaw[]): Map<string, DayFacts> {
   const day = (d: string) => {
     let f = days.get(d);
     if (!f) {
-      f = { classes: [], tipCents: 0, tipMissing: 0, discountCents: 0, discountCount: 0, discountMissing: 0, refundCents: 0, refundCount: 0, ezcaterCents: 0, ezcaterOrders: 0, ezcaterMissing: 0, captured: false };
+      f = { classes: [], salesRefundsCents: 0, salesRefundMissing: 0, tipCents: 0, tipMissing: 0, discountCents: 0, discountCount: 0, discountMissing: 0, refundCents: 0, refundCount: 0, ezcaterCents: 0, ezcaterOrders: 0, ezcaterMissing: 0, captured: false };
       days.set(d, f);
     }
     return f;
@@ -312,7 +339,11 @@ function dayIndex(raws: readonly DailyRaw[]): Map<string, DayFacts> {
     for (const c of raw.classes ?? []) day(c.business_date).classes.push(c);
     for (const r of raw.tips ?? []) { const f = day(r.business_date); f.tipCents += n(r.tip_cents); f.tipMissing += n(r.tip_missing); }
     for (const r of raw.discounts ?? []) { const f = day(r.business_date); f.discountCents += n(r.cents); f.discountCount += n(r.count); f.discountMissing += n(r.amount_missing); }
-    for (const r of raw.refunds ?? []) { const f = day(r.business_date); f.refundCents += n(r.refund_cents); f.refundCount += n(r.count); }
+    for (const r of raw.refunds ?? []) {
+      const f = day(r.business_date); f.refundCents += n(r.refund_cents); f.refundCount += n(r.count);
+      f.salesRefundsCents = addExact(f.salesRefundsCents, r.sales_refund_cents);
+      f.salesRefundMissing += r.sales_refund_missing == null ? n(r.count) : n(r.sales_refund_missing);
+    }
     for (const r of raw.ezcater ?? []) { const f = day(r.business_date); f.ezcaterCents += n(r.subtotal_cents); f.ezcaterOrders += n(r.orders); f.ezcaterMissing += n(r.amount_missing); }
     for (const d of raw.captured_days ?? []) day(d).captured = true;
   }

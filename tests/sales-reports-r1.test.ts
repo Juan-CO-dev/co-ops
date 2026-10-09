@@ -47,19 +47,23 @@ beforeEach(() => {
   rpc = () => [];
 });
 
-describe("P1-1: the money is named for what it is, not 'net sales'", () => {
+describe("P1-1: legacy check totals stay separate from captured exact item-sales net", () => {
   it("screen labels say check totals / sales before refunds, with a visible caveat, in en and es", () => {
     expect(E["reports.sales.toast_checks"]).toBe("Toast check totals (before refunds)");
     expect(E["reports.sales.total"]).toBe("Sales (before refunds)");
     expect(E["reports.sales.toast_checks_hint"]).toMatch(/Not reconciled net sales/);
-    expect(E["reports.sales.caveat"]).toMatch(/not reconciled net sales/);
-    expect(S["reports.sales.caveat"]).toMatch(/no son ventas netas conciliadas/i);
-    expect(E["reports.sales.toast_net"]).toBeUndefined();
+    expect(E["reports.sales.caveat"]).toMatch(/not item-sales net/);
+    expect(S["reports.sales.caveat"]).toMatch(/no es el neto de ventas de artículos/i);
+    expect(E["reports.sales.toast_net"]).toBe("Toast item-sales net (captured)");
+    expect(E["reports.sales.net_basis"]).toMatch(/Missing accounting or unreconciled refunds show as unavailable/);
     expect(readFileSync("components/reports-hub/SalesSummary.tsx", "utf8")).toContain('t("reports.sales.caveat")');
     for (const [k, v] of Object.entries(E)) if (k.startsWith("reports.sales.") && /net sales/i.test(v)) expect(v, k).toMatch(/not reconciled/i);
   });
-  it("no export column of any view claims 'net'", () => {
-    for (const [view, cols] of Object.entries(SALES_EXPORT_COLUMNS)) for (const c of cols) expect(c.key, `${view}.${c.key}`).not.toMatch(/net/);
+  it("only the new accounted summary and its basis note claim net", () => {
+    for (const [view, cols] of Object.entries(SALES_EXPORT_COLUMNS)) for (const c of cols) {
+      if (view === "summary" && ["toast_item_sales_net", "toast_net_basis"].includes(c.key)) continue;
+      expect(c.key, `${view}.${c.key}`).not.toMatch(/net/);
+    }
     expect(SALES_EXPORT_COLUMNS.summary.map((c) => c.key)).toEqual(expect.arrayContaining(["toast_check_totals", "sales_before_refunds"]));
     expect(SALES_EXPORT_COLUMNS.checks.map((c) => c.key)).toContain("check_total");
   });
@@ -68,7 +72,7 @@ describe("P1-1: the money is named for what it is, not 'net sales'", () => {
 describe("P1-2: refunds are 'captured so far', never a complete-looking zero", () => {
   it("label, hint and export column say captured so far", () => {
     expect(E["reports.sales.refunds"]).toBe("Refunds captured so far");
-    expect(E["reports.sales.refunds_hint"]).toMatch(/only after that order's day is captured again/);
+    expect(E["reports.sales.refunds_hint"]).toMatch(/only after that order is captured again/);
     expect(SALES_EXPORT_COLUMNS.summary.map((c) => c.key)).toEqual(expect.arrayContaining(["refunds_captured_so_far", "refunds_captured_count"]));
   });
 });
