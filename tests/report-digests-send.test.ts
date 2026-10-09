@@ -220,6 +220,24 @@ describe("03:00 ET fallback", () => {
     expect(late.sent.find((m) => m.to === "pete@example.com")?.text).toContain("! Closing not finalized: Shop B");
     expect(store.of("skipped").map((r) => [r.recipient_ref, r.location_id, r.skip_reason])).toEqual([["user:gm-b", B.id, "shop_not_finalized"]]);
   });
+
+  it.each([
+    ["2026-03-08", "2026-03-07", "2026-03-08T07:00:00Z"],
+    ["2026-11-01", "2026-10-31", "2026-11-01T08:00:00Z"],
+  ])("hourly ticks at the %s fallback send once across repeated runs", async (_date, businessDay, at) => {
+    const store = new Store();
+    const first = makeIO({ now: at, store, finalized: { [businessDay]: [A.id] } });
+    await runDigestTickWith(first.io);
+    expect(first.sent.filter((m) => m.to === "pete@example.com" && m.text.includes("Closing not finalized: Shop B"))).toHaveLength(1);
+    const afterFirst = store.rows.length;
+    for (const hours of [1, 2]) {
+      const later = makeIO({ now: new Date(Date.parse(at) + hours * 3_600_000).toISOString(), store, finalized: { [businessDay]: [A.id] } });
+      await runDigestTickWith(later.io);
+      expect(later.sent).toEqual([]);
+      expect(store.rows.length).toBe(afterFirst);
+    }
+    expect(store.of("sent").filter((r) => r.kind === "unified" && r.business_day === businessDay)).toHaveLength(2);
+  });
 });
 
 describe("catering morning digest", () => {

@@ -6,6 +6,7 @@ import { JOBS_REGISTRY, type RegisteredJob } from "@/lib/jobs-registry";
 const JOB_WATCH_SCHEDULE = "0 17 * * *"; // 12:00 EST / 13:00 EDT — inside the 06–22 ET pinger window either side of DST
 const pinger = JOBS_REGISTRY.find((job) => job.job === "toast-catering-scan")!;
 const daily = JOBS_REGISTRY.find((job) => job.job === "toast-sales-pull")!;
+const digest = JOBS_REGISTRY.find((job) => job.job === "digest-tick")!;
 const decide = (now: string, last: string | null, alert: string | null = null) =>
   decideJobWatch(pinger, new Date(now), last, alert);
 
@@ -140,5 +141,24 @@ describe("digest polish item 13: a daily job with no history is expected after i
   it("once the nightly has written a heartbeat, the 2x-cadence rule applies as before", () => {
     expect(decideJobWatch(capture, new Date("2026-10-09T17:00:00Z"), "2026-10-08T09:02:00Z", null).silent).toBe(false);
     expect(decideJobWatch(capture, new Date("2026-10-10T09:03:00Z"), "2026-10-08T09:02:00Z", null).silent).toBe(true);
+  });
+});
+
+describe("overnight digest cron watch", () => {
+  it.each([
+    ["2026-01-15", "2026-01-15T10:00:00.000Z"],
+    ["2026-07-15", "2026-07-15T09:00:00.000Z"],
+    ["2026-03-08", "2026-03-08T09:00:00.000Z"],
+    ["2026-11-01", "2026-11-01T10:00:00.000Z"],
+  ])("expects the first digest heartbeat after two hourly slots on %s", (day, expected) => {
+    const at = easternBoundary(day, 3);
+    expect(decideJobWatch(digest, at, null, null).expectedBy).toBe(expected);
+    expect(decideJobWatch(digest, new Date(expected), null, null).silent).toBe(false);
+    expect(decideJobWatch(digest, new Date(Date.parse(expected) + 1), null, null).silent).toBe(true);
+  });
+
+  it("a 03:00 cron heartbeat resets expected_by to 05:00 ET", () => {
+    expect(decideJobWatch(digest, new Date("2026-10-08T08:00:00Z"), "2026-10-08T07:00:00Z", null).expectedBy)
+      .toBe("2026-10-08T09:00:00.000Z");
   });
 });
