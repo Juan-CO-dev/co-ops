@@ -29,10 +29,10 @@ function between(source: string, from: string, to: string): string {
 }
 
 describe("0233 who's here: migration discipline", () => {
-  it("is authored only, numbered 0233, and never touches 0232's number", () => {
+  it("is numbered 0233, carries its prod apply stamp, and never touches 0232's number", () => {
     expect(sql.split("\n")[0]).toBe("-- Migration 0233_whos_here");
     expect(sql).toMatch(/AUTHORED ONLY 2026-10-08.*NOT APPLIED/);
-    expect(sql).not.toMatch(/APPLIED TO PROD/);
+    expect(sql).toMatch(/APPLIED TO PROD 2026-10-08/);
     expect(sql.match(/\b0232\b/g)).toHaveLength(1); // the "reserved for Sales" note only
     expect(sql.trim().startsWith("-- Migration")).toBe(true);
     expect(sql).toMatch(/\nbegin;\n/);
