@@ -10,7 +10,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AuthContext } from "@/lib/session";
 
-const fake = vi.hoisted(() => ({ calls: [] as string[], date: "2026-10-09" }));
+const fake = vi.hoisted(() => ({ calls: [] as string[], date: "2026-10-09", rows: {} as Record<string, unknown[]> }));
 function builder(data: unknown) {
   const q: Record<string, unknown> = {};
   for (const m of ["select", "insert", "update", "upsert", "delete", "eq", "neq", "in", "is", "not", "or", "gte", "gt", "lte", "lt", "order", "limit", "range", "match", "returns", "abortSignal"]) q[m] = () => q;
@@ -20,7 +20,7 @@ function builder(data: unknown) {
   return q;
 }
 const client = {
-  from: (table: string) => { fake.calls.push(`from:${table}`); return builder([]); },
+  from: (table: string) => { fake.calls.push(`from:${table}`); return builder(fake.rows[table] ?? []); },
   rpc: (name: string) => { fake.calls.push(`rpc:${name}`); return builder(name === "station_business_date" ? fake.date : []); },
 };
 vi.mock("@/lib/supabase-server", () => ({ getServiceRoleClient: () => client }));
@@ -49,7 +49,7 @@ async function poll(level: number, viewer: string, depsFactory: () => ReturnType
   return { total: mine.length, byTable };
 }
 
-beforeEach(() => { fake.calls.length = 0; resetSourceCache(); vi.spyOn(console, "error").mockImplementation(() => {}); });
+beforeEach(() => { fake.calls.length = 0; fake.rows = {}; resetSourceCache(); vi.spyOn(console, "error").mockImplementation(() => {}); });
 afterEach(() => { vi.restoreAllMocks(); resetSourceCache(); });
 
 describe("DB calls per poll (GM, all nine sections)", () => {
@@ -77,5 +77,76 @@ describe("DB calls per poll (GM, all nine sections)", () => {
     for (const t of ["from:par_pass_events", "from:vendor_cutoffs", "rpc:sales_report_daily", "rpc:sales_report_breakdown", "from:ezcater_reconciliation_status", "from:toast_time_entries", "from:pulse_station_layouts_never"]) {
       expect(before.byTable[t], t).toBeUndefined();
     }
+  });
+});
+
+describe("level-8 cross-shop Pulse sources", () => {
+  const other = "22222222-2222-4222-8222-222222222222";
+  const crossShop = (level = 8): PulseCtx => {
+    const c = ctx(level, "director");
+    c.auth.role = c.auth.user.role = level === 8 ? "moo" : "gm";
+    c.locationId = other;
+    return c;
+  };
+  beforeEach(() => { vi.useFakeTimers({ toFake: ["Date"] }); vi.setSystemTime(new Date(`${fake.date}T19:30:00Z`)); });
+  afterEach(() => vi.useRealTimers());
+
+  it.each(["board", "deliveries", "cutoffs"] as const)("loads %s through the REAL reader on a cold cache", async (source) => {
+    const c = crossShop();
+    const result = await pulseDeps(client as never)[source](c);
+    expect(result).toBeDefined();
+    const query = { board: "rpc:station_business_date", deliveries: "from:vendor_deliveries", cutoffs: "from:vendor_cutoffs" }[source];
+    expect(fake.calls).toContain(query);
+    expect(c.auth.locations).toEqual([LOC]);
+  });
+
+  it.each(["floor", "people", "stations", "inventory"] as const)("serves the %s section without a member warming it", async (section) => {
+    expect(await loadPulseSection(pulseDeps(client as never), crossShop(), section)).toMatchObject({ state: "ok" });
+  });
+
+  it("returns populated cross-shop Inventory sources, not swallowed failures", async () => {
+    fake.rows.vendor_deliveries = [{ id: "delivery", vendor_id: "vendor", delivery_date: fake.date,
+      received_by: null, purchase_order_id: null, delivery_status: "complete", match_state: "counted_only" }];
+    fake.rows.vendor_delivery_items = [{ id: "line", delivery_id: "delivery" }];
+    fake.rows.vendor_cutoffs = [{ vendor_id: "vendor", location_id: other, cutoff_time: "16:00:00" }];
+    fake.rows.vendors = [{ id: "vendor", name: "Test vendor" }];
+    const deps = pulseDeps(client as never);
+    const c = crossShop();
+    expect(await deps.deliveries(c)).toMatchObject([{ id: "delivery", vendorName: "Test vendor", lineCount: 1 }]);
+    expect(await deps.cutoffs(c)).toMatchObject({ count: 1, vendors: [{ vendorId: "vendor", vendorName: "Test vendor", hasDraft: false }] });
+    const result = await loadPulseSection(deps, c, "inventory");
+    expect(result).toMatchObject({ state: "ok", data: {
+      receiving: [{ id: "delivery", vendorName: "Test vendor" }], cutoffs: [{ vendorName: "Test vendor", hasDraft: false }],
+    } });
+  });
+
+  it.each([false, true])("refuses a level-7 non-member before I/O, warm=%s", async (warm) => {
+    const deps = pulseDeps(client as never);
+    if (warm) {
+      for (const source of ["board", "deliveries", "cutoffs"] as const) await deps[source](crossShop());
+    }
+    fake.calls.length = 0;
+    for (const source of ["board", "deliveries", "cutoffs"] as const) {
+      await expect(deps[source](crossShop(7))).rejects.toThrow("location_access_denied");
+    }
+    expect(await loadPulseSection(deps, crossShop(7), "inventory")).toMatchObject({ state: "error", code: "forbidden" });
+    expect(fake.calls).toEqual([]);
+  });
+
+  it("keeps shop keys separate and patches board viewer identity on a warm cache", async () => {
+    const deps = pulseDeps(client as never);
+    const c = crossShop();
+    for (const source of ["board", "deliveries", "cutoffs"] as const) {
+      fake.calls.length = 0;
+      await deps[source](c);
+      await deps[source]({ ...c, locationId: LOC });
+      const query = { board: "rpc:station_business_date", deliveries: "from:vendor_deliveries", cutoffs: "from:vendor_cutoffs" }[source];
+      expect(fake.calls.filter((x) => x === query)).toHaveLength(2);
+    }
+    fake.calls.length = 0;
+    const board = await deps.board({ ...c, auth: { ...c.auth, user: { ...c.auth.user, id: "second-director" } } });
+    expect(board.viewerId).toBe("second-director");
+    expect(board.viewerLevel).toBe(8);
+    expect(fake.calls).toEqual([]);
   });
 });

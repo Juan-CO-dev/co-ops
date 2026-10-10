@@ -46,6 +46,7 @@ import { getRoleLevel } from "@/lib/roles";
 import { lockLocationContext, type LocationActor } from "@/lib/locations";
 import { audit } from "@/lib/audit";
 import type { AuthContext } from "@/lib/session";
+import { isPulseReadActor, requirePulseReadScope, type PulseScopedReadActor } from "@/lib/pulse/read-actor";
 import { loadMeasures, loadSkuPackChains } from "@/lib/prep-consumption";
 import { ozForRecipeInput, skuContentOz, type MeasureUnitFactor, type RecipeInputSku } from "@/lib/recipe-math";
 import type { PackChainLevel } from "@/lib/pack-chain-shared";
@@ -100,6 +101,7 @@ function num(v: number | string | null): number | null {
   return Number.isFinite(n) ? n : null;
 }
 function requireReceive(actor: AuthContext): void {
+  if (isPulseReadActor(actor)) throw new ReceivingError(403, "read_only_actor");
   if (getRoleLevel(actor.user.role) < RECEIVE_MIN) {
     throw new ReceivingError(403, "forbidden", "Insufficient role level to receive");
   }
@@ -991,9 +993,13 @@ async function insertMissingExpectedCredits(
 
 type DeliveryListRow = { id: string; vendor_id: string; delivery_date: string; invoice_number: string | null; received_by: string | null; match_state: DeliveryMatchState; delivery_status: DeliveryStatus; receipt_url: string | null; email_receipt_id: string | null; created_at: string; purchase_order_id: string | null };
 
-export async function loadRecentDeliveries(actor: AuthContext, locationId: string, limit = 20): Promise<DeliveryView[]> {
-  requireReceive(actor);
-  if (!lockLocationContext(actorLoc(actor), locationId)) throw new ReceivingError(404, "not_found", "Location not found");
+export async function loadRecentDeliveries(actor: AuthContext | PulseScopedReadActor, locationId: string, limit = 20): Promise<DeliveryView[]> {
+  if (isPulseReadActor(actor)) {
+    requirePulseReadScope(actor, locationId, RECEIVE_MIN);
+  } else {
+    requireReceive(actor);
+    if (!lockLocationContext(actorLoc(actor), locationId)) throw new ReceivingError(404, "not_found", "Location not found");
+  }
   const sb = getServiceRoleClient();
   const { data: rows, error } = await sb.from("vendor_deliveries")
     .select("id, vendor_id, delivery_date, invoice_number, received_by, match_state, delivery_status, receipt_url, email_receipt_id, created_at, purchase_order_id")

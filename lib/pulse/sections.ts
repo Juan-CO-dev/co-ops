@@ -41,10 +41,11 @@ import { shiftReportDate } from "@/lib/report-range";
 import { loadHandoffRaw, projectHandoffNotes, PulseNotInstalledError, type HandoffRaw } from "@/lib/pulse/handoff";
 import { loadStationLayout } from "@/lib/pulse/layout";
 import { cachedSource, sourceKey } from "@/lib/pulse/source-cache";
+import { pulseReadActor } from "@/lib/pulse/read-actor";
 import { attentionEvidence, attentionScore, crewAttention, rankAttention, severityOf, stripAttentionRows } from "@/lib/pulse/attention-shared";
 import { baselineCumulative, cumulativeByHour, dowOf, hourCurve, paceDeltaPct, sameWeekdayCoverage } from "@/lib/pulse/baseline-shared";
 import { floorStations, mergeLayout } from "@/lib/pulse/floor-shared";
-import { canArrangeFloor, canAuthorHandoff, canViewSection, crewScoped, moneyVisible, type PulseSection } from "@/lib/pulse/scope-shared";
+import { canArrangeFloor, canAuthorHandoff, canReadPulseLocation, canViewSection, crewScoped, moneyVisible, type PulseSection } from "@/lib/pulse/scope-shared";
 import type {
   AttentionData, AttentionRowScoped, CateringData, FloorData, FloorLayout, FoodSafetyData, HandoffData, InventoryData,
   InventoryLowRow, PeopleData, PersonRow, SalesData, SectionState, StationRow, StationsData, StationTaskRow,
@@ -113,9 +114,12 @@ export function sourceScope(source: keyof PulseDeps, ctx: PulseCtx): string {
  * dedupes within one request).
  */
 export function cachedPulseDeps(deps: PulseDeps, opts: { ttlMs?: number; now?: () => number } = {}): PulseDeps {
-  const wrap = <K extends keyof PulseDeps>(key: K): PulseDeps[K] => ((ctx: PulseCtx) =>
-    cachedSource(sourceKey({ source: key, locationId: ctx.locationId, date: ctx.date, scope: sourceScope(key, ctx) }),
-      () => (deps[key] as (c: PulseCtx) => Promise<unknown>)(ctx), { ttlMs: opts.ttlMs, now: opts.now?.() })) as PulseDeps[K];
+  const wrap = <K extends keyof PulseDeps>(key: K): PulseDeps[K] => (async (ctx: PulseCtx) => {
+    // Authorization must run on cache hits too; a member warming a shop cannot grant access.
+    if (!canReadPulseLocation(ctx.auth, ctx.locationId)) throw new Error("location_access_denied");
+    return cachedSource(sourceKey({ source: key, locationId: ctx.locationId, date: ctx.date, scope: sourceScope(key, ctx) }),
+      () => (deps[key] as (c: PulseCtx) => Promise<unknown>)(ctx), { ttlMs: opts.ttlMs, now: opts.now?.() });
+  }) as PulseDeps[K];
   const board = wrap("board");
   return {
     // The board is a shop fact; only its viewer fields differ, so patch them for the asking viewer.
@@ -558,7 +562,7 @@ const LOADERS: Record<PulseSection, (deps: PulseDeps, ctx: PulseCtx) => Promise<
 
 export async function loadPulseSection(deps: PulseDeps, ctx: PulseCtx, section: PulseSection): Promise<SectionState<unknown>> {
   const asOf = ctx.now.toISOString();
-  if (!canViewSection(ctx.auth.level, section)) return { state: "error", asOf, code: "forbidden" };
+  if (!canViewSection(ctx.auth.level, section) || !canReadPulseLocation(ctx.auth, ctx.locationId)) return { state: "error", asOf, code: "forbidden" };
   try {
     const data = await withDeadline(LOADERS[section](deps, ctx), SECTION_DEADLINE_MS);
     return { state: "ok", asOf, data };
@@ -586,7 +590,7 @@ export async function loadPulseSections(deps: PulseDeps, ctx: PulseCtx, sections
 const UNLINKED_LIMIT = 20;
 
 export function defaultPulseDeps(service: SupabaseClient): PulseDeps {
-  const actorOf = (ctx: PulseCtx) => ({ userId: ctx.auth.user.id, role: ctx.auth.role, level: ctx.auth.level, locations: ctx.auth.locations });
+  const actorOf = (ctx: PulseCtx) => pulseReadActor(ctx.auth, ctx.locationId);
   return {
     board: (ctx) => loadShiftBoard(service, { actor: actorOf(ctx), locationId: ctx.locationId, date: ctx.date }),
     reports: (ctx) => loadReportStatuses(service, { locationId: ctx.locationId, date: ctx.date, actor: { userId: ctx.auth.user.id, role: ctx.auth.role, level: ctx.auth.level } }),
@@ -629,8 +633,8 @@ export function defaultPulseDeps(service: SupabaseClient): PulseDeps {
         lines: rows.map((r) => ({ skuName: names.get(r.sku_id) ?? "(sku)", parQty: num(r.par_qty), orderQty: num(r.order_qty) ?? 0, unitLabel: r.order_unit_label })),
       };
     },
-    deliveries: (ctx) => loadRecentDeliveries(ctx.auth, ctx.locationId, 10),
-    cutoffs: (ctx) => loadOrderingAttention(ctx.auth, ctx.locationId),
+    deliveries: (ctx) => loadRecentDeliveries(actorOf(ctx), ctx.locationId, 10),
+    cutoffs: (ctx) => loadOrderingAttention(actorOf(ctx), ctx.locationId),
     sales: async (ctx) => {
       const viewer = { userId: ctx.auth.user.id, level: getRoleLevel(ctx.auth.user.role), locations: ctx.auth.locations };
       const today = resolveSalesRange({ range: "today" }, ctx.date);
