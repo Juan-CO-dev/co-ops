@@ -1,5 +1,5 @@
 -- Migration 0241_vault_hardening
--- AUTHORED ONLY 2026-10-10. NOT APPLIED. GATE: CC/Juan.
+-- APPLIED TO PROD 2026-10-10 (20261010044236; sim 20261010043200 harness pass; prod dry run pass). Apply BEFORE the app change (app sends _audit).
 -- Re-emits 0235's six-argument vault_update_entry; 0235 is already applied and unchanged.
 -- Edit and rotation audit rows commit with the mutation (fail-closed here, unlike app audit()).
 -- Apply before the accompanying app change; VAULT_ENABLED remains off.
