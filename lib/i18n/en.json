@@ -5582,6 +5582,7 @@
   "vault.error.no_previous_secret": "There is no previous secret to recover (30-day window).",
   "vault.error.vault_unavailable": "The vault is unavailable right now. Nothing was shown; management has been alerted.",
   "vault.error.invalid_payload": "Check the form: {field}.",
+  "vault.error.version_conflict": "Someone changed this entry. The latest version is loaded. Review it and save again.",
   "vault.error.generic": "Something went wrong. Try again.",
   "vault.a11y.list": "Vault entries",
   "vault.a11y.tabs": "Vault sections",

@@ -47,6 +47,7 @@ export function vaultErrorKey(code: string | undefined): TranslationKey {
     case "entry_not_found": return "vault.error.not_found";
     case "no_previous_secret": return "vault.error.no_previous_secret";
     case "vault_unavailable": return "vault.error.vault_unavailable";
+    case "version_conflict": return "vault.error.version_conflict";
     case "invalid_payload": return "vault.error.invalid_payload";
     default: return "vault.error.generic";
   }
@@ -55,6 +56,7 @@ export function vaultErrorKey(code: string | undefined): TranslationKey {
 export function VaultEntryForm({ kind, initial, shops, createShops, canCreateBoth, actorLevel, onSaved, onCancel }: VaultEntryFormProps) {
   const { t } = useTranslation();
   const isEdit = initial !== undefined;
+  const [revision, setRevision] = useState(initial?.revision);
   const [name, setName] = useState(initial?.name ?? "");
   const [entryType, setEntryType] = useState<VaultEntryType>(initial?.entryType ?? "login");
   const [username, setUsername] = useState(initial?.username ?? "");
@@ -81,7 +83,7 @@ export function VaultEntryForm({ kind, initial, shops, createShops, canCreateBot
     setSaving(true);
     setError(null);
     const body: Record<string, unknown> = {
-      ...(initial ? { expectedRevision: initial.revision } : {}),
+      ...(initial ? { expectedRevision: revision } : {}),
       kind, name: name.trim(), entryType, username: username.trim() || null, url: url.trim() || null, notes: notes.trim() || null,
       secret: secret.length > 0 ? secret : undefined,
     };
@@ -94,6 +96,26 @@ export function VaultEntryForm({ kind, initial, shops, createShops, canCreateBot
         method: initial ? "PATCH" : "POST", headers: { "Content-Type": "application/json" }, redirect: "manual", body: JSON.stringify(body),
       });
       const json = (await res.json().catch(() => ({}))) as { entry?: VaultEntryView; code?: string; field?: string };
+      if (res.status === 409 && initial) {
+        // Reload metadata too: adopting only the revision would overwrite another editor's changes.
+        setSecret("");
+        setShowSecret(false);
+        const latest = await fetch("/api/vault/entries", { cache: "no-store", redirect: "manual" });
+        if (!latest.ok) throw new Error("refresh_failed");
+        const entries = await latest.json() as { shared: VaultEntryView[]; personal: VaultEntryView[] };
+        const entry = [...entries.shared, ...entries.personal].find((row) => row.id === initial.id && row.canManage);
+        if (!entry) { onCancel(); return; }
+        setRevision(entry.revision);
+        setName(entry.name);
+        setEntryType(entry.entryType);
+        setUsername(entry.username ?? "");
+        setUrl(entry.url ?? "");
+        setNotes(entry.notes ?? "");
+        setShop(entry.locationId ?? "both");
+        setFloor((entry.minLevel as VaultRoleFloor | null) ?? 4);
+        setError(t("vault.error.version_conflict"));
+        return;
+      }
       if (!res.ok || !json.entry) {
         setError(t(vaultErrorKey(json.code), { field: json.field ?? "" }));
         return;

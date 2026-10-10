@@ -3,6 +3,7 @@ import { NextRequest } from "next/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { GET } from "@/app/api/cron/prune-sessions/route";
 import { runVaultScrub } from "@/lib/vault-scrub-run";
+import { runPruneSessions } from "@/lib/prune-sessions-run";
 import { audit } from "@/lib/audit";
 
 const { rpc } = vi.hoisted(() => ({ rpc: vi.fn() }));
@@ -44,11 +45,32 @@ describe("P2 #4: scheduled cryptographic deletion", () => {
     rpc.mockResolvedValue({ data: null, error: { code: "42501", message: "private database detail" } });
     const response = await GET(request("test-cron-token"));
     expect(response.status).toBe(500);
+    expect(runPruneSessions).toHaveBeenCalledOnce();
+    expect(audit).toHaveBeenCalledWith(expect.objectContaining({ action: "cron.success", metadata: { job: "prune-sessions", revoked: 2 } }));
     expect(JSON.stringify(await response.json())).not.toContain("private database detail");
-    expect(audit).toHaveBeenCalledWith(expect.objectContaining({ action: "cron.failure", metadata: { job: "prune-sessions", error: "vault_scrub_failed" } }));
+    expect(audit).toHaveBeenCalledWith(expect.objectContaining({ action: "cron.failure", metadata: { job: "vault-scrub", error: "vault_scrub_failed" } }));
   });
   it("sanitizes thrown transport errors too", async () => {
     rpc.mockRejectedValue(new Error("private transport detail"));
     await expect(runVaultScrub()).rejects.toThrow(/^vault_scrub_failed$/);
   });
+});
+
+
+it("prune failure does not prevent a scrub success heartbeat", async () => {
+  vi.mocked(runPruneSessions).mockRejectedValueOnce(new Error("private prune detail"));
+  const response = await GET(request("test-cron-token"));
+  expect(response.status).toBe(500);
+  expect(rpc).toHaveBeenCalledOnce();
+  expect(audit).toHaveBeenCalledWith(expect.objectContaining({ action: "cron.success", metadata: { job: "vault-scrub", scrubbed: 3, migrationPending: false } }));
+  expect(audit).toHaveBeenCalledWith(expect.objectContaining({ action: "cron.failure", metadata: { job: "prune-sessions", error: "session_prune_failed" } }));
+  expect(JSON.stringify(await response.json())).not.toContain("private prune detail");
+});
+it("both failures get separate failure heartbeats", async () => {
+  rpc.mockRejectedValueOnce(new Error("scrub failed"));
+  vi.mocked(runPruneSessions).mockRejectedValueOnce(new Error("prune failed"));
+  expect((await GET(request("test-cron-token"))).status).toBe(500);
+  expect(vi.mocked(audit).mock.calls.map(([row]) => [row.action, row.metadata.job])).toEqual([
+    ["cron.failure", "vault-scrub"], ["cron.failure", "prune-sessions"],
+  ]);
 });

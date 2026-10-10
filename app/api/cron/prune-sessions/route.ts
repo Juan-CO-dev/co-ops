@@ -13,12 +13,6 @@ import { audit } from "@/lib/audit";
 import { runPruneSessions } from "@/lib/prune-sessions-run";
 import { runVaultScrub } from "@/lib/vault-scrub-run";
 
-/** Truncate a caught error message so a giant stack never bloats the audit row. */
-function truncateErr(e: unknown): string {
-  const msg = e instanceof Error ? e.message : String(e);
-  return msg.length > 500 ? `${msg.slice(0, 500)}…` : msg;
-}
-
 function secretOk(req: NextRequest): boolean {
   const secret = process.env.CRON_SECRET;
   if (!secret) return false;
@@ -33,35 +27,25 @@ function secretOk(req: NextRequest): boolean {
 export async function GET(req: NextRequest) {
   if (!process.env.CRON_SECRET) return jsonError(503, "cron_disabled");
   if (!secretOk(req)) return jsonError(401, "unauthorized");
+  const auditBase = { actorId: null, actorRole: null, resourceTable: "cron", resourceId: null, ipAddress: null, userAgent: null };
+  let vault: Awaited<ReturnType<typeof runVaultScrub>> | undefined;
+  let revoked: number | undefined;
+  let failed = false;
   try {
-    const vault = await runVaultScrub();
-    const { revoked } = await runPruneSessions();
-    // Heartbeat (fail-open): a cron.success row lets the admin hub show "last run OK".
-    await audit({
-      actorId: null,
-      actorRole: null,
-      action: "cron.success",
-      resourceTable: "cron",
-      resourceId: null,
-      metadata: { job: "prune-sessions", revoked, vault },
-      ipAddress: null,
-      userAgent: null,
-    });
-    await watchSiblings("prune-sessions");
-    return jsonOk({ revoked, vault });
-  } catch (e) {
-    // A LIVE failure is otherwise silent (console only). Write a fail-open audit row
-    // so the admin hub can surface it. audit() never throws.
-    void audit({
-      actorId: null,
-      actorRole: null,
-      action: "cron.failure",
-      resourceTable: "cron",
-      resourceId: null,
-      metadata: { job: "prune-sessions", error: truncateErr(e) },
-      ipAddress: null,
-      userAgent: null,
-    });
-    return jsonError(500, "cron_failed", { message: e instanceof Error ? e.message : String(e) });
+    vault = await runVaultScrub();
+    await audit({ ...auditBase, action: "cron.success", metadata: { job: "vault-scrub", ...vault } });
+  } catch {
+    failed = true;
+    await audit({ ...auditBase, action: "cron.failure", metadata: { job: "vault-scrub", error: "vault_scrub_failed" } });
   }
+  try {
+    ({ revoked } = await runPruneSessions());
+    await audit({ ...auditBase, action: "cron.success", metadata: { job: "prune-sessions", revoked } });
+  } catch {
+    failed = true;
+    await audit({ ...auditBase, action: "cron.failure", metadata: { job: "prune-sessions", error: "session_prune_failed" } });
+  }
+  await watchSiblings("prune-sessions");
+  if (failed) return jsonError(500, "cron_failed");
+  return jsonOk({ revoked, vault });
 }

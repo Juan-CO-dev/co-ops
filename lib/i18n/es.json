@@ -5582,6 +5582,7 @@
   "vault.error.no_previous_secret": "No hay un secreto anterior que recuperar (ventana de 30 días).",
   "vault.error.vault_unavailable": "La bóveda no está disponible ahora. No se mostró nada; se alertó a la gerencia.",
   "vault.error.invalid_payload": "Revisa el formulario: {field}.",
+  "vault.error.version_conflict": "Alguien cambió esta entrada. Se cargó la versión más reciente. Revísala y guarda de nuevo.",
   "vault.error.generic": "Algo salió mal. Inténtalo de nuevo.",
   "vault.a11y.list": "Entradas de la bóveda",
   "vault.a11y.tabs": "Secciones de la bóveda",

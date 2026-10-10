@@ -272,12 +272,14 @@ describe("update and deactivate", () => {
     vi.clearAllMocks();
     const view = await updateVaultEntry(f.client, gmEm, id, shared({ name: "Toast BOH", secret: null }), META);
     expect(view.name).toBe("Toast BOH");
-    expect(audited()[0]).toMatchObject({ action: "vault_entry.update", metadata: expect.objectContaining({ changed: ["name"], secret_rotated: false, name: "Toast BOH" }) });
+    expect(audit).not.toHaveBeenCalled();
+    expect(f.tables.audit_log?.[0]).toMatchObject({ action: "vault_entry.update", metadata: expect.objectContaining({ changed: ["name"], secret_rotated: false, name: "Toast BOH" }) });
     expect(notified()[0]).toMatchObject({ titleKey: "notifications.vault_entry_change.title.update", bodyKey: "notifications.vault_entry_change.body.metadata", bodyParams: expect.objectContaining({ changed: "name" }) });
     vi.clearAllMocks();
     await updateVaultEntry(f.client, gmEm, id, shared({ expectedRevision: 2, name: "Toast BOH", secret: "toast-pw-2" }), META);
     expect(f.rpcCalls.at(-1)).toMatchObject({ name: "vault_write_secret", args: { p_version: 2 } });
-    expect(audited().map((a) => a.action)).toEqual(["vault_entry.update", "vault_secret.rotate"]);
+    expect(audit).not.toHaveBeenCalled();
+    expect(f.tables.audit_log?.slice(1).map((a) => a.action)).toEqual(["vault_entry.update", "vault_secret.rotate"]);
     expect(JSON.stringify(audited())).not.toContain("toast-pw-2");
     expect(notified()[0]).toMatchObject({ bodyKey: "notifications.vault_entry_change.body.secret" });
     expect(f.tables.vault_secrets!.filter((s) => s.superseded_at == null)).toHaveLength(1);
@@ -412,5 +414,30 @@ describe("security review regressions", () => {
     expect(asManager.shared.find((r) => r.id === "s-00001")?.canRecoverPrevious).toBe(true);
     expect(asManager.shared.some((r) => r.minLevel === 9)).toBe(false);
     expect(seed.revision).toBe(1);
+  });
+});
+
+
+describe("vault hardening", () => {
+  it("post-filters broadened SQL results for kind, active, floor and location", async () => {
+    await createVaultEntry(f.client, gmEm, shared(), META);
+    const row = f.tables.vault_entries![0]!;
+    f.tables.vault_entries!.push(
+      { ...row, id: "wrong-shop", location_id: MEP }, { ...row, id: "high-floor", min_level: 9 },
+      { ...row, id: "inactive", active: false }, { ...row, id: "personal", kind: "personal", owner_id: U.pete },
+      { ...row, id: "no-floor", min_level: null }, { ...row, id: "both", location_id: null },
+    );
+    f.ignoreVisibilityFilters = true;
+    expect((await listVaultEntries(f.client, maya)).shared.map((r) => r.id).sort()).toEqual([row.id, "both"].sort());
+  });
+  it("an RPC audit failure surfaces as a failed edit without an app audit fallback", async () => {
+    const entry = await createVaultEntry(f.client, gmEm, shared(), META);
+    vi.clearAllMocks();
+    const before = structuredClone(f.tables);
+    f.failInsert.add("audit_log");
+    await expect(updateVaultEntry(f.client, gmEm, entry.id, shared(), META)).rejects.toMatchObject({ code: "write_failed" });
+    expect(f.tables).toEqual(before);
+    expect(audit).not.toHaveBeenCalled();
+    expect(enqueueNotification).not.toHaveBeenCalled();
   });
 });
