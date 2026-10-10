@@ -5,7 +5,7 @@ import { captureEnabled } from "./capture";
 import { toastGet } from "./client";
 import { captureBudget, captureErrorCode } from "./capture-runner";
 import { MODIFIED_BATCH_SIZE, MODIFIED_DB_TIMEOUT_MS, MODIFIED_MAX_PAGES, MODIFIED_MAX_WINDOWS,
-  modifiedWindow, normalizeModifiedOrder } from "./capture-modified-shared";
+  modifiedRequestDates, modifiedWindow, normalizeModifiedOrder } from "./capture-modified-shared";
 
 type Budget = ReturnType<typeof captureBudget>;
 interface Shop { id: string; toast_restaurant_guid: string }
@@ -32,18 +32,20 @@ async function sweepShop(shop: Shop, budget: Budget): Promise<ShopResult> {
       const cursor = await database(budget, (signal) => sb.rpc("toast_modified_begin", { p_location_id: shop.id }).abortSignal(signal));
       const window = modifiedWindow(cursor);
       if (!window) break;
+      const dates = modifiedRequestDates(window);
       const seen = new Set<string>();
       let complete = false;
       for (let page = 1; page <= MODIFIED_MAX_PAGES; page++) {
-        const query = new URLSearchParams({ startDate: window.start, endDate: window.end, page: String(page), pageSize: "100" });
+        const query = `startDate=${dates.startDate}&endDate=${dates.endDate}&page=${page}&pageSize=100`;
         const raw = await budget.request(() => toastGet<unknown>(`/orders/v2/ordersBulk?${query}`, shop.toast_restaurant_guid, budget.signal));
         budget.check();
         if (!Array.isArray(raw) || raw.length > 100) throw new Error("capture_bad_page");
-        const orders = raw.map((entry) => {
+        const orders = raw.flatMap((entry) => {
           const normalized = normalizeModifiedOrder(entry, window);
+          if (!normalized) return [];
           if (seen.has(normalized.order.order_guid)) throw new Error("capture_modified_duplicate_order");
           seen.add(normalized.order.order_guid);
-          return { ...normalized, content_hash: createHash("sha256").update(JSON.stringify(normalized)).digest("hex") };
+          return [{ ...normalized, content_hash: createHash("sha256").update(JSON.stringify(normalized)).digest("hex") }];
         });
         for (let i = 0; i < orders.length; i += MODIFIED_BATCH_SIZE) {
           const changed = await database(budget, (signal) => sb.rpc("toast_modified_save", {

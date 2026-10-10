@@ -48,6 +48,14 @@ export const NON_DESTRUCTIVE_ACTIONS = [
   "assignment.system_release", // 0230 SQL: observed Toast departure.
   "shift.system_end", // 0233 SQL: the closing was finalized; held work released (shop_closed).
   "toast_employee_link.auto_create", // 0233: system exact full-name match from the labor pull.
+  // 0234 customer profiles: reads and exports of contact data are findable, never destructive.
+  "customer.contact_read", // level 9+ revealed one profile's raw email/phone.
+  "customer.contact_lookup", // level 9+ looked a person up by email/phone (delete-on-request intake).
+  "customer.export_marketing", // level 9+ downloaded the opted-in email list.
+  "customer.export_meta_audience", // level 9+ downloaded the hashed Meta file (switch on).
+  "customer.export_refused", // a marketing/Meta export was refused (switch off / role).
+  "customer.merge_dismiss", // a manager said two profiles are NOT the same person.
+  "customer.catering_link", // level 9+ linked catering/ezCater orders to profiles (observation).
   "ezcater.location_reassigned", // Provider shop observation, including a manual-location conflict.
   "ezcater.toast_reconciled", // SQL-only provider cross-check observation; non-destructive.
   "ezcater.order_synced", // Provider observation; metadata contains identities/codes only.

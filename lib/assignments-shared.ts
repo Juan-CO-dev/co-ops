@@ -2,6 +2,7 @@
 import { formatTime } from "./i18n/format";
 import type { Language, TranslationKey, TranslationParams } from "./i18n/types";
 import type { PresenceView } from "./presence-shared";
+import type { StationTrim } from "./station-schedule-shared";
 
 export const OVERRIDE_REASON_CODES = ["coverage_change", "unavailable", "skill_fit", "correction", "other"] as const;
 export type OverrideReasonCode = (typeof OVERRIDE_REASON_CODES)[number];
@@ -40,7 +41,7 @@ export function isTaskType(value: unknown): value is TaskType {
   return typeof value === "string" && TASK_TYPES.some((task) => task === value);
 }
 export interface StationPosition { id: string; stationId: string; name: string; nameEs: string | null; duty: string | null; dutyEs: string | null; sort: number; active: boolean; usuallyTrimsAt?: string | null }
-export interface Station { id: string; name: string; nameEs: string | null; sort: number; active: boolean; staffed: boolean; positions: StationPosition[]; closedAt?: string | null; usuallyClosesAt?: string | null }
+export interface Station { id: string; name: string; nameEs: string | null; sort: number; active: boolean; staffed: boolean; positions: StationPosition[]; closedAt?: string | null; usuallyClosesAt?: string | null; trims?: StationTrim[] }
 export interface ShiftPerson { id: string; name: string; level: number; hasWork: boolean; available?: boolean; onBreak?: boolean;
   /** 0233 (WHOS_HERE=1): on shift today and how we know. Absent when the feature is off. */
   presence?: PresenceView;
@@ -63,6 +64,7 @@ export interface TaskAssignment {
   available?: boolean;
 }
 export interface ShiftBoard {
+  stationDate?: string;
   locationId: string; date: string; viewerId: string; viewerLevel: number;
   stations: Station[]; people: ShiftPerson[]; events: StationEvent[]; tasks: TaskAssignment[];
   occupiedPositions?: { positionId: string; firstName: string }[];

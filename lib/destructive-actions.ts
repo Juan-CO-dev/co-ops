@@ -55,8 +55,19 @@ export const DESTRUCTIVE_ACTIONS = [
   "assignment.create",
   "assignment.retract",
   "shift.end", // 0233: a human ends a shift — releases the station and unassigns open tasks.
+  // Mid-shift Pulse v2 (0240): a GM arranges the shop floor (shared config); handoff notes are the
+  // shift's accountability record (authored, superseded, acknowledged by a human).
+  "station.layout_update",
+  "handoff.note_create",
+  "handoff.note_supersede",
+  "handoff.note_ack",
   "toast_employee_link.create", // 0233: a human links a Toast employee to a CO-OPS user (attribution).
   "toast_employee_link.deactivate", // 0233: a human unlinks one (attribution is cleared).
+  "customer.consent_import", // 0234: a human imports the Toast marketing list (consent events appended).
+  "customer.consent_import_cancel", // 0234 r1: a human cancels a half-applied import (its pending events never count).
+  "customer.merge_confirm", // 0234: a manager merges two profiles into one person.
+  "customer.erase", // 0234: delete-on-request (identifiers deleted, hashes suppressed, opted out).
+  "customer.retention_sweep", // 0234: a human runs the retention sweep (inactive profiles erased).
   "receiving.store_create",
   "receiving.store_sku_create",
   "receiving.pending_create",

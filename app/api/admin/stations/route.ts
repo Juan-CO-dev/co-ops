@@ -4,6 +4,7 @@ import { jsonError, jsonOk, parseJsonBody } from "@/lib/api-helpers";
 import { AssignmentError, saveStationSpanish, saveStationConfig, saveStationTiming } from "@/lib/assignments";
 import { requireSession } from "@/lib/session";
 import { getServiceRoleClient } from "@/lib/supabase-server";
+import { validStationTrims } from "@/lib/station-schedule-shared";
 
 export async function POST(req: NextRequest) {
   const ctx = await requireSession(req, "/api/admin/stations");
@@ -13,16 +14,20 @@ export async function POST(req: NextRequest) {
   if (!body || typeof body !== "object" || Array.isArray(body)) return jsonError(400, "invalid_payload");
   const b = body as Record<string, unknown>;
   if (b.operation === "timing") {
-    if (ctx.level < 4) return jsonError(403, "role_insufficient");
+    if (ctx.level < 7) return jsonError(403, "role_insufficient");
+    const stepUp = assertStepUp(ctx, "B");
+    if (!stepUp.ok) return jsonError(403, stepUp.code);
     if (typeof b.locationId !== "string" || typeof b.stationId !== "string" ||
       (b.positionId !== undefined && typeof b.positionId !== "string") ||
-      Object.keys(b).some((key) => !["operation", "locationId", "stationId", "positionId", "usuallyClosesAt", "usuallyTrimsAt"].includes(key)))
+      (b.trims !== undefined && !validStationTrims(b.trims)) ||
+      Object.keys(b).some((key) => !["operation", "locationId", "stationId", "positionId", "usuallyClosesAt", "usuallyTrimsAt", "trims"].includes(key)))
       return jsonError(400, "invalid_payload");
     try {
       return jsonOk(await saveStationTiming(getServiceRoleClient(), {
         actor: { userId: ctx.user.id, role: ctx.role, level: ctx.level, locations: ctx.locations },
         locationId: b.locationId, stationId: b.stationId, positionId: b.positionId as string | undefined,
         usuallyClosesAt: b.usuallyClosesAt as string | null | undefined, usuallyTrimsAt: b.usuallyTrimsAt as string | null | undefined,
+        trims: b.trims as import("@/lib/station-schedule-shared").StationTrim[] | undefined,
       }));
     } catch (error) {
       if (error instanceof AssignmentError) return jsonError(error.status, error.code);

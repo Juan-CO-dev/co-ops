@@ -316,7 +316,7 @@ async function loadActiveToday(
  *  BOARD's read floor is Shift Lead (5); event/customer NAMES at KH (4) here
  *  are a deliberate, owner-ratified exception (Juan 2026-08-01) — the name is
  *  how floor staff identify and label the outgoing order. Revenue stays 5+. */
-async function loadCateringDueToday(
+export async function loadCateringDueToday(
   service: SupabaseClient,
   args: { locationId: string; date: string },
 ): Promise<CateringDueItem[]> {
@@ -368,7 +368,7 @@ async function loadCateringDueToday(
  * the full list is /catering's job. Same fabrication rule as today's lane: a read error
  * THROWS, because an empty look-ahead reads as "nothing tomorrow" and preps nothing.
  */
-async function loadCateringTomorrow(
+export async function loadCateringTomorrow(
   service: SupabaseClient,
   args: { locationId: string; date: string },
 ): Promise<CateringTomorrow> {

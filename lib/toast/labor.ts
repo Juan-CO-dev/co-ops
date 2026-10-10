@@ -20,6 +20,8 @@ import { audit } from "@/lib/audit";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import { etCalendarDate } from "@/lib/operational-day";
 import { toastGet } from "./client";
+import { toastModifiedParam } from "./dates-shared";
+export { toastModifiedParam } from "./dates-shared";
 import { toastBusinessDate } from "./orders";
 import { employeeFirstNames, jobTitles, normalizeTimeEntries, type LaborEntryRow } from "./labor-shared";
 
@@ -65,11 +67,6 @@ export function withDeadline<T>(p: PromiseLike<T>, signal: AbortSignal): Promise
       (e) => { signal.removeEventListener("abort", onAbort); reject(e); },
     );
   });
-}
-
-/** Toast's modified-date parameter shape: ISO with milliseconds and a +0000 offset. */
-export function toastModifiedParam(at: Date): string {
-  return encodeURIComponent(at.toISOString().replace("Z", "+0000"));
 }
 
 export async function runToastLaborPull(

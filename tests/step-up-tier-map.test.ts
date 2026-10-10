@@ -88,6 +88,11 @@ const SERVER_TIER_MAP: Record<string, string[]> = {
   // 0233 Toast employee links: link/unlink is an attribution change (Tier B); its only client,
   // ToastEmployeeLinks, asks B proactively and retries on step_up_required/stale (joined by hand).
   "app/api/admin/toast-employees/route.ts": ["B"],
+  // 0234 customer profiles: Tier A = reveal / lookup / dismiss / link catering; Tier B = merge, erase,
+  // retention, consent import; exports Tier B.
+  "app/api/admin/customers/route.ts": ["A"],
+  "app/api/admin/customers/confirm/route.ts": ["B"],
+  "app/api/admin/customers/export/route.ts": ["B"],
   // 0220 report recipients: both writers are owner-level config changes (Tier B).
   "app/api/admin/report-recipients/route.ts": ["B"],
   "app/api/admin/report-recipients/settings/route.ts": ["B"],
@@ -209,6 +214,10 @@ const CLIENT_TIER_MAP: Record<string, string[]> = {
   "components/catering/pipeline/TransferLead.tsx": ["B"],
   "components/assignments/StationsAdmin.tsx": ["B"],
   "components/admin/toast-employees/ToastEmployeeLinks.tsx": ["B"],
+  "components/admin/customers/CancelImportButton.tsx": ["B"],
+  "components/admin/customers/ConsentTools.tsx": ["A", "B"],
+  "components/admin/customers/CustomerContactPanel.tsx": ["A", "B"],
+  "components/admin/customers/CustomerSuggestions.tsx": ["A", "B"],
   "components/admin/report-recipients/ReportRecipientsAdmin.tsx": ["B"],
   "app/admin/catering/rate-rules/rate-rules-client.tsx": ["B"],
   // The provider itself — the parameter, not a call site.

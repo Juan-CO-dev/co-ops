@@ -1,7 +1,7 @@
 /**
  * Report digests — the server I/O (service-role reads, Resend, audit, ops alerts). Builds the
  * DigestIO the engine runs on (lib/report-digests-engine.ts) and exposes the two entry points:
- *   runDigestTick()                       — /api/cron/digest-tick (the desktop pinger, 03-22 ET)
+ *   runDigestTick()                       — /api/cron/digest-tick (desktop pinger + overnight Vercel)
  *   runClosingDigests(locationId, day)    — after() in /api/checklist/confirm for a closing
  * Pure rules live in lib/report-digests-shared.ts and lib/report-digests-compose.ts.
  *

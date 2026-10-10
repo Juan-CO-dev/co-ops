@@ -32,6 +32,8 @@ import { formatTime } from "@/lib/i18n/format";
 import { isAllLocationsAccess, lockLocationContext } from "@/lib/locations";
 import { requireSessionFromHeaders } from "@/lib/session";
 import { getServiceRoleClient } from "@/lib/supabase-server";
+import { PulseHome } from "@/components/pulse/PulseHome";
+import { pulseV2Enabled } from "@/lib/pulse/flag";
 import { OperationalStrip } from "@/components/midshift/OperationalStrip";
 import { loadRecentDeliveries } from "@/lib/receiving";
 import { loadTodaysOrders } from "@/lib/purchase-orders";
@@ -51,6 +53,13 @@ export default async function MidShiftPage({
 }) {
   const auth = await requireSessionFromHeaders("/mid-shift");
   const language = auth.user.language;
+
+  // Mid-shift Pulse v2 (spec 2026-10-09) — behind PULSE_V2=1 until Juan tries it. With the flag
+  // off, everything below is the unchanged v1 page.
+  if (pulseV2Enabled()) {
+    const { location: requested } = await searchParams;
+    return <PulseHome auth={auth} requested={requested} />;
+  }
 
   if (auth.level < MIDSHIFT_BASE_LEVEL) {
     return (
