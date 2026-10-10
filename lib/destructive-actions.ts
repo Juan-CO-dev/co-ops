@@ -432,6 +432,13 @@ export const DESTRUCTIVE_ACTIONS = [
   "report_recipient.deactivate",
   "report_settings.update",
 
+  // Password vault (0235): a human changes a shared or personal entry or its secret. The
+  // metadata names the entry (shared) or its id (personal); the secret is never in a row.
+  "vault_entry.create",
+  "vault_entry.update",
+  "vault_entry.deactivate",
+  "vault_secret.rotate",
+
   // Bulk / sensitive
   "reports.bulk_export",
   "reports.bulk_correct",

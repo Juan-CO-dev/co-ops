@@ -37,10 +37,13 @@ export const NAV_LINKS: NavLink[] = [
  * Single source of truth for DashboardNav AND unified search — so a `minLevel`
  * filtered out here stops being both a nav chip AND a search hit.
  */
-export function navDestinationsFor(level: number): NavLink[] {
+export function navDestinationsFor(level: number, opts?: { vault?: boolean }): NavLink[] {
   const out: NavLink[] = [];
   if (level >= 4) out.push({ key: "nav.mid_shift", href: "/mid-shift", scoped: true, minLevel: 4 });
   out.push(...NAV_LINKS.filter((l) => level >= (l.minLevel ?? 0)));
+  // The password vault (0235) is a switched surface: the chip exists only while VAULT_ENABLED=1
+  // (the caller reads the flag; this module stays pure). Every level has "My logins".
+  if (opts?.vault) out.push({ key: "nav.vault", href: "/vault", scoped: false });
   if (level >= 6) out.push({ key: "nav.admin", href: "/admin", scoped: false, minLevel: 6 });
   return out;
 }

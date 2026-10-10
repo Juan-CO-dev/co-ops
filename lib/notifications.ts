@@ -80,6 +80,12 @@ export const NOTIFICATION_TYPES = {
   UNDER_PAR_ALERT: "under_par_alert",
   OPENING_NO_PRIOR_DATA_ALERT: "opening_no_prior_data_alert",
   SHIFT_FEEDBACK: "shift_feedback",
+  // Password vault (0235). Params never carry a secret: names, roles, shop codes, counts only.
+  VAULT_REVEAL: "vault_reveal",
+  VAULT_ENTRY_CHANGE: "vault_entry_change",
+  VAULT_RECOVERY: "vault_recovery",
+  VAULT_BURST: "vault_burst",
+  VAULT_ALERT: "vault_alert",
 } as const;
 
 export type NotificationType =

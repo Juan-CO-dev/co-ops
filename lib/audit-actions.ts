@@ -43,6 +43,7 @@ import { DESTRUCTIVE_ACTIONS } from "@/lib/destructive-actions";
  * to filter for.
  */
 export const NON_DESTRUCTIVE_ACTIONS = [
+  "vault.decrypt_failure", // 0235: the vault failed closed (missing/rotated master key, tampered row); entry id + reason code only.
   "station.system_release", // 0230 SQL: observed closure / Toast departure.
   "assignment.system_release", // 0230 SQL: observed Toast departure.
   "shift.system_end", // 0233 SQL: the closing was finalized; held work released (shop_closed).
