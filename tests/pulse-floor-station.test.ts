@@ -10,7 +10,7 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import type { AuthContext } from "@/lib/session";
-import { isFloorStation, type ShiftBoard, type Station, type StationEvent } from "@/lib/assignments-shared";
+import { currentFloorStation, isFloorStation, type ShiftBoard, type Station, type StationEvent } from "@/lib/assignments-shared";
 import { floorStations, stationStatus } from "@/lib/pulse/floor-shared";
 import { stationNudges } from "@/lib/station-schedule-shared";
 import { assignmentSectionDefaults, dashboardWorkVisibility } from "@/lib/assignment-sections";
@@ -123,7 +123,19 @@ describe("every pulse reader uses the predicate", () => {
     expect(crew).toMatchObject({ state: "ok", data: { mine: { stationName: null, positionName: null } } });
     expect(assignmentSectionDefaults(b, true)).toEqual({ tasks: true, stations: true, team: false });
     expect(dashboardWorkVisibility(b, "receiving").stationCard).toBe(false);
+    // The dashboard "My station" card reads currentFloorStation directly (app/(authed)/dashboard/page.tsx).
+    expect(currentFloorStation(b, "me")).toBeNull();
     expect(b.events).toEqual(before);
+  });
+  it("People freed stations: a vacancy at an unticked section is not listed; a floor vacancy is", async () => {
+    const b = mixedBoard(4);
+    b.stations[2]!.positions = [pos("foh", 1)];
+    b.positionVacancies = [
+      { positionId: "foh-p1", userId: "ana", name: "Ana Perez", reason: "clocked_out", at: "2026-10-10T19:10:00Z" },
+      { positionId: "expo-p1", userId: "me", name: "Val Viewer", reason: "clocked_out", at: "2026-10-10T19:00:00Z" },
+    ];
+    const people = await data<PeopleData>("people", b);
+    expect(people.freed.map((f) => f.stationName)).toEqual(["Station expo"]);
   });
   it("3D/2D floor: only floor stations, and the saved layout keeps only their points", async () => {
     const floor = await data<FloorData>("floor");

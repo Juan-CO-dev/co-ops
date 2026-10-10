@@ -20,7 +20,7 @@
 import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { AuthContext } from "@/lib/session";
-import { currentFloorStation, taskHref, TASK_TYPES, type ShiftBoard, type TaskType } from "@/lib/assignments-shared";
+import { currentFloorStation, isFloorStation, taskHref, TASK_TYPES, type ShiftBoard, type TaskType } from "@/lib/assignments-shared";
 import { loadShiftBoard } from "@/lib/assignments";
 import { loadFridgesToday, type FridgeToday } from "@/lib/pulse/fridges";
 import {
@@ -390,9 +390,11 @@ async function people(deps: PulseDeps, ctx: PulseCtx): Promise<PeopleData> {
   const stationsCovered = floorRows.filter((s) => s.status !== "closed" && s.status !== "inactive" && s.status !== "uncovered").length;
   const stationsOpen = floorRows.filter((s) => s.status === "uncovered").length;
   const freed = [
-    ...(board.positionVacancies ?? []).map((v) => {
-      const sid = board.stations.find((s) => s.positions.some((p) => p.id === v.positionId))?.id ?? null;
-      return { name: v.name, stationName: stationLabel(board, sid).station, at: v.at, reason: v.reason };
+    // Current vacancies only at floor stations: an unticked section is not "open, needs cover" (history keeps it).
+    ...(board.positionVacancies ?? []).flatMap((v) => {
+      const st = board.stations.find((s) => s.positions.some((p) => p.id === v.positionId));
+      if (st && !isFloorStation(st)) return [];
+      return [{ name: v.name, stationName: stationLabel(board, st?.id ?? null).station, at: v.at, reason: v.reason }];
     }),
     ...(board.taskVacancies ?? []).map((v) => ({ name: v.name, stationName: null, at: v.at, reason: v.reason ?? "clocked_out" })),
   ].sort((a, b) => b.at.localeCompare(a.at));

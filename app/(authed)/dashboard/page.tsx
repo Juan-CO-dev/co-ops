@@ -25,7 +25,7 @@
 import { after } from "next/server";
 import Link from "next/link";
 import { loadOwnTaskAssignments, loadShiftBoard } from "@/lib/assignments";
-import { currentStation, taskVisible, type TaskType } from "@/lib/assignments-shared";
+import { currentFloorStation, taskVisible, type TaskType } from "@/lib/assignments-shared";
 import { closingStationAnchor, dashboardWorkVisibility } from "@/lib/assignment-sections";
 import { ShiftBoardClient } from "@/components/assignments/ShiftBoardClient";
 import { RetrainTaskList } from "@/components/production/RetrainTaskList";
@@ -384,7 +384,7 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
         })) ?? []
       : [];
   const visible = (task: TaskType) => shiftBoard ? dashboardWorkVisibility(shiftBoard, task).taskTile : taskVisible(auth.level, task, ownTasks);
-  const heldStationId = shiftBoard ? currentStation(shiftBoard.events, auth.user.id)?.stationId : null;
+  const heldStationId = shiftBoard ? currentFloorStation(shiftBoard, auth.user.id)?.stationId : null;
   const heldStation = shiftBoard?.stations.find((station) => station.id === heldStationId);
   const dashActor = { userId: auth.user.id, role: auth.role, level: auth.level };
   const [amPrepDashboard, midDayPrepDashboard, cashDashboard, pmDashboard] = await Promise.all([
