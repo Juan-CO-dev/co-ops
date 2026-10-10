@@ -42,6 +42,19 @@ export function isTaskType(value: unknown): value is TaskType {
 }
 export interface StationPosition { id: string; stationId: string; name: string; nameEs: string | null; duty: string | null; dutyEs: string | null; sort: number; active: boolean; usuallyTrimsAt?: string | null }
 export interface Station { id: string; name: string; nameEs: string | null; sort: number; active: boolean; staffed: boolean; positions: StationPosition[]; closedAt?: string | null; usuallyClosesAt?: string | null; trims?: StationTrim[] }
+/**
+ * THE floor-station predicate (CC ruling 2026-10-10, from Juan's live use: "stations I tick off
+ * shouldn't be shown anywhere else"). A station is on the FLOOR only if it is active, `staffed`, and
+ * has at least one active position. Everything else is a closing SECTION (Clean front of house, Prep
+ * Fridge, Shut Down Back Line, Walk-Out Verification…): it stays on the closing checklist
+ * (station_closures / release_closed_stations, 0230) and appears nowhere else — not the pulse floor,
+ * Needs attention, Stations & tasks, People counts, the close/trim nudges, the assignments board or
+ * the dashboard's station list. Every reader calls THIS; a second spelling is how the four sections
+ * came back painted "covered" with nobody at them. Day closure (`closedAt`) is lifecycle, not kind.
+ */
+export function isFloorStation(station: Pick<Station, "active" | "staffed" | "positions">): boolean {
+  return station.active && station.staffed && station.positions.some((position) => position.active);
+}
 export interface ShiftPerson { id: string; name: string; level: number; hasWork: boolean; available?: boolean; onBreak?: boolean;
   /** 0233 (WHOS_HERE=1): on shift today and how we know. Absent when the feature is off. */
   presence?: PresenceView;

@@ -347,9 +347,13 @@ async function people(deps: PulseDeps, ctx: PulseCtx): Promise<PeopleData> {
   });
   const here = rows.filter((r) => r.onShift).sort((a, b) => a.name.localeCompare(b.name));
   const seenToday = rows.filter((r) => !r.onShift && (r.off || r.tasks.length > 0 || r.stationName)).sort((a, b) => a.name.localeCompare(b.name));
-  const covered = new Set(board.events.filter((e) => e.stationId).map((e) => e.stationId));
-  const coveredNow = new Set([...peopleAtStations(board).keys()]);
-  void covered;
+  // The SAME floor rows the Stations card counts (one predicate, one status word), so the two cards
+  // can never disagree again ("0 covered · 6 open" beside "4 covered", 2026-10-10). Covered = someone
+  // is covering it (covered / short / closing soon / to close now); open = uncovered; closed is neither.
+  const { minutesOfDay } = operationalNow(ctx.now);
+  const floorRows = floorStations(board, { nowMinutes: minutesOfDay, viewerId: ctx.auth.user.id, showNames: false });
+  const stationsCovered = floorRows.filter((s) => s.status !== "closed" && s.status !== "inactive" && s.status !== "uncovered").length;
+  const stationsOpen = floorRows.filter((s) => s.status === "uncovered").length;
   const freed = [
     ...(board.positionVacancies ?? []).map((v) => {
       const sid = board.stations.find((s) => s.positions.some((p) => p.id === v.positionId))?.id ?? null;
@@ -368,13 +372,12 @@ async function people(deps: PulseDeps, ctx: PulseCtx): Promise<PeopleData> {
     timeline.push({ at: e.at, kind: e.stationId ? "station" : "release", name: nameOf.get(e.userId) ?? "—", detail: e.stationId ? label.station : (e.releaseReason ?? null) });
   }
   timeline.sort((a, b) => b.at.localeCompare(a.at));
-  const openStations = board.stations.filter((s) => s.active && s.staffed && !s.closedAt && !coveredNow.has(s.id)).length;
   return {
     whosHere: board.whosHere === true,
     here, seenToday,
     onBreak: rows.filter((r) => r.onBreak).length,
-    stationsCovered: coveredNow.size,
-    stationsOpen: openStations,
+    stationsCovered,
+    stationsOpen,
     freed, unlinked,
     timeline: timeline.slice(0, 200),
   };

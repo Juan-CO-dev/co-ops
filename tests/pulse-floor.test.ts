@@ -29,24 +29,29 @@ function board(stations: Station[], events: StationEvent[], people: ShiftBoard["
 
 describe("stationStatus", () => {
   it("closed > inactive > uncovered > short/closing_soon > covered", () => {
-    expect(stationStatus({ active: true, staffed: true, closed: true, filled: 2, positions: 2, closingSoon: false, closeDue: false, onBreak: 0 })).toBe("closed");
-    expect(stationStatus({ active: false, staffed: true, closed: false, filled: 0, positions: 2, closingSoon: false, closeDue: false, onBreak: 0 })).toBe("inactive");
-    expect(stationStatus({ active: true, staffed: true, closed: false, filled: 0, positions: 2, closingSoon: false, closeDue: false, onBreak: 0 })).toBe("uncovered");
-    expect(stationStatus({ active: true, staffed: true, closed: false, filled: 1, positions: 2, closingSoon: false, closeDue: false, onBreak: 0 })).toBe("short");
-    expect(stationStatus({ active: true, staffed: true, closed: false, filled: 2, positions: 2, closingSoon: true, closeDue: false, onBreak: 0 })).toBe("closing_soon");
-    expect(stationStatus({ active: true, staffed: true, closed: false, filled: 2, positions: 2, closingSoon: false, closeDue: false, onBreak: 0 })).toBe("covered");
+    expect(stationStatus({ active: true, closed: true, filled: 2, positions: 2, closingSoon: false, closeDue: false, onBreak: 0 })).toBe("closed");
+    expect(stationStatus({ active: false, closed: false, filled: 0, positions: 2, closingSoon: false, closeDue: false, onBreak: 0 })).toBe("inactive");
+    expect(stationStatus({ active: true, closed: false, filled: 0, positions: 2, closingSoon: false, closeDue: false, onBreak: 0 })).toBe("uncovered");
+    expect(stationStatus({ active: true, closed: false, filled: 1, positions: 2, closingSoon: false, closeDue: false, onBreak: 0 })).toBe("short");
+    expect(stationStatus({ active: true, closed: false, filled: 2, positions: 2, closingSoon: true, closeDue: false, onBreak: 0 })).toBe("closing_soon");
+    expect(stationStatus({ active: true, closed: false, filled: 2, positions: 2, closingSoon: false, closeDue: false, onBreak: 0 })).toBe("covered");
   });
   it("Astra #9: past its close time a staffed open station is close_due, never covered again", () => {
-    expect(stationStatus({ active: true, staffed: true, closed: false, filled: 2, positions: 2, closingSoon: false, closeDue: true, onBreak: 0 })).toBe("close_due");
-    expect(stationStatus({ active: true, staffed: true, closed: false, filled: 1, positions: 2, closingSoon: false, closeDue: true, onBreak: 0 })).toBe("short");
-    expect(stationStatus({ active: true, staffed: true, closed: true, filled: 2, positions: 2, closingSoon: false, closeDue: true, onBreak: 0 })).toBe("closed");
+    expect(stationStatus({ active: true, closed: false, filled: 2, positions: 2, closingSoon: false, closeDue: true, onBreak: 0 })).toBe("close_due");
+    expect(stationStatus({ active: true, closed: false, filled: 1, positions: 2, closingSoon: false, closeDue: true, onBreak: 0 })).toBe("short");
+    expect(stationStatus({ active: true, closed: true, filled: 2, positions: 2, closingSoon: false, closeDue: true, onBreak: 0 })).toBe("closed");
   });
   it("a station with no positions counts as covered by one person; everyone on break = uncovered", () => {
-    expect(stationStatus({ active: true, staffed: true, closed: false, filled: 1, positions: 0, closingSoon: false, closeDue: false, onBreak: 0 })).toBe("covered");
-    expect(stationStatus({ active: true, staffed: true, closed: false, filled: 1, positions: 1, closingSoon: false, closeDue: false, onBreak: 1 })).toBe("uncovered");
+    expect(stationStatus({ active: true, closed: false, filled: 1, positions: 0, closingSoon: false, closeDue: false, onBreak: 0 })).toBe("covered");
+    expect(stationStatus({ active: true, closed: false, filled: 1, positions: 1, closingSoon: false, closeDue: false, onBreak: 1 })).toBe("uncovered");
   });
-  it("an unstaffed station (storage / prep table) is never 'uncovered'", () => {
-    expect(stationStatus({ active: true, staffed: false, closed: false, filled: 0, positions: 0, closingSoon: false, closeDue: false, onBreak: 0 })).toBe("covered");
+  it("there is no unstaffed branch: nobody there is uncovered, never covered (2026-10-10 ruling)", () => {
+    expect(stationStatus({ active: true, closed: false, filled: 0, positions: 0, closingSoon: false, closeDue: false, onBreak: 0 })).toBe("uncovered");
+  });
+  it("an unstaffed section / a station with no active position is not a floor station at all (isFloorStation)", () => {
+    const out = floorStations(board([st("a", 1, { staffed: false }), st("b", 2, { positions: [] }), st("c", 3)], [], []), { nowMinutes: 900, viewerId: "v", showNames: true });
+    expect(out.map((s) => s.id)).toEqual(["c"]);
+    expect(out[0]!.status).toBe("uncovered");
   });
 });
 

@@ -8,7 +8,7 @@
  * and a GM's one-time drag (saved per shop, audited). Status is always a WORD the UI translates —
  * colour is reinforcement, never the only signal.
  */
-import { currentStation, type ShiftBoard } from "@/lib/assignments-shared";
+import { currentStation, isFloorStation, type ShiftBoard } from "@/lib/assignments-shared";
 import { closeTimeFacts } from "@/lib/pulse/close-times-shared";
 import type { FloorLayout, FloorLayoutPoint, FloorStation, FloorStatus } from "@/lib/pulse/types";
 
@@ -16,12 +16,16 @@ export const FLOOR_COLS = 3;
 /** Layout coordinates are grid units; a GM may drag within this box. */
 export const FLOOR_MAX_COORD = 12;
 
+/**
+ * The status WORD for a FLOOR station (callers filter with `isFloorStation` first). There is no
+ * "unstaffed ⇒ covered" branch any more (Juan, 2026-10-10: four closing sections were painted green
+ * with nobody at them): a station with nobody covering it is UNCOVERED, whatever its positions count.
+ */
 export function stationStatus(f: {
-  active: boolean; staffed: boolean; closed: boolean; filled: number; positions: number; closingSoon: boolean; closeDue: boolean; onBreak: number;
+  active: boolean; closed: boolean; filled: number; positions: number; closingSoon: boolean; closeDue: boolean; onBreak: number;
 }): FloorStatus {
   if (f.closed) return "closed";
   if (!f.active) return "inactive";
-  if (!f.staffed) return "covered";
   const covering = Math.max(0, f.filled - f.onBreak);
   if (covering === 0) return "uncovered";
   if (f.positions > 0 && covering < f.positions) return "short";
@@ -40,7 +44,8 @@ export function floorStations(board: ShiftBoard, args: { nowMinutes: number; vie
   const openTasksBy = new Map<string, number>();
   for (const t of board.tasks) if (t.available !== false) openTasksBy.set(t.assigneeId, (openTasksBy.get(t.assigneeId) ?? 0) + 1);
 
-  return [...board.stations].sort((a, b) => a.sort - b.sort || a.name.localeCompare(b.name)).map((station) => {
+  // Floor stations only: a closing section (unstaffed, or no active position) is never on the floor.
+  return board.stations.filter(isFloorStation).sort((a, b) => a.sort - b.sort || a.name.localeCompare(b.name)).map((station) => {
     const here = board.people.filter((p) => heads.get(p.id)?.stationId === station.id);
     const covering = here.filter((p) => !onBreak.has(p.id));
     const facts = closeTimeFacts(station, args.nowMinutes);
@@ -54,7 +59,7 @@ export function floorStations(board: ShiftBoard, args: { nowMinutes: number; vie
       nameEs: station.nameEs,
       sort: station.sort,
       status: stationStatus({
-        active: station.active, staffed: station.staffed, closed: facts.closedAt !== null,
+        active: station.active, closed: facts.closedAt !== null,
         filled: here.length, positions, closingSoon: facts.closingSoon || facts.trimDue, closeDue: facts.closeDue, onBreak: here.length - covering.length,
       }),
       people: names,

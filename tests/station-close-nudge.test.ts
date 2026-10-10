@@ -32,7 +32,9 @@ vi.mock("@/lib/supabase-server", () => ({ getServiceRoleClient: () => ({
 function board(): ShiftBoard {
   return { locationId: "shop", date: "2026-10-09", viewerId: "kh", viewerLevel: 4,
     people: [], tasks: [], events: [], stations: [{ id: "station-id", name: "Crunchy Boi", nameEs: "Crujiente",
-      active: true, staffed: true, sort: 1, positions: [], usuallyClosesAt: "16:00" }] };
+      active: true, staffed: true, sort: 1, usuallyClosesAt: "16:00",
+      // A FLOOR station needs an active position (isFloorStation); a position-less station is a closing section and gets no nudge.
+      positions: [{ id: "p1", stationId: "station-id", name: "First", nameEs: null, duty: null, dutyEs: null, sort: 1, active: true }] }] };
 }
 function render(value = board(), language: "en" | "es" = "en") {
   return renderToStaticMarkup(createElement(TranslationProvider, { initialLanguage: language,
@@ -56,6 +58,19 @@ describe("close nudge checklist navigation", () => {
     }));
     expect(page.props.initialState.instance.id).toBe(instance.id);
     expect(page.props.initialState.readOnly).toBe(false);
+  });
+  it("renders NO nudge for a closing section: unstaffed, or no active position (isFloorStation, 2026-10-10)", () => {
+    const value = board();
+    const floor = value.stations[0]!;
+    value.stations = [
+      floor,
+      { ...floor, id: "foh", name: "Clean front of house", nameEs: null, staffed: false },
+      { ...floor, id: "fridge", name: "Prep Fridge", nameEs: null, positions: [] },
+      { ...floor, id: "backline", name: "Shut Down Back Line", nameEs: null, positions: [{ ...floor.positions[0]!, id: "p2", stationId: "backline", active: false }] },
+    ];
+    const html = render(value);
+    expect(html).toContain("Close Crunchy Boi station");
+    expect(html).not.toMatch(/front of house|Prep Fridge|Back Line/);
   });
   it("keeps the English anchor with translated button copy", () => {
     const html = render(board(), "es");

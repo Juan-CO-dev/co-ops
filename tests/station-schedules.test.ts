@@ -8,7 +8,8 @@ import es from "@/lib/i18n/es.json";
 function fixture(): ShiftBoard {
   return { locationId: "shop", date: "2026-10-09", stationDate: "2026-10-09", viewerId: "kh", viewerLevel: 4,
     tasks: [], people: ["a", "b"].map(id => ({ id, name: id, level: 3, hasWork: true })),
-    stations: [{ id: "s", name: "Station", nameEs: null, active: true, staffed: true, sort: 1, positions: [], usuallyClosesAt: "16:00", trims: [{ at: "14:00", to_count: 1 }] }],
+    // A FLOOR station (isFloorStation): staffed with an active position. A position-less station is a closing section and gets no nudge.
+    stations: [{ id: "s", name: "Station", nameEs: null, active: true, staffed: true, sort: 1, positions: [{ id: "a", stationId: "s", name: "First", nameEs: null, duty: null, dutyEs: null, sort: 1, active: true }], usuallyClosesAt: "16:00", trims: [{ at: "14:00", to_count: 1 }] }],
     events: ["a", "b"].map((id, index): StationEvent => ({ id, sequence: String(index + 1), userId: id,
       locationId: "shop", businessDate: "2026-10-09", stationId: "s", positionId: id,
       kind: "claim", actorId: id, actorName: id, source: "claimed", at: "2026-10-09T12:00:00Z" })) };
