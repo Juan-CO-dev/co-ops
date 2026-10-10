@@ -1,10 +1,6 @@
-/** Closed heartbeat registry. Daily cadences follow vercel.json (UTC schedules).
- * Every successful scheduled route watches its siblings after its own heartbeat.
- * The 10-minute pinger catches up missing daily work after 90 minutes of grace;
- * the Vercel routes provide independent chances to check a dead pinger
- * (alerts still require its active ET window; dormant parsing does not check).
- * Detection retains the 2x-cadence/window rules; checks run every pinger cycle in
- * 06:00-22:00 ET, not just the 17:00 UTC job-watch cron.
+/** Closed heartbeat registry. Vercel owns all scheduled jobs.
+ * Intraday routes watch siblings after their heartbeat and catch up missing daily work.
+ * ET business windows keep overnight pauses out of the ten-minute jobs' deadlines.
  */
 export interface DailyCatchUpEntry {
   job: "prune-sessions" | "toast-sales-pull" | "parse-receipts";
@@ -37,19 +33,18 @@ export const JOBS_REGISTRY = [
   // Its cron heartbeat is written by the capture inside the 09:00 UTC sales pull.
   { job: "toast-order-capture", cadenceMinutes: 1440, source: "vercel", dueUtc: "09:00" },
   { job: "toast-sales-pull", cadenceMinutes: 1440, source: "vercel", catchUp: { job: "toast-sales-pull", dueUtc: "09:00" } }, // 09:00 UTC
-  // Labor (0224/0230): today's bounded, fail-soft pull rides the 10-minute pinger; nightly remains a backstop.
-  { job: "toast-labor-pull", cadenceMinutes: 10, window: { startHourET: 6, endHourET: 22 }, source: "pinger" },
+  // Labor (0224/0230): today's bounded, fail-soft pull rides the 10-minute Vercel cron; nightly remains a backstop.
+  { job: "toast-labor-pull", cadenceMinutes: 10, window: { startHourET: 6, endHourET: 22 }, source: "vercel" },
   { job: "prune-sessions", cadenceMinutes: 1440, source: "vercel", catchUp: { job: "prune-sessions", dueUtc: "08:30" } }, // 08:30 UTC
   // Shares the prune route and its catch-up attempt, but has its own heartbeat.
   { job: "vault-scrub", cadenceMinutes: 1440, source: "vercel", dueUtc: "08:30" },
   { job: "parse-receipts", cadenceMinutes: 1440, source: "vercel", catchUp: { job: "parse-receipts", dueUtc: "09:45" } }, // 09:45 UTC
-  { job: "toast-catering-scan", cadenceMinutes: 10, window: { startHourET: 6, endHourET: 22 }, source: "pinger" },
-  { job: "toast-sales-today", cadenceMinutes: 10, window: { startHourET: 6, endHourET: 22 }, source: "pinger" },
+  { job: "toast-catering-scan", cadenceMinutes: 10, window: { startHourET: 6, endHourET: 22 }, source: "vercel" },
+  { job: "toast-sales-today", cadenceMinutes: 10, window: { startHourET: 6, endHourET: 22 }, source: "vercel" },
   { job: "job-watch", cadenceMinutes: 1440, source: "vercel" }, // 17:00 UTC
-  // Report digests (0220). The hourly Vercel backup covers 03:00 ET in both DST states;
-  // allow two hourly intervals before job-watch calls it silent. Must equal
-  // DIGEST_TICK_WINDOW in lib/report-digests-shared.ts (pinned by tests/digest-routes.test.ts).
-  { job: "digest-tick", cadenceMinutes: 60, window: { startHourET: 3, endHourET: 22 }, source: "pinger" },
+  // Hourly all day, including the 03:00 ET fallback in both DST states.
+  // Window matches DIGEST_TICK_WINDOW; two hours of grace for the first heartbeat.
+  { job: "digest-tick", cadenceMinutes: 60, window: { startHourET: 0, endHourET: 24 }, source: "vercel" },
 ] as const satisfies readonly RegisteredJob[];
 
 export type JobName = (typeof JOBS_REGISTRY)[number]["job"];

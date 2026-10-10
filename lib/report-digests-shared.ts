@@ -3,9 +3,8 @@
  * and the due / watch decisions for the three digests (Reports hub v2 piece 2 + the catering
  * morning digest, GO 2026-10-07). I/O lives in lib/report-digests.ts.
  *
- * The desktop pinger calls /api/cron/digest-tick every 10 minutes while active. Vercel Pro also
- * calls it hourly from 04:00 to 09:00 UTC, covering 03:00 ET in both DST states. Every decision
- * below is a pure function of `now` plus the report_settings row; repeated ticks are safe.
+ * Vercel calls /api/cron/digest-tick hourly all day. Desktop ticks remain supported.
+ * Decisions use `now` plus report_settings; repeated ticks share send claims.
  */
 import { ROLES, isRoleCode } from "@/lib/roles";
 import type { Language } from "@/lib/i18n/types";
@@ -26,8 +25,8 @@ export const DIGEST_ALL_SHOPS_LEVEL = 8;
 export const SHOP_DIGEST_FLAG_MIN = 6;    // AGM and up (Q2's "add an AGM via the override row")
 export const CATERING_DIGEST_FLAG_MIN = 5; // PIPELINE_READ_MIN — shift lead+ may view the pipeline
 
-/** The job-watch window for digest-tick (ET hours). Vercel covers its 03:00 opening. */
-export const DIGEST_TICK_WINDOW = { startHourET: 3, endHourET: 22 } as const;
+/** The all-day job-watch window for the hourly Vercel digest tick (ET hours). */
+export const DIGEST_TICK_WINDOW = { startHourET: 0, endHourET: 24 } as const;
 /** A claim older than this that never became sent|failed is a dead function; free the key. */
 export const DIGEST_STALE_CLAIM_MINUTES = 15;
 /**
