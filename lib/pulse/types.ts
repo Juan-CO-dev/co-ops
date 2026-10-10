@@ -180,6 +180,7 @@ export interface SalesData {
     baselineCumulative: Array<number | null> | null;
     /** How many trailing same weekdays had data (the basis stated on the chart). */
     baselineWeeks: number;
+    baselineUnavailable: boolean;
     weekday: number;
     /** Today so far vs the baseline at the same hour, whole %, null when no basis. */
     pctOfNormal: number | null;

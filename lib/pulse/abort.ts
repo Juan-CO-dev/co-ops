@@ -14,8 +14,12 @@ function attach(result: unknown, signal: AbortSignal): unknown {
   return r && typeof r === "object" && typeof r.abortSignal === "function" ? r.abortSignal(signal) : result;
 }
 
+const signals = new WeakMap<object, AbortSignal>();
+
 export function withAbort<C extends SupabaseClient>(client: C, signal: AbortSignal): C {
-  return new Proxy(client, {
+  const parent = signals.get(client);
+  if (parent) signal = AbortSignal.any([parent, signal]);
+  const wrapped = new Proxy(client, {
     get(target, prop, receiver) {
       if (prop === "from") {
         return (table: string) => {
@@ -35,4 +39,6 @@ export function withAbort<C extends SupabaseClient>(client: C, signal: AbortSign
       return Reflect.get(target, prop, receiver);
     },
   });
+  signals.set(wrapped, signal);
+  return wrapped;
 }
