@@ -53,6 +53,8 @@ beforeEach(() => { fake.calls.length = 0; fake.rows = {}; resetSourceCache(); vi
 afterEach(() => { vi.restoreAllMocks(); resetSourceCache(); });
 
 describe("DB calls per poll (GM, all nine sections)", () => {
+  beforeEach(() => { vi.useFakeTimers({ toFake: ["Date"] }); vi.setSystemTime(new Date(`${fake.date}T19:30:00Z`)); });
+  afterEach(() => vi.useRealTimers());
   it("BEFORE: every section request reloads its sources; AFTER: one shared load per shop per poll, 0 on the next viewer's poll", async () => {
     const before = await poll(7, "gm-a", () => defaultPulseDeps(client as never));
     fake.calls.length = 0;

@@ -9,7 +9,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cachedSource, invalidateSource, resetSourceCache, SOURCE_TTL_MS, sourceCacheSize, sourceKey } from "@/lib/pulse/source-cache";
 import { withAbort } from "@/lib/pulse/abort";
-import { cachedPulseDeps, sourceScope, type PulseCtx, type PulseDeps } from "@/lib/pulse/sections";
+import { cachedPulseDeps, loadPulseSection, sourceScope, type PulseCtx, type PulseDeps } from "@/lib/pulse/sections";
 import type { AuthContext } from "@/lib/session";
 
 beforeEach(() => resetSourceCache());
@@ -77,6 +77,34 @@ describe("cachedPulseDeps — scope-safe sharing", () => {
     expect(sourceScope("reports", ctx(4, "x"))).toBe("full");
     expect(sourceScope("reports", ctx(3, "x"))).toBe("user:x");
     expect(sourceScope("board", ctx(3, "x"))).toBe("shop");
+  });
+  it("keeps formatted cutoffs separate by language within the same shop", async () => {
+    const d = deps();
+    d.cutoffs = vi.fn(async (viewer) => ({ count: 1, vendors: [{
+      vendorId: "vendor", vendorName: "Vendor", cutoffTime: viewer.auth.user.language === "es" ? "4:00 p. m." : "4:00 PM", hasDraft: false,
+    }] }));
+    const c = cachedPulseDeps(d, { now: () => 1_000 });
+    const spanish = ctx(8, "director");
+    spanish.auth.user.language = "es";
+    const english = ctx(4, "kh");
+    expect((await c.cutoffs(spanish)).vendors[0]?.cutoffTime).toBe("4:00 p. m.");
+    expect((await c.cutoffs(english)).vendors[0]?.cutoffTime).toBe("4:00 PM");
+    expect((await c.cutoffs(ctx(8, "other"))).vendors[0]?.cutoffTime).toBe("4:00 PM");
+    expect(d.cutoffs).toHaveBeenCalledTimes(2);
+  });
+  it("projects crew-redacted catering after a level-8 viewer warms the shop cache", async () => {
+    const d = deps();
+    d.cateringToday = vi.fn(async () => [{ id: "event", name: "Private customer", timeWindow: "4:00 PM", headcount: 12, isDelivery: true, stage: "confirmed" as const, source: "ezcater" }]);
+    const c = cachedPulseDeps(d, { now: () => 1_000 });
+    expect(await loadPulseSection(c, ctx(8, "director"), "catering")).toMatchObject({ state: "ok", data: {
+      redacted: false, today: [{ name: "Private customer", source: "ezcater" }],
+    } });
+    const crew = await loadPulseSection(c, ctx(3, "crew"), "catering");
+    expect(crew).toMatchObject({ state: "ok", data: {
+      redacted: true, today: [{ name: null, source: null, timeWindow: "4:00 PM", headcount: 12 }], notRung: [],
+    } });
+    expect(JSON.stringify(crew)).not.toContain("Private customer");
+    expect(d.cateringToday).toHaveBeenCalledTimes(1);
   });
   it("a second poll inside the TTL reads nothing; after the TTL every source reloads", async () => {
     const d = deps();

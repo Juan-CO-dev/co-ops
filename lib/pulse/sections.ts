@@ -105,6 +105,8 @@ export interface PulseDeps {
  */
 export function sourceScope(source: keyof PulseDeps, ctx: PulseCtx): string {
   if (source === "reports") return ctx.auth.level >= 4 ? "full" : `user:${ctx.auth.user.id}`;
+  // The ordering reader formats cutoff times in the viewer's language before caching.
+  if (source === "cutoffs") return `language:${ctx.auth.user.language}`;
   return "shop";
 }
 
