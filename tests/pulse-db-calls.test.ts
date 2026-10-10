@@ -21,7 +21,12 @@ function builder(data: unknown) {
 }
 const client = {
   from: (table: string) => { fake.calls.push(`from:${table}`); return builder(fake.rows[table] ?? []); },
-  rpc: (name: string) => { fake.calls.push(`rpc:${name}`); return builder(name === "station_business_date" ? fake.date : []); },
+  rpc: (name: string) => {
+    fake.calls.push(`rpc:${name}`);
+    return builder(name === "station_business_date" ? fake.date : name === "pulse_sales_today" ?
+      { classes: [], discounts: [], refunds: [], captured_days: [], captured_at: null } :
+      name === "pulse_sales_baseline" ? { hours: [], captured_days: [] } : []);
+  },
 };
 vi.mock("@/lib/supabase-server", () => ({ getServiceRoleClient: () => client }));
 vi.mock("@/lib/audit", () => ({ audit: vi.fn(async () => {}) }));
@@ -76,7 +81,7 @@ describe("DB calls per poll (GM, all nine sections)", () => {
   it("a crew poll never reaches sources outside its scope, before or after", async () => {
     const before = await poll(3, "crew", () => defaultPulseDeps(client as never));
     // (vendor_deliveries is read by the report-status loaders for everyone; the inventory lane is par_pass_events + vendor_cutoffs.)
-    for (const t of ["from:par_pass_events", "from:vendor_cutoffs", "rpc:sales_report_daily", "rpc:sales_report_breakdown", "from:ezcater_reconciliation_status", "from:toast_time_entries", "from:pulse_station_layouts_never"]) {
+    for (const t of ["from:par_pass_events", "from:vendor_cutoffs", "rpc:pulse_sales_today", "rpc:pulse_sales_baseline", "rpc:sales_report_daily", "rpc:sales_report_breakdown", "from:ezcater_reconciliation_status", "from:toast_time_entries", "from:pulse_station_layouts_never"]) {
       expect(before.byTable[t], t).toBeUndefined();
     }
   });

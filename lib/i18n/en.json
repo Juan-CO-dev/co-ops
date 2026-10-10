@@ -5729,6 +5729,7 @@
   "pulse.sales.pace": "Pace vs a normal {weekday}",
   "pulse.sales.pace_delta_up": "+{pct}% vs normal at this hour",
   "pulse.sales.pace_delta_down": "−{pct}% vs normal at this hour",
+  "pulse.sales.baseline_unavailable": "Sales baseline is temporarily unavailable.",
   "pulse.sales.pace_no_basis": "No same-weekday history yet to compare.",
   "pulse.sales.basis": "Normal day = average of the last {weeks} {weekday}s with captured Toast data.",
   "pulse.sales.legend_today": "Today",

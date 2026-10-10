@@ -36,7 +36,7 @@ export function SalesSection({ data, mode, locationId, date }: { data: SalesData
           <div className={`text-lg font-bold tabular-nums ${delta == null ? "text-co-text-muted" : delta >= 0 ? "text-co-confirm-text" : "text-co-cta-text"}`}>
             {delta == null ? "—" : `${delta >= 0 ? "+" : "−"}${Math.abs(delta)}%`}
           </div>
-          <div className="text-xs text-co-text-muted">{delta == null ? t("pulse.sales.pace_no_basis") : t(delta >= 0 ? "pulse.sales.pace_delta_up" : "pulse.sales.pace_delta_down", { pct: Math.abs(delta) })}</div>
+          <div className="text-xs text-co-text-muted">{delta == null ? t(data.pace.baselineUnavailable ? "pulse.sales.baseline_unavailable" : "pulse.sales.pace_no_basis") : t(delta >= 0 ? "pulse.sales.pace_delta_up" : "pulse.sales.pace_delta_down", { pct: Math.abs(delta) })}</div>
         </div>
         <div className="col-span-2 min-w-0 rounded-lg border border-co-border bg-co-surface-inset p-3 sm:col-span-1">
           <div className="text-xs text-co-text-muted">{t("pulse.sales.discounts", { count: data.discounts.count, amount: formatCents(data.discounts.cents, language) })}</div>
@@ -48,7 +48,7 @@ export function SalesSection({ data, mode, locationId, date }: { data: SalesData
           today={data.pace.todayCumulative} baseline={data.pace.baselineCumulative} currentHour={data.pace.currentHour}
           ariaLabel={t("pulse.sales.pace", { weekday })} labelToday={t("pulse.sales.legend_today")} labelNormal={t("pulse.sales.legend_normal")} noData={t("pulse.chart.no_data")}
         />
-        <p className="mt-1 text-[11px] text-co-text-dim">{data.pace.baselineWeeks > 0 ? t("pulse.sales.basis", { weeks: data.pace.baselineWeeks, weekday }) : t("pulse.sales.pace_no_basis")}</p>
+        <p className="mt-1 text-[11px] text-co-text-dim">{data.pace.baselineWeeks > 0 ? t("pulse.sales.basis", { weeks: data.pace.baselineWeeks, weekday }) : t(data.pace.baselineUnavailable ? "pulse.sales.baseline_unavailable" : "pulse.sales.pace_no_basis")}</p>
       </div>
       <div className="grid gap-3 md:grid-cols-2">
         <div>
@@ -78,7 +78,7 @@ export function SalesSection({ data, mode, locationId, date }: { data: SalesData
           </div>
           <div>
             <h3 className={subHeading}>{t("pulse.sales.heatmap")}</h3>
-            <Heatmap cells={data.heat} language={language} ariaLabel={t("pulse.sales.heatmap")} noData={t("pulse.chart.no_data")} />
+            {data.pace.baselineUnavailable ? <p className="text-sm text-co-text-muted">{t("pulse.sales.baseline_unavailable")}</p> : <Heatmap cells={data.heat} language={language} ariaLabel={t("pulse.sales.heatmap")} noData={t("pulse.chart.no_data")} />}
           </div>
           <Link href={`/reports/sales?location=${encodeURIComponent(locationId)}&range=today`} className={tapLink}>{t("pulse.sales.report_link")}</Link>
         </>

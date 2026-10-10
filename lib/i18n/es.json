@@ -5729,6 +5729,7 @@
   "pulse.sales.pace": "Ritmo vs. un {weekday} normal",
   "pulse.sales.pace_delta_up": "+{pct}% vs. lo normal a esta hora",
   "pulse.sales.pace_delta_down": "−{pct}% vs. lo normal a esta hora",
+  "pulse.sales.baseline_unavailable": "La referencia de ventas no está disponible temporalmente.",
   "pulse.sales.pace_no_basis": "Aún no hay historial del mismo día para comparar.",
   "pulse.sales.basis": "Día normal = promedio de los últimos {weeks} {weekday} con datos de Toast.",
   "pulse.sales.legend_today": "Hoy",

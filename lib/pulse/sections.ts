@@ -20,7 +20,6 @@
 import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { AuthContext } from "@/lib/session";
-import { getRoleLevel } from "@/lib/roles";
 import { currentStation, taskHref, TASK_TYPES, type ShiftBoard, type TaskType } from "@/lib/assignments-shared";
 import { loadShiftBoard } from "@/lib/assignments";
 import { loadFridgesToday, type FridgeToday } from "@/lib/pulse/fridges";
@@ -34,10 +33,10 @@ import { toastReadyAt, toastRingTiming, type NotInToastOrder } from "@/lib/cater
 import { loadRecentDeliveries, type DeliveryView } from "@/lib/receiving";
 import { loadOrderingAttention, type OrderingCutoffAttention } from "@/lib/ordering";
 import {
-  loadSalesBreakdown, loadSalesSummary, resolveSalesRange, SalesReportError,
+  SalesReportError,
   type BreakdownRow, type SalesSummaryDto,
 } from "@/lib/sales-reports";
-import { shiftReportDate } from "@/lib/report-range";
+import { loadPulseSales } from "@/lib/pulse/sales";
 import { loadHandoffRaw, projectHandoffNotes, PulseNotInstalledError, type HandoffRaw } from "@/lib/pulse/handoff";
 import { loadStationLayout } from "@/lib/pulse/layout";
 import { cachedSource, sourceKey } from "@/lib/pulse/source-cache";
@@ -68,7 +67,7 @@ export interface ParPassFacts {
 }
 
 export interface SalesFacts {
-  today: SalesSummaryDto;
+  today: Pick<SalesSummaryDto, "totals" | "capturedAt">;
   items: BreakdownRow[];
   channels: BreakdownRow[];
   discounts: BreakdownRow[];
@@ -76,7 +75,7 @@ export interface SalesFacts {
   hoursToday: BreakdownRow[];
   /** Trailing 28 days (yesterday back), hour × weekday. */
   heatTrailing: BreakdownRow[];
-  trailing: SalesSummaryDto;
+  trailing: { buckets: Array<{ from: string; coveredDays: number }> } | null;
 }
 
 export interface PulseDeps {
@@ -449,7 +448,7 @@ async function sales(deps: PulseDeps, ctx: PulseCtx): Promise<SalesData> {
   const dow = dowOf(ctx.date);
   const todayCurve = hourCurve(f.hoursToday.filter((r) => r.dow === dow || r.dow === undefined).map((r) => ({ hour: r.hour ?? -1, cents: r.cents })));
   const todayCumulative = cumulativeByHour(todayCurve, currentHour);
-  const weeks = sameWeekdayCoverage(f.trailing.buckets, dow);
+  const weeks = sameWeekdayCoverage(f.trailing?.buckets ?? [], dow);
   const heat = f.heatTrailing.filter((r) => r.dow !== undefined && r.hour !== undefined).map((r) => ({ dow: r.dow!, hour: r.hour!, cents: r.cents }));
   const baseline = baselineCumulative(heat, dow, weeks);
   const hasData = t.coveredDays > 0 || t.checks > 0;
@@ -459,7 +458,7 @@ async function sales(deps: PulseDeps, ctx: PulseCtx): Promise<SalesData> {
     net: hasData ? { cents: t.toastChecksCents, checks: t.checks, avgCheckCents: t.avgCheckCents } : null,
     discounts: { cents: t.discountCents, count: t.discountCount },
     refunds: { cents: t.refundCents, count: t.refundCount },
-    pace: { todayCumulative, baselineCumulative: baseline, baselineWeeks: weeks, weekday: dow, pctOfNormal: paceDeltaPct(todayCumulative, baseline, currentHour), currentHour },
+    pace: { baselineUnavailable: f.trailing === null, todayCumulative, baselineCumulative: baseline, baselineWeeks: weeks, weekday: dow, pctOfNormal: paceDeltaPct(todayCumulative, baseline, currentHour), currentHour },
     topItems: f.items.slice(0, 5).map((r) => ({ name: r.label ?? r.key, units: r.units })),
     channels: f.channels.filter((r) => (r.saleClass ?? "sale") === "sale").map((r) => ({ channel: r.channel ?? r.key, cents: r.cents, checks: r.checks })),
     discountsByName: f.discounts.slice(0, 8).map((r) => ({ name: r.label ?? r.key, cents: r.cents, count: r.count })),
@@ -637,23 +636,7 @@ export function defaultPulseDeps(service: SupabaseClient): PulseDeps {
     },
     deliveries: (ctx) => loadRecentDeliveries(actorOf(ctx), ctx.locationId, 10),
     cutoffs: (ctx) => loadOrderingAttention(actorOf(ctx), ctx.locationId),
-    sales: async (ctx) => {
-      const viewer = { userId: ctx.auth.user.id, level: getRoleLevel(ctx.auth.user.role), locations: ctx.auth.locations };
-      const today = resolveSalesRange({ range: "today" }, ctx.date);
-      const trailing = resolveSalesRange({ range: "custom", from: shiftReportDate(ctx.date, -28), to: shiftReportDate(ctx.date, -1) }, ctx.date);
-      const one = { locationId: ctx.locationId, range: today };
-      const [summary, items, channels, discounts, servers, hoursToday, heatTrailing, trailingSummary] = await Promise.all([
-        loadSalesSummary(viewer, one),
-        loadSalesBreakdown(viewer, { ...one, dimension: "item" }),
-        loadSalesBreakdown(viewer, { ...one, dimension: "channel" }),
-        loadSalesBreakdown(viewer, { ...one, dimension: "discount" }),
-        loadSalesBreakdown(viewer, { ...one, dimension: "server" }),
-        loadSalesBreakdown(viewer, { ...one, dimension: "hour_weekday" }),
-        loadSalesBreakdown(viewer, { locationId: ctx.locationId, range: trailing, dimension: "hour_weekday" }),
-        loadSalesSummary(viewer, { locationId: ctx.locationId, range: trailing }),
-      ]);
-      return { today: summary, items, channels, discounts, servers, hoursToday, heatTrailing, trailing: trailingSummary };
-    },
+    sales: (ctx) => loadPulseSales(service, ctx),
     handoff: (ctx) => loadHandoffRaw(service, { locationId: ctx.locationId, date: ctx.date }),
     layout: (ctx) => loadStationLayout(service, ctx.locationId),
   };
