@@ -20,7 +20,7 @@
 import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { AuthContext } from "@/lib/session";
-import { currentStation, taskHref, TASK_TYPES, type ShiftBoard, type TaskType } from "@/lib/assignments-shared";
+import { currentFloorStation, taskHref, TASK_TYPES, type ShiftBoard, type TaskType } from "@/lib/assignments-shared";
 import { loadShiftBoard } from "@/lib/assignments";
 import { loadFridgesToday, type FridgeToday } from "@/lib/pulse/fridges";
 import {
@@ -51,6 +51,7 @@ import type {
 } from "@/lib/pulse/types";
 
 export const SECTION_DEADLINE_MS = 7_000;
+export const STAMP_DEADLINE_MS = 1_500;
 
 export interface PulseCtx {
   auth: AuthContext;
@@ -96,9 +97,9 @@ export interface PulseDeps {
    * for this shop/day (null before the first). One indexed single-row read. `cachedPulseDeps` keys the
    * sales cache by it so every warm instance serves the same, newest completed capture (Juan,
    * 2026-10-10: the card "needed 2-4 refreshes, and went BACKWARDS"). Optional: without it (or when it
-   * fails) the sales source falls back to the plain per-instance TTL cache.
+   * fails) the sales source serves an unexpired sibling or falls back to the plain TTL cache.
    */
-  salesStamp?(ctx: PulseCtx): Promise<string | null>;
+  salesStamp?(ctx: PulseCtx, signal?: AbortSignal): Promise<string | null>;
   /** The shop's raw notes (every audience); the section projects per viewer. */
   handoff(ctx: PulseCtx): Promise<HandoffRaw>;
   layout(ctx: PulseCtx): Promise<FloorLayout | null>;
@@ -133,12 +134,24 @@ export function cachedPulseDeps(deps: PulseDeps, opts: { ttlMs?: number; now?: (
   // Today's sales are keyed by the latest COMPLETED capture (the stamp), not just by the clock: a warm
   // instance that still holds the pre-capture snapshot learns the new stamp on its next poll and
   // reloads, instead of serving the lower, older number for up to a TTL (the 4:40 → 4:41 PM "went
-  // backwards"). A failed stamp read degrades to the plain TTL cache; it never fails the section.
+  // backwards"). A failed stamp read reuses an unexpired snapshot or the plain TTL loader.
   const sales: PulseDeps["sales"] = async (ctx) => {
     if (!canReadPulseLocation(ctx.auth, ctx.locationId)) throw new Error("location_access_denied");
-    const stamp = deps.salesStamp
-      ? await deps.salesStamp(ctx).catch((err: unknown) => { console.error("pulse sales stamp failed", err); return null; })
-      : null;
+    const controller = new AbortController();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let stamp: string | null = null;
+    if (deps.salesStamp) {
+      try {
+        const deadline = new Promise<never>((_, reject) => {
+          timer = setTimeout(() => { controller.abort(); reject(new PulseTimeoutError()); }, STAMP_DEADLINE_MS);
+        });
+        stamp = await Promise.race([deps.salesStamp(ctx, controller.signal), deadline]);
+      } catch (err) {
+        console.error("pulse sales stamp failed", err);
+      } finally {
+        if (timer) clearTimeout(timer);
+      }
+    }
     const scope = sourceScope("sales", ctx);
     const prefix = sourceKey({ source: "sales", locationId: ctx.locationId, date: ctx.date, scope: "" });
     const key = sourceKey({ source: "sales", locationId: ctx.locationId, date: ctx.date, scope: stamp ? `${scope}|captured:${stamp}` : scope });
@@ -205,7 +218,7 @@ function overdueRows(reports: Awaited<ReturnType<PulseDeps["reports"]>>, minutes
 function peopleAtStations(board: ShiftBoard): Map<string, string[]> {
   const out = new Map<string, string[]>();
   for (const p of board.people) {
-    const head = currentStation(board.events, p.id);
+    const head = currentFloorStation(board, p.id);
     if (head?.stationId) out.set(head.stationId, [...(out.get(head.stationId) ?? []), p.id]);
   }
   return out;
@@ -332,7 +345,7 @@ async function floor(deps: PulseDeps, ctx: PulseCtx): Promise<FloorData> {
     deps.layout(ctx).catch((err) => { console.error("pulse floor layout failed", err); return null; }),
   ]);
   const stations = floorStations(board, { nowMinutes: minutesOfDay, viewerId: ctx.auth.user.id, showNames: !crew });
-  const mine = currentStation(board.events, ctx.auth.user.id)?.stationId ?? null;
+  const mine = currentFloorStation(board, ctx.auth.user.id)?.stationId ?? null;
   return {
     stations,
     layout: mergeLayout(stations.map((s) => s.id), layout),
@@ -353,7 +366,7 @@ async function people(deps: PulseDeps, ctx: PulseCtx): Promise<PeopleData> {
   ]);
   const positionName = new Map(board.stations.flatMap((s) => s.positions.map((p) => [p.id, p.name] as const)));
   const rows: PersonRow[] = board.people.map((p) => {
-    const head = currentStation(board.events, p.id);
+    const head = currentFloorStation(board, p.id);
     const label = stationLabel(board, head?.stationId);
     return {
       id: p.id, name: p.name,
@@ -424,7 +437,7 @@ async function stations(deps: PulseDeps, ctx: PulseCtx): Promise<StationsData> {
   const [board, reports] = await Promise.all([deps.board(ctx), deps.reports(ctx)]);
   const overdue = overdueRows(reports, minutesOfDay);
   const floorRows = floorStations(board, { nowMinutes: minutesOfDay, viewerId: ctx.auth.user.id, showNames: !crew });
-  const heads = new Map(board.people.map((p) => [p.id, currentStation(board.events, p.id)] as const));
+  const heads = new Map(board.people.map((p) => [p.id, currentFloorStation(board, p.id)] as const));
   const rows: StationRow[] = floorRows.map((f) => {
     const station = board.stations.find((s) => s.id === f.id)!;
     return {
@@ -662,7 +675,7 @@ export function defaultPulseDeps(service: SupabaseClient): PulseDeps {
     deliveries: (ctx) => loadRecentDeliveries(actorOf(ctx), ctx.locationId, 10),
     cutoffs: (ctx) => loadOrderingAttention(actorOf(ctx), ctx.locationId),
     sales: (ctx) => loadPulseSales(service, ctx),
-    salesStamp: (ctx) => loadCaptureStamp(service, ctx.locationId, ctx.date),
+    salesStamp: (ctx, signal) => loadCaptureStamp(service, ctx.locationId, ctx.date, signal),
     handoff: (ctx) => loadHandoffRaw(service, { locationId: ctx.locationId, date: ctx.date }),
     layout: (ctx) => loadStationLayout(service, ctx.locationId),
   };

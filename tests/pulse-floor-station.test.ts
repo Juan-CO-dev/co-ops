@@ -13,7 +13,7 @@ import type { AuthContext } from "@/lib/session";
 import { isFloorStation, type ShiftBoard, type Station, type StationEvent } from "@/lib/assignments-shared";
 import { floorStations, stationStatus } from "@/lib/pulse/floor-shared";
 import { stationNudges } from "@/lib/station-schedule-shared";
-import { assignmentSectionDefaults } from "@/lib/assignment-sections";
+import { assignmentSectionDefaults, dashboardWorkVisibility } from "@/lib/assignment-sections";
 import { loadPulseSection, type PulseCtx, type PulseDeps } from "@/lib/pulse/sections";
 import type { AttentionData, FloorData, PeopleData, StationsData } from "@/lib/pulse/types";
 import { ShiftBoardClient } from "@/components/assignments/ShiftBoardClient";
@@ -108,6 +108,23 @@ describe("every pulse reader uses the predicate", () => {
     return r.data as T;
   };
 
+  it("unticking an occupied station hides current projections but preserves its event", async () => {
+    const b = mixedBoard(4);
+    const before = structuredClone(b.events);
+    expect((await data<PeopleData>("people", b)).here[0]?.stationName).toBe("Station line");
+    b.stations[0]!.staffed = false;
+    const people = await data<PeopleData>("people", b);
+    expect(people.here.every((p) => p.stationName === null && p.positionName === null)).toBe(true);
+    expect(people.timeline.some((e) => e.detail === "Station line")).toBe(true);
+    for (const section of ["floor", "stations", "attention"] as const) {
+      expect(JSON.stringify(await data(section, b))).not.toContain("Station line");
+    }
+    const crew = await loadPulseSection(deps(b), ctx(3), "stations");
+    expect(crew).toMatchObject({ state: "ok", data: { mine: { stationName: null, positionName: null } } });
+    expect(assignmentSectionDefaults(b, true)).toEqual({ tasks: true, stations: true, team: false });
+    expect(dashboardWorkVisibility(b, "receiving").stationCard).toBe(false);
+    expect(b.events).toEqual(before);
+  });
   it("3D/2D floor: only floor stations, and the saved layout keeps only their points", async () => {
     const floor = await data<FloorData>("floor");
     expect(floor.stations.map((s) => s.id)).toEqual(["line", "expo"]);
@@ -178,6 +195,17 @@ describe("assignments board + dashboard station lists use the predicate", () => 
     expect(html).toContain("Station expo");
     expect(html).not.toMatch(/Station foh|Station fridge|Station backline/);
     expect(html).not.toMatch(/foh-p1|fridge-p1|backline-p1/);
+  });
+  it.each([false, true])("occupied then unticked: compact=%s hides cards and picker entries", (compact) => {
+    const b = mixedBoard(4);
+    b.events[0]!.source = "claimed"; // The compact self-picker must be visible too.
+    const before = structuredClone(b.events);
+    expect(render(b, compact)).toContain("Station line");
+    b.stations[0]!.staffed = false;
+    const html = render(b, compact);
+    expect(html).not.toContain("Station line");
+    expect(html).not.toContain("line-p1");
+    expect(b.events).toEqual(before);
   });
   it("section defaults: a shop whose only stations are closing sections has NO station positions to fill, so the stations section does not open first", () => {
     const b = mixedBoard(4);

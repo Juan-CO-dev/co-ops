@@ -103,6 +103,12 @@ export function orderedStationEvents(events: readonly StationEvent[]): StationEv
 export function currentStation(events: readonly StationEvent[], userId: string): StationEvent | null {
   return orderedStationEvents(events.filter((event) => event.userId === userId)).at(-1) ?? null;
 }
+/** Current presentation only: never rewrite history or release an assignment when a station is unticked. */
+export function currentFloorStation(board: Pick<ShiftBoard, "events" | "stations">, userId: string): StationEvent | null {
+  const head = currentStation(board.events, userId);
+  if (!head?.stationId) return head;
+  return board.stations.some((station) => station.id === head.stationId && isFloorStation(station)) ? head : null;
+}
 export function canManageAssignee(actorLevel: number, targetLevel: number): boolean {
   return actorLevel >= 4 && targetLevel <= actorLevel;
 }

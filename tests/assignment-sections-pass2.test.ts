@@ -16,6 +16,8 @@ describe("assignment disclosure defaults", () => {
   });
   it("collapses both dashboard rows for a station without a task", () => {
     const b = board();
+    b.stations.push({ id: "station", name: "Station", nameEs: null, sort: 1, active: true, staffed: true,
+      positions: [{ id: "position", stationId: "station", name: "Position", nameEs: null, duty: null, dutyEs: null, sort: 1, active: true }] });
     b.events.push({ id: "e", sequence: "1", locationId: "shop", businessDate: b.date, userId: "me",
       stationId: "station", positionId: "position", kind: "assign", actorId: "lead", actorName: "Lead", at: "2026-10-08T12:00:00Z", source: "assigned" });
     expect(assignmentSectionDefaults(b, true)).toEqual({ tasks: false, stations: false, team: false });
@@ -40,6 +42,8 @@ describe("dashboard work after assignment", () => {
   });
   it("gives a held station a card without granting unrelated task tiles", () => {
     const b = board();
+    b.stations.push({ id: "station", name: "Station", nameEs: null, sort: 1, active: true, staffed: true,
+      positions: [{ id: "position", stationId: "station", name: "Position", nameEs: null, duty: null, dutyEs: null, sort: 1, active: true }] });
     b.events.push({ id: "e", sequence: "1", locationId: "shop", businessDate: b.date, userId: "me",
       stationId: "station", positionId: "position", kind: "claim", actorId: "me", actorName: null, at: "2026-10-08T12:00:00Z", source: "claimed" });
     expect(dashboardWorkVisibility(b, "receiving")).toEqual({ taskTile: false, stationCard: true });

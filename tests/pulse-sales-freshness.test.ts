@@ -16,6 +16,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { AuthContext } from "@/lib/session";
 import { cachedStampedSource, resetSourceCache, SOURCE_TTL_MS, sourceCacheSize, sourceKey } from "@/lib/pulse/source-cache";
 import { cachedPulseDeps, type PulseCtx, type PulseDeps, type SalesFacts } from "@/lib/pulse/sections";
+import { withAbort } from "@/lib/pulse/abort";
 import { loadCaptureStamp } from "@/lib/pulse/sales";
 import type { SalesData } from "@/lib/pulse/types";
 import { SalesSection } from "@/components/pulse/sections/SalesSection";
@@ -37,7 +38,7 @@ function fnBody(text: string, name: string): string {
 }
 
 beforeEach(() => resetSourceCache());
-afterEach(() => { resetSourceCache(); vi.restoreAllMocks(); vi.resetModules(); });
+afterEach(() => { resetSourceCache(); vi.useRealTimers(); vi.restoreAllMocks(); vi.resetModules(); });
 
 describe("(a) a sales read never sees a partial capture run — pinned on the writers", () => {
   it("0221 toast_capture_finish publishes the pointers AND completes the run in ONE function; paging never touches a pointer", () => {
@@ -70,6 +71,7 @@ function stampClient(row: { finished_at: string | null } | null, error: { messag
   const chain: Array<[string, unknown[]]> = [];
   const q: Record<string, unknown> = {};
   for (const m of ["select", "eq", "order", "limit"]) q[m] = (...a: unknown[]) => { chain.push([m, a]); return q; };
+  q.abortSignal = (signal: AbortSignal) => { chain.push(["abortSignal", [signal]]); return q; };
   q.maybeSingle = async () => ({ data: row, error });
   const tables: string[] = [];
   const client = { from: (t: string) => { tables.push(t); return q; }, rpc: () => { throw new Error("no rpc"); } } as unknown as SupabaseClient;
@@ -85,6 +87,17 @@ describe("loadCaptureStamp — the latest COMPLETED full-day capture, one indexe
       ["select", ["finished_at"]], ["eq", ["location_id", LOC]], ["eq", ["business_date", "2026-10-10"]], ["eq", ["status", "completed"]],
       ["order", ["finished_at", { ascending: false }]], ["limit", [1]],
     ]);
+  });
+  it.each(["probe", "route"])("combines the probe and route signals: %s cancellation reaches the query", async (which) => {
+    const f = stampClient(null);
+    const route = new AbortController();
+    const probe = new AbortController();
+    await loadCaptureStamp(withAbort(f.client, route.signal), LOC, "2026-10-10", probe.signal);
+    const signal = f.chain.filter(([method]) => method === "abortSignal").at(-1)![1][0] as AbortSignal;
+    expect(signal.aborted).toBe(false);
+    (which === "probe" ? probe : route).abort();
+    expect(signal.aborted).toBe(true);
+    expect((which === "probe" ? route : probe).signal.aborted).toBe(false);
   });
   it("null before the first completed capture; a read error throws (the caller degrades, never guesses)", async () => {
     expect(await loadCaptureStamp(stampClient(null).client, LOC, "2026-10-10")).toBeNull();
@@ -226,5 +239,46 @@ describe("(c) the card says when Toast last synced", () => {
   it("before the first completed capture it says so, in both languages, instead of a time", () => {
     expect(render(data(null), "en")).toContain("Not synced with Toast yet today");
     expect(render(data(null), "es")).toContain("Aún sin sincronizar con Toast hoy");
+  });
+});
+
+
+describe("stamp probe regressions", () => {
+  it.each([false, true])("a hanging probe has a short deadline (warm=%s)", async (warm) => {
+    vi.useFakeTimers();
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const d = salesDeps({ stamp: "T1", cents: 1 });
+    const cached = cachedPulseDeps(d);
+    if (warm) await cached.sales(ctx());
+    let signal: AbortSignal | undefined;
+    d.salesStamp = (_ctx, probeSignal) => { signal = probeSignal; return new Promise(() => {}); };
+    let result: SalesFacts | undefined;
+    const pending = cached.sales(ctx()).then((value) => { result = value; });
+    await vi.advanceTimersByTimeAsync(1_600);
+    expect(result?.today.totals.toastChecksCents).toBe(1);
+    expect(signal?.aborted).toBe(true);
+    expect(d.loads).toBe(1);
+    await pending;
+  });
+  it("a late T1 probe cannot evict T2; failed and null probes keep T2", async () => {
+    const world = { stamp: "T1", cents: 1 };
+    const d = salesDeps(world);
+    const cached = cachedPulseDeps(d);
+    await cached.sales(ctx());
+    let finish!: (stamp: string) => void;
+    d.salesStamp = () => new Promise((resolve) => { finish = resolve; });
+    const late = cached.sales(ctx());
+    d.salesStamp = async () => "T2";
+    world.cents = 2;
+    expect((await cached.sales(ctx())).today.totals.toastChecksCents).toBe(2);
+    finish("T1");
+    expect((await late).today.totals.toastChecksCents).toBe(2);
+    expect((await cached.sales(ctx())).today.totals.toastChecksCents).toBe(2);
+    d.salesStamp = async () => null;
+    expect((await cached.sales(ctx())).today.totals.toastChecksCents).toBe(2);
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    d.salesStamp = async () => { throw new Error("down"); };
+    expect((await cached.sales(ctx())).today.totals.toastChecksCents).toBe(2);
+    expect(d.loads).toBe(2);
   });
 });

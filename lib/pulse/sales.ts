@@ -61,8 +61,9 @@ async function cachedBaseline(client: SupabaseClient, locationId: string, date: 
  * "Toast synced" label and the cache key move together. One indexed single-row read
  * (toast_capture_runs_location_date), cheap enough to run on every poll.
  */
-export async function loadCaptureStamp(client: SupabaseClient, locationId: string, date: string): Promise<string | null> {
-  const { data, error } = await client.from("toast_capture_runs").select("finished_at")
+export async function loadCaptureStamp(client: SupabaseClient, locationId: string, date: string, signal?: AbortSignal): Promise<string | null> {
+  const probe = signal ? withAbort(client, signal) : client;
+  const { data, error } = await probe.from("toast_capture_runs").select("finished_at")
     .eq("location_id", locationId).eq("business_date", date).eq("status", "completed")
     .order("finished_at", { ascending: false }).limit(1)
     .maybeSingle<{ finished_at: string | null }>();
