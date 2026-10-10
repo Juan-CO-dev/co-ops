@@ -65,6 +65,21 @@ it.each(["toast-catering-scan", "toast-sales-today", "toast-sales-pull", "prune-
 
 afterEach(() => vi.unstubAllEnvs());
 
+it("routes migrated scheduler alerts to Vercel instructions in both languages", async () => {
+  vi.stubEnv("TOAST_LABOR_PULL", "1");
+  await runJobWatch({ self: "job-watch", now: new Date("2026-10-10T17:00:00Z") });
+  for (const job of ["toast-sales-today", "toast-catering-scan", "toast-labor-pull", "digest-tick"]) {
+    expect(sendEmail).toHaveBeenCalledWith(expect.objectContaining({
+      subject: expect.stringContaining(job),
+      text: expect.stringContaining("Check Vercel crons for this job."),
+    }));
+    expect(sendEmail).toHaveBeenCalledWith(expect.objectContaining({
+      subject: expect.stringContaining(job),
+      text: expect.stringContaining("Revisa los crons de Vercel para esta tarea."),
+    }));
+  }
+});
+
 it("watches capture independently only while its kill switch is enabled", async () => {
   await runJobWatch({ self: "job-watch", now: new Date("2026-09-10T12:00:00Z") });
   expect(jobs).not.toContain("toast-order-capture");

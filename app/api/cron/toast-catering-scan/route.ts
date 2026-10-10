@@ -1,9 +1,7 @@
-// GET Toast catering scan (catering inbox A1.2). Toast order webhooks are partner-only, so an
-// external pinger (CO desktop Task Scheduler) calls this every 10 minutes in business hours.
-// Auth: x-cron-secret header (or Authorization: Bearer) must equal env CATERING_SCAN_SECRET —
-// a DEDICATED pinger secret; this route also catches up eligible daily jobs server-side
-// without exposing CRON_SECRET to the pinger. 503 no-op when unset (dormant-safe).
-import { timingSafeEqual } from "node:crypto";
+// Vercel runs every ten minutes; desktop credentials remain supported during cutover.
+// Padding outside 06-22 ET safely scans the same dated orders and catches up due jobs.
+import { cronAuthStatus } from "@/lib/cron-auth";
+import { claimCronRoute } from "@/lib/cron-route-lease";
 import { type NextRequest } from "next/server";
 import { jsonError, jsonOk } from "@/lib/api-helpers";
 import { catchUpDailyJobs } from "@/lib/daily-catchup";
@@ -18,17 +16,9 @@ export const maxDuration = 300;
 const MAX_DATE_SKEW_DAYS = 14;
 
 function truncateErr(e: unknown): string { const m = e instanceof Error ? e.message : String(e); return m.length > 500 ? `${m.slice(0, 500)}…` : m; }
-function secretOk(req: NextRequest): boolean {
-  const secret = process.env.CATERING_SCAN_SECRET;
-  if (!secret) return false;
-  const provided = req.headers.get("x-cron-secret") ?? req.headers.get("authorization")?.replace(/^Bearer\s+/i, "") ?? "";
-  const a = Buffer.from(provided); const b = Buffer.from(secret);
-  return a.length === b.length && timingSafeEqual(a, b);
-}
-
 export async function GET(req: NextRequest) {
-  if (!process.env.CATERING_SCAN_SECRET) return jsonError(503, "cron_disabled");
-  if (!secretOk(req)) return jsonError(401, "unauthorized");
+  const auth = cronAuthStatus(req.headers);
+  if (auth) return jsonError(auth, auth === 503 ? "cron_disabled" : "unauthorized");
   const today = etCalendarDate(new Date().toISOString());
   const param = req.nextUrl.searchParams.get("date");
   if (param && !/^\d{4}-\d{2}-\d{2}$/.test(param)) return jsonError(400, "invalid_date");
@@ -39,6 +29,7 @@ export async function GET(req: NextRequest) {
   }
   const dates = param ? [param] : [today, etYmdMinusDays(today, 1)];
   try {
+    if (!await claimCronRoute("toast-catering-scan")) return jsonOk({ skipped: true, reason: "cron_route_busy" });
     const results = await scanToastCateringForAllLocations(dates);
     const sum = (k: "seen" | "catering" | "attributed" | "createdLeads" | "lostLeads" | "refreshed" | "skipped" | "errors" | "unparsedAmounts") => results.reduce((n, r) => n + r[k], 0);
     const healthy = results.every((result) => result.ok);

@@ -2,7 +2,7 @@ import "server-only";
 import { audit } from "@/lib/audit";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import { sendEmail, teamFrom } from "@/lib/email";
-import { DEFAULT_OPS_ALERT_EMAIL, JOBS_REGISTRY, type JobName } from "@/lib/jobs-registry";
+import { DEFAULT_OPS_ALERT_EMAIL, JOBS_REGISTRY, type JobName, type RegisteredJob } from "@/lib/jobs-registry";
 import { decideJobWatch, easternBoundary, easternDay } from "@/lib/job-watch";
 import { formatDateLabel, formatTime } from "@/lib/i18n/format";
 import { serverT } from "@/lib/i18n/server";
@@ -18,7 +18,7 @@ export async function runJobWatch(opts: { self?: JobName; now?: Date }): Promise
   const day = easternDay(now);
   let alerted = 0;
   let checked = 0;
-  for (const job of JOBS_REGISTRY) {
+  for (const job of JOBS_REGISTRY as readonly RegisteredJob[]) {
     if (job.job === opts.self) continue;
     if (job.job === "toast-order-capture" && (process.env.TOAST_ORDER_CAPTURE !== "1" || process.env.TOAST_FIXTURES === "1")) continue;
     if (job.job === "toast-labor-pull" && (process.env.TOAST_LABOR_PULL !== "1" || process.env.TOAST_FIXTURES === "1")) continue;

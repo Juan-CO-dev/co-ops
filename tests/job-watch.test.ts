@@ -146,12 +146,12 @@ describe("digest polish item 13: a daily job with no history is expected after i
 
 describe("overnight digest cron watch", () => {
   it.each([
-    ["2026-01-15", "2026-01-15T10:00:00.000Z"],
-    ["2026-07-15", "2026-07-15T09:00:00.000Z"],
-    ["2026-03-08", "2026-03-08T09:00:00.000Z"],
-    ["2026-11-01", "2026-11-01T10:00:00.000Z"],
+    ["2026-01-15", "2026-01-15T07:00:00.000Z"],
+    ["2026-07-15", "2026-07-15T06:00:00.000Z"],
+    ["2026-03-08", "2026-03-08T07:00:00.000Z"],
+    ["2026-11-01", "2026-11-01T06:00:00.000Z"],
   ])("expects the first digest heartbeat after two hourly slots on %s", (day, expected) => {
-    const at = easternBoundary(day, 3);
+    const at = easternBoundary(day, 0);
     expect(decideJobWatch(digest, at, null, null).expectedBy).toBe(expected);
     expect(decideJobWatch(digest, new Date(expected), null, null).silent).toBe(false);
     expect(decideJobWatch(digest, new Date(Date.parse(expected) + 1), null, null).silent).toBe(true);

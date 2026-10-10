@@ -14,6 +14,7 @@ vi.mock("@/lib/supabase-server", () => ({ getServiceRoleClient: vi.fn() }));
 vi.mock("@/lib/audit", () => ({ audit: vi.fn(async () => {}) }));
 vi.mock("@/lib/job-watch-run", () => ({ watchSiblings: vi.fn(async () => {}) }));
 vi.mock("@/lib/toast/labor", () => ({ laborPullEnabled: vi.fn(() => true), runToastLaborPull: vi.fn(async () => ({ ran: false, results: [], modified: 0 })) }));
+vi.mock("@/lib/cron-route-lease", () => ({ claimCronRoute: vi.fn(async () => true) }));
 const reconcile = vi.fn();
 beforeEach(() => {
   vi.clearAllMocks();

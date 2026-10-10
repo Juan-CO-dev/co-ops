@@ -60,19 +60,19 @@ describe("/api/cron/digest-tick", () => {
   });
 });
 
-describe("overnight Vercel schedule", () => {
-  it("the registry's digest-tick window is DIGEST_TICK_WINDOW, starting at 03:00 ET for the fallback", () => {
+describe("hourly Vercel schedule", () => {
+  it("the registry's digest-tick window is DIGEST_TICK_WINDOW, covering all ET hours", () => {
     const entry = JOBS_REGISTRY.find((j) => j.job === "digest-tick");
-    expect(entry).toEqual({ job: "digest-tick", cadenceMinutes: 60, window: DIGEST_TICK_WINDOW, source: "pinger" });
+    expect(entry).toEqual({ job: "digest-tick", cadenceMinutes: 60, window: DIGEST_TICK_WINDOW, source: "vercel" });
     expect(DIGEST_TICK_WINDOW.startHourET).toBeLessThanOrEqual(3);
   });
 
   it("covers 03:00 ET in winter, summer and on both DST change days", () => {
     const config = JSON.parse(readFileSync("vercel.json", "utf8")) as { crons: Array<{ path: string; schedule: string }> };
-    expect(config.crons).toHaveLength(5);
-    expect(config.crons.filter((c) => c.path === "/api/cron/digest-tick")).toEqual([{ path: "/api/cron/digest-tick", schedule: "0 4-9 * * *" }]);
+    expect(config.crons).toHaveLength(7);
+    expect(config.crons.filter((c) => c.path === "/api/cron/digest-tick")).toEqual([{ path: "/api/cron/digest-tick", schedule: "0 * * * *" }]);
     for (const [day, expectedUtcHour] of [["2026-01-15", 8], ["2026-07-15", 7], ["2026-03-08", 7], ["2026-11-01", 8]] as const) {
-      const hits = Array.from({ length: 6 }, (_, i) => i + 4).filter((hour) => {
+      const hits = Array.from({ length: 24 }, (_, i) => i).filter((hour) => {
         const instant = new Date(`${day}T${String(hour).padStart(2, "0")}:00:00Z`);
         const clock = etClock(instant);
         return clock.day === day && clock.minutes === 180;
