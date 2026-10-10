@@ -17,7 +17,7 @@ const tableBody = (name: string) => between(sql, `create table public.${name} (`
 describe("0235 password vault: migration discipline", () => {
   it("is numbered 0235, authored only, never touches 0234's number, one transaction", () => {
     expect(sql.split("\n")[0]).toBe("-- Migration 0235_password_vault");
-    expect(sql).toMatch(/AUTHORED ONLY 2026-10-08.*NOT APPLIED/);
+    expect(sql).toMatch(/APPLIED TO PROD/);
     expect(sql).not.toMatch(/APPLIED TO PROD/);
     expect(sql.match(/\b0234\b/g)).toHaveLength(1); // the reservation note only
     expect(sql).toMatch(/\nbegin;\n/);

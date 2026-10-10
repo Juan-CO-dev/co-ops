@@ -1,5 +1,5 @@
 -- Migration 0235_password_vault
--- AUTHORED ONLY 2026-10-08 (CO Claude builder, feat/password-vault). NOT APPLIED. GATE: CC sim + Astra review, then Juan's apply gate.
+-- APPLIED TO PROD 2026-10-10 (20261010035833; sim 20261009232129, harness pass incl. vault_update_entry; prod dry run pass).
 -- 0234 is reserved for the parallel customer-profiles build; nothing here touches it.
 --
 -- Password vault (Juan 2026-10-08: "Build the vault"; spec docs/superpowers/specs/2026-10-08-password-vault-design.md,
