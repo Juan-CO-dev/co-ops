@@ -60,7 +60,7 @@ afterEach(() => { vi.restoreAllMocks(); resetSourceCache(); });
 describe("DB calls per poll (GM, all nine sections)", () => {
   beforeEach(() => { vi.useFakeTimers({ toFake: ["Date"] }); vi.setSystemTime(new Date(`${fake.date}T19:30:00Z`)); });
   afterEach(() => vi.useRealTimers());
-  it("BEFORE: every section request reloads its sources; AFTER: one shared load per shop per poll, 0 on the next viewer's poll", async () => {
+  it("BEFORE: every section request reloads its sources; AFTER: one shared load per shop per poll, only the one-row sales freshness probe on the next viewer's poll", async () => {
     const before = await poll(7, "gm-a", () => defaultPulseDeps(client as never));
     fake.calls.length = 0;
     const afterFirst = await poll(7, "gm-a", () => pulseDeps(client as never));
@@ -75,8 +75,10 @@ describe("DB calls per poll (GM, all nine sections)", () => {
     // After: once per shop per poll, however many sections or viewers.
     expect(afterFirst.byTable["rpc:station_business_date"]).toBe(1);
     expect(afterFirst.total).toBeLessThan(before.total);
-    expect(afterSecondViewer.total).toBe(0);
-    expect(afterSamePoll.total).toBe(0);
+    // The ONE read a warm poll still makes: the sales freshness probe (toast_capture_runs, one indexed row),
+    // so every instance keys today's sales by the latest COMPLETED capture (2026-10-10, "went backwards").
+    expect(afterSecondViewer.byTable).toEqual({ "from:toast_capture_runs": 1 });
+    expect(afterSamePoll.byTable).toEqual({ "from:toast_capture_runs": 1 });
   });
   it("a crew poll never reaches sources outside its scope, before or after", async () => {
     const before = await poll(3, "crew", () => defaultPulseDeps(client as never));

@@ -20,7 +20,7 @@
 import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { AuthContext } from "@/lib/session";
-import { currentStation, taskHref, TASK_TYPES, type ShiftBoard, type TaskType } from "@/lib/assignments-shared";
+import { currentFloorStation, isFloorStation, taskHref, TASK_TYPES, type ShiftBoard, type TaskType } from "@/lib/assignments-shared";
 import { loadShiftBoard } from "@/lib/assignments";
 import { loadFridgesToday, type FridgeToday } from "@/lib/pulse/fridges";
 import {
@@ -36,10 +36,10 @@ import {
   SalesReportError,
   type BreakdownRow, type SalesSummaryDto,
 } from "@/lib/sales-reports";
-import { loadPulseSales } from "@/lib/pulse/sales";
+import { loadCaptureStamp, loadPulseSales } from "@/lib/pulse/sales";
 import { loadHandoffRaw, projectHandoffNotes, PulseNotInstalledError, type HandoffRaw } from "@/lib/pulse/handoff";
 import { loadStationLayout } from "@/lib/pulse/layout";
-import { cachedSource, sourceKey } from "@/lib/pulse/source-cache";
+import { cachedSource, cachedStampedSource, sourceKey } from "@/lib/pulse/source-cache";
 import { pulseReadActor } from "@/lib/pulse/read-actor";
 import { attentionEvidence, attentionScore, crewAttention, rankAttention, severityOf, stripAttentionRows } from "@/lib/pulse/attention-shared";
 import { baselineCumulative, cumulativeByHour, dowOf, hourCurve, paceDeltaPct, sameWeekdayCoverage } from "@/lib/pulse/baseline-shared";
@@ -51,6 +51,7 @@ import type {
 } from "@/lib/pulse/types";
 
 export const SECTION_DEADLINE_MS = 7_000;
+export const STAMP_DEADLINE_MS = 1_500;
 
 export interface PulseCtx {
   auth: AuthContext;
@@ -91,6 +92,14 @@ export interface PulseDeps {
   deliveries(ctx: PulseCtx): Promise<DeliveryView[]>;
   cutoffs(ctx: PulseCtx): Promise<{ count: number; vendors: OrderingCutoffAttention[] }>;
   sales(ctx: PulseCtx): Promise<SalesFacts>;
+  /**
+   * The freshness STAMP of today's sales: `finished_at` of the latest COMPLETED full-day Toast capture
+   * for this shop/day (null before the first). One indexed single-row read. `cachedPulseDeps` keys the
+   * sales cache by it so every warm instance serves the same, newest completed capture (Juan,
+   * 2026-10-10: the card "needed 2-4 refreshes, and went BACKWARDS"). Optional: without it (or when it
+   * fails) the sales source serves an unexpired sibling or falls back to the plain TTL cache.
+   */
+  salesStamp?(ctx: PulseCtx, signal?: AbortSignal): Promise<string | null>;
   /** The shop's raw notes (every audience); the section projects per viewer. */
   handoff(ctx: PulseCtx): Promise<HandoffRaw>;
   layout(ctx: PulseCtx): Promise<FloorLayout | null>;
@@ -122,12 +131,38 @@ export function cachedPulseDeps(deps: PulseDeps, opts: { ttlMs?: number; now?: (
       () => (deps[key] as (c: PulseCtx) => Promise<unknown>)(ctx), { ttlMs: opts.ttlMs, now: opts.now?.() });
   }) as PulseDeps[K];
   const board = wrap("board");
+  // Today's sales are keyed by the latest COMPLETED capture (the stamp), not just by the clock: a warm
+  // instance that still holds the pre-capture snapshot learns the new stamp on its next poll and
+  // reloads, instead of serving the lower, older number for up to a TTL (the 4:40 → 4:41 PM "went
+  // backwards"). A failed stamp read reuses an unexpired snapshot or the plain TTL loader.
+  const sales: PulseDeps["sales"] = async (ctx) => {
+    if (!canReadPulseLocation(ctx.auth, ctx.locationId)) throw new Error("location_access_denied");
+    const controller = new AbortController();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let stamp: string | null = null;
+    if (deps.salesStamp) {
+      try {
+        const deadline = new Promise<never>((_, reject) => {
+          timer = setTimeout(() => { controller.abort(); reject(new PulseTimeoutError()); }, STAMP_DEADLINE_MS);
+        });
+        stamp = await Promise.race([deps.salesStamp(ctx, controller.signal), deadline]);
+      } catch (err) {
+        console.error("pulse sales stamp failed", err);
+      } finally {
+        if (timer) clearTimeout(timer);
+      }
+    }
+    const scope = sourceScope("sales", ctx);
+    const prefix = sourceKey({ source: "sales", locationId: ctx.locationId, date: ctx.date, scope: "" });
+    const key = sourceKey({ source: "sales", locationId: ctx.locationId, date: ctx.date, scope: stamp ? `${scope}|captured:${stamp}` : scope });
+    return cachedStampedSource(prefix, key, () => deps.sales(ctx), { ttlMs: opts.ttlMs, now: opts.now?.() });
+  };
   return {
     // The board is a shop fact; only its viewer fields differ, so patch them for the asking viewer.
     board: async (ctx) => ({ ...(await board(ctx)), viewerId: ctx.auth.user.id, viewerLevel: ctx.auth.level }),
     reports: wrap("reports"), fridges: wrap("fridges"), cateringToday: wrap("cateringToday"),
     cateringTomorrow: wrap("cateringTomorrow"), notRung: wrap("notRung"), unlinkedClockIns: wrap("unlinkedClockIns"),
-    lastParPass: wrap("lastParPass"), deliveries: wrap("deliveries"), cutoffs: wrap("cutoffs"), sales: wrap("sales"),
+    lastParPass: wrap("lastParPass"), deliveries: wrap("deliveries"), cutoffs: wrap("cutoffs"), sales,
     handoff: wrap("handoff"), layout: wrap("layout"),
   };
 }
@@ -183,7 +218,7 @@ function overdueRows(reports: Awaited<ReturnType<PulseDeps["reports"]>>, minutes
 function peopleAtStations(board: ShiftBoard): Map<string, string[]> {
   const out = new Map<string, string[]>();
   for (const p of board.people) {
-    const head = currentStation(board.events, p.id);
+    const head = currentFloorStation(board, p.id);
     if (head?.stationId) out.set(head.stationId, [...(out.get(head.stationId) ?? []), p.id]);
   }
   return out;
@@ -310,7 +345,7 @@ async function floor(deps: PulseDeps, ctx: PulseCtx): Promise<FloorData> {
     deps.layout(ctx).catch((err) => { console.error("pulse floor layout failed", err); return null; }),
   ]);
   const stations = floorStations(board, { nowMinutes: minutesOfDay, viewerId: ctx.auth.user.id, showNames: !crew });
-  const mine = currentStation(board.events, ctx.auth.user.id)?.stationId ?? null;
+  const mine = currentFloorStation(board, ctx.auth.user.id)?.stationId ?? null;
   return {
     stations,
     layout: mergeLayout(stations.map((s) => s.id), layout),
@@ -331,7 +366,7 @@ async function people(deps: PulseDeps, ctx: PulseCtx): Promise<PeopleData> {
   ]);
   const positionName = new Map(board.stations.flatMap((s) => s.positions.map((p) => [p.id, p.name] as const)));
   const rows: PersonRow[] = board.people.map((p) => {
-    const head = currentStation(board.events, p.id);
+    const head = currentFloorStation(board, p.id);
     const label = stationLabel(board, head?.stationId);
     return {
       id: p.id, name: p.name,
@@ -347,13 +382,19 @@ async function people(deps: PulseDeps, ctx: PulseCtx): Promise<PeopleData> {
   });
   const here = rows.filter((r) => r.onShift).sort((a, b) => a.name.localeCompare(b.name));
   const seenToday = rows.filter((r) => !r.onShift && (r.off || r.tasks.length > 0 || r.stationName)).sort((a, b) => a.name.localeCompare(b.name));
-  const covered = new Set(board.events.filter((e) => e.stationId).map((e) => e.stationId));
-  const coveredNow = new Set([...peopleAtStations(board).keys()]);
-  void covered;
+  // The SAME floor rows the Stations card counts (one predicate, one status word), so the two cards
+  // can never disagree again ("0 covered · 6 open" beside "4 covered", 2026-10-10). Covered = someone
+  // is covering it (covered / short / closing soon / to close now); open = uncovered; closed is neither.
+  const { minutesOfDay } = operationalNow(ctx.now);
+  const floorRows = floorStations(board, { nowMinutes: minutesOfDay, viewerId: ctx.auth.user.id, showNames: false });
+  const stationsCovered = floorRows.filter((s) => s.status !== "closed" && s.status !== "inactive" && s.status !== "uncovered").length;
+  const stationsOpen = floorRows.filter((s) => s.status === "uncovered").length;
   const freed = [
-    ...(board.positionVacancies ?? []).map((v) => {
-      const sid = board.stations.find((s) => s.positions.some((p) => p.id === v.positionId))?.id ?? null;
-      return { name: v.name, stationName: stationLabel(board, sid).station, at: v.at, reason: v.reason };
+    // Current vacancies only at floor stations: an unticked section is not "open, needs cover" (history keeps it).
+    ...(board.positionVacancies ?? []).flatMap((v) => {
+      const st = board.stations.find((s) => s.positions.some((p) => p.id === v.positionId));
+      if (st && !isFloorStation(st)) return [];
+      return [{ name: v.name, stationName: stationLabel(board, st?.id ?? null).station, at: v.at, reason: v.reason }];
     }),
     ...(board.taskVacancies ?? []).map((v) => ({ name: v.name, stationName: null, at: v.at, reason: v.reason ?? "clocked_out" })),
   ].sort((a, b) => b.at.localeCompare(a.at));
@@ -368,13 +409,12 @@ async function people(deps: PulseDeps, ctx: PulseCtx): Promise<PeopleData> {
     timeline.push({ at: e.at, kind: e.stationId ? "station" : "release", name: nameOf.get(e.userId) ?? "—", detail: e.stationId ? label.station : (e.releaseReason ?? null) });
   }
   timeline.sort((a, b) => b.at.localeCompare(a.at));
-  const openStations = board.stations.filter((s) => s.active && s.staffed && !s.closedAt && !coveredNow.has(s.id)).length;
   return {
     whosHere: board.whosHere === true,
     here, seenToday,
     onBreak: rows.filter((r) => r.onBreak).length,
-    stationsCovered: coveredNow.size,
-    stationsOpen: openStations,
+    stationsCovered,
+    stationsOpen,
     freed, unlinked,
     timeline: timeline.slice(0, 200),
   };
@@ -399,7 +439,7 @@ async function stations(deps: PulseDeps, ctx: PulseCtx): Promise<StationsData> {
   const [board, reports] = await Promise.all([deps.board(ctx), deps.reports(ctx)]);
   const overdue = overdueRows(reports, minutesOfDay);
   const floorRows = floorStations(board, { nowMinutes: minutesOfDay, viewerId: ctx.auth.user.id, showNames: !crew });
-  const heads = new Map(board.people.map((p) => [p.id, currentStation(board.events, p.id)] as const));
+  const heads = new Map(board.people.map((p) => [p.id, currentFloorStation(board, p.id)] as const));
   const rows: StationRow[] = floorRows.map((f) => {
     const station = board.stations.find((s) => s.id === f.id)!;
     return {
@@ -637,6 +677,7 @@ export function defaultPulseDeps(service: SupabaseClient): PulseDeps {
     deliveries: (ctx) => loadRecentDeliveries(actorOf(ctx), ctx.locationId, 10),
     cutoffs: (ctx) => loadOrderingAttention(actorOf(ctx), ctx.locationId),
     sales: (ctx) => loadPulseSales(service, ctx),
+    salesStamp: (ctx, signal) => loadCaptureStamp(service, ctx.locationId, ctx.date, signal),
     handoff: (ctx) => loadHandoffRaw(service, { locationId: ctx.locationId, date: ctx.date }),
     layout: (ctx) => loadStationLayout(service, ctx.locationId),
   };

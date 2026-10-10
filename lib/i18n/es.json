@@ -5746,6 +5746,8 @@
   "pulse.sales.units": "{count} unidades",
   "pulse.sales.report_link": "Informe de ventas completo",
   "pulse.sales.empty": "Aún no hay ventas capturadas hoy.",
+  "pulse.sales.synced": "Toast sincronizado {time}",
+  "pulse.sales.synced_none": "Aún sin sincronizar con Toast hoy",
   "pulse.catering.next_hours": "Para hoy",
   "pulse.catering.none_today": "No hay catering para hoy.",
   "pulse.catering.not_rung": "Sin registrar en Toast",

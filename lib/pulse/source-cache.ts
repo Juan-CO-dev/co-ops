@@ -18,6 +18,7 @@ export const SOURCE_TTL_MS = 50_000;
 
 interface Entry { at: number; value: Promise<unknown> }
 const store = new Map<string, Entry>();
+const highWater = new Map<string, { stamp: string; key: string }>();
 
 export function sourceKey(parts: { source: string; locationId: string; date: string; scope: string }): string {
   return `${parts.source}|${parts.locationId}|${parts.date}|${parts.scope}`;
@@ -38,8 +39,42 @@ export function cachedSource<T>(key: string, load: () => Promise<T>, opts: { ttl
   return value;
 }
 
+/**
+ * `cachedSource` for a source whose freshness is a STAMP (today's sales: the latest COMPLETED Toast
+ * capture). The stamp is part of `key`; a new stamp under the same `prefix` first retires every older
+ * sibling, so a superseded snapshot is never served again and never lingers in memory. Two instances
+ * holding the same stamp hold the same numbers; an instance that learns a newer stamp reloads at once,
+ * TTL or not (Juan, 2026-10-10: "needed 2-4 refreshes, and went BACKWARDS" — refresh roulette across
+ * warm instances). The TTL still bounds a stamp that did not move (ezCater links, channel map, a
+ * modified-order run), so nothing is ever served longer than before.
+ */
+export function cachedStampedSource<T>(prefix: string, key: string, load: () => Promise<T>, opts: { ttlMs?: number; now?: number } = {}): Promise<T> {
+  const ttl = opts.ttlMs ?? SOURCE_TTL_MS;
+  const now = opts.now ?? Date.now();
+  const stamp = key.split("|captured:")[1];
+  const latest = highWater.get(prefix);
+  if (!stamp) {
+    // A null/failed probe cannot retire a stamped snapshot. Prefer any unexpired sibling;
+    // otherwise load through the plain TTL key without changing the high-water mark.
+    const stamped = latest && store.get(latest.key);
+    if (stamped && now - stamped.at < ttl) return stamped.value as Promise<T>;
+    for (const [k, entry] of store) {
+      if (k.startsWith(prefix) && now - entry.at < ttl) return entry.value as Promise<T>;
+    }
+    return cachedSource(key, load, opts);
+  }
+  // Toast timestamps are ordered instants (accept equivalent timezone representations too).
+  const older = latest && (Number.isFinite(Date.parse(stamp)) && Number.isFinite(Date.parse(latest.stamp))
+    ? Date.parse(stamp) < Date.parse(latest.stamp) : stamp < latest.stamp);
+  if (older) return cachedSource(latest.key, load, opts);
+  highWater.set(prefix, { stamp, key });
+  for (const k of [...store.keys()]) if (k !== key && k.startsWith(prefix)) store.delete(k);
+  return cachedSource(key, load, opts);
+}
+
 /** Drop every entry whose key starts with `prefix` (a writer invalidating its own source for a shop). */
 export function invalidateSource(prefix: string): number {
+  for (const key of highWater.keys()) if (key.startsWith(prefix)) highWater.delete(key);
   let n = 0;
   for (const key of [...store.keys()]) if (key.startsWith(prefix)) { store.delete(key); n++; }
   return n;
@@ -47,4 +82,4 @@ export function invalidateSource(prefix: string): number {
 
 export function sourceCacheSize(): number { return store.size; }
 /** Tests only. */
-export function resetSourceCache(): void { store.clear(); }
+export function resetSourceCache(): void { store.clear(); highWater.clear(); }

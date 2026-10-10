@@ -1,5 +1,5 @@
 /** Daily advisory schedules. Pure projection: never closes or releases anything. */
-import { currentStation, type ShiftBoard, type Station } from "./assignments-shared";
+import { currentStation, isFloorStation, type ShiftBoard, type Station } from "./assignments-shared";
 import { etCalendarDate, etClockTime, etYmdMinusDays } from "./operational-day";
 
 export interface StationTrim { at: string; to_count: number }
@@ -18,7 +18,8 @@ export function validStationTrims(value: unknown): value is StationTrim[] {
 export interface StationNudge { key: string; kind: "close" | "trim"; at: string; count: number; toCount: number }
 export function stationNudges(board: ShiftBoard, station: Station, now: string, dismissed: readonly string[]): StationNudge[] {
   const day = board.stationDate ?? board.date;
-  if (board.viewerLevel < 4 || !station.active || !station.staffed || station.closedAt || etCalendarDate(now) !== board.date) return [];
+  // Nudges are for FLOOR stations only; a closing section is closed from the checklist, never nudged here.
+  if (board.viewerLevel < 4 || !isFloorStation(station) || station.closedAt || etCalendarDate(now) !== board.date) return [];
   const clock = etClockTime(now);
   // A closing schedule runs noon-to-noon: morning targets belong to the
   // following calendar date, not the morning before that day's evening shift.

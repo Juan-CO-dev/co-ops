@@ -52,6 +52,25 @@ async function cachedBaseline(client: SupabaseClient, locationId: string, date: 
   return value;
 }
 
+/**
+ * The freshness stamp of today's sales: `finished_at` of the latest COMPLETED full-day capture for this
+ * shop/day, null before the first one. This is the SAME definition 0242's `pulse_sales_today` uses for
+ * `captured_at` (status = 'completed' only — a running run has published nothing: 0221's
+ * `toast_capture_finish` moves the pointers and flips the status in one transaction; 0237's
+ * modified-order runs end as 'modified_completed' and are not full-day coverage), so the card's
+ * "Toast synced" label and the cache key move together. One indexed single-row read
+ * (toast_capture_runs_location_date), cheap enough to run on every poll.
+ */
+export async function loadCaptureStamp(client: SupabaseClient, locationId: string, date: string, signal?: AbortSignal): Promise<string | null> {
+  const probe = signal ? withAbort(client, signal) : client;
+  const { data, error } = await probe.from("toast_capture_runs").select("finished_at")
+    .eq("location_id", locationId).eq("business_date", date).eq("status", "completed")
+    .order("finished_at", { ascending: false }).limit(1)
+    .maybeSingle<{ finished_at: string | null }>();
+  if (error) throw new Error(`pulse capture stamp: ${error.message}`);
+  return data?.finished_at ?? null;
+}
+
 /** Seven bounded RPCs on a cold source; no report accounting or coverage-discovery reads. */
 export async function loadPulseSales(client: SupabaseClient, ctx: PulseCtx): Promise<SalesFacts> {
   const viewer = { userId: ctx.auth.user.id, level: ctx.auth.level, locations: ctx.auth.locations };

@@ -7,7 +7,7 @@
  * refuses the section, so this component is only ever mounted with a GM payload.
  */
 import Link from "next/link";
-import { formatCents, formatQuantity, formatWeekday } from "@/lib/i18n/format";
+import { formatCents, formatQuantity, formatTime, formatWeekday } from "@/lib/i18n/format";
 import { useTranslation } from "@/lib/i18n/provider";
 import type { TranslationKey } from "@/lib/i18n/types";
 import type { SalesData } from "@/lib/pulse/types";
@@ -25,6 +25,8 @@ export function SalesSection({ data, mode, locationId, date }: { data: SalesData
     <div className="flex flex-col gap-3">
       {data.coverage === "missing" && !data.net && <p className="text-sm text-co-text-muted">{t("pulse.sales.coverage_missing")}</p>}
       {data.coverage === "partial" && <p className="text-xs text-co-warning-text">{t("pulse.sales.coverage_partial")}</p>}
+      {/* Freshness, honestly: the last COMPLETED Toast capture this card is built from (the 60 s poll picks up the next one). */}
+      <p className="text-[11px] text-co-text-dim">{data.capturedAt ? t("pulse.sales.synced", { time: formatTime(data.capturedAt, language) }) : t("pulse.sales.synced_none")}</p>
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
         <div className="min-w-0 rounded-lg border border-co-border bg-co-surface-inset p-3">
           <div className="text-[11px] font-bold tracking-[0.12em] text-co-text-dim">{t("pulse.sales.net")}</div>

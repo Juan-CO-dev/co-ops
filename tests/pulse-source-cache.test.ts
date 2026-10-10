@@ -110,7 +110,8 @@ describe("cachedPulseDeps — scope-safe sharing", () => {
     const d = deps();
     let now = 0;
     const c = cachedPulseDeps(d, { now: () => now });
-    const poll = async () => { for (const k of Object.keys(d).filter((k) => k !== "counts") as Array<keyof PulseDeps>) await c[k](ctx(7, "gm")); };
+    // `salesStamp` is the one optional dep (absent from this fake), hence `?.`.
+    const poll = async () => { for (const k of Object.keys(d).filter((k) => k !== "counts") as Array<keyof PulseDeps>) await c[k]?.(ctx(7, "gm")); };
     await poll();
     const first = { ...d.counts };
     now = 30_000; await poll();
