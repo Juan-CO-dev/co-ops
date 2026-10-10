@@ -215,7 +215,8 @@ describe("(c) the card says when Toast last synced", () => {
     topItems: [], channels: [], discountsByName: [], servers: [], heat: [],
   });
   const render = (d: SalesData, language: "en" | "es") =>
-    renderToStaticMarkup(createElement(TranslationProvider, { initialLanguage: language }, createElement(SalesSection, { data: d, mode: "card", locationId: LOC, date: "2026-10-10" })));
+    // eslint-disable-next-line react/no-children-prop -- TranslationProvider types `children` as a required prop
+    renderToStaticMarkup(createElement(TranslationProvider, { initialLanguage: language, children: createElement(SalesSection, { data: d, mode: "card", locationId: LOC, date: "2026-10-10" }) }));
   it("en + es: 'Toast synced <time of the last completed capture>', in the shop's time zone", () => {
     const at = "2026-10-10T20:30:00Z"; // 4:30 PM ET
     expect(render(data(at), "en")).toContain(`Toast synced ${formatTime(at, "en")}`);

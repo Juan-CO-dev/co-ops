@@ -170,7 +170,8 @@ describe("close / trim nudges use the predicate", () => {
 
 describe("assignments board + dashboard station lists use the predicate", () => {
   const render = (b: ShiftBoard, compact: boolean) =>
-    renderToStaticMarkup(createElement(TranslationProvider, { initialLanguage: "en" }, createElement(ShiftBoardClient, { board: b, compact })));
+    // eslint-disable-next-line react/no-children-prop -- TranslationProvider types `children` as a required prop
+    renderToStaticMarkup(createElement(TranslationProvider, { initialLanguage: "en", children: createElement(ShiftBoardClient, { board: b, compact }) }));
   it.each([false, true])("compact=%s: non-floor stations are not listed and offer no position to pick", (compact) => {
     const html = render(mixedBoard(4), compact);
     expect(html).toContain("Station line");
