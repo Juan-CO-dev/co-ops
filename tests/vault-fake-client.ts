@@ -20,6 +20,8 @@ export interface FakeVaultClient {
   failInsert: Set<string>;
   /** RPC names that should return an error message. */
   failRpc: Map<string, string>;
+  /** Simulate a widened SQL read while retaining pagination. */
+  ignoreVisibilityFilters: boolean;
 }
 
 let seq = 0;
@@ -68,15 +70,15 @@ export function fakeVaultClient(tables: Record<string, Row[]>, rowLimit = 1000):
     };
     const q = {
       select: () => q,
-      eq: (c: string, v: unknown) => { filters.push((r) => r[c] === v); return q; },
+      eq: (c: string, v: unknown) => { if (!(result.ignoreVisibilityFilters && table === "vault_entries" && ["kind", "active"].includes(c))) filters.push((r) => r[c] === v); return q; },
       is: (c: string, v: unknown) => { filters.push((r) => (v === null ? r[c] === null || r[c] === undefined : r[c] === v)); return q; },
       in: (c: string, vs: unknown[]) => { filters.push((r) => vs.includes(r[c])); return q; },
       not: (c: string, _operator: string, v: unknown) => { filters.push((r) => !(v === null ? r[c] === null || r[c] === undefined : r[c] === v)); return q; },
       gt: (c: string, v: unknown) => { filters.push((r) => String(r[c]) > String(v)); return q; },
-      lte: (c: string, v: number) => { filters.push((r) => typeof r[c] === "number" && Number(r[c]) <= v); return q; },
+      lte: (c: string, v: number) => { if (!result.ignoreVisibilityFilters) filters.push((r) => typeof r[c] === "number" && Number(r[c]) <= v); return q; },
       or: (expression: string) => {
         const ids = expression.match(/location_id\.in\.\(([^)]*)\)/)?.[1]?.split(",") ?? [];
-        filters.push((r) => r.location_id === null || ids.includes(String(r.location_id)));
+        if (!result.ignoreVisibilityFilters) filters.push((r) => r.location_id === null || ids.includes(String(r.location_id)));
         return q;
       },
       gte: (c: string, v: unknown) => { filters.push((r) => String(r[c]) >= String(v)); return q; },
@@ -104,6 +106,9 @@ export function fakeVaultClient(tables: Record<string, Row[]>, rowLimit = 1000):
       const entry = (tables.vault_entries ?? []).find((r) => r.id === args.p_entry_id);
       if (!entry || !entry.active) return { data: null, error: { message: "entry_not_found" } };
       if (entry.revision !== args.p_expected_revision) return { data: null, error: { message: "version_conflict" } };
+      if (failInsert.has("audit_log")) return { data: null, error: { message: "audit_failed" } };
+      const { _audit, ...patch } = args.p_patch as Row;
+      const changed = Object.keys(patch).filter((key) => patch[key] !== entry[key]).sort();
       if (args.p_version !== null) {
         const enc = args.p_envelope as Row;
         const result = await rpc("vault_write_secret", {
@@ -113,7 +118,13 @@ export function fakeVaultClient(tables: Record<string, Row[]>, rowLimit = 1000):
         });
         if (result.error) return result;
       }
-      Object.assign(entry, args.p_patch, { revision: Number(entry.revision) + 1, updated_by: args.p_actor_id, updated_at: new Date().toISOString() });
+      Object.assign(entry, patch, { revision: Number(entry.revision) + 1, updated_by: args.p_actor_id, updated_at: new Date().toISOString() });
+      const metadata: Row = { kind: entry.kind, entry_id: entry.id, entry_type: entry.entry_type, ...(_audit as Row) };
+      if (entry.kind === "shared") Object.assign(metadata, { name: entry.name, location_id: entry.location_id, min_level: entry.min_level });
+      const base = { actor_id: args.p_actor_id, actor_role: tables.users?.find((u) => u.id === args.p_actor_id)?.role, resource_id: entry.id, destructive: true };
+      const logs = (tables.audit_log ??= []);
+      if (changed.length || args.p_version !== null) logs.push({ ...base, action: "vault_entry.update", resource_table: "vault_entries", metadata: { ...metadata, changed, secret_rotated: args.p_version !== null, secret_version: args.p_version } });
+      if (args.p_version !== null) logs.push({ ...base, action: "vault_secret.rotate", resource_table: "vault_secrets", metadata: { ...metadata, secret_version: args.p_version } });
       return { data: { ...entry }, error: null };
     }
     if (name === "vault_write_secret") {
@@ -136,5 +147,6 @@ export function fakeVaultClient(tables: Record<string, Row[]>, rowLimit = 1000):
     return { data: null, error: { message: `unknown rpc ${name}` } };
   };
 
-  return { client: { from: query, rpc } as unknown as SupabaseClient, tables, writes, rpcCalls, failInsert, failRpc };
+  const result = { client: { from: query, rpc } as unknown as SupabaseClient, tables, writes, rpcCalls, failInsert, failRpc, ignoreVisibilityFilters: false };
+  return result;
 }

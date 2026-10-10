@@ -1,4 +1,4 @@
--- CC SIM ONLY, after 0235. Owner connection; every fixture change rolls back.
+-- CC SIM ONLY, after 0235 + 0241. Owner connection; every fixture change rolls back.
 -- psql -v ON_ERROR_STOP=1 -f scripts/test-password-vault.sql
 -- Do not run against production. Requires the existing named sim sentinel.
 -- Covers: grants and RLS as authenticated/anon (tables and RPCs), vault_write_secret (versions, supersede, the
@@ -27,6 +27,16 @@ do $$ begin
       or (table_name='vault_reveals' and privilege_type='UPDATE')
       or (table_name='vault_reveal_counters' and privilege_type in ('INSERT','UPDATE')))), 'service grants';
 end $$;
+-- Fixture-only failure injection. The enclosing rollback removes trigger and function.
+create function public.vault_test_reject_audit() returns trigger language plpgsql as $$ begin
+  if new.action='vault_secret.rotate' and current_setting('vault_test.fail_rotation_audit',true)='1' then
+    raise exception 'forced_audit_failure';
+  end if;
+  return new;
+end $$;
+create trigger vault_test_reject_audit before insert on public.audit_log
+  for each row execute function public.vault_test_reject_audit();
+
 set local role authenticated;
 do $$ begin
   begin perform public.vault_write_secret(gen_random_uuid(),gen_random_uuid(),1,'a','b','c','d','e','f','v1');
@@ -116,6 +126,21 @@ begin
   exception when others then assert sqlerrm='version_conflict',sqlerrm; end;
   assert (select name='Newer' and revision=2 from public.vault_entries where id=entry),'stale editor overwrote metadata';
 
+  -- 0241: one edit row, one rotation row, atomic with the secret. No duplicates on stale retry.
+  assert (select count(*) from public.audit_log where resource_id=entry and action='vault_entry.update')=1,'metadata edit audited once';
+  assert not exists(select 1 from public.audit_log where resource_id=entry and action='vault_secret.rotate'),'failed rotations left no audit';
+  begin
+    perform public.vault_update_entry(entry,actor,2,'{}'::jsonb,3,
+      jsonb_build_object('ciphertext',f_ct,'iv',f_iv,'tag',f_tag,'wrappedKey',f_key,'keyIv',f_iv,'keyTag',f_tag,'masterKeyId','v1'));
+    assert (select count(*) from public.audit_log where resource_id=entry and action='vault_secret.rotate')=1,'rotation audited once inside transaction';
+    assert (select count(*) from public.audit_log where resource_id=entry and action='vault_entry.update')=2,'edit audited once inside transaction';
+    raise exception 'forced_rollback';
+  exception when others then assert sqlerrm='forced_rollback',sqlerrm; end;
+  assert not exists(select 1 from public.audit_log where resource_id=entry and action='vault_secret.rotate'),'rollback left no rotation audit';
+  assert (select count(*) from public.audit_log where resource_id=entry and action='vault_entry.update')=1,'rollback left no edit audit';
+  assert (select revision=2 from public.vault_entries where id=entry),'rollback restored revision';
+  assert (select version=2 from public.vault_secrets where entry_id=entry and superseded_at is null),'rollback restored secret';
+
   -- C. the 30-day scrub: age v1 artificially, write v3 -> v1 is a scrubbed shell, v2 (fresh) stays whole
   update public.vault_secrets set superseded_at=clock_timestamp()-interval '31 days' where entry_id=entry and version=1;
   r:=public.vault_write_secret(entry,actor,3,f_ct,f_iv,f_tag,f_key,f_iv,f_tag,'v1');
@@ -149,6 +174,40 @@ begin
     raise exception 'owner recovery of a shared entry recorded'; exception when check_violation then null; end;
   insert into public.vault_reveals(entry_id,entry_kind,entry_type,viewer_id,kind,secret_version)
     values(personal,'personal','login',actor,'owner_recovery',1);
+  -- Commit a successful rotation through the app RPC as its service-role caller.
+  set local role service_role;
+  perform public.vault_update_entry(entry,actor,2,
+    '{"notes":"CANARY-audit-notes","_audit":{"ip_address":"127.0.0.1","user_agent":"harness","secret":"CANARY-context"}}'::jsonb,4,
+    jsonb_build_object('ciphertext',f_ct,'iv',f_iv,'tag',f_tag,'wrappedKey',f_key,'keyIv',f_iv,'keyTag',f_tag,'masterKeyId','v1'));
+  reset role;
+  assert (select count(*) from public.audit_log where resource_id=entry and action='vault_secret.rotate')=1,'exactly one rotation audit';
+  assert (select count(*) from public.audit_log where resource_id=entry and action='vault_entry.update')=2,'exactly one new edit audit';
+  assert (select bool_and(destructive and actor_id=actor and actor_role=(select role from public.users where id=actor))
+    from public.audit_log where resource_id=entry),'audit actor and destructive';
+  assert not exists(select 1 from public.audit_log where resource_id=entry and
+    (metadata::text like '%CANARY-%' or metadata::text like '%'||f_ct||'%' or metadata::text like '%'||f_key||'%')),'audit allowlist';
+  begin
+    perform public.vault_update_entry(entry,actor,2,'{}'::jsonb,null,null);
+    raise exception 'stale retry accepted';
+  exception when others then assert sqlerrm='version_conflict',sqlerrm; end;
+  assert (select count(*) from public.audit_log where resource_id=entry and action='vault_secret.rotate')=1,'retry did not duplicate audit';
+
+  -- Force the SECOND audit insert to fail after metadata, secret and edit audit writes.
+  perform set_config('vault_test.fail_rotation_audit','1',true);
+  begin
+    perform public.vault_update_entry(entry,actor,3,'{"name":"must roll back"}'::jsonb,5,
+      jsonb_build_object('ciphertext',f_ct,'iv',f_iv,'tag',f_tag,'wrappedKey',f_key,'keyIv',f_iv,'keyTag',f_tag,'masterKeyId','v1'));
+    raise exception 'audit failure accepted';
+  exception when others then assert sqlerrm='forced_audit_failure',sqlerrm; end;
+  perform set_config('vault_test.fail_rotation_audit','0',true);
+  assert (select revision=3 and name<>'must roll back' from public.vault_entries where id=entry),'audit failure rolled back metadata';
+  assert (select version=4 from public.vault_secrets where entry_id=entry and superseded_at is null),'audit failure rolled back secret';
+  assert (select count(*) from public.audit_log where resource_id=entry)=3,'audit failure rolled back first audit too';
+
+  -- Personal edits preserve privacy (no personal name, login, URL or notes in audit).
+  perform public.vault_update_entry(personal,owner_user,1,'{"name":"CANARY-personal-name","username":"CANARY-login"}'::jsonb,null,null);
+  assert (select count(*) from public.audit_log where resource_id=personal and action='vault_entry.update')=1,'personal edit audited';
+  assert not exists(select 1 from public.audit_log where resource_id=personal and metadata::text like '%CANARY-%'),'personal audit privacy';
   raise notice 'password vault harness: PASS';
 end $$;
 rollback;

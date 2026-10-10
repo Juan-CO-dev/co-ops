@@ -150,7 +150,7 @@ async function previousAvailable(service: SupabaseClient, entryIds: string[]): P
 
 export async function listVaultEntries(service: SupabaseClient, actor: VaultActor): Promise<{ shared: VaultEntryView[]; personal: VaultEntryView[] }> {
   assertEnabled();
-  const shared = await allPages<EntryRow>((after) => {
+  const sharedRows = await allPages<EntryRow>((after) => {
     let q = service.from("vault_entries").select(ENTRY_COLS).eq("kind", "shared").eq("active", true)
       .lte("min_level", actor.level).order("id").limit(100);
     if (actor.level < VAULT_MANAGE_ALL_LEVEL) {
@@ -160,6 +160,7 @@ export async function listVaultEntries(service: SupabaseClient, actor: VaultActo
     if (after !== null) q = q.gt("id", after);
     return q;
   });
+  const shared = sharedRows.filter((row) => canSeeSharedEntry(actor, access(row)));
   const personal = await personalEntries(service, actor.userId);
   shared.sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id));
   const previous = actor.level >= VAULT_PREVIOUS_RECOVERY_LEVEL ? await previousAvailable(service, shared.map((r) => r.id)) : new Set<string>();
@@ -485,7 +486,8 @@ export async function updateVaultEntry(service: SupabaseClient, actor: VaultServ
   }
   const { data, error } = await service.rpc("vault_update_entry", {
     p_entry_id: entry.id, p_actor_id: actor.userId, p_expected_revision: input.expectedRevision,
-    p_patch: patch, p_version: secretVersion, p_envelope: encrypted,
+    p_patch: { ...patch, _audit: { ip_address: meta.ipAddress, user_agent: meta.userAgent } },
+    p_version: secretVersion, p_envelope: encrypted,
   });
   if (error) {
     if (error.message.includes("version_conflict")) throw new VaultError("version_conflict", 409);
@@ -495,16 +497,7 @@ export async function updateVaultEntry(service: SupabaseClient, actor: VaultServ
   const after = data as EntryRow | null;
   if (!after || after.id !== entry.id || after.revision !== entry.revision + 1) throw new VaultError("write_failed", 500);
   if (changed.length > 0 || secretVersion !== null) {
-    await audit({
-      actorId: actor.userId, actorRole: actor.role, action: "vault_entry.update", resourceTable: "vault_entries", resourceId: entry.id,
-      metadata: lifecycleMetadata(after, { changed, secret_rotated: secretVersion !== null, secret_version: secretVersion }), ipAddress: meta.ipAddress, userAgent: meta.userAgent,
-    });
-    if (secretVersion !== null) {
-      await audit({
-        actorId: actor.userId, actorRole: actor.role, action: "vault_secret.rotate", resourceTable: "vault_secrets", resourceId: entry.id,
-        metadata: lifecycleMetadata(after, { secret_version: secretVersion }), ipAddress: meta.ipAddress, userAgent: meta.userAgent,
-      });
-    }
+    // 0241 writes both audit actions inside the RPC transaction.
     await notifyChange(service, actor, after, "update", secretVersion !== null
       ? { key: "notifications.vault_entry_change.body.secret" }
       : { key: "notifications.vault_entry_change.body.metadata", changed: changed.join(", ") });
