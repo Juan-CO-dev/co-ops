@@ -29,9 +29,9 @@ beforeEach(() => {
 
 it("skips self before any lookup, including the watcher itself", async () => {
   const result = await runJobWatch({ self: "job-watch", now: new Date("2026-09-10T12:00:00Z") });
-  expect(result).toEqual({ alerted: 7, checked: 7 });
+  expect(result).toEqual({ alerted: 8, checked: 8 });
   expect(jobs).not.toContain("job-watch");
-  expect(new Set(jobs).size).toBe(7);
+  expect(new Set(jobs).size).toBe(8);
 });
 
 it("siblings can detect a silent job-watch and retain the ET claim key", async () => {
@@ -81,4 +81,15 @@ it("watches the labor pull only while TOAST_LABOR_PULL is on (0224 applied)", as
   jobs.length = 0;
   await runJobWatch({ self: "job-watch", now: new Date("2026-09-10T12:00:00Z") });
   expect(jobs).toContain("toast-labor-pull");
+});
+
+
+it("alerts on a missing vault heartbeat even while the UI is off", async () => {
+  vi.stubEnv("VAULT_ENABLED", "");
+  await runJobWatch({ self: "prune-sessions", now: new Date("2026-09-10T12:00:00Z") });
+  expect(jobs).toContain("vault-scrub");
+  expect(rpc).toHaveBeenCalledWith("portal_rate_limit_hit", {
+    p_bucket_key: "job-watch:vault-scrub:2026-09-10", p_window_start: "2026-09-10T04:00:00.000Z", p_max: 1,
+  });
+  expect(sendEmail).toHaveBeenCalledWith(expect.objectContaining({ subject: expect.stringContaining("vault-scrub") }));
 });

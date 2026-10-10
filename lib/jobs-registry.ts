@@ -40,6 +40,8 @@ export const JOBS_REGISTRY = [
   // Labor (0224/0230): today's bounded, fail-soft pull rides the 10-minute pinger; nightly remains a backstop.
   { job: "toast-labor-pull", cadenceMinutes: 10, window: { startHourET: 6, endHourET: 22 }, source: "pinger" },
   { job: "prune-sessions", cadenceMinutes: 1440, source: "vercel", catchUp: { job: "prune-sessions", dueUtc: "08:30" } }, // 08:30 UTC
+  // Shares the prune route and its catch-up attempt, but has its own heartbeat.
+  { job: "vault-scrub", cadenceMinutes: 1440, source: "vercel", dueUtc: "08:30" },
   { job: "parse-receipts", cadenceMinutes: 1440, source: "vercel", catchUp: { job: "parse-receipts", dueUtc: "09:45" } }, // 09:45 UTC
   { job: "toast-catering-scan", cadenceMinutes: 10, window: { startHourET: 6, endHourET: 22 }, source: "pinger" },
   { job: "toast-sales-today", cadenceMinutes: 10, window: { startHourET: 6, endHourET: 22 }, source: "pinger" },

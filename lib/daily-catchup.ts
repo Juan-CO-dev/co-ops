@@ -4,6 +4,7 @@ import { getServiceRoleClient } from "@/lib/supabase-server";
 import { JOBS_REGISTRY } from "@/lib/jobs-registry";
 import { decideCatchUp } from "@/lib/daily-catchup-shared";
 import { runPruneSessions } from "@/lib/prune-sessions-run";
+import { runVaultScrub } from "@/lib/vault-scrub-run";
 import { runToastSalesPull } from "@/lib/toast-sales-pull-run";
 import { runParseReceipts } from "@/lib/parse-receipts-run";
 import { etCalendarDate, etYmdMinusDays } from "@/lib/operational-day";
@@ -55,6 +56,15 @@ export async function catchUpDailyJobs(opts?: { now?: Date }): Promise<{ ran: st
       let metadata: Record<string, unknown>;
       switch (entry.job) {
         case "prune-sessions": {
+          // Retention is independent of pruning and of the vault UI switch.
+          try {
+            const vault = await runVaultScrub();
+            await audit({ ...auditBase, action: "cron.success", metadata: { job: "vault-scrub", ...vault, ...provenance } });
+          } catch {
+            try {
+              await audit({ ...auditBase, action: "cron.failure", metadata: { job: "vault-scrub", error: "vault_scrub_failed", ...provenance } });
+            } catch { /* failure reporting must not prevent pruning */ }
+          }
           const { revoked } = await runPruneSessions();
           metadata = { job: entry.job, revoked };
           break;

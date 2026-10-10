@@ -4,12 +4,14 @@ import { decideCatchUp } from "@/lib/daily-catchup-shared";
 import { catchUpDailyJobs } from "@/lib/daily-catchup";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import { audit } from "@/lib/audit";
+import { runVaultScrub } from "@/lib/vault-scrub-run";
 import { runPruneSessions } from "@/lib/prune-sessions-run";
 import { runToastSalesPull } from "@/lib/toast-sales-pull-run";
 import { runParseReceipts } from "@/lib/parse-receipts-run";
 
 vi.mock("@/lib/audit", () => ({ audit: vi.fn(async () => {}) }));
 vi.mock("@/lib/supabase-server", () => ({ getServiceRoleClient: vi.fn() }));
+vi.mock("@/lib/vault-scrub-run", () => ({ runVaultScrub: vi.fn() }));
 vi.mock("@/lib/prune-sessions-run", () => ({ runPruneSessions: vi.fn() }));
 vi.mock("@/lib/toast-sales-pull-run", () => ({ runToastSalesPull: vi.fn() }));
 vi.mock("@/lib/parse-receipts-run", () => ({ runParseReceipts: vi.fn() }));
@@ -53,6 +55,7 @@ beforeEach(() => {
     return query;
   };
   vi.mocked(getServiceRoleClient).mockReturnValue({ from, rpc } as unknown as ReturnType<typeof getServiceRoleClient>);
+  vi.mocked(runVaultScrub).mockResolvedValue({ scrubbed: 4, migrationPending: false });
   vi.mocked(runPruneSessions).mockResolvedValue({ revoked: 3 });
   vi.mocked(runToastSalesPull).mockResolvedValue({ businessDate: "2026-09-11", results: [], healthy: true, metadata: { capture_failures: 0,
     job: "toast-sales-pull", business_date: "2026-09-11", source: "capture", dates: [], capture_skipped: false, pars_pending_activation: false, per_location_failures: 0,
@@ -68,13 +71,14 @@ afterEach(() => vi.unstubAllEnvs());
 it("concurrent catch-ups share one UTC claim and emit the route's metadata plus provenance", async () => {
   await Promise.all([catchUpDailyJobs({ now }), catchUpDailyJobs({ now })]);
   expect(runPruneSessions).toHaveBeenCalledTimes(1);
+  expect(runVaultScrub).toHaveBeenCalledTimes(1);
   expect(runToastSalesPull).toHaveBeenCalledExactlyOnceWith({ businessDate: "2026-09-11" });
   expect(runParseReceipts).toHaveBeenCalledTimes(1);
   expect(gte).toHaveBeenCalledWith("occurred_at", "2026-09-12T00:00:00.000Z");
   expect(rpc).toHaveBeenCalledWith("portal_rate_limit_hit", {
     p_bucket_key: "catchup:prune-sessions:2026-09-12", p_window_start: "2026-09-12T00:00:00.000Z", p_max: 1,
   });
-  expect(audit).toHaveBeenCalledTimes(3);
+  expect(audit).toHaveBeenCalledTimes(4);
   expect(audit).toHaveBeenCalledWith(expect.objectContaining({ action: "cron.success", metadata: {
     job: "prune-sessions", revoked: 3, via: "catch-up", caller: "toast-catering-scan",
   } }));
@@ -84,6 +88,7 @@ it("today's successes skip all work and claims", async () => {
   lookup.mockResolvedValue({ data: { occurred_at: "2026-09-12T08:30:00Z" }, error: null });
   expect((await catchUpDailyJobs({ now })).ran).toEqual([]);
   expect(rpc).not.toHaveBeenCalled();
+  expect(runVaultScrub).not.toHaveBeenCalled();
   expect(audit).not.toHaveBeenCalled();
 });
 
@@ -91,6 +96,7 @@ it.each(["lookup", "claim"])("%s errors fail closed to work and open to the call
   (mode === "lookup" ? lookup : rpc).mockResolvedValue({ data: null, error: { message: "unavailable" } });
   await expect(catchUpDailyJobs({ now })).resolves.toMatchObject({ ran: [] });
   expect(runPruneSessions).not.toHaveBeenCalled();
+  expect(runVaultScrub).not.toHaveBeenCalled();
   expect(runToastSalesPull).not.toHaveBeenCalled();
   expect(runParseReceipts).not.toHaveBeenCalled();
   expect(audit).toHaveBeenCalledTimes(3);
@@ -112,7 +118,7 @@ it("dormant parsing has no claim, work, or heartbeat", async () => {
   expect((await catchUpDailyJobs({ now })).skipped).toEqual(["parse-receipts"]);
   expect(runParseReceipts).not.toHaveBeenCalled();
   expect(rpc).toHaveBeenCalledTimes(2);
-  expect(audit).toHaveBeenCalledTimes(2);
+  expect(audit).toHaveBeenCalledTimes(3);
 });
 
 it("a thrown client and thrown failure audit cannot escape to the pinger", async () => {
@@ -156,4 +162,38 @@ it("capture failures do not withhold the selection catch-up success", async () =
   expect((await catchUpDailyJobs({ now })).ran).toContain("toast-sales-pull");
   expect(audit).toHaveBeenCalledWith(expect.objectContaining({ action: "cron.success", metadata: expect.objectContaining({ job: "toast-sales-pull", capture_failures: 2 }) }));
   expect(audit).not.toHaveBeenCalledWith(expect.objectContaining({ action: "cron.failure", metadata: expect.objectContaining({ job: "toast-sales-pull" }) }));
+});
+
+
+it.each(["", "0", "1"])("catch-up scrubs and audits with VAULT_ENABLED=%s", async (enabled) => {
+  vi.stubEnv("VAULT_ENABLED", enabled);
+  await catchUpDailyJobs({ now });
+  expect(runVaultScrub).toHaveBeenCalledOnce();
+  expect(audit).toHaveBeenCalledWith(expect.objectContaining({ action: "cron.success", metadata: {
+    job: "vault-scrub", scrubbed: 4, migrationPending: false, via: "catch-up", caller: "toast-catering-scan",
+  } }));
+});
+
+it.each([false, true])("scrub failure does not stop prune (prune fails=%s)", async (pruneFails) => {
+  vi.mocked(runVaultScrub).mockRejectedValue(new Error("private detail"));
+  if (pruneFails) vi.mocked(runPruneSessions).mockRejectedValue(new Error("prune failed"));
+  await catchUpDailyJobs({ now });
+  expect(runPruneSessions).toHaveBeenCalledOnce();
+  expect(runParseReceipts).toHaveBeenCalledOnce();
+  expect(audit).toHaveBeenCalledWith(expect.objectContaining({ action: "cron.failure", metadata: {
+    job: "vault-scrub", error: "vault_scrub_failed", via: "catch-up", caller: "toast-catering-scan",
+  } }));
+  expect(audit).toHaveBeenCalledWith(expect.objectContaining({
+    action: pruneFails ? "cron.failure" : "cron.success", metadata: expect.objectContaining({ job: "prune-sessions" }),
+  }));
+  expect(JSON.stringify(vi.mocked(audit).mock.calls)).not.toContain("private detail");
+  await catchUpDailyJobs({ now });
+  expect(runVaultScrub).toHaveBeenCalledOnce();
+});
+
+it("prune failure preserves the independent scrub success heartbeat", async () => {
+  vi.mocked(runPruneSessions).mockRejectedValue(new Error("prune failed"));
+  await catchUpDailyJobs({ now });
+  expect(audit).toHaveBeenCalledWith(expect.objectContaining({ action: "cron.success", metadata: expect.objectContaining({ job: "vault-scrub", scrubbed: 4 }) }));
+  expect(audit).toHaveBeenCalledWith(expect.objectContaining({ action: "cron.failure", metadata: expect.objectContaining({ job: "prune-sessions" }) }));
 });

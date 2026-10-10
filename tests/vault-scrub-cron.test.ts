@@ -27,6 +27,7 @@ describe("P2 #4: scheduled cryptographic deletion", () => {
     expect(config.crons).toContainEqual({ path: "/api/cron/prune-sessions", schedule: "30 8 * * *" });
     const response = await GET(request("test-cron-token"));
     expect(response.status).toBe(200);
+    expect(audit).toHaveBeenCalledWith(expect.objectContaining({ action: "cron.success", metadata: { job: "vault-scrub", scrubbed: 3, migrationPending: false } }));
     expect(rpc).toHaveBeenCalledExactlyOnceWith("vault_scrub_expired_secrets");
     expect(await response.json()).toMatchObject({ vault: { scrubbed: 3, migrationPending: false } });
   });
