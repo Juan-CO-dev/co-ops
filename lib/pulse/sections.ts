@@ -36,10 +36,10 @@ import {
   SalesReportError,
   type BreakdownRow, type SalesSummaryDto,
 } from "@/lib/sales-reports";
-import { loadPulseSales } from "@/lib/pulse/sales";
+import { loadCaptureStamp, loadPulseSales } from "@/lib/pulse/sales";
 import { loadHandoffRaw, projectHandoffNotes, PulseNotInstalledError, type HandoffRaw } from "@/lib/pulse/handoff";
 import { loadStationLayout } from "@/lib/pulse/layout";
-import { cachedSource, sourceKey } from "@/lib/pulse/source-cache";
+import { cachedSource, cachedStampedSource, sourceKey } from "@/lib/pulse/source-cache";
 import { pulseReadActor } from "@/lib/pulse/read-actor";
 import { attentionEvidence, attentionScore, crewAttention, rankAttention, severityOf, stripAttentionRows } from "@/lib/pulse/attention-shared";
 import { baselineCumulative, cumulativeByHour, dowOf, hourCurve, paceDeltaPct, sameWeekdayCoverage } from "@/lib/pulse/baseline-shared";
@@ -91,6 +91,14 @@ export interface PulseDeps {
   deliveries(ctx: PulseCtx): Promise<DeliveryView[]>;
   cutoffs(ctx: PulseCtx): Promise<{ count: number; vendors: OrderingCutoffAttention[] }>;
   sales(ctx: PulseCtx): Promise<SalesFacts>;
+  /**
+   * The freshness STAMP of today's sales: `finished_at` of the latest COMPLETED full-day Toast capture
+   * for this shop/day (null before the first). One indexed single-row read. `cachedPulseDeps` keys the
+   * sales cache by it so every warm instance serves the same, newest completed capture (Juan,
+   * 2026-10-10: the card "needed 2-4 refreshes, and went BACKWARDS"). Optional: without it (or when it
+   * fails) the sales source falls back to the plain per-instance TTL cache.
+   */
+  salesStamp?(ctx: PulseCtx): Promise<string | null>;
   /** The shop's raw notes (every audience); the section projects per viewer. */
   handoff(ctx: PulseCtx): Promise<HandoffRaw>;
   layout(ctx: PulseCtx): Promise<FloorLayout | null>;
@@ -122,12 +130,26 @@ export function cachedPulseDeps(deps: PulseDeps, opts: { ttlMs?: number; now?: (
       () => (deps[key] as (c: PulseCtx) => Promise<unknown>)(ctx), { ttlMs: opts.ttlMs, now: opts.now?.() });
   }) as PulseDeps[K];
   const board = wrap("board");
+  // Today's sales are keyed by the latest COMPLETED capture (the stamp), not just by the clock: a warm
+  // instance that still holds the pre-capture snapshot learns the new stamp on its next poll and
+  // reloads, instead of serving the lower, older number for up to a TTL (the 4:40 → 4:41 PM "went
+  // backwards"). A failed stamp read degrades to the plain TTL cache; it never fails the section.
+  const sales: PulseDeps["sales"] = async (ctx) => {
+    if (!canReadPulseLocation(ctx.auth, ctx.locationId)) throw new Error("location_access_denied");
+    const stamp = deps.salesStamp
+      ? await deps.salesStamp(ctx).catch((err: unknown) => { console.error("pulse sales stamp failed", err); return null; })
+      : null;
+    const scope = sourceScope("sales", ctx);
+    const prefix = sourceKey({ source: "sales", locationId: ctx.locationId, date: ctx.date, scope: "" });
+    const key = sourceKey({ source: "sales", locationId: ctx.locationId, date: ctx.date, scope: stamp ? `${scope}|captured:${stamp}` : scope });
+    return cachedStampedSource(prefix, key, () => deps.sales(ctx), { ttlMs: opts.ttlMs, now: opts.now?.() });
+  };
   return {
     // The board is a shop fact; only its viewer fields differ, so patch them for the asking viewer.
     board: async (ctx) => ({ ...(await board(ctx)), viewerId: ctx.auth.user.id, viewerLevel: ctx.auth.level }),
     reports: wrap("reports"), fridges: wrap("fridges"), cateringToday: wrap("cateringToday"),
     cateringTomorrow: wrap("cateringTomorrow"), notRung: wrap("notRung"), unlinkedClockIns: wrap("unlinkedClockIns"),
-    lastParPass: wrap("lastParPass"), deliveries: wrap("deliveries"), cutoffs: wrap("cutoffs"), sales: wrap("sales"),
+    lastParPass: wrap("lastParPass"), deliveries: wrap("deliveries"), cutoffs: wrap("cutoffs"), sales,
     handoff: wrap("handoff"), layout: wrap("layout"),
   };
 }
@@ -640,6 +662,7 @@ export function defaultPulseDeps(service: SupabaseClient): PulseDeps {
     deliveries: (ctx) => loadRecentDeliveries(actorOf(ctx), ctx.locationId, 10),
     cutoffs: (ctx) => loadOrderingAttention(actorOf(ctx), ctx.locationId),
     sales: (ctx) => loadPulseSales(service, ctx),
+    salesStamp: (ctx) => loadCaptureStamp(service, ctx.locationId, ctx.date),
     handoff: (ctx) => loadHandoffRaw(service, { locationId: ctx.locationId, date: ctx.date }),
     layout: (ctx) => loadStationLayout(service, ctx.locationId),
   };

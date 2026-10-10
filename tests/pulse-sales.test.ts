@@ -21,7 +21,16 @@ const history = { hours: [{ key: "5|11", dow: 5, hour: 11, cents: 1001, checks: 
   captured_days: ["2026-10-02", "2026-09-25", "2026-10-01", "2026-10-02"] };
 function fake(mode: "ok" | "hang" | "error" | "empty" | "today-error" = "ok") {
   const calls: Array<{ name: string; args: Record<string, unknown>; signal?: AbortSignal }> = [];
-  const client = { from: vi.fn(() => { throw new Error("unexpected table read"); }), rpc(name: string, args: Record<string, unknown>) {
+  const reads: string[] = [];
+  // The only table read the sales lane may make is the one-row capture-stamp probe (loadCaptureStamp).
+  const client = { from: vi.fn((table: string) => {
+    reads.push(table);
+    if (table !== "toast_capture_runs") throw new Error("unexpected table read");
+    const q: Record<string, unknown> = {};
+    for (const m of ["select", "eq", "order", "limit", "abortSignal"]) q[m] = () => q;
+    q.maybeSingle = async () => ({ data: { finished_at: today.captured_at }, error: null });
+    return q;
+  }), rpc(name: string, args: Record<string, unknown>) {
     const call: typeof calls[number] = { name, args }; calls.push(call);
     const data = name === "pulse_sales_today" ? today : name === "pulse_sales_baseline" ?
       (mode === "empty" ? { hours: [], captured_days: [] } : history) :
@@ -30,12 +39,12 @@ function fake(mode: "ok" | "hang" | "error" | "empty" | "today-error" = "ok") {
       Promise.resolve({ data, error: (name === "pulse_sales_baseline" && mode === "error") || (name === "pulse_sales_today" && mode === "today-error") ? { message: "timeout" } : null });
     return { abortSignal(signal: AbortSignal) { call.signal = signal; return this; }, then: result.then.bind(result) };
   } } as unknown as SupabaseClient;
-  return { client, calls };
+  return { client, calls, reads };
 }
 afterEach(() => { vi.useRealTimers(); resetSourceCache(); clearBaselineCache(); vi.restoreAllMocks(); });
 describe("real Pulse sales wiring", () => {
-  it("issues seven scoped RPCs, preserves summary and weekday rounding/full heatmap; cached repoll issues zero", async () => {
-    const { client, calls } = fake();
+  it("issues seven scoped RPCs, preserves summary and weekday rounding/full heatmap; a cached repoll issues zero RPCs and only the one-row capture-stamp probe", async () => {
+    const { client, calls, reads } = fake();
     const parent = new AbortController();
     const deps = pulseDeps(withAbort(client, parent.signal));
     const result = await loadPulseSection(deps, ctx, "sales");
@@ -59,6 +68,9 @@ describe("real Pulse sales wiring", () => {
     expect(calls.filter((c) => c.name === "sales_report_breakdown").map((c) => c.args.p_dimension)).toEqual(["item", "channel", "discount", "server", "hour_weekday"]);
     await loadPulseSection(pulseDeps(client), ctx, "sales");
     expect(calls).toHaveLength(7);
+    // The cache key carries the stamp the probe returned, which is the RPC's own captured_at.
+    expect(reads).toEqual(["toast_capture_runs", "toast_capture_runs"]);
+    expect(data.capturedAt).toBe(today.captured_at);
   });
   it.each(["hang", "error"] as const)("isolates %s baseline and aborts the hung request at the baseline deadline", async (mode) => {
     vi.useFakeTimers();
