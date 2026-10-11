@@ -12,9 +12,11 @@ import { useTranslation } from "@/lib/i18n/provider";
 
 type View = "catalog" | "registry";
 
-export function ItemsPageTabs({ catalog, registry }: { catalog: React.ReactNode; registry: React.ReactNode }) {
+export function ItemsPageTabs({ catalog, registry, initialView = "catalog" }: {
+  catalog: React.ReactNode; registry: React.ReactNode; initialView?: View;
+}) {
   const { t } = useTranslation();
-  const [view, setView] = useState<View>("catalog");
+  const [view, setView] = useState<View>(initialView);
 
   const tab = (active: boolean) =>
     `inline-flex min-h-[44px] items-center rounded-full border-2 px-4 text-sm font-bold transition ${

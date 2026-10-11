@@ -7,6 +7,8 @@
  * lib/admin/templates.ts's loadChecklistAdminView.
  */
 import { getServiceRoleClient } from "@/lib/supabase-server";
+import { loadProductItemLinks } from "@/lib/admin/product-item-links";
+import type { RegistryLink } from "@/lib/admin/product-item-links-shared";
 import { getRoleLevel } from "@/lib/roles";
 import type { AuthContext } from "@/lib/session";
 import type { PrepSectionDefn } from "@/lib/types";
@@ -30,6 +32,7 @@ export interface ItemsAdminView {
   itemQuestions: ItemQuestionView[];
   /** itemId → its ACTIVE producing recipe id (recipe_outputs). */
   producingRecipeByItem: Record<string, string>;
+  madeFromByItem: Record<string, RegistryLink[]>;
 }
 
 export async function loadItemsAdminView(actor: AuthContext): Promise<ItemsAdminView> {
@@ -38,26 +41,14 @@ export async function loadItemsAdminView(actor: AuthContext): Promise<ItemsAdmin
   }
   const sb = getServiceRoleClient();
 
-  const [registry, sectionMap, units, itemQuestions] = await Promise.all([
+  const [registry, sectionMap, units, itemQuestions, relationships] = await Promise.all([
     loadItemRegistry(sb),
     loadPrepSections(sb),
     loadUnits(sb),
     loadItemQuestions(sb),
+    loadProductItemLinks(actor),
   ]);
   const sections = Array.from(sectionMap.values()).sort((a, b) => a.displayOrder - b.displayOrder);
-
-  // itemId → producing recipe, ACTIVE recipes only (an item produced solely by
-  // an inactive recipe reads "no recipe" — mirrors lib/admin/readiness-load.ts).
-  const [{ data: recRows }, { data: outRows }] = await Promise.all([
-    sb.from("recipes").select("id").eq("active", true).returns<Array<{ id: string }>>(),
-    sb.from("recipe_outputs").select("recipe_id, output_item_id").not("output_item_id", "is", null)
-      .returns<Array<{ recipe_id: string; output_item_id: string }>>(),
-  ]);
-  const activeRecipeIds = new Set((recRows ?? []).map((r) => r.id));
-  const producingRecipeByItem: Record<string, string> = {};
-  for (const o of outRows ?? []) {
-    if (activeRecipeIds.has(o.recipe_id)) producingRecipeByItem[o.output_item_id] = o.recipe_id;
-  }
 
   return {
     actorLevel: getRoleLevel(actor.user.role),
@@ -65,6 +56,7 @@ export async function loadItemsAdminView(actor: AuthContext): Promise<ItemsAdmin
     sections,
     units,
     itemQuestions,
-    producingRecipeByItem,
+    producingRecipeByItem: relationships.producingRecipeByItem,
+    madeFromByItem: relationships.madeFromByItem,
   };
 }

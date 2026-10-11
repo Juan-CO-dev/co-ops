@@ -32,6 +32,8 @@ import { CollapsibleSection } from "@/components/ui/CollapsibleSection";
 import { SummaryRow } from "@/components/ui/SummaryRow";
 import type { ProductView } from "@/lib/products";
 import { postJson, resolveErrorKey } from "./shared";
+import { RegistryRelationships } from "@/components/admin/RegistryRelationships";
+import type { RegistryLink } from "@/lib/admin/product-item-links-shared";
 
 /** Mirrors PRODUCT_WRITE_MIN (lib/products.ts) — structural registry edits are GM+. */
 const PRODUCT_WRITE_MIN = 7;
@@ -82,11 +84,15 @@ export function ProductsClient({
   skus,
   locations,
   actorLevel,
+  usedInByProduct,
+  targetProductId,
 }: {
   products: ProductView[];
   skus: SkuOption[];
   locations: LocationOption[];
   actorLevel: number;
+  usedInByProduct: Record<string, RegistryLink[]>;
+  targetProductId?: string;
 }) {
   const { t } = useTranslation();
   const router = useRouter();
@@ -139,6 +145,7 @@ export function ProductsClient({
     <ProductRow
       key={p.id}
       product={p}
+      usedIn={usedInByProduct[p.id] ?? []}
       locations={locations}
       unattachedSkus={unattachedSkus}
       canManage={canManage}
@@ -180,7 +187,7 @@ export function ProductsClient({
             idBase="products-all"
             title={t("admin.products.all.heading")}
             count={t("admin.products.count", { n: rest.length })}
-            defaultOpen={attention.length === 0}
+            defaultOpen={attention.length === 0 || rest.some(p => p.id === targetProductId)}
           >
             {rest.length === 0 ? (
               <p className="text-sm text-co-text-muted">{t("admin.products.all.empty")}</p>
@@ -278,6 +285,7 @@ function CreateProductForm({
 /** One product: identity + badges always visible, editors in the lazy drawer. */
 function ProductRow({
   product,
+  usedIn,
   locations,
   unattachedSkus,
   canManage,
@@ -287,6 +295,7 @@ function ProductRow({
   onMutate,
 }: {
   product: ProductView;
+  usedIn: RegistryLink[];
   locations: LocationOption[];
   unattachedSkus: SkuOption[];
   canManage: boolean;
@@ -299,8 +308,9 @@ function ProductRow({
   const primaryMember = product.members.find((m) => m.skuId === product.globalPrimarySkuId) ?? null;
 
   const summary = (
-    <span className="flex flex-wrap items-baseline gap-2">
+    <span id={product.id} className="flex scroll-mt-24 flex-wrap items-baseline gap-2">
       <span className="text-sm font-bold text-co-text">{product.name}</span>
+      <span className="w-full"><RegistryRelationships kind="product" links={usedIn} /></span>
       <span className="text-xs text-co-text-muted">
         {t("admin.products.field.members", { n: product.members.length })}
       </span>

@@ -25,6 +25,8 @@ import { postJson, resolveErrorKey } from "@/components/admin/templates/shared";
 import { UnitSelect } from "@/components/admin/UnitSelect";
 import { ItemQuestionsEditor } from "./ItemQuestions";
 import { Labeled } from "./Labeled";
+import { RegistryRelationships } from "@/components/admin/RegistryRelationships";
+import type { RegistryLink } from "@/lib/admin/product-item-links-shared";
 
 export function ItemRow({
   item,
@@ -35,6 +37,7 @@ export function ItemRow({
   itemQuestions,
   readiness,
   producingRecipeId,
+  madeFrom,
 }: {
   item: ChecklistRegistryItem;
   actorLevel: number;
@@ -44,6 +47,7 @@ export function ItemRow({
   itemQuestions: ItemQuestionView[];
   readiness: Readiness | null;
   producingRecipeId: string | null;
+  madeFrom: RegistryLink[];
 }) {
   const { t } = useTranslation();
   const router = useRouter();
@@ -165,7 +169,7 @@ export function ItemRow({
   };
 
   return (
-    <div className="co-card p-3">
+    <div id={item.itemId} className="co-card scroll-mt-24 p-3">
       <div className="flex items-center justify-between gap-2">
         <span className="text-sm font-bold text-co-text">
           {item.name}
@@ -199,6 +203,8 @@ export function ItemRow({
           ) : null}
         </div>
       </div>
+
+      <RegistryRelationships kind="item" links={madeFrom} />
 
       {open && canEdit ? (
         <div className="mt-3 flex flex-col gap-3">

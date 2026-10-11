@@ -73,6 +73,7 @@ export function ItemsClient({
                   itemQuestions={view.itemQuestions.filter((q) => q.itemId === r.itemId)}
                   readiness={itemReadiness[r.itemId] ?? null}
                   producingRecipeId={view.producingRecipeByItem[r.itemId] ?? null}
+                  madeFrom={view.madeFromByItem[r.itemId] ?? []}
                 />
               ))}
             </div>

@@ -266,11 +266,12 @@ export function SkuCatalogClient({
   const renderRow = (s: SkuView) => (
     <li
       key={s.id}
+      id={s.id}
       className={
         // Editing rows keep the card chrome around SkuBuilder; non-editing
         // rows let SummaryRow be the card (avoids a nested double-card).
         (editingId === s.id ? "rounded-lg border-2 border-co-border bg-co-surface p-3 " : "") +
-        (s.active ? "" : "opacity-60")
+        "scroll-mt-24 " + (s.active ? "" : "opacity-60")
       }
     >
       {editingId === s.id ? (
