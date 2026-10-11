@@ -413,7 +413,8 @@ async function people(deps: PulseDeps, ctx: PulseCtx): Promise<PeopleData> {
   return {
     whosHere: board.whosHere === true,
     here, seenToday,
-    hereUnlinked: unlinked?.entries.map((e) => ({ key: e.employeeGuid, name: e.firstName, since: e.since })) ?? [],
+    // Only with Who's Here on: without it nothing is linked, so linked people would be counted twice.
+    hereUnlinked: board.whosHere === true ? unlinked?.entries.map((e) => ({ key: e.employeeGuid, name: e.firstName, since: e.since })) ?? [] : [],
     canLink: ctx.auth.level >= LINK_ADMIN_MIN_LEVEL,
     onBreak: rows.filter((r) => r.onBreak).length,
     stationsCovered,
