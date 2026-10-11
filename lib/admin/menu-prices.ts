@@ -12,7 +12,9 @@ export class MenuPriceError extends Error {
 
 export async function updateMenuPrice(actor: AuthContext, id: string, value: unknown, expectedMenuPrice: unknown): Promise<void> {
   if (getRoleLevel(actor.user.role) < MENU_PRICE_WRITE_MIN) throw new MenuPriceError(403, "forbidden");
-  if (!isValidMenuPrice(value) || !isValidMenuPrice(expectedMenuPrice)) throw new MenuPriceError(400, "invalid_menu_price");
+  // expected echoes what is STORED, and the column allows any price >= 0 — only the new value is held to the editor's rules.
+  const expectedOk = expectedMenuPrice === null || (typeof expectedMenuPrice === "number" && Number.isFinite(expectedMenuPrice) && expectedMenuPrice >= 0);
+  if (!isValidMenuPrice(value) || !expectedOk) throw new MenuPriceError(400, "invalid_menu_price");
   if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)) throw new MenuPriceError(404, "not_found");
   const sb = getServiceRoleClient();
   const { data, error } = await sb.from("menu_items").select("menu_price, catering_available").eq("id", id).eq("active", true)

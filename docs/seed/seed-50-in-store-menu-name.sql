@@ -1,5 +1,6 @@
 -- Seed 50: configure the in-store Toast menu for each active Toast-linked shop.
 -- AUTHORED, NOT YET APPLIED — GATE CC: sim first, then prod; requires 0246.
+-- APPLIED TO PROD 2026-10-11 (Capitol Hill + P Street set, 2 system.config_update audits actor_context seed_50; true dry run first).
 -- Idempotent; refuses an empty target set or a different existing menu selection.
 -- No location.update exists: registered system.config_update is the config-edit action.
 begin;

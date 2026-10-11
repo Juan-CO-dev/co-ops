@@ -27,6 +27,7 @@ export async function loadCachedMenuPrices(): Promise<{
     let oldest = Infinity;
     for (const location of locations.data ?? []) {
       const guid = location.toast_restaurant_guid;
+      if (!guid) continue; // a shop not on Toast has no Toast prices to miss
       const menuName = location.toast_in_store_menu_name;
       if (!menuName?.trim()) notices.push({ locationName: location.name, reason: "menu_not_set" });
       try {

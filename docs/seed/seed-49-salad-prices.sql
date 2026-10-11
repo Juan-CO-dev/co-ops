@@ -1,5 +1,6 @@
 -- Seed 49: salad prices follow the corresponding sub (Juan 2026-10-11).
 -- AUTHORED, NOT YET APPLIED — GATE CC: sim first, then prod; requires 0245.
+-- APPLIED TO PROD 2026-10-11 (7 salads linked, 7 menu_item.update audits actor_context seed_49; true dry run first).
 -- Exact active names; idempotent; refuses missing/ambiguous names or a different existing link.
 begin;
 -- Keep the guard, audit and write on the same catalog state.
