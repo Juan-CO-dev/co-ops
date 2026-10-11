@@ -1,5 +1,6 @@
 -- Migration 0244_dormant_people
--- AUTHORED 2026-10-11. NOT YET APPLIED -- GATE CC: sim first, then prod.
+-- APPLIED TO PROD 2026-10-11 (schema_migrations 20261011143435; true dry run first; sim first, 20261011143436 stamp).
+-- AUTHORED 2026-10-11. Authoring-gate note kept as history.
 -- Display-only dormancy. No login/session changes and no wider staff column grants.
 begin;
 alter table public.users
