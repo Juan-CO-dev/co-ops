@@ -1,3 +1,8 @@
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import type { SupabaseClient } from "@supabase/supabase-js";
+import { PeopleSection } from "@/components/pulse/sections/PeopleSection";
+import { TranslationProvider } from "@/lib/i18n/provider";
 /**
  * Section loaders: scope BEFORE any read, per-section isolation (one failure never blanks another),
  * the 7 s deadline, "not installed" states, and the crew / money stripping — all with fake deps.
@@ -6,7 +11,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { AuthContext } from "@/lib/session";
 import type { ShiftBoard } from "@/lib/assignments-shared";
 import {
-  loadPulseSection, loadPulseSections, memoDeps, parPassLow, withDeadline, type PulseCtx, type PulseDeps,
+  defaultPulseDeps, loadPulseSection, loadPulseSections, memoDeps, parPassLow, withDeadline, type PulseCtx, type PulseDeps,
 } from "@/lib/pulse/sections";
 import { PulseNotInstalledError, type HandoffRaw } from "@/lib/pulse/handoff";
 import { SalesReportError } from "@/lib/sales-reports";
@@ -66,7 +71,7 @@ function deps(over: Partial<PulseDeps> = {}): PulseDeps {
     cateringToday: vi.fn(async () => [{ id: "c1", timeWindow: "4:00 PM", name: "Acme lunch", headcount: 20, isDelivery: true, stage: "confirmed" as const, source: "ezcater" }]),
     cateringTomorrow: vi.fn(async () => ({ count: 1, firstWindow: "11:00 AM" })),
     notRung: vi.fn(async () => [{ order_id: "o1", lead_id: null, location_id: LOC, event_date: "2026-10-09", order_number: "EZ-1", handoff_time: "2026-10-09T17:00:00Z", event_timestamp: null, headcount: 12, total_cents: 12000 }]),
-    unlinkedClockIns: vi.fn(async () => ({ count: 1, names: ["Pat"] })),
+    unlinkedClockIns: vi.fn(async () => ({ count: 1, entries: [{ employeeGuid: "pat", firstName: "Pat", since: "2026-10-09T14:00:00Z" }] })),
     lastParPass: vi.fn(async () => ({ at: "2026-10-09T13:00:00Z", byName: "Mgr", lines: [
       { skuName: "Ham", parQty: 4, orderQty: 4, unitLabel: "case" }, { skuName: "Rolls", parQty: 10, orderQty: 2, unitLabel: "bag" }, { skuName: "Napkins", parQty: 5, orderQty: 0, unitLabel: "case" },
     ] })),
@@ -225,7 +230,7 @@ describe("Astra #7 — failed sources never produce a reassuring state", () => {
     board: vi.fn(async () => ({ ...board(), stations: [], events: [], tasks: [] })),
     reports: vi.fn(async () => ({ rows: [], closingDone: false, midDayDoneCount: 0 })),
     fridges: vi.fn(async () => []), cateringToday: vi.fn(async () => []), notRung: vi.fn(async () => []),
-    lastParPass: vi.fn(async () => null), unlinkedClockIns: vi.fn(async () => ({ count: 0, names: [] })),
+    lastParPass: vi.fn(async () => null), unlinkedClockIns: vi.fn(async () => ({ count: 0, entries: [] })),
     ...over,
   });
   it("every attention source failing → evidence unavailable, score null, no items", async () => {
@@ -301,5 +306,84 @@ describe("parPassLow", () => {
     expect(low[0]).toMatchObject({ pctOfPar: 0, risk86: true });
     expect(low[1]).toMatchObject({ pctOfPar: 0.8, risk86: false });
     expect(low[2]).toMatchObject({ pctOfPar: null, risk86: false });
+  });
+});
+
+
+describe("Here now includes unlinked Toast employees", () => {
+  const render = (data: PeopleData, mode: "card" | "detail" = "card", language: "en" | "es" = "en") => renderToStaticMarkup(createElement(TranslationProvider, {
+    initialLanguage: language, children: createElement(PeopleSection, { data, mode, locationId: LOC }),
+  }));
+  it("counts everyone, sorts linked and unlinked together, and preserves station coverage in both views", async () => {
+    const entries = ["Santos", "Veronica", "Akia", "Olivia"].map((firstName) => ({ employeeGuid: firstName, firstName, since: "2026-10-09T14:00:00Z" }));
+    const d = deps({ unlinkedClockIns: async () => ({ count: entries.length, entries }) });
+    const { data } = await loadPulseSection(d, ctx(7), "people") as { data: PeopleData };
+    const baseline = await loadPulseSection(deps({ unlinkedClockIns: async () => ({ count: 0, entries: [] }) }), ctx(7), "people") as { data: PeopleData };
+    expect(data.here.length + data.hereUnlinked.length).toBe(6);
+    expect(data.hereUnlinked[0]).toEqual({ key: "Santos", name: "Santos", since: entries[0]!.since });
+    expect([data.stationsCovered, data.stationsOpen]).toEqual([baseline.data.stationsCovered, baseline.data.stationsOpen]);
+    expect(data.canLink).toBe(true);
+    for (const mode of ["card", "detail"] as const) {
+      const html = render(data, mode);
+      expect(html).toContain("Here now (6)");
+      expect(html).toContain("Not linked yet");
+      expect(html).toContain("Clocked in");
+      expect(html).toContain(`/admin/toast-employees?loc=${LOC}`);
+      expect(html).toContain(">Link</a>");
+      const names = ["Akia", "Ana Perez", "Olivia", "Santos", "Val Viewer", "Veronica"];
+      expect(names.map((name) => html.indexOf(`>${name}</span>`))).toEqual(names.map((name) => html.indexOf(`>${name}</span>`)).sort((a, b) => a - b));
+    }
+    expect(render(data, "card", "es")).toContain("Sin vincular todavía");
+    expect(render(data, "card", "es")).toContain(">Vincular</a>");
+  });
+  it("shows unnamed Toast employees without station claims and hides Link below level 7", async () => {
+    for (const level of [4, 5, 6]) {
+      const { data } = await loadPulseSection(deps({ unlinkedClockIns: async () => ({ count: 1, entries: [{ employeeGuid: "unknown", firstName: null, since: "2026-10-09T14:00:00Z" }] }) }), ctx(level), "people") as { data: PeopleData };
+      expect(data.canLink).toBe(false);
+      const html = render(data);
+      expect(html).toContain("Toast employee");
+      expect(html).toContain("Here now (3)");
+      expect(html).not.toContain("/admin/toast-employees");
+      const row = html.split("<li ").find((part) => part.includes("Toast employee"))!.split("</li>")[0];
+      expect(row).not.toContain("No station");
+    }
+  });
+  it("renders unavailable on read failure, retaining linked people", async () => {
+    const { data } = await loadPulseSection(deps({ unlinkedClockIns: async () => { throw new Error("read failed"); } }), ctx(7), "people") as { data: PeopleData };
+    expect(data.unlinked).toBeNull();
+    expect(data.hereUnlinked).toEqual([]);
+    expect(render(data)).toContain("Toast clock-ins could not be checked right now.");
+    expect(render(data)).toContain("Here now (2)");
+  });
+  it("uses the selected shop in the attention link", async () => {
+    const { data } = await loadPulseSection(deps(), ctx(7), "attention") as { data: AttentionData };
+    expect(data.items.find((r) => r.kind === "clockin_unlinked")?.href).toBe(`/admin/toast-employees?loc=${LOC}`);
+  });
+  it("deduplicates the bounded, scoped read by GUID, keeping the earliest entry and null names", async () => {
+    const query = {
+      select: vi.fn().mockReturnThis(), eq: vi.fn().mockReturnThis(), is: vi.fn().mockReturnThis(),
+      order: vi.fn().mockReturnThis(), limit: vi.fn().mockReturnThis(),
+      returns: vi.fn().mockResolvedValue({ data: [
+        { employee_guid: "a", employee_first_name: "Pat", in_at: "2026-10-09T13:00:00Z" },
+        { employee_guid: "b", employee_first_name: null, in_at: "2026-10-09T14:00:00Z" },
+        { employee_guid: "a", employee_first_name: "Pat", in_at: "2026-10-09T15:00:00Z" },
+        { employee_guid: "c", employee_first_name: "Pat", in_at: "2026-10-09T16:00:00Z" },
+      ], error: null }),
+    };
+    const service = { from: vi.fn(() => query) };
+    const read = defaultPulseDeps(service as unknown as SupabaseClient).unlinkedClockIns;
+    expect(await read(ctx(7))).toEqual({ count: 3, entries: [
+      { employeeGuid: "a", firstName: "Pat", since: "2026-10-09T13:00:00Z" },
+      { employeeGuid: "b", firstName: null, since: "2026-10-09T14:00:00Z" },
+      { employeeGuid: "c", firstName: "Pat", since: "2026-10-09T16:00:00Z" },
+    ] });
+    expect(service.from).toHaveBeenCalledWith("toast_time_entries");
+    expect(query.select).toHaveBeenCalledWith("employee_guid,employee_first_name,in_at");
+    expect(query.eq.mock.calls).toEqual([["location_id", LOC], ["business_date", ctx(7).date], ["deleted", false]]);
+    expect(query.is.mock.calls).toEqual([["user_id", null], ["out_at", null]]);
+    expect(query.order).toHaveBeenCalledWith("in_at", { ascending: true });
+    expect(query.limit).toHaveBeenCalledWith(20);
+    query.returns.mockResolvedValueOnce({ data: null, error: { message: "offline" } });
+    await expect(read(ctx(7))).rejects.toThrow("offline");
   });
 });

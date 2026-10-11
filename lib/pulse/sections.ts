@@ -41,6 +41,7 @@ import { loadHandoffRaw, projectHandoffNotes, PulseNotInstalledError, type Hando
 import { loadStationLayout } from "@/lib/pulse/layout";
 import { cachedSource, cachedStampedSource, sourceKey } from "@/lib/pulse/source-cache";
 import { pulseReadActor } from "@/lib/pulse/read-actor";
+import { LINK_ADMIN_MIN_LEVEL } from "@/lib/toast/employee-links";
 import { attentionEvidence, attentionScore, crewAttention, rankAttention, severityOf, stripAttentionRows } from "@/lib/pulse/attention-shared";
 import { baselineCumulative, cumulativeByHour, dowOf, hourCurve, paceDeltaPct, sameWeekdayCoverage } from "@/lib/pulse/baseline-shared";
 import { floorStations, mergeLayout } from "@/lib/pulse/floor-shared";
@@ -87,7 +88,7 @@ export interface PulseDeps {
   cateringToday(ctx: PulseCtx): Promise<CateringDueItem[]>;
   cateringTomorrow(ctx: PulseCtx): Promise<CateringTomorrow>;
   notRung(ctx: PulseCtx): Promise<NotInToastOrder[]>;
-  unlinkedClockIns(ctx: PulseCtx): Promise<{ count: number; names: string[] }>;
+  unlinkedClockIns(ctx: PulseCtx): Promise<{ count: number; entries: Array<{ employeeGuid: string; firstName: string | null; since: string }> }>;
   lastParPass(ctx: PulseCtx): Promise<ParPassFacts | null>;
   deliveries(ctx: PulseCtx): Promise<DeliveryView[]>;
   cutoffs(ctx: PulseCtx): Promise<{ count: number; vendors: OrderingCutoffAttention[] }>;
@@ -326,7 +327,7 @@ async function attention(deps: PulseDeps, ctx: PulseCtx): Promise<AttentionData>
     }
   }
   const unlinked = got("unlinked");
-  if (unlinked && unlinked.count > 0) rows.push({ key: "clockin_unlinked", kind: "clockin_unlinked", severity: severityOf("clockin_unlinked"), params: { count: unlinked.count, names: unlinked.names.join(", ") }, href: `/admin/toast-employees?location=${loc}`, action: "link" });
+  if (unlinked && unlinked.count > 0) rows.push({ key: "clockin_unlinked", kind: "clockin_unlinked", severity: severityOf("clockin_unlinked"), params: { count: unlinked.count, names: unlinked.entries.map((e) => e.firstName).filter(Boolean).join(", ") }, href: `/admin/toast-employees?loc=${loc}`, action: "link" });
 
   const ranked = rankAttention(crew ? crewAttention(rows, ctx.auth.user.id) : rows);
   const evidence = attentionEvidence(names.length, partial.length);
@@ -412,10 +413,12 @@ async function people(deps: PulseDeps, ctx: PulseCtx): Promise<PeopleData> {
   return {
     whosHere: board.whosHere === true,
     here, seenToday,
+    hereUnlinked: unlinked?.entries.map((e) => ({ key: e.employeeGuid, name: e.firstName, since: e.since })) ?? [],
+    canLink: ctx.auth.level >= LINK_ADMIN_MIN_LEVEL,
     onBreak: rows.filter((r) => r.onBreak).length,
     stationsCovered,
     stationsOpen,
-    freed, unlinked,
+    freed, unlinked: unlinked ? { count: unlinked.count } : null,
     timeline: timeline.slice(0, 200),
   };
 }
@@ -640,13 +643,20 @@ export function defaultPulseDeps(service: SupabaseClient): PulseDeps {
     cateringTomorrow: (ctx) => loadCateringTomorrow(service, { locationId: ctx.locationId, date: ctx.date }),
     notRung: (ctx) => readNotInToast(service, [ctx.locationId], { through: ctx.date }),
     unlinkedClockIns: async (ctx) => {
-      const { data, error } = await service.from("toast_time_entries").select("employee_first_name")
+      const { data, error } = await service.from("toast_time_entries").select("employee_guid,employee_first_name,in_at")
         .eq("location_id", ctx.locationId).eq("business_date", ctx.date).eq("deleted", false).is("user_id", null).is("out_at", null)
         .order("in_at", { ascending: true }).limit(UNLINKED_LIMIT)
-        .returns<Array<{ employee_first_name: string | null }>>();
+        .returns<Array<{ employee_guid: string; employee_first_name: string | null; in_at: string }>>();
       if (error) throw new Error(`pulse unlinked clock-ins: ${error.message}`);
-      const rows = data ?? [];
-      return { count: rows.length, names: rows.map((r) => r.employee_first_name).filter((n): n is string => !!n) };
+      // Ordered oldest first: retain the earliest open clock-in for each employee.
+      const unique = new Map<string, { employeeGuid: string; firstName: string | null; since: string }>();
+      for (const row of data ?? []) {
+        if (!unique.has(row.employee_guid)) unique.set(row.employee_guid, {
+          employeeGuid: row.employee_guid, firstName: row.employee_first_name, since: row.in_at,
+        });
+      }
+      const entries = [...unique.values()];
+      return { count: entries.length, entries };
     },
     lastParPass: async (ctx) => {
       const { data: ev, error } = await service.from("par_pass_events").select("id, walked_at, walked_by")
