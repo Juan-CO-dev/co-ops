@@ -98,7 +98,7 @@ describe("every pulse reader uses the predicate", () => {
     const never = async () => { throw new Error("not read"); };
     return {
       board: async () => b, reports: async () => reports, fridges: async () => [], cateringToday: async () => [], cateringTomorrow: async () => ({ count: 0, firstWindow: null }),
-      notRung: async () => [], unlinkedClockIns: async () => ({ count: 0, names: [] }), lastParPass: async () => null, deliveries: async () => [], cutoffs: async () => ({ count: 0, vendors: [] }),
+      notRung: async () => [], unlinkedClockIns: async () => ({ count: 0, entries: [] }), lastParPass: async () => null, deliveries: async () => [], cutoffs: async () => ({ count: 0, vendors: [] }),
       sales: never as never, handoff: async () => ({ notes: [], acks: [], names: {} }), layout: async () => ({ foh: { x: 0, y: 0 }, line: { x: 2, y: 2 } }),
     };
   }

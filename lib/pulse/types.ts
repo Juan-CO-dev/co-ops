@@ -129,13 +129,15 @@ export interface PersonRow {
 export interface PeopleData {
   whosHere: boolean;
   here: PersonRow[];
+  hereUnlinked: Array<{ key: string; name: string | null; since: string }>;
+  canLink: boolean;
   seenToday: PersonRow[];
   onBreak: number;
   stationsCovered: number;
   stationsOpen: number;
   freed: Array<{ name: string; stationName: string | null; at: string; reason: string }>;
   /** Null = the Toast clock-in read failed (unavailable, never "0 unlinked"). */
-  unlinked: { count: number; names: string[] } | null;
+  unlinked: { count: number } | null;
   /** Clock-ins/outs/breaks/covers as one timeline (detail page). */
   timeline: Array<{ at: string; kind: "clock_in" | "clock_out" | "break_start" | "break_end" | "station" | "release" | "end_shift"; name: string; detail: string | null }>;
 }

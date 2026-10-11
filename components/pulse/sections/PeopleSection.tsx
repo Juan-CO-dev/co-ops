@@ -19,11 +19,15 @@ function presenceText(p: PersonRow, t: ReturnType<typeof useTranslation>["t"], l
 
 export function PeopleSection({ data, mode, locationId }: { data: PeopleData; mode: "card" | "detail"; locationId: string }) {
   const { t, language } = useTranslation();
-  const list = mode === "card" ? data.here.slice(0, 8) : data.here;
+  const here = [
+    ...data.here.map((p) => ({ ...p, key: `user:${p.id}`, linked: p })),
+    ...data.hereUnlinked.map((p) => ({ ...p, key: `toast:${p.key}`, name: p.name ?? t("pulse.people.toast_employee"), linked: null })),
+  ].sort((a, b) => a.name.localeCompare(b.name, language));
+  const list = mode === "card" ? here.slice(0, 8) : here;
   return (
     <div className="flex flex-col gap-3">
       <div className="flex flex-wrap gap-x-3 gap-y-1 text-sm text-co-text-muted">
-        <span className="font-bold text-co-text">{t("pulse.people.here", { count: data.here.length })}</span>
+        <span className="font-bold text-co-text">{t("pulse.people.here", { count: here.length })}</span>
         {data.onBreak > 0 && <span>{t("pulse.people.on_break", { count: data.onBreak })}</span>}
         <span>{t("pulse.people.stations", { covered: data.stationsCovered, open: data.stationsOpen })}</span>
       </div>
@@ -31,9 +35,12 @@ export function PeopleSection({ data, mode, locationId }: { data: PeopleData; mo
       {list.length === 0 ? <p className="text-sm text-co-text-muted">{t("pulse.people.nobody")}</p> : (
         <ul className="flex flex-col divide-y divide-co-border/50">
           {list.map((p) => (
-            <li key={p.id} className="flex min-h-[44px] flex-wrap items-center justify-between gap-2 py-1">
-              <span className="min-w-0 text-sm"><span className="font-bold text-co-text">{p.name}</span>{p.onBreak && <span className="ml-2 rounded-full bg-co-warning-surface px-2 py-0.5 text-[10px] font-bold uppercase text-co-warning-text">{t("assignments.lifecycle.onBreak")}</span>}</span>
-              <span className="text-xs text-co-text-muted">{p.stationName ? `${p.stationName}${p.positionName ? ` · ${p.positionName}` : ""}` : t("pulse.people.no_station")} · {presenceText(p, t, language)}</span>
+            <li key={p.key} className="flex min-h-[44px] flex-wrap items-center justify-between gap-2 py-1">
+              <span className="min-w-0 text-sm"><span className="font-bold text-co-text">{p.name}</span>{p.linked?.onBreak && <span className="ml-2 rounded-full bg-co-warning-surface px-2 py-0.5 text-[10px] font-bold uppercase text-co-warning-text">{t("assignments.lifecycle.onBreak")}</span>}</span>
+              <span className="text-xs text-co-text-muted">{p.linked ? <>{p.linked.stationName ? `${p.linked.stationName}${p.linked.positionName ? ` · ${p.linked.positionName}` : ""}` : t("pulse.people.no_station")} · {presenceText(p.linked, t, language)}</> : <>
+                {t("pulse.people.not_linked")} · {t("whosHere.clockedIn", { time: formatTime(p.since!, language) })}
+                {data.canLink && <Link href={`/admin/toast-employees?loc=${encodeURIComponent(locationId)}`} className="ml-2 inline-flex min-h-[44px] items-center font-semibold text-co-text underline underline-offset-2">{t("pulse.people.link")}</Link>}
+              </>}</span>
             </li>
           ))}
         </ul>
@@ -41,7 +48,7 @@ export function PeopleSection({ data, mode, locationId }: { data: PeopleData; mo
       {data.unlinked === null && <p className="text-xs text-co-warning-text">{t("pulse.people.unlinked_unavailable")}</p>}
       {data.unlinked && data.unlinked.count > 0 && (
         <p className="text-xs font-semibold text-co-warning-text">
-          {data.unlinked.count === 1 ? t("pulse.people.unlinked_one", { names: data.unlinked.names.join(", ") }) : t("pulse.people.unlinked_other", { count: data.unlinked.count, names: data.unlinked.names.join(", ") })}
+          {t(data.unlinked.count === 1 ? "pulse.people.unlinked_one" : "pulse.people.unlinked_other", { count: data.unlinked.count })}
         </p>
       )}
       {data.freed.length > 0 && (

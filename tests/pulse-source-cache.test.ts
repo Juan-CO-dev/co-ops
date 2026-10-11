@@ -54,7 +54,7 @@ function deps(): PulseDeps & { counts: Record<string, number> } {
     board: count("board", { locationId: LOC, date: "2026-10-09", viewerId: "loader", viewerLevel: 0, stations: [], people: [], events: [], tasks: [] }),
     reports: count("reports", { rows: [], closingDone: false, midDayDoneCount: 0 }),
     fridges: count("fridges", []), cateringToday: count("cateringToday", []), cateringTomorrow: count("cateringTomorrow", { count: 0, firstWindow: null }),
-    notRung: count("notRung", []), unlinkedClockIns: count("unlinked", { count: 0, names: [] }), lastParPass: count("parPass", null),
+    notRung: count("notRung", []), unlinkedClockIns: count("unlinked", { count: 0, entries: [] }), lastParPass: count("parPass", null),
     deliveries: count("deliveries", []), cutoffs: count("cutoffs", { count: 0, vendors: [] }),
     sales: count("sales", {} as never), handoff: count("handoff", { notes: [], acks: [], names: {} }), layout: count("layout", null),
   };
