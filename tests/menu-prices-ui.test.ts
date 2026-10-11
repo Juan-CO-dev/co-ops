@@ -54,3 +54,10 @@ it("renders muted shop notices using location names", () => {
   expect(html).toContain("Shop B: Toast prices unavailable");
   expect(html).toContain("text-co-text-muted");
 });
+
+it.each(["en", "es"] as const)("shows unset per-shop menu notice in %s", (language) => {
+  const html = renderToStaticMarkup(createElement(TranslationProvider, { initialLanguage: language, children:
+    createElement(MenuCostingClient, { rows: [row], totals: summarizeMenuCostRows([row]), skuNames: {}, itemNames: {}, productNames: {},
+      toastNotices: [{ locationName: "Shop A", reason: "menu_not_set" }] }) }));
+  expect(html).toContain(language === "en" ? "Shop A: in-store Toast menu not set" : "Shop A: men\u00fa de Toast de la tienda sin configurar");
+});

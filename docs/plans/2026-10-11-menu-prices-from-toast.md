@@ -23,12 +23,14 @@ differs from Toast is flagged; an editable Price field covers what Toast lacks) 
 ## Rules
 
 1. **Toast in-store price** of a menu item = for each active, confirmed (`match_status = confirmed`) `toast_menu_map` row of that menu item:
-   - item rows: the item's `price` where it appears inside the menu named exactly `"Compliments Only"`
+   - item rows: the item's `price` where it appears inside the menu named exactly by that shop's
+     `locations.toast_in_store_menu_name`
      (walk nested `menuGroups`; same guid may appear more than once → collect all);
    - modifier rows: `modifierOptionReferences[*]` with that guid → `price`.
    Collect across both shops. Price ≤ 0 or missing is ignored. One distinct value → that price.
    Several distinct values → use the LOWEST and mark `toastPriceVaries: { min, max }`.
-   Constant `TOAST_IN_STORE_MENU = "Compliments Only"` in one place, with a comment saying why.
+   Null/blank menu configuration contributes no item prices and produces a per-shop `menu_not_set` notice;
+   modifier prices still count. The loader passes the name into both pure walker functions.
 2. **Effective price** (what Food cost / Margin use) = first of:
    a. `menu_items.menu_price` when set and > 0 (typed — wins);
    b. Toast in-store price (rule 1);
@@ -37,9 +39,10 @@ differs from Toast is flagged; an editable Price field covers what Toast lacks) 
    `priceSource: "typed" | "toast" | "same_as" | null`.
 3. **Flag**: when (a) is used AND a Toast in-store price exists AND they differ by ≥ 1 cent → badge
    "Toast: $X" (amber, not red). No flag for (b)/(c).
-4. **Zero-price modifiers** (e.g. Cheesy Boi filling = 0 in Toast): no effective price; show the line
-   "Included in the sub's price" instead of "—" for items whose section is "Modifier builds" and have no price.
-   Never divide by zero.
+4. **Included modifiers**: show "Included in the sub's price" only when there is no effective price AND
+   at least one active, confirmed `is_modifier` map row points to a Toast modifier option priced exactly 0.
+   The walker reports zero-price modifier GUIDs separately; nonpositive prices stay out of selling prices.
+   Section display text never determines inclusion. Never divide by zero.
 5. The page reads the CACHED payloads from `toast_menu_cache` only (no Toast API call at page load). Show a
    muted "Toast prices as of {fetched_at date}" note. If the cache read/parse fails, log a fixed code, fall back
    to typed prices (including one-hop typed-parent inheritance), and show a muted notice; the page must never 500 because of Toast.
@@ -60,6 +63,15 @@ It's a BOI Salad→It's a BOI · Marisa Tomei Eats Free Salad→Marisa Tomei Eat
 Sicky Wicky Club Salad→Sicky Wicky Club · The Frex Salad→The Frex · The Teamster Salad→The Teamster.
 (Exact-name match, `active = true`; abort on 0 or >1 match.)
 
+## Per-shop menu configuration - migration `0246_location_toast_in_store_menu.sql`
+
+Add nullable `locations.toast_in_store_menu_name`, constrained to 1-120 characters after `btrim` when set.
+Preserve existing locations grants and RLS; no client grants are added. Seed 50 configures every active
+Toast-linked location with the tenant's in-store menu name. It locks the target table, rejects conflicting
+configuration or an empty target set, skips already-configured rows, and audits each changed location with
+registered `system.config_update` (`destructive = true`, `actor_context = seed_50`); no location.update exists.
+Both SQL files remain unapplied pending CC's sim/prod gate.
+
 ## Editable price
 
 - Menu costing Details drawer: a "Selling price" money input + Save, and "Use Toast price" (clears the typed
@@ -72,7 +84,7 @@ Sicky Wicky Club Salad→Sicky Wicky Club · The Frex Salad→The Frex · The Te
 
 ## Code
 
-- New pure module `lib/toast/in-store-prices-shared.ts`: `inStorePricesByGuid(payload)` → Map<guid, cents[]>
+- New pure module `lib/toast/in-store-prices-shared.ts`: `inStorePricesByGuid(payload, menuName, lane)` returns `{ prices: Map<guid, cents[]>, zeroPriceModifierGuids: Set<guid> }`
   for items on the in-store menu + modifier options; `resolveMenuPrice(...)` implementing rules 1–4.
   Exhaustive unit tests incl. nested groups, same guid on two menus with different prices (only in-store
   counts), modifier lookup, varies-by-shop, zero price, typed-vs-Toast flag, same_as one hop.

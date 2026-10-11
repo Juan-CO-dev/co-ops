@@ -80,7 +80,7 @@ export function MenuCostingClient({
   canEditPrice?: boolean;
   toastFetchedAt?: string | null;
   toastUnavailable?: boolean;
-  toastNotices?: Array<{ locationName: string; reason: "unavailable" | "menu_missing" }>;
+  toastNotices?: Array<{ locationName: string; reason: "unavailable" | "menu_missing" | "menu_not_set" }>;
   rows: MenuCostRow[];
   totals: MenuCostTotals;
   skuNames: Record<string, string>;
@@ -131,7 +131,7 @@ export function MenuCostingClient({
           ? t("admin.menu_costing.price.as_of", { date: formatDateLabel(etCalendarDate(toastFetchedAt), language) }) : null}
       </p>
       {toastNotices.map((notice, index) => <p key={index} className="text-xs text-co-text-muted">
-        {t(notice.reason === "menu_missing" ? "admin.menu_costing.price.menu_missing" : "admin.menu_costing.price.shop_unavailable", { name: notice.locationName })}
+        {t(notice.reason === "menu_not_set" ? "admin.menu_costing.price.menu_not_set" : notice.reason === "menu_missing" ? "admin.menu_costing.price.menu_missing" : "admin.menu_costing.price.shop_unavailable", { name: notice.locationName })}
       </p>)}
       {/* Board state — never collapses (D2): the counts that say how much of this
           board is real yet. */}

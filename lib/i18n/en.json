@@ -1,4 +1,5 @@
 {
+  "admin.menu_costing.price.menu_not_set": "{name}: in-store Toast menu not set",
   "admin.menu_costing.price.catering_required": "Catering uses this price, so it can't be cleared. Type the price instead.",
   "admin.menu_costing.price.menu_missing": "{name}: in-store menu not found in Toast. Modifier prices are still available.",
   "admin.menu_costing.price.shop_unavailable": "{name}: Toast prices unavailable.",

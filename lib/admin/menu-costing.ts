@@ -92,7 +92,7 @@ export function costPerOzFromGraph(
 export interface MenuCostingBoard {
   toastFetchedAt: string | null;
   toastUnavailable: boolean;
-  toastNotices: Array<{ locationName: string; reason: "unavailable" | "menu_missing" }>;
+  toastNotices: Array<{ locationName: string; reason: "unavailable" | "menu_missing" | "menu_not_set" }>;
   rows: MenuCostRow[];
   totals: MenuCostTotals;
   /** Display names for the SKUs blocking at least one row, so the UI can name them. */
@@ -140,7 +140,7 @@ export async function loadMenuCostingBoard(actor: AuthContext): Promise<MenuCost
   const inputs: MenuCostInput[] = (menuRes.data ?? []).map((m) => {
     const parent = m.price_same_as_id ? menuById.get(m.price_same_as_id) : undefined;
     const resolved = resolveMenuPrice({
-      typedPrice: num(m.menu_price), toastPrices: toast.prices.get(m.id) ?? [], section: m.section,
+      typedPrice: num(m.menu_price), toastPrices: toast.prices.get(m.id) ?? [], hasZeroPriceModifier: toast.zeroPriceModifierItems.has(m.id),
       sameAs: parent ? { typedPrice: num(parent.menu_price), toastPrices: toast.prices.get(parent.id) ?? [] } : null,
     });
     return { id: m.id, name: m.name, nameEs: m.name_es, section: m.section,

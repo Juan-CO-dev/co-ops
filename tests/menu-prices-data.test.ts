@@ -14,7 +14,7 @@ import { loadMenuCostingBoard } from "@/lib/admin/menu-costing";
 import { updateMenuPrice } from "@/lib/admin/menu-prices";
 import { PATCH } from "@/app/api/admin/menu-items/[id]/price/route";
 import { NextRequest } from "next/server";
-import { TOAST_IN_STORE_MENU } from "@/lib/toast/in-store-prices-shared";
+const MENU_NAME = "Counter";
 import { costingRows } from "@/lib/report-export-shared";
 
 const id = "00000000-0000-0000-0000-000000000001";
@@ -28,7 +28,7 @@ let predicates: unknown[];
 beforeEach(() => {
   vi.clearAllMocks(); failed = null; rejected = false; writes = []; predicates = [];
   updateResult = { data: [{ id }], error: null };
-  const payload = (price: number) => ({ menus: [{ name: TOAST_IN_STORE_MENU, menuGroups: [{ menuItems: [{ guid: "sub", price }] }] }],
+  const payload = (price: number) => ({ menus: [{ name: MENU_NAME, menuGroups: [{ menuItems: [{ guid: "sub", price }] }] }],
     modifierOptionReferences: { bacon: { guid: "bacon", price: 2 } } });
   tables = {
     menu_items: [{ id, name: "Sub", name_es: null, section: "Subs", menu_price: null, price_same_as_id: null },
@@ -36,7 +36,7 @@ beforeEach(() => {
     toast_menu_map: ["a", "b"].map((location_id) => ({ location_id, menu_item_id: id, toast_item_guid: "sub", match_status: "confirmed", is_modifier: false })),
     toast_menu_cache: [{ restaurant_guid: "ra", payload: payload(12), fetched_at: "2026-10-01T12:00:00Z" },
       { restaurant_guid: "rb", payload: payload(13), fetched_at: "2026-10-02T12:00:00Z" }],
-    locations: [{ id: "a", name: "Shop A", toast_restaurant_guid: "ra" }, { id: "b", name: "Shop B", toast_restaurant_guid: "rb" }],
+    locations: [{ id: "a", name: "Shop A", toast_restaurant_guid: "ra", toast_in_store_menu_name: MENU_NAME }, { id: "b", name: "Shop B", toast_restaurant_guid: "rb", toast_in_store_menu_name: MENU_NAME }],
   };
   mocks.client.mockReturnValue({ from: (table: string) => {
     let updating = false;
@@ -69,7 +69,7 @@ describe("cache-only costing loader", () => {
       { location_id: "a", menu_item_id: "salad", toast_item_guid: "elsewhere", match_status: "confirmed", is_modifier: false },
     ];
     tables.toast_menu_cache![1] = { restaurant_guid: "rb", fetched_at: "2026-10-02", payload: {
-      menus: [{ name: TOAST_IN_STORE_MENU, menuGroups: [{ menuItems: [{ guid: "elsewhere", price: 99 }] }] }],
+      menus: [{ name: MENU_NAME, menuGroups: [{ menuItems: [{ guid: "elsewhere", price: 99 }] }] }],
     } };
     const board = await loadMenuCostingBoard(actor);
     expect(board.rows.find((r) => r.id === id)?.menuPrice).toBe(2);
@@ -187,4 +187,33 @@ it.each([null, 11])("refuses a stale tab with expected price %s before writing",
 });
 it("requires an explicit expected price", async () => {
   expect((await request({ menuPrice: 12 })).status).toBe(400);
+});
+
+it.each([null, "", "   "])("unset shop menu %s drops item prices but keeps modifiers", async (menuName) => {
+  tables.locations![0] = { ...(tables.locations![0] as object), toast_in_store_menu_name: menuName };
+  tables.toast_menu_map!.push({ location_id: "a", menu_item_id: "salad", toast_item_guid: "bacon", is_modifier: true, match_status: "confirmed" });
+  const board = await loadMenuCostingBoard(actor);
+  expect(board.rows.find(r => r.id === id)?.menuPrice).toBe(13);
+  expect(board.rows.find(r => r.id === "salad")?.menuPrice).toBe(2);
+  expect(board.toastNotices).toEqual([{ locationName: "Shop A", reason: "menu_not_set" }]);
+});
+it("uses per-shop menu names even when shops share a Toast restaurant", async () => {
+  tables.locations![1] = { ...(tables.locations![1] as object), toast_restaurant_guid: "ra", toast_in_store_menu_name: "Other counter" };
+  tables.toast_menu_map = [{ location_id: "a", menu_item_id: id, toast_item_guid: "sub", is_modifier: false, match_status: "confirmed" }];
+  const payload = (tables.toast_menu_cache![0] as { payload: { menus: unknown[] } }).payload;
+  payload.menus.push({ name: "Other counter", menuGroups: [{ menuItems: [{ guid: "sub", price: 4 }] }] });
+  expect((await loadMenuCostingBoard(actor)).rows.find(r => r.id === id)?.menuPrice).toBe(12);
+  tables.toast_menu_map.push({ location_id: "b", menu_item_id: id, toast_item_guid: "sub", is_modifier: false, match_status: "confirmed" });
+  expect((await loadMenuCostingBoard(actor)).rows.find(r => r.id === id)?.toastPriceVaries).toEqual({ min: 400, max: 1200 });
+});
+it.each([
+  ["confirmed", true, 0, true], ["pending", true, 0, false], ["rejected", true, 0, false],
+  ["confirmed", false, 0, false], ["confirmed", true, -1, false], ["confirmed", true, 0.001, false],
+] as const)("included uses confirmed modifier zero evidence (%s, %s, %s)", async (status, modifier, price, included) => {
+  tables.menu_items![0] = { ...(tables.menu_items![0] as object), section: "Modifier builds" };
+  tables.toast_menu_map = [{ location_id: "a", menu_item_id: id, toast_item_guid: "free", is_modifier: modifier, match_status: status }];
+  tables.toast_menu_cache![0] = { restaurant_guid: "ra", fetched_at: "2026-10-01", payload: {
+    menus: [], modifierOptionReferences: { free: { guid: "free", price } },
+  } };
+  expect((await loadMenuCostingBoard(actor)).rows.find(r => r.id === id)).toMatchObject({ menuPrice: null, includedInSubPrice: included });
 });
