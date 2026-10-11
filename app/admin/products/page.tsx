@@ -23,12 +23,16 @@ import { listProducts, PRODUCT_READ_MIN, ProductError, type ProductView } from "
 import { loadSkus } from "@/lib/admin/skus";
 import { ProductsClient } from "@/components/admin/products/ProductsClient";
 import { PageHeader } from "@/components/ui/PageHeader";
+import { loadProductItemLinks } from "@/lib/admin/product-item-links";
 
-export default async function AdminProductsPage() {
+export default async function AdminProductsPage({ searchParams }: {
+  searchParams: Promise<{ product?: string }>;
+}) {
   const auth = await requireSessionFromHeaders("/admin");
   const level = ROLES[auth.user.role].level;
   if (level < PRODUCT_READ_MIN) redirect("/dashboard");
   const lang = auth.user.language;
+  const targetProductId = (await searchParams).product;
 
   let products: ProductView[] = [];
   let schemaPending = false;
@@ -40,10 +44,18 @@ export default async function AdminProductsPage() {
   }
 
   const sb = getServiceRoleClient();
-  const [skus, locRes] = await Promise.all([
+  // The link read is tolerated locally: a failure must not take down attach / retire / primary.
+  // The human sees a "links couldn't load" notice instead of silently empty "Used in" lines.
+  const [skus, locRes, relationships] = await Promise.all([
     loadSkus(auth),
     sb.from("locations").select("id, name").eq("active", true).order("name"),
+    schemaPending ? Promise.resolve(null) : loadProductItemLinks(auth).catch((e) => {
+      console.error("product/item links load failed (rendering without links)", e);
+      return "unavailable" as const;
+    }),
   ]);
+  const linksUnavailable = relationships === "unavailable";
+  const usedInByProduct = relationships && relationships !== "unavailable" ? relationships.usedInByProduct : {};
 
   const skuOptions = skus
     .filter((s) => s.active)
@@ -63,12 +75,21 @@ export default async function AdminProductsPage() {
         title={serverT(lang, "admin.products.title")}
         subtitle={serverT(lang, "admin.products.subtitle")}
       />
+      <p className="mt-2 text-sm text-co-text-muted">{serverT(lang, "admin.products.explainer")}</p>
+      {linksUnavailable ? (
+        <p role="status" className="mt-3 rounded-lg border-2 border-co-warning bg-co-warning-surface px-3 py-2 text-xs font-bold text-co-text">
+          {serverT(lang, "admin.relationships.unavailable")}
+        </p>
+      ) : null}
       {schemaPending ? (
         <div className="mt-5 rounded-2xl border-2 border-dashed border-co-border p-6 text-center text-sm text-co-text-muted">
           {serverT(lang, "admin.products.schema_pending")}
         </div>
       ) : (
         <ProductsClient
+          key={targetProductId ?? "all"}
+          targetProductId={targetProductId}
+          usedInByProduct={usedInByProduct}
           products={products}
           skus={skuOptions}
           locations={locations}

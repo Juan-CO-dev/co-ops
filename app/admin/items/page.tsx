@@ -21,11 +21,14 @@ import { CatalogClient } from "@/components/admin/catalog/CatalogClient";
 import { ItemsPageTabs } from "@/components/admin/catalog/ItemsPageTabs";
 import { PageHeader } from "@/components/ui/PageHeader";
 
-export default async function AdminItemsPage() {
+export default async function AdminItemsPage({ searchParams }: {
+  searchParams: Promise<{ view?: string }>;
+}) {
   const auth = await requireSessionFromHeaders("/admin/items");
   const level = getRoleLevel(auth.user.role);
   if (level < ITEMS_READ_MIN) redirect("/dashboard");
   const lang = auth.user.language;
+  const initialView = (await searchParams).view === "registry" ? "registry" : "catalog";
 
   const [view, entities] = await Promise.all([
     loadItemsAdminView(auth),
@@ -49,6 +52,8 @@ export default async function AdminItemsPage() {
         subtitle={serverT(lang, "admin.catalog.subtitle")}
       />
       <ItemsPageTabs
+        key={initialView}
+        initialView={initialView}
         catalog={<CatalogClient entities={entities} actorLevel={level} />}
         registry={<ItemsClient view={view} itemReadiness={itemReadiness} />}
       />

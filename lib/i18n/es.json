@@ -1,4 +1,11 @@
 {
+  "admin.relationships.prep_item": "Artículo de preparación",
+  "admin.relationships.purchased_product": "Producto comprado",
+  "admin.relationships.made_from": "Se prepara con:",
+  "admin.relationships.used_in": "Se usa en:",
+  "admin.relationships.sub_prep": "preparación previa",
+  "admin.relationships.unavailable": "No se pudieron cargar los enlaces Se prepara con / Se usa en. Todo lo demás funciona: actualiza para reintentar.",
+  "admin.products.explainer": "Un producto agrupa lo mismo de distintos proveedores. Lo que compras a un solo proveedor (como el tocino) no necesita un producto: las recetas usan el SKU directamente.",
   "catering.toast_pending.title": "Aún no registrado en Toast",
   "catering.toast_pending.count": "{n} pedidos",
   "catering.toast_pending.overdue": "ATRASADO",
