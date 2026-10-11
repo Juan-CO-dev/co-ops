@@ -173,6 +173,7 @@ export const DESTRUCTIVE_ACTIONS = [
   "backup.tossed",
   "backup.toss_retracted",
   "menu_item.create",
+  "menu_item.update",
 
   // Category registry (Vendor Directory v2, Slice A).
   // — category.create adds a category to the shared `categories` registry (MoO+,

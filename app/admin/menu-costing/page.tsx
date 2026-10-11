@@ -1,9 +1,9 @@
 /**
  * /admin/menu-costing — the menu costing board.
  *
- * READ-ONLY payoff surface: every active menu_item priced against its rolled-up
+ * Menu costing payoff surface: every active menu_item priced against its rolled-up
  * food cost, with food-cost %, $ margin, and an inline count of the ingredient
- * lines we cannot price yet. No mutations, no step-up.
+ * lines we cannot price yet. Level 8+ can edit selling prices with Tier B step-up.
  *
  * DORMANT-SAFE BY DESIGN: with an empty price ledger every row renders as
  * "not yet priced" with its blocking-SKU count — the correct day-one output,
@@ -34,7 +34,7 @@ export default async function AdminMenuCostingPage() {
   if (level < MENU_COSTING_READ_MIN) redirect("/dashboard");
   const lang = auth.user.language;
 
-  const { rows, totals, skuNames, itemNames, productNames } = await loadMenuCostingBoard(auth);
+  const { rows, totals, skuNames, itemNames, productNames, toastFetchedAt, toastUnavailable } = await loadMenuCostingBoard(auth);
 
   return (
     <div>
@@ -44,6 +44,9 @@ export default async function AdminMenuCostingPage() {
       />
       <ExportLinks className="mb-4" family="costing" language={lang} query={{}} />
       <MenuCostingClient
+        canEditPrice={level >= 8}
+        toastFetchedAt={toastFetchedAt}
+        toastUnavailable={toastUnavailable}
         rows={rows}
         totals={totals}
         skuNames={skuNames}

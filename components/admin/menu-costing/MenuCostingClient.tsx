@@ -5,7 +5,7 @@
  *
  * One row per active menu_item: name · menu price · rolled-up cost · food-cost %
  * · $ margin, with an inline `(N unpriced)` badge naming exactly how incomplete
- * the number is. Read-only: nothing here mutates.
+ * the number is. Level 8+ may edit selling prices in the details drawer.
  *
  * HONESTY RULES this component enforces at the render layer (the whole point of
  * the screen — see lib/menu-costing-shared.ts for the math side):
@@ -39,6 +39,9 @@
 
 import { useMemo, useState, type ReactNode } from "react";
 
+import { MenuPriceEditor } from "./MenuPriceEditor";
+import { formatDateLabel } from "@/lib/i18n/format";
+import { etCalendarDate } from "@/lib/operational-day";
 import { useTranslation } from "@/lib/i18n/provider";
 import type { TranslationKey } from "@/lib/i18n/types";
 import { AlertPill } from "@/components/ui/AlertPill";
@@ -69,7 +72,13 @@ export function MenuCostingClient({
   skuNames,
   itemNames,
   productNames,
+  canEditPrice = false,
+  toastFetchedAt = null,
+  toastUnavailable = false,
 }: {
+  canEditPrice?: boolean;
+  toastFetchedAt?: string | null;
+  toastUnavailable?: boolean;
   rows: MenuCostRow[];
   totals: MenuCostTotals;
   skuNames: Record<string, string>;
@@ -115,6 +124,10 @@ export function MenuCostingClient({
 
   return (
     <div className="mt-4 flex flex-col gap-3">
+      <p className="text-xs text-co-text-muted">
+        {toastUnavailable ? t("admin.menu_costing.price.unavailable") : toastFetchedAt
+          ? t("admin.menu_costing.price.as_of", { date: formatDateLabel(etCalendarDate(toastFetchedAt), language) }) : null}
+      </p>
       {/* Board state — never collapses (D2): the counts that say how much of this
           board is real yet. */}
       <div className="co-card flex flex-wrap items-center gap-x-5 gap-y-2 p-3">
@@ -180,7 +193,7 @@ export function MenuCostingClient({
                         <span className="mt-1 grid grid-cols-2 gap-x-4 gap-y-1 sm:flex sm:flex-wrap sm:gap-x-5">
                           <Metric
                             label={t("admin.menu_costing.col.price")}
-                            value={money(row.menuPrice)}
+                            value={row.includedInSubPrice ? t("admin.menu_costing.price.included") : money(row.menuPrice)}
                           />
                           <Metric
                             label={t("admin.menu_costing.col.cost")}
@@ -196,10 +209,15 @@ export function MenuCostingClient({
                             value={money(row.marginDollars)}
                           />
                         </span>
+                        {row.priceSource === "toast" && <span className="block text-xs text-co-text-muted">{t("admin.menu_costing.price.from_toast")}</span>}
+                        {row.priceSource === "same_as" && <span className="block text-xs text-co-text-muted">{t("admin.menu_costing.price.same_as", { name: (language === "es" ? row.sameAsNameEs ?? row.sameAsName : row.sameAsName) ?? "" })}</span>}
+                        {row.toastPriceVaries && <span className="block text-xs text-co-text-muted">{t("admin.menu_costing.price.varies", { min: money(row.toastPriceVaries.min / 100), max: money(row.toastPriceVaries.max / 100) })}</span>}
                       </span>
                     }
-                    badges={<RowBadges row={row} t={t} />}
+                    badges={<>{row.priceFlag && <AlertPill tone="warn">{t("admin.menu_costing.price.flag", { amount: money((row.toastPriceCents ?? 0) / 100) })}</AlertPill>}<RowBadges row={row} t={t} /></>}
                   >
+                    {canEditPrice ? <MenuPriceEditor key={`${row.id}:${row.typedPrice}`} row={row} /> :
+                      <p className="mb-2 text-xs text-co-text-muted">{t("admin.menu_costing.price.label")}: {row.includedInSubPrice ? t("admin.menu_costing.price.included") : money(row.menuPrice)}</p>}
                     <RowDrawer
                       row={row}
                       skuNames={skuNames}

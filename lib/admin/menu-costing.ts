@@ -7,7 +7,8 @@
  *
  * BATCH-LOADED, NEVER PER-NODE (the loadRecipeGraph law, AGENTS.md): ONE
  * loadRecipeGraph() for the whole recipe universe (6 fixed queries) + ONE
- * price read + ONE menu_items read + at most TWO name reads (the blocking SKUs,
+ * ingredient-price read + ONE menu_items read + THREE cache/crosswalk/location
+ * reads + at most THREE name reads (the blocking SKUs,
  * and the prep items a row is waiting on — mass-inconsistent or never-weighed,
  * both in the same lookup — each skipped when that failure mode is absent).
  * Cost for 68 menu items costs the same number of queries as for one.
@@ -30,6 +31,8 @@
  * this board's population and a subset of the catalog those screens list.
  */
 import "server-only";
+import { loadCachedMenuPrices } from "@/lib/admin/menu-costing-toast";
+import { resolveMenuPrice } from "@/lib/toast/in-store-prices-shared";
 
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import { getRoleLevel } from "@/lib/roles";
@@ -87,6 +90,8 @@ export function costPerOzFromGraph(
 }
 
 export interface MenuCostingBoard {
+  toastFetchedAt: string | null;
+  toastUnavailable: boolean;
   rows: MenuCostRow[];
   totals: MenuCostTotals;
   /** Display names for the SKUs blocking at least one row, so the UI can name them. */
@@ -118,24 +123,30 @@ export async function loadMenuCostingBoard(actor: AuthContext): Promise<MenuCost
   requireLevel(actor, MENU_COSTING_READ_MIN);
   const sb = getServiceRoleClient();
 
-  const [graph, menuRes] = await Promise.all([
+  const [graph, menuRes, toast] = await Promise.all([
     loadRecipeGraph(),
     sb
       .from("menu_items")
-      .select("id, name, name_es, section, menu_price")
+      .select("id, name, name_es, section, menu_price, price_same_as_id")
       .eq("active", true)
       .order("name")
-      .returns<Array<{ id: string; name: string; name_es: string | null; section: string | null; menu_price: number | string | null }>>(),
+      .returns<Array<{ id: string; name: string; name_es: string | null; section: string | null; menu_price: number | string | null; price_same_as_id: string | null }>>(),
+    loadCachedMenuPrices(),
   ]);
   if (menuRes.error) throw new Error(`loadMenuCostingBoard menu_items: ${menuRes.error.message}`);
 
-  const inputs: MenuCostInput[] = (menuRes.data ?? []).map((m) => ({
-    id: m.id,
-    name: m.name,
-    nameEs: m.name_es,
-    section: m.section,
-    menuPrice: num(m.menu_price),
-  }));
+  const menuById = new Map((menuRes.data ?? []).map((m) => [m.id, m]));
+  const inputs: MenuCostInput[] = (menuRes.data ?? []).map((m) => {
+    const parent = m.price_same_as_id ? menuById.get(m.price_same_as_id) : undefined;
+    const resolved = resolveMenuPrice({
+      typedPrice: num(m.menu_price), toastPrices: toast.prices.get(m.id) ?? [], section: m.section,
+      // A cache failure means typed-only, including no inherited fallback.
+      sameAs: parent && !toast.unavailable ? { typedPrice: num(parent.menu_price), toastPrices: toast.prices.get(parent.id) ?? [] } : null,
+    });
+    return { id: m.id, name: m.name, nameEs: m.name_es, section: m.section,
+      ...resolved, menuPrice: resolved.effectivePrice, typedPrice: num(m.menu_price),
+      sameAsName: parent?.name ?? null, sameAsNameEs: parent?.name_es ?? null };
+  });
 
   const prices = await loadCurrentSkuPrices([...graph.skuPack.keys()]);
   const rows = composeMenuCostRows(inputs, graph, costPerOzFromGraph(graph, prices));
@@ -169,5 +180,5 @@ export async function loadMenuCostingBoard(actor: AuthContext): Promise<MenuCost
   for (const i of itemRes.data ?? []) itemNames[i.id] = { en: i.name, es: i.name_es };
   for (const p of productRes.data ?? []) productNames[p.id] = { en: p.name, es: p.name_es };
 
-  return { rows, totals, skuNames, itemNames, productNames };
+  return { rows, totals, skuNames, itemNames, productNames, toastFetchedAt: toast.fetchedAt, toastUnavailable: toast.unavailable };
 }
