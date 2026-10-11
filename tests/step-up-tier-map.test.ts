@@ -180,6 +180,9 @@ const SERVER_TIER_MAP: Record<string, string[]> = {
   "app/api/admin/toast-sales/pull/route.ts": ["A"],
   "app/api/admin/users/[id]/activate/route.ts": ["B"],
   "app/api/admin/users/[id]/deactivate/route.ts": ["B"],
+  // Display-only dormancy: UserActions.run("B") joins both writers to the same fresh step-up.
+  "app/api/admin/users/[id]/dormant/route.ts": ["B"],
+  "app/api/admin/users/[id]/wake/route.ts": ["B"],
   "app/api/admin/users/[id]/locations/route.ts": ["B"],
   "app/api/admin/users/[id]/reset-pin/route.ts": ["B"],
   "app/api/admin/users/[id]/role/route.ts": ["B"],

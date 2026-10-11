@@ -101,3 +101,23 @@ Week 1 / 0223: modifiedDate cursor, durable backlog, lease/fencing, immutable ge
 - Gate: 150/152 passed. The 2 failures (MEP 2026-08-01, EM 2026-08-06) are test-fixture rows in the legacy ledger (check_guid `check-1`..`check-4`, generic items, written in one instant): the capture is correct and the legacy ledger over-counted those days. Purge them when legacy write grants are retired (0224).
 - Intraday capture verified live before the flip (today + yesterday captured at 21:40 ET).
 - **Flipped:** Vercel production `DEPLETION_SOURCE=capture` (Juan's word: "switch now"). Rollback = delete the var + redeploy; backfill gap days with the legacy nightly `?date=`.
+
+## Dormant people: labor history (0244)
+
+Run `node scripts/sql-harness-0244.mjs` for the local synthetic Postgres proof (requires the
+declared PGlite dependency). CC then applies `0244_dormant_people.sql` to sim, verifies its
+column/RPC grants there, and applies to production before deploying the app. The local harness
+does not verify either remote database.
+With credentials injected by the approved operator environment and `TOAST_LABOR_PULL=1`:
+
+```powershell
+node --conditions=react-server --import tsx scripts/backfill-toast-labor.ts --from 2026-04-10 --through 2026-10-09
+```
+
+Choose the dates explicitly: through must be at most T-2 in Eastern time. The script runs seven-day
+chunks sequentially, stops on failure, and prints counts and fixed failure codes only. Reruns upsert
+existing entries. The existing pull also refreshes the recent modification window for tombstones;
+historical chunks never reconcile current assignments. Its `toast-labor-pull-backfill` heartbeat is
+intentionally absent from the required daily job registry. Confirm history coverage before relying
+on the collapsed lists: absent Toast history is not proof of provider retention. Dormancy never
+enables a deactivated login; manual wake clears only the manual marker.

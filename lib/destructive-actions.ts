@@ -80,6 +80,8 @@ export const DESTRUCTIVE_ACTIONS = [
   "user.create",
   "user.activate",
   "user.deactivate",
+  "user.dormant",
+  "user.wake",
   "user.promote",
   "user.demote",
   "user.change_locations",

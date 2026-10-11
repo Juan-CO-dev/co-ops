@@ -4,7 +4,9 @@ import { useRouter } from "next/navigation";
 import { useTranslation } from "@/lib/i18n/provider";
 import { useStepUp } from "@/components/admin/StepUpProvider";
 import type { TranslationKey } from "@/lib/i18n/types";
-import type { LinkReview } from "@/lib/toast/employee-links";
+import { formatDateLabel } from "@/lib/i18n/format";
+import { etCalendarDate } from "@/lib/operational-day";
+import type { LinkReview, ReviewEmployeeView } from "@/lib/toast/employee-links";
 
 const button = "inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-gold-deep bg-co-gold px-4 font-bold text-co-text";
 const dangerButton = "inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-cta-text bg-co-surface px-4 font-bold text-co-cta-text";
@@ -20,7 +22,7 @@ const ERRORS: Record<string, TranslationKey> = {
 
 /** Review Toast employees no one has linked yet; link with a tap, unlink a wrong match. */
 export function ToastEmployeeLinks({ review }: { review: LinkReview }) {
-  const { t } = useTranslation();
+  const { t, language } = useTranslation();
   const { requestStepUp } = useStepUp();
   const router = useRouter();
   const [busy, setBusy] = useState(false);
@@ -47,15 +49,14 @@ export function ToastEmployeeLinks({ review }: { review: LinkReview }) {
     } catch { setError("toastLinks.error.generic"); } finally { setBusy(false); }
   }
   const kindLabel = (kind: "full_name" | "last_name" | "first_name") => t(`toastLinks.kind.${kind}`);
-  return <div className="space-y-4" aria-busy={disabled}>
-    {error && <p role="alert" className="text-co-cta-text">{t(error)}</p>}
-    {review.toastError && <p role="status" className="co-card p-4 text-co-text-muted">{t(review.toastError === "toast_employees_not_connected" ? "toastLinks.notConnected" : "toastLinks.toastUnavailable")}</p>}
-    <section className="co-card min-w-0 space-y-3 p-4">
-      <h2 className="text-lg font-bold text-co-text">{t("toastLinks.unlinkedTitle", { count: review.unlinked.length })}</h2>
-      <p className="text-sm text-co-text-muted">{t("toastLinks.unlinkedHint")}</p>
-      {review.unlinked.length === 0 && !review.toastError && <p className="text-sm text-co-text-muted">{t("toastLinks.allLinked")}</p>}
-      <ul className="space-y-3">{review.unlinked.map((row) => <li key={row.guid} className="min-w-0 space-y-2 rounded-xl border border-co-border p-3">
+  const seen = review.unlinked.filter((row) => !row.notSeen);
+  const notSeen = review.unlinked.filter((row) => row.notSeen);
+  const renderRows = (rows: ReviewEmployeeView[]) => (
+      <ul className="space-y-3">{rows.map((row) => <li key={row.guid} className="min-w-0 space-y-2 rounded-xl border border-co-border p-3">
         <p className="truncate font-bold text-co-text" title={row.name}>{row.name}</p>
+        {row.notSeen && !row.deleted && <p className="text-sm text-co-text-muted">{row.lastClockInAt
+          ? t("toastLinks.lastClockIn", { date: formatDateLabel(etCalendarDate(row.lastClockInAt), language) })
+          : t("toastLinks.noClockIn")}</p>}
         {row.deleted && <p className="text-sm text-co-text-muted">{t("toastLinks.archived")}</p>}
         {row.suggestions.length > 0 && <ul className="space-y-2">{row.suggestions.map((s) => <li key={s.userId} className="flex flex-wrap items-center gap-2">
           <button type="button" className={button} disabled={disabled}
@@ -76,6 +77,20 @@ export function ToastEmployeeLinks({ review }: { review: LinkReview }) {
           <button type="submit" className={button} disabled={disabled}>{t("toastLinks.link")}</button>
         </form>
       </li>)}</ul>
+  );
+  return <div className="space-y-4" aria-busy={disabled}>
+    {error && <p role="alert" className="text-co-cta-text">{t(error)}</p>}
+    {review.clockHistoryUnavailable && <p role="status" className="text-sm text-co-text-muted">{t("toastLinks.clockHistoryUnavailable")}</p>}
+    {review.toastError && <p role="status" className="co-card p-4 text-co-text-muted">{t(review.toastError === "toast_employees_not_connected" ? "toastLinks.notConnected" : "toastLinks.toastUnavailable")}</p>}
+    <section className="co-card min-w-0 space-y-3 p-4">
+      <h2 className="text-lg font-bold text-co-text">{t("toastLinks.unlinkedTitle", { count: seen.length })}</h2>
+      <p className="text-sm text-co-text-muted">{t("toastLinks.unlinkedHint")}</p>
+      {review.unlinked.length === 0 && !review.toastError && <p className="text-sm text-co-text-muted">{t("toastLinks.allLinked")}</p>}
+      {renderRows(seen)}
+      {notSeen.length > 0 && <details>
+        <summary className="min-h-[44px] cursor-pointer py-3 font-bold text-co-text">{t("toastLinks.notSeenTitle", { count: notSeen.length })}</summary>
+        {renderRows(notSeen)}
+      </details>}
     </section>
     <section className="co-card min-w-0 space-y-3 p-4">
       <h2 className="text-lg font-bold text-co-text">{t("toastLinks.linkedTitle", { count: review.links.length })}</h2>

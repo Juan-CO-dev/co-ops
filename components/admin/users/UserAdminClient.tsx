@@ -58,6 +58,65 @@ export function UserAdminClient({
     currentFilters.location !== "" ||
     currentFilters.q !== "";
 
+  const dormantUsers = users.filter((u) => u.dormancy.dormant);
+  const renderRows = (rows: AdminUserListItem[]) => (
+      <ul className="mt-5 grid grid-cols-1 gap-3 lg:grid-cols-2">
+        {rows.map((u) => {
+          const actionable = canActOn(actorRole, u.role);
+          return (
+            <li
+              key={u.id}
+              className="co-card min-w-0 break-words p-4"
+            >
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <div className="text-base font-bold text-co-text">{u.name}</div>
+                  <div className="mt-0.5 text-sm text-co-text-muted">
+                    {t(`role.${u.role}` as TranslationKey)}
+                  </div>
+                  <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-co-text-muted">
+                    <span>
+                      {t("admin.users.col.locations")}:{" "}
+                      {u.locationIds.length > 0 ? u.locationIds.map(locCode).join(", ") : "—"}
+                    </span>
+                    <span>
+                      {t("admin.users.col.status")}:{" "}
+                      {u.active ? t("admin.users.status.active") : t("admin.users.status.inactive")}
+                    </span>
+                    <span>
+                      {t("admin.users.col.last_login")}:{" "}
+                      {u.lastLoginAt
+                        ? `${formatDateLabel(etCalendarDate(u.lastLoginAt), language)} ${formatTime(u.lastLoginAt, language)}`
+                        : t("admin.users.last_login.never")}
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              {u.dormancy.dormant && <p className="mt-2 text-sm text-co-text-muted">
+                {u.dormancy.reason === "deactivated" ? t("admin.users.dormancy.deactivated")
+                  : t(u.dormancy.reason === "manual" ? "admin.users.dormancy.manual" : "admin.users.dormancy.noClockIn",
+                    { date: u.dormancy.since ? formatDateLabel(etCalendarDate(u.dormancy.since), language) : "" })}
+              </p>}
+              <div className="mt-3 border-t border-co-border-2 pt-3">
+                {actionable ? (
+                  <UserActions
+                    user={u}
+                    assignableRoles={assignableRoles}
+                    accessibleLocations={accessibleLocations}
+                  />
+                ) : (
+                  <p className="text-[11px] italic text-co-text-muted" title={t("admin.users.cant_act")}>
+                    {t("admin.users.cant_act")}
+                  </p>
+                )}
+              </div>
+            </li>
+          );
+        })}
+      </ul>
+  );
+
   return (
     <div className="mt-5">
       {/* Filter bar */}
@@ -140,56 +199,15 @@ export function UserAdminClient({
           className="mt-5"
         />
       ) : (
-      <ul className="mt-5 grid grid-cols-1 gap-3 lg:grid-cols-2">
-        {users.map((u) => {
-          const actionable = canActOn(actorRole, u.role);
-          return (
-            <li
-              key={u.id}
-              className="co-card p-4"
-            >
-              <div className="flex flex-wrap items-start justify-between gap-3">
-                <div>
-                  <div className="text-base font-bold text-co-text">{u.name}</div>
-                  <div className="mt-0.5 text-sm text-co-text-muted">
-                    {t(`role.${u.role}` as TranslationKey)}
-                  </div>
-                  <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-co-text-muted">
-                    <span>
-                      {t("admin.users.col.locations")}:{" "}
-                      {u.locationIds.length > 0 ? u.locationIds.map(locCode).join(", ") : "—"}
-                    </span>
-                    <span>
-                      {t("admin.users.col.status")}:{" "}
-                      {u.active ? t("admin.users.status.active") : t("admin.users.status.inactive")}
-                    </span>
-                    <span>
-                      {t("admin.users.col.last_login")}:{" "}
-                      {u.lastLoginAt
-                        ? `${formatDateLabel(etCalendarDate(u.lastLoginAt), language)} ${formatTime(u.lastLoginAt, language)}`
-                        : t("admin.users.last_login.never")}
-                    </span>
-                  </div>
-                </div>
-              </div>
-
-              <div className="mt-3 border-t border-co-border-2 pt-3">
-                {actionable ? (
-                  <UserActions
-                    user={u}
-                    assignableRoles={assignableRoles}
-                    accessibleLocations={accessibleLocations}
-                  />
-                ) : (
-                  <p className="text-[11px] italic text-co-text-muted" title={t("admin.users.cant_act")}>
-                    {t("admin.users.cant_act")}
-                  </p>
-                )}
-              </div>
-            </li>
-          );
-        })}
-      </ul>
+      <>
+        {renderRows(hasActiveFilters ? users : users.filter((u) => !u.dormancy.dormant))}
+        {!hasActiveFilters && dormantUsers.length > 0 && <details className="mt-5">
+          <summary className="min-h-[44px] cursor-pointer py-3 font-bold text-co-text">
+            {t("admin.users.dormancy.title", { count: dormantUsers.length })}
+          </summary>
+          {renderRows(dormantUsers)}
+        </details>}
+      </>
       )}
 
       {creating ? (

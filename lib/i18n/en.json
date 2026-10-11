@@ -5937,5 +5937,17 @@
   "pulse.inventory.receiving_unavailable": "Receiving could not be read right now.",
   "pulse.inventory.cutoffs_unavailable": "Order cutoffs could not be read right now.",
   "pulse.people.unlinked_unavailable": "Toast clock-ins could not be checked right now.",
-  "pulse.catering.crew_note": "Timing only: names and details are on the catering board for managers."
+  "pulse.catering.crew_note": "Timing only: names and details are on the catering board for managers.",
+  "admin.users.dormancy.title": "Dormant & deactivated ({count})",
+  "admin.users.dormancy.deactivated": "Deactivated",
+  "admin.users.dormancy.manual": "Marked dormant {date}",
+  "admin.users.dormancy.noClockIn": "No clock-in since {date}",
+  "admin.users.action.dormant": "Move to dormant",
+  "admin.users.action.wake": "Move back to active",
+  "admin.users.confirm.dormant": "Move this person to dormant? Their login stays enabled. A later clock-in clears manual dormancy.",
+  "admin.users.confirm.wake": "Clear manual dormancy? People with no clock-in in 6 months may still be automatically dormant.",
+  "toastLinks.notSeenTitle": "Not seen in 6+ months ({count})",
+  "toastLinks.lastClockIn": "Last clock-in {date}",
+  "toastLinks.noClockIn": "No clock-in in 6 months",
+  "toastLinks.clockHistoryUnavailable": "Couldn't load clock-in history — showing everyone"
 }
