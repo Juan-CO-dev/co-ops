@@ -145,6 +145,7 @@ const SERVER_TIER_MAP: Record<string, string[]> = {
   "app/api/admin/ezcater/location/route.ts": ["A"],
   "app/api/admin/items/[itemId]/sold-directly/route.ts": ["B"],
   "app/api/admin/menu-items/route.ts": ["B"],
+  "app/api/admin/menu-items/[id]/price/route.ts": ["B"],
   "app/api/admin/order-types/route.ts": ["B"],
   "app/api/admin/products/[id]/active/route.ts": ["B"],
   "app/api/admin/products/[id]/members/route.ts": ["A"],
@@ -212,6 +213,7 @@ const SERVER_TIER_MAP: Record<string, string[]> = {
 
 // ── THE CLIENT HALF: component → the tiers it requests ────────────────────────
 const CLIENT_TIER_MAP: Record<string, string[]> = {
+  "components/admin/menu-costing/MenuPriceEditor.tsx": ["B"],
   // POST /api/admin/catering/ezcater-review -> decideEzcaterMapping asserts B in lib.
   "app/admin/catering/ezcater-review/review-client.tsx": ["B"],
   "components/catering/pipeline/TransferLead.tsx": ["B"],

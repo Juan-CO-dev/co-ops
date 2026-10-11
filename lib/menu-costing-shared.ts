@@ -543,8 +543,17 @@ export interface MenuCostInput {
   name: string;
   nameEs: string | null;
   section: string | null;
-  /** menu_items.menu_price in DOLLARS (numeric in PG); null when unset. */
+  /** Effective selling price in dollars; typed, cached Toast, then one-hop inheritance. */
   menuPrice: number | null;
+  cateringAvailable?: boolean;
+  typedPrice?: number | null;
+  priceSource?: "typed" | "toast" | "same_as" | null;
+  toastPriceCents?: number | null;
+  toastPriceVaries?: { min: number; max: number } | null;
+  priceFlag?: boolean;
+  includedInSubPrice?: boolean;
+  sameAsName?: string | null;
+  sameAsNameEs?: string | null;
 }
 
 export interface MenuCostRow extends MenuCostInput {
