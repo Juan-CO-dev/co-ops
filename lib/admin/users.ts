@@ -14,6 +14,8 @@ import { hashPin, hashPassword } from "@/lib/auth";
 import { audit } from "@/lib/audit";
 import { isAllLocationsAccess } from "@/lib/locations";
 import { revokeAllUserSessions } from "@/lib/session";
+import { userDormancy, type UserDormancy } from "./dormancy-shared";
+import { lastClockIns, clockInsByUser } from "./dormancy";
 import type { AuthContext } from "@/lib/session";
 
 export interface AdminUserListItem {
@@ -24,10 +26,12 @@ export interface AdminUserListItem {
   level: number;
   active: boolean;
   lastLoginAt: string | null;
+  dormantAt: string | null;
+  dormancy: UserDormancy;
   locationIds: string[]; // active assignments only
 }
 
-export interface AdminUserDetail extends AdminUserListItem {
+export interface AdminUserDetail extends Omit<AdminUserListItem, "dormancy"> {
   phone: string | null;
   emailVerified: boolean;
   createdAt: string;
@@ -54,12 +58,12 @@ interface DbUserRow {
   id: string; name: string; email: string | null; role: RoleCode;
   active: boolean; last_login_at: string | null; phone: string | null;
   email_verified: boolean; created_at: string; created_by: string | null;
-  locked_until: string | null;
+  locked_until: string | null; dormant_at: string | null;
 }
 
-const LIST_COLS = "id, name, email, role, active, last_login_at";
+const LIST_COLS = "id, name, email, role, active, last_login_at, created_at, dormant_at";
 const DETAIL_COLS =
-  "id, name, email, role, active, last_login_at, phone, email_verified, created_at, created_by, locked_until";
+  "id, name, email, role, active, last_login_at, phone, email_verified, created_at, created_by, locked_until, dormant_at";
 
 /** Map user_id → active location_ids, for the given user ids. */
 async function activeLocationsByUser(userIds: string[]): Promise<Map<string, string[]>> {
@@ -116,10 +120,19 @@ export async function listUsers(filters: ListUsersFilters): Promise<AdminUserLis
   if (error) throw new Error(`listUsers failed: ${error.message}`);
   const rows = data ?? [];
   const locMap = await activeLocationsByUser(rows.map((r) => r.id));
+  // A failed history read degrades to "deactivated / marked dormant only", never a broken page.
+  const clocks = await lastClockIns(sb, "-infinity").then(clockInsByUser, () => {
+    console.warn("admin_clock_ins_failed");
+    return null;
+  });
+  const now = Date.now();
   return rows.map((r) => ({
     id: r.id, name: r.name, email: r.email, role: r.role,
     level: getRoleLevel(r.role), active: r.active, lastLoginAt: r.last_login_at,
     locationIds: locMap.get(r.id) ?? [],
+    dormantAt: r.dormant_at,
+    dormancy: userDormancy({ level: getRoleLevel(r.role), active: r.active, createdAt: r.created_at,
+      dormantAt: r.dormant_at, lastClockInAt: clocks?.get(r.id) ?? null, now, clockHistoryKnown: clocks !== null }),
   }));
 }
 
@@ -136,6 +149,7 @@ export async function getUserDetail(id: string): Promise<AdminUserDetail | null>
     phone: data.phone, emailVerified: data.email_verified, createdAt: data.created_at,
     createdBy: data.created_by, lockedUntil: data.locked_until,
     locationIds: locMap.get(id) ?? [],
+    dormantAt: data.dormant_at,
   };
 }
 
@@ -375,4 +389,31 @@ export async function setActive(actor: AuthContext, id: string, active: boolean)
     await audit({ actorId: actor.user.id, actorRole: actor.user.role, action: "user.activate",
       resourceTable: "users", resourceId: id, metadata: {}, ipAddress: null, userAgent: null });
   }
+}
+
+/** Display-only mutation: do not revoke sessions or modify login authorization. */
+export async function setDormant(actor: AuthContext, id: string, dormant: boolean): Promise<void> {
+  if (getRoleLevel(actor.user.role) < ADMIN_MIN_LEVEL) throw new AdminUserError(403, "forbidden");
+  // Same target checks as setActive: a display flag must not be harder to set than deactivation.
+  const target = await loadActionableTarget(actor, id);
+  // A stale marker already cleared by a clock-in can be marked again. Clearing it cannot
+  // override the automatic clock-in rule; the UI offers wake for manual dormancy only.
+  if (dormant ? !target.active : !target.dormantAt) return;
+  if (dormant && target.dormantAt) {
+    // Only this mutation needs wake evidence; credential and activation writers must not
+    // acquire a new dependency on Toast history just to load their actionable target.
+    const clocks = clockInsByUser(await lastClockIns(getServiceRoleClient(), "-infinity", { userId: id }));
+    const state = userDormancy({ level: target.level, active: target.active, createdAt: target.createdAt,
+      dormantAt: target.dormantAt, lastClockInAt: clocks.get(id) ?? null, now: Date.now() });
+    if (state.dormant && state.reason === "manual") return;
+  }
+  const at = dormant ? new Date().toISOString() : null;
+  let q = getServiceRoleClient().from("users").update({ dormant_at: at, dormant_by: dormant ? actor.user.id : null }).eq("id", id);
+  // Compare-and-set prevents concurrent taps from emitting duplicate audit rows.
+  q = target.dormantAt ? q.eq("dormant_at", target.dormantAt) : q.is("dormant_at", null);
+  const { data, error } = await q.select("id");
+  if (error) throw new AdminUserError(500, "dormancy_write_failed");
+  if (!data?.length) throw new AdminUserError(409, "dormancy_changed");
+  await audit({ actorId: actor.user.id, actorRole: actor.user.role, action: dormant ? "user.dormant" : "user.wake",
+    resourceTable: "users", resourceId: id, metadata: { dormant_at: at }, ipAddress: null, userAgent: null });
 }

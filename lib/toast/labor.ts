@@ -34,7 +34,7 @@ export function stationLifecycleEnabled(): boolean {
   return process.env.STATION_LIFECYCLE === "1";
 }
 
-export type LaborPullContext = "cron" | "manual" | "digest";
+export type LaborPullContext = "cron" | "manual" | "digest" | "backfill";
 
 export interface LaborPullResult {
   ran: boolean;

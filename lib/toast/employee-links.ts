@@ -10,6 +10,8 @@
  * Gated by WHOS_HERE=1 (nothing runs before 0233 is applied).
  */
 import "server-only";
+import { DORMANT_WINDOW_MS, employeeNotSeen } from "@/lib/admin/dormancy-shared";
+import { lastClockIns } from "@/lib/admin/dormancy";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { audit } from "@/lib/audit";
 import { lockLocationContext, type LocationActor } from "@/lib/locations";
@@ -93,12 +95,13 @@ export async function fetchEmployees(service: SupabaseClient, locationId: string
   return parseToastEmployees(await toastGet<unknown>("/labor/v1/employees", loc.data.toast_restaurant_guid, signal));
 }
 
-export interface ReviewEmployeeView { guid: string; name: string; deleted: boolean; suggestions: Array<LinkSuggestion & { name: string }> }
+export interface ReviewEmployeeView { guid: string; name: string; deleted: boolean; lastClockInAt: string | null; notSeen: boolean; suggestions: Array<LinkSuggestion & { name: string }> }
 export interface LinkView { id: string; employeeGuid: string; employeeName: string | null; userId: string; userName: string; source: "auto" | "manual" }
 export interface LinkReview {
   locationId: string;
   /** Null when Toast answered; otherwise a fixed code and the review list is empty. */
   toastError: string | null;
+  clockHistoryUnavailable: boolean;
   unlinked: ReviewEmployeeView[];
   links: LinkView[];
   /** People the viewer may link (level ≤ viewer), for the manual picker. */
@@ -116,6 +119,19 @@ export async function loadLinkReview(service: SupabaseClient, args: { actor: Lin
     toastError = e instanceof Error && /^toast_employees_/.test(e.message) ? e.message
       : e instanceof Error && (e.name === "AbortError" || e.name === "TimeoutError") ? "toast_employees_deadline" : "toast_employees_failed";
   }
+  const now = Date.now();
+  const clockMap = new Map<string, string>();
+  let clockHistoryUnavailable = false;
+  try {
+    const clocks = await lastClockIns(service, new Date(now - DORMANT_WINDOW_MS).toISOString(), { locationId: args.locationId });
+    for (const row of clocks) {
+      if (Date.parse(row.last_in_at) > Date.parse(clockMap.get(row.employee_guid) ?? "0001-01-01")) clockMap.set(row.employee_guid, row.last_in_at);
+    }
+  } catch {
+    // A failed history read must not hide people or remove their linking controls.
+    clockHistoryUnavailable = true;
+    console.warn("admin_clock_ins_failed");
+  }
   const pickable = users.filter((u) => u.level <= args.actor.level);
   const names = new Map(users.map((u) => [u.id, u.name]));
   const byGuid = new Map(employees.map((e) => [e.guid, e]));
@@ -127,10 +143,12 @@ export async function loadLinkReview(service: SupabaseClient, args: { actor: Lin
   const autoRows = plan.auto.map((a) => ({ employee: byGuid.get(a.employeeGuid)!, suggestions: [{ userId: a.userId, kind: "full_name" as const }] }));
   const unlinked = [...autoRows, ...plan.review].map((r) => ({
     guid: r.employee.guid, name: toastDisplayName(r.employee), deleted: r.employee.deleted,
+    lastClockInAt: clockMap.get(r.employee.guid) ?? null,
+    notSeen: !clockHistoryUnavailable && employeeNotSeen({ deleted: r.employee.deleted, lastClockInAt: clockMap.get(r.employee.guid) ?? null, now }),
     suggestions: r.suggestions.filter((s) => canPick.has(s.userId)).map((s) => ({ ...s, name: names.get(s.userId) ?? "" })),
   }));
   return {
-    locationId: args.locationId, toastError, unlinked,
+    locationId: args.locationId, toastError, clockHistoryUnavailable, unlinked,
     links: links.map((l) => ({ id: l.id, employeeGuid: l.employeeGuid, userId: l.userId, source: l.source,
       employeeName: byGuid.has(l.employeeGuid) ? toastDisplayName(byGuid.get(l.employeeGuid)!) : null,
       userName: names.get(l.userId) ?? "" })),

@@ -34,6 +34,8 @@ type ActiveAction =
   | { kind: "edit_profile" }
   | { kind: "deactivate" }
   | { kind: "activate" }
+  | { kind: "dormant" }
+  | { kind: "wake" }
   | null;
 
 export function UserActions({
@@ -102,6 +104,10 @@ export function UserActions({
         <ActionButton label={t("admin.users.action.activate")} onClick={() => setActive({ kind: "activate" })} />
       )}
 
+      {user.active && (!user.dormancy.dormant || user.dormancy.reason === "manual") && (
+        <ActionButton label={t(user.dormancy.dormant ? "admin.users.action.wake" : "admin.users.action.dormant")}
+          onClick={() => setActive({ kind: user.dormancy.dormant ? "wake" : "dormant" })} />
+      )}
       {active ? (
         <div
           role="dialog"
@@ -197,6 +203,9 @@ export function UserActions({
                 <p className="text-sm text-co-text">{t("admin.users.confirm.activate")}</p>
               ) : null}
 
+              {(active.kind === "dormant" || active.kind === "wake") && (
+                <p className="text-sm text-co-text">{t(active.kind === "dormant" ? "admin.users.confirm.dormant" : "admin.users.confirm.wake")}</p>
+              )}
               {errorMsg ? <p className="text-sm text-co-cta-text">{errorMsg}</p> : null}
             </div>
 
@@ -220,6 +229,7 @@ export function UserActions({
                   else if (a.kind === "change_locations") void run("B", `${base}/locations`, { locationIds: locs });
                   else if (a.kind === "edit_profile") void run("B", base, { name: name.trim() }, "PATCH");
                   else if (a.kind === "deactivate") void run("B", `${base}/deactivate`, {});
+                  else if (a.kind === "dormant" || a.kind === "wake") void run("B", `${base}/${a.kind}`, {});
                   else if (a.kind === "activate") void run("B", `${base}/activate`, {});
                 }}
                 className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-gold-deep bg-co-gold px-4 text-sm font-bold uppercase tracking-[0.1em] text-co-text transition focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60 disabled:cursor-not-allowed disabled:opacity-50"

@@ -5937,5 +5937,18 @@
   "pulse.inventory.receiving_unavailable": "No se pudo leer la recepción ahora.",
   "pulse.inventory.cutoffs_unavailable": "No se pudieron leer los cortes de pedido ahora.",
   "pulse.people.unlinked_unavailable": "No se pudieron revisar las entradas de Toast ahora.",
-  "pulse.catering.crew_note": "Solo horarios: nombres y detalles están en el tablero de catering para gerentes."
+  "pulse.catering.crew_note": "Solo horarios: nombres y detalles están en el tablero de catering para gerentes.",
+  "admin.users.dormancy.title": "Inactivos y desactivados ({count})",
+  "admin.users.dormancy.deactivated": "Desactivado",
+  "admin.users.dormancy.manual": "Marcado como inactivo el {date}",
+  "admin.users.dormancy.noClockIn": "Sin fichar desde el {date}",
+  "admin.users.dormancy.neverClockedIn": "Agregado el {date}, sin fichar desde entonces",
+  "admin.users.action.dormant": "Marcar como inactivo",
+  "admin.users.action.wake": "Volver a activo",
+  "admin.users.confirm.dormant": "¿Marcar a esta persona como inactiva? Podrá seguir iniciando sesión. Al volver a fichar, se quitará la inactividad manual.",
+  "admin.users.confirm.wake": "¿Quitar la inactividad manual? Si lleva 6 meses sin fichar, puede seguir inactiva automáticamente.",
+  "toastLinks.notSeenTitle": "No visto en más de 6 meses ({count})",
+  "toastLinks.lastClockIn": "Último fichaje: {date}",
+  "toastLinks.noClockIn": "Sin fichar en los últimos 6 meses",
+  "toastLinks.clockHistoryUnavailable": "No se pudo cargar el historial de fichajes — se muestra a todo el mundo"
 }
