@@ -92,6 +92,7 @@ export function costPerOzFromGraph(
 export interface MenuCostingBoard {
   toastFetchedAt: string | null;
   toastUnavailable: boolean;
+  toastNotices: Array<{ locationName: string; reason: "unavailable" | "menu_missing" }>;
   rows: MenuCostRow[];
   totals: MenuCostTotals;
   /** Display names for the SKUs blocking at least one row, so the UI can name them. */
@@ -127,10 +128,10 @@ export async function loadMenuCostingBoard(actor: AuthContext): Promise<MenuCost
     loadRecipeGraph(),
     sb
       .from("menu_items")
-      .select("id, name, name_es, section, menu_price, price_same_as_id")
+      .select("id, name, name_es, section, menu_price, price_same_as_id, catering_available")
       .eq("active", true)
       .order("name")
-      .returns<Array<{ id: string; name: string; name_es: string | null; section: string | null; menu_price: number | string | null; price_same_as_id: string | null }>>(),
+      .returns<Array<{ id: string; name: string; name_es: string | null; section: string | null; menu_price: number | string | null; price_same_as_id: string | null; catering_available: boolean }>>(),
     loadCachedMenuPrices(),
   ]);
   if (menuRes.error) throw new Error(`loadMenuCostingBoard menu_items: ${menuRes.error.message}`);
@@ -140,11 +141,10 @@ export async function loadMenuCostingBoard(actor: AuthContext): Promise<MenuCost
     const parent = m.price_same_as_id ? menuById.get(m.price_same_as_id) : undefined;
     const resolved = resolveMenuPrice({
       typedPrice: num(m.menu_price), toastPrices: toast.prices.get(m.id) ?? [], section: m.section,
-      // A cache failure means typed-only, including no inherited fallback.
-      sameAs: parent && !toast.unavailable ? { typedPrice: num(parent.menu_price), toastPrices: toast.prices.get(parent.id) ?? [] } : null,
+      sameAs: parent ? { typedPrice: num(parent.menu_price), toastPrices: toast.prices.get(parent.id) ?? [] } : null,
     });
     return { id: m.id, name: m.name, nameEs: m.name_es, section: m.section,
-      ...resolved, menuPrice: resolved.effectivePrice, typedPrice: num(m.menu_price),
+      ...resolved, cateringAvailable: m.catering_available, menuPrice: resolved.effectivePrice, typedPrice: num(m.menu_price),
       sameAsName: parent?.name ?? null, sameAsNameEs: parent?.name_es ?? null };
   });
 
@@ -180,5 +180,5 @@ export async function loadMenuCostingBoard(actor: AuthContext): Promise<MenuCost
   for (const i of itemRes.data ?? []) itemNames[i.id] = { en: i.name, es: i.name_es };
   for (const p of productRes.data ?? []) productNames[p.id] = { en: p.name, es: p.name_es };
 
-  return { rows, totals, skuNames, itemNames, productNames, toastFetchedAt: toast.fetchedAt, toastUnavailable: toast.unavailable };
+  return { rows, totals, skuNames, itemNames, productNames, toastFetchedAt: toast.fetchedAt, toastUnavailable: toast.unavailable, toastNotices: toast.notices };
 }

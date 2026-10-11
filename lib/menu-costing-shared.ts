@@ -545,6 +545,7 @@ export interface MenuCostInput {
   section: string | null;
   /** Effective selling price in dollars; typed, cached Toast, then one-hop inheritance. */
   menuPrice: number | null;
+  cateringAvailable?: boolean;
   typedPrice?: number | null;
   priceSource?: "typed" | "toast" | "same_as" | null;
   toastPriceCents?: number | null;

@@ -22,7 +22,7 @@ differs from Toast is flagged; an editable Price field covers what Toast lacks) 
 
 ## Rules
 
-1. **Toast in-store price** of a menu item = for each active `toast_menu_map` row of that menu item:
+1. **Toast in-store price** of a menu item = for each active, confirmed (`match_status = confirmed`) `toast_menu_map` row of that menu item:
    - item rows: the item's `price` where it appears inside the menu named exactly `"Compliments Only"`
      (walk nested `menuGroups`; same guid may appear more than once → collect all);
    - modifier rows: `modifierOptionReferences[*]` with that guid → `price`.
@@ -42,7 +42,9 @@ differs from Toast is flagged; an editable Price field covers what Toast lacks) 
    Never divide by zero.
 5. The page reads the CACHED payloads from `toast_menu_cache` only (no Toast API call at page load). Show a
    muted "Toast prices as of {fetched_at date}" note. If the cache read/parse fails, log a fixed code, fall back
-   to typed prices only, and show a muted notice; the page must never 500 because of Toast.
+   to typed prices (including one-hop typed-parent inheritance), and show a muted notice; the page must never 500 because of Toast.
+   Missing/malformed caches drop only the affected shop; notices name the location. A missing in-store menu
+   drops that shop's item prices only; modifier prices still count. Malformed entries are skipped.
 
 ## Data — migration `0245_menu_price_same_as.sql`
 
@@ -61,9 +63,10 @@ Sicky Wicky Club Salad→Sicky Wicky Club · The Frex Salad→The Frex · The Te
 ## Editable price
 
 - Menu costing Details drawer: a "Selling price" money input + Save, and "Use Toast price" (clears the typed
-  price) when a Toast price exists. Level ≥ 8 only (owner/MOO/CGS); lower levels see read-only text.
-- `PATCH /api/admin/menu-items/[id]/price` body `{ menuPrice: number | null }` (dollars, 0 < x ≤ 1000, 2 dp;
-  null clears). Level ≥ 8, step-up tier per the repo's step-up map conventions for admin catalog edits (add it
+  price) only when a typed price and Toast price exist and the item is not catering-available. Level ≥ 8 only (owner/MOO/CGS); lower levels see read-only text.
+- `PATCH /api/admin/menu-items/[id]/price` body `{ menuPrice: number | null, expectedMenuPrice: number | null }` (dollars, 0 < x ≤ 1000, 2 dp;
+  null clears non-catering items only; catering clears return 409 `menu_price_catering_required`).
+  A stale expected price returns 409 `menu_price_changed`; the update also retains compare-and-set. Level ≥ 8, step-up tier per the repo's step-up map conventions for admin catalog edits (add it
   to the map + its test), audit `menu_item.update` with before/after menu_price. Mirror an existing admin
   menu-items/catalog route for session, CSRF and error shape.
 

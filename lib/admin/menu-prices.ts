@@ -10,16 +10,18 @@ export class MenuPriceError extends Error {
   constructor(public status: number, public code: string) { super(code); }
 }
 
-export async function updateMenuPrice(actor: AuthContext, id: string, value: unknown): Promise<void> {
+export async function updateMenuPrice(actor: AuthContext, id: string, value: unknown, expectedMenuPrice: unknown): Promise<void> {
   if (getRoleLevel(actor.user.role) < MENU_PRICE_WRITE_MIN) throw new MenuPriceError(403, "forbidden");
-  if (!isValidMenuPrice(value)) throw new MenuPriceError(400, "invalid_menu_price");
+  if (!isValidMenuPrice(value) || !isValidMenuPrice(expectedMenuPrice)) throw new MenuPriceError(400, "invalid_menu_price");
   if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)) throw new MenuPriceError(404, "not_found");
   const sb = getServiceRoleClient();
-  const { data, error } = await sb.from("menu_items").select("menu_price").eq("id", id).eq("active", true)
-    .maybeSingle<{ menu_price: number | string | null }>();
+  const { data, error } = await sb.from("menu_items").select("menu_price, catering_available").eq("id", id).eq("active", true)
+    .maybeSingle<{ menu_price: number | string | null; catering_available: boolean }>();
   if (error) throw new MenuPriceError(500, "internal_error");
   if (!data) throw new MenuPriceError(404, "not_found");
   const before = data.menu_price == null ? null : Number(data.menu_price);
+  if (before !== expectedMenuPrice) throw new MenuPriceError(409, "menu_price_changed");
+  if (value === null && data.catering_available) throw new MenuPriceError(409, "menu_price_catering_required");
   if (before === value) return;
   let query = sb.from("menu_items").update({ menu_price: value, updated_at: new Date().toISOString(), updated_by: actor.user.id })
     .eq("id", id).eq("active", true);

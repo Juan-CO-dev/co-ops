@@ -24,7 +24,7 @@ export function MenuPriceEditor({ row }: { row: MenuCostRow }) {
       if (await requestStepUp("B") !== "ok") return;
       const send = () => fetch(`/api/admin/menu-items/${row.id}/price`, {
         method: "PATCH", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ menuPrice: price }), redirect: "manual",
+        body: JSON.stringify({ menuPrice: price, expectedMenuPrice: row.typedPrice ?? null }), redirect: "manual",
       });
       let response = await send();
       let body = await response.json().catch(() => ({})) as { code?: string; ok?: boolean };
@@ -33,7 +33,7 @@ export function MenuPriceEditor({ row }: { row: MenuCostRow }) {
         body = await response.json().catch(() => ({})) as typeof body;
       }
       if (!response.ok || body.ok !== true) {
-        setError(body.code === "menu_price_changed" ? "admin.menu_costing.price.changed" : "admin.menu_costing.price.error");
+        setError(body.code === "menu_price_catering_required" ? "admin.menu_costing.price.catering_required" : body.code === "menu_price_changed" ? "admin.menu_costing.price.changed" : "admin.menu_costing.price.error");
         return;
       }
       setValue(price === null ? "" : price.toFixed(2));
@@ -48,9 +48,9 @@ export function MenuPriceEditor({ row }: { row: MenuCostRow }) {
         className="min-h-[44px] w-32 rounded-lg border-2 border-co-border bg-co-surface px-3 text-base text-co-text"
         value={value} onChange={(event) => setValue(event.target.value)} disabled={busy || refreshing} />
       <button className={button} disabled={busy || refreshing} type="submit">{t("admin.menu_costing.price.save")}</button>
-      {row.toastPriceCents != null && <button className={button} disabled={busy || refreshing} type="button" onClick={() => void save(null)}>{t("admin.menu_costing.price.use_toast")}</button>}
+      {row.typedPrice != null && row.toastPriceCents != null && !row.cateringAvailable && <button className={button} disabled={busy || refreshing} type="button" onClick={() => void save(null)}>{t("admin.menu_costing.price.use_toast")}</button>}
     </div>
-    <p className="text-xs text-co-text-muted">{t("admin.menu_costing.price.help")}</p>
+    <p className="text-xs text-co-text-muted">{t(row.cateringAvailable ? "admin.menu_costing.price.catering_required" : "admin.menu_costing.price.help")}</p>
     {error && <p role="alert" className="text-xs text-co-cta-text">{t(error)}</p>}
   </form>;
 }

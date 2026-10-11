@@ -1,4 +1,7 @@
 {
+  "admin.menu_costing.price.catering_required": "Catering usa este precio, así que no puedes borrarlo. Ingresa el precio.",
+  "admin.menu_costing.price.menu_missing": "{name}: no se encontró el menú de la tienda en Toast. Los precios de los modificadores siguen disponibles.",
+  "admin.menu_costing.price.shop_unavailable": "{name}: los precios de Toast no están disponibles.",
   "admin.menu_costing.price.label": "Precio de venta",
   "admin.menu_costing.price.save": "Guardar",
   "admin.menu_costing.price.use_toast": "Usar precio de Toast",

@@ -18,6 +18,7 @@
  * (pure, vitest-pinned); this file only fetches and hands off.
  */
 
+import { MENU_PRICE_WRITE_MIN } from "@/lib/admin/menu-prices";
 import { redirect } from "next/navigation";
 
 import { requireSessionFromHeaders } from "@/lib/session";
@@ -34,7 +35,7 @@ export default async function AdminMenuCostingPage() {
   if (level < MENU_COSTING_READ_MIN) redirect("/dashboard");
   const lang = auth.user.language;
 
-  const { rows, totals, skuNames, itemNames, productNames, toastFetchedAt, toastUnavailable } = await loadMenuCostingBoard(auth);
+  const { rows, totals, skuNames, itemNames, productNames, toastFetchedAt, toastUnavailable, toastNotices } = await loadMenuCostingBoard(auth);
 
   return (
     <div>
@@ -44,7 +45,8 @@ export default async function AdminMenuCostingPage() {
       />
       <ExportLinks className="mb-4" family="costing" language={lang} query={{}} />
       <MenuCostingClient
-        canEditPrice={level >= 8}
+        canEditPrice={level >= MENU_PRICE_WRITE_MIN}
+        toastNotices={toastNotices}
         toastFetchedAt={toastFetchedAt}
         toastUnavailable={toastUnavailable}
         rows={rows}

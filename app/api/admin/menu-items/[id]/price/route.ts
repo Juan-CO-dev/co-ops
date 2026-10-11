@@ -16,7 +16,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   if (parsed instanceof Response) return parsed;
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return jsonError(400, "invalid_payload");
   try {
-    await updateMenuPrice(ctx, id, (parsed as Record<string, unknown>).menuPrice);
+    await updateMenuPrice(ctx, id, (parsed as Record<string, unknown>).menuPrice, (parsed as Record<string, unknown>).expectedMenuPrice);
     return jsonOk({ ok: true });
   } catch (error) {
     if (error instanceof MenuPriceError) return jsonError(error.status, error.code);

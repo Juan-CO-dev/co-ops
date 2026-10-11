@@ -49,3 +49,9 @@ describe("effective selling prices", () => {
   it.each([null, 0.01, 15.79, 19.99, 1000])("accepts valid edit %s", (value) => expect(isValidMenuPrice(value)).toBe(true));
   it.each([undefined, "12", true, 0, -1, 1000.01, 1.001, 1e-12, 1.00000000001, NaN, Infinity])("rejects invalid edit %s", (value) => expect(isValidMenuPrice(value)).toBe(false));
 });
+
+it("skips null and missing-guid entries without dropping valid prices", () => {
+  expect(inStorePricesByGuid({ menus: [null, { name: TOAST_IN_STORE_MENU, menuGroups: [null, {
+    menuItems: [null, {}, { price: 99 }, { guid: "sub", price: 12 }],
+  }] }], modifierOptionReferences: { bad: null, missing: { price: 99 }, good: { guid: "bacon", price: 2 } } })).toEqual(new Map([["sub", [1200]], ["bacon", [200]]]));
+});

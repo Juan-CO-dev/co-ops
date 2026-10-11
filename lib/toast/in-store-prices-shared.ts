@@ -1,5 +1,5 @@
 /** Pure cached-menu pricing. Do not use the all-menu, first-wins matcher here. */
-// Juan's reviewed in-store menu selector; other named menus have different prices.
+// Known config debt: Juan-sanctioned in-store menu and Modifier builds literals await tenant config.
 export const TOAST_IN_STORE_MENU = "Compliments Only";
 
 type Obj = Record<string, unknown>;
@@ -13,14 +13,21 @@ function list(value: unknown): unknown[] {
   return value;
 }
 
+export function hasInStoreMenu(payload: unknown): boolean {
+  const root = object(payload);
+  if (!Array.isArray(root.menus)) throw new Error("invalid_toast_price_payload");
+  return root.menus.some((menu) => menu && typeof menu === "object" && menu.name === TOAST_IN_STORE_MENU);
+}
+
 /** Default combines both lanes; callers matching crosswalk rows select the exact lane. */
 export function inStorePricesByGuid(payload: unknown, lane: "item" | "modifier" | "both" = "both"): Map<string, number[]> {
   const root = object(payload);
   if (!Array.isArray(root.menus)) throw new Error("invalid_toast_price_payload");
   const prices = new Map<string, number[]>();
   function add(raw: unknown) {
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) return;
     const item = object(raw);
-    if (typeof item.guid !== "string" || !item.guid) throw new Error("invalid_toast_price_payload");
+    if (typeof item.guid !== "string" || !item.guid) return;
     if (typeof item.price !== "number" || !Number.isFinite(item.price) || item.price <= 0) return;
     const cents = Math.round(item.price * 100);
     if (!Number.isSafeInteger(cents) || cents <= 0) return;
@@ -28,11 +35,13 @@ export function inStorePricesByGuid(payload: unknown, lane: "item" | "modifier" 
   }
   function group(raw: unknown, depth: number) {
     if (depth > 100) throw new Error("invalid_toast_price_payload");
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) return;
     const g = object(raw);
     for (const item of list(g.menuItems)) add(item);
     for (const sub of list(g.menuGroups)) group(sub, depth + 1);
   }
   if (lane !== "modifier") for (const raw of root.menus) {
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) continue;
     const menu = object(raw);
     if (menu.name === TOAST_IN_STORE_MENU) for (const g of list(menu.menuGroups)) group(g, 0);
   }

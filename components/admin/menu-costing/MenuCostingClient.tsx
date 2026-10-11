@@ -75,10 +75,12 @@ export function MenuCostingClient({
   canEditPrice = false,
   toastFetchedAt = null,
   toastUnavailable = false,
+  toastNotices = [],
 }: {
   canEditPrice?: boolean;
   toastFetchedAt?: string | null;
   toastUnavailable?: boolean;
+  toastNotices?: Array<{ locationName: string; reason: "unavailable" | "menu_missing" }>;
   rows: MenuCostRow[];
   totals: MenuCostTotals;
   skuNames: Record<string, string>;
@@ -125,9 +127,12 @@ export function MenuCostingClient({
   return (
     <div className="mt-4 flex flex-col gap-3">
       <p className="text-xs text-co-text-muted">
-        {toastUnavailable ? t("admin.menu_costing.price.unavailable") : toastFetchedAt
+        {toastUnavailable && !toastNotices.length ? t("admin.menu_costing.price.unavailable") : toastFetchedAt
           ? t("admin.menu_costing.price.as_of", { date: formatDateLabel(etCalendarDate(toastFetchedAt), language) }) : null}
       </p>
+      {toastNotices.map((notice, index) => <p key={index} className="text-xs text-co-text-muted">
+        {t(notice.reason === "menu_missing" ? "admin.menu_costing.price.menu_missing" : "admin.menu_costing.price.shop_unavailable", { name: notice.locationName })}
+      </p>)}
       {/* Board state — never collapses (D2): the counts that say how much of this
           board is real yet. */}
       <div className="co-card flex flex-wrap items-center gap-x-5 gap-y-2 p-3">

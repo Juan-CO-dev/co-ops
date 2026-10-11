@@ -22,7 +22,7 @@ it("shows source, effective math, and cache date; lower levels have no editor", 
   expect(html).toContain("Toast prices as of"); expect(html).not.toContain("<input");
 });
 it("level 8+ gets labeled money input, save and clear controls even without a recipe", () => {
-  const html = render(true, { rollup: { ...row.rollup, status: "no_recipe" } });
+  const html = render(true, { typedPrice: 15, rollup: { ...row.rollup, status: "no_recipe" } });
   expect(html).toContain('type="number"'); expect(html).toContain("Selling price"); expect(html).toContain("Use Toast price");
   expect(html).toContain("min-h-[44px]");
 });
@@ -32,9 +32,25 @@ it("shows the typed mismatch badge and variation disclosure", () => {
 });
 it("shows inherited names and Spanish copy", () => {
   expect(render(false, { priceSource: "same_as", sameAsName: "Sub", sameAsNameEs: "Sub ES" }, "es")).toContain("igual que Sub ES");
-  expect(render(true, {}, "es")).toContain("Usar precio de Toast");
+  expect(render(true, { typedPrice: 15 }, "es")).toContain("Usar precio de Toast");
 });
 it("explains included modifiers without printing a zero selling price", () => {
   const html = render(false, { menuPrice: null, includedInSubPrice: true, priceSource: null });
   expect(html).toContain("Included in the sub’s price");
+});
+
+it("offers Toast reset only for a typed non-catering price with Toast available", () => {
+  expect(render(true)).not.toContain("Use Toast price");
+  expect(render(true, { typedPrice: 15, cateringAvailable: true })).not.toContain("Use Toast price");
+  expect(render(true, { typedPrice: 15, toastPriceCents: null })).not.toContain("Use Toast price");
+  expect(render(true, { typedPrice: 15, cateringAvailable: false })).toContain("Use Toast price");
+  expect(render(true, { cateringAvailable: true })).toContain("Catering uses this price");
+});
+it("renders muted shop notices using location names", () => {
+  const html = renderToStaticMarkup(createElement(TranslationProvider, { initialLanguage: "en", children:
+    createElement(MenuCostingClient, { rows: [row], totals: summarizeMenuCostRows([row]), skuNames: {}, itemNames: {}, productNames: {},
+      toastNotices: [{ locationName: "Shop A", reason: "menu_missing" }, { locationName: "Shop B", reason: "unavailable" }] }) }));
+  expect(html).toContain("Shop A: in-store menu not found");
+  expect(html).toContain("Shop B: Toast prices unavailable");
+  expect(html).toContain("text-co-text-muted");
 });
