@@ -5942,6 +5942,7 @@
   "admin.users.dormancy.deactivated": "Deactivated",
   "admin.users.dormancy.manual": "Marked dormant {date}",
   "admin.users.dormancy.noClockIn": "No clock-in since {date}",
+  "admin.users.dormancy.neverClockedIn": "Added {date}, no clock-in since",
   "admin.users.action.dormant": "Move to dormant",
   "admin.users.action.wake": "Move back to active",
   "admin.users.confirm.dormant": "Move this person to dormant? Their login stays enabled. A later clock-in clears manual dormancy.",

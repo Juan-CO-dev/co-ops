@@ -5942,6 +5942,7 @@
   "admin.users.dormancy.deactivated": "Desactivado",
   "admin.users.dormancy.manual": "Marcado como inactivo el {date}",
   "admin.users.dormancy.noClockIn": "Sin fichar desde el {date}",
+  "admin.users.dormancy.neverClockedIn": "Agregado el {date}, sin fichar desde entonces",
   "admin.users.action.dormant": "Marcar como inactivo",
   "admin.users.action.wake": "Volver a activo",
   "admin.users.confirm.dormant": "¿Marcar a esta persona como inactiva? Podrá seguir iniciando sesión. Al volver a fichar, se quitará la inactividad manual.",

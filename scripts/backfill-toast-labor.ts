@@ -44,5 +44,9 @@ export async function main(args = process.argv.slice(2)): Promise<void> {
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  main().catch(() => { console.error("toast_labor_backfill_failed"); process.exitCode = 1; });
+  // Our own fixed codes are safe to print; anything else (provider text) stays generic.
+  main().catch((e) => {
+    console.error(e instanceof Error && /^toast_labor_[a-z_]+$/.test(e.message) ? e.message : "toast_labor_backfill_failed");
+    process.exitCode = 1;
+  });
 }

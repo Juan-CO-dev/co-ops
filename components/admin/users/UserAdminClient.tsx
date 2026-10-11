@@ -95,7 +95,8 @@ export function UserAdminClient({
 
               {u.dormancy.dormant && <p className="mt-2 text-sm text-co-text-muted">
                 {u.dormancy.reason === "deactivated" ? t("admin.users.dormancy.deactivated")
-                  : t(u.dormancy.reason === "manual" ? "admin.users.dormancy.manual" : "admin.users.dormancy.noClockIn",
+                  : t(u.dormancy.reason === "manual" ? "admin.users.dormancy.manual"
+                    : u.dormancy.reason === "never_clocked_in" ? "admin.users.dormancy.neverClockedIn" : "admin.users.dormancy.noClockIn",
                     { date: u.dormancy.since ? formatDateLabel(etCalendarDate(u.dormancy.since), language) : "" })}
               </p>}
               <div className="mt-3 border-t border-co-border-2 pt-3">

@@ -120,7 +120,11 @@ export async function listUsers(filters: ListUsersFilters): Promise<AdminUserLis
   if (error) throw new Error(`listUsers failed: ${error.message}`);
   const rows = data ?? [];
   const locMap = await activeLocationsByUser(rows.map((r) => r.id));
-  const clocks = clockInsByUser(await lastClockIns(sb, "-infinity"));
+  // A failed history read degrades to "deactivated / marked dormant only", never a broken page.
+  const clocks = await lastClockIns(sb, "-infinity").then(clockInsByUser, () => {
+    console.warn("admin_clock_ins_failed");
+    return null;
+  });
   const now = Date.now();
   return rows.map((r) => ({
     id: r.id, name: r.name, email: r.email, role: r.role,
@@ -128,7 +132,7 @@ export async function listUsers(filters: ListUsersFilters): Promise<AdminUserLis
     locationIds: locMap.get(r.id) ?? [],
     dormantAt: r.dormant_at,
     dormancy: userDormancy({ level: getRoleLevel(r.role), active: r.active, createdAt: r.created_at,
-      dormantAt: r.dormant_at, lastClockInAt: clocks.get(r.id) ?? null, now }),
+      dormantAt: r.dormant_at, lastClockInAt: clocks?.get(r.id) ?? null, now, clockHistoryKnown: clocks !== null }),
   }));
 }
 
@@ -390,11 +394,8 @@ export async function setActive(actor: AuthContext, id: string, active: boolean)
 /** Display-only mutation: do not revoke sessions or modify login authorization. */
 export async function setDormant(actor: AuthContext, id: string, dormant: boolean): Promise<void> {
   if (getRoleLevel(actor.user.role) < ADMIN_MIN_LEVEL) throw new AdminUserError(403, "forbidden");
+  // Same target checks as setActive: a display flag must not be harder to set than deactivation.
   const target = await loadActionableTarget(actor, id);
-  if (!isAllLocationsAccess({ role: actor.user.role, locations: actor.locations }) &&
-    (!target.locationIds.length || !target.locationIds.every((loc) => actor.locations.includes(loc)))) {
-    throw new AdminUserError(403, "forbidden");
-  }
   // A stale marker already cleared by a clock-in can be marked again. Clearing it cannot
   // override the automatic clock-in rule; the UI offers wake for manual dormancy only.
   if (dormant ? !target.active : !target.dormantAt) return;

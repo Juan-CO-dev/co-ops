@@ -20,7 +20,8 @@ describe("display-only user dormancy", () => {
     }
   });
   it("auto ends at level 5 and requires older than 182 days", () => {
-    expect(userDormancy(base)).toEqual({ dormant: true, reason: "no_clock_in", since: old });
+    expect(userDormancy(base)).toEqual({ dormant: true, reason: "never_clocked_in", since: old });
+    expect(userDormancy({ ...base, createdAt: "2025-01-01", lastClockInAt: old })).toEqual({ dormant: true, reason: "no_clock_in", since: old });
     expect(userDormancy({ ...base, level: 6 })).toEqual({ dormant: false });
     expect(userDormancy({ ...base, createdAt: boundary })).toEqual({ dormant: false });
     expect(userDormancy({ ...base, lastClockInAt: boundary })).toEqual({ dormant: false });
@@ -30,6 +31,11 @@ describe("display-only user dormancy", () => {
     expect(userDormancy({ ...base, createdAt: null })).toEqual({ dormant: false });
     expect(userDormancy({ ...base, createdAt: null, lastClockInAt: old })).toEqual({ dormant: true, reason: "no_clock_in", since: old });
     expect(userDormancy({ ...base, createdAt: "invalid" })).toEqual({ dormant: false });
+  });
+  it("unknown clock history never auto-hides anyone, but deactivated and manual still apply", () => {
+    expect(userDormancy({ ...base, clockHistoryKnown: false })).toEqual({ dormant: false });
+    expect(userDormancy({ ...base, dormantAt: old, clockHistoryKnown: false })).toEqual({ dormant: true, reason: "manual", since: old });
+    expect(userDormancy({ ...base, active: false, clockHistoryKnown: false }).dormant).toBe(true);
   });
   it("old wake evidence clears manual but does not override automatic inactivity", () => {
     expect(userDormancy({ ...base, dormantAt: "2025-01-01", lastClockInAt: old }).dormant).toBe(true);

@@ -56,12 +56,9 @@ describe("manual dormancy authorization and audit", () => {
     await expect(setDormant(actor, "u", true)).rejects.toMatchObject({ code: "forbidden" });
     expect(writes).toEqual([]);
   });
-  it("requires every target membership in a scoped actor's accessible shops", async () => {
+  it("a scoped level-8 actor may mark anyone setActive lets them deactivate", async () => {
     memberLocations = [LOC, OTHER];
     const scoped = { ...actor, user: { ...actor.user, role: "moo" as const }, locations: [LOC] };
-    await expect(setDormant(scoped, "u", true)).rejects.toMatchObject({ code: "forbidden" });
-    expect(writes).toEqual([]);
-    memberLocations = [LOC];
     await setDormant(scoped, "u", true);
     expect(writes).toHaveLength(1);
   });
@@ -88,6 +85,13 @@ describe("manual dormancy authorization and audit", () => {
     updateRows = [];
     await expect(setDormant(actor, "u", true)).rejects.toMatchObject({ code: "dormancy_changed" });
     expect(writes).toHaveLength(1); expect(mocks.audit).not.toHaveBeenCalled();
+  });
+  it("a failed clock-in read keeps the users page up and auto-hides no one", async () => {
+    target.role = "employee"; target.created_at = "2024-01-01"; target.dormant_at = null; rpcError = true;
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    expect((await listUsers({}))[0]!.dormancy).toEqual({ dormant: false });
+    expect(warn).toHaveBeenCalledWith("admin_clock_ins_failed");
+    warn.mockRestore();
   });
   it("list uses the latest clock-in across shops and all history for manual wake", async () => {
     target.role = "agm"; target.dormant_at = "2025-01-01";
