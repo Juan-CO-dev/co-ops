@@ -33,6 +33,8 @@ export interface ItemsAdminView {
   /** itemId → its ACTIVE producing recipe id (recipe_outputs). */
   producingRecipeByItem: Record<string, string>;
   madeFromByItem: Record<string, RegistryLink[]>;
+  /** The product/recipe link read failed: the page renders, with a visible notice instead of empty links. */
+  relationshipsUnavailable: boolean;
 }
 
 export async function loadItemsAdminView(actor: AuthContext): Promise<ItemsAdminView> {
@@ -46,7 +48,12 @@ export async function loadItemsAdminView(actor: AuthContext): Promise<ItemsAdmin
     loadPrepSections(sb),
     loadUnits(sb),
     loadItemQuestions(sb),
-    loadProductItemLinks(actor),
+    // Tolerated locally: a failed link read must not take down the item editors. The human
+    // sees a "links couldn't load" notice (relationshipsUnavailable), never silently empty links.
+    loadProductItemLinks(actor).catch((e) => {
+      console.error("product/item links load failed (rendering without links)", e);
+      return null;
+    }),
   ]);
   const sections = Array.from(sectionMap.values()).sort((a, b) => a.displayOrder - b.displayOrder);
 
@@ -56,7 +63,8 @@ export async function loadItemsAdminView(actor: AuthContext): Promise<ItemsAdmin
     sections,
     units,
     itemQuestions,
-    producingRecipeByItem: relationships.producingRecipeByItem,
-    madeFromByItem: relationships.madeFromByItem,
+    producingRecipeByItem: relationships?.producingRecipeByItem ?? {},
+    madeFromByItem: relationships?.madeFromByItem ?? {},
+    relationshipsUnavailable: relationships === null,
   };
 }

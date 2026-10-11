@@ -43,6 +43,11 @@ export function ItemsClient({
       <p className="rounded-lg border-2 border-co-warning bg-co-warning-surface px-3 py-2 text-xs font-bold text-co-text">
         {t("admin.templates.global_blast_radius_note")}
       </p>
+      {view.relationshipsUnavailable ? (
+        <p role="status" className="rounded-lg border-2 border-co-warning bg-co-warning-surface px-3 py-2 text-xs font-bold text-co-text">
+          {t("admin.relationships.unavailable")}
+        </p>
+      ) : null}
 
       {canAdd ? (
         <AddItemForm sections={view.sections} units={view.units} actorLevel={view.actorLevel} />

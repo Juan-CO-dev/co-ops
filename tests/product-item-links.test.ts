@@ -77,7 +77,7 @@ describe("product/prep-item relationships", () => {
     expect(result.madeFromByItem["prep-ham"]).toBeUndefined();
     expect(result.madeFromByItem["prep-bacon"]).toHaveLength(1);
   });
-  it("maps multiple outputs and input rows beyond the first thousand without duplicate links", () => {
+  it("maps multiple outputs and deduplicates repeated input rows into one link per item", () => {
     const data = fixture();
     data.inputs = Array.from({ length: 1001 }, () => input("direct", "product", "ham"));
     data.outputs.push({ recipe_id: "direct", output_item_id: "prep-bacon" });

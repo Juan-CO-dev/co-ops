@@ -85,7 +85,7 @@ describe("registry relationship rendering", () => {
   });
   it("keeps all added copy in both dictionaries", () => {
     const keys = Object.keys(en).filter(k => k.startsWith("admin.relationships.") || k === "admin.products.explainer");
-    expect(keys).toHaveLength(6);
+    expect(keys).toHaveLength(7);
     for (const key of keys) {
       expect(en[key as keyof typeof en]).toBeTruthy();
       expect(es[key as keyof typeof es]).toBeTruthy();

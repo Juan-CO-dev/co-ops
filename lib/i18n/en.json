@@ -4,6 +4,7 @@
   "admin.relationships.made_from": "Made from:",
   "admin.relationships.used_in": "Used in:",
   "admin.relationships.sub_prep": "sub-prep",
+  "admin.relationships.unavailable": "The Made from / Used in links couldn't load. Everything else works — refresh to retry.",
   "admin.products.explainer": "A product groups the same thing from different vendors. Things you buy from only one vendor (like Bacon) don't need a product — recipes use the SKU directly.",
   "catering.toast_pending.title": "Not in Toast yet",
   "catering.toast_pending.count": "{n} orders",

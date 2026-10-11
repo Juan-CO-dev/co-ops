@@ -44,11 +44,18 @@ export default async function AdminProductsPage({ searchParams }: {
   }
 
   const sb = getServiceRoleClient();
-  const relationships = schemaPending ? null : await loadProductItemLinks(auth);
-  const [skus, locRes] = await Promise.all([
+  // The link read is tolerated locally: a failure must not take down attach / retire / primary.
+  // The human sees a "links couldn't load" notice instead of silently empty "Used in" lines.
+  const [skus, locRes, relationships] = await Promise.all([
     loadSkus(auth),
     sb.from("locations").select("id, name").eq("active", true).order("name"),
+    schemaPending ? Promise.resolve(null) : loadProductItemLinks(auth).catch((e) => {
+      console.error("product/item links load failed (rendering without links)", e);
+      return "unavailable" as const;
+    }),
   ]);
+  const linksUnavailable = relationships === "unavailable";
+  const usedInByProduct = relationships && relationships !== "unavailable" ? relationships.usedInByProduct : {};
 
   const skuOptions = skus
     .filter((s) => s.active)
@@ -69,6 +76,11 @@ export default async function AdminProductsPage({ searchParams }: {
         subtitle={serverT(lang, "admin.products.subtitle")}
       />
       <p className="mt-2 text-sm text-co-text-muted">{serverT(lang, "admin.products.explainer")}</p>
+      {linksUnavailable ? (
+        <p role="status" className="mt-3 rounded-lg border-2 border-co-warning bg-co-warning-surface px-3 py-2 text-xs font-bold text-co-text">
+          {serverT(lang, "admin.relationships.unavailable")}
+        </p>
+      ) : null}
       {schemaPending ? (
         <div className="mt-5 rounded-2xl border-2 border-dashed border-co-border p-6 text-center text-sm text-co-text-muted">
           {serverT(lang, "admin.products.schema_pending")}
@@ -77,7 +89,7 @@ export default async function AdminProductsPage({ searchParams }: {
         <ProductsClient
           key={targetProductId ?? "all"}
           targetProductId={targetProductId}
-          usedInByProduct={relationships?.usedInByProduct ?? {}}
+          usedInByProduct={usedInByProduct}
           products={products}
           skus={skuOptions}
           locations={locations}
