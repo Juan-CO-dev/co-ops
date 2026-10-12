@@ -108,9 +108,43 @@ describe("range windowing: 12 months is twelve-ish bounded statements, two at a 
     await expect(loadSalesSummary(gm, { locationId: A, range: resolveSalesRange({}, TODAY) }, { client: f.client }))
       .rejects.toMatchObject({ status: 503, code: "sales_reads_not_installed" });
   });
-  it("any other read error throws (distinct from empty)", async () => {
-    const f = fakeClient(() => new Error("statement timeout"));
-    await expect(loadSalesBreakdown(gm, { locationId: A, range: resolveSalesRange({}, TODAY), dimension: "item" }, { client: f.client })).rejects.toThrow(/statement timeout/);
+  it.each(["57014", "XX000", undefined])("RPC error %s becomes a payload-free 503", async (code) => {
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const f = fakeClient(() => Object.assign(new Error("private RPC payload"), { code }));
+      const range = resolveSalesRange({}, TODAY);
+      const loads = [
+        () => loadSalesSummary(gm, { locationId: A, range }, { client: f.client }),
+        () => loadSalesBreakdown(gm, { locationId: A, range, dimension: "item" }, { client: f.client }),
+        () => loadSalesCheckPage(gm, { locationId: A, range, filters: {} }, { client: f.client }),
+        () => loadSalesCheckDetail(gm, { locationId: A, businessDate: TODAY, checkGuid: "c1" }, { client: f.client }),
+        () => loadSalesCatering(gm, { locationId: A, range }, { client: f.client }),
+        () => loadSalesEzcaterOrders(gm, { locationId: A, range }, { client: f.client }),
+      ];
+      for (const load of loads) await expect(load()).rejects.toMatchObject({ status: 503, code: "sales_reads_timeout" });
+      expect(log).toHaveBeenCalled();
+      for (const args of log.mock.calls) expect(args).toEqual(["sales_reads_timeout"]);
+    } finally { log.mockRestore(); }
+  });
+  it("a failed today-so-far capture read is a payload-free 503, not a crash", async () => {
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const f = fakeClient(() => emptyDaily, (table) => table === "toast_capture_runs"
+        ? { data: null, error: { message: "private table payload", code: "57014" } }
+        : { data: null, error: null });
+      await expect(loadSalesSummary(gm, { locationId: A, range: resolveSalesRange({ range: "today" }, TODAY) }, { client: f.client }))
+        .rejects.toMatchObject({ status: 503, code: "sales_reads_timeout" });
+      expect(log.mock.calls).toEqual([["sales_reads_timeout"]]);
+    } finally { log.mockRestore(); }
+  });
+  it("a rejected RPC transport also becomes a payload-free 503", async () => {
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const f = fakeClient(() => { throw new Error("private transport payload"); });
+      await expect(loadSalesBreakdown(gm, { locationId: A, range: resolveSalesRange({}, TODAY), dimension: "item" }, { client: f.client }))
+        .rejects.toMatchObject({ status: 503, code: "sales_reads_timeout" });
+      expect(log.mock.calls).toEqual([["sales_reads_timeout"]]);
+    } finally { log.mockRestore(); }
   });
   it("an empty range reads only optional refund coverage", async () => {
     const f = fakeClient(() => emptyDaily);
