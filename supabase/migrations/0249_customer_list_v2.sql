@@ -1,5 +1,6 @@
 -- Migration 0249_customer_list_v2
 -- AUTHORED 2026-10-12, NOT YET APPLIED -- GATE CC: sim first, then prod.
+-- APPLIED TO PROD 2026-10-12 (schema_migrations version 20261012072932, name '0249_customer_list_v2'); sim applied first; prod dry run first.
 -- Contact-free list projections and advisory marketplace links; no historical cleanup.
 begin;
 
