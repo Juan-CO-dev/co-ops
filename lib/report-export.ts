@@ -189,6 +189,7 @@ export function operationsFilters(params: Params, level: number): { types: Repor
     ...(params.sf_underPar === "true" ? { underPar: true } : {}),
     ...(params.sf_overPar === "true" ? { overPar: true } : {}),
     ...(params.sf_skipped === "true" ? { skipped: true } : {}),
+    ...(params.sf_notStarted === "true" ? { notStarted: true } : {}),
     ...(params.sf_tempFlag === "true" ? { tempFlag: true } : {}),
     ...(params.sf_cashOver === "true" && level >= REPORTS_HUB_CASH_LEVEL ? { cashOver: true } : {}),
     ...(params.sf_cashShort === "true" && level >= REPORTS_HUB_CASH_LEVEL ? { cashShort: true } : {}),
@@ -248,6 +249,7 @@ export async function loadExportTable(auth: AuthContext, family: ExportFamily, p
           });
           items.push(...res.reports);
           if (!res.nextCursor) break;
+          if (page === WRITTEN_MAX_PAGES - 1) throw new ExportError(413, "export_too_large");
           cursor = res.nextCursor;
         }
         return { ...base, rows: writtenRows(items, shops) };

@@ -201,18 +201,23 @@ async function loadTeamWindow(
   if (locInstanceIds.size) {
     const ids = [...locInstanceIds];
     for (let i = 0; i < ids.length; i += 50) {
-      const comps = await selectAllRows<{ completed_by: string | null; completed_at: string; notes: string | null }>(
+      const comps = await selectAllRows<{ instance_id: string; template_item_id: string; completed_by: string | null; completed_at: string; notes: string | null }>(
         (from, to) => service
           .from("checklist_completions")
-          .select("instance_id, completed_by, completed_at, notes")
+          .select("instance_id, template_item_id, completed_by, completed_at, notes")
           .in("instance_id", ids.slice(i, i + 50))
           .gte("completed_at", bounds.start).lt("completed_at", upperTs)
           .is("superseded_at", null).is("revoked_at", null)
-          .order("completed_at", { ascending: true }).range(from, to),
+          .order("completed_at", { ascending: true }).order("id", { ascending: true }).range(from, to),
       );
+      const tasks = new Set<string>();
       for (const c of comps) {
         if (!c.completed_by) continue;
-        place(c.completed_by, c.completed_at, "tasks");
+        const key = `${c.completed_by}:${c.instance_id}:${c.template_item_id}`;
+        if (!tasks.has(key)) {
+          tasks.add(key);
+          place(c.completed_by, c.completed_at, "tasks");
+        }
         if (c.notes && c.notes.trim()) place(c.completed_by, c.completed_at, "notes");
       }
     }
@@ -258,7 +263,7 @@ async function loadTeamWindow(
       (from, to) => service
         .from("pm_employee_evals").select("pm_report_id, area_to_improve, note")
         .in("pm_report_id", [...pmReportById.keys()]).is("superseded_at", null)
-        .order("pm_report_id", { ascending: true }).range(from, to),
+        .order("pm_report_id", { ascending: true }).order("id", { ascending: true }).range(from, to),
     );
     for (const e of evalRows) {
       const rep = pmReportById.get(e.pm_report_id);
@@ -421,17 +426,22 @@ async function computePersonMetrics(
 
   if (locInstanceIds.length) {
     for (let i = 0; i < locInstanceIds.length; i += 50) {
-      const comps = await selectAllRows<{ completed_at: string; notes: string | null }>(
+      const comps = await selectAllRows<{ instance_id: string; template_item_id: string; completed_at: string; notes: string | null }>(
         (from, to) => service
-          .from("checklist_completions").select("completed_at, notes")
+          .from("checklist_completions").select("instance_id, template_item_id, completed_at, notes")
           .eq("completed_by", args.personId).in("instance_id", locInstanceIds.slice(i, i + 50))
           .gte("completed_at", bounds.start).lt("completed_at", upperTsP)
           .is("superseded_at", null).is("revoked_at", null)
-          .order("completed_at", { ascending: true }).range(from, to),
+          .order("completed_at", { ascending: true }).order("id", { ascending: true }).range(from, to),
       );
+      const tasks = new Set<string>();
       for (const c of comps) {
-        add(c.completed_at, "tasks");
         if (c.notes && c.notes.trim()) add(c.completed_at, "notes");
+        const key = `${c.instance_id}:${c.template_item_id}`;
+        // Query order assigns each task to its first live completion in this window.
+        if (tasks.has(key)) continue;
+        tasks.add(key);
+        add(c.completed_at, "tasks");
         if (windowOf(c.completed_at) === "cur") {
           const d = etCalendarDate(c.completed_at);
           const bs = bucketStart(d, args.granularity);
@@ -532,6 +542,7 @@ async function computePersonMetrics(
   const pmInLoc = await selectAllRows<{ id: string }>(
     (from, to) => service
       .from("pm_reports").select("id").eq("location_id", args.locationId).is("superseded_at", null)
+      .in("status", ["submitted", "incomplete_confirmed", "auto_finalized"])
       .gte("report_date", loadFrom).lte("report_date", toIncl)
       .order("id", { ascending: true }).range(from, to),
   );
@@ -554,6 +565,7 @@ async function computePersonMetrics(
   const mvp = await selectAllRows<{ id: string }>(
     (from, to) => service
       .from("pm_reports").select("id").eq("location_id", args.locationId).eq("mvp_user_id", args.personId).is("superseded_at", null)
+      .in("status", ["submitted", "incomplete_confirmed", "auto_finalized"])
       .gte("report_date", loadFrom).lte("report_date", toIncl)
       .order("id", { ascending: true }).range(from, to),
   );

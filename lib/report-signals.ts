@@ -2,8 +2,9 @@
  * Pure signal-derivation helpers shared by the Reports Hub list/detail loader
  * (lib/reports-hub.ts computeReportSignals) and the trends loader
  * (lib/reports-trends.ts). Extracted so the bug-prone par math lives in ONE
- * place — a mid-day prepped DELTA vs an am-prep FINAL amount diverge here and
- * nowhere else (see AGENTS.md "Same field name, different meaning across types").
+ * place. Final-check deviations use persisted opening/mid-day outcomes;
+ * numeric detail values still distinguish a mid-day DELTA from an AM-prep FINAL
+ * amount (see AGENTS.md "Same field name, different meaning across types").
  */
 
 import { FRIDGE_DEFAULT_SAFE_MAX_F } from "@/lib/maintenance";
@@ -29,6 +30,21 @@ export function derivePrepHave({ isMidDay, onHand, total }: PrepHaveInput): numb
 }
 
 export type ParStatus = "under" | "over" | "at" | "na";
+
+/** Final-check deviations only; AM prep is an evening stock count. */
+export function reportParDeviation(type: string, prepData: unknown): "under" | "over" | null {
+  if (!prepData || typeof prepData !== "object") return null;
+  const data = prepData as Record<string, unknown>;
+  if (type === "opening" && data.phase2 && typeof data.phase2 === "object") {
+    const status = (data.phase2 as Record<string, unknown>).over_under_status;
+    return status === "under_prep" ? "under" : status === "over_prep" ? "over" : null;
+  }
+  if (type === "mid_day" && data.overUnder && typeof data.overUnder === "object") {
+    const kind = (data.overUnder as Record<string, unknown>).kind;
+    return kind === "under" || kind === "over" ? kind : null;
+  }
+  return null;
+}
 
 export function parStatusFromHave(par: number | null, have: number | null): ParStatus {
   if (par === null || have === null) return "na";

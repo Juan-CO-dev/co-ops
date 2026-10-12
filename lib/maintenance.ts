@@ -508,7 +508,7 @@ export async function listMaintenanceReportDates(
         .in("template_item_id", itemIds)
         .is("superseded_at", null).is("revoked_at", null)
         .not("count_value", "is", null)
-        .order("instance_id", { ascending: true }).range(from, to)
+        .order("instance_id", { ascending: true }).order("id", { ascending: true }).range(from, to)
         .returns<Array<{template_item_id:string;instance_id:string;count_value:number|null}>>(),
       ));
     }

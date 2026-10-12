@@ -76,7 +76,7 @@ describe("related report authorization",()=>{
   it("does not manufacture unavailable baseline links",async()=>{
     const result=await loadReportRelations(fake(tables()).client,{...args,baselineIds:["missing-source"]});
     expect(result.baselineHrefs).toEqual({});
-    expect(renderToStaticMarkup(createElement(ReportReference,{children:"Baseline"}))).toBe("<span>Baseline</span>");
+    expect(renderToStaticMarkup(createElement(ReportReference,null,"Baseline"))).toBe("<span>Baseline</span>");
   });
   it("refuses another shop before querying and propagates read failures",async()=>{
     await expect(loadReportRelations(fake(tables()).client,{...args,locationId:"other"})).rejects.toThrow();
@@ -100,7 +100,7 @@ it("links an exact older baseline only for its participants, never an arbitrary 
 });
 it("renders baseline and PM report references as links only when supplied authorized targets",()=>{
   const opening:OpeningReportDetail={kind:"opening",date:args.date,status:"confirmed",isRecountNoPriorSubmission:false,noPriorDataReason:null,
-    signals:{done:1,total:1,skipped:0,tempFlags:0,underPar:0,overPar:0,cashOverShortCents:null},
+    signals:{done:1,total:1,skipped:0,notStarted:0,tempFlags:0,underPar:0,overPar:0,cashOverShortCents:null},
     items:[{station:"Kitchen",label:"Count",done:true,byName:null,countValue:null,note:null,isTempFlag:false,baseline:{closerCount:3,par:4,sourceInstanceId:"source"},openerRecount:null,groundTruth:null,prepNeed:null,resolution:"section_verify",photoId:null,inputType:null,phase2:null}]};
   const href="/reports/am_prep/source?location=shop";
   const openingPlain=renderToStaticMarkup(createElement(OpeningReportDetailView,{detail:opening,language:"en"}));

@@ -167,7 +167,7 @@ export async function buildSearchCorpus(
       ? await selectAllRows<{ instance_id: string; completed_by: string | null; notes: string | null; template_item_id: string; prep_data: unknown }>(
           (from, to) => service.from("checklist_completions").select("instance_id, completed_by, notes, template_item_id, prep_data")
             .in("instance_id", authorizedInstanceIds).match(!isManager ? {completed_by: args.viewer.userId} : {}).is("superseded_at", null).is("revoked_at", null)
-            .order("instance_id", { ascending: true }).range(from, to),
+            .order("instance_id", { ascending: true }).order("id", { ascending: true }).range(from, to),
         )
       : [];
     const completerIds = [...new Set(comps.map((c) => c.completed_by).filter((v): v is string => !!v))];

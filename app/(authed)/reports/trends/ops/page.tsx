@@ -250,6 +250,10 @@ async function renderPage(paramsRange: Record<string, string | undefined>, allSh
                 : []),
             ]}
           />
+          <div className="mt-2 flex flex-wrap gap-2 text-xs text-co-text-muted">
+            <span className="rounded-full border border-co-border px-2 py-1">{serverT(language, "reports.hub.skipped", { n: cur.reduce((sum, b) => sum + b.skipped, 0) })}</span>
+            <span className="rounded-full border border-co-border px-2 py-1">{serverT(language, "reports.hub.notStarted", { n: cur.reduce((sum, b) => sum + b.notStarted, 0) })}</span>
+          </div>
           {monthAxis}
           <ChartLegend hasPrev={!!prev} current={legendCurrent} previous={legendPrevious} />
         </TrendCard>

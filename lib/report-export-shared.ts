@@ -181,7 +181,7 @@ export const SALES_EXPORT_COLUMNS: Record<SalesExportView, readonly ExportColumn
 export const EXPORT_COLUMNS: Record<ExportFamily, readonly ExportColumn[]> = {
   operations: [
     col("business_date", "date"), ...SHOP, col("report_type"), col("report_id"), col("status"), col("submitted_by"),
-    col("under_par", "int"), col("over_par", "int"), col("skipped", "int"), col("temp_flags", "int"),
+    col("under_par", "int"), col("over_par", "int"), col("skipped", "int"), col("not_started", "int"), col("temp_flags", "int"),
     col("cash_over_short", "money"), col("currency", "currency"),
   ],
   cash: [
@@ -234,7 +234,7 @@ export function operationsRows(items: readonly ReportListItem[], shops: Readonly
   return items.map((i) => ({
     business_date: i.date, ...shopCells(shops.get(i.locationId)), report_type: i.type, report_id: i.id, status: i.status,
     submitted_by: i.submitterName, under_par: i.signalSummary?.underPar, over_par: i.signalSummary?.overPar,
-    skipped: i.signalSummary?.skipped, temp_flags: i.signalSummary?.tempFlags,
+    skipped: i.signalSummary?.skipped, not_started: i.signalSummary ? (i.signalSummary.notStarted ?? 0) : undefined, temp_flags: i.signalSummary?.tempFlags,
     cash_over_short: i.signalSummary?.cashOverShortCents ?? null,
   }));
 }

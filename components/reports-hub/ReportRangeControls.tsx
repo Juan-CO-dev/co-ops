@@ -1,6 +1,7 @@
 import { serverT } from "@/lib/i18n/server";
 import type { Language, TranslationKey } from "@/lib/i18n/types";
 import type { ReportGrain, ReportRange } from "@/lib/report-range";
+import { ReportRangeForm } from "./ReportRangeForm";
 
 const DEFAULT_RANGES = ["today", "yesterday", "last7", "last30", "this_month", "last_month", "custom"] as const;
 
@@ -15,7 +16,7 @@ export function ReportRangeControls({ range, locationId, language, action = "/re
 }) {
   const control = "inline-flex min-h-[44px] items-center rounded-lg border border-co-border-2 bg-co-surface px-3 text-sm";
   const owned = ["location", "range", "from", "to", "compare", "cmp", "cursor", ...(grains ? ["g"] : [])];
-  return <form action={action} className="mb-4 flex flex-wrap items-end gap-3">
+  return <ReportRangeForm action={action}>
     <input type="hidden" name="location" value={locationId} />
     {Object.entries(preserve).filter(([key,value]) => value && !key.startsWith("cursor_") && !owned.includes(key)).map(([key,value]) => <input key={key} type="hidden" name={key} value={value} />)}
     <label className="grid gap-1 text-xs font-bold">{serverT(language, "reports.hub.range")}
@@ -34,5 +35,5 @@ export function ReportRangeControls({ range, locationId, language, action = "/re
     <button className={control} type="submit">{serverT(language, "reports.hub.apply")}</button>
     <p className="w-full text-xs text-co-text-muted">{serverT(language, capKey)}</p>
     {shortened ? <p className="w-full text-xs text-co-text-muted">{serverT(language, shortenedKey)}</p> : null}
-  </form>;
+  </ReportRangeForm>;
 }

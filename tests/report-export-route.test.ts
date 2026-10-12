@@ -130,7 +130,7 @@ describe("the export matches the screen", () => {
     const body = bytes.toString("utf8");
     expect(body.startsWith(CSV_BOM)).toBe(true);
     expect(body.trim().split("\r\n")).toHaveLength(2);
-    expect(body).toContain("2026-10-05,MEP,Capitol Hill,closing,k1,confirmed,Ana,2,0,1,0,,USD");
+    expect(body).toContain("2026-10-05,MEP,Capitol Hill,closing,k1,confirmed,Ana,2,0,1,0,0,,USD");
     expect(res.headers.get("content-type")).toBe("text/csv; charset=utf-8");
     expect(res.headers.get("content-disposition")).toBe('attachment; filename="operations_MEP_2026-10-01_2026-10-06.csv"');
     expect(res.headers.get("cache-control")).toContain("no-store");
