@@ -50,10 +50,10 @@ describe("digest v2 layout", () => {
   });
 
   it("headline: net pre-tax, vs the same weekday last week, checks, average, 3rd-party share; catering kept apart", () => {
-    expect(lineIn(facts(), "Headline", "Net sales (pre-tax)")).toMatchObject({
+    expect(lineIn(facts(), "Headline", "Register sales (pre-tax, excl. ezCater)")).toMatchObject({
       text: "$100.00 · +25% vs last Wed · 1 check · avg $100.00 · 3rd-party 0%", href: `${BASE}/mid-shift?location=${LOC}`,
     });
-    expect(lineIn(facts(), "Headline", "Catering (pipeline)")!.text).toBe("1 order · completed $50.00 · confirmed, not completed $0.00 · separate from register sales");
+    expect(lineIn(facts(), "Headline", "Catering (pipeline totals; ezCater incl. fees/tax)")!.text).toBe("1 order · completed $50.00 · confirmed, not completed $0.00 · separate from register sales");
   });
 
   it("silence never means all good: an empty day says so on every line", () => {
@@ -251,7 +251,7 @@ describe("unified totals never turn a failed read into zero (Astra r2 P2)", () =
     const half = v2Fixture({ ordering: failed(), receiving: failed(), sales: failed() });
     const en = allShops([facts(), b(half)], "en");
     expect(en).toContain("POs placed: 1 PO placed · $25.00 · 0 missed cutoffs · partial (1 of 2 shops)");
-    expect(en).toContain("Net sales (pre-tax): $100.00 · last week not available · 1 check · avg $100.00 · 3rd-party 0% · partial (1 of 2 shops)");
+    expect(en).toContain("Register sales (pre-tax, excl. ezCater): $100.00 · last week not available · 1 check · avg $100.00 · 3rd-party 0% · partial (1 of 2 shops)");
     expect(allShops([facts(), b(half)], "es")).toContain("parcial (1 de 2 tiendas)");
   });
 

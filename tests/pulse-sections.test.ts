@@ -311,6 +311,7 @@ describe("parPassLow", () => {
 
 
 describe("Here now includes unlinked Toast employees", () => {
+  // eslint-disable-next-line react/no-children-prop -- TranslationProvider requires children in its props type.
   const render = (data: PeopleData, mode: "card" | "detail" = "card", language: "en" | "es" = "en") => renderToStaticMarkup(createElement(TranslationProvider, {
     initialLanguage: language, children: createElement(PeopleSection, { data, mode, locationId: LOC }),
   }));
@@ -361,10 +362,10 @@ describe("Here now includes unlinked Toast employees", () => {
   });
   it("deduplicates the bounded, scoped read by GUID, keeping the earliest entry and null names", async () => {
     const query = {
-      select: vi.fn().mockReturnThis(), eq: vi.fn().mockReturnThis(), is: vi.fn().mockReturnThis(),
+      select: vi.fn().mockReturnThis(), eq: vi.fn().mockReturnThis(), in: vi.fn().mockReturnThis(), is: vi.fn().mockReturnThis(),
       order: vi.fn().mockReturnThis(), limit: vi.fn().mockReturnThis(),
       returns: vi.fn().mockResolvedValue({ data: [
-        { employee_guid: "a", employee_first_name: "Pat", in_at: "2026-10-09T13:00:00Z" },
+        { employee_guid: "a", employee_first_name: "Pat Smith", in_at: "2026-10-09T03:00:00Z" },
         { employee_guid: "b", employee_first_name: null, in_at: "2026-10-09T14:00:00Z" },
         { employee_guid: "a", employee_first_name: "Pat", in_at: "2026-10-09T15:00:00Z" },
         { employee_guid: "c", employee_first_name: "Pat", in_at: "2026-10-09T16:00:00Z" },
@@ -373,16 +374,17 @@ describe("Here now includes unlinked Toast employees", () => {
     const service = { from: vi.fn(() => query) };
     const read = defaultPulseDeps(service as unknown as SupabaseClient).unlinkedClockIns;
     expect(await read(ctx(7))).toEqual({ count: 3, entries: [
-      { employeeGuid: "a", firstName: "Pat", since: "2026-10-09T13:00:00Z" },
+      { employeeGuid: "a", firstName: "Pat", since: "2026-10-09T03:00:00Z" },
       { employeeGuid: "b", firstName: null, since: "2026-10-09T14:00:00Z" },
       { employeeGuid: "c", firstName: "Pat", since: "2026-10-09T16:00:00Z" },
     ] });
     expect(service.from).toHaveBeenCalledWith("toast_time_entries");
     expect(query.select).toHaveBeenCalledWith("employee_guid,employee_first_name,in_at");
-    expect(query.eq.mock.calls).toEqual([["location_id", LOC], ["business_date", ctx(7).date], ["deleted", false]]);
+    expect(query.eq.mock.calls).toEqual([["location_id", LOC], ["deleted", false]]);
+    expect(query.in).toHaveBeenCalledWith("business_date", ["2026-10-08", "2026-10-09"]);
     expect(query.is.mock.calls).toEqual([["user_id", null], ["out_at", null]]);
     expect(query.order).toHaveBeenCalledWith("in_at", { ascending: true });
-    expect(query.limit).toHaveBeenCalledWith(20);
+    expect(query.limit).toHaveBeenCalledWith(50);
     query.returns.mockResolvedValueOnce({ data: null, error: { message: "offline" } });
     await expect(read(ctx(7))).rejects.toThrow("offline");
   });

@@ -104,7 +104,8 @@ describe("the digest's labor math", () => {
     expect(s.people).toEqual([{ employeeGuid: "a", firstName: "Ana", hours: 11, unknownShifts: 0 }, { employeeGuid: "l", firstName: "Luis", hours: 6.5, unknownShifts: 0 }]);
   });
   it("sales per labor hour = net pre-tax / clocked hours; unknown sales or zero hours = null", () => {
-    expect(s.salesPerLaborHourCents).toBe(14286);
+    expect(s.salesPerLaborHourCents).toBeNull(); // Kim is still clocked in.
+    expect(summarizeLabor("2026-10-07", entries.filter((e) => !e.open), 250_000).salesPerLaborHourCents).toBe(14286);
     expect(summarizeLabor("2026-10-07", entries, null).salesPerLaborHourCents).toBeNull();
     expect(summarizeLabor("2026-10-07", [], 1000).salesPerLaborHourCents).toBeNull();
   });

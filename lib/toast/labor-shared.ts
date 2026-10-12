@@ -166,7 +166,7 @@ export interface LaborSummary {
   unknownHoursEntries: number;
   /** Any unknown hours on D or week-to-date: the totals are a lower bound and conclusions are withheld. */
   partial: boolean;
-  /** Net sales pre-tax / clocked hours; null when either side is unknown, hours are 0, or hours are partial. */
+  /** Register sales / closed-shift hours; null for unknown/zero hours or any open shift today. */
   salesPerLaborHourCents: number | null;
   /** False when partial: overtime is not assessed (no "no overtime" conclusion, no flags). */
   overtimeAssessed: boolean;
@@ -220,10 +220,11 @@ export function summarizeLabor(day: string, entries: readonly LaborEntryFact[], 
     .sort((a, b) => b.hours - a.hours || String(a.firstName).localeCompare(String(b.firstName)));
   // Unknown hours make every total a lower bound: rates and overtime conclusions are withheld.
   const partial = unknownToday.length > 0 || weekUnknown > 0;
-  const splhPartial = unknownToday.length > 0;
+  const openEntries = today.filter((e) => e.open).length;
+  const splhPartial = unknownToday.length > 0 || openEntries > 0;
   return {
     totalHours,
-    openEntries: today.filter((e) => e.open).length,
+    openEntries,
     byJob: [...byJob].map(([job, hours]) => ({ job, hours: round2(hours) })).sort((a, b) => b.hours - a.hours || String(a.job).localeCompare(String(b.job))),
     people,
     unknownHoursEntries: unknownToday.length,

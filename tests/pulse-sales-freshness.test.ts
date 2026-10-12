@@ -221,10 +221,10 @@ describe("(b) two warm instances (two module copies) agree on the newest complet
 
 describe("(c) the card says when Toast last synced", () => {
   const data = (capturedAt: string | null): SalesData => ({
-    capturedAt, coverage: capturedAt ? "complete" : "missing",
+    capturedAt, coverage: capturedAt ? "complete" : "missing", amountMissing: 0,
     net: capturedAt ? { cents: 338_038, checks: 103, avgCheckCents: 3282 } : null,
     discounts: { cents: 0, count: 0 }, refunds: { cents: 0, count: 0 },
-    pace: { todayCumulative: new Array(24).fill(null), baselineCumulative: null, baselineWeeks: 0, baselineUnavailable: false, weekday: 5, pctOfNormal: null, currentHour: 16 },
+    pace: { todayCumulative: new Array(24).fill(null), baselineCumulative: null, baselineWeeks: 0, baselineUnavailable: false, available: !!capturedAt, staleMinutes: null, weekday: 5, pctOfNormal: null, currentHour: 16 },
     topItems: [], channels: [], discountsByName: [], servers: [], heat: [],
   });
   const render = (d: SalesData, language: "en" | "es") =>
@@ -239,6 +239,19 @@ describe("(c) the card says when Toast last synced", () => {
   it("before the first completed capture it says so, in both languages, instead of a time", () => {
     expect(render(data(null), "en")).toContain("Not synced with Toast yet today");
     expect(render(data(null), "es")).toContain("Aún sin sincronizar con Toast hoy");
+  });
+  it("renders the partial-money warning even with complete capture-day coverage", () => {
+    const d = { ...data("2026-10-10T20:30:00Z"), amountMissing: 1 };
+    expect(render(d, "en")).toContain("totals are partial");
+    expect(render(d, "es")).toContain("parciales");
+    expect(render(d, "en")).toContain("Register checks, before tax · ezCater not included");
+  });
+  it("renders stale pace in both languages and hides its chart", () => {
+    const d = data("2026-10-10T20:30:00Z");
+    d.pace = { ...d.pace, available: false, staleMinutes: 28 };
+    expect(render(d, "en")).toContain("Toast sync is 28 min old — pace hidden");
+    expect(render(d, "es")).toContain("28 min — ritmo oculto");
+    expect(render(d, "en")).not.toContain("<svg");
   });
 });
 

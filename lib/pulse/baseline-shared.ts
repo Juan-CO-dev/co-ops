@@ -46,6 +46,23 @@ export function paceDeltaPct(today: ReadonlyArray<number | null>, baseline: Read
   return Math.round(((t - b) / b) * 100);
 }
 
+/** 0242 exposes only hourly buckets: approximate the cutoff hour linearly by elapsed minutes. */
+export function baselineAtMinute(baseline: ReadonlyArray<number | null> | null, minute: number): number | null {
+  if (!baseline || minute < 0 || minute >= 1440) return null;
+  const hour = Math.floor(minute / 60);
+  const before = hour === 0 ? 0 : baseline[hour - 1];
+  const through = baseline[hour];
+  if (before == null || through == null) return null;
+  return Math.round(before + (through - before) * (minute % 60) / 60);
+}
+
+/** Age uses the instant, so the 20-minute limit is independent of timezone/DST. */
+export function capturePaceAge(capturedAt: string | null, now: Date): { usable: boolean; staleMinutes: number | null } {
+  const age = capturedAt === null ? NaN : now.getTime() - Date.parse(capturedAt);
+  if (!Number.isFinite(age) || age < 0) return { usable: false, staleMinutes: null };
+  return { usable: age <= 20 * 60_000, staleMinutes: age > 20 * 60_000 ? Math.floor(age / 60_000) : null };
+}
+
 /** ISO weekday (1 = Monday … 7 = Sunday) — the 0232 `extract(isodow …)` convention — from a Y-M-D, no timezone. */
 export function dowOf(ymd: string): number {
   const [y, m, d] = ymd.split("-").map(Number);

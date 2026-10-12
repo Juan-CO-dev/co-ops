@@ -84,6 +84,23 @@ describe("sales: the pulse's net rules, channel mix, top items, discounts and vo
     expect(() => summarizeSalesDay("2026-10-07", [order("x", { checks: [{ checkGuid: "c", amountCents: null, voided: false, deleted: false }] })], [], false))
       .toThrow("capture_pulse_amount_missing");
   });
+  it("excludes linked checks, items and discounts without dropping an unlinked check on the same order", () => {
+    const s = summarizeSalesDay("2026-10-07", [order("split", {
+      salesChannel: "third_party",
+      checks: [
+        { checkGuid: "ez", amountCents: 99900, voided: false, deleted: false, ezcaterLinked: true },
+        { checkGuid: "sale", amountCents: 1200, voided: false, deleted: false },
+        { checkGuid: "ez-unknown", amountCents: null, voided: false, deleted: false, ezcaterLinked: true },
+      ], selections: [sel("ez", "Catering", 50), sel("sale", "Sub", 1)],
+    })], [
+      { snapshotId: "split", checkGuid: "ez", name: "Excluded", amountCents: 500 },
+      { snapshotId: "split", checkGuid: "sale", name: "Promo", amountCents: 100 },
+    ], false);
+    expect(s).toMatchObject({ netCents: 1200, checks: 1, avgCheckCents: 1200, thirdPartyCents: 1200,
+      thirdPartySharePct: 100, channels: [{ channel: "third_party", netCents: 1200, checks: 1 }],
+      topItems: [{ name: "Sub", units: 1 }], discounts: [{ name: "Promo", count: 1, cents: 100 }],
+      voids: { orders: 0, checks: 0, units: 0 } });
+  });
   it("vs the same weekday last week; uncomparable is null", () => {
     expect(salesDeltaPct(s, { ...s, netCents: 1590 })).toBe(10);
     expect(salesDeltaPct(s, null)).toBeNull();

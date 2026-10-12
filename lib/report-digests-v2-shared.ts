@@ -86,6 +86,7 @@ export function summarizeSalesDay(date: string, orders: readonly SalesOrderInput
     for (const c of o.checks) {
       if (c.deleted) continue;
       if (c.voided) { voids.checks += 1; continue; }
+      if (c.ezcaterLinked) continue;
       live.add(c.checkGuid);
       liveChecks.add(`${o.snapshotId}|${c.checkGuid}`);
       const ch = byChannel.get(o.salesChannel ?? null) ?? { netCents: 0, checks: 0 };
