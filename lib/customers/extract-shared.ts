@@ -83,15 +83,15 @@ export function extractCustomerRows(rawOrders: readonly unknown[], channelFor: (
     const isThirdParty = thirdParty || channel === "third_party";
 
     const emailClass = classifyEmail(customer.email);
-    let email = emailClass.kind === "ok" ? emailClass.email : null;
+    const email = emailClass.kind === "ok" ? emailClass.email : null;
     let phone = normalizePhoneE164(customer.phone);
-    let masked = emailClass.kind === "masked";
-    if (isThirdParty && phone) { phone = null; masked = true; }
-    if (isThirdParty && emailClass.kind === "masked") email = null;
+    const masked = emailClass.kind === "masked" || isThirdParty;
+    // A relay address itself proves the phone may also be a relay, even without provider metadata.
+    if (masked) phone = null;
     const first = text(customer.firstName);
     const last = text(customer.lastName);
     const full = [first, last].filter(Boolean).join(" ") || null;
-    if (!email && !phone) {
+    if (!email && !phone && !(masked && full)) {
       if (masked) out.maskedOnly++; else out.noContact++;
       continue;
     }
@@ -116,7 +116,8 @@ export function extractCustomerRows(rawOrders: readonly unknown[], channelFor: (
         if (brand && last4) cards.set(`${brand}:${last4}`, { brand, last4 });
       }
     }
-    const maskedChannel = masked ? channelSlug(providerName) ?? (emailClass.kind === "masked" ? channelSlug(String(customer.email).split("@")[1]?.split(".")[0]) : null) ?? "third_party" : null;
+    const doorDashRelay = typeof customer.email === "string" && customer.email.trim().toLowerCase().split("@")[0]?.split("+")[0] === "dd.toast.orders";
+    const maskedChannel = masked ? (doorDashRelay ? "doordash" : channelSlug(providerName)) ?? (emailClass.kind === "masked" ? channelSlug(String(customer.email).split("@")[1]?.split(".")[0]) : null) ?? "third_party" : null;
     out.rows.push({
       order_guid: guid,
       business_date: businessDate,

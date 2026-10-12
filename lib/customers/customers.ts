@@ -27,6 +27,7 @@ import {
 import { marketingCsv, metaAudienceCsv, metaAudienceEnabled, type MarketingSourceRow } from "./exports-core";
 import { classifyEmail, normalizeEmail, normalizePhoneE164 } from "./identity-shared";
 import { profileStats, type CustomerOrderRow } from "./stats-shared";
+import { parseListParams, type CustomerListDto, type CustomerListSearchParams } from "./list-params-shared";
 
 export * from "./access-shared";
 
@@ -135,6 +136,76 @@ export async function loadProfilePage(viewer: CustomerViewer, args: { search?: s
   });
   const profiles = await statsFor(sb, viewer, rows.map((r) => r.customer_id));
   return { profiles, total: Number(rows[0]?.total_rows ?? 0), page, pageSize: PAGE_SIZE, search };
+}
+
+interface ListRow {
+  customer_id: string; full_name: string | null; visits: number; spend_cents: number | null; avg_order_cents: number | null;
+  first_order: string | null; last_order: string | null; shops: string[]; catering_orders: number; cards: number;
+  channels: string[]; is_guest: boolean; has_email: boolean; has_phone: boolean; opted_in: boolean; total_rows: number;
+}
+
+/** List errors must not forward database messages that could contain customer values. */
+async function listRpc<T>(sb: Client, name: string, args: Record<string, unknown>): Promise<T> {
+  const { data, error } = await sb.rpc(name, args);
+  if (error) {
+    if (["PGRST202", "42883", "42P01"].includes(error.code)) throw new CustomerError(503, "customers_not_installed");
+    throw new CustomerError(503, "customer_list_unavailable");
+  }
+  return data as T;
+}
+
+export async function loadCustomerList(viewer: CustomerViewer, raw: CustomerListSearchParams = {}, deps: CustomerDeps = {}) {
+  requireEnabled();
+  requireStats(viewer);
+  const params = parseListParams(raw, viewer.level);
+  const scope = customerShopScope(viewer);
+  const locations = scope ?? (params.locationId ? [params.locationId] : null);
+  const sb = deps.client ?? getServiceRoleClient();
+  const read = (page: number) => listRpc<ListRow[]>(sb, "customer_list_page", {
+    p_location_ids: locations, p_search: params.search || null, p_sort: params.sort, p_filters: params.filters,
+    p_limit: PAGE_SIZE, p_offset: (page - 1) * PAGE_SIZE,
+  });
+  let rows = await read(params.page);
+  // A window count has no row on an out-of-range page. Recover to the first page, retaining filters.
+  if (rows.length === 0 && params.page > 1) { params.page = 1; rows = await read(1); }
+  const profiles: CustomerListDto[] = rows.map((r) => ({
+    id: r.customer_id, name: r.full_name, visits: Number(r.visits),
+    spendCents: r.spend_cents === null ? null : Number(r.spend_cents),
+    avgOrderCents: r.avg_order_cents === null ? null : Number(r.avg_order_cents),
+    firstOrder: r.first_order, lastOrder: r.last_order, shops: r.shops ?? [],
+    cateringOrders: Number(r.catering_orders), cards: Number(r.cards), channels: r.channels ?? [], isGuest: r.is_guest,
+    ...(viewer.level >= CUSTOMER_CONTACT_MIN ? { hasEmail: r.has_email, hasPhone: r.has_phone, optedIn: r.opted_in } : {}),
+  }));
+  return { profiles, total: Number(rows[0]?.total_rows ?? 0), page: params.page, pageSize: PAGE_SIZE, params };
+}
+
+export async function loadCustomerSummary(viewer: CustomerViewer, raw: CustomerListSearchParams = {}, deps: CustomerDeps = {}) {
+  requireEnabled();
+  requireStats(viewer);
+  const params = parseListParams(raw, viewer.level);
+  const scope = customerShopScope(viewer);
+  const r = await listRpc<Record<string, number>>(deps.client ?? getServiceRoleClient(), "customer_list_summary", {
+    p_location_ids: scope ?? (params.locationId ? [params.locationId] : null),
+  });
+  return {
+    people: Number(r.people ?? 0), regulars: Number(r.regulars ?? 0), lapsed: Number(r.lapsed ?? 0),
+    bothShops: Number(r.both_shops ?? 0), catering: Number(r.catering ?? 0),
+    guests: Number(r.guests ?? 0), guestsLinked: Number(r.guests_linked ?? 0),
+    ...(viewer.level >= CUSTOMER_CONTACT_MIN ? { reachable: Number(r.reachable ?? 0) } : {}),
+  };
+}
+
+/** Names only; include retired shops so historical rows never display an unexplained UUID. */
+export async function loadCustomerShops(viewer: CustomerViewer, deps: CustomerDeps = {}): Promise<{ id: string; name: string }[]> {
+  requireEnabled();
+  requireStats(viewer);
+  const scope = customerShopScope(viewer);
+  const sb = deps.client ?? getServiceRoleClient();
+  let query = sb.from("locations").select("id,name").order("name");
+  if (scope) query = query.in("id", scope);
+  const { data, error } = await query;
+  if (error) throw new CustomerError(503, "customer_list_unavailable");
+  return (data ?? []).map((r: { id: string; name: string }) => ({ id: r.id, name: r.name }));
 }
 
 export async function loadProfile(viewer: CustomerViewer, customerId: string, deps: CustomerDeps = {}) {
@@ -453,4 +524,3 @@ function cateringRow(kind: "catering" | "ezcater", id: string, locationId: strin
     email, phone, full_name: contact.name?.trim().slice(0, 200) || null,
     contact_masked: e.kind === "masked", masked_channel: e.kind === "masked" ? kind : null };
 }
-

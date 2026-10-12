@@ -41,14 +41,33 @@ describe("extractCustomerRows", () => {
   it("third-party orders drop the relay phone and a relay email, and flag the marketplace", () => {
     const { rows, maskedOnly } = extractCustomerRows([order({ diningOption: { guid: "do-dd" }, thirdPartyProviderInfo: { provider: "DoorDash" },
       checks: [{ guid: "c1", totalAmount: 9, customer: { firstName: "Bo", lastName: "Li", email: "x1@doordash.com", phone: "2025550123" }, selections: [], payments: [] }] })], channel);
-    expect(rows).toHaveLength(0);
-    expect(maskedOnly).toBe(1);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ full_name: "Bo Li", email: null, phone: null, contact_masked: true, masked_channel: "doordash" });
+    expect(maskedOnly).toBe(0);
   });
 
   it("a third-party order with a real email keeps the email, never the phone, and is flagged", () => {
     const { rows } = extractCustomerRows([order({ thirdPartyProviderInfo: { provider: "Uber Eats" },
       checks: [{ guid: "c1", totalAmount: 9, customer: { firstName: "Bo", lastName: "Li", email: "bo@example.com", phone: "2025550123" }, selections: [], payments: [] }] })], channel);
     expect(rows[0]).toMatchObject({ email: "bo@example.com", phone: null, contact_masked: true, masked_channel: "ubereats", channel: "third_party", source: "toast_third_party" });
+  });
+
+  it("relay local base drops phone without metadata and attributes DoorDash", () => {
+    const { rows } = extractCustomerRows([order({ checks: [{ totalAmount: 9, customer: { firstName: "Bo", lastName: "Li", email: "DD.TOAST.ORDERS+123@gmail.com", phone: "2025550123" } }] })], channel);
+    expect(rows[0]).toMatchObject({ email: null, phone: null, contact_masked: true, masked_channel: "doordash" });
+  });
+
+  it("metadata-only and channel-only named guests survive; anonymous masked rows count as maskedOnly", () => {
+    const named = { checks: [{ totalAmount: 9, customer: { firstName: "Bo", lastName: "Li" } }] };
+    const r = extractCustomerRows([
+      order({ ...named, thirdPartyProviderInfo: { provider: "DoorDash" } }),
+      order({ ...named, guid: "o2", diningOption: { guid: "do-dd" } }),
+      order({ guid: "o3", diningOption: { guid: "do-dd" }, checks: [{ customer: { email: "dd.toast.orders+123@gmail.com" } }] }),
+    ], channel);
+    expect(r.rows).toHaveLength(2);
+    expect(r.rows.every((row) => row.contact_masked && row.email === null && row.phone === null)).toBe(true);
+    expect(r.maskedOnly).toBe(1);
+    expect(r.noContact).toBe(0);
   });
 
   it("skips voided orders and orders without any contact", () => {

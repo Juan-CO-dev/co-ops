@@ -48,6 +48,8 @@ export const MASKED_EMAIL_DOMAINS = [
   "doordash.com", "ubereats.com", "uber.com", "grubhub.com", "seamless.com", "postmates.com", "caviar.com",
   "ezcater.com", "marketplace.amazon.com", "relay.toasttab.com", "toasttab.com",
 ] as const;
+/** Exact local base before +; dots are significant, regardless of domain. */
+export const RELAY_EMAIL_LOCALS = ["dd.toast.orders"] as const;
 /** Placeholder addresses staff type to get past a required field. */
 const PLACEHOLDER_LOCAL = /^(no-?e?mail|none|na|n\/a|noreply|no-reply|test|null|x+)$/;
 
@@ -58,6 +60,7 @@ export function classifyEmail(raw: unknown): EmailClass {
   if (!email) return { kind: "invalid" };
   const [local = "", domain = ""] = email.split("@");
   if (PLACEHOLDER_LOCAL.test(local)) return { kind: "placeholder" };
+  if (RELAY_EMAIL_LOCALS.some((base) => local.split("+")[0] === base)) return { kind: "masked" };
   if (MASKED_EMAIL_DOMAINS.some((d) => domain === d || domain.endsWith(`.${d}`))) return { kind: "masked" };
   if (/(^|\.)(relay|masked|anonymi[sz]ed|proxy)\./.test(domain) || /^(relay|masked)[+.-]/.test(local)) return { kind: "masked" };
   return { kind: "ok", email };
