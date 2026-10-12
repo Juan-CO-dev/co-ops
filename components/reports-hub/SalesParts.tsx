@@ -24,6 +24,7 @@ export function Money({ cents, language }: { cents: number | null | undefined; l
 }
 
 export function channelLabel(language: Language, channel: string | null | undefined): string {
+  if (channel === "gift_card") return serverT(language, "reports.sales.channel.gift_card");
   const c = channel && (SALES_CHANNELS as readonly string[]).includes(channel) ? channel : "unknown";
   return serverT(language, `reports.sales.channel.${c}` as TranslationKey);
 }
@@ -34,7 +35,8 @@ export function providerLabel(language: Language, provider: string | null | unde
 }
 
 /** The order's server by Toast FIRST name; no name = "not mapped" + a 4-character reference. */
-export function serverLabel(language: Language, key: string, name: string | null | undefined): string {
+export function serverLabel(language: Language, key: string, name: string | null | undefined, online = false): string {
+  if (!name?.trim() && online) return serverT(language, "reports.sales.server.online");
   if (!key) return serverT(language, "reports.sales.server.none");
   return name && name.trim() ? name : serverT(language, "reports.sales.server.unmapped", { ref: serverRef(key) });
 }

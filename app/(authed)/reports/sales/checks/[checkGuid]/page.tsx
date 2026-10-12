@@ -69,7 +69,7 @@ export default async function SalesCheckPage({ params, searchParams }: { params:
       {row(t("reports.sales.col.channel"), channelLabel(language, detail.channel))}
       {row(t("reports.sales.col.provider"), providerLabel(language, detail.provider))}
       {row(t("reports.sales.check.dining_option"), detail.diningOption ?? "—")}
-      {row(t("reports.sales.col.servers"), serverLabel(language, detail.serverGuid ?? "", detail.serverName))}
+      {row(t("reports.sales.col.servers"), serverLabel(language, detail.serverGuid ?? "", detail.serverName, detail.serverOnline))}
       {row(t("reports.sales.check.opened"), detail.openedAt ? formatTime(detail.openedAt, language) : "—")}
       {row(t("reports.sales.check.closed"), detail.closedAt ? formatTime(detail.closedAt, language) : "—")}
       {row(t("reports.sales.toast_checks"), <Money cents={detail.amountCents} language={language} />)}

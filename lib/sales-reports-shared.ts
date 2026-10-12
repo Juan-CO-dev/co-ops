@@ -28,7 +28,7 @@ export const SALES_PAGE_SIZE = 50;
 /** Breakdown tables render this many rows per page. */
 export const SALES_BREAKDOWN_PAGE = 50;
 /** Exports page through the same reads; beyond this they refuse rather than truncate. */
-export const SALES_EXPORT_MAX_ROWS = 10_000;
+export const SALES_EXPORT_MAX_ROWS = 25_000;
 
 export const SALES_VIEWS = ["summary", "items", "modifiers", "channels", "heatmap", "discounts", "servers"] as const;
 export type SalesView = (typeof SALES_VIEWS)[number];
@@ -387,16 +387,19 @@ export function salesDeltaPct(current: SalesTotals, previous: SalesTotals | null
 export interface BreakdownRaw {
   key: string; label?: string | null; units?: Num; checks?: Num; cents?: Num; count?: Num; amount_missing?: Num;
   channel?: string | null; provider?: string | null; sale_class?: string | null; dow?: Num; hour?: Num;
+  server_online?: boolean;
 }
 export interface BreakdownRow {
   key: string; label: string | null; units: number; checks: number; cents: number; count: number; amountMissing: number;
   channel?: string; provider?: string | null; saleClass?: string; dow?: number; hour?: number;
+  serverOnline?: boolean;
 }
 
 /**
  * Merges window results into one row per key. Every metric is additive across DISJOINT business
  * date windows (a check belongs to one business date), including distinct check counts. The label
- * is the NEWEST window's (windows arrive newest first), so a renamed item shows its current name.
+ * is the NEWEST window's (windows arrive newest first); 0248 chooses the latest business date's
+ * item name within each window, breaking same-date ties by descending name.
  */
 export function mergeBreakdown(dimension: SalesDimension, chunks: readonly (readonly BreakdownRaw[])[]): BreakdownRow[] {
   const rows = new Map<string, BreakdownRow>();
@@ -408,8 +411,12 @@ export function mergeBreakdown(dimension: SalesDimension, chunks: readonly (read
         row = { key: r.key, label: r.label ?? null, units: 0, checks: 0, cents: 0, count: 0, amountMissing: 0 };
         if (dimension === "channel") { row.channel = r.channel ?? "unknown"; row.provider = r.provider ?? null; row.saleClass = r.sale_class ?? "sale"; }
         if (dimension === "hour_weekday") { row.dow = n(r.dow); row.hour = n(r.hour); }
+        if (dimension === "server") row.serverOnline = r.server_online === true;
         rows.set(key, row);
-      } else if (!row.label && r.label) row.label = r.label;
+      } else {
+        if (dimension !== "item" && dimension !== "modifier" && !row.label && r.label) row.label = r.label;
+        if (dimension === "server") row.serverOnline = row.serverOnline === true && r.server_online === true;
+      }
       row.units += n(r.units); row.checks += n(r.checks); row.cents += n(r.cents); row.count += n(r.count); row.amountMissing += n(r.amount_missing);
     }
   }
@@ -520,12 +527,14 @@ export function salesListContext(locationId: string, from: string, to: string, f
 export interface SalesCheckRow {
   businessDate: string; checkGuid: string; openedAt: string | null; channel: string; provider: string | null;
   diningOption: string | null; serverGuid: string | null; serverName: string | null;
+  serverOnline?: boolean;
   amountCents: number | null; taxCents: number | null; discountCents: number | null; units: number;
 }
 export interface SalesCheckDetail {
   businessDate: string; checkGuid: string; openedAt: string | null; closedAt: string | null; paidAt: string | null;
   channel: string; provider: string | null; diningOption: string | null; saleClass: SaleClass;
   serverName: string | null; serverGuid: string | null; ezcaterOrderNumber: string | null;
+  serverOnline?: boolean;
   amountCents: number | null; taxCents: number | null; totalCents: number | null;
   /** `counted` = false for a discount on a voided/deleted line (shown, never summed). */
   discounts: Array<{ ordinal: number; name: string | null; amountCents: number | null; itemName: string | null; counted: boolean }>;
@@ -545,7 +554,7 @@ export function toCheckRow(r: Record<string, unknown>): SalesCheckRow {
     businessDate: String(r.business_date), checkGuid: String(r.check_guid), openedAt: (r.opened_at as string | null) ?? null,
     channel: String(r.channel ?? "unknown"), provider: (r.provider as string | null) ?? null,
     diningOption: (r.dining_option as string | null) ?? null, serverGuid: (r.server_guid as string | null) ?? null,
-    serverName: (r.server_name as string | null) ?? null, amountCents: centsOrNull(r.amount_cents as Num),
+    serverName: (r.server_name as string | null) ?? null, serverOnline: r.server_online === true, amountCents: centsOrNull(r.amount_cents as Num),
     taxCents: centsOrNull(r.tax_cents as Num), discountCents: centsOrNull(r.discount_cents as Num), units: n(r.units as Num),
   };
 }
@@ -581,6 +590,7 @@ export function toCheckDetail(r: Record<string, unknown>): SalesCheckDetail {
     channel: String(r.channel ?? "unknown"), provider: (r.provider as string | null) ?? null,
     diningOption: (r.dining_option as string | null) ?? null, saleClass: (r.sale_class as SaleClass) ?? "sale",
     serverName: (r.server_name as string | null) ?? null, serverGuid: (r.server_guid as string | null) ?? null,
+    serverOnline: r.server_online === true,
     ezcaterOrderNumber: (r.ezcater_order_number as string | null) ?? null,
     amountCents: centsOrNull(r.amount_cents as Num), taxCents: centsOrNull(r.tax_cents as Num), totalCents: centsOrNull(r.total_cents as Num),
     discounts: ((r.discounts as Array<Record<string, unknown>>) ?? []).map((d) => ({

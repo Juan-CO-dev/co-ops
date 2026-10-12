@@ -8,6 +8,26 @@ import {
 const TODAY = "2026-10-08";
 const day = (over: Partial<DailyRaw> = {}): DailyRaw => ({ classes: [], tips: [], discounts: [], refunds: [], captured_days: [], ezcater: [], ...over });
 
+describe("accuracy label merging", () => {
+  it("requires online evidence across every window without changing the GUID or money", () => {
+    for (const online of [true, false, undefined]) {
+      const rows = mergeBreakdown("server", [[{ key: "guid", server_online: true, checks: 2, cents: 300 }],
+        [{ key: "guid", server_online: online, checks: 3, cents: 700 }]]);
+      expect(rows[0]).toMatchObject({ key: "guid", label: null, serverOnline: online === true, checks: 5, cents: 1000 });
+    }
+  });
+  it("uses a resolved name when an older window supplies it", () => {
+    expect(mergeBreakdown("server", [[{ key: "guid", server_online: true }], [{ key: "guid", label: "Alex", server_online: false }]])[0])
+      .toMatchObject({ label: "Alex", serverOnline: false });
+  });
+  it("preserves the newest item label, including unknown, instead of reviving an obsolete name", () => {
+    for (const label of ["New name", null]) {
+      expect(mergeBreakdown("item", [[{ key: "item", label, units: 1 }], [{ key: "item", label: "Z old name", units: 2 }]])[0])
+        .toMatchObject({ label, units: 3 });
+    }
+  });
+});
+
 describe("range wrapper: finished business days, 12 months reachable", () => {
   it("defaults to the seven finished days ending yesterday (today never mixed in)", () => {
     const r = resolveSalesRange({}, TODAY);

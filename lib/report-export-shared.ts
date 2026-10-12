@@ -36,7 +36,7 @@ import { rowAverageCents, salesHasData } from "@/lib/sales-reports-shared";
 
 /** text · date (YYYY-MM-DD) · datetime (ISO UTC) · money (integer cents → "12.34") · int · number · bool · currency ("USD"). */
 export type ColumnKind = "text" | "date" | "datetime" | "money" | "int" | "number" | "bool" | "currency";
-export interface ExportColumn { key: string; kind: ColumnKind }
+export interface ExportColumn { key: string; kind: ColumnKind; label?: string }
 export type ExportValue = string | number | boolean | null | undefined;
 export type ExportRow = Record<string, ExportValue>;
 
@@ -165,8 +165,8 @@ export const SALES_EXPORT_COLUMNS: Record<SalesExportView, readonly ExportColumn
   ],
   checks: [
     col("business_date", "date"), ...SHOP, col("check_guid"), col("opened_at", "datetime"), col("channel"), col("provider"),
-    col("dining_option"), col("server_first_name"), col("units", "number"), col("discounts", "money"),
-    col("check_total", "money"), col("sales_tax", "money"), col("currency", "currency"),
+    col("dining_option"), col("server_first_name"), col("server_ref"), col("units", "number"), col("discounts", "money"),
+    col("check_amount_pre_tax", "money"), col("sales_tax", "money"), col("currency", "currency"),
   ],
   catering: [
     col("event_date", "date"), ...SHOP, col("ezcater_order_number"), col("headcount", "int"), col("subtotal", "money"),
@@ -396,8 +396,8 @@ export function salesBreakdownRows(view: Exclude<SalesExportView, "summary" | "c
 export function salesCheckRows(rows: readonly SalesCheckRow[], shop: ShopRef): ExportRow[] {
   return rows.map((r) => ({
     business_date: r.businessDate, ...shopCells(shop), check_guid: r.checkGuid, opened_at: r.openedAt, channel: r.channel,
-    provider: r.provider, dining_option: r.diningOption, server_first_name: r.serverName, units: r.units,
-    discounts: r.discountCents, check_total: r.amountCents, sales_tax: r.taxCents,
+    provider: r.provider, dining_option: r.diningOption, server_first_name: r.serverName, server_ref: r.serverGuid?.slice(-4) ?? null, units: r.units,
+    discounts: r.discountCents, check_amount_pre_tax: r.amountCents, sales_tax: r.taxCents,
   }));
 }
 
