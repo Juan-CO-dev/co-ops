@@ -25,6 +25,12 @@ describe("normalisation", () => {
 });
 
 describe("masked relay emails are never real", () => {
+  it.each(["dd.toast.orders+123@gmail.com", "dd.toast.orders@gmail.com", "DD.TOAST.ORDERS+123@EXAMPLE.COM"])(
+    "masks the exact relay local base %s", (email) => expect(classifyEmail(email).kind).toBe("masked"));
+  it("does not fold dots or prefixes in real local parts", () => {
+    expect(classifyEmail("dd.toast.orders.fan@gmail.com").kind).toBe("ok");
+    expect(classifyEmail("ddtoastorders@gmail.com").kind).toBe("ok");
+  });
   it.each(["abc123@doordash.com", "guest@relay.toasttab.com", "x7@marketplace.amazon.com", "order-1@ubereats.com", "relay+1@example.com", "a@relay.example.com"])(
     "%s is masked", (e) => expect(classifyEmail(e).kind).toBe("masked"));
   it.each(["noemail@gmail.com", "none@none.com", "n/a@example.com"])("%s is a placeholder", (e) => expect(classifyEmail(e).kind).toBe("placeholder"));

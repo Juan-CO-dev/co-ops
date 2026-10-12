@@ -17,12 +17,12 @@ import { channelLookup, extractCustomerRows } from "./extract-shared";
 import { likelySamePerson } from "./identity-shared";
 import { chunkRows } from "./consent-shared";
 
-export interface CustomerCaptureResult { ok: boolean; linked: number; skipped: number; created: number; suggestions: number; error: string | null }
+export interface CustomerCaptureResult { ok: boolean; linked: number; skipped: number; created: number; ownerConflicts: number; suggestions: number; error: string | null }
 
 type Client = Pick<SupabaseClient, "rpc" | "from">;
 
 export async function persistCapturedCustomers(locationId: string, rawOrders: readonly unknown[], options: { signal?: AbortSignal; client?: Client } = {}): Promise<CustomerCaptureResult> {
-  const empty = { linked: 0, skipped: 0, created: 0, suggestions: 0 };
+  const empty = { linked: 0, skipped: 0, created: 0, ownerConflicts: 0, suggestions: 0 };
   if (!customerProfilesEnabled()) return { ok: true, ...empty, error: "customer_profiles_off" };
   const signal = options.signal ?? AbortSignal.timeout(30_000);
   try {
@@ -41,8 +41,10 @@ export async function persistCapturedCustomers(locationId: string, rawOrders: re
       signal.throwIfAborted();
       const { data, error } = await sb.rpc("customer_ingest_orders", { p_location_id: locationId, p_rows: chunk }).abortSignal(signal);
       if (error) throw new Error(error.code === "PGRST202" ? "customer_schema_missing" : "customer_ingest_failed");
-      const r = data as { linked: number; skipped: number; created: number; customer_ids: string[] };
+      const r = data as { linked: number; skipped: number; created: number; owner_conflicts?: number; customer_ids: string[] };
       result.linked += r.linked; result.skipped += r.skipped; result.created += r.created;
+      // A re-captured order whose contact now resolves to someone else keeps its owner (0249); counted, never named.
+      result.ownerConflicts += r.owner_conflicts ?? 0;
       for (const id of r.customer_ids ?? []) touched.add(id);
     }
     result.suggestions = await suggestFromCards(sb, [...touched], signal);
