@@ -13,6 +13,14 @@ const header = { title: "Cash reports", lines: ["Tenant", "Shop: Capitol Hill", 
 const label = (n: number, total: number) => `Page ${n} / ${total}`;
 
 describe("renderReportPdf", () => {
+  it("renders a display header while reading the stable CSV key", async () => {
+    const pdf = await renderReportPdf(header, [{ heading: null, emptyText: "No rows",
+      columns: [{ key: "check_amount_pre_tax", kind: "money", label: "Check amount (pre-tax)" }],
+      rows: [{ check_amount_pre_tax: 1234 }],
+    }], { compress: false, pageLabel: label });
+    expect(pdfText(pdf).replace(/\s/g, "")).toContain("Checkamount(pre-tax)");
+    expect(pdfText(pdf)).toContain("12.34");
+  });
   it("renders a real PDF (pdfkit + its font files load) with the header and a page count", async () => {
     const pdf = await renderReportPdf(header, [{
       heading: null, columns: EXPORT_COLUMNS.cash, emptyText: "No rows",

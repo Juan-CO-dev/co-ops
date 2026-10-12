@@ -5,7 +5,7 @@ vi.mock("@/lib/supabase-server", () => ({ getServiceRoleClient: vi.fn(() => { th
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import {
   SalesReportError, assertSalesScope, decodeSalesCursor, encodeSalesCursor, loadSalesBreakdown, loadSalesCatering, loadSalesCheckDetail,
-  loadSalesCheckPage, loadSalesEzcaterOrders, loadSalesSummary, mapBounded, resolveSalesRange, salesListContext,
+  loadSalesCheckPage, loadSalesEzcaterOrders, loadSalesLatestCapture, loadSalesSummary, mapBounded, resolveSalesRange, salesListContext,
 } from "@/lib/sales-reports";
 
 const A = "aaaaaaaa-0000-4000-8000-00000000000a";
@@ -56,6 +56,7 @@ describe("access matrix: GM+ own shop, 8+ every shop, below GM refused, all chec
     (v: typeof gm, loc: string) => loadSalesCheckDetail(v, { locationId: loc, businessDate: "2026-10-06", checkGuid: "c1" }),
     (v: typeof gm, loc: string) => loadSalesCatering(v, { locationId: loc, range }),
     (v: typeof gm, loc: string) => loadSalesEzcaterOrders(v, { locationId: loc, range }),
+    (v: typeof gm, loc: string) => loadSalesLatestCapture(v, { locationId: loc, businessDate: TODAY }),
   ];
   it("below GM (an AGM at level 6, even at their own shop) is refused with no database work", async () => {
     for (const load of loaders) {
@@ -227,10 +228,88 @@ describe("check list keyset paging across windows", () => {
 });
 
 describe("mapBounded", () => {
+  it("stops scheduling after rejection, including when another in-flight item completes", async () => {
+    let finish!: () => void;
+    const pending = new Promise<void>((resolve) => { finish = resolve; });
+    const started: number[] = [];
+    const result = mapBounded([1, 2, 3, 4], 2, async (x) => {
+      started.push(x);
+      if (x === 1) throw new Error("failed");
+      await pending;
+      return x;
+    });
+    await expect(result).rejects.toThrow("failed");
+    finish();
+    await pending;
+    expect(started).toEqual([1, 2]);
+  });
   it("keeps order and the concurrency bound", async () => {
     let live = 0; let peak = 0;
     const out = await mapBounded([1, 2, 3, 4, 5], 2, async (x) => { live++; peak = Math.max(peak, live); await new Promise((r) => setTimeout(r, 2)); live--; return x * 2; });
     expect(out).toEqual([2, 4, 6, 8, 10]);
     expect(peak).toBe(2);
+  });
+});
+
+describe("statement timeout retry", () => {
+  const args = { locationId: A, range: resolveSalesRange({}, TODAY), dimension: "server" as const };
+  it.each(["57014", "message"])("retries one %s timeout with identical arguments and returns success", async (kind) => {
+    let attempts = 0;
+    const f = fakeClient(() => ++attempts === 1
+      ? Object.assign(new Error(kind === "message" ? "canceling statement due to statement timeout" : "private"), { code: kind === "57014" ? "57014" : "XX000" })
+      : [{ key: "server", checks: 1, cents: 700 }]);
+    const rows = await loadSalesBreakdown(gm, args, { client: f.client });
+    expect(rows[0]).toMatchObject({ checks: 1, cents: 700 });
+    expect(f.calls).toHaveLength(2);
+    expect(f.calls[1]).toEqual(f.calls[0]);
+  });
+  it.each(["57014", "XX000", "PGRST202"])("bounds attempts for %s and keeps mapping", async (code) => {
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const f = fakeClient(() => Object.assign(new Error("private"), { code }));
+      await expect(loadSalesBreakdown(gm, args, { client: f.client })).rejects.toMatchObject({
+        status: 503, code: code === "PGRST202" ? "sales_reads_not_installed" : "sales_reads_timeout",
+      });
+      expect(f.calls).toHaveLength(code === "57014" ? 2 : 1);
+    } finally { log.mockRestore(); }
+  });
+});
+
+describe("optional today caption", () => {
+  it("returns the captured timestamp or null when no completed capture exists", async () => {
+    for (const captured of ["2026-10-08T16:00:00Z", null]) {
+      const f = fakeClient(() => [], () => ({ data: captured ? { finished_at: captured } : null, error: null }));
+      expect(await loadSalesLatestCapture(gm, { locationId: A, businessDate: TODAY }, { client: f.client })).toBe(captured);
+    }
+  });
+  it("returns null for returned errors and rejected transports", async () => {
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      for (const reject of [false, true]) {
+        const f = fakeClient(() => [], () => {
+          if (reject) throw new Error("private transport");
+          return { data: null, error: { message: "private error" } };
+        });
+        expect(await loadSalesLatestCapture(gm, { locationId: A, businessDate: TODAY }, { client: f.client })).toBeNull();
+      }
+      expect(log.mock.calls).toEqual([["sales_reads_timeout"]]);
+    } finally { log.mockRestore(); }
+  });
+});
+
+describe("large check pages", () => {
+  it("keeps lookahead inside 1000 and walks every row across the page boundary", async () => {
+    const rows = Array.from({ length: 2001 }, (_, i) => ({ business_date: "2026-10-07", check_guid: `c-${String(i).padStart(5, "0")}`, amount_cents: i }));
+    const f = fakeClient((_fn, args) => rows.filter((r) => args.p_after_check == null || r.check_guid > String(args.p_after_check)).slice(0, Number(args.p_limit)));
+    const seen: string[] = [];
+    let cursor: string | undefined;
+    do {
+      const page = await loadSalesCheckPage(gm, { locationId: A, range: resolveSalesRange({}, TODAY), filters: {}, pageSize: 1000, cursor }, { client: f.client });
+      seen.push(...page.rows.map((r) => r.checkGuid));
+      cursor = page.nextCursor ?? undefined;
+    } while (cursor);
+    expect(seen).toEqual(rows.map((r) => r.check_guid));
+    expect(f.calls).toHaveLength(3);
+    expect(f.calls.every((c) => Number(c.args.p_limit) <= 1000)).toBe(true);
   });
 });
