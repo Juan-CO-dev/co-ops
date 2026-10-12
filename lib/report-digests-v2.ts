@@ -65,11 +65,19 @@ async function salesDay(sb: Sb, locationId: string, day: string): Promise<SalesS
   const captured = await loadCapturedToastDay(locationId, day);
   if (!captured) return null;
   const ids = captured.orders.map((o) => o.snapshotId);
+  // Match sales_report_facts' exact link identity and scope. Never exclude an entire split order.
+  const links = await selectAllRows<{ toast_snapshot_id: string; check_guid: string }>((from, to) =>
+    sb.from("ezcater_current_toast_links").select("toast_snapshot_id, check_guid")
+      .eq("location_id", locationId).eq("business_date", day)
+      .order("toast_snapshot_id").order("check_guid").range(from, to));
+  const linked = new Set(links.map((l) => `${l.toast_snapshot_id}|${l.check_guid}`));
   const discounts = await inChunks(ids, (chunk) => selectAllRows<{ snapshot_id: string; check_guid: string; name: string | null; amount_cents: number | string | null }>((from, to) =>
     sb.from("toast_check_discounts").select("snapshot_id, check_guid, name, amount_cents").in("snapshot_id", chunk)
       .order("snapshot_id").order("check_guid").order("ordinal").range(from, to)));
   return {
-    orders: captured.orders,
+    orders: captured.orders.map((o) => ({ ...o,
+      checks: o.checks.map((c) => ({ ...c, ezcaterLinked: linked.has(`${o.snapshotId}|${c.checkGuid}`) })),
+    })),
     discounts: discounts.map((d) => ({ snapshotId: d.snapshot_id, checkGuid: d.check_guid, name: d.name, amountCents: d.amount_cents === null ? null : Number(d.amount_cents) })),
     configDegraded: captured.coverage.configDegraded,
   };

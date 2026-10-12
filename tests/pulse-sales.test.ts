@@ -16,7 +16,7 @@ const ctx: PulseCtx = {
 const today = { classes: [{ business_date: ctx.date, sale_class: "sale" as const, checks: 2, amount_cents: 900, tax_cents: 90, amount_missing: 0 }],
   discounts: [{ business_date: ctx.date, cents: 100, count: 1 }],
   refunds: [{ business_date: ctx.date, refund_cents: 50, refund_tip_cents: 0, count: 1 }],
-  captured_days: [ctx.date], captured_at: "2026-10-09T19:00:00Z" };
+  captured_days: [ctx.date], captured_at: "2026-10-09T19:15:00Z" };
 const history = { hours: [{ key: "5|11", dow: 5, hour: 11, cents: 1001, checks: 4 }, { key: "4|12", dow: 4, hour: 12, cents: 600, checks: 2 }],
   captured_days: ["2026-10-02", "2026-09-25", "2026-10-01", "2026-10-02"] };
 function fake(mode: "ok" | "hang" | "error" | "empty" | "today-error" = "ok") {
@@ -43,6 +43,30 @@ function fake(mode: "ok" | "hang" | "error" | "empty" | "today-error" = "ok") {
 }
 afterEach(() => { vi.useRealTimers(); resetSourceCache(); clearBaselineCache(); vi.restoreAllMocks(); });
 describe("real Pulse sales wiring", () => {
+  it.each([null, "2026-10-09T19:00:00Z"])("hides pace for a missing or stale capture (%s), retaining sales", async (capturedAt) => {
+    const { client } = fake();
+    const deps = defaultPulseDeps(client);
+    const facts = await deps.sales(ctx);
+    const result = await loadPulseSection({ ...deps, sales: async () => ({ ...facts, today: { ...facts.today, capturedAt } }) }, ctx, "sales");
+    if (result.state !== "ok") throw new Error(result.state);
+    expect(result.data).toMatchObject({ net: { cents: 900 }, pace: { available: false, pctOfNormal: null,
+      staleMinutes: capturedAt ? 30 : null } });
+  });
+  it("compares at capture minutes, not the request clock, and carries missing amounts", async () => {
+    const { client } = fake();
+    const deps = defaultPulseDeps(client);
+    const facts = await deps.sales(ctx);
+    const sales = { ...facts, today: { ...facts.today, capturedAt: "2026-10-09T19:15:00Z" },
+      heatTrailing: [{ ...facts.heatTrailing[0]!, dow: 5, hour: 15, cents: 7200 }] };
+    const result = await loadPulseSection({ ...deps, sales: async () => sales }, ctx, "sales");
+    if (result.state !== "ok") throw new Error(result.state);
+    expect((result.data as SalesData).pace).toMatchObject({ currentHour: 15, pctOfNormal: 0, available: true });
+    expect((result.data as SalesData).pace.baselineCumulative?.[15]).toBe(900);
+    sales.today.totals = { ...sales.today.totals, amountMissing: 1 };
+    const partial = await loadPulseSection({ ...deps, sales: async () => sales }, ctx, "sales");
+    if (partial.state !== "ok") throw new Error(partial.state);
+    expect(partial.data).toMatchObject({ coverage: "complete", amountMissing: 1, pace: { available: false, pctOfNormal: null } });
+  });
   it("issues seven scoped RPCs, preserves summary and weekday rounding/full heatmap; a cached repoll issues zero RPCs and only the one-row capture-stamp probe", async () => {
     const { client, calls, reads } = fake();
     const parent = new AbortController();

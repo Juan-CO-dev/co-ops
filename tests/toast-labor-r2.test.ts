@@ -177,12 +177,12 @@ describe("labor timing (Astra r2 P1): the digest pulls day D itself, before comp
     // Closing (22:30 ET): Ana is done, Kim still clocked in.
     toast = [entry(), entry({ guid: "te-2", employeeReference: { guid: "emp-kim" }, inDate: "2026-10-07T22:00:00.000+0000", outDate: null, regularHours: null })];
     const closing = await laborForDigest(LOC, "2026-10-07", deps);
-    expect(closing).toMatchObject({ kind: "ok", value: { totalHours: 8, openEntries: 1, salesPerLaborHourCents: 10000 } });
+    expect(closing).toMatchObject({ kind: "ok", value: { totalHours: 8, openEntries: 1, salesPerLaborHourCents: null } });
     // 03:00 ET fallback: Kim clocked out at 02:30 (with a 0.5 h unpaid break, regularHours not yet set).
     toast = [entry(), entry({ guid: "te-2", employeeReference: { guid: "emp-kim" }, inDate: "2026-10-07T22:00:00.000+0000", outDate: "2026-10-08T06:30:00.000+0000", regularHours: null,
       breaks: [{ paid: false, missed: false, inDate: "2026-10-08T02:00:00.000+0000", outDate: "2026-10-08T02:30:00.000+0000" }] })];
     const fallback = await laborForDigest(LOC, "2026-10-07", deps);
-    expect(fallback).toMatchObject({ kind: "ok", value: { totalHours: 16, openEntries: 0 } });
+    expect(fallback).toMatchObject({ kind: "ok", value: { totalHours: 16, openEntries: 0, salesPerLaborHourCents: 5000 } });
     // 09:00 UTC nightly backstop: same rows, upserted idempotently (same keys, no double count).
     await runToastLaborPull(["2026-10-07"], { deadlineMs: 10_000, context: "cron" });
     expect(table.size).toBe(2);

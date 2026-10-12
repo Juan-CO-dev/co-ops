@@ -43,7 +43,8 @@ import { cachedSource, cachedStampedSource, sourceKey } from "@/lib/pulse/source
 import { pulseReadActor } from "@/lib/pulse/read-actor";
 import { LINK_ADMIN_MIN_LEVEL } from "@/lib/toast/employee-links";
 import { attentionEvidence, attentionScore, crewAttention, rankAttention, severityOf, stripAttentionRows } from "@/lib/pulse/attention-shared";
-import { baselineCumulative, cumulativeByHour, dowOf, hourCurve, paceDeltaPct, sameWeekdayCoverage } from "@/lib/pulse/baseline-shared";
+import { baselineAtMinute, baselineCumulative, capturePaceAge, cumulativeByHour, dowOf, hourCurve, paceDeltaPct, sameWeekdayCoverage } from "@/lib/pulse/baseline-shared";
+import { shiftReportDate } from "@/lib/report-range";
 import { floorStations, mergeLayout } from "@/lib/pulse/floor-shared";
 import { canArrangeFloor, canAuthorHandoff, canReadPulseLocation, canViewSection, crewScoped, moneyVisible, type PulseSection } from "@/lib/pulse/scope-shared";
 import type {
@@ -487,7 +488,9 @@ async function sales(deps: PulseDeps, ctx: PulseCtx): Promise<SalesData> {
   if (!moneyVisible(ctx.auth.level)) throw new PulseScopeError("sales");
   const f = await deps.sales(ctx);
   const t = f.today.totals;
-  const { minutesOfDay } = operationalNow(ctx.now);
+  const age = capturePaceAge(f.today.capturedAt, ctx.now);
+  const paceAvailable = age.usable && t.amountMissing === 0;
+  const { minutesOfDay } = operationalNow(age.usable ? new Date(f.today.capturedAt!) : ctx.now);
   const currentHour = Math.min(23, Math.floor(minutesOfDay / 60));
   const dow = dowOf(ctx.date);
   const todayCurve = hourCurve(f.hoursToday.filter((r) => r.dow === dow || r.dow === undefined).map((r) => ({ hour: r.hour ?? -1, cents: r.cents })));
@@ -495,14 +498,20 @@ async function sales(deps: PulseDeps, ctx: PulseCtx): Promise<SalesData> {
   const weeks = sameWeekdayCoverage(f.trailing?.buckets ?? [], dow);
   const heat = f.heatTrailing.filter((r) => r.dow !== undefined && r.hour !== undefined).map((r) => ({ dow: r.dow!, hour: r.hour!, cents: r.cents }));
   const baseline = baselineCumulative(heat, dow, weeks);
+  if (baseline) baseline[currentHour] = baselineAtMinute(baseline, minutesOfDay);
+  // The headline and endpoint use the same captured total, not a separately loaded hourly sum.
+  todayCumulative[currentHour] = t.toastChecksCents;
   const hasData = t.coveredDays > 0 || t.checks > 0;
   return {
     capturedAt: f.today.capturedAt,
     coverage: t.coverage,
+    amountMissing: t.amountMissing,
     net: hasData ? { cents: t.toastChecksCents, checks: t.checks, avgCheckCents: t.avgCheckCents } : null,
     discounts: { cents: t.discountCents, count: t.discountCount },
     refunds: { cents: t.refundCents, count: t.refundCount },
-    pace: { baselineUnavailable: f.trailing === null, todayCumulative, baselineCumulative: baseline, baselineWeeks: weeks, weekday: dow, pctOfNormal: paceDeltaPct(todayCumulative, baseline, currentHour), currentHour },
+    pace: { baselineUnavailable: f.trailing === null, available: paceAvailable, staleMinutes: age.staleMinutes,
+      todayCumulative, baselineCumulative: baseline, baselineWeeks: weeks, weekday: dow,
+      pctOfNormal: paceAvailable ? paceDeltaPct(todayCumulative, baseline, currentHour) : null, currentHour },
     topItems: f.items.slice(0, 5).map((r) => ({ name: r.label ?? r.key, units: r.units })),
     channels: f.channels.filter((r) => (r.saleClass ?? "sale") === "sale").map((r) => ({ channel: r.channel ?? r.key, cents: r.cents, checks: r.checks })),
     discountsByName: f.discounts.slice(0, 8).map((r) => ({ name: r.label ?? r.key, cents: r.cents, count: r.count })),
@@ -632,7 +641,7 @@ export async function loadPulseSections(deps: PulseDeps, ctx: PulseCtx, sections
 
 // ── Real wiring ─────────────────────────────────────────────────────────────────────────────
 
-const UNLINKED_LIMIT = 20;
+const UNLINKED_LIMIT = 50;
 
 export function defaultPulseDeps(service: SupabaseClient): PulseDeps {
   const actorOf = (ctx: PulseCtx) => pulseReadActor(ctx.auth, ctx.locationId);
@@ -645,7 +654,7 @@ export function defaultPulseDeps(service: SupabaseClient): PulseDeps {
     notRung: (ctx) => readNotInToast(service, [ctx.locationId], { through: ctx.date }),
     unlinkedClockIns: async (ctx) => {
       const { data, error } = await service.from("toast_time_entries").select("employee_guid,employee_first_name,in_at")
-        .eq("location_id", ctx.locationId).eq("business_date", ctx.date).eq("deleted", false).is("user_id", null).is("out_at", null)
+        .eq("location_id", ctx.locationId).in("business_date", [shiftReportDate(ctx.date, -1), ctx.date]).eq("deleted", false).is("user_id", null).is("out_at", null)
         .order("in_at", { ascending: true }).limit(UNLINKED_LIMIT)
         .returns<Array<{ employee_guid: string; employee_first_name: string | null; in_at: string }>>();
       if (error) throw new Error(`pulse unlinked clock-ins: ${error.message}`);
@@ -653,7 +662,7 @@ export function defaultPulseDeps(service: SupabaseClient): PulseDeps {
       const unique = new Map<string, { employeeGuid: string; firstName: string | null; since: string }>();
       for (const row of data ?? []) {
         if (!unique.has(row.employee_guid)) unique.set(row.employee_guid, {
-          employeeGuid: row.employee_guid, firstName: row.employee_first_name, since: row.in_at,
+          employeeGuid: row.employee_guid, firstName: row.employee_first_name ? firstName(row.employee_first_name) : null, since: row.in_at,
         });
       }
       const entries = [...unique.values()];

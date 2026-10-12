@@ -7,7 +7,7 @@ export interface PulseCapturedOrder {
   voided: boolean;
   excessFood: boolean;
   selections: CaptureSelection[];
-  checks: { checkGuid: string; amountCents: number | null; voided: boolean; deleted: boolean }[];
+  checks: { checkGuid: string; amountCents: number | null; voided: boolean; deleted: boolean; ezcaterLinked?: boolean }[];
 }
 
 /** Capture amounts are net check amounts. Selection/modifier prices never enter money. */
@@ -22,7 +22,7 @@ export function capturedDayPulse(businessDate: string, orders: readonly PulseCap
     if (order.deleted || order.voided || order.excessFood || order.salesChannel === "gift_card") continue;
     const liveChecks = new Set<string>();
     for (const check of order.checks) {
-      if (check.deleted || check.voided) continue;
+      if (check.deleted || check.voided || check.ezcaterLinked) continue;
       if (check.amountCents === null || !Number.isSafeInteger(check.amountCents)) throw new Error("capture_pulse_amount_missing");
       netCents += check.amountCents;
       checks += 1;
