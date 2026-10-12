@@ -15,6 +15,20 @@ describe("report contracts", () => {
   it("rejects normalized impossible dates and accepts leap days", () => { expect(validReportDate("2026-02-30")).toBe(false); expect(validReportDate("2024-02-29")).toBe(true); });
   it("caps day to 92 inclusive and compares disjoint equal periods", () => { const r = parseReportRange({from:"2020-01-01",to:"2026-10-07",cmp:"1"},"2026-10-07"); expect(r.from).toBe("2026-07-08"); expect(r.previous.to).toBe("2026-07-07"); expect(r.compare).toBe(true); });
   it("compares this month with prior month to date", () => { expect(parseReportRange({range:"this_month"},"2026-10-07").previous).toEqual({from:"2026-09-01",to:"2026-09-07"}); });
+  it("honors an edited valid pair despite a stale preset and compares the custom period", () => {
+    expect(parseReportRange({range:"this_month",from:"2026-10-02",to:"2026-10-05",compare:"true"},"2026-10-07"))
+      .toMatchObject({range:"custom",from:"2026-10-02",to:"2026-10-05",previous:{from:"2026-09-28",to:"2026-10-01"},compare:true});
+  });
+  it("retains preset semantics for unchanged dates and ignores an incomplete or invalid pair", () => {
+    for (const dates of [{from:"2026-10-01",to:"2026-10-07"},{from:"2026-01-01"},{from:"2026-02-30",to:"2026-10-05"}]) {
+      expect(parseReportRange({range:"this_month",...dates},"2026-10-07"))
+        .toMatchObject({range:"this_month",from:"2026-10-01",to:"2026-10-07",previous:{from:"2026-09-01",to:"2026-09-07"}});
+    }
+  });
+  it("still caps explicit dates overriding a preset", () => {
+    expect(parseReportRange({range:"last7",from:"2020-01-01",to:"2026-12-01"},"2026-10-07"))
+      .toMatchObject({range:"custom",from:"2026-07-08",to:"2026-10-07"});
+  });
   it("uses independent midnights across DST", () => { expect(reportTimestampBounds("2026-03-08","2026-03-08")).toEqual({start:"2026-03-08T05:00:00.000Z",end:"2026-03-09T04:00:00.000Z"}); });
   it("retains a year of monthly buckets", () => { expect(parseReportRange({from:"2020-01-01"},"2026-10-07","month").from).toBe("2025-11-01"); });
   it("does not authorize a forged all-shop selection", () => { expect(canReadScopedReport({userId:"u",level:7,locations:["a"]},"b")).toBe(false); expect(canReadScopedReport({userId:"u",level:8,locations:[]},"b")).toBe(true); expect(canReadScopedReport({userId:"u",level:8},"all")).toBe(false); });

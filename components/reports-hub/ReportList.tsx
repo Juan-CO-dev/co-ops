@@ -102,7 +102,7 @@ export function ReportList({ items, locationId, language, viewerLevel, searchQue
                     {t("reports.col.by")}: {item.submitterName}
                   </span>
                 ) : null}
-                <span>
+                <span className={item.status === "auto_finalized" ? "rounded-full bg-co-warning-surface px-2 py-0.5 font-semibold text-co-warning-text" : undefined}>
                   {t("reports.col.status")}: {statusLabel}
                 </span>
               </div>
@@ -110,6 +110,7 @@ export function ReportList({ items, locationId, language, viewerLevel, searchQue
               {/* Signal badges — derived from signalSummary, always attached by listReports */}
               {s ? (
                 <div className="mt-1 flex flex-wrap gap-1.5">
+                  {(s.notStarted ?? 0) > 0 ? <span className="rounded-full bg-co-warning-surface px-2 py-0.5 text-xs font-semibold text-co-warning-text">{t("reports.filter.not_started")}</span> : null}
                   {s.underPar > 0 ? (
                     <span className="rounded-full border border-co-cta/30 bg-co-cta/10 px-2 py-0.5 text-xs font-semibold text-co-cta-text">
                       {t("reports.badge.under_par").replace("{count}", String(s.underPar))}

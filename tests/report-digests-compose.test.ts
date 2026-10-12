@@ -61,6 +61,14 @@ describe("shop digest lines", () => {
     expect(lines.find((l) => l.label === "AM Prep")?.href).toBe(`${BASE}/reports/operations?location=${LOC}&range=custom&from=${DAY}&to=${DAY}&type=am_prep&sf_skipped=true`);
   });
 
+  it("an auto-closed report nobody started is an issue, never All good", () => {
+    const lines = composeShopLines(facts({ reports: [report("closing", "auto_finalized", { ...clean, notStarted: 1 }, "c")] }), "en", BASE);
+    const closing = lines.find((l) => l.label === "Closing")!;
+    expect(closing.tone).toBe("issue");
+    expect(closing.text).toContain("not started");
+    expect(closing.text).not.toContain("All good");
+  });
+
   it("receiving, tosses, store runs and assigned tasks speak explicitly", () => {
     const lines = composeShopLines(facts({
       receiving: { deliveries: 3, discrepant: 1, missingReceipt: 2 }, tosses: 4, storeRunsPending: 2,

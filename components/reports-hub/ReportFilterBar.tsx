@@ -34,6 +34,7 @@ interface ActiveSignalFilters {
   underPar?: boolean;
   overPar?: boolean;
   skipped?: boolean;
+  notStarted?: boolean;
   tempFlag?: boolean;
   cashOver?: boolean;
   cashShort?: boolean;
@@ -183,6 +184,11 @@ export function ReportFilterBar({
             defaultChecked={activeSignalFilters.skipped === true}
           />
           {t("reports.filter.skipped")}
+        </label>
+
+        <label className="flex cursor-pointer items-center gap-1.5 text-sm text-co-text">
+          <input type="checkbox" name="sf_notStarted" value="true" aria-label={t("reports.filter.not_started")} defaultChecked={activeSignalFilters.notStarted === true} />
+          {t("reports.filter.not_started")}
         </label>
 
         <label className="flex cursor-pointer items-center gap-1.5 text-sm text-co-text">

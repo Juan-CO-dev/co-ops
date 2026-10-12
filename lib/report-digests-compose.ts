@@ -121,7 +121,7 @@ export function composeShopLines(f: ShopDayFacts, language: Language, baseUrl: s
     const info: string[] = [];
     let n = 0;
     let filter: string | null = null;
-    const sum = (k: "underPar" | "overPar" | "skipped" | "tempFlags") => items.reduce((acc, r) => acc + (r.signalSummary?.[k] ?? 0), 0);
+    const sum = (k: "underPar" | "overPar" | "skipped" | "notStarted" | "tempFlags") => items.reduce((acc, r) => acc + (r.signalSummary?.[k] ?? 0), 0);
     const add = (count: number, one: TranslationKey, other: TranslationKey, sf: string, asIssue = true) => {
       if (count <= 0) return;
       if (!asIssue) { info.push(plural(t, count, one, other)); return; }
@@ -132,6 +132,8 @@ export function composeShopLines(f: ShopDayFacts, language: Language, baseUrl: s
     add(sum("underPar"), "digest.signal.under_par_one", "digest.signal.under_par_other", "sf_underPar", parIsIssue);
     add(sum("overPar"), "digest.signal.over_par_one", "digest.signal.over_par_other", "sf_overPar", parIsIssue);
     add(sum("skipped"), "digest.signal.skipped_one", "digest.signal.skipped_other", "sf_skipped");
+    // A report nobody started is an issue, never "All good" (its skipped count is 0 by design).
+    add(sum("notStarted"), "digest.signal.not_started_one", "digest.signal.not_started_other", "sf_notStarted");
     add(sum("tempFlags"), "digest.signal.temp_flags_one", "digest.signal.temp_flags_other", "sf_tempFlag");
     for (const r of items) {
       const cents = r.signalSummary?.cashOverShortCents ?? 0;

@@ -11,7 +11,7 @@ import {
   loadMaintenanceReportDetail,
   type MaintenanceReportDetail,
 } from "@/lib/maintenance";
-import { derivePrepHave, parStatusFromHave, isOutOfRangeTemp } from "@/lib/report-signals";
+import { derivePrepHave, parStatusFromHave, reportParDeviation, isOutOfRangeTemp } from "@/lib/report-signals";
 import { loadShiftWrapUp } from "@/lib/pm-report";
 import type { ShiftWrapUpRow } from "@/lib/pm-report";
 import { loadReportStatuses } from "@/lib/midshift";
@@ -36,6 +36,8 @@ export interface SignalSummary {
   underPar: number;
   overPar: number;
   skipped: number;
+  /** Older callers may supply summaries without this additive count. Loaders always set it. */
+  notStarted?: number;
   tempFlags: number;
   cashOverShortCents: number | null;
 }
@@ -59,6 +61,7 @@ export interface SignalFilters {
   underPar?: boolean;
   overPar?: boolean;
   skipped?: boolean;
+  notStarted?: boolean;
   tempFlag?: boolean;
   cashOver?: boolean;
   cashShort?: boolean;
@@ -274,7 +277,7 @@ export async function enrichReportItems(service: SupabaseClient, f: ListFilters,
     void _at; // Internal ordering metadata must not enter list rows.
     if (item.type === "maintenance") {
       const flagCount = maintenanceFlags.get(item.date) ?? 0;
-      item.signalSummary = {underPar:0,overPar:0,skipped:0,tempFlags:flagCount,cashOverShortCents:null};
+      item.signalSummary = {underPar:0,overPar:0,skipped:0,notStarted:0,tempFlags:flagCount,cashOverShortCents:null};
       item.status = flagCount ? "flags" : "ok";
     } else item.signalSummary = signals.get(item.id);
     out.push({...item, submitterName: submitterId ? names.get(submitterId) ?? null : null});
@@ -285,6 +288,7 @@ function matchesSignals(item: ReportListItem, sf?: SignalFilters): boolean {
   const s = item.signalSummary;
   if (!sf || !s) return true;
   return !(sf.underPar && s.underPar <= 0 || sf.overPar && s.overPar <= 0 || sf.skipped && s.skipped <= 0 ||
+    sf.notStarted && (s.notStarted ?? 0) <= 0 ||
     sf.tempFlag && s.tempFlags <= 0 || sf.cashOver && (s.cashOverShortCents ?? 0) <= 0 || sf.cashShort && (s.cashOverShortCents ?? 0) >= 0);
 }
 /** Summary consumers need the whole capped range; list pages use listReportsPage. */
@@ -375,6 +379,7 @@ async function loadChecklistDetail(
   // resource to it prevents a cross-location IDOR (loading another store's
   // report by id while passing a location you DO have access to).
   if (inst.location_id !== args.locationId) return null;
+  if (!(await templateMatchesReportType(service, inst.template_id, args.type))) return null;
   if (!isFinalizedReport(inst.status) && inst.date >= etCalendarDate(new Date().toISOString())) return null;
 
   // AFTER the IDOR guard: load temp-item ids and compute signals (derived from
@@ -701,6 +706,7 @@ async function loadOpeningDetail(
   // SECURITY: cross-location IDOR guard — the record must belong to the caller's
   // authorized location (page validated args.locationId via lockLocationContext).
   if (inst.location_id !== args.locationId) return null;
+  if (!(await templateMatchesReportType(service, inst.template_id, "opening"))) return null;
   if (!isFinalizedReport(inst.status) && inst.date >= etCalendarDate(new Date().toISOString())) return null;
 
   // AFTER the IDOR guard: signals + temp-item ids (derived from already-authorized data).
@@ -1213,6 +1219,14 @@ export type ReportDetail =
   | PmReportDetail
   | MaintenanceReportDetail;
 
+async function templateMatchesReportType(service: SupabaseClient, templateId: string, type: ReportTypeKey): Promise<boolean> {
+  const { data, error } = await service.from("checklist_templates")
+    .select("type, prep_subtype").eq("id", templateId)
+    .maybeSingle<{ type: string; prep_subtype: string | null }>();
+  if (error) throw new Error(error.message);
+  return !!data && checklistReportType(data.type, data.prep_subtype) === type;
+}
+
 export async function loadReportDetail(
   service: SupabaseClient,
   args: { viewer: Viewer; type: ReportTypeKey; id: string; locationId: string },
@@ -1254,9 +1268,10 @@ export async function loadReportDetail(
 export interface ReportSignals {
   done: number;
   total: number; // required template items (checklist); 1 for cash
-  skipped: number; // required items with no live completion
-  underPar: number; // prep: items with total < par
-  overPar: number; // prep: items with total > par
+  skipped: number; // missing required items on a started instance
+  notStarted: number; // instances with no live completion (0 or 1)
+  underPar: number; // opening/mid-day final-check deviations
+  overPar: number;
   tempFlags: number; // completions on temp items with count_value > 41
   cashOverShortCents: number | null; // cash only
 }
@@ -1316,6 +1331,7 @@ export async function computeReportSignals(
     done: 0,
     total: 0,
     skipped: 0,
+    notStarted: 0,
     underPar: 0,
     overPar: 0,
     tempFlags: 0,
@@ -1410,7 +1426,8 @@ function computeChecklistSignalsFromData(
   const requiredItems = items.filter((i) => i.required && (i.active || completedIds.has(i.id)));
   const done = requiredItems.filter((i) => completedIds.has(i.id)).length;
   const total = requiredItems.length;
-  const skipped = total - done;
+  const notStarted = rows.length === 0 ? 1 : 0;
+  const skipped = notStarted ? 0 : total - done;
 
   let tempFlags = 0;
   let underPar = 0;
@@ -1419,6 +1436,9 @@ function computeChecklistSignalsFromData(
   const checks: ChecklistCheckRow[] = [];
 
   for (const r of rows) {
+    const deviation = reportParDeviation(type, r.prep_data);
+    if (deviation === "under") underPar++;
+    else if (deviation === "over") overPar++;
     // Temp-flag: ONLY on completions whose template_item_id is in the registry
     // tempItemIds set AND count_value > 41. Never "any count_value > 41" —
     // prep totals can exceed 41 and would false-positive.
@@ -1449,8 +1469,6 @@ function computeChecklistSignalsFromData(
       const have = derivePrepHave({ isMidDay, onHand, total: totalVal });
       const displayTotal = isMidDay ? have : totalVal;
       const parStatus = parStatusFromHave(par, have);
-      if (parStatus === "under") underPar++;
-      else if (parStatus === "over") overPar++;
       prepValues.push({
         label: labelById.get(r.template_item_id) ?? "—",
         par,
@@ -1462,7 +1480,7 @@ function computeChecklistSignalsFromData(
   }
 
   return {
-    signals: { done, total, skipped, underPar, overPar, tempFlags, cashOverShortCents: null },
+    signals: { done, total, skipped, notStarted, underPar, overPar, tempFlags, cashOverShortCents: null },
     prepValues,
     checks,
   };
@@ -1482,7 +1500,7 @@ export async function computeReportSignalsBatch(
   tempItemIds: Set<string>,
   viewer?: Viewer,
 ): Promise<Map<string, ReportSignals>> {
-  const empty: ReportSignals = { done: 0, total: 0, skipped: 0, underPar: 0, overPar: 0, tempFlags: 0, cashOverShortCents: null };
+  const empty: ReportSignals = { done: 0, total: 0, skipped: 0, notStarted: 0, underPar: 0, overPar: 0, tempFlags: 0, cashOverShortCents: null };
   const out = new Map<string, ReportSignals>();
 
   // Cash — one query for all cash reports in the batch.

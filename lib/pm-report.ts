@@ -97,12 +97,15 @@ export async function loadShiftWrapUp(
   if (instIdList.length > 0) {
     const { data: comps } = await service
       .from("checklist_completions")
-      .select("completed_by, instance_id")
+      .select("completed_by, instance_id, template_item_id")
       .in("instance_id", instIdList)
       .is("superseded_at", null)
       .is("revoked_at", null);
-    for (const r of (comps ?? []) as { completed_by: string | null; instance_id: string }[]) {
-      if (r.completed_by) {
+    const tasks = new Set<string>();
+    for (const r of (comps ?? []) as { completed_by: string | null; instance_id: string; template_item_id: string }[]) {
+      const key = `${r.completed_by}:${r.instance_id}:${r.template_item_id}`;
+      if (r.completed_by && !tasks.has(key)) {
+        tasks.add(key);
         itemsByUser.set(r.completed_by, (itemsByUser.get(r.completed_by) ?? 0) + 1);
       }
     }

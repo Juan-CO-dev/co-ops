@@ -94,7 +94,7 @@ describe("the column registry is the documented contract", () => {
         "catering": "event_date,location_code,location_name,lead_id,event_name,time_window,headcount,lead_source,stage,money_status,value,currency",
         "costing": "menu_item_id,menu_item,section,menu_price,food_cost,food_cost_pct,margin,cost_status,currency",
         "counts": "location_code,location_name,sku_id,sku,dimension,anchor_at,anchor_age_days,anchor_qty,on_hand_qty,unit,anchor_stale",
-        "operations": "business_date,location_code,location_name,report_type,report_id,status,submitted_by,under_par,over_par,skipped,temp_flags,cash_over_short,currency",
+        "operations": "business_date,location_code,location_name,report_type,report_id,status,submitted_by,under_par,over_par,skipped,not_started,temp_flags,cash_over_short,currency",
         "receiving": "delivery_date,location_code,location_name,delivery_id,vendor_or_store,invoice_number,line_count,received_by,match_state,delivery_status,has_receipt_photo,po_code",
         "sales": "row_type,period_start,period_end,location_code,location_name,coverage_status,covered_days,expected_days,toast_check_totals,checks,average_check,discounts,discount_count,sales_tax,tips,refunds_captured_so_far,refunds_captured_count,ezcater_sales,ezcater_orders,sales_before_refunds,amount_missing,unknown_tax,unknown_tips,unknown_discounts,gift_cards_excluded,gift_card_checks_excluded,ezcater_linked_toast_excluded,ezcater_linked_checks_excluded,void_checks,currency,sales_basis,refunds_basis,toast_gross,toast_discounts_comps,toast_item_voids,toast_service_charges,toast_sales_refunds,toast_item_sales_net,accounting_missing,sales_refund_missing,toast_net_basis",
         "team": "period_from,period_to,location_code,location_name,name,role,score,previous_score,health,tasks,finalizations,people_mgmt,oversight,notes",
@@ -113,8 +113,8 @@ describe("row mappers", () => {
       { type: "closing", id: "k1", date: "2026-10-06", locationId: "loc-1", submitterName: null, status: "confirmed" },
     ], shops);
     const csv = toCsv(EXPORT_COLUMNS.operations, rows);
-    expect(csv).toContain("2026-10-06,MEP,Capitol Hill,cash,c1,flags,Ana,0,0,0,0,-2.50,USD\r\n");
-    expect(csv).toContain("2026-10-06,MEP,Capitol Hill,closing,k1,confirmed,,,,,,,USD\r\n");
+    expect(csv).toContain("2026-10-06,MEP,Capitol Hill,cash,c1,flags,Ana,0,0,0,0,0,-2.50,USD\r\n");
+    expect(csv).toContain("2026-10-06,MEP,Capitol Hill,closing,k1,confirmed,,,,,,,,USD\r\n");
   });
 
   it("cash: every money field, tips and the payment type, per shop per day", () => {
@@ -131,7 +131,7 @@ describe("row mappers", () => {
   it("trends: a gap bucket stays empty, never a zero", () => {
     const rows = trendRows({
       granularity: "day", previous: null, cashVisible: false, totals: {} as never,
-      current: [{ key: "2026-10-05", hasData: false, underPar: 0, overPar: 0, tempFlags: 0, cashOverShortCents: null, completionPct: null }],
+      current: [{ key: "2026-10-05", hasData: false, underPar: 0, overPar: 0, skipped: 0, notStarted: 0, tempFlags: 0, cashOverShortCents: null, completionPct: null }],
     }, SHOP);
     expect(toCsv(EXPORT_COLUMNS.trends_ops, rows)).toContain("2026-10-05,MEP,Capitol Hill,day,false,,,,,,USD");
   });

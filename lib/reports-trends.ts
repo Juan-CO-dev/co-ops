@@ -1,7 +1,6 @@
 import { parseReportRange, reportRangeParams } from "@/lib/report-range";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { selectAllRows } from "@/lib/supabase-paginate";
-import { isPrepData } from "@/lib/prep";
 import {
   REPORTS_HUB_CASH_LEVEL,
   isFinalizedReport,
@@ -9,7 +8,7 @@ import {
   loadLocationTempItemIds,
   type ReportTypeKey,
 } from "@/lib/reports-hub";
-import { derivePrepHave, parStatusFromHave, isOutOfRangeTemp } from "@/lib/report-signals";
+import { reportParDeviation, isOutOfRangeTemp } from "@/lib/report-signals";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -34,6 +33,8 @@ export interface TrendBucket {
   hasData: boolean;
   underPar: number;
   overPar: number;
+  skipped: number;
+  notStarted: number;
   tempFlags: number;
   cashOverShortCents: number | null; // null when no cash report OR family redacted
   completionPct: number | null;      // 0..100; null when no required items that bucket
@@ -146,6 +147,8 @@ interface BucketAcc {
   hasData: boolean;
   underPar: number;
   overPar: number;
+  skipped: number;
+  notStarted: number;
   tempFlags: number;
   doneSum: number;
   reqSum: number;
@@ -154,7 +157,7 @@ interface BucketAcc {
 }
 
 function emptyAcc(): BucketAcc {
-  return { hasData: false, underPar: 0, overPar: 0, tempFlags: 0, doneSum: 0, reqSum: 0, cashSum: 0, cashCount: 0 };
+  return { hasData: false, underPar: 0, overPar: 0, skipped: 0, notStarted: 0, tempFlags: 0, doneSum: 0, reqSum: 0, cashSum: 0, cashCount: 0 };
 }
 
 export const OPS_TRENDS_LEVEL = 4;
@@ -320,23 +323,15 @@ async function loadTrendWindow(
     a.hasData = true;
 
     const comps = compsByInst.get(inst.id) ?? [];
-    const isMidDay = rt === "mid_day";
+    if (comps.length === 0) a.notStarted++;
 
     for (const c of comps) {
       if (tempItemIds.has(c.template_item_id) && isOutOfRangeTemp(c.count_value)) {
         a.tempFlags++;
       }
-      if (isPrepData(c.prep_data)) {
-        const par = c.prep_data.snapshot.parValue;
-        const have = derivePrepHave({
-          isMidDay,
-          onHand: c.prep_data.inputs.onHand ?? null,
-          total: c.prep_data.inputs.total ?? null,
-        });
-        const status = parStatusFromHave(par, have);
-        if (status === "under") a.underPar++;
-        else if (status === "over") a.overPar++;
-      }
+      const status = reportParDeviation(rt, c.prep_data);
+      if (status === "under") a.underPar++;
+      else if (status === "over") a.overPar++;
     }
 
     const required = requiredByTmpl.get(inst.template_id);
@@ -358,6 +353,7 @@ async function loadTrendWindow(
         }
       }
       if (req > 0) {
+        if (comps.length > 0) a.skipped += req - done;
         a.doneSum += done;
         a.reqSum += req;
       }
@@ -394,13 +390,15 @@ async function loadTrendWindow(
   const toBucket = (key: string): TrendBucket => {
     const a = acc.get(key);
     if (!a || !a.hasData) {
-      return { key, hasData: false, underPar: 0, overPar: 0, tempFlags: 0, cashOverShortCents: null, completionPct: null };
+      return { key, hasData: false, underPar: 0, overPar: 0, skipped: 0, notStarted: 0, tempFlags: 0, cashOverShortCents: null, completionPct: null };
     }
     return {
       key,
       hasData: true,
       underPar: a.underPar,
       overPar: a.overPar,
+      skipped: a.skipped,
+      notStarted: a.notStarted,
       tempFlags: a.tempFlags,
       cashOverShortCents: cashVisible && a.cashCount > 0 ? a.cashSum : null,
       completionPct: a.reqSum > 0 ? Math.round((a.doneSum / a.reqSum) * 100) : null,

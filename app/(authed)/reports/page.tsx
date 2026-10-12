@@ -68,18 +68,19 @@ export default async function ReportsPage({ searchParams }: { searchParams: Prom
     {auth.level < 4 && <p className="mb-4 text-sm text-co-text-muted">{t("reports.hub.own_scope")}</p>}
     {panels.map(({ shop, current, previous, close, receiving, ordering }) => {
       const dayContext = context(shop.id, { range: "custom", from: yesterday, to: yesterday });
-      const signals = { underPar: current.signals.underPar, overPar: current.signals.overPar, skipped: current.signals.skipped, tempFlag: current.signals.tempFlags, ...(auth.level >= 4 ? { cashOver: current.cashOver, cashShort: current.cashShort } : {}) };
-      const priorSignals = { underPar: previous.signals.underPar, overPar: previous.signals.overPar, skipped: previous.signals.skipped, tempFlag: previous.signals.tempFlags, cashOver: previous.cashOver, cashShort: previous.cashShort };
+      const signals = { underPar: current.signals.underPar, overPar: current.signals.overPar, skipped: current.signals.skipped, notStarted: current.signals.notStarted, tempFlag: current.signals.tempFlags, ...(auth.level >= 4 ? { cashOver: current.cashOver, cashShort: current.cashShort } : {}) };
+      const priorSignals = { underPar: previous.signals.underPar, overPar: previous.signals.overPar, skipped: previous.signals.skipped, notStarted: previous.signals.notStarted, tempFlag: previous.signals.tempFlags, cashOver: previous.cashOver, cashShort: previous.cashShort };
       return <section key={shop.id} className="mb-6 rounded-xl border border-co-border bg-co-surface p-4">
         <h2 className="text-base font-bold">{shop.name}</h2>
         <h3 className="mt-3 text-sm font-bold">{t(close.ownScope ? "reports.hub.your_submissions" : "reports.hub.last_close", { date: formatDateLabel(yesterday, language) })}</h3>
         {close.noActivity ? <p className="py-3 text-sm text-co-text-muted">{t("reports.hub.no_activity")}</p> : close.ownScope ? <ul>
-          {close.submissions.map((item) => <li key={`${item.type}:${item.id}`}><Link className="inline-flex min-h-[44px] items-center gap-2 text-sm underline" href={`/reports/${item.type}/${item.id}?${dayContext}`}>{t(`reports.type.${item.type}` as TranslationKey)} · {t(reportIsFinalized(item) ? "reports.hub.done" : "reports.hub.not_finalized")}</Link></li>)}
+          {close.submissions.map((item) => <li key={`${item.type}:${item.id}`}><Link className="inline-flex min-h-[44px] items-center gap-2 text-sm underline" href={`/reports/${item.type}/${item.id}?${dayContext}`}>{t(`reports.type.${item.type}` as TranslationKey)} · <span className={item.status === "auto_finalized" ? "text-co-warning-text" : undefined}>{t(item.status === "auto_finalized" ? "reports.hub.auto_closed" : reportIsFinalized(item) ? "reports.hub.done" : "reports.hub.not_finalized")}</span></Link></li>)}
         </ul> : <ul className="mt-2 grid gap-2 sm:grid-cols-2">
-          {close.reports.map(({ type, state, item }) => <li key={type}><Link className={`${linkClass} w-full justify-between gap-3`} href={item ? `/reports/${type}/${item.id}?${dayContext}` : `/reports/operations?${dayContext}&type=${type}`}><span>{t(`reports.type.${type}` as TranslationKey)}</span><span>{t(`reports.hub.${state}` as TranslationKey)}</span></Link></li>)}
+          {close.reports.map(({ type, state, item }) => <li key={type}><Link className={`${linkClass} w-full justify-between gap-3`} href={item ? `/reports/${type}/${item.id}?${dayContext}` : `/reports/operations?${dayContext}&type=${type}`}><span>{t(`reports.type.${type}` as TranslationKey)}</span><span className={state === "auto_closed" ? "rounded-full bg-co-warning-surface px-2 py-0.5 text-co-warning-text" : undefined}>{t(`reports.hub.${state}` as TranslationKey)}</span></Link></li>)}
         </ul>}
         <div className="mt-4 flex flex-wrap gap-2">
           <Link className={linkClass} href={`/reports/operations?${context(shop.id)}`}>{t("reports.hub.total", { n: current.total })}</Link>
+          {current.autoClosed > 0 && <span className="inline-flex min-h-[44px] items-center rounded-full bg-co-warning-surface px-3 text-sm text-co-warning-text">{t("reports.hub.autoClosed", { n: current.autoClosed })}</span>}
           {range.compare && <span className="inline-flex min-h-[44px] items-center text-sm">{t("reports.hub.previous", { n: previous.total })}</span>}
           {Object.entries(signals).map(([signal, n]) => <Link className={linkClass} key={signal} href={`/reports/operations?${context(shop.id, { [`sf_${signal}`]: "true" })}`}>{t(`reports.hub.${signal}` as TranslationKey, { n })}{range.compare ? ` · ${t("reports.hub.previous", { n: priorSignals[signal as keyof typeof priorSignals] })}` : ""}</Link>)}
         </div>

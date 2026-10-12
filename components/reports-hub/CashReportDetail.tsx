@@ -10,24 +10,10 @@
  * Highlights card: over/short readout from signals.cashOverShortCents.
  */
 
-import { formatDateLabel } from "@/lib/i18n/format";
+import { formatCents, formatDateLabel } from "@/lib/i18n/format";
 import { serverT } from "@/lib/i18n/server";
 import type { Language, TranslationKey } from "@/lib/i18n/types";
 import type { CashReportDetail } from "@/lib/reports-hub";
-
-function centsToDisplay(cents: number): string {
-  const abs = Math.abs(cents);
-  const dollars = Math.floor(abs / 100);
-  const pennies = abs % 100;
-  const sign = cents < 0 ? "-" : cents > 0 ? "+" : "";
-  return `${sign}$${dollars}.${String(pennies).padStart(2, "0")}`;
-}
-
-function centsToPositiveDisplay(cents: number): string {
-  const dollars = Math.floor(cents / 100);
-  const pennies = cents % 100;
-  return `$${dollars}.${String(pennies).padStart(2, "0")}`;
-}
 
 interface Props {
   detail: CashReportDetail;
@@ -37,17 +23,18 @@ interface Props {
 export function CashReportDetailView({ detail, language }: Props) {
   const t = (key: TranslationKey, params?: Record<string, string | number>) =>
     serverT(language, key, params);
+  const centsToDisplay = (cents: number) => `${cents > 0 ? "+" : ""}${formatCents(cents, language)}`;
   const dateLabel = formatDateLabel(detail.date, language);
 
   const overShortCents = detail.signals.cashOverShortCents;
 
   const rows: Array<{ label: TranslationKey; value: string }> = [
-    { label: "reports.cash.projected", value: centsToPositiveDisplay(detail.projectedCents) },
-    { label: "reports.cash.drawer", value: centsToPositiveDisplay(detail.drawerTotalCents) },
-    { label: "reports.cash.float", value: centsToPositiveDisplay(detail.floatCents) },
-    { label: "reports.cash.deposit", value: centsToPositiveDisplay(detail.depositCents) },
+    { label: "reports.cash.projected", value: formatCents(detail.projectedCents, language) },
+    { label: "reports.cash.drawer", value: formatCents(detail.drawerTotalCents, language) },
+    { label: "reports.cash.float", value: formatCents(detail.floatCents, language) },
+    { label: "reports.cash.deposit", value: formatCents(detail.depositCents, language) },
     { label: "reports.cash.over_short", value: centsToDisplay(detail.overShortCents) },
-    { label: "reports.cash.tips", value: centsToPositiveDisplay(detail.cashTipsCents) },
+    { label: "reports.cash.tips", value: formatCents(detail.cashTipsCents, language) },
   ];
 
   return (

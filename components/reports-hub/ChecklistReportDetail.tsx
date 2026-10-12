@@ -197,6 +197,7 @@ export function ChecklistReportDetailView({ detail, language, relatedReports = [
             skipped: signals.skipped,
           })}
         </span>
+        {signals.notStarted > 0 && <span className="rounded-full bg-co-warning-surface px-2 py-0.5 font-semibold text-co-warning-text">{t("reports.filter.not_started")}</span>}
         {hasPrepValues && (
           <span>
             {t("reports.signal.par", {

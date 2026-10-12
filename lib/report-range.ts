@@ -20,7 +20,7 @@ function cappedFrom(to: string, grain: ReportGrain): string {
   return shiftReportDate(to, -91);
 }
 export function parseReportRange(p: Record<string, string | undefined>, today: string, grain: ReportGrain = "day"): ReportRange {
-  const range = p.range ?? (p.from || p.to ? "custom" : "last7");
+  let range = p.range ?? (p.from || p.to ? "custom" : "last7");
   let to = today; let from = shiftReportDate(today, -6);
   if (range === "today") from = today;
   else if (range === "yesterday") from = to = shiftReportDate(today, -1);
@@ -28,6 +28,10 @@ export function parseReportRange(p: Record<string, string | undefined>, today: s
   else if (range === "this_month") from = monthStart(today);
   else if (range === "last_month") { from = monthStart(today, -1); to = shiftReportDate(monthStart(today), -1); }
   else if (range === "custom") { from = validReportDate(p.from) ? p.from : from; to = validReportDate(p.to) ? p.to : today; }
+  // A valid edited pair wins even when an older/no-JS form leaves its preset selected.
+  if (range !== "custom" && validReportDate(p.from) && validReportDate(p.to) && (p.from !== from || p.to !== to)) {
+    range = "custom"; from = p.from; to = p.to;
+  }
   if (to > today) to = today;
   if (from > to) from = to;
   const minimum = cappedFrom(to, grain); // Day grain: 92 INCLUSIVE days.

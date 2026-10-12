@@ -289,6 +289,7 @@ export function OpeningReportDetailView({ detail, language, baselineHrefs = {} }
             skipped: signals.skipped,
           })}
         </span>
+        {signals.notStarted > 0 && <span className="rounded-full bg-co-warning-surface px-2 py-0.5 font-semibold text-co-warning-text">{t("reports.filter.not_started")}</span>}
         {signals.tempFlags > 0 && (
           <span className="font-semibold text-co-cta-text">
             {t("reports.signal.temp_flag", { n: signals.tempFlags })}

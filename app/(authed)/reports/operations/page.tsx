@@ -48,6 +48,7 @@ interface PageProps {
     sf_underPar?: string;
     sf_overPar?: string;
     sf_skipped?: string;
+    sf_notStarted?: string;
     sf_tempFlag?: string;
     sf_cashOver?: string;
     sf_cashShort?: string;
@@ -68,6 +69,7 @@ async function renderReportsPage(params: Awaited<PageProps["searchParams"]>, all
     sf_underPar,
     sf_overPar,
     sf_skipped,
+    sf_notStarted,
     sf_tempFlag,
     sf_cashOver,
     sf_cashShort,
@@ -119,6 +121,7 @@ async function renderReportsPage(params: Awaited<PageProps["searchParams"]>, all
     ...(sf_underPar === "true" ? { underPar: true } : {}),
     ...(sf_overPar === "true" ? { overPar: true } : {}),
     ...(sf_skipped === "true" ? { skipped: true } : {}),
+    ...(sf_notStarted === "true" ? { notStarted: true } : {}),
     ...(sf_tempFlag === "true" ? { tempFlag: true } : {}),
     ...(sf_cashOver === "true" && viewerLevel >= REPORTS_HUB_CASH_LEVEL ? { cashOver: true } : {}),
     ...(sf_cashShort === "true" && viewerLevel >= REPORTS_HUB_CASH_LEVEL ? { cashShort: true } : {}),
