@@ -112,7 +112,7 @@ async function salesExportTable(auth: AuthContext, params: Params, shop: ShopRef
       }
       case "checks": {
         const filters = parseSalesCheckFilters(params);
-        const rows = await pages((cursor) => loadSalesCheckPage(viewer, { locationId: shop.id, range, filters, cursor, pageSize: 100 }));
+        const rows = await pages((cursor) => loadSalesCheckPage(viewer, { locationId: shop.id, range, filters, cursor, pageSize: 999 }));
         return { ...out, rows: salesCheckRows(rows, shop) };
       }
       case "catering": {

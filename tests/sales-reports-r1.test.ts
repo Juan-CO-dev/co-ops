@@ -65,7 +65,7 @@ describe("P1-1: legacy check totals stay separate from captured exact item-sales
       expect(c.key, `${view}.${c.key}`).not.toMatch(/net/);
     }
     expect(SALES_EXPORT_COLUMNS.summary.map((c) => c.key)).toEqual(expect.arrayContaining(["toast_check_totals", "sales_before_refunds"]));
-    expect(SALES_EXPORT_COLUMNS.checks.map((c) => c.key)).toContain("check_total");
+    expect(SALES_EXPORT_COLUMNS.checks.map((c) => c.key)).toContain("check_amount_pre_tax");
   });
 });
 
@@ -93,13 +93,13 @@ describe("P2-6: catering values are read per bounded window, never over all hist
   });
 });
 
-describe("P2-7: EVERY Sales export view refuses past 10,000 rows", () => {
-  it("a breakdown with 10,001 distinct item keys is a 413, not a file", async () => {
-    rpc = (fn) => fn === "sales_report_breakdown" ? Array.from({ length: 10_001 }, (_, i) => ({ key: `item-${i}`, label: `Item ${i}`, units: 1, checks: 1 })) : [];
+describe("P2-7: EVERY Sales export view refuses past 25,000 rows", () => {
+  it("a breakdown with 25,001 distinct item keys is a 413, not a file", async () => {
+    rpc = (fn) => fn === "sales_report_breakdown" ? Array.from({ length: 25_001 }, (_, i) => ({ key: `item-${i}`, label: `Item ${i}`, units: 1, checks: 1 })) : [];
     expect((await get(`family=sales&format=csv&location=${A}&view=items`)).status).toBe(413);
   });
-  it("10,000 rows still export", async () => {
-    rpc = (fn) => fn === "sales_report_breakdown" ? Array.from({ length: 10_000 }, (_, i) => ({ key: `item-${i}`, label: `Item ${i}`, units: 1, checks: 1 })) : [];
+  it("25,000 rows still export", async () => {
+    rpc = (fn) => fn === "sales_report_breakdown" ? Array.from({ length: 25_000 }, (_, i) => ({ key: `item-${i}`, label: `Item ${i}`, units: 1, checks: 1 })) : [];
     expect((await get(`family=sales&format=csv&location=${A}&view=items`)).status).toBe(200);
   });
 });

@@ -19,7 +19,7 @@ export function SalesBreakdown({ view, rows, offset, language, drillHref, nextHr
   const t = tFor(language);
   if (view === "channels") return <ChannelTables rows={rows} language={language} drillHref={drillHref} />;
   const label = (r: BreakdownRow) => view === "discounts" ? discountLabel(language, r.label)
-    : view === "servers" ? serverLabel(language, r.key, r.label) : (r.label ?? t("reports.sales.item.unnamed"));
+    : view === "servers" ? serverLabel(language, r.key, r.label, r.serverOnline) : (r.label ?? t("reports.sales.item.unnamed"));
   const units = view === "items" || view === "modifiers";
   if (!rows.length) return <p className={`${salesCard} text-sm text-co-text-muted`}>{t("reports.sales.no_rows")}</p>;
   return <section className={salesCard} aria-label={t(`reports.sales.view.${view}`)}>

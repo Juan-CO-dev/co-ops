@@ -26,7 +26,7 @@ import { reportNavigationHref } from "@/lib/report-navigation";
 import { canReadScopedReport } from "@/lib/report-scope";
 import {
   SALES_EMPTY_KEY, SALES_GRAINS, SALES_RANGES, SALES_READ_MIN, SalesReportError, VIEW_DIMENSION, isSalesView, loadSalesBreakdown,
-  loadSalesSummary, pageRows, resolveSalesRange, salesDayParams, salesRangeParams, type BreakdownRow, type SalesView,
+  loadSalesLatestCapture, loadSalesSummary, pageRows, resolveSalesRange, salesDayParams, salesRangeParams, type BreakdownRow, type SalesView,
 } from "@/lib/sales-reports";
 import { requireSessionFromHeaders } from "@/lib/session";
 
@@ -79,7 +79,8 @@ export default async function SalesPage({ searchParams }: { searchParams: Promis
         </>;
       } else {
         const rows = await loadSalesBreakdown(viewer, { locationId: shopId, range, dimension: VIEW_DIMENSION[view] });
-        const caption = <RangeCaption from={range.from} to={range.to} language={language} todaySoFar={range.todaySoFar} />;
+        const capturedAt = range.todaySoFar ? await loadSalesLatestCapture(viewer, { locationId: shopId, businessDate: range.to }) : null;
+        const caption = <RangeCaption from={range.from} to={range.to} language={language} todaySoFar={range.todaySoFar} capturedAt={capturedAt} />;
         if (view === "heatmap") {
           body = <>{caption}<SalesHeatmap rows={rows} language={language}
             cellHref={(dow, hour) => shopHref("/reports/sales/checks", { ...(dow ? { dow: String(dow) } : {}), hour: String(hour) })} /></>;
