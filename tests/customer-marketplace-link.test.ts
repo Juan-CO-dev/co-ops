@@ -54,6 +54,10 @@ describe("marketplace decision pipeline", () => {
     expect(await planMarketplaceLinks({ rpc }, shop)).toEqual([decision]);
     expect(rpc.mock.calls[1]?.[1]).toEqual({ p_location_id: shop, p_after: guestId, p_limit: 100 });
   });
+  it("never re-proposes a pair a person revoked", async () => {
+    const rpc = vi.fn().mockResolvedValueOnce({ data: [{ guest_id: guestId, guest_name_key: "ana diaz", location_id: shop, guest_items: ["Sub"], guest_dates: [], candidates: [{ customer_id: directId, name_key: "ana diaz", items: ["Sub"], dates: [] }] }], error: null }).mockResolvedValueOnce({ data: [], error: null });
+    expect(await planMarketplaceLinks({ rpc }, shop, new Set([`${guestId}:${directId}`]))).toEqual([]);
+  });
   it("validates all decisions before mutations and never includes RPC error detail", async () => {
     const rpc = vi.fn();
     await expect(applyMarketplaceLinks({ rpc }, JSON.stringify(decision) + "\n" + JSON.stringify({ ...decision, phone: "2025550123" }))).rejects.toThrow("Invalid marketplace link input");

@@ -2,7 +2,7 @@ import type { NextRequest } from "next/server";
 import { assertStepUp } from "@/lib/admin/step-up";
 import { extractIp, jsonError, jsonOk, parseJsonBody } from "@/lib/api-helpers";
 import {
-  CUSTOMER_STATS_MIN, CustomerError, customerProfilesEnabled, dismissMerge, linkCateringOrders, lookupByContact, revealContact,
+  CUSTOMER_STATS_MIN, CustomerError, customerProfilesEnabled, dismissMerge, linkCateringOrders, lookupByContact, revealContact, revokeProbableLink,
 } from "@/lib/customers/customers";
 import { requireSession } from "@/lib/session";
 
@@ -35,13 +35,16 @@ export async function POST(req: NextRequest) {
     if (b.operation === "dismiss" && typeof b.suggestionId === "string" && only("suggestionId")) {
       return jsonOk(await dismissMerge(actor, { suggestionId: b.suggestionId }, meta));
     }
+    if (b.operation === "revoke_link" && typeof b.linkId === "string" && only("linkId")) {
+      return jsonOk(await revokeProbableLink(actor, b.linkId, meta));
+    }
     if (b.operation === "link_catering" && only()) {
       return jsonOk(await linkCateringOrders(actor, meta));
     }
     return jsonError(400, "invalid_payload");
   } catch (error) {
     if (error instanceof CustomerError) return jsonError(error.status, error.code);
-    console.error("[/api/admin/customers]", error instanceof Error ? error.message : String(error));
+    console.error("[/api/admin/customers] internal_error");
     return jsonError(500, "internal_error");
   }
 }
