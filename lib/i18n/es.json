@@ -185,6 +185,7 @@
   "reports.sales.today_none": "Hoy hasta ahora: nada capturado todavía",
   "reports.sales.not_installed": "Las cifras de ventas aún no están activadas (las lecturas esperan instalación). No mostramos nada en lugar de una cifra equivocada.",
   "reports.sales.read_failed": "No se pudieron cargar las ventas. Actualiza para intentarlo de nuevo.",
+  "reports.sales.read_timeout": "Las cifras de ventas tardaron demasiado en cargar. Actualiza para intentarlo de nuevo.",
   "reports.sales.amount_unavailable": "Monto no disponible",
   "reports.sales.coverage.label": "Cobertura",
   "reports.sales.coverage.complete": "Completo · {covered}/{expected} días",

@@ -185,6 +185,7 @@
   "reports.sales.today_none": "Today so far: nothing captured yet",
   "reports.sales.not_installed": "Sales numbers are not switched on yet (the reads are waiting to be installed). Nothing is shown instead of a wrong number.",
   "reports.sales.read_failed": "Sales could not be loaded. Refresh to try again.",
+  "reports.sales.read_timeout": "Sales numbers took too long to load. Refresh to try again.",
   "reports.sales.amount_unavailable": "Amount not available",
   "reports.sales.coverage.label": "Coverage",
   "reports.sales.coverage.complete": "Complete · {covered}/{expected} days",

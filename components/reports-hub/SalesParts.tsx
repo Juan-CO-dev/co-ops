@@ -71,6 +71,7 @@ export function RangeCaption({ from, to, language, todaySoFar, capturedAt }: { f
 
 /** The page says WHY a section has no numbers: 0232 not applied, a refused scope, or a failed read. */
 export function SalesUnavailable({ code, language }: { code: string; language: Language }) {
-  const key = code === "sales_reads_not_installed" ? "reports.sales.not_installed" : "reports.sales.read_failed";
+  const key = code === "sales_reads_not_installed" ? "reports.sales.not_installed"
+    : code === "sales_reads_timeout" ? "reports.sales.read_timeout" : "reports.sales.read_failed";
   return <p className={`${salesCard} text-sm text-co-text-muted`} role="status">{serverT(language, key)}</p>;
 }

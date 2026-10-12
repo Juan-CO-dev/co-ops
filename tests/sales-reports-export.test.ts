@@ -69,6 +69,17 @@ describe("sales export: the page's gates, before any read", () => {
 });
 
 describe("sales export = the screen", () => {
+  it.each(["summary", "checks", "catering", "items"])("%s returns a 503 on an RPC timeout", async (view) => {
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      session(7, [A]);
+      rpc = () => Object.assign(new Error("private RPC payload"), { code: "57014" });
+      const res = await get(`family=sales&format=csv&location=${A}&view=${view}`);
+      expect(res.status).toBe(503);
+      expect(await res.json()).toMatchObject({ code: "sales_reads_timeout" });
+      expect(log.mock.calls).toEqual([["sales_reads_timeout"]]);
+    } finally { log.mockRestore(); }
+  });
   it("summary: the header is the contract and the total row equals the page loader's totals", async () => {
     session(7, [A]);
     const res = await get(`family=sales&format=csv&location=${A}&range=last7`);

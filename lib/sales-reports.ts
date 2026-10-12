@@ -51,13 +51,23 @@ type Client = Pick<SupabaseClient, "rpc" | "from">;
 export interface SalesDeps { client?: Client }
 
 async function call<T>(sb: Client, fn: string, args: Record<string, unknown>): Promise<T> {
-  const { data, error } = await sb.rpc(fn, args);
-  if (error) {
-    // 0232 not applied yet: say so on the page, never a fake empty report.
-    if (error.code === "PGRST202" || error.code === "42883") throw new SalesReportError(503, "sales_reads_not_installed");
-    throw new Error(`${fn}: ${error.message}`);
+  // Catch transport rejection as well as PostgREST's returned error. Scope guards run
+  // before this boundary; their 400/403 errors must never be turned into unavailable.
+  let result;
+  try {
+    result = await sb.rpc(fn, args);
+  } catch {
+    console.error("sales_reads_timeout");
+    throw new SalesReportError(503, "sales_reads_timeout");
   }
-  return data as T;
+  if (result.error) {
+    // 0232 not applied yet: say so on the page, never a fake empty report.
+    if (result.error.code === "PGRST202" || result.error.code === "42883") throw new SalesReportError(503, "sales_reads_not_installed");
+    // Includes statement timeout (57014). Never log RPC messages, args or payloads.
+    console.error("sales_reads_timeout");
+    throw new SalesReportError(503, "sales_reads_timeout");
+  }
+  return result.data as T;
 }
 
 /** Order-preserving map with at most `limit` calls in flight. */
@@ -125,7 +135,11 @@ async function latestCapture(sb: Client, locationId: string, businessDate: strin
   const { data, error } = await sb.from("toast_capture_runs").select("finished_at")
     .eq("location_id", locationId).eq("business_date", businessDate).eq("status", "completed")
     .order("finished_at", { ascending: false }).limit(1).maybeSingle<{ finished_at: string }>();
-  if (error) throw new Error(`sales capture run: ${error.message}`);
+  // Same boundary as call(): a failed read shows the unavailable panel, not the app error page.
+  if (error) {
+    console.error("sales_reads_timeout");
+    throw new SalesReportError(503, "sales_reads_timeout");
+  }
   return data?.finished_at ?? null;
 }
 
