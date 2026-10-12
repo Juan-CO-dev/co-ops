@@ -1,5 +1,6 @@
 -- Migration 0247_sales_refund_candidates
 -- AUTHORED 2026-10-11, NOT YET APPLIED -- GATE CC: sim first, then prod.
+-- APPLIED TO PROD 2026-10-11 (schema_migrations version 20261012010247, name '0247_sales_refund_candidates'); sim 20261012004328.
 -- Plan: docs/plans/2026-10-11-sales-report-refund-scan.md.
 -- Performance only: replace ONLY 0239's refund_facts CTE; every other function
 -- byte and the exact revoke/grant statements are retained. No data rewrite.
