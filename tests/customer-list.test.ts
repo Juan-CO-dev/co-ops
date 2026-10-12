@@ -88,10 +88,18 @@ describe("customer list authorized loaders", () => {
   it.each([7, 8, 9])("summary scopes and contact count at level %i", async (level) => {
     const rpc = vi.fn(async () => ({ data: { people: "12", reachable: "10", regulars: 5, lapsed: 2, both_shops: 3,
       catering: 4, guests: 8, guests_linked: 1, email: "fixture@example.com" }, error: null }));
-    const result = await loadCustomerSummary(viewer(level), { location: OTHER }, { client: { rpc } as never });
+    const query = { select: vi.fn(), eq: vi.fn(), then: (resolve: (v: unknown) => unknown) => Promise.resolve({ count: 4, error: null }).then(resolve) };
+    query.select.mockReturnValue(query); query.eq.mockReturnValue(query);
+    const from = vi.fn(() => query);
+    const result = await loadCustomerSummary(viewer(level), { location: OTHER }, { client: { rpc, from } as never });
     expect(rpc).toHaveBeenCalledWith("customer_list_summary", { p_location_ids: level === 7 ? [SHOP] : [OTHER] });
     expect(result).toEqual({ people: 12, regulars: 5, lapsed: 2, bothShops: 3, catering: 4, guests: 8, guestsLinked: 1,
-      ...(level >= 9 ? { reachable: 10 } : {}) });
+      ...(level >= 9 ? { reachable: 10, optedIn: 4 } : {}) });
+    expect(from).toHaveBeenCalledTimes(level >= 9 ? 1 : 0);
+    if (level >= 9) {
+      expect(from).toHaveBeenCalledWith("customer_consent_current");
+      expect(query.eq.mock.calls).toEqual([["channel", "email"], ["status", "opted_in"]]);
+    }
   });
   it("never surfaces a database error message containing customer values", async () => {
     const rpc = vi.fn(async () => ({ data: null, error: { code: "XX000", message: "fixture@example.com" } }));

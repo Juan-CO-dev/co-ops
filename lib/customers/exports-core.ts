@@ -32,6 +32,10 @@ export function optedInOnly<T extends { status?: string }>(rows: readonly T[]): 
   return rows.filter((r) => r.status === "opted_in");
 }
 
+export function segmentMarketingRows(rows: readonly MarketingSourceRow[], ids: ReadonlySet<string>): MarketingSourceRow[] {
+  return optedInOnly(rows).filter((r) => ids.has(r.customer_id));
+}
+
 export function sha256Hex(value: string): string {
   return createHash("sha256").update(value, "utf8").digest("hex");
 }

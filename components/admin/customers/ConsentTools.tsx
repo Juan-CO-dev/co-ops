@@ -6,6 +6,7 @@ import { useTranslation } from "@/lib/i18n/provider";
 import { useStepUp } from "@/components/admin/StepUpProvider";
 import type { TranslationKey } from "@/lib/i18n/types";
 import { STEP_UP_CODES, postCustomerJson } from "./customer-post";
+import { downloadCustomerExport } from "./customer-download";
 
 const button = "inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-gold-deep bg-co-gold px-4 font-bold text-co-text";
 const quiet = "inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-border bg-co-surface px-4 font-bold text-co-text";
@@ -76,25 +77,10 @@ export function ConsentTools({ metaEnabled, today }: { metaEnabled: boolean; tod
   async function onExport(kind: "marketing_email" | "meta_audience") {
     setBusy(true); setError(null);
     try {
-      if (!await unlocked("B")) return;
-      const post = () => fetch("/api/admin/customers/export", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ kind }) });
-      let response = await post();
-      if (!response.ok) {
-        const body = await response.clone().json().catch(() => ({})) as { code?: string };
-        if (STEP_UP_CODES.has(body.code ?? "") && await unlocked("B")) response = await post();
-      }
-      if (!response.ok || response.redirected) {
-        const body = await response.json().catch(() => ({})) as { code?: string };
-        setError(ERRORS[body.code ?? ""] ?? "customers.error.generic");
-        return;
-      }
-      const blob = await response.blob();
-      const name = /filename="([^"]+)"/.exec(response.headers.get("content-disposition") ?? "")?.[1] ?? "export.csv";
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url; a.download = name; a.click();
-      URL.revokeObjectURL(url);
-      setNotice(t("customers.export.done", { count: Number(response.headers.get("x-row-count") ?? 0) }));
+      const result = await downloadCustomerExport({ kind }, requestStepUp);
+      if (!result) return;
+      if (!result.ok) { setError(ERRORS[result.code ?? ""] ?? "customers.error.generic"); return; }
+      setNotice(t("customers.export.done", { count: result.count }));
     } catch { setError("customers.error.generic"); } finally { setBusy(false); }
   }
 

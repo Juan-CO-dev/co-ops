@@ -223,6 +223,8 @@ const CLIENT_TIER_MAP: Record<string, string[]> = {
   "components/admin/customers/ConsentTools.tsx": ["A", "B"],
   "components/admin/customers/CustomerContactPanel.tsx": ["A", "B"],
   "components/admin/customers/CustomerSuggestions.tsx": ["A", "B"],
+  "components/admin/customers/RevokeLinkButton.tsx": ["A"], // POST /api/admin/customers revoke_link.
+  "components/admin/customers/customer-download.ts": ["B"], // Both download controls -> export route.
   "components/admin/report-recipients/ReportRecipientsAdmin.tsx": ["B"],
   "app/admin/catering/rate-rules/rate-rules-client.tsx": ["B"],
   // The provider itself — the parameter, not a call site.

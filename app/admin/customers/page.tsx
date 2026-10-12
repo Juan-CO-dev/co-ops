@@ -7,6 +7,7 @@ import { etCalendarDate } from "@/lib/operational-day";
 import { CUSTOMER_CONTACT_MIN, CUSTOMER_STATS_MIN, customerProfilesEnabled, loadCustomerList, loadCustomerSummary, loadCustomerShops, loadSuggestions } from "@/lib/customers/customers";
 import { listParamsQuery } from "@/lib/customers/list-params-shared";
 import { CustomerSuggestions } from "@/components/admin/customers/CustomerSuggestions";
+import { MarketingListButton } from "@/components/admin/customers/MarketingListButton";
 import { CustomerListControls } from "@/components/admin/customers/CustomerListControls";
 import { CollapsibleSection } from "@/components/ui/CollapsibleSection";
 
@@ -51,6 +52,7 @@ export default async function CustomersPage({ searchParams }: { searchParams: Pr
   return <div className="min-w-0 space-y-4">
     <div className="flex flex-wrap items-center justify-between gap-2">
       <h1 className="text-2xl font-bold text-co-text">{t("customers.title")}</h1>
+      <Link href="/admin/customers/catering" className={pill}>{t("customers.catering.title")}</Link>
       {auth.level >= CUSTOMER_CONTACT_MIN && <Link href="/admin/customers/consent" className={pill}>{t("customers.consent.link")}</Link>}
     </div>
     <p className="text-co-text-muted">{t(auth.level >= CUSTOMER_CONTACT_MIN ? "customers.intro.owner" : "customers.intro.manager")}</p>
@@ -61,17 +63,18 @@ export default async function CustomersPage({ searchParams }: { searchParams: Pr
       <Link className={pill} href={summaryHref({ only_guests: "1" })}>{t("customers.summary.guests", { count: summary.guests, linked: summary.guestsLinked })}</Link>
     </nav>
     <CustomerListControls params={list.params} level={auth.level} shops={shops} />
+    {auth.level >= CUSTOMER_CONTACT_MIN && <MarketingListButton params={list.params} optedIn={summary.optedIn ?? 0} />}
     <h2 className="text-lg font-bold text-co-text">{t("customers.list.title", { count: list.total })}</h2>
     {list.profiles.length === 0 ? <p className="co-card p-4 text-co-text-muted">{t("customers.list.noMatches")}</p> : <>
       <div className="hidden lg:block"><table className="w-full table-fixed text-left text-sm text-co-text"><thead><tr>{headings.map((h) => <th key={h} scope="col" className="break-words px-2 py-3">{t(`customers.list.${h}`)}</th>)}</tr></thead><tbody>
         {list.profiles.map((p) => <tr key={p.id} className="border-t border-co-border">
-          <th scope="row" className="break-words px-2 py-3"><Link className="inline-flex min-h-[44px] items-center underline" href={`/admin/customers/${p.id}`}>{p.isGuest ? t("customers.list.guestName", { name: p.name ?? t("customers.unnamed") }) : p.name ?? t("customers.unnamed")}</Link></th>
+          <th scope="row" className="break-words px-2 py-3"><Link className="inline-flex min-h-[44px] max-w-full items-center underline [overflow-wrap:anywhere]" href={`/admin/customers/${p.id}`}>{p.isGuest ? t("customers.list.guestName", { name: p.name ?? t("customers.unnamed") }) : p.name ?? t("customers.unnamed")}</Link></th>
           <td className="px-2 py-3">{p.visits}</td><td className="break-words px-2 py-3">{money(p.spendCents)}</td><td className="break-words px-2 py-3">{money(p.avgOrderCents)}</td><td className="px-2 py-3">{lastOrder(p.lastOrder)}</td><td className="px-2 py-3">{p.cards}</td><td className="px-2 py-3">{p.cateringOrders}</td>
           <td className="break-words px-2 py-3">{p.shops.map((id) => <span key={id} className="mb-1 block rounded-lg bg-co-surface-inset px-2 py-1">{shopNames.get(id) ?? t("customers.list.unknownShop")}</span>)}</td>
         </tr>)}
       </tbody></table></div>
       <div className="space-y-3 lg:hidden">{list.profiles.map((p) => <article key={p.id} className="co-card min-w-0 space-y-2 p-4">
-        <Link className="flex min-h-[44px] items-center break-words text-lg font-bold text-co-text underline" href={`/admin/customers/${p.id}`}>{p.isGuest ? t("customers.list.guestName", { name: p.name ?? t("customers.unnamed") }) : p.name ?? t("customers.unnamed")}</Link>
+        <Link className="flex min-h-[44px] min-w-0 items-center text-lg font-bold text-co-text underline [overflow-wrap:anywhere]" href={`/admin/customers/${p.id}`}>{p.isGuest ? t("customers.list.guestName", { name: p.name ?? t("customers.unnamed") }) : p.name ?? t("customers.unnamed")}</Link>
         <dl className="grid min-w-0 grid-cols-2 gap-3 text-co-text">{([
           ["visits", p.visits], ["spend", money(p.spendCents)], ["avgOrder", money(p.avgOrderCents)], ["lastOrder", lastOrder(p.lastOrder)], ["cards", p.cards], ["catering", p.cateringOrders],
         ] as const).map(([key, value]) => <div key={key} className="min-w-0 break-words"><dt className="text-[11px] font-bold tracking-[0.12em] text-co-text-dim">{t(`customers.list.${key}`)}</dt><dd>{value}</dd></div>)}</dl>

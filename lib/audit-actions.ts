@@ -52,6 +52,7 @@ export const NON_DESTRUCTIVE_ACTIONS = [
   "customer.contact_read", // level 9+ revealed one profile's raw email/phone.
   "customer.contact_lookup", // level 9+ looked a person up by email/phone (delete-on-request intake).
   "customer.export_marketing", // level 9+ downloaded the opted-in email list.
+  "customer.export_marketing_segment", // Opted-in subset of an authorized list view.
   "customer.export_meta_audience", // level 9+ downloaded the hashed Meta file (switch on).
   "customer.export_refused", // a marketing/Meta export was refused (switch off / role).
   "customer.merge_dismiss", // a manager said two profiles are NOT the same person.

@@ -148,6 +148,15 @@ export function formatDateLabel(yyyymmdd: string, language: Language): string {
   }).format(dt);
 }
 
+/** "Oct 9, 2026" (en) / "9 oct 2026" (es): a date label for histories that span years. */
+export function formatDateLabelWithYear(yyyymmdd: string, language: Language): string {
+  const [y, m, d] = yyyymmdd.split("-").map(Number);
+  if (!y || !m || !d) return yyyymmdd;
+  return new Intl.DateTimeFormat(language === "es" ? "es-US" : "en-US", {
+    month: "short", day: "numeric", year: "numeric", timeZone: "UTC",
+  }).format(new Date(Date.UTC(y, m - 1, d)));
+}
+
 /**
  * Translation function shape compatible with both serverT (lib/i18n/server.ts)
  * and the client-side t from useTranslation (lib/i18n/provider.tsx). Used by

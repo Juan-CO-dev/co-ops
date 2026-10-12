@@ -5,7 +5,7 @@ import { TranslationProvider } from "@/lib/i18n/provider";
 import { parseListParams, type CustomerListSearchParams } from "@/lib/customers/list-params-shared";
 import CustomersPage from "@/app/admin/customers/page";
 
-const state = vi.hoisted(() => ({ level: 7, language: "en" as "en" | "es", enabled: true }));
+const state = vi.hoisted(() => ({ level: 7, language: "en" as "en" | "es", enabled: true, optedIn: 2 }));
 vi.mock("@/lib/session", () => ({ requireSessionFromHeaders: async () => ({ level: state.level, locations: ["shop"], user: { id: "viewer", language: state.language } }) }));
 vi.mock("next/navigation", () => ({ redirect: (path: string) => { throw new Error(`redirect:${path}`); }, useRouter: () => ({ refresh: vi.fn() }) }));
 vi.mock("@/components/admin/StepUpProvider", () => ({ useStepUp: () => ({ requestStepUp: vi.fn() }) }));
@@ -16,12 +16,12 @@ vi.mock("@/lib/customers/customers", () => ({
     profiles: [{ id: "customer", name: "Fixture Guest", isGuest: true, visits: 6, spendCents: null, avgOrderCents: null, lastOrder: "2026-10-01", cards: 2, cateringOrders: 1, shops: ["shop"] }],
     total: 120, page: 2, pageSize: 50, params: parseListParams(raw, state.level),
   }),
-  loadCustomerSummary: async () => ({ people: 100, reachable: 80, regulars: 10, lapsed: 4, bothShops: 3, catering: 8, guests: 20, guestsLinked: 2 }),
+  loadCustomerSummary: async () => ({ people: 100, reachable: 80, optedIn: state.optedIn, regulars: 10, lapsed: 4, bothShops: 3, catering: 8, guests: 20, guestsLinked: 2 }),
   loadCustomerShops: async () => [{ id: "shop", name: "Fixture Shop" }],
   loadSuggestions: async () => [{ id: "suggestion", confidence: 0.8, reasons: ["same_shop"], a: { id: "a", name: "Hidden Suggestion" }, b: { id: "b", name: "Other Suggestion" } }],
 }));
 
-beforeEach(() => { state.level = 7; state.language = "en"; state.enabled = true; });
+beforeEach(() => { state.level = 7; state.language = "en"; state.enabled = true; state.optedIn = 2; });
 afterEach(() => { vi.useRealTimers(); });
 async function render(raw: CustomerListSearchParams = { sort: "spend", min_visits: "5", guests: "1", q: "Fixture", page: "2" }) {
   const page = await CustomersPage({ searchParams: Promise.resolve(raw) });
@@ -36,6 +36,7 @@ it("renders stats with unknown spend, named shops, and collapsed suggestions", a
   expect(html).toContain('aria-label="Unknown"'); expect(html).not.toContain("$0.00");
   expect(html).toContain("Likely same person (1)"); expect(html).toContain('aria-expanded="false"');
   expect(html).not.toContain("Hidden Suggestion"); expect(html).toContain("lg:hidden"); expect(html).toContain("table-fixed");
+  expect(html).toContain("underline [overflow-wrap:anywhere]");
 });
 
 it.each([7, 8, 9])("gates shop/contact controls and summary at level %s", async (level) => {
@@ -44,6 +45,17 @@ it.each([7, 8, 9])("gates shop/contact controls and summary at level %s", async 
   expect(html.includes('name="reachable"')).toBe(level >= 9);
   expect(html.includes('name="opted_in"')).toBe(level >= 9);
   expect(html.includes("Reachable: 80")).toBe(level >= 9);
+  expect(html).toContain('href="/admin/customers/catering"');
+  expect(html.includes("Download opted-in list for this view")).toBe(level >= 9);
+  expect(html.includes("Only people who opted in to email are included.")).toBe(level >= 9);
+});
+
+it("disables marketing downloads and explains the missing import when no one opted in", async () => {
+  state.level = 9; state.optedIn = 0;
+  const html = await render();
+  expect(html).toMatch(/<button[^>]*disabled=""[^>]*>No one has opted in yet:/);
+  expect(html).toContain("Consent page");
+  expect(html).not.toContain("Download opted-in list for this view");
 });
 
 it("preserves all applied filters in pagination and resets other filters on summary chips", async () => {

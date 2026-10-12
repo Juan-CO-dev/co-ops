@@ -24,10 +24,14 @@ import {
   ConsentCsvError, canonicalImportPayload, chunkRows, mergeConsentFiles, parseConsentCsv, summaryFromRpc,
   type ConsentImportSummary,
 } from "./consent-shared";
-import { marketingCsv, metaAudienceCsv, metaAudienceEnabled, type MarketingSourceRow } from "./exports-core";
+import { marketingCsv, metaAudienceCsv, metaAudienceEnabled, segmentMarketingRows, type MarketingSourceRow } from "./exports-core";
 import { classifyEmail, normalizeEmail, normalizePhoneE164 } from "./identity-shared";
 import { profileStats, type CustomerOrderRow } from "./stats-shared";
-import { parseListParams, type CustomerListDto, type CustomerListSearchParams } from "./list-params-shared";
+import { listParamsInput, parseListParams, type CustomerListParams, type CustomerListDto, type CustomerListSearchParams } from "./list-params-shared";
+import { etCalendarDate } from "@/lib/operational-day";
+import { monthlyVisits, shopSplit, orderHistory, cateringSummary, type DetailOrder } from "./profile-detail-shared";
+import { cateringAccounts, parseCateringParams, sortCateringAccounts, type CateringOrder, type CateringPerson } from "./catering-accounts-shared";
+import { MARKETPLACE_LINK_REASONS, type MarketplaceLinkReason } from "./marketplace-link-shared";
 
 export * from "./access-shared";
 
@@ -59,12 +63,12 @@ function requireId(id: unknown): asserts id is string { if (typeof id !== "strin
 
 function rpcError(error: { code?: string; message?: string }): never {
   if (error.code === "PGRST202" || error.code === "42883" || error.code === "42P01") throw new CustomerError(503, "customers_not_installed");
-  const known = ["suggestion_not_found", "suggestion_already_decided", "merge_invalid", "merge_erased", "customer_not_found",
+  const known = ["customer_probable_link_not_found", "suggestion_not_found", "suggestion_already_decided", "merge_invalid", "merge_erased", "customer_not_found",
     "consent_import_invalid", "consent_import_future_date", "consent_import_busy", "consent_import_older_than_last",
     "consent_import_mismatch", "consent_import_large_opt_out", "consent_import_incomplete", "consent_import_not_running", "retention_invalid"];
   const code = known.find((k) => error.message?.includes(k));
   if (code) throw new CustomerError(code.endsWith("not_found") ? 404 : 409, code);
-  throw new Error(`customers rpc: ${error.message ?? "unknown"}`);
+  throw new CustomerError(503, "customer_list_unavailable");
 }
 
 async function rpc<T>(sb: Client, fn: string, args: Record<string, unknown>): Promise<T> {
@@ -80,7 +84,7 @@ async function assertInScope(sb: Client, viewer: CustomerViewer, customerIds: re
   for (const id of customerIds) {
     const members = await memberIds(sb, id);
     const { data, error } = await sb.from("customer_orders").select("id").in("customer_id", members).in("location_id", scope).limit(1);
-    if (error) throw new Error(`customer scope: ${error.message}`);
+    if (error) throw new CustomerError(503, "customer_list_unavailable");
     if (!data || data.length === 0) throw new CustomerError(403, "location_forbidden");
   }
 }
@@ -88,7 +92,7 @@ async function assertInScope(sb: Client, viewer: CustomerViewer, customerIds: re
 /** A person and everyone merged into them. */
 async function memberIds(sb: Client, rootId: string): Promise<string[]> {
   const { data, error } = await sb.from("customers").select("id").or(`id.eq.${rootId},merged_into.eq.${rootId}`);
-  if (error) throw new Error(`customer members: ${error.message}`);
+  if (error) throw new CustomerError(503, "customer_list_unavailable");
   return (data ?? []).map((r: { id: string }) => r.id);
 }
 
@@ -184,14 +188,22 @@ export async function loadCustomerSummary(viewer: CustomerViewer, raw: CustomerL
   requireStats(viewer);
   const params = parseListParams(raw, viewer.level);
   const scope = customerShopScope(viewer);
-  const r = await listRpc<Record<string, number>>(deps.client ?? getServiceRoleClient(), "customer_list_summary", {
+  const sb = deps.client ?? getServiceRoleClient();
+  const r = await listRpc<Record<string, number>>(sb, "customer_list_summary", {
     p_location_ids: scope ?? (params.locationId ? [params.locationId] : null),
   });
+  let optedIn: number | undefined;
+  if (viewer.level >= CUSTOMER_CONTACT_MIN) {
+    const { count, error } = await sb.from("customer_consent_current").select("customer_id", { count: "exact", head: true })
+      .eq("channel", "email").eq("status", "opted_in");
+    if (error) throw new CustomerError(503, "customer_list_unavailable");
+    optedIn = count ?? 0;
+  }
   return {
     people: Number(r.people ?? 0), regulars: Number(r.regulars ?? 0), lapsed: Number(r.lapsed ?? 0),
     bothShops: Number(r.both_shops ?? 0), catering: Number(r.catering ?? 0),
     guests: Number(r.guests ?? 0), guestsLinked: Number(r.guests_linked ?? 0),
-    ...(viewer.level >= CUSTOMER_CONTACT_MIN ? { reachable: Number(r.reachable ?? 0) } : {}),
+    ...(viewer.level >= CUSTOMER_CONTACT_MIN ? { reachable: Number(r.reachable ?? 0), optedIn } : {}),
   };
 }
 
@@ -219,6 +231,140 @@ export async function loadProfile(viewer: CustomerViewer, customerId: string, de
   return profile;
 }
 
+/** Preserve the all-or-error pagination contract without exposing database error detail. */
+async function privateRows<T>(build: Parameters<typeof selectAllRows<T>>[0]): Promise<T[]> {
+  try { return await selectAllRows<T>(build); }
+  catch { throw new CustomerError(503, "customer_list_unavailable"); }
+}
+
+async function detailOrders(sb: Client, viewer: CustomerViewer, ids: string[]): Promise<DetailOrder[]> {
+  const scope = customerShopScope(viewer);
+  const out: DetailOrder[] = [];
+  for (const batch of chunkRows(ids, 100)) out.push(...await privateRows<DetailOrder>((from, to) => {
+    let q = sb.from("customer_orders").select("id,customer_id,business_date,channel,total_cents,items,location_id,source_kind,contact_masked").in("customer_id", batch);
+    if (scope) q = q.in("location_id", scope);
+    return q.order("id").range(from, to);
+  }));
+  return out;
+}
+
+async function detailPeople(sb: Client, ids: string[]): Promise<CustomerRow[]> {
+  const rows: CustomerRow[] = [];
+  for (const batch of chunkRows([...new Set(ids)], 100)) rows.push(...await privateRows<CustomerRow>((from, to) => sb.from("customers")
+    .select("id,full_name,masked_channels,merged_into,erased_at").in("id", batch).order("id").range(from, to)));
+  return rows;
+}
+
+interface ProbableLink { id: string; guest_id: string; customer_id: string; confidence: number; reasons: string[] }
+export interface ProfileLinkDto {
+  id: string; confidence: number; reasons: MarketplaceLinkReason[];
+  person: { id: string; name: string | null } | null;
+  stats?: { visits: number; spendCents: number | null; firstOrder: string | null; lastOrder: string | null };
+}
+
+async function profileLinks(sb: Client, viewer: CustomerViewer, customerId: string) {
+  const members = await privateRows<{ id: string }>((from, to) => sb.from("customers").select("id")
+    .or(`id.eq.${customerId},merged_into.eq.${customerId}`).order("id").range(from, to));
+  const links = new Map<string, ProbableLink>();
+  for (const batch of chunkRows(members.map((m) => m.id), 100)) {
+    for (const column of ["guest_id", "customer_id"]) {
+      const rows = await privateRows<ProbableLink>((from, to) => sb.from("customer_probable_links")
+        .select("id,guest_id,customer_id,confidence,reasons").in(column, batch).is("revoked_at", null).order("id").range(from, to));
+      for (const r of rows) links.set(r.id, r);
+    }
+  }
+  const people = await detailPeople(sb, [...links.values()].flatMap((l) => [l.guest_id, l.customer_id]));
+  const roots = await detailPeople(sb, people.flatMap((p) => p.merged_into ? [p.merged_into] : []));
+  const byId = new Map([...people, ...roots].map((p) => [p.id, p]));
+  const root = (id: string) => {
+    const p = byId.get(id);
+    if (!p || p.erased_at) return null;
+    const r = p.merged_into ? byId.get(p.merged_into) : p;
+    return r && !r.erased_at && !r.merged_into ? r : null;
+  };
+  const pairs = [...links.values()].flatMap((l) => {
+    const guest = root(l.guest_id), person = root(l.customer_id);
+    return guest && person && guest.id !== person.id ? [{ l, guest, person }] : [];
+  });
+  const otherIds = [...new Set(pairs.flatMap(({ guest, person }) => [guest.id, person.id]).filter((id) => id !== customerId))];
+  const orders = await detailOrders(sb, viewer, otherIds);
+  const visible = (id: string) => customerShopScope(viewer) === null || orders.some((o) => o.customer_id === id);
+  const outgoing: ProfileLinkDto[] = [], incoming: ProfileLinkDto[] = [];
+  for (const { l, guest, person } of pairs) {
+    const base = { id: l.id, confidence: Number(l.confidence), reasons: l.reasons.filter((r): r is MarketplaceLinkReason => MARKETPLACE_LINK_REASONS.includes(r as MarketplaceLinkReason)) };
+    if (guest.id === customerId) outgoing.push({ ...base, person: visible(person.id) ? { id: person.id, name: person.full_name } : null });
+    if (person.id === customerId && visible(guest.id)) {
+      const s = profileStats(orders.filter((o) => o.customer_id === guest.id));
+      incoming.push({ ...base, person: { id: guest.id, name: guest.full_name },
+        stats: { visits: s.visits, spendCents: s.spendCents, firstOrder: s.firstOrder, lastOrder: s.lastOrder } });
+    }
+  }
+  return { outgoing, incoming };
+}
+
+export async function loadProfileDetail(viewer: CustomerViewer, customerId: string, args: { page?: number } = {}, deps: CustomerDeps = {}) {
+  requireEnabled(); requireStats(viewer); requireId(customerId);
+  const sb = deps.client ?? getServiceRoleClient();
+  await assertInScope(sb, viewer, [customerId]);
+  const [person] = await detailPeople(sb, [customerId]);
+  if (!person || person.erased_at || person.merged_into) throw new CustomerError(404, "customer_not_found");
+  const orders = await detailOrders(sb, viewer, [customerId]);
+  const s = profileStats(orders, 5);
+  const { data: consent, error: ce } = await sb.from("customer_consent_current").select("status")
+    .eq("customer_id", customerId).eq("channel", "email").maybeSingle();
+  const { count: cards, error: ke } = await sb.from("customer_cards").select("customer_id", { count: "exact", head: true }).eq("customer_id", customerId);
+  const { count: identifiers, error: ie } = await sb.from("customer_identifiers").select("kind", { count: "exact", head: true }).eq("customer_id", customerId);
+  if (ce || ke || ie) throw new CustomerError(503, "customer_list_unavailable");
+  const profile = toStatsDto({ id: person.id, name: person.full_name, visits: s.visits, spendCents: s.spendCents,
+    firstOrder: s.firstOrder, lastOrder: s.lastOrder, avgDaysBetween: s.avgDaysBetween, channels: s.channels,
+    favourites: s.favourites, maskedChannels: person.masked_channels ?? [], cards: cards ?? 0,
+    emailMarketing: consent?.status === "opted_in" || consent?.status === "opted_out" ? consent.status : "unknown" });
+  const today = etCalendarDate((deps.now ?? new Date()).toISOString());
+  return { profile, isGuest: !identifiers && orders.length > 0 && orders.every((o) => o.contact_masked), today,
+    months: monthlyVisits(orders, today), shops: shopSplit(orders), shopNames: await loadCustomerShops(viewer, { client: sb }),
+    history: orderHistory(orders, args.page ?? 1), catering: cateringSummary(orders), links: await profileLinks(sb, viewer, customerId) };
+}
+
+export async function loadCateringAccounts(viewer: CustomerViewer, raw: CustomerListSearchParams = {}, deps: CustomerDeps = {}) {
+  requireEnabled(); requireStats(viewer);
+  const params = parseCateringParams(raw, viewer.level);
+  const scope = customerShopScope(viewer) ?? (params.locationId ? [params.locationId] : null);
+  const sb = deps.client ?? getServiceRoleClient();
+  const orders = await privateRows<CateringOrder>((from, to) => {
+    let q = sb.from("customer_orders").select("customer_id,business_date,total_cents,location_id,source_kind")
+      .or("source_kind.neq.toast,channel.eq.catering");
+    if (scope) q = q.in("location_id", scope);
+    return q.order("id").range(from, to);
+  });
+  const people: CateringPerson[] = await detailPeople(sb, [...new Set(orders.map((o) => o.customer_id))]);
+  const live = people.filter((p) => !p.merged_into && !p.erased_at);
+  const visits = new Map<string, number>();
+  for (const batch of chunkRows(live.map((p) => p.id), 100)) {
+    const rows = await privateRows<{ customer_id: string }>((from, to) => {
+      let q = sb.from("customer_orders").select("customer_id").in("customer_id", batch);
+      if (scope) q = q.in("location_id", scope);
+      return q.order("id").range(from, to);
+    });
+    for (const r of rows) visits.set(r.customer_id, (visits.get(r.customer_id) ?? 0) + 1);
+  }
+  const today = etCalendarDate((deps.now ?? new Date()).toISOString());
+  const result = cateringAccounts(orders, live, visits, today);
+  const rows = sortCateringAccounts(result.rows.filter((r) => !params.quiet || r.quiet), params.sort);
+  const pages = Math.max(1, Math.ceil(rows.length / PAGE_SIZE));
+  params.page = Math.min(params.page, pages);
+  return { ...result, rows: rows.slice((params.page - 1) * PAGE_SIZE, params.page * PAGE_SIZE), total: rows.length, pages, params, today };
+}
+
+export async function revokeProbableLink(actor: CustomerActor, linkId: string, meta: RequestMeta, deps: CustomerDeps = {}) {
+  requireEnabled(); requireContact(actor); requireId(linkId);
+  const result = await rpc<{ revoked: boolean; guest_id?: string; customer_id?: string }>(deps.client ?? getServiceRoleClient(),
+    "customer_probable_link_revoke", { p_link_id: linkId, p_actor_id: actor.userId });
+  if (result.revoked) await audit({ actorId: actor.userId, actorRole: actor.role, action: "customer.probable_link_revoke",
+    resourceTable: "customer_probable_links", resourceId: linkId,
+    metadata: { guest_id: result.guest_id, customer_id: result.customer_id }, ...meta });
+  return { revoked: result.revoked };
+}
+
 export interface SuggestionDto { id: string; confidence: number; reasons: string[]; a: { id: string; name: string | null }; b: { id: string; name: string | null } }
 
 export async function loadSuggestions(viewer: CustomerViewer, deps: CustomerDeps = {}): Promise<SuggestionDto[]> {
@@ -236,7 +382,7 @@ export async function loadSuggestions(viewer: CustomerViewer, deps: CustomerDeps
   const names = new Map((people ?? []).map((p: { id: string; full_name: string | null }) => [p.id, p.full_name]));
   const out: SuggestionDto[] = [];
   for (const r of rows) {
-    try { await assertInScope(sb, viewer, [r.customer_a, r.customer_b]); } catch (e) { if (e instanceof CustomerError) continue; throw e; }
+    try { await assertInScope(sb, viewer, [r.customer_a, r.customer_b]); } catch (e) { if (e instanceof CustomerError && e.status === 403) continue; throw e; }
     out.push({ id: r.id, confidence: Number(r.confidence), reasons: r.reasons,
       a: { id: r.customer_a, name: names.get(r.customer_a) ?? null }, b: { id: r.customer_b, name: names.get(r.customer_b) ?? null } });
   }
@@ -444,13 +590,13 @@ export async function loadConsentOverview(viewer: CustomerViewer, deps: Customer
 
 // ── Exports (level 9+, audited, opted-in only, no override) ──────────────────────────────────────
 
-export type CustomerExportKind = "marketing_email" | "meta_audience";
+export type CustomerExportKind = "marketing_email" | "meta_audience" | "marketing_segment";
 
 async function marketingRows(sb: Client, channel: "email" | "sms"): Promise<MarketingSourceRow[]> {
   return selectAllRows<MarketingSourceRow>((from, to) => sb.rpc("customer_marketing_export", { p_channel: channel }).range(from, to));
 }
 
-export async function exportCustomers(actor: CustomerActor, kind: CustomerExportKind, meta: RequestMeta, deps: CustomerDeps = {}): Promise<{ filename: string; csv: string; count: number }> {
+export async function exportCustomers(actor: CustomerActor, kind: CustomerExportKind, meta: RequestMeta, deps: CustomerDeps = {}, params?: CustomerListParams): Promise<{ filename: string; csv: string; count: number }> {
   requireEnabled();
   if (actor.level < CUSTOMER_CONTACT_MIN || (kind === "meta_audience" && !metaAudienceEnabled())) {
     const code = actor.level < CUSTOMER_CONTACT_MIN ? "role_insufficient" : "meta_export_off";
@@ -459,7 +605,30 @@ export async function exportCustomers(actor: CustomerActor, kind: CustomerExport
     throw new CustomerError(403, code);
   }
   const sb = deps.client ?? getServiceRoleClient();
-  const date = (deps.now ?? new Date()).toISOString().slice(0, 10);
+  const date = etCalendarDate((deps.now ?? new Date()).toISOString());
+  if (kind === "marketing_segment") {
+    const raw = listParamsInput(params);
+    if (!raw) throw new CustomerError(400, "invalid_payload");
+    const parsed = parseListParams(raw, actor.level);
+    const rows = await marketingRows(sb, "email");
+    const ids = new Set<string>();
+    // Conflicting view filters have an empty intersection, never a wider replacement view.
+    if (rows.length && parsed.filters.opted_in !== false && !parsed.filters.only_guests) {
+      for (let offset = 0; ; offset += 200) {
+        const page = await listRpc<ListRow[]>(sb, "customer_list_page", {
+          p_location_ids: customerShopScope(actor) ?? (parsed.locationId ? [parsed.locationId] : null),
+          p_search: parsed.search || null, p_sort: parsed.sort,
+          p_filters: { ...parsed.filters, opted_in: true, guests: false, only_guests: false }, p_limit: 200, p_offset: offset,
+        });
+        for (const r of page) ids.add(r.customer_id);
+        if (page.length < 200) break;
+      }
+    }
+    const { csv, count } = marketingCsv(segmentMarketingRows(rows, ids));
+    await audit({ actorId: actor.userId, actorRole: actor.role, action: "customer.export_marketing_segment", resourceTable: "customers", resourceId: null,
+      metadata: { kind, rows: count, filters: { ...parsed.filters, sort: parsed.sort, locationId: parsed.locationId }, searchLength: parsed.search.length }, ...meta });
+    return { filename: `marketing-opted-in-view-${date}.csv`, csv, count };
+  }
   if (kind === "marketing_email") {
     const { csv, count } = marketingCsv(await marketingRows(sb, "email"));
     await audit({ actorId: actor.userId, actorRole: actor.role, action: "customer.export_marketing", resourceTable: "customers", resourceId: null,

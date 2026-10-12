@@ -48,7 +48,8 @@ export interface LinkClient {
 }
 
 /** Each RPC row contains the COMPLETE candidate set for one guest. Never page candidate pairs. */
-export async function planMarketplaceLinks(client: LinkClient, locationId: string): Promise<MarketplaceDecision[]> {
+/** `revoked` holds "guest:customer" pairs a person rejected (0250); they are never proposed again. */
+export async function planMarketplaceLinks(client: LinkClient, locationId: string, revoked: ReadonlySet<string> = new Set()): Promise<MarketplaceDecision[]> {
   id(locationId);
   const decisions: MarketplaceDecision[] = [];
   let after: string | null = null;
@@ -73,7 +74,7 @@ export async function planMarketplaceLinks(client: LinkClient, locationId: strin
         return { customerId: id(candidate.customer_id), nameKey: key(candidate.name_key), locationId, items: strings(candidate.items), dates: strings(candidate.dates) };
       });
       const verdict = marketplaceLinkVerdict({ guest: { nameKey: guestName, locationId, items: strings(row.guest_items), dates: strings(row.guest_dates) }, candidates });
-      if (verdict) decisions.push(parseMarketplaceDecision({ guest_id: guestId, customer_id: verdict.customerId, guest_name_key: guestName, customer_name_key: candidates.find((c) => c.customerId === verdict.customerId)!.nameKey, confidence: verdict.confidence, reasons: verdict.reasons }));
+      if (verdict && !revoked.has(`${guestId}:${verdict.customerId}`)) decisions.push(parseMarketplaceDecision({ guest_id: guestId, customer_id: verdict.customerId, guest_name_key: guestName, customer_name_key: candidates.find((c) => c.customerId === verdict.customerId)!.nameKey, confidence: verdict.confidence, reasons: verdict.reasons }));
     }
   }
   return decisions;
@@ -115,7 +116,10 @@ export async function main(args = process.argv.slice(2)): Promise<void> {
   if (process.env.SIM_MODE) assertSimTarget(url);
   const client = createClient(url, secret, { auth: { persistSession: false, autoRefreshToken: false } });
   if (mode === "plan") {
-    const decisions = await planMarketplaceLinks(client, options.get("--location")!);
+    const { data: rejected, error } = await client.from("customer_probable_links").select("guest_id,customer_id").not("revoked_at", "is", null).limit(10000);
+    if (error || !rejected || rejected.length >= 10000) throw new Error("Revoked link read failed");
+    const revoked = new Set(rejected.map((r: { guest_id: string; customer_id: string }) => `${r.guest_id}:${r.customer_id}`));
+    const decisions = await planMarketplaceLinks(client, options.get("--location")!, revoked);
     await writeFile(options.get("--out")!, decisions.map((decision) => JSON.stringify(decision)).join("\n") + (decisions.length ? "\n" : ""), { flag: "wx", mode: 0o600 });
     console.log(`Planned ${decisions.length} advisory links`);
   } else {

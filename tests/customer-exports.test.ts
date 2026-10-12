@@ -5,13 +5,20 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/lib/audit", () => ({ audit: vi.fn() }));
 import { audit } from "@/lib/audit";
-import { marketingCsv, metaAudienceCsv, metaAudienceEnabled, metaEmailHash, metaPhoneHash, optedInOnly } from "@/lib/customers/exports-core";
+import { marketingCsv, metaAudienceCsv, metaAudienceEnabled, metaEmailHash, metaPhoneHash, optedInOnly, segmentMarketingRows } from "@/lib/customers/exports-core";
 import { exportCustomers } from "@/lib/customers/customers";
 
 const sha = (s: string) => createHash("sha256").update(s).digest("hex");
 const row = (id: string, value: string, status = "opted_in") => ({ customer_id: id, value, first_name: "A", last_name: "B", opted_in_at: "2026-10-01T04:00:00Z", source: "toast_csv_import", status });
 
 describe("the second filter", () => {
+  it("intersects a segment with explicit consent without changing either input", () => {
+    const rows = [row("1", "one@example.com"), row("2", "two@example.com", "opted_out"), row("3", "three@example.com")];
+    const ids = new Set(["1", "2"]);
+    expect(segmentMarketingRows(rows, ids)).toEqual([rows[0]]);
+    expect(rows).toHaveLength(3);
+    expect(ids.size).toBe(2);
+  });
   it("drops anything not explicitly opted_in", () => {
     expect(optedInOnly([{ status: "opted_in" }, { status: "opted_out" }, {}, { status: "unknown" }])).toEqual([{ status: "opted_in" }]);
   });
@@ -92,9 +99,8 @@ describe("no override, by construction", () => {
     expect(fn).toContain("c.erased_at is null");
     expect(fn).toMatch(/customer_suppressions/);
   });
-  it("the TS export entry takes a kind, never a filter or status", () => {
+  it("the TS export entry has no consent override", () => {
     const src = readFileSync("lib/customers/customers.ts", "utf8");
-    expect(src).toMatch(/export async function exportCustomers\(actor: CustomerActor, kind: CustomerExportKind, meta: RequestMeta, deps: CustomerDeps = \{\}\)/);
     const code = src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");
     expect(code).not.toMatch(/includeNonOptedIn|override|allStatuses/i);
   });

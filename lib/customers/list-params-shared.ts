@@ -79,6 +79,23 @@ export function listParamsQuery(params: CustomerListParams): URLSearchParams {
   return out;
 }
 
+/** Validate the parsed-state wire shape before reparsing it at the server's authority level. */
+export function listParamsInput(value: unknown): CustomerListSearchParams | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const p = value as Record<string, unknown>;
+  if (Object.keys(p).some((k) => !["search", "page", "sort", "locationId", "filters"].includes(k))) return null;
+  if (!p.filters || typeof p.filters !== "object" || Array.isArray(p.filters)) return null;
+  const filters = p.filters as Record<string, unknown>;
+  if (Object.keys(filters).some((k) => !["segment", "channel", "min_visits", "min_spend_cents", "guests", "only_guests", "reachable", "opted_in"].includes(k))) return null;
+  const raw: CustomerListSearchParams = {};
+  for (const [key, v] of Object.entries({ q: p.search, page: p.page, sort: p.sort, location: p.locationId, ...filters })) {
+    if (v === null || v === undefined) continue;
+    if (!["string", "number", "boolean"].includes(typeof v)) return null;
+    raw[key] = typeof v === "boolean" ? (v ? "1" : "0") : String(v);
+  }
+  return raw;
+}
+
 /** Explicit projection: RPC additions never silently expand the page's privacy boundary. */
 export interface CustomerListDto {
   id: string;
