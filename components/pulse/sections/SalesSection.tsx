@@ -24,13 +24,14 @@ export function SalesSection({ data, mode, locationId, date }: { data: SalesData
   return (
     <div className="flex flex-col gap-3">
       {data.coverage === "missing" && !data.net && <p className="text-sm text-co-text-muted">{t("pulse.sales.coverage_missing")}</p>}
-      {data.coverage === "partial" && <p className="text-xs text-co-warning-text">{t("pulse.sales.coverage_partial")}</p>}
+      {(data.coverage === "partial" || data.amountMissing > 0) && <p className="text-xs text-co-warning-text">{t("pulse.sales.coverage_partial")}</p>}
       {/* Freshness, honestly: the last COMPLETED Toast capture this card is built from (the 60 s poll picks up the next one). */}
       <p className="text-[11px] text-co-text-dim">{data.capturedAt ? t("pulse.sales.synced", { time: formatTime(data.capturedAt, language) }) : t("pulse.sales.synced_none")}</p>
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
         <div className="min-w-0 rounded-lg border border-co-border bg-co-surface-inset p-3">
           <div className="text-[11px] font-bold tracking-[0.12em] text-co-text-dim">{t("pulse.sales.net")}</div>
           <div className="text-lg font-bold tabular-nums text-co-text">{data.net ? formatCents(data.net.cents, language) : "—"}</div>
+          <div className="text-xs text-co-text-muted">{t("pulse.sales.net_basis")}</div>
           {data.net && <div className="text-xs text-co-text-muted">{t("pulse.sales.checks", { count: data.net.checks })}{data.net.avgCheckCents != null ? ` · ${t("pulse.sales.avg", { amount: formatCents(data.net.avgCheckCents, language) })}` : ""}</div>}
         </div>
         <div className="min-w-0 rounded-lg border border-co-border bg-co-surface-inset p-3">
@@ -38,20 +39,24 @@ export function SalesSection({ data, mode, locationId, date }: { data: SalesData
           <div className={`text-lg font-bold tabular-nums ${delta == null ? "text-co-text-muted" : delta >= 0 ? "text-co-confirm-text" : "text-co-cta-text"}`}>
             {delta == null ? "—" : `${delta >= 0 ? "+" : "−"}${Math.abs(delta)}%`}
           </div>
-          <div className="text-xs text-co-text-muted">{delta == null ? t(data.pace.baselineUnavailable ? "pulse.sales.baseline_unavailable" : "pulse.sales.pace_no_basis") : t(delta >= 0 ? "pulse.sales.pace_delta_up" : "pulse.sales.pace_delta_down", { pct: Math.abs(delta) })}</div>
+          <div className="text-xs text-co-text-muted">{data.pace.staleMinutes !== null
+            ? t("pulse.sales.pace_stale", { n: data.pace.staleMinutes })
+            : !data.pace.available ? t("pulse.sales.pace_unavailable")
+            : delta == null ? t(data.pace.baselineUnavailable ? "pulse.sales.baseline_unavailable" : "pulse.sales.pace_no_basis")
+            : t(delta >= 0 ? "pulse.sales.pace_delta_up" : "pulse.sales.pace_delta_down", { pct: Math.abs(delta) })}</div>
         </div>
         <div className="col-span-2 min-w-0 rounded-lg border border-co-border bg-co-surface-inset p-3 sm:col-span-1">
           <div className="text-xs text-co-text-muted">{t("pulse.sales.discounts", { count: data.discounts.count, amount: formatCents(data.discounts.cents, language) })}</div>
           <div className="text-xs text-co-text-muted">{t("pulse.sales.refunds", { count: data.refunds.count, amount: formatCents(data.refunds.cents, language) })}</div>
         </div>
       </div>
-      <div>
+      {data.pace.available && <div>
         <PaceCurve
           today={data.pace.todayCumulative} baseline={data.pace.baselineCumulative} currentHour={data.pace.currentHour}
           ariaLabel={t("pulse.sales.pace", { weekday })} labelToday={t("pulse.sales.legend_today")} labelNormal={t("pulse.sales.legend_normal")} noData={t("pulse.chart.no_data")}
         />
         <p className="mt-1 text-[11px] text-co-text-dim">{data.pace.baselineWeeks > 0 ? t("pulse.sales.basis", { weeks: data.pace.baselineWeeks, weekday }) : t(data.pace.baselineUnavailable ? "pulse.sales.baseline_unavailable" : "pulse.sales.pace_no_basis")}</p>
-      </div>
+      </div>}
       <div className="grid gap-3 md:grid-cols-2">
         <div>
           <h3 className={subHeading}>{t("pulse.sales.top_items")}</h3>

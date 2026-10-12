@@ -5,12 +5,31 @@
 import { describe, expect, it } from "vitest";
 import {
   baselineCumulative,
+  baselineAtMinute,
+  capturePaceAge,
   cumulativeByHour,
   dowOf,
   hourCurve,
   paceDeltaPct,
   sameWeekdayCoverage,
 } from "@/lib/pulse/baseline-shared";
+
+describe("capture cutoff", () => {
+  it("prorates the cutoff hour only, excluding later sales and using zero minutes on the hour", () => {
+    const baseline = baselineCumulative([{ dow: 5, hour: 10, cents: 2000 }, { dow: 5, hour: 11, cents: 12000 }, { dow: 5, hour: 12, cents: 99999 }], 5, 2);
+    expect(baselineAtMinute(baseline, 11 * 60 + 37)).toBe(4700);
+    expect(baselineAtMinute(baseline, 11 * 60)).toBe(1000);
+    expect(baselineAtMinute(baseline, 12 * 60)).toBe(7000);
+    expect(baselineAtMinute(null, 697)).toBeNull();
+  });
+  it("allows exactly 20 minutes but refuses stale, missing, invalid, and future captures", () => {
+    const now = new Date("2026-10-11T16:05:00Z");
+    expect(capturePaceAge("2026-10-11T15:45:00Z", now)).toEqual({ usable: true, staleMinutes: null });
+    expect(capturePaceAge("2026-10-11T15:44:59Z", now)).toEqual({ usable: false, staleMinutes: 20 });
+    expect(capturePaceAge("2026-10-11T15:37:00Z", now)).toEqual({ usable: false, staleMinutes: 28 });
+    for (const at of [null, "bad", "2026-10-11T17:00:00Z"]) expect(capturePaceAge(at, now).usable).toBe(false);
+  });
+});
 
 describe("hourCurve / cumulativeByHour", () => {
   it("buckets cents per hour 0..23 and accumulates up to the current hour, null after", () => {

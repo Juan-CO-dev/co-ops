@@ -173,18 +173,21 @@ export interface StationsData {
 export interface SalesData {
   capturedAt: string | null;
   coverage: "complete" | "partial" | "missing";
+  amountMissing: number;
   net: { cents: number; checks: number; avgCheckCents: number | null } | null;
   discounts: { cents: number; count: number };
   refunds: { cents: number; count: number };
-  /** Cumulative cents by hour 0..23 for today; null entries after "now". */
+  /** Cumulative cents by hour 0..23; the final point is at the capture cutoff. */
   pace: {
     todayCumulative: Array<number | null>;
     baselineCumulative: Array<number | null> | null;
     /** How many trailing same weekdays had data (the basis stated on the chart). */
     baselineWeeks: number;
     baselineUnavailable: boolean;
+    available: boolean;
+    staleMinutes: number | null;
     weekday: number;
-    /** Today so far vs the baseline at the same hour, whole %, null when no basis. */
+    /** Captured total vs the minute-prorated baseline, whole %, null when unavailable. */
     pctOfNormal: number | null;
     currentHour: number;
   };
