@@ -56,6 +56,10 @@ async function call<T>(sb: Client, fn: string, args: Record<string, unknown>): P
   let result;
   try {
     result = await sb.rpc(fn, args);
+    if (result.error && (result.error.code === "57014" || /statement timeout/i.test(result.error.message))) {
+      await new Promise((resolve) => setTimeout(resolve, 250));
+      result = await sb.rpc(fn, args);
+    }
   } catch {
     console.error("sales_reads_timeout");
     throw new SalesReportError(503, "sales_reads_timeout");
@@ -74,10 +78,16 @@ async function call<T>(sb: Client, fn: string, args: Record<string, unknown>): P
 export async function mapBounded<T, R>(items: readonly T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
   const out = new Array<R>(items.length);
   let next = 0;
+  let failed = false;
   const worker = async () => {
-    while (next < items.length) {
+    while (!failed && next < items.length) {
       const i = next++;
-      out[i] = await fn(items[i]!);
+      try {
+        out[i] = await fn(items[i]!);
+      } catch (error) {
+        failed = true;
+        throw error;
+      }
     }
   };
   await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
@@ -134,13 +144,24 @@ async function loadModifiedCoverage(sb: Client, locationId: string): Promise<Sal
 async function latestCapture(sb: Client, locationId: string, businessDate: string): Promise<string | null> {
   const { data, error } = await sb.from("toast_capture_runs").select("finished_at")
     .eq("location_id", locationId).eq("business_date", businessDate).eq("status", "completed")
-    .order("finished_at", { ascending: false }).limit(1).maybeSingle<{ finished_at: string }>();
+    .order("finished_at", { ascending: false }).limit(1).abortSignal(AbortSignal.timeout(6_000)).maybeSingle<{ finished_at: string }>();
   // Same boundary as call(): a failed read shows the unavailable panel, not the app error page.
   if (error) {
     console.error("sales_reads_timeout");
     throw new SalesReportError(503, "sales_reads_timeout");
   }
   return data?.finished_at ?? null;
+}
+
+/** Optional caption evidence: authorization still fails closed, capture availability does not. */
+export async function loadSalesLatestCapture(viewer: ReportScopeViewer, args: { locationId: string; businessDate: string }, deps: SalesDeps = {}): Promise<string | null> {
+  assertSalesScope(viewer, args.locationId);
+  if (!validReportDate(args.businessDate)) return null;
+  try {
+    return await latestCapture(deps.client ?? getServiceRoleClient(), args.locationId, args.businessDate);
+  } catch {
+    return null;
+  }
 }
 
 // ── Breakdowns ──────────────────────────────────────────────────────────────────────────────
@@ -197,7 +218,8 @@ export async function loadSalesCheckPage(viewer: ReportScopeViewer, args: {
 }, deps: SalesDeps = {}): Promise<SalesCheckPage> {
   assertSalesScope(viewer, args.locationId);
   const sb = deps.client ?? getServiceRoleClient();
-  const pageSize = Math.min(Math.max(args.pageSize ?? SALES_PAGE_SIZE, 1), 100);
+  // One lookahead row must also fit inside the RPC's 1,000-row bound.
+  const pageSize = Math.min(Math.max(args.pageSize ?? SALES_PAGE_SIZE, 1), 999);
   if (args.range.empty) return { rows: [], nextCursor: null, cursorReset: false };
   const context = salesListContext(args.locationId, args.range.from, args.range.to, args.filters);
   const after = decodeSalesCursor(args.cursor, context, CHECK_GUID);

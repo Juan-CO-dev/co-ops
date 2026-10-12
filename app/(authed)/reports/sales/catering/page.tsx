@@ -25,7 +25,7 @@ import { REPORT_ALL_LOCATIONS_LEVEL } from "@/lib/locations";
 import { operationalNow } from "@/lib/midshift";
 import { reportNavigationHref } from "@/lib/report-navigation";
 import { canReadScopedReport } from "@/lib/report-scope";
-import { SALES_EMPTY_KEY, SALES_GRAINS, SALES_RANGES, SALES_READ_MIN, SalesReportError, loadSalesCatering, resolveSalesRange, salesRangeParams } from "@/lib/sales-reports";
+import { SALES_EMPTY_KEY, SALES_GRAINS, SALES_RANGES, SALES_READ_MIN, SalesReportError, loadSalesLatestCapture, loadSalesCatering, resolveSalesRange, salesRangeParams } from "@/lib/sales-reports";
 import { requireSessionFromHeaders } from "@/lib/session";
 
 type Params = Record<string, string | undefined>;
@@ -56,6 +56,7 @@ export default async function SalesCateringPage({ searchParams }: { searchParams
 
   const panel = async (shopId: string): Promise<ReactNode> => {
     const cursorKey = locationId === "all" ? `cursor_${shopId}` : "cursor";
+    const capturedAt = range.todaySoFar ? await loadSalesLatestCapture(viewer, { locationId: shopId, businessDate: range.to }) : null;
     let body: ReactNode;
     try {
       const data = await loadSalesCatering(viewer, { locationId: shopId, range, cursor: params[cursorKey] });
@@ -116,7 +117,7 @@ export default async function SalesCateringPage({ searchParams }: { searchParams
       else throw error;
     }
     return <div className="mb-6">
-      <RangeCaption from={range.from} to={range.to} language={language} todaySoFar={range.todaySoFar} />
+      <RangeCaption from={range.from} to={range.to} language={language} todaySoFar={range.todaySoFar} capturedAt={capturedAt} />
       <ExportLinks className="mb-3" family="sales" language={language} query={{ ...context, view: "catering", location: shopId }} />
       {body}
     </div>;

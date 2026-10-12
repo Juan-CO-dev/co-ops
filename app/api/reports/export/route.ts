@@ -11,6 +11,8 @@ import { exportFilename, isExportFamily, isExportFormat, toCsv } from "@/lib/rep
 import { pdfHeaderLines, renderReportPdf } from "@/lib/report-pdf";
 import { requireSession } from "@/lib/session";
 
+export const maxDuration = 120;
+
 export async function GET(req: NextRequest) {
   const ctx = await requireSession(req, "/api/reports/export");
   if (ctx instanceof Response) return ctx;
@@ -37,7 +39,9 @@ export async function GET(req: NextRequest) {
       ? toCsv(table.columns, table.rows)
       : await renderReportPdf(
         { title: serverT(language, EXPORT_TITLE_KEY[family]), lines: pdfHeaderLines(language, { shop: shopLabel, from: table.from, to: table.to, at: new Date(), by: ctx.user.name }) },
-        [{ heading: null, columns: table.columns, rows: table.rows, emptyText: serverT(language, "reports.export.empty") }],
+        [{ heading: null, columns: table.columns.map((c) => c.key === "check_amount_pre_tax"
+          ? { ...c, label: serverT(language, "reports.export.column.check_amount_pre_tax") } : c),
+        rows: table.rows, emptyText: serverT(language, "reports.export.empty") }],
         { pageLabel: (n, total) => serverT(language, "reports.export.page", { n, total }), partLabel: (i, n) => serverT(language, "reports.export.part", { i, n }) },
       );
   } catch (error) {

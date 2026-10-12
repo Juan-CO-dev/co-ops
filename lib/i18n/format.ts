@@ -56,6 +56,27 @@ import type { Language, TranslationKey, TranslationParams } from "@/lib/i18n/typ
  */
 const OPERATIONAL_TZ = "America/New_York";
 
+/** A local hour bucket is wall-clock time, not an instant to shift to Eastern. */
+function hourParts(hour: number, language: Language): { hour: string; period: string } {
+  const parts = new Intl.DateTimeFormat(language === "es" ? "es-US" : "en-US", {
+    hour: "numeric", hour12: true, timeZone: "UTC",
+  }).formatToParts(new Date(Date.UTC(2000, 0, 1, hour)));
+  return { hour: parts.find((p) => p.type === "hour")!.value, period: parts.find((p) => p.type === "dayPeriod")!.value };
+}
+
+/** Compact heatmap heading; Spanish retains its localized day period. */
+export function formatHourShort(hour: number, language: Language): string {
+  const p = hourParts(hour, language);
+  return language === "en" ? `${p.hour}${p.period[0]!.toLowerCase()}` : `${p.hour} ${p.period}`;
+}
+
+/** Full bucket bounds; keep both periods across noon and midnight. */
+export function formatHourRange(hour: number, language: Language): string {
+  const start = hourParts(hour, language);
+  const end = hourParts((hour + 1) % 24, language);
+  return `${start.hour}${start.period === end.period ? "" : ` ${start.period}`}–${end.hour} ${end.period}`;
+}
+
 /** A database time is a wall-clock hint, not an instant: never shift it by timezone. */
 export function formatClockTime(time: string, language: Language): string {
   if (!/^([01]\d|2[0-3]):[0-5]\d(?::[0-5]\d)?$/.test(time)) return "";

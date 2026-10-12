@@ -6,7 +6,7 @@ vi.mock("@/lib/audit", () => ({ audit: vi.fn(async () => {}) }));
 vi.mock("@/lib/supabase-server", () => ({ getServiceRoleClient: vi.fn() }));
 vi.mock("@/lib/midshift-shared", async (orig) => ({ ...(await orig<typeof import("@/lib/midshift-shared")>()), operationalNow: () => ({ date: "2026-10-08" }) }));
 
-import { GET } from "@/app/api/reports/export/route";
+import { GET, maxDuration } from "@/app/api/reports/export/route";
 import { requireSession } from "@/lib/session";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import { SALES_EXPORT_COLUMNS, CSV_BOM, NOT_YET_AVAILABLE } from "@/lib/report-export-shared";
@@ -118,6 +118,31 @@ describe("sales export = the screen", () => {
     expect(res.headers.get("content-disposition")).toContain("sales-checks_MEP_");
     const out = await lines(res);
     expect(out.length - 1).toBe(230);
+  });
+  it("exports exactly 25000 checks with bounded lookahead, first names, refs and unchanged pre-tax cents", async () => {
+    session(7, [A]);
+    const rows = Array.from({ length: 25000 }, (_, i) => ({ business_date: "2026-10-06", check_guid: `c-${String(i).padStart(5, "0")}`,
+      amount_cents: 1234, tax_cents: 74, server_name: "Alex", server_guid: "aaaaaaaa-0000-4000-8000-000000001234" }));
+    const limits: number[] = [];
+    rpc = (fn, a) => {
+      if (fn !== "sales_report_check_page") return [];
+      limits.push(Number(a.p_limit));
+      return rows.filter((r) => a.p_after_check == null || r.check_guid > String(a.p_after_check)).slice(0, Number(a.p_limit));
+    };
+    const res = await get(`family=sales&format=csv&location=${A}&view=checks`);
+    expect(res.status).toBe(200);
+    const out = await lines(res);
+    expect(out).toHaveLength(25001);
+    expect(limits).toHaveLength(26);
+    expect(limits.every((n) => n === 1000)).toBe(true);
+    const header = out[0]!.split(",");
+    const first = out[1]!.split(",");
+    expect(header).not.toContain("check_total");
+    expect(first[header.indexOf("check_amount_pre_tax")]).toBe("12.34");
+    expect(first[header.indexOf("sales_tax")]).toBe("0.74");
+    expect(first[header.indexOf("server_first_name")]).toBe("Alex");
+    expect(first[header.indexOf("server_ref")]).toBe("1234");
+    expect(maxDuration).toBe(120);
   });
   it("an export past the row cap refuses (413) instead of truncating", async () => {
     session(7, [A]);

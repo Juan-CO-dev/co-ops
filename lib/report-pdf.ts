@@ -95,7 +95,7 @@ function fit(doc: Doc, text: string, width: number): string {
 function naturalWidths(doc: Doc, table: PdfTable): number[] {
   return table.columns.map((c) => {
     doc.font(HEADER_FONT).fontSize(FONT_SIZE);
-    let w = Math.min(doc.widthOfString(headerLabel(c.key)), 90);
+    let w = Math.min(doc.widthOfString(c.label ?? headerLabel(c.key)), 90);
     doc.font(BODY_FONT).fontSize(FONT_SIZE);
     for (const row of table.rows.slice(0, 200)) w = Math.max(w, doc.widthOfString(pdfSafe(formatCell(c.kind, row[c.key]))));
     return Math.min(MAX_COL, Math.max(MIN_COL, w + CELL_PAD * 2));
@@ -197,7 +197,7 @@ export async function renderReportPdf(header: PdfHeader, tables: readonly PdfTab
       const nat = part.map((i) => natural[i]!);
       const total = nat.reduce((a, b) => a + b, 0);
       const ws = total > width ? nat.map((w) => (w / total) * width) : nat;
-      const headers = cols.map((c) => headerLabel(c.key));
+      const headers = cols.map((c) => c.label ?? headerLabel(c.key));
       const headerH = rowHeight(headers, ws, HEADER_FONT);
       const partText = parts.length > 1 ? (options.partLabel ? options.partLabel(p + 1, parts.length) : `(${p + 1}/${parts.length})`) : "";
       const heading = [table.heading ? pdfSafe(table.heading) : "", pdfSafe(partText)].filter(Boolean).join(" · ");
