@@ -34,7 +34,7 @@ AGMs, catering managers, prep managers, social media managers, and higher roles 
 
 ### How do I find a customer?
 
-As a GM or higher, open **Customers** for visits and spending in the shops you can see. Use the summary buttons, **Sort by**, and filters to narrow the list; **Include marketplace guests** includes DoorDash guests. A Manager of Operations or higher can choose the **Shop**.
+As a GM or higher, open **Customers** for visits and spending in the shops you can see. Use the summary buttons, **Sort by**, and filters to narrow the list; **Include marketplace guests** includes guests from DoorDash and other delivery apps. A Manager of Operations or higher can choose the **Shop**.
 
 ### How do I read a customer's history or fix a wrong DoorDash link?
 

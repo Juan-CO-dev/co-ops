@@ -1,8 +1,4 @@
-## 12 de octubre: ¿Cómo me mantengo al día durante el turno?
-
-### ¿Cómo reviso qué pasa en la tienda?
-
-Abre **Pulso de medio turno** para ver tu trabajo, el estado de las estaciones, los horarios de catering, los recordatorios de seguridad alimentaria y las notas de entrega para tu equipo. Las secciones se actualizan mientras la página está abierta y visible. Toca una estación en **Piso en vivo** para ver sus detalles; puedes cambiar entre **Vista 3D** y **Vista de mapa** cuando la vista 3D está disponible. Como miembro del equipo, ves tus propias asignaciones sin los detalles de otras personas ni los importes de ventas.
+## 12 de octubre: ¿Cómo termino mi turno?
 
 ### ¿Cómo termino mi turno en el tablero?
 
@@ -16,7 +12,7 @@ Abre **Mi turno** en el panel. Toca **Tareas** o **Estaciones** para abrir esa p
 
 ### ¿Cómo tomo un puesto o busco cobertura para un descanso?
 
-Usa **Reclamar / cambiar estación** para un puesto libre. Un encargado de llaves puede asignar a otra persona. Toca **Empezar descanso** al dejar tu puesto; queda libre para que alguien lo cubra. Al volver, toca **Volver del descanso** y reclama un puesto disponible. Tu puesto anterior no queda reservado. Si sales con trabajo pendiente, el tablero lo marca **Quedó abierto** para que el equipo lo cubra.
+Usa **Elegir / cambiar estación** para un puesto libre. Un encargado de llaves puede asignar a otra persona. Toca **Iniciar descanso** al dejar tu puesto; queda libre para que alguien lo cubra. Al volver, toca **Volver del descanso** y reclama un puesto disponible. Tu puesto anterior no queda reservado. Si sales con trabajo pendiente, el tablero lo marca **Quedó libre** para que el equipo lo cubra.
 
 ### ¿Cómo uso la lista de cierre?
 

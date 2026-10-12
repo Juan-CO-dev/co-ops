@@ -20,7 +20,7 @@ En **Estaciones**, un gerente general o superior puede fijar horarios de cierre 
 
 Como gerente general o superior, abre **Ventas** o elige **Informe de ventas completo** desde el detalle de ventas del Pulso. Elige **Resumen**, **Artículos**, **Modificadores**, **Canales**, **Hora × día**, **Descuentos** o **Meseros**; la vista por hora muestra un mapa de calor. También puedes abrir **Cuentas** y **Catering**. Usa **CSV** o **PDF** para descargar el informe.
 
-### ¿Cómo interpreto una lista incompleta en los informes?
+### ¿Cómo interpreto una lista incompleta en los reportes?
 
 En **Centro de reportes**, una lista cerrada automáticamente muestra **Cerrado automáticamente — sin confirmar** en vez de contar como terminada. Los conteos por debajo o por encima del par vienen de los controles finales registrados de apertura y de medio día.
 
@@ -34,7 +34,7 @@ Los subgerentes generales, gerentes de catering, gerentes de preparación, geren
 
 ### ¿Cómo encuentro a un cliente?
 
-Como gerente general o superior, abre **Clientes** para ver visitas y gastos de las tiendas a las que tienes acceso. Usa los botones del resumen, **Ordenar por** y los filtros para acotar la lista; **Incluye clientes de plataformas** incluye clientes de DoorDash. Un gerente de operaciones o superior puede elegir la **Tienda**.
+Como gerente general o superior, abre **Clientes** para ver visitas y gastos de las tiendas a las que tienes acceso. Usa los botones del resumen, **Ordenar por** y los filtros para acotar la lista; **Incluye clientes de plataformas** incluye clientes de DoorDash y otras apps de entrega. Un gerente de operaciones o superior puede elegir la **Tienda**.
 
 ### ¿Cómo reviso el historial de un cliente o corrijo un vínculo de DoorDash?
 
@@ -56,16 +56,16 @@ Abre **Asignaciones** desde el panel. Todos los niveles pueden leer **Equipo de 
 
 ### ¿Qué pasa durante un descanso, al salir y al cerrar?
 
-**Empezar descanso** deja el puesto libre para cobertura; **Volver del descanso** no reserva el puesto anterior. Al salir, el trabajo pendiente aparece como **Quedó abierto** para reasignarlo. Una estación se cierra cuando termina su sección de la lista de cierre. Las secciones se pueden contraer y muestran el avance; empieza por la primera incompleta.
+**Iniciar descanso** deja el puesto libre para cobertura; **Volver del descanso** no reserva el puesto anterior. Al salir, el trabajo pendiente aparece como **Quedó libre** para reasignarlo. Una estación se cierra cuando termina su sección de la lista de cierre. Las secciones se pueden contraer y muestran el avance; empieza por la primera incompleta.
 
 ### ¿Cómo guardo la preparación AM y registro un lote?
 
-Abre **Preparación AM** e ingresa los conteos. El borrador compartido se guarda por tienda y día; espera **Guardado** o revisa **No guardado — reintentando** antes de salir. Otra persona autorizada puede retomarlo. Para una receta por lotes, cuenta **En la línea** y **Reserva a granel**. Registra **Lotes preparados**, **Rindió**, y **Envasado para la línea**; si superas el mínimo, elige un motivo. Marca la reserva vencida como desechada. Los artículos por botella siguen su proceso habitual. El gerente general puede revisar los avisos de rendimiento en Tendencias, actualizar el rendimiento de la receta o registrar una recapacitación. La persona asignada, con rango de encargado de llaves o superior, marca la tarea terminada en **Mi turno**.
+Abre **Preparación AM** e ingresa los conteos. El borrador compartido se guarda por tienda y día; espera **Guardado** o revisa **No se guardó — reintentando** antes de salir. Otra persona autorizada puede retomarlo. Para una receta por lotes, cuenta **En la línea** y **Respaldo a granel**. Registra **Tandas hechas**, **Salió**, y **Embotellado para la línea**; si superas el mínimo, elige un motivo. Marca el respaldo a granel vencido como desechado. Los artículos por botella siguen su proceso habitual. El gerente general puede revisar los avisos de rendimiento en Tendencias, actualizar el rendimiento de la receta o registrar una recapacitación. La persona asignada, con rango de encargado de llaves o superior, marca la tarea terminada en **Mi turno**.
 
 ### ¿Cómo recibo una compra de tienda?
 
 Abre **Recepción**, elige la opción de compra en tienda y registra la compra y el recibo. Puedes ingresarla desde cualquier lugar. Revisa la tienda de destino antes de guardar; la compra pertenece a esa tienda.
 
-### ¿Cómo encuentro y exporto informes?
+### ¿Cómo encuentro y exporto reportes?
 
-Abre **Centro de informes** y elige una familia como **Operaciones**, **Informes escritos**, **Personas**, **Inventario** o **Costo del menú**. Elige tienda y fechas, abre el informe y usa **CSV** para hoja de cálculo o **PDF** para imprimir cuando aparezcan. Los archivos se descargan; el envío programado por correo todavía no está activo.
+Abre **Centro de reportes** y elige una familia como **Operaciones**, **Reportes escritos**, **Personas**, **Inventario** o **Costos del menú**. Elige tienda y fechas, abre el informe y usa **CSV** para hoja de cálculo o **PDF** para imprimir cuando aparezcan. Los archivos se descargan; el envío programado por correo todavía no está activo.
