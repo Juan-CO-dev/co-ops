@@ -391,3 +391,9 @@ How to read it:
 - Manager guide says Admin sections other than Checklist Templates/Par Levels open at AGM. In code, Stations, Toast employees, Customers and Report recipients need GM (7) and Categories needs 8 — `docs/guides/manager-guide.md:980` vs `lib/admin/sections.ts:33-38`, `lib/admin/sections.ts:59`, `lib/admin/sections.ts:68`
 - Staff guide's maintenance section says "Any employee can open it". True for Employee (3), but Trainees (2) are refused — `docs/guides/staff-guide.md:324` vs `lib/maintenance.ts:18`
 - The closing's AM-prep advisory text tells the closer to "check with the opener", which conflicts with AM prep being the closing count. The staff guide repeats it — `lib/i18n/en.json:2321`, `docs/guides/staff-guide.md:260` vs `lib/opening.ts:659-668`
+
+## Production switches (read from the Vercel production env list, values not decrypted, 2026-10-13)
+
+- ON in production: `PULSE_V2=1`, `WHOS_HERE=1` (Toast employee links, manager presence, **End my shift**, shop-closed release), `CUSTOMER_PROFILES=1` (Customers), `TOAST_LABOR_PULL=1`, `TOAST_ORDER_CAPTURE=1`, `EZCATER_DEPLETION_ENABLED=1`, `DEPLETION_SOURCE=capture` — Vercel project env list (CC, 2026-10-13)
+- NOT set in production (so OFF): `STATION_LIFECYCLE` — do not document the Toast clock-out station reconcile — `lib/toast/labor.ts:34`; Vercel env list has no such key
+- The sim for guides v2 runs with the three on-screen switches that production has on: `PULSE_V2=1 WHOS_HERE=1 CUSTOMER_PROFILES=1 node scripts/sim/dev-sim.mjs` (the sim passes parent env through — `lib/sim-isolation-shared.ts:134-140`)
