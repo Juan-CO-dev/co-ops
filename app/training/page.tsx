@@ -104,7 +104,7 @@ export default async function TrainingPage({
   }
 
   const guides: GuideTab[] = available.map((slug) => {
-    const doc = loadGuide(slug, lang);
+    const doc = loadGuide(slug);
     return {
       slug,
       label: serverT(lang, TAB_LABEL_KEY[slug]),

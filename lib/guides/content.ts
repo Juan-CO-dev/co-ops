@@ -17,7 +17,8 @@
  *
  * CACHED FOR THE PROCESS LIFETIME. The guides are repo files: they cannot change
  * between deploys, so one parse per guide per server instance is correct — not a
- * staleness risk. Cache by language because each guide gets a translated launch section.
+ * staleness risk. Each guide carries its own Spanish (English first, Spanish right
+ * after each section — Guides v2, Juan 2026-10-13), so there is one parse per guide.
  */
 
 import "server-only";
@@ -26,7 +27,6 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { parseGuideMarkdown, type GuideDoc, type GuideSlug } from "./markdown-shared";
-import type { Language } from "@/lib/i18n/types";
 
 /** Literal filenames — see the path note in the module header. */
 const GUIDE_FILES: Record<GuideSlug, string> = {
@@ -35,28 +35,18 @@ const GUIDE_FILES: Record<GuideSlug, string> = {
   catering: "catering-guide.md",
 };
 
-const parsed = new Map<string, GuideDoc>();
+const parsed = new Map<GuideSlug, GuideDoc>();
 
-const LAUNCH_FILES: Record<Language, Record<GuideSlug, string>> = {
-  en: { staff: "launch-staff.en.md", manager: "launch-manager.en.md", catering: "launch-catering.en.md" },
-  es: { staff: "launch-staff.es.md", manager: "launch-manager.es.md", catering: "launch-catering.es.md" },
-};
-
-export function loadGuide(slug: GuideSlug, language: Language): GuideDoc {
-  const key = `${language}:${slug}`;
-  const cached = parsed.get(key);
+export function loadGuide(slug: GuideSlug): GuideDoc {
+  const cached = parsed.get(slug);
   if (cached) return cached;
 
-  const base = fs.readFileSync(
+  const source = fs.readFileSync(
     path.join(process.cwd(), "docs", "guides", GUIDE_FILES[slug]),
     "utf8",
   );
-  const launch = fs.readFileSync(
-    path.join(process.cwd(), "docs", "guides", LAUNCH_FILES[language][slug]),
-    "utf8",
-  );
-  const doc = parseGuideMarkdown(`${base}\n\n---\n\n${launch}`, slug);
-  parsed.set(key, doc);
+  const doc = parseGuideMarkdown(source, slug);
+  parsed.set(slug, doc);
   return doc;
 }
 
