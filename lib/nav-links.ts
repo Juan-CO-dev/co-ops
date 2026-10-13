@@ -33,13 +33,18 @@ export const NAV_LINKS: NavLink[] = [
 
 /**
  * Destinations the given role level may reach, in display order:
- * mid-shift (>=4) first, then eligible destinations, then admin (>=6) last.
+ * mid-shift first, then eligible destinations, then admin (>=6) last.
  * Single source of truth for DashboardNav AND unified search — so a `minLevel`
  * filtered out here stops being both a nav chip AND a search hit.
+ *
+ * Mid-shift's floor follows the page it opens: with Pulse v2 on (PULSE_V2=1) the page serves
+ * trainee and up, with crew getting the server-stripped view (PULSE_V2_BASE_LEVEL = 2); with it off,
+ * the v1 page is key holder and up (MIDSHIFT_BASE_LEVEL = 4). The caller reads the flag.
  */
-export function navDestinationsFor(level: number, opts?: { vault?: boolean }): NavLink[] {
+export function navDestinationsFor(level: number, opts?: { vault?: boolean; pulseV2?: boolean }): NavLink[] {
   const out: NavLink[] = [];
-  if (level >= 4) out.push({ key: "nav.mid_shift", href: "/mid-shift", scoped: true, minLevel: 4 });
+  const midShiftFloor = opts?.pulseV2 ? 2 : 4; // PULSE_V2_BASE_LEVEL : MIDSHIFT_BASE_LEVEL
+  if (level >= midShiftFloor) out.push({ key: "nav.mid_shift", href: "/mid-shift", scoped: true, minLevel: midShiftFloor });
   out.push(...NAV_LINKS.filter((l) => level >= (l.minLevel ?? 0)));
   // The password vault (0235) is a switched surface: the chip exists only while VAULT_ENABLED=1
   // (the caller reads the flag; this module stays pure). Every level has "My logins".

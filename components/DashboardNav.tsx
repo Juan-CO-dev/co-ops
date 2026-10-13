@@ -10,7 +10,7 @@
  * travels with the user (matching how the report tiles link). Unified
  * destinations (Profile, Settings, Recipes, Comms, Training, Admin) are
  * user/company-wide and link bare. The Admin chip is GM+ (level >= 6); the
- * Mid-Shift Pulse chip is KH+ (level >= 4).
+ * Mid-Shift Pulse chip is trainee+ (level >= 2) while PULSE_V2 is on, KH+ (level >= 4) when off.
  *
  * Props mirror the dashboard page's resolved session values so no
  * additional session read is needed here.
@@ -20,6 +20,7 @@ import { serverT } from "@/lib/i18n/server";
 import type { Language } from "@/lib/i18n/types";
 import { navDestinationsFor, chipHref } from "@/lib/nav-links";
 import { vaultEnabled } from "@/lib/vault-flag";
+import { pulseV2Enabled } from "@/lib/pulse/flag";
 
 interface DashboardNavProps {
   language: Language;
@@ -39,7 +40,7 @@ export function DashboardNav({ language, actorLevel, selectedLocationId }: Dashb
         {serverT(language, "nav.section_label")}
       </p>
       <div className="flex flex-wrap gap-2">
-        {navDestinationsFor(actorLevel, { vault: vaultEnabled() }).map(({ key, href, scoped }) => (
+        {navDestinationsFor(actorLevel, { vault: vaultEnabled(), pulseV2: pulseV2Enabled() }).map(({ key, href, scoped }) => (
           <a key={href} href={chipHref(href, scoped, selectedLocationId)} className={CHIP_CLASS}>
             {serverT(language, key)}
           </a>

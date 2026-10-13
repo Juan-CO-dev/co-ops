@@ -14,7 +14,7 @@ import { PeopleSection } from "@/components/pulse/sections/PeopleSection";
 import { SalesSection } from "@/components/pulse/sections/SalesSection";
 import { StationsSection } from "@/components/pulse/sections/StationsSection";
 
-export function SectionBody({ section, data, mode, locationId, date, refresh }: {
+export function SectionBody({ section, data, mode, locationId, date, viewerLevel, refresh }: {
   section: PulseSection; data: unknown; mode: "card" | "detail"; locationId: string; date: string; viewerLevel: number; refresh: () => Promise<void>;
 }): ReactNode {
   switch (section) {
@@ -25,7 +25,7 @@ export function SectionBody({ section, data, mode, locationId, date, refresh }: 
     case "sales": return <SalesSection data={data as SalesData} mode={mode} locationId={locationId} date={date} />;
     case "catering": return <CateringSection data={data as CateringData} mode={mode} />;
     case "inventory": return <InventorySection data={data as InventoryData} mode={mode} locationId={locationId} />;
-    case "food_safety": return <FoodSafetySection data={data as FoodSafetyData} mode={mode} locationId={locationId} />;
+    case "food_safety": return <FoodSafetySection data={data as FoodSafetyData} mode={mode} locationId={locationId} viewerLevel={viewerLevel} />;
     case "handoff": return <HandoffSection data={data as HandoffData} mode={mode} locationId={locationId} onChanged={refresh} />;
   }
 }

@@ -23,6 +23,7 @@ import { requireSessionFromHeaders } from "@/lib/session";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import { loadProfileDirectory } from "@/lib/profiles";
 import { matchPeople, matchPages, type PageResult, type PersonResult } from "@/lib/unified-search";
+import { pulseV2Enabled } from "@/lib/pulse/flag";
 
 import { ReportPageNav } from "@/components/reports-hub/ReportPageNav";
 import { ReportShopTabs } from "@/components/reports-hub/ReportShopTabs";
@@ -200,7 +201,7 @@ async function renderReportsPage(params: Awaited<PageProps["searchParams"]>, all
     const pm = matchPeople(directory, query, (role) => serverT(lang, `role.${role}` as TranslationKey));
     people = pm.people;
     peopleHasMore = pm.hasMore;
-    pages = matchPages(viewerLevel, query, (key) => serverT(lang, key));
+    pages = matchPages(viewerLevel, query, (key) => serverT(lang, key), { pulseV2: pulseV2Enabled() });
   }
   const nothingMatched =
     query.length > 0 && people.length === 0 && pages.length === 0 && filteredItems.length === 0;

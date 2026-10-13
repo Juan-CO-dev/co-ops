@@ -6,8 +6,9 @@ import { useTranslation } from "@/lib/i18n/provider";
 import type { FoodSafetyData } from "@/lib/pulse/types";
 import { Sparkline } from "@/components/pulse/charts/Sparkline";
 import { tapLink } from "@/components/pulse/shared";
+import { canOpenMaintenance } from "@/lib/pulse/scope-shared";
 
-export function FoodSafetySection({ data, mode, locationId }: { data: FoodSafetyData; mode: "card" | "detail"; locationId: string }) {
+export function FoodSafetySection({ data, mode, locationId, viewerLevel }: { data: FoodSafetyData; mode: "card" | "detail"; locationId: string; viewerLevel: number }) {
   const { t } = useTranslation();
   const alert = data.counts.outOfRange > 0 || data.reminder;
   return (
@@ -31,7 +32,7 @@ export function FoodSafetySection({ data, mode, locationId }: { data: FoodSafety
           ))}
         </ul>
       )}
-      {mode === "detail" && <Link href={`/maintenance?location=${encodeURIComponent(locationId)}`} className={tapLink}>{t("pulse.food_safety.maintenance_link")}</Link>}
+      {mode === "detail" && canOpenMaintenance(viewerLevel) && <Link href={`/maintenance?location=${encodeURIComponent(locationId)}`} className={tapLink}>{t("pulse.food_safety.maintenance_link")}</Link>}
     </div>
   );
 }

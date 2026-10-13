@@ -45,6 +45,15 @@ export const HANDOFF_AUTHOR_LEVEL = 6;
 export const PULSE_MONEY_LEVEL = 7;
 /** Saves the 3D floor layout for the shop. */
 export const FLOOR_ARRANGE_LEVEL = 7;
+/**
+ * /maintenance's own floor (MAINTENANCE_BASE_LEVEL in lib/maintenance.ts, pinned by tests/nav-links.test.ts).
+ * Kept here so client sections can ask without importing the server module: a trainee (2) sees the
+ * food-safety reminder but must not be handed a link the maintenance page refuses.
+ */
+export const MAINTENANCE_LINK_LEVEL = 3;
+export function canOpenMaintenance(level: number): boolean {
+  return level >= MAINTENANCE_LINK_LEVEL;
+}
 /** Both shops side by side (matches REPORT_ALL_LOCATIONS_LEVEL). */
 export const BOTH_SHOPS_LEVEL = 8;
 /**

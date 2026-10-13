@@ -46,7 +46,7 @@ import { attentionEvidence, attentionScore, crewAttention, rankAttention, severi
 import { baselineAtMinute, baselineCumulative, capturePaceAge, cumulativeByHour, dowOf, hourCurve, paceDeltaPct, sameWeekdayCoverage } from "@/lib/pulse/baseline-shared";
 import { shiftReportDate } from "@/lib/report-range";
 import { floorStations, mergeLayout } from "@/lib/pulse/floor-shared";
-import { canArrangeFloor, canAuthorHandoff, canReadPulseLocation, canViewSection, crewScoped, moneyVisible, type PulseSection } from "@/lib/pulse/scope-shared";
+import { canArrangeFloor, canAuthorHandoff, canOpenMaintenance, canReadPulseLocation, canViewSection, crewScoped, moneyVisible, type PulseSection } from "@/lib/pulse/scope-shared";
 import type {
   AttentionData, AttentionRowScoped, CateringData, FloorData, FloorLayout, FoodSafetyData, HandoffData, InventoryData,
   InventoryLowRow, PeopleData, PersonRow, SalesData, SectionState, StationRow, StationsData, StationTaskRow,
@@ -297,9 +297,11 @@ async function attention(deps: PulseDeps, ctx: PulseCtx): Promise<AttentionData>
   }
   const fridges = got("fridges");
   if (fridges) {
-    for (const f of fridges) if (f.status === "out_of_range") rows.push({ key: `fridge_out_of_range:${f.id}`, kind: "fridge_out_of_range", severity: severityOf("fridge_out_of_range"), params: { fridge: f.name, temp: f.latestF ?? "" }, href: `/maintenance?location=${loc}`, action: "check", shopWide: true });
+    // Below the maintenance floor (trainees) the check opens the pulse's own food-safety page instead.
+    const fridgeHref = canOpenMaintenance(ctx.auth.level) ? `/maintenance?location=${loc}` : `/mid-shift/food_safety?location=${loc}`;
+    for (const f of fridges) if (f.status === "out_of_range") rows.push({ key: `fridge_out_of_range:${f.id}`, kind: "fridge_out_of_range", severity: severityOf("fridge_out_of_range"), params: { fridge: f.name, temp: f.latestF ?? "" }, href: fridgeHref, action: "check", shopWide: true });
     const unchecked = fridges.filter((f) => f.status === "no_reading_today").length;
-    if (unchecked > 0 && minutesOfDay > EXPECTED_BY.openingOverdueAfter) rows.push({ key: "fridge_unchecked", kind: "fridge_unchecked", severity: severityOf("fridge_unchecked"), params: { count: unchecked }, href: `/maintenance?location=${loc}`, action: "check", shopWide: true });
+    if (unchecked > 0 && minutesOfDay > EXPECTED_BY.openingOverdueAfter) rows.push({ key: "fridge_unchecked", kind: "fridge_unchecked", severity: severityOf("fridge_unchecked"), params: { count: unchecked }, href: fridgeHref, action: "check", shopWide: true });
   }
   const parPass = got("parPass");
   if (parPass) {
