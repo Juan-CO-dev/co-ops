@@ -6,7 +6,7 @@ Pinned 2026-10-13. GLM and DeepSeek IDs come from each provider's `/models` list
 |---|---|---|---|
 | opus | Claude | claude (Agent tool) | `opus` → Opus 5.5 |
 | sonnet | Claude | claude | `sonnet` → Sonnet 5.5 |
-| haiku | Claude | claude | `haiku` → must report Haiku 5.5 (checked in the lane probe) |
+| haiku | Claude | claude, run on the CO desktop | `claude -p --model haiku` there = `claude-haiku-5-5` (checked 2026-10-13; this laptop's alias still gives Haiku 4.5). The desktop session reaches the laptop daemon through an SSH tunnel (`ssh -R 3199:127.0.0.1:3199 co-desktop`). |
 | fable | Claude | claude | `fable` → Fable 5.1 |
 | astra | OpenAI | codex | `gpt-6-astra` |
 | sol | OpenAI | codex | `gpt-5.6` |
