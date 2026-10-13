@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { MIDSHIFT_BASE_LEVEL } from "@/lib/midshift-shared";
 import { navDestinationsFor, chipHref } from "@/lib/nav-links";
-import { PULSE_V2_BASE_LEVEL, pulsePageAccess } from "@/lib/pulse/scope-shared";
+import { MAINTENANCE_LINK_LEVEL, PULSE_V2_BASE_LEVEL, canOpenMaintenance, pulsePageAccess } from "@/lib/pulse/scope-shared";
 import { matchPages } from "@/lib/unified-search";
 
 const hrefs = (level: number) => navDestinationsFor(level).map((d) => d.href).sort();
@@ -88,6 +88,17 @@ describe("Mid-shift Pulse v2 in navigation (crew get the pulse, Juan 2026-10-12)
     const t = (key: string) => (key === "nav.mid_shift" ? "Mid-shift Pulse" : key);
     expect(matchPages(3, "pulse", t, { pulseV2: true }).map((p) => p.href)).toEqual(["/mid-shift"]);
     expect(matchPages(3, "pulse", t)).toEqual([]);
+  });
+  it("never hands a trainee a maintenance link the maintenance page refuses", () => {
+    const source = (path: string) => readFileSync(path, "utf8");
+    expect(MAINTENANCE_LINK_LEVEL).toBe(Number(source("lib/maintenance.ts").match(/const MAINTENANCE_BASE_LEVEL = (\d+)/)?.[1]));
+    expect(canOpenMaintenance(PULSE_V2_BASE_LEVEL)).toBe(false);
+    expect(canOpenMaintenance(MAINTENANCE_LINK_LEVEL)).toBe(true);
+    const sections = source("lib/pulse/sections.ts");
+    expect(sections).toMatch(/const fridgeHref = canOpenMaintenance\(ctx\.auth\.level\) \? `\/maintenance\?location=\$\{loc\}` : `\/mid-shift\/food_safety\?location=\$\{loc\}`/);
+    for (const line of sections.split("\n").filter((l) => /fridge_(out_of_range|unchecked)/.test(l))) expect(line).not.toContain("href: `/maintenance");
+    expect(source("components/pulse/sections/FoodSafetySection.tsx")).toMatch(/mode === "detail" && canOpenMaintenance\(viewerLevel\) && <Link/);
+    expect(source("components/pulse/SectionBody.tsx")).toMatch(/<FoodSafetySection[^>]*viewerLevel=\{viewerLevel\}/);
   });
   it("every caller passes the v2 switch, and the page lets v2 viewers in before the v1 gate", () => {
     const source = (path: string) => readFileSync(path, "utf8");

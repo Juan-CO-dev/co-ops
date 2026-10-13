@@ -10,7 +10,7 @@
  * travels with the user (matching how the report tiles link). Unified
  * destinations (Profile, Settings, Recipes, Comms, Training, Admin) are
  * user/company-wide and link bare. The Admin chip is GM+ (level >= 6); the
- * Mid-Shift Pulse chip is KH+ (level >= 4).
+ * Mid-Shift Pulse chip is trainee+ (level >= 2) while PULSE_V2 is on, KH+ (level >= 4) when off.
  *
  * Props mirror the dashboard page's resolved session values so no
  * additional session read is needed here.
