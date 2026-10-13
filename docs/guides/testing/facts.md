@@ -397,3 +397,18 @@ How to read it:
 - ON in production: `PULSE_V2=1`, `WHOS_HERE=1` (Toast employee links, manager presence, **End my shift**, shop-closed release), `CUSTOMER_PROFILES=1` (Customers), `TOAST_LABOR_PULL=1`, `TOAST_ORDER_CAPTURE=1`, `EZCATER_DEPLETION_ENABLED=1`, `DEPLETION_SOURCE=capture` — Vercel project env list (CC, 2026-10-13)
 - NOT set in production (so OFF): `STATION_LIFECYCLE` — do not document the Toast clock-out station reconcile — `lib/toast/labor.ts:34`; Vercel env list has no such key
 - The sim for guides v2 runs with the three on-screen switches that production has on: `PULSE_V2=1 WHOS_HERE=1 CUSTOMER_PROFILES=1 node scripts/sim/dev-sim.mjs` (the sim passes parent env through — `lib/sim-isolation-shared.ts:134-140`)
+
+## Added from the guide reviews (round 1, 2026-10-13; each re-checked by the fixer against the code)
+
+- Manager (email + password) sign-in is AGM, Catering Manager and up; shift leads use tiles only — `lib/roles.ts:55`, `app/api/auth/password/route.ts:103-106`
+- Catering Customers shows each contact's email and phone to Shift Lead and up; the level-9 contact rule is only Admin → Customers — `components/catering/customers/CustomersClient.tsx:73-76`, `lib/catering/customers.ts:19,84`, `lib/customers/access-shared.ts:4-15`
+- **Deactivate** keeps the person on the list as "(inactive)"; **Reactivate** undoes it — `CustomersClient.tsx:71,210`
+- A package line on a quote comes in at the package's own count; à la carte lines start at 1 — `components/catering/quotes/QuotesClient.tsx:185,281,300,309,317`
+- "Not in Toast yet" shows a search box only with 10+ orders — `components/catering/pipeline/NotInToast.tsx:30`
+- A Confirmed lead plans food only if it has a linked quote with an event date — `lib/catering/prep-demand.ts:118-142`
+- **Confirm move** (move to other shop) and **Send quote** ask for a password — `TransferLead.tsx:32`, `QuotesClient.tsx:723-725,834`
+- **Send quote** marks the quote sent and then tries the email; the outcome message says whether it went out — `lib/catering/quotes.ts:944-1011`, `en.json:4179-4183`
+- Catering Insights money tiles count only accepted quotes (plus ezCater order totals) — `lib/catering/insights.ts:11-13`
+- The lead card shows the notes typed on **Add lead** — `components/catering/pipeline/PipelineClient.tsx:427-446`
+- A known **Client email** on a quote fills in Client name and Company — `QuotesClient.tsx:406-414`
+

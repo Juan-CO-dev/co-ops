@@ -21,7 +21,7 @@ idea (for Juan), or a sim-only issue. Production checks are marked.
   $352 draft quote. Catering Insights "OPEN PIPELINE" reads $0.00 at the same time.
 - **A GM who logs in at P Street lands on Capitol Hill's dashboard** and has to switch shops (both the
   dashboard and the Reports Hub).
-- **An opened lead shows an amber "Order comparison is currently unavailable."** line every time.
+- **An opened lead shows an amber "Order comparison is currently unavailable."** line every time. Likely a bug, per the catering fixer's code read: on a lead with no ezCater order, the fallback lookup sends an array filter against the jsonb `candidates` column, errors, and returns `available:false` every time (`components/catering/pipeline/EzcaterReconciliationPanel.tsx:27-30`).
 - **The catering setup hub's sub-line** still lists "pricing", but Pricing is not on the hub for a GM.
 - **Opening Phase 2 tab title** still reads "Phase 1 — Verification" while the Phase 2 tab is open.
 - **Fractions in prep entry:** a prep need of "5 1/3 Pan" can't be typed as "5 1/3" (the box stays empty).
