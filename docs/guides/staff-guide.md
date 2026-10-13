@@ -208,7 +208,7 @@ You walk each station. You check that last night's closing matches what you see.
 
 - The page saves as you go. The bottom bar says "Saved a moment ago". If someone else opens the report, they see your work.
 - The bottom bar counts what is left. Tap **Show me what needs fixing** to find it.
-- **Verify section** stays grey until every recount box in that section has a number.
+- **Verify section** stays grey until each item with no count from last night has a recount. On the other items, the recount box is a choice. Use it only to fix a wrong count.
 - The recount boxes may stay red after you fill them. That is not an error.
 - **Submit Opening** stays grey until every station is checked, every temp is in, and every prep section is verified (**Verify section**). If the pink box shows, a reason must be picked too.
 - A fridge should read 41°F or less. If it reads higher, tell your key holder right away.
@@ -229,19 +229,26 @@ Each row shows three things:
 
 ![More prep rows, each one "Not saved" until you type in it](img/staff/13-opening-prep-entry.png)
 
-2. Type how much you made in **Opener prepped**. The row saves when you leave the box. Then it says "Saved by" with your name and the time.
+2. Type how much you made in **Opener prepped**. Then tap outside the box.
+
+3. Made more or less than **Prep need**? Then the row does not save yet. It says "Add a reason to save". Tap the button under the row. It says how far off you are. Pick a reason. Fill in **Notes** if it asks. Tap **Save**.
+
+4. Check the row. It should say "Saved by" with your name and the time.
 
 ![Three rows saved, each with "At par" and an Undo button](img/staff/14-opening-prep-filled.png)
 
-3. Typed the wrong number? Tap **Undo** on that row and type it again.
+5. Typed the wrong number? Tap **Undo** on that row. If a box asks why, pick a reason and tap **Undo entry**. Then type the right amount.
 
-4. When every row is saved, tap **Finalize Phase 2**. Until then, the button shows how many rows are left. After you tap it, it says **Phase 2 finalized**.
+6. When every row is saved, tap **Finalize Phase 2**. Until then, the button shows how many rows are left. After you tap it, it says **Phase 2 finalized**.
 
 **Worth knowing**
 
 - The title at the top still says "Phase 1 — Verification" on this tab. You are in the right place.
 - After you tap **Finalize Phase 2**, the button says **Phase 2 finalized**. The opening is done.
-- The closer count comes from last night's AM prep. If nobody did AM prep, the number you typed in **Opener recount** shows here as the closer count.
+- The closer count comes from last night's AM prep. If you typed an **Opener recount** in Phase 1, your recount shows here instead.
+- A row with no "Saved by" line is not saved. Look for "Add a reason to save" or "Not saved".
+- If you made less than you need, your managers get an alert. Be clear in the note.
+- **Undo** right after you save asks nothing. After about a minute, it asks why.
 
 ### En español
 
@@ -277,7 +284,7 @@ Recorres cada estación. Revisas que el cierre de anoche coincida con lo que ves
 
 - La página guarda mientras trabajas. La barra de abajo dice "Guardado hace un momento". Si otra persona abre el reporte, ve tu trabajo.
 - La barra de abajo cuenta lo que falta. Toca **Muéstrame qué hay que corregir** para encontrarlo.
-- **Verificar sección** sigue gris hasta que cada casilla de recuento de esa sección tenga un número.
+- **Verificar sección** sigue gris hasta que cada producto sin conteo de anoche tenga su recuento. En los demás productos, la casilla de recuento es opcional. Úsala solo para corregir un conteo mal hecho.
 - Puede que las casillas de recuento sigan en rojo después de llenarlas. No es un error.
 - **Enviar Apertura** sigue gris hasta que todas las estaciones estén revisadas, todas las temperaturas puestas y todas las secciones de prep verificadas (**Verificar sección**). Si sale el cuadro rosa, también tienes que elegir un motivo.
 - Un refrigerador debe marcar 41°F o menos. Si marca más, avísale de inmediato a tu encargado de llaves.
@@ -292,17 +299,24 @@ Después de enviar la Fase 1, se abre la pestaña **Fase 2 — Entrada de Prep**
 
 1. Prepara la comida de una fila.
 
-2. Escribe cuánto preparaste en **Preparado hoy**. La fila se guarda cuando sales de la casilla. Luego dice "Guardado por" con tu nombre y la hora.
+2. Escribe cuánto preparaste en **Preparado hoy**. Luego toca fuera de la casilla.
 
-3. ¿Pusiste mal el número? Toca **Deshacer** en esa fila y escríbelo otra vez.
+3. ¿Preparaste más o menos de lo que dice **Por preparar**? Entonces la fila todavía no se guarda. Dice "Agrega una razón para guardar". Toca el botón debajo de la fila. Dice cuánto te pasaste o te faltó. Elige una razón. Llena **Notas** si te lo pide. Toca **Guardar**.
 
-4. Cuando todas las filas estén guardadas, toca **Finalizar Fase 2**. Mientras tanto, el botón muestra cuántas filas faltan. Después de tocarlo, dice **Fase 2 finalizada**.
+4. Revisa la fila. Debe decir "Guardado por" con tu nombre y la hora.
+
+5. ¿Pusiste mal el número? Toca **Deshacer** en esa fila. Si sale un cuadro que pregunta por qué, elige una razón y toca **Deshacer entrada**. Luego escribe el número correcto.
+
+6. Cuando todas las filas estén guardadas, toca **Finalizar Fase 2**. Mientras tanto, el botón muestra cuántas filas faltan. Después de tocarlo, dice **Fase 2 finalizada**.
 
 **Bueno saber**
 
 - El título de arriba sigue diciendo "Fase 1 — Verificación" en esta pestaña. Estás en el lugar correcto.
 - Después de tocar **Finalizar Fase 2**, el botón dice **Fase 2 finalizada**. La apertura está lista.
-- El conteo de cierre sale de la Lista de Prep AM de anoche. Si nadie hizo la Lista de Prep AM, el número que escribiste en **Recuento del opener** sale aquí como conteo de cierre.
+- El conteo de cierre sale de la Lista de Prep AM de anoche. Si escribiste un **Recuento del opener** en la Fase 1, aquí sale tu recuento.
+- Una fila sin la línea "Guardado por" no está guardada. Busca "Agrega una razón para guardar" o "Sin guardar".
+- Si preparaste menos de lo necesario, tus gerentes reciben una alerta. Explícalo claro en la nota.
+- Si tocas **Deshacer** justo después de guardar, no te pregunta nada. Después de un minuto más o menos, te pregunta por qué.
 
 ## All day
 
@@ -329,7 +343,7 @@ The **Stations** list shows each station and its positions, and who has them.
 
 ### Claim a station
 
-You pick your own station from the board on the dashboard.
+You pick your own station from the board on the dashboard. If a key holder or manager already gave you a station, you can't change it yourself.
 
 1. On the dashboard, under **My shift**, tap the **Stations** row to open it.
 
@@ -348,6 +362,7 @@ You pick your own station from the board on the dashboard.
 **Worth knowing**
 
 - You can't take a spot someone already has. Ask a key holder.
+- Does your station say "Assigned by" and a name? Then a key holder or manager gave it to you. The **Claim / change station** button does not show. Ask a key holder to change it.
 - Going on break? Open the **Stations** row and tap **Start break**. When you come back, tap **Back from break**.
 
 ### Your station's closing jobs
@@ -473,7 +488,7 @@ La lista de **Estaciones** muestra cada estación con sus puestos, y quién los 
 
 **Elegir tu estación**
 
-Eliges tu estación desde el tablero del panel.
+Eliges tu estación desde el tablero del panel. Si un encargado de llaves o un gerente ya te dio una estación, no la puedes cambiar tú.
 
 1. En el panel, en **Mi turno**, toca la fila **Estaciones** para abrirla.
 
@@ -488,6 +503,7 @@ Eliges tu estación desde el tablero del panel.
 **Bueno saber**
 
 - No puedes tomar un lugar que ya tiene otra persona. Pregúntale a un encargado de llaves.
+- ¿Tu estación dice "Asignado por" y un nombre? Entonces te la dio un encargado de llaves o un gerente. No sale el botón **Elegir / cambiar estación**. Pídele a un encargado de llaves que la cambie.
 - ¿Te vas a tu descanso? Abre la fila **Estaciones** y toca **Iniciar descanso**. Cuando regreses, toca **Volver del descanso**.
 
 **Las tareas de cierre de tu estación**

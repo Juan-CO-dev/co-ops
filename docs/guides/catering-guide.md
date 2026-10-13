@@ -494,7 +494,7 @@ A quote is the price for a lead, line by line. AGM, Catering Manager and up can 
 
 ![The totals: Subtotal, Tax, Total and Deposit due](img/catering/14-quote-totals.png)
 
-2. Read **Subtotal**, **Tax**, **Total** and **Deposit due**.
+2. Read **Subtotal** and **Total**. **Tax** and **Deposit due** show too, but only when they apply.
 
 3. Tap **Save draft**.
 
@@ -504,6 +504,7 @@ A quote is the price for a lead, line by line. AGM, Catering Manager and up can 
 
 - The totals change as you type.
 - **Deposit due** is the part the client pays up front.
+- A line with $0 does not show. That goes for **Tax**, **Deposit due**, **Delivery**, **Service charge** and **Gratuity**.
 - The screen does not show the tax rate or the deposit rate.
 - There is no "saved" message. The quote's own page opening is your sign it worked.
 - You may see a message that starts with *No pricing rule for this location*. It means that shop has no prices set up yet. Tax and the other charges show $0 until a Manager of Operations sets them in **Pricing & Tax**. Ask them before you send the quote.
@@ -568,12 +569,13 @@ Una cotización es el precio de un prospecto, línea por línea. Subgerente Gene
 
 1. Baja hasta el final del formulario.
 
-2. Lee **Subtotal**, **Impuesto**, **Total** y **Depósito requerido**.
+2. Lee **Subtotal** y **Total**. **Impuesto** y **Depósito requerido** también salen, pero solo cuando aplican.
 
 3. Toca **Guardar borrador**.
 
 - Los totales cambian mientras escribes.
 - **Depósito requerido** es la parte que el cliente paga por adelantado.
+- Una línea en $0 no sale. Eso pasa con **Impuesto**, **Depósito requerido**, **Entrega**, **Cargo por servicio** y **Propina**.
 - La pantalla no muestra la tasa de impuesto ni la del depósito.
 - No sale mensaje de "guardado". Se abre la página de la cotización y así sabes que funcionó.
 - Puede salir un mensaje que empieza con *No hay regla de precios para esta ubicación*. Quiere decir que esa tienda todavía no tiene precios configurados. El impuesto y los otros cargos salen en $0 hasta que un Gerente de Operaciones los configure en **Precios e impuestos**. Pregúntale antes de enviar la cotización.
@@ -629,13 +631,14 @@ Only the Catering Manager, or a Manager of Operations and up, can do this. It is
 
 1. Go to **Admin**, then **Catering**, then **ezCater item review**.
 
-2. Look at each item and its **Suggested match**.
+2. Look at each item. Read the line that says "Suggested match:" and an item name.
 
 3. Tap **Approve** if it is right. Tap **Pick another** if it is wrong.
 
 **Worth knowing**
 
 - If you are not sure, leave it. Don't match an item just to clear the list.
+- If the line says "Suggested match: Choose a match", the app has no guess. **Approve** stays grey. Tap **Pick another**.
 
 ### En español
 
@@ -669,11 +672,12 @@ Solo el Gerente de Catering, o el Gerente de Operaciones y arriba, puede hacerlo
 
 1. Ve a **Admin**, luego **Catering**, luego **Revisión de artículos de ezCater**.
 
-2. Mira cada artículo y su **Coincidencia sugerida**.
+2. Mira cada artículo. Lee la línea que dice "Coincidencia sugerida:" y el nombre de un artículo.
 
 3. Toca **Aprobar** si está bien. Toca **Elegir otra** si está mal.
 
 - Si no estás seguro, déjalo. No vincules un artículo solo para vaciar la lista.
+- Si la línea dice "Coincidencia sugerida: Elige una coincidencia", la app no tiene sugerencia. **Aprobar** sigue gris. Toca **Elegir otra**.
 
 ## Customers and companies
 
@@ -692,7 +696,7 @@ Catering has its own lists of people and businesses. The GM and up also have the
 **Worth knowing**
 
 - People are grouped by the company typed on them.
-- Each row shows the person's name, email and phone.
+- Each row shows the person's name. It also shows their email and phone, but only if they are saved.
 - Contacts you add in Catering Customers show their email and phone to anyone who can open that list. Shift leads and up can open it.
 - **+ Add customer** adds a person by hand. **Edit** changes their details. AGM, Catering Manager and up can do this.
 - **Deactivate** marks the person inactive. They stay on the list with "(inactive)" by their name. **Reactivate** brings them back.
@@ -762,7 +766,7 @@ Catering tiene sus propias listas de personas y negocios. El Gerente General y a
 2. Toca a una persona para abrirla.
 
 - Las personas se agrupan por la empresa que tienen escrita.
-- Cada fila muestra el nombre, el correo y el teléfono de la persona.
+- Cada fila muestra el nombre de la persona. También muestra su correo y su teléfono, pero solo si están guardados.
 - Los contactos que agregas en Clientes de catering muestran su correo y su teléfono a todos los que pueden abrir esa lista. Los líderes de turno y arriba pueden abrirla.
 - **+ Agregar cliente** agrega a alguien a mano. **Editar** cambia sus datos. Subgerente General, Gerente de Catering y arriba pueden hacerlo.
 - **Desactivar** marca a la persona como inactiva. Se queda en la lista con "(inactivo)" junto a su nombre. **Reactivar** la regresa.
@@ -943,7 +947,8 @@ GM and up.
 
 **Worth knowing**
 
-- Each item has three switches: **On catering menu**, **Catering only** and **Sold by portion**.
+- Each item has two switches: **On catering menu** and **Catering only**.
+- An item marked **Toast item** has a third switch, **Sold by portion**. It lets clients order a quarter, half or whole.
 - **Feeds** is how many people one item serves.
 - The screen says Toast items come from the store menu. Catering items exist only on this page.
 - **Preview as customer** shows the menu the way a client sees it.
@@ -1023,7 +1028,7 @@ GM and up. These are two pages. You need both.
 **Worth knowing**
 
 - The screen says it turns extra food into a featured LTO or a discount.
-- **No perishable surplus to act on.** means there is nothing extra right now.
+- **No perishable surplus to act on.** means no catering order was canceled late with its food already prepped. This page only lists that food. It does not count other extra food in the kitchen.
 
 ### En español
 
@@ -1061,7 +1066,8 @@ Gerente General y arriba.
 
 1. Toca **Menú de Catering**.
 
-- Cada artículo tiene tres interruptores: **En el menú de catering**, **Solo catering** y **Por porción**.
+- Cada artículo tiene dos interruptores: **En el menú de catering** y **Solo catering**.
+- Un artículo marcado **Artículo de Toast** tiene un tercer interruptor, **Por porción**. Deja que el cliente pida un cuarto, mitad o entero.
 - **Rinde** es para cuántas personas alcanza un artículo.
 - La pantalla dice que los artículos de Toast vienen del menú de la tienda. Los artículos de catering solo existen en esta página.
 - **Ver como cliente** muestra el menú como lo ve el cliente.
@@ -1119,4 +1125,4 @@ Gerente General y arriba. Son dos páginas y necesitas las dos. En español las 
 2. Escoge la tienda en **Ubicación**.
 
 - La pantalla dice que convierte la comida que sobra en un LTO destacado o un descuento.
-- **Sin excedente perecedero para gestionar.** quiere decir que no sobra nada por ahora.
+- **Sin excedente perecedero para gestionar.** quiere decir que ningún pedido de catering se canceló tarde con su comida ya preparada. Esta página solo muestra esa comida. No cuenta otra comida que sobre en la cocina.
