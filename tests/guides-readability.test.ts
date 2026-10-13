@@ -16,6 +16,8 @@ describe("plainSentences", () => {
     ].join("\n");
     expect(plainSentences(md)).toEqual(["Tap X.", "Then tap your name.", "Pick your role.", "Type your PIN.", "See the board for more."]);
   });
+  it("skips label-only lines", () => expect(plainSentences("**What you see**\n\nFour tiles.\n\n- **Worth knowing**")).toEqual(["Four tiles."]));
+  it("scores a bolded sentence instead of hiding it", () => expect(plainSentences("- **Nothing here saves as you go.** It all lives on the tablet until **Submit Opening** goes through.")).toEqual(["Nothing here saves as you go.", "It all lives on the tablet until X goes through."]));
 });
 
 describe("fkGrade", () => {

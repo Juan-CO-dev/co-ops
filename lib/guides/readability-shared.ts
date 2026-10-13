@@ -5,7 +5,8 @@
  * PURE. Flesch-Kincaid grade = 0.39·(words/sentence) + 11.8·(syllables/word) − 15.59.
  * The syllable count is the usual English heuristic (vowel groups, minus a silent final e), which
  * is close enough to hold a line; it is not a linguistics library. Bold UI labels count as one
- * short word ("X"), because a label is read off the screen, not decoded. Headings, photos, tables
+ * short word ("X"), because a label is read off the screen, not decoded; a line that is only
+ * labels is skipped, and a bolded whole sentence (ends in . ! ? or runs past 5 words) is scored. Headings, photos, tables
  * and code are left out. Only the English is scored; the Spanish is read by a reviewer.
  */
 
@@ -23,13 +24,16 @@ export function syllables(word: string): number {
 
 function inlinePlain(line: string): string {
   return line
-    .replace(/\*\*[^*]+\*\*/g, "X")
+    .replace(/\*\*([^*]+)\*\*/g, (_, t: string) => (/[.!?]\s*$/.test(t) || t.trim().split(/\s+/).length > 5 ? t : "X"))
     .replace(/`[^`]+`/g, "X")
     .replace(/!\[[^\]]*\]\([^)]*\)/g, "")
     .replace(/\[([^\]]+)\]\([^)]*\)/g, "$1")
     .replace(/[*_]([^*_]+)[*_]/g, "$1")
     .trim();
 }
+
+/** A piece that is only bold-label tokens and punctuation ("X", "X — X:") is chrome, not a sentence. */
+const LABEL_ONLY = /^(?:X[\s—–:,-]*)+[.!?]?$/;
 
 const endWithStop = (s: string) => (/[.!?:]$/.test(s) ? s.replace(/:$/, ".") : `${s}.`);
 
@@ -41,7 +45,10 @@ export function plainSentences(markdown: string): string[] {
     const text = paragraph.join(" ").trim();
     paragraph = [];
     if (!text) return;
-    for (const s of text.split(/(?<=[.!?])\s+/)) if (/[A-Za-z0-9]/.test(s)) out.push(endWithStop(s.trim()));
+    for (const s of text.split(/(?<=[.!?])\s+/)) {
+      if (!/[A-Za-z0-9]/.test(s) || LABEL_ONLY.test(s.trim())) continue;
+      out.push(endWithStop(s.trim()));
+    }
   };
   for (const raw of markdown.split(/\r?\n/)) {
     const line = raw.trim();
