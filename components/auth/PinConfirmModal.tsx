@@ -102,6 +102,9 @@ export function PinConfirmModal({
   const [shake, setShake] = useState(false);
   const [useSystemKeyboard, setUseSystemKeyboard] = useState(false);
   const systemInputRef = useRef<HTMLInputElement | null>(null);
+  // Synchronous one-shot latch: `submitting` only flips after a 60 ms timer + a
+  // render, so a second timer/tap in that window could POST twice. A ref closes it.
+  const inFlight = useRef(false);
 
   // Reset state on open via render-phase compare — a synchronous reset inside an
   // effect would trip react-hooks/set-state-in-effect.
@@ -115,6 +118,12 @@ export function PinConfirmModal({
       setShake(false);
     }
   }
+
+  // A ref can't be reset in the render-phase block above, so release the latch here
+  // when the modal (re)opens; error exits release it in submit's `finally`.
+  useEffect(() => {
+    if (open) inFlight.current = false;
+  }, [open]);
 
   useEffect(() => {
     if (open && useSystemKeyboard) systemInputRef.current?.focus();
@@ -130,6 +139,9 @@ export function PinConfirmModal({
 
   const submit = useCallback(
     async (full: string) => {
+      if (inFlight.current) return;
+      inFlight.current = true;
+      let confirmed = false;
       setSubmitting(true);
       setError(null);
       try {
@@ -151,6 +163,7 @@ export function PinConfirmModal({
           const data = (await res.json()) as { instance: ChecklistInstance };
           // Best-effort scrub of in-memory PIN before yielding control.
           setPin("");
+          confirmed = true; // success: leave the latch set, the modal is done
           onConfirmed(data.instance);
           return;
         }
@@ -226,6 +239,7 @@ export function PinConfirmModal({
       } catch {
         triggerError(t("auth.pin_modal.error_network"));
       } finally {
+        if (!confirmed) inFlight.current = false;
         setSubmitting(false);
       }
     },
@@ -234,18 +248,20 @@ export function PinConfirmModal({
 
   const handleDigit = useCallback(
     (d: string) => {
-      if (submitting) return;
+      if (submitting || inFlight.current) return;
+      // A full PIN is already waiting on its submit timer; extra taps are noise.
+      if (pin.length >= PIN_LENGTH) return;
       vibrateIfAvailable(10);
       setError(null);
-      setPin((prev) => {
-        const next = (prev + d).slice(0, PIN_LENGTH);
-        if (next.length === PIN_LENGTH) {
-          window.setTimeout(() => void submit(next), 60);
-        }
-        return next;
-      });
+      // Side effects live OUT here, never inside the updater (Strict Mode
+      // double-invokes updaters, which scheduled two submits).
+      const next = (pin + d).slice(0, PIN_LENGTH);
+      setPin(next);
+      if (next.length === PIN_LENGTH) {
+        window.setTimeout(() => void submit(next), 60);
+      }
     },
-    [submitting, submit],
+    [submitting, pin, submit],
   );
 
   const handleClear = useCallback(() => {
@@ -257,15 +273,15 @@ export function PinConfirmModal({
 
   const handleSystemInput = useCallback(
     (value: string) => {
-      if (submitting) return;
+      if (submitting || inFlight.current) return;
       const cleaned = value.replace(/\D/g, "").slice(0, PIN_LENGTH);
       setError(null);
       setPin(cleaned);
-      if (cleaned.length === PIN_LENGTH) {
+      if (cleaned.length === PIN_LENGTH && pin.length < PIN_LENGTH) {
         window.setTimeout(() => void submit(cleaned), 60);
       }
     },
-    [submitting, submit],
+    [submitting, pin, submit],
   );
 
   // Physical keyboard handling when modal is open and using on-screen keypad.
