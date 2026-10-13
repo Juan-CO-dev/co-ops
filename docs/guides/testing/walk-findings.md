@@ -48,6 +48,16 @@ idea (for Juan), or a sim-only issue. Production checks are marked.
 - **The Pulse live floor map renders with overlapping labels** at tablet width.
 - **Assigning a task** happens per person ("Who has what" → **ASSIGN TASK**) and saves at once, with no
   confirm step.
+- **After finalizing mid-day prep, the page says "The interactive count and prep forms ship in the next
+  build."** — a leftover placeholder; it reads as if the work was lost (it saved: the dashboard shows
+  "Finalized … SUBMITTED"). (Opus staff tester, round 1)
+- **Mid-day prep Phase 2 on a phone:** after typing in a box the page zooms and shifts sideways; **SAVE** and
+  **FINALIZE PREP** sit partly off screen and stop taking taps (only keyboard Tab/Enter worked). Likely the
+  iOS-style input zoom on small fonts. (Opus staff tester, round 1)
+- **A station whose closing lines are all done drops back to "No station"** and the My station card goes away,
+  instead of showing "Closed" with the time. (Opus staff tester, round 1)
+- **After End my shift the card still offers START BREAK and CLAIM / CHANGE STATION.** (Opus staff tester)
+- **Rows with no par (Tomato, Caesar Dressing) still say "verify section first"** after the section is verified.
 - **Probe testers:** the PIN pad gives no feedback (no dots); one tester needed a fifth tap.
 
 ## Guide fixes (writers)

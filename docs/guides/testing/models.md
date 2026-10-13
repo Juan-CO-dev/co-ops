@@ -9,7 +9,7 @@ Pinned 2026-10-13. GLM and DeepSeek IDs come from each provider's `/models` list
 | haiku | Claude | claude, run on the CO desktop | `claude -p --model haiku` there = `claude-haiku-5-5` (checked 2026-10-13; this laptop's alias still gives Haiku 4.5). The desktop session reaches the laptop daemon through an SSH tunnel (`ssh -R 3199:127.0.0.1:3199 co-desktop`). |
 | fable | Claude | claude | `fable` → Fable 5.1 |
 | astra | OpenAI | codex | `gpt-6-astra` |
-| sol | OpenAI | codex | `gpt-5.6` |
+| sol | OpenAI | codex | `gpt-6-sol` (`gpt-5.6` is refused on the ChatGPT-account Codex) |
 | terra | OpenAI | codex | `gpt-5.6-terra` |
 | luna | OpenAI | codex | `gpt-5.6-luna` |
 | glm | GLM (flagship) | api | `glm-5.3` |
