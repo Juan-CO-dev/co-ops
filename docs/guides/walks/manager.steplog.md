@@ -1,506 +1,489 @@
-# Manager walk — step log (Marcus Webb, 2026-09-08)
+# Manager walk — step log (Nicole Boyd, 2026-10-13)
 
-## Step 01 — login-where
+## Step 01 — where-are-you
 - URL: /
-- Persona / viewport: (not logged in) / 1280x800
-- Action: Navigated to http://localhost:3100 (fresh session, no prior login to log out of).
-- Saw: Heading "Compliments Only" / "Operations", a "Manager login →" button top of card, and "Where are you?" with two location tiles: "MEP / Capitol Hill" and "EM / P Street".
-- Shot: img/manager/01-login-where.png
+- Persona / viewport: Nicole Boyd, Assistant General Manager / 1024x768
+- Action: Opened the app (fresh session).
+- Saw: Header "OPERATIONS", button "Manager login →" (top right), heading "Where are you?", two tiles: "MEP Capitol Hill" and "EM P Street".
+- Shot: img/manager/01-where-are-you.png
 
 ## Step 02 — manager-login-form
 - URL: /
-- Persona / viewport: (not logged in) / 1280x800
-- Action: Clicked "Manager login →" at the top of the login card.
-- Saw: Card flips to "Manager login" / "Email + password for AGM and above." with Email and Password fields (email placeholder "you@complimentsonlysubs.com"), a "Sign in" button, a "Forgot password?" link, note "Reset links go to manager email accounts. If you sign in with a PIN, ask a manager to reset it.", and a "Use tile login →" link to go back.
+- Persona / viewport: Nicole Boyd, Assistant General Manager / 1024x768
+- Action: Tapped "Manager login →". Did not type.
+- Saw: Button "Use tile login →"; heading "Manager login"; "Email + password for AGM and above."; fields EMAIL (placeholder "you@complimentsonlysubs.com") and PASSWORD (placeholder "password"); button "SIGN IN"; link "Forgot password?"; hint "Reset links go to manager email accounts. If you sign in with a PIN, ask a manager to reset it."
 - Shot: img/manager/02-manager-login-form.png
 
-## Step 03 — login-role
+## Step 03 — whats-your-role
 - URL: /
-- Persona / viewport: (not logged in) / 1280x800
-- Action: Clicked "Use tile login →", then "Select location P Street".
-- Saw: "What's your role?" with subhead "EM · P Street" and eight role tiles: General Manager (GM), Assistant General Manager (AGM), Catering Manager (CTR), Shift Lead (SL), Key Holder (KH), Trainer (TR), Employee (EMP), Trainee (TRN); a "Back" link.
-- Shot: img/manager/03-login-role.png
+- Persona / viewport: Nicole Boyd, Assistant General Manager / 1024x768
+- Action: Tapped "Use tile login →", then the Capitol Hill tile.
+- Saw: Heading "What's your role?"; "MEP · CAPITOL HILL"; tiles GM General Manager, AGM Assistant General Manager, CTR Catering Manager, SL Shift Lead, KH Key Holder, TR Trainer, EMP Employee, TRN Trainee; button "← Back".
+- Shot: img/manager/03-whats-your-role.png
 
-## Step 04 — login-user
+## Step 04 — who-are-you
 - URL: /
-- Persona / viewport: (not logged in) / 1280x800
-- Action: Clicked "Select role General Manager".
-- Saw: "Who are you?" with subhead "EM · P Street · General Manager" and a single user tile "Marcus Webb" (initials MW).
-- Shot: img/manager/04-login-user.png
+- Persona / viewport: Nicole Boyd, Assistant General Manager / 1024x768
+- Action: Tapped the "AGM Assistant General Manager" tile.
+- Saw: Heading "Who are you?"; "MEP · CAPITOL HILL · ASSISTANT GENERAL MANAGER"; one tile "NB Nicole Boyd"; button "← Back".
+- Shot: img/manager/04-who-are-you.png
 
-## Step 05 — login-pin
+## Step 05 — pin-keypad
 - URL: /
-- Persona / viewport: (not logged in) / 1280x800
-- Action: Clicked "Select user Marcus Webb".
-- Saw: "General Manager" / heading "Marcus Webb" / "Enter your 4-digit PIN", a PIN-entry dot row (screen-reader label "PIN entry: 0 of 4 digits entered"), and a numeric keypad 1-9/0 plus "Clear"; "Back" and "Use system keyboard" links below.
-- Shot: img/manager/05-login-pin.png
+- Persona / viewport: Nicole Boyd, Assistant General Manager / 1024x768
+- Action: Tapped "Nicole Boyd".
+- Saw: Heading "ASSISTANT GENERAL MANAGER / Nicole Boyd"; "Enter your 4-digit PIN"; keypad 1-9, "Clear", 0, "←"; buttons "Back" and "Use system keyboard".
+- Shot: img/manager/05-pin-keypad.png
 
-## Step 06 — dashboard-capitol-hill
+## Step 06 — dashboard
 - URL: /dashboard
-- Persona / viewport: Marcus Webb, General Manager / 1280x800
-- Action: Pressed "9" four times on the PIN keypad; it auto-submitted and landed on /dashboard (default location = MEP · Capitol Hill).
-- Saw: Heading "Hi, Marcus Webb." with a full "Explore" nav list staff do not get — Mid-Shift Pulse, Reports Hub, Trends, Announcements, Ordering, Tip Pool, AI Insights, Rollups, Deep Cleaning, Feedback, LTO, Written Reports, Catering, Training, Recipes, Comms, Profile, Settings, My Performance, and Admin — plus a role chip "General Manager", a notifications bell "1 unread", and a location switcher with both "MEP · Capitol Hill" and "EM · P Street". Capitol Hill's Today's-operations card shows "Closing checklist — Not started" and every Reports row reads "Not started"/"No orders today"/"Start your first count".
-- Shot: img/manager/06-dashboard-capitol-hill-full.png
-- Confused: The dashboard's default location on login was Capitol Hill (MEP), not P Street — had to switch explicitly via the location-switcher nav.
+- Persona / viewport: Nicole Boyd, Assistant General Manager / 1024x768
+- Action: Signed in with 8888 (4th digit signs in; first look showed "Loading…", waited and looked again before photographing). Top of dashboard.
+- Saw: Initial "N" user-menu button, "COMPLIMENTS ONLY / OPERATIONS", heading "DASHBOARD", "Hi, Nicole Boyd.". EXPLORE chips (14): Mid-Shift Pulse, Reports Hub, Assignments, Trends, LTO, Written Reports, Catering, Maintenance, Training, Recipes, Profile, Settings, My Performance, Admin. Role badge "ASSISTANT GENERAL MANAGER"; shop chip "MEP · CAPITOL HILL". "My shift" board: "Take or assign tasks 0 of 8 assigned ▾" with lines "UNASSIGNED: AM PREP · ASSIGN OR TAKE IT", "UNASSIGNED: MID-DAY PREP · ASSIGN OR TAKE IT", "UNASSIGNED: CASH REPORT · ASSIGN OR TAKE IT", "UNASSIGNED: OPENING PREP · ASSIGN OR TAKE IT", "UNASSIGNED: RECEIVING · ASSIGN OR TAKE IT", "UNASSIGNED: COUNTS · ASSIGN OR TAKE IT", "UNASSIGNED: ORDERING · ASSIGN OR TAKE IT", "UNASSIGNED: PM REPORT · ASSIGN OR TAKE IT"; "Take or assign stations 0 of 1 assigned ▾"; "On shift · Active in CO-OPS" with buttons "START BREAK" and "END MY SHIFT"; station drop-down ("No station" default; 12 stations each shown as "<Name> · <label> · fill first" e.g. "Crunchy Boi Station · Crunchy Boi Station · fill first") and button "CLAIM / CHANGE STATION"; "Tasks: No assigned tasks today."; "Team today 0 of 5 assigned ▸"; link "ASSIGNMENTS". "TODAY'S OPERATIONS" card: "MEP · Capitol Hill", "Tue, Oct 13", "CLOSING CHECKLIST", "Not started", button "START CLOSING". No Reports section shows. Bottom: "LOG OUT".
+- Shot: img/manager/06-dashboard.png
 
-## Step 07 — dashboard-p-street
-- URL: /dashboard?loc=d2cced11-b167-49fa-bab6-86ec9bf4ff09
-- Persona / viewport: Marcus Webb, General Manager / 1280x800
-- Action: Clicked "EM · P Street" in the location switcher.
-- Saw: "Today's operations at P Street" showing "Closing checklist — In progress · 3 of 61 items" with a "Continue closing" link; Reports card shows "Opening Report — In progress", "AM Prep — Not yet started", "Mid-day Prep — No mid-day preps started today.", "Receiving — No deliveries logged yet today", "Ordering — No orders today", "Inventory Audit — 28 days since last count / 6 SKUs anchored", "Cash Deposit — Not started today", "PM Report — Not started today"; Trends tile "Checklist Completion 28%"; Team panel "1 on track · 5 need a check-in: Deshawn Carter, Rosa Delgado, Tommy Nguyen." listing Rosa Delgado (KH), Tommy Nguyen (SL), Maya Torres (EMP, "Steady"), Deshawn Carter (EMP), Marcus Webb (GM), Priya Shah (AGM).
-- Shot: img/manager/07-dashboard-p-street-full.png
+## Step 07 — dashboard-full
+- URL: /dashboard
+- Persona / viewport: Nicole Boyd, Assistant General Manager / 1024x768
+- Action: Full-page photo of the dashboard.
+- Saw: Same screen as step 06, full page: Explore, My shift board, station picker, Team today, Today's operations card (CLOSING CHECKLIST / Not started / START CLOSING), LOG OUT.
+- Shot: img/manager/07-dashboard-full.png
 
-## Step 08 — opening-phase1-filled
-- URL: /operations/opening?location=d2cced11-b167-49fa-bab6-86ec9bf4ff09
-- Persona / viewport: Marcus Webb, General Manager / 1280x800
-- Action: Clicked "Open / continue" on the Opening Report. Landed on "Phase 1 — Verification" with 10 station cards (Crunchy Boi Station, 3rd Party Station, Walk Ins Station, Prep Fridge, Prep Area, Back Line Open, Expo Station, Front of House Open, Manager Open, Walk-Out Verification) each with sub-checklist items and, on 8 of them, a "Temperature reading for <fridge> (≤41°F)" box; plus 5 prep-recount sections (Veg, Cooks, Sides, Sauces, Slicing, 36 items total) each item showing an "Opener recount" number box. Filled all 8 temps (34-40°F range: 36, 38, 35, 37, 39, 36, 38, 37) and all 36 opener-recount boxes with plausible counts.
-- Saw: Station header text "Verify last night's closing matches reality. Tap each station once you've checked it; add a comment if anything looks off." Each item row bullet is "·" until verified. Header counter read "0 of 44 verified · 0 of 8 temp readings entered · 0 of 36 prep entries" before filling; each prep-recount section's "Verify section" button was disabled with note "Recount items without closer data first" until its items had counts.
-- Shot: img/manager/08-opening-phase1-filled.png
-- Confused: The dashboard/staff-walker note said 4 items were already verified with one comment, but this GM session showed 0 of 44 verified on load — no carried-over progress was visible.
+## Step 08 — board-tasks
+- URL: /assignments?location=<Capitol Hill id>
+- Persona / viewport: Nicole Boyd, Assistant General Manager / 1024x768
+- Action: Dashboard → Explore → Assignments (waited out a "Loading…" screen first). Collapsed "Take or assign stations" so the tasks list is in view.
+- Saw: Heading "Assignments", "Tue, Oct 13", chip "Capitol Hill", card "Today's team" with "STATIONS" and "Active staff at this shop. Stations and tasks show today's assignments."; collapsible "Take or assign stations / 0 of 12 assigned"; open "Take or assign tasks / 0 of 8 assigned" with hint "Open an unassigned task to do it. Your submission records you as the doer; to assign it to yourself, ask another key holder." Task tiles: "CLOSING CHECKLIST — Everyone on shift · no assignment needed", then "AM PREP", "MID-DAY PREP", "CASH REPORT", "OPENING PREP", "RECEIVING", "COUNTS", "ORDERING", "PM REPORT" each "Unassigned". Below: collapsibles "Unassigned / 8 unassigned" and "Who has what / 0 of 5 assigned".
+- Shot: img/manager/08-board-tasks.png
 
-## Step 09 — opening-ready-to-submit
-- URL: /operations/opening?location=d2cced11-b167-49fa-bab6-86ec9bf4ff09
-- Persona / viewport: Marcus Webb, General Manager / 1280x800
-- Action: Clicked all 10 station "Mark [Station] as verified" toggles (each flips to "Untick [Station] / ✓ Verified"), then clicked "Verify section" on Veg, Cooks, Sides, Sauces, and Slicing (each flips to "Verified — [Section]"). This surfaced a callout "No prior closing data detected" — "36 item(s) had no closing count from last night — morning recounts were entered. Confirm the reason:" with two radio options "Location was closed (planned)" and "Closing was missed / I don't know". Selected "Closing was missed / I don't know" (true to the dashboard's "Closing checklist — In progress · 3 of 61 items").
-- Saw: Footer counter updated to "44 of 44 verified · 8 of 8 temp readings entered · 0 of 36 prep entries" with status line "Submit ready" and an enabled "Submit Opening" button (previously disabled and read "44 items not yet verified").
-- Shot: img/manager/09-opening-ready-to-submit.png
-- Confused: The footer kept reading "0 of 36 prep entries" even after every recount box had a number in it and every section showed "Verified" — that counter tracks something else (likely Phase 2's separate opener-prepped entries, not the Phase 1 recounts).
+## Step 09 — board-stations
+- URL: /assignments?location=<Capitol Hill id>
+- Persona / viewport: Nicole Boyd, Assistant General Manager / 1024x768
+- Action: Reopened "Take or assign stations" and looked at the stations list.
+- Saw: "Take or assign stations / 0 of 12 assigned ▾", then station groups each "<Group> · 0 of N": Crunchy Boi Station 0 of 1, 3rd Party Station 0 of 1, Walk Ins Station 0 of 2 (Walk-ins "Dedicated to walk-in orders; helps with online orders when there are no subs to make"; Walk-ins / Online "Half walk-ins, half online orders; leans toward walk-ins"), Prep Fridge 0 of 1, Shut Down Back Line 0 of 1, Expo Station 0 of 2 (Expeditor "Expedites the orders"; Register & Delivery "Runs the cash register and hands out delivery orders"), Clean front of house 0 of 1, Prep Area 0 of 1, Closing Manager 0 of 1, Walk-Out Verification 0 of 1. Each station row reads "<Station> · Unassigned", then "Unassigned", a "Person" drop-down (options: Person, Angel Reyes, Luis Herrera, Nicole Boyd) and a yellow "SET STATION" button.
+- Shot: img/manager/09-board-stations.png
 
-## Step 10 — opening-phase2-prep-entry
-- URL: /operations/opening?location=d2cced11-b167-49fa-bab6-86ec9bf4ff09
-- Persona / viewport: Marcus Webb, General Manager / 1280x800
-- Action: Clicked "Submit Opening". Instead of finishing, it advanced to "Phase 2 — Prep Entry": the same 5 prep sections re-rendered, each item now showing "Par: <amount+unit>", "Closer count: <n>", "Prep need: <n>", an "Opener prepped" number box, and a collapsible "Uses: ... tap to confirm usage" row per item's ingredients. Filled all 36 "Opener prepped" boxes with plausible amounts (0 where Prep need was already 0, otherwise close to the shown Prep need).
-- Saw: Each item row read e.g. "Par: 7 1/3 Pan" / "Closer count: 8 · 1/3 Pan" / "Prep need: 0 · 1/3 Pan" (Iceberg). One item, Tomato, showed no "Par" line at all and "Prep need: verify section first" instead of a number even after its section showed Verified.
-- Shot: img/manager/10-opening-phase2-prep-entry.png
-- Confused: Tomato's "Prep need" never resolved to a number ("verify section first") even though the Veg section's "Verify section" toggle already read "Verified — Veg" — unclear whether Tomato is missing a par/recipe configuration or the message is stale.
+## Step 10 — assign-task
+- URL: /assignments?location=<Capitol Hill id>
+- Persona / viewport: Nicole Boyd, Assistant General Manager / 1024x768
+- Action: Opened "Who has what" (the only place an "Assign task" button exists). Did NOT tap ASSIGN TASK: it has no picker, it assigns the chosen task to that person at once.
+- Saw: Under "Who has what / 0 of 5 assigned", "Here now (1)": "Nicole Boyd · On shift · Active in CO-OPS". One card per person (Angel Reyes, Dana Brooks, Luis Herrera, Marcus Webb, Nicole Boyd). Angel Reyes card: "START BREAK", "No station", "Station" drop-down ("No station", then the 12 stations) + "SET STATION", "Tasks / No assigned tasks today.", then "Task" drop-down (AM prep, Mid-day prep, Cash report, Opening prep, Receiving, Counts, Ordering, PM report; default "AM prep"), text box "Note (optional)" (empty, no other placeholder text) and a yellow "ASSIGN TASK" button. Luis Herrera's Task drop-down offers only AM prep, Mid-day prep, Opening prep. Dana Brooks and Marcus Webb show "No station / Tasks / No assigned tasks today." with no controls.
+- Shot: img/manager/10-assign-task.png
+- Confused: The walk script expects an "Assign task" button on a task in the task list that opens a picker; there is none there. The button lives per person in "Who has what" and has no confirm step, so the picker was not opened and nobody was assigned.
 
-## Step 11 — opening-phase2-save-failed-bug
-- URL: /operations/opening?location=d2cced11-b167-49fa-bab6-86ec9bf4ff09
-- Persona / viewport: Marcus Webb, General Manager / 1280x800
-- Action: After filling all 36 "Opener prepped" boxes, every row showed a red "Save failed" alert with a "Retry" button instead of saving. Clicked "Retry" on Iceberg, then on Onion Dip, as two more honest attempts (three total counting the original fill) — both retries produced the same failure.
-- Saw: Per-row alert text "Save failed" next to a "Retry" button (e.g. "Retry saving Iceberg", "Retry saving Onion Dip"); the bottom bar still read "44 of 44 verified · 8 of 8 temp readings entered · 0 of 36 prep entries" / "36 prep items not yet saved" with a disabled button "Finalize Phase 2 (36 outstanding)".
-- Shot: img/manager/11-opening-phase2-save-failed-bug.png
-- Bug?: Every "Opener prepped" save call to the prep-entry endpoint returns a server error (repeated browser console entries: "Failed to load resource: the server responded with a status of 500 (Internal Server Error)" for the opening prep-item save route) — confirmed on the original fill and on two separate manual Retry clicks (Iceberg, Onion Dip). "Finalize Phase 2" can never enable because no row can save, so the Opening Report cannot be completed and the confirm ceremony (PIN/password step-up) is never reached.
+## Step 11 — opening-verify
+- URL: /operations/opening?location=<Capitol Hill id>
+- Persona / viewport: Nicole Boyd, Assistant General Manager / 1024x768
+- Action: On the board tapped "OPENING PREP" (from the Unassigned list). Opening Report opened.
+- Saw: Header "COMPLIMENTS ONLY / OPERATIONS", link "‹ DASHBOARD", "OPENING REPORT", heading "Phase 1 — Verification", subtitle "Verify last night's closing matches reality. Tap each station once you've checked it; add a comment if anything looks off.", tabs "PHASE 1 · VERIFY" and "PHASE 2 (LOCKED)". Two-column station cards, each with a "VERIFIED" button and "0 of N done": CRUNCHY BOI STATION 0 of 4 (open: "Station appears clean as reported", "Crunchy Boi Fridge temp (≤41°F)" with a temperature box showing "—", "Sauces topped off & dated correctly", "Station ready for service (containers placed, prep ready)", each with "ADD COMMENT"), 3RD PARTY STATION 0 of 4, WALK INS STATION 0 of 4, PREP FRIDGE 0 of 4, PREP AREA 0 of 6, BACK LINE OPEN 0 of 5, EXPO STATION 0 of 4, FRONT OF HOUSE OPEN 0 of 5, MANAGER OPEN 0 of 3, WALK-OUT VERIFICATION 0 of 5. Prep sections each with "VERIFY SECTION" and "Recount items without closer data first": VEG 0 of 6, COOKS 0 of 6, SIDES 0 of 6, SAUCES 0 of 11, SLICING 0 of 9. Sticky footer: "0 of 44 verified · 0 of 8 temp readings entered", "44 items not yet verified", link "SHOW ME WHAT NEEDS FIXING", button "SUBMIT OPENING" (greyed). "ADD COMMENT" opens a comment box (not opened yet).
+- Shot: img/manager/11-opening-verify.png
+- Confused: Phase 2 tab is greyed "(LOCKED)" until Submit Opening.
 
-## Step 12 — BLOCKED goal 2 (confirm ceremony)
-- URL: /operations/opening?location=d2cced11-b167-49fa-bab6-86ec9bf4ff09
-- Persona / viewport: Marcus Webb, General Manager / 1280x800
-- BLOCKED GOAL 2 (finish the confirm ceremony): Phase 2 — Prep Entry's per-item save call fails with a 500 on every attempt (3 honest tries: the initial batch save plus two individual Retry clicks), so "Finalize Phase 2 (36 outstanding)" never un-disables and the opening can't be submitted to reach the PIN/password confirm step. This blocks the whole flow regardless of role, so switching to Rosa Delgado (key holder) would not route around it — same shared endpoint.
+## Step 12 — opening-station-verified
+- URL: /operations/opening?location=<Capitol Hill id>
+- Persona / viewport: Nicole Boyd, Assistant General Manager / 1024x768
+- Action: Tapped "VERIFIED" on CRUNCHY BOI STATION.
+- Saw: Card now reads "CRUNCHY BOI STATION / 3 of 4 done" with "✓ VERIFIED"; the three non-temperature lines show ✓; all four lines now show a tick, including "Crunchy Boi Fridge temp (≤41°F)", whose box still shows "—".
+- Shot: img/manager/12-opening-station-verified.png
+- Confused: Verified did not tick the temperature line (3 of 4 done): the temp box needs its own number.
 
-## Step 13 — am-prep-sheet
-- URL: /operations/am-prep?location=d2cced11-b167-49fa-bab6-86ec9bf4ff09
-- Persona / viewport: Marcus Webb, General Manager / 1280x800
-- Action: Navigated to AM Prep from the dashboard's "Start AM Prep" link.
-- Saw: Heading "AM Prep" / "EM · P Street" with the same 5 station sections as the opening walk (Veg, Cooks, Sides, Sauces, Slicing), each item showing "PAR" and an editable column (ON HAND / PORTIONED / LINE depending on section) plus BACK UP and an auto-computed TOTAL; every input carried a red "Required" alert while empty. Below that, a "Misc" section with four YES/NO toggle questions ("Meatball mix - ready?", "Meatballs - ready to cook?", "Meatballs - for reheat?", "Cook Bacon?") each "currently —, tap to change", plus a "Notes" box (placeholder "Add notes…"). Footer alert read "Fix 40 issues before submitting" with a disabled "Fix issues before submitting" button.
-- Shot: img/manager/12-am-prep-sheet.png
+## Step 13 — opening-section-verify
+- URL: /operations/opening?location=<Capitol Hill id>
+- Persona / viewport: Nicole Boyd, Assistant General Manager / 1024x768
+- Action: Opened VEG. "VERIFY SECTION" was greyed ("Recount items without closer data first") and no row showed a "Closer count", so typed 2 in "OPENER RECOUNT" for each of the six rows (Iceberg, Onion, Basil, Radish, Cucumber, Tomato), then tapped "VERIFY SECTION".
+- Saw: VEG card now "✓ VEG / 6 of 6 done" with the button "✓ VERIFIED". Each row shows the item name, "ADD COMMENT", and a pink box "OPENER RECOUNT [2] —". Footer unchanged: "4 of 44 verified · 0 of 8 temp readings entered", "40 items not yet verified", "Saved a moment ago". A pink box "NO PRIOR CLOSING DATA DETECTED / 6 item(s) had no closing count from last night — morning recounts were entered. Confirm the reason:" appears at the bottom of the page.
+- Shot: img/manager/13-opening-section-verify.png
+- Confused: Footer still said "4 of 44 verified" after Veg showed 6 of 6 done (did not change on look after a pause). The recount boxes are red/pink even though a number is typed.
 
-## Step 14 — am-prep-filled-row
-- URL: /operations/am-prep?location=d2cced11-b167-49fa-bab6-86ec9bf4ff09
-- Persona / viewport: Marcus Webb, General Manager / 1280x800
-- Action: Filled ON HAND for 3 Veg items: Iceberg = 6, Onion = 7, Basil = 3.
-- Saw: Each row's TOTAL auto-filled to match ON HAND (6, 7, 3) since BACK UP was left blank; the "Required" alerts cleared on those 3 rows only; the footer counter dropped from "Fix 40 issues before submitting" to "Fix 37 issues before submitting", and "Fix issues before submitting" stayed disabled (expected — the other 37 required fields across Cooks/Sides/Sauces/Slicing/Misc were still empty, matching the task's "3 items" scope rather than a full sheet).
-- Shot: img/manager/13-am-prep-filled-row.png
-- Confused: The submit button's label doubles as the validation message ("Fix issues before submitting") rather than reading "Submit AM Prep" — easy to mistake for a broken button rather than an incomplete-form guard.
+## Step 14 — opening-ready
+- URL: /operations/opening?location=<Capitol Hill id>
+- Persona / viewport: Nicole Boyd, Assistant General Manager / 1024x768
+- Action: Finished Phase 1 with no more shots: tapped "VERIFIED" on every other station; typed temps 36, 37, 38, 35, 36, 37, 38, 36 into the eight fridge boxes (Crunchy Boi Fridge, 3rd-Party Fridge, Walk-In Fridge, Sauce Fridge, 3-Door Fridge, Back-Line Drinks Fridge, Deli Display Fridge, FOH Drinks Fridge — each "temp (≤41°F)"); typed 2 in "OPENER RECOUNT" for every row of COOKS, SIDES, SAUCES, SLICING (no row showed a "Closer count") and tapped "VERIFY SECTION" on each; picked "Closing was missed / I don't know". Scrolled to the bottom.
+- Saw: Pink box "NO PRIOR CLOSING DATA DETECTED / 38 item(s) had no closing count from last night — morning recounts were entered. Confirm the reason:" with two radio options "Location was closed (planned)" and "Closing was missed / I don't know" (selected), and under it "Attestation: Closing was missed / I don't know". Sticky footer: "44 of 44 verified · 8 of 8 temp readings entered", "Submit ready", "Saved a moment ago", button "SUBMIT OPENING" (now bright yellow). The VEG recount boxes were typed before the box appeared; every OPENER RECOUNT box is pink/red with a typed 2. Other comment buttons: each line has "ADD COMMENT" (not opened).
+- Shot: img/manager/14-opening-ready.png
+- Confused: The "6 item(s)" count in the pink box grew to "38 item(s)" as more sections were recounted (the six Veg rows plus the other 32).
 
-## Step 15 — midday-prep-new
-- URL: /operations/mid-day?instance=f878f8a4-87e7-4017-b267-851d103600fe
-- Persona / viewport: Marcus Webb, General Manager / 1280x800
-- Action: Back on the dashboard, Mid-day Prep read "No mid-day preps started today." — clicked "+ New mid-day prep", which created a new instance and opened it.
-- Saw: Heading "Mid-day Prep" / "Phase 1 — count to par" with two sections, Veg (Pickles, Sweet Peppers, Hot Peppers, Basil, Shredded Mozzarella, Fresh Mozzarella) and Sauces (Aioli, HC Aioli, HP Mayo, Mustard Aioli, Horsey Mayo, Salsa Verde, Dukes, Vin), each item showing "Par <n> <unit>" and an "On hand" spinbutton; a "Submit count → Phase 2" button at the bottom.
-- Shot: img/manager/15-midday-prep-new.png
+## Step 15 — opening-submitted
+- URL: /operations/opening?location=<Capitol Hill id>
+- Persona / viewport: Nicole Boyd, Assistant General Manager / 1024x768
+- Action: Tapped "SUBMIT OPENING". The tab "PHASE 2 — PREP ENTRY" became available and opened.
+- Saw: Tabs "PHASE 1 · VERIFY" and "PHASE 2 — PREP ENTRY" (selected). Link "SHOW ME WHAT NEEDS FIXING". Prep sections VEG, COOKS, SIDES, SAUCES, SLICING; VEG open, "0 of 6 done", greyed "✓ VERIFIED" with "Recount items without closer data first". First row "Iceberg — Par: 7 1/3 Pan", box "CLOSER COUNT: 2 1/3 Pan", "PREP NEED: 5 1/3 Pan", empty box "OPENER PREPPED", and a bar "Uses: 0 Iceberg · ~0 oz — tap to confirm usage". Sticky footer: "44 of 44 verified · 8 of 8 temp readings entered · 0 of 38 prep entries", "38 prep items not yet saved", button "FINALIZE PHASE 2 (38 OUTSTANDING)" (greyed).
+- Shot: img/manager/15-opening-submitted.png
+- Confused: The page heading still reads "Phase 1 — Verification" and the Phase 1 subtitle while the Phase 2 tab is open. The "Closer count" in Phase 2 is the recount I typed in Phase 1 (2), shown in pan/quart units (e.g. "2 1/3 Pan"), not the raw "2".
+- Bug?: Heading/subtitle do not change to Phase 2 when the Phase 2 tab is open.
 
-## Step 16 — midday-prep-filled
-- URL: /operations/mid-day?instance=f878f8a4-87e7-4017-b267-851d103600fe
-- Persona / viewport: Marcus Webb, General Manager / 1280x800
-- Action: Filled "On hand" for 2 items: Pickles = 14, Sweet Peppers = 9.
-- Saw: Both spinbuttons held their new values; no per-field save indicator or error appeared (contrast with the Opening Report's Phase 2 grid, which showed an explicit "Not saved"/"Save failed" state per row).
-- Shot: img/manager/16-midday-prep-filled.png
+## Step 16 — opening-prep-entry
+- URL: /operations/opening?location=<Capitol Hill id>
+- Persona / viewport: Nicole Boyd, Assistant General Manager / 1024x768
+- Action: Scrolled down on Phase 2 — Prep Entry (nothing typed yet).
+- Saw: Rows (VEG): "Onion — Par: 8 Quart; CLOSER COUNT: 2 Quart; PREP NEED: 6 Quart; OPENER PREPPED [empty box]; Uses: 0 Onion (red) · ~0 oz — tap to confirm usage; Not saved", "Basil — Par: 4 Quart; CLOSER COUNT: 2 Quart; PREP NEED: 2 Quart", "Radish — Par: 1 Quart; CLOSER COUNT: 2 Quart; PREP NEED: 0 Quart". Footer "44 of 44 verified · 8 of 8 temp readings entered · 0 of 38 prep entries", "38 prep items not yet saved", "FINALIZE PHASE 2 (38 OUTSTANDING)". Each row ends with "Not saved" until typed. The "Radish" row's usage bar names "Watermelon Radish".
+- Shot: img/manager/16-opening-prep-entry.png
 
-## Step 17 — receiving-vendor-pick
-- URL: /operations/receiving?location=d2cced11-b167-49fa-bab6-86ec9bf4ff09
-- Persona / viewport: Marcus Webb, General Manager / 1280x800
-- Action: Opened Receiving from the dashboard's "Log a delivery" link.
-- Saw: Heading "Receiving" with step "1 Count the delivery": a "Vendor" dropdown (Amazon, Baldor, Boar's Head, Cardinal Bakery, Continental Tape, Costco, Country Snacks, Cristian, Penny Candy, PFG, Sarah, Saval, Sysco, Trimark, US Foods, Vistaprint, Webstaurant), "Delivery date" (defaulted 2026-09-08), "Invoice #" (placeholder "From the paperwork"), "Invoice total ($)", and note "Pick a vendor to load its usual order." Below, step "2 Receipt photo" ("Choose or take a photo" / "Take receipt photo" / "Photo later" checkbox) and step "3" with disabled "Delivery confirmed" and "Save partial — truck still unloading" buttons. "Recent deliveries" on the right showed two old PFG entries both tagged "Photo missing" and "Missing email".
-- Shot: img/manager/17-receiving-vendor-pick.png
-- Confused: No vendor in the list is labeled as a produce house (no "produce" name); picked "Baldor" as the closest real-world match for a produce vendor.
+## Step 17 — opening-prep-filled
+- URL: /operations/opening?location=<Capitol Hill id>
+- Persona / viewport: Nicole Boyd, Assistant General Manager / 1024x768
+- Action: Typed the PREP NEED number in OPENER PREPPED for Iceberg (5), Onion (6) and Basil (2); each saved when the cursor left the box.
+- Saw: Each filled row shows its number in the "OPENER PREPPED" box, a green "At par" line, "Saved by Nicole Boyd at 1:29 PM" (Basil 1:30 PM) and a button "UNDO". The "Uses: … · ~N oz — tap to confirm usage" bar updates (Onion "Uses: 0 Onion (red) · ~2 oz", Basil "Uses: 0.03 Basil · ~1 oz"). Footer: "44 of 44 verified · 8 of 8 temp readings entered · 3 of 38 prep entries", "35 prep items not yet saved", "FINALIZE PHASE 2 (35 OUTSTANDING)".
+- Shot: img/manager/17-opening-prep-filled.png
+- Confused: Prep need on Iceberg reads "5 1/3 Pan" where the unit is "1/3 Pan": the number to type is 5. I first typed 5.33 and the row said "Above prep need by 0.33000000000000007 — tap to record reason" (a long unrounded number on screen). A row saves only after the cursor leaves its box, so the last typed row shows "Not saved" until you tap elsewhere.
+- Bug?: Unrounded number in "Above prep need by 0.33000000000000007 — tap to record reason".
 
-## Step 18 — receiving-vendor-selected
-- URL: /operations/receiving?location=d2cced11-b167-49fa-bab6-86ec9bf4ff09
-- Persona / viewport: Marcus Webb, General Manager / 1280x800
-- Action: Selected vendor "Baldor" from the dropdown.
-- Saw: A "Prices from the invoice" button appeared, plus one line card already present titled "New item" / "Added — not on the usual order" with Qty, a "Flag a problem" row (Short/Over/Damaged/Sub), Price/pack, Oz/each, a line-note box, and photo buttons — with no product name or SKU tied to it. Below that, a separate "Pick a SKU…" dropdown (Cholula, Fresh Mozzarella, Ham, Onions, Salami, White Cheddar) with a disabled "+ Add item" button for adding more lines.
-- Shot: img/manager/18-receiving-vendor-selected.png
-- Confused: The auto-added "New item" card had no field to name or identify the product — just quantity/price/notes attached to a generic "New item" label. Unclear what this line represented since Baldor apparently has no "usual order" on file.
+## Step 18 — opening-finalize
+- URL: /operations/opening?location=<Capitol Hill id>
+- Persona / viewport: Nicole Boyd, Assistant General Manager / 1024x768
+- Action: Typed the PREP NEED number into OPENER PREPPED on all 38 rows (VEG 6, COOKS 6, SIDES 6, SAUCES 11, SLICING 9; each saved once focus left the box), then tapped "FINALIZE PHASE 2".
+- Saw: All sections show a green ✓ and full counts (VEG 6 of 6 done, COOKS 6 of 6, SIDES 6 of 6, SAUCES 11 of 11, SLICING 9 of 9), each with a greyed "✓ VERIFIED" and "Recount items without closer data first". Footer: "44 of 44 verified · 8 of 8 temp readings entered · 38 of 38 prep entries", "Phase 2 already finalized", greyed button "PHASE 2 FINALIZED". Before finalizing the button read "FINALIZE PHASE 2 (35 OUTSTANDING)" and later plain "FINALIZE PHASE 2".
+- Shot: img/manager/18-opening-finalize.png
+- Confused: Two rows have no Par and show "Prep need: verify section first" instead of a number: Tomato (VEG) and Caesar Dressing (SAUCES) — I typed 0 in both. Prep-need units: Iceberg "5 1/3 Pan", Turkey "3 1/3 Pan", Roast Beef "0 1/3 Pan" (unit is "1/3 Pan", number is the first one); I typed 5, 3, 0. Tuna Salad "13", Egg Salad "10", Chix Salad "10", Antipasto Pasta "10" have no unit. No reason box appeared on any prep row except the "Above prep need" prompt I triggered once with 5.33.
 
-## Step 19 — receiving-line-entry
-- URL: /operations/receiving?location=d2cced11-b167-49fa-bab6-86ec9bf4ff09
-- Persona / viewport: Marcus Webb, General Manager / 1280x800
-- Action: Filled Invoice # = "BAL-88213", Invoice total = "145.50", and on the "New item" card: Qty = 12, Price/pack = 3.25, Line note = "case of assorted greens, no label match".
-- Saw: The header badge changed to "1 priced"; fields held their values with no per-field save indicator.
-- Shot: img/manager/19-receiving-line-entry.png
+## Step 19 — receiving
+- URL: /operations/receiving?location=<Capitol Hill id>
+- Persona / viewport: Nicole Boyd, Assistant General Manager / 1024x768
+- Action: On the board tapped "RECEIVING".
+- Saw: Top: link "‹ DASHBOARD", breadcrumb "ORDERING ›", heading "Receiving". Step "1 COUNT THE DELIVERY": drop-down "Vendor" ("Pick a vendor…", Amazon, Baldor, Berger, Boar's Head, Cardinal Bakery, Continental Tape, Costco, Country Snacks, Cristian, District Bakery, Leonard Paper, Penny Candy, PFG, Sarah, Saval, Sysco, Thompson Delivers, Trimark, US Foods, Vistaprint, Webstaurant, "+ New store"); fields "Delivery date" (2026-10-13), "Invoice #", "Invoice total ($)"; hint "Pick a vendor to load its usual order." Step "2 RECEIPT PHOTO": "Snap the invoice or packing slip. It settles any credit later.", buttons "Take receipt photo" and checkbox "Photo later", field "Notes". Step "3 DELIVERY CONFIRMED" with greyed buttons "DELIVERY CONFIRMED" and "SAVE PARTIAL — TRUCK STILL UNLOADING". "RECENT DELIVERIES" with links "Download CSV" and "PDF"; "No deliveries logged yet."
+- Shot: img/manager/19-receiving.png
 
-## Step 20 — receiving-short-flagged
-- URL: /operations/receiving?location=d2cced11-b167-49fa-bab6-86ec9bf4ff09
-- Persona / viewport: Marcus Webb, General Manager / 1280x800
-- Action: Used "Pick a SKU…" + "+ Add item" to add "Onions" (Qty 8, Price/pack $18.00) and clicked "Short" on its "Flag a problem" row (button went to a pressed/highlighted state, no popup at that moment); then added "Fresh Mozzarella" (Unit "case", Qty 4, Price/pack $22.00) as a fully-received line; checked "Photo later"; typed a note "Onions came in short - driver said next truck Thursday." in the delivery Notes box.
-- Saw: Onions card showed "Onions" / "Added — not on the usual order" and paragraph "No pack chain — enter quantity in packs."; the Short button stayed visually pressed but nothing else changed on this screen. "Delivery confirmed" (step 3) became enabled once Photo later was checked.
-- Shot: img/manager/20-receiving-short-flagged.png
+## Step 20 — receiving-vendor
+- URL: /operations/receiving?location=<Capitol Hill id>
+- Persona / viewport: Nicole Boyd, Assistant General Manager / 1024x768
+- Action: Chose "Baldor" in Vendor. Also tried Berger, Boar's Head, Cardinal Bakery, District Bakery, PFG, Saval, Sysco, Thompson Delivers, Trimark, US Foods, Whisked, Costco: none shows an expected order / purchase order for today.
+- Saw: "Saved on device 1:33 PM" chip on "1 COUNT THE DELIVERY". Vendor "Baldor", Delivery date 10/13/2026, "Invoice #" (placeholder "From the paperwork"), "Invoice total ($)" (empty), buttons "Scan" and chip "Scanner ready", button "Prices from the invoice", one usual-order line "Cholula — Tap to count (units)" with a dashed count box "—", then a "Pick a SKU…" drop-down (Cholula, Cannoli Shell, Fresh Mozzarella, Ham, Lettuce, Onions, Salami, White Cheddar) and "+ Add item" (greyed until a SKU is picked). Other vendors: PFG loads about 40 usual-order lines (Duke's Mayo, Iceberg, Ham, Tomatoes Crushed (10#), Chicken Breast, ...); Boar's Head loads Provolone, Genoa, Turkey, Capicola...; US Foods loads "Dried Chives"; Berger, Cardinal Bakery, District Bakery, Saval, Sysco, Thompson Delivers, Trimark, Whisked, Costco load one blank "New item — Added — not on the usual order" line.
+- Shot: img/manager/20-receiving-vendor.png
+- Confused: Nothing says which vendors are produce; Baldor was picked as the produce vendor but only has one usual-order line.
 
-## Step 21 — receiving-detail-short-item
-- URL: /operations/receiving/1da9de68-de7d-42c8-832d-47871e9919c9
-- Persona / viewport: Marcus Webb, General Manager / 1280x800
-- Action: Clicked "Delivery confirmed" (submitted immediately, no confirmation dialog — form reset to blank and a new "Baldor · 2026-09-08 · Photo missing · 2 item(s) · #BAL-88213 · Marcus Webb" row appeared in Recent Deliveries, plus a new "Open vendor credits 1 open" panel). Opened that Baldor delivery's detail page.
-- Saw: Heading "Baldor" / "2026-09-08 · #BAL-88213 · by Marcus Webb" / "Invoice total: $145.50" / the delivery note text; a "Receipt photo still missing" callout; a "Vendor claim" section reading "Not compared" / "No vendor claim is linked to this delivery yet."; an "Items" list with only 2 lines — "Onions — Short — 8 packs — $18.00/pack" and "Fresh Mozzarella — 4 case — $22.00/pack · 288.0 oz"; a "Vendor credits" section listing "Short — — — Open" with a "Resolve" button.
-- Shot: img/manager/21-receiving-detail-short-item.png
-- Bug?: The delivery's Items list shows only 2 items (Onions, Fresh Mozzarella) — the first line I filled in, the auto-added "New item" card (qty 12, $3.25/pack, note "case of assorted greens, no label match"), is gone entirely. It had no SKU attached, and its data appears to have been silently dropped on submit rather than saved or flagged as an error.
+## Step 21 — receiving-didnt-arrive
+- URL: /operations/receiving?location=<Capitol Hill id>
+- Persona / viewport: Nicole Boyd, Assistant General Manager / 1024x768
+- Action: No vendor had an expected order, so the "Some expected items were never confirmed" list and "Didn't arrive" button never appeared. Fallback per script: typed 2 on "Cholula" (collapsed row now reads "2 × units"), picked Lettuce in "Pick a SKU…" and tapped "+ Add item", typed 3 in "Qty (units)" and tapped "Short" under "FLAG A PROBLEM".
+- Saw: Row "Cholula / 2 × units" (dashed count box "—"). Row "Lettuce / Added — not on the usual order" with "QTY (UNITS)" [−] 3 [+], italic "No pack chain — enter quantity in packs.", "FLAG A PROBLEM" buttons "Short" (now red, selected), "Over", "Damaged", "Sub", then "PRICE/PACK ($)" and "OZ/EACH (OPT)" boxes, then "Line note (optional)" box, "Add photo" and "Remove". Bottom bar: "3 DELIVERY CONFIRMED" (greyed) and "SAVE PARTIAL — TRUCK STILL UNLOADING".
+- Shot: img/manager/21-receiving-didnt-arrive.png
+- Confused: No purchase order exists for any vendor today, so the "Didn't arrive" / "… short(s) will be claimed on this delivery." text cannot be photographed. Facts.md says shorts can only be claimed against a purchase order.
 
-## Step 22 — receiving-short-item-options
-- URL: /operations/receiving/1da9de68-de7d-42c8-832d-47871e9919c9
-- Persona / viewport: Marcus Webb, General Manager / 1280x800
-- Action: Clicked "Resolve" on the "Short" vendor-credit row.
-- Saw: The row expanded to a "Note (optional)" textbox and four buttons: "Credit", "Refund", "Write off", "Cancel". This is the short-item resolution prompt (it appears on the delivery's detail page after confirming, not inline on the receiving form when the Short flag is first tapped).
-- Shot: img/manager/22-receiving-short-item-options.png
+## Step 22 — receiving-confirmed
+- URL: /operations/receiving?location=<Capitol Hill id>
+- Persona / viewport: Nicole Boyd, Assistant General Manager / 1024x768
+- Action: Typed "SIM-1001" in "Invoice #" and "120.00" in "Invoice total ($)", ticked "Photo later" (the only way to enable the button without a camera photo; "DELIVERY CONFIRMED" stayed greyed until both an invoice # and the photo choice were set), then tapped "DELIVERY CONFIRMED".
+- Saw: The form reset to "Pick a vendor…" / "Pick a vendor to load its usual order.". New card on the right: "Open vendor credits — 1 open ▸". "RECENT DELIVERIES" with "Download CSV / PDF" and a card "Baldor — 2026-10-13", yellow chip "PHOTO MISSING", "2 item(s) · #SIM-1001 · Nicole Boyd". Further down: "2 RECEIPT PHOTO — Snap the invoice or packing slip. It settles any credit later." [Take receipt photo] [ ] Photo later; "Notes" box with placeholder "Anything to flag about this delivery…"; the "Invoice #" placeholder is "From the paperwork".
+- Shot: img/manager/22-receiving-confirmed.png
+- Confused: Reports Hub → Inventory → Receiving not checked yet (see Reports Hub step).
 
-## Step 23 — receiving-finished-receipt
-- URL: /operations/receiving/1da9de68-de7d-42c8-832d-47871e9919c9
-- Persona / viewport: Marcus Webb, General Manager / 1280x800
-- Action: Typed note "Baldor to credit next invoice for 4 missing cases of onions" and clicked "Credit".
-- Saw: The "Short" vendor-credit row status changed from "Open" to "Credited", and the note text now displays under it permanently.
-- Shot: img/manager/23-receiving-finished-receipt.png
+## Step 23 — midday-start
+- URL: /operations/mid-day?location=<Capitol Hill id>
+- Persona / viewport: Nicole Boyd, Assistant General Manager / 1024x768
+- Action: On the board tapped "MID-DAY PREP" (it showed "No mid-day preps started today." with "+ NEW MID-DAY PREP"), then tapped "+ NEW MID-DAY PREP".
+- Saw: Header link "‹ DASHBOARD", "MID-DAY PREP", heading "Phase 1 — count to par". Sections "VEG 0 of 6 done ▾" (open), "SAUCES 0 of 10 done ▸", "COOKS 0 of 1 done ▸". VEG rows, each with an empty number box whose placeholder is "On hand": Pickles "PAR 20 QUART", Sweet Peppers "PAR 12 QUART", Hot Peppers "PAR 12 QUART", Basil "PAR 4 QUART", Shredded Mozzarella "PAR 5 QUART", Fresh Mozzarella "PAR 12 QUART". Button "SUBMIT COUNT → PHASE 2".
+- Shot: img/manager/23-midday-start.png
+- Confused: The script says the form shows "Bulk backup" boxes: there is NO "Bulk backup" label or box anywhere (VEG, SAUCES and COOKS all show only "On hand"). The URL changed to /operations/mid-day?instance=<id> as soon as the first number was typed.
 
-## Step 24 — counts-new-audit
-- URL: /operations/counts?location=d2cced11-b167-49fa-bab6-86ec9bf4ff09
-- Persona / viewport: Marcus Webb, General Manager / 1280x800
-- Action: Opened Inventory Audit from the dashboard's "Inventory Audit" tile.
-- Saw: Heading "Inventory Audit" / "Run when the owner calls for a full audit. Day to day, the system infers on-hand from deliveries, production, and sales." A "New audit" panel with instruction "Count each unit once: full containers, then loose units below. Never count the same stock twice." — a "Pick an item…" dropdown (full catalog, 150+ items), a Unit field, a "How many" spinbutton, a "Loose (below a full container)" checkbox revealing a "Partial" spinbutton, a "+ Add item" button, a "Note" box, and a disabled "Record audit" button. To the right, an "On hand" list anchored to "Tue, Aug 11" showing ~30 items all flagged "Inferred / advisory" or "Audited Tue, Aug 11 / advisory" with the same warning "A backdated delivery landed after this audit — verify before trusting on-hand."
-- Shot: img/manager/24-counts-new-audit.png
+## Step 24 — midday-filled
+- URL: /operations/mid-day?instance=<id>
+- Persona / viewport: Nicole Boyd, Assistant General Manager / 1024x768
+- Action: Typed 4 in Pickles "On hand" and 2 in Sweet Peppers "On hand". Did not tap "SUBMIT COUNT → PHASE 2".
+- Saw: VEG "2 of 6 done". Pickles "PAR 20 QUART · NEED: 16" with 4; Sweet Peppers "PAR 12 QUART · NEED: 10" with 2; the other four rows still show the "On hand" placeholder. No limit message appeared. SAUCES (10 rows: PAR 15, 4, 4, 4, 4, 1, 3, 6, "PAR — BOTTLE", 1 BOTTLE) and COOKS (1 row: PAR 15 PIECE) also use "On hand" only.
+- Shot: img/manager/24-midday-filled.png
+- Confused: One sauce row shows "PAR — BOTTLE" (no par number).
 
-## Step 25 — counts-filled
-- URL: /operations/counts?location=d2cced11-b167-49fa-bab6-86ec9bf4ff09
-- Persona / viewport: Marcus Webb, General Manager / 1280x800
-- Action: Added 3 lines: Iceberg (Unit "case", How many 6), Tomatoes (Unit "case", How many 3), Onions (Unit "bag" free-text, How many 2, checked "Loose (below a full container)", Partial 0.5). Noted the Unit field is a locked dropdown ("Pick a unit… / case") for items with a defined pack chain (Iceberg, Tomatoes, Fresh Mozzarella) but a free-text box for others (Onions) with no conversion behind it.
-- Saw: Each added line collapses to a compact row with a "Remove" button; "Record audit" became enabled once the first line was added.
-- Shot: img/manager/25-counts-filled.png
+## Step 25 — pulse
+- URL: /mid-shift?location=<Capitol Hill id>
+- Persona / viewport: Nicole Boyd, Assistant General Manager / 1024x768
+- Action: Dashboard → Explore → "Mid-Shift Pulse".
+- Saw: Link "‹ DASHBOARD", heading "Mid-shift Pulse" with "MEP · Capitol Hill" and "Updated 1:38 PM", small lines "Refreshes every 60 s" (in the text), card "Needs attention · as of 1:38 PM" with "See more", red tag "NEEDS ACTION", eight lines each with an "ASSIGN" button: "3rd Party Station is uncovered", "Expo Station is uncovered", "Crunchy Boi Station is uncovered", "Prep Area is uncovered", "Closing Manager is uncovered", "Clean front of house is uncovered", "Prep Fridge is uncovered", "Walk-Out Verification is uncovered", then "+2".
+- Shot: img/manager/25-pulse.png
 
-## Step 26 — counts-confirm-dialog
-- URL: /operations/counts?location=d2cced11-b167-49fa-bab6-86ec9bf4ff09
-- Persona / viewport: Marcus Webb, General Manager / 1280x800
-- Action: Clicked "Record audit". First attempt 403'd silently (no on-screen message); this triggered a step-up dialog on submit.
-- Saw: Dialog heading "Confirm your password" / "Re-enter your password to confirm this action." with a "Password" field and "Confirm" / "Cancel" buttons. This is the count submit confirmation the walk goal asks for.
-- Shot: img/manager/26-counts-confirm-dialog.png
+## Step 26 — pulse-full
+- URL: /mid-shift?location=<Capitol Hill id>
+- Persona / viewport: Nicole Boyd, Assistant General Manager / 1024x768
+- Action: Full-page photo of the Pulse.
+- Saw: Cards in order: "Needs attention"; "Live shop floor" ("Tap a station for details.", button "MAP VIEW", a 3D floor map with red station tiles, legend "Green covered · amber short, closing soon or past its close time · red uncovered · grey closed"); "People" ("Here now (1)", "0 stations covered · 10 open", "Nicole Boyd — No station · Active in CO-OPS"); "Stations & tasks" ("0 covered · 0 short · 0 closing soon · 0 to close now · 10 uncovered · 0 closed", "Tasks: 1 done · 1 left", rows Crunchy Boi Station, 3rd Party Station, Walk Ins Station, Prep Fridge, Shut Down Back Line, Expo Station each "UNCOVERED"); "Catering" ("DUE TODAY / No catering due today.", "Tomorrow: no catering booked", "Prep: AM Not started · mid-day In progress", "NOT RUNG INTO TOAST / Every ezCater order is in Toast."); "Inventory" ("No par walk recorded yet.", "RUNNING LOW VS PAR / No data yet", "ORDER CUTOFFS TODAY": Boar's Head · 3:00 PM · no draft yet, Cardinal Bakery · 3:00 PM · no draft yet, Trimark · 6:00 PM · no draft yet); "Food safety" ("All fridges checked and in range.", "8 in range · 0 out of range · 0 unchecked", fridge chips Walk-In Fridge 38°F, 3-Door Fridge 36°F, Sauce Fridge 35°F, Deli Display Fridge 38°F, Crunchy Boi Fridge 36°F, FOH Drinks Fridge 36°F, Back-Line Drinks Fridge 37°F, 3rd-Party Fridge 37°F); "Handoff" ("Reports: 1 done · 4 left", chips OPENING, AM PREP, MID-DAY PREP, CASH DEPOSIT, CLOSING, "No handoff notes for today."). Every card except Needs attention/Live shop floor has a "See more" link.
+- Shot: img/manager/26-pulse-full.png
+- Confused: There is NO Sales card and no "Not available for your role." text anywhere on the page; the Handoff card has no "Write a handoff note" button (only "See more"). The 3D map in "Live shop floor" looks jumbled in the photo (overlapping labels, red blobs, big grey wedge).
+- Bug?: Live shop floor map renders messily in the headless photo: labels overlap.
 
-## Step 27 — counts-unit-error
-- URL: /operations/counts?location=d2cced11-b167-49fa-bab6-86ec9bf4ff09
-- Persona / viewport: Marcus Webb, General Manager / 1280x800
-- Action: Typed password "sim-marcus-pw" and clicked "Confirm". Submission still failed.
-- Saw: An on-screen error line appeared above "Record audit": "Can't convert that unit to ounces — set the item's pack chain or avg oz first." This pointed at the Onions line (free-text "bag" unit, no configured pack chain).
-- Shot: img/manager/27-counts-unit-error.png
-- Bug?: Submitting a count with any item whose unit has no configured pack-chain/avg-oz conversion (here, Onions in "bag") fails the whole audit with a generic error rather than only flagging that one line — the two good lines (Iceberg, Tomatoes) had to be resubmitted separately after removing Onions.
+## Step 27 — pulse-section
+- URL: /mid-shift?location=<Capitol Hill id>
+- Persona / viewport: Nicole Boyd, Assistant General Manager / 1024x768
+- Action: On the Pulse tapped "See more" on the People card.
+- Saw: Link "‹ PULSE", heading "People", "as of 1:40 PM", "Here now (1)", "0 stations covered · 10 open", "Nicole Boyd — No station · Active in CO-OPS", heading "TIMELINE" with "Nothing to show yet.", link "Stations".
+- Shot: img/manager/27-pulse-section.png
+- Confused: The Pulse has no section called "Sales" at all (see step 26).
 
-## Step 28 — counts-submitted
-- URL: /operations/counts?location=d2cced11-b167-49fa-bab6-86ec9bf4ff09
-- Persona / viewport: Marcus Webb, General Manager / 1280x800
-- Action: Removed the Onions line, added Fresh Mozzarella (Unit "case", How many 5) in its place alongside Iceberg and Tomatoes, and clicked "Record audit" again. This time it went through without a second password prompt (the earlier step-up apparently still counted) and without error.
-- Saw: The form reset to blank; the "On hand anchor" line updated from "Tue, Aug 11" to "Tue, Sep 8"; Iceberg, Tomatoes, and Fresh Mozzarella now show "Audited Tue, Sep 8" with fresh on-hand totals ("Iceberg — counted: 3840.0 oz · since: 0.0 oz · 0d ago", "Tomatoes — counted: 480.0 oz · since: 0.0 oz · 0d ago", "Fresh Mozzarella — counted: 360.0 oz · since: 0.0 oz · 0d ago").
-- Shot: img/manager/28-counts-submitted.png
+## Step 28 — handoff-write
+- URL: /mid-shift/handoff?location=<Capitol Hill id>
+- Persona / viewport: Nicole Boyd, Assistant General Manager / 1024x768
+- Action: On the Pulse tapped "See more" on the Handoff card (the page already shows the write form; there is no separate "Write a handoff note" button, it is a heading). Typed the note and kept "For everyone" in "Who should see it".
+- Saw: Link "‹ PULSE"; card "Handoff · as of 1:41 PM", "Reports: 1 done · 4 left", chips OPENING (green), AM PREP, MID-DAY PREP, CASH DEPOSIT, CLOSING (amber), "No handoff notes for today.", heading "WRITE A HANDOFF NOTE", drop-down "Who should see it" (For everyone / For crew / For managers), box "Note" (no placeholder text) holding "Bread comes early tomorrow. Clear a shelf in the prep fridge first.", button "POST NOTE" (yellow once there is text).
+- Shot: img/manager/28-handoff-write.png
+- Confused: The script said to tap "Write a handoff note" first; on this screen "WRITE A HANDOFF NOTE" is only a heading above the form.
 
-## Step 29 — ordering-walk-list
-- URL: /ordering?location=d2cced11-b167-49fa-bab6-86ec9bf4ff09
-- Persona / viewport: Marcus Webb, General Manager / 1280x800
-- Action: Opened /ordering from the dashboard's Ordering tile.
-- Saw: Heading "Ordering walk — Tue, Sep 8" with location tabs "Capitol Hill" / "P Street"; a "Today's orders" card reading "Nothing ordered yet today." and an "Order history 1" expander; a warning banner "2 par'd products have no ordering path today — nothing will be suggested for them." / "2 sit on a deactivated item. Move the par to the item you actually buy, or turn that one back on."; note "Par tuning hasn't run at this shop yet."; then a vendor accordion "PFG · 79 SKUs · ORDER DAY" (expanded) listing every SKU with a "− / Order to par (unit) / +" stepper plus "Empty · order N" and "We're full · 0" quick-set buttons; a sticky footer "0 SKUs marked" / "REVIEW ORDER".
-- Shot: img/manager/29-ordering-walk-list.png
+## Step 29 — handoff-posted
+- URL: /mid-shift/handoff?location=<Capitol Hill id>
+- Persona / viewport: Nicole Boyd, Assistant General Manager / 1024x768
+- Action: Tapped "POST NOTE".
+- Saw: The note now shows above the form: tag "FOR EVERYONE", "Nicole Boyd · 1:41 PM", "Bread comes early tomorrow. Clear a shelf in the prep fridge first.", buttons "GOT IT" and "RETRACT" (not tapped). The form below is cleared (Note empty, "POST NOTE" greyed). Report chips unchanged: OPENING, AM PREP, MID-DAY PREP, CASH DEPOSIT, CLOSING.
+- Shot: img/manager/29-handoff-posted.png
+- Confused: Pulse floor-view buttons: only "MAP VIEW" (no "Both shops" view, as expected for an AGM).
 
-## Step 30 — ordering-adjusted-line
-- URL: /ordering?location=d2cced11-b167-49fa-bab6-86ec9bf4ff09
-- Persona / viewport: Marcus Webb, General Manager / 1280x800
-- Action: Clicked "+" twice on "1/2 pint top (flexi)" (Par 5) to set its order to 2, then clicked "Empty · order 3" on "Arugula" (Par 3, marks the full par).
-- Saw: The "1/2 pint top (flexi)" stepper showed "2" and gained a "Clear" button; the vendor header badge changed to show a marked count; the sticky footer updated to "1 SKUs marked" then "2 SKUs marked" as each line was set.
-- Shot: img/manager/30-ordering-adjusted-line.png
+## Step 30 — closing-overview
+- URL: /operations/closing?location=<Capitol Hill id>
+- Persona / viewport: Nicole Boyd, Assistant General Manager / 1024x768
+- Action: Dashboard → "START CLOSING" (Today's operations card). Looked only; ticked nothing.
+- Saw: Link "‹ DASHBOARD", heading "CLOSING CHECKLIST", "MEP · Capitol Hill", "PROGRESS 1/61". Station sections, each "<NAME> / 0 of N done": CRUNCHY BOI STATION 0 of 6 (open: Restock; Wipe inside & outside; Wipe tops of sauce bottles; Combine & check dates on sauces; Pull out station and sweep; Crunchy Boi Fridge temp (≤41°F)), 3RD PARTY STATION 0 of 6, WALK INS STATION 0 of 6, PREP FRIDGE 0 of 6, SHUT DOWN BACK LINE 0 of 4, EXPO STATION 0 of 5, CLEAN FRONT OF HOUSE 0 of 7, PREP AREA 0 of 9, CLOSING MANAGER 1 of 7, WALK-OUT VERIFICATION 0 of 5. Bottom line: "AM Prep had 0 items saved today - check with the opener."
+- Shot: img/manager/30-closing-overview.png
+- Confused: The yellow line "AM Prep had 0 items saved today - check with the opener." is there because AM prep has not been done yet today. No "awaiting a higher role" mark appears anywhere. "PROGRESS 1/61" counts the auto-done "Opening verified" report line.
 
-## Step 31 — ordering-review-order
-- URL: /ordering?location=d2cced11-b167-49fa-bab6-86ec9bf4ff09
-- Persona / viewport: Marcus Webb, General Manager / 1280x800
-- Action: Clicked "Review order".
-- Saw: A "Review order" panel with a "Close" button, summary "1 vendor orders · 0 marked full", a "PFG" table (columns SKU / Item # / Qty) listing "1/2 pint top (flexi) — 870550 — 2 unit" and "Arugula — 242470 — 3 case", note "Delivery options (email, portal, phone) appear once you submit.", and two buttons "Keep walking" and "Record walk · 2 SKUs".
-- Shot: img/manager/31-ordering-review-order.png
+## Step 31 — closing-full
+- URL: /operations/closing?location=<Capitol Hill id>
+- Persona / viewport: Nicole Boyd, Assistant General Manager / 1024x768
+- Action: Opened every section (taps on the section titles only) and took the full-page photo.
+- Saw: All sections open. Extra lines: 3RD PARTY STATION (Restock; Wipe inside & outside; Wipe tops of sauce bottles; Combine & check dates on sauces; Pull out station and sweep; 3rd-Party Fridge temp (≤41°F)); WALK INS STATION (same five + Walk-In Fridge temp (≤41°F), Record cooler temp in Fahrenheit); PREP FRIDGE (same five + Sauce Fridge temp (≤41°F)); SHUT DOWN BACK LINE (Wipe down burners; Wipe down tile walls; Wipe wall under prep tables; Back-Line Drinks Fridge temp (≤41°F)); EXPO STATION (Change & stock cannoli pan; Wipe out deli display fridge; Restock bevs; Cookies & gluten free; Deli Display Fridge temp (≤41°F)); CLEAN FRONT OF HOUSE (Bathrooms; Patio furniture; Sweep; Mop; Restock bev fridge; Put away / organize cases; FOH Drinks Fridge temp (≤41°F)); PREP AREA (Organize Back Walk In; Clean Oven Window; Organize Smallwares & Utensils; Organize Dry Storage; Wipe down 3 door fridge; Wipe out 3 bay sink; Drain & turn off dish Machine; Trash to dumpster; 3-Door Fridge temp (≤41°F)). CLOSING MANAGER: "Count the drawer", "Count and secure tips" ("Count tips, place in safe. Weekly distribution handled separately by AGM+."), then report lines "AM Prep List — Pending — submit from the dashboard", "Opening verified — Submitted by Nicole Boyd at 1:42 PM", "Mid-day Prep — Pending — submit from the dashboard", "Cash deposited — Pending — submit from the dashboard", "PM Report submitted — Pending — submit from the dashboard". WALK-OUT VERIFICATION 0 of 5: Lights off; Devices charging; Oven off; Front doors locked; Back door locked.
+- Shot: img/manager/31-closing-full.png
+- Confused: The four report lines are links whose accessible names all say "tap to submit from the AM Prep page" (AM Prep List, Mid-Day Prep, Cash deposited, PM Report) - the wording is the same for all four. "Opening verified … Submitted by Nicole Boyd at 1:42 PM" while the Opening report page said finalized at 1:32 PM (the time shown is probably when the closing page loaded).
 
-## Step 32 — ordering-draft-created
-- URL: /ordering?location=d2cced11-b167-49fa-bab6-86ec9bf4ff09
-- Persona / viewport: Marcus Webb, General Manager / 1280x800
-- Action: Clicked "Record walk · 2 SKUs".
-- Saw: "Today's orders" now lists a card "PFG · EM-20260908-PFG · 2 lines · Draft"; "Order history" count went from "1" to "2".
-- Shot: img/manager/32-ordering-draft-created.png
+## BLOCKED (earlier, now cleared) — AM PREP (night: count what is left for the morning crew)
+- BLOCKED AM PREP (planned shots 32-am-prep, 33-am-prep-filled, 34-am-prep-submitted): the AM prep page (/operations/am-prep?location=<Capitol Hill id>) shows only a full-screen error: "Something went wrong" / "Algo salió mal" / "An unexpected error occurred. Try again, or head back to your dashboard." / buttons "Try again · Reintentar" and "Dashboard · Panel" / "REF 789350329". Tried 4 times: Assignments board "AM PREP" tile (twice), "Try again · Reintentar" (twice), and the dashboard "CONTINUE AM PREP" button (the dashboard now lists "AM PREP — In progress"). Same REF each time. Not photographed. The closing checklist still said "AM Prep had 0 items saved today - check with the opener." CC then fixed the sim data and I retried the goal later: it worked (see steps 41-43, taken after step 40, in the order really taken).
 
-## Step 33 — production-form
-- URL: /operations/production?location=d2cced11-b167-49fa-bab6-86ec9bf4ff09
-- Persona / viewport: Marcus Webb, General Manager / 1280x800
-- Action: Opened Production from Ordering's page nav.
-- Saw: Heading "Production" / "Log a conversion" with a "Raw item (SKU)" dropdown (every catalog item, each labeled with its "in stock" count — most read "0 in stock" except a handful like "Cucumber (2 in stock)", "Fresh Mozzarella (4 in stock)", "Onions (8 in stock)"), an "Amount used (packs)" spinbutton, an "Amount made" spinbutton, a "Notes" box, and a disabled "Log production" button. Below, "Recent production" read "No production logged yet."
-- Shot: img/manager/33-production-form.png
-- Confused: "In stock" counts here didn't match the Inventory Audit numbers just recorded (e.g. Iceberg showed "0 in stock" here right after being audited at 3840 oz) — this raw-item stock appears to track a different ledger (deliveries/production) than the audit's on-hand oz.
+## Step 32 — pm-report
+- URL: /pm-report?location=<Capitol Hill id>
+- Persona / viewport: Nicole Boyd, Assistant General Manager / 1024x768
+- Action: On the board tapped "PM REPORT".
+- Saw: Link "‹ DASHBOARD", heading "PM Report", "SHIFT ACTIVITY": row "Nicole Boyd — 83 items · 1 reports", then status rows "Opening 1:32 PM", "AM Prep In progress", "Mid-day Prep Not due yet", "Cash Deposit Not started", "Closing In progress". Section "MVP" with drop-down (default "No MVP", option "Nicole Boyd") and a yellow "SAVE". Section "ATTITUDE" with a person card "Nicole Boyd" and the grade rows "ARRIVED READY", "ATTITUDE", "PRODUCTION", "TEAM PLAYER", each with buttons "Great" / "Good" (selected by default) / "Needs work"; boxes "AREA TO IMPROVE" (box named "What should they work on?") and "NOTE (MANAGERS ONLY)" (box named "Private note for managers", hint "Only managers see this note"), a "SAVE" button, then a drop-down "Select employee…" (Angel Reyes, Dana Brooks, Luis Herrera, Marcus Webb) and "SUBMIT PM REPORT".
+- Shot: img/manager/32-pm-report.png
+- Confused: Only ONE person is listed on the grade list (Nicole Boyd herself, the only person on shift). The other staff are added with the "Select employee…" drop-down at the bottom. The script says "Attitude" and "Production" are the grade names: there are FOUR grade names: Arrived ready, Attitude, Production, Team player.
 
-## Step 34 — production-filled
-- URL: /operations/production?location=d2cced11-b167-49fa-bab6-86ec9bf4ff09
-- Persona / viewport: Marcus Webb, General Manager / 1280x800
-- Action: Selected "Fresh Mozzarella (4 in stock)" as the raw item — this revealed a second dropdown, "Makes" ("Pick what you made… / Fresh Mozzarella"), which had to be set before "Log production" would enable. Filled Amount used (packs) = 2, Amount made = 10, Notes = "batch of fresh mozz portions for the deli case".
-- Saw: "Log production" went from disabled to enabled only after the "Makes" dropdown was also set — selecting just the raw item and quantities was not enough.
-- Shot: img/manager/34-production-filled.png
-- Confused: The "Makes" field appears only after picking a raw item and isn't mentioned anywhere as a required step — easy to fill everything else and not notice why Submit stays disabled.
+## Step 33 — pm-grades
+- URL: /pm-report?location=<Capitol Hill id>
+- Persona / viewport: Nicole Boyd, Assistant General Manager / 1024x768
+- Action: Set Nicole Boyd Attitude to "Great". Only one person was listed, so I used the "Select employee…" drop-down at the bottom to add "Angel Reyes" as the second person, set Angel Reyes Production to "Needs work" and typed "Restock lids before the rush." in "AREA TO IMPROVE". Tapped "SAVE" on Nicole's card (button turned "SAVED ✓" for a moment, then back to "SAVE") and on Angel's card ("SAVED ✓").
+- Saw: Two person cards side by side (Nicole Boyd left, Angel Reyes right), each with grade rows PRODUCTION / TEAM PLAYER (and above them ARRIVED READY and ATTITUDE), buttons "Great" / "Good" / "Needs work" (the selected one is yellow with a black edge; default "Good"). Left card: Attitude Great, others Good. Right card: Production "Needs work", others Good, "AREA TO IMPROVE" shows "Restock lids before the rush." Placeholders: AREA TO IMPROVE box "What should they work on?"; "NOTE (MANAGERS ONLY)" box "Private note for managers" with hint "Only managers see this note". Under the cards: drop-down "Select employee…" (Dana Brooks, Luis Herrera, Marcus Webb left) and "SUBMIT PM REPORT".
+- Shot: img/manager/33-pm-grades.png
+- Confused: Nicole's card went back to "SAVE" (not "SAVED ✓") a few seconds after saving; unclear whether the grade stayed saved. Angel Reyes is not on shift today (he only appears through the drop-down).
 
-## Step 35 — production-logged
-- URL: /operations/production?location=d2cced11-b167-49fa-bab6-86ec9bf4ff09
-- Persona / viewport: Marcus Webb, General Manager / 1280x800
-- Action: Clicked "Log production".
-- Saw: Form cleared; "Recent production" now lists "2 Fresh Mozzarella → 10 Fresh Mozzarella · Tue, Sep 8"; the Raw item dropdown's Fresh Mozzarella option updated to "Fresh Mozzarella (2 in stock)" (down from 4).
-- Shot: img/manager/35-production-logged.png
+## Step 34 — pm-mvp
+- URL: /pm-report?location=<Capitol Hill id>
+- Persona / viewport: Nicole Boyd, Assistant General Manager / 1024x768
+- Action: In "MVP" picked "Nicole Boyd" (first person); a reason box appeared; typed "Kept the line moving all lunch." and tapped "SAVE" (it flashed "SAVED ✓").
+- Saw: Section "MVP": drop-down now "Nicole Boyd" (options No MVP, Nicole Boyd, Angel Reyes), a text box named "Why MVP?" holding "Kept the line moving all lunch.", yellow "SAVE". Above it the "SHIFT ACTIVITY" rows (Opening 1:32 PM; AM Prep In progress; Mid-day Prep Not due yet; Cash Deposit Not started; Closing In progress) and below it the "ATTITUDE" section with the two person cards.
+- Shot: img/manager/34-pm-mvp.png
+- Confused: The reason box only appears once a person is picked (the label is "Why MVP?"). Its placeholder was not visible because it was filled.
 
-## Step 36 — midshift-pulse
-- URL: /mid-shift?location=d2cced11-b167-49fa-bab6-86ec9bf4ff09
-- Persona / viewport: Marcus Webb, General Manager / 1280x800
-- Action: Opened Mid-Shift Pulse from the dashboard nav.
-- Saw: Heading "Mid-Shift Pulse — Updated 3:17 AM"; a "Check — Needs attention" alert linking "1 maintenance note logged today"; "Today's operation" tiles ("Ordering — All orders in", "Receiving — 1 needs attention", "Inventory Audit — 0 · days since last count"); "Today's reports" list (Opening In progress, AM Prep After closing/In progress, Mid-day Prep Not due yet/In progress, Cash Deposit After closing/Not started, Closing In progress); "Fridge temps — All 8 fridges read · in range" showing every temp we entered in the opening walk (Walk-In 35°F, 3-Door 39°F, Sauce 37°F, Deli Display 38°F, Crunchy Boi 36°F, FOH Drinks 37°F, Back-Line Drinks 36°F, 3rd-Party 38°F) with a "View maintenance log" link; "Active today" (Maya Torres · Closing, Marcus Webb · Opening) with note "From report activity (scheduled roster arrives with 7shifts)."; "Sales — No Toast sales data yet."
-- Shot: img/manager/36-midshift-pulse.png
+## Step 35 — pm-submitted
+- URL: /pm-report?location=<Capitol Hill id>
+- Persona / viewport: Nicole Boyd, Assistant General Manager / 1024x768
+- Action: Tapped "SUBMIT PM REPORT".
+- Saw: Green banner "Submitted 1:45 PM by Nicole Boyd" under "PM Report". "SHIFT ACTIVITY" rows unchanged (Nicole Boyd 83 items · 1 reports; Opening 1:32 PM; AM Prep In progress; Mid-day Prep Not due yet; Cash Deposit Not started; Closing In progress). The two grade cards are now greyed read-only: Nicole Boyd (Attitude Great, rest Good) and Angel Reyes (Production Needs work, rest Good, AREA TO IMPROVE "Restock lids before the rush."). The "NOTE (MANAGERS ONLY)" boxes show empty with "Only managers see this note". No "SAVE"/"SUBMIT" buttons remain.
+- Shot: img/manager/35-pm-submitted.png
+- Confused: The MVP drop-down and the "Why MVP?" text are not shown anywhere on the submitted page (MVP section disappeared after submit).
 
-## Step 37 — maintenance-note-filled
-- URL: /maintenance?location=d2cced11-b167-49fa-bab6-86ec9bf4ff09
-- Persona / viewport: Marcus Webb, General Manager / 1280x800
-- Action: Followed "View maintenance log" from the pulse (the offered action). On the Maintenance Log page (Fridge temps cards all "OK", Equipment cards "Oven — No issues logged" / "Fryer — No issues logged" — neither of these mentioned the staff walker's earlier "Slicer" note), used "Log a maintenance note": selected Equipment "Other…" (revealing an "Equipment name" box), typed "Slicer", and typed "Checked the slicer opener flagged - blade guard was loose, tightened it, cutting clean now." in "What's going on?".
-- Saw: The Equipment dropdown listed Walk-In Fridge, 3-Door Fridge, Sauce Fridge, Deli Display Fridge, Crunchy Boi Fridge, FOH Drinks Fridge, Back-Line Drinks Fridge, 3rd-Party Fridge, Oven, Fryer, Other…
-- Shot: img/manager/37-maintenance-note-filled.png
-- Confused: Nowhere on this page could I find the staff walker's earlier "Slicer" maintenance note that the dashboard/pulse referenced as "1 maintenance note logged today" — the Equipment section only tracks Oven and Fryer as named pieces of equipment, so a prior "Other…"-logged Slicer note (if that's how it was filed) has no visible home to review it against.
+## Step 36 — cash-deposit
+- URL: /cash?location=<Capitol Hill id>
+- Persona / viewport: Nicole Boyd, Assistant General Manager / 1024x768
+- Action: On the board tapped "CASH REPORT" (the page is titled "Cash Deposit").
+- Saw: Link "‹ DASHBOARD", heading "Cash Deposit". Left column "CASH": box "Projected (from Toast)" (placeholder "0.00"), two toggle buttons "Enter total" (selected, yellow) and "Count by denomination", box "Drawer total" (placeholder "0.00"), line "$200 stays in the register", result line "Deposit -$200.00 · $200.00 short" ("$200.00 short" in red), box "Over/short note (optional)" (empty, no placeholder text). Right column "TIPS": box "Cash tips" (placeholder "0.00"); "ON SHIFT TODAY" tick list: Angel Reyes, Dana Brooks, Luis Herrera, Marcus Webb, Nicole Boyd (all unticked) and a "+ Add" button; big yellow "SIGN & SUBMIT DEPOSIT".
+- Shot: img/manager/36-cash-deposit.png
+- Confused: The "ON SHIFT TODAY" list names five people (Angel Reyes, Dana Brooks, Luis Herrera, Marcus Webb, Nicole Boyd) although the Pulse showed only Nicole Boyd as "Here now". The tip-split list is the whole active crew, not just who clocked in.
 
-## Step 38 — maintenance-note-saved
-- URL: /maintenance?location=d2cced11-b167-49fa-bab6-86ec9bf4ff09
-- Persona / viewport: Marcus Webb, General Manager / 1280x800
-- Action: Clicked "Save note".
-- Saw: No error appeared, but the "What's going on?" textarea cleared back to placeholder while the "Equipment name" field still read "Slicer" and the Equipment dropdown stayed on "Other…" — there is no visible list of saved maintenance notes anywhere on the page to confirm the note actually recorded.
-- Shot: img/manager/38-maintenance-note-saved.png
-- Confused: No confirmation toast or note history — after Save, it's unclear from the screen alone whether the note persisted; only the partial form-field reset (note text cleared, equipment name and dropdown left as-is) hints that something happened.
+## Step 37 — cash-filled
+- URL: /cash?location=<Capitol Hill id>
+- Persona / viewport: Nicole Boyd, Assistant General Manager / 1024x768
+- Action: Kept "Enter total". Typed 845.00 in "Projected (from Toast)" (it is an ordinary box here), 1045.00 in "Drawer total", 62.00 in "Cash tips", ticked "Nicole Boyd" under "ON SHIFT TODAY". Left the over/short note empty.
+- Saw: Boxes show 845.00, 1045.00 and 62.00; "$200 stays in the register"; result line now "Deposit $845.00 · Even" (no "short" in red any more); "Nicole Boyd" ticked.
+- Shot: img/manager/37-cash-filled.png
 
-## Step 39 — pmreport-form
-- URL: /pm-report?location=d2cced11-b167-49fa-bab6-86ec9bf4ff09
-- Persona / viewport: Marcus Webb, General Manager / 1280x800
-- Action: Opened PM Report from the dashboard's "Start PM Report" link.
-- Saw: Heading "PM Report" / "Shift activity" listing "Marcus Webb — 80 items · 0 reports" and "Maya Torres — 3 items · 0 reports", plus today's report statuses (Opening/AM Prep/Closing "In progress", Mid-day Prep "Not due yet", Cash Deposit "Not started"). An "MVP" section (dropdown "No MVP / Marcus Webb / Maya Torres" + a "Why MVP?" box + "Save"). An "Attitude" section with one card per crew member, each with four 3-way graded rows (Arrived ready / Attitude / Production / Team player, each "Great / Good / Needs work"), an "Area to improve" box, a "Note (managers only)" box (caption "Only managers see this note"), and a per-employee "Save" button. A "Select employee…" dropdown (Deshawn Carter, Priya Shah, Rosa Delgado, Tommy Nguyen) to add more evals, and "Submit PM Report" at the bottom.
-- Shot: img/manager/39-pmreport-form.png
+## Step 38 — cash-pin
+- URL: /cash?location=<Capitol Hill id>
+- Persona / viewport: Nicole Boyd, Assistant General Manager / 1024x768
+- Action: Tapped "SIGN & SUBMIT DEPOSIT".
+- Saw: A PIN panel opens over the form: "ASSISTANT GENERAL MANAGER / Nicole Boyd", "Enter your 4-digit PIN", keypad 1-9, "Clear", 0, "←", buttons "Back" and "Use system keyboard".
+- Shot: img/manager/38-cash-pin.png
 
-## Step 40 — pmreport-evals
-- URL: /pm-report?location=d2cced11-b167-49fa-bab6-86ec9bf4ff09
-- Persona / viewport: Marcus Webb, General Manager / 1280x800
-- Action: Set MVP = "Maya Torres" with reason "Covered two open stations solo during the lunch rush without missing a beat." and saved. Graded Marcus Webb (Arrived ready: Good, Attitude: Great, Production: Great, Team player: Good; Area to improve: "Delegate more of the line checks to Priya during rush"; manager note: "Solid open, caught the closing gap early and got ahead of it.") and saved. Graded Maya Torres (Arrived ready: Great, Attitude: Good, Production: Great, Team player: Great; Area to improve: "Speak up sooner when the walk-in feels off"; manager note: "MVP for the day - carried closing almost single-handed.") and saved.
-- Saw: Selected rating buttons highlight gold/filled against the unselected white ones; each per-employee Save is independent of the page-level Submit.
-- Shot: img/manager/40-pmreport-evals.png
+## Step 39 — cash-submitted
+- URL: /cash?location=<Capitol Hill id>
+- Persona / viewport: Nicole Boyd, Assistant General Manager / 1024x768
+- Action: Tapped 8 four times on the PIN keypad.
+- Saw: Read-only page: "Deposited $845.00 · signed by Nicole Boyd at 1:47 PM". Rows: "Projected (from Toast) $845.00", "Drawer total $1,045.00", "$0.00 over $0.00", "Deposit $845.00 $845.00", "Cash tips $62.00", "On shift today: Nicole Boyd". Deposit $845.00; over/short $0.00 over.
+- Shot: img/manager/39-cash-submitted.png
 
-## Step 41 — pmreport-submitted
-- URL: /pm-report?location=d2cced11-b167-49fa-bab6-86ec9bf4ff09
-- Persona / viewport: Marcus Webb, General Manager / 1280x800
-- Action: Clicked "Submit PM Report".
-- Saw: Page header gained "Submitted 3:21 AM by Marcus Webb"; every rating button, and both Area-to-improve/Note boxes, are now disabled/read-only showing the saved values; the MVP section and the "Select employee…" add-more control disappeared from the submitted view.
-- Shot: img/manager/41-pmreport-submitted.png
+## Step 40 — closing-walk-out
+- URL: /operations/closing?location=<Capitol Hill id>
+- Persona / viewport: Nicole Boyd, Assistant General Manager / 1024x768
+- Action: Dashboard → "CONTINUE CLOSING" (the Today's operations card now said "In progress · 1 of 61 items"). Ticked the five Walk-Out Verification lines: Lights off, Devices charging, Oven off, Front doors locked, Back door locked.
+- Saw: Sticky top bar "PROGRESS 8/61". Section "✓ WALK-OUT VERIFICATION / 5 of 5 done" with each line showing a yellow tick, an "UNDO" button, "you · 1:48 PM" and a link "Add note" (the per-line note link). In the CLOSING MANAGER card above: green tick "PM Report submitted — Submitted by Nicole Boyd at 1:47 PM". Bottom: yellow strip "AM Prep had 0 items saved today - check with the opener.", big button "REVIEW & SUBMIT (INCOMPLETE)" with "8 of 61 required done", and a floating pill "REVIEW & SUBMIT · 8/61".
+- Shot: img/manager/40-closing-walk-out.png
+- Confused: The PM Report line says "1:47 PM" while the PM Report page said "Submitted 1:45 PM"; the Cash deposit said 1:47 PM.
 
-## Step 42 — cash-form
-- URL: /cash?location=d2cced11-b167-49fa-bab6-86ec9bf4ff09
-- Persona / viewport: Marcus Webb, General Manager / 1280x800
-- Action: Opened Cash Deposit from the dashboard's "Start cash deposit" link.
-- Saw: Heading "Cash Deposit" with a "Cash" panel (Projected (from Toast) box, "Enter total" / "Count by denomination" toggle, Drawer total box, note "$200 stays in the register", a live line "Deposit -$200.00 · $200.00 short", and an "Over/short note (optional)" box); a "Tips" panel (Cash tips box); an "On shift today" checklist (Deshawn Carter, Marcus Webb, Maya Torres, Priya Shah, Rosa Delgado, Tommy Nguyen, "+ Add"); and "Sign & submit deposit".
-- Shot: img/manager/42-cash-form.png
+## Step 41 — am-prep
+- URL: /operations/am-prep?location=<Capitol Hill id>
+- Persona / viewport: Nicole Boyd, Assistant General Manager / 1024x768
+- Action: Retried after the coordinator said the bad par data was fixed: Dashboard → Explore → Assignments → "AM PREP". It opens now.
+- Saw: Link "‹ DASHBOARD", heading "AM PREP", "MEP · Capitol Hill". Sections VEG 0 of 6 (open), COOKS 0 of 6, SIDES 0 of 6, SAUCES 0 of 11, SLICING 0 of 9, MISC 0 of 4 (42 rows). Column heads "PAR", "ON HAND", "BACK UP", "TOTAL". VEG rows with a red "Required" tag each: Iceberg 7 1/3 Pan, Onion 8 Quart, Basil 4 Quart, Radish 1 Quart, Cucumber 3 Quart, Tomato "Prep Daily". Footer: "Fix 42 issues before submitting" with link "SHOW ME WHAT NEEDS FIXING" and a greyed button "FIX ISSUES BEFORE SUBMITTING".
+- Shot: img/manager/41-am-prep.png
+- Confused: Earlier tries today (four, before CC fixed the sim data) gave "Something went wrong / Algo salió mal", REF 789350329 — see the BLOCKED note above, now resolved. The "Tomato" row shows "Prep Daily" instead of a par.
 
-## Step 43 — cash-filled
-- URL: /cash?location=d2cced11-b167-49fa-bab6-86ec9bf4ff09
-- Persona / viewport: Marcus Webb, General Manager / 1280x800
-- Action: Filled Projected (from Toast) = 845.00, Drawer total = 1045.00, Cash tips = 62.00, and checked Marcus Webb and Maya Torres on "On shift today".
-- Saw: The live deposit line updated to "Deposit $845.00 · Even" (the $200 float automatically subtracted from the $1,045 drawer total to net against the $845 projected).
-- Shot: img/manager/43-cash-filled.png
+## Step 42 — am-prep-filled
+- URL: /operations/am-prep?location=<Capitol Hill id>
+- Persona / viewport: Nicole Boyd, Assistant General Manager / 1024x768
+- Action: Typed 2 in Iceberg "ON HAND", 1 in Onion "ON HAND", 3 in Basil "ON HAND" (each box is named like "Veg · Iceberg · ON HAND").
+- Saw: VEG "3 of 6 done". The three rows lost their red "Required" tag. "TOTAL" boxes filled by themselves with the same number (Iceberg 2, Onion 1, Basil 3); "BACK UP" boxes stay empty. A small "Saved" note appears. Footer "Fix 39 issues before submitting" and the greyed "FIX ISSUES BEFORE SUBMITTING" button.
+- Shot: img/manager/42-am-prep-filled.png
+- Confused: The button cannot be tapped until every one of the 42 rows has a count; the wording is "Fix 39 issues before submitting" / "FIX ISSUES BEFORE SUBMITTING".
 
-## Step 44 — cash-sign-pin
-- URL: /cash?location=d2cced11-b167-49fa-bab6-86ec9bf4ff09
-- Persona / viewport: Marcus Webb, General Manager / 1280x800
-- Action: Clicked "Sign & submit deposit".
-- Saw: A PIN dialog appeared — "General Manager" / heading "Marcus Webb" / "Enter your 4-digit PIN" with the same dot-entry keypad as login ("PIN entry: 0 of 4 digits entered"), "Back" and "Use system keyboard" links. This is the cash deposit's confirm ceremony.
-- Shot: img/manager/44-cash-sign-pin.png
+## Step 43 — am-prep-submitted
+- URL: /operations/am-prep?location=<Capitol Hill id>
+- Persona / viewport: Nicole Boyd, Assistant General Manager / 1024x768
+- Action: The "SUBMIT AM PREP" button was greyed ("FIX ISSUES BEFORE SUBMITTING", footer "Fix 39 issues before submitting" counting down: 30, then 4) until every row had a number: typed 1 in the first box (ON HAND, or "PORTIONED" in SIDES) of every remaining row of VEG, COOKS, SIDES, SAUCES and SLICING, tapped "YES" on the four MISC questions (Meatball mix - ready?, Meatballs - ready to cook?, Meatballs - for reheat?, Cook Bacon?), then tapped "SUBMIT AM PREP".
+- Saw: Banner "AM Prep submitted at 1:51 PM by Nicole Boyd" under "MEP · Capitol Hill"; every section collapsed with a green ✓ and full counts (VEG 6 of 6, COOKS 6 of 6, SIDES 6 of 6, SAUCES 11 of 11, SLICING 9 of 9, MISC 4 of 4). Other things met on the page: the SIDES section column heads read "PAR / PORTIONED / BACK UP / TOTAL" (not "ON HAND"); rows in SIDES: Tuna Salad 15, Egg Salad 12, Onion Dip 12 Side, Chix Salad 12, Antipasto Pasta 12, Cannoli Cream 0.5 Bag; MISC has YES/NO buttons and a notes box with the placeholder "Add notes…"; "DISCARD CHANGES" button before submit; a "Saved" note appears while typing (autosave).
+- Shot: img/manager/43-am-prep-submitted.png
+- Confused: The script predicted "If it refuses because rows are empty, log the exact words": it does not refuse on tap; the button is disabled and reads "FIX ISSUES BEFORE SUBMITTING" with "Fix N issues before submitting" and "SHOW ME WHAT NEEDS FIXING" next to it.
 
-## Step 45 — cash-deposited
-- URL: /cash?location=d2cced11-b167-49fa-bab6-86ec9bf4ff09
-- Persona / viewport: Marcus Webb, General Manager / 1280x800
-- Action: Pressed "9" four times on the PIN keypad; it auto-submitted.
-- Saw: "Deposited $845.00 · signed by Marcus Webb at 3:22 AM" with a summary list — "Projected (from Toast) $845.00", "Drawer total $1,045.00", "$0.00 over $0.00", "Deposit $845.00 $845.00", "Cash tips $62.00" — and "On shift today: Marcus Webb, Maya Torres".
-- Shot: img/manager/45-cash-deposited.png
+## Step 44 — closing-review
+- URL: /operations/closing?location=<Capitol Hill id>
+- Persona / viewport: Nicole Boyd, Assistant General Manager / 1024x768
+- Action: Went back to the closing (the AM prep was done in between, so this time it was "9/61"). Tapped "REVIEW & SUBMIT (INCOMPLETE)". A "Some required items aren't done — explain why" panel opened with one box per missing item (52 of them); typed "Sim walk — not done on this test day." in every box.
+- Saw: Panel header "REVIEW & SUBMIT", "Some required items aren't done — explain why", "9 of 61 required done"; then 52 labelled boxes, each a text area named "Why couldn't this be completed?", labelled e.g. "SHUT DOWN BACK LINE · BACK-LINE DRINKS FRIDGE TEMP (≤41°F)", "EXPO STATION · DELI DISPLAY FRIDGE TEMP (≤41°F)", "CLEAN FRONT OF HOUSE · FOH DRINKS FRIDGE TEMP (≤41°F)", "PREP AREA · 3-DOOR FRIDGE TEMP (≤41°F)", "CLOSING MANAGER · MID-DAY PREP". All the station lines and the six fridge temp lines are listed. At the bottom a yellow "CONTINUE" button and the floating "REVIEW & SUBMIT · 9/61" pill; a button "HIDE REVIEW" sits above the panel. The reason boxes have no placeholder text visible once filled.
+- Shot: img/manager/44-closing-review.png
+- Confused: The temperature lines (CRUNCHY BOI FRIDGE TEMP etc.) are listed as "not done" in the review panel although I had typed all eight temperatures at the opening: the closing checklist wants its own temperature ticks. The button said "CONTINUE", not "Submit".
 
-## Step 46 — reports-hub
-- URL: /reports?location=d2cced11-b167-49fa-bab6-86ec9bf4ff09
-- Persona / viewport: Marcus Webb, General Manager / 1280x800
-- Action: Opened Reports Hub from the dashboard nav.
-- Saw: Heading "Reports" with a "View trends" link; a filter bar (Search, From/To dates defaulting to the last 2 weeks through today, a "Type" dropdown — All types/Opening/Closing/AM Prep/Mid-Day Prep/Cash/PM Report/Maintenance — and "Apply"); "Signal filters" checkboxes (Under par, Over par, Skipped items, Temp out of range, Cash over, Cash short); and today's report list: "Cash — By: Marcus Webb — Status: Submitted", "PM Report — By: Marcus Webb — Status: Submitted", "AM Prep — Status: Open", "Closing — Status: Open", "Opening — Status: Verification done", "Mid-Day Prep — Status: Open", "Maintenance — Status: OK".
-- Shot: img/manager/46-reports-hub.png
+## Step 45 — closing-pin
+- URL: /operations/closing?location=<Capitol Hill id>
+- Persona / viewport: Nicole Boyd, Assistant General Manager / 1024x768
+- Action: Tapped "CONTINUE" (there is no separate "Submit" button).
+- Saw: A dialog "Confirm with your PIN" / "Enter your 4-digit PIN to confirm this action." with keypad 1-9, "Clear", 0, buttons "Cancel" and "Use system keyboard" opens over the checklist.
+- Shot: img/manager/45-closing-pin.png
+- Confused: Note the keypad here has no "←" key; Clear and Cancel instead.
 
-## Step 47 — reports-opening-detail
-- URL: /reports/opening/c9f48cc2-dabf-4cad-88e0-98e0a3936ac3?location=d2cced11-b167-49fa-bab6-86ec9bf4ff09
-- Persona / viewport: Marcus Webb, General Manager / 1280x800
-- Action: Opened today's Opening report from the hub.
-- Saw: Header "Opening — Tue, Sep 8 — Verification done"; a note "Recount — no prior-day submission" / "No prior-day AM-Prep submission to verify against — the opener recounted to establish the counts. Reason: missed or unknown."; a summary "80/80 done · 0 skipped"; then every station's checklist read back with a ✓ and "Marcus Webb" as the actor, temps shown inline (e.g. "Crunchy Boi Fridge temp (≤41°F) ✓ · Marcus Webb · Temp 36°"), and every prep-recount item annotated "Recount — no prior submission" / "No prior-day baseline · par N" / "Recount: X" / "Ground truth: X · prep need Y" — this is where the Phase 1 recount data we entered actually surfaced, even though Phase 2 (Opener prepped) never saved.
-- Shot: img/manager/47-reports-opening-detail.png
+## Step 46 — closing-confirmed
+- URL: /operations/closing?location=<Capitol Hill id>
+- Persona / viewport: Nicole Boyd, Assistant General Manager / 1024x768
+- Action: Tapped 8 four times on the "Confirm with your PIN" keypad. The page showed a red line "Just modified by someone else — try again." and every checklist line turned grey/disabled (named "… — instance incomplete_confirmed"). I did not photograph that. I went back to the dashboard: the Today's operations card now read "CLOSING CHECKLIST / Closed with items incomplete" with a button "REVIEW CLOSING"; tapped it.
+- Saw: Banner "Closing submitted with incomplete items · 1:53 PM by Nicole Boyd", heading "REASONS GIVEN FOR UNFINISHED LINES", then one line per item like "Restock — Sim walk — not done on this test day. · Nicole Boyd" (52 lines, station by station). The closing is read-only.
+- Shot: img/manager/46-closing-confirmed.png
+- Confused: The banner does not say "Closing confirmed" — it says "Closing submitted with incomplete items · 1:53 PM by Nicole Boyd". Dashboard card wording: "Closed with items incomplete" and "REVIEW CLOSING".
+- Bug?: After the PIN: error text "Just modified by someone else — try again." appeared although the closing had in fact been submitted (it shows as closed afterwards). Possibly a double-write race (the page refreshed itself while the PIN confirm was saving).
 
-## Step 48 — reports-trends
-- URL: /reports/trends?location=d2cced11-b167-49fa-bab6-86ec9bf4ff09
-- Persona / viewport: Marcus Webb, General Manager / 1280x800
-- Action: Opened Trends from the Reports Hub link.
-- Saw: Heading "Trends" with two entry cards "Ops Trends — Par · temps · cash · completion over time" and "Team — Operating health (managers)"; a "Relevant right now" callout "Team — 1 on track · 5 need a check-in: Deshawn Carter, Rosa Delgado, Tommy Nguyen."; an "Ops snapshot" (Under/Over Par 0, Fridge Temp Flags 0) and a "Team snapshot" (on track 1, needs attention 5).
-- Shot: img/manager/48-reports-trends.png
+## Step 47 — counts
+- URL: /operations/counts?location=<Capitol Hill id>
+- Persona / viewport: Nicole Boyd, Assistant General Manager / 1024x768
+- Action: On the board tapped "COUNTS".
+- Saw: Link "‹ DASHBOARD", heading "Inventory Audit", "Run when the owner calls for a full audit. Day to day, the system infers on-hand from deliveries, production, and sales." Left card "NEW AUDIT": hint box "Count each unit once: full containers, then loose units below. Never count the same stock twice."; a row with drop-down "Pick an item…" (about 100 items, first three: 1/2 pint bottoms (flexi), 1/2 pint top (flexi), 2 oz portion cup lids), "UNIT" box (placeholder "Unit (e.g. tub)"), "HOW MANY" box, tick box "Loose (below a full container)" with "Partial" box (placeholder "e.g. 0.5"), "+ Add item", "Note" box (placeholder "Anything to flag about this audit…"), greyed "RECORD AUDIT". Right: "ON HAND" with "Download CSV / PDF", "No audit yet — on-hand is inferred from deliveries, production, and sales." and item cards (Banana Peppers "1 vendors unknown", Capicola "63.0 oz on hand", Ham "114.1 oz known so far", Iceberg "171.2 oz known so far", Pepperoni 28.4 oz, Provolone 144.3 oz, Turkey 87.1 oz, then "Inferred" rows such as Arugula "counted: 36.7 oz · since: — · 69d ago").
+- Shot: img/manager/47-counts.png
+- Confused: The screen shows no password prompt yet.
 
-## Step 49 — reports-trends-team
-- URL: /reports/trends/team?location=d2cced11-b167-49fa-bab6-86ec9bf4ff09
-- Persona / viewport: Marcus Webb, General Manager / 1280x800
-- Action: Opened Team trends.
-- Saw: Heading "Team" / "Operating health — who's doing their part"; the same "1 on track · 5 need a check-in: Deshawn Carter, Rosa Delgado, Tommy Nguyen." line as the dashboard's Team panel, followed by per-person detail cards (full-page shot captures all of them).
-- Shot: img/manager/49-reports-trends-team.png
+## Step 48 — counts-filled
+- URL: /operations/counts?location=<Capitol Hill id>
+- Persona / viewport: Nicole Boyd, Assistant General Manager / 1024x768
+- Action: Picked the first three items from the drop-down ("1/2 pint bottoms (flexi)", "1/2 pint top (flexi)", "2 oz portion cup lids"), typed 4, 2 and 6 in "HOW MANY" and used "+ Add item" for the second and third lines. "RECORD AUDIT" stayed greyed until each line also had text in "UNIT"; the script does not name a unit, so I typed the plain word "case" in each UNIT box (the one thing I typed that the script did not name).
+- Saw: Each item card shows its name, a small line "No deliveries recorded here yet", a bar "Count by vendor instead ▸", UNIT "case", HOW MANY 4 / 2 / 6, the "Loose (below a full container)" tick box (unticked) with "Partial" box (placeholder "e.g. 0.5"), and a red "Remove" link. A fresh empty line is added each time "+ Add item" is tapped.
+- Shot: img/manager/48-counts-filled.png
+- Confused: The script says to type only how many; the form needs a unit name too (UNIT placeholder: "Unit (e.g. tub)"). RECORD AUDIT stays greyed without it.
 
-## Step 50 — admin-home
+## Step 49 — counts-password
+- URL: /operations/counts?location=<Capitol Hill id>
+- Persona / viewport: Nicole Boyd, Assistant General Manager / 1024x768
+- Action: Tapped "RECORD AUDIT".
+- Saw: A dialog over a dimmed page: "Confirm your password" / "Re-enter your password to confirm this action." / label "PASSWORD" with an empty box (named "password"), a black "CONFIRM" button (red letters) and "Cancel".
+- Shot: img/manager/49-counts-password.png
+
+## Step 50 — counts-recorded
+- URL: /operations/counts?location=<Capitol Hill id>
+- Persona / viewport: Nicole Boyd, Assistant General Manager / 1024x768
+- Action: Typed "sim-nicole-pw" in the password box and tapped "CONFIRM". The first try (unit "case") came back with a red error (not photographed): "Can't convert "case" to ounces for 1/2 pint bottoms (flexi) — nothing was saved. Pick a unit from that item's list, or remove the line and have its pack size or average weight added first." I changed the three UNIT boxes to "oz", tapped "RECORD AUDIT" again: it saved straight away (no second password prompt appeared).
+- Saw: The form cleared (UNIT "Unit (e.g. tub)", HOW MANY empty, "Loose" unticked, Note "Anything to flag about this audit…"). The right-hand list now says "Anchored to the audit on Tue, Oct 13." and shows the three counted items first: "1/2 pint bottoms (flexi) 4.0 oz on hand", "1/2 pint top (flexi) 2.0 oz on hand", "2 oz portion cup lids 6.0 oz on hand", each "VENDORS · 2". Under the form, three orange notes: "1/2 pint bottoms (flexi): no deliveries recorded here yet, so all 4 oz was counted under PFG. Count by vendor to split it." and the same for "1/2 pint top (flexi)" (all 2 oz counted under Leonard Paper) and "2 oz portion cup lids" (all 6 oz counted under Leonard Paper).
+- Shot: img/manager/50-counts-recorded.png
+- Confused: Units matter: "case" is refused; "oz" works. The script gives no unit. The password step appeared only on the first RECORD AUDIT tap (step 49); the first CONFIRM tap I made with an empty box did nothing (dialog stayed open), then the error came after the password was typed.
+- Bug?: Typing a unit that has no conversion to ounces gives the long red message quoted above (the word "case" is not valid for these packaging items).
+
+## Step 51 — ordering-walk
+- URL: /ordering?location=<Capitol Hill id>
+- Persona / viewport: Nicole Boyd, Assistant General Manager / 1024x768
+- Action: On the board tapped "ORDERING" (the page lives at /ordering).
+- Saw: Breadcrumb "‹ DASHBOARD" and "RECEIVING ›", heading "Ordering walk — Tue, Oct 13", "MEP · Capitol Hill". Card "TODAY'S ORDERS" ("Nothing ordered yet today."), card "CUTOFF TODAY / 3 to draft" with rows "Boar's Head — Cutoff 3:00 PM", "Cardinal Bakery — Cutoff 3:00 PM", "Trimark — Cutoff 6:00 PM", each with a yellow "GENERATE DRAFT" button. Line "Par tuning hasn't run at this shop yet." Then the vendor PFG ("73 SKUs", tag "ORDER DAY", "▾") with item cards: Duke's Mayo (case, "Par 3", "~1.4 case on hand · inferred", "ORDER TO PAR (CASE)" with − [ ] +, buttons "Suggest 2", "Empty · order 3", "We're full · 0"), Iceberg (Par 4, "~0.3 Case on hand · inferred", Suggest 4, Empty · order 4), Ham (Par 3, Each (no case), Suggest 0, Empty · order 3), Tomatoes Crushed (10#) (Par 0.67, Suggest 1), Chicken Breast (Par 0.25, Suggest 1), Tuna, ... (73 lines).
+- Shot: img/manager/51-ordering-walk.png
+- Confused: Nothing in this screen says "Ordering" is a section of the Explore menu; it is reached only from the board. Reports Hub → Inventory → Ordering: checked later.
+
+## Step 52 — ordering-adjusted
+- URL: /ordering?location=<Capitol Hill id>
+- Persona / viewport: Nicole Boyd, Assistant General Manager / 1024x768
+- Action: Tapped "+" twice on Duke's Mayo (first line) and once on Iceberg.
+- Saw: Tag "2 marked" on the PFG header. Duke's Mayo box shows 2 (yellow "Suggest 2" selected, a new "Clear" button), Iceberg box shows 1. Bottom bar: "2 SKUs marked" and yellow "REVIEW ORDER".
+- Shot: img/manager/52-ordering-adjusted.png
+- Confused: The "+" box counts from 0 to 1 and 2: it shows the order quantity, not the suggested number; "Suggest 2" is highlighted when the box equals the suggestion.
+
+## Step 53 — ordering-review
+- URL: /ordering?location=<Capitol Hill id>
+- Persona / viewport: Nicole Boyd, Assistant General Manager / 1024x768
+- Action: Tapped "REVIEW ORDER".
+- Saw: A sheet "Review order" (button "Close") opens: "1 vendor orders · 0 marked full", vendor "PFG", table "SKU / ITEM # / QTY": PRODUCE — "Iceberg ICE1/5326426 1 Case"; DRY GOODS — "Duke's Mayo 32118 2 case"; hint "Delivery options (email, portal, phone) appear once you submit."; buttons "Keep walking" and "RECORD WALK · 2 SKUS".
+- Shot: img/manager/53-ordering-review.png
+- Confused: The walk-through table lists Produce before Dry goods, not in the order I tapped.
+
+## Step 54 — ordering-draft
+- URL: /ordering?location=<Capitol Hill id>
+- Persona / viewport: Nicole Boyd, Assistant General Manager / 1024x768
+- Action: Tapped "RECORD WALK · 2 SKUS" and scrolled down. Stopped at the draft (no Confirm/Send/Mark placed exists on this screen; I did not tap "Copy").
+- Saw: Green banner "Walk recorded — 2 SKUs.", a new row "Order history 1 ▸", heading "DRAFT ORDERS", card "PFG" with tag "PO MEP-20261013-PFG", "Minimum: 10 case minimum", table SKU / ITEM # / QTY: "Duke's Mayo 32118 2 case", "Iceberg ICE1/5326426 1 Case"; box "Order portal — TBD — PFG order portal" with button "Copy"; button "START A NEW WALK". The three "GENERATE DRAFT" rows (Boar's Head, Cardinal Bakery, Trimark) stay above.
+- Shot: img/manager/54-ordering-draft.png
+- Confused: The PFG draft says "Minimum: 10 case minimum" while the order is 3 cases; no warning text beside it. No "Confirm"/"Send" button shows on this page.
+
+## Step 55 — production
+- URL: /operations/production?location=<Capitol Hill id>
+- Persona / viewport: Nicole Boyd, Assistant General Manager / 1024x768
+- Action: Looked for a menu path to "Production" in 3 honest tries: the Ordering page (only has "RECEIVING ›" and Back to Dashboard), the Reports Hub (families Operations / People / Inventory / Catering / Menu costing, no "Production" link) and Reports Hub → "Counts and variance" (no link). Then used goto: "/operations/production" alone sent me back to the dashboard; "/operations/production?location=<Capitol Hill id>" opened the page.
+- Saw: Link "‹ DASHBOARD", heading "Production", link "YIELD VARIANCE →", card "LOG A CONVERSION": drop-down "Raw item (SKU)" ("Pick a SKU…", each option "<name> (0 in stock)"), boxes "Amount used (packs)" and "Amount made", box "Notes" (no placeholder), greyed "LOG PRODUCTION". Below: "RECENT PRODUCTION" with rows like "0 Cheddar → 4 Cheddar — Tue, Oct 13", "0 Mortadella → 2 Mortadella", "0 Provolone → 23 Provolone" (the opening Phase 2 entries I made).
+- Shot: img/manager/55-production.png
+- Confused: There is no menu path to Production: not in Explore, not in the Reports Hub, not on the Ordering page. The page opens only with the "?location=…" part of the address.
+
+## Step 56 — production-filled
+- URL: /operations/production?location=<Capitol Hill id>
+- Persona / viewport: Nicole Boyd, Assistant General Manager / 1024x768
+- Action: Picked the first item offered, "1/2 pint bottoms (flexi) (0 in stock)": a second drop-down "Pick what you made…" appeared but with NO option, and "LOG PRODUCTION" stayed greyed even with 1 and 4 typed (not photographed). Picked the next SKU that has a "Makes" option, "Cheddar (0 in stock)", chose its only option "Cheddar", typed 1 in "Amount used (packs)" and 4 in "Amount made".
+- Saw: "Raw item (SKU)" Cheddar (0 in stock); a new drop-down "Makes" now shows "Cheddar"; "Amount used (packs)" 1; "Amount made" 4; "Notes" empty (no placeholder text); "LOG PRODUCTION" now bright yellow.
+- Shot: img/manager/56-production-filled.png
+- Confused: The first SKU in the list has no finished item to make, so the log button stays greyed; the label on the second picker is "Makes" (placeholder "Pick what you made…").
+
+## Step 57 — production-logged
+- URL: /operations/production?location=<Capitol Hill id>
+- Persona / viewport: Nicole Boyd, Assistant General Manager / 1024x768
+- Action: Tapped "LOG PRODUCTION".
+- Saw: The form reset (SKU back to "Pick a SKU…", both amounts empty, "LOG PRODUCTION" greyed) and a new first row appears in "RECENT PRODUCTION": "1 Cheddar → 4 Cheddar — Tue, Oct 13", above "0 Cheddar → 4 Cheddar" and "0 Mortadella → 2 Mortadella".
+- Shot: img/manager/57-production-logged.png
+- Confused: No "Logged" message or toast shows; the only sign is the new row at the top of "RECENT PRODUCTION".
+
+## Step 58 — reports-hub
+- URL: /reports?location=<Capitol Hill id>
+- Persona / viewport: Nicole Boyd, Assistant General Manager / 1024x768
+- Action: Dashboard → Explore → "Reports Hub".
+- Saw: Link "‹ DASHBOARD", heading "Reports", chip "Capitol Hill" (yellow). Filter row: "Date range" drop-down ("Last 7 days"; options Today, Yesterday, Last 7 days, Last 30 days, This month, Last month, Custom), "From" 10/07/2026, "To" 10/13/2026, tick box "Compare with previous period", "Apply"; note "Up to 92 inclusive days. Comparison applies to summary counts and trends." Card "Capitol Hill / Last close · Mon, Oct 12 / No activity recorded" with chips "Reports: 6", "Under par: 0", "Over par: 0", "Skipped: 52", "Not started: 0", "Temperature flags: 0", "Cash over: 0", "Cash short: 0". Report families: "Operations" (buttons "Operations", "Operations trends"), "Written reports", "People" ("My feedback", "Team trends"), "Inventory" ("Counts and variance", "Receiving", "Ordering"), then "Catering" and "Menu costing" further down. No "Sales" family. No "Production" link.
+- Shot: img/manager/58-reports-hub.png
+- Confused: Reports Hub → Inventory shows "Counts and variance" (opens the Inventory Audit page), "Receiving" and "Ordering" for this AGM. There is no "Sales" family.
+
+## Step 59 — reports-opening
+- URL: /reports/opening/<id>?location=<Capitol Hill id>
+- Persona / viewport: Nicole Boyd, Assistant General Manager / 1024x768
+- Action: On the Reports Hub tapped "Operations" (a list of today's reports opened: Tue, Oct 13 Opening — By: Nicole Boyd — Status: Prep done; Closing — Status: Confirmed (incomplete); AM Prep — Status: Confirmed; Cash — Status: Submitted; PM Report — Status: Submitted; Maintenance — Status: OK; filters "SEARCH", "FROM", "TO", "TYPE" (All types, Opening, Closing, AM Prep, Mid-Day Prep, Cash, PM Report, Maintenance), "APPLY", "SIGNAL FILTERS" Under par, Over par, Skipped items, Not started, Temp out of range, Cash over, Cash short, "Download CSV / PDF", button "VIEW TRENDS"), then tapped the Opening row.
+- Saw: Link "‹ OPERATIONS", "DASHBOARD", tabs "Same day": Closing, AM Prep, Cash, PM Report, Maintenance; buttons "Previous day" and "Next day". Heading "Opening", "Tue, Oct 13", "Prep done". Notice "RECOUNT — NO PRIOR-DAY SUBMISSION": "No prior-day AM-Prep submission to verify against — the opener recounted to establish the counts. Reason: missed or unknown." Then "82/82 done · 0 skipped" and each station with ticks and names: CRUNCHY BOI STATION (Station appears clean as reported ✓ Nicole Boyd; Crunchy Boi Fridge temp (≤41°F) ✓ Nicole Boyd "Temp 36°"; Sauces topped off & dated correctly ✓; Station ready for service (containers placed, prep ready) ✓), 3RD PARTY STATION (… "Temp 37°"), WALK INS STATION ("Temp 38°"), PREP FRIDGE ("Temp 35°"), PREP AREA ("Temp 36°" …) and more.
+- Shot: img/manager/59-reports-opening.png
+- Confused: It says "Reason: missed or unknown." for the reason I picked ("Closing was missed / I don't know"). The "Tue, Oct 13 Closing" row shows "Status: Confirmed (incomplete)" while the closing page said "Closing submitted with incomplete items".
+
+## Step 60 — trends
+- URL: /reports/trends?location=<Capitol Hill id>
+- Persona / viewport: Nicole Boyd, Assistant General Manager / 1024x768
+- Action: Dashboard → Explore → "Trends".
+- Saw: Links "‹ REPORTS", "DASHBOARD", chip "Capitol Hill", heading "Trends". Three cards each "TAP FOR THE FULL VIEW →": "Ops Trends — Par · temps · cash · completion over time", "Team — Operating health (managers)", "Yield — Batches vs the recipe card". Section "RELEVANT RIGHT NOW": "Team — 1 on track · 3 need a check-in: Angel Reyes, Nicole Boyd, Marcus Webb." and "Fridge Temp Flags 8". "OPS SNAPSHOT" (button "VIEW OPS TRENDS": "UNDER / OVER PAR 0", "FRIDGE TEMP FLAGS 8"), "TEAM SNAPSHOT" (button "VIEW TEAM": "ON TRACK 1", "NEEDS ATTENTION 3").
+- Shot: img/manager/60-trends.png
+- Confused: The Trends page shows "Fridge Temp Flags 8" and "Reports Hub" said "Temperature flags: 0" the same day; all eight opening temps (35-38°F) are in range. Also "Nicole Boyd" is counted as needing a check-in right after her own shift.
+- Bug?: Fridge Temp Flags 8 (Trends) vs Temperature flags 0 (Reports Hub).
+
+## Step 61 — admin-home
 - URL: /admin
-- Persona / viewport: Marcus Webb, General Manager / 1280x800
-- Action: Opened Admin from the dashboard nav.
-- Saw: Heading "Admin" / "Manage your business configuration."; a "Used this week" tally (Checklists confirmed 0, Counts recorded 1, Receiving logged 1, Prep submitted 0, Reports written 1, Photos uploaded 0, Production recorded 1, Catering quotes 0); a grid of admin sections — Vendors, "SKUs — 160 not ready", Products, "Recipes — 70 not ready", "Items — 46 not ready", Menu Costing, Weights & Trim, Catering, Checklist Templates — and a disabled-looking "Par Levels — Arrives in Phase 5" tile. There was no "Users" (or Team/Staff/Employees) tile anywhere on this page.
-- Shot: img/manager/50-admin-home.png
-- Confused: No visible entry point to user management from the admin home — had to guess the URL.
-
-## Step 51 — BLOCKED admin/users
-- URL: /admin/users
-- Persona / viewport: Marcus Webb, General Manager / 1280x800
-- BLOCKED (add-one-user requirement): Navigating directly to /admin/users silently redirects to /dashboard every time (2 direct attempts, plus a search of the /admin home page for any alternate link, found none — 3 honest tries). No error banner, no console error — a clean server-side redirect. Every other /admin/* sub-page (checklist-templates, pars, vendors, skus, items, weights) loaded normally for this same Marcus Webb GM session, so this looks like a role-floor specific to user management rather than a broken /admin route generally. Could not add the requested fake employee "Jordan Blake" because this page never renders for a General Manager account.
-- Bug?: /admin/users redirects a General Manager (level 7, "both shops") straight to /dashboard with no explanation — a GM sees every other admin tool but silently loses access here, with nothing on screen telling them why or who to ask.
-
-## Step 52 — admin-checklist-templates-opening
-- URL: /admin/checklist-templates/opening
-- Persona / viewport: Marcus Webb, General Manager / 1280x800
-- Action: Opened Checklist Templates → Opening.
-- Saw: Heading "Opening" / "Edit every checklist, count list, prep list, and report from one place. Changes apply going forward — past reports stay as submitted."; a "List check ✓ All clear" status button; a location tab strip; a "Standard Opening v1" tab panel listing "80 items" with a "+ Add item" button; a "This list requires…" control and a "Preview (what staff see)" button; and a collapsed footer "Prep lists (read-only) managed in the Prep Editor ✓ All clear".
-- Shot: img/manager/53-admin-checklist-templates-opening.png
-
-## Step 53 — admin-checklist-item-open
-- URL: /admin/checklist-templates/opening
-- Persona / viewport: Marcus Webb, General Manager / 1280x800
-- Action: Clicked "Details" on the first item, "Station appears clean as reported" (Crunchy Boi Station).
-- Saw: An expanded editor with "Label" ("Station appears clean as reported"), "Description" (empty), "Who can do it?" (role dropdown, "Employee" selected, full ladder Prospect through Chief Growth Strategist), "When is this required?" ("Must complete — or explain" selected, alongside "Optional" / "Hard gate — can't submit until done"), a "Connections" section ("Auto-tick when this report is done" — No report connection/Opening report/AM Prep/Mid-day Prep/Cash deposit/PM report — plus a searchable list of other-list items each with a "Track" button), a "Disable" button, and a Spanish translation line "Spanish 1/1 — Label (ES): Estación limpia como se reportó".
-- Shot: img/manager/54-admin-checklist-item-open.png
-
-## Step 54 — admin-pars
-- URL: /admin/pars
-- Persona / viewport: Marcus Webb, General Manager / 1280x800
-- Action: Opened Par Levels directly (no working link from /admin home — the tile there just read "Arrives in Phase 5").
-- Saw: Heading "Par Levels" / "Coming in Phase 5 (Foundation Admin Tools)" — a stub listing planned features: "Location selector", "Items grouped by category (matches vendor_item categories)", "All-days par + day-of-week overrides", "Inline edit, save per row (each save = step-up)".
-- Shot: img/manager/55-admin-pars.png
-
-## Step 55 — admin-vendors
-- URL: /admin/vendors
-- Persona / viewport: Marcus Webb, General Manager / 1280x800
-- Action: Opened Vendors from /admin.
-- Saw: Heading "Vendors" / "Your supplier directory — contacts and how to order."; a "This week's ordering" region; an "Add vendor" button; and the full vendor list (Amazon, Baldor, Boar's Head, Cardinal Bakery, Continental Tape, Costco, Country Snacks, Cristian, Penny Candy, PFG, Sarah, Saval, Sysco, Trimark, US Foods, Vistaprint, Webstaurant) each showing status "Active", category tags, contact count, and an order/delivery-day schedule line (e.g. Baldor: "Order: Sun · Wed · Sat / Delivery: Tue · Fri"; most others "No schedule").
-- Shot: img/manager/56-admin-vendors.png
-
-## Step 56 — admin-vendor-baldor
-- URL: /admin/vendors/f6539397-2b9f-4cc6-92f2-00747a7fd621
-- Persona / viewport: Marcus Webb, General Manager / 1280x800
-- Action: Opened the Baldor vendor record.
-- Saw: Baldor's detail page (contact info, categories, ordering schedule, and SKU/product ties).
-- Shot: img/manager/57-admin-vendor-baldor.png
-
-## Step 57 — admin-skus
-- URL: /admin/skus
-- Persona / viewport: Marcus Webb, General Manager / 1280x800
-- Action: Opened SKUs from /admin (home tile read "SKUs — 160 not ready").
-- Saw: The SKU catalog admin screen.
-- Shot: img/manager/58-admin-skus.png
-
-## Step 58 — admin-items
-- URL: /admin/items
-- Persona / viewport: Marcus Webb, General Manager / 1280x800
-- Action: Opened Items from /admin (home tile read "Items — 46 not ready").
-- Saw: The item (prep registry) admin screen.
-- Shot: img/manager/59-admin-items.png
-
-## Step 59 — admin-weights
-- URL: /admin/weights
-- Persona / viewport: Marcus Webb, General Manager / 1280x800
-- Action: Opened Weights & Trim from /admin.
-- Saw: Heading "Weights & Trim" / "Every weight the system believes, where it came from, and what disagrees with it. Open it when you have a scale — nothing here is due."
-- Shot: img/manager/60-admin-weights.png
-
-## Step 60 — settings
-- URL: /settings
-- Persona / viewport: Marcus Webb, General Manager / 1280x800
-- Action: Opened Settings from the dashboard nav.
-- Saw: Heading "Settings" / "Your app preferences."; a "Language" radio group (English selected, Español); a "Profile" section — "View your team and update your profile blurb." with a "Go to Profile" link; "More settings" — "Notification preferences are coming in a follow-up."
-- Shot: img/manager/61-settings.png
-
-## Step 61 — dashboard-before-logout
-- URL: /dashboard
-- Persona / viewport: Marcus Webb, General Manager / 1280x800
-- Action: Returned to the dashboard to log out.
-- Saw: The same dashboard shell with the "Log out" button at the bottom of the page.
-- Shot: img/manager/62-dashboard-before-logout.png
+- Persona / viewport: Nicole Boyd, Assistant General Manager / 1024x768
+- Action: Dashboard → Explore → "Admin". Opened nothing.
+- Saw: Link "‹ DASHBOARD", heading "Admin", "Manage your business configuration.". Card "USED THIS WEEK": Checklists confirmed 1, Counts recorded 1, Receiving logged 1, Prep submitted 1, Reports written 1, Photos uploaded 0, Production recorded 33, Catering quotes 1. Eight section tiles: "Vendors", "SKUs" (red tag "212 not ready"), "Products", "Recipes" (tag "115 not ready"), "Items" (tag "38 not ready"), "Menu Costing", "Weights & Trim", "Catering". "Customers" is NOT listed (needs GM); no user/template/pars tiles either.
+- Shot: img/manager/61-admin-home.png
+- Confused: The weekly card says "Production recorded 33": 32 are my Phase 2 prep entries counted as production plus the one Cheddar conversion; "Counts recorded 1" is the Inventory Audit.
 
 ## Step 62 — logged-out
 - URL: /
-- Persona / viewport: (logged out) / 1280x800
-- Action: Clicked "Log out".
-- Saw: Landed back on the tile-login home screen — "Compliments Only" / "Operations", "Manager login →" link, and "Where are you?" with the two location tiles (Capitol Hill, P Street) — matching Step 01's starting screen.
-- Shot: img/manager/63-logged-out.png
-
-# Supplement A — confirming the closing (Marcus Webb, 2026-09-08)
-
-## Step 64 — dashboard-closing-in-progress
-- URL: /dashboard?loc=d2cced11-b167-49fa-bab6-86ec9bf4ff09
-- Persona / viewport: Marcus Webb, General Manager / 1280x800
-- Action: Logged in fresh (P Street → General Manager → Marcus Webb → PIN 9999), then switched the location switcher to "EM · P Street".
-- Saw: "Today's operations at P Street" / "EM · P Street" / "Tue, Sep 8" tile, showing "Closing checklist" — "In progress · 3 of 61 items" — with a "Continue closing" link. Cash Deposit already read "Deposited at 3:22 AM by Marcus Webb" and PM Report "Submitted 3:21 AM by Marcus Webb".
-- Shot: img/manager/64-dashboard-closing-in-progress.png
-
-## Step 65 — closing-checklist-arrival
-- URL: /operations/closing?location=d2cced11-b167-49fa-bab6-86ec9bf4ff09
-- Persona / viewport: Marcus Webb, General Manager / 1280x800
-- Action: Clicked "Continue closing".
-- Saw: Heading "Closing checklist" / "EM · P Street" with a "Progress" bar reading "5/61", followed by station cards — Crunchy Boi Station (3 of 6 done, with earlier completions logged by Maya Torres, one carrying the note "Ran out of clean rags halfway through — used paper towels to finish, someone should restock the rag bin."), 3rd Party Station, Walk Ins Station, Prep Fridge, Shut Down Back Line, Expo Station, Clean front of house, Prep Area, Closing Manager, and Walk-Out Verification, each starting at 0 of its required count except Crunchy Boi.
-- Shot: img/manager/65-closing-checklist-arrival.png
-
-## Step 66 — walkout-verification-section
-- URL: /operations/closing?location=d2cced11-b167-49fa-bab6-86ec9bf4ff09
-- Persona / viewport: Marcus Webb, General Manager / 1280x800
-- Action: Ticked every remaining line across all eight cleaning stations, typing a plausible reading into each "Count" box where a fridge-temp step asked for one (Crunchy Boi 38°, 3rd-Party 39°, Walk-In 37°, Sauce/Prep Fridge 36°, Back-Line Drinks 39°, Deli Display 40°, FOH Drinks 38°, 3-Door 37°), then scrolled to the Walk-Out Verification card.
-- Saw: Overall "Progress" at "53/61"; "WALK-OUT VERIFICATION" reading "0 of 5 required done" with five untouched lines — Lights off, Devices charging, Oven off, Front doors locked, Back door locked — next to the Closing Manager card's already-satisfied "Cash deposited — Submitted by Marcus Webb at 4:00 AM" and "PM Report submitted — Submitted by Marcus Webb at 4:00 AM" rows.
-- Shot: img/manager/66-walkout-verification-section.png
-
-## Step 67 — closing-checklist-fully-done
-- URL: /operations/closing?location=d2cced11-b167-49fa-bab6-86ec9bf4ff09
-- Persona / viewport: Marcus Webb, General Manager / 1280x800
-- Action: Ticked all five Walk-Out Verification lines (Lights off, Devices charging, Oven off, Front doors locked, Back door locked) and the two remaining Closing Manager lines (Count the drawer, Count and secure tips).
-- Saw: Every cleaning-station card now at its full count (e.g. "Walk-Out Verification — 5 of 5 required done", "Prep Area — 9 of 9 required done"), overall "Progress" reading "58 of 61 required items complete", and a floating bar at the bottom reading "Review & submit (incomplete)" / "58 of 61 required done".
-- Confused: Three Closing Manager lines — "AM Prep List", "Opening verified", "Mid-day Prep" — stayed "Pending — submit from the dashboard" the entire walk; each is a link out to a different page (am-prep, opening, mid-day) rather than a completable line on this screen, so 61/61 is not reachable from the closing checklist alone.
-- Shot: img/manager/67-closing-checklist-fully-done.png
-
-## Step 68 — review-submit-explain-why
-- URL: /operations/closing?location=d2cced11-b167-49fa-bab6-86ec9bf4ff09
-- Persona / viewport: Marcus Webb, General Manager / 1280x800
-- Action: Tapped the "Review & submit · 58/61" bar.
-- Saw: A "Review & submit" panel opened with heading "Some required items aren't done — explain why" and subtext "58 of 61 required done", listing three fields labeled "Closing Manager · AM Prep List", "Closing Manager · Opening verified", and "Closing Manager · Mid-day Prep", each a textbox placeholder-reading "Why couldn't this be completed?", with a "Continue" button that stayed disabled until all three were filled.
-- Shot: img/manager/68-review-submit-explain-why.png
-
-## Step 69 — confirm-pin-prompt
-- URL: /operations/closing?location=d2cced11-b167-49fa-bab6-86ec9bf4ff09
-- Persona / viewport: Marcus Webb, General Manager / 1280x800
-- Action: Typed a reason into each of the three boxes ("Opener never logged an AM Prep List today — checked with the morning crew, nothing was saved." / "Opening report was never submitted this morning — following up with the opener tomorrow." / "Mid-day Prep #1 is still in progress (Phase 1 — counting), not finished before close.") and tapped "Continue".
-- Saw: A dialog headed "Confirm with your PIN" with body text "Enter your 4-digit PIN to confirm this action.", a "PIN entry: 0 of 4 digits entered" tracker, and a numeric keypad. This was a PIN step-up, not the password step-up used elsewhere in the app.
-- Shot: img/manager/69-confirm-pin-prompt.png
-
-## Step 70 — closing-confirmed-state
-- URL: /operations/closing?location=d2cced11-b167-49fa-bab6-86ec9bf4ff09
-- Persona / viewport: Marcus Webb, General Manager / 1280x800
-- Action: Entered PIN 9999 (pressed 9 four times) on the confirm dialog.
-- Saw: The dialog closed and a banner appeared reading "Closing submitted with incomplete items · 4:04 AM by you". Every line on every station card is now shown greyed out and locked (each button disabled, its accessible name suffixed "instance incomplete_confirmed"), with "Progress" frozen at "58/61". No refusal appeared at any point — cash deposit and PM report were already on file from earlier in the shift (both stamped 4:00 AM by Marcus Webb going into this walk), so confirm never asked for either again.
-- Shot: img/manager/70-closing-confirmed-state.png
-
-## Step 71 — dashboard-closed-incomplete
-- URL: /dashboard?loc=d2cced11-b167-49fa-bab6-86ec9bf4ff09
-- Persona / viewport: Marcus Webb, General Manager / 1280x800
-- Action: Navigated back to the dashboard.
-- Saw: "Today's operations at P Street" now reads "Closing checklist" / "Closed with items incomplete" with a "Review closing" link in place of the earlier "Continue closing"; the Trends tile "Checklist Completion" moved from "—" to "75%".
-- Shot: img/manager/71-dashboard-closed-incomplete.png
+- Persona / viewport: Nicole Boyd, Assistant General Manager / 1024x768
+- Action: Dashboard → scrolled to the bottom → "LOG OUT".
+- Saw: Back on "Where are you?": "OPERATIONS" header, "Manager login →", two tiles "MEP Capitol Hill" and "EM P Street".
+- Shot: img/manager/62-logged-out.png
