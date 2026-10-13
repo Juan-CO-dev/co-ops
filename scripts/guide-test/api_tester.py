@@ -86,8 +86,11 @@ def run(args):
             try: a = json.loads(c["function"].get("arguments") or "{}")
             except json.JSONDecodeError: a = {}
             if name == "finish":
-                report = a.get("report", "")
-                out = "Report received."
+                if (a.get("report") or "").strip():
+                    report = a["report"]
+                    out = "Report received."
+                else:  # glm-5.3 once finished with an empty report after 161 actions; ask again instead of losing the run
+                    out = "Your report was empty. Call finish again with the FULL report (the Markdown shape from your instructions) in the report field."
             elif name in ("look", "tap", "type", "press", "scroll", "back"):
                 out = daemon(name, session=args.session, **a)
             else:
