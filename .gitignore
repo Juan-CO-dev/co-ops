@@ -76,3 +76,6 @@ next-env.d.ts
 # co-scenes real food photos: NEVER committed (the photo rule). The vendor script
 # fills this from co-scenes; see vendor/co-scenes/README.md for how a deploy gets them.
 /vendor/co-scenes/photos/
+
+# guides v2 tester browser runs (screens + action logs; the reports are committed, the raw runs are not)
+docs/guides/testing/runs/
