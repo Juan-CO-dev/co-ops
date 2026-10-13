@@ -45,6 +45,15 @@ async function start({ session, viewport = "phone", walker = false }) {
     if (req.isNavigationRequest() && !req.url().startsWith(SIM)) return route.abort();
     return route.continue();
   });
+  // The sim runs `next dev`: hide its dev-tools badge so it is neither a tester control nor in a guide photo.
+  await ctx.addInitScript(() => {
+    const hide = () => {
+      const style = document.createElement("style");
+      style.textContent = "nextjs-portal{display:none!important}";
+      document.head?.appendChild(style);
+    };
+    if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", hide); else hide();
+  });
   const page = await ctx.newPage();
   const s = { ctx, page, dir, walker: Boolean(walker), looks: 0, dialogs: [] };
   page.on("dialog", async (d) => { s.dialogs.push(`${d.type()}: ${d.message()}`); await d.accept().catch(() => {}); });
