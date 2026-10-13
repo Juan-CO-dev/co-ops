@@ -1,8 +1,14 @@
+## October 12: How do I end my shift?
+
+### How do I finish my shift on the board?
+
+Use **End my shift** to release your station and unassign your open tasks. When the shop's closing checklist is finalized, the board also releases the stations and assignments held at closing. This does not clock you out of Toast.
+
 ## October 8: How do I run my shift?
 
 ### How do I see my station and tasks?
 
-Open **My shift** on the dashboard. Tap **Take or assign tasks** or **Take or assign stations** to expand that part of the board. Your station shows a named position. Fill the first position before taking another. The board says who has each task or position and who assigned, claimed, or took it. **Team today** is readable by everyone; you can see the whole team's coverage without changing their assignments.
+Open **My shift** on the dashboard. Tap **Tasks** or **Stations** to expand that part of the board. If you are a key holder, trainer, or higher, these headings read **Take or assign tasks** and **Take or assign stations**. Your station shows a named position. Fill the first position before taking another. The board says who has each task or position and who assigned, claimed, or took it. **Team today** is readable by everyone; you can see the whole team's coverage without changing their assignments.
 
 ### How do I take a position or get cover for a break?
 

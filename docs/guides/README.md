@@ -2,7 +2,7 @@
 
 Three guides, one per job. They are written for people who know sandwiches, not software.
 
-The base guides retain their earlier screenshots. The short October 8 launch sections are text only and live in `launch-<role>.<en|es>.md`; `/training` appends the matching language to each role guide. The base guides remain in English while the Spanish edition is being completed.
+The base guides retain their earlier screenshots. The short October 12 and October 8 launch sections are text only and live in `launch-<role>.<en|es>.md`, newest first; `/training` appends the matching language to each role guide. The base guides remain in English while the Spanish edition is being completed.
 
 | Guide | Who reads it |
 |---|---|
@@ -37,7 +37,7 @@ The base guides retain their earlier screenshots. The short October 8 launch sec
 
 ## Sim notes
 
-- Personas, PINs, and locations live in `scripts/sim/personas.md`. Location codes are crossed in sim data: code EM is "P Street", code MEP is "Capitol Hill".
+- Personas, PINs, and locations live in `scripts/sim/personas.md`. Location code EM is "P Street"; code MEP is "Capitol Hill".
 - The sim database is caught up to prod's lineage except migration 0193, which is a production-only data purge and is never applied to sim.
 
 ## In the app
