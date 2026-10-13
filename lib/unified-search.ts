@@ -53,11 +53,12 @@ export function matchPages(
   level: number,
   query: string,
   translateLabel: (key: TranslationKey) => string,
+  opts?: { pulseV2?: boolean },
 ): PageResult[] {
   const q = query.trim().toLowerCase();
   if (!q) return [];
   const out: PageResult[] = [];
-  for (const d of navDestinationsFor(level)) {
+  for (const d of navDestinationsFor(level, { pulseV2: opts?.pulseV2 })) {
     const label = translateLabel(d.key);
     if (label.toLowerCase().includes(q)) out.push({ label, href: d.href, scoped: d.scoped });
   }

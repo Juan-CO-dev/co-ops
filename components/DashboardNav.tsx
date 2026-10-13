@@ -20,6 +20,7 @@ import { serverT } from "@/lib/i18n/server";
 import type { Language } from "@/lib/i18n/types";
 import { navDestinationsFor, chipHref } from "@/lib/nav-links";
 import { vaultEnabled } from "@/lib/vault-flag";
+import { pulseV2Enabled } from "@/lib/pulse/flag";
 
 interface DashboardNavProps {
   language: Language;
@@ -39,7 +40,7 @@ export function DashboardNav({ language, actorLevel, selectedLocationId }: Dashb
         {serverT(language, "nav.section_label")}
       </p>
       <div className="flex flex-wrap gap-2">
-        {navDestinationsFor(actorLevel, { vault: vaultEnabled() }).map(({ key, href, scoped }) => (
+        {navDestinationsFor(actorLevel, { vault: vaultEnabled(), pulseV2: pulseV2Enabled() }).map(({ key, href, scoped }) => (
           <a key={href} href={chipHref(href, scoped, selectedLocationId)} className={CHIP_CLASS}>
             {serverT(language, key)}
           </a>

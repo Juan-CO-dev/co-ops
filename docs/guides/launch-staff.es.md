@@ -1,4 +1,8 @@
-## 12 de octubre: ¿Cómo termino mi turno?
+## 12 de octubre: ¿Cómo me mantengo al día durante el turno?
+
+### ¿Cómo reviso qué pasa en la tienda?
+
+Toca **Pulso de medio turno** en el menú del panel para ver tu trabajo, el estado de las estaciones, los horarios de catering, los recordatorios de seguridad alimentaria y las notas de entrega para tu equipo. Las secciones se actualizan mientras la página está abierta y visible. Toca una estación en **Piso en vivo** para ver sus detalles; puedes cambiar entre **Vista 3D** y **Vista de mapa** cuando la vista 3D está disponible. Como miembro del equipo, ves tus propias asignaciones sin los detalles de otras personas ni los importes de ventas.
 
 ### ¿Cómo termino mi turno en el tablero?
 

@@ -1,4 +1,8 @@
-## October 12: How do I end my shift?
+## October 12: How do I keep up with the shift?
+
+### How do I check what is happening in the shop?
+
+Tap **Mid-Shift Pulse** in the dashboard menu for your work, station status, catering timing, food-safety reminders, and handoff notes for your team. The sections refresh while the page is open and visible. Tap a station on **Live shop floor** to see its details; you can switch between **3D view** and **Map view** when 3D is available. As crew, you see your own assignments without other people's details or sales amounts.
 
 ### How do I finish my shift on the board?
 
