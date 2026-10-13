@@ -26,6 +26,7 @@ idea (for Juan), or a sim-only issue. Production checks are marked.
 - **Opening Phase 2 tab title** still reads "Phase 1 — Verification" while the Phase 2 tab is open.
 - **Fractions in prep entry:** a prep need of "5 1/3 Pan" can't be typed as "5 1/3" (the box stays empty).
 - **Opening recount boxes stay red-bordered** even after they are filled.
+- **The round user button floats over page content** at phone and tablet widths: it covers the ORDERING › breadcrumb on Receiving, the VEG **Verified** button on the opening, and (with the REVIEW & SUBMIT pill) closing headers and an **Add note** (photo check, manager 18/19/20/22/40).
 - **The DASHBOARD breadcrumb is hidden behind the round user button** on `/my-feedback` and
   `/reports/written` at phone width (also seen by both flash testers in the probes).
 - **Closing checklist amber note** says "AM Prep had 0 items saved today - check with the opener." AM prep
@@ -62,3 +63,12 @@ idea (for Juan), or a sim-only issue. Production checks are marked.
   the dashboard, then re-submit AM Prep"). Entries are kept ("Picked up where you left off …"). Every AM prep
   row is required; BACK UP is optional; TOTAL fills itself.
 - Claiming a station: open the **Stations** row, pick from the list, **CLAIM / CHANGE STATION**, confirm.
+
+## Photo retakes owed (photo check, 2026-10-13) — after round 1, so the sim is free
+
+- staff/15-my-shift.png — scroll to the My shift board.
+- staff/19-station-claimed.png — show the board's "Stations — 1 of 1 assigned" / "Claimed · time".
+- staff/41-my-performance.png — wait for the chart to settle.
+- manager/31-closing-full.png — stitching flaw (sticky progress bar drawn mid-page); retake as two viewport shots or wait for the bar to settle.
+- manager/10-assign-task.png — scroll up so the person's name is in frame.
+
