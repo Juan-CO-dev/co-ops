@@ -17,7 +17,7 @@ How to read it:
 - Below level 4, a task opens only with an active assignment for today. At level 4 and up, the floor is enough — `lib/assignments.ts:76-77`, `lib/assignments.ts:78-90`
 - An assignment never takes access away from a key holder: "Assignments delegate work; they never remove KH authority" — `lib/assignments.ts:72`
 - PIN length is 4 digits for every role — `lib/roles.ts:98-100`
-- Roles at level 5 and up also have an email and password sign-in path — `lib/roles.ts:34-35`, `lib/roles.ts:47-55`
+- AGM and up (roles with `hasEmailAuth: true`) also have an email and password sign-in path; Shift Lead does not ("Email + password for AGM and above.") — `lib/roles.ts:47-55`, `lib/i18n/en.json:2913` (corrected 2026-10-13 by the manager-guide writer)
 
 ## Getting in — login tiles
 
