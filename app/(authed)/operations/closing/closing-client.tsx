@@ -663,8 +663,13 @@ export function ClosingClient({ initialState }: { initialState: ClosingInitialSt
 
   // ─── PinConfirmModal callbacks ──────────────────────────────────────────
 
+  // True once THIS tab's confirm succeeded. A ref (not `instance.status`) because a
+  // late callback from the modal can hold a pre-confirm closure.
+  const confirmedHereRef = useRef(false);
+
   const handlePinConfirmed = useCallback(
     (confirmedInstance: ChecklistInstance) => {
+      confirmedHereRef.current = true;
       setInstance(confirmedInstance);
       setPinOpen(false);
       setReviewOpen(false);
@@ -691,6 +696,9 @@ export function ClosingClient({ initialState }: { initialState: ClosingInitialSt
   );
 
   const handlePinError = useCallback((err: ChecklistApiError) => {
+    // A late "already closed" after our own successful confirm is just the echo of
+    // a duplicate request: the closing IS saved, keep the success banner.
+    if (err.code === "instance_closed" && confirmedHereRef.current) return;
     // Non-recoverable errors (instance_closed, role_level_insufficient,
     // missing/extra reasons, supersede_failed, missing_count/photo) bubble
     // up here. Modal already surfaced an inline message; we close it and
@@ -703,13 +711,11 @@ export function ClosingClient({ initialState }: { initialState: ClosingInitialSt
       revealStations(unfinishedSectionIds(stationProgress));
     }
     if (err.code === "instance_closed") {
-      // Best signal we can give without a re-fetch: show the historical-style
-      // banner so the closer knows their attempt landed on an already-closed
-      // instance.
+      // Genuinely closed elsewhere (another device/manager): say so plainly.
       setReadOnly(true);
       setBanner({
         tone: "historical",
-        message: t("closing.error.concurrent_modification"),
+        message: t("closing.error.instance_closed"),
       });
     }
   }, [t, stationProgress, revealStations]);
