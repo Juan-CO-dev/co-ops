@@ -3,7 +3,8 @@
 -- shops. Deletes TODAY's (ET) report, board, delivery, cash and handoff rows at P Street and Capitol Hill,
 -- children first. Leaves yesterday's closing and AM prep (the opener reads them), all config (stations,
 -- positions, templates), audit history and notifications. Finalizes yesterday's closing if it is still
--- open, so today's opening is not gated. Prep side effects on inventory (price history, depletion) are
+-- open, so today's opening is not gated. Then seeds Maya's assignments for today (see the end of the block).
+-- Prep side effects on inventory (price history, depletion) are
 -- not rolled back; they are sim noise.
 -- Run through the Supabase MCP execute_sql as the owner. Never on production.
 begin;
@@ -61,6 +62,16 @@ begin
 
     raise notice 'reset % for % (board date %): % report instances, % deliveries', loc, d, b, cardinality(inst), cardinality(dels);
   end loop;
+
+  -- The morning a real crew member walks into: a manager (Priya, AGM, P Street) has already assigned Maya
+  -- her reports for today. Report tiles show only to the person assigned that task (lib/assignment-sections.ts
+  -- dashboardWorkVisibility → taskVisible); crew cannot take tasks themselves (level < 4). The manager tester
+  -- at Capitol Hill starts with nothing assigned on purpose: taking tasks is part of the manager guide.
+  insert into public.report_assignments (report_type, location_id, operational_date, assigner_id, assignee_id, active)
+  select t.report_type::public.report_type_enum, 'd2cced11-b167-49fa-bab6-86ec9bf4ff09'::uuid, d,
+         (select id from public.users where email = 'priya@sim.co-ops'),
+         (select id from public.users where email = 'maya@sim.co-ops'), true
+    from unnest(array['opening_report', 'mid_day_prep', 'am_prep']) as t(report_type);
 end $$;
 commit;
 select 'reset done' as result;
