@@ -17,7 +17,7 @@ You use the app through one tool only. Run it from this folder:
 screen. Move around only by tapping and typing, like a person on a {device}.
 
 This is a practice copy of the app with made-up people. Your login: shop **{shop}**, role **{roleLabel}**,
-name **{name}**, PIN **{pin}**.
+name **{name}**, PIN **{pin}**. {passwordLine}
 
 ## Your goals (in order; a goal that fails does not stop you from trying the next one)
 

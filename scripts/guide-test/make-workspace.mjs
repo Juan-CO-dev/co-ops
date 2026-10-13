@@ -9,8 +9,8 @@ import path from "node:path";
 const [guide, modelLabel, round, lane] = process.argv.slice(2);
 const PERSONAS = {
   staff: { shop: "P Street", roleLabel: "Employee", roleWords: "crew member", name: "Maya Torres", pin: "1111", device: "phone", viewport: "phone" },
-  manager: { shop: "Capitol Hill", roleLabel: "Assistant General Manager", roleWords: "manager", name: "Nicole Boyd", pin: "8888", device: "tablet", viewport: "tablet" },
-  catering: { shop: "P Street", roleLabel: "General Manager", roleWords: "manager who runs catering", name: "Marcus Webb", pin: "9999", device: "tablet", viewport: "tablet" },
+  manager: { shop: "Capitol Hill", roleLabel: "Assistant General Manager", roleWords: "manager", name: "Nicole Boyd", pin: "8888", password: "sim-nicole-pw", device: "tablet", viewport: "tablet" },
+  catering: { shop: "P Street", roleLabel: "General Manager", roleWords: "manager who runs catering", name: "Marcus Webb", pin: "9999", password: "sim-marcus-pw", device: "tablet", viewport: "tablet" },
 };
 const p = PERSONAS[guide];
 if (!p || !modelLabel || !round || !["claude", "codex", "api"].includes(lane)) {
@@ -20,6 +20,7 @@ if (!p || !modelLabel || !round || !["claude", "codex", "api"].includes(lane)) {
 const root = process.cwd();
 const session = `${modelLabel}-${guide}-r${round}`;
 // Catering leads are not part of the day reset, so each run gets its own fake company name.
+p.passwordLine = p.password ? `If the app asks for your password, it is **${p.password}**.` : "";
 p.company = `Hill Staffers ${modelLabel[0].toUpperCase()}${modelLabel.slice(1)} R${round} LLC`;
 const ws = path.join("C:/Users/conta/guide-test-ws", `r${round}`, `${modelLabel}-${guide}`);
 fs.rmSync(ws, { recursive: true, force: true });
