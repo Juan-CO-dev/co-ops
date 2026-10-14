@@ -27,7 +27,7 @@
  *   2. Empty pending (no completion AND not read-only):
  *      - Empty circle (same shape as cleaning's not-yet-completed state)
  *      - Item label
- *      - Italic subtitle: "Pending — submit from the dashboard"
+ *      - Italic subtitle: "Pending — tap to open"
  *      - Tap navigates to the source-report page resolved by
  *        templateItem.reportReferenceType (per C.42 generalization).
  *        AM Prep items → /operations/am-prep; Opening verified items
@@ -64,37 +64,8 @@ import type { ChecklistChainEntry } from "@/lib/checklists";
 import { resolveTemplateItemContent } from "@/lib/i18n/content";
 import { formatChainAttribution, formatTime } from "@/lib/i18n/format";
 import { useTranslation } from "@/lib/i18n/provider";
+import { reportNameKey, reportRoute } from "@/lib/report-reference-route";
 import type { ChecklistCompletion, ChecklistTemplateItem } from "@/lib/types";
-
-/**
- * Resolves the source-report page route for a report-reference item by
- * branching on templateItem.reportReferenceType. System-key match per
- * C.38 (the original English value, not a translated display string).
- *
- * Future report types (mid_day_prep, cash_report, training_report,
- * special_report) add cases here as their pages ship; until their
- * routes exist, the defensive default sends them to AM Prep so closer
- * isn't dead-ended on a 404. Closing-template seed discipline today is
- * to add a report-reference item only when its target page exists, so
- * the default branch is forensic-only.
- */
-function reportRoute(
-  reportType: ChecklistTemplateItem["reportReferenceType"],
-): string {
-  switch (reportType) {
-    case "opening_report":
-      return "/operations/opening";
-    case "mid_day_prep":
-      // Multi-instance; the page resolves ?location → smart-routes (1 instance
-      // redirects straight to it; 2+ shows the day's list; 0 shows list + New).
-      return "/operations/mid-day";
-    case "cash_report":
-      return "/cash";
-    case "am_prep":
-    default:
-      return "/operations/am-prep";
-  }
-}
 
 interface ReportReferenceItemProps {
   templateItem: ChecklistTemplateItem;
@@ -140,6 +111,8 @@ export function ReportReferenceItem({
 
   const isAutoCompleted = completion !== null && completion.autoCompleteMeta !== null;
   const baseRoute = reportRoute(templateItem.reportReferenceType);
+  // #15 — name the report in prose from its own type (never "AM Prep" for all).
+  const reportName = t(reportNameKey(templateItem.reportReferenceType));
   const editHref = `${baseRoute}?location=${locationId}&edit=true`;
 
   // ─── State 1: Live auto-complete ──────────────────────────────────────────
@@ -151,7 +124,12 @@ export function ReportReferenceItem({
     const submitterName = hasChain
       ? chainAttribution![0]!.submitterName
       : completionAuthor?.name ?? "—";
-    const time = formatTime(completion.completedAt, language);
+    // #16 — show when the REPORT was submitted. completedAt is when the auto-tick
+    // row was written, which can be hours earlier (often when closing was first opened).
+    const time = formatTime(
+      completion.autoCompleteMeta?.reportSubmittedAt ?? completion.completedAt,
+      language,
+    );
     const attribution = hasChain
       ? formatChainAttribution(chainAttribution!, language, t)
       : t("closing.report_ref.attribution", {
@@ -199,6 +177,7 @@ export function ReportReferenceItem({
           <Link
             href={editHref}
             aria-label={t("closing.report_ref.edit_link_aria", {
+              report: reportName,
               name: submitterName,
             })}
             className="
@@ -217,7 +196,9 @@ export function ReportReferenceItem({
 
   // ─── State 2 + 3: Empty pending (interactive when !readOnly) ──────────────
 
-  const subtitleText = t("closing.report_ref.empty_subtitle");
+  const subtitleText = readOnly
+    ? t("closing.report_ref.empty_subtitle")
+    : t("closing.report_ref.empty_subtitle_tap");
   const tapHref = `${baseRoute}?location=${locationId}`;
 
   if (!readOnly && !canOpenTarget) {
@@ -238,11 +219,12 @@ export function ReportReferenceItem({
     );
   }
 
-  // Tappable when the closing is still open (closer can navigate to AM
-  // Prep and submit it from there).
+  // Tappable when the closing is still open (closer can open the source
+  // report's page and submit it from there).
   if (!readOnly) {
     const ariaLabel = t("closing.report_ref.tap_to_submit_aria", {
       label: resolved.label,
+      report: reportName,
     });
     return (
       <Link

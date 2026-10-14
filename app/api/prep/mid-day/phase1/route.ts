@@ -108,6 +108,13 @@ export async function POST(req: NextRequest) {
       if (result.reason === "not_open") {
         return jsonError(409, "instance_not_open", { message: "Phase 1 was already submitted for this instance." });
       }
+      if (result.reason === "bad_row") {
+        // D-66 — the row's stored prep settings are malformed; it was skipped and cannot be written.
+        return jsonError(400, "prep_shape", {
+          message: "This item's prep settings are broken, so it can't be saved. A manager can fix it in Admin.",
+          template_item_id: result.templateItemId,
+        });
+      }
       if (result.reason === "backup_required") {
         // 0215 batch vs bottle: a batch item counts LINE (on hand) AND the bulk BACK UP.
         return jsonError(422, "mid_day_backup_required", {
@@ -117,7 +124,8 @@ export async function POST(req: NextRequest) {
       }
       return jsonError(400, "bad_item", { message: "An entry references an item not in this template.", detail: result.detail });
     }
-    return jsonOk({ instance: result.instance });
+    // D-66 — rows skipped for a bad stored shape were not included (and were not required).
+    return jsonOk({ instance: result.instance, skipped: result.skipped });
   } catch (err) {
     if (err instanceof PrepRoleViolationError) return jsonError(403, "role_insufficient", {});
     const msg = err instanceof Error ? err.message : String(err);

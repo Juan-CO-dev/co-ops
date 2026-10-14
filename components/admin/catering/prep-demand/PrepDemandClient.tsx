@@ -504,7 +504,7 @@ function DemandLine({
     return <ChoiceLine line={line} t={t} />;
   }
   if (line.refKind === "menu_item") {
-    return <MenuItemLine line={line} t={t} />;
+    return <MenuItemLine line={line} />;
   }
   return <ItemLine line={line} t={t} />;
 }
@@ -530,13 +530,7 @@ function ChoiceLine({
 
 // ─── MenuItemLine ─────────────────────────────────────────────────────────────
 
-function MenuItemLine({
-  line,
-  t,
-}: {
-  line: PrepDemandLine;
-  t: (key: TranslationKey, params?: Record<string, string | number>) => string;
-}) {
+function MenuItemLine({ line }: { line: PrepDemandLine }) {
   const prefix = portionPrefix(line.portion);
   return (
     <div className="flex flex-wrap items-start gap-2 rounded-lg border-2 border-co-border bg-co-surface px-3 py-2 text-sm text-co-text">
@@ -545,9 +539,6 @@ function MenuItemLine({
         {" × "}
         {prefix}
         {line.name}
-      </span>
-      <span className="text-xs text-co-text-muted">
-        {t("admin.catering.prep_demand.sub_note" as TranslationKey)}
       </span>
     </div>
   );

@@ -19,11 +19,12 @@ import { useTranslation } from "@/lib/i18n/provider";
 import { formatCents, formatDateLabel } from "@/lib/i18n/format";
 import type { TranslationKey } from "@/lib/i18n/types";
 import { CollapsibleSection } from "@/components/ui/CollapsibleSection";
-import { INSIGHT_WINDOWS, stageDot, type WindowKey } from "@/lib/catering/insights-shared";
+import { INSIGHT_WINDOWS, sourceCountKey, stageDot, type WindowKey } from "@/lib/catering/insights-shared";
 import { leadSourceLabelKey } from "@/lib/catering/intake-shared";
 import { PIPELINE_STAGES } from "@/lib/catering/pipeline-shared";
 import type { CateringInsightsV2 } from "@/lib/catering/insights";
 import { InsightsCalendar } from "@/components/catering/InsightsCalendar";
+import { etDisplayDate } from "@/lib/operational-day";
 
 export function InsightsClient({ data }: { data: CateringInsightsV2 }) {
   const { t, language } = useTranslation();
@@ -112,7 +113,7 @@ export function InsightsClient({ data }: { data: CateringInsightsV2 }) {
       <CollapsibleSection
         idBase="catering-insights-by-source"
         title={t("catering.insights.by_source")}
-        count={t("catering.insights.source_count", { n: sourceRows.length })}
+        count={t(sourceCountKey(sourceRows.length), { n: sourceRows.length })}
       >
         <div className="flex flex-col gap-2.5">
           {sourceRows.map((r) => (
@@ -196,7 +197,7 @@ export function InsightsClient({ data }: { data: CateringInsightsV2 }) {
                         {t("catering.insights.follow_up")}
                       </span>
                     )}
-                    {f.submittedAt ? formatDateLabel(f.submittedAt.slice(0, 10), language) : ""}
+                    {f.submittedAt ? formatDateLabel(etDisplayDate(f.submittedAt), language) : ""}
                   </span>
                 </div>
                 {f.comment && <p className="mt-1 text-sm text-co-text-muted">{f.comment}</p>}

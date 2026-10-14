@@ -3,7 +3,7 @@ import type { AuthContext } from "@/lib/session";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import { canReadCateringLead } from "./ezcater-detail";
 import { CateringPipelineError } from "./pipeline";
-import type { EzcaterReconciliationDetail } from "./ezcater-reconciliation-shared";
+import { reviewQueueScope, type EzcaterReconciliationDetail } from "./ezcater-reconciliation-shared";
 
 /** Review is a read, never a mapping confirmation or a depletion write. */
 export async function loadEzcaterReconciliation(actor: AuthContext, leadId: string): Promise<EzcaterReconciliationDetail> {
@@ -28,11 +28,17 @@ export async function loadEzcaterReconciliation(actor: AuthContext, leadId: stri
     }
   }
   let query = sb.from("ezcater_review_queue").select("id,source,code,candidates").is("resolved_at", null);
-  query = order ? query.eq("order_id", order.id).eq("snapshot_id", order.snapshot_id).eq("location_id", lead.location_id)
-    : query.contains("candidates", [leadId]);
+  const scope = reviewQueueScope(order ?? null, leadId);
+  query = scope.kind === "order"
+    ? query.eq("order_id", scope.orderId).eq("snapshot_id", scope.snapshotId).eq("location_id", lead.location_id)
+    : query.filter(scope.column, scope.op, scope.value);
   const { data: reviews, error: reviewError } = await query.order("created_at").limit(101)
     .returns<Array<{ id: string; source: "ezcater" | "toast"; code: string; candidates: unknown }>>();
-  if (reviewError) return unavailable;
+  if (reviewError) {
+    // Say why in the server log instead of hiding it behind "unavailable" (B5 #32).
+    console.error(`[ezcater-reconciliation] review read failed: ${reviewError.code ?? ""} ${reviewError.message ?? ""}`.trim());
+    return unavailable;
+  }
   const counts = order?.snapshot_id ? await Promise.all([
     sb.from("ezcater_toast_links").select("order_id", { count: "exact", head: true }).eq("order_id", order.id).eq("snapshot_id", order.snapshot_id).eq("location_id", lead.location_id).eq("is_current", true),
     sb.from("ezcater_shadow_depletion").select("order_id", { count: "exact", head: true }).eq("order_id", order.id).eq("snapshot_id", order.snapshot_id).eq("location_id", lead.location_id).eq("is_current", true),

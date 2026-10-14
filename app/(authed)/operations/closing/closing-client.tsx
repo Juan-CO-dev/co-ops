@@ -125,6 +125,8 @@ export interface ClosingInitialState {
    */
   reportRefCanEdit: Record<string, boolean>;
   reportRefCanOpen: Record<string, boolean>;
+  /** #18 — template_item_id -> true for fridge-temperature count items (label "Temp (°F)", not "Count"). */
+  tempReadingItems: Record<string, boolean>;
   /**
    * Fulledit floor cut F — today's AM prep exists with ZERO saved completions
    * (or was never opened). Renders an ADVISORY pill only; never blocks
@@ -241,6 +243,7 @@ export function ClosingClient({ initialState }: { initialState: ClosingInitialSt
     reportRefChains,
     reportRefCanEdit,
     reportRefCanOpen,
+    tempReadingItems,
     amPrepGap,
     incompleteReasons,
   } = initialState;
@@ -810,7 +813,7 @@ export function ClosingClient({ initialState }: { initialState: ClosingInitialSt
   const headerLabel = `${location.code} · ${location.name}`;
 
   return (
-    <main className="mx-auto max-w-2xl px-4 pb-32 pt-4 sm:px-6">
+    <main className="mx-auto w-full max-w-2xl px-4 pb-32 pt-4 sm:px-6">
       {/* Persistent back-to-dashboard CTA. UserMenu floats in the
           top-right corner from the (authed) layout (per
           SPEC_AMENDMENTS.md C.39); reserved zone has min-h sized so this
@@ -913,6 +916,7 @@ export function ClosingClient({ initialState }: { initialState: ClosingInitialSt
               reportRefChains={reportRefChains}
               reportRefCanEdit={reportRefCanEdit}
               reportRefCanOpen={reportRefCanOpen}
+              tempReadingItems={tempReadingItems}
               onToggle={() => collapsible.toggle(station)}
               onComplete={handleItemComplete}
               onRevoke={handleItemRevoke}
@@ -959,7 +963,8 @@ export function ClosingClient({ initialState }: { initialState: ClosingInitialSt
         * saved completions (or was never opened). The closing screen is the one
         * surface a manager reliably sees at day's end; closing's auto-complete
         * machinery otherwise makes an empty AM prep invisible. ADVISORY only —
-        * never gates finalize (council: no hard gate on AM prep). */}
+        * never gates finalize (council: no hard gate on AM prep). D-17: the page
+        * sets amPrepGap only from 6 PM ET on the closing's business day. */}
       {!readOnly && amPrepGap ? (
         <div className="mt-6 rounded-2xl border-2 border-co-warning bg-co-warning-surface p-4">
           <p className="text-sm font-bold text-co-text">{t("closing.am_prep_gap.banner")}</p>
@@ -1132,6 +1137,7 @@ function StationGroup({
   reportRefChains,
   reportRefCanEdit,
   reportRefCanOpen,
+  tempReadingItems,
   onToggle,
   onComplete,
   onRevoke,
@@ -1171,6 +1177,7 @@ function StationGroup({
   /** C.46 — canEdit per template_item_id (report-ref items only). */
   reportRefCanEdit: Record<string, boolean>;
   reportRefCanOpen: Record<string, boolean>;
+  tempReadingItems: Record<string, boolean>;
   onToggle: () => void;
   onComplete: (payload: ChecklistCompletePayload) => Promise<ChecklistCompleteResult>;
   onRevoke: (completionId: string) => Promise<ChecklistRevokeResult>;
@@ -1279,6 +1286,7 @@ function StationGroup({
                 actorLevel={actor.level}
                 actorUserId={actor.userId}
                 completerLevel={c ? (completerLevels[c.completedBy] ?? null) : null}
+                isTempReading={tempReadingItems[it.id] ?? false}
                 instanceStatus={instanceStatus}
                 locationId={locationId}
                 readOnly={readOnly}

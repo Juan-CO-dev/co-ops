@@ -1,7 +1,7 @@
 /**
  * Operational production-capture data layer (Item/Inventory Spine — S1, reshaped to
  * the header + production_inputs lines model, migration 0102). SERVER-ONLY,
- * service-role; app-layer KH+ (≥4) gate + location-bind IDOR (mirrors lib/receiving.ts).
+ * service-role; app-layer employee+ (≥3) gate + location-bind IDOR (mirrors lib/receiving.ts).
  * Records SKU→item conversions: a `productions` header credits the item; one
  * `production_inputs` line per consumed SKU depletes it (consumption signal) and
  * feeds the running-average yield prediction. The standalone form still sends a
@@ -16,7 +16,12 @@ import type { AuthContext } from "@/lib/session";
 import { skuContentOz, type MeasureUnitFactor } from "@/lib/recipe-math";
 import type { MeasureDimension } from "@/lib/recipe-math";
 
-export const PRODUCE_MIN = 4; // key_holder+
+// employee+ (Juan D-64, 2026-10-13: "production needs to be employee and up... key holders
+// aren't the only ones doing prep"). Every production gate reads THIS constant: the page,
+// both API routes and the lib loaders/writer. The dashboard menu entry mirrors it as a
+// literal (lib/nav-links.ts is client-safe; this module is server-only), pinned by test.
+// The productions tables are deny-all RLS / service-role only, so there is no DB floor.
+export const PRODUCE_MIN = 3;
 
 export class ProductionError extends Error {
   constructor(public status: number, public code: string, message?: string) {
@@ -37,8 +42,8 @@ function actorLoc(actor: AuthContext): LocationActor { return { role: actor.user
 /**
  * Load the active measure-unit registry as a label→factor map, directly via
  * service-role. NOT via lib/admin/skus.loadMeasureUnits, which gates at AGM+ (≥6);
- * recordProduction runs at KH+ (≥4), so the gated helper would throw for a
- * key-holder. Same select shape as loadMeasureUnits.
+ * recordProduction runs at employee+ (≥3), so the gated helper would throw for a
+ * crew member. Same select shape as loadMeasureUnits.
  */
 async function loadMeasuresMap(): Promise<Map<string, MeasureUnitFactor>> {
   const sb = getServiceRoleClient();

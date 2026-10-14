@@ -18,6 +18,7 @@ import {
   loadEquipmentDetail,
   loadMaintenanceOverview,
 } from "@/lib/maintenance";
+import { etYmdMinusDays } from "@/lib/operational-day";
 import { requireSessionFromHeaders } from "@/lib/session";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 
@@ -69,9 +70,7 @@ export default async function MaintenancePage({ searchParams }: PageProps) {
   const today = nyDateString(new Date());
 
   // 14-day window for readings + notes
-  const sd = new Date(today + "T00:00:00Z");
-  sd.setUTCDate(sd.getUTCDate() - 14);
-  const sinceDate = sd.toISOString().slice(0, 10);
+  const sinceDate = etYmdMinusDays(today, 14);
 
   const locationId = locationParam;
 

@@ -55,9 +55,47 @@ export interface Station { id: string; name: string; nameEs: string | null; sort
 export function isFloorStation(station: Pick<Station, "active" | "staffed" | "positions">): boolean {
   return station.active && station.staffed && station.positions.some((position) => position.active);
 }
+/**
+ * D-26 (Juan 2026-10-13) — the "fill first" cue on station choices. It used to ride on every
+ * position with `sort === 1`, which is every station's first slot, so it said "fill first" on 10 of
+ * 12 options and meant nothing. It now names, for each open floor station the Pulse calls UNCOVERED,
+ * its first UNOCCUPIED active position (lowest sort, then name — the board's own option order).
+ *
+ * Coverage is the floor's own rule (lib/pulse/floor-shared floorStations + stationStatus, B7b review
+ * #2): a station is covered while someone on the board holds it (their current station head points at
+ * it) and is NOT on break. So a two-position station whose only holder is on break is uncovered —
+ * the Pulse says so — and the cue lands on the first position nobody holds (the on-break holder keeps
+ * theirs). A closed station or a closing section carries no cue.
+ */
+export function fillFirstPositionIds(
+  board: { stations: ReadonlyArray<Pick<Station, "id" | "active" | "staffed" | "positions" | "closedAt">>;
+    events: readonly StationEvent[]; people: ReadonlyArray<Pick<ShiftPerson, "id" | "onBreak">>;
+    occupiedPositions?: ReadonlyArray<{ positionId: string }> },
+): Set<string> {
+  const covering = new Set<string>();
+  const heldPositions = new Set((board.occupiedPositions ?? []).map((entry) => entry.positionId));
+  for (const person of board.people) {
+    const head = currentStation(board.events, person.id);
+    if (!head?.stationId) continue;
+    if (head.positionId) heldPositions.add(head.positionId);
+    if (!person.onBreak) covering.add(head.stationId);
+  }
+  const out = new Set<string>();
+  for (const station of board.stations) {
+    if (!isFloorStation(station) || station.closedAt || covering.has(station.id)) continue;
+    const first = station.positions.filter((position) => position.active && !heldPositions.has(position.id))
+      .sort((a, b) => a.sort - b.sort || a.name.localeCompare(b.name))[0];
+    if (first) out.add(first.id);
+  }
+  return out;
+}
 export interface ShiftPerson { id: string; name: string; level: number; hasWork: boolean; available?: boolean; onBreak?: boolean;
   /** 0233 (WHOS_HERE=1): on shift today and how we know. Absent when the feature is off. */
   presence?: PresenceView;
+  /** Today's last "End my shift" (shift_ends), when the feature is on. Independent of Toast presence. */
+  shiftEndedAt?: string | null;
+  /** True while that end is still the latest CO-OPS fact (nothing newer): see coopsShiftEnded. */
+  shiftEnded?: boolean;
   /** Highest level that gave this person the work they hold (station assigned / open tasks). */
   heldFromLevel?: number }
 export interface StationEvent {
@@ -108,6 +146,46 @@ export function currentFloorStation(board: Pick<ShiftBoard, "events" | "stations
   const head = currentStation(board.events, userId);
   if (!head?.stationId) return head;
   return board.stations.some((station) => station.id === head.stationId && isFloorStation(station)) ? head : null;
+}
+/**
+ * B4 #19 — a person whose station just CLOSED holds a `release(station_closed)` head with a null
+ * stationId, so the board used to print "No station" (and lose the "Closed · time" line) the moment
+ * their last closing line was ticked. Resolve the station/position they were released from via
+ * `priorPositionId` (0230 writes it on the station_closed release). Only while that station is still
+ * closed for the day, and only for a floor station; every other head (assign/claim/move, a
+ * clocked_out/ended_shift/on_break release, no events) returns null, so "No station" stays honest.
+ */
+export function closedStationFor(
+  board: Pick<ShiftBoard, "events" | "stations"> & { people?: ShiftBoard["people"] },
+  userId: string,
+): { station: Station; position: StationPosition } | null {
+  const head = currentStation(board.events, userId);
+  if (head?.kind !== "release" || head.releaseReason !== "station_closed" || !head.priorPositionId) return null;
+  // "End my shift" after the close writes NO newer station event (0233 only releases a held station),
+  // so the closed-station head would linger beside the ended-shift state. The shift_ends record wins.
+  const endedAt = board.people?.find((person) => person.id === userId)?.shiftEndedAt;
+  if (endedAt && Date.parse(endedAt) >= Date.parse(head.effectiveAt ?? head.at)) return null;
+  for (const station of board.stations) {
+    const position = station.positions.find((p) => p.id === head.priorPositionId);
+    if (position) return station.closedAt && isFloorStation(station) ? { station, position } : null;
+  }
+  return null;
+}
+/**
+ * B4 #20 — "Start break" is for someone who is on shift. After "End my shift" the person is off
+ * shift (presence.onShift false) and offering a break is nonsense; CLAIM stays (a new claim is new
+ * activity and is the documented way back on shift, presence-shared). Someone already on break keeps
+ * their "Back from break" button. Only meaningful when presence tracking is live (`whosHere`).
+ */
+export function showBreakButton(
+  person: Pick<ShiftPerson, "available" | "onBreak" | "presence" | "shiftEnded">,
+  board: Pick<ShiftBoard, "whosHere">,
+): boolean {
+  if (person.available === false) return false;
+  // The CO-OPS end-of-shift fact hides it even while Toast still says clocked in (Toast outranks
+  // CO-OPS in presence.onShift, so presence alone left the button up after End my shift).
+  if (board.whosHere && person.shiftEnded && !person.onBreak) return false;
+  return !(board.whosHere && person.presence && !person.presence.onShift && !person.onBreak);
 }
 export function canManageAssignee(actorLevel: number, targetLevel: number): boolean {
   return actorLevel >= 4 && targetLevel <= actorLevel;

@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import { useTranslation } from "@/lib/i18n/provider";
-import { formatCents } from "@/lib/i18n/format";
+import { formatCents, formatDateLabel } from "@/lib/i18n/format";
 import type { TranslationKey } from "@/lib/i18n/types";
 import type { CateringCustomer, CustomerDetail } from "@/lib/catering/customers";
 import { postJson, resolveErrorKey } from "./shared";
@@ -168,7 +168,7 @@ function CustomerDetailPanel({ customer, canWrite }: { customer: CateringCustome
       ) : (
         <>
           {customer.notes && <p className="text-xs text-co-text">{customer.notes}</p>}
-          <div className="mt-2 grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <div className="mt-2 grid grid-cols-1 gap-3 sm:grid-cols-3">
             <div>
               <div className="text-xs font-semibold text-co-text-muted">{t("catering.customers.history.leads")}</div>
               {detail && detail.leads.length > 0 ? (
@@ -177,6 +177,22 @@ function CustomerDetailPanel({ customer, canWrite }: { customer: CateringCustome
                     <li key={l.id}>
                       {l.contactName} · {t(`catering.pipeline.stage.${l.stage}` as TranslationKey)}
                       {l.eventDate ? ` · ${l.eventDate}` : ""}
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="mt-1 text-xs text-co-text-muted">{t("catering.customers.history.none")}</p>
+              )}
+            </div>
+            <div>
+              <div className="text-xs font-semibold text-co-text-muted">{t("catering.customers.history.quotes")}</div>
+              {detail && detail.quotes.length > 0 ? (
+                <ul className="mt-1 space-y-0.5 text-xs text-co-text">
+                  {detail.quotes.map((q) => (
+                    <li key={q.id}>
+                      {formatCents(q.totalCents, language)} · {t(`catering.quotes.status.${q.status}` as TranslationKey)}
+                      {q.version > 1 ? ` · v${q.version}` : ""}
+                      {q.eventDate ? ` · ${formatDateLabel(q.eventDate, language)}` : ""}
                     </li>
                   ))}
                 </ul>

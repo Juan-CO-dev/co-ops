@@ -4,10 +4,11 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { TranslationProvider } from "@/lib/i18n/provider";
 const mocks = vi.hoisted(() => ({ auth: vi.fn(), service: vi.fn(), personLocations: vi.fn(), pathname: "/reports" }));
 vi.mock("@/lib/session", () => ({ requireSessionFromHeaders: mocks.auth }));
+vi.mock("next/headers", () => ({ cookies: async () => ({ get: () => undefined }) })); // B2: no remembered shop
 vi.mock("@/lib/supabase-server", () => ({ getServiceRoleClient: mocks.service }));
 vi.mock("next/navigation", () => ({ usePathname: () => mocks.pathname, redirect: (path: string) => { throw new Error(path); } }));
 vi.mock("@/lib/operational-task-access", () => ({ canDoOperationalTask: async () => false }));
-vi.mock("@/lib/reports-hub", async original => ({ ...await original<typeof import("@/lib/reports-hub")>(), listReports: async () => [], listReportSkeleton: async () => [], listReportsPage: async () => ({ items: [], nextCursor: null }) }));
+vi.mock("@/lib/reports-hub", async original => ({ ...await original<typeof import("@/lib/reports-hub")>(), listReports: async () => [], listReportSkeleton: async () => [], latestFinalizedClosingDate: async () => null, listReportsPage: async () => ({ items: [], nextCursor: null }) }));
 vi.mock("@/lib/written-reports", async original => ({ ...await original<typeof import("@/lib/written-reports")>(), listWrittenReports: async () => ({ reports: [], nextCursor: null }) }));
 vi.mock("@/lib/pm-report", async original => ({ ...await original<typeof import("@/lib/pm-report")>(), loadMyFeedback: async () => [] }));
 vi.mock("@/lib/team-metrics", async original => ({ ...await original<typeof import("@/lib/team-metrics")>(), loadPersonReportLocations: mocks.personLocations, loadTeamOperatingHealth: async () => null, loadPersonDetail: async () => null, loadMyPerformance: async () => null }));

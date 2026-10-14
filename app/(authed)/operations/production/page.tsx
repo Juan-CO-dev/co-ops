@@ -2,26 +2,43 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { serverT } from "@/lib/i18n/server";
 import { formatDateLabel } from "@/lib/i18n/format";
-import { lockLocationContext, type LocationActor } from "@/lib/locations";
+import { isAllLocationsAccess, lockLocationContext, type LocationActor } from "@/lib/locations";
 import { etCalendarDate } from "@/lib/operational-day";
 import { requireSessionFromHeaders } from "@/lib/session";
-import { loadProductionFormData, loadRecentProductions } from "@/lib/production";
+import { resolveShopId } from "@/lib/shop-context";
+import { searchParamValues, shopParamFor } from "@/lib/shop-context-shared";
+import { PRODUCE_MIN, loadProductionFormData, loadRecentProductions } from "@/lib/production";
+import { getServiceRoleClient } from "@/lib/supabase-server";
 import { ProductionForm } from "@/components/production/ProductionForm";
 import { DashboardBackLink } from "@/components/DashboardBackLink";
 import { EmptyState } from "@/components/EmptyState";
 import { YIELD_STATS_READ_MIN } from "@/lib/yield-stats-shared";
 
+async function activeLocationIds(): Promise<string[]> {
+  const { data, error } = await getServiceRoleClient().from("locations").select("id").eq("active", true).order("name").returns<Array<{ id: string }>>();
+  // A failed lookup is a fault, not "no shop": throw so the error boundary shows it instead of
+  // a silent bounce to /dashboard. Only a truly empty result yields no shop.
+  if (error) throw new Error(`production: default shop lookup failed: ${error.message}`);
+  return (data ?? []).map((row) => row.id);
+}
+
 export default async function ProductionPage({ searchParams }: { searchParams: Promise<{ location?: string }> }) {
   const auth = await requireSessionFromHeaders("/operations/production");
-  const { location } = await searchParams;
-  if (auth.level < 4) redirect("/dashboard");
-  if (!location) redirect("/dashboard");
+  const requested = shopParamFor("/operations/production", searchParamValues(await searchParams));
+  if (auth.level < PRODUCE_MIN) redirect("/dashboard");
   const locActor: LocationActor = { role: auth.role, locations: auth.locations };
+  // D-64: no hard ?location redirect. Without one, the B2 resolver picks among the shops this
+  // page's bind admits: the memberships, plus (all-shop grant, 9+) every active shop after them —
+  // the remembered shop when it is one of those, else the first. The location bind below still applies.
+  const location = requested ?? (await resolveShopId(isAllLocationsAccess(locActor)
+    ? [...auth.locations, ...(await activeLocationIds()).filter((id) => !auth.locations.includes(id))]
+    : auth.locations));
+  if (!location) redirect("/dashboard");
   if (!lockLocationContext(locActor, location)) redirect("/dashboard");
   const lang = auth.user.language;
   const [formData, recent] = await Promise.all([loadProductionFormData(auth, location), loadRecentProductions(auth, location, 20)]);
   return (
-    <main className="mx-auto max-w-2xl md:max-w-3xl lg:max-w-5xl xl:max-w-6xl px-4 pb-32 pt-4 sm:px-6">
+    <main className="mx-auto w-full max-w-2xl md:max-w-3xl lg:max-w-5xl xl:max-w-6xl px-4 pb-32 pt-4 sm:px-6">
       <div className="mb-3"><DashboardBackLink /></div>
       <h1 className="mb-4 text-lg font-bold text-co-text">{serverT(lang, "production.page.title")}</h1>
       {auth.level >= YIELD_STATS_READ_MIN ? (

@@ -6,17 +6,19 @@ import { hasTaskAccess } from "@/lib/assignments";
  * multi-instance per day — the dashboard tile creates a numbered instance via
  * POST /api/prep/mid-day and links here with its id.
  *
- * This build renders the loaded instance + its template items (read view),
- * routed by phase via instance.status (open = Phase 1 count; phase1_complete =
- * Phase 2 prep). The interactive count form (Phase 1, reuses the prep form) and
- * collaborative prep grid (Phase 2, reuses OpeningPrepEntry) land in the next
- * build — mid-day needs its own phase-1/phase-2 submit paths (the AM-prep submit
- * writes status='confirmed' + closing auto-complete, which mid-day must NOT do).
+ * Routed by phase via instance.status: open = Phase 1 count (MidDayPhase1Form);
+ * phase1_complete = Phase 2 prep (MidDayPhase2Form); phase2_complete = the
+ * read-only FINALIZED view (banner "Finalized at {time} by {name}" + per item
+ * need · made, rows from the pure midDayFinalizedRows). Any other status falls
+ * to the same read-only rows under a neutral heading. Mid-day has its own
+ * phase-1/phase-2 submit paths (the AM-prep submit writes status='confirmed' +
+ * closing auto-complete, which mid-day must NOT do).
  */
 
 import { redirect } from "next/navigation";
 
 import { serverT } from "@/lib/i18n/server";
+import { formatTime } from "@/lib/i18n/format";
 import { lockLocationContext, type LocationActor } from "@/lib/locations";
 import {
   loadMidDayPrepDashboardState,
@@ -27,14 +29,16 @@ import { resolveSectionLabel } from "@/lib/prep-sections";
 import { etCalendarDate } from "@/lib/operational-day";
 import { requireSessionFromHeaders } from "@/lib/session";
 import { getServiceRoleClient } from "@/lib/supabase-server";
-import type { ChecklistTemplateItem } from "@/lib/types";
 import { needForLine, type BatchRowContext } from "@/lib/batch-prep-shared";
-import { midDayPhase2RowSeed } from "@/lib/mid-day-shared";
+import { midDayFinalizedRows, midDayPhase2RowSeed, type MidDayFinalizedRow } from "@/lib/mid-day-shared";
+import { formatPrepQty } from "@/lib/prep-display-shared";
+import { canEditConsumption } from "@/lib/consumption-edit-shared";
 
 import { MidDayPhase1Form } from "@/components/MidDayPhase1Form";
 import { MidDayPhase2Form, type MidDayPhase2Item } from "@/components/MidDayPhase2Form";
 import { MidDayPrepTile } from "@/components/MidDayPrepTile";
 import { DashboardBackLink } from "@/components/DashboardBackLink";
+import { PrepSkippedRowsNote } from "@/components/prep/PrepSkippedRowsNote";
 import type { ManagerOption } from "@/components/opening/OverParModal";
 
 interface PageProps {
@@ -97,7 +101,7 @@ export default async function MidDayPrepPage({ searchParams }: PageProps) {
     }
 
     return (
-      <main className="mx-auto max-w-2xl md:max-w-3xl lg:max-w-5xl xl:max-w-6xl px-4 pb-32 pt-4 sm:px-6">
+      <main className="mx-auto w-full max-w-2xl md:max-w-3xl lg:max-w-5xl xl:max-w-6xl px-4 pb-32 pt-4 sm:px-6">
         <div className="mb-3">
           <DashboardBackLink />
         </div>
@@ -114,7 +118,10 @@ export default async function MidDayPrepPage({ searchParams }: PageProps) {
     );
   }
 
-  const state = await loadMidDayPrepState(sb, { instanceId });
+  // D-66 — the page read tolerates a bad row (skipped + named in the note below) instead of
+  // blanking the page; Phase 1 submit / Phase 2 save / finalize skip the same row (not
+  // included, not required) and refuse only a write that targets it.
+  const state = await loadMidDayPrepState(sb, { instanceId, tolerateBadRows: true });
   if (!state) redirect("/dashboard"); // not a mid-day instance, or not found
 
   const locActor: LocationActor = { role: auth.role, locations: auth.locations };
@@ -124,24 +131,39 @@ export default async function MidDayPrepPage({ searchParams }: PageProps) {
 
   const lang = auth.user.language;
 
-  // Group items by section (station), preserving display order.
-  const groups: Array<{ section: string; items: ChecklistTemplateItem[] }> = [];
-  const indexBySection = new Map<string, number>();
-  for (const item of state.templateItems) {
-    const section = item.prepMeta?.section ?? item.station ?? "Misc";
-    let gi = indexBySection.get(section);
-    if (gi === undefined) {
-      gi = groups.length;
-      indexBySection.set(section, gi);
-      groups.push({ section, items: [] });
-    }
-    groups[gi]!.items.push(item);
-  }
-
+  const status = state.instance.status;
   const phaseHeading =
-    state.instance.status === "open"
+    status === "open"
       ? serverT(lang, "mid_day_prep.page.phase1_heading")
-      : serverT(lang, "mid_day_prep.page.phase2_heading");
+      : status === "phase1_complete"
+        ? serverT(lang, "mid_day_prep.page.phase2_heading")
+        : status === "phase2_complete"
+          ? serverT(lang, "mid_day_prep.page.finalized_heading")
+          : serverT(lang, "mid_day_prep.page.readonly_heading");
+
+  // B1 #2 — the read-only finalized view (and the neutral fallback for any other
+  // status): per item need · made, grouped by section in template order.
+  const finalizedGroups: Array<{ section: string; rows: MidDayFinalizedRow[] }> = [];
+  if (status !== "open" && status !== "phase1_complete") {
+    // History reads from each record (snapshot + persisted shape), never today's config.
+    const indexBySection = new Map<string, number>();
+    for (const row of midDayFinalizedRows(state.templateItems, state.completions)) {
+      let gi = indexBySection.get(row.section);
+      if (gi === undefined) {
+        gi = finalizedGroups.length;
+        indexBySection.set(row.section, gi);
+        finalizedGroups.push({ section: row.section, rows: [] });
+      }
+      finalizedGroups[gi]!.rows.push(row);
+    }
+  }
+  const finalizedBanner =
+    status === "phase2_complete" && state.instance.confirmedAt
+      ? serverT(lang, "dashboard.mid_day_prep.finalized_by", {
+          time: formatTime(state.instance.confirmedAt, lang),
+          name: (state.instance.confirmedBy ? state.authors[state.instance.confirmedBy] : null) ?? "—",
+        })
+      : null;
 
   // Phase 2 per-item reconcile-on-load state: latest live completion per item
   // (Phase 1 wrote onHand; a Phase 2 save adds total + the saver as completedBy).
@@ -203,7 +225,7 @@ export default async function MidDayPrepPage({ searchParams }: PageProps) {
   const managers = await loadAgmPlusManagers(sb, state.instance.locationId);
 
   return (
-    <main className="mx-auto max-w-2xl md:max-w-3xl lg:max-w-5xl xl:max-w-6xl px-4 pb-32 pt-4 sm:px-6">
+    <main className="mx-auto w-full max-w-2xl md:max-w-3xl lg:max-w-5xl xl:max-w-6xl px-4 pb-32 pt-4 sm:px-6">
       <div className="mb-3">
         <DashboardBackLink />
       </div>
@@ -212,6 +234,8 @@ export default async function MidDayPrepPage({ searchParams }: PageProps) {
         {serverT(lang, "mid_day_prep.page.title")}
       </p>
       <h1 className="mt-1 text-lg font-bold text-co-text">{phaseHeading}</h1>
+
+      <PrepSkippedRowsNote rows={state.skippedRows} language={lang} />
 
       {state.instance.status === "open" ? (
         <MidDayPhase1Form
@@ -234,37 +258,36 @@ export default async function MidDayPrepPage({ searchParams }: PageProps) {
           managers={managers}
           sectionLabels={state.sectionLabels}
           todayIso={state.instance.date}
+          canEditConsumption={canEditConsumption(auth.level)}
         />
       ) : (
         <>
-          <p className="mt-3 rounded-lg border-2 border-co-border-2 bg-co-surface px-3 py-2 text-[11px] italic leading-snug text-co-text-muted">
-            {serverT(lang, "mid_day_prep.page.forms_pending")}
-          </p>
+          {finalizedBanner ? (
+            <p className="mt-3 rounded-lg border-2 border-co-success bg-co-success-surface px-3 py-2 text-sm font-semibold text-co-confirm-text">
+              {finalizedBanner}
+            </p>
+          ) : null}
 
           <div className="mt-4 flex flex-col gap-5">
-            {groups.map((g) => (
+            {finalizedGroups.map((g) => (
               <section key={g.section}>
                 <h2 className="text-xs font-bold uppercase tracking-[0.14em] text-co-gold-text">
                   {resolveSectionLabel(state.sectionLabels, g.section, lang, g.section)}
                 </h2>
                 <ul className="mt-2 flex flex-col gap-1">
-                  {g.items.map((item) => {
-                    const par = item.prepMeta?.parValue;
-                    return (
-                      <li
-                        key={item.id}
-                        className="flex items-center justify-between gap-3 rounded-md border-2 border-co-border bg-co-surface px-3 py-2 text-sm"
-                      >
-                        <span className="font-semibold text-co-text">{item.label}</span>
-                        {par !== null && par !== undefined ? (
-                          <span className="shrink-0 text-xs font-bold uppercase tracking-[0.08em] text-co-text-muted">
-                            {serverT(lang, "mid_day_prep.page.section_par")} {par}
-                            {item.prepMeta?.parUnit ? ` ${item.prepMeta.parUnit}` : ""}
-                          </span>
-                        ) : null}
-                      </li>
-                    );
-                  })}
+                  {g.rows.map((row) => (
+                    <li
+                      key={row.id}
+                      className="flex min-w-0 items-center justify-between gap-3 rounded-md border-2 border-co-border bg-co-surface px-3 py-2 text-sm"
+                    >
+                      <span className="min-w-0 truncate font-semibold text-co-text">{row.label}</span>
+                      <span className="shrink-0 text-right text-xs font-bold uppercase tracking-[0.08em] text-co-text-muted">
+                        {serverT(lang, "mid_day_prep.phase1.need")} {formatPrepQty(row.need, row.parUnit)}
+                        {" · "}
+                        {serverT(lang, "mid_day_prep.page.made")} {formatPrepQty(row.made, row.parUnit)}
+                      </span>
+                    </li>
+                  ))}
                 </ul>
               </section>
             ))}

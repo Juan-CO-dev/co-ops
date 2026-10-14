@@ -93,3 +93,63 @@ export function shopChipLabel(lead: { locationName?: string | null }): string | 
   const n = lead.locationName?.trim();
   return n ? n : null;
 }
+
+// ── Lead edit (B5 #36) ─────────────────────────────────────────────────────────────────
+
+/** The lead fields the "Edit details" form owns (phone/email are D-48, Juan's call). */
+export interface LeadEditable {
+  contactName: string;
+  company: string | null;
+  eventDate: string | null;
+  headcount: number | null;
+  followUpDate: string | null;
+  notes: string | null;
+}
+/** The form's raw values (every input is a string). */
+export interface LeadEditForm {
+  contactName: string;
+  company: string;
+  eventDate: string;
+  headcount: string;
+  followUpDate: string;
+  notes: string;
+}
+export type LeadEditPatch = Partial<LeadEditable>;
+
+/**
+ * The PATCH body for the lead-edit form: ONLY the fields the manager changed. An untouched
+ * field is never sent — so an untouched Notes box can never rewrite the machine-written
+ * ezCater / Toast block inside `notes`. Empty text clears to null; the contact name may not
+ * be cleared; headcount must be a whole number ≥ 0.
+ */
+export function leadEditPatch(
+  lead: LeadEditable,
+  form: LeadEditForm,
+): { ok: true; patch: LeadEditPatch } | { ok: false; field: keyof LeadEditable } {
+  const patch: LeadEditPatch = {};
+  const text = (v: string): string | null => (v.trim() === "" ? null : v.trim());
+
+  const name = form.contactName.trim();
+  if (name === "") return { ok: false, field: "contactName" };
+  if (name !== lead.contactName) patch.contactName = name;
+
+  if (text(form.company) !== (lead.company ?? null)) patch.company = text(form.company);
+  if (text(form.eventDate) !== (lead.eventDate ?? null)) patch.eventDate = text(form.eventDate);
+  if (text(form.followUpDate) !== (lead.followUpDate ?? null)) patch.followUpDate = text(form.followUpDate);
+
+  const hc = form.headcount.trim();
+  if (hc === "") {
+    if (lead.headcount != null) patch.headcount = null;
+  } else {
+    const n = Number(hc);
+    if (!Number.isInteger(n) || n < 0) return { ok: false, field: "headcount" };
+    if (n !== lead.headcount) patch.headcount = n;
+  }
+
+  // Compare the raw box to the stored text so an untouched Notes box never counts as a change.
+  // (A browser textarea reports line breaks as \n, so CRLF is normalised before comparing.)
+  const crlf = (v: string) => v.replace(/\r\n/g, "\n");
+  if (crlf(form.notes) !== crlf(lead.notes ?? "")) patch.notes = text(form.notes);
+
+  return { ok: true, patch };
+}

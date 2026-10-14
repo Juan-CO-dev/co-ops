@@ -60,6 +60,7 @@ Live in production (co-ops-ashy.vercel.app, two locations): auth + checklists (o
 - Constant-shape responses on enumeration surfaces (`verify`, `password-reset-request`); internal disposition goes in audit metadata only. `/api/users/login-options` is a documented, accepted enumeration tradeoff (tile login UX).
 - Proxy 307s preserve method — UI treats 307 from API routes as auth failure; test fetches use `redirect: "manual"`.
 - `requireSessionFromHeaders` = Server Component variant (redirects); `requireSession` = route variant (returns 401). `lib/session.ts` is Node-runtime only; `proxy.ts` (edge) imports from `lib/auth.ts` only.
+- **"Which shop am I working in" has ONE resolver** (B2, triage #30, 2026-10-13): a page that needs a default shop calls `resolveShop` / `resolveShopId` (`lib/shop-context.ts`; pure rule `pickShop` in `lib/shop-context-shared.ts`) over the list it ALREADY allows the actor — explicit `?location=`/`?loc=` → the remembered `co_shop` cookie → the first allowed. Never a bare `locations[0]` default (`tests/shop-context.test.ts` pins it). The cookie is a per-device preference, not authorization: it is re-validated against the page's list on every read and never rides in the JWT. It is written by the CLIENT (tile login + `ShopContextSync` after a committed navigation), **never by `proxy.ts`** — Next 16 strips `next-router-prefetch` from proxy request headers, so a proxy cannot tell a Link prefetch from a tap.
 
 ### Audit & append-only conventions
 

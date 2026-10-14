@@ -618,6 +618,20 @@ export interface OrderingCutoffFacts {
   /** Already formatted by the loader via the house formatTime. */
   cutoffTime: string;
   hasDraft: boolean;
+  /** D-63: the cutoff has PASSED with no placed order — "missed cutoff — call the vendor" (red). */
+  missed: boolean;
+}
+
+/**
+ * D-63 (Juan 2026-10-13) — a vendor cutoff that has passed with no placed order is MISSED: the
+ * order window is shut and the only fix is a phone call, so it goes red ("missed cutoff — call the
+ * vendor") instead of the yellow "cutoff today" advisory. Passed = the governing cutoff instant is at
+ * or before now (the cutoff minute itself is already too late to start). An unparseable instant is
+ * never missed (no honest deadline to judge against).
+ */
+export function cutoffMissed(cutoffIso: string, nowMs: number): boolean {
+  const at = Date.parse(cutoffIso);
+  return Number.isFinite(at) && at <= nowMs;
 }
 
 /** One of today's POs — the shape lib/purchase-orders.ts `TodaysOrderVendor` returns. */
@@ -653,11 +667,11 @@ const ORDER_STATUS_PILL: Record<string, { key: TranslationKey; tone: StatusPillT
 export function composeOrderingTile(input: OrderingTileInput): TileViewModel {
   const pills: StatusPill[] = [];
 
-  // Every open cutoff BEYOND the nearest becomes a red pill.
+  // Every open cutoff BEYOND the nearest becomes a red pill (D-63: a missed one says so).
   for (const c of input.openCutoffs.slice(1)) {
     pills.push({
       id: `cutoff-${c.vendorId}`,
-      key: "dashboard.ordering.pill_cutoff",
+      key: c.missed ? "dashboard.ordering.pill_missed" : "dashboard.ordering.pill_cutoff",
       params: { vendor: c.vendorName, time: c.cutoffTime },
       tone: "danger",
     });
@@ -681,7 +695,8 @@ export function composeOrderingTile(input: OrderingTileInput): TileViewModel {
   if (nearest) {
     return {
       headline: {
-        key: "dashboard.ordering.headline_cutoff",
+        // D-63: a passed cutoff with no placed order is "missed — call the vendor", not "not started".
+        key: nearest.missed ? "dashboard.ordering.headline_missed" : "dashboard.ordering.headline_cutoff",
         params: { vendor: nearest.vendorName },
         form: "gauge",
         value: nearest.cutoffTime,

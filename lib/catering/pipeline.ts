@@ -18,6 +18,7 @@ import { getRoleLevel, type RoleCode } from "@/lib/roles";
 import { lockLocationContext } from "@/lib/locations";
 import { audit } from "@/lib/audit";
 import { canReadCateringLead, loadCateringReader } from "./ezcater-detail";
+import { canReadCateringContact } from "./ezcater-detail-shared";
 import type { AuthContext } from "@/lib/session";
 import { checkCateringCapacity, type CateringCapacityResult } from "@/lib/catering/capacity";
 import { reservePrepDemand, consumePrepDemand, releasePrepDemand } from "@/lib/catering/prep-demand";
@@ -267,15 +268,24 @@ export async function searchPipeline(actor: AuthContext, args: { query: string }
   const sb = getServiceRoleClient();
   const term = `%${raw}%`;
 
-  // 1. Customer ids matching email/phone/name, plus customers of companies whose name matches.
+  // B5 review 3: a lead the actor may read can still point at ANOTHER shop's customer (a
+  // transfer keeps customer_id; option b attaches by email). That customer's saved contact is
+  // not the actor's: it may neither MATCH a search (or a typed email/phone would confirm it)
+  // nor be RETURNED as the result's email. Same catering contact policy, fail-closed.
+  const reader = await loadCateringReader(actor);
+  const customerReadable = (primaryLocationId: string | null) =>
+    !!reader && canReadCateringContact(reader, primaryLocationId);
+
+  // 1. Customer ids matching email/phone/name, plus customers of companies whose name matches —
+  //    readable customers only.
   const matchedCustomerIds = new Set<string>();
   const { data: custRows, error: cErr } = await sb
     .from("catering_customers")
-    .select("id")
+    .select("id, primary_location_id")
     .or(`email.ilike.${term},phone.ilike.${term},name.ilike.${term}`)
-    .returns<Array<{ id: string }>>();
+    .returns<Array<{ id: string; primary_location_id: string | null }>>();
   if (cErr) throw new Error(`searchPipeline customers: ${cErr.message}`);
-  for (const c of custRows ?? []) matchedCustomerIds.add(c.id);
+  for (const c of custRows ?? []) if (customerReadable(c.primary_location_id)) matchedCustomerIds.add(c.id);
 
   const { data: compRows, error: coErr } = await sb
     .from("catering_companies")
@@ -287,11 +297,11 @@ export async function searchPipeline(actor: AuthContext, args: { query: string }
   if (companyIds.length) {
     const { data: compCust, error: ccErr } = await sb
       .from("catering_customers")
-      .select("id")
+      .select("id, primary_location_id")
       .in("company_id", companyIds)
-      .returns<Array<{ id: string }>>();
+      .returns<Array<{ id: string; primary_location_id: string | null }>>();
     if (ccErr) throw new Error(`searchPipeline company customers: ${ccErr.message}`);
-    for (const c of compCust ?? []) matchedCustomerIds.add(c.id);
+    for (const c of compCust ?? []) if (customerReadable(c.primary_location_id)) matchedCustomerIds.add(c.id);
   }
 
   // 2. Search leads: own text fields OR matched customer ids, location-scoped.
@@ -310,8 +320,10 @@ export async function searchPipeline(actor: AuthContext, args: { query: string }
   const custIds = [...new Set(leads.map((l) => l.customerId).filter((x): x is string => !!x))];
   const emailByCustomer = new Map<string, string | null>();
   if (custIds.length) {
-    const { data } = await sb.from("catering_customers").select("id, email").in("id", custIds).returns<Array<{ id: string; email: string | null }>>();
-    for (const c of data ?? []) emailByCustomer.set(c.id, c.email);
+    const { data } = await sb.from("catering_customers").select("id, email, primary_location_id").in("id", custIds)
+      .returns<Array<{ id: string; email: string | null; primary_location_id: string | null }>>();
+    // An unreadable customer's email is omitted, never returned (review 3).
+    for (const c of data ?? []) emailByCustomer.set(c.id, customerReadable(c.primary_location_id) ? c.email : null);
   }
   const leadIds = leads.map((l) => l.id);
   const quoteByLead = new Map<string, { status: string; total_cents: number }>();

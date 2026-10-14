@@ -208,6 +208,12 @@ interface ChecklistItemProps {
    */
   completerLevel?: number | null;
   /**
+   * B4 #18 — true when this count item is a fridge-temperature reading (looked up
+   * server-side from the maintenance registry). Only changes the expand panel's
+   * input label ("Temp (°F)" instead of "Count"); never affects the stored value.
+   */
+  isTempReading?: boolean;
+  /**
    * C.55 — async cross-user mark-not-done callback (post-60s, KH+, at-or-below
    * the completer's current level). Fires
    * POST /api/checklist/completions/[id]/mark-not-done. Pessimistic — UI
@@ -397,6 +403,7 @@ export function ChecklistItem({
   onTagActualCompleter,
   onLoadPickerCandidates,
   completerLevel = null,
+  isTempReading = false,
   onMarkNotDone,
 }: ChecklistItemProps) {
   const { t, language } = useTranslation();
@@ -1132,7 +1139,7 @@ export function ChecklistItem({
           {templateItem.expectsCount ? (
             <label className="block">
               <span className="block text-[11px] font-bold uppercase tracking-[0.14em] text-co-text-dim">
-                {t("closing.expand.count_label")}
+                {t(isTempReading ? "closing.expand.temp_label" : "closing.expand.count_label")}
               </span>
               <input
                 type="text"

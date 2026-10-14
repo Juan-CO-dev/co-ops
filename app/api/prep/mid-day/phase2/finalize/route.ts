@@ -74,7 +74,8 @@ export async function POST(req: NextRequest) {
       }
       return jsonError(409, "not_in_phase2", { message: "This instance isn't in the Phase 2 window." });
     }
-    return jsonOk({ instance: result.instance });
+    // D-66 — rows skipped for a bad stored shape were not required and not included.
+    return jsonOk({ instance: result.instance, skipped: result.skipped });
   } catch (err) {
     if (err instanceof PrepRoleViolationError) return jsonError(403, "role_insufficient", {});
     const msg = err instanceof Error ? err.message : String(err);

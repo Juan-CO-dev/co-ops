@@ -11,6 +11,8 @@ import { REPORT_ALL_LOCATIONS_LEVEL, canReadReportLocation, type LocationActor }
 import { operationalNow } from "@/lib/midshift-shared";
 import { parseReportRange, reportRangeParams } from "@/lib/report-range";
 import { requireSessionFromHeaders } from "@/lib/session";
+import { searchParamValues, shopParamFor } from "@/lib/shop-context-shared";
+import { resolveShopId } from "@/lib/shop-context";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import { listWrittenReports, WRITTEN_REPORT_WRITE_MIN_LEVEL } from "@/lib/written-reports";
 
@@ -25,13 +27,16 @@ function scalarParams(params: Params): Record<string, string | undefined> {
 export default async function ReportsWrittenPage({ searchParams }: { searchParams: Promise<Params> }) {
   const auth = await requireSessionFromHeaders("/reports/written");
   if (auth.level < 2) redirect("/dashboard");
-  const raw = scalarParams(await searchParams);
+  const rawParams = await searchParams;
+  // The explicit shop is read through the B2 route contract (a repeated ?location= = no pick).
+  const raw: Record<string, string | undefined> = { ...scalarParams(rawParams), location: shopParamFor("/reports/written", searchParamValues(rawParams)) };
   const range = parseReportRange(raw, operationalNow(new Date()).date);
   const actor: LocationActor = { role: auth.role, locations: auth.locations };
   if (raw.location && !/^[a-zA-Z0-9_-]+$/.test(raw.location)) redirect("/reports/written");
   if (raw.location === "all" && auth.level < REPORT_ALL_LOCATIONS_LEVEL) redirect("/reports/written");
   if (raw.location && raw.location !== "all" && !canReadReportLocation(actor, raw.location)) redirect("/reports/written");
-  const selectedLocation = raw.location && raw.location !== "all" ? raw.location : auth.level >= REPORT_ALL_LOCATIONS_LEVEL ? null : auth.locations[0] ?? null;
+  // B2: below level 8 the default is the remembered shop when it is a membership, else the first.
+  const selectedLocation = raw.location && raw.location !== "all" ? raw.location : auth.level >= REPORT_ALL_LOCATIONS_LEVEL ? null : await resolveShopId(auth.locations);
   const viewerLocations = selectedLocation
     ? [selectedLocation]
     : auth.level >= REPORT_ALL_LOCATIONS_LEVEL ? "all" as const : auth.locations;

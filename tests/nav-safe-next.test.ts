@@ -107,7 +107,9 @@ describe("app/page.tsx delegates the post-login hop to the sanitizer", () => {
   });
 
   it("routes the post-login push through safeNextPath", () => {
-    expect(src).toMatch(/router\.push\(\s*safeNextPath\(/);
+    // B2 (#30): the sanitized path may be wrapped by loginLandingPath, which only ever turns the
+    // exact "/dashboard" into "/dashboard?loc=<uuid>" (tests/shop-context.test.ts) — never off-origin.
+    expect(src).toMatch(/router\.push\(\s*(?:loginLandingPath\(\s*)?safeNextPath\(/);
   });
 
   it("no longer carries its own startsWith(\"/\") next check — the bug's exact shape", () => {

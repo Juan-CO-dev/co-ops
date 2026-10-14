@@ -4,6 +4,7 @@ import type { Language } from "@/lib/i18n/types";
 import { serverT } from "@/lib/i18n/server";
 import { formatTime, formatDateLabel } from "@/lib/i18n/format";
 import { TempTrendChart } from "./TempTrendChart";
+import { etCalendarDate } from "@/lib/operational-day";
 
 export function EquipmentDetail({
   detail,
@@ -16,7 +17,7 @@ export function EquipmentDetail({
   const safeMax = detail.equip.safeMaxF ?? FRIDGE_DEFAULT_SAFE_MAX_F;
 
   // Derive today's status for the header chip
-  const today = new Date().toISOString().slice(0, 10);
+  const today = etCalendarDate(new Date().toISOString());
   const todaysReadings = detail.readings.filter((r) => r.date === today);
   const status = isFridge
     ? computeFridgeStatus(todaysReadings, safeMax)

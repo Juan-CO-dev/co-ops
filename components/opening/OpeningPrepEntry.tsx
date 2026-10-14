@@ -4,7 +4,8 @@
  * OpeningPrepEntry — Phase 2 prep verification UI (C.50 redesign).
  *
  * Per-section layout per C.50 §4:
- *   - Section header has the verify CTA (OpeningSectionVerify component)
+ *   - Section header shows a static "Verified ✓" chip (B1 #8: Phase 1 owns section-verify
+ *     and is submitted before Phase 2 opens, so there is nothing to toggle here)
  *   - Per-item rows below show ground-truth display + opener_prepped input
  *   - Live prep_need preview (display-only)
  *   - Modal-trigger signal banners for over/under-prep capture
@@ -21,9 +22,9 @@
  *   removed as vestigial — recount is a Phase 1 concern; Phase 2 reads the
  *   persisted ground truth, never re-counts.
  * - Signal banners trigger on delta_vs_prep_need (not delta_vs_par).
- * - NULL closer_count sentinel: section-verify disabled for sections with
- *   any NULL item. NULL-reason badge surfaces operational cause via snapshot
- *   row metadata + template item's references_template_item_id.
+ * - NULL closer_count sentinel: the NULL-reason badge surfaces operational
+ *   cause via snapshot row metadata + template item's references_template_item_id.
+ *   (The section-verify disabled guard lives in Phase 1 — OpeningVerificationStation.)
  *
  * Form state model (per Lock 2): separate overPar / underPar slots in
  * OpeningPhase2FormValue; UX path-differentiation via delta sign. Modals
@@ -46,13 +47,13 @@ import type { DerivedSku, ConfirmedInput } from "@/lib/prep-consumption";
 import { ProductionConsumptionPanel } from "@/components/production/ProductionConsumptionPanel";
 import { BatchEntryFields } from "@/components/prep/BatchEntryFields";
 import { emptyBatchFormValue, isBatchContractCode, type BatchFormValue, type BatchRowContext } from "@/lib/batch-prep-shared";
+import { formatPrepQty, parseDecimalDraft, prepNeedLabel, prepQtyParts, roundQty } from "@/lib/prep-display-shared";
 import type { ChecklistTemplateItem, OpeningPhase2Meta } from "@/lib/types";
 
 import { CollapsibleChecklistSection } from "@/components/ui/CollapsibleChecklistSection";
 import { showProblems, unfinishedSectionIds } from "@/lib/collapsible-sections";
 import { useCollapsibleSections } from "@/lib/use-collapsible-sections";
 
-import { OpeningSectionVerify } from "./OpeningSectionVerify";
 import {
   OverParModal,
   type ManagerOption,
@@ -60,6 +61,7 @@ import {
 } from "./OverParModal";
 import { UnderParModal, type UnderParCapture } from "./UnderParModal";
 import { RevokeReasonModal } from "./RevokeReasonModal";
+import { etCalendarDate } from "@/lib/operational-day";
 
 export interface OpeningPhase2FormValue {
   /** Opener recount value when item flagged for per-item recount; NULL otherwise. */
@@ -198,9 +200,11 @@ interface OpeningPrepEntryProps {
     string,
     { groundTruth: number | null; prepNeed: number | null }
   >;
-  /** Map<sectionKey, verified-state> in client memory; toggled via OpeningSectionVerify. */
+  /**
+   * Map<sectionKey, verified-state> — seeded from server truth; Phase 1 owns the toggle.
+   * Read-only here: drives the header chip and the rows' pre-persist ground-truth fallback.
+   */
   sectionVerifications: Map<string, boolean>;
-  onSectionVerifyToggle: (sectionKey: string) => void;
   managers: ReadonlyArray<ManagerOption>;
   language: Language;
   showMissingErrors: boolean;
@@ -224,6 +228,8 @@ interface OpeningPrepEntryProps {
   batchDerivedByItem?: Record<string, DerivedSku[]>;
   /** 0215 — the opening's operational date (YYYY-MM-DD) for the shelf-life red state. */
   todayIso?: string;
+  /** D-13 — the viewer may edit the "Uses: …" panel (KH+); server-derived. Default read-only. */
+  canEditConsumption?: boolean;
 }
 
 export function OpeningPrepEntry({
@@ -238,7 +244,6 @@ export function OpeningPrepEntry({
   closerSnapshots,
   phase1ResolvedByItem,
   sectionVerifications,
-  onSectionVerifyToggle,
   managers,
   language,
   showMissingErrors,
@@ -247,6 +252,7 @@ export function OpeningPrepEntry({
   batchByItem,
   batchDerivedByItem,
   todayIso,
+  canEditConsumption = false,
 }: OpeningPrepEntryProps) {
   const { t } = useTranslation();
 
@@ -285,25 +291,6 @@ export function OpeningPrepEntry({
     }
     return groups;
   }, [items]);
-
-  // Per-section disabled state per Step 11 Lock 3: section disabled when
-  // any item has NULL closer_count AND no opener_recount. Opener must
-  // per-item recount NULL items before they can section-verify the rest.
-  const sectionDisabledMap = useMemo(() => {
-    const map = new Map<string, boolean>();
-    for (const [section, sectionItems] of sectionGroups.entries()) {
-      const hasUnrecountedNull = sectionItems.some((it) => {
-        const snap = closerSnapshots.get(it.id) ?? null;
-        const value = values.get(it.id) ?? null;
-        return (
-          (snap?.closerCount ?? null) === null &&
-          (value?.openerRecount ?? null) === null
-        );
-      });
-      map.set(section, hasUnrecountedNull);
-    }
-    return map;
-  }, [sectionGroups, closerSnapshots, values]);
 
   // Wave 1 B — collapsible sections. DONE = the item's save state is "saved" (the
   // same status the Phase 2 finalize gate counts: outstandingCount). First section
@@ -357,7 +344,6 @@ export function OpeningPrepEntry({
           ? resolveTemplateItemContent(firstItem, language).station ?? sectionKey
           : sectionKey;
         const verified = sectionVerifications.get(sectionKey) ?? false;
-        const disabled = sectionDisabledMap.get(sectionKey) ?? false;
 
         const progress = sectionProgress.find((p) => p.id === sectionKey);
 
@@ -375,15 +361,15 @@ export function OpeningPrepEntry({
             className="rounded-2xl border-2 border-co-border bg-co-surface p-4 shadow-sm sm:p-5"
             titleClassName="text-base font-extrabold uppercase tracking-[0.14em] text-co-text"
             headerExtras={
-              <OpeningSectionVerify
-                sectionKey={sectionKey}
-                sectionDisplay={sectionDisplay}
-                verified={verified}
-                disabled={disabled || readOnly}
-                disabledReason={disabled ? "null_items_unrecounted" : null}
-                onToggleVerified={() => onSectionVerifyToggle(sectionKey)}
-                language={language}
-              />
+              // B1 #8 — Phase 1 (submitted before this tab opens) owns section-verify. The
+              // old toggle read Phase-2 values, which carry no recount, so it showed a grey
+              // VERIFIED + "Recount items without closer data first" on finished sections.
+              verified ? (
+                <span className="inline-flex items-center gap-1.5 rounded-full border-2 border-co-success bg-co-success-surface px-3 py-1 text-xs font-bold uppercase tracking-[0.12em] text-co-confirm-text">
+                  <span aria-hidden>✓</span>
+                  {t("opening.section_verify.verified_button")}
+                </span>
+              ) : null
             }
           >
 
@@ -436,7 +422,8 @@ export function OpeningPrepEntry({
                     readOnly={readOnly}
                     batch={batchByItem?.get(item.id) ?? null}
                     batchDerived={batchDerivedByItem?.[item.id] ?? []}
-                    todayIso={todayIso ?? new Date().toISOString().slice(0, 10)}
+                    todayIso={todayIso ?? etCalendarDate(new Date().toISOString())}
+                    canEditConsumption={canEditConsumption}
                     t={t}
                   />
                 );
@@ -547,6 +534,8 @@ interface PrepEntryRowProps {
   /** 0215 — per-BATCH panel rows for a batch item ([] otherwise). */
   batchDerived: DerivedSku[];
   todayIso: string;
+  /** D-13 — KH+ edit the consumption panel; crew see its summary line only. */
+  canEditConsumption: boolean;
   t: (key: TranslationKey, params?: Record<string, string | number>) => string;
 }
 
@@ -572,6 +561,7 @@ function PrepEntryRow({
   batch,
   batchDerived,
   todayIso,
+  canEditConsumption,
   t,
 }: PrepEntryRowProps) {
   const resolved = resolveTemplateItemContent(item, language);
@@ -650,10 +640,10 @@ function PrepEntryRow({
     ((delta > 0 && batch === null && value.overPar === null) ||
       (delta < 0 && value.underPar === null));
 
-  const parDisplay =
-    parValue !== null
-      ? `${parValue}${parUnit ? ` ${parUnit}` : ""}`
-      : null;
+  // B1 #3 — a size unit ("1/3 Pan") reads "5 × 1/3 Pan", never "5 1/3 Pan"; 0 reads "0".
+  const parDisplay = parValue !== null ? formatPrepQty(parValue, parUnit) : null;
+  const groundTruthParts = prepQtyParts(groundTruth, parUnit);
+  const prepNeedParts = prepQtyParts(prepNeed, parUnit);
 
   // C.53 Commit B — the ground-truth display sources from the persisted Phase 1
   // value (closer count, or a Phase 1 recount captured at verification time).
@@ -682,8 +672,8 @@ function PrepEntryRow({
         </span>
         {groundTruth !== null ? (
           <span className="font-semibold text-co-text">
-            {groundTruth}
-            {parUnit ? <span className="text-co-text-muted"> {parUnit}</span> : null}
+            {groundTruthParts.qty}
+            {groundTruthParts.unit ? <span className="text-co-text-muted"> {groundTruthParts.unit}</span> : null}
           </span>
         ) : (
           <span className="text-co-text-dim italic">
@@ -706,13 +696,17 @@ function PrepEntryRow({
               {t("opening.phase2.prep_need_label")}:
             </span>
             <span className="font-semibold text-co-text">
-              {prepNeed}
-              {parUnit ? <span className="text-co-text-muted"> {parUnit}</span> : null}
+              {prepNeedParts.qty}
+              {prepNeedParts.unit ? <span className="text-co-text-muted"> {prepNeedParts.unit}</span> : null}
             </span>
           </>
         ) : (
           <span className="text-co-text-dim italic">
-            {t("opening.phase2.prep_need_pending_verification")}
+            {/* B1 #6 — a row with no par never gets a prep need, however the section is
+                verified; "verify section first" only while a par waits on ground truth. */}
+            {prepNeedLabel({ parValue, groundTruth }) === "no_par"
+              ? t("opening.phase2.prep_need_no_par")
+              : t("opening.phase2.prep_need_pending_verification")}
           </span>
         )}
       </div>
@@ -744,6 +738,7 @@ function PrepEntryRow({
           onChange={(next) => onChange({ ...value, openerPrepped: next })}
           onBlur={readOnly ? undefined : () => onSave(value)}
           ariaLabel={t("opening.phase2.input_prepped_aria", { item: resolved.label })}
+          invalidHint={t("opening.phase2.numbers_only")}
           hasError={!readOnly && prepAmountMissing}
           disabled={readOnly}
         />
@@ -768,6 +763,7 @@ function PrepEntryRow({
             onChange(next);
             onSave(next);
           }}
+          canEdit={canEditConsumption}
         />
       ) : null}
 
@@ -780,7 +776,7 @@ function PrepEntryRow({
           aria-label={
             value.overPar
               ? t("opening.phase2.signal.over_prep_recorded")
-              : t("opening.phase2.signal.over_prep", { delta: overDelta })
+              : t("opening.phase2.signal.over_prep", { delta: roundQty(overDelta) })
           }
           className={[
             "self-start inline-flex min-h-[44px] items-center gap-2 rounded-md px-3 py-1",
@@ -794,7 +790,7 @@ function PrepEntryRow({
         >
           {value.overPar
             ? t("opening.phase2.signal.over_prep_recorded")
-            : t("opening.phase2.signal.over_prep", { delta: overDelta })}
+            : t("opening.phase2.signal.over_prep", { delta: roundQty(overDelta) })}
         </button>
       ) : null}
 
@@ -806,7 +802,7 @@ function PrepEntryRow({
           aria-label={
             value.underPar
               ? t("opening.phase2.signal.under_prep_recorded")
-              : t("opening.phase2.signal.under_prep", { delta: underDelta })
+              : t("opening.phase2.signal.under_prep", { delta: roundQty(underDelta) })
           }
           className={[
             "self-start inline-flex min-h-[44px] items-center gap-2 rounded-md px-3 py-1",
@@ -820,7 +816,7 @@ function PrepEntryRow({
         >
           {value.underPar
             ? t("opening.phase2.signal.under_prep_recorded")
-            : t("opening.phase2.signal.under_prep", { delta: underDelta })}
+            : t("opening.phase2.signal.under_prep", { delta: roundQty(underDelta) })}
         </button>
       ) : null}
 
@@ -953,48 +949,78 @@ interface NumericInputProps {
   onChange: (next: number | null) => void;
   onBlur?: () => void;
   ariaLabel: string;
+  /** B1 #5 — shown beside the box while its text is not a number (e.g. "5 1/3"). */
+  invalidHint: string;
   hasError?: boolean;
   /** Locked (read-only) — the input renders its value but cannot be edited. */
   disabled?: boolean;
 }
 
+const draftOf = (v: number | null) => (v === null ? "" : String(v));
+
+/**
+ * B1 #5 — the box keeps what was TYPED (a local draft) instead of re-rendering String(value):
+ * typing "0." used to commit 0 and re-render "0", so the point vanished and 0.5 could not be
+ * typed one key at a time. The parent's number moves only when the draft means a number
+ * (parseDecimalDraft: "5" and "5." commit 5, "." commits nothing); an invalid draft ("5 1/3")
+ * commits nothing and says so. Blur saves the parent's value — the last valid number — and
+ * tidies a partial draft ("5." → "5"). The draft re-syncs from the prop with the during-render
+ * prev-compare pattern (never an effect) when the value changes from outside the box.
+ */
 function NumericInput({
   value,
   onChange,
   onBlur,
   ariaLabel,
+  invalidHint,
   hasError = false,
   disabled = false,
 }: NumericInputProps) {
-  const stringValue = value === null ? "" : String(value);
+  const [draft, setDraft] = useState(() => draftOf(value));
+  const [prevValue, setPrevValue] = useState(value);
+  if (value !== prevValue) {
+    setPrevValue(value);
+    const d = parseDecimalDraft(draft);
+    const draftMeans = d.kind === "empty" ? null : d.kind === "invalid" ? undefined : d.value;
+    if (draftMeans !== value) setDraft(draftOf(value));
+  }
+  const invalid = !disabled && parseDecimalDraft(draft).kind === "invalid";
   return (
-    <input
-      type="text"
-      inputMode="decimal"
-      value={stringValue}
-      disabled={disabled}
-      onChange={(e) => {
-        const raw = e.target.value.trim();
-        if (raw === "") {
-          onChange(null);
-          return;
-        }
-        const parsed = Number(raw);
-        if (Number.isFinite(parsed)) onChange(parsed);
-      }}
-      onBlur={onBlur}
-      aria-label={ariaLabel}
-      aria-invalid={hasError}
-      className={[
-        "inline-flex h-11 w-20 items-center rounded-md border-2 px-3",
-        "text-base font-semibold text-co-text",
-        "transition focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60",
-        disabled
-          ? "border-co-border-2 bg-co-bg/40 text-co-text-muted cursor-not-allowed"
-          : hasError
-            ? "border-co-cta-text bg-co-surface"
-            : "border-co-border-2 bg-co-surface hover:border-co-text",
-      ].join(" ")}
-    />
+    <>
+      <input
+        type="text"
+        inputMode="decimal"
+        value={draft}
+        disabled={disabled}
+        onChange={(e) => {
+          const raw = e.target.value;
+          setDraft(raw);
+          const d = parseDecimalDraft(raw);
+          if (d.kind === "empty") onChange(null);
+          else if ((d.kind === "number" || d.kind === "partial") && d.value !== null) onChange(d.value);
+        }}
+        onBlur={() => {
+          if (!invalid) setDraft(draftOf(value));
+          onBlur?.();
+        }}
+        aria-label={ariaLabel}
+        aria-invalid={hasError || invalid}
+        className={[
+          "inline-flex h-11 w-20 items-center rounded-md border-2 px-3",
+          "text-base font-semibold text-co-text",
+          "transition focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60",
+          disabled
+            ? "border-co-border-2 bg-co-bg/40 text-co-text-muted cursor-not-allowed"
+            : hasError || invalid
+              ? "border-co-cta-text bg-co-surface"
+              : "border-co-border-2 bg-co-surface hover:border-co-text",
+        ].join(" ")}
+      />
+      {invalid ? (
+        <span role="alert" className="text-[11px] font-medium text-co-cta-text">
+          {invalidHint}
+        </span>
+      ) : null}
+    </>
   );
 }

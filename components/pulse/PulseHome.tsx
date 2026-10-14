@@ -20,6 +20,7 @@ import { BOTH_SHOPS_LEVEL, pulsePageAccess, visibleSections } from "@/lib/pulse/
 import { withAbort } from "@/lib/pulse/abort";
 import { loadPulseSections, pulseDeps, SECTION_DEADLINE_MS } from "@/lib/pulse/sections";
 import type { AuthContext } from "@/lib/session";
+import { rememberedShopId } from "@/lib/shop-context";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 
 const shell = "mx-auto flex max-w-2xl md:max-w-3xl lg:max-w-5xl xl:max-w-7xl flex-col gap-4 px-4 pb-32 pt-4 sm:px-6";
@@ -33,7 +34,7 @@ export async function PulseHome({ auth, requested }: { auth: AuthContext; reques
   const service = getServiceRoleClient();
   const accessible = await loadAccessibleLocations(service, auth);
   const actor = { role: auth.role, locations: auth.locations, level: auth.level };
-  const shops = resolvePulsePanels({ requested, accessible, actor });
+  const shops = resolvePulsePanels({ requested, accessible, actor, remembered: await rememberedShopId() });
   if (!shops || shops.length === 0) {
     return (
       <main className={shell}>

@@ -19,6 +19,14 @@ import { etCalendarDate } from "@/lib/operational-day";
 import type { TranslationKey } from "@/lib/i18n/types";
 import { PasswordModal } from "@/components/auth/PasswordModal";
 import type { Quote, QuoteItem, DeliveryZone, ChargeRates, ChargeStack } from "@/lib/catering/quotes";
+import {
+  appendLines,
+  leadOptionLabel,
+  prefillFromLead,
+  type QuoteClientRef,
+  type QuoteLeadOption,
+  type QuoteLeadRef,
+} from "@/lib/catering/quotes-shared";
 import type { CateringMenuItem, CateringPackage } from "@/lib/catering/menu";
 import type { Payment } from "@/lib/catering/payments";
 import { postJson, resolveErrorKey, isStepUpCode } from "./shared";
@@ -33,8 +41,10 @@ interface LocationPricing {
 export interface QuotesClientProps {
   quotes: Quote[];
   locations: { id: string; name: string }[];
+  /** B2: the working shop — a NEW quote's default Location (a revision keeps its own). */
+  defaultLocationId: string | null;
   customers: { id: string; name: string; company: string | null; email: string | null }[];
-  leads: { id: string; contactName: string; company: string | null; eventDate: string | null; headcount: number | null; locationId: string | null }[];
+  leads: QuoteLeadOption[];
   pricingByLocation: Record<string, LocationPricing>;
   menuItems: CateringMenuItem[];
   packagesByLocation: Record<string, CateringPackage[]>;
@@ -46,6 +56,11 @@ type View = { mode: "list" } | { mode: "build"; reviseOf: QuoteDetail | null } |
 interface QuoteDetail {
   quote: Quote;
   items: QuoteItem[];
+  /** Who the quote is for (B5 #35) — present on the detail GET, absent on a revise draft. */
+  client?: QuoteClientRef | null;
+  lead?: QuoteLeadRef | null;
+  /** Another shop's customer, attached by email — exists, contact details not shown (option b). */
+  clientHidden?: boolean;
 }
 
 const STATUS_ORDER = ["draft", "sent", "accepted", "declined", "expired"] as const;
@@ -56,7 +71,7 @@ function dollarsToCents(v: string): number | null {
   return Math.round(n * 100);
 }
 
-export function QuotesClient({ quotes, locations, customers, leads, pricingByLocation, menuItems, packagesByLocation, actorLevel }: QuotesClientProps) {
+export function QuotesClient({ quotes, locations, defaultLocationId, customers, leads, pricingByLocation, menuItems, packagesByLocation, actorLevel }: QuotesClientProps) {
   const { t, language } = useTranslation();
   const router = useRouter();
   const [view, setView] = useState<View>({ mode: "list" });
@@ -68,6 +83,7 @@ export function QuotesClient({ quotes, locations, customers, leads, pricingByLoc
       <QuoteBuilder
         reviseOf={view.reviseOf}
         locations={locations}
+        defaultLocationId={defaultLocationId}
         customers={customers}
         leads={leads}
         pricingByLocation={pricingByLocation}
@@ -188,6 +204,7 @@ function blankLine(): LineDraft {
 function QuoteBuilder({
   reviseOf,
   locations,
+  defaultLocationId,
   customers,
   leads,
   pricingByLocation,
@@ -198,6 +215,7 @@ function QuoteBuilder({
 }: {
   reviseOf: QuoteDetail | null;
   locations: QuotesClientProps["locations"];
+  defaultLocationId: string | null;
   customers: QuotesClientProps["customers"];
   leads: QuotesClientProps["leads"];
   pricingByLocation: Record<string, LocationPricing>;
@@ -210,7 +228,7 @@ function QuoteBuilder({
   const money = (c: number) => formatCents(c, language);
   const editing = reviseOf?.quote ?? null;
 
-  const [locationId, setLocationId] = useState<string>(editing?.locationId ?? locations[0]?.id ?? "");
+  const [locationId, setLocationId] = useState<string>(editing?.locationId ?? defaultLocationId ?? "");
   const [contactEmail, setContactEmail] = useState<string>("");
   const [contactName, setContactName] = useState<string>("");
   const [contactCompany, setContactCompany] = useState<string>("");
@@ -287,7 +305,7 @@ function QuoteBuilder({
       menuItemId: item.kind === "menu_item" ? item.id : null,
       packageId: null,
     };
-    setLines((prev) => [...prev, line]);
+    setLines((prev) => appendLines(prev, [line]));
   };
   const addPackage = (pkg: CateringPackage) => {
     // Expand the package into editable per-item lines (customize each item). If the package
@@ -316,7 +334,27 @@ function QuoteBuilder({
       lineKeySeq += 1;
       newLines.unshift({ key: `l${lineKeySeq}`, description: pkg.labelEn, quantity: "1", unitPrice: (pkg.priceCents / 100).toString(), itemId: null, menuItemId: null, packageId: pkg.id });
     }
-    setLines((prev) => [...prev, ...newLines]);
+    setLines((prev) => appendLines(prev, newLines));
+  };
+
+  // Picking a lead fills only the EMPTY fields and moves the shop to the lead's (B5 #38).
+  const pickLead = (id: string) => {
+    setPipelineId(id);
+    const lead = leads.find((l) => l.id === id);
+    if (!lead || editing) return;
+    const next = prefillFromLead(
+      { contactName, contactCompany, eventDate, headcount, locationId },
+      lead,
+      locations.map((l) => l.id),
+    );
+    setContactName(next.contactName);
+    setContactCompany(next.contactCompany);
+    setEventDate(next.eventDate);
+    setHeadcount(next.headcount);
+    if (next.locationId !== locationId) {
+      setLocationId(next.locationId);
+      setDeliveryZoneId("");
+    }
   };
 
   const submit = async () => {
@@ -435,10 +473,10 @@ function QuoteBuilder({
           </>
         )}
         <Field label={t("catering.quotes.field.lead")}>
-          <select value={pipelineId} onChange={(e) => setPipelineId(e.target.value)} disabled={!!editing} className="min-h-[44px] w-full rounded-lg border-2 border-co-border-2 bg-co-surface px-3 text-sm text-co-text disabled:opacity-60">
+          <select value={pipelineId} onChange={(e) => pickLead(e.target.value)} disabled={!!editing} className="min-h-[44px] w-full rounded-lg border-2 border-co-border-2 bg-co-surface px-3 text-sm text-co-text disabled:opacity-60">
             <option value="">{t("catering.quotes.none")}</option>
             {leads.map((l) => (
-              <option key={l.id} value={l.id}>{l.company ? `${l.contactName} · ${l.company}` : l.contactName}</option>
+              <option key={l.id} value={l.id}>{leadOptionLabel(l, (d) => formatDateLabel(d, language))}</option>
             ))}
           </select>
         </Field>
@@ -769,6 +807,25 @@ function QuoteDetailPanel({
           {q.headcount != null ? ` · ${q.headcount} ${t("catering.quotes.covers")}` : ""}
           {q.version > 1 ? ` · v${q.version}` : ""}
         </p>
+        {detail.client && (
+          <p className="text-sm text-co-text">
+            <span className="font-semibold">{t("catering.quotes.client")}:</span> {detail.client.name}
+            {detail.client.company ? ` · ${detail.client.company}` : ""}
+            {detail.client.email ? ` · ${detail.client.email}` : ""}
+          </p>
+        )}
+        {!detail.client && detail.clientHidden && (
+          <p className="text-sm text-co-text">
+            <span className="font-semibold">{t("catering.quotes.client")}:</span> {t("catering.quotes.client_hidden")}
+          </p>
+        )}
+        {detail.lead && (
+          <p className="text-sm text-co-text">
+            <span className="font-semibold">{t("catering.quotes.lead")}:</span> {detail.lead.contactName}
+            {detail.lead.company ? ` · ${detail.lead.company}` : ""}
+            {detail.lead.eventDate ? ` · ${formatDateLabel(detail.lead.eventDate, language)}` : ""}
+          </p>
+        )}
         {q.expiresAt && (
           <p className="text-xs text-co-text-dim">
             {t("catering.quotes.expires")}: {formatDateLabel(etCalendarDate(q.expiresAt), language)}

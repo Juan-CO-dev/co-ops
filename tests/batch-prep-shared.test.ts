@@ -143,6 +143,8 @@ describe("eligibility and shelf life", () => {
     expect(isPastShelfLife("2026-10-02", 5, "2026-10-07")).toBe(false);
     expect(isPastShelfLife(null, 5, "2026-10-07")).toBe(false);
     expect(isPastShelfLife("2026-10-01T09:12:00.000Z", 5, "2026-10-07T06:00:00.000Z")).toBe(true);
+    // Made 9 PM EDT on 10-01 (stored 01:00Z on 10-02): the ET day is 10-01, so by 10-07 it is 6 days old.
+    expect(isPastShelfLife("2026-10-02T01:00:00.000Z", 5, "2026-10-07")).toBe(true);
   });
 });
 

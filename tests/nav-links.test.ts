@@ -2,19 +2,21 @@ import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { MIDSHIFT_BASE_LEVEL } from "@/lib/midshift-shared";
 import { navDestinationsFor, chipHref } from "@/lib/nav-links";
+import { PRODUCE_MIN } from "@/lib/production";
 import { MAINTENANCE_LINK_LEVEL, PULSE_V2_BASE_LEVEL, canOpenMaintenance, pulsePageAccess } from "@/lib/pulse/scope-shared";
 import { matchPages } from "@/lib/unified-search";
 
 const hrefs = (level: number) => navDestinationsFor(level).map((d) => d.href).sort();
 const everyone = ["/training", "/profile", "/settings", "/my-feedback", "/assignments"];
 const kh = ["/mid-shift", "/reports/trends"];
+const employee = ["/operations/production"]; // PRODUCE_MIN = 3 (Juan D-64)
 const lead = ["/catering"];
 const manager = ["/lto", "/admin", "/admin/recipes"];
 
 describe("role navigation", () => {
   it("reports begins at trainee level 2", () => { expect(hrefs(1)).not.toContain("/reports"); expect(hrefs(2)).toContain("/reports"); });
   it.each([2, 3, 4, 5, 6, 7, 9])("shows exactly the approved destinations at level %s", (level) => {
-    expect(hrefs(level)).toEqual([...everyone, ...(level >= 2 ? ["/reports", "/reports/written"] : []), ...(level >= 3 ? ["/maintenance"] : []), ...(level >= 4 ? kh : []), ...(level >= 5 ? lead : []), ...(level >= 6 ? manager : [])].sort());
+    expect(hrefs(level)).toEqual([...everyone, ...(level >= 2 ? ["/reports", "/reports/written"] : []), ...(level >= 3 ? ["/maintenance", ...employee] : []), ...(level >= 4 ? kh : []), ...(level >= 5 ? lead : []), ...(level >= 6 ? manager : [])].sort());
   });
   it("never advertises a placeholder or the ordering task in navigation", () => {
     for (const level of [2, 3, 4, 5, 6, 7, 9, 10]) {
@@ -25,7 +27,7 @@ describe("role navigation", () => {
     // Floors confirmed against destination pages/layouts and their server loaders.
     const pageFloors: Record<string, number> = {
       "/maintenance": 3, "/training": 0, "/admin/recipes": 6, "/profile": 0, "/settings": 0, "/my-feedback": 0,
-      "/mid-shift": 4, "/assignments": 0, "/reports": 2,
+      "/mid-shift": 4, "/operations/production": 3, "/assignments": 0, "/reports": 2,
       "/catering": 5, "/reports/written": 2, "/reports/trends": 4, "/lto": 0, "/admin": 6,
     };
     for (const level of [2, 3, 4, 5, 6, 7, 9]) for (const href of hrefs(level)) {
@@ -41,6 +43,19 @@ describe("role navigation", () => {
     expect(assignments).not.toMatch(/auth\.level < .*redirect/);
     expect(catering).toMatch(/if \(level < CATERING_HUB_MIN\)/);
     expect(admin).toMatch(/if \(auth\.level < ADMIN_MIN_LEVEL\)/);
+    // Production (Juan D-64): the page, both routes and the menu all use PRODUCE_MIN (3); a missing ?location defaults.
+    const production = source("app/(authed)/operations/production/page.tsx");
+    expect(production).toMatch(/if \(auth\.level < PRODUCE_MIN\) redirect\("\/dashboard"\)/);
+    expect(PRODUCE_MIN).toBe(3);
+    expect(source("app/api/operations/production/route.ts")).toMatch(/level < PRODUCE_MIN/);
+    expect(source("app/api/operations/production/predict/route.ts")).toMatch(/level < PRODUCE_MIN/);
+    // D-64: no hard ?location redirect any more; the page defaults through the B2 shop resolver
+    // (remembered shop, else the first allowed) and the location bind still runs after it.
+    expect(production).not.toMatch(/if \(!location\) redirect\("\/dashboard"\);\s*const locActor/);
+    expect(production).toMatch(/const location = requested \?\? \(await resolveShopId\(/);
+    expect(production).toMatch(/if \(!lockLocationContext\(locActor, location\)\) redirect\("\/dashboard"\)/);
+    const prod = navDestinationsFor(3).find((d) => d.href === "/operations/production");
+    expect(prod).toMatchObject({ key: "production.page.title", scoped: true, minLevel: PRODUCE_MIN });
     expect(source("app/(authed)/mid-shift/page.tsx")).toMatch(/if \(auth\.level < MIDSHIFT_BASE_LEVEL\)/);
     const declaredNumber = (contents: string, pattern: RegExp) => {
       const value = contents.match(pattern)?.[1];
@@ -107,6 +122,21 @@ describe("Mid-shift Pulse v2 in navigation (crew get the pulse, Juan 2026-10-12)
     const page = source("app/(authed)/mid-shift/page.tsx");
     expect(page.indexOf("if (pulseV2Enabled())")).toBeGreaterThan(-1);
     expect(page.indexOf("if (pulseV2Enabled())")).toBeLessThan(page.indexOf("if (auth.level < MIDSHIFT_BASE_LEVEL)"));
+  });
+});
+
+describe("Production in the menu (Juan D-64)", () => {
+  it("shows for employees and up only", () => {
+    expect(hrefs(2)).not.toContain("/operations/production");
+    for (const level of [3, 4, 5, 6, 7, 9]) expect(hrefs(level)).toContain("/operations/production");
+  });
+  it("carries the selected shop (the page needs ?location=)", () => {
+    expect(chipHref("/operations/production", true, "shop-1")).toBe("/operations/production?location=shop-1");
+  });
+  it("unified search finds it for level 3+ and hides it below", () => {
+    const t = (key: string) => (key === "production.page.title" ? "Production" : key);
+    expect(matchPages(3, "production", t).map((p) => p.href)).toEqual(["/operations/production"]);
+    expect(matchPages(2, "production", t)).toEqual([]);
   });
 });
 

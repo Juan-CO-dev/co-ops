@@ -31,6 +31,8 @@ export async function POST(req: NextRequest) {
     // customer), resolve-or-create the contact (auto-attributing to a company by domain).
     let customerId = optStr(b.customerId);
     const contactEmail = optStr(b.contactEmail);
+    // Set ONLY here, from the server's own resolution — never from the body (Juan, option b).
+    let emailAttach: { email: string } | null = null;
     if (!customerId && contactEmail) {
       const contact = await resolveOrCreateContact(ctx, {
         email: contactEmail,
@@ -39,6 +41,7 @@ export async function POST(req: NextRequest) {
         primaryLocationId: locationId,
       });
       customerId = contact.id;
+      emailAttach = { email: contactEmail };
     }
 
     const input: CreateQuoteInput = {
@@ -52,6 +55,7 @@ export async function POST(req: NextRequest) {
       lines: parseQuoteLinesFromBody(b.lines),
       notes: optStr(b.notes),
       expiresAt: optStr(b.expiresAt),
+      emailAttach,
     };
     const { id, version } = await createQuote(ctx, input);
     return jsonOk({ id, version }, 201);

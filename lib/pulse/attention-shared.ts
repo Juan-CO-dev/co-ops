@@ -3,27 +3,46 @@
  * sections' facts (lib/pulse/sections.ts); this module owns the ORDER, the severity classes, the
  * score (same three states as v1's pulseScore) and the crew filter.
  */
-import type { PulseScore } from "@/lib/midshift-shared";
+import type { PulseScore, ReportKey, ReportStatusRow } from "@/lib/midshift-shared";
 import type { AttentionEvidence, AttentionKind, AttentionRow, AttentionRowScoped, AttentionSeverity } from "@/lib/pulse/types";
 
-/** Spec order. The index is the rank. */
+/**
+ * The index is the rank. D-27 (Juan 2026-10-13): RED ITEMS FIRST, STATIONS AFTER. A missed checklist
+ * or a fridge out of range is a single act-now fact; uncovered stations come in a run (8 at an empty
+ * open), and with stations first "Closing is overdue" sank behind the card's See more. So: the red
+ * non-station facts lead, then every station row (uncovered, trim due, closing soon) as one group,
+ * then the yellow advisories.
+ */
 export const ATTENTION_ORDER: readonly AttentionKind[] = [
+  "checklist_missed",
+  "task_late",
+  "fridge_out_of_range",
+  "cutoff_missed",
+  "catering_not_rung",
   "station_uncovered",
   "station_trim_due",
   "station_closing_soon",
-  "task_late",
-  "checklist_missed",
-  "fridge_out_of_range",
   "fridge_unchecked",
   "item_low",
-  "catering_not_rung",
   "catering_unprepped",
   "clockin_unlinked",
 ];
 
 const RED: ReadonlySet<AttentionKind> = new Set([
   "station_uncovered", "station_trim_due", "task_late", "checklist_missed", "fridge_out_of_range", "catering_not_rung",
+  // D-63: a vendor cutoff that passed with no placed order — the fix is a phone call, now.
+  "cutoff_missed",
 ]);
+
+/**
+ * B4 #23 — report keys whose assigned task counts as LATE on the Pulse. Only `overdue` qualifies:
+ * `due_now` is the report's own due WINDOW (mid-day prep is due-now 2:00-3:30 PM and overdue after
+ * 3:30 PM, lib/midshift-shared EXPECTED_BY), and calling it late from 2:00 cried wolf on every
+ * assigned mid-day. The overdue test is the same one the missed-checklist rows use.
+ */
+export function lateTaskKeys(reports: ReadonlyArray<Pick<ReportStatusRow, "key" | "overdue">>): Set<ReportKey> {
+  return new Set(reports.filter((r) => r.overdue === "overdue").map((r) => r.key));
+}
 
 export function severityOf(kind: AttentionKind): AttentionSeverity {
   return RED.has(kind) ? "red" : "yellow";

@@ -105,3 +105,8 @@ export function stageDot(stage: BookedStage | "lost"): string {
   if (stage === "lost") return "bg-co-text-dim opacity-50";
   return stage === "confirmed" ? "bg-co-gold" : stage === "out" ? "bg-co-text" : "bg-co-success";
 }
+
+/** "1 source" / "{n} sources" — the house `_one` / `_other` plural rule (B5 #40). */
+export function sourceCountKey(n: number): TranslationKey {
+  return n === 1 ? "catering.insights.source_count_one" : "catering.insights.source_count_other";
+}

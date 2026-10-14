@@ -26,12 +26,24 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import type { PinKeypadError } from "@/lib/auth-pin-errors";
+import { createPinEntry } from "@/lib/pin-entry";
 import { ROLES, type RoleCode } from "@/lib/roles";
 import { BrandMark } from "@/components/BrandMark";
 import { useTranslation } from "@/lib/i18n/provider";
 import type { TranslationKey } from "@/lib/i18n/types";
 
 const PIN_LENGTH = 4;
+/** Let the 4th dot paint before the POST goes out. */
+const SUBMIT_DELAY_MS = 60;
+/**
+ * After a successful sign-in with `lockOnSuccess`, the keypad stays locked
+ * while the router navigates. If the navigation never lands, release it so the
+ * person is never stranded on a dead keypad.
+ */
+const NAVIGATE_RELEASE_MS = 10_000;
+
+export type { PinKeypadError };
 
 export interface PinKeypadProps {
   userName: string;
@@ -39,13 +51,13 @@ export interface PinKeypadProps {
   /** Called with the entered PIN once the user submits. Returns when the API resolves. */
   onSubmit: (pin: string) => Promise<{ ok: true } | { ok: false; error: PinKeypadError }>;
   onBack: () => void;
+  /**
+   * Keep the keypad locked after an `ok` answer (sign-in navigates away; a
+   * re-enabled keypad let a 5th tap re-submit while the route was loading).
+   * Off by default: step-up callers (cash, vault) close their own modal.
+   */
+  lockOnSuccess?: boolean;
 }
-
-export type PinKeypadError =
-  | { kind: "invalid"; message?: string }
-  | { kind: "locked"; retryAfterSeconds: number }
-  | { kind: "inactive" }
-  | { kind: "network"; message?: string };
 
 function vibrateIfAvailable(durationMs: number) {
   if (typeof navigator === "undefined") return;
@@ -64,19 +76,36 @@ function formatRetryAfter(seconds: number): string {
   return `${mm}:${ss.toString().padStart(2, "0")}`;
 }
 
-export function PinKeypad({ userName, role, onSubmit, onBack }: PinKeypadProps) {
+export function PinKeypad({ userName, role, onSubmit, onBack, lockOnSuccess = false }: PinKeypadProps) {
   const { t } = useTranslation();
   const def = ROLES[role];
   const roleLabel = t(`role.${role}` as TranslationKey);
   const [pin, setPin] = useState("");
+  // Synchronous source of truth for the buffer AND the freeze. `pin` (state) is for
+  // rendering only: two events before a re-render both read the same stale state (a lost
+  // digit; an edit after the 4th digit already queued the submit). Once the 4th digit lands
+  // the entry is frozen until a failure path resets it - see lib/pin-entry.ts.
+  const [entry] = useState(createPinEntry);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<PinKeypadError | null>(null);
   const [shake, setShake] = useState(false);
   const [useSystemKeyboard, setUseSystemKeyboard] = useState(false);
   const [retryRemaining, setRetryRemaining] = useState<number | null>(null);
   const systemInputRef = useRef<HTMLInputElement | null>(null);
+  // Synchronous one-shot latch (mirrors PinConfirmModal): `submitting` is state
+  // and only flips on the next render, so a second tap/timer could POST twice.
+  const inFlight = useRef(false);
+  const timers = useRef<number[]>([]);
 
-  // Live lockout countdown. Expiry is driven inside the timer callback (clearing
+  // Never leave a scheduled submit or release behind an unmounted keypad.
+  useEffect(() => {
+    const pending = timers.current;
+    return () => {
+      for (const id of pending) window.clearTimeout(id);
+    };
+  }, []);
+
+  // Live lockout / throttle countdown. Expiry is driven inside the timer callback (clearing
   // retryRemaining + the locked error there) — a synchronous setRetryRemaining(null)
   // in the effect body would trip react-hooks/set-state-in-effect (cascading renders).
   useEffect(() => {
@@ -84,7 +113,7 @@ export function PinKeypad({ userName, role, onSubmit, onBack }: PinKeypadProps) 
     const t = window.setTimeout(() => {
       if (retryRemaining <= 1) {
         setRetryRemaining(null);
-        setError((e) => (e && e.kind === "locked" ? null : e));
+        setError((e) => (e && (e.kind === "locked" || e.kind === "throttled") ? null : e));
       } else {
         setRetryRemaining(retryRemaining - 1);
       }
@@ -101,75 +130,102 @@ export function PinKeypad({ userName, role, onSubmit, onBack }: PinKeypadProps) 
     vibrateIfAvailable(200);
     setShake(true);
     window.setTimeout(() => setShake(false), 400);
+    entry.reset();
     setPin("");
-    if (err.kind === "locked") {
+    if (err.kind === "locked" || err.kind === "throttled") {
       setRetryRemaining(err.retryAfterSeconds);
     }
-  }, []);
+  }, [entry]);
 
+  const release = useCallback(() => {
+    inFlight.current = false;
+    entry.unfreeze();
+    setSubmitting(false);
+  }, [entry]);
+
+  // Runs only via queueSubmit, which already took the latch and set submitting.
   const submit = useCallback(
     async (full: string) => {
-      setSubmitting(true);
-      setError(null);
+      let navigating = false;
       try {
         const result = await onSubmit(full);
-        if (!result.ok) triggerError(result.error);
+        if (result.ok) navigating = lockOnSuccess;
+        else triggerError(result.error);
       } catch {
         triggerError({ kind: "network", message: t("auth.pin.error_network") });
       } finally {
-        setSubmitting(false);
+        if (navigating) {
+          // Success: stay locked through the navigation (see NAVIGATE_RELEASE_MS).
+          timers.current.push(window.setTimeout(release, NAVIGATE_RELEASE_MS));
+        } else {
+          release();
+        }
       }
     },
-    [onSubmit, triggerError, t],
+    [onSubmit, triggerError, t, release, lockOnSuccess],
+  );
+
+  // Take the latch and lock the keypad the moment the 4th digit lands, then POST
+  // after a beat. Side effects live here, NEVER inside a setPin updater (Strict
+  // Mode double-invokes updaters, which scheduled two submits - the #458 bug).
+  const queueSubmit = useCallback(
+    (full: string) => {
+      if (inFlight.current) return;
+      inFlight.current = true;
+      setSubmitting(true);
+      setError(null);
+      timers.current.push(window.setTimeout(() => void submit(full), SUBMIT_DELAY_MS));
+    },
+    [submit],
   );
 
   const handleDigit = useCallback(
     (d: string) => {
-      if (submitting || retryRemaining !== null) return;
+      if (submitting || inFlight.current || retryRemaining !== null) return;
+      // null = frozen (a full PIN is queued), full or not a digit: extra taps are noise.
+      const step = entry.append(d);
+      if (!step) return;
       vibrateIfAvailable(10);
       setError(null);
-      setPin((prev) => {
-        const next = (prev + d).slice(0, PIN_LENGTH);
-        if (next.length === PIN_LENGTH) {
-          window.setTimeout(() => void submit(next), 60);
-        }
-        return next;
-      });
+      setPin(step.pin);
+      if (step.completed) queueSubmit(step.pin);
     },
-    [submitting, retryRemaining, submit],
+    [submitting, retryRemaining, entry, queueSubmit],
   );
 
   const handleClear = useCallback(() => {
-    if (submitting) return;
+    if (submitting || inFlight.current) return;
+    if (!entry.clear()) return;
     vibrateIfAvailable(10);
     setPin("");
     setError(null);
-  }, [submitting]);
+  }, [submitting, entry]);
 
   const handleSystemInput = useCallback(
     (value: string) => {
-      if (submitting) return;
-      const cleaned = value.replace(/\D/g, "").slice(0, PIN_LENGTH);
+      if (submitting || inFlight.current) return;
+      const step = entry.input(value);
+      if (!step) return;
       setError(null);
-      setPin(cleaned);
-      if (cleaned.length === PIN_LENGTH) {
-        window.setTimeout(() => void submit(cleaned), 60);
-      }
+      setPin(step.pin);
+      if (step.completed) queueSubmit(step.pin);
     },
-    [submitting, submit],
+    [submitting, entry, queueSubmit],
   );
 
   // Physical keyboard handling — accessibility affordance + desktop testing.
   useEffect(() => {
     if (useSystemKeyboard) return;
     function onKey(e: KeyboardEvent) {
-      if (submitting || retryRemaining !== null) return;
+      // Guard with the SYNCHRONOUS latch too: `submitting` is render state and lags the 4th digit.
+      if (submitting || inFlight.current || entry.frozen || retryRemaining !== null) return;
       if (/^\d$/.test(e.key)) {
         e.preventDefault();
         handleDigit(e.key);
       } else if (e.key === "Backspace") {
         e.preventDefault();
-        setPin((prev) => prev.slice(0, -1));
+        const step = entry.backspace();
+        if (step) setPin(step.pin);
       } else if (e.key === "Escape") {
         e.preventDefault();
         handleClear();
@@ -177,10 +233,13 @@ export function PinKeypad({ userName, role, onSubmit, onBack }: PinKeypadProps) 
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [useSystemKeyboard, submitting, retryRemaining, handleDigit, handleClear]);
+  }, [useSystemKeyboard, submitting, retryRemaining, entry, handleDigit, handleClear]);
 
   const dots = Array.from({ length: PIN_LENGTH }, (_, i) => i < pin.length);
   const isLocked = retryRemaining !== null;
+  // Two reasons to wait, two voices: the account's lockout vs this device's
+  // sign-in throttle (a shop shares one IP, so "Wrong PIN" was a lie there).
+  const waitReason = error?.kind === "throttled" ? "throttled" : "locked";
 
   return (
     <div className="flex w-full flex-col items-stretch gap-6">
@@ -214,7 +273,7 @@ export function PinKeypad({ userName, role, onSubmit, onBack }: PinKeypadProps) 
           ))}
         </div>
 
-        {error && error.kind !== "locked" && (
+        {error && error.kind !== "locked" && error.kind !== "throttled" && (
           <p className="text-center text-sm font-semibold text-co-cta-text" role="alert">
             {error.kind === "invalid" && (error.message ?? t("auth.pin.error_invalid"))}
             {error.kind === "inactive" && t("auth.pin.error_inactive")}
@@ -227,12 +286,16 @@ export function PinKeypad({ userName, role, onSubmit, onBack }: PinKeypadProps) 
             role="alert"
             className="w-full rounded-xl border-2 border-co-cta-text bg-co-cta/10 px-4 py-3 text-center"
           >
-            <p className="text-sm font-bold uppercase tracking-wide text-co-cta-text">{t("auth.pin.locked_title")}</p>
+            <p className="text-sm font-bold uppercase tracking-wide text-co-cta-text">
+              {waitReason === "throttled" ? t("auth.pin.throttled_title") : t("auth.pin.locked_title")}
+            </p>
             <p className="mt-1 text-2xl font-extrabold tabular-nums text-co-text">
               {formatRetryAfter(retryRemaining)}
             </p>
             <p className="mt-1 text-xs text-co-text-muted">
-              {t("auth.pin.locked_body", { time: formatRetryAfter(retryRemaining) })}
+              {waitReason === "throttled"
+                ? t("auth.pin.throttled_body", { time: formatRetryAfter(retryRemaining) })
+                : t("auth.pin.locked_body", { time: formatRetryAfter(retryRemaining) })}
             </p>
           </div>
         )}

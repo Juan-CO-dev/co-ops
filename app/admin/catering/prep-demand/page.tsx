@@ -14,6 +14,8 @@
 import { redirect } from "next/navigation";
 
 import { requireSessionFromHeaders } from "@/lib/session";
+import { searchParamValues, shopParamFor } from "@/lib/shop-context-shared";
+import { resolveShop } from "@/lib/shop-context";
 import { ROLES } from "@/lib/roles";
 import { serverT } from "@/lib/i18n/server";
 import type { TranslationKey } from "@/lib/i18n/types";
@@ -50,13 +52,9 @@ export default async function AdminCateringPrepDemandPage({
   const sp = await searchParams;
   const locations = await loadPackageLocations(auth);
 
-  // Determine active location: from ?location= param, else first location.
-  const paramLocation = typeof sp["location"] === "string" ? sp["location"] : undefined;
-  const firstLocation = locations[0];
-  const locationId =
-    paramLocation && locations.some((l) => l.id === paramLocation)
-      ? paramLocation
-      : (firstLocation?.id ?? null);
+  // Active location (B2): ?location= when allowed, else the remembered shop, else the first.
+  const paramLocation = shopParamFor("/admin/catering/prep-demand", searchParamValues(sp));
+  const locationId = (await resolveShop(locations, paramLocation))?.id ?? null;
 
   // Default 14-day window from today.
   const from = todayYmd();

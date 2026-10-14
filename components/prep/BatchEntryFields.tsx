@@ -39,6 +39,7 @@ import {
 } from "@/lib/batch-prep-shared";
 import { formatDateLabel } from "@/lib/i18n/format";
 import type { Language, TranslationKey } from "@/lib/i18n/types";
+import { etDisplayDate } from "@/lib/operational-day";
 
 const bk = (k: string): TranslationKey => k as TranslationKey;
 
@@ -140,7 +141,7 @@ export function BatchEntryFields({
         ) : null}
         {ctx.madeOn !== null ? (
           <span className={pastShelfLife ? "font-bold text-co-cta-text" : "text-co-text-muted"}>
-            {t(bk("prep.batch.made_on"), { date: formatDateLabel(ctx.madeOn.slice(0, 10), language) })}
+            {t(bk("prep.batch.made_on"), { date: formatDateLabel(etDisplayDate(ctx.madeOn), language) })}
             {pastShelfLife ? ` · ${t(bk("prep.batch.past_shelf_life"), { days: ctx.shelfLifeDays })}` : ""}
           </span>
         ) : null}
@@ -266,7 +267,7 @@ export function BatchEntryFields({
                   aria-label={t(bk("prep.batch.reason_note_placeholder"))}
                   onChange={(e) => onChange({ ...value, overBatchReason: { code: "other", note: e.target.value } })}
                   onBlur={disabled ? undefined : () => onCommit?.(value)}
-                  className="min-h-[44px] w-full rounded-md border-2 border-co-border-2 bg-co-surface px-3 text-sm text-co-text focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60"
+                  className="min-h-[44px] w-full rounded-md border-2 border-co-border-2 bg-co-surface px-3 text-base text-co-text focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60"
                 />
               ) : null}
             </div>

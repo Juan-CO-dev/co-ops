@@ -11,6 +11,7 @@
 import { redirect } from "next/navigation";
 
 import { requireSessionFromHeaders } from "@/lib/session";
+import { resolveShop } from "@/lib/shop-context";
 import { getRoleLevel } from "@/lib/roles";
 import { serverT } from "@/lib/i18n/server";
 import { getServiceRoleClient } from "@/lib/supabase-server";
@@ -56,11 +57,15 @@ export default async function CateringQuotesPage() {
     locations = data ?? [];
   }
 
+  // B2: the shop the actor is working in (remembered at login / last explicit pick, else the
+  // first accessible). It is the new quote's default Location AND the picker's rate basis below.
+  const defaultLocationId = (await resolveShop(locations))?.id ?? null;
+
   // Catering rates are per-location. The staff picker shows a single flat à-la-carte list, so we
-  // derive its prices against the actor's first accessible location as an interim rate basis. The
+  // derive its prices against the working shop (above) as an interim rate basis. The
   // per-location staff builder reskin (menuByLocation) is owned by the later portal/staff pass; the
   // staff builder uses caller-supplied prices, so the picker price here is only a starting suggestion.
-  const rateLocationId = locations[0]?.id ?? null;
+  const rateLocationId = defaultLocationId;
   const menuItems = rateLocationId ? await loadCateringMenuItems(auth, rateLocationId) : [];
 
   // Per-location pricing context (delivery zones + rates) so the builder can render zones +
@@ -89,6 +94,7 @@ export default async function CateringQuotesPage() {
       <QuotesClient
         quotes={quotes}
         locations={locations}
+        defaultLocationId={defaultLocationId}
         customers={customers.map((c) => ({ id: c.id, name: c.name, company: c.company, email: c.email }))}
         leads={leads.map((l) => ({
           id: l.id,
@@ -97,6 +103,7 @@ export default async function CateringQuotesPage() {
           eventDate: l.eventDate,
           headcount: l.headcount,
           locationId: l.locationId,
+          locationName: l.locationName,
         }))}
         pricingByLocation={pricingByLocation}
         menuItems={menuItems}

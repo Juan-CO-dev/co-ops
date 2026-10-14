@@ -302,6 +302,8 @@ export async function POST(req: NextRequest) {
       closingAutoCompleteId: result.closingAutoCompleteId,
       editCount: result.editCount,
       originalSubmissionId: result.originalSubmissionId,
+      // D-66 — rows skipped for a bad stored shape were not included (and were not required).
+      skipped: result.skipped,
     });
   } catch (err) {
     if (err instanceof PrepError) return mapPrepError(err);

@@ -92,6 +92,8 @@ export function UserMenu({ userName, userEmail, actorLevel, initialBlurb }: User
         // Server confirmed; update local Context. Pessimistic — wait for 200
         // before updating so we don't flicker on an error response.
         setLanguage(next);
+        // Server-rendered (serverT) strings only change on a refetch (#54).
+        router.refresh();
       } else {
         let body: { error?: string; message?: string } = {};
         try {

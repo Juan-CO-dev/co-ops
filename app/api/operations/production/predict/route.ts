@@ -2,15 +2,15 @@ import { type NextRequest } from "next/server";
 import { requireSession } from "@/lib/session";
 import { ROLES } from "@/lib/roles";
 import { jsonError, jsonOk, parseJsonBody } from "@/lib/api-helpers";
-import { predictOutput, ProductionError } from "@/lib/production";
+import { predictOutput, ProductionError, PRODUCE_MIN } from "@/lib/production";
 
-// Advisory yield prediction for a (SKU → item) pair. KH+ (≥4).
+// Advisory yield prediction for a (SKU → item) pair. Employee+ (PRODUCE_MIN = 3).
 export async function POST(req: NextRequest) {
   const parsed = await parseJsonBody(req);
   if (parsed instanceof Response) return parsed;
   const ctx = await requireSession(req, "/api/operations/production/predict");
   if (ctx instanceof Response) return ctx;
-  if (ROLES[ctx.user.role].level < 4) return jsonError(403, "forbidden");
+  if (ROLES[ctx.user.role].level < PRODUCE_MIN) return jsonError(403, "forbidden");
 
   const b = parsed as { inputSkuId?: unknown; outputItemId?: unknown; inputQty?: unknown };
   if (

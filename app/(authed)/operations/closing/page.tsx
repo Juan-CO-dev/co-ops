@@ -55,11 +55,13 @@ import {
 } from "@/lib/checklist-rows";
 import { lockLocationContext, type LocationActor } from "@/lib/locations";
 import { reconcileClosingReportRefs } from "@/lib/prep";
+import { loadLocationTempItemIds } from "@/lib/reports-hub";
 import { applyEffectiveResolution, type EffectiveResolvableBuilder } from "@/lib/admin/template-builder-shared";
 import { formatDateLabel, formatTime } from "@/lib/i18n/format";
 import { serverT } from "@/lib/i18n/server";
 import type { Language } from "@/lib/i18n/types";
 import { etCalendarDate } from "@/lib/operational-day";
+import { amPrepGapNoteDue } from "@/lib/am-prep-gap-shared";
 import { getRoleLevel, type RoleCode } from "@/lib/roles";
 import { requireSessionFromHeaders } from "@/lib/session";
 import { getServiceRoleClient } from "@/lib/supabase-server";
@@ -473,8 +475,10 @@ export default async function ClosingPage({ searchParams }: PageProps) {
   // the closing screen is the one surface a manager reliably sees at day's
   // end, so it carries the signal: today's AM prep exists with ZERO saved
   // completions (or was never opened). Advisory only — never blocks finalize.
+  // D-17 (Juan 2026-10-13): hidden until 6 PM ET on the closing's business day — before
+  // then the count is simply not due, so the note (and its three reads) are skipped.
   let amPrepGap = false;
-  if (!isHistorical) {
+  if (!isHistorical && amPrepGapNoteDue(new Date().toISOString(), targetDate)) {
     const { data: amTmpls, error: atErr } = await sb
       .from("checklist_templates")
       .select("id")
@@ -552,6 +556,19 @@ export default async function ClosingPage({ searchParams }: PageProps) {
     });
   }));
 
+  // #18 — which count items are fridge-temperature readings (the maintenance
+  // registry is the source), so the expand panel says "Temp (°F)" instead of
+  // "Count". Cosmetic only: a failed read falls back to the generic label.
+  const tempReadingItems: Record<string, boolean> = {};
+  try {
+    const tempIds = await loadLocationTempItemIds(sb, locationParam);
+    for (const item of templateItems) {
+      if (item.expectsCount && tempIds.has(item.id)) tempReadingItems[item.id] = true;
+    }
+  } catch {
+    /* label-only; keep the generic Count label */
+  }
+
   const initialState: ClosingInitialState = {
     location: locationRow,
     instance: rowToInstance(instanceRow),
@@ -566,6 +583,7 @@ export default async function ClosingPage({ searchParams }: PageProps) {
     reportRefChains,
     reportRefCanEdit,
     reportRefCanOpen,
+    tempReadingItems,
     amPrepGap,
     incompleteReasons,
   };
@@ -579,7 +597,7 @@ export default async function ClosingPage({ searchParams }: PageProps) {
 
 function NoTemplateView({ locationLabel, language }: { locationLabel: string; language: Language }) {
   return (
-    <main className="mx-auto max-w-2xl md:max-w-3xl lg:max-w-5xl xl:max-w-6xl p-4 sm:p-6">
+    <main className="mx-auto w-full max-w-2xl md:max-w-3xl lg:max-w-5xl xl:max-w-6xl p-4 sm:p-6">
       <p className="text-xs font-bold uppercase tracking-wide text-co-text-muted">
         {serverT(language, "closing.no_template.heading")}
       </p>
@@ -606,7 +624,7 @@ function NoInstanceView({
   language: Language;
 }) {
   return (
-    <main className="mx-auto max-w-2xl md:max-w-3xl lg:max-w-5xl xl:max-w-6xl p-4 sm:p-6">
+    <main className="mx-auto w-full max-w-2xl md:max-w-3xl lg:max-w-5xl xl:max-w-6xl p-4 sm:p-6">
       <p className="text-xs font-bold uppercase tracking-wide text-co-text-muted">
         {serverT(language, "closing.no_template.heading")}
       </p>

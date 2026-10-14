@@ -106,6 +106,14 @@ export function OpeningChecklistItem({
   //   isNullSource = snapshot exists AND closer_count IS NULL (recount REQUIRED)
   const isSpotCheck = closerCount !== undefined;
   const isNullSource = closerCount === null;
+  // B1 #9 — the red required styling is for an EMPTY required recount. Once the opener has
+  // filled it (both boxes on a batch item) the row goes calm; aria-required still follows
+  // isNullSource, because the recount stays required.
+  const needsRecount =
+    isNullSource &&
+    (batchMode
+      ? (value.openerRecountLine ?? null) === null || (value.openerRecountBackUp ?? null) === null
+      : value.openerRecount === null);
 
   // Numeric-input recount handler — empty string → null, valid number → number,
   // invalid → ignore (input rejects). Pattern mirrors OpeningRecountPanel +
@@ -224,7 +232,7 @@ export function OpeningChecklistItem({
             <div
               className={[
                 "mt-1 flex flex-col gap-2 rounded-md border-2 px-3 py-2 text-sm",
-                isNullSource
+                needsRecount
                   ? "border-co-cta-text bg-co-danger-surface"
                   : "border-co-border-2 bg-co-bg",
               ].join(" ")}
@@ -233,7 +241,7 @@ export function OpeningChecklistItem({
                 <span
                   className={[
                     "shrink-0 text-xs font-bold uppercase tracking-[0.12em]",
-                    isNullSource ? "text-co-cta-text" : "text-co-text-muted",
+                    needsRecount ? "text-co-cta-text" : "text-co-text-muted",
                   ].join(" ")}
                 >
                   {t("opening.recount.label")}
@@ -263,7 +271,7 @@ export function OpeningChecklistItem({
                           "text-base font-semibold text-co-text",
                           "transition focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60",
                           verificationLocked ? "cursor-not-allowed opacity-70" : "",
-                          isNullSource
+                          isNullSource && current === null
                             ? "border-co-cta-text bg-co-surface hover:border-co-text"
                             : "border-co-border-2 bg-co-surface hover:border-co-text",
                         ].join(" ")}
@@ -282,7 +290,7 @@ export function OpeningChecklistItem({
             <div
               className={[
                 "mt-1 flex items-center gap-3 rounded-md border-2 px-3 py-2 text-sm",
-                isNullSource
+                needsRecount
                   ? "border-co-cta-text bg-co-danger-surface"
                   : "border-co-border-2 bg-co-bg",
               ].join(" ")}
@@ -290,7 +298,7 @@ export function OpeningChecklistItem({
               <span
                 className={[
                   "shrink-0 text-xs font-bold uppercase tracking-[0.12em]",
-                  isNullSource ? "text-co-cta-text" : "text-co-text-muted",
+                  needsRecount ? "text-co-cta-text" : "text-co-text-muted",
                 ].join(" ")}
               >
                 {t("opening.recount.label")}
@@ -308,7 +316,7 @@ export function OpeningChecklistItem({
                   "text-base font-semibold text-co-text",
                   "transition focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60",
                   verificationLocked ? "cursor-not-allowed opacity-70" : "",
-                  isNullSource
+                  needsRecount
                     ? "border-co-cta-text bg-co-surface hover:border-co-text"
                     : "border-co-border-2 bg-co-surface hover:border-co-text",
                 ].join(" ")}

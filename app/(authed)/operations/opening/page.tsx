@@ -36,6 +36,8 @@ import {
 import type { OpeningPhase1Draft } from "@/lib/opening-draft-shared";
 import { etCalendarDate } from "@/lib/operational-day";
 import { requireSessionFromHeaders } from "@/lib/session";
+import { searchParamValues, shopParamFor } from "@/lib/shop-context-shared";
+import { resolveShop } from "@/lib/shop-context";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import { applyEffectiveResolution, type EffectiveResolvableBuilder } from "@/lib/admin/template-builder-shared";
 import type { OpeningPhase2Meta } from "@/lib/types";
@@ -45,6 +47,7 @@ import type { ManagerOption } from "@/components/opening/OverParModal";
 import { DashboardBackLink } from "@/components/DashboardBackLink";
 
 import { OpeningClient } from "./opening-client";
+import { canEditConsumption } from "@/lib/consumption-edit-shared";
 
 interface LocationLite {
   id: string;
@@ -139,11 +142,9 @@ export default async function OpeningPage({ searchParams }: OpeningPageProps) {
   };
   const locations = await loadAccessibleLocations(sb, locationActor);
 
-  const { location: locParam } = await searchParams;
-  const selectedLocation =
-    (locParam ? locations.find((l) => l.id === locParam) : null) ??
-    locations[0] ??
-    null;
+  const sp = await searchParams;
+  const locParam = shopParamFor("/operations/opening", searchParamValues(sp));
+  const selectedLocation = await resolveShop(locations, locParam); // B2: ?location= → remembered → first
 
   if (!selectedLocation) {
     return (
@@ -280,6 +281,7 @@ export default async function OpeningPage({ searchParams }: OpeningPageProps) {
         saverNames={{ ...state.authors, [auth.user.id]: auth.user.name }}
         language={language}
         canSubmit={canSubmit}
+        canEditConsumption={canEditConsumption(auth.level)}
       />
     </AuthShell>
   );
@@ -345,11 +347,10 @@ function ScaffoldHeader({ language }: { language: Language }) {
   return (
     <div className="mb-4">
       <DashboardBackLink />
-      <p className="text-xs font-bold uppercase tracking-wide text-co-text-muted">
+      {/* B1 #7 — the scaffold views (no location, gate blocked, no template, read-only)
+          are not Phase 1, so they carry the report label only, not "Phase 1 — Verification". */}
+      <h2 className="text-xs font-bold uppercase tracking-wide text-co-text-muted">
         {serverT(language, "opening.page.label")}
-      </p>
-      <h2 className="mt-1 text-2xl font-extrabold leading-tight text-co-text">
-        {serverT(language, "opening.page.title")}
       </h2>
     </div>
   );

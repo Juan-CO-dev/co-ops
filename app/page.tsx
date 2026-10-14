@@ -31,9 +31,12 @@ import { LocationTile } from "@/components/auth/LocationTile";
 import { RoleTile } from "@/components/auth/RoleTile";
 import { NameTile } from "@/components/auth/NameTile";
 import { PinKeypad, type PinKeypadError } from "@/components/auth/PinKeypad";
+import { pinErrorFromResponse } from "@/lib/auth-pin-errors";
 import { ManagerLoginForm } from "@/components/auth/ManagerLoginForm";
 import { BrandMark } from "@/components/BrandMark";
 import { safeNextPath } from "@/lib/nav-redirect";
+import { isShopId, loginLandingPath } from "@/lib/shop-context-shared";
+import { rememberShopOnDevice } from "@/components/ShopContextSync";
 import type { RoleCode } from "@/lib/roles";
 import { TranslationProvider, useTranslation } from "@/lib/i18n/provider";
 import type { TranslationKey } from "@/lib/i18n/types";
@@ -132,8 +135,11 @@ function LoginPageContent() {
   // the whole check; `//evil.com` and `/\evil.com` pass it while being
   // protocol-relative URLs a browser resolves to a third-party origin. The
   // one sanitizer lives in lib/nav-redirect.ts (pure, zero-I/O, unit-tested).
-  const navigateToDashboard = useCallback(() => {
-    router.push(safeNextPath(searchParams?.get("next")));
+  // B2 (#30): a tile login carries its shop forward — remembered on the device (every page that
+  // opens without a shop in its URL reads it) and named on the plain dashboard landing.
+  const navigateToDashboard = useCallback((shopId?: string) => {
+    if (isShopId(shopId)) rememberShopOnDevice(shopId);
+    router.push(loginLandingPath(safeNextPath(searchParams?.get("next")), shopId));
   }, [router, searchParams]);
 
   // Initial location load.
@@ -200,23 +206,19 @@ function LoginPageContent() {
           redirect: "manual",
         });
         if (res.ok) {
-          navigateToDashboard();
+          navigateToDashboard(step.locationId);
           return { ok: true };
         }
         const body = (await res.json().catch(() => ({}))) as {
           code?: string;
           retry_after_seconds?: number;
         };
-        if (res.status === 423 && body.code === "account_locked") {
-          return {
-            ok: false,
-            error: { kind: "locked", retryAfterSeconds: body.retry_after_seconds ?? 60 },
-          };
-        }
-        if (res.status === 403 && body.code === "account_inactive") {
-          return { ok: false, error: { kind: "inactive" } };
-        }
-        return { ok: false, error: { kind: "invalid" } };
+        // 423 locked / 403 inactive / 429 throttled / 5xx network / else wrong PIN.
+        // A 429 is the per-source throttle (a shop shares one IP), NOT a wrong PIN.
+        return {
+          ok: false,
+          error: pinErrorFromResponse(res.status, body.code, body.retry_after_seconds),
+        };
       } catch {
         return { ok: false, error: { kind: "network" } };
       }
@@ -294,7 +296,7 @@ function LoginPageContent() {
         )}
 
         {surface === "manager" ? (
-          <ManagerSurface onSuccess={navigateToDashboard} onTransientError={showToast} />
+          <ManagerSurface onSuccess={() => navigateToDashboard()} onTransientError={showToast} />
         ) : (
           <>
             {step.kind !== "pin" && (
@@ -380,6 +382,7 @@ function LoginPageContent() {
                 userName={step.userName}
                 role={step.role}
                 onSubmit={handlePinSubmit}
+                lockOnSuccess
                 onBack={() =>
                   setStep({
                     kind: "name",

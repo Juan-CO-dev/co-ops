@@ -31,7 +31,7 @@ export default async function YieldVariancePage({ searchParams }: { searchParams
     }
   }
   return (
-    <main className="mx-auto max-w-2xl md:max-w-3xl lg:max-w-5xl xl:max-w-6xl px-4 pb-32 pt-4 sm:px-6">
+    <main className="mx-auto w-full max-w-2xl md:max-w-3xl lg:max-w-5xl xl:max-w-6xl px-4 pb-32 pt-4 sm:px-6">
       <BackLink search={`?location=${location}`} />
       <h1 className="mb-4 text-lg font-bold text-co-text">{serverT(lang, "yield.view.title")}</h1>
       <YieldVariance view={view} dateLabels={dateLabels} />
