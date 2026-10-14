@@ -8,6 +8,26 @@ export function reportIsFinalized(item: Pick<ReportListItem, "status" | "type">)
   return item.type === "maintenance" || ["confirmed", "phase2_complete", "submitted", "completed", "incomplete_confirmed", "auto_finalized", "ok", "flags"].includes(item.status);
 }
 
+/** How far back the Reports Hub looks for the last close (today plus the six days before it). */
+export const LAST_CLOSE_LOOKBACK_DAYS = 7;
+
+/**
+ * D-62 (Juan 2026-10-13) — the shop card's "Last close" is the MOST RECENT CLOSED DAY, not a fixed
+ * "yesterday": the day of the newest finalized CLOSING in the window (today, once tonight's closing is
+ * confirmed). It used to read "Last close · Mon, Oct 12 · No activity recorded" right after today's
+ * closing was confirmed. "Finalized" is the hub's own `reportIsFinalized`, so a closing the system
+ * auto-closed still marks its day closed (the card then says "auto closed" on it, which is the honest
+ * report). No closed day in the window → the caller's fallback (yesterday), as before.
+ */
+export function lastCloseDate(items: ReadonlyArray<Pick<ReportListItem, "type" | "status" | "date">>, fallback: string): string {
+  let best: string | null = null;
+  for (const item of items) {
+    if (item.type !== "closing" || !reportIsFinalized(item)) continue;
+    if (best === null || item.date > best) best = item.date;
+  }
+  return best ?? fallback;
+}
+
 /** Empty shops have no activity, never six claims that work was missed. */
 export function composeLastClose(items: ReportListItem[], level: number) {
   return {
