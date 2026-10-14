@@ -7,6 +7,7 @@ import {
   cashReadoutVisible,
   computeCashTotals,
   DEFAULT_FLOAT_CENTS,
+  overShortReadout,
   sumDenominations,
   type Denominations,
   type OnShiftEntry,
@@ -100,12 +101,8 @@ export function CashClient({
     }
   };
 
-  const overShortLine =
-    overShortCents === 0
-      ? t("cash.readout.even")
-      : overShortCents > 0
-        ? t("cash.readout.over", { amount: formatCents(overShortCents, language) })
-        : t("cash.readout.short", { amount: formatCents(Math.abs(overShortCents), language) });
+  const readout = overShortReadout(overShortCents);
+  const overShortLine = t(readout.key, { amount: formatCents(readout.amountCents, language) });
 
   // Recomposition PR 4b: phone keeps the stack; lg+ composes — the cash count
   // (the real work) left, tips + on-shift + submit as a right rail. Source

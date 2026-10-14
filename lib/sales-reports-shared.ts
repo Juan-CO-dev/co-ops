@@ -71,6 +71,15 @@ export interface SalesRange {
 
 export const SALES_RANGES = ["yesterday", "last7", "last30", "last90", "this_month", "last_month", "last12m", "today", "custom"] as const;
 export const SALES_GRAINS: readonly ReportGrain[] = ["day", "week", "month"];
+/**
+ * B8 #5: the rolling presets end YESTERDAY here (finished business days), unlike the hub's,
+ * which end today — so they say "full days" instead of sharing the hub's "Last 7 days" label.
+ */
+export const SALES_RANGE_LABELS = {
+  last7: "reports.sales.range.last7",
+  last30: "reports.sales.range.last30",
+  last90: "reports.sales.range.last90",
+} as const;
 
 function monthStart(date: string, offset = 0): string {
   const d = new Date(`${date}T00:00:00Z`);

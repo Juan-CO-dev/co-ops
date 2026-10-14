@@ -15,6 +15,7 @@ import { hasTaskAccess } from "@/lib/assignments";
 import { redirect } from "next/navigation";
 
 import { loadCashReport } from "@/lib/cash";
+import { overShortReadout } from "@/lib/cash-shared";
 import { formatCents, formatTime } from "@/lib/i18n/format";
 import { serverT } from "@/lib/i18n/server";
 import type { Language, TranslationKey } from "@/lib/i18n/types";
@@ -161,16 +162,12 @@ export default async function CashPage({ searchParams }: PageProps) {
               value={formatCents(report.drawerTotalCents, lang)}
               lang={lang}
             />
-            {/* Over/short — use readout keys which encode the sign */}
+            {/* Over/short — the entry form's own wording (B8 #6: an even night says "Even") */}
             <li className="flex items-center justify-between gap-3 rounded-md border-2 border-co-border bg-co-surface px-3 py-2 text-sm">
               <span className="font-semibold text-co-text">
-                {serverT(
-                  lang,
-                  report.overShortCents >= 0
-                    ? "cash.readout.over"
-                    : "cash.readout.short",
-                  { amount: formatCents(Math.abs(report.overShortCents), lang) },
-                )}
+                {serverT(lang, overShortReadout(report.overShortCents).key, {
+                  amount: formatCents(overShortReadout(report.overShortCents).amountCents, lang),
+                })}
               </span>
               <span className="shrink-0 font-bold text-co-text">
                 {formatCents(report.overShortCents, lang)}

@@ -22,7 +22,7 @@ import { reportNavigationHref } from "@/lib/report-navigation";
 import { shiftReportDate } from "@/lib/report-range";
 import { canReadScopedReport } from "@/lib/report-scope";
 import {
-  SALES_GRAINS, SALES_RANGES, SALES_READ_MIN, SalesReportError, loadSalesLatestCapture, loadSalesCheckPage, parseSalesCheckFilters, resolveSalesRange,
+  SALES_GRAINS, SALES_RANGES, SALES_RANGE_LABELS, SALES_READ_MIN, SalesReportError, loadSalesLatestCapture, loadSalesCheckPage, parseSalesCheckFilters, resolveSalesRange,
   salesFilterParams, salesRangeParams, type SalesCheckFilters,
 } from "@/lib/sales-reports";
 import { requireSessionFromHeaders } from "@/lib/session";
@@ -54,7 +54,7 @@ export default async function SalesChecksPage({ searchParams }: { searchParams: 
     <ReportShopTabs path="/reports/sales/checks" params={context} locationId={locationId} language={language} viewer={auth} />
     <h1 className="mb-3 text-lg font-bold text-co-text">{t("reports.sales.checks.title")}</h1>
     <ReportRangeControls range={range} locationId={locationId} language={language} action="/reports/sales/checks"
-      preserve={{ ...filterParams, hubLocation: params.hubLocation }} ranges={SALES_RANGES} grains={SALES_GRAINS} grain={range.grain}
+      preserve={{ ...filterParams, hubLocation: params.hubLocation }} ranges={SALES_RANGES} labelKeys={SALES_RANGE_LABELS} grains={SALES_GRAINS} grain={range.grain}
       capKey="reports.sales.cap" shortened={range.shortened} shortenedKey="reports.sales.range_shortened" />
 
   </>;

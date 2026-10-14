@@ -7,7 +7,9 @@
  * amount (see AGENTS.md "Same field name, different meaning across types").
  */
 
-import { FRIDGE_DEFAULT_SAFE_MAX_F } from "@/lib/maintenance";
+import { FRIDGE_DEFAULT_SAFE_MAX_F, isHotReading, type TempItemRegistry } from "@/lib/fridge-registry";
+
+export type { TempItemRegistry };
 
 export interface PrepHaveInput {
   /** True for mid-day prep (inputs.total is a prepped delta), false for am-prep/other (inputs.total is final). */
@@ -54,10 +56,21 @@ export function parStatusFromHave(par: number | null, have: number | null): ParS
 }
 
 /**
- * True when a fridge-temp reading is out of safe range (> 41°F). The CALLER
- * must already know the completion's template_item_id is in the location's
- * temp-item registry — this only checks the count, never "any count > 41".
+ * True when a fridge-temp reading is out of safe range (> the fridge's own safe max,
+ * 41°F when unset). The CALLER must already know the completion's template_item_id is
+ * in the location's temp-item registry — this only checks the count, never "any count > 41".
  */
-export function isOutOfRangeTemp(countValue: number | null): boolean {
-  return countValue !== null && countValue > FRIDGE_DEFAULT_SAFE_MAX_F;
+export function isOutOfRangeTemp(countValue: number | null, safeMaxF: number = FRIDGE_DEFAULT_SAFE_MAX_F): boolean {
+  return countValue !== null && countValue > safeMaxF;
+}
+
+/**
+ * B8 #4: Reports and Trends used a flat 41°F while Pulse and the maintenance page used each
+ * fridge's own max — one reading could be a flag on one surface and fine on the other. r4: every
+ * surface now reads through the ONE registry in lib/fridge-registry (every fridge at the location,
+ * one owner per item, active first), so the same reading is the same verdict everywhere.
+ * THE temp-flag rule: a registry temp item whose reading exceeds its owner fridge's safe max.
+ */
+export function isTempFlag(registry: TempItemRegistry, templateItemId: string, countValue: number | null): boolean {
+  return isHotReading(registry, templateItemId, countValue);
 }

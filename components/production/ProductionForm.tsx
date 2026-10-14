@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { useTranslation } from "@/lib/i18n/provider";
 import { ActionButton } from "@/components/ActionButton";
 import type { ProductionFormData } from "@/lib/production";
+import { skuOptionName } from "@/lib/production-shared";
 
 const field = "mt-1 min-h-[44px] w-full rounded-lg border-2 border-co-border bg-co-surface px-3 text-base text-co-text focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60 disabled:opacity-60";
 
@@ -50,7 +51,7 @@ export function ProductionForm({ formData, locationId }: { formData: ProductionF
       <label className="mt-3 block"><span className="text-sm font-bold text-co-text">{t("production.form.sku")}</span>
         <select className={field} value={skuId} disabled={busy} onChange={(e) => { setSkuId(e.target.value); setItemId(""); setPredicted(null); }}>
           <option value="">{t("production.form.pick_sku")}</option>
-          {formData.skus.map((s) => <option key={s.id} value={s.id}>{s.name} ({s.inStockPacks} {t("production.form.in_stock")})</option>)}
+          {formData.skus.map((s) => <option key={s.id} value={s.id}>{skuOptionName(s, t("production.form.no_vendor"))} ({s.inStockPacks} {t("production.form.in_stock")})</option>)}
         </select>
       </label>
       {skuId ? (

@@ -5,6 +5,15 @@
  * fake zero). Optional zero baseline for signed series (cash over/short).
  */
 
+/**
+ * B8 #10: a series with fewer than two real points has no trend to draw — a caller shows an
+ * honest "not enough days yet" state instead of a lone mark at the chart's edge.
+ */
+export const MIN_TREND_POINTS = 2;
+export function hasTrend(points: readonly (number | null)[]): boolean {
+  return points.filter((p) => p !== null).length >= MIN_TREND_POINTS;
+}
+
 export interface LineSeries {
   points: (number | null)[];
   /** CSS color string, e.g. "var(--co-danger)". */
@@ -120,6 +129,9 @@ export function LineChart({
             strokeDasharray={s.dashed ? "4 3" : undefined}
             strokeLinejoin="round"
             strokeLinecap="round"
+            // B8 #10: the viewBox stretches horizontally (preserveAspectRatio="none"), which turned
+            // an isolated point's round cap into a dash. Unscaled strokes keep it a dot.
+            vectorEffect="non-scaling-stroke"
             opacity={s.dashed ? 0.6 : 1}
           />
         );

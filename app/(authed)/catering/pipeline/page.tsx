@@ -27,6 +27,7 @@ import {
 import { PipelineClient } from "@/components/catering/pipeline/PipelineClient";
 import { BackLink } from "@/components/nav/BackLink";
 import { loadNotInToast, type PipelineToastOrder } from "@/lib/catering/not-in-toast";
+import { resolveShop } from "@/lib/shop-context";
 
 export default async function CateringPipelinePage({
   searchParams,
@@ -63,6 +64,10 @@ export default async function CateringPipelinePage({
       .returns<Array<{ id: string; name: string }>>();
     locations = data ?? [];
   }
+
+  const createLocations = locations.filter((location) => lockLocationContext(locActor, location.id));
+  // B8 #3 — "Add lead" starts on the working shop (the one shop resolver), not "global".
+  const defaultCreateLocationId = (await resolveShop(createLocations))?.id ?? null;
 
   let leads: Parameters<typeof PipelineClient>[0]["leads"] = [];
   let followUps: Parameters<typeof PipelineClient>[0]["followUps"] = [];
@@ -101,7 +106,8 @@ export default async function CateringPipelinePage({
         leads={leads}
         followUps={followUps}
         locations={locations}
-        createLocations={locations.filter((location) => lockLocationContext(locActor, location.id))}
+        createLocations={createLocations}
+        defaultCreateLocationId={defaultCreateLocationId}
         actorLevel={level}
         canTransfer={canTransferCatering(auth.user.role)}
         writeMin={PIPELINE_WRITE_MIN}

@@ -32,7 +32,7 @@ async function render(level: number, role: RoleCode, location = "mine", assigned
     operationalNow: () => ({ date: "2026-10-07" }), formatDateLabel: (date: string) => date,
     reportLandingContext, parseReportRange, reportRangeParams, shiftReportDate, composeLastClose, composeReportSummary, reportIsFinalized,
     shopParamFor, searchParamValues, resolveReportShopId: async () => "mine", // B2: the real contract getter; default = the membership
-    canDoOperationalTask, listReports, SALES_READ_MIN: 7, // D-62 / review #4: the newest finalized closing is found directly (here: Sep 30, a week+ back),
+    canDoOperationalTask, listReports, countHotTempReadings: async () => 0, SALES_READ_MIN: 7, // D-62 / review #4: the newest finalized closing is found directly (here: Sep 30, a week+ back),
     // then only that day's reports are loaded.
     latestFinalizedClosingDate: async () => lastClose ? "2026-09-30" : null,
     listReportSkeleton: async (_s: unknown, f: { dateFrom: string; dateTo: string }) => lastClose && f.dateFrom === "2026-09-30" && f.dateTo === "2026-09-30"

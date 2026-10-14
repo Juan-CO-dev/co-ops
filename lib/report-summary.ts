@@ -24,8 +24,14 @@ export function composeLastClose(items: ReportListItem[], level: number) {
   };
 }
 
-export function composeReportSummary(items: ReportListItem[]) {
-  const signals = { underPar: 0, overPar: 0, skipped: 0, notStarted: 0, tempFlags: 0, cashOverShortCents: null };
+/**
+ * B8 #4 r4 (Astra round 3): `tempFlags` is not summed from the listed reports nor from maintenance
+ * day rows — each depended on which rows exist (today's unfinished opening is not listed; a fridge
+ * retired since has no day row). The caller passes the window's out-of-range temperature readings,
+ * counted directly (`countHotTempReadings`), each once against its own fridge's safe max.
+ */
+export function composeReportSummary(items: ReportListItem[], hotTempReadings: number) {
+  const signals = { underPar: 0, overPar: 0, skipped: 0, notStarted: 0, tempFlags: hotTempReadings, cashOverShortCents: null };
   let cashOver = 0;
   let cashShort = 0;
   for (const item of items) {
@@ -35,7 +41,6 @@ export function composeReportSummary(items: ReportListItem[]) {
     signals.overPar += s.overPar;
     signals.skipped += s.skipped;
     signals.notStarted += s.notStarted ?? 0;
-    signals.tempFlags += s.tempFlags;
     if ((s.cashOverShortCents ?? 0) > 0) cashOver++;
     if ((s.cashOverShortCents ?? 0) < 0) cashShort++;
   }
