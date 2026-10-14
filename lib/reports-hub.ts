@@ -39,6 +39,13 @@ export interface SignalSummary {
   /** Older callers may supply summaries without this additive count. Loaders always set it. */
   notStarted?: number;
   tempFlags: number;
+  /**
+   * B8 #4 r2 — maintenance rows only: the day's out-of-range temperature READINGS, counted from
+   * every live reading whether or not its opening/closing report is finalized (an unfinished
+   * report of today is not listed, but its hot fridge is real). The summary takes this per day
+   * in place of the listed reports' reading flags, so each reading counts exactly once.
+   */
+  tempReadings?: number;
   cashOverShortCents: number | null;
 }
 
@@ -307,14 +314,15 @@ export async function enrichReportItems(service: SupabaseClient, f: ListFilters,
   const maintenanceDates = items.filter(i => i.type === "maintenance").map(i => i.date).sort();
   const maintenanceFlags = new Map(maintenanceDates.length
     ? (await listMaintenanceReportDates(service, f.locationId, maintenanceDates[0]!, maintenanceDates[maintenanceDates.length - 1]!,
-      f.viewer.level < 4 ? f.viewer.userId : undefined)).map(d => [d.date, d.tempFlags])
+      f.viewer.level < 4 ? f.viewer.userId : undefined)).map(d => [d.date, d] as const)
     : []);
   const out: ReportListItem[] = [];
   for (const {submitterId, submittedAt: _at, ...item} of items) {
     void _at; // Internal ordering metadata must not enter list rows.
     if (item.type === "maintenance") {
-      const flagCount = maintenanceFlags.get(item.date) ?? 0;
-      item.signalSummary = {underPar:0,overPar:0,skipped:0,notStarted:0,tempFlags:flagCount,cashOverShortCents:null};
+      const day = maintenanceFlags.get(item.date);
+      const flagCount = day?.tempFlags ?? 0;
+      item.signalSummary = {underPar:0,overPar:0,skipped:0,notStarted:0,tempFlags:flagCount,tempReadings:day?.tempReadings ?? 0,cashOverShortCents:null};
       item.status = flagCount ? "flags" : "ok";
     } else item.signalSummary = signals.get(item.id);
     out.push({...item, submitterName: submitterId ? names.get(submitterId) ?? null : null});

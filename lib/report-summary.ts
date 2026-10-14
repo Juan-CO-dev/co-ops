@@ -24,6 +24,29 @@ export function composeLastClose(items: ReportListItem[], level: number) {
   };
 }
 
+/**
+ * B8 #4 (r2, Astra P1): out-of-range temperature READINGS in the window, each counted once.
+ * A day's maintenance row counts every live reading of that day (`tempReadings`), finalized or
+ * not — so it REPLACES the listed opening/closing reports' reading flags for that day (summing
+ * both double-counted one hot reading; dropping it lost today's readings, whose reports are not
+ * listed until finalized). A day with no maintenance reading count falls back to its reports.
+ */
+export function summaryTempReadings(items: ReportListItem[]): number {
+  const fromReports = new Map<string, number>();
+  const fromMaintenance = new Map<string, number>();
+  for (const item of items) {
+    const s = item.signalSummary;
+    if (!s) continue;
+    if (item.type === "maintenance") {
+      if (s.tempReadings !== undefined) fromMaintenance.set(item.date, s.tempReadings);
+    } else fromReports.set(item.date, (fromReports.get(item.date) ?? 0) + s.tempFlags);
+  }
+  let total = 0;
+  for (const [date, n] of fromReports) if (!fromMaintenance.has(date)) total += n;
+  for (const n of fromMaintenance.values()) total += n;
+  return total;
+}
+
 export function composeReportSummary(items: ReportListItem[]) {
   const signals = { underPar: 0, overPar: 0, skipped: 0, notStarted: 0, tempFlags: 0, cashOverShortCents: null };
   let cashOver = 0;
@@ -35,12 +58,9 @@ export function composeReportSummary(items: ReportListItem[]) {
     signals.overPar += s.overPar;
     signals.skipped += s.skipped;
     signals.notStarted += s.notStarted ?? 0;
-    // B8 #4: a maintenance row's flag count is a fridge-DAY re-read of the same temp
-    // completions its opening/closing report already counted — summing both double-counts
-    // one hot reading. The summary counts readings once, as Trends does.
-    if (item.type !== "maintenance") signals.tempFlags += s.tempFlags;
     if ((s.cashOverShortCents ?? 0) > 0) cashOver++;
     if ((s.cashOverShortCents ?? 0) < 0) cashShort++;
   }
+  signals.tempFlags = summaryTempReadings(items);
   return { total: items.length, finalized: items.filter(reportIsFinalized).length, autoClosed: items.filter((item) => item.status === "auto_finalized").length, signals, cashOver, cashShort };
 }

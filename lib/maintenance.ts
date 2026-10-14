@@ -478,7 +478,7 @@ export async function listMaintenanceReportDates(
   dateTo: string,
   ownUserId?: string,
   skeletonOnly = false,
-): Promise<Array<{ date: string; tempFlags: number }>> {
+): Promise<Array<{ date: string; tempFlags: number; tempReadings: number }>> {
   const equipment = await loadEquipment(service, locationId);
   const fridges = equipment.filter((e) => e.kind === "fridge");
 
@@ -545,15 +545,19 @@ export async function listMaintenanceReportDates(
 
   const safeOf = (f: Equipment) => f.safeMaxF ?? FRIDGE_DEFAULT_SAFE_MAX_F;
   const fridgeById = new Map(fridges.map((f) => [f.id, f] as const));
-  const out: Array<{ date: string; tempFlags: number }> = [];
+  const out: Array<{ date: string; tempFlags: number; tempReadings: number }> = [];
   for (const [date, perFridge] of byDate) {
     let flags = 0;
+    // B8 #4 r2: the out-of-range READINGS of the day (each above its own fridge's max), whatever
+    // the state of the report that holds them — the hub summary's one source for temp flags.
+    let hotReadings = 0;
     for (const [fid, readings] of perFridge) {
       const f = fridgeById.get(fid);
       if (!f) continue;
       if (computeFridgeStatus(readings, safeOf(f)) === "out_of_range") flags++;
+      if (!skeletonOnly) hotReadings += readings.filter((r) => r.valueF > safeOf(f)).length;
     }
-    out.push({ date, tempFlags: flags });
+    out.push({ date, tempFlags: flags, tempReadings: hotReadings });
   }
   out.sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0));
   return out;

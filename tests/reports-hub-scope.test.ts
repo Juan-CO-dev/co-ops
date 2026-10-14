@@ -126,7 +126,7 @@ describe("review regressions", () => {
     const {client,reads}=fake(data);
     for (const skeletonOnly of [true,false]) {
       const dates=await maintenance.listMaintenanceReportDates(client,"shop","2026-07-08","2026-10-07","me",skeletonOnly);
-      expect(dates).toEqual([{date:instance.date,tempFlags:skeletonOnly?0:1}]);
+      expect(dates).toEqual([{date:instance.date,tempFlags:skeletonOnly?0:1,tempReadings:skeletonOnly?0:549}]);
     }
     expect(reads.filter(r=>r.table==="checklist_completions")).toHaveLength(22);
     expect(reads.filter(r=>r.table==="checklist_instances")).toHaveLength(2);
