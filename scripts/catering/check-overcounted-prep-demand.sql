@@ -1,5 +1,11 @@
 -- check-overcounted-prep-demand.sql — READ-ONLY (SELECT only; no writes, no DDL, no temp tables).
 --
+-- HISTORICAL RECORD. Run on production 2026-10-14 (CC, read-only): it found NOTHING —
+-- production had no catering_prep_demand rows at all, one catering quote and zero package quote
+-- lines. B7c round 3 therefore removed the legacy (no line_kind) Prep Demand rules this script
+-- mirrors, and migration 0251 now refuses any package line without a kind. The script is kept
+-- only as the record of that check; there is nothing left for it to find.
+--
 -- B7c (2026-10-14). Finds leads whose STORED catering prep demand (catering_prep_demand) is
 -- inflated by the package double expansion fixed in B7c (12e208d3 + migration 0251): before the
 -- fix, Prep Demand read EVERY quote line with a package id and no item reference as "the whole

@@ -227,30 +227,18 @@ describe("review · package components keep their identity; one package counted 
     expect(await resolve(asRows(priced, "10"))).toMatchObject({ chips: 10, picks: 10 });
   });
 
-  it("OLD saved quotes (placeholders carrying the package id) resolve without double counting", async () => {
-    // old platter: header $115 x1 + pick line $0 x16 with the package id
-    expect(await resolve([
-      { package_id: "pkg-plat", quantity: 1, unit_price_cents: 11500 },
-      { package_id: "pkg-plat", quantity: 16, unit_price_cents: 0 },
-    ])).toMatchObject({ picks: 16 });
-    // old mixed: header + concrete component with the package id + pick line with the package id
-    expect(await resolve([
-      { package_id: "pkg-mix", quantity: 5, unit_price_cents: 1800 },
-      { package_id: "pkg-mix", item_id: "i-chips", quantity: 5 },
-      { package_id: "pkg-mix", quantity: 5, unit_price_cents: 0 },
-    ])).toMatchObject({ chips: 5, picks: 5 });
-  });
-
+  // 0251: a portal package line is a whole-package header (components_listed = false).
+  const portalLine = { package_id: "pkg-mix", quantity: 3, unit_price_cents: 1800, line_kind: "package_header", components_listed: false };
   it("a portal package line (no component lines) still expands the whole package, picks included", async () => {
-    expect(await resolve([{ package_id: "pkg-mix", quantity: 3, unit_price_cents: 1800 }])).toMatchObject({ chips: 3, picks: 3 });
+    expect(await resolve([portalLine])).toMatchObject({ chips: 3, picks: 3 });
     expect(await resolve(
-      [{ package_id: "pkg-mix", quantity: 3, unit_price_cents: 1800 }],
+      [portalLine],
       [{ quote_item_id: "qi-0", package_item_id: "mix-slot", item_id: null, menu_item_id: "m-sub", quantity: 1 }],
     )).toMatchObject({ chips: 3, picks: 0, subs: 3 });
   });
 
-  it("an unpriced bare package line with nothing priced beside it still counts (a free package)", async () => {
-    expect(await resolve([{ package_id: "pkg-fix", quantity: 2, unit_price_cents: 0 }])).toMatchObject({ chips: 2 });
+  it("an unpriced whole-package header still counts (a free package — price never decides)", async () => {
+    expect(await resolve([{ package_id: "pkg-fix", quantity: 2, unit_price_cents: 0, line_kind: "package_header", components_listed: false }])).toMatchObject({ chips: 2 });
   });
 });
 

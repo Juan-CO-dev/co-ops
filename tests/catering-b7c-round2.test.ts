@@ -213,12 +213,38 @@ describe("A · quote writers store the line kind", () => {
     expect(writes.filter((w) => w.op === "insert")).toEqual([]);
   });
 
-  it("a client without kinds (a pre-0251 tab): referenced package lines become components, bare ones stay legacy", async () => {
-    const { id } = await createQuote(gmA, { locationId: A, lines: [
-      { description: "Mix", quantity: 2, unitPriceCents: 1800, packageId: "pkg-mix" },
-      { description: "Chips", quantity: 2, unitPriceCents: 0, itemId: "i-chips", packageId: "pkg-mix" },
-    ] });
-    expect(stored(id)).toEqual([["Mix", "pkg-mix", null, null], ["Chips", "pkg-mix", "package_component", null]]);
+  it("a client without kinds (a page loaded before 0251) is a 409 quote_lines_outdated before anything is written", async () => {
+    for (const lines of [
+      [{ description: "Mix", quantity: 2, unitPriceCents: 1800, packageId: "pkg-mix" }],
+      [{ description: "Chips", quantity: 2, unitPriceCents: 0, itemId: "i-chips", packageId: "pkg-mix" }], // never stamped a component
+    ]) {
+      await expect(createQuote(gmA, { locationId: A, lines })).rejects.toMatchObject({ status: 409, code: "quote_lines_outdated" });
+    }
+    db.catering_quotes!.push({ id: "q1", root_id: null, version: 1, location_id: A, pipeline_id: null, customer_id: null, superseded_at: null });
+    await expect(reviseQuote(gmA, "q1", { lines: [{ description: "Mix", quantity: 1, unitPriceCents: 1800, packageId: "pkg-mix" }] }))
+      .rejects.toMatchObject({ status: 409, code: "quote_lines_outdated" });
+    expect(writes.filter((w) => w.op === "insert" || w.table === "catering_quotes")).toEqual([]);
+  });
+
+  it("the builder maps 409 quote_lines_outdated to a reload message, in en and es", () => {
+    const shared = readFileSync("components/catering/quotes/shared.ts", "utf8");
+    expect(shared).toContain(`"quote_lines_outdated",`);
+    const en = JSON.parse(readFileSync("lib/i18n/en.json", "utf8")) as Record<string, string>;
+    const es = JSON.parse(readFileSync("lib/i18n/es.json", "utf8")) as Record<string, string>;
+    expect(en["catering.quotes.error.quote_lines_outdated"]).toMatch(/Reload/);
+    expect(es["catering.quotes.error.quote_lines_outdated"]).toMatch(/Recarga/);
+  });
+
+  it("every writer that sets package_id also sets its kind (smoke scripts included)", () => {
+    for (const f of ["scripts/w4a-smoke.ts", "scripts/w4b-smoke.ts"]) {
+      const src = readFileSync(f, "utf8");
+      // The quote-item insert (not the package-item one): its package line is the one with PKG_LABEL.
+      const at = src.indexOf("description: PKG_LABEL,");
+      expect(at).toBeGreaterThan(0);
+      const after = src.slice(at - 200, at);
+      expect(after).toContain(`line_kind: "package_header",`);
+      expect(after).toContain("components_listed: false,");
+    }
   });
 
   it("the portal writes its package line as a whole-package header (source pin; pricing path unchanged)", () => {
@@ -228,15 +254,31 @@ describe("A · quote writers store the line kind", () => {
     expect(draft.match(/options: \[\], lineKind: null, componentsListed: null \}/g)).toHaveLength(3);
   });
 
-  it("resolveQuoteDemand reads description, order and package labels for an OLD quote (zeroed header + placeholder → 16)", async () => {
-    db.catering_packages = [{ id: "pkg-plat", label_en: "16 pc platter", label_es: null }];
+  it("resolveQuoteDemand: a package line without a kind counts nothing and warns with ids only", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     db.catering_package_items = [{ id: "plat-slot", package_id: "pkg-plat", slot_type: "choice", item_id: null, menu_item_id: null, quantity: 16, description: "Choose your subs", display_order: 0, active: true }];
     db.catering_quote_items = [
-      { id: "o1", quote_id: "q-old", package_id: "pkg-plat", item_id: null, menu_item_id: null, description: "16 pc platter", quantity: 1, unit_price_cents: 0, display_order: 0, portion: null, line_kind: null, components_listed: null },
-      { id: "o2", quote_id: "q-old", package_id: "pkg-plat", item_id: null, menu_item_id: null, description: "Choose your subs", quantity: 16, unit_price_cents: 0, display_order: 1, portion: null, line_kind: null, components_listed: null },
+      { id: "o1", quote_id: "q-old", package_id: "pkg-plat", item_id: null, menu_item_id: null, description: "Party tray for Ana", quantity: 1, portion: null, line_kind: null, components_listed: null },
+      { id: "o2", quote_id: "q-old", package_id: null, item_id: "i-chips", menu_item_id: null, description: "Chips", quantity: 3, portion: null, line_kind: null, components_listed: null },
     ];
-    const d = await resolveQuoteDemand(sbFake as never, "q-old");
-    expect(d).toEqual([{ itemId: null, menuItemId: null, choicePackageItemId: "plat-slot", portion: null, qty: 16 }]);
+    expect(await resolveQuoteDemand(sbFake as never, "q-old")).toEqual([{ itemId: "i-chips", menuItemId: null, choicePackageItemId: null, portion: null, qty: 3 }]);
+    const msg = warn.mock.calls.map((c) => String(c[0])).join(" | ");
+    expect(msg).toContain("q-old");
+    expect(msg).toContain("o1");
+    expect(msg).not.toMatch(/Ana|Party/);
+    warn.mockRestore();
+  });
+
+  it("resolveQuoteDemand: a kinded quote reads the kinds and never warns", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    db.catering_package_items = [{ id: "plat-slot", package_id: "pkg-plat", slot_type: "choice", item_id: null, menu_item_id: null, quantity: 16, description: "Choose your subs", display_order: 0, active: true }];
+    db.catering_quote_items = [
+      { id: "k1", quote_id: "q-new", package_id: "pkg-plat", item_id: null, menu_item_id: null, description: "16 pc platter", quantity: 1, portion: null, line_kind: "package_header", components_listed: true },
+      { id: "k2", quote_id: "q-new", package_id: "pkg-plat", item_id: null, menu_item_id: null, description: "Choose your subs", quantity: 16, portion: null, line_kind: "package_pick", components_listed: null },
+    ];
+    expect(await resolveQuoteDemand(sbFake as never, "q-new")).toEqual([{ itemId: null, menuItemId: null, choicePackageItemId: "plat-slot", portion: null, qty: 16 }]);
+    expect(warn).not.toHaveBeenCalled();
+    warn.mockRestore();
   });
 });
 

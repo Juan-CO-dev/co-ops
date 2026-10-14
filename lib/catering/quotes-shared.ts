@@ -150,18 +150,19 @@ export function reclassifyQuoteLineRefs<T extends QuoteLineRefLike>(
 
 export type LineKindResult =
   | { ok: true; lineKind: QuoteLineKind | null; componentsListed: boolean | null }
-  | { ok: false; message: string };
+  /** `outdated`: a package line with no kind — a page loaded before 0251; the user reloads. */
+  | { ok: false; reason: "outdated" | "invalid"; message: string };
 
 /**
  * What a saved line stores in `line_kind` / `components_listed`, checked against its
- * references (the same shape the 0251 CHECKs enforce, so a bad payload is a named 400, never
- * a constraint 500 after the quote header was written):
+ * references (the same shape the 0251 CHECKs enforce, so a bad payload is a named error before
+ * the quote header is written, never a constraint 500 after it):
+ *   · a line with no package id carries no kind (NULL);
+ *   · every line WITH a package id must say its kind — a kind-less one is refused as
+ *     `outdated` (409 `quote_lines_outdated`: reload the page). It is never stamped by guessing;
  *   · package_header / package_pick — a package id and no item/menu reference;
- *   · package_component — a package id and a reference;
+ *     package_component — a package id and a reference;
  *   · `componentsListed` is kept on a header only (absent → false: the whole package).
- * A line with no kind: a referenced line tagged with a package is unambiguously a component
- * and is stamped so; anything else stays NULL — a non-package line, or a bare package line
- * from a client that predates 0251, which the legacy Prep Demand rules were written for.
  */
 export function resolveQuoteLineKind(l: {
   itemId: string | null;
@@ -172,12 +173,13 @@ export function resolveQuoteLineKind(l: {
 }): LineKindResult {
   const hasRef = l.itemId != null || l.menuItemId != null;
   if (l.lineKind == null) {
-    return { ok: true, lineKind: l.packageId != null && hasRef ? "package_component" : null, componentsListed: null };
+    if (l.packageId != null) return { ok: false, reason: "outdated", message: "a package line without its line kind (the page is out of date)" };
+    return { ok: true, lineKind: null, componentsListed: null };
   }
-  if (!isQuoteLineKind(l.lineKind)) return { ok: false, message: "unknown line kind" };
-  if (l.packageId == null) return { ok: false, message: `${l.lineKind} needs a package` };
-  if (l.lineKind === "package_component" && !hasRef) return { ok: false, message: "a package component needs an item" };
-  if (l.lineKind !== "package_component" && hasRef) return { ok: false, message: `${l.lineKind} cannot name an item` };
+  if (!isQuoteLineKind(l.lineKind)) return { ok: false, reason: "invalid", message: "unknown line kind" };
+  if (l.packageId == null) return { ok: false, reason: "invalid", message: `${l.lineKind} needs a package` };
+  if (l.lineKind === "package_component" && !hasRef) return { ok: false, reason: "invalid", message: "a package component needs an item" };
+  if (l.lineKind !== "package_component" && hasRef) return { ok: false, reason: "invalid", message: `${l.lineKind} cannot name an item` };
   return {
     ok: true,
     lineKind: l.lineKind,

@@ -182,7 +182,7 @@ export interface QuoteItem {
   lineTotalCents: number;
   displayOrder: number;
   portion: "quarter" | "half" | "whole" | null;
-  /** Migration 0251 — what part of a package the line is (NULL = non-package or legacy). */
+  /** Migration 0251 — what part of a package the line is (NULL = a non-package line). */
   lineKind: QuoteLineKind | null;
   componentsListed: boolean | null;
 }
@@ -545,7 +545,12 @@ function resolveLines(lines: QuoteLineInput[]): ResolvedLine[] {
     }
     const packageId = l.packageId ?? null;
     const kind = resolveQuoteLineKind({ itemId, menuItemId, packageId, lineKind: l.lineKind, componentsListed: l.componentsListed });
-    if (!kind.ok) throw new CateringQuoteError(400, "invalid_payload", `Line ${i + 1}: ${kind.message}`);
+    if (!kind.ok) {
+      // A kind-less package line comes from a page loaded before 0251 (or a client bug): never
+      // guessed at — the manager reloads and the builder sends the kinds.
+      if (kind.reason === "outdated") throw new CateringQuoteError(409, "quote_lines_outdated", `Line ${i + 1}: ${kind.message}`);
+      throw new CateringQuoteError(400, "invalid_payload", `Line ${i + 1}: ${kind.message}`);
+    }
     return {
       description,
       itemId,

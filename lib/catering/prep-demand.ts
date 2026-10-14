@@ -18,6 +18,7 @@ import {
   isBarePackageLine,
   isQuoteLineKind,
   resolveDemandFromLines,
+  unkindedPackageLineIds,
   type DemandQuoteLine,
   type ResolvedDemand,
 } from "@/lib/catering/prep-demand-shared";
@@ -40,37 +41,39 @@ const num = (v: number | string | null | undefined): number => (typeof v === "st
  *  an UNCONFIGURED package (no stored picks) falls back to one advisory "needs a pick" row. Package
  *  lines are processed PER quote-line (two lines of the same package can hold different picks).
  *
- *  ONE PACKAGE, COUNTED ONCE (B7c, migration 0251): kinded lines (`line_kind`) are read by what
- *  they say; legacy lines (no kind) by the fixed legacy rules. Both rule sets live, pure and
- *  documented, in `resolveDemandFromLines` (lib/catering/prep-demand-shared.ts). This function
- *  only loads the rows. */
+ *  ONE PACKAGE, COUNTED ONCE (B7c, migration 0251): every package line carries its `line_kind`
+ *  and is read by what it says — the rules live, pure and documented, in `resolveDemandFromLines`
+ *  (lib/catering/prep-demand-shared.ts). This function only loads the rows. A package line with
+ *  NO kind (forbidden by 0251) counts nothing and is reported here by id — never guessed at. */
 export async function resolveQuoteDemand(sb: Sb, quoteId: string): Promise<ResolvedDemand[]> {
   const { data: rows, error } = await sb
     .from("catering_quote_items")
-    .select("id, item_id, menu_item_id, package_id, quantity, portion, unit_price_cents, display_order, description, line_kind, components_listed")
+    .select("id, item_id, menu_item_id, package_id, quantity, portion, description, line_kind, components_listed")
     .eq("quote_id", quoteId)
-    .returns<Array<{ id: string; item_id: string | null; menu_item_id: string | null; package_id: string | null; quantity: number | string; portion: Portion | null; unit_price_cents: number | string | null; display_order: number | null; description: string | null; line_kind: string | null; components_listed: boolean | null }>>();
+    .returns<Array<{ id: string; item_id: string | null; menu_item_id: string | null; package_id: string | null; quantity: number | string; portion: Portion | null; description: string | null; line_kind: string | null; components_listed: boolean | null }>>();
   if (error) throw new Error(`resolveQuoteDemand items: ${error.message}`);
 
-  const lines: DemandQuoteLine[] = (rows ?? []).map((l, i) => ({
+  const lines: DemandQuoteLine[] = (rows ?? []).map((l) => ({
     id: l.id,
     itemId: l.item_id,
     menuItemId: l.menu_item_id,
     packageId: l.package_id,
     quantity: num(l.quantity),
     portion: l.portion,
-    unitPriceCents: num(l.unit_price_cents),
-    displayOrder: l.display_order ?? i,
     description: l.description ?? null,
     lineKind: isQuoteLineKind(l.line_kind) ? l.line_kind : null,
     componentsListed: l.components_listed ?? null,
   }));
-  const bare = lines.filter(isBarePackageLine);
-  if (bare.length === 0) return resolveDemandFromLines({ lines, comps: [], packages: [], picks: [] });
+  const unkinded = unkindedPackageLineIds(lines);
+  if (unkinded.length > 0) {
+    // Ids only — never a description, a name or a contact value.
+    console.warn(`[catering] resolveQuoteDemand: quote ${quoteId} has ${unkinded.length} package line(s) without a line_kind (${unkinded.join(",")}) — counted as no demand. 0251 forbids this shape; look at how they were written.`);
+  }
+  const bare = lines.filter((l) => isBarePackageLine(l) && l.lineKind != null);
+  if (bare.length === 0) return resolveDemandFromLines({ lines, comps: [], picks: [] });
 
   const packageIds = [...new Set(bare.map((l) => l.packageId!))];
-  const needsLabels = bare.some((l) => l.lineKind == null); // only the legacy rules read labels
-  const [compsRes, optsRes, pkgRes] = await Promise.all([
+  const [compsRes, optsRes] = await Promise.all([
     sb
       .from("catering_package_items")
       .select("id, package_id, slot_type, item_id, menu_item_id, quantity, description, display_order")
@@ -83,14 +86,9 @@ export async function resolveQuoteDemand(sb: Sb, quoteId: string): Promise<Resol
       .select("quote_item_id, package_item_id, item_id, menu_item_id, quantity")
       .in("quote_item_id", bare.map((l) => l.id))
       .returns<Array<{ quote_item_id: string; package_item_id: string; item_id: string | null; menu_item_id: string | null; quantity: number | string }>>(),
-    needsLabels
-      ? sb.from("catering_packages").select("id, label_en, label_es").in("id", packageIds)
-          .returns<Array<{ id: string; label_en: string | null; label_es: string | null }>>()
-      : Promise.resolve({ data: [] as Array<{ id: string; label_en: string | null; label_es: string | null }>, error: null }),
   ]);
   if (compsRes.error) throw new Error(`resolveQuoteDemand package components: ${compsRes.error.message}`);
   if (optsRes.error) throw new Error(`resolveQuoteDemand package options: ${optsRes.error.message}`);
-  if (pkgRes.error) throw new Error(`resolveQuoteDemand packages: ${pkgRes.error.message}`);
 
   return resolveDemandFromLines({
     lines,
@@ -98,7 +96,6 @@ export async function resolveQuoteDemand(sb: Sb, quoteId: string): Promise<Resol
       id: c.id, packageId: c.package_id, slotType: c.slot_type, itemId: c.item_id, menuItemId: c.menu_item_id,
       quantity: num(c.quantity), description: c.description ?? null, displayOrder: c.display_order ?? i,
     })),
-    packages: (pkgRes.data ?? []).map((p) => ({ id: p.id, labelEn: p.label_en, labelEs: p.label_es })),
     picks: (optsRes.data ?? []).map((o) => ({
       quoteItemId: o.quote_item_id, packageItemId: o.package_item_id, itemId: o.item_id, menuItemId: o.menu_item_id, quantity: num(o.quantity),
     })),

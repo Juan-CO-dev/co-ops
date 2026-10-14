@@ -1,21 +1,24 @@
 /**
- * B7c round 2 — quote line kinds (migration 0251) and Astra's three P2s on 12e208d3.
- * PURE: resolveDemandFromLines (lib/catering/prep-demand-shared.ts), resolveQuoteLineKind and
- * expandPackageLines (lib/catering/quotes-shared.ts). No I/O.
+ * B7c — quote line kinds (migration 0251). PURE: resolveDemandFromLines + the 0251 CHECK mirror
+ * (lib/catering/prep-demand-shared.ts), resolveQuoteLineKind and expandPackageLines
+ * (lib/catering/quotes-shared.ts). No I/O.
  *
- *   P2-1  Removing the last concrete component restores its demand → a header that lists its
- *         components (components_listed = true) never expands fixed components, even when none remain.
- *   P2-2  A paid header suppresses a legitimate free package → the legacy "unpriced placeholder"
- *         heuristic never applies to a line that carries a line_kind.
- *   P2-3  Legacy quotes still multiply pick demand → a legacy pick placeholder is never also a
- *         header, and its Qty (already the slot count) is never multiplied by the slot again.
- *   TOTALS  144 package × pricing-mode × headcount cases: every line's quantity and price, the
- *           subtotal and the whole charge stack are identical to the parent commit (12e208d3).
+ *   Round 2  P2-1 a listed header never re-expands its fixed components · P2-2 price never
+ *            decides what a line is · the edited/removed header and pick cases.
+ *   Round 3  The legacy (no line_kind) rules are GONE (production had no package quote lines):
+ *            a package line without a kind counts nothing and is reported by id; the write path
+ *            refuses it as `outdated` (409 quote_lines_outdated); 0251 refuses it in SQL, and the
+ *            CHECK mirror is pinned to the migration text (incl. Astra's P3: components_listed on
+ *            a NULL-kind line).
+ *   TOTALS   144 package × pricing-mode × headcount cases: every line's quantity and price, the
+ *            subtotal and the whole charge stack are identical to the parent commit (12e208d3).
  */
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import {
+  quoteLineRowAllowed,
   resolveDemandFromLines,
-  type DemandPackage,
+  unkindedPackageLineIds,
   type DemandPackageComp,
   type DemandPick,
   type DemandQuoteLine,
@@ -30,13 +33,6 @@ import {
 } from "@/lib/catering/quotes-shared";
 
 // ── catalog fixture (shaped like the live catalog: platters/lunches = one choice slot) ─────
-const PACKAGES: DemandPackage[] = [
-  { id: "pkg-plat", labelEn: "16 pc platter", labelEs: "Bandeja de 16" },
-  { id: "pkg-ll", labelEn: "Light Lunch", labelEs: null },
-  { id: "pkg-mix", labelEn: "Mix", labelEs: null },
-  { id: "pkg-combo", labelEn: "Combo", labelEs: null },
-  { id: "pkg-fix", labelEn: "Snack pack", labelEs: null },
-];
 const comp = (id: string, packageId: string, slotType: string, quantity: number, extra: Partial<DemandPackageComp> = {}): DemandPackageComp => ({
   id, packageId, slotType, itemId: null, menuItemId: null, quantity, description: null, displayOrder: 0, ...extra,
 });
@@ -69,23 +65,24 @@ const BUILDER: Record<string, ExpandablePackage> = {
     items: [{ itemId: "i-chips", menuItemId: null, label: "Chips", quantity: 1, unitPriceCents: 0 }] },
 };
 
-type LineIn = Partial<DemandQuoteLine> & { quantity: number };
+/** A saved line; the price rides along to prove it never decides what a line is. */
+type TLine = DemandQuoteLine & { unitPriceCents?: number };
+type LineIn = Partial<TLine> & { quantity: number };
 let n = 0;
-const L = (l: LineIn): DemandQuoteLine => ({
+const L = (l: LineIn): TLine => ({
   id: `qi-${++n}`, itemId: null, menuItemId: null, packageId: null, portion: null, unitPriceCents: 0,
-  displayOrder: 0, description: null, lineKind: null, componentsListed: null, ...l,
+  description: null, lineKind: null, componentsListed: null, ...l,
 });
 /** The builder's lines for a package, as they are saved (kinds included). */
-const built = (pkg: ExpandablePackage, headcount = ""): DemandQuoteLine[] =>
+const built = (pkg: ExpandablePackage, headcount = ""): TLine[] =>
   expandPackageLines(pkg, headcount).map((x) => L({
     description: x.description, quantity: Number(x.quantity), unitPriceCents: Math.round(Number(x.unitPrice || "0") * 100),
     itemId: x.itemId, menuItemId: x.menuItemId, packageId: x.packageId, lineKind: x.lineKind, componentsListed: x.componentsListed,
   }));
-/** Number the lines in the order given (display order = position on the quote). */
-const quote = (...groups: DemandQuoteLine[][]): DemandQuoteLine[] => groups.flat().map((l, i) => ({ ...l, displayOrder: i }));
+const quote = (...groups: TLine[][]): TLine[] => groups.flat();
 
-const demand = (lines: DemandQuoteLine[], picks: DemandPick[] = []) => {
-  const d = resolveDemandFromLines({ lines, comps: COMPS, packages: PACKAGES, picks });
+const demand = (lines: TLine[], picks: DemandPick[] = []) => {
+  const d = resolveDemandFromLines({ lines, comps: COMPS, picks });
   const sum = (f: (x: (typeof d)[number]) => boolean) => d.filter(f).reduce((s, x) => s + x.qty, 0);
   return {
     chips: sum((x) => x.itemId === "i-chips"),
@@ -172,90 +169,54 @@ describe("edited and removed headers and pick slots — no double count, no sile
 
 // ── portal lines ───────────────────────────────────────────────────────────────────────
 describe("portal lines (package_header, components_listed = false) behave exactly as before", () => {
-  const portal = (packageId: string, quantity: number, kinded: boolean) =>
-    L({ packageId, quantity, unitPriceCents: 1800, description: "Mix", lineKind: kinded ? "package_header" : null, componentsListed: kinded ? false : null });
-  for (const kinded of [true, false]) {
-    it(`${kinded ? "kinded" : "legacy"} portal line expands the whole package, picks as needs-pick`, () => {
-      expect(demand(quote([portal("pkg-mix", 3, kinded)]))).toMatchObject({ chips: 3, picks: 3 });
-    });
-    it(`${kinded ? "kinded" : "legacy"} portal line with stored picks → concrete subs, no needs-pick`, () => {
-      const line = quote([portal("pkg-mix", 3, kinded)])[0]!;
-      expect(demand([line], [{ quoteItemId: line.id, packageItemId: "mix-slot", itemId: null, menuItemId: "m-sub", quantity: 1 }]))
-        .toMatchObject({ chips: 3, picks: 0, subs: 3 });
-    });
-  }
+  const portal = (packageId: string, quantity: number) =>
+    L({ packageId, quantity, unitPriceCents: 1800, description: "Mix", lineKind: "package_header", componentsListed: false });
+  it("a portal line expands the whole package, picks as needs-pick", () => {
+    expect(demand(quote([portal("pkg-mix", 3)]))).toMatchObject({ chips: 3, picks: 3 });
+  });
+  it("a portal line with stored picks → concrete subs, no needs-pick", () => {
+    const line = portal("pkg-mix", 3);
+    expect(demand([line], [{ quoteItemId: line.id, packageItemId: "mix-slot", itemId: null, menuItemId: "m-sub", quantity: 1 }]))
+      .toMatchObject({ chips: 3, picks: 0, subs: 3 });
+  });
   it("a staff revise of a portal quote (picks not carried) keeps the whole-package header", () => {
     expect(demand(quote([L({ packageId: "pkg-plat", quantity: 2, unitPriceCents: 11500, lineKind: "package_header", componentsListed: false })])))
       .toMatchObject({ picks: 32 });
   });
-});
-
-// ── P2-3 · old saved quotes (no kind) ─────────────────────────────────────────────────
-describe("P2-3 · old saved quotes resolve with the fixed legacy rules", () => {
-  /** A legacy line exactly as the pre-0251 builders wrote it: package id on every line, no kind. */
-  const legacy = (l: LineIn) => L({ lineKind: null, componentsListed: null, ...l });
-  const oldHeader = (packageId: string, label: string, cents: number, quantity = 1) =>
-    legacy({ packageId, description: label, unitPriceCents: cents, quantity });
-  const oldPlaceholder = (packageId: string, quantity: number, label = "Choose your subs") =>
-    legacy({ packageId, description: label, unitPriceCents: 0, quantity });
-
-  it("composition-priced package: priced chips line + $0 pick placeholder at Qty 16, no header → 1 chip, 16 picks (was 256)", () => {
-    expect(demand(quote([
-      legacy({ packageId: "pkg-combo", itemId: "i-chips", description: "Chips", unitPriceCents: 200, quantity: 1 }),
-      oldPlaceholder("pkg-combo", 16),
-    ]))).toMatchObject({ chips: 1, picks: 16 });
-  });
-  it("zero-priced platter header + its Qty-16 placeholder → 16 picks (was 272)", () => {
-    expect(demand(quote([oldHeader("pkg-plat", "16 pc platter", 0), oldPlaceholder("pkg-plat", 16)]))).toMatchObject({ picks: 16 });
-  });
-  it("priced platter header + placeholder → 16; two old platters → 32; one of them zeroed → still 32", () => {
-    const one = () => [oldHeader("pkg-plat", "16 pc platter", 11500), oldPlaceholder("pkg-plat", 16)];
-    expect(demand(quote(one()))).toMatchObject({ picks: 16 });
-    expect(demand(quote(one(), one()))).toMatchObject({ picks: 32 });
-    expect(demand(quote(one(), [oldHeader("pkg-plat", "16 pc platter", 0), oldPlaceholder("pkg-plat", 16)]))).toMatchObject({ picks: 32 });
-  });
-  it("header with its placeholder deleted reserves the slot; placeholder with its header deleted counts once", () => {
-    expect(demand(quote([oldHeader("pkg-plat", "16 pc platter", 11500)]))).toMatchObject({ picks: 16 });
-    expect(demand(quote([oldPlaceholder("pkg-plat", 16)]))).toMatchObject({ picks: 16 });
-  });
-  it("the Spanish package label also reads as a header", () => {
-    expect(demand(quote([oldHeader("pkg-plat", "Bandeja de 16", 0), oldPlaceholder("pkg-plat", 16)]))).toMatchObject({ picks: 16 });
-  });
-  it("retyped descriptions fall back to price: a priced line is the header, a $0 line the placeholder", () => {
-    expect(demand(quote([oldHeader("pkg-plat", "Party tray", 11500), oldPlaceholder("pkg-plat", 16, "Subs TBD")]))).toMatchObject({ picks: 16 });
-  });
-  it("old whole-priced mixed package: header + listed chips + placeholder → chips and picks once", () => {
-    expect(demand(quote([
-      oldHeader("pkg-mix", "Mix", 1800, 5),
-      legacy({ packageId: "pkg-mix", itemId: "i-chips", description: "Chips", quantity: 5 }),
-      oldPlaceholder("pkg-mix", 5, "Choose your sub"),
-    ]))).toMatchObject({ chips: 5, picks: 5 });
-  });
-  it("an old free package with no choice slot (unpriced, alone) still counts — never a silent zero", () => {
-    expect(demand(quote([oldHeader("pkg-fix", "Snack pack", 0, 2)]))).toMatchObject({ chips: 2 });
-  });
-  it("an old header with stored picks (portal) wins over a stray placeholder in its run", () => {
-    const h = oldHeader("pkg-plat", "16 pc platter", 11500);
-    const lines = quote([h, oldPlaceholder("pkg-plat", 16)]);
-    expect(demand(lines, [{ quoteItemId: lines[0]!.id, packageItemId: "plat-slot", itemId: null, menuItemId: "m-sub", quantity: 16 }]))
-      .toMatchObject({ picks: 0, subs: 16 });
-  });
-});
-
-// ── mixed old + new ────────────────────────────────────────────────────────────────────
-describe("mixed old + new lines on one quote", () => {
-  it("a revised legacy platter plus a newly added platter → 32, no double count", () => {
-    const old = [L({ packageId: "pkg-plat", description: "16 pc platter", unitPriceCents: 11500, quantity: 1 }), L({ packageId: "pkg-plat", description: "Choose your subs", quantity: 16 })];
-    expect(demand(quote(old, built(BUILDER.platter!)))).toMatchObject({ picks: 32 });
-  });
-  it("legacy and kinded lines of one package never cover for each other (they are separate adds)", () => {
-    const legacyPh = L({ packageId: "pkg-plat", description: "Choose your subs", quantity: 16 });
-    const kindedHeader = built(BUILDER.platter!).filter((l) => l.lineKind === "package_header");
-    expect(demand(quote([legacyPh], kindedHeader))).toMatchObject({ picks: 32 });
+  it("a free (unpriced) whole-package header still counts — price never decides", () => {
+    expect(demand(quote([L({ packageId: "pkg-fix", quantity: 2, lineKind: "package_header", componentsListed: false })]))).toMatchObject({ chips: 2 });
   });
   it("à la carte lines count on their own beside packages", () => {
     const sub = L({ menuItemId: "m-sub", quantity: 4, unitPriceCents: 1000 });
     expect(demand(quote([sub], built(BUILDER.mix!, "2")))).toMatchObject({ subs: 4, chips: 2, picks: 2 });
+  });
+});
+
+// ── round 3 · no legacy rules ──────────────────────────────────────────────────────────
+describe("round 3 · a package line without a kind is never guessed at", () => {
+  /** Exactly the three shapes Astra's round 3 broke the legacy rules with — now inert. */
+  const bare = (packageId: string, quantity: number, description: string, cents = 0) =>
+    L({ packageId, quantity, description, unitPriceCents: cents });
+
+  it("a bare unkinded package line counts NOTHING, whatever its price or description", () => {
+    expect(demand(quote([bare("pkg-plat", 1, "16 pc platter", 11500), bare("pkg-plat", 16, "Choose your subs")])))
+      .toMatchObject({ picks: 0, chips: 0 });
+    expect(demand(quote([bare("pkg-plat", 1, "Party tray"), bare("pkg-plat", 16, "Choose your subs")]))).toMatchObject({ picks: 0 });
+  });
+  it("an unkinded package line with a reference still counts its own item — that is no guess", () => {
+    expect(demand(quote([L({ packageId: "pkg-mix", itemId: "i-chips", quantity: 1 }), bare("pkg-mix", 5, "Mix", 1800)])))
+      .toMatchObject({ chips: 1, picks: 0 });
+  });
+  it("unkinded package lines never cover for kinded ones: a kinded platter beside them is exactly 16", () => {
+    expect(demand(quote([bare("pkg-plat", 16, "Choose your subs")], built(BUILDER.platter!)))).toMatchObject({ picks: 16 });
+  });
+  it("unkindedPackageLineIds names every package line without a kind (ids only) and nothing else", () => {
+    const a = bare("pkg-plat", 1, "x");
+    const b = L({ packageId: "pkg-mix", itemId: "i-chips", quantity: 1 });
+    const ok = built(BUILDER.mix!, "2");
+    const plain = L({ menuItemId: "m-sub", quantity: 1 });
+    expect(unkindedPackageLineIds([a, ...ok, b, plain])).toEqual([a.id, b.id]);
+    expect(unkindedPackageLineIds(built(BUILDER.platter!))).toEqual([]);
   });
 });
 
@@ -272,20 +233,83 @@ describe("resolveQuoteLineKind — what a saved line stores", () => {
       .toEqual({ ok: true, lineKind: "package_pick", componentsListed: null });
   });
   it("refuses a kind that contradicts the line's references (the 0251 CHECKs, as a named 400)", () => {
-    expect(resolveQuoteLineKind({ itemId: "i", menuItemId: null, packageId: "p", lineKind: "package_header" }).ok).toBe(false);
-    expect(resolveQuoteLineKind({ itemId: null, menuItemId: null, packageId: "p", lineKind: "package_component" }).ok).toBe(false);
-    expect(resolveQuoteLineKind({ itemId: null, menuItemId: null, packageId: null, lineKind: "package_pick" }).ok).toBe(false);
-    expect(resolveQuoteLineKind({ itemId: null, menuItemId: null, packageId: "p", lineKind: "whole_package" }).ok).toBe(false);
+    for (const bad of [
+      { itemId: "i", menuItemId: null, packageId: "p", lineKind: "package_header" },
+      { itemId: null, menuItemId: null, packageId: "p", lineKind: "package_component" },
+      { itemId: null, menuItemId: null, packageId: null, lineKind: "package_pick" },
+      { itemId: null, menuItemId: null, packageId: "p", lineKind: "whole_package" },
+    ]) expect(resolveQuoteLineKind(bad)).toMatchObject({ ok: false, reason: "invalid" });
   });
-  it("no kind: a referenced package line is stamped a component; anything else stays NULL", () => {
-    expect(resolveQuoteLineKind({ itemId: null, menuItemId: "m", packageId: "p" })).toEqual({ ok: true, lineKind: "package_component", componentsListed: null });
+  it("round 3: ANY package line without a kind is refused as outdated — never stamped (Astra P2-1)", () => {
+    expect(resolveQuoteLineKind({ itemId: null, menuItemId: "m", packageId: "p" })).toMatchObject({ ok: false, reason: "outdated" });
+    expect(resolveQuoteLineKind({ itemId: "i", menuItemId: null, packageId: "p", lineKind: null })).toMatchObject({ ok: false, reason: "outdated" });
+    expect(resolveQuoteLineKind({ itemId: null, menuItemId: null, packageId: "p" })).toMatchObject({ ok: false, reason: "outdated" });
+  });
+  it("a non-package line carries no kind", () => {
     expect(resolveQuoteLineKind({ itemId: "i", menuItemId: null, packageId: null })).toEqual({ ok: true, lineKind: null, componentsListed: null });
-    expect(resolveQuoteLineKind({ itemId: null, menuItemId: null, packageId: "p" })).toEqual({ ok: true, lineKind: null, componentsListed: null });
+    expect(resolveQuoteLineKind({ itemId: null, menuItemId: null, packageId: null })).toEqual({ ok: true, lineKind: null, componentsListed: null });
   });
-  it("every line the builder emits passes the gate", () => {
+  it("every line the builder emits passes the gate AND the 0251 CHECKs", () => {
     for (const pkg of Object.values(BUILDER)) {
-      for (const l of expandPackageLines(pkg, "12")) expect(resolveQuoteLineKind(l).ok).toBe(true);
+      for (const l of expandPackageLines(pkg, "12")) {
+        const k = resolveQuoteLineKind(l);
+        expect(k.ok).toBe(true);
+        if (k.ok) expect(quoteLineRowAllowed({ ...l, lineKind: k.lineKind, componentsListed: k.componentsListed })).toBe(true);
+      }
     }
+  });
+});
+
+// ── the 0251 CHECKs, mirrored and pinned ───────────────────────────────────────────────
+describe("0251 · the CHECK mirror (quoteLineRowAllowed) and the migration text", () => {
+  const sql = readFileSync("supabase/migrations/0251_catering_quote_line_kind.sql", "utf8").replace(/\r\n/g, "\n");
+  const squash = (x: string) => x.replace(/\s+/g, " ");
+  const row = (r: Partial<Parameters<typeof quoteLineRowAllowed>[0]>) =>
+    quoteLineRowAllowed({ itemId: null, menuItemId: null, packageId: null, lineKind: null, componentsListed: null, ...r });
+
+  it("the migration carries the three CHECKs, the manifest ASSERT and stays one unapplied transaction", () => {
+    const flat = squash(sql);
+    expect(flat).toContain("check (line_kind in ('package_header', 'package_component', 'package_pick'))");
+    expect(flat).toContain("add constraint catering_quote_items_package_line_has_kind check ( package_id is null or line_kind is not null )");
+    expect(flat).toContain("add constraint catering_quote_items_components_listed_header_only check ( components_listed is null or coalesce(line_kind = 'package_header', false) )");
+    expect(flat).toContain("(line_kind = 'package_header' and package_id is not null and item_id is null and menu_item_id is null)");
+    expect(flat).toContain("(line_kind = 'package_component' and package_id is not null and (item_id is not null or menu_item_id is not null))");
+    expect(flat).toContain("(line_kind = 'package_pick' and package_id is not null and item_id is null and menu_item_id is null)");
+    // The ASSERT runs after the columns exist and BEFORE the constraints go on; it refuses blind runs.
+    const assertAt = sql.indexOf("assert n = 0");
+    expect(assertAt).toBeGreaterThan(sql.indexOf("add column components_listed boolean null"));
+    expect(assertAt).toBeLessThan(sql.indexOf("add constraint catering_quote_items_package_line_has_kind"));
+    expect(sql).toContain("where package_id is not null and line_kind is null");
+    expect(sql).toContain("plpgsql.check_asserts");
+    expect(sql).toContain("-- AUTHORED 2026-10-14, NOT YET APPLIED — GATE CC: sim first, then prod.");
+    expect(sql).toContain("\nbegin;\n");
+    expect(sql.trimEnd().endsWith("commit;")).toBe(true);
+    expect(sql).not.toMatch(/^\s*(grant|revoke|update|delete)\b/im); // no grant change, no data write
+  });
+
+  it("every package line needs its kind; a non-package line needs none", () => {
+    expect(row({ itemId: "i" })).toBe(true);
+    expect(row({ packageId: "p" })).toBe(false);
+    expect(row({ packageId: "p", itemId: "i" })).toBe(false);
+  });
+  it("each kind's shape", () => {
+    expect(row({ packageId: "p", lineKind: "package_header" })).toBe(true);
+    expect(row({ packageId: "p", lineKind: "package_pick" })).toBe(true);
+    expect(row({ packageId: "p", itemId: "i", lineKind: "package_component" })).toBe(true);
+    expect(row({ packageId: "p", menuItemId: "m", lineKind: "package_component" })).toBe(true);
+    expect(row({ packageId: "p", itemId: "i", lineKind: "package_header" })).toBe(false);
+    expect(row({ packageId: "p", menuItemId: "m", lineKind: "package_pick" })).toBe(false);
+    expect(row({ packageId: "p", lineKind: "package_component" })).toBe(false);
+    expect(row({ lineKind: "package_header" })).toBe(false);
+    expect(row({ packageId: "p", lineKind: "whole_package" })).toBe(false);
+  });
+  it("P3: components_listed is a header-only field — a NULL-kind line may not carry it", () => {
+    expect(row({ packageId: "p", lineKind: "package_header", componentsListed: true })).toBe(true);
+    expect(row({ packageId: "p", lineKind: "package_header", componentsListed: false })).toBe(true);
+    expect(row({ itemId: "i", componentsListed: true })).toBe(false); // the P3 case: NULL kind + true
+    expect(row({ componentsListed: false })).toBe(false);
+    expect(row({ packageId: "p", lineKind: "package_pick", componentsListed: true })).toBe(false);
+    expect(row({ packageId: "p", itemId: "i", lineKind: "package_component", componentsListed: false })).toBe(false);
   });
 });
 
