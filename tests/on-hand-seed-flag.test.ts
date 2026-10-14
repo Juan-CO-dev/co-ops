@@ -8,7 +8,7 @@
  * app/(authed)/operations/counts/page.tsx -> loadOnHand      | counts-panel read (wrapper)
  * scripts/sim/product-identity/day2-two-vendor-count.ts      | panel verification read (false)
  *   -> loadOnHandDerived
- * lib/counts.ts loadOnHandDerived -> onHandCore (private)     | gated wrapper (floor + bind), forwards opts
+ * lib/counts.ts loadOnHandDerived -> onHandCore (private)     | gated wrapper (floor + bind), forwards opts (+ B9 shared refs)
  * lib/counts.ts deriveOnHand -> onHandCore                   | PUBLIC actor-less read: ALWAYS seedBaselines false, no option
  * lib/report-digests.ts loadCateringReadiness -> deriveOnHand | digest read (read-only by construction)
  * lib/counts.ts onHandCore -> loadInferredRows (x1, B9)      | forwards flag on the single path
@@ -36,12 +36,12 @@ describe("LRA-217: inference persistence is explicit", () => {
       expect(fn(ordering, name).text).toContain("loadOnHandDerived(actor, locationId)");
     }
     expect(fn(counts, "onHandCore").text).toContain("const seedBaselines = opts.seedBaselines ?? true");
-    expect(fn(counts, "loadOnHandDerived").text).toContain("return onHandCore(locationId, now, opts)");
+    expect(fn(counts, "loadOnHandDerived").text).toContain("return onHandCore(locationId, now, opts, refs)");
   });
 
   it("disables seeds for the counts panel and its simulation read", () => {
-    expect(fn(counts, "loadOnHand").text).toContain("loadOnHandDerived(actor, locationId, now, { withProducts: true, seedBaselines: false })");
-    expect(readFileSync("app/(authed)/operations/counts/page.tsx", "utf8")).toContain("loadOnHand(auth, location)");
+    expect(fn(counts, "loadOnHand").text).toContain("loadOnHandDerived(actor, locationId, now, { withProducts: true, seedBaselines: false }, refs)");
+    expect(readFileSync("app/(authed)/operations/counts/page.tsx", "utf8")).toContain("loadOnHand(auth, location, undefined, refs)");
     expect(readFileSync("scripts/sim/product-identity/day2-two-vendor-count.ts", "utf8")).toContain("loadOnHandDerived(actor, loc.id, Date.now(), { withProducts: true, seedBaselines: false })");
   });
 

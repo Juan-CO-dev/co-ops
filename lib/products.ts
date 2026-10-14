@@ -42,7 +42,8 @@ import {
 } from "@/lib/products-shared";
 import type { ProductIndex } from "@/lib/prep-consumption-graph";
 import { loadMeasures, loadSkuPackChains } from "@/lib/prep-consumption";
-import { skuContentOz } from "@/lib/recipe-math";
+import { skuContentOz, type MeasureUnitFactor } from "@/lib/recipe-math";
+import type { PackChainLevel } from "@/lib/pack-chain-shared";
 import { storeRunReceiptStreak, type ProductReceiptEvent } from "@/lib/products-shared";
 
 // ── Authority floors (the lib is the authority per-action) ───────────────────
@@ -438,6 +439,18 @@ export interface ProductIndexLoad {
   productBySku: Map<string, string>;
 }
 
+/**
+ * Reference reads a caller ALREADY holds for this render (B9: the counts page reads the
+ * vendor list, the measure registry and the pack chains once and shares them). Each must
+ * answer exactly what the default read would — same rows for the same ids — and must
+ * THROW on failure, as the default reads do (vendor kind/activity are resolution inputs).
+ */
+export interface ProductIndexSharedReads {
+  vendors?: (vendorIds: string[]) => Promise<Array<{ id: string; name: string; source_kind: "vendor" | "store"; active: boolean }>>;
+  measures?: () => Promise<Map<string, MeasureUnitFactor>>;
+  packChains?: (skuIds: string[]) => Promise<Map<string, PackChainLevel[]>>;
+}
+
 const EMPTY_PRODUCT_INDEX: ProductIndexLoad = {
   index: { resolution: new Map(), basis: new Map() },
   byProduct: new Map(),
@@ -582,6 +595,7 @@ interface ProductReceiptLine {
 export async function loadProductIndex(
   productIds: string[],
   locationId: string | null = null,
+  shared: ProductIndexSharedReads = {},
 ): Promise<ProductIndexLoad> {
   const ids = [...new Set(productIds.filter(Boolean))];
   if (ids.length === 0) return EMPTY_PRODUCT_INDEX;
@@ -642,17 +656,22 @@ export async function loadProductIndex(
   const vendorNameById = new Map<string, string>();
   const vendorById = new Map<string, { source_kind: "vendor" | "store"; active: boolean }>();
   if (vendorIds.length > 0) {
-    const { data: vs, error: vErr } = await sb
-      .from("vendors")
-      .select("id, name, source_kind, active")
-      .in("id", vendorIds)
-      .returns<Array<{ id: string; name: string; source_kind: "vendor" | "store"; active: boolean }>>();
-    if (vErr) throw new Error(`loadProductIndex vendor eligibility: ${vErr.message}`);
-    for (const v of vs ?? []) { vendorNameById.set(v.id, v.name); vendorById.set(v.id, v); }
+    const vs = shared.vendors ? await shared.vendors(vendorIds) : await (async () => {
+      const { data, error: vErr } = await sb
+        .from("vendors")
+        .select("id, name, source_kind, active")
+        .in("id", vendorIds)
+        .returns<Array<{ id: string; name: string; source_kind: "vendor" | "store"; active: boolean }>>();
+      if (vErr) throw new Error(`loadProductIndex vendor eligibility: ${vErr.message}`);
+      return data ?? [];
+    })();
+    for (const v of vs) { vendorNameById.set(v.id, v.name); vendorById.set(v.id, v); }
   }
 
   const [{ lastReceived, lines: receiptLines }, measures, chains] = await Promise.all([
-    loadReceiptHistory(sb, memberIds, locationId), loadMeasures(), loadSkuPackChains(memberIds),
+    loadReceiptHistory(sb, memberIds, locationId),
+    shared.measures ? shared.measures() : loadMeasures(),
+    shared.packChains ? shared.packChains(memberIds) : loadSkuPackChains(memberIds),
   ]);
   const receiptEventsByProduct = new Map<string, ProductReceiptEvent[]>();
   const memberProduct = new Map(memberRowList.map((m) => [m.id, m.product_id]));

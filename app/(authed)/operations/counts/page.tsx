@@ -3,7 +3,7 @@ import { redirect } from "next/navigation";
 import { serverT } from "@/lib/i18n/server";
 import { lockLocationContext, type LocationActor } from "@/lib/locations";
 import { requireSessionFromHeaders } from "@/lib/session";
-import { loadCountFormData, loadCountReferenceData, loadOnHand, COUNT_READ_MIN, COUNT_WRITE_MIN } from "@/lib/counts";
+import { createCountsReadRefs, loadCountFormData, loadCountReferenceData, loadOnHand, COUNT_READ_MIN, COUNT_WRITE_MIN } from "@/lib/counts";
 import { twinVendorLabels } from "@/lib/counts-shared";
 import { CountForm } from "@/components/counts/CountForm";
 import { OnHandPanel } from "@/components/counts/OnHandPanel";
@@ -24,9 +24,12 @@ export default async function CountsPage({ searchParams }: { searchParams: Promi
   if (!mayCount && auth.level < COUNT_READ_MIN) redirect("/dashboard");
 
   const lang = auth.user.language;
+  // B9: ONE set of reference reads (roster, vendors, measures, chains, the product index +
+  // lots) for the whole render — the count sheet and the on-hand panel share them.
+  const refs = createCountsReadRefs();
   const [formData, onHand] = await Promise.all([
-    mayCount ? loadCountFormData(auth, location) : loadCountReferenceData(auth, location),
-    auth.level >= COUNT_READ_MIN ? loadOnHand(auth, location) : Promise.resolve(null),
+    mayCount ? loadCountFormData(auth, location, refs) : loadCountReferenceData(auth, location, refs),
+    auth.level >= COUNT_READ_MIN ? loadOnHand(auth, location, undefined, refs) : Promise.resolve(null),
   ]);
 
   return (

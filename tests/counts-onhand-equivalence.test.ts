@@ -131,8 +131,12 @@ describe.each(MODES)("OLD ≡ NEW over the same database — %s sales source", (
     const old = await measure(scale, () => v0.v0OnHandCore(LOC, NOW, {}));
     const neu = await measure(scale, () => counts.loadOnHandDerived(actor, LOC, NOW));
     expect(plain(neu.out)).toEqual(plain(old.out));
-    expect(neu.writes).toEqual(old.writes);
+    // The upsert is a SET (ON CONFLICT DO NOTHING per row): compare it as one. Its row order
+    // followed an unordered roster read before B9 and the sheet's name-ordered one after.
+    const asSet = (w: typeof old.writes) => w.map((x) => ({ table: x.table, rows: [...x.rows].sort((a, b) => String(a.sku_id).localeCompare(String(b.sku_id))) }));
+    expect(asSet(neu.writes)).toEqual(asSet(old.writes));
     expect(old.writes.length).toBe(1); // a real upsert happened, so the comparison is not vacuous
+    expect(old.writes[0]!.rows.length).toBeGreaterThanOrEqual(3);
   });
 
   it("the actor-less digest read is identical — and the read-only path writes nothing", async () => {
@@ -220,5 +224,31 @@ describe("B9 step 3 — the count-dimension N+1 is one read", () => {
     expect(tally(scaled.log, "vendor_deliveries")).toBe(1);
     expect(scaled.trips).toBe(base.trips);
     expect(tally(old.log, "vendor_delivery_items")).toBeGreaterThan(tally(scaled.log, "vendor_delivery_items") + 10);
+  });
+});
+
+const pageRender = async () => {
+  const refs = counts.createCountsReadRefs();
+  return Promise.all([counts.loadCountReferenceData(actor, LOC, refs), counts.loadOnHand(actor, LOC, NOW, refs)]);
+};
+const v0PageRender = () => Promise.all([v0.v0LoadCountCatalog(LOC), v0Panel()]);
+const byTable = (log: Array<{ table: string }>) => log.reduce<Record<string, number>>((m, q) => ((m[q.table] = (m[q.table] ?? 0) + 1), m), {});
+
+describe("B9 step 4 — reference data read once per page render (sheet + panel share it)", () => {
+  it.each(MODES)("one roster, one vendor list, one measure registry, one chain read, ONE product index — %s", async (mode) => {
+    setMode(mode);
+    await measure({}, pageRender); // warm the module-level 0180 probe (it caches only `true`)
+    const neu = await measure({}, pageRender);
+    const old = await measure({}, v0PageRender);
+    const t = byTable(neu.log);
+    expect(t.measure_units).toBe(1);
+    expect(t.sku_pack_levels).toBe(1);
+    expect(t.vendors).toBe(1);
+    expect(t.products).toBe(1); // the product index: read once, resolved once (product-identity law)
+    expect(t.product_primaries).toBe(1);
+    expect(t.vendor_items).toBe(3); // roster + the index's member read + one off-roster census label read
+    expect(t.vendor_delivery_items).toBe(3); // the receipt-line ledger, the index's receipt history, ONE lots read
+    expect(byTable(old.log).products).toBe(2);
+    expect(neu.trips).toBeLessThan(old.trips);
   });
 });
