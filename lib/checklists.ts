@@ -982,12 +982,12 @@ export async function completeItem(
       .eq("template_item_id", templateItemId)
       .is("superseded_at", null)
       .is("revoked_at", null)
-      .select("id, completed_by, completed_at, count_value, photo_id");
+      .select("id, completed_by, completed_at, count_value, photo_id, actual_completer_id");
     if (supErr) throw new Error(`completeItem supersede: ${supErr.message}`);
     // B8 #13 — a notes-only re-save by the same person keeps the line's original tick time.
-    const priorHead = (superseded?.[0] ?? null) as Pick<CompletionRow, "completed_by" | "completed_at" | "count_value" | "photo_id"> | null;
+    const priorHead = (superseded?.[0] ?? null) as Pick<CompletionRow, "completed_by" | "completed_at" | "count_value" | "photo_id" | "actual_completer_id"> | null;
     const carryAt = carriedCompletedAt(priorHead, {
-      actorId: actor.userId, countValue: args.countValue ?? null, photoId: args.photoId ?? null,
+      actorId: actor.userId, countValue: args.countValue ?? null, photoId: args.photoId ?? null, inputType: item.input_type,
     });
     // What THIS lap claimed, kept apart from the accumulated `supersededPriorId` (which
     // deliberately carries across laps so the back-pointer survives a 23505 retry).

@@ -9,18 +9,18 @@ import { carriedCompletedAt } from "@/lib/checklist-rows";
 // when only the note changed and the same person saves it. No migration: completed_at already
 // accepts an explicit value and no RLS qual or trigger reads it.
 
-const mocks = vi.hoisted(() => ({ service: {} as unknown, insert: vi.fn(), prior: null as unknown }));
+const mocks = vi.hoisted(() => ({ service: {} as unknown, insert: vi.fn(), prior: null as unknown, inputType: null as "yes_no" | "free_text" | null }));
 vi.mock("@/lib/supabase-server", () => ({ getServiceRoleClient: () => mocks.service }));
 vi.mock("@/lib/audit", () => ({ audit: vi.fn() }));
 vi.mock("@/lib/assignments", () => ({ hasTaskAccess: vi.fn(async () => false), auditTaskOverride: vi.fn() }));
 import { completeItem } from "@/lib/checklists";
 
 const TICK = "2026-10-14T19:20:00.000Z";
-const prior = (over: Record<string, unknown> = {}) => ({ id: "old", completed_by: "kh", completed_at: TICK, count_value: null, photo_id: null, ...over });
+const prior = (over: Record<string, unknown> = {}) => ({ id: "old", completed_by: "kh", completed_at: TICK, count_value: null, photo_id: null, actual_completer_id: null, ...over });
 
 function client(service = false) {
   const item = { id: "item", template_id: "template", min_role_level: 2, active: true, report_reference_type: null,
-    ref_track_item_completion: false, references_template_item_id: null, required: false, expects_count: false, expects_photo: false, input_type: null };
+    ref_track_item_completion: false, references_template_item_id: null, required: false, expects_count: false, expects_photo: false, input_type: mocks.inputType };
   const from = (table: string) => {
     let updating = false;
     const row = table === "checklist_instances" ? { id: "instance", template_id: "template", location_id: "shop", date: "2026-10-14", status: "open" }
@@ -39,10 +39,10 @@ function client(service = false) {
   return { from } as unknown as SupabaseClient;
 }
 const actor = { userId: "kh", role: "key_holder" as const, level: 4 };
-beforeEach(() => { vi.clearAllMocks(); mocks.service = client(true); mocks.prior = null; });
+beforeEach(() => { vi.clearAllMocks(); mocks.inputType = null; mocks.service = client(true); mocks.prior = null; });
 
 describe("B8 #13 the carry rule", () => {
-  const next = { actorId: "kh", countValue: null, photoId: null };
+  const next = { actorId: "kh", countValue: null, photoId: null, inputType: null } as const;
   it("a notes-only re-save by the same person keeps the tick time", () => {
     expect(carriedCompletedAt(prior(), next)).toBe(TICK);
     expect(carriedCompletedAt(prior({ count_value: "3" }), { ...next, countValue: 3 })).toBe(TICK);
@@ -52,6 +52,13 @@ describe("B8 #13 the carry rule", () => {
     expect(carriedCompletedAt(prior({ count_value: 1 }), { ...next, countValue: 0 })).toBeNull();
     expect(carriedCompletedAt(prior(), { ...next, photoId: "p" })).toBeNull();
     expect(carriedCompletedAt(null, next)).toBeNull();
+  });
+  it("r2: on a free_text line the notes ARE the answer — a fresh time, never carried", () => {
+    expect(carriedCompletedAt(prior(), { ...next, inputType: "free_text" })).toBeNull();
+    expect(carriedCompletedAt(prior({ count_value: 1 }), { ...next, countValue: 1, inputType: "yes_no" })).toBe(TICK);
+  });
+  it("r2: a peer-tagged head is not carried (the re-save does not copy the tag; keep today's fresh time)", () => {
+    expect(carriedCompletedAt(prior({ actual_completer_id: "trainee" }), next)).toBeNull();
   });
 });
 
@@ -65,6 +72,18 @@ describe("B8 #13 completeItem", () => {
     await completeItem(client(), { instanceId: "instance", templateItemId: "item", actor });
     expect(mocks.insert.mock.calls[0]![0]).not.toHaveProperty("completed_at");
   });
+  it("r2: changing a free_text ANSWER gets a fresh completed_at (and a fresh quick-undo window)", async () => {
+    mocks.inputType = "free_text";
+    mocks.prior = prior({ count_value: null });
+    await completeItem(client(), { instanceId: "instance", templateItemId: "item", actor, notes: "the new answer" });
+    expect(mocks.insert).toHaveBeenCalledWith(expect.objectContaining({ notes: "the new answer" }));
+    expect(mocks.insert.mock.calls[0]![0]).not.toHaveProperty("completed_at");
+  });
+  it("r2: a note re-save on a peer-tagged line keeps a fresh time", async () => {
+    mocks.prior = prior({ actual_completer_id: "trainee" });
+    await completeItem(client(), { instanceId: "instance", templateItemId: "item", actor, notes: "x" });
+    expect(mocks.insert.mock.calls[0]![0]).not.toHaveProperty("completed_at");
+  });
   it("another person's save keeps its own time", async () => {
     mocks.prior = prior({ completed_by: "someone-else" });
     await completeItem(client(), { instanceId: "instance", templateItemId: "item", actor, notes: "x" });
@@ -72,7 +91,8 @@ describe("B8 #13 completeItem", () => {
   });
   it("the supersede claim reads what the rule needs, still guarded on the live head", () => {
     const src = readFileSync("lib/checklists.ts", "utf8");
-    expect(src).toContain('.select("id, completed_by, completed_at, count_value, photo_id");');
+    expect(src).toContain('.select("id, completed_by, completed_at, count_value, photo_id, actual_completer_id");');
+    expect(src).toContain("inputType: item.input_type,");
     expect(src).toContain("...(carryAt ? { completed_at: carryAt } : {}),");
   });
 });
