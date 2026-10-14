@@ -18,7 +18,7 @@ describe("B8 #11 confirm-here shows the reasons", () => {
   it("an incomplete confirm captures the submitted reasons (same drafts the PIN modal sent)", () => {
     const confirmed = src.slice(src.indexOf("const handlePinConfirmed"), src.indexOf("const handlePinError"));
     expect(confirmed).toContain('incompleteRequiredIds.map((id) => ({ templateItemId: id, reason: (reasonDrafts.get(id) ?? "").trim(), byName: who }))');
-    expect(confirmed).toContain("[t, incompleteRequiredIds, reasonDrafts]");
+    expect(confirmed).toContain("[t, language, incompleteRequiredIds, reasonDrafts]");
     expect(src).toContain('reason: (reasonDrafts.get(id) ?? "").trim(),\n          }))}\n          onConfirmed={handlePinConfirmed}');
   });
 });

@@ -703,7 +703,7 @@ export function ClosingClient({ initialState }: { initialState: ClosingInitialSt
         );
       }
     },
-    [t, incompleteRequiredIds, reasonDrafts],
+    [t, language, incompleteRequiredIds, reasonDrafts],
   );
 
   const handlePinError = useCallback((err: ChecklistApiError) => {
