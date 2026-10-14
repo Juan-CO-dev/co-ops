@@ -938,9 +938,9 @@ export type { ProductOnHandRow } from "@/lib/products-shared";
  *   sales lane      = SUM(toast_daily_depletion.direct_oz) at this location for
  *                     business_dates in the last 28d (ONLY the direct lane depletes
  *                     raw stock; flattened_oz is production-covered — NEVER summed).
- * Two grouped batch queries (loadRecipeGraph law — never per-SKU), returning per-SKU
- * lane totals so the writer can persist the lane breakdown in `basis`. A SKU absent
- * from both lanes is absent from the map (advisory-null — gets NO baseline).
+ * Per-SKU lane totals (never per-SKU reads — loadRecipeGraph law) so the writer can
+ * persist the lane breakdown in `basis`. A SKU absent from both lanes is absent from the
+ * map (advisory-null — gets NO baseline).
  *
  * B9: both lanes are slices of the render's ONE production read and ONE effective-sales
  * read, never a second pass over the same rows.
@@ -1057,7 +1057,7 @@ function inferredPlanFrom(
  * Pre-existing baselines anchor at their stored computed_at. With seedBaselines
  * false, the same merge computes this render without writing future anchors.
  *
- * B9: step 1 (the roster + stored baselines) is planInferredTier, run before any ledger
+ * B9: step 1 (the roster + stored baselines) is inferredPlanFrom, run before any ledger
  * is read so the render's single ledger reads can start early enough for this tier too.
  */
 async function loadInferredRows(
@@ -1965,11 +1965,11 @@ async function onHandCore(
 
   // ── Par-estimate rows (spec D6, middle tier) ── for active SKUs with NO census
   // anchor (weight or count) but a par-pass line's implied on-hand: a soft shelf-walk
-  // snapshot (loadParAnchors excluded every census-anchored SKU).
+  // snapshot (parAnchorsFrom excluded every census-anchored SKU).
   const parRows = loadParEstimateRows(par, ctx, now);
 
   // ── Inferred rows (spec D6, cold-start tier) ── for active SKUs with NEITHER a census
-  // anchor NOR a par_estimate anchor but real consumption history (planInferredTier
+  // anchor NOR a par_estimate anchor but real consumption history (inferredPlanFrom
   // excluded both sets: census > par_estimate > inferred precedence).
   const inferredRows = await loadInferredRows(sb, locationId, inferredPlan, ctx, now, { seedBaselines });
 

@@ -150,6 +150,9 @@ async function countPage(role: RoleCode, mayCount: boolean) {
     redirect: () => { throw new Error("redirect"); },
     loadCountFormData: form, loadCountReferenceData: reference, loadOnHand: onHand,
     serverT: () => "label", twinVendorLabels: () => new Map(),
+    // B9: shared reference reads + the streamed panel (Suspense + error boundary + deadline).
+    createCountsReadRefs: () => ({}), withDeadline: <T,>(p: Promise<T>) => p, ON_HAND_DEADLINE_MS: 1,
+    Suspense: "Suspense", OnHandBoundary: "OnHandBoundary", OnHandSection: "OnHandSection",
     CountForm: "CountForm", OnHandPanel: "OnHandPanel", DashboardBackLink: "DashboardBackLink", ExportLinks: "ExportLinks",
     React: { createElement: (type: unknown, props: unknown, ...children: unknown[]) => ({ type, props, children }) },
   };
@@ -161,7 +164,8 @@ async function countPage(role: RoleCode, mayCount: boolean) {
 describe("count read-only view", () => {
   it("retains AGM history/variance when the count belongs to another person", async () => {
     const page = await countPage("agm", false);
-    expect(page.rendered).toContain("OnHandPanel");
+    expect(page.rendered).toContain("OnHandSection"); // the streamed on-hand panel (B9)
+    expect(page.onHand).toHaveBeenCalledOnce();
     expect(page.rendered).not.toContain("CountForm");
     expect(page.form).not.toHaveBeenCalled();
     expect(page.reference).toHaveBeenCalledOnce();
@@ -170,7 +174,7 @@ describe("count read-only view", () => {
     const page = await countPage(role, true);
     expect(page.rendered).toContain("CountForm");
     expect(page.rendered).toContain('"requiresPin":true');
-    expect(page.rendered).not.toContain("OnHandPanel");
+    expect(page.rendered).not.toContain("OnHandSection");
     expect(page.onHand).not.toHaveBeenCalled();
   });
   it("AGM receives the password confirmation form", async () => {
