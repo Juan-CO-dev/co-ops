@@ -70,6 +70,35 @@ function tzOffsetMs(instant: Date): number {
 }
 
 /**
+ * The UTC instant of an ET WALL-CLOCK time ("HH:MM[:SS]", a Postgres `time` render) on the ET
+ * calendar date `dateYmd`, as an ISO string — with the offset read AT THAT TIME, not at midnight.
+ * "ET midnight + elapsed hours" is wrong for every time after 2 AM on a DST-transition day (review
+ * of B7b D-63, 2026-10-14): on Sun 2026-11-01 an 11:00 cutoff came out as 10:00 EST, on Sun
+ * 2026-03-08 as 12:00 EDT. Two-pass resolution: guess with the offset at the naive instant, then
+ * re-read the offset at the guess. The two DST edge hours (no cutoff lives there) are deterministic:
+ * a time inside the spring-forward gap (02:00–02:59, which never happens) lands one hour EARLIER
+ * (02:30 → 01:30 EST), and an ambiguous fall-back time (01:00–01:59, which happens twice) resolves
+ * to its FIRST (daylight-time) occurrence. Returns null on a malformed date or time — never a
+ * fabricated instant.
+ */
+export function etWallClockToUtcIso(dateYmd: string, time: string): string | null {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(dateYmd)) return null;
+  const parts = time.split(":");
+  if (parts.length < 2 || parts.length > 3 || parts.some((p) => !/^\d{1,2}(\.\d+)?$/.test(p))) return null;
+  const h = Number(parts[0]);
+  const m = Number(parts[1]);
+  const s = Number(parts[2] ?? "0");
+  if (!Number.isInteger(h) || h < 0 || h > 23) return null;
+  if (!Number.isFinite(m) || m < 0 || m > 59) return null;
+  if (!Number.isFinite(s) || s < 0 || s >= 60) return null;
+  const [y, mo, d] = dateYmd.split("-").map(Number);
+  const naive = Date.UTC(y!, mo! - 1, d!, h, Math.floor(m), Math.floor(s));
+  if (!Number.isFinite(naive)) return null;
+  const guess = naive - tzOffsetMs(new Date(naive));
+  return new Date(naive - tzOffsetMs(new Date(guess))).toISOString();
+}
+
+/**
  * The UTC instant range [startIso, endExclusiveIso) covering one ET operational
  * day `dateYmd` (YYYY-MM-DD). Use for timestamptz range filters:
  *   .gte("created_at", startIso).lt("created_at", endExclusiveIso)

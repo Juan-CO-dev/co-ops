@@ -7,6 +7,7 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import { cutoffMissed } from "@/lib/dashboard-status-shared";
+import { etClockTime, etWallClockToUtcIso } from "@/lib/operational-day";
 import { pulseScore, type AttentionItem } from "@/lib/midshift-shared";
 import { AttentionBanner } from "@/components/midshift/AttentionBanner";
 import { TranslationProvider } from "@/lib/i18n/provider";
@@ -26,6 +27,29 @@ describe("cutoffMissed", () => {
   });
   it("an unparseable instant is never missed", () => {
     expect(cutoffMissed("not a date", Date.now())).toBe(false);
+  });
+});
+
+describe("review #1: the cutoff instant reads the ET offset AT the cutoff time (DST days)", () => {
+  it("fall back, Sun 2026-11-01: an 11:00 cutoff is 11:00 EST (16:00Z), so 10:30 ET is NOT missed", () => {
+    const iso = etWallClockToUtcIso("2026-11-01", "11:00:00")!;
+    expect(iso).toBe("2026-11-01T16:00:00.000Z");
+    expect(etClockTime(iso)).toBe("11:00");
+    expect(cutoffMissed(iso, Date.parse("2026-11-01T15:30:00Z"))).toBe(false); // 10:30 EST
+    expect(cutoffMissed(iso, Date.parse("2026-11-01T16:00:00Z"))).toBe(true);
+  });
+  it("spring forward, Sun 2026-03-08: an 11:00 cutoff is 11:00 EDT (15:00Z), so 11:30 ET IS missed", () => {
+    const iso = etWallClockToUtcIso("2026-03-08", "11:00")!;
+    expect(iso).toBe("2026-03-08T15:00:00.000Z");
+    expect(etClockTime(iso)).toBe("11:00");
+    expect(cutoffMissed(iso, Date.parse("2026-03-08T15:30:00Z"))).toBe(true); // 11:30 EDT
+    expect(cutoffMissed(iso, Date.parse("2026-03-08T14:30:00Z"))).toBe(false); // 10:30 EDT
+  });
+  it("ordinary days in both halves of the year, and malformed input is null", () => {
+    expect(etWallClockToUtcIso("2026-10-13", "16:00:00")).toBe("2026-10-13T20:00:00.000Z");
+    expect(etWallClockToUtcIso("2026-01-13", "16:00:00")).toBe("2026-01-13T21:00:00.000Z");
+    for (const bad of ["24:00", "11:60", "noon", "11", ""]) expect(etWallClockToUtcIso("2026-10-13", bad)).toBeNull();
+    expect(etWallClockToUtcIso("10/13/2026", "11:00")).toBeNull();
   });
 });
 

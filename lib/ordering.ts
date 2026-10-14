@@ -90,7 +90,7 @@ import {
   type CreatedDraft,
   type DraftLineInput,
 } from "@/lib/purchase-orders";
-import { etCalendarDate, etYmdMinusDays, operationalDayUtcRange } from "@/lib/operational-day";
+import { etCalendarDate, etWallClockToUtcIso, etYmdMinusDays, operationalDayUtcRange } from "@/lib/operational-day";
 import { etDayFromDate } from "@/lib/et-day-shared";
 import { formatTime } from "@/lib/i18n/format";
 import { cutoffMissed } from "@/lib/dashboard-status-shared";
@@ -151,23 +151,15 @@ function etWalkDay(): { walkDateEt: string; weekend: boolean; todayDow: number }
 // private there — the plan authorizes mirroring the exact approach) ──────────────────────
 /**
  * The UTC instant of an ET wall-clock TIME (bare "HH:MM[:SS]") on an ET calendar date, as
- * an ISO timestamptz — byte-identical derivation to purchase-orders.ts etWallClockToUtcIso:
- * operationalDayUtcRange(dateEt).startIso (ET-midnight-as-UTC, DST-correct) + the cutoff's
- * seconds-of-day. The offset is fixed for the whole ET day (DST never flips mid-day). Returns
- * null on a malformed time (advisory — never fabricate a deadline).
+ * an ISO timestamptz — the ONE shared conversion, lib/operational-day.ts etWallClockToUtcIso
+ * (purchase-orders.ts delegates to it too). It reads the offset AT the cutoff time: the old
+ * "ET midnight + seconds-of-day" was an hour off for every cutoff after 2 AM on a DST day
+ * (B7b review, 2026-10-14 — an 11:00 cutoff read 10:00 on 2026-11-01, 12:00 on 2026-03-08,
+ * in the chip, the attention time AND D-63's missed flag). Returns null on a malformed time
+ * (advisory — never fabricate a deadline).
  */
 function cutoffWallClockToUtcIso(dateEt: string, time: string): string | null {
-  const parts = time.split(":");
-  const h = Number(parts[0]);
-  const m = Number(parts[1] ?? "0");
-  const s = Number(parts[2] ?? "0");
-  if (!Number.isInteger(h) || h < 0 || h > 23) return null;
-  if (!Number.isFinite(m) || m < 0 || m > 59) return null;
-  if (!Number.isFinite(s) || s < 0 || s > 59) return null;
-  const { startIso } = operationalDayUtcRange(dateEt);
-  const startMs = Date.parse(startIso);
-  if (!Number.isFinite(startMs)) return null;
-  return new Date(startMs + (h * 3600 + Math.floor(m) * 60 + Math.floor(s)) * 1000).toISOString();
+  return etWallClockToUtcIso(dateEt, time);
 }
 
 /**

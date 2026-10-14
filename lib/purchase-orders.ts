@@ -45,7 +45,7 @@ import { lockLocationContext, type LocationActor } from "@/lib/locations";
 import { audit } from "@/lib/audit";
 import type { AuthContext } from "@/lib/session";
 import { formatTime } from "@/lib/i18n/format";
-import { etCalendarDate, operationalDayUtcRange } from "@/lib/operational-day";
+import { etCalendarDate, etWallClockToUtcIso as sharedEtWallClockToUtcIso, operationalDayUtcRange } from "@/lib/operational-day";
 import { etDayFromDate } from "@/lib/et-day-shared";
 import { loadCreditsForDelivery } from "@/lib/credits";
 import { emailOrderingAvailable, isPlausibleEmail } from "@/lib/po-email-shared";
@@ -110,27 +110,15 @@ function etToday(): { dateEt: string; dow: number; compactYmd: string } {
 
 /**
  * The UTC instant of an ET wall-clock TIME on an ET calendar date, as an ISO
- * timestamptz. Reuses the exported operationalDayUtcRange (ET-midnight-as-UTC,
- * DST-correct) as the day anchor, then adds the cutoff's seconds-of-day. The
- * offset is fixed for the whole ET day (DST never flips mid-day), so
- * ET-midnight-UTC + seconds is the correct instant for any wall-clock time that
- * day — EXCEPT the ~1h DST-transition window, an accepted advisory slop (the
- * cutoff is a wall-clock INTENT per the 0174 comment, not an instant). `time` is
- * a bare "HH:MM[:SS]" (Postgres `time` render). Returns null on a malformed time.
+ * timestamptz — delegates to the shared lib/operational-day.ts etWallClockToUtcIso,
+ * which reads the offset AT the cutoff time. The old "ET midnight + seconds-of-day"
+ * was not a ~1h window slop: on a DST-transition day it put EVERY cutoff after 2 AM
+ * an hour off (B7b review, 2026-10-14), so `cutoff_at_confirm` / ordered-late judged
+ * against the wrong instant twice a year. `time` is a bare "HH:MM[:SS]" (Postgres
+ * `time` render). Returns null on a malformed time.
  */
 function etWallClockToUtcIso(dateEt: string, time: string): string | null {
-  const parts = time.split(":");
-  const h = Number(parts[0]);
-  const m = Number(parts[1] ?? "0");
-  const s = Number(parts[2] ?? "0");
-  if (!Number.isInteger(h) || h < 0 || h > 23) return null;
-  if (!Number.isFinite(m) || m < 0 || m > 59) return null;
-  if (!Number.isFinite(s) || s < 0 || s > 59) return null;
-  const { startIso } = operationalDayUtcRange(dateEt); // ET midnight (of dateEt) as a UTC instant
-  const startMs = Date.parse(startIso);
-  if (!Number.isFinite(startMs)) return null;
-  const secondsOfDay = h * 3600 + Math.floor(m) * 60 + Math.floor(s);
-  return new Date(startMs + secondsOfDay * 1000).toISOString();
+  return sharedEtWallClockToUtcIso(dateEt, time);
 }
 
 // ── Display code generation (spec §5b.3 / plan convention) ───────────────────────

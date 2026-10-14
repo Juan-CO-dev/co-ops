@@ -130,6 +130,19 @@ describe("level-8 cross-shop Pulse sources", () => {
     } });
   });
 
+  it.each([
+    // Review #1 (DST): the loader's cutoff instant and its displayed time on both transition days.
+    { day: "2026-11-01", now: "2026-11-01T15:30:00Z", missed: false }, // 10:30 EST vs 11:00 EST (was "missed" 30 min early)
+    { day: "2026-11-01", now: "2026-11-01T16:05:00Z", missed: true },
+    { day: "2026-03-08", now: "2026-03-08T15:30:00Z", missed: true },  // 11:30 EDT vs 11:00 EDT (was "open" 30 min late)
+    { day: "2026-03-08", now: "2026-03-08T14:30:00Z", missed: false },
+  ])("D-63 on DST day $day at $now: missed=$missed, time still reads 11:00 AM", async ({ now, missed }) => {
+    vi.setSystemTime(new Date(now));
+    fake.rows.vendor_cutoffs = [{ vendor_id: "vendor", location_id: other, cutoff_time: "11:00:00" }];
+    fake.rows.vendors = [{ id: "vendor", name: "Test vendor" }];
+    expect(await pulseDeps(client as never).cutoffs(crossShop())).toMatchObject({ vendors: [{ vendorId: "vendor", missed, cutoffTime: "11:00 AM" }] });
+  });
+
   it("D-63: a cutoff that has passed with no placed order comes back missed", async () => {
     fake.rows.vendor_cutoffs = [{ vendor_id: "vendor", location_id: other, cutoff_time: "15:00:00" }];
     fake.rows.vendors = [{ id: "vendor", name: "Test vendor" }];
