@@ -41,10 +41,12 @@ describe("role navigation", () => {
     expect(assignments).not.toMatch(/auth\.level < .*redirect/);
     expect(catering).toMatch(/if \(level < CATERING_HUB_MIN\)/);
     expect(admin).toMatch(/if \(auth\.level < ADMIN_MIN_LEVEL\)/);
-    // Production (Juan D-64): the page redirects below level 4 and without ?location.
+    // Production (Juan D-64): the page redirects below level 4; a missing ?location defaults.
     const production = source("app/(authed)/operations/production/page.tsx");
     expect(production).toMatch(/if \(auth\.level < 4\) redirect\("\/dashboard"\)/);
-    expect(production).toMatch(/if \(!location\) redirect\("\/dashboard"\)/);
+    // D-64: no hard ?location redirect any more; the page defaults to the user's first shop.
+    expect(production).not.toMatch(/if \(!location\) redirect\("\/dashboard"\);\s*const locActor/);
+    expect(production).toMatch(/requested \?\? auth\.locations\[0\]/);
     const prod = navDestinationsFor(4).find((d) => d.href === "/operations/production");
     expect(prod).toMatchObject({ key: "production.page.title", scoped: true, minLevel: 4 });
     expect(source("app/(authed)/mid-shift/page.tsx")).toMatch(/if \(auth\.level < MIDSHIFT_BASE_LEVEL\)/);
