@@ -107,3 +107,9 @@ Sim data (not app): catering test leads/quotes/customers from round 1 ("Hill Sta
 - **Name/label truncation at 390 px** ("Crunchy Boi Station · Unassign…", "Preppec" placeholder).
 - **Sim data:** ~10 leftover "Prep fridge" maintenance notes (the reset doesn't cover maintenance notes).
 
+
+## Retakes owed after the reconcile pass (2026-10-14)
+- manager 49-counts-password, 50-counts-recorded (type "each" in Unit, Record audit, password) · 52 (vendor headers cut) · 40 (last walk-out line + Review pill) · 05 (Back / system keyboard below frame) · 17, 42 (focus ring; 17 cuts Iceberg)
+- catering (after sim catering cleanup): 07, 09, 10, 11, 12 (should read "No quotes yet."), 16, 17, 19, 20, 32; 10b after B8 lead-edit fix; 34 at tablet width
+- staff (minor): 22b (Progress bar), 14, 16/18/19/34 focus ring; add a Sides AM prep header close-up (PORT vs PORTIONED)
+- after B8 merges, update: manager cash "Even" wording; catering Add lead step 6 (Location default); Fulfillment map not-set
