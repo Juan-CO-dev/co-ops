@@ -106,7 +106,7 @@ vi.mock("@/lib/supabase-server", () => ({ getServiceRoleClient: () => sbFake }))
 vi.mock("@/lib/audit", () => ({ audit }));
 vi.mock("@/lib/session", () => ({ requireSession: async () => session.ctx }));
 
-import { resolveQuoteDemand } from "@/lib/catering/prep-demand";
+import { loadCateringPrepDemand, resolveQuoteDemand } from "@/lib/catering/prep-demand";
 import { loadPipelineBoard } from "@/lib/catering/pipeline";
 import { showQuoteNotAccepted } from "@/lib/catering/pipeline-shared";
 import { expandPackageLines, type ExpandablePackage } from "@/lib/catering/quotes-shared";
@@ -218,5 +218,61 @@ describe("D-46 · the board knows which Confirmed leads have an unaccepted quote
     db.catering_pipeline = [lead("i-draft", "inquiry")];
     expect((await loadPipelineBoard(gmA)).map((l) => l.quoteStatus)).toEqual([null]);
     expect(reads).not.toContain("catering_quotes");
+  });
+});
+
+// ── D-47 · Prep Demand lines name their lead ────────────────────────────────────────────
+describe("D-47 · Prep Demand names the lead behind each line", () => {
+  const B = "loc-b";
+  const demand = (pipeline_id: string, qty: number, extra: Row = {}): Row => ({
+    pipeline_id, location_id: A, status: "reserved", need_date: "2026-10-20",
+    item_id: null, menu_item_id: null, choice_package_item_id: "slot-1", portion: null, qty, ...extra,
+  });
+  beforeEach(() => {
+    db.catering_package_items = [{ id: "slot-1", description: "Choose your sub" }];
+    db.menu_items = [{ id: "m-1", name: "Crunchy Boi" }];
+    db.catering_pipeline = [
+      { id: "l-ana", contact_name: "Ana Diaz", company: "Acme", location_id: A },
+      { id: "l-bob", contact_name: "Bob Ray", company: null, location_id: A },
+      { id: "l-moved", contact_name: "Zed Hidden", company: "Secret Co", location_id: B },
+    ];
+    db.catering_prep_demand = [
+      demand("l-ana", 20),
+      demand("l-bob", 8),
+      demand("l-moved", 4),
+      demand("l-ana", 3, { choice_package_item_id: null, menu_item_id: "m-1" }),
+      demand("l-bob", 99, { status: "released" }), // not reserved → not on the overlay
+    ];
+  });
+  const load = () => loadCateringPrepDemand(gmA, { locationId: A, from: "2026-10-14", to: "2026-10-28" });
+
+  it("a NEEDS PICK line lists every lead it is for, most first, with contact · company", async () => {
+    const [day] = await load();
+    const pick = day!.lines.find((l) => l.needsPick)!;
+    expect(pick.qty).toBe(32);
+    expect(pick.leads).toEqual([
+      { id: "l-ana", label: "Ana Diaz · Acme", qty: 20 },
+      { id: "l-bob", label: "Bob Ray", qty: 8 },
+      { id: "l-moved", label: null, qty: 4 },
+    ]);
+    const sub = day!.lines.find((l) => l.refKind === "menu_item")!;
+    expect(sub.leads).toEqual([{ id: "l-ana", label: "Ana Diaz · Acme", qty: 3 }]);
+  });
+
+  it("a lead now at a shop the viewer cannot read is counted but never named", async () => {
+    const days = await load();
+    expect(JSON.stringify(days)).not.toMatch(/Zed|Secret/);
+  });
+
+  it("fails closed: no readable membership → no names at all", async () => {
+    db.users = [{ id: "gm-a", role: "gm", active: false }];
+    const [day] = await load();
+    for (const line of day!.lines) for (const l of line.leads) expect(l.label).toBeNull();
+    expect(JSON.stringify(day)).not.toMatch(/Ana|Bob/);
+  });
+
+  it("names are never written to the audit log", async () => {
+    await load();
+    expect(JSON.stringify(audit.mock.calls)).not.toMatch(/Ana|Bob|Zed/);
   });
 });

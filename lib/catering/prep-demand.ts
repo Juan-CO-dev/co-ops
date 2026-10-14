@@ -11,6 +11,9 @@ import type { AuthContext } from "@/lib/session";
 import { audit } from "@/lib/audit";
 import { PORTION_FRACTION, type Portion } from "@/lib/catering/pricing-derivation";
 import { loadItemDefns, loadItemOverrides, pickOverride, operationalDayOfWeek } from "@/lib/items";
+import { loadCateringReader } from "@/lib/catering/ezcater-detail";
+import { canReadCateringContact } from "@/lib/catering/ezcater-detail-shared";
+import { leadContactLabel } from "@/lib/catering/pipeline-shared";
 
 export const PREP_DEMAND_READ_MIN = 6; // catering_mgr+ views the demand surface
 
@@ -251,7 +254,14 @@ export interface PrepDemandLine {
   wholeEquivDemand: number;    // qty × PORTION_FRACTION (for par comparison)
   overPar: boolean;            // item ref where wholeEquivDemand >= par, or no par set
   needsPick: boolean;          // unresolved choice slot
+  /**
+   * D-47: the leads this line is for, most demand first. `label` is "contact · company" when
+   * the viewer may read that lead's shop (the catering contact policy), else null — a lead
+   * since moved to a shop the viewer cannot read is counted but not named.
+   */
+  leads: PrepDemandLeadRef[];
 }
+export interface PrepDemandLeadRef { id: string; label: string | null; qty: number }
 export interface PrepDemandDay { needDate: string; lines: PrepDemandLine[] }
 
 /** Aggregate reserved catering prep demand for a location over [from, to], with over-par flags. */
@@ -263,17 +273,17 @@ export async function loadCateringPrepDemand(
   const sb = getServiceRoleClient();
   const { data: rows, error } = await sb
     .from("catering_prep_demand")
-    .select("need_date, item_id, menu_item_id, choice_package_item_id, portion, qty")
+    .select("pipeline_id, need_date, item_id, menu_item_id, choice_package_item_id, portion, qty")
     .eq("location_id", args.locationId)
     .eq("status", "reserved")
     .gte("need_date", args.from)
     .lte("need_date", args.to)
-    .returns<Array<{ need_date: string; item_id: string | null; menu_item_id: string | null; choice_package_item_id: string | null; portion: Portion | null; qty: number | string }>>();
+    .returns<Array<{ pipeline_id: string; need_date: string; item_id: string | null; menu_item_id: string | null; choice_package_item_id: string | null; portion: Portion | null; qty: number | string }>>();
   if (error) throw new Error(`loadCateringPrepDemand: ${error.message}`);
   const demandRows = rows ?? [];
 
   // Aggregate by (need_date, ref, portion).
-  const groups = new Map<string, { needDate: string; refKind: "item" | "menu_item" | "choice"; refId: string; portion: Portion | null; qty: number }>();
+  const groups = new Map<string, { needDate: string; refKind: "item" | "menu_item" | "choice"; refId: string; portion: Portion | null; qty: number; byLead: Map<string, number> }>();
   const itemIds = new Set<string>();
   const menuIds = new Set<string>();
   const choiceIds = new Set<string>();
@@ -285,12 +295,14 @@ export async function loadCateringPrepDemand(
     else if (refKind === "menu_item") menuIds.add(refId);
     else choiceIds.add(refId);
     const key = `${r.need_date}|${refKind}:${refId}|${r.portion ?? ""}`;
-    const g = groups.get(key) ?? { needDate: r.need_date, refKind, refId, portion: r.portion, qty: 0 };
+    const g = groups.get(key) ?? { needDate: r.need_date, refKind, refId, portion: r.portion, qty: 0, byLead: new Map<string, number>() };
     g.qty += qty;
+    g.byLead.set(r.pipeline_id, (g.byLead.get(r.pipeline_id) ?? 0) + qty);
     groups.set(key, g);
   }
 
   const refs = await resolveRefs(sb, itemIds, menuIds, choiceIds);
+  const leadLabels = await loadDemandLeadLabels(actor, sb, new Set(demandRows.map((r) => r.pipeline_id)));
   // Item-grain par: reuse the item defaults resolveRefs already loaded + day-aware location overrides.
   const overrides = await loadItemOverrides(sb, [...itemIds], args.locationId);
 
@@ -314,6 +326,9 @@ export async function loadCateringPrepDemand(
       wholeEquivDemand: wholeEquiv,
       overPar,
       needsPick: g.refKind === "choice",
+      leads: [...g.byLead]
+        .map(([id, qty]) => ({ id, qty, label: leadLabels.get(id) ?? null }))
+        .sort((a, b) => b.qty - a.qty || (a.label ?? "\uffff").localeCompare(b.label ?? "\uffff")),
     };
     const day = byDate.get(g.needDate) ?? { needDate: g.needDate, lines: [] };
     day.lines.push(line);
@@ -371,8 +386,37 @@ export async function loadLeadPrepDemand(actor: AuthContext, pipelineId: string)
       wholeEquivDemand: g.portion ? g.qty * PORTION_FRACTION[g.portion] : g.qty,
       overPar: false,
       needsPick: g.refKind === "choice",
+      leads: [], // one lead's own breakdown: the lead is the context, not a line attribute
     }))
     .sort((a, b) => a.name.localeCompare(b.name));
+}
+
+/** Lead ids per `.in()` read (the 414 class: an id list in the request line). */
+const LEAD_LABEL_CHUNK = 100;
+
+/**
+ * D-47: "contact · company" per lead the demand rows name, for leads whose shop the viewer may
+ * read (canReadCateringContact over FRESH memberships, fail-closed: no reader → no names). A
+ * lead the viewer may not read is absent from the map and renders unnamed. Never logged.
+ */
+async function loadDemandLeadLabels(actor: AuthContext, sb: Sb, ids: ReadonlySet<string>): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
+  if (ids.size === 0) return out;
+  const reader = await loadCateringReader(actor);
+  if (!reader) return out;
+  const all = [...ids];
+  for (let i = 0; i < all.length; i += LEAD_LABEL_CHUNK) {
+    const { data, error } = await sb
+      .from("catering_pipeline")
+      .select("id, contact_name, company, location_id")
+      .in("id", all.slice(i, i + LEAD_LABEL_CHUNK))
+      .returns<Array<{ id: string; contact_name: string; company: string | null; location_id: string | null }>>();
+    if (error) throw new Error(`loadDemandLeadLabels: ${error.message}`);
+    for (const l of data ?? []) {
+      if (canReadCateringContact(reader, l.location_id)) out.set(l.id, leadContactLabel({ contactName: l.contact_name, company: l.company }));
+    }
+  }
+  return out;
 }
 
 type ItemDefnMap = Awaited<ReturnType<typeof loadItemDefns>>;

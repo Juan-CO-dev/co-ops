@@ -6,7 +6,7 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { showQuoteNotAccepted, PIPELINE_STAGES } from "@/lib/catering/pipeline-shared";
+import { leadContactLabel, showQuoteNotAccepted, PIPELINE_STAGES } from "@/lib/catering/pipeline-shared";
 import en from "@/lib/i18n/en.json";
 import es from "@/lib/i18n/es.json";
 import {
@@ -121,5 +121,23 @@ describe("D-46 · quote-not-accepted chip", () => {
     expect(client).toContain("showQuoteNotAccepted(r.stage, r.quoteStatus) && <QuoteNotAcceptedChip />");
     bothLanguages("catering.pipeline.quote_not_accepted");
     bothLanguages("catering.pipeline.quote_not_accepted_hint");
+  });
+});
+
+// ── D-47 · Prep Demand lines name their lead ────────────────────────────────────────────
+describe("D-47 · lead label on Prep Demand", () => {
+  it("is contact · company, or just the contact when there is no company", () => {
+    expect(leadContactLabel({ contactName: "Ana Diaz", company: "Acme" })).toBe("Ana Diaz · Acme");
+    expect(leadContactLabel({ contactName: " Bob ", company: null })).toBe("Bob");
+    expect(leadContactLabel({ contactName: "Bob", company: "  " })).toBe("Bob");
+  });
+  it("every Prep Demand line kind renders the leads, and a pick line shows its count", () => {
+    const client = src("components/admin/catering/prep-demand/PrepDemandClient.tsx");
+    expect(client.match(/<LeadsFor line=\{line\} t=\{t\} \/>/g)).toHaveLength(3);
+    const choice = client.slice(client.indexOf("function ChoiceLine("), client.indexOf("function MenuItemLine("));
+    expect(choice).toContain("{r1(line.qty)}");
+    bothLanguages("admin.catering.prep_demand.for_leads");
+    bothLanguages("admin.catering.prep_demand.lead_hidden");
+    expect(esKeys["admin.catering.prep_demand.lead_qty"]).toBeTruthy();
   });
 });

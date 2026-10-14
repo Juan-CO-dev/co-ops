@@ -94,6 +94,12 @@ export function shopChipLabel(lead: { locationName?: string | null }): string | 
   return n ? n : null;
 }
 
+/** "Contact · Company" (company omitted when blank) — how a lead is named off the board (D-47). */
+export function leadContactLabel(lead: { contactName: string; company: string | null }): string {
+  const company = lead.company?.trim();
+  return company ? `${lead.contactName.trim()} · ${company}` : lead.contactName.trim();
+}
+
 /**
  * D-46 (Juan, 2026-10-13): Confirmed keeps its meaning (the kitchen plans it), and a Confirmed
  * card whose linked quote is still a draft or only sent wears a "quote not accepted" chip —
