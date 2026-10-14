@@ -17,13 +17,27 @@ vi.mock("@/lib/assignments", async (importOriginal) => ({
   hasTaskAccess: vi.fn(async () => true),
   auditTaskOverride: vi.fn(async () => {}),
 }));
+// Registry-linked rows reach the recipe graph; stand in for it (no database here).
+vi.mock("@/lib/batch-prep", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/batch-prep")>()),
+  loadBatchContextForItems: vi.fn(async () => new Map()),
+}));
+vi.mock("@/lib/prep-consumption", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/prep-consumption")>()),
+  loadDerivedForItems: vi.fn(async () => new Map()),
+  loadBatchDerivedForItems: vi.fn(async () => new Map()),
+}));
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 
+import { loadBatchContextForItems } from "@/lib/batch-prep";
+import type { BatchItemContext } from "@/lib/batch-prep-shared";
 import {
   PrepInvariantError,
   PrepShapeError,
+  excludeSkippedTargets,
   finalizeMidDayPhase2,
+  loadAmPrepState,
   saveMidDayPhase2Item,
   submitAmPrep,
   submitMidDayPhase1,
@@ -241,5 +255,74 @@ describe("AM prep submit", () => {
       }),
     ).rejects.toBeInstanceOf(PrepInvariantError);
     expect(rpcCalls).toEqual([]);
+  });
+});
+
+// ── D-66 review (Astra P1): a VALID item whose live save is malformed ─────────
+//
+// Its completion is skipped, so it must leave the editable / completeness set too: otherwise
+// finalize's blockers call it unsaved while every save to it is refused as bad_row.
+
+const BATCH = "item-batch";
+const batchRow: Row = { id: BATCH, template_id: TEMPLATE, station: "sauces", label: "Chipotle Mayo", display_order: 3, active: true, item_id: "reg-batch", translations: null, prep_meta: goodMeta };
+const malformedSave: Row = { id: "c-mal", instance_id: INSTANCE, template_item_id: BATCH, completed_by: "u-1", completed_at: "2026-10-13T14:00:00Z", prep_data: { inputs: { total: "3" } }, edit_count: 0 };
+const batchCtx: BatchItemContext = {
+  itemId: "reg-batch", recipeId: "r-1", recipeName: "Chipotle Mayo", batchMode: true, shelfLifeDays: 5,
+  outputCount: 1, yieldPerBatch: 4, isBatch: true, eligibility: "batched", blockedReason: null,
+};
+const SKIPPED_SAVE = { templateItemId: BATCH, label: "Chipotle Mayo", labelEs: null, source: "completion" };
+
+describe("D-66 review — a skipped TARGET never blocks finishing", () => {
+  beforeEach(() => {
+    vi.mocked(loadBatchContextForItems).mockImplementation(async (ids: string[]) =>
+      new Map(ids.includes("reg-batch") ? [["reg-batch", batchCtx]] : []),
+    );
+  });
+
+  function tables(status: string, rows: Row[]): Record<string, Row[]> {
+    return { ...midDayTables(status, [malformedSave]), checklist_template_items: rows, items: [], item_par_levels: [], productions: [], prep_batch_sessions: [] };
+  }
+
+  it("finalize succeeds when a batch item's live save is malformed, and reports it as skipped", async () => {
+    const { service } = fakeService(tables("phase1_complete", [items[0]!, batchRow]), () => null);
+    const res = await finalizeMidDayPhase2(service, { instanceId: INSTANCE, actor: ACTOR });
+    expect(res).toMatchObject({ ok: true, skipped: [SKIPPED_SAVE] });
+  });
+
+  it("a save that targets that item is still refused", async () => {
+    const { service, rpcCalls } = fakeService(tables("phase1_complete", [items[0]!, batchRow]), () => ({ completionId: "c", savedAt: "x" }));
+    const res = await saveMidDayPhase2Item(service, { instanceId: INSTANCE, templateItemId: BATCH, prepped: 4, actor: ACTOR });
+    expect(res).toEqual({ ok: false, reason: "bad_row", templateItemId: BATCH });
+    expect(rpcCalls).toEqual([]);
+  });
+
+  it("the AM prep page read drops that item from the form (edit validation never requires it)", async () => {
+    const { service } = fakeService(
+      {
+        checklist_templates: [{ id: TEMPLATE, name: "AM prep", type: "prep", prep_subtype: "am_prep", location_id: LOC, active: true }],
+        checklist_instances: [instance("confirmed")],
+        checklist_template_items: [items[0]!, batchRow],
+        checklist_completions: [malformedSave],
+        users: [],
+        prep_sections: [],
+        items: [],
+        item_par_levels: [],
+      },
+      () => null,
+    );
+    const state = await loadAmPrepState(service, { locationId: LOC, date: DATE, actor: ACTOR, tolerateBadRows: true });
+    expect(state?.templateItems.map((t) => t.id)).toEqual([GOOD]);
+    expect(state?.skippedRows).toEqual([SKIPPED_SAVE]);
+  });
+
+  it("excludeSkippedTargets removes every skipped id and is a no-op with nothing skipped", () => {
+    const rows = [{ id: "a" }, { id: "b" }, { id: "c" }];
+    expect(excludeSkippedTargets(rows, [])).toBe(rows);
+    expect(
+      excludeSkippedTargets(rows, [
+        { templateItemId: "b", label: "B", labelEs: null, source: "completion" },
+        { templateItemId: "z", label: "Z", labelEs: null, source: "template_item" },
+      ]).map((r) => r.id),
+    ).toEqual(["a", "c"]);
   });
 });

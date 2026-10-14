@@ -2,18 +2,14 @@
 
 /**
  * MidDayPhase2Form — Phase 2 collaborative prep for mid-day (C.43). Per-item
- * "prepped" input that SAVES WHEN YOU LEAVE THE BOX (D-14, like opening Phase 2;
- * realtime-lite: append-only, reconcile on reload). When prepped is off the
- * back-to-par need, a STRUCTURED over/under reason is required — reusing the
- * opening Phase 2 OverParModal / UnderParModal (reason category + directedBy +
- * free text), stored as prep_data.overUnder. A blur while that reason is missing
- * saves nothing and shows the calm "add a reason" nudge; saving the reason in
- * the modal is what persists the row. The gate is the pure midDayPhase2SaveGate
- * (lib/mid-day-shared.ts). Finalize waits for every in-flight row save, then
- * closes the instance (phase1_complete → phase2_complete).
+ * "prepped" input + per-item Save (realtime-lite: append-only, reconcile on
+ * reload). When prepped is off the back-to-par need, a STRUCTURED over/under
+ * reason is required — reusing the opening Phase 2 OverParModal / UnderParModal
+ * (reason category + directedBy + free text), stored as prep_data.overUnder.
+ * Finalize closes the instance (phase1_complete → phase2_complete).
  */
 
-import { useMemo, useRef, useState } from "react";
+import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 
 import { useTranslation } from "@/lib/i18n/provider";
@@ -38,12 +34,13 @@ import type { DerivedSku, ConfirmedInput } from "@/lib/prep-consumption";
 import { ProductionConsumptionPanel } from "@/components/production/ProductionConsumptionPanel";
 import { BatchEntryFields } from "@/components/prep/BatchEntryFields";
 import {
+  batchEntryFromForm,
   emptyBatchFormValue,
   isBatchContractCode,
+  validateBatchEntry,
   type BatchFormValue,
   type BatchRowContext,
 } from "@/lib/batch-prep-shared";
-import { midDayPhase2SaveGate, midDayPhase2Signature } from "@/lib/mid-day-shared";
 import type { TranslationKey } from "@/lib/i18n/types";
 import { etCalendarDate } from "@/lib/operational-day";
 import { formatPrepQty } from "@/lib/prep-display-shared";
@@ -84,12 +81,9 @@ interface SaveState {
   value: string;
   overUnder: MidDayOverUnder | null;
   modalOpen: boolean;
-  /** incomplete = a calm nudge (reason / batch half missing), never a failure. */
-  status: "idle" | "saving" | "saved" | "error" | "incomplete";
+  status: "idle" | "saving" | "saved" | "error";
   savedBy: string | null;
   error: string | null;
-  /** True when the last save reached the server (or the network) and failed — the row offers "Try again". */
-  retryable: boolean;
   /** Panel confirmation; null = untouched (server records the derived default). */
   confirmedConsumption: ConfirmedInput[] | null;
   /** 0215 — the batch half (ignored on single-box items). */
@@ -105,28 +99,10 @@ const EMPTY: SaveState = {
   status: "idle",
   savedBy: null,
   error: null,
-  retryable: false,
   confirmedConsumption: null,
   batch: emptyBatchFormValue(),
   batchErrorCode: null,
 };
-
-/** The signature of what a row already saved (D-14 dedupe); null when it has no save or it would not pass the gate. */
-function savedSignatureOf(it: MidDayPhase2Item, st: SaveState): string | null {
-  if (st.status !== "saved") return null;
-  const gate = midDayPhase2SaveGate(
-    { value: st.value, overUnder: st.overUnder, batch: st.batch },
-    { need: it.need, batch: it.batch ?? null },
-  );
-  return gate.kind === "ok"
-    ? midDayPhase2Signature({
-        prepped: gate.prepped,
-        overUnder: gate.overUnder,
-        confirmedConsumption: st.confirmedConsumption,
-        batchEntry: gate.batchEntry,
-      })
-    : null;
-}
 
 function overToOU(c: OverParCapture): MidDayOverUnder {
   return { kind: "over", reasonCategory: c.reasonCategory, directedBy: c.directedBy, freeText: c.freeText };
@@ -178,7 +154,6 @@ export function MidDayPhase2Form({
         status: (it.initialSaved ?? it.initialPrepped !== null) ? "saved" : "idle",
         savedBy: it.initialSavedBy,
         error: null,
-        retryable: false,
         confirmedConsumption: null,
         batch: it.initialBatch ?? emptyBatchFormValue(),
         batchErrorCode: null,
@@ -186,16 +161,6 @@ export function MidDayPhase2Form({
     }
     return init;
   });
-  // D-14 — per row: the signature the server holds, the one last sent, and the save chain.
-  // One row's saves run one after another (never two POSTs racing for the same row), and
-  // finalize waits for every chain. Mutable bookkeeping, never rendered.
-  const [savedSig] = useState(() => {
-    const m = new Map<string, string | null>();
-    for (const it of items) m.set(it.id, savedSignatureOf(it, states[it.id] ?? EMPTY));
-    return m;
-  });
-  const [queuedSig] = useState(() => new Map(savedSig));
-  const chains = useRef(new Map<string, Promise<void>>());
   const [finalizing, setFinalizing] = useState(false);
   const [finalizeError, setFinalizeError] = useState<string | null>(null);
 
@@ -226,108 +191,78 @@ export function MidDayPhase2Form({
   const patch = (id: string, p: Partial<SaveState>) =>
     setStates((s) => ({ ...s, [id]: { ...(s[id] ?? EMPTY), ...p } }));
 
-  /**
-   * D-14 — persist one row with the given state (blur, reason saved, panel or batch commit).
-   * Takes the explicit state to save so a modal / panel edit is never read from a stale closure.
-   */
-  const persist = (it: MidDayPhase2Item, st: SaveState): Promise<void> => {
-    const pending = chains.current.get(it.id) ?? Promise.resolve();
-    const gate = midDayPhase2SaveGate(
-      { value: st.value, overUnder: st.overUnder, batch: st.batch },
-      { need: it.need, batch: it.batch ?? null },
-    );
-    if (gate.kind === "blank") return pending;
-    if (gate.kind === "invalid") {
-      patch(it.id, { status: "error", error: t("mid_day_prep.phase2.required"), retryable: false });
-      return pending;
+  const onSave = async (it: MidDayPhase2Item) => {
+    const st = states[it.id] ?? EMPTY;
+    if (st.status === "saving") return;
+    const raw = st.value.trim();
+    const prepped = raw === "" ? NaN : Number(raw);
+    if (!Number.isFinite(prepped) || prepped < 0) {
+      patch(it.id, { status: "error", error: t("mid_day_prep.phase2.required") });
+      collapsible.reveal([it.section]);
+      return;
     }
-    if (gate.kind === "incomplete") {
-      patch(it.id, {
-        status: "incomplete",
-        error:
-          gate.reason === "needs_reason"
-            ? t("mid_day_prep.phase2.reason_required")
-            : t("mid_day_prep.phase2.batch_incomplete" as TranslationKey),
-        retryable: false,
-        batchErrorCode: gate.batchErrorCode,
-      });
-      return pending;
+    const offPar = it.need !== null && prepped !== it.need;
+    if (offPar && !st.overUnder) {
+      patch(it.id, { status: "error", error: t("mid_day_prep.phase2.reason_required") });
+      collapsible.reveal([it.section]);
+      return;
     }
-    const sig = midDayPhase2Signature({
-      prepped: gate.prepped,
-      overUnder: gate.overUnder,
-      confirmedConsumption: st.confirmedConsumption,
-      batchEntry: gate.batchEntry,
-    });
-    if (sig === queuedSig.get(it.id)) {
-      // Already saved (or on its way) — no second completion row, no re-attribution.
-      if (sig === savedSig.get(it.id)) patch(it.id, { status: "saved", error: null, retryable: false, batchErrorCode: null });
-      return pending;
-    }
-    queuedSig.set(it.id, sig);
-    patch(it.id, { status: "saving", error: null, retryable: false, batchErrorCode: null });
-    const sentValue = st.value.trim();
-    const failed = (p: Partial<SaveState>) => {
-      queuedSig.set(it.id, savedSig.get(it.id) ?? null);
-      patch(it.id, { status: "error", retryable: true, ...p });
-    };
-    const run = async () => {
-      try {
-        const res = await fetch("/api/prep/mid-day/phase2/item", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            instanceId,
-            templateItemId: it.id,
-            prepped: gate.prepped,
-            overUnder: gate.overUnder,
-            confirmedConsumption: st.confirmedConsumption,
-            // 0215 — present only on a batch item (absent = single box, today's body).
-            ...(gate.batchEntry ? { batch: gate.batchEntry } : {}),
-          }),
-          redirect: "manual",
-        });
-        if (res.ok) {
-          savedSig.set(it.id, sig);
-          // "Saved" only while the box still shows what was sent (typing during the save keeps the row unsaved).
-          setStates((s) => {
-            const cur = s[it.id] ?? EMPTY;
-            const same = cur.value.trim() === sentValue;
-            return {
-              ...s,
-              [it.id]: same
-                ? { ...cur, status: "saved", savedBy: null, error: null, retryable: false, batchErrorCode: null }
-                : { ...cur, savedBy: null },
-            };
-          });
-          return;
-        }
-        let msg = "Save failed.";
-        let code: string | null = null;
-        try {
-          const b = (await res.json()) as { message?: string; error?: string; code?: string };
-          msg = b.message ?? b.error ?? msg;
-          code = typeof b.code === "string" ? b.code : null;
-        } catch {
-          // keep generic
-        }
-        failed({ error: isBatchContractCode(code) ? null : msg, batchErrorCode: isBatchContractCode(code) ? code : null });
-      } catch (e) {
-        failed({ error: e instanceof Error ? e.message : "Network error." });
+    // 0215 batch vs bottle — mirror the RPC's gates (ruling B + addendum 2) before POSTing.
+    const batchCtx = it.batch ?? null;
+    let batchEntry: ReturnType<typeof batchEntryFromForm> | null = null;
+    if (batchCtx) {
+      if (batchCtx.blocked || batchCtx.backupBefore === null) {
+        patch(it.id, { status: "error", error: t("mid_day_prep.phase2.batch_incomplete" as TranslationKey), batchErrorCode: batchCtx.blocked ? "batch_recipe_unresolved" : "backup_unknown" });
+        collapsible.reveal([it.section]);
+        return;
       }
-    };
-    const next = pending.then(run);
-    chains.current.set(it.id, next);
-    return next;
+      batchEntry = batchEntryFromForm(st.batch, batchCtx.yieldPerBatch);
+      const check = validateBatchEntry(batchEntry, { bottled: prepped, backupBefore: batchCtx.backupBefore, need: batchCtx.need, yieldPerBatch: batchCtx.yieldPerBatch });
+      if (!check.ok) {
+        patch(it.id, { status: "error", error: t("mid_day_prep.phase2.batch_incomplete" as TranslationKey), batchErrorCode: check.code });
+        collapsible.reveal([it.section]);
+        return;
+      }
+    }
+    patch(it.id, { status: "saving", error: null, batchErrorCode: null });
+    try {
+      const res = await fetch("/api/prep/mid-day/phase2/item", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          instanceId,
+          templateItemId: it.id,
+          prepped,
+          overUnder: offPar ? st.overUnder : null,
+          confirmedConsumption: st.confirmedConsumption,
+          // 0215 — present only on a batch item (absent = single box, today's body).
+          ...(batchEntry ? { batch: batchEntry } : {}),
+        }),
+        redirect: "manual",
+      });
+      if (res.ok) {
+        patch(it.id, { status: "saved", savedBy: null, error: null, batchErrorCode: null });
+        return;
+      }
+      let msg = "Save failed.";
+      let code: string | null = null;
+      try {
+        const b = (await res.json()) as { message?: string; error?: string; code?: string };
+        msg = b.message ?? b.error ?? msg;
+        code = typeof b.code === "string" ? b.code : null;
+      } catch {
+        // keep generic
+      }
+      patch(it.id, { status: "error", error: isBatchContractCode(code) ? null : msg, batchErrorCode: isBatchContractCode(code) ? code : null });
+    } catch (e) {
+      patch(it.id, { status: "error", error: e instanceof Error ? e.message : "Network error." });
+    }
   };
 
   const onFinalize = async () => {
     if (finalizing) return;
     setFinalizing(true);
     setFinalizeError(null);
-    // D-14 — tapping Finalize blurs the last box first; wait for that save (and every other
-    // in-flight row save) so finalize never overtakes a row save and strands it.
-    await Promise.all([...chains.current.values()]);
     try {
       const res = await fetch("/api/prep/mid-day/phase2/finalize", {
         method: "POST",
@@ -362,7 +297,6 @@ export function MidDayPhase2Form({
 
   return (
     <div className="mt-4 flex flex-col gap-5 lg:block lg:columns-2 lg:[column-gap:1.25rem] lg:[&>*]:break-inside-avoid lg:[&>*]:mb-5">
-      <p className="px-1 text-xs text-co-text-muted">{t("mid_day_prep.phase2.autosave_hint")}</p>
       {groups.map((g) => (
         <CollapsibleChecklistSection
           key={g.section}
@@ -396,7 +330,6 @@ export function MidDayPhase2Form({
                     <BatchEntryFields
                       value={st.batch}
                       onChange={(next) => patch(it.id, { batch: next, status: "idle", error: null, batchErrorCode: null })}
-                      onCommit={(next) => void persist(it, { ...st, batch: next })}
                       ctx={it.batch}
                       bottled={preppedNum !== null && Number.isFinite(preppedNum) ? preppedNum : null}
                       showErrors={st.batchErrorCode !== null}
@@ -429,8 +362,6 @@ export function MidDayPhase2Form({
                         // prepped < 0 (defense in depth).
                         patch(it.id, { value: e.target.value.replace(/-/g, ""), status: "idle", error: null })
                       }
-                      // D-14 — leaving the box saves the row (no Save button), like opening Phase 2.
-                      onBlur={() => void persist(it, st)}
                       aria-label={`${it.label} — ${it.batch ? t("prep.batch.bottled_label" as TranslationKey) : t("mid_day_prep.phase2.prepped")}`}
                       placeholder={it.batch ? t("prep.batch.bottled_label" as TranslationKey) : t("mid_day_prep.phase2.prepped")}
                       className="
@@ -439,6 +370,13 @@ export function MidDayPhase2Form({
                         focus-visible:ring-4 focus-visible:ring-co-gold/60
                       "
                     />
+                    <ActionButton
+                      onClick={() => void onSave(it)}
+                      disabled={st.status === "saving"}
+                      className="shrink-0"
+                    >
+                      {st.status === "saving" ? t("mid_day_prep.phase2.saving") : t("mid_day_prep.phase2.save")}
+                    </ActionButton>
                   </div>
 
                   {offPar ? (
@@ -459,18 +397,9 @@ export function MidDayPhase2Form({
                       derived={it.batch ? (it.batchDerived ?? []) : it.derived}
                       outputQty={it.batch ? st.batch.batches : (preppedNum ?? 0)}
                       value={st.confirmedConsumption}
-                      onChange={(rows) => {
-                        // No Save button: a panel edit persists itself, as on opening Phase 2.
-                        patch(it.id, { confirmedConsumption: rows });
-                        void persist(it, { ...st, confirmedConsumption: rows });
-                      }}
+                      onChange={(rows) => patch(it.id, { confirmedConsumption: rows })}
                       canEdit={canEditConsumption}
                     />
-                  ) : null}
-                  {st.status === "saving" ? (
-                    <p className="text-[10px] font-bold uppercase tracking-[0.08em] text-co-text-muted">
-                      {t("mid_day_prep.phase2.saving")}
-                    </p>
                   ) : null}
                   {st.status === "saved" ? (
                     <p className="text-[10px] font-bold uppercase tracking-[0.08em] text-co-confirm-text">
@@ -479,22 +408,8 @@ export function MidDayPhase2Form({
                         : t("mid_day_prep.phase2.saved")}
                     </p>
                   ) : null}
-                  {st.status === "incomplete" && st.error ? (
-                    // Calm, directive nudge (not an error): the next step that makes the row savable.
-                    <p className="text-[11px] font-medium text-co-info">{st.error}</p>
-                  ) : null}
                   {st.status === "error" && st.error ? (
-                    <p role="alert" className="text-[10px] text-co-cta-text">{st.error}</p>
-                  ) : null}
-                  {st.status === "error" && st.retryable ? (
-                    <ActionButton
-                      variant="secondary"
-                      onClick={() => void persist(it, st)}
-                      aria-label={t("mid_day_prep.phase2.retry_aria", { item: it.label })}
-                      className="self-start"
-                    >
-                      {t("mid_day_prep.phase2.retry")}
-                    </ActionButton>
+                    <p className="text-[10px] text-co-cta-text">{st.error}</p>
                   ) : null}
 
                   {st.modalOpen && over ? (
@@ -503,11 +418,7 @@ export function MidDayPhase2Form({
                       itemLabel={it.label}
                       initial={ouToOverInitial(st.overUnder)}
                       managers={managers}
-                      onSave={(c) => {
-                        // Saving the reason is what persists an off-need row.
-                        patch(it.id, { overUnder: overToOU(c), modalOpen: false });
-                        void persist(it, { ...st, overUnder: overToOU(c) });
-                      }}
+                      onSave={(c) => patch(it.id, { overUnder: overToOU(c), modalOpen: false })}
                       onCancel={() => patch(it.id, { modalOpen: false })}
                     />
                   ) : null}
@@ -516,10 +427,7 @@ export function MidDayPhase2Form({
                       open
                       itemLabel={it.label}
                       initial={ouToUnderInitial(st.overUnder)}
-                      onSave={(c) => {
-                        patch(it.id, { overUnder: underToOU(c), modalOpen: false });
-                        void persist(it, { ...st, overUnder: underToOU(c) });
-                      }}
+                      onSave={(c) => patch(it.id, { overUnder: underToOU(c), modalOpen: false })}
                       onCancel={() => patch(it.id, { modalOpen: false })}
                     />
                   ) : null}

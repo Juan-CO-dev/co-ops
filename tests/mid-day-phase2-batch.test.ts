@@ -104,13 +104,11 @@ describe("route, form, page, strings", () => {
   });
   it("the form posts `batch` only for batch items and validates before POSTing", () => {
     const form = read("components", "MidDayPhase2Form.tsx");
-    expect(form).toContain("...(gate.batchEntry ? { batch: gate.batchEntry } : {}),");
-    // D-14: the validation lives in the shared save gate (lib/mid-day-shared.ts), run before the POST.
-    const gateAt = form.indexOf("midDayPhase2SaveGate(", form.indexOf("const persist ="));
+    expect(form).toContain("...(batchEntry ? { batch: batchEntry } : {}),");
+    const validateAt = form.indexOf("validateBatchEntry(batchEntry");
     const fetchAt = form.indexOf('fetch("/api/prep/mid-day/phase2/item"');
-    expect(gateAt).toBeGreaterThan(-1);
-    expect(gateAt).toBeLessThan(fetchAt);
-    expect(read("lib", "mid-day-shared.ts")).toContain("validateBatchEntry(batchEntry");
+    expect(validateAt).toBeGreaterThan(-1);
+    expect(validateAt).toBeLessThan(fetchAt);
   });
   it("the page builds the row context from Phase 1's onHand (LINE) + backUp and hydrates prep_data.batch", () => {
     const page = read("app", "(authed)", "operations", "mid-day", "page.tsx");

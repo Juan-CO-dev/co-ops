@@ -508,6 +508,19 @@ export function narrowPrepCompletionsForPage(
   return out;
 }
 
+/**
+ * D-66 review (Astra P1) — the editable / completeness set of a tolerant read: every template
+ * item MINUS the skipped targets. A skipped target is a bad template row (already absent) OR a
+ * valid template item whose live completion is malformed. Leaving the latter in made it
+ * required (finalize's blockers, the AM prep form's validation) while every write to it is
+ * refused as bad_row — a prep that could never finish. Pure; strict reads skip nothing.
+ */
+export function excludeSkippedTargets<T extends { id: string }>(items: T[], skipped: SkippedPrepRow[]): T[] {
+  if (skipped.length === 0) return items;
+  const bad = new Set(skipped.map((r) => r.templateItemId));
+  return items.filter((it) => !bad.has(it.id));
+}
+
 /** Name lookup over the RAW template rows (skipped ones included) for narrowPrepCompletionsForPage. */
 function labelLookup(items: ChecklistTemplateItem[]): (id: string) => { label: string; labelEs: string | null } | null {
   const byId = new Map(items.map((it) => [it.id, { label: it.label, labelEs: it.translations?.es?.label ?? null }] as const));
@@ -856,7 +869,7 @@ export async function loadAmPrepState(
   const itemDefns = await loadItemDefns(service, itemIds);
   const overrides = await loadItemOverrides(service, itemIds, args.locationId);
   const dow = operationalDayOfWeek(args.date);
-  const resolvedItems = templateItems.map((t) => {
+  let resolvedItems = templateItems.map((t) => {
     const ovr = t.itemId ? pickOverride(overrides.get(t.itemId) ?? [], dow) : null;
     const r = resolveLineDefinition(t, t.itemId ? itemDefns.get(t.itemId) ?? null : null, ovr);
     return {
@@ -882,6 +895,10 @@ export async function loadAmPrepState(
   const completions = args.tolerateBadRows
     ? narrowPrepCompletionsForPage(rawCompletions, labelLookup(rawItems), skippedRows)
     : rawCompletions.map(narrowPrepCompletion);
+  // D-66 review (Astra P1) — an item whose live save is malformed is a skipped TARGET too: it
+  // leaves the editable / completeness set (the writers refuse it as bad_row), so it can never
+  // be both "still required" and "refused".
+  resolvedItems = excludeSkippedTargets(resolvedItems, skippedRows);
 
   // Resolve author names for completedBy + confirmedBy + triggeredBy.
   const authorIds = new Set<string>();
@@ -1015,7 +1032,7 @@ export async function loadMidDayPrepState(
   const itemDefns = await loadItemDefns(service, itemIds);
   const overrides = await loadItemOverrides(service, itemIds, instanceRow.location_id);
   const dow = operationalDayOfWeek(instanceRow.date);
-  const resolvedItems = templateItems.map((t) => {
+  let resolvedItems = templateItems.map((t) => {
     const ovr = t.itemId ? pickOverride(overrides.get(t.itemId) ?? [], dow) : null;
     const r = resolveLineDefinition(t, t.itemId ? itemDefns.get(t.itemId) ?? null : null, ovr);
     return {
@@ -1040,6 +1057,10 @@ export async function loadMidDayPrepState(
   const completions = args.tolerateBadRows
     ? narrowPrepCompletionsForPage(rawCompletions, labelLookup(rawItems), skippedRows)
     : rawCompletions.map(narrowPrepCompletion);
+  // D-66 review (Astra P1) — an item whose live save is malformed is a skipped TARGET too: it
+  // leaves the editable / completeness set (the writers refuse it as bad_row), so it can never
+  // be both "still required" and "refused".
+  resolvedItems = excludeSkippedTargets(resolvedItems, skippedRows);
 
   const authorIds = new Set<string>();
   for (const c of completions) authorIds.add(c.completedBy);
