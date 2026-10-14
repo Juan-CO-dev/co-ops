@@ -45,6 +45,7 @@ import type { ManagerOption } from "@/components/opening/OverParModal";
 import { DashboardBackLink } from "@/components/DashboardBackLink";
 
 import { OpeningClient } from "./opening-client";
+import { canEditConsumption } from "@/lib/consumption-edit-shared";
 
 interface LocationLite {
   id: string;
@@ -280,6 +281,7 @@ export default async function OpeningPage({ searchParams }: OpeningPageProps) {
         saverNames={{ ...state.authors, [auth.user.id]: auth.user.name }}
         language={language}
         canSubmit={canSubmit}
+        canEditConsumption={canEditConsumption(auth.level)}
       />
     </AuthShell>
   );
@@ -345,11 +347,10 @@ function ScaffoldHeader({ language }: { language: Language }) {
   return (
     <div className="mb-4">
       <DashboardBackLink />
-      <p className="text-xs font-bold uppercase tracking-wide text-co-text-muted">
+      {/* B1 #7 — the scaffold views (no location, gate blocked, no template, read-only)
+          are not Phase 1, so they carry the report label only, not "Phase 1 — Verification". */}
+      <h2 className="text-xs font-bold uppercase tracking-wide text-co-text-muted">
         {serverT(language, "opening.page.label")}
-      </p>
-      <h2 className="mt-1 text-2xl font-extrabold leading-tight text-co-text">
-        {serverT(language, "opening.page.title")}
       </h2>
     </div>
   );

@@ -79,7 +79,7 @@ export default async function DeliveryDetailPage({ params }: { params: Promise<{
   }));
 
   return (
-    <main className="mx-auto max-w-2xl md:max-w-3xl lg:max-w-5xl xl:max-w-6xl px-4 pb-32 pt-4 sm:px-6">
+    <main className="mx-auto w-full max-w-2xl md:max-w-3xl lg:max-w-5xl xl:max-w-6xl px-4 pb-32 pt-4 sm:px-6">
       {/* The registry resolves this to /operations/receiving, which REQUIRES a ?location=
           (it redirects to the dashboard without one) — so carry this delivery's location
           through, or "back" silently dumps the manager out of receiving entirely. */}

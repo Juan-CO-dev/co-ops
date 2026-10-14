@@ -17,6 +17,7 @@ import { resolveSectionLabel } from "@/lib/prep-sections";
 import { ActionButton } from "@/components/ActionButton";
 import { CollapsibleChecklistSection } from "@/components/ui/CollapsibleChecklistSection";
 import { useCollapsibleSections } from "@/lib/use-collapsible-sections";
+import { formatPrepQty } from "@/lib/prep-display-shared";
 
 export interface MidDayPhase1Item {
   id: string;
@@ -171,9 +172,9 @@ export function MidDayPhase1Form({
                   <div className="min-w-0 flex-1">
                     <p className="truncate text-sm font-semibold text-co-text">{it.label}</p>
                     <p className="text-[10px] font-bold uppercase tracking-[0.08em] text-co-text-dim">
-                      {t("mid_day_prep.page.section_par")} {it.parValue ?? "—"}
-                      {it.parUnit ? ` ${it.parUnit}` : ""}
-                      {need !== null ? ` · ${t("mid_day_prep.phase1.need")} ${need}` : ""}
+                      {/* B1 #3 — "5 × 1/3 Pan", never "5 1/3 Pan"; float noise rounded. */}
+                      {t("mid_day_prep.page.section_par")} {formatPrepQty(it.parValue, it.parUnit)}
+                      {need !== null ? ` · ${t("mid_day_prep.phase1.need")} ${formatPrepQty(need, it.parUnit)}` : ""}
                     </p>
                     {batchIncomplete ? (
                       <p className="text-[10px] font-bold text-co-cta-text">{t("mid_day_prep.phase1.error.backup_required")}</p>
@@ -192,7 +193,7 @@ export function MidDayPhase1Form({
                       placeholder={t("mid_day_prep.phase1.back_up")}
                       className="
                         min-h-[44px] w-24 shrink-0 rounded-md border-2 border-co-border-2 bg-co-surface
-                        px-2 text-sm text-co-text focus:border-co-text focus:outline-none
+                        px-2 text-base text-co-text focus:border-co-text focus:outline-none
                         focus-visible:ring-4 focus-visible:ring-co-gold/60
                       "
                     />
@@ -209,7 +210,7 @@ export function MidDayPhase1Form({
                     placeholder={t("mid_day_prep.phase1.on_hand")}
                     className="
                       min-h-[44px] w-24 shrink-0 rounded-md border-2 border-co-border-2 bg-co-surface
-                      px-2 text-sm text-co-text focus:border-co-text focus:outline-none
+                      px-2 text-base text-co-text focus:border-co-text focus:outline-none
                       focus-visible:ring-4 focus-visible:ring-co-gold/60
                     "
                   />

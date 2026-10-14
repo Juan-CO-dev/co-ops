@@ -40,7 +40,7 @@ export default async function ReceivingPage({ searchParams }: { searchParams: Pr
   const missingEmailIds = deriveMissingEmailIds(recent, Date.now());
 
   return (
-    <main className="mx-auto max-w-2xl md:max-w-3xl lg:max-w-5xl xl:max-w-6xl px-4 pb-32 pt-4 sm:px-6">
+    <main className="mx-auto w-full max-w-2xl md:max-w-3xl lg:max-w-5xl xl:max-w-6xl px-4 pb-32 pt-4 sm:px-6">
       {/* Back + the sibling hop to ordering (the other end of the draft → PO → truck
           thread). The active location travels so the destination resolves the same shop. */}
       <div className="mb-3 flex items-center justify-between gap-2">

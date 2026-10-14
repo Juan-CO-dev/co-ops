@@ -267,7 +267,7 @@ export function BatchEntryFields({
                   aria-label={t(bk("prep.batch.reason_note_placeholder"))}
                   onChange={(e) => onChange({ ...value, overBatchReason: { code: "other", note: e.target.value } })}
                   onBlur={disabled ? undefined : () => onCommit?.(value)}
-                  className="min-h-[44px] w-full rounded-md border-2 border-co-border-2 bg-co-surface px-3 text-sm text-co-text focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60"
+                  className="min-h-[44px] w-full rounded-md border-2 border-co-border-2 bg-co-surface px-3 text-base text-co-text focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60"
                 />
               ) : null}
             </div>

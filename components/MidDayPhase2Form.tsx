@@ -43,6 +43,7 @@ import {
 } from "@/lib/batch-prep-shared";
 import type { TranslationKey } from "@/lib/i18n/types";
 import { etCalendarDate } from "@/lib/operational-day";
+import { formatPrepQty } from "@/lib/prep-display-shared";
 
 export interface MidDayPhase2Item {
   id: string;
@@ -128,6 +129,7 @@ export function MidDayPhase2Form({
   managers,
   sectionLabels = {},
   todayIso,
+  canEditConsumption = false,
 }: {
   instanceId: string;
   items: MidDayPhase2Item[];
@@ -136,6 +138,8 @@ export function MidDayPhase2Form({
   sectionLabels?: Record<string, { en: string; es: string | null }>;
   /** 0215 — the instance's operational date (YYYY-MM-DD) for the shelf-life red state. */
   todayIso?: string;
+  /** D-13 — the viewer may edit the "Uses: …" panel (KH+); server-derived. Default read-only. */
+  canEditConsumption?: boolean;
 }) {
   const { t, language } = useTranslation();
   const router = useRouter();
@@ -319,7 +323,7 @@ export function MidDayPhase2Form({
               return (
                 <li
                   key={it.id}
-                  className="flex flex-col gap-1.5 rounded-md border-2 border-co-border bg-co-surface px-3 py-2"
+                  className="flex min-w-0 flex-col gap-1.5 rounded-md border-2 border-co-border bg-co-surface px-3 py-2"
                 >
                   {it.batch ? (
                     /* 0215 batch vs bottle — the batch half (batch_mode items only). */
@@ -339,10 +343,10 @@ export function MidDayPhase2Form({
                     <div className="min-w-0 flex-1">
                       <p className="truncate text-sm font-semibold text-co-text">{it.label}</p>
                       <p className="text-[10px] font-bold uppercase tracking-[0.08em] text-co-text-dim">
+                        {/* B1 #3 — "5 × 1/3 Pan", never "5 1/3 Pan"; float noise rounded. */}
                         {it.need !== null
-                          ? `${t("mid_day_prep.phase1.need")} ${it.need}`
-                          : `${t("mid_day_prep.page.section_par")} ${it.parValue ?? "—"}`}
-                        {it.parUnit ? ` ${it.parUnit}` : ""}
+                          ? `${t("mid_day_prep.phase1.need")} ${formatPrepQty(it.need, it.parUnit)}`
+                          : `${t("mid_day_prep.page.section_par")} ${formatPrepQty(it.parValue, it.parUnit)}`}
                         {it.batch ? ` · ${t("prep.batch.bottled_label" as TranslationKey)}` : ""}
                       </p>
                     </div>
@@ -362,7 +366,7 @@ export function MidDayPhase2Form({
                       placeholder={it.batch ? t("prep.batch.bottled_label" as TranslationKey) : t("mid_day_prep.phase2.prepped")}
                       className="
                         min-h-[44px] w-20 shrink-0 rounded-md border-2 border-co-border-2 bg-co-surface
-                        px-2 text-sm text-co-text focus:border-co-text focus:outline-none
+                        px-2 text-base text-co-text focus:border-co-text focus:outline-none
                         focus-visible:ring-4 focus-visible:ring-co-gold/60
                       "
                     />
@@ -394,6 +398,7 @@ export function MidDayPhase2Form({
                       outputQty={it.batch ? st.batch.batches : (preppedNum ?? 0)}
                       value={st.confirmedConsumption}
                       onChange={(rows) => patch(it.id, { confirmedConsumption: rows })}
+                      canEdit={canEditConsumption}
                     />
                   ) : null}
                   {st.status === "saved" ? (

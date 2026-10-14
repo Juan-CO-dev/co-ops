@@ -810,7 +810,7 @@ export function ClosingClient({ initialState }: { initialState: ClosingInitialSt
   const headerLabel = `${location.code} · ${location.name}`;
 
   return (
-    <main className="mx-auto max-w-2xl px-4 pb-32 pt-4 sm:px-6">
+    <main className="mx-auto w-full max-w-2xl px-4 pb-32 pt-4 sm:px-6">
       {/* Persistent back-to-dashboard CTA. UserMenu floats in the
           top-right corner from the (authed) layout (per
           SPEC_AMENDMENTS.md C.39); reserved zone has min-h sized so this

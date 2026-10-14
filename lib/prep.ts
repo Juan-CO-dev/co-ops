@@ -69,6 +69,7 @@ import { operationalNow } from "@/lib/midshift";
 import { applyEffectiveResolution, type EffectiveResolvableBuilder } from "@/lib/admin/template-builder-shared";
 import { loadPrepSections } from "@/lib/prep-sections.server";
 import { loadBatchDerivedForItems, loadDerivedForItems, recordBatchProductionFromPrep, recordProductionFromPrep, skuConsumptionForItem, type DerivedSku, type ConfirmedInput } from "@/lib/prep-consumption";
+import { consumptionOverrideFor } from "@/lib/consumption-edit-shared";
 import { loadBatchContextForItems, type BatchItemContext } from "@/lib/batch-prep";
 import { batchContractCodeFromMessage, toBatchPayload, type BatchContractCode, type BatchEntry } from "@/lib/batch-prep-shared";
 import { midDayFinalizeBlockers } from "@/lib/mid-day-shared";
@@ -1455,6 +1456,9 @@ export async function saveMidDayPhase2Item(
     }
   }
 
+  // D-13 — crew (level < CONSUMPTION_EDIT_MIN) cannot override the panel: their save
+  // records the DERIVED consumption whatever the body carried (the UI hiding is not the gate).
+  const confirmedConsumption = consumptionOverrideFor(args.actor.level, args.confirmedConsumption);
   if (item.itemId && args.batch) {
     // 0215 batch vs bottle — the BATCH fold (ruling 3): batches × the recipe from ONE
     // graph read. produced_at / made_by are the PERSISTED session facts the RPC returned
@@ -1472,7 +1476,7 @@ export async function saveMidDayPhase2Item(
         outputItemId: item.itemId,
         batches: args.batch.batches,
         cameOutTo: args.batch.cameOutTo ?? 0,
-        confirmedConsumption: args.confirmedConsumption ?? null,
+        confirmedConsumption,
         producedAt,
         madeBy,
         source: "mid_day_p2",
@@ -1482,7 +1486,7 @@ export async function saveMidDayPhase2Item(
     }
   } else if (item.itemId) {
     try {
-      let consumption = args.confirmedConsumption ?? null;
+      let consumption = confirmedConsumption;
       if (consumption === null) {
         const derivedMap = await skuConsumptionForItem(item.itemId, args.prepped);
         consumption = [...derivedMap].map(([skuId, oz]) => ({ skuId, qtyOz: oz, qtyEntered: null, unitEntered: null, derivedOz: oz }));
