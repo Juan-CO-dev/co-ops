@@ -15,7 +15,14 @@ export interface SalesCoverage {
   degraded: boolean;
   byLocation: Record<string, { hasGaps: boolean; degraded: boolean; missingDates: string[]; degradedDates: string[] }>;
 }
-export interface EffectiveSalesWindow { rows: EffectiveSalesRow[]; coverage: SalesCoverage }
+export interface EffectiveSalesWindow {
+  rows: EffectiveSalesRow[]; coverage: SalesCoverage;
+  /** RAW CAPTURE ONLY: the completed-run day manifests this read was fenced against —
+   *  exactly what loadSalesCoverageDisclosure reads for the same window, so a caller that
+   *  already holds the window can disclose coverage without a second read (B9). */
+  manifests?: CaptureDayManifest[];
+}
+export type CaptureDayManifest = Coverage;
 interface Coverage { location_id: string; business_date: string; run_id: string; status: string;
   suspect_check_count: number; suspect_qty: number; counted_qty: number;
   computed_at: string; aggregate_count: number; attribution_count: number }
@@ -179,5 +186,5 @@ async function loadRawToastSalesWindow(sb: Client, window: Window): Promise<Effe
     for (const [sku_id, direct_oz] of selected) if (!skuFilter || skuFilter.has(sku_id)) out.push({ location_id: day.location_id,
       business_date: day.business_date, sku_id, direct_oz, flattened_oz: flattened.get(sku_id) ?? 0 });
   }
-  return { rows: out, coverage: await loadSalesCoverageDisclosure(sb, { ...window, untilDateExclusive: end }, validCoverage) };
+  return { rows: out, coverage: await loadSalesCoverageDisclosure(sb, { ...window, untilDateExclusive: end }, validCoverage), manifests: coverage };
 }

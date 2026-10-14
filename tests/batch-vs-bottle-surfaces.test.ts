@@ -60,7 +60,8 @@ describe("production log, counts panel, AM prep hint", () => {
     const counts = read("lib", "counts.ts");
     const loadOnHandAt = counts.indexOf("export async function loadOnHand(");
     const loadOnHandBody = counts.slice(loadOnHandAt, counts.indexOf("\n}\n", loadOnHandAt));
-    expect(loadOnHandBody).toContain("prepWaste: await loadPrepWasteRows(");
+    expect(loadOnHandBody).toContain("loadPrepWasteRows(getServiceRoleClient(), locationId)"); // B9: read beside the derivation
+    expect(loadOnHandBody).toContain("return { ...view, prepWaste };");
     const derivedAt = counts.indexOf("export async function loadOnHandDerived(");
     expect(counts.slice(derivedAt)).not.toContain("loadPrepWasteRows(");
     expect(counts).toMatch(/\.from\("prep_batch_sessions"\)[\s\S]*?\.gt\("tossed_qty", 0\)/);
