@@ -612,17 +612,6 @@ export async function loadProductIndex(
   if (products.length === 0) return EMPTY_PRODUCT_INDEX;
   const presentIds = products.map((p) => p.id);
 
-  const { data: memberRows, error: mErr } = await sb
-    .from("vendor_items")
-    .select("id, name, vendor_id, product_id, active, avg_oz_per_each, pending_review, location_id, units_per_pack, each_size, each_measure")
-    .in("product_id", presentIds)
-    .order("name", { ascending: true })
-    .returns<DbMemberRow[]>();
-  throwIfSchemaPending(mErr, "loadProductIndex members");
-  if (mErr) throw new Error(`loadProductIndex members failed: ${mErr.message}`);
-  const memberRowList = memberRows ?? [];
-  const memberIds = memberRowList.map((m) => m.id);
-
   let primaryQuery = sb
     .from("product_primaries")
     .select("id, product_id, location_id, primary_sku_id, note")
@@ -632,47 +621,68 @@ export async function loadProductIndex(
   primaryQuery = locationId != null
     ? primaryQuery.or(`location_id.is.null,location_id.eq.${locationId}`)
     : primaryQuery.is("location_id", null);
-  const { data: primaryRows, error: prErr } = await primaryQuery.returns<DbPrimaryRow[]>();
+  // The member and primary reads both key off the product ids alone — one wave (B9).
+  const [{ data: memberRows, error: mErr }, { data: primaryRows, error: prErr }] = await Promise.all([
+    sb
+      .from("vendor_items")
+      .select("id, name, vendor_id, product_id, active, avg_oz_per_each, pending_review, location_id, units_per_pack, each_size, each_measure")
+      .in("product_id", presentIds)
+      .order("name", { ascending: true })
+      .returns<DbMemberRow[]>(),
+    primaryQuery.returns<DbPrimaryRow[]>(),
+  ]);
+  throwIfSchemaPending(mErr, "loadProductIndex members");
+  if (mErr) throw new Error(`loadProductIndex members failed: ${mErr.message}`);
   throwIfSchemaPending(prErr, "loadProductIndex primaries");
   if (prErr) throw new Error(`loadProductIndex primaries failed: ${prErr.message}`);
+  const memberRowList = memberRows ?? [];
+  const memberIds = memberRowList.map((m) => m.id);
 
+  // Everything below keys off the member list — the overlay, vendor eligibility, receipt
+  // history, the measure registry and the pack chains — so it is one wave too (B9).
+  //
   // Per-location activation overlay (0174). Without a location there is no overlay
   // to read and `active` reduces to the global column, byte-identical to before.
-  const overlayBySku = new Map<string, boolean | null>();
-  if (locationId != null && memberIds.length > 0) {
-    const { data: ovRows, error: ovErr } = await sb
-      .from("location_sku_settings")
-      .select("sku_id, active_override")
-      .eq("location_id", locationId)
-      .in("sku_id", memberIds)
-      .returns<Array<{ sku_id: string; active_override: boolean | null }>>();
-    if (ovErr) throw new Error(`loadProductIndex overlay failed: ${ovErr.message}`);
-    for (const r of ovRows ?? []) overlayBySku.set(r.sku_id, r.active_override);
-  }
-
   // Vendor kind/activity are resolution inputs: an unavailable lookup must refuse,
   // rather than silently treating a store as a regular supplier.
+  type VendorRow = { id: string; name: string; source_kind: "vendor" | "store"; active: boolean };
+  type OverlayRow = { sku_id: string; active_override: boolean | null };
   const vendorIds = [...new Set(memberRowList.map((m) => m.vendor_id).filter((v): v is string => v !== null))];
-  const vendorNameById = new Map<string, string>();
-  const vendorById = new Map<string, { source_kind: "vendor" | "store"; active: boolean }>();
-  if (vendorIds.length > 0) {
-    const vs = shared.vendors ? await shared.vendors(vendorIds) : await (async () => {
-      const { data, error: vErr } = await sb
-        .from("vendors")
-        .select("id, name, source_kind, active")
-        .in("id", vendorIds)
-        .returns<Array<{ id: string; name: string; source_kind: "vendor" | "store"; active: boolean }>>();
-      if (vErr) throw new Error(`loadProductIndex vendor eligibility: ${vErr.message}`);
-      return data ?? [];
-    })();
-    for (const v of vs) { vendorNameById.set(v.id, v.name); vendorById.set(v.id, v); }
-  }
-
-  const [{ lastReceived, lines: receiptLines }, measures, chains] = await Promise.all([
+  const [ovRows, vs, { lastReceived, lines: receiptLines }, measures, chains] = await Promise.all([
+    locationId != null && memberIds.length > 0
+      ? (async (): Promise<OverlayRow[]> => {
+          const { data, error: ovErr } = await sb
+            .from("location_sku_settings")
+            .select("sku_id, active_override")
+            .eq("location_id", locationId)
+            .in("sku_id", memberIds)
+            .returns<OverlayRow[]>();
+          if (ovErr) throw new Error(`loadProductIndex overlay failed: ${ovErr.message}`);
+          return data ?? [];
+        })()
+      : Promise.resolve([] as OverlayRow[]),
+    vendorIds.length === 0
+      ? Promise.resolve([] as VendorRow[])
+      : shared.vendors
+        ? shared.vendors(vendorIds)
+        : (async (): Promise<VendorRow[]> => {
+            const { data, error: vErr } = await sb
+              .from("vendors")
+              .select("id, name, source_kind, active")
+              .in("id", vendorIds)
+              .returns<VendorRow[]>();
+            if (vErr) throw new Error(`loadProductIndex vendor eligibility: ${vErr.message}`);
+            return data ?? [];
+          })(),
     loadReceiptHistory(sb, memberIds, locationId),
     shared.measures ? shared.measures() : loadMeasures(),
     shared.packChains ? shared.packChains(memberIds) : loadSkuPackChains(memberIds),
   ]);
+  const overlayBySku = new Map<string, boolean | null>();
+  for (const r of ovRows) overlayBySku.set(r.sku_id, r.active_override);
+  const vendorNameById = new Map<string, string>();
+  const vendorById = new Map<string, { source_kind: "vendor" | "store"; active: boolean }>();
+  for (const v of vs) { vendorNameById.set(v.id, v.name); vendorById.set(v.id, v); }
   const receiptEventsByProduct = new Map<string, ProductReceiptEvent[]>();
   const memberProduct = new Map(memberRowList.map((m) => [m.id, m.product_id]));
   for (const line of receiptLines) {

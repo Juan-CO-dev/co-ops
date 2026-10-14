@@ -20,6 +20,8 @@ const RELATIONS: Record<string, { table: string; local: string; foreign: string 
   "vendor_delivery_items.vendor_deliveries": { table: "vendor_deliveries", local: "delivery_id", foreign: "id" },
   "vendor_deliveries.vendors": { table: "vendors", local: "vendor_id", foreign: "id" },
   "production_inputs.productions": { table: "productions", local: "production_id", foreign: "id" },
+  "sku_count_lines.sku_count_events": { table: "sku_count_events", local: "count_event_id", foreign: "id" },
+  "par_pass_lines.par_pass_events": { table: "par_pass_events", local: "event_id", foreign: "id" },
 };
 
 const TS = /^(\d{4}-\d{2}-\d{2})[T ](\d{2}:\d{2}:\d{2})(\.\d+)?(Z|[+-]\d{2}(?::?\d{2})?)?$/;
@@ -59,11 +61,18 @@ function parseSelect(s: string): Field[] {
   });
 }
 
-export interface QueryLogEntry { table: string; select: string }
+export interface QueryLogEntry { table: string; select: string; depth: number }
 
-export function createFakeDb(tables: Tables) {
+/** `latencyMs` makes every round trip take that long (real timers), so a test can read the
+ *  CRITICAL PATH — sequential waves — off the wall clock. */
+export function createFakeDb(tables: Tables, latencyMs = 0) {
   const log: QueryLogEntry[] = [];
   const writes: Array<{ table: string; rows: Row[] }> = [];
+  // CRITICAL PATH: a query issued after a depth-d query has COMPLETED is at least d + 1.
+  // With a uniform latency every wave issues and completes together, so `stats.depth` is the
+  // number of sequential round-trip waves the caller waited through.
+  const stats = { depth: 0 };
+  let completedDepth = 0;
 
   function related(base: string, row: Row, rel: string): Row | null {
     const r = RELATIONS[`${base}.${rel}`];
@@ -98,8 +107,9 @@ export function createFakeDb(tables: Tables) {
     let upsertRows: Row[] | null = null;
     let upsertOpts: { onConflict?: string; ignoreDuplicates?: boolean } = {};
 
+    let depth = 0;
     const run = () => {
-      log.push({ table, select: selectStr });
+      log.push({ table, select: selectStr, depth });
       if (upsertRows) {
         writes.push({ table, rows: upsertRows });
         const keys = (upsertOpts.onConflict ?? "id").split(",");
@@ -165,10 +175,15 @@ export function createFakeDb(tables: Tables) {
       maybeSingle() { single = true; return q; },
       upsert(rows: Row[], opts: { onConflict?: string; ignoreDuplicates?: boolean } = {}) { upsertRows = rows; upsertOpts = opts; return q; },
       then(resolve: (v: unknown) => unknown, reject?: (e: unknown) => unknown) {
-        try { return Promise.resolve(run()).then(resolve, reject); } catch (e) { return Promise.reject(e).then(resolve, reject); }
+        depth = completedDepth + 1;
+        stats.depth = Math.max(stats.depth, depth);
+        const done = <T>(v: T) => { completedDepth = Math.max(completedDepth, depth); return v; };
+        const exec = () => { try { return Promise.resolve(run()); } catch (e) { return Promise.reject(e); } };
+        const p = latencyMs > 0 ? new Promise<void>((r) => setTimeout(r, latencyMs)).then(exec) : exec();
+        return p.then(done, (e) => { done(null); throw e; }).then(resolve, reject);
       },
     };
     return q;
   }
-  return { client: { from } as unknown as ReturnType<typeof getServiceRoleClient>, log, writes };
+  return { client: { from } as unknown as ReturnType<typeof getServiceRoleClient>, log, writes, stats };
 }

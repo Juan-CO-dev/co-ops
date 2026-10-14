@@ -166,10 +166,16 @@ function actorLoc(actor: AuthContext): LocationActor {
  */
 let countProductAllocationColumnReady = false;
 let countProductAllocationPendingLogged = false;
+/** B9: concurrent callers in one render (the sheet and the panel) share one in-flight probe. */
+let countProductAllocationProbe: Promise<boolean> | null = null;
 async function countProductAllocationReady(
   sb: ReturnType<typeof getServiceRoleClient>,
 ): Promise<boolean> {
   if (countProductAllocationColumnReady) return true;
+  countProductAllocationProbe ??= probeCountProductAllocation(sb).finally(() => { countProductAllocationProbe = null; });
+  return countProductAllocationProbe;
+}
+async function probeCountProductAllocation(sb: ReturnType<typeof getServiceRoleClient>): Promise<boolean> {
   const { error } = await sb.from("sku_count_lines").select("allocated_from_product_id").limit(1);
   if (error) {
     if (!countProductAllocationPendingLogged) {
@@ -255,39 +261,44 @@ async function loadCountCatalog(locationId: string, refs: CountsReadRefs): Promi
   const sb = getServiceRoleClient();
   // The active roster, in name order — the render's ONE read (B9: the on-hand tiers share it).
   const list = await refs.roster();
-  // Vendor names (P8) — ONE batched lookup over the distinct vendors, never per-SKU.
-  // LABEL-ONLY: a failure here must not break the count sheet, so it degrades to null
-  // labels (the twin rows just stay ambiguous, exactly as they were before P8).
-  const vendorIds = [...new Set(list.map((s) => s.vendor_id).filter((v): v is string => v !== null))];
-  const vendorNameById = new Map<string, string>();
-  if (vendorIds.length > 0) {
-    try {
-      const vs = await refs.vendors();
-      for (const id of vendorIds) { const v = vs.get(id); if (v) vendorNameById.set(id, v.name); }
-    } catch (vErr) {
-      console.error(`[counts] loadCountFormData vendor names lookup failed:`, vErr instanceof Error ? vErr.message : vErr);
-    }
-  }
-  const chainsBySku = await refs.packChains(list.map((s) => s.id));
-  const chainLabelsFor = (skuId: string): string[] =>
+  const chainsP = refs.packChains(list.map((s) => s.id));
+  const chainLabelsFor = (chainsBySku: Map<string, PackChainLevel[]>) => (skuId: string): string[] =>
     chainLabelsInWalkOrder(chainsBySku.get(skuId) ?? []);
-
   const productIds = [...new Set(list.map((s) => s.product_id).filter((v): v is string => v !== null))];
-  const products =
-    productIds.length > 0 && (await countProductAllocationReady(sb))
-      ? await loadCountProductOptions(locationId, productIds, chainLabelsFor, refs)
-      : [];
+  // B9: the vendor labels, the chains and the product rows are independent — one wave.
+  const [vendorNameById, chainsBySku, products] = await Promise.all([
+    // Vendor names (P8) — ONE batched lookup over the distinct vendors, never per-SKU.
+    // LABEL-ONLY: a failure here must not break the count sheet, so it degrades to null
+    // labels (the twin rows just stay ambiguous, exactly as they were before P8).
+    (async () => {
+      const vendorIds = [...new Set(list.map((s) => s.vendor_id).filter((v): v is string => v !== null))];
+      const names = new Map<string, string>();
+      if (vendorIds.length === 0) return names;
+      try {
+        const vs = await refs.vendors();
+        for (const id of vendorIds) { const v = vs.get(id); if (v) names.set(id, v.name); }
+      } catch (vErr) {
+        console.error(`[counts] loadCountFormData vendor names lookup failed:`, vErr instanceof Error ? vErr.message : vErr);
+      }
+      return names;
+    })(),
+    chainsP,
+    (async () => productIds.length > 0 && (await countProductAllocationReady(sb))
+      ? loadCountProductOptions(locationId, productIds, async () => chainLabelsFor(await chainsP), refs)
+      : [])(),
+  ]);
 
   // A member's productName is only known while C-mode is live; before migration 0180
   // it stays null and the SKU renders exactly as it does today.
   const productNameById = new Map(products.map((p) => [p.productId, p.name]));
+  const labelsFor = chainLabelsFor(chainsBySku);
   return {
     skus: list.map((s) => ({
       id: s.id, name: s.name, packFormat: s.pack_format,
       vendorName: s.vendor_id != null ? vendorNameById.get(s.vendor_id) ?? null : null,
       productId: s.product_id,
       productName: s.product_id != null ? productNameById.get(s.product_id) ?? null : null,
-      chainLabels: chainLabelsFor(s.id),
+      chainLabels: labelsFor(s.id),
     })),
     products,
   };
@@ -313,7 +324,7 @@ async function loadCountCatalog(locationId: string, refs: CountsReadRefs): Promi
 async function loadCountProductOptions(
   locationId: string,
   productIds: string[],
-  chainLabelsFor: (skuId: string) => string[],
+  loadChainLabels: () => Promise<(skuId: string) => string[]>,
   refs: CountsReadRefs,
 ): Promise<CountProductOption[]> {
   const { byProduct } = await refs.productIndex(productIds, locationId);
@@ -345,7 +356,7 @@ async function loadCountProductOptions(
     const active = entry.members.filter((m) => m.active).map((m) => m.skuId);
     if (active.length > 0) memberIdsByProduct.set(productId, active);
   }
-  const { lotsByProduct } = await refs.productLots(locationId, memberIdsByProduct);
+  const [{ lotsByProduct }, chainLabelsFor] = await Promise.all([refs.productLots(locationId, memberIdsByProduct), loadChainLabels()]);
 
   const options: CountProductOption[] = [];
   for (const [productId, members] of activeMembersByProduct) {
@@ -990,32 +1001,36 @@ interface InferredPlan {
   needsBaseline: string[];
 }
 
-async function planInferredTier(
-  sb: ReturnType<typeof getServiceRoleClient>,
-  locationId: string,
-  censusSkuIds: ReadonlySet<string>,
-  activeSkus: readonly RosterSku[],
-): Promise<InferredPlan> {
-  // Active SKU roster (global; the item spine is location-scoped via deliveries, not
-  // the vendor_items row) minus any SKU already carrying a census anchor.
-  const roster = activeSkus.filter((s) => !censusSkuIds.has(s.id));
-  const plan: InferredPlan = { skuName: new Map(roster.map((s) => [s.id, s.name])), baselineBySku: new Map(), needsBaseline: [] };
-  if (roster.length === 0) return plan;
-  const rosterIds = roster.map((s) => s.id);
+type StoredBaseline = { sku_id: string; inferred_oz: number | string; computed_at: string };
 
-  // (a) Pre-existing baselines for this location (batch).
+/** Every stored inferred baseline at this location (B9: read beside the anchors; the tier filters in memory). */
+async function loadStoredBaselines(sb: ReturnType<typeof getServiceRoleClient>, locationId: string): Promise<StoredBaseline[]> {
   const { data: existing, error: bErr } = await sb.from("sku_inferred_baselines")
     .select("sku_id, inferred_oz, computed_at")
     .eq("location_id", locationId)
-    .in("sku_id", rosterIds)
-    .returns<Array<{ sku_id: string; inferred_oz: number | string; computed_at: string }>>();
+    .returns<StoredBaseline[]>();
   if (bErr) throw new Error(`loadInferredRows baselines: ${bErr.message}`);
-  for (const r of existing ?? []) {
+  return existing ?? [];
+}
+
+function inferredPlanFrom(
+  stored: readonly StoredBaseline[],
+  activeSkus: readonly RosterSku[],
+  excludedSkuIds: ReadonlySet<string>,
+): InferredPlan {
+  // Active SKU roster (global; the item spine is location-scoped via deliveries, not
+  // the vendor_items row) minus every census- and par-anchored SKU.
+  const roster = activeSkus.filter((s) => !excludedSkuIds.has(s.id));
+  const plan: InferredPlan = { skuName: new Map(roster.map((s) => [s.id, s.name])), baselineBySku: new Map(), needsBaseline: [] };
+  if (roster.length === 0) return plan;
+  // (a) Pre-existing baselines for this location, for roster SKUs.
+  for (const r of stored) {
+    if (!plan.skuName.has(r.sku_id)) continue;
     const oz = num(r.inferred_oz);
     if (oz == null) continue; // defensive — column is NOT NULL, but never fabricate.
     plan.baselineBySku.set(r.sku_id, { inferredOz: oz, anchorAt: r.computed_at });
   }
-  plan.needsBaseline = rosterIds.filter((id) => !plan.baselineBySku.has(id));
+  plan.needsBaseline = roster.map((s) => s.id).filter((id) => !plan.baselineBySku.has(id));
   return plan;
 }
 
@@ -1175,55 +1190,47 @@ interface ParAnchors {
   skuIds: string[];
 }
 
-async function loadParAnchors(
-  sb: ReturnType<typeof getServiceRoleClient>,
-  locationId: string,
-  censusSkuIds: ReadonlySet<string>,
-  activeSkus: readonly RosterSku[],
-): Promise<ParAnchors> {
-  const empty: ParAnchors = { skuName: new Map(), anchorBySku: new Map(), skuIds: [] };
-  // Active SKU roster (global; the item spine is location-scoped via the ledgers, not
-  // the vendor_items row) minus any SKU already carrying a census anchor.
-  const roster = activeSkus.filter((s) => !censusSkuIds.has(s.id));
-  if (roster.length === 0) return empty;
-  const skuName = new Map(roster.map((s) => [s.id, s.name]));
-  const rosterIds = roster.map((s) => s.id);
+/** par_pass_lines has ONE FK to par_pass_events; the embed scopes lines to submitted walks here. */
+const PAR_EVENT_EMBED = "par_pass_events!inner(location_id, status)";
+type ParLineRow = { sku_id: string; implied_on_hand_oz: number | string | null; created_at: string };
 
-  // (a) Location-scoped par-pass event ids (two-step — NOT an embedded .eq() on the
-  //     lines→events relation, which is RLS-fragile per house law). Submitted events
-  //     only (a draft walk is not a truth anchor).
-  const { data: evRows, error: evErr } = await sb.from("par_pass_events")
-    .select("id")
-    .eq("location_id", locationId)
-    .eq("status", "submitted")
-    .returns<Array<{ id: string }>>();
-  if (evErr) throw new Error(`loadParEstimateRows events: ${evErr.message}`);
-  const eventIds = (evRows ?? []).map((e) => e.id);
-  if (eventIds.length === 0) return empty;
-
-  // (b) Latest par_pass line per roster SKU with a non-null implied_on_hand_oz, among
-  //     those events. Ordered created_at desc (the sku_ix) → first seen per SKU wins.
-  //     PAGED (the PR #63 lesson): par_pass_lines grows one row per SKU per walk, so
-  //     the desc scan loses its tail past 1000 rows — dropping a rarely-walked SKU's
-  //     only anchor. `id` is a tiebreaker ONLY (created_at stays the primary sort key),
-  //     making the order total so page boundaries can't reshuffle the first-seen pick.
-  const lineRows = await selectAllRows<{ sku_id: string; implied_on_hand_oz: number | string | null; created_at: string }>(
+/**
+ * Every par-pass line with a non-null implied on-hand from a SUBMITTED walk at this
+ * location (a draft walk is not a truth anchor), newest first. B9: one read — the walks
+ * are scoped through the event embed (service role) instead of a separate event-id read —
+ * and it no longer needs the roster first; the tier's SKU filter runs in memory.
+ * PAGED (the PR #63 lesson): par_pass_lines grows one row per SKU per walk, so the desc
+ * scan loses its tail past 1000 rows — dropping a rarely-walked SKU's only anchor. `id` is
+ * a tiebreaker ONLY (created_at stays the primary sort key), making the order total so
+ * page boundaries can't reshuffle the first-seen pick.
+ */
+async function loadParLines(sb: ReturnType<typeof getServiceRoleClient>, locationId: string): Promise<ParLineRow[]> {
+  return selectAllRows<ParLineRow>(
     async (from, to) => {
       const { data, error } = await sb.from("par_pass_lines")
-        .select("sku_id, implied_on_hand_oz, created_at")
-        .in("event_id", eventIds)
-        .in("sku_id", rosterIds)
+        .select(`sku_id, implied_on_hand_oz, created_at, ${PAR_EVENT_EMBED}`)
+        .eq("par_pass_events.location_id", locationId)
+        .eq("par_pass_events.status", "submitted")
         .not("implied_on_hand_oz", "is", null)
         .order("created_at", { ascending: false })
         .order("id", { ascending: false })
         .range(from, to)
-        .returns<Array<{ sku_id: string; implied_on_hand_oz: number | string | null; created_at: string }>>();
+        .returns<ParLineRow[]>();
       if (error) throw new Error(`loadParEstimateRows lines: ${error.message}`);
       return { data };
     },
   );
+}
+
+/** The par anchors: the latest line per active, NOT census-anchored SKU (census > par_estimate). */
+function parAnchorsFrom(lineRows: readonly ParLineRow[], activeSkus: readonly RosterSku[], censusSkuIds: ReadonlySet<string>): ParAnchors {
+  // Active SKU roster (global; the item spine is location-scoped via the ledgers, not
+  // the vendor_items row) minus any SKU already carrying a census anchor.
+  const roster = activeSkus.filter((s) => !censusSkuIds.has(s.id));
+  const skuName = new Map(roster.map((s) => [s.id, s.name]));
   const anchorBySku = new Map<string, { impliedOz: number; anchorAt: string }>();
   for (const r of lineRows) {
+    if (!skuName.has(r.sku_id)) continue; // not on this tier's roster.
     if (anchorBySku.has(r.sku_id)) continue; // desc order → first seen is the latest.
     const oz = num(r.implied_on_hand_oz);
     if (oz == null) continue; // defensive — filtered above, but never fabricate.
@@ -1318,12 +1325,19 @@ function loadParEstimateRows(par: ParAnchors, ctx: OnHandLedgerContext, now: num
  */
 export async function loadOnHand(actor: AuthContext, locationId: string, now: number = Date.now(), refs: CountsReadRefs = createCountsReadRefs()): Promise<OnHandView> {
   requireLevel(actor, COUNT_READ_MIN);
+  // The location bind runs BEFORE any read (the prep-waste read below starts beside the
+  // derivation, so it must not wait for the derivation's own bind).
+  if (!lockLocationContext(actorLoc(actor), locationId)) throw new CountError(404, "not_found", "Location not found");
   // The counts SURFACE gets the product grain; the advisory derivation below does not
   // (see withProducts). This is the only entry point that renders a two-grain panel.
   // `refs` (B9): the page's render-scoped reference reads, shared with the count sheet.
-  const view = await loadOnHandDerived(actor, locationId, now, { withProducts: true, seedBaselines: false }, refs);
-  // 0215 — prep waste rides on the counts surface only (advisory; never in `rows`).
-  return { ...view, prepWaste: await loadPrepWasteRows(getServiceRoleClient(), locationId) };
+  // 0215 — prep waste rides on the counts surface only (advisory; never in `rows`); read
+  // beside the derivation (B9), not after it.
+  const [view, prepWaste] = await Promise.all([
+    loadOnHandDerived(actor, locationId, now, { withProducts: true, seedBaselines: false }, refs),
+    loadPrepWasteRows(getServiceRoleClient(), locationId),
+  ]);
+  return { ...view, prepWaste };
 }
 
 /**
@@ -1629,55 +1643,62 @@ interface CensusAnchors {
   skuIds: string[];
 }
 
+/** sku_count_lines has ONE FK to sku_count_events; the embed scopes lines to this shop's live events. */
+const COUNT_EVENT_EMBED = "sku_count_events!inner(location_id, active, counted_at)";
+
 async function loadCensusAnchors(sb: ReturnType<typeof getServiceRoleClient>, locationId: string): Promise<CensusAnchors> {
-  // ALL active count events at this location, newest first — every event is a live
-  // session (F1: no supersede). We resolve each SKU's anchor across all of them.
-  // A failed read MUST throw: an empty result is the COLD START signal ("this
-  // location was never counted"), so a swallowed error would fabricate it. PAGED (the
-  // PR #63 lesson): one row per count session accumulates forever, and evList[0] is
-  // the location's "last counted" hint — `id` is a tiebreaker ONLY (counted_at stays
-  // the primary sort key), making the order total so paging can't reorder the head.
-  const evList = await selectAllRows<{ id: string; counted_at: string }>(
-    async (from, to) => {
-      const { data, error } = await sb.from("sku_count_events")
-        .select("id, counted_at")
-        .eq("location_id", locationId)
-        .eq("active", true)
-        .order("counted_at", { ascending: false })
-        .order("id", { ascending: false })
-        .range(from, to)
-        .returns<Array<{ id: string; counted_at: string }>>();
-      if (error) throw new Error(`loadOnHand count events: ${error.message}`);
-      return { data };
-    },
-  );
+  type LineRow = { count_event_id: string; sku_id: string; anchor_dimension: "weight" | "count" | null; resolved_oz: number | string | null; resolved_units: number | string | null; is_loose: boolean; partial_fraction: number | string | null; sku_count_events: { counted_at: string } };
+  const [evList, lines] = await Promise.all([
+    // ALL active count events at this location, newest first — every event is a live
+    // session (F1: no supersede). We resolve each SKU's anchor across all of them.
+    // A failed read MUST throw: an empty result is the COLD START signal ("this
+    // location was never counted"), so a swallowed error would fabricate it. PAGED (the
+    // PR #63 lesson): one row per count session accumulates forever, and evList[0] is
+    // the location's "last counted" hint — `id` is a tiebreaker ONLY (counted_at stays
+    // the primary sort key), making the order total so paging can't reorder the head.
+    selectAllRows<{ id: string; counted_at: string }>(
+      async (from, to) => {
+        const { data, error } = await sb.from("sku_count_events")
+          .select("id, counted_at")
+          .eq("location_id", locationId)
+          .eq("active", true)
+          .order("counted_at", { ascending: false })
+          .order("id", { ascending: false })
+          .range(from, to)
+          .returns<Array<{ id: string; counted_at: string }>>();
+        if (error) throw new Error(`loadOnHand count events: ${error.message}`);
+        return { data };
+      },
+    ),
+    // ALL lines across those active events, each carrying its event's counted_at.
+    // PR-C: read anchor_dimension + resolved_units to partition weight vs count rows.
+    // B9: scoped through the event embed (service role) so it runs BESIDE the events read
+    // and never spends the ever-growing event-id list in the request line.
+    // A failed read MUST throw: these lines ARE every SKU's anchor — an empty result
+    // reads as "the events resolved to no anchors" and silently drops the census tier.
+    // PAGED (the PR #63 lesson): a full census writes one line per SKU (~163), so all
+    // lines across all active events cross 1000 rows within a handful of counts; a
+    // truncated page would silently strand whichever SKUs fell off. `id` (the PK) gives
+    // the stable total order paging requires — anchors resolve by event counted_at, so
+    // row order is not otherwise load-bearing.
+    selectAllRows<LineRow>(
+      async (from, to) => {
+        const { data, error } = await sb.from("sku_count_lines")
+          .select(`count_event_id, sku_id, anchor_dimension, resolved_oz, resolved_units, is_loose, partial_fraction, ${COUNT_EVENT_EMBED}`)
+          .eq("sku_count_events.location_id", locationId)
+          .eq("sku_count_events.active", true)
+          .order("id", { ascending: true })
+          .range(from, to)
+          .returns<LineRow[]>();
+        if (error) throw new Error(`loadOnHand count lines: ${error.message}`);
+        return { data };
+      },
+    ),
+  ]);
   if (evList.length === 0) {
     return { evList, anchorBySku: new Map(), unitAnchorBySku: new Map(), weightSkuIds: [], countSkuIds: [], skuIds: [] };
   }
   const eventAt = new Map(evList.map((e) => [e.id, e.counted_at]));
-
-  // ALL lines across those active events, each tagged with its event's counted_at.
-  // PR-C: read anchor_dimension + resolved_units to partition weight vs count rows.
-  const eventIds = evList.map((e) => e.id);
-  // A failed read MUST throw: these lines ARE every SKU's anchor — an empty result
-  // reads as "the events resolved to no anchors" and silently drops the census tier.
-  // PAGED (the PR #63 lesson): a full census writes one line per SKU (~163), so all
-  // lines across all active events cross 1000 rows within a handful of counts; a
-  // truncated page would silently strand whichever SKUs fell off. `id` (the PK) gives
-  // the stable total order paging requires — anchors resolve by event counted_at, so
-  // row order is not otherwise load-bearing.
-  const lines = await selectAllRows<{ count_event_id: string; sku_id: string; anchor_dimension: "weight" | "count" | null; resolved_oz: number | string | null; resolved_units: number | string | null; is_loose: boolean; partial_fraction: number | string | null }>(
-    async (from, to) => {
-      const { data, error } = await sb.from("sku_count_lines")
-        .select("count_event_id, sku_id, anchor_dimension, resolved_oz, resolved_units, is_loose, partial_fraction")
-        .in("count_event_id", eventIds)
-        .order("id", { ascending: true })
-        .range(from, to)
-        .returns<Array<{ count_event_id: string; sku_id: string; anchor_dimension: "weight" | "count" | null; resolved_oz: number | string | null; resolved_units: number | string | null; is_loose: boolean; partial_fraction: number | string | null }>>();
-      if (error) throw new Error(`loadOnHand count lines: ${error.message}`);
-      return { data };
-    },
-  );
   // Legacy rows (anchor_dimension NULL) read as weight-anchored (0161 rationale).
   const isWeight = (d: "weight" | "count" | null): boolean => d !== "count";
 
@@ -1735,17 +1756,29 @@ async function onHandCore(
   const withProducts = opts.withProducts === true;
   const seedBaselines = opts.seedBaselines ?? true;
   const sb = getServiceRoleClient();
-  const watermarkStart = await loadDepletionWatermarkStart(locationId, sb);
 
-  // ── 1. Anchors (census > par_estimate > inferred). Each tier excludes the ones above it.
-  const census = await loadCensusAnchors(sb, locationId);
+  // ── 1. Anchors (census > par_estimate > inferred), read in ONE parallel wave (B9 step 5):
+  //       none of these reads depends on another; each tier's exclusion runs in memory.
+  const [watermarkStart, census, roster, parLines, storedBaselines, productsReady] = await Promise.all([
+    loadDepletionWatermarkStart(locationId, sb),
+    loadCensusAnchors(sb, locationId),
+    refs.roster(),
+    loadParLines(sb, locationId),
+    loadStoredBaselines(sb, locationId),
+    withProducts ? countProductAllocationReady(sb) : Promise.resolve(false),
+  ]);
+  if (productsReady) {
+    // Start the product grain's index + lots now (the count sheet asks for the same set);
+    // the rollup at the end narrows to its own products. Failures surface there.
+    const productIds = [...new Set(roster.map((r) => r.product_id).filter((v): v is string => v != null))];
+    if (productIds.length > 0) void refs.productIndex(productIds, locationId).catch(() => undefined);
+  }
   const { evList, anchorBySku, unitAnchorBySku, weightSkuIds, countSkuIds, skuIds } = census;
   const censusSet = new Set(skuIds);
   // par_estimate first (the shelf-walk snapshot, firmer than a run-rate guess), then
   // inferred for the rest: inference never shadows a counted OR par-estimated SKU.
-  const roster = await refs.roster();
-  const par = await loadParAnchors(sb, locationId, censusSet, roster);
-  const inferredPlan = await planInferredTier(sb, locationId, new Set([...skuIds, ...par.skuIds]), roster);
+  const par = parAnchorsFrom(parLines, roster, censusSet);
+  const inferredPlan = inferredPlanFrom(storedBaselines, roster, new Set([...skuIds, ...par.skuIds]));
 
   // ── 2. The earliest business date any sales consumer reads.
   const openEtDate = etBusinessDate(new Date(now).toISOString());
@@ -1761,10 +1794,6 @@ async function onHandCore(
     ...evList.map((event) => etBusinessDate(event.counted_at))].sort()[0]!;
   const legacyGapSince = earliestDate([censusGapSince, parGapSince, inferredGapSince]);
   const captureSource = salesSourceMode() !== "legacy";
-  const sales = await loadSalesSnapshot(sb, locationId, now, {
-    fromDate: earliestDate([legacyGapSince, laneFrom, captureSource ? disclosureFrom : null]),
-    legacyGapSince,
-  });
   // ── 3. The earliest instant any received / consumed / staleness window reaches, then
   //       each ledger ONCE from there (B9 step 2). Fresh inferred baselines anchor at `now`.
   const nowIso = new Date(now).toISOString();
@@ -1776,24 +1805,25 @@ async function onHandCore(
   ].filter((v): v is string => v != null);
   const countAnchorInstants = countSkuIds.flatMap((id) => [unitAnchorBySku.get(id)!.anchorAt, unitAnchorBySku.get(id)!.prevAt])
     .filter((v): v is string => v != null);
-  const ledgers = await loadOnHandLedgers(sb, locationId, {
-    deliveriesAfter: earliestInstant([...weightAnchorInstants, ...countAnchorInstants]),
-    productionsFrom: earliestInstant([
-      ...weightAnchorInstants,
-      ...(inferredPlan.needsBaseline.length > 0 ? [inferredWindowStart(now).cutoffIso] : []),
-    ]),
-  });
-  const ctx = onHandLedgerContext(sales, ledgers);
-  const salesCoverage = await salesDisclosure(sb, locationId, disclosureFrom, sales);
-  const salesThrough = await finishDepletionWatermark(watermarkStart, locationId, sb, sales);
-  const anchorAt = evList[0]?.counted_at ?? null; // the location's "last counted" header hint only.
-
   // SKU names + chains (count rows derive received-units read-time from the chain).
   // Names come off the render's roster; only a census SKU that is no longer active needs
   // its own (label-only) lookup.
   const rosterName = new Map(roster.map((r) => [r.id, r.name]));
   const offRoster = skuIds.filter((id) => !rosterName.has(id));
-  const [nameRes, chainsBySku, measures] = await Promise.all([
+
+  // ── 4. The second (and last) parallel wave: the sales read, the ledgers, the labels.
+  const [sales, ledgers, nameRes, chainsBySku, measures] = await Promise.all([
+    loadSalesSnapshot(sb, locationId, now, {
+      fromDate: earliestDate([legacyGapSince, laneFrom, captureSource ? disclosureFrom : null]),
+      legacyGapSince,
+    }),
+    loadOnHandLedgers(sb, locationId, {
+      deliveriesAfter: earliestInstant([...weightAnchorInstants, ...countAnchorInstants]),
+      productionsFrom: earliestInstant([
+        ...weightAnchorInstants,
+        ...(inferredPlan.needsBaseline.length > 0 ? [inferredWindowStart(now).cutoffIso] : []),
+      ]),
+    }),
     offRoster.length > 0
       ? sb.from("vendor_items").select("id, name, product_id").in("id", offRoster).returns<OffRosterSku[]>()
       : Promise.resolve({ data: [] as OffRosterSku[], error: null }),
@@ -1803,6 +1833,12 @@ async function onHandCore(
   // LABEL-ONLY read: names never touch the drift math (rows fall back to "(sku)"), so
   // a failure logs and continues best-effort rather than failing the whole panel.
   if (nameRes.error) console.error(`[counts] loadOnHand sku names lookup failed:`, nameRes.error.message);
+  const ctx = onHandLedgerContext(sales, ledgers);
+  const [salesCoverage, salesThrough] = await Promise.all([
+    salesDisclosure(sb, locationId, disclosureFrom, sales),
+    finishDepletionWatermark(watermarkStart, locationId, sb, sales),
+  ]);
+  const anchorAt = evList[0]?.counted_at ?? null; // the location's "last counted" header hint only.
   const skuName = new Map<string, string>();
   for (const id of skuIds) { const n = rosterName.get(id); if (n != null) skuName.set(id, n); }
   for (const r of nameRes.data ?? []) skuName.set(r.id, r.name);

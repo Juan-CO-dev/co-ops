@@ -252,3 +252,30 @@ describe("B9 step 4 — reference data read once per page render (sheet + panel 
     expect(neu.trips).toBeLessThan(old.trips);
   });
 });
+
+describe("B9 step 5 — independent reads run together", () => {
+  it.each(MODES)("a page render waits through ≤ 6 sequential round-trip waves (it was 25–45) — %s", async (mode) => {
+    setMode(mode);
+    await measure({}, pageRender); // warm the module-level 0180 probe
+    for (const scale of [{}, { parWalks: 6, countSessions: 6, baselineInstants: 6 }] as FixtureScale[]) {
+      const neu = createFakeDb(buildCountsFixture(scale), 1);
+      current = neu;
+      await pageRender();
+      const old = createFakeDb(buildCountsFixture(scale), 1);
+      current = old;
+      await v0PageRender();
+      expect(neu.stats.depth).toBeLessThanOrEqual(6);
+      expect(old.stats.depth).toBeGreaterThanOrEqual(25);
+    }
+  });
+
+  it.each(MODES)("THE BUDGET: one page render ≤ 25 round trips on the ledger and reconciled sources (≤ 30 on raw capture), constant as anchor groups grow — %s", async (mode) => {
+    setMode(mode);
+    await measure({}, pageRender);
+    const base = await measure({}, pageRender);
+    const scaled = await measure({ parWalks: 10, countSessions: 10, baselineInstants: 10 }, pageRender);
+    expect(base.trips).toBeLessThanOrEqual(mode === "capture" ? 30 : 25);
+    expect(scaled.trips).toBe(base.trips);
+    expect(scaled.reconciled).toBe(mode === "reconciled" ? 1 : 0);
+  });
+});
