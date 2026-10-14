@@ -99,7 +99,7 @@ App (candidates for the next fix batch):
 - **Tool scroll jumps a full screen** (harness, not app).
 
 Sim data (not app): catering test leads/quotes/customers from round 1 ("Hill Staffers <Model> R1 LLC", a second "Jordan Sample") clutter the pipeline, quotes and customers — the day reset doesn't cover catering. Clean up (sim-only) before the final catering photo pass.
-- **Opening Phase 2: a saved row reverted** (Onion "Saved by Maya" → empty "Not saved" after Basil saved; VEG 3→2 of 6). Under investigation 2026-10-14 (possible #461 regression).
+- **Opening Phase 2: a saved row reverted** (Onion "Saved by Maya" → empty "Not saved" after Basil saved). RESOLVED: an accidental one-tap Undo (DB-confirmed `quick_reenter`, pre-existing, not #461); Undo now needs two taps and the row keeps its height — B8 #467.
 - **Phase 1: tapping a station's Verified ticks its fridge temp line before a temp is typed** — under investigation.
 - **My Performance charts** render as dashes / a lone mark after 15 s (chart data or layout bug).
 - **Opening Phase 1 footer "4 of 44 verified" vs card "3 of 4 done"** lag.
