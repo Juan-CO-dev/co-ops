@@ -25,12 +25,19 @@ function mainClasses(src: string): string[] {
   return Array.from(src.matchAll(/<main\s+className="([^"]*)"/g), (m) => m[1]!);
 }
 
-/** Class strings of every `<input …>` element (template-literal or string className). */
+/**
+ * Class strings of every `<input …>` element (template-literal or string className), with any
+ * `${CONST}` / `{CONST}` expanded from a module-level `const CONST = "…"` in the same file.
+ */
 function inputClasses(src: string): string[] {
+  const consts = new Map<string, string>();
+  for (const m of src.matchAll(/const (\w+) =\s*"([^"]*)";/g)) consts.set(m[1]!, m[2]!);
   const out: string[] = [];
   for (const m of src.matchAll(/<input\b[\s\S]*?\/>/g)) {
-    const cls = /className=(?:"([^"]*)"|\{?`([^`]*)`\}?)/.exec(m[0]);
-    if (cls) out.push((cls[1] ?? cls[2] ?? "").replace(/\s+/g, " "));
+    const cls = /className=(?:"([^"]*)"|\{?`([^`]*)`\}?|\{(\w+)\})/.exec(m[0]);
+    if (!cls) continue;
+    const raw = cls[3] !== undefined ? (consts.get(cls[3]) ?? "") : (cls[1] ?? cls[2] ?? "");
+    out.push(raw.replace(/\$\{(\w+)\}/g, (_, k: string) => consts.get(k) ?? "").replace(/\s+/g, " "));
   }
   return out;
 }
@@ -76,6 +83,7 @@ describe("#1 number inputs are 16 px (no focus zoom on phones)", () => {
     "components/MidDayPhase1Form.tsx",
     "components/MidDayPhase2Form.tsx",
     "components/production/ProductionConsumptionPanel.tsx",
+    "components/prep/BatchEntryFields.tsx",
   ]) {
     it(`${f}: no input is text-sm`, () => {
       const classes = inputClasses(read(f));
