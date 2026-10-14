@@ -73,8 +73,53 @@ describe("midDayFinalizedRows", () => {
       inputs: { onHand: 2, backUp: 8, total: 2 },
       batch: { batches: 0, came_out_to: 0, bottled: 2, tossed: 0, backup_before: 8, backup_after: 6, yield_at_time: 4, need_for_line: 2, min_batches: 0 },
     };
-    expect(midDayFinalizedRows([item("a", 4)], [{ templateItemId: "a", completedAt: "t", prepData: counted }], { a: true })[0]?.made).toBeNull();
-    expect(midDayFinalizedRows([item("a", 4)], [{ templateItemId: "a", completedAt: "t", prepData: saved }], { a: true })[0]?.made).toBe(2);
+    expect(midDayFinalizedRows([item("a", 4)], [{ templateItemId: "a", completedAt: "t", prepData: counted }])[0]?.made).toBeNull();
+    const [row] = midDayFinalizedRows([item("a", 4)], [{ templateItemId: "a", completedAt: "t", prepData: saved }]);
+    expect(row?.made).toBe(2);
+    // the saved need_for_line is the need the bottler worked against
+    expect(row?.need).toBe(2);
+  });
+});
+
+describe("midDayFinalizedRows reads history from the record, not today's config (Astra review)", () => {
+  /** What the mid-day Phase 2 RPC (0199) persists for an ordinary item: par 6, on hand 2, made 4. */
+  const finalized = {
+    inputs: { onHand: 2, total: 4 },
+    snapshot: { section: "sauces", itemName: "HC Aioli", parValue: 6, parUnit: "1/3 Pan", specialInstruction: null },
+    overUnder: null,
+  };
+  const comp = (prepData: unknown) => [{ templateItemId: "a", completedAt: "2026-10-13T15:00:00Z", prepData }];
+
+  it("a par / unit / name / section change after finalize does not rewrite the finalized row (C.44)", () => {
+    const edited = { id: "a", label: "Hot Cherry Aioli", station: "veg", prepMeta: { section: "veg", parValue: 10, parUnit: "Qt" } };
+    expect(midDayFinalizedRows([edited], comp(finalized))).toEqual([
+      { id: "a", label: "HC Aioli", section: "sauces", parUnit: "1/3 Pan", need: 4, made: 4 },
+    ]);
+  });
+
+  it("a snapshot that froze a null par keeps the need null even if a par is added later", () => {
+    const noPar = { ...finalized, snapshot: { ...finalized.snapshot, parValue: null } };
+    expect(midDayFinalizedRows([item("a", 6)], comp(noPar))[0]).toMatchObject({ need: null, made: 4 });
+  });
+
+  it("an ordinary item finalized before batch mode was switched on still shows what was made", () => {
+    // There is no batch-mode input any more: the record's own shape decides.
+    expect(midDayFinalizedRows([item("a", 6)], comp(finalized))[0]?.made).toBe(4);
+  });
+
+  it("a pre-0064 Phase 2 save (no overUnder key, no backUp) still counts as made", () => {
+    const legacy = { inputs: { onHand: 2, total: 4 }, snapshot: finalized.snapshot };
+    expect(midDayFinalizedRows([item("a", 6)], comp(legacy))[0]?.made).toBe(4);
+  });
+
+  it("a Phase 2 save on an item counted as LINE + BACK UP (batch mode later switched off) counts as made", () => {
+    const savedAfterBatchCount = { inputs: { onHand: 2, backUp: 8, total: 3 }, snapshot: finalized.snapshot, overUnder: null };
+    expect(midDayFinalizedRows([item("a", 6)], comp(savedAfterBatchCount))[0]?.made).toBe(3);
+  });
+
+  it("a batch Phase 1 count left unsaved is still not made, whatever today's mode", () => {
+    const counted = { inputs: { onHand: 2, backUp: 8, total: 10 }, snapshot: finalized.snapshot };
+    expect(midDayFinalizedRows([item("a", 6)], comp(counted))[0]).toMatchObject({ need: 4, made: null });
   });
 
   it("falls back to station, then Misc, for the section", () => {

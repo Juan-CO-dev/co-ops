@@ -141,10 +141,9 @@ export default async function MidDayPrepPage({ searchParams }: PageProps) {
   // status): per item need · made, grouped by section in template order.
   const finalizedGroups: Array<{ section: string; rows: MidDayFinalizedRow[] }> = [];
   if (status !== "open" && status !== "phase1_complete") {
-    const batchModeById: Record<string, boolean> = {};
-    for (const [id, ctx] of Object.entries(state.batchContext)) batchModeById[id] = ctx.batchMode === true;
+    // History reads from each record (snapshot + persisted shape), never today's config.
     const indexBySection = new Map<string, number>();
-    for (const row of midDayFinalizedRows(state.templateItems, state.completions, batchModeById)) {
+    for (const row of midDayFinalizedRows(state.templateItems, state.completions)) {
       let gi = indexBySection.get(row.section);
       if (gi === undefined) {
         gi = finalizedGroups.length;

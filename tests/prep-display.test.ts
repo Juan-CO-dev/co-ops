@@ -91,6 +91,18 @@ describe("parseDecimalDraft (#5)", () => {
     expect(parseDecimalDraft("5,")).toEqual({ kind: "partial", value: 5 });
   });
 
+  it("a number too big to be finite is INVALID (shows the hint, commits nothing), never Infinity", () => {
+    const nines = "9".repeat(309);
+    expect(Number(nines)).toBe(Infinity); // sanity: the overflow is real
+    expect(parseDecimalDraft(nines)).toEqual({ kind: "invalid" });
+    expect(parseDecimalDraft(`${nines}.5`)).toEqual({ kind: "invalid" });
+    expect(parseDecimalDraft(`${nines},5`)).toEqual({ kind: "invalid" });
+    expect(parseDecimalDraft(`${nines}.`)).toEqual({ kind: "invalid" });
+    expect(parseDecimalDraft(`${nines},`)).toEqual({ kind: "invalid" });
+    // the largest finite magnitudes still parse
+    expect(parseDecimalDraft("9".repeat(308))).toEqual({ kind: "number", value: Number("9".repeat(308)) });
+  });
+
   it.each(["5 1/3", "-1", "1/3", "abc", "5..", "1e3", "5.5.5", "Infinity"])("%s is invalid", (raw) => {
     expect(parseDecimalDraft(raw)).toEqual({ kind: "invalid" });
   });

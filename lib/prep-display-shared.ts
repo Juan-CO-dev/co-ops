@@ -54,8 +54,18 @@ export function parseDecimalDraft(raw: string): DecimalDraft {
   const s = raw.trim().replace(",", ".");
   if (s === "") return { kind: "empty" };
   if (s === ".") return { kind: "partial", value: null };
-  if (/^\d+\.$/.test(s)) return { kind: "partial", value: Number(s.slice(0, -1)) };
-  if (/^(\d+(\.\d+)?|\.\d+)$/.test(s)) return { kind: "number", value: Number(s) };
+  // Astra review: a digit string past ~1.8e308 is Number() → Infinity. It is NOT a number the
+  // box may commit (the save would serialise it as null): invalid, the hint shows, and the
+  // parent keeps its last valid value. Checked on both numeric branches (point and comma alike,
+  // the comma is normalised above).
+  if (/^\d+\.$/.test(s)) {
+    const n = Number(s.slice(0, -1));
+    return Number.isFinite(n) ? { kind: "partial", value: n } : { kind: "invalid" };
+  }
+  if (/^(\d+(\.\d+)?|\.\d+)$/.test(s)) {
+    const n = Number(s);
+    return Number.isFinite(n) ? { kind: "number", value: n } : { kind: "invalid" };
+  }
   return { kind: "invalid" };
 }
 

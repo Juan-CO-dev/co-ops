@@ -72,29 +72,64 @@ export function midDayFinalizeBlockers(
 /** One row of the read-only finalized mid-day view (B1 #2). */
 export interface MidDayFinalizedRow {
   id: string;
+  /** The item name FROZEN in the record's snapshot (C.44); the template label only without one. */
   label: string;
-  /** System key (prep_meta.section, else station, else "Misc") — render via resolveSectionLabel. */
+  /** System key (snapshot section, else prep_meta.section, else station, else "Misc") — render via resolveSectionLabel. */
   section: string;
   parUnit: string | null;
-  /** max(par − counted on hand, 0); null when the item has no par or no count. */
+  /** The saved need: a batch save's need_for_line, else max(snapshot par − counted on hand, 0); null when no par or no count. */
   need: number | null;
-  /** What the Phase 2 save recorded (bottled on a batch item); null = never saved. */
+  /** What the Phase 2 save recorded (bottled on a batch save); null = never saved. */
   made: number | null;
 }
 
-function readOnHand(prepData: unknown): number | null {
-  if (prepData === null || prepData === undefined || typeof prepData !== "object") return null;
-  const inputs = (prepData as { inputs?: unknown }).inputs;
-  if (inputs === null || inputs === undefined || typeof inputs !== "object") return null;
-  const onHand = (inputs as { onHand?: unknown }).onHand;
-  return typeof onHand === "number" && Number.isFinite(onHand) ? onHand : null;
+function asRecord(v: unknown): Record<string, unknown> | null {
+  return v !== null && v !== undefined && typeof v === "object" ? (v as Record<string, unknown>) : null;
+}
+
+function finiteOrNull(v: unknown): number | null {
+  return typeof v === "number" && Number.isFinite(v) ? v : null;
+}
+
+/** The C.44 snapshot the save froze (prep_data.snapshot), or null when the record carries none. */
+function readSnapshot(prepData: unknown): { section: string | null; itemName: string | null; parValue: number | null; parUnit: string | null } | null {
+  const snap = asRecord(asRecord(prepData)?.snapshot);
+  if (!snap) return null;
+  return {
+    section: typeof snap.section === "string" && snap.section !== "" ? snap.section : null,
+    itemName: typeof snap.itemName === "string" && snap.itemName !== "" ? snap.itemName : null,
+    parValue: finiteOrNull(snap.parValue),
+    parUnit: typeof snap.parUnit === "string" ? snap.parUnit : null,
+  };
 }
 
 /**
- * B1 #2 — the rows of a FINALIZED mid-day prep (status phase2_complete), read-only: per
- * template item (template order) the latest live completion's count gives the need and its
- * Phase 2 save gives "made". "Made" follows midDayPhase2RowSeed, so a Phase 1 count is never
- * shown as made and a batch item shows its BOTTLED number, never the derived count total.
+ * What a persisted mid-day record says was MADE, read from the record's own shape — never from
+ * today's batch-mode flag (Astra review: switching a recipe to batch mode after finalize must not
+ * blank history, and vice versa):
+ *  - a `batch` object → a batch Phase 2 save → its BOTTLED number;
+ *  - else `inputs.total` is a Phase 2 save UNLESS the record is a batch Phase 1 count: the only
+ *    writer of a total without a Phase 2 save is 0215's Phase 1 RPC, which always writes
+ *    `inputs.backUp` and never the `overUnder` key (every Phase 2 save since 0064 writes it;
+ *    pre-0215 Phase 1 never wrote a total or a backUp, so legacy 0061/0062 saves read as made).
+ */
+export function midDayMadeFromRecord(prepData: unknown): number | null {
+  const batch = readBatchFromPrepData(prepData);
+  if (batch) return batch.bottled;
+  const total = readTotal(prepData);
+  if (total === null) return null;
+  const rec = asRecord(prepData)!;
+  const inputs = asRecord(rec.inputs);
+  const phase1BatchCount = !("overUnder" in rec) && typeof inputs?.backUp === "number";
+  return phase1BatchCount ? null : total;
+}
+
+/**
+ * B1 #2 — the rows of a FINALIZED mid-day prep (status phase2_complete), read-only: one row per
+ * template item (template order) from its latest live completion. History is read from the
+ * RECORD (Astra review, C.44): name, section, par and unit come from the snapshot the save froze,
+ * the need from the saved batch need or the snapshot par, and "made" from the record's own shape
+ * (midDayMadeFromRecord). Template metadata is only the fallback for a record with no snapshot.
  */
 export function midDayFinalizedRows(
   templateItems: ReadonlyArray<{
@@ -104,7 +139,6 @@ export function midDayFinalizedRows(
     prepMeta?: { section?: string | null; parValue?: number | null; parUnit?: string | null } | null;
   }>,
   liveCompletions: ReadonlyArray<{ templateItemId: string; completedAt: string; prepData: unknown }>,
-  batchModeByTemplateItemId: Record<string, boolean> = {},
 ): MidDayFinalizedRow[] {
   const latest = new Map<string, { completedAt: string; prepData: unknown }>();
   for (const c of liveCompletions) {
@@ -113,16 +147,17 @@ export function midDayFinalizedRows(
   }
   return templateItems.map((it) => {
     const prepData = latest.get(it.id)?.prepData;
-    const par = it.prepMeta?.parValue ?? null;
-    const onHand = readOnHand(prepData);
-    const seed = midDayPhase2RowSeed(prepData, batchModeByTemplateItemId[it.id] === true);
+    const snap = readSnapshot(prepData);
+    const par = snap ? snap.parValue : (it.prepMeta?.parValue ?? null);
+    const onHand = finiteOrNull(asRecord(asRecord(prepData)?.inputs)?.onHand);
+    const savedBatchNeed = readBatchFromPrepData(prepData)?.needForLine ?? null;
     return {
       id: it.id,
-      label: it.label,
-      section: it.prepMeta?.section ?? it.station ?? "Misc",
-      parUnit: it.prepMeta?.parUnit ?? null,
-      need: par !== null && onHand !== null ? Math.max(par - onHand, 0) : null,
-      made: seed.saved ? seed.initialPrepped : null,
+      label: snap?.itemName ?? it.label,
+      section: snap?.section ?? it.prepMeta?.section ?? it.station ?? "Misc",
+      parUnit: snap ? snap.parUnit : (it.prepMeta?.parUnit ?? null),
+      need: savedBatchNeed ?? (par !== null && onHand !== null ? Math.max(par - onHand, 0) : null),
+      made: midDayMadeFromRecord(prepData),
     };
   });
 }
