@@ -1849,7 +1849,7 @@ export function midDayRefWrite(
 ): {
   meta: Record<string, unknown>;
   count: number;
-  truth: { reportInstanceId: string; reportSubmittedAt: string | null };
+  truth: { reportInstanceId: string; reportSubmittedAt: string | null; confirmedAtById: Record<string, string | null> };
 } | null {
   const truth = pickMidDayReport(rows);
   if (!truth || rows.length === 0) return null;
@@ -1863,7 +1863,7 @@ export function midDayRefWrite(
       reportInstanceIds: ids,
     },
     count: ids.length,
-    truth,
+    truth: { ...truth, confirmedAtById: Object.fromEntries(rows.map((r) => [r.id, r.confirmed_at])) },
   };
 }
 
@@ -1885,7 +1885,12 @@ async function ensureClosingRefCompletion(
      * compared (never churn over a value we cannot improve). Equal values (compared as instants)
      * skip, so a refresh stays idempotent.
      */
-    truthCheck?: { reportInstanceId: string; reportSubmittedAt: string | null };
+    truthCheck?: {
+      reportInstanceId: string;
+      reportSubmittedAt: string | null;
+      /** confirmed_at of every finalized report, to compare a head's instance against ours without trusting its stored time. */
+      confirmedAtById?: Record<string, string | null>;
+    };
   },
 ): Promise<"inserted" | "superseded" | "skipped"> {
   // Up to 3 passes: read the live head -> decide -> compare-and-swap THAT head. A lost swap means another
@@ -1911,13 +1916,25 @@ async function ensureClosingRefCompletion(
       if (head.revoked_at) return "skipped";
       if (args.countForSupersedeCheck === undefined) return "skipped"; // already live
       const headCount = head.auto_complete_meta?.count ?? null;
-      // After a lost swap the head is another writer's work: if it already covers MORE reports than we
-      // would write, it is newer than us - stop rather than regress it.
-      if (attempt > 0 && headCount !== null && headCount > args.countForSupersedeCheck) return "skipped";
-      if (headCount === args.countForSupersedeCheck && !midDayTickIsStale(head.auto_complete_meta, args.truthCheck)) {
-        return "skipped"; // count unchanged and the stored instance/time are already the true ones
+      // MONOTONIC GUARD, on EVERY attempt including the first read (finalized mid-day reports only
+      // ever increase within a day): never replace a live head that already covers MORE reports than we
+      // would write. A stale writer (read {A}, paused, B then wrote count 2) must not regress B's tick.
+      if (headCount !== null && headCount > args.countForSupersedeCheck) return "skipped";
+      if (headCount === args.countForSupersedeCheck) {
+        const truth = args.truthCheck;
+        const headInstance = head.auto_complete_meta?.reportInstanceId;
+        if (truth && headInstance && headInstance !== truth.reportInstanceId) {
+          // Equal count, different report: replace only if OUR report was confirmed strictly later than the
+          // head's (the head's own confirmed_at when we know it - an old-code tick's stored time is the
+          // closing-open time, not the submission). Otherwise the head is at least as current: no write.
+          const headAt = truth.confirmedAtById?.[headInstance] ?? head.auto_complete_meta?.reportSubmittedAt ?? null;
+          const ours = truth.reportSubmittedAt;
+          if (!ours || (headAt && Date.parse(ours) <= Date.parse(headAt))) return "skipped";
+        } else if (!midDayTickIsStale(head.auto_complete_meta, truth)) {
+          return "skipped"; // count unchanged and the stored instance/time are already the true ones
+        }
       }
-      // count or stored instance/time changed -> supersede that head, then insert
+      // fewer reports, or a strictly later report, or a repaired time -> supersede that head, then insert
     }
 
     const result = await replaceLiveClosingRefCompletion(service, {

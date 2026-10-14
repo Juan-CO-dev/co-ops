@@ -244,7 +244,10 @@ describe("#16 reconcile carries the real mid-day submission time", () => {
 
   it("the finalize-time push (autoCompleteClosingMidDayRef) also supersedes before it inserts", async () => {
     eveningOpen();
-    const f = reconcileService([{ id: "md-2", triggered_at: "2026-10-11T18:30:00Z", confirmed_at: "2026-10-11T19:00:00Z" }], oldTick());
+    const f = reconcileService([
+      { id: "md-1", triggered_at: "2026-10-11T17:00:00Z", confirmed_at: "2026-10-11T18:00:00Z" },
+      { id: "md-2", triggered_at: "2026-10-11T18:30:00Z", confirmed_at: "2026-10-11T19:00:00Z" },
+    ], oldTick()); // head covers 1 report; two are finalized now
     await autoCompleteClosingMidDayRef(f.service, { locationId: "loc", date: "2026-10-11", midDayInstanceId: "md-2", actor: { userId: "u1" } as never });
     expect(f.calls).toEqual(["supersede", "insert", "link"]);
     expect(f.live()).toHaveLength(1);
@@ -349,6 +352,50 @@ describe("#16 reconcile carries the real mid-day submission time", () => {
     // ...and the page-load reconcile agrees with the push (one definition of the truth).
     expect((await reconcile(f.service)).ticked).toBe(0);
     expect(f.calls).toEqual(before);
+  });
+
+  it("MONOTONIC on the FIRST read: A read {A} and paused, B then wrote count 2 / B - A resumes, sees B's live tick, and does NOT regress it", async () => {
+    eveningOpen();
+    const staleRows: MdRow[] = [{ id: "A", triggered_at: "2026-10-11T17:00:00Z", confirmed_at: "2026-10-11T18:30:00Z" }]; // what A read
+    const bTick = liveHead({ reportType: "mid_day_prep", reportInstanceId: "B", reportSubmittedAt: "2026-10-11T19:00:00Z", count: 2 }, "B-head");
+    const push = reconcileService(staleRows, bTick);
+    await autoCompleteClosingMidDayRef(push.service, { locationId: "loc", date: "2026-10-11", midDayInstanceId: "A", actor: { userId: "u1" } as never });
+    expect(push.calls).toEqual([]); // no supersede, no insert
+    expect(push.live().map((c) => c.id)).toEqual(["B-head"]);
+    expect(metaOf(push.live()[0])).toMatchObject({ reportInstanceId: "B", count: 2 });
+
+    const reconciled = reconcileService(staleRows, bTick); // the same stale view through the reconcile writer
+    expect((await reconcile(reconciled.service)).ticked).toBe(0);
+    expect(reconciled.calls).toEqual([]);
+  });
+
+  it("equal count, different report: replaced only when OUR report was confirmed strictly later", async () => {
+    eveningOpen();
+    const head = (id: string, at: string) => liveHead({ reportType: "mid_day_prep", reportInstanceId: id, reportSubmittedAt: at, count: 1 }, "head-x");
+    const ours: MdRow[] = [{ id: "A", triggered_at: "2026-10-11T17:00:00Z", confirmed_at: "2026-10-11T19:00:00Z" }];
+
+    const later = reconcileService(ours, head("B", "2026-10-11T18:00:00Z")); // head's report confirmed earlier -> ours is newer
+    expect((await reconcile(later.service)).ticked).toBe(1);
+    expect(metaOf(later.live()[0]).reportInstanceId).toBe("A");
+
+    const earlier = reconcileService(ours, head("B", "2026-10-11T20:00:00Z")); // head's report confirmed later -> no write
+    expect((await reconcile(earlier.service)).ticked).toBe(0);
+    expect(earlier.calls).toEqual([]);
+
+    const same = reconcileService(ours, head("B", "2026-10-11T19:00:00Z")); // not STRICTLY later -> no write
+    expect((await reconcile(same.service)).ticked).toBe(0);
+    expect(same.calls).toEqual([]);
+  });
+
+  it("an old-code tick (different instance, stored time = closing-open) is still repaired: the head's instance is judged by ITS confirmed_at, not the bogus stored time", async () => {
+    eveningOpen();
+    const rows: MdRow[] = [
+      { id: "X", triggered_at: "2026-10-11T18:00:00Z", confirmed_at: "2026-10-11T18:30:00Z" },
+      { id: "Y", triggered_at: "2026-10-11T17:00:00Z", confirmed_at: "2026-10-11T20:00:00Z" }, // started first, confirmed last
+    ];
+    const f = reconcileService(rows, liveHead({ reportType: "mid_day_prep", reportInstanceId: "X", reportSubmittedAt: "2026-10-11T23:59:00.000Z", count: 2 }));
+    expect((await reconcile(f.service)).ticked).toBe(1);
+    expect(metaOf(f.live()[0])).toMatchObject({ reportInstanceId: "Y", reportSubmittedAt: "2026-10-11T20:00:00Z", count: 2 });
   });
 
   it("a first tick (no head) is a plain insert with no supersede", async () => {
