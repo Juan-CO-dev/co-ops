@@ -36,6 +36,7 @@ import {
 import type { OpeningPhase1Draft } from "@/lib/opening-draft-shared";
 import { etCalendarDate } from "@/lib/operational-day";
 import { requireSessionFromHeaders } from "@/lib/session";
+import { resolveShop } from "@/lib/shop-context";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import { applyEffectiveResolution, type EffectiveResolvableBuilder } from "@/lib/admin/template-builder-shared";
 import type { OpeningPhase2Meta } from "@/lib/types";
@@ -141,10 +142,7 @@ export default async function OpeningPage({ searchParams }: OpeningPageProps) {
   const locations = await loadAccessibleLocations(sb, locationActor);
 
   const { location: locParam } = await searchParams;
-  const selectedLocation =
-    (locParam ? locations.find((l) => l.id === locParam) : null) ??
-    locations[0] ??
-    null;
+  const selectedLocation = await resolveShop(locations, locParam); // B2: ?location= → remembered → first
 
   if (!selectedLocation) {
     return (

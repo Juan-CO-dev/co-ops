@@ -10,6 +10,7 @@
 import { redirect } from "next/navigation";
 
 import { requireSessionFromHeaders } from "@/lib/session";
+import { resolveShopId } from "@/lib/shop-context";
 import { ROLES } from "@/lib/roles";
 import { serverT } from "@/lib/i18n/server";
 import type { TranslationKey } from "@/lib/i18n/types";
@@ -24,6 +25,8 @@ export default async function AdminCateringFulfillmentPage() {
   const lang = auth.user.language;
 
   const nodes = await loadFulfillmentNodes(auth);
+  // B2: open on the shop the actor is working in (remembered, else the first node).
+  const defaultLocationId = await resolveShopId(nodes.map((n) => n.locationId));
 
   return (
     <div>
@@ -31,7 +34,7 @@ export default async function AdminCateringFulfillmentPage() {
         title={serverT(lang, "admin.catering.fulfillment.title" as TranslationKey)}
         subtitle={serverT(lang, "admin.catering.fulfillment.subtitle" as TranslationKey)}
       />
-      <FulfillmentClient nodes={nodes} actorLevel={level} />
+      <FulfillmentClient nodes={nodes} defaultLocationId={defaultLocationId} actorLevel={level} />
     </div>
   );
 }

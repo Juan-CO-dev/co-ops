@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { requireSessionFromHeaders } from "@/lib/session";
+import { resolveShop } from "@/lib/shop-context";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import { accessibleLocations } from "@/lib/locations";
 import { loadShiftBoard } from "@/lib/assignments";
@@ -20,7 +21,7 @@ export default async function StationsPage({ searchParams }: { searchParams: Pro
   if (error) throw error;
   const locations = (data ?? []) as { id: string; name: string }[];
   const { loc } = await searchParams;
-  const selected = locations.find((l) => l.id === loc) ?? locations[0];
+  const selected = (await resolveShop(locations, loc)) ?? undefined; // B2: ?loc= → remembered → first
   if (selected && auth.level >= 7) await syncStationsFromClosing(selected.id, actor);
   const board = selected ? await loadShiftBoard(sb, { actor: auth.level >= 8 ? { ...actor, locations: [...actor.locations, selected.id] } : actor,
     locationId: selected.id, date: etCalendarDate(new Date().toISOString()) }) : null;

@@ -20,6 +20,7 @@ import { loadMyFeedback } from "@/lib/pm-report";
 import { loadMyPerformance } from "@/lib/team-metrics";
 import type { TrendGranularity } from "@/lib/reports-trends";
 import { requireSessionFromHeaders } from "@/lib/session";
+import { resolveShop } from "@/lib/shop-context";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 
 import { ReportPageNav } from "@/components/reports-hub/ReportPageNav";
@@ -59,7 +60,8 @@ async function renderPage(query: Record<string, string | undefined>, allShops = 
   const locations = (locRows ?? []) as LocLite[];
   if (locations.length === 0) return <EmptyShell language={language} viewerLevel={auth.level} />;
 
-  const selected = selectedParam === "all" ? { id: "all", code: "" } : (selectedParam ? locations.find((l) => l.id === selectedParam) : null) ?? locations[0]!;
+  // B2: ?location= / ?loc= → remembered → first (locations is non-empty here).
+  const selected = selectedParam === "all" ? { id: "all", code: "" } : (await resolveShop(locations, selectedParam))!;
   const granularity = parseGranularity(g);
   const today = operationalNow(new Date()).date;
   const range = resolveTrendRange(query, today, granularity);

@@ -31,6 +31,7 @@ import { serverT } from "@/lib/i18n/server";
 import { formatTime } from "@/lib/i18n/format";
 import { isAllLocationsAccess, lockLocationContext } from "@/lib/locations";
 import { requireSessionFromHeaders } from "@/lib/session";
+import { resolveShopId } from "@/lib/shop-context";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import { PulseHome } from "@/components/pulse/PulseHome";
 import { pulseV2Enabled } from "@/lib/pulse/flag";
@@ -89,7 +90,8 @@ export default async function MidShiftPage({
   // loadMidShiftPulse runs on the service-role client (bypasses RLS), so
   // without this gate a ?location=<other-store> would leak that store's pulse.
   // lockLocationContext honors the all-locations override.
-  const requested = location ?? accessible[0]?.id ?? null;
+  // An explicit ?location= is gated below as before; the default is the remembered shop (B2).
+  const requested = location ?? (await resolveShopId(accessible.map((l) => l.id)));
   const locationId =
     requested &&
     lockLocationContext({ role: auth.role, locations: auth.locations }, requested) &&

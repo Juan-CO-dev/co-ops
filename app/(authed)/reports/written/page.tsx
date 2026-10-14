@@ -11,6 +11,7 @@ import { REPORT_ALL_LOCATIONS_LEVEL, canReadReportLocation, type LocationActor }
 import { operationalNow } from "@/lib/midshift-shared";
 import { parseReportRange, reportRangeParams } from "@/lib/report-range";
 import { requireSessionFromHeaders } from "@/lib/session";
+import { resolveShopId } from "@/lib/shop-context";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import { listWrittenReports, WRITTEN_REPORT_WRITE_MIN_LEVEL } from "@/lib/written-reports";
 
@@ -31,7 +32,8 @@ export default async function ReportsWrittenPage({ searchParams }: { searchParam
   if (raw.location && !/^[a-zA-Z0-9_-]+$/.test(raw.location)) redirect("/reports/written");
   if (raw.location === "all" && auth.level < REPORT_ALL_LOCATIONS_LEVEL) redirect("/reports/written");
   if (raw.location && raw.location !== "all" && !canReadReportLocation(actor, raw.location)) redirect("/reports/written");
-  const selectedLocation = raw.location && raw.location !== "all" ? raw.location : auth.level >= REPORT_ALL_LOCATIONS_LEVEL ? null : auth.locations[0] ?? null;
+  // B2: below level 8 the default is the remembered shop when it is a membership, else the first.
+  const selectedLocation = raw.location && raw.location !== "all" ? raw.location : auth.level >= REPORT_ALL_LOCATIONS_LEVEL ? null : await resolveShopId(auth.locations);
   const viewerLocations = selectedLocation
     ? [selectedLocation]
     : auth.level >= REPORT_ALL_LOCATIONS_LEVEL ? "all" as const : auth.locations;

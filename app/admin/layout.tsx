@@ -13,15 +13,17 @@
  * client state), and admin chrome (context-aware back link + container).
  */
 
-import type { ReactNode } from "react";
+import { Suspense, type ReactNode } from "react";
 import { redirect } from "next/navigation";
 
 import { BackLink } from "@/components/nav/BackLink";
+import { ShopContextSync } from "@/components/ShopContextSync";
 import { StepUpProvider } from "@/components/admin/StepUpProvider";
 import { UserMenu } from "@/components/UserMenu";
 import { CanvasWatermark } from "@/components/layout/CanvasWatermark";
 import { IdleTimeoutWarning } from "@/components/auth/IdleTimeoutWarning";
 import { TranslationProvider } from "@/lib/i18n/provider";
+import { accessibleLocations } from "@/lib/locations";
 import { ROLES } from "@/lib/roles";
 import { requireSessionFromHeaders } from "@/lib/session";
 
@@ -49,6 +51,10 @@ export default async function AdminLayout({ children }: { children: ReactNode })
       {/* Idle-timeout guard also covers the admin section (its own top-level
           route group, not under (authed)). */}
       <IdleTimeoutWarning />
+      {/* B2: an explicit ?location= / ?loc= pick becomes the remembered shop (lib/shop-context-shared.ts). */}
+      <Suspense fallback={null}>
+        <ShopContextSync allowed={accessibleLocations({ role: auth.role, locations: auth.locations })} />
+      </Suspense>
       <StepUpProvider
         unlocked={auth.session.stepUpUnlocked}
         unlockedAt={auth.session.stepUpUnlockedAt}

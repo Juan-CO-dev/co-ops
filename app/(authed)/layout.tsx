@@ -27,12 +27,14 @@
  * SPEC_AMENDMENTS.md C.39 for the full architectural rationale.
  */
 
-import type { ReactNode } from "react";
+import { Suspense, type ReactNode } from "react";
 
+import { ShopContextSync } from "@/components/ShopContextSync";
 import { UserMenu } from "@/components/UserMenu";
 import { CanvasWatermark } from "@/components/layout/CanvasWatermark";
 import { IdleTimeoutWarning } from "@/components/auth/IdleTimeoutWarning";
 import { TranslationProvider } from "@/lib/i18n/provider";
+import { accessibleLocations } from "@/lib/locations";
 import { ROLES } from "@/lib/roles";
 import { requireSessionFromHeaders } from "@/lib/session";
 
@@ -66,6 +68,10 @@ export default async function AuthedLayout({ children }: { children: ReactNode }
       {/* Idle-timeout guard for ALL authenticated pages — hoisted here (was
           mounted on only 2 pages) so the 10-min idle logout warning is global. */}
       <IdleTimeoutWarning />
+      {/* B2: an explicit ?location= / ?loc= pick becomes the remembered shop (lib/shop-context-shared.ts). */}
+      <Suspense fallback={null}>
+        <ShopContextSync allowed={accessibleLocations({ role: auth.role, locations: auth.locations })} />
+      </Suspense>
       {children}
     </TranslationProvider>
   );

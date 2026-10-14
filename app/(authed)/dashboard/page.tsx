@@ -70,6 +70,7 @@ import { ReceivingTile } from "@/components/receiving/ReceivingTile";
 import { CountsTile } from "@/components/counts/CountsTile";
 import { OpeningTile } from "@/components/OpeningTile";
 import { requireSessionFromHeaders } from "@/lib/session";
+import { resolveShop } from "@/lib/shop-context";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import type { ChecklistInstance } from "@/lib/types";
 
@@ -347,11 +348,9 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
     await evaluateAutoReleaseForUserLocations(sb, { locationIds: scope });
   });
 
+  // B2: ?loc= wins, else the remembered shop (tile login / last explicit pick), else the first.
   const { loc } = await searchParams;
-  const selectedLocation =
-    (loc ? locations.find((l) => l.id === loc) : null) ??
-    locations[0] ??
-    null;
+  const selectedLocation = await resolveShop(locations, loc);
 
   // Each optional loader fails independently; never present missing data as empty.
   const failedWidgets = new Set<TranslationKey>();

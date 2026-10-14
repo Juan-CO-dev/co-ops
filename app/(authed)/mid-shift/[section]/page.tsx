@@ -18,6 +18,7 @@ import { isPulseSection, sectionAccess } from "@/lib/pulse/scope-shared";
 import { withAbort } from "@/lib/pulse/abort";
 import { loadPulseSections, pulseDeps, SECTION_DEADLINE_MS } from "@/lib/pulse/sections";
 import { requireSessionFromHeaders } from "@/lib/session";
+import { rememberedShopId } from "@/lib/shop-context";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 
 const shell = "mx-auto flex max-w-2xl md:max-w-3xl lg:max-w-5xl xl:max-w-6xl flex-col gap-4 px-4 pb-32 pt-4 sm:px-6";
@@ -36,7 +37,7 @@ export default async function PulseSectionPage({ params, searchParams }: {
   const { location } = await searchParams;
   const service = getServiceRoleClient();
   const accessible = await loadAccessibleLocations(service, auth);
-  const locationId = resolveRequestedLocation({ requested: location, accessible, actor: { role: auth.role, locations: auth.locations, level: auth.level } });
+  const locationId = resolveRequestedLocation({ requested: location, accessible, actor: { role: auth.role, locations: auth.locations, level: auth.level }, remembered: await rememberedShopId() });
   if (!locationId) {
     return (
       <main className={shell}>

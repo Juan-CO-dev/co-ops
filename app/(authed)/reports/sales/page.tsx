@@ -29,6 +29,7 @@ import {
   loadSalesLatestCapture, loadSalesSummary, pageRows, resolveSalesRange, salesDayParams, salesRangeParams, type BreakdownRow, type SalesView,
 } from "@/lib/sales-reports";
 import { requireSessionFromHeaders } from "@/lib/session";
+import { resolveShopId } from "@/lib/shop-context";
 
 type Params = Record<string, string | undefined>;
 
@@ -37,7 +38,9 @@ export default async function SalesPage({ searchParams }: { searchParams: Promis
   const auth = await requireSessionFromHeaders("/reports/sales");
   if (auth.level < SALES_READ_MIN) redirect("/reports");
   const viewer = { userId: auth.user.id, level: auth.level, locations: auth.locations };
-  const locationId = params.location ?? auth.locations[0];
+  // B2: an explicit ?location= (a shop or "all") passes through to the read gate below unchanged;
+  // only the DEFAULT moves — the remembered shop when it is a membership, else the first.
+  const locationId = params.location ?? (await resolveShopId(auth.locations));
   if (!locationId) redirect("/dashboard");
   if (locationId === "all" ? auth.level < REPORT_ALL_LOCATIONS_LEVEL : !canReadScopedReport(viewer, locationId)) redirect("/reports");
 

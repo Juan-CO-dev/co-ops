@@ -23,9 +23,11 @@ import { canDoOperationalTask } from "@/lib/operational-task-access";
  */
 
 import Link from "next/link";
+import { Suspense } from "react";
 import { redirect } from "next/navigation";
 
 import { DashboardBackLink } from "@/components/DashboardBackLink";
+import { ShopContextSync } from "@/components/ShopContextSync";
 import { ParPassWalker } from "@/components/ordering/ParPassWalker";
 import { OrderingSurfaces } from "@/components/ordering/OrderingSurfaces";
 import { loadWalkerData, loadRecentParPasses, loadOrderingAttention, PAR_PASS_MIN } from "@/lib/ordering";
@@ -33,8 +35,9 @@ import { loadTodaysOrders, loadPoHistory } from "@/lib/purchase-orders";
 import { serverT } from "@/lib/i18n/server";
 import { formatDateLabel } from "@/lib/i18n/format";
 import { TranslationProvider } from "@/lib/i18n/provider";
-import { isAllLocationsAccess, lockLocationContext } from "@/lib/locations";
+import { accessibleLocations, isAllLocationsAccess, lockLocationContext } from "@/lib/locations";
 import { requireSessionFromHeaders } from "@/lib/session";
+import { resolveShopId } from "@/lib/shop-context";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 
 export default async function OrderingPage({
@@ -70,7 +73,8 @@ export default async function OrderingPage({
   // Authorization: the requested location MUST be one the actor may view — the walker
   // lib runs on the service-role client (bypasses RLS), so without this gate a
   // ?location=<other-store> would leak that store's walk.
-  const requested = location ?? accessible[0]?.id ?? null;
+  // An explicit ?location= is gated below as before; the default is the remembered shop (B2).
+  const requested = location ?? (await resolveShopId(accessible.map((l) => l.id)));
   const locationId =
     requested &&
     lockLocationContext({ role: auth.role, locations: auth.locations }, requested) &&
@@ -111,6 +115,10 @@ export default async function OrderingPage({
 
   return (
     <TranslationProvider initialLanguage={language}>
+      {/* /ordering sits outside the (authed) layout, so it mounts the B2 shop sync itself. */}
+      <Suspense fallback={null}>
+        <ShopContextSync allowed={accessibleLocations({ role: auth.role, locations: auth.locations })} />
+      </Suspense>
       <main className="mx-auto max-w-2xl md:max-w-3xl lg:max-w-5xl xl:max-w-6xl px-4 pb-40 pt-4 sm:px-6">
         {/* Back + the sibling hop to receiving. Ordering and receiving are two ends of one
             thread (draft → PO → truck), so each names the other; the active location
