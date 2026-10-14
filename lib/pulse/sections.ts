@@ -42,7 +42,7 @@ import { loadStationLayout } from "@/lib/pulse/layout";
 import { cachedSource, cachedStampedSource, sourceKey } from "@/lib/pulse/source-cache";
 import { pulseReadActor } from "@/lib/pulse/read-actor";
 import { LINK_ADMIN_MIN_LEVEL } from "@/lib/toast/employee-links";
-import { attentionEvidence, attentionScore, crewAttention, rankAttention, severityOf, stripAttentionRows } from "@/lib/pulse/attention-shared";
+import { attentionEvidence, attentionScore, crewAttention, lateTaskKeys, rankAttention, severityOf, stripAttentionRows } from "@/lib/pulse/attention-shared";
 import { baselineAtMinute, baselineCumulative, capturePaceAge, cumulativeByHour, dowOf, hourCurve, paceDeltaPct, sameWeekdayCoverage } from "@/lib/pulse/baseline-shared";
 import { shiftReportDate } from "@/lib/report-range";
 import { floorStations, mergeLayout } from "@/lib/pulse/floor-shared";
@@ -279,8 +279,8 @@ async function attention(deps: PulseDeps, ctx: PulseCtx): Promise<AttentionData>
       if (s.trimDue && s.trimAt) rows.push({ key: `station_trim_due:${s.id}`, kind: "station_trim_due", severity: severityOf("station_trim_due"), params: { ...params, time: s.trimAt, to: s.trimTo ?? 0 }, href: `/assignments?loc=${loc}`, action: "trim", subjectUserIds: subjects });
       else if ((s.status === "closing_soon" || s.closeDue) && s.closesAt) rows.push({ key: `station_closing_soon:${s.id}`, kind: "station_closing_soon", severity: severityOf("station_closing_soon"), params: { ...params, time: s.closesAt }, href: `/operations/closing?location=${loc}`, action: "close", subjectUserIds: subjects });
     }
-    // Late tasks: an assigned task whose report is overdue (or due now).
-    const late = new Set(overdue.filter((r) => r.overdue === "overdue" || r.overdue === "due_now").map((r) => r.key));
+    // Late tasks: an assigned task whose report is OVERDUE (the due window itself is not late; #23).
+    const late = lateTaskKeys(overdue);
     for (const t of board.tasks) {
       const report = REPORT_FOR_TASK[t.task];
       if (!report || !late.has(report) || t.available === false) continue;

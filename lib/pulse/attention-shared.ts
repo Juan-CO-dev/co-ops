@@ -3,7 +3,7 @@
  * sections' facts (lib/pulse/sections.ts); this module owns the ORDER, the severity classes, the
  * score (same three states as v1's pulseScore) and the crew filter.
  */
-import type { PulseScore } from "@/lib/midshift-shared";
+import type { PulseScore, ReportKey, ReportStatusRow } from "@/lib/midshift-shared";
 import type { AttentionEvidence, AttentionKind, AttentionRow, AttentionRowScoped, AttentionSeverity } from "@/lib/pulse/types";
 
 /** Spec order. The index is the rank. */
@@ -24,6 +24,16 @@ export const ATTENTION_ORDER: readonly AttentionKind[] = [
 const RED: ReadonlySet<AttentionKind> = new Set([
   "station_uncovered", "station_trim_due", "task_late", "checklist_missed", "fridge_out_of_range", "catering_not_rung",
 ]);
+
+/**
+ * B4 #23 — report keys whose assigned task counts as LATE on the Pulse. Only `overdue` qualifies:
+ * `due_now` is the report's own due WINDOW (mid-day prep is due-now 2:00-3:30 PM and overdue after
+ * 3:30 PM, lib/midshift-shared EXPECTED_BY), and calling it late from 2:00 cried wolf on every
+ * assigned mid-day. The overdue test is the same one the missed-checklist rows use.
+ */
+export function lateTaskKeys(reports: ReadonlyArray<Pick<ReportStatusRow, "key" | "overdue">>): Set<ReportKey> {
+  return new Set(reports.filter((r) => r.overdue === "overdue").map((r) => r.key));
+}
 
 export function severityOf(kind: AttentionKind): AttentionSeverity {
   return RED.has(kind) ? "red" : "yellow";
