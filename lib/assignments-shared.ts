@@ -109,6 +109,39 @@ export function currentFloorStation(board: Pick<ShiftBoard, "events" | "stations
   if (!head?.stationId) return head;
   return board.stations.some((station) => station.id === head.stationId && isFloorStation(station)) ? head : null;
 }
+/**
+ * B4 #19 — a person whose station just CLOSED holds a `release(station_closed)` head with a null
+ * stationId, so the board used to print "No station" (and lose the "Closed · time" line) the moment
+ * their last closing line was ticked. Resolve the station/position they were released from via
+ * `priorPositionId` (0230 writes it on the station_closed release). Only while that station is still
+ * closed for the day, and only for a floor station; every other head (assign/claim/move, a
+ * clocked_out/ended_shift/on_break release, no events) returns null, so "No station" stays honest.
+ */
+export function closedStationFor(
+  board: Pick<ShiftBoard, "events" | "stations">,
+  userId: string,
+): { station: Station; position: StationPosition } | null {
+  const head = currentStation(board.events, userId);
+  if (head?.kind !== "release" || head.releaseReason !== "station_closed" || !head.priorPositionId) return null;
+  for (const station of board.stations) {
+    const position = station.positions.find((p) => p.id === head.priorPositionId);
+    if (position) return station.closedAt && isFloorStation(station) ? { station, position } : null;
+  }
+  return null;
+}
+/**
+ * B4 #20 — "Start break" is for someone who is on shift. After "End my shift" the person is off
+ * shift (presence.onShift false) and offering a break is nonsense; CLAIM stays (a new claim is new
+ * activity and is the documented way back on shift, presence-shared). Someone already on break keeps
+ * their "Back from break" button. Only meaningful when presence tracking is live (`whosHere`).
+ */
+export function showBreakButton(
+  person: Pick<ShiftPerson, "available" | "onBreak" | "presence">,
+  board: Pick<ShiftBoard, "whosHere">,
+): boolean {
+  if (person.available === false) return false;
+  return !(board.whosHere && person.presence && !person.presence.onShift && !person.onBreak);
+}
 export function canManageAssignee(actorLevel: number, targetLevel: number): boolean {
   return actorLevel >= 4 && targetLevel <= actorLevel;
 }
