@@ -22,6 +22,7 @@ const session = `${modelLabel}-${guide}-r${round}`;
 // Catering leads are not part of the day reset, so each run gets its own fake company name.
 p.passwordLine = p.password ? `If the app asks for your password, it is **${p.password}**.` : "";
 p.company = `Hill Staffers ${modelLabel[0].toUpperCase()}${modelLabel.slice(1)} R${round} LLC`;
+p.companyslug = `hillstaffers-${modelLabel}-r${round}`;
 const ws = path.join("C:/Users/conta/guide-test-ws", `r${round}`, `${modelLabel}-${guide}`);
 fs.rmSync(ws, { recursive: true, force: true });
 fs.mkdirSync(ws, { recursive: true });
