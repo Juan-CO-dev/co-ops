@@ -138,3 +138,10 @@ describe("#5 the opening prep box keeps what was typed", () => {
     expect(opening).toContain('invalidHint={t("opening.phase2.numbers_only")}');
   });
 });
+
+describe("#6 no-par rows say so instead of 'verify section first'", () => {
+  it("the null prep-need branch asks prepNeedLabel and has a no-par line", () => {
+    const opening = read("components/opening/OpeningPrepEntry.tsx");
+    expect(opening).toMatch(/prepNeedLabel\(\{ parValue, groundTruth \}\) === "no_par"\s*\?\s*t\("opening\.phase2\.prep_need_no_par"\)/);
+  });
+});

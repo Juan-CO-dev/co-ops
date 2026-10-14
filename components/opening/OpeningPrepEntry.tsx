@@ -46,7 +46,7 @@ import type { DerivedSku, ConfirmedInput } from "@/lib/prep-consumption";
 import { ProductionConsumptionPanel } from "@/components/production/ProductionConsumptionPanel";
 import { BatchEntryFields } from "@/components/prep/BatchEntryFields";
 import { emptyBatchFormValue, isBatchContractCode, type BatchFormValue, type BatchRowContext } from "@/lib/batch-prep-shared";
-import { formatPrepQty, parseDecimalDraft, prepQtyParts, roundQty } from "@/lib/prep-display-shared";
+import { formatPrepQty, parseDecimalDraft, prepNeedLabel, prepQtyParts, roundQty } from "@/lib/prep-display-shared";
 import type { ChecklistTemplateItem, OpeningPhase2Meta } from "@/lib/types";
 
 import { CollapsibleChecklistSection } from "@/components/ui/CollapsibleChecklistSection";
@@ -714,7 +714,11 @@ function PrepEntryRow({
           </>
         ) : (
           <span className="text-co-text-dim italic">
-            {t("opening.phase2.prep_need_pending_verification")}
+            {/* B1 #6 — a row with no par never gets a prep need, however the section is
+                verified; "verify section first" only while a par waits on ground truth. */}
+            {prepNeedLabel({ parValue, groundTruth }) === "no_par"
+              ? t("opening.phase2.prep_need_no_par")
+              : t("opening.phase2.prep_need_pending_verification")}
           </span>
         )}
       </div>

@@ -2652,6 +2652,7 @@
   "opening.phase1.recount_two_box_hint": "Cuenta por separado lo que está listo en la línea y el recipiente a granel.",
   "opening.phase2.prep_need_label": "Por preparar",
   "opening.phase2.prep_need_pending_verification": "Por preparar: verifica la sección primero",
+  "opening.phase2.prep_need_no_par": "Sin par — escribe lo que preparaste",
   "opening.phase2.numbers_only": "Solo números, como 5.5 — no se guardó",
   "opening.phase2.signal.over_prep": "Sobre el necesario por {delta} — toca para registrar la razón",
   "opening.phase2.signal.under_prep": "Bajo el necesario por {delta} — toca para registrar la razón",
