@@ -46,7 +46,7 @@ These are the words you will see in this guide and on the screen.
 Your role decides what you can change.
 
 - **Shift Lead:** can open Catering and read the board, quotes, customers, companies and insights. Can't change them.
-- **AGM and Catering Manager:** add and move leads, build and send quotes, and edit customers and companies. In setup: packages, the FAQ, prep demand and LTOs.
+- **AGM and Catering Manager:** add, fix and move leads, build and send quotes, and edit customers and companies. In setup: packages, the FAQ, prep demand and LTOs.
 - **GM:** all of that, plus the catering menu, capacity, delivery zones, the customer pages and sales.
 - **Manager of Operations and up:** pricing, tax and catering rates.
 - **Catering Manager, or Manager of Operations and up:** move an order to the other shop, and review ezCater items.
@@ -76,7 +76,9 @@ You do this each time you pick up the tablet.
 
 - The login screens are always in English.
 - AGM, Catering Manager and up can also use **Manager login →** at the top. It asks for your email and password.
-- A wrong PIN shows **Wrong PIN. Try again.** Too many wrong tries lock the account for a while.
+- A wrong PIN shows **Wrong PIN. Try again.** Too many wrong tries lock the account for a while: **Account locked**.
+- Too many log-ins from one tablet show **Too many tries** and how long to wait.
+- If the keypad gives you trouble, tap **Use system keyboard** and type your PIN.
 - The app logs you out after 10 minutes with no taps.
 
 ### Get to catering
@@ -91,7 +93,8 @@ You do this each time you pick up the tablet.
 
 **Worth knowing**
 
-- The app may open on the other shop, even if you picked your shop at login. Look before you start.
+- The app opens on the shop you picked at login. If you switch shops, the app remembers the new one. Pages like **Catering Quotes** and **Prep Demand** open on that shop too.
+- The **Catering Pipeline** board shows every shop you work at. Each card has a chip with its shop's name.
 
 ### Log out
 
@@ -146,7 +149,7 @@ También puedes leer esta guía en la app. Toca **Capacitación** en el menú **
 #### Quién puede hacer qué
 
 - **Líder de Turno:** puede abrir Catering y leer el tablero, las cotizaciones, los clientes, las empresas y el panel. No puede cambiar nada.
-- **Subgerente General y Gerente de Catering:** agregan y mueven prospectos, arman y envían cotizaciones, y editan clientes y empresas. En la configuración: paquetes, preguntas frecuentes, demanda de prep y LTO.
+- **Subgerente General y Gerente de Catering:** agregan, corrigen y mueven prospectos, arman y envían cotizaciones, y editan clientes y empresas. En la configuración: paquetes, preguntas frecuentes, demanda de prep y LTO.
 - **Gerente General:** todo eso, más el menú de catering, la capacidad, las zonas de entrega, las páginas de clientes y las ventas.
 - **Gerente de Operaciones y arriba:** precios, impuestos y tarifas de catering.
 - **Gerente de Catering, o Gerente de Operaciones y arriba:** mover un pedido a la otra tienda y revisar artículos de ezCater.
@@ -165,7 +168,9 @@ Lo haces cada vez que tomas la tablet. Las pantallas de entrada siempre salen en
 4. Marca tu PIN de 4 dígitos. No hay botón para terminar. El último dígito te deja entrar.
 
 - Subgerente General, Gerente de Catering y arriba también pueden usar "Manager login →" arriba. Pide tu correo y contraseña.
-- Si el PIN está mal, sale "Wrong PIN. Try again." Muchos intentos fallidos bloquean la cuenta un rato.
+- Si el PIN está mal, sale "Wrong PIN. Try again." Muchos intentos fallidos bloquean la cuenta un rato: "Account locked".
+- Si entran muchas veces desde la misma tablet, sale "Too many tries" y cuánto tiempo esperar.
+- Si el teclado te da problemas, toca "Use system keyboard" y escribe tu PIN.
 - La app cierra tu sesión después de 10 minutos sin tocar nada.
 
 #### Llegar a catering
@@ -176,7 +181,8 @@ Lo haces cada vez que tomas la tablet. Las pantallas de entrada siempre salen en
 
 3. En **Explorar**, toca **Catering**.
 
-- La app puede abrir en la otra tienda, aunque hayas escogido tu tienda al entrar. Revisa antes de empezar.
+- La app abre en la tienda que escogiste al entrar. Si cambias de tienda, la app recuerda la nueva. Páginas como **Cotizaciones de Catering** y **Demanda de Prep** también abren en esa tienda.
+- El tablero **Flujo de catering** muestra todas las tiendas donde trabajas. Cada tarjeta tiene una etiqueta con el nombre de su tienda.
 
 #### Salir
 
@@ -265,7 +271,7 @@ El equipo de la tienda puede seguir el catering aquí durante el día.
 
 ## The pipeline
 
-The pipeline is the board of leads. Each lead is a card. Each column is a stage, in this order: **Inquiry**, **Quote sent**, **Confirmed**, **Out for delivery**, **Completed** and **Lost**. Shift leads can look. AGM, Catering Manager and up can add and move leads.
+The pipeline is the board of leads. Each lead is a card. Each column is a stage, in this order: **Inquiry**, **Quote sent**, **Confirmed**, **Out for delivery**, **Completed** and **Lost**. Shift leads can look. AGM, Catering Manager and up can add, fix and move leads.
 
 ### Read the board
 
@@ -276,7 +282,9 @@ The pipeline is the board of leads. Each lead is a card. Each column is a stage,
 **Worth knowing**
 
 - An empty column says **None**.
-- The search box finds leads by name, company or phone. Type, then tap **Search**.
+- The board shows every shop you work at. The chip on each card names the shop.
+- The search box finds leads by name, company or phone. Type, then tap **Search**. It does not find ezCater leads by the word "ezCater". Use **Source** for that.
+- If no lead matches, the page says **No leads match** and your words. Tap **Clear search** to go back to the board.
 - Phone numbers come in with ezCater and online leads. The **Add lead** form has no phone box.
 - **Order lead** shows only the leads of one person. **Source** shows only the leads that came in one way, like **Phone** or **EZCater**.
 - On a small screen, the last columns are off to the right.
@@ -289,7 +297,7 @@ You do this when someone calls, emails or walks in about catering.
 
 ![The Add lead form](img/catering/08-add-lead-form.png)
 
-2. Type the **Contact name**. It is the only box you must fill in.
+2. Type the **Contact name**. It is the only box you must fill in. If you only know the company, type the company name here. You can fix it later.
 
 3. Fill in what you know: **Company**, **Event date**, **Headcount** and **Follow-up date**.
 
@@ -307,7 +315,7 @@ You do this when someone calls, emails or walks in about catering.
 
 **Worth knowing**
 
-- Write your notes now. The lead card has no box to add a note later.
+- Write what you know now. You can add or fix notes later with **Edit details**.
 - The form has no phone or email box. Put the email on the quote instead.
 - There is no "saved" message. The new card in **Inquiry** is your sign it worked.
 - Every new lead starts in **Inquiry**.
@@ -323,9 +331,27 @@ You do this when someone calls, emails or walks in about catering.
 **Worth knowing**
 
 - There is no separate lead page. The card is the lead.
-- The card shows the name, company, shop, date, headcount and source, and the notes you typed.
-- **No caps set** means no booking limits are set for that shop yet. See **Capacity & Blackouts** in [Setup](#setup).
-- You may see an amber line: **Order comparison is currently unavailable.** This line is about ezCater orders. On a lead you typed in, it always shows. Ignore it. You can still move the lead.
+- The card shows the name, company, shop, date, headcount and source. Open it to see the notes you typed.
+- **No caps set** shows on a lead with an event date. It means no booking limits are set for that shop yet. See **Capacity & Blackouts** in [Setup](#setup).
+
+### Fix a lead
+
+You do this when the client changes the date or the headcount, or you have a new note.
+
+1. Open the card.
+
+2. Tap **Edit details**.
+
+3. Change what you need: **Contact name**, **Company**, **Event date**, **Headcount**, **Follow-up date** or **Notes**.
+
+4. Tap **Save**.
+
+**Worth knowing**
+
+- AGM, Catering Manager and up can do this.
+- **Cancel** closes the form and keeps the lead as it was.
+- The shop and the source can't change here. To change the shop, see "Move an order to the other shop" below.
+- This is not shown in photos.
 
 ### Move a lead
 
@@ -345,6 +371,8 @@ You do this each time a job moves forward.
 - **Lost** works from any open stage.
 - **Completed** and **Lost** are final. The lead can't move after that.
 - **Confirmed** tells the kitchen to plan the food. This works only if the lead has a quote with an event date, picked under **Pipeline lead**. **Out for delivery** and **Completed** count that food as used. Going back to **Inquiry** or **Quote sent**, or moving to **Lost**, takes it off the plan.
+- A lead with no quote can still move to **Confirmed**. The kitchen gets nothing to plan.
+- When the client says yes, mark the quote accepted before you move the lead. See [When the client says yes](#when-the-client-says-yes).
 
 ### Move an order to the other shop
 
@@ -364,14 +392,16 @@ Only the Catering Manager, or a Manager of Operations and up, can do this. It is
 
 ### En español
 
-El flujo de catering es el tablero de prospectos. Cada prospecto es una tarjeta. Cada columna es una etapa, en este orden: **Consulta**, **Cotización enviada**, **Confirmado**, **En reparto**, **Completado** y **Perdido**. Los líderes de turno pueden ver. Subgerente General, Gerente de Catering y arriba pueden agregar y mover prospectos.
+El flujo de catering es el tablero de prospectos. Cada prospecto es una tarjeta. Cada columna es una etapa, en este orden: **Consulta**, **Cotización enviada**, **Confirmado**, **En reparto**, **Completado** y **Perdido**. Los líderes de turno pueden ver. Subgerente General, Gerente de Catering y arriba pueden agregar, corregir y mover prospectos.
 
 #### Leer el tablero
 
 1. En la página de catering, toca **Flujo de catering**.
 
 - Una columna vacía dice **Ninguno**.
-- El buscador encuentra prospectos por nombre, empresa o teléfono. Escribe y toca **Buscar**.
+- El tablero muestra todas las tiendas donde trabajas. La etiqueta de cada tarjeta dice la tienda.
+- El buscador encuentra prospectos por nombre, empresa o teléfono. Escribe y toca **Buscar**. No encuentra los de ezCater con la palabra "ezCater". Para eso usa **Origen**.
+- Si ningún prospecto coincide, la página dice **No hay prospectos que coincidan** con tus palabras. Toca **Limpia la búsqueda** para volver al tablero.
 - Los teléfonos llegan con los prospectos de ezCater y los de internet. El formulario **Agregar prospecto** no tiene casilla de teléfono.
 - **Líder del pedido** muestra solo los prospectos de una persona. **Origen** muestra solo los que llegaron de una forma, como **Teléfono** o **EZCater**.
 - En una pantalla chica, las últimas columnas quedan a la derecha.
@@ -382,7 +412,7 @@ Lo haces cuando alguien llama, escribe o llega a preguntar por catering.
 
 1. Toca **+ Agregar prospecto**.
 
-2. Escribe el **Nombre de contacto**. Es lo único obligatorio.
+2. Escribe el **Nombre de contacto**. Es lo único obligatorio. Si solo sabes la empresa, escribe aquí el nombre de la empresa. Lo puedes corregir después.
 
 3. Llena lo que sepas: **Empresa**, **Fecha del evento**, **Personas** y **Fecha de seguimiento**.
 
@@ -396,7 +426,7 @@ Lo haces cuando alguien llama, escribe o llega a preguntar por catering.
 
 8. Toca **Agrega**.
 
-- Escribe tus notas ahora. La tarjeta no tiene dónde agregar una nota después.
+- Escribe ahora lo que sepas. Puedes agregar o corregir notas después con **Editar datos**.
 - El formulario no tiene casilla de teléfono ni de correo. Pon el correo en la cotización.
 - No sale mensaje de "guardado". La tarjeta nueva en **Consulta** te dice que funcionó.
 - Todo prospecto nuevo empieza en **Consulta**.
@@ -408,9 +438,25 @@ Lo haces cuando alguien llama, escribe o llega a preguntar por catering.
 2. Tócala otra vez para cerrarla.
 
 - No hay una página aparte para el prospecto. La tarjeta es el prospecto.
-- La tarjeta muestra el nombre, la empresa, la tienda, la fecha, las personas, el origen y las notas que escribiste.
-- **Sin límites configurados** quiere decir que esa tienda todavía no tiene límites de reservas. Mira **Capacidad y bloqueos** en la configuración.
-- Puede salir una línea ámbar: **La comparación del pedido no está disponible en este momento.** Esa línea es de los pedidos de ezCater. En un prospecto que tú escribiste, siempre sale. No le hagas caso. Aun así puedes mover el prospecto.
+- La tarjeta muestra el nombre, la empresa, la tienda, la fecha, las personas y el origen. Ábrela para ver las notas que escribiste.
+- **Sin límites configurados** sale en un prospecto con fecha del evento. Quiere decir que esa tienda todavía no tiene límites de reservas. Mira **Capacidad y bloqueos** en la configuración.
+
+#### Corregir un prospecto
+
+Lo haces cuando el cliente cambia la fecha o las personas, o tienes una nota nueva.
+
+1. Abre la tarjeta.
+
+2. Toca **Editar datos**.
+
+3. Cambia lo que necesites: **Nombre de contacto**, **Empresa**, **Fecha del evento**, **Personas**, **Fecha de seguimiento** o **Notas**.
+
+4. Toca **Guarda**.
+
+- Subgerente General, Gerente de Catering y arriba pueden hacerlo.
+- **Cancela** cierra el formulario y deja el prospecto como estaba.
+- Aquí no se cambian la tienda ni el origen. Para cambiar la tienda, mira "Mover un pedido a la otra tienda" abajo.
+- No sale en fotos.
 
 #### Mover un prospecto
 
@@ -426,6 +472,8 @@ Lo haces cada vez que un trabajo avanza.
 - **Perdido** funciona desde cualquier etapa abierta.
 - **Completado** y **Perdido** son finales. Ya no se puede mover.
 - **Confirmado** le dice a la cocina que planee la comida. Solo funciona si el prospecto tiene una cotización con fecha del evento, escogida en **Prospecto**. **En reparto** y **Completado** cuentan esa comida como usada. Regresar a **Consulta** o **Cotización enviada**, o pasar a **Perdido**, la quita del plan.
+- Un prospecto sin cotización también puede pasar a **Confirmado**. La cocina no recibe nada que planear.
+- Cuando el cliente dice que sí, marca la cotización como aceptada antes de mover el prospecto. Mira "Cuando el cliente dice que sí" en Cotizaciones.
 
 #### Mover un pedido a la otra tienda
 
@@ -455,20 +503,21 @@ A quote is the price for a lead, line by line. AGM, Catering Manager and up can 
 
 ![The top of the new quote form](img/catering/13-quote-builder.png)
 
-3. Set **Location** first. It may start on the other shop.
+3. Under **Pipeline lead**, pick the lead this quote is for. Don't skip it. The kitchen plans the food from this quote when the lead moves to **Confirmed**.
 
-4. Fill in **Event date** and **Headcount**.
+4. Check **Location**, **Event date** and **Headcount**.
 
-5. Type the **Client email**, **Client name** and **Company**.
-
-6. Under **Pipeline lead**, pick the lead this quote is for. Don't skip it. The kitchen plans the food from this quote when the lead moves to **Confirmed**.
+5. Type the **Client email**. Check **Client name** and **Company**.
 
 **Worth knowing**
 
+- Each lead in the list shows the contact, company, date and shop. That helps when two leads have the same name.
+- Picking the lead fills in **Client name**, **Company**, **Event date** and **Headcount** if they are empty. It also sets **Location** to the lead's shop. It never fills in the email.
+- **Location** starts on your shop.
 - The screen says the client's email is how the app knows them. It is used to send the quote.
-- Picking the lead does not fill in the name, company or email. Type them yourself.
 - Type a **Client email** the app already knows and it fills in **Client name** and **Company**. The box suggests known emails as you type.
-- When you save a quote with a **Client email**, that person shows up in **Catering Customers**.
+- When you save a quote with a **Client email**, that person shows up in **Catering Customers**. The lead you picked shows on their page too.
+- The email may belong to a client of the other shop. The quote still goes to that client, but you don't see their contact details.
 
 ### Add packages and items
 
@@ -482,8 +531,12 @@ A quote is the price for a lead, line by line. AGM, Catering Manager and up can 
 
 **Worth knowing**
 
-- An à la carte line starts at **Qty** 1. A package line comes in with the package's own count, like 8 for a platter of 8. **Qty** never follows the headcount. Change it yourself.
-- A package can add more than one line. The **Light Lunch** package also added a "Choose your sub" line with no price.
+- **Qty** never follows the headcount. Change it yourself.
+- Some packages are priced per person, like **Light Lunch**. The **Packages** page marks them **Per head**. They come in at **Qty** 1. For 25 people, set **Qty** to 25. If you leave it at 1, you quote one lunch.
+- An à la carte line starts at **Qty** 1. A package line comes in with the package's own count, like 8 for a platter of 8.
+- A package can add more than one line. **Light Lunch** also adds a "Choose your sub" line with no price.
+- The app has no sub picker yet. Write the sub mix in the **Notes** box, like "10 turkey, 10 Italian, 5 veggie".
+- A new quote starts with one empty line. It goes away when you add a package or an item.
 - An à la carte item comes in with its price filled in.
 - Tick **Delivery** if you will bring the food.
 - Use the **Notes** box at the bottom for anything else.
@@ -511,20 +564,45 @@ A quote is the price for a lead, line by line. AGM, Catering Manager and up can 
 
 ### Read the saved quote
 
-**What you see:** the status (**draft** at first), the total, the date, the headcount, **Expires**, the lines and the totals.
+**What you see:** the status (**draft** at first), the total, the date, the headcount, **Client**, **Lead**, **Expires**, the lines and the totals.
 
-**What to do:** read every line back. Fix mistakes with **Revise** before you send.
+**What to do:** read every line back. Check that **Lead** names the right lead. Fix mistakes with **Revise** before you send.
 
 **Worth knowing**
 
+- **Client** shows the name, company and email. **Lead** shows the lead's contact, company and date.
+- For a client of the other shop, **Client** says **another shop's client (contact details hidden)**.
 - A quote can be **draft**, **sent**, **accepted**, **declined** or **expired**.
 - **Send quote** marks the quote as sent and tries to email the client. Enter your password if it asks. This is not shown in photos.
-- Read the message that appears after you send. It tells you if the email went out. If it says the email could not be delivered, send the price yourself and tell your GM.
+- Read the message that appears after you send. It tells you if the email went out.
+- If it says the email could not be delivered, send the price yourself and tell your GM.
+- With no **Client email**, the quote is still marked sent. The message says nothing was emailed.
+- After you send, the button says **Resend**.
 - **Revise** lets you change it.
 - **Print labels** opens labels you can print.
-- **Mark accepted** and **Mark declined** do not show on a draft.
-- The quote page does not show the client's name or email.
+- **Mark accepted** and **Mark declined** show only after you send the quote.
 - Move the lead on the board yourself with **Move to**.
+
+### When the client says yes
+
+You do this when the client agrees to the price. It tells the kitchen and the numbers that the job is real.
+
+1. On **Catering Quotes**, open the quote.
+
+2. If it is still a draft, tap **Send quote**. Enter your password if it asks.
+
+3. Tap **Mark accepted**.
+
+4. Go to **Catering Pipeline** and open the lead.
+
+5. Under **Move to**, tap **Confirmed**.
+
+**Worth knowing**
+
+- Do all the steps. If you skip **Mark accepted**, the kitchen still plans the food. But **Catering Insights** shows the job as $0.
+- To check the kitchen got it, open **Prep Demand** in setup. A job in the next 14 days shows on its event date.
+- If the client says no, tap **Mark declined**. Then move the lead to **Lost**.
+- These steps are not shown in photos.
 
 ### En español
 
@@ -536,18 +614,19 @@ Una cotización es el precio de un prospecto, línea por línea. Subgerente Gene
 
 2. Toca **Nueva cotización**.
 
-3. Primero pon la **Ubicación**. Puede empezar en la otra tienda.
+3. En **Prospecto**, escoge el prospecto de esta cotización. No te lo saltes. La cocina planea la comida con esta cotización cuando el prospecto pasa a **Confirmado**.
 
-4. Llena **Fecha del evento** y **Personas**.
+4. Revisa **Ubicación**, **Fecha del evento** y **Personas**.
 
-5. Escribe el **Correo del cliente**, el **Nombre del cliente** y la **Empresa**.
+5. Escribe el **Correo del cliente**. Revisa el **Nombre del cliente** y la **Empresa**.
 
-6. En **Prospecto**, escoge el prospecto de esta cotización. No te lo saltes. La cocina planea la comida con esta cotización cuando el prospecto pasa a **Confirmado**.
-
+- Cada prospecto de la lista muestra el contacto, la empresa, la fecha y la tienda. Así distingues dos prospectos con el mismo nombre.
+- Escoger el prospecto llena el **Nombre del cliente**, la **Empresa**, la **Fecha del evento** y las **Personas** si están vacíos. También pone la **Ubicación** en la tienda del prospecto. Nunca llena el correo.
+- La **Ubicación** empieza en tu tienda.
 - La pantalla dice que el correo del cliente es como la app lo reconoce. Se usa para enviar la cotización.
-- Escoger el prospecto no llena el nombre, la empresa ni el correo. Escríbelos tú.
 - Si escribes un **Correo del cliente** que la app ya conoce, llena el **Nombre del cliente** y la **Empresa**. La casilla te sugiere correos conocidos mientras escribes.
-- Cuando guardas una cotización con **Correo del cliente**, esa persona aparece en **Clientes de catering**.
+- Cuando guardas una cotización con **Correo del cliente**, esa persona aparece en **Clientes de catering**. El prospecto que escogiste también sale en su página.
+- El correo puede ser de un cliente de la otra tienda. La cotización igual va a ese cliente, pero no ves sus datos de contacto.
 
 #### Agregar paquetes y artículos
 
@@ -559,8 +638,12 @@ Una cotización es el precio de un prospecto, línea por línea. Subgerente Gene
 
 4. Toca la **×** de la línea que no quieres.
 
-- Una línea a la carta empieza en **Cant.** 1. Una línea de paquete entra con la cantidad del paquete, como 8 en una charola de 8. La **Cant.** nunca sigue a las personas. Cámbiala tú.
-- Un paquete puede agregar más de una línea. El paquete **Light Lunch** también agregó una línea "Choose your sub" sin precio.
+- La **Cant.** nunca sigue a las personas. Cámbiala tú.
+- Algunos paquetes tienen precio por persona, como **Light Lunch**. La página **Paquetes** los marca **Por persona**. Entran con **Cant.** 1. Para 25 personas, pon la **Cant.** en 25. Si la dejas en 1, cotizas un solo lunch.
+- Una línea a la carta empieza en **Cant.** 1. Una línea de paquete entra con la cantidad del paquete, como 8 en una charola de 8.
+- Un paquete puede agregar más de una línea. **Light Lunch** también agrega una línea "Choose your sub" sin precio.
+- La app todavía no tiene dónde escoger los subs. Escribe la mezcla de subs en la casilla **Notas**, por ejemplo "10 de pavo, 10 italianos, 5 vegetarianos".
+- Una cotización nueva empieza con una línea vacía. Se quita sola cuando agregas un paquete o un artículo.
 - Un artículo a la carta entra con su precio ya puesto.
 - Marca **Entrega a domicilio** si vas a llevar la comida.
 - Usa la casilla **Notas** de abajo para lo demás.
@@ -582,18 +665,41 @@ Una cotización es el precio de un prospecto, línea por línea. Subgerente Gene
 
 #### Leer la cotización guardada
 
-**Qué ves:** el estado (al principio **borrador**), el total, la fecha, las personas, **Vence**, las líneas y los totales.
+**Qué ves:** el estado (al principio **borrador**), el total, la fecha, las personas, **Cliente**, **Prospecto**, **Vence**, las líneas y los totales.
 
-**Qué haces:** lee cada línea. Corrige errores con **Revisar** antes de enviar.
+**Qué haces:** lee cada línea. Revisa que **Prospecto** diga el prospecto correcto. Corrige errores con **Revisar** antes de enviar.
 
+- **Cliente** muestra el nombre, la empresa y el correo. **Prospecto** muestra el contacto, la empresa y la fecha del prospecto.
+- Si es cliente de la otra tienda, **Cliente** dice **cliente de otra tienda (datos de contacto ocultos)**.
 - Una cotización puede estar en **borrador**, **enviada**, **aceptada**, **rechazada** o **vencida**.
 - **Enviar cotización** marca la cotización como enviada y trata de mandarle un correo al cliente. Escribe tu contraseña si te la pide. No sale en fotos.
-- Lee el mensaje que sale después de enviar. Te dice si el correo salió. Si dice que el correo no pudo entregarse, mándale tú el precio al cliente y avisa a tu GM.
+- Lee el mensaje que sale después de enviar. Te dice si el correo salió.
+- Si dice que el correo no pudo entregarse, mándale tú el precio al cliente y avisa a tu GM.
+- Sin **Correo del cliente**, la cotización igual queda como enviada. El mensaje dice que no se mandó ningún correo.
+- Después de enviar, el botón dice **Reenviar**.
 - **Revisar** te deja cambiarla.
 - **Imprimir etiquetas** abre etiquetas para imprimir.
-- **Marcar aceptada** y **Marcar rechazada** no salen en un borrador.
-- La página de la cotización no muestra el nombre ni el correo del cliente.
+- **Marcar aceptada** y **Marcar rechazada** salen solo después de enviar la cotización.
 - Mueve tú el prospecto en el tablero con **Mover a**.
+
+#### Cuando el cliente dice que sí
+
+Lo haces cuando el cliente acepta el precio. Así la cocina y los números saben que el trabajo va.
+
+1. En **Cotizaciones de Catering**, abre la cotización.
+
+2. Si todavía es borrador, toca **Enviar cotización**. Escribe tu contraseña si te la pide.
+
+3. Toca **Marcar aceptada**.
+
+4. Ve a **Flujo de catering** y abre el prospecto.
+
+5. En **Mover a**, toca **Confirmado**.
+
+- Haz todos los pasos. Si te saltas **Marcar aceptada**, la cocina igual planea la comida. Pero el **Panel de Catering** muestra el trabajo en $0.
+- Para revisar que la cocina lo recibió, abre **Demanda de Prep** en la configuración. Un trabajo de los próximos 14 días sale en su fecha del evento.
+- Si el cliente dice que no, toca **Marcar rechazada**. Luego pasa el prospecto a **Perdido**.
+- Estos pasos no salen en fotos.
 
 ## ezCater orders
 
@@ -611,6 +717,21 @@ Orders placed on ezCater come into CO-OPS on their own. You don't type them in.
 
 - This is not shown in photos. Our practice board had no ezCater orders.
 - Check the shop on the card. It tells you which shop makes the food.
+- The search box does not find ezCater orders by the word "ezCater". Use **Source**.
+
+### When there are no ezCater orders
+
+Some days no ezCater order comes in. Here is how that looks, so you know you are in the right place.
+
+- On **Catering Pipeline**, with **Source** on **EZCater**, every column says **None**.
+- The **Not in Toast yet** panel does not show.
+- On **Catering sales**, it says **0 ezCater orders** and **Nothing in this range.**
+- On the **Mid-Shift Pulse**, the **Catering** section says **Every ezCater order is in Toast.**
+
+**Worth knowing**
+
+- That is not an error. There is nothing to do. Check again later.
+- If you expected an order and it is not there, tell your GM.
 
 ### Ring ezCater orders into Toast
 
@@ -654,6 +775,19 @@ Los pedidos hechos en ezCater llegan solos a CO-OPS. No los escribes tú.
 
 - No sale en fotos. Nuestro tablero de práctica no tenía pedidos de ezCater.
 - Revisa la tienda en la tarjeta. Te dice qué tienda hace la comida.
+- El buscador no encuentra pedidos de ezCater con la palabra "ezCater". Usa **Origen**.
+
+#### Cuando no hay pedidos de ezCater
+
+Algunos días no llega ningún pedido de ezCater. Así se ve, para que sepas que estás en el lugar correcto.
+
+- En **Flujo de catering**, con **Origen** en **EZCater**, todas las columnas dicen **Ninguno**.
+- El panel **Aún no registrado en Toast** no sale.
+- En **Ventas de catering** dice **0 pedidos de ezCater** y **Nada en este rango.**
+- En el **Pulso de medio turno**, la sección **Catering** dice **Todos los pedidos de ezCater están en Toast.**
+
+- No es un error. No hay nada que hacer. Revisa más tarde.
+- Si esperabas un pedido y no está, avisa a tu GM.
 
 #### Registrar pedidos de ezCater en Toast
 
@@ -691,7 +825,7 @@ Catering has its own lists of people and businesses. The GM and up also have the
 
 2. Tap a person to open them.
 
-![A customer opened, with Pipeline, Orders, Edit and Deactivate](img/catering/17-customer-detail.png)
+![A customer opened, with Pipeline, Quotes, Orders, Edit and Deactivate](img/catering/17-customer-detail.png)
 
 **Worth knowing**
 
@@ -700,8 +834,9 @@ Catering has its own lists of people and businesses. The GM and up also have the
 - Contacts you add in Catering Customers show their email and phone to anyone who can open that list. Shift leads and up can open it.
 - **+ Add customer** adds a person by hand. **Edit** changes their details. AGM, Catering Manager and up can do this.
 - **Deactivate** marks the person inactive. They stay on the list with "(inactive)" by their name. **Reactivate** brings them back.
-- **Pipeline** lists only leads tied to this customer. A lead you typed on the board does not show here. Check the board too.
-- **Orders** may say **None yet.** even when the person has a quote.
+- **Pipeline** lists the person's leads, with the stage and date. A lead joins this list when you save a quote with their **Client email** and that lead picked under **Pipeline lead**.
+- **Quotes** lists the person's quotes, with the total, status and date.
+- **Orders** may say **None yet.** even when the person has a quote. Quotes are in **Quotes**.
 
 ### Catering Companies
 
@@ -770,8 +905,9 @@ Catering tiene sus propias listas de personas y negocios. El Gerente General y a
 - Los contactos que agregas en Clientes de catering muestran su correo y su teléfono a todos los que pueden abrir esa lista. Los líderes de turno y arriba pueden abrirla.
 - **+ Agregar cliente** agrega a alguien a mano. **Editar** cambia sus datos. Subgerente General, Gerente de Catering y arriba pueden hacerlo.
 - **Desactivar** marca a la persona como inactiva. Se queda en la lista con "(inactivo)" junto a su nombre. **Reactivar** la regresa.
-- **Prospectos** muestra solo los prospectos ligados a este cliente. Un prospecto que escribiste en el tablero no sale aquí. Revisa también el tablero.
-- **Pedidos** puede decir **Nada aún.** aunque la persona tenga una cotización.
+- **Prospectos** muestra los prospectos de la persona, con la etapa y la fecha. Un prospecto entra a esta lista cuando guardas una cotización con su **Correo del cliente** y ese prospecto escogido en **Prospecto**.
+- **Cotizaciones** muestra las cotizaciones de la persona, con el total, el estado y la fecha.
+- **Pedidos** puede decir **Nada aún.** aunque la persona tenga una cotización. Las cotizaciones están en **Cotizaciones**.
 
 #### Empresas de Catering
 
@@ -833,9 +969,11 @@ Shift leads and up can open this page.
 
 **Worth knowing**
 
+- The page opens on **This month**. The dark button is the range you see.
 - The screen says it: money counts by the event date. Leads count by the day they came in.
 - Money is split into three tiles: **Confirmed (upcoming)**, **Completed** and **Open pipeline**.
-- Only an accepted quote counts in the money tiles. A draft or sent quote does not. ezCater orders count at their own total.
+- A job counts at its accepted quote. A draft or sent quote does not count. Orders that come in from ezCater or Toast count at their own total.
+- So a lead you typed shows $0 until you tap **Mark accepted** on its quote. See [When the client says yes](#when-the-client-says-yes).
 - **Leads by source** and **Events by stage** open when you tap them.
 - **Booked catering calendar** puts a dot on each booked day. Tap a day to see its jobs.
 - **Customer feedback** is at the bottom.
@@ -877,9 +1015,11 @@ Los líderes de turno y arriba pueden abrir esta página.
 
 4. Baja para ver el resto.
 
+- La página abre en **Este mes**. El botón oscuro es el rango que ves.
 - La pantalla lo dice: el dinero cuenta por la fecha del evento. Los prospectos cuentan por el día en que llegaron.
 - El dinero se divide en tres recuadros: **Confirmado (por venir)**, **Completado** y **Pipeline abierto**.
-- Solo una cotización aceptada cuenta en los recuadros de dinero. Una en borrador o enviada no cuenta. Los pedidos de ezCater cuentan con su propio total.
+- Un trabajo cuenta con su cotización aceptada. Una cotización en borrador o enviada no cuenta. Los pedidos que llegan de ezCater o Toast cuentan con su propio total.
+- Por eso un prospecto que escribiste sale en $0 hasta que tocas **Marcar aceptada** en su cotización. Mira "Cuando el cliente dice que sí" en Cotizaciones.
 - **Leads por origen** y **Eventos por etapa** se abren cuando los tocas.
 - **Calendario de catering confirmado** pone un punto en cada día con evento. Toca un día para ver sus trabajos.
 - **Comentarios de clientes** está hasta abajo.
@@ -982,14 +1122,14 @@ GM and up. These are two pages. You need both.
 
 ![Fulfillment Zones with the map, the pin and the delivery radius](img/catering/30-setup-fulfillment.png)
 
-3. Pick the shop. Drag the pin to the shop and set **Delivery radius (miles)**.
+3. Check the shop. Drag the pin to the shop and set **Delivery radius (miles)**.
 
 4. Tick **Offers delivery** and **Offers pickup** as they fit. Tap **Save zone**.
 
 **Worth knowing**
 
 - **Delivery Zones** is what you charge. **Fulfillment Zones** is how far you go.
-- The map may open on the other shop. Check the shop before you save.
+- The map opens on your shop. Check the shop before you save.
 
 ### FAQ
 
@@ -1009,12 +1149,14 @@ GM and up. These are two pages. You need both.
 
 ![Catering Prep Demand with its tabs and a two-week range](img/catering/32-setup-prep-demand.png)
 
-2. Pick the shop in **Location**.
+2. Check the shop in **Location**. It opens on your shop.
 
 **Worth knowing**
 
 - It shows the food the kitchen needs for the next 14 days.
 - Only **Confirmed** leads count here, and only when the lead has a quote with an event date, picked under **Pipeline lead**. If you know a job is coming and the page is empty, check both.
+- If the page says **No upcoming catering prep demand for this location.**, check the shop in **Location** first.
+- A "Choose your sub" line with a **Needs pick** tag means the sub choice is not in the app. That is expected for now. The sub mix is in the quote's **Notes**.
 - The tabs are **Prep**, **Raw / SKU**, **Surplus** and **Sales**.
 
 ### LTO & discounts
@@ -1023,7 +1165,7 @@ GM and up. These are two pages. You need both.
 
 ![The Surplus to LTO page with no surplus and no LTOs](img/catering/33-setup-lto.png)
 
-2. Pick the shop in **Location**.
+2. Check the shop in **Location**.
 
 **Worth knowing**
 
@@ -1093,12 +1235,12 @@ Gerente General y arriba. Son dos páginas y necesitas las dos. En español las 
 
 2. Regresa. Toca **Zonas de Entrega**, la del mapa.
 
-3. Escoge la tienda. Arrastra el marcador a la tienda y pon el **Radio de entrega (millas)**.
+3. Revisa la tienda. Arrastra el marcador a la tienda y pon el **Radio de entrega (millas)**.
 
 4. Marca **Ofrece entrega a domicilio** y **Ofrece recogida en tienda** según aplique. Toca **Guardar zona**.
 
 - La página de tarifas es lo que cobras. La página del mapa es hasta dónde llegas.
-- El mapa puede abrir en la otra tienda. Revisa la tienda antes de guardar.
+- El mapa abre en tu tienda. Revisa la tienda antes de guardar.
 
 #### Preguntas frecuentes
 
@@ -1112,17 +1254,19 @@ Gerente General y arriba. Son dos páginas y necesitas las dos. En español las 
 
 1. Toca **Demanda de Prep**.
 
-2. Escoge la tienda en **Ubicación**.
+2. Revisa la tienda en **Ubicación**. Abre en tu tienda.
 
 - Muestra la comida que la cocina necesita para los próximos 14 días.
 - Solo cuentan los prospectos en **Confirmado**, y solo si el prospecto tiene una cotización con fecha del evento, escogida en **Prospecto**. Si sabes que viene un trabajo y la página está vacía, revisa las dos cosas.
+- Si la página dice **No hay demanda de prep de catering próxima para esta ubicación.**, primero revisa la tienda en **Ubicación**.
+- Una línea "Choose your sub" con la etiqueta **Necesita elección** quiere decir que los subs no están escogidos en la app. Por ahora es normal. La mezcla de subs está en las **Notas** de la cotización.
 - Las pestañas son **Prep**, **Crudo / SKU**, **Excedente** y **Ventas**.
 
 #### LTO y descuentos
 
 1. Toca **LTO y descuentos**.
 
-2. Escoge la tienda en **Ubicación**.
+2. Revisa la tienda en **Ubicación**.
 
 - La pantalla dice que convierte la comida que sobra en un LTO destacado o un descuento.
 - **Sin excedente perecedero para gestionar.** quiere decir que ningún pedido de catering se canceló tarde con su comida ya preparada. Esta página solo muestra esa comida. No cuenta otra comida que sobre en la cocina.
