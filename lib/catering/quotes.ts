@@ -25,6 +25,7 @@ import { getRoleLevel } from "@/lib/roles";
 import { lockLocationContext, isAllLocationsAccess } from "@/lib/locations";
 import { audit } from "@/lib/audit";
 import { sendEmail } from "@/lib/email";
+import { redactEmailAddresses } from "@/lib/email-redact";
 import { escapeHtml } from "@/lib/email-templates/_layout";
 import type { AuthContext } from "@/lib/session";
 import { loadCateringReader } from "./ezcater-detail";
@@ -1213,7 +1214,8 @@ export async function sendQuote(actor: AuthContext, id: string): Promise<SendQuo
         emailed = true;
         emailOutcome = "sent";
       } else {
-        emailError = res.error;
+        // Defence in depth: sendEmail already scrubs, but this string lands in an audit row.
+        emailError = redactEmailAddresses(res.error);
         emailOutcome = "send_failed";
       }
     }

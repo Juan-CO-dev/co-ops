@@ -36,6 +36,18 @@ const { db, hooks, writes, audit, sendEmail, session } = vi.hoisted(() => ({
 
 // ── a tiny PostgREST-shaped fake ─────────────────────────────────────────────────────────
 type Pred = (r: Row) => boolean;
+/** SQL ILIKE: % and _ wildcards, backslash escapes (escapeLike), case-insensitive. */
+function likeToRegex(pattern: string): RegExp {
+  let out = "";
+  for (let i = 0; i < pattern.length; i++) {
+    const ch = pattern[i]!;
+    if (ch === "\\" && i + 1 < pattern.length) out += pattern[++i]!.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    else if (ch === "%") out += ".*";
+    else if (ch === "_") out += ".";
+    else out += ch.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  }
+  return new RegExp(`^${out}$`, "i");
+}
 function splitTop(s: string): string[] {
   const out: string[] = [];
   let depth = 0;
@@ -64,6 +76,10 @@ function parseTerm(t: string): Pred {
   const val = rest.join(".");
   if (op === "eq") return (r) => String(r[col!]) === val;
   if (op === "is") return (r) => (r[col!] ?? null) === (val === "null" ? null : val === "true");
+  if (op === "ilike") {
+    const re = likeToRegex(val);
+    return (r) => typeof r[col!] === "string" && re.test(r[col!] as string);
+  }
   if (op === "in") {
     const ids = val.replace(/^\(|\)$/g, "").split(",");
     return (r) => ids.includes(String(r[col!]));
@@ -82,8 +98,8 @@ class Q {
   is(c: string, v: unknown) { this.preds.push((r) => (r[c] ?? null) === v); return this; }
   in(c: string, vs: unknown[]) { this.preds.push((r) => vs.includes(r[c])); return this; }
   ilike(c: string, pattern: string) {
-    const want = pattern.replace(/\\(.)/g, "$1").toLowerCase(); // escapeLike → literal, case-insensitive
-    this.preds.push((r) => typeof r[c] === "string" && (r[c] as string).toLowerCase() === want);
+    const re = likeToRegex(pattern);
+    this.preds.push((r) => typeof r[c] === "string" && re.test(r[c] as string));
     return this;
   }
   or(expr: string) { const p = splitTop(expr).map(parseTerm); this.preds.push((r) => p.some((f) => f(r))); return this; }
@@ -125,6 +141,7 @@ vi.mock("@/lib/admin/step-up", () => ({ assertStepUp: () => ({ ok: true }) }));
 import { NextRequest } from "next/server";
 import { createQuote, linkLeadToCustomer, loadQuoteParties, reviseQuote, sendQuote } from "@/lib/catering/quotes";
 import { loadCustomer } from "@/lib/catering/customers";
+import { searchPipeline } from "@/lib/catering/pipeline";
 import { POST as createQuoteRoute } from "@/app/api/catering/quotes/route";
 import { POST as sendQuoteRoute } from "@/app/api/catering/quotes/[id]/send/route";
 import { GET as getQuoteRoute } from "@/app/api/catering/quotes/[id]/route";
@@ -304,6 +321,14 @@ describe("R2 + option b — Send on a quote whose client is another shop's custo
     expect(sendAudit.metadata).toMatchObject({ recipient: null, recipient_hidden: true });
     expect(JSON.stringify(sendAudit)).not.toMatch(/bea@b\.test/);
   });
+  it("a provider error that quotes the address is scrubbed before the audit row and the result", async () => {
+    sendEmail.mockResolvedValue({ error: "Invalid `to` field: Bea@B.test is on the suppression list (bea%40b.test)" });
+    const r = await sendQuote(gmA, "q-b");
+    expect(r.emailError).toBe("Invalid `to` field: [email] is on the suppression list ([email])");
+    const sendAudit = audit.mock.calls.map((c) => c[0]).find((a) => a.action === "catering.quote.send");
+    expect(JSON.stringify(sendAudit)).not.toMatch(/bea(@|%40)b\.test/i);
+    expect(JSON.stringify(r)).not.toMatch(/bea(@|%40)b\.test/i);
+  });
   it("a failed delivery does not leak it either", async () => {
     sendEmail.mockResolvedValue({ error: "boom" });
     const r = await sendQuote(gmA, "q-b");
@@ -378,5 +403,30 @@ describe("option b — email resolution → creation through the quotes route", 
     const created = db.catering_customers!.find((c) => c.email === "new@client.test")!;
     expect(created).toMatchObject({ primary_location_id: A, active: true });
     expect(db.catering_quotes!.at(-1)).toMatchObject({ customer_id: created.id });
+  });
+});
+
+describe("review 3 — pipeline search never matches or returns another shop's customer contact", () => {
+  beforeEach(() => {
+    db.catering_companies = [];
+    db.locations = [{ id: A, name: "Shop A" }, { id: B, name: "Shop B" }];
+    db.catering_pipeline!.push(
+      { ...lead("l-moved", "c-b", A), contact_name: "Zed Moved" }, // B's customer, lead transferred to A
+      { ...lead("l-own", "c-a", A), contact_name: "Yan Own" },
+    );
+  });
+  it("finds the readable lead by its own name but omits the other shop's customer email", async () => {
+    const results = await searchPipeline(gmA, { query: "Zed" });
+    expect(results.map((r) => r.id)).toEqual(["l-moved"]);
+    expect(results[0]!.email).toBeNull();
+    expect(JSON.stringify(results)).not.toMatch(/bea@b\.test|555-B/);
+  });
+  it("an unreadable customer's email or phone does not match (no confirmation oracle)", async () => {
+    expect(await searchPipeline(gmA, { query: "bea@b.test" })).toEqual([]);
+    expect(await searchPipeline(gmA, { query: "555-B" })).toEqual([]);
+  });
+  it("an own-shop customer still matches by email and returns it", async () => {
+    const results = await searchPipeline(gmA, { query: "ana@a.test" });
+    expect(results.map((r) => [r.id, r.email])).toEqual([["l-own", "ana@a.test"]]);
   });
 });
