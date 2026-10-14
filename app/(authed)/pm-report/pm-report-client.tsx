@@ -256,7 +256,9 @@ export function PmReportClient({
   const wrapUp: ShiftWrapUpRow[] = report?.wrapUp ?? [];
   const existingEvals = report?.evals ?? [];
 
-  const autoEmployeeIds = new Set<string>(presenceRoster ? presenceRoster.map((p) => p.id) : wrapUp.map((r) => r.userId));
+  // The fallback seed obeys the same eligibility as the presence seed (the route's roster = locationUsers).
+  const eligibleIds = new Set(locationUsers.map((u) => u.id));
+  const autoEmployeeIds = new Set<string>(presenceRoster ? presenceRoster.map((p) => p.id) : wrapUp.map((r) => r.userId).filter((id) => eligibleIds.has(id)));
   for (const e of existingEvals) autoEmployeeIds.add(e.employeeId);
 
   const [addedEmployeeIds, setAddedEmployeeIds] = useState<string[]>([]);

@@ -4,6 +4,7 @@
  */
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
+import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 import { TranslationProvider } from "@/lib/i18n/provider";
 import { evalGradesComplete, pmPresenceRoster } from "@/lib/pm-report-shared";
@@ -38,27 +39,37 @@ describe("pmPresenceRoster", () => {
         person("member-only", { presence: { onShift: false, source: null, since: null } }),
       ],
     };
-    expect(pmPresenceRoster(board).map((p) => p.id)).toEqual(["onshift", "clockedout", "ended"]);
+    expect(pmPresenceRoster(board, all(board)).map((p) => p.id)).toEqual(["onshift", "clockedout", "ended"]);
   });
   it("with presence off: holding a station or task, or held a station earlier today (released at close)", () => {
     const board: Pick<ShiftBoard, "people" | "events"> = {
       events: [claim("released", "grill"), claim("released", null)],
       people: [person("tasked", { hasWork: true }), person("released"), person("idle-member")],
     };
-    expect(pmPresenceRoster(board).map((p) => p.id)).toEqual(["tasked", "released"]);
+    expect(pmPresenceRoster(board, all(board)).map((p) => p.id)).toEqual(["tasked", "released"]);
   });
   it("never seeds someone no longer available at the shop", () => {
     const board: Pick<ShiftBoard, "people" | "events"> = { events: [], people: [person("gone", { hasWork: true, available: false })] };
-    expect(pmPresenceRoster(board)).toEqual([]);
+    expect(pmPresenceRoster(board, all(board))).toEqual([]);
+  });
+  it("review #3: never seeds someone the PM route would refuse (e.g. a level-9 owner on a station with no shop membership)", () => {
+    const board: Pick<ShiftBoard, "people" | "events"> = {
+      events: [claim("owner", "grill"), claim("cook", "line")],
+      people: [person("owner", { level: 9, hasWork: true }), person("cook", { hasWork: true })],
+    };
+    // The eligible set is the route's roster: active members of this shop (the page's locationUsers).
+    expect(pmPresenceRoster(board, new Set(["cook"])).map((p) => p.id)).toEqual(["cook"]);
   });
 });
 
-function render(report: PmReportForEdit, presenceRoster: { id: string; name: string }[] | null, submitted = false) {
+const all = (board: Pick<ShiftBoard, "people">) => new Set(board.people.map((p) => p.id));
+function render(report: PmReportForEdit, presenceRoster: { id: string; name: string }[] | null, submitted = false,
+  locationUsers: { id: string; name: string }[] = []) {
   // eslint-disable-next-line react/no-children-prop -- house test pattern: TranslationProvider's children prop is required
   return renderToStaticMarkup(createElement(TranslationProvider, {
     initialLanguage: "en",
     children: createElement(PmReportClient, {
-      locationId: "shop", report, timeliness: [], locationUsers: [], presenceRoster, language: "en", submitted,
+      locationId: "shop", report, timeliness: [], locationUsers, presenceRoster, language: "en", submitted,
     }),
   }));
 }
@@ -75,8 +86,10 @@ describe("PM report client", () => {
     expect(html).not.toContain('value="toucher"');
     expect(html).toContain('value="line"');
   });
-  it("falls back to the activity roster only when the presence read failed", () => {
-    expect(render(report(), null)).toContain('value="toucher"');
+  it("falls back to the activity roster only when the presence read failed — and only its eligible members", () => {
+    expect(render(report(), null, false, [{ id: "toucher", name: "App Toucher" }])).toContain('value="toucher"');
+    // Review #3: a wrap-up toucher who is not on the route's roster is never seeded.
+    expect(render(report(), null, false, [])).not.toContain('value="toucher"');
   });
   it("starts with no grade picked and Save disabled, with a hint", () => {
     const html = render(report(), [{ id: "line", name: "Line Cook" }]);
@@ -94,5 +107,16 @@ describe("PM report client", () => {
       [{ id: "line", name: "Line Cook" }, { id: "other", name: "Not Graded" }], true);
     expect(html).toContain("Line Cook");
     expect(html).not.toContain("Not Graded");
+  });
+});
+
+describe("review #3: the page seeds from the route's own roster", () => {
+  it("the PM page passes the add-picker roster (active members) as the eligible set, and the route still checks membership", () => {
+    const page = readFileSync("app/(authed)/pm-report/page.tsx", "utf8");
+    expect(page).toContain("pmPresenceRoster(board, new Set(locationUsers.map((u) => u.id)))");
+    expect(page).toMatch(/from\("user_locations"\)[\s\S]*?\.eq\("active", true\)/);
+    const route = readFileSync("app/api/pm-report/route.ts", "utf8");
+    expect(route).toMatch(/isOnLocationRoster\(service, locationId, b\.employeeId\)/);
+    expect(route).toContain('jsonError(400, "invalid_target", { field: "employeeId" })');
   });
 });

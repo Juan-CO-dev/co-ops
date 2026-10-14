@@ -129,7 +129,8 @@ export default async function PmReportPage({ searchParams }: PageProps) {
       locationId,
       date,
     });
-    presenceRoster = pmPresenceRoster(board);
+    // Review #3: only people the PM route will accept a grade for (the add-picker's roster).
+    presenceRoster = pmPresenceRoster(board, new Set(locationUsers.map((u) => u.id)));
   } catch (err) {
     console.error("pm report presence roster failed", err);
   }

@@ -31,13 +31,22 @@ export function evalGradesComplete(grades: EvalGrades): boolean {
 
 /**
  * Today's presence roster for the PM report, in the board's (name) order. A person is in when they
- * were at this shop today; someone no longer available at the shop (deactivated or moved) is not
- * seeded — the add-picker lists only the shop's active people, and the seed must not offer more.
+ * were at this shop today AND they are someone the PM route will accept a grade for.
+ *
+ * `eligibleUserIds` is the route's own roster rule (app/api/pm-report/route.ts isOnLocationRoster:
+ * an ACTIVE user with an ACTIVE user_locations row at this shop) — the page's add-picker list. The
+ * shift board is wider than that: it carries an all-shops (level 9+) account holding a station or
+ * clocked in here with no membership row, and seeding them gave a card whose Save could only fail
+ * with 400 invalid_target (B7b review #3). The server check is unchanged; the seed just never
+ * offers what it would refuse.
  */
-export function pmPresenceRoster(board: Pick<ShiftBoard, "people" | "events">): Array<{ id: string; name: string }> {
+export function pmPresenceRoster(
+  board: Pick<ShiftBoard, "people" | "events">,
+  eligibleUserIds: ReadonlySet<string>,
+): Array<{ id: string; name: string }> {
   const heldStationToday = new Set(board.events.filter((event) => event.stationId).map((event) => event.userId));
   return board.people
-    .filter((person) => person.available !== false)
+    .filter((person) => person.available !== false && eligibleUserIds.has(person.id))
     .filter((person) => (person.presence ? person.presence.onShift || person.presence.source !== null : false)
       || person.hasWork || heldStationToday.has(person.id))
     .map((person) => ({ id: person.id, name: person.name }));
