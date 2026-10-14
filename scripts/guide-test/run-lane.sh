@@ -35,7 +35,8 @@ for g in "${guides[@]}"; do
     ) &
   else
     provider="${model%%:*}"; mid="${model#*:}"
-    PYTHONIOENCODING=utf-8 python scripts/guide-test/api_tester.py --provider "$provider" --model "$mid" \
+    # 2-hour cap per guide: an API tester once sat idle for 4.5 hours and held up the whole chain.
+    PYTHONIOENCODING=utf-8 timeout 7200 python scripts/guide-test/api_tester.py --provider "$provider" --model "$mid" \
       --workspace "$ws" --session "$session" --out "$report" --viewport "$viewport" > "$ws/api.out" 2>&1 &
   fi
   pids+=($!)

@@ -4,10 +4,25 @@
 # Usage: scripts/guide-test/run-chain.sh <round> <log> "<label> <lane> <model>" ...
 round="$1"; log="$2"; shift 2
 cd "$(dirname "$0")/../.." || exit 1
+# Healthy sim, or restart it once (a crash-restarted Next child stayed broken for hours on 2026-10-14).
+ensure_sim() {
+  bash scripts/guide-test/health.sh >/dev/null && return 0
+  echo "sim unhealthy $(date +%H:%M) — restarting it" >> "$log"
+  powershell -NoProfile -ExecutionPolicy Bypass -File scripts/guide-test/start-sim.ps1 >/dev/null 2>&1
+  for i in $(seq 1 60); do [ "$(curl -s -o /dev/null -w '%{http_code}' http://localhost:3100/)" = 200 ] && break; sleep 5; done
+  bash scripts/guide-test/health.sh >/dev/null
+}
 for spec in "$@"; do
   set -- $spec
-  echo "### $1 $(date +%H:%M) reset: $(npx tsx scripts/guide-test/reset.ts 2>&1 | tail -1)" >> "$log"
+  if ! ensure_sim; then
+    echo "SIM UNHEALTHY before $1 even after a restart — chain stopped $(date +%H:%M)" >> "$log"
+    exit 1
+  fi
+  echo "### $1 $(date +%H:%M) sim ok · reset: $(npx tsx scripts/guide-test/reset.ts 2>&1 | tail -1)" >> "$log"
   bash scripts/guide-test/run-lane.sh "$1" "$2" "$3" "$round" staff manager 2>&1 | grep "==" >> "$log"
+  if ! h=$(bash scripts/guide-test/health.sh); then
+    echo "SIM UNHEALTHY after $1 ($h) — CHECK ITS REPORTS (sim may have broken mid-run)" >> "$log"
+  fi
   git add "docs/guides/testing/round-$round" >/dev/null 2>&1
   git commit -q -m "test(guides): round $round — $1 staff + manager
 
