@@ -7,7 +7,7 @@ import { matchPages } from "@/lib/unified-search";
 
 const hrefs = (level: number) => navDestinationsFor(level).map((d) => d.href).sort();
 const everyone = ["/training", "/profile", "/settings", "/my-feedback", "/assignments"];
-const kh = ["/mid-shift", "/reports/trends"];
+const kh = ["/mid-shift", "/reports/trends", "/operations/production"];
 const lead = ["/catering"];
 const manager = ["/lto", "/admin", "/admin/recipes"];
 
@@ -25,7 +25,7 @@ describe("role navigation", () => {
     // Floors confirmed against destination pages/layouts and their server loaders.
     const pageFloors: Record<string, number> = {
       "/maintenance": 3, "/training": 0, "/admin/recipes": 6, "/profile": 0, "/settings": 0, "/my-feedback": 0,
-      "/mid-shift": 4, "/assignments": 0, "/reports": 2,
+      "/mid-shift": 4, "/operations/production": 4, "/assignments": 0, "/reports": 2,
       "/catering": 5, "/reports/written": 2, "/reports/trends": 4, "/lto": 0, "/admin": 6,
     };
     for (const level of [2, 3, 4, 5, 6, 7, 9]) for (const href of hrefs(level)) {
@@ -41,6 +41,12 @@ describe("role navigation", () => {
     expect(assignments).not.toMatch(/auth\.level < .*redirect/);
     expect(catering).toMatch(/if \(level < CATERING_HUB_MIN\)/);
     expect(admin).toMatch(/if \(auth\.level < ADMIN_MIN_LEVEL\)/);
+    // Production (Juan D-64): the page redirects below level 4 and without ?location.
+    const production = source("app/(authed)/operations/production/page.tsx");
+    expect(production).toMatch(/if \(auth\.level < 4\) redirect\("\/dashboard"\)/);
+    expect(production).toMatch(/if \(!location\) redirect\("\/dashboard"\)/);
+    const prod = navDestinationsFor(4).find((d) => d.href === "/operations/production");
+    expect(prod).toMatchObject({ key: "production.page.title", scoped: true, minLevel: 4 });
     expect(source("app/(authed)/mid-shift/page.tsx")).toMatch(/if \(auth\.level < MIDSHIFT_BASE_LEVEL\)/);
     const declaredNumber = (contents: string, pattern: RegExp) => {
       const value = contents.match(pattern)?.[1];
@@ -107,6 +113,21 @@ describe("Mid-shift Pulse v2 in navigation (crew get the pulse, Juan 2026-10-12)
     const page = source("app/(authed)/mid-shift/page.tsx");
     expect(page.indexOf("if (pulseV2Enabled())")).toBeGreaterThan(-1);
     expect(page.indexOf("if (pulseV2Enabled())")).toBeLessThan(page.indexOf("if (auth.level < MIDSHIFT_BASE_LEVEL)"));
+  });
+});
+
+describe("Production in the menu (Juan D-64)", () => {
+  it("shows for key holders and up only", () => {
+    expect(hrefs(3)).not.toContain("/operations/production");
+    for (const level of [4, 5, 6, 7, 9]) expect(hrefs(level)).toContain("/operations/production");
+  });
+  it("carries the selected shop (the page needs ?location=)", () => {
+    expect(chipHref("/operations/production", true, "shop-1")).toBe("/operations/production?location=shop-1");
+  });
+  it("unified search finds it for level 4+ and hides it below", () => {
+    const t = (key: string) => (key === "production.page.title" ? "Production" : key);
+    expect(matchPages(4, "production", t).map((p) => p.href)).toEqual(["/operations/production"]);
+    expect(matchPages(3, "production", t)).toEqual([]);
   });
 });
 
