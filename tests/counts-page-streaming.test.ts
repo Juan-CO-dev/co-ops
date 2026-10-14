@@ -18,7 +18,7 @@ describe("the counts page streams its on-hand panel", () => {
     const sheet = page.indexOf("const formData = await");
     expect(start).toBeGreaterThan(0);
     expect(sheet).toBeGreaterThan(start);
-    expect(page).not.toMatch(/Promise\.all\(\[[^\]]*loadOnHand/s);
+    expect(page).not.toMatch(/Promise\.all\(\[[^\]]*loadOnHand/);
     expect(page).toContain("onHand?.catch(() => {});");
   });
 
