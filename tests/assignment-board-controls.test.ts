@@ -101,12 +101,24 @@ describe("assignment board retract and assign controls", () => {
         { id: "second", stationId: "walk", name: "Online", nameEs: null, duty: null, dutyEs: null, sort: 2, active: true },
         { id: "first", stationId: "walk", name: "Walk-ins", nameEs: null, duty: null, dutyEs: null, sort: 1, active: true },
       ] }];
+    // Maya holds "second" on the floor (a live head, not on break), so the station is covered.
+    value.people.push({ id: "maya", name: "Maya", level: 3, hasWork: true, available: true });
+    value.events = [{ id: "maya-claim", sequence: "1", locationId: "shop", businessDate: value.date,
+      userId: "maya", stationId: "walk", positionId: "second", kind: "claim", actorId: "maya", actorName: null,
+      at: "2026-10-07T12:00:00Z", source: "claimed" }];
     value.occupiedPositions = [{ positionId: "second", firstName: "Maya" }];
     const html = render(value, true);
     expect(html.indexOf('value="first"')).toBeLessThan(html.indexOf('value="second"'));
-    // D-26: Maya holds a position here, so the station is covered — no "fill first" cue.
+    // D-26: the station is covered — no "fill first" cue.
     expect(html).not.toContain('fill first');
     expect(html).toMatch(/<option[^>]*value="second"[^>]*disabled[^>]*>[^<]*taken by Maya/);
+    // Review #2: Maya on break leaves the station uncovered (the Pulse says so) — the cue lands on the
+    // first position nobody holds, never on Maya's own.
+    value.people[1]!.onBreak = true;
+    expect(render(value, true)).toContain('Walk-ins · fill first');
+    expect(render(value, true)).not.toContain('Online · fill first');
+    value.people[1]!.onBreak = false;
+    value.events = [];
     value.occupiedPositions = [];
     expect(render(value, true)).toContain('Walk-ins · fill first');
     expect(render(value, true)).not.toContain('Online · fill first');

@@ -58,24 +58,32 @@ export function isFloorStation(station: Pick<Station, "active" | "staffed" | "po
 /**
  * D-26 (Juan 2026-10-13) — the "fill first" cue on station choices. It used to ride on every
  * position with `sort === 1`, which is every station's first slot, so it said "fill first" on 10 of
- * 12 options and meant nothing. It now names, for each open floor station that NOBODY holds yet, its
- * first open position (lowest sort, then name — the board's own option order). A station is held when
- * anyone's current station head points at it (the floor's own coverage read, so a legacy hold with no
- * position counts) or any of its positions is occupied; a closed station or a closing section gets no cue.
+ * 12 options and meant nothing. It now names, for each open floor station the Pulse calls UNCOVERED,
+ * its first UNOCCUPIED active position (lowest sort, then name — the board's own option order).
+ *
+ * Coverage is the floor's own rule (lib/pulse/floor-shared floorStations + stationStatus, B7b review
+ * #2): a station is covered while someone on the board holds it (their current station head points at
+ * it) and is NOT on break. So a two-position station whose only holder is on break is uncovered —
+ * the Pulse says so — and the cue lands on the first position nobody holds (the on-break holder keeps
+ * theirs). A closed station or a closing section carries no cue.
  */
 export function fillFirstPositionIds(
   board: { stations: ReadonlyArray<Pick<Station, "id" | "active" | "staffed" | "positions" | "closedAt">>;
-    events: readonly StationEvent[]; occupiedPositions?: ReadonlyArray<{ positionId: string }> },
+    events: readonly StationEvent[]; people: ReadonlyArray<Pick<ShiftPerson, "id" | "onBreak">>;
+    occupiedPositions?: ReadonlyArray<{ positionId: string }> },
 ): Set<string> {
-  const heads = new Map<string, StationEvent>();
-  for (const event of orderedStationEvents(board.events)) heads.set(event.userId, event);
-  const heldStations = new Set([...heads.values()].flatMap((head) => head.stationId ? [head.stationId] : []));
+  const covering = new Set<string>();
   const heldPositions = new Set((board.occupiedPositions ?? []).map((entry) => entry.positionId));
+  for (const person of board.people) {
+    const head = currentStation(board.events, person.id);
+    if (!head?.stationId) continue;
+    if (head.positionId) heldPositions.add(head.positionId);
+    if (!person.onBreak) covering.add(head.stationId);
+  }
   const out = new Set<string>();
   for (const station of board.stations) {
-    if (!isFloorStation(station) || station.closedAt || heldStations.has(station.id)) continue;
-    if (station.positions.some((position) => heldPositions.has(position.id))) continue;
-    const first = station.positions.filter((position) => position.active)
+    if (!isFloorStation(station) || station.closedAt || covering.has(station.id)) continue;
+    const first = station.positions.filter((position) => position.active && !heldPositions.has(position.id))
       .sort((a, b) => a.sort - b.sort || a.name.localeCompare(b.name))[0];
     if (first) out.add(first.id);
   }
