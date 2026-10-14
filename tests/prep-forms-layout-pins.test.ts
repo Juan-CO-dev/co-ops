@@ -178,3 +178,17 @@ describe("#9 recount boxes are red only while empty", () => {
     expect(item.match(/aria-required=\{isNullSource\}/g)?.length).toBe(2);
   });
 });
+
+describe("#7 the opening title follows the active tab", () => {
+  it("the header branches on activePhase for the title and the subtitle", () => {
+    const client = read("app/(authed)/operations/opening/opening-client.tsx");
+    expect(client).toContain('{activePhase === "prep" ? t("opening.phase.tab_phase2") : t("opening.page.title")}');
+    expect(client).toContain('{activePhase === "prep" ? t("opening.page.subtitle_phase2") : t("opening.page.subtitle")}');
+  });
+  it("the scaffold header keeps the report label only", () => {
+    const page = read("app/(authed)/operations/opening/page.tsx");
+    const scaffold = page.slice(page.indexOf("function ScaffoldHeader"), page.indexOf("function FooterActions"));
+    expect(scaffold).toContain('"opening.page.label"');
+    expect(scaffold).not.toContain('"opening.page.title"');
+  });
+});

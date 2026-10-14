@@ -1795,10 +1795,13 @@ export function OpeningClient({
         <p className="text-xs font-bold uppercase tracking-wide text-co-text-muted">
           {t("opening.page.label")}
         </p>
+        {/* B1 #7 — the title follows the tab: the prep tab is Phase 2, not "Phase 1 — Verification". */}
         <h2 className="mt-1 text-2xl font-extrabold leading-tight text-co-text">
-          {t("opening.page.title")}
+          {activePhase === "prep" ? t("opening.phase.tab_phase2") : t("opening.page.title")}
         </h2>
-        <p className="mt-1 text-sm text-co-text-muted">{t("opening.page.subtitle")}</p>
+        <p className="mt-1 text-sm text-co-text-muted">
+          {activePhase === "prep" ? t("opening.page.subtitle_phase2") : t("opening.page.subtitle")}
+        </p>
       </div>
 
       {/* Phase tabs — Phase 1 always navigable; Phase 2 hard-gated until

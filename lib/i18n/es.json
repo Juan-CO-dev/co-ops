@@ -2522,6 +2522,7 @@
   "opening.page.label": "Reporte de Apertura",
   "opening.page.title": "Fase 1 — Verificación",
   "opening.page.subtitle": "Verifica que el cierre de anoche corresponda con la realidad. Toca cada estación una vez que la revises; añade un comentario si algo no coincide.",
+  "opening.page.subtitle_phase2": "Escribe lo que preparaste de cada artículo. Cada fila se guarda al salir de su casilla.",
   "opening.no_location.body": "No hay ubicaciones disponibles para tu cuenta.",
   "opening.no_template.heading": "Plantilla de Apertura no configurada",
   "opening.no_template.body": "Contacta a un gerente — la plantilla de Apertura aún no está configurada en {code}.",
