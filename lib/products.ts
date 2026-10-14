@@ -601,41 +601,58 @@ export async function loadProductIndex(
   if (ids.length === 0) return EMPTY_PRODUCT_INDEX;
   const sb = getServiceRoleClient();
 
-  const { data: productRows, error: pErr } = await sb
-    .from("products")
-    .select("id, name, unit_oz, active")
-    .in("id", ids)
-    .returns<Array<{ id: string; name: string; unit_oz: number | string | null; active: boolean | null }>>();
-  throwIfSchemaPending(pErr, "loadProductIndex products");
-  if (pErr) throw new Error(`loadProductIndex products failed: ${pErr.message}`);
-  const products = productRows ?? [];
+  // Every read here is PAGED (B9 r1, the PR #63 lesson): the counts render now shares ONE
+  // index between the count sheet and the on-hand rollup, so its reads span every product
+  // on the roster — a truncated page would silently drop members, primaries or overlays
+  // for every consumer at once. Schema-pending is still recognised on any page.
+  const products = await selectAllRows<{ id: string; name: string; unit_oz: number | string | null; active: boolean | null }>(async (from, to) => {
+    const { data, error: pErr } = await sb
+      .from("products")
+      .select("id, name, unit_oz, active")
+      .in("id", ids)
+      .order("id", { ascending: true })
+      .range(from, to)
+      .returns<Array<{ id: string; name: string; unit_oz: number | string | null; active: boolean | null }>>();
+    throwIfSchemaPending(pErr, "loadProductIndex products");
+    if (pErr) throw new Error(`loadProductIndex products failed: ${pErr.message}`);
+    return { data };
+  });
   if (products.length === 0) return EMPTY_PRODUCT_INDEX;
   const presentIds = products.map((p) => p.id);
 
-  let primaryQuery = sb
-    .from("product_primaries")
-    .select("id, product_id, location_id, primary_sku_id, note")
-    .in("product_id", presentIds);
-  // The vendor_cutoffs "null = global" idiom (lib/ordering.ts loadOrderingAttention):
-  // read the location row AND the global row, then let the location row win below.
-  primaryQuery = locationId != null
-    ? primaryQuery.or(`location_id.is.null,location_id.eq.${locationId}`)
-    : primaryQuery.is("location_id", null);
   // The member and primary reads both key off the product ids alone — one wave (B9).
-  const [{ data: memberRows, error: mErr }, { data: primaryRows, error: prErr }] = await Promise.all([
-    sb
-      .from("vendor_items")
-      .select("id, name, vendor_id, product_id, active, avg_oz_per_each, pending_review, location_id, units_per_pack, each_size, each_measure")
-      .in("product_id", presentIds)
-      .order("name", { ascending: true })
-      .returns<DbMemberRow[]>(),
-    primaryQuery.returns<DbPrimaryRow[]>(),
+  const [memberRowList, primaryRows] = await Promise.all([
+    // Name order (the members' display order); `id` breaks a same-name tie so the order is
+    // total and page boundaries are stable.
+    selectAllRows<DbMemberRow>(async (from, to) => {
+      const { data, error: mErr } = await sb
+        .from("vendor_items")
+        .select("id, name, vendor_id, product_id, active, avg_oz_per_each, pending_review, location_id, units_per_pack, each_size, each_measure")
+        .in("product_id", presentIds)
+        .order("name", { ascending: true })
+        .order("id", { ascending: true })
+        .range(from, to)
+        .returns<DbMemberRow[]>();
+      throwIfSchemaPending(mErr, "loadProductIndex members");
+      if (mErr) throw new Error(`loadProductIndex members failed: ${mErr.message}`);
+      return { data };
+    }),
+    selectAllRows<DbPrimaryRow>(async (from, to) => {
+      let primaryQuery = sb
+        .from("product_primaries")
+        .select("id, product_id, location_id, primary_sku_id, note")
+        .in("product_id", presentIds);
+      // The vendor_cutoffs "null = global" idiom (lib/ordering.ts loadOrderingAttention):
+      // read the location row AND the global row, then let the location row win below.
+      primaryQuery = locationId != null
+        ? primaryQuery.or(`location_id.is.null,location_id.eq.${locationId}`)
+        : primaryQuery.is("location_id", null);
+      const { data, error: prErr } = await primaryQuery.order("id", { ascending: true }).range(from, to).returns<DbPrimaryRow[]>();
+      throwIfSchemaPending(prErr, "loadProductIndex primaries");
+      if (prErr) throw new Error(`loadProductIndex primaries failed: ${prErr.message}`);
+      return { data };
+    }),
   ]);
-  throwIfSchemaPending(mErr, "loadProductIndex members");
-  if (mErr) throw new Error(`loadProductIndex members failed: ${mErr.message}`);
-  throwIfSchemaPending(prErr, "loadProductIndex primaries");
-  if (prErr) throw new Error(`loadProductIndex primaries failed: ${prErr.message}`);
-  const memberRowList = memberRows ?? [];
   const memberIds = memberRowList.map((m) => m.id);
 
   // Everything below keys off the member list — the overlay, vendor eligibility, receipt
@@ -650,16 +667,18 @@ export async function loadProductIndex(
   const vendorIds = [...new Set(memberRowList.map((m) => m.vendor_id).filter((v): v is string => v !== null))];
   const [ovRows, vs, { lastReceived, lines: receiptLines }, measures, chains] = await Promise.all([
     locationId != null && memberIds.length > 0
-      ? (async (): Promise<OverlayRow[]> => {
+      ? selectAllRows<OverlayRow>(async (from, to) => {
           const { data, error: ovErr } = await sb
             .from("location_sku_settings")
             .select("sku_id, active_override")
             .eq("location_id", locationId)
             .in("sku_id", memberIds)
+            .order("sku_id", { ascending: true })
+            .range(from, to)
             .returns<OverlayRow[]>();
           if (ovErr) throw new Error(`loadProductIndex overlay failed: ${ovErr.message}`);
-          return data ?? [];
-        })()
+          return { data };
+        })
       : Promise.resolve([] as OverlayRow[]),
     vendorIds.length === 0
       ? Promise.resolve([] as VendorRow[])

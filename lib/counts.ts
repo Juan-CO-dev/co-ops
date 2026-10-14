@@ -1005,12 +1005,20 @@ type StoredBaseline = { sku_id: string; inferred_oz: number | string; computed_a
 
 /** Every stored inferred baseline at this location (B9: read beside the anchors; the tier filters in memory). */
 async function loadStoredBaselines(sb: ReturnType<typeof getServiceRoleClient>, locationId: string): Promise<StoredBaseline[]> {
-  const { data: existing, error: bErr } = await sb.from("sku_inferred_baselines")
-    .select("sku_id, inferred_oz, computed_at")
-    .eq("location_id", locationId)
-    .returns<StoredBaseline[]>();
-  if (bErr) throw new Error(`loadInferredRows baselines: ${bErr.message}`);
-  return existing ?? [];
+  // PAGED (B9 r1, Astra P2-2): this read is no longer narrowed to the tier's roster in the
+  // query, so a shop's baseline history can pass the 1000-row cap — and a stored baseline
+  // that fell off the page would be RECOMPUTED (D6: computed once, never regenerated) or
+  // dropped. `sku_id` is unique per location, so it is a total order for paging.
+  return selectAllRows<StoredBaseline>(async (from, to) => {
+    const { data, error } = await sb.from("sku_inferred_baselines")
+      .select("sku_id, inferred_oz, computed_at")
+      .eq("location_id", locationId)
+      .order("sku_id", { ascending: true })
+      .range(from, to)
+      .returns<StoredBaseline[]>();
+    if (error) throw new Error(`loadInferredRows baselines: ${error.message}`);
+    return { data };
+  });
 }
 
 function inferredPlanFrom(
@@ -1825,8 +1833,17 @@ async function onHandCore(
       ]),
     }),
     offRoster.length > 0
-      ? sb.from("vendor_items").select("id, name, product_id").in("id", offRoster).returns<OffRosterSku[]>()
-      : Promise.resolve({ data: [] as OffRosterSku[], error: null }),
+      // PAGED (B9 r1); label-only, so a failed read is reported, not thrown (see below).
+      ? selectAllRows<OffRosterSku>(async (from, to) => {
+          const { data, error } = await sb.from("vendor_items").select("id, name, product_id").in("id", offRoster)
+            .order("id", { ascending: true }).range(from, to).returns<OffRosterSku[]>();
+          if (error) throw new Error(error.message);
+          return { data };
+        }).then(
+          (data) => ({ data, error: null as { message: string } | null }),
+          (e: unknown) => ({ data: null as OffRosterSku[] | null, error: { message: e instanceof Error ? e.message : String(e) } }),
+        )
+      : Promise.resolve({ data: [] as OffRosterSku[], error: null as { message: string } | null }),
     countSkuIds.length > 0 ? refs.packChains(countSkuIds) : Promise.resolve(new Map<string, PackChainLevel[]>()),
     countSkuIds.length > 0 ? refs.measures() : Promise.resolve(new Map<string, MeasureUnitFactor>()),
   ]);
@@ -2266,17 +2283,29 @@ export async function loadSalesGapDates(
     const snapshot = await loadEffectiveSalesWindow(sb, { locationId, fromDate: sinceDate, untilDateExclusive: openEtDate });
     return new CapturedSalesGapDates(locationId, sinceDate, openEtDate, snapshot);
   }
-  const [evRes, deplRes] = await Promise.all([
-    sb.from("toast_sales_events").select("business_date").eq("location_id", locationId).gte("business_date", sinceDate)
-      .returns<Array<{ business_date: string }>>(),
-    sb.from("toast_daily_depletion").select("business_date").eq("location_id", locationId).gte("business_date", sinceDate)
-      .returns<Array<{ business_date: string }>>(),
+  // PAGED to completion (B9 r1, Astra P2-1; the PR #63 lesson): these reads used to stop
+  // at PostgREST's 1000-row cap. toast_sales_events is one row PER SELECTION, so a probe
+  // spanning a few busy days silently lost its newest dates — a real gap then read as "no
+  // gap" and a since-window's sales term turned numeric. Since B9 one probe serves every
+  // tier from the EARLIEST anchor, which would have made that worse; complete reads make
+  // the answer independent of where the probe starts. `id` (the PK) is the stable order.
+  const [events, depletion] = await Promise.all([
+    selectAllRows<{ business_date: string }>(async (from, to) => {
+      const { data, error } = await sb.from("toast_sales_events").select("business_date").eq("location_id", locationId).gte("business_date", sinceDate)
+        .order("id", { ascending: true }).range(from, to).returns<Array<{ business_date: string }>>();
+      if (error) throw new Error(`loadSalesGapDates events: ${error.message}`);
+      return { data };
+    }),
+    selectAllRows<{ business_date: string }>(async (from, to) => {
+      const { data, error } = await sb.from("toast_daily_depletion").select("business_date").eq("location_id", locationId).gte("business_date", sinceDate)
+        .order("id", { ascending: true }).range(from, to).returns<Array<{ business_date: string }>>();
+      if (error) throw new Error(`loadSalesGapDates depletion: ${error.message}`);
+      return { data };
+    }),
   ]);
-  if (evRes.error) throw new Error(`loadSalesGapDates events: ${evRes.error.message}`);
-  if (deplRes.error) throw new Error(`loadSalesGapDates depletion: ${deplRes.error.message}`);
-  const materialized = new Set((deplRes.data ?? []).map((r) => r.business_date));
+  const materialized = new Set(depletion.map((r) => r.business_date));
   const gaps = new Set<string>();
-  for (const r of evRes.data ?? []) {
+  for (const r of events) {
     if (!materialized.has(r.business_date) && isGapEligibleDate(r.business_date, openEtDate)) {
       gaps.add(r.business_date);
     }

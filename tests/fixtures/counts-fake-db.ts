@@ -61,6 +61,9 @@ function parseSelect(s: string): Field[] {
   });
 }
 
+/** PostgREST `db-max-rows` (Supabase default). */
+export const MAX_ROWS = 1000;
+
 export interface QueryLogEntry { table: string; select: string; depth: number }
 
 /** `latencyMs` makes every round trip take that long (real timers), so a test can read the
@@ -138,6 +141,9 @@ export function createFakeDb(tables: Tables, latencyMs = 0) {
       }
       if (rangeFrom != null) rows = rows.slice(rangeFrom, rangeTo! + 1);
       if (lim != null) rows = rows.slice(0, lim);
+      // PostgREST's max-rows: NO response carries more than 1000 rows, ranged or not. An
+      // un-paged read past the cap silently loses its tail here exactly as it does live.
+      rows = rows.slice(0, MAX_ROWS);
       const fields = parseSelect(selectStr);
       const projected = rows.map((r) => project(table, r, fields)).filter((r): r is Row => r !== null);
       if (single) return { data: projected[0] ?? null, error: null };

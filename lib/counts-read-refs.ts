@@ -54,11 +54,16 @@ function once<T>(load: () => Promise<T>): () => Promise<T> {
 export function createCountsReadRefs(): CountsReadRefs {
   const roster = once(async () => {
     const sb = getServiceRoleClient();
-    // The sheet's own read (name order) — the par and inferred tiers filter the same rows.
-    const { data, error } = await sb.from("vendor_items").select("id, name, pack_format, vendor_id, product_id").eq("active", true).order("name", { ascending: true })
-      .returns<RosterSku[]>();
-    if (error) throw new Error(`counts roster (active SKUs): ${error.message}`);
-    return data ?? [];
+    // The sheet's own order (name) — the par and inferred tiers filter the same rows. PAGED
+    // (B9 r1): every tier now stands on this one read, so past 1000 active SKUs a truncated
+    // page would decide WHICH SKUs exist for all of them; `id` breaks name ties so the order
+    // is total and page boundaries are stable.
+    return selectAllRows<RosterSku>(async (from, to) => {
+      const { data, error } = await sb.from("vendor_items").select("id, name, pack_format, vendor_id, product_id").eq("active", true)
+        .order("name", { ascending: true }).order("id", { ascending: true }).range(from, to).returns<RosterSku[]>();
+      if (error) throw new Error(`counts roster (active SKUs): ${error.message}`);
+      return { data };
+    });
   });
   const vendors = once(async () => {
     const sb = getServiceRoleClient();
