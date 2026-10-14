@@ -68,3 +68,61 @@ export function midDayFinalizeBlockers(
   }
   return out;
 }
+
+/** One row of the read-only finalized mid-day view (B1 #2). */
+export interface MidDayFinalizedRow {
+  id: string;
+  label: string;
+  /** System key (prep_meta.section, else station, else "Misc") — render via resolveSectionLabel. */
+  section: string;
+  parUnit: string | null;
+  /** max(par − counted on hand, 0); null when the item has no par or no count. */
+  need: number | null;
+  /** What the Phase 2 save recorded (bottled on a batch item); null = never saved. */
+  made: number | null;
+}
+
+function readOnHand(prepData: unknown): number | null {
+  if (prepData === null || prepData === undefined || typeof prepData !== "object") return null;
+  const inputs = (prepData as { inputs?: unknown }).inputs;
+  if (inputs === null || inputs === undefined || typeof inputs !== "object") return null;
+  const onHand = (inputs as { onHand?: unknown }).onHand;
+  return typeof onHand === "number" && Number.isFinite(onHand) ? onHand : null;
+}
+
+/**
+ * B1 #2 — the rows of a FINALIZED mid-day prep (status phase2_complete), read-only: per
+ * template item (template order) the latest live completion's count gives the need and its
+ * Phase 2 save gives "made". "Made" follows midDayPhase2RowSeed, so a Phase 1 count is never
+ * shown as made and a batch item shows its BOTTLED number, never the derived count total.
+ */
+export function midDayFinalizedRows(
+  templateItems: ReadonlyArray<{
+    id: string;
+    label: string;
+    station?: string | null;
+    prepMeta?: { section?: string | null; parValue?: number | null; parUnit?: string | null } | null;
+  }>,
+  liveCompletions: ReadonlyArray<{ templateItemId: string; completedAt: string; prepData: unknown }>,
+  batchModeByTemplateItemId: Record<string, boolean> = {},
+): MidDayFinalizedRow[] {
+  const latest = new Map<string, { completedAt: string; prepData: unknown }>();
+  for (const c of liveCompletions) {
+    const prev = latest.get(c.templateItemId);
+    if (!prev || c.completedAt > prev.completedAt) latest.set(c.templateItemId, { completedAt: c.completedAt, prepData: c.prepData });
+  }
+  return templateItems.map((it) => {
+    const prepData = latest.get(it.id)?.prepData;
+    const par = it.prepMeta?.parValue ?? null;
+    const onHand = readOnHand(prepData);
+    const seed = midDayPhase2RowSeed(prepData, batchModeByTemplateItemId[it.id] === true);
+    return {
+      id: it.id,
+      label: it.label,
+      section: it.prepMeta?.section ?? it.station ?? "Misc",
+      parUnit: it.prepMeta?.parUnit ?? null,
+      need: par !== null && onHand !== null ? Math.max(par - onHand, 0) : null,
+      made: seed.saved ? seed.initialPrepped : null,
+    };
+  });
+}
