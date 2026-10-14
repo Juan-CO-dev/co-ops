@@ -16,7 +16,7 @@ import { composeLastClose, composeReportSummary, reportIsFinalized } from "@/lib
 import { listReports, listReportSkeleton, type Viewer } from "@/lib/reports-hub";
 import { SALES_READ_MIN } from "@/lib/sales-reports-shared";
 import { requireSessionFromHeaders } from "@/lib/session";
-import { resolveShopId } from "@/lib/shop-context";
+import { resolveReportShopId } from "@/lib/shop-context";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 
 export default async function ReportsPage({ searchParams }: { searchParams: Promise<Record<string, string | undefined>> }) {
@@ -25,8 +25,8 @@ export default async function ReportsPage({ searchParams }: { searchParams: Prom
   const params = reportLandingContext(await searchParams);
   const actor = { role: auth.role, locations: auth.locations };
   // B2: an explicit ?location= (a shop or "all") passes through to the read gate below unchanged;
-  // only the DEFAULT moves — the remembered shop when it is a membership, else the first.
-  const locationId = params.location ?? (await resolveShopId(auth.locations));
+  // only the DEFAULT moves — the remembered shop when this page's read grant admits it, else the first.
+  const locationId = params.location ?? (await resolveReportShopId(auth));
   if (!locationId || (locationId === "all" ? auth.level < REPORT_ALL_LOCATIONS_LEVEL : !canReadReportLocation(actor, locationId))) redirect("/dashboard");
   const service = getServiceRoleClient();
   let locationsQuery = service.from("locations").select("id,name").eq("active", true).order("name");

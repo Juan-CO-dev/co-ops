@@ -3,6 +3,7 @@ import { AuthShell } from "@/components/auth/AuthShell";
 import { ShiftBoardClient } from "@/components/assignments/ShiftBoardClient";
 import { requireSessionFromHeaders } from "@/lib/session";
 import { resolveShop } from "@/lib/shop-context";
+import { shopParamFor } from "@/lib/shop-context-shared";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import { accessibleLocations } from "@/lib/locations";
 import { loadShiftBoard } from "@/lib/assignments";
@@ -20,8 +21,8 @@ export default async function AssignmentsPage({ searchParams }: { searchParams: 
   const { data, error } = await query;
   if (error) throw error;
   const locations = (data ?? []) as { id: string; name: string }[];
-  const { loc, location } = await searchParams;
-  const selected = (await resolveShop(locations, location ?? loc)) ?? undefined; // B2: URL → remembered → first
+  const sp = await searchParams;
+  const selected = (await resolveShop(locations, shopParamFor("/assignments", (name) => sp[name as keyof typeof sp]))) ?? undefined; // B2: URL → remembered → first
   const date = etCalendarDate(new Date().toISOString());
   const board = selected ? await loadShiftBoard(sb, { actor, locationId: selected.id, date }) : null;
   const language = auth.user.language;

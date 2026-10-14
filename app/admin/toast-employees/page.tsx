@@ -2,6 +2,7 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { requireSessionFromHeaders } from "@/lib/session";
 import { resolveShop } from "@/lib/shop-context";
+import { shopParamFor } from "@/lib/shop-context-shared";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import { accessibleLocations } from "@/lib/locations";
 import { serverT } from "@/lib/i18n/server";
@@ -21,8 +22,8 @@ export default async function ToastEmployeesPage({ searchParams }: { searchParam
   const { data, error } = await query;
   if (error) throw error;
   const locations = (data ?? []) as { id: string; name: string }[];
-  const { loc } = await searchParams;
-  const selected = (await resolveShop(locations, loc)) ?? undefined; // B2: ?loc= → remembered → first
+  const sp = await searchParams;
+  const selected = (await resolveShop(locations, shopParamFor("/admin/toast-employees", (name) => sp[name as keyof typeof sp]))) ?? undefined; // B2: ?loc= → remembered → first
   const enabled = whosHereEnabled();
   const review = enabled && selected ? await loadLinkReview(sb, { actor, locationId: selected.id }) : null;
   return <div className="space-y-4">

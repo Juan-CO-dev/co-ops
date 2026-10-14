@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { requireSessionFromHeaders } from "@/lib/session";
 import { resolveShop } from "@/lib/shop-context";
+import { shopParamFor } from "@/lib/shop-context-shared";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import { accessibleLocations } from "@/lib/locations";
 import { StationsAdmin } from "@/components/assignments/StationsAdmin";
@@ -19,8 +20,8 @@ export default async function StaffStationsPage({ searchParams }: { searchParams
   const locationsResult = await locationsQuery;
   if (locationsResult.error) throw locationsResult.error;
   const locations = locationsResult.data ?? [];
-  const { loc } = await searchParams;
-  const location = (await resolveShop(locations, loc)) ?? undefined; // B2: ?loc= → remembered → first
+  const sp = await searchParams;
+  const location = (await resolveShop(locations, shopParamFor("/stations", (name) => sp[name as keyof typeof sp]))) ?? undefined; // B2: ?loc= → remembered → first
   const board = location ? await loadShiftBoard(service, {
     actor: { userId: auth.user.id, role: auth.role, level: auth.level,
       locations: auth.level >= 8 ? [...auth.locations, location.id] : auth.locations },

@@ -9,7 +9,9 @@
 import "server-only";
 import { cookies } from "next/headers";
 
-import { SHOP_COOKIE, isShopId, pickShop, pickShopId } from "./shop-context-shared";
+import { REPORT_ALL_LOCATIONS_LEVEL } from "./locations";
+import { SHOP_COOKIE, isShopId, pickShop, pickShopId, reportShopCandidates } from "./shop-context-shared";
+import { getServiceRoleClient } from "./supabase-server";
 
 export { SHOP_COOKIE, isShopId, pickShop, pickShopId } from "./shop-context-shared";
 
@@ -27,4 +29,25 @@ export async function resolveShop<T extends { id: string }>(allowed: readonly T[
 /** Explicit → remembered → first, over shop ids the page already allows. */
 export async function resolveShopId(allowed: readonly string[], explicit?: string | null): Promise<string | null> {
   return pickShopId({ allowed, explicit, remembered: await rememberedShopId() });
+}
+
+/**
+ * The default shop of a REPORT page with no `?location=` (the hub and the three Sales pages),
+ * resolved against the page's AUTHORIZED list — the read gate's own grant — not memberships only
+ * (review P2). Level 8+ reads every shop, so a remembered active shop outside the memberships is
+ * honoured; below that the list is the memberships, exactly as the gate. The active-shop read runs
+ * only when the remembered shop is not already a membership, so the common case costs no query.
+ */
+export async function resolveReportShopId(viewer: { level: number; locations: readonly string[] }): Promise<string | null> {
+  const remembered = await rememberedShopId();
+  const needsAllShops = viewer.level >= REPORT_ALL_LOCATIONS_LEVEL
+    && (viewer.locations.length === 0 || (remembered !== null && !viewer.locations.includes(remembered)));
+  let activeShopIds: string[] = [];
+  if (needsAllShops) {
+    const { data, error } = await getServiceRoleClient().from("locations").select("id").eq("active", true).order("name");
+    if (error) throw new Error(`report default shop: ${error.message}`);
+    activeShopIds = ((data ?? []) as Array<{ id: string }>).map((row) => row.id);
+  }
+  const allowed = reportShopCandidates({ level: viewer.level, memberships: viewer.locations, activeShopIds, reportAllLevel: REPORT_ALL_LOCATIONS_LEVEL });
+  return pickShopId({ allowed, remembered });
 }

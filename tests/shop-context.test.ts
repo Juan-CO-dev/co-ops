@@ -4,7 +4,7 @@
  */
 import { readFileSync } from "node:fs";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   SHOP_COOKIE,
@@ -14,11 +14,29 @@ import {
   pickShop,
   pickShopId,
   readCookie,
+  reportShopCandidates,
+  shopParamFor,
+  shopParamNames,
   shopCookieAssignment,
   shopParamFromUrl,
   shouldRememberShop,
 } from "@/lib/shop-context-shared";
 import { resolvePulsePanels, resolveRequestedLocation } from "@/lib/pulse/page-shared";
+import { resolveReportShopId } from "@/lib/shop-context";
+import { REPORT_ALL_LOCATIONS_LEVEL } from "@/lib/locations";
+import { canReadScopedReport } from "@/lib/report-scope";
+
+// The server half reads the cookie through next/headers and (8+ only) the active-shop list through
+// the service client; both are stubbed per test.
+const server = vi.hoisted(() => ({ cookie: undefined as string | undefined, active: [] as string[], queries: 0 }));
+vi.mock("next/headers", () => ({ cookies: async () => ({ get: () => (server.cookie === undefined ? undefined : { value: server.cookie }) }) }));
+vi.mock("@/lib/supabase-server", () => ({
+  getServiceRoleClient: () => {
+    server.queries += 1;
+    const query = { select: () => query, eq: () => query, order: () => query, then: (resolve: (v: unknown) => unknown) => resolve({ data: server.active.map((id) => ({ id })), error: null }) };
+    return { from: () => query };
+  },
+}));
 
 // Fixture ids only — never real tenant data.
 const A = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
@@ -86,10 +104,19 @@ describe("pulse resolver threads the remembered shop through the same gate", () 
 
 describe("shopParamFromUrl", () => {
   const q = (s: string) => new URLSearchParams(s);
-  it("reads ?location= first, then the dashboard's ?loc=", () => {
+  it("reads each page's own shop parameter (the route contract)", () => {
     expect(shopParamFromUrl("/reports", q(`location=${A}`))).toBe(A);
     expect(shopParamFromUrl("/dashboard", q(`loc=${B}`))).toBe(B);
     expect(shopParamFromUrl("/my-feedback", q(`loc=${B}&location=${A}`))).toBe(A);
+    expect(shopParamFromUrl("/my-feedback", q(`loc=${B}`))).toBe(B);
+  });
+  it("review P2: the dashboard reads only ?loc=, so a stray ?location= never wins there", () => {
+    expect(shopParamFromUrl("/dashboard", q(`loc=${A}&location=${B}`))).toBe(A);
+    expect(shopParamFromUrl("/dashboard", q(`location=${B}`))).toBeNull();
+    expect(shopParamFromUrl("/stations", q(`loc=${A}&location=${B}`))).toBe(A);
+    // and a page that reads only ?location= ignores ?loc=
+    expect(shopParamFromUrl("/reports", q(`loc=${A}`))).toBeNull();
+    expect(shopParamFromUrl("/ordering", q(`loc=${A}&location=${B}`))).toBe(B);
   });
   it("ignores non-shop values (all / both / junk) and absent params", () => {
     expect(shopParamFromUrl("/reports", q("location=all"))).toBeNull();
@@ -156,6 +183,89 @@ describe("loginLandingPath — the tile login carries its shop", () => {
   });
 });
 
+describe("page/sync agreement — the remembered shop is the shop the page displays (review P2)", () => {
+  const ROUTES = ["/dashboard", "/stations", "/admin/stations", "/admin/toast-employees", "/assignments", "/my-feedback", "/reports", "/reports/sales", "/ordering", "/mid-shift", "/operations/opening"];
+  const URLS = [`loc=${A}&location=${B}`, `location=${B}&loc=${A}`, `loc=${A}`, `location=${B}`, `loc=${C}&location=${A}`, ""];
+  for (const route of ROUTES) {
+    it(route, () => {
+      const allowed = [{ id: A }, { id: B }];
+      let checked = 0;
+      for (const search of URLS) {
+        const params = new URLSearchParams(search);
+        const record = Object.fromEntries(params) as Record<string, string | undefined>;
+        // What the page displays: its explicit value from the contract, read from its searchParams
+        // RECORD exactly as the pages do, resolved with no remembered shop.
+        const shown = pickShop({ allowed, explicit: shopParamFor(route, (name) => record[name]) });
+        // What the sync remembers after this navigation (a member of A and B).
+        const candidate = shopParamFromUrl(route, params);
+        if (shouldRememberShop({ candidate, allowed: [A, B], current: null })) {
+          expect(candidate, `${route}?${search}`).toBe(shown!.id);
+          checked += 1;
+        }
+      }
+      expect(checked).toBeGreaterThan(0);
+    });
+  }
+  it("contract spot-checks", () => {
+    expect(shopParamNames("/dashboard")).toEqual(["loc"]);
+    expect(shopParamNames("/my-feedback")).toEqual(["location", "loc"]);
+    expect(shopParamNames("/catering/quotes")).toEqual(["location"]);
+    expect(shopParamFor("/my-feedback", (n) => ({ location: "all", loc: A } as Record<string, string>)[n])).toBe("all");
+  });
+});
+
+describe("report default — resolved against the page's AUTHORIZED shops (review P2)", () => {
+  beforeEach(() => { server.cookie = undefined; server.active = [A, B, C]; server.queries = 0; });
+
+  it("candidates: memberships below level 8; memberships first, then every active shop at 8+", () => {
+    const base = { memberships: [A], activeShopIds: [B, A, C], reportAllLevel: REPORT_ALL_LOCATIONS_LEVEL };
+    expect(reportShopCandidates({ ...base, level: 7 })).toEqual([A]);
+    expect(reportShopCandidates({ ...base, level: 8 })).toEqual([A, B, C]);
+    expect(reportShopCandidates({ ...base, level: 9 })).toEqual([A, B, C]);
+  });
+
+  it("REGRESSION: a level-9 with membership [A] who picked B on the dashboard opens /reports on B", async () => {
+    server.cookie = B;
+    const viewer = { userId: "u", level: 9, locations: [A] };
+    const shop = await resolveReportShopId(viewer);
+    expect(shop).toBe(B);
+    expect(canReadScopedReport(viewer, shop!)).toBe(true); // and the page's own gate admits it
+  });
+
+  it("level 8 likewise (the report all-shop grant starts at 8)", async () => {
+    server.cookie = B;
+    expect(await resolveReportShopId({ level: 8, locations: [A] })).toBe(B);
+  });
+
+  it("below 8 a non-membership remembered shop is ignored (the gate would refuse it)", async () => {
+    server.cookie = B;
+    const viewer = { userId: "u", level: 7, locations: [A] };
+    expect(await resolveReportShopId(viewer)).toBe(A);
+    expect(canReadScopedReport(viewer, B)).toBe(false);
+    expect(server.queries).toBe(0);
+  });
+
+  it("an inactive / unknown remembered shop falls back to the first membership even at 9", async () => {
+    server.cookie = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
+    expect(await resolveReportShopId({ level: 9, locations: [A] })).toBe(A);
+  });
+
+  it("no cookie: the old default (first membership), and no extra query", async () => {
+    expect(await resolveReportShopId({ level: 9, locations: [B, A] })).toBe(B);
+    expect(server.queries).toBe(0);
+  });
+
+  it("a remembered membership needs no query", async () => {
+    server.cookie = A;
+    expect(await resolveReportShopId({ level: 9, locations: [B, A] })).toBe(A);
+    expect(server.queries).toBe(0);
+  });
+
+  it("an 8+ with no memberships defaults to the first active shop instead of bouncing", async () => {
+    expect(await resolveReportShopId({ level: 9, locations: [] })).toBe(A);
+  });
+});
+
 // ─── Source-shape pins ────────────────────────────────────────────────────────
 
 const ROOT = path.resolve(__dirname, "..");
@@ -163,15 +273,15 @@ const src = (rel: string) => readFileSync(path.join(ROOT, rel), "utf8");
 
 /** Every page that defaulted to "the first location" (triage #30 + the two Pulse-era twins). */
 const RESOLVER_PAGES: Record<string, RegExp> = {
-  "app/(authed)/dashboard/page.tsx": /await resolveShop\(locations, loc\)/,
-  "app/(authed)/reports/page.tsx": /params\.location \?\? \(await resolveShopId\(auth\.locations\)\)/,
-  "app/(authed)/reports/sales/page.tsx": /params\.location \?\? \(await resolveShopId\(auth\.locations\)\)/,
-  "app/(authed)/reports/sales/catering/page.tsx": /params\.location \?\? \(await resolveShopId\(auth\.locations\)\)/,
-  "app/(authed)/reports/sales/checks/page.tsx": /params\.location \?\? \(await resolveShopId\(auth\.locations\)\)/,
+  "app/(authed)/dashboard/page.tsx": /await resolveShop\(locations, shopParamFor\("\/dashboard", /,
+  "app/(authed)/reports/page.tsx": /params\.location \?\? \(await resolveReportShopId\(auth\)\)/,
+  "app/(authed)/reports/sales/page.tsx": /params\.location \?\? \(await resolveReportShopId\(auth\)\)/,
+  "app/(authed)/reports/sales/catering/page.tsx": /params\.location \?\? \(await resolveReportShopId\(auth\)\)/,
+  "app/(authed)/reports/sales/checks/page.tsx": /params\.location \?\? \(await resolveReportShopId\(auth\)\)/,
   "app/(authed)/reports/written/page.tsx": /await resolveShopId\(auth\.locations\)/,
-  "app/(authed)/my-feedback/page.tsx": /await resolveShop\(locations, selectedParam\)/,
-  "app/(authed)/assignments/page.tsx": /await resolveShop\(locations, location \?\? loc\)/,
-  "app/(authed)/stations/page.tsx": /await resolveShop\(locations, loc\)/,
+  "app/(authed)/my-feedback/page.tsx": /selectedParam = shopParamFor\("\/my-feedback", [\s\S]*await resolveShop\(locations, selectedParam\)/,
+  "app/(authed)/assignments/page.tsx": /await resolveShop\(locations, shopParamFor\("\/assignments", /,
+  "app/(authed)/stations/page.tsx": /await resolveShop\(locations, shopParamFor\("\/stations", /,
   "app/(authed)/operations/opening/page.tsx": /await resolveShop\(locations, locParam\)/,
   "app/(authed)/catering/quotes/page.tsx": /await resolveShop\(locations\)/,
   "app/(authed)/mid-shift/page.tsx": /location \?\? \(await resolveShopId\(accessible\.map/,
@@ -180,8 +290,8 @@ const RESOLVER_PAGES: Record<string, RegExp> = {
   "app/admin/catering/prep-demand/page.tsx": /await resolveShop\(locations, paramLocation\)/,
   "app/admin/catering/lto/page.tsx": /await resolveShop\(locations, paramLocation\)/,
   "app/admin/catering/fulfillment/page.tsx": /await resolveShopId\(nodes\.map/,
-  "app/admin/stations/page.tsx": /await resolveShop\(locations, loc\)/,
-  "app/admin/toast-employees/page.tsx": /await resolveShop\(locations, loc\)/,
+  "app/admin/stations/page.tsx": /await resolveShop\(locations, shopParamFor\("\/admin\/stations", /,
+  "app/admin/toast-employees/page.tsx": /await resolveShop\(locations, shopParamFor\("\/admin\/toast-employees", /,
   "app/ordering/page.tsx": /location \?\? \(await resolveShopId\(accessible\.map/,
 };
 

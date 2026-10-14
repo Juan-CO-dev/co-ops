@@ -21,6 +21,7 @@ import { loadMyPerformance } from "@/lib/team-metrics";
 import type { TrendGranularity } from "@/lib/reports-trends";
 import { requireSessionFromHeaders } from "@/lib/session";
 import { resolveShop } from "@/lib/shop-context";
+import { shopParamFor } from "@/lib/shop-context-shared";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 
 import { ReportPageNav } from "@/components/reports-hub/ReportPageNav";
@@ -46,8 +47,9 @@ export default async function MyPerformancePage({ searchParams }: PageProps): Pr
 async function renderPage(query: Record<string, string | undefined>, allShops = false): Promise<ReactNode> {
   const auth = await requireSessionFromHeaders("/my-feedback");
   const language: Language = auth.user.language;
-  const { loc, location, g } = query;
-  const selectedParam = location ?? loc; // Keep old ?loc= links working; the shared tabs use ?location=.
+  const { g } = query;
+  // ?location= then the old ?loc= — the route contract the B2 shop sync reads too.
+  const selectedParam = shopParamFor("/my-feedback", (name) => query[name]);
   const sb = getServiceRoleClient();
 
   const access = auth.level >= REPORT_ALL_LOCATIONS_LEVEL ? "all" : auth.locations;

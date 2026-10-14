@@ -71,11 +71,62 @@ export function pickShop<T extends { id: string }>(args: PickShopArgs<T>): T | n
  */
 const NON_CONTEXT_PATHS: readonly string[] = ["/admin/users"];
 
-/** The explicit shop a URL selects (`location` first, then the dashboard's `loc`), or null. */
+/**
+ * THE ROUTE PARAMETER CONTRACT: which query parameter(s) select the shop on each page, in
+ * precedence order. The pages listed here read their explicit shop THROUGH `shopParamFor`, and the
+ * sync reads it through the same function, so the shop the sync remembers is always the shop the
+ * page displays (review P2: `/dashboard?loc=A&location=B` shows A, so it must remember A — never
+ * B). Every other page reads `?location=` alone.
+ */
+const SHOP_PARAMS_BY_PATH: Readonly<Record<string, readonly string[]>> = {
+  "/dashboard": ["loc"],
+  "/stations": ["loc"],
+  "/admin/stations": ["loc"],
+  "/admin/toast-employees": ["loc"],
+  "/assignments": ["location", "loc"],
+  "/my-feedback": ["location", "loc"], // old ?loc= links keep working; the shared tabs use ?location=
+};
+const DEFAULT_SHOP_PARAMS: readonly string[] = ["location"];
+
+/** The shop-selecting query parameters of `pathname`, in precedence order. */
+export function shopParamNames(pathname: string): readonly string[] {
+  return SHOP_PARAMS_BY_PATH[pathname] ?? DEFAULT_SHOP_PARAMS;
+}
+
+/**
+ * The RAW explicit shop value `pathname` reads (first present parameter of its contract), or
+ * undefined. Raw on purpose: a page may give a non-shop value meaning (`"all"`).
+ */
+export function shopParamFor(pathname: string, get: (name: string) => string | null | undefined): string | undefined {
+  for (const name of shopParamNames(pathname)) {
+    const value = get(name);
+    if (value !== null && value !== undefined) return value;
+  }
+  return undefined;
+}
+
+/** The explicit shop a URL selects on this page (per the contract above), or null. */
 export function shopParamFromUrl(pathname: string, params: { get(name: string): string | null }): string | null {
   if (NON_CONTEXT_PATHS.includes(pathname)) return null;
-  const value = params.get("location") ?? params.get("loc");
+  const value = shopParamFor(pathname, (name) => params.get(name));
   return isShopId(value) ? value : null;
+}
+
+/**
+ * The shops a REPORT page may default to, in fallback order (review P2). Below
+ * `reportAllLevel` that is the actor's memberships (the read gate is membership). At or above
+ * it the read gate admits every active shop, so a remembered shop outside the memberships (a
+ * level-9 who picked it on the dashboard) is a valid default too; memberships still come first so
+ * the no-cookie default is unchanged.
+ */
+export function reportShopCandidates(args: {
+  level: number;
+  memberships: readonly string[];
+  activeShopIds: readonly string[];
+  reportAllLevel: number;
+}): string[] {
+  if (args.level < args.reportAllLevel) return [...args.memberships];
+  return [...args.memberships, ...args.activeShopIds.filter((id) => !args.memberships.includes(id))];
 }
 
 /**

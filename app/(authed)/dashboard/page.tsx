@@ -71,6 +71,7 @@ import { CountsTile } from "@/components/counts/CountsTile";
 import { OpeningTile } from "@/components/OpeningTile";
 import { requireSessionFromHeaders } from "@/lib/session";
 import { resolveShop } from "@/lib/shop-context";
+import { shopParamFor } from "@/lib/shop-context-shared";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import type { ChecklistInstance } from "@/lib/types";
 
@@ -349,8 +350,8 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
   });
 
   // B2: ?loc= wins, else the remembered shop (tile login / last explicit pick), else the first.
-  const { loc } = await searchParams;
-  const selectedLocation = await resolveShop(locations, loc);
+  const sp = await searchParams;
+  const selectedLocation = await resolveShop(locations, shopParamFor("/dashboard", (name) => sp[name as keyof typeof sp]));
 
   // Each optional loader fails independently; never present missing data as empty.
   const failedWidgets = new Set<TranslationKey>();
