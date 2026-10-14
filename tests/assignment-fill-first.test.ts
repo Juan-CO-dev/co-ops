@@ -21,7 +21,7 @@ const ev = (userId: string, stationId: string | null, positionId: string | null,
   id: `e${++seq}`, sequence: String(seq), locationId: "shop", businessDate: "2026-10-13", userId, stationId, positionId,
   kind, actorId: userId, actorName: null, at: "2026-10-13T15:00:00Z", source: stationId ? "claimed" : null,
 });
-const cue = (b: Pick<ShiftBoard, "stations" | "events" | "people" | "occupiedPositions">) => [...fillFirstPositionIds(b)].sort();
+const cue = (b: Parameters<typeof fillFirstPositionIds>[0]) => [...fillFirstPositionIds(b)].sort();
 
 describe("fillFirstPositionIds", () => {
   it("cues the first position of each uncovered station and nothing on covered ones", () => {
@@ -51,7 +51,7 @@ describe("fillFirstPositionIds", () => {
       ],
       people: [person("onbreak", { onBreak: true }), person("working")],
       events: [ev("onbreak", "a", "a-1"), ev("working", "b", "b-1")],
-      occupiedPositions: [{ positionId: "a-1" }, { positionId: "b-1" }],
+      occupiedPositions: [{ positionId: "a-1", firstName: "On" }, { positionId: "b-1", firstName: "Wo" }],
     };
     const floor = floorStations(b, { nowMinutes: 600, viewerId: "x", showNames: true });
     const uncovered = floor.filter((s) => s.status === "uncovered").map((s) => s.id).sort();
