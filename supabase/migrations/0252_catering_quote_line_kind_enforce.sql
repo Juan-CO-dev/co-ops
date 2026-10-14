@@ -1,5 +1,7 @@
 -- Migration 0252_catering_quote_line_kind_enforce
 -- AUTHORED 2026-10-14, NOT YET APPLIED — GATE: apply only AFTER the B7c deploy is live
+-- APPLIED TO SIM 2026-10-14 (schema_migrations version 20261014175401, name '0252_catering_quote_line_kind_enforce')
+-- APPLIED TO PROD 2026-10-14 (schema_migrations version 20261014175406, name '0252_catering_quote_line_kind_enforce')
 -- (sim first, then prod). Requires 0251.
 --
 -- RELEASE (expand/contract, Astra r4 BC-038): this is the CONTRACT half of 0251. From here on
