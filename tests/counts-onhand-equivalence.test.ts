@@ -208,3 +208,17 @@ describe("B9 step 2 — each ledger read once, whatever the number of anchor gro
     expect(tally(old.log, "vendor_deliveries")).toBeGreaterThan(20); // the per-group re-reads this replaced
   });
 });
+
+describe("B9 step 3 — the count-dimension N+1 is one read", () => {
+  it.each(MODES)("count-anchored (packaging) SKUs add no queries: one receipt-line read serves them all — %s", async (mode) => {
+    setMode(mode);
+    const base = await measure({}, () => counts.loadOnHand(actor, LOC, NOW));
+    const scaled = await measure({ countSessions: 12, parWalks: 4, baselineInstants: 4 }, () => counts.loadOnHand(actor, LOC, NOW));
+    const old = await measure({ countSessions: 12 }, v0Panel);
+    expect(scaled.out.rows.filter((r) => r.dimension === "count").length).toBeGreaterThanOrEqual(8);
+    expect(tally(base.log, "vendor_deliveries")).toBe(1);
+    expect(tally(scaled.log, "vendor_deliveries")).toBe(1);
+    expect(scaled.trips).toBe(base.trips);
+    expect(tally(old.log, "vendor_delivery_items")).toBeGreaterThan(tally(scaled.log, "vendor_delivery_items") + 10);
+  });
+});

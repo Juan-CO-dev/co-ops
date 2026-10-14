@@ -6,6 +6,7 @@ import {
   instantMicros,
   productionInputsFrom,
   receivedOzWindow,
+  receivedUnitsWindow,
   retroEditStale,
   salesDirectOz,
   salesGapDates,
@@ -74,7 +75,7 @@ import { audit } from "@/lib/audit";
 import type { AuthContext } from "@/lib/session";
 import { loadMeasures, loadSkuPackChains } from "@/lib/prep-consumption";
 import { type MeasureUnitFactor, type RecipeInputSku } from "@/lib/recipe-math";
-import { buildPackChain, chainCountLeafMeasure, chainLeafUnitsFrom, type PackChainLevel } from "@/lib/pack-chain-shared";
+import { buildPackChain, chainCountLeafMeasure, type PackChainLevel } from "@/lib/pack-chain-shared";
 import {
   resolveCountLinesDim,
   resolvePerSkuAnchors,
@@ -1422,7 +1423,7 @@ interface OnHandLedgerContext {
   salesOz(skuIds: string[], fromDate: string, untilExclusive: string | null, gaps: SalesGapSet): Map<string, number | null>;
   salesRowsFrom(fromDate: string): EffectiveSalesRow[];
   receivedOz(skuIds: string[], afterIso: string, untilIso: string | null): Map<string, number | null>;
-  receivedUnits(skuId: string, afterIso: string, untilIso: string | null, chain: PackChainLevel[] | null): Promise<number | null>;
+  receivedUnits(skuId: string, afterIso: string, untilIso: string | null, chain: PackChainLevel[] | null): number | null;
   consumedOz(skuIds: string[], afterIso: string, untilIso: string | null): Map<string, number | null>;
   productionInputsFrom(fromIso: string): ProductionLedgerInput[];
   stale(anchorIso: string): boolean;
@@ -1581,8 +1582,6 @@ async function loadOnHandLedgers(
  * wrong, and that must fail loudly rather than quietly under-count.
  */
 function onHandLedgerContext(
-  sb: ReturnType<typeof getServiceRoleClient>,
-  locationId: string,
   sales: SalesSnapshot | null,
   ledgers: OnHandLedgers,
 ): OnHandLedgerContext {
@@ -1605,7 +1604,7 @@ function onHandLedgerContext(
     salesOz: (skuIds, fromDate, untilExclusive, gaps) => salesDirectOz(requireSales(), skuIds, fromDate, untilExclusive, gaps),
     salesRowsFrom: (fromDate) => (sales ? salesRowsFrom(sales, fromDate) : []),
     receivedOz: (skuIds, afterIso, untilIso) => { requireDeliveries(afterIso); return receivedOzWindow(ledgers.deliveryLines, skuIds, afterIso, untilIso); },
-    receivedUnits: (skuId, afterIso, untilIso, chain) => sumReceivedUnitsWindow(sb, skuId, locationId, afterIso, untilIso, chain),
+    receivedUnits: (skuId, afterIso, untilIso, chain) => { requireDeliveries(afterIso); return receivedUnitsWindow(ledgers.deliveryLines, skuId, afterIso, untilIso, chain); },
     consumedOz: (skuIds, afterIso, untilIso) => { requireProductions(afterIso); return consumedOzWindow(ledgers.productionInputs, skuIds, afterIso, untilIso); },
     productionInputsFrom: (fromIso) => { requireProductions(fromIso); return productionInputsFrom(ledgers.productionInputs, fromIso); },
     stale: (anchorIso) => {
@@ -1778,7 +1777,7 @@ async function onHandCore(
       ...(inferredPlan.needsBaseline.length > 0 ? [inferredWindowStart(now).cutoffIso] : []),
     ]),
   });
-  const ctx = onHandLedgerContext(sb, locationId, sales, ledgers);
+  const ctx = onHandLedgerContext(sales, ledgers);
   const salesCoverage = await salesDisclosure(sb, locationId, disclosureFrom, sales);
   const salesThrough = await finishDepletionWatermark(watermarkStart, locationId, sb, sales);
   const anchorAt = evList[0]?.counted_at ?? null; // the location's "last counted" header hint only.
@@ -1884,12 +1883,12 @@ async function onHandCore(
   // ── Count rows (leaf-unit on-hand + "used or lost since last count") ──
   // received-units derive READ-TIME from level-aware receiving: received_qty_at_level
   // × chain multipliers to the leaf. No consumption term (packaging has no ledger).
-  const countRows: OnHandRow[] = await Promise.all(
-    countSkuIds.map(async (skuId): Promise<OnHandRow> => {
+  // B9 step 3: one receipt-line read serves every count SKU (it was 2–4 queries per SKU).
+  const countRows: OnHandRow[] = countSkuIds.map((skuId): OnHandRow => {
       const a = unitAnchorBySku.get(skuId)!;
       const chain = chainsBySku.get(skuId) ?? null;
       const unitLabel = chain ? (chainCountLeafMeasure(buildPackChain(chain), measures) ?? "units") : "units";
-      const receivedSince = await ctx.receivedUnits(skuId, a.anchorAt, null, chain);
+      const receivedSince = ctx.receivedUnits(skuId, a.anchorAt, null, chain);
       const anchorStale = ctx.stale(a.anchorAt); // memoized — shared with the weight tier.
       const onHand = computeOnHandUnits(
         { skuId, anchorUnits: a.anchorUnits, anchorAt: a.anchorAt, receivedUnitsSince: receivedSince, anchorStale },
@@ -1897,7 +1896,7 @@ async function onHandCore(
       );
       let receivedBetweenUnits: number | null = null;
       if (a.prevAt != null) {
-        receivedBetweenUnits = await ctx.receivedUnits(skuId, a.prevAt, a.anchorAt, chain);
+        receivedBetweenUnits = ctx.receivedUnits(skuId, a.prevAt, a.anchorAt, chain);
       }
       const usedOrLost = computeUsedOrLost({
         skuId,
@@ -1914,8 +1913,7 @@ async function onHandCore(
         looseLineCount: a.looseLineCount,
         partialLineCount: a.partialLineCount,
       };
-    }),
-  );
+  });
 
   // ── Par-estimate rows (spec D6, middle tier) ── for active SKUs with NO census
   // anchor (weight or count) but a par-pass line's implied on-hand: a soft shelf-walk
@@ -2121,92 +2119,6 @@ export async function loadCountsTileState(
 }
 
 // ── Ledger oz aggregations (A3, oz-native, advisory-null) ─────────────────────────
-/**
- * Deliveries at this location whose write instant (vendor_deliveries.created_at)
- * falls in the drift window — F4: bound the id set by the SAME window the line sum
- * uses (created_at > anchor, <= until when set) rather than pulling the location's
- * entire delivery history into the .in() clause. Cheaper + tighter (a huge legacy
- * history no longer bloats the id list); correctness is unchanged because the line
- * sum re-filters on the item created_at anyway.
- */
-async function locationDeliveryIds(
-  sb: ReturnType<typeof getServiceRoleClient>,
-  locationId: string,
-  afterIso: string,
-  untilIso: string | null,
-): Promise<string[]> {
-  // Feeds the received-since term: a short id list silently zeroes intake for every
-  // delivery it drops, so this read must neither swallow an error nor truncate. The
-  // window is anchor→now, which widens without bound while a location goes uncounted
-  // — PAGED (the PR #63 lesson) under `id` (the PK) as the stable total order; the
-  // caller only uses the set membership, so row order is not load-bearing.
-  const rows = await selectAllRows<{ id: string }>(
-    async (from, to) => {
-      let q = sb.from("vendor_deliveries").select("id").eq("location_id", locationId).gt("created_at", afterIso);
-      if (untilIso != null) q = q.lte("created_at", untilIso);
-      const { data, error } = await q
-        .order("id", { ascending: true })
-        .range(from, to)
-        .returns<Array<{ id: string }>>();
-      if (error) throw new Error(`locationDeliveryIds: ${error.message}`);
-      return { data };
-    },
-  );
-  return rows.map((d) => d.id);
-}
-
-// ── Count-space received-units (PR-C): derive LEAF units from level-aware receiving ─
-// For a count-anchored SKU, on-hand needs "how many leaf units arrived since the
-// anchor". We derive it READ-TIME from the receiving line's entered level + qty:
-//   line_units = received_qty_at_level × chainLeafUnitsFrom(chain, received_level_label)
-// A line with no level label, no qty-at-level, or an unresolvable walk → the SKU's
-// received-units term is advisory-NULL (never a fabricated count). No chain → null.
-async function sumReceivedUnitsWindow(
-  sb: ReturnType<typeof getServiceRoleClient>,
-  skuId: string,
-  locationId: string,
-  afterIso: string,
-  untilIso: string | null,
-  chain: PackChainLevel[] | null,
-): Promise<number | null> {
-  if (chain == null || chain.length === 0) return null; // no chain → can't map to leaf units.
-  const packChain = buildPackChain(chain);
-  const deliveryIds = await locationDeliveryIds(sb, locationId, afterIso, untilIso);
-  if (deliveryIds.length === 0) return 0;
-  // PAGED (the PR #63 lesson): a truncated page silently UNDERSTATES the received-
-  // units term. `id` (the PK) gives the stable total order paging requires; the sum
-  // and its advisory-null taint are order-insensitive.
-  const rows = await selectAllRows<{ received_level_label: string | null; received_qty_at_level: number | string | null; created_at: string }>(
-    async (from, to) => {
-      let q = sb.from("vendor_delivery_items")
-        .select("received_level_label, received_qty_at_level, created_at")
-        .eq("vendor_item_id", skuId)
-        .in("delivery_id", deliveryIds)
-        .gt("created_at", afterIso);
-      if (untilIso != null) q = q.lte("created_at", untilIso);
-      const { data, error } = await q
-        .order("id", { ascending: true })
-        .range(from, to)
-        .returns<Array<{ received_level_label: string | null; received_qty_at_level: number | string | null; created_at: string }>>();
-      if (error) throw new Error(`sumReceivedUnitsWindow: ${error.message}`);
-      return { data };
-    },
-  );
-  if (rows.length === 0) return 0;
-  let sum = 0;
-  for (const r of rows) {
-    const level = r.received_level_label?.trim();
-    const qty = num(r.received_qty_at_level);
-    // A line with no level or no qty-at-level can't map to leaf units → advisory-null
-    // taint (the whole SKU's intake term is unknowable this window).
-    if (!level || qty == null) return null;
-    const perContainer = chainLeafUnitsFrom(packChain, level);
-    if (perContainer == null) return null; // unresolvable level → advisory-null.
-    sum += qty * perContainer;
-  }
-  return Number.isFinite(sum) ? sum : null;
-}
-
 /**
  * Consumed oz for each SKU from LIVE productions (superseded_at/revoked_at NULL) at
  * this location with produced_at STRICTLY AFTER the anchor, summing

@@ -9,6 +9,7 @@ import {
   earliestInstant,
   instantMicros,
   receivedOzWindow,
+  receivedUnitsWindow,
   retroEditStale,
   salesDirectOz,
   salesGapDates,
@@ -96,5 +97,26 @@ describe("the one sales read, sliced", () => {
   it("legacy gap sets are the probe's dates from the consumer's own start", () => {
     const s = snap({ mode: "legacy", legacyGaps: new Set(["2026-09-28", "2026-10-03"]) });
     expect([...salesGapDates(s, "2026-10-01")]).toEqual(["2026-10-03"]);
+  });
+});
+
+describe("count-dimension received units (PR-C), from the shared receipt lines", () => {
+  const chain = [
+    { id: "case", label: "case", containsQty: 10, containsLevelId: "sleeve", containsMeasureUnit: null, displayOrdinal: 1 },
+    { id: "sleeve", label: "sleeve", containsQty: 50, containsLevelId: null, containsMeasureUnit: "each", displayOrdinal: 2 },
+  ];
+  const at = (created: string, level: string | null, qty: number | string | null): DeliveryLedgerLine =>
+    ({ ...line("bags", null, created), receivedLevelLabel: level, receivedQtyAtLevel: qty });
+  it("walks each line's level to leaf units and sums them", () => {
+    expect(receivedUnitsWindow([at("2026-10-02T00:00:00Z", "case", 2), at("2026-10-03T00:00:00Z", " sleeve ", "4")], "bags", "2026-10-01T00:00:00Z", null, chain)).toBe(1200);
+  });
+  it("no chain → null; no line in the window → 0", () => {
+    expect(receivedUnitsWindow([], "bags", "2026-10-01T00:00:00Z", null, null)).toBeNull();
+    expect(receivedUnitsWindow([at("2026-09-01T00:00:00Z", "case", 1)], "bags", "2026-10-01T00:00:00Z", null, chain)).toBe(0);
+  });
+  it("one level-less, qty-less or unwalkable line makes the whole term unknown", () => {
+    for (const bad of [at("2026-10-02T00:00:00Z", null, 1), at("2026-10-02T00:00:00Z", "case", null), at("2026-10-02T00:00:00Z", "pallet", 1)]) {
+      expect(receivedUnitsWindow([at("2026-10-02T00:00:00Z", "case", 1), bad], "bags", "2026-10-01T00:00:00Z", null, chain)).toBeNull();
+    }
   });
 });

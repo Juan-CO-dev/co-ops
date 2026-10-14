@@ -20,6 +20,7 @@
  * same database, all three sales sources).
  */
 import { salesWindowUntrustworthy } from "@/lib/counts-shared";
+import { buildPackChain, chainLeafUnitsFrom, type PackChainLevel } from "@/lib/pack-chain-shared";
 import type { CaptureDayManifest, EffectiveSalesRow, SalesCoverage } from "@/lib/toast/effective-depletion";
 
 function num(v: number | string | null | undefined): number | null {
@@ -279,4 +280,39 @@ export function retroEditStale(headers: readonly DeliveryLedgerHeader[], anchorI
   const anchorUs = instantMicros(anchorIso);
   const anchorDate = anchorIso.slice(0, 10); // YYYY-MM-DD for the bare delivery_date compare.
   return headers.some((h) => h.createdUs > anchorUs && h.deliveryDate != null && h.deliveryDate <= anchorDate);
+}
+
+/**
+ * Received LEAF units for one count-dimension SKU over (after, until] — the PR-C read-time
+ * derivation (received_qty_at_level × the chain's leaf multiplier for that level) over the
+ * loaded lines. B9 step 3: this used to be 2–4 queries PER count-anchored SKU (~114
+ * packaging SKUs on prod after the first full count); now it is a filter. No chain → null;
+ * no line → 0; any line without a level / qty, or with a level the chain cannot walk →
+ * the whole term is advisory-null (never a fabricated count).
+ */
+export function receivedUnitsWindow(
+  lines: readonly DeliveryLedgerLine[],
+  skuId: string,
+  afterIso: string,
+  untilIso: string | null,
+  chain: PackChainLevel[] | null,
+): number | null {
+  if (chain == null || chain.length === 0) return null; // no chain → can't map to leaf units.
+  const packChain = buildPackChain(chain);
+  const afterUs = instantMicros(afterIso);
+  const untilUs = untilIso == null ? null : instantMicros(untilIso);
+  let any = false;
+  let sum = 0;
+  for (const l of lines) {
+    if (l.skuId !== skuId || !inWindowUs(l.deliveryCreatedUs, afterUs, untilUs) || !inWindowUs(l.createdUs, afterUs, untilUs)) continue;
+    any = true;
+    const level = l.receivedLevelLabel?.trim();
+    const qty = num(l.receivedQtyAtLevel);
+    if (!level || qty == null) return null;
+    const perContainer = chainLeafUnitsFrom(packChain, level);
+    if (perContainer == null) return null; // unresolvable level → advisory-null.
+    sum += qty * perContainer;
+  }
+  if (!any) return 0;
+  return Number.isFinite(sum) ? sum : null;
 }
