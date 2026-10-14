@@ -568,3 +568,4 @@ Not batched until reproduced: #22, #29, #67.
 - **D-64:** Production goes in the menu for **Employee (3) and up**, not key holder ("key holders aren't the only ones doing prep"). Every gate gets lowered to 3; the yield stats keep their own floor.
 - **D-14, D-17, D-26, D-27, D-28, D-45, D-46, D-47, D-48, D-49, D-60, D-62, D-63, D-66, D-80:** approved as recommended ("The rest of the recs are good").
 - **Cross-shop catering customer (B5 review, 2026-10-14):** option (b). A quote may attach to an existing customer from the other shop, resolved by email. The other shop's saved contact details stay hidden from that GM.
+  - Accepted as part of option (b): the "another shop's client (contact details hidden)" display tells the GM that the email already exists at the other shop. That follows directly from attaching to the existing customer (Astra note, 2026-10-14).
