@@ -1,12 +1,12 @@
 "use client";
 
-import { useState, useEffect, useCallback, type FormEvent } from "react";
+import { useState, useEffect, useCallback, useId, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import { useTranslation } from "@/lib/i18n/provider";
 import { formatCents, formatDateLabel } from "@/lib/i18n/format";
 import type { TranslationKey } from "@/lib/i18n/types";
-import { LEGAL_TRANSITIONS, PIPELINE_STAGES, leadEditPatch, shopChipLabel, type PipelineStage } from "@/lib/catering/pipeline-shared";
-import type { PipelineLead, PipelineSearchResult, AssignableStaff } from "@/lib/catering/pipeline";
+import { LEAD_EMAIL_MAX, LEAD_PHONE_MAX, LEGAL_TRANSITIONS, PIPELINE_STAGES, leadEditPatch, shopChipLabel, showQuoteNotAccepted, stageMoveNeedsConfirm, type PipelineStage } from "@/lib/catering/pipeline-shared";
+import type { PipelineLead, PipelineBoardLead, PipelineSearchResult, AssignableStaff } from "@/lib/catering/pipeline";
 import { LEAD_SOURCES, leadSourceKey } from "@/lib/catering/intake-shared";
 import type { CateringCapacityResult } from "@/lib/catering/capacity";
 import { EzcaterReconciliationPanel } from "./EzcaterReconciliationPanel";
@@ -25,7 +25,7 @@ interface LocationOpt {
 interface Props {
   notInToast: PipelineToastOrder[] | null;
   staff: AssignableStaff[];
-  leads: PipelineLead[];
+  leads: PipelineBoardLead[];
   followUps: PipelineLead[];
   locations: LocationOpt[];
   createLocations: LocationOpt[];
@@ -62,6 +62,20 @@ function ShopChip({ lead }: { lead: { locationName?: string | null } }) {
   );
 }
 
+/** D-46: a Confirmed card whose current quote is still a draft or only sent. */
+function QuoteNotAcceptedChip() {
+  const { t } = useTranslation();
+  return (
+    <span
+      data-testid="quote-not-accepted-chip"
+      title={t("catering.pipeline.quote_not_accepted_hint")}
+      className="ml-1 mt-1 inline-block rounded-md bg-co-warning-surface px-2 py-0.5 text-xs font-medium text-co-warning-text"
+    >
+      {t("catering.pipeline.quote_not_accepted")}
+    </span>
+  );
+}
+
 function stageKey(s: PipelineStage): TranslationKey {
   return `catering.pipeline.stage.${s}` as TranslationKey;
 }
@@ -84,7 +98,7 @@ export function PipelineClient({ notInToast, staff, leads, followUps, locations,
       (filterSource === "" || l.leadSource === filterSource),
   );
 
-  const byStage: Record<PipelineStage, PipelineLead[]> = {
+  const byStage: Record<PipelineStage, PipelineBoardLead[]> = {
     inquiry: [],
     quote_sent: [],
     confirmed: [],
@@ -288,7 +302,7 @@ function SearchResultCard({
         <div>
           <span className="font-semibold text-co-text">{r.contactName}</span>
           {r.company && <span className="ml-2 text-sm text-co-text-muted">{r.company}</span>}
-          <div><ShopChip lead={r} />{notInToast && <NotInToastChip />}</div>
+          <div><ShopChip lead={r} />{notInToast && <NotInToastChip />}{showQuoteNotAccepted(r.stage, r.quoteStatus) && <QuoteNotAcceptedChip />}</div>
         </div>
         <span className="inline-block rounded-md bg-co-surface px-2 py-0.5 text-xs font-medium text-co-text-muted border border-co-border">
           {t(stageKey(r.stage))}
@@ -333,7 +347,7 @@ function LeadCard({
   staffNames,
 }: {
   notInToast: boolean;
-  lead: PipelineLead;
+  lead: PipelineBoardLead;
   money: (c: number | null) => string | null;
   canWrite: boolean;
   canTransfer: boolean;
@@ -355,6 +369,7 @@ function LeadCard({
         {lead.company && <div className="text-xs text-co-text-muted">{lead.company}</div>}
         <ShopChip lead={lead} />
         {notInToast && <NotInToastChip />}
+        {showQuoteNotAccepted(lead.stage, lead.quoteStatus) && <QuoteNotAcceptedChip />}
         <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 text-xs text-co-text-muted">
           {lead.eventDate && <span>{formatDateLabel(lead.eventDate, language)}</span>}
           {lead.headcount != null && <span>{t("catering.pipeline.headcount_short").replace("{n}", String(lead.headcount))}</span>}
@@ -393,6 +408,9 @@ function LeadDetail({
   const capacity = detail?.leadId === lead.id ? detail.capacity : null;
   const [busy, setBusy] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  // D-49: the final stage awaiting a second tap (Completed / Lost), or null.
+  const [confirming, setConfirming] = useState<PipelineStage | null>(null);
+  const confirmTitleId = useId();
 
   useEffect(() => {
     let alive = true;
@@ -411,6 +429,7 @@ function LeadDetail({
     async (toStage: PipelineStage) => {
       setBusy(true);
       setErrorMsg(null);
+      setConfirming(null);
       const res = await postJson(`/api/catering/pipeline/${lead.id}`, { stage: toStage }, "PATCH");
       setBusy(false);
       if (res.ok) {
@@ -442,6 +461,12 @@ function LeadDetail({
       )}
 
       <dl className="grid grid-cols-2 gap-x-3 gap-y-1 text-xs">
+        {lead.contactPhone && (
+          <>
+            <dt className="text-co-text-muted">{t("catering.pipeline.field.phone")}</dt>
+            <dd className="text-co-text">{lead.contactPhone}</dd>
+          </>
+        )}
         {visibleNotes?.trim() && (
           <>
             <dt className="text-co-text-muted">{t("catering.pipeline.field.notes")}</dt>
@@ -481,14 +506,45 @@ function LeadDetail({
               <button
                 key={s}
                 type="button"
-                disabled={busy}
-                onClick={() => void moveTo(s)}
+                disabled={busy || confirming !== null}
+                onClick={() => (stageMoveNeedsConfirm(s) ? setConfirming(s) : void moveTo(s))}
                 className="rounded-md border border-co-border px-2 py-1 text-xs text-co-text disabled:opacity-50"
               >
                 {t(stageKey(s))}
               </button>
             ))}
           </div>
+          {confirming && (
+            <div
+              role="group"
+              aria-labelledby={confirmTitleId}
+              data-testid="final-stage-confirm"
+              className="mt-2 rounded-md border border-co-border bg-co-warning-surface p-3"
+            >
+              <p id={confirmTitleId} className="text-sm font-semibold text-co-warning-text">
+                {t("catering.pipeline.confirm_final.title", { stage: t(stageKey(confirming)) })}
+              </p>
+              <p className="mt-1 text-xs text-co-text">{t("catering.pipeline.confirm_final.body")}</p>
+              <div className="mt-2 flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={() => void moveTo(confirming)}
+                  className="inline-flex min-h-[44px] items-center rounded-md bg-co-text px-4 text-sm font-semibold text-co-bg disabled:opacity-50"
+                >
+                  {t("catering.pipeline.confirm_final.yes", { stage: t(stageKey(confirming)) })}
+                </button>
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={() => setConfirming(null)}
+                  className="inline-flex min-h-[44px] items-center rounded-md px-4 text-sm text-co-text-muted"
+                >
+                  {t("catering.pipeline.cancel")}
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       )}
 
@@ -499,8 +555,8 @@ function LeadDetail({
 
 // ── Edit a lead in place (B5 #36) ────────────────────────────────────────────
 // PATCH /api/catering/pipeline/[id] already edits these fields ("D3 — edit in place");
-// the board only lacked a form. Sends ONLY the changed fields (leadEditPatch). Phone and
-// email are not here: adding them is D-48, Juan's call.
+// the board only lacked a form. Sends ONLY the changed fields (leadEditPatch). D-48 adds the
+// phone; a lead has no email column (email lives on the catering customer), so no email box.
 function EditLeadDetails({ lead }: { lead: PipelineLead }) {
   const { t } = useTranslation();
   const router = useRouter();
@@ -517,6 +573,7 @@ function EditLeadDetails({ lead }: { lead: PipelineLead }) {
       const result = leadEditPatch(lead, {
         contactName: raw("contactName"),
         company: raw("company"),
+        contactPhone: raw("contactPhone"),
         eventDate: raw("eventDate"),
         headcount: raw("headcount"),
         followUpDate: raw("followUpDate"),
@@ -563,6 +620,7 @@ function EditLeadDetails({ lead }: { lead: PipelineLead }) {
           <div className="grid grid-cols-1 gap-3">
             <Field label={t("catering.pipeline.field.contact_name")} name="contactName" required defaultValue={lead.contactName} />
             <Field label={t("catering.pipeline.field.company")} name="company" defaultValue={lead.company ?? ""} />
+            <Field label={t("catering.pipeline.field.phone")} name="contactPhone" type="tel" defaultValue={lead.contactPhone ?? ""} />
             <Field label={t("catering.pipeline.field.event_date")} name="eventDate" type="date" defaultValue={lead.eventDate ?? ""} />
             <Field label={t("catering.pipeline.field.headcount")} name="headcount" type="number" defaultValue={lead.headcount != null ? String(lead.headcount) : ""} />
             <Field label={t("catering.pipeline.field.follow_up_date")} name="followUpDate" type="date" defaultValue={lead.followUpDate ?? ""} />
@@ -614,6 +672,8 @@ function AddLeadRow({ locations, staff, defaultLocationId }: { locations: Locati
       const res = await postJson("/api/catering/pipeline", {
         contactName,
         company: str("company"),
+        contactPhone: str("contactPhone"),
+        contactEmail: str("contactEmail"),
         eventDate: str("eventDate"),
         headcount: headcountRaw ? Number(headcountRaw) : null,
         leadSource: str("leadSource"),
@@ -650,6 +710,8 @@ function AddLeadRow({ locations, staff, defaultLocationId }: { locations: Locati
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         <Field label={t("catering.pipeline.field.contact_name")} name="contactName" required />
         <Field label={t("catering.pipeline.field.company")} name="company" />
+        <Field label={t("catering.pipeline.field.phone")} name="contactPhone" type="tel" />
+        <Field label={t("catering.pipeline.field.email")} name="contactEmail" type="email" hint={t("catering.pipeline.field.email_hint")} />
         <Field label={t("catering.pipeline.field.event_date")} name="eventDate" type="date" />
         <Field label={t("catering.pipeline.field.headcount")} name="headcount" type="number" />
         <label className="block text-sm">
@@ -705,13 +767,16 @@ function Field({
   type = "text",
   required = false,
   defaultValue,
+  hint,
 }: {
   label: string;
   name: string;
   type?: string;
   required?: boolean;
   defaultValue?: string;
+  hint?: string;
 }) {
+  const hintId = useId();
   return (
     <label className="block min-w-0 text-sm">
       <span className="text-co-text-muted">
@@ -723,8 +788,12 @@ function Field({
         type={type}
         required={required}
         defaultValue={defaultValue}
+        aria-describedby={hint ? hintId : undefined}
+        {...(type === "tel" ? { inputMode: "tel" as const, autoComplete: "off", maxLength: LEAD_PHONE_MAX } : {})}
+        {...(type === "email" ? { inputMode: "email" as const, autoComplete: "off", autoCapitalize: "none", maxLength: LEAD_EMAIL_MAX } : {})}
         className="mt-1 min-h-[44px] w-full min-w-0 rounded-md border border-co-border bg-co-surface p-2 text-co-text"
       />
+      {hint && <span id={hintId} className="mt-1 block text-xs text-co-text-dim">{hint}</span>}
     </label>
   );
 }

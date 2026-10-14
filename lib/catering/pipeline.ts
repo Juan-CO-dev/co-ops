@@ -21,10 +21,11 @@ import { canReadCateringLead, loadCateringReader } from "./ezcater-detail";
 import { canReadCateringContact } from "./ezcater-detail-shared";
 import type { AuthContext } from "@/lib/session";
 import { checkCateringCapacity, type CateringCapacityResult } from "@/lib/catering/capacity";
-import { reservePrepDemand, consumePrepDemand, releasePrepDemand } from "@/lib/catering/prep-demand";
+import { reservePrepDemand, consumePrepDemand, releasePrepDemand, assertQuoteReadyForPrep, PrepDemandNeedsRepairError } from "@/lib/catering/prep-demand";
 
 // ── Stage vocabulary ─────────────────────────────────────────────────────────
-import { PIPELINE_STAGES, type PipelineStage, canTransition } from "./pipeline-shared";
+import { PIPELINE_STAGES, type PipelineStage, canTransition, normalizeLeadEmail, normalizeLeadPhone } from "./pipeline-shared";
+import { resolveOrCreateContact } from "./companies";
 import { isLeadSource } from "./intake-shared";
 // Client-safe stage vocabulary lives in pipeline-shared.ts; re-exported for
 // existing server consumers.
@@ -57,6 +58,13 @@ function validateLeadSource(v: string | null | undefined): void {
   if (v != null && !isLeadSource(v)) {
     throw new CateringPipelineError(400, "invalid_source", "Unknown lead source");
   }
+}
+
+/** D-48: a lead phone is stored trimmed (empty → null); too long is refused WITHOUT the value. */
+function leadPhone(v: string | null | undefined): string | null {
+  const r = normalizeLeadPhone(v);
+  if (!r.ok) throw new CateringPipelineError(400, "invalid_payload", "contactPhone is too long");
+  return r.value;
 }
 
 /** The "order lead" must be an active staff member (level >= 3). */
@@ -237,8 +245,40 @@ async function readScopeOr(actor: AuthContext): Promise<string | null> {
 }
 
 // ── Reads ───────────────────────────────────────────────────────────────────
+/** A board lead: the lead plus its current quote's status where the board needs it. */
+export interface PipelineBoardLead extends PipelineLead {
+  /**
+   * Status of the lead's CURRENT quote (latest non-superseded) — loaded for Confirmed leads
+   * only, for the D-46 "quote not accepted" chip; null for every other stage or no quote.
+   */
+  quoteStatus: string | null;
+}
+
+/** Ids per `.in()` read — keeps the request line well under the 414 found at ~220 ids. */
+const QUOTE_STATUS_CHUNK = 100;
+
+/** The current (latest non-superseded) quote status per lead id. Status only — no contact. */
+async function currentQuoteStatuses(
+  sb: ReturnType<typeof getServiceRoleClient>,
+  leadIds: readonly string[],
+): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
+  for (let i = 0; i < leadIds.length; i += QUOTE_STATUS_CHUNK) {
+    const { data, error } = await sb
+      .from("catering_quotes")
+      .select("pipeline_id, status, created_at")
+      .in("pipeline_id", leadIds.slice(i, i + QUOTE_STATUS_CHUNK))
+      .is("superseded_at", null)
+      .order("created_at", { ascending: false })
+      .returns<Array<{ pipeline_id: string; status: string; created_at: string }>>();
+    if (error) throw new Error(`currentQuoteStatuses: ${error.message}`);
+    for (const r of data ?? []) if (!out.has(r.pipeline_id)) out.set(r.pipeline_id, r.status); // first seen = latest
+  }
+  return out;
+}
+
 /** All non-archived leads the actor may view, for the board (grouped client-side by stage). */
-export async function loadPipelineBoard(actor: AuthContext): Promise<PipelineLead[]> {
+export async function loadPipelineBoard(actor: AuthContext): Promise<PipelineBoardLead[]> {
   requireLevel(actor, PIPELINE_READ_MIN);
   const sb = getServiceRoleClient();
   let q = sb.from("catering_pipeline").select(LEAD_COLS);
@@ -246,7 +286,10 @@ export async function loadPipelineBoard(actor: AuthContext): Promise<PipelineLea
   if (scope) q = q.or(scope);
   const { data, error } = await q.order("created_at", { ascending: false }).returns<DbLeadRow[]>();
   if (error) throw new Error(`loadPipelineBoard: ${error.message}`);
-  return withLocationNames(sb, (data ?? []).map(mapLead));
+  const leads = await withLocationNames(sb, (data ?? []).map(mapLead));
+  const confirmedIds = leads.filter((l) => l.stage === "confirmed").map((l) => l.id);
+  const statuses = confirmedIds.length ? await currentQuoteStatuses(sb, confirmedIds) : new Map<string, string>();
+  return leads.map((l) => ({ ...l, quoteStatus: statuses.get(l.id) ?? null }));
 }
 
 export interface PipelineSearchResult extends PipelineLead {
@@ -410,6 +453,14 @@ export interface CreateLeadInput {
   followUpDate?: string | null;
   customerId?: string | null;
   estimatedRevenueCents?: number | null;
+  /**
+   * B7c: the email typed on Add lead. A lead has no email column — the address resolves the
+   * lead's CATERING CUSTOMER through the quote flow's own resolver (resolveOrCreateContact):
+   * an existing customer is linked (another shop's is attached with its contact hidden —
+   * Juan's option b), a readable deactivated one is revived, none → a new customer homed at
+   * the lead's shop. Ignored when `customerId` is given. Never logged or echoed.
+   */
+  contactEmail?: string | null;
 }
 
 /** Create a new lead at stage 'inquiry' + its initial append-only stage event. */
@@ -420,8 +471,29 @@ export async function createLead(actor: AuthContext, input: CreateLeadInput): Pr
     throw new CateringPipelineError(400, "invalid_payload", "contactName is required");
   }
   validateLeadSource(input.leadSource);
+  const contactPhone = leadPhone(input.contactPhone);
+  const email = normalizeLeadEmail(input.contactEmail);
+  if (!email.ok) throw new CateringPipelineError(400, "invalid_email", "contactEmail is not a valid email");
   if (input.assignedTo != null) await requireAssignable(input.assignedTo);
   if (input.customerId != null) await requireVisibleCustomer(actor, input.customerId);
+
+  // Every check above runs before this: resolving may CREATE a customer (append-only), so it
+  // is the last step before the lead insert — the same order as the quotes route. The id is
+  // server-resolved from the typed address, so a customer the actor cannot read (option b) is
+  // linked without passing requireVisibleCustomer, which guards ids from a request body.
+  let customerId = input.customerId ?? null;
+  let customerVia: "id" | "email_existing" | "email_created" | null = customerId ? "id" : null;
+  if (customerId == null && email.value != null) {
+    const contact = await resolveOrCreateContact(actor, {
+      email: email.value,
+      name: input.contactName.trim(),
+      company: input.company ?? null,
+      primaryLocationId: locationId,
+      via: "lead_capture",
+    });
+    customerId = contact.id;
+    customerVia = contact.created ? "email_created" : "email_existing";
+  }
   const sb = getServiceRoleClient();
   const { data: inserted, error } = await sb
     .from("catering_pipeline")
@@ -430,7 +502,7 @@ export async function createLead(actor: AuthContext, input: CreateLeadInput): Pr
       company: input.company ?? null,
       event_date: input.eventDate ?? null,
       headcount: input.headcount ?? null,
-      contact_phone: input.contactPhone ?? null,
+      contact_phone: contactPhone,
       delivery_address: input.deliveryAddress ?? null,
       time_window: input.timeWindow ?? null,
       event_type: input.eventType ?? null,
@@ -442,7 +514,7 @@ export async function createLead(actor: AuthContext, input: CreateLeadInput): Pr
       location_id: locationId,
       notes: input.notes ?? null,
       follow_up_date: input.followUpDate ?? null,
-      customer_id: input.customerId ?? null,
+      customer_id: customerId,
       estimated_revenue_cents: input.estimatedRevenueCents ?? null,
       assigned_to: input.assignedTo ?? null,
       created_by: actor.user.id,
@@ -466,7 +538,8 @@ export async function createLead(actor: AuthContext, input: CreateLeadInput): Pr
     action: "catering.pipeline.create",
     resourceTable: "catering_pipeline",
     resourceId: inserted.id,
-    metadata: { location_id: locationId, lead_source: input.leadSource ?? null },
+    // How the customer link was made — never the address itself.
+    metadata: { location_id: locationId, lead_source: input.leadSource ?? null, customer_id: customerId, customer_via: customerVia },
     ipAddress: null,
     userAgent: null,
   });
@@ -497,6 +570,30 @@ export async function moveStage(
   // canTransition is TOTAL: a legacy/unknown label on the row is refused, never guessed.
   if (fromStage === null || !canTransition(fromStage, args.toStage)) {
     throw new CateringPipelineError(409, "illegal_transition", `A lead cannot move from ${lead.stage} to ${args.toStage}`);
+  }
+
+  // B7c r5: a quote with a package line the pre-B7c server saved without its kind would reserve
+  // ZERO package demand (Prep Demand never guesses). Refuse the confirm LOUDLY — before the stage
+  // changes and before any demand row is touched — until the line is repaired (0252 header).
+  if (args.toStage === "confirmed") {
+    try {
+      await assertQuoteReadyForPrep(sb, args.id);
+    } catch (e) {
+      if (e instanceof PrepDemandNeedsRepairError) {
+        void audit({
+          actorId: actor.user.id,
+          actorRole: actor.user.role,
+          action: "catering.prep_demand.sync_failed",
+          resourceTable: "catering_pipeline",
+          resourceId: args.id,
+          metadata: { to_stage: args.toStage, outcome: "quote_needs_repair", quote_id: e.quoteId, line_ids: e.lineIds },
+          ipAddress: null,
+          userAgent: null,
+        });
+        throw new CateringPipelineError(409, "quote_needs_repair", "This quote was saved during an app update and can't be used for prep yet");
+      }
+      throw e;
+    }
   }
 
   // Guard on the stage the pre-read saw (silent-UPDATE law): the event row below records
@@ -592,7 +689,7 @@ export async function editLead(actor: AuthContext, id: string, input: EditLeadIn
   if (input.company !== undefined) patch.company = input.company;
   if (input.eventDate !== undefined) patch.event_date = input.eventDate;
   if (input.headcount !== undefined) patch.headcount = input.headcount;
-  if (input.contactPhone !== undefined) patch.contact_phone = input.contactPhone;
+  if (input.contactPhone !== undefined) patch.contact_phone = leadPhone(input.contactPhone);
   if (input.deliveryAddress !== undefined) patch.delivery_address = input.deliveryAddress;
   if (input.timeWindow !== undefined) patch.time_window = input.timeWindow;
   if (input.eventType !== undefined) patch.event_type = input.eventType;

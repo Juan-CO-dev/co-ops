@@ -405,6 +405,9 @@ async function main() {
       {
         quote_id: quoteId,
         package_id: packageId,
+        // 0251: every package line carries its kind — a portal-style whole-package header.
+        line_kind: "package_header",
+        components_listed: false,
         description: PKG_LABEL,
         quantity: 1,
         portion: null,

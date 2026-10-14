@@ -376,6 +376,9 @@ interface ResolvedLine {
   portion: Portion | null; description: string; quantity: number;
   unitPriceCents: number; lineTotalCents: number; displayOrder: number;
   options: PackageOption[]; // resolved package slot picks (empty for non-package lines)
+  /** Migration 0251: a portal package line is a header standing for the WHOLE package
+   *  (components_listed = false) — Prep Demand expands it exactly as before. Others: NULL. */
+  lineKind: "package_header" | null; componentsListed: boolean | null;
 }
 
 /** Resolve + price every line from the SERVER-owned menu (D20). A client price is never read. */
@@ -405,9 +408,9 @@ async function resolveLines(locationId: string, lines: DraftLineInput[]): Promis
       if (it.sizes && it.sizes.length > 0) {
         const size = l.sizeId ? it.sizes.find((s) => s.id === l.sizeId) : it.sizes[0];
         if (!size) throw new PortalDraftError(400, "invalid_line", `Line ${i + 1}: unknown size`);
-        return { itemId, menuItemId: null, packageId: null, sizeId: size.id, portion: null, description: `${it.name} (${size.label})`, quantity, unitPriceCents: size.unitPriceCents, lineTotalCents: lineTotalCents(quantity, size.unitPriceCents), displayOrder: i, options: [] };
+        return { itemId, menuItemId: null, packageId: null, sizeId: size.id, portion: null, description: `${it.name} (${size.label})`, quantity, unitPriceCents: size.unitPriceCents, lineTotalCents: lineTotalCents(quantity, size.unitPriceCents), displayOrder: i, options: [], lineKind: null, componentsListed: null };
       }
-      return { itemId, menuItemId: null, packageId: null, sizeId: null, portion: null, description: it.name, quantity, unitPriceCents: it.unitPriceCents, lineTotalCents: lineTotalCents(quantity, it.unitPriceCents), displayOrder: i, options: [] };
+      return { itemId, menuItemId: null, packageId: null, sizeId: null, portion: null, description: it.name, quantity, unitPriceCents: it.unitPriceCents, lineTotalCents: lineTotalCents(quantity, it.unitPriceCents), displayOrder: i, options: [], lineKind: null, componentsListed: null };
     }
     if (menuItemId != null && menuItemId !== "") {
       const sub = byKey.get(`menu_item:${menuItemId}`);
@@ -415,7 +418,7 @@ async function resolveLines(locationId: string, lines: DraftLineInput[]): Promis
       const portion: Portion = l.portion ?? "whole";
       if (!sub.portionable && portion !== "whole") throw new PortalDraftError(400, "invalid_line", `Line ${i + 1}: item is not portioned`);
       const unitPriceCents = sub.portionable && sub.portionPricesCents ? sub.portionPricesCents[portion] : sub.unitPriceCents;
-      return { itemId: null, menuItemId, packageId: null, sizeId: null, portion: sub.portionable ? portion : null, description: sub.name, quantity, unitPriceCents, lineTotalCents: lineTotalCents(quantity, unitPriceCents), displayOrder: i, options: [] };
+      return { itemId: null, menuItemId, packageId: null, sizeId: null, portion: sub.portionable ? portion : null, description: sub.name, quantity, unitPriceCents, lineTotalCents: lineTotalCents(quantity, unitPriceCents), displayOrder: i, options: [], lineKind: null, componentsListed: null };
     }
     if (packageId != null && packageId !== "") {
       // Package line (sub-project B): price = package.price_cents × qty (D20 — picks never move price).
@@ -443,7 +446,7 @@ async function resolveLines(locationId: string, lines: DraftLineInput[]): Promis
         }
       }
       const unitPriceCents = pkg.priceCents;
-      return { itemId: null, menuItemId: null, packageId, sizeId: null, portion: null, description: pkg.labelEn, quantity, unitPriceCents, lineTotalCents: lineTotalCents(quantity, unitPriceCents), displayOrder: i, options };
+      return { itemId: null, menuItemId: null, packageId, sizeId: null, portion: null, description: pkg.labelEn, quantity, unitPriceCents, lineTotalCents: lineTotalCents(quantity, unitPriceCents), displayOrder: i, options, lineKind: "package_header", componentsListed: false };
     }
     throw new PortalDraftError(400, "invalid_line", `Line ${i + 1}: needs an item, sub, or package reference`);
   });
@@ -502,6 +505,7 @@ export async function setDraftLines(customerId: string, quoteId: string, lines: 
       quote_id: quoteId, item_id: l.itemId, menu_item_id: l.menuItemId, package_id: l.packageId, size_id: l.sizeId,
       portion: l.portion, description: l.description, quantity: l.quantity,
       unit_price_cents: l.unitPriceCents, line_total_cents: l.lineTotalCents, display_order: l.displayOrder, created_by: null,
+      line_kind: l.lineKind, components_listed: l.componentsListed,
     }))).select("id, display_order");
     if (insErr) throw new Error(`setDraftLines insert: ${insErr.message}`);
     // Persist package slot picks against the NEW line ids (old rows were cascade-deleted above).

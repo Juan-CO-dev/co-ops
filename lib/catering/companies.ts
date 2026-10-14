@@ -282,7 +282,9 @@ export async function reviveInactiveContact(
     action: "catering.customer.activate",
     resourceTable: "catering_customers",
     resourceId: revived.id,
-    metadata: { via: attribution.via, email, reason: "revived_instead_of_forking_identity" },
+    // Never the address (Juan's standing rule: contact values stay out of audit rows; the row
+    // id is the reference). It was logged here until B7c (2026-10-14).
+    metadata: { via: attribution.via, reason: "revived_instead_of_forking_identity" },
     ipAddress: null,
     userAgent: null,
   });
@@ -429,6 +431,8 @@ export interface ResolveContactInput {
   name?: string | null;
   company?: string | null;
   primaryLocationId?: string | null;
+  /** Which capture path is resolving (audit attribution only). Default `quote_capture`. */
+  via?: "quote_capture" | "lead_capture";
 }
 export interface ResolvedContact {
   id: string;
@@ -503,7 +507,7 @@ export async function resolveOrCreateContact(actor: AuthContext, input: ResolveC
   const revived = await reviveInactiveContact(email, {
     actorId: actor.user.id,
     actorRole: actor.user.role,
-    via: "quote_capture",
+    via: input.via ?? "quote_capture",
   }, readable);
   if (revived) return { id: revived.id, companyId: revived.companyId, created: false, hidden: false };
 
@@ -535,7 +539,8 @@ export async function resolveOrCreateContact(actor: AuthContext, input: ResolveC
     action: "catering.customer.create",
     resourceTable: "catering_customers",
     resourceId: inserted.id,
-    metadata: { via: "quote_capture", email, auto_company_id: companyId },
+    // Never the address — the new row's id is the reference (contact values stay out of audit).
+    metadata: { via: input.via ?? "quote_capture", auto_company_id: companyId },
     ipAddress: null,
     userAgent: null,
   });

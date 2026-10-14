@@ -36,6 +36,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
 const EDIT_KEYS = [
   "contactName",
   "company",
+  "contactPhone",
   "eventDate",
   "headcount",
   "leadSource",
@@ -87,6 +88,11 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       const v = optStr(b.company);
       if (v === undefined) return jsonError(400, "invalid_payload", { field: "company" });
       input.company = v;
+    }
+    if ("contactPhone" in b) {
+      const v = optStr(b.contactPhone); // D-48 — the value is never echoed or logged
+      if (v === undefined) return jsonError(400, "invalid_payload", { field: "contactPhone" });
+      input.contactPhone = v;
     }
     if ("eventDate" in b) {
       const v = optStr(b.eventDate);
