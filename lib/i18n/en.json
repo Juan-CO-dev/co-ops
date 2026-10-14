@@ -3489,6 +3489,8 @@
   "counts.onhand.anchor_at": "Anchored to the audit on {date}.",
   "counts.onhand.sales_through": "Register sales counted through {date}.",
   "counts.onhand.on_hand": "{oz} oz on hand",
+  "counts.onhand.below_zero": "below zero — count it",
+  "counts.onhand.theoretical": "theoretical {value}",
   "counts.onhand.advisory": "advisory",
   "counts.onhand.anchor": "counted",
   "counts.onhand.drift": "since",

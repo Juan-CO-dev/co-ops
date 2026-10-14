@@ -3489,6 +3489,8 @@
   "counts.onhand.anchor_at": "Anclado a la auditoría del {date}.",
   "counts.onhand.sales_through": "Ventas de caja contadas hasta el {date}.",
   "counts.onhand.on_hand": "{oz} oz en existencia",
+  "counts.onhand.below_zero": "bajo cero — cuéntalo",
+  "counts.onhand.theoretical": "teórico {value}",
   "counts.onhand.advisory": "referencial",
   "counts.onhand.anchor": "contado",
   "counts.onhand.drift": "desde",

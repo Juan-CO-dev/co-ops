@@ -1,7 +1,7 @@
 import { serverT } from "@/lib/i18n/server";
 import { formatDateLabel } from "@/lib/i18n/format";
 import type { Language } from "@/lib/i18n/types";
-import type { AnchorSource } from "@/lib/counts-shared";
+import { displayOnHand, onHandBelowZero, type AnchorSource } from "@/lib/counts-shared";
 import type { OnHandView, OnHandRow, OnHandWeightRow, OnHandCountRow } from "@/lib/counts";
 import { AlertPill } from "@/components/ui/AlertPill";
 import { EmptyState } from "@/components/EmptyState";
@@ -157,18 +157,22 @@ function WeightRow({ r, lang, vendorName }: { r: OnHandWeightRow; lang: Language
   const varianceLabel = (v: number): string | null =>
     v < 0 ? serverT(lang, "counts.onhand.variance_short") : v > 0 ? serverT(lang, "counts.onhand.variance_over") : null;
   const vLabel = r.varianceOz != null ? varianceLabel(r.varianceOz) : null;
+  // D-60: a negative theoretical on-hand shows clamped at 0 with a "count it" pill; the real number rides in the detail.
+  const belowZero = onHandBelowZero(r.onHandOz);
   return (
     <li className="rounded-lg border-2 border-co-border-2 bg-co-surface px-3 py-2 text-sm">
       <div className="flex items-center justify-between gap-2">
         <SkuNameLabel name={r.skuName} vendorName={vendorName} />
-        <span className="flex items-center gap-2">
+        <span className="flex flex-wrap items-center justify-end gap-2">
           <SourceChip source={r.anchorSource} anchorAt={r.anchorAt} lang={lang} />
+          {belowZero ? <BelowZeroPill lang={lang} /> : null}
           <span className="text-xs text-co-text-muted">
-            {r.onHandOz != null ? serverT(lang, "counts.onhand.on_hand", { oz: r.onHandOz.toFixed(1) }) : serverT(lang, "counts.onhand.advisory")}
+            {r.onHandOz != null ? serverT(lang, "counts.onhand.on_hand", { oz: (displayOnHand(r.onHandOz) ?? 0).toFixed(1) }) : serverT(lang, "counts.onhand.advisory")}
           </span>
         </span>
       </div>
       <div className="text-[11px] text-co-text-dim">
+        {belowZero ? `${serverT(lang, "counts.onhand.theoretical", { value: oz(r.onHandOz) })} · ` : ""}
         {serverT(lang, "counts.onhand.anchor")}: {oz(r.anchorOz)}
         {" · "}{serverT(lang, "counts.onhand.drift")}: {signedOz(r.driftOz)}
         {r.anchorAgeDays != null ? ` · ${serverT(lang, "counts.onhand.age_days", { n: r.anchorAgeDays })}` : ""}
@@ -189,21 +193,24 @@ function WeightRow({ r, lang, vendorName }: { r: OnHandWeightRow; lang: Language
 function CountRow({ r, lang, vendorName }: { r: OnHandCountRow; lang: Language; vendorName: string | null }) {
   const units = (v: number | null): string =>
     v == null ? "—" : serverT(lang, "counts.onhand.units", { n: round(v), unit: r.unitLabel });
+  const belowZero = onHandBelowZero(r.onHandUnits);
   return (
     <li className="rounded-lg border-2 border-co-border-2 bg-co-surface px-3 py-2 text-sm">
       <div className="flex items-center justify-between gap-2">
         <SkuNameLabel name={r.skuName} vendorName={vendorName} />
-        <span className="flex items-center gap-2">
+        <span className="flex flex-wrap items-center justify-end gap-2">
           {/* Count rows are always census — packaging has no consumption ledger to infer from. */}
           <SourceChip source="census" anchorAt={r.anchorAt} lang={lang} />
+          {belowZero ? <BelowZeroPill lang={lang} /> : null}
           <span className="text-xs text-co-text-muted">
             {r.onHandUnits != null
-              ? serverT(lang, "counts.onhand.on_hand_units", { n: round(r.onHandUnits), unit: r.unitLabel })
+              ? serverT(lang, "counts.onhand.on_hand_units", { n: round(displayOnHand(r.onHandUnits) ?? 0), unit: r.unitLabel })
               : serverT(lang, "counts.onhand.advisory")}
           </span>
         </span>
       </div>
       <div className="text-[11px] text-co-text-dim">
+        {belowZero ? `${serverT(lang, "counts.onhand.theoretical", { value: units(r.onHandUnits) })} · ` : ""}
         {serverT(lang, "counts.onhand.anchor")}: {units(r.anchorUnits)}
         {r.anchorAgeDays != null ? ` · ${serverT(lang, "counts.onhand.age_days", { n: r.anchorAgeDays })}` : ""}
         {r.usedOrLostUnits != null
@@ -223,6 +230,15 @@ function CountRow({ r, lang, vendorName }: { r: OnHandCountRow; lang: Language; 
         <p className="mt-1 text-[11px] font-bold text-co-cta-text">{serverT(lang, "counts.onhand.stale")}</p>
       ) : null}
     </li>
+  );
+}
+
+/** D-60: the "below zero — count it" pill beside a clamped on-hand. */
+function BelowZeroPill({ lang }: { lang: Language }) {
+  return (
+    <AlertPill tone="warn" uppercase={false} className="shrink-0">
+      {serverT(lang, "counts.onhand.below_zero")}
+    </AlertPill>
   );
 }
 

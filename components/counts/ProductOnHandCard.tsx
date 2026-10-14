@@ -25,7 +25,7 @@
 import { useId, useState } from "react";
 import { useTranslation } from "@/lib/i18n/provider";
 import { AlertPill } from "@/components/ui/AlertPill";
-import type { ProductOnHandRow } from "@/lib/counts-shared";
+import { displayOnHand, onHandBelowZero, type ProductOnHandRow } from "@/lib/counts-shared";
 
 export function ProductOnHandCard({ row }: { row: ProductOnHandRow }) {
   const { t } = useTranslation();
@@ -33,6 +33,8 @@ export function ProductOnHandCard({ row }: { row: ProductOnHandRow }) {
   const drawerId = `product-onhand-${useId()}`;
 
   const oz1 = (v: number): number => Math.round(v * 10) / 10;
+  // D-60: a negative theoretical total shows clamped at 0 with a "count it" pill; the number is in the drawer.
+  const belowZero = onHandBelowZero(row.totalOz);
   const signedOz = (v: number): string => `${v > 0 ? "+" : ""}${v.toFixed(1)} oz`;
   const varianceLabel =
     row.varianceOz == null || row.varianceOz === 0
@@ -47,9 +49,16 @@ export function ProductOnHandCard({ row }: { row: ProductOnHandRow }) {
         <span className="font-semibold text-co-text">{row.productName}</span>
         <span className="flex flex-wrap items-center gap-2">
           {row.totalOz != null ? (
-            <span className="text-xs text-co-text-muted">
-              {t("counts.onhand.on_hand", { oz: row.totalOz.toFixed(1) })}
-            </span>
+            <>
+              {belowZero ? (
+                <AlertPill tone="warn" uppercase={false} className="shrink-0">
+                  {t("counts.onhand.below_zero")}
+                </AlertPill>
+              ) : null}
+              <span className="text-xs text-co-text-muted">
+                {t("counts.onhand.on_hand", { oz: (displayOnHand(row.totalOz) ?? 0).toFixed(1) })}
+              </span>
+            </>
           ) : (
             <>
               <span aria-hidden className="text-xs text-co-text-muted">—</span>
@@ -85,6 +94,11 @@ export function ProductOnHandCard({ row }: { row: ProductOnHandRow }) {
 
       {open ? (
         <div id={drawerId} className="mt-1 border-t-2 border-co-border-2 pt-2">
+          {belowZero && row.totalOz != null ? (
+            <p className="mb-2 text-[12px] text-co-text">
+              {t("counts.onhand.theoretical", { value: `${row.totalOz.toFixed(1)} oz` })}
+            </p>
+          ) : null}
           <p className="text-[11px] font-bold uppercase tracking-[0.12em] text-co-text-dim">{t("counts.onhand.vendor_split")}</p>
           <ul className="mt-1 flex flex-col gap-1">
             {row.members.map((m) => (
