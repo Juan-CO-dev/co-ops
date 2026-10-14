@@ -212,7 +212,7 @@ You walk each station. You check that last night's closing matches what you see.
 
 - The page saves as you go. The bottom bar says "Saved a moment ago". If someone else opens the report, they see your work.
 - The bottom bar counts what is left. Tap **Show me what needs fixing** to find it.
-- The "verified" count on the bottom bar (like "44 of 44 verified") counts the station cards only. The prep sections are a separate step. Each one needs its own **Verify section** tap.
+- The "verified" count on the bottom bar (like "44 of 44 verified") counts the lines on the station cards. The prep sections are not in it. Each one needs its own **Verify section** tap.
 - **Verify section** stays grey until each item with no count from last night has a recount. On the other items, the recount box is a choice. Use it only to fix a wrong count.
 - A recount box is red while it still needs a number. It goes back to normal once you fill it.
 - Some days no item has a count from last night. Then every prep item needs a recount. That is a lot of boxes, so work one section at a time.
@@ -241,7 +241,7 @@ Each row shows three things:
 
 4. Check the row. It should say "Saved by" with your name and the time.
 
-![Three rows saved, each with "At par" and an Undo button](img/staff/14-opening-prep-filled.png)
+![Saved rows, each with "At par", "Saved by" and an Undo button](img/staff/14-opening-prep-filled.png)
 
 5. Typed the wrong number? Tap **Undo** on that row. If a box asks why, pick a reason and tap **Undo entry**. Then type the right amount.
 
@@ -293,7 +293,7 @@ Recorres cada estación. Revisas que el cierre de anoche coincida con lo que ves
 
 - La página guarda mientras trabajas. La barra de abajo dice "Guardado hace un momento". Si otra persona abre el reporte, ve tu trabajo.
 - La barra de abajo cuenta lo que falta. Toca **Muéstrame qué hay que corregir** para encontrarlo.
-- El conteo de "verificadas" en la barra de abajo (como "44 de 44 verificadas") cuenta solo las tarjetas de las estaciones. Las secciones de prep son un paso aparte. Cada una necesita su propio toque en **Verificar sección**.
+- El conteo de "verificadas" en la barra de abajo (como "44 de 44 verificadas") cuenta las líneas de las tarjetas de las estaciones. Las secciones de prep no entran. Cada una necesita su propio toque en **Verificar sección**.
 - **Verificar sección** sigue gris hasta que cada producto sin conteo de anoche tenga su recuento. En los demás productos, la casilla de recuento es opcional. Úsala solo para corregir un conteo mal hecho.
 - Una casilla de recuento está en rojo mientras le falta un número. Vuelve a la normalidad cuando la llenas.
 - Algunos días ningún producto tiene conteo de anoche. Entonces cada producto de prep necesita un recuento. Son muchas casillas, así que trabaja una sección a la vez.
@@ -403,7 +403,7 @@ The closing checklist runs all day. Each station closes on its own when its jobs
 
 6. Checked the wrong line? Tap **Undo** on it.
 
-![The whole closing checklist, every section open](img/staff/24-closing-full.png)
+![The whole closing checklist: your section open, the other sections folded](img/staff/24-closing-full.png)
 
 **Worth knowing**
 
@@ -415,6 +415,7 @@ The closing checklist runs all day. Each station closes on its own when its jobs
 - Some lines are reports, like AM Prep or Mid-day Prep. They are not check boxes. They say "Pending — tap to open". Tap one to open that report's own page. The line checks itself when the report is sent, with "Submitted by", a name and the time.
 - A report line that says "Assigned shift task required" is not yours. Leave it.
 - A trainee can open the list once someone has started it for the day.
+- There is no send button at the bottom for you. A key holder sends the closing at night.
 
 ### Mid-Shift Pulse
 
@@ -426,7 +427,7 @@ The Pulse shows what is going on in the shop right now. Tap **Mid-Shift Pulse** 
 
 You see these parts:
 
-- **Needs attention**: things that are late or need action.
+- **Needs attention**: things that are late or need action. When nothing does, it says "All clear — nothing needs attention right now."
 - **Live shop floor**: a map of the stations. Tap a station for details. One button switches the look. It says **Map view** while you see the 3D floor, and **3D view** while you see the flat map.
 - **Stations & tasks**: your tasks, and which stations are covered.
 - **Catering**: when catering orders are due.
@@ -483,7 +484,7 @@ After the lunch rush, mid-day prep gets the line back to par. You only do it if 
 
 3. Tap **Submit count → Phase 2**.
 
-4. The page now says **Phase 2 — prep** (not shown in a photo). Each row shows **Need:**, how much to make. Make the food. Type how much you made in the **Prepped** box.
+4. The page now says **Phase 2 — prep**. Each row shows **Need:**, how much to make. Make the food. Type how much you made in the **Prepped** box.
 
 ![Phase 2 — prep: rows with Need: and an empty Prepped box](img/staff/33b-midday-phase2.png)
 
@@ -511,22 +512,22 @@ After the lunch rush, mid-day prep gets the line back to par. You only do it if 
 
 ### Production
 
-Use this when you make food from raw stock outside the opening and mid-day prep sheets. Employees and up can log it. Tap **Production** in **Explore** (not shown in a photo).
+Use this when you make food from raw stock outside the opening and mid-day prep sheets. Employees and up can log it. Tap **Production** in **Explore**.
 
 ![The Production page: the Log a conversion form and Recent production](img/staff/33e-production.png)
 
 1. Under **Log a conversion**, pick the **Raw item (SKU)** you used. Each choice shows how many packs are **in stock**.
 
-2. Pick what it **Makes**.
+2. Pick what it **Makes**. This list shows up only after you pick a raw item. It starts on "Pick what you made…".
 
-3. Type the **Amount used (packs)** and the **Amount made**. The app may fill in **Amount made** with what it expects (**Predicted output**). Change it to what you really made.
+3. Type the **Amount used (packs)** and the **Amount made**. The app may fill in **Amount made** with what it expects (**Predicted output**). Change it to what you really made. **Notes** is optional.
 
 4. Tap **Log production**. Your line shows at the top of **Recent production**.
 
 **Worth knowing**
 
 - The app takes the packs you used off the shop's stock count. That keeps the shop's numbers right for counts and orders.
-- The opening and mid-day prep sheets log their own food. Don't log those again here.
+- The opening and mid-day prep sheets log their own food. You see it in **Recent production** too. Don't log it again here.
 - **Log production** stays grey until the raw item, what it makes and both amounts are filled in. If **Makes** has nothing to pick, ask a manager.
 - No message pops up. Your new line in **Recent production** means it worked.
 
@@ -593,12 +594,13 @@ La lista de cierre corre todo el día. Cada estación se cierra sola cuando sus 
 - Algunas líneas son reportes, como la Lista de Prep AM o la preparación de mediodía. No son casillas. Dicen "Pendiente — toca para abrir". Toca una para abrir la página de ese reporte. La línea se marca sola cuando se envía el reporte, con "Enviado por", un nombre y la hora.
 - Una línea de reporte que dice "Necesitas tener asignada esta tarea" no es tuya. Déjala.
 - Un aprendiz puede abrir la lista cuando alguien ya la empezó ese día.
+- Abajo no hay botón para enviar. Un encargado de llaves envía el cierre en la noche.
 
 **Pulso de medio turno**
 
 El Pulso muestra qué pasa en la tienda ahora mismo. Toca **Pulso de medio turno** en **Explorar**. Ves estas partes:
 
-- **Requiere atención**: cosas que van tarde o que hay que atender.
+- **Requiere atención**: cosas que van tarde o que hay que atender. Si no hay nada, dice "Todo en orden: nada requiere atención ahora."
 - **Piso en vivo**: un mapa de las estaciones. Toca una estación para ver detalles. Un botón cambia la vista. Dice **Vista de mapa** mientras ves el piso en 3D, y **Vista 3D** mientras ves el mapa plano.
 - **Estaciones y tareas**: tus tareas y qué estaciones están cubiertas.
 - **Catering**: cuándo tocan los pedidos de catering.
@@ -637,7 +639,7 @@ Después de la hora pico del almuerzo, la preparación de mediodía regresa la l
 
 3. Toca **Enviar conteo → Fase 2**.
 
-4. Ahora la página dice **Fase 2 — preparación** (no sale en foto). Cada fila muestra **Falta:**, cuánto hay que preparar. Prepara la comida. Escribe cuánto preparaste en la casilla **Preparado**.
+4. Ahora la página dice **Fase 2 — preparación**. Cada fila muestra **Falta:**, cuánto hay que preparar. Prepara la comida. Escribe cuánto preparaste en la casilla **Preparado**.
 
 5. ¿Preparaste más o menos de lo que dice **Falta:**? Debajo de la fila sale el botón **Agregar razón sobre/bajo par**. Tócalo y llénalo primero. Si te lo saltas, **Guardar** dice "Agrega primero una razón de sobre/bajo par".
 
@@ -659,20 +661,20 @@ Después de la hora pico del almuerzo, la preparación de mediodía regresa la l
 
 **Producción**
 
-Úsalo cuando preparas comida con materia prima fuera de las hojas de prep de la apertura y de mediodía. Lo pueden registrar los empleados y más arriba. Toca **Producción** en **Explorar** (no sale en foto).
+Úsalo cuando preparas comida con materia prima fuera de las hojas de prep de la apertura y de mediodía. Lo pueden registrar los empleados y más arriba. Toca **Producción** en **Explorar**.
 
 1. En **Registrar una conversión**, elige la **Materia prima (SKU)** que usaste. Cada opción dice cuántos paquetes hay **en existencia**.
 
-2. Elige lo que **Hace**.
+2. Elige lo que **Hace**. Esta lista sale solo después de elegir la materia prima. Empieza en "Elige lo que hiciste…".
 
-3. Escribe la **Cantidad usada (paquetes)** y la **Cantidad hecha**. La app puede llenar **Cantidad hecha** con lo que espera (**Salida estimada**). Cámbiala por lo que de verdad hiciste.
+3. Escribe la **Cantidad usada (paquetes)** y la **Cantidad hecha**. La app puede llenar **Cantidad hecha** con lo que espera (**Salida estimada**). Cámbiala por lo que de verdad hiciste. **Notas** es opcional.
 
 4. Toca **Registrar producción**. Tu línea sale arriba en **Producción reciente**.
 
 **Bueno saber**
 
 - La app resta los paquetes que usaste del inventario de la tienda. Así los números de la tienda quedan bien para los conteos y los pedidos.
-- Las hojas de prep de la apertura y de mediodía registran su propia comida. No las registres otra vez aquí.
+- Las hojas de prep de la apertura y de mediodía registran su propia comida. También la ves en **Producción reciente**. No la registres otra vez aquí.
 - **Registrar producción** sigue gris hasta que llenas la materia prima, lo que hace y las dos cantidades. Si **Hace** no tiene nada para elegir, pregúntale a un gerente.
 - No sale ningún mensaje. Tu línea nueva en **Producción reciente** quiere decir que funcionó.
 
@@ -694,7 +696,7 @@ AM prep is a count you do at closing. You count what is left so the morning crew
 
 ![The AM prep sheet with the Veg section open](img/staff/43-am-prep-sheet.png)
 
-3. Open each section: Veg, Cooks, Sides, Sauces, Slicing and Misc. In the first box of each row, type how much is left. The box is called **ON HAND**, **PORT** (portioned) or **LINE**.
+3. Open each section: Veg, Cooks, Sides, Sauces, Slicing and Misc. In the first box of each row, type how much is left. Its name depends on the section: **ON HAND** (Veg, Cooks), **PORT** (portioned, in Sides) or **LINE** (Sauces, Slicing).
 
 ![Three Veg rows filled in, with TOTAL filled in for you](img/staff/44-am-prep-filled-row.png)
 
@@ -710,7 +712,8 @@ AM prep is a count you do at closing. You count what is left so the morning crew
 
 - Every row needs an answer. An empty box says **Required** in red. **BACK UP** can stay empty.
 - Until every row is filled, the button says **Fix issues before submitting**. Tap **Show me what needs fixing** to find the empty rows.
-- The sheet saves as you go. If you leave and come back, it says "Picked up where you left off".
+- The sheet saves as you go. The bottom of the page says "Saved". If you leave and come back, it says "Picked up where you left off".
+- **Discard changes** at the bottom puts the boxes back the way they were when you opened the page.
 - If it says "Closing not yet started", start the closing checklist from the dashboard. Then go back to the dashboard and tap **Continue AM Prep**. Tap **Submit AM Prep** again. Your numbers are still there.
 - There is no second check. **Submit AM Prep** sends it right away.
 - Sending AM prep checks the AM Prep line on the closing checklist for you.
@@ -740,7 +743,7 @@ Closers: finish your station's lines and AM prep first. **End my shift** takes y
 
 3. A **Confirm change** box asks: "End your shift? Your station is released and your open tasks are unassigned." A reason is not needed. Leave **Reason for change** on "No reason (optional)". Tap **Confirm change**.
 
-4. The board says "Ended shift" and the time. Your station, your tasks and your report tiles go away. **Start break** goes away too.
+4. The board says "Ended shift" and the time. Your station, your tasks and the **Reports** tiles go away. **Start break** and **End my shift** go away too. The **Station** list and **Claim / change station** stay. You use them if you come back.
 
 ![The board after End my shift: no station, no tasks](img/staff/35-shift-ended.png)
 
@@ -765,7 +768,7 @@ La Lista de Prep AM es un conteo que haces al cerrar. Cuentas lo que queda para 
 
 2. En **Reportes**, en el mosaico **Lista de Prep AM**, toca **Iniciar Lista de Prep AM**.
 
-3. Abre cada sección: Verduras, Cocidos, Acompañantes, Salsas, Rebanado y Misceláneo. En la primera casilla de cada fila, escribe cuánto queda. La casilla se llama **EN MANO**, **PORC** (porcionado) o **LÍNEA**.
+3. Abre cada sección: Verduras, Cocidos, Acompañantes, Salsas, Rebanado y Misceláneo. En la primera casilla de cada fila, escribe cuánto queda. Su nombre depende de la sección: **EN MANO** (Verduras, Cocidos), **PORC** (porcionado, en Acompañantes) o **LÍNEA** (Salsas, Rebanado).
 
 4. ¿Hay más en un recipiente a granel? Escríbelo en **RESPALDO**. **TOTAL** se llena solo.
 
@@ -777,7 +780,8 @@ La Lista de Prep AM es un conteo que haces al cerrar. Cuentas lo que queda para 
 
 - Cada fila necesita una respuesta. Una casilla vacía dice **Obligatorio** en rojo. **RESPALDO** puede quedar vacía.
 - Mientras falten filas, el botón dice **Corrige los errores antes de enviar**. Toca **Muéstrame qué hay que corregir** para encontrar las filas vacías.
-- La hoja guarda mientras trabajas. Si sales y regresas, dice "Retomaste donde lo dejaste".
+- La hoja guarda mientras trabajas. Abajo de la página dice "Guardado". Si sales y regresas, dice "Retomaste donde lo dejaste".
+- **Descartar cambios**, abajo, deja las casillas como estaban cuando abriste la página.
 - Si dice "El cierre no ha comenzado", empieza la lista de cierre desde el panel. Luego regresa al panel y toca **Continuar Lista de Prep AM**. Toca **Enviar Lista de Prep AM** otra vez. Tus números siguen ahí.
 - No hay una segunda confirmación. **Enviar Lista de Prep AM** la envía de inmediato.
 - Al enviar la Lista de Prep AM, se marca sola su línea en la lista de cierre.
@@ -805,7 +809,7 @@ Si cierras: termina primero las líneas de tu estación y la Lista de Prep AM. *
 
 3. Un cuadro **Confirma el cambio** pregunta: "¿Terminar tu turno? Se libera tu estación y se quitan tus tareas abiertas." No hace falta un motivo. Deja **Motivo del cambio** en "Sin motivo (opcional)". Toca **Confirma el cambio**.
 
-4. El tablero dice "Terminó su turno a las" y la hora. Tu estación, tus tareas y tus mosaicos de reportes desaparecen. **Iniciar descanso** también desaparece.
+4. El tablero dice "Terminó su turno a las" y la hora. Tu estación, tus tareas y los mosaicos de **Reportes** desaparecen. **Iniciar descanso** y **Terminar mi turno** también desaparecen. La lista **Estación** y **Elegir / cambiar estación** se quedan. Las usas si vuelves.
 
 - **Terminar mi turno** no registra tu salida en Toast.
 - ¿Vuelves a trabajar? Elige otra vez una estación desde la fila **Mi estación**.

@@ -137,15 +137,17 @@ This is your home page. You land here after you log in.
 
 **What you see**
 
-![Full dashboard with the shift board, Team today and the Today's operations card](img/manager/07-dashboard-full.png)
+![Full dashboard with the shift board, the Today's operations card, and Reports with the Ordering and Inventory Audit tiles](img/manager/07-dashboard-full.png)
 
 **What to do** — Find the **Today's operations** card. It holds the **Closing checklist**, with **Start closing** or **Continue closing**.
 
 **Worth knowing**
 
 - A **Reports** part shows only if you have a task or a station today.
-- A report tile shows only to the person assigned that task today. This is true for managers too.
+- A report tile shows only to the person who has that task today. This is true for managers too.
+- A task you took from the board counts as yours. Its tile then shows under **Reports**, like **Ordering** or **Inventory Audit**.
 - If you hold a station, a **My station: …** card takes you to it.
+- **Ordering**, **Counts** and **Receiving** are not in the menu. Open them from the board, or from the Reports Hub under **Inventory**.
 
 ### The board comes first
 
@@ -273,7 +275,7 @@ Los subgerentes (AGM) y roles más altos también tienen correo y contraseña. T
 #### Tu dashboard
 
 1. **Arriba.** Revisa el nombre de la tienda debajo de tu rol. Luego mira **Mi turno**. La fila de botones bajo **Explorar** es el menú. Si trabajas en más de una tienda, aquí cambias de tienda. La app abre en la tienda que elegiste al entrar y la recuerda en ese aparato hasta que cambies. Si el cierre de anoche no se confirmó, aquí sale un aviso: toca **Revisar el cierre de ayer**. Para ver la app en español, toca el botón redondo con tu inicial, arriba a la derecha, y elige **Español**.
-2. **El resto.** Busca la tarjeta **Operaciones de hoy**. Ahí está la **Lista de cierre**, con **Empezar cierre** o **Continuar cierre**. La parte **Reportes** solo sale si tienes una tarea o una estación hoy. Una tarjeta de reporte solo la ve la persona asignada a esa tarea hoy, también si eres gerente. Si tienes estación, la tarjeta **Mi estación: …** te lleva a ella.
+2. **El resto.** Busca la tarjeta **Operaciones de hoy**. Ahí está la **Lista de cierre**, con **Empezar cierre** o **Continuar cierre**. La parte **Reportes** solo sale si tienes una tarea o una estación hoy. Una tarjeta de reporte solo la ve la persona que tiene esa tarea hoy, también si eres gerente. Una tarea que tomaste del tablero cuenta como tuya: su tarjeta sale en **Reportes**, como **Pedidos** o **Auditoría de inventario**. Si tienes estación, la tarjeta **Mi estación: …** te lleva a ella. **Pedidos**, **Conteos** y **Recepción** no están en el menú. Ábrelos desde el tablero, o desde el Centro de reportes en **Inventario**.
 
 #### Primero, el tablero
 
@@ -411,7 +413,8 @@ You do this right after Part 1. You make the food you need to get to par.
 **Worth knowing**
 
 - Until then, the button shows how many rows are left. Look for rows that say **Not saved** or **Add a reason to save**.
-- After it, the button reads **Phase 2 finalized**. The opening is done and can't be changed.
+- No box asks you to confirm. The button then reads **Phase 2 finalized**, and the bottom bar says **Phase 2 already finalized**. The opening is done and can't be changed.
+- The title still reads **Phase 2 — Prep Entry**. Each section shows a tick and closes.
 
 ### En español
 
@@ -434,7 +437,7 @@ Lo haces justo después de la parte 1. Preparas lo que falta para llegar al par.
 
 1. **Lee cada fila.** Cada fila muestra **Par**, **Conteo de cierre** y **Por preparar**. Prepara la cantidad de **Por preparar**. El conteo de cierre es el AM prep de anoche; si escribiste un recuento en la parte 1, sale tu recuento. **Por preparar** es lo que debes hacer para llegar al par. El título ahora dice **Fase 2 — Entrada de Prep**. Cada sección empieza cerrada, menos la primera con trabajo pendiente: toca el nombre de una sección para abrirla. Dos personas pueden trabajar la parte 2 a la vez; cada fila dice quién la guardó. Repártanse las secciones para terminar antes.
 2. **Escribe lo que preparaste.** Escribe la cantidad en **Preparado hoy** y toca fuera de la casilla. La fila se guarda cuando sales de la casilla; entonces dice **Guardado por … a las …** con un botón **Deshacer**. Antes dice **Sin guardar**. **Al par** quiere decir que llegaste. Una cantidad como **5 × 1/3 Pan** son cinco bandejas de 1/3: escribe 5. Usa solo números, como 5 o 5.5. Cada fila necesita un número, aunque no hayas hecho nada: entonces escribe 0. ¿Hiciste menos de lo necesario? La fila dice **Bajo el necesario por …**: tócala, elige un motivo y escribe una nota. Los gerentes reciben un aviso. ¿Hiciste más? La fila dice **Sobre el necesario por …**: tócala y elige un motivo. La fila se guarda solo cuando el motivo está puesto; antes dice **Agrega una razón para guardar**. Una fila sin par dice **Sin par — escribe lo que preparaste**: escribe lo que hiciste, o 0. No pide motivo.
-3. **Finaliza la fase 2.** Cuando todas las filas estén guardadas, toca **Finalizar Fase 2**. Antes de eso, el botón dice cuántas filas faltan; busca las filas que dicen **Sin guardar** o **Agrega una razón para guardar**. Después dice **Fase 2 finalizada**. La apertura está lista y ya no se puede cambiar.
+3. **Finaliza la fase 2.** Cuando todas las filas estén guardadas, toca **Finalizar Fase 2**. Antes de eso, el botón dice cuántas filas faltan; busca las filas que dicen **Sin guardar** o **Agrega una razón para guardar**. No sale ningún cuadro para confirmar. Después el botón dice **Fase 2 finalizada** y la barra de abajo dice **Fase 2 ya finalizada**. La apertura está lista y ya no se puede cambiar. El título sigue diciendo **Fase 2 — Entrada de Prep**. Cada sección muestra una marca y se cierra.
 
 ---
 
@@ -450,14 +453,18 @@ Open it any time to see the shop at a glance. It updates every 60 seconds.
 
 **What you see**
 
-![Mid-shift Pulse: the Needs attention card, late items first, then uncovered stations with an Assign button](img/manager/25-pulse.png)
+![Mid-shift Pulse: the Needs attention card with uncovered stations, each with an Assign button](img/manager/25-pulse.png)
 
 **What to do** — Tap **Mid-Shift Pulse** in the menu. Read **Needs attention** first.
 
 **Worth knowing**
 
-- **Needs attention** lists what needs action now. Tap the button on the line. A station with no one on it has **Assign**.
-- Late work comes first, in red: a report that is overdue, a late task, a fridge out of range, or a vendor cutoff that passed with no order (**missed the … cutoff — call the vendor**). Stations with no one on them come next. Smaller things come last, like items low against par.
+- **Needs attention** lists what needs action now. Tap the button on the line. A station with no one on it says "… is uncovered" and has **Assign**.
+- Red lines come first: a report that is overdue, a late task, a fridge out of range, a vendor cutoff that passed with no order (**missed the … cutoff — call the vendor**), or an ezCater order not rung into Toast.
+- Stations come next. A station with no one on it is red too.
+- Smaller things come last, in yellow, like fridges not checked yet or items low against par.
+- When nothing is late, the stations lead the list.
+- The card shows the first 8 lines. Tap **See more** to see them all.
 - Mid-day prep shows as late only after 3:30 PM.
 
 #### 2. Read the cards
@@ -511,11 +518,13 @@ A handoff note tells the next shift what they need to know. Everyone can read th
 
 ![The posted note with the writer's name, time, Got it and Retract](img/manager/29-handoff-posted.png)
 
-**What to do** — Check your note. AGMs and up tap **Got it** to show they read it.
+**What to do** — Check your note. It shows who wrote it, the time, and two buttons: **Got it** and **Retract**. AGMs and up tap **Got it** to show they read it.
 
 **Worth knowing**
 
+- After you tap **Got it**, the note says **You acknowledged this**.
 - **Retract** takes a note down. Only the writer or a higher role can do it.
+- The form clears after you post, so you can write another note.
 
 ### Check in a delivery
 
@@ -540,13 +549,14 @@ You do this each time a truck comes. Key holders and up.
 **Worth knowing**
 
 - The usual order may not match today's truck. It can be short, or hold items that did not come.
+- A line marked **Suggested — from this vendor's usage** has no expected number. It says "Tap to count". Tap it and type what came.
 - An item not on the list? Pick it in **Pick a SKU…**, then tap **+ Add item**.
 
 #### 3. Flag a problem
 
 **What you see**
 
-![Lettuce line with Short marked under Flag a problem](img/manager/21-receiving-didnt-arrive.png)
+![An open line with a count of 1 and Short marked under Flag a problem](img/manager/21-receiving-didnt-arrive.png)
 
 **What to do** — If a line is wrong, tap a button under **Flag a problem**: **Short**, **Over**, **Damaged** or **Sub**. Add a **Line note (optional)** if it helps.
 
@@ -569,12 +579,13 @@ You do this each time a truck comes. Key holders and up.
 
 - **Delivery confirmed** stays grey until at least one line has a count and you have taken the photo or ticked **Photo later**. A half-filled new-item line also blocks it.
 - Type the **Invoice #** anyway. It helps match the paperwork later.
-- Some lines show **Expected …**. If you leave one of those untouched, the first tap lists it: **Some expected items were never confirmed**. Tap **Received** or **Didn't arrive** on each. The button now says **Tap again to confirm**. Tap it.
-- Lines with no **Expected …** never show in that list. With none left untouched, one tap confirms the delivery.
+- Most of the time, one tap saves the delivery at once. There is no pop-up. The form clears for the next truck.
+- A second step comes only for lines that show **Expected …**. Those come from a purchase order or the last delivery. If you leave one of them untouched (no count, no flag), the first tap lists it: **Some expected items were never confirmed**. Tap **Received** or **Didn't arrive** on each. The button now says **Tap again to confirm**. Tap it.
+- Lines with no **Expected …**, like **Suggested** lines, never show in that list.
 - With a purchase order, the app tells you how many shorts it will claim. With no purchase order, **Didn't arrive** claims nothing.
 - Anything left blank is filed as not counted. It will show against the invoice.
 - The delivery shows under **Recent deliveries**, lower on the same page. If you skipped the photo, it says **Photo missing**. Tap a delivery to see its lines, flags and credits.
-- A short you flag shows up under **Open vendor credits**.
+- Each flag you picked (**Short**, **Over**, **Damaged** or **Sub**) opens a vendor credit. It shows under **Open vendor credits**, with how many are open.
 
 ### Mid-day prep
 
@@ -605,16 +616,18 @@ After the lunch rush, you count and prep back up to par. It is due from 2:00 PM 
 
 - If a row can't load, a note says **Some items couldn't load** and names them. The rest still works. Tell a manager.
 
-#### 3. Prep and finish (not shown)
+#### 3. Prep and finish
+
+**What you see**
 
 ![Phase 2 — prep: one row saved with Saved ✓, the next row with its Prepped box and Save button](img/manager/24b-midday-phase2-saved.png)
 
-**What to do** — In **Phase 2 — prep**, type what you made in **Prepped**. Tap **Save** on that row. Do this on every row. Then tap **Finalize prep**.
+**What to do** — In **Phase 2 — prep**, each row shows **Need:**. Type what you made in **Prepped**. Tap **Save** on that row. Do this on every row. Then tap **Finalize prep**.
 
 **Worth knowing**
 
 - Each row has its own **Save**. A row is kept only after it says **Saved ✓**.
-- Save every row before you tap **Finalize prep**. A row you did not save is left out.
+- Save every row before you tap **Finalize prep**. It does not stop you or warn you. A row you did not save is left out and shows **Made: —**.
 - If you made more or less than the need, tap **Add over/under reason** on the row first. Then save it.
 - When it is done, the page says **Finalized — prep made**, with who finished it and when. Each row shows what was **Made:**.
 - This ticks the **Mid-day Prep** line on the closing checklist for you.
@@ -685,7 +698,7 @@ Entre la apertura y el cierre, vigilas la tienda, recibes camiones, preparas des
 
 Ábrelo cuando quieras ver la tienda de un vistazo. Se actualiza cada 60 segundos.
 
-1. **Abre el Pulso.** Toca **Pulso de medio turno** en el menú. Lee primero **Requiere atención**: muestra lo que hay que resolver ya. Toca el botón de la línea; una estación sin nadie tiene **Asignar**. Primero, en rojo, sale lo atrasado: un reporte atrasado, una tarea tarde, un refrigerador fuera de rango o un corte de proveedor que pasó sin pedido (**se pasó el corte de las … — llama al proveedor**). Después, las estaciones sin nadie. Al final, cosas menores, como artículos bajos respecto al par. La prep de mediodía sale tarde solo después de las 3:30 PM.
+1. **Abre el Pulso.** Toca **Pulso de medio turno** en el menú. Lee primero **Requiere atención**: muestra lo que hay que resolver ya. Toca el botón de la línea; una estación sin nadie dice "… está sin cubrir" y tiene **Asignar**. Primero salen las líneas rojas: un reporte atrasado, una tarea tarde, un refrigerador fuera de rango, un corte de proveedor que pasó sin pedido (**se pasó el corte de las … — llama al proveedor**) o un pedido de ezCater que no está en Toast. Después, las estaciones; una estación sin nadie también sale en rojo. Al final, en amarillo, cosas menores, como refrigeradores sin revisar o artículos bajos respecto al par. Si nada va tarde, las estaciones encabezan la lista. La tarjeta muestra las primeras 8 líneas; toca **Ver más** para verlas todas. La prep de mediodía sale tarde solo después de las 3:30 PM.
 2. **Lee las tarjetas.** **Piso en vivo** muestra las estaciones; toca una para ver detalles. **Inventario** muestra los cierres de pedido de hoy. **Seguridad alimentaria** muestra las temperaturas. **Entrega de turno** muestra qué reportes están listos. **Estaciones y tareas** cuenta solo las tareas repartidas en el tablero; **Entrega de turno** cuenta todos los reportes de hoy, así que los números pueden ser distintos. Un corte perdido también sale en rojo en **Inventario**: **se pasó el corte — llama al proveedor**. Lo que ves depende de tu rol. Encargados de llaves, entrenadores y líderes de turno ven todo menos el dinero. Los subgerentes también escriben notas de entrega. Los gerentes generales también ven **Ventas** y el dinero, y pueden usar **Organizar** en el plano. Un Gerente de Operaciones o más ve **Ambas tiendas** lado a lado; un gerente general solo ve sus tiendas. Un solo botón cambia el plano: dice **Vista de mapa** o **Vista 3D**, la vista que sale al tocarlo.
 3. **Ver más.** Toca **Ver más** en una tarjeta para la lista completa. Toca **‹ Pulso** para regresar.
 
@@ -694,16 +707,16 @@ Entre la apertura y el cierre, vigilas la tienda, recibes camiones, preparas des
 Una nota de entrega le dice al siguiente turno lo que necesita saber. Todos la leen en el Pulso. Los subgerentes y roles más altos la escriben.
 
 1. **Escribe una nota.** En el Pulso, baja hasta la última tarjeta, **Entrega de turno**. Toca el **Ver más** de arriba a la derecha de esa tarjeta, junto a su nombre. Cada tarjeta tiene su propio **Ver más**: usa el de **Entrega de turno**. Bajo **Escribir una nota de entrega**, elige **Quién debe verla**: **Para todos**, **Para el equipo** o **Para gerentes**. Escribe tu **Nota** y toca **Publicar nota**. Una nota puede tener hasta 1000 caracteres. El equipo solo ve las notas para el equipo o para todos, y no ve quién la escribió.
-2. **Después de publicar.** Revisa tu nota. Los subgerentes y roles más altos tocan **Recibido** para mostrar que la leyeron. **Retirar** quita la nota; solo puede hacerlo quien la escribió o un rol más alto.
+2. **Después de publicar.** Revisa tu nota. Muestra quién la escribió, la hora y dos botones: **Recibido** y **Retirar**. Los subgerentes y roles más altos tocan **Recibido** para mostrar que la leyeron; después la nota dice **Ya lo confirmaste**. **Retirar** quita la nota; solo puede hacerlo quien la escribió o un rol más alto. El formulario se vacía al publicar, así que puedes escribir otra nota.
 
 #### Recibir una entrega
 
 Lo haces cada vez que llega un camión. Encargado de llaves o más.
 
 1. **Abre Recepción.** En el tablero, toca **Recepción**. También sirve la tarjeta **Recepción** si la tienes asignada, o el Centro de reportes: **Inventario** y luego **Recepción**.
-2. **Elige el proveedor y cuenta.** En **Proveedor**, toca **Elige un proveedor…** y elige uno. Se carga su pedido habitual. Toca cada línea y escribe lo que llegó. Escribe **Factura #** y **Total de factura ($)**. El pedido habitual puede no cuadrar con el camión de hoy: le pueden faltar cosas o tener cosas que no llegaron. ¿Llegó algo que no está en la lista? Elígelo en **Elige un SKU…** y toca **+ Agregar artículo**.
+2. **Elige el proveedor y cuenta.** En **Proveedor**, toca **Elige un proveedor…** y elige uno. Se carga su pedido habitual. Toca cada línea y escribe lo que llegó. Escribe **Factura #** y **Total de factura ($)**. El pedido habitual puede no cuadrar con el camión de hoy: le pueden faltar cosas o tener cosas que no llegaron. Una línea marcada **Sugerido — según el uso de este proveedor** no tiene número esperado; dice "Toca para contar". Tócala y escribe lo que llegó. ¿Llegó algo que no está en la lista? Elígelo en **Elige un SKU…** y toca **+ Agregar artículo**.
 3. **Marca un problema.** Si una línea está mal, toca un botón bajo **Marca un problema**: **Faltante**, **De más**, **Dañado** o **Sustituto**. Agrega una **Nota de línea (opcional)** si ayuda. La marca que elegiste se pone rosa con borde rojo; tócala otra vez para quitarla. Usa **Faltante** cuando llegó solo una parte: escribe lo que sí llegó y toca **Faltante**. Esto sirve en cualquier entrega. Una línea necesita una cantidad mayor que 0, así que **Faltante** no reclama algo que no llegó nada. Lo que no llegó nada se reclama con **No llegó** en el siguiente paso, y solo si la entrega tiene orden de compra.
-4. **Confirma la entrega.** Toca **Toma foto del recibo** o marca **Foto después**. Toca **Entrega confirmada**. Si el camión sigue descargando, toca **Guardar parcial — el camión sigue descargando**. **Entrega confirmada** sigue gris hasta que al menos una línea tenga cantidad y tomes la foto o marques **Foto después**. Una línea de artículo nuevo a medio llenar también lo bloquea. Escribe la **Factura #** de todos modos: ayuda a cuadrar los papeles después. Algunas líneas dicen **Esperado …**. Si dejas una de esas sin tocar, el primer toque la muestra: **No confirmaste algunos artículos esperados**. Toca **Sí llegó** o **No llegó** en cada una. El botón ahora dice **Toca otra vez para confirmar**; tócalo. Las líneas sin **Esperado …** nunca salen en esa lista; si no queda ninguna sin tocar, un solo toque confirma la entrega. Con orden de compra, la app te dice cuántos faltantes va a reclamar. Sin orden de compra, **No llegó** no reclama nada. Lo que dejes sin responder se registra como no contado y aparece contra la factura. La entrega sale en **Entregas recientes**, más abajo en la misma página; si no tomaste foto, dice **Falta foto**. Toca una entrega para ver sus líneas, marcas y créditos. Un faltante marcado aparece en **Créditos de proveedor abiertos**.
+4. **Confirma la entrega.** Toca **Toma foto del recibo** o marca **Foto después**. Toca **Entrega confirmada**. Si el camión sigue descargando, toca **Guardar parcial — el camión sigue descargando**. **Entrega confirmada** sigue gris hasta que al menos una línea tenga cantidad y tomes la foto o marques **Foto después**. Una línea de artículo nuevo a medio llenar también lo bloquea. Escribe la **Factura #** de todos modos: ayuda a cuadrar los papeles después. Casi siempre, un solo toque guarda la entrega de una vez, sin ventana emergente, y el formulario se vacía para el siguiente camión. Solo hay un segundo paso con las líneas que dicen **Esperado …**, que vienen de una orden de compra o de la última entrega. Si dejas una de esas sin tocar (sin cantidad ni marca), el primer toque la muestra: **No confirmaste algunos artículos esperados**. Toca **Sí llegó** o **No llegó** en cada una. El botón ahora dice **Toca otra vez para confirmar**; tócalo. Las líneas sin **Esperado …**, como las **Sugerido**, nunca salen en esa lista. Con orden de compra, la app te dice cuántos faltantes va a reclamar. Sin orden de compra, **No llegó** no reclama nada. Lo que dejes sin responder se registra como no contado y aparece contra la factura. La entrega sale en **Entregas recientes**, más abajo en la misma página; si no tomaste foto, dice **Falta foto**. Toca una entrega para ver sus líneas, marcas y créditos. Cada marca que elegiste (**Faltante**, **De más**, **Dañado** o **Sustituto**) abre un crédito de proveedor. Aparece en **Créditos de proveedor abiertos**, con cuántos hay abiertos.
 
 #### Prep de mediodía
 
@@ -711,7 +724,7 @@ Después del rush del almuerzo, cuentas y preparas hasta volver al par. Toca des
 
 1. **Empieza.** En el tablero, toca **Preparación del mediodía** y luego **+ Nueva preparación de mediodía**. Si la tienes asignada, también sirve la tarjeta **Preparación de mediodía**. Un encargado de llaves o más puede hacerla; un empleado, si hoy la tiene asignada. Una tienda puede hacer dos al día como máximo; después ves **Límite de preparación de mediodía alcanzado (2 por día).**
 2. **Cuenta al par.** En **Fase 1 — conteo al par**, escribe lo que tienes en **En mano** en cada fila. La fila muestra cuánto falta. Toca **Enviar conteo → Fase 2**. Si una fila no carga, una nota dice **Algunos artículos no se pudieron cargar** y los nombra; lo demás funciona. Avísale a un gerente.
-3. **Prepara y termina (sin foto).** En **Fase 2 — preparación**, escribe lo que preparaste en **Preparado** y toca **Guardar** en esa fila. Hazlo en cada fila. Luego toca **Finalizar preparación**. Cada fila tiene su propio **Guardar**, y queda solo cuando dice **Guardado ✓**. Guarda cada fila antes de finalizar: una fila sin guardar queda fuera. Si hiciste más o menos de lo necesario, primero toca **Agregar razón sobre/bajo par** en la fila y luego guárdala. Al terminar, la página dice **Finalizada — preparación hecha**, con quién la terminó y a qué hora, y cada fila muestra lo **Hecho:**. La línea de prep de mediodía en la lista de cierre se marca sola. Después, tocar **Preparación del mediodía** en el tablero abre la que ya terminaste.
+3. **Prepara y termina.** En **Fase 2 — preparación**, cada fila muestra **Falta:**. Escribe lo que preparaste en **Preparado** y toca **Guardar** en esa fila. Hazlo en cada fila. Luego toca **Finalizar preparación**. Cada fila tiene su propio **Guardar**, y queda solo cuando dice **Guardado ✓**. Guarda cada fila antes de finalizar: el botón no te detiene ni te avisa. Una fila sin guardar queda fuera y muestra **Hecho: —**. Si hiciste más o menos de lo necesario, primero toca **Agregar razón sobre/bajo par** en la fila y luego guárdala. Al terminar, la página dice **Finalizada — preparación hecha**, con quién la terminó y a qué hora, y cada fila muestra lo **Hecho:**. La línea de prep de mediodía en la lista de cierre se marca sola. Después, tocar **Preparación del mediodía** en el tablero abre la que ya terminaste.
 
 #### Mantén la lista de cierre en marcha
 
@@ -793,7 +806,7 @@ You do this once a night. Key holders and up.
 
 **What you see**
 
-![PM Report: Shift activity, MVP, and a grade card for each person with no grade picked yet](img/manager/32-pm-report.png)
+![PM Report: Shift activity, MVP, and the first grade card with no grade picked yet](img/manager/32-pm-report.png)
 
 **What to do** — On the board, tap **PM report**. If it is assigned to you, the **PM Report** tile works too.
 
@@ -812,6 +825,7 @@ You do this once a night. Key holders and up.
 **Worth knowing**
 
 - Nothing is picked to start. **Save** stays grey until all four lines have a grade: **Pick a grade on every line to save.**
+- After you tap **Save**, the button says **Saved ✓** for about two seconds. Then it goes back to **Save**. Your grades are kept.
 - Only saved cards count. A card you don't save is not graded.
 - Type in **Area to improve** if they need to work on something.
 - **Note (managers only)** is private: **Only managers see this note**.
@@ -889,6 +903,8 @@ You do this once a night, before you confirm the closing. Key holders and up.
 
 **Worth knowing**
 
+- A green line says **Deposited … · signed by … at …**. Below it are the amounts, the deposit, the cash tips and who was on shift.
+- Here an even night reads **$0.00 over**. The form said **Even** for the same night. Both mean the cash matched.
 - Once signed, the deposit is read-only. You can't redo it. Check the amounts before you sign.
 - If the closing is confirmed before anyone files the deposit, the page is locked: **Today's closing is already finalized — the cash deposit is locked.**
 - Filing it ticks the cash line on the closing. You can't confirm the closing without it.
@@ -939,12 +955,13 @@ This is the last job of the night. Key holders and up.
 
 **What you see**
 
-![Closed closing: banner "Closing submitted with incomplete items" and the reasons list](img/manager/46-closing-confirmed.png)
+![Closed closing: the banner "Closing submitted with incomplete items" and the greyed-out lines](img/manager/46-closing-confirmed.png)
 
-**What to do** — Check the banner. With every line done, it says **Closing confirmed … by …**. With reasons, it says **Closing submitted with incomplete items … by …** and lists them.
+**What to do** — Check the banner. With every line done, it says **Closing confirmed … by …**, with the time and "you". With reasons, it says **Closing submitted with incomplete items … by …**. Every line turns grey.
 
 **Worth knowing**
 
+- Your reasons don't show right away. Open the closing again later. Under the banner, **Reasons given for unfinished lines** lists each line, its reason and who wrote it.
 - The list can't be changed after this.
 - The dashboard card then says **Closed** or **Closed with items incomplete**, with **Review closing**.
 - If no one confirms, the dashboard warns the next day. The opener has to wait until it is confirmed or released.
@@ -975,7 +992,7 @@ AM prep es un trabajo de la noche. Antes de irte, cuentas lo que queda. El equip
 Lo haces una vez por noche. Encargado de llaves o más.
 
 1. **Abre el reporte PM.** En el tablero, toca **Reporte PM**. Si lo tienes asignado, también sirve la tarjeta **Reporte PM**. **Actividad del turno** muestra quién hizo qué y qué reportes están.
-2. **Califica a cada persona.** Cada persona tiene cuatro notas: **Llegó listo**, **Actitud**, **Producción** y **Trabajo en equipo**. En cada una toca **Excelente**, **Bien** o **Necesita mejorar**, y luego **Guardar** en la tarjeta. Al inicio no hay nada marcado. **Guardar** sigue gris hasta que las cuatro líneas tengan nota: **Elige una calificación en cada línea para guardar.** Solo cuentan las tarjetas guardadas; una tarjeta sin guardar no queda calificada. Escribe en **Área a mejorar** si hace falta. **Nota (solo gerentes)** es privada: **Solo los gerentes ven esta nota**. Al principio sale el equipo de hoy en esta tienda: quienes estuvieron en turno, tuvieron estación o tuvieron una tarea. También salen los que ya calificaste. Para agregar a alguien, usa **Selecciona empleado…** abajo.
+2. **Califica a cada persona.** Cada persona tiene cuatro notas: **Llegó listo**, **Actitud**, **Producción** y **Trabajo en equipo**. En cada una toca **Excelente**, **Bien** o **Necesita mejorar**, y luego **Guardar** en la tarjeta. Al inicio no hay nada marcado. **Guardar** sigue gris hasta que las cuatro líneas tengan nota: **Elige una calificación en cada línea para guardar.** Al tocar **Guardar**, el botón dice **Guardado ✓** unos dos segundos y luego vuelve a **Guardar**; tus notas quedan guardadas. Solo cuentan las tarjetas guardadas; una tarjeta sin guardar no queda calificada. Escribe en **Área a mejorar** si hace falta. **Nota (solo gerentes)** es privada: **Solo los gerentes ven esta nota**. Al principio sale el equipo de hoy en esta tienda: quienes estuvieron en turno, tuvieron estación o tuvieron una tarea. También salen los que ya calificaste. Para agregar a alguien, usa **Selecciona empleado…** abajo.
 3. **Elige un MVP.** En **MVP**, elige a una persona. Escribe por qué en **¿Por qué MVP?** y toca **Guardar**. Es tu decisión; puedes dejar **Sin MVP**.
 4. **Envíalo.** Toca **Enviar Reporte PM**. Un aviso verde dice **Enviado … por …** y las notas quedan fijas. Cada persona que calificaste recibe el aviso **Nuevo comentario de turno** y ve sus notas en **Mi Desempeño**.
 
@@ -986,7 +1003,7 @@ Lo haces una vez por noche, antes de confirmar el cierre. Encargado de llaves o 
 1. **Ábrelo.** En el tablero, toca **Reporte de caja**. La página se llama **Depósito de efectivo**. También sirve la tarjeta **Depósito de efectivo** o el botón **Hacer el depósito de efectivo** en el cierre.
 2. **Llénalo.** Escribe **Proyectado (de Toast)**. Cuenta la caja con **Ingresar total** o **Contar por billete**. Escribe **Total de la caja** y **Propinas en efectivo**. Marca en **En turno hoy** a quienes trabajaron. **$200 se quedan en la caja**: el depósito es el total de la caja menos $200. O sea, el total de la caja incluye los $200: cuenta todo el efectivo de la caja. En una noche exacta, el total de la caja es lo proyectado más $200. Ejemplo: proyectado $845, caja $1,045, depósito $845, **Exacto**. La app compara el depósito con lo proyectado y muestra si sobra o falta; esto sale cuando ya escribiste lo proyectado y la caja. Si no cuadra, explica en **Nota de sobra/falta (opcional)**. **En turno hoy** muestra a todo el equipo: marca solo a quienes trabajaron. **+ Agregar** suma un nombre.
 3. **Fírmalo.** Toca **Firmar y enviar depósito** y escribe tu PIN.
-4. **Listo.** Revisa los montos. Ya firmado, el depósito es de solo lectura: no lo puedes rehacer. Revisa los montos antes de firmar. Si el cierre se confirma antes de que alguien envíe el depósito, la página queda bloqueada: **El cierre de hoy ya está finalizado — el depósito de efectivo está bloqueado.** Al enviarlo se marca la línea de efectivo del cierre. Sin él no puedes confirmar el cierre.
+4. **Listo.** Revisa los montos. Una línea verde dice **Depositado … · firmado por … a las …**. Debajo están los montos, el depósito, las propinas y quién estuvo en turno. Aquí una noche exacta dice **$0.00 de sobra**; el formulario decía **Exacto** para la misma noche. Las dos quieren decir que el efectivo cuadró. Ya firmado, el depósito es de solo lectura: no lo puedes rehacer. Revisa los montos antes de firmar. Si el cierre se confirma antes de que alguien envíe el depósito, la página queda bloqueada: **El cierre de hoy ya está finalizado — el depósito de efectivo está bloqueado.** Al enviarlo se marca la línea de efectivo del cierre. Sin él no puedes confirmar el cierre.
 
 #### Confirmar el cierre
 
@@ -995,7 +1012,7 @@ Es el último trabajo de la noche. Encargado de llaves o más.
 1. **Haz la salida.** Toca **Continuar cierre**. En **Verificación de salida** (Walk-Out Verification), marca las cinco: luces apagadas, aparatos cargando, horno apagado, puertas de enfrente con llave, puerta de atrás con llave. No puedes confirmar el cierre hasta marcar las cinco.
 2. **Revisa y explica.** Toca **Revisar y enviar**. Si quedan líneas abiertas, dice **Revisar y enviar (incompleto)**. Escribe un motivo en cada casilla **¿Por qué no se completó?** y toca el botón amarillo **Continuar** al final del panel de motivos. Algunas líneas son obligatorias sin excusa: debes terminarlas. El depósito de efectivo debe estar; si no, ves **Se requiere el depósito de efectivo antes de finalizar el cierre.** Tu rol debe ser igual o más alto que el rol más alto de las líneas marcadas.
 3. **Confirma con tu PIN.** En **Confirma con tu PIN**, escribe tu PIN. El cuarto dígito lo envía; luego el teclado espera un momento. No vuelvas a tocar.
-4. **El cierre está listo.** Revisa el aviso. Si todo se hizo, dice **Cierre confirmado … por …**. Con motivos, dice **Cierre enviado con ítems sin completar … por …** y los muestra. Ya no se puede cambiar. La tarjeta del dashboard dice **Cerrado** o **Cerrado con pendientes**, con **Revisar cierre**. Si nadie confirma, el dashboard avisa al día siguiente, y el que abre tiene que esperar a que se confirme o se libere.
+4. **El cierre está listo.** Revisa el aviso. Si todo se hizo, dice **Cierre confirmado … por …**, con la hora y "tú". Con motivos, dice **Cierre enviado con ítems sin completar … por …**. Todas las líneas se ponen grises. Tus motivos no salen enseguida: abre el cierre otra vez más tarde. Debajo del aviso, **Motivos indicados para las líneas sin terminar** muestra cada línea, su motivo y quién lo escribió. Ya no se puede cambiar. La tarjeta del dashboard dice **Cerrado** o **Cerrado con pendientes**, con **Revisar cierre**. Si nadie confirma, el dashboard avisa al día siguiente, y el que abre tiene que esperar a que se confirme o se libere.
 
 #### Si ves "Esta lista ya está confirmada."
 
@@ -1028,16 +1045,17 @@ Run a full count when the owner asks for one. Key holders and up can record it.
 
 **What you see**
 
-![Three count lines, each with an item, a unit and a number](img/manager/48-counts-filled.png)
+![Count lines with an item and How many filled in, the Unit box still empty, and Record audit still grey](img/manager/48-counts-filled.png)
 
-**What to do** — Pick the item in **Pick an item…**. Pick its unit from the **Unit** list. Type **How many**. For a part of a container, tick **Loose (below a full container)** and type the part. Tap **+ Add item** for the next line.
+**What to do** — Pick the item in **Pick an item…**. Fill in **Unit**. Type **How many**. For a part of a container, tick **Loose (below a full container)** and type the part. Tap **+ Add item** for the next line.
 
 **Worth knowing**
 
-- After you pick the item, **Unit** lists that item's units, like Case or head. Pick one. If an item has no list, type the unit in the box.
+- **Unit** is a list or a box, by item. An item with packs set up shows a list (**Pick a unit…**), like Case or head. Pick one. Many items have no list. Then **Unit** is a box that says **Unit (e.g. tub)**. Type the unit, like each or tub.
+- A unit is required. A line with no unit is not saved, even with a number in **How many**.
+- **Record audit** stays grey until at least one line has all three: an item, a unit and **How many**.
 - **How many** must be more than 0.
 - Count each unit once. Count full containers first, then loose ones.
-- **Record audit** turns on once one line has an item, a unit and a number.
 - Finish every line you want saved. A yellow note warns you: **… unfinished line(s) — they won't be saved**.
 - If a unit won't work for an item, a red message says nothing was saved. Pick a unit from that item's list.
 
@@ -1070,7 +1088,7 @@ Walk the shelves and mark what to order, before each vendor's cutoff. Key holder
 
 **What you see**
 
-![Ordering walk: Today's orders, Cutoff today with three vendors, and the PFG item list](img/manager/51-ordering-walk.png)
+![Ordering walk: Today's orders, Cutoff today with two vendors to draft, and the vendor item lists](img/manager/51-ordering-walk.png)
 
 **What to do** — Ordering is not in the menu. On the board, tap **Ordering**. You can also use the **Ordering** tile if it is assigned to you, or the Reports Hub: **Inventory**, then **Ordering**.
 
@@ -1084,7 +1102,7 @@ Walk the shelves and mark what to order, before each vendor's cutoff. Key holder
 
 **What you see**
 
-![Duke's Mayo set to 2 and Iceberg set to 1; the bar says 2 SKUs marked](img/manager/52-ordering-adjusted.png)
+![One item set to 2 and another set to 1; the bar says 2 SKUs marked](img/manager/52-ordering-adjusted.png)
 
 **What to do** — Use **+** and **−** under **Order to par** to set how many to order.
 
@@ -1097,7 +1115,7 @@ Walk the shelves and mark what to order, before each vendor's cutoff. Key holder
 
 **What you see**
 
-![Review order sheet: PFG with Iceberg and Duke's Mayo](img/manager/53-ordering-review.png)
+![Review order sheet: one card per vendor with the marked items](img/manager/53-ordering-review.png)
 
 **What to do** — Tap **Review order**. Check each vendor's list. Tap **Record walk** to save it. The button also shows how many you marked, like **Record walk · 2 SKUs**. **Keep walking** takes you back.
 
@@ -1105,9 +1123,9 @@ Walk the shelves and mark what to order, before each vendor's cutoff. Key holder
 
 **What you see**
 
-![Walk recorded; the PFG draft order with its order number, minimum and lines](img/manager/54-ordering-draft.png)
+![Walk recorded, with a green link for each vendor's draft and the Start a new walk button](img/manager/54-ordering-draft.png)
 
-**What to do** — Find your order under **Draft orders**. Use it to place the order with the vendor.
+**What to do** — Find your order. A green box says **Walk recorded — … SKUs.** A new order shows under **Draft orders**. If the vendor already had a draft today, your items go into it. Then a green link says **…: added to today's draft — PO …**, and **Draft orders** can be empty. Tap the link to open that order. Use it to place the order with the vendor.
 
 **Worth knowing**
 
@@ -1139,10 +1157,12 @@ Log food you make from raw stock outside the prep sheets. Employees and up can d
 
 ![Cheddar picked, Makes set to Cheddar, 1 used and 4 made](img/manager/56-production-filled.png)
 
-**What to do** — Pick the **Raw item (SKU)**. Pick what it **Makes**. Type the **Amount used (packs)** and the **Amount made**.
+**What to do** — Pick the **Raw item (SKU)**. Then **Makes** shows up, with **Pick what you made…**. Pick what it makes. Type the **Amount used (packs)** and the **Amount made**.
 
 **Worth knowing**
 
+- **Makes** is not on the form until you pick the raw item.
+- The app may fill in **Amount made** with what it expects (**Predicted output**). Change it to what you really made.
 - Some items have nothing to pick in **Makes**. Then **Log production** stays grey. Pick another item.
 
 #### 3. Log it
@@ -1297,7 +1317,7 @@ Estos son los trabajos y páginas que usas además de los reportes diarios.
 Haz un conteo completo cuando el dueño lo pida. Un encargado de llaves o más lo puede registrar.
 
 1. **Ábrelo.** En el tablero, toca **Conteos**. Si lo tienes asignado, también sirve la tarjeta **Auditoría de inventario**. Los subgerentes y roles más altos también lo abren en el Centro de reportes: **Inventario** y luego **Conteos y variaciones**. Solo los subgerentes y roles más altos ven la parte de lo que hay en existencia.
-2. **Agrega tus líneas.** Elige el artículo en **Elige un artículo…**. Elige su unidad en la lista **Unidad**. Escribe **Cuántos**. Para una parte de un recipiente, marca **Suelto (debajo de un contenedor lleno)** y escribe la parte. Toca **+ Agregar artículo** para otra línea. Al elegir el artículo, **Unidad** muestra sus unidades, como Case o head: elige una. Si un artículo no tiene lista, escribe la unidad en la casilla. **Cuántos** debe ser mayor que 0. Cuenta cada unidad una sola vez: primero los recipientes llenos, luego los sueltos. **Registrar auditoría** se enciende cuando una línea tiene artículo, unidad y cantidad. Termina cada línea que quieras guardar; una nota amarilla avisa: **… línea(s) sin terminar — no se guardarán**. Si una unidad no sirve para un artículo, un mensaje rojo dice que no se guardó nada: elige una unidad de la lista de ese artículo.
+2. **Agrega tus líneas.** Elige el artículo en **Elige un artículo…**. Llena **Unidad**. Escribe **Cuántos**. Para una parte de un recipiente, marca **Suelto (debajo de un contenedor lleno)** y escribe la parte. Toca **+ Agregar artículo** para otra línea. **Unidad** es una lista o una casilla, según el artículo. Un artículo con paquetes muestra una lista (**Elige una unidad…**), como Case o head: elige una. Muchos artículos no tienen lista; entonces **Unidad** es una casilla que dice **Unidad (p. ej. tina)**. Escribe la unidad, como pieza o tina. La unidad es obligatoria: una línea sin unidad no se guarda, aunque tenga número en **Cuántos**. **Registrar auditoría** sigue gris hasta que al menos una línea tenga las tres cosas: artículo, unidad y **Cuántos**. **Cuántos** debe ser mayor que 0. Cuenta cada unidad una sola vez: primero los recipientes llenos, luego los sueltos. Termina cada línea que quieras guardar; una nota amarilla avisa: **… línea(s) sin terminar — no se guardarán**. Si una unidad no sirve para un artículo, un mensaje rojo dice que no se guardó nada: elige una unidad de la lista de ese artículo.
 3. **Confírmalo.** Encargados de llaves, entrenadores y líderes de turno: primero escribe tu PIN en la casilla **PIN** junto al botón. **Registrar auditoría** sigue gris hasta tener 4 dígitos. Luego toca **Registrar auditoría**. Subgerentes y roles más altos: toca **Registrar auditoría** y luego escribe tu contraseña en **Confirma tu contraseña**.
 4. **El conteo registrado.** El formulario se limpia. Subgerentes y roles más altos: revisen la lista de existencias, a la derecha en una tableta o abajo en un teléfono. Ahora dice **Anclado a la auditoría del …**: las existencias ahora parten de tu conteo. Una nota puede decir que el conteo quedó bajo un solo proveedor; **Contar por proveedor** te deja repartirlo. Un artículo marcado **bajo cero — cuéntalo** muestra 0: la app cree que tienes menos que nada, así que sus números están mal. Cuenta ese artículo después.
 
@@ -1308,14 +1328,14 @@ Recorre los estantes y marca qué pedir, antes del cierre de cada proveedor. Enc
 1. **Abre el recorrido.** Pedidos no está en el menú. En el tablero, toca **Pedidos**. También sirve la tarjeta **Pedidos** si la tienes asignada, o el Centro de reportes: **Inventario** y luego **Pedidos**. **Cierre hoy** muestra los proveedores con hora límite hoy, y la hora. Un corte que pasó sin pedido sale en rojo: **Se pasó el corte — llama al proveedor**. Llama al proveedor para hacer el pedido. Cada artículo muestra su par y más o menos cuánto hay.
 2. **Marca qué pedir.** Usa **+** y **−** bajo **Pedir hasta el par** para poner cuánto pedir. Debajo de cada artículo hay botones rápidos, como **Sugerir 2**, **Vacío · pedir 3** y **Estamos llenos · 0**. **Sugerir** se enciende cuando tu número coincide con la sugerencia de la app.
 3. **Revisa el pedido.** Toca **Revisar pedido** y revisa la lista de cada proveedor. Toca **Registrar recorrido** para guardarlo. El botón también muestra cuántos marcaste, como **Registrar recorrido · 2 SKUs**. **Seguir recorriendo** te regresa.
-4. **El pedido borrador.** Busca tu pedido en **Pedidos borrador** y úsalo para hacer el pedido al proveedor. Si sale el mínimo del proveedor, revísalo antes de pedir; la app no avisa cuando un pedido queda por debajo. Algunos borradores muestran cómo recibe pedidos el proveedor, como un portal con un botón **Copiar**. **Iniciar un nuevo recorrido** empieza otra vez.
+4. **El pedido borrador.** Busca tu pedido. Un cuadro verde dice **Recorrido registrado — … SKUs.** Un pedido nuevo sale en **Pedidos borrador**. Si el proveedor ya tenía un borrador hoy, tus artículos se agregan a ese. Entonces un enlace verde dice **…: se agregó al borrador de hoy — OC …**, y **Pedidos borrador** puede quedar vacío. Toca el enlace para abrir ese pedido. Úsalo para hacer el pedido al proveedor. Si sale el mínimo del proveedor, revísalo antes de pedir; la app no avisa cuando un pedido queda por debajo. Algunos borradores muestran cómo recibe pedidos el proveedor, como un portal con un botón **Copiar**. **Iniciar un nuevo recorrido** empieza otra vez.
 
 #### Producción
 
 Registra comida que haces con materia prima fuera de las listas de prep. Empleados y roles más altos pueden hacerlo.
 
 1. **Ábrela.** Toca **Producción** en el menú. Abre en tu tienda. Úsala solo para comida que no está en una lista de prep: las filas de prep de apertura y de mediodía ya registran lo que haces ahí. Al registrar, la materia prima que usaste sale de las existencias, y la app aprende cuánto rinde cada paquete. Los líderes de turno y roles más altos también ven **Variación de rendimiento →** en esta página.
-2. **Llénala.** Elige la **Materia prima (SKU)**. Elige lo que **Hace**. Escribe **Cantidad usada (paquetes)** y **Cantidad hecha**. Algunos artículos no tienen nada en **Hace**; entonces **Registrar producción** sigue gris. Elige otro.
+2. **Llénala.** Elige la **Materia prima (SKU)**. Entonces sale **Hace**, con **Elige lo que hiciste…**; **Hace** no está en el formulario hasta que eliges la materia prima. Elige lo que hace. La app puede llenar **Cantidad hecha** con lo que espera (**Salida estimada**); cámbiala por lo que de verdad hiciste. Escribe **Cantidad usada (paquetes)** y **Cantidad hecha**. Algunos artículos no tienen nada en **Hace**; entonces **Registrar producción** sigue gris. Elige otro.
 3. **Regístrala.** Toca **Registrar producción**. No sale ningún mensaje: la fila nueva arriba en **Producción reciente** te dice que funcionó. Tus entradas de prep de apertura también salen en esta lista.
 
 #### Centro de reportes

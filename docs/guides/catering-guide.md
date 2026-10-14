@@ -220,9 +220,9 @@ The shop team can follow catering here during the day.
 
 1. On the dashboard, tap **Mid-Shift Pulse** in **Explore**.
 
-2. Find the **Catering** section.
+2. Find the **Catering** section. It shows the jobs **Due today** and the jobs booked for tomorrow. It shows if the AM and mid-day prep have started. Under **Not rung into Toast**, it lists ezCater orders that still need to go into Toast.
 
-![The Catering section on the Mid-Shift Pulse](img/catering/06b-pulse-catering.png)
+![The Catering section on the Mid-Shift Pulse, next to Inventory, Food safety and Handoff](img/catering/06b-pulse-catering.png)
 
 3. To leave a note for the next shift, open the **Handoff** section.
 
@@ -232,9 +232,10 @@ The shop team can follow catering here during the day.
 
 **Worth knowing**
 
+- With no jobs, the section says **No catering due today.** and **Every ezCater order is in Toast.**
+- The **Catering** section shows no money. The sales money on the Pulse shows only for the GM and up.
 - AGM, Catering Manager and up can write notes and tap **Got it** on a note they read.
-- The money on the Pulse shows only for the GM and up.
-- These steps are not shown in photos.
+- The photo shows the **Handoff** section with no notes. Steps 4 and 5 are not in a photo.
 
 ### En español
 
@@ -259,7 +260,7 @@ El equipo de la tienda puede seguir el catering aquí durante el día.
 
 1. En el dashboard, toca **Pulso de medio turno** en **Explorar**.
 
-2. Busca la sección **Catering**.
+2. Busca la sección **Catering**. Muestra los trabajos **Para hoy** y los que hay para mañana. Muestra si ya empezó la prep de la mañana y la de mediodía. En **Sin registrar en Toast** salen los pedidos de ezCater que faltan por pasar a Toast.
 
 3. Para dejar una nota al siguiente turno, abre la sección **Entrega de turno**.
 
@@ -267,9 +268,10 @@ El equipo de la tienda puede seguir el catering aquí durante el día.
 
 5. Toca **Publicar nota**.
 
+- Si no hay trabajos, la sección dice **No hay catering para hoy.** y **Todos los pedidos de ezCater están en Toast.**
+- La sección **Catering** no muestra dinero. El dinero de ventas en el Pulso solo lo ve el Gerente General y arriba.
 - Subgerente General, Gerente de Catering y arriba pueden escribir notas y tocar **Recibido** en una nota que leyeron.
-- El dinero en el Pulso solo lo ve el Gerente General y arriba.
-- Estos pasos no salen en fotos.
+- La foto muestra la sección **Entrega de turno** sin notas. Los pasos 4 y 5 no salen en foto.
 
 ## The pipeline
 
@@ -333,7 +335,7 @@ You do this when someone calls, emails or walks in about catering.
 **Worth knowing**
 
 - There is no separate lead page. The card is the lead.
-- The card shows the name, company, shop, date, headcount and source. Open it to see the notes you typed.
+- The card shows the name, company, shop, date, headcount and source. Open it to see the notes and the follow-up date.
 - **No caps set** shows on a lead with an event date. It means no booking limits are set for that shop yet. See **Capacity & Blackouts** in [Setup](#setup).
 
 ### Fix a lead
@@ -344,18 +346,18 @@ You do this when the client changes the date or the headcount, or you have a new
 
 2. Tap **Edit details**.
 
-3. Change what you need: **Contact name**, **Company**, **Event date**, **Headcount**, **Follow-up date** or **Notes**.
+3. The form opens inside the card, above **Move to**. Change what you need: **Contact name**, **Company**, **Event date**, **Headcount**, **Follow-up date** or **Notes**.
 
 ![The Edit details form on a lead, with Save and Cancel](img/catering/10b-lead-edit-details.png)
 
-4. Tap **Save**.
+4. Tap **Save**. The form closes. The card stays open and shows your changes. A new follow-up date shows as **Follow-up date** on the card.
 
 **Worth knowing**
 
 - AGM, Catering Manager and up can do this.
 - **Cancel** closes the form and keeps the lead as it was.
 - The shop and the source can't change here. To change the shop, see "Move an order to the other shop" below.
-- This is not shown in photos.
+- The form has no phone or email box.
 
 ### Move a lead
 
@@ -380,13 +382,13 @@ You do this each time a job moves forward.
 
 ### Move an order to the other shop
 
-Only the Catering Manager, or a Manager of Operations and up, can do this. It is not shown in photos.
+Only the Catering Manager, or a Manager of Operations and up, can do this. A GM or an AGM does not see the button. It is not shown in photos.
 
 1. Open the card.
 
 2. Tap **Move to other shop**.
 
-3. Pick the shop and a reason. Add a note if it asks.
+3. Pick the **Destination shop** and a **Reason**. If the reason is **Other**, a note is a must.
 
 4. Tap **Confirm move**. Enter your password if it asks.
 
@@ -442,7 +444,7 @@ Lo haces cuando alguien llama, escribe o llega a preguntar por catering.
 2. Tócala otra vez para cerrarla.
 
 - No hay una página aparte para el prospecto. La tarjeta es el prospecto.
-- La tarjeta muestra el nombre, la empresa, la tienda, la fecha, las personas y el origen. Ábrela para ver las notas que escribiste.
+- La tarjeta muestra el nombre, la empresa, la tienda, la fecha, las personas y el origen. Ábrela para ver las notas y la fecha de seguimiento.
 - **Sin límites configurados** sale en un prospecto con fecha del evento. Quiere decir que esa tienda todavía no tiene límites de reservas. Mira **Capacidad y bloqueos** en la configuración.
 
 #### Corregir un prospecto
@@ -453,14 +455,14 @@ Lo haces cuando el cliente cambia la fecha o las personas, o tienes una nota nue
 
 2. Toca **Editar datos**.
 
-3. Cambia lo que necesites: **Nombre de contacto**, **Empresa**, **Fecha del evento**, **Personas**, **Fecha de seguimiento** o **Notas**.
+3. El formulario se abre dentro de la tarjeta, arriba de **Mover a**. Cambia lo que necesites: **Nombre de contacto**, **Empresa**, **Fecha del evento**, **Personas**, **Fecha de seguimiento** o **Notas**.
 
-4. Toca **Guarda**.
+4. Toca **Guarda**. El formulario se cierra. La tarjeta sigue abierta y muestra tus cambios. Una fecha de seguimiento nueva sale como **Fecha de seguimiento** en la tarjeta.
 
 - Subgerente General, Gerente de Catering y arriba pueden hacerlo.
 - **Cancela** cierra el formulario y deja el prospecto como estaba.
 - Aquí no se cambian la tienda ni el origen. Para cambiar la tienda, mira "Mover un pedido a la otra tienda" abajo.
-- No sale en fotos.
+- El formulario no tiene casilla de teléfono ni de correo.
 
 #### Mover un prospecto
 
@@ -481,13 +483,13 @@ Lo haces cada vez que un trabajo avanza.
 
 #### Mover un pedido a la otra tienda
 
-Solo el Gerente de Catering, o el Gerente de Operaciones y arriba, puede hacerlo. No sale en fotos.
+Solo el Gerente de Catering, o el Gerente de Operaciones y arriba, puede hacerlo. Un Gerente General o un Subgerente General no ve el botón. No sale en fotos.
 
 1. Abre la tarjeta.
 
 2. Toca **Mover a otra tienda**.
 
-3. Escoge la tienda y un motivo. Agrega una nota si te la pide.
+3. Escoge la **Tienda de destino** y un **Motivo**. Si el motivo es **Otro**, la nota es obligatoria.
 
 4. Toca **Confirmar cambio**. Escribe tu contraseña si te la pide.
 
@@ -501,7 +503,7 @@ A quote is the price for a lead, line by line. AGM, Catering Manager and up can 
 
 1. On the hub, tap **Catering Quotes**.
 
-![Catering Quotes with the New quote button and "No quotes yet."](img/catering/12-quotes-list.png)
+![Catering Quotes with the New quote button and the list of quotes](img/catering/12-quotes-list.png)
 
 2. Tap **New quote**.
 
@@ -525,7 +527,7 @@ A quote is the price for a lead, line by line. AGM, Catering Manager and up can 
 
 ### Add packages and items
 
-1. Pick a package in **Add package**. It drops in as lines.
+1. Pick a package in **Add package**. It drops in as lines. The first one fills the empty line the quote starts with.
 
 2. Pick single items in **Add à la carte**.
 
@@ -537,10 +539,11 @@ A quote is the price for a lead, line by line. AGM, Catering Manager and up can 
 
 - **Qty** never follows the headcount. Change it yourself.
 - Some packages are priced per person, like **Light Lunch**. The **Packages** page marks them **Per head**. They come in at **Qty** 1. For 25 people, set **Qty** to 25. If you leave it at 1, you quote one lunch.
-- An à la carte line starts at **Qty** 1. A package line comes in with the package's own count, like 8 for a platter of 8.
-- A package can add more than one line. **Light Lunch** also adds a "Choose your sub" line with no price.
+- A platter comes in as one line at **Qty** 1 with the platter's price. Leave it at 1 for one platter. It is not priced per person.
+- An à la carte line starts at **Qty** 1.
+- A package also adds a line that starts with "Choose your sub". Its **Qty** is the number of subs in the package. It has no price and adds no money.
 - The app has no sub picker yet. Write the sub mix in the **Notes** box, like "10 turkey, 10 Italian, 5 veggie".
-- A new quote starts with one empty line. It goes away when you add a package or an item.
+- A new quote starts with one empty line. Your first package or item takes its place.
 - An à la carte item comes in with its price filled in.
 - Tick **Delivery** if you will bring the food.
 - Use the **Notes** box at the bottom for anything else.
@@ -634,7 +637,7 @@ Una cotización es el precio de un prospecto, línea por línea. Subgerente Gene
 
 #### Agregar paquetes y artículos
 
-1. Escoge un paquete en **Agregar paquete**. Entra como líneas.
+1. Escoge un paquete en **Agregar paquete**. Entra como líneas. El primero llena la línea vacía con la que empieza la cotización.
 
 2. Escoge artículos sueltos en **Agregar a la carta**.
 
@@ -644,10 +647,11 @@ Una cotización es el precio de un prospecto, línea por línea. Subgerente Gene
 
 - La **Cant.** nunca sigue a las personas. Cámbiala tú.
 - Algunos paquetes tienen precio por persona, como **Light Lunch**. La página **Paquetes** los marca **Por persona**. Entran con **Cant.** 1. Para 25 personas, pon la **Cant.** en 25. Si la dejas en 1, cotizas un solo lunch.
-- Una línea a la carta empieza en **Cant.** 1. Una línea de paquete entra con la cantidad del paquete, como 8 en una charola de 8.
-- Un paquete puede agregar más de una línea. **Light Lunch** también agrega una línea "Choose your sub" sin precio.
+- Una charola entra como una línea con **Cant.** 1 y el precio de la charola. Déjala en 1 para una charola. No tiene precio por persona.
+- Una línea a la carta empieza en **Cant.** 1.
+- Un paquete también agrega una línea que empieza con "Choose your sub". Su **Cant.** es el número de subs del paquete. No tiene precio y no suma dinero.
 - La app todavía no tiene dónde escoger los subs. Escribe la mezcla de subs en la casilla **Notas**, por ejemplo "10 de pavo, 10 italianos, 5 vegetarianos".
-- Una cotización nueva empieza con una línea vacía. Se quita sola cuando agregas un paquete o un artículo.
+- Una cotización nueva empieza con una línea vacía. Tu primer paquete o artículo toma su lugar.
 - Un artículo a la carta entra con su precio ya puesto.
 - Marca **Entrega a domicilio** si vas a llevar la comida.
 - Usa la casilla **Notas** de abajo para lo demás.
@@ -848,11 +852,19 @@ Catering has its own lists of people and businesses. The GM and up also have the
 
 ![Catering Companies with a New company button and "No company accounts yet."](img/catering/18-catering-companies.png)
 
-2. Tap **New company** to add a business you cater for. The form is not shown in photos.
+2. Tap **New company** to add a business you cater for.
 
-![The New company form](img/catering/18b-new-company-form.png)
+![The New company form with Company name, Corporate domain (optional), Create and Cancel](img/catering/18b-new-company-form.png)
+
+3. Type the **Company name**.
+
+4. If the company has its own email domain, type it in **Corporate domain (optional)**, like "acme.com".
+
+5. Tap **Create**. **Cancel** closes the form and saves nothing.
 
 **Worth knowing**
+
+- A personal domain, like gmail, can't be used. Add those people to the company by hand.
 
 - A company typed on a customer is only a group name. It does not make a company account.
 - The screen says a company's email domain can link its people to it on its own.
@@ -919,7 +931,15 @@ Catering tiene sus propias listas de personas y negocios. El Gerente General y a
 
 1. En la página de catering, toca **Empresas de Catering**.
 
-2. Toca **Nueva empresa** para agregar un negocio al que le haces catering. El formulario no sale en fotos.
+2. Toca **Nueva empresa** para agregar un negocio al que le haces catering.
+
+3. Escribe el **Nombre de la empresa**.
+
+4. Si la empresa tiene su propio dominio de correo, escríbelo en **Dominio corporativo (opcional)**, como "acme.com".
+
+5. Toca **Crear**. **Cancelar** cierra el formulario y no guarda nada.
+
+- Un dominio personal, como gmail, no se puede usar. Agrega a esas personas a la empresa a mano.
 
 - Una empresa escrita en un cliente es solo un nombre de grupo. No crea una cuenta de empresa.
 - La pantalla dice que el dominio de correo de una empresa puede ligar a su gente sola.
@@ -979,6 +999,7 @@ Shift leads and up can open this page.
 - The screen says it: money counts by the event date. Leads count by the day they came in.
 - Money is split into three tiles: **Confirmed (upcoming)**, **Completed** and **Open pipeline**.
 - A job counts at its accepted quote. A draft or sent quote does not count. Orders that come in from ezCater or Toast count at their own total.
+- **Open pipeline** adds up the leads still in **Inquiry** or **Quote sent**, on any date. It does not change with the range you pick. It uses the same money rule, so a lead with only a draft or sent quote adds $0.
 - So a lead you typed shows $0 until you tap **Mark accepted** on its quote. See [When the client says yes](#when-the-client-says-yes).
 - **Leads by source** and **Events by stage** open when you tap them.
 - **Booked catering calendar** puts a dot on each booked day. Tap a day to see its jobs.
@@ -1025,6 +1046,7 @@ Los líderes de turno y arriba pueden abrir esta página.
 - La pantalla lo dice: el dinero cuenta por la fecha del evento. Los prospectos cuentan por el día en que llegaron.
 - El dinero se divide en tres recuadros: **Confirmado (por venir)**, **Completado** y **Pipeline abierto**.
 - Un trabajo cuenta con su cotización aceptada. Una cotización en borrador o enviada no cuenta. Los pedidos que llegan de ezCater o Toast cuentan con su propio total.
+- **Pipeline abierto** suma los prospectos que siguen en **Consulta** o **Cotización enviada**, de cualquier fecha. No cambia con el rango que escoges. Usa la misma regla del dinero, así que un prospecto con solo una cotización en borrador o enviada suma $0.
 - Por eso un prospecto que escribiste sale en $0 hasta que tocas **Marcar aceptada** en su cotización. Mira "Cuando el cliente dice que sí" en Cotizaciones.
 - **Leads por origen** y **Eventos por etapa** se abren cuando los tocas.
 - **Calendario de catering confirmado** pone un punto en cada día con evento. Toca un día para ver sus trabajos.
@@ -1059,7 +1081,7 @@ Setup is where catering is built: packages, menu, limits and zones. Do it on a c
 
 **Worth knowing**
 
-- You only see the tiles your role can open.
+- You only see the tiles your role can open. A GM sees nine tiles. **Pricing & Tax**, **Catering Rates** and **ezCater item review** are not among them.
 - **Catering workspace** takes you back to the catering hub.
 
 ### Who can change what
@@ -1093,6 +1115,7 @@ GM and up.
 
 **Worth knowing**
 
+- Items are in groups, like Drinks, Sides and Desserts. A group with 6 items or less starts open. Tap a group's name to open or close it.
 - Each item has two switches: **On catering menu** and **Catering only**.
 - An item marked **Toast item** has a third switch, **Sold by portion**. It lets clients order a quarter, half or whole.
 - **Feeds** is how many people one item serves.
@@ -1188,7 +1211,7 @@ En la configuración se arma el catering: paquetes, menú, límites y zonas. Haz
 
 2. Toca un recuadro.
 
-- Solo ves los recuadros que tu rol puede abrir.
+- Solo ves los recuadros que tu rol puede abrir. Un Gerente General ve nueve recuadros. **Precios e impuestos**, **Tarifas de catering** y **Revisión de artículos de ezCater** no están entre ellos.
 - **Espacio de trabajo de catering** te regresa a la página de catering.
 
 #### Quién puede cambiar qué
@@ -1214,6 +1237,7 @@ Gerente General y arriba.
 
 1. Toca **Menú de Catering**.
 
+- Los artículos están en grupos, como bebidas, acompañantes y postres. Un grupo con 6 artículos o menos empieza abierto. Toca el nombre de un grupo para abrirlo o cerrarlo.
 - Cada artículo tiene dos interruptores: **En el menú de catering** y **Solo catering**.
 - Un artículo marcado **Artículo de Toast** tiene un tercer interruptor, **Por porción**. Deja que el cliente pida un cuarto, mitad o entero.
 - **Rinde** es para cuántas personas alcanza un artículo.
