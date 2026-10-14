@@ -29,6 +29,8 @@ interface Props {
   followUps: PipelineLead[];
   locations: LocationOpt[];
   createLocations: LocationOpt[];
+  /** B8 #3 — the working shop (resolveShop over createLocations); null = none allowed. */
+  defaultCreateLocationId?: string | null;
   actorLevel: number;
   canTransfer: boolean;
   writeMin: number;
@@ -64,7 +66,7 @@ function stageKey(s: PipelineStage): TranslationKey {
   return `catering.pipeline.stage.${s}` as TranslationKey;
 }
 
-export function PipelineClient({ notInToast, staff, leads, followUps, locations, createLocations, actorLevel, canTransfer, writeMin, searchQuery, results }: Props) {
+export function PipelineClient({ notInToast, staff, leads, followUps, locations, createLocations, defaultCreateLocationId = null, actorLevel, canTransfer, writeMin, searchQuery, results }: Props) {
   const { t, language } = useTranslation();
   const canWrite = actorLevel >= writeMin;
   const pendingIds = new Set((notInToast ?? []).flatMap((r) => r.lead_id ? [r.lead_id] : []));
@@ -104,7 +106,7 @@ export function PipelineClient({ notInToast, staff, leads, followUps, locations,
       ) : (
         /* BOARD MODE */
         <>
-          {canWrite && <AddLeadRow locations={createLocations} staff={staff} />}
+          {canWrite && <AddLeadRow locations={createLocations} staff={staff} defaultLocationId={defaultCreateLocationId} />}
 
           <div className="flex flex-wrap items-center gap-2">
             <label className="text-xs text-co-text-muted" htmlFor="pl-f-assignee">{t("catering.intake.filter.assignee")}</label>
@@ -585,7 +587,7 @@ function EditLeadDetails({ lead }: { lead: PipelineLead }) {
 }
 
 // ── Add-lead form ─────────────────────────────────────────────────────────────
-function AddLeadRow({ locations, staff }: { locations: LocationOpt[]; staff: AssignableStaff[] }) {
+function AddLeadRow({ locations, staff, defaultLocationId }: { locations: LocationOpt[]; staff: AssignableStaff[]; defaultLocationId: string | null }) {
   const { t } = useTranslation();
   const router = useRouter();
   const [open, setOpen] = useState(false);
@@ -670,7 +672,7 @@ function AddLeadRow({ locations, staff }: { locations: LocationOpt[]; staff: Ass
         <Field label={t("catering.pipeline.field.follow_up_date")} name="followUpDate" type="date" />
         <label className="block text-sm">
           <span className="text-co-text-muted">{t("catering.pipeline.field.location")}</span>
-          <select name="locationId" className="mt-1 w-full rounded-md border border-co-border bg-co-surface p-2 text-co-text">
+          <select name="locationId" defaultValue={defaultLocationId ?? ""} className="mt-1 w-full rounded-md border border-co-border bg-co-surface p-2 text-co-text">
             <option value="">{t("catering.pipeline.global")}</option>
             {locations.map((l) => (
               <option key={l.id} value={l.id}>

@@ -31,3 +31,18 @@ describe("B8 #2 lead edit form fits the pipeline column", () => {
     expect(field).toMatch(/className="mt-1 min-h-\[44px\] w-full min-w-0 /);
   });
 });
+
+// B8 #3: "Add lead" opened on "No location (global)" instead of the working shop.
+describe("B8 #3 add-lead location defaults to the working shop", () => {
+  const page = readFileSync("app/(authed)/catering/pipeline/page.tsx", "utf8");
+  it("the page resolves the default with the one shop resolver over the create list", () => {
+    expect(page).toContain('import { resolveShop } from "@/lib/shop-context";');
+    expect(page).toContain("const defaultCreateLocationId = (await resolveShop(createLocations))?.id ?? null;");
+    expect(page).toContain("defaultCreateLocationId={defaultCreateLocationId}");
+    expect(page).not.toMatch(/createLocations\[0\]|locations\[0\]/);
+  });
+  it("the add-lead location select starts on that shop", () => {
+    expect(src).toContain('<AddLeadRow locations={createLocations} staff={staff} defaultLocationId={defaultCreateLocationId} />');
+    expect(src).toContain('<select name="locationId" defaultValue={defaultLocationId ?? ""}');
+  });
+});
