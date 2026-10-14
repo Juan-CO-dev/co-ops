@@ -21,7 +21,7 @@ import { loadMyPerformance } from "@/lib/team-metrics";
 import type { TrendGranularity } from "@/lib/reports-trends";
 import { requireSessionFromHeaders } from "@/lib/session";
 import { resolveShop } from "@/lib/shop-context";
-import { shopParamFor } from "@/lib/shop-context-shared";
+import { searchParamValues, shopParamFor } from "@/lib/shop-context-shared";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 
 import { ReportPageNav } from "@/components/reports-hub/ReportPageNav";
@@ -49,7 +49,7 @@ async function renderPage(query: Record<string, string | undefined>, allShops = 
   const language: Language = auth.user.language;
   const { g } = query;
   // ?location= then the old ?loc= — the route contract the B2 shop sync reads too.
-  const selectedParam = shopParamFor("/my-feedback", (name) => query[name]);
+  const selectedParam = shopParamFor("/my-feedback", searchParamValues(query));
   const sb = getServiceRoleClient();
 
   const access = auth.level >= REPORT_ALL_LOCATIONS_LEVEL ? "all" : auth.locations;

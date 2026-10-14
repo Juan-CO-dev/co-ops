@@ -31,6 +31,7 @@ import { serverT } from "@/lib/i18n/server";
 import { formatTime } from "@/lib/i18n/format";
 import { isAllLocationsAccess, lockLocationContext } from "@/lib/locations";
 import { requireSessionFromHeaders } from "@/lib/session";
+import { searchParamValues, shopParamFor } from "@/lib/shop-context-shared";
 import { resolveShopId } from "@/lib/shop-context";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import { PulseHome } from "@/components/pulse/PulseHome";
@@ -58,7 +59,7 @@ export default async function MidShiftPage({
   // Mid-shift Pulse v2 (spec 2026-10-09) — behind PULSE_V2=1 until Juan tries it. With the flag
   // off, everything below is the unchanged v1 page.
   if (pulseV2Enabled()) {
-    const { location: requested } = await searchParams;
+    const requested = shopParamFor("/mid-shift", searchParamValues(await searchParams));
     return <PulseHome auth={auth} requested={requested} />;
   }
 
@@ -70,7 +71,7 @@ export default async function MidShiftPage({
     );
   }
 
-  const { location } = await searchParams;
+  const location = shopParamFor("/mid-shift", searchParamValues(await searchParams));
   const service = getServiceRoleClient();
 
   // Accessible locations drive BOTH the tab row and the default resolution.

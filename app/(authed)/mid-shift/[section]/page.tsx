@@ -18,6 +18,7 @@ import { isPulseSection, sectionAccess } from "@/lib/pulse/scope-shared";
 import { withAbort } from "@/lib/pulse/abort";
 import { loadPulseSections, pulseDeps, SECTION_DEADLINE_MS } from "@/lib/pulse/sections";
 import { requireSessionFromHeaders } from "@/lib/session";
+import { searchParamValues, shopParamFor } from "@/lib/shop-context-shared";
 import { rememberedShopId } from "@/lib/shop-context";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 
@@ -34,7 +35,7 @@ export default async function PulseSectionPage({ params, searchParams }: {
   if (sectionAccess({ flagOn: true, level: auth.level, section }) !== "ok") {
     return <main className={shell}><AccessDeniedBanner language={language} /></main>;
   }
-  const { location } = await searchParams;
+  const location = shopParamFor(`/mid-shift/${section}`, searchParamValues(await searchParams));
   const service = getServiceRoleClient();
   const accessible = await loadAccessibleLocations(service, auth);
   const locationId = resolveRequestedLocation({ requested: location, accessible, actor: { role: auth.role, locations: auth.locations, level: auth.level }, remembered: await rememberedShopId() });

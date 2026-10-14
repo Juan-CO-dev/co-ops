@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 import { canReadReportLocation, lockLocationContext } from "@/lib/locations";
 import { parseReportRange, reportRangeParams, shiftReportDate } from "@/lib/report-range";
 import { composeLastClose, composeReportSummary, reportIsFinalized } from "@/lib/report-summary";
+import { searchParamValues, shopParamFor } from "@/lib/shop-context-shared";
 import type { RoleCode } from "@/lib/roles";
 
 type Node = { type: unknown; props: Record<string, unknown>; children: unknown[] };
@@ -30,6 +31,7 @@ async function render(level: number, role: RoleCode, location = "mine", assigned
     getServiceRoleClient: () => ({ from: () => query }), serverT: (_language: string, key: string) => key,
     operationalNow: () => ({ date: "2026-10-07" }), formatDateLabel: (date: string) => date,
     reportLandingContext, parseReportRange, reportRangeParams, shiftReportDate, composeLastClose, composeReportSummary, reportIsFinalized,
+    shopParamFor, searchParamValues, resolveReportShopId: async () => "mine", // B2: the real contract getter; default = the membership
     canDoOperationalTask, listReports, SALES_READ_MIN: 7, listReportSkeleton: async () => lastClose ? [{ id: "close-id", type: "closing", status: "submitted" }] : [],
   };
   const page = new Function(...Object.keys(deps), `${js}; return ReportsPage;`)(...Object.values(deps));

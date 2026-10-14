@@ -16,6 +16,7 @@ import {
   declaredShopRoutes,
   readCookie,
   reportShopCandidates,
+  searchParamValues,
   shopParamFor,
   shopParamNames,
   shopCookieAssignment,
@@ -184,29 +185,62 @@ describe("loginLandingPath — the tile login carries its shop", () => {
   });
 });
 
-describe("page/sync agreement — the remembered shop is the shop the page displays (review P2)", () => {
-  const ROUTES = ["/dashboard", "/stations", "/admin/stations", "/admin/toast-employees", "/assignments", "/my-feedback", "/reports", "/reports/sales", "/ordering", "/mid-shift", "/operations/opening"];
-  const URLS = [`loc=${A}&location=${B}`, `location=${B}&loc=${A}`, `loc=${A}`, `location=${B}`, `loc=${C}&location=${A}`, ""];
+/** A Next `searchParams` record built from a query string: a REPEATED key arrives as an array. */
+function nextRecord(search: string): Record<string, string | string[]> {
+  const params = new URLSearchParams(search);
+  const out: Record<string, string | string[]> = {};
+  for (const key of new Set(params.keys())) {
+    const all = params.getAll(key);
+    out[key] = all.length === 1 ? all[0]! : all;
+  }
+  return out;
+}
+
+describe("page/sync agreement — the remembered shop is the shop the page displays (reviews 1–3)", () => {
+  // Every declared route (+ a dynamic /mid-shift section and two routes that read no URL shop).
+  const ROUTES = [...declaredShopRoutes(), "/mid-shift/sales", "/catering/quotes", "/admin/catering/fulfillment"];
+  const URLS = [
+    `loc=${A}`, `location=${B}`, // single
+    `loc=${A}&location=${B}`, `location=${B}&loc=${A}`, // mixed
+    `location=${B}&location=${A}`, `loc=${B}&loc=${A}`, // repeated (review 3)
+    `loc=${B}&loc=${A}&location=${B}`, `location=${A}&location=${B}&loc=${B}`, // repeated + the other param
+    `loc=${C}&location=${C}`, "", // not held / none
+  ];
   for (const route of ROUTES) {
     it(route, () => {
       const allowed = [{ id: A }, { id: B }];
-      let checked = 0;
       for (const search of URLS) {
-        const params = new URLSearchParams(search);
-        const record = Object.fromEntries(params) as Record<string, string | undefined>;
-        // What the page displays: its explicit value from the contract, read from its searchParams
-        // RECORD exactly as the pages do, resolved with no remembered shop.
-        const shown = pickShop({ allowed, explicit: shopParamFor(route, (name) => record[name]) });
-        // What the sync remembers after this navigation (a member of A and B).
-        const candidate = shopParamFromUrl(route, params);
-        if (shouldRememberShop({ candidate, allowed: [A, B], current: null })) {
-          expect(candidate, `${route}?${search}`).toBe(shown!.id);
-          checked += 1;
+        for (const remembered of [null, A, B]) {
+          const where = `${route}?${search} (co_shop=${remembered})`;
+          // The page: its explicit shop through ITS getter over Next's record shape (the exact
+          // `shopParamFor("<route>", searchParamValues(<awaited searchParams>))` form is pinned in
+          // the source audit below), then the resolver.
+          const explicit = shopParamFor(route, searchParamValues(nextRecord(search)));
+          const shown = pickShop({ allowed, explicit, remembered });
+          // The sync, over the browser's URLSearchParams.
+          const candidate = shopParamFromUrl(route, new URLSearchParams(search));
+          if (shouldRememberShop({ candidate, allowed: [A, B], current: remembered })) {
+            expect(candidate, where).toBe(shown!.id); // a write names the shop on screen
+          } else if (candidate === null) {
+            // silence ⇔ the page showed what it would show with no URL shop at all
+            expect(shown, where).toBe(pickShop({ allowed, remembered }));
+          }
         }
       }
-      expect(checked).toBeGreaterThan(0);
     });
   }
+
+  it("review 3: a repeated contracted parameter is no pick — page default shown, nothing written", () => {
+    for (const route of [...declaredShopRoutes(), "/mid-shift/sales"]) {
+      for (const name of shopParamNames(route)) {
+        const search = `${name}=${B}&${name}=${A}`;
+        expect(shopParamFromUrl(route, new URLSearchParams(search)), `${route}?${search}`).toBeNull();
+        expect(shopParamFor(route, searchParamValues(nextRecord(search))), `${route}?${search}`).toBeUndefined();
+        expect(pickShop({ allowed: [{ id: A }, { id: B }], explicit: shopParamFor(route, searchParamValues(nextRecord(search))), remembered: A })!.id).toBe(A);
+      }
+    }
+  });
+
   it("contract spot-checks", () => {
     expect(shopParamNames("/dashboard")).toEqual(["loc"]);
     expect(shopParamNames("/my-feedback")).toEqual(["location", "loc"]);
@@ -214,7 +248,10 @@ describe("page/sync agreement — the remembered shop is the shop the page displ
     expect(shopParamNames("/admin/catering/fulfillment")).toEqual([]);
     expect(shopParamNames("/mid-shift/sales")).toEqual(["location"]);
     expect(shopParamNames("/mid-shift/")).toEqual([]);
-    expect(shopParamFor("/my-feedback", (n) => ({ location: "all", loc: A } as Record<string, string>)[n])).toBe("all");
+    expect(shopParamFor("/my-feedback", searchParamValues({ location: "all", loc: A }))).toBe("all");
+    // a repeated FIRST parameter stops the precedence; it never falls through to ?loc=
+    expect(shopParamFor("/my-feedback", searchParamValues({ location: [A, B], loc: A }))).toBeUndefined();
+    expect(shopParamFor("/my-feedback", searchParamValues({ location: undefined, loc: B }))).toBe(B);
   });
 });
 
@@ -311,23 +348,46 @@ const PAGE_ROUTES: Record<string, string> = {
   "app/(authed)/catering/quotes/page.tsx": "/catering/quotes",
 };
 
-/** Which shop parameters a page's SOURCE actually reads, in precedence order. */
+/** Where each audited page binds the awaited `searchParams` its getter reads. */
+const BINDINGS: Record<string, RegExp> = {
+  sp: /const sp = await searchParams;/,
+  raw: /const raw = await searchParams;/,
+  params: /const params = await searchParams;/,
+  rawParams: /const rawParams = await searchParams;/,
+  query: /renderPage\(await searchParams\)[\s\S]*async function renderPage\(query: /,
+  "await searchParams": /./,
+};
+/** Direct reads of a shop parameter that bypass the contract getter. */
+const BYPASS = [
+  /\b(?:params|sp|query|rawParams)\.(?:location|loc)\b/,
+  /\bsp\[["'](?:location|loc)["']\]/,
+  /const \{[^}]*\b(?:location|loc)\b[^}]*\} = (?:await )?(?:searchParams|sp|query|params)\b/,
+];
+
+/**
+ * The shop parameters a page's SOURCE reads: the contract of its route when (and only when) it reads
+ * through the canonical getter over its OWN awaited searchParams; [] when it reads none. Anything
+ * else (a hand-written getter, a direct read) fails here — review 3 P3: `() => undefined` as
+ * /stations' getter must not pass.
+ */
 function shopParamsReadBySource(text: string, route: string): readonly string[] {
-  const viaContract = text.match(/shopParamFor\("([^"]+)"/);
-  if (viaContract) {
-    expect(viaContract[1], `${route} reads the contract of its own route`).toBe(route);
-    return shopParamNames(route);
+  for (const re of BYPASS) expect(re.test(text), `${route} reads a shop param outside the getter: ${re}`).toBe(false);
+  const calls = [...text.matchAll(/shopParamFor\(/g)].length;
+  const canonical = [...text.matchAll(/shopParamFor\((`[^`]+`|"[^"]+"), searchParamValues\(([^()]*(?:\(\))?)\)\)/g)];
+  expect(canonical.length, `${route}: every shopParamFor call uses the canonical getter`).toBe(calls);
+  if (calls === 0) return [];
+  for (const [, literal, arg] of canonical) {
+    const routeLiteral = literal!.slice(1, -1);
+    if (routeLiteral.includes("${")) expect(route.startsWith(routeLiteral.split("${")[0]!), `${route}: ${routeLiteral}`).toBe(true);
+    else expect(routeLiteral).toBe(route);
+    const binding = BINDINGS[arg!];
+    expect(binding, `${route}: getter reads ${arg}, which is not a known searchParams binding`).toBeDefined();
+    expect(text, `${route}: ${arg} is the page's awaited searchParams`).toMatch(binding!);
   }
-  const readsLocation = [
-    /\bparams\.location\b/, /\braw\.location\b/, /\bsp\["location"\]/,
-    /const \{[^}]*\blocation\b[^}]*\} = await searchParams/,
-  ].some((re) => re.test(text));
-  const readsLoc = /const \{[^}]*\bloc\b[^}]*\} = await searchParams|\bsp\["loc"\]|\bparams\.loc\b/.test(text);
-  expect(readsLoc, `${route} reads ?loc= outside the contract`).toBe(false);
-  return readsLocation ? ["location"] : [];
+  return shopParamNames(route);
 }
 
-describe("route contract = what each resolver page's source actually reads (review 2)", () => {
+describe("route contract = what each resolver page's source actually reads (reviews 2–3)", () => {
   it("every page that imports the resolver is audited (and every audited page imports it)", () => {
     const pages: string[] = [];
     const walk = (dir: string) => {
@@ -360,10 +420,10 @@ const src = (rel: string) => readFileSync(path.join(ROOT, rel), "utf8");
 /** Every page that defaulted to "the first location" (triage #30 + the two Pulse-era twins). */
 const RESOLVER_PAGES: Record<string, RegExp> = {
   "app/(authed)/dashboard/page.tsx": /await resolveShop\(locations, shopParamFor\("\/dashboard", /,
-  "app/(authed)/reports/page.tsx": /params\.location \?\? \(await resolveReportShopId\(auth\)\)/,
-  "app/(authed)/reports/sales/page.tsx": /params\.location \?\? \(await resolveReportShopId\(auth\)\)/,
-  "app/(authed)/reports/sales/catering/page.tsx": /params\.location \?\? \(await resolveReportShopId\(auth\)\)/,
-  "app/(authed)/reports/sales/checks/page.tsx": /params\.location \?\? \(await resolveReportShopId\(auth\)\)/,
+  "app/(authed)/reports/page.tsx": /shopParamFor\("\/reports", searchParamValues\(raw\)\) \?\? \(await resolveReportShopId\(auth\)\)/,
+  "app/(authed)/reports/sales/page.tsx": /shopParamFor\("\/reports\/sales", searchParamValues\(params\)\) \?\? \(await resolveReportShopId\(auth\)\)/,
+  "app/(authed)/reports/sales/catering/page.tsx": /shopParamFor\("\/reports\/sales\/catering", searchParamValues\(params\)\) \?\? \(await resolveReportShopId\(auth\)\)/,
+  "app/(authed)/reports/sales/checks/page.tsx": /shopParamFor\("\/reports\/sales\/checks", searchParamValues\(params\)\) \?\? \(await resolveReportShopId\(auth\)\)/,
   "app/(authed)/reports/written/page.tsx": /await resolveShopId\(auth\.locations\)/,
   "app/(authed)/my-feedback/page.tsx": /selectedParam = shopParamFor\("\/my-feedback", [\s\S]*await resolveShop\(locations, selectedParam\)/,
   "app/(authed)/assignments/page.tsx": /await resolveShop\(locations, shopParamFor\("\/assignments", /,

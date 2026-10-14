@@ -27,6 +27,7 @@ import { reportNavigationHref } from "@/lib/report-navigation";
 import { canReadScopedReport } from "@/lib/report-scope";
 import { SALES_EMPTY_KEY, SALES_GRAINS, SALES_RANGES, SALES_READ_MIN, SalesReportError, loadSalesLatestCapture, loadSalesCatering, resolveSalesRange, salesRangeParams } from "@/lib/sales-reports";
 import { requireSessionFromHeaders } from "@/lib/session";
+import { searchParamValues, shopParamFor } from "@/lib/shop-context-shared";
 import { resolveReportShopId } from "@/lib/shop-context";
 
 type Params = Record<string, string | undefined>;
@@ -39,7 +40,7 @@ export default async function SalesCateringPage({ searchParams }: { searchParams
   const viewer = { userId: auth.user.id, level: auth.level, locations: auth.locations };
   // B2: an explicit ?location= (a shop or "all") passes through to the read gate below unchanged;
   // only the DEFAULT moves — the remembered shop when this page's read grant admits it, else the first.
-  const locationId = params.location ?? (await resolveReportShopId(auth));
+  const locationId = shopParamFor("/reports/sales/catering", searchParamValues(params)) ?? (await resolveReportShopId(auth));
   if (!locationId) redirect("/dashboard");
   if (locationId === "all" ? auth.level < REPORT_ALL_LOCATIONS_LEVEL : !canReadScopedReport(viewer, locationId)) redirect("/reports");
 

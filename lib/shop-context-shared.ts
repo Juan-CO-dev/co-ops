@@ -71,9 +71,8 @@ export function pickShop<T extends { id: string }>(args: PickShopArgs<T>): T | n
  * sync never remembers a shop from it (review 2: `/admin/catering/fulfillment?location=B` and
  * `/catering/quotes?location=B` ignore the parameter and show the remembered shop, so remembering B
  * there would move the working shop to one the page never displayed; `/admin/users?location=` is a
- * list FILTER). The `loc` pages read their explicit shop THROUGH `shopParamFor`, the others read
- * the named parameter directly, and the sync reads every one through `shopParamFor` — so the shop
- * the sync remembers is the shop the page displays (review 1: `/dashboard?loc=A&location=B` shows
+ * list FILTER). Every declared page reads its explicit shop THROUGH `shopParamFor`, and so does the
+ * sync — so the shop the sync remembers is the shop the page displays (review 1: `/dashboard?loc=A&location=B` shows
  * A, so it remembers A). `tests/shop-context.test.ts` audits every resolver page's SOURCE against
  * this table, both ways.
  */
@@ -113,21 +112,47 @@ export function declaredShopRoutes(): string[] {
   return Object.keys(SHOP_PARAMS_BY_PATH);
 }
 
+/** Every value a query parameter carries, in order (`[]` = absent). */
+export type ShopParamValues = (name: string) => readonly string[];
+
 /**
- * The RAW explicit shop value `pathname` reads (first present parameter of its contract), or
- * undefined. Raw on purpose: a page may give a non-shop value meaning (`"all"`).
+ * Values over a Next `searchParams` RECORD (a repeated parameter arrives as an array). Every
+ * declared page reads its explicit shop as `shopParamFor("<route>", searchParamValues(<the awaited
+ * searchParams>))`; `tests/shop-context.test.ts` pins that exact form.
  */
-export function shopParamFor(pathname: string, get: (name: string) => string | null | undefined): string | undefined {
+export function searchParamValues(record: object): ShopParamValues {
+  return (name) => {
+    const value = (record as Record<string, unknown>)[name];
+    if (typeof value === "string") return [value];
+    if (Array.isArray(value)) return value.filter((v): v is string => typeof v === "string");
+    return [];
+  };
+}
+
+/** Values over a `URLSearchParams` (the sync's `useSearchParams()`). */
+export function urlParamValues(params: { getAll(name: string): string[] }): ShopParamValues {
+  return (name) => params.getAll(name);
+}
+
+/**
+ * The RAW explicit shop value `pathname` reads: the first PRESENT parameter of its contract, or
+ * undefined. Raw on purpose: a page may give a non-shop value meaning (`"all"`). A REPEATED
+ * parameter (`?location=B&location=A`) is no selection at all (review 3): the page shows its
+ * default and the sync writes nothing — the precedence stops there, it does not fall through to
+ * the next parameter. Page and sync both run this one function, so they cannot disagree.
+ */
+export function shopParamFor(pathname: string, values: ShopParamValues): string | undefined {
   for (const name of shopParamNames(pathname)) {
-    const value = get(name);
-    if (value !== null && value !== undefined) return value;
+    const all = values(name);
+    if (all.length === 0) continue;
+    return all.length === 1 ? all[0] : undefined;
   }
   return undefined;
 }
 
 /** The explicit shop a URL selects on this page (per the contract above), or null. */
-export function shopParamFromUrl(pathname: string, params: { get(name: string): string | null }): string | null {
-  const value = shopParamFor(pathname, (name) => params.get(name));
+export function shopParamFromUrl(pathname: string, params: { getAll(name: string): string[] }): string | null {
+  const value = shopParamFor(pathname, urlParamValues(params));
   return isShopId(value) ? value : null;
 }
 

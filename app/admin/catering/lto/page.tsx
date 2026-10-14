@@ -10,6 +10,7 @@
 import { redirect } from "next/navigation";
 
 import { requireSessionFromHeaders } from "@/lib/session";
+import { searchParamValues, shopParamFor } from "@/lib/shop-context-shared";
 import { resolveShop } from "@/lib/shop-context";
 import { ROLES } from "@/lib/roles";
 import { serverT } from "@/lib/i18n/server";
@@ -47,7 +48,7 @@ export default async function AdminCateringLtoPage({
   const locations = await loadPackageLocations(auth);
 
   // Active location (B2): ?location= when allowed, else the remembered shop, else the first.
-  const paramLocation = typeof sp["location"] === "string" ? sp["location"] : undefined;
+  const paramLocation = shopParamFor("/admin/catering/lto", searchParamValues(sp));
   const locationId = (await resolveShop(locations, paramLocation))?.id ?? null;
 
   const from = todayYmd();

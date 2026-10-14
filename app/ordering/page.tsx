@@ -37,6 +37,7 @@ import { formatDateLabel } from "@/lib/i18n/format";
 import { TranslationProvider } from "@/lib/i18n/provider";
 import { accessibleLocations, isAllLocationsAccess, lockLocationContext } from "@/lib/locations";
 import { requireSessionFromHeaders } from "@/lib/session";
+import { searchParamValues, shopParamFor } from "@/lib/shop-context-shared";
 import { resolveShopId } from "@/lib/shop-context";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 
@@ -51,7 +52,9 @@ export default async function OrderingPage({
   const language = auth.user.language;
   if (auth.level < PAR_PASS_MIN) redirect("/dashboard");
 
-  const { location, po } = await searchParams;
+  const sp = await searchParams;
+  const { po } = sp;
+  const location = shopParamFor("/ordering", searchParamValues(sp));
   const service = getServiceRoleClient();
 
   // Accessible locations drive both the tab row and the default resolution (mid-shift
