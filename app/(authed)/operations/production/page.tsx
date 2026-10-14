@@ -5,7 +5,7 @@ import { formatDateLabel } from "@/lib/i18n/format";
 import { lockLocationContext, type LocationActor } from "@/lib/locations";
 import { etCalendarDate } from "@/lib/operational-day";
 import { requireSessionFromHeaders } from "@/lib/session";
-import { loadProductionFormData, loadRecentProductions } from "@/lib/production";
+import { PRODUCE_MIN, loadProductionFormData, loadRecentProductions } from "@/lib/production";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import { ProductionForm } from "@/components/production/ProductionForm";
 import { DashboardBackLink } from "@/components/DashboardBackLink";
@@ -23,7 +23,7 @@ async function firstActiveLocationId(): Promise<string | null> {
 export default async function ProductionPage({ searchParams }: { searchParams: Promise<{ location?: string }> }) {
   const auth = await requireSessionFromHeaders("/operations/production");
   const { location: requested } = await searchParams;
-  if (auth.level < 4) redirect("/dashboard");
+  if (auth.level < PRODUCE_MIN) redirect("/dashboard");
   const locActor: LocationActor = { role: auth.role, locations: auth.locations };
   // D-64: no hard ?location redirect. Without one, default to the user's first shop (the B2
   // shop-context resolver replaces this on merge); an all-shop level with no membership
