@@ -113,3 +113,6 @@ Sim data (not app): catering test leads/quotes/customers from round 1 ("Hill Sta
 - catering (after sim catering cleanup): 07, 09, 10, 11, 12 (should read "No quotes yet."), 16, 17, 19, 20, 32; 10b after B8 lead-edit fix; 34 at tablet width
 - staff (minor): 22b (Progress bar), 14, 16/18/19/34 focus ring; add a Sides AM prep header close-up (PORT vs PORTIONED)
 - after B8 merges, update: manager cash "Even" wording; catering Add lead step 6 (Location default); Fulfillment map not-set
+
+## Retakes owed after B8 (#467, 2026-10-14)
+manager 39 (cash now "Even"), 46 (reasons list under the banner), 60 (Trends dates/window), 24b + staff 33b ("Prepped" box fits), staff 41 ("Not enough days yet"), catering 21 + 22 ("Last 7 full days"), 10b (stacked edit form), 30 (not-set note + Place pin — or caption change), 06 (hub card text per level); minor spacing: staff 14, manager 17.
