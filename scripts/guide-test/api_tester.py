@@ -14,7 +14,7 @@ PROVIDERS = {
     "deepseek": ("DEEPSEEK_API_KEY", "https://api.deepseek.com/v1"),
 }
 DAEMON = "http://127.0.0.1:3199"
-MAX_STEPS = 300
+MAX_STEPS = 800  # a full staff/manager day takes ~450-520 actions (Astra round 1); 300 cut GLM off mid-day
 
 def key(name):
     with open(ENV, encoding="utf-8") as f:
@@ -96,6 +96,25 @@ def run(args):
             else:
                 out = f"Unknown tool {name}."
             messages.append({"role": "tool", "tool_call_id": c["id"], "name": name, "content": out})
+    if report is None:  # out of actions: ask for the report instead of ending the run silently
+        messages.append({"role": "user", "content": f"You have used all {MAX_STEPS} actions. Stop testing now and call finish with your full report: mark each goal you did not finish as stuck or partly."})
+        for _ in range(3):
+            try:
+                data = http_json(f"{base}/chat/completions", {"model": args.model, "messages": messages, "tools": TOOLS, "temperature": 0.2, "max_tokens": 6000}, auth=key(kname))
+            except Exception as e:
+                print(f"final report call failed: {type(e).__name__}", file=sys.stderr); break
+            msg = data["choices"][0]["message"]
+            messages.append({k: v for k, v in msg.items() if k in ("role", "content", "tool_calls", "reasoning_content")})
+            for c in msg.get("tool_calls") or []:
+                try: a = json.loads(c["function"].get("arguments") or "{}")
+                except json.JSONDecodeError: a = {}
+                if c["function"]["name"] == "finish" and (a.get("report") or "").strip():
+                    report = a["report"]
+                messages.append({"role": "tool", "tool_call_id": c["id"], "name": c["function"]["name"], "content": "Report received." if report else "Only finish is allowed now, with the full report."})
+            if report is None and (msg.get("content") or "").strip().startswith("# Report"):
+                report = msg["content"]
+            if report is not None:
+                break
     daemon("stop", session=args.session)
     header = f"<!-- tester {args.provider}/{args.model} · session {args.session} · {steps} actions · {round(time.time() - t0)}s -->\n"
     body = report if report is not None else f"# Report — {args.model}\n\nRUN ENDED WITHOUT A REPORT after {steps} actions (limit {MAX_STEPS})."
