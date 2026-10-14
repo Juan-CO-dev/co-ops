@@ -1,5 +1,7 @@
 -- Migration 0251_catering_quote_line_kind
 -- AUTHORED 2026-10-14, NOT YET APPLIED — GATE CC: sim first, then prod, BEFORE the B7c deploy.
+-- APPLIED TO SIM 2026-10-14 (schema_migrations version 20261014174514, name '0251_catering_quote_line_kind')
+-- APPLIED TO PROD 2026-10-14 (schema_migrations version 20261014174531, name '0251_catering_quote_line_kind')
 --
 -- RELEASE (expand/contract, Astra r4 BC-038): this is the EXPAND half. It only ADDS — two
 -- nullable columns and two CHECKs that every row the OLD server writes still satisfies (the old
