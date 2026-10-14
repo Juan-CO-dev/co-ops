@@ -15,7 +15,15 @@
  * save and it blocks finalize (the row shows "recipe needs fixing") until a GM fixes the recipe
  * and the row is saved explicitly.
  */
-import { batchFormFromRecord, readBatchFromPrepData, type BatchFormValue } from "@/lib/batch-prep-shared";
+import {
+  batchEntryFromForm,
+  batchFormFromRecord,
+  readBatchFromPrepData,
+  validateBatchEntry,
+  type BatchEntry,
+  type BatchFormValue,
+  type BatchRowContext,
+} from "@/lib/batch-prep-shared";
 
 export interface MidDayPhase2RowSeed {
   /** The number the "prepped / bottled" box starts with; null = nothing saved yet. */
@@ -180,5 +188,100 @@ export function midDayFinalizedRows(
     if (ia !== undefined) return -1;
     if (ib !== undefined) return 1;
     return cmp(a.section, b.section) || cmp(a.label, b.label) || cmp(a.id, b.id);
+  });
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// D-14 — mid-day Phase 2 saves each row when you leave the box (like opening Phase 2)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** The over/under capture as the row holds it (prep_data.overUnder's shape). */
+export interface MidDayOverUnderValue {
+  kind: "over" | "under";
+  reasonCategory: string;
+  directedBy: string | null;
+  freeText: string | null;
+}
+
+/**
+ * What a blur (or a reason / panel / batch commit) does with a mid-day Phase 2 row.
+ *  - blank: nothing typed — no save, no nudge (leaving an empty box is not a mistake).
+ *  - invalid: the box does not hold a number >= 0 — "Enter amount".
+ *  - incomplete: a prerequisite blocks the save — the calm nudge names it (the over/under
+ *    reason, or the batch half with the batch contract code that fails).
+ *  - ok: savable; `overUnder` is what rides in the body (null when the row is at its need) and
+ *    `batchEntry` is present only on a batch item.
+ * The rules are the ones the per-row Save button applied before D-14, unchanged: an amount off
+ * the need needs a reason; a batch row must pass the RPC's own batch checks first.
+ */
+export type MidDayPhase2Gate =
+  | { kind: "blank" }
+  | { kind: "invalid" }
+  | { kind: "incomplete"; reason: "needs_reason"; batchErrorCode: null }
+  | { kind: "incomplete"; reason: "needs_batch"; batchErrorCode: string }
+  | { kind: "ok"; prepped: number; overUnder: MidDayOverUnderValue | null; batchEntry: BatchEntry | null };
+
+export function midDayPhase2SaveGate(
+  v: { value: string; overUnder: MidDayOverUnderValue | null; batch: BatchFormValue },
+  ctx: { need: number | null; batch: BatchRowContext | null },
+): MidDayPhase2Gate {
+  const raw = v.value.trim();
+  if (raw === "") return { kind: "blank" };
+  const prepped = Number(raw);
+  if (!Number.isFinite(prepped) || prepped < 0) return { kind: "invalid" };
+  const offPar = ctx.need !== null && prepped !== ctx.need;
+  if (offPar && !v.overUnder) return { kind: "incomplete", reason: "needs_reason", batchErrorCode: null };
+  let batchEntry: BatchEntry | null = null;
+  if (ctx.batch) {
+    if (ctx.batch.blocked || ctx.batch.backupBefore === null) {
+      return {
+        kind: "incomplete",
+        reason: "needs_batch",
+        batchErrorCode: ctx.batch.blocked ? "batch_recipe_unresolved" : "backup_unknown",
+      };
+    }
+    batchEntry = batchEntryFromForm(v.batch, ctx.batch.yieldPerBatch);
+    const check = validateBatchEntry(batchEntry, {
+      bottled: prepped,
+      backupBefore: ctx.batch.backupBefore,
+      need: ctx.batch.need,
+      yieldPerBatch: ctx.batch.yieldPerBatch,
+    });
+    if (!check.ok) return { kind: "incomplete", reason: "needs_batch", batchErrorCode: check.code };
+  }
+  return { kind: "ok", prepped, overUnder: offPar ? v.overUnder : null, batchEntry };
+}
+
+/**
+ * The persisted beats of a savable row as one stable string — what the POST body would carry.
+ * A blur that would re-send the last saved signature is skipped (no duplicate completion row, no
+ * re-attribution). Field order is fixed here, so a reason read back from the database and the
+ * same reason picked in the modal compare equal.
+ */
+export function midDayPhase2Signature(p: {
+  prepped: number;
+  overUnder: MidDayOverUnderValue | null;
+  confirmedConsumption: unknown;
+  batchEntry: BatchEntry | null;
+}): string {
+  return JSON.stringify({
+    prepped: p.prepped,
+    overUnder: p.overUnder
+      ? {
+          kind: p.overUnder.kind,
+          reasonCategory: p.overUnder.reasonCategory,
+          directedBy: p.overUnder.directedBy ?? null,
+          freeText: p.overUnder.freeText ?? null,
+        }
+      : null,
+    confirmedConsumption: p.confirmedConsumption ?? null,
+    batch: p.batchEntry
+      ? {
+          batches: p.batchEntry.batches,
+          cameOutTo: p.batchEntry.cameOutTo ?? null,
+          tossed: p.batchEntry.tossed ?? null,
+          overBatchReason: p.batchEntry.overBatchReason ?? null,
+        }
+      : null,
   });
 }
