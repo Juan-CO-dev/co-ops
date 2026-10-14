@@ -6,6 +6,7 @@ import type { OnHandView, OnHandRow, OnHandWeightRow, OnHandCountRow } from "@/l
 import { AlertPill } from "@/components/ui/AlertPill";
 import { EmptyState } from "@/components/EmptyState";
 import { ProductOnHandCard } from "@/components/counts/ProductOnHandCard";
+import { etDisplayDate } from "@/lib/operational-day";
 
 /**
  * On-hand panel (server-rendered). PER-SKU anchors (F1): each row's anchor timestamp
@@ -50,7 +51,7 @@ export function OnHandPanel({ view, lang, twinVendorBySkuId }: {
     <div className="mt-2">
       <p className="text-[11px] text-co-text-dim">
         {view.anchorAt != null
-          ? serverT(lang, "counts.onhand.anchor_at", { date: formatDateLabel(view.anchorAt.slice(0, 10), lang) })
+          ? serverT(lang, "counts.onhand.anchor_at", { date: formatDateLabel(etDisplayDate(view.anchorAt), lang) })
           : serverT(lang, "counts.onhand.inferred_header")}
         {view.salesThrough != null
           ? ` · ${serverT(lang, "counts.onhand.sales_through", { date: formatDateLabel(view.salesThrough, lang) })}`
@@ -122,14 +123,14 @@ function SourceChip({ source, anchorAt, lang }: { source: AnchorSource; anchorAt
     // than a count). Same muted date-chip shape as census — a light provenance note.
     return (
       <span className="shrink-0 text-[11px] font-medium text-co-text-muted">
-        {serverT(lang, "counts.onhand.source_par_estimate", { date: anchorAt != null ? formatDateLabel(anchorAt.slice(0, 10), lang) : "—" })}
+        {serverT(lang, "counts.onhand.source_par_estimate", { date: anchorAt != null ? formatDateLabel(etDisplayDate(anchorAt), lang) : "—" })}
       </span>
     );
   }
   // Census (explicit or the count-row default) — an audited on-hand as of the anchor.
   return (
     <span className="shrink-0 text-[11px] font-medium text-co-text-muted">
-      {serverT(lang, "counts.onhand.source_audited", { date: anchorAt != null ? formatDateLabel(anchorAt.slice(0, 10), lang) : "—" })}
+      {serverT(lang, "counts.onhand.source_audited", { date: anchorAt != null ? formatDateLabel(etDisplayDate(anchorAt), lang) : "—" })}
     </span>
   );
 }

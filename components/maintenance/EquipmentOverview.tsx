@@ -7,6 +7,7 @@ import type { Language, TranslationKey } from "@/lib/i18n/types";
 import { serverT } from "@/lib/i18n/server";
 import { formatDateLabel } from "@/lib/i18n/format";
 import { TempTrendChart } from "./TempTrendChart";
+import { etDisplayDate } from "@/lib/operational-day";
 
 /**
  * Maps FridgeStatus values to their i18n keys.
@@ -116,7 +117,7 @@ export function EquipmentOverview({
                       ? serverT(language, "maintenance.last_note", {
                           note: lastNote.note,
                           date: formatDateLabel(
-                            lastNote.at.slice(0, 10),
+                            etDisplayDate(lastNote.at),
                             language,
                           ),
                         })
@@ -142,7 +143,7 @@ export function EquipmentOverview({
                 </div>
                 <div className="mt-1 text-xs text-co-text">{n.note}</div>
                 <div className="mt-1 text-[11px] text-co-text-muted">
-                  {formatDateLabel(n.at.slice(0, 10), language)}
+                  {formatDateLabel(etDisplayDate(n.at), language)}
                   {n.byName ? ` · ${n.byName}` : ""}
                 </div>
               </li>

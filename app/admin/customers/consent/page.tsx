@@ -7,6 +7,7 @@ import { operationalNow } from "@/lib/midshift";
 import { CUSTOMER_CONTACT_MIN, customerProfilesEnabled, loadConsentOverview } from "@/lib/customers/customers";
 import { ConsentTools } from "@/components/admin/customers/ConsentTools";
 import { CancelImportButton } from "@/components/admin/customers/CancelImportButton";
+import { etDisplayDate } from "@/lib/operational-day";
 
 /**
  * 0234 consent desk (level 9+): the Toast Web Marketing list import, the opted-in-only exports (Meta
@@ -32,7 +33,7 @@ export default async function ConsentPage() {
       {overview.newlyOptedIn.length === 0 ? <p className="text-sm text-co-text-muted">{t("customers.newly.none")}</p>
         : <ul className="space-y-2">{overview.newlyOptedIn.map((r) => <li key={r.customerId} className="flex min-w-0 flex-wrap items-center gap-2 rounded-xl border border-co-border p-3">
           <Link href={`/admin/customers/${r.customerId}`} className="inline-flex min-h-[44px] min-w-0 items-center truncate font-bold text-co-text underline">{r.name ?? t("customers.unnamed")}</Link>
-          <span className="text-sm text-co-text-muted">{formatDateLabel(r.optedInAt.slice(0, 10), language)} · {t(r.previous === "opted_out" ? "customers.newly.wasOut" : "customers.newly.wasNone")}{r.hadOrders ? ` · ${t("customers.newly.hadOrders")}` : ""}</span>
+          <span className="text-sm text-co-text-muted">{formatDateLabel(etDisplayDate(r.optedInAt), language)} · {t(r.previous === "opted_out" ? "customers.newly.wasOut" : "customers.newly.wasNone")}{r.hadOrders ? ` · ${t("customers.newly.hadOrders")}` : ""}</span>
         </li>)}</ul>}
     </section>
     <section className="co-card min-w-0 space-y-3 p-4">

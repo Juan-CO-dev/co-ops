@@ -40,6 +40,7 @@ import { AlertPill, type AlertPillTone } from "@/components/ui/AlertPill";
 import type { TranslationKey } from "@/lib/i18n/types";
 import type { DeliveryReceiptView, UnlinkedReceiptView, ReceiptAsset, PoAttachCandidate } from "@/lib/email-receipts";
 import type { DeliveryMatchState } from "@/lib/receiving";
+import { etDisplayDate } from "@/lib/operational-day";
 
 /** Mirror of lib/email-receipts.ts RECEIPT_OVERRIDE_MIN (server-only module). */
 const RECEIPT_OVERRIDE_MIN = 6;
@@ -150,7 +151,7 @@ function VendorClaimColumn({ receipt, t }: { receipt: DeliveryReceiptView; t: (k
       <div className="text-[11px] text-co-text-dim">
         {receipt.subject ? <p className="font-semibold text-co-text-muted">{receipt.subject}</p> : null}
         {receipt.fromAddress ? <p>{t("receiving.claim.from", { addr: receipt.fromAddress })}</p> : null}
-        <p>{t("receiving.claim.received", { date: receipt.receivedAt.slice(0, 10) })}</p>
+        <p>{t("receiving.claim.received", { date: etDisplayDate(receipt.receivedAt) })}</p>
         <p className="uppercase tracking-[0.08em]">
           {receipt.source === "inbound" ? t("receiving.claim.source_inbound") : t("receiving.claim.source_upload")}
         </p>
@@ -306,7 +307,7 @@ function UnlinkedReceiptRow({
           </span>
           <span className="block text-[11px] text-co-text-dim">
             {r.fromAddress ? `${r.fromAddress} · ` : ""}
-            {r.receivedAt.slice(0, 10)}
+            {etDisplayDate(r.receivedAt)}
             {r.locationId == null ? ` · ${t("receiving.claim.link_unattributed")}` : ""}
           </span>
           {/* PO chip — the order axis (D2: this alert-adjacent status is always visible). +
@@ -383,7 +384,7 @@ function UnlinkedReceiptRow({
                       <div className="min-w-0">
                         <span className="block truncate text-xs font-semibold text-co-text">{c.displayCode}</span>
                         <span className="block text-[11px] text-co-text-dim">
-                          {c.vendorName} · {t("receiving.claim.po_status_at_date", { status: c.status, date: c.createdAt.slice(0, 10) })}
+                          {c.vendorName} · {t("receiving.claim.po_status_at_date", { status: c.status, date: etDisplayDate(c.createdAt) })}
                         </span>
                       </div>
                       <ActionButton

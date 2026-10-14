@@ -26,6 +26,7 @@ import { useStepUp } from "@/components/admin/StepUpProvider";
 import { CollapsibleSection } from "@/components/ui/CollapsibleSection";
 import { postJson, resolveErrorKey } from "./shared";
 import type { SkuFormLocationOption } from "./SkuBuilder";
+import { etDisplayDate } from "@/lib/operational-day";
 
 /** A location's current overlay (camelCase; matches lib/admin/skus LocationSkuSetting). */
 export interface LocationSkuOverlayView {
@@ -129,7 +130,7 @@ function AutoParNote({ value, appliedAt }: { value: number | null; appliedAt: st
       {appliedAt != null
         ? t("admin.skus.auto_par_readonly", {
             n: value,
-            day: formatDateLabel(appliedAt.slice(0, 10), language),
+            day: formatDateLabel(etDisplayDate(appliedAt), language),
           })
         : t("admin.skus.auto_par_readonly_undated", { n: value })}
     </span>

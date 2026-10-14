@@ -39,6 +39,7 @@ import {
 } from "@/lib/batch-prep-shared";
 import { formatDateLabel } from "@/lib/i18n/format";
 import type { Language, TranslationKey } from "@/lib/i18n/types";
+import { etDisplayDate } from "@/lib/operational-day";
 
 const bk = (k: string): TranslationKey => k as TranslationKey;
 
@@ -140,7 +141,7 @@ export function BatchEntryFields({
         ) : null}
         {ctx.madeOn !== null ? (
           <span className={pastShelfLife ? "font-bold text-co-cta-text" : "text-co-text-muted"}>
-            {t(bk("prep.batch.made_on"), { date: formatDateLabel(ctx.madeOn.slice(0, 10), language) })}
+            {t(bk("prep.batch.made_on"), { date: formatDateLabel(etDisplayDate(ctx.madeOn), language) })}
             {pastShelfLife ? ` · ${t(bk("prep.batch.past_shelf_life"), { days: ctx.shelfLifeDays })}` : ""}
           </span>
         ) : null}

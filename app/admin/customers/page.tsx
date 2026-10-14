@@ -3,7 +3,7 @@ import { redirect } from "next/navigation";
 import { requireSessionFromHeaders } from "@/lib/session";
 import { serverT } from "@/lib/i18n/server";
 import { formatCents, formatDateLabel } from "@/lib/i18n/format";
-import { etCalendarDate } from "@/lib/operational-day";
+import { etCalendarDate, etDisplayDate } from "@/lib/operational-day";
 import { CUSTOMER_CONTACT_MIN, CUSTOMER_STATS_MIN, customerProfilesEnabled, loadCustomerList, loadCustomerSummary, loadCustomerShops, loadSuggestions } from "@/lib/customers/customers";
 import { listParamsQuery } from "@/lib/customers/list-params-shared";
 import { CustomerSuggestions } from "@/components/admin/customers/CustomerSuggestions";
@@ -45,8 +45,8 @@ export default async function CustomersPage({ searchParams }: { searchParams: Pr
   const lastOrder = (date: string | null) => {
     if (!date) return t("customers.stats.unknown");
     const today = etCalendarDate(new Date().toISOString());
-    const days = Math.max(0, Math.round((Date.parse(today) - Date.parse(date.slice(0, 10))) / 86400000));
-    return <span>{t("customers.list.daysAgo", { days })}<span className="block text-xs text-co-text-muted">{formatDateLabel(date.slice(0, 10), language)}</span></span>;
+    const days = Math.max(0, Math.round((Date.parse(today) - Date.parse(etDisplayDate(date))) / 86400000));
+    return <span>{t("customers.list.daysAgo", { days })}<span className="block text-xs text-co-text-muted">{formatDateLabel(etDisplayDate(date), language)}</span></span>;
   };
   const headings = ["name", "visits", "spend", "avgOrder", "lastOrder", "cards", "catering", "shops"] as const;
   return <div className="min-w-0 space-y-4">

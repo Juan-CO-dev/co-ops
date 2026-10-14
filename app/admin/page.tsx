@@ -16,6 +16,7 @@ import type { Language } from "@/lib/i18n/types";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { AlertPill } from "@/components/ui/AlertPill";
 import { CollapsibleSection } from "@/components/ui/CollapsibleSection";
+import { etDisplayDate } from "@/lib/operational-day";
 
 const DENIED_KEYS = {
   users: "admin.hub.denied.users",
@@ -129,7 +130,7 @@ export default async function AdminHubPage({ searchParams }: { searchParams: Pro
 function CronHealthCard({ health, lang }: { health: CronHealth | null; lang: Language }) {
   if (!health) return null;
   if (health.hasRecentFailure) {
-    const dateLabel = health.lastFailureAt ? formatDateLabel(health.lastFailureAt.slice(0, 10), lang) : "";
+    const dateLabel = health.lastFailureAt ? formatDateLabel(etDisplayDate(health.lastFailureAt), lang) : "";
     return (
       <div className="co-card mt-5 flex flex-col gap-1 border-2 border-co-danger-surface p-4">
         <div className="flex items-center gap-2">
@@ -155,7 +156,7 @@ function CronHealthCard({ health, lang }: { health: CronHealth | null; lang: Lan
           </AlertPill>
           <span className="text-sm font-bold text-co-text">
             {serverT(lang, "admin.hub.cron.degraded_line", {
-              date: formatDateLabel(health.lastSuccessAt.slice(0, 10), lang),
+              date: formatDateLabel(etDisplayDate(health.lastSuccessAt), lang),
               count: cronRunFailureTotal(health.lastRunFailures),
             })}
           </span>
@@ -166,7 +167,7 @@ function CronHealthCard({ health, lang }: { health: CronHealth | null; lang: Lan
   if (health.lastSuccessAt) {
     return (
       <p className="mt-4 text-xs text-co-text-dim">
-        {serverT(lang, "admin.hub.cron.ok_line", { date: formatDateLabel(health.lastSuccessAt.slice(0, 10), lang) })}
+        {serverT(lang, "admin.hub.cron.ok_line", { date: formatDateLabel(etDisplayDate(health.lastSuccessAt), lang) })}
       </p>
     );
   }

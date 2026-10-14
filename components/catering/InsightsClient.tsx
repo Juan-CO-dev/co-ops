@@ -24,6 +24,7 @@ import { leadSourceLabelKey } from "@/lib/catering/intake-shared";
 import { PIPELINE_STAGES } from "@/lib/catering/pipeline-shared";
 import type { CateringInsightsV2 } from "@/lib/catering/insights";
 import { InsightsCalendar } from "@/components/catering/InsightsCalendar";
+import { etDisplayDate } from "@/lib/operational-day";
 
 export function InsightsClient({ data }: { data: CateringInsightsV2 }) {
   const { t, language } = useTranslation();
@@ -196,7 +197,7 @@ export function InsightsClient({ data }: { data: CateringInsightsV2 }) {
                         {t("catering.insights.follow_up")}
                       </span>
                     )}
-                    {f.submittedAt ? formatDateLabel(f.submittedAt.slice(0, 10), language) : ""}
+                    {f.submittedAt ? formatDateLabel(etDisplayDate(f.submittedAt), language) : ""}
                   </span>
                 </div>
                 {f.comment && <p className="mt-1 text-sm text-co-text-muted">{f.comment}</p>}

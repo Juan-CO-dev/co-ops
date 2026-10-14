@@ -27,6 +27,20 @@ export function etCalendarDate(iso: string): string {
 }
 
 /**
+ * The ET calendar date to DISPLAY for a stored value that is either a UTC
+ * timestamp (`2026-10-14T02:00:00Z` -> `2026-10-13`: 10 PM EDT is still the
+ * 13th) or already a bare `YYYY-MM-DD` operational date (returned untouched --
+ * re-zoning a bare date would shift it a day west). Never `iso.slice(0, 10)`: that
+ * is the UTC date and reads "tomorrow" for every row written after 8 PM ET
+ * (B6 / #58). Unparseable input falls back to its first 10 characters.
+ */
+export function etDisplayDate(value: string): string {
+  if (/^\d{4}-\d{2}-\d{2}$/.test(value)) return value;
+  if (Number.isNaN(new Date(value).getTime())) return value.slice(0, 10);
+  return etCalendarDate(value);
+}
+
+/**
  * The ET calendar date `days` before `ymd` — pure math on the calendar grid via
  * Date.UTC, immune to the runtime's zone AND to DST. Replaces the
  * `new Date(new Date().toLocaleString(..., {timeZone}))` round-trip antipattern:
