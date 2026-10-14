@@ -103,3 +103,29 @@ describe("B8 #4 r2 the pure per-day rule", () => {
     expect(summaryTempReadings([row("maintenance", TODAY, 1, 2)])).toBe(2);
   });
 });
+
+// B8 #4 r3 (Astra P2): report flags read every fridge at the location, retired ones included, so
+// the maintenance day count that replaces them must too — each reading against its own fridge's max.
+describe("B8 #4 r3 a retired fridge's readings count the same on both sides", () => {
+  async function withRetired(retiredValue: number) {
+    const t = tables([inst("o-y", YESTERDAY, "t-open", "confirmed")],
+      [reading("r1", "o-y", "am-temp", 43), { ...reading("r2", "o-y", "am-temp", retiredValue), template_item_id: "old-am-temp" }]);
+    t.checklist_template_items!.push({ id: "old-am-temp", template_id: "t-open", label: "Old reach-in AM", station: "Kitchen", required: true, active: true });
+    t.maintenance_equipment = [
+      { ...t.maintenance_equipment![0]!, safe_max_f: 45 },
+      { id: "old-reach-in", kind: "fridge", name: "Old reach-in", active: false, location_id: "shop", opening_temp_item_id: "old-am-temp", closing_temp_item_id: null, safe_max_f: 41, sort_order: 2 },
+    ];
+    const items = await listReports(fake(t), { viewer, locationId: "shop", dateFrom: YESTERDAY, dateTo: TODAY });
+    const opening = items.find((i) => i.type === "opening")!;
+    const maintenance = items.find((i) => i.type === "maintenance")!;
+    return { report: opening.signalSummary!.tempFlags, maintenance: maintenance.signalSummary!.tempReadings, hub: composeReportSummary(items).signals.tempFlags };
+  }
+  it("retired fridge 43°F over its 41°F max + active fridge 43°F under its 45°F max: report 1, maintenance 1, hub 1", async () => {
+    atToday();
+    expect(await withRetired(43)).toEqual({ report: 1, maintenance: 1, hub: 1 });
+  });
+  it("retired fridge in range (40°F, max 41°F): report 0, maintenance 0, hub 0", async () => {
+    atToday();
+    expect(await withRetired(40)).toEqual({ report: 0, maintenance: 0, hub: 0 });
+  });
+});

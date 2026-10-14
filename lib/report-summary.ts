@@ -30,6 +30,7 @@ export function composeLastClose(items: ReportListItem[], level: number) {
  * not — so it REPLACES the listed opening/closing reports' reading flags for that day (summing
  * both double-counted one hot reading; dropping it lost today's readings, whose reports are not
  * listed until finalized). A day with no maintenance reading count falls back to its reports.
+ * The count reads the same fridges the reports do, retired ones included (r3, listMaintenanceReportDates).
  */
 export function summaryTempReadings(items: ReportListItem[]): number {
   const fromReports = new Map<string, number>();

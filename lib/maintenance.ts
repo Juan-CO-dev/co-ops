@@ -487,7 +487,27 @@ export async function listMaintenanceReportDates(
     if (f.openingTempItemId) fridgeByItem.set(f.openingTempItemId, f);
     if (f.closingTempItemId) fridgeByItem.set(f.closingTempItemId, f);
   }
-  const itemIds = [...fridgeByItem.keys()];
+  // B8 #4 r3 (Astra P2): a day's `tempReadings` REPLACES its listed reports' temp flags in the hub
+  // summary, and report flags read every fridge at the location, retired ones included
+  // (loadLocationTempItemIds). So the hot-reading count reads the same universe: a retired
+  // fridge's readings count against that fridge's own max. They never make a day row or a
+  // fridge flag on their own (the day detail lists active equipment only). An item an active
+  // fridge also carries stays with the active fridge.
+  const retiredSafeByItem = new Map<string, number>();
+  if (!skeletonOnly) {
+    const { data: allFridges, error: fridgeError } = await service.from("maintenance_equipment")
+      .select("opening_temp_item_id, closing_temp_item_id, safe_max_f, active")
+      .eq("location_id", locationId).eq("kind", "fridge");
+    if (fridgeError) throw new Error(`listMaintenanceReportDates: ${fridgeError.message}`);
+    for (const r of (allFridges ?? []) as Array<{ opening_temp_item_id: string | null; closing_temp_item_id: string | null; safe_max_f: number | null; active: boolean }>) {
+      if (r.active) continue;
+      for (const item of [r.opening_temp_item_id, r.closing_temp_item_id]) {
+        if (item && !fridgeByItem.has(item)) retiredSafeByItem.set(item, r.safe_max_f ?? FRIDGE_DEFAULT_SAFE_MAX_F);
+      }
+    }
+  }
+  const retiredHotByDate = new Map<string, number>();
+  const itemIds = [...fridgeByItem.keys(), ...retiredSafeByItem.keys()];
 
   const byDate = new Map<string, Map<string, TempReading[]>>();
   const boundedInstances = await selectAllRows<{id:string;date:string}>((from,to) => service.from("checklist_instances")
@@ -519,6 +539,11 @@ export async function listMaintenanceReportDates(
       if (!skeletonOnly && c.count_value === null) continue;
       const date = dateById.get(c.instance_id);
       if (!date) continue;
+      const retiredSafe = retiredSafeByItem.get(c.template_item_id);
+      if (retiredSafe !== undefined) {
+        if ((c.count_value ?? 0) > retiredSafe) retiredHotByDate.set(date, (retiredHotByDate.get(date) ?? 0) + 1);
+        continue;
+      }
       const f = fridgeByItem.get(c.template_item_id);
       if (!f) continue;
       const phase: "AM" | "PM" = c.template_item_id === f.openingTempItemId ? "AM" : "PM";
@@ -550,7 +575,7 @@ export async function listMaintenanceReportDates(
     let flags = 0;
     // B8 #4 r2: the out-of-range READINGS of the day (each above its own fridge's max), whatever
     // the state of the report that holds them — the hub summary's one source for temp flags.
-    let hotReadings = 0;
+    let hotReadings = retiredHotByDate.get(date) ?? 0;
     for (const [fid, readings] of perFridge) {
       const f = fridgeById.get(fid);
       if (!f) continue;
