@@ -55,6 +55,7 @@ import {
 } from "@/lib/checklist-rows";
 import { lockLocationContext, type LocationActor } from "@/lib/locations";
 import { reconcileClosingReportRefs } from "@/lib/prep";
+import { loadLocationTempItemIds } from "@/lib/reports-hub";
 import { applyEffectiveResolution, type EffectiveResolvableBuilder } from "@/lib/admin/template-builder-shared";
 import { formatDateLabel, formatTime } from "@/lib/i18n/format";
 import { serverT } from "@/lib/i18n/server";
@@ -552,6 +553,19 @@ export default async function ClosingPage({ searchParams }: PageProps) {
     });
   }));
 
+  // #18 — which count items are fridge-temperature readings (the maintenance
+  // registry is the source), so the expand panel says "Temp (°F)" instead of
+  // "Count". Cosmetic only: a failed read falls back to the generic label.
+  const tempReadingItems: Record<string, boolean> = {};
+  try {
+    const tempIds = await loadLocationTempItemIds(sb, locationParam);
+    for (const item of templateItems) {
+      if (item.expectsCount && tempIds.has(item.id)) tempReadingItems[item.id] = true;
+    }
+  } catch {
+    /* label-only; keep the generic Count label */
+  }
+
   const initialState: ClosingInitialState = {
     location: locationRow,
     instance: rowToInstance(instanceRow),
@@ -566,6 +580,7 @@ export default async function ClosingPage({ searchParams }: PageProps) {
     reportRefChains,
     reportRefCanEdit,
     reportRefCanOpen,
+    tempReadingItems,
     amPrepGap,
     incompleteReasons,
   };

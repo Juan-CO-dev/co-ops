@@ -125,6 +125,8 @@ export interface ClosingInitialState {
    */
   reportRefCanEdit: Record<string, boolean>;
   reportRefCanOpen: Record<string, boolean>;
+  /** #18 — template_item_id -> true for fridge-temperature count items (label "Temp (°F)", not "Count"). */
+  tempReadingItems: Record<string, boolean>;
   /**
    * Fulledit floor cut F — today's AM prep exists with ZERO saved completions
    * (or was never opened). Renders an ADVISORY pill only; never blocks
@@ -241,6 +243,7 @@ export function ClosingClient({ initialState }: { initialState: ClosingInitialSt
     reportRefChains,
     reportRefCanEdit,
     reportRefCanOpen,
+    tempReadingItems,
     amPrepGap,
     incompleteReasons,
   } = initialState;
@@ -913,6 +916,7 @@ export function ClosingClient({ initialState }: { initialState: ClosingInitialSt
               reportRefChains={reportRefChains}
               reportRefCanEdit={reportRefCanEdit}
               reportRefCanOpen={reportRefCanOpen}
+              tempReadingItems={tempReadingItems}
               onToggle={() => collapsible.toggle(station)}
               onComplete={handleItemComplete}
               onRevoke={handleItemRevoke}
@@ -1132,6 +1136,7 @@ function StationGroup({
   reportRefChains,
   reportRefCanEdit,
   reportRefCanOpen,
+  tempReadingItems,
   onToggle,
   onComplete,
   onRevoke,
@@ -1171,6 +1176,7 @@ function StationGroup({
   /** C.46 — canEdit per template_item_id (report-ref items only). */
   reportRefCanEdit: Record<string, boolean>;
   reportRefCanOpen: Record<string, boolean>;
+  tempReadingItems: Record<string, boolean>;
   onToggle: () => void;
   onComplete: (payload: ChecklistCompletePayload) => Promise<ChecklistCompleteResult>;
   onRevoke: (completionId: string) => Promise<ChecklistRevokeResult>;
@@ -1279,6 +1285,7 @@ function StationGroup({
                 actorLevel={actor.level}
                 actorUserId={actor.userId}
                 completerLevel={c ? (completerLevels[c.completedBy] ?? null) : null}
+                isTempReading={tempReadingItems[it.id] ?? false}
                 instanceStatus={instanceStatus}
                 locationId={locationId}
                 readOnly={readOnly}
