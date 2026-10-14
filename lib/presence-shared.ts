@@ -77,6 +77,18 @@ export function coopsEvidence(facts: CoopsDayFacts): PresenceEvidence | null {
   return { source: "coops_activity", onShift: true, since: top[1], activity: top[0] };
 }
 
+/**
+ * B4 #20/#19 - the CO-OPS "End my shift" state for today, INDEPENDENT of Toast. Toast clock evidence
+ * outranks CO-OPS in `resolvePresence` (someone still clocked into Toast stays `onShift` after tapping
+ * End my shift), so UI that must react to the tap (hide Start break, stop naming a closed station)
+ * reads this instead of `presence.onShift`. True only while nothing newer than the end exists: a new
+ * claim, task or sign-in after it puts the person back on shift.
+ */
+export function coopsShiftEnded(facts: CoopsDayFacts): boolean {
+  if (!facts.endedAt) return false;
+  return ![facts.stationAt, facts.taskAt, facts.signedInAt].some((at) => at !== null && ms(at) > ms(facts.endedAt));
+}
+
 /** Pick the first evidence by precedence; the Toast clock, when present, decides alone. */
 export function resolvePresence(evidence: ReadonlyArray<PresenceEvidence | null>, ctx: {
   lastOutAt?: string | null; endedAt?: string | null; shopClosedAt?: string | null;

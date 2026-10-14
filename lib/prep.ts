@@ -1725,6 +1725,16 @@ export async function autoCompleteClosingMidDayRef(
  * every closing page load, so it MUST pre-check to avoid growing a supersede
  * chain on each refresh.
  */
+/** Latest of several ISO timestamps (null when none is usable). Pure. */
+export function latestIso(values: ReadonlyArray<string | null | undefined>): string | null {
+  let best: string | null = null;
+  for (const v of values) {
+    if (!v || Number.isNaN(Date.parse(v))) continue;
+    if (best === null || Date.parse(v) > Date.parse(best)) best = v;
+  }
+  return best;
+}
+
 async function ensureClosingRefCompletion(
   service: SupabaseClient,
   args: {
@@ -1926,14 +1936,15 @@ export async function reconcileClosingReportRefs(
     if (mTmpl) {
       const { data: finalized, error: fErr } = await service
         .from("checklist_instances")
-        .select("id, triggered_at")
+        .select("id, triggered_at, confirmed_at")
         .eq("template_id", mTmpl.id)
         .eq("location_id", args.locationId)
         .eq("date", args.date)
         .eq("status", "phase2_complete")
         .order("triggered_at", { ascending: true });
       if (fErr) throw new Error(`reconcileClosingReportRefs: mid-day instances: ${fErr.message}`);
-      const ids = ((finalized ?? []) as Array<{ id: string }>).map((r) => r.id);
+      const finalizedRows = (finalized ?? []) as Array<{ id: string; confirmed_at: string | null }>;
+      const ids = finalizedRows.map((r) => r.id);
       if (ids.length > 0) {
         bump(
           await ensureClosingRefCompletion(service, {
@@ -1943,7 +1954,9 @@ export async function reconcileClosingReportRefs(
             meta: {
               reportType: "mid_day_prep",
               reportInstanceId: ids[ids.length - 1]!,
-              reportSubmittedAt: new Date().toISOString(),
+              // B4 #16: the TRUE submission time (phase-2 finalize stamps confirmed_at), never "now" -
+              // reconcile runs hours later, when the closing page is opened.
+              reportSubmittedAt: latestIso(finalizedRows.map((r) => r.confirmed_at)) ?? new Date().toISOString(),
               count: ids.length,
               reportInstanceIds: ids,
             },
