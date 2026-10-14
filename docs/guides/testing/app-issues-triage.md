@@ -569,3 +569,9 @@ Not batched until reproduced: #22, #29, #67.
 - **D-14, D-17, D-26, D-27, D-28, D-45, D-46, D-47, D-48, D-49, D-60, D-62, D-63, D-66, D-80:** approved as recommended ("The rest of the recs are good").
 - **Cross-shop catering customer (B5 review, 2026-10-14):** option (b). A quote may attach to an existing customer from the other shop, resolved by email. The other shop's saved contact details stay hidden from that GM.
   - Accepted as part of option (b): the "another shop's client (contact details hidden)" display tells the GM that the email already exists at the other shop. That follows directly from attaching to the existing customer (Astra note, 2026-10-14).
+
+## Juan's decisions — 2026-10-14 ("Yes to all")
+1. B7c quote-line migration approved: `catering_quote_items.line_kind` (package_header / package_component / package_pick, nullable) + `components_listed` boolean. Sim first, then prod, then Astra review round 3.
+2. Email on Add lead approved: resolve the typed email to a catering customer and link the lead (no email column on leads).
+3. Read-only prod check for existing quotes that over-count prep (package pick-line double expansion) approved.
+4. "Last close" counts auto-closed days, labelled "auto closed" (shipped in B7b, #465).
