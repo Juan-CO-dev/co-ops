@@ -204,7 +204,8 @@ export default async function MidShiftPage({
       <div>
         <h1 className="flex flex-wrap items-baseline gap-2 text-lg font-bold text-co-text">
           {serverT(language, "midshift.page.title")}
-          {loc && accessible.length === 1 && (
+          {/* B8 #9: name the shop on show for every viewer, not only single-shop ones. */}
+          {loc && (
             <span className="text-sm font-semibold text-co-text-muted">
               {loc.code} &middot; {loc.name}
             </span>

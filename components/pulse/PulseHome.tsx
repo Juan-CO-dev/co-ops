@@ -66,7 +66,8 @@ export async function PulseHome({ auth, requested }: { auth: AuthContext; reques
       <div>
         <h1 className="flex flex-wrap items-baseline gap-2 text-lg font-bold text-co-text">
           {serverT(language, "pulse.page.title")}
-          {!both && accessible.length === 1 && <span className="text-sm font-semibold text-co-text-muted">{shops[0]!.code} &middot; {shops[0]!.name}</span>}
+          {/* B8 #9: always name the shop on show — a multi-shop viewer's only cue was a tab's tint. */}
+          {!both && <span className="text-sm font-semibold text-co-text-muted">{shops[0]!.code} &middot; {shops[0]!.name}</span>}
           <span className="text-xs font-semibold text-co-text-dim">{serverT(language, "pulse.page.updated", { time: formatTime(now.toISOString(), language) })}</span>
         </h1>
         {showTabs && (
