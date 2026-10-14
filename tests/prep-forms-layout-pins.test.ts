@@ -162,3 +162,19 @@ describe("#8 Phase 2 section headers are a static Verified chip", () => {
     expect(station).toContain("onSectionVerifyToggle={handleSectionVerifyToggle}");
   });
 });
+
+describe("#9 recount boxes are red only while empty", () => {
+  const item = read("components/opening/OpeningChecklistItem.tsx");
+  it("needsRecount folds in the entered recount (both boxes on a batch item)", () => {
+    expect(item).toMatch(/const needsRecount =\s*isNullSource &&/);
+    expect(item).toContain("value.openerRecount === null");
+    expect(item).toContain("(value.openerRecountLine ?? null) === null || (value.openerRecountBackUp ?? null) === null");
+  });
+  it("no red class condition is on isNullSource alone; aria-required still is", () => {
+    // every ternary that picks a red class keys off needsRecount (or a per-box empty check)
+    for (const m of item.matchAll(/(\S[^\n?]*)\?\s*"[^"]*(?:border-co-cta-text|text-co-cta-text)/g)) {
+      expect(m[1]).toMatch(/needsRecount|current === null|hasMissingCountError/);
+    }
+    expect(item.match(/aria-required=\{isNullSource\}/g)?.length).toBe(2);
+  });
+});
