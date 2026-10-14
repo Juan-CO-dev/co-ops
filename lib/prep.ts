@@ -420,6 +420,96 @@ export function narrowPrepCompletion(completion: ChecklistCompletion): Checklist
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// D-66 (Juan 2026-10-13) — one bad prep row must not blank a prep PAGE
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** A prep row a page left out because its stored shape failed narrowing (PrepShapeError). */
+export interface SkippedPrepRow {
+  templateItemId: string;
+  /** The item's name as stored on the template row (or the save's snapshot), for the manager note. */
+  label: string;
+  /** The Spanish name when the template row carries one; null = show `label`. */
+  labelEs: string | null;
+  /** What failed: the item's prep settings (prep_meta) or a saved count (prep_data). */
+  source: "template_item" | "completion";
+}
+
+function recordSkip(skipped: SkippedPrepRow[], row: SkippedPrepRow, err: PrepShapeError): void {
+  console.error(`[prep] D-66: skipped ${row.source} for template_item ${row.templateItemId} (${row.label}) on a page read: ${err.message}`);
+  if (!skipped.some((r) => r.templateItemId === row.templateItemId)) skipped.push(row);
+}
+
+/**
+ * The PAGE read of prep template items: narrows each like narrowPrepTemplateItem, but a row that
+ * throws PrepShapeError (e.g. a text par in prep_meta) is left out and recorded in `skipped`
+ * instead of blanking the whole page. ONLY PrepShapeError is tolerated — PrepInvariantError
+ * (station/section drift, with its forensic audit) and every other error still throw.
+ *
+ * Page loaders opt in (`tolerateBadRows: true`); writers, the audit harness and tests keep the
+ * strict narrowPrepTemplateItem, so nothing is ever WRITTEN from a row that failed its shape.
+ */
+export function narrowPrepTemplateItemsForPage(
+  items: ChecklistTemplateItem[],
+  skipped: SkippedPrepRow[],
+): ChecklistTemplateItem[] {
+  const out: ChecklistTemplateItem[] = [];
+  for (const item of items) {
+    try {
+      out.push(narrowPrepTemplateItem(item));
+    } catch (err) {
+      if (!(err instanceof PrepShapeError)) throw err;
+      recordSkip(
+        skipped,
+        { templateItemId: item.id, label: item.label, labelEs: item.translations?.es?.label ?? null, source: "template_item" },
+        err,
+      );
+    }
+  }
+  return out;
+}
+
+/**
+ * The PAGE read of prep completions: a saved row whose prep_data fails isPrepData() is left out
+ * (the row shows as not saved) and recorded in `skipped`, named from the template row
+ * (`labelFor`), else the save's own snapshot, else its template item id. Same tolerance rule as
+ * narrowPrepTemplateItemsForPage: only PrepShapeError.
+ */
+export function narrowPrepCompletionsForPage(
+  completions: ChecklistCompletion[],
+  labelFor: (templateItemId: string) => { label: string; labelEs: string | null } | null,
+  skipped: SkippedPrepRow[],
+): ChecklistCompletion[] {
+  const out: ChecklistCompletion[] = [];
+  for (const c of completions) {
+    try {
+      out.push(narrowPrepCompletion(c));
+    } catch (err) {
+      if (!(err instanceof PrepShapeError)) throw err;
+      const named = labelFor(c.templateItemId);
+      const snap = (c.prepData as { snapshot?: { itemName?: unknown } } | null)?.snapshot;
+      const snapName = typeof snap?.itemName === "string" && snap.itemName !== "" ? snap.itemName : null;
+      recordSkip(
+        skipped,
+        {
+          templateItemId: c.templateItemId,
+          label: named?.label ?? snapName ?? c.templateItemId,
+          labelEs: named?.labelEs ?? null,
+          source: "completion",
+        },
+        err,
+      );
+    }
+  }
+  return out;
+}
+
+/** Name lookup over the RAW template rows (skipped ones included) for narrowPrepCompletionsForPage. */
+function labelLookup(items: ChecklistTemplateItem[]): (id: string) => { label: string; labelEs: string | null } | null {
+  const byId = new Map(items.map((it) => [it.id, { label: it.label, labelEs: it.translations?.es?.label ?? null }] as const));
+  return (id) => byId.get(id) ?? null;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Write-path: drift-prevention helpers
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -607,6 +697,11 @@ export async function loadAmPrepState(
     locationId: string;
     date: string;
     actor: PrepActor;
+    /**
+     * D-66 — the PAGE read: a row whose stored shape fails (PrepShapeError) is left out and
+     * listed in `skippedRows` instead of throwing. Absent/false = strict (every other caller).
+     */
+    tolerateBadRows?: boolean;
   },
 ): Promise<{
   template: { id: string; name: string };
@@ -627,6 +722,8 @@ export async function loadAmPrepState(
    * the closing count's BACK UP is the bulk container tomorrow's opener starts from.
    */
   batchModeByItem: Record<string, boolean>;
+  /** D-66 — rows left out by a `tolerateBadRows` read (always [] on a strict read). */
+  skippedRows: SkippedPrepRow[];
 } | null> {
   if (!(await hasTaskAccess(service, { ...args.actor, locationId: args.locationId, date: args.date, task: "am_prep" }))) {
     throw new PrepRoleViolationError("KH+ or active assignment", args.actor.level);
@@ -740,9 +837,11 @@ export async function loadAmPrepState(
     .eq("active", true)
     .order("display_order", { ascending: true });
   if (itemsErr) throw new Error(`loadAmPrepState: load items: ${itemsErr.message}`);
-  const templateItems = ((itemsRows ?? []) as TemplateItemRow[])
-    .map(rowToTemplateItem)
-    .map(narrowPrepTemplateItem);
+  const rawItems = ((itemsRows ?? []) as TemplateItemRow[]).map(rowToTemplateItem);
+  const skippedRows: SkippedPrepRow[] = [];
+  const templateItems = args.tolerateBadRows
+    ? narrowPrepTemplateItemsForPage(rawItems, skippedRows)
+    : rawItems.map(narrowPrepTemplateItem);
 
   // Item/Inventory Spine 2A/2B: name + par come from the linked item registry,
   // par via the override-aware resolver (per-location item_par_levels for the
@@ -774,9 +873,10 @@ export async function loadAmPrepState(
     .is("superseded_at", null)
     .is("revoked_at", null);
   if (compErr) throw new Error(`loadAmPrepState: load completions: ${compErr.message}`);
-  const completions = ((completionRows ?? []) as CompletionRow[])
-    .map(rowToCompletion)
-    .map(narrowPrepCompletion);
+  const rawCompletions = ((completionRows ?? []) as CompletionRow[]).map(rowToCompletion);
+  const completions = args.tolerateBadRows
+    ? narrowPrepCompletionsForPage(rawCompletions, labelLookup(rawItems), skippedRows)
+    : rawCompletions.map(narrowPrepCompletion);
 
   // Resolve author names for completedBy + confirmedBy + triggeredBy.
   const authorIds = new Set<string>();
@@ -825,6 +925,7 @@ export async function loadAmPrepState(
     sectionLabels,
     sections,
     batchModeByItem,
+    skippedRows,
   };
 }
 
@@ -837,7 +938,15 @@ export async function loadAmPrepState(
  */
 export async function loadMidDayPrepState(
   service: SupabaseClient,
-  args: { instanceId: string },
+  args: {
+    instanceId: string;
+    /**
+     * D-66 — the PAGE read: a row whose stored shape fails (PrepShapeError) is left out and
+     * listed in `skippedRows`. Absent/false = strict — the Phase 1 submit, Phase 2 save and
+     * finalize writers all read strictly.
+     */
+    tolerateBadRows?: boolean;
+  },
 ): Promise<{
   template: { id: string; name: string };
   templateItems: ChecklistTemplateItem[];
@@ -856,6 +965,8 @@ export async function loadMidDayPrepState(
   batchDerived: Record<string, DerivedSku[]>;
   /** 0215 — per eligible batch TEMPLATE-ITEM id: last batch's produced_at at this location + this instance's recorded toss. */
   batchState: Record<string, { madeOn: string | null; tossed: number }>;
+  /** D-66 — rows left out by a `tolerateBadRows` read (always [] on a strict read). */
+  skippedRows: SkippedPrepRow[];
 } | null> {
   const { data: instanceRow, error: instErr } = await service
     .from("checklist_instances")
@@ -884,9 +995,11 @@ export async function loadMidDayPrepState(
     .eq("active", true)
     .order("display_order", { ascending: true });
   if (itemsErr) throw new Error(`loadMidDayPrepState: load items: ${itemsErr.message}`);
-  const templateItems = ((itemsRows ?? []) as TemplateItemRow[])
-    .map(rowToTemplateItem)
-    .map(narrowPrepTemplateItem);
+  const rawItems = ((itemsRows ?? []) as TemplateItemRow[]).map(rowToTemplateItem);
+  const skippedRows: SkippedPrepRow[] = [];
+  const templateItems = args.tolerateBadRows
+    ? narrowPrepTemplateItemsForPage(rawItems, skippedRows)
+    : rawItems.map(narrowPrepTemplateItem);
 
   // Item/Inventory Spine 2A/2B: name + par come from the linked item registry,
   // par via the override-aware resolver (per-location item_par_levels for the
@@ -918,9 +1031,10 @@ export async function loadMidDayPrepState(
     .is("superseded_at", null)
     .is("revoked_at", null);
   if (compErr) throw new Error(`loadMidDayPrepState: load completions: ${compErr.message}`);
-  const completions = ((completionRows ?? []) as CompletionRow[])
-    .map(rowToCompletion)
-    .map(narrowPrepCompletion);
+  const rawCompletions = ((completionRows ?? []) as CompletionRow[]).map(rowToCompletion);
+  const completions = args.tolerateBadRows
+    ? narrowPrepCompletionsForPage(rawCompletions, labelLookup(rawItems), skippedRows)
+    : rawCompletions.map(narrowPrepCompletion);
 
   const authorIds = new Set<string>();
   for (const c of completions) authorIds.add(c.completedBy);
@@ -1008,6 +1122,7 @@ export async function loadMidDayPrepState(
     batchContext,
     batchDerived,
     batchState,
+    skippedRows,
   };
 }
 

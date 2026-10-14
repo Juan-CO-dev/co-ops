@@ -2758,6 +2758,8 @@
   "prep.batch.reason_note_placeholder": "Di por qué (obligatorio)",
   "prep.batch.preview": "Disponible para la línea: {available} · respaldo a granel tras embotellar: {after}",
   "prep.batch.bottled_label": "Embotellado para la línea",
+  "prep.skipped_rows.heading": "Algunos artículos no se pudieron cargar",
+  "prep.skipped_rows.body": "No se muestra: {items}. Un gerente tiene que corregir la configuración de preparación de este artículo en Admin. Hasta entonces, es posible que guardar no funcione.",
   "prep.batch.bottled_hint": "recipientes puestos en la línea hoy, del respaldo y de las tandas nuevas",
   "prep.batch.error.batches_missing": "Ingresa cuántas tandas se hicieron (0 está bien).",
   "prep.batch.error.invalid_batch_count": "Las tandas deben ser un número entero.",

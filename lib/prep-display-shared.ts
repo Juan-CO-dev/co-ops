@@ -126,3 +126,14 @@ export function openingFooterHint(s: OpeningFooterState): OpeningFooterHint {
   if (s.outstandingCount > 0) return { kind: "outstanding", count: s.outstandingCount };
   return { kind: "generic" };
 }
+
+/**
+ * D-66 — the item names for the "couldn't load" note on a prep page, in the viewer's language
+ * (the Spanish name when the row carries one), comma-joined in the order they were skipped.
+ */
+export function skippedRowNames(
+  rows: ReadonlyArray<{ label: string; labelEs: string | null }>,
+  language: "en" | "es",
+): string {
+  return rows.map((r) => (language === "es" && r.labelEs ? r.labelEs : r.label)).join(", ");
+}
