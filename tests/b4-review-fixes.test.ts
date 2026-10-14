@@ -326,6 +326,31 @@ describe("#16 reconcile carries the real mid-day submission time", () => {
     expect(metaOf(f.live()[0]).reportSubmittedAt).toBe("2026-10-11T19:00:00Z");
   });
 
+  it("A and B both finalize: B's push writes B, then A's DELAYED push computes the same truth (B) and writes nothing", async () => {
+    eveningOpen();
+    const rows: MdRow[] = [
+      { id: "A", triggered_at: "2026-10-11T17:00:00Z", confirmed_at: "2026-10-11T18:30:00Z" },
+      { id: "B", triggered_at: "2026-10-11T18:00:00Z", confirmed_at: "2026-10-11T19:00:00Z" },
+    ];
+    const f = reconcileService(rows, oldTick({ reportInstanceId: "A", reportSubmittedAt: "2026-10-11T18:30:00Z", count: 1 }));
+    const push = (id: string) => autoCompleteClosingMidDayRef(f.service, { locationId: "loc", date: "2026-10-11", midDayInstanceId: id, actor: { userId: "u1" } as never });
+
+    await push("B");
+    expect(f.live()).toHaveLength(1);
+    expect(metaOf(f.live()[0])).toMatchObject({ reportInstanceId: "B", reportSubmittedAt: "2026-10-11T19:00:00Z", count: 2 });
+    const before = [...f.calls];
+    const headId = f.live()[0]!.id;
+
+    await push("A"); // delayed fire-and-forget for the OTHER report, reading the same two finalized rows
+    expect(f.calls).toEqual(before); // no supersede, no insert
+    expect(f.live().map((c) => c.id)).toEqual([headId]);
+    expect(metaOf(f.live()[0]).reportInstanceId).toBe("B");
+
+    // ...and the page-load reconcile agrees with the push (one definition of the truth).
+    expect((await reconcile(f.service)).ticked).toBe(0);
+    expect(f.calls).toEqual(before);
+  });
+
   it("a first tick (no head) is a plain insert with no supersede", async () => {
     eveningOpen();
     const f = reconcileService([{ id: "md-1", triggered_at: "2026-10-11T18:00:00Z", confirmed_at: "2026-10-11T19:00:00Z" }]);

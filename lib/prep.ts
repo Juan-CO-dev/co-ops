@@ -1641,36 +1641,33 @@ export async function autoCompleteClosingMidDayRef(
   if (!mTmpl) return;
   const { data: finalized, error: fErr } = await service
     .from("checklist_instances")
-    .select("id, triggered_at")
+    .select("id, triggered_at, confirmed_at")
     .eq("template_id", mTmpl.id)
     .eq("location_id", args.locationId)
     .eq("date", args.date)
     .eq("status", "phase2_complete")
     .order("triggered_at", { ascending: true });
   if (fErr) throw new Error(`autoCompleteClosingMidDayRef: count: ${fErr.message}`);
-  const reportInstanceIds = ((finalized ?? []) as Array<{ id: string }>).map((r) => r.id);
-  const count = reportInstanceIds.length;
 
-  const nowIso = new Date().toISOString();
-  const meta = {
-    reportType: "mid_day_prep" as const,
-    reportInstanceId: args.midDayInstanceId,
-    reportSubmittedAt: nowIso,
-    count,
-    reportInstanceIds,
-  };
+  // The truth is computed over ALL finalized reports exactly as the page-load reconcile does (latest-
+  // confirmed instance + its time) - NOT "the instance that just finalized" (args.midDayInstanceId only
+  // says why we ran). A delayed push for A that reads the same two reports as B's push therefore computes
+  // the same truth (B) and writes nothing, instead of superseding B's tick with A and a different time.
+  const write = midDayRefWrite(
+    (finalized ?? []) as Array<{ id: string; triggered_at: string | null; confirmed_at: string | null }>,
+  );
+  if (!write) return;
 
-  // Same writer the page-load reconcile uses, so the finalize-time push obeys the same rules: a REVOKED
-  // head (a manager reopened the line, C.55) is never re-ticked, a lost race re-reads instead of
-  // clobbering, and an unchanged count/instance is a no-op. The push's own true time is `nowIso`.
+  // Same writer the reconcile uses: a REVOKED head (C.55 reopen) is never re-ticked, a lost race re-reads
+  // instead of clobbering, and an unchanged count/instance/time is a no-op.
   await ensureClosingRefCompletion(service, {
     label: "autoCompleteClosingMidDayRef",
     closingInstanceId: cInst.id,
     refItemId,
     actor: args.actor,
-    meta,
-    countForSupersedeCheck: count,
-    truthCheck: { reportInstanceId: args.midDayInstanceId, reportSubmittedAt: null },
+    meta: write.meta,
+    countForSupersedeCheck: write.count,
+    truthCheck: write.truth,
   });
 }
 
@@ -1837,6 +1834,37 @@ export function pickMidDayReport(
   const last = rows[rows.length - 1]!;
   const started = last.triggered_at && !Number.isNaN(Date.parse(last.triggered_at)) ? last.triggered_at : null;
   return { reportInstanceId: last.id, reportSubmittedAt: started };
+}
+
+/**
+ * What the closing "Mid-day Prep" line SHOULD say, from ALL of today's finalized mid-day reports (B4 #16
+ * review 5). The ONE definition both writers use - the page-load reconcile and the finalize-time push - so
+ * they can never disagree about the truth: instance + time of the latest-CONFIRMED report, count of every
+ * finalized report, and a time that is omitted (never invented) when unknown. A push for "the instance that
+ * just finalized" is NOT the truth: A and B finalize, B's push writes B, and A's delayed push would otherwise
+ * supersede it with A and a different time.
+ */
+export function midDayRefWrite(
+  rows: ReadonlyArray<{ id: string; triggered_at?: string | null; confirmed_at: string | null }>,
+): {
+  meta: Record<string, unknown>;
+  count: number;
+  truth: { reportInstanceId: string; reportSubmittedAt: string | null };
+} | null {
+  const truth = pickMidDayReport(rows);
+  if (!truth || rows.length === 0) return null;
+  const ids = rows.map((r) => r.id);
+  return {
+    meta: {
+      reportType: "mid_day_prep",
+      reportInstanceId: truth.reportInstanceId,
+      ...(truth.reportSubmittedAt ? { reportSubmittedAt: truth.reportSubmittedAt } : {}),
+      count: ids.length,
+      reportInstanceIds: ids,
+    },
+    count: ids.length,
+    truth,
+  };
 }
 
 async function ensureClosingRefCompletion(
@@ -2051,27 +2079,20 @@ export async function reconcileClosingReportRefs(
         .eq("status", "phase2_complete")
         .order("triggered_at", { ascending: true });
       if (fErr) throw new Error(`reconcileClosingReportRefs: mid-day instances: ${fErr.message}`);
-      const finalizedRows = (finalized ?? []) as Array<{ id: string; triggered_at: string | null; confirmed_at: string | null }>;
-      const ids = finalizedRows.map((r) => r.id);
-      const picked = pickMidDayReport(finalizedRows);
-      if (ids.length > 0 && picked) {
+      // B4 #16: instance and TRUE submit time come from the same (latest-confirmed) row via the shared
+      // midDayRefWrite (also used by the finalize-time push) - never "now"; an unknown time is omitted.
+      const write = midDayRefWrite(
+        (finalized ?? []) as Array<{ id: string; triggered_at: string | null; confirmed_at: string | null }>,
+      );
+      if (write) {
         bump(
           await ensureClosingRefCompletion(service, {
             closingInstanceId: args.closingInstanceId,
             refItemId: midRefId,
             actor: args.actor,
-            meta: {
-              reportType: "mid_day_prep",
-              // B4 #16: instance and TRUE submit time come from the same (latest-confirmed) row, never
-              // "now" - reconcile runs hours later, when the closing page is opened. An unknown time is
-              // omitted (the display falls back to the tick's own time) rather than invented.
-              reportInstanceId: picked.reportInstanceId,
-              ...(picked.reportSubmittedAt ? { reportSubmittedAt: picked.reportSubmittedAt } : {}),
-              count: ids.length,
-              reportInstanceIds: ids,
-            },
-            countForSupersedeCheck: ids.length,
-            truthCheck: picked,
+            meta: write.meta,
+            countForSupersedeCheck: write.count,
+            truthCheck: write.truth,
           }),
         );
       }
