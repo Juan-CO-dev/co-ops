@@ -554,20 +554,23 @@ function EditLeadDetails({ lead }: { lead: PipelineLead }) {
         {t("catering.pipeline.edit_details")}
       </button>
       {open && (
+        /* B8 #2 — this form lives inside a ~15rem pipeline column, so it STACKS at every
+           width: a viewport-breakpoint two-column grid split it into ~6rem columns at tablet width
+           (labels wrapped, names and dates clipped). */
         <form id={formId} onSubmit={submit} className="mt-2 space-y-3">
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <div className="grid grid-cols-1 gap-3">
             <Field label={t("catering.pipeline.field.contact_name")} name="contactName" required defaultValue={lead.contactName} />
             <Field label={t("catering.pipeline.field.company")} name="company" defaultValue={lead.company ?? ""} />
             <Field label={t("catering.pipeline.field.event_date")} name="eventDate" type="date" defaultValue={lead.eventDate ?? ""} />
             <Field label={t("catering.pipeline.field.headcount")} name="headcount" type="number" defaultValue={lead.headcount != null ? String(lead.headcount) : ""} />
             <Field label={t("catering.pipeline.field.follow_up_date")} name="followUpDate" type="date" defaultValue={lead.followUpDate ?? ""} />
-            <label className="block text-sm sm:col-span-2">
+            <label className="block min-w-0 text-sm">
               <span className="text-co-text-muted">{t("catering.pipeline.field.notes")}</span>
               <textarea name="notes" rows={3} aria-label={t("catering.pipeline.field.notes")} defaultValue={lead.notes ?? ""} className="mt-1 w-full rounded-md border border-co-border bg-co-surface p-2 text-co-text" />
             </label>
           </div>
           {errorMsg && <p className="text-xs text-co-cta-text">{errorMsg}</p>}
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-2">
             <button type="submit" disabled={busy} className="inline-flex min-h-[44px] items-center rounded-md bg-co-text px-4 text-sm font-semibold text-co-bg disabled:opacity-50">
               {busy ? t("catering.pipeline.saving") : t("catering.pipeline.save")}
             </button>
@@ -708,7 +711,7 @@ function Field({
   defaultValue?: string;
 }) {
   return (
-    <label className="block text-sm">
+    <label className="block min-w-0 text-sm">
       <span className="text-co-text-muted">
         {label}
         {required ? " *" : ""}
@@ -718,7 +721,7 @@ function Field({
         type={type}
         required={required}
         defaultValue={defaultValue}
-        className="mt-1 w-full rounded-md border border-co-border bg-co-surface p-2 text-co-text"
+        className="mt-1 min-h-[44px] w-full min-w-0 rounded-md border border-co-border bg-co-surface p-2 text-co-text"
       />
     </label>
   );
