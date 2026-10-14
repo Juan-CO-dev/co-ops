@@ -55,6 +55,32 @@ export interface Station { id: string; name: string; nameEs: string | null; sort
 export function isFloorStation(station: Pick<Station, "active" | "staffed" | "positions">): boolean {
   return station.active && station.staffed && station.positions.some((position) => position.active);
 }
+/**
+ * D-26 (Juan 2026-10-13) — the "fill first" cue on station choices. It used to ride on every
+ * position with `sort === 1`, which is every station's first slot, so it said "fill first" on 10 of
+ * 12 options and meant nothing. It now names, for each open floor station that NOBODY holds yet, its
+ * first open position (lowest sort, then name — the board's own option order). A station is held when
+ * anyone's current station head points at it (the floor's own coverage read, so a legacy hold with no
+ * position counts) or any of its positions is occupied; a closed station or a closing section gets no cue.
+ */
+export function fillFirstPositionIds(
+  board: { stations: ReadonlyArray<Pick<Station, "id" | "active" | "staffed" | "positions" | "closedAt">>;
+    events: readonly StationEvent[]; occupiedPositions?: ReadonlyArray<{ positionId: string }> },
+): Set<string> {
+  const heads = new Map<string, StationEvent>();
+  for (const event of orderedStationEvents(board.events)) heads.set(event.userId, event);
+  const heldStations = new Set([...heads.values()].flatMap((head) => head.stationId ? [head.stationId] : []));
+  const heldPositions = new Set((board.occupiedPositions ?? []).map((entry) => entry.positionId));
+  const out = new Set<string>();
+  for (const station of board.stations) {
+    if (!isFloorStation(station) || station.closedAt || heldStations.has(station.id)) continue;
+    if (station.positions.some((position) => heldPositions.has(position.id))) continue;
+    const first = station.positions.filter((position) => position.active)
+      .sort((a, b) => a.sort - b.sort || a.name.localeCompare(b.name))[0];
+    if (first) out.add(first.id);
+  }
+  return out;
+}
 export interface ShiftPerson { id: string; name: string; level: number; hasWork: boolean; available?: boolean; onBreak?: boolean;
   /** 0233 (WHOS_HERE=1): on shift today and how we know. Absent when the feature is off. */
   presence?: PresenceView;

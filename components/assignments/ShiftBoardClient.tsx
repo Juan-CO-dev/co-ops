@@ -13,7 +13,7 @@ import { assignmentSectionDefaults } from "@/lib/assignment-sections";
 import type { RetrainTaskView } from "@/lib/yield-stats";
 import type { PresenceView } from "@/lib/presence-shared";
 import { StationNudges } from "./StationNudges";
-import { canSelfClaim, closedStationFor, currentFloorStation, showBreakButton, currentStation, formatAssignmentAttribution, isFloorStation, requiresOverrideReason, OVERRIDE_REASON_CODES, type OverrideReasonCode, type TaskAssignment, type AssignmentChange, type StationEvent, TASK_TYPES, TASK_MIN_LEVEL, taskHref, type ShiftBoard, type TaskType } from "@/lib/assignments-shared";
+import { canSelfClaim, closedStationFor, currentFloorStation, fillFirstPositionIds, showBreakButton, currentStation, formatAssignmentAttribution, isFloorStation, requiresOverrideReason, OVERRIDE_REASON_CODES, type OverrideReasonCode, type TaskAssignment, type AssignmentChange, type StationEvent, TASK_TYPES, TASK_MIN_LEVEL, taskHref, type ShiftBoard, type TaskType } from "@/lib/assignments-shared";
 
 const control = "flex min-h-[44px] w-full max-w-full min-w-0 items-center rounded-lg border-2 border-co-border bg-co-surface px-3 text-base font-normal tracking-normal text-co-text";
 
@@ -133,6 +133,8 @@ export function ShiftBoardClient({ board, compact = false, retrainTasks = [] }: 
   }
   const unassigned = TASK_TYPES.filter((task) => !board.tasks.some((assignment) => assignment.task === task && assignment.available !== false));
   const people = compact ? board.people.filter((p) => p.id === board.viewerId) : board.people;
+  // D-26: "fill first" only on an uncovered station's first open position.
+  const fillFirst = fillFirstPositionIds(board);
   const ownTasks = board.tasks.filter((task) => task.assigneeId === board.viewerId && task.available !== false);
   // Floor stations only (isFloorStation): closing sections live on the closing checklist, not this board.
   const positions = board.stations.filter((station) => isFloorStation(station) && !station.closedAt).flatMap((station) => station.positions.filter((position) => position.active));
@@ -284,7 +286,7 @@ export function ShiftBoardClient({ board, compact = false, retrainTasks = [] }: 
                   const taken = !!holder && p.id !== current?.positionId;
                   return <option key={p.id} value={p.id} disabled={!isFloorStation(s) || !!s.closedAt || !p.active || (board.viewerLevel < 4 && taken)}>
                     {language === "es" ? s.nameEs || s.name : s.name} · {language === "es" ? p.nameEs || p.name : p.name}
-                    {p.sort === 1 ? ` · ${t("assignments.fillFirst")}` : ""}
+                    {fillFirst.has(p.id) ? ` · ${t("assignments.fillFirst")}` : ""}
                     {holder ? ` · ${t("assignments.takenBy", { name: holder.firstName })}` : ""}
                   </option>;
                 }))}

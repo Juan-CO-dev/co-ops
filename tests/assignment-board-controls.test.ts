@@ -104,8 +104,12 @@ describe("assignment board retract and assign controls", () => {
     value.occupiedPositions = [{ positionId: "second", firstName: "Maya" }];
     const html = render(value, true);
     expect(html.indexOf('value="first"')).toBeLessThan(html.indexOf('value="second"'));
-    expect(html).toContain('Walk-ins · fill first');
+    // D-26: Maya holds a position here, so the station is covered — no "fill first" cue.
+    expect(html).not.toContain('fill first');
     expect(html).toMatch(/<option[^>]*value="second"[^>]*disabled[^>]*>[^<]*taken by Maya/);
+    value.occupiedPositions = [];
+    expect(render(value, true)).toContain('Walk-ins · fill first');
+    expect(render(value, true)).not.toContain('Online · fill first');
   });
 });
 
