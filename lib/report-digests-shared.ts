@@ -8,6 +8,7 @@
  */
 import { ROLES, isRoleCode } from "@/lib/roles";
 import type { Language } from "@/lib/i18n/types";
+import { etWallMinutesInstant } from "@/lib/operational-day";
 
 export type DigestKind = "gm_shop" | "unified" | "catering";
 export const DIGEST_KINDS: readonly DigestKind[] = ["gm_shop", "unified", "catering"];
@@ -94,18 +95,14 @@ export function addDays(day: string, n: number): string {
   return new Date(Date.UTC(y!, m! - 1, d! + n)).toISOString().slice(0, 10);
 }
 
-/** The UTC instant of ET wall time `minutes` on `day` (DST-correct; a skipped wall time lands just after the gap). */
+/**
+ * The UTC instant of ET wall time `minutes` on `day` (DST-correct; a skipped wall time lands just
+ * after the gap, a repeated one is its first occurrence). The algorithm now lives in
+ * lib/operational-day.ts `etWallMinutesInstant` so the ordering/PO cutoff conversion shares it and
+ * the two can never disagree about a DST edge (B7b review 2).
+ */
 export function etWallTime(day: string, minutes: number): Date {
-  const hh = String(Math.floor(minutes / 60)).padStart(2, "0");
-  const mm = String(minutes % 60).padStart(2, "0");
-  const target = Date.parse(`${day}T${hh}:${mm}:00Z`);
-  let instant = target;
-  for (let i = 0; i < 3; i++) {
-    const p = parts(new Date(instant));
-    const wall = Date.parse(`${p.year}-${p.month}-${p.day}T${p.hour}:${p.minute}:${p.second}Z`);
-    instant += target - wall;
-  }
-  return new Date(instant);
+  return etWallMinutesInstant(day, minutes);
 }
 
 /**

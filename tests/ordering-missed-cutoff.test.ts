@@ -7,7 +7,8 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import { cutoffMissed } from "@/lib/dashboard-status-shared";
-import { etClockTime, etWallClockToUtcIso } from "@/lib/operational-day";
+import { etClockTime, etWallClockToUtcIso, etWallMinutesInstant } from "@/lib/operational-day";
+import { etWallTime } from "@/lib/report-digests-shared";
 import { pulseScore, type AttentionItem } from "@/lib/midshift-shared";
 import { AttentionBanner } from "@/components/midshift/AttentionBanner";
 import { TranslationProvider } from "@/lib/i18n/provider";
@@ -50,6 +51,33 @@ describe("review #1: the cutoff instant reads the ET offset AT the cutoff time (
     expect(etWallClockToUtcIso("2026-01-13", "16:00:00")).toBe("2026-01-13T21:00:00.000Z");
     for (const bad of ["24:00", "11:60", "noon", "11", ""]) expect(etWallClockToUtcIso("2026-10-13", bad)).toBeNull();
     expect(etWallClockToUtcIso("10/13/2026", "11:00")).toBeNull();
+  });
+});
+
+describe("review 2: the DST edge hours follow the digest helper's policy (one resolver)", () => {
+  it("SKIPPED hour — 02:30 on 2026-03-08 never happens: rolls FORWARD to 07:30Z (03:30 EDT), same as the digest", () => {
+    const iso = etWallClockToUtcIso("2026-03-08", "02:30:00")!;
+    expect(iso).toBe("2026-03-08T07:30:00.000Z");
+    expect(iso).toBe(etWallTime("2026-03-08", 150).toISOString());
+    expect(etClockTime(iso)).toBe("03:30");
+    // So at 01:45 EST (06:45Z) the cutoff is NOT yet missed; it is once the gap is over.
+    expect(cutoffMissed(iso, Date.parse("2026-03-08T06:45:00Z"))).toBe(false);
+    expect(cutoffMissed(iso, Date.parse("2026-03-08T07:30:00Z"))).toBe(true);
+  });
+  it("REPEATED hour — 01:30 on 2026-11-01 happens twice: the FIRST (EDT) occurrence, 05:30Z, same as the digest", () => {
+    const iso = etWallClockToUtcIso("2026-11-01", "01:30")!;
+    expect(iso).toBe("2026-11-01T05:30:00.000Z");
+    expect(iso).toBe(etWallTime("2026-11-01", 90).toISOString());
+  });
+  it("agrees with the digest helper minute-for-minute across both transition days", () => {
+    for (const day of ["2026-03-08", "2026-11-01", "2026-10-13", "2026-01-13"]) {
+      for (let minutes = 0; minutes < 24 * 60; minutes += 1) {
+        const hh = String(Math.floor(minutes / 60)).padStart(2, "0");
+        const mm = String(minutes % 60).padStart(2, "0");
+        expect(etWallClockToUtcIso(day, `${hh}:${mm}:00`), `${day} ${hh}:${mm}`).toBe(etWallTime(day, minutes).toISOString());
+      }
+    }
+    expect(etWallTime("2026-03-08", 150).getTime()).toBe(etWallMinutesInstant("2026-03-08", 150).getTime());
   });
 });
 
