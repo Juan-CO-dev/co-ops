@@ -193,3 +193,18 @@ describe("B9 step 1 — ONE effective-sales read per render", () => {
     expect(tally(neu.log, "toast_sales_events")).toBe(1);
   });
 });
+
+describe("B9 step 2 — each ledger read once, whatever the number of anchor groups", () => {
+  it.each(MODES)("deliveries, receipt lines, production inputs cost the same at 1 group or 17 — %s", async (mode) => {
+    setMode(mode);
+    const base = await measure({}, () => counts.loadOnHand(actor, LOC, NOW));
+    const scaled = await measure({ parWalks: 8, baselineInstants: 8 }, () => counts.loadOnHand(actor, LOC, NOW));
+    const old = await measure({ parWalks: 8, baselineInstants: 8 }, v0Panel);
+    expect(tally(base.log, "production_inputs")).toBe(1);
+    expect(tally(scaled.log, "production_inputs")).toBe(1);
+    for (const table of ["vendor_deliveries", "vendor_delivery_items", "productions"]) {
+      expect(tally(scaled.log, table)).toBe(tally(base.log, table));
+    }
+    expect(tally(old.log, "vendor_deliveries")).toBeGreaterThan(20); // the per-group re-reads this replaced
+  });
+});

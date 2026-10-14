@@ -1,12 +1,22 @@
-import { loadEffectiveSalesWindow, loadEffectiveSalesCoverage, loadSalesCoverageDisclosure, type SalesCoverage, type EffectiveSalesWindow } from "@/lib/toast/effective-depletion";
+import { loadEffectiveSalesWindow, loadEffectiveSalesCoverage, loadSalesCoverageDisclosure, type SalesCoverage, type EffectiveSalesRow, type EffectiveSalesWindow } from "@/lib/toast/effective-depletion";
 import {
+  consumedOzWindow,
   earliestDate,
+  earliestInstant,
+  instantMicros,
+  productionInputsFrom,
+  receivedOzWindow,
+  retroEditStale,
   salesDirectOz,
   salesGapDates,
   salesRowsFrom,
   salesSnapshotCovers,
   sliceSalesCoverage,
   SalesGapSet,
+  type DeliveryLedgerHeader,
+  type DeliveryLedgerLine,
+  type LedgerFloor,
+  type ProductionLedgerInput,
   type SalesSnapshot,
   type SalesSourceMode,
 } from "@/lib/counts-ledger-shared";
@@ -911,15 +921,13 @@ export type { ProductOnHandRow } from "@/lib/products-shared";
  * lane totals so the writer can persist the lane breakdown in `basis`. A SKU absent
  * from both lanes is absent from the map (advisory-null — gets NO baseline).
  *
- * B9: the sales lane is a slice of the render's ONE effective-sales read (`sales`), never
- * a second derivation of the same days.
+ * B9: both lanes are slices of the render's ONE production read and ONE effective-sales
+ * read, never a second pass over the same rows.
  */
-async function loadInferredConsumedOz(
-  sb: ReturnType<typeof getServiceRoleClient>,
-  locationId: string,
+function inferredConsumedOz(
   now: number,
-  sales: SalesSnapshot | null,
-): Promise<Map<string, { productionOz: number; directOz: number }>> {
+  ctx: OnHandLedgerContext,
+): Map<string, { productionOz: number; directOz: number }> {
   const lanes = new Map<string, { productionOz: number; directOz: number }>();
   const addProd = (skuId: string, oz: number) => {
     if (!Number.isFinite(oz) || oz <= 0) return;
@@ -938,48 +946,17 @@ async function loadInferredConsumedOz(
   // ledger compares on business_date (a bare date) — derive both from one instant.
   const { cutoffIso, cutoffDate } = inferredWindowStart(now);
 
-  // Production lane — live productions at this location in the window, then inputs.
-  // WINDOW BOUNDARY: inclusive (.gte) on the cutoff instant so both lanes intend the
+  // Production lane — inputs of live productions at this location in the window.
+  // WINDOW BOUNDARY: inclusive (>=) on the cutoff instant so both lanes intend the
   // SAME calendar window — the sales lane filters business_date >= cutoffDate (a bare
-  // date, inherently inclusive of that whole day), so production uses .gte(cutoffIso)
+  // date, inherently inclusive of that whole day), so production uses >= cutoffIso
   // to match (a production exactly at the cutoff instant belongs to the 28-day window).
-  // BOTH production reads are PAGED (the PR #63 lesson): 28 days of productions and
-  // their inputs each overrun the 1000-row cap, and a truncated page would silently
-  // understate the run-rate. `id` (the PK) gives the stable total order paging needs;
-  // both reads are order-insensitive sums.
-  const prodHdrs = await selectAllRows<{ id: string }>(
-    async (from, to) => {
-      const { data, error } = await sb.from("productions")
-        .select("id")
-        .eq("location_id", locationId)
-        .is("superseded_at", null).is("revoked_at", null)
-        .gte("produced_at", cutoffIso)
-        .order("id", { ascending: true })
-        .range(from, to)
-        .returns<Array<{ id: string }>>();
-      if (error) throw new Error(`loadInferredConsumedOz productions: ${error.message}`);
-      return { data };
-    },
-  );
-  const prodIds = prodHdrs.map((h) => h.id);
-  if (prodIds.length > 0) {
-    const inputs = await selectAllRows<{ input_sku_id: string; input_oz: number | string | null }>(
-      async (from, to) => {
-        const { data, error } = await sb.from("production_inputs")
-          .select("input_sku_id, input_oz")
-          .in("production_id", prodIds)
-          .order("id", { ascending: true })
-          .range(from, to)
-          .returns<Array<{ input_sku_id: string; input_oz: number | string | null }>>();
-        if (error) throw new Error(`loadInferredConsumedOz production_inputs: ${error.message}`);
-        return { data };
-      },
-    );
-    for (const r of inputs) addProd(r.input_sku_id, num(r.input_oz) ?? 0);
-  }
+  // B9: a slice of the render's one production read (paged, `id` order — the order the
+  // old header→inputs read summed in).
+  for (const r of ctx.productionInputsFrom(cutoffIso)) addProd(r.skuId, num(r.inputOz) ?? 0);
 
   // Sales direct lane — the effective sales rows over the window (the render's one read).
-  for (const r of sales ? salesRowsFrom(sales, cutoffDate) : []) addDirect(r.sku_id, num(r.direct_oz) ?? 0);
+  for (const r of ctx.salesRowsFrom(cutoffDate)) addDirect(r.sku_id, num(r.direct_oz) ?? 0);
 
   return lanes;
 }
@@ -1076,7 +1053,7 @@ async function loadInferredRows(
   //     baseline for each with positive consumption. Zero-consumption SKUs get NO
   //     row (advisory-null). Computed once (upsert ignoreDuplicates); merge in memory.
   if (needsBaseline.length > 0) {
-    const lanes = await loadInferredConsumedOz(sb, locationId, now, ctx.sales);
+    const lanes = inferredConsumedOz(now, ctx);
     const nowIso = new Date(now).toISOString();
     const toInsert: Array<{
       location_id: string;
@@ -1136,13 +1113,10 @@ async function loadInferredRows(
     group.push(id);
   }
 
-  const rowGroups = await Promise.all(
-    [...idsByAnchorAt.entries()].map(async ([anchorAt, groupIds]): Promise<OnHandRow[]> => {
-      const [receivedSince, consumedSince, anchorStale] = await Promise.all([
-        ctx.receivedOz(groupIds, anchorAt, null),
-        ctx.consumedOz(groupIds, anchorAt, null),
-        ctx.stale(anchorAt),
-      ]);
+  const rowGroups = [...idsByAnchorAt.entries()].map(([anchorAt, groupIds]): OnHandRow[] => {
+      const receivedSince = ctx.receivedOz(groupIds, anchorAt, null);
+      const consumedSince = ctx.consumedOz(groupIds, anchorAt, null);
+      const anchorStale = ctx.stale(anchorAt);
       const salesSince = ctx.salesOz(groupIds, etBusinessDate(anchorAt), null, gapDates);
       // Build a weight row per SKU in the group: anchor + received-since − consumed-since,
       // accrued from computed_at exactly like a census weight row (drift is source-blind).
@@ -1174,8 +1148,7 @@ async function loadInferredRows(
           partialLineCount: 0,
         };
       });
-    }),
-  );
+  });
   return rowGroups.flat();
 }
 
@@ -1266,7 +1239,7 @@ async function loadParAnchors(
  * reference; VARIANCE IS CENSUS-ONLY). Persists NOTHING (the par-pass event already
  * stored the line — this is a derive-on-read tier).
  */
-async function loadParEstimateRows(par: ParAnchors, ctx: OnHandLedgerContext, now: number): Promise<OnHandRow[]> {
+function loadParEstimateRows(par: ParAnchors, ctx: OnHandLedgerContext, now: number): OnHandRow[] {
   const { anchorBySku, skuIds: parSkuIds, skuName } = par;
   if (parSkuIds.length === 0) return [];
 
@@ -1287,13 +1260,10 @@ async function loadParEstimateRows(par: ParAnchors, ctx: OnHandLedgerContext, no
     group.push(id);
   }
 
-  const rowGroups = await Promise.all(
-    [...idsByAnchorAt.entries()].map(async ([anchorAt, groupIds]): Promise<OnHandRow[]> => {
-      const [receivedSince, consumedSince, anchorStale] = await Promise.all([
-        ctx.receivedOz(groupIds, anchorAt, null),
-        ctx.consumedOz(groupIds, anchorAt, null),
-        ctx.stale(anchorAt),
-      ]);
+  const rowGroups = [...idsByAnchorAt.entries()].map(([anchorAt, groupIds]): OnHandRow[] => {
+      const receivedSince = ctx.receivedOz(groupIds, anchorAt, null);
+      const consumedSince = ctx.consumedOz(groupIds, anchorAt, null);
+      const anchorStale = ctx.stale(anchorAt);
       const salesSince = ctx.salesOz(groupIds, etBusinessDate(anchorAt), null, gapDates);
       // Build a weight row per SKU: anchor + received-since − consumed-since, accrued
       // from the par-pass line's created_at exactly like a census weight row (source-blind).
@@ -1325,8 +1295,7 @@ async function loadParEstimateRows(par: ParAnchors, ctx: OnHandLedgerContext, no
           partialLineCount: 0,
         };
       });
-    }),
-  );
+  });
   return rowGroups.flat();
 }
 
@@ -1451,10 +1420,12 @@ interface OnHandLedgerContext {
   sales: SalesSnapshot | null;
   gapDates(since: string): SalesGapSet;
   salesOz(skuIds: string[], fromDate: string, untilExclusive: string | null, gaps: SalesGapSet): Map<string, number | null>;
-  receivedOz(skuIds: string[], afterIso: string, untilIso: string | null): Promise<Map<string, number | null>>;
+  salesRowsFrom(fromDate: string): EffectiveSalesRow[];
+  receivedOz(skuIds: string[], afterIso: string, untilIso: string | null): Map<string, number | null>;
   receivedUnits(skuId: string, afterIso: string, untilIso: string | null, chain: PackChainLevel[] | null): Promise<number | null>;
-  consumedOz(skuIds: string[], afterIso: string, untilIso: string | null): Promise<Map<string, number | null>>;
-  stale(anchorIso: string): Promise<boolean>;
+  consumedOz(skuIds: string[], afterIso: string, untilIso: string | null): Map<string, number | null>;
+  productionInputsFrom(fromIso: string): ProductionLedgerInput[];
+  stale(anchorIso: string): boolean;
 }
 
 function salesSourceMode(): SalesSourceMode {
@@ -1514,31 +1485,133 @@ async function salesDisclosure(
 }
 
 /**
- * Build the ledger seam over the render's sales read. B9 step 1: received, consumed and
- * staleness still query per window (memoized per anchor instant for staleness).
+ * THE RENDER'S ONE READ OF EACH LEDGER (B9 step 2): the location's receipt lines (with
+ * their header's write instant, via the service-role embed — see DELIVERY_HEADER_EMBED),
+ * its delivery headers (the retro-edit probe), and the inputs of its LIVE productions,
+ * each from the earliest instant any tier's window reaches. Extra anchor groups now cost
+ * nothing: every group's received / consumed / staleness figure is a filter over these.
+ */
+interface OnHandLedgers {
+  floor: LedgerFloor;
+  deliveryLines: DeliveryLedgerLine[];
+  deliveryHeaders: DeliveryLedgerHeader[];
+  productionInputs: ProductionLedgerInput[];
+}
+
+/**
+ * Service-role embed (AGENTS.md: legitimate on the service client, and the only constant-
+ * length way to scope receipt lines to a location — a delivery-id `.in()` list was a 414
+ * at ~220 deliveries). Disambiguated by FK name: vendor_delivery_items has TWO FKs to
+ * vendor_deliveries.
+ */
+const DELIVERY_HEADER_EMBED = "vendor_deliveries!vendor_delivery_items_delivery_id_fkey!inner(location_id, created_at)";
+/** production_inputs has ONE FK to productions; the embed scopes inputs to live productions here. */
+const PRODUCTION_HEADER_EMBED = "productions!inner(location_id, produced_at, superseded_at, revoked_at)";
+
+async function loadOnHandLedgers(
+  sb: ReturnType<typeof getServiceRoleClient>,
+  locationId: string,
+  bounds: { deliveriesAfter: string | null; productionsFrom: string | null },
+): Promise<OnHandLedgers> {
+  const { deliveriesAfter, productionsFrom } = bounds;
+  // Every read is PAGED under `id` (the PR #63 lesson — a truncated page silently
+  // understates a received or consumed term) and THROWS on error (an empty ledger reads
+  // as "nothing arrived / nothing was used", which would fabricate on-hand).
+  type LineRow = { id: string; vendor_item_id: string; resolved_oz: number | string | null; created_at: string;
+    received_level_label: string | null; received_qty_at_level: number | string | null;
+    vendor_deliveries: { location_id: string; created_at: string } };
+  type HeaderRow = { id: string; created_at: string; delivery_date: string | null };
+  type InputRow = { id: string; input_sku_id: string; input_oz: number | string | null; productions: { produced_at: string } };
+  const [lines, headers, inputs] = await Promise.all([
+    deliveriesAfter == null ? Promise.resolve([] as LineRow[]) : selectAllRows<LineRow>(async (from, to) => {
+      const { data, error } = await sb.from("vendor_delivery_items")
+        .select(`id, vendor_item_id, resolved_oz, created_at, received_level_label, received_qty_at_level, ${DELIVERY_HEADER_EMBED}`)
+        .eq("vendor_deliveries.location_id", locationId)
+        .gt("vendor_deliveries.created_at", deliveriesAfter)
+        .gt("created_at", deliveriesAfter)
+        .order("id", { ascending: true })
+        .range(from, to)
+        .returns<LineRow[]>();
+      if (error) throw new Error(`loadOnHandLedgers receipt lines: ${error.message}`);
+      return { data };
+    }),
+    deliveriesAfter == null ? Promise.resolve([] as HeaderRow[]) : selectAllRows<HeaderRow>(async (from, to) => {
+      const { data, error } = await sb.from("vendor_deliveries")
+        .select("id, created_at, delivery_date")
+        .eq("location_id", locationId)
+        .gt("created_at", deliveriesAfter)
+        .order("id", { ascending: true })
+        .range(from, to)
+        .returns<HeaderRow[]>();
+      if (error) throw new Error(`loadOnHandLedgers deliveries: ${error.message}`);
+      return { data };
+    }),
+    productionsFrom == null ? Promise.resolve([] as InputRow[]) : selectAllRows<InputRow>(async (from, to) => {
+      const { data, error } = await sb.from("production_inputs")
+        .select(`id, input_sku_id, input_oz, ${PRODUCTION_HEADER_EMBED}`)
+        .eq("productions.location_id", locationId)
+        .is("productions.superseded_at", null)
+        .is("productions.revoked_at", null)
+        .gte("productions.produced_at", productionsFrom)
+        .order("id", { ascending: true })
+        .range(from, to)
+        .returns<InputRow[]>();
+      if (error) throw new Error(`loadOnHandLedgers production inputs: ${error.message}`);
+      return { data };
+    }),
+  ]);
+  return {
+    floor: {
+      deliveriesAfterUs: deliveriesAfter == null ? null : instantMicros(deliveriesAfter),
+      productionsFromUs: productionsFrom == null ? null : instantMicros(productionsFrom),
+    },
+    deliveryLines: lines.map((l) => ({
+      id: l.id, skuId: l.vendor_item_id, resolvedOz: l.resolved_oz,
+      receivedLevelLabel: l.received_level_label, receivedQtyAtLevel: l.received_qty_at_level,
+      createdUs: instantMicros(l.created_at), deliveryCreatedUs: instantMicros(l.vendor_deliveries.created_at),
+    })),
+    deliveryHeaders: headers.map((h) => ({ createdUs: instantMicros(h.created_at), deliveryDate: h.delivery_date })),
+    productionInputs: inputs.map((r) => ({ skuId: r.input_sku_id, inputOz: r.input_oz, producedUs: instantMicros(r.productions.produced_at) })),
+  };
+}
+
+/**
+ * Build the ledger seam over the render's reads. Every window is checked against what
+ * was loaded: a window that starts before the loaded floor means a bound was computed
+ * wrong, and that must fail loudly rather than quietly under-count.
  */
 function onHandLedgerContext(
   sb: ReturnType<typeof getServiceRoleClient>,
   locationId: string,
-  now: number,
   sales: SalesSnapshot | null,
+  ledgers: OnHandLedgers,
 ): OnHandLedgerContext {
   const requireSales = (): SalesSnapshot => {
     if (!sales) throw new Error("onHand: a sales consumer ran without the render's sales read");
     return sales;
   };
-  const staleness = new Map<string, Promise<boolean>>();
+  const requireDeliveries = (afterIso: string) => {
+    const floor = ledgers.floor.deliveriesAfterUs;
+    if (floor == null || instantMicros(afterIso) < floor) throw new Error(`onHand: receipt window after ${afterIso} starts before the loaded ledger`);
+  };
+  const requireProductions = (fromIso: string) => {
+    const floor = ledgers.floor.productionsFromUs;
+    if (floor == null || instantMicros(fromIso) < floor) throw new Error(`onHand: production window from ${fromIso} starts before the loaded ledger`);
+  };
+  const staleness = new Map<string, boolean>();
   return {
     sales,
     gapDates: (since) => salesGapDates(requireSales(), since),
     salesOz: (skuIds, fromDate, untilExclusive, gaps) => salesDirectOz(requireSales(), skuIds, fromDate, untilExclusive, gaps),
-    receivedOz: (skuIds, afterIso, untilIso) => sumReceivedOzWindow(sb, skuIds, locationId, afterIso, untilIso),
+    salesRowsFrom: (fromDate) => (sales ? salesRowsFrom(sales, fromDate) : []),
+    receivedOz: (skuIds, afterIso, untilIso) => { requireDeliveries(afterIso); return receivedOzWindow(ledgers.deliveryLines, skuIds, afterIso, untilIso); },
     receivedUnits: (skuId, afterIso, untilIso, chain) => sumReceivedUnitsWindow(sb, skuId, locationId, afterIso, untilIso, chain),
-    consumedOz: (skuIds, afterIso, untilIso) => sumConsumedOzWindow(sb, skuIds, locationId, afterIso, untilIso),
+    consumedOz: (skuIds, afterIso, untilIso) => { requireProductions(afterIso); return consumedOzWindow(ledgers.productionInputs, skuIds, afterIso, untilIso); },
+    productionInputsFrom: (fromIso) => { requireProductions(fromIso); return productionInputsFrom(ledgers.productionInputs, fromIso); },
     stale: (anchorIso) => {
-      let p = staleness.get(anchorIso);
-      if (!p) { p = detectRetroEditStaleness(sb, locationId, anchorIso, now); staleness.set(anchorIso, p); }
-      return p;
+      let hit = staleness.get(anchorIso);
+      if (hit === undefined) { requireDeliveries(anchorIso); hit = retroEditStale(ledgers.deliveryHeaders, anchorIso); staleness.set(anchorIso, hit); }
+      return hit;
     },
   };
 }
@@ -1687,7 +1760,25 @@ async function onHandCore(
     fromDate: earliestDate([legacyGapSince, laneFrom, captureSource ? disclosureFrom : null]),
     legacyGapSince,
   });
-  const ctx = onHandLedgerContext(sb, locationId, now, sales);
+  // ── 3. The earliest instant any received / consumed / staleness window reaches, then
+  //       each ledger ONCE from there (B9 step 2). Fresh inferred baselines anchor at `now`.
+  const nowIso = new Date(now).toISOString();
+  const weightAnchorInstants = [
+    ...weightSkuIds.flatMap((id) => [anchorBySku.get(id)!.anchorAt, anchorBySku.get(id)!.prevAt]),
+    ...par.skuIds.map((id) => par.anchorBySku.get(id)!.anchorAt),
+    ...[...inferredPlan.baselineBySku.values()].map((b) => b.anchorAt),
+    inferredPlan.needsBaseline.length > 0 ? nowIso : null,
+  ].filter((v): v is string => v != null);
+  const countAnchorInstants = countSkuIds.flatMap((id) => [unitAnchorBySku.get(id)!.anchorAt, unitAnchorBySku.get(id)!.prevAt])
+    .filter((v): v is string => v != null);
+  const ledgers = await loadOnHandLedgers(sb, locationId, {
+    deliveriesAfter: earliestInstant([...weightAnchorInstants, ...countAnchorInstants]),
+    productionsFrom: earliestInstant([
+      ...weightAnchorInstants,
+      ...(inferredPlan.needsBaseline.length > 0 ? [inferredWindowStart(now).cutoffIso] : []),
+    ]),
+  });
+  const ctx = onHandLedgerContext(sb, locationId, sales, ledgers);
   const salesCoverage = await salesDisclosure(sb, locationId, disclosureFrom, sales);
   const salesThrough = await finishDepletionWatermark(watermarkStart, locationId, sb, sales);
   const anchorAt = evList[0]?.counted_at ?? null; // the location's "last counted" header hint only.
@@ -1723,19 +1814,11 @@ async function onHandCore(
     g.ids.push(skuId);
   }
 
-  const weightRowGroups = await Promise.all(
-    [...weightGroups.values()].map(async ({ anchorAt: groupAnchorAt, prevAt, ids }): Promise<OnHandRow[]> => {
-      const [receivedSince, consumedSince, anchorStale, between] = await Promise.all([
-        ctx.receivedOz(ids, groupAnchorAt, null),
-        ctx.consumedOz(ids, groupAnchorAt, null),
-        ctx.stale(groupAnchorAt),
-        prevAt == null
-          ? Promise.resolve(null)
-          : Promise.all([
-              ctx.receivedOz(ids, prevAt, groupAnchorAt),
-              ctx.consumedOz(ids, prevAt, groupAnchorAt),
-            ]),
-      ]);
+  const weightRowGroups = [...weightGroups.values()].map(({ anchorAt: groupAnchorAt, prevAt, ids }): OnHandRow[] => {
+      const receivedSince = ctx.receivedOz(ids, groupAnchorAt, null);
+      const consumedSince = ctx.consumedOz(ids, groupAnchorAt, null);
+      const anchorStale = ctx.stale(groupAnchorAt);
+      const between = prevAt == null ? null : [ctx.receivedOz(ids, prevAt, groupAnchorAt), ctx.consumedOz(ids, prevAt, groupAnchorAt)] as const;
       const salesSince = ctx.salesOz(ids, etBusinessDate(groupAnchorAt), null, gapDates);
       const salesBetween = prevAt == null ? null : ctx.salesOz(ids, etBusinessDate(prevAt), etBusinessDate(groupAnchorAt), gapDates);
       return ids.map((skuId): OnHandRow => {
@@ -1795,8 +1878,7 @@ async function onHandCore(
           partialLineCount: a.partialLineCount,
         };
       });
-    }),
-  );
+  });
   const weightRows: OnHandRow[] = weightRowGroups.flat();
 
   // ── Count rows (leaf-unit on-hand + "used or lost since last count") ──
@@ -1807,10 +1889,8 @@ async function onHandCore(
       const a = unitAnchorBySku.get(skuId)!;
       const chain = chainsBySku.get(skuId) ?? null;
       const unitLabel = chain ? (chainCountLeafMeasure(buildPackChain(chain), measures) ?? "units") : "units";
-      const [receivedSince, anchorStale] = await Promise.all([
-        ctx.receivedUnits(skuId, a.anchorAt, null, chain),
-        ctx.stale(a.anchorAt), // memoized — shared with the weight tier's probes.
-      ]);
+      const receivedSince = await ctx.receivedUnits(skuId, a.anchorAt, null, chain);
+      const anchorStale = ctx.stale(a.anchorAt); // memoized — shared with the weight tier.
       const onHand = computeOnHandUnits(
         { skuId, anchorUnits: a.anchorUnits, anchorAt: a.anchorAt, receivedUnitsSince: receivedSince, anchorStale },
         now,
@@ -1840,7 +1920,7 @@ async function onHandCore(
   // ── Par-estimate rows (spec D6, middle tier) ── for active SKUs with NO census
   // anchor (weight or count) but a par-pass line's implied on-hand: a soft shelf-walk
   // snapshot (loadParAnchors excluded every census-anchored SKU).
-  const parRows = await loadParEstimateRows(par, ctx, now);
+  const parRows = loadParEstimateRows(par, ctx, now);
 
   // ── Inferred rows (spec D6, cold-start tier) ── for active SKUs with NEITHER a census
   // anchor NOR a par_estimate anchor but real consumption history (planInferredTier
@@ -2073,61 +2153,6 @@ async function locationDeliveryIds(
     },
   );
   return rows.map((d) => d.id);
-}
-
-/**
- * Received oz for each SKU on deliveries at this location dated STRICTLY AFTER the
- * anchor. Uses vendor_delivery_items.resolved_oz (the persisted oz-at-write, L3).
- * A SKU with ANY NULL resolved_oz among its in-window lines → null (advisory:
- * can't derive a clean received term). No in-window lines at all → 0.
- */
-async function sumReceivedOzWindow(
-  sb: ReturnType<typeof getServiceRoleClient>,
-  skuIds: string[],
-  locationId: string,
-  afterIso: string,
-  untilIso: string | null,
-): Promise<Map<string, number | null>> {
-  const out = new Map<string, number | null>();
-  for (const id of skuIds) out.set(id, 0);
-  const deliveryIds = await locationDeliveryIds(sb, locationId, afterIso, untilIso);
-  if (deliveryIds.length === 0) return out;
-  // vendor_delivery_items has created_at; use it as the receipt timestamp (the
-  // delivery_date is a bare date, created_at is the true write instant that the
-  // anchor timestamp is comparable to).
-  // PAGED (the PR #63 lesson): a wide window over the delivery ledger crosses the
-  // 1000-row cap, and a truncated page silently UNDERSTATES the received term —
-  // which reads downstream as shrinkage. `id` (the PK) gives the stable total order
-  // paging requires; the per-SKU sum and the null-taint are order-insensitive.
-  const rows = await selectAllRows<{ vendor_item_id: string; resolved_oz: number | string | null; created_at: string }>(
-    async (from, to) => {
-      let q = sb.from("vendor_delivery_items")
-        .select("vendor_item_id, resolved_oz, created_at")
-        .in("vendor_item_id", skuIds)
-        .in("delivery_id", deliveryIds)
-        .gt("created_at", afterIso);
-      if (untilIso != null) q = q.lte("created_at", untilIso);
-      const { data, error } = await q
-        .order("id", { ascending: true })
-        .range(from, to)
-        .returns<Array<{ vendor_item_id: string; resolved_oz: number | string | null; created_at: string }>>();
-      if (error) throw new Error(`sumReceivedOzWindow: ${error.message}`);
-      return { data };
-    },
-  );
-  // Sum resolved oz per SKU; a SKU with ANY NULL resolved_oz in-window line →
-  // advisory null (can't derive a clean received term). Tracked separately so a
-  // null line taints the whole SKU regardless of row order.
-  const sums = new Map<string, number>();
-  const nulled = new Set<string>();
-  for (const r of rows) {
-    const oz = num(r.resolved_oz);
-    if (oz == null) { nulled.add(r.vendor_item_id); continue; }
-    sums.set(r.vendor_item_id, (sums.get(r.vendor_item_id) ?? 0) + oz);
-  }
-  for (const [id, s] of sums) out.set(id, s);
-  for (const id of nulled) out.set(id, null); // taint wins over any partial sum.
-  return out;
 }
 
 // ── Count-space received-units (PR-C): derive LEAF units from level-aware receiving ─
@@ -2435,36 +2460,4 @@ async function sumConsumedOzWindow(
   for (const [id, s] of sums) out.set(id, s);
   for (const id of nulled) out.set(id, null); // NULL input_oz → null-drift advisory.
   return out;
-}
-
-/**
- * Retro-edit staleness (L5): true when a BACKDATED delivery exists — one whose
- * write instant (vendor_deliveries.created_at) is AFTER the anchor count but whose
- * effective delivery_date is on-or-BEFORE the anchor. Such a row landed after the
- * manager counted yet claims stock the count should already have reflected — so it
- * can't be cleanly folded into the since-anchor drift, and the anchor's ground
- * truth is suspect. Sound + cheap: the mismatch between write-time and effective-
- * time IS the retro edit.
- *
- * SCOPE NOTE: only the delivery ledger is checkable — `productions` has NO
- * created_at (schema: only produced_at, verified against live), so a backdated
- * production is not observable without a created_at column. Documented seam: if a
- * production created_at lands later, add the symmetric check here. We surface the
- * honest signal we CAN derive rather than a fabricated one.
- */
-async function detectRetroEditStaleness(
-  sb: ReturnType<typeof getServiceRoleClient>,
-  locationId: string,
-  anchorIso: string,
-  _now: number,
-): Promise<boolean> {
-  const anchorDate = anchorIso.slice(0, 10); // YYYY-MM-DD for the bare delivery_date compare.
-  // Absence of rows means "not stale" — a swallowed error would assert trust in an
-  // anchor we couldn't check. Throw instead of overstating the anchor's soundness.
-  const { data: delivHit, error } = await sb.from("vendor_deliveries").select("id")
-    .eq("location_id", locationId)
-    .gt("created_at", anchorIso).lte("delivery_date", anchorDate).limit(1)
-    .returns<Array<{ id: string }>>();
-  if (error) throw new Error(`detectRetroEditStaleness: ${error.message}`);
-  return (delivHit ?? []).length > 0;
 }

@@ -175,3 +175,108 @@ export function sliceSalesCoverage(coverage: SalesCoverage, fromDate: string, en
 export function salesSnapshotCovers(snap: SalesSnapshot, fromDate: string, end: string): boolean {
   return fromDate >= snap.fromDate && (snap.end === null || end <= snap.end);
 }
+
+// ── The receiving + production ledgers, loaded once ───────────────────────────────
+/** One receipt line at the location, with its delivery header's write instant (µs). */
+export interface DeliveryLedgerLine {
+  id: string;
+  skuId: string;
+  resolvedOz: number | string | null;
+  receivedLevelLabel: string | null;
+  receivedQtyAtLevel: number | string | null;
+  /** vendor_delivery_items.created_at, µs. */
+  createdUs: number;
+  /** vendor_deliveries.created_at of its header, µs. */
+  deliveryCreatedUs: number;
+}
+/** One delivery header at the location (the retro-edit probe reads headers, lines or not). */
+export interface DeliveryLedgerHeader { createdUs: number; deliveryDate: string | null }
+/** One input line of a LIVE production at the location. */
+export interface ProductionLedgerInput { skuId: string; inputOz: number | string | null; producedUs: number }
+
+/** Every window a reader may ask for must lie inside what was loaded — else a bound is wrong. */
+export interface LedgerFloor {
+  /** Lines/headers were read with created_at STRICTLY AFTER this instant (null = not read). */
+  deliveriesAfterUs: number | null;
+  /** Inputs were read with produced_at AT OR AFTER this instant (null = not read). */
+  productionsFromUs: number | null;
+}
+
+function inWindowUs(t: number, afterUs: number, untilUs: number | null): boolean {
+  return t > afterUs && (untilUs == null || t <= untilUs);
+}
+
+/**
+ * Received oz per SKU over (after, until] — sumReceivedOzWindow over the loaded lines:
+ * the delivery header AND the line must both fall in the window (the old two-step
+ * filtered headers by window, then lines by window). Every SKU starts at 0; a SKU with
+ * ANY null resolved_oz line in the window is null (advisory: no clean received term).
+ */
+export function receivedOzWindow(
+  lines: readonly DeliveryLedgerLine[],
+  skuIds: readonly string[],
+  afterIso: string,
+  untilIso: string | null,
+): Map<string, number | null> {
+  const out = new Map<string, number | null>();
+  for (const id of skuIds) out.set(id, 0);
+  const afterUs = instantMicros(afterIso);
+  const untilUs = untilIso == null ? null : instantMicros(untilIso);
+  const selected = new Set(skuIds);
+  const sums = new Map<string, number>();
+  const nulled = new Set<string>();
+  for (const l of lines) {
+    if (!selected.has(l.skuId) || !inWindowUs(l.deliveryCreatedUs, afterUs, untilUs) || !inWindowUs(l.createdUs, afterUs, untilUs)) continue;
+    const oz = num(l.resolvedOz);
+    if (oz == null) { nulled.add(l.skuId); continue; }
+    sums.set(l.skuId, (sums.get(l.skuId) ?? 0) + oz);
+  }
+  for (const [id, s] of sums) out.set(id, s);
+  for (const id of nulled) out.set(id, null); // taint wins over any partial sum.
+  return out;
+}
+
+/**
+ * Consumed oz per SKU over (after, until] — sumConsumedOzWindow over the loaded inputs of
+ * LIVE productions at the location. Every SKU starts at 0; a null input_oz → that SKU null.
+ */
+export function consumedOzWindow(
+  inputs: readonly ProductionLedgerInput[],
+  skuIds: readonly string[],
+  afterIso: string,
+  untilIso: string | null,
+): Map<string, number | null> {
+  const out = new Map<string, number | null>();
+  for (const id of skuIds) out.set(id, 0);
+  const afterUs = instantMicros(afterIso);
+  const untilUs = untilIso == null ? null : instantMicros(untilIso);
+  const selected = new Set(skuIds);
+  const sums = new Map<string, number>();
+  const nulled = new Set<string>();
+  for (const l of inputs) {
+    if (!selected.has(l.skuId) || !inWindowUs(l.producedUs, afterUs, untilUs)) continue;
+    const oz = num(l.inputOz);
+    if (oz == null) { nulled.add(l.skuId); continue; }
+    sums.set(l.skuId, (sums.get(l.skuId) ?? 0) + oz);
+  }
+  for (const [id, s] of sums) out.set(id, s);
+  for (const id of nulled) out.set(id, null); // NULL input_oz → null-drift advisory.
+  return out;
+}
+
+/** The inputs a `.gte("produced_at", fromIso)` production read returned (the 28-day lane). */
+export function productionInputsFrom(inputs: readonly ProductionLedgerInput[], fromIso: string): ProductionLedgerInput[] {
+  const fromUs = instantMicros(fromIso);
+  return inputs.filter((l) => l.producedUs >= fromUs);
+}
+
+/**
+ * Retro-edit staleness — detectRetroEditStaleness over the loaded headers: a delivery
+ * written AFTER the anchor whose effective delivery_date is on-or-before the anchor's
+ * (UTC) date.
+ */
+export function retroEditStale(headers: readonly DeliveryLedgerHeader[], anchorIso: string): boolean {
+  const anchorUs = instantMicros(anchorIso);
+  const anchorDate = anchorIso.slice(0, 10); // YYYY-MM-DD for the bare delivery_date compare.
+  return headers.some((h) => h.createdUs > anchorUs && h.deliveryDate != null && h.deliveryDate <= anchorDate);
+}
