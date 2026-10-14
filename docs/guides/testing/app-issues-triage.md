@@ -561,3 +561,9 @@ Not batched until reproduced: #22, #29, #67.
 - **#79 Vendor credit "—" and Send quote without email:** no price was given, and the app says the quote was marked sent without email. **Guide:** one line each.
 
 **Guide fixes also implied by the BUG fixes:** once B1 lands, remove "the title still says Phase 1" (staff-guide.md:246) and the "verify section first" warning (manager-guide.md:386). Once B4 lands, update the amber note text (manager-guide.md:741). Once B5 lands, drop "On a lead you typed in, it always shows. Ignore it." (catering-guide.md:328). Add mid-day's per-row **Save** and the finalized view to the mid-day section now, and the closing temp line (tap → Temp → **Save**).
+
+## Juan's decisions (2026-10-13)
+
+- **D-13:** option (b). The "Uses:" panel is read-only and collapsed for crew (level < 4); key holder and up can edit it. Enforced on the server too.
+- **D-64:** Production goes in the menu for **Employee (3) and up**, not key holder ("key holders aren't the only ones doing prep"). Every gate gets lowered to 3; the yield stats keep their own floor.
+- **D-14, D-17, D-26, D-27, D-28, D-45, D-46, D-47, D-48, D-49, D-60, D-62, D-63, D-66, D-80:** approved as recommended ("The rest of the recs are good").
