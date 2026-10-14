@@ -24,6 +24,7 @@ import { AlertPill, type AlertPillTone } from "@/components/ui/AlertPill";
 import { EmptyState } from "@/components/EmptyState";
 import { SummaryRow } from "@/components/ui/SummaryRow";
 import { WrittenReportForm, type WrittenReportFormValues } from "./WrittenReportForm";
+import { etDisplayDate } from "@/lib/operational-day";
 
 /** Category → pill tone (incident = danger; the rest informational/warn). */
 function categoryTone(category: string | null): AlertPillTone {
@@ -35,7 +36,7 @@ function categoryTone(category: string | null): AlertPillTone {
 /** ISO timestamp → localized "date · time" via the shared formatters. */
 function stampLabel(iso: string, language: "en" | "es"): string {
   if (!iso) return "";
-  const ymd = iso.slice(0, 10);
+  const ymd = etDisplayDate(iso);
   const time = formatTime(iso, language);
   const [y, m, d] = ymd.split("-").map(Number);
   if (!y || !m || !d) return time;

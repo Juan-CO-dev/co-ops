@@ -60,6 +60,7 @@ import {
 } from "./OverParModal";
 import { UnderParModal, type UnderParCapture } from "./UnderParModal";
 import { RevokeReasonModal } from "./RevokeReasonModal";
+import { etCalendarDate } from "@/lib/operational-day";
 
 export interface OpeningPhase2FormValue {
   /** Opener recount value when item flagged for per-item recount; NULL otherwise. */
@@ -436,7 +437,7 @@ export function OpeningPrepEntry({
                     readOnly={readOnly}
                     batch={batchByItem?.get(item.id) ?? null}
                     batchDerived={batchDerivedByItem?.[item.id] ?? []}
-                    todayIso={todayIso ?? new Date().toISOString().slice(0, 10)}
+                    todayIso={todayIso ?? etCalendarDate(new Date().toISOString())}
                     t={t}
                   />
                 );

@@ -4,7 +4,7 @@
  * midshift maintenance-notes bucketing + catering surplus ±1-day classification.
  */
 import { describe, it, expect } from "vitest";
-import { etCalendarDate, etYmdMinusDays, operationalDayUtcRange } from "@/lib/operational-day";
+import { etCalendarDate, etDisplayDate, etYmdMinusDays, operationalDayUtcRange } from "@/lib/operational-day";
 
 describe("etCalendarDate", () => {
   it("a late-evening ET instant belongs to the ET day, not the next UTC day", () => {
@@ -67,5 +67,33 @@ describe("etYmdMinusDays (council audit 2026-08-08 P1-2: the winter cron D-2 bug
   });
   it("rejects malformed input", () => {
     expect(() => etYmdMinusDays("Jan 9 2026", 1)).toThrow();
+  });
+});
+
+// B6 / #58 -- a maintenance note written at 9 PM ET is stored 01:00Z/02:00Z the NEXT
+// UTC day; `iso.slice(0, 10)` showed tomorrow's date for every closer.
+describe("etDisplayDate (B6 #58)", () => {
+  it("a 9 PM EDT note shows that evening's date, not tomorrow's", () => {
+    // 9 PM EDT on Oct 13 = 01:00Z on Oct 14.
+    expect(etDisplayDate("2026-10-14T01:00:00Z")).toBe("2026-10-13");
+    // 10 PM EDT (the triage case, 02:00Z) too.
+    expect(etDisplayDate("2026-10-14T02:00:00Z")).toBe("2026-10-13");
+    // the UTC slice it replaces would have said the 14th
+    expect("2026-10-14T01:00:00Z".slice(0, 10)).toBe("2026-10-14");
+  });
+  it("9 PM EST (winter) is still the same ET day", () => {
+    // 9 PM EST on Jan 14 = 02:00Z on Jan 15.
+    expect(etDisplayDate("2026-01-15T02:00:00Z")).toBe("2026-01-14");
+  });
+  it("just before and just after 8 PM EDT (the 00:00Z flip) land on the right day", () => {
+    expect(etDisplayDate("2026-10-13T23:59:59Z")).toBe("2026-10-13"); // 7:59 PM EDT
+    expect(etDisplayDate("2026-10-14T00:00:00Z")).toBe("2026-10-13"); // 8:00 PM EDT
+    expect(etDisplayDate("2026-10-14T04:00:00Z")).toBe("2026-10-14"); // midnight EDT
+  });
+  it("a bare operational date passes through untouched (never re-zoned a day west)", () => {
+    expect(etDisplayDate("2026-10-13")).toBe("2026-10-13");
+  });
+  it("unparseable input falls back to its first 10 characters instead of throwing", () => {
+    expect(etDisplayDate("not-a-date-at-all")).toBe("not-a-date");
   });
 });

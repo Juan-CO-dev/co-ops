@@ -42,6 +42,7 @@ import {
   type BatchRowContext,
 } from "@/lib/batch-prep-shared";
 import type { TranslationKey } from "@/lib/i18n/types";
+import { etCalendarDate } from "@/lib/operational-day";
 
 export interface MidDayPhase2Item {
   id: string;
@@ -138,7 +139,7 @@ export function MidDayPhase2Form({
 }) {
   const { t, language } = useTranslation();
   const router = useRouter();
-  const today = todayIso ?? new Date().toISOString().slice(0, 10);
+  const today = todayIso ?? etCalendarDate(new Date().toISOString());
   const [states, setStates] = useState<Record<string, SaveState>>(() => {
     const init: Record<string, SaveState> = {};
     for (const it of items) {

@@ -3,6 +3,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { RoleCode } from "@/lib/roles";
 import { audit } from "@/lib/audit";
 import { selectAllRows } from "@/lib/supabase-paginate";
+import { etDisplayDate } from "@/lib/operational-day";
 
 const OPERATIONAL_TZ = "America/New_York";
 /** Operational-TZ date (YYYY-MM-DD) from a timestamptz string. Local copy to
@@ -157,7 +158,7 @@ async function loadFridgeReadings(
   const out: TempReading[] = [];
   for (const r of rows) {
     if (r.count_value === null) continue;
-    const date = dateById.get(r.instance_id) ?? r.completed_at.slice(0, 10);
+    const date = dateById.get(r.instance_id) ?? etDisplayDate(r.completed_at);
     if (date < sinceDate) continue;
     out.push({
       date,

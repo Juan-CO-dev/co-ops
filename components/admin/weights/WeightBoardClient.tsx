@@ -40,6 +40,7 @@ import { SummaryRow } from "@/components/ui/SummaryRow";
 import type { WeightBoard, WeightBoardRow } from "@/lib/weights";
 import type { WeightBelief, WeightSuggestion } from "@/lib/weights-shared";
 import { postJson, resolveErrorKey } from "./shared";
+import { etDisplayDate } from "@/lib/operational-day";
 
 type T = (key: TranslationKey, params?: Record<string, string | number>) => string;
 
@@ -520,7 +521,7 @@ function RowDrawer({
                 t("admin.weights.provenance.by_seed", { script: p.seedScript })
               : t("admin.weights.provenance.unknown")}
           {row.belief.establishedAt
-            ? ` · ${new Date(row.belief.establishedAt).toISOString().slice(0, 10)}`
+            ? ` · ${etDisplayDate(row.belief.establishedAt)}`
             : ""}
         </p>
         {row.belief.sourceNote ? (

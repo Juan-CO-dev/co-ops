@@ -15,6 +15,8 @@
  * arithmetic is testable without a database.
  */
 
+import { etDisplayDate } from "@/lib/operational-day";
+
 /** Addendum 2 (Juan): one tap from this list; only `other` opens a short required note. */
 export const OVER_BATCH_REASON_CODES = ["catering_order", "busy_day_expected", "prepping_ahead", "other"] as const;
 export type OverBatchReasonCode = (typeof OVER_BATCH_REASON_CODES)[number];
@@ -201,11 +203,11 @@ export interface BatchItemContext {
 
 export type BatchBlockedReason = "multi_output" | "no_yield" | "unresolved";
 
-/** Shelf life: "made on" + shelf_life_days is before today → the backup is past its life. */
+/** Shelf life: "made on" + shelf_life_days is before today → the backup is past its life. `madeOnIso` is a UTC `produced_at`; it is read as its ET calendar date (an evening batch is that evening's day, not tomorrow). */
 export function isPastShelfLife(madeOnIso: string | null, shelfLifeDays: number, todayIso: string): boolean {
   if (madeOnIso === null || !(shelfLifeDays > 0)) return false;
-  const made = new Date(`${madeOnIso.slice(0, 10)}T00:00:00Z`);
-  const today = new Date(`${todayIso.slice(0, 10)}T00:00:00Z`);
+  const made = new Date(`${etDisplayDate(madeOnIso)}T00:00:00Z`);
+  const today = new Date(`${etDisplayDate(todayIso)}T00:00:00Z`);
   if (Number.isNaN(made.getTime()) || Number.isNaN(today.getTime())) return false;
   const ageDays = Math.floor((today.getTime() - made.getTime()) / 86_400_000);
   return ageDays > shelfLifeDays;
