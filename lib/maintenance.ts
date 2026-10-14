@@ -4,6 +4,9 @@ import type { RoleCode } from "@/lib/roles";
 import { audit } from "@/lib/audit";
 import { selectAllRows } from "@/lib/supabase-paginate";
 import { etDisplayDate } from "@/lib/operational-day";
+import { FRIDGE_DEFAULT_SAFE_MAX_F, itemsOwnedBy, loadTempItemRegistry, type TempItemRegistry } from "@/lib/fridge-registry";
+
+export { FRIDGE_DEFAULT_SAFE_MAX_F };
 
 const OPERATIONAL_TZ = "America/New_York";
 /** Operational-TZ date (YYYY-MM-DD) from a timestamptz string. Local copy to
@@ -17,7 +20,6 @@ function opDate(tstz: string): string {
 }
 
 export const MAINTENANCE_BASE_LEVEL = 3;
-export const FRIDGE_DEFAULT_SAFE_MAX_F = 41;
 
 export interface MaintActor {
   userId: string;
@@ -107,12 +109,16 @@ export async function loadEquipment(service: SupabaseClient, locationId: string)
 async function loadFridgeReadings(
   service: SupabaseClient,
   equip: Equipment,
+  registry: TempItemRegistry,
   sinceDate: string,
   ownUserId?: string,
   reportContext?: {locationId:string; date:string},
 ): Promise<TempReading[]> {
-  const itemIds = [equip.openingTempItemId, equip.closingTempItemId].filter((v): v is string => !!v);
+  // B8 #4 r4: only the items the ONE registry gives this fridge (an item shared with another
+  // fridge reads on its owner only — the active fridge first).
+  const itemIds = itemsOwnedBy(registry, equip.id);
   if (itemIds.length === 0) return [];
+  const phaseOf = (item: string): "AM" | "PM" => registry.get(item)?.phase ?? "PM";
   if (reportContext) {
     const instances = await selectAllRows<{id:string}>((from,to)=>service.from("checklist_instances").select("id")
       .eq("location_id",reportContext.locationId).eq("date",reportContext.date).order("id").range(from,to));
@@ -122,7 +128,7 @@ async function loadFridgeReadings(
         service.from("checklist_completions").select("template_item_id,count_value,completed_at,notes")
           .in("instance_id",instances.slice(i,i+50).map(r=>r.id)).in("template_item_id",itemIds)
           .match(ownUserId ? {completed_by:ownUserId} : {}).is("superseded_at",null).is("revoked_at",null).order("id").range(from,to));
-      for (const r of rows) if (r.count_value !== null) result.push({date:reportContext.date,phase:r.template_item_id===equip.openingTempItemId?"AM":"PM",valueF:r.count_value,at:r.completed_at,note:r.notes});
+      for (const r of rows) if (r.count_value !== null) result.push({date:reportContext.date,phase:phaseOf(r.template_item_id),valueF:r.count_value,at:r.completed_at,note:r.notes});
     }
     return result.sort((a,b)=>a.at.localeCompare(b.at));
   }
@@ -162,7 +168,7 @@ async function loadFridgeReadings(
     if (date < sinceDate) continue;
     out.push({
       date,
-      phase: r.template_item_id === equip.openingTempItemId ? "AM" : "PM",
+      phase: phaseOf(r.template_item_id),
       valueF: r.count_value,
       at: r.completed_at,
       note: r.notes ?? null,
@@ -190,9 +196,10 @@ export async function loadMaintenanceOverview(
   args: { locationId: string; today: string; sinceDate: string },
 ): Promise<MaintenanceOverview> {
   const equipment = await loadEquipment(service, args.locationId);
+  const registry = await loadTempItemRegistry(service, args.locationId);
   const fridges: OverviewFridge[] = [];
   for (const e of equipment.filter((x) => x.kind === "fridge")) {
-    const readings = await loadFridgeReadings(service, e, args.sinceDate);
+    const readings = await loadFridgeReadings(service, e, registry, args.sinceDate);
     const todays = readings.filter((r) => r.date === args.today);
     const latest = readings.length ? readings[readings.length - 1]! : null;
     fridges.push({
@@ -348,13 +355,14 @@ export async function loadEquipmentDetail(
 ): Promise<EquipmentDetail | null> {
   const { data: eRow } = await service
     .from("maintenance_equipment")
-    .select(EQUIP_ROW)
+    .select(`${EQUIP_ROW}, location_id`)
     .eq("id", args.equipmentId)
     .maybeSingle<Record<string, unknown>>();
   if (!eRow) return null;
   const equip = rowToEquip(eRow);
+  const registry = equip.kind === "fridge" ? await loadTempItemRegistry(service, eRow.location_id as string) : new Map();
 
-  const readings = equip.kind === "fridge" ? await loadFridgeReadings(service, equip, args.sinceDate) : [];
+  const readings = equip.kind === "fridge" ? await loadFridgeReadings(service, equip, registry, args.sinceDate) : [];
   let stats: EquipmentDetail["stats"] = null;
   if (readings.length) {
     const vals = readings.map((r) => r.valueF);
@@ -393,7 +401,7 @@ export async function loadEquipmentDetail(
   }));
 
   // checklist notes left on this fridge's temp items → append as read-only history
-  const itemIds = [equip.openingTempItemId, equip.closingTempItemId].filter((v): v is string => !!v);
+  const itemIds = itemsOwnedBy(registry, equip.id);
   if (itemIds.length) {
     const { data: cNotes } = await service
       .from("checklist_completions")
@@ -478,37 +486,12 @@ export async function listMaintenanceReportDates(
   dateTo: string,
   ownUserId?: string,
   skeletonOnly = false,
-): Promise<Array<{ date: string; tempFlags: number; tempReadings: number }>> {
-  const equipment = await loadEquipment(service, locationId);
-  const fridges = equipment.filter((e) => e.kind === "fridge");
-
-  const fridgeByItem = new Map<string, Equipment>();
-  for (const f of fridges) {
-    if (f.openingTempItemId) fridgeByItem.set(f.openingTempItemId, f);
-    if (f.closingTempItemId) fridgeByItem.set(f.closingTempItemId, f);
-  }
-  // B8 #4 r3 (Astra P2): a day's `tempReadings` REPLACES its listed reports' temp flags in the hub
-  // summary, and report flags read every fridge at the location, retired ones included
-  // (loadLocationTempItemIds). So the hot-reading count reads the same universe: a retired
-  // fridge's readings count against that fridge's own max. They never make a day row or a
-  // fridge flag on their own (the day detail lists active equipment only). An item an active
-  // fridge also carries stays with the active fridge.
-  const retiredSafeByItem = new Map<string, number>();
-  if (!skeletonOnly) {
-    const { data: allFridges, error: fridgeError } = await service.from("maintenance_equipment")
-      .select("opening_temp_item_id, closing_temp_item_id, safe_max_f, active")
-      .eq("location_id", locationId).eq("kind", "fridge");
-    if (fridgeError) throw new Error(`listMaintenanceReportDates: ${fridgeError.message}`);
-    for (const r of (allFridges ?? []) as Array<{ opening_temp_item_id: string | null; closing_temp_item_id: string | null; safe_max_f: number | null; active: boolean }>) {
-      if (r.active) continue;
-      for (const item of [r.opening_temp_item_id, r.closing_temp_item_id]) {
-        if (item && !fridgeByItem.has(item)) retiredSafeByItem.set(item, r.safe_max_f ?? FRIDGE_DEFAULT_SAFE_MAX_F);
-      }
-    }
-  }
-  const retiredHotByDate = new Map<string, number>();
-  const itemIds = [...fridgeByItem.keys(), ...retiredSafeByItem.keys()];
-
+): Promise<Array<{ date: string; tempFlags: number }>> {
+  // B8 #4 r4: readings belong to the fridge the ONE registry names. Day rows and fridge flags stay
+  // what the day page shows — ACTIVE fridges only; a retired fridge's reading makes no row (the hub
+  // summary counts it directly, countHotTempReadings, independent of these rows).
+  const registry = await loadTempItemRegistry(service, locationId);
+  const itemIds = [...registry].filter(([, owner]) => owner.active).map(([item]) => item);
   const byDate = new Map<string, Map<string, TempReading[]>>();
   const boundedInstances = await selectAllRows<{id:string;date:string}>((from,to) => service.from("checklist_instances")
     .select("id, date").eq("location_id", locationId).gte("date",dateFrom).lte("date",dateTo).order("id").range(from,to));
@@ -539,18 +522,12 @@ export async function listMaintenanceReportDates(
       if (!skeletonOnly && c.count_value === null) continue;
       const date = dateById.get(c.instance_id);
       if (!date) continue;
-      const retiredSafe = retiredSafeByItem.get(c.template_item_id);
-      if (retiredSafe !== undefined) {
-        if ((c.count_value ?? 0) > retiredSafe) retiredHotByDate.set(date, (retiredHotByDate.get(date) ?? 0) + 1);
-        continue;
-      }
-      const f = fridgeByItem.get(c.template_item_id);
-      if (!f) continue;
-      const phase: "AM" | "PM" = c.template_item_id === f.openingTempItemId ? "AM" : "PM";
+      const owner = registry.get(c.template_item_id);
+      if (!owner?.active) continue;
       const dm = byDate.get(date) ?? new Map<string, TempReading[]>();
-      const arr = dm.get(f.id) ?? [];
-      arr.push({ date, phase, valueF: c.count_value ?? 0, at: date, note: null });
-      dm.set(f.id, arr);
+      const arr = dm.get(owner.fridgeId) ?? [];
+      arr.push({ date, phase: owner.phase, valueF: c.count_value ?? 0, at: date, note: null });
+      dm.set(owner.fridgeId, arr);
       byDate.set(date, dm);
     }
   }
@@ -568,21 +545,14 @@ export async function listMaintenanceReportDates(
     if (!byDate.has(date)) byDate.set(date, new Map());
   }
 
-  const safeOf = (f: Equipment) => f.safeMaxF ?? FRIDGE_DEFAULT_SAFE_MAX_F;
-  const fridgeById = new Map(fridges.map((f) => [f.id, f] as const));
-  const out: Array<{ date: string; tempFlags: number; tempReadings: number }> = [];
+  const safeMaxOf = new Map([...registry.values()].map((owner) => [owner.fridgeId, owner.safeMaxF] as const));
+  const out: Array<{ date: string; tempFlags: number }> = [];
   for (const [date, perFridge] of byDate) {
     let flags = 0;
-    // B8 #4 r2: the out-of-range READINGS of the day (each above its own fridge's max), whatever
-    // the state of the report that holds them — the hub summary's one source for temp flags.
-    let hotReadings = retiredHotByDate.get(date) ?? 0;
     for (const [fid, readings] of perFridge) {
-      const f = fridgeById.get(fid);
-      if (!f) continue;
-      if (computeFridgeStatus(readings, safeOf(f)) === "out_of_range") flags++;
-      if (!skeletonOnly) hotReadings += readings.filter((r) => r.valueF > safeOf(f)).length;
+      if (computeFridgeStatus(readings, safeMaxOf.get(fid) ?? FRIDGE_DEFAULT_SAFE_MAX_F) === "out_of_range") flags++;
     }
-    out.push({ date, tempFlags: flags, tempReadings: hotReadings });
+    out.push({ date, tempFlags: flags });
   }
   out.sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0));
   return out;
@@ -603,6 +573,7 @@ export async function loadMaintenanceReportDetail(
 ): Promise<MaintenanceReportDetail> {
   const bounds = reportTimestampBounds(date,date);
   const equipment = await loadEquipment(service, locationId);
+  const registry = await loadTempItemRegistry(service, locationId);
 
   const allNoteRows = await selectAllRows<{
     id: string; note: string; created_by: string; created_at: string; equipment_id: string | null; other_label: string | null;
@@ -632,7 +603,7 @@ export async function loadMaintenanceReportDetail(
   const out: MaintenanceReportEquip[] = [];
   let flagCount = 0;
   for (const e of equipment) {
-    const all = e.kind === "fridge" ? await loadFridgeReadings(service, e, date, ownUserId, {locationId,date}) : [];
+    const all = e.kind === "fridge" ? await loadFridgeReadings(service, e, registry, date, ownUserId, {locationId,date}) : [];
     const readings = all.filter((r) => r.date === date).map(r => ({...r,note:showNotes ? r.note : null}));
     const safe = e.safeMaxF ?? FRIDGE_DEFAULT_SAFE_MAX_F;
     const status = e.kind === "fridge" ? computeFridgeStatus(readings, safe) : "no_reading_today";

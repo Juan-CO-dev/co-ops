@@ -7,7 +7,9 @@
  * amount (see AGENTS.md "Same field name, different meaning across types").
  */
 
-import { FRIDGE_DEFAULT_SAFE_MAX_F } from "@/lib/maintenance";
+import { FRIDGE_DEFAULT_SAFE_MAX_F, isHotReading, type TempItemRegistry } from "@/lib/fridge-registry";
+
+export type { TempItemRegistry };
 
 export interface PrepHaveInput {
   /** True for mid-day prep (inputs.total is a prepped delta), false for am-prep/other (inputs.total is final). */
@@ -63,15 +65,12 @@ export function isOutOfRangeTemp(countValue: number | null, safeMaxF: number = F
 }
 
 /**
- * The location's fridge temp items → that fridge's safe max (°F), from `maintenance_equipment`
- * (`safe_max_f ?? 41`). B8 #4: Reports and Trends used a flat 41°F while Pulse and the
- * maintenance page used each fridge's own max — one reading could be a flag on one surface
- * and fine on the other. Every surface now asks the same question of the same row.
+ * B8 #4: Reports and Trends used a flat 41°F while Pulse and the maintenance page used each
+ * fridge's own max — one reading could be a flag on one surface and fine on the other. r4: every
+ * surface now reads through the ONE registry in lib/fridge-registry (every fridge at the location,
+ * one owner per item, active first), so the same reading is the same verdict everywhere.
+ * THE temp-flag rule: a registry temp item whose reading exceeds its owner fridge's safe max.
  */
-export type TempItemRegistry = ReadonlyMap<string, number>;
-
-/** THE temp-flag rule: a registry temp item whose reading exceeds its fridge's safe max. */
 export function isTempFlag(registry: TempItemRegistry, templateItemId: string, countValue: number | null): boolean {
-  const safeMax = registry.get(templateItemId);
-  return safeMax !== undefined && isOutOfRangeTemp(countValue, safeMax);
+  return isHotReading(registry, templateItemId, countValue);
 }

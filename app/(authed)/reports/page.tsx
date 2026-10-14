@@ -13,7 +13,7 @@ import { operationalNow } from "@/lib/midshift";
 import { canDoOperationalTask } from "@/lib/operational-task-access";
 import { parseReportRange, reportRangeParams, shiftReportDate } from "@/lib/report-range";
 import { composeLastClose, composeReportSummary, reportIsFinalized } from "@/lib/report-summary";
-import { latestFinalizedClosingDate, listReports, listReportSkeleton, type Viewer } from "@/lib/reports-hub";
+import { countHotTempReadings, latestFinalizedClosingDate, listReports, listReportSkeleton, type Viewer } from "@/lib/reports-hub";
 import { SALES_READ_MIN } from "@/lib/sales-reports-shared";
 import { requireSessionFromHeaders } from "@/lib/session";
 import { searchParamValues, shopParamFor } from "@/lib/shop-context-shared";
@@ -55,7 +55,12 @@ export default async function ReportsPage({ searchParams }: { searchParams: Prom
   };
   // Summary counts intentionally aggregate the bounded authorized window, unlike paged lists.
   const panels = await Promise.all(selected.map(async (shop) => {
-    const load = (from: string, to: string) => listReports(service, { viewer, locationId: shop.id, dateFrom: from, dateTo: to });
+    // B8 #4 r4: the temp-flag count is read straight from the window's readings, never from which rows are listed.
+    const load = async (from: string, to: string) => {
+      const scope = { viewer, locationId: shop.id, dateFrom: from, dateTo: to };
+      const [items, hot] = await Promise.all([listReports(service, scope), countHotTempReadings(service, scope)]);
+      return composeReportSummary(items, hot);
+    };
     // D-62 (+ review #4): managers see the shop's most recent CLOSED day — the newest finalized
     // closing on or before today (tonight's, once confirmed), found by one bounded newest-first
     // read, then that day's reports. No closing in the window → yesterday, as before. Crew keep
@@ -64,13 +69,13 @@ export default async function ReportsPage({ searchParams }: { searchParams: Prom
       ? (await latestFinalizedClosingDate(service, { viewer, locationId: shop.id, onOrBefore: today })) ?? yesterday
       : yesterday);
     const [current, previous, closeDay, receiving, ordering] = await Promise.all([
-      load(range.from, range.to), range.compare ? load(range.previous.from, range.previous.to) : Promise.resolve([]),
+      load(range.from, range.to), range.compare ? load(range.previous.from, range.previous.to) : Promise.resolve(composeReportSummary([], 0)),
       lastCloseDay(),
       auth.level >= 4 && lockLocationContext(actor, shop.id) ? canDoOperationalTask(auth, shop.id, "receiving") : false,
       auth.level >= 4 && lockLocationContext(actor, shop.id) ? canDoOperationalTask(auth, shop.id, "ordering") : false,
     ]);
     const lastDay = await listReportSkeleton(service, { viewer, locationId: shop.id, dateFrom: closeDay, dateTo: closeDay });
-    return { shop, current: composeReportSummary(current), previous: composeReportSummary(previous), close: composeLastClose(lastDay, auth.level), closeDay, receiving, ordering };
+    return { shop, current, previous, close: composeLastClose(lastDay, auth.level), closeDay, receiving, ordering };
   }));
   const linkClass = "inline-flex min-h-[44px] items-center rounded-lg border border-co-border-2 px-3 py-2 text-sm font-bold hover:bg-co-surface-2";
   return <main className="mx-auto max-w-2xl px-4 pb-32 pt-4 sm:px-6 lg:max-w-5xl">

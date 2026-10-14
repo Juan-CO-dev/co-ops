@@ -6,12 +6,12 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { selectAllRows } from "@/lib/supabase-paginate";
 import { isPrepData } from "@/lib/prep";
 import {
-  FRIDGE_DEFAULT_SAFE_MAX_F,
   listMaintenanceReportDates,
   loadMaintenanceReportDetail,
   type MaintenanceReportDetail,
 } from "@/lib/maintenance";
 import { derivePrepHave, parStatusFromHave, reportParDeviation, isTempFlag, type TempItemRegistry } from "@/lib/report-signals";
+import { loadTempItemRegistry, type TempItemOwner } from "@/lib/fridge-registry";
 import { loadShiftWrapUp } from "@/lib/pm-report";
 import type { ShiftWrapUpRow } from "@/lib/pm-report";
 import { loadReportStatuses } from "@/lib/midshift";
@@ -39,13 +39,6 @@ export interface SignalSummary {
   /** Older callers may supply summaries without this additive count. Loaders always set it. */
   notStarted?: number;
   tempFlags: number;
-  /**
-   * B8 #4 r2 — maintenance rows only: the day's out-of-range temperature READINGS, counted from
-   * every live reading whether or not its opening/closing report is finalized (an unfinished
-   * report of today is not listed, but its hot fridge is real). The summary takes this per day
-   * in place of the listed reports' reading flags, so each reading counts exactly once.
-   */
-  tempReadings?: number;
   cashOverShortCents: number | null;
 }
 
@@ -322,7 +315,7 @@ export async function enrichReportItems(service: SupabaseClient, f: ListFilters,
     if (item.type === "maintenance") {
       const day = maintenanceFlags.get(item.date);
       const flagCount = day?.tempFlags ?? 0;
-      item.signalSummary = {underPar:0,overPar:0,skipped:0,notStarted:0,tempFlags:flagCount,tempReadings:day?.tempReadings ?? 0,cashOverShortCents:null};
+      item.signalSummary = {underPar:0,overPar:0,skipped:0,notStarted:0,tempFlags:flagCount,cashOverShortCents:null};
       item.status = flagCount ? "flags" : "ok";
     } else item.signalSummary = signals.get(item.id);
     out.push({...item, submitterName: submitterId ? names.get(submitterId) ?? null : null});
@@ -999,7 +992,7 @@ async function loadCashDetail(
   const { signals } = await computeReportSignals(service, {
     type: "cash",
     id: args.id,
-    tempItemIds: new Map<string, number>(),
+    tempItemIds: new Map(),
   });
 
   // Resolve signer name
@@ -1329,39 +1322,40 @@ export interface PrepValueRow {
 }
 
 /**
- * Temp-item template-item ids for a location, from the maintenance registry, each mapped to
- * its fridge's safe max (`safe_max_f ?? 41`, B8 #4). Only completions on these items are
- * considered, never "any count_value > 41" (prep totals can exceed 41 and would
- * false-positive). Inactive fridges stay in: their past readings are still history.
+ * The location's fridge temp-item registry (lib/fridge-registry: every fridge, retired ones
+ * included; one owner per item, active first; each item → its owner's safe max, 41 when unset).
+ * Only completions on these items are temperature readings, never "any count_value > 41" (prep
+ * totals can exceed 41 and would false-positive).
  */
-export async function loadLocationTempItemIds(
-  service: SupabaseClient,
-  locationId: string,
-): Promise<Map<string, number>> {
-  const { data, error } = await service
-    .from("maintenance_equipment")
-    .select("opening_temp_item_id, closing_temp_item_id, safe_max_f")
-    .eq("location_id", locationId)
-    .eq("kind", "fridge");
-  if (error) throw new Error(error.message);
-  return tempItemRegistry((data ?? []) as Array<{
-    opening_temp_item_id: string | null;
-    closing_temp_item_id: string | null;
-    safe_max_f: number | null;
-  }>);
+export async function loadLocationTempItemIds(service: SupabaseClient, locationId: string): Promise<Map<string, TempItemOwner>> {
+  return loadTempItemRegistry(service, locationId);
 }
 
-/** Pure half of loadLocationTempItemIds (tested): equipment rows → item id → safe max. */
-export function tempItemRegistry(
-  rows: ReadonlyArray<{ opening_temp_item_id: string | null; closing_temp_item_id: string | null; safe_max_f: number | null }>,
-): Map<string, number> {
-  const ids = new Map<string, number>();
-  for (const r of rows) {
-    const safeMax = r.safe_max_f ?? FRIDGE_DEFAULT_SAFE_MAX_F;
-    if (r.opening_temp_item_id) ids.set(r.opening_temp_item_id, safeMax);
-    if (r.closing_temp_item_id) ids.set(r.closing_temp_item_id, safeMax);
+/**
+ * B8 #4 r4 (Astra round 3): the hub summary's temperature-flag count, read DIRECTLY from the
+ * window's live temperature readings through the registry — each reading once, strictly above its
+ * owner fridge's safe max. It does not depend on which reports are listed (today's unfinished
+ * opening is not, but its hot reading is real) nor on whether a maintenance day row exists (a
+ * fridge retired since has none). Crew (level < 4) count their own readings, as their report
+ * signals do.
+ */
+export async function countHotTempReadings(service: SupabaseClient, f: Pick<ListFilters, "viewer" | "locationId" | "dateFrom" | "dateTo">): Promise<number> {
+  requireReportScope(f.viewer, f.locationId);
+  const range = parseReportRange({ from: f.dateFrom, to: f.dateTo }, etCalendarDate(new Date().toISOString()));
+  const registry = await loadTempItemRegistry(service, f.locationId);
+  if (registry.size === 0) return 0;
+  const instances = await selectAllRows<{ id: string }>((from, to) => service.from("checklist_instances").select("id")
+    .eq("location_id", f.locationId).gte("date", range.from).lte("date", range.to).order("id").range(from, to));
+  let hot = 0;
+  for (let i = 0; i < instances.length; i += 50) {
+    const rows = await selectAllRows<{ template_item_id: string; count_value: number | null }>((from, to) =>
+      service.from("checklist_completions").select("template_item_id, count_value")
+        .in("instance_id", instances.slice(i, i + 50).map((r) => r.id)).in("template_item_id", [...registry.keys()])
+        .match(f.viewer.level < 4 ? { completed_by: f.viewer.userId } : {})
+        .is("superseded_at", null).is("revoked_at", null).order("id").range(from, to));
+    for (const r of rows) if (isTempFlag(registry, r.template_item_id, r.count_value)) hot++;
   }
-  return ids;
+  return hot;
 }
 
 /**

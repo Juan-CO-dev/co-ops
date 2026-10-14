@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { isOutOfRangeTemp, isTempFlag } from "@/lib/report-signals";
-import { tempItemRegistry } from "@/lib/reports-hub";
+import { buildTempItemRegistry } from "@/lib/fridge-registry";
 import { computeFridgeStatus, FRIDGE_DEFAULT_SAFE_MAX_F } from "@/lib/maintenance";
 import { composeReportSummary } from "@/lib/report-summary";
 import type { ReportListItem } from "@/lib/reports-hub";
@@ -17,16 +17,16 @@ import es from "@/lib/i18n/es.json";
 const read = (p: string) => readFileSync(p, "utf8");
 
 describe("B8 #4 one temp-flag rule", () => {
-  const registry = tempItemRegistry([
-    { opening_temp_item_id: "am-walkin", closing_temp_item_id: "pm-walkin", safe_max_f: null },
-    { opening_temp_item_id: "am-drinks", closing_temp_item_id: null, safe_max_f: 45 },
-    { opening_temp_item_id: "am-cold", closing_temp_item_id: null, safe_max_f: 38 },
+  const registry = buildTempItemRegistry([
+    { id: "walkin", opening_temp_item_id: "am-walkin", closing_temp_item_id: "pm-walkin", safe_max_f: null },
+    { id: "drinks", opening_temp_item_id: "am-drinks", closing_temp_item_id: null, safe_max_f: 45 },
+    { id: "cold", opening_temp_item_id: "am-cold", closing_temp_item_id: null, safe_max_f: 38 },
   ]);
 
   it("maps each fridge's temp items to its safe max, 41 when unset", () => {
-    expect(registry.get("am-walkin")).toBe(FRIDGE_DEFAULT_SAFE_MAX_F);
-    expect(registry.get("pm-walkin")).toBe(41);
-    expect(registry.get("am-drinks")).toBe(45);
+    expect(registry.get("am-walkin")?.safeMaxF).toBe(FRIDGE_DEFAULT_SAFE_MAX_F);
+    expect(registry.get("pm-walkin")?.safeMaxF).toBe(41);
+    expect(registry.get("am-drinks")?.safeMaxF).toBe(45);
     expect(registry.has("prep-item")).toBe(false);
   });
 
@@ -66,8 +66,8 @@ describe("B8 #4 the hub summary counts each hot reading once", () => {
   const item = (type: ReportListItem["type"], tempFlags: number) =>
     ({ type, id: `${type}-1`, date: "2026-10-14", locationId: "shop", submitterName: null, status: "ok", signalSummary: sig(tempFlags) }) as unknown as ReportListItem;
 
-  it("a maintenance day's fridge flags do not add to the opening report's reading flags", () => {
-    expect(composeReportSummary([item("opening", 1), item("maintenance", 1)]).signals.tempFlags).toBe(1);
+  it("row flags never add up: the summary takes the directly counted readings (r4)", () => {
+    expect(composeReportSummary([item("opening", 1), item("maintenance", 1)], 1).signals.tempFlags).toBe(1);
   });
 });
 
