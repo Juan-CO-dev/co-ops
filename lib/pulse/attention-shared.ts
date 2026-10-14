@@ -6,17 +6,23 @@
 import type { PulseScore, ReportKey, ReportStatusRow } from "@/lib/midshift-shared";
 import type { AttentionEvidence, AttentionKind, AttentionRow, AttentionRowScoped, AttentionSeverity } from "@/lib/pulse/types";
 
-/** Spec order. The index is the rank. */
+/**
+ * The index is the rank. D-27 (Juan 2026-10-13): RED ITEMS FIRST, STATIONS AFTER. A missed checklist
+ * or a fridge out of range is a single act-now fact; uncovered stations come in a run (8 at an empty
+ * open), and with stations first "Closing is overdue" sank behind the card's See more. So: the red
+ * non-station facts lead, then every station row (uncovered, trim due, closing soon) as one group,
+ * then the yellow advisories.
+ */
 export const ATTENTION_ORDER: readonly AttentionKind[] = [
+  "checklist_missed",
+  "task_late",
+  "fridge_out_of_range",
+  "catering_not_rung",
   "station_uncovered",
   "station_trim_due",
   "station_closing_soon",
-  "task_late",
-  "checklist_missed",
-  "fridge_out_of_range",
   "fridge_unchecked",
   "item_low",
-  "catering_not_rung",
   "catering_unprepped",
   "clockin_unlinked",
 ];

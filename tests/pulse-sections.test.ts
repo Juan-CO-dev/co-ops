@@ -184,8 +184,9 @@ describe("needs attention", () => {
     const d = deps({ unlinkedClockIns: vi.fn(async () => { throw new Error("toast down"); }) });
     const r = (await loadPulseSection(d, ctx(5), "attention")) as { data: AttentionData };
     const kinds = r.data.items.map((i) => i.kind);
-    expect(kinds).toEqual(["station_uncovered", "station_closing_soon", "task_late", "task_late", "checklist_missed", "checklist_missed", "fridge_out_of_range", "fridge_unchecked", "item_low", "catering_not_rung", "catering_unprepped"]);
-    expect(r.data.items[0]!.href).toBe(`/assignments?loc=${LOC}`);
+    // D-27: red facts first, stations after, yellow advisories last.
+    expect(kinds).toEqual(["checklist_missed", "checklist_missed", "task_late", "task_late", "fridge_out_of_range", "catering_not_rung", "station_uncovered", "station_closing_soon", "fridge_unchecked", "item_low", "catering_unprepped"]);
+    expect(r.data.items.find((i) => i.kind === "station_uncovered")!.href).toBe(`/assignments?loc=${LOC}`);
     expect(r.data.score).toBe("red");
     expect(r.data.partial).toEqual(["unlinked"]);
     // Closing is done, so am_prep + cash are overdue: both assigned tasks are late, each naming its holder.
@@ -196,8 +197,8 @@ describe("needs attention", () => {
     const d = deps();
     const r = (await loadPulseSection(d, ctx(3), "attention")) as { data: AttentionData };
     // Their own station (Expo) closes at 16:00 and it is 15:30: that row is THEIRS; the uncovered Line is not.
-    expect(r.data.items.map((i) => i.kind)).toEqual(["station_closing_soon", "task_late", "fridge_out_of_range", "fridge_unchecked", "catering_unprepped"]);
-    expect(r.data.items[1]!.params).not.toHaveProperty("name");
+    expect(r.data.items.map((i) => i.kind)).toEqual(["task_late", "fridge_out_of_range", "station_closing_soon", "fridge_unchecked", "catering_unprepped"]);
+    expect(r.data.items[0]!.params).not.toHaveProperty("name");
     expect(JSON.stringify(r.data)).not.toContain("Ana");
     expect(d.notRung).not.toHaveBeenCalled();
     expect(d.lastParPass).not.toHaveBeenCalled();
