@@ -1,10 +1,9 @@
 /**
  * D-66 (Juan 2026-10-13) — the note a prep page shows when its loader left rows out because
- * their stored shape is bad (PrepShapeError, e.g. a text par). The rest of the page renders;
- * this names the item(s) so a manager can fix the prep settings in Admin. Server-rendered.
- *
- * Saving still runs the STRICT check (writers never read a bad row leniently), so the note says
- * plainly that saving may not work until the item is fixed.
+ * their stored shape is bad (PrepShapeError, e.g. a text par). The rest of the page renders and
+ * saves: the submit / save / finalize paths skip the same rows (not included, not required) and
+ * refuse only a write that targets one. This names the item(s) so a manager can fix them in
+ * Admin. Server-rendered.
  */
 import { serverT } from "@/lib/i18n/server";
 import type { Language } from "@/lib/i18n/types";

@@ -103,7 +103,7 @@ export default async function AmPrepPage({ searchParams }: PageProps) {
 
   // 4. Load AM Prep state.
   // D-66 — the page read tolerates a bad row (skipped + named in the note below) instead
-  // of blanking the page; the submit path still reads strictly.
+  // of blanking the page; submit skips the same row (not included, not required).
   const state = await loadAmPrepState(sb, {
     locationId: locationParam,
     date: today,

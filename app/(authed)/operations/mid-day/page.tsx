@@ -119,7 +119,8 @@ export default async function MidDayPrepPage({ searchParams }: PageProps) {
   }
 
   // D-66 — the page read tolerates a bad row (skipped + named in the note below) instead of
-  // blanking the page; the Phase 1 submit / Phase 2 save / finalize writers still read strictly.
+  // blanking the page; Phase 1 submit / Phase 2 save / finalize skip the same row (not
+  // included, not required) and refuse only a write that targets it.
   const state = await loadMidDayPrepState(sb, { instanceId, tolerateBadRows: true });
   if (!state) redirect("/dashboard"); // not a mid-day instance, or not found
 

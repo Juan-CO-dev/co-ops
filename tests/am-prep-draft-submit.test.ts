@@ -57,6 +57,7 @@ const okResult = {
   closingAutoCompleteId: null,
   editCount: 0,
   originalSubmissionId: null,
+  skipped: [],
 };
 
 beforeEach(() => {

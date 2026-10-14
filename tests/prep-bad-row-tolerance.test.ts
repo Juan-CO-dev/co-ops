@@ -1,7 +1,8 @@
 /**
  * D-66 (Juan 2026-10-13) — one bad prep row (PrepShapeError, e.g. a text par in prep_meta)
  * must not blank the AM prep / mid-day page: the page read skips that row, shows the rest and
- * names the item in a note. The strict narrowing stays for writers, the audit harness and tests.
+ * names the item in a note. narrowPrepTemplateItem itself stays strict (admin, audit harness,
+ * tests); the save paths skip bad rows they are not writing (tests/prep-bad-row-writers.test.ts).
  */
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -55,7 +56,7 @@ afterEach(() => {
   errSpy.mockRestore();
 });
 
-describe("the strict check stays (writers, audit, tests)", () => {
+describe("the strict check stays (admin, audit harness, tests)", () => {
   it("narrowPrepTemplateItem still throws PrepShapeError on a text par", () => {
     expect(() => narrowPrepTemplateItem(item("t1", "Aioli", textParMeta))).toThrow(PrepShapeError);
   });
@@ -135,11 +136,12 @@ describe("the note", () => {
     for (const dict of [en, es] as Array<Record<string, string>>) {
       expect(dict["prep.skipped_rows.heading"]).toBeTruthy();
       expect(dict["prep.skipped_rows.body"]).toContain("{items}");
+      expect(dict["prep.skipped_rows.body"]).not.toMatch(/may not work|es posible que guardar/);
     }
   });
 });
 
-describe("wiring — pages read tolerantly, writers stay strict", () => {
+describe("wiring — pages and save paths read tolerantly; the strict narrowing stays available", () => {
   const prep = read("lib", "prep.ts");
 
   it("the AM prep and mid-day pages opt in and render the note", () => {
@@ -156,10 +158,10 @@ describe("wiring — pages read tolerantly, writers stay strict", () => {
     expect(prep.match(/args\.tolerateBadRows\s*\?\s*narrowPrepCompletionsForPage\(/g)).toHaveLength(2);
   });
 
-  it("the mid-day writers (Phase 1 submit, Phase 2 save, finalize) and the AM prep submit read strictly", () => {
-    const writerReads = prep.match(/loadMidDayPrepState\(service, \{ instanceId: args\.instanceId \}\)/g) ?? [];
-    expect(writerReads).toHaveLength(3);
-    expect(prep).not.toMatch(/loadMidDayPrepState\(service, \{[^}]*tolerateBadRows/);
-    expect(prep).toContain("const narrowed = narrowPrepTemplateItem(rowToTemplateItem(r));");
+  it("the mid-day save paths and the AM prep submit skip bad rows they are not writing (D-66 follow-up)", () => {
+    // Phase 1 submit, Phase 2 save, finalize — behaviour in tests/prep-bad-row-writers.test.ts.
+    expect(prep.match(/loadMidDayPrepState\(service, \{ instanceId: args\.instanceId, tolerateBadRows: true \}\)/g)).toHaveLength(3);
+    expect(prep).not.toMatch(/loadMidDayPrepState\(service, \{ instanceId: args\.instanceId \}\)/);
+    expect(prep).toContain("narrowPrepTemplateItemsForPage(((itemsRows ?? []) as TemplateItemRow[]).map(rowToTemplateItem), skipped)");
   });
 });

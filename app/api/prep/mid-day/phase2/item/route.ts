@@ -148,6 +148,13 @@ export async function POST(req: NextRequest) {
       if (result.reason === "not_in_phase2") {
         return jsonError(409, "not_in_phase2", { message: "This instance isn't in the Phase 2 window." });
       }
+      if (result.reason === "bad_row") {
+        // D-66 — the row's stored prep settings are malformed; it was skipped and cannot be written.
+        return jsonError(400, "prep_shape", {
+          message: "This item's prep settings are broken, so it can't be saved. A manager can fix it in Admin.",
+          template_item_id: result.templateItemId,
+        });
+      }
       if (result.reason === "batch_contract") {
         // 0215 batch vs bottle — the RPC refused the batch payload; the row renders prep.batch.error.<code>.
         return jsonError(422, result.code, { message: `Batch row refused: ${result.code}`, template_item_id: result.templateItemId });
