@@ -576,3 +576,8 @@ Not batched until reproduced: #22, #29, #67.
 3. Read-only prod check for existing quotes that over-count prep (package pick-line double expansion) approved.
 4. "Last close" counts auto-closed days, labelled "auto closed" (shipped in B7b, #465).
 5. "Last 7 days" (B8 #5): keep the two rules — Reports Hub includes today, Sales stops at yesterday — and label Sales "Last 7/30/90 full days". Juan: "let's not force both pages onto one rule."
+
+## Follow-ups found during B8 (2026-10-14)
+- **Re-saving a ticked line (e.g. adding a note) drops its peer tag** — the new completion row does not copy `actual_completer_id` / tag fields from the row it supersedes, so a line ticked "for" a teammate looks self-done after a note. Pre-existing (before B8); B8 only makes sure a tagged line never keeps its old time. Needs its own fix in `completeItem`'s supersede path.
+- Closing checklist's one-tap Undo (`ChecklistItem.tsx` UndoButton, 60 s quick revoke) is the same one-tap-revoke shape B8 fixed for opening prep rows; it doesn't shift layout, so lower risk — consider two-tap for consistency.
+- `loadProductionFormData` reads `vendor_items` without paging (silently caps at 1000 SKUs).
