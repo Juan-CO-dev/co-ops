@@ -669,6 +669,11 @@ export function ClosingClient({ initialState }: { initialState: ClosingInitialSt
   // True once THIS tab's confirm succeeded. A ref (not `instance.status`) because a
   // late callback from the modal can hold a pre-confirm closure.
   const confirmedHereRef = useRef(false);
+  // B8 #11 — the reasons this closer just gave. `incompleteReasons` (the server's record) is
+  // only loaded when the page opens on an already-confirmed closing, so a confirm made HERE
+  // showed the "submitted with incomplete items" banner with no reasons under it.
+  const [confirmedReasons, setConfirmedReasons] = useState<ClosingInitialState["incompleteReasons"]>([]);
+  const shownReasons = incompleteReasons.length > 0 ? incompleteReasons : confirmedReasons;
 
   const handlePinConfirmed = useCallback(
     (confirmedInstance: ChecklistInstance) => {
@@ -693,9 +698,12 @@ export function ClosingClient({ initialState }: { initialState: ClosingInitialSt
           tone: "incomplete_confirmed",
           message: t("closing.banner.incomplete_confirmed", { time: timePrefix, who }),
         });
+        setConfirmedReasons(
+          incompleteRequiredIds.map((id) => ({ templateItemId: id, reason: (reasonDrafts.get(id) ?? "").trim(), byName: who })),
+        );
       }
     },
-    [t],
+    [t, incompleteRequiredIds, reasonDrafts],
   );
 
   const handlePinError = useCallback((err: ChecklistApiError) => {
@@ -836,11 +844,11 @@ export function ClosingClient({ initialState }: { initialState: ClosingInitialSt
       {banner ? <BannerView banner={banner} /> : null}
 
       {/* Reasons written at confirm for lines left undone — read-only record */}
-      {readOnly && incompleteReasons.length > 0 ? (
+      {readOnly && shownReasons.length > 0 ? (
         <section aria-label={t("closing.reasons.heading")} className="mt-3 rounded-xl border-2 border-co-border bg-co-surface px-4 py-3">
           <h2 className="text-xs font-bold uppercase tracking-[0.14em] text-co-text-dim">{t("closing.reasons.heading")}</h2>
           <ul className="mt-2 flex flex-col gap-2">
-            {incompleteReasons.map((r) => {
+            {shownReasons.map((r) => {
               const item = templateItems.find((ti) => ti.id === r.templateItemId);
               const label = item ? item.label : r.templateItemId;
               return (
