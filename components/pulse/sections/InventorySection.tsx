@@ -33,7 +33,10 @@ export function InventorySection({ data, mode, locationId }: { data: InventoryDa
           <h3 className={subHeading}>{t("pulse.inventory.cutoffs")}</h3>
           {data.cutoffs === null ? <p className="text-sm text-co-warning-text">{t("pulse.inventory.cutoffs_unavailable")}</p>
             : data.cutoffs.length === 0 ? <p className="text-sm text-co-text-muted">{t("pulse.card.empty")}</p> : (
-            <ul className="text-sm text-co-text">{data.cutoffs.map((c) => <li key={c.vendorName} className="min-h-[28px]"><span className="font-semibold">{c.vendorName}</span> · {c.time} · <span className="text-co-text-muted">{t(c.hasDraft ? "pulse.inventory.cutoff_draft" : "pulse.inventory.cutoff_nodraft")}</span></li>)}</ul>
+            <ul className="text-sm text-co-text">{data.cutoffs.map((c) => <li key={c.vendorName} className="min-h-[28px]"><span className="font-semibold">{c.vendorName}</span> · {c.time} · {c.missed
+              // D-63: passed with no placed order — red, and the errand is a phone call.
+              ? <span className="font-bold text-co-cta-text">{t("pulse.inventory.cutoff_missed")}</span>
+              : <span className="text-co-text-muted">{t(c.hasDraft ? "pulse.inventory.cutoff_draft" : "pulse.inventory.cutoff_nodraft")}</span>}</li>)}</ul>
           )}
         </div>
       )}

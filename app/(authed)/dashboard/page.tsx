@@ -460,6 +460,7 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
         vendorName: v.vendorName,
         cutoffTime: v.cutoffTime,
         hasDraft: v.hasDraft,
+        missed: v.missed,
       }))
     : null;
 

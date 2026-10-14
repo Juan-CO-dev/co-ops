@@ -122,11 +122,18 @@ describe("level-8 cross-shop Pulse sources", () => {
     const deps = pulseDeps(client as never);
     const c = crossShop();
     expect(await deps.deliveries(c)).toMatchObject([{ id: "delivery", vendorName: "Test vendor", lineCount: 1 }]);
-    expect(await deps.cutoffs(c)).toMatchObject({ count: 1, vendors: [{ vendorId: "vendor", vendorName: "Test vendor", hasDraft: false }] });
+    // 3:30 PM ET against a 4:00 PM cutoff: still open, not missed (D-63).
+    expect(await deps.cutoffs(c)).toMatchObject({ count: 1, vendors: [{ vendorId: "vendor", vendorName: "Test vendor", hasDraft: false, missed: false }] });
     const result = await loadPulseSection(deps, c, "inventory");
     expect(result).toMatchObject({ state: "ok", data: {
-      receiving: [{ id: "delivery", vendorName: "Test vendor" }], cutoffs: [{ vendorName: "Test vendor", hasDraft: false }],
+      receiving: [{ id: "delivery", vendorName: "Test vendor" }], cutoffs: [{ vendorName: "Test vendor", hasDraft: false, missed: false }],
     } });
+  });
+
+  it("D-63: a cutoff that has passed with no placed order comes back missed", async () => {
+    fake.rows.vendor_cutoffs = [{ vendor_id: "vendor", location_id: other, cutoff_time: "15:00:00" }];
+    fake.rows.vendors = [{ id: "vendor", name: "Test vendor" }];
+    expect(await pulseDeps(client as never).cutoffs(crossShop())).toMatchObject({ count: 1, vendors: [{ vendorId: "vendor", missed: true }] });
   });
 
   it.each([false, true])("refuses a level-7 non-member before I/O, warm=%s", async (warm) => {

@@ -17,6 +17,7 @@ export const ATTENTION_ORDER: readonly AttentionKind[] = [
   "checklist_missed",
   "task_late",
   "fridge_out_of_range",
+  "cutoff_missed",
   "catering_not_rung",
   "station_uncovered",
   "station_trim_due",
@@ -29,6 +30,8 @@ export const ATTENTION_ORDER: readonly AttentionKind[] = [
 
 const RED: ReadonlySet<AttentionKind> = new Set([
   "station_uncovered", "station_trim_due", "task_late", "checklist_missed", "fridge_out_of_range", "catering_not_rung",
+  // D-63: a vendor cutoff that passed with no placed order — the fix is a phone call, now.
+  "cutoff_missed",
 ]);
 
 /**

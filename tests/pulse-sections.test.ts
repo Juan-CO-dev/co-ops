@@ -193,6 +193,29 @@ describe("needs attention", () => {
     expect(r.data.items.filter((i) => i.kind === "task_late").map((i) => i.key)).toEqual(["task_late:am_prep:me", "task_late:cash_report:other"]);
     expect(r.data.items.filter((i) => i.kind === "task_late").map((i) => i.params.name)).toEqual(["Val Viewer", "Ana Perez"]);
   });
+  it("D-63: a passed cutoff with no placed order is a RED 'missed cutoff' row, ranked with the red facts", async () => {
+    const d = deps({ cutoffs: vi.fn(async () => ({ count: 2, vendors: [
+      { vendorId: "pfg", vendorName: "PFG", cutoffTime: "11:00 AM", hasDraft: true, missed: true },
+      { vendorId: "ferraro", vendorName: "Ferraro", cutoffTime: "5:00 PM", hasDraft: false, missed: false },
+    ] })) });
+    const r = (await loadPulseSection(d, ctx(5), "attention")) as { data: AttentionData };
+    const missed = r.data.items.filter((i) => i.kind === "cutoff_missed");
+    expect(missed).toEqual([{ key: "cutoff_missed:pfg", kind: "cutoff_missed", severity: "red", params: { vendor: "PFG", time: "11:00 AM" }, href: `/ordering?location=${LOC}`, action: "order" }]);
+    const kinds = r.data.items.map((i) => i.kind);
+    expect(kinds.indexOf("cutoff_missed")).toBeLessThan(kinds.indexOf("station_uncovered"));
+    // The still-open cutoff stays an Inventory fact, not an attention row.
+    expect(JSON.stringify(r.data.items)).not.toContain("Ferraro");
+    const inv = (await loadPulseSection(d, ctx(5), "inventory")) as { data: InventoryData };
+    expect(inv.data.cutoffs).toEqual([
+      { vendorName: "PFG", time: "11:00 AM", hasDraft: true, missed: true },
+      { vendorName: "Ferraro", time: "5:00 PM", hasDraft: false, missed: false },
+    ]);
+  });
+  it("D-63: a failed cutoffs read is named in partial, never a silent all-clear", async () => {
+    const d = deps({ cutoffs: vi.fn(async () => { throw new Error("down"); }) });
+    const r = (await loadPulseSection(d, ctx(5), "attention")) as { data: AttentionData };
+    expect(r.data.partial).toContain("cutoffs");
+  });
   it("crew: only their own rows + shop-wide reminders; no catering/inventory/clock-in sources are even read", async () => {
     const d = deps();
     const r = (await loadPulseSection(d, ctx(3), "attention")) as { data: AttentionData };
@@ -203,6 +226,7 @@ describe("needs attention", () => {
     expect(d.notRung).not.toHaveBeenCalled();
     expect(d.lastParPass).not.toHaveBeenCalled();
     expect(d.unlinkedClockIns).not.toHaveBeenCalled();
+    expect(d.cutoffs).not.toHaveBeenCalled(); // D-63: ordering is KH+ — crew never read cutoffs
     // Astra #11: shop catering timing reaches crew, with no event name.
     expect(r.data.items[4]!.params).toEqual({ time: "4:00 PM" });
     expect(JSON.stringify(r.data)).not.toContain("Acme");
@@ -235,10 +259,10 @@ describe("Astra #7 — failed sources never produce a reassuring state", () => {
     ...over,
   });
   it("every attention source failing → evidence unavailable, score null, no items", async () => {
-    const d = deps({ board: failing(), reports: failing(), fridges: failing(), cateringToday: failing(), notRung: failing(), lastParPass: failing(), unlinkedClockIns: failing() });
+    const d = deps({ board: failing(), reports: failing(), fridges: failing(), cateringToday: failing(), notRung: failing(), lastParPass: failing(), unlinkedClockIns: failing(), cutoffs: failing() });
     const r = (await loadPulseSection(d, ctx(5), "attention")) as { data: AttentionData };
     expect(r.data).toMatchObject({ items: [], score: null, evidence: "unavailable" });
-    expect([...r.data.partial].sort()).toEqual(["board", "cateringToday", "fridges", "notRung", "parPass", "reports", "unlinked"]);
+    expect([...r.data.partial].sort()).toEqual(["board", "cateringToday", "cutoffs", "fridges", "notRung", "parPass", "reports", "unlinked"]);
   });
   it("a quiet shop with one source down → partial, score null (no all-clear); rows present → partial but scored; all up → green", async () => {
     const partial = (await loadPulseSection(quietDeps({ unlinkedClockIns: failing() }), ctx(5), "attention")) as { data: AttentionData };

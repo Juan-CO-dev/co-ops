@@ -264,6 +264,7 @@ describe("composeOrderingTile", () => {
     vendorName: `Vendor ${over.vendorId}`,
     cutoffTime: "3:00 PM",
     hasDraft: false,
+    missed: false,
     ...over,
   });
   const order = (over: Partial<OrderingOrderFacts> & { poId: string }): OrderingOrderFacts => ({
@@ -282,6 +283,22 @@ describe("composeOrderingTile", () => {
     expect(vm.headline.key).toBe("dashboard.ordering.headline_cutoff");
     expect(vm.headline.params).toEqual({ vendor: "Ferraro" });
     expect(vm.headline.tone).toBe("danger");
+  });
+
+  it("D-63: a missed nearest cutoff headlines 'missed — call the vendor'; a missed extra is a missed pill", () => {
+    const vm = composeOrderingTile({
+      openCutoffs: [
+        cutoff({ vendorId: "a", vendorName: "Baldor", cutoffTime: "11:00 AM", missed: true }),
+        cutoff({ vendorId: "b", vendorName: "PFG", cutoffTime: "11:30 AM", missed: true }),
+        cutoff({ vendorId: "c", vendorName: "Ferraro", cutoffTime: "3:00 PM" }),
+      ],
+      orders: [],
+    });
+    expect(vm.headline.key).toBe("dashboard.ordering.headline_missed");
+    expect(vm.headline.params).toEqual({ vendor: "Baldor" });
+    expect(vm.headline.tone).toBe("danger");
+    expect(vm.pills.map((p) => p.key)).toEqual(["dashboard.ordering.pill_missed", "dashboard.ordering.pill_cutoff"]);
+    expect(vm.pills.every((p) => p.tone === "danger")).toBe(true);
   });
 
   it("the NEAREST cutoff leads; the rest become red pills (loader order is authoritative)", () => {

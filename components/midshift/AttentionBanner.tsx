@@ -130,6 +130,25 @@ export function AttentionBanner({
               </li>
             );
           }
+          if (item.kind === "ordering_cutoff_missed") {
+            // D-63: the cutoff PASSED with no placed order — RED-tier, the fix is a phone call.
+            // The earliest missed vendor names the line; pluralizes on the missed count.
+            const count = item.count ?? 0;
+            const earliest = item.cutoffVendors?.[0];
+            const params = { vendor: earliest?.name ?? "—", time: earliest?.time ?? "—" };
+            return (
+              <li key={key} className="text-sm font-semibold text-co-cta-text">
+                <Link
+                  href={`/ordering?location=${locationId}`}
+                  className="underline decoration-co-border underline-offset-2"
+                >
+                  {count === 1
+                    ? serverT(language, "midshift.attention.ordering_cutoff_missed_one", params)
+                    : serverT(language, "midshift.attention.ordering_cutoff_missed_other", { ...params, count })}
+                </Link>
+              </li>
+            );
+          }
           if (item.kind === "ordering_cutoff") {
             // Vendor cutoff today with no order placed. YELLOW-tier. The earliest vendor
             // (loader-sorted first) names the line; hasDraft picks "draft ready" vs "no

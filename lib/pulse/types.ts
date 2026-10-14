@@ -27,6 +27,7 @@ export type AttentionKind =
   | "task_late"
   | "checklist_missed"
   | "fridge_out_of_range"
+  | "cutoff_missed"
   | "fridge_unchecked"
   | "item_low"
   | "catering_not_rung"
@@ -241,7 +242,8 @@ export interface InventoryData {
   risk86: number;
   /** Null = that read failed (unavailable), never an empty "nothing recorded". */
   receiving: Array<{ id: string; vendorName: string; at: string; matchState: "counted_only" | "matched" | "discrepant" | "override"; status: "in_progress" | "complete" }> | null;
-  cutoffs: Array<{ vendorName: string; time: string; hasDraft: boolean }> | null;
+  /** D-63: `missed` = the cutoff passed with no placed order ("missed cutoff — call the vendor"). */
+  cutoffs: Array<{ vendorName: string; time: string; hasDraft: boolean; missed: boolean }> | null;
 }
 
 // ── Food safety ─────────────────────────────────────────────────────────────────────────────

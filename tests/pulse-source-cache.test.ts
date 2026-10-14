@@ -81,7 +81,7 @@ describe("cachedPulseDeps — scope-safe sharing", () => {
   it("keeps formatted cutoffs separate by language within the same shop", async () => {
     const d = deps();
     d.cutoffs = vi.fn(async (viewer) => ({ count: 1, vendors: [{
-      vendorId: "vendor", vendorName: "Vendor", cutoffTime: viewer.auth.user.language === "es" ? "4:00 p. m." : "4:00 PM", hasDraft: false,
+      vendorId: "vendor", vendorName: "Vendor", cutoffTime: viewer.auth.user.language === "es" ? "4:00 p. m." : "4:00 PM", hasDraft: false, missed: false,
     }] }));
     const c = cachedPulseDeps(d, { now: () => 1_000 });
     const spanish = ctx(8, "director");

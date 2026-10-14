@@ -93,6 +93,7 @@ import {
 import { etCalendarDate, etYmdMinusDays, operationalDayUtcRange } from "@/lib/operational-day";
 import { etDayFromDate } from "@/lib/et-day-shared";
 import { formatTime } from "@/lib/i18n/format";
+import { cutoffMissed } from "@/lib/dashboard-status-shared";
 
 /**
  * How far ahead the walk looks for BOOKED CATERING when naming the event advisory.
@@ -2167,6 +2168,8 @@ export interface OrderingCutoffAttention {
   cutoffTime: string;
   /** True when a draft PO already exists today for this vendor ("draft ready" vs "no draft"). */
   hasDraft: boolean;
+  /** D-63: the cutoff has passed and still no order is placed — red "missed cutoff — call the vendor". */
+  missed: boolean;
 }
 
 /**
@@ -2243,6 +2246,7 @@ export async function loadOrderingAttention(
   const vName = new Map((vendorRows ?? []).map((v) => [v.id, v.name]));
 
   const vendors: Array<OrderingCutoffAttention & { sortKey: string }> = [];
+  const nowMs = Date.now();
   for (const vid of openVendorIds) {
     if (!vName.has(vid)) continue;
     const bare = governingCutoffTime(rowsByVendor.get(vid) ?? [], locationId);
@@ -2254,6 +2258,7 @@ export async function loadOrderingAttention(
       vendorName: vName.get(vid) ?? "(vendor)",
       cutoffTime: formatTime(iso, language),
       hasDraft: hasDraftVendors.has(vid),
+      missed: cutoffMissed(iso, nowMs),
       // sortKey (bare governing time, "HH:MM:SS") sorts lexically = chronologically for
       // one ET day; kept out of the returned shape (stripped below).
       sortKey: bare,
