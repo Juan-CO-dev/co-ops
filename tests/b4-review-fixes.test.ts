@@ -9,7 +9,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { loadShiftBoard } from "@/lib/assignments";
 import { closedStationFor, showBreakButton, type ShiftBoard } from "@/lib/assignments-shared";
 import { coopsShiftEnded, personPresence } from "@/lib/presence-shared";
-import { midDayTickIsStale, pickMidDayReport, reconcileClosingReportRefs } from "@/lib/prep";
+import { autoCompleteClosingMidDayRef, midDayTickIsStale, pickMidDayReport, reconcileClosingReportRefs } from "@/lib/prep";
 
 vi.mock("@/lib/audit", () => ({ audit: vi.fn() }));
 vi.mock("@/lib/assignment-taken", () => ({ loadTakenTasks: vi.fn(async () => []) }));
@@ -18,55 +18,133 @@ afterEach(() => { vi.useRealTimers(); vi.unstubAllEnvs(); });
 
 // -- 1. mid-day reconcile -----------------------------------------------------------------------
 type MdRow = { id: string; triggered_at: string; confirmed_at: string | null };
+type Completion = {
+  id: string; instance_id: string; template_item_id: string; revoked_at: string | null; superseded_at: string | null;
+  superseded_by: string | null; prep_data: Record<string, unknown> | null; auto_complete_meta: Record<string, unknown>;
+};
 type Head = { id: string; revoked_at: string | null; auto_complete_meta: Record<string, unknown> } | null;
-/** Minimal chainable Supabase fake: answers by table + eq filters, records inserts and supersedes. */
-function reconcileService(midDayRows: MdRow[], head: Head = null) {
-  const inserts: Array<Record<string, unknown>> = [];
-  const supersedes: Array<Record<string, unknown>> = [];
+const liveHead = (meta: Record<string, unknown>, id = "head-1"): Head => ({ id, revoked_at: null, auto_complete_meta: meta });
+
+/**
+ * Chainable Supabase fake. `checklist_completions` is STATEFUL and ENFORCES the 0196 index
+ * (one live row per instance + item + phase kind): an INSERT while a live row shares the key is a 23505,
+ * exactly what production does - so insert-before-supersede cannot pass this fake.
+ */
+function reconcileService(midDayRows: MdRow[], head: Head = null, opts: { failInsert?: boolean; failRestore?: boolean } = {}) {
+  const completions: Completion[] = head ? [{
+    id: head.id, instance_id: "closing-1", template_item_id: "mid-ref-item", revoked_at: head.revoked_at,
+    superseded_at: null, superseded_by: null, prep_data: null, auto_complete_meta: head.auto_complete_meta,
+  }] : [];
+  const calls: string[] = [];
+  let seq = 0;
+  const isLive = (c: Completion) => c.superseded_at === null && c.revoked_at === null;
+  const phaseKey = (c: Completion) => `${c.instance_id}|${c.template_item_id}|${!!(c.prep_data && "phase2" in c.prep_data)}`;
   const from = (table: string) => {
     const eq = new Map<string, unknown>();
+    const filters: Array<(c: Completion) => boolean> = [];
     let op: "select" | "insert" | "update" = "select";
-    const single = (): unknown => {
-      if (table === "checklist_templates") {
-        if (eq.get("type") === "closing") return { id: "closing-tmpl" };
-        if (eq.get("prep_subtype") === "mid_day_prep") return { id: "mid-tmpl", name: "Mid-day" };
-        return null;
+    let payload: Record<string, unknown> = {};
+    const matches = () => completions.filter((c) => filters.every((f) => f(c)));
+    const run = (): { data?: unknown; error: { message: string; code?: string } | null; count?: number } => {
+      if (table !== "checklist_completions") {
+        return { data: table === "checklist_instances" ? midDayRows : [], error: null, count: 0 };
       }
-      if (table === "checklist_template_items") return eq.get("report_reference_type") === "mid_day_prep" ? { id: "mid-ref-item" } : null;
-      if (op === "insert") return { id: "new-completion" };
-      return head; // the live closing completion, if any
+      if (op === "insert") {
+        calls.push("insert");
+        if (opts.failInsert) return { error: { message: "injected insert failure" } };
+        const row: Completion = {
+          id: `new-${++seq}`, instance_id: String(payload.instance_id), template_item_id: String(payload.template_item_id),
+          revoked_at: null, superseded_at: null, superseded_by: null, prep_data: null,
+          auto_complete_meta: payload.auto_complete_meta as Record<string, unknown>,
+        };
+        if (completions.some((c) => isLive(c) && phaseKey(c) === phaseKey(row))) {
+          return { error: { message: 'duplicate key value violates unique constraint "checklist_completions_one_live_head_per_phase"', code: "23505" } };
+        }
+        completions.push(row);
+        return { data: { id: row.id }, error: null };
+      }
+      if (op === "update") {
+        const un = payload.superseded_at === null;
+        calls.push(un ? "restore" : "superseded_by" in payload ? "link" : "supersede");
+        if (un && opts.failRestore) return { error: { message: "injected restore failure" } };
+        const rows = matches();
+        // Un-superseding can itself hit the index (a live row now shares the key) - enforce it too.
+        if (un && rows.some((r) => completions.some((c) => c !== r && isLive(c) && phaseKey(c) === phaseKey(r)))) {
+          return { error: { message: 'duplicate key value violates unique constraint "checklist_completions_one_live_head_per_phase"', code: "23505" } };
+        }
+        rows.forEach((r) => Object.assign(r, payload));
+        return { error: null, count: rows.length };
+      }
+      return { data: matches()[0] ?? null, error: null };
     };
     const q: Record<string, unknown> = {
-      select: () => q, returns: () => q, order: () => q, limit: () => q, is: () => q, in: () => q, lte: () => q, gte: () => q, or: () => q, not: () => q,
-      eq: (k: string, v: unknown) => { eq.set(k, v); return q; },
-      insert: (row: Record<string, unknown>) => { op = "insert"; inserts.push(row); return q; },
-      update: (row: Record<string, unknown>) => { op = "update"; supersedes.push(row); return q; },
-      maybeSingle: async () => ({ data: single(), error: null }),
-      then: (resolve: (v: unknown) => unknown) => Promise.resolve({
-        data: table === "checklist_instances" ? midDayRows : [], error: null, count: op === "update" ? 1 : 0,
-      }).then(resolve),
+      select: () => q, returns: () => q, order: () => q, limit: () => q, in: () => q, lte: () => q, gte: () => q, or: () => q, not: () => q,
+      eq: (k: string, v: unknown) => {
+        eq.set(k, v);
+        filters.push((c) => (c as unknown as Record<string, unknown>)[k] === undefined || (c as unknown as Record<string, unknown>)[k] === v);
+        return q;
+      },
+      is: (k: string, v: unknown) => { filters.push((c) => (c as unknown as Record<string, unknown>)[k] === v); return q; },
+      neq: (k: string, v: unknown) => { filters.push((c) => (c as unknown as Record<string, unknown>)[k] !== v); return q; },
+      insert: (row: Record<string, unknown>) => { op = "insert"; payload = row; return q; },
+      update: (row: Record<string, unknown>) => { op = "update"; payload = row; return q; },
+      maybeSingle: async () => {
+        if (table === "checklist_completions" && op === "select") return run();
+        if (table === "checklist_completions") return run();
+        if (table === "checklist_templates") {
+          if (eq.get("type") === "closing") return { data: { id: "closing-tmpl" }, error: null };
+          if (eq.get("prep_subtype") === "mid_day_prep") return { data: { id: "mid-tmpl", name: "Mid-day" }, error: null };
+          return { data: null, error: null };
+        }
+        if (table === "checklist_template_items") {
+          return { data: eq.get("report_reference_type") === "mid_day_prep" ? { id: "mid-ref-item" } : null, error: null };
+        }
+        if (table === "checklist_instances") return { data: { id: "closing-1" }, error: null };
+        return { data: null, error: null };
+      },
+      then: (resolve: (v: unknown) => unknown) => Promise.resolve(run()).then(resolve),
     };
     return q;
   };
-  return { service: { from } as unknown as SupabaseClient, inserts, supersedes };
+  const inserts = { get length() { return calls.filter((c) => c === "insert").length; } };
+  return {
+    service: { from } as unknown as SupabaseClient,
+    completions, calls, inserts,
+    live: () => completions.filter(isLive),
+  };
 }
+
 const reconcile = (service: SupabaseClient) => reconcileClosingReportRefs(service, {
   locationId: "loc", date: "2026-10-11", closingInstanceId: "closing-1", actor: { userId: "u1" } as never,
 });
 type Meta = { reportType: string; reportSubmittedAt?: string; count: number; reportInstanceId: string };
-const metaOf = (row: Record<string, unknown> | undefined) => row?.auto_complete_meta as Meta;
+const newest = (f: ReturnType<typeof reconcileService>) => f.completions.filter((c) => c.id.startsWith("new-")).at(-1);
+const metaOf = (c: { auto_complete_meta: Record<string, unknown> } | undefined) => c?.auto_complete_meta as Meta;
 const eveningOpen = () => { vi.useFakeTimers(); vi.setSystemTime(new Date("2026-10-12T00:00:00Z")); }; // 8 PM ET
+const oldTick = (over: Record<string, unknown> = {}) => liveHead({
+  reportType: "mid_day_prep", reportInstanceId: "md-1", reportSubmittedAt: "2026-10-11T23:59:00.000Z", count: 1, ...over,
+});
+
+describe("the fake enforces the 0196 live-head index (so insert-before-supersede cannot pass)", () => {
+  it("rejects a second live tick for the same instance + item", async () => {
+    const f = reconcileService([], oldTick());
+    const res = await (f.service.from("checklist_completions") as unknown as {
+      insert: (r: unknown) => { select: (c: string) => { maybeSingle: () => Promise<{ error: { code?: string } | null }> } };
+    }).insert({ instance_id: "closing-1", template_item_id: "mid-ref-item", auto_complete_meta: {} }).select("id").maybeSingle();
+    expect(res.error?.code).toBe("23505");
+  });
+});
 
 describe("#16 reconcile carries the real mid-day submission time", () => {
   it("uses the confirmed_at of the report, not the moment the closing page was opened", async () => {
     eveningOpen();
-    const { service, inserts } = reconcileService([
+    const f = reconcileService([
       { id: "md-1", triggered_at: "2026-10-11T17:00:00Z", confirmed_at: "2026-10-11T18:10:00Z" },
       { id: "md-2", triggered_at: "2026-10-11T18:30:00Z", confirmed_at: "2026-10-11T19:00:00Z" },
     ]);
-    expect((await reconcile(service)).ticked).toBe(1);
-    expect(inserts[0]).toMatchObject({ instance_id: "closing-1", template_item_id: "mid-ref-item" });
-    expect(metaOf(inserts[0])).toMatchObject({ reportType: "mid_day_prep", count: 2, reportInstanceId: "md-2", reportSubmittedAt: "2026-10-11T19:00:00Z" });
+    expect((await reconcile(f.service)).ticked).toBe(1);
+    expect(newest(f)).toMatchObject({ instance_id: "closing-1", template_item_id: "mid-ref-item" });
+    expect(metaOf(newest(f))).toMatchObject({ reportType: "mid_day_prep", count: 2, reportInstanceId: "md-2", reportSubmittedAt: "2026-10-11T19:00:00Z" });
   });
 
   it("out of order: A started first but confirmed last (4 PM) beats B started second, confirmed 3 PM - id and time from the SAME row", async () => {
@@ -75,10 +153,10 @@ describe("#16 reconcile carries the real mid-day submission time", () => {
       { id: "A", triggered_at: "2026-10-11T17:00:00Z", confirmed_at: "2026-10-11T20:00:00Z" }, // 4 PM ET
       { id: "B", triggered_at: "2026-10-11T18:00:00Z", confirmed_at: "2026-10-11T19:00:00Z" }, // 3 PM ET
     ];
-    const { service, inserts } = reconcileService(rows);
-    await reconcile(service);
-    expect(metaOf(inserts[0]).reportInstanceId).toBe("A");
-    expect(metaOf(inserts[0]).reportSubmittedAt).toBe("2026-10-11T20:00:00Z");
+    const f = reconcileService(rows);
+    await reconcile(f.service);
+    expect(metaOf(newest(f)).reportInstanceId).toBe("A");
+    expect(metaOf(newest(f)).reportSubmittedAt).toBe("2026-10-11T20:00:00Z");
     expect(pickMidDayReport(rows)).toEqual({ reportInstanceId: "A", reportSubmittedAt: "2026-10-11T20:00:00Z" });
   });
 
@@ -86,33 +164,88 @@ describe("#16 reconcile carries the real mid-day submission time", () => {
     eveningOpen();
     const started = reconcileService([{ id: "md-1", triggered_at: "2026-10-11T19:00:00Z", confirmed_at: null }]);
     await reconcile(started.service);
-    expect(metaOf(started.inserts[0]).reportSubmittedAt).toBe("2026-10-11T19:00:00Z");
+    expect(metaOf(newest(started)).reportSubmittedAt).toBe("2026-10-11T19:00:00Z");
 
     const unknown = reconcileService([{ id: "md-1", triggered_at: null as unknown as string, confirmed_at: null }]);
     await reconcile(unknown.service);
-    const meta = metaOf(unknown.inserts[0]);
+    const meta = metaOf(newest(unknown));
     expect(meta.reportInstanceId).toBe("md-1");
     expect("reportSubmittedAt" in meta).toBe(false); // display falls back to the tick's own time
     expect(JSON.stringify(meta)).not.toContain("2026-10-12T00:00:00");
   });
 
-  it("repairs an existing tick written by old code (same count, closing-open time), then stays idempotent", async () => {
+  it("repairs an existing tick written by old code (same count, closing-open time) UNDER the live-head index, then stays idempotent", async () => {
     eveningOpen();
     const rows: MdRow[] = [{ id: "md-1", triggered_at: "2026-10-11T18:00:00Z", confirmed_at: "2026-10-11T19:00:00Z" }];
-    const oldHead: Head = { id: "head-1", revoked_at: null, auto_complete_meta: {
-      reportType: "mid_day_prep", reportInstanceId: "md-1", reportSubmittedAt: "2026-10-11T23:59:00.000Z", count: 1,
-    } };
-    const stale = reconcileService(rows, oldHead);
+    const stale = reconcileService(rows, oldTick());
     expect((await reconcile(stale.service)).ticked).toBe(1);
-    expect(stale.inserts).toHaveLength(1);
-    expect(stale.supersedes).toHaveLength(1);
-    expect(metaOf(stale.inserts[0]).reportSubmittedAt).toBe("2026-10-11T19:00:00Z");
+    expect(stale.calls).toEqual(["supersede", "insert", "link"]); // supersede BEFORE insert
+    expect(stale.live()).toHaveLength(1);
+    const live = stale.live()[0]!;
+    expect(live.id).not.toBe("head-1");
+    expect(metaOf(live).reportSubmittedAt).toBe("2026-10-11T19:00:00Z");
+    const old = stale.completions.find((c) => c.id === "head-1")!;
+    expect(old.superseded_at).not.toBeNull();
+    expect(old.superseded_by).toBe(live.id);
 
     // Stored time equal as an INSTANT (different spelling) -> no churn.
-    const fresh = reconcileService(rows, { ...oldHead!, auto_complete_meta: { ...oldHead!.auto_complete_meta, reportSubmittedAt: "2026-10-11T19:00:00.000+00:00" } });
+    const fresh = reconcileService(rows, oldTick({ reportSubmittedAt: "2026-10-11T19:00:00.000+00:00" }));
     expect((await reconcile(fresh.service)).ticked).toBe(0);
-    expect(fresh.inserts).toHaveLength(0);
-    expect(fresh.supersedes).toHaveLength(0);
+    expect(fresh.calls).toEqual([]);
+  });
+
+  it("the count-change path (a second mid-day finalizes) also works under the index", async () => {
+    eveningOpen();
+    const rows: MdRow[] = [
+      { id: "md-1", triggered_at: "2026-10-11T17:00:00Z", confirmed_at: "2026-10-11T18:00:00Z" },
+      { id: "md-2", triggered_at: "2026-10-11T18:30:00Z", confirmed_at: "2026-10-11T19:00:00Z" },
+    ];
+    const f = reconcileService(rows, oldTick({ reportSubmittedAt: "2026-10-11T18:00:00Z", count: 1 }));
+    expect((await reconcile(f.service)).ticked).toBe(1);
+    expect(f.live()).toHaveLength(1);
+    expect(metaOf(f.live()[0])).toMatchObject({ count: 2, reportInstanceId: "md-2" });
+  });
+
+  it("a revoked (C.55 reopened) head is never re-ticked", async () => {
+    eveningOpen();
+    const rows: MdRow[] = [{ id: "md-1", triggered_at: "2026-10-11T18:00:00Z", confirmed_at: "2026-10-11T19:00:00Z" }];
+    const reopened: Head = { ...oldTick()!, revoked_at: "2026-10-11T23:00:00Z" };
+    const f = reconcileService(rows, reopened);
+    expect((await reconcile(f.service)).ticked).toBe(0);
+    expect(f.calls).toEqual([]);
+  });
+
+  it("a failed insert after the supersede is LOUD and restores the prior tick (the line is never left unticked)", async () => {
+    eveningOpen();
+    const rows: MdRow[] = [{ id: "md-1", triggered_at: "2026-10-11T18:00:00Z", confirmed_at: "2026-10-11T19:00:00Z" }];
+    const f = reconcileService(rows, oldTick(), { failInsert: true });
+    await expect(reconcile(f.service)).rejects.toThrow(/insert: injected insert failure.*prior tick was restored/);
+    expect(f.calls).toEqual(["supersede", "insert", "restore"]);
+    expect(f.live().map((c) => c.id)).toEqual(["head-1"]);
+    expect(f.live()[0]!.superseded_by).toBeNull();
+  });
+
+  it("if the compensating restore ALSO fails, the error says the line is unticked", async () => {
+    eveningOpen();
+    const rows: MdRow[] = [{ id: "md-1", triggered_at: "2026-10-11T18:00:00Z", confirmed_at: "2026-10-11T19:00:00Z" }];
+    const f = reconcileService(rows, oldTick(), { failInsert: true, failRestore: true });
+    await expect(reconcile(f.service)).rejects.toThrow(/restoring the superseded prior tick failed.*UNTICKED/);
+  });
+
+  it("the finalize-time push (autoCompleteClosingMidDayRef) also supersedes before it inserts", async () => {
+    eveningOpen();
+    const f = reconcileService([{ id: "md-2", triggered_at: "2026-10-11T18:30:00Z", confirmed_at: "2026-10-11T19:00:00Z" }], oldTick());
+    await autoCompleteClosingMidDayRef(f.service, { locationId: "loc", date: "2026-10-11", midDayInstanceId: "md-2", actor: { userId: "u1" } as never });
+    expect(f.calls).toEqual(["supersede", "insert", "link"]);
+    expect(f.live()).toHaveLength(1);
+    expect(metaOf(f.live()[0]).reportInstanceId).toBe("md-2");
+  });
+
+  it("a first tick (no head) is a plain insert with no supersede", async () => {
+    eveningOpen();
+    const f = reconcileService([{ id: "md-1", triggered_at: "2026-10-11T18:00:00Z", confirmed_at: "2026-10-11T19:00:00Z" }]);
+    await reconcile(f.service);
+    expect(f.calls).toEqual(["insert"]);
   });
 
   it("a head with no stored time is repaired; a wrong stored instance is repaired; an unknown true time never churns", () => {

@@ -1669,41 +1669,118 @@ export async function autoCompleteClosingMidDayRef(
     .is("revoked_at", null)
     .maybeSingle<{ id: string }>();
 
-  const { data: inserted, error: insErr } = await service
-    .from("checklist_completions")
-    .insert({
-      instance_id: cInst.id,
-      template_item_id: refItemId,
-      completed_by: args.actor.userId,
-      completed_at: nowIso,
-      auto_complete_meta: meta,
-    })
-    .select("id")
-    .maybeSingle<{ id: string }>();
-  if (insErr) throw new Error(`autoCompleteClosingMidDayRef: insert: ${insErr.message}`);
-
-  if (prior && inserted) {
-    // Guard on superseded_at IS NULL + rowcount (silent-UPDATE law, sibling
-    // ensureClosingRefCompletion). DETECTION, not prevention: the new row above is
-    // already committed, so a lost race means a duplicate live head EXISTS — the
-    // throw makes it loud instead of silent (structural prevention = the Wave-2
-    // atomicity RPC). Throwing is safe — the caller is fire-and-forget with a
-    // .catch (submitMidDayPhase2).
-    const { error: supErr, count: supCount } = await service
-      .from("checklist_completions")
-      .update({ superseded_at: nowIso, superseded_by: inserted.id }, { count: "exact" })
-      .eq("id", prior.id)
-      .is("superseded_at", null);
-    if (supErr) throw new Error(`autoCompleteClosingMidDayRef: supersede: ${supErr.message}`);
-    if (supCount === 0) {
-      throw new Error("autoCompleteClosingMidDayRef: supersede: prior completion was concurrently superseded");
-    }
-  }
+  await replaceLiveClosingRefCompletion(service, {
+    label: "autoCompleteClosingMidDayRef",
+    closingInstanceId: cInst.id,
+    refItemId,
+    actor: args.actor,
+    meta,
+    hasLiveHead: !!prior,
+    nowIso,
+  });
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Closing report-reference reconcile (pull-based; order-independent)
 // ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Replace the live auto-complete tick of one closing report-reference item: SUPERSEDE FIRST, INSERT SECOND
+ * (the 0199 / 0056 order).
+ *
+ * WHY THE ORDER IS LAW: 0196's checklist_completions_one_live_head_per_phase is UNIQUE
+ * (instance_id, template_item_id, coalesce(prep_data ? 'phase2', false)) over live rows. A closing tick carries
+ * no prep_data, so a replacement inserted while its predecessor is still live shares the key and is a 23505 -
+ * which the closing page's reconcile catch used to log and move past, leaving the old count/time on the line.
+ * (The count-change supersede on main had the same insert-first order, so it was broken the same way.)
+ *
+ *   1. UPDATE ... SET superseded_at WHERE instance + item + live (superseded_at IS NULL AND revoked_at IS NULL):
+ *      the predicate covers EVERY live row sharing the index key, not just the head we read. Rowcount 0 means
+ *      the head changed under us (revoked by a C.55 reopen, or a concurrent reconcile replaced it): do nothing -
+ *      never re-tick over a reopen.
+ *   2. INSERT the replacement. If it fails, the line would be left with no live tick (worse than a stale one),
+ *      so the rows this call superseded are restored (compensation) and the failure is thrown. If the restore
+ *      ALSO fails, the thrown message says so, loudly - no silent path leaves the line unticked.
+ *   3. Link superseded_by now that the replacement's id exists (0199's provenance link).
+ *
+ * NOT atomic across the three statements (that needs an RPC - the Wave-2 atomicity note): a crash between 1
+ * and 2 leaves the line unticked until the next closing load, whose reconcile re-inserts it.
+ */
+async function replaceLiveClosingRefCompletion(
+  service: SupabaseClient,
+  args: {
+    label: string;
+    closingInstanceId: string;
+    refItemId: string;
+    actor: PrepActor;
+    meta: Record<string, unknown>;
+    hasLiveHead: boolean;
+    nowIso: string;
+  },
+): Promise<"inserted" | "superseded" | "skipped"> {
+  const { label, nowIso } = args;
+  const key = { instance_id: args.closingInstanceId, template_item_id: args.refItemId };
+
+  let supersededCount = 0;
+  if (args.hasLiveHead) {
+    const { error: supErr, count } = await service
+      .from("checklist_completions")
+      .update({ superseded_at: nowIso }, { count: "exact" })
+      .eq("instance_id", key.instance_id)
+      .eq("template_item_id", key.template_item_id)
+      .is("superseded_at", null)
+      .is("revoked_at", null);
+    if (supErr) throw new Error(`${label}: supersede: ${supErr.message}`);
+    if (!count) return "skipped"; // head revoked or replaced concurrently - leave it
+    supersededCount = count;
+  }
+
+  const restore = async (): Promise<string | null> => {
+    if (supersededCount === 0) return null;
+    const { error } = await service
+      .from("checklist_completions")
+      .update({ superseded_at: null })
+      .eq("instance_id", key.instance_id)
+      .eq("template_item_id", key.template_item_id)
+      .eq("superseded_at", nowIso)
+      .is("superseded_by", null);
+    return error ? error.message : null;
+  };
+
+  const { data: inserted, error: insErr } = await service
+    .from("checklist_completions")
+    .insert({
+      ...key,
+      completed_by: args.actor.userId,
+      completed_at: nowIso,
+      auto_complete_meta: args.meta,
+    })
+    .select("id")
+    .maybeSingle<{ id: string }>();
+  if (insErr || !inserted) {
+    const reason = insErr?.message ?? "insert returned no row";
+    const restoreErr = await restore();
+    throw new Error(
+      restoreErr === null
+        ? `${label}: insert: ${reason}${supersededCount ? " (the prior tick was restored)" : ""}`
+        : `${label}: insert: ${reason} AND restoring the superseded prior tick failed: ${restoreErr} - the line is UNTICKED until the next reconcile`,
+    );
+  }
+
+  if (supersededCount > 0) {
+    const { error: linkErr } = await service
+      .from("checklist_completions")
+      .update({ superseded_by: inserted.id })
+      .eq("instance_id", key.instance_id)
+      .eq("template_item_id", key.template_item_id)
+      .eq("superseded_at", nowIso)
+      .is("superseded_by", null)
+      .neq("id", inserted.id);
+    if (linkErr) throw new Error(`${label}: supersede link: ${linkErr.message}`);
+    return "superseded";
+  }
+  return "inserted";
+}
 
 /**
  * Idempotent upsert of one closing report-reference auto-completion.
@@ -1804,35 +1881,15 @@ async function ensureClosingRefCompletion(
     // count or stored instance/time changed → fall through to insert + supersede
   }
 
-  const nowIso = new Date().toISOString();
-  const { data: inserted, error: insErr } = await service
-    .from("checklist_completions")
-    .insert({
-      instance_id: args.closingInstanceId,
-      template_item_id: args.refItemId,
-      completed_by: args.actor.userId,
-      completed_at: nowIso,
-      auto_complete_meta: args.meta,
-    })
-    .select("id")
-    .maybeSingle<{ id: string }>();
-  if (insErr) throw new Error(`ensureClosingRefCompletion: insert: ${insErr.message}`);
-
-  if (head && inserted) {
-    // Prior-state guard + rowcount (silent-UPDATE law; symmetric with the
-    // autoCompleteClosingMidDayRef supersede). DETECTION, not prevention — the
-    // inserted row above already exists, so a lost race means a duplicate live
-    // head; the throw surfaces it loudly (structural fix = Wave-2 atomicity RPC).
-    const { error: supErr, count: supCount } = await service
-      .from("checklist_completions")
-      .update({ superseded_at: nowIso, superseded_by: inserted.id }, { count: "exact" })
-      .eq("id", head.id)
-      .is("superseded_at", null);
-    if (supErr) throw new Error(`ensureClosingRefCompletion: supersede: ${supErr.message}`);
-    if (supCount === 0) throw new Error(`ensureClosingRefCompletion: supersede raced — head ${head.id} already superseded`);
-    return "superseded";
-  }
-  return "inserted";
+  return replaceLiveClosingRefCompletion(service, {
+    label: "ensureClosingRefCompletion",
+    closingInstanceId: args.closingInstanceId,
+    refItemId: args.refItemId,
+    actor: args.actor,
+    meta: args.meta,
+    hasLiveHead: !!head,
+    nowIso: new Date().toISOString(),
+  });
 }
 
 /**
