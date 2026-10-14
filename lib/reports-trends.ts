@@ -8,7 +8,7 @@ import {
   loadLocationTempItemIds,
   type ReportTypeKey,
 } from "@/lib/reports-hub";
-import { reportParDeviation, isOutOfRangeTemp } from "@/lib/report-signals";
+import { reportParDeviation, isTempFlag } from "@/lib/report-signals";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -326,7 +326,7 @@ async function loadTrendWindow(
     if (comps.length === 0) a.notStarted++;
 
     for (const c of comps) {
-      if (tempItemIds.has(c.template_item_id) && isOutOfRangeTemp(c.count_value)) {
+      if (isTempFlag(tempItemIds, c.template_item_id, c.count_value)) {
         a.tempFlags++;
       }
       const status = reportParDeviation(rt, c.prep_data);

@@ -11,6 +11,7 @@ import { reportRangeParams } from "@/lib/report-range";
 import { redirect } from "next/navigation";
 
 import { serverT } from "@/lib/i18n/server";
+import { formatDateLabel } from "@/lib/i18n/format";
 import { REPORT_ALL_LOCATIONS_LEVEL, canReadReportLocation, type LocationActor } from "@/lib/locations";
 import { operationalNow } from "@/lib/midshift";
 import { loadTrendSeries } from "@/lib/reports-trends";
@@ -64,6 +65,10 @@ async function renderPage(paramsRange: Record<string, string | undefined>, allSh
 
   const opsSeries = await loadTrendSeries(sb, { viewer, locationId: locationParam, granularity, compare, today, range });
   const ops = { underPar: opsSeries.totals.par.current ?? 0, tempFlags: opsSeries.totals.temps.current ?? 0 };
+  // B8 #4: these are WINDOW totals (30 days by default), not today — say so wherever they show,
+  // or they read as "right now" beside Pulse's today-only fridge card.
+  const windowLabel = { from: formatDateLabel(range.from, language), to: formatDateLabel(range.to, language) };
+  const inWindow = (n: number) => serverT(language, "reports.trends.landing.count_in_window", { n, ...windowLabel });
 
   const team = canSeeTeam
     ? await loadTeamOperatingHealth(sb, { viewer, locationId: locationParam, granularity, compare: true, today, range: { ...range, compare: true } })
@@ -89,10 +94,10 @@ async function renderPage(paramsRange: Record<string, string | undefined>, allSh
     attention.push({ kind: "team", titleKey: "reports.trends.team.title", sub: serverT(language, team.banner.key as Parameters<typeof serverT>[1], team.banner.params) });
   }
   if (ops.tempFlags > 0) {
-    attention.push({ kind: "ops", titleKey: "reports.trends.temps_title", sub: String(ops.tempFlags) });
+    attention.push({ kind: "ops", titleKey: "reports.trends.temps_title", sub: inWindow(ops.tempFlags) });
   }
   if (ops.underPar > 0) {
-    attention.push({ kind: "ops", titleKey: "reports.trends.par_title", sub: String(ops.underPar) });
+    attention.push({ kind: "ops", titleKey: "reports.trends.par_title", sub: inWindow(ops.underPar) });
   }
 
   const Container = allShops ? "div" : "main";
@@ -106,6 +111,7 @@ async function renderPage(paramsRange: Record<string, string | undefined>, allSh
         canSeeTeam={canSeeTeam}
         canSeeYield={canSeeYield}
         ops={ops}
+        opsWindow={serverT(language, "reports.trends.landing.window", windowLabel)}
         team={team}
         attention={attention}
       />

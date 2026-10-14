@@ -3093,6 +3093,8 @@
   "reports.trends.landing.view_ops": "Ver tendencias de operación",
   "reports.trends.landing.view_team": "Ver equipo",
   "reports.trends.landing.nothing_urgent": "Nada urgente por ahora.",
+  "reports.trends.landing.window": "{from} – {to}",
+  "reports.trends.landing.count_in_window": "{n} · {from} – {to}",
   "people.score": "puntaje",
   "people.on_track": "en marcha",
   "people.needs_attention": "necesita revisión",

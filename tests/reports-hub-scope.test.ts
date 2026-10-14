@@ -150,7 +150,7 @@ describe("review regressions", () => {
     const snapshot={section:"misc",itemName:"Question",parValue:null,parUnit:null,specialInstruction:null};
     data.checklist_completions=data.checklist_completions!.map((r,n)=>({...r,prep_data:{inputs:{freeText:n?"colleague answer":"own answer"},snapshot}}));
     const {client}=fake(data);
-    const result=await computeReportSignals(client,{type:"opening",id:"shared",viewer,tempItemIds:new Set()});
+    const result=await computeReportSignals(client,{type:"opening",id:"shared",viewer,tempItemIds:new Map()});
     expect(result.checks.map(r=>r.freeText)).toEqual(["own answer"]);
     const corpus=await buildSearchCorpus(client,{viewer,locationId:"shop",items:[{id:"shared",type:"opening",date:instance.date,locationId:"shop",status:"open",submitterName:null}]});
     expect(JSON.stringify([...corpus])).toContain("own answer");expect(JSON.stringify([...corpus])).not.toContain("colleague answer");

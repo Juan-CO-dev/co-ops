@@ -3093,6 +3093,8 @@
   "reports.trends.landing.view_ops": "View ops trends",
   "reports.trends.landing.view_team": "View team",
   "reports.trends.landing.nothing_urgent": "Nothing urgent right now.",
+  "reports.trends.landing.window": "{from} – {to}",
+  "reports.trends.landing.count_in_window": "{n} · {from} – {to}",
   "people.score": "score",
   "people.on_track": "on track",
   "people.needs_attention": "needs attention",

@@ -35,7 +35,10 @@ export function composeReportSummary(items: ReportListItem[]) {
     signals.overPar += s.overPar;
     signals.skipped += s.skipped;
     signals.notStarted += s.notStarted ?? 0;
-    signals.tempFlags += s.tempFlags;
+    // B8 #4: a maintenance row's flag count is a fridge-DAY re-read of the same temp
+    // completions its opening/closing report already counted — summing both double-counts
+    // one hot reading. The summary counts readings once, as Trends does.
+    if (item.type !== "maintenance") signals.tempFlags += s.tempFlags;
     if ((s.cashOverShortCents ?? 0) > 0) cashOver++;
     if ((s.cashOverShortCents ?? 0) < 0) cashShort++;
   }

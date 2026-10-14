@@ -87,9 +87,9 @@ it("reads persisted final checks and ignores AM prep and malformed outcomes", ()
 it("keeps detail/batch/trends signal parity, inactive-item history and completion percentage", async () => {
   const { client } = fake(data());
   const reports = [report("opening", "open"), report("am_prep", "am"), report("mid_day", "mid"), report("closing", "empty"), report("closing", "optional")];
-  const batch = await computeReportSignalsBatch(client, reports, new Set(), viewer);
+  const batch = await computeReportSignalsBatch(client, reports, new Map(), viewer);
   for (const r of reports) {
-    const single = await computeReportSignals(client, { ...r, viewer, tempItemIds: new Set() });
+    const single = await computeReportSignals(client, { ...r, viewer, tempItemIds: new Map() });
     expect(single.signals).toEqual(batch.get(r.id));
     if (r.id === "am") expect(single.prepValues).toMatchObject([{ par: 10, total: 2 }]);
   }

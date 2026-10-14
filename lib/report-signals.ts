@@ -54,10 +54,24 @@ export function parStatusFromHave(par: number | null, have: number | null): ParS
 }
 
 /**
- * True when a fridge-temp reading is out of safe range (> 41°F). The CALLER
- * must already know the completion's template_item_id is in the location's
- * temp-item registry — this only checks the count, never "any count > 41".
+ * True when a fridge-temp reading is out of safe range (> the fridge's own safe max,
+ * 41°F when unset). The CALLER must already know the completion's template_item_id is
+ * in the location's temp-item registry — this only checks the count, never "any count > 41".
  */
-export function isOutOfRangeTemp(countValue: number | null): boolean {
-  return countValue !== null && countValue > FRIDGE_DEFAULT_SAFE_MAX_F;
+export function isOutOfRangeTemp(countValue: number | null, safeMaxF: number = FRIDGE_DEFAULT_SAFE_MAX_F): boolean {
+  return countValue !== null && countValue > safeMaxF;
+}
+
+/**
+ * The location's fridge temp items → that fridge's safe max (°F), from `maintenance_equipment`
+ * (`safe_max_f ?? 41`). B8 #4: Reports and Trends used a flat 41°F while Pulse and the
+ * maintenance page used each fridge's own max — one reading could be a flag on one surface
+ * and fine on the other. Every surface now asks the same question of the same row.
+ */
+export type TempItemRegistry = ReadonlyMap<string, number>;
+
+/** THE temp-flag rule: a registry temp item whose reading exceeds its fridge's safe max. */
+export function isTempFlag(registry: TempItemRegistry, templateItemId: string, countValue: number | null): boolean {
+  const safeMax = registry.get(templateItemId);
+  return safeMax !== undefined && isOutOfRangeTemp(countValue, safeMax);
 }

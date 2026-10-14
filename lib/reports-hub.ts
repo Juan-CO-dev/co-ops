@@ -11,7 +11,7 @@ import {
   loadMaintenanceReportDetail,
   type MaintenanceReportDetail,
 } from "@/lib/maintenance";
-import { derivePrepHave, parStatusFromHave, reportParDeviation, isOutOfRangeTemp } from "@/lib/report-signals";
+import { derivePrepHave, parStatusFromHave, reportParDeviation, isTempFlag, type TempItemRegistry } from "@/lib/report-signals";
 import { loadShiftWrapUp } from "@/lib/pm-report";
 import type { ShiftWrapUpRow } from "@/lib/pm-report";
 import { loadReportStatuses } from "@/lib/midshift";
@@ -364,7 +364,7 @@ export interface ChecklistDetailItem {
   byName: string | null;
   countValue: number | null;
   note: string | null; // null unless viewer.level >= REPORTS_HUB_NOTES_LEVEL
-  isTempFlag: boolean; // true when item is in location's tempItemIds AND count_value > FRIDGE_DEFAULT_SAFE_MAX_F
+  isTempFlag: boolean; // true when item is in location's tempItemIds AND count_value > that fridge's safe max (41 when unset)
   /** Fulledit PR-2 (0165): the line's question input type — drives how the
    *  completion's count_value/notes read in the report (via interpretAnswer). */
   inputType: "yes_no" | "free_text" | null;
@@ -520,7 +520,7 @@ async function loadChecklistDetail(
       note: showNotes ? c?.notes ?? null : null, // REDACTED below L5
       // isTempFlag: item is in the location's fridge temp registry AND its count exceeds the safe max.
       // tempItemIds already loaded above (after the IDOR guard).
-      isTempFlag: tempItemIds.has(ti.id) && countValue !== null && countValue > FRIDGE_DEFAULT_SAFE_MAX_F,
+      isTempFlag: isTempFlag(tempItemIds, ti.id, countValue),
       photoId: c?.photo_id ?? null,
       inputType: ti.input_type,
       incompleteReason: (() => {
@@ -892,8 +892,7 @@ async function loadOpeningDetail(
       byName: c?.completed_by ? (nameById.get(c.completed_by) ?? null) : null,
       countValue,
       note: showNotes ? (c?.notes ?? null) : null, // REDACTED below L5
-      isTempFlag:
-        tempItemIds.has(ti.id) && countValue !== null && countValue > FRIDGE_DEFAULT_SAFE_MAX_F,
+      isTempFlag: isTempFlag(tempItemIds, ti.id, countValue),
       baseline: isSpotCheck ? { closerCount: snap.closerCount, par: snap.parValue, sourceInstanceId: snap.closingInstanceId } : null,
       openerRecount: p1?.openerRecount ?? null,
       groundTruth: p1?.groundTruth ?? null,
@@ -992,7 +991,7 @@ async function loadCashDetail(
   const { signals } = await computeReportSignals(service, {
     type: "cash",
     id: args.id,
-    tempItemIds: new Set<string>(),
+    tempItemIds: new Map<string, number>(),
   });
 
   // Resolve signer name
@@ -1309,7 +1308,7 @@ export interface ReportSignals {
   notStarted: number; // instances with no live completion (0 or 1)
   underPar: number; // opening/mid-day final-check deviations
   overPar: number;
-  tempFlags: number; // completions on temp items with count_value > 41
+  tempFlags: number; // completions on temp items above their fridge's safe max (41 when unset)
   cashOverShortCents: number | null; // cash only
 }
 
@@ -1322,29 +1321,37 @@ export interface PrepValueRow {
 }
 
 /**
- * Temp-item template-item ids for a location, from the maintenance registry.
- * Returns a Set of checklist_template_item UUIDs whose completions represent
- * fridge temperature readings. Used to gate tempFlags counting — only
- * completions on these items are considered, never "any count_value > 41"
- * (prep totals can exceed 41 and would false-positive).
+ * Temp-item template-item ids for a location, from the maintenance registry, each mapped to
+ * its fridge's safe max (`safe_max_f ?? 41`, B8 #4). Only completions on these items are
+ * considered, never "any count_value > 41" (prep totals can exceed 41 and would
+ * false-positive). Inactive fridges stay in: their past readings are still history.
  */
 export async function loadLocationTempItemIds(
   service: SupabaseClient,
   locationId: string,
-): Promise<Set<string>> {
+): Promise<Map<string, number>> {
   const { data, error } = await service
     .from("maintenance_equipment")
-    .select("opening_temp_item_id, closing_temp_item_id")
+    .select("opening_temp_item_id, closing_temp_item_id, safe_max_f")
     .eq("location_id", locationId)
     .eq("kind", "fridge");
   if (error) throw new Error(error.message);
-  const ids = new Set<string>();
-  for (const r of (data ?? []) as Array<{
+  return tempItemRegistry((data ?? []) as Array<{
     opening_temp_item_id: string | null;
     closing_temp_item_id: string | null;
-  }>) {
-    if (r.opening_temp_item_id) ids.add(r.opening_temp_item_id);
-    if (r.closing_temp_item_id) ids.add(r.closing_temp_item_id);
+    safe_max_f: number | null;
+  }>);
+}
+
+/** Pure half of loadLocationTempItemIds (tested): equipment rows → item id → safe max. */
+export function tempItemRegistry(
+  rows: ReadonlyArray<{ opening_temp_item_id: string | null; closing_temp_item_id: string | null; safe_max_f: number | null }>,
+): Map<string, number> {
+  const ids = new Map<string, number>();
+  for (const r of rows) {
+    const safeMax = r.safe_max_f ?? FRIDGE_DEFAULT_SAFE_MAX_F;
+    if (r.opening_temp_item_id) ids.set(r.opening_temp_item_id, safeMax);
+    if (r.closing_temp_item_id) ids.set(r.closing_temp_item_id, safeMax);
   }
   return ids;
 }
@@ -1362,7 +1369,7 @@ export async function loadLocationTempItemIds(
  */
 export async function computeReportSignals(
   service: SupabaseClient,
-  args: { type: ReportTypeKey; id: string; tempItemIds: Set<string>; viewer?: Viewer },
+  args: { type: ReportTypeKey; id: string; tempItemIds: TempItemRegistry; viewer?: Viewer },
 ): Promise<{ signals: ReportSignals; prepValues: PrepValueRow[]; checks: ChecklistCheckRow[] }> {
   const empty: ReportSignals = {
     done: 0,
@@ -1452,7 +1459,7 @@ function computeChecklistSignalsFromData(
   type: ReportTypeKey,
   items: Array<{ id: string; label: string; required: boolean; active: boolean }>,
   rows: Array<{ template_item_id: string; count_value: number | null; prep_data: unknown }>,
-  tempItemIds: Set<string>,
+  tempItemIds: TempItemRegistry,
 ): { signals: ReportSignals; prepValues: PrepValueRow[]; checks: ChecklistCheckRow[] } {
   const labelById = new Map(items.map((i) => [i.id, i.label]));
   const completedIds = new Set(rows.map((r) => r.template_item_id));
@@ -1477,9 +1484,9 @@ function computeChecklistSignalsFromData(
     if (deviation === "under") underPar++;
     else if (deviation === "over") overPar++;
     // Temp-flag: ONLY on completions whose template_item_id is in the registry
-    // tempItemIds set AND count_value > 41. Never "any count_value > 41" —
+    // tempItemIds registry AND count_value > its fridge's safe max. Never "any count_value > 41" —
     // prep totals can exceed 41 and would false-positive.
-    if (tempItemIds.has(r.template_item_id) && isOutOfRangeTemp(r.count_value)) {
+    if (isTempFlag(tempItemIds, r.template_item_id, r.count_value)) {
       tempFlags++;
     }
 
@@ -1534,7 +1541,7 @@ function computeChecklistSignalsFromData(
 export async function computeReportSignalsBatch(
   service: SupabaseClient,
   reports: Array<{ type: ReportTypeKey; id: string }>,
-  tempItemIds: Set<string>,
+  tempItemIds: TempItemRegistry,
   viewer?: Viewer,
 ): Promise<Map<string, ReportSignals>> {
   const empty: ReportSignals = { done: 0, total: 0, skipped: 0, notStarted: 0, underPar: 0, overPar: 0, tempFlags: 0, cashOverShortCents: null };
