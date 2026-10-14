@@ -1204,16 +1204,19 @@ export function OpeningClient({
   // hint when ticked but missing temp) and its station — B1 #10: the hint is a
   // button that opens + scrolls to that station (the temp box sits in a
   // collapsed station card). Station key = the stationGroups key.
-  const firstMissingTemp = useMemo(() => {
+  const firstMissingTempItem = useMemo(() => {
     for (const item of phase1Items) {
       if (!item.expectsCount) continue;
       const v = values.get(item.id);
       if (v?.ticked && (v?.countValue === null || v?.countValue === undefined)) {
-        return { label: item.label, station: item.station ?? "—" };
+        return item;
       }
     }
     return null;
   }, [phase1Items, values]);
+  const firstMissingTemp = firstMissingTempItem
+    ? { label: firstMissingTempItem.label, station: firstMissingTempItem.station ?? "—" }
+    : null;
 
   const footerHint = openingFooterHint({
     activePhase,
