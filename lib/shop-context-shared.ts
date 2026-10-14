@@ -66,17 +66,16 @@ export function pickShop<T extends { id: string }>(args: PickShopArgs<T>): T | n
 }
 
 /**
- * Paths where `?location=` is NOT the working shop (a list FILTER, not a context switch), so
- * visiting them must not move the remembered shop.
- */
-const NON_CONTEXT_PATHS: readonly string[] = ["/admin/users"];
-
-/**
  * THE ROUTE PARAMETER CONTRACT: which query parameter(s) select the shop on each page, in
- * precedence order. The pages listed here read their explicit shop THROUGH `shopParamFor`, and the
- * sync reads it through the same function, so the shop the sync remembers is always the shop the
- * page displays (review P2: `/dashboard?loc=A&location=B` shows A, so it must remember A — never
- * B). Every other page reads `?location=` alone.
+ * precedence order. OPT-IN: a route that is not declared here reads NO shop from its URL, and the
+ * sync never remembers a shop from it (review 2: `/admin/catering/fulfillment?location=B` and
+ * `/catering/quotes?location=B` ignore the parameter and show the remembered shop, so remembering B
+ * there would move the working shop to one the page never displayed; `/admin/users?location=` is a
+ * list FILTER). The `loc` pages read their explicit shop THROUGH `shopParamFor`, the others read
+ * the named parameter directly, and the sync reads every one through `shopParamFor` — so the shop
+ * the sync remembers is the shop the page displays (review 1: `/dashboard?loc=A&location=B` shows
+ * A, so it remembers A). `tests/shop-context.test.ts` audits every resolver page's SOURCE against
+ * this table, both ways.
  */
 const SHOP_PARAMS_BY_PATH: Readonly<Record<string, readonly string[]>> = {
   "/dashboard": ["loc"],
@@ -85,12 +84,33 @@ const SHOP_PARAMS_BY_PATH: Readonly<Record<string, readonly string[]>> = {
   "/admin/toast-employees": ["loc"],
   "/assignments": ["location", "loc"],
   "/my-feedback": ["location", "loc"], // old ?loc= links keep working; the shared tabs use ?location=
+  "/reports": ["location"],
+  "/reports/sales": ["location"],
+  "/reports/sales/catering": ["location"],
+  "/reports/sales/checks": ["location"],
+  "/reports/written": ["location"],
+  "/operations/opening": ["location"],
+  "/mid-shift": ["location"],
+  "/ordering": ["location"],
+  "/admin/catering/prep-demand": ["location"],
+  "/admin/catering/lto": ["location"],
 };
-const DEFAULT_SHOP_PARAMS: readonly string[] = ["location"];
 
-/** The shop-selecting query parameters of `pathname`, in precedence order. */
+/** Dynamic routes, matched by prefix (`/mid-shift/[section]`). */
+const SHOP_PARAMS_BY_PREFIX: ReadonlyArray<readonly [string, readonly string[]]> = [["/mid-shift/", ["location"]]];
+
+const NO_SHOP_PARAMS: readonly string[] = [];
+
+/** The shop-selecting query parameters of `pathname`, in precedence order; [] = reads none. */
 export function shopParamNames(pathname: string): readonly string[] {
-  return SHOP_PARAMS_BY_PATH[pathname] ?? DEFAULT_SHOP_PARAMS;
+  const exact = SHOP_PARAMS_BY_PATH[pathname];
+  if (exact) return exact;
+  return SHOP_PARAMS_BY_PREFIX.find(([prefix]) => pathname.startsWith(prefix) && pathname.length > prefix.length)?.[1] ?? NO_SHOP_PARAMS;
+}
+
+/** Every declared exact route (the test audits each against its page source). */
+export function declaredShopRoutes(): string[] {
+  return Object.keys(SHOP_PARAMS_BY_PATH);
 }
 
 /**
@@ -107,7 +127,6 @@ export function shopParamFor(pathname: string, get: (name: string) => string | n
 
 /** The explicit shop a URL selects on this page (per the contract above), or null. */
 export function shopParamFromUrl(pathname: string, params: { get(name: string): string | null }): string | null {
-  if (NON_CONTEXT_PATHS.includes(pathname)) return null;
   const value = shopParamFor(pathname, (name) => params.get(name));
   return isShopId(value) ? value : null;
 }

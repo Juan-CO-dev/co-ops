@@ -2,7 +2,7 @@
  * B2 · shop context (triage #30): the pure resolver, the URL/cookie helpers, and source-shape pins
  * that every shop-defaulting page goes through it instead of defaulting to "the first location".
  */
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -13,6 +13,7 @@ import {
   loginLandingPath,
   pickShop,
   pickShopId,
+  declaredShopRoutes,
   readCookie,
   reportShopCandidates,
   shopParamFor,
@@ -22,7 +23,7 @@ import {
   shouldRememberShop,
 } from "@/lib/shop-context-shared";
 import { resolvePulsePanels, resolveRequestedLocation } from "@/lib/pulse/page-shared";
-import { resolveReportShopId } from "@/lib/shop-context";
+import { resolveReportShopId, resolveShopId } from "@/lib/shop-context";
 import { REPORT_ALL_LOCATIONS_LEVEL } from "@/lib/locations";
 import { canReadScopedReport } from "@/lib/report-scope";
 
@@ -209,7 +210,10 @@ describe("page/sync agreement — the remembered shop is the shop the page displ
   it("contract spot-checks", () => {
     expect(shopParamNames("/dashboard")).toEqual(["loc"]);
     expect(shopParamNames("/my-feedback")).toEqual(["location", "loc"]);
-    expect(shopParamNames("/catering/quotes")).toEqual(["location"]);
+    expect(shopParamNames("/catering/quotes")).toEqual([]);
+    expect(shopParamNames("/admin/catering/fulfillment")).toEqual([]);
+    expect(shopParamNames("/mid-shift/sales")).toEqual(["location"]);
+    expect(shopParamNames("/mid-shift/")).toEqual([]);
     expect(shopParamFor("/my-feedback", (n) => ({ location: "all", loc: A } as Record<string, string>)[n])).toBe("all");
   });
 });
@@ -264,6 +268,88 @@ describe("report default — resolved against the page's AUTHORIZED shops (revie
   it("an 8+ with no memberships defaults to the first active shop instead of bouncing", async () => {
     expect(await resolveReportShopId({ level: 9, locations: [] })).toBe(A);
   });
+});
+
+describe("review 2: a route that ignores the URL shop never moves the remembered shop", () => {
+  beforeEach(() => { server.cookie = A; server.queries = 0; });
+  const q = (s: string) => new URLSearchParams(s);
+  for (const route of ["/admin/catering/fulfillment", "/catering/quotes", "/admin/users", "/admin/catering/zones", "/operations/closing"]) {
+    it(`${route}?location=B shows the remembered shop and writes nothing`, async () => {
+      // The page's own selection code (fulfillment: resolveShopId over its nodes; quotes:
+      // resolveShop over its locations) takes no explicit shop, so with co_shop=A it shows A…
+      expect(await resolveShopId([A, B])).toBe(A);
+      // …and the sync must not remember B from a parameter the page never read.
+      const candidate = shopParamFromUrl(route, q(`location=${B}&loc=${B}`));
+      expect(candidate).toBeNull();
+      expect(shouldRememberShop({ candidate, allowed: [A, B], current: A })).toBe(false);
+    });
+  }
+});
+
+// ─── Route-contract audit against the ACTUAL page sources ─────────────────────
+
+const ROOT_FOR_AUDIT = path.resolve(__dirname, "..");
+const PAGE_ROUTES: Record<string, string> = {
+  "app/(authed)/dashboard/page.tsx": "/dashboard",
+  "app/(authed)/stations/page.tsx": "/stations",
+  "app/admin/stations/page.tsx": "/admin/stations",
+  "app/admin/toast-employees/page.tsx": "/admin/toast-employees",
+  "app/(authed)/assignments/page.tsx": "/assignments",
+  "app/(authed)/my-feedback/page.tsx": "/my-feedback",
+  "app/(authed)/reports/page.tsx": "/reports",
+  "app/(authed)/reports/sales/page.tsx": "/reports/sales",
+  "app/(authed)/reports/sales/catering/page.tsx": "/reports/sales/catering",
+  "app/(authed)/reports/sales/checks/page.tsx": "/reports/sales/checks",
+  "app/(authed)/reports/written/page.tsx": "/reports/written",
+  "app/(authed)/operations/opening/page.tsx": "/operations/opening",
+  "app/(authed)/mid-shift/page.tsx": "/mid-shift",
+  "app/(authed)/mid-shift/[section]/page.tsx": "/mid-shift/sales",
+  "app/ordering/page.tsx": "/ordering",
+  "app/admin/catering/prep-demand/page.tsx": "/admin/catering/prep-demand",
+  "app/admin/catering/lto/page.tsx": "/admin/catering/lto",
+  "app/admin/catering/fulfillment/page.tsx": "/admin/catering/fulfillment",
+  "app/(authed)/catering/quotes/page.tsx": "/catering/quotes",
+};
+
+/** Which shop parameters a page's SOURCE actually reads, in precedence order. */
+function shopParamsReadBySource(text: string, route: string): readonly string[] {
+  const viaContract = text.match(/shopParamFor\("([^"]+)"/);
+  if (viaContract) {
+    expect(viaContract[1], `${route} reads the contract of its own route`).toBe(route);
+    return shopParamNames(route);
+  }
+  const readsLocation = [
+    /\bparams\.location\b/, /\braw\.location\b/, /\bsp\["location"\]/,
+    /const \{[^}]*\blocation\b[^}]*\} = await searchParams/,
+  ].some((re) => re.test(text));
+  const readsLoc = /const \{[^}]*\bloc\b[^}]*\} = await searchParams|\bsp\["loc"\]|\bparams\.loc\b/.test(text);
+  expect(readsLoc, `${route} reads ?loc= outside the contract`).toBe(false);
+  return readsLocation ? ["location"] : [];
+}
+
+describe("route contract = what each resolver page's source actually reads (review 2)", () => {
+  it("every page that imports the resolver is audited (and every audited page imports it)", () => {
+    const pages: string[] = [];
+    const walk = (dir: string) => {
+      for (const entry of readdirSync(path.join(ROOT_FOR_AUDIT, dir), { withFileTypes: true })) {
+        const rel = `${dir}/${entry.name}`;
+        if (entry.isDirectory()) walk(rel);
+        else if (entry.name === "page.tsx" && /from "@\/lib\/shop-context"/.test(readFileSync(path.join(ROOT_FOR_AUDIT, rel), "utf8"))) pages.push(rel);
+      }
+    };
+    walk("app");
+    expect(pages.sort()).toEqual(Object.keys(PAGE_ROUTES).sort());
+  });
+  it("every declared route is backed by an audited page", () => {
+    const audited = new Set(Object.values(PAGE_ROUTES));
+    for (const route of declaredShopRoutes()) expect(audited.has(route), route).toBe(true);
+  });
+  for (const [file, route] of Object.entries(PAGE_ROUTES)) {
+    it(`${route} (${file})`, () => {
+      const text = readFileSync(path.join(ROOT_FOR_AUDIT, file), "utf8");
+      expect(shopParamNames(route)).toEqual(shopParamsReadBySource(text, route));
+    });
+  }
 });
 
 // ─── Source-shape pins ────────────────────────────────────────────────────────
