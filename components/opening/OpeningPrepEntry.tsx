@@ -46,7 +46,7 @@ import type { DerivedSku, ConfirmedInput } from "@/lib/prep-consumption";
 import { ProductionConsumptionPanel } from "@/components/production/ProductionConsumptionPanel";
 import { BatchEntryFields } from "@/components/prep/BatchEntryFields";
 import { emptyBatchFormValue, isBatchContractCode, type BatchFormValue, type BatchRowContext } from "@/lib/batch-prep-shared";
-import { formatPrepQty, prepQtyParts, roundQty } from "@/lib/prep-display-shared";
+import { formatPrepQty, parseDecimalDraft, prepQtyParts, roundQty } from "@/lib/prep-display-shared";
 import type { ChecklistTemplateItem, OpeningPhase2Meta } from "@/lib/types";
 
 import { CollapsibleChecklistSection } from "@/components/ui/CollapsibleChecklistSection";
@@ -746,6 +746,7 @@ function PrepEntryRow({
           onChange={(next) => onChange({ ...value, openerPrepped: next })}
           onBlur={readOnly ? undefined : () => onSave(value)}
           ariaLabel={t("opening.phase2.input_prepped_aria", { item: resolved.label })}
+          invalidHint={t("opening.phase2.numbers_only")}
           hasError={!readOnly && prepAmountMissing}
           disabled={readOnly}
         />
@@ -955,48 +956,78 @@ interface NumericInputProps {
   onChange: (next: number | null) => void;
   onBlur?: () => void;
   ariaLabel: string;
+  /** B1 #5 — shown beside the box while its text is not a number (e.g. "5 1/3"). */
+  invalidHint: string;
   hasError?: boolean;
   /** Locked (read-only) — the input renders its value but cannot be edited. */
   disabled?: boolean;
 }
 
+const draftOf = (v: number | null) => (v === null ? "" : String(v));
+
+/**
+ * B1 #5 — the box keeps what was TYPED (a local draft) instead of re-rendering String(value):
+ * typing "0." used to commit 0 and re-render "0", so the point vanished and 0.5 could not be
+ * typed one key at a time. The parent's number moves only when the draft means a number
+ * (parseDecimalDraft: "5" and "5." commit 5, "." commits nothing); an invalid draft ("5 1/3")
+ * commits nothing and says so. Blur saves the parent's value — the last valid number — and
+ * tidies a partial draft ("5." → "5"). The draft re-syncs from the prop with the during-render
+ * prev-compare pattern (never an effect) when the value changes from outside the box.
+ */
 function NumericInput({
   value,
   onChange,
   onBlur,
   ariaLabel,
+  invalidHint,
   hasError = false,
   disabled = false,
 }: NumericInputProps) {
-  const stringValue = value === null ? "" : String(value);
+  const [draft, setDraft] = useState(() => draftOf(value));
+  const [prevValue, setPrevValue] = useState(value);
+  if (value !== prevValue) {
+    setPrevValue(value);
+    const d = parseDecimalDraft(draft);
+    const draftMeans = d.kind === "empty" ? null : d.kind === "invalid" ? undefined : d.value;
+    if (draftMeans !== value) setDraft(draftOf(value));
+  }
+  const invalid = !disabled && parseDecimalDraft(draft).kind === "invalid";
   return (
-    <input
-      type="text"
-      inputMode="decimal"
-      value={stringValue}
-      disabled={disabled}
-      onChange={(e) => {
-        const raw = e.target.value.trim();
-        if (raw === "") {
-          onChange(null);
-          return;
-        }
-        const parsed = Number(raw);
-        if (Number.isFinite(parsed)) onChange(parsed);
-      }}
-      onBlur={onBlur}
-      aria-label={ariaLabel}
-      aria-invalid={hasError}
-      className={[
-        "inline-flex h-11 w-20 items-center rounded-md border-2 px-3",
-        "text-base font-semibold text-co-text",
-        "transition focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60",
-        disabled
-          ? "border-co-border-2 bg-co-bg/40 text-co-text-muted cursor-not-allowed"
-          : hasError
-            ? "border-co-cta-text bg-co-surface"
-            : "border-co-border-2 bg-co-surface hover:border-co-text",
-      ].join(" ")}
-    />
+    <>
+      <input
+        type="text"
+        inputMode="decimal"
+        value={draft}
+        disabled={disabled}
+        onChange={(e) => {
+          const raw = e.target.value;
+          setDraft(raw);
+          const d = parseDecimalDraft(raw);
+          if (d.kind === "empty") onChange(null);
+          else if ((d.kind === "number" || d.kind === "partial") && d.value !== null) onChange(d.value);
+        }}
+        onBlur={() => {
+          if (!invalid) setDraft(draftOf(value));
+          onBlur?.();
+        }}
+        aria-label={ariaLabel}
+        aria-invalid={hasError || invalid}
+        className={[
+          "inline-flex h-11 w-20 items-center rounded-md border-2 px-3",
+          "text-base font-semibold text-co-text",
+          "transition focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60",
+          disabled
+            ? "border-co-border-2 bg-co-bg/40 text-co-text-muted cursor-not-allowed"
+            : hasError || invalid
+              ? "border-co-cta-text bg-co-surface"
+              : "border-co-border-2 bg-co-surface hover:border-co-text",
+        ].join(" ")}
+      />
+      {invalid ? (
+        <span role="alert" className="text-[11px] font-medium text-co-cta-text">
+          {invalidHint}
+        </span>
+      ) : null}
+    </>
   );
 }

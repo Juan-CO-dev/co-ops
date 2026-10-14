@@ -116,3 +116,25 @@ describe("#3/#4 quantities render through the prep display helpers", () => {
     expect(p2).toContain("formatPrepQty(it.need, it.parUnit)");
   });
 });
+
+describe("#5 the opening prep box keeps what was typed", () => {
+  const opening = read("components/opening/OpeningPrepEntry.tsx");
+  const body = opening.slice(opening.indexOf("function NumericInput("));
+
+  it("renders a local draft parsed by parseDecimalDraft, not String(value)", () => {
+    expect(body).toContain("const [draft, setDraft] = useState(");
+    expect(body).toContain("value={draft}");
+    expect(body).toContain("parseDecimalDraft(raw)");
+    expect(body).not.toContain("String(value)}");
+  });
+
+  it("re-syncs from the prop during render (prev-compare), never in an effect", () => {
+    expect(body).toMatch(/if \(value !== prevValue\) \{\s*setPrevValue\(value\);/);
+    expect(body).not.toMatch(/useEffect/);
+  });
+
+  it("says so when the text is not a number", () => {
+    expect(body).toContain("{invalidHint}");
+    expect(opening).toContain('invalidHint={t("opening.phase2.numbers_only")}');
+  });
+});
