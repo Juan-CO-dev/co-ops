@@ -27,6 +27,7 @@ import {
   type QuoteClientRef,
   type QuoteLeadOption,
   type QuoteLeadRef,
+  type QuoteLineKind,
 } from "@/lib/catering/quotes-shared";
 import type { CateringMenuItem, CateringPackage } from "@/lib/catering/menu";
 import type { Payment } from "@/lib/catering/payments";
@@ -195,11 +196,14 @@ interface LineDraft {
   itemId: string | null;
   menuItemId: string | null;
   packageId: string | null;
+  /** Migration 0251 — carried unchanged through edits and revisions; null = not a package line. */
+  lineKind: QuoteLineKind | null;
+  componentsListed: boolean | null;
 }
 let lineKeySeq = 0;
 function blankLine(): LineDraft {
   lineKeySeq += 1;
-  return { key: `l${lineKeySeq}`, description: "", quantity: "1", unitPrice: "", itemId: null, menuItemId: null, packageId: null };
+  return { key: `l${lineKeySeq}`, description: "", quantity: "1", unitPrice: "", itemId: null, menuItemId: null, packageId: null, lineKind: null, componentsListed: null };
 }
 
 function QuoteBuilder({
@@ -251,6 +255,8 @@ function QuoteBuilder({
             itemId: i.itemId,
             menuItemId: i.menuItemId,
             packageId: i.packageId,
+            lineKind: i.lineKind,
+            componentsListed: i.componentsListed,
           };
         })
       : [blankLine()],
@@ -268,7 +274,7 @@ function QuoteBuilder({
     const seq = ++previewSeq.current;
     const handle = window.setTimeout(async () => {
       const validLines = lines
-        .map((l) => ({ description: l.description.trim(), quantity: Number(l.quantity), unitPriceCents: dollarsToCents(l.unitPrice), itemId: l.itemId, menuItemId: l.menuItemId, packageId: l.packageId }))
+        .map((l) => ({ description: l.description.trim(), quantity: Number(l.quantity), unitPriceCents: dollarsToCents(l.unitPrice), itemId: l.itemId, menuItemId: l.menuItemId, packageId: l.packageId, lineKind: l.lineKind, componentsListed: l.componentsListed }))
         .filter((l) => (l.description.length > 0 || l.itemId || l.menuItemId) && Number.isFinite(l.quantity) && l.quantity > 0 && l.unitPriceCents != null);
       if (!locationId || validLines.length === 0) {
         if (seq === previewSeq.current) setPreview(null);
@@ -305,6 +311,8 @@ function QuoteBuilder({
       itemId: item.kind === "item" ? item.id : null,
       menuItemId: item.kind === "menu_item" ? item.id : null,
       packageId: null,
+      lineKind: null,
+      componentsListed: null,
     };
     setLines((prev) => appendLines(prev, [line]));
   };
@@ -341,7 +349,7 @@ function QuoteBuilder({
   const submit = async () => {
     setErrorKey(null);
     const payloadLines = lines
-      .map((l) => ({ description: l.description.trim(), quantity: Number(l.quantity), unitPriceCents: dollarsToCents(l.unitPrice), itemId: l.itemId, menuItemId: l.menuItemId, packageId: l.packageId }))
+      .map((l) => ({ description: l.description.trim(), quantity: Number(l.quantity), unitPriceCents: dollarsToCents(l.unitPrice), itemId: l.itemId, menuItemId: l.menuItemId, packageId: l.packageId, lineKind: l.lineKind, componentsListed: l.componentsListed }))
       .filter((l) => l.description.length > 0 || l.itemId || l.menuItemId);
     if (payloadLines.length === 0) {
       setErrorKey("catering.quotes.error.invalid_payload");

@@ -69,11 +69,13 @@ describe("D-45 · per-head package Qty = headcount", () => {
     ]);
   });
 
-  it("under a priced package line, the pick lines are display only (no package id, no reference)", () => {
+  it("under a priced package header, the pick lines say they are picks (0251: package tag, no reference)", () => {
     for (const pkg of [lightLunch, platter16]) {
       const [whole, ...picks] = expandPackageLines(pkg, "20");
-      expect(whole).toMatchObject({ packageId: pkg.id, itemId: null, menuItemId: null });
-      for (const p of picks) expect(p).toMatchObject({ packageId: null, itemId: null, menuItemId: null, unitPrice: "" });
+      expect(whole).toMatchObject({ packageId: pkg.id, itemId: null, menuItemId: null, lineKind: "package_header", componentsListed: true });
+      for (const p of picks) {
+        expect(p).toMatchObject({ packageId: pkg.id, itemId: null, menuItemId: null, unitPrice: "", lineKind: "package_pick", componentsListed: null });
+      }
     }
   });
 
@@ -83,8 +85,8 @@ describe("D-45 · per-head package Qty = headcount", () => {
       items: [{ itemId: "i-chips", menuItemId: null, label: "Chips", quantity: 1, unitPriceCents: 0 }],
     };
     expect(expandPackageLines(fixed, "")).toEqual([
-      { description: "Snack pack", quantity: "1", unitPrice: "15", itemId: null, menuItemId: null, packageId: "pkg-fix" },
-      { description: "Chips", quantity: "1", unitPrice: "", itemId: "i-chips", menuItemId: null, packageId: "pkg-fix" },
+      { description: "Snack pack", quantity: "1", unitPrice: "15", itemId: null, menuItemId: null, packageId: "pkg-fix", lineKind: "package_header", componentsListed: true },
+      { description: "Chips", quantity: "1", unitPrice: "", itemId: "i-chips", menuItemId: null, packageId: "pkg-fix", lineKind: "package_component", componentsListed: null },
     ]);
   });
 
@@ -96,10 +98,10 @@ describe("D-45 · per-head package Qty = headcount", () => {
         { itemId: null, menuItemId: null, label: "Choose your sub", quantity: 1, unitPriceCents: 0 },
       ],
     };
-    expect(expandPackageLines(mixed, "4").map((l) => [l.description, l.quantity, l.unitPrice, l.itemId, l.packageId])).toEqual([
-      ["Mix", "4", "0", null, "pkg-mix"],
-      ["Chips", "4", "2", "i-chips", "pkg-mix"],
-      ["Choose your sub", "4", "", null, null],
+    expect(expandPackageLines(mixed, "4").map((l) => [l.description, l.quantity, l.unitPrice, l.itemId, l.packageId, l.lineKind])).toEqual([
+      ["Mix", "4", "0", null, "pkg-mix", "package_header"],
+      ["Chips", "4", "2", "i-chips", "pkg-mix", "package_component"],
+      ["Choose your sub", "4", "", null, "pkg-mix", "package_pick"],
     ]);
   });
 
@@ -135,7 +137,7 @@ describe("D-45 · per-head package Qty = headcount", () => {
   it("a per-head package with no composition is one priced line at the headcount", () => {
     const bare: ExpandablePackage = { id: "p", labelEn: "Bare", pricingMode: "per_head", priceCents: 900, items: [] };
     expect(expandPackageLines(bare, "15")).toEqual([
-      { description: "Bare", quantity: "15", unitPrice: "9", itemId: null, menuItemId: null, packageId: "p" },
+      { description: "Bare", quantity: "15", unitPrice: "9", itemId: null, menuItemId: null, packageId: "p", lineKind: "package_header", componentsListed: false },
     ]);
   });
 });

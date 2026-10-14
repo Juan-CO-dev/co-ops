@@ -151,6 +151,11 @@ describe("D-45 · package lines → Prep Demand", () => {
       package_id: l.packageId,
       quantity: Number(l.quantity),
       portion: null,
+      description: l.description,
+      unit_price_cents: Math.round(Number(l.unitPrice || "0") * 100),
+      display_order: i,
+      line_kind: l.lineKind,
+      components_listed: l.componentsListed,
     }));
     const demand = await resolveQuoteDemand(sbFake as never, "q-1");
     return demand.filter((d) => d.choicePackageItemId).reduce((s, d) => s + d.qty, 0);
@@ -166,7 +171,7 @@ describe("D-45 · package lines → Prep Demand", () => {
 
 // ── review (Astra) · package components keep their identity; no double expansion ─────────
 describe("review · package components keep their identity; one package counted once", () => {
-  type QLine = { item_id?: string | null; menu_item_id?: string | null; package_id?: string | null; quantity: number; unit_price_cents?: number };
+  type QLine = { item_id?: string | null; menu_item_id?: string | null; package_id?: string | null; quantity: number; unit_price_cents?: number; description?: string | null; line_kind?: string | null; components_listed?: boolean | null };
   const comps: Row[] = [
     { id: "fix-chips", package_id: "pkg-fix", slot_type: "fixed", item_id: "i-chips", menu_item_id: null, quantity: 1, active: true },
     { id: "mix-chips", package_id: "pkg-mix", slot_type: "fixed", item_id: "i-chips", menu_item_id: null, quantity: 1, active: true },
@@ -177,7 +182,7 @@ describe("review · package components keep their identity; one package counted 
     db.catering_package_items = comps.map((c) => ({ ...c }));
     db.catering_quote_item_options = options;
     db.catering_quote_items = lines.map((l, i) => ({
-      id: `qi-${i}`, quote_id: "q-r", item_id: null, menu_item_id: null, package_id: null, portion: null, unit_price_cents: 0, ...l,
+      id: `qi-${i}`, quote_id: "q-r", item_id: null, menu_item_id: null, package_id: null, portion: null, unit_price_cents: 0, display_order: i, ...l,
     }));
     const d = await resolveQuoteDemand(sbFake as never, "q-r");
     const sum = (f: (x: (typeof d)[number]) => boolean) => d.filter(f).reduce((s, x) => s + x.qty, 0);
@@ -191,6 +196,7 @@ describe("review · package components keep their identity; one package counted 
     expandPackageLines(pkg, headcount).map((l) => ({
       item_id: l.itemId, menu_item_id: l.menuItemId, package_id: l.packageId,
       quantity: Number(l.quantity), unit_price_cents: Math.round(Number(l.unitPrice || "0") * 100),
+      description: l.description, line_kind: l.lineKind, components_listed: l.componentsListed,
     }));
 
   it("$15 fixed package with an unpriced concrete item: demand is the item's own Qty, once", async () => {

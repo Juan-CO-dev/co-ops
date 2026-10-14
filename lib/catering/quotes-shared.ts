@@ -5,6 +5,8 @@
  * (PR #166) import the mixed quotes module — pure money math now lives here.
  * quotes.ts re-exports, so server consumers are unchanged.
  */
+import { isQuoteLineKind, type QuoteLineKind } from "@/lib/catering/prep-demand-shared";
+export type { QuoteLineKind };
 
 export interface ChargeRates {
   taxRateBps: number;
@@ -144,6 +146,45 @@ export function reclassifyQuoteLineRefs<T extends QuoteLineRefLike>(
   return { lines: out, moved, unknown };
 }
 
+// ── Line kind (B7c, migration 0251) ───────────────────────────────────────────────────
+
+export type LineKindResult =
+  | { ok: true; lineKind: QuoteLineKind | null; componentsListed: boolean | null }
+  | { ok: false; message: string };
+
+/**
+ * What a saved line stores in `line_kind` / `components_listed`, checked against its
+ * references (the same shape the 0251 CHECKs enforce, so a bad payload is a named 400, never
+ * a constraint 500 after the quote header was written):
+ *   · package_header / package_pick — a package id and no item/menu reference;
+ *   · package_component — a package id and a reference;
+ *   · `componentsListed` is kept on a header only (absent → false: the whole package).
+ * A line with no kind: a referenced line tagged with a package is unambiguously a component
+ * and is stamped so; anything else stays NULL — a non-package line, or a bare package line
+ * from a client that predates 0251, which the legacy Prep Demand rules were written for.
+ */
+export function resolveQuoteLineKind(l: {
+  itemId: string | null;
+  menuItemId: string | null;
+  packageId: string | null;
+  lineKind?: unknown;
+  componentsListed?: unknown;
+}): LineKindResult {
+  const hasRef = l.itemId != null || l.menuItemId != null;
+  if (l.lineKind == null) {
+    return { ok: true, lineKind: l.packageId != null && hasRef ? "package_component" : null, componentsListed: null };
+  }
+  if (!isQuoteLineKind(l.lineKind)) return { ok: false, message: "unknown line kind" };
+  if (l.packageId == null) return { ok: false, message: `${l.lineKind} needs a package` };
+  if (l.lineKind === "package_component" && !hasRef) return { ok: false, message: "a package component needs an item" };
+  if (l.lineKind !== "package_component" && hasRef) return { ok: false, message: `${l.lineKind} cannot name an item` };
+  return {
+    ok: true,
+    lineKind: l.lineKind,
+    componentsListed: l.lineKind === "package_header" ? l.componentsListed === true : null,
+  };
+}
+
 // ── Quote ↔ lead ↔ customer (B5 #34, #35) ─────────────────────────────────────────────
 
 /**
@@ -255,6 +296,10 @@ export interface ExpandedPackageLine {
   itemId: string | null;
   menuItemId: string | null;
   packageId: string | null;
+  /** What part of the package this line is (migration 0251). */
+  lineKind: QuoteLineKind;
+  /** Header only: true when the package's composition is listed as its own lines. */
+  componentsListed: boolean | null;
 }
 
 /**
@@ -284,18 +329,20 @@ const scaleQty = (q: number, n: number): string => String(Math.round(q * n * 100
  *   (the guide-walk $115 × 8 fix). That line is per person for a per-head package, so its Qty
  *   is the headcount too.
  *
- * ONE REPRESENTATION, THREE KINDS OF LINE (B7c review, Astra 2026-10-14) — what Prep Demand
- * (`resolveQuoteDemand`) counts:
- *   · HEADER — package id, no item/menu reference. Qty = package units. Prep Demand expands
- *     it, but when the quote lists the package's components as their own lines it expands
- *     only the CHOICE slots (→ "needs a pick"); the listed components count themselves.
- *   · COMPONENT — a concrete item/menu reference (+ the package id as a tag). Counted at its
- *     OWN Qty, so editing it moves the demand, and it still counts if the header is removed.
- *   · PICK PLACEHOLDER — a "Choose your sub" slot: no package id and no reference, display
- *     only. The header's choice-slot expansion is what reserves it, exactly once.
+ * ONE REPRESENTATION, THREE KINDS OF LINE, EACH SAYING WHAT IT IS (`line_kind`, migration
+ * 0251) — what Prep Demand (`resolveDemandFromLines`) counts:
+ *   · package_header — package id, no item/menu reference. Qty = package units. With
+ *     `componentsListed = true` (the composition follows as its own lines) Prep Demand expands
+ *     ONLY its choice slots (→ "needs a pick"), even after every component is removed; with no
+ *     composition it stands for the whole package.
+ *   · package_component — a concrete item/menu reference (+ the package id). Counted at its OWN
+ *     Qty, so editing it moves the demand, and it still counts if the header is removed.
+ *   · package_pick — a "Choose your sub" slot (package id, no reference). Display only while a
+ *     header of the package is on the quote (the header reserves the slot, exactly once); if
+ *     every header of the package is removed it counts its own Qty.
  * A header is emitted whenever the package has no composition, is priced only as a whole,
  * or has a pick slot (then at $0 when the components carry the prices), so a slot always
- * has a header to be reserved through.
+ * has a header to be reserved through. Prices and quantities are exactly as before 0251.
  */
 export function expandPackageLines(pkg: ExpandablePackage, headcount: string): ExpandedPackageLine[] {
   const n = packageHeadcountMultiplier(pkg.pricingMode, headcount);
@@ -306,6 +353,8 @@ export function expandPackageLines(pkg: ExpandablePackage, headcount: string): E
     itemId: null,
     menuItemId: null,
     packageId: pkg.id,
+    lineKind: "package_header",
+    componentsListed: pkg.items.length > 0,
   });
   const isPick = (pi: ExpandablePackage["items"][number]) => pi.itemId == null && pi.menuItemId == null;
   const lines: ExpandedPackageLine[] = pkg.items.map((pi) => ({
@@ -314,7 +363,9 @@ export function expandPackageLines(pkg: ExpandablePackage, headcount: string): E
     unitPrice: centsToDollarText(pi.unitPriceCents),
     itemId: pi.itemId,
     menuItemId: pi.menuItemId,
-    packageId: isPick(pi) ? null : pkg.id,
+    packageId: pkg.id,
+    lineKind: isPick(pi) ? "package_pick" : "package_component",
+    componentsListed: null,
   }));
   if (lines.length === 0) return [header(pkg.priceCents)];
   const pricedAsWhole = pkg.priceCents > 0 && lines.every((l) => l.unitPrice === "");
