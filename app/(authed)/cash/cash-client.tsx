@@ -46,6 +46,7 @@ export function CashClient({
   const [mode, setMode] = useState<"hand" | "denomination">("hand");
   const [handTotal, setHandTotal] = useState("");
   const [denoms, setDenoms] = useState<Denominations>({});
+  const [enteredDenoms, setEnteredDenoms] = useState<string[]>([]);
   const [tips, setTips] = useState("");
   const [picked, setPicked] = useState<Set<string>>(new Set());
   const [extraNames, setExtraNames] = useState<string[]>([]);
@@ -187,7 +188,8 @@ export function CashClient({
           ) : (
             <DenominationCounter
               value={denoms}
-              onChange={setDenoms}
+              entered={enteredDenoms}
+              onChange={(next, entered) => { setDenoms(next); setEnteredDenoms(entered); }}
               language={language}
             />
           )}
@@ -197,7 +199,7 @@ export function CashClient({
           {/* Live deposit readout - held back until the closer has entered the
               projected figure AND a drawer figure (an empty form read
               "Deposit -$200.00 - $200.00 short"). */}
-          {cashReadoutVisible({ projected, mode, handTotal, denoms }) ? (
+          {cashReadoutVisible({ projected, mode, handTotal, denoms, enteredDenoms }) ? (
             <p className="text-sm font-semibold text-co-text">
               {t("cash.readout.deposit", { amount: formatCents(depositCents, language) })}
               {" · "}

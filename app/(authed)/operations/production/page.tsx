@@ -13,7 +13,10 @@ import { EmptyState } from "@/components/EmptyState";
 import { YIELD_STATS_READ_MIN } from "@/lib/yield-stats-shared";
 
 async function firstActiveLocationId(): Promise<string | null> {
-  const { data } = await getServiceRoleClient().from("locations").select("id").eq("active", true).order("name").limit(1).maybeSingle<{ id: string }>();
+  const { data, error } = await getServiceRoleClient().from("locations").select("id").eq("active", true).order("name").limit(1).maybeSingle<{ id: string }>();
+  // A failed lookup is a fault, not "no shop": throw so the error boundary shows it instead of
+  // a silent bounce to /dashboard. Only a truly empty result returns null.
+  if (error) throw new Error(`production: default shop lookup failed: ${error.message}`);
   return data?.id ?? null;
 }
 

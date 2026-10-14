@@ -29,9 +29,9 @@ function updaterBodies(src: string): string[] {
 }
 
 describe("PinConfirmModal fires the confirm POST once", () => {
-  it("has setPin updaters (sanity) and none schedules a side effect", () => {
+  it("has no setPin updaters left (the ref is the source of truth) and none schedules a side effect", () => {
     const bodies = updaterBodies(modal);
-    expect(bodies.length).toBeGreaterThan(0);
+    expect(bodies.length).toBe(0);
     for (const b of bodies) {
       expect(b).not.toMatch(/setTimeout/);
       expect(b).not.toMatch(/submit\s*\(/);
@@ -100,8 +100,8 @@ describe("PinConfirmModal queued window (#57)", () => {
 
   it("digit and system-keyboard paths schedule through queueSubmit, not a bare setTimeout", () => {
     expect(modal).not.toMatch(/window\.setTimeout\(\(\) => void submit\(/);
-    expect(modal).toMatch(/if \(next\.length === PIN_LENGTH\) queueSubmit\(next\);/);
-    expect(modal).toMatch(/queueSubmit\(cleaned\)/);
+    expect(modal).toMatch(/if \(step\.completed\) queueSubmit\(step\.pin\);/);
+    expect(modal).toMatch(/pinFromInput\([^]*?queueSubmit\(step\.pin\)/);
   });
 
   it("Cancel, Clear, digits and the toggle are disabled while queued", () => {
@@ -135,9 +135,9 @@ describe("PinConfirmModal queued window (#57)", () => {
 const keypad = readFileSync("components/auth/PinKeypad.tsx", "utf8");
 
 describe("PinKeypad (tile login) fires the PIN POST once (#55)", () => {
-  it("has setPin updaters (sanity) and none schedules a side effect", () => {
+  it("has no setPin updaters left (the ref is the source of truth) and none schedules a side effect", () => {
     const bodies = updaterBodies(keypad);
-    expect(bodies.length).toBeGreaterThan(0);
+    expect(bodies.length).toBe(0);
     for (const b of bodies) {
       expect(b).not.toMatch(/setTimeout/);
       expect(b).not.toMatch(/submit\s*\(/);
@@ -146,7 +146,7 @@ describe("PinKeypad (tile login) fires the PIN POST once (#55)", () => {
   });
 
   it("digit input computes `next` outside any updater and queues once", () => {
-    expect(keypad).toMatch(/const next = \(pin \+ d\)\.slice\(0, PIN_LENGTH\);\s*setPin\(next\);\s*if \(next\.length === PIN_LENGTH\) queueSubmit\(next\);/);
+    expect(keypad).toMatch(/const step = pinAppend\(pinRef\.current, d, PIN_LENGTH\);\s*pinRef\.current = step\.pin;\s*setPin\(step\.pin\);\s*if \(step\.completed\) queueSubmit\(step\.pin\);/);
   });
 
   it("queueSubmit takes an inFlight latch and locks the keypad at the 4th digit", () => {

@@ -27,6 +27,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import type { PinKeypadError } from "@/lib/auth-pin-errors";
+import { pinAppend, pinBackspace, pinFromInput } from "@/lib/pin-entry";
 import { ROLES, type RoleCode } from "@/lib/roles";
 import { BrandMark } from "@/components/BrandMark";
 import { useTranslation } from "@/lib/i18n/provider";
@@ -80,6 +81,9 @@ export function PinKeypad({ userName, role, onSubmit, onBack, lockOnSuccess = fa
   const def = ROLES[role];
   const roleLabel = t(`role.${role}` as TranslationKey);
   const [pin, setPin] = useState("");
+  // Synchronous source of truth for the buffer. `pin` (state) is for rendering only: two
+  // digit events before a re-render both read the same stale state and lost a digit.
+  const pinRef = useRef("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<PinKeypadError | null>(null);
   const [shake, setShake] = useState(false);
@@ -124,6 +128,7 @@ export function PinKeypad({ userName, role, onSubmit, onBack, lockOnSuccess = fa
     vibrateIfAvailable(200);
     setShake(true);
     window.setTimeout(() => setShake(false), 400);
+    pinRef.current = "";
     setPin("");
     if (err.kind === "locked" || err.kind === "throttled") {
       setRetryRemaining(err.retryAfterSeconds);
@@ -175,19 +180,21 @@ export function PinKeypad({ userName, role, onSubmit, onBack, lockOnSuccess = fa
     (d: string) => {
       if (submitting || inFlight.current || retryRemaining !== null) return;
       // A full PIN is already queued; extra taps are noise.
-      if (pin.length >= PIN_LENGTH) return;
+      if (pinRef.current.length >= PIN_LENGTH) return;
       vibrateIfAvailable(10);
       setError(null);
-      const next = (pin + d).slice(0, PIN_LENGTH);
-      setPin(next);
-      if (next.length === PIN_LENGTH) queueSubmit(next);
+      const step = pinAppend(pinRef.current, d, PIN_LENGTH);
+      pinRef.current = step.pin;
+      setPin(step.pin);
+      if (step.completed) queueSubmit(step.pin);
     },
-    [submitting, retryRemaining, pin, queueSubmit],
+    [submitting, retryRemaining, queueSubmit],
   );
 
   const handleClear = useCallback(() => {
     if (submitting || inFlight.current) return;
     vibrateIfAvailable(10);
+    pinRef.current = "";
     setPin("");
     setError(null);
   }, [submitting]);
@@ -195,12 +202,13 @@ export function PinKeypad({ userName, role, onSubmit, onBack, lockOnSuccess = fa
   const handleSystemInput = useCallback(
     (value: string) => {
       if (submitting || inFlight.current) return;
-      const cleaned = value.replace(/\D/g, "").slice(0, PIN_LENGTH);
+      const step = pinFromInput(pinRef.current, value, PIN_LENGTH);
       setError(null);
-      setPin(cleaned);
-      if (cleaned.length === PIN_LENGTH && pin.length < PIN_LENGTH) queueSubmit(cleaned);
+      pinRef.current = step.pin;
+      setPin(step.pin);
+      if (step.completed) queueSubmit(step.pin);
     },
-    [submitting, pin, queueSubmit],
+    [submitting, queueSubmit],
   );
 
   // Physical keyboard handling — accessibility affordance + desktop testing.
@@ -213,7 +221,9 @@ export function PinKeypad({ userName, role, onSubmit, onBack, lockOnSuccess = fa
         handleDigit(e.key);
       } else if (e.key === "Backspace") {
         e.preventDefault();
-        setPin((prev) => prev.slice(0, -1));
+        const step = pinBackspace(pinRef.current);
+        pinRef.current = step.pin;
+        setPin(step.pin);
       } else if (e.key === "Escape") {
         e.preventDefault();
         handleClear();
