@@ -64,7 +64,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import type { ChecklistApiError } from "@/components/ChecklistItem";
 import { useTranslation } from "@/lib/i18n/provider";
-import { pinAppend, pinBackspace, pinFromInput } from "@/lib/pin-entry";
+import { createPinEntry } from "@/lib/pin-entry";
 import type { ChecklistInstance } from "@/lib/types";
 
 const PIN_LENGTH = 4;
@@ -100,9 +100,11 @@ export function PinConfirmModal({
 }: PinConfirmModalProps) {
   const { t } = useTranslation();
   const [pin, setPin] = useState("");
-  // Synchronous source of truth for the buffer (state is for rendering only): two digit
-  // events before a re-render both read the same stale `pin` and lost a digit.
-  const pinRef = useRef("");
+  // Synchronous source of truth for the buffer AND the freeze (state is for rendering only):
+  // two events before a re-render both read the same stale `pin` (a lost digit; an edit
+  // after the 4th digit already queued the submit). Once the 4th digit lands the entry is
+  // frozen until a failure/close path resets it - see lib/pin-entry.ts.
+  const [entry] = useState(createPinEntry);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [shake, setShake] = useState(false);
@@ -146,10 +148,10 @@ export function PinConfirmModal({
     if (open) inFlight.current = false;
   }, [open]);
 
-  // The render-phase block above resets the PIN state; the ref half resets here.
+  // The render-phase block above resets the PIN state; the entry half resets here.
   useEffect(() => {
-    if (open) pinRef.current = "";
-  }, [open]);
+    if (open) entry.reset();
+  }, [open, entry]);
 
   // A scheduled confirm must never outlive the modal: closing (for any reason)
   // or unmounting cancels the timer.
@@ -167,9 +169,9 @@ export function PinConfirmModal({
     vibrateIfAvailable(200);
     setShake(true);
     window.setTimeout(() => setShake(false), 400);
-    pinRef.current = "";
+    entry.reset();
     setPin("");
-  }, []);
+  }, [entry]);
 
   const submit = useCallback(
     async (full: string) => {
@@ -197,7 +199,7 @@ export function PinConfirmModal({
         if (res.ok) {
           const data = (await res.json()) as { instance: ChecklistInstance };
           // Best-effort scrub of in-memory PIN before yielding control.
-          pinRef.current = "";
+          entry.wipe(); // stays frozen: the dialog is finishing
           setPin("");
           confirmed = true; // success: leave the latch set, the modal is done
           onConfirmed(data.instance);
@@ -275,11 +277,14 @@ export function PinConfirmModal({
       } catch {
         triggerError(t("auth.pin_modal.error_network"));
       } finally {
-        if (!confirmed) inFlight.current = false;
+        if (!confirmed) {
+          inFlight.current = false;
+          entry.unfreeze();
+        }
         setSubmitting(false);
       }
     },
-    [instanceId, incompleteReasons, onConfirmed, onError, triggerError, t],
+    [instanceId, incompleteReasons, onConfirmed, onError, triggerError, entry, t],
   );
 
   // Schedule the POST and mark the modal busy in the same breath.
@@ -300,39 +305,38 @@ export function PinConfirmModal({
       if (submitting || inFlight.current) return;
       if (queued) return;
       // A full PIN is already waiting on its submit timer; extra taps are noise.
-      if (pinRef.current.length >= PIN_LENGTH) return;
+      // Advance the entry synchronously (two events before a render must both land); null =
+      // frozen/full/non-digit. Schedule from the result. Side effects live OUT here, never
+      // inside an updater (Strict Mode double-invokes updaters, which scheduled two submits).
+      const step = entry.append(d);
+      if (!step) return;
       vibrateIfAvailable(10);
       setError(null);
-      // Advance the ref synchronously (two events before a render must both land) and
-      // schedule from the result. Side effects live OUT here, never inside an updater
-      // (Strict Mode double-invokes updaters, which scheduled two submits).
-      const step = pinAppend(pinRef.current, d, PIN_LENGTH);
-      pinRef.current = step.pin;
       setPin(step.pin);
       if (step.completed) queueSubmit(step.pin);
     },
-    [submitting, queued, queueSubmit],
+    [submitting, queued, entry, queueSubmit],
   );
 
   const handleClear = useCallback(() => {
     if (submitting || queued) return;
+    if (!entry.clear()) return;
     vibrateIfAvailable(10);
-    pinRef.current = "";
     setPin("");
     setError(null);
-  }, [submitting, queued]);
+  }, [submitting, queued, entry]);
 
   const handleSystemInput = useCallback(
     (value: string) => {
       if (submitting || inFlight.current) return;
       if (queued) return;
-      const step = pinFromInput(pinRef.current, value, PIN_LENGTH);
+      const step = entry.input(value);
+      if (!step) return;
       setError(null);
-      pinRef.current = step.pin;
       setPin(step.pin);
       if (step.completed) queueSubmit(step.pin);
     },
-    [submitting, queued, queueSubmit],
+    [submitting, queued, entry, queueSubmit],
   );
 
   // Cancel closes the dialog: drop any scheduled confirm with it, so a Cancel
@@ -342,22 +346,24 @@ export function PinConfirmModal({
     if (submitting) return;
     clearQueued();
     setQueued(false);
+    entry.unfreeze();
     onCancel();
-  }, [submitting, clearQueued, onCancel]);
+  }, [submitting, clearQueued, entry, onCancel]);
 
   // Physical keyboard handling when modal is open and using on-screen keypad.
   useEffect(() => {
     if (!open || useSystemKeyboard) return;
     function onKey(e: KeyboardEvent) {
-      if (submitting || queued) return;
+      // Guard with the SYNCHRONOUS latch too: `submitting`/`queued` are render state and lag
+      // the 4th digit (Backspace before a render used to edit the display, not the submit).
+      if (submitting || queued || inFlight.current || entry.frozen) return;
       if (/^\d$/.test(e.key)) {
         e.preventDefault();
         handleDigit(e.key);
       } else if (e.key === "Backspace") {
         e.preventDefault();
-        const step = pinBackspace(pinRef.current);
-        pinRef.current = step.pin;
-        setPin(step.pin);
+        const step = entry.backspace();
+        if (step) setPin(step.pin);
       } else if (e.key === "Escape") {
         e.preventDefault();
         handleCancel();
@@ -365,7 +371,7 @@ export function PinConfirmModal({
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [open, useSystemKeyboard, submitting, queued, handleDigit, handleCancel]);
+  }, [open, useSystemKeyboard, submitting, queued, entry, handleDigit, handleCancel]);
 
   if (!open) return null;
 

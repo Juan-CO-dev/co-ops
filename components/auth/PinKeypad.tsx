@@ -27,7 +27,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import type { PinKeypadError } from "@/lib/auth-pin-errors";
-import { pinAppend, pinBackspace, pinFromInput } from "@/lib/pin-entry";
+import { createPinEntry } from "@/lib/pin-entry";
 import { ROLES, type RoleCode } from "@/lib/roles";
 import { BrandMark } from "@/components/BrandMark";
 import { useTranslation } from "@/lib/i18n/provider";
@@ -81,9 +81,11 @@ export function PinKeypad({ userName, role, onSubmit, onBack, lockOnSuccess = fa
   const def = ROLES[role];
   const roleLabel = t(`role.${role}` as TranslationKey);
   const [pin, setPin] = useState("");
-  // Synchronous source of truth for the buffer. `pin` (state) is for rendering only: two
-  // digit events before a re-render both read the same stale state and lost a digit.
-  const pinRef = useRef("");
+  // Synchronous source of truth for the buffer AND the freeze. `pin` (state) is for
+  // rendering only: two events before a re-render both read the same stale state (a lost
+  // digit; an edit after the 4th digit already queued the submit). Once the 4th digit lands
+  // the entry is frozen until a failure path resets it - see lib/pin-entry.ts.
+  const [entry] = useState(createPinEntry);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<PinKeypadError | null>(null);
   const [shake, setShake] = useState(false);
@@ -128,17 +130,18 @@ export function PinKeypad({ userName, role, onSubmit, onBack, lockOnSuccess = fa
     vibrateIfAvailable(200);
     setShake(true);
     window.setTimeout(() => setShake(false), 400);
-    pinRef.current = "";
+    entry.reset();
     setPin("");
     if (err.kind === "locked" || err.kind === "throttled") {
       setRetryRemaining(err.retryAfterSeconds);
     }
-  }, []);
+  }, [entry]);
 
   const release = useCallback(() => {
     inFlight.current = false;
+    entry.unfreeze();
     setSubmitting(false);
-  }, []);
+  }, [entry]);
 
   // Runs only via queueSubmit, which already took the latch and set submitting.
   const submit = useCallback(
@@ -179,51 +182,50 @@ export function PinKeypad({ userName, role, onSubmit, onBack, lockOnSuccess = fa
   const handleDigit = useCallback(
     (d: string) => {
       if (submitting || inFlight.current || retryRemaining !== null) return;
-      // A full PIN is already queued; extra taps are noise.
-      if (pinRef.current.length >= PIN_LENGTH) return;
+      // null = frozen (a full PIN is queued), full or not a digit: extra taps are noise.
+      const step = entry.append(d);
+      if (!step) return;
       vibrateIfAvailable(10);
       setError(null);
-      const step = pinAppend(pinRef.current, d, PIN_LENGTH);
-      pinRef.current = step.pin;
       setPin(step.pin);
       if (step.completed) queueSubmit(step.pin);
     },
-    [submitting, retryRemaining, queueSubmit],
+    [submitting, retryRemaining, entry, queueSubmit],
   );
 
   const handleClear = useCallback(() => {
     if (submitting || inFlight.current) return;
+    if (!entry.clear()) return;
     vibrateIfAvailable(10);
-    pinRef.current = "";
     setPin("");
     setError(null);
-  }, [submitting]);
+  }, [submitting, entry]);
 
   const handleSystemInput = useCallback(
     (value: string) => {
       if (submitting || inFlight.current) return;
-      const step = pinFromInput(pinRef.current, value, PIN_LENGTH);
+      const step = entry.input(value);
+      if (!step) return;
       setError(null);
-      pinRef.current = step.pin;
       setPin(step.pin);
       if (step.completed) queueSubmit(step.pin);
     },
-    [submitting, queueSubmit],
+    [submitting, entry, queueSubmit],
   );
 
   // Physical keyboard handling — accessibility affordance + desktop testing.
   useEffect(() => {
     if (useSystemKeyboard) return;
     function onKey(e: KeyboardEvent) {
-      if (submitting || retryRemaining !== null) return;
+      // Guard with the SYNCHRONOUS latch too: `submitting` is render state and lags the 4th digit.
+      if (submitting || inFlight.current || entry.frozen || retryRemaining !== null) return;
       if (/^\d$/.test(e.key)) {
         e.preventDefault();
         handleDigit(e.key);
       } else if (e.key === "Backspace") {
         e.preventDefault();
-        const step = pinBackspace(pinRef.current);
-        pinRef.current = step.pin;
-        setPin(step.pin);
+        const step = entry.backspace();
+        if (step) setPin(step.pin);
       } else if (e.key === "Escape") {
         e.preventDefault();
         handleClear();
@@ -231,7 +233,7 @@ export function PinKeypad({ userName, role, onSubmit, onBack, lockOnSuccess = fa
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [useSystemKeyboard, submitting, retryRemaining, handleDigit, handleClear]);
+  }, [useSystemKeyboard, submitting, retryRemaining, entry, handleDigit, handleClear]);
 
   const dots = Array.from({ length: PIN_LENGTH }, (_, i) => i < pin.length);
   const isLocked = retryRemaining !== null;

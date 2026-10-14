@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 
-import { PIN_LENGTH, pinAppend, pinBackspace, pinFromInput } from "@/lib/pin-entry";
+import { PIN_LENGTH, createPinEntry, pinAppend, pinBackspace, pinFromInput } from "@/lib/pin-entry";
 
 // Review P2: two digit events before a re-render must both land. The keypads
 // advance a ref with these helpers inside the handler and mirror it to state.
@@ -73,35 +73,122 @@ describe("pin entry buffer (no render between events)", () => {
   });
 });
 
-describe("both keypads use the synchronous ref, cleared wherever the PIN is cleared", () => {
+describe("PinEntry controller: once the 4th digit lands, input is frozen (review 2)", () => {
+  function fill(e = createPinEntry()) {
+    const completed: string[] = [];
+    for (const d of ["1", "2", "3", "4"]) {
+      const step = e.append(d);
+      if (step?.completed) completed.push(step.pin);
+    }
+    return { e, completed };
+  }
+
+  it("two events with no render between both land", () => {
+    const e = createPinEntry();
+    e.append("1");
+    e.append("2");
+    expect(e.value).toBe("12");
+  });
+
+  it("the 4th digit completes exactly once and freezes the entry", () => {
+    const { e, completed } = fill();
+    expect(completed).toEqual(["1234"]);
+    expect(e.frozen).toBe(true);
+  });
+
+  it("Backspace right after the 4th digit (before any render) applies NO edit", () => {
+    const { e } = fill();
+    expect(e.backspace()).toBeNull();
+    expect(e.value).toBe("1234"); // display and the scheduled submit can never diverge
+  });
+
+  it("Clear, system input and further digits are all rejected while frozen", () => {
+    const { e } = fill();
+    expect(e.clear()).toBeNull();
+    expect(e.input("99")).toBeNull();
+    expect(e.append("5")).toBeNull();
+    expect(e.value).toBe("1234");
+  });
+
+  it("a failure path resets: buffer emptied and edits allowed again", () => {
+    const { e } = fill();
+    e.reset();
+    expect(e.value).toBe("");
+    expect(e.frozen).toBe(false);
+    expect(e.append("7")?.pin).toBe("7");
+  });
+
+  it("unfreeze keeps the buffer; wipe empties it but stays frozen (success)", () => {
+    const a = fill().e;
+    a.unfreeze();
+    expect(a.value).toBe("1234");
+    expect(a.backspace()?.pin).toBe("123");
+    const b = fill().e;
+    b.wipe();
+    expect(b.value).toBe("");
+    expect(b.frozen).toBe(true);
+    expect(b.append("1")).toBeNull();
+  });
+
+  it("edits before the 4th digit work: backspace, clear, system input", () => {
+    const e = createPinEntry();
+    e.append("1");
+    e.append("2");
+    expect(e.backspace()?.pin).toBe("1");
+    expect(e.clear()?.pin).toBe("");
+    expect(e.input("55a")?.pin).toBe("55");
+    expect(e.frozen).toBe(false);
+  });
+
+  it("system input that completes the PIN freezes it too", () => {
+    const e = createPinEntry();
+    const step = e.input("4821");
+    expect(step).toEqual({ pin: "4821", completed: true });
+    expect(e.frozen).toBe(true);
+    expect(e.backspace()).toBeNull();
+  });
+
+  it("rejects non-digits and a full buffer without changing anything", () => {
+    const e = createPinEntry();
+    expect(e.append("x")).toBeNull();
+    expect(e.value).toBe("");
+  });
+});
+
+describe("both keypads edit only through the synchronous entry, and guard keys with it", () => {
   for (const [name, path] of [
     ["PinKeypad", "components/auth/PinKeypad.tsx"],
     ["PinConfirmModal", "components/auth/PinConfirmModal.tsx"],
   ] as const) {
     const src = readFileSync(path, "utf8");
-    it(`${name}: digits, backspace and system input advance pinRef, not render state`, () => {
-      expect(src).toMatch(/const pinRef = useRef\(""\)/);
-      expect(src).toMatch(/pinAppend\(pinRef\.current, d, PIN_LENGTH\)/);
-      expect(src).toMatch(/pinBackspace\(pinRef\.current\)/);
-      expect(src).toMatch(/pinFromInput\(pinRef\.current, value, PIN_LENGTH\)/);
+    it(`${name}: digits, backspace, clear and system input go through the entry`, () => {
+      expect(src).toMatch(/const \[entry\] = useState\(createPinEntry\)/);
+      expect(src).toMatch(/entry\.append\(d\)/);
+      expect(src).toMatch(/entry\.backspace\(\)/);
+      expect(src).toMatch(/entry\.clear\(\)/);
+      expect(src).toMatch(/entry\.input\(value\)/);
       expect(src).not.toMatch(/\(pin \+ d\)/);
       expect(src).not.toMatch(/setPin\(\(prev\)/);
+      expect(src).not.toMatch(/pinRef/);
     });
-    it(`${name}: every state clear also clears the ref`, () => {
-      // each `setPin("")` is immediately preceded by a pinRef reset (modal open-reset is
-      // render-phase and is covered by the [open] effect asserted below)
-      const lines = src.split("\n");
-      lines.forEach((line, i) => {
-        if (line.trim() === 'setPin("");' && !/prev|render-phase/.test(lines[i - 1] ?? "")) {
-          const before = lines.slice(Math.max(0, i - 2), i).join("\n");
-          const inOpenReset = lines.slice(Math.max(0, i - 3), i).join("\n").includes("if (open) {");
-          if (!inOpenReset) expect(before, `${name} line ${i + 1}`).toContain('pinRef.current = "";');
-        }
-      });
+    it(`${name}: the physical-key handler checks the synchronous freeze, not just render state`, () => {
+      const at = src.indexOf("function onKey(e: KeyboardEvent)");
+      expect(at).toBeGreaterThan(-1);
+      const head = src.slice(at, at + 700);
+      expect(head).toMatch(/inFlight\.current \|\| (entry\.frozen|retryRemaining)/);
+      expect(head).toContain("entry.frozen");
+    });
+    it(`${name}: every failure path resets the entry`, () => {
+      expect(src).toMatch(/entry\.reset\(\);\s*setPin\(""\)/);
     });
   }
-  it("PinConfirmModal resets the ref on open", () => {
+  it("PinConfirmModal resets the entry on open and unfreezes when a submit fails", () => {
     const src = readFileSync("components/auth/PinConfirmModal.tsx", "utf8");
-    expect(src).toMatch(/useEffect\(\(\) => \{\s*if \(open\) pinRef\.current = "";\s*\}, \[open\]\)/);
+    expect(src).toMatch(/useEffect\(\(\) => \{\s*if \(open\) entry\.reset\(\);\s*\}, \[open, entry\]\)/);
+    expect(src).toMatch(/if \(!confirmed\) \{\s*inFlight\.current = false;\s*entry\.unfreeze\(\);/);
+  });
+  it("PinKeypad release() unfreezes with the latch", () => {
+    const src = readFileSync("components/auth/PinKeypad.tsx", "utf8");
+    expect(src).toMatch(/inFlight\.current = false;\s*entry\.unfreeze\(\);/);
   });
 });
