@@ -963,7 +963,8 @@ export function ClosingClient({ initialState }: { initialState: ClosingInitialSt
         * saved completions (or was never opened). The closing screen is the one
         * surface a manager reliably sees at day's end; closing's auto-complete
         * machinery otherwise makes an empty AM prep invisible. ADVISORY only —
-        * never gates finalize (council: no hard gate on AM prep). */}
+        * never gates finalize (council: no hard gate on AM prep). D-17: the page
+        * sets amPrepGap only from 6 PM ET on the closing's business day. */}
       {!readOnly && amPrepGap ? (
         <div className="mt-6 rounded-2xl border-2 border-co-warning bg-co-warning-surface p-4">
           <p className="text-sm font-bold text-co-text">{t("closing.am_prep_gap.banner")}</p>

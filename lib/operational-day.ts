@@ -138,3 +138,19 @@ export function operationalDayUtcRange(dateYmd: string): { startIso: string; end
   const endMs = startMs + 86_400_000;
   return { startIso: new Date(startMs).toISOString(), endExclusiveIso: new Date(endMs).toISOString() };
 }
+
+/**
+ * True once operational day `dateYmd` (YYYY-MM-DD, ET) has reached the ET wall-clock time
+ * `hhmm` (24-hour "HH:mm"), or the day is already over; false before it, and for a day that
+ * has not started. Business-day aware the only way CO's day works: the ET calendar date
+ * (etCalendarDate) is the business day, so 00:30 on the 15th has NOT reached 18:00 on the
+ * 15th, while any time on the 15th is past 18:00 on the 14th. DST-proof: compares the ET
+ * date and the ET wall clock, never a computed offset.
+ */
+export function etReachedClockOn(nowIso: string, dateYmd: string, hhmm: string): boolean {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(dateYmd)) throw new Error(`etReachedClockOn: bad ymd "${dateYmd}"`);
+  if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(hhmm)) throw new Error(`etReachedClockOn: bad time "${hhmm}"`);
+  const today = etCalendarDate(nowIso);
+  if (today !== dateYmd) return today > dateYmd;
+  return etClockTime(nowIso) >= hhmm;
+}

@@ -420,6 +420,163 @@ export function narrowPrepCompletion(completion: ChecklistCompletion): Checklist
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// D-66 (Juan 2026-10-13) — one bad prep row must not blank a prep PAGE
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** A prep row a page left out because its stored shape failed narrowing (PrepShapeError). */
+export interface SkippedPrepRow {
+  templateItemId: string;
+  /** The item's name as stored on the template row (or the save's snapshot), for the manager note. */
+  label: string;
+  /** The Spanish name when the template row carries one; null = show `label`. */
+  labelEs: string | null;
+  /** What failed: the item's prep settings (prep_meta) or a saved count (prep_data). */
+  source: "template_item" | "completion";
+}
+
+function recordSkip(skipped: SkippedPrepRow[], row: SkippedPrepRow, err: PrepShapeError): void {
+  console.error(`[prep] D-66: skipped ${row.source} for template_item ${row.templateItemId} (${row.label}) on a page read: ${err.message}`);
+  if (!skipped.some((r) => r.templateItemId === row.templateItemId)) skipped.push(row);
+}
+
+/**
+ * The tolerant read of prep template items: narrows each like narrowPrepTemplateItem, but a row
+ * that throws PrepShapeError (e.g. a text par in prep_meta) is left out and recorded in `skipped`
+ * instead of blanking the page or blocking the shift. ONLY PrepShapeError is tolerated —
+ * PrepInvariantError (station/section drift, with its forensic audit) and every other error
+ * still throw.
+ *
+ * Who opts in (`tolerateBadRows: true`): the AM prep and mid-day pages, and the save paths
+ * (AM prep submit, mid-day Phase 1 submit / Phase 2 save / finalize). A save path skips bad rows
+ * it is NOT writing, refuses a write that TARGETS a skipped row (`bad_row` / PrepShapeError), and
+ * never counts a skipped row as required for completeness. So nothing is ever written from a row
+ * that failed its shape. narrowPrepTemplateItem itself stays strict (admin, the audit harness,
+ * tests).
+ */
+export function narrowPrepTemplateItemsForPage(
+  items: ChecklistTemplateItem[],
+  skipped: SkippedPrepRow[],
+): ChecklistTemplateItem[] {
+  const out: ChecklistTemplateItem[] = [];
+  for (const item of items) {
+    try {
+      out.push(narrowPrepTemplateItem(item));
+    } catch (err) {
+      if (!(err instanceof PrepShapeError)) throw err;
+      recordSkip(
+        skipped,
+        { templateItemId: item.id, label: item.label, labelEs: item.translations?.es?.label ?? null, source: "template_item" },
+        err,
+      );
+    }
+  }
+  return out;
+}
+
+/**
+ * The PAGE read of prep completions: a saved row whose prep_data fails isPrepData() is left out
+ * (the row shows as not saved) and recorded in `skipped`, named from the template row
+ * (`labelFor`), else the save's own snapshot, else its template item id. Same tolerance rule as
+ * narrowPrepTemplateItemsForPage: only PrepShapeError.
+ */
+export function narrowPrepCompletionsForPage(
+  completions: ChecklistCompletion[],
+  labelFor: (templateItemId: string) => { label: string; labelEs: string | null } | null,
+  skipped: SkippedPrepRow[],
+): ChecklistCompletion[] {
+  const out: ChecklistCompletion[] = [];
+  for (const c of completions) {
+    try {
+      out.push(narrowPrepCompletion(c));
+    } catch (err) {
+      if (!(err instanceof PrepShapeError)) throw err;
+      const named = labelFor(c.templateItemId);
+      const snap = (c.prepData as { snapshot?: { itemName?: unknown } } | null)?.snapshot;
+      const snapName = typeof snap?.itemName === "string" && snap.itemName !== "" ? snap.itemName : null;
+      recordSkip(
+        skipped,
+        {
+          templateItemId: c.templateItemId,
+          label: named?.label ?? snapName ?? c.templateItemId,
+          labelEs: named?.labelEs ?? null,
+          source: "completion",
+        },
+        err,
+      );
+    }
+  }
+  return out;
+}
+
+/**
+ * D-66 review (Astra P1) — the editable / completeness set of a tolerant read: every template
+ * item MINUS the skipped targets. A skipped target is a bad template row (already absent) OR a
+ * valid template item whose live completion is malformed. Leaving the latter in made it
+ * required (finalize's blockers, the AM prep form's validation) while every write to it is
+ * refused as bad_row — a prep that could never finish. Pure; strict reads skip nothing.
+ */
+export function excludeSkippedTargets<T extends { id: string }>(items: T[], skipped: SkippedPrepRow[]): T[] {
+  if (skipped.length === 0) return items;
+  const bad = new Set(skipped.map((r) => r.templateItemId));
+  return items.filter((it) => !bad.has(it.id));
+}
+
+/**
+ * D-66 review 2 (Astra P2 #2, C.44/C.46) — once an AM prep has been submitted, its universe is
+ * the CHAIN HEAD submission's items. An edit can only change what was submitted (the update
+ * inherits the head's snapshots; an item outside it is refused), so an item absent from the head
+ * — skipped as malformed at submit time and repaired since, or added to the template later — is
+ * neither shown as editable nor required in edit mode. It joins on the next day's AM prep.
+ * `headItemIds` null = no chain head yet (a first submission): nothing is restricted. Pure.
+ */
+export function restrictToChainUniverse<T extends { id: string }>(items: T[], headItemIds: ReadonlySet<string> | null): T[] {
+  if (headItemIds === null) return items;
+  return items.filter((it) => headItemIds.has(it.id));
+}
+
+/** The template item ids of an instance's chain HEAD submission, or null when it has none yet. */
+async function loadChainHeadItemIds(service: SupabaseClient, instanceId: string): Promise<Set<string> | null> {
+  const { data: head, error: headErr } = await service
+    .from("checklist_submissions")
+    .select("id, completion_ids")
+    .eq("instance_id", instanceId)
+    .is("original_submission_id", null)
+    .maybeSingle<{ id: string; completion_ids: string[] | null }>();
+  if (headErr) throw new Error(`loadChainHeadItemIds: load chain head: ${headErr.message}`);
+  if (!head) return null;
+  const ids = head.completion_ids ?? [];
+  if (ids.length === 0) return new Set();
+  const { data: rows, error: rowsErr } = await service
+    .from("checklist_completions")
+    .select("template_item_id")
+    .in("id", ids);
+  if (rowsErr) throw new Error(`loadChainHeadItemIds: load head completions: ${rowsErr.message}`);
+  return new Set(((rows ?? []) as Array<{ template_item_id: string }>).map((r) => r.template_item_id));
+}
+
+/**
+ * An instance's live completions (not superseded, not revoked) — the same set the page reads.
+ * READ ONLY. Kept outside submitAmPrepUpdate on purpose: that path must never flip a row itself
+ * (tests/am-prep-chain-edit-supersede.test.ts pins it textually).
+ */
+async function loadLiveCompletions(service: SupabaseClient, instanceId: string): Promise<ChecklistCompletion[]> {
+  const { data, error } = await service
+    .from("checklist_completions")
+    .select(COMPLETION_COLUMNS)
+    .eq("instance_id", instanceId)
+    .is("superseded_at", null)
+    .is("revoked_at", null);
+  if (error) throw new Error(`loadLiveCompletions: ${error.message}`);
+  return ((data ?? []) as CompletionRow[]).map(rowToCompletion);
+}
+
+/** Name lookup over the RAW template rows (skipped ones included) for narrowPrepCompletionsForPage. */
+function labelLookup(items: ChecklistTemplateItem[]): (id: string) => { label: string; labelEs: string | null } | null {
+  const byId = new Map(items.map((it) => [it.id, { label: it.label, labelEs: it.translations?.es?.label ?? null }] as const));
+  return (id) => byId.get(id) ?? null;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Write-path: drift-prevention helpers
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -607,6 +764,11 @@ export async function loadAmPrepState(
     locationId: string;
     date: string;
     actor: PrepActor;
+    /**
+     * D-66 — a row whose stored shape fails (PrepShapeError) is left out and listed in
+     * `skippedRows` instead of throwing. Absent/false = strict.
+     */
+    tolerateBadRows?: boolean;
   },
 ): Promise<{
   template: { id: string; name: string };
@@ -627,6 +789,8 @@ export async function loadAmPrepState(
    * the closing count's BACK UP is the bulk container tomorrow's opener starts from.
    */
   batchModeByItem: Record<string, boolean>;
+  /** D-66 — rows left out by a `tolerateBadRows` read (always [] on a strict read). */
+  skippedRows: SkippedPrepRow[];
 } | null> {
   if (!(await hasTaskAccess(service, { ...args.actor, locationId: args.locationId, date: args.date, task: "am_prep" }))) {
     throw new PrepRoleViolationError("KH+ or active assignment", args.actor.level);
@@ -740,9 +904,11 @@ export async function loadAmPrepState(
     .eq("active", true)
     .order("display_order", { ascending: true });
   if (itemsErr) throw new Error(`loadAmPrepState: load items: ${itemsErr.message}`);
-  const templateItems = ((itemsRows ?? []) as TemplateItemRow[])
-    .map(rowToTemplateItem)
-    .map(narrowPrepTemplateItem);
+  const rawItems = ((itemsRows ?? []) as TemplateItemRow[]).map(rowToTemplateItem);
+  const skippedRows: SkippedPrepRow[] = [];
+  const templateItems = args.tolerateBadRows
+    ? narrowPrepTemplateItemsForPage(rawItems, skippedRows)
+    : rawItems.map(narrowPrepTemplateItem);
 
   // Item/Inventory Spine 2A/2B: name + par come from the linked item registry,
   // par via the override-aware resolver (per-location item_par_levels for the
@@ -752,7 +918,7 @@ export async function loadAmPrepState(
   const itemDefns = await loadItemDefns(service, itemIds);
   const overrides = await loadItemOverrides(service, itemIds, args.locationId);
   const dow = operationalDayOfWeek(args.date);
-  const resolvedItems = templateItems.map((t) => {
+  let resolvedItems = templateItems.map((t) => {
     const ovr = t.itemId ? pickOverride(overrides.get(t.itemId) ?? [], dow) : null;
     const r = resolveLineDefinition(t, t.itemId ? itemDefns.get(t.itemId) ?? null : null, ovr);
     return {
@@ -774,9 +940,17 @@ export async function loadAmPrepState(
     .is("superseded_at", null)
     .is("revoked_at", null);
   if (compErr) throw new Error(`loadAmPrepState: load completions: ${compErr.message}`);
-  const completions = ((completionRows ?? []) as CompletionRow[])
-    .map(rowToCompletion)
-    .map(narrowPrepCompletion);
+  const rawCompletions = ((completionRows ?? []) as CompletionRow[]).map(rowToCompletion);
+  const completions = args.tolerateBadRows
+    ? narrowPrepCompletionsForPage(rawCompletions, labelLookup(rawItems), skippedRows)
+    : rawCompletions.map(narrowPrepCompletion);
+  // D-66 review (Astra P1) — an item whose live save is malformed is a skipped TARGET too: it
+  // leaves the editable / completeness set (the writers refuse it as bad_row), so it can never
+  // be both "still required" and "refused".
+  resolvedItems = excludeSkippedTargets(resolvedItems, skippedRows);
+  // D-66 review 2 — after the first submission the form's universe is the chain head's items
+  // (C.44/C.46): an item the head never carried cannot be edited in, so it is never required.
+  resolvedItems = restrictToChainUniverse(resolvedItems, await loadChainHeadItemIds(service, instanceRow.id));
 
   // Resolve author names for completedBy + confirmedBy + triggeredBy.
   const authorIds = new Set<string>();
@@ -825,6 +999,7 @@ export async function loadAmPrepState(
     sectionLabels,
     sections,
     batchModeByItem,
+    skippedRows,
   };
 }
 
@@ -837,7 +1012,15 @@ export async function loadAmPrepState(
  */
 export async function loadMidDayPrepState(
   service: SupabaseClient,
-  args: { instanceId: string },
+  args: {
+    instanceId: string;
+    /**
+     * D-66 — a row whose stored shape fails (PrepShapeError) is left out and listed in
+     * `skippedRows`. The page and the Phase 1 submit / Phase 2 save / finalize all opt in; the
+     * writers refuse a write that targets a skipped row. Absent/false = strict.
+     */
+    tolerateBadRows?: boolean;
+  },
 ): Promise<{
   template: { id: string; name: string };
   templateItems: ChecklistTemplateItem[];
@@ -856,6 +1039,8 @@ export async function loadMidDayPrepState(
   batchDerived: Record<string, DerivedSku[]>;
   /** 0215 — per eligible batch TEMPLATE-ITEM id: last batch's produced_at at this location + this instance's recorded toss. */
   batchState: Record<string, { madeOn: string | null; tossed: number }>;
+  /** D-66 — rows left out by a `tolerateBadRows` read (always [] on a strict read). */
+  skippedRows: SkippedPrepRow[];
 } | null> {
   const { data: instanceRow, error: instErr } = await service
     .from("checklist_instances")
@@ -884,9 +1069,11 @@ export async function loadMidDayPrepState(
     .eq("active", true)
     .order("display_order", { ascending: true });
   if (itemsErr) throw new Error(`loadMidDayPrepState: load items: ${itemsErr.message}`);
-  const templateItems = ((itemsRows ?? []) as TemplateItemRow[])
-    .map(rowToTemplateItem)
-    .map(narrowPrepTemplateItem);
+  const rawItems = ((itemsRows ?? []) as TemplateItemRow[]).map(rowToTemplateItem);
+  const skippedRows: SkippedPrepRow[] = [];
+  const templateItems = args.tolerateBadRows
+    ? narrowPrepTemplateItemsForPage(rawItems, skippedRows)
+    : rawItems.map(narrowPrepTemplateItem);
 
   // Item/Inventory Spine 2A/2B: name + par come from the linked item registry,
   // par via the override-aware resolver (per-location item_par_levels for the
@@ -897,7 +1084,7 @@ export async function loadMidDayPrepState(
   const itemDefns = await loadItemDefns(service, itemIds);
   const overrides = await loadItemOverrides(service, itemIds, instanceRow.location_id);
   const dow = operationalDayOfWeek(instanceRow.date);
-  const resolvedItems = templateItems.map((t) => {
+  let resolvedItems = templateItems.map((t) => {
     const ovr = t.itemId ? pickOverride(overrides.get(t.itemId) ?? [], dow) : null;
     const r = resolveLineDefinition(t, t.itemId ? itemDefns.get(t.itemId) ?? null : null, ovr);
     return {
@@ -918,9 +1105,14 @@ export async function loadMidDayPrepState(
     .is("superseded_at", null)
     .is("revoked_at", null);
   if (compErr) throw new Error(`loadMidDayPrepState: load completions: ${compErr.message}`);
-  const completions = ((completionRows ?? []) as CompletionRow[])
-    .map(rowToCompletion)
-    .map(narrowPrepCompletion);
+  const rawCompletions = ((completionRows ?? []) as CompletionRow[]).map(rowToCompletion);
+  const completions = args.tolerateBadRows
+    ? narrowPrepCompletionsForPage(rawCompletions, labelLookup(rawItems), skippedRows)
+    : rawCompletions.map(narrowPrepCompletion);
+  // D-66 review (Astra P1) — an item whose live save is malformed is a skipped TARGET too: it
+  // leaves the editable / completeness set (the writers refuse it as bad_row), so it can never
+  // be both "still required" and "refused".
+  resolvedItems = excludeSkippedTargets(resolvedItems, skippedRows);
 
   const authorIds = new Set<string>();
   for (const c of completions) authorIds.add(c.completedBy);
@@ -1008,6 +1200,7 @@ export async function loadMidDayPrepState(
     batchContext,
     batchDerived,
     batchState,
+    skippedRows,
   };
 }
 
@@ -1227,9 +1420,19 @@ export async function loadMidDayPrepDashboardState(
 
 /** Result of submitMidDayPhase1 — discriminated so the route maps to HTTP without error-class coupling. */
 export type MidDayPhase1Result =
-  | { ok: true; instance: ChecklistInstance }
+  /** `skipped` (D-66): rows left out because their stored shape is bad — not included, not required. */
+  | { ok: true; instance: ChecklistInstance; skipped: SkippedPrepRow[] }
   /** `backup_required` (0215): a batch item arrived without both boxes (LINE + bulk BACK UP, each >= 0). */
-  | { ok: false; reason: "not_found" | "not_open" | "bad_item" | "backup_required"; detail?: string };
+  | { ok: false; reason: "not_found" | "not_open" | "bad_item" | "backup_required"; detail?: string }
+  /** D-66: an entry targets a row whose stored shape is bad (skipped) — that write is refused. */
+  | { ok: false; reason: "bad_row"; templateItemId: string };
+
+/** D-66 — the skipped row an entry targets, if any (a write to a bad row is refused, never read leniently). */
+function skippedTarget(skipped: SkippedPrepRow[], templateItemIds: Iterable<string>): string | null {
+  const bad = new Set(skipped.map((r) => r.templateItemId));
+  for (const id of templateItemIds) if (bad.has(id)) return id;
+  return null;
+}
 
 /**
  * submitMidDayPhase1 — count-to-par submission (C.43 Phase 1). Builds C.44
@@ -1249,9 +1452,13 @@ export async function submitMidDayPhase1(
   },
 ): Promise<MidDayPhase1Result> {
   await requirePrepInstanceTaskAccess(service, args, "mid_day_prep");
-  const state = await loadMidDayPrepState(service, { instanceId: args.instanceId });
+  // D-66 — a bad row this submit is not writing is skipped (the page never showed it); an entry
+  // that targets one is refused.
+  const state = await loadMidDayPrepState(service, { instanceId: args.instanceId, tolerateBadRows: true });
   if (!state) return { ok: false, reason: "not_found" };
   if (state.instance.status !== "open") return { ok: false, reason: "not_open" };
+  const badTarget = skippedTarget(state.skippedRows, args.entries.map((e) => e.templateItemId));
+  if (badTarget) return { ok: false, reason: "bad_row", templateItemId: badTarget };
 
   const itemsById = new Map(state.templateItems.map((it) => [it.id, it]));
   const rpcEntries: Array<{ templateItemId: string; inputs: PrepInputs; snapshot: PrepSnapshot }> = [];
@@ -1311,6 +1518,7 @@ export async function submitMidDayPhase1(
       phase: "mid_day_phase1",
       prep_subtype: "mid_day_prep",
       item_count: rpcEntries.length,
+      skipped_bad_rows: state.skippedRows.map((r) => r.templateItemId),
     },
     ipAddress: args.ipAddress ?? null,
     userAgent: args.userAgent ?? null,
@@ -1319,13 +1527,15 @@ export async function submitMidDayPhase1(
   const instance = rowToInstance((data as { instance: InstanceRow }).instance);
   await auditPrepOverride(service, args, "mid_day_prep", "submitMidDayPhase1");
 
-  return { ok: true, instance };
+  return { ok: true, instance, skipped: state.skippedRows };
 }
 
 /** Result of saveMidDayPhase2Item. */
 export type MidDayPhase2SaveResult =
   | { ok: true; completionId: string; savedAt: string }
   | { ok: false; reason: "not_found" | "not_in_phase2" | "bad_item" }
+  /** D-66: the save targets a row whose stored shape is bad (skipped) — refused. */
+  | { ok: false; reason: "bad_row"; templateItemId: string }
   /** 0215: save_mid_day_phase2_item_atomic refused the batch contract (lib/batch-prep-shared.ts BATCH_CONTRACT_CODES). */
   | { ok: false; reason: "batch_contract"; code: BatchContractCode; templateItemId: string };
 
@@ -1369,9 +1579,13 @@ export async function saveMidDayPhase2Item(
   },
 ): Promise<MidDayPhase2SaveResult> {
   await requirePrepInstanceTaskAccess(service, args, "mid_day_prep");
-  const state = await loadMidDayPrepState(service, { instanceId: args.instanceId });
+  // D-66 — another row's bad shape does not block this save; saving the bad row itself is refused.
+  const state = await loadMidDayPrepState(service, { instanceId: args.instanceId, tolerateBadRows: true });
   if (!state) return { ok: false, reason: "not_found" };
   if (state.instance.status !== "phase1_complete") return { ok: false, reason: "not_in_phase2" };
+  if (skippedTarget(state.skippedRows, [args.templateItemId])) {
+    return { ok: false, reason: "bad_row", templateItemId: args.templateItemId };
+  }
 
   const item = state.templateItems.find((it) => it.id === args.templateItemId);
   if (!item || !item.prepMeta) return { ok: false, reason: "bad_item" };
@@ -1513,7 +1727,8 @@ export async function saveMidDayPhase2Item(
 
 /** Result of finalizeMidDayPhase2. */
 export type MidDayFinalizeResult =
-  | { ok: true; instance: ChecklistInstance }
+  /** `skipped` (D-66): rows left out because their stored shape is bad — not required, not included. */
+  | { ok: true; instance: ChecklistInstance; skipped: SkippedPrepRow[] }
   | { ok: false; reason: "not_found" | "not_in_phase2" }
   /** 0215 (Astra P1 #2): batch rows whose Phase 2 save is missing — finalize refused. */
   | { ok: false; reason: "batch_rows_unsaved"; missing: string[] };
@@ -1531,7 +1746,9 @@ export async function finalizeMidDayPhase2(
   // Astra P1 #2 (BC-034): a batch item's Phase 1 count is NOT a Phase 2 save. Finalize is
   // refused while any batch row lacks a `batch` object on its live completion — the same
   // pure rule the page uses to mark a row saved (lib/mid-day-shared.ts).
-  const state = await loadMidDayPrepState(service, { instanceId: args.instanceId });
+  // D-66 — skipped bad rows are not in state.templateItems, so they never block finalize.
+  const state = await loadMidDayPrepState(service, { instanceId: args.instanceId, tolerateBadRows: true });
+  const skipped = state?.skippedRows ?? [];
   if (state) {
     // IDENTITY, not eligibility (Astra r2 P1): keyed on recipe.batch_mode, so an unresolved
     // batch recipe (isBatch false, batchMode true) still blocks finalize until a GM fixes the
@@ -1577,7 +1794,12 @@ export async function finalizeMidDayPhase2(
     action: "prep.submit",
     resourceTable: "checklist_instances",
     resourceId: args.instanceId,
-    metadata: { outcome: "success", phase: "mid_day_phase2_finalize", prep_subtype: "mid_day_prep" },
+    metadata: {
+      outcome: "success",
+      phase: "mid_day_phase2_finalize",
+      prep_subtype: "mid_day_prep",
+      skipped_bad_rows: skipped.map((r) => r.templateItemId),
+    },
     ipAddress: args.ipAddress ?? null,
     userAgent: args.userAgent ?? null,
   });
@@ -1594,7 +1816,7 @@ export async function finalizeMidDayPhase2(
 
   await auditPrepOverride(service, args, "mid_day_prep", "finalizeMidDayPhase2");
 
-  return { ok: true, instance: rowToInstance(data) };
+  return { ok: true, instance: rowToInstance(data), skipped };
 }
 
 /**
@@ -2819,6 +3041,11 @@ export async function submitAmPrep(
   editCount: number;
   /** C.46: chain head submission id (null on original; FK on update). */
   originalSubmissionId: string | null;
+  /**
+   * D-66: rows left out because their stored shape is bad — not included, not required. On the
+   * update path: items whose latest live completion is malformed (an edit to one is refused).
+   */
+  skipped: SkippedPrepRow[];
 }> {
   try {
     await requirePrepInstanceTaskAccess(service, args, "am_prep");
@@ -2841,6 +3068,8 @@ export async function submitAmPrep(
         `submitAmPrep: originalSubmissionId required when isUpdate=true`,
       );
     }
+    // The update path inherits the chain head's own snapshots (C.44) and refuses an edit to an
+    // item whose latest live completion is malformed (D-66 review 2); it reports those as skipped.
     return submitAmPrepUpdate(service, {
       instanceId: args.instanceId,
       actor: args.actor,
@@ -2879,10 +3108,16 @@ export async function submitAmPrep(
     .eq("template_id", instRow.template_id)
     .eq("active", true);
   if (itemsErr) throw new Error(`submitAmPrep: load items: ${itemsErr.message}`);
+  // D-66 — a bad row (PrepShapeError) this submit is not writing is skipped, so one broken item
+  // cannot stop the night's AM prep; an entry that TARGETS a skipped row is refused below.
+  const skipped: SkippedPrepRow[] = [];
   const itemsById = new Map<string, ChecklistTemplateItem>();
-  for (const r of (itemsRows ?? []) as TemplateItemRow[]) {
-    const narrowed = narrowPrepTemplateItem(rowToTemplateItem(r));
+  for (const narrowed of narrowPrepTemplateItemsForPage(((itemsRows ?? []) as TemplateItemRow[]).map(rowToTemplateItem), skipped)) {
     itemsById.set(narrowed.id, narrowed);
+  }
+  const badTarget = skippedTarget(skipped, args.entries.map((e) => e.templateItemId));
+  if (badTarget) {
+    throw new PrepShapeError(badTarget, "template_item's stored prep settings are malformed; the row was skipped and cannot be submitted");
   }
 
   // Item/Inventory Spine 2A/2B: snapshot freezes the item-resolved name+par
@@ -3001,6 +3236,7 @@ export async function submitAmPrep(
       closing_report_ref_item_id: args.closingReportRefItemId,
       closing_auto_complete_id: result.autoCompleteId,
       report_type: "am_prep",
+      skipped_bad_rows: skipped.map((r) => r.templateItemId),
     },
     ipAddress: args.ipAddress ?? null,
     userAgent: args.userAgent ?? null,
@@ -3014,6 +3250,7 @@ export async function submitAmPrep(
     closingAutoCompleteId: result.autoCompleteId,
     editCount: 0,
     originalSubmissionId: null,
+    skipped,
   };
 }
 
@@ -3057,6 +3294,8 @@ async function submitAmPrepUpdate(
   closingAutoCompleteId: string | null;
   editCount: number;
   originalSubmissionId: string | null;
+  /** D-66 — items whose LATEST live completion is malformed (refused as edit targets). */
+  skipped: SkippedPrepRow[];
 }> {
   // 1. Load chain head submission. Pull completion_ids too so we can fetch
   //    the head's snapshot rows in one extra round trip (C.46 A6 + C.44:
@@ -3215,6 +3454,24 @@ async function submitAmPrepUpdate(
     headSnapshotsByItemId.set(c.template_item_id, c.prep_data.snapshot);
   }
 
+  // D-66 review 2 (Astra P2 #1) — the item's LATEST live completion decides whether it is a
+  // skipped target, exactly as the page read does (the page left it out). A valid head snapshot
+  // does not make a malformed latest row editable: an edit that targets it is refused here,
+  // before the RPC; every other entry keeps inheriting its head snapshot (C.44).
+  const skipped: SkippedPrepRow[] = [];
+  narrowPrepCompletionsForPage(
+    await loadLiveCompletions(service, args.instanceId),
+    (id) => {
+      const snap = headSnapshotsByItemId.get(id);
+      return snap ? { label: snap.itemName, labelEs: null } : null;
+    },
+    skipped,
+  );
+  const badTarget = skippedTarget(skipped, args.entries.map((e) => e.templateItemId));
+  if (badTarget) {
+    throw new PrepShapeError(badTarget, "the item's latest saved count is malformed; it was skipped and cannot be edited");
+  }
+
   // Build rpcEntries using chain head snapshots. Any entry whose
   // template_item_id isn't in the chain head's completions is rejected here
   // (the RPC's C.44 alignment guard would catch it too, but we surface the
@@ -3314,5 +3571,6 @@ async function submitAmPrepUpdate(
     closingAutoCompleteId: null,  // per A4: update path doesn't touch closing auto-complete
     editCount: result.editCount,
     originalSubmissionId: result.originalSubmissionId,
+    skipped,
   };
 }

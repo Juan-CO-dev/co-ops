@@ -2756,6 +2756,8 @@
   "prep.batch.reason_note_placeholder": "Say why (required)",
   "prep.batch.preview": "Available for the line: {available} · bulk backup after bottling: {after}",
   "prep.batch.bottled_label": "Bottled for the line",
+  "prep.skipped_rows.heading": "Some items couldn't load",
+  "prep.skipped_rows.body": "These items couldn't load and weren't included: {items}. A manager can fix them in Admin.",
   "prep.batch.bottled_hint": "containers put on the line today, from the backup and the new batches",
   "prep.batch.error.batches_missing": "Enter how many batches were made (0 is fine).",
   "prep.batch.error.invalid_batch_count": "Batches must be a whole number.",

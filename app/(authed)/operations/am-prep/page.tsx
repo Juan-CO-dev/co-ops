@@ -54,6 +54,7 @@ import { getServiceRoleClient } from "@/lib/supabase-server";
 import type { ChecklistInstance, PrepInputs } from "@/lib/types";
 
 import { AmPrepForm } from "@/components/prep/AmPrepForm";
+import { PrepSkippedRowsNote } from "@/components/prep/PrepSkippedRowsNote";
 import { BackLink } from "@/components/nav/BackLink";
 import { actionButtonClass } from "@/components/ActionButton";
 
@@ -101,10 +102,13 @@ export default async function AmPrepPage({ searchParams }: PageProps) {
   }))) redirect("/dashboard");
 
   // 4. Load AM Prep state.
+  // D-66 — the page read tolerates a bad row (skipped + named in the note below) instead
+  // of blanking the page; submit skips the same row (not included, not required).
   const state = await loadAmPrepState(sb, {
     locationId: locationParam,
     date: today,
     actor: { userId: auth.user.id, role: auth.role, level: auth.level },
+    tolerateBadRows: true,
   });
 
   if (state === null) {
@@ -207,6 +211,8 @@ export default async function AmPrepPage({ searchParams }: PageProps) {
           {locationRow.code} · {locationRow.name}
         </h1>
       </div>
+
+      <PrepSkippedRowsNote rows={state.skippedRows} language={auth.user.language} />
 
       <div className="mt-4">
         <AmPrepForm

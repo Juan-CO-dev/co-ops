@@ -38,6 +38,7 @@ import { MidDayPhase1Form } from "@/components/MidDayPhase1Form";
 import { MidDayPhase2Form, type MidDayPhase2Item } from "@/components/MidDayPhase2Form";
 import { MidDayPrepTile } from "@/components/MidDayPrepTile";
 import { DashboardBackLink } from "@/components/DashboardBackLink";
+import { PrepSkippedRowsNote } from "@/components/prep/PrepSkippedRowsNote";
 import type { ManagerOption } from "@/components/opening/OverParModal";
 
 interface PageProps {
@@ -117,7 +118,10 @@ export default async function MidDayPrepPage({ searchParams }: PageProps) {
     );
   }
 
-  const state = await loadMidDayPrepState(sb, { instanceId });
+  // D-66 — the page read tolerates a bad row (skipped + named in the note below) instead of
+  // blanking the page; Phase 1 submit / Phase 2 save / finalize skip the same row (not
+  // included, not required) and refuse only a write that targets it.
+  const state = await loadMidDayPrepState(sb, { instanceId, tolerateBadRows: true });
   if (!state) redirect("/dashboard"); // not a mid-day instance, or not found
 
   const locActor: LocationActor = { role: auth.role, locations: auth.locations };
@@ -230,6 +234,8 @@ export default async function MidDayPrepPage({ searchParams }: PageProps) {
         {serverT(lang, "mid_day_prep.page.title")}
       </p>
       <h1 className="mt-1 text-lg font-bold text-co-text">{phaseHeading}</h1>
+
+      <PrepSkippedRowsNote rows={state.skippedRows} language={lang} />
 
       {state.instance.status === "open" ? (
         <MidDayPhase1Form

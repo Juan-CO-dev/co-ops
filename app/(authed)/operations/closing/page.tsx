@@ -61,6 +61,7 @@ import { formatDateLabel, formatTime } from "@/lib/i18n/format";
 import { serverT } from "@/lib/i18n/server";
 import type { Language } from "@/lib/i18n/types";
 import { etCalendarDate } from "@/lib/operational-day";
+import { amPrepGapNoteDue } from "@/lib/am-prep-gap-shared";
 import { getRoleLevel, type RoleCode } from "@/lib/roles";
 import { requireSessionFromHeaders } from "@/lib/session";
 import { getServiceRoleClient } from "@/lib/supabase-server";
@@ -474,8 +475,10 @@ export default async function ClosingPage({ searchParams }: PageProps) {
   // the closing screen is the one surface a manager reliably sees at day's
   // end, so it carries the signal: today's AM prep exists with ZERO saved
   // completions (or was never opened). Advisory only — never blocks finalize.
+  // D-17 (Juan 2026-10-13): hidden until 6 PM ET on the closing's business day — before
+  // then the count is simply not due, so the note (and its three reads) are skipped.
   let amPrepGap = false;
-  if (!isHistorical) {
+  if (!isHistorical && amPrepGapNoteDue(new Date().toISOString(), targetDate)) {
     const { data: amTmpls, error: atErr } = await sb
       .from("checklist_templates")
       .select("id")
