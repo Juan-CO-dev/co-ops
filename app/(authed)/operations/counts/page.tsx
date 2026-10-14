@@ -1,14 +1,38 @@
+import { Suspense } from "react";
 import { canDoOperationalTask } from "@/lib/operational-task-access";
 import { redirect } from "next/navigation";
 import { serverT } from "@/lib/i18n/server";
+import type { Language } from "@/lib/i18n/types";
 import { lockLocationContext, type LocationActor } from "@/lib/locations";
 import { requireSessionFromHeaders } from "@/lib/session";
-import { createCountsReadRefs, loadCountFormData, loadCountReferenceData, loadOnHand, COUNT_READ_MIN, COUNT_WRITE_MIN } from "@/lib/counts";
+import { createCountsReadRefs, loadCountFormData, loadCountReferenceData, loadOnHand, COUNT_READ_MIN, COUNT_WRITE_MIN, type OnHandView } from "@/lib/counts";
 import { twinVendorLabels } from "@/lib/counts-shared";
 import { CountForm } from "@/components/counts/CountForm";
 import { OnHandPanel } from "@/components/counts/OnHandPanel";
+import { OnHandBoundary } from "@/components/counts/OnHandBoundary";
 import { DashboardBackLink } from "@/components/DashboardBackLink";
 import { ExportLinks } from "@/components/reports-export/ExportLinks";
+
+/**
+ * B9: the on-hand panel STREAMS. Its read starts at the top of the render (beside the count
+ * sheet's, sharing one set of reference reads), but the page flushes as soon as the SHEET is
+ * ready; the panel arrives behind <Suspense>. A read that fails — or runs past this deadline,
+ * which no healthy render approaches (~0.5 s on the sim) — lands in OnHandBoundary's
+ * translated notice + retry instead of leaving "Loading…" up forever.
+ */
+const ON_HAND_DEADLINE_MS = 45_000;
+
+function withDeadline<T>(p: Promise<T>, ms: number): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error("on_hand_deadline_exceeded")), ms);
+  });
+  return Promise.race([p, deadline]).finally(() => clearTimeout(timer));
+}
+
+async function OnHandSection({ view, lang, twinVendorBySkuId }: { view: Promise<OnHandView>; lang: Language; twinVendorBySkuId: Map<string, string> }) {
+  return <OnHandPanel view={await view} lang={lang} twinVendorBySkuId={twinVendorBySkuId} />;
+}
 
 export default async function CountsPage({ searchParams }: { searchParams: Promise<{ location?: string }> }) {
   const auth = await requireSessionFromHeaders("/operations/counts");
@@ -27,10 +51,11 @@ export default async function CountsPage({ searchParams }: { searchParams: Promi
   // B9: ONE set of reference reads (roster, vendors, measures, chains, the product index +
   // lots) for the whole render — the count sheet and the on-hand panel share them.
   const refs = createCountsReadRefs();
-  const [formData, onHand] = await Promise.all([
-    mayCount ? loadCountFormData(auth, location, refs) : loadCountReferenceData(auth, location, refs),
-    auth.level >= COUNT_READ_MIN ? loadOnHand(auth, location, undefined, refs) : Promise.resolve(null),
-  ]);
+  // Start the panel's read NOW, beside the sheet's. Its outcome belongs to the boundary
+  // below; the no-op catch only keeps an early failure from surfacing as unhandled.
+  const onHand = auth.level >= COUNT_READ_MIN ? withDeadline(loadOnHand(auth, location, undefined, refs), ON_HAND_DEADLINE_MS) : null;
+  onHand?.catch(() => {});
+  const formData = await (mayCount ? loadCountFormData(auth, location, refs) : loadCountReferenceData(auth, location, refs));
 
   return (
     <main className="mx-auto w-full max-w-2xl md:max-w-3xl lg:max-w-5xl xl:max-w-6xl px-4 pb-32 pt-4 sm:px-6">
@@ -54,7 +79,11 @@ export default async function CountsPage({ searchParams }: { searchParams: Promi
           shared with the on-hand panel so both halves of this page disambiguate twins the
           same way. An on-hand row for an INACTIVE SKU is not in the option set and simply
           gets no label — honest, since the twin check has no basis to judge it. */}
-      <OnHandPanel view={onHand} lang={lang} twinVendorBySkuId={twinVendorLabels(formData.skus)} />
+      <OnHandBoundary message={serverT(lang, "counts.onhand.load_failed")} retryLabel={serverT(lang, "counts.onhand.retry")}>
+        <Suspense fallback={<p role="status" className="mt-3 text-sm text-co-text-muted">{serverT(lang, "counts.onhand.loading")}</p>}>
+          <OnHandSection view={onHand} lang={lang} twinVendorBySkuId={twinVendorLabels(formData.skus)} />
+        </Suspense>
+      </OnHandBoundary>
       </div>}
       </div>
     </main>
