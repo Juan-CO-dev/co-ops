@@ -9,7 +9,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { loadShiftBoard } from "@/lib/assignments";
 import { closedStationFor, showBreakButton, type ShiftBoard } from "@/lib/assignments-shared";
 import { coopsShiftEnded, personPresence } from "@/lib/presence-shared";
-import { latestIso, reconcileClosingReportRefs } from "@/lib/prep";
+import { midDayTickIsStale, pickMidDayReport, reconcileClosingReportRefs } from "@/lib/prep";
 
 vi.mock("@/lib/audit", () => ({ audit: vi.fn() }));
 vi.mock("@/lib/assignment-taken", () => ({ loadTakenTasks: vi.fn(async () => []) }));
@@ -17,12 +17,15 @@ vi.mock("@/lib/assignment-taken", () => ({ loadTakenTasks: vi.fn(async () => [])
 afterEach(() => { vi.useRealTimers(); vi.unstubAllEnvs(); });
 
 // -- 1. mid-day reconcile -----------------------------------------------------------------------
-/** Minimal chainable Supabase fake: answers by table + eq filters, records inserts. */
-function reconcileService(midDayRows: Array<{ id: string; triggered_at: string; confirmed_at: string | null }>) {
+type MdRow = { id: string; triggered_at: string; confirmed_at: string | null };
+type Head = { id: string; revoked_at: string | null; auto_complete_meta: Record<string, unknown> } | null;
+/** Minimal chainable Supabase fake: answers by table + eq filters, records inserts and supersedes. */
+function reconcileService(midDayRows: MdRow[], head: Head = null) {
   const inserts: Array<Record<string, unknown>> = [];
+  const supersedes: Array<Record<string, unknown>> = [];
   const from = (table: string) => {
     const eq = new Map<string, unknown>();
-    let op: "select" | "insert" = "select";
+    let op: "select" | "insert" | "update" = "select";
     const single = (): unknown => {
       if (table === "checklist_templates") {
         if (eq.get("type") === "closing") return { id: "closing-tmpl" };
@@ -31,47 +34,92 @@ function reconcileService(midDayRows: Array<{ id: string; triggered_at: string; 
       }
       if (table === "checklist_template_items") return eq.get("report_reference_type") === "mid_day_prep" ? { id: "mid-ref-item" } : null;
       if (op === "insert") return { id: "new-completion" };
-      return null; // no live closing completion yet
+      return head; // the live closing completion, if any
     };
     const q: Record<string, unknown> = {
       select: () => q, returns: () => q, order: () => q, limit: () => q, is: () => q, in: () => q, lte: () => q, gte: () => q, or: () => q, not: () => q,
       eq: (k: string, v: unknown) => { eq.set(k, v); return q; },
       insert: (row: Record<string, unknown>) => { op = "insert"; inserts.push(row); return q; },
+      update: (row: Record<string, unknown>) => { op = "update"; supersedes.push(row); return q; },
       maybeSingle: async () => ({ data: single(), error: null }),
       then: (resolve: (v: unknown) => unknown) => Promise.resolve({
-        data: table === "checklist_instances" ? midDayRows : [], error: null, count: 0,
+        data: table === "checklist_instances" ? midDayRows : [], error: null, count: op === "update" ? 1 : 0,
       }).then(resolve),
     };
     return q;
   };
-  return { service: { from } as unknown as SupabaseClient, inserts };
+  return { service: { from } as unknown as SupabaseClient, inserts, supersedes };
 }
+const reconcile = (service: SupabaseClient) => reconcileClosingReportRefs(service, {
+  locationId: "loc", date: "2026-10-11", closingInstanceId: "closing-1", actor: { userId: "u1" } as never,
+});
+type Meta = { reportType: string; reportSubmittedAt?: string; count: number; reportInstanceId: string };
+const metaOf = (row: Record<string, unknown> | undefined) => row?.auto_complete_meta as Meta;
+const eveningOpen = () => { vi.useFakeTimers(); vi.setSystemTime(new Date("2026-10-12T00:00:00Z")); }; // 8 PM ET
 
 describe("#16 reconcile carries the real mid-day submission time", () => {
-  it("uses the latest phase-2 confirmed_at, not the moment the closing page was opened", async () => {
-    vi.useFakeTimers();
-    vi.setSystemTime(new Date("2026-10-12T00:00:00Z")); // 8:00 PM ET: closing opened hours after the 3 PM mid-day
+  it("uses the confirmed_at of the report, not the moment the closing page was opened", async () => {
+    eveningOpen();
     const { service, inserts } = reconcileService([
       { id: "md-1", triggered_at: "2026-10-11T17:00:00Z", confirmed_at: "2026-10-11T18:10:00Z" },
       { id: "md-2", triggered_at: "2026-10-11T18:30:00Z", confirmed_at: "2026-10-11T19:00:00Z" },
     ]);
-    const result = await reconcileClosingReportRefs(service, {
-      locationId: "loc", date: "2026-10-11", closingInstanceId: "closing-1",
-      actor: { userId: "u1" } as never,
-    });
-    expect(result.ticked).toBe(1);
-    expect(inserts).toHaveLength(1);
+    expect((await reconcile(service)).ticked).toBe(1);
     expect(inserts[0]).toMatchObject({ instance_id: "closing-1", template_item_id: "mid-ref-item" });
-    const meta = inserts[0]!.auto_complete_meta as { reportType: string; reportSubmittedAt: string; count: number; reportInstanceId: string };
-    expect(meta.reportType).toBe("mid_day_prep");
-    expect(meta.count).toBe(2);
-    expect(meta.reportInstanceId).toBe("md-2");
-    expect(meta.reportSubmittedAt).toBe("2026-10-11T19:00:00Z");
-    expect(meta.reportSubmittedAt).not.toBe(new Date().toISOString());
+    expect(metaOf(inserts[0])).toMatchObject({ reportType: "mid_day_prep", count: 2, reportInstanceId: "md-2", reportSubmittedAt: "2026-10-11T19:00:00Z" });
   });
-  it("latestIso picks the newest usable timestamp", () => {
-    expect(latestIso(["2026-10-11T18:10:00Z", null, "2026-10-11T19:00:00Z", "garbage"])).toBe("2026-10-11T19:00:00Z");
-    expect(latestIso([null, undefined])).toBeNull();
+
+  it("out of order: A started first but confirmed last (4 PM) beats B started second, confirmed 3 PM - id and time from the SAME row", async () => {
+    eveningOpen();
+    const rows: MdRow[] = [
+      { id: "A", triggered_at: "2026-10-11T17:00:00Z", confirmed_at: "2026-10-11T20:00:00Z" }, // 4 PM ET
+      { id: "B", triggered_at: "2026-10-11T18:00:00Z", confirmed_at: "2026-10-11T19:00:00Z" }, // 3 PM ET
+    ];
+    const { service, inserts } = reconcileService(rows);
+    await reconcile(service);
+    expect(metaOf(inserts[0]).reportInstanceId).toBe("A");
+    expect(metaOf(inserts[0]).reportSubmittedAt).toBe("2026-10-11T20:00:00Z");
+    expect(pickMidDayReport(rows)).toEqual({ reportInstanceId: "A", reportSubmittedAt: "2026-10-11T20:00:00Z" });
+  });
+
+  it("never invents 'now' when no row has confirmed_at: uses the row's own start time, or omits the time", async () => {
+    eveningOpen();
+    const started = reconcileService([{ id: "md-1", triggered_at: "2026-10-11T19:00:00Z", confirmed_at: null }]);
+    await reconcile(started.service);
+    expect(metaOf(started.inserts[0]).reportSubmittedAt).toBe("2026-10-11T19:00:00Z");
+
+    const unknown = reconcileService([{ id: "md-1", triggered_at: null as unknown as string, confirmed_at: null }]);
+    await reconcile(unknown.service);
+    const meta = metaOf(unknown.inserts[0]);
+    expect(meta.reportInstanceId).toBe("md-1");
+    expect("reportSubmittedAt" in meta).toBe(false); // display falls back to the tick's own time
+    expect(JSON.stringify(meta)).not.toContain("2026-10-12T00:00:00");
+  });
+
+  it("repairs an existing tick written by old code (same count, closing-open time), then stays idempotent", async () => {
+    eveningOpen();
+    const rows: MdRow[] = [{ id: "md-1", triggered_at: "2026-10-11T18:00:00Z", confirmed_at: "2026-10-11T19:00:00Z" }];
+    const oldHead: Head = { id: "head-1", revoked_at: null, auto_complete_meta: {
+      reportType: "mid_day_prep", reportInstanceId: "md-1", reportSubmittedAt: "2026-10-11T23:59:00.000Z", count: 1,
+    } };
+    const stale = reconcileService(rows, oldHead);
+    expect((await reconcile(stale.service)).ticked).toBe(1);
+    expect(stale.inserts).toHaveLength(1);
+    expect(stale.supersedes).toHaveLength(1);
+    expect(metaOf(stale.inserts[0]).reportSubmittedAt).toBe("2026-10-11T19:00:00Z");
+
+    // Stored time equal as an INSTANT (different spelling) -> no churn.
+    const fresh = reconcileService(rows, { ...oldHead!, auto_complete_meta: { ...oldHead!.auto_complete_meta, reportSubmittedAt: "2026-10-11T19:00:00.000+00:00" } });
+    expect((await reconcile(fresh.service)).ticked).toBe(0);
+    expect(fresh.inserts).toHaveLength(0);
+    expect(fresh.supersedes).toHaveLength(0);
+  });
+
+  it("a head with no stored time is repaired; a wrong stored instance is repaired; an unknown true time never churns", () => {
+    expect(midDayTickIsStale({ reportInstanceId: "A" }, { reportInstanceId: "A", reportSubmittedAt: "2026-10-11T19:00:00Z" })).toBe(true);
+    expect(midDayTickIsStale({ reportInstanceId: "B", reportSubmittedAt: "2026-10-11T19:00:00Z" }, { reportInstanceId: "A", reportSubmittedAt: "2026-10-11T19:00:00Z" })).toBe(true);
+    expect(midDayTickIsStale({ reportInstanceId: "A", reportSubmittedAt: "2026-10-11T23:00:00Z" }, { reportInstanceId: "A", reportSubmittedAt: null })).toBe(false);
+    expect(midDayTickIsStale({ reportInstanceId: "A" }, undefined)).toBe(false);
   });
 });
 

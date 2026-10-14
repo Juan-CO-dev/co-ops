@@ -1725,14 +1725,41 @@ export async function autoCompleteClosingMidDayRef(
  * every closing page load, so it MUST pre-check to avoid growing a supersede
  * chain on each refresh.
  */
-/** Latest of several ISO timestamps (null when none is usable). Pure. */
-export function latestIso(values: ReadonlyArray<string | null | undefined>): string | null {
-  let best: string | null = null;
-  for (const v of values) {
-    if (!v || Number.isNaN(Date.parse(v))) continue;
-    if (best === null || Date.parse(v) > Date.parse(best)) best = v;
+/** True when a live mid-day tick's stored instance/time differs from the truth (see truthCheck). Pure. */
+export function midDayTickIsStale(
+  stored: { reportInstanceId?: string; reportSubmittedAt?: string } | null,
+  truth: { reportInstanceId: string; reportSubmittedAt: string | null } | undefined,
+): boolean {
+  if (!truth) return false;
+  if (stored?.reportInstanceId !== truth.reportInstanceId) return true;
+  if (truth.reportSubmittedAt === null) return false;
+  const have = stored?.reportSubmittedAt ? Date.parse(stored.reportSubmittedAt) : Number.NaN;
+  return have !== Date.parse(truth.reportSubmittedAt);
+}
+
+/**
+ * The mid-day report the closing line points at, and when it was submitted - BOTH from the same row
+ * (B4 #16 review): the latest-CONFIRMED instance (ties -> later in start order). A row started first
+ * but confirmed last is the latest submission. When none is confirmed, the last-started row and its
+ * own start time (a past instant, never "now"); no usable time -> null (the display then falls back).
+ */
+export function pickMidDayReport(
+  rows: ReadonlyArray<{ id: string; triggered_at?: string | null; confirmed_at: string | null }>,
+): { reportInstanceId: string; reportSubmittedAt: string | null } | null {
+  if (rows.length === 0) return null;
+  let best: { id: string; at: number; confirmed: string } | null = null;
+  rows.forEach((row) => {
+    const at = row.confirmed_at ? Date.parse(row.confirmed_at) : Number.NaN;
+    if (Number.isNaN(at)) return;
+    if (best === null || at >= best.at) best = { id: row.id, at, confirmed: row.confirmed_at! };
+  });
+  if (best !== null) {
+    const picked: { id: string; confirmed: string } = best;
+    return { reportInstanceId: picked.id, reportSubmittedAt: picked.confirmed };
   }
-  return best;
+  const last = rows[rows.length - 1]!;
+  const started = last.triggered_at && !Number.isNaN(Date.parse(last.triggered_at)) ? last.triggered_at : null;
+  return { reportInstanceId: last.id, reportSubmittedAt: started };
 }
 
 async function ensureClosingRefCompletion(
@@ -1744,6 +1771,14 @@ async function ensureClosingRefCompletion(
     meta: Record<string, unknown>;
     /** Mid-day only: supersede an existing live tick whose meta.count differs. */
     countForSupersedeCheck?: number;
+    /**
+     * Mid-day only (B4 #16): also supersede a live tick whose stored report instance or submit time
+     * differs from the true one - ticks written by older code carry the closing-open time, and
+     * the count alone cannot tell. `reportSubmittedAt: null` = the true time is unknown, so it is not
+     * compared (never churn over a value we cannot improve). Equal values (compared as instants)
+     * skip, so a refresh stays idempotent.
+     */
+    truthCheck?: { reportInstanceId: string; reportSubmittedAt: string | null };
   },
 ): Promise<"inserted" | "superseded" | "skipped"> {
   const { data: head, error: headErr } = await service
@@ -1755,7 +1790,7 @@ async function ensureClosingRefCompletion(
     .maybeSingle<{
       id: string;
       revoked_at: string | null;
-      auto_complete_meta: { count?: number } | null;
+      auto_complete_meta: { count?: number; reportInstanceId?: string; reportSubmittedAt?: string } | null;
     }>();
   if (headErr) throw new Error(`ensureClosingRefCompletion: head lookup: ${headErr.message}`);
 
@@ -1763,8 +1798,10 @@ async function ensureClosingRefCompletion(
     if (head.revoked_at) return "skipped"; // respect C.55 reopen — never re-tick
     if (args.countForSupersedeCheck === undefined) return "skipped"; // already live
     const headCount = head.auto_complete_meta?.count ?? null;
-    if (headCount === args.countForSupersedeCheck) return "skipped"; // count unchanged
-    // count changed → fall through to insert + supersede
+    if (headCount === args.countForSupersedeCheck && !midDayTickIsStale(head.auto_complete_meta, args.truthCheck)) {
+      return "skipped"; // count unchanged and the stored instance/time are already the true ones
+    }
+    // count or stored instance/time changed → fall through to insert + supersede
   }
 
   const nowIso = new Date().toISOString();
@@ -1943,9 +1980,10 @@ export async function reconcileClosingReportRefs(
         .eq("status", "phase2_complete")
         .order("triggered_at", { ascending: true });
       if (fErr) throw new Error(`reconcileClosingReportRefs: mid-day instances: ${fErr.message}`);
-      const finalizedRows = (finalized ?? []) as Array<{ id: string; confirmed_at: string | null }>;
+      const finalizedRows = (finalized ?? []) as Array<{ id: string; triggered_at: string | null; confirmed_at: string | null }>;
       const ids = finalizedRows.map((r) => r.id);
-      if (ids.length > 0) {
+      const picked = pickMidDayReport(finalizedRows);
+      if (ids.length > 0 && picked) {
         bump(
           await ensureClosingRefCompletion(service, {
             closingInstanceId: args.closingInstanceId,
@@ -1953,14 +1991,16 @@ export async function reconcileClosingReportRefs(
             actor: args.actor,
             meta: {
               reportType: "mid_day_prep",
-              reportInstanceId: ids[ids.length - 1]!,
-              // B4 #16: the TRUE submission time (phase-2 finalize stamps confirmed_at), never "now" -
-              // reconcile runs hours later, when the closing page is opened.
-              reportSubmittedAt: latestIso(finalizedRows.map((r) => r.confirmed_at)) ?? new Date().toISOString(),
+              // B4 #16: instance and TRUE submit time come from the same (latest-confirmed) row, never
+              // "now" - reconcile runs hours later, when the closing page is opened. An unknown time is
+              // omitted (the display falls back to the tick's own time) rather than invented.
+              reportInstanceId: picked.reportInstanceId,
+              ...(picked.reportSubmittedAt ? { reportSubmittedAt: picked.reportSubmittedAt } : {}),
               count: ids.length,
               reportInstanceIds: ids,
             },
             countForSupersedeCheck: ids.length,
+            truthCheck: picked,
           }),
         );
       }

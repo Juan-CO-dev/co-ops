@@ -494,8 +494,8 @@ export interface OpeningPhase2Meta {
 export interface AutoCompleteMeta {
   reportType: ReportType;
   reportInstanceId: string;
-  /** ISO timestamp — when the source report was submitted. */
-  reportSubmittedAt: string;
+  /** ISO timestamp — when the source report was submitted. Absent when genuinely unknown (display falls back). */
+  reportSubmittedAt?: string;
   /**
    * Count of completed reports of this type for the day. Set for multi-instance
    * reports (Mid-day Prep, C.43) where several reports auto-tick one closing
