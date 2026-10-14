@@ -2565,6 +2565,7 @@
   "opening.submit.gate_disabled_verify_sections": "Verifica todas las secciones antes de enviar",
   "opening.submit.gate_disabled_template_misconfigured": "Error de configuración de la plantilla — avisa a un gerente",
   "opening.submit.gate_disabled_generic": "Envío deshabilitado",
+  "opening.submit.gate_disabled_reason_required": "Elige un motivo en el recuadro rosa “No se detectaron datos de cierre previo”",
   "opening.submit.button_label": "Enviar Apertura",
   "opening.submit.submitting": "Enviando…",
   "opening.error.role_level_insufficient": "Tu rol no puede enviar la Apertura — contacta a un gerente.",

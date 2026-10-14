@@ -2565,6 +2565,7 @@
   "opening.submit.gate_disabled_verify_sections": "Verify all sections before submitting",
   "opening.submit.gate_disabled_template_misconfigured": "Template configuration error — contact a manager",
   "opening.submit.gate_disabled_generic": "Submit disabled",
+  "opening.submit.gate_disabled_reason_required": "Pick a reason in the pink “No prior closing data detected” box",
   "opening.submit.button_label": "Submit Opening",
   "opening.submit.submitting": "Submitting…",
   "opening.error.role_level_insufficient": "Your role can't submit Opening — contact a manager.",

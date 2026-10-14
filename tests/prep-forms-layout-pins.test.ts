@@ -192,3 +192,15 @@ describe("#7 the opening title follows the active tab", () => {
     expect(scaffold).not.toContain('"opening.page.title"');
   });
 });
+
+describe("#10 the opening footer names the blocker", () => {
+  const client = read("app/(authed)/operations/opening/opening-client.tsx");
+  it("the hint is chosen by openingFooterHint, fed the attestation state", () => {
+    expect(client).toContain("const footerHint = openingFooterHint({");
+    expect(client).toContain("attestationMissing: needsAttestation && attestationReason === null,");
+    expect(client).toContain('t("opening.submit.gate_disabled_reason_required")');
+  });
+  it("the missing-temp hint is a button that reveals its station", () => {
+    expect(client).toMatch(/footerHint\.kind === "temps_required" \? \(\s*<button\s+type="button"\s+onClick=\{\(\) => stationCollapse\.reveal\(\[footerHint\.station\]\)\}/);
+  });
+});

@@ -43,6 +43,7 @@ import {
   type BatchRowContext,
 } from "@/lib/batch-prep-shared";
 import { phase2SaveGate } from "@/lib/opening-phase2-gate";
+import { openingFooterHint } from "@/lib/prep-display-shared";
 import type {
   ChecklistCompletion,
   ChecklistInstance,
@@ -1200,17 +1201,31 @@ export function OpeningClient({
   }
 
   // First missing-temp item label (for the "Temp reading required for [X]"
-  // hint when ticked but missing temp).
-  const firstMissingTempLabel = useMemo(() => {
+  // hint when ticked but missing temp) and its station — B1 #10: the hint is a
+  // button that opens + scrolls to that station (the temp box sits in a
+  // collapsed station card). Station key = the stationGroups key.
+  const firstMissingTemp = useMemo(() => {
     for (const item of phase1Items) {
       if (!item.expectsCount) continue;
       const v = values.get(item.id);
       if (v?.ticked && (v?.countValue === null || v?.countValue === undefined)) {
-        return item.label;
+        return { label: item.label, station: item.station ?? "—" };
       }
     }
     return null;
   }, [phase1Items, values]);
+
+  const footerHint = openingFooterHint({
+    activePhase,
+    submitEnabled,
+    roleCanSubmit: roleCanSubmitPhase1,
+    remainingTicks: totalTickItems - tickedCount,
+    firstMissingTemp,
+    spotCheckBlockReason: spotCheckResolved ? null : spotCheckBlockReason,
+    attestationMissing: needsAttestation && attestationReason === null,
+    phase2AlreadyFinalized,
+    outstandingCount,
+  });
 
   const handlePhase2ItemChange = (
     templateItemId: string,
@@ -2024,39 +2039,40 @@ export function OpeningClient({
                 </>
               ) : null}
             </p>
-            {/* Phase-aware gate hint per 3c form-split. On the Phase 1 tab,
-                surface Phase 1 blockers (ticks, temps, attestation). On the
-                Phase 2 tab, surface Phase 2 blockers (entries, under-par
-                freetext). When attestation is required but not yet captured,
-                the inline prompt above is the actionable surface — the
-                sticky-footer hint falls to gate_disabled_generic since
-                duplicate messaging would be noise. */}
+            {/* Phase-aware gate hint per 3c form-split, chosen by the pure
+                openingFooterHint (lib/prep-display-shared.ts): the FIRST blocker on
+                the active tab. B1 #10 — an unpicked no-prior-data reason is named
+                (it used to fall to "Submit disabled" while the pink prompt sat far
+                up the page), and a missing temp is a button that opens + scrolls to
+                its station. */}
             <p className="text-[11px] text-co-text-dim">
-              {submitEnabled
-                ? (roleCanSubmitPhase1 ? t("opening.submit.gate_ready") : t("opening.submit.gate_role"))
-                : activePhase === "verification"
-                  ? !allTicked
-                    ? t("opening.submit.gate_disabled_items_remaining", {
-                        remaining: totalTickItems - tickedCount,
-                      })
-                    : firstMissingTempLabel
-                      ? t("opening.submit.gate_disabled_temps_required", {
-                          item: firstMissingTempLabel,
-                        })
-                      : !spotCheckResolved
-                        ? spotCheckBlockReason === "template_misconfigured"
-                          ? t(
-                              "opening.submit.gate_disabled_template_misconfigured",
-                            )
-                          : t("opening.submit.gate_disabled_verify_sections")
-                        : t("opening.submit.gate_disabled_generic")
-                  : phase2AlreadyFinalized
-                    ? t("opening.finalize.already_finalized")
-                    : outstandingCount > 0
-                      ? t("opening.finalize.gate_outstanding", {
-                          count: outstandingCount,
-                        })
-                      : t("opening.submit.gate_disabled_generic")}
+              {footerHint.kind === "temps_required" ? (
+                <button
+                  type="button"
+                  onClick={() => stationCollapse.reveal([footerHint.station])}
+                  className="inline-flex min-h-[44px] items-center text-left font-medium text-co-text underline focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/40"
+                >
+                  {t("opening.submit.gate_disabled_temps_required", { item: footerHint.item })}
+                </button>
+              ) : footerHint.kind === "ready" ? (
+                t("opening.submit.gate_ready")
+              ) : footerHint.kind === "role" ? (
+                t("opening.submit.gate_role")
+              ) : footerHint.kind === "items_remaining" ? (
+                t("opening.submit.gate_disabled_items_remaining", { remaining: footerHint.remaining })
+              ) : footerHint.kind === "template_misconfigured" ? (
+                t("opening.submit.gate_disabled_template_misconfigured")
+              ) : footerHint.kind === "verify_sections" ? (
+                t("opening.submit.gate_disabled_verify_sections")
+              ) : footerHint.kind === "reason_required" ? (
+                t("opening.submit.gate_disabled_reason_required")
+              ) : footerHint.kind === "already_finalized" ? (
+                t("opening.finalize.already_finalized")
+              ) : footerHint.kind === "outstanding" ? (
+                t("opening.finalize.gate_outstanding", { count: footerHint.count })
+              ) : (
+                t("opening.submit.gate_disabled_generic")
+              )}
             </p>
             {/* LRA-121 — draft autosave status. Renders only on the verification tab of a
                 still-'open' instance (past that there is no draft to speak for), and only
