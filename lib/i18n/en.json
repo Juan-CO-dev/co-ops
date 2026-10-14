@@ -4645,6 +4645,8 @@
   "admin.catering.fulfillment.select_location": "Select a location to configure",
   "admin.catering.fulfillment.configured": "configured",
   "admin.catering.fulfillment.not_set": "not set",
+  "admin.catering.fulfillment.not_set_notice": "{shop} has no delivery location set yet.",
+  "admin.catering.fulfillment.place_pin": "Place pin",
   "admin.catering.fulfillment.radius_miles": "Delivery radius (miles)",
   "admin.catering.fulfillment.offers_delivery": "Offers delivery",
   "admin.catering.fulfillment.offers_pickup": "Offers pickup",

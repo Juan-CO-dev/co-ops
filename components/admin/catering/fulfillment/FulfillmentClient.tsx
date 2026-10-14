@@ -28,6 +28,9 @@ const DEFAULT_LNG = -77.0369;
 const DEFAULT_RADIUS = 5;
 
 interface ZoneState {
+  /** B8 #8 — a pin exists: the shop's saved location, or one the manager just placed. A shop
+   *  that is "not set" starts unplaced, so the map draws no pin/circle it does not have. */
+  placed: boolean;
   lat: number;
   lng: number;
   radiusMiles: number;
@@ -35,9 +38,10 @@ interface ZoneState {
   offersPickup: boolean;
 }
 
-function seedState(node: FulfillmentNodeView): ZoneState {
+export function seedState(node: FulfillmentNodeView): ZoneState {
   if (node.configured && node.lat !== null && node.lng !== null) {
     return {
+      placed: true,
       lat: node.lat,
       lng: node.lng,
       // Radius is stored as integer meters, so metersToMiles round-trips to e.g. 5.000174 —
@@ -48,6 +52,7 @@ function seedState(node: FulfillmentNodeView): ZoneState {
     };
   }
   return {
+    placed: false,
     lat: DEFAULT_LAT,
     lng: DEFAULT_LNG,
     radiusMiles: DEFAULT_RADIUS,
@@ -76,6 +81,7 @@ export function FulfillmentClient({
   );
   const [zone, setZone] = useState<ZoneState>(
     initialNode ? seedState(initialNode) : {
+      placed: false,
       lat: DEFAULT_LAT,
       lng: DEFAULT_LNG,
       radiusMiles: DEFAULT_RADIUS,
@@ -104,7 +110,7 @@ export function FulfillmentClient({
   };
 
   const handleSave = async () => {
-    if (busy || !selectedId) return;
+    if (busy || !selectedId || !zone.placed) return;
     setErrorMsg(null);
     setSavedMsg(false);
     if ((await requestStepUp("A")) !== "ok") return;
@@ -171,11 +177,26 @@ export function FulfillmentClient({
         </label>
       </div>
 
-      {/* Drag hint */}
-      {selectedNode && (
+      {/* Drag hint — or, for a shop with no saved location, the not-set state (B8 #8) */}
+      {selectedNode && zone.placed && (
         <p className="text-sm text-co-text-muted">
           {t("admin.catering.fulfillment.drag_hint" as TranslationKey)}
         </p>
+      )}
+      {selectedNode && !zone.placed && (
+        <div role="status" className="flex flex-wrap items-center gap-3 rounded-lg border-2 border-dashed border-co-border p-3 text-sm text-co-text-muted">
+          <span>{t("admin.catering.fulfillment.not_set_notice", { shop: selectedNode.locationName })}</span>
+          {canManage ? (
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => setZone((prev) => ({ ...prev, placed: true }))}
+              className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-gold-deep bg-co-surface px-4 text-sm font-bold uppercase tracking-[0.1em] text-co-text transition focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {t("admin.catering.fulfillment.place_pin")}
+            </button>
+          ) : null}
+        </div>
       )}
 
       {/* Map — SSR-safe via dynamic ssr:false. `isolate` contains Leaflet's internal
@@ -186,6 +207,7 @@ export function FulfillmentClient({
           lat={zone.lat}
           lng={zone.lng}
           radiusMiles={zone.radiusMiles}
+          showZone={zone.placed}
           onCenterChange={handleCenterChange}
         />
       </div>
@@ -254,7 +276,7 @@ export function FulfillmentClient({
         {canManage ? (
           <button
             type="button"
-            disabled={busy || !selectedId}
+            disabled={busy || !selectedId || !zone.placed}
             onClick={() => void handleSave()}
             className="inline-flex min-h-[44px] items-center justify-center rounded-lg border-2 border-co-gold-deep bg-co-gold px-6 text-sm font-bold uppercase tracking-[0.1em] text-co-text transition focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60 disabled:cursor-not-allowed disabled:opacity-50"
           >
