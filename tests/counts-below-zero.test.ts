@@ -73,6 +73,7 @@ describe("Product on-hand row", () => {
     productId: "ham", productName: "Ham", totalOz, knownOz: totalOz ?? 0, unknownSkuIds: [],
     members: [{ skuId: "a", skuName: "Ham", vendorName: "PFG", onHandOz: totalOz }], varianceOz: null, varianceLots: [], remaining: [],
   });
+  // eslint-disable-next-line react/no-children-prop -- house test pattern: TranslationProvider's children prop is required
   const card = (row: ProductOnHandRow) => renderToStaticMarkup(createElement(TranslationProvider, {
     initialLanguage: "en", children: createElement(ProductOnHandCard, { row }),
   }));

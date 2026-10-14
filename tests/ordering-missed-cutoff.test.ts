@@ -52,6 +52,7 @@ describe("v1 mid-shift banner", () => {
 
 describe("/ordering page surfaces", () => {
   const c = (over: Partial<OrderingCutoffAttention>): OrderingCutoffAttention => ({ vendorId: "v", vendorName: "V", cutoffTime: "11:00 AM", hasDraft: false, missed: false, ...over });
+  // eslint-disable-next-line react/no-children-prop -- house test pattern: TranslationProvider's children prop is required
   const render = (cutoffAttention: OrderingCutoffAttention[]) => renderToStaticMarkup(createElement(TranslationProvider, {
     initialLanguage: "en",
     children: createElement(OrderingSurfaces, { todaysOrders: [], history: [], cutoffAttention, locationId: "shop", actorLevel: 7, language: "en", shopLabel: "Shop", dateLabel: "Today" }),

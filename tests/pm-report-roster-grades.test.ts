@@ -54,6 +54,7 @@ describe("pmPresenceRoster", () => {
 });
 
 function render(report: PmReportForEdit, presenceRoster: { id: string; name: string }[] | null, submitted = false) {
+  // eslint-disable-next-line react/no-children-prop -- house test pattern: TranslationProvider's children prop is required
   return renderToStaticMarkup(createElement(TranslationProvider, {
     initialLanguage: "en",
     children: createElement(PmReportClient, {
