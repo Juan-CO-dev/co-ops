@@ -164,6 +164,90 @@ describe("D-45 · package lines → Prep Demand", () => {
   });
 });
 
+// ── review (Astra) · package components keep their identity; no double expansion ─────────
+describe("review · package components keep their identity; one package counted once", () => {
+  type QLine = { item_id?: string | null; menu_item_id?: string | null; package_id?: string | null; quantity: number; unit_price_cents?: number };
+  const comps: Row[] = [
+    { id: "fix-chips", package_id: "pkg-fix", slot_type: "fixed", item_id: "i-chips", menu_item_id: null, quantity: 1, active: true },
+    { id: "mix-chips", package_id: "pkg-mix", slot_type: "fixed", item_id: "i-chips", menu_item_id: null, quantity: 1, active: true },
+    { id: "mix-slot", package_id: "pkg-mix", slot_type: "choice", item_id: null, menu_item_id: null, quantity: 1, active: true },
+    { id: "plat-slot", package_id: "pkg-plat", slot_type: "choice", item_id: null, menu_item_id: null, quantity: 16, active: true },
+  ];
+  const resolve = async (lines: QLine[], options: Row[] = []) => {
+    db.catering_package_items = comps.map((c) => ({ ...c }));
+    db.catering_quote_item_options = options;
+    db.catering_quote_items = lines.map((l, i) => ({
+      id: `qi-${i}`, quote_id: "q-r", item_id: null, menu_item_id: null, package_id: null, portion: null, unit_price_cents: 0, ...l,
+    }));
+    const d = await resolveQuoteDemand(sbFake as never, "q-r");
+    const sum = (f: (x: (typeof d)[number]) => boolean) => d.filter(f).reduce((s, x) => s + x.qty, 0);
+    return { chips: sum((x) => x.itemId === "i-chips"), picks: sum((x) => x.choicePackageItemId != null), subs: sum((x) => x.menuItemId === "m-sub") };
+  };
+  const fixedPkg: ExpandablePackage = {
+    id: "pkg-fix", labelEn: "Snack pack", pricingMode: "fixed", priceCents: 1500,
+    items: [{ itemId: "i-chips", menuItemId: null, label: "Chips", quantity: 1, unitPriceCents: 0 }],
+  };
+  const asRows = (pkg: ExpandablePackage, headcount: string): QLine[] =>
+    expandPackageLines(pkg, headcount).map((l) => ({
+      item_id: l.itemId, menu_item_id: l.menuItemId, package_id: l.packageId,
+      quantity: Number(l.quantity), unit_price_cents: Math.round(Number(l.unitPrice || "0") * 100),
+    }));
+
+  it("$15 fixed package with an unpriced concrete item: demand is the item's own Qty, once", async () => {
+    const rows = asRows(fixedPkg, "");
+    expect(await resolve(rows)).toMatchObject({ chips: 1, picks: 0 });
+    rows[1]!.quantity = 2; // the manager edits the component's Qty
+    expect(await resolve(rows)).toMatchObject({ chips: 2, picks: 0 });
+  });
+
+  it("removing the header keeps the components counting", async () => {
+    const rows = asRows(fixedPkg, "");
+    rows[1]!.quantity = 2;
+    rows[1]!.unit_price_cents = 1500; // the manager prices the remaining component
+    expect(await resolve(rows.slice(1))).toMatchObject({ chips: 2, picks: 0 });
+  });
+
+  it("a pick placeholder is reserved once, through the header's slot, never as a second package", async () => {
+    const mixed: ExpandablePackage = {
+      id: "pkg-mix", labelEn: "Mix", pricingMode: "per_head", priceCents: 1800,
+      items: [
+        { itemId: "i-chips", menuItemId: null, label: "Chips", quantity: 1, unitPriceCents: 0 },
+        { itemId: null, menuItemId: null, label: "Choose your sub", quantity: 1, unitPriceCents: 0 },
+      ],
+    };
+    expect(await resolve(asRows(mixed, "10"))).toMatchObject({ chips: 10, picks: 10 });
+    // same package with priced components (the $0 header path)
+    const priced = { ...mixed, priceCents: 0, items: [{ ...mixed.items[0]!, unitPriceCents: 200 }, mixed.items[1]!] };
+    expect(await resolve(asRows(priced, "10"))).toMatchObject({ chips: 10, picks: 10 });
+  });
+
+  it("OLD saved quotes (placeholders carrying the package id) resolve without double counting", async () => {
+    // old platter: header $115 x1 + pick line $0 x16 with the package id
+    expect(await resolve([
+      { package_id: "pkg-plat", quantity: 1, unit_price_cents: 11500 },
+      { package_id: "pkg-plat", quantity: 16, unit_price_cents: 0 },
+    ])).toMatchObject({ picks: 16 });
+    // old mixed: header + concrete component with the package id + pick line with the package id
+    expect(await resolve([
+      { package_id: "pkg-mix", quantity: 5, unit_price_cents: 1800 },
+      { package_id: "pkg-mix", item_id: "i-chips", quantity: 5 },
+      { package_id: "pkg-mix", quantity: 5, unit_price_cents: 0 },
+    ])).toMatchObject({ chips: 5, picks: 5 });
+  });
+
+  it("a portal package line (no component lines) still expands the whole package, picks included", async () => {
+    expect(await resolve([{ package_id: "pkg-mix", quantity: 3, unit_price_cents: 1800 }])).toMatchObject({ chips: 3, picks: 3 });
+    expect(await resolve(
+      [{ package_id: "pkg-mix", quantity: 3, unit_price_cents: 1800 }],
+      [{ quote_item_id: "qi-0", package_item_id: "mix-slot", item_id: null, menu_item_id: "m-sub", quantity: 1 }],
+    )).toMatchObject({ chips: 3, picks: 0, subs: 3 });
+  });
+
+  it("an unpriced bare package line with nothing priced beside it still counts (a free package)", async () => {
+    expect(await resolve([{ package_id: "pkg-fix", quantity: 2, unit_price_cents: 0 }])).toMatchObject({ chips: 2 });
+  });
+});
+
 // ── D-46 · "quote not accepted" chip on Confirmed cards ─────────────────────────────────
 describe("D-46 · the board knows which Confirmed leads have an unaccepted quote", () => {
   const lead = (id: string, stage: string, location_id: string | null = A): Row => ({

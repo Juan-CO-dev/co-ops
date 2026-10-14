@@ -77,6 +77,32 @@ describe("D-45 · per-head package Qty = headcount", () => {
     }
   });
 
+  it("concrete components keep their reference and the package tag, priced or not (review)", () => {
+    const fixed: ExpandablePackage = {
+      id: "pkg-fix", labelEn: "Snack pack", pricingMode: "fixed", priceCents: 1500,
+      items: [{ itemId: "i-chips", menuItemId: null, label: "Chips", quantity: 1, unitPriceCents: 0 }],
+    };
+    expect(expandPackageLines(fixed, "")).toEqual([
+      { description: "Snack pack", quantity: "1", unitPrice: "15", itemId: null, menuItemId: null, packageId: "pkg-fix" },
+      { description: "Chips", quantity: "1", unitPrice: "", itemId: "i-chips", menuItemId: null, packageId: "pkg-fix" },
+    ]);
+  });
+
+  it("a priced composition with a pick slot gets a $0 header to reserve the slot through", () => {
+    const mixed: ExpandablePackage = {
+      id: "pkg-mix", labelEn: "Mix", pricingMode: "per_head", priceCents: 0,
+      items: [
+        { itemId: "i-chips", menuItemId: null, label: "Chips", quantity: 1, unitPriceCents: 200 },
+        { itemId: null, menuItemId: null, label: "Choose your sub", quantity: 1, unitPriceCents: 0 },
+      ],
+    };
+    expect(expandPackageLines(mixed, "4").map((l) => [l.description, l.quantity, l.unitPrice, l.itemId, l.packageId])).toEqual([
+      ["Mix", "4", "0", null, "pkg-mix"],
+      ["Chips", "4", "2", "i-chips", "pkg-mix"],
+      ["Choose your sub", "4", "", null, null],
+    ]);
+  });
+
   it("with no headcount yet, a per-head package still drops in at Qty 1", () => {
     expect(expandPackageLines(lightLunch, "").map((l) => l.quantity)).toEqual(["1", "1"]);
   });

@@ -40,30 +40,47 @@ interface PackageComp { id: string; package_id: string; slot_type: string; item_
  *  to concrete refs. A choice slot resolves to the CUSTOMER'S STORED PICKS (catering_quote_item_options,
  *  sub-project B) — each chosen sub becomes concrete demand scaled by package-line-qty × pick-qty; only
  *  an UNCONFIGURED package (no stored picks) falls back to one advisory "needs a pick" row. Package
- *  lines are processed PER quote-line (two lines of the same package can hold different picks). */
+ *  lines are processed PER quote-line (two lines of the same package can hold different picks).
+ *
+ *  ONE PACKAGE, COUNTED ONCE (B7c review, Astra 2026-10-14). The staff builder lists a package as
+ *  a HEADER (package id, no reference) + COMPONENT lines (a reference, tagged with the package id)
+ *  + display-only pick placeholders (see `expandPackageLines`). So:
+ *   · a component line counts at its OWN Qty (edits move demand; removing the header keeps it);
+ *   · a header whose package has components listed as their own lines in this quote expands ONLY
+ *     its choice slots — the fixed components are already counted, never twice;
+ *   · a portal line (no component lines) still expands the whole package.
+ *  OLD SAVED QUOTES (no migration): the builder used to give the pick placeholders the package id
+ *  too, so each looked like a second header (a 16 pc platter reserved 16 + 256 picks). Among the
+ *  bare package lines of one package WITHOUT stored picks, only the PRICED ones are headers when
+ *  any is priced (an old placeholder is always $0); if none is priced they all expand. A line
+ *  with stored picks always expands. Residual: an old quote whose header was itself zeroed still
+ *  counts its old placeholders. */
 export async function resolveQuoteDemand(sb: Sb, quoteId: string): Promise<ResolvedDemand[]> {
   const { data: lines, error } = await sb
     .from("catering_quote_items")
-    .select("id, item_id, menu_item_id, package_id, quantity, portion")
+    .select("id, item_id, menu_item_id, package_id, quantity, portion, unit_price_cents")
     .eq("quote_id", quoteId)
-    .returns<Array<{ id: string; item_id: string | null; menu_item_id: string | null; package_id: string | null; quantity: number | string; portion: Portion | null }>>();
+    .returns<Array<{ id: string; item_id: string | null; menu_item_id: string | null; package_id: string | null; quantity: number | string; portion: Portion | null; unit_price_cents: number | string | null }>>();
   if (error) throw new Error(`resolveQuoteDemand items: ${error.message}`);
 
   const out: ResolvedDemand[] = [];
-  const pkgLines: Array<{ quoteItemId: string; packageId: string; qty: number }> = [];
+  const bareLines: Array<{ quoteItemId: string; packageId: string; qty: number; priced: boolean }> = [];
+  /** Packages this quote lists component-by-component (a referenced line tagged with the package). */
+  const listedPackages = new Set<string>();
   for (const l of lines ?? []) {
     const qty = typeof l.quantity === "string" ? Number(l.quantity) : l.quantity;
+    if (l.package_id && (l.item_id || l.menu_item_id)) listedPackages.add(l.package_id);
     if (l.item_id) {
       out.push({ itemId: l.item_id, menuItemId: null, choicePackageItemId: null, portion: l.portion, qty });
     } else if (l.menu_item_id) {
       out.push({ itemId: null, menuItemId: l.menu_item_id, choicePackageItemId: null, portion: l.portion, qty });
     } else if (l.package_id) {
-      pkgLines.push({ quoteItemId: l.id, packageId: l.package_id, qty });
+      bareLines.push({ quoteItemId: l.id, packageId: l.package_id, qty, priced: Number(l.unit_price_cents ?? 0) > 0 });
     }
   }
 
-  if (pkgLines.length) {
-    const packageIds = [...new Set(pkgLines.map((p) => p.packageId))];
+  if (bareLines.length) {
+    const packageIds = [...new Set(bareLines.map((p) => p.packageId))];
     const { data: comps, error: cErr } = await sb
       .from("catering_package_items")
       .select("id, package_id, slot_type, item_id, menu_item_id, quantity")
@@ -78,7 +95,7 @@ export async function resolveQuoteDemand(sb: Sb, quoteId: string): Promise<Resol
     const { data: optRows, error: oErr } = await sb
       .from("catering_quote_item_options")
       .select("quote_item_id, package_item_id, item_id, menu_item_id, quantity")
-      .in("quote_item_id", pkgLines.map((p) => p.quoteItemId))
+      .in("quote_item_id", bareLines.map((p) => p.quoteItemId))
       .returns<Array<{ quote_item_id: string; package_item_id: string; item_id: string | null; menu_item_id: string | null; quantity: number | string }>>();
     if (oErr) throw new Error(`resolveQuoteDemand package options: ${oErr.message}`);
     const picksBySlot = new Map<string, Array<{ itemId: string | null; menuItemId: string | null; qty: number }>>();
@@ -89,8 +106,17 @@ export async function resolveQuoteDemand(sb: Sb, quoteId: string): Promise<Resol
       picksBySlot.set(key, arr);
     }
 
+    // Which bare lines are HEADERS (see the doc above): stored picks always; else the priced ones
+    // of that package when any is priced, else all of them.
+    const hasPicks = new Set([...picksBySlot.keys()].map((k) => k.split(":")[0]!));
+    const pricedPackages = new Set(bareLines.filter((b) => b.priced && !hasPicks.has(b.quoteItemId)).map((b) => b.packageId));
+    const pkgLines = bareLines.filter((b) => hasPicks.has(b.quoteItemId) || b.priced || !pricedPackages.has(b.packageId));
+
     for (const pl of pkgLines) {
+      const listed = listedPackages.has(pl.packageId);
       for (const c of compsByPackage.get(pl.packageId) ?? []) {
+        // Listed component-by-component: the fixed components count themselves; expand slots only.
+        if (listed && c.slot_type !== "choice") continue;
         const compQty = typeof c.quantity === "string" ? Number(c.quantity) : c.quantity;
         if (c.slot_type === "choice") {
           const picks = picksBySlot.get(`${pl.quoteItemId}:${c.id}`);

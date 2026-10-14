@@ -280,40 +280,46 @@ const scaleQty = (q: number, n: number): string => String(Math.round(q * n * 100
  * - Each composition line keeps its own quantity × the headcount multiplier (1 unless the
  *   package is per-head and a headcount is set — D-45). A fixed-count platter keeps its count.
  * - A package with no composition becomes one priced line for the package itself.
- * - A package whose composition is all unpriced "choose your own" slots carries the package
- *   price on ONE line (the guide-walk $115 × 8 fix). That line is per person for a per-head
- *   package, so its Qty is the headcount too.
+ * - A package whose composition is all unpriced carries the package price on ONE header line
+ *   (the guide-walk $115 × 8 fix). That line is per person for a per-head package, so its Qty
+ *   is the headcount too.
  *
- * WHOLE-PACKAGE LINE vs DISPLAY LINES. Prep Demand (`resolveQuoteDemand`) reads a quote line
- * that carries `package_id` and no item/menu reference as "this whole package × Qty" and
- * expands every component. The priced package line above is exactly that, so the pick lines
- * shown under it are DISPLAY ONLY: no package id and no catalog reference. Before, they kept
- * the package id and each one expanded the package again — a 16 pc platter reserved 16 + 256
- * "needs a pick" subs, Light Lunch for 20 reserved 20 + 20.
+ * ONE REPRESENTATION, THREE KINDS OF LINE (B7c review, Astra 2026-10-14) — what Prep Demand
+ * (`resolveQuoteDemand`) counts:
+ *   · HEADER — package id, no item/menu reference. Qty = package units. Prep Demand expands
+ *     it, but when the quote lists the package's components as their own lines it expands
+ *     only the CHOICE slots (→ "needs a pick"); the listed components count themselves.
+ *   · COMPONENT — a concrete item/menu reference (+ the package id as a tag). Counted at its
+ *     OWN Qty, so editing it moves the demand, and it still counts if the header is removed.
+ *   · PICK PLACEHOLDER — a "Choose your sub" slot: no package id and no reference, display
+ *     only. The header's choice-slot expansion is what reserves it, exactly once.
+ * A header is emitted whenever the package has no composition, is priced only as a whole,
+ * or has a pick slot (then at $0 when the components carry the prices), so a slot always
+ * has a header to be reserved through.
  */
 export function expandPackageLines(pkg: ExpandablePackage, headcount: string): ExpandedPackageLine[] {
   const n = packageHeadcountMultiplier(pkg.pricingMode, headcount);
-  const packageLine = (): ExpandedPackageLine => ({
+  const header = (priceCents: number): ExpandedPackageLine => ({
     description: pkg.labelEn,
     quantity: String(n),
-    unitPrice: (pkg.priceCents / 100).toString(),
+    unitPrice: (priceCents / 100).toString(),
     itemId: null,
     menuItemId: null,
     packageId: pkg.id,
   });
+  const isPick = (pi: ExpandablePackage["items"][number]) => pi.itemId == null && pi.menuItemId == null;
   const lines: ExpandedPackageLine[] = pkg.items.map((pi) => ({
     description: pi.label,
     quantity: scaleQty(pi.quantity, n),
     unitPrice: centsToDollarText(pi.unitPriceCents),
     itemId: pi.itemId,
     menuItemId: pi.menuItemId,
-    packageId: pkg.id,
+    packageId: isPick(pi) ? null : pkg.id,
   }));
-  if (lines.length === 0) return [packageLine()];
-  if (pkg.priceCents > 0 && lines.every((l) => l.unitPrice === "")) {
-    const display = lines.map((l) => ({ ...l, itemId: null, menuItemId: null, packageId: null }));
-    return [packageLine(), ...display];
-  }
+  if (lines.length === 0) return [header(pkg.priceCents)];
+  const pricedAsWhole = pkg.priceCents > 0 && lines.every((l) => l.unitPrice === "");
+  if (pricedAsWhole) return [header(pkg.priceCents), ...lines];
+  if (pkg.items.some(isPick)) return [header(0), ...lines];
   return lines;
 }
 
