@@ -47,10 +47,12 @@ export interface ZoneMapProps {
   lat: number;
   lng: number;
   radiusMiles: number;
+  /** B8 #8 — false for a shop with no saved location: no pin, no circle (nothing is set). */
+  showZone?: boolean;
   onCenterChange: (lat: number, lng: number) => void;
 }
 
-export default function ZoneMap({ mapKey, lat, lng, radiusMiles, onCenterChange }: ZoneMapProps) {
+export default function ZoneMap({ mapKey, lat, lng, radiusMiles, showZone = true, onCenterChange }: ZoneMapProps) {
   const center: [number, number] = [lat, lng];
   const radiusMeters = milesToMeters(radiusMiles);
 
@@ -66,7 +68,7 @@ export default function ZoneMap({ mapKey, lat, lng, radiusMiles, onCenterChange 
         url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
         attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
       />
-      <Marker
+      {showZone ? <Marker
         position={center}
         draggable
         eventHandlers={{
@@ -75,8 +77,8 @@ export default function ZoneMap({ mapKey, lat, lng, radiusMiles, onCenterChange 
             onCenterChange(latlng.lat, latlng.lng);
           },
         }}
-      />
-      <Circle center={center} radius={radiusMeters} />
+      /> : null}
+      {showZone ? <Circle center={center} radius={radiusMeters} /> : null}
     </MapContainer>
   );
 }

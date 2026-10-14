@@ -347,6 +347,7 @@ const PAGE_ROUTES: Record<string, string> = {
   "app/admin/catering/lto/page.tsx": "/admin/catering/lto",
   "app/admin/catering/fulfillment/page.tsx": "/admin/catering/fulfillment",
   "app/(authed)/catering/quotes/page.tsx": "/catering/quotes",
+  "app/(authed)/catering/pipeline/page.tsx": "/catering/pipeline", // B8 #3 — add-lead default shop
 };
 
 /** Where each audited page binds the awaited `searchParams` its getter reads. */
@@ -433,6 +434,7 @@ const RESOLVER_PAGES: Record<string, RegExp> = {
   // B3's Production default (D-64): memberships, then every active shop for the 9+ grant; the bind follows.
   "app/(authed)/operations/production/page.tsx": /const location = requested \?\? \(await resolveShopId\(isAllLocationsAccess\(locActor\)\s*\? \[\.\.\.auth\.locations, \.\.\.\(await activeLocationIds\(\)\)\.filter\(\(id\) => !auth\.locations\.includes\(id\)\)\]\s*: auth\.locations\)\);\s*if \(!location\) redirect\("\/dashboard"\);\s*if \(!lockLocationContext\(locActor, location\)\) redirect\("\/dashboard"\);/,
   "app/(authed)/catering/quotes/page.tsx": /await resolveShop\(locations\)/,
+  "app/(authed)/catering/pipeline/page.tsx": /await resolveShop\(createLocations\)/,
   "app/(authed)/mid-shift/page.tsx": /location \?\? \(await resolveShopId\(accessible\.map/,
   "app/(authed)/mid-shift/[section]/page.tsx": /remembered: await rememberedShopId\(\)/,
   "components/pulse/PulseHome.tsx": /remembered: await rememberedShopId\(\)/,

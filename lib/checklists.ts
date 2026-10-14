@@ -63,6 +63,7 @@ import {
   type EffectiveResolvableBuilder,
 } from "./admin/template-builder-shared";
 import {
+  carriedCompletedAt,
   COMPLETION_COLUMNS,
   INSTANCE_COLUMNS,
   type CompletionRow,
@@ -964,6 +965,7 @@ export async function completeItem(
   const sb = getServiceRoleClient();
   let inserted: CompletionRow | null = null;
   let supersededPriorId: string | null = null;
+  let keptCompletedAt = false;
   for (let attempt = 0; attempt < 5 && !inserted; attempt++) {
     // Claim: supersede whatever live head currently exists for this item (0 rows
     // is fine — no prior, or a rival already superseded it). Guarded on
@@ -980,8 +982,13 @@ export async function completeItem(
       .eq("template_item_id", templateItemId)
       .is("superseded_at", null)
       .is("revoked_at", null)
-      .select("id");
+      .select("id, completed_by, completed_at, count_value, photo_id, actual_completer_id");
     if (supErr) throw new Error(`completeItem supersede: ${supErr.message}`);
+    // B8 #13 — a notes-only re-save by the same person keeps the line's original tick time.
+    const priorHead = (superseded?.[0] ?? null) as Pick<CompletionRow, "completed_by" | "completed_at" | "count_value" | "photo_id" | "actual_completer_id"> | null;
+    const carryAt = carriedCompletedAt(priorHead, {
+      actorId: actor.userId, countValue: args.countValue ?? null, photoId: args.photoId ?? null, inputType: item.input_type,
+    });
     // What THIS lap claimed, kept apart from the accumulated `supersededPriorId` (which
     // deliberately carries across laps so the back-pointer survives a 23505 retry).
     // Compensating with the accumulated id would revert a stamp from an EARLIER lap that
@@ -1000,6 +1007,7 @@ export async function completeItem(
         count_value: args.countValue ?? null,
         photo_id: args.photoId ?? null,
         notes: args.notes ?? null,
+        ...(carryAt ? { completed_at: carryAt } : {}),
       })
       .select(COMPLETION_COLUMNS)
       .maybeSingle<CompletionRow>();
@@ -1037,6 +1045,7 @@ export async function completeItem(
     }
     if (!row) throw new Error(`completeItem insert returned no row`);
     inserted = row;
+    keptCompletedAt = carryAt !== null;
   }
   if (!inserted) {
     // 5 laps without landing a live head means sustained contention on one item —
@@ -1069,6 +1078,7 @@ export async function completeItem(
       superseded_prior_id: priorId,
       had_count: args.countValue !== undefined && args.countValue !== null,
       had_photo: args.photoId !== undefined && args.photoId !== null,
+      kept_completed_at: keptCompletedAt,
     },
     ipAddress: args.ipAddress ?? null,
     userAgent: args.userAgent ?? null,

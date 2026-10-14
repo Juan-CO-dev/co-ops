@@ -184,3 +184,34 @@ export function rowToCompletion(r: CompletionRow): ChecklistCompletion {
     countProvenance: null,
   };
 }
+
+/** Input types whose ANSWER lives in `notes` (validateAnswerForInputType / interpretAnswer). */
+const NOTES_ARE_THE_ANSWER: ReadonlySet<"yes_no" | "free_text" | null> = new Set(["free_text"]);
+
+/**
+ * B8 #13 (sim walk 2026-10-14): saving a NOTE on a ticked closing line re-stamped its tick time
+ * (3:20 → 3:22), because a note save is an append-only re-completion and the new row took
+ * `completed_at = now()`. When the new row only adds/edits the note — same person, same count,
+ * same photo — the line was still DONE at the original moment, so the new head carries the
+ * prior head's `completed_at`. Anything else (another person, a new count or answer, a new
+ * photo) is a genuine re-completion and keeps its own time. Pure; the supersede claim in
+ * `completeItem` supplies the prior row it just superseded (0196's one-live-head law unchanged).
+ */
+export function carriedCompletedAt(
+  prior: Pick<CompletionRow, "completed_by" | "completed_at" | "count_value" | "photo_id" | "actual_completer_id"> | null,
+  next: { actorId: string; countValue: number | null; photoId: string | null; inputType: "yes_no" | "free_text" | null },
+): string | null {
+  if (!prior || prior.completed_by !== next.actorId) return null;
+  // r2 (Astra P2): on a free_text line `notes` IS the answer (lib/checklist-answers.ts), so a
+  // notes save there is a new ANSWER — it takes its own time (and its own quick-undo window).
+  // Only a note on a non-answer line is "a note on a tick".
+  if (NOTES_ARE_THE_ANSWER.has(next.inputType)) return null;
+  // r2: a peer-tagged head (actual_completer_id) loses its tag on any re-save (the new row does
+  // not copy it — a pre-existing gap). Keeping the old time as well would make the line read as
+  // self-done AT the tagged moment, so a tagged head keeps today's behaviour: a fresh time.
+  if (prior.actual_completer_id !== null && prior.actual_completer_id !== undefined) return null;
+  const priorCount = prior.count_value === null ? null : Number(prior.count_value);
+  if (priorCount !== next.countValue) return null;
+  if ((prior.photo_id ?? null) !== next.photoId) return null;
+  return prior.completed_at;
+}

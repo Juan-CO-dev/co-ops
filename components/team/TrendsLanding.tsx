@@ -17,6 +17,7 @@ export function TrendsLanding({
   canSeeTeam,
   canSeeYield = false,
   ops,
+  opsWindow,
   team,
   attention,
 }: {
@@ -27,6 +28,8 @@ export function TrendsLanding({
   /** Batch vs bottle Phase B: level 5+ bound to this shop sees the Yield card + its nudges. */
   canSeeYield?: boolean;
   ops: { underPar: number; tempFlags: number } | null;
+  /** B8 #4 — the date window the ops counts cover ("Sep 15 – Oct 14"); they are not today-only. */
+  opsWindow?: string;
   team: TeamOperatingHealth | null;
   attention: { kind: "ops" | "team" | "yield"; titleKey: string; sub: string }[];
 }) {
@@ -137,6 +140,7 @@ export function TrendsLanding({
               {serverT(language, "reports.trends.landing.view_ops")}
             </Link>
           </div>
+          {opsWindow ? <p className="text-[11px] text-co-text-muted">{opsWindow}</p> : null}
           <div className="grid grid-cols-2 gap-2">
             <MiniTile
               label={serverT(language, "reports.trends.par_title")}

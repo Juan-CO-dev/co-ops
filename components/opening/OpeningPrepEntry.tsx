@@ -62,6 +62,7 @@ import {
 import { UnderParModal, type UnderParCapture } from "./UnderParModal";
 import { RevokeReasonModal } from "./RevokeReasonModal";
 import { etCalendarDate } from "@/lib/operational-day";
+import { TwoTapUndoButton } from "@/components/prep/TwoTapUndoButton";
 
 export interface OpeningPhase2FormValue {
   /** Opener recount value when item flagged for per-item recount; NULL otherwise. */
@@ -830,7 +831,9 @@ function PrepEntryRow({
       {/* Per-row save-state indicator + attribution + retry (C.53 Commit B Lane B).
        * Reads the same Map entry that feeds the parent's finalize outstanding-count,
        * so the badge and the gate can never disagree. */}
-      <div className="flex flex-wrap items-center gap-2 text-[11px]">
+      {/* B8 #1 — the status line reserves the 44px control height so a save (which
+       * grows the Undo pill) never shifts the rows below under a finger. */}
+      <div className="flex min-h-[44px] flex-wrap items-center gap-2 text-[11px]">
         {saveState.status === "saving" ? (
           <span className="font-bold uppercase tracking-[0.12em] text-co-text-muted">
             {t("opening.phase2.save.saving")}
@@ -849,23 +852,17 @@ function PrepEntryRow({
                 never predicts the 60s window. Hidden once Phase 2 is finalized
                 (read-only): a locked report has no per-row self-revoke. */}
             {!readOnly ? (
-              <button
-                type="button"
-                onClick={onRevoke}
+              /* B8 #1 — two taps: the first only arms ("Tap again to undo", ~4 s). */
+              <TwoTapUndoButton
+                onConfirm={onRevoke}
                 disabled={revoking}
-                aria-label={t("opening.phase2.revoke.cta_aria", { item: resolved.label })}
-                className="
-                  inline-flex min-h-[44px] items-center rounded-full border-2 border-co-border-2 bg-co-surface px-3 py-1
-                  text-[10px] font-bold uppercase tracking-[0.12em] text-co-text-muted
-                  transition hover:border-co-cta-text hover:text-co-cta-text
-                  focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60
-                  disabled:cursor-not-allowed disabled:opacity-60
-                "
-              >
-                {revoking
-                  ? t("opening.phase2.revoke.cta_pending")
-                  : t("opening.phase2.revoke.cta")}
-              </button>
+                pending={revoking}
+                label={t("opening.phase2.revoke.cta")}
+                armedLabel={t("opening.phase2.revoke.cta_confirm")}
+                pendingLabel={t("opening.phase2.revoke.cta_pending")}
+                ariaLabel={t("opening.phase2.revoke.cta_aria", { item: resolved.label })}
+                armedAriaLabel={t("opening.phase2.revoke.cta_confirm_aria", { item: resolved.label })}
+              />
             ) : null}
             {revokeError ? (
               <span role="alert" className="font-bold text-co-cta-text">

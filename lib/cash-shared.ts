@@ -36,6 +36,20 @@ export function computeCashTotals(input: {
   return { overShortCents, depositCents };
 }
 
+/**
+ * THE over/short wording (B8 #6): the entry form and the submitted view both read this, so an
+ * even night says "Even" on both — never "$0.00 over". `amountCents` is the magnitude.
+ */
+export function overShortReadout(overShortCents: number): {
+  key: "cash.readout.even" | "cash.readout.over" | "cash.readout.short";
+  amountCents: number;
+} {
+  if (overShortCents === 0) return { key: "cash.readout.even", amountCents: 0 };
+  return overShortCents > 0
+    ? { key: "cash.readout.over", amountCents: overShortCents }
+    : { key: "cash.readout.short", amountCents: -overShortCents };
+}
+
 /** Sum a denomination map to cents. Ignores non-positive / unknown-unit entries. */
 export function sumDenominations(denoms: Denominations): number {
   let total = 0;

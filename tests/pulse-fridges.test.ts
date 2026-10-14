@@ -46,7 +46,9 @@ describe("loadFridgesToday", () => {
     const signal = AbortSignal.timeout(5_000);
     const out = await loadFridgesToday(client, { locationId: LOC, date: "2026-10-09", signal });
     expect(calls.map((c) => c.table)).toEqual(["maintenance_equipment", "checklist_instances", "checklist_completions"]);
-    expect(calls[0]!.filters).toEqual(expect.arrayContaining([["location_id", LOC], ["active", true], ["kind", "fridge"]]));
+    // B8 #4 r4: every fridge is read (retired ones too) so the one registry decides item ownership; only active ones show.
+    expect(calls[0]!.filters).toEqual(expect.arrayContaining([["location_id", LOC], ["kind", "fridge"]]));
+    expect(calls[0]!.filters).not.toContainEqual(["active", true]);
     expect(calls[1]!.filters).toEqual(expect.arrayContaining([["location_id", LOC], ["date", "2026-10-09"]]));
     expect(calls[2]!.filters).toEqual(expect.arrayContaining([["instance_id", ["i-open", "i-close"]], ["superseded_at", null], ["revoked_at", null]]));
     expect(calls[2]!.filters.find(([c]) => c === "template_item_id")![1]).toHaveLength(12);

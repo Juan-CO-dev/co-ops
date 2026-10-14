@@ -19,7 +19,7 @@ describe("last close", () => {
   });
   it("counts finalized history and individual signal totals", () => {
     const item = { ...row("opening", "auto_finalized"), signalSummary: { underPar: 3, overPar: 0, skipped: 2, tempFlags: 1, cashOverShortCents: null } };
-    expect(composeReportSummary([item, row("closing", "open")])).toMatchObject({ total: 2, finalized: 1, signals: { underPar: 3, skipped: 2, tempFlags: 1 } });
+    expect(composeReportSummary([item, row("closing", "open")], 1)).toMatchObject({ total: 2, finalized: 1, signals: { underPar: 3, skipped: 2, tempFlags: 1 } });
   });
 });
 

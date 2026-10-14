@@ -15,6 +15,7 @@ import { audit } from "@/lib/audit";
 import type { AuthContext } from "@/lib/session";
 import { skuContentOz, type MeasureUnitFactor } from "@/lib/recipe-math";
 import type { MeasureDimension } from "@/lib/recipe-math";
+import { markSkuNameClashes, type ProductionSkuOption } from "@/lib/production-shared";
 
 // employee+ (Juan D-64, 2026-10-13: "production needs to be employee and up... key holders
 // aren't the only ones doing prep"). Every production gate reads THIS constant: the page,
@@ -107,7 +108,8 @@ export interface RecordProductionInput {
   notes?: string | null;
 }
 export interface ProductionFormData {
-  skus: Array<{ id: string; name: string; inStockPacks: number }>;
+  /** B8 #12 — one option per SKU id; a colliding name carries its vendor (lib/production-shared). */
+  skus: ProductionSkuOption[];
   /** SKU id → the items makeable from it (output items of active recipes that take the SKU). */
   skuToItems: Record<string, Array<{ itemId: string; name: string }>>;
 }
@@ -267,12 +269,22 @@ export async function loadProductionFormData(actor: AuthContext, locationId: str
   requireProduce(actor);
   if (!lockLocationContext(actorLoc(actor), locationId)) throw new ProductionError(404, "not_found", "Location not found");
   const sb = getServiceRoleClient();
-  const { data: skus, error } = await sb.from("vendor_items").select("id, name").eq("active", true).order("name", { ascending: true }).returns<Array<{ id: string; name: string }>>();
+  const { data: skus, error } = await sb.from("vendor_items").select("id, name, vendor_id").eq("active", true).order("name", { ascending: true }).returns<Array<{ id: string; name: string; vendor_id: string | null }>>();
   if (error) throw new Error(`loadProductionFormData skus: ${error.message}`);
   const ids = (skus ?? []).map((s) => s.id);
-  const [skuToItems, inStock] = await Promise.all([loadSkuToItems(ids), loadInStockPacks(ids, locationId)]);
+  const vendorIds = [...new Set((skus ?? []).flatMap((s) => (s.vendor_id ? [s.vendor_id] : [])))];
+  const [skuToItems, inStock, vendorRes] = await Promise.all([
+    loadSkuToItems(ids),
+    loadInStockPacks(ids, locationId),
+    vendorIds.length ? sb.from("vendors").select("id, name").in("id", vendorIds).returns<Array<{ id: string; name: string }>>() : Promise.resolve({ data: [] as Array<{ id: string; name: string }>, error: null }),
+  ]);
+  if (vendorRes.error) throw new Error(`loadProductionFormData vendors: ${vendorRes.error.message}`);
+  const vendorName = new Map((vendorRes.data ?? []).map((v) => [v.id, v.name] as const));
   return {
-    skus: (skus ?? []).map((s) => ({ id: s.id, name: s.name, inStockPacks: inStock.get(s.id) ?? 0 })),
+    skus: markSkuNameClashes((skus ?? []).map((s) => ({
+      id: s.id, name: s.name, inStockPacks: inStock.get(s.id) ?? 0,
+      vendorName: s.vendor_id ? (vendorName.get(s.vendor_id) ?? null) : null,
+    }))),
     skuToItems,
   };
 }

@@ -70,7 +70,7 @@ it("marks system-finalized reports auto-closed, prefers human confirmation and r
   expect(composeLastClose([auto], 5).reports.find(r => r.type === "closing")?.state).toBe("auto_closed");
   expect(composeLastClose([auto, human], 5).reports.find(r => r.type === "closing")).toMatchObject({ state: "done", item: human });
   expect(composeLastClose([human, auto], 5).reports.find(r => r.type === "closing")).toMatchObject({ state: "done", item: human });
-  expect(composeReportSummary([auto, human])).toMatchObject({ total: 2, finalized: 2, autoClosed: 1 });
+  expect(composeReportSummary([auto, human], 0)).toMatchObject({ total: 2, finalized: 2, autoClosed: 1 });
 });
 
 it("reads persisted final checks and ignores AM prep and malformed outcomes", () => {
@@ -87,9 +87,9 @@ it("reads persisted final checks and ignores AM prep and malformed outcomes", ()
 it("keeps detail/batch/trends signal parity, inactive-item history and completion percentage", async () => {
   const { client } = fake(data());
   const reports = [report("opening", "open"), report("am_prep", "am"), report("mid_day", "mid"), report("closing", "empty"), report("closing", "optional")];
-  const batch = await computeReportSignalsBatch(client, reports, new Set(), viewer);
+  const batch = await computeReportSignalsBatch(client, reports, new Map(), viewer);
   for (const r of reports) {
-    const single = await computeReportSignals(client, { ...r, viewer, tempItemIds: new Set() });
+    const single = await computeReportSignals(client, { ...r, viewer, tempItemIds: new Map() });
     expect(single.signals).toEqual(batch.get(r.id));
     if (r.id === "am") expect(single.prepValues).toMatchObject([{ par: 10, total: 2 }]);
   }
@@ -101,7 +101,7 @@ it("keeps detail/batch/trends signal parity, inactive-item history and completio
   const trend = await loadTrendSeries(client, { viewer, locationId: "shop", granularity: "day", compare: false, today: "2026-10-07" });
   expect(trend.current.find(b => b.key === date)).toMatchObject({ underPar: 1, overPar: 2, skipped: 1, notStarted: 1, completionPct: 67 });
   expect(trend.totals.completion.current).toBe(67);
-  expect(composeReportSummary(reports.map(r => ({ ...r, signalSummary: batch.get(r.id) })))).toMatchObject({ signals: { underPar: 1, overPar: 2, skipped: 1, notStarted: 1 } });
+  expect(composeReportSummary(reports.map(r => ({ ...r, signalSummary: batch.get(r.id) })), 0)).toMatchObject({ signals: { underPar: 1, overPar: 2, skipped: 1, notStarted: 1 } });
 });
 
 it("not-started and skipped list filters select different instances", async () => {

@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 import type { MyPerformanceData } from "@/lib/team-metrics";
 import type { MyFeedbackItem, Gradient } from "@/lib/pm-report";
-import { LineChart } from "@/components/trends/LineChart";
+import { LineChart, hasTrend } from "@/components/trends/LineChart";
 import { serverT } from "@/lib/i18n/server";
 import type { Language, TranslationKey } from "@/lib/i18n/types";
 import { formatDateLabel } from "@/lib/i18n/format";
@@ -97,19 +97,27 @@ export function MyPerformance({
 
       {/* 2. Contribution */}
       <Section title={serverT(language, "me.contribution")}>
-        <LineChart
-          series={[{ points: data.contribution, color: "var(--co-gold-deep)" }]}
-          ariaLabel={serverT(language, "me.contribution")}
-        />
+        {hasTrend(data.contribution) ? (
+          <LineChart
+            series={[{ points: data.contribution, color: "var(--co-gold-deep)" }]}
+            ariaLabel={serverT(language, "me.contribution")}
+          />
+        ) : (
+          <p className="text-sm text-co-text-muted">{serverT(language, "me.not_enough_days")}</p>
+        )}
       </Section>
 
       {/* 3. On-time */}
       <Section title={serverT(language, "me.on_time")}>
         <p className="text-[10px] text-co-text-dim">{serverT(language, "me.on_time_sub")}</p>
-        <LineChart
-          series={[{ points: data.onTime, color: "var(--co-success)" }]}
-          ariaLabel={serverT(language, "me.on_time")}
-        />
+        {hasTrend(data.onTime) ? (
+          <LineChart
+            series={[{ points: data.onTime, color: "var(--co-success)" }]}
+            ariaLabel={serverT(language, "me.on_time")}
+          />
+        ) : (
+          <p className="text-sm text-co-text-muted">{serverT(language, "me.not_enough_days")}</p>
+        )}
       </Section>
 
       {/* 4. Gradients */}

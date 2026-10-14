@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 import Link from "next/link";
 
-import { LineChart } from "@/components/trends/LineChart";
+import { LineChart, hasTrend } from "@/components/trends/LineChart";
 import type { PersonDetail as PersonDetailData } from "@/lib/team-metrics";
 import { ROLES } from "@/lib/roles";
 import { serverT } from "@/lib/i18n/server";
@@ -117,10 +117,14 @@ export function PersonDetail({
 
       {/* 5. Contribution */}
       <Section title={serverT(language, "people.detail.contribution")}>
-        <LineChart
-          series={[{ points: detail.contribution, color: "var(--co-gold-deep)" }]}
-          ariaLabel={serverT(language, "people.detail.contribution")}
-        />
+        {hasTrend(detail.contribution) ? (
+          <LineChart
+            series={[{ points: detail.contribution, color: "var(--co-gold-deep)" }]}
+            ariaLabel={serverT(language, "people.detail.contribution")}
+          />
+        ) : (
+          <p className="text-sm text-co-text-muted">{serverT(language, "people.detail.not_enough_days")}</p>
+        )}
       </Section>
 
       {/* 6. On-time */}
@@ -128,10 +132,14 @@ export function PersonDetail({
         <p className="-mt-1 mb-2 text-[10px] text-co-text-dim">
           {serverT(language, "people.detail.on_time_sub")}
         </p>
-        <LineChart
-          series={[{ points: detail.onTime, color: "var(--co-success)" }]}
-          ariaLabel={serverT(language, "people.detail.on_time")}
-        />
+        {hasTrend(detail.onTime) ? (
+          <LineChart
+            series={[{ points: detail.onTime, color: "var(--co-success)" }]}
+            ariaLabel={serverT(language, "people.detail.on_time")}
+          />
+        ) : (
+          <p className="text-sm text-co-text-muted">{serverT(language, "people.detail.not_enough_days")}</p>
+        )}
       </Section>
 
       {/* 7. PM gradients */}

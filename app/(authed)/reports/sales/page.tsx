@@ -25,7 +25,7 @@ import { operationalNow } from "@/lib/midshift";
 import { reportNavigationHref } from "@/lib/report-navigation";
 import { canReadScopedReport } from "@/lib/report-scope";
 import {
-  SALES_EMPTY_KEY, SALES_GRAINS, SALES_RANGES, SALES_READ_MIN, SalesReportError, VIEW_DIMENSION, isSalesView, loadSalesBreakdown,
+  SALES_EMPTY_KEY, SALES_GRAINS, SALES_RANGES, SALES_RANGE_LABELS, SALES_READ_MIN, SalesReportError, VIEW_DIMENSION, isSalesView, loadSalesBreakdown,
   loadSalesLatestCapture, loadSalesSummary, pageRows, resolveSalesRange, salesDayParams, salesRangeParams, type BreakdownRow, type SalesView,
 } from "@/lib/sales-reports";
 import { requireSessionFromHeaders } from "@/lib/session";
@@ -65,7 +65,7 @@ export default async function SalesPage({ searchParams }: { searchParams: Promis
       </div>
     </div>
     <ReportRangeControls range={range} locationId={locationId} language={language} action="/reports/sales" preserve={{ view, hubLocation: params.hubLocation }}
-      ranges={SALES_RANGES} grains={SALES_GRAINS} grain={range.grain} capKey="reports.sales.cap" shortened={range.shortened} shortenedKey="reports.sales.range_shortened" />
+      ranges={SALES_RANGES} labelKeys={SALES_RANGE_LABELS} grains={SALES_GRAINS} grain={range.grain} capKey="reports.sales.cap" shortened={range.shortened} shortenedKey="reports.sales.range_shortened" />
     <SalesViewTabs view={view} language={language} hrefFor={(v) => href("/reports/sales", { view: v })} />
   </>;
 

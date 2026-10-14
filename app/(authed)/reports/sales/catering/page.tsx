@@ -25,7 +25,7 @@ import { REPORT_ALL_LOCATIONS_LEVEL } from "@/lib/locations";
 import { operationalNow } from "@/lib/midshift";
 import { reportNavigationHref } from "@/lib/report-navigation";
 import { canReadScopedReport } from "@/lib/report-scope";
-import { SALES_EMPTY_KEY, SALES_GRAINS, SALES_RANGES, SALES_READ_MIN, SalesReportError, loadSalesLatestCapture, loadSalesCatering, resolveSalesRange, salesRangeParams } from "@/lib/sales-reports";
+import { SALES_EMPTY_KEY, SALES_GRAINS, SALES_RANGES, SALES_RANGE_LABELS, SALES_READ_MIN, SalesReportError, loadSalesLatestCapture, loadSalesCatering, resolveSalesRange, salesRangeParams } from "@/lib/sales-reports";
 import { requireSessionFromHeaders } from "@/lib/session";
 import { searchParamValues, shopParamFor } from "@/lib/shop-context-shared";
 import { resolveReportShopId } from "@/lib/shop-context";
@@ -54,7 +54,7 @@ export default async function SalesCateringPage({ searchParams }: { searchParams
     <ReportShopTabs path="/reports/sales/catering" params={context} locationId={locationId} language={language} viewer={auth} />
     <h1 className="mb-3 text-lg font-bold text-co-text">{t("reports.sales.catering.title")}</h1>
     <ReportRangeControls range={range} locationId={locationId} language={language} action="/reports/sales/catering"
-      preserve={{ hubLocation: params.hubLocation }} ranges={SALES_RANGES} grains={SALES_GRAINS} grain={range.grain}
+      preserve={{ hubLocation: params.hubLocation }} ranges={SALES_RANGES} labelKeys={SALES_RANGE_LABELS} grains={SALES_GRAINS} grain={range.grain}
       capKey="reports.sales.cap" shortened={range.shortened} shortenedKey="reports.sales.range_shortened" />
   </>;
 
