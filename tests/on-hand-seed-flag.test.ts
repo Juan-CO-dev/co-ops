@@ -11,7 +11,7 @@
  * lib/counts.ts loadOnHandDerived -> onHandCore (private)     | gated wrapper (floor + bind), forwards opts
  * lib/counts.ts deriveOnHand -> onHandCore                   | PUBLIC actor-less read: ALWAYS seedBaselines false, no option
  * lib/report-digests.ts loadCateringReadiness -> deriveOnHand | digest read (read-only by construction)
- * lib/counts.ts onHandCore -> loadInferredRows (x3)          | forwards flag in every branch
+ * lib/counts.ts onHandCore -> loadInferredRows (x1, B9)      | forwards flag on the single path
  */
 import { readFileSync } from "node:fs";
 import ts from "typescript";
@@ -64,9 +64,9 @@ describe("LRA-217: inference persistence is explicit", () => {
     expect(counts).not.toMatch(/export (async )?function onHandCore/);
   });
 
-  it("forwards the flag through cold, empty-anchor, and anchored branches", () => {
+  it("forwards the flag on the one path every shop takes (B9 merged the cold, empty-anchor, and anchored branches)", () => {
     const calls = fn(counts, "onHandCore").text.match(/await loadInferredRows\([^;]+;/g);
-    expect(calls).toHaveLength(3);
+    expect(calls).toHaveLength(1);
     for (const call of calls!) expect(call).toContain(", now, { seedBaselines })");
   });
 

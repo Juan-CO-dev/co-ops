@@ -1,4 +1,15 @@
-import { loadEffectiveSalesRows, loadEffectiveSalesWindow, loadEffectiveSalesCoverage, loadSalesCoverageDisclosure, type SalesCoverage, type EffectiveSalesWindow } from "@/lib/toast/effective-depletion";
+import { loadEffectiveSalesWindow, loadEffectiveSalesCoverage, loadSalesCoverageDisclosure, type SalesCoverage, type EffectiveSalesWindow } from "@/lib/toast/effective-depletion";
+import {
+  earliestDate,
+  salesDirectOz,
+  salesGapDates,
+  salesRowsFrom,
+  salesSnapshotCovers,
+  sliceSalesCoverage,
+  SalesGapSet,
+  type SalesSnapshot,
+  type SalesSourceMode,
+} from "@/lib/counts-ledger-shared";
 import { auditOperationalTaskOverride, canDoOperationalTask } from "@/lib/operational-task-access";
 /**
  * Manager physical-count data layer (pack hierarchy PR 2, migration 0160).
@@ -74,6 +85,8 @@ import {
   type CountProductLineInput,
   type OnHandResult,
   type OnHandUnitsResult,
+  type SkuAnchor,
+  type SkuUnitAnchor,
 } from "@/lib/counts-shared";
 import { loadProductIndex, loadProductLots, type ProductIndexEntry } from "@/lib/products";
 import {
@@ -897,11 +910,15 @@ export type { ProductOnHandRow } from "@/lib/products-shared";
  * Two grouped batch queries (loadRecipeGraph law — never per-SKU), returning per-SKU
  * lane totals so the writer can persist the lane breakdown in `basis`. A SKU absent
  * from both lanes is absent from the map (advisory-null — gets NO baseline).
+ *
+ * B9: the sales lane is a slice of the render's ONE effective-sales read (`sales`), never
+ * a second derivation of the same days.
  */
 async function loadInferredConsumedOz(
   sb: ReturnType<typeof getServiceRoleClient>,
   locationId: string,
   now: number,
+  sales: SalesSnapshot | null,
 ): Promise<Map<string, { productionOz: number; directOz: number }>> {
   const lanes = new Map<string, { productionOz: number; directOz: number }>();
   const addProd = (skuId: string, oz: number) => {
@@ -919,9 +936,7 @@ async function loadInferredConsumedOz(
 
   // 28-day window. Productions compare on produced_at (timestamptz); the depletion
   // ledger compares on business_date (a bare date) — derive both from one instant.
-  const cutoff = new Date(now - INFERRED_WINDOW_DAYS * 24 * 60 * 60 * 1000);
-  const cutoffIso = cutoff.toISOString();
-  const cutoffDate = cutoffIso.slice(0, 10); // YYYY-MM-DD for the business_date filter.
+  const { cutoffIso, cutoffDate } = inferredWindowStart(now);
 
   // Production lane — live productions at this location in the window, then inputs.
   // WINDOW BOUNDARY: inclusive (.gte) on the cutoff instant so both lanes intend the
@@ -963,14 +978,62 @@ async function loadInferredConsumedOz(
     for (const r of inputs) addProd(r.input_sku_id, num(r.input_oz) ?? 0);
   }
 
-  // Sales direct lane — the materialized depletion ledger over the window (0166).
-  // 28 days × the SKU roster overruns PostgREST's 1000-row default cap, and an
-  // unordered truncated page would silently understate the run-rate (the PR #63
-  // lesson) — page it under a stable total order (`id`, the primary key).
-  const sales = await loadEffectiveSalesRows(sb, { locationId, fromDate: cutoffDate });
-  for (const r of sales) addDirect(r.sku_id, num(r.direct_oz) ?? 0);
+  // Sales direct lane — the effective sales rows over the window (the render's one read).
+  for (const r of sales ? salesRowsFrom(sales, cutoffDate) : []) addDirect(r.sku_id, num(r.direct_oz) ?? 0);
 
   return lanes;
+}
+
+/** The inferred tier's 28-day window start, as an instant and as a business date. */
+function inferredWindowStart(now: number): { cutoffIso: string; cutoffDate: string } {
+  const cutoffIso = new Date(now - INFERRED_WINDOW_DAYS * 24 * 60 * 60 * 1000).toISOString();
+  return { cutoffIso, cutoffDate: cutoffIso.slice(0, 10) }; // YYYY-MM-DD for the business_date filter.
+}
+
+/**
+ * What the inferred tier stands on BEFORE any ledger is read (B9: the window bounds of
+ * the render's single ledger reads are computed from these). The active roster minus
+ * every census- and par-anchored SKU; the pre-existing baselines among them; and the
+ * SKUs still needing one (whose 28-day lanes decide whether they get one).
+ */
+interface InferredPlan {
+  skuName: Map<string, string>;
+  /** Pre-existing baselines (stored order), then — after loadInferredRows — the fresh ones. */
+  baselineBySku: Map<string, { inferredOz: number; anchorAt: string }>;
+  needsBaseline: string[];
+}
+
+async function planInferredTier(
+  sb: ReturnType<typeof getServiceRoleClient>,
+  locationId: string,
+  censusSkuIds: ReadonlySet<string>,
+): Promise<InferredPlan> {
+  // Active SKU roster (global; the item spine is location-scoped via deliveries, not
+  // the vendor_items row) minus any SKU already carrying a census anchor.
+  const { data: activeSkus, error: aErr } = await sb.from("vendor_items")
+    .select("id, name")
+    .eq("active", true)
+    .returns<Array<{ id: string; name: string }>>();
+  if (aErr) throw new Error(`loadInferredRows active skus: ${aErr.message}`);
+  const roster = (activeSkus ?? []).filter((s) => !censusSkuIds.has(s.id));
+  const plan: InferredPlan = { skuName: new Map(roster.map((s) => [s.id, s.name])), baselineBySku: new Map(), needsBaseline: [] };
+  if (roster.length === 0) return plan;
+  const rosterIds = roster.map((s) => s.id);
+
+  // (a) Pre-existing baselines for this location (batch).
+  const { data: existing, error: bErr } = await sb.from("sku_inferred_baselines")
+    .select("sku_id, inferred_oz, computed_at")
+    .eq("location_id", locationId)
+    .in("sku_id", rosterIds)
+    .returns<Array<{ sku_id: string; inferred_oz: number | string; computed_at: string }>>();
+  if (bErr) throw new Error(`loadInferredRows baselines: ${bErr.message}`);
+  for (const r of existing ?? []) {
+    const oz = num(r.inferred_oz);
+    if (oz == null) continue; // defensive — column is NOT NULL, but never fabricate.
+    plan.baselineBySku.set(r.sku_id, { inferredOz: oz, anchorAt: r.computed_at });
+  }
+  plan.needsBaseline = rosterIds.filter((id) => !plan.baselineBySku.has(id));
+  return plan;
 }
 
 /**
@@ -995,46 +1058,25 @@ async function loadInferredConsumedOz(
  * wins — the compute is deterministic over the same window, so any winner is fine).
  * Pre-existing baselines anchor at their stored computed_at. With seedBaselines
  * false, the same merge computes this render without writing future anchors.
+ *
+ * B9: step 1 (the roster + stored baselines) is planInferredTier, run before any ledger
+ * is read so the render's single ledger reads can start early enough for this tier too.
  */
 async function loadInferredRows(
   sb: ReturnType<typeof getServiceRoleClient>,
   locationId: string,
-  censusSkuIds: ReadonlySet<string>,
+  plan: InferredPlan,
+  ctx: OnHandLedgerContext,
   now: number,
   { seedBaselines }: { seedBaselines: boolean } = { seedBaselines: true },
 ): Promise<OnHandRow[]> {
-  // Active SKU roster (global; the item spine is location-scoped via deliveries, not
-  // the vendor_items row) minus any SKU already carrying a census anchor.
-  const { data: activeSkus, error: aErr } = await sb.from("vendor_items")
-    .select("id, name")
-    .eq("active", true)
-    .returns<Array<{ id: string; name: string }>>();
-  if (aErr) throw new Error(`loadInferredRows active skus: ${aErr.message}`);
-  const roster = (activeSkus ?? []).filter((s) => !censusSkuIds.has(s.id));
-  if (roster.length === 0) return [];
-  const skuName = new Map(roster.map((s) => [s.id, s.name]));
-  const rosterIds = roster.map((s) => s.id);
-
-  // (a) Pre-existing baselines for this location (batch).
-  const { data: existing, error: bErr } = await sb.from("sku_inferred_baselines")
-    .select("sku_id, inferred_oz, computed_at")
-    .eq("location_id", locationId)
-    .in("sku_id", rosterIds)
-    .returns<Array<{ sku_id: string; inferred_oz: number | string; computed_at: string }>>();
-  if (bErr) throw new Error(`loadInferredRows baselines: ${bErr.message}`);
-  const baselineBySku = new Map<string, { inferredOz: number; anchorAt: string }>();
-  for (const r of existing ?? []) {
-    const oz = num(r.inferred_oz);
-    if (oz == null) continue; // defensive — column is NOT NULL, but never fabricate.
-    baselineBySku.set(r.sku_id, { inferredOz: oz, anchorAt: r.computed_at });
-  }
+  const { skuName, baselineBySku, needsBaseline } = plan;
 
   // (b) For SKUs missing a baseline, compute lanes over 28d and lazily persist a
   //     baseline for each with positive consumption. Zero-consumption SKUs get NO
   //     row (advisory-null). Computed once (upsert ignoreDuplicates); merge in memory.
-  const needsBaseline = rosterIds.filter((id) => !baselineBySku.has(id));
   if (needsBaseline.length > 0) {
-    const lanes = await loadInferredConsumedOz(sb, locationId, now);
+    const lanes = await loadInferredConsumedOz(sb, locationId, now, ctx.sales);
     const nowIso = new Date(now).toISOString();
     const toInsert: Array<{
       location_id: string;
@@ -1075,21 +1117,17 @@ async function loadInferredRows(
   const inferredIds = [...baselineBySku.keys()];
   if (inferredIds.length === 0) return [];
 
-  // Sales-coverage gap dates for the inferred anchors' earliest window start — loaded
-  // ONCE (not per SKU), same taint discipline as the census path.
+  // Sales-coverage gap dates for the inferred anchors' earliest window start — read ONCE
+  // (not per SKU), same taint discipline as the census path.
   const earliestSalesDate = inferredIds
     .map((id) => etBusinessDate(baselineBySku.get(id)!.anchorAt))
     .reduce((min, d) => (d < min ? d : min));
-  const gapDates = await loadSalesGapDates(
-    sb, locationId, earliestSalesDate, etBusinessDate(new Date(now).toISOString()),
-  );
+  const gapDates = ctx.gapDates(earliestSalesDate);
 
   // BATCHED (mirrors the census path's array-taking calls): the since-helpers all take
-  // a full skuIds array + one anchorAt, and detectRetroEditStaleness is location+time
+  // a full skuIds array + one anchorAt, and the staleness probe is location+time
   // scoped (identical for every SKU sharing an anchorAt). Group inferred SKUs by their
-  // EXACT anchorAt, then make ONE call per since-helper per group and ONE staleness
-  // probe per distinct anchorAt — N×4 per-SKU queries collapse to 4 per anchor-group.
-  // Day-one cold start = every SKU anchored at now() → a SINGLE group.
+  // EXACT anchorAt. Day-one cold start = every SKU anchored at now() → a SINGLE group.
   const idsByAnchorAt = new Map<string, string[]>();
   for (const id of inferredIds) {
     const at = baselineBySku.get(id)!.anchorAt;
@@ -1100,12 +1138,12 @@ async function loadInferredRows(
 
   const rowGroups = await Promise.all(
     [...idsByAnchorAt.entries()].map(async ([anchorAt, groupIds]): Promise<OnHandRow[]> => {
-      const [receivedSince, consumedSince, salesSince, anchorStale] = await Promise.all([
-        sumReceivedOzSince(sb, groupIds, locationId, anchorAt),
-        sumConsumedOzSince(sb, groupIds, locationId, anchorAt),
-        sumSalesDirectOzSince(sb, groupIds, locationId, anchorAt, gapDates),
-        detectRetroEditStaleness(sb, locationId, anchorAt, now),
+      const [receivedSince, consumedSince, anchorStale] = await Promise.all([
+        ctx.receivedOz(groupIds, anchorAt, null),
+        ctx.consumedOz(groupIds, anchorAt, null),
+        ctx.stale(anchorAt),
       ]);
+      const salesSince = ctx.salesOz(groupIds, etBusinessDate(anchorAt), null, gapDates);
       // Build a weight row per SKU in the group: anchor + received-since − consumed-since,
       // accrued from computed_at exactly like a census weight row (drift is source-blind).
       return groupIds.map((skuId): OnHandRow => {
@@ -1142,34 +1180,28 @@ async function loadInferredRows(
 }
 
 /**
- * PAR-ESTIMATE ON-HAND ROWS (spec D6 — the middle truth tier, census > par_estimate
+ * PAR-ESTIMATE ANCHORS (spec D6 — the middle truth tier, census > par_estimate
  * > inferred). For active SKUs at this location that have NO census anchor
  * (`censusSkuIds` — passed so a par-pass estimate NEVER shadows a counted SKU) but a
  * par-pass line carrying a non-null `implied_on_hand_oz` (par − order_qty, oz — the
- * shelf-walk soft snapshot), surface a par_estimate baseline:
- *   1. batch-load the LATEST par_pass_lines row per roster SKU (by created_at) whose
- *      implied_on_hand_oz is non-null, SCOPED TO THIS LOCATION through par_pass_events
- *      (two-step: submitted events at this location → lines in those events; house law
- *      — embedded-select .eq() on a relation is fragile under RLS). The sku_ix
- *      (sku_id, created_at desc) serves the latest-per-SKU pick.
- *   2. anchor each such SKU at implied_on_hand_oz / line.created_at (anchorSource
- *      "par_estimate") and accrue received/consumed-since from that anchor EXACTLY like
- *      a census weight row (same ledger helpers, same anchor-group batching, same
- *      gap-taint) — the drift math is source-blind. varianceOz is ALWAYS null (a
- *      par-pass estimate is not a counted ground truth — it can never be a variance
- *      reference; VARIANCE IS CENSUS-ONLY).
- *
- * Patterned on loadInferredRows: batch-load the anchors, group SKUs by their EXACT
- * anchorAt, then ONE call per since-helper per anchor-group (N×4 per-SKU queries
- * collapse to 4 per group). Persists NOTHING (the par-pass event already stored the
- * line — this is a derive-on-read tier).
+ * shelf-walk soft snapshot): the LATEST par_pass_lines row per roster SKU (by
+ * created_at) whose implied_on_hand_oz is non-null, SCOPED TO THIS LOCATION through
+ * par_pass_events (two-step: submitted events at this location → lines in those
+ * events; house law — embedded-select .eq() on a relation is fragile under RLS). The
+ * sku_ix (sku_id, created_at desc) serves the latest-per-SKU pick.
  */
-async function loadParEstimateRows(
+interface ParAnchors {
+  skuName: Map<string, string>;
+  anchorBySku: Map<string, { impliedOz: number; anchorAt: string }>;
+  skuIds: string[];
+}
+
+async function loadParAnchors(
   sb: ReturnType<typeof getServiceRoleClient>,
   locationId: string,
   censusSkuIds: ReadonlySet<string>,
-  now: number,
-): Promise<{ rows: OnHandRow[]; skuIds: string[] }> {
+): Promise<ParAnchors> {
+  const empty: ParAnchors = { skuName: new Map(), anchorBySku: new Map(), skuIds: [] };
   // Active SKU roster (global; the item spine is location-scoped via the ledgers, not
   // the vendor_items row) minus any SKU already carrying a census anchor.
   const { data: activeSkus, error: aErr } = await sb.from("vendor_items")
@@ -1178,7 +1210,7 @@ async function loadParEstimateRows(
     .returns<Array<{ id: string; name: string }>>();
   if (aErr) throw new Error(`loadParEstimateRows active skus: ${aErr.message}`);
   const roster = (activeSkus ?? []).filter((s) => !censusSkuIds.has(s.id));
-  if (roster.length === 0) return { rows: [], skuIds: [] };
+  if (roster.length === 0) return empty;
   const skuName = new Map(roster.map((s) => [s.id, s.name]));
   const rosterIds = roster.map((s) => s.id);
 
@@ -1192,7 +1224,7 @@ async function loadParEstimateRows(
     .returns<Array<{ id: string }>>();
   if (evErr) throw new Error(`loadParEstimateRows events: ${evErr.message}`);
   const eventIds = (evRows ?? []).map((e) => e.id);
-  if (eventIds.length === 0) return { rows: [], skuIds: [] };
+  if (eventIds.length === 0) return empty;
 
   // (b) Latest par_pass line per roster SKU with a non-null implied_on_hand_oz, among
   //     those events. Ordered created_at desc (the sku_ix) → first seen per SKU wins.
@@ -1222,21 +1254,31 @@ async function loadParEstimateRows(
     if (oz == null) continue; // defensive — filtered above, but never fabricate.
     anchorBySku.set(r.sku_id, { impliedOz: oz, anchorAt: r.created_at });
   }
-  const parSkuIds = [...anchorBySku.keys()];
-  if (parSkuIds.length === 0) return { rows: [], skuIds: [] };
+  return { skuName, anchorBySku, skuIds: [...anchorBySku.keys()] };
+}
 
-  // Sales-coverage gap dates for the earliest par-estimate window start — loaded ONCE
+/**
+ * PAR-ESTIMATE ON-HAND ROWS: anchor each par-anchored SKU at implied_on_hand_oz /
+ * line.created_at (anchorSource "par_estimate") and accrue received/consumed-since from
+ * that anchor EXACTLY like a census weight row (same ledger helpers, same anchor-group
+ * batching, same gap-taint) — the drift math is source-blind. varianceOz is ALWAYS null
+ * (a par-pass estimate is not a counted ground truth — it can never be a variance
+ * reference; VARIANCE IS CENSUS-ONLY). Persists NOTHING (the par-pass event already
+ * stored the line — this is a derive-on-read tier).
+ */
+async function loadParEstimateRows(par: ParAnchors, ctx: OnHandLedgerContext, now: number): Promise<OnHandRow[]> {
+  const { anchorBySku, skuIds: parSkuIds, skuName } = par;
+  if (parSkuIds.length === 0) return [];
+
+  // Sales-coverage gap dates for the earliest par-estimate window start — read ONCE
   // (not per SKU), same taint discipline as the census + inferred paths.
   const earliestSalesDate = parSkuIds
     .map((id) => etBusinessDate(anchorBySku.get(id)!.anchorAt))
     .reduce((min, d) => (d < min ? d : min));
-  const gapDates = await loadSalesGapDates(
-    sb, locationId, earliestSalesDate, etBusinessDate(new Date(now).toISOString()),
-  );
+  const gapDates = ctx.gapDates(earliestSalesDate);
 
-  // BATCHED (mirrors loadInferredRows): group par-estimate SKUs by their EXACT anchorAt,
-  // then make ONE call per since-helper per group + ONE staleness probe per distinct
-  // anchorAt. A single walk = every SKU anchored at that event's line created_at → one group.
+  // BATCHED (mirrors loadInferredRows): group par-estimate SKUs by their EXACT anchorAt.
+  // A single walk = every SKU anchored at that event's line created_at → one group.
   const idsByAnchorAt = new Map<string, string[]>();
   for (const id of parSkuIds) {
     const at = anchorBySku.get(id)!.anchorAt;
@@ -1247,12 +1289,12 @@ async function loadParEstimateRows(
 
   const rowGroups = await Promise.all(
     [...idsByAnchorAt.entries()].map(async ([anchorAt, groupIds]): Promise<OnHandRow[]> => {
-      const [receivedSince, consumedSince, salesSince, anchorStale] = await Promise.all([
-        sumReceivedOzSince(sb, groupIds, locationId, anchorAt),
-        sumConsumedOzSince(sb, groupIds, locationId, anchorAt),
-        sumSalesDirectOzSince(sb, groupIds, locationId, anchorAt, gapDates),
-        detectRetroEditStaleness(sb, locationId, anchorAt, now),
+      const [receivedSince, consumedSince, anchorStale] = await Promise.all([
+        ctx.receivedOz(groupIds, anchorAt, null),
+        ctx.consumedOz(groupIds, anchorAt, null),
+        ctx.stale(anchorAt),
       ]);
+      const salesSince = ctx.salesOz(groupIds, etBusinessDate(anchorAt), null, gapDates);
       // Build a weight row per SKU: anchor + received-since − consumed-since, accrued
       // from the par-pass line's created_at exactly like a census weight row (source-blind).
       return groupIds.map((skuId): OnHandRow => {
@@ -1285,7 +1327,7 @@ async function loadParEstimateRows(
       });
     }),
   );
-  return { rows: rowGroups.flat(), skuIds: parSkuIds };
+  return rowGroups.flat();
 }
 
 /**
@@ -1400,20 +1442,118 @@ export async function deriveOnHand(
 }
 
 /**
- * PRIVATE core of loadOnHandDerived (pure refactor: the gated wrapper behaves byte-identically).
- * Not exported — the only public paths are the gated wrapper (may seed, ordering walk default) and
- * the read-only deriveOnHand above.
+ * The render's ledger seam (B9). Every tier asks THIS for its windowed figures instead of
+ * querying per anchor group: received / consumed oz over (after, until], the retro-edit
+ * staleness of an anchor, sales direct oz over a business-date window, and the gap set
+ * a tier reads from its earliest window start.
  */
-async function onHandCore(
+interface OnHandLedgerContext {
+  sales: SalesSnapshot | null;
+  gapDates(since: string): SalesGapSet;
+  salesOz(skuIds: string[], fromDate: string, untilExclusive: string | null, gaps: SalesGapSet): Map<string, number | null>;
+  receivedOz(skuIds: string[], afterIso: string, untilIso: string | null): Promise<Map<string, number | null>>;
+  receivedUnits(skuId: string, afterIso: string, untilIso: string | null, chain: PackChainLevel[] | null): Promise<number | null>;
+  consumedOz(skuIds: string[], afterIso: string, untilIso: string | null): Promise<Map<string, number | null>>;
+  stale(anchorIso: string): Promise<boolean>;
+}
+
+function salesSourceMode(): SalesSourceMode {
+  if (process.env.EZCATER_DEPLETION_ENABLED === "1") {
+    if (process.env.DEPLETION_SOURCE !== "capture") throw new Error("ezcater_depletion_requires_capture");
+    return "reconciled";
+  }
+  return process.env.DEPLETION_SOURCE === "capture" ? "capture" : "legacy";
+}
+
+/**
+ * THE RENDER'S ONE EFFECTIVE-SALES READ (B9 step 1). [fromDate, end) of the active source,
+ * every SKU, read once; on the legacy ledger the event/ledger gap probe runs once too, from
+ * the earliest gap consumer's date. Null when no consumer needs sales at all.
+ */
+async function loadSalesSnapshot(
+  sb: ReturnType<typeof getServiceRoleClient>,
   locationId: string,
   now: number,
-  opts: { withProducts?: boolean; seedBaselines?: boolean },
-): Promise<OnHandView> {
-  const withProducts = opts.withProducts === true;
-  const seedBaselines = opts.seedBaselines ?? true;
-  const sb = getServiceRoleClient();
-  const salesThrough = await loadDepletionWatermark(locationId, sb);
+  need: { fromDate: string | null; legacyGapSince: string | null },
+): Promise<SalesSnapshot | null> {
+  if (need.fromDate == null) return null;
+  const mode = salesSourceMode();
+  const today = etCalendarDate(new Date().toISOString());
+  const openEtDate = etBusinessDate(new Date(now).toISOString());
+  // Capture sources: the sums end at today and the gap reads at the open day — read through
+  // whichever is later. The legacy ledger was always read open-ended.
+  const end = mode === "legacy" ? null : (today > openEtDate ? today : openEtDate);
+  const [window, legacyGaps] = await Promise.all([
+    loadEffectiveSalesWindow(sb, { locationId, fromDate: need.fromDate, untilDateExclusive: end }),
+    mode === "legacy" && need.legacyGapSince != null
+      ? loadSalesGapDates(sb, locationId, need.legacyGapSince, openEtDate)
+      : Promise.resolve(null),
+  ]);
+  return {
+    mode, locationId, fromDate: need.fromDate, end, today, openEtDate,
+    rows: window.rows, coverage: window.coverage, legacyGaps, manifests: window.manifests,
+  };
+}
 
+/** The coverage disclosure over [fromDate, today), from the render's sales read when it holds it. */
+async function salesDisclosure(
+  sb: ReturnType<typeof getServiceRoleClient>,
+  locationId: string,
+  fromDate: string,
+  sales: SalesSnapshot | null,
+): Promise<SalesCoverage> {
+  if (sales && salesSnapshotCovers(sales, fromDate, sales.today)) {
+    // Reconciled: the disclosure IS the window's coverage. Raw capture: the disclosure reads
+    // the completed-run manifests, which the window read already holds.
+    if (sales.mode === "reconciled") return sliceSalesCoverage(sales.coverage, fromDate, sales.today);
+    if (sales.mode === "capture" && sales.manifests) {
+      return loadSalesCoverageDisclosure(sb, { locationId, fromDate }, sales.manifests);
+    }
+  }
+  return loadSalesCoverageDisclosure(sb, { locationId, fromDate });
+}
+
+/**
+ * Build the ledger seam over the render's sales read. B9 step 1: received, consumed and
+ * staleness still query per window (memoized per anchor instant for staleness).
+ */
+function onHandLedgerContext(
+  sb: ReturnType<typeof getServiceRoleClient>,
+  locationId: string,
+  now: number,
+  sales: SalesSnapshot | null,
+): OnHandLedgerContext {
+  const requireSales = (): SalesSnapshot => {
+    if (!sales) throw new Error("onHand: a sales consumer ran without the render's sales read");
+    return sales;
+  };
+  const staleness = new Map<string, Promise<boolean>>();
+  return {
+    sales,
+    gapDates: (since) => salesGapDates(requireSales(), since),
+    salesOz: (skuIds, fromDate, untilExclusive, gaps) => salesDirectOz(requireSales(), skuIds, fromDate, untilExclusive, gaps),
+    receivedOz: (skuIds, afterIso, untilIso) => sumReceivedOzWindow(sb, skuIds, locationId, afterIso, untilIso),
+    receivedUnits: (skuId, afterIso, untilIso, chain) => sumReceivedUnitsWindow(sb, skuId, locationId, afterIso, untilIso, chain),
+    consumedOz: (skuIds, afterIso, untilIso) => sumConsumedOzWindow(sb, skuIds, locationId, afterIso, untilIso),
+    stale: (anchorIso) => {
+      let p = staleness.get(anchorIso);
+      if (!p) { p = detectRetroEditStaleness(sb, locationId, anchorIso, now); staleness.set(anchorIso, p); }
+      return p;
+    },
+  };
+}
+
+/** Census anchors: every active count event at the location and the per-SKU anchors its lines resolve to. */
+interface CensusAnchors {
+  evList: Array<{ id: string; counted_at: string }>;
+  anchorBySku: Map<string, SkuAnchor>;
+  unitAnchorBySku: Map<string, SkuUnitAnchor>;
+  weightSkuIds: string[];
+  countSkuIds: string[];
+  skuIds: string[];
+}
+
+async function loadCensusAnchors(sb: ReturnType<typeof getServiceRoleClient>, locationId: string): Promise<CensusAnchors> {
   // ALL active count events at this location, newest first — every event is a live
   // session (F1: no supersede). We resolve each SKU's anchor across all of them.
   // A failed read MUST throw: an empty result is the COLD START signal ("this
@@ -1435,22 +1575,10 @@ async function onHandCore(
       return { data };
     },
   );
-  const disclosureFrom = [new Date(now - 28 * 86_400_000).toISOString().slice(0, 10),
-    ...evList.map((event) => etBusinessDate(event.counted_at))].sort()[0]!;
-  const salesCoverage = await loadSalesCoverageDisclosure(sb, { locationId, fromDate: disclosureFrom });
   if (evList.length === 0) {
-    // COLD START (spec D6): no physical count has EVER anchored this location. Still
-    // surface soft baselines so the panel isn't empty on day one — par_estimate first
-    // (the shelf-walk snapshot, firmer than a run-rate guess), then inferred for the
-    // rest. No census SKUs → both tiers see the full active roster; inference EXCLUDES
-    // whatever par_estimate already anchored.
-    const parEstimate = await loadParEstimateRows(sb, locationId, new Set<string>(), now);
-    const inferredRows = await loadInferredRows(sb, locationId, new Set(parEstimate.skuIds), now, { seedBaselines });
-    const rows = [...parEstimate.rows, ...inferredRows].sort((a, b) => a.skuName.localeCompare(b.skuName));
-    return { locationId, salesCoverage, anchorAt: null, salesThrough, rows, products: await loadProductOnHandRows(sb, locationId, rows, withProducts) };
+    return { evList, anchorBySku: new Map(), unitAnchorBySku: new Map(), weightSkuIds: [], countSkuIds: [], skuIds: [] };
   }
   const eventAt = new Map(evList.map((e) => [e.id, e.counted_at]));
-  const locationLastCountedAt = evList[0]!.counted_at; // header hint only.
 
   // ALL lines across those active events, each tagged with its event's counted_at.
   // PR-C: read anchor_dimension + resolved_units to partition weight vs count rows.
@@ -1509,58 +1637,83 @@ async function onHandCore(
 
   const weightSkuIds = [...anchorBySku.keys()];
   const countSkuIds = [...unitAnchorBySku.keys()];
-  const skuIds = [...new Set([...weightSkuIds, ...countSkuIds])];
-  if (skuIds.length === 0) {
-    // Events exist but resolved to no anchors (edge) — still run the par_estimate then
-    // inference tiers (par_estimate first; inference excludes what it anchored).
-    const parEstimate = await loadParEstimateRows(sb, locationId, new Set<string>(), now);
-    const inferredRows = await loadInferredRows(sb, locationId, new Set(parEstimate.skuIds), now, { seedBaselines });
-    const rows = [...parEstimate.rows, ...inferredRows].sort((a, b) => a.skuName.localeCompare(b.skuName));
-    return { locationId, salesCoverage, anchorAt: locationLastCountedAt, salesThrough, rows, products: await loadProductOnHandRows(sb, locationId, rows, withProducts) };
-  }
+  return { evList, anchorBySku, unitAnchorBySku, weightSkuIds, countSkuIds, skuIds: [...new Set([...weightSkuIds, ...countSkuIds])] };
+}
+
+/**
+ * PRIVATE core of loadOnHandDerived (pure refactor: the gated wrapper behaves byte-identically).
+ * Not exported — the only public paths are the gated wrapper (may seed, ordering walk default) and
+ * the read-only deriveOnHand above.
+ *
+ * B9 SHAPE: read every ANCHOR first (count events + lines, par walks, inferred baselines),
+ * then derive the earliest instant / date any window reaches, then read each ledger ONCE
+ * from there, and compute every tier's windows in memory. A cold-start shop (no count
+ * events) and a counted-but-unanchored shop are the same path with an empty census.
+ */
+async function onHandCore(
+  locationId: string,
+  now: number,
+  opts: { withProducts?: boolean; seedBaselines?: boolean },
+): Promise<OnHandView> {
+  const withProducts = opts.withProducts === true;
+  const seedBaselines = opts.seedBaselines ?? true;
+  const sb = getServiceRoleClient();
+  const watermarkStart = await loadDepletionWatermarkStart(locationId, sb);
+
+  // ── 1. Anchors (census > par_estimate > inferred). Each tier excludes the ones above it.
+  const census = await loadCensusAnchors(sb, locationId);
+  const { evList, anchorBySku, unitAnchorBySku, weightSkuIds, countSkuIds, skuIds } = census;
+  const censusSet = new Set(skuIds);
+  // par_estimate first (the shelf-walk snapshot, firmer than a run-rate guess), then
+  // inferred for the rest: inference never shadows a counted OR par-estimated SKU.
+  const par = await loadParAnchors(sb, locationId, censusSet);
+  const inferredPlan = await planInferredTier(sb, locationId, new Set([...skuIds, ...par.skuIds]));
+
+  // ── 2. The earliest business date any sales consumer reads.
+  const openEtDate = etBusinessDate(new Date(now).toISOString());
+  const censusGapSince = earliestDate(weightSkuIds.map((id) => etBusinessDate(anchorBySku.get(id)!.prevAt ?? anchorBySku.get(id)!.anchorAt)));
+  const parGapSince = earliestDate(par.skuIds.map((id) => etBusinessDate(par.anchorBySku.get(id)!.anchorAt)));
+  // Fresh baselines anchor at `now`, so the open day bounds them; stored ones at computed_at.
+  const inferredGapSince = earliestDate([
+    ...[...inferredPlan.baselineBySku.values()].map((b) => etBusinessDate(b.anchorAt)),
+    inferredPlan.needsBaseline.length > 0 ? openEtDate : null,
+  ]);
+  const laneFrom = inferredPlan.needsBaseline.length > 0 ? inferredWindowStart(now).cutoffDate : null;
+  const disclosureFrom = [new Date(now - 28 * 86_400_000).toISOString().slice(0, 10),
+    ...evList.map((event) => etBusinessDate(event.counted_at))].sort()[0]!;
+  const legacyGapSince = earliestDate([censusGapSince, parGapSince, inferredGapSince]);
+  const captureSource = salesSourceMode() !== "legacy";
+  const sales = await loadSalesSnapshot(sb, locationId, now, {
+    fromDate: earliestDate([legacyGapSince, laneFrom, captureSource ? disclosureFrom : null]),
+    legacyGapSince,
+  });
+  const ctx = onHandLedgerContext(sb, locationId, now, sales);
+  const salesCoverage = await salesDisclosure(sb, locationId, disclosureFrom, sales);
+  const salesThrough = await finishDepletionWatermark(watermarkStart, locationId, sb, sales);
+  const anchorAt = evList[0]?.counted_at ?? null; // the location's "last counted" header hint only.
 
   // SKU names + chains (count rows derive received-units read-time from the chain).
-  const [nameRes, chainsBySku, measures] = await Promise.all([
-    sb.from("vendor_items").select("id, name").in("id", skuIds).returns<Array<{ id: string; name: string }>>(),
-    loadSkuPackChains(countSkuIds),
-    loadMeasures(),
-  ]);
+  const [nameRes, chainsBySku, measures] = skuIds.length > 0
+    ? await Promise.all([
+        sb.from("vendor_items").select("id, name").in("id", skuIds).returns<Array<{ id: string; name: string }>>(),
+        loadSkuPackChains(countSkuIds),
+        loadMeasures(),
+      ])
+    : [{ data: [] as Array<{ id: string; name: string }>, error: null }, new Map<string, PackChainLevel[]>(), new Map<string, MeasureUnitFactor>()];
   // LABEL-ONLY read: names never touch the drift math (rows fall back to "(sku)"), so
   // a failure logs and continues best-effort rather than failing the whole panel.
   if (nameRes.error) console.error(`[counts] loadOnHand sku names lookup failed:`, nameRes.error.message);
   const skuName = new Map((nameRes.data ?? []).map((s) => [s.id, s.name]));
 
-  // Sales-coverage gap dates (hardening 2026-07-31): loaded ONCE for the whole
-  // location from the earliest weight-SKU window start, then membership-tested
-  // in memory per SKU — no per-SKU query. Empty set when no weight SKUs / no
-  // ledger. `prevAt ?? anchorAt` picks the earliest date any window reaches.
-  const earliestSalesDate = weightSkuIds.length
-    ? weightSkuIds
-        .map((id) => etBusinessDate(anchorBySku.get(id)!.prevAt ?? anchorBySku.get(id)!.anchorAt))
-        .reduce((min, d) => (d < min ? d : min))
-    : null;
-  const gapDates = earliestSalesDate
-    ? await loadSalesGapDates(sb, locationId, earliestSalesDate, etBusinessDate(new Date(now).toISOString()))
-    : new Set<string>();
+  // Sales-coverage gap dates (hardening 2026-07-31): from the earliest weight-SKU
+  // window start, then membership-tested in memory per SKU — no per-SKU query.
+  // `prevAt ?? anchorAt` picks the earliest date any window reaches.
+  const gapDates = censusGapSince ? ctx.gapDates(censusGapSince) : new SalesGapSet(openEtDate, []);
 
   // ── Weight rows (oz drift + variance) ──
   // BATCHED (council audit 2026-08-08 P1-3; same group idiom as the par_estimate +
-  // inferred tiers above): census SKUs group by their EXACT (anchorAt, prevAt)
-  // window pair → ONE call per ledger helper per group, instead of the full helper
-  // fan-out per SKU (~10-12 queries × the whole roster on the first physical
-  // count). A single walk anchors most SKUs at one event → 1-2 groups in practice.
-  // Staleness probes are per-anchorAt (identical for every SKU sharing one) —
-  // memoized here and shared with the count tier below.
-  const stalenessByAnchorAt = new Map<string, Promise<boolean>>();
-  const stalenessFor = (anchorAt: string): Promise<boolean> => {
-    let p = stalenessByAnchorAt.get(anchorAt);
-    if (!p) {
-      p = detectRetroEditStaleness(sb, locationId, anchorAt, now);
-      stalenessByAnchorAt.set(anchorAt, p);
-    }
-    return p;
-  };
-
+  // inferred tiers): census SKUs group by their EXACT (anchorAt, prevAt) window pair →
+  // ONE call per ledger figure per group. A single walk anchors most SKUs at one event.
   const weightGroups = new Map<string, { anchorAt: string; prevAt: string | null; ids: string[] }>();
   for (const skuId of weightSkuIds) {
     const a = anchorBySku.get(skuId)!;
@@ -1571,20 +1724,20 @@ async function onHandCore(
   }
 
   const weightRowGroups = await Promise.all(
-    [...weightGroups.values()].map(async ({ anchorAt, prevAt, ids }): Promise<OnHandRow[]> => {
-      const [receivedSince, consumedSince, salesSince, anchorStale, between] = await Promise.all([
-        sumReceivedOzSince(sb, ids, locationId, anchorAt),
-        sumConsumedOzSince(sb, ids, locationId, anchorAt),
-        sumSalesDirectOzSince(sb, ids, locationId, anchorAt, gapDates),
-        stalenessFor(anchorAt),
+    [...weightGroups.values()].map(async ({ anchorAt: groupAnchorAt, prevAt, ids }): Promise<OnHandRow[]> => {
+      const [receivedSince, consumedSince, anchorStale, between] = await Promise.all([
+        ctx.receivedOz(ids, groupAnchorAt, null),
+        ctx.consumedOz(ids, groupAnchorAt, null),
+        ctx.stale(groupAnchorAt),
         prevAt == null
           ? Promise.resolve(null)
           : Promise.all([
-              sumReceivedOzBetween(sb, ids, locationId, prevAt, anchorAt),
-              sumConsumedOzBetween(sb, ids, locationId, prevAt, anchorAt),
-              sumSalesDirectOzBetween(sb, ids, locationId, prevAt, anchorAt, gapDates),
+              ctx.receivedOz(ids, prevAt, groupAnchorAt),
+              ctx.consumedOz(ids, prevAt, groupAnchorAt),
             ]),
       ]);
+      const salesSince = ctx.salesOz(ids, etBusinessDate(groupAnchorAt), null, gapDates);
+      const salesBetween = prevAt == null ? null : ctx.salesOz(ids, etBusinessDate(prevAt), etBusinessDate(groupAnchorAt), gapDates);
       return ids.map((skuId): OnHandRow => {
         const a = anchorBySku.get(skuId)!;
         // Drift spec 2026-07-31: consumed = prep production + DIRECT sales lane.
@@ -1611,12 +1764,12 @@ async function onHandCore(
         );
         let receivedBetweenOz: number | null = null;
         let consumedBetweenOz: number | null = null;
-        if (between != null) {
-          const [rB, cB, sB] = between;
+        if (between != null && salesBetween != null) {
+          const [rB, cB] = between;
           receivedBetweenOz = rB.get(skuId) ?? null;
           const prodBetween = cB.get(skuId) ?? null;
-          const salesBetween = sB.get(skuId) ?? null;
-          consumedBetweenOz = prodBetween == null || salesBetween == null ? null : prodBetween + salesBetween;
+          const salesBetweenOz = salesBetween.get(skuId) ?? null;
+          consumedBetweenOz = prodBetween == null || salesBetweenOz == null ? null : prodBetween + salesBetweenOz;
         }
         // VARIANCE IS CENSUS-ONLY (spec D6, LOAD-BEARING). computeVariance verifies a
         // NEW physical count against the PREVIOUS one + intervening ledger. Both
@@ -1655,8 +1808,8 @@ async function onHandCore(
       const chain = chainsBySku.get(skuId) ?? null;
       const unitLabel = chain ? (chainCountLeafMeasure(buildPackChain(chain), measures) ?? "units") : "units";
       const [receivedSince, anchorStale] = await Promise.all([
-        sumReceivedUnitsSince(sb, skuId, locationId, a.anchorAt, chain),
-        stalenessFor(a.anchorAt), // memoized — shared with the weight tier's probes.
+        ctx.receivedUnits(skuId, a.anchorAt, null, chain),
+        ctx.stale(a.anchorAt), // memoized — shared with the weight tier's probes.
       ]);
       const onHand = computeOnHandUnits(
         { skuId, anchorUnits: a.anchorUnits, anchorAt: a.anchorAt, receivedUnitsSince: receivedSince, anchorStale },
@@ -1664,7 +1817,7 @@ async function onHandCore(
       );
       let receivedBetweenUnits: number | null = null;
       if (a.prevAt != null) {
-        receivedBetweenUnits = await sumReceivedUnitsBetween(sb, skuId, locationId, a.prevAt, a.anchorAt, chain);
+        receivedBetweenUnits = await ctx.receivedUnits(skuId, a.prevAt, a.anchorAt, chain);
       }
       const usedOrLost = computeUsedOrLost({
         skuId,
@@ -1686,19 +1839,16 @@ async function onHandCore(
 
   // ── Par-estimate rows (spec D6, middle tier) ── for active SKUs with NO census
   // anchor (weight or count) but a par-pass line's implied on-hand: a soft shelf-walk
-  // snapshot. `skuIds` is every census-anchored SKU this pass — pass it so a par
-  // estimate NEVER shadows a counted SKU.
-  const parEstimate = await loadParEstimateRows(sb, locationId, new Set(skuIds), now);
+  // snapshot (loadParAnchors excluded every census-anchored SKU).
+  const parRows = await loadParEstimateRows(par, ctx, now);
 
   // ── Inferred rows (spec D6, cold-start tier) ── for active SKUs with NEITHER a census
-  // anchor NOR a par_estimate anchor but real consumption history. Exclude BOTH sets so
-  // inference never shadows a counted OR par-pass-estimated SKU (census > par_estimate >
-  // inferred precedence).
-  const inferredExcluded = new Set([...skuIds, ...parEstimate.skuIds]);
-  const inferredRows = await loadInferredRows(sb, locationId, inferredExcluded, now, { seedBaselines });
+  // anchor NOR a par_estimate anchor but real consumption history (planInferredTier
+  // excluded both sets: census > par_estimate > inferred precedence).
+  const inferredRows = await loadInferredRows(sb, locationId, inferredPlan, ctx, now, { seedBaselines });
 
-  const rows = [...weightRows, ...countRows, ...parEstimate.rows, ...inferredRows].sort((a, b) => a.skuName.localeCompare(b.skuName));
-  return { locationId, salesCoverage, anchorAt: locationLastCountedAt, salesThrough, rows, products: await loadProductOnHandRows(sb, locationId, rows, withProducts) };
+  const rows = [...weightRows, ...countRows, ...parRows, ...inferredRows].sort((a, b) => a.skuName.localeCompare(b.skuName));
+  return { locationId, salesCoverage, anchorAt, salesThrough, rows, products: await loadProductOnHandRows(sb, locationId, rows, withProducts) };
 }
 
 /**
@@ -1931,23 +2081,6 @@ async function locationDeliveryIds(
  * A SKU with ANY NULL resolved_oz among its in-window lines → null (advisory:
  * can't derive a clean received term). No in-window lines at all → 0.
  */
-async function sumReceivedOzSince(
-  sb: ReturnType<typeof getServiceRoleClient>,
-  skuIds: string[],
-  locationId: string,
-  afterIso: string,
-): Promise<Map<string, number | null>> {
-  return sumReceivedOzWindow(sb, skuIds, locationId, afterIso, null);
-}
-async function sumReceivedOzBetween(
-  sb: ReturnType<typeof getServiceRoleClient>,
-  skuIds: string[],
-  locationId: string,
-  afterIso: string,
-  untilIso: string,
-): Promise<Map<string, number | null>> {
-  return sumReceivedOzWindow(sb, skuIds, locationId, afterIso, untilIso);
-}
 async function sumReceivedOzWindow(
   sb: ReturnType<typeof getServiceRoleClient>,
   skuIds: string[],
@@ -2003,25 +2136,6 @@ async function sumReceivedOzWindow(
 //   line_units = received_qty_at_level × chainLeafUnitsFrom(chain, received_level_label)
 // A line with no level label, no qty-at-level, or an unresolvable walk → the SKU's
 // received-units term is advisory-NULL (never a fabricated count). No chain → null.
-async function sumReceivedUnitsSince(
-  sb: ReturnType<typeof getServiceRoleClient>,
-  skuId: string,
-  locationId: string,
-  afterIso: string,
-  chain: PackChainLevel[] | null,
-): Promise<number | null> {
-  return sumReceivedUnitsWindow(sb, skuId, locationId, afterIso, null, chain);
-}
-async function sumReceivedUnitsBetween(
-  sb: ReturnType<typeof getServiceRoleClient>,
-  skuId: string,
-  locationId: string,
-  afterIso: string,
-  untilIso: string,
-  chain: PackChainLevel[] | null,
-): Promise<number | null> {
-  return sumReceivedUnitsWindow(sb, skuId, locationId, afterIso, untilIso, chain);
-}
 async function sumReceivedUnitsWindow(
   sb: ReturnType<typeof getServiceRoleClient>,
   skuId: string,
@@ -2082,16 +2196,6 @@ async function sumConsumedOzSince(
 ): Promise<Map<string, number | null>> {
   return sumConsumedOzWindow(sb, skuIds, locationId, afterIso, null);
 }
-async function sumConsumedOzBetween(
-  sb: ReturnType<typeof getServiceRoleClient>,
-  skuIds: string[],
-  locationId: string,
-  afterIso: string,
-  untilIso: string,
-): Promise<Map<string, number | null>> {
-  return sumConsumedOzWindow(sb, skuIds, locationId, afterIso, untilIso);
-}
-
 // ── Sales direct-lane depletion (drift spec 2026-07-31) ───────────────────────
 /**
  * SUM(direct_oz) per SKU from the materialized toast_daily_depletion ledger —
@@ -2156,17 +2260,6 @@ async function sumSalesDirectOzSince(
   gapDates: ReadonlySet<string>,
 ): Promise<Map<string, number | null>> {
   return sumSalesDirectOzWindow(sb, skuIds, locationId, etBusinessDate(anchorIso), null, gapDates);
-}
-
-async function sumSalesDirectOzBetween(
-  sb: ReturnType<typeof getServiceRoleClient>,
-  skuIds: string[],
-  locationId: string,
-  prevIso: string,
-  anchorIso: string,
-  gapDates: ReadonlySet<string>,
-): Promise<Map<string, number | null>> {
-  return sumSalesDirectOzWindow(sb, skuIds, locationId, etBusinessDate(prevIso), etBusinessDate(anchorIso), gapDates);
 }
 
 /**
@@ -2236,6 +2329,19 @@ export async function loadDepletionWatermark(
   locationId: string,
   sb: ReturnType<typeof getServiceRoleClient> = getServiceRoleClient(),
 ): Promise<string | null> {
+  return finishDepletionWatermark(await loadDepletionWatermarkStart(locationId, sb), locationId, sb, null);
+}
+
+/**
+ * The watermark's first read (B9: split so the counts render can validate the reconciled
+ * candidate against its ONE sales read instead of deriving that day a second time). On
+ * every source but the reconciled one this IS the answer.
+ */
+type WatermarkStart = { done: true; value: string | null } | { done: false; candidate: string };
+async function loadDepletionWatermarkStart(
+  locationId: string,
+  sb: ReturnType<typeof getServiceRoleClient>,
+): Promise<WatermarkStart> {
   if (process.env.EZCATER_DEPLETION_ENABLED === "1") {
     if (process.env.DEPLETION_SOURCE !== "capture") throw new Error("ezcater_depletion_requires_capture");
     const end = etCalendarDate(new Date().toISOString());
@@ -2243,16 +2349,12 @@ export async function loadDepletionWatermark(
       .eq("location_id", locationId).eq("status", "completed").lt("business_date", end)
       .order("business_date", { ascending: false }).limit(1).maybeSingle<{ business_date: string }>();
     if (error) throw new Error("capture_depletion_runs_unavailable");
-    if (!data) return null;
-    // Validate just the newest candidate, never derive all historical sales for
-    // a watermark. A concurrent changed read remains conservatively unknown.
-    const coverage = await loadSalesCoverageDisclosure(sb, { locationId, fromDate: data.business_date,
-      untilDateExclusive: etYmdMinusDays(data.business_date, -1) });
-    return coverage.byLocation[locationId]?.hasGaps === false ? data.business_date : null;
+    if (!data) return { done: true, value: null };
+    return { done: false, candidate: data.business_date };
   }
   if (process.env.DEPLETION_SOURCE === "capture") {
     const covered = await loadEffectiveSalesCoverage(sb, { locationId, fromDate: "1900-01-01" });
-    return covered.map((r) => r.business_date).sort().at(-1) ?? null;
+    return { done: true, value: covered.map((r) => r.business_date).sort().at(-1) ?? null };
   }
   const { data, error } = await sb.from("toast_daily_depletion")
     .select("business_date")
@@ -2261,7 +2363,25 @@ export async function loadDepletionWatermark(
     .limit(1)
     .maybeSingle<{ business_date: string }>();
   if (error) throw new Error(`loadDepletionWatermark: ${error.message}`);
-  return data?.business_date ?? null;
+  return { done: true, value: data?.business_date ?? null };
+}
+
+async function finishDepletionWatermark(
+  start: WatermarkStart,
+  locationId: string,
+  sb: ReturnType<typeof getServiceRoleClient>,
+  sales: SalesSnapshot | null,
+): Promise<string | null> {
+  if (start.done) return start.value;
+  const candidate = start.candidate;
+  const untilDateExclusive = etYmdMinusDays(candidate, -1);
+  // Validate just the newest candidate, never derive all historical sales for
+  // a watermark. A concurrent changed read remains conservatively unknown. When the
+  // render's sales read already spans that day, its coverage IS the answer.
+  const coverage = sales && sales.mode === "reconciled" && salesSnapshotCovers(sales, candidate, untilDateExclusive)
+    ? sliceSalesCoverage(sales.coverage, candidate, untilDateExclusive)
+    : await loadSalesCoverageDisclosure(sb, { locationId, fromDate: candidate, untilDateExclusive });
+  return coverage.byLocation[locationId]?.hasGaps === false ? candidate : null;
 }
 async function sumConsumedOzWindow(
   sb: ReturnType<typeof getServiceRoleClient>,
