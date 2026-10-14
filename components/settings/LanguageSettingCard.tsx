@@ -11,12 +11,14 @@
  */
 
 import { useState } from "react";
+import { useRouter } from "next/navigation";
 
 import { useTranslation } from "@/lib/i18n/provider";
 import type { Language } from "@/lib/i18n/types";
 
 export function LanguageSettingCard() {
   const { language, t, setLanguage } = useTranslation();
+  const router = useRouter();
   const [updating, setUpdating] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -33,6 +35,9 @@ export function LanguageSettingCard() {
       });
       if (res.ok) {
         setLanguage(next);
+        // Client strings flip via context; server-rendered strings (serverT on
+        // the page) only change when the RSC payload is refetched (#54).
+        router.refresh();
       } else {
         setError(t("settings.error.generic"));
       }

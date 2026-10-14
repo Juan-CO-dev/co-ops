@@ -24,6 +24,9 @@ export const NAV_LINKS: NavLink[] = [
   { key: "nav.written_reports", href: "/reports/written", scoped: true, minLevel: 2 },
   { key: "nav.catering", href: "/catering", scoped: true, minLevel: 5 },
   { key: "maintenance.nav_label", href: "/maintenance", scoped: true, minLevel: 3 }, // MAINTENANCE_BASE_LEVEL
+  // Production capture (Juan D-64, 2026-10-13: employee and up). Mirrors PRODUCE_MIN in
+  // lib/production.ts (kept literal: that module is server-only; tests pin the match).
+  { key: "production.page.title", href: "/operations/production", scoped: true, minLevel: 3 }, // PRODUCE_MIN
   { key: "nav.training", href: "/training", scoped: false },
   { key: "nav.recipes", href: "/admin/recipes", scoped: false, minLevel: 6 },
   { key: "nav.profile", href: "/profile", scoped: false },

@@ -2,15 +2,15 @@ import { type NextRequest } from "next/server";
 import { requireSession } from "@/lib/session";
 import { ROLES } from "@/lib/roles";
 import { jsonError, jsonOk, parseJsonBody } from "@/lib/api-helpers";
-import { recordProduction, ProductionError, type RecordProductionInput } from "@/lib/production";
+import { recordProduction, ProductionError, PRODUCE_MIN, type RecordProductionInput } from "@/lib/production";
 
-// Log a production run (SKU → item conversion). KH+ (≥4), location-bound (checked in recordProduction).
+// Log a production run (SKU → item conversion). Employee+ (PRODUCE_MIN = 3), location-bound (checked in recordProduction).
 export async function POST(req: NextRequest) {
   const parsed = await parseJsonBody(req);
   if (parsed instanceof Response) return parsed;
   const ctx = await requireSession(req, "/api/operations/production");
   if (ctx instanceof Response) return ctx;
-  if (ROLES[ctx.user.role].level < 4) return jsonError(403, "forbidden");
+  if (ROLES[ctx.user.role].level < PRODUCE_MIN) return jsonError(403, "forbidden");
 
   const b = parsed as Partial<RecordProductionInput>;
   if (
