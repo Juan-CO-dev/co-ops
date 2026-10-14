@@ -90,13 +90,14 @@ export interface PulseFridge {
 }
 
 export interface AttentionItem {
-  kind: "overdue" | "fridge" | "fridge_unchecked" | "maintenance_note" | "shrinkage" | "ordering_cutoff";
+  kind: "overdue" | "fridge" | "fridge_unchecked" | "maintenance_note" | "shrinkage" | "ordering_cutoff" | "ordering_cutoff_missed";
   /** i18n key + params resolved at render; we pass a stable shape. */
   reportKey?: ReportKey; // for overdue
   fridgeName?: string; // for fridge (display)
   equipId?: string; // for fridge — the stable React key (names can collide)
-  count?: number; // for maintenance_note / fridge_unchecked / shrinkage / ordering_cutoff
-  /** ordering_cutoff only: the vendors whose cutoff is today with no placed PO yet,
+  count?: number; // for maintenance_note / fridge_unchecked / shrinkage / ordering_cutoff(_missed)
+  /** ordering_cutoff(_missed) only: the vendors whose cutoff is today with no placed PO yet
+   *  (`_missed`: the cutoff has already PASSED — D-63, red),
    *  earliest cutoff first. `count` mirrors this array's length; the banner names the
    *  EARLIEST vendor + its formatted cutoff time and pluralizes on `count`. hasDraft
    *  distinguishes "draft ready" from "no draft yet" per the earliest vendor. */
@@ -113,7 +114,8 @@ export interface AttentionItem {
  * are fixed here so the banner and any future badge agree.
  */
 export type PulseScore = "green" | "yellow" | "red";
-const RED_KINDS: ReadonlySet<AttentionItem["kind"]> = new Set(["overdue", "fridge"]);
+// D-63: a missed vendor cutoff (passed, nothing placed) is act-now — a phone call — so it is red.
+const RED_KINDS: ReadonlySet<AttentionItem["kind"]> = new Set(["overdue", "fridge", "ordering_cutoff_missed"]);
 export function pulseScore(items: AttentionItem[]): PulseScore {
   if (items.length === 0) return "green";
   return items.some((i) => RED_KINDS.has(i.kind)) ? "red" : "yellow";

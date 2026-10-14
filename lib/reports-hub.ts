@@ -1,6 +1,6 @@
 import { requireReportScope } from "@/lib/report-scope";
 import { parseReportRange } from "@/lib/report-range";
-import { etCalendarDate } from "@/lib/operational-day";
+import { etCalendarDate, etYmdMinusDays } from "@/lib/operational-day";
 import { compareReportTuples, decodeReportCursor, encodeReportCursor } from "@/lib/report-pagination";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { selectAllRows } from "@/lib/supabase-paginate";
@@ -101,7 +101,44 @@ type ReportListItemInternal = ReportListItem & { submitterId: string | null; sub
 // CC ruling (2026-10-07): finished openings have ended at phase2_complete since May;
 // only six reached confirmed (last 2026-05-09), as Phase 3 is unwired.
 // finalizeMidDayPhase2 also writes phase2_complete. Keep it finalized.
-export function isFinalizedReport(status: string): boolean { return ["confirmed", "phase2_complete", "submitted", "completed", "incomplete_confirmed", "auto_finalized", "ok", "flags"].includes(status); }
+export const FINALIZED_REPORT_STATUSES: readonly string[] = ["confirmed", "phase2_complete", "submitted", "completed", "incomplete_confirmed", "auto_finalized", "ok", "flags"];
+export function isFinalizedReport(status: string): boolean { return FINALIZED_REPORT_STATUSES.includes(status); }
+
+/** How far back the Reports Hub looks for the last close — the hub's own 92-day day-grain cap. */
+export const LAST_CLOSE_MAX_LOOKBACK_DAYS = 92;
+
+/**
+ * D-62 (+ B7b review #4) — the date of the shop's NEWEST FINALIZED CLOSING on or before `onOrBefore`
+ * (today), or null when there is none in the bounded window. One indexed, bounded read — newest
+ * first, limit 1 — instead of a fixed 7-day window: a shop whose last closing was finalized 8+ days
+ * ago (Oct 6 seen on Oct 14) used to fall back to "yesterday" and show an empty day as the last
+ * close. "Finalized" is the hub's own status set (auto_finalized included: an auto-closed day is a
+ * closed day, labelled "auto closed" on the card — Juan's default, 2026-10-14). Same report scope as
+ * listReportSkeleton, checked before any I/O.
+ */
+export async function latestFinalizedClosingDate(
+  service: SupabaseClient,
+  args: { viewer: Viewer; locationId: string; onOrBefore: string },
+): Promise<string | null> {
+  requireReportScope(args.viewer, args.locationId);
+  const { data: templates, error: templateError } = await service
+    .from("checklist_templates").select("id").eq("type", "closing");
+  if (templateError) throw new Error(`latestFinalizedClosingDate templates: ${templateError.message}`);
+  const templateIds = ((templates ?? []) as Array<{ id: string }>).map((t) => t.id);
+  if (templateIds.length === 0) return null;
+  const { data, error } = await service
+    .from("checklist_instances")
+    .select("date")
+    .eq("location_id", args.locationId)
+    .in("template_id", templateIds)
+    .in("status", [...FINALIZED_REPORT_STATUSES])
+    .lte("date", args.onOrBefore)
+    .gte("date", etYmdMinusDays(args.onOrBefore, LAST_CLOSE_MAX_LOOKBACK_DAYS - 1))
+    .order("date", { ascending: false })
+    .limit(1);
+  if (error) throw new Error(`latestFinalizedClosingDate: ${error.message}`);
+  return ((data ?? []) as Array<{ date: string }>)[0]?.date ?? null;
+}
 
 export async function listReportSkeleton(service: SupabaseClient, f: ListFilters): Promise<ReportListItemInternal[]> {
   requireReportScope(f.viewer, f.locationId);

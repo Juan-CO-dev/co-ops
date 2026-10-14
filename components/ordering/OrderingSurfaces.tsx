@@ -122,9 +122,25 @@ export function OrderingSurfaces({
 
   const hasTodays = todaysOrders.length > 0;
   const hasDraftless = draftless.length > 0;
+  // D-63: cutoffs that PASSED with nothing placed (draft or not) — red, the fix is a phone call.
+  const missed = cutoffAttention.filter((c) => c.missed);
 
   return (
     <div className="mt-4 flex flex-col gap-3">
+      {missed.length > 0 && (
+        <section role="alert" className="rounded-xl border-2 border-co-cta bg-co-danger-surface p-4">
+          <h2 className="text-sm font-bold uppercase tracking-[0.14em] text-co-cta-text">
+            {t("ordering.po.missed_title")}
+          </h2>
+          <ul className="mt-2 flex flex-col gap-1">
+            {missed.map((c) => (
+              <li key={c.vendorId} className="text-[14px] font-semibold text-co-text">
+                {t("ordering.po.missed_line", { vendor: c.vendorName, time: c.cutoffTime })}
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
       {/* Today's orders — a visible EmptyState when nothing's been drafted yet today
           (council C2 adoption sweep; was previously a silent no-render). */}
       <section className="co-card p-4">
@@ -185,8 +201,8 @@ export function OrderingSurfaces({
               >
                 <span className="min-w-0">
                   <span className="block text-[14px] font-bold text-co-text">{c.vendorName}</span>
-                  <span className="block text-[12px] text-co-text-dim">
-                    {t("ordering.po.cutoff_at", { time: c.cutoffTime })}
+                  <span className={`block text-[12px] ${c.missed ? "font-bold text-co-cta-text" : "text-co-text-dim"}`}>
+                    {t(c.missed ? "ordering.po.cutoff_missed_at" : "ordering.po.cutoff_at", { time: c.cutoffTime })}
                   </span>
                 </span>
                 <ActionButton

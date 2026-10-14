@@ -499,6 +499,25 @@ export function computeOnHand(input: OnHandInput, now: number): OnHandResult {
 }
 
 /**
+ * D-60 (Juan 2026-10-13) — a NEGATIVE THEORETICAL ON-HAND is a prompt to count, not a quantity.
+ * anchor + received − consumed goes below zero whenever usage outruns what the ledgers saw arrive
+ * (receiving not logged yet, a stale anchor): "-433 oz on hand" reads as a broken app. The list shows
+ * the on-hand CLAMPED at 0 beside a "below zero — count it" pill, and the real theoretical number
+ * stays in the row's detail (drawer). Judged at the displayed precision (one decimal), so a −0.04
+ * rounding crumb is neither a pill nor a "−0.0". The ledgers and the math are untouched — this is
+ * presentation only, and null (advisory) stays null.
+ */
+export function onHandBelowZero(value: number | null | undefined): boolean {
+  return value != null && Number.isFinite(value) && Math.round(value * 10) / 10 < 0;
+}
+
+/** The on-hand to SHOW (D-60): never below zero; null stays null (advisory, never a fabricated 0). */
+export function displayOnHand(value: number | null): number | null {
+  if (value == null) return null;
+  return value < 0 ? 0 : value;
+}
+
+/**
  * INFERENCE BOOTSTRAP (spec D6, constants locked: WINDOW_DAYS=28, COVERAGE_DAYS=7).
  * Cold-start an on-hand anchor from consumption run-rate when a SKU has NEVER been
  * physically counted. Given the SKU's TOTAL consumed oz over the trailing calendar

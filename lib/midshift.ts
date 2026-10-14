@@ -486,15 +486,15 @@ export async function loadMidShiftPulse(
     // swallow + omit. Needs the full AuthContext (KH+ gate + location-bind in the loader).
     // A YELLOW advisory (ordering_cutoff ∉ RED_KINDS). The banner names the EARLIEST vendor
     // + its cutoff time and distinguishes "draft ready" from "no draft yet" per hasDraft.
+    // D-63 (Juan 2026-10-13): a cutoff that has PASSED with no placed order is its own RED item
+    // ("missed cutoff — call the vendor"); only the still-open ones stay the yellow advisory.
     try {
       const cutoff = await loadOrderingAttention(args.authContext, args.locationId);
-      if (cutoff.count > 0) {
-        attention.push({
-          kind: "ordering_cutoff",
-          count: cutoff.count,
-          cutoffVendors: cutoff.vendors.map((v) => ({ name: v.vendorName, time: v.cutoffTime, hasDraft: v.hasDraft })),
-        });
-      }
+      const toItem = (v: (typeof cutoff.vendors)[number]) => ({ name: v.vendorName, time: v.cutoffTime, hasDraft: v.hasDraft });
+      const missed = cutoff.vendors.filter((v) => v.missed);
+      const open = cutoff.vendors.filter((v) => !v.missed);
+      if (missed.length > 0) attention.push({ kind: "ordering_cutoff_missed", count: missed.length, cutoffVendors: missed.map(toItem) });
+      if (open.length > 0) attention.push({ kind: "ordering_cutoff", count: open.length, cutoffVendors: open.map(toItem) });
     } catch (err) {
       console.error("midshift ordering cutoff signal failed", err);
     }

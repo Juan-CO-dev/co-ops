@@ -13,7 +13,7 @@ import { operationalNow } from "@/lib/midshift";
 import { canDoOperationalTask } from "@/lib/operational-task-access";
 import { parseReportRange, reportRangeParams, shiftReportDate } from "@/lib/report-range";
 import { composeLastClose, composeReportSummary, reportIsFinalized } from "@/lib/report-summary";
-import { listReports, listReportSkeleton, type Viewer } from "@/lib/reports-hub";
+import { latestFinalizedClosingDate, listReports, listReportSkeleton, type Viewer } from "@/lib/reports-hub";
 import { SALES_READ_MIN } from "@/lib/sales-reports-shared";
 import { requireSessionFromHeaders } from "@/lib/session";
 import { searchParamValues, shopParamFor } from "@/lib/shop-context-shared";
@@ -56,13 +56,21 @@ export default async function ReportsPage({ searchParams }: { searchParams: Prom
   // Summary counts intentionally aggregate the bounded authorized window, unlike paged lists.
   const panels = await Promise.all(selected.map(async (shop) => {
     const load = (from: string, to: string) => listReports(service, { viewer, locationId: shop.id, dateFrom: from, dateTo: to });
-    const [current, previous, lastDay, receiving, ordering] = await Promise.all([
+    // D-62 (+ review #4): managers see the shop's most recent CLOSED day — the newest finalized
+    // closing on or before today (tonight's, once confirmed), found by one bounded newest-first
+    // read, then that day's reports. No closing in the window → yesterday, as before. Crew keep
+    // "your submissions" for yesterday.
+    const lastCloseDay = async () => (auth.level >= 4
+      ? (await latestFinalizedClosingDate(service, { viewer, locationId: shop.id, onOrBefore: today })) ?? yesterday
+      : yesterday);
+    const [current, previous, closeDay, receiving, ordering] = await Promise.all([
       load(range.from, range.to), range.compare ? load(range.previous.from, range.previous.to) : Promise.resolve([]),
-      listReportSkeleton(service, { viewer, locationId: shop.id, dateFrom: yesterday, dateTo: yesterday }),
+      lastCloseDay(),
       auth.level >= 4 && lockLocationContext(actor, shop.id) ? canDoOperationalTask(auth, shop.id, "receiving") : false,
       auth.level >= 4 && lockLocationContext(actor, shop.id) ? canDoOperationalTask(auth, shop.id, "ordering") : false,
     ]);
-    return { shop, current: composeReportSummary(current), previous: composeReportSummary(previous), close: composeLastClose(lastDay, auth.level), receiving, ordering };
+    const lastDay = await listReportSkeleton(service, { viewer, locationId: shop.id, dateFrom: closeDay, dateTo: closeDay });
+    return { shop, current: composeReportSummary(current), previous: composeReportSummary(previous), close: composeLastClose(lastDay, auth.level), closeDay, receiving, ordering };
   }));
   const linkClass = "inline-flex min-h-[44px] items-center rounded-lg border border-co-border-2 px-3 py-2 text-sm font-bold hover:bg-co-surface-2";
   return <main className="mx-auto max-w-2xl px-4 pb-32 pt-4 sm:px-6 lg:max-w-5xl">
@@ -71,13 +79,13 @@ export default async function ReportsPage({ searchParams }: { searchParams: Prom
     <ReportShopTabs path="/reports" params={params} locationId={locationId} language={language} viewer={auth} />
     <ReportRangeControls range={range} locationId={locationId} language={language} />
     {auth.level < 4 && <p className="mb-4 text-sm text-co-text-muted">{t("reports.hub.own_scope")}</p>}
-    {panels.map(({ shop, current, previous, close, receiving, ordering }) => {
-      const dayContext = context(shop.id, { range: "custom", from: yesterday, to: yesterday });
+    {panels.map(({ shop, current, previous, close, closeDay, receiving, ordering }) => {
+      const dayContext = context(shop.id, { range: "custom", from: closeDay, to: closeDay });
       const signals = { underPar: current.signals.underPar, overPar: current.signals.overPar, skipped: current.signals.skipped, notStarted: current.signals.notStarted, tempFlag: current.signals.tempFlags, ...(auth.level >= 4 ? { cashOver: current.cashOver, cashShort: current.cashShort } : {}) };
       const priorSignals = { underPar: previous.signals.underPar, overPar: previous.signals.overPar, skipped: previous.signals.skipped, notStarted: previous.signals.notStarted, tempFlag: previous.signals.tempFlags, cashOver: previous.cashOver, cashShort: previous.cashShort };
       return <section key={shop.id} className="mb-6 rounded-xl border border-co-border bg-co-surface p-4">
         <h2 className="text-base font-bold">{shop.name}</h2>
-        <h3 className="mt-3 text-sm font-bold">{t(close.ownScope ? "reports.hub.your_submissions" : "reports.hub.last_close", { date: formatDateLabel(yesterday, language) })}</h3>
+        <h3 className="mt-3 text-sm font-bold">{t(close.ownScope ? "reports.hub.your_submissions" : "reports.hub.last_close", { date: formatDateLabel(closeDay, language) })}</h3>
         {close.noActivity ? <p className="py-3 text-sm text-co-text-muted">{t("reports.hub.no_activity")}</p> : close.ownScope ? <ul>
           {close.submissions.map((item) => <li key={`${item.type}:${item.id}`}><Link className="inline-flex min-h-[44px] items-center gap-2 text-sm underline" href={`/reports/${item.type}/${item.id}?${dayContext}`}>{t(`reports.type.${item.type}` as TranslationKey)} · <span className={item.status === "auto_finalized" ? "text-co-warning-text" : undefined}>{t(item.status === "auto_finalized" ? "reports.hub.auto_closed" : reportIsFinalized(item) ? "reports.hub.done" : "reports.hub.not_finalized")}</span></Link></li>)}
         </ul> : <ul className="mt-2 grid gap-2 sm:grid-cols-2">

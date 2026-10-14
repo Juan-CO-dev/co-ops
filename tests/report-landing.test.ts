@@ -32,7 +32,11 @@ async function render(level: number, role: RoleCode, location = "mine", assigned
     operationalNow: () => ({ date: "2026-10-07" }), formatDateLabel: (date: string) => date,
     reportLandingContext, parseReportRange, reportRangeParams, shiftReportDate, composeLastClose, composeReportSummary, reportIsFinalized,
     shopParamFor, searchParamValues, resolveReportShopId: async () => "mine", // B2: the real contract getter; default = the membership
-    canDoOperationalTask, listReports, SALES_READ_MIN: 7, listReportSkeleton: async () => lastClose ? [{ id: "close-id", type: "closing", status: "submitted" }] : [],
+    canDoOperationalTask, listReports, SALES_READ_MIN: 7, // D-62 / review #4: the newest finalized closing is found directly (here: Sep 30, a week+ back),
+    // then only that day's reports are loaded.
+    latestFinalizedClosingDate: async () => lastClose ? "2026-09-30" : null,
+    listReportSkeleton: async (_s: unknown, f: { dateFrom: string; dateTo: string }) => lastClose && f.dateFrom === "2026-09-30" && f.dateTo === "2026-09-30"
+      ? [{ id: "close-id", type: "closing", status: "submitted", date: "2026-09-30" }] : [],
   };
   const page = new Function(...Object.keys(deps), `${js}; return ReportsPage;`)(...Object.values(deps));
   const tree = await page({ searchParams: Promise.resolve({ location, ...extra }) });
@@ -51,6 +55,11 @@ describe("actual reports landing card gates", () => {
     expect(query.get("cursor")).toBeNull();
     expect(query.get("type")).toBeNull();
     expect(query.get("sf_underPar")).toBeNull();
+    // D-62 / review #4: the newest finalized close (Sep 30, over a week back) is the last close —
+    // not a fixed yesterday and not a 7-day window's fallback.
+    expect(query.get("from")).toBe("2026-09-30");
+    expect(query.get("to")).toBe("2026-09-30");
+    expect(result.text).toContain("2026-09-30");
   });
   it("trainees receive own reports and feedback without aggregate or cash links", async () => {
     const result = await render(2, "trainee");

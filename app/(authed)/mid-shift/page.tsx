@@ -186,6 +186,7 @@ export default async function MidShiftPage({
         vendorName: v.vendorName,
         cutoffTime: v.cutoffTime,
         hasDraft: v.hasDraft,
+        missed: v.missed,
       }))
     : null;
 

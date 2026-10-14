@@ -252,6 +252,8 @@ async function attention(deps: PulseDeps, ctx: PulseCtx): Promise<AttentionData>
     notRung: crew ? null : deps.notRung(ctx),
     parPass: crew ? null : deps.lastParPass(ctx),
     unlinked: crew ? null : deps.unlinkedClockIns(ctx),
+    // D-63: ordering is KH+ (loadOrderingAttention's floor), so crew never read it.
+    cutoffs: crew ? null : deps.cutoffs(ctx),
   };
   const names = (Object.keys(sources) as Array<keyof typeof sources>).filter((k) => sources[k] !== null);
   const settled = await Promise.allSettled(names.map((k) => sources[k] as Promise<unknown>));
@@ -307,6 +309,15 @@ async function attention(deps: PulseDeps, ctx: PulseCtx): Promise<AttentionData>
   if (parPass) {
     const low = parPassLow(parPass).filter((l) => l.risk86 || (l.pctOfPar !== null && l.pctOfPar <= 0.5));
     if (low.length > 0) rows.push({ key: "item_low", kind: "item_low", severity: severityOf("item_low"), params: { count: low.length, items: low.slice(0, 3).map((l) => l.skuName).join(" · ") }, href: `/ordering?location=${loc}`, action: "order" });
+  }
+  const cutoffs = got("cutoffs");
+  if (cutoffs) {
+    // D-63: a cutoff that has PASSED with no placed order is red — "missed cutoff, call the vendor".
+    // A still-open cutoff stays on the Inventory card (it is a deadline, not yet a miss).
+    for (const v of cutoffs.vendors) {
+      if (!v.missed) continue;
+      rows.push({ key: `cutoff_missed:${v.vendorId}`, kind: "cutoff_missed", severity: severityOf("cutoff_missed"), params: { vendor: v.vendorName, time: v.cutoffTime }, href: `/ordering?location=${loc}`, action: "order" });
+    }
   }
   const notRung = got("notRung");
   if (notRung) {
@@ -572,7 +583,7 @@ async function inventory(deps: PulseDeps, ctx: PulseCtx): Promise<InventoryData>
     low,
     risk86: low.filter((l) => l.risk86).length,
     receiving: deliveries ? deliveries.slice(0, 5).map((d) => ({ id: d.id, vendorName: d.vendorName, at: d.createdAt, matchState: d.matchState, status: d.deliveryStatus })) : null,
-    cutoffs: cutoffs ? cutoffs.vendors.map((v) => ({ vendorName: v.vendorName, time: v.cutoffTime, hasDraft: v.hasDraft })) : null,
+    cutoffs: cutoffs ? cutoffs.vendors.map((v) => ({ vendorName: v.vendorName, time: v.cutoffTime, hasDraft: v.hasDraft, missed: v.missed })) : null,
   };
 }
 
