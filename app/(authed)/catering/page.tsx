@@ -33,8 +33,13 @@ export default async function CateringHubPage() {
 
   // Cross-link to the admin catering KB (packages/menu/pricing/zones/rates) for
   // viewers who can reach it — the two hubs were siloed (council E finding).
+  // B8 #7: the card names only what this viewer can open there (the /admin/catering EDITORS
+  // floors: pricing + rate rules 8, menu/capacity/zones 7, packages/FAQ/prep demand/LTO 6).
+  const adminDescKey: TranslationKey = level >= 8
+    ? "catering.hub.admin_link_desc"
+    : level >= 7 ? "catering.hub.admin_link_desc_gm" : "catering.hub.admin_link_desc_agm";
   const cards = level >= ADMIN_CATERING_MIN
-    ? [...CARDS, { href: "/admin/catering", titleKey: "catering.hub.admin_link_title" as TranslationKey, descKey: "catering.hub.admin_link_desc" as TranslationKey }]
+    ? [...CARDS, { href: "/admin/catering", titleKey: "catering.hub.admin_link_title" as TranslationKey, descKey: adminDescKey }]
     : CARDS;
 
   return (

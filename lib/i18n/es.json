@@ -4310,6 +4310,8 @@
   "catering.hub.companies_desc": "Cuentas de empresa + atribución por correo.",
   "catering.hub.admin_link_title": "Administración y configuración",
   "catering.hub.admin_link_desc": "Paquetes, menú, precios, zonas y tarifas.",
+  "catering.hub.admin_link_desc_gm": "Paquetes, menú, capacidad, zonas y preguntas frecuentes.",
+  "catering.hub.admin_link_desc_agm": "Paquetes, preguntas frecuentes, demanda de prep y LTOs.",
   "catering.companies.title": "Empresas de Catering",
   "catering.companies.subtitle": "Cuentas de empresa — los dominios corporativos atribuyen contactos automáticamente; una cuenta puede reclamarse luego con registro en el portal.",
   "catering.companies.new": "Nueva empresa",

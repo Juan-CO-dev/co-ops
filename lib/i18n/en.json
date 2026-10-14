@@ -4310,6 +4310,8 @@
   "catering.hub.companies_desc": "Company accounts + email attribution.",
   "catering.hub.admin_link_title": "Admin & setup",
   "catering.hub.admin_link_desc": "Packages, menu, pricing, zones & rate rules.",
+  "catering.hub.admin_link_desc_gm": "Packages, menu, capacity, zones & FAQ.",
+  "catering.hub.admin_link_desc_agm": "Packages, FAQ, prep demand & LTOs.",
   "catering.companies.title": "Catering Companies",
   "catering.companies.subtitle": "Company accounts — corporate domains auto-attribute contacts; an account can later be claimed via portal sign-up.",
   "catering.companies.new": "New company",
