@@ -87,3 +87,32 @@ describe("#1 number inputs are 16 px (no focus zoom on phones)", () => {
     });
   }
 });
+
+describe("#3/#4 quantities render through the prep display helpers", () => {
+  const opening = read("components/opening/OpeningPrepEntry.tsx");
+  const p1 = read("components/MidDayPhase1Form.tsx");
+  const p2 = read("components/MidDayPhase2Form.tsx");
+
+  it("opening par / closer count / prep need never print a raw `${n} ${parUnit}`", () => {
+    expect(opening).toContain("formatPrepQty(parValue, parUnit)");
+    expect(opening).toContain("prepQtyParts(groundTruth, parUnit)");
+    expect(opening).toContain("prepQtyParts(prepNeed, parUnit)");
+    expect(opening).not.toMatch(/\$\{parValue\}\$\{parUnit/);
+    expect(opening).not.toMatch(/\{(groundTruth|prepNeed)\}\s*\{parUnit \?/);
+  });
+
+  it("the over/under prompts round their delta for display (#4)", () => {
+    expect(opening.match(/over_prep", \{ delta: roundQty\(overDelta\) \}/g)?.length).toBe(2);
+    expect(opening.match(/under_prep", \{ delta: roundQty\(underDelta\) \}/g)?.length).toBe(2);
+    expect(opening).not.toMatch(/delta: (over|under)Delta \}/);
+  });
+
+  it("mid-day par / need lines go through formatPrepQty", () => {
+    for (const src of [p1, p2]) {
+      expect(src).toMatch(/formatPrepQty\(it\.parValue, it\.parUnit\)/);
+      expect(src).not.toMatch(/it\.parUnit \? ` \$\{it\.parUnit\}`/);
+    }
+    expect(p1).toContain("formatPrepQty(need, it.parUnit)");
+    expect(p2).toContain("formatPrepQty(it.need, it.parUnit)");
+  });
+});

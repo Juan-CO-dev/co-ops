@@ -43,6 +43,7 @@ import {
 } from "@/lib/batch-prep-shared";
 import type { TranslationKey } from "@/lib/i18n/types";
 import { etCalendarDate } from "@/lib/operational-day";
+import { formatPrepQty } from "@/lib/prep-display-shared";
 
 export interface MidDayPhase2Item {
   id: string;
@@ -339,10 +340,10 @@ export function MidDayPhase2Form({
                     <div className="min-w-0 flex-1">
                       <p className="truncate text-sm font-semibold text-co-text">{it.label}</p>
                       <p className="text-[10px] font-bold uppercase tracking-[0.08em] text-co-text-dim">
+                        {/* B1 #3 — "5 × 1/3 Pan", never "5 1/3 Pan"; float noise rounded. */}
                         {it.need !== null
-                          ? `${t("mid_day_prep.phase1.need")} ${it.need}`
-                          : `${t("mid_day_prep.page.section_par")} ${it.parValue ?? "—"}`}
-                        {it.parUnit ? ` ${it.parUnit}` : ""}
+                          ? `${t("mid_day_prep.phase1.need")} ${formatPrepQty(it.need, it.parUnit)}`
+                          : `${t("mid_day_prep.page.section_par")} ${formatPrepQty(it.parValue, it.parUnit)}`}
                         {it.batch ? ` · ${t("prep.batch.bottled_label" as TranslationKey)}` : ""}
                       </p>
                     </div>

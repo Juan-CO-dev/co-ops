@@ -46,6 +46,7 @@ import type { DerivedSku, ConfirmedInput } from "@/lib/prep-consumption";
 import { ProductionConsumptionPanel } from "@/components/production/ProductionConsumptionPanel";
 import { BatchEntryFields } from "@/components/prep/BatchEntryFields";
 import { emptyBatchFormValue, isBatchContractCode, type BatchFormValue, type BatchRowContext } from "@/lib/batch-prep-shared";
+import { formatPrepQty, prepQtyParts, roundQty } from "@/lib/prep-display-shared";
 import type { ChecklistTemplateItem, OpeningPhase2Meta } from "@/lib/types";
 
 import { CollapsibleChecklistSection } from "@/components/ui/CollapsibleChecklistSection";
@@ -651,10 +652,10 @@ function PrepEntryRow({
     ((delta > 0 && batch === null && value.overPar === null) ||
       (delta < 0 && value.underPar === null));
 
-  const parDisplay =
-    parValue !== null
-      ? `${parValue}${parUnit ? ` ${parUnit}` : ""}`
-      : null;
+  // B1 #3 — a size unit ("1/3 Pan") reads "5 × 1/3 Pan", never "5 1/3 Pan"; 0 reads "0".
+  const parDisplay = parValue !== null ? formatPrepQty(parValue, parUnit) : null;
+  const groundTruthParts = prepQtyParts(groundTruth, parUnit);
+  const prepNeedParts = prepQtyParts(prepNeed, parUnit);
 
   // C.53 Commit B — the ground-truth display sources from the persisted Phase 1
   // value (closer count, or a Phase 1 recount captured at verification time).
@@ -683,8 +684,8 @@ function PrepEntryRow({
         </span>
         {groundTruth !== null ? (
           <span className="font-semibold text-co-text">
-            {groundTruth}
-            {parUnit ? <span className="text-co-text-muted"> {parUnit}</span> : null}
+            {groundTruthParts.qty}
+            {groundTruthParts.unit ? <span className="text-co-text-muted"> {groundTruthParts.unit}</span> : null}
           </span>
         ) : (
           <span className="text-co-text-dim italic">
@@ -707,8 +708,8 @@ function PrepEntryRow({
               {t("opening.phase2.prep_need_label")}:
             </span>
             <span className="font-semibold text-co-text">
-              {prepNeed}
-              {parUnit ? <span className="text-co-text-muted"> {parUnit}</span> : null}
+              {prepNeedParts.qty}
+              {prepNeedParts.unit ? <span className="text-co-text-muted"> {prepNeedParts.unit}</span> : null}
             </span>
           </>
         ) : (
@@ -781,7 +782,7 @@ function PrepEntryRow({
           aria-label={
             value.overPar
               ? t("opening.phase2.signal.over_prep_recorded")
-              : t("opening.phase2.signal.over_prep", { delta: overDelta })
+              : t("opening.phase2.signal.over_prep", { delta: roundQty(overDelta) })
           }
           className={[
             "self-start inline-flex min-h-[44px] items-center gap-2 rounded-md px-3 py-1",
@@ -795,7 +796,7 @@ function PrepEntryRow({
         >
           {value.overPar
             ? t("opening.phase2.signal.over_prep_recorded")
-            : t("opening.phase2.signal.over_prep", { delta: overDelta })}
+            : t("opening.phase2.signal.over_prep", { delta: roundQty(overDelta) })}
         </button>
       ) : null}
 
@@ -807,7 +808,7 @@ function PrepEntryRow({
           aria-label={
             value.underPar
               ? t("opening.phase2.signal.under_prep_recorded")
-              : t("opening.phase2.signal.under_prep", { delta: underDelta })
+              : t("opening.phase2.signal.under_prep", { delta: roundQty(underDelta) })
           }
           className={[
             "self-start inline-flex min-h-[44px] items-center gap-2 rounded-md px-3 py-1",
@@ -821,7 +822,7 @@ function PrepEntryRow({
         >
           {value.underPar
             ? t("opening.phase2.signal.under_prep_recorded")
-            : t("opening.phase2.signal.under_prep", { delta: underDelta })}
+            : t("opening.phase2.signal.under_prep", { delta: roundQty(underDelta) })}
         </button>
       ) : null}
 
