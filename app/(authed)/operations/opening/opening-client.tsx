@@ -147,6 +147,8 @@ interface OpeningClientProps {
   language: Language;
   /** Server-resolved KH+ or active opening assignment; rechecked on every write. */
   canSubmit: boolean;
+  /** D-13 — the viewer may edit the "Uses: …" panel (KH+); server-derived, re-gated on save. */
+  canEditConsumption: boolean;
 }
 
 /**
@@ -411,6 +413,7 @@ export function OpeningClient({
   saverNames,
   language,
   canSubmit,
+  canEditConsumption,
 }: OpeningClientProps) {
   const { t } = useTranslation();
   const router = useRouter();
@@ -1986,6 +1989,7 @@ export function OpeningClient({
           batchByItem={batchByItem}
           batchDerivedByItem={batchDerived}
           todayIso={instance.date}
+          canEditConsumption={canEditConsumption}
         />
       ) : null}
 

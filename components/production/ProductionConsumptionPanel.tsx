@@ -7,6 +7,10 @@
  * rows with a Case⇄Each toggle. Controlled component: parent owns value/onChange;
  * this component owns only expanded/collapsed + per-row unit selection.
  *
+ * D-13 (Juan, 2026-10-13): `canEdit` false (crew, level < CONSUMPTION_EDIT_MIN) renders the
+ * summary line ONLY — no expand-to-edit, no Case⇄Each toggle. The prep saves enforce the same
+ * floor server-side (lib/consumption-edit-shared.ts consumptionOverrideFor).
+ *
  * DerivedSku / ConfirmedInput are type-only imports from lib/prep-consumption
  * (server-only module — `import type` is erased at compile, so no server code
  * reaches the client bundle).
@@ -65,8 +69,10 @@ export function ProductionConsumptionPanel(props: {
   outputQty: number;
   value: ConfirmedInput[] | null;
   onChange: (rows: ConfirmedInput[]) => void;
+  /** D-13 — KH+ may expand and edit; crew see the read-only summary line. Server-derived. */
+  canEdit: boolean;
 }): React.JSX.Element | null {
-  const { derived, outputQty, value, onChange } = props;
+  const { derived, outputQty, value, onChange, canEdit } = props;
   const { t } = useTranslation();
 
   const [expanded, setExpanded] = useState(false);
@@ -158,6 +164,18 @@ export function ProductionConsumptionPanel(props: {
     const oz = derivedOzForSku(d);
     return `${fmtQty(oz, unit, d)} ${d.skuName} · ~${Math.round(oz)} oz`;
   });
+
+  if (!canEdit) {
+    // D-13 — read-only for crew: the summary wraps (there is no expand to read the rest).
+    return (
+      <div className="mt-2 min-w-0 rounded-lg border border-co-border bg-co-surface-inset px-3 py-2 text-sm text-co-text-dim">
+        <p className="break-words">
+          <span className="font-medium text-co-text">{t("production.panel.uses")}: </span>
+          <span>{summaryParts.join(" · ")}</span>
+        </p>
+      </div>
+    );
+  }
 
   return (
     <div className="mt-2 min-w-0 rounded-lg border border-co-border bg-co-surface">

@@ -45,6 +45,7 @@ import type { ManagerOption } from "@/components/opening/OverParModal";
 import { DashboardBackLink } from "@/components/DashboardBackLink";
 
 import { OpeningClient } from "./opening-client";
+import { canEditConsumption } from "@/lib/consumption-edit-shared";
 
 interface LocationLite {
   id: string;
@@ -280,6 +281,7 @@ export default async function OpeningPage({ searchParams }: OpeningPageProps) {
         saverNames={{ ...state.authors, [auth.user.id]: auth.user.name }}
         language={language}
         canSubmit={canSubmit}
+        canEditConsumption={canEditConsumption(auth.level)}
       />
     </AuthShell>
   );

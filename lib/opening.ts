@@ -54,6 +54,7 @@ import {
   type ConfirmedInput,
   type DerivedSku,
 } from "@/lib/prep-consumption";
+import { consumptionOverrideFor } from "@/lib/consumption-edit-shared";
 import { isPrepData } from "./prep";
 import { loadBatchContextForItems, type BatchItemContext } from "@/lib/batch-prep";
 import {
@@ -2285,6 +2286,9 @@ export async function savePhase2Item(
       .select("item_id")
       .eq("id", args.entry.templateItemId)
       .maybeSingle<{ item_id: string | null }>();
+    // D-13 — crew (level < CONSUMPTION_EDIT_MIN) cannot override the panel: their save
+    // records the DERIVED consumption whatever the body carried (the UI hiding is not the gate).
+    const confirmedConsumption = consumptionOverrideFor(args.actor.level, args.confirmedConsumption);
     if (tItem?.item_id && args.entry.batch) {
       // 0215 batch vs bottle — the BATCH fold (ruling 3): depletion is batches × the
       // recipe from ONE graph read. `produced_at` / `made_by` are the PERSISTED session facts
@@ -2303,13 +2307,13 @@ export async function savePhase2Item(
         outputItemId: tItem.item_id,
         batches: record?.batches ?? args.entry.batch.batches,
         cameOutTo: record?.cameOutTo ?? args.entry.batch.cameOutTo ?? 0,
-        confirmedConsumption: args.confirmedConsumption ?? null,
+        confirmedConsumption,
         producedAt,
         madeBy,
         source: "opening_p2",
       });
     } else if (tItem?.item_id) {
-      let consumption = args.confirmedConsumption ?? null;
+      let consumption = confirmedConsumption;
       if (consumption === null) {
         const m = await skuConsumptionForItem(tItem.item_id, args.entry.openerPrepped);
         consumption = [...m].map(([skuId, oz]) => ({ skuId, qtyOz: oz, qtyEntered: null, unitEntered: null, derivedOz: oz }));

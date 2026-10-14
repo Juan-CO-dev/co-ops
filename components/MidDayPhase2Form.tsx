@@ -129,6 +129,7 @@ export function MidDayPhase2Form({
   managers,
   sectionLabels = {},
   todayIso,
+  canEditConsumption = false,
 }: {
   instanceId: string;
   items: MidDayPhase2Item[];
@@ -137,6 +138,8 @@ export function MidDayPhase2Form({
   sectionLabels?: Record<string, { en: string; es: string | null }>;
   /** 0215 — the instance's operational date (YYYY-MM-DD) for the shelf-life red state. */
   todayIso?: string;
+  /** D-13 — the viewer may edit the "Uses: …" panel (KH+); server-derived. Default read-only. */
+  canEditConsumption?: boolean;
 }) {
   const { t, language } = useTranslation();
   const router = useRouter();
@@ -395,6 +398,7 @@ export function MidDayPhase2Form({
                       outputQty={it.batch ? st.batch.batches : (preppedNum ?? 0)}
                       value={st.confirmedConsumption}
                       onChange={(rows) => patch(it.id, { confirmedConsumption: rows })}
+                      canEdit={canEditConsumption}
                     />
                   ) : null}
                   {st.status === "saved" ? (

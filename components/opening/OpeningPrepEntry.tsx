@@ -228,6 +228,8 @@ interface OpeningPrepEntryProps {
   batchDerivedByItem?: Record<string, DerivedSku[]>;
   /** 0215 — the opening's operational date (YYYY-MM-DD) for the shelf-life red state. */
   todayIso?: string;
+  /** D-13 — the viewer may edit the "Uses: …" panel (KH+); server-derived. Default read-only. */
+  canEditConsumption?: boolean;
 }
 
 export function OpeningPrepEntry({
@@ -250,6 +252,7 @@ export function OpeningPrepEntry({
   batchByItem,
   batchDerivedByItem,
   todayIso,
+  canEditConsumption = false,
 }: OpeningPrepEntryProps) {
   const { t } = useTranslation();
 
@@ -420,6 +423,7 @@ export function OpeningPrepEntry({
                     batch={batchByItem?.get(item.id) ?? null}
                     batchDerived={batchDerivedByItem?.[item.id] ?? []}
                     todayIso={todayIso ?? etCalendarDate(new Date().toISOString())}
+                    canEditConsumption={canEditConsumption}
                     t={t}
                   />
                 );
@@ -530,6 +534,8 @@ interface PrepEntryRowProps {
   /** 0215 — per-BATCH panel rows for a batch item ([] otherwise). */
   batchDerived: DerivedSku[];
   todayIso: string;
+  /** D-13 — KH+ edit the consumption panel; crew see its summary line only. */
+  canEditConsumption: boolean;
   t: (key: TranslationKey, params?: Record<string, string | number>) => string;
 }
 
@@ -555,6 +561,7 @@ function PrepEntryRow({
   batch,
   batchDerived,
   todayIso,
+  canEditConsumption,
   t,
 }: PrepEntryRowProps) {
   const resolved = resolveTemplateItemContent(item, language);
@@ -756,6 +763,7 @@ function PrepEntryRow({
             onChange(next);
             onSave(next);
           }}
+          canEdit={canEditConsumption}
         />
       ) : null}
 

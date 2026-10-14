@@ -32,6 +32,7 @@ import { getServiceRoleClient } from "@/lib/supabase-server";
 import { needForLine, type BatchRowContext } from "@/lib/batch-prep-shared";
 import { midDayFinalizedRows, midDayPhase2RowSeed, type MidDayFinalizedRow } from "@/lib/mid-day-shared";
 import { formatPrepQty } from "@/lib/prep-display-shared";
+import { canEditConsumption } from "@/lib/consumption-edit-shared";
 
 import { MidDayPhase1Form } from "@/components/MidDayPhase1Form";
 import { MidDayPhase2Form, type MidDayPhase2Item } from "@/components/MidDayPhase2Form";
@@ -252,6 +253,7 @@ export default async function MidDayPrepPage({ searchParams }: PageProps) {
           managers={managers}
           sectionLabels={state.sectionLabels}
           todayIso={state.instance.date}
+          canEditConsumption={canEditConsumption(auth.level)}
         />
       ) : (
         <>
