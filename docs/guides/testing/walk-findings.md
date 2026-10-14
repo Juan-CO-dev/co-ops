@@ -87,3 +87,23 @@ idea (for Juan), or a sim-only issue. Production checks are marked.
 - catering/13-quote-builder.png (optional) — picking a lead now pre-fills the quote.
 - catering/32-setup-prep-demand.png (optional) — the "Sub — par comparison in W4b" dev text is gone.
 
+## Found in the re-walk on the fixed app (2026-10-14)
+
+App (candidates for the next fix batch):
+- **Lead "Edit details" form is squeezed into the narrow pipeline column** (Inquiry): labels wrap, values clip ("Jordan Samp"), dates read "10/23/20". Needs a wider panel/drawer at tablet width. (B5 #36)
+- **Reports Hub "Last 7 days" (10/08–10/14) and Sales (10/07–10/13) use different 7-day windows** for the same label.
+- **The Mid-Shift Pulse doesn't say which shop it's showing** when you can see more than one.
+- **Add lead's Location starts on "No location (global)"** instead of the working shop (B2 resolver not applied to that form).
+- **Fulfillment map shows a pin + 5-mile circle while both shops say "not set".**
+- **Catering setup hub card still says "pricing … rate rules"** for a GM who can't open them (sub-line was fixed; card text wasn't).
+- **Tool scroll jumps a full screen** (harness, not app).
+
+Sim data (not app): catering test leads/quotes/customers from round 1 ("Hill Staffers <Model> R1 LLC", a second "Jordan Sample") clutter the pipeline, quotes and customers — the day reset doesn't cover catering. Clean up (sim-only) before the final catering photo pass.
+- **Opening Phase 2: a saved row reverted** (Onion "Saved by Maya" → empty "Not saved" after Basil saved; VEG 3→2 of 6). Under investigation 2026-10-14 (possible #461 regression).
+- **Phase 1: tapping a station's Verified ticks its fridge temp line before a temp is typed** — under investigation.
+- **My Performance charts** render as dashes / a lone mark after 15 s (chart data or layout bug).
+- **Opening Phase 1 footer "4 of 44 verified" vs card "3 of 4 done"** lag.
+- **Saving a closing note re-stamps the line's tick time.**
+- **Name/label truncation at 390 px** ("Crunchy Boi Station · Unassign…", "Preppec" placeholder).
+- **Sim data:** ~10 leftover "Prep fridge" maintenance notes (the reset doesn't cover maintenance notes).
+
