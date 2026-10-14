@@ -575,3 +575,4 @@ Not batched until reproduced: #22, #29, #67.
 2. Email on Add lead approved: resolve the typed email to a catering customer and link the lead (no email column on leads).
 3. Read-only prod check for existing quotes that over-count prep (package pick-line double expansion) approved.
 4. "Last close" counts auto-closed days, labelled "auto closed" (shipped in B7b, #465).
+5. "Last 7 days" (B8 #5): keep the two rules — Reports Hub includes today, Sales stops at yesterday — and label Sales "Last 7/30/90 full days". Juan: "let's not force both pages onto one rule."
