@@ -4,6 +4,7 @@ import { ROLES } from "@/lib/roles";
 import { jsonError, jsonOk, parseJsonBody } from "@/lib/api-helpers";
 import {
   loadQuote,
+  loadQuoteParties,
   reviseQuote,
   setQuoteStatus,
   parseQuoteLinesFromBody,
@@ -25,7 +26,10 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
   try {
     const detail = await loadQuote(ctx, id);
     if (!detail) return jsonError(404, "not_found");
-    return jsonOk({ quote: detail.quote, items: detail.items });
+    // Client + lead for the quote page (B5 #35). Each side is authorized on its own inside
+    // loadQuoteParties: passing loadQuote's gate only proves the QUOTE's shop is readable.
+    const parties = await loadQuoteParties(ctx, detail.quote);
+    return jsonOk({ quote: detail.quote, items: detail.items, client: parties.client, lead: parties.lead, clientHidden: parties.clientHidden });
   } catch (e) {
     if (e instanceof CateringQuoteError) return jsonError(e.status, e.code);
     throw e;

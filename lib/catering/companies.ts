@@ -18,6 +18,8 @@ import { getRoleLevel, type RoleCode } from "@/lib/roles";
 import { audit } from "@/lib/audit";
 import type { AuthContext } from "@/lib/session";
 import { lockLocationContext, isAllLocationsAccess, type LocationActor } from "@/lib/locations";
+import { loadCateringReader } from "./ezcater-detail";
+import { canReadCateringContact } from "./ezcater-detail-shared";
 
 export const COMPANY_READ_MIN = 5;
 export const COMPANY_WRITE_MIN = 6;
@@ -231,6 +233,12 @@ export async function resolveCompanyForEmail(email: string): Promise<string | nu
 export async function reviveInactiveContact(
   emailRaw: string,
   attribution: { actorId: string | null; actorRole: RoleCode | null; via: string },
+  /**
+   * Optional authorization of the row that WOULD be revived, checked on that exact row before
+   * the flip (B5 review 2). Returning false refuses with 400 `invalid_customer` and writes
+   * nothing. The portal magic-link caller passes none and is unchanged.
+   */
+  canRevive?: (primaryLocationId: string | null) => boolean,
 ): Promise<{ id: string; companyId: string | null } | null> {
   const email = normalizeEmail(emailRaw);
   const sb = getServiceRoleClient();
@@ -239,15 +247,18 @@ export async function reviveInactiveContact(
   // exactly like a false one.
   const { data: rows, error } = await sb
     .from("catering_customers")
-    .select("id, company_id")
+    .select("id, company_id, primary_location_id")
     .or("active.is.null,active.is.false")
     .ilike("email", escapeLike(email))
     .order("created_at", { ascending: false })
     .limit(1)
-    .returns<Array<{ id: string; company_id: string | null }>>();
+    .returns<Array<{ id: string; company_id: string | null; primary_location_id: string | null }>>();
   if (error) throw new Error(`reviveInactiveContact lookup: ${error.message}`);
   const row = rows[0];
   if (!row) return null;
+  if (canRevive && !canRevive(row.primary_location_id)) {
+    throw new CateringCompanyError(400, "invalid_customer", "That client is not available at this shop");
+  }
 
   // Guarded flip: the `active` predicate makes this a compare-and-set, so the loser of a
   // double request gets 0 rows rather than a second revival.
@@ -423,6 +434,11 @@ export interface ResolvedContact {
   id: string;
   companyId: string | null;
   created: boolean;
+  /**
+   * The actor may NOT read this contact (another shop's customer, attached by the email they
+   * typed — Juan, option b). The caller attaches it but must never surface its saved data.
+   */
+  hidden: boolean;
 }
 
 /**
@@ -441,23 +457,55 @@ export async function resolveOrCreateContact(actor: AuthContext, input: ResolveC
   }
   const sb = getServiceRoleClient();
 
+  // An email may resolve to a contact homed at a shop the actor does not read. Juan's ruling
+  // (option b, 2026-10-14): ATTACH it — one person, one customer row, no duplicate — but mark
+  // it `hidden` so no read path shows the actor its saved contact data. Readability is the
+  // catering contact policy, fail-closed. Nothing about another shop's record is WRITTEN:
+  // an unreadable deactivated contact is attached as-is, never revived (see below).
+  const reader = await loadCateringReader(actor);
+  const readable = (primaryLocationId: string | null) =>
+    !!reader && canReadCateringContact(reader, primaryLocationId);
+
   const { data: existing, error: lErr } = await sb
     .from("catering_customers")
-    .select("id, company_id")
+    .select("id, company_id, primary_location_id")
     .eq("active", true)
     .ilike("email", escapeLike(email))
-    .maybeSingle<{ id: string; company_id: string | null }>();
+    .maybeSingle<{ id: string; company_id: string | null; primary_location_id: string | null }>();
   if (lErr) throw new Error(`resolveOrCreateContact lookup: ${lErr.message}`);
-  if (existing) return { id: existing.id, companyId: existing.company_id, created: false };
+  if (existing) {
+    return { id: existing.id, companyId: existing.company_id, created: false, hidden: !readable(existing.primary_location_id) };
+  }
 
   // Before minting a new contact: this email may belong to a DEACTIVATED one. Inserting
   // beside it would fork the person in two — see reviveInactiveContact.
+  //
+  // UNREADABLE + DEACTIVATED → ATTACH WITHOUT REVIVING (the option-b sub-case). Reviving is a
+  // write to another shop's directory (reversing that shop's own decision) that the actor
+  // could not even see; refusing would push the GM to retype a variant and fork the person.
+  // Attaching the deactivated row keeps one identity, reaches the person, and changes nothing
+  // in shop B's book (the portal magic-link still revives it if the customer signs in).
+  const { data: dormant, error: dErr } = await sb
+    .from("catering_customers")
+    .select("id, company_id, primary_location_id")
+    .or("active.is.null,active.is.false")
+    .ilike("email", escapeLike(email))
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .returns<Array<{ id: string; company_id: string | null; primary_location_id: string | null }>>();
+  if (dErr) throw new Error(`resolveOrCreateContact dormant lookup: ${dErr.message}`);
+  const dormantRow = dormant?.[0];
+  if (dormantRow && !readable(dormantRow.primary_location_id)) {
+    return { id: dormantRow.id, companyId: dormantRow.company_id, created: false, hidden: true };
+  }
+  // Readable → revive as before. canRevive re-checks the exact row it flips (a race that swaps
+  // in an unreadable row refuses with no write rather than reviving it).
   const revived = await reviveInactiveContact(email, {
     actorId: actor.user.id,
     actorRole: actor.user.role,
     via: "quote_capture",
-  });
-  if (revived) return { id: revived.id, companyId: revived.companyId, created: false };
+  }, readable);
+  if (revived) return { id: revived.id, companyId: revived.companyId, created: false, hidden: false };
 
   const companyId = await resolveCompanyForEmail(email);
   const { data: inserted, error: iErr } = await sb
@@ -477,7 +525,7 @@ export async function resolveOrCreateContact(actor: AuthContext, input: ResolveC
     if (iErr.code === "23505") {
       // Raced against a concurrent create — re-read by email.
       const { data: raced } = await sb.from("catering_customers").select("id, company_id").eq("active", true).ilike("email", escapeLike(email)).maybeSingle<{ id: string; company_id: string | null }>();
-      if (raced) return { id: raced.id, companyId: raced.company_id, created: false };
+      if (raced) return { id: raced.id, companyId: raced.company_id, created: false, hidden: false };
     }
     throw new Error(`resolveOrCreateContact insert: ${iErr.message}`);
   }
@@ -491,5 +539,5 @@ export async function resolveOrCreateContact(actor: AuthContext, input: ResolveC
     ipAddress: null,
     userAgent: null,
   });
-  return { id: inserted.id, companyId, created: true };
+  return { id: inserted.id, companyId, created: true, hidden: false };
 }

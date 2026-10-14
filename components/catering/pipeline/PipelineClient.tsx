@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { useTranslation } from "@/lib/i18n/provider";
 import { formatCents, formatDateLabel } from "@/lib/i18n/format";
 import type { TranslationKey } from "@/lib/i18n/types";
-import { LEGAL_TRANSITIONS, PIPELINE_STAGES, shopChipLabel, type PipelineStage } from "@/lib/catering/pipeline-shared";
+import { LEGAL_TRANSITIONS, PIPELINE_STAGES, leadEditPatch, shopChipLabel, type PipelineStage } from "@/lib/catering/pipeline-shared";
 import type { PipelineLead, PipelineSearchResult, AssignableStaff } from "@/lib/catering/pipeline";
 import { LEAD_SOURCES, leadSourceKey } from "@/lib/catering/intake-shared";
 import type { CateringCapacityResult } from "@/lib/catering/capacity";
@@ -466,6 +466,8 @@ function LeadDetail({
 
       {canTransfer && <TransferLead leadId={lead.id} locationId={lead.locationId} locations={locations} onMoved={onClose} />}
 
+      {canWrite && <EditLeadDetails lead={lead} />}
+
       {canWrite && (
         <div className="mt-3">
           <div className="text-xs font-semibold text-co-text-muted">{t("catering.pipeline.move_to")}</div>
@@ -489,6 +491,92 @@ function LeadDetail({
       )}
 
       {errorMsg && <p className="mt-2 text-xs text-co-cta-text">{errorMsg}</p>}
+    </div>
+  );
+}
+
+// ── Edit a lead in place (B5 #36) ────────────────────────────────────────────
+// PATCH /api/catering/pipeline/[id] already edits these fields ("D3 — edit in place");
+// the board only lacked a form. Sends ONLY the changed fields (leadEditPatch). Phone and
+// email are not here: adding them is D-48, Juan's call.
+function EditLeadDetails({ lead }: { lead: PipelineLead }) {
+  const { t } = useTranslation();
+  const router = useRouter();
+  const [open, setOpen] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const formId = `lead-edit-${lead.id}`;
+
+  const submit = useCallback(
+    async (e: FormEvent<HTMLFormElement>) => {
+      e.preventDefault();
+      const fd = new FormData(e.currentTarget);
+      const raw = (k: string) => (fd.get(k) as string | null) ?? "";
+      const result = leadEditPatch(lead, {
+        contactName: raw("contactName"),
+        company: raw("company"),
+        eventDate: raw("eventDate"),
+        headcount: raw("headcount"),
+        followUpDate: raw("followUpDate"),
+        notes: raw("notes"),
+      });
+      if (!result.ok) {
+        setErrorMsg(t("catering.pipeline.error.invalid_payload"));
+        return;
+      }
+      if (Object.keys(result.patch).length === 0) {
+        setOpen(false);
+        return;
+      }
+      setBusy(true);
+      setErrorMsg(null);
+      const res = await postJson(`/api/catering/pipeline/${lead.id}`, result.patch, "PATCH");
+      setBusy(false);
+      if (res.ok) {
+        setOpen(false);
+        router.refresh();
+      } else {
+        setErrorMsg(t(resolveErrorKey(res.code)));
+      }
+    },
+    [lead, router, t],
+  );
+
+  return (
+    <div className="mt-3">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        aria-controls={formId}
+        className="inline-flex min-h-[44px] items-center rounded-md border border-co-border px-3 text-xs font-semibold text-co-text"
+      >
+        {t("catering.pipeline.edit_details")}
+      </button>
+      {open && (
+        <form id={formId} onSubmit={submit} className="mt-2 space-y-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <Field label={t("catering.pipeline.field.contact_name")} name="contactName" required defaultValue={lead.contactName} />
+            <Field label={t("catering.pipeline.field.company")} name="company" defaultValue={lead.company ?? ""} />
+            <Field label={t("catering.pipeline.field.event_date")} name="eventDate" type="date" defaultValue={lead.eventDate ?? ""} />
+            <Field label={t("catering.pipeline.field.headcount")} name="headcount" type="number" defaultValue={lead.headcount != null ? String(lead.headcount) : ""} />
+            <Field label={t("catering.pipeline.field.follow_up_date")} name="followUpDate" type="date" defaultValue={lead.followUpDate ?? ""} />
+            <label className="block text-sm sm:col-span-2">
+              <span className="text-co-text-muted">{t("catering.pipeline.field.notes")}</span>
+              <textarea name="notes" rows={3} aria-label={t("catering.pipeline.field.notes")} defaultValue={lead.notes ?? ""} className="mt-1 w-full rounded-md border border-co-border bg-co-surface p-2 text-co-text" />
+            </label>
+          </div>
+          {errorMsg && <p className="text-xs text-co-cta-text">{errorMsg}</p>}
+          <div className="flex gap-2">
+            <button type="submit" disabled={busy} className="inline-flex min-h-[44px] items-center rounded-md bg-co-text px-4 text-sm font-semibold text-co-bg disabled:opacity-50">
+              {busy ? t("catering.pipeline.saving") : t("catering.pipeline.save")}
+            </button>
+            <button type="button" onClick={() => setOpen(false)} className="inline-flex min-h-[44px] items-center rounded-md px-4 text-sm text-co-text-muted">
+              {t("catering.pipeline.cancel")}
+            </button>
+          </div>
+        </form>
+      )}
     </div>
   );
 }
@@ -611,11 +699,13 @@ function Field({
   name,
   type = "text",
   required = false,
+  defaultValue,
 }: {
   label: string;
   name: string;
   type?: string;
   required?: boolean;
+  defaultValue?: string;
 }) {
   return (
     <label className="block text-sm">
@@ -627,6 +717,7 @@ function Field({
         name={name}
         type={type}
         required={required}
+        defaultValue={defaultValue}
         className="mt-1 w-full rounded-md border border-co-border bg-co-surface p-2 text-co-text"
       />
     </label>

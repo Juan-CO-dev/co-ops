@@ -103,6 +103,7 @@ export default async function CateringQuotesPage() {
           eventDate: l.eventDate,
           headcount: l.headcount,
           locationId: l.locationId,
+          locationName: l.locationName,
         }))}
         pricingByLocation={pricingByLocation}
         menuItems={menuItems}

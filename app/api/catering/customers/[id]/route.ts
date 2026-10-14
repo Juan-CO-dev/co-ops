@@ -12,7 +12,7 @@ import {
   type EditCustomerInput,
 } from "@/lib/catering/customers";
 
-// GET — one customer + their pipeline leads + order history (view >= 5).
+// GET — one customer + their pipeline leads, live quotes + order history (view >= 5).
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const ctx = await requireSession(req, `/api/catering/customers/${id}`);
@@ -21,7 +21,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
   try {
     const detail = await loadCustomer(ctx, id);
     if (!detail) return jsonError(404, "not_found");
-    return jsonOk({ customer: detail.customer, leads: detail.leads, orders: detail.orders });
+    return jsonOk({ customer: detail.customer, leads: detail.leads, orders: detail.orders, quotes: detail.quotes });
   } catch (e) {
     if (e instanceof CateringCustomerError) return jsonError(e.status, e.code);
     throw e;

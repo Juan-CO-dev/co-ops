@@ -25,8 +25,11 @@ import { getRoleLevel } from "@/lib/roles";
 import { lockLocationContext, isAllLocationsAccess } from "@/lib/locations";
 import { audit } from "@/lib/audit";
 import { sendEmail } from "@/lib/email";
+import { redactEmailAddresses } from "@/lib/email-redact";
 import { escapeHtml } from "@/lib/email-templates/_layout";
 import type { AuthContext } from "@/lib/session";
+import { loadCateringReader } from "./ezcater-detail";
+import { canReadCateringContact } from "./ezcater-detail-shared";
 
 export const QUOTE_READ_MIN = 5; // shift_lead+ may VIEW (a lead viewer sees its quote)
 export const QUOTE_WRITE_MIN = 6; // catering_mgr+ may build/revise/send
@@ -75,8 +78,17 @@ function canSeeLocation(actor: AuthContext, locationId: string): boolean {
 }
 
 // ── Charge stack (pure) — lives in quotes-shared.ts; re-exported for server consumers ──
-import { computeChargeStack, lineTotalCents, type ChargeRates, type ChargeStack, reclassifyQuoteLineRefs } from "./quotes-shared";
-export { computeChargeStack, lineTotalCents, type ChargeRates, type ChargeStack };
+import {
+  computeChargeStack,
+  lineTotalCents,
+  type ChargeRates,
+  type ChargeStack,
+  reclassifyQuoteLineRefs,
+  shouldLinkLead,
+  mapQuoteParties,
+  type QuoteParties,
+} from "./quotes-shared";
+export { computeChargeStack, lineTotalCents, type ChargeRates, type ChargeStack, type QuoteParties };
 
 // ── Pricing context ───────────────────────────────────────────────────────────
 export interface DeliveryZone {
@@ -370,6 +382,87 @@ export async function loadQuote(actor: AuthContext, id: string): Promise<QuoteDe
   return { quote: mapQuote(row), items: (itemRows ?? []).map(mapItem) };
 }
 
+/**
+ * Who a quote is for, for the staff quote page (B5 #35): the customer's name, company and
+ * email and the linked lead's contact, company and event date.
+ *
+ * EACH SIDE IS AUTHORIZED ON ITS OWN (review P1). Passing loadQuote's gate proves the actor
+ * may read the QUOTE's shop, not the customer's or the lead's: a quote at shop A can name a
+ * customer homed at shop B (or a lead since transferred to B). Both sides go through the
+ * catering contact policy (`canReadCateringContact`, fresh memberships, fail-closed): a
+ * customer is shown only when it is global (no home shop) or homed at a shop the actor reads;
+ * a lead only when it is global or at such a shop. Otherwise that side is omitted (null).
+ * A failed side read degrades that side to null and is logged by error code only.
+ */
+export async function loadQuoteParties(
+  actor: AuthContext,
+  quote: Pick<Quote, "id" | "customerId" | "pipelineId">,
+): Promise<QuoteParties> {
+  if (!quote.customerId && !quote.pipelineId) return mapQuoteParties(null, null);
+  const sb = getServiceRoleClient();
+  const [reader, customer, lead] = await Promise.all([
+    loadCateringReader(actor),
+    quote.customerId
+      ? sb
+          .from("catering_customers")
+          .select("id, name, company, email, primary_location_id")
+          .eq("id", quote.customerId)
+          .maybeSingle<{ id: string; name: string; company: string | null; email: string | null; primary_location_id: string | null }>()
+      : Promise.resolve({ data: null, error: null }),
+    quote.pipelineId
+      ? sb
+          .from("catering_pipeline")
+          .select("id, contact_name, company, event_date, location_id")
+          .eq("id", quote.pipelineId)
+          .maybeSingle<{ id: string; contact_name: string; company: string | null; event_date: string | null; location_id: string | null }>()
+      : Promise.resolve({ data: null, error: null }),
+  ]);
+  if (customer.error) console.error(`[catering] loadQuoteParties customer read failed for quote ${quote.id}: ${customer.error.code ?? "unknown"}`);
+  if (lead.error) console.error(`[catering] loadQuoteParties lead read failed for quote ${quote.id}: ${lead.error.code ?? "unknown"}`);
+  const c = !customer.error && customer.data && reader && canReadCateringContact(reader, customer.data.primary_location_id)
+    ? customer.data : null;
+  const l = !lead.error && lead.data && reader && canReadCateringContact(reader, lead.data.location_id)
+    ? lead.data : null;
+  // A client that exists but is not the viewer's to read (option b) is flagged, not shown.
+  return mapQuoteParties(c, l, !customer.error && !!customer.data && c == null);
+}
+
+/**
+ * Which customer a NEW quote may name (review P1 + Juan's option b, 2026-10-14):
+ *   - one the actor may read (global, or homed at a shop the actor reads under the catering
+ *     contact policy) and active; or
+ *   - another shop's customer ATTACHED BY EMAIL: only when the server resolved it from the
+ *     email the actor typed (`emailAttach`, never from a request body) and its saved email is
+ *     that address. It may be deactivated (attached without reviving). Its contact data stays
+ *     hidden on every read path.
+ * Anything else — a raw `customerId` the actor cannot read (a crafted body), a missing or
+ * deactivated one — is the SAME 400 `invalid_customer` (no existence oracle).
+ */
+async function assertQuoteCustomerAllowed(
+  actor: AuthContext,
+  customerId: string,
+  emailAttach: { email: string } | null | undefined,
+): Promise<void> {
+  const sb = getServiceRoleClient();
+  const [reader, { data, error }] = await Promise.all([
+    loadCateringReader(actor),
+    sb
+      .from("catering_customers")
+      .select("id, active, email, primary_location_id")
+      .eq("id", customerId)
+      .maybeSingle<{ id: string; active: boolean | null; email: string | null; primary_location_id: string | null }>(),
+  ]);
+  if (error) throw new Error(`quote customer check: ${error.message}`);
+  if (!data || !reader) throw new CateringQuoteError(400, "invalid_customer", "That client is not available at this shop");
+  if (canReadCateringContact(reader, data.primary_location_id)) {
+    if (data.active === true || emailAttach) return; // a readable dormant row was revived by the resolver
+    throw new CateringQuoteError(400, "invalid_customer", "That client is not available at this shop");
+  }
+  const typed = emailAttach?.email.trim().toLowerCase() ?? "";
+  if (typed !== "" && (data.email ?? "").trim().toLowerCase() === typed) return;
+  throw new CateringQuoteError(400, "invalid_customer", "That client is not available at this shop");
+}
+
 // ── Mutations ─────────────────────────────────────────────────────────────────
 export interface QuoteLineInput {
   description?: string | null;
@@ -392,6 +485,13 @@ export interface CreateQuoteInput {
   lines: QuoteLineInput[];
   notes?: string | null;
   expiresAt?: string | null;
+  /**
+   * SERVER-SET ONLY (the quotes POST route, after resolveOrCreateContact): the customer was
+   * resolved from this typed email. Never read from a request body. It lets createQuote
+   * attach another shop's customer by email (Juan, option b) while still refusing a raw
+   * `customerId` the actor cannot read.
+   */
+  emailAttach?: { email: string } | null;
 }
 
 interface ResolvedLine {
@@ -583,11 +683,84 @@ export function parseQuoteLinesFromBody(raw: unknown): QuoteLineInput[] {
   });
 }
 
+/**
+ * Attach the quote's customer to its lead when the lead has none (B5 #34). The customer page
+ * lists leads by `catering_pipeline.customer_id`, and a staff-typed lead never had one, so a
+ * customer with a lead and a quote read "None yet".
+ *
+ * A SECOND WRITER ON `catering_pipeline`, kept narrow on purpose:
+ *   - NULL-ONLY: the UPDATE is guarded `customer_id IS NULL`, so it never moves a lead from
+ *     one customer to another (count 0 = someone linked it first; nothing to do).
+ *   - LOCATION-BOUND: the UPDATE also matches the `location_id` that was authorized, so a
+ *     transfer racing the write cannot let a shop-A actor change a shop-B lead.
+ *   - Same scope as the lead-edit PATCH: the actor must be able to write the lead's shop, and
+ *     the customer must be active and homed at no shop or one the actor holds.
+ *   - Audited on the action the lead-edit PATCH already speaks (`catering.pipeline.edit`).
+ *   - BEST-EFFORT: the quote is already committed. A failure here must not 500 the save (the
+ *     manager would re-save and make a second quote); it is logged by id and error code only,
+ *     never a contact value, and the next revise retries the link.
+ *
+ * Exported only so the behaviour spine can drive it directly; createQuote / reviseQuote are
+ * its only callers.
+ */
+export async function linkLeadToCustomer(
+  actor: AuthContext,
+  args: { pipelineId: string | null; customerId: string | null; quoteId: string; context: "quote_create" | "quote_revise" },
+): Promise<void> {
+  if (!args.pipelineId || !args.customerId) return;
+  try {
+    const sb = getServiceRoleClient();
+    const [{ data: lead, error: lErr }, { data: customer, error: cErr }] = await Promise.all([
+      sb.from("catering_pipeline").select("id, customer_id, location_id").eq("id", args.pipelineId)
+        .maybeSingle<{ id: string; customer_id: string | null; location_id: string | null }>(),
+      sb.from("catering_customers").select("id, active, primary_location_id").eq("id", args.customerId)
+        .maybeSingle<{ id: string; active: boolean; primary_location_id: string | null }>(),
+    ]);
+    if (lErr || cErr) throw new Error(`read failed: ${lErr?.code ?? cErr?.code ?? "unknown"}`);
+    if (!lead || !customer) return;
+    if (!shouldLinkLead({ pipelineId: lead.id, customerId: customer.id, leadCustomerId: lead.customer_id })) return;
+    if (lead.location_id != null && !lockLocationContext(locActor(actor), lead.location_id)) return;
+    if (!customer.active) return;
+    if (customer.primary_location_id != null && !lockLocationContext(locActor(actor), customer.primary_location_id)) return;
+
+    // Bind the write to the shop we AUTHORIZED (review P2): a transfer between the read and
+    // this UPDATE changes location_id, the predicate stops matching, and nothing is written.
+    let update = sb
+      .from("catering_pipeline")
+      .update({ customer_id: customer.id, updated_at: new Date().toISOString() }, { count: "exact" })
+      .eq("id", lead.id)
+      .is("customer_id", null);
+    update = lead.location_id == null ? update.is("location_id", null) : update.eq("location_id", lead.location_id);
+    const { error: uErr, count } = await update;
+    if (uErr) throw new Error(`update failed: ${uErr.code ?? "unknown"}`);
+    // 0 rows = linked by someone else, or moved to another shop, in between. Leave it.
+    if ((count ?? 0) === 0) return;
+
+    void audit({
+      actorId: actor.user.id,
+      actorRole: actor.user.role,
+      action: "catering.pipeline.edit",
+      resourceTable: "catering_pipeline",
+      resourceId: lead.id,
+      metadata: { fields: ["customer_id"], context: args.context, quote_id: args.quoteId, customer_id: customer.id },
+      ipAddress: null,
+      userAgent: null,
+    });
+  } catch (e) {
+    console.error(
+      `[catering] could not link lead ${args.pipelineId} to the customer of quote ${args.quoteId} (${args.context}): ${e instanceof Error ? e.message : String(e)}`,
+    );
+  }
+}
+
 /** Create a draft quote (v1) — computes + freezes the charge stack, inserts header + lines. */
 export async function createQuote(actor: AuthContext, input: CreateQuoteInput): Promise<{ id: string; version: number }> {
   const locationId = input.locationId;
   if (!locationId) throw new CateringQuoteError(400, "invalid_payload", "locationId is required");
   assertCanWrite(actor, locationId);
+  // Review P1 / option b: a quote names a customer the actor can read, or one attached by the
+  // typed email (pre-existing gap: the route passed any body `customerId` through). Before any write.
+  if (input.customerId) await assertQuoteCustomerAllowed(actor, input.customerId, input.emailAttach);
 
   const sb = getServiceRoleClient();
   const lines = await verifyLineRefs(sb, resolveLines(input.lines));
@@ -660,6 +833,12 @@ export async function createQuote(actor: AuthContext, input: CreateQuoteInput): 
     ipAddress: null,
     userAgent: null,
   });
+  await linkLeadToCustomer(actor, {
+    pipelineId: input.pipelineId ?? null,
+    customerId: input.customerId ?? null,
+    quoteId: inserted.id,
+    context: "quote_create",
+  });
   return { id: inserted.id, version: inserted.version };
 }
 
@@ -714,6 +893,9 @@ export async function reviseQuote(actor: AuthContext, quoteId: string, input: Re
   if (current.superseded_at != null) {
     throw new CateringQuoteError(409, "not_current", "This quote revision has already been superseded");
   }
+  // The revision carries the live revision's customer forward unchanged. createQuote is the
+  // only door a customer comes in by (readable, or attached by typed email — option b), and a
+  // revise neither picks a new one nor shows it, so there is nothing further to authorize here.
 
   // Validate + compute the new revision fully before touching the current row.
   const lines = await verifyLineRefs(sb, resolveLines(input.lines));
@@ -807,6 +989,13 @@ export async function reviseQuote(actor: AuthContext, quoteId: string, input: Re
     metadata: { from_quote_id: quoteId, root_id: rootId, version: inserted.version, total_cents: stack.totalCents },
     ipAddress: null,
     userAgent: null,
+  });
+  // A quote saved before this link existed (B5 #34) gets its lead linked on the next revise.
+  await linkLeadToCustomer(actor, {
+    pipelineId: current.pipeline_id,
+    customerId: current.customer_id,
+    quoteId: inserted.id,
+    context: "quote_revise",
   });
   return { id: inserted.id, version: inserted.version, pipelineId: current.pipeline_id };
 }
@@ -937,7 +1126,10 @@ export interface SendQuoteResult {
   emailed: boolean;
   /** Why `emailed` is false, when it is. `sent` when it is true. */
   emailOutcome: "sent" | "no_customer" | "no_address" | "send_failed";
+  /** Null whenever `recipientHidden` — another shop's customer's address is never returned. */
   recipient: string | null;
+  /** The quote's client is another shop's customer the sender may not read (option b). */
+  recipientHidden: boolean;
   emailError: string | null;
 }
 
@@ -962,6 +1154,28 @@ export async function sendQuote(actor: AuthContext, id: string): Promise<SendQuo
     throw new CateringQuoteError(409, "invalid_status", "Only a draft or sent quote can be sent");
   }
 
+  // Review 2 (P1) + option b: the recipient is contact data at the CUSTOMER's shop, not the
+  // quote's. It is authorized BEFORE the status write and the email. A customer the sender
+  // may not read is another shop's customer attached by the email typed at creation (createQuote
+  // admits no other way in): the quote is still DELIVERED to that customer, but the address is
+  // never returned or logged — `recipient` stays null and `recipientHidden` says why. A
+  // customer row that is simply gone keeps today's `no_address` outcome.
+  let cust: { email: string | null; name: string | null } | null = null;
+  let recipientHidden = false;
+  if (row.customer_id) {
+    const [reader, { data: c, error: cErr }] = await Promise.all([
+      loadCateringReader(actor),
+      sb
+        .from("catering_customers")
+        .select("email, name, primary_location_id")
+        .eq("id", row.customer_id)
+        .maybeSingle<{ email: string | null; name: string | null; primary_location_id: string | null }>(),
+    ]);
+    if (cErr) throw new Error(`sendQuote customer read: ${cErr.message}`);
+    recipientHidden = !!c && !(reader && canReadCateringContact(reader, c.primary_location_id));
+    cust = c ? { email: c.email, name: c.name } : null;
+  }
+
   const { error: uErr, count } = await sb
     .from("catering_quotes")
     .update({ status: "sent", sent_at: new Date().toISOString(), sent_by: actor.user.id }, { count: "exact" })
@@ -977,13 +1191,8 @@ export async function sendQuote(actor: AuthContext, id: string): Promise<SendQuo
   let emailError: string | null = null;
   if (row.customer_id) {
     emailOutcome = "no_address";
-    const { data: cust } = await sb
-      .from("catering_customers")
-      .select("email, name")
-      .eq("id", row.customer_id)
-      .maybeSingle<{ email: string | null; name: string | null }>();
     if (cust?.email) {
-      recipient = cust.email;
+      recipient = recipientHidden ? null : cust.email;
       // Customer-supplied name is interpolated into email HTML → escape it (A-H2 stored-XSS-in-email).
       const safeName = escapeHtml(cust.name ?? "there");
       const total = (row.total_cents / 100).toLocaleString("en-US", { style: "currency", currency: "USD" });
@@ -1005,7 +1214,8 @@ export async function sendQuote(actor: AuthContext, id: string): Promise<SendQuo
         emailed = true;
         emailOutcome = "sent";
       } else {
-        emailError = res.error;
+        // Defence in depth: sendEmail already scrubs, but this string lands in an audit row.
+        emailError = redactEmailAddresses(res.error);
         emailOutcome = "send_failed";
       }
     }
@@ -1017,9 +1227,9 @@ export async function sendQuote(actor: AuthContext, id: string): Promise<SendQuo
     action: "catering.quote.send",
     resourceTable: "catering_quotes",
     resourceId: id,
-    metadata: { emailed, email_outcome: emailOutcome, recipient, email_error: emailError, total_cents: row.total_cents },
+    metadata: { emailed, email_outcome: emailOutcome, recipient, recipient_hidden: recipientHidden, email_error: emailError, total_cents: row.total_cents },
     ipAddress: null,
     userAgent: null,
   });
-  return { emailed, emailOutcome, recipient, emailError };
+  return { emailed, emailOutcome, recipient, recipientHidden, emailError };
 }

@@ -29,6 +29,7 @@
  */
 
 import { Resend } from "resend";
+import { recipientTag, redactEmailAddresses } from "./email-redact";
 
 let cachedClient: Resend | null = null;
 
@@ -80,14 +81,13 @@ export interface SendEmailInput {
 /** `code` carries Resend's error name when it gave one (e.g. invalid_idempotent_request). */
 export type SendEmailResult = { id: string } | { error: string; code?: string };
 
-/** A stable log label for `to` whether it's one address or an array. */
-function toLabel(to: string | string[]): string {
-  return Array.isArray(to) ? to.join(", ") : to;
-}
 
 export async function sendEmail(input: SendEmailInput): Promise<SendEmailResult> {
   if (process.env.SIM_MODE && process.env.SIM_EMAIL_CAPTURE_DIR) return import("./sim-email").then(({ captureEmail }) => captureEmail(input)).catch(() => ({ error: "sim_capture_failed" }));
-  const label = toLabel(input.to);
+  // Recipient-safe for EVERY caller (B5 review 3): logs carry a count, never an address, and
+  // provider error text is scrubbed of anything email-shaped before it is logged or returned
+  // (callers store `error` in audit rows).
+  const label = recipientTag(input.to);
   try {
     // `from` defaults to EMAIL_FROM (getFrom) — existing callers pass no `from`,
     // so their sender is unchanged. `replyTo` (Resend v6 public field, mapped to the
@@ -104,17 +104,18 @@ export async function sendEmail(input: SendEmailInput): Promise<SendEmailResult>
       ...(input.attachments?.length ? { attachments: input.attachments } : {}),
     }, input.idempotencyKey ? { idempotencyKey: input.idempotencyKey } : undefined);
     if (error) {
-      console.error(`[email] send failed for to=${label}:`, error.message);
-      return { error: error.message, ...(error.name ? { code: error.name } : {}) };
+      const safe = redactEmailAddresses(error.message ?? "send failed");
+      console.error(`[email] send failed for ${label}:`, safe);
+      return { error: safe, ...(error.name ? { code: error.name } : {}) };
     }
     if (!data?.id) {
-      console.error(`[email] send returned no id for to=${label}`);
+      console.error(`[email] send returned no id for ${label}`);
       return { error: "send returned no id" };
     }
     return { id: data.id };
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    console.error(`[email] unexpected error for to=${label}:`, msg);
+    const msg = redactEmailAddresses(err instanceof Error ? err.message : String(err));
+    console.error(`[email] unexpected error for ${label}:`, msg);
     return { error: msg };
   }
 }
