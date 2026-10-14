@@ -101,8 +101,11 @@ describe("#35 saved quote shows client and lead", () => {
     expect(parties).toEqual({
       client: { id: "c", name: "Ana", company: "Acme", email: "ana@example.com" },
       lead: { id: "l", contactName: "Ana", company: "Acme", eventDate: "2026-10-20" },
+      clientHidden: false,
     });
-    expect(mapQuoteParties(null, null)).toEqual({ client: null, lead: null });
+    expect(mapQuoteParties(null, null)).toEqual({ client: null, lead: null, clientHidden: false });
+    // option b: a hidden client is flagged, never shown; a shown client is never "hidden"
+    expect(mapQuoteParties(null, null, true)).toEqual({ client: null, lead: null, clientHidden: true });
   });
   it("the GET route reads the parties after the loadQuote gate and the panel renders them", () => {
     const route = src("app/api/catering/quotes/[id]/route.ts");
@@ -111,7 +114,7 @@ describe("#35 saved quote shows client and lead", () => {
     expect(src("components/catering/quotes/shared.ts")).toContain('"invalid_customer"');
     expect(enKeys["catering.quotes.error.invalid_customer"]).toBeTruthy();
     expect(esKeys["catering.quotes.error.invalid_customer"]).toBeTruthy();
-    expect(route).toContain("client: parties.client, lead: parties.lead");
+    expect(route).toContain("client: parties.client, lead: parties.lead, clientHidden: parties.clientHidden");
     const client = src("components/catering/quotes/QuotesClient.tsx");
     expect(client).toContain('t("catering.quotes.client")');
     expect(client).toContain('t("catering.quotes.lead")');

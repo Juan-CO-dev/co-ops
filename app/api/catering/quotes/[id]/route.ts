@@ -29,7 +29,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     // Client + lead for the quote page (B5 #35). Each side is authorized on its own inside
     // loadQuoteParties: passing loadQuote's gate only proves the QUOTE's shop is readable.
     const parties = await loadQuoteParties(ctx, detail.quote);
-    return jsonOk({ quote: detail.quote, items: detail.items, client: parties.client, lead: parties.lead });
+    return jsonOk({ quote: detail.quote, items: detail.items, client: parties.client, lead: parties.lead, clientHidden: parties.clientHidden });
   } catch (e) {
     if (e instanceof CateringQuoteError) return jsonError(e.status, e.code);
     throw e;

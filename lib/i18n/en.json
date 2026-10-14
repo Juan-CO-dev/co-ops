@@ -4168,6 +4168,7 @@
   "catering.quotes.none": "None",
   "catering.quotes.field.lead": "Pipeline lead",
   "catering.quotes.client": "Client",
+  "catering.quotes.client_hidden": "another shop's client (contact details hidden)",
   "catering.quotes.lead": "Lead",
   "catering.quotes.lines": "Line items",
   "catering.quotes.field.description": "Description",

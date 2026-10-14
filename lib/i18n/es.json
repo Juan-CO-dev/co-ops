@@ -4168,6 +4168,7 @@
   "catering.quotes.none": "Ninguno",
   "catering.quotes.field.lead": "Prospecto",
   "catering.quotes.client": "Cliente",
+  "catering.quotes.client_hidden": "cliente de otra tienda (datos de contacto ocultos)",
   "catering.quotes.lead": "Prospecto",
   "catering.quotes.lines": "Partidas",
   "catering.quotes.field.description": "Descripción",

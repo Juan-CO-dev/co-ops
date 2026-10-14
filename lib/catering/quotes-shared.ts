@@ -175,14 +175,21 @@ export interface QuoteLeadRef {
 export interface QuoteParties {
   client: QuoteClientRef | null;
   lead: QuoteLeadRef | null;
+  /**
+   * The quote HAS a client, but it is another shop's customer the viewer may not read (Juan,
+   * option b, 2026-10-14): the page says so without showing any of its saved contact data.
+   */
+  clientHidden: boolean;
 }
 
 /** Map the customer + lead rows to the quote page's DTO, picking fields by name only. */
 export function mapQuoteParties(
   customer: { id: string; name: string; company: string | null; email: string | null } | null,
   lead: { id: string; contact_name: string; company: string | null; event_date: string | null } | null,
+  clientHidden = false,
 ): QuoteParties {
   return {
+    clientHidden: customer ? false : clientHidden,
     client: customer
       ? { id: customer.id, name: customer.name, company: customer.company, email: customer.email }
       : null,

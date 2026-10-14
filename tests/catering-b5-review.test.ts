@@ -10,13 +10,13 @@
  *   P2   linkLeadToCustomer binds its UPDATE to the location it authorized: a transfer racing
  *        the write leaves the lead untouched and writes no audit row.
  *
- * Review 2 (Astra, 2026-10-14), driven through the real ROUTES:
- *   R2-P1  POST /api/catering/quotes/[id]/send on a shop-A quote whose customer is shop B's:
- *          refused before the status write and the email, and B's address never appears in
- *          the response.
- *   R2-P2  POST /api/catering/quotes with a typed email that resolves to shop B's contact
- *          (active, or deactivated): refused with nothing written — in particular the
- *          deactivated contact is NOT revived by a request that is then refused.
+ * Review 2 (Astra, 2026-10-14) as amended by JUAN'S OPTION B (2026-10-14), driven through the
+ * real ROUTES:
+ *   - A typed email that resolves to another shop's customer ATTACHES it (no duplicate row),
+ *     a deactivated one WITHOUT reviving it (no write to shop B's book), and every read path
+ *     hides its saved contact data: quote detail (clientHidden), Send (recipient null,
+ *     recipientHidden), the customer page, the lead link.
+ *   - A raw `customerId` the actor cannot read (a crafted body) is still refused.
  *
  * The fake evaluates the filters the code actually sends (eq / is / in / the `.or()` grammar
  * used by customerLeadsFilter), so a dropped scope predicate shows up as a wrong row set.
@@ -127,6 +127,7 @@ import { createQuote, linkLeadToCustomer, loadQuoteParties, reviseQuote, sendQuo
 import { loadCustomer } from "@/lib/catering/customers";
 import { POST as createQuoteRoute } from "@/app/api/catering/quotes/route";
 import { POST as sendQuoteRoute } from "@/app/api/catering/quotes/[id]/send/route";
+import { GET as getQuoteRoute } from "@/app/api/catering/quotes/[id]/route";
 
 // ── fixtures ─────────────────────────────────────────────────────────────────────────────
 const A = "loc-a";
@@ -182,7 +183,7 @@ describe("P1a — quote parties are authorized per side", () => {
   it("fails closed when the reader cannot be loaded (deactivated actor)", async () => {
     db.users![0]!.active = false;
     db.catering_pipeline!.push(lead("l-a", null, A));
-    expect(await loadQuoteParties(gmA, { id: "q", customerId: "c-a", pipelineId: "l-a" })).toEqual({ client: null, lead: null });
+    expect(await loadQuoteParties(gmA, { id: "q", customerId: "c-a", pipelineId: "l-a" })).toEqual({ client: null, lead: null, clientHidden: true });
   });
 });
 
@@ -203,11 +204,16 @@ describe("P1b — a quote may only name a customer the actor can read", () => {
     expect(db.catering_quotes!.find((q) => q.id === id)).toMatchObject({ customer_id: "c-g", location_id: A });
     expect(db.catering_pipeline!.find((l) => l.id === "l-a")!.customer_id).toBe("c-g");
   });
-  it("revise refuses a live quote whose customer is shop B's, without superseding it", async () => {
-    db.catering_quotes!.push({ id: "q1", root_id: null, version: 1, location_id: A, pipeline_id: null, customer_id: "c-b", superseded_at: null });
-    await expect(reviseQuote(gmA, "q1", { lines: line })).rejects.toMatchObject({ status: 400, code: "invalid_customer" });
-    expect(db.catering_quotes!.find((q) => q.id === "q1")!.superseded_at).toBeNull();
+  it("create still refuses shop B's customer named by a raw customerId even if it carries B's email elsewhere", async () => {
+    // emailAttach is server-set; a mismatching typed email does not unlock another customer either.
+    await expect(createQuote(gmA, { locationId: A, customerId: "c-b", emailAttach: { email: "someone@else.test" }, lines: line }))
+      .rejects.toMatchObject({ status: 400, code: "invalid_customer" });
     expect(quoteWrites()).toEqual([]);
+  });
+  it("revise carries an email-attached shop-B customer forward (option b) without revealing it", async () => {
+    db.catering_quotes!.push({ id: "q1", root_id: null, version: 1, location_id: A, pipeline_id: null, customer_id: "c-b", superseded_at: null });
+    await expect(reviseQuote(gmA, "q1", { lines: line })).resolves.toMatchObject({ version: 2 });
+    expect(db.catering_quotes!.at(-1)).toMatchObject({ customer_id: "c-b", version: 2 });
   });
   it("revise keeps a customer that was only deactivated (it is still the quote's own client)", async () => {
     db.catering_quotes!.push({ id: "q1", root_id: null, version: 1, location_id: A, pipeline_id: null, customer_id: "c-off", superseded_at: null });
@@ -279,68 +285,95 @@ const json = (url: string, body: unknown) =>
   new NextRequest(`http://localhost${url}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
 const params = (id: string) => ({ params: Promise.resolve({ id }) });
 
-describe("R2-P1 — sending a quote whose customer is another shop's", () => {
+describe("R2 + option b — Send on a quote whose client is another shop's customer", () => {
   beforeEach(() => {
     db.catering_quotes!.push(
       { id: "q-b", location_id: A, status: "draft", superseded_at: null, customer_id: "c-b", total_cents: 12000, expires_at: null },
       { id: "q-a", location_id: A, status: "draft", superseded_at: null, customer_id: "c-a", total_cents: 12000, expires_at: null },
     );
   });
-  it("the route refuses with invalid_customer: no status change, no email, no recipient, no B address", async () => {
+  it("delivers to the customer but never returns or logs the address", async () => {
     const res = await sendQuoteRoute(json("/api/catering/quotes/q-b/send", {}), params("q-b"));
     const body = await res.json();
-    expect(res.status).toBe(400);
-    expect(body.code).toBe("invalid_customer");
-    expect(body).not.toHaveProperty("recipient");
+    expect(res.status).toBe(200);
+    expect(body).toMatchObject({ ok: true, emailed: true, emailOutcome: "sent", recipient: null, recipientHidden: true });
     expect(JSON.stringify(body)).not.toMatch(/bea@b\.test|Bea/);
-    expect(db.catering_quotes!.find((q) => q.id === "q-b")).toMatchObject({ status: "draft" });
-    expect(quoteWrites()).toEqual([]);
-    expect(sendEmail).not.toHaveBeenCalled();
-    expect(audit).not.toHaveBeenCalled();
+    expect(sendEmail).toHaveBeenCalledWith(expect.objectContaining({ to: "bea@b.test" }));
+    expect(db.catering_quotes!.find((q) => q.id === "q-b")).toMatchObject({ status: "sent" });
+    const sendAudit = audit.mock.calls.map((c) => c[0]).find((a) => a.action === "catering.quote.send");
+    expect(sendAudit.metadata).toMatchObject({ recipient: null, recipient_hidden: true });
+    expect(JSON.stringify(sendAudit)).not.toMatch(/bea@b\.test/);
   });
-  it("the lib refuses the same way (a failed delivery can no longer leak it either)", async () => {
+  it("a failed delivery does not leak it either", async () => {
     sendEmail.mockResolvedValue({ error: "boom" });
-    await expect(sendQuote(gmA, "q-b")).rejects.toMatchObject({ status: 400, code: "invalid_customer" });
-    expect(sendEmail).not.toHaveBeenCalled();
+    const r = await sendQuote(gmA, "q-b");
+    expect(r).toMatchObject({ emailed: false, emailOutcome: "send_failed", recipient: null, recipientHidden: true });
   });
   it("an own-shop customer still sends and returns its own recipient", async () => {
     const res = await sendQuoteRoute(json("/api/catering/quotes/q-a/send", {}), params("q-a"));
     expect(res.status).toBe(200);
-    expect(await res.json()).toMatchObject({ ok: true, emailed: true, emailOutcome: "sent", recipient: "ana@a.test" });
-    expect(db.catering_quotes!.find((q) => q.id === "q-a")).toMatchObject({ status: "sent" });
+    expect(await res.json()).toMatchObject({ ok: true, emailed: true, emailOutcome: "sent", recipient: "ana@a.test", recipientHidden: false });
     expect(sendEmail).toHaveBeenCalledWith(expect.objectContaining({ to: "ana@a.test" }));
   });
 });
 
-describe("R2-P2 — email resolution → creation through the quotes route", () => {
-  const create = (contactEmail: string) => createQuoteRoute(json("/api/catering/quotes", { locationId: A, contactEmail, contactName: "Typed", lines: line }));
+describe("option b — email resolution → creation through the quotes route", () => {
+  const create = (body: Record<string, unknown>) =>
+    createQuoteRoute(json("/api/catering/quotes", { locationId: A, contactName: "Typed", lines: line, ...body }));
   const customerWrites = () => writes.filter((w) => w.table === "catering_customers");
+  const getQuote = async (id: string) => {
+    const res = await getQuoteRoute(new NextRequest(`http://localhost/api/catering/quotes/${id}`), params(id));
+    return { status: res.status, body: await res.json() };
+  };
 
-  it("a deactivated shop-B contact is refused and NOT revived; nothing is written", async () => {
-    const res = await create("Dormant@B.test");
-    expect(res.status).toBe(400);
-    expect((await res.json()).code).toBe("invalid_customer");
+  it("an active shop-B customer's email ATTACHES that customer (no duplicate), hidden on the quote page", async () => {
+    db.catering_pipeline!.push(lead("l-a", null, A));
+    const res = await create({ contactEmail: "BEA@b.test", pipelineId: "l-a" });
+    expect(res.status).toBe(201);
+    const { id } = await res.json();
+    expect(db.catering_quotes!.find((q) => q.id === id)).toMatchObject({ customer_id: "c-b", location_id: A });
+    expect(db.catering_customers!.filter((c) => (c.email as string | null)?.toLowerCase() === "bea@b.test")).toHaveLength(1);
+    expect(customerWrites()).toEqual([]);
+    // the lead is NOT linked to an unreadable customer (that would surface B's email in pipeline search)
+    expect(db.catering_pipeline!.find((l) => l.id === "l-a")!.customer_id).toBeNull();
+    const detail = await getQuote(id);
+    expect(detail.status).toBe(200);
+    expect(detail.body).toMatchObject({ client: null, clientHidden: true });
+    expect(JSON.stringify(detail.body)).not.toMatch(/bea@b\.test|Bea|Beta|555-B/);
+  });
+  it("a deactivated shop-B contact is attached WITHOUT reviving it; nothing in B's book is written", async () => {
+    const res = await create({ contactEmail: "Dormant@B.test" });
+    expect(res.status).toBe(201);
+    const { id } = await res.json();
+    expect(db.catering_quotes!.find((q) => q.id === id)).toMatchObject({ customer_id: "c-off-b" });
     expect(db.catering_customers!.find((c) => c.id === "c-off-b")!.active).toBe(false);
     expect(customerWrites()).toEqual([]);
-    expect(quoteWrites()).toEqual([]);
-    expect(audit).not.toHaveBeenCalled();
+    expect(audit.mock.calls.map((c) => c[0].action)).not.toContain("catering.customer.activate");
+    expect((await getQuote(id)).body).toMatchObject({ client: null, clientHidden: true });
   });
-  it("an active shop-B contact is refused with nothing written", async () => {
-    const res = await create("bea@b.test");
-    expect(res.status).toBe(400);
-    expect((await res.json()).code).toBe("invalid_customer");
-    expect(customerWrites()).toEqual([]);
+  it("a crafted body naming shop B's customerId is refused with nothing written (email in the body or not)", async () => {
+    for (const body of [{ customerId: "c-b" }, { customerId: "c-b", contactEmail: "bea@b.test" }, { customerId: "c-b", emailAttach: { email: "bea@b.test" } }]) {
+      const res = await create(body);
+      expect(res.status).toBe(400);
+      expect((await res.json()).code).toBe("invalid_customer");
+    }
     expect(quoteWrites()).toEqual([]);
+    expect(customerWrites()).toEqual([]);
+  });
+  it("the customer page stays closed to the A-only GM", async () => {
+    await create({ contactEmail: "bea@b.test" });
+    expect(await loadCustomer(gmA, "c-b")).toBeNull();
   });
   it("a deactivated own-shop contact is revived and quoted (identity kept, no fork)", async () => {
-    const res = await create("dormant@a.test");
+    const res = await create({ contactEmail: "dormant@a.test" });
     expect(res.status).toBe(201);
     expect(db.catering_customers!.find((c) => c.id === "c-off-a")!.active).toBe(true);
     expect(db.catering_customers!.filter((c) => c.email === "dormant@a.test")).toHaveLength(1);
     expect(db.catering_quotes!.at(-1)).toMatchObject({ customer_id: "c-off-a", location_id: A });
+    expect((await getQuote(db.catering_quotes!.at(-1)!.id as string)).body).toMatchObject({ clientHidden: false, client: { id: "c-off-a" } });
   });
   it("a new email creates a contact at the quote's shop and quotes it", async () => {
-    const res = await create("new@client.test");
+    const res = await create({ contactEmail: "new@client.test" });
     expect(res.status).toBe(201);
     const created = db.catering_customers!.find((c) => c.email === "new@client.test")!;
     expect(created).toMatchObject({ primary_location_id: A, active: true });

@@ -59,6 +59,8 @@ interface QuoteDetail {
   /** Who the quote is for (B5 #35) — present on the detail GET, absent on a revise draft. */
   client?: QuoteClientRef | null;
   lead?: QuoteLeadRef | null;
+  /** Another shop's customer, attached by email — exists, contact details not shown (option b). */
+  clientHidden?: boolean;
 }
 
 const STATUS_ORDER = ["draft", "sent", "accepted", "declined", "expired"] as const;
@@ -810,6 +812,11 @@ function QuoteDetailPanel({
             <span className="font-semibold">{t("catering.quotes.client")}:</span> {detail.client.name}
             {detail.client.company ? ` · ${detail.client.company}` : ""}
             {detail.client.email ? ` · ${detail.client.email}` : ""}
+          </p>
+        )}
+        {!detail.client && detail.clientHidden && (
+          <p className="text-sm text-co-text">
+            <span className="font-semibold">{t("catering.quotes.client")}:</span> {t("catering.quotes.client_hidden")}
           </p>
         )}
         {detail.lead && (
