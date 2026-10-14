@@ -217,7 +217,7 @@ You walk each station. You check that last night's closing matches what you see.
 - A recount box is red while it still needs a number. It goes back to normal once you fill it.
 - Some days no item has a count from last night. Then every prep item needs a recount. That is a lot of boxes, so work one section at a time.
 - **Submit Opening** stays grey until every station is checked, every temp is in, and every prep section is verified (**Verify section**). If the pink box shows, a reason must be picked too.
-- A fridge should read 41°F or less. If it reads higher, tell your key holder right away.
+- Each fridge has its own safe top temp. It is 41°F unless a manager set a different one. A reading above it is out of range. If a fridge reads too warm, tell your key holder right away.
 
 ### Opening prep (Phase 2)
 
@@ -243,7 +243,7 @@ Each row shows three things:
 
 ![Saved rows, each with "At par", "Saved by" and an Undo button](img/staff/14-opening-prep-filled.png)
 
-5. Typed the wrong number? Tap **Undo** on that row. If a box asks why, pick a reason and tap **Undo entry**. Then type the right amount.
+5. Typed the wrong number? Tap **Undo** on that row. It changes to **Tap again to undo**. Tap it again within about 4 seconds. If a box asks why, pick a reason and tap **Undo entry**. Then type the right amount.
 
 6. When every row is saved, tap **Finalize Phase 2**. Until then, the button shows how many rows are left. After you tap it, it says **Phase 2 finalized**.
 
@@ -258,6 +258,8 @@ Each row shows three things:
 - A row with no "Saved by" line is not saved. Look for "Add a reason to save" or "Not saved".
 - If you made less than you need, your managers get an alert. Be clear in the note.
 - **Undo** right after you save asks nothing. After about a minute, it asks why.
+- **Undo** needs two taps, so a stray tap can't undo a row. If you wait, it goes back to **Undo**.
+- The rows don't jump when a row saves.
 
 ### En español
 
@@ -298,7 +300,7 @@ Recorres cada estación. Revisas que el cierre de anoche coincida con lo que ves
 - Una casilla de recuento está en rojo mientras le falta un número. Vuelve a la normalidad cuando la llenas.
 - Algunos días ningún producto tiene conteo de anoche. Entonces cada producto de prep necesita un recuento. Son muchas casillas, así que trabaja una sección a la vez.
 - **Enviar Apertura** sigue gris hasta que todas las estaciones estén revisadas, todas las temperaturas puestas y todas las secciones de prep verificadas (**Verificar sección**). Si sale el cuadro rosa, también tienes que elegir un motivo.
-- Un refrigerador debe marcar 41°F o menos. Si marca más, avísale de inmediato a tu encargado de llaves.
+- Cada refrigerador tiene su propia temperatura máxima segura. Es 41°F, a menos que un gerente haya puesto otra. Una lectura más alta está fuera de rango. Si un refrigerador marca muy caliente, avísale de inmediato a tu encargado de llaves.
 
 **Prep de apertura (Fase 2)**
 
@@ -316,7 +318,7 @@ Después de enviar la Fase 1, se abre la pestaña **Fase 2 — Entrada de Prep**
 
 4. Revisa la fila. Debe decir "Guardado por" con tu nombre y la hora.
 
-5. ¿Pusiste mal el número? Toca **Deshacer** en esa fila. Si sale un cuadro que pregunta por qué, elige una razón y toca **Deshacer entrada**. Luego escribe el número correcto.
+5. ¿Pusiste mal el número? Toca **Deshacer** en esa fila. Cambia a **Toca otra vez para deshacer**. Tócalo otra vez antes de unos 4 segundos. Si sale un cuadro que pregunta por qué, elige una razón y toca **Deshacer entrada**. Luego escribe el número correcto.
 
 6. Cuando todas las filas estén guardadas, toca **Finalizar Fase 2**. Mientras tanto, el botón muestra cuántas filas faltan. Después de tocarlo, dice **Fase 2 finalizada**.
 
@@ -331,6 +333,8 @@ Después de enviar la Fase 1, se abre la pestaña **Fase 2 — Entrada de Prep**
 - Una fila sin la línea "Guardado por" no está guardada. Busca "Agrega una razón para guardar" o "Sin guardar".
 - Si preparaste menos de lo necesario, tus gerentes reciben una alerta. Explícalo claro en la nota.
 - Si tocas **Deshacer** justo después de guardar, no te pregunta nada. Después de un minuto más o menos, te pregunta por qué.
+- **Deshacer** necesita dos toques, así un toque por error no deshace una fila. Si esperas, vuelve a decir **Deshacer**.
+- Las filas no saltan cuando una fila se guarda.
 
 ## All day
 
@@ -516,7 +520,7 @@ Use this when you make food from raw stock outside the opening and mid-day prep 
 
 ![The Production page: the Log a conversion form and Recent production](img/staff/33e-production.png)
 
-1. Under **Log a conversion**, pick the **Raw item (SKU)** you used. Each choice shows how many packs are **in stock**.
+1. Under **Log a conversion**, pick the **Raw item (SKU)** you used. Each choice shows how many packs are **in stock**. If two items have the same name, each one also shows its vendor, like "Sample Bottles — Sample Vendor".
 
 2. Pick what it **Makes**. This list shows up only after you pick a raw item. It starts on "Pick what you made…".
 
@@ -663,7 +667,7 @@ Después de la hora pico del almuerzo, la preparación de mediodía regresa la l
 
 Úsalo cuando preparas comida con materia prima fuera de las hojas de prep de la apertura y de mediodía. Lo pueden registrar los empleados y más arriba. Toca **Producción** en **Explorar**.
 
-1. En **Registrar una conversión**, elige la **Materia prima (SKU)** que usaste. Cada opción dice cuántos paquetes hay **en existencia**.
+1. En **Registrar una conversión**, elige la **Materia prima (SKU)** que usaste. Cada opción dice cuántos paquetes hay **en existencia**. Si dos opciones tienen el mismo nombre, cada una también muestra su proveedor, como "Botellas de prueba — Proveedor de prueba".
 
 2. Elige lo que **Hace**. Esta lista sale solo después de elegir la materia prima. Empieza en "Elige lo que hiciste…".
 
@@ -874,6 +878,7 @@ Tap **My Performance** in **Explore**. It shows only your own work.
 - The bell shows "New shift feedback" when a new PM report grades you.
 - A manager's private notes never show here.
 - Pick dates at the top to see a different time.
+- A chart with less than two days of work says "Not enough days yet". It fills in after a few more shifts.
 
 ### Log out
 
@@ -930,6 +935,7 @@ Toca **Mi Desempeño** en **Explorar**. Solo muestra tu propio trabajo.
 - La campana muestra "Nuevo comentario de turno" cuando un reporte PM nuevo te califica.
 - Las notas privadas de un gerente nunca salen aquí.
 - Elige fechas arriba para ver otro periodo.
+- Una gráfica con menos de dos días de trabajo dice "Aún no hay suficientes días". Se llena después de unos turnos más.
 
 **Cerrar sesión**
 

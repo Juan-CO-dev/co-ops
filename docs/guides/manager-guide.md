@@ -394,6 +394,7 @@ You do this right after Part 1. You make the food you need to get to par.
 **Worth knowing**
 
 - A row saves when you leave its box. Then it says **Saved by … at …** with an **Undo** button. Until then it says **Not saved**.
+- **Undo** takes two taps. The first tap shows **Tap again to undo** for about 4 seconds. Only a second tap undoes the row. The rows don't jump when a row saves.
 - **At par** means you hit the need.
 - A need like **5 × 1/3 Pan** means five 1/3 pans. Type 5. Use numbers only, like 5 or 5.5.
 - Every row needs a number, even when you made none. Type 0 then.
@@ -436,7 +437,7 @@ Lo haces una vez al día, antes de abrir a las 10:30 AM. La apertura va tarde de
 Lo haces justo después de la parte 1. Preparas lo que falta para llegar al par.
 
 1. **Lee cada fila.** Cada fila muestra **Par**, **Conteo de cierre** y **Por preparar**. Prepara la cantidad de **Por preparar**. El conteo de cierre es el AM prep de anoche; si escribiste un recuento en la parte 1, sale tu recuento. **Por preparar** es lo que debes hacer para llegar al par. El título ahora dice **Fase 2 — Entrada de Prep**. Cada sección empieza cerrada, menos la primera con trabajo pendiente: toca el nombre de una sección para abrirla. Dos personas pueden trabajar la parte 2 a la vez; cada fila dice quién la guardó. Repártanse las secciones para terminar antes.
-2. **Escribe lo que preparaste.** Escribe la cantidad en **Preparado hoy** y toca fuera de la casilla. La fila se guarda cuando sales de la casilla; entonces dice **Guardado por … a las …** con un botón **Deshacer**. Antes dice **Sin guardar**. **Al par** quiere decir que llegaste. Una cantidad como **5 × 1/3 Pan** son cinco bandejas de 1/3: escribe 5. Usa solo números, como 5 o 5.5. Cada fila necesita un número, aunque no hayas hecho nada: entonces escribe 0. ¿Hiciste menos de lo necesario? La fila dice **Bajo el necesario por …**: tócala, elige un motivo y escribe una nota. Los gerentes reciben un aviso. ¿Hiciste más? La fila dice **Sobre el necesario por …**: tócala y elige un motivo. La fila se guarda solo cuando el motivo está puesto; antes dice **Agrega una razón para guardar**. Una fila sin par dice **Sin par — escribe lo que preparaste**: escribe lo que hiciste, o 0. No pide motivo.
+2. **Escribe lo que preparaste.** Escribe la cantidad en **Preparado hoy** y toca fuera de la casilla. La fila se guarda cuando sales de la casilla; entonces dice **Guardado por … a las …** con un botón **Deshacer**. Antes dice **Sin guardar**. **Deshacer** pide dos toques: el primero muestra **Toca otra vez para deshacer** unos 4 segundos, y solo el segundo deshace la fila. Las filas no saltan cuando una fila se guarda. **Al par** quiere decir que llegaste. Una cantidad como **5 × 1/3 Pan** son cinco bandejas de 1/3: escribe 5. Usa solo números, como 5 o 5.5. Cada fila necesita un número, aunque no hayas hecho nada: entonces escribe 0. ¿Hiciste menos de lo necesario? La fila dice **Bajo el necesario por …**: tócala, elige un motivo y escribe una nota. Los gerentes reciben un aviso. ¿Hiciste más? La fila dice **Sobre el necesario por …**: tócala y elige un motivo. La fila se guarda solo cuando el motivo está puesto; antes dice **Agrega una razón para guardar**. Una fila sin par dice **Sin par — escribe lo que preparaste**: escribe lo que hiciste, o 0. No pide motivo.
 3. **Finaliza la fase 2.** Cuando todas las filas estén guardadas, toca **Finalizar Fase 2**. Antes de eso, el botón dice cuántas filas faltan; busca las filas que dicen **Sin guardar** o **Agrega una razón para guardar**. No sale ningún cuadro para confirmar. Después el botón dice **Fase 2 finalizada** y la barra de abajo dice **Fase 2 ya finalizada**. La apertura está lista y ya no se puede cambiar. El título sigue diciendo **Fase 2 — Entrada de Prep**. Cada sección muestra una marca y se cierra.
 
 ---
@@ -484,6 +485,7 @@ Open it any time to see the shop at a glance. It updates every 60 seconds.
 - AGMs also write handoff notes.
 - GMs also see **Sales** and money. A GM can also **Arrange** the floor layout.
 - A Manager of Operations and up can see **Both shops** side by side. A GM sees only their own shops.
+- The title shows the code and name of the shop you are looking at. If you can see more than one shop, check it before you act.
 - One button switches the floor picture. It reads **Map view** or **3D view**: the view you get when you tap it.
 
 #### 3. See more
@@ -699,7 +701,7 @@ Entre la apertura y el cierre, vigilas la tienda, recibes camiones, preparas des
 Ábrelo cuando quieras ver la tienda de un vistazo. Se actualiza cada 60 segundos.
 
 1. **Abre el Pulso.** Toca **Pulso de medio turno** en el menú. Lee primero **Requiere atención**: muestra lo que hay que resolver ya. Toca el botón de la línea; una estación sin nadie dice "… está sin cubrir" y tiene **Asignar**. Primero salen las líneas rojas: un reporte atrasado, una tarea tarde, un refrigerador fuera de rango, un corte de proveedor que pasó sin pedido (**se pasó el corte de las … — llama al proveedor**) o un pedido de ezCater que no está en Toast. Después, las estaciones; una estación sin nadie también sale en rojo. Al final, en amarillo, cosas menores, como refrigeradores sin revisar o artículos bajos respecto al par. Si nada va tarde, las estaciones encabezan la lista. La tarjeta muestra las primeras 8 líneas; toca **Ver más** para verlas todas. La prep de mediodía sale tarde solo después de las 3:30 PM.
-2. **Lee las tarjetas.** **Piso en vivo** muestra las estaciones; toca una para ver detalles. **Inventario** muestra los cierres de pedido de hoy. **Seguridad alimentaria** muestra las temperaturas. **Entrega de turno** muestra qué reportes están listos. **Estaciones y tareas** cuenta solo las tareas repartidas en el tablero; **Entrega de turno** cuenta todos los reportes de hoy, así que los números pueden ser distintos. Un corte perdido también sale en rojo en **Inventario**: **se pasó el corte — llama al proveedor**. Lo que ves depende de tu rol. Encargados de llaves, entrenadores y líderes de turno ven todo menos el dinero. Los subgerentes también escriben notas de entrega. Los gerentes generales también ven **Ventas** y el dinero, y pueden usar **Organizar** en el plano. Un Gerente de Operaciones o más ve **Ambas tiendas** lado a lado; un gerente general solo ve sus tiendas. Un solo botón cambia el plano: dice **Vista de mapa** o **Vista 3D**, la vista que sale al tocarlo.
+2. **Lee las tarjetas.** **Piso en vivo** muestra las estaciones; toca una para ver detalles. **Inventario** muestra los cierres de pedido de hoy. **Seguridad alimentaria** muestra las temperaturas. **Entrega de turno** muestra qué reportes están listos. **Estaciones y tareas** cuenta solo las tareas repartidas en el tablero; **Entrega de turno** cuenta todos los reportes de hoy, así que los números pueden ser distintos. Un corte perdido también sale en rojo en **Inventario**: **se pasó el corte — llama al proveedor**. Lo que ves depende de tu rol. Encargados de llaves, entrenadores y líderes de turno ven todo menos el dinero. Los subgerentes también escriben notas de entrega. Los gerentes generales también ven **Ventas** y el dinero, y pueden usar **Organizar** en el plano. Un Gerente de Operaciones o más ve **Ambas tiendas** lado a lado; un gerente general solo ve sus tiendas. El título muestra el código y el nombre de la tienda que estás viendo. Si puedes ver más de una tienda, revísalo antes de actuar. Un solo botón cambia el plano: dice **Vista de mapa** o **Vista 3D**, la vista que sale al tocarlo.
 3. **Ver más.** Toca **Ver más** en una tarjeta para la lista completa. Toca **‹ Pulso** para regresar.
 
 #### Notas de entrega
@@ -904,7 +906,7 @@ You do this once a night, before you confirm the closing. Key holders and up.
 **Worth knowing**
 
 - A green line says **Deposited … · signed by … at …**. Below it are the amounts, the deposit, the cash tips and who was on shift.
-- Here an even night reads **$0.00 over**. The form said **Even** for the same night. Both mean the cash matched.
+- On an even night, this page says **Even**, just like the form did.
 - Once signed, the deposit is read-only. You can't redo it. Check the amounts before you sign.
 - If the closing is confirmed before anyone files the deposit, the page is locked: **Today's closing is already finalized — the cash deposit is locked.**
 - Filing it ticks the cash line on the closing. You can't confirm the closing without it.
@@ -961,7 +963,7 @@ This is the last job of the night. Key holders and up.
 
 **Worth knowing**
 
-- Your reasons don't show right away. Open the closing again later. Under the banner, **Reasons given for unfinished lines** lists each line, its reason and who wrote it.
+- Under the banner, **Reasons given for unfinished lines** lists each line, its reason and who wrote it. It shows right away.
 - The list can't be changed after this.
 - The dashboard card then says **Closed** or **Closed with items incomplete**, with **Review closing**.
 - If no one confirms, the dashboard warns the next day. The opener has to wait until it is confirmed or released.
@@ -1003,7 +1005,7 @@ Lo haces una vez por noche, antes de confirmar el cierre. Encargado de llaves o 
 1. **Ábrelo.** En el tablero, toca **Reporte de caja**. La página se llama **Depósito de efectivo**. También sirve la tarjeta **Depósito de efectivo** o el botón **Hacer el depósito de efectivo** en el cierre.
 2. **Llénalo.** Escribe **Proyectado (de Toast)**. Cuenta la caja con **Ingresar total** o **Contar por billete**. Escribe **Total de la caja** y **Propinas en efectivo**. Marca en **En turno hoy** a quienes trabajaron. **$200 se quedan en la caja**: el depósito es el total de la caja menos $200. O sea, el total de la caja incluye los $200: cuenta todo el efectivo de la caja. En una noche exacta, el total de la caja es lo proyectado más $200. Ejemplo: proyectado $845, caja $1,045, depósito $845, **Exacto**. La app compara el depósito con lo proyectado y muestra si sobra o falta; esto sale cuando ya escribiste lo proyectado y la caja. Si no cuadra, explica en **Nota de sobra/falta (opcional)**. **En turno hoy** muestra a todo el equipo: marca solo a quienes trabajaron. **+ Agregar** suma un nombre.
 3. **Fírmalo.** Toca **Firmar y enviar depósito** y escribe tu PIN.
-4. **Listo.** Revisa los montos. Una línea verde dice **Depositado … · firmado por … a las …**. Debajo están los montos, el depósito, las propinas y quién estuvo en turno. Aquí una noche exacta dice **$0.00 de sobra**; el formulario decía **Exacto** para la misma noche. Las dos quieren decir que el efectivo cuadró. Ya firmado, el depósito es de solo lectura: no lo puedes rehacer. Revisa los montos antes de firmar. Si el cierre se confirma antes de que alguien envíe el depósito, la página queda bloqueada: **El cierre de hoy ya está finalizado — el depósito de efectivo está bloqueado.** Al enviarlo se marca la línea de efectivo del cierre. Sin él no puedes confirmar el cierre.
+4. **Listo.** Revisa los montos. Una línea verde dice **Depositado … · firmado por … a las …**. Debajo están los montos, el depósito, las propinas y quién estuvo en turno. En una noche exacta, esta página dice **Exacto**, igual que el formulario. Ya firmado, el depósito es de solo lectura: no lo puedes rehacer. Revisa los montos antes de firmar. Si el cierre se confirma antes de que alguien envíe el depósito, la página queda bloqueada: **El cierre de hoy ya está finalizado — el depósito de efectivo está bloqueado.** Al enviarlo se marca la línea de efectivo del cierre. Sin él no puedes confirmar el cierre.
 
 #### Confirmar el cierre
 
@@ -1012,7 +1014,7 @@ Es el último trabajo de la noche. Encargado de llaves o más.
 1. **Haz la salida.** Toca **Continuar cierre**. En **Verificación de salida** (Walk-Out Verification), marca las cinco: luces apagadas, aparatos cargando, horno apagado, puertas de enfrente con llave, puerta de atrás con llave. No puedes confirmar el cierre hasta marcar las cinco.
 2. **Revisa y explica.** Toca **Revisar y enviar**. Si quedan líneas abiertas, dice **Revisar y enviar (incompleto)**. Escribe un motivo en cada casilla **¿Por qué no se completó?** y toca el botón amarillo **Continuar** al final del panel de motivos. Algunas líneas son obligatorias sin excusa: debes terminarlas. El depósito de efectivo debe estar; si no, ves **Se requiere el depósito de efectivo antes de finalizar el cierre.** Tu rol debe ser igual o más alto que el rol más alto de las líneas marcadas.
 3. **Confirma con tu PIN.** En **Confirma con tu PIN**, escribe tu PIN. El cuarto dígito lo envía; luego el teclado espera un momento. No vuelvas a tocar.
-4. **El cierre está listo.** Revisa el aviso. Si todo se hizo, dice **Cierre confirmado … por …**, con la hora y "tú". Con motivos, dice **Cierre enviado con ítems sin completar … por …**. Todas las líneas se ponen grises. Tus motivos no salen enseguida: abre el cierre otra vez más tarde. Debajo del aviso, **Motivos indicados para las líneas sin terminar** muestra cada línea, su motivo y quién lo escribió. Ya no se puede cambiar. La tarjeta del dashboard dice **Cerrado** o **Cerrado con pendientes**, con **Revisar cierre**. Si nadie confirma, el dashboard avisa al día siguiente, y el que abre tiene que esperar a que se confirme o se libere.
+4. **El cierre está listo.** Revisa el aviso. Si todo se hizo, dice **Cierre confirmado … por …**, con la hora y "tú". Con motivos, dice **Cierre enviado con ítems sin completar … por …**. Todas las líneas se ponen grises. Debajo del aviso, **Motivos indicados para las líneas sin terminar** muestra enseguida cada línea, su motivo y quién lo escribió. Ya no se puede cambiar. La tarjeta del dashboard dice **Cerrado** o **Cerrado con pendientes**, con **Revisar cierre**. Si nadie confirma, el dashboard avisa al día siguiente, y el que abre tiene que esperar a que se confirme o se libere.
 
 #### Si ves "Esta lista ya está confirmada."
 
@@ -1162,6 +1164,7 @@ Log food you make from raw stock outside the prep sheets. Employees and up can d
 **Worth knowing**
 
 - **Makes** is not on the form until you pick the raw item.
+- Two raw items can share a name. Then each one shows its vendor too: "name — vendor". It says **no vendor** when none is set.
 - The app may fill in **Amount made** with what it expects (**Predicted output**). Change it to what you really made.
 - Some items have nothing to pick in **Makes**. Then **Log production** stays grey. Pick another item.
 
@@ -1231,7 +1234,9 @@ See how the shop is doing over time. Key holders and up.
 
 - **Ops Trends** shows par, temps, cash and how much got done.
 - **Team** needs an AGM or up.
-- **Relevant right now** points out things to check, like team check-ins and fridge temp flags.
+- **Relevant right now** points out things to check, like team check-ins and **Fridge Temp Flags**.
+- The **Fridge Temp Flags** and **Under / Over Par** counts cover the dates shown with them, about the last 30 days. They are not just today.
+- A temp is flagged only when it is above that fridge's own safe max. A fridge with no max set uses 41°F. Trends, the Reports Hub and the Pulse all use this same rule.
 
 ### Sales (GM)
 
@@ -1249,6 +1254,7 @@ GMs and up see the shop's sales.
 
 - **Checks** and **Catering** are tabs at the top.
 - **Group by** groups the numbers by day, week or month.
+- Here the ranges read **Last 7 full days**, **Last 30 full days** and **Last 90 full days**. They stop at yesterday. The Reports Hub's **Last 7 days** counts today too.
 - A dash ("—") means that number is not available. It does not mean $0.
 - You see the shops you belong to. All shops at once needs a Manager of Operations or up.
 
@@ -1335,7 +1341,7 @@ Recorre los estantes y marca qué pedir, antes del cierre de cada proveedor. Enc
 Registra comida que haces con materia prima fuera de las listas de prep. Empleados y roles más altos pueden hacerlo.
 
 1. **Ábrela.** Toca **Producción** en el menú. Abre en tu tienda. Úsala solo para comida que no está en una lista de prep: las filas de prep de apertura y de mediodía ya registran lo que haces ahí. Al registrar, la materia prima que usaste sale de las existencias, y la app aprende cuánto rinde cada paquete. Los líderes de turno y roles más altos también ven **Variación de rendimiento →** en esta página.
-2. **Llénala.** Elige la **Materia prima (SKU)**. Entonces sale **Hace**, con **Elige lo que hiciste…**; **Hace** no está en el formulario hasta que eliges la materia prima. Elige lo que hace. La app puede llenar **Cantidad hecha** con lo que espera (**Salida estimada**); cámbiala por lo que de verdad hiciste. Escribe **Cantidad usada (paquetes)** y **Cantidad hecha**. Algunos artículos no tienen nada en **Hace**; entonces **Registrar producción** sigue gris. Elige otro.
+2. **Llénala.** Elige la **Materia prima (SKU)**. Entonces sale **Hace**, con **Elige lo que hiciste…**; **Hace** no está en el formulario hasta que eliges la materia prima. Dos materias primas pueden tener el mismo nombre; entonces cada una muestra también su proveedor: "nombre — proveedor". Dice **sin proveedor** si no tiene. Elige lo que hace. La app puede llenar **Cantidad hecha** con lo que espera (**Salida estimada**); cámbiala por lo que de verdad hiciste. Escribe **Cantidad usada (paquetes)** y **Cantidad hecha**. Algunos artículos no tienen nada en **Hace**; entonces **Registrar producción** sigue gris. Elige otro.
 3. **Regístrala.** Toca **Registrar producción**. No sale ningún mensaje: la fila nueva arriba en **Producción reciente** te dice que funcionó. Tus entradas de prep de apertura también salen en esta lista.
 
 #### Centro de reportes
@@ -1347,13 +1353,13 @@ Revisa los reportes de cualquier día. Todos lo abren; lo que ves crece con tu r
 
 #### Tendencias
 
-Mira cómo va la tienda con el tiempo. Encargado de llaves o más. Toca **Tendencias** en el menú y toca una tarjeta para verla completa. **Tendencias de Operación** muestra par, temperaturas, efectivo y cuánto se hizo. **Equipo** necesita subgerente o más. **Relevante ahora** señala cosas para revisar, como el seguimiento al equipo y alertas de temperatura.
+Mira cómo va la tienda con el tiempo. Encargado de llaves o más. Toca **Tendencias** en el menú y toca una tarjeta para verla completa. **Tendencias de Operación** muestra par, temperaturas, efectivo y cuánto se hizo. **Equipo** necesita subgerente o más. **Relevante ahora** señala cosas para revisar, como el seguimiento al equipo y **Alertas de Temperatura**. Los números de **Alertas de Temperatura** y **Bajo / Sobre Par** cubren las fechas que salen con ellos, más o menos los últimos 30 días. No son solo de hoy. Una temperatura solo cuenta como alerta cuando pasa la máxima segura de ese refrigerador; uno sin máxima usa 41°F. Tendencias, el Centro de reportes y el Pulso usan esta misma regla.
 
 #### Ventas (gerente general)
 
 Los gerentes generales y roles más altos ven las ventas.
 
-1. **Abre Ventas.** En el Centro de reportes, bajo **Ventas**, toca **Ventas**. Elige una vista: **Resumen**, **Artículos**, **Modificadores**, **Canales**, **Hora × día**, **Descuentos** o **Meseros**. **Cuentas** y **Catering** son pestañas arriba. **Agrupar por** agrupa los números por día, semana o mes. Una raya ("—") quiere decir que ese número no está disponible; no quiere decir $0. Ves las tiendas a las que perteneces; todas a la vez necesita Gerente de Operaciones o más.
+1. **Abre Ventas.** En el Centro de reportes, bajo **Ventas**, toca **Ventas**. Elige una vista: **Resumen**, **Artículos**, **Modificadores**, **Canales**, **Hora × día**, **Descuentos** o **Meseros**. **Cuentas** y **Catering** son pestañas arriba. **Agrupar por** agrupa los números por día, semana o mes. Aquí los rangos dicen **Últimos 7 días completos**, **Últimos 30 días completos** y **Últimos 90 días completos**: terminan ayer. En el Centro de reportes, **Últimos 7 días** también cuenta hoy. Una raya ("—") quiere decir que ese número no está disponible; no quiere decir $0. Ves las tiendas a las que perteneces; todas a la vez necesita Gerente de Operaciones o más.
 2. **Ventas de catering.** Toca la pestaña **Catering** para ver las ventas de catering.
 
 #### Clientes y cuentas de catering (gerente general)

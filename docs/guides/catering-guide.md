@@ -213,6 +213,7 @@ The **Catering** page is where every catering job starts. Shift leads and up can
 - **Catering Companies** lists the businesses we cater for.
 - **Catering Insights** shows your numbers and a calendar.
 - **Admin & setup** shows only for AGM, Catering Manager and up. It opens the setup pages.
+- The line under **Admin & setup** names only the pages you can open. A GM sees "Packages, menu, capacity, zones & FAQ." An AGM or Catering Manager sees "Packages, FAQ, prep demand & LTOs."
 
 ### Catering on the Mid-Shift Pulse
 
@@ -234,6 +235,7 @@ The shop team can follow catering here during the day.
 
 - With no jobs, the section says **No catering due today.** and **Every ezCater order is in Toast.**
 - The **Catering** section shows no money. The sales money on the Pulse shows only for the GM and up.
+- The Pulse title shows the shop's code and name. If you work at more than one shop, check it first.
 - AGM, Catering Manager and up can write notes and tap **Got it** on a note they read.
 - The photo shows the **Handoff** section with no notes. Steps 4 and 5 are not in a photo.
 
@@ -253,6 +255,7 @@ La página **Catering** es donde empieza todo trabajo de catering. Los líderes 
 - **Empresas de Catering** es la lista de negocios a los que les hacemos catering.
 - **Panel de Catering** muestra tus números y un calendario.
 - **Administración y configuración** sale solo para Subgerente General, Gerente de Catering y arriba. Abre las páginas de configuración.
+- La línea debajo de **Administración y configuración** nombra solo las páginas que puedes abrir. Un Gerente General ve "Paquetes, menú, capacidad, zonas y preguntas frecuentes." Un Subgerente General o un Gerente de Catering ve "Paquetes, preguntas frecuentes, demanda de prep y LTOs."
 
 #### Catering en el Pulso de medio turno
 
@@ -270,6 +273,7 @@ El equipo de la tienda puede seguir el catering aquí durante el día.
 
 - Si no hay trabajos, la sección dice **No hay catering para hoy.** y **Todos los pedidos de ezCater están en Toast.**
 - La sección **Catering** no muestra dinero. El dinero de ventas en el Pulso solo lo ve el Gerente General y arriba.
+- El título del Pulso muestra el código y el nombre de la tienda. Si trabajas en más de una tienda, revísalo primero.
 - Subgerente General, Gerente de Catering y arriba pueden escribir notas y tocar **Recibido** en una nota que leyeron.
 - La foto muestra la sección **Entrega de turno** sin notas. Los pasos 4 y 5 no salen en foto.
 
@@ -309,7 +313,7 @@ You do this when someone calls, emails or walks in about catering.
 
 5. Under **Order lead (assigned to)**, pick who will follow up.
 
-6. Set **Location** to the shop that will make the food. It starts on **No location (global)**, so change it.
+6. Check **Location**. It starts on the shop you are working at. If another shop will make the food, pick that shop.
 
 7. Type your notes in **Notes**. Put in what they asked for and what you promised.
 
@@ -346,7 +350,7 @@ You do this when the client changes the date or the headcount, or you have a new
 
 2. Tap **Edit details**.
 
-3. The form opens inside the card, above **Move to**. Change what you need: **Contact name**, **Company**, **Event date**, **Headcount**, **Follow-up date** or **Notes**.
+3. The form opens inside the card, above **Move to**. The boxes stack one under the other, so they fit in the card. Change what you need: **Contact name**, **Company**, **Event date**, **Headcount**, **Follow-up date** or **Notes**.
 
 ![The Edit details form on a lead, with Save and Cancel](img/catering/10b-lead-edit-details.png)
 
@@ -426,7 +430,7 @@ Lo haces cuando alguien llama, escribe o llega a preguntar por catering.
 
 5. En **Líder del pedido (asignado a)**, escoge quién le da seguimiento.
 
-6. Pon en **Ubicación** la tienda que va a hacer la comida. Empieza en **Sin ubicación (global)**, así que cámbiala.
+6. Revisa **Ubicación**. Empieza en la tienda donde estás trabajando. Si otra tienda va a hacer la comida, escoge esa tienda.
 
 7. Escribe tus notas en **Notas**. Pon lo que pidieron y lo que prometiste.
 
@@ -455,7 +459,7 @@ Lo haces cuando el cliente cambia la fecha o las personas, o tienes una nota nue
 
 2. Toca **Editar datos**.
 
-3. El formulario se abre dentro de la tarjeta, arriba de **Mover a**. Cambia lo que necesites: **Nombre de contacto**, **Empresa**, **Fecha del evento**, **Personas**, **Fecha de seguimiento** o **Notas**.
+3. El formulario se abre dentro de la tarjeta, arriba de **Mover a**. Las casillas van una debajo de otra, así caben en la tarjeta. Cambia lo que necesites: **Nombre de contacto**, **Empresa**, **Fecha del evento**, **Personas**, **Fecha de seguimiento** o **Notas**.
 
 4. Toca **Guarda**. El formulario se cierra. La tarjeta sigue abierta y muestra tus cambios. Una fecha de seguimiento nueva sale como **Fecha de seguimiento** en la tarjeta.
 
@@ -1159,6 +1163,7 @@ GM and up. These are two pages. You need both.
 
 - **Delivery Zones** is what you charge. **Fulfillment Zones** is how far you go.
 - The map opens on your shop. Check the shop before you save.
+- A shop with no spot set yet shows no pin and no circle. It says "… has no delivery location set yet." Tap **Place pin**, then drag the pin to the shop. **Save zone** stays grey until there is a pin.
 
 ### FAQ
 
@@ -1271,6 +1276,7 @@ Gerente General y arriba. Son dos páginas y necesitas las dos. En español las 
 
 - La página de tarifas es lo que cobras. La página del mapa es hasta dónde llegas.
 - El mapa abre en tu tienda. Revisa la tienda antes de guardar.
+- Una tienda sin lugar puesto no muestra marcador ni círculo. Dice "… todavía no tiene ubicación de entrega." Toca **Poner pin** y arrastra el marcador a la tienda. **Guardar zona** sigue gris hasta que hay un marcador.
 
 #### Preguntas frecuentes
 
