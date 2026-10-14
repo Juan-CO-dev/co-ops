@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { TranslationProvider } from "@/lib/i18n/provider";
 const mocks = vi.hoisted(() => ({ auth: vi.fn(), service: vi.fn(), personLocations: vi.fn(), pathname: "/reports" }));
 vi.mock("@/lib/session", () => ({ requireSessionFromHeaders: mocks.auth }));
+vi.mock("next/headers", () => ({ cookies: async () => ({ get: () => undefined }) })); // B2: no remembered shop
 vi.mock("@/lib/supabase-server", () => ({ getServiceRoleClient: mocks.service }));
 vi.mock("next/navigation", () => ({ usePathname: () => mocks.pathname, redirect: (path: string) => { throw new Error(path); } }));
 vi.mock("@/lib/operational-task-access", () => ({ canDoOperationalTask: async () => false }));

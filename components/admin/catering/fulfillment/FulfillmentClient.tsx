@@ -58,21 +58,24 @@ function seedState(node: FulfillmentNodeView): ZoneState {
 
 export function FulfillmentClient({
   nodes,
+  defaultLocationId,
   actorLevel,
 }: {
   nodes: FulfillmentNodeView[];
+  /** B2: the working shop, resolved server-side among `nodes` (null only when there are none). */
+  defaultLocationId: string | null;
   actorLevel: number;
 }) {
   const { t } = useTranslation();
   const router = useRouter();
   const { requestStepUp } = useStepUp();
 
+  const initialNode = nodes.find((n) => n.locationId === defaultLocationId);
   const [selectedId, setSelectedId] = useState<string | null>(
-    nodes[0]?.locationId ?? null,
+    initialNode?.locationId ?? null,
   );
-  const firstNode = nodes[0];
   const [zone, setZone] = useState<ZoneState>(
-    firstNode ? seedState(firstNode) : {
+    initialNode ? seedState(initialNode) : {
       lat: DEFAULT_LAT,
       lng: DEFAULT_LNG,
       radiusMiles: DEFAULT_RADIUS,

@@ -33,6 +33,8 @@ interface LocationPricing {
 export interface QuotesClientProps {
   quotes: Quote[];
   locations: { id: string; name: string }[];
+  /** B2: the working shop — a NEW quote's default Location (a revision keeps its own). */
+  defaultLocationId: string | null;
   customers: { id: string; name: string; company: string | null; email: string | null }[];
   leads: { id: string; contactName: string; company: string | null; eventDate: string | null; headcount: number | null; locationId: string | null }[];
   pricingByLocation: Record<string, LocationPricing>;
@@ -56,7 +58,7 @@ function dollarsToCents(v: string): number | null {
   return Math.round(n * 100);
 }
 
-export function QuotesClient({ quotes, locations, customers, leads, pricingByLocation, menuItems, packagesByLocation, actorLevel }: QuotesClientProps) {
+export function QuotesClient({ quotes, locations, defaultLocationId, customers, leads, pricingByLocation, menuItems, packagesByLocation, actorLevel }: QuotesClientProps) {
   const { t, language } = useTranslation();
   const router = useRouter();
   const [view, setView] = useState<View>({ mode: "list" });
@@ -68,6 +70,7 @@ export function QuotesClient({ quotes, locations, customers, leads, pricingByLoc
       <QuoteBuilder
         reviseOf={view.reviseOf}
         locations={locations}
+        defaultLocationId={defaultLocationId}
         customers={customers}
         leads={leads}
         pricingByLocation={pricingByLocation}
@@ -188,6 +191,7 @@ function blankLine(): LineDraft {
 function QuoteBuilder({
   reviseOf,
   locations,
+  defaultLocationId,
   customers,
   leads,
   pricingByLocation,
@@ -198,6 +202,7 @@ function QuoteBuilder({
 }: {
   reviseOf: QuoteDetail | null;
   locations: QuotesClientProps["locations"];
+  defaultLocationId: string | null;
   customers: QuotesClientProps["customers"];
   leads: QuotesClientProps["leads"];
   pricingByLocation: Record<string, LocationPricing>;
@@ -210,7 +215,7 @@ function QuoteBuilder({
   const money = (c: number) => formatCents(c, language);
   const editing = reviseOf?.quote ?? null;
 
-  const [locationId, setLocationId] = useState<string>(editing?.locationId ?? locations[0]?.id ?? "");
+  const [locationId, setLocationId] = useState<string>(editing?.locationId ?? defaultLocationId ?? "");
   const [contactEmail, setContactEmail] = useState<string>("");
   const [contactName, setContactName] = useState<string>("");
   const [contactCompany, setContactCompany] = useState<string>("");

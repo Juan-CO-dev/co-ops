@@ -8,6 +8,7 @@ import en from "@/lib/i18n/en.json";
 
 const state = vi.hoisted(() => ({ level: 4, role: "key_holder", tasks: [] as TaskAssignment[], failure: "", yesterday: false }));
 vi.mock("next/server", () => ({ after: vi.fn() }));
+vi.mock("next/headers", () => ({ cookies: async () => ({ get: () => undefined }) })); // B2: no remembered shop
 vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: vi.fn() }) }));
 vi.mock("@/lib/session", () => ({ requireSessionFromHeaders: async () => ({ user: { id: "viewer", name: "Viewer", language: "en" }, level: state.level, role: state.role, locations: ["shop-a"] }) }));
 vi.mock("@/lib/supabase-server", () => ({ getServiceRoleClient: () => ({ from: (table: string) => {
