@@ -2940,6 +2940,8 @@
   "auth.pin.error_network": "Error de red. Inténtalo de nuevo.",
   "auth.pin.locked_title": "Cuenta bloqueada",
   "auth.pin.locked_body": "Demasiados intentos fallidos. Inténtalo de nuevo en {time}.",
+  "auth.pin.throttled_title": "Demasiados intentos",
+  "auth.pin.throttled_body": "Demasiados inicios de sesión desde este dispositivo. Inténtalo de nuevo en {time}.",
   "auth.pin.keypad_aria": "Teclado de PIN",
   "auth.pin.clear": "Borrar",
   "auth.pin.pin_label": "PIN",

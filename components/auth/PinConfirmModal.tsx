@@ -67,6 +67,8 @@ import { useTranslation } from "@/lib/i18n/provider";
 import type { ChecklistInstance } from "@/lib/types";
 
 const PIN_LENGTH = 4;
+/** Let the 4th dot paint before the POST goes out. */
+const SUBMIT_DELAY_MS = 60;
 
 export interface PinConfirmModalProps {
   open: boolean;
@@ -105,6 +107,20 @@ export function PinConfirmModal({
   // Synchronous one-shot latch: `submitting` only flips after a 60 ms timer + a
   // render, so a second timer/tap in that window could POST twice. A ref closes it.
   const inFlight = useRef(false);
+  // The 4th digit schedules the POST SUBMIT_DELAY_MS out. In that window nothing
+  // has flipped `submitting` yet, so Cancel/Escape/Clear/Backspace stayed live:
+  // a Cancel closed the modal and the timer still confirmed the closing (#57).
+  // `queued` (state, for rendering) is set the moment the timer is scheduled;
+  // `queuedTimer` (ref, for synchronous checks) holds the timer id.
+  const [queued, setQueued] = useState(false);
+  const queuedTimer = useRef<number | null>(null);
+
+  const clearQueued = useCallback(() => {
+    if (queuedTimer.current !== null) {
+      window.clearTimeout(queuedTimer.current);
+      queuedTimer.current = null;
+    }
+  }, []);
 
   // Reset state on open via render-phase compare — a synchronous reset inside an
   // effect would trip react-hooks/set-state-in-effect.
@@ -115,6 +131,7 @@ export function PinConfirmModal({
       setPin("");
       setError(null);
       setSubmitting(false);
+      setQueued(false);
       setShake(false);
     }
   }
@@ -124,6 +141,13 @@ export function PinConfirmModal({
   useEffect(() => {
     if (open) inFlight.current = false;
   }, [open]);
+
+  // A scheduled confirm must never outlive the modal: closing (for any reason)
+  // or unmounting cancels the timer.
+  useEffect(() => {
+    if (!open) clearQueued();
+    return clearQueued;
+  }, [open, clearQueued]);
 
   useEffect(() => {
     if (open && useSystemKeyboard) systemInputRef.current?.focus();
@@ -142,6 +166,7 @@ export function PinConfirmModal({
       if (inFlight.current) return;
       inFlight.current = true;
       let confirmed = false;
+      setQueued(false);
       setSubmitting(true);
       setError(null);
       try {
@@ -246,9 +271,23 @@ export function PinConfirmModal({
     [instanceId, incompleteReasons, onConfirmed, onError, triggerError, t],
   );
 
+  // Schedule the POST and mark the modal busy in the same breath.
+  const queueSubmit = useCallback(
+    (full: string) => {
+      clearQueued();
+      setQueued(true);
+      queuedTimer.current = window.setTimeout(() => {
+        queuedTimer.current = null;
+        void submit(full);
+      }, SUBMIT_DELAY_MS);
+    },
+    [clearQueued, submit],
+  );
+
   const handleDigit = useCallback(
     (d: string) => {
       if (submitting || inFlight.current) return;
+      if (queued) return;
       // A full PIN is already waiting on its submit timer; extra taps are noise.
       if (pin.length >= PIN_LENGTH) return;
       vibrateIfAvailable(10);
@@ -257,38 +296,45 @@ export function PinConfirmModal({
       // double-invokes updaters, which scheduled two submits).
       const next = (pin + d).slice(0, PIN_LENGTH);
       setPin(next);
-      if (next.length === PIN_LENGTH) {
-        window.setTimeout(() => void submit(next), 60);
-      }
+      if (next.length === PIN_LENGTH) queueSubmit(next);
     },
-    [submitting, pin, submit],
+    [submitting, queued, pin, queueSubmit],
   );
 
   const handleClear = useCallback(() => {
-    if (submitting) return;
+    if (submitting || queued) return;
     vibrateIfAvailable(10);
     setPin("");
     setError(null);
-  }, [submitting]);
+  }, [submitting, queued]);
 
   const handleSystemInput = useCallback(
     (value: string) => {
       if (submitting || inFlight.current) return;
+      if (queued) return;
       const cleaned = value.replace(/\D/g, "").slice(0, PIN_LENGTH);
       setError(null);
       setPin(cleaned);
-      if (cleaned.length === PIN_LENGTH && pin.length < PIN_LENGTH) {
-        window.setTimeout(() => void submit(cleaned), 60);
-      }
+      if (cleaned.length === PIN_LENGTH && pin.length < PIN_LENGTH) queueSubmit(cleaned);
     },
-    [submitting, pin, submit],
+    [submitting, queued, pin, queueSubmit],
   );
+
+  // Cancel closes the dialog: drop any scheduled confirm with it, so a Cancel
+  // can never be followed by a confirm POST (#57). The button and Escape are
+  // disabled while `queued`; this clear is the belt to those braces.
+  const handleCancel = useCallback(() => {
+    if (submitting) return;
+    clearQueued();
+    setQueued(false);
+    onCancel();
+  }, [submitting, clearQueued, onCancel]);
 
   // Physical keyboard handling when modal is open and using on-screen keypad.
   useEffect(() => {
     if (!open || useSystemKeyboard) return;
     function onKey(e: KeyboardEvent) {
-      if (submitting) return;
+      if (submitting || queued) return;
       if (/^\d$/.test(e.key)) {
         e.preventDefault();
         handleDigit(e.key);
@@ -297,12 +343,12 @@ export function PinConfirmModal({
         setPin((prev) => prev.slice(0, -1));
       } else if (e.key === "Escape") {
         e.preventDefault();
-        if (!submitting) onCancel();
+        handleCancel();
       }
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [open, useSystemKeyboard, submitting, handleDigit, onCancel]);
+  }, [open, useSystemKeyboard, submitting, queued, handleDigit, handleCancel]);
 
   if (!open) return null;
 
@@ -348,14 +394,14 @@ export function PinConfirmModal({
         {!useSystemKeyboard ? (
           <div className="mt-5 grid grid-cols-3 gap-2" aria-label={t("auth.pin_modal.keypad_aria")}>
             {["1", "2", "3", "4", "5", "6", "7", "8", "9"].map((d) => (
-              <KeypadButton key={d} onClick={() => handleDigit(d)} disabled={submitting}>
+              <KeypadButton key={d} onClick={() => handleDigit(d)} disabled={submitting || queued}>
                 {d}
               </KeypadButton>
             ))}
-            <KeypadButton variant="ghost" onClick={handleClear} disabled={submitting}>
+            <KeypadButton variant="ghost" onClick={handleClear} disabled={submitting || queued}>
               {t("auth.pin_modal.clear")}
             </KeypadButton>
-            <KeypadButton onClick={() => handleDigit("0")} disabled={submitting}>
+            <KeypadButton onClick={() => handleDigit("0")} disabled={submitting || queued}>
               0
             </KeypadButton>
             <KeypadButton variant="ghost" disabled aria-hidden>
@@ -372,7 +418,7 @@ export function PinConfirmModal({
               autoComplete="one-time-code"
               maxLength={PIN_LENGTH}
               value={pin}
-              disabled={submitting}
+              disabled={submitting || queued}
               onChange={(e) => handleSystemInput(e.target.value)}
               aria-label={t("auth.pin_modal.pin_label")}
               className="
@@ -390,8 +436,8 @@ export function PinConfirmModal({
         <div className="mt-5 flex flex-col gap-3">
           <button
             type="button"
-            onClick={onCancel}
-            disabled={submitting}
+            onClick={handleCancel}
+            disabled={submitting || queued}
             className="
               inline-flex min-h-[52px] items-center justify-center rounded-xl
               border-2 border-co-border-2 bg-co-surface px-4 py-3 text-sm
@@ -406,7 +452,7 @@ export function PinConfirmModal({
           <button
             type="button"
             onClick={() => setUseSystemKeyboard((v) => !v)}
-            disabled={submitting}
+            disabled={submitting || queued}
             className="
               self-center px-2 py-2 text-sm text-co-text-dim underline-offset-2
               hover:text-co-text hover:underline

@@ -2940,6 +2940,8 @@
   "auth.pin.error_network": "Network error. Try again.",
   "auth.pin.locked_title": "Account locked",
   "auth.pin.locked_body": "Too many failed attempts. Try again in {time}.",
+  "auth.pin.throttled_title": "Too many tries",
+  "auth.pin.throttled_body": "Too many sign-ins from this device. Try again in {time}.",
   "auth.pin.keypad_aria": "PIN keypad",
   "auth.pin.clear": "Clear",
   "auth.pin.pin_label": "PIN",
