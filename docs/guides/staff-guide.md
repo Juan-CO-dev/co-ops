@@ -36,6 +36,7 @@ These are the words the app uses. Each one gets one plain line.
 | Delivery | A truck order coming in. A key holder checks it in. |
 | Count | A full count of what is on the shelves. A key holder does it. |
 | Ordering walk | A walk through the shop to build the next order for a vendor. A key holder does it. |
+| Production | A note of food you made from raw stock outside the prep sheets. Employees and up can log it. |
 | 86 | Kitchen talk for "we are out of it." When something runs out, tell your key holder. |
 | Handoff note | A note a manager leaves for the next shift. You see the ones meant for crew. |
 | Saved | The app has kept your work. Many pages save as you go and say "Saved". |
@@ -64,7 +65,8 @@ You do this at the start of every shift. The login pages are always in English.
 
 - **Back** takes you one page back. **Clear** wipes the numbers you typed.
 - Only people at that shop with that role show up. If your name is not there, tap **Back** and check your shop and role. Still missing? Ask a manager.
-- A wrong PIN says "Wrong PIN. Try again." Too many wrong tries lock you out for a while. Ask a manager for help.
+- A wrong PIN says "Wrong PIN. Try again." Too many wrong tries lock you out for a while. A red box says **Account locked** and counts down. Ask a manager for help.
+- A red box that says **Too many tries** means too many log-ins came from the shop in a short time. It is not your PIN. Wait for the count to run out, then try again.
 - **Manager login →** at the top is for managers who use an email and password. You use the tiles.
 - The app logs you out after 10 minutes with no taps.
 
@@ -78,7 +80,7 @@ This is your home page. You land here after you log in.
 
 From top to bottom, you see:
 
-- **Explore**: buttons to other pages, like **Mid-Shift Pulse**, **Assignments**, **Maintenance**, **Training** and **My Performance**.
+- **Explore**: buttons to other pages, like **Mid-Shift Pulse**, **Assignments**, **Maintenance**, **Production**, **Training** and **My Performance**.
 - Your role and your shop.
 - **My shift**: the board. It shows your tasks and your station.
 - **Today's operations**: the closing checklist, with **Start closing** or **Continue closing**.
@@ -122,6 +124,7 @@ CO-OPS es la app que usamos para manejar la tienda. La usas para revisar la tien
 | Entrega | Un pedido que llega en camión. Un encargado de llaves lo recibe. |
 | Conteo | Un conteo completo de lo que hay en los estantes. Lo hace un encargado de llaves. |
 | Recorrido de pedido | Un recorrido por la tienda para armar el próximo pedido a un proveedor. Lo hace un encargado de llaves. |
+| Producción | El registro de comida que hiciste con materia prima fuera de las hojas de prep. Lo pueden registrar los empleados y más arriba. |
 | 86 | Lenguaje de cocina para "se acabó". Cuando algo se acabe, avísale a tu encargado de llaves. |
 | Nota de entrega de turno | Una nota que un gerente deja para el siguiente turno. Ves las que son para el equipo. |
 | Guardado | La app ya guardó tu trabajo. Muchas páginas guardan mientras trabajas y dicen "Guardado". |
@@ -142,7 +145,8 @@ Lo haces al empezar cada turno. Las páginas de entrada siempre están en inglé
 
 - **Back** te regresa una página. **Clear** borra los números que escribiste.
 - Solo salen las personas de esa tienda con ese rol. Si tu nombre no aparece, toca **Back** y revisa tu tienda y tu rol. ¿Sigue sin salir? Pregúntale a un gerente.
-- Un PIN equivocado dice "Wrong PIN. Try again." Si te equivocas muchas veces, la cuenta se bloquea un rato. Pídele ayuda a un gerente.
+- Un PIN equivocado dice "Wrong PIN. Try again." Si te equivocas muchas veces, la cuenta se bloquea un rato. Un cuadro rojo dice **Account locked** y cuenta el tiempo hacia atrás. Pídele ayuda a un gerente.
+- Un cuadro rojo que dice **Too many tries** quiere decir que hubo demasiadas entradas desde la tienda en poco tiempo. No es tu PIN. Espera a que termine la cuenta y vuelve a intentar.
 - **Manager login →** arriba es para gerentes que usan correo y contraseña. Tú usas los mosaicos.
 - La app cierra tu sesión después de 10 minutos sin tocar nada.
 
@@ -150,7 +154,7 @@ Lo haces al empezar cada turno. Las páginas de entrada siempre están en inglé
 
 Es tu página de inicio. Llegas aquí después de entrar. De arriba hacia abajo ves:
 
-- **Explorar**: botones a otras páginas, como **Pulso de medio turno**, **Asignaciones**, **Mantenimiento**, **Capacitación** y **Mi Desempeño**.
+- **Explorar**: botones a otras páginas, como **Pulso de medio turno**, **Asignaciones**, **Mantenimiento**, **Producción**, **Capacitación** y **Mi Desempeño**.
 - Tu rol y tu tienda.
 - **Mi turno**: el tablero. Muestra tus tareas y tu estación.
 - **Operaciones de hoy**: la lista de cierre, con **Empezar cierre** o **Continuar cierre**.
@@ -188,7 +192,7 @@ You walk each station. You check that last night's closing matches what you see.
 
 ![The Crunchy Boi Station card after Verified, 3 of 4 done](img/staff/08-opening-station-verified.png)
 
-2. Read the fridge thermometer. Type the number in the temp box on that card. The card is done when the temp is in.
+2. Read the fridge thermometer. Type the number in the temp box on that card. The card is done when the temp is in. Only the first card starts open. Tap a card's name to open it and find its temp box.
 
 ![The fridge temp box with 36 typed in, 4 of 4 done](img/staff/09-opening-temperature.png)
 
@@ -198,7 +202,7 @@ You walk each station. You check that last night's closing matches what you see.
 
 ![The Veg section after Verify section, with the Opener recount boxes filled](img/staff/10-opening-section-verify.png)
 
-5. If a pink box says "No prior closing data detected", pick the reason that fits: **Location was closed (planned)** or **Closing was missed / I don't know**.
+5. A pink box may show under the cards: "No prior closing data detected". It shows once you type a recount for an item with no count from last night. Pick the reason that fits: **Location was closed (planned)** or **Closing was missed / I don't know**.
 
 6. Make sure every station is checked, every temp is in, and every prep section is verified. If the pink box showed, pick a reason. Then tap **Submit Opening**.
 
@@ -208,8 +212,10 @@ You walk each station. You check that last night's closing matches what you see.
 
 - The page saves as you go. The bottom bar says "Saved a moment ago". If someone else opens the report, they see your work.
 - The bottom bar counts what is left. Tap **Show me what needs fixing** to find it.
+- The "verified" count on the bottom bar (like "44 of 44 verified") counts the station cards only. The prep sections are a separate step. Each one needs its own **Verify section** tap.
 - **Verify section** stays grey until each item with no count from last night has a recount. On the other items, the recount box is a choice. Use it only to fix a wrong count.
-- The recount boxes may stay red after you fill them. That is not an error.
+- A recount box is red while it still needs a number. It goes back to normal once you fill it.
+- Some days no item has a count from last night. Then every prep item needs a recount. That is a lot of boxes, so work one section at a time.
 - **Submit Opening** stays grey until every station is checked, every temp is in, and every prep section is verified (**Verify section**). If the pink box shows, a reason must be picked too.
 - A fridge should read 41°F or less. If it reads higher, tell your key holder right away.
 
@@ -229,7 +235,7 @@ Each row shows three things:
 
 ![More prep rows, each one "Not saved" until you type in it](img/staff/13-opening-prep-entry.png)
 
-2. Type how much you made in **Opener prepped**. Then tap outside the box.
+2. Type how much you made in **Opener prepped**. Then tap outside the box, or go on to the next box. The row saves when you leave its box.
 
 3. Made more or less than **Prep need**? Then the row does not save yet. It says "Add a reason to save". Tap the button under the row. It says how far off you are. Pick a reason. Fill in **Notes** if it asks. Tap **Save**.
 
@@ -243,7 +249,10 @@ Each row shows three things:
 
 **Worth knowing**
 
-- The title at the top still says "Phase 1 — Verification" on this tab. You are in the right place.
+- "5 × 1/3 Pan" means five 1/3 pans. Type 5, not 5.33.
+- Type plain numbers, like 5 or 5.5. A fraction like "5 1/3" does not save. The box says "Numbers only, like 5.5 — not saved".
+- A row with no par says "No par set — type what you made". Type what you made, even 0. It needs no reason.
+- Some rows show a **Uses:** line. It lists the stock that food uses. You don't need to do anything with it.
 - After you tap **Finalize Phase 2**, the button says **Phase 2 finalized**. The opening is done.
 - The closer count comes from last night's AM prep. If you typed an **Opener recount** in Phase 1, your recount shows here instead.
 - A row with no "Saved by" line is not saved. Look for "Add a reason to save" or "Not saved".
@@ -270,13 +279,13 @@ Recorres cada estación. Revisas que el cierre de anoche coincida con lo que ves
 
 1. Revisa una estación. Si se ve bien, toca **Verificar** en su tarjeta. Las líneas de la tarjeta quedan marcadas.
 
-2. Lee el termómetro del refrigerador. Escribe el número en la casilla de temperatura de esa tarjeta. La tarjeta queda lista cuando pones la temperatura.
+2. Lee el termómetro del refrigerador. Escribe el número en la casilla de temperatura de esa tarjeta. La tarjeta queda lista cuando pones la temperatura. Solo la primera tarjeta empieza abierta. Toca el nombre de una tarjeta para abrirla y ver su casilla de temperatura.
 
 3. Si algo está mal, toca **Añadir comentario** en esa línea. Escribe lo que encontraste. Avísale también a tu encargado de llaves.
 
 4. Ahora las secciones de prep: Verduras (Veg), Cocidos (Cooks), Acompañantes (Sides), Salsas (Sauces) y Rebanado (Slicing). Abre una. Algunos productos no tienen conteo de anoche. Escribe lo que ves en la casilla **Recuento del opener** de cada uno. Luego toca **Verificar sección**.
 
-5. Si sale un cuadro rosa que dice "No se detectaron datos de cierre previo", elige el motivo correcto: **Ubicación cerrada (planificado)** o **Cierre omitido / No sé**.
+5. Puede salir un cuadro rosa debajo de las tarjetas: "No se detectaron datos de cierre previo". Sale cuando escribes un recuento de un producto que no tenía conteo de anoche. Elige el motivo correcto: **Ubicación cerrada (planificado)** o **Cierre omitido / No sé**.
 
 6. Asegúrate de que todas las estaciones estén revisadas, todas las temperaturas puestas y todas las secciones de prep verificadas. Si salió el cuadro rosa, elige un motivo. Luego toca **Enviar Apertura**.
 
@@ -284,8 +293,10 @@ Recorres cada estación. Revisas que el cierre de anoche coincida con lo que ves
 
 - La página guarda mientras trabajas. La barra de abajo dice "Guardado hace un momento". Si otra persona abre el reporte, ve tu trabajo.
 - La barra de abajo cuenta lo que falta. Toca **Muéstrame qué hay que corregir** para encontrarlo.
+- El conteo de "verificadas" en la barra de abajo (como "44 de 44 verificadas") cuenta solo las tarjetas de las estaciones. Las secciones de prep son un paso aparte. Cada una necesita su propio toque en **Verificar sección**.
 - **Verificar sección** sigue gris hasta que cada producto sin conteo de anoche tenga su recuento. En los demás productos, la casilla de recuento es opcional. Úsala solo para corregir un conteo mal hecho.
-- Puede que las casillas de recuento sigan en rojo después de llenarlas. No es un error.
+- Una casilla de recuento está en rojo mientras le falta un número. Vuelve a la normalidad cuando la llenas.
+- Algunos días ningún producto tiene conteo de anoche. Entonces cada producto de prep necesita un recuento. Son muchas casillas, así que trabaja una sección a la vez.
 - **Enviar Apertura** sigue gris hasta que todas las estaciones estén revisadas, todas las temperaturas puestas y todas las secciones de prep verificadas (**Verificar sección**). Si sale el cuadro rosa, también tienes que elegir un motivo.
 - Un refrigerador debe marcar 41°F o menos. Si marca más, avísale de inmediato a tu encargado de llaves.
 
@@ -299,7 +310,7 @@ Después de enviar la Fase 1, se abre la pestaña **Fase 2 — Entrada de Prep**
 
 1. Prepara la comida de una fila.
 
-2. Escribe cuánto preparaste en **Preparado hoy**. Luego toca fuera de la casilla.
+2. Escribe cuánto preparaste en **Preparado hoy**. Luego toca fuera de la casilla, o pasa a la siguiente. La fila se guarda al salir de su casilla.
 
 3. ¿Preparaste más o menos de lo que dice **Por preparar**? Entonces la fila todavía no se guarda. Dice "Agrega una razón para guardar". Toca el botón debajo de la fila. Dice cuánto te pasaste o te faltó. Elige una razón. Llena **Notas** si te lo pide. Toca **Guardar**.
 
@@ -311,7 +322,10 @@ Después de enviar la Fase 1, se abre la pestaña **Fase 2 — Entrada de Prep**
 
 **Bueno saber**
 
-- El título de arriba sigue diciendo "Fase 1 — Verificación" en esta pestaña. Estás en el lugar correcto.
+- "5 × 1/3 Pan" quiere decir cinco bandejas de 1/3. Escribe 5, no 5.33.
+- Escribe números simples, como 5 o 5.5. Una fracción como "5 1/3" no se guarda. La casilla dice "Solo números, como 5.5 — no se guardó".
+- Una fila sin par dice "Sin par — escribe lo que preparaste". Escribe lo que preparaste, aunque sea 0. No necesita razón.
+- Algunas filas muestran una línea **Usa:**. Dice qué producto usa esa comida. No tienes que hacer nada con ella.
 - Después de tocar **Finalizar Fase 2**, el botón dice **Fase 2 finalizada**. La apertura está lista.
 - El conteo de cierre sale de la Lista de Prep AM de anoche. Si escribiste un **Recuento del opener** en la Fase 1, aquí sale tu recuento.
 - Una fila sin la línea "Guardado por" no está guardada. Busca "Agrega una razón para guardar" o "Sin guardar".
@@ -328,7 +342,7 @@ The board shows who has which task and station today. Find it on the dashboard u
 
 ![My shift on the dashboard, with the Tasks, Stations and Team today rows](img/staff/15-my-shift.png)
 
-It has three rows: **Tasks**, **Stations** and **Team today**. Tap a row to open it. For the full board, tap **View my day**, or tap **Assignments** in **Explore**.
+It has three rows: **Tasks**, **My station** and **Team today**. Tap a row to open it. The **My station** row says "Yours:" and your station, or "None yet". For the full board, tap **View my day**, or tap **Assignments** in **Explore**.
 
 ![The Tasks list on the Assignments page](img/staff/16-board-tasks.png)
 
@@ -345,17 +359,17 @@ The **Stations** list shows each station and its positions, and who has them.
 
 You pick your own station from the board on the dashboard. If a key holder or manager already gave you a station, you can't change it yourself.
 
-1. On the dashboard, under **My shift**, tap the **Stations** row to open it.
+1. On the dashboard, under **My shift**, tap the **My station** row to open it.
 
 ![The open Stations row with the Station list and Claim / change station](img/staff/18-claim-station.png)
 
-2. Pick your spot in the **Station** list. Some choices say **fill first**. Take those before the others.
+2. Pick your spot in the **Station** list. Some choices say **fill first**. That means nobody is at that station yet. Take those before the others.
 
 3. Tap **Claim / change station**.
 
-4. A **Confirm change** box opens. A reason is not needed. Tap **Confirm change**.
+4. A **Confirm change** box opens. A reason is not needed. Leave **Reason for change** on "No reason (optional)". Tap **Confirm change**.
 
-5. The board now shows your station. A **My station:** card with your station's name shows up under **Reports**. Tap it to go to your part of the closing checklist.
+5. The **My station** row now says "Yours:" and your station. A **My station:** card with your station's name shows up under **Reports**. Tap it to go to your part of the closing checklist.
 
 ![Your station claimed, and the My station card under Reports](img/staff/19-station-claimed.png)
 
@@ -363,7 +377,7 @@ You pick your own station from the board on the dashboard. If a key holder or ma
 
 - You can't take a spot someone already has. Ask a key holder.
 - Does your station say "Assigned by" and a name? Then a key holder or manager gave it to you. The **Claim / change station** button does not show. Ask a key holder to change it.
-- Going on break? Open the **Stations** row and tap **Start break**. When you come back, tap **Back from break**.
+- Going on break? Open the **My station** row and tap **Start break**. When you come back, tap **Back from break**.
 
 ### Your station's closing jobs
 
@@ -377,23 +391,27 @@ The closing checklist runs all day. Each station closes on its own when its jobs
 
 3. Do a job, then tap its line. The line gets a check, with "you" and the time.
 
+4. A fridge temp line works a little differently. Tapping it opens a small box. Type the temp in **Temp (°F)**, then tap **Save**. A few lines ask for a number the same way, in a box called **Count**.
+
 ![Two lines checked, each with Undo and Add note](img/staff/22-closing-ticked.png)
 
-4. Want to add a note? Tap **Add note** on a checked line. Type in the box ("Anything noteworthy?"). Tap **Save note**.
+5. Want to add a note? Tap **Add note** on a checked line. Type in the box ("Anything noteworthy?"). Tap **Save note**.
 
 ![A saved note under a checked line, and the Edit note link](img/staff/23-closing-note.png)
 
-5. Checked the wrong line? Tap **Undo** on it.
+6. Checked the wrong line? Tap **Undo** on it.
 
 ![The whole closing checklist, every section open](img/staff/24-closing-full.png)
 
 **Worth knowing**
 
 - **Add note** shows up only after you check a line. After you save a note, the link says **Edit note**.
+- A temp or count line has no **Add note**. Type your note in the **Notes (optional)** box when you type the number.
 - Each section shows how many of its lines are done. **Progress** at the top counts the whole list.
-- When all of a station's lines are done, the station closes. The board says "Closed" and the time. If a line is undone, the station opens again.
+- When all of a station's lines are done, the station closes. Your **My station** row says "Closed ·" and the time. The **My station:** card under **Reports** goes away. That is normal. If a line is undone, the station opens again.
 - If a section says "N awaiting higher role", some of its lines are for a higher role. Those lines show a badge like "Level 4+ only" or "Shift Lead+ only". Leave them.
-- Some lines in the Closing Manager section are not check boxes. They say "Pending — submit from the dashboard". They check themselves when that report is sent.
+- Some lines are reports, like AM Prep or Mid-day Prep. They are not check boxes. They say "Pending — tap to open". Tap one to open that report's own page. The line checks itself when the report is sent, with "Submitted by", a name and the time.
+- A report line that says "Assigned shift task required" is not yours. Leave it.
 - A trainee can open the list once someone has started it for the day.
 
 ### Mid-Shift Pulse
@@ -407,7 +425,7 @@ The Pulse shows what is going on in the shop right now. Tap **Mid-Shift Pulse** 
 You see these parts:
 
 - **Needs attention**: things that are late or need action.
-- **Live shop floor**: a map of the stations. Tap a station for details. **Map view** and **3D view** switch the look.
+- **Live shop floor**: a map of the stations. Tap a station for details. One button switches the look. It says **Map view** while you see the 3D floor, and **3D view** while you see the flat map.
 - **Stations & tasks**: your tasks, and which stations are covered.
 - **Catering**: when catering orders are due.
 - **Food safety**: if the fridges are checked and in range.
@@ -463,11 +481,44 @@ After the lunch rush, mid-day prep gets the line back to par. You only do it if 
 
 3. Tap **Submit count → Phase 2**.
 
-4. In **Phase 2 — prep** (not shown in a photo), make the food. Type how much you made in **Prepped**. Then tap **Save** on that row.
+4. The page now says **Phase 2 — prep** (not shown in a photo). Each row shows **Need:**, how much to make. Make the food. Type how much you made in the **Prepped** box.
 
-5. If a row is over or under par, tap **Add over/under reason** and fill it in.
+5. Made more or less than **Need:**? An **Add over/under reason** button shows under the row. Tap it and fill it in first. If you skip it, **Save** says "Add an over/under reason first".
 
-6. Tap **Finalize prep**. This checks the Mid-day Prep line on the closing checklist for you.
+6. Tap **Save** on that row. The row says "Saved ✓".
+
+7. When every row you made is saved, tap **Finalize prep**. This checks the Mid-day Prep line on the closing checklist for you.
+
+8. The title changes to **Finalized — prep made**. A green line says "Finalized at" the time, with your name. Each row shows **Need:** and **Made:**. Your work is saved.
+
+**Worth knowing**
+
+- Here, each row needs its own **Save** tap. That is not like the opening, where a row saves when you leave its box.
+- A row you don't save is not counted. **Finalize prep** does not stop you, so check every row first.
+- A row with no par shows **Par** instead of **Need:**. Type what you made and tap **Save**. It needs no reason.
+- "5 × 1/3 Pan" means five 1/3 pans. Type 5.
+- Some rows show a **Uses:** line. It lists the stock that food uses. You don't need to do anything with it.
+- If a note says "Some items couldn't load", do the rest of the rows. Tell a manager the items it names.
+- The **Mid-day Prep** tile on the dashboard also shows "Finalized at" the time, with your name.
+
+### Production
+
+Use this when you make food from raw stock outside the opening and mid-day prep sheets. Employees and up can log it. Tap **Production** in **Explore** (not shown in a photo).
+
+1. Under **Log a conversion**, pick the **Raw item (SKU)** you used. Each choice shows how many packs are **in stock**.
+
+2. Pick what it **Makes**.
+
+3. Type the **Amount used (packs)** and the **Amount made**. The app may fill in **Amount made** with what it expects (**Predicted output**). Change it to what you really made.
+
+4. Tap **Log production**. Your line shows at the top of **Recent production**.
+
+**Worth knowing**
+
+- The app takes the packs you used off the shop's stock count. That keeps the shop's numbers right for counts and orders.
+- The opening and mid-day prep sheets log their own food. Don't log those again here.
+- **Log production** stays grey until the raw item, what it makes and both amounts are filled in. If **Makes** has nothing to pick, ask a manager.
+- No message pops up. Your new line in **Recent production** means it worked.
 
 ### En español
 
@@ -477,7 +528,7 @@ Estos trabajos corren todo el día. Usas tu tablero. Haces las tareas de cierre 
 
 El tablero muestra quién tiene cada tarea y cada estación hoy. Lo encuentras en el panel, en **Mi turno**.
 
-Tiene tres filas: **Tareas**, **Estaciones** y **Equipo de hoy**. Toca una fila para abrirla. Para ver el tablero completo, toca **Ver mi día**, o toca **Asignaciones** en **Explorar**.
+Tiene tres filas: **Tareas**, **Mi estación** y **Equipo de hoy**. Toca una fila para abrirla. La fila **Mi estación** dice "Tuya:" y tu estación, o "Aún ninguna". Para ver el tablero completo, toca **Ver mi día**, o toca **Asignaciones** en **Explorar**.
 
 - La primera tarea es **Lista de cierre**. Dice "Todos en el turno · no requiere asignación". Quiere decir que es para todos.
 - Tus propias tareas son enlaces. Toca una para abrirla.
@@ -490,21 +541,21 @@ La lista de **Estaciones** muestra cada estación con sus puestos, y quién los 
 
 Eliges tu estación desde el tablero del panel. Si un encargado de llaves o un gerente ya te dio una estación, no la puedes cambiar tú.
 
-1. En el panel, en **Mi turno**, toca la fila **Estaciones** para abrirla.
+1. En el panel, en **Mi turno**, toca la fila **Mi estación** para abrirla.
 
-2. Elige tu lugar en la lista de estaciones. Algunas opciones dicen **cubrir primero**. Toma esas antes que las demás.
+2. Elige tu lugar en la lista de estaciones. Algunas opciones dicen **cubrir primero**. Quiere decir que nadie está en esa estación todavía. Toma esas antes que las demás.
 
 3. Toca **Elegir / cambiar estación**.
 
-4. Se abre un cuadro **Confirma el cambio**. No hace falta un motivo. Toca **Confirma el cambio**.
+4. Se abre un cuadro **Confirma el cambio**. No hace falta un motivo. Deja **Motivo del cambio** en "Sin motivo (opcional)". Toca **Confirma el cambio**.
 
-5. El tablero ya muestra tu estación. En **Reportes** aparece una tarjeta **Mi estación:** con el nombre de tu estación. Tócala para ir a tu parte de la lista de cierre.
+5. La fila **Mi estación** ya dice "Tuya:" y tu estación. En **Reportes** aparece una tarjeta **Mi estación:** con el nombre de tu estación. Tócala para ir a tu parte de la lista de cierre.
 
 **Bueno saber**
 
 - No puedes tomar un lugar que ya tiene otra persona. Pregúntale a un encargado de llaves.
 - ¿Tu estación dice "Asignado por" y un nombre? Entonces te la dio un encargado de llaves o un gerente. No sale el botón **Elegir / cambiar estación**. Pídele a un encargado de llaves que la cambie.
-- ¿Te vas a tu descanso? Abre la fila **Estaciones** y toca **Iniciar descanso**. Cuando regreses, toca **Volver del descanso**.
+- ¿Te vas a tu descanso? Abre la fila **Mi estación** y toca **Iniciar descanso**. Cuando regreses, toca **Volver del descanso**.
 
 **Las tareas de cierre de tu estación**
 
@@ -516,17 +567,21 @@ La lista de cierre corre todo el día. Cada estación se cierra sola cuando sus 
 
 3. Haz un trabajo y luego toca su línea. La línea queda marcada, con "tú" y la hora.
 
-4. ¿Quieres agregar una nota? Toca **Agregar nota** en una línea marcada. Escribe en la casilla ("¿Algo importante?"). Toca **Guardar nota**.
+4. La línea de temperatura de un refrigerador es un poco distinta. Al tocarla se abre un cuadro chico. Escribe la temperatura en **Temp (°F)** y toca **Guardar**. Algunas líneas piden un número de la misma forma, en una casilla llamada **Cantidad**.
 
-5. ¿Marcaste la línea equivocada? Toca **Deshacer** en ella.
+5. ¿Quieres agregar una nota? Toca **Agregar nota** en una línea marcada. Escribe en la casilla ("¿Algo importante?"). Toca **Guardar nota**.
+
+6. ¿Marcaste la línea equivocada? Toca **Deshacer** en ella.
 
 **Bueno saber**
 
 - **Agregar nota** aparece solo después de marcar una línea. Después de guardar una nota, el enlace dice **Editar nota**.
+- Una línea de temperatura o de cantidad no tiene **Agregar nota**. Escribe tu nota en la casilla **Notas (opcional)** cuando escribes el número.
 - Cada sección muestra cuántas de sus líneas están hechas. **Progreso** arriba cuenta toda la lista.
-- Cuando todas las líneas de una estación están hechas, la estación se cierra. El tablero dice "Cerrada" y la hora. Si se deshace una línea, la estación se abre otra vez.
+- Cuando todas las líneas de una estación están hechas, la estación se cierra. Tu fila **Mi estación** dice "Cerrada ·" y la hora. La tarjeta **Mi estación:** de **Reportes** desaparece. Es normal. Si se deshace una línea, la estación se abre otra vez.
 - Si una sección dice "N esperando rol superior", algunas de sus líneas son para un rol más alto. Esas líneas muestran una etiqueta como "Solo nivel 4+" o "Solo Shift Lead+". Déjalas.
-- Algunas líneas de la sección Gerente de cierre (Closing Manager) no son casillas. Dicen "Pendiente — envía desde el dashboard". Se marcan solas cuando se envía ese reporte.
+- Algunas líneas son reportes, como la Lista de Prep AM o la preparación de mediodía. No son casillas. Dicen "Pendiente — toca para abrir". Toca una para abrir la página de ese reporte. La línea se marca sola cuando se envía el reporte, con "Enviado por", un nombre y la hora.
+- Una línea de reporte que dice "Necesitas tener asignada esta tarea" no es tuya. Déjala.
 - Un aprendiz puede abrir la lista cuando alguien ya la empezó ese día.
 
 **Pulso de medio turno**
@@ -534,7 +589,7 @@ La lista de cierre corre todo el día. Cada estación se cierra sola cuando sus 
 El Pulso muestra qué pasa en la tienda ahora mismo. Toca **Pulso de medio turno** en **Explorar**. Ves estas partes:
 
 - **Requiere atención**: cosas que van tarde o que hay que atender.
-- **Piso en vivo**: un mapa de las estaciones. Toca una estación para ver detalles. **Vista de mapa** y **Vista 3D** cambian la vista.
+- **Piso en vivo**: un mapa de las estaciones. Toca una estación para ver detalles. Un botón cambia la vista. Dice **Vista de mapa** mientras ves el piso en 3D, y **Vista 3D** mientras ves el mapa plano.
 - **Estaciones y tareas**: tus tareas y qué estaciones están cubiertas.
 - **Catering**: cuándo tocan los pedidos de catering.
 - **Seguridad alimentaria**: si los refrigeradores están revisados y en rango.
@@ -572,11 +627,44 @@ Después de la hora pico del almuerzo, la preparación de mediodía regresa la l
 
 3. Toca **Enviar conteo → Fase 2**.
 
-4. En **Fase 2 — preparación** (no sale en foto), prepara la comida. Escribe cuánto preparaste en **Preparado**. Luego toca **Guardar** en esa fila.
+4. Ahora la página dice **Fase 2 — preparación** (no sale en foto). Cada fila muestra **Falta:**, cuánto hay que preparar. Prepara la comida. Escribe cuánto preparaste en la casilla **Preparado**.
 
-5. Si una fila queda arriba o abajo del par, toca **Agregar razón sobre/bajo par** y llénala.
+5. ¿Preparaste más o menos de lo que dice **Falta:**? Debajo de la fila sale el botón **Agregar razón sobre/bajo par**. Tócalo y llénalo primero. Si te lo saltas, **Guardar** dice "Agrega primero una razón de sobre/bajo par".
 
-6. Toca **Finalizar preparación**. Esto marca por ti la línea de preparación de mediodía en la lista de cierre.
+6. Toca **Guardar** en esa fila. La fila dice "Guardado ✓".
+
+7. Cuando todas las filas que preparaste estén guardadas, toca **Finalizar preparación**. Esto marca por ti la línea de preparación de mediodía en la lista de cierre.
+
+8. El título cambia a **Finalizada — preparación hecha**. Una línea verde dice "Finalizado a las" con la hora y tu nombre. Cada fila muestra **Falta:** y **Hecho:**. Tu trabajo quedó guardado.
+
+**Bueno saber**
+
+- Aquí cada fila necesita su propio toque en **Guardar**. No es como la apertura, donde la fila se guarda al salir de su casilla.
+- Una fila que no guardas no cuenta. **Finalizar preparación** no te detiene, así que revisa cada fila antes.
+- Una fila sin par muestra **Par** en vez de **Falta:**. Escribe lo que preparaste y toca **Guardar**. No necesita razón.
+- "5 × 1/3 Pan" quiere decir cinco bandejas de 1/3. Escribe 5.
+- Algunas filas muestran una línea **Usa:**. Dice qué producto usa esa comida. No tienes que hacer nada con ella.
+- Si sale una nota que dice "Algunos artículos no se pudieron cargar", haz las demás filas. Avísale a un gerente qué artículos nombra.
+- El mosaico **Preparación de mediodía** del panel también dice "Finalizado a las" con la hora y tu nombre.
+
+**Producción**
+
+Úsalo cuando preparas comida con materia prima fuera de las hojas de prep de la apertura y de mediodía. Lo pueden registrar los empleados y más arriba. Toca **Producción** en **Explorar** (no sale en foto).
+
+1. En **Registrar una conversión**, elige la **Materia prima (SKU)** que usaste. Cada opción dice cuántos paquetes hay **en existencia**.
+
+2. Elige lo que **Hace**.
+
+3. Escribe la **Cantidad usada (paquetes)** y la **Cantidad hecha**. La app puede llenar **Cantidad hecha** con lo que espera (**Salida estimada**). Cámbiala por lo que de verdad hiciste.
+
+4. Toca **Registrar producción**. Tu línea sale arriba en **Producción reciente**.
+
+**Bueno saber**
+
+- La app resta los paquetes que usaste del inventario de la tienda. Así los números de la tienda quedan bien para los conteos y los pedidos.
+- Las hojas de prep de la apertura y de mediodía registran su propia comida. No las registres otra vez aquí.
+- **Registrar producción** sigue gris hasta que llenas la materia prima, lo que hace y las dos cantidades. Si **Hace** no tiene nada para elegir, pregúntale a un gerente.
+- No sale ningún mensaje. Tu línea nueva en **Producción reciente** quiere decir que funcionó.
 
 ## Night
 
@@ -616,6 +704,8 @@ AM prep is a count you do at closing. You count what is left so the morning crew
 - If it says "Closing not yet started", start the closing checklist from the dashboard. Then go back to the dashboard and tap **Continue AM Prep**. Tap **Submit AM Prep** again. Your numbers are still there.
 - There is no second check. **Submit AM Prep** sends it right away.
 - Sending AM prep checks the AM Prep line on the closing checklist for you.
+- From 6 PM, the closing checklist shows a yellow note until AM prep is sent: "Tonight’s AM prep count isn’t in yet." Sending AM prep clears it.
+- If a note says "Some items couldn't load", count the rest and send. Tell a manager the items it names.
 
 ### What the key holder does
 
@@ -632,21 +722,22 @@ Do this when you leave for the day.
 
 Closers: finish your station's lines and AM prep first. **End my shift** takes your tasks and report tiles away.
 
-1. On the dashboard, under **My shift**, tap the **Stations** row to open it.
+1. On the dashboard, under **My shift**, tap the **My station** row to open it.
 
 ![The open Stations row with End my shift](img/staff/34-end-my-shift.png)
 
 2. Tap **End my shift**.
 
-3. A **Confirm change** box asks: "End your shift? Your station is released and your open tasks are unassigned." A reason is not needed. Tap **Confirm change**.
+3. A **Confirm change** box asks: "End your shift? Your station is released and your open tasks are unassigned." A reason is not needed. Leave **Reason for change** on "No reason (optional)". Tap **Confirm change**.
 
-4. The board says "Ended shift" and the time. Your station, your tasks and your report tiles go away.
+4. The board says "Ended shift" and the time. Your station, your tasks and your report tiles go away. **Start break** goes away too.
 
 ![The board after End my shift: no station, no tasks](img/staff/35-shift-ended.png)
 
 **Worth knowing**
 
 - **End my shift** does not clock you out of Toast.
+- Coming back to work? Claim a station again from the **My station** row.
 
 ### En español
 
@@ -680,6 +771,8 @@ La Lista de Prep AM es un conteo que haces al cerrar. Cuentas lo que queda para 
 - Si dice "El cierre no ha comenzado", empieza la lista de cierre desde el panel. Luego regresa al panel y toca **Continuar Lista de Prep AM**. Toca **Enviar Lista de Prep AM** otra vez. Tus números siguen ahí.
 - No hay una segunda confirmación. **Enviar Lista de Prep AM** la envía de inmediato.
 - Al enviar la Lista de Prep AM, se marca sola su línea en la lista de cierre.
+- Desde las 6 PM, la lista de cierre muestra una nota amarilla hasta que se envía la Lista de Prep AM: "El conteo de preparación AM de esta noche aún no está." Al enviarla, la nota se quita.
+- Si sale una nota que dice "Algunos artículos no se pudieron cargar", cuenta los demás y envía. Avísale a un gerente qué artículos nombra.
 
 **Lo que hace el encargado de llaves**
 
@@ -696,15 +789,16 @@ Hazlo cuando te vas al final del día.
 
 Si cierras: termina primero las líneas de tu estación y la Lista de Prep AM. **Terminar mi turno** te quita tus tareas y tus mosaicos de reportes.
 
-1. En el panel, en **Mi turno**, toca la fila **Estaciones** para abrirla.
+1. En el panel, en **Mi turno**, toca la fila **Mi estación** para abrirla.
 
 2. Toca **Terminar mi turno**.
 
-3. Un cuadro **Confirma el cambio** pregunta: "¿Terminar tu turno? Se libera tu estación y se quitan tus tareas abiertas." No hace falta un motivo. Toca **Confirma el cambio**.
+3. Un cuadro **Confirma el cambio** pregunta: "¿Terminar tu turno? Se libera tu estación y se quitan tus tareas abiertas." No hace falta un motivo. Deja **Motivo del cambio** en "Sin motivo (opcional)". Toca **Confirma el cambio**.
 
-4. El tablero dice "Terminó su turno a las" y la hora. Tu estación, tus tareas y tus mosaicos de reportes desaparecen.
+4. El tablero dice "Terminó su turno a las" y la hora. Tu estación, tus tareas y tus mosaicos de reportes desaparecen. **Iniciar descanso** también desaparece.
 
 - **Terminar mi turno** no registra tu salida en Toast.
+- ¿Vuelves a trabajar? Elige otra vez una estación desde la fila **Mi estación**.
 
 ## Your stuff
 

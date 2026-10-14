@@ -81,4 +81,9 @@ idea (for Juan), or a sim-only issue. Production checks are marked.
 - staff/41-my-performance.png — wait for the chart to settle.
 - manager/31-closing-full.png — stitching flaw (sticky progress bar drawn mid-page); retake as two viewport shots or wait for the bar to settle.
 - manager/10-assign-task.png — scroll up so the person's name is in frame.
+- catering/10-lead-detail.png — amber line gone; **Edit details** button now there.
+- catering/15-quote-saved.png — now shows **Client** and **Lead** lines.
+- catering/17-customer-detail.png — now has a **Quotes** list.
+- catering/13-quote-builder.png (optional) — picking a lead now pre-fills the quote.
+- catering/32-setup-prep-demand.png (optional) — the "Sub — par comparison in W4b" dev text is gone.
 
