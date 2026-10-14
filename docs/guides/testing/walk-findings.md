@@ -116,3 +116,13 @@ Sim data (not app): catering test leads/quotes/customers from round 1 ("Hill Sta
 
 ## Retakes owed after B8 (#467, 2026-10-14)
 manager 39 (cash now "Even"), 46 (reasons list under the banner), 60 (Trends dates/window), 24b + staff 33b ("Prepped" box fits), staff 41 ("Not enough days yet"), catering 21 + 22 ("Last 7 full days"), 10b (stacked edit form), 30 (not-set note + Place pin — or caption change), 06 (hub card text per level); minor spacing: staff 14, manager 17.
+
+## Catering re-shoot on the clean board (2026-10-14 afternoon) — findings
+App (next fix batch candidates):
+- Customer detail: on FIRST open, Pipeline and Quotes say "None yet." even 30 s later; leaving and re-opening shows the lead + $88 draft quote (stale first render?).
+- Catering Insights: OPEN PIPELINE $0.00 with a Quote-sent lead + $88 draft quote (by design: open pipeline counts accepted quote value, else estimated revenue — a draft adds $0); "Events by stage: 1 events" while BOOKED EVENTS 0 — wording could confuse.
+- Saved quote prints event date "2026-10-23" while the Lead line prints "Fri, Oct 23" (date format mismatch).
+- Pipeline at tablet width shows only 4 columns (COMPLETED / LOST off the right edge).
+- Admin → Customers shows "Catering: 0" though a catering customer exists (different customer systems?).
+- Heading mismatches: "Delivery Zones" tile vs "Delivery zones" page; "LTO & discounts" tile vs "Surplus → LTO / discount" page.
+- Date boxes show mm/dd/yyyy; the test browser only accepts ISO (harness only).

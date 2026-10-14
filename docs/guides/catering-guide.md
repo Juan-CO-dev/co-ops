@@ -1153,7 +1153,7 @@ GM and up. These are two pages. You need both.
 
 2. Go back. Tap **Fulfillment Zones**.
 
-![Fulfillment Zones with the map, the pin and the delivery radius](img/catering/30-setup-fulfillment.png)
+![Fulfillment Zones for a shop with no location set yet: the "not set" note and the Place pin button](img/catering/30-setup-fulfillment.png)
 
 3. Check the shop. Drag the pin to the shop and set **Delivery radius (miles)**.
 
