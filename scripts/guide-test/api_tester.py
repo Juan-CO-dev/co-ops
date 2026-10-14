@@ -67,7 +67,8 @@ def run(args):
     ]
     daemon("start", session=args.session, viewport=args.viewport)
     report, steps, t0 = None, 0, time.time()
-    while steps < MAX_STEPS and report is None:
+    out_of_time = lambda: time.time() - t0 > args.max_minutes * 60
+    while steps < MAX_STEPS and report is None and not out_of_time():
         shrink_old_looks(messages)
         payload = {"model": args.model, "messages": messages, "tools": TOOLS, "temperature": 0.2, "max_tokens": 4000}
         try:
@@ -97,7 +98,8 @@ def run(args):
                 out = f"Unknown tool {name}."
             messages.append({"role": "tool", "tool_call_id": c["id"], "name": name, "content": out})
     if report is None:  # out of actions: ask for the report instead of ending the run silently
-        messages.append({"role": "user", "content": f"You have used all {MAX_STEPS} actions. Stop testing now and call finish with your full report: mark each goal you did not finish as stuck or partly."})
+        why = f"You are out of time ({args.max_minutes:g} minutes)" if out_of_time() else f"You have used all {MAX_STEPS} actions"
+        messages.append({"role": "user", "content": f"{why}. Stop testing now and call finish with your full report: mark each goal you did not finish as stuck or partly."})
         for _ in range(3):
             try:
                 data = http_json(f"{base}/chat/completions", {"model": args.model, "messages": messages, "tools": TOOLS, "temperature": 0.2, "max_tokens": 6000}, auth=key(kname))
@@ -117,7 +119,7 @@ def run(args):
                 break
     daemon("stop", session=args.session)
     header = f"<!-- tester {args.provider}/{args.model} · session {args.session} · {steps} actions · {round(time.time() - t0)}s -->\n"
-    body = report if report is not None else f"# Report — {args.model}\n\nRUN ENDED WITHOUT A REPORT after {steps} actions (limit {MAX_STEPS})."
+    body = report if report is not None else f"# Report — {args.model}\n\nRUN ENDED WITHOUT A REPORT after {steps} actions (limit {MAX_STEPS}, time budget {args.max_minutes:g} min)."
     os.makedirs(os.path.dirname(args.out), exist_ok=True)
     with open(args.out, "w", encoding="utf-8", newline="\n") as f:
         f.write(header + body + "\n")
@@ -135,6 +137,9 @@ if __name__ == "__main__":
     p.add_argument("--provider", choices=list(PROVIDERS))
     p.add_argument("--model"); p.add_argument("--workspace"); p.add_argument("--session"); p.add_argument("--out")
     p.add_argument("--viewport", default="phone", choices=["phone", "tablet", "desktop"])
+    # Time budget: past it the tester stops acting and is asked for its report. The run-lane hard kill (2 h)
+    # stays as a backstop; on 2026-10-14 that kill ended a slow GLM run with no report at all.
+    p.add_argument("--max-minutes", type=float, default=100)
     a = p.parse_args()
     if a.list_models: list_models(a.list_models)
     else: run(a)
