@@ -44,7 +44,7 @@ const num = (v: number | string | null | undefined): number => (typeof v === "st
  *  ONE PACKAGE, COUNTED ONCE (B7c, migration 0251): every package line carries its `line_kind`
  *  and is read by what it says — the rules live, pure and documented, in `resolveDemandFromLines`
  *  (lib/catering/prep-demand-shared.ts). This function only loads the rows. A package line with
- *  NO kind (forbidden by 0251) counts nothing and is reported here by id — never guessed at. */
+ *  NO kind (forbidden by 0252; only the pre-B7c server in the deploy window writes one) counts nothing and is reported here by id — never guessed at. */
 export async function resolveQuoteDemand(sb: Sb, quoteId: string): Promise<ResolvedDemand[]> {
   const { data: rows, error } = await sb
     .from("catering_quote_items")
@@ -67,7 +67,7 @@ export async function resolveQuoteDemand(sb: Sb, quoteId: string): Promise<Resol
   const unkinded = unkindedPackageLineIds(lines);
   if (unkinded.length > 0) {
     // Ids only — never a description, a name or a contact value.
-    console.warn(`[catering] resolveQuoteDemand: quote ${quoteId} has ${unkinded.length} package line(s) without a line_kind (${unkinded.join(",")}) — counted as no demand. 0251 forbids this shape; look at how they were written.`);
+    console.warn(`[catering] resolveQuoteDemand: quote ${quoteId} has ${unkinded.length} package line(s) without a line_kind (${unkinded.join(",")}) — counted as no demand. 0252 forbids this shape (written by the pre-B7c server in the deploy window?) — re-save the quote.`);
   }
   const bare = lines.filter((l) => isBarePackageLine(l) && l.lineKind != null);
   if (bare.length === 0) return resolveDemandFromLines({ lines, comps: [], picks: [] });

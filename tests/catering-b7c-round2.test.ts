@@ -132,6 +132,7 @@ import { searchPipeline } from "@/lib/catering/pipeline";
 import { expandPackageLines, type ExpandablePackage } from "@/lib/catering/quotes-shared";
 import { normalizeLeadEmail } from "@/lib/catering/pipeline-shared";
 import { POST as createLeadRoute } from "@/app/api/catering/pipeline/route";
+import { POST as createQuoteRoute } from "@/app/api/catering/quotes/route";
 
 // ── fixtures ─────────────────────────────────────────────────────────────────────────────
 const A = "loc-a";
@@ -396,5 +397,45 @@ describe("C · Add lead takes an optional email and links the lead's customer", 
       expect(typeof es[k]).toBe("string");
       expect(es[k]).not.toBe(en[k]);
     }
+  });
+});
+
+// ── r4 · a refused save changes no customer state (BC-040/041) ──────────────────────────
+describe("r4 · the quotes POST refuses outdated lines BEFORE it resolves the customer", () => {
+  const post = (body: Record<string, unknown>) =>
+    createQuoteRoute(new NextRequest("http://localhost/api/catering/quotes", {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ locationId: A, contactName: "Typed", ...body }),
+    }));
+  const staleLines = [{ description: "16 pc platter", quantity: 1, unitPriceCents: 11500, packageId: "pkg-plat" }]; // no lineKind
+  const customerWrites = () => writes.filter((w) => w.table === "catering_customers");
+
+  it("a NEW email + a kind-less package line → 409 quote_lines_outdated; no customer created, no quote written", async () => {
+    const res = await post({ contactEmail: "brand.new@example.test", lines: staleLines });
+    expect(res.status).toBe(409);
+    expect((await res.json()).code).toBe("quote_lines_outdated");
+    expect(customerWrites()).toEqual([]);
+    expect(db.catering_customers!.some((c) => c.email === "brand.new@example.test")).toBe(false);
+    expect(writes.filter((w) => w.table === "catering_quotes" || w.table === "catering_quote_items")).toEqual([]);
+    expect(audit.mock.calls.map((c) => c[0].action)).not.toContain("catering.customer.create");
+  });
+
+  it("a DEACTIVATED own-shop customer's email + a kind-less package line → 409; the customer is NOT revived", async () => {
+    const res = await post({ contactEmail: "dormant@a.test", lines: staleLines });
+    expect(res.status).toBe(409);
+    expect(customerWrites()).toEqual([]);
+    expect(db.catering_customers!.find((c) => c.id === "c-off-a")!.active).toBe(false);
+  });
+
+  it("any other pure line refusal (a bad quantity) also lands before the resolver", async () => {
+    const res = await post({ contactEmail: "another.new@example.test", lines: [{ description: "Box", quantity: 0, unitPriceCents: 100 }] });
+    expect(res.status).toBe(400);
+    expect(customerWrites()).toEqual([]);
+  });
+
+  it("control: the same request with kinded lines creates the customer and the quote", async () => {
+    const res = await post({ contactEmail: "brand.new@example.test", lines: [{ ...staleLines[0], lineKind: "package_header", componentsListed: false }] });
+    expect(res.status).toBe(201);
+    expect(db.catering_customers!.some((c) => c.email === "brand.new@example.test")).toBe(true);
   });
 });

@@ -150,12 +150,12 @@ export function reclassifyQuoteLineRefs<T extends QuoteLineRefLike>(
 
 export type LineKindResult =
   | { ok: true; lineKind: QuoteLineKind | null; componentsListed: boolean | null }
-  /** `outdated`: a package line with no kind — a page loaded before 0251; the user reloads. */
+  /** `outdated`: a package line with no kind — a page loaded before the B7c deploy; the user reloads. */
   | { ok: false; reason: "outdated" | "invalid"; message: string };
 
 /**
  * What a saved line stores in `line_kind` / `components_listed`, checked against its
- * references (the same shape the 0251 CHECKs enforce, so a bad payload is a named error before
+ * references (the same shape the 0251/0252 CHECKs enforce, so a bad payload is a named error before
  * the quote header is written, never a constraint 500 after it):
  *   · a line with no package id carries no kind (NULL);
  *   · every line WITH a package id must say its kind — a kind-less one is refused as

@@ -520,6 +520,17 @@ interface ResolvedLine {
   componentsListed: boolean | null;
 }
 
+/**
+ * The PURE line checks (quantity, price, references, line kind — 409 `quote_lines_outdated` for
+ * a kind-less package line), with no I/O. A route that does anything stateful before
+ * createQuote — the quotes POST resolves, creates or revives the customer — calls this FIRST,
+ * so a save the lines will refuse changes nothing (Astra r4, BC-040/041). createQuote,
+ * reviseQuote and previewQuote run the same checks again themselves.
+ */
+export function validateQuoteLines(lines: QuoteLineInput[]): void {
+  resolveLines(lines);
+}
+
 /** Validate + freeze the line set (quantity>0, integer non-negative price, identified). */
 function resolveLines(lines: QuoteLineInput[]): ResolvedLine[] {
   if (!Array.isArray(lines) || lines.length === 0) {
@@ -546,7 +557,7 @@ function resolveLines(lines: QuoteLineInput[]): ResolvedLine[] {
     const packageId = l.packageId ?? null;
     const kind = resolveQuoteLineKind({ itemId, menuItemId, packageId, lineKind: l.lineKind, componentsListed: l.componentsListed });
     if (!kind.ok) {
-      // A kind-less package line comes from a page loaded before 0251 (or a client bug): never
+      // A kind-less package line comes from a page loaded before the B7c deploy (or a client bug): never
       // guessed at — the manager reloads and the builder sends the kinds.
       if (kind.reason === "outdated") throw new CateringQuoteError(409, "quote_lines_outdated", `Line ${i + 1}: ${kind.message}`);
       throw new CateringQuoteError(400, "invalid_payload", `Line ${i + 1}: ${kind.message}`);

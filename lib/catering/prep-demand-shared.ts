@@ -16,9 +16,11 @@
  *     counts its own Qty as "needs a pick", so deleting a header never silently zeroes visible
  *     pick lines.
  *
- * NO LEGACY RULES. Migration 0251 refuses a package line without a kind (CHECK
- * `catering_quote_items_package_line_has_kind`) and the write paths refuse one with 409
- * `quote_lines_outdated`; production had no package quote lines when the kinds landed. So a
+ * NO LEGACY RULES. The write paths refuse a package line without a kind (409
+ * `quote_lines_outdated`), migration 0252 refuses one in SQL (CHECK
+ * `catering_quote_items_package_line_has_kind`, applied after the deploy — until then only the
+ * pre-B7c server in the deploy window can write one), and production had no package quote lines
+ * when the kinds landed. So a
  * bare package line with NO kind is never guessed at: it counts NOTHING, and
  * `unkindedPackageLineIds` names it so the loader can warn (ids only). Counting nothing is the
  * least surprising answer for a row the database says cannot exist: guessing was the source of
@@ -35,8 +37,10 @@ export function isQuoteLineKind(v: unknown): v is QuoteLineKind {
 }
 
 /**
- * The three 0251 CHECKs on catering_quote_items, mirrored in TypeScript (Postgres CHECK
- * semantics: a NULL result passes). Pinned against the migration text by
+ * The line-kind CHECKs on catering_quote_items, mirrored in TypeScript (Postgres CHECK
+ * semantics: a NULL result passes). `after: "0251"` = the expand half only (a NULL-kind package
+ * line still passes — the old server's rows in the deploy window); `after: "0252"` adds the
+ * contract CHECK (every package line carries its kind). Pinned against both migration texts by
  * tests/catering-quote-line-kind.test.ts so the two cannot drift.
  */
 export function quoteLineRowAllowed(r: {
@@ -45,12 +49,12 @@ export function quoteLineRowAllowed(r: {
   packageId: string | null;
   lineKind: string | null;
   componentsListed: boolean | null;
-}): boolean {
+}, after: "0251" | "0252" = "0252"): boolean {
   const hasRef = r.itemId != null || r.menuItemId != null;
-  // line_kind_check: line_kind in (...) — NULL passes.
+  // 0251 line_kind_check: line_kind in (...) — NULL passes.
   if (r.lineKind != null && !isQuoteLineKind(r.lineKind)) return false;
-  // package_line_has_kind: package_id is null or line_kind is not null.
-  if (r.packageId != null && r.lineKind == null) return false;
+  // 0252 package_line_has_kind: package_id is null or line_kind is not null.
+  if (after === "0252" && r.packageId != null && r.lineKind == null) return false;
   // line_kind_shape.
   if (r.lineKind != null) {
     if (r.packageId == null) return false;
@@ -107,7 +111,7 @@ export function isBarePackageLine(l: Pick<DemandQuoteLine, "packageId" | "itemId
   return l.packageId != null && l.itemId == null && l.menuItemId == null;
 }
 
-/** Package lines that carry no kind — a shape 0251 forbids. Ids only (for a warning). */
+/** Package lines that carry no kind — a shape 0252 forbids. Ids only (for a warning). */
 export function unkindedPackageLineIds(lines: readonly DemandQuoteLine[]): string[] {
   return lines.filter((l) => l.packageId != null && l.lineKind == null).map((l) => l.id);
 }

@@ -7,8 +7,8 @@
  *            decides what a line is · the edited/removed header and pick cases.
  *   Round 3  The legacy (no line_kind) rules are GONE (production had no package quote lines):
  *            a package line without a kind counts nothing and is reported by id; the write path
- *            refuses it as `outdated` (409 quote_lines_outdated); 0251 refuses it in SQL, and the
- *            CHECK mirror is pinned to the migration text (incl. Astra's P3: components_listed on
+ *            refuses it as `outdated` (409 quote_lines_outdated); 0252 refuses it in SQL, and the
+ *            CHECK mirror is pinned to both migration texts (incl. Astra's P3: components_listed on
  *            a NULL-kind line).
  *   TOTALS   144 package × pricing-mode × headcount cases: every line's quantity and price, the
  *            subtotal and the whole charge stack are identical to the parent commit (12e208d3).
@@ -261,55 +261,100 @@ describe("resolveQuoteLineKind — what a saved line stores", () => {
 });
 
 // ── the 0251 CHECKs, mirrored and pinned ───────────────────────────────────────────────
-describe("0251 · the CHECK mirror (quoteLineRowAllowed) and the migration text", () => {
-  const sql = readFileSync("supabase/migrations/0251_catering_quote_line_kind.sql", "utf8").replace(/\r\n/g, "\n");
+describe("0251 + 0252 · the CHECK mirror (quoteLineRowAllowed) and both migration texts", () => {
+  const read = (f: string) => readFileSync(`supabase/migrations/${f}`, "utf8").replace(/\r\n/g, "\n");
+  const expand = read("0251_catering_quote_line_kind.sql");
+  const contract = read("0252_catering_quote_line_kind_enforce.sql");
   const squash = (x: string) => x.replace(/\s+/g, " ");
-  const row = (r: Partial<Parameters<typeof quoteLineRowAllowed>[0]>) =>
-    quoteLineRowAllowed({ itemId: null, menuItemId: null, packageId: null, lineKind: null, componentsListed: null, ...r });
+  type Row = Parameters<typeof quoteLineRowAllowed>[0];
+  const blank: Row = { itemId: null, menuItemId: null, packageId: null, lineKind: null, componentsListed: null };
+  const row = (r: Partial<Row>, after: "0251" | "0252" = "0252") => quoteLineRowAllowed({ ...blank, ...r }, after);
 
-  it("the migration carries the three CHECKs, the manifest ASSERT and stays one unapplied transaction", () => {
-    const flat = squash(sql);
+  it("0251 is the EXPAND half: columns + shape + header-only CHECKs, no kind requirement, no ASSERT", () => {
+    const flat = squash(expand);
     expect(flat).toContain("check (line_kind in ('package_header', 'package_component', 'package_pick'))");
-    expect(flat).toContain("add constraint catering_quote_items_package_line_has_kind check ( package_id is null or line_kind is not null )");
+    expect(flat).toContain("add column components_listed boolean null");
     expect(flat).toContain("add constraint catering_quote_items_components_listed_header_only check ( components_listed is null or coalesce(line_kind = 'package_header', false) )");
     expect(flat).toContain("(line_kind = 'package_header' and package_id is not null and item_id is null and menu_item_id is null)");
     expect(flat).toContain("(line_kind = 'package_component' and package_id is not null and (item_id is not null or menu_item_id is not null))");
     expect(flat).toContain("(line_kind = 'package_pick' and package_id is not null and item_id is null and menu_item_id is null)");
-    // The ASSERT runs after the columns exist and BEFORE the constraints go on; it refuses blind runs.
-    const assertAt = sql.indexOf("assert n = 0");
-    expect(assertAt).toBeGreaterThan(sql.indexOf("add column components_listed boolean null"));
-    expect(assertAt).toBeLessThan(sql.indexOf("add constraint catering_quote_items_package_line_has_kind"));
-    expect(sql).toContain("where package_id is not null and line_kind is null");
-    expect(sql).toContain("plpgsql.check_asserts");
-    expect(sql).toContain("-- AUTHORED 2026-10-14, NOT YET APPLIED — GATE CC: sim first, then prod.");
-    expect(sql).toContain("\nbegin;\n");
-    expect(sql.trimEnd().endsWith("commit;")).toBe(true);
-    expect(sql).not.toMatch(/^\s*(grant|revoke|update|delete)\b/im); // no grant change, no data write
+    expect(expand).not.toContain("package_line_has_kind");
+    expect(expand).not.toMatch(/\bassert\b|do \$\$/);
+    expect(expand).toContain("-- AUTHORED 2026-10-14, NOT YET APPLIED — GATE CC: sim first, then prod, BEFORE the B7c deploy.");
+    expect(expand).toContain("\nbegin;\n");
+    expect(expand.trimEnd().endsWith("commit;")).toBe(true);
+    expect(expand).not.toMatch(/^\s*(grant|revoke|update|delete)\b/im); // no grant change, no data write
   });
 
-  it("every package line needs its kind; a non-package line needs none", () => {
-    expect(row({ itemId: "i" })).toBe(true);
-    expect(row({ packageId: "p" })).toBe(false);
-    expect(row({ packageId: "p", itemId: "i" })).toBe(false);
+  it("0252 is the CONTRACT half: check_asserts guard, ASSERT before the CHECK, after-deploy gate", () => {
+    const flat = squash(contract);
+    expect(flat).toContain("add constraint catering_quote_items_package_line_has_kind check ( package_id is null or line_kind is not null )");
+    expect(contract).toContain("-- AUTHORED 2026-10-14, NOT YET APPLIED — GATE: apply only AFTER the B7c deploy is live");
+    expect(contract).toContain("plpgsql.check_asserts");
+    expect(contract).toContain("where package_id is not null and line_kind is null");
+    const assertAt = contract.indexOf("assert n = 0");
+    expect(assertAt).toBeGreaterThan(0);
+    expect(assertAt).toBeLessThan(contract.indexOf("add constraint catering_quote_items_package_line_has_kind"));
+    expect(contract).toContain("IF THE ASSERT FAILS");
+    expect(contract).toContain("\nbegin;\n");
+    expect(contract.trimEnd().endsWith("commit;")).toBe(true);
+    expect(contract).not.toMatch(/^\s*(grant|revoke|update|delete)\b/im);
+    expect(contract).not.toContain("add column");
   });
-  it("each kind's shape", () => {
-    expect(row({ packageId: "p", lineKind: "package_header" })).toBe(true);
-    expect(row({ packageId: "p", lineKind: "package_pick" })).toBe(true);
-    expect(row({ packageId: "p", itemId: "i", lineKind: "package_component" })).toBe(true);
-    expect(row({ packageId: "p", menuItemId: "m", lineKind: "package_component" })).toBe(true);
-    expect(row({ packageId: "p", itemId: "i", lineKind: "package_header" })).toBe(false);
-    expect(row({ packageId: "p", menuItemId: "m", lineKind: "package_pick" })).toBe(false);
-    expect(row({ packageId: "p", lineKind: "package_component" })).toBe(false);
-    expect(row({ lineKind: "package_header" })).toBe(false);
-    expect(row({ packageId: "p", lineKind: "whole_package" })).toBe(false);
+
+  it("deploy window: every row the OLD (main) writers produce passes every 0251 CHECK", () => {
+    // The old writers name neither new column: their rows land with both NULL.
+    const oldRows: Array<Partial<Row>> = [
+      { packageId: "p" }, // old staff header / pick placeholder · old portal package line
+      { packageId: "p", itemId: "i" }, // old staff component (package tag + reference)
+      { packageId: "p", menuItemId: "m" },
+      { itemId: "i" },
+      { menuItemId: "m" },
+      {}, // a free-text line
+    ];
+    for (const r of oldRows) expect(row(r, "0251"), JSON.stringify(r)).toBe(true);
+    // ...and 0252 refuses exactly the package ones among them.
+    expect(oldRows.map((r) => row(r, "0252"))).toEqual([false, false, false, true, true, true]);
   });
-  it("P3: components_listed is a header-only field — a NULL-kind line may not carry it", () => {
-    expect(row({ packageId: "p", lineKind: "package_header", componentsListed: true })).toBe(true);
-    expect(row({ packageId: "p", lineKind: "package_header", componentsListed: false })).toBe(true);
-    expect(row({ itemId: "i", componentsListed: true })).toBe(false); // the P3 case: NULL kind + true
-    expect(row({ componentsListed: false })).toBe(false);
-    expect(row({ packageId: "p", lineKind: "package_pick", componentsListed: true })).toBe(false);
-    expect(row({ packageId: "p", itemId: "i", lineKind: "package_component", componentsListed: false })).toBe(false);
+
+  it("every row the NEW code writes passes both halves", () => {
+    for (const pkg of Object.values(BUILDER)) {
+      for (const l of expandPackageLines(pkg, "12")) {
+        const k = resolveQuoteLineKind(l);
+        if (!k.ok) throw new Error("builder line refused");
+        const r = { ...l, lineKind: k.lineKind, componentsListed: k.componentsListed };
+        expect(row(r, "0251")).toBe(true);
+        expect(row(r, "0252")).toBe(true);
+      }
+    }
+    const portalHeader = { packageId: "p", lineKind: "package_header", componentsListed: false };
+    expect(row(portalHeader, "0251") && row(portalHeader, "0252")).toBe(true);
+  });
+
+  it("each kind's shape (both halves)", () => {
+    for (const after of ["0251", "0252"] as const) {
+      expect(row({ packageId: "p", lineKind: "package_header" }, after)).toBe(true);
+      expect(row({ packageId: "p", lineKind: "package_pick" }, after)).toBe(true);
+      expect(row({ packageId: "p", itemId: "i", lineKind: "package_component" }, after)).toBe(true);
+      expect(row({ packageId: "p", menuItemId: "m", lineKind: "package_component" }, after)).toBe(true);
+      expect(row({ packageId: "p", itemId: "i", lineKind: "package_header" }, after)).toBe(false);
+      expect(row({ packageId: "p", menuItemId: "m", lineKind: "package_pick" }, after)).toBe(false);
+      expect(row({ packageId: "p", lineKind: "package_component" }, after)).toBe(false);
+      expect(row({ lineKind: "package_header" }, after)).toBe(false);
+      expect(row({ packageId: "p", lineKind: "whole_package" }, after)).toBe(false);
+    }
+  });
+
+  it("P3: components_listed is a header-only field — a NULL-kind line may not carry it (0251 already)", () => {
+    for (const after of ["0251", "0252"] as const) {
+      expect(row({ packageId: "p", lineKind: "package_header", componentsListed: true }, after)).toBe(true);
+      expect(row({ packageId: "p", lineKind: "package_header", componentsListed: false }, after)).toBe(true);
+      expect(row({ itemId: "i", componentsListed: true }, after)).toBe(false); // the P3 case: NULL kind + true
+      expect(row({ packageId: "p", componentsListed: true }, after)).toBe(false);
+      expect(row({ componentsListed: false }, after)).toBe(false);
+      expect(row({ packageId: "p", lineKind: "package_pick", componentsListed: true }, after)).toBe(false);
+      expect(row({ packageId: "p", itemId: "i", lineKind: "package_component", componentsListed: false }, after)).toBe(false);
+    }
   });
 });
 
