@@ -18,6 +18,7 @@ beforeEach(() => {
     const q = {
       select: () => q, eq: (...args: unknown[]) => { filters(table, "eq", ...args); return q; },
       contains: (...args: unknown[]) => { filters(table, "contains", ...args); return q; },
+      filter: (...args: unknown[]) => { filters(table, "filter", ...args); return q; },
       is: () => q, order: () => q, limit: () => q,
       maybeSingle: async () => result, returns: async () => result,
       then: (resolve: (x: unknown) => unknown) => Promise.resolve(result).then(resolve),
@@ -53,7 +54,9 @@ describe("reconciliation diagnostics authorization and disclosure", () => {
     queues.ezcater_orders = [{ data: null, error: null }];
     queues.ezcater_review_queue = [{ data: [], error: null }];
     expect(await loadEzcaterReconciliation(actor, "house-lead")).toMatchObject({ available: true });
-    expect(filters).toHaveBeenCalledWith("ezcater_review_queue", "contains", "candidates", ["house-lead"]);
+    // B5 #32: candidates is jsonb — a JSON array literal, never the cs.{…} Postgres array form.
+    expect(filters).toHaveBeenCalledWith("ezcater_review_queue", "filter", "candidates", "cs", '["house-lead"]');
+    expect(filters).not.toHaveBeenCalledWith("ezcater_review_queue", "contains", expect.anything(), expect.anything());
   });
   it("discloses schema or query failure instead of displaying zero issues as success", async () => {
     queues.ezcater_orders = [{ data: null, error: { code: "42P01" } }];

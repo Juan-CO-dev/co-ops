@@ -6,7 +6,7 @@
  * row (edit in place; deactivate via active=false, never DELETE — it has no updated_at/by
  * columns, so edits don't stamp a timestamp). Company grouping is a text rollup on the
  * `company` field (the full append-only identity/company-edge model, D19d, is Wave 2+).
- * The detail view surfaces the customer's pipeline leads + order history.
+ * The detail view surfaces the customer's pipeline leads, live quotes + order history.
  */
 
 import { getServiceRoleClient } from "@/lib/supabase-server";
@@ -127,10 +127,31 @@ export interface CustomerHistoryOrder {
   amountCents: number | null;
   headcount: number | null;
 }
+export interface CustomerHistoryQuote {
+  id: string;
+  version: number;
+  status: string;
+  eventDate: string | null;
+  totalCents: number;
+}
 export interface CustomerDetail {
   customer: CateringCustomer;
   leads: CustomerHistoryLead[];
   orders: CustomerHistoryOrder[];
+  quotes: CustomerHistoryQuote[];
+}
+
+/**
+ * The PostgREST `.or()` for a customer's leads (B5 #34): leads linked to the customer, plus
+ * leads that one of the customer's quotes points at and that have NO customer yet. The second
+ * half covers quotes saved before the quote save started linking the lead, without a backfill;
+ * it never claims a lead that belongs to a different customer.
+ */
+export function customerLeadsFilter(customerId: string, quoteLeadIds: readonly string[]): string {
+  const ids = [...new Set(quoteLeadIds)];
+  return ids.length === 0
+    ? `customer_id.eq.${customerId}`
+    : `customer_id.eq.${customerId},and(id.in.(${ids.join(",")}),customer_id.is.null)`;
 }
 
 /** One customer + their pipeline leads + order history (scoped). Null if not visible. */
@@ -152,11 +173,29 @@ export async function loadCustomer(actor: AuthContext, id: string): Promise<Cust
     return null;
   }
 
+  // Live quotes for this customer (B5 #34), limited to the shops the actor can see — the same
+  // location rule the quote board uses.
+  let quoteQuery = sb
+    .from("catering_quotes")
+    .select("id, version, status, event_date, total_cents, pipeline_id, location_id")
+    .eq("customer_id", id)
+    .is("superseded_at", null);
+  if (!isAllLocationsAccess(locActor(actor))) {
+    quoteQuery = actor.locations.length === 0
+      ? quoteQuery.eq("location_id", "00000000-0000-0000-0000-000000000000")
+      : quoteQuery.in("location_id", actor.locations);
+  }
+  const { data: quotes, error: qErr } = await quoteQuery
+    .order("created_at", { ascending: false })
+    .returns<Array<{ id: string; version: number; status: string; event_date: string | null; total_cents: number; pipeline_id: string | null; location_id: string }>>();
+  if (qErr) throw new Error(`loadCustomer quotes: ${qErr.message}`);
+  const quoteLeadIds = (quotes ?? []).flatMap((q) => (q.pipeline_id ? [q.pipeline_id] : []));
+
   const [{ data: leads }, { data: orders }] = await Promise.all([
     sb
       .from("catering_pipeline")
       .select("id, contact_name, stage, event_date, headcount")
-      .eq("customer_id", id)
+      .or(customerLeadsFilter(id, quoteLeadIds))
       .order("created_at", { ascending: false })
       .returns<Array<{ id: string; contact_name: string; stage: string; event_date: string | null; headcount: number | null }>>(),
     sb
@@ -181,6 +220,13 @@ export async function loadCustomer(actor: AuthContext, id: string): Promise<Cust
       orderDate: o.order_date,
       amountCents: o.amount_cents,
       headcount: o.headcount,
+    })),
+    quotes: (quotes ?? []).map((q) => ({
+      id: q.id,
+      version: q.version,
+      status: q.status,
+      eventDate: q.event_date,
+      totalCents: q.total_cents,
     })),
   };
 }

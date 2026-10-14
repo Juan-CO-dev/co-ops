@@ -75,8 +75,17 @@ function canSeeLocation(actor: AuthContext, locationId: string): boolean {
 }
 
 // ── Charge stack (pure) — lives in quotes-shared.ts; re-exported for server consumers ──
-import { computeChargeStack, lineTotalCents, type ChargeRates, type ChargeStack, reclassifyQuoteLineRefs } from "./quotes-shared";
-export { computeChargeStack, lineTotalCents, type ChargeRates, type ChargeStack };
+import {
+  computeChargeStack,
+  lineTotalCents,
+  type ChargeRates,
+  type ChargeStack,
+  reclassifyQuoteLineRefs,
+  shouldLinkLead,
+  mapQuoteParties,
+  type QuoteParties,
+} from "./quotes-shared";
+export { computeChargeStack, lineTotalCents, type ChargeRates, type ChargeStack, type QuoteParties };
 
 // ── Pricing context ───────────────────────────────────────────────────────────
 export interface DeliveryZone {
@@ -370,6 +379,36 @@ export async function loadQuote(actor: AuthContext, id: string): Promise<QuoteDe
   return { quote: mapQuote(row), items: (itemRows ?? []).map(mapItem) };
 }
 
+/**
+ * Who a quote is for, for the staff quote page (B5 #35): the customer's name, company and
+ * email (the same fields the Customers directory already shows at this read floor) and the
+ * linked lead's contact, company and event date. The caller has already passed loadQuote's
+ * read gate for this quote. A failed side read degrades that side to null (the quote page
+ * still renders) and is logged by error code only, never a contact value.
+ */
+export async function loadQuoteParties(quote: Pick<Quote, "id" | "customerId" | "pipelineId">): Promise<QuoteParties> {
+  const sb = getServiceRoleClient();
+  const [customer, lead] = await Promise.all([
+    quote.customerId
+      ? sb
+          .from("catering_customers")
+          .select("id, name, company, email")
+          .eq("id", quote.customerId)
+          .maybeSingle<{ id: string; name: string; company: string | null; email: string | null }>()
+      : Promise.resolve({ data: null, error: null }),
+    quote.pipelineId
+      ? sb
+          .from("catering_pipeline")
+          .select("id, contact_name, company, event_date")
+          .eq("id", quote.pipelineId)
+          .maybeSingle<{ id: string; contact_name: string; company: string | null; event_date: string | null }>()
+      : Promise.resolve({ data: null, error: null }),
+  ]);
+  if (customer.error) console.error(`[catering] loadQuoteParties customer read failed for quote ${quote.id}: ${customer.error.code ?? "unknown"}`);
+  if (lead.error) console.error(`[catering] loadQuoteParties lead read failed for quote ${quote.id}: ${lead.error.code ?? "unknown"}`);
+  return mapQuoteParties(customer.error ? null : customer.data, lead.error ? null : lead.data);
+}
+
 // ── Mutations ─────────────────────────────────────────────────────────────────
 export interface QuoteLineInput {
   description?: string | null;
@@ -583,6 +622,66 @@ export function parseQuoteLinesFromBody(raw: unknown): QuoteLineInput[] {
   });
 }
 
+/**
+ * Attach the quote's customer to its lead when the lead has none (B5 #34). The customer page
+ * lists leads by `catering_pipeline.customer_id`, and a staff-typed lead never had one, so a
+ * customer with a lead and a quote read "None yet".
+ *
+ * A SECOND WRITER ON `catering_pipeline`, kept narrow on purpose:
+ *   - NULL-ONLY: the UPDATE is guarded `customer_id IS NULL`, so it never moves a lead from
+ *     one customer to another (count 0 = someone linked it first; nothing to do).
+ *   - Same scope as the lead-edit PATCH: the actor must be able to write the lead's shop, and
+ *     the customer must be active and homed at no shop or one the actor holds.
+ *   - Audited on the action the lead-edit PATCH already speaks (`catering.pipeline.edit`).
+ *   - BEST-EFFORT: the quote is already committed. A failure here must not 500 the save (the
+ *     manager would re-save and make a second quote); it is logged by id and error code only,
+ *     never a contact value, and the next revise retries the link.
+ */
+async function linkLeadToCustomer(
+  actor: AuthContext,
+  args: { pipelineId: string | null; customerId: string | null; quoteId: string; context: "quote_create" | "quote_revise" },
+): Promise<void> {
+  if (!args.pipelineId || !args.customerId) return;
+  try {
+    const sb = getServiceRoleClient();
+    const [{ data: lead, error: lErr }, { data: customer, error: cErr }] = await Promise.all([
+      sb.from("catering_pipeline").select("id, customer_id, location_id").eq("id", args.pipelineId)
+        .maybeSingle<{ id: string; customer_id: string | null; location_id: string | null }>(),
+      sb.from("catering_customers").select("id, active, primary_location_id").eq("id", args.customerId)
+        .maybeSingle<{ id: string; active: boolean; primary_location_id: string | null }>(),
+    ]);
+    if (lErr || cErr) throw new Error(`read failed: ${lErr?.code ?? cErr?.code ?? "unknown"}`);
+    if (!lead || !customer) return;
+    if (!shouldLinkLead({ pipelineId: lead.id, customerId: customer.id, leadCustomerId: lead.customer_id })) return;
+    if (lead.location_id != null && !lockLocationContext(locActor(actor), lead.location_id)) return;
+    if (!customer.active) return;
+    if (customer.primary_location_id != null && !lockLocationContext(locActor(actor), customer.primary_location_id)) return;
+
+    const { error: uErr, count } = await sb
+      .from("catering_pipeline")
+      .update({ customer_id: customer.id, updated_at: new Date().toISOString() }, { count: "exact" })
+      .eq("id", lead.id)
+      .is("customer_id", null);
+    if (uErr) throw new Error(`update failed: ${uErr.code ?? "unknown"}`);
+    if ((count ?? 0) === 0) return; // linked by someone else in between; null-only, so leave it
+
+    void audit({
+      actorId: actor.user.id,
+      actorRole: actor.user.role,
+      action: "catering.pipeline.edit",
+      resourceTable: "catering_pipeline",
+      resourceId: lead.id,
+      metadata: { fields: ["customer_id"], context: args.context, quote_id: args.quoteId, customer_id: customer.id },
+      ipAddress: null,
+      userAgent: null,
+    });
+  } catch (e) {
+    console.error(
+      `[catering] could not link lead ${args.pipelineId} to the customer of quote ${args.quoteId} (${args.context}): ${e instanceof Error ? e.message : String(e)}`,
+    );
+  }
+}
+
 /** Create a draft quote (v1) — computes + freezes the charge stack, inserts header + lines. */
 export async function createQuote(actor: AuthContext, input: CreateQuoteInput): Promise<{ id: string; version: number }> {
   const locationId = input.locationId;
@@ -659,6 +758,12 @@ export async function createQuote(actor: AuthContext, input: CreateQuoteInput): 
     metadata: { location_id: locationId, pipeline_id: input.pipelineId ?? null, total_cents: stack.totalCents, lines: lines.length },
     ipAddress: null,
     userAgent: null,
+  });
+  await linkLeadToCustomer(actor, {
+    pipelineId: input.pipelineId ?? null,
+    customerId: input.customerId ?? null,
+    quoteId: inserted.id,
+    context: "quote_create",
   });
   return { id: inserted.id, version: inserted.version };
 }
@@ -807,6 +912,13 @@ export async function reviseQuote(actor: AuthContext, quoteId: string, input: Re
     metadata: { from_quote_id: quoteId, root_id: rootId, version: inserted.version, total_cents: stack.totalCents },
     ipAddress: null,
     userAgent: null,
+  });
+  // A quote saved before this link existed (B5 #34) gets its lead linked on the next revise.
+  await linkLeadToCustomer(actor, {
+    pipelineId: current.pipeline_id,
+    customerId: current.customer_id,
+    quoteId: inserted.id,
+    context: "quote_revise",
   });
   return { id: inserted.id, version: inserted.version, pipelineId: current.pipeline_id };
 }

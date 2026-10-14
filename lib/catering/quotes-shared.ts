@@ -143,3 +143,131 @@ export function reclassifyQuoteLineRefs<T extends QuoteLineRefLike>(
   });
   return { lines: out, moved, unknown };
 }
+
+// ── Quote ↔ lead ↔ customer (B5 #34, #35) ─────────────────────────────────────────────
+
+/**
+ * Should saving a quote attach its customer to the linked lead? Only when the quote names
+ * both a lead and a customer AND the lead has no customer yet: the link is null-only, so it
+ * never moves a lead from one customer to another (B5 #34).
+ */
+export function shouldLinkLead(args: {
+  pipelineId: string | null | undefined;
+  customerId: string | null | undefined;
+  leadCustomerId: string | null | undefined;
+}): boolean {
+  return !!args.pipelineId && !!args.customerId && args.leadCustomerId == null;
+}
+
+/** Who a saved quote is for — a whitelisted DTO (no phone, no address, no notes). */
+export interface QuoteClientRef {
+  id: string;
+  name: string;
+  company: string | null;
+  email: string | null;
+}
+export interface QuoteLeadRef {
+  id: string;
+  contactName: string;
+  company: string | null;
+  eventDate: string | null;
+}
+export interface QuoteParties {
+  client: QuoteClientRef | null;
+  lead: QuoteLeadRef | null;
+}
+
+/** Map the customer + lead rows to the quote page's DTO, picking fields by name only. */
+export function mapQuoteParties(
+  customer: { id: string; name: string; company: string | null; email: string | null } | null,
+  lead: { id: string; contact_name: string; company: string | null; event_date: string | null } | null,
+): QuoteParties {
+  return {
+    client: customer
+      ? { id: customer.id, name: customer.name, company: customer.company, email: customer.email }
+      : null,
+    lead: lead
+      ? { id: lead.id, contactName: lead.contact_name, company: lead.company, eventDate: lead.event_date }
+      : null,
+  };
+}
+
+// ── Builder helpers (B5 #37, #38, #39) — pure, client-safe ──────────────────────────────
+
+export interface DraftLineLike {
+  description: string;
+  unitPrice: string;
+  itemId: string | null;
+  menuItemId: string | null;
+  packageId: string | null;
+}
+
+/** A line nobody has touched: no description, no catalog reference, no price. */
+export function isUntouchedBlankLine(l: DraftLineLike): boolean {
+  return (
+    l.description.trim() === "" &&
+    l.itemId == null &&
+    l.menuItemId == null &&
+    l.packageId == null &&
+    l.unitPrice.trim() === ""
+  );
+}
+
+/**
+ * Append lines from a package or menu pick, dropping the untouched blank lines first so a
+ * new quote does not keep its empty starter line under the package (B5 #37). Appending
+ * nothing returns `prev` unchanged.
+ */
+export function appendLines<T extends DraftLineLike>(prev: readonly T[], next: readonly T[]): T[] {
+  if (next.length === 0) return [...prev];
+  return [...prev.filter((l) => !isUntouchedBlankLine(l)), ...next];
+}
+
+export interface QuoteLeadOption {
+  id: string;
+  contactName: string;
+  company: string | null;
+  eventDate: string | null;
+  headcount: number | null;
+  locationId: string | null;
+  locationName?: string | null;
+}
+export interface QuotePrefillForm {
+  contactName: string;
+  contactCompany: string;
+  eventDate: string;
+  headcount: string;
+  locationId: string;
+}
+
+/**
+ * Picking a lead fills the EMPTY name, company, date and headcount, and moves the shop to
+ * the lead's shop when the builder offers it. A value the manager already typed is never
+ * overwritten (B5 #38).
+ */
+export function prefillFromLead(
+  form: QuotePrefillForm,
+  lead: QuoteLeadOption,
+  locationIds: readonly string[],
+): QuotePrefillForm {
+  return {
+    contactName: form.contactName.trim() === "" ? lead.contactName : form.contactName,
+    contactCompany: form.contactCompany.trim() === "" ? lead.company ?? "" : form.contactCompany,
+    eventDate: form.eventDate === "" ? lead.eventDate ?? "" : form.eventDate,
+    headcount: form.headcount === "" && lead.headcount != null ? String(lead.headcount) : form.headcount,
+    locationId:
+      lead.locationId != null && locationIds.includes(lead.locationId) ? lead.locationId : form.locationId,
+  };
+}
+
+/** "Contact · Company · {date} · {shop}" so two leads with one name can be told apart (B5 #39). */
+export function leadOptionLabel(lead: QuoteLeadOption, formatDate: (yyyymmdd: string) => string): string {
+  return [
+    lead.contactName,
+    lead.company,
+    lead.eventDate ? formatDate(lead.eventDate) : null,
+    lead.locationName,
+  ]
+    .filter((p): p is string => typeof p === "string" && p.trim() !== "")
+    .join(" · ");
+}
