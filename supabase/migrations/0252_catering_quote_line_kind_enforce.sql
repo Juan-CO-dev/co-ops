@@ -33,8 +33,12 @@
 --   · a bare line whose description is the package label   → package_header
 --       components_listed = TRUE  when the quote also lists that package's component / pick
 --                                 lines as their own lines (the staff builder);
---                           FALSE when the header is the package's ONLY line (the portal, or a
---                                 package with no composition) — it then stands for the whole package
+--       a header that is the package's ONLY line is AMBIGUOUS — a human decides, never this rule:
+--         · FALSE (stands for the whole package) only when the quote came from the customer portal,
+--           or the package has no composition at all;
+--         · TRUE when it is a staff-builder quote whose listed components were deleted on purpose
+--           (FALSE here would bring back demand staff removed — Astra r6). Ask whoever built it if unsure.
+--         Zero remaining NULL kinds proves the repair is complete, not that it is right.
 --   · a bare line whose description is a choice slot's     → package_pick (components_listed NULL)
 --     label (catering_package_items.description, slot_type 'choice')
 --   · anything else (retyped description)                  → a human decides from the quote
@@ -45,7 +49,11 @@
 --          case
 --            when qi.item_id is not null or qi.menu_item_id is not null then 'package_component'
 --            when lower(btrim(coalesce(qi.description, ''))) in (lower(btrim(p.label_en)), lower(btrim(coalesce(p.label_es, ''))))
---              then 'package_header'
+--              then case when exists (select 1 from public.catering_quote_items o
+--                                      where o.quote_id = qi.quote_id and o.package_id = qi.package_id and o.id <> qi.id)
+--                        then 'package_header (components_listed = true)'
+--                        else 'package_header — ONLY LINE: REVIEW BY HAND (portal/no composition = false; staff quote with components removed = true)'
+--                   end
 --            when exists (select 1 from public.catering_package_items s
 --                          where s.package_id = qi.package_id and s.slot_type = 'choice'
 --                            and lower(btrim(coalesce(s.description, ''))) = lower(btrim(coalesce(qi.description, ''))))
@@ -65,7 +73,8 @@
 --   -- pick lines:
 --   -- update public.catering_quote_items set line_kind = 'package_pick', components_listed = null
 --   --  where id in ('<pick line id>', ...) and line_kind is null;
---   -- the header (true = its components/picks are listed on the quote, false = it is the package's only line):
+--   -- the header (true = the quote lists its components/picks, OR a staff quote whose components were
+--   -- deleted on purpose; false = a portal line or a package with no composition — see the rule above):
 --   -- update public.catering_quote_items set line_kind = 'package_header', components_listed = <true|false>
 --   --  where id = '<header line id>' and line_kind is null;
 --   -- then re-run step 1: zero rows for that quote, and commit;
