@@ -340,7 +340,7 @@ These jobs run all day. You use your board. You do your station's closing jobs. 
 
 The board shows who has which task and station today. Find it on the dashboard under **My shift**.
 
-![My shift on the dashboard, with the Tasks, Stations and Team today rows](img/staff/15-my-shift.png)
+![My shift on the dashboard, with the Tasks, My station and Team today rows](img/staff/15-my-shift.png)
 
 It has three rows: **Tasks**, **My station** and **Team today**. Tap a row to open it. The **My station** row says "Yours:" and your station, or "None yet". For the full board, tap **View my day**, or tap **Assignments** in **Explore**.
 
@@ -361,7 +361,7 @@ You pick your own station from the board on the dashboard. If a key holder or ma
 
 1. On the dashboard, under **My shift**, tap the **My station** row to open it.
 
-![The open Stations row with the Station list and Claim / change station](img/staff/18-claim-station.png)
+![The open My station row with the Station list and Claim / change station](img/staff/18-claim-station.png)
 
 2. Pick your spot in the **Station** list. Some choices say **fill first**. That means nobody is at that station yet. Take those before the others.
 
@@ -371,7 +371,7 @@ You pick your own station from the board on the dashboard. If a key holder or ma
 
 5. The **My station** row now says "Yours:" and your station. A **My station:** card with your station's name shows up under **Reports**. Tap it to go to your part of the closing checklist.
 
-![Your station claimed, and the My station card under Reports](img/staff/19-station-claimed.png)
+![Your station claimed: the My station row says Yours:, and the My station card under Reports](img/staff/19-station-claimed.png)
 
 **Worth knowing**
 
@@ -391,9 +391,11 @@ The closing checklist runs all day. Each station closes on its own when its jobs
 
 3. Do a job, then tap its line. The line gets a check, with "you" and the time.
 
+![Two lines checked, each with Undo and Add note](img/staff/22-closing-ticked.png)
+
 4. A fridge temp line works a little differently. Tapping it opens a small box. Type the temp in **Temp (°F)**, then tap **Save**. A few lines ask for a number the same way, in a box called **Count**.
 
-![Two lines checked, each with Undo and Add note](img/staff/22-closing-ticked.png)
+![A fridge temp line open, with 38 typed in the Temp (°F) box and the Save button](img/staff/22b-closing-temp-line.png)
 
 5. Want to add a note? Tap **Add note** on a checked line. Type in the box ("Anything noteworthy?"). Tap **Save note**.
 
@@ -483,13 +485,19 @@ After the lunch rush, mid-day prep gets the line back to par. You only do it if 
 
 4. The page now says **Phase 2 — prep** (not shown in a photo). Each row shows **Need:**, how much to make. Make the food. Type how much you made in the **Prepped** box.
 
+![Phase 2 — prep: rows with Need: and an empty Prepped box](img/staff/33b-midday-phase2.png)
+
 5. Made more or less than **Need:**? An **Add over/under reason** button shows under the row. Tap it and fill it in first. If you skip it, **Save** says "Add an over/under reason first".
 
 6. Tap **Save** on that row. The row says "Saved ✓".
 
+![A row saved, with "Saved ✓"](img/staff/33c-midday-row-saved.png)
+
 7. When every row you made is saved, tap **Finalize prep**. This checks the Mid-day Prep line on the closing checklist for you.
 
 8. The title changes to **Finalized — prep made**. A green line says "Finalized at" the time, with your name. Each row shows **Need:** and **Made:**. Your work is saved.
+
+![Finalized — prep made: the green Finalized at line, and Need: and Made: on each row](img/staff/33d-midday-finalized.png)
 
 **Worth knowing**
 
@@ -504,6 +512,8 @@ After the lunch rush, mid-day prep gets the line back to par. You only do it if 
 ### Production
 
 Use this when you make food from raw stock outside the opening and mid-day prep sheets. Employees and up can log it. Tap **Production** in **Explore** (not shown in a photo).
+
+![The Production page: the Log a conversion form and Recent production](img/staff/33e-production.png)
 
 1. Under **Log a conversion**, pick the **Raw item (SKU)** you used. Each choice shows how many packs are **in stock**.
 
@@ -724,7 +734,7 @@ Closers: finish your station's lines and AM prep first. **End my shift** takes y
 
 1. On the dashboard, under **My shift**, tap the **My station** row to open it.
 
-![The open Stations row with End my shift](img/staff/34-end-my-shift.png)
+![The open My station row with End my shift](img/staff/34-end-my-shift.png)
 
 2. Tap **End my shift**.
 

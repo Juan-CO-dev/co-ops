@@ -450,7 +450,7 @@ Open it any time to see the shop at a glance. It updates every 60 seconds.
 
 **What you see**
 
-![Mid-shift Pulse: the Needs attention card lists uncovered stations, each with an Assign button](img/manager/25-pulse.png)
+![Mid-shift Pulse: the Needs attention card, late items first, then uncovered stations with an Assign button](img/manager/25-pulse.png)
 
 **What to do** — Tap **Mid-Shift Pulse** in the menu. Read **Needs attention** first.
 
@@ -607,6 +607,8 @@ After the lunch rush, you count and prep back up to par. It is due from 2:00 PM 
 
 #### 3. Prep and finish (not shown)
 
+![Phase 2 — prep: one row saved with Saved ✓, the next row with its Prepped box and Save button](img/manager/24b-midday-phase2-saved.png)
+
 **What to do** — In **Phase 2 — prep**, type what you made in **Prepped**. Tap **Save** on that row. Do this on every row. Then tap **Finalize prep**.
 
 **Worth knowing**
@@ -617,6 +619,8 @@ After the lunch rush, you count and prep back up to par. It is due from 2:00 PM 
 - When it is done, the page says **Finalized — prep made**, with who finished it and when. Each row shows what was **Made:**.
 - This ticks the **Mid-day Prep** line on the closing checklist for you.
 - After that, tapping **Mid-day prep** on the board opens the finished one.
+
+![Finalized — prep made, with who finished it and when, and Need: and Made: on each row](img/manager/24c-midday-finalized.png)
 
 ### Keep the closing checklist moving
 
@@ -640,7 +644,9 @@ The closing checklist is not only a night job. It runs all day, one station at a
 
 **What you see**
 
-![Every closing section open, with the Closing Manager report lines and Walk-Out Verification](img/manager/31-closing-full.png)
+![The closing checklist with the station sections open, each with its lines](img/manager/31-closing-full.png)
+
+![Further down: the Closing Manager report lines and Walk-Out Verification](img/manager/31a-closing-report-lines.png)
 
 **What to do** — When a station winds down, tick its lines. When every line in a station is done, that station is closed. The board then shows **Closed · …** with the time.
 
@@ -654,6 +660,8 @@ The closing checklist is not only a night job. It runs all day, one station at a
 - The closing has its own fridge temp lines. Morning temps don't count for it.
 - To fill a temp line, tap it. A **Temp (°F)** box opens. Type the temp and tap **Save**. The line ticks only after **Save**.
 - The shop closes at 8:00 PM. The closing is late after 9:00 PM.
+
+![A fridge temp line open, with 38 typed in the Temp (°F) box and the Save button](img/manager/31b-closing-temp-line.png)
 
 ### Breaks and the end of a shift
 
@@ -785,7 +793,7 @@ You do this once a night. Key holders and up.
 
 **What you see**
 
-![PM Report: Shift activity, MVP, and a grade card for each person](img/manager/32-pm-report.png)
+![PM Report: Shift activity, MVP, and a grade card for each person with no grade picked yet](img/manager/32-pm-report.png)
 
 **What to do** — On the board, tap **PM report**. If it is assigned to you, the **PM Report** tile works too.
 
@@ -797,7 +805,7 @@ You do this once a night. Key holders and up.
 
 **What you see**
 
-![Two grade cards: Attitude set to Great on one, Production set to Needs work on the other](img/manager/33-pm-grades.png)
+![Two saved grade cards, every line graded: Attitude Great on one, Production Needs work on the other](img/manager/33-pm-grades.png)
 
 **What to do** — Each person gets four grades: **Arrived ready**, **Attitude**, **Production** and **Team player**. Tap **Great**, **Good** or **Needs work** on each. Tap **Save** on the card.
 

@@ -222,6 +222,8 @@ The shop team can follow catering here during the day.
 
 2. Find the **Catering** section.
 
+![The Catering section on the Mid-Shift Pulse](img/catering/06b-pulse-catering.png)
+
 3. To leave a note for the next shift, open the **Handoff** section.
 
 4. Tap **Write a handoff note** and pick who sees it: **For crew**, **For managers** or **For everyone**.
@@ -324,7 +326,7 @@ You do this when someone calls, emails or walks in about catering.
 
 1. Tap the card. It opens right there on the board.
 
-![A lead card opened, with "No caps set" and the Move to buttons](img/catering/10-lead-detail.png)
+![A lead card opened, with Edit details, "No caps set" and the Move to buttons](img/catering/10-lead-detail.png)
 
 2. Tap the card again to close it.
 
@@ -343,6 +345,8 @@ You do this when the client changes the date or the headcount, or you have a new
 2. Tap **Edit details**.
 
 3. Change what you need: **Contact name**, **Company**, **Event date**, **Headcount**, **Follow-up date** or **Notes**.
+
+![The Edit details form on a lead, with Save and Cancel](img/catering/10b-lead-edit-details.png)
 
 4. Tap **Save**.
 
@@ -501,7 +505,7 @@ A quote is the price for a lead, line by line. AGM, Catering Manager and up can 
 
 2. Tap **New quote**.
 
-![The top of the new quote form](img/catering/13-quote-builder.png)
+![The top of the new quote form, filled in from the picked lead](img/catering/13-quote-builder.png)
 
 3. Under **Pipeline lead**, pick the lead this quote is for. Don't skip it. The kitchen plans the food from this quote when the lead moves to **Confirmed**.
 
@@ -551,7 +555,7 @@ A quote is the price for a lead, line by line. AGM, Catering Manager and up can 
 
 3. Tap **Save draft**.
 
-![The saved draft quote with its total, line items and buttons](img/catering/15-quote-saved.png)
+![The saved draft quote with its total, Client, Lead, line items and buttons](img/catering/15-quote-saved.png)
 
 **Worth knowing**
 
@@ -845,6 +849,8 @@ Catering has its own lists of people and businesses. The GM and up also have the
 ![Catering Companies with a New company button and "No company accounts yet."](img/catering/18-catering-companies.png)
 
 2. Tap **New company** to add a business you cater for. The form is not shown in photos.
+
+![The New company form](img/catering/18b-new-company-form.png)
 
 **Worth knowing**
 
