@@ -4204,6 +4204,7 @@
   "catering.quotes.labels": "Print labels",
   "catering.quotes.error.status_changed": "This quote changed since you loaded it — reload and try again.",
   "catering.quotes.error.quote_expired": "This quote has expired — revise it before accepting.",
+  "catering.quotes.error.invalid_customer": "That client belongs to a shop you don't manage, or no longer exists. Use another email or ask a manager who covers that shop.",
   "catering.quotes.error.generic": "Something went wrong. Please try again.",
   "catering.quotes.error.forbidden": "You do not have permission for that.",
   "catering.quotes.error.not_found": "Not found.",

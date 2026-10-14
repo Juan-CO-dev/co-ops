@@ -27,6 +27,8 @@ import { audit } from "@/lib/audit";
 import { sendEmail } from "@/lib/email";
 import { escapeHtml } from "@/lib/email-templates/_layout";
 import type { AuthContext } from "@/lib/session";
+import { loadCateringReader } from "./ezcater-detail";
+import { canReadCateringContact } from "./ezcater-detail-shared";
 
 export const QUOTE_READ_MIN = 5; // shift_lead+ may VIEW (a lead viewer sees its quote)
 export const QUOTE_WRITE_MIN = 6; // catering_mgr+ may build/revise/send
@@ -381,32 +383,80 @@ export async function loadQuote(actor: AuthContext, id: string): Promise<QuoteDe
 
 /**
  * Who a quote is for, for the staff quote page (B5 #35): the customer's name, company and
- * email (the same fields the Customers directory already shows at this read floor) and the
- * linked lead's contact, company and event date. The caller has already passed loadQuote's
- * read gate for this quote. A failed side read degrades that side to null (the quote page
- * still renders) and is logged by error code only, never a contact value.
+ * email and the linked lead's contact, company and event date.
+ *
+ * EACH SIDE IS AUTHORIZED ON ITS OWN (review P1). Passing loadQuote's gate proves the actor
+ * may read the QUOTE's shop, not the customer's or the lead's: a quote at shop A can name a
+ * customer homed at shop B (or a lead since transferred to B). Both sides go through the
+ * catering contact policy (`canReadCateringContact`, fresh memberships, fail-closed): a
+ * customer is shown only when it is global (no home shop) or homed at a shop the actor reads;
+ * a lead only when it is global or at such a shop. Otherwise that side is omitted (null).
+ * A failed side read degrades that side to null and is logged by error code only.
  */
-export async function loadQuoteParties(quote: Pick<Quote, "id" | "customerId" | "pipelineId">): Promise<QuoteParties> {
+export async function loadQuoteParties(
+  actor: AuthContext,
+  quote: Pick<Quote, "id" | "customerId" | "pipelineId">,
+): Promise<QuoteParties> {
+  if (!quote.customerId && !quote.pipelineId) return mapQuoteParties(null, null);
   const sb = getServiceRoleClient();
-  const [customer, lead] = await Promise.all([
+  const [reader, customer, lead] = await Promise.all([
+    loadCateringReader(actor),
     quote.customerId
       ? sb
           .from("catering_customers")
-          .select("id, name, company, email")
+          .select("id, name, company, email, primary_location_id")
           .eq("id", quote.customerId)
-          .maybeSingle<{ id: string; name: string; company: string | null; email: string | null }>()
+          .maybeSingle<{ id: string; name: string; company: string | null; email: string | null; primary_location_id: string | null }>()
       : Promise.resolve({ data: null, error: null }),
     quote.pipelineId
       ? sb
           .from("catering_pipeline")
-          .select("id, contact_name, company, event_date")
+          .select("id, contact_name, company, event_date, location_id")
           .eq("id", quote.pipelineId)
-          .maybeSingle<{ id: string; contact_name: string; company: string | null; event_date: string | null }>()
+          .maybeSingle<{ id: string; contact_name: string; company: string | null; event_date: string | null; location_id: string | null }>()
       : Promise.resolve({ data: null, error: null }),
   ]);
   if (customer.error) console.error(`[catering] loadQuoteParties customer read failed for quote ${quote.id}: ${customer.error.code ?? "unknown"}`);
   if (lead.error) console.error(`[catering] loadQuoteParties lead read failed for quote ${quote.id}: ${lead.error.code ?? "unknown"}`);
-  return mapQuoteParties(customer.error ? null : customer.data, lead.error ? null : lead.data);
+  const c = !customer.error && customer.data && reader && canReadCateringContact(reader, customer.data.primary_location_id)
+    ? customer.data : null;
+  const l = !lead.error && lead.data && reader && canReadCateringContact(reader, lead.data.location_id)
+    ? lead.data : null;
+  return mapQuoteParties(c, l);
+}
+
+/**
+ * A quote's customer must be one the actor may read (review P1): global (no home shop) or
+ * homed at a shop the actor reads under the catering contact policy. Checked on CREATE (any
+ * `customerId`, whether sent by the client or resolved from a typed email) and on REVISE
+ * (the customer the live revision carries). Missing and out-of-scope answer the SAME 400
+ * `invalid_customer`, so the refusal is not an existence oracle for another shop's book.
+ * `requireActive`: a new quote may not name a deactivated contact; a revise keeps the
+ * customer the quote already has, so deactivation alone does not block it.
+ */
+async function assertQuoteCustomerReadable(
+  actor: AuthContext,
+  customerId: string,
+  opts: { requireActive: boolean },
+): Promise<void> {
+  const sb = getServiceRoleClient();
+  const [reader, { data, error }] = await Promise.all([
+    loadCateringReader(actor),
+    sb
+      .from("catering_customers")
+      .select("id, active, primary_location_id")
+      .eq("id", customerId)
+      .maybeSingle<{ id: string; active: boolean; primary_location_id: string | null }>(),
+  ]);
+  if (error) throw new Error(`quote customer check: ${error.message}`);
+  const usable =
+    !!data &&
+    (!opts.requireActive || data.active) &&
+    !!reader &&
+    canReadCateringContact(reader, data.primary_location_id);
+  if (!usable) {
+    throw new CateringQuoteError(400, "invalid_customer", "That client is not available at this shop");
+  }
 }
 
 // ── Mutations ─────────────────────────────────────────────────────────────────
@@ -630,14 +680,19 @@ export function parseQuoteLinesFromBody(raw: unknown): QuoteLineInput[] {
  * A SECOND WRITER ON `catering_pipeline`, kept narrow on purpose:
  *   - NULL-ONLY: the UPDATE is guarded `customer_id IS NULL`, so it never moves a lead from
  *     one customer to another (count 0 = someone linked it first; nothing to do).
+ *   - LOCATION-BOUND: the UPDATE also matches the `location_id` that was authorized, so a
+ *     transfer racing the write cannot let a shop-A actor change a shop-B lead.
  *   - Same scope as the lead-edit PATCH: the actor must be able to write the lead's shop, and
  *     the customer must be active and homed at no shop or one the actor holds.
  *   - Audited on the action the lead-edit PATCH already speaks (`catering.pipeline.edit`).
  *   - BEST-EFFORT: the quote is already committed. A failure here must not 500 the save (the
  *     manager would re-save and make a second quote); it is logged by id and error code only,
  *     never a contact value, and the next revise retries the link.
+ *
+ * Exported only so the behaviour spine can drive it directly; createQuote / reviseQuote are
+ * its only callers.
  */
-async function linkLeadToCustomer(
+export async function linkLeadToCustomer(
   actor: AuthContext,
   args: { pipelineId: string | null; customerId: string | null; quoteId: string; context: "quote_create" | "quote_revise" },
 ): Promise<void> {
@@ -657,13 +712,18 @@ async function linkLeadToCustomer(
     if (!customer.active) return;
     if (customer.primary_location_id != null && !lockLocationContext(locActor(actor), customer.primary_location_id)) return;
 
-    const { error: uErr, count } = await sb
+    // Bind the write to the shop we AUTHORIZED (review P2): a transfer between the read and
+    // this UPDATE changes location_id, the predicate stops matching, and nothing is written.
+    let update = sb
       .from("catering_pipeline")
       .update({ customer_id: customer.id, updated_at: new Date().toISOString() }, { count: "exact" })
       .eq("id", lead.id)
       .is("customer_id", null);
+    update = lead.location_id == null ? update.is("location_id", null) : update.eq("location_id", lead.location_id);
+    const { error: uErr, count } = await update;
     if (uErr) throw new Error(`update failed: ${uErr.code ?? "unknown"}`);
-    if ((count ?? 0) === 0) return; // linked by someone else in between; null-only, so leave it
+    // 0 rows = linked by someone else, or moved to another shop, in between. Leave it.
+    if ((count ?? 0) === 0) return;
 
     void audit({
       actorId: actor.user.id,
@@ -687,6 +747,9 @@ export async function createQuote(actor: AuthContext, input: CreateQuoteInput): 
   const locationId = input.locationId;
   if (!locationId) throw new CateringQuoteError(400, "invalid_payload", "locationId is required");
   assertCanWrite(actor, locationId);
+  // Review P1: a quote may only name a customer the actor can read (pre-existing gap: the
+  // route passed any body `customerId` straight through). Before any write.
+  if (input.customerId) await assertQuoteCustomerReadable(actor, input.customerId, { requireActive: true });
 
   const sb = getServiceRoleClient();
   const lines = await verifyLineRefs(sb, resolveLines(input.lines));
@@ -819,6 +882,8 @@ export async function reviseQuote(actor: AuthContext, quoteId: string, input: Re
   if (current.superseded_at != null) {
     throw new CateringQuoteError(409, "not_current", "This quote revision has already been superseded");
   }
+  // Review P1: the revision carries the customer forward, so it must be one the actor can read.
+  if (current.customer_id) await assertQuoteCustomerReadable(actor, current.customer_id, { requireActive: false });
 
   // Validate + compute the new revision fully before touching the current row.
   const lines = await verifyLineRefs(sb, resolveLines(input.lines));

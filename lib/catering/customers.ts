@@ -15,6 +15,8 @@ import { lockLocationContext, isAllLocationsAccess } from "@/lib/locations";
 import { audit } from "@/lib/audit";
 import type { AuthContext } from "@/lib/session";
 import { normalizeEmail } from "@/lib/catering/companies";
+import { loadCateringReader } from "@/lib/catering/ezcater-detail";
+import { canReadCateringContact } from "@/lib/catering/ezcater-detail-shared";
 
 export const CUSTOMER_READ_MIN = 5;
 export const CUSTOMER_WRITE_MIN = 6;
@@ -154,6 +156,15 @@ export function customerLeadsFilter(customerId: string, quoteLeadIds: readonly s
     : `customer_id.eq.${customerId},and(id.in.(${ids.join(",")}),customer_id.is.null)`;
 }
 
+/** Keep only the leads whose shop the reader may read (global leads included). Pure. */
+export function filterReadableLeads<T extends { location_id: string | null }>(
+  reader: Parameters<typeof canReadCateringContact>[0] | null,
+  leads: readonly T[],
+): T[] {
+  if (!reader) return [];
+  return leads.filter((l) => canReadCateringContact(reader, l.location_id));
+}
+
 /** One customer + their pipeline leads + order history (scoped). Null if not visible. */
 export async function loadCustomer(actor: AuthContext, id: string): Promise<CustomerDetail | null> {
   requireLevel(actor, CUSTOMER_READ_MIN);
@@ -191,13 +202,14 @@ export async function loadCustomer(actor: AuthContext, id: string): Promise<Cust
   if (qErr) throw new Error(`loadCustomer quotes: ${qErr.message}`);
   const quoteLeadIds = (quotes ?? []).flatMap((q) => (q.pipeline_id ? [q.pipeline_id] : []));
 
-  const [{ data: leads }, { data: orders }] = await Promise.all([
+  const [reader, { data: leadRows }, { data: orders }] = await Promise.all([
+    loadCateringReader(actor),
     sb
       .from("catering_pipeline")
-      .select("id, contact_name, stage, event_date, headcount")
+      .select("id, contact_name, stage, event_date, headcount, location_id")
       .or(customerLeadsFilter(id, quoteLeadIds))
       .order("created_at", { ascending: false })
-      .returns<Array<{ id: string; contact_name: string; stage: string; event_date: string | null; headcount: number | null }>>(),
+      .returns<Array<{ id: string; contact_name: string; stage: string; event_date: string | null; headcount: number | null; location_id: string | null }>>(),
     sb
       .from("catering_orders")
       .select("id, order_date, amount_cents, headcount")
@@ -206,9 +218,15 @@ export async function loadCustomer(actor: AuthContext, id: string): Promise<Cust
       .returns<Array<{ id: string; order_date: string; amount_cents: number | null; headcount: number | null }>>(),
   ]);
 
+  // Review P1: a customer's leads are listed by RELATIONSHIP (either branch of the filter),
+  // but each lead is contact data at its OWN shop. A lead transferred to a shop the actor does
+  // not read (or one a quote points at there) is dropped, under the same catering contact
+  // policy the pipeline uses (fresh memberships; fail-closed: no reader, no leads).
+  const leads = filterReadableLeads(reader, leadRows ?? []);
+
   return {
     customer: mapCustomer(row),
-    leads: (leads ?? []).map((l) => ({
+    leads: leads.map((l) => ({
       id: l.id,
       contactName: l.contact_name,
       stage: l.stage,

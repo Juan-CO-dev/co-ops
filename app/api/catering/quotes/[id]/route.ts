@@ -26,8 +26,9 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
   try {
     const detail = await loadQuote(ctx, id);
     if (!detail) return jsonError(404, "not_found");
-    // Client + lead for the quote page (B5 #35), read only after loadQuote's gate passed.
-    const parties = await loadQuoteParties(detail.quote);
+    // Client + lead for the quote page (B5 #35). Each side is authorized on its own inside
+    // loadQuoteParties: passing loadQuote's gate only proves the QUOTE's shop is readable.
+    const parties = await loadQuoteParties(ctx, detail.quote);
     return jsonOk({ quote: detail.quote, items: detail.items, client: parties.client, lead: parties.lead });
   } catch (e) {
     if (e instanceof CateringQuoteError) return jsonError(e.status, e.code);

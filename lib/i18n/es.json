@@ -4204,6 +4204,7 @@
   "catering.quotes.labels": "Imprimir etiquetas",
   "catering.quotes.error.status_changed": "Esta cotización cambió desde que la cargaste — actualiza e inténtalo de nuevo.",
   "catering.quotes.error.quote_expired": "Esta cotización venció — revísala antes de aceptar.",
+  "catering.quotes.error.invalid_customer": "Ese cliente es de una tienda que no manejas, o ya no existe. Usa otro correo o pídeselo a un gerente de esa tienda.",
   "catering.quotes.error.generic": "Algo salió mal. Inténtalo de nuevo.",
   "catering.quotes.error.forbidden": "No tienes permiso para eso.",
   "catering.quotes.error.not_found": "No encontrado.",

@@ -106,7 +106,11 @@ describe("#35 saved quote shows client and lead", () => {
   });
   it("the GET route reads the parties after the loadQuote gate and the panel renders them", () => {
     const route = src("app/api/catering/quotes/[id]/route.ts");
-    expect(route.indexOf("loadQuoteParties(detail.quote)")).toBeGreaterThan(route.indexOf("if (!detail) return jsonError(404"));
+    expect(route.indexOf("loadQuoteParties(ctx, detail.quote)")).toBeGreaterThan(route.indexOf("if (!detail) return jsonError(404"));
+    // The refusal a cross-shop client gets on create/revise is a known, translated code.
+    expect(src("components/catering/quotes/shared.ts")).toContain('"invalid_customer"');
+    expect(enKeys["catering.quotes.error.invalid_customer"]).toBeTruthy();
+    expect(esKeys["catering.quotes.error.invalid_customer"]).toBeTruthy();
     expect(route).toContain("client: parties.client, lead: parties.lead");
     const client = src("components/catering/quotes/QuotesClient.tsx");
     expect(client).toContain('t("catering.quotes.client")');
