@@ -38,6 +38,7 @@ import {
   excludeSkippedTargets,
   finalizeMidDayPhase2,
   loadAmPrepState,
+  restrictToChainUniverse,
   saveMidDayPhase2Item,
   submitAmPrep,
   submitMidDayPhase1,
@@ -61,8 +62,16 @@ function fakeService(tables: Record<string, Row[]>, rpcResult: (name: string, pa
     const self = () => b;
     Object.assign(b, {
       select: self,
-      is: self,
-      in: self,
+      // `is(col, null)` / `in(col, values)` filter like PostgREST; a row without the column passes.
+      is: (col: string, val: unknown) => {
+        rows = rows.filter((r) => !(col in r) || (r[col] ?? null) === val);
+        return b;
+      },
+      in: (col: string, vals: unknown[]) => {
+        rows = rows.filter((r) => !(col in r) || vals.includes(r[col]));
+        return b;
+      },
+      or: self, // only the AM prep chain lookups use it; each test's tables hold that one chain
       order: self,
       limit: self,
       returns: self,
@@ -324,5 +333,99 @@ describe("D-66 review — a skipped TARGET never blocks finishing", () => {
         { templateItemId: "z", label: "Z", labelEs: null, source: "template_item" },
       ]).map((r) => r.id),
     ).toEqual(["a", "c"]);
+  });
+});
+
+// ── D-66 review 2 (Astra P2 #1, #2): AM prep EDITS ────────────────────────────
+
+describe("D-66 review 2 — AM prep edits respect skipped targets and the original universe", () => {
+  const HEAD = "s-head";
+  const snap = (name: string) => ({ section: "sauces", itemName: name, parValue: 4, parUnit: "Bottle", specialInstruction: null });
+  const goodHead: Row = { id: "c-good", instance_id: INSTANCE, template_item_id: GOOD, completed_by: "u-1", completed_at: "2026-10-13T22:00:00Z", prep_data: { inputs: { total: 3 }, snapshot: snap("Mayo") }, edit_count: 0, superseded_at: "2026-10-13T23:00:00Z", revoked_at: null };
+  const goodEdit: Row = { ...goodHead, id: "c-good-1", completed_at: "2026-10-13T23:00:00Z", edit_count: 1, superseded_at: null };
+  const batchHead: Row = { id: "c-batch", instance_id: INSTANCE, template_item_id: BATCH, completed_by: "u-1", completed_at: "2026-10-13T22:00:00Z", prep_data: { inputs: { total: 2 }, snapshot: snap("Chipotle Mayo") }, edit_count: 0, superseded_at: "2026-10-13T23:00:00Z", revoked_at: null };
+  // The item's LATEST live row is malformed although its head snapshot is valid.
+  const batchLatestBad: Row = { id: "c-batch-1", instance_id: INSTANCE, template_item_id: BATCH, completed_by: "u-1", completed_at: "2026-10-13T23:00:00Z", prep_data: { inputs: { total: "2" } }, edit_count: 1, superseded_at: null, revoked_at: null };
+  const KH = { userId: "u-kh", role: "key_holder", level: 4 } as const;
+  const rpcOk = () => ({ instance: instance("confirmed"), completionIds: ["c-new"], autoCompleteId: null, submissionId: "s-2", editCount: 2, originalSubmissionId: HEAD });
+
+  function editTables(completions: Row[], headCompletionIds: string[]): Record<string, Row[]> {
+    return {
+      checklist_templates: [{ id: TEMPLATE, name: "AM prep", type: "prep", prep_subtype: "am_prep", location_id: LOC, active: true }],
+      checklist_instances: [instance("confirmed")],
+      checklist_template_items: [items[0]!, batchRow],
+      checklist_completions: completions,
+      checklist_submissions: [{ id: HEAD, instance_id: INSTANCE, original_submission_id: null, completion_ids: headCompletionIds, submitted_by: "u-1", submitted_at: "2026-10-13T22:00:00Z", edit_count: 0 }],
+      users: [],
+      prep_sections: [],
+      items: [],
+      item_par_levels: [],
+    };
+  }
+  const edit = (service: SupabaseClient, ids: string[]) =>
+    submitAmPrep(service, {
+      instanceId: INSTANCE,
+      actor: KH,
+      entries: ids.map((id) => ({ templateItemId: id, inputs: { total: 5 } })),
+      closingReportRefItemId: null,
+      activeAssignmentId: null,
+      isUpdate: true,
+      originalSubmissionId: HEAD,
+    });
+
+  beforeEach(() => {
+    vi.mocked(loadBatchContextForItems).mockImplementation(async () => new Map());
+  });
+
+  it("#1 an edit targeting an item whose LATEST completion is malformed is refused before the RPC", async () => {
+    const { service, rpcCalls } = fakeService(editTables([goodHead, goodEdit, batchHead, batchLatestBad], ["c-good", "c-batch"]), rpcOk);
+    await expect(edit(service, [GOOD, BATCH])).rejects.toBeInstanceOf(PrepShapeError);
+    expect(rpcCalls).toEqual([]);
+  });
+
+  it("#1 an edit of the other items still goes through, inherits the head snapshot, and reports the skipped one", async () => {
+    const { service, rpcCalls } = fakeService(editTables([goodHead, goodEdit, batchHead, batchLatestBad], ["c-good", "c-batch"]), rpcOk);
+    const res = await edit(service, [GOOD]);
+    expect(res.skipped).toEqual([{ templateItemId: BATCH, label: "Chipotle Mayo", labelEs: null, source: "completion" }]);
+    expect(rpcCalls.map((c) => c.name)).toEqual(["submit_am_prep_atomic"]);
+    const entries = rpcCalls[0]!.params.p_entries as Array<{ templateItemId: string; snapshot: unknown }>;
+    expect(entries).toEqual([expect.objectContaining({ templateItemId: GOOD, snapshot: snap("Mayo") })]);
+  });
+
+  it("#1 the page read agrees: the item with the malformed latest row is not in the form", async () => {
+    const { service } = fakeService(editTables([goodHead, goodEdit, batchHead, batchLatestBad], ["c-good", "c-batch"]), rpcOk);
+    const state = await loadAmPrepState(service, { locationId: LOC, date: DATE, actor: KH, tolerateBadRows: true });
+    expect(state?.templateItems.map((t) => t.id)).toEqual([GOOD]);
+  });
+
+  it("#2 an item the chain head never carried (skipped at submit, repaired since) is not in the edit form", async () => {
+    // Submitted while B was malformed, so the head carries GOOD only. B's template row is repaired now.
+    const { service } = fakeService(editTables([{ ...goodHead, superseded_at: null }], ["c-good"]), rpcOk);
+    const state = await loadAmPrepState(service, { locationId: LOC, date: DATE, actor: KH, tolerateBadRows: true });
+    expect(state?.skippedRows).toEqual([]); // nothing is malformed any more...
+    expect(state?.templateItems.map((t) => t.id)).toEqual([GOOD]); // ...but B is outside the original universe
+  });
+
+  it("#2 so the edit submits with the head's items only, and adding B through an edit is still refused", async () => {
+    const { service, rpcCalls } = fakeService(editTables([{ ...goodHead, superseded_at: null }], ["c-good"]), rpcOk);
+    await expect(edit(service, [GOOD])).resolves.toMatchObject({ submittedCompletionIds: ["c-new"], skipped: [] });
+    expect(rpcCalls).toHaveLength(1);
+    await expect(edit(service, [GOOD, BATCH])).rejects.toBeInstanceOf(PrepShapeError);
+    expect(rpcCalls).toHaveLength(1);
+  });
+
+  it("a first submission (no chain head yet) is not restricted", async () => {
+    const tables = editTables([], []);
+    tables.checklist_submissions = [];
+    tables.checklist_instances = [instance("open")];
+    const { service } = fakeService(tables, rpcOk);
+    const state = await loadAmPrepState(service, { locationId: LOC, date: DATE, actor: KH, tolerateBadRows: true });
+    expect(state?.templateItems.map((t) => t.id)).toEqual([GOOD, BATCH]);
+  });
+
+  it("restrictToChainUniverse keeps only the head's items; null = no restriction", () => {
+    const rows = [{ id: "a" }, { id: "b" }];
+    expect(restrictToChainUniverse(rows, null)).toBe(rows);
+    expect(restrictToChainUniverse(rows, new Set(["b"])).map((r) => r.id)).toEqual(["b"]);
   });
 });

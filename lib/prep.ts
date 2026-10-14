@@ -521,6 +521,55 @@ export function excludeSkippedTargets<T extends { id: string }>(items: T[], skip
   return items.filter((it) => !bad.has(it.id));
 }
 
+/**
+ * D-66 review 2 (Astra P2 #2, C.44/C.46) — once an AM prep has been submitted, its universe is
+ * the CHAIN HEAD submission's items. An edit can only change what was submitted (the update
+ * inherits the head's snapshots; an item outside it is refused), so an item absent from the head
+ * — skipped as malformed at submit time and repaired since, or added to the template later — is
+ * neither shown as editable nor required in edit mode. It joins on the next day's AM prep.
+ * `headItemIds` null = no chain head yet (a first submission): nothing is restricted. Pure.
+ */
+export function restrictToChainUniverse<T extends { id: string }>(items: T[], headItemIds: ReadonlySet<string> | null): T[] {
+  if (headItemIds === null) return items;
+  return items.filter((it) => headItemIds.has(it.id));
+}
+
+/** The template item ids of an instance's chain HEAD submission, or null when it has none yet. */
+async function loadChainHeadItemIds(service: SupabaseClient, instanceId: string): Promise<Set<string> | null> {
+  const { data: head, error: headErr } = await service
+    .from("checklist_submissions")
+    .select("id, completion_ids")
+    .eq("instance_id", instanceId)
+    .is("original_submission_id", null)
+    .maybeSingle<{ id: string; completion_ids: string[] | null }>();
+  if (headErr) throw new Error(`loadChainHeadItemIds: load chain head: ${headErr.message}`);
+  if (!head) return null;
+  const ids = head.completion_ids ?? [];
+  if (ids.length === 0) return new Set();
+  const { data: rows, error: rowsErr } = await service
+    .from("checklist_completions")
+    .select("template_item_id")
+    .in("id", ids);
+  if (rowsErr) throw new Error(`loadChainHeadItemIds: load head completions: ${rowsErr.message}`);
+  return new Set(((rows ?? []) as Array<{ template_item_id: string }>).map((r) => r.template_item_id));
+}
+
+/**
+ * An instance's live completions (not superseded, not revoked) — the same set the page reads.
+ * READ ONLY. Kept outside submitAmPrepUpdate on purpose: that path must never flip a row itself
+ * (tests/am-prep-chain-edit-supersede.test.ts pins it textually).
+ */
+async function loadLiveCompletions(service: SupabaseClient, instanceId: string): Promise<ChecklistCompletion[]> {
+  const { data, error } = await service
+    .from("checklist_completions")
+    .select(COMPLETION_COLUMNS)
+    .eq("instance_id", instanceId)
+    .is("superseded_at", null)
+    .is("revoked_at", null);
+  if (error) throw new Error(`loadLiveCompletions: ${error.message}`);
+  return ((data ?? []) as CompletionRow[]).map(rowToCompletion);
+}
+
 /** Name lookup over the RAW template rows (skipped ones included) for narrowPrepCompletionsForPage. */
 function labelLookup(items: ChecklistTemplateItem[]): (id: string) => { label: string; labelEs: string | null } | null {
   const byId = new Map(items.map((it) => [it.id, { label: it.label, labelEs: it.translations?.es?.label ?? null }] as const));
@@ -899,6 +948,9 @@ export async function loadAmPrepState(
   // leaves the editable / completeness set (the writers refuse it as bad_row), so it can never
   // be both "still required" and "refused".
   resolvedItems = excludeSkippedTargets(resolvedItems, skippedRows);
+  // D-66 review 2 — after the first submission the form's universe is the chain head's items
+  // (C.44/C.46): an item the head never carried cannot be edited in, so it is never required.
+  resolvedItems = restrictToChainUniverse(resolvedItems, await loadChainHeadItemIds(service, instanceRow.id));
 
   // Resolve author names for completedBy + confirmedBy + triggeredBy.
   const authorIds = new Set<string>();
@@ -2990,8 +3042,8 @@ export async function submitAmPrep(
   /** C.46: chain head submission id (null on original; FK on update). */
   originalSubmissionId: string | null;
   /**
-   * D-66: template rows left out because their stored shape is bad — not included, not
-   * required. Always [] on the update path (it inherits the chain head's own snapshots).
+   * D-66: rows left out because their stored shape is bad — not included, not required. On the
+   * update path: items whose latest live completion is malformed (an edit to one is refused).
    */
   skipped: SkippedPrepRow[];
 }> {
@@ -3016,9 +3068,9 @@ export async function submitAmPrep(
         `submitAmPrep: originalSubmissionId required when isUpdate=true`,
       );
     }
-    // The update path inherits the chain head's own snapshots and already skips a malformed
-    // head row (isPrepData), so it reports no skipped template rows.
-    const updated = await submitAmPrepUpdate(service, {
+    // The update path inherits the chain head's own snapshots (C.44) and refuses an edit to an
+    // item whose latest live completion is malformed (D-66 review 2); it reports those as skipped.
+    return submitAmPrepUpdate(service, {
       instanceId: args.instanceId,
       actor: args.actor,
       entries: args.entries,
@@ -3026,7 +3078,6 @@ export async function submitAmPrep(
       ipAddress: args.ipAddress ?? null,
       userAgent: args.userAgent ?? null,
     });
-    return { ...updated, skipped: [] };
   }
 
   // 2. Pre-flight: load the instance + template items so we can build snapshots
@@ -3243,6 +3294,8 @@ async function submitAmPrepUpdate(
   closingAutoCompleteId: string | null;
   editCount: number;
   originalSubmissionId: string | null;
+  /** D-66 — items whose LATEST live completion is malformed (refused as edit targets). */
+  skipped: SkippedPrepRow[];
 }> {
   // 1. Load chain head submission. Pull completion_ids too so we can fetch
   //    the head's snapshot rows in one extra round trip (C.46 A6 + C.44:
@@ -3401,6 +3454,24 @@ async function submitAmPrepUpdate(
     headSnapshotsByItemId.set(c.template_item_id, c.prep_data.snapshot);
   }
 
+  // D-66 review 2 (Astra P2 #1) — the item's LATEST live completion decides whether it is a
+  // skipped target, exactly as the page read does (the page left it out). A valid head snapshot
+  // does not make a malformed latest row editable: an edit that targets it is refused here,
+  // before the RPC; every other entry keeps inheriting its head snapshot (C.44).
+  const skipped: SkippedPrepRow[] = [];
+  narrowPrepCompletionsForPage(
+    await loadLiveCompletions(service, args.instanceId),
+    (id) => {
+      const snap = headSnapshotsByItemId.get(id);
+      return snap ? { label: snap.itemName, labelEs: null } : null;
+    },
+    skipped,
+  );
+  const badTarget = skippedTarget(skipped, args.entries.map((e) => e.templateItemId));
+  if (badTarget) {
+    throw new PrepShapeError(badTarget, "the item's latest saved count is malformed; it was skipped and cannot be edited");
+  }
+
   // Build rpcEntries using chain head snapshots. Any entry whose
   // template_item_id isn't in the chain head's completions is rejected here
   // (the RPC's C.44 alignment guard would catch it too, but we surface the
@@ -3500,5 +3571,6 @@ async function submitAmPrepUpdate(
     closingAutoCompleteId: null,  // per A4: update path doesn't touch closing auto-complete
     editCount: result.editCount,
     originalSubmissionId: result.originalSubmissionId,
+    skipped,
   };
 }
