@@ -2717,6 +2717,8 @@
   "opening.phase2.revoke.cta": "Undo",
   "opening.phase2.revoke.cta_pending": "Undoing…",
   "opening.phase2.revoke.cta_aria": "Undo saved prep entry for {item}",
+  "opening.phase2.revoke.cta_confirm": "Tap again to undo",
+  "opening.phase2.revoke.cta_confirm_aria": "Tap again to undo the saved prep entry for {item}",
   "opening.phase2.revoke.modal_title": "Undo prep entry: {item}",
   "opening.phase2.revoke.modal_help": "This entry was saved a while ago. Tell us why you're undoing it.",
   "opening.phase2.revoke.reason_label": "Reason",

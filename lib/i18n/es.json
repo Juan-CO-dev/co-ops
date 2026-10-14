@@ -2717,6 +2717,8 @@
   "opening.phase2.revoke.cta": "Deshacer",
   "opening.phase2.revoke.cta_pending": "Deshaciendo…",
   "opening.phase2.revoke.cta_aria": "Deshacer la entrada de prep guardada para {item}",
+  "opening.phase2.revoke.cta_confirm": "Toca otra vez para deshacer",
+  "opening.phase2.revoke.cta_confirm_aria": "Toca otra vez para deshacer la entrada de prep guardada para {item}",
   "opening.phase2.revoke.modal_title": "Deshacer entrada de prep: {item}",
   "opening.phase2.revoke.modal_help": "Esta entrada se guardó hace rato. Dinos por qué la estás deshaciendo.",
   "opening.phase2.revoke.reason_label": "Razón",
