@@ -2092,6 +2092,7 @@
   "pm.eval.attitude": "Actitud",
   "pm.eval.production": "Producción",
   "pm.eval.team_player": "Trabajo en equipo",
+  "pm.eval.pick_all": "Elige una calificación en cada línea para guardar.",
   "pm.attitude.great": "Excelente",
   "pm.attitude.good": "Bien",
   "pm.attitude.needs_work": "Necesita mejorar",

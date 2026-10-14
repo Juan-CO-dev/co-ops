@@ -2092,6 +2092,7 @@
   "pm.eval.attitude": "Attitude",
   "pm.eval.production": "Production",
   "pm.eval.team_player": "Team player",
+  "pm.eval.pick_all": "Pick a grade on every line to save.",
   "pm.attitude.great": "Great",
   "pm.attitude.good": "Good",
   "pm.attitude.needs_work": "Needs work",

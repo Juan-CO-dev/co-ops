@@ -3,9 +3,9 @@ import { canDoOperationalTask } from "@/lib/operational-task-access";
  * /pm-report — PM Report fill/submit surface (KH+ only).
  *
  * Auth → location guard → KH+ gate → get-or-create report → load edit state
- * (with notes — KH+ surface) → load active location users → compute timeliness
- * (reusing loadReportStatuses + computeOverdue + operationalNow from midshift)
- * → render <PmReportClient>.
+ * (with notes — KH+ surface) → load active location users → today's presence
+ * roster (D-28) → compute timeliness (reusing loadReportStatuses +
+ * computeOverdue + operationalNow from midshift) → render <PmReportClient>.
  *
  * Security: lockLocationContext before any service-role read (IDOR lesson).
  * Notes are ONLY passed to the KH+ client, never to any employee surface.
@@ -27,6 +27,8 @@ import {
   getOrCreatePmReport,
   loadPmReportForEdit,
 } from "@/lib/pm-report";
+import { loadShiftBoard } from "@/lib/assignments";
+import { pmPresenceRoster } from "@/lib/pm-report-shared";
 import { requireSessionFromHeaders } from "@/lib/session";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 
@@ -117,6 +119,21 @@ export default async function PmReportPage({ searchParams }: PageProps) {
     locationUsers = (candidates ?? []) as { id: string; name: string }[];
   }
 
+  // D-28: the starting roster is today's presence at this shop (the shift board's people who were
+  // here), not "anyone who touched the app". A failed board read falls back to the old activity
+  // roster (null) rather than an empty page at close — the add-picker still lists everyone.
+  let presenceRoster: { id: string; name: string }[] | null = null;
+  try {
+    const board = await loadShiftBoard(sb, {
+      actor: { userId: auth.user.id, role: auth.role, level: auth.level, locations: auth.locations },
+      locationId,
+      date,
+    });
+    presenceRoster = pmPresenceRoster(board);
+  } catch (err) {
+    console.error("pm report presence roster failed", err);
+  }
+
   const submitted = report?.status === "submitted";
 
   return (
@@ -133,6 +150,7 @@ export default async function PmReportPage({ searchParams }: PageProps) {
         report={report}
         timeliness={timeliness}
         locationUsers={locationUsers}
+        presenceRoster={presenceRoster}
         language={lang}
         submitted={submitted}
       />

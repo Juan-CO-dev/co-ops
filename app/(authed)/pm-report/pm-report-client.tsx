@@ -13,6 +13,7 @@ import type {
   ShiftWrapUpRow,
 } from "@/lib/pm-report";
 import type { ReportKey, ReportProgress, ReportStatusRow } from "@/lib/midshift";
+import { evalGradesComplete } from "@/lib/pm-report-shared";
 import { ActionButton } from "@/components/ActionButton";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -22,6 +23,9 @@ interface Props {
   report: PmReportForEdit | null;
   timeliness: ReportStatusRow[];
   locationUsers: { id: string; name: string }[];
+  /** D-28: today's presence at this shop — the starting roster. null = the board read failed
+   *  (fall back to the shift-activity roster). */
+  presenceRoster: { id: string; name: string }[] | null;
   language: Language;
   submitted: boolean;
 }
@@ -95,16 +99,19 @@ function EmployeeEvalCard({
   readOnly: boolean;
 }) {
   const { t } = useTranslation();
-  const [arrivedReady, setArrivedReady] = useState<Gradient>(existing?.arrivedReady ?? "good");
-  const [attitude, setAttitude] = useState<Gradient>(existing?.attitude ?? "good");
-  const [production, setProduction] = useState<Gradient>(existing?.production ?? "good");
-  const [teamPlayer, setTeamPlayer] = useState<Gradient>(existing?.teamPlayer ?? "good");
+  // D-28: no default grade — an unsaved card starts with nothing picked.
+  const [arrivedReady, setArrivedReady] = useState<Gradient | null>(existing?.arrivedReady ?? null);
+  const [attitude, setAttitude] = useState<Gradient | null>(existing?.attitude ?? null);
+  const [production, setProduction] = useState<Gradient | null>(existing?.production ?? null);
+  const [teamPlayer, setTeamPlayer] = useState<Gradient | null>(existing?.teamPlayer ?? null);
+  const gradesComplete = evalGradesComplete({ arrivedReady, attitude, production, teamPlayer });
   const [area, setArea] = useState(existing?.areaToImprove ?? "");
   const [note, setNote] = useState(existing?.note ?? "");
   const [saveState, setSaveState] = useState<SaveState>("idle");
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   const handleSave = async () => {
+    if (!gradesComplete) return;
     setSaveState("saving");
     setErrorMsg(null);
     try {
@@ -149,113 +156,11 @@ function EmployeeEvalCard({
     <div className="rounded-2xl border-2 border-co-border bg-co-surface p-4">
       <p className="mb-3 text-sm font-bold text-co-text">{employeeName}</p>
 
-      {/* Arrived ready 3-way */}
-      <div className="mb-3">
-        <p className="mb-1.5 text-xs font-semibold uppercase tracking-[0.12em] text-co-text-dim">
-          {t("pm.eval.arrived_ready")}
-        </p>
-        <div className="flex gap-2">
-          {GRADIENT_VALUES.map((g) => (
-            <button
-              key={g}
-              type="button"
-              disabled={readOnly}
-              onClick={() => !readOnly && setArrivedReady(g)}
-              className={`
-                inline-flex min-h-[44px] flex-1 items-center justify-center rounded-md border-2 px-2 py-2 text-sm font-semibold transition
-                focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60
-                disabled:cursor-not-allowed disabled:opacity-60
-                ${arrivedReady === g
-                  ? "border-co-text bg-co-gold text-co-text"
-                  : "border-co-border-2 bg-co-surface text-co-text-muted hover:border-co-text hover:text-co-text"}
-              `}
-            >
-              {t(GRADIENT_LABEL[g])}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      {/* Attitude 3-way */}
-      <div className="mb-3">
-        <p className="mb-1.5 text-xs font-semibold uppercase tracking-[0.12em] text-co-text-dim">
-          {t("pm.eval.attitude")}
-        </p>
-        <div className="flex gap-2">
-          {GRADIENT_VALUES.map((g) => (
-            <button
-              key={g}
-              type="button"
-              disabled={readOnly}
-              onClick={() => !readOnly && setAttitude(g)}
-              className={`
-                inline-flex min-h-[44px] flex-1 items-center justify-center rounded-md border-2 px-2 py-2 text-sm font-semibold transition
-                focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60
-                disabled:cursor-not-allowed disabled:opacity-60
-                ${attitude === g
-                  ? "border-co-text bg-co-gold text-co-text"
-                  : "border-co-border-2 bg-co-surface text-co-text-muted hover:border-co-text hover:text-co-text"}
-              `}
-            >
-              {t(GRADIENT_LABEL[g])}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      {/* Production 3-way */}
-      <div className="mb-3">
-        <p className="mb-1.5 text-xs font-semibold uppercase tracking-[0.12em] text-co-text-dim">
-          {t("pm.eval.production")}
-        </p>
-        <div className="flex gap-2">
-          {GRADIENT_VALUES.map((g) => (
-            <button
-              key={g}
-              type="button"
-              disabled={readOnly}
-              onClick={() => !readOnly && setProduction(g)}
-              className={`
-                inline-flex min-h-[44px] flex-1 items-center justify-center rounded-md border-2 px-2 py-2 text-sm font-semibold transition
-                focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60
-                disabled:cursor-not-allowed disabled:opacity-60
-                ${production === g
-                  ? "border-co-text bg-co-gold text-co-text"
-                  : "border-co-border-2 bg-co-surface text-co-text-muted hover:border-co-text hover:text-co-text"}
-              `}
-            >
-              {t(GRADIENT_LABEL[g])}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      {/* Team player 3-way */}
-      <div className="mb-3">
-        <p className="mb-1.5 text-xs font-semibold uppercase tracking-[0.12em] text-co-text-dim">
-          {t("pm.eval.team_player")}
-        </p>
-        <div className="flex gap-2">
-          {GRADIENT_VALUES.map((g) => (
-            <button
-              key={g}
-              type="button"
-              disabled={readOnly}
-              onClick={() => !readOnly && setTeamPlayer(g)}
-              className={`
-                inline-flex min-h-[44px] flex-1 items-center justify-center rounded-md border-2 px-2 py-2 text-sm font-semibold transition
-                focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60
-                disabled:cursor-not-allowed disabled:opacity-60
-                ${teamPlayer === g
-                  ? "border-co-text bg-co-gold text-co-text"
-                  : "border-co-border-2 bg-co-surface text-co-text-muted hover:border-co-text hover:text-co-text"}
-              `}
-            >
-              {t(GRADIENT_LABEL[g])}
-            </button>
-          ))}
-        </div>
-      </div>
+      {/* D-28: four 3-way grades, none picked until the manager taps one. */}
+      <GradeRow label={t("pm.eval.arrived_ready")} value={arrivedReady} onPick={setArrivedReady} readOnly={readOnly} />
+      <GradeRow label={t("pm.eval.attitude")} value={attitude} onPick={setAttitude} readOnly={readOnly} />
+      <GradeRow label={t("pm.eval.production")} value={production} onPick={setProduction} readOnly={readOnly} />
+      <GradeRow label={t("pm.eval.team_player")} value={teamPlayer} onPick={setTeamPlayer} readOnly={readOnly} />
 
       {/* Area to improve */}
       <div className="mb-3">
@@ -308,12 +213,16 @@ function EmployeeEvalCard({
         <p className="mb-2 text-sm text-co-cta-text">{errorMsg}</p>
       )}
 
+      {!readOnly && !gradesComplete && (
+        <p className="mb-2 text-xs text-co-text-muted">{t("pm.eval.pick_all")}</p>
+      )}
+
       {!readOnly && (
         <ActionButton
           size="default"
           variant={saveState === "saved" ? "secondary" : "primary"}
           onClick={() => void handleSave()}
-          disabled={saveState === "saving"}
+          disabled={saveState === "saving" || !gradesComplete}
         >
           {saveBtnLabel}
         </ActionButton>
@@ -329,6 +238,7 @@ export function PmReportClient({
   report,
   timeliness,
   locationUsers,
+  presenceRoster,
   language,
   submitted,
 }: Props) {
@@ -341,12 +251,12 @@ export function PmReportClient({
   const [mvpSaveState, setMvpSaveState] = useState<SaveState>("idle");
   const [mvpError, setMvpError] = useState<string | null>(null);
 
-  // Employees being evaluated: auto-populate from wrapUp activity + any existing evals
+  // Employees being evaluated: D-28 — today's presence at this shop ∪ any existing evals. Only when
+  // the presence read failed does the shift-activity roster (app touchers) seed it instead.
   const wrapUp: ShiftWrapUpRow[] = report?.wrapUp ?? [];
   const existingEvals = report?.evals ?? [];
 
-  // Build the initial set from wrapUp (active today) ∪ existing evals
-  const autoEmployeeIds = new Set<string>(wrapUp.map((r) => r.userId));
+  const autoEmployeeIds = new Set<string>(presenceRoster ? presenceRoster.map((p) => p.id) : wrapUp.map((r) => r.userId));
   for (const e of existingEvals) autoEmployeeIds.add(e.employeeId);
 
   const [addedEmployeeIds, setAddedEmployeeIds] = useState<string[]>([]);
@@ -362,6 +272,7 @@ export function PmReportClient({
   // Name lookup helper
   const nameById = new Map<string, string>();
   for (const u of locationUsers) nameById.set(u.id, u.name);
+  for (const p of presenceRoster ?? []) nameById.set(p.id, p.name);
   for (const r of wrapUp) if (r.name) nameById.set(r.userId, r.name);
   for (const e of existingEvals) if (e.employeeName) nameById.set(e.employeeId, e.employeeName);
 
@@ -455,9 +366,10 @@ export function PmReportClient({
         </p>
         {/* Read-only wrap-up and evals below */}
         <WrapUpSection wrapUp={wrapUp} timeliness={timeliness} language={language} />
-        {/* Eval cards two-up at lg (recomposition PR 4b) — phone keeps the stack. */}
+        {/* Eval cards two-up at lg (recomposition PR 4b) — phone keeps the stack. Only people who
+            were actually graded: with no default grade (D-28), an ungraded roster card is not feedback. */}
         <div className="grid gap-4 lg:grid-cols-2">
-        {evalEmployeeIds.map((id) => (
+        {existingEvals.map((e) => e.employeeId).map((id) => (
           <EmployeeEvalCard
             key={id}
             employeeId={id}
@@ -671,5 +583,48 @@ function WrapUpSection({
         </ul>
       )}
     </section>
+  );
+}
+
+// ─── GradeRow ──────────────────────────────────────────────────────────────────
+
+/** One 3-way grade. `value` null = not picked yet (D-28: there is no default grade). */
+function GradeRow({
+  label,
+  value,
+  onPick,
+  readOnly,
+}: {
+  label: string;
+  value: Gradient | null;
+  onPick: (g: Gradient) => void;
+  readOnly: boolean;
+}) {
+  const { t } = useTranslation();
+  return (
+    <div className="mb-3">
+      <p className="mb-1.5 text-xs font-semibold uppercase tracking-[0.12em] text-co-text-dim">{label}</p>
+      <div role="group" aria-label={label} className="flex gap-2">
+        {GRADIENT_VALUES.map((g) => (
+          <button
+            key={g}
+            type="button"
+            disabled={readOnly}
+            aria-pressed={value === g}
+            onClick={() => !readOnly && onPick(g)}
+            className={`
+              inline-flex min-h-[44px] flex-1 items-center justify-center rounded-md border-2 px-2 py-2 text-sm font-semibold transition
+              focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60
+              disabled:cursor-not-allowed disabled:opacity-60
+              ${value === g
+                ? "border-co-text bg-co-gold text-co-text"
+                : "border-co-border-2 bg-co-surface text-co-text-muted hover:border-co-text hover:text-co-text"}
+            `}
+          >
+            {t(GRADIENT_LABEL[g])}
+          </button>
+        ))}
+      </div>
+    </div>
   );
 }
