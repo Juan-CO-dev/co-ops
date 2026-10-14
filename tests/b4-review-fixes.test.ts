@@ -30,13 +30,21 @@ const liveHead = (meta: Record<string, unknown>, id = "head-1"): Head => ({ id, 
  * (one live row per instance + item + phase kind): an INSERT while a live row shares the key is a 23505,
  * exactly what production does - so insert-before-supersede cannot pass this fake.
  */
-function reconcileService(midDayRows: MdRow[], head: Head = null, opts: { failInsert?: boolean; failRestore?: boolean } = {}) {
+function reconcileService(midDayRows: MdRow[], head: Head = null, opts: {
+  failInsert?: boolean; failRestore?: boolean;
+  /** Runs once, just before this writer's first supersede UPDATE (a concurrent writer moves first). */
+  beforeSupersede?: (rows: Completion[]) => void;
+  /** Runs once, just before this writer's first INSERT. */
+  beforeInsert?: (rows: Completion[]) => void;
+} = {}) {
   const completions: Completion[] = head ? [{
     id: head.id, instance_id: "closing-1", template_item_id: "mid-ref-item", revoked_at: head.revoked_at,
     superseded_at: null, superseded_by: null, prep_data: null, auto_complete_meta: head.auto_complete_meta,
   }] : [];
   const calls: string[] = [];
   let seq = 0;
+  let hookedSupersede = false;
+  let hookedInsert = false;
   const isLive = (c: Completion) => c.superseded_at === null && c.revoked_at === null;
   const phaseKey = (c: Completion) => `${c.instance_id}|${c.template_item_id}|${!!(c.prep_data && "phase2" in c.prep_data)}`;
   const from = (table: string) => {
@@ -51,6 +59,7 @@ function reconcileService(midDayRows: MdRow[], head: Head = null, opts: { failIn
       }
       if (op === "insert") {
         calls.push("insert");
+        if (opts.beforeInsert && !hookedInsert) { hookedInsert = true; opts.beforeInsert(completions); }
         if (opts.failInsert) return { error: { message: "injected insert failure" } };
         const row: Completion = {
           id: `new-${++seq}`, instance_id: String(payload.instance_id), template_item_id: String(payload.template_item_id),
@@ -65,6 +74,7 @@ function reconcileService(midDayRows: MdRow[], head: Head = null, opts: { failIn
       }
       if (op === "update") {
         const un = payload.superseded_at === null;
+        if (opts.beforeSupersede && !hookedSupersede && !un && !("superseded_by" in payload)) { hookedSupersede = true; opts.beforeSupersede(completions); }
         calls.push(un ? "restore" : "superseded_by" in payload ? "link" : "supersede");
         if (un && opts.failRestore) return { error: { message: "injected restore failure" } };
         const rows = matches();
@@ -239,6 +249,81 @@ describe("#16 reconcile carries the real mid-day submission time", () => {
     expect(f.calls).toEqual(["supersede", "insert", "link"]);
     expect(f.live()).toHaveLength(1);
     expect(metaOf(f.live()[0]).reportInstanceId).toBe("md-2");
+  });
+
+
+  it("CAS: writer A reads head H, writer B replaces H with count 3, A's swap on H updates 0 rows -> A re-reads, sees count 3 is newer, and writes NOTHING", async () => {
+    eveningOpen();
+    const rows: MdRow[] = [
+      { id: "md-1", triggered_at: "2026-10-11T17:00:00Z", confirmed_at: "2026-10-11T18:00:00Z" },
+      { id: "md-2", triggered_at: "2026-10-11T18:30:00Z", confirmed_at: "2026-10-11T19:00:00Z" },
+    ]; // A's truth: count 2
+    const f = reconcileService(rows, oldTick({ reportSubmittedAt: "2026-10-11T18:00:00Z", count: 1 }), {
+      beforeSupersede: (all) => {
+        all[0]!.superseded_at = "2026-10-11T23:50:00.000Z"; // B superseded H ...
+        all.push({ ...all[0]!, id: "B-row", superseded_at: null, superseded_by: null,
+          auto_complete_meta: { reportType: "mid_day_prep", reportInstanceId: "md-3", reportSubmittedAt: "2026-10-11T22:00:00Z", count: 3 } }); // ... with count 3
+      },
+    });
+    expect((await reconcile(f.service)).ticked).toBe(0);
+    expect(f.calls).toEqual(["supersede"]); // A's CAS attempt only: no insert, no restore, no link
+    expect(f.live().map((c) => c.id)).toEqual(["B-row"]);
+    expect(metaOf(f.live()[0]).count).toBe(3);
+  });
+
+  it("CAS: B replaced H with an OLDER count, so A re-reads and swaps B's row (never H, never both)", async () => {
+    eveningOpen();
+    const rows: MdRow[] = [
+      { id: "md-1", triggered_at: "2026-10-11T17:00:00Z", confirmed_at: "2026-10-11T18:00:00Z" },
+      { id: "md-2", triggered_at: "2026-10-11T18:30:00Z", confirmed_at: "2026-10-11T19:00:00Z" },
+    ];
+    const f = reconcileService(rows, oldTick({ count: 1 }), {
+      beforeSupersede: (all) => {
+        all[0]!.superseded_at = "2026-10-11T23:50:00.000Z";
+        all.push({ ...all[0]!, id: "B-row", superseded_at: null, superseded_by: null,
+          auto_complete_meta: { reportType: "mid_day_prep", reportInstanceId: "md-1", reportSubmittedAt: "2026-10-11T18:00:00Z", count: 1 } });
+      },
+    });
+    expect((await reconcile(f.service)).ticked).toBe(1);
+    expect(f.live()).toHaveLength(1);
+    expect(metaOf(f.live()[0])).toMatchObject({ count: 2, reportInstanceId: "md-2" });
+    expect(f.completions.find((c) => c.id === "B-row")!.superseded_by).toBe(f.live()[0]!.id);
+  });
+
+  it("CAS: two first-ticks racing - the loser's insert is a 23505, it re-reads, and finds the line already true", async () => {
+    eveningOpen();
+    const rows: MdRow[] = [{ id: "md-1", triggered_at: "2026-10-11T18:00:00Z", confirmed_at: "2026-10-11T19:00:00Z" }];
+    const f = reconcileService(rows, null, {
+      beforeInsert: (all) => {
+        all.push({ id: "B-row", instance_id: "closing-1", template_item_id: "mid-ref-item", revoked_at: null, superseded_at: null,
+          superseded_by: null, prep_data: null,
+          auto_complete_meta: { reportType: "mid_day_prep", reportInstanceId: "md-1", reportSubmittedAt: "2026-10-11T19:00:00Z", count: 1 } });
+      },
+    });
+    expect((await reconcile(f.service)).ticked).toBe(0);
+    expect(f.live().map((c) => c.id)).toEqual(["B-row"]);
+  });
+
+  it("the finalize-time push does NOT re-tick over a manager's revoke (same rule as the page-load reconcile)", async () => {
+    eveningOpen();
+    const f = reconcileService([{ id: "md-2", triggered_at: "2026-10-11T18:30:00Z", confirmed_at: "2026-10-11T19:00:00Z" }],
+      { ...oldTick()!, revoked_at: "2026-10-11T23:00:00Z" });
+    await autoCompleteClosingMidDayRef(f.service, { locationId: "loc", date: "2026-10-11", midDayInstanceId: "md-2", actor: { userId: "u1" } as never });
+    expect(f.calls).toEqual([]);
+    expect(f.completions).toHaveLength(1);
+    expect(f.live()).toHaveLength(0);
+  });
+
+  it("crash between supersede and insert (superseded head, nothing live, not revoked): the next closing load re-inserts the tick", async () => {
+    eveningOpen();
+    const rows: MdRow[] = [{ id: "md-1", triggered_at: "2026-10-11T18:00:00Z", confirmed_at: "2026-10-11T19:00:00Z" }];
+    const f = reconcileService(rows, oldTick());
+    f.completions[0]!.superseded_at = "2026-10-11T23:59:30.000Z"; // the state a crash would leave
+    expect(f.live()).toHaveLength(0);
+    expect((await reconcile(f.service)).ticked).toBe(1);
+    expect(f.calls).toEqual(["insert"]);
+    expect(f.live()).toHaveLength(1);
+    expect(metaOf(f.live()[0]).reportSubmittedAt).toBe("2026-10-11T19:00:00Z");
   });
 
   it("a first tick (no head) is a plain insert with no supersede", async () => {

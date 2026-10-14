@@ -1660,23 +1660,17 @@ export async function autoCompleteClosingMidDayRef(
     reportInstanceIds,
   };
 
-  const { data: prior } = await service
-    .from("checklist_completions")
-    .select("id")
-    .eq("instance_id", cInst.id)
-    .eq("template_item_id", refItemId)
-    .is("superseded_at", null)
-    .is("revoked_at", null)
-    .maybeSingle<{ id: string }>();
-
-  await replaceLiveClosingRefCompletion(service, {
+  // Same writer the page-load reconcile uses, so the finalize-time push obeys the same rules: a REVOKED
+  // head (a manager reopened the line, C.55) is never re-ticked, a lost race re-reads instead of
+  // clobbering, and an unchanged count/instance is a no-op. The push's own true time is `nowIso`.
+  await ensureClosingRefCompletion(service, {
     label: "autoCompleteClosingMidDayRef",
     closingInstanceId: cInst.id,
     refItemId,
     actor: args.actor,
     meta,
-    hasLiveHead: !!prior,
-    nowIso,
+    countForSupersedeCheck: count,
+    truthCheck: { reportInstanceId: args.midDayInstanceId, reportSubmittedAt: null },
   });
 }
 
@@ -1694,17 +1688,19 @@ export async function autoCompleteClosingMidDayRef(
  * which the closing page's reconcile catch used to log and move past, leaving the old count/time on the line.
  * (The count-change supersede on main had the same insert-first order, so it was broken the same way.)
  *
- *   1. UPDATE ... SET superseded_at WHERE instance + item + live (superseded_at IS NULL AND revoked_at IS NULL):
- *      the predicate covers EVERY live row sharing the index key, not just the head we read. Rowcount 0 means
- *      the head changed under us (revoked by a C.55 reopen, or a concurrent reconcile replaced it): do nothing -
- *      never re-tick over a reopen.
+ *   1. COMPARE-AND-SWAP: UPDATE ... SET superseded_at WHERE id = <the head THIS writer read> AND
+ *      superseded_at IS NULL AND revoked_at IS NULL. It never supersedes "whatever is live": if another writer
+ *      moved first (replaced the head, or a C.55 reopen revoked it) the rowcount is 0 and this returns "lost" -
+ *      the caller re-reads the live head and re-evaluates (ensureClosingRefCompletion). A lost INSERT with no
+ *      head (23505: a concurrent first tick) is "lost" too.
  *   2. INSERT the replacement. If it fails, the line would be left with no live tick (worse than a stale one),
  *      so the rows this call superseded are restored (compensation) and the failure is thrown. If the restore
  *      ALSO fails, the thrown message says so, loudly - no silent path leaves the line unticked.
  *   3. Link superseded_by now that the replacement's id exists (0199's provenance link).
  *
- * NOT atomic across the three statements (that needs an RPC - the Wave-2 atomicity note): a crash between 1
- * and 2 leaves the line unticked until the next closing load, whose reconcile re-inserts it.
+ * NOT atomic across the three statements. A crash BETWEEN steps 1 and 2 leaves the line unticked (superseded
+ * head, no live row, not revoked) until the next closing load, whose reconcile sees no head and re-inserts it
+ * (tested). The real fix is an atomic replace RPC (migration) - filed as a follow-up, not built here.
  */
 async function replaceLiveClosingRefCompletion(
   service: SupabaseClient,
@@ -1714,24 +1710,26 @@ async function replaceLiveClosingRefCompletion(
     refItemId: string;
     actor: PrepActor;
     meta: Record<string, unknown>;
-    hasLiveHead: boolean;
+    /** The live head THIS writer read (compare-and-swap target), or null when it read none. */
+    headId: string | null;
     nowIso: string;
   },
-): Promise<"inserted" | "superseded" | "skipped"> {
+): Promise<"inserted" | "superseded" | "lost"> {
   const { label, nowIso } = args;
   const key = { instance_id: args.closingInstanceId, template_item_id: args.refItemId };
 
   let supersededCount = 0;
-  if (args.hasLiveHead) {
+  if (args.headId) {
     const { error: supErr, count } = await service
       .from("checklist_completions")
       .update({ superseded_at: nowIso }, { count: "exact" })
+      .eq("id", args.headId)
       .eq("instance_id", key.instance_id)
       .eq("template_item_id", key.template_item_id)
       .is("superseded_at", null)
       .is("revoked_at", null);
     if (supErr) throw new Error(`${label}: supersede: ${supErr.message}`);
-    if (!count) return "skipped"; // head revoked or replaced concurrently - leave it
+    if (!count) return "lost"; // another writer moved first (replaced or revoked it): re-read, never clobber
     supersededCount = count;
   }
 
@@ -1757,13 +1755,14 @@ async function replaceLiveClosingRefCompletion(
     })
     .select("id")
     .maybeSingle<{ id: string }>();
+  if (!args.headId && insErr?.code === "23505") return "lost"; // a concurrent first tick won the index
   if (insErr || !inserted) {
     const reason = insErr?.message ?? "insert returned no row";
     const restoreErr = await restore();
     throw new Error(
       restoreErr === null
         ? `${label}: insert: ${reason}${supersededCount ? " (the prior tick was restored)" : ""}`
-        : `${label}: insert: ${reason} AND restoring the superseded prior tick failed: ${restoreErr} - the line is UNTICKED until the next reconcile`,
+        : `${label}: insert: ${reason} AND restoring the superseded prior tick failed: ${restoreErr} - the line is UNTICKED until the next closing load repairs it`,
     );
   }
 
@@ -1797,8 +1796,9 @@ async function replaceLiveClosingRefCompletion(
  *                                              reopen.
  *   - no head                               → insert.
  *
- * This is the per-load-safe sibling of autoCompleteClosingMidDayRef (which
- * inserts unconditionally as a one-shot finalize-time push). Reconcile runs on
+ * This is the per-load-safe writer; autoCompleteClosingMidDayRef (the one-shot
+ * finalize-time push) now goes through it too, so both obey the same revoked-head,
+ * compare-and-swap and supersede-before-insert rules. Reconcile runs on
  * every closing page load, so it MUST pre-check to avoid growing a supersede
  * chain on each refresh.
  */
@@ -1842,6 +1842,8 @@ export function pickMidDayReport(
 async function ensureClosingRefCompletion(
   service: SupabaseClient,
   args: {
+    /** Error-message prefix (the finalize-time push reuses this writer). */
+    label?: string;
     closingInstanceId: string;
     refItemId: string;
     actor: PrepActor;
@@ -1858,38 +1860,50 @@ async function ensureClosingRefCompletion(
     truthCheck?: { reportInstanceId: string; reportSubmittedAt: string | null };
   },
 ): Promise<"inserted" | "superseded" | "skipped"> {
-  const { data: head, error: headErr } = await service
-    .from("checklist_completions")
-    .select("id, revoked_at, auto_complete_meta")
-    .eq("instance_id", args.closingInstanceId)
-    .eq("template_item_id", args.refItemId)
-    .is("superseded_at", null)
-    .maybeSingle<{
-      id: string;
-      revoked_at: string | null;
-      auto_complete_meta: { count?: number; reportInstanceId?: string; reportSubmittedAt?: string } | null;
-    }>();
-  if (headErr) throw new Error(`ensureClosingRefCompletion: head lookup: ${headErr.message}`);
+  // Up to 3 passes: read the live head -> decide -> compare-and-swap THAT head. A lost swap means another
+  // writer moved first, so we re-read and re-evaluate against what is now true instead of overwriting it.
+  const label = args.label ?? "ensureClosingRefCompletion";
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const { data: head, error: headErr } = await service
+      .from("checklist_completions")
+      .select("id, revoked_at, auto_complete_meta")
+      .eq("instance_id", args.closingInstanceId)
+      .eq("template_item_id", args.refItemId)
+      .is("superseded_at", null)
+      .maybeSingle<{
+        id: string;
+        revoked_at: string | null;
+        auto_complete_meta: { count?: number; reportInstanceId?: string; reportSubmittedAt?: string } | null;
+      }>();
+    if (headErr) throw new Error(`${label}: head lookup: ${headErr.message}`);
 
-  if (head) {
-    if (head.revoked_at) return "skipped"; // respect C.55 reopen — never re-tick
-    if (args.countForSupersedeCheck === undefined) return "skipped"; // already live
-    const headCount = head.auto_complete_meta?.count ?? null;
-    if (headCount === args.countForSupersedeCheck && !midDayTickIsStale(head.auto_complete_meta, args.truthCheck)) {
-      return "skipped"; // count unchanged and the stored instance/time are already the true ones
+    if (head) {
+      // The most recent tick for this line is a manager's REVOKE (C.55 reopen): never re-tick over it -
+      // the same rule for the page-load reconcile and the finalize-time push.
+      if (head.revoked_at) return "skipped";
+      if (args.countForSupersedeCheck === undefined) return "skipped"; // already live
+      const headCount = head.auto_complete_meta?.count ?? null;
+      // After a lost swap the head is another writer's work: if it already covers MORE reports than we
+      // would write, it is newer than us - stop rather than regress it.
+      if (attempt > 0 && headCount !== null && headCount > args.countForSupersedeCheck) return "skipped";
+      if (headCount === args.countForSupersedeCheck && !midDayTickIsStale(head.auto_complete_meta, args.truthCheck)) {
+        return "skipped"; // count unchanged and the stored instance/time are already the true ones
+      }
+      // count or stored instance/time changed -> supersede that head, then insert
     }
-    // count or stored instance/time changed → fall through to insert + supersede
-  }
 
-  return replaceLiveClosingRefCompletion(service, {
-    label: "ensureClosingRefCompletion",
-    closingInstanceId: args.closingInstanceId,
-    refItemId: args.refItemId,
-    actor: args.actor,
-    meta: args.meta,
-    hasLiveHead: !!head,
-    nowIso: new Date().toISOString(),
-  });
+    const result = await replaceLiveClosingRefCompletion(service, {
+      label,
+      closingInstanceId: args.closingInstanceId,
+      refItemId: args.refItemId,
+      actor: args.actor,
+      meta: args.meta,
+      headId: head?.id ?? null,
+      nowIso: new Date().toISOString(),
+    });
+    if (result !== "lost") return result;
+  }
+  return "skipped"; // lost three times: another writer is actively keeping this line current
 }
 
 /**
