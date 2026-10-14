@@ -143,13 +143,14 @@ describe("#36 a lead can be edited", () => {
     expect(leadEditPatch(lead, { ...form, headcount: "2.5" })).toEqual({ ok: false, field: "headcount" });
     expect(leadEditPatch(lead, { ...form, headcount: "-1" })).toEqual({ ok: false, field: "headcount" });
   });
-  it("the board has the gated disclosure; no phone or email field (D-48 is Juan's)", () => {
+  it("the board has the gated disclosure; phone joined in D-48, still no email field (no lead email column)", () => {
     const client = src("components/catering/pipeline/PipelineClient.tsx");
     expect(client).toContain("{canWrite && <EditLeadDetails lead={lead} />}");
     const form = client.slice(client.indexOf("function EditLeadDetails"), client.indexOf("// ── Add-lead form"));
     expect(form).toContain("aria-expanded={open}");
     expect(form).toContain("leadEditPatch(lead,");
-    expect(form).not.toMatch(/name="(contactPhone|email|phone)"/);
+    expect(form).toContain('name="contactPhone" type="tel"');
+    expect(form).not.toMatch(/name="(contactEmail|email)"/);
     for (const k of ["catering.pipeline.edit_details", "catering.pipeline.save", "catering.pipeline.saving"]) {
       expect(enKeys[k]).toBeTruthy();
       expect(esKeys[k]).toBeTruthy();

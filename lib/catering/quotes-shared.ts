@@ -5,6 +5,8 @@
  * (PR #166) import the mixed quotes module — pure money math now lives here.
  * quotes.ts re-exports, so server consumers are unchanged.
  */
+import { isQuoteLineKind, type QuoteLineKind } from "@/lib/catering/prep-demand-shared";
+export type { QuoteLineKind };
 
 export interface ChargeRates {
   taxRateBps: number;
@@ -144,6 +146,47 @@ export function reclassifyQuoteLineRefs<T extends QuoteLineRefLike>(
   return { lines: out, moved, unknown };
 }
 
+// ── Line kind (B7c, migration 0251) ───────────────────────────────────────────────────
+
+export type LineKindResult =
+  | { ok: true; lineKind: QuoteLineKind | null; componentsListed: boolean | null }
+  /** `outdated`: a package line with no kind — a page loaded before the B7c deploy; the user reloads. */
+  | { ok: false; reason: "outdated" | "invalid"; message: string };
+
+/**
+ * What a saved line stores in `line_kind` / `components_listed`, checked against its
+ * references (the same shape the 0251/0252 CHECKs enforce, so a bad payload is a named error before
+ * the quote header is written, never a constraint 500 after it):
+ *   · a line with no package id carries no kind (NULL);
+ *   · every line WITH a package id must say its kind — a kind-less one is refused as
+ *     `outdated` (409 `quote_lines_outdated`: reload the page). It is never stamped by guessing;
+ *   · package_header / package_pick — a package id and no item/menu reference;
+ *     package_component — a package id and a reference;
+ *   · `componentsListed` is kept on a header only (absent → false: the whole package).
+ */
+export function resolveQuoteLineKind(l: {
+  itemId: string | null;
+  menuItemId: string | null;
+  packageId: string | null;
+  lineKind?: unknown;
+  componentsListed?: unknown;
+}): LineKindResult {
+  const hasRef = l.itemId != null || l.menuItemId != null;
+  if (l.lineKind == null) {
+    if (l.packageId != null) return { ok: false, reason: "outdated", message: "a package line without its line kind (the page is out of date)" };
+    return { ok: true, lineKind: null, componentsListed: null };
+  }
+  if (!isQuoteLineKind(l.lineKind)) return { ok: false, reason: "invalid", message: "unknown line kind" };
+  if (l.packageId == null) return { ok: false, reason: "invalid", message: `${l.lineKind} needs a package` };
+  if (l.lineKind === "package_component" && !hasRef) return { ok: false, reason: "invalid", message: "a package component needs an item" };
+  if (l.lineKind !== "package_component" && hasRef) return { ok: false, reason: "invalid", message: `${l.lineKind} cannot name an item` };
+  return {
+    ok: true,
+    lineKind: l.lineKind,
+    componentsListed: l.lineKind === "package_header" ? l.componentsListed === true : null,
+  };
+}
+
 // ── Quote ↔ lead ↔ customer (B5 #34, #35) ─────────────────────────────────────────────
 
 /**
@@ -228,6 +271,109 @@ export function isUntouchedBlankLine(l: DraftLineLike): boolean {
 export function appendLines<T extends DraftLineLike>(prev: readonly T[], next: readonly T[]): T[] {
   if (next.length === 0) return [...prev];
   return [...prev.filter((l) => !isUntouchedBlankLine(l)), ...next];
+}
+
+// ── Package expansion (D-45) — pure, client-safe ────────────────────────────────────────
+
+/** The fields of a catering package the builder expands into quote lines. */
+export interface ExpandablePackage {
+  id: string;
+  labelEn: string;
+  /** `per_head` | `per_platter` | `fixed` (0115 CHECK). */
+  pricingMode: string;
+  priceCents: number;
+  items: ReadonlyArray<{
+    itemId: string | null;
+    menuItemId: string | null;
+    label: string;
+    quantity: number;
+    unitPriceCents: number;
+  }>;
+}
+/** One expanded line, in the builder's string form (quantity and dollars as typed text). */
+export interface ExpandedPackageLine {
+  description: string;
+  quantity: string;
+  unitPrice: string;
+  itemId: string | null;
+  menuItemId: string | null;
+  packageId: string | null;
+  /** What part of the package this line is (migration 0251). */
+  lineKind: QuoteLineKind;
+  /** Header only: true when the package's composition is listed as its own lines. */
+  componentsListed: boolean | null;
+}
+
+/**
+ * How many people a package line is for (D-45, Juan 2026-10-13): a PER-HEAD package is priced
+ * per person, so its lines default to the quote's headcount. A per-platter or fixed package
+ * keeps its own count (multiplier 1), and so does a per-head package while the headcount is
+ * empty or not a whole number above zero.
+ */
+export function packageHeadcountMultiplier(pricingMode: string, headcount: string): number {
+  if (pricingMode !== "per_head") return 1;
+  const raw = headcount.trim();
+  if (raw === "") return 1;
+  const n = Number(raw);
+  return Number.isInteger(n) && n > 0 ? n : 1;
+}
+
+const centsToDollarText = (c: number): string => (c ? (c / 100).toString() : "");
+const scaleQty = (q: number, n: number): string => String(Math.round(q * n * 1000) / 1000);
+
+/**
+ * Expand a package into editable quote lines (the staff builder's "Add package").
+ *
+ * - Each composition line keeps its own quantity × the headcount multiplier (1 unless the
+ *   package is per-head and a headcount is set — D-45). A fixed-count platter keeps its count.
+ * - A package with no composition becomes one priced line for the package itself.
+ * - A package whose composition is all unpriced carries the package price on ONE header line
+ *   (the guide-walk $115 × 8 fix). That line is per person for a per-head package, so its Qty
+ *   is the headcount too.
+ *
+ * ONE REPRESENTATION, THREE KINDS OF LINE, EACH SAYING WHAT IT IS (`line_kind`, migration
+ * 0251) — what Prep Demand (`resolveDemandFromLines`) counts:
+ *   · package_header — package id, no item/menu reference. Qty = package units. With
+ *     `componentsListed = true` (the composition follows as its own lines) Prep Demand expands
+ *     ONLY its choice slots (→ "needs a pick"), even after every component is removed; with no
+ *     composition it stands for the whole package.
+ *   · package_component — a concrete item/menu reference (+ the package id). Counted at its OWN
+ *     Qty, so editing it moves the demand, and it still counts if the header is removed.
+ *   · package_pick — a "Choose your sub" slot (package id, no reference). Display only while a
+ *     header of the package is on the quote (the header reserves the slot, exactly once); if
+ *     every header of the package is removed it counts its own Qty.
+ * A header is emitted whenever the package has no composition, is priced only as a whole,
+ * or has a pick slot (then at $0 when the components carry the prices), so a slot always
+ * has a header to be reserved through. Prices and quantities are exactly as before 0251.
+ */
+export function expandPackageLines(pkg: ExpandablePackage, headcount: string): ExpandedPackageLine[] {
+  const n = packageHeadcountMultiplier(pkg.pricingMode, headcount);
+  const header = (priceCents: number): ExpandedPackageLine => ({
+    description: pkg.labelEn,
+    quantity: String(n),
+    unitPrice: (priceCents / 100).toString(),
+    itemId: null,
+    menuItemId: null,
+    packageId: pkg.id,
+    lineKind: "package_header",
+    componentsListed: pkg.items.length > 0,
+  });
+  const isPick = (pi: ExpandablePackage["items"][number]) => pi.itemId == null && pi.menuItemId == null;
+  const lines: ExpandedPackageLine[] = pkg.items.map((pi) => ({
+    description: pi.label,
+    quantity: scaleQty(pi.quantity, n),
+    unitPrice: centsToDollarText(pi.unitPriceCents),
+    itemId: pi.itemId,
+    menuItemId: pi.menuItemId,
+    packageId: pkg.id,
+    lineKind: isPick(pi) ? "package_pick" : "package_component",
+    componentsListed: null,
+  }));
+  if (lines.length === 0) return [header(pkg.priceCents)];
+  const pricedAsWhole = pkg.priceCents > 0 && lines.every((l) => l.unitPrice === "");
+  if (pricedAsWhole) return [header(pkg.priceCents), ...lines];
+  if (pkg.items.some(isPick)) return [header(0), ...lines];
+  return lines;
 }
 
 export interface QuoteLeadOption {

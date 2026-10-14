@@ -33,6 +33,7 @@ import { paymentPlan } from "@/lib/catering/payment-plan";
 import { createCheckoutSession, stripeCredentialsFor, StripeError } from "@/lib/stripe/client";
 import { TENANT_NAME } from "@/lib/tenant";
 import type { Quote, QuoteItem, QuoteDetail } from "@/lib/catering/quotes";
+import { isQuoteLineKind } from "@/lib/catering/prep-demand-shared";
 import { isQuoteStatus } from "@/lib/catering/quotes";
 
 /** 404-style error for the customer path (ownership failures surface as "not found"). */
@@ -117,12 +118,14 @@ interface DbItemRow {
   line_total_cents: number;
   display_order: number;
   portion: string | null;
+  line_kind: string | null;
+  components_listed: boolean | null;
 }
 
 const QUOTE_COLS =
   "id, root_id, version, pipeline_id, customer_id, location_id, status, origin, event_date, headcount, is_delivery, delivery_zone_id, subtotal_cents, delivery_fee_cents, service_charge_cents, gratuity_cents, tax_cents, total_cents, deposit_cents, tax_rate_bps, gratuity_bps, service_charge_bps, deposit_pct_bps, tax_on_delivery, tax_on_gratuity, expires_at, notes, created_at, created_by, sent_at, sent_by, superseded_at";
 const ITEM_COLS =
-  "id, item_id, menu_item_id, package_id, description, quantity, unit_price_cents, line_total_cents, display_order, portion";
+  "id, item_id, menu_item_id, package_id, description, quantity, unit_price_cents, line_total_cents, display_order, portion, line_kind, components_listed";
 
 function mapQuote(r: DbQuoteRow, now: number = Date.now()): Quote {
   const status = isQuoteStatus(r.status) ? r.status : "draft";
@@ -178,6 +181,8 @@ function mapItem(r: DbItemRow): QuoteItem {
       r.portion === "quarter" || r.portion === "half" || r.portion === "whole"
         ? r.portion
         : null,
+    lineKind: isQuoteLineKind(r.line_kind) ? r.line_kind : null,
+    componentsListed: r.components_listed ?? null,
   };
 }
 

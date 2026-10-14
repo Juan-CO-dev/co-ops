@@ -11,6 +11,17 @@ import type { AuthContext } from "@/lib/session";
 import { audit } from "@/lib/audit";
 import { PORTION_FRACTION, type Portion } from "@/lib/catering/pricing-derivation";
 import { loadItemDefns, loadItemOverrides, pickOverride, operationalDayOfWeek } from "@/lib/items";
+import { loadCateringReader } from "@/lib/catering/ezcater-detail";
+import { canReadCateringContact } from "@/lib/catering/ezcater-detail-shared";
+import { leadContactLabel } from "@/lib/catering/pipeline-shared";
+import {
+  isBarePackageLine,
+  isQuoteLineKind,
+  resolveDemandFromLines,
+  unkindedPackageLineIds,
+  type DemandQuoteLine,
+  type ResolvedDemand,
+} from "@/lib/catering/prep-demand-shared";
 
 export const PREP_DEMAND_READ_MIN = 6; // catering_mgr+ views the demand surface
 
@@ -22,96 +33,73 @@ type Sb = ReturnType<typeof getServiceRoleClient>;
 
 // ── Resolution: a lead's current quote → concrete prep demand (item grain) ──────────
 
-/** A resolved demand row to insert (exactly one of item/menuItem/choice ref set). */
-interface ResolvedDemand {
-  itemId: string | null;
-  menuItemId: string | null;
-  choicePackageItemId: string | null;
-  portion: Portion | null;
-  qty: number;
-}
-
-interface PackageComp { id: string; package_id: string; slot_type: string; item_id: string | null; menu_item_id: string | null; quantity: number | string }
+const num = (v: number | string | null | undefined): number => (typeof v === "string" ? Number(v) : v ?? 0);
 
 /** Resolve a lead's current quote lines into concrete prep demand. Fixed package components resolve
  *  to concrete refs. A choice slot resolves to the CUSTOMER'S STORED PICKS (catering_quote_item_options,
  *  sub-project B) — each chosen sub becomes concrete demand scaled by package-line-qty × pick-qty; only
  *  an UNCONFIGURED package (no stored picks) falls back to one advisory "needs a pick" row. Package
- *  lines are processed PER quote-line (two lines of the same package can hold different picks). */
+ *  lines are processed PER quote-line (two lines of the same package can hold different picks).
+ *
+ *  ONE PACKAGE, COUNTED ONCE (B7c, migration 0251): every package line carries its `line_kind`
+ *  and is read by what it says — the rules live, pure and documented, in `resolveDemandFromLines`
+ *  (lib/catering/prep-demand-shared.ts). This function only loads the rows. A package line with
+ *  NO kind (forbidden by 0252; only the pre-B7c server in the deploy window writes one) counts nothing and is reported here by id — never guessed at. */
 export async function resolveQuoteDemand(sb: Sb, quoteId: string): Promise<ResolvedDemand[]> {
-  const { data: lines, error } = await sb
+  const { data: rows, error } = await sb
     .from("catering_quote_items")
-    .select("id, item_id, menu_item_id, package_id, quantity, portion")
+    .select("id, item_id, menu_item_id, package_id, quantity, portion, description, line_kind, components_listed")
     .eq("quote_id", quoteId)
-    .returns<Array<{ id: string; item_id: string | null; menu_item_id: string | null; package_id: string | null; quantity: number | string; portion: Portion | null }>>();
+    .returns<Array<{ id: string; item_id: string | null; menu_item_id: string | null; package_id: string | null; quantity: number | string; portion: Portion | null; description: string | null; line_kind: string | null; components_listed: boolean | null }>>();
   if (error) throw new Error(`resolveQuoteDemand items: ${error.message}`);
 
-  const out: ResolvedDemand[] = [];
-  const pkgLines: Array<{ quoteItemId: string; packageId: string; qty: number }> = [];
-  for (const l of lines ?? []) {
-    const qty = typeof l.quantity === "string" ? Number(l.quantity) : l.quantity;
-    if (l.item_id) {
-      out.push({ itemId: l.item_id, menuItemId: null, choicePackageItemId: null, portion: l.portion, qty });
-    } else if (l.menu_item_id) {
-      out.push({ itemId: null, menuItemId: l.menu_item_id, choicePackageItemId: null, portion: l.portion, qty });
-    } else if (l.package_id) {
-      pkgLines.push({ quoteItemId: l.id, packageId: l.package_id, qty });
-    }
+  const lines: DemandQuoteLine[] = (rows ?? []).map((l) => ({
+    id: l.id,
+    itemId: l.item_id,
+    menuItemId: l.menu_item_id,
+    packageId: l.package_id,
+    quantity: num(l.quantity),
+    portion: l.portion,
+    description: l.description ?? null,
+    lineKind: isQuoteLineKind(l.line_kind) ? l.line_kind : null,
+    componentsListed: l.components_listed ?? null,
+  }));
+  const unkinded = unkindedPackageLineIds(lines);
+  if (unkinded.length > 0) {
+    // Ids only — never a description, a name or a contact value.
+    console.warn(`[catering] resolveQuoteDemand: quote ${quoteId} has ${unkinded.length} package line(s) without a line_kind (${unkinded.join(",")}) — counted as no demand. 0252 forbids this shape (written by the pre-B7c server in the deploy window?) — re-save the quote.`);
   }
+  const bare = lines.filter((l) => isBarePackageLine(l) && l.lineKind != null);
+  if (bare.length === 0) return resolveDemandFromLines({ lines, comps: [], picks: [] });
 
-  if (pkgLines.length) {
-    const packageIds = [...new Set(pkgLines.map((p) => p.packageId))];
-    const { data: comps, error: cErr } = await sb
+  const packageIds = [...new Set(bare.map((l) => l.packageId!))];
+  const [compsRes, optsRes] = await Promise.all([
+    sb
       .from("catering_package_items")
-      .select("id, package_id, slot_type, item_id, menu_item_id, quantity")
+      .select("id, package_id, slot_type, item_id, menu_item_id, quantity, description, display_order")
       .in("package_id", packageIds)
       .eq("active", true)
-      .returns<PackageComp[]>();
-    if (cErr) throw new Error(`resolveQuoteDemand package components: ${cErr.message}`);
-    const compsByPackage = new Map<string, PackageComp[]>();
-    for (const c of comps ?? []) { const arr = compsByPackage.get(c.package_id) ?? []; arr.push(c); compsByPackage.set(c.package_id, arr); }
-
-    // The customer's stored slot picks (sub-project B), keyed `${quote_item_id}:${package_item_id}`.
-    const { data: optRows, error: oErr } = await sb
+      .returns<Array<{ id: string; package_id: string; slot_type: string; item_id: string | null; menu_item_id: string | null; quantity: number | string; description: string | null; display_order: number | null }>>(),
+    // The customer's stored slot picks (sub-project B).
+    sb
       .from("catering_quote_item_options")
       .select("quote_item_id, package_item_id, item_id, menu_item_id, quantity")
-      .in("quote_item_id", pkgLines.map((p) => p.quoteItemId))
-      .returns<Array<{ quote_item_id: string; package_item_id: string; item_id: string | null; menu_item_id: string | null; quantity: number | string }>>();
-    if (oErr) throw new Error(`resolveQuoteDemand package options: ${oErr.message}`);
-    const picksBySlot = new Map<string, Array<{ itemId: string | null; menuItemId: string | null; qty: number }>>();
-    for (const o of optRows ?? []) {
-      const key = `${o.quote_item_id}:${o.package_item_id}`;
-      const arr = picksBySlot.get(key) ?? [];
-      arr.push({ itemId: o.item_id, menuItemId: o.menu_item_id, qty: typeof o.quantity === "string" ? Number(o.quantity) : o.quantity });
-      picksBySlot.set(key, arr);
-    }
+      .in("quote_item_id", bare.map((l) => l.id))
+      .returns<Array<{ quote_item_id: string; package_item_id: string; item_id: string | null; menu_item_id: string | null; quantity: number | string }>>(),
+  ]);
+  if (compsRes.error) throw new Error(`resolveQuoteDemand package components: ${compsRes.error.message}`);
+  if (optsRes.error) throw new Error(`resolveQuoteDemand package options: ${optsRes.error.message}`);
 
-    for (const pl of pkgLines) {
-      for (const c of compsByPackage.get(pl.packageId) ?? []) {
-        const compQty = typeof c.quantity === "string" ? Number(c.quantity) : c.quantity;
-        if (c.slot_type === "choice") {
-          const picks = picksBySlot.get(`${pl.quoteItemId}:${c.id}`);
-          if (picks && picks.length > 0) {
-            for (const p of picks) {
-              const qty = pl.qty * p.qty;
-              if (qty <= 0) continue;
-              out.push({ itemId: p.itemId, menuItemId: p.menuItemId, choicePackageItemId: null, portion: null, qty });
-            }
-          } else {
-            const qty = pl.qty * compQty;
-            if (qty > 0) out.push({ itemId: null, menuItemId: null, choicePackageItemId: c.id, portion: null, qty });
-          }
-        } else if (c.menu_item_id) {
-          const qty = pl.qty * compQty;
-          if (qty > 0) out.push({ itemId: null, menuItemId: c.menu_item_id, choicePackageItemId: null, portion: null, qty });
-        } else if (c.item_id) {
-          const qty = pl.qty * compQty;
-          if (qty > 0) out.push({ itemId: c.item_id, menuItemId: null, choicePackageItemId: null, portion: null, qty });
-        }
-      }
-    }
-  }
-  return out;
+  return resolveDemandFromLines({
+    lines,
+    comps: (compsRes.data ?? []).map((c, i) => ({
+      id: c.id, packageId: c.package_id, slotType: c.slot_type, itemId: c.item_id, menuItemId: c.menu_item_id,
+      quantity: num(c.quantity), description: c.description ?? null, displayOrder: c.display_order ?? i,
+    })),
+    picks: (optsRes.data ?? []).map((o) => ({
+      quoteItemId: o.quote_item_id, packageItemId: o.package_item_id, itemId: o.item_id, menuItemId: o.menu_item_id, quantity: num(o.quantity),
+    })),
+  });
 }
 
 /** Load the lead's current (latest non-superseded) quote header. */
@@ -128,6 +116,36 @@ async function loadCurrentQuote(sb: Sb, pipelineId: string): Promise<{ id: strin
   return data ?? null;
 }
 
+// ── Repair guard (B7c r5) ────────────────────────────────────────────────────────────
+
+/**
+ * The lead's current quote holds a package line WITHOUT a line_kind — written by the pre-B7c
+ * server in the deploy window, before 0252 made the kind required. Prep Demand never guesses at
+ * such a line (it would count as no demand), so a confirm must REFUSE loudly instead of
+ * reserving a silent zero. Fixed by hand per the 0252 header; never auto-repaired.
+ */
+export class PrepDemandNeedsRepairError extends Error {
+  constructor(public quoteId: string, public lineIds: string[]) {
+    super(`quote ${quoteId} has ${lineIds.length} package line(s) without a line_kind (${lineIds.join(",")}) — repair per migration 0252 before confirming`);
+    this.name = "PrepDemandNeedsRepairError";
+  }
+}
+
+/** Throws PrepDemandNeedsRepairError when the lead's current quote has a kind-less package line. */
+export async function assertQuoteReadyForPrep(sb: Sb, pipelineId: string): Promise<void> {
+  const quote = await loadCurrentQuote(sb, pipelineId);
+  if (!quote) return;
+  const { data, error } = await sb
+    .from("catering_quote_items")
+    .select("id")
+    .eq("quote_id", quote.id)
+    .not("package_id", "is", null)
+    .is("line_kind", null)
+    .returns<Array<{ id: string }>>();
+  if (error) throw new Error(`assertQuoteReadyForPrep: ${error.message}`);
+  if (data && data.length > 0) throw new PrepDemandNeedsRepairError(quote.id, data.map((r) => r.id));
+}
+
 // ── Lifecycle: reserve / consume / release / resync ─────────────────────────────────
 
 /**
@@ -140,6 +158,9 @@ export async function reservePrepDemand(actor: AuthContext, pipelineId: string):
   const sb = getServiceRoleClient();
   const quote = await loadCurrentQuote(sb, pipelineId);
   if (!quote || !quote.event_date) return; // can't prep-plan without a dated quote
+  // Inner guard (B7c r5): never retire a lead's reserved rows to replace them with a silent zero.
+  // moveStage checks this before the stage changes; this covers every other path in.
+  await assertQuoteReadyForPrep(sb, pipelineId);
 
   // Idempotency: retire prior reserved rows (append-only — mark released, never delete).
   const { error: relErr } = await sb
@@ -251,7 +272,14 @@ export interface PrepDemandLine {
   wholeEquivDemand: number;    // qty × PORTION_FRACTION (for par comparison)
   overPar: boolean;            // item ref where wholeEquivDemand >= par, or no par set
   needsPick: boolean;          // unresolved choice slot
+  /**
+   * D-47: the leads this line is for, most demand first. `label` is "contact · company" when
+   * the viewer may read that lead's shop (the catering contact policy), else null — a lead
+   * since moved to a shop the viewer cannot read is counted but not named.
+   */
+  leads: PrepDemandLeadRef[];
 }
+export interface PrepDemandLeadRef { id: string; label: string | null; qty: number }
 export interface PrepDemandDay { needDate: string; lines: PrepDemandLine[] }
 
 /** Aggregate reserved catering prep demand for a location over [from, to], with over-par flags. */
@@ -263,17 +291,17 @@ export async function loadCateringPrepDemand(
   const sb = getServiceRoleClient();
   const { data: rows, error } = await sb
     .from("catering_prep_demand")
-    .select("need_date, item_id, menu_item_id, choice_package_item_id, portion, qty")
+    .select("pipeline_id, need_date, item_id, menu_item_id, choice_package_item_id, portion, qty")
     .eq("location_id", args.locationId)
     .eq("status", "reserved")
     .gte("need_date", args.from)
     .lte("need_date", args.to)
-    .returns<Array<{ need_date: string; item_id: string | null; menu_item_id: string | null; choice_package_item_id: string | null; portion: Portion | null; qty: number | string }>>();
+    .returns<Array<{ pipeline_id: string; need_date: string; item_id: string | null; menu_item_id: string | null; choice_package_item_id: string | null; portion: Portion | null; qty: number | string }>>();
   if (error) throw new Error(`loadCateringPrepDemand: ${error.message}`);
   const demandRows = rows ?? [];
 
   // Aggregate by (need_date, ref, portion).
-  const groups = new Map<string, { needDate: string; refKind: "item" | "menu_item" | "choice"; refId: string; portion: Portion | null; qty: number }>();
+  const groups = new Map<string, { needDate: string; refKind: "item" | "menu_item" | "choice"; refId: string; portion: Portion | null; qty: number; byLead: Map<string, number> }>();
   const itemIds = new Set<string>();
   const menuIds = new Set<string>();
   const choiceIds = new Set<string>();
@@ -285,12 +313,14 @@ export async function loadCateringPrepDemand(
     else if (refKind === "menu_item") menuIds.add(refId);
     else choiceIds.add(refId);
     const key = `${r.need_date}|${refKind}:${refId}|${r.portion ?? ""}`;
-    const g = groups.get(key) ?? { needDate: r.need_date, refKind, refId, portion: r.portion, qty: 0 };
+    const g = groups.get(key) ?? { needDate: r.need_date, refKind, refId, portion: r.portion, qty: 0, byLead: new Map<string, number>() };
     g.qty += qty;
+    g.byLead.set(r.pipeline_id, (g.byLead.get(r.pipeline_id) ?? 0) + qty);
     groups.set(key, g);
   }
 
   const refs = await resolveRefs(sb, itemIds, menuIds, choiceIds);
+  const leadLabels = await loadDemandLeadLabels(actor, sb, new Set(demandRows.map((r) => r.pipeline_id)));
   // Item-grain par: reuse the item defaults resolveRefs already loaded + day-aware location overrides.
   const overrides = await loadItemOverrides(sb, [...itemIds], args.locationId);
 
@@ -314,6 +344,9 @@ export async function loadCateringPrepDemand(
       wholeEquivDemand: wholeEquiv,
       overPar,
       needsPick: g.refKind === "choice",
+      leads: [...g.byLead]
+        .map(([id, qty]) => ({ id, qty, label: leadLabels.get(id) ?? null }))
+        .sort((a, b) => b.qty - a.qty || (a.label ?? "\uffff").localeCompare(b.label ?? "\uffff")),
     };
     const day = byDate.get(g.needDate) ?? { needDate: g.needDate, lines: [] };
     day.lines.push(line);
@@ -371,8 +404,37 @@ export async function loadLeadPrepDemand(actor: AuthContext, pipelineId: string)
       wholeEquivDemand: g.portion ? g.qty * PORTION_FRACTION[g.portion] : g.qty,
       overPar: false,
       needsPick: g.refKind === "choice",
+      leads: [], // one lead's own breakdown: the lead is the context, not a line attribute
     }))
     .sort((a, b) => a.name.localeCompare(b.name));
+}
+
+/** Lead ids per `.in()` read (the 414 class: an id list in the request line). */
+const LEAD_LABEL_CHUNK = 100;
+
+/**
+ * D-47: "contact · company" per lead the demand rows name, for leads whose shop the viewer may
+ * read (canReadCateringContact over FRESH memberships, fail-closed: no reader → no names). A
+ * lead the viewer may not read is absent from the map and renders unnamed. Never logged.
+ */
+async function loadDemandLeadLabels(actor: AuthContext, sb: Sb, ids: ReadonlySet<string>): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
+  if (ids.size === 0) return out;
+  const reader = await loadCateringReader(actor);
+  if (!reader) return out;
+  const all = [...ids];
+  for (let i = 0; i < all.length; i += LEAD_LABEL_CHUNK) {
+    const { data, error } = await sb
+      .from("catering_pipeline")
+      .select("id, contact_name, company, location_id")
+      .in("id", all.slice(i, i + LEAD_LABEL_CHUNK))
+      .returns<Array<{ id: string; contact_name: string; company: string | null; location_id: string | null }>>();
+    if (error) throw new Error(`loadDemandLeadLabels: ${error.message}`);
+    for (const l of data ?? []) {
+      if (canReadCateringContact(reader, l.location_id)) out.set(l.id, leadContactLabel({ contactName: l.contact_name, company: l.company }));
+    }
+  }
+  return out;
 }
 
 type ItemDefnMap = Awaited<ReturnType<typeof loadItemDefns>>;

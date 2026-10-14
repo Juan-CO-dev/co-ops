@@ -504,9 +504,36 @@ function DemandLine({
     return <ChoiceLine line={line} t={t} />;
   }
   if (line.refKind === "menu_item") {
-    return <MenuItemLine line={line} />;
+    return <MenuItemLine line={line} t={t} />;
   }
   return <ItemLine line={line} t={t} />;
+}
+
+// ─── LeadsFor (D-47) ──────────────────────────────────────────────────────────
+// Names the lead(s) a demand line is for — "contact · company" — so a NEEDS PICK line can be
+// traced to its order. A lead at a shop the viewer cannot read is counted but not named.
+
+function LeadsFor({
+  line,
+  t,
+}: {
+  line: PrepDemandLine;
+  t: (key: TranslationKey, params?: Record<string, string | number>) => string;
+}) {
+  if (line.leads.length === 0) return null;
+  const many = line.leads.length > 1;
+  const names = line.leads.map((l) => {
+    const label = l.label ?? t("admin.catering.prep_demand.lead_hidden" as TranslationKey);
+    return many ? t("admin.catering.prep_demand.lead_qty" as TranslationKey, { label, n: r1(l.qty) }) : label;
+  });
+  return (
+    <p
+      data-testid="prep-demand-leads"
+      className="mt-1 w-full text-xs text-co-text-muted"
+    >
+      {t("admin.catering.prep_demand.for_leads" as TranslationKey, { leads: names.join(" · ") })}
+    </p>
+  );
 }
 
 // ─── ChoiceLine ───────────────────────────────────────────────────────────────
@@ -520,17 +547,28 @@ function ChoiceLine({
 }) {
   return (
     <div className="flex flex-wrap items-center gap-2 rounded-lg border-2 border-co-border bg-co-surface px-3 py-2 text-sm text-co-text">
-      <span className="font-medium">{line.name}</span>
+      <span className="font-medium">
+        {r1(line.qty)}
+        {" × "}
+        {line.name}
+      </span>
       <span className="inline-flex items-center rounded-full bg-co-gold/20 px-2 py-0.5 text-[11px] font-bold uppercase tracking-[0.08em] text-co-text">
         {t("admin.catering.prep_demand.needs_pick" as TranslationKey)}
       </span>
+      <LeadsFor line={line} t={t} />
     </div>
   );
 }
 
 // ─── MenuItemLine ─────────────────────────────────────────────────────────────
 
-function MenuItemLine({ line }: { line: PrepDemandLine }) {
+function MenuItemLine({
+  line,
+  t,
+}: {
+  line: PrepDemandLine;
+  t: (key: TranslationKey, params?: Record<string, string | number>) => string;
+}) {
   const prefix = portionPrefix(line.portion);
   return (
     <div className="flex flex-wrap items-start gap-2 rounded-lg border-2 border-co-border bg-co-surface px-3 py-2 text-sm text-co-text">
@@ -540,6 +578,7 @@ function MenuItemLine({ line }: { line: PrepDemandLine }) {
         {prefix}
         {line.name}
       </span>
+      <LeadsFor line={line} t={t} />
     </div>
   );
 }
@@ -576,6 +615,7 @@ function ItemLine({
           </AlertPill>
         ) : null}
       </div>
+      <LeadsFor line={line} t={t} />
 
       {/* Par-bump affordance — only when overPar */}
       {line.overPar && suggestedPar !== null ? (

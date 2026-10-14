@@ -87,7 +87,9 @@ import {
   shouldLinkLead,
   mapQuoteParties,
   type QuoteParties,
+  resolveQuoteLineKind,
 } from "./quotes-shared";
+import { isQuoteLineKind, type QuoteLineKind } from "./prep-demand-shared";
 export { computeChargeStack, lineTotalCents, type ChargeRates, type ChargeStack, type QuoteParties };
 
 // ── Pricing context ───────────────────────────────────────────────────────────
@@ -180,6 +182,9 @@ export interface QuoteItem {
   lineTotalCents: number;
   displayOrder: number;
   portion: "quarter" | "half" | "whole" | null;
+  /** Migration 0251 — what part of a package the line is (NULL = a non-package line). */
+  lineKind: QuoteLineKind | null;
+  componentsListed: boolean | null;
 }
 export interface Quote {
   id: string;
@@ -258,7 +263,7 @@ interface DbQuoteRow {
 const QUOTE_COLS =
   "id, root_id, version, pipeline_id, customer_id, location_id, status, event_date, headcount, is_delivery, delivery_zone_id, subtotal_cents, delivery_fee_cents, service_charge_cents, gratuity_cents, tax_cents, total_cents, deposit_cents, tax_rate_bps, gratuity_bps, service_charge_bps, deposit_pct_bps, tax_on_delivery, tax_on_gratuity, expires_at, notes, created_at, created_by, sent_at, sent_by, superseded_at";
 const ITEM_COLS =
-  "id, item_id, menu_item_id, package_id, description, quantity, unit_price_cents, line_total_cents, display_order, portion";
+  "id, item_id, menu_item_id, package_id, description, quantity, unit_price_cents, line_total_cents, display_order, portion, line_kind, components_listed";
 
 function mapQuote(r: DbQuoteRow, now: number = Date.now()): Quote {
   const status: QuoteStatus = isQuoteStatus(r.status) ? r.status : "draft";
@@ -310,6 +315,8 @@ function mapItem(r: {
   line_total_cents: number;
   display_order: number;
   portion: string | null;
+  line_kind?: string | null;
+  components_listed?: boolean | null;
 }): QuoteItem {
   return {
     id: r.id,
@@ -325,6 +332,8 @@ function mapItem(r: {
       r.portion === "quarter" || r.portion === "half" || r.portion === "whole"
         ? r.portion
         : null,
+    lineKind: isQuoteLineKind(r.line_kind) ? r.line_kind : null,
+    componentsListed: r.components_listed ?? null,
   };
 }
 
@@ -473,6 +482,9 @@ export interface QuoteLineInput {
   quantity: number;
   unitPriceCents: number;
   displayOrder?: number;
+  /** Migration 0251 — validated by resolveQuoteLineKind (unknown → 400). */
+  lineKind?: unknown;
+  componentsListed?: unknown;
 }
 export interface CreateQuoteInput {
   locationId: string;
@@ -504,6 +516,20 @@ interface ResolvedLine {
   unitPriceCents: number;
   lineTotalCents: number;
   displayOrder: number;
+  lineKind: QuoteLineKind | null;
+  componentsListed: boolean | null;
+}
+
+/**
+ * EVERY line check that can refuse a save, before anything stateful: the pure ones (quantity,
+ * price, line kind — 409 `quote_lines_outdated` for a kind-less package line) and the catalog
+ * reference read (400 `unknown_item` for an inactive or missing item / menu item). Read-only.
+ * The quotes POST calls this BEFORE it resolves, creates or revives the customer, so a save
+ * the lines will refuse changes nothing (Astra r4 + r5, BC-040/041). createQuote, reviseQuote
+ * and previewQuote run the same checks again themselves.
+ */
+export async function preflightQuoteLines(lines: QuoteLineInput[]): Promise<void> {
+  await verifyLineRefs(getServiceRoleClient(), resolveLines(lines));
 }
 
 /** Validate + freeze the line set (quantity>0, integer non-negative price, identified). */
@@ -529,11 +555,21 @@ function resolveLines(lines: QuoteLineInput[]): ResolvedLine[] {
     if (description == null && itemId == null && menuItemId == null) {
       throw new CateringQuoteError(400, "invalid_payload", `Line ${i + 1}: needs a description or a menu reference`);
     }
+    const packageId = l.packageId ?? null;
+    const kind = resolveQuoteLineKind({ itemId, menuItemId, packageId, lineKind: l.lineKind, componentsListed: l.componentsListed });
+    if (!kind.ok) {
+      // A kind-less package line comes from a page loaded before the B7c deploy (or a client bug): never
+      // guessed at — the manager reloads and the builder sends the kinds.
+      if (kind.reason === "outdated") throw new CateringQuoteError(409, "quote_lines_outdated", `Line ${i + 1}: ${kind.message}`);
+      throw new CateringQuoteError(400, "invalid_payload", `Line ${i + 1}: ${kind.message}`);
+    }
     return {
       description,
       itemId,
       menuItemId,
-      packageId: l.packageId ?? null,
+      packageId,
+      lineKind: kind.lineKind,
+      componentsListed: kind.componentsListed,
       portion: l.portion ?? null,
       quantity,
       unitPriceCents,
@@ -608,6 +644,8 @@ async function insertQuoteItems(
       unit_price_cents: l.unitPriceCents,
       line_total_cents: l.lineTotalCents,
       display_order: l.displayOrder,
+      line_kind: l.lineKind,
+      components_listed: l.componentsListed,
       created_by: actorId,
     })),
   );
@@ -679,6 +717,8 @@ export function parseQuoteLinesFromBody(raw: unknown): QuoteLineInput[] {
       quantity: Number(o.quantity),
       unitPriceCents: Number(o.unitPriceCents),
       displayOrder: typeof o.displayOrder === "number" ? o.displayOrder : undefined,
+      lineKind: o.lineKind ?? null,
+      componentsListed: o.componentsListed ?? null,
     };
   });
 }

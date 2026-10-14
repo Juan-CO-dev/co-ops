@@ -84,6 +84,15 @@ export function canTransition(from: PipelineStage, to: PipelineStage): boolean {
 }
 
 /**
+ * D-49 (Juan, 2026-10-13): a move to Completed or Lost asks first — both are final (nothing
+ * leaves a terminal stage), so one mis-tap would otherwise close the lead for good. Every
+ * other move stays one tap.
+ */
+export function stageMoveNeedsConfirm(to: PipelineStage): boolean {
+  return (TERMINAL_PIPELINE_STAGES as readonly PipelineStage[]).includes(to);
+}
+
+/**
  * The text of a lead card's shop chip: the location NAME the loader read from the `locations`
  * table, trimmed. Null when the lead has no resolvable shop (tenant-wide or unresolved) — the
  * card then shows the "No shop set" fallback. It NEVER takes a location code: prod codes are
@@ -94,9 +103,63 @@ export function shopChipLabel(lead: { locationName?: string | null }): string | 
   return n ? n : null;
 }
 
+/** "Contact · Company" (company omitted when blank) — how a lead is named off the board (D-47). */
+export function leadContactLabel(lead: { contactName: string; company: string | null }): string {
+  const company = lead.company?.trim();
+  return company ? `${lead.contactName.trim()} · ${company}` : lead.contactName.trim();
+}
+
+/**
+ * D-46 (Juan, 2026-10-13): Confirmed keeps its meaning (the kitchen plans it), and a Confirmed
+ * card whose linked quote is still a draft or only sent wears a "quote not accepted" chip —
+ * Insights counts it at $0 until the quote is marked accepted. A Confirmed lead with no quote,
+ * or a declined one, gets no chip (no quote to accept; feeds no prep).
+ */
+export function showQuoteNotAccepted(stage: PipelineStage, quoteStatus: string | null | undefined): boolean {
+  return stage === "confirmed" && (quoteStatus === "draft" || quoteStatus === "sent");
+}
+
+// ── Lead phone (D-48) ───────────────────────────────────────────────────────────────────
+
+/** Longest phone text a lead keeps — room for "(202) 555-0100 ext. 1234" and a label. */
+export const LEAD_PHONE_MAX = 40;
+
+/**
+ * D-48: the lead's phone as stored — trimmed, empty → null, longer than LEAD_PHONE_MAX
+ * refused. The value is never echoed in an error (contact data is never logged).
+ */
+export function normalizeLeadPhone(v: string | null | undefined): { ok: true; value: string | null } | { ok: false } {
+  if (v == null) return { ok: true, value: null };
+  const t = v.trim();
+  if (t === "") return { ok: true, value: null };
+  return t.length > LEAD_PHONE_MAX ? { ok: false } : { ok: true, value: t };
+}
+
+// ── Lead email (B7c, Juan 2026-10-14) ─────────────────────────────────────────────────────
+
+/** RFC 5321's practical address ceiling. */
+export const LEAD_EMAIL_MAX = 254;
+const EMAIL_SHAPE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+/**
+ * The email typed on Add lead, as the customer resolver will match it: trimmed, LOWERCASED
+ * (the identity rule — a mixed-case address must resolve to the same customer), empty → null.
+ * A lead has no email column: the address only finds or creates the lead's catering
+ * customer. Not an address, or too long → refused, and the value is never echoed.
+ */
+export function normalizeLeadEmail(v: string | null | undefined): { ok: true; value: string | null } | { ok: false } {
+  if (v == null) return { ok: true, value: null };
+  const t = v.trim().toLowerCase();
+  if (t === "") return { ok: true, value: null };
+  return t.length <= LEAD_EMAIL_MAX && EMAIL_SHAPE.test(t) ? { ok: true, value: t } : { ok: false };
+}
+
 // ── Lead edit (B5 #36) ─────────────────────────────────────────────────────────────────
 
-/** The lead fields the "Edit details" form owns (phone/email are D-48, Juan's call). */
+/**
+ * The lead fields the "Edit details" form owns. Phone joined in D-48; a lead has no email
+ * column (the email lives on the catering customer), so email is not here.
+ */
 export interface LeadEditable {
   contactName: string;
   company: string | null;
@@ -104,8 +167,9 @@ export interface LeadEditable {
   headcount: number | null;
   followUpDate: string | null;
   notes: string | null;
+  contactPhone?: string | null;
 }
-/** The form's raw values (every input is a string). */
+/** The form's raw values (every input is a string). `contactPhone` absent = not on the form. */
 export interface LeadEditForm {
   contactName: string;
   company: string;
@@ -113,6 +177,7 @@ export interface LeadEditForm {
   headcount: string;
   followUpDate: string;
   notes: string;
+  contactPhone?: string;
 }
 export type LeadEditPatch = Partial<LeadEditable>;
 
@@ -134,6 +199,11 @@ export function leadEditPatch(
   if (name !== lead.contactName) patch.contactName = name;
 
   if (text(form.company) !== (lead.company ?? null)) patch.company = text(form.company);
+  if (form.contactPhone !== undefined) {
+    const phone = normalizeLeadPhone(form.contactPhone);
+    if (!phone.ok) return { ok: false, field: "contactPhone" };
+    if (phone.value !== (lead.contactPhone ?? null)) patch.contactPhone = phone.value;
+  }
   if (text(form.eventDate) !== (lead.eventDate ?? null)) patch.eventDate = text(form.eventDate);
   if (text(form.followUpDate) !== (lead.followUpDate ?? null)) patch.followUpDate = text(form.followUpDate);
 

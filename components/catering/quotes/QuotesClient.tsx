@@ -21,11 +21,13 @@ import { PasswordModal } from "@/components/auth/PasswordModal";
 import type { Quote, QuoteItem, DeliveryZone, ChargeRates, ChargeStack } from "@/lib/catering/quotes";
 import {
   appendLines,
+  expandPackageLines,
   leadOptionLabel,
   prefillFromLead,
   type QuoteClientRef,
   type QuoteLeadOption,
   type QuoteLeadRef,
+  type QuoteLineKind,
 } from "@/lib/catering/quotes-shared";
 import type { CateringMenuItem, CateringPackage } from "@/lib/catering/menu";
 import type { Payment } from "@/lib/catering/payments";
@@ -194,11 +196,14 @@ interface LineDraft {
   itemId: string | null;
   menuItemId: string | null;
   packageId: string | null;
+  /** Migration 0251 — carried unchanged through edits and revisions; null = not a package line. */
+  lineKind: QuoteLineKind | null;
+  componentsListed: boolean | null;
 }
 let lineKeySeq = 0;
 function blankLine(): LineDraft {
   lineKeySeq += 1;
-  return { key: `l${lineKeySeq}`, description: "", quantity: "1", unitPrice: "", itemId: null, menuItemId: null, packageId: null };
+  return { key: `l${lineKeySeq}`, description: "", quantity: "1", unitPrice: "", itemId: null, menuItemId: null, packageId: null, lineKind: null, componentsListed: null };
 }
 
 function QuoteBuilder({
@@ -250,6 +255,8 @@ function QuoteBuilder({
             itemId: i.itemId,
             menuItemId: i.menuItemId,
             packageId: i.packageId,
+            lineKind: i.lineKind,
+            componentsListed: i.componentsListed,
           };
         })
       : [blankLine()],
@@ -267,7 +274,7 @@ function QuoteBuilder({
     const seq = ++previewSeq.current;
     const handle = window.setTimeout(async () => {
       const validLines = lines
-        .map((l) => ({ description: l.description.trim(), quantity: Number(l.quantity), unitPriceCents: dollarsToCents(l.unitPrice), itemId: l.itemId, menuItemId: l.menuItemId, packageId: l.packageId }))
+        .map((l) => ({ description: l.description.trim(), quantity: Number(l.quantity), unitPriceCents: dollarsToCents(l.unitPrice), itemId: l.itemId, menuItemId: l.menuItemId, packageId: l.packageId, lineKind: l.lineKind, componentsListed: l.componentsListed }))
         .filter((l) => (l.description.length > 0 || l.itemId || l.menuItemId) && Number.isFinite(l.quantity) && l.quantity > 0 && l.unitPriceCents != null);
       if (!locationId || validLines.length === 0) {
         if (seq === previewSeq.current) setPreview(null);
@@ -304,36 +311,18 @@ function QuoteBuilder({
       itemId: item.kind === "item" ? item.id : null,
       menuItemId: item.kind === "menu_item" ? item.id : null,
       packageId: null,
+      lineKind: null,
+      componentsListed: null,
     };
     setLines((prev) => appendLines(prev, [line]));
   };
   const addPackage = (pkg: CateringPackage) => {
-    // Expand the package into editable per-item lines (customize each item). If the package
-    // has no composition, add one priced line for the package itself.
-    const newLines: LineDraft[] = pkg.items.map((pi) => {
+    // Expand the package into editable per-item lines (expandPackageLines). A per-head package
+    // defaults its Qty to the headcount above (D-45); a platter keeps its own count.
+    const newLines: LineDraft[] = expandPackageLines(pkg, headcount).map((l) => {
       lineKeySeq += 1;
-      return {
-        key: `l${lineKeySeq}`,
-        description: pi.label,
-        quantity: String(pi.quantity),
-        unitPrice: pi.unitPriceCents ? (pi.unitPriceCents / 100).toString() : "",
-        itemId: pi.itemId,
-        menuItemId: pi.menuItemId,
-        packageId: pkg.id,
-      };
+      return { key: `l${lineKeySeq}`, ...l };
     });
-    if (newLines.length === 0) {
-      lineKeySeq += 1;
-      newLines.push({ key: `l${lineKeySeq}`, description: pkg.labelEn, quantity: "1", unitPrice: (pkg.priceCents / 100).toString(), itemId: null, menuItemId: null, packageId: pkg.id });
-    } else if (pkg.priceCents > 0 && newLines.every((l) => l.unitPrice === "")) {
-      // A package whose composition is all "choose your own" slots expands into lines with
-      // no price behind them; the package price then arrived nowhere and the builder totaled
-      // to $0 unless the manager typed it — usually into a ×8 slot line (guide-walk finding:
-      // $115 × 8). Carry the package price on ONE line at Qty 1; the slot lines stay as the
-      // customer's picks at no charge.
-      lineKeySeq += 1;
-      newLines.unshift({ key: `l${lineKeySeq}`, description: pkg.labelEn, quantity: "1", unitPrice: (pkg.priceCents / 100).toString(), itemId: null, menuItemId: null, packageId: pkg.id });
-    }
     setLines((prev) => appendLines(prev, newLines));
   };
 
@@ -360,7 +349,7 @@ function QuoteBuilder({
   const submit = async () => {
     setErrorKey(null);
     const payloadLines = lines
-      .map((l) => ({ description: l.description.trim(), quantity: Number(l.quantity), unitPriceCents: dollarsToCents(l.unitPrice), itemId: l.itemId, menuItemId: l.menuItemId, packageId: l.packageId }))
+      .map((l) => ({ description: l.description.trim(), quantity: Number(l.quantity), unitPriceCents: dollarsToCents(l.unitPrice), itemId: l.itemId, menuItemId: l.menuItemId, packageId: l.packageId, lineKind: l.lineKind, componentsListed: l.componentsListed }))
       .filter((l) => l.description.length > 0 || l.itemId || l.menuItemId);
     if (payloadLines.length === 0) {
       setErrorKey("catering.quotes.error.invalid_payload");

@@ -45,6 +45,7 @@ export async function postJson(
 
 const KNOWN_ERROR_CODES = new Set([
   "forbidden",
+  "quote_lines_outdated", // B7c 0251: a page loaded before the line kinds — reload
   "not_found",
   "invalid_payload",
   "unknown_item",

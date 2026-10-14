@@ -5,6 +5,7 @@ import { jsonError, jsonOk, parseJsonBody } from "@/lib/api-helpers";
 import {
   createQuote,
   parseQuoteLinesFromBody,
+  preflightQuoteLines,
   CateringQuoteError,
   QUOTE_WRITE_MIN,
   type CreateQuoteInput,
@@ -27,6 +28,13 @@ export async function POST(req: NextRequest) {
   const optInt = (v: unknown): number | null => (typeof v === "number" && Number.isInteger(v) ? v : null);
 
   try {
+    // Lines FIRST (Astra r4 + r5): every line refusal — a bad quantity or price, a kind-less
+    // package line from a page loaded before the B7c deploy (409 quote_lines_outdated), an
+    // inactive or unknown catalog reference (400 unknown_item) — happens before the customer
+    // resolver below can create or revive a customer for a save that will not land.
+    const lines = parseQuoteLinesFromBody(b.lines);
+    await preflightQuoteLines(lines);
+
     // Email-as-identifier: when the builder supplies a client email (and no existing
     // customer), resolve-or-create the contact (auto-attributing to a company by domain).
     let customerId = optStr(b.customerId);
@@ -52,7 +60,7 @@ export async function POST(req: NextRequest) {
       headcount: optInt(b.headcount),
       isDelivery: b.isDelivery === true,
       deliveryZoneId: optStr(b.deliveryZoneId),
-      lines: parseQuoteLinesFromBody(b.lines),
+      lines,
       notes: optStr(b.notes),
       expiresAt: optStr(b.expiresAt),
       emailAttach,
