@@ -230,6 +230,83 @@ export function appendLines<T extends DraftLineLike>(prev: readonly T[], next: r
   return [...prev.filter((l) => !isUntouchedBlankLine(l)), ...next];
 }
 
+// ── Package expansion (D-45) — pure, client-safe ────────────────────────────────────────
+
+/** The fields of a catering package the builder expands into quote lines. */
+export interface ExpandablePackage {
+  id: string;
+  labelEn: string;
+  /** `per_head` | `per_platter` | `fixed` (0115 CHECK). */
+  pricingMode: string;
+  priceCents: number;
+  items: ReadonlyArray<{
+    itemId: string | null;
+    menuItemId: string | null;
+    label: string;
+    quantity: number;
+    unitPriceCents: number;
+  }>;
+}
+/** One expanded line, in the builder's string form (quantity and dollars as typed text). */
+export interface ExpandedPackageLine {
+  description: string;
+  quantity: string;
+  unitPrice: string;
+  itemId: string | null;
+  menuItemId: string | null;
+  packageId: string | null;
+}
+
+/**
+ * How many people a package line is for (D-45, Juan 2026-10-13): a PER-HEAD package is priced
+ * per person, so its lines default to the quote's headcount. A per-platter or fixed package
+ * keeps its own count (multiplier 1), and so does a per-head package while the headcount is
+ * empty or not a whole number above zero.
+ */
+export function packageHeadcountMultiplier(pricingMode: string, headcount: string): number {
+  if (pricingMode !== "per_head") return 1;
+  const raw = headcount.trim();
+  if (raw === "") return 1;
+  const n = Number(raw);
+  return Number.isInteger(n) && n > 0 ? n : 1;
+}
+
+const centsToDollarText = (c: number): string => (c ? (c / 100).toString() : "");
+const scaleQty = (q: number, n: number): string => String(Math.round(q * n * 1000) / 1000);
+
+/**
+ * Expand a package into editable quote lines (the staff builder's "Add package").
+ *
+ * - Each composition line keeps its own quantity × the headcount multiplier (1 unless the
+ *   package is per-head and a headcount is set — D-45). A fixed-count platter keeps its count.
+ * - A package with no composition becomes one priced line for the package itself.
+ * - A package whose composition is all unpriced "choose your own" slots carries the package
+ *   price on ONE line (the guide-walk $115 × 8 fix). That line is per person for a per-head
+ *   package, so its Qty is the headcount too.
+ */
+export function expandPackageLines(pkg: ExpandablePackage, headcount: string): ExpandedPackageLine[] {
+  const n = packageHeadcountMultiplier(pkg.pricingMode, headcount);
+  const packageLine = (): ExpandedPackageLine => ({
+    description: pkg.labelEn,
+    quantity: String(n),
+    unitPrice: (pkg.priceCents / 100).toString(),
+    itemId: null,
+    menuItemId: null,
+    packageId: pkg.id,
+  });
+  const lines: ExpandedPackageLine[] = pkg.items.map((pi) => ({
+    description: pi.label,
+    quantity: scaleQty(pi.quantity, n),
+    unitPrice: centsToDollarText(pi.unitPriceCents),
+    itemId: pi.itemId,
+    menuItemId: pi.menuItemId,
+    packageId: pkg.id,
+  }));
+  if (lines.length === 0) return [packageLine()];
+  if (pkg.priceCents > 0 && lines.every((l) => l.unitPrice === "")) return [packageLine(), ...lines];
+  return lines;
+}
+
 export interface QuoteLeadOption {
   id: string;
   contactName: string;
