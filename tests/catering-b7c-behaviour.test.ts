@@ -6,8 +6,9 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { AuthContext } from "@/lib/session";
 
 type Row = Record<string, unknown>;
-const { db, writes, audit, session } = vi.hoisted(() => ({
+const { db, reads, writes, audit, session } = vi.hoisted(() => ({
   db: {} as Record<string, Row[]>,
+  reads: [] as string[],
   writes: [] as Array<{ table: string; op: "update" | "insert"; patch?: Row; rows?: Row[]; count?: number }>,
   audit: vi.fn(),
   session: { ctx: null as unknown },
@@ -79,6 +80,7 @@ class Q {
       writes.push({ table: this.table, op: "insert", rows });
       return { data: rows.map((r) => ({ ...r })), error: null, count: rows.length };
     }
+    if (this.mode === "select") reads.push(this.table);
     let matched = table.filter((r) => this.preds.every((p) => p(r)));
     if (this.mode === "update") {
       for (const r of matched) Object.assign(r, this.patch);
@@ -105,6 +107,8 @@ vi.mock("@/lib/audit", () => ({ audit }));
 vi.mock("@/lib/session", () => ({ requireSession: async () => session.ctx }));
 
 import { resolveQuoteDemand } from "@/lib/catering/prep-demand";
+import { loadPipelineBoard } from "@/lib/catering/pipeline";
+import { showQuoteNotAccepted } from "@/lib/catering/pipeline-shared";
 import { expandPackageLines, type ExpandablePackage } from "@/lib/catering/quotes-shared";
 
 // ── fixtures ─────────────────────────────────────────────────────────────────────────────
@@ -114,6 +118,7 @@ const gmA = { user: { id: "gm-a", role: "gm" }, role: "gm", level: 7, locations:
 function seed() {
   for (const k of Object.keys(db)) delete db[k];
   writes.length = 0;
+  reads.length = 0;
   audit.mockClear();
   session.ctx = gmA;
   db.users = [{ id: "gm-a", role: "gm", active: true }];
@@ -153,5 +158,65 @@ describe("D-45 · package lines → Prep Demand", () => {
   });
   it("a 16 pc platter reserves 16 subs to pick — not 16 + 256", async () => {
     expect(await reserveFor(slotPackage("platter-16", "per_platter", 16), "20")).toBe(16);
+  });
+});
+
+// ── D-46 · "quote not accepted" chip on Confirmed cards ─────────────────────────────────
+describe("D-46 · the board knows which Confirmed leads have an unaccepted quote", () => {
+  const lead = (id: string, stage: string, location_id: string | null = A): Row => ({
+    id, stage, location_id, customer_id: null, contact_name: `Contact ${id}`, company: null, created_at: `2026-10-0${id.length}`,
+  });
+  const quote = (pipeline_id: string, status: string, created_at: string, superseded_at: string | null = null): Row => ({
+    id: `q-${pipeline_id}-${created_at}`, pipeline_id, status, created_at, superseded_at,
+  });
+  beforeEach(() => {
+    db.locations = [{ id: A, name: "Shop A" }];
+    db.catering_pipeline = [
+      lead("c-draft", "confirmed"),
+      lead("c-sent", "confirmed"),
+      lead("c-acc", "confirmed"),
+      lead("c-none", "confirmed"),
+      lead("c-revised", "confirmed"),
+      lead("c-declined", "confirmed"),
+      lead("i-draft", "inquiry"),
+      lead("other-shop", "confirmed", "loc-b"),
+    ];
+    db.catering_quotes = [
+      quote("c-draft", "draft", "2026-10-02"),
+      quote("c-sent", "sent", "2026-10-02"),
+      quote("c-acc", "accepted", "2026-10-02"),
+      // revised: v1 accepted then superseded; the current v2 is only a draft
+      quote("c-revised", "accepted", "2026-10-01", "2026-10-03"),
+      quote("c-revised", "draft", "2026-10-03"),
+      quote("c-declined", "declined", "2026-10-02"),
+      quote("i-draft", "draft", "2026-10-02"),
+      quote("other-shop", "draft", "2026-10-02"),
+    ];
+  });
+
+  it("returns the CURRENT quote status for Confirmed leads only, scoped to the actor's shops", async () => {
+    const board = await loadPipelineBoard(gmA);
+    const byId = Object.fromEntries(board.map((l) => [l.id, l.quoteStatus]));
+    expect(byId).toEqual({
+      "c-draft": "draft",
+      "c-sent": "sent",
+      "c-acc": "accepted",
+      "c-none": null,
+      "c-revised": "draft",
+      "c-declined": "declined",
+      "i-draft": null, // not Confirmed → not loaded
+    });
+  });
+
+  it("the chip shows on Confirmed + draft/sent only", async () => {
+    const board = await loadPipelineBoard(gmA);
+    expect(board.filter((l) => showQuoteNotAccepted(l.stage, l.quoteStatus)).map((l) => l.id).sort())
+      .toEqual(["c-draft", "c-revised", "c-sent"]);
+  });
+
+  it("a board with no Confirmed lead makes no quote read", async () => {
+    db.catering_pipeline = [lead("i-draft", "inquiry")];
+    expect((await loadPipelineBoard(gmA)).map((l) => l.quoteStatus)).toEqual([null]);
+    expect(reads).not.toContain("catering_quotes");
   });
 });

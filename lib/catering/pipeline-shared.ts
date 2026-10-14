@@ -94,6 +94,16 @@ export function shopChipLabel(lead: { locationName?: string | null }): string | 
   return n ? n : null;
 }
 
+/**
+ * D-46 (Juan, 2026-10-13): Confirmed keeps its meaning (the kitchen plans it), and a Confirmed
+ * card whose linked quote is still a draft or only sent wears a "quote not accepted" chip —
+ * Insights counts it at $0 until the quote is marked accepted. A Confirmed lead with no quote,
+ * or a declined one, gets no chip (no quote to accept; feeds no prep).
+ */
+export function showQuoteNotAccepted(stage: PipelineStage, quoteStatus: string | null | undefined): boolean {
+  return stage === "confirmed" && (quoteStatus === "draft" || quoteStatus === "sent");
+}
+
 // ── Lead edit (B5 #36) ─────────────────────────────────────────────────────────────────
 
 /** The lead fields the "Edit details" form owns (phone/email are D-48, Juan's call). */

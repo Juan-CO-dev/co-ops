@@ -624,6 +624,8 @@
   "catering.pipeline.capacity.remaining": "{n} covers left",
   "catering.pipeline.error.illegal_transition": "That move is not allowed from this stage. Out for delivery can only go to Completed or Lost; Completed and Lost are final.",
   "catering.pipeline.no_moves": "This lead is closed — no further moves.",
+  "catering.pipeline.quote_not_accepted": "Quote not accepted",
+  "catering.pipeline.quote_not_accepted_hint": "The kitchen plans this order, but Insights counts it only once the quote is marked accepted.",
   "catering.pipeline.error.stage_changed": "This lead moved stages since you loaded it — reload and try again.",
   "catering.pipeline.error.generic": "Something went wrong. Please try again.",
   "catering.pipeline.error.forbidden": "You do not have permission for that.",

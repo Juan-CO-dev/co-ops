@@ -3,12 +3,26 @@
  * Pure helpers are unit-tested here; lib/route behaviour lives in
  * tests/catering-b7c-behaviour.test.ts (in-memory Supabase fake).
  */
+import { readFileSync } from "node:fs";
+import path from "node:path";
 import { describe, expect, it } from "vitest";
+import { showQuoteNotAccepted, PIPELINE_STAGES } from "@/lib/catering/pipeline-shared";
+import en from "@/lib/i18n/en.json";
+import es from "@/lib/i18n/es.json";
 import {
   expandPackageLines,
   packageHeadcountMultiplier,
   type ExpandablePackage,
 } from "@/lib/catering/quotes-shared";
+
+const src = (rel: string) => readFileSync(path.resolve(__dirname, "..", rel), "utf8");
+const enKeys = en as Record<string, string>;
+const esKeys = es as Record<string, string>;
+const bothLanguages = (key: string) => {
+  expect(enKeys[key], `en ${key}`).toBeTruthy();
+  expect(esKeys[key], `es ${key}`).toBeTruthy();
+  expect(esKeys[key]).not.toBe(enKeys[key]);
+};
 
 // ── D-45 · per-head package Qty defaults to the headcount ───────────────────────────────
 const lightLunch: ExpandablePackage = {
@@ -88,5 +102,24 @@ describe("D-45 · per-head package Qty = headcount", () => {
     expect(expandPackageLines(bare, "15")).toEqual([
       { description: "Bare", quantity: "15", unitPrice: "9", itemId: null, menuItemId: null, packageId: "p" },
     ]);
+  });
+});
+
+// ── D-46 · "quote not accepted" chip ────────────────────────────────────────────────────
+describe("D-46 · quote-not-accepted chip", () => {
+  it("shows only on a Confirmed lead whose current quote is a draft or sent", () => {
+    for (const stage of PIPELINE_STAGES) {
+      for (const status of ["draft", "sent", "accepted", "declined", null, undefined]) {
+        expect(showQuoteNotAccepted(stage, status), `${stage}/${String(status)}`)
+          .toBe(stage === "confirmed" && (status === "draft" || status === "sent"));
+      }
+    }
+  });
+  it("the board card and the search card both render it, in en and es", () => {
+    const client = src("components/catering/pipeline/PipelineClient.tsx");
+    expect(client).toContain("showQuoteNotAccepted(lead.stage, lead.quoteStatus) && <QuoteNotAcceptedChip />");
+    expect(client).toContain("showQuoteNotAccepted(r.stage, r.quoteStatus) && <QuoteNotAcceptedChip />");
+    bothLanguages("catering.pipeline.quote_not_accepted");
+    bothLanguages("catering.pipeline.quote_not_accepted_hint");
   });
 });

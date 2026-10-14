@@ -5,8 +5,8 @@ import { useRouter } from "next/navigation";
 import { useTranslation } from "@/lib/i18n/provider";
 import { formatCents, formatDateLabel } from "@/lib/i18n/format";
 import type { TranslationKey } from "@/lib/i18n/types";
-import { LEGAL_TRANSITIONS, PIPELINE_STAGES, leadEditPatch, shopChipLabel, type PipelineStage } from "@/lib/catering/pipeline-shared";
-import type { PipelineLead, PipelineSearchResult, AssignableStaff } from "@/lib/catering/pipeline";
+import { LEGAL_TRANSITIONS, PIPELINE_STAGES, leadEditPatch, shopChipLabel, showQuoteNotAccepted, type PipelineStage } from "@/lib/catering/pipeline-shared";
+import type { PipelineLead, PipelineBoardLead, PipelineSearchResult, AssignableStaff } from "@/lib/catering/pipeline";
 import { LEAD_SOURCES, leadSourceKey } from "@/lib/catering/intake-shared";
 import type { CateringCapacityResult } from "@/lib/catering/capacity";
 import { EzcaterReconciliationPanel } from "./EzcaterReconciliationPanel";
@@ -25,7 +25,7 @@ interface LocationOpt {
 interface Props {
   notInToast: PipelineToastOrder[] | null;
   staff: AssignableStaff[];
-  leads: PipelineLead[];
+  leads: PipelineBoardLead[];
   followUps: PipelineLead[];
   locations: LocationOpt[];
   createLocations: LocationOpt[];
@@ -62,6 +62,20 @@ function ShopChip({ lead }: { lead: { locationName?: string | null } }) {
   );
 }
 
+/** D-46: a Confirmed card whose current quote is still a draft or only sent. */
+function QuoteNotAcceptedChip() {
+  const { t } = useTranslation();
+  return (
+    <span
+      data-testid="quote-not-accepted-chip"
+      title={t("catering.pipeline.quote_not_accepted_hint")}
+      className="ml-1 mt-1 inline-block rounded-md bg-co-warning-surface px-2 py-0.5 text-xs font-medium text-co-warning-text"
+    >
+      {t("catering.pipeline.quote_not_accepted")}
+    </span>
+  );
+}
+
 function stageKey(s: PipelineStage): TranslationKey {
   return `catering.pipeline.stage.${s}` as TranslationKey;
 }
@@ -84,7 +98,7 @@ export function PipelineClient({ notInToast, staff, leads, followUps, locations,
       (filterSource === "" || l.leadSource === filterSource),
   );
 
-  const byStage: Record<PipelineStage, PipelineLead[]> = {
+  const byStage: Record<PipelineStage, PipelineBoardLead[]> = {
     inquiry: [],
     quote_sent: [],
     confirmed: [],
@@ -288,7 +302,7 @@ function SearchResultCard({
         <div>
           <span className="font-semibold text-co-text">{r.contactName}</span>
           {r.company && <span className="ml-2 text-sm text-co-text-muted">{r.company}</span>}
-          <div><ShopChip lead={r} />{notInToast && <NotInToastChip />}</div>
+          <div><ShopChip lead={r} />{notInToast && <NotInToastChip />}{showQuoteNotAccepted(r.stage, r.quoteStatus) && <QuoteNotAcceptedChip />}</div>
         </div>
         <span className="inline-block rounded-md bg-co-surface px-2 py-0.5 text-xs font-medium text-co-text-muted border border-co-border">
           {t(stageKey(r.stage))}
@@ -333,7 +347,7 @@ function LeadCard({
   staffNames,
 }: {
   notInToast: boolean;
-  lead: PipelineLead;
+  lead: PipelineBoardLead;
   money: (c: number | null) => string | null;
   canWrite: boolean;
   canTransfer: boolean;
@@ -355,6 +369,7 @@ function LeadCard({
         {lead.company && <div className="text-xs text-co-text-muted">{lead.company}</div>}
         <ShopChip lead={lead} />
         {notInToast && <NotInToastChip />}
+        {showQuoteNotAccepted(lead.stage, lead.quoteStatus) && <QuoteNotAcceptedChip />}
         <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 text-xs text-co-text-muted">
           {lead.eventDate && <span>{formatDateLabel(lead.eventDate, language)}</span>}
           {lead.headcount != null && <span>{t("catering.pipeline.headcount_short").replace("{n}", String(lead.headcount))}</span>}

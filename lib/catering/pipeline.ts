@@ -237,8 +237,40 @@ async function readScopeOr(actor: AuthContext): Promise<string | null> {
 }
 
 // ── Reads ───────────────────────────────────────────────────────────────────
+/** A board lead: the lead plus its current quote's status where the board needs it. */
+export interface PipelineBoardLead extends PipelineLead {
+  /**
+   * Status of the lead's CURRENT quote (latest non-superseded) — loaded for Confirmed leads
+   * only, for the D-46 "quote not accepted" chip; null for every other stage or no quote.
+   */
+  quoteStatus: string | null;
+}
+
+/** Ids per `.in()` read — keeps the request line well under the 414 found at ~220 ids. */
+const QUOTE_STATUS_CHUNK = 100;
+
+/** The current (latest non-superseded) quote status per lead id. Status only — no contact. */
+async function currentQuoteStatuses(
+  sb: ReturnType<typeof getServiceRoleClient>,
+  leadIds: readonly string[],
+): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
+  for (let i = 0; i < leadIds.length; i += QUOTE_STATUS_CHUNK) {
+    const { data, error } = await sb
+      .from("catering_quotes")
+      .select("pipeline_id, status, created_at")
+      .in("pipeline_id", leadIds.slice(i, i + QUOTE_STATUS_CHUNK))
+      .is("superseded_at", null)
+      .order("created_at", { ascending: false })
+      .returns<Array<{ pipeline_id: string; status: string; created_at: string }>>();
+    if (error) throw new Error(`currentQuoteStatuses: ${error.message}`);
+    for (const r of data ?? []) if (!out.has(r.pipeline_id)) out.set(r.pipeline_id, r.status); // first seen = latest
+  }
+  return out;
+}
+
 /** All non-archived leads the actor may view, for the board (grouped client-side by stage). */
-export async function loadPipelineBoard(actor: AuthContext): Promise<PipelineLead[]> {
+export async function loadPipelineBoard(actor: AuthContext): Promise<PipelineBoardLead[]> {
   requireLevel(actor, PIPELINE_READ_MIN);
   const sb = getServiceRoleClient();
   let q = sb.from("catering_pipeline").select(LEAD_COLS);
@@ -246,7 +278,10 @@ export async function loadPipelineBoard(actor: AuthContext): Promise<PipelineLea
   if (scope) q = q.or(scope);
   const { data, error } = await q.order("created_at", { ascending: false }).returns<DbLeadRow[]>();
   if (error) throw new Error(`loadPipelineBoard: ${error.message}`);
-  return withLocationNames(sb, (data ?? []).map(mapLead));
+  const leads = await withLocationNames(sb, (data ?? []).map(mapLead));
+  const confirmedIds = leads.filter((l) => l.stage === "confirmed").map((l) => l.id);
+  const statuses = confirmedIds.length ? await currentQuoteStatuses(sb, confirmedIds) : new Map<string, string>();
+  return leads.map((l) => ({ ...l, quoteStatus: statuses.get(l.id) ?? null }));
 }
 
 export interface PipelineSearchResult extends PipelineLead {
