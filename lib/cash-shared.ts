@@ -47,3 +47,22 @@ export function sumDenominations(denoms: Denominations): number {
   }
   return total;
 }
+
+/**
+ * B3 / issue #59: the live deposit + over/short readout is meaningless until
+ * the closer has entered something. With both fields empty it computed
+ * "Deposit -$200.00 · $200.00 short" (an empty drawer minus the float).
+ * Show it only once the projected field AND a drawer figure (the hand total,
+ * or at least one denomination count) have been entered.
+ */
+export function cashReadoutVisible(input: {
+  projected: string;
+  mode: "hand" | "denomination";
+  handTotal: string;
+  denoms: Denominations;
+}): boolean {
+  if (input.projected.trim() === "") return false;
+  return input.mode === "hand"
+    ? input.handTotal.trim() !== ""
+    : sumDenominations(input.denoms) > 0;
+}

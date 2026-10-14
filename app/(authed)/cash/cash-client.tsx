@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 
 import {
+  cashReadoutVisible,
   computeCashTotals,
   DEFAULT_FLOAT_CENTS,
   sumDenominations,
@@ -193,22 +194,26 @@ export function CashClient({
           {/* Muted reminder: $200 float stays in the register */}
           <p className="text-xs text-co-text-muted">{t("cash.hint.float")}</p>
 
-          {/* Live deposit readout */}
-          <p className="text-sm font-semibold text-co-text">
-            {t("cash.readout.deposit", { amount: formatCents(depositCents, language) })}
-            {" · "}
-            <span
-              className={
-                overShortCents === 0
-                  ? "text-co-text-muted"
-                  : overShortCents > 0
-                    ? "text-co-confirm-text"
-                    : "text-co-cta-text"
-              }
-            >
-              {overShortLine}
-            </span>
-          </p>
+          {/* Live deposit readout - held back until the closer has entered the
+              projected figure AND a drawer figure (an empty form read
+              "Deposit -$200.00 - $200.00 short"). */}
+          {cashReadoutVisible({ projected, mode, handTotal, denoms }) ? (
+            <p className="text-sm font-semibold text-co-text">
+              {t("cash.readout.deposit", { amount: formatCents(depositCents, language) })}
+              {" · "}
+              <span
+                className={
+                  overShortCents === 0
+                    ? "text-co-text-muted"
+                    : overShortCents > 0
+                      ? "text-co-confirm-text"
+                      : "text-co-cta-text"
+                }
+              >
+                {overShortLine}
+              </span>
+            </p>
+          ) : null}
 
           {/* Over/short note */}
           <label className="flex flex-col gap-1">

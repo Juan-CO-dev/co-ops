@@ -4,17 +4,19 @@
  * Cross-cutting concerns owned by this layout:
  *   - requireSessionFromHeaders() — auth boundary
  *   - TranslationProvider — i18n context for all authenticated client components
- *   - UserMenu — floating top-right (fixed top-4 right-4 z-30)
+ *   - UserMenu — IN-FLOW top-right row above the page (scrolls away with it)
  *
  * Back-to-dashboard is an IN-FLOW per-page affordance (components/
  * DashboardBackLink), not global chrome — Juan preferred the in-flow muted
  * ChevronLeft style over a floating pill. UserMenu also carries a Dashboard item.
  *
- * Architectural constraint for future authenticated pages: top-right corner
- * real estate is reserved for UserMenu (and future floating elements like a
- * notification bell). Pages render their own structural chrome (headers,
- * banners, etc.) but must NOT place critical interactive content in the
- * top-right corner where UserMenu's avatar + dropdown panel would overlap.
+ * UserMenu used to float (`fixed top-4 right-4`). A fixed 44px circle sat on top
+ * of whatever a page put in its top-right (the DASHBOARD link on /my-feedback and
+ * /reports/written, ORDERING > on Receiving) and covered anything that scrolled
+ * under it (B3 / issue #53). It now takes its own row ABOVE the page content, so
+ * it overlaps nothing and scrolls away with the page. Its dropdown is absolutely
+ * positioned off the trigger and the row is `relative z-30`, so the open panel
+ * still stacks above page content and sticky bars (z-20).
  *
  * Page-level requireSessionFromHeaders calls are KEPT for typed auth
  * access (locations, level, role for page logic). The ~5ms duplicate
@@ -46,13 +48,13 @@ export default async function AuthedLayout({ children }: { children: ReactNode }
   return (
     <TranslationProvider initialLanguage={auth.user.language}>
       {/*
-        UserMenu floats fixed in the top-right corner. z-30 keeps it above
-        page content (sticky progress bars use z-20; modals use z-50, so
-        the menu sits between page chrome and modal overlays — modals can
-        cover it when they open, which is correct: modal-mode owns the
+        UserMenu sits in its own in-flow row. `relative z-30` keeps the OPEN
+        dropdown above page content (sticky progress bars use z-20; modals use
+        z-50, so the menu sits between page chrome and modal overlays - modals
+        can cover it when they open, which is correct: modal-mode owns the
         full screen).
       */}
-      <div className="fixed top-4 right-4 z-30">
+      <div className="relative z-30 flex justify-end px-4 pt-3 sm:px-6">
         <UserMenu
           userName={auth.user.name}
           userEmail={auth.user.email}
