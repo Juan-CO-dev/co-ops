@@ -145,3 +145,20 @@ describe("#6 no-par rows say so instead of 'verify section first'", () => {
     expect(opening).toMatch(/prepNeedLabel\(\{ parValue, groundTruth \}\) === "no_par"\s*\?\s*t\("opening\.phase2\.prep_need_no_par"\)/);
   });
 });
+
+describe("#8 Phase 2 section headers are a static Verified chip", () => {
+  const opening = read("components/opening/OpeningPrepEntry.tsx");
+  it("OpeningPrepEntry (Phase 2 only) does not render OpeningSectionVerify or take a toggle", () => {
+    expect(opening).not.toMatch(/OpeningSectionVerify/);
+    expect(opening).not.toMatch(/onSectionVerifyToggle/);
+    expect(opening).not.toMatch(/sectionDisabledMap/);
+    expect(opening).toContain('t("opening.section_verify.verified_button")');
+  });
+  it("opening-client no longer hands Phase 2 a verify toggle (Phase 1 still has it)", () => {
+    const client = read("app/(authed)/operations/opening/opening-client.tsx");
+    const prep = client.slice(client.indexOf("<OpeningPrepEntry"), client.indexOf("/>", client.indexOf("<OpeningPrepEntry")));
+    expect(prep).not.toContain("onSectionVerifyToggle");
+    const station = client.slice(client.indexOf("<OpeningVerificationStation"), client.indexOf("/>", client.indexOf("<OpeningVerificationStation")));
+    expect(station).toContain("onSectionVerifyToggle={handleSectionVerifyToggle}");
+  });
+});

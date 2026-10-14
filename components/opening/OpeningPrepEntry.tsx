@@ -4,7 +4,8 @@
  * OpeningPrepEntry — Phase 2 prep verification UI (C.50 redesign).
  *
  * Per-section layout per C.50 §4:
- *   - Section header has the verify CTA (OpeningSectionVerify component)
+ *   - Section header shows a static "Verified ✓" chip (B1 #8: Phase 1 owns section-verify
+ *     and is submitted before Phase 2 opens, so there is nothing to toggle here)
  *   - Per-item rows below show ground-truth display + opener_prepped input
  *   - Live prep_need preview (display-only)
  *   - Modal-trigger signal banners for over/under-prep capture
@@ -21,9 +22,9 @@
  *   removed as vestigial — recount is a Phase 1 concern; Phase 2 reads the
  *   persisted ground truth, never re-counts.
  * - Signal banners trigger on delta_vs_prep_need (not delta_vs_par).
- * - NULL closer_count sentinel: section-verify disabled for sections with
- *   any NULL item. NULL-reason badge surfaces operational cause via snapshot
- *   row metadata + template item's references_template_item_id.
+ * - NULL closer_count sentinel: the NULL-reason badge surfaces operational
+ *   cause via snapshot row metadata + template item's references_template_item_id.
+ *   (The section-verify disabled guard lives in Phase 1 — OpeningVerificationStation.)
  *
  * Form state model (per Lock 2): separate overPar / underPar slots in
  * OpeningPhase2FormValue; UX path-differentiation via delta sign. Modals
@@ -53,7 +54,6 @@ import { CollapsibleChecklistSection } from "@/components/ui/CollapsibleChecklis
 import { showProblems, unfinishedSectionIds } from "@/lib/collapsible-sections";
 import { useCollapsibleSections } from "@/lib/use-collapsible-sections";
 
-import { OpeningSectionVerify } from "./OpeningSectionVerify";
 import {
   OverParModal,
   type ManagerOption,
@@ -200,9 +200,11 @@ interface OpeningPrepEntryProps {
     string,
     { groundTruth: number | null; prepNeed: number | null }
   >;
-  /** Map<sectionKey, verified-state> in client memory; toggled via OpeningSectionVerify. */
+  /**
+   * Map<sectionKey, verified-state> — seeded from server truth; Phase 1 owns the toggle.
+   * Read-only here: drives the header chip and the rows' pre-persist ground-truth fallback.
+   */
   sectionVerifications: Map<string, boolean>;
-  onSectionVerifyToggle: (sectionKey: string) => void;
   managers: ReadonlyArray<ManagerOption>;
   language: Language;
   showMissingErrors: boolean;
@@ -240,7 +242,6 @@ export function OpeningPrepEntry({
   closerSnapshots,
   phase1ResolvedByItem,
   sectionVerifications,
-  onSectionVerifyToggle,
   managers,
   language,
   showMissingErrors,
@@ -287,25 +288,6 @@ export function OpeningPrepEntry({
     }
     return groups;
   }, [items]);
-
-  // Per-section disabled state per Step 11 Lock 3: section disabled when
-  // any item has NULL closer_count AND no opener_recount. Opener must
-  // per-item recount NULL items before they can section-verify the rest.
-  const sectionDisabledMap = useMemo(() => {
-    const map = new Map<string, boolean>();
-    for (const [section, sectionItems] of sectionGroups.entries()) {
-      const hasUnrecountedNull = sectionItems.some((it) => {
-        const snap = closerSnapshots.get(it.id) ?? null;
-        const value = values.get(it.id) ?? null;
-        return (
-          (snap?.closerCount ?? null) === null &&
-          (value?.openerRecount ?? null) === null
-        );
-      });
-      map.set(section, hasUnrecountedNull);
-    }
-    return map;
-  }, [sectionGroups, closerSnapshots, values]);
 
   // Wave 1 B — collapsible sections. DONE = the item's save state is "saved" (the
   // same status the Phase 2 finalize gate counts: outstandingCount). First section
@@ -359,7 +341,6 @@ export function OpeningPrepEntry({
           ? resolveTemplateItemContent(firstItem, language).station ?? sectionKey
           : sectionKey;
         const verified = sectionVerifications.get(sectionKey) ?? false;
-        const disabled = sectionDisabledMap.get(sectionKey) ?? false;
 
         const progress = sectionProgress.find((p) => p.id === sectionKey);
 
@@ -377,15 +358,15 @@ export function OpeningPrepEntry({
             className="rounded-2xl border-2 border-co-border bg-co-surface p-4 shadow-sm sm:p-5"
             titleClassName="text-base font-extrabold uppercase tracking-[0.14em] text-co-text"
             headerExtras={
-              <OpeningSectionVerify
-                sectionKey={sectionKey}
-                sectionDisplay={sectionDisplay}
-                verified={verified}
-                disabled={disabled || readOnly}
-                disabledReason={disabled ? "null_items_unrecounted" : null}
-                onToggleVerified={() => onSectionVerifyToggle(sectionKey)}
-                language={language}
-              />
+              // B1 #8 — Phase 1 (submitted before this tab opens) owns section-verify. The
+              // old toggle read Phase-2 values, which carry no recount, so it showed a grey
+              // VERIFIED + "Recount items without closer data first" on finished sections.
+              verified ? (
+                <span className="inline-flex items-center gap-1.5 rounded-full border-2 border-co-success bg-co-success-surface px-3 py-1 text-xs font-bold uppercase tracking-[0.12em] text-co-confirm-text">
+                  <span aria-hidden>✓</span>
+                  {t("opening.section_verify.verified_button")}
+                </span>
+              ) : null
             }
           >
 

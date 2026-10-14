@@ -1957,7 +1957,6 @@ export function OpeningClient({
           closerSnapshots={closerSnapshotsMap}
           phase1ResolvedByItem={phase1ResolvedByItem}
           sectionVerifications={sectionVerifications}
-          onSectionVerifyToggle={handleSectionVerifyToggle}
           managers={managers}
           language={language}
           showMissingErrors={showMissingPhase2Errors}
