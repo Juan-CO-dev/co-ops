@@ -160,7 +160,7 @@ export function ProductionConsumptionPanel(props: {
   });
 
   return (
-    <div className="mt-2 rounded-lg border border-co-border bg-co-surface">
+    <div className="mt-2 min-w-0 rounded-lg border border-co-border bg-co-surface">
       <button
         type="button"
         aria-expanded={expanded}
@@ -195,7 +195,7 @@ export function ProductionConsumptionPanel(props: {
                   step="any"
                   value={displayQty}
                   onChange={(e) => handleInputChange(d, e.target.value)}
-                  className="min-h-[44px] w-20 rounded-md border border-co-border bg-co-surface px-2 py-1 text-right text-sm text-co-text focus:outline-none focus-visible:ring-2 focus-visible:ring-co-gold/60"
+                  className="min-h-[44px] w-20 rounded-md border border-co-border bg-co-surface px-2 py-1 text-right text-base text-co-text focus:outline-none focus-visible:ring-2 focus-visible:ring-co-gold/60"
                   aria-label={d.skuName}
                 />
                 <div className="flex items-center rounded-md border border-co-border bg-co-surface text-xs">

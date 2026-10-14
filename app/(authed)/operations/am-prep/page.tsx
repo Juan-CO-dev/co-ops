@@ -194,7 +194,7 @@ export default async function AmPrepPage({ searchParams }: PageProps) {
   });
 
   return (
-    <main className="mx-auto max-w-2xl md:max-w-3xl lg:max-w-5xl xl:max-w-6xl px-4 pb-32 pt-4 sm:px-6">
+    <main className="mx-auto w-full max-w-2xl md:max-w-3xl lg:max-w-5xl xl:max-w-6xl px-4 pb-32 pt-4 sm:px-6">
       {/* Back-to-dashboard — the one BackLink primitive (registry-driven). */}
       <BackLink />
 
@@ -323,7 +323,7 @@ function NoTemplateView({
   language: Language;
 }) {
   return (
-    <main className="mx-auto max-w-2xl md:max-w-3xl lg:max-w-5xl xl:max-w-6xl p-4 sm:p-6">
+    <main className="mx-auto w-full max-w-2xl md:max-w-3xl lg:max-w-5xl xl:max-w-6xl p-4 sm:p-6">
       <p className="text-xs font-bold uppercase tracking-wide text-co-text-muted">
         {serverT(language, "am_prep.page.title")}
       </p>
