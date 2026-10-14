@@ -6,7 +6,14 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { leadContactLabel, showQuoteNotAccepted, PIPELINE_STAGES } from "@/lib/catering/pipeline-shared";
+import {
+  LEAD_PHONE_MAX,
+  leadContactLabel,
+  leadEditPatch,
+  normalizeLeadPhone,
+  showQuoteNotAccepted,
+  PIPELINE_STAGES,
+} from "@/lib/catering/pipeline-shared";
 import en from "@/lib/i18n/en.json";
 import es from "@/lib/i18n/es.json";
 import {
@@ -139,5 +146,37 @@ describe("D-47 · lead label on Prep Demand", () => {
     bothLanguages("admin.catering.prep_demand.for_leads");
     bothLanguages("admin.catering.prep_demand.lead_hidden");
     expect(esKeys["admin.catering.prep_demand.lead_qty"]).toBeTruthy();
+  });
+});
+
+// ── D-48 · phone on Add lead and Edit details ───────────────────────────────────────────
+describe("D-48 · lead phone", () => {
+  it("normalizeLeadPhone trims, blanks to null, refuses over the cap", () => {
+    expect(normalizeLeadPhone(" (202) 555-0100 ")).toEqual({ ok: true, value: "(202) 555-0100" });
+    expect(normalizeLeadPhone("  ")).toEqual({ ok: true, value: null });
+    expect(normalizeLeadPhone(null)).toEqual({ ok: true, value: null });
+    expect(normalizeLeadPhone("9".repeat(LEAD_PHONE_MAX))).toEqual({ ok: true, value: "9".repeat(LEAD_PHONE_MAX) });
+    expect(normalizeLeadPhone("9".repeat(LEAD_PHONE_MAX + 1))).toEqual({ ok: false });
+  });
+  it("the edit form sends the phone only when it changed", () => {
+    const lead = { contactName: "Ana", company: null, eventDate: null, headcount: null, followUpDate: null, notes: null, contactPhone: "555-0100" };
+    const form = { contactName: "Ana", company: "", eventDate: "", headcount: "", followUpDate: "", notes: "", contactPhone: " 555-0100 " };
+    expect(leadEditPatch(lead, form)).toEqual({ ok: true, patch: {} });
+    expect(leadEditPatch(lead, { ...form, contactPhone: "555-0199" })).toEqual({ ok: true, patch: { contactPhone: "555-0199" } });
+    expect(leadEditPatch(lead, { ...form, contactPhone: "" })).toEqual({ ok: true, patch: { contactPhone: null } });
+    expect(leadEditPatch(lead, { ...form, contactPhone: "9".repeat(LEAD_PHONE_MAX + 1) })).toEqual({ ok: false, field: "contactPhone" });
+    // a form without the phone box never touches the phone (B5 callers)
+    const { contactPhone: _omit, ...noPhone } = form;
+    void _omit;
+    expect(leadEditPatch(lead, noPhone)).toEqual({ ok: true, patch: {} });
+  });
+  it("Add lead and Edit details both carry a phone box, in en and es; no lead email box (no column)", () => {
+    const client = src("components/catering/pipeline/PipelineClient.tsx");
+    expect(client.match(/name="contactPhone" type="tel"/g)).toHaveLength(2);
+    expect(client).toContain('contactPhone: str("contactPhone")');
+    expect(client).toContain('contactPhone: raw("contactPhone")');
+    expect(client).not.toMatch(/name="contactEmail"/);
+    bothLanguages("catering.pipeline.field.phone");
+    expect(src("app/api/catering/pipeline/[id]/route.ts")).toMatch(/"contactPhone",/);
   });
 });

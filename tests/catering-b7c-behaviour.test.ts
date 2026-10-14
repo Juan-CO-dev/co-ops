@@ -108,6 +108,9 @@ vi.mock("@/lib/session", () => ({ requireSession: async () => session.ctx }));
 
 import { loadCateringPrepDemand, resolveQuoteDemand } from "@/lib/catering/prep-demand";
 import { loadPipelineBoard } from "@/lib/catering/pipeline";
+import { NextRequest } from "next/server";
+import { POST as createLeadRoute } from "@/app/api/catering/pipeline/route";
+import { PATCH as patchLeadRoute } from "@/app/api/catering/pipeline/[id]/route";
 import { showQuoteNotAccepted } from "@/lib/catering/pipeline-shared";
 import { expandPackageLines, type ExpandablePackage } from "@/lib/catering/quotes-shared";
 
@@ -274,5 +277,76 @@ describe("D-47 · Prep Demand names the lead behind each line", () => {
   it("names are never written to the audit log", async () => {
     await load();
     expect(JSON.stringify(audit.mock.calls)).not.toMatch(/Ana|Bob|Zed/);
+  });
+});
+
+// ── D-48 · phone on Add lead and on Edit details ────────────────────────────────────────
+describe("D-48 · lead phone through the pipeline routes", () => {
+  const PHONE = "(202) 555-0147";
+  const req = (url: string, method: "POST" | "PATCH", body: unknown) =>
+    new NextRequest(`http://localhost${url}`, { method, headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+  const create = (body: Record<string, unknown>) => createLeadRoute(req("/api/catering/pipeline", "POST", { contactName: "Ana", locationId: A, ...body }));
+  const patch = (id: string, body: Record<string, unknown>) =>
+    patchLeadRoute(req(`/api/catering/pipeline/${id}`, "PATCH", body), { params: Promise.resolve({ id }) });
+  const leadWrites = () => writes.filter((w) => w.table === "catering_pipeline");
+  const noPhoneLeak = (x: unknown) => expect(JSON.stringify(x)).not.toContain("555-0147");
+
+  beforeEach(() => {
+    db.catering_pipeline = [
+      { id: "l-a", location_id: A, contact_name: "Ana", contact_phone: null, assigned_to: null, stage: "inquiry" },
+      { id: "l-b", location_id: "loc-b", contact_name: "Bea", contact_phone: null, assigned_to: null, stage: "inquiry" },
+    ];
+    db.catering_pipeline_events = [];
+  });
+
+  it("Add lead stores the phone trimmed, and the audit row never carries it", async () => {
+    const res = await create({ contactPhone: `  ${PHONE}  ` });
+    expect(res.status).toBe(201);
+    const { id } = await res.json();
+    expect(db.catering_pipeline!.find((l) => l.id === id)).toMatchObject({ contact_phone: PHONE, location_id: A });
+    noPhoneLeak(audit.mock.calls);
+  });
+
+  it("Add lead with a blank phone stores null", async () => {
+    const res = await create({ contactPhone: "   " });
+    const { id } = await res.json();
+    expect(db.catering_pipeline!.find((l) => l.id === id)!.contact_phone).toBeNull();
+  });
+
+  it("a phone that is too long or not text is refused, nothing written, value never echoed", async () => {
+    const long = `${PHONE} ${"9".repeat(40)}`;
+    const r1 = await create({ contactPhone: long });
+    expect(r1.status).toBe(400);
+    const b1 = await r1.json();
+    expect(b1.code).toBe("invalid_payload");
+    noPhoneLeak(b1);
+    const r2 = await create({ contactPhone: 2025550147 });
+    expect(r2.status).toBe(400);
+    expect((await r2.json()).field).toBe("contactPhone");
+    expect(leadWrites()).toEqual([]);
+    noPhoneLeak(audit.mock.calls);
+  });
+
+  it("Edit details sets and clears the phone; the audit names the field, never the value", async () => {
+    expect((await patch("l-a", { contactPhone: PHONE })).status).toBe(200);
+    expect(db.catering_pipeline!.find((l) => l.id === "l-a")!.contact_phone).toBe(PHONE);
+    const editAudit = audit.mock.calls.map((c) => c[0]).find((a) => a.action === "catering.pipeline.edit");
+    expect(editAudit.metadata.fields).toEqual(["contact_phone"]);
+    noPhoneLeak(audit.mock.calls);
+    expect((await patch("l-a", { contactPhone: "" })).status).toBe(200);
+    expect(db.catering_pipeline!.find((l) => l.id === "l-a")!.contact_phone).toBeNull();
+  });
+
+  it("a GM cannot set the phone on another shop's lead", async () => {
+    const res = await patch("l-b", { contactPhone: PHONE });
+    expect(res.status).toBe(403);
+    expect(db.catering_pipeline!.find((l) => l.id === "l-b")!.contact_phone).toBeNull();
+    expect(leadWrites()).toEqual([]);
+  });
+
+  it("a stage move and a phone edit in one PATCH are still refused as mixed concerns", async () => {
+    const res = await patch("l-a", { stage: "lost", contactPhone: PHONE });
+    expect(res.status).toBe(400);
+    expect((await res.json()).code).toBe("mixed_concerns");
   });
 });

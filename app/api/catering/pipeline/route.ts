@@ -25,6 +25,7 @@ export async function POST(req: NextRequest) {
     v === null || v === undefined ? null : typeof v === "number" ? v : undefined;
 
   const company = optStr(b.company);
+  const contactPhone = optStr(b.contactPhone); // D-48 — the value is never echoed or logged
   const eventDate = optStr(b.eventDate);
   const headcount = optNum(b.headcount);
   const leadSource = optStr(b.leadSource);
@@ -36,7 +37,7 @@ export async function POST(req: NextRequest) {
   const estimatedRevenueCents = optNum(b.estimatedRevenueCents);
 
   for (const [field, v] of Object.entries({
-    company, eventDate, headcount, leadSource, locationId, notes, followUpDate, customerId, estimatedRevenueCents, assignedTo,
+    company, contactPhone, eventDate, headcount, leadSource, locationId, notes, followUpDate, customerId, estimatedRevenueCents, assignedTo,
   })) {
     if (v === undefined) return jsonError(400, "invalid_payload", { field });
   }
@@ -44,6 +45,7 @@ export async function POST(req: NextRequest) {
   const input: CreateLeadInput = {
     contactName,
     company: company ?? null,
+    contactPhone: contactPhone ?? null,
     eventDate: eventDate ?? null,
     headcount: headcount ?? null,
     leadSource: leadSource ?? null,

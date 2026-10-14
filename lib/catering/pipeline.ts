@@ -24,7 +24,7 @@ import { checkCateringCapacity, type CateringCapacityResult } from "@/lib/cateri
 import { reservePrepDemand, consumePrepDemand, releasePrepDemand } from "@/lib/catering/prep-demand";
 
 // ── Stage vocabulary ─────────────────────────────────────────────────────────
-import { PIPELINE_STAGES, type PipelineStage, canTransition } from "./pipeline-shared";
+import { PIPELINE_STAGES, type PipelineStage, canTransition, normalizeLeadPhone } from "./pipeline-shared";
 import { isLeadSource } from "./intake-shared";
 // Client-safe stage vocabulary lives in pipeline-shared.ts; re-exported for
 // existing server consumers.
@@ -57,6 +57,13 @@ function validateLeadSource(v: string | null | undefined): void {
   if (v != null && !isLeadSource(v)) {
     throw new CateringPipelineError(400, "invalid_source", "Unknown lead source");
   }
+}
+
+/** D-48: a lead phone is stored trimmed (empty → null); too long is refused WITHOUT the value. */
+function leadPhone(v: string | null | undefined): string | null {
+  const r = normalizeLeadPhone(v);
+  if (!r.ok) throw new CateringPipelineError(400, "invalid_payload", "contactPhone is too long");
+  return r.value;
 }
 
 /** The "order lead" must be an active staff member (level >= 3). */
@@ -455,6 +462,7 @@ export async function createLead(actor: AuthContext, input: CreateLeadInput): Pr
     throw new CateringPipelineError(400, "invalid_payload", "contactName is required");
   }
   validateLeadSource(input.leadSource);
+  const contactPhone = leadPhone(input.contactPhone);
   if (input.assignedTo != null) await requireAssignable(input.assignedTo);
   if (input.customerId != null) await requireVisibleCustomer(actor, input.customerId);
   const sb = getServiceRoleClient();
@@ -465,7 +473,7 @@ export async function createLead(actor: AuthContext, input: CreateLeadInput): Pr
       company: input.company ?? null,
       event_date: input.eventDate ?? null,
       headcount: input.headcount ?? null,
-      contact_phone: input.contactPhone ?? null,
+      contact_phone: contactPhone,
       delivery_address: input.deliveryAddress ?? null,
       time_window: input.timeWindow ?? null,
       event_type: input.eventType ?? null,
@@ -627,7 +635,7 @@ export async function editLead(actor: AuthContext, id: string, input: EditLeadIn
   if (input.company !== undefined) patch.company = input.company;
   if (input.eventDate !== undefined) patch.event_date = input.eventDate;
   if (input.headcount !== undefined) patch.headcount = input.headcount;
-  if (input.contactPhone !== undefined) patch.contact_phone = input.contactPhone;
+  if (input.contactPhone !== undefined) patch.contact_phone = leadPhone(input.contactPhone);
   if (input.deliveryAddress !== undefined) patch.delivery_address = input.deliveryAddress;
   if (input.timeWindow !== undefined) patch.time_window = input.timeWindow;
   if (input.eventType !== undefined) patch.event_type = input.eventType;

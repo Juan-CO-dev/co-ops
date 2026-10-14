@@ -608,6 +608,7 @@
   "catering.pipeline.stage.lost": "Lost",
   "catering.pipeline.field.contact_name": "Contact name",
   "catering.pipeline.field.company": "Company",
+  "catering.pipeline.field.phone": "Phone",
   "catering.pipeline.field.event_date": "Event date",
   "catering.pipeline.field.headcount": "Headcount",
   "catering.pipeline.field.lead_source": "Lead source",

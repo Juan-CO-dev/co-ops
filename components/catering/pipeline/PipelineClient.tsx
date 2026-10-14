@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { useTranslation } from "@/lib/i18n/provider";
 import { formatCents, formatDateLabel } from "@/lib/i18n/format";
 import type { TranslationKey } from "@/lib/i18n/types";
-import { LEGAL_TRANSITIONS, PIPELINE_STAGES, leadEditPatch, shopChipLabel, showQuoteNotAccepted, type PipelineStage } from "@/lib/catering/pipeline-shared";
+import { LEAD_PHONE_MAX, LEGAL_TRANSITIONS, PIPELINE_STAGES, leadEditPatch, shopChipLabel, showQuoteNotAccepted, type PipelineStage } from "@/lib/catering/pipeline-shared";
 import type { PipelineLead, PipelineBoardLead, PipelineSearchResult, AssignableStaff } from "@/lib/catering/pipeline";
 import { LEAD_SOURCES, leadSourceKey } from "@/lib/catering/intake-shared";
 import type { CateringCapacityResult } from "@/lib/catering/capacity";
@@ -457,6 +457,12 @@ function LeadDetail({
       )}
 
       <dl className="grid grid-cols-2 gap-x-3 gap-y-1 text-xs">
+        {lead.contactPhone && (
+          <>
+            <dt className="text-co-text-muted">{t("catering.pipeline.field.phone")}</dt>
+            <dd className="text-co-text">{lead.contactPhone}</dd>
+          </>
+        )}
         {visibleNotes?.trim() && (
           <>
             <dt className="text-co-text-muted">{t("catering.pipeline.field.notes")}</dt>
@@ -514,8 +520,8 @@ function LeadDetail({
 
 // ── Edit a lead in place (B5 #36) ────────────────────────────────────────────
 // PATCH /api/catering/pipeline/[id] already edits these fields ("D3 — edit in place");
-// the board only lacked a form. Sends ONLY the changed fields (leadEditPatch). Phone and
-// email are not here: adding them is D-48, Juan's call.
+// the board only lacked a form. Sends ONLY the changed fields (leadEditPatch). D-48 adds the
+// phone; a lead has no email column (email lives on the catering customer), so no email box.
 function EditLeadDetails({ lead }: { lead: PipelineLead }) {
   const { t } = useTranslation();
   const router = useRouter();
@@ -532,6 +538,7 @@ function EditLeadDetails({ lead }: { lead: PipelineLead }) {
       const result = leadEditPatch(lead, {
         contactName: raw("contactName"),
         company: raw("company"),
+        contactPhone: raw("contactPhone"),
         eventDate: raw("eventDate"),
         headcount: raw("headcount"),
         followUpDate: raw("followUpDate"),
@@ -578,6 +585,7 @@ function EditLeadDetails({ lead }: { lead: PipelineLead }) {
           <div className="grid grid-cols-1 gap-3">
             <Field label={t("catering.pipeline.field.contact_name")} name="contactName" required defaultValue={lead.contactName} />
             <Field label={t("catering.pipeline.field.company")} name="company" defaultValue={lead.company ?? ""} />
+            <Field label={t("catering.pipeline.field.phone")} name="contactPhone" type="tel" defaultValue={lead.contactPhone ?? ""} />
             <Field label={t("catering.pipeline.field.event_date")} name="eventDate" type="date" defaultValue={lead.eventDate ?? ""} />
             <Field label={t("catering.pipeline.field.headcount")} name="headcount" type="number" defaultValue={lead.headcount != null ? String(lead.headcount) : ""} />
             <Field label={t("catering.pipeline.field.follow_up_date")} name="followUpDate" type="date" defaultValue={lead.followUpDate ?? ""} />
@@ -629,6 +637,7 @@ function AddLeadRow({ locations, staff, defaultLocationId }: { locations: Locati
       const res = await postJson("/api/catering/pipeline", {
         contactName,
         company: str("company"),
+        contactPhone: str("contactPhone"),
         eventDate: str("eventDate"),
         headcount: headcountRaw ? Number(headcountRaw) : null,
         leadSource: str("leadSource"),
@@ -665,6 +674,7 @@ function AddLeadRow({ locations, staff, defaultLocationId }: { locations: Locati
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         <Field label={t("catering.pipeline.field.contact_name")} name="contactName" required />
         <Field label={t("catering.pipeline.field.company")} name="company" />
+        <Field label={t("catering.pipeline.field.phone")} name="contactPhone" type="tel" />
         <Field label={t("catering.pipeline.field.event_date")} name="eventDate" type="date" />
         <Field label={t("catering.pipeline.field.headcount")} name="headcount" type="number" />
         <label className="block text-sm">
@@ -738,6 +748,7 @@ function Field({
         type={type}
         required={required}
         defaultValue={defaultValue}
+        {...(type === "tel" ? { inputMode: "tel" as const, autoComplete: "off", maxLength: LEAD_PHONE_MAX } : {})}
         className="mt-1 min-h-[44px] w-full min-w-0 rounded-md border border-co-border bg-co-surface p-2 text-co-text"
       />
     </label>
