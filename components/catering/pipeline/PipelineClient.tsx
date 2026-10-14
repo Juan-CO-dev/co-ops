@@ -1,11 +1,11 @@
 "use client";
 
-import { useState, useEffect, useCallback, type FormEvent } from "react";
+import { useState, useEffect, useCallback, useId, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import { useTranslation } from "@/lib/i18n/provider";
 import { formatCents, formatDateLabel } from "@/lib/i18n/format";
 import type { TranslationKey } from "@/lib/i18n/types";
-import { LEAD_PHONE_MAX, LEGAL_TRANSITIONS, PIPELINE_STAGES, leadEditPatch, shopChipLabel, showQuoteNotAccepted, type PipelineStage } from "@/lib/catering/pipeline-shared";
+import { LEAD_PHONE_MAX, LEGAL_TRANSITIONS, PIPELINE_STAGES, leadEditPatch, shopChipLabel, showQuoteNotAccepted, stageMoveNeedsConfirm, type PipelineStage } from "@/lib/catering/pipeline-shared";
 import type { PipelineLead, PipelineBoardLead, PipelineSearchResult, AssignableStaff } from "@/lib/catering/pipeline";
 import { LEAD_SOURCES, leadSourceKey } from "@/lib/catering/intake-shared";
 import type { CateringCapacityResult } from "@/lib/catering/capacity";
@@ -408,6 +408,9 @@ function LeadDetail({
   const capacity = detail?.leadId === lead.id ? detail.capacity : null;
   const [busy, setBusy] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  // D-49: the final stage awaiting a second tap (Completed / Lost), or null.
+  const [confirming, setConfirming] = useState<PipelineStage | null>(null);
+  const confirmTitleId = useId();
 
   useEffect(() => {
     let alive = true;
@@ -426,6 +429,7 @@ function LeadDetail({
     async (toStage: PipelineStage) => {
       setBusy(true);
       setErrorMsg(null);
+      setConfirming(null);
       const res = await postJson(`/api/catering/pipeline/${lead.id}`, { stage: toStage }, "PATCH");
       setBusy(false);
       if (res.ok) {
@@ -502,14 +506,45 @@ function LeadDetail({
               <button
                 key={s}
                 type="button"
-                disabled={busy}
-                onClick={() => void moveTo(s)}
+                disabled={busy || confirming !== null}
+                onClick={() => (stageMoveNeedsConfirm(s) ? setConfirming(s) : void moveTo(s))}
                 className="rounded-md border border-co-border px-2 py-1 text-xs text-co-text disabled:opacity-50"
               >
                 {t(stageKey(s))}
               </button>
             ))}
           </div>
+          {confirming && (
+            <div
+              role="group"
+              aria-labelledby={confirmTitleId}
+              data-testid="final-stage-confirm"
+              className="mt-2 rounded-md border border-co-border bg-co-warning-surface p-3"
+            >
+              <p id={confirmTitleId} className="text-sm font-semibold text-co-warning-text">
+                {t("catering.pipeline.confirm_final.title", { stage: t(stageKey(confirming)) })}
+              </p>
+              <p className="mt-1 text-xs text-co-text">{t("catering.pipeline.confirm_final.body")}</p>
+              <div className="mt-2 flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={() => void moveTo(confirming)}
+                  className="inline-flex min-h-[44px] items-center rounded-md bg-co-text px-4 text-sm font-semibold text-co-bg disabled:opacity-50"
+                >
+                  {t("catering.pipeline.confirm_final.yes", { stage: t(stageKey(confirming)) })}
+                </button>
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={() => setConfirming(null)}
+                  className="inline-flex min-h-[44px] items-center rounded-md px-4 text-sm text-co-text-muted"
+                >
+                  {t("catering.pipeline.cancel")}
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       )}
 

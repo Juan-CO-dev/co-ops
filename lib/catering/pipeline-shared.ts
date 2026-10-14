@@ -84,6 +84,15 @@ export function canTransition(from: PipelineStage, to: PipelineStage): boolean {
 }
 
 /**
+ * D-49 (Juan, 2026-10-13): a move to Completed or Lost asks first — both are final (nothing
+ * leaves a terminal stage), so one mis-tap would otherwise close the lead for good. Every
+ * other move stays one tap.
+ */
+export function stageMoveNeedsConfirm(to: PipelineStage): boolean {
+  return (TERMINAL_PIPELINE_STAGES as readonly PipelineStage[]).includes(to);
+}
+
+/**
  * The text of a lead card's shop chip: the location NAME the loader read from the `locations`
  * table, trimmed. Null when the lead has no resolvable shop (tenant-wide or unresolved) — the
  * card then shows the "No shop set" fallback. It NEVER takes a location code: prod codes are

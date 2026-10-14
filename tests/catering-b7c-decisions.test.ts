@@ -12,6 +12,8 @@ import {
   leadEditPatch,
   normalizeLeadPhone,
   showQuoteNotAccepted,
+  stageMoveNeedsConfirm,
+  LEGAL_TRANSITIONS,
   PIPELINE_STAGES,
 } from "@/lib/catering/pipeline-shared";
 import en from "@/lib/i18n/en.json";
@@ -178,5 +180,31 @@ describe("D-48 · lead phone", () => {
     expect(client).not.toMatch(/name="contactEmail"/);
     bothLanguages("catering.pipeline.field.phone");
     expect(src("app/api/catering/pipeline/[id]/route.ts")).toMatch(/"contactPhone",/);
+  });
+});
+
+// ── D-49 · confirm before Completed or Lost ─────────────────────────────────────────────
+describe("D-49 · final-stage confirm", () => {
+  it("asks only for Completed and Lost — every other move stays one tap", () => {
+    expect(PIPELINE_STAGES.filter(stageMoveNeedsConfirm)).toEqual(["completed", "lost"]);
+    // and those two really are final (the reason for asking)
+    expect(LEGAL_TRANSITIONS.completed).toEqual([]);
+    expect(LEGAL_TRANSITIONS.lost).toEqual([]);
+  });
+  it("the stage buttons route final moves through the confirm; only its Yes moves the lead", () => {
+    const client = src("components/catering/pipeline/PipelineClient.tsx");
+    const detail = client.slice(client.indexOf("function LeadDetail("), client.indexOf("// ── Edit a lead in place"));
+    expect(detail).toContain("onClick={() => (stageMoveNeedsConfirm(s) ? setConfirming(s) : void moveTo(s))}");
+    expect(detail).toContain("onClick={() => void moveTo(confirming)}");
+    expect(detail).toContain("onClick={() => setConfirming(null)}");
+    // moveTo is called from exactly those two places
+    expect(detail.match(/void moveTo\(/g)).toHaveLength(2);
+    for (const k of ["catering.pipeline.confirm_final.title", "catering.pipeline.confirm_final.body", "catering.pipeline.confirm_final.yes"]) {
+      bothLanguages(k);
+      if (k !== "catering.pipeline.confirm_final.body") {
+        expect(enKeys[k]).toContain("{stage}");
+        expect(esKeys[k]).toContain("{stage}");
+      }
+    }
   });
 });
