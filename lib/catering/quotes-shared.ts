@@ -283,6 +283,13 @@ const scaleQty = (q: number, n: number): string => String(Math.round(q * n * 100
  * - A package whose composition is all unpriced "choose your own" slots carries the package
  *   price on ONE line (the guide-walk $115 × 8 fix). That line is per person for a per-head
  *   package, so its Qty is the headcount too.
+ *
+ * WHOLE-PACKAGE LINE vs DISPLAY LINES. Prep Demand (`resolveQuoteDemand`) reads a quote line
+ * that carries `package_id` and no item/menu reference as "this whole package × Qty" and
+ * expands every component. The priced package line above is exactly that, so the pick lines
+ * shown under it are DISPLAY ONLY: no package id and no catalog reference. Before, they kept
+ * the package id and each one expanded the package again — a 16 pc platter reserved 16 + 256
+ * "needs a pick" subs, Light Lunch for 20 reserved 20 + 20.
  */
 export function expandPackageLines(pkg: ExpandablePackage, headcount: string): ExpandedPackageLine[] {
   const n = packageHeadcountMultiplier(pkg.pricingMode, headcount);
@@ -303,7 +310,10 @@ export function expandPackageLines(pkg: ExpandablePackage, headcount: string): E
     packageId: pkg.id,
   }));
   if (lines.length === 0) return [packageLine()];
-  if (pkg.priceCents > 0 && lines.every((l) => l.unitPrice === "")) return [packageLine(), ...lines];
+  if (pkg.priceCents > 0 && lines.every((l) => l.unitPrice === "")) {
+    const display = lines.map((l) => ({ ...l, itemId: null, menuItemId: null, packageId: null }));
+    return [packageLine(), ...display];
+  }
   return lines;
 }
 

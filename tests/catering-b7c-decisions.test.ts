@@ -46,6 +46,14 @@ describe("D-45 · per-head package Qty = headcount", () => {
     ]);
   });
 
+  it("under a priced package line, the pick lines are display only (no package id, no reference)", () => {
+    for (const pkg of [lightLunch, platter16]) {
+      const [whole, ...picks] = expandPackageLines(pkg, "20");
+      expect(whole).toMatchObject({ packageId: pkg.id, itemId: null, menuItemId: null });
+      for (const p of picks) expect(p).toMatchObject({ packageId: null, itemId: null, menuItemId: null, unitPrice: "" });
+    }
+  });
+
   it("with no headcount yet, a per-head package still drops in at Qty 1", () => {
     expect(expandPackageLines(lightLunch, "").map((l) => l.quantity)).toEqual(["1", "1"]);
   });
