@@ -184,3 +184,23 @@ export function rowToCompletion(r: CompletionRow): ChecklistCompletion {
     countProvenance: null,
   };
 }
+
+/**
+ * B8 #13 (sim walk 2026-10-14): saving a NOTE on a ticked closing line re-stamped its tick time
+ * (3:20 → 3:22), because a note save is an append-only re-completion and the new row took
+ * `completed_at = now()`. When the new row only adds/edits the note — same person, same count,
+ * same photo — the line was still DONE at the original moment, so the new head carries the
+ * prior head's `completed_at`. Anything else (another person, a new count or answer, a new
+ * photo) is a genuine re-completion and keeps its own time. Pure; the supersede claim in
+ * `completeItem` supplies the prior row it just superseded (0196's one-live-head law unchanged).
+ */
+export function carriedCompletedAt(
+  prior: Pick<CompletionRow, "completed_by" | "completed_at" | "count_value" | "photo_id"> | null,
+  next: { actorId: string; countValue: number | null; photoId: string | null },
+): string | null {
+  if (!prior || prior.completed_by !== next.actorId) return null;
+  const priorCount = prior.count_value === null ? null : Number(prior.count_value);
+  if (priorCount !== next.countValue) return null;
+  if ((prior.photo_id ?? null) !== next.photoId) return null;
+  return prior.completed_at;
+}
