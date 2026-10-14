@@ -13,7 +13,7 @@ import { assignmentSectionDefaults } from "@/lib/assignment-sections";
 import type { RetrainTaskView } from "@/lib/yield-stats";
 import type { PresenceView } from "@/lib/presence-shared";
 import { StationNudges } from "./StationNudges";
-import { canSelfClaim, currentFloorStation, currentStation, formatAssignmentAttribution, isFloorStation, requiresOverrideReason, OVERRIDE_REASON_CODES, type OverrideReasonCode, type TaskAssignment, type AssignmentChange, type StationEvent, TASK_TYPES, TASK_MIN_LEVEL, taskHref, type ShiftBoard, type TaskType } from "@/lib/assignments-shared";
+import { canSelfClaim, closedStationFor, currentFloorStation, showBreakButton, currentStation, formatAssignmentAttribution, isFloorStation, requiresOverrideReason, OVERRIDE_REASON_CODES, type OverrideReasonCode, type TaskAssignment, type AssignmentChange, type StationEvent, TASK_TYPES, TASK_MIN_LEVEL, taskHref, type ShiftBoard, type TaskType } from "@/lib/assignments-shared";
 
 const control = "flex min-h-[44px] w-full max-w-full min-w-0 items-center rounded-lg border-2 border-co-border bg-co-surface px-3 text-base font-normal tracking-normal text-co-text";
 
@@ -144,9 +144,18 @@ export function ShiftBoardClient({ board, compact = false, retrainTasks = [] }: 
     { id: "unassigned", done: 0, total: unassigned.length },
     { id: "team", done: board.people.filter((person) => person.hasWork).length, total: board.people.length },
   ], assignmentSectionDefaults(board, compact));
+  // #21 — the compact (dashboard) card only ever shows ME, so its station header must not read as a
+  // roster count ("0 of 1 assigned"): title "My station", progress "Yours: {station}" / "None yet".
+  const myStation = !compact ? null : (() => {
+    const head = currentFloorStation(board, board.viewerId);
+    const found = head?.stationId ? board.stations.find((x) => x.id === head.stationId) : closedStationFor(board, board.viewerId)?.station;
+    return found ? (language === "es" ? found.nameEs || found.name : found.name) : null;
+  })();
   const section = (id: "tasks" | "stations" | "people" | "unassigned" | "team", title: TranslationKey, done: number, total: number, children: ReactNode) =>
     <CollapsibleChecklistSection formKey="assignment-board" sectionId={id} title={t(title)} done={done} total={total}
-      progressText={id === "unassigned" ? t("assignments.unassignedCount", { count: total }) : t("assignments.assignedCount", { done, total })}
+      progressText={id === "unassigned" ? t("assignments.unassignedCount", { count: total })
+        : compact && id === "stations" ? (myStation ? t("assignments.yoursStation", { station: myStation }) : t("assignments.yoursNone"))
+        : t("assignments.assignedCount", { done, total })}
       open={sections.isOpen(id)} onToggle={() => sections.toggle(id)} headingLevel={3}
       className="min-w-0 rounded-xl border border-co-border p-3" panelClassName="min-w-0 space-y-3 pt-3"
       titleClassName="min-w-0 truncate text-sm font-bold text-co-text">{children}</CollapsibleChecklistSection>;
@@ -232,13 +241,15 @@ export function ShiftBoardClient({ board, compact = false, retrainTasks = [] }: 
       </ul>
     </div>)}
     {!compact && board.viewerLevel >= 4 && section("unassigned", "assignments.unassigned", 0, unassigned.length, <ul className="space-y-2">{unassigned.map((task) => <li key={task}>{board.viewerLevel >= TASK_MIN_LEVEL[task] ? <ActionLink variant="secondary" href={taskHref(task, board.locationId)}>{t(`assignments.task.${task}`)}</ActionLink> : <span>{t(`assignments.task.${task}`)}</span>}</li>)}</ul>)}
-    {section(compact ? "stations" : "people", compact ? (board.viewerLevel >= 4 ? "assignments.takeAssignStations" : "assignments.stations") : "assignments.people", compact ? Number(!!currentFloorStation(board, board.viewerId)?.stationId) : board.people.filter((person) => person.hasWork).length, compact ? 1 : board.people.length, <div className="space-y-3">
+    {section(compact ? "stations" : "people", compact ? "assignments.myStation" : "assignments.people", compact ? Number(!!currentFloorStation(board, board.viewerId)?.stationId) : board.people.filter((person) => person.hasWork).length, compact ? 1 : board.people.length, <div className="space-y-3">
     {!compact && hereNowList}
     {people.length === 0 && <p>{t("assignments.empty")}</p>}
     {people.map((person) => {
       const current = currentFloorStation(board, person.id);
-      const station = board.stations.find((s) => s.id === current?.stationId);
-      const position = station?.positions.find((p) => p.id === current?.positionId);
+      // #19 — a station that just closed released its holder; keep naming it (with its "Closed" line).
+      const closed = current?.stationId ? null : closedStationFor(board, person.id);
+      const station = closed?.station ?? board.stations.find((s) => s.id === current?.stationId);
+      const position = closed?.position ?? station?.positions.find((p) => p.id === current?.positionId);
       const tasks = board.tasks.filter((task) => task.assigneeId === person.id);
       const assignableTasks = TASK_TYPES.filter((task) => person.level >= TASK_MIN_LEVEL[task]);
       const managerCanEdit = !compact && board.viewerLevel >= 4 && person.available !== false && person.level <= board.viewerLevel
@@ -249,7 +260,7 @@ export function ShiftBoardClient({ board, compact = false, retrainTasks = [] }: 
         {!compact && <h4 className="truncate font-bold text-co-text" title={person.name}>{person.name}</h4>}
         {presenceLine(person.presence)}
         {person.onBreak && <><p className="font-bold text-co-text-muted">{t("assignments.lifecycle.onBreak")}</p><p className="text-sm text-co-text-muted">{t("assignments.lifecycle.breakHelp")}</p></>}
-        {person.available !== false && (person.id === board.viewerId || (!compact && board.viewerLevel >= 4 && person.level <= board.viewerLevel)) && <ActionButton variant="secondary" disabled={disabled} onClick={() => void mutate({ action: "break", userId: person.id, onBreak: !person.onBreak })}>{t(person.onBreak ? "assignments.lifecycle.backFromBreak" : "assignments.lifecycle.startBreak")}</ActionButton>}
+        {showBreakButton(person, board) && (person.id === board.viewerId || (!compact && board.viewerLevel >= 4 && person.level <= board.viewerLevel)) && <ActionButton variant="secondary" disabled={disabled} onClick={() => void mutate({ action: "break", userId: person.id, onBreak: !person.onBreak })}>{t(person.onBreak ? "assignments.lifecycle.backFromBreak" : "assignments.lifecycle.startBreak")}</ActionButton>}
         {endShiftButton(person)}
         {person.available === false && <p className="text-sm text-co-text-muted">{t("assignments.unavailablePerson")}</p>}
         <p className="truncate font-bold text-co-text" title={station?.name}>{station ? `${language === "es" ? station.nameEs || station.name : station.name} · ${position ? (language === "es" ? position.nameEs || position.name : position.name) : ""}` : t("assignments.noStation")}</p>

@@ -1641,69 +1641,142 @@ export async function autoCompleteClosingMidDayRef(
   if (!mTmpl) return;
   const { data: finalized, error: fErr } = await service
     .from("checklist_instances")
-    .select("id, triggered_at")
+    .select("id, triggered_at, confirmed_at")
     .eq("template_id", mTmpl.id)
     .eq("location_id", args.locationId)
     .eq("date", args.date)
     .eq("status", "phase2_complete")
     .order("triggered_at", { ascending: true });
   if (fErr) throw new Error(`autoCompleteClosingMidDayRef: count: ${fErr.message}`);
-  const reportInstanceIds = ((finalized ?? []) as Array<{ id: string }>).map((r) => r.id);
-  const count = reportInstanceIds.length;
 
-  const nowIso = new Date().toISOString();
-  const meta = {
-    reportType: "mid_day_prep" as const,
-    reportInstanceId: args.midDayInstanceId,
-    reportSubmittedAt: nowIso,
-    count,
-    reportInstanceIds,
-  };
+  // The truth is computed over ALL finalized reports exactly as the page-load reconcile does (latest-
+  // confirmed instance + its time) - NOT "the instance that just finalized" (args.midDayInstanceId only
+  // says why we ran). A delayed push for A that reads the same two reports as B's push therefore computes
+  // the same truth (B) and writes nothing, instead of superseding B's tick with A and a different time.
+  const write = midDayRefWrite(
+    (finalized ?? []) as Array<{ id: string; triggered_at: string | null; confirmed_at: string | null }>,
+  );
+  if (!write) return;
 
-  const { data: prior } = await service
-    .from("checklist_completions")
-    .select("id")
-    .eq("instance_id", cInst.id)
-    .eq("template_item_id", refItemId)
-    .is("superseded_at", null)
-    .is("revoked_at", null)
-    .maybeSingle<{ id: string }>();
-
-  const { data: inserted, error: insErr } = await service
-    .from("checklist_completions")
-    .insert({
-      instance_id: cInst.id,
-      template_item_id: refItemId,
-      completed_by: args.actor.userId,
-      completed_at: nowIso,
-      auto_complete_meta: meta,
-    })
-    .select("id")
-    .maybeSingle<{ id: string }>();
-  if (insErr) throw new Error(`autoCompleteClosingMidDayRef: insert: ${insErr.message}`);
-
-  if (prior && inserted) {
-    // Guard on superseded_at IS NULL + rowcount (silent-UPDATE law, sibling
-    // ensureClosingRefCompletion). DETECTION, not prevention: the new row above is
-    // already committed, so a lost race means a duplicate live head EXISTS — the
-    // throw makes it loud instead of silent (structural prevention = the Wave-2
-    // atomicity RPC). Throwing is safe — the caller is fire-and-forget with a
-    // .catch (submitMidDayPhase2).
-    const { error: supErr, count: supCount } = await service
-      .from("checklist_completions")
-      .update({ superseded_at: nowIso, superseded_by: inserted.id }, { count: "exact" })
-      .eq("id", prior.id)
-      .is("superseded_at", null);
-    if (supErr) throw new Error(`autoCompleteClosingMidDayRef: supersede: ${supErr.message}`);
-    if (supCount === 0) {
-      throw new Error("autoCompleteClosingMidDayRef: supersede: prior completion was concurrently superseded");
-    }
-  }
+  // Same writer the reconcile uses: a REVOKED head (C.55 reopen) is never re-ticked, a lost race re-reads
+  // instead of clobbering, and an unchanged count/instance/time is a no-op.
+  await ensureClosingRefCompletion(service, {
+    label: "autoCompleteClosingMidDayRef",
+    closingInstanceId: cInst.id,
+    refItemId,
+    actor: args.actor,
+    meta: write.meta,
+    countForSupersedeCheck: write.count,
+    truthCheck: write.truth,
+  });
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Closing report-reference reconcile (pull-based; order-independent)
 // ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Replace the live auto-complete tick of one closing report-reference item: SUPERSEDE FIRST, INSERT SECOND
+ * (the 0199 / 0056 order).
+ *
+ * WHY THE ORDER IS LAW: 0196's checklist_completions_one_live_head_per_phase is UNIQUE
+ * (instance_id, template_item_id, coalesce(prep_data ? 'phase2', false)) over live rows. A closing tick carries
+ * no prep_data, so a replacement inserted while its predecessor is still live shares the key and is a 23505 -
+ * which the closing page's reconcile catch used to log and move past, leaving the old count/time on the line.
+ * (The count-change supersede on main had the same insert-first order, so it was broken the same way.)
+ *
+ *   1. COMPARE-AND-SWAP: UPDATE ... SET superseded_at WHERE id = <the head THIS writer read> AND
+ *      superseded_at IS NULL AND revoked_at IS NULL. It never supersedes "whatever is live": if another writer
+ *      moved first (replaced the head, or a C.55 reopen revoked it) the rowcount is 0 and this returns "lost" -
+ *      the caller re-reads the live head and re-evaluates (ensureClosingRefCompletion). A lost INSERT with no
+ *      head (23505: a concurrent first tick) is "lost" too.
+ *   2. INSERT the replacement. If it fails, the line would be left with no live tick (worse than a stale one),
+ *      so the rows this call superseded are restored (compensation) and the failure is thrown. If the restore
+ *      ALSO fails, the thrown message says so, loudly - no silent path leaves the line unticked.
+ *   3. Link superseded_by now that the replacement's id exists (0199's provenance link).
+ *
+ * NOT atomic across the three statements. A crash BETWEEN steps 1 and 2 leaves the line unticked (superseded
+ * head, no live row, not revoked) until the next closing load, whose reconcile sees no head and re-inserts it
+ * (tested). The real fix is an atomic replace RPC (migration) - filed as a follow-up, not built here.
+ */
+async function replaceLiveClosingRefCompletion(
+  service: SupabaseClient,
+  args: {
+    label: string;
+    closingInstanceId: string;
+    refItemId: string;
+    actor: PrepActor;
+    meta: Record<string, unknown>;
+    /** The live head THIS writer read (compare-and-swap target), or null when it read none. */
+    headId: string | null;
+    nowIso: string;
+  },
+): Promise<"inserted" | "superseded" | "lost"> {
+  const { label, nowIso } = args;
+  const key = { instance_id: args.closingInstanceId, template_item_id: args.refItemId };
+
+  let supersededCount = 0;
+  if (args.headId) {
+    const { error: supErr, count } = await service
+      .from("checklist_completions")
+      .update({ superseded_at: nowIso }, { count: "exact" })
+      .eq("id", args.headId)
+      .eq("instance_id", key.instance_id)
+      .eq("template_item_id", key.template_item_id)
+      .is("superseded_at", null)
+      .is("revoked_at", null);
+    if (supErr) throw new Error(`${label}: supersede: ${supErr.message}`);
+    if (!count) return "lost"; // another writer moved first (replaced or revoked it): re-read, never clobber
+    supersededCount = count;
+  }
+
+  const restore = async (): Promise<string | null> => {
+    if (supersededCount === 0) return null;
+    const { error } = await service
+      .from("checklist_completions")
+      .update({ superseded_at: null })
+      .eq("instance_id", key.instance_id)
+      .eq("template_item_id", key.template_item_id)
+      .eq("superseded_at", nowIso)
+      .is("superseded_by", null);
+    return error ? error.message : null;
+  };
+
+  const { data: inserted, error: insErr } = await service
+    .from("checklist_completions")
+    .insert({
+      ...key,
+      completed_by: args.actor.userId,
+      completed_at: nowIso,
+      auto_complete_meta: args.meta,
+    })
+    .select("id")
+    .maybeSingle<{ id: string }>();
+  if (!args.headId && insErr?.code === "23505") return "lost"; // a concurrent first tick won the index
+  if (insErr || !inserted) {
+    const reason = insErr?.message ?? "insert returned no row";
+    const restoreErr = await restore();
+    throw new Error(
+      restoreErr === null
+        ? `${label}: insert: ${reason}${supersededCount ? " (the prior tick was restored)" : ""}`
+        : `${label}: insert: ${reason} AND restoring the superseded prior tick failed: ${restoreErr} - the line is UNTICKED until the next closing load repairs it`,
+    );
+  }
+
+  if (supersededCount > 0) {
+    const { error: linkErr } = await service
+      .from("checklist_completions")
+      .update({ superseded_by: inserted.id })
+      .eq("instance_id", key.instance_id)
+      .eq("template_item_id", key.template_item_id)
+      .eq("superseded_at", nowIso)
+      .is("superseded_by", null)
+      .neq("id", inserted.id);
+    if (linkErr) throw new Error(`${label}: supersede link: ${linkErr.message}`);
+    return "superseded";
+  }
+  return "inserted";
+}
 
 /**
  * Idempotent upsert of one closing report-reference auto-completion.
@@ -1720,72 +1793,162 @@ export async function autoCompleteClosingMidDayRef(
  *                                              reopen.
  *   - no head                               → insert.
  *
- * This is the per-load-safe sibling of autoCompleteClosingMidDayRef (which
- * inserts unconditionally as a one-shot finalize-time push). Reconcile runs on
+ * This is the per-load-safe writer; autoCompleteClosingMidDayRef (the one-shot
+ * finalize-time push) now goes through it too, so both obey the same revoked-head,
+ * compare-and-swap and supersede-before-insert rules. Reconcile runs on
  * every closing page load, so it MUST pre-check to avoid growing a supersede
  * chain on each refresh.
  */
+/** True when a live mid-day tick's stored instance/time differs from the truth (see truthCheck). Pure. */
+export function midDayTickIsStale(
+  stored: { reportInstanceId?: string; reportSubmittedAt?: string } | null,
+  truth: { reportInstanceId: string; reportSubmittedAt: string | null } | undefined,
+): boolean {
+  if (!truth) return false;
+  if (stored?.reportInstanceId !== truth.reportInstanceId) return true;
+  if (truth.reportSubmittedAt === null) return false;
+  const have = stored?.reportSubmittedAt ? Date.parse(stored.reportSubmittedAt) : Number.NaN;
+  return have !== Date.parse(truth.reportSubmittedAt);
+}
+
+/**
+ * The mid-day report the closing line points at, and when it was submitted - BOTH from the same row
+ * (B4 #16 review): the latest-CONFIRMED instance (ties -> later in start order). A row started first
+ * but confirmed last is the latest submission. When none is confirmed, the last-started row and its
+ * own start time (a past instant, never "now"); no usable time -> null (the display then falls back).
+ */
+export function pickMidDayReport(
+  rows: ReadonlyArray<{ id: string; triggered_at?: string | null; confirmed_at: string | null }>,
+): { reportInstanceId: string; reportSubmittedAt: string | null } | null {
+  if (rows.length === 0) return null;
+  let best: { id: string; at: number; confirmed: string } | null = null;
+  rows.forEach((row) => {
+    const at = row.confirmed_at ? Date.parse(row.confirmed_at) : Number.NaN;
+    if (Number.isNaN(at)) return;
+    if (best === null || at >= best.at) best = { id: row.id, at, confirmed: row.confirmed_at! };
+  });
+  if (best !== null) {
+    const picked: { id: string; confirmed: string } = best;
+    return { reportInstanceId: picked.id, reportSubmittedAt: picked.confirmed };
+  }
+  const last = rows[rows.length - 1]!;
+  const started = last.triggered_at && !Number.isNaN(Date.parse(last.triggered_at)) ? last.triggered_at : null;
+  return { reportInstanceId: last.id, reportSubmittedAt: started };
+}
+
+/**
+ * What the closing "Mid-day Prep" line SHOULD say, from ALL of today's finalized mid-day reports (B4 #16
+ * review 5). The ONE definition both writers use - the page-load reconcile and the finalize-time push - so
+ * they can never disagree about the truth: instance + time of the latest-CONFIRMED report, count of every
+ * finalized report, and a time that is omitted (never invented) when unknown. A push for "the instance that
+ * just finalized" is NOT the truth: A and B finalize, B's push writes B, and A's delayed push would otherwise
+ * supersede it with A and a different time.
+ */
+export function midDayRefWrite(
+  rows: ReadonlyArray<{ id: string; triggered_at?: string | null; confirmed_at: string | null }>,
+): {
+  meta: Record<string, unknown>;
+  count: number;
+  truth: { reportInstanceId: string; reportSubmittedAt: string | null; confirmedAtById: Record<string, string | null> };
+} | null {
+  const truth = pickMidDayReport(rows);
+  if (!truth || rows.length === 0) return null;
+  const ids = rows.map((r) => r.id);
+  return {
+    meta: {
+      reportType: "mid_day_prep",
+      reportInstanceId: truth.reportInstanceId,
+      ...(truth.reportSubmittedAt ? { reportSubmittedAt: truth.reportSubmittedAt } : {}),
+      count: ids.length,
+      reportInstanceIds: ids,
+    },
+    count: ids.length,
+    truth: { ...truth, confirmedAtById: Object.fromEntries(rows.map((r) => [r.id, r.confirmed_at])) },
+  };
+}
+
 async function ensureClosingRefCompletion(
   service: SupabaseClient,
   args: {
+    /** Error-message prefix (the finalize-time push reuses this writer). */
+    label?: string;
     closingInstanceId: string;
     refItemId: string;
     actor: PrepActor;
     meta: Record<string, unknown>;
     /** Mid-day only: supersede an existing live tick whose meta.count differs. */
     countForSupersedeCheck?: number;
+    /**
+     * Mid-day only (B4 #16): also supersede a live tick whose stored report instance or submit time
+     * differs from the true one - ticks written by older code carry the closing-open time, and
+     * the count alone cannot tell. `reportSubmittedAt: null` = the true time is unknown, so it is not
+     * compared (never churn over a value we cannot improve). Equal values (compared as instants)
+     * skip, so a refresh stays idempotent.
+     */
+    truthCheck?: {
+      reportInstanceId: string;
+      reportSubmittedAt: string | null;
+      /** confirmed_at of every finalized report, to compare a head's instance against ours without trusting its stored time. */
+      confirmedAtById?: Record<string, string | null>;
+    };
   },
 ): Promise<"inserted" | "superseded" | "skipped"> {
-  const { data: head, error: headErr } = await service
-    .from("checklist_completions")
-    .select("id, revoked_at, auto_complete_meta")
-    .eq("instance_id", args.closingInstanceId)
-    .eq("template_item_id", args.refItemId)
-    .is("superseded_at", null)
-    .maybeSingle<{
-      id: string;
-      revoked_at: string | null;
-      auto_complete_meta: { count?: number } | null;
-    }>();
-  if (headErr) throw new Error(`ensureClosingRefCompletion: head lookup: ${headErr.message}`);
-
-  if (head) {
-    if (head.revoked_at) return "skipped"; // respect C.55 reopen — never re-tick
-    if (args.countForSupersedeCheck === undefined) return "skipped"; // already live
-    const headCount = head.auto_complete_meta?.count ?? null;
-    if (headCount === args.countForSupersedeCheck) return "skipped"; // count unchanged
-    // count changed → fall through to insert + supersede
-  }
-
-  const nowIso = new Date().toISOString();
-  const { data: inserted, error: insErr } = await service
-    .from("checklist_completions")
-    .insert({
-      instance_id: args.closingInstanceId,
-      template_item_id: args.refItemId,
-      completed_by: args.actor.userId,
-      completed_at: nowIso,
-      auto_complete_meta: args.meta,
-    })
-    .select("id")
-    .maybeSingle<{ id: string }>();
-  if (insErr) throw new Error(`ensureClosingRefCompletion: insert: ${insErr.message}`);
-
-  if (head && inserted) {
-    // Prior-state guard + rowcount (silent-UPDATE law; symmetric with the
-    // autoCompleteClosingMidDayRef supersede). DETECTION, not prevention — the
-    // inserted row above already exists, so a lost race means a duplicate live
-    // head; the throw surfaces it loudly (structural fix = Wave-2 atomicity RPC).
-    const { error: supErr, count: supCount } = await service
+  // Up to 3 passes: read the live head -> decide -> compare-and-swap THAT head. A lost swap means another
+  // writer moved first, so we re-read and re-evaluate against what is now true instead of overwriting it.
+  const label = args.label ?? "ensureClosingRefCompletion";
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const { data: head, error: headErr } = await service
       .from("checklist_completions")
-      .update({ superseded_at: nowIso, superseded_by: inserted.id }, { count: "exact" })
-      .eq("id", head.id)
-      .is("superseded_at", null);
-    if (supErr) throw new Error(`ensureClosingRefCompletion: supersede: ${supErr.message}`);
-    if (supCount === 0) throw new Error(`ensureClosingRefCompletion: supersede raced — head ${head.id} already superseded`);
-    return "superseded";
+      .select("id, revoked_at, auto_complete_meta")
+      .eq("instance_id", args.closingInstanceId)
+      .eq("template_item_id", args.refItemId)
+      .is("superseded_at", null)
+      .maybeSingle<{
+        id: string;
+        revoked_at: string | null;
+        auto_complete_meta: { count?: number; reportInstanceId?: string; reportSubmittedAt?: string } | null;
+      }>();
+    if (headErr) throw new Error(`${label}: head lookup: ${headErr.message}`);
+
+    if (head) {
+      // The most recent tick for this line is a manager's REVOKE (C.55 reopen): never re-tick over it -
+      // the same rule for the page-load reconcile and the finalize-time push.
+      if (head.revoked_at) return "skipped";
+      if (args.countForSupersedeCheck === undefined) return "skipped"; // already live
+      const headCount = head.auto_complete_meta?.count ?? null;
+      // MONOTONIC GUARD, on EVERY attempt including the first read (finalized mid-day reports only
+      // ever increase within a day): never replace a live head that already covers MORE reports than we
+      // would write. A stale writer (read {A}, paused, B then wrote count 2) must not regress B's tick.
+      if (headCount !== null && headCount > args.countForSupersedeCheck) return "skipped";
+      if (headCount === args.countForSupersedeCheck) {
+        const truth = args.truthCheck;
+        const headInstance = head.auto_complete_meta?.reportInstanceId;
+        if (truth && headInstance && headInstance !== truth.reportInstanceId) {
+          // Equal count, different report: replace only if OUR report was confirmed strictly later than the
+          // head's (the head's own confirmed_at when we know it - an old-code tick's stored time is the
+          // closing-open time, not the submission). Otherwise the head is at least as current: no write.
+          const headAt = truth.confirmedAtById?.[headInstance] ?? head.auto_complete_meta?.reportSubmittedAt ?? null;
+          const ours = truth.reportSubmittedAt;
+          if (!ours || (headAt && Date.parse(ours) <= Date.parse(headAt))) return "skipped";
+        } else if (!midDayTickIsStale(head.auto_complete_meta, truth)) {
+          return "skipped"; // count unchanged and the stored instance/time are already the true ones
+        }
+      }
+      // fewer reports, or a strictly later report, or a repaired time -> supersede that head, then insert
+    }
+
+    const result = await replaceLiveClosingRefCompletion(service, {
+      label,
+      closingInstanceId: args.closingInstanceId,
+      refItemId: args.refItemId,
+      actor: args.actor,
+      meta: args.meta,
+      headId: head?.id ?? null,
+      nowIso: new Date().toISOString(),
+    });
+    if (result !== "lost") return result;
   }
-  return "inserted";
+  return "skipped"; // lost three times: another writer is actively keeping this line current
 }
 
 /**
@@ -1926,28 +2089,27 @@ export async function reconcileClosingReportRefs(
     if (mTmpl) {
       const { data: finalized, error: fErr } = await service
         .from("checklist_instances")
-        .select("id, triggered_at")
+        .select("id, triggered_at, confirmed_at")
         .eq("template_id", mTmpl.id)
         .eq("location_id", args.locationId)
         .eq("date", args.date)
         .eq("status", "phase2_complete")
         .order("triggered_at", { ascending: true });
       if (fErr) throw new Error(`reconcileClosingReportRefs: mid-day instances: ${fErr.message}`);
-      const ids = ((finalized ?? []) as Array<{ id: string }>).map((r) => r.id);
-      if (ids.length > 0) {
+      // B4 #16: instance and TRUE submit time come from the same (latest-confirmed) row via the shared
+      // midDayRefWrite (also used by the finalize-time push) - never "now"; an unknown time is omitted.
+      const write = midDayRefWrite(
+        (finalized ?? []) as Array<{ id: string; triggered_at: string | null; confirmed_at: string | null }>,
+      );
+      if (write) {
         bump(
           await ensureClosingRefCompletion(service, {
             closingInstanceId: args.closingInstanceId,
             refItemId: midRefId,
             actor: args.actor,
-            meta: {
-              reportType: "mid_day_prep",
-              reportInstanceId: ids[ids.length - 1]!,
-              reportSubmittedAt: new Date().toISOString(),
-              count: ids.length,
-              reportInstanceIds: ids,
-            },
-            countForSupersedeCheck: ids.length,
+            meta: write.meta,
+            countForSupersedeCheck: write.count,
+            truthCheck: write.truth,
           }),
         );
       }

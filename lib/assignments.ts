@@ -11,7 +11,7 @@ import { isPulseReadActor, requirePulseReadScope, type PulseScopedReadActor } fr
 import { etCalendarDate } from "./operational-day";
 import { getRoleLevel, isRoleCode, type RoleCode } from "./roles";
 import { loadPresenceFacts, loadSignedInAt, whosHereEnabled } from "./whos-here";
-import { personPresence } from "./presence-shared";
+import { coopsShiftEnded, personPresence } from "./presence-shared";
 import { validStationTrims, type StationTrim } from "./station-schedule-shared";
 import {
   canManageAssignee, isTaskType, TASK_TYPES, TASK_MIN_LEVEL, type ShiftBoard, type Station,
@@ -591,13 +591,15 @@ export async function loadShiftBoard(service: SupabaseClient, args: {
       // Who gave them what they hold: an assigned station's author and every open assigned task's assigner.
       const givers = [head?.stationId && head.source === "assigned" ? head.actorLevel : undefined,
         ...held.filter((task) => task.source !== "taken").map((task) => task.assignerLevel)].filter((v): v is number => typeof v === "number");
+      const coops = {
+        stationAt: head?.stationId ? head.at : null, taskAt: latest(held.map((task) => task.at)),
+        signedInAt: signedIn.get(person.id) ?? null, endedAt: presenceFacts.endedAt.get(person.id) ?? null,
+        shopClosedAt: presenceFacts.shopClosedAt,
+      };
       return { ...person,
         heldFromLevel: givers.length ? Math.max(...givers) : undefined,
-        presence: personPresence({ entries: presenceFacts.toast.get(person.id) ?? [] }, {
-          stationAt: head?.stationId ? head.at : null, taskAt: latest(held.map((task) => task.at)),
-          signedInAt: signedIn.get(person.id) ?? null, endedAt: presenceFacts.endedAt.get(person.id) ?? null,
-          shopClosedAt: presenceFacts.shopClosedAt,
-        }) };
+        presence: personPresence({ entries: presenceFacts.toast.get(person.id) ?? [] }, coops),
+        shiftEndedAt: coops.endedAt, shiftEnded: coopsShiftEnded(coops) };
     });
   }
   return { locationId: args.locationId, date: args.date, stationDate, viewerId: viewer.userId, viewerLevel: viewer.level,

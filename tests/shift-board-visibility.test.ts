@@ -31,8 +31,11 @@ describe("My shift and assignments board", () => {
   ] as const)("uses permission-accurate section titles at level %s in %s", (level, language, tasks, stations) => {
     for (const compact of [true, false]) {
       const html = render(board(level), compact, language);
+      // The compact dashboard card lists only the viewer, so its stations section is "My station"
+      // (B4 #21); the full board keeps the permission-accurate roster title.
+      const stationsTitle = compact ? (language === "en" ? en["assignments.myStation"] : es["assignments.myStation"]) : stations;
       expect(html).toContain(`<span class="min-w-0 truncate text-sm font-bold text-co-text">${tasks}</span>`);
-      expect(html).toContain(`<span class="min-w-0 truncate text-sm font-bold text-co-text">${stations}</span>`);
+      expect(html).toContain(`<span class="min-w-0 truncate text-sm font-bold text-co-text">${stationsTitle}</span>`);
       if (level < 4) expect(html).not.toContain(language === "en" ? "Take or assign" : "Tomar o asignar");
     }
   });
