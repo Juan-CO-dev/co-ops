@@ -339,6 +339,7 @@ const PAGE_ROUTES: Record<string, string> = {
   "app/(authed)/reports/sales/checks/page.tsx": "/reports/sales/checks",
   "app/(authed)/reports/written/page.tsx": "/reports/written",
   "app/(authed)/operations/opening/page.tsx": "/operations/opening",
+  "app/(authed)/operations/production/page.tsx": "/operations/production",
   "app/(authed)/mid-shift/page.tsx": "/mid-shift",
   "app/(authed)/mid-shift/[section]/page.tsx": "/mid-shift/sales",
   "app/ordering/page.tsx": "/ordering",
@@ -429,6 +430,8 @@ const RESOLVER_PAGES: Record<string, RegExp> = {
   "app/(authed)/assignments/page.tsx": /await resolveShop\(locations, shopParamFor\("\/assignments", /,
   "app/(authed)/stations/page.tsx": /await resolveShop\(locations, shopParamFor\("\/stations", /,
   "app/(authed)/operations/opening/page.tsx": /await resolveShop\(locations, locParam\)/,
+  // B3's Production default (D-64): memberships, then every active shop for the 9+ grant; the bind follows.
+  "app/(authed)/operations/production/page.tsx": /const location = requested \?\? \(await resolveShopId\(isAllLocationsAccess\(locActor\)\s*\? \[\.\.\.auth\.locations, \.\.\.\(await activeLocationIds\(\)\)\.filter\(\(id\) => !auth\.locations\.includes\(id\)\)\]\s*: auth\.locations\)\);\s*if \(!location\) redirect\("\/dashboard"\);\s*if \(!lockLocationContext\(locActor, location\)\) redirect\("\/dashboard"\);/,
   "app/(authed)/catering/quotes/page.tsx": /await resolveShop\(locations\)/,
   "app/(authed)/mid-shift/page.tsx": /location \?\? \(await resolveShopId\(accessible\.map/,
   "app/(authed)/mid-shift/[section]/page.tsx": /remembered: await rememberedShopId\(\)/,
@@ -465,6 +468,12 @@ describe("source shape — every shop-defaulting page uses the one resolver", ()
       const offenders = allowed ? lines.filter((line) => !allowed.test(line)) : lines;
       expect(offenders, file).toEqual([]);
     }
+  });
+
+  it("Production's all-shop lookup still fails LOUD (a lookup error is a fault, not 'no shop')", () => {
+    const production = src("app/(authed)/operations/production/page.tsx");
+    expect(production).toMatch(/if \(error\) throw new Error\(`production: default shop lookup failed: \$\{error\.message\}`\);/);
+    expect(production).not.toMatch(/firstActiveLocationId/);
   });
 
   it("the new-quote Location and the fulfillment editor take the server-resolved default", () => {

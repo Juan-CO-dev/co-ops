@@ -49,9 +49,11 @@ describe("role navigation", () => {
     expect(PRODUCE_MIN).toBe(3);
     expect(source("app/api/operations/production/route.ts")).toMatch(/level < PRODUCE_MIN/);
     expect(source("app/api/operations/production/predict/route.ts")).toMatch(/level < PRODUCE_MIN/);
-    // D-64: no hard ?location redirect any more; the page defaults to the user's first shop.
+    // D-64: no hard ?location redirect any more; the page defaults through the B2 shop resolver
+    // (remembered shop, else the first allowed) and the location bind still runs after it.
     expect(production).not.toMatch(/if \(!location\) redirect\("\/dashboard"\);\s*const locActor/);
-    expect(production).toMatch(/requested \?\? auth\.locations\[0\]/);
+    expect(production).toMatch(/const location = requested \?\? \(await resolveShopId\(/);
+    expect(production).toMatch(/if \(!lockLocationContext\(locActor, location\)\) redirect\("\/dashboard"\)/);
     const prod = navDestinationsFor(3).find((d) => d.href === "/operations/production");
     expect(prod).toMatchObject({ key: "production.page.title", scoped: true, minLevel: PRODUCE_MIN });
     expect(source("app/(authed)/mid-shift/page.tsx")).toMatch(/if \(auth\.level < MIDSHIFT_BASE_LEVEL\)/);
