@@ -1139,6 +1139,28 @@ export async function sendQuote(actor: AuthContext, id: string): Promise<SendQuo
     throw new CateringQuoteError(409, "invalid_status", "Only a draft or sent quote can be sent");
   }
 
+  // Review 2 (P1): the recipient is contact data at the CUSTOMER's shop, not the quote's.
+  // Authorize it under the catering contact policy BEFORE the status write and before any
+  // email, and refuse with the create/revise answer — no status change, no delivery attempt,
+  // no recipient in the response. A customer row that is simply gone keeps today's
+  // `no_address` outcome (nothing to disclose).
+  let cust: { email: string | null; name: string | null } | null = null;
+  if (row.customer_id) {
+    const [reader, { data: c, error: cErr }] = await Promise.all([
+      loadCateringReader(actor),
+      sb
+        .from("catering_customers")
+        .select("email, name, primary_location_id")
+        .eq("id", row.customer_id)
+        .maybeSingle<{ email: string | null; name: string | null; primary_location_id: string | null }>(),
+    ]);
+    if (cErr) throw new Error(`sendQuote customer read: ${cErr.message}`);
+    if (c && !(reader && canReadCateringContact(reader, c.primary_location_id))) {
+      throw new CateringQuoteError(400, "invalid_customer", "That client is not available at this shop");
+    }
+    cust = c ? { email: c.email, name: c.name } : null;
+  }
+
   const { error: uErr, count } = await sb
     .from("catering_quotes")
     .update({ status: "sent", sent_at: new Date().toISOString(), sent_by: actor.user.id }, { count: "exact" })
@@ -1154,11 +1176,6 @@ export async function sendQuote(actor: AuthContext, id: string): Promise<SendQuo
   let emailError: string | null = null;
   if (row.customer_id) {
     emailOutcome = "no_address";
-    const { data: cust } = await sb
-      .from("catering_customers")
-      .select("email, name")
-      .eq("id", row.customer_id)
-      .maybeSingle<{ email: string | null; name: string | null }>();
     if (cust?.email) {
       recipient = cust.email;
       // Customer-supplied name is interpolated into email HTML → escape it (A-H2 stored-XSS-in-email).

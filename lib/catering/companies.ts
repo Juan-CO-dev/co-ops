@@ -18,6 +18,8 @@ import { getRoleLevel, type RoleCode } from "@/lib/roles";
 import { audit } from "@/lib/audit";
 import type { AuthContext } from "@/lib/session";
 import { lockLocationContext, isAllLocationsAccess, type LocationActor } from "@/lib/locations";
+import { loadCateringReader } from "./ezcater-detail";
+import { canReadCateringContact } from "./ezcater-detail-shared";
 
 export const COMPANY_READ_MIN = 5;
 export const COMPANY_WRITE_MIN = 6;
@@ -231,6 +233,12 @@ export async function resolveCompanyForEmail(email: string): Promise<string | nu
 export async function reviveInactiveContact(
   emailRaw: string,
   attribution: { actorId: string | null; actorRole: RoleCode | null; via: string },
+  /**
+   * Optional authorization of the row that WOULD be revived, checked on that exact row before
+   * the flip (B5 review 2). Returning false refuses with 400 `invalid_customer` and writes
+   * nothing. The portal magic-link caller passes none and is unchanged.
+   */
+  canRevive?: (primaryLocationId: string | null) => boolean,
 ): Promise<{ id: string; companyId: string | null } | null> {
   const email = normalizeEmail(emailRaw);
   const sb = getServiceRoleClient();
@@ -239,15 +247,18 @@ export async function reviveInactiveContact(
   // exactly like a false one.
   const { data: rows, error } = await sb
     .from("catering_customers")
-    .select("id, company_id")
+    .select("id, company_id, primary_location_id")
     .or("active.is.null,active.is.false")
     .ilike("email", escapeLike(email))
     .order("created_at", { ascending: false })
     .limit(1)
-    .returns<Array<{ id: string; company_id: string | null }>>();
+    .returns<Array<{ id: string; company_id: string | null; primary_location_id: string | null }>>();
   if (error) throw new Error(`reviveInactiveContact lookup: ${error.message}`);
   const row = rows[0];
   if (!row) return null;
+  if (canRevive && !canRevive(row.primary_location_id)) {
+    throw new CateringCompanyError(400, "invalid_customer", "That client is not available at this shop");
+  }
 
   // Guarded flip: the `active` predicate makes this a compare-and-set, so the loser of a
   // double request gets 0 rows rather than a second revival.
@@ -441,22 +452,36 @@ export async function resolveOrCreateContact(actor: AuthContext, input: ResolveC
   }
   const sb = getServiceRoleClient();
 
+  // B5 review 2: an email may resolve to a contact homed at a shop the actor does not read.
+  // Authorize the RESOLVED contact before returning it and before any revival — a refused
+  // request must leave no trace (it used to reactivate shop B's deactivated contact and only
+  // then be refused by createQuote). Same contact policy as the quote guards; fail-closed.
+  const reader = await loadCateringReader(actor);
+  const readable = (primaryLocationId: string | null) =>
+    !!reader && canReadCateringContact(reader, primaryLocationId);
+
   const { data: existing, error: lErr } = await sb
     .from("catering_customers")
-    .select("id, company_id")
+    .select("id, company_id, primary_location_id")
     .eq("active", true)
     .ilike("email", escapeLike(email))
-    .maybeSingle<{ id: string; company_id: string | null }>();
+    .maybeSingle<{ id: string; company_id: string | null; primary_location_id: string | null }>();
   if (lErr) throw new Error(`resolveOrCreateContact lookup: ${lErr.message}`);
-  if (existing) return { id: existing.id, companyId: existing.company_id, created: false };
+  if (existing) {
+    if (!readable(existing.primary_location_id)) {
+      throw new CateringCompanyError(400, "invalid_customer", "That client is not available at this shop");
+    }
+    return { id: existing.id, companyId: existing.company_id, created: false };
+  }
 
   // Before minting a new contact: this email may belong to a DEACTIVATED one. Inserting
-  // beside it would fork the person in two — see reviveInactiveContact.
+  // beside it would fork the person in two — see reviveInactiveContact. The candidate row is
+  // authorized before its flip (canRevive), so an unreadable one is refused with no write.
   const revived = await reviveInactiveContact(email, {
     actorId: actor.user.id,
     actorRole: actor.user.role,
     via: "quote_capture",
-  });
+  }, readable);
   if (revived) return { id: revived.id, companyId: revived.companyId, created: false };
 
   const companyId = await resolveCompanyForEmail(email);

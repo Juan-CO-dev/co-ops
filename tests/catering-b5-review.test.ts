@@ -10,6 +10,14 @@
  *   P2   linkLeadToCustomer binds its UPDATE to the location it authorized: a transfer racing
  *        the write leaves the lead untouched and writes no audit row.
  *
+ * Review 2 (Astra, 2026-10-14), driven through the real ROUTES:
+ *   R2-P1  POST /api/catering/quotes/[id]/send on a shop-A quote whose customer is shop B's:
+ *          refused before the status write and the email, and B's address never appears in
+ *          the response.
+ *   R2-P2  POST /api/catering/quotes with a typed email that resolves to shop B's contact
+ *          (active, or deactivated): refused with nothing written — in particular the
+ *          deactivated contact is NOT revived by a request that is then refused.
+ *
  * The fake evaluates the filters the code actually sends (eq / is / in / the `.or()` grammar
  * used by customerLeadsFilter), so a dropped scope predicate shows up as a wrong row set.
  */
@@ -17,11 +25,13 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { AuthContext } from "@/lib/session";
 
 type Row = Record<string, unknown>;
-const { db, hooks, writes, audit } = vi.hoisted(() => ({
+const { db, hooks, writes, audit, sendEmail, session } = vi.hoisted(() => ({
   db: {} as Record<string, Row[]>,
   hooks: { afterSelect: null as null | ((table: string, rows: Row[]) => void) },
   writes: [] as Array<{ table: string; op: "update" | "insert"; patch?: Row; rows?: Row[]; count?: number }>,
   audit: vi.fn(),
+  sendEmail: vi.fn(),
+  session: { ctx: null as unknown },
 }));
 
 // ── a tiny PostgREST-shaped fake ─────────────────────────────────────────────────────────
@@ -71,6 +81,11 @@ class Q {
   eq(c: string, v: unknown) { this.preds.push((r) => r[c] === v); return this; }
   is(c: string, v: unknown) { this.preds.push((r) => (r[c] ?? null) === v); return this; }
   in(c: string, vs: unknown[]) { this.preds.push((r) => vs.includes(r[c])); return this; }
+  ilike(c: string, pattern: string) {
+    const want = pattern.replace(/\\(.)/g, "$1").toLowerCase(); // escapeLike → literal, case-insensitive
+    this.preds.push((r) => typeof r[c] === "string" && (r[c] as string).toLowerCase() === want);
+    return this;
+  }
   or(expr: string) { const p = splitTop(expr).map(parseTerm); this.preds.push((r) => p.some((f) => f(r))); return this; }
   order() { return this; }
   limit() { return this; }
@@ -89,7 +104,7 @@ class Q {
     if (this.mode === "update") {
       for (const r of matched) Object.assign(r, this.patch);
       writes.push({ table: this.table, op: "update", patch: this.patch, count: matched.length });
-      return { data: null, error: null, count: matched.length };
+      return { data: matched.map((r) => ({ ...r })), error: null, count: matched.length };
     }
     const out = matched.map((r) => ({ ...r }));
     hooks.afterSelect?.(this.table, out);
@@ -103,10 +118,15 @@ class Q {
 }
 vi.mock("@/lib/supabase-server", () => ({ getServiceRoleClient: () => ({ from: (t: string) => new Q(t) }) }));
 vi.mock("@/lib/audit", () => ({ audit }));
-vi.mock("@/lib/email", () => ({ sendEmail: vi.fn() }));
+vi.mock("@/lib/email", () => ({ sendEmail }));
+vi.mock("@/lib/session", () => ({ requireSession: async () => session.ctx }));
+vi.mock("@/lib/admin/step-up", () => ({ assertStepUp: () => ({ ok: true }) }));
 
-import { createQuote, linkLeadToCustomer, loadQuoteParties, reviseQuote } from "@/lib/catering/quotes";
+import { NextRequest } from "next/server";
+import { createQuote, linkLeadToCustomer, loadQuoteParties, reviseQuote, sendQuote } from "@/lib/catering/quotes";
 import { loadCustomer } from "@/lib/catering/customers";
+import { POST as createQuoteRoute } from "@/app/api/catering/quotes/route";
+import { POST as sendQuoteRoute } from "@/app/api/catering/quotes/[id]/send/route";
 
 // ── fixtures ─────────────────────────────────────────────────────────────────────────────
 const A = "loc-a";
@@ -118,6 +138,9 @@ function seed() {
   writes.length = 0;
   hooks.afterSelect = null;
   audit.mockClear();
+  sendEmail.mockReset();
+  sendEmail.mockResolvedValue({ id: "email-1" });
+  session.ctx = gmA;
   db.users = [{ id: "gm-a", role: "gm", active: true }];
   db.user_locations = [{ user_id: "gm-a", location_id: A, active: true }];
   db.catering_customers = [
@@ -125,6 +148,8 @@ function seed() {
     { id: "c-b", name: "Bea B", company: "Beta", email: "bea@b.test", phone: "555-B", active: true, primary_location_id: B },
     { id: "c-g", name: "Gus G", company: null, email: "gus@g.test", phone: null, active: true, primary_location_id: null },
     { id: "c-off", name: "Old A", company: null, email: null, phone: null, active: false, primary_location_id: A },
+    { id: "c-off-a", name: "Dormant A", company: null, email: "dormant@a.test", phone: null, active: false, primary_location_id: A },
+    { id: "c-off-b", name: "Dormant B", company: null, email: "dormant@b.test", phone: null, active: false, primary_location_id: B },
   ];
   db.catering_pipeline = [];
   db.catering_quotes = [];
@@ -246,5 +271,79 @@ describe("P2 — the lead link is bound to the location it authorized", () => {
     await linkLeadToCustomer(gmA, { ...args, customerId: "c-g" });
     expect(db.catering_pipeline![0]!.customer_id).toBeNull();
     expect(audit).not.toHaveBeenCalled();
+  });
+});
+
+// ── Review 2 — through the routes ────────────────────────────────────────────────────────
+const json = (url: string, body: unknown) =>
+  new NextRequest(`http://localhost${url}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+const params = (id: string) => ({ params: Promise.resolve({ id }) });
+
+describe("R2-P1 — sending a quote whose customer is another shop's", () => {
+  beforeEach(() => {
+    db.catering_quotes!.push(
+      { id: "q-b", location_id: A, status: "draft", superseded_at: null, customer_id: "c-b", total_cents: 12000, expires_at: null },
+      { id: "q-a", location_id: A, status: "draft", superseded_at: null, customer_id: "c-a", total_cents: 12000, expires_at: null },
+    );
+  });
+  it("the route refuses with invalid_customer: no status change, no email, no recipient, no B address", async () => {
+    const res = await sendQuoteRoute(json("/api/catering/quotes/q-b/send", {}), params("q-b"));
+    const body = await res.json();
+    expect(res.status).toBe(400);
+    expect(body.code).toBe("invalid_customer");
+    expect(body).not.toHaveProperty("recipient");
+    expect(JSON.stringify(body)).not.toMatch(/bea@b\.test|Bea/);
+    expect(db.catering_quotes!.find((q) => q.id === "q-b")).toMatchObject({ status: "draft" });
+    expect(quoteWrites()).toEqual([]);
+    expect(sendEmail).not.toHaveBeenCalled();
+    expect(audit).not.toHaveBeenCalled();
+  });
+  it("the lib refuses the same way (a failed delivery can no longer leak it either)", async () => {
+    sendEmail.mockResolvedValue({ error: "boom" });
+    await expect(sendQuote(gmA, "q-b")).rejects.toMatchObject({ status: 400, code: "invalid_customer" });
+    expect(sendEmail).not.toHaveBeenCalled();
+  });
+  it("an own-shop customer still sends and returns its own recipient", async () => {
+    const res = await sendQuoteRoute(json("/api/catering/quotes/q-a/send", {}), params("q-a"));
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ ok: true, emailed: true, emailOutcome: "sent", recipient: "ana@a.test" });
+    expect(db.catering_quotes!.find((q) => q.id === "q-a")).toMatchObject({ status: "sent" });
+    expect(sendEmail).toHaveBeenCalledWith(expect.objectContaining({ to: "ana@a.test" }));
+  });
+});
+
+describe("R2-P2 — email resolution → creation through the quotes route", () => {
+  const create = (contactEmail: string) => createQuoteRoute(json("/api/catering/quotes", { locationId: A, contactEmail, contactName: "Typed", lines: line }));
+  const customerWrites = () => writes.filter((w) => w.table === "catering_customers");
+
+  it("a deactivated shop-B contact is refused and NOT revived; nothing is written", async () => {
+    const res = await create("Dormant@B.test");
+    expect(res.status).toBe(400);
+    expect((await res.json()).code).toBe("invalid_customer");
+    expect(db.catering_customers!.find((c) => c.id === "c-off-b")!.active).toBe(false);
+    expect(customerWrites()).toEqual([]);
+    expect(quoteWrites()).toEqual([]);
+    expect(audit).not.toHaveBeenCalled();
+  });
+  it("an active shop-B contact is refused with nothing written", async () => {
+    const res = await create("bea@b.test");
+    expect(res.status).toBe(400);
+    expect((await res.json()).code).toBe("invalid_customer");
+    expect(customerWrites()).toEqual([]);
+    expect(quoteWrites()).toEqual([]);
+  });
+  it("a deactivated own-shop contact is revived and quoted (identity kept, no fork)", async () => {
+    const res = await create("dormant@a.test");
+    expect(res.status).toBe(201);
+    expect(db.catering_customers!.find((c) => c.id === "c-off-a")!.active).toBe(true);
+    expect(db.catering_customers!.filter((c) => c.email === "dormant@a.test")).toHaveLength(1);
+    expect(db.catering_quotes!.at(-1)).toMatchObject({ customer_id: "c-off-a", location_id: A });
+  });
+  it("a new email creates a contact at the quote's shop and quotes it", async () => {
+    const res = await create("new@client.test");
+    expect(res.status).toBe(201);
+    const created = db.catering_customers!.find((c) => c.email === "new@client.test")!;
+    expect(created).toMatchObject({ primary_location_id: A, active: true });
+    expect(db.catering_quotes!.at(-1)).toMatchObject({ customer_id: created.id });
   });
 });
