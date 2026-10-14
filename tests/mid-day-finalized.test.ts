@@ -50,10 +50,8 @@ describe("midDayFinalizedRows", () => {
     expect(row).toMatchObject({ need: 1, made: null });
   });
 
-  it("an item with no completion at all has need and made null", () => {
-    expect(midDayFinalizedRows([item("a", 6)], [])).toEqual([
-      { id: "a", label: "Item a", section: "sauces", parUnit: "1/3 Pan", need: null, made: null },
-    ]);
+  it("a template item with no saved record is not part of the finalized report", () => {
+    expect(midDayFinalizedRows([item("a", 6)], [])).toEqual([]);
   });
 
   it("no par → need null; the need never goes below zero", () => {
@@ -122,15 +120,50 @@ describe("midDayFinalizedRows reads history from the record, not today's config 
     expect(midDayFinalizedRows([item("a", 6)], comp(counted))[0]).toMatchObject({ need: 4, made: null });
   });
 
-  it("falls back to station, then Misc, for the section", () => {
+  it("falls back to station, then Misc, for the section (record with no snapshot)", () => {
     const rows = midDayFinalizedRows(
       [
         { id: "x", label: "X", station: "Cooks", prepMeta: null },
         { id: "y", label: "Y", station: null, prepMeta: null },
       ],
-      [],
+      [
+        { templateItemId: "x", completedAt: "t", prepData: { inputs: { onHand: 1 } } },
+        { templateItemId: "y", completedAt: "t", prepData: { inputs: { onHand: 1 } } },
+        { templateItemId: "z", completedAt: "t", prepData: { inputs: { onHand: 1 } } },
+      ],
     );
-    expect(rows.map((r) => r.section)).toEqual(["Cooks", "Misc"]);
+    expect(rows.map((r) => [r.id, r.section, r.label])).toEqual([["x", "Cooks", "X"], ["y", "Misc", "Y"], ["z", "Misc", "—"]]);
+  });
+});
+
+describe("midDayFinalizedRows' universe is the SAVED records, not today's active template (Astra re-review)", () => {
+  const snap = (itemName: string, section: string) => ({ section, itemName, parValue: 6, parUnit: "Qt", specialInstruction: null });
+  const saved = (id: string, itemName: string, section = "sauces") => ({
+    templateItemId: id,
+    completedAt: "2026-10-13T15:00:00Z",
+    prepData: { inputs: { onHand: 2, total: 4 }, snapshot: snap(itemName, section), overUnder: null },
+  });
+
+  it("an item DEACTIVATED after finalize keeps its saved row, labelled from its snapshot", () => {
+    // template now lists only B (A was deactivated); A's live record still holds made 4
+    const rows = midDayFinalizedRows([item("b", 6)], [saved("a", "HC Aioli"), saved("b", "HP Mayo")]);
+    expect(rows).toEqual([
+      { id: "b", label: "HP Mayo", section: "sauces", parUnit: "Qt", need: 4, made: 4 },
+      { id: "a", label: "HC Aioli", section: "sauces", parUnit: "Qt", need: 4, made: 4 },
+    ]);
+  });
+
+  it("an item ADDED after finalize does not appear as an unsaved row", () => {
+    const rows = midDayFinalizedRows([item("a", 6), item("new", 3)], [saved("a", "HC Aioli")]);
+    expect(rows.map((r) => r.id)).toEqual(["a"]);
+  });
+
+  it("orders still-active items by template order, then retired ones by section and name", () => {
+    const rows = midDayFinalizedRows(
+      [item("b", 6), item("a", 6)],
+      [saved("z", "Zucchini", "veg"), saved("a", "Aioli"), saved("y", "Basil", "sauces"), saved("b", "Mayo")],
+    );
+    expect(rows.map((r) => r.id)).toEqual(["b", "a", "y", "z"]);
   });
 });
 

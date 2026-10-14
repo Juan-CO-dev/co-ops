@@ -125,11 +125,19 @@ export function midDayMadeFromRecord(prepData: unknown): number | null {
 }
 
 /**
- * B1 #2 — the rows of a FINALIZED mid-day prep (status phase2_complete), read-only: one row per
- * template item (template order) from its latest live completion. History is read from the
- * RECORD (Astra review, C.44): name, section, par and unit come from the snapshot the save froze,
- * the need from the saved batch need or the snapshot par, and "made" from the record's own shape
- * (midDayMadeFromRecord). Template metadata is only the fallback for a record with no snapshot.
+ * B1 #2 — the rows of a FINALIZED mid-day prep (status phase2_complete), read-only.
+ *
+ * THE UNIVERSE IS THE SAVED RECORDS (Astra re-review, C.44): one row per template item that has
+ * a live completion on the instance (its latest one) — never today's active template list. An
+ * item deactivated after finalize keeps its saved row; an item added after finalize, which has
+ * no record, does not appear. (Mid-day Phase 1 submits an entry for every item, so the records
+ * are exactly the items that existed when the prep ran; mid-day has no 0197-style finalize
+ * universe of its own — finalize only gates unsaved batch rows.)
+ *
+ * History is read from the RECORD: name, section, par and unit come from the snapshot the save
+ * froze, the need from the saved batch need or the snapshot par, and "made" from the record's
+ * own shape (midDayMadeFromRecord). Template metadata only fills in for a record with no
+ * snapshot. Order: still-listed items in template order, then the rest by section, name, id.
  */
 export function midDayFinalizedRows(
   templateItems: ReadonlyArray<{
@@ -145,19 +153,32 @@ export function midDayFinalizedRows(
     const prev = latest.get(c.templateItemId);
     if (!prev || c.completedAt > prev.completedAt) latest.set(c.templateItemId, { completedAt: c.completedAt, prepData: c.prepData });
   }
-  return templateItems.map((it) => {
-    const prepData = latest.get(it.id)?.prepData;
+  const templateIndex = new Map(templateItems.map((it, i) => [it.id, i] as const));
+
+  const rows: MidDayFinalizedRow[] = [];
+  for (const [id, { prepData }] of latest) {
+    const it = templateItems[templateIndex.get(id) ?? -1];
     const snap = readSnapshot(prepData);
-    const par = snap ? snap.parValue : (it.prepMeta?.parValue ?? null);
+    const par = snap ? snap.parValue : (it?.prepMeta?.parValue ?? null);
     const onHand = finiteOrNull(asRecord(asRecord(prepData)?.inputs)?.onHand);
     const savedBatchNeed = readBatchFromPrepData(prepData)?.needForLine ?? null;
-    return {
-      id: it.id,
-      label: snap?.itemName ?? it.label,
-      section: snap?.section ?? it.prepMeta?.section ?? it.station ?? "Misc",
-      parUnit: snap ? snap.parUnit : (it.prepMeta?.parUnit ?? null),
+    rows.push({
+      id,
+      label: snap?.itemName ?? it?.label ?? "—",
+      section: snap?.section ?? it?.prepMeta?.section ?? it?.station ?? "Misc",
+      parUnit: snap ? snap.parUnit : (it?.prepMeta?.parUnit ?? null),
       need: savedBatchNeed ?? (par !== null && onHand !== null ? Math.max(par - onHand, 0) : null),
       made: midDayMadeFromRecord(prepData),
-    };
+    });
+  }
+
+  const cmp = (x: string, y: string) => (x < y ? -1 : x > y ? 1 : 0);
+  return rows.sort((a, b) => {
+    const ia = templateIndex.get(a.id);
+    const ib = templateIndex.get(b.id);
+    if (ia !== undefined && ib !== undefined) return ia - ib;
+    if (ia !== undefined) return -1;
+    if (ib !== undefined) return 1;
+    return cmp(a.section, b.section) || cmp(a.label, b.label) || cmp(a.id, b.id);
   });
 }
