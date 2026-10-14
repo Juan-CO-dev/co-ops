@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { useTranslation } from "@/lib/i18n/provider";
 import { formatCents, formatDateLabel } from "@/lib/i18n/format";
 import type { TranslationKey } from "@/lib/i18n/types";
-import { LEAD_PHONE_MAX, LEGAL_TRANSITIONS, PIPELINE_STAGES, leadEditPatch, shopChipLabel, showQuoteNotAccepted, stageMoveNeedsConfirm, type PipelineStage } from "@/lib/catering/pipeline-shared";
+import { LEAD_EMAIL_MAX, LEAD_PHONE_MAX, LEGAL_TRANSITIONS, PIPELINE_STAGES, leadEditPatch, shopChipLabel, showQuoteNotAccepted, stageMoveNeedsConfirm, type PipelineStage } from "@/lib/catering/pipeline-shared";
 import type { PipelineLead, PipelineBoardLead, PipelineSearchResult, AssignableStaff } from "@/lib/catering/pipeline";
 import { LEAD_SOURCES, leadSourceKey } from "@/lib/catering/intake-shared";
 import type { CateringCapacityResult } from "@/lib/catering/capacity";
@@ -673,6 +673,7 @@ function AddLeadRow({ locations, staff, defaultLocationId }: { locations: Locati
         contactName,
         company: str("company"),
         contactPhone: str("contactPhone"),
+        contactEmail: str("contactEmail"),
         eventDate: str("eventDate"),
         headcount: headcountRaw ? Number(headcountRaw) : null,
         leadSource: str("leadSource"),
@@ -710,6 +711,7 @@ function AddLeadRow({ locations, staff, defaultLocationId }: { locations: Locati
         <Field label={t("catering.pipeline.field.contact_name")} name="contactName" required />
         <Field label={t("catering.pipeline.field.company")} name="company" />
         <Field label={t("catering.pipeline.field.phone")} name="contactPhone" type="tel" />
+        <Field label={t("catering.pipeline.field.email")} name="contactEmail" type="email" hint={t("catering.pipeline.field.email_hint")} />
         <Field label={t("catering.pipeline.field.event_date")} name="eventDate" type="date" />
         <Field label={t("catering.pipeline.field.headcount")} name="headcount" type="number" />
         <label className="block text-sm">
@@ -765,13 +767,16 @@ function Field({
   type = "text",
   required = false,
   defaultValue,
+  hint,
 }: {
   label: string;
   name: string;
   type?: string;
   required?: boolean;
   defaultValue?: string;
+  hint?: string;
 }) {
+  const hintId = useId();
   return (
     <label className="block min-w-0 text-sm">
       <span className="text-co-text-muted">
@@ -783,9 +788,12 @@ function Field({
         type={type}
         required={required}
         defaultValue={defaultValue}
+        aria-describedby={hint ? hintId : undefined}
         {...(type === "tel" ? { inputMode: "tel" as const, autoComplete: "off", maxLength: LEAD_PHONE_MAX } : {})}
+        {...(type === "email" ? { inputMode: "email" as const, autoComplete: "off", autoCapitalize: "none", maxLength: LEAD_EMAIL_MAX } : {})}
         className="mt-1 min-h-[44px] w-full min-w-0 rounded-md border border-co-border bg-co-surface p-2 text-co-text"
       />
+      {hint && <span id={hintId} className="mt-1 block text-xs text-co-text-dim">{hint}</span>}
     </label>
   );
 }

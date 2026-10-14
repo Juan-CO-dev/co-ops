@@ -24,7 +24,8 @@ import { checkCateringCapacity, type CateringCapacityResult } from "@/lib/cateri
 import { reservePrepDemand, consumePrepDemand, releasePrepDemand } from "@/lib/catering/prep-demand";
 
 // ── Stage vocabulary ─────────────────────────────────────────────────────────
-import { PIPELINE_STAGES, type PipelineStage, canTransition, normalizeLeadPhone } from "./pipeline-shared";
+import { PIPELINE_STAGES, type PipelineStage, canTransition, normalizeLeadEmail, normalizeLeadPhone } from "./pipeline-shared";
+import { resolveOrCreateContact } from "./companies";
 import { isLeadSource } from "./intake-shared";
 // Client-safe stage vocabulary lives in pipeline-shared.ts; re-exported for
 // existing server consumers.
@@ -452,6 +453,14 @@ export interface CreateLeadInput {
   followUpDate?: string | null;
   customerId?: string | null;
   estimatedRevenueCents?: number | null;
+  /**
+   * B7c: the email typed on Add lead. A lead has no email column — the address resolves the
+   * lead's CATERING CUSTOMER through the quote flow's own resolver (resolveOrCreateContact):
+   * an existing customer is linked (another shop's is attached with its contact hidden —
+   * Juan's option b), a readable deactivated one is revived, none → a new customer homed at
+   * the lead's shop. Ignored when `customerId` is given. Never logged or echoed.
+   */
+  contactEmail?: string | null;
 }
 
 /** Create a new lead at stage 'inquiry' + its initial append-only stage event. */
@@ -463,8 +472,28 @@ export async function createLead(actor: AuthContext, input: CreateLeadInput): Pr
   }
   validateLeadSource(input.leadSource);
   const contactPhone = leadPhone(input.contactPhone);
+  const email = normalizeLeadEmail(input.contactEmail);
+  if (!email.ok) throw new CateringPipelineError(400, "invalid_email", "contactEmail is not a valid email");
   if (input.assignedTo != null) await requireAssignable(input.assignedTo);
   if (input.customerId != null) await requireVisibleCustomer(actor, input.customerId);
+
+  // Every check above runs before this: resolving may CREATE a customer (append-only), so it
+  // is the last step before the lead insert — the same order as the quotes route. The id is
+  // server-resolved from the typed address, so a customer the actor cannot read (option b) is
+  // linked without passing requireVisibleCustomer, which guards ids from a request body.
+  let customerId = input.customerId ?? null;
+  let customerVia: "id" | "email_existing" | "email_created" | null = customerId ? "id" : null;
+  if (customerId == null && email.value != null) {
+    const contact = await resolveOrCreateContact(actor, {
+      email: email.value,
+      name: input.contactName.trim(),
+      company: input.company ?? null,
+      primaryLocationId: locationId,
+      via: "lead_capture",
+    });
+    customerId = contact.id;
+    customerVia = contact.created ? "email_created" : "email_existing";
+  }
   const sb = getServiceRoleClient();
   const { data: inserted, error } = await sb
     .from("catering_pipeline")
@@ -485,7 +514,7 @@ export async function createLead(actor: AuthContext, input: CreateLeadInput): Pr
       location_id: locationId,
       notes: input.notes ?? null,
       follow_up_date: input.followUpDate ?? null,
-      customer_id: input.customerId ?? null,
+      customer_id: customerId,
       estimated_revenue_cents: input.estimatedRevenueCents ?? null,
       assigned_to: input.assignedTo ?? null,
       created_by: actor.user.id,
@@ -509,7 +538,8 @@ export async function createLead(actor: AuthContext, input: CreateLeadInput): Pr
     action: "catering.pipeline.create",
     resourceTable: "catering_pipeline",
     resourceId: inserted.id,
-    metadata: { location_id: locationId, lead_source: input.leadSource ?? null },
+    // How the customer link was made — never the address itself.
+    metadata: { location_id: locationId, lead_source: input.leadSource ?? null, customer_id: customerId, customer_via: customerVia },
     ipAddress: null,
     userAgent: null,
   });

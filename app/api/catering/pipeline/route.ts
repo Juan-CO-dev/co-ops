@@ -3,6 +3,7 @@ import { requireSession } from "@/lib/session";
 import { ROLES } from "@/lib/roles";
 import { jsonError, jsonOk, parseJsonBody } from "@/lib/api-helpers";
 import { createLead, CateringPipelineError, PIPELINE_WRITE_MIN, type CreateLeadInput } from "@/lib/catering/pipeline";
+import { CateringCompanyError } from "@/lib/catering/companies";
 
 // POST — create a catering lead at stage 'inquiry' (catering_mgr+ >= 6).
 export async function POST(req: NextRequest) {
@@ -26,6 +27,7 @@ export async function POST(req: NextRequest) {
 
   const company = optStr(b.company);
   const contactPhone = optStr(b.contactPhone); // D-48 — the value is never echoed or logged
+  const contactEmail = optStr(b.contactEmail); // B7c — finds/creates the customer; never echoed or logged
   const eventDate = optStr(b.eventDate);
   const headcount = optNum(b.headcount);
   const leadSource = optStr(b.leadSource);
@@ -37,7 +39,7 @@ export async function POST(req: NextRequest) {
   const estimatedRevenueCents = optNum(b.estimatedRevenueCents);
 
   for (const [field, v] of Object.entries({
-    company, contactPhone, eventDate, headcount, leadSource, locationId, notes, followUpDate, customerId, estimatedRevenueCents, assignedTo,
+    company, contactPhone, contactEmail, eventDate, headcount, leadSource, locationId, notes, followUpDate, customerId, estimatedRevenueCents, assignedTo,
   })) {
     if (v === undefined) return jsonError(400, "invalid_payload", { field });
   }
@@ -46,6 +48,7 @@ export async function POST(req: NextRequest) {
     contactName,
     company: company ?? null,
     contactPhone: contactPhone ?? null,
+    contactEmail: contactEmail ?? null,
     eventDate: eventDate ?? null,
     headcount: headcount ?? null,
     leadSource: leadSource ?? null,
@@ -62,6 +65,8 @@ export async function POST(req: NextRequest) {
     return jsonOk({ id }, 201);
   } catch (e) {
     if (e instanceof CateringPipelineError) return jsonError(e.status, e.code, { message: e.message });
+    // The customer resolver's refusals (its messages never carry the address).
+    if (e instanceof CateringCompanyError) return jsonError(e.status, e.code, { message: e.message });
     throw e;
   }
 }

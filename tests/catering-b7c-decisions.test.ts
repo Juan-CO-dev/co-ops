@@ -200,12 +200,13 @@ describe("D-48 · lead phone", () => {
     void _omit;
     expect(leadEditPatch(lead, noPhone)).toEqual({ ok: true, patch: {} });
   });
-  it("Add lead and Edit details both carry a phone box, in en and es; no lead email box (no column)", () => {
+  it("Add lead and Edit details both carry a phone box, in en and es; the email box is on Add lead only (B7c round 2)", () => {
     const client = src("components/catering/pipeline/PipelineClient.tsx");
     expect(client.match(/name="contactPhone" type="tel"/g)).toHaveLength(2);
     expect(client).toContain('contactPhone: str("contactPhone")');
     expect(client).toContain('contactPhone: raw("contactPhone")');
-    expect(client).not.toMatch(/name="contactEmail"/);
+    // A lead has no email column: the one email box (Add lead) resolves the lead's customer.
+    expect(client.match(/name="contactEmail"/g)).toHaveLength(1);
     bothLanguages("catering.pipeline.field.phone");
     expect(src("app/api/catering/pipeline/[id]/route.ts")).toMatch(/"contactPhone",/);
   });

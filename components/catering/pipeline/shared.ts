@@ -59,6 +59,8 @@ const KNOWN_ERROR_CODES = new Set([
   "invalid_payload",
   "invalid_source",
   "invalid_assignee",
+  "invalid_email",
+  "invalid_customer",
   "location_access_denied",
   "invalid_stage",
   "mixed_concerns",

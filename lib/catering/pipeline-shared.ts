@@ -135,6 +135,25 @@ export function normalizeLeadPhone(v: string | null | undefined): { ok: true; va
   return t.length > LEAD_PHONE_MAX ? { ok: false } : { ok: true, value: t };
 }
 
+// ── Lead email (B7c, Juan 2026-10-14) ─────────────────────────────────────────────────────
+
+/** RFC 5321's practical address ceiling. */
+export const LEAD_EMAIL_MAX = 254;
+const EMAIL_SHAPE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+/**
+ * The email typed on Add lead, as the customer resolver will match it: trimmed, LOWERCASED
+ * (the identity rule — a mixed-case address must resolve to the same customer), empty → null.
+ * A lead has no email column: the address only finds or creates the lead's catering
+ * customer. Not an address, or too long → refused, and the value is never echoed.
+ */
+export function normalizeLeadEmail(v: string | null | undefined): { ok: true; value: string | null } | { ok: false } {
+  if (v == null) return { ok: true, value: null };
+  const t = v.trim().toLowerCase();
+  if (t === "") return { ok: true, value: null };
+  return t.length <= LEAD_EMAIL_MAX && EMAIL_SHAPE.test(t) ? { ok: true, value: t } : { ok: false };
+}
+
 // ── Lead edit (B5 #36) ─────────────────────────────────────────────────────────────────
 
 /**
