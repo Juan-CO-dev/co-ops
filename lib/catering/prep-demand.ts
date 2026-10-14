@@ -116,6 +116,36 @@ async function loadCurrentQuote(sb: Sb, pipelineId: string): Promise<{ id: strin
   return data ?? null;
 }
 
+// ── Repair guard (B7c r5) ────────────────────────────────────────────────────────────
+
+/**
+ * The lead's current quote holds a package line WITHOUT a line_kind — written by the pre-B7c
+ * server in the deploy window, before 0252 made the kind required. Prep Demand never guesses at
+ * such a line (it would count as no demand), so a confirm must REFUSE loudly instead of
+ * reserving a silent zero. Fixed by hand per the 0252 header; never auto-repaired.
+ */
+export class PrepDemandNeedsRepairError extends Error {
+  constructor(public quoteId: string, public lineIds: string[]) {
+    super(`quote ${quoteId} has ${lineIds.length} package line(s) without a line_kind (${lineIds.join(",")}) — repair per migration 0252 before confirming`);
+    this.name = "PrepDemandNeedsRepairError";
+  }
+}
+
+/** Throws PrepDemandNeedsRepairError when the lead's current quote has a kind-less package line. */
+export async function assertQuoteReadyForPrep(sb: Sb, pipelineId: string): Promise<void> {
+  const quote = await loadCurrentQuote(sb, pipelineId);
+  if (!quote) return;
+  const { data, error } = await sb
+    .from("catering_quote_items")
+    .select("id")
+    .eq("quote_id", quote.id)
+    .not("package_id", "is", null)
+    .is("line_kind", null)
+    .returns<Array<{ id: string }>>();
+  if (error) throw new Error(`assertQuoteReadyForPrep: ${error.message}`);
+  if (data && data.length > 0) throw new PrepDemandNeedsRepairError(quote.id, data.map((r) => r.id));
+}
+
 // ── Lifecycle: reserve / consume / release / resync ─────────────────────────────────
 
 /**
@@ -128,6 +158,9 @@ export async function reservePrepDemand(actor: AuthContext, pipelineId: string):
   const sb = getServiceRoleClient();
   const quote = await loadCurrentQuote(sb, pipelineId);
   if (!quote || !quote.event_date) return; // can't prep-plan without a dated quote
+  // Inner guard (B7c r5): never retire a lead's reserved rows to replace them with a silent zero.
+  // moveStage checks this before the stage changes; this covers every other path in.
+  await assertQuoteReadyForPrep(sb, pipelineId);
 
   // Idempotency: retire prior reserved rows (append-only — mark released, never delete).
   const { error: relErr } = await sb

@@ -521,14 +521,15 @@ interface ResolvedLine {
 }
 
 /**
- * The PURE line checks (quantity, price, references, line kind — 409 `quote_lines_outdated` for
- * a kind-less package line), with no I/O. A route that does anything stateful before
- * createQuote — the quotes POST resolves, creates or revives the customer — calls this FIRST,
- * so a save the lines will refuse changes nothing (Astra r4, BC-040/041). createQuote,
- * reviseQuote and previewQuote run the same checks again themselves.
+ * EVERY line check that can refuse a save, before anything stateful: the pure ones (quantity,
+ * price, line kind — 409 `quote_lines_outdated` for a kind-less package line) and the catalog
+ * reference read (400 `unknown_item` for an inactive or missing item / menu item). Read-only.
+ * The quotes POST calls this BEFORE it resolves, creates or revives the customer, so a save
+ * the lines will refuse changes nothing (Astra r4 + r5, BC-040/041). createQuote, reviseQuote
+ * and previewQuote run the same checks again themselves.
  */
-export function validateQuoteLines(lines: QuoteLineInput[]): void {
-  resolveLines(lines);
+export async function preflightQuoteLines(lines: QuoteLineInput[]): Promise<void> {
+  await verifyLineRefs(getServiceRoleClient(), resolveLines(lines));
 }
 
 /** Validate + freeze the line set (quantity>0, integer non-negative price, identified). */

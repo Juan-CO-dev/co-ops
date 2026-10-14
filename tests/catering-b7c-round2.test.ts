@@ -433,6 +433,18 @@ describe("r4 · the quotes POST refuses outdated lines BEFORE it resolves the cu
     expect(customerWrites()).toEqual([]);
   });
 
+  it("r5: an unknown or inactive catalog reference + a new email → 400 unknown_item; no customer, no audit", async () => {
+    for (const ref of [{ itemId: "i-gone" }, { menuItemId: "m-retired" }]) {
+      db.menu_items!.push({ id: "m-retired", active: false });
+      const res = await post({ contactEmail: "ghost.client@example.test", lines: [{ description: "Gone", quantity: 1, unitPriceCents: 100, ...ref }] });
+      expect(res.status).toBe(400);
+      expect((await res.json()).code).toBe("unknown_item");
+    }
+    expect(customerWrites()).toEqual([]);
+    expect(db.catering_customers!.some((c) => c.email === "ghost.client@example.test")).toBe(false);
+    expect(audit.mock.calls).toEqual([]);
+  });
+
   it("control: the same request with kinded lines creates the customer and the quote", async () => {
     const res = await post({ contactEmail: "brand.new@example.test", lines: [{ ...staleLines[0], lineKind: "package_header", componentsListed: false }] });
     expect(res.status).toBe(201);

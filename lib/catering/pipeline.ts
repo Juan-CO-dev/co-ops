@@ -21,7 +21,7 @@ import { canReadCateringLead, loadCateringReader } from "./ezcater-detail";
 import { canReadCateringContact } from "./ezcater-detail-shared";
 import type { AuthContext } from "@/lib/session";
 import { checkCateringCapacity, type CateringCapacityResult } from "@/lib/catering/capacity";
-import { reservePrepDemand, consumePrepDemand, releasePrepDemand } from "@/lib/catering/prep-demand";
+import { reservePrepDemand, consumePrepDemand, releasePrepDemand, assertQuoteReadyForPrep, PrepDemandNeedsRepairError } from "@/lib/catering/prep-demand";
 
 // ── Stage vocabulary ─────────────────────────────────────────────────────────
 import { PIPELINE_STAGES, type PipelineStage, canTransition, normalizeLeadEmail, normalizeLeadPhone } from "./pipeline-shared";
@@ -570,6 +570,30 @@ export async function moveStage(
   // canTransition is TOTAL: a legacy/unknown label on the row is refused, never guessed.
   if (fromStage === null || !canTransition(fromStage, args.toStage)) {
     throw new CateringPipelineError(409, "illegal_transition", `A lead cannot move from ${lead.stage} to ${args.toStage}`);
+  }
+
+  // B7c r5: a quote with a package line the pre-B7c server saved without its kind would reserve
+  // ZERO package demand (Prep Demand never guesses). Refuse the confirm LOUDLY — before the stage
+  // changes and before any demand row is touched — until the line is repaired (0252 header).
+  if (args.toStage === "confirmed") {
+    try {
+      await assertQuoteReadyForPrep(sb, args.id);
+    } catch (e) {
+      if (e instanceof PrepDemandNeedsRepairError) {
+        void audit({
+          actorId: actor.user.id,
+          actorRole: actor.user.role,
+          action: "catering.prep_demand.sync_failed",
+          resourceTable: "catering_pipeline",
+          resourceId: args.id,
+          metadata: { to_stage: args.toStage, outcome: "quote_needs_repair", quote_id: e.quoteId, line_ids: e.lineIds },
+          ipAddress: null,
+          userAgent: null,
+        });
+        throw new CateringPipelineError(409, "quote_needs_repair", "This quote was saved during an app update and can't be used for prep yet");
+      }
+      throw e;
+    }
   }
 
   // Guard on the stage the pre-read saw (silent-UPDATE law): the event row below records

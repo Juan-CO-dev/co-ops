@@ -109,6 +109,7 @@ vi.mock("@/lib/session", () => ({ requireSession: async () => session.ctx }));
 import { loadCateringPrepDemand, resolveQuoteDemand } from "@/lib/catering/prep-demand";
 import { loadPipelineBoard } from "@/lib/catering/pipeline";
 import { NextRequest } from "next/server";
+import { readFileSync } from "node:fs";
 import { POST as createLeadRoute } from "@/app/api/catering/pipeline/route";
 import { PATCH as patchLeadRoute } from "@/app/api/catering/pipeline/[id]/route";
 import { showQuoteNotAccepted } from "@/lib/catering/pipeline-shared";
@@ -426,5 +427,64 @@ describe("D-48 · lead phone through the pipeline routes", () => {
     const res = await patch("l-a", { stage: "lost", contactPhone: PHONE });
     expect(res.status).toBe(400);
     expect((await res.json()).code).toBe("mixed_concerns");
+  });
+});
+
+// ── r5 · confirming a quote with an unkinded package line is LOUD, never a silent zero ─────
+describe("r5 · Confirm refuses a quote whose package line was saved without its kind", () => {
+  const req = (body: unknown) =>
+    new NextRequest("http://localhost/api/catering/pipeline/l-c", { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+  const confirm = () => patchLeadRoute(req({ stage: "confirmed" }), { params: Promise.resolve({ id: "l-c" }) });
+  const line = (id: string, extra: Row): Row => ({
+    id, quote_id: "q-c", item_id: null, menu_item_id: null, package_id: "pkg-plat", quantity: 1, portion: null,
+    description: "16 pc platter", line_kind: null, components_listed: null, ...extra,
+  });
+  beforeEach(() => {
+    db.catering_pipeline = [{ id: "l-c", location_id: A, stage: "quote_sent", contact_name: "Ana", assigned_to: null }];
+    db.catering_pipeline_events = [];
+    db.catering_quotes = [{ id: "q-c", pipeline_id: "l-c", location_id: A, event_date: "2026-10-30", superseded_at: null, created_at: "2026-10-14" }];
+    db.catering_package_items = [{ id: "plat-slot", package_id: "pkg-plat", slot_type: "choice", item_id: null, menu_item_id: null, quantity: 16, description: "Choose your subs", display_order: 0, active: true }];
+    db.catering_quote_item_options = [];
+    db.catering_prep_demand = [];
+  });
+
+  it("an unkinded package line → 409 quote_needs_repair; stage unchanged, no event, no demand row", async () => {
+    db.catering_quote_items = [line("x1", {}), line("x2", { description: "Choose your subs", quantity: 16 })];
+    const res = await confirm();
+    expect(res.status).toBe(409);
+    expect((await res.json()).code).toBe("quote_needs_repair");
+    expect(db.catering_pipeline!.find((l) => l.id === "l-c")!.stage).toBe("quote_sent");
+    expect(db.catering_pipeline_events).toEqual([]);
+    expect(db.catering_prep_demand).toEqual([]);
+    expect(writes.filter((w) => w.table === "catering_pipeline" || w.table === "catering_prep_demand")).toEqual([]);
+    const flagged = audit.mock.calls.map((c) => c[0]).find((a) => a.metadata?.outcome === "quote_needs_repair");
+    expect(flagged.metadata).toMatchObject({ quote_id: "q-c", line_ids: ["x1", "x2"] });
+  });
+
+  it("a kinded quote confirms and reserves its picks normally", async () => {
+    db.catering_quote_items = [
+      line("k1", { line_kind: "package_header", components_listed: true }),
+      line("k2", { description: "Choose your subs", quantity: 16, line_kind: "package_pick" }),
+    ];
+    const res = await confirm();
+    expect(res.status).toBe(200);
+    expect(db.catering_pipeline!.find((l) => l.id === "l-c")!.stage).toBe("confirmed");
+    expect(db.catering_prep_demand!.filter((d) => d.status === "reserved")).toEqual([
+      expect.objectContaining({ pipeline_id: "l-c", quote_id: "q-c", choice_package_item_id: "plat-slot", qty: 16 }),
+    ]);
+  });
+
+  it("a quote with no package lines (à la carte only) is unaffected", async () => {
+    db.catering_quote_items = [line("a1", { package_id: null, menu_item_id: "m-sub", description: "Sub", quantity: 4 })];
+    expect((await confirm()).status).toBe(200);
+    expect(db.catering_prep_demand!.map((d) => d.qty)).toEqual([4]);
+  });
+
+  it("en + es carry the repair message, and the board maps the code", () => {
+    const en = JSON.parse(readFileSync("lib/i18n/en.json", "utf8")) as Record<string, string>;
+    const es = JSON.parse(readFileSync("lib/i18n/es.json", "utf8")) as Record<string, string>;
+    expect(en["catering.pipeline.error.quote_needs_repair"]).toBe("This quote was saved during an app update and can't be used for prep yet. Ask a manager to fix it.");
+    expect(es["catering.pipeline.error.quote_needs_repair"]).toMatch(/gerente/);
+    expect(readFileSync("components/catering/pipeline/shared.ts", "utf8")).toContain(`"quote_needs_repair",`);
   });
 });

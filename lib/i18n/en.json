@@ -644,6 +644,7 @@
   "catering.pipeline.error.invalid_assignee": "The order lead must be an active staff member.",
   "catering.pipeline.error.invalid_email": "Enter a valid email, or leave it blank.",
   "catering.pipeline.error.invalid_customer": "That customer can't be linked from this shop.",
+  "catering.pipeline.error.quote_needs_repair": "This quote was saved during an app update and can't be used for prep yet. Ask a manager to fix it.",
   "admin.catering.title": "Catering",
   "admin.catering.subtitle": "Packages, capacity, delivery zones, and menu FAQ.",
   "admin.catering.hub.packages": "Packages",

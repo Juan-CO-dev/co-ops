@@ -644,6 +644,7 @@
   "catering.pipeline.error.invalid_assignee": "El líder del pedido debe ser parte activa del equipo.",
   "catering.pipeline.error.invalid_email": "Escribe un correo válido o déjalo en blanco.",
   "catering.pipeline.error.invalid_customer": "Ese cliente no se puede vincular desde esta tienda.",
+  "catering.pipeline.error.quote_needs_repair": "Esta cotización se guardó durante una actualización de la app y todavía no se puede usar para la preparación. Pídele a un gerente que la arregle.",
   "admin.catering.title": "Catering",
   "admin.catering.subtitle": "Paquetes, capacidad, zonas de entrega y preguntas del menú.",
   "admin.catering.hub.packages": "Paquetes",

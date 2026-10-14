@@ -61,6 +61,7 @@ const KNOWN_ERROR_CODES = new Set([
   "invalid_assignee",
   "invalid_email",
   "invalid_customer",
+  "quote_needs_repair", // B7c r5: a package line saved without its kind by the pre-B7c server
   "location_access_denied",
   "invalid_stage",
   "mixed_concerns",

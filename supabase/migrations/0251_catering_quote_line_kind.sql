@@ -10,6 +10,18 @@
 --   2. merge + deploy B7c         (new server writes a kind on every package line)
 --   3. 0252 → sim, then prod      (refuses a kind-less package line from then on)
 --
+-- DEPLOY RUNBOOK — HARD GATE (Astra r5): run the whole thing OUTSIDE catering hours.
+--   1. 0251 → sim, then prod.
+--   2. Merge + deploy B7c IMMEDIATELY after step 1 (back-to-back: the window between them is
+--      when the OLD server can still save a package line without its kind).
+--   3. As soon as the deploy is live, run the 0252 ASSERT query by hand:
+--        select quote_id, id from public.catering_quote_items
+--         where package_id is not null and line_kind is null;
+--      zero rows → apply 0252 at once (sim, then prod).
+--      any rows  → repair those lines by hand with the template in the 0252 header BEFORE anyone
+--                  confirms the lead (B7c refuses the confirm with 409 quote_needs_repair until
+--                  then), then apply 0252.
+--
 -- B7c (Juan 2026-10-14, "yes to all"): every package line on a quote says what part of the
 -- package it is, so Prep Demand never has to guess. Before this, a package line was told apart
 -- only by heuristics (package id + no item reference = "the whole package"), and the staff
