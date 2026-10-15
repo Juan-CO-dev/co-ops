@@ -135,11 +135,19 @@ const REEMITS: Reemit[] = [
   { name: "add_recipe_output", sourceFile: "0187_one_active_producer_backstop.sql", start: "create or replace function add_recipe_output(", end: "end $$;", mods: ARO_MODS },
 ];
 
+/**
+ * Later migrations that re-emit a 0215 body FROM 0215 (each has its own line-subsequence pin).
+ * 0255 (B11a, under-par alert recipients + par) → tests/under-par-alert-recipients-migration.test.ts.
+ */
+const LATER_REEMITTERS: Readonly<Record<string, string>> = {
+  submit_phase2_atomic: "0255_under_par_alert_recipients.sql",
+};
+
 describe("0215 re-emits every RPC from its latest definer — nothing dropped (GO correction 5)", () => {
   for (const r of REEMITS) {
     it(`${r.name}: 0215 is now the latest definer and the ${r.sourceFile} body (± enumerated mods) is a line-subsequence of it`, () => {
       const latest = latestDefiner(r.start, r.end);
-      expect(latest.file).toBe(file0215);
+      expect(latest.file).toBe(LATER_REEMITTERS[r.name] ?? file0215);
       const source = applyMods(extract(read(r.sourceFile), r.start, r.end), r.mods);
       const emitted = extract(src0215, r.start, r.end);
       const check = isLineSubsequence(source, emitted);

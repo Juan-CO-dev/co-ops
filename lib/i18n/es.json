@@ -2661,6 +2661,8 @@
   "notifications.card.tap_aria": "Marcar como leída",
   "notifications.card.under_par.detail": "{openerName} preparó {prepped} (par {par}, conteo de cierre {closer})",
   "notifications.card.under_par.detail_no_estimate": "{openerName} preparó {prepped} (par {par}, sin conteo de cierre)",
+  "notifications.card.under_par.detail_no_par": "{openerName} preparó {prepped} (conteo de cierre {closer})",
+  "notifications.card.under_par.detail_no_estimate_no_par": "{openerName} preparó {prepped} (sin conteo de cierre)",
   "notifications.card.under_par.reason_prefix": "Razón: {reasonCategory}",
   "notifications.card.location_time": "{locationCode} · {time}",
   "notifications.card.location_date_time": "{locationCode} · {dateLabel} {time}",

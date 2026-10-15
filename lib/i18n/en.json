@@ -2661,6 +2661,8 @@
   "notifications.card.tap_aria": "Mark as read",
   "notifications.card.under_par.detail": "{openerName} prepped {prepped} (par {par}, estimated {closer})",
   "notifications.card.under_par.detail_no_estimate": "{openerName} prepped {prepped} (par {par}, no closer estimate)",
+  "notifications.card.under_par.detail_no_par": "{openerName} prepped {prepped} (estimated {closer})",
+  "notifications.card.under_par.detail_no_estimate_no_par": "{openerName} prepped {prepped} (no closer estimate)",
   "notifications.card.under_par.reason_prefix": "Reason: {reasonCategory}",
   "notifications.card.location_time": "{locationCode} · {time}",
   "notifications.card.location_date_time": "{locationCode} · {dateLabel} {time}",
