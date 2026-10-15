@@ -126,7 +126,8 @@ The scheduler only places a person in positions their work type allows, and the 
   1. a **setup crew** before service, to set up the line;
   2. arrivals **at service start**;
   3. **rush reinforcements** right before the busy hours (from the demand curve).
-- **Store closed and people out** by a target time (8:30–9:00 PM). Closing duties and the closing checklist must fit before it.
+- **Service closes** at a set time (8:00 PM at CO).
+- **Everyone out** within a MIN–MAX window (e.g. 8:30–9:00 PM, never past the max). The closing checklist runs from service close and must finish inside the window. A close projected past the max is flagged.
 - **BOH staffing by day type:**
   - **Slow days:** only ONE Prep/Dishwasher. A second is added only when expected demand needs it, and the reason says so.
   - **Weekends:** BOTH (Prep + Prep/Dishwasher) until about 5 PM, then only the Prep/Dishwasher through close.
