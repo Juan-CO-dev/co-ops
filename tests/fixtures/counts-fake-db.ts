@@ -4,7 +4,8 @@
  * Supports exactly the builder surface lib/counts.ts, lib/products.ts, lib/prep-consumption.ts
  * and lib/toast/effective-depletion.ts use: select (with many-to-one `rel!fk!inner(cols)`
  * embeds and dotted filters on them), eq / is / not-is / in / gt / gte / lt / lte / or,
- * order (stable, NULLS LAST asc / FIRST desc), range / limit / maybeSingle, upsert.
+ * order (stable, NULLS LAST asc / FIRST desc), range / limit / maybeSingle, upsert, insert, and
+ * update (the matched rows, with PostgREST's exact `count`).
  *
  * Timestamps compare as INSTANTS (microsecond precision, any offset spelling) — the way
  * Postgres compares timestamptz — so a "Z" anchor against a "+00:00" ledger row behaves
@@ -109,6 +110,7 @@ export function createFakeDb(tables: Tables, latencyMs = 0) {
     let single = false;
     let upsertRows: Row[] | null = null;
     let insertRows: Row[] | null = null;
+    let updatePatch: Row | null = null;
     let upsertOpts: { onConflict?: string; ignoreDuplicates?: boolean } = {};
 
     let depth = 0;
@@ -122,6 +124,13 @@ export function createFakeDb(tables: Tables, latencyMs = 0) {
         const fields = parseSelect(selectStr);
         const projected = inserted.map((r) => project(table, r, fields)).filter((r): r is Row => r !== null);
         return { data: single ? (projected[0] ?? null) : projected, error: null };
+      }
+      if (updatePatch) {
+        // UPDATE … WHERE <preds>: PostgREST's `count: "exact"` is the matched-row count.
+        const hit = (tables[table] ?? []).filter((r) => preds.every((p) => p(r)));
+        for (const r of hit) Object.assign(r, updatePatch);
+        writes.push({ table, rows: hit.map((r) => ({ ...r })) });
+        return { data: null, error: null, count: hit.length };
       }
       if (upsertRows) {
         writes.push({ table, rows: upsertRows });
@@ -191,6 +200,7 @@ export function createFakeDb(tables: Tables, latencyMs = 0) {
       maybeSingle() { single = true; return q; },
       upsert(rows: Row[], opts: { onConflict?: string; ignoreDuplicates?: boolean } = {}) { upsertRows = rows; upsertOpts = opts; return q; },
       insert(rows: Row | Row[]) { insertRows = Array.isArray(rows) ? rows : [rows]; return q; },
+      update(patch: Row) { updatePatch = patch; return q; },
       then(resolve: (v: unknown) => unknown, reject?: (e: unknown) => unknown) {
         depth = completedDepth + 1;
         stats.depth = Math.max(stats.depth, depth);

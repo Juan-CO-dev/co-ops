@@ -80,6 +80,8 @@ export const NOTIFICATION_TYPES = {
   UNDER_PAR_ALERT: "under_par_alert",
   OPENING_NO_PRIOR_DATA_ALERT: "opening_no_prior_data_alert",
   SHIFT_FEEDBACK: "shift_feedback",
+  // Catalog Phase 2b (0261): a crew member reported "This case looks different" at the door.
+  PACK_CHANGE_REQUEST: "pack_change_request",
   // Password vault (0235). Params never carry a secret: names, roles, shop codes, counts only.
   VAULT_REVEAL: "vault_reveal",
   VAULT_ENTRY_CHANGE: "vault_entry_change",

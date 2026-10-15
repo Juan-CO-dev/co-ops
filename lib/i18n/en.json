@@ -6255,5 +6255,7 @@
   "admin.skus.error.sku_inactive": "This item is inactive. Reactivate it before changing its pack.",
   "admin.skus.chain.global_read_only": "Only a Manager of Operations can change this pack for every shop.",
   "admin.skus.chain.no_changes": "No changes to save.",
-  "admin.skus.error.not_found": "You can't change this item's pack from your shop."
+  "admin.skus.error.not_found": "You can't change this item's pack from your shop.",
+  "notif.pack_change_request.title": "{item} looks different at {shop}",
+  "notif.pack_change_request.body": "{who} says this case arrived differently. Open the item to check how it arrives now."
 }

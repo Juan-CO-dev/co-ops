@@ -60,6 +60,8 @@ const TENANCY_SCOPED_TABLES = [
   "sku_pack_levels",
   "sku_price_lanes",
   "vendor_price_history",
+  // 0261 — a door report belongs to one shop.
+  "sku_pack_change_requests",
   "stations",
   "station_positions",
   "station_break_events",
@@ -94,6 +96,8 @@ const TENANCY_SCOPED_RPCS = [
   "save_sku_shop_price",
   "save_sku_global_price",
   "retire_sku_price_lane",
+  // 0261 — the atomic pack + par + report apply; lib/catalog/sku-item.ts binds before calling it.
+  "apply_sku_pack_change",
   "write_station_event",
   "write_station_break",
   "write_task_assignment",
@@ -140,6 +144,8 @@ const FILES = [
   "lib/yield-stats.ts",
   // 0259 — every shop-version writer binds inside the lib (requireLocation) before any I/O.
   "lib/admin/sku-versions.ts",
+  // 0261 — filing and dismissing a door report bind inside the lib (requireLocation) before any write.
+  "lib/pack-change-requests.ts",
 ];
 
 /**

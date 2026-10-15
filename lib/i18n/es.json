@@ -6255,5 +6255,7 @@
   "admin.skus.error.sku_inactive": "Este artículo está inactivo. Reactívalo antes de cambiar su empaque.",
   "admin.skus.chain.global_read_only": "Solo un Manager of Operations puede cambiar este empaque para todas las tiendas.",
   "admin.skus.chain.no_changes": "No hay cambios que guardar.",
-  "admin.skus.error.not_found": "No puedes cambiar el empaque de este artículo desde tu tienda."
+  "admin.skus.error.not_found": "No puedes cambiar el empaque de este artículo desde tu tienda.",
+  "notif.pack_change_request.title": "{item} llegó diferente en {shop}",
+  "notif.pack_change_request.body": "{who} dice que esta caja llegó diferente. Abre el artículo para revisar cómo llega ahora."
 }

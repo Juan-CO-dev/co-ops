@@ -256,6 +256,11 @@ export const NON_DESTRUCTIVE_ACTIONS = [
   // mistaught code is reconstructible. Its sibling `sku.barcode.forgotten` DOES remove a live
   // code from lookups and is registered in DESTRUCTIVE_ACTIONS.
   "sku.barcode.taught",
+  // Catalog Phase 2b (0261): a door report ("This case looks different") and its closing are
+  // REQUESTS — the pack change itself is audited as sku.pack_version_save (destructive) when the
+  // GM applies it; a dismiss ("nothing changed") moves nothing about the kitchen.
+  "sku.pack_change_request.file",
+  "sku.pack_change_request.resolve",
   "sku.deduplicate",
   "sku_count.recorded",
   // Vendor order guides (V3-A, 2026-09-16). The guide is the READING ORDER of a vendor's
