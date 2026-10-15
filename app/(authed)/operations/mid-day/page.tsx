@@ -204,6 +204,8 @@ export default async function MidDayPrepPage({ searchParams }: PageProps) {
     const seed = midDayPhase2RowSeed(comp?.prepData, ctx?.batchMode === true);
     return {
       id: item.id,
+      required: item.required,
+      minRoleLevel: item.minRoleLevel,
       itemId: item.itemId,
       derived: state.derived[item.id] ?? [],
       label: item.label,
@@ -240,9 +242,12 @@ export default async function MidDayPrepPage({ searchParams }: PageProps) {
       {state.instance.status === "open" ? (
         <MidDayPhase1Form
           instanceId={state.instance.id}
+          actorLevel={auth.level}
           sectionLabels={state.sectionLabels}
           items={state.templateItems.map((item) => ({
             id: item.id,
+            required: item.required,
+            minRoleLevel: item.minRoleLevel,
             label: item.label,
             section: item.prepMeta?.section ?? item.station ?? "Misc",
             parValue: item.prepMeta?.parValue ?? null,
@@ -254,6 +259,7 @@ export default async function MidDayPrepPage({ searchParams }: PageProps) {
       ) : state.instance.status === "phase1_complete" ? (
         <MidDayPhase2Form
           instanceId={state.instance.id}
+          actorLevel={auth.level}
           items={phase2Items}
           managers={managers}
           sectionLabels={state.sectionLabels}

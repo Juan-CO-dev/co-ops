@@ -9,13 +9,14 @@
  * Finalize closes the instance (phase1_complete → phase2_complete).
  */
 
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 
 import { useTranslation } from "@/lib/i18n/provider";
 import { resolveSectionLabel } from "@/lib/prep-sections";
 import type { MidDayOverUnder } from "@/lib/prep";
 import { ActionButton } from "@/components/ActionButton";
+import { SaveStatus } from "@/components/ui/SaveStatus";
 import { CollapsibleChecklistSection } from "@/components/ui/CollapsibleChecklistSection";
 import { unfinishedSectionIds } from "@/lib/collapsible-sections";
 import { useCollapsibleSections } from "@/lib/use-collapsible-sections";
@@ -45,9 +46,14 @@ import type { TranslationKey } from "@/lib/i18n/types";
 import { etCalendarDate } from "@/lib/operational-day";
 import { formatPrepQty } from "@/lib/prep-display-shared";
 import { canMakeTheNeed } from "@/lib/made-the-need-shared";
+import { initialMidDaySave, nextSaveStep, type MidDaySaveState } from "@/lib/mid-day-save-shared";
+import { whatsLeft } from "@/lib/whats-left-shared";
+import { WhatsLeft, focusWhatsLeft } from "@/components/ui/WhatsLeft";
 
 export interface MidDayPhase2Item {
   id: string;
+  required?: boolean;
+  minRoleLevel?: number;
   label: string;
   section: string;
   parValue: number | null;
@@ -126,6 +132,7 @@ function ouToUnderInitial(ou: MidDayOverUnder | null): UnderParCapture | null {
 
 export function MidDayPhase2Form({
   instanceId,
+  actorLevel = 99,
   items,
   managers,
   sectionLabels = {},
@@ -133,6 +140,7 @@ export function MidDayPhase2Form({
   canEditConsumption = false,
 }: {
   instanceId: string;
+  actorLevel?: number;
   items: MidDayPhase2Item[];
   managers: ManagerOption[];
   /** DB-backed section labels (slug → { en, es }); preferred over the raw slug. */
@@ -164,6 +172,13 @@ export function MidDayPhase2Form({
   });
   const [finalizing, setFinalizing] = useState(false);
   const [finalizeError, setFinalizeError] = useState<string | null>(null);
+  // Synchronous per-row authority: React state may not have committed before a second tap.
+  const saveOrderRef = useRef<Map<string, MidDaySaveState>>(new Map());
+  const stepSave = (id: string, event: Parameters<typeof nextSaveStep>[1]) => {
+    const result = nextSaveStep(saveOrderRef.current.get(id) ?? initialMidDaySave, event);
+    saveOrderRef.current.set(id, result.state);
+    return result;
+  };
 
   const groups = useMemo(() => {
     const out: Array<{ section: string; items: MidDayPhase2Item[] }> = [];
@@ -188,15 +203,20 @@ export function MidDayPhase2Form({
     done: g.items.filter((it) => (states[it.id] ?? EMPTY).status === "saved").length,
   }));
   const collapsible = useCollapsibleSections("mid-day-phase2", sectionProgress);
+  const left = whatsLeft(items.map((it) => ({ id: it.id, sectionId: it.section, label: it.label,
+    required: it.required ?? true, minRoleLevel: it.minRoleLevel ?? 0, targetField: "primary" })),
+    Object.fromEntries(items.map((it) => [it.id, (states[it.id] ?? EMPTY).status === "saved"])), actorLevel);
 
-  const patch = (id: string, p: Partial<SaveState>) =>
+  const patch = (id: string, p: Partial<SaveState>) => {
+    if (p.status === "idle") stepSave(id, { type: "edit" });
     setStates((s) => ({ ...s, [id]: { ...(s[id] ?? EMPTY), ...p } }));
+  };
 
   // `override` lets a one-tap fill ("Made the need", B11a) save the value it just set without
   // waiting for the state update to land — same body, same route, same RPC.
   const onSave = async (it: MidDayPhase2Item, override?: Partial<SaveState>) => {
     const st = { ...(states[it.id] ?? EMPTY), ...override };
-    if (st.status === "saving") return;
+    if (saveOrderRef.current.get(it.id)?.inFlightRevision != null) return;
     const raw = st.value.trim();
     const prepped = raw === "" ? NaN : Number(raw);
     if (!Number.isFinite(prepped) || prepped < 0) {
@@ -227,6 +247,10 @@ export function MidDayPhase2Form({
         return;
       }
     }
+    const signature = JSON.stringify({ prepped, overUnder: offPar ? st.overUnder : null, batchEntry, confirmedConsumption: st.confirmedConsumption });
+    const start = stepSave(it.id, { type: "start", signature });
+    if (!start.post) return;
+    const saveRevision = start.state.revision;
     patch(it.id, { status: "saving", error: null, batchErrorCode: null });
     try {
       const res = await fetch("/api/prep/mid-day/phase2/item", {
@@ -244,7 +268,8 @@ export function MidDayPhase2Form({
         redirect: "manual",
       });
       if (res.ok) {
-        patch(it.id, { status: "saved", savedBy: null, error: null, batchErrorCode: null });
+        const ack = stepSave(it.id, { type: "ack", revision: saveRevision });
+        patch(it.id, { status: ack.state.phase === "saved" ? "saved" : "idle", savedBy: null, error: null, batchErrorCode: null });
         return;
       }
       let msg = "Save failed.";
@@ -258,9 +283,13 @@ export function MidDayPhase2Form({
       }
       // B11a: the server's off-need reason refusal speaks the same words as the client gate.
       if (code === "off_need_reason_required") msg = t("mid_day_prep.phase2.reason_required");
-      patch(it.id, { status: "error", error: isBatchContractCode(code) ? null : msg, batchErrorCode: isBatchContractCode(code) ? code : null });
+      const refused = stepSave(it.id, { type: "fail", revision: saveRevision });
+      if (refused.state.phase === "failed") patch(it.id, { status: "error", error: isBatchContractCode(code) ? null : msg, batchErrorCode: isBatchContractCode(code) ? code : null });
+      else patch(it.id, { status: "idle" });
     } catch (e) {
-      patch(it.id, { status: "error", error: e instanceof Error ? e.message : "Network error." });
+      const refused = stepSave(it.id, { type: "fail", revision: saveRevision });
+      if (refused.state.phase === "failed") patch(it.id, { status: "error", error: e instanceof Error ? e.message : "Network error." });
+      else patch(it.id, { status: "idle" });
     }
   };
 
@@ -302,6 +331,7 @@ export function MidDayPhase2Form({
 
   return (
     <div className="mt-4 flex flex-col gap-5 lg:block lg:columns-2 lg:[column-gap:1.25rem] lg:[&>*]:break-inside-avoid lg:[&>*]:mb-5">
+      <WhatsLeft result={left} onJump={(entry) => focusWhatsLeft(entry, (id) => collapsible.setOpenTransient(id, true))} />
       {groups.map((g) => (
         <CollapsibleChecklistSection
           key={g.section}
@@ -312,6 +342,9 @@ export function MidDayPhase2Form({
           titleClassName="text-xs font-bold uppercase tracking-[0.14em] text-co-gold-text"
           done={g.items.filter((it) => (states[it.id] ?? EMPTY).status === "saved").length}
           total={g.items.length}
+          progressSuffix={g.items.some((it) => (states[it.id] ?? EMPTY).status === "error")
+            ? ` · ${t("save_status.failed_count", { n: g.items.filter((it) => (states[it.id] ?? EMPTY).status === "error").length })}`
+            : undefined}
           open={collapsible.isOpen(g.section)}
           onToggle={() => collapsible.toggle(g.section)}
         >
@@ -329,6 +362,7 @@ export function MidDayPhase2Form({
                 <li
                   key={it.id}
                   className="flex min-w-0 flex-col gap-1.5 rounded-md border-2 border-co-border bg-co-surface px-3 py-2"
+                  data-whats-left-item={it.id}
                 >
                   {it.batch ? (
                     /* 0215 batch vs bottle — the batch half (batch_mode items only). */
@@ -357,6 +391,7 @@ export function MidDayPhase2Form({
                     </div>
                     <input
                       type="number"
+                      data-whats-left-field="primary"
                       inputMode="decimal"
                       min={0}
                       value={st.value}
@@ -379,7 +414,7 @@ export function MidDayPhase2Form({
                     />
                     <ActionButton
                       onClick={() => void onSave(it)}
-                      disabled={st.status === "saving"}
+                      disabled={saveOrderRef.current.get(it.id)?.inFlightRevision != null}
                       className="shrink-0"
                     >
                       {st.status === "saving" ? t("mid_day_prep.phase2.saving") : t("mid_day_prep.phase2.save")}
@@ -404,7 +439,7 @@ export function MidDayPhase2Form({
                         patch(it.id, { ...fill, status: "idle", error: null });
                         void onSave(it, fill);
                       }}
-                      disabled={st.status === "saving"}
+                      disabled={saveOrderRef.current.get(it.id)?.inFlightRevision != null}
                       aria-label={t("prep.made_the_need_aria", { item: it.label, qty: formatPrepQty(it.need, it.parUnit) })}
                       className="self-start"
                     >
@@ -430,20 +465,15 @@ export function MidDayPhase2Form({
                       derived={it.batch ? (it.batchDerived ?? []) : it.derived}
                       outputQty={it.batch ? st.batch.batches : (preppedNum ?? 0)}
                       value={st.confirmedConsumption}
-                      onChange={(rows) => patch(it.id, { confirmedConsumption: rows })}
+                      onChange={(rows) => patch(it.id, { confirmedConsumption: rows, status: "idle", error: null })}
                       canEdit={canEditConsumption}
                     />
                   ) : null}
-                  {st.status === "saved" ? (
-                    <p className="text-[10px] font-bold uppercase tracking-[0.08em] text-co-confirm-text">
-                      {st.savedBy
-                        ? t("mid_day_prep.phase2.saved_by", { name: st.savedBy })
-                        : t("mid_day_prep.phase2.saved")}
-                    </p>
-                  ) : null}
-                  {st.status === "error" && st.error ? (
-                    <p className="text-[10px] text-co-cta-text">{st.error}</p>
-                  ) : null}
+                  <SaveStatus phase={st.status === "error" ? "failed" : st.status}
+                    detail={st.status === "saved" ? (st.savedBy
+                      ? t("mid_day_prep.phase2.saved_by", { name: st.savedBy })
+                      : t("mid_day_prep.phase2.saved")) : st.error}
+                    onRetry={st.status === "error" ? () => void onSave(it) : undefined} />
 
                   {st.modalOpen && over ? (
                     <OverParModal

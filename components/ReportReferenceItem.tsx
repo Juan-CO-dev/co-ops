@@ -228,6 +228,7 @@ export function ReportReferenceItem({
     });
     return (
       <Link
+        data-whats-left-field="primary"
         href={tapHref}
         aria-label={ariaLabel}
         className="

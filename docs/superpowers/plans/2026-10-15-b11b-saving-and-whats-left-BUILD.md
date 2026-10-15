@@ -1,0 +1,44 @@
+# B11b — Saving and what's left: revised build plan
+
+Branch `feat/b11b-saving-whats-left` in `C:\Users\conta\co-ops-sol-b11b`. Client feedback/navigation only: no schema, RPC, payload, report calculation, permission, or database change. Cross-family Aggie/GLM review (2026-10-15) is incorporated below. Confirm cited files before each chunk.
+
+## Review decisions and contracts
+
+- **P1-1, P2-1 Undo:** Reuse `components/prep/TwoTapUndoButton.tsx` (`twoTapStep`, 4000 ms timer, opening i18n copy), already used by `OpeningPrepEntry.tsx:903` and pinned in `tests/b8-two-tap-undo.test.ts`. Replace closing's local `UndoButton` in `ChecklistItem.tsx`, preserving its handler and the server's 60-second quick-revoke rule. Add a `closing` grammar variant: rounded-lg, 48px; opening retains its 44px pill. Share the visible “Tap again to undo” key, add closing-specific ARIA keys in en/es. A reset input plus completion-ID call-site key disarms on completion/action change and unmount, on both opening and closing. First tap never invokes the handler; second tap invokes it once. Refusal restores the row and retains its error.
+- **P1-2 Verifiable state:** Implement pure `saveStatusStep(state,event)` in `lib/save-status-shared.ts`, per-item `nextSaveStep(prev,event)` in `lib/mid-day-save-shared.ts`, `cateringStageOverlay(overlay,props,action)` in existing `lib/catering/pipeline-shared.ts`, `submitOutcome(result | thrown,prev)` in `lib/receiving-submit-shared.ts`, and `whatsLeft(template,state,role)` in `lib/whats-left-shared.ts`. Give each real transition assertions. Wiring uses source pins and `renderToStaticMarkup` where useful. Vitest is node-only; no jsdom/testing-library. Source pins alone cannot prove request order.
+- **P2-2 Mid-day:** Reuse `isDuplicateInFlight` from `lib/made-the-need-shared.ts` for equal signatures and add a synchronous per-item revision/in-flight rule for edited values. An old ack cannot make a newer edit Saved. Keep route/body, batch error codes and one-tap Made the need. Rescope `tests/b11a-astra-r1.test.ts` to say no blur race only, and cover tap/edit race in pure tests.
+- **P2-3 Required projection:** Carry template `required` from `app/(authed)/operations/mid-day/page.tsx` into both `MidDayPhase1Item` and `MidDayPhase2Item`; props only, no payload change. Phase 1 blank non-batch boxes count as unentered even though submit serializes blank as zero (`MidDayPhase1Form.tsx:79-113`). Batch needs both boxes; Phase 2 needs its own saved completion.
+- **P2-4 Disclosure:** Every touched collapsible section shows a translated failed count in `headerExtras`/`progressSuffix` while closed. D2 in `docs/DISCLOSURE_DOCTRINE.md` forbids hiding errors or unsaved state. Detail remains in the mounted row panel. Shared SaveStatus gets its own 44px `items-center` floor pin.
+- **P2-5 Jump:** Use `useCollapsibleSections.setOpenTransient(sectionId,true)`, then scroll/focus the item after render; `reveal()` schedules a competing section scroll. Transient opening overrides stored preference without persisting (D9a). Pin ordering and check at 375px.
+- **P2-6 Existing pins:** Repoint B8's literal OpeningPrepEntry status-row pin while preserving 44px reservation and armed copy. Repoint `tests/mid-day-count-is-not-production.test.ts` seed pin while preserving Phase 2 identity, saving disable, batch error-code rendering and one-tap Made the need body. Do not delete those invariants.
+
+## Shared save UI inventory
+
+`idle → saving → saved | failed`; retry enters saving; an edit invalidates Saved; only the latest acknowledged revision can show Saved. AM prep retains its stamped `retrying` transport in `lib/am-prep-draft-autosave.ts`. Opening has Phase 1 `flushDraft(body)` (`opening-client.tsx:914`) and Phase 2 `Phase2SaveState` map (`:672-710`): explicit Retry sends latest `draftBody`/`draftLatestRef.current`, without adding an automatic retry loop. Closing has row `inFlight`/`error` (`ChecklistItem.tsx:784-817`). Receiving has `busy`/`err`. Shared SaveStatus offers actionable en/es retry at 44px using token colors; failed state never times out. Add key-parity assertion for en/es.
+
+## Chunk 1 — TDD, shared state and named save failures
+
+1. Assert `saveStatusStep`: save/edit/old ack, failure/retry/success, stale error and retry revision. Render static SaveStatus for 44px, centered retry and en/es. Wire visible status for opening Phase 1/2, AM prep, closing, mid-day and receiving without replacing their write protocols; the catering and PM adapters land with their Chunk 2 mutation work. Explicit opening draft retry calls latest serialized body and AM prep invokes its own retry. Pin collapsed failed counts and repoint B8's status-row assertion. Closing keeps its row error text/button grammar and reports failed rows in the station header.
+2. Extend existing TwoTapUndoButton with closing grammar and reset input, replace local closing button, reset both call sites on completion/action change. Test closing-specific 48px markup, first tap vs 60-second rule, refusal and source wiring. Keep B8 tests green.
+3. Assert `nextSaveStep` for equal-signature duplicate, newer edit in flight, old ack/refusal and next permitted save. Use synchronous per-item ref plus `isDuplicateInFlight`; disable Save during flight, retain newer edit as unsaved. Preserve batch and Made the need payloads. Rescope B11a pin.
+4. Assert `submitOutcome` for success, server refusal, thrown fetch/JSON and retry eligibility. Wrap receiving submit in `try/catch/finally`; retain fields/draft on failure, clear busy on every outcome. Retry sends current entry once. Acceptance: no stuck spinner, duplicate same-item POST or one-tap Undo; failures visible at 375px in en/es.
+
+## Chunk 2 — catering and PM
+
+Use pure `cateringStageOverlay` in **existing** `lib/catering/pipeline-shared.ts`; test immediate stage, rollback, stale props, out-of-order response. Board uses `stageOverlay` (not existing `pendingIds`, which tracks not-in-Toast IDs), locks duplicate moves, preserves `LEGAL_TRANSITIONS` and final-stage confirmation, and shows shared Saving/refusal on the moving card. `postJson` currently maps network and unknown refusal to generic (`components/catering/pipeline/shared.ts:28-45`); add a distinct translated network code. PATCH remains authoritative.
+
+PM row #29: current labels at `pm-report-client.tsx:166-208` appear in both editable and read-only branches. Reproduce on preview/sim; if absent, record “could not reproduce, now guarded.” Export `EmployeeEvalCard` and render-pin it inside `<TranslationProvider initialLanguage="en">` (provider is required by `useTranslation`). `router.refresh()` is at :331; page derives submitted status from server. Submitted view includes persisted MVP name/note, while typed-but-unsaved text is never called Saved. Adapt its save buttons to shared status here. Test pure transitions and markup/source separately.
+
+## Chunk 3 — What's left
+
+Pure `whatsLeft(template,state,role)` returns stable template-order `{itemId,sectionId,label,targetField}` entries. “Left” means template-required and not entered. Above-role required items are listed separately using closing's existing badge/wording: “{n} left · {m} need a key holder.” Opening needs actor role from its existing session/role props. AM prep universe contains only actually rendered rows with `prepMeta` (`AmPrepForm.tsx:475-493`); mid-day section keys match page projection `station ?? "Misc"`. Assert optional/invalid/batch/dual-membership/Phase 2 identity/role cases.
+
+Mount a collapsed summary near each active phase heading, before section list, without pushing the first required control below the fold at 375px (D8). Its disclosure is transient `useState`; checklist sections retain remembered expansion. `setOpenTransient` opens a parent, then item scroll/focus occurs after render; use stable IDs/refs only where needed. Translate display via content/section resolvers, never match on translated labels. Hide after server-authoritative finalization. Mid-day projections gain `required`; no save payload/permission change.
+
+## Verification and risks
+
+Run targeted `npx vitest run` on new Chunk 1 files plus `tests/b8-two-tap-undo.test.ts`, `tests/b11a-astra-r1.test.ts`, `tests/mid-day-count-is-not-production.test.ts`; then `npx tsc --noEmit`, then full `npx vitest run`. Report exact outcomes or sandbox EPERM. Later chunks add their pure and source-pin tests. Preview 375px en/es with delayed/refused requests and focus visible. Risks: stale ack, collapsed failure, AM prep protocol flattening, unmounted jump target, optimistic props snapping back. Prior plan's “five files 49/49” and tsc exit 0 lacked commands/file names; they are historical unverified claims, not a fresh baseline.
+
+## Result
+
+Revised for Aggie/GLM P1-1/P1-2 and P2-1–P2-6 and binding lead rulings. No database or production work.

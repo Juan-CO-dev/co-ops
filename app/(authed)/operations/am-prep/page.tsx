@@ -221,6 +221,7 @@ export default async function AmPrepPage({ searchParams }: PageProps) {
           initialValues={initialValues}
           authors={state.authors}
           actor={{ userId: auth.user.id, name: auth.user.name }}
+          actorLevel={auth.level}
           mode={mode}
           chainAttribution={chainState.chain}
           originalSubmissionId={chainState.originalSubmissionId}

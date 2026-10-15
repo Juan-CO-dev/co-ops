@@ -61,7 +61,8 @@ describe("B8 #1 opening Phase 2 row pins", () => {
     expect(src).not.toMatch(/onClick=\{onRevoke\}/);
   });
   it("the save-status line reserves the 44px height so saving never shifts rows", () => {
-    expect(src).toContain('<div className="flex min-h-[44px] flex-wrap items-center gap-2 text-[11px]">');
+    expect(src).toContain("<SaveStatusFrame>");
+    expect(read("components/ui/SaveStatus.tsx")).toContain("flex min-h-[44px] flex-wrap items-center");
   });
   it("the armed copy exists in en and es", () => {
     expect(en["opening.phase2.revoke.cta_confirm"]).toBe("Tap again to undo");

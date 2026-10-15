@@ -185,6 +185,7 @@ export function PrepRow({
 
   return (
     <div
+      data-whats-left-item={templateItemId}
       // Grid: label flexes; PAR + N input cells at fixed widths.
       // 1fr label + repeat(inputCount + 1, fixed-width-cell)
       // Mobile: each cell ~52px; sm: bumps to ~64px.
@@ -252,6 +253,10 @@ export function PrepRow({
               ariaLabel={ariaLabel}
               disabled={disabled}
               readOnly={isAutoCalcTotal}
+              primary={!isAutoCalcTotal && inputColumns.find((candidate) => {
+                const candidateField = COLUMN_INPUT_FIELD[candidate];
+                return rowErrors?.[candidateField] || !(rawInputs[candidateField] ?? "").trim();
+              }) === col}
             />
             {fieldError ? (
               <span

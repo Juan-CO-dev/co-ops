@@ -1,11 +1,11 @@
 "use client";
 
-import { useState, useEffect, useCallback, useId, type FormEvent } from "react";
+import { useState, useEffect, useCallback, useId, useRef, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import { useTranslation } from "@/lib/i18n/provider";
 import { formatCents, formatDateLabel } from "@/lib/i18n/format";
 import type { TranslationKey } from "@/lib/i18n/types";
-import { LEAD_EMAIL_MAX, LEAD_PHONE_MAX, LEGAL_TRANSITIONS, PIPELINE_STAGES, leadEditPatch, shopChipLabel, showQuoteNotAccepted, stageMoveNeedsConfirm, type PipelineStage } from "@/lib/catering/pipeline-shared";
+import { LEAD_EMAIL_MAX, LEAD_PHONE_MAX, LEGAL_TRANSITIONS, PIPELINE_STAGES, cateringStageOverlay, projectedCateringStage, leadEditPatch, shopChipLabel, showQuoteNotAccepted, stageMoveNeedsConfirm, type CateringStageMove, type CateringStageOverlay, type PipelineStage } from "@/lib/catering/pipeline-shared";
 import type { PipelineLead, PipelineBoardLead, PipelineSearchResult, AssignableStaff } from "@/lib/catering/pipeline";
 import { LEAD_SOURCES, leadSourceKey } from "@/lib/catering/intake-shared";
 import type { CateringCapacityResult } from "@/lib/catering/capacity";
@@ -15,6 +15,7 @@ import { EzcaterDetail } from "./EzcaterDetail";
 import type { EzcaterOrderDetail } from "@/lib/catering/ezcater-detail-shared";
 import { humanEzcaterNotes } from "@/lib/catering/ezcater-detail-shared";
 import { postJson, resolveErrorKey } from "./shared";
+import { SaveStatus } from "@/components/ui/SaveStatus";
 import { NotInToast, NotInToastChip } from "./NotInToast";
 import type { PipelineToastOrder } from "@/lib/catering/not-in-toast";
 
@@ -84,6 +85,38 @@ export function PipelineClient({ notInToast, staff, leads, followUps, locations,
   const { t, language } = useTranslation();
   const canWrite = actorLevel >= writeMin;
   const pendingIds = new Set((notInToast ?? []).flatMap((r) => r.lead_id ? [r.lead_id] : []));
+  const router = useRouter();
+  const [stageOverlay, setStageOverlay] = useState<CateringStageOverlay>({});
+  const stageOverlayRef = useRef<CateringStageOverlay>({});
+  const requestRef = useRef(0);
+  const serverStages: Record<string, PipelineStage> = {};
+  const serverVersions: Record<string, string | null> = {};
+  for (const lead of leads) {
+    serverStages[lead.id] = lead.stage;
+    serverVersions[lead.id] = lead.updatedAt;
+  }
+  useEffect(() => {
+    const next = cateringStageOverlay(stageOverlayRef.current, serverStages, { type: "props", versions: serverVersions });
+    if (next !== stageOverlayRef.current) {
+      stageOverlayRef.current = next;
+      setStageOverlay(next);
+    }
+  }, [leads]); // Server props are authoritative once they include the accepted move.
+
+  const moveStage = useCallback(async (id: string, from: PipelineStage, to: PipelineStage) => {
+    const request = ++requestRef.current;
+    const next = cateringStageOverlay(stageOverlayRef.current, serverStages, { type: "start", id, from, to, request, version: serverVersions[id] });
+    if (next === stageOverlayRef.current) return;
+    stageOverlayRef.current = next;
+    setStageOverlay(next);
+    const result = await postJson(`/api/catering/pipeline/${id}`, { stage: to }, "PATCH");
+    const resolved = cateringStageOverlay(stageOverlayRef.current, serverStages, { type: "resolve", id, request, result });
+    if (resolved !== stageOverlayRef.current) {
+      stageOverlayRef.current = resolved;
+      setStageOverlay(resolved);
+    }
+    if (result.ok || result.code === "stage_changed" || result.code === "network") router.refresh();
+  }, [leads, router]);
 
   const money = (cents: number | null) => (cents == null ? null : formatCents(cents, language));
 
@@ -106,7 +139,10 @@ export function PipelineClient({ notInToast, staff, leads, followUps, locations,
     completed: [],
     lost: [],
   };
-  for (const l of visibleLeads) byStage[l.stage].push(l);
+  for (const l of visibleLeads) {
+    const stage = projectedCateringStage(l.stage, stageOverlay[l.id]);
+    byStage[stage].push({ ...l, stage });
+  }
 
   return (
     <div className="mt-4 space-y-6">
@@ -170,7 +206,7 @@ export function PipelineClient({ notInToast, staff, leads, followUps, locations,
                   {byStage[stage].length === 0 ? (
                     <p className="px-1 text-xs text-co-text-muted">{t("catering.pipeline.empty_stage")}</p>
                   ) : (
-                    byStage[stage].map((lead) => <LeadCard key={lead.id} lead={lead} notInToast={pendingIds.has(lead.id)} money={money} canWrite={canWrite} canTransfer={canTransfer} locations={locations} staffNames={staffNames} />)
+                    byStage[stage].map((lead) => <LeadCard key={lead.id} lead={lead} stageMove={stageOverlay[lead.id]} onStageMove={moveStage} notInToast={pendingIds.has(lead.id)} money={money} canWrite={canWrite} canTransfer={canTransfer} locations={locations} staffNames={staffNames} />)
                   )}
                 </div>
               </div>
@@ -340,6 +376,8 @@ function SearchResultCard({
 function LeadCard({
   notInToast,
   lead,
+  stageMove,
+  onStageMove,
   money,
   canWrite,
   canTransfer,
@@ -348,6 +386,8 @@ function LeadCard({
 }: {
   notInToast: boolean;
   lead: PipelineBoardLead;
+  stageMove?: CateringStageMove;
+  onStageMove: (id: string, from: PipelineStage, to: PipelineStage) => Promise<void>;
   money: (c: number | null) => string | null;
   canWrite: boolean;
   canTransfer: boolean;
@@ -380,7 +420,9 @@ function LeadCard({
           {rev && <span>{rev}</span>}
         </div>
       </button>
-      {open && <LeadDetail lead={lead} money={money} canWrite={canWrite} canTransfer={canTransfer} locations={locations} onClose={() => setOpen(false)} />}
+      {stageMove && <SaveStatus phase={stageMove.phase} detail={stageMove.phase === "failed" ? t(resolveErrorKey(stageMove.errorCode ?? "generic")) : undefined}
+        onRetry={stageMove.phase === "failed" ? () => void onStageMove(lead.id, lead.stage, stageMove.to) : undefined} />}
+      {open && <LeadDetail lead={lead} money={money} canWrite={canWrite} canTransfer={canTransfer} locations={locations} onStageMove={onStageMove} moving={stageMove?.phase === "saving" || stageMove?.phase === "saved"} onClose={() => setOpen(false)} />}
     </div>
   );
 }
@@ -391,6 +433,8 @@ function LeadDetail({
   canWrite,
   canTransfer,
   locations,
+  onStageMove,
+  moving,
   onClose,
 }: {
   lead: PipelineLead;
@@ -398,16 +442,15 @@ function LeadDetail({
   canWrite: boolean;
   canTransfer: boolean;
   locations: LocationOpt[];
+  onStageMove: (id: string, from: PipelineStage, to: PipelineStage) => Promise<void>;
+  moving: boolean;
   onClose: () => void;
 }) {
   const { t, language } = useTranslation();
-  const router = useRouter();
   const [detail, setDetail] = useState<{ leadId: string; ezcater: EzcaterOrderDetail | null; capacity: CateringCapacityResult | null } | null>(null);
   // Key the response to its lead: a switch hides old details before the next effect runs.
   const ezcater = detail?.leadId === lead.id ? detail.ezcater : null;
   const capacity = detail?.leadId === lead.id ? detail.capacity : null;
-  const [busy, setBusy] = useState(false);
-  const [errorMsg, setErrorMsg] = useState<string | null>(null);
   // D-49: the final stage awaiting a second tap (Completed / Lost), or null.
   const [confirming, setConfirming] = useState<PipelineStage | null>(null);
   const confirmTitleId = useId();
@@ -427,19 +470,11 @@ function LeadDetail({
 
   const moveTo = useCallback(
     async (toStage: PipelineStage) => {
-      setBusy(true);
-      setErrorMsg(null);
+      if (moving) return;
       setConfirming(null);
-      const res = await postJson(`/api/catering/pipeline/${lead.id}`, { stage: toStage }, "PATCH");
-      setBusy(false);
-      if (res.ok) {
-        router.refresh();
-        onClose();
-      } else {
-        setErrorMsg(t(resolveErrorKey(res.code)));
-      }
+      await onStageMove(lead.id, lead.stage, toStage);
     },
-    [lead.id, router, t, onClose],
+    [lead.id, lead.stage, moving, onStageMove],
   );
 
   const rev = money(lead.estimatedRevenueCents);
@@ -506,7 +541,7 @@ function LeadDetail({
               <button
                 key={s}
                 type="button"
-                disabled={busy || confirming !== null}
+                disabled={moving || confirming !== null}
                 onClick={() => (stageMoveNeedsConfirm(s) ? setConfirming(s) : void moveTo(s))}
                 className="rounded-md border border-co-border px-2 py-1 text-xs text-co-text disabled:opacity-50"
               >
@@ -528,7 +563,7 @@ function LeadDetail({
               <div className="mt-2 flex flex-wrap gap-2">
                 <button
                   type="button"
-                  disabled={busy}
+                  disabled={moving}
                   onClick={() => void moveTo(confirming)}
                   className="inline-flex min-h-[44px] items-center rounded-md bg-co-text px-4 text-sm font-semibold text-co-bg disabled:opacity-50"
                 >
@@ -536,7 +571,7 @@ function LeadDetail({
                 </button>
                 <button
                   type="button"
-                  disabled={busy}
+                  disabled={moving}
                   onClick={() => setConfirming(null)}
                   className="inline-flex min-h-[44px] items-center rounded-md px-4 text-sm text-co-text-muted"
                 >
@@ -548,7 +583,6 @@ function LeadDetail({
         </div>
       )}
 
-      {errorMsg && <p className="mt-2 text-xs text-co-cta-text">{errorMsg}</p>}
     </div>
   );
 }

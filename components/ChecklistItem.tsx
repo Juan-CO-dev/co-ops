@@ -60,7 +60,7 @@
  */
 
 import { canCompleteChecklistItem } from "@/lib/checklist-constants";
-import { useRef, useState, type FocusEvent, type KeyboardEvent } from "react";
+import { useEffect, useRef, useState, type FocusEvent, type KeyboardEvent } from "react";
 
 import { PhotoCapture } from "@/components/photos/PhotoCapture";
 import { interpretAnswer, validateAnswerForInputType, type InterpretedAnswer } from "@/lib/checklist-answers";
@@ -75,6 +75,7 @@ import {
 import { resolveTemplateItemContent } from "@/lib/i18n/content";
 import { formatTime } from "@/lib/i18n/format";
 import { useTranslation } from "@/lib/i18n/provider";
+import { TwoTapUndoButton } from "@/components/prep/TwoTapUndoButton";
 import type { TranslationKey } from "@/lib/i18n/types";
 import type {
   ChecklistCompletion,
@@ -149,6 +150,8 @@ export type ChecklistPickerResult =
 
 interface ChecklistItemProps {
   templateItem: ChecklistTemplateItem;
+  /** Station header keeps a failed count visible when this row's panel is collapsed. */
+  onErrorChange?: (itemId: string, failed: boolean) => void;
   /** Live (non-superseded, non-revoked) completion for this item, or null. */
   completion: ChecklistCompletion | null;
   /** Resolved by parent via users join — kept off the component to avoid a fetch per row. */
@@ -406,6 +409,7 @@ type ExpandMode =
 
 export function ChecklistItem({
   templateItem,
+  onErrorChange,
   completion,
   completionAuthor,
   actualCompleterAuthor,
@@ -442,6 +446,9 @@ export function ChecklistItem({
   const [revoked, setRevoked] = useState(false);
   const [inFlight, setInFlight] = useState(false);
   const [error, setError] = useState<ChecklistApiError | null>(null);
+  useEffect(() => {
+    onErrorChange?.(templateItem.id, error !== null);
+  }, [onErrorChange, templateItem.id, error]);
 
   // Expand state for count / notes inputs (existing).
   const [expanded, setExpanded] = useState(false);
@@ -1130,9 +1137,10 @@ export function ChecklistItem({
   // ─── Render ──────────────────────────────────────────────────────────────
 
   return (
-    <div className="w-full">
+    <div data-whats-left-item={templateItem.id} className="w-full">
       <div className="flex items-stretch gap-2">
         <button
+          data-whats-left-field="primary"
           type="button"
           onClick={handleRowTap}
           disabled={!interactable && !error}
@@ -1192,7 +1200,19 @@ export function ChecklistItem({
             (KH+ at-or-below the completer, past 60s), a single "Correct…" menu
             replaces the direct buttons (C.55). */}
         {showUndo ? (
-          <UndoButton onClick={handleUndoClick} disabled={inFlight || expandMode !== "none"} />
+          <TwoTapUndoButton
+            key={liveCompletion?.id}
+            resetKey={liveCompletion?.id}
+            variant="closing"
+            onConfirm={() => void handleUndoClick()}
+            disabled={inFlight || expandMode !== "none"}
+            pending={inFlight}
+            label={t("closing.row.undo")}
+            armedLabel={t("opening.phase2.revoke.cta_confirm")}
+            pendingLabel={t("closing.row.undo")}
+            ariaLabel={t("closing.row.aria_undo")}
+            armedAriaLabel={t("closing.row.aria_undo_confirm")}
+          />
         ) : showTagAffordance && showMarkNotDone ? (
           <CorrectionMenuButton
             onClick={handleCorrectionMenuClick}
@@ -1474,28 +1494,6 @@ export function ChecklistItem({
 // ─────────────────────────────────────────────────────────────────────────────
 // Sub-components — Build #1 (existing) + Build #1.5 PR 2 additions
 // ─────────────────────────────────────────────────────────────────────────────
-
-function UndoButton({ onClick, disabled }: { onClick: () => void; disabled: boolean }) {
-  const { t } = useTranslation();
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      disabled={disabled}
-      aria-label={t("closing.row.aria_undo")}
-      className="
-        shrink-0 inline-flex min-h-[48px] min-w-[64px] items-center justify-center rounded-lg
-        border-2 border-co-border bg-co-surface px-3
-        text-[11px] font-bold uppercase tracking-[0.12em] text-co-text-muted
-        transition hover:border-co-cta-text/60 hover:text-co-cta-text active:bg-co-surface-2
-        focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60
-        disabled:cursor-not-allowed disabled:opacity-50
-      "
-    >
-      {t("closing.row.undo")}
-    </button>
-  );
-}
 
 function TagAffordanceButton({
   onClick,

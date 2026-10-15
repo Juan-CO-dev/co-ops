@@ -92,6 +92,62 @@ export function stageMoveNeedsConfirm(to: PipelineStage): boolean {
   return (TERMINAL_PIPELINE_STAGES as readonly PipelineStage[]).includes(to);
 }
 
+/** A move stays projected until a fresh server prop confirms it. */
+export interface CateringStageMove {
+  from: PipelineStage;
+  to: PipelineStage;
+  request: number;
+  phase: "saving" | "saved" | "failed";
+  errorCode?: string;
+  /** Server version observed before the local PATCH. */
+  fromVersion?: string | null;
+}
+export type CateringStageOverlay = Readonly<Record<string, CateringStageMove>>;
+export type CateringStageAction =
+  | { type: "start"; id: string; from: PipelineStage; to: PipelineStage; request: number; version?: string | null }
+  | { type: "resolve"; id: string; request: number; result: { ok: true } | { ok: false; code: string } }
+  | { type: "props"; versions?: Readonly<Record<string, string | null>> };
+
+/** Pure board projection: a stale refresh or response cannot undo a newer local move. */
+export function cateringStageOverlay(
+  overlay: CateringStageOverlay,
+  props: Readonly<Record<string, PipelineStage>>,
+  action: CateringStageAction,
+): CateringStageOverlay {
+  if (action.type === "props") {
+    const next = { ...overlay };
+    let changed = false;
+    for (const [id, move] of Object.entries(next)) {
+      const incomingVersion = action.versions?.[id];
+      const newer = move.fromVersion && incomingVersion
+        ? Date.parse(incomingVersion) > Date.parse(move.fromVersion)
+        : false;
+      if (((move.phase === "saved" || (move.phase === "failed" && move.errorCode === "network")) &&
+        (props[id] === move.to || (move.phase === "saved" && (newer || !move.fromVersion)))) || props[id] === undefined) {
+        delete next[id];
+        changed = true;
+      }
+    }
+    return changed ? next : overlay;
+  }
+  const current = overlay[action.id];
+  if (action.type === "start") {
+    if ((current?.phase === "saving" || current?.phase === "saved") || !canTransition(action.from, action.to)) return overlay;
+    return { ...overlay, [action.id]: { from: action.from, to: action.to, request: action.request, phase: "saving", fromVersion: action.version } };
+  }
+  if (!current || current.request !== action.request || current.phase !== "saving") return overlay;
+  return {
+    ...overlay,
+    [action.id]: action.result.ok
+      ? { ...current, phase: "saved" }
+      : { ...current, phase: "failed", errorCode: action.result.code },
+  };
+}
+
+export function projectedCateringStage(stage: PipelineStage, move?: CateringStageMove): PipelineStage {
+  return move?.phase === "saving" || move?.phase === "saved" ? move.to : stage;
+}
+
 /**
  * The text of a lead card's shop chip: the location NAME the loader read from the `locations`
  * table, trimmed. Null when the lead has no resolvable shop (tenant-wide or unresolved) — the

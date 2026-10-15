@@ -106,6 +106,10 @@ describe("wiring", () => {
   });
   it("the form marks a row saved from initialSaved, and finalize consults the blockers before the status write", () => {
     expect(read("components", "MidDayPhase2Form.tsx")).toContain('(it.initialSaved ?? it.initialPrepped !== null) ? "saved" : "idle"');
+    const form = read("components", "MidDayPhase2Form.tsx");
+    expect(form).toContain('disabled={saveOrderRef.current.get(it.id)?.inFlightRevision != null}');
+    expect(form).toContain('isBatchContractCode(code)');
+    expect(form).toContain('void onSave(it, fill)');
     const lib = read("lib", "prep.ts");
     const fn = lib.slice(lib.indexOf("export async function finalizeMidDayPhase2("));
     const blockersAt = fn.indexOf("midDayFinalizeBlockers(");

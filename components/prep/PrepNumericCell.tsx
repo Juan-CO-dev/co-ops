@@ -53,6 +53,7 @@ export interface PrepNumericCellProps {
    * When both are set, disabled wins visually (uniform muting).
    */
   readOnly?: boolean;
+  primary?: boolean;
   /** Optional placeholder text (e.g., "0"). Empty by default. */
   placeholder?: string;
 }
@@ -63,6 +64,7 @@ export function PrepNumericCell({
   ariaLabel,
   disabled = false,
   readOnly = false,
+  primary = false,
   placeholder,
 }: PrepNumericCellProps) {
   // TODO smoke-test: 14px (text-sm) input font on mobile is WCAG-legible per
@@ -84,6 +86,7 @@ export function PrepNumericCell({
 
   return (
     <input
+      data-whats-left-field={primary ? "primary" : undefined}
       type="text"
       inputMode="decimal"
       value={value}

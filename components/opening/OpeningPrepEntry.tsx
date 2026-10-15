@@ -65,6 +65,9 @@ import { UnderParModal, type UnderParCapture } from "./UnderParModal";
 import { RevokeReasonModal } from "./RevokeReasonModal";
 import { etCalendarDate } from "@/lib/operational-day";
 import { TwoTapUndoButton } from "@/components/prep/TwoTapUndoButton";
+import { SaveStatusFrame } from "@/components/ui/SaveStatus";
+import { WhatsLeft, focusWhatsLeft } from "@/components/ui/WhatsLeft";
+import { whatsLeft } from "@/lib/whats-left-shared";
 
 export interface OpeningPhase2FormValue {
   /** Opener recount value when item flagged for per-item recount; NULL otherwise. */
@@ -161,6 +164,7 @@ export type Phase2RevokeOutcome =
   | { status: "error"; code: string };
 
 interface OpeningPrepEntryProps {
+  actorLevel?: number;
   items: ChecklistTemplateItem[];
   /**
    * Production-in-prep fold — per-Phase-2-item derived SKU consumption keyed by
@@ -236,6 +240,7 @@ interface OpeningPrepEntryProps {
 }
 
 export function OpeningPrepEntry({
+  actorLevel = 99,
   items,
   derivedByItem,
   values,
@@ -304,6 +309,11 @@ export function OpeningPrepEntry({
     done: group.filter((it) => saveStates.get(it.id)?.status === "saved").length,
   }));
   const collapsible = useCollapsibleSections("opening-p2", sectionProgress);
+  const left = whatsLeft(items.map((item) => ({ id: item.id,
+    sectionId: (item.prepMeta as OpeningPhase2Meta | null)?.section ?? "—",
+    label: resolveTemplateItemContent(item, language).label, required: item.required,
+    minRoleLevel: item.minRoleLevel, targetField: "primary" })),
+    Object.fromEntries(items.map((item) => [item.id, saveStates.get(item.id)?.status === "saved"])), actorLevel);
   // Finalize pressed with problems (showMissingErrors flips true): open + scroll to
   // every section that still has an unsaved item.
   const revealSections = collapsible.reveal;
@@ -326,6 +336,8 @@ export function OpeningPrepEntry({
 
   return (
     <div className="flex flex-col gap-4">
+      {!readOnly ? <WhatsLeft result={left} onJump={(entry) => focusWhatsLeft(entry,
+        (id) => collapsible.setOpenTransient(id, true))} /> : null}
       {hasUnsaved && !readOnly ? (
         <button
           type="button"
@@ -359,6 +371,9 @@ export function OpeningPrepEntry({
             title={sectionDisplay}
             done={progress?.done ?? 0}
             total={progress?.total ?? sectionItems.length}
+            progressSuffix={sectionItems.some((it) => saveStates.get(it.id)?.status === "failed")
+              ? ` · ${t("save_status.failed_count", { n: sectionItems.filter((it) => saveStates.get(it.id)?.status === "failed").length })}`
+              : undefined}
             open={collapsible.isOpen(sectionKey)}
             onToggle={() => collapsible.toggle(sectionKey)}
             className="rounded-2xl border-2 border-co-border bg-co-surface p-4 shadow-sm sm:p-5"
@@ -656,7 +671,7 @@ function PrepEntryRow({
   const groundTruthBadgeLabel = t("opening.phase2.closer_estimate_label");
 
   return (
-    <li className="flex flex-col gap-2 border-t border-co-border py-3 first:border-t-0 first:pt-0">
+    <li data-whats-left-item={item.id} className="flex flex-col gap-2 border-t border-co-border py-3 first:border-t-0 first:pt-0">
       <div className="flex items-baseline justify-between gap-3">
         <p className="text-sm font-medium text-co-text">{resolved.label}</p>
         {parDisplay ? (
@@ -737,6 +752,7 @@ function PrepEntryRow({
           {batch !== null ? t("prep.batch.bottled_label" as TranslationKey) : t("opening.phase2.opener_prepped_label")}
         </label>
         <NumericInput
+          primary
           value={value.openerPrepped}
           onChange={(next) => onChange({ ...value, openerPrepped: next })}
           onBlur={
@@ -880,7 +896,7 @@ function PrepEntryRow({
        * so the badge and the gate can never disagree. */}
       {/* B8 #1 — the status line reserves the 44px control height so a save (which
        * grows the Undo pill) never shifts the rows below under a finger. */}
-      <div className="flex min-h-[44px] flex-wrap items-center gap-2 text-[11px]">
+      <SaveStatusFrame>
         {saveState.status === "saving" ? (
           <span className="font-bold uppercase tracking-[0.12em] text-co-text-muted">
             {t("opening.phase2.save.saving")}
@@ -901,6 +917,8 @@ function PrepEntryRow({
             {!readOnly ? (
               /* B8 #1 — two taps: the first only arms ("Tap again to undo", ~4 s). */
               <TwoTapUndoButton
+                key={saveState.completionId ?? item.id}
+                resetKey={saveState.completionId ?? item.id}
                 onConfirm={onRevoke}
                 disabled={revoking}
                 pending={revoking}
@@ -962,7 +980,7 @@ function PrepEntryRow({
             {t("opening.phase2.save.unsaved")}
           </span>
         )}
-      </div>
+      </SaveStatusFrame>
 
       {/* Submit-gate inline error badges — render only when showMissingErrors active */}
       {sectionUnverifiedAndNoRecount ? (
@@ -989,6 +1007,7 @@ function PrepEntryRow({
 // ─────────────────────────────────────────────────────────────────────────────
 
 interface NumericInputProps {
+  primary?: boolean;
   value: number | null;
   onChange: (next: number | null) => void;
   /** Astra r1 P2-2: receives where focus went (null when unknown). */
@@ -1013,6 +1032,7 @@ const draftOf = (v: number | null) => (v === null ? "" : String(v));
  * prev-compare pattern (never an effect) when the value changes from outside the box.
  */
 function NumericInput({
+  primary = false,
   value,
   onChange,
   onBlur,
@@ -1033,6 +1053,7 @@ function NumericInput({
   return (
     <>
       <input
+        data-whats-left-field={primary ? "primary" : undefined}
         type="text"
         inputMode="decimal"
         value={draft}

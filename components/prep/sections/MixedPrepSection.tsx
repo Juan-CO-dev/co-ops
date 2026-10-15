@@ -110,13 +110,14 @@ function MixedYesNoRow({
   });
 
   return (
-    <div className="flex flex-col gap-2 py-2 border-b border-co-border last:border-b-0">
+    <div data-whats-left-item={templateItemId} className="flex flex-col gap-2 py-2 border-b border-co-border last:border-b-0">
       <div className="flex items-center justify-between gap-3">
         <span className="text-sm font-semibold text-co-text leading-tight flex-1 min-w-0">
           {itemLabel}
         </span>
         <div role="group" aria-label={yesAria} className="inline-flex shrink-0 gap-1.5">
           <button
+            data-whats-left-field="primary"
             type="button"
             aria-pressed={isYes}
             disabled={disabled}
@@ -203,10 +204,11 @@ function MixedFreeTextRow({
 }) {
   const { t } = useTranslation();
   return (
-    <div className="flex flex-col gap-2 py-2 border-b border-co-border last:border-b-0">
+    <div data-whats-left-item={templateItemId} className="flex flex-col gap-2 py-2 border-b border-co-border last:border-b-0">
       <label className="block">
         <span className="text-sm font-semibold text-co-text leading-tight">{itemLabel}</span>
         <textarea
+          data-whats-left-field="primary"
           value={freeText ?? ""}
           onChange={(e) => onChange(templateItemId, "freeText", e.target.value)}
           placeholder={t("am_prep.misc.notes_placeholder")}
