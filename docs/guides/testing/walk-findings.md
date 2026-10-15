@@ -74,7 +74,7 @@ idea (for Juan), or a sim-only issue. Production checks are marked.
   row is required; BACK UP is optional; TOTAL fills itself.
 - Claiming a station: open the **Stations** row, pick from the list, **CLAIM / CHANGE STATION**, confirm.
 
-## Photo retakes owed (photo check, 2026-10-13) — after round 1, so the sim is free
+## Photo retakes owed (photo check, 2026-10-13) — DONE in the re-walks
 
 - staff/15-my-shift.png — scroll to the My shift board.
 - staff/19-station-claimed.png — show the board's "Stations — 1 of 1 assigned" / "Claimed · time".
@@ -108,13 +108,13 @@ Sim data (not app): catering test leads/quotes/customers from round 1 ("Hill Sta
 - **Sim data:** ~10 leftover "Prep fridge" maintenance notes (the reset doesn't cover maintenance notes).
 
 
-## Retakes owed after the reconcile pass (2026-10-14)
+## Retakes owed after the reconcile pass (2026-10-14) — DONE (catering 15:36, staff + manager in the night re-walk)
 - manager 49-counts-password, 50-counts-recorded (type "each" in Unit, Record audit, password) · 52 (vendor headers cut) · 40 (last walk-out line + Review pill) · 05 (Back / system keyboard below frame) · 17, 42 (focus ring; 17 cuts Iceberg)
 - catering (after sim catering cleanup): 07, 09, 10, 11, 12 (should read "No quotes yet."), 16, 17, 19, 20, 32; 10b after B8 lead-edit fix; 34 at tablet width
 - staff (minor): 22b (Progress bar), 14, 16/18/19/34 focus ring; add a Sides AM prep header close-up (PORT vs PORTIONED)
 - after B8 merges, update: manager cash "Even" wording; catering Add lead step 6 (Location default); Fulfillment map not-set
 
-## Retakes owed after B8 (#467, 2026-10-14)
+## Retakes owed after B8 (#467, 2026-10-14) — DONE 2026-10-14 night (full staff + manager re-walk on the B9 sim)
 manager 39 (cash now "Even"), 46 (reasons list under the banner), 60 (Trends dates/window), 24b + staff 33b ("Prepped" box fits), staff 41 ("Not enough days yet"), catering 21 + 22 ("Last 7 full days"), 10b (stacked edit form), 30 (not-set note + Place pin — or caption change), 06 (hub card text per level); minor spacing: staff 14, manager 17.
 
 ## Catering re-shoot on the clean board (2026-10-14 afternoon) — findings

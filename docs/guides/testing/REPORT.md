@@ -275,4 +275,4 @@ From the triage, the PR notes and the walk findings.
 - Round 2 is done. GLM and GLM flash were not re-run (shared rate limit; see section 3). If they are wanted, run one GLM tester at a time.
 - Seed one ezCater order per shop on the sim (one matched in Toast, one not), so the ezCater goal tests finding a real order, not just the empty list.
 - The day reset does not clear maintenance notes (about 10 old "Prep fridge" notes). Catering now has its own reset.
-- Photo retakes owed after B8 (listed at the end of `walk-findings.md`).
+- Photo retakes: done 2026-10-14 on the B9 sim (staff 49, manager 66, catering 37). Two manager shots (51, 58) leave part of their subject just below the frame; fine for now.
