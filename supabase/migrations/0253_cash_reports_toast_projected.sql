@@ -1,5 +1,7 @@
 -- Migration 0253_cash_reports_toast_projected
 -- AUTHORED 2026-10-14. NOT YET APPLIED — apply via MCP after review (sim first, then prod; BEFORE the B10 code deploys).
+-- APPLIED TO SIM 2026-10-14 (schema_migrations version 20261015032643, name 'cash_reports_toast_projected')
+-- APPLIED TO PROD 2026-10-14 (schema_migrations version 20261015032933, name 'cash_reports_toast_projected'); prod dry-run with rollback first (MEP 10-12 = $33.30, EM 10-12 = $85.03)
 --
 -- B10 (owner decision, final): the Cash Deposit page's "Projected (from Toast)" box PREFILLS from
 -- Toast — that shop's Toast CASH payments for the business day — and stays editable. The saved

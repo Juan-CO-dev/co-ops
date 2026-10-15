@@ -1,4 +1,5 @@
 -- Migration 0254_toast_payments_cash_paid_date_index
+-- APPLIED TO SIM + PROD 2026-10-14 via execute_sql (CONCURRENTLY cannot run inside apply_migration's transaction, so it has NO schema_migrations row); prod index verified indisvalid = true
 -- AUTHORED 2026-10-14. NOT YET APPLIED — apply via MCP after review (any time AFTER 0253; sim first, then prod).
 --
 -- MUST RUN OUTSIDE A TRANSACTION. CREATE INDEX CONCURRENTLY refuses to run inside a transaction
