@@ -781,6 +781,12 @@ function PrepEntryRow({
               onChange(next);
               onSave(next);
             }}
+            // Astra r2: focus that merely PASSES the shortcut (Tab onto it, Tab away) must not
+            // swallow the typed amount — the box's blur skipped its save because focus came
+            // here, so leaving the button saves the row's current value. After an activation
+            // that value IS the need, and the parent's saved-signature / in-flight guards make
+            // this a no-op, so a click stays exactly one at-need save.
+            onBlur={() => onSave(value)}
             disabled={saveState.status === "saving"}
             aria-label={t("prep.made_the_need_aria", { item: resolved.label, qty: formatPrepQty(prepNeed, parUnit) })}
           >
