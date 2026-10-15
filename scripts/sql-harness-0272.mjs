@@ -34,7 +34,8 @@ async function setup() {
     await db.exec(`create table public.${table} (id integer primary key, value text);
       insert into public.${table} values (1, 'before');
       alter table public.${table} enable row level security;
-      grant select, insert, update, delete, truncate, references, trigger on public.${table} to anon, authenticated, service_role;
+      grant select, insert, update, delete, truncate, references, trigger on public.${table} to anon, authenticated;
+      grant select, insert, update, delete on public.${table} to service_role;
       create policy ${table}_read on public.${table} for select using (public.current_user_role_level() >= 3);`);
     for (const policy of policies) {
       const kind = policy.includes("update") ? "update" : "insert";
@@ -49,6 +50,10 @@ async function setup() {
   await db.exec("grant update (value) on public.written_reports to authenticated;");
   // Explicit column ACL proves why a table-level REVOKE alone is insufficient.
   await db.exec("grant update (value), insert (id, value) on public.vendor_items to authenticated;");
+  await db.exec(`create function public.write_vendor_items() returns void language plpgsql security definer
+    as 'begin insert into public.vendor_items (id, value) values (9, ''function''); end';
+    revoke all on function public.write_vendor_items() from public, anon, authenticated;
+    grant execute on function public.write_vendor_items() to service_role;`);
   return db;
 }
 
@@ -109,14 +114,42 @@ try {
     check((await db.query(`select value from public.${table} where id = 2`)).rows[0]?.value === "updated", `service_role writes ${table}`);
   }
   await db.exec("reset role");
-  await db.close();
-  db = await setup();
-  // PGlite's table-level revoke clears the setup column ACL. Regrant after
-  // cleanup to prove the assertion catches a surviving or later grant.
-  const weakened = migration.replace("create policy opening_setup_verifications_no_user_insert",
-    "grant insert (id, value) on public.vendor_items to authenticated;\ncreate policy opening_setup_verifications_no_user_insert");
-  try { await db.exec(weakened); throw new Error("weakened migration succeeded"); }
-  catch (error) { check(String(error.message).includes("0272: PostgREST write grant remains on vendor_items"), `leftover authenticated INSERT grant trips DO assertion: ${error.message}`); }
+  await db.close(); db = undefined;
+  const marker = "create policy opening_setup_items_no_user_insert";
+  const mutations = [
+    ["column INSERT/UPDATE", migration.replace(
+      "    for c in select attname from pg_attribute",
+      "    if r.table_name = 'vendor_items' then\n      execute 'grant insert (id), update (value) on public.vendor_items to authenticated';\n    else\n    for c in select attname from pg_attribute").replace(
+      "    end loop;\n  end loop;\nend $$;",
+      () => "    end loop;\n    end if;\n  end loop;\nend $$;"),
+      "0272: PostgREST write grant remains on vendor_items"],
+    ["PUBLIC table", migration.replace(marker,
+      "grant insert on public.vendor_items to public;\n" + marker),
+      "0272: PostgREST write grant remains on vendor_items"],
+    ["permissive sibling", migration.replace(marker,
+      "create policy vendor_items_sibling on public.vendor_items for insert with check (true);\n" + marker),
+      "0272: permissive write policy remains on vendor_items"],
+    ["table REFERENCES", migration.replace(marker,
+      "grant references on public.vendor_items to authenticated;\n" + marker),
+      "0272: PostgREST write grant remains on vendor_items"],
+  ];
+  for (const [name, sql, expected] of mutations) {
+    stage = `mutation ${name}`;
+    db = await setup();
+    try {
+      const first = sql.indexOf("do $$");
+      const second = sql.indexOf("do $$", first + 1);
+      await db.exec(sql.slice(0, first));
+      await db.exec(sql.slice(first, second));
+      await db.exec(sql.slice(second));
+      throw new Error(`${name}: migration unexpectedly succeeded`);
+    }
+    catch (error) {
+      check(String(error.message).includes(expected), `${name} expected ${expected}: ${error.message}`);
+      console.log(`0272 mutation ${name}: ${expected}`);
+    }
+    await db.close(); db = undefined;
+  }
   console.log(`PASS 0272: ${checks} checks`);
 } catch (error) {
   console.error(`FAIL 0272 (${stage}): ${error.stack ?? error} code=${error.code} detail=${error.detail}`);

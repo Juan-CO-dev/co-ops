@@ -79,6 +79,11 @@ insert into lockdown_0272 values
   ('vendor_orders', array['vendor_orders_insert','vendor_orders_update']),
   ('vendors', array['vendors_insert','vendors_update_trivial']);
 
+-- Preserve the exact pre-migration authenticated read surface for the 42 tables.
+create temporary table lockdown_0272_reads on commit drop as
+select table_name, has_table_privilege('authenticated', format('public.%I', table_name), 'SELECT') as allowed
+from lockdown_0272;
+
 do $$
 declare r record; p text; c record;
 begin
@@ -99,6 +104,8 @@ begin
   end loop;
 end $$;
 
+create policy opening_setup_items_no_user_insert on public.opening_setup_items
+  for insert with check (false);
 create policy opening_setup_verifications_no_user_insert on public.opening_setup_verifications
   for insert with check (false);
 create policy opening_setup_verifications_no_user_update on public.opening_setup_verifications
@@ -107,7 +114,7 @@ create policy opening_setup_verifications_no_user_delete on public.opening_setup
   for delete using (false);
 
 do $$
-declare r record; role_name text; obj text;
+declare r record; role_name text; obj text; f record;
 begin
   if (select count(*) from lockdown_0272) <> 42 then
     raise exception '0272: manifest must contain 42 tables';
@@ -130,7 +137,7 @@ begin
     end if;
     foreach role_name in array array['anon','authenticated'] loop
       if has_any_column_privilege(role_name, obj, 'INSERT, UPDATE, REFERENCES')
-         or has_table_privilege(role_name, obj, 'DELETE, TRUNCATE, TRIGGER') then
+         or has_table_privilege(role_name, obj, 'DELETE, TRUNCATE, REFERENCES, TRIGGER') then
         raise exception '0272: PostgREST write grant remains on % for %', r.table_name, role_name;
       end if;
     end loop;
@@ -138,9 +145,29 @@ begin
     -- above also prove that PUBLIC has no write privilege at either level.
     if not (has_table_privilege('service_role', obj, 'SELECT')
       and has_table_privilege('service_role', obj, 'INSERT')
-      and has_table_privilege('service_role', obj, 'UPDATE')) then
+      and has_table_privilege('service_role', obj, 'UPDATE'))
+      or has_table_privilege('service_role', obj, 'TRUNCATE, REFERENCES, TRIGGER') then
       raise exception '0272: service_role lacks SELECT/INSERT/UPDATE on %', r.table_name;
     end if;
+    -- DELETE is intentionally outside this ceiling: existing service paths may use it.
+    if exists (select 1 from lockdown_0272_reads b where b.table_name = r.table_name
+      and b.allowed and not has_table_privilege('authenticated', obj, 'SELECT')) then
+      raise exception '0272: authenticated SELECT lost on %', r.table_name;
+    end if;
+    for f in select p.oid, format('%I.%I(%s)', n.nspname, p.proname,
+        pg_get_function_identity_arguments(p.oid)) as signature
+      from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+      where n.nspname = 'public' and p.prosecdef
+        and p.prosrc ~* ('(^|[^a-z0-9_])' || r.table_name || '([^a-z0-9_]|$)')
+        and p.prosrc ~* '(^|[^a-z0-9_])(insert|update)([^a-z0-9_]|$)' loop
+      if has_function_privilege('anon', f.signature, 'EXECUTE')
+        or has_function_privilege('authenticated', f.signature, 'EXECUTE')
+        or exists (select 1 from aclexplode(coalesce((select proacl from pg_proc where oid = f.oid),
+          acldefault('f', (select proowner from pg_proc where oid = f.oid)))) acl
+          where acl.grantee = 0 and acl.privilege_type = 'EXECUTE') then
+        raise exception '0272: definer writer executable by PostgREST on %: %', r.table_name, f.signature;
+      end if;
+    end loop;
   end loop;
 end $$;
 

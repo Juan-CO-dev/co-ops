@@ -51,13 +51,16 @@ const expected: Record<string, string[]> = {
 
 describe("0272 PostgREST write lockdown", () => {
   it("keeps the authoring gate even after an applied stamp", () => {
-    const lines = sql.split(/\r?\n/);
-    const gate = "-- AUTHORED 2026-10-15. NOT YET APPLIED — apply via MCP after review (sim → prod; no code depends on it).";
-    expect(lines[0]).toBe("-- Migration 0272_postgrest_write_lockdown");
-    expect(lines[1]).toBe(gate);
-    const stamped = [lines[0], lines[1], "-- APPLIED TO PROD 2026-10-16 (schema_migrations version 20261016000001, name 'postgrest_write_lockdown')", ...lines.slice(2)];
-    expect(stamped[1]).toBe(gate);
-    expect(stamped.slice(2).findIndex(line => !(line ?? "").startsWith("-- APPLIED TO "))).toBeGreaterThanOrEqual(0);
+    const ok = (text: string) => {
+      const lines = text.split("\n");
+      return lines[0] === "-- Migration 0272_postgrest_write_lockdown"
+        && /^-- AUTHORED 2026-10-15\. NOT YET APPLIED — apply via MCP after review \(sim → prod; no code depends on it\)\.$/.test(lines[1] ?? "")
+        && lines.slice(2, 8).filter(line => /^-- APPLIED /.test(line))
+          .every(line => /^-- APPLIED TO (PROD|SIM) \d{4}-\d{2}-\d{2}/.test(line));
+    };
+    expect(ok(sql)).toBe(true);
+    const [first, gate, ...rest] = sql.split("\n");
+    expect(ok([first, gate, "-- APPLIED TO PROD 2026-10-16 (schema_migrations version 20261016000001, name 'postgrest_write_lockdown')", ...rest].join("\n"))).toBe(true);
   });
 
   it("pins exactly 42 tables and each permissive policy being dropped", () => {
@@ -79,6 +82,10 @@ describe("0272 PostgREST write lockdown", () => {
   it("pins write revocation, service checks, denies, and 42 audit rows", () => {
     expect(sql).toContain("revoke insert, update, delete, truncate, references, trigger on table public.%I from public, anon, authenticated");
     expect(sql).toContain("has_any_column_privilege(role_name, obj, 'INSERT, UPDATE, REFERENCES')");
+    expect(sql).toContain("has_table_privilege(role_name, obj, 'DELETE, TRUNCATE, REFERENCES, TRIGGER')");
+    expect(sql).toContain("create policy opening_setup_items_no_user_insert");
+    expect(sql).toContain("lockdown_0272_reads");
+    expect(sql).toContain("has_function_privilege('authenticated', f.signature, 'EXECUTE')");
     expect(sql).toContain("rolbypassrls from pg_roles where rolname = 'service_role'");
     for (const kind of ["insert", "update", "delete"]) {
       expect(sql).toContain(`create policy opening_setup_verifications_no_user_${kind}`);
