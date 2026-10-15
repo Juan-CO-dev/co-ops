@@ -1,7 +1,8 @@
 "use client";
 
 /**
- * RecipeInputRow — one existing recipe_input edge with a remove (✕) button.
+ * RecipeInputRow — one existing recipe_input edge with Edit (in place — catalog Phase 1)
+ * and Remove buttons.
  * Matches MadeFromEditor's MadeFromRow look (border-2 border-co-border card).
  * Calls onRemove(edgeId) on confirm.
  *
@@ -28,10 +29,13 @@ const rk = (k: string): TranslationKey => k as TranslationKey;
 export function RecipeInputRow({
   input,
   canEdit,
+  onEdit,
   onRemove,
 }: {
   input: RecipeInputView;
   canEdit: boolean;
+  /** Open the in-place line editor for this row. */
+  onEdit?: () => void;
   onRemove: (id: string) => void;
 }) {
   const { t } = useTranslation();
@@ -89,13 +93,25 @@ export function RecipeInputRow({
           {meta ? <p className="text-xs text-co-text-muted">{meta}</p> : null}
         </div>
         {canEdit ? (
-          <button
-            type="button"
-            onClick={() => setConfirming((v) => !v)}
-            className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-border bg-co-surface px-3 text-xs font-bold text-co-cta-text hover:border-co-cta-text"
-          >
-            {t(rk("recipes.row.remove"))}
-          </button>
+          <div className="flex shrink-0 gap-2">
+            {onEdit ? (
+              <button
+                type="button"
+                onClick={onEdit}
+                aria-label={t(rk("recipes.row.edit_aria"), { name: input.componentName })}
+                className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-border bg-co-surface px-3 text-xs font-bold text-co-text hover:border-co-text"
+              >
+                {t(rk("recipes.row.edit"))}
+              </button>
+            ) : null}
+            <button
+              type="button"
+              onClick={() => setConfirming((v) => !v)}
+              className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-border bg-co-surface px-3 text-xs font-bold text-co-cta-text hover:border-co-cta-text"
+            >
+              {t(rk("recipes.row.remove"))}
+            </button>
+          </div>
         ) : null}
       </div>
       {confirming && canEdit ? (

@@ -24,6 +24,8 @@ const KNOWN_ERROR_CODES = new Set([
   "invalid_table",
   "step_up_required",
   "step_up_stale",
+  "step_up_grant_required",
+  "line_changed",
   // Added in recipe-refinement slice (createRecipeFull / setItemSoldDirectly / addRecipeOutput errors)
   "incomplete_recipe",
   "would_create_cycle",
@@ -35,6 +37,9 @@ const KNOWN_ERROR_CODES = new Set([
   "batch_mode_single_output",
   "batch_mode_requires_output",
   "invalid_shelf_life_days",
+  // Catalog Phase 1 — the line editor reaches these through add AND edit (the keys already exist).
+  "invalid_component_product",
+  "product_line_needs_measure_unit",
 ]);
 
 export function resolveErrorKey(code: string): TranslationKey {

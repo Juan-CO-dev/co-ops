@@ -2,7 +2,11 @@
  * POST /api/auth/step-up — re-authenticate with password to unlock destructive
  * admin actions for the current session.
  *
- * Body: { password: string }
+ * Body: { password: string; catalogWindow?: boolean; purpose?: { action, targetId } }
+ *   catalogWindow — sent by the admin StepUpProvider: this password also opens the 15-minute
+ *                   catalog edit window (sessions.catalog_edit_unlocked_at, 0257).
+ *   purpose       — a ONE-SHOT grant for one destructive catalog act (lib/admin/step-up-grants.ts),
+ *                   minted only after the password verifies. Malformed → 400 before any check.
  *
  * Flow (locked Phase 2 Session 3):
  *   1. Validate body shape.
@@ -21,15 +25,19 @@
  * tooling can flag clusters of step-up failures from a single session.
  */
 
+import { randomUUID } from "node:crypto";
 import { type NextRequest } from "next/server";
 
 import { verifyPassword } from "@/lib/auth";
 import { upgradeLegacyPasswordHash } from "@/lib/auth-flows";
-import { audit } from "@/lib/audit";
+import { audit, auditChecked } from "@/lib/audit";
 import { requireSession, unlockStepUp } from "@/lib/session";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import { jsonError, jsonOk, parseJsonBody, extractIp } from "@/lib/api-helpers";
 import { ROLES, type RoleCode } from "@/lib/roles";
+import { stepUpEditWindowMs } from "@/lib/admin/step-up";
+import { parseStepUpPurpose } from "@/lib/admin/step-up-shared";
+import { mintStepUpGrant, voidStepUpGrant } from "@/lib/admin/step-up-grants";
 
 interface StepUpBody {
   password: string;
@@ -55,6 +63,12 @@ export async function POST(req: NextRequest) {
       message: "password must not be empty",
     });
   }
+  const raw = parsed as unknown as Record<string, unknown>;
+  const purpose = parseStepUpPurpose(raw.purpose);
+  if (purpose === "invalid") {
+    return jsonError(400, "invalid_payload", { field: "purpose", message: "purpose must name a known action and a target id" });
+  }
+  const catalogWindow = raw.catalogWindow === true;
 
   // 2. requireSession
   const ctx = await requireSession(req, "/api/auth/step-up");
@@ -127,18 +141,46 @@ export async function POST(req: NextRequest) {
     user.id, password, pwRow.password_hash, user.role, { ipAddress, userAgent }, "step_up",
   );
 
-  // 5. Success
-  await unlockStepUp(session.id);
-  await audit({
+  // 5. Success, in an order that never leaves a live authorization without its record, and never
+  //    a usable grant before its record exists (Astra full-branch #2, r2 #2):
+  //    (1) choose the grant's id;
+  //    (2) write the success row with a CHECKED audit naming that id — audit() is fail-open by
+  //        law, so a failure there would otherwise go unseen; on failure: no grant, no stamp, 500;
+  //    (3) insert the grant with that id — a failure here is a 500 with no stamp (a success row
+  //        naming a grant that never existed is acceptable: it records a verified password);
+  //    (4) only then stamp the shared flag (and the catalog window when asked). If that throws,
+  //        the grant is voided (chunk-3 review f).
+  const grantId = purpose ? randomUUID() : null;
+  const recorded = await auditChecked({
     actorId: user.id,
     actorRole: user.role,
     action: "auth_step_up_success",
     resourceTable: "sessions",
     resourceId: session.id,
-    metadata: {},
+    metadata: {
+      edit_window_seconds: catalogWindow ? stepUpEditWindowMs() / 1000 : null,
+      grant: purpose && grantId ? { id: grantId, action: purpose.action, target_id: purpose.targetId } : null,
+    },
     ipAddress,
     userAgent,
   });
+  if (!recorded.ok) {
+    return jsonError(500, "step_up_audit_failed", { message: "Could not record the confirmation. Try again." });
+  }
+  if (purpose && grantId) {
+    try {
+      await mintStepUpGrant({ id: grantId, sessionId: session.id, userId: user.id, purpose });
+    } catch (e) {
+      console.error(`[step-up] grant insert failed after the success audit: ${e instanceof Error ? e.message : String(e)}`);
+      return jsonError(500, "step_up_grant_failed", { message: "Could not record the confirmation. Try again." });
+    }
+  }
+  try {
+    await unlockStepUp(session.id, { catalogWindow });
+  } catch (e) {
+    if (grantId) await voidStepUpGrant(grantId);
+    throw e;
+  }
 
   return jsonOk({ ok: true });
 }

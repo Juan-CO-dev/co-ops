@@ -1,35 +1,39 @@
 import type { AuthContext } from "@/lib/session";
+import {
+  DEFAULT_EDIT_WINDOW_SECONDS,
+  DEFAULT_FRESH_SECONDS,
+  isFreshWithin,
+  isInsideWindow,
+  parseWindowSeconds,
+  type StepUpTier,
+} from "@/lib/admin/step-up-shared";
 
 /**
- * Two-tier admin step-up enforcement (C.44 Module 1).
+ * Admin step-up enforcement (C.44 Module 1; Tier E added 2026-10-15, catalog Phase 1).
  *
- * Password verification lives solely in POST /api/auth/step-up; the tiers
- * differ only by a freshness bound on the session's step_up_unlocked_at:
- *   Tier A — unlocked at all (any age). Auto-clears on /admin exit
- *            (lib/session.ts requireSessionCore).
- *   Tier B — unlocked AND step_up_unlocked_at within the freshness window.
- *
- * Pure over AuthContext (requireSessionCore populates the session row's
- * flag + timestamp from the live row, so this needs no I/O). `now` is
- * injectable for deterministic smokes.
- *
- * FOUNDATION PRIMITIVE: built + unit-smoked here; first live consumer is the
- * User Management module. Not called anywhere in this cycle — not dead code.
+ *   Tier A — sessions.step_up_unlocked (any age).
+ *   Tier B — step_up_unlocked AND step_up_unlocked_at within ADMIN_STEP_UP_FRESH_SECONDS (120 s).
+ *   Tier E — sessions.catalog_edit_unlocked_at (0257) within ADMIN_STEP_UP_EDIT_WINDOW_SECONDS
+ *            (900 s, never shorter than B). Its OWN fixed clock: stamped only by an
+ *            admin-surface password, never extended, never cleared by navigation.
+ * The always-prompt catalog acts use none of these: they consume a one-shot grant
+ * (lib/admin/step-up-grants.ts). Pure over AuthContext; `now` is injectable.
  */
-export type StepUpTier = "A" | "B";
+export type { StepUpTier };
 
 export type StepUpResult =
   | { ok: true }
   | { ok: false; code: "step_up_required" | "step_up_stale" };
 
-const DEFAULT_FRESH_SECONDS = 120;
-
 /** Tier B freshness window in ms. Override via ADMIN_STEP_UP_FRESH_SECONDS. */
 export function stepUpFreshWindowMs(): number {
-  const raw = process.env.ADMIN_STEP_UP_FRESH_SECONDS;
-  const n = raw ? parseInt(raw, 10) : NaN;
-  const seconds = Number.isFinite(n) && n > 0 ? n : DEFAULT_FRESH_SECONDS;
-  return seconds * 1000;
+  return parseWindowSeconds(process.env.ADMIN_STEP_UP_FRESH_SECONDS, DEFAULT_FRESH_SECONDS) * 1000;
+}
+
+/** Tier E edit window in ms. Override via ADMIN_STEP_UP_EDIT_WINDOW_SECONDS; never shorter than Tier B. */
+export function stepUpEditWindowMs(): number {
+  const edit = parseWindowSeconds(process.env.ADMIN_STEP_UP_EDIT_WINDOW_SECONDS, DEFAULT_EDIT_WINDOW_SECONDS) * 1000;
+  return Math.max(edit, stepUpFreshWindowMs());
 }
 
 export function assertStepUp(
@@ -37,14 +41,16 @@ export function assertStepUp(
   tier: StepUpTier,
   now: number = Date.now(),
 ): StepUpResult {
+  if (tier === "E") {
+    const at = ctx.session.catalogEditUnlockedAt ?? null;
+    if (at === null) return { ok: false, code: "step_up_required" };
+    // EXCLUSIVE deadline (Astra r3 #2): at exactly 15:00 the window is closed. Tier B below keeps
+    // its existing inclusive boundary.
+    return isInsideWindow(at, now, stepUpEditWindowMs()) ? { ok: true } : { ok: false, code: "step_up_stale" };
+  }
   if (!ctx.session.stepUpUnlocked) return { ok: false, code: "step_up_required" };
   if (tier === "A") return { ok: true };
-
-  // Tier B — must also be fresh.
-  const unlockedAt = ctx.session.stepUpUnlockedAt;
-  if (!unlockedAt) return { ok: false, code: "step_up_stale" };
-  const age = now - Date.parse(unlockedAt);
-  if (Number.isNaN(age) || age < 0 || age > stepUpFreshWindowMs()) {
+  if (!isFreshWithin(ctx.session.stepUpUnlockedAt, now, stepUpFreshWindowMs())) {
     return { ok: false, code: "step_up_stale" };
   }
   return { ok: true };

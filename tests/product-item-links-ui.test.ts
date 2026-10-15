@@ -43,7 +43,7 @@ describe("registry relationship rendering", () => {
     expect(html).toContain("Prep item");
     expect(html).toContain("Made from:");
     expect(html).toContain('href="/admin/products?product=ham#ham"');
-    expect(html).toContain('href="/admin/skus#bacon"');
+    expect(html).toContain('href="/admin/skus?sku=bacon#bacon"');
     expect(html).toContain("Bacon · Supplier");
     expect(html).toContain("(sub-prep)");
     expect(html).toContain('href="/admin/recipes/recipe"');

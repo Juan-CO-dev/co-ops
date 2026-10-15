@@ -10,10 +10,10 @@
  *   - Fixed lines: picker over catering-available items (PickerItem[]) or freeform
  *   - Choice slots: label + pick-N quantity, with eligible options added per-slot
  *   - Price-advice panel: GET /api/admin/catering/packages/[id]/recommend with a
- *     "use recommended" affordance that PATCHes the flat price via Tier A step-up
+ *     "use recommended" affordance that PATCHes the flat price via the Tier E edit window
  *
- * Authority (matches the routes): create = Tier B; edit fields = Tier A;
- * deactivate = Tier B; add/remove line item = Tier A. A single busy + errorMsg
+ * Authority (matches the routes): create = Tier B; edit fields = Tier E (the catalog edit
+ * window); deactivate = Tier B; add/remove line item = Tier E. A single busy + errorMsg
  * state guards all mutations. Before every mutation: if requestStepUp(tier) is
  * not "ok", return.
  */
@@ -24,8 +24,9 @@ import { useRouter } from "next/navigation";
 import { useTranslation } from "@/lib/i18n/provider";
 import type { TranslationKey } from "@/lib/i18n/types";
 import { useStepUp } from "@/components/admin/StepUpProvider";
+import { useStepUpPost } from "@/components/admin/useStepUpPost";
 import { formatCents } from "@/lib/i18n/format";
-import { postJson, resolveErrorKey } from "@/components/admin/catering/shared";
+import { resolveErrorKey } from "@/components/admin/catering/shared";
 import type { PackageView, PackageLocationOption } from "@/lib/admin/catering/packages";
 import type { PickerItem } from "@/lib/admin/catering/package-pricing";
 import { SummaryRow } from "@/components/ui/SummaryRow";
@@ -48,6 +49,8 @@ export function PackagesClient({
   const { t, language } = useTranslation();
   const router = useRouter();
   const { requestStepUp } = useStepUp();
+  // Forgets a refused unlock (step_up_required / step_up_stale) so the next tap prompts.
+  const send = useStepUpPost();
 
   const canManage = actorLevel >= PACKAGE_MIN;
 
@@ -80,7 +83,7 @@ export function PackagesClient({
     setErrorMsg(null);
     if ((await requestStepUp("B")) !== "ok") return;
     setBusy(true);
-    const result = await postJson("/api/admin/catering/packages", values);
+    const result = await send("/api/admin/catering/packages", values);
     setBusy(false);
     if (result.ok) {
       setAdding(false);
@@ -91,12 +94,12 @@ export function PackagesClient({
   const saveEdit = async (id: string, values: PackageFormValues) => {
     if (busy) return;
     setErrorMsg(null);
-    if ((await requestStepUp("A")) !== "ok") return;
+    if ((await requestStepUp("E")) !== "ok") return;
     // slug + location are identity fields — the edit PATCH sends fields only.
     const { locationId: _loc, ...fields } = values;
     void _loc;
     setBusy(true);
-    const result = await postJson(`/api/admin/catering/packages/${id}`, fields, "PATCH");
+    const result = await send(`/api/admin/catering/packages/${id}`, fields, "PATCH");
     setBusy(false);
     if (result.ok) {
       setEditingId(null);
@@ -110,7 +113,7 @@ export function PackagesClient({
     setErrorMsg(null);
     if ((await requestStepUp("B")) !== "ok") return;
     setBusy(true);
-    const result = await postJson(`/api/admin/catering/packages/${pkg.id}`, { active: !pkg.active }, "PATCH");
+    const result = await send(`/api/admin/catering/packages/${pkg.id}`, { active: !pkg.active }, "PATCH");
     setBusy(false);
     if (result.ok) {
       setConfirmDeactivateId(null);
@@ -130,9 +133,9 @@ export function PackagesClient({
   ) => {
     if (busy) return;
     setErrorMsg(null);
-    if ((await requestStepUp("A")) !== "ok") return;
+    if ((await requestStepUp("E")) !== "ok") return;
     setBusy(true);
-    const result = await postJson(
+    const result = await send(
       `/api/admin/catering/packages/${packageId}`,
       { addLine: payload },
       "PATCH",
@@ -151,9 +154,9 @@ export function PackagesClient({
   ) => {
     if (busy) return;
     setErrorMsg(null);
-    if ((await requestStepUp("A")) !== "ok") return;
+    if ((await requestStepUp("E")) !== "ok") return;
     setBusy(true);
-    const result = await postJson(
+    const result = await send(
       `/api/admin/catering/packages/${packageId}`,
       { addSlotOption: { lineItemId, ref } },
       "PATCH",
@@ -168,9 +171,9 @@ export function PackagesClient({
   const removeSlotOption = async (packageId: string, optionId: string) => {
     if (busy) return;
     setErrorMsg(null);
-    if ((await requestStepUp("A")) !== "ok") return;
+    if ((await requestStepUp("E")) !== "ok") return;
     setBusy(true);
-    const result = await postJson(
+    const result = await send(
       `/api/admin/catering/packages/${packageId}`,
       { removeSlotOptionId: optionId },
       "PATCH",
@@ -185,9 +188,9 @@ export function PackagesClient({
   const setOptionClassic = async (packageId: string, optionId: string, classic: boolean) => {
     if (busy) return;
     setErrorMsg(null);
-    if ((await requestStepUp("A")) !== "ok") return;
+    if ((await requestStepUp("E")) !== "ok") return;
     setBusy(true);
-    const result = await postJson(
+    const result = await send(
       `/api/admin/catering/packages/${packageId}`,
       { setOptionClassic: { optionId, classic } },
       "PATCH",
@@ -202,9 +205,9 @@ export function PackagesClient({
   const removeLineItem = async (packageId: string, itemId: string) => {
     if (busy) return;
     setErrorMsg(null);
-    if ((await requestStepUp("A")) !== "ok") return;
+    if ((await requestStepUp("E")) !== "ok") return;
     setBusy(true);
-    const result = await postJson(`/api/admin/catering/packages/${packageId}`, { removeItemId: itemId }, "PATCH");
+    const result = await send(`/api/admin/catering/packages/${packageId}`, { removeItemId: itemId }, "PATCH");
     setBusy(false);
     if (result.ok) {
       bumpRefresh(packageId);
@@ -215,9 +218,9 @@ export function PackagesClient({
   const applyRecommendedPrice = async (packageId: string, priceCents: number) => {
     if (busy) return;
     setErrorMsg(null);
-    if ((await requestStepUp("A")) !== "ok") return;
+    if ((await requestStepUp("E")) !== "ok") return;
     setBusy(true);
-    const result = await postJson(
+    const result = await send(
       `/api/admin/catering/packages/${packageId}`,
       { priceCents },
       "PATCH",

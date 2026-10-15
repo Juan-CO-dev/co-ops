@@ -5,7 +5,7 @@ import { assertStepUp } from "@/lib/admin/step-up";
 import { jsonError, jsonOk, parseJsonBody } from "@/lib/api-helpers";
 import { attachMember, detachMember, ProductError } from "@/lib/products";
 
-// Membership edits (GM+ ≥7, Tier A — a membership change is a SKU-grade edit).
+// Membership edits (GM+ ≥7, Tier E — a membership change is a SKU-grade edit).
 //   POST   { skuId } — attach the SKU to this product.
 //   DELETE { skuId } — detach it (product_id → NULL = implicit singleton again).
 // Both refuse with a NAMED 409 when a product_primaries row names the SKU: the
@@ -18,7 +18,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   const ctx = await requireSession(req, `/api/admin/products/${id}/members`);
   if (ctx instanceof Response) return ctx;
   if (ROLES[ctx.user.role].level < 7) return jsonError(403, "forbidden");
-  const su = assertStepUp(ctx, "A");
+  const su = assertStepUp(ctx, "E");
   if (!su.ok) return jsonError(403, su.code);
 
   const b = parsed as Record<string, unknown>;
@@ -40,7 +40,7 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ i
   const ctx = await requireSession(req, `/api/admin/products/${id}/members`);
   if (ctx instanceof Response) return ctx;
   if (ROLES[ctx.user.role].level < 7) return jsonError(403, "forbidden");
-  const su = assertStepUp(ctx, "A");
+  const su = assertStepUp(ctx, "E");
   if (!su.ok) return jsonError(403, su.code);
 
   const b = parsed as Record<string, unknown>;

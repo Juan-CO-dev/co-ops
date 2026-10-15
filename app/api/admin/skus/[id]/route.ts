@@ -2,13 +2,16 @@ import { type NextRequest } from "next/server";
 import { requireSession } from "@/lib/session";
 import { ROLES } from "@/lib/roles";
 import { assertStepUp } from "@/lib/admin/step-up";
+import { consumeStepUpGrant } from "@/lib/admin/step-up-grants";
+import { isUuid } from "@/lib/admin/step-up-shared";
 import { jsonError, jsonOk, parseJsonBody } from "@/lib/api-helpers";
 import { updateSku, deactivateSku, AdminSkuError, isSkuClass, type UpdateSkuChanges } from "@/lib/admin/skus";
 import type { SkuClass } from "@/lib/admin/catalog-shared";
 
 // PATCH — body discriminates (one concern per call, like the vendors route):
-//   {active}-only        → deactivateSku  (GM+ ≥7, Tier A)
-//   else (other fields)  → updateSku      (GM+ ≥7, Tier A)
+//   {active:false}       → deactivateSku  (GM+ ≥7, one-shot grant "sku.deactivate" — asks every time)
+//   {active:true}        → deactivateSku  (GM+ ≥7, Tier E — reactivation is an ordinary edit)
+//   else (other fields)  → updateSku      (GM+ ≥7, Tier E — the 15-minute catalog edit window)
 // Mixing `active` with other fields is rejected. The route floors ≥6;
 // the lib write fns enforce ≥7.
 const UPDATE_KEYS = [
@@ -55,10 +58,17 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     return jsonError(400, "mixed_concerns", { message: "active must be the only field when toggling activation" });
   }
 
-  // Both deactivate + update are GM+ Tier A.
+  // GM+. Deactivating a SKU is destructive: a ONE-SHOT grant for exactly this SKU (catalog
+  // Phase 1, Astra r1 P1-2). Every other write here rides the 15-minute edit window.
   if (ROLES[ctx.user.role].level < 7) return jsonError(403, "forbidden");
-  const su = assertStepUp(ctx, "A");
-  if (!su.ok) return jsonError(403, su.code);
+  if (hasActive && b.active === false) {
+    if (!isUuid(id)) return jsonError(400, "invalid_id");
+    const grant = await consumeStepUpGrant(ctx, "sku.deactivate", id);
+    if (!grant.ok) return jsonError(403, grant.code);
+  } else {
+    const su = assertStepUp(ctx, "E");
+    if (!su.ok) return jsonError(403, su.code);
+  }
 
   try {
     if (hasActive) {

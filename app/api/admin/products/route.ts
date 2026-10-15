@@ -7,7 +7,7 @@ import { listProducts, createProduct, ProductError } from "@/lib/products";
 
 // Product registry (migration 0179).
 // GET  — list products with members + primaries (≥6; the lib enforces it too).
-// POST — create a product (GM+ ≥7, Tier B — mirrors a SKU create).
+// POST — create a product (GM+ ≥7, Tier E — mirrors a SKU create).
 // Every mutation's real authority is lib/products.ts; the route floors are the
 // outer layer of the same gate (defense in depth, app/api/admin/skus precedent).
 
@@ -31,7 +31,7 @@ export async function POST(req: NextRequest) {
   const ctx = await requireSession(req, "/api/admin/products");
   if (ctx instanceof Response) return ctx;
   if (ROLES[ctx.user.role].level < 7) return jsonError(403, "forbidden");
-  const su = assertStepUp(ctx, "B");
+  const su = assertStepUp(ctx, "E");
   if (!su.ok) return jsonError(403, su.code);
 
   const b = parsed as Record<string, unknown>;

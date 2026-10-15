@@ -10,7 +10,7 @@ import { isValidMenuPrice } from "@/lib/toast/in-store-prices-shared";
 const button = "min-h-[44px] rounded-lg border-2 border-co-gold-deep px-3 text-sm font-bold text-co-text disabled:opacity-50";
 export function MenuPriceEditor({ row }: { row: MenuCostRow }) {
   const { t } = useTranslation();
-  const { requestStepUp } = useStepUp();
+  const { requestStepUp, forgetStepUp } = useStepUp();
   const router = useRouter();
   const [value, setValue] = useState(row.typedPrice?.toFixed(2) ?? "");
   const [busy, setBusy] = useState(false);
@@ -21,14 +21,15 @@ export function MenuPriceEditor({ row }: { row: MenuCostRow }) {
     if (!isValidMenuPrice(price)) { setError("admin.menu_costing.price.invalid"); return; }
     setBusy(true);
     try {
-      if (await requestStepUp("B") !== "ok") return;
+      if (await requestStepUp("E") !== "ok") return;
       const send = () => fetch(`/api/admin/menu-items/${row.id}/price`, {
         method: "PATCH", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ menuPrice: price, expectedMenuPrice: row.typedPrice ?? null }), redirect: "manual",
       });
       let response = await send();
       let body = await response.json().catch(() => ({})) as { code?: string; ok?: boolean };
-      if ((body.code === "step_up_required" || body.code === "step_up_stale") && await requestStepUp("B") === "ok") {
+      if (body.code === "step_up_required" || body.code === "step_up_stale") forgetStepUp();
+      if ((body.code === "step_up_required" || body.code === "step_up_stale") && await requestStepUp("E") === "ok") {
         response = await send();
         body = await response.json().catch(() => ({})) as typeof body;
       }

@@ -10,7 +10,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   const ctx = await requireSession(req, `/api/admin/menu-items/${id}/price`);
   if (ctx instanceof Response) return ctx;
   if (ROLES[ctx.user.role].level < MENU_PRICE_WRITE_MIN) return jsonError(403, "forbidden");
-  const su = assertStepUp(ctx, "B");
+  const su = assertStepUp(ctx, "E");
   if (!su.ok) return jsonError(403, su.code);
   const parsed = await parseJsonBody(req);
   if (parsed instanceof Response) return parsed;

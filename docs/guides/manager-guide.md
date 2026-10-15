@@ -1317,6 +1317,44 @@ AGMs and up can open **Admin**.
 - In **Stations**, a GM sets station times for their shop. It asks for your password: **Confirm your password**. These times are only hints. They don't close a station.
 - **This week in CO-OPS** puts each shop side by side for the last 7 days: how many people used the app, the checklists they finished, reports, orders, deliveries, counts and catering. Jobs that run on their own (Toast, ezCater) are shown apart. Tap **Details** to see people by role and checklists by type.
 
+### Recipes and the catalog
+
+GMs and up change recipes and SKUs.
+
+#### 1. One password for 15 minutes (not shown)
+
+**What to do** — The first time you save a change on an admin page, the app asks **Confirm your password**. Type it once. Then keep working.
+
+**Worth knowing**
+
+- After your password, editing stays unlocked for 15 minutes on this phone or computer. Saves in that time do not ask again.
+- The 15 minutes count from your password. Saving does not add time. When they run out, the app asks again.
+- Logging out ends it right away.
+- Three things ask every time: retire a product, delete a recipe, and deactivate a SKU.
+- If the app says your confirmation expired, tap save again and type your password.
+
+#### 2. Change a recipe line (not shown)
+
+**What to do** — Open the recipe. In **Consumes (inputs)**, tap **Edit** on the line. Change the amount, the unit or the ingredient. Tap **Save changes**.
+
+**Worth knowing**
+
+- **Save changes** stays gray until you change something.
+- Lines on a new recipe you have not saved yet have **Edit** too.
+- If someone else changed the same line first, the app tells you. Reload the page, then try again.
+- A product line takes a measure unit only, like oz, lb or each. A vendor's pack name means a different thing at each vendor.
+- If a product line shows an old unit, pick a measure unit before you save.
+
+#### 3. Find an ingredient (not shown)
+
+**What to do** — Tap **+ Add ingredient**. Type part of the name, or the vendor's name. Tap the one you want.
+
+**Worth knowing**
+
+- Each row shows the name, the vendor and the kind: SKU, prep item or product.
+- On a computer, use the arrow keys and Enter.
+- Changed your mind? Tap **Keep current** to keep the ingredient you had.
+
 ### En español
 
 Estos son los trabajos y páginas que usas además de los reportes diarios.
@@ -1375,3 +1413,11 @@ Los gerentes generales y roles más altos ven quién le compra a la tienda.
 #### Las páginas de Admin
 
 Los subgerentes y roles más altos pueden abrir **Admin**. Toca **Admin** en el menú y luego una tarjeta. Los subgerentes ven **Proveedores**, **SKUs**, **Productos**, **Recetas**, **Artículos**, **Costeo del Menú**, **Pesos y merma** y **Catering**. Los gerentes generales también ven **Estaciones**, **Empleados de Toast**, **Clientes** y **Plantillas de Listas**. Un Gerente de Operaciones también ve **Gestión de Usuarios** y **Categorías**. En **Estaciones**, un gerente general pone los horarios de las estaciones de su tienda y la app le pide su contraseña (**Confirma tu contraseña**); esos horarios son solo una guía y no cierran una estación. **Usado esta semana** muestra cuánto se usó la app.
+
+#### Recetas y el catálogo
+
+Los gerentes generales y roles más altos cambian recetas y SKUs.
+
+1. **Una contraseña por 15 minutos.** La primera vez que guardas un cambio en una página de Admin, la app pide **Confirma tu contraseña**. Después, editar queda desbloqueado por 15 minutos en este teléfono o computadora; en ese tiempo no la vuelve a pedir. Los 15 minutos cuentan desde tu contraseña: guardar no suma tiempo. Cuando se acaban, la app la pide otra vez. Salir de la app los termina. Tres cosas la piden siempre: retirar un producto, borrar una receta y desactivar un SKU. Si la app dice que tu confirmación venció, toca guardar otra vez y escribe tu contraseña.
+2. **Cambia una línea de la receta.** Abre la receta. En **Consume (entradas)**, toca **Editar** en la línea. Cambia la cantidad, la unidad o el ingrediente y toca **Guardar cambios**. El botón sigue gris hasta que cambias algo. Las líneas de una receta nueva que aún no guardas también tienen **Editar**. Si alguien más cambió esa línea antes, la app te avisa: recarga la página y vuelve a intentarlo. Una línea de producto solo acepta una unidad de medida, como oz, lb o each. Si muestra una unidad vieja, elige una unidad de medida antes de guardar.
+3. **Busca un ingrediente.** Toca **+ Agregar ingrediente**. Escribe parte del nombre o el nombre del proveedor y toca el que quieres. Cada fila muestra el nombre, el proveedor y el tipo: SKU, preparación o producto. Si cambias de idea, toca **Dejar el actual**.

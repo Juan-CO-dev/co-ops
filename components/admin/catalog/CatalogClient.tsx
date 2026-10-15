@@ -4,7 +4,7 @@
  * CatalogClient — the Items Master Catalog surface (/admin/items, default view).
  * Lens chips + search + section-grouped rows, each expanding to a routing
  * DOSSIER of Links to the owning editors. The catalog only WRITES `seasonal`
- * (level ≥7, Tier-A step-up via the shared PasswordModal — pendingRef pattern
+ * (level ≥7, Tier E edit window via the shared PasswordModal — pendingRef pattern
  * cribbed from SalesTab). Every other edge is a read-only Link.
  *
  * Types come from lib/admin/catalog-shared (client-safe; the server loader
@@ -17,9 +17,11 @@ import { useRouter } from "next/navigation";
 import { useTranslation } from "@/lib/i18n/provider";
 import type { TranslationKey } from "@/lib/i18n/types";
 import { PasswordModal } from "@/components/auth/PasswordModal";
+import { useStepUp } from "@/components/admin/StepUpProvider";
 import { SummaryRow } from "@/components/ui/SummaryRow";
 import type { CatalogEntity, CatalogIssue, ItemType, RoleBadge } from "@/lib/admin/catalog-shared";
 import { ITEM_TYPES, deriveRoleBadges } from "@/lib/admin/catalog-shared";
+import { skuCatalogHref } from "@/lib/admin/product-item-links-shared";
 
 const tk = (k: string): TranslationKey => k as TranslationKey;
 
@@ -65,6 +67,9 @@ export function CatalogClient({ entities, actorLevel }: { entities: CatalogEntit
   const [busyKey, setBusyKey] = useState<string | null>(null);
   const [errorKey, setErrorKey] = useState<TranslationKey | null>(null);
   const [stepUpOpen, setStepUpOpen] = useState(false);
+  // This modal is not the provider's; report its confirms and refusals so the provider's catalog
+  // clock stays true for every other admin surface (Astra r3 #1).
+  const { noteStepUpConfirmed, forgetStepUp } = useStepUp();
   const pendingRef = useRef<null | (() => Promise<void>)>(null);
 
   const canWriteSeasonal = actorLevel >= SEASONAL_MIN;
@@ -125,6 +130,7 @@ export function CatalogClient({ entities, actorLevel }: { entities: CatalogEntit
       }
       const b = (await res.json().catch(() => ({}))) as { code?: string };
       if (b.code === "step_up_required" || b.code === "step_up_stale") {
+        forgetStepUp();
         pendingRef.current = () => writeSeasonal(e, seasonal);
         setStepUpOpen(true);
         return;
@@ -135,9 +141,9 @@ export function CatalogClient({ entities, actorLevel }: { entities: CatalogEntit
     } finally {
       setBusyKey(null);
     }
-  }, [router]);
+  }, [router, forgetStepUp]);
 
-  // Dossier item_type editor (items only; GM+ Tier-A step-up via pendingRef).
+  // Dossier item_type editor (items only; GM+ Tier E edit window via pendingRef).
   const writeItemType = useCallback(async (e: CatalogEntity, itemType: ItemType) => {
     setErrorKey(null);
     setBusyKey(e.key);
@@ -156,6 +162,7 @@ export function CatalogClient({ entities, actorLevel }: { entities: CatalogEntit
       }
       const b = (await res.json().catch(() => ({}))) as { code?: string };
       if (b.code === "step_up_required" || b.code === "step_up_stale") {
+        forgetStepUp();
         pendingRef.current = () => writeItemType(e, itemType);
         setStepUpOpen(true);
         return;
@@ -166,7 +173,7 @@ export function CatalogClient({ entities, actorLevel }: { entities: CatalogEntit
     } finally {
       setBusyKey(null);
     }
-  }, [router]);
+  }, [router, forgetStepUp]);
 
   const chip = (active: boolean) =>
     `inline-flex min-h-[44px] items-center rounded-full border-2 px-3 text-xs font-bold transition ${
@@ -228,8 +235,9 @@ export function CatalogClient({ entities, actorLevel }: { entities: CatalogEntit
       )}
 
       <PasswordModal
+        catalogWindow
         open={stepUpOpen}
-        onConfirm={async () => { if (pendingRef.current) await pendingRef.current(); }}
+        onConfirm={async () => { noteStepUpConfirmed(); if (pendingRef.current) await pendingRef.current(); }}
         onCancel={() => { setStepUpOpen(false); pendingRef.current = null; }}
       />
     </div>
@@ -372,8 +380,12 @@ function CatalogRow({
 
           {e.kind === "item" && (
             <EdgeList label={t("admin.catalog.edge.skus")}>
-              {e.edges.skuNames.length > 0
-                ? <Link href="/admin/skus" className={linkCls}>{e.edges.skuNames.join(", ")}</Link>
+              {e.edges.skus.length > 0
+                ? e.edges.skus.map((r, i) => (
+                    <Link key={r.id} href={skuCatalogHref(r.id)} className={linkCls}>
+                      {r.name}{i < e.edges.skus.length - 1 ? "," : ""}
+                    </Link>
+                  ))
                 : none}
             </EdgeList>
           )}

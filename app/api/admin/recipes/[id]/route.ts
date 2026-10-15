@@ -2,6 +2,8 @@ import { type NextRequest } from "next/server";
 import { requireSession } from "@/lib/session";
 import { ROLES } from "@/lib/roles";
 import { assertStepUp } from "@/lib/admin/step-up";
+import { consumeStepUpGrant } from "@/lib/admin/step-up-grants";
+import { isUuid } from "@/lib/admin/step-up-shared";
 import { jsonError, jsonOk, parseJsonBody } from "@/lib/api-helpers";
 import { updateRecipe, deactivateRecipe, RecipeError, RECIPE_WRITE_MIN, RECIPE_DELETE_MIN } from "@/lib/recipes";
 
@@ -15,7 +17,8 @@ export async function PATCH(
   const ctx = await requireSession(req, `/api/admin/recipes/${id}`);
   if (ctx instanceof Response) return ctx;
   if (ROLES[ctx.user.role].level < RECIPE_WRITE_MIN) return jsonError(403, "forbidden");
-  const su = assertStepUp(ctx, "B");
+  // Catalog Phase 1: a header edit rides the 15-minute edit window.
+  const su = assertStepUp(ctx, "E");
   if (!su.ok) return jsonError(403, su.code);
 
   const b = parsed as Record<string, unknown>;
@@ -46,8 +49,10 @@ export async function DELETE(
   const ctx = await requireSession(req, `/api/admin/recipes/${id}`);
   if (ctx instanceof Response) return ctx;
   if (ROLES[ctx.user.role].level < RECIPE_DELETE_MIN) return jsonError(403, "forbidden");
-  const su = assertStepUp(ctx, "B");
-  if (!su.ok) return jsonError(403, su.code);
+  // Deleting a recipe is an always-prompt act: a ONE-SHOT grant for exactly this recipe (catalog Phase 1).
+  if (!isUuid(id)) return jsonError(400, "invalid_id");
+  const grant = await consumeStepUpGrant(ctx, "recipe.delete", id);
+  if (!grant.ok) return jsonError(403, grant.code);
 
   try {
     await deactivateRecipe(ctx, id);

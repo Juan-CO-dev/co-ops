@@ -7,7 +7,7 @@
  * DRAFT mode  (recipe == null):
  *   Header fields (name/nameEs/batchYield/directions/directionsEs) + recipe_type
  *   are local state. Inputs + outputs are draft arrays. A single Save button
- *   POSTs the entire draft to /api/admin/recipes/full after requestStepUp("B"),
+ *   POSTs the entire draft to /api/admin/recipes/full after requestStepUp("E"),
  *   then navigates to /admin/recipes/{id}.
  *
  * LIVE mode (recipe != null):
@@ -20,12 +20,16 @@
  * Live oz readout: calls ozForRecipeInput per SKU input row (shows "≈ N oz").
  */
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 
 import { useTranslation } from "@/lib/i18n/provider";
 import { CollapsibleSection } from "@/components/ui/CollapsibleSection";
 import { useStepUp } from "@/components/admin/StepUpProvider";
+import { useStepUpPost } from "@/components/admin/useStepUpPost";
+import { buildIngredientOptions } from "@/lib/ingredient-picker-shared";
+import { beginLineEdit, recipeLineKind, type LineEditStart, type RecipeLineDraft } from "@/lib/recipe-line-shared";
+import { RecipeLineEditor } from "./RecipeLineEditor";
 import { StatusBadge, ReadinessReasons } from "@/components/admin/StatusBadge";
 import type { Readiness } from "@/lib/readiness";
 import { RegistrySelect } from "@/components/admin/skus/RegistrySelect";
@@ -36,7 +40,7 @@ import type { TranslationKey } from "@/lib/i18n/types";
 import type { MeasureUnitFactor, RecipeInputSku } from "@/lib/recipe-math";
 import { ozForRecipeInput } from "@/lib/recipe-math";
 import { productInputBasis } from "@/lib/products-shared";
-import { postJson, resolveErrorKey } from "./shared";
+import { resolveErrorKey } from "./shared";
 
 const rk = (k: string): TranslationKey => k as TranslationKey;
 import { RecipeInputRow } from "./RecipeInputRow";
@@ -52,6 +56,8 @@ const textareaCls =
 export interface RecipeBuilderSku extends RecipeInputSku {
   id: string;
   name: string;
+  /** The SKU's vendor, for the picker's "name · vendor · kind" label; null = no vendor. */
+  vendorName: string | null;
 }
 
 /** A PRODUCT the recipe can pin instead of one vendor's SKU (0179). */
@@ -85,8 +91,6 @@ interface DraftOutput {
   outputContainerLabel: string | null;
 }
 
-type InputKind = "sku" | "item" | "product";
-
 // ── RecipeBuilder ────────────────────────────────────────────────────────────
 export function RecipeBuilder({
   recipe,
@@ -95,6 +99,7 @@ export function RecipeBuilder({
   products = [],
   unitOptions,
   measures,
+  activeMeasureLabels,
   level,
   defaultType = "production",
   readiness = null,
@@ -106,13 +111,16 @@ export function RecipeBuilder({
   products?: RecipeBuilderProduct[];
   unitOptions: Array<{ id: string; label: string }>;
   measures: Map<string, MeasureUnitFactor>;
+  /** ACTIVE measure labels for the line editor's unit list (Astra full-branch #4). */
+  activeMeasureLabels?: string[];
   level: number;
   defaultType?: RecipeType;
   readiness?: Readiness | null;
 }) {
   const { t } = useTranslation();
   const router = useRouter();
-  const { requestStepUp } = useStepUp();
+  const { requestStepUp, requestStepUpGrant } = useStepUp();
+  const send = useStepUpPost();
   const canEdit = level >= RECIPE_WRITE_MIN;
   const canDelete = level >= RECIPE_DELETE_MIN;
 
@@ -129,9 +137,10 @@ export function RecipeBuilder({
   const deleteRecipe = async () => {
     if (!recipe || deleteBusy) return;
     setDeleteError(null);
-    if ((await requestStepUp("B")) !== "ok") return;
+    // Deleting a recipe is destructive: a one-shot password for THIS recipe, every time.
+    if ((await requestStepUpGrant({ action: "recipe.delete", targetId: recipe.id })) !== "ok") return;
     setDeleteBusy(true);
-    const result = await postJson(`/api/admin/recipes/${recipe.id}`, {}, "DELETE");
+    const result = await send(`/api/admin/recipes/${recipe.id}`, {}, "DELETE");
     setDeleteBusy(false);
     if (result.ok) {
       router.push("/admin/recipes");
@@ -170,15 +179,14 @@ export function RecipeBuilder({
   const patchField = async (field: string, value: string | number | null) => {
     if (!canEdit || !recipe) return;
     // TIER PARITY (the CreateUserForm class). PATCH /api/admin/recipes/[id] asserts
-    // Tier B, and this lane asked for nothing at all — so a header edit only ever
-    // succeeded when the actor happened to have unlocked FRESHLY for some other action
-    // on the same screen, and otherwise came back as an opaque error on blur. Every
-    // other write in this file already requests "B"; this one and removeEdge below were
-    // the two that did not.
-    if ((await requestStepUp("B")) !== "ok") return;
+    // Tier E (the catalog edit window; Tier B before catalog Phase 1), and this lane once
+    // asked for nothing at all — so a header edit only succeeded when the actor happened
+    // to be unlocked already, and otherwise came back as an opaque error on blur. Every
+    // write in this file requests "E" (recipe delete takes a one-shot grant).
+    if ((await requestStepUp("E")) !== "ok") return;
     setPatchError(null);
     setPatchBusy(true);
-    const result = await postJson(
+    const result = await send(
       `/api/admin/recipes/${recipe.id}`,
       { [field]: value },
       "PATCH",
@@ -216,10 +224,10 @@ export function RecipeBuilder({
     const prev = batchModeVal;
     setBatchModeVal(on);
     if (!canEdit) return;
-    if ((await requestStepUp("B")) !== "ok") { setBatchModeVal(prev); return; }
+    if ((await requestStepUp("E")) !== "ok") { setBatchModeVal(prev); return; }
     setPatchError(null);
     setPatchBusy(true);
-    const result = await postJson(`/api/admin/recipes/${recipe.id}`, { batchMode: on }, "PATCH");
+    const result = await send(`/api/admin/recipes/${recipe.id}`, { batchMode: on }, "PATCH");
     setPatchBusy(false);
     if (result.ok) {
       router.refresh();
@@ -240,10 +248,10 @@ export function RecipeBuilder({
   // ── LIVE mode: remove edge ──
   const removeEdge = async (table: "recipe_inputs" | "recipe_outputs", edgeId: string) => {
     if (!canEdit) return;
-    // Same tier-parity fix as patchField: DELETE /api/admin/recipes/edges asserts Tier B.
-    if ((await requestStepUp("B")) !== "ok") return;
+    // Same tier-parity fix as patchField: DELETE /api/admin/recipes/edges asserts Tier E.
+    if ((await requestStepUp("E")) !== "ok") return;
     setPatchError(null);
-    const result = await postJson("/api/admin/recipes/edges", { table, id: edgeId }, "DELETE");
+    const result = await send("/api/admin/recipes/edges", { table, id: edgeId }, "DELETE");
     if (result.ok) {
       router.refresh();
     } else {
@@ -271,9 +279,9 @@ export function RecipeBuilder({
       setSaveError(t(rk("recipes.error.batch_mode_single_output")));
       return;
     }
-    if ((await requestStepUp("B")) !== "ok") return;
+    if ((await requestStepUp("E")) !== "ok") return;
     setSaveBusy(true);
-    const result = await postJson("/api/admin/recipes/full", {
+    const result = await send("/api/admin/recipes/full", {
       name,
       nameEs: nameEsVal.trim() || null,
       recipeType: effectiveType,
@@ -324,6 +332,9 @@ export function RecipeBuilder({
 
   const removeDraftInput = (key: number) =>
     setDraftInputs((prev) => prev.filter((x) => x._key !== key));
+  /** Catalog Phase 1 (P2-7): a draft line is edited in place, keeping its key and position. */
+  const updateDraftInput = (key: number, di: Omit<DraftInput, "_key">) =>
+    setDraftInputs((prev) => prev.map((x) => (x._key === key ? { ...di, _key: key } : x)));
   const removeDraftOutput = (key: number) =>
     setDraftOutputs((prev) => prev.filter((x) => x._key !== key));
 
@@ -510,12 +521,14 @@ export function RecipeBuilder({
         items={items}
         products={products}
         measures={measures}
+        activeMeasureLabels={activeMeasureLabels}
         unitRegistryOptions={unitRegistryOptions}
         canEdit={canEdit}
         level={level}
         isDraft={recipe === null}
         onAddDraftInput={(di) => onAddDraftInput({ ...di, _key: nextKey() })}
         onRemoveDraftInput={removeDraftInput}
+        onUpdateDraftInput={updateDraftInput}
         onRemoveLive={(id) => void removeEdge("recipe_inputs", id)}
       />
 
@@ -624,6 +637,14 @@ export function RecipeBuilder({
 }
 
 // ── CONSUMES section ─────────────────────────────────────────────────────────
+// ONE add/edit form for all three kinds (catalog redesign Phase 1, 2026-10-15): the searchable
+// IngredientPicker replaced the per-kind forms and their unsearchable selects. A SAVED line is
+// edited in place through PATCH …/inputs/[inputId] with the line the client saw (compare-and-set);
+// a DRAFT line is edited in place locally — it is not on the server until the recipe saves.
+// A live edit captures its starting line AND the compare-and-set snapshot ONCE, when Edit is
+// tapped (beginLineEdit): a router.refresh() mid-edit must not quietly move "what I saw" (r2 #1).
+type LineEditing = ({ kind: "live" } & LineEditStart) | { kind: "draft"; key: number } | null;
+
 function ConsumesSection({
   recipeId,
   liveInputs,
@@ -632,12 +653,12 @@ function ConsumesSection({
   items,
   products,
   measures,
-  unitRegistryOptions,
+  activeMeasureLabels,
   canEdit,
-  level,
   isDraft,
   onAddDraftInput,
   onRemoveDraftInput,
+  onUpdateDraftInput,
   onRemoveLive,
 }: {
   recipeId: string | null;
@@ -647,220 +668,107 @@ function ConsumesSection({
   items: Array<{ id: string; name: string }>;
   products: RecipeBuilderProduct[];
   measures: Map<string, MeasureUnitFactor>;
+  activeMeasureLabels?: string[];
+  /** Kept so the call site is unchanged; the line editor needs neither. */
   unitRegistryOptions: RegistryOption[];
-  canEdit: boolean;
   level: number;
+  canEdit: boolean;
   isDraft: boolean;
   onAddDraftInput: (di: Omit<DraftInput, "_key">) => void;
   onRemoveDraftInput: (key: number) => void;
+  onUpdateDraftInput: (key: number, di: Omit<DraftInput, "_key">) => void;
   onRemoveLive: (id: string) => void;
 }) {
   const { t } = useTranslation();
   const router = useRouter();
   const { requestStepUp } = useStepUp();
+  const send = useStepUpPost();
 
-  const [addKind, setAddKind] = useState<InputKind | null>(null);
+  const [adding, setAdding] = useState(false);
+  const [editing, setEditing] = useState<LineEditing>(null);
   const [busy, setBusy] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
-  // Disclosure (D3: PRIMARY work section → default-open; D10: locked open while
-  // an add-form is in progress so the dirty draft stays mounted). Uncontrolled-
-  // style toggle otherwise (lift open state + force true while form open).
+  // Disclosure (D3: PRIMARY work section → default-open; D10: locked open while a form is in
+  // progress so the dirty line stays mounted).
   const [sectionOpen, setSectionOpen] = useState(true);
-  const formInProgress = addKind !== null;
+  const formInProgress = adding || editing !== null;
   const isOpen = sectionOpen || formInProgress;
+  const live = editing?.kind === "live" ? editing : null;
+  // Chunk-3 review (c): the row being edited vanished after a refresh (removed elsewhere) — drop
+  // the editor during render (the prev-compare idiom, never an effect).
+  if (live && !liveInputs.some((i) => i.id === live.id)) setEditing(null);
 
-  // SKU form state
-  const [skuId, setSkuId] = useState("");
-  const [skuQty, setSkuQty] = useState("");
-  const [skuUnit, setSkuUnit] = useState("");
-  const [skuPortioned, setSkuPortioned] = useState(false);
+  const options = useMemo(() => buildIngredientOptions({ skus, items, products }), [skus, items, products]);
 
-  // Item form state
-  const [itemId, setItemId] = useState("");
-  const [itemQty, setItemQty] = useState("");
-  const [itemUnit, setItemUnit] = useState("");
+  const lineBody = (line: RecipeLineDraft) => ({
+    componentSkuId: line.componentSkuId,
+    componentItemId: line.componentItemId,
+    componentProductId: line.componentProductId,
+    quantity: line.quantity,
+    unit: line.unit,
+    eachContainerLabel: line.eachContainerLabel,
+    portioned: line.portioned,
+  });
+  const toDraftInput = (line: RecipeLineDraft): Omit<DraftInput, "_key"> =>
+    ({ kind: recipeLineKind(line), ...lineBody(line), componentName: line.componentName });
+  const draftLine = (di: DraftInput): RecipeLineDraft => ({
+    componentSkuId: di.componentSkuId,
+    componentItemId: di.componentItemId,
+    componentProductId: di.componentProductId,
+    quantity: di.quantity,
+    unit: di.unit,
+    eachContainerLabel: di.eachContainerLabel,
+    portioned: di.portioned,
+    componentName: di.componentName,
+  });
 
-  // Product form state (0179)
-  const [productId, setProductId] = useState("");
-  const [productQty, setProductQty] = useState("");
-  const [productUnit, setProductUnit] = useState("");
-  const [productPortioned, setProductPortioned] = useState(false);
-
-  const resetForms = () => {
-    setSkuId(""); setSkuQty(""); setSkuUnit(""); setSkuPortioned(false);
-    setItemId(""); setItemQty(""); setItemUnit("");
-    setProductId(""); setProductQty(""); setProductUnit(""); setProductPortioned(false);
+  const closeForms = () => {
+    setAdding(false);
+    setEditing(null);
     setErrorMsg(null);
   };
 
-  // ── Product line: MEASURE UNITS ONLY (deviation D3) ────────────────────────
-  // The unit control offers the measure registry and nothing else — never a SKU's
-  // pack or chain label, because "1 case" of one vendor's ham is not "1 case" of
-  // another's and a product has no honest way to choose. The server refuses such a
-  // line (`product_line_needs_measure_unit`); the UI expresses the same rule so an
-  // author cannot author the refusal in the first place.
-  const measureLabels = [...measures.keys()].sort((a, b) => a.localeCompare(b));
-  const selectedProduct = products.find((p) => p.id === productId) ?? null;
-  /** The measure-only basis a product line resolves through — the SAME pure
-   *  function the flatten uses, so this readout cannot disagree with the board. */
-  const productBasis: RecipeInputSku | null = selectedProduct
-    ? productInputBasis({ productId: selectedProduct.id, unitOz: selectedProduct.unitOz }, null)
-    : null;
-  const productOzReadout: string | null = (() => {
-    if (!productBasis || !productUnit || !productQty) return null;
-    const qty = Number(productQty);
-    if (!Number.isFinite(qty) || qty <= 0) return null;
-    const oz = ozForRecipeInput(qty, productUnit, productBasis, measures);
-    if (oz == null) return null;
-    return `≈ ${oz.toFixed(1)} oz`;
-  })();
-  /** A count-denominated line on a product nobody has weighed cannot resolve —
-   *  say so HERE rather than letting it read `unresolved` on the cost board. */
-  const productNeedsUnitOz =
-    selectedProduct != null &&
-    selectedProduct.unitOz == null &&
-    productUnit !== "" &&
-    measures.get(productUnit)?.dimension !== "weight";
-
-  const submitProductInput = async () => {
+  const submitAdd = async (line: RecipeLineDraft) => {
     if (busy) return;
     setErrorMsg(null);
-    const qty = Number(productQty);
-    if (!productId) { setErrorMsg(t(rk("recipes.error.invalid_component_product"))); return; }
-    if (!Number.isFinite(qty) || qty <= 0) { setErrorMsg(t(rk("recipes.error.invalid_quantity"))); return; }
-    if (!productUnit) { setErrorMsg(t(rk("recipes.error.product_line_needs_measure_unit"))); return; }
-    if ((await requestStepUp("B")) !== "ok") return;
-
     if (isDraft) {
-      onAddDraftInput({
-        kind: "product",
-        componentSkuId: null,
-        componentItemId: null,
-        componentProductId: productId,
-        componentName: selectedProduct?.name ?? productId,
-        quantity: qty,
-        unit: productUnit,
-        eachContainerLabel: null,
-        portioned: productPortioned,
-      });
-      resetForms(); setAddKind(null);
-    } else {
-      if (!recipeId) return;
-      setBusy(true);
-      const result = await postJson(`/api/admin/recipes/${recipeId}/inputs`, {
-        componentProductId: productId,
-        quantity: qty,
-        unit: productUnit,
-        portioned: productPortioned,
-      });
-      setBusy(false);
-      if (result.ok) { resetForms(); setAddKind(null); router.refresh(); }
-      else setErrorMsg(t(resolveErrorKey(result.code)));
+      // A draft line is local until the whole recipe saves — that save asks for the window.
+      onAddDraftInput(toDraftInput(line));
+      closeForms();
+      return;
+    }
+    if (!recipeId) return;
+    if ((await requestStepUp("E")) !== "ok") return;
+    setBusy(true);
+    const result = await send(`/api/admin/recipes/${recipeId}/inputs`, lineBody(line));
+    setBusy(false);
+    if (result.ok) { closeForms(); router.refresh(); }
+    else setErrorMsg(t(resolveErrorKey(result.code)));
+  };
+
+  const submitLiveEdit = async (start: LineEditStart, line: RecipeLineDraft) => {
+    if (busy || !recipeId) return;
+    setErrorMsg(null);
+    if ((await requestStepUp("E")) !== "ok") return;
+    setBusy(true);
+    const result = await send(
+      `/api/admin/recipes/${recipeId}/inputs/${start.id}`,
+      { line: lineBody(line), expected: start.expected },
+      "PATCH",
+    );
+    setBusy(false);
+    if (result.ok) { closeForms(); router.refresh(); }
+    else {
+      setErrorMsg(t(resolveErrorKey(result.code)));
+      // Someone else changed the line first: refresh so the next Edit captures the fresh row.
+      if (result.code === "line_changed") router.refresh();
     }
   };
 
-  // Derive unit options for the selected SKU
-  const selectedSku = skus.find((s) => s.id === skuId) ?? null;
-  const skuUnitOptions: string[] = selectedSku
-    ? [...new Set([
-        selectedSku.packFormat,
-        selectedSku.eachContainerLabel,
-        selectedSku.eachMeasure,
-      ].filter((v): v is string => v != null && v.length > 0))]
-    : [];
-
-  // Reset skuUnit when SKU changes
-  const handleSkuChange = (newId: string) => {
-    setSkuId(newId);
-    setSkuUnit(""); // reset unit when SKU changes
-  };
-
-  // oz readout for current SKU form
-  const skuOzReadout: string | null = (() => {
-    if (!selectedSku || !skuUnit || !skuQty) return null;
-    const qty = Number(skuQty);
-    if (!Number.isFinite(qty) || qty <= 0) return null;
-    const oz = ozForRecipeInput(qty, skuUnit, selectedSku, measures);
-    if (oz == null) return null;
-    return `≈ ${oz.toFixed(1)} oz`;
-  })();
-
-  const submitSkuInput = async () => {
-    if (busy) return;
-    setErrorMsg(null);
-    const qty = Number(skuQty);
-    if (!skuId) { setErrorMsg(t(rk("recipes.error.invalid_sku"))); return; }
-    if (!Number.isFinite(qty) || qty <= 0) { setErrorMsg(t(rk("recipes.error.invalid_quantity"))); return; }
-    if ((await requestStepUp("B")) !== "ok") return;
-
-    const skuObj = skus.find((s) => s.id === skuId);
-    const resolvedEachContainerLabel = skuObj?.eachContainerLabel ?? null;
-
-    if (isDraft) {
-      onAddDraftInput({
-        kind: "sku",
-        componentSkuId: skuId,
-        componentItemId: null,
-        componentProductId: null,
-        componentName: skuObj?.name ?? skuId,
-        quantity: qty,
-        unit: skuUnit || null,
-        eachContainerLabel: resolvedEachContainerLabel,
-        portioned: skuPortioned,
-      });
-      resetForms(); setAddKind(null);
-    } else {
-      if (!recipeId) return;
-      setBusy(true);
-      const result = await postJson(`/api/admin/recipes/${recipeId}/inputs`, {
-        componentSkuId: skuId,
-        quantity: qty,
-        unit: skuUnit.trim() || null,
-        eachContainerLabel: resolvedEachContainerLabel,
-        portioned: skuPortioned,
-      });
-      setBusy(false);
-      if (result.ok) { resetForms(); setAddKind(null); router.refresh(); }
-      else setErrorMsg(t(resolveErrorKey(result.code)));
-    }
-  };
-
-  const submitItemInput = async () => {
-    if (busy) return;
-    setErrorMsg(null);
-    const qty = Number(itemQty);
-    if (!itemId) { setErrorMsg(t(rk("recipes.error.invalid_component_item"))); return; }
-    if (!Number.isFinite(qty) || qty <= 0) { setErrorMsg(t(rk("recipes.error.invalid_quantity"))); return; }
-    if ((await requestStepUp("B")) !== "ok") return;
-
-    const itemObj = items.find((i) => i.id === itemId);
-
-    if (isDraft) {
-      onAddDraftInput({
-        kind: "item",
-        componentSkuId: null,
-        componentItemId: itemId,
-        componentProductId: null,
-        componentName: itemObj?.name ?? itemId,
-        quantity: qty,
-        unit: itemUnit.trim() || null,
-        eachContainerLabel: null,
-        portioned: false,
-      });
-      resetForms(); setAddKind(null);
-    } else {
-      if (!recipeId) return;
-      setBusy(true);
-      const result = await postJson(`/api/admin/recipes/${recipeId}/inputs`, {
-        componentItemId: itemId,
-        quantity: qty,
-        unit: itemUnit.trim() || null,
-      });
-      setBusy(false);
-      if (result.ok) { resetForms(); setAddKind(null); router.refresh(); }
-      else setErrorMsg(t(resolveErrorKey(result.code)));
-    }
+  const submitDraftEdit = (key: number, line: RecipeLineDraft) => {
+    onUpdateDraftInput(key, toDraftInput(line));
+    closeForms();
   };
 
   return (
@@ -874,28 +782,71 @@ function ConsumesSection({
     >
       <p className="mt-1 text-xs text-co-text-muted">{t(rk("recipes.builder.consumes_subtitle"))}</p>
 
-      {/* Live rows */}
+      {/* Saved rows — each one edits in place */}
       {liveInputs.length > 0 ? (
         <div className="mt-3 flex flex-col gap-2">
-          {liveInputs.map((inp) => (
-            <RecipeInputRow key={inp.id} input={inp} canEdit={canEdit} onRemove={onRemoveLive} />
-          ))}
+          {liveInputs.map((inp) =>
+            live && live.id === inp.id ? (
+              <RecipeLineEditor
+                key={inp.id}
+                title={t(rk("recipes.row.edit_title"))}
+                submitLabel={t(rk("recipes.row.save_changes"))}
+                options={options}
+                skus={skus}
+                products={products}
+                measures={measures}
+                activeMeasureLabels={activeMeasureLabels}
+                initial={live.initial}
+                busy={busy}
+                errorMsg={errorMsg}
+                onSubmit={(line) => void submitLiveEdit(live, line)}
+                onCancel={closeForms}
+              />
+            ) : (
+              <RecipeInputRow
+                key={inp.id}
+                input={inp}
+                canEdit={canEdit && !formInProgress}
+                onEdit={() => { setAdding(false); setErrorMsg(null); setEditing({ kind: "live", ...beginLineEdit(inp) }); }}
+                onRemove={onRemoveLive}
+              />
+            ),
+          )}
         </div>
       ) : null}
 
-      {/* Draft rows */}
+      {/* Draft rows — edit in place too (P2-7) */}
       {draftInputs.length > 0 ? (
         <div className={`${liveInputs.length > 0 ? "mt-2" : "mt-3"} flex flex-col gap-2`}>
-          {draftInputs.map((di) => (
-            <DraftInputRow
-              key={di._key}
-              di={di}
-              skus={skus}
-              products={products}
-              measures={measures}
-              onRemove={() => onRemoveDraftInput(di._key)}
-            />
-          ))}
+          {draftInputs.map((di) =>
+            editing?.kind === "draft" && editing.key === di._key ? (
+              <RecipeLineEditor
+                key={di._key}
+                title={t(rk("recipes.row.edit_title"))}
+                submitLabel={t(rk("recipes.row.save_changes"))}
+                options={options}
+                skus={skus}
+                products={products}
+                measures={measures}
+                activeMeasureLabels={activeMeasureLabels}
+                initial={draftLine(di)}
+                busy={busy}
+                errorMsg={errorMsg}
+                onSubmit={(line) => submitDraftEdit(di._key, line)}
+                onCancel={closeForms}
+              />
+            ) : (
+              <DraftInputRow
+                key={di._key}
+                di={di}
+                skus={skus}
+                products={products}
+                measures={measures}
+                onEdit={formInProgress ? undefined : () => { setAdding(false); setErrorMsg(null); setEditing({ kind: "draft", key: di._key }); }}
+                onRemove={() => onRemoveDraftInput(di._key)}
+              />
+            ),
+          )}
         </div>
       ) : null}
 
@@ -905,188 +856,30 @@ function ConsumesSection({
 
       {canEdit ? (
         <div className="mt-4">
-          {addKind === null ? (
-            <div className="flex gap-2 flex-wrap">
-              <button
-                type="button"
-                onClick={() => { resetForms(); setAddKind("sku"); }}
-                className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-border bg-co-surface px-3 text-xs font-bold text-co-text hover:border-co-text"
-              >
-                {t(rk("recipes.builder.add_sku_input"))}
-              </button>
-              <button
-                type="button"
-                onClick={() => { resetForms(); setAddKind("item"); }}
-                className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-border bg-co-surface px-3 text-xs font-bold text-co-text hover:border-co-text"
-              >
-                {t(rk("recipes.builder.add_item_input"))}
-              </button>
-              {/* Product pin (0179) — only offered where products exist, so a system
-                  with none never sees a third button it cannot use. */}
-              {products.length > 0 ? (
-                <button
-                  type="button"
-                  onClick={() => { resetForms(); setAddKind("product"); }}
-                  className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-border bg-co-surface px-3 text-xs font-bold text-co-text hover:border-co-text"
-                >
-                  {t(rk("recipes.builder.add_product_input"))}
-                </button>
-              ) : null}
-            </div>
-          ) : addKind === "product" ? (
-            <div className="rounded-lg border-2 border-co-gold-deep bg-co-surface p-3">
-              <h3 className="text-sm font-extrabold text-co-text">{t(rk("recipes.builder.add_product_input"))}</h3>
-              <p className="mt-1 text-xs text-co-text-muted">{t(rk("recipes.input.product_hint"))}</p>
-              <div className="mt-3 flex flex-col gap-3">
-                <label className="block">
-                  <span className="text-sm font-bold text-co-text">{t(rk("recipes.input.pick_product"))}</span>
-                  <select className={fieldCls} value={productId} disabled={busy}
-                    onChange={(e) => { setProductId(e.target.value); setProductUnit(""); }}>
-                    <option value="">{t(rk("recipes.input.pick_product"))}</option>
-                    {products.map((p) => (<option key={p.id} value={p.id}>{p.name}</option>))}
-                  </select>
-                </label>
-                <label className="block">
-                  <span className="text-sm font-bold text-co-text">{t(rk("recipes.input.quantity"))}</span>
-                  <input className={fieldCls} type="number" min={0.001} step="any" inputMode="decimal"
-                    value={productQty} disabled={busy} onChange={(e) => setProductQty(e.target.value)} />
-                </label>
-                {/* MEASURE UNITS ONLY — never a vendor's pack label (D3). */}
-                <label className="block">
-                  <span className="text-sm font-bold text-co-text">{t(rk("recipes.input.unit"))}</span>
-                  <select className={fieldCls} value={productUnit} disabled={busy || !productId}
-                    onChange={(e) => setProductUnit(e.target.value)}>
-                    <option value="">{t(rk("recipes.input.unit_placeholder"))}</option>
-                    {measureLabels.map((u) => (<option key={u} value={u}>{u}</option>))}
-                  </select>
-                </label>
-                {productOzReadout ? (
-                  <p className="text-xs text-co-text-muted">
-                    {productQty} {productUnit} {productOzReadout}
-                  </p>
-                ) : null}
-                {productNeedsUnitOz ? (
-                  <p className="text-xs text-co-warning-text">{t(rk("recipes.input.product_needs_unit_oz"))}</p>
-                ) : null}
-                <label className="flex min-h-[44px] items-center gap-2">
-                  <input
-                    type="checkbox"
-                    checked={productPortioned}
-                    disabled={busy}
-                    onChange={(e) => setProductPortioned(e.target.checked)}
-                    className="h-5 w-5 rounded border-2 border-co-border"
-                  />
-                  <span className="text-sm font-bold text-co-text">{t(rk("recipes.input.portioned"))}</span>
-                </label>
-                {errorMsg ? <p className="text-sm text-co-cta-text">{errorMsg}</p> : null}
-                <div className="flex justify-end gap-2">
-                  <button type="button" disabled={busy} onClick={() => { resetForms(); setAddKind(null); }}
-                    className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-border bg-co-surface px-4 text-sm font-bold text-co-text disabled:opacity-50">
-                    {t(rk("recipes.builder.cancel"))}
-                  </button>
-                  <button type="button" disabled={busy || !productId || !productQty || !productUnit} onClick={() => void submitProductInput()}
-                    className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-gold-deep bg-co-gold px-4 text-sm font-bold uppercase tracking-[0.1em] text-co-text disabled:opacity-50">
-                    {t(rk("recipes.builder.save"))}
-                  </button>
-                </div>
-              </div>
-            </div>
-          ) : addKind === "sku" ? (
-            <div className="rounded-lg border-2 border-co-gold-deep bg-co-surface p-3">
-              <h3 className="text-sm font-extrabold text-co-text">{t(rk("recipes.builder.add_sku_input"))}</h3>
-              <div className="mt-3 flex flex-col gap-3">
-                <label className="block">
-                  <span className="text-sm font-bold text-co-text">{t(rk("recipes.input.pick_sku"))}</span>
-                  <select className={fieldCls} value={skuId} disabled={busy} onChange={(e) => handleSkuChange(e.target.value)}>
-                    <option value="">{t(rk("recipes.input.pick_sku"))}</option>
-                    {skus.map((s) => (<option key={s.id} value={s.id}>{s.name}</option>))}
-                  </select>
-                </label>
-                <label className="block">
-                  <span className="text-sm font-bold text-co-text">{t(rk("recipes.input.quantity"))}</span>
-                  <input className={fieldCls} type="number" min={0.001} step="any" inputMode="decimal"
-                    value={skuQty} disabled={busy} onChange={(e) => setSkuQty(e.target.value)} />
-                </label>
-                {/* SKU-derived unit picker */}
-                <label className="block">
-                  <span className="text-sm font-bold text-co-text">{t(rk("recipes.input.unit"))}</span>
-                  {skuUnitOptions.length > 0 ? (
-                    <select className={fieldCls} value={skuUnit} disabled={busy || !skuId}
-                      onChange={(e) => setSkuUnit(e.target.value)}>
-                      <option value="">{t(rk("recipes.input.unit_placeholder"))}</option>
-                      {skuUnitOptions.map((u) => (<option key={u} value={u}>{u}</option>))}
-                    </select>
-                  ) : (
-                    <input className={fieldCls} type="text" value={skuUnit} disabled={busy}
-                      onChange={(e) => setSkuUnit(e.target.value)}
-                      placeholder={t(rk("recipes.input.unit_placeholder"))} />
-                  )}
-                </label>
-                {/* Live oz readout for form */}
-                {skuOzReadout ? (
-                  <p className="text-xs text-co-text-muted">
-                    {skuQty} {skuUnit} {skuOzReadout}
-                  </p>
-                ) : null}
-                <label className="flex min-h-[44px] items-center gap-2">
-                  <input
-                    type="checkbox"
-                    checked={skuPortioned}
-                    disabled={busy}
-                    onChange={(e) => setSkuPortioned(e.target.checked)}
-                    className="h-5 w-5 rounded border-2 border-co-border"
-                  />
-                  <span className="text-sm font-bold text-co-text">{t(rk("recipes.input.portioned"))}</span>
-                </label>
-                {errorMsg ? <p className="text-sm text-co-cta-text">{errorMsg}</p> : null}
-                <div className="flex justify-end gap-2">
-                  <button type="button" disabled={busy} onClick={() => { resetForms(); setAddKind(null); }}
-                    className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-border bg-co-surface px-4 text-sm font-bold text-co-text disabled:opacity-50">
-                    {t(rk("recipes.builder.cancel"))}
-                  </button>
-                  <button type="button" disabled={busy || !skuId || !skuQty} onClick={() => void submitSkuInput()}
-                    className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-gold-deep bg-co-gold px-4 text-sm font-bold uppercase tracking-[0.1em] text-co-text disabled:opacity-50">
-                    {t(rk("recipes.builder.save"))}
-                  </button>
-                </div>
-              </div>
-            </div>
-          ) : (
-            <div className="rounded-lg border-2 border-co-gold-deep bg-co-surface p-3">
-              <h3 className="text-sm font-extrabold text-co-text">{t(rk("recipes.builder.add_item_input"))}</h3>
-              <div className="mt-3 flex flex-col gap-3">
-                <label className="block">
-                  <span className="text-sm font-bold text-co-text">{t(rk("recipes.input.pick_item"))}</span>
-                  <select className={fieldCls} value={itemId} disabled={busy} onChange={(e) => setItemId(e.target.value)}>
-                    <option value="">{t(rk("recipes.input.pick_item"))}</option>
-                    {items.map((i) => (<option key={i.id} value={i.id}>{i.name}</option>))}
-                  </select>
-                </label>
-                <label className="block">
-                  <span className="text-sm font-bold text-co-text">{t(rk("recipes.input.quantity"))}</span>
-                  <input className={fieldCls} type="number" min={0.001} step="any" inputMode="decimal"
-                    value={itemQty} disabled={busy} onChange={(e) => setItemQty(e.target.value)} />
-                </label>
-                <label className="block">
-                  <span className="text-sm font-bold text-co-text">{t(rk("recipes.input.unit"))}</span>
-                  <input className={fieldCls} type="text" value={itemUnit} disabled={busy}
-                    onChange={(e) => setItemUnit(e.target.value)}
-                    placeholder={t(rk("recipes.input.unit_placeholder"))} />
-                </label>
-                {errorMsg ? <p className="text-sm text-co-cta-text">{errorMsg}</p> : null}
-                <div className="flex justify-end gap-2">
-                  <button type="button" disabled={busy} onClick={() => { resetForms(); setAddKind(null); }}
-                    className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-border bg-co-surface px-4 text-sm font-bold text-co-text disabled:opacity-50">
-                    {t(rk("recipes.builder.cancel"))}
-                  </button>
-                  <button type="button" disabled={busy || !itemId || !itemQty} onClick={() => void submitItemInput()}
-                    className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-gold-deep bg-co-gold px-4 text-sm font-bold uppercase tracking-[0.1em] text-co-text disabled:opacity-50">
-                    {t(rk("recipes.builder.save"))}
-                  </button>
-                </div>
-              </div>
-            </div>
-          )}
+          {adding ? (
+            <RecipeLineEditor
+              title={t(rk("recipes.builder.add_ingredient_title"))}
+              submitLabel={t(rk("recipes.builder.save"))}
+              options={options}
+              skus={skus}
+              products={products}
+              measures={measures}
+              activeMeasureLabels={activeMeasureLabels}
+              initial={null}
+              busy={busy}
+              errorMsg={errorMsg}
+              onSubmit={(line) => void submitAdd(line)}
+              onCancel={closeForms}
+            />
+          ) : editing === null ? (
+            <button
+              type="button"
+              onClick={() => { setErrorMsg(null); setAdding(true); }}
+              className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-border bg-co-surface px-3 text-xs font-bold text-co-text hover:border-co-text"
+            >
+              {t(rk("recipes.builder.add_ingredient"))}
+            </button>
+          ) : null}
         </div>
       ) : null}
     </CollapsibleSection>
@@ -1094,18 +887,21 @@ function ConsumesSection({
   );
 }
 
-// ── DraftInputRow — display a pending draft input with remove ────────────────
+// ── DraftInputRow — a pending draft input with Edit and Remove ───────────────
 function DraftInputRow({
   di,
   skus,
   products,
   measures,
+  onEdit,
   onRemove,
 }: {
   di: DraftInput;
   skus: RecipeBuilderSku[];
   products: RecipeBuilderProduct[];
   measures: Map<string, MeasureUnitFactor>;
+  /** Open the in-place editor; absent while another line form is open. */
+  onEdit?: () => void;
   onRemove: () => void;
 }) {
   const { t } = useTranslation();
@@ -1154,13 +950,25 @@ function DraftInputRow({
           <p className="text-sm font-bold text-co-text">{label}</p>
           {meta ? <p className="text-xs text-co-text-muted">{meta}</p> : null}
         </div>
-        <button
-          type="button"
-          onClick={() => setConfirming((v) => !v)}
-          className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-border bg-co-surface px-3 text-xs font-bold text-co-cta-text hover:border-co-cta-text"
-        >
-          {t(rk("recipes.row.remove"))}
-        </button>
+        <div className="flex shrink-0 gap-2">
+          {onEdit ? (
+            <button
+              type="button"
+              onClick={onEdit}
+              aria-label={t(rk("recipes.row.edit_aria"), { name: di.componentName })}
+              className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-border bg-co-surface px-3 text-xs font-bold text-co-text hover:border-co-text"
+            >
+              {t(rk("recipes.row.edit"))}
+            </button>
+          ) : null}
+          <button
+            type="button"
+            onClick={() => setConfirming((v) => !v)}
+            className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-border bg-co-surface px-3 text-xs font-bold text-co-cta-text hover:border-co-cta-text"
+          >
+            {t(rk("recipes.row.remove"))}
+          </button>
+        </div>
       </div>
       {confirming ? (
         <div className="mt-3 rounded-lg border-2 border-co-cta-text bg-co-cta/10 p-3">
@@ -1216,6 +1024,7 @@ function ProducesSection({
   const { t } = useTranslation();
   const router = useRouter();
   const { requestStepUp } = useStepUp();
+  const send = useStepUpPost();
 
   const [addOpen, setAddOpen] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -1250,7 +1059,7 @@ function ProducesSection({
     const yld = Number(outputYield);
     if (!outputItemId) { setErrorMsg(t(rk("recipes.error.invalid_output_item"))); return; }
     if (!Number.isFinite(yld) || yld <= 0) { setErrorMsg(t(rk("recipes.error.invalid_yield"))); return; }
-    if ((await requestStepUp("B")) !== "ok") return;
+    if ((await requestStepUp("E")) !== "ok") return;
 
     const itemObj = items.find((i) => i.id === outputItemId);
 
@@ -1267,7 +1076,7 @@ function ProducesSection({
     } else {
       if (!recipeId) return;
       setBusy(true);
-      const result = await postJson(`/api/admin/recipes/${recipeId}/outputs`, {
+      const result = await send(`/api/admin/recipes/${recipeId}/outputs`, {
         outputItemId,
         yield: yld,
         outputContainerLabel: outputContainerLabel || null,
@@ -1285,7 +1094,7 @@ function ProducesSection({
     if (!Number.isFinite(yld) || yld <= 0) { setErrorMsg(t(rk("recipes.error.invalid_yield"))); return; }
     const name = menuItemName.trim();
     if (!name) { setErrorMsg(t(rk("recipes.error.invalid_name"))); return; }
-    if ((await requestStepUp("B")) !== "ok") return;
+    if ((await requestStepUp("E")) !== "ok") return;
 
     if (isDraft) {
       onAddDraftOutput({
@@ -1301,14 +1110,14 @@ function ProducesSection({
       if (!recipeId) return;
       setBusy(true);
       const price = menuItemPrice.trim() ? Number(menuItemPrice) : null;
-      const miResult = await postJson("/api/admin/menu-items", {
+      const miResult = await send("/api/admin/menu-items", {
         name,
         menuPrice: price,
       });
       if (!miResult.ok) { setBusy(false); setErrorMsg(t(resolveErrorKey(miResult.code))); return; }
       const menuId = miResult.data["id"] as string | null;
       if (!menuId) { setBusy(false); setErrorMsg(t(rk("recipes.error.invalid_output_menu_item"))); return; }
-      const result = await postJson(`/api/admin/recipes/${recipeId}/outputs`, {
+      const result = await send(`/api/admin/recipes/${recipeId}/outputs`, {
         outputMenuItemId: menuId,
         yield: yld,
       });

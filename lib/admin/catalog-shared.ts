@@ -197,6 +197,27 @@ export interface StarterChainLevel {
   containsMeasureUnit: string | null;
 }
 
+/**
+ * Does this chain need the SKU's avg oz per each? (catalog Phase 1 — the avg-weight dead
+ * end.) True exactly when the server's class-aware leaf law (lib/admin/pack-chain.ts) would
+ * throw `leaf_needs_avg` for a missing avg: a RAW SKU whose chain ends in a REGISTERED measure
+ * that is not a weight (count or volume). Non-raw classes are checked for structure only, and
+ * an unregistered unit is the server's `unknown_measure` — a different errand.
+ */
+export function chainNeedsAvgOzPerEach(
+  levels: ReadonlyArray<{ containsMeasureUnit: string | null }>,
+  dimensionByLabel: ReadonlyMap<string, string>,
+  skuClass: SkuClass,
+): boolean {
+  if (skuClass !== "raw") return false;
+  return levels.some((l) => {
+    const unit = l.containsMeasureUnit?.trim();
+    if (!unit) return false;
+    const dimension = dimensionByLabel.get(unit);
+    return dimension !== undefined && dimension !== "weight";
+  });
+}
+
 /** The quick-pack fields an unchained SKU can fill instead of building a chain. */
 export interface QuickPackInput {
   /** How many of the each/inner container are in one pack (e.g. 6). null/1 → single-level. */
@@ -499,8 +520,8 @@ export interface CatalogEdges {
   producedBy: CatalogEdgeRef[];
   /** menu_items: the consumer build recipe → /admin/recipes/[id]. */
   build: CatalogEdgeRef | null;
-  /** items: leaf SKU names (display-capped). */
-  skuNames: string[];
+  /** items: leaf SKUs (display-capped) — each links to its own row in /admin/skus (catalog Phase 1). */
+  skus: CatalogEdgeRef[];
   /** menu_items: first-level component item names. */
   componentItems: CatalogEdgeRef[];
   /** items: menu_items whose recipe consumes this item. */

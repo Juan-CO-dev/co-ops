@@ -30,6 +30,8 @@ const KNOWN_ERROR_CODES = new Set([
   "invalid_payload",
   "step_up_required",
   "step_up_stale",
+  "step_up_grant_required",
+  "avg_required_by_chain",
   "invalid_price",
   "invalid_date",
   "invalid_sku",

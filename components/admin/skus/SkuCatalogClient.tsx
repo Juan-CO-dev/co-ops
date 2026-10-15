@@ -7,23 +7,26 @@
  * assigned to a vendor) + a per-SKU Edit (incl. reassigning the vendor — this
  * is how the 24 Baldor placeholders get moved) + deactivate.
  *
- * Authority (matches the routes): create = Tier B; edit + deactivate = Tier A.
+ * Authority (matches the routes): create + edit + reactivate = Tier E (the catalog edit
+ * window); deactivate = a one-shot grant (a password every time).
  * Filtering is client-side over the full set the server loaded.
  */
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 
 import { useTranslation } from "@/lib/i18n/provider";
 import type { TranslationKey } from "@/lib/i18n/types";
 import { useStepUp } from "@/components/admin/StepUpProvider";
+import { useStepUpPost } from "@/components/admin/useStepUpPost";
 import type { RegistryOption, MeasureUnitOption, SkuView } from "@/lib/admin/skus";
-import { postJson, resolveErrorKey, formatSkuPack } from "./shared";
+import { resolveErrorKey, formatSkuPack } from "./shared";
 import type { SkuReceivingLedger, SkuConsumption } from "@/lib/admin/cost";
 import type { Readiness } from "@/lib/readiness";
 import type { PackChainLevel } from "@/lib/pack-chain-shared";
 import type { StarterChainLevel, SkuNameCollisionCandidate, SkuClass } from "@/lib/admin/catalog-shared";
 import { SKU_CLASSES } from "@/lib/admin/catalog-shared";
+import { SKU_FILTER_ALL, skuFocusPatch } from "@/lib/admin/sku-focus-shared";
 import { StatusBadge, ReadinessReasons } from "@/components/admin/StatusBadge";
 import { SummaryRow } from "@/components/ui/SummaryRow";
 import { SkuCostPanel, type SkuCostInfo } from "./SkuCostPanel";
@@ -39,7 +42,7 @@ import type { SkuDataShop } from "@/lib/sku-data-readiness";
 import { SkuDataChips, SkuDataDrawer, SkuDataHeader } from "./SkuDataLane";
 
 // Vendor-select sentinels distinct from any real vendor id.
-const FILTER_ALL = "__all__";
+const FILTER_ALL = SKU_FILTER_ALL;
 const FILTER_MANUAL = "__manual__";
 
 const tk = (k: string): TranslationKey => k as TranslationKey;
@@ -70,6 +73,8 @@ export function SkuCatalogClient({
   parsFieldsReady,
   actorLevel,
   canManage,
+  focusSkuId = null,
+  initialVendorFilter = null,
 }: {
   skus: SkuView[];
   vendors: SkuFormVendorOption[];
@@ -99,12 +104,21 @@ export function SkuCatalogClient({
   parsFieldsReady: boolean;
   actorLevel: number;
   canManage: boolean; // GM+
+  /** ?sku=<id> deep link (catalog Phase 1): the row opens, scrolls into view and is ringed. */
+  focusSkuId?: string | null;
+  /** ?vendor=<id> deep link: preselect the vendor filter (a focused SKU wins). */
+  initialVendorFilter?: string | null;
 }) {
   const { t } = useTranslation();
   const router = useRouter();
-  const { requestStepUp } = useStepUp();
+  const { requestStepUp, requestStepUpGrant } = useStepUp();
+  const send = useStepUpPost();
 
-  const [vendorFilter, setVendorFilter] = useState<string>(FILTER_ALL);
+  // The deep link's FIRST patch seeds the initial state; later param changes re-patch below.
+  const [initialPatch] = useState(() =>
+    skuFocusPatch({ focusSkuId: null, vendorParam: null }, { focusSkuId, vendorParam: initialVendorFilter }, new Set(vendors.map((v) => v.id))),
+  );
+  const [vendorFilter, setVendorFilter] = useState<string>(initialPatch?.vendorFilter ?? FILTER_ALL);
   const [lens, setLens] = useState<Lens>("all");
   const [query, setQuery] = useState("");
   const [needsErrand, setNeedsErrand] = useState(false);
@@ -117,7 +131,32 @@ export function SkuCatalogClient({
   // open. Caller-owned Set (mirrors CatalogClient) so several can be open at once
   // and collapse preserves scroll. Drawer children (the SkuCostPanel) lazy-render
   // only when expanded → 0 cost panels on first paint (the ×163 fix).
-  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [expanded, setExpanded] = useState<Set<string>>(() => new Set(initialPatch?.expand ? [initialPatch.expand] : []));
+
+  // P2-6: a client-side navigation ?sku=A → ?sku=B keeps this component mounted, so the params
+  // are re-applied with the during-render prev-compare pattern (AGENTS.md), never an effect.
+  const vendorIds = useMemo(() => new Set(vendors.map((v) => v.id)), [vendors]);
+  const [seenParams, setSeenParams] = useState({ focusSkuId, vendorParam: initialVendorFilter });
+  if (seenParams.focusSkuId !== focusSkuId || seenParams.vendorParam !== initialVendorFilter) {
+    const patch = skuFocusPatch(seenParams, { focusSkuId, vendorParam: initialVendorFilter }, vendorIds);
+    setSeenParams({ focusSkuId, vendorParam: initialVendorFilter });
+    if (patch) {
+      if (patch.vendorFilter !== null) setVendorFilter(patch.vendorFilter);
+      if (patch.resetOtherFilters) {
+        setLens("all");
+        setQuery("");
+        setNeedsErrand(false);
+      }
+      const target = patch.expand;
+      if (target) setExpanded((prev) => new Set(prev).add(target));
+    }
+  }
+
+  // The hash already scrolls on a full load; this covers a client-side navigation (A → B) too.
+  useEffect(() => {
+    if (!focusSkuId) return;
+    document.getElementById(focusSkuId)?.scrollIntoView({ block: "start" });
+  }, [focusSkuId]);
   const toggleExpand = (id: string) =>
     setExpanded((prev) => {
       const next = new Set(prev);
@@ -189,10 +228,10 @@ export function SkuCatalogClient({
   const create = async (values: SkuFormValues, chain: StarterChainLevel[] | null) => {
     if (busy) return;
     setErrorMsg(null);
-    if ((await requestStepUp("B")) !== "ok") return;
+    if ((await requestStepUp("E")) !== "ok") return;
     setBusy(true);
     // Atomic add: identity + optional starter/edited chain in ONE request.
-    const result = await postJson("/api/admin/skus", { ...values, chain });
+    const result = await send("/api/admin/skus", { ...values, chain });
     setBusy(false);
     if (result.ok) {
       setAdding(false);
@@ -203,9 +242,9 @@ export function SkuCatalogClient({
   const saveEdit = async (id: string, values: SkuFormValues) => {
     if (busy) return;
     setErrorMsg(null);
-    if ((await requestStepUp("A")) !== "ok") return;
+    if ((await requestStepUp("E")) !== "ok") return;
     setBusy(true);
-    const result = await postJson(`/api/admin/skus/${id}`, values, "PATCH");
+    const result = await send(`/api/admin/skus/${id}`, values, "PATCH");
     setBusy(false);
     if (result.ok) {
       setEditingId(null);
@@ -213,21 +252,21 @@ export function SkuCatalogClient({
     } else setErrorMsg(t(resolveErrorKey(result.code)));
   };
 
-  // Edit-mode chain save (the SKU exists → the pack-chain route). Its own Tier-A
+  // Edit-mode chain save (the SKU exists → the pack-chain route). Its own Tier E
   // step-up (mirrors the retired SkuPackChainPanel). Returns ok so the builder
   // can close the editor + refresh the seeded chain. When the wizard hands an
   // `avgOzPerEach` (its raw count/volume leaf), PATCH it onto the SKU FIRST so
   // the chain's count leaf is oz-resolvable at validation (both writes ride the
-  // one Tier-A step-up). The chain editor passes no avg → skips the PATCH.
+  // one Tier E step-up). The chain editor passes no avg → skips the PATCH.
   const saveChain = async (
     id: string,
     levels: StarterChainLevel[],
     avgOzPerEach?: number | null,
   ): Promise<boolean> => {
     setErrorMsg(null);
-    if ((await requestStepUp("A")) !== "ok") return false;
+    if ((await requestStepUp("E")) !== "ok") return false;
     if (avgOzPerEach !== undefined && avgOzPerEach !== null) {
-      const avgResult = await postJson(`/api/admin/skus/${id}`, { avgOzPerEach }, "PATCH");
+      const avgResult = await send(`/api/admin/skus/${id}`, { avgOzPerEach }, "PATCH");
       if (!avgResult.ok) {
         setErrorMsg(t(resolveErrorKey(avgResult.code)));
         return false;
@@ -239,7 +278,7 @@ export function SkuCatalogClient({
       containsIndex: l.containsIndex,
       containsMeasureUnit: l.containsMeasureUnit,
     }));
-    const result = await postJson(`/api/admin/skus/${id}/pack-chain`, { levels: payload }, "POST");
+    const result = await send(`/api/admin/skus/${id}/pack-chain`, { levels: payload }, "POST");
     if (result.ok) {
       router.refresh();
       return true;
@@ -251,9 +290,14 @@ export function SkuCatalogClient({
   const toggleActive = async (sku: SkuView) => {
     if (busy) return;
     setErrorMsg(null);
-    if ((await requestStepUp("A")) !== "ok") return;
+    // Deactivating a SKU is destructive: a one-shot password for THIS SKU, every time.
+    // Reactivating is an ordinary edit inside the 15-minute window.
+    const gate = sku.active
+      ? await requestStepUpGrant({ action: "sku.deactivate", targetId: sku.id })
+      : await requestStepUp("E");
+    if (gate !== "ok") return;
     setBusy(true);
-    const result = await postJson(`/api/admin/skus/${sku.id}`, { active: !sku.active }, "PATCH");
+    const result = await send(`/api/admin/skus/${sku.id}`, { active: !sku.active }, "PATCH");
     setBusy(false);
     if (result.ok) {
       setConfirmDeactivateId(null);
@@ -271,7 +315,7 @@ export function SkuCatalogClient({
         // Editing rows keep the card chrome around SkuBuilder; non-editing
         // rows let SummaryRow be the card (avoids a nested double-card).
         (editingId === s.id ? "rounded-lg border-2 border-co-border bg-co-surface p-3 " : "") +
-        "scroll-mt-24 " + (s.active ? "" : "opacity-60")
+        "scroll-mt-24 " + (s.active ? "" : "opacity-60") + (s.id === focusSkuId ? " rounded-lg ring-4 ring-co-gold/60" : "")
       }
     >
       {editingId === s.id ? (

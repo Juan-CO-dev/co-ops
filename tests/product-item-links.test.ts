@@ -40,7 +40,7 @@ describe("product/prep-item relationships", () => {
     const result = mapProductItemLinks(fixture());
     const bacon = result.madeFromByItem["prep-bacon"]![0]!;
     expect(bacon).toMatchObject({ kind: "sku", id: "bacon", vendorName: "Supplier" });
-    expect(registryLinkHref(bacon)).toBe("/admin/skus#bacon");
+    expect(registryLinkHref(bacon)).toBe("/admin/skus?sku=bacon#bacon");
     expect(result.usedInByProduct.bacon).toBeUndefined();
   });
   it.each(["recipe", "product", "sku", "item"])("excludes inactive %s relationships", kind => {

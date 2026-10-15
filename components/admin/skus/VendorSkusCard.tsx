@@ -14,8 +14,8 @@
  * via chainsBySku / chainUnverifiedBySku, and the edit-mode chain save mirrors the
  * catalog's avg-PATCH-before-chain-POST flow.
  *
- * Authority (matches the routes): create = Tier B; edit + deactivate = Tier A;
- * chain save = Tier A. Below GM+ (≥7) the write affordances are hidden.
+ * Authority (matches the routes): create + edit + reactivate + chain save = Tier E (the
+ * catalog edit window); deactivate = a one-shot grant (a password every time). Below GM+ (≥7) the write affordances are hidden.
  */
 
 import { useState } from "react";
@@ -23,8 +23,9 @@ import { useRouter } from "next/navigation";
 
 import { useTranslation } from "@/lib/i18n/provider";
 import { useStepUp } from "@/components/admin/StepUpProvider";
+import { useStepUpPost } from "@/components/admin/useStepUpPost";
 import type { RegistryOption, MeasureUnitOption, SkuView } from "@/lib/admin/skus";
-import { postJson, resolveErrorKey, formatSkuPack } from "./shared";
+import { resolveErrorKey, formatSkuPack } from "./shared";
 import type { SkuReceivingLedger, SkuConsumption } from "@/lib/admin/cost";
 import type { Readiness } from "@/lib/readiness";
 import type { PackChainLevel } from "@/lib/pack-chain-shared";
@@ -81,7 +82,8 @@ export function VendorSkusCard({
 }) {
   const { t } = useTranslation();
   const router = useRouter();
-  const { requestStepUp } = useStepUp();
+  const { requestStepUp, requestStepUpGrant } = useStepUp();
+  const send = useStepUpPost();
 
   const [adding, setAdding] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -100,10 +102,10 @@ export function VendorSkusCard({
   const create = async (values: SkuFormValues, chain: StarterChainLevel[] | null) => {
     if (busy) return;
     setErrorMsg(null);
-    if ((await requestStepUp("B")) !== "ok") return;
+    if ((await requestStepUp("E")) !== "ok") return;
     setBusy(true);
     // Atomic add: identity + optional starter chain in ONE request (matches catalog).
-    const result = await postJson("/api/admin/skus", { ...values, vendorId, chain });
+    const result = await send("/api/admin/skus", { ...values, vendorId, chain });
     setBusy(false);
     if (result.ok) {
       setAdding(false);
@@ -114,9 +116,9 @@ export function VendorSkusCard({
   const saveEdit = async (id: string, values: SkuFormValues) => {
     if (busy) return;
     setErrorMsg(null);
-    if ((await requestStepUp("A")) !== "ok") return;
+    if ((await requestStepUp("E")) !== "ok") return;
     setBusy(true);
-    const result = await postJson(`/api/admin/skus/${id}`, values, "PATCH");
+    const result = await send(`/api/admin/skus/${id}`, values, "PATCH");
     setBusy(false);
     if (result.ok) {
       setEditingId(null);
@@ -124,19 +126,19 @@ export function VendorSkusCard({
     } else setErrorMsg(t(resolveErrorKey(result.code)));
   };
 
-  // Edit-mode chain save (the SKU exists → the pack-chain route). Its own Tier-A
+  // Edit-mode chain save (the SKU exists → the pack-chain route). Its own Tier E
   // step-up (mirrors SkuCatalogClient). When the wizard hands an `avgOzPerEach`
   // (its raw count/volume leaf), PATCH it onto the SKU FIRST so the chain's count
-  // leaf is oz-resolvable at validation (both writes ride the one Tier-A step-up).
+  // leaf is oz-resolvable at validation (both writes ride the one Tier E step-up).
   const saveChain = async (
     id: string,
     levels: StarterChainLevel[],
     avgOzPerEach?: number | null,
   ): Promise<boolean> => {
     setErrorMsg(null);
-    if ((await requestStepUp("A")) !== "ok") return false;
+    if ((await requestStepUp("E")) !== "ok") return false;
     if (avgOzPerEach !== undefined && avgOzPerEach !== null) {
-      const avgResult = await postJson(`/api/admin/skus/${id}`, { avgOzPerEach }, "PATCH");
+      const avgResult = await send(`/api/admin/skus/${id}`, { avgOzPerEach }, "PATCH");
       if (!avgResult.ok) {
         setErrorMsg(t(resolveErrorKey(avgResult.code)));
         return false;
@@ -148,7 +150,7 @@ export function VendorSkusCard({
       containsIndex: l.containsIndex,
       containsMeasureUnit: l.containsMeasureUnit,
     }));
-    const result = await postJson(`/api/admin/skus/${id}/pack-chain`, { levels: payload }, "POST");
+    const result = await send(`/api/admin/skus/${id}/pack-chain`, { levels: payload }, "POST");
     if (result.ok) {
       router.refresh();
       return true;
@@ -160,9 +162,14 @@ export function VendorSkusCard({
   const toggleActive = async (sku: SkuView) => {
     if (busy) return;
     setErrorMsg(null);
-    if ((await requestStepUp("A")) !== "ok") return;
+    // Deactivating a SKU is destructive: a one-shot password for THIS SKU, every time.
+    // Reactivating is an ordinary edit inside the 15-minute window.
+    const gate = sku.active
+      ? await requestStepUpGrant({ action: "sku.deactivate", targetId: sku.id })
+      : await requestStepUp("E");
+    if (gate !== "ok") return;
     setBusy(true);
-    const result = await postJson(`/api/admin/skus/${sku.id}`, { active: !sku.active }, "PATCH");
+    const result = await send(`/api/admin/skus/${sku.id}`, { active: !sku.active }, "PATCH");
     setBusy(false);
     if (result.ok) {
       setConfirmDeactivateId(null);

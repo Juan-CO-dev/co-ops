@@ -48,12 +48,16 @@ import { AlertPill } from "@/components/ui/AlertPill";
 import { CollapsibleSection } from "@/components/ui/CollapsibleSection";
 import { EmptyState } from "@/components/EmptyState";
 import { SummaryRow } from "@/components/ui/SummaryRow";
+import { prepItemHref, productHref, skuCatalogHref } from "@/lib/admin/product-item-links-shared";
 import {
   FOOD_COST_RED_THRESHOLD_PCT,
   type MenuCostRow,
   type MenuCostStatus,
   type MenuCostTotals,
 } from "@/lib/menu-costing-shared";
+
+/** A name the drawer blames is a link to the place that fixes it (catalog Phase 1). 44px tap floor. */
+const drawerLinkCls = "inline-flex min-h-[44px] items-center underline decoration-2 underline-offset-2 hover:text-co-gold-text";
 
 /** Group render order — mirrors the sort ranking in menu-costing-shared. */
 const GROUPS: ReadonlyArray<{ status: MenuCostStatus; titleKey: TranslationKey }> = [
@@ -349,6 +353,7 @@ function RowDrawer({
     labelKey: TranslationKey,
     names: Record<string, { en: string; es: string | null }>,
     unknownKey: TranslationKey,
+    hrefFor: (id: string) => string,
   ) => (
     <div>
       <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-co-text-dim">
@@ -359,7 +364,9 @@ function RowDrawer({
           const name = names[id];
           return (
             <li key={id} className="text-xs font-medium text-co-text">
-              {(language === "es" ? name?.es ?? name?.en : name?.en) ?? t(unknownKey)}
+              <a href={hrefFor(id)} className={drawerLinkCls}>
+                {(language === "es" ? name?.es ?? name?.en : name?.en) ?? t(unknownKey)}
+              </a>
             </li>
           );
         })}
@@ -369,7 +376,7 @@ function RowDrawer({
 
   /** The two prep-blocked drawers — same list, different errand. */
   const prepList = (ids: string[], labelKey: TranslationKey) =>
-    nameList(ids, labelKey, itemNames, "admin.menu_costing.drawer.unknown_item");
+    nameList(ids, labelKey, itemNames, "admin.menu_costing.drawer.unknown_item", prepItemHref);
 
   if (status === "no_recipe") {
     return <p className="text-xs text-co-text-muted">{t("admin.menu_costing.drawer.no_recipe_help")}</p>;
@@ -388,6 +395,7 @@ function RowDrawer({
             "admin.menu_costing.drawer.retired_products",
             productNames,
             "admin.menu_costing.drawer.unknown_product",
+            productHref,
           )}
         </>
       );
@@ -433,7 +441,9 @@ function RowDrawer({
           <ul className="mt-1 flex flex-wrap gap-x-3 gap-y-1">
             {unpricedSkuIds.map((id) => (
               <li key={id} className="text-xs font-medium text-co-text">
-                {skuNames[id] ?? t("admin.menu_costing.drawer.unknown_sku")}
+                <a href={skuCatalogHref(id)} className={drawerLinkCls}>
+                  {skuNames[id] ?? t("admin.menu_costing.drawer.unknown_sku")}
+                </a>
               </li>
             ))}
           </ul>

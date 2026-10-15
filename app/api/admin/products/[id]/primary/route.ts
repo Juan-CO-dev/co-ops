@@ -5,7 +5,7 @@ import { assertStepUp } from "@/lib/admin/step-up";
 import { jsonError, jsonOk, parseJsonBody } from "@/lib/api-helpers";
 import { setPrimary, ProductError } from "@/lib/products";
 
-// POST — designate the primary member for a scope (GM+ ≥7, Tier A).
+// POST — designate the primary member for a scope (GM+ ≥7, Tier E).
 //   locationId null = the GLOBAL default (the "null = global" house idiom);
 //   a location-scoped row overrides it for that shop only.
 // Membership is DB-proven by the composite FK; a non-member returns a named 400.
@@ -16,7 +16,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   const ctx = await requireSession(req, `/api/admin/products/${id}/primary`);
   if (ctx instanceof Response) return ctx;
   if (ROLES[ctx.user.role].level < 7) return jsonError(403, "forbidden");
-  const su = assertStepUp(ctx, "A");
+  const su = assertStepUp(ctx, "E");
   if (!su.ok) return jsonError(403, su.code);
 
   const b = parsed as Record<string, unknown>;

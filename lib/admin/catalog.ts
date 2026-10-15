@@ -343,7 +343,7 @@ export async function loadCatalogView(actor: AuthContext): Promise<CatalogEntity
       ? [{ id: producing.recipeId, name: recipeNameById.get(producing.recipeId) ?? "—" }]
       : [];
     const skuKeys = perItemSkuKeys.get(it.id) ?? [];
-    const skuNames = skuKeys.slice(0, SKU_NAME_CAP).map((k) => skuNameById.get(k) ?? "—");
+    const skus: CatalogEdgeRef[] = skuKeys.slice(0, SKU_NAME_CAP).map((k) => ({ id: k, name: skuNameById.get(k) ?? "—" }));
     const usedInMenu = edgeRefs(usedInMenuItemsByItem.get(it.id), menuNameById);
     const usedInItems = edgeRefs(usedInItemsByItem.get(it.id), itemNameById);
     const pkgs = packageRefs(pkgsByItem.get(it.id));
@@ -365,7 +365,7 @@ export async function loadCatalogView(actor: AuthContext): Promise<CatalogEntity
       flags: { soldDirectly: it.sold_directly, cateringAvailable: it.catering_available, cateringOnly: it.catering_only, cateringPortionable: null },
       serves: num(it.serves), priceCents: toCents(it.menu_price),
       edges: {
-        producedBy, build: null, skuNames, componentItems: [],
+        producedBy, build: null, skus, componentItems: [],
         usedInMenuItems: usedInMenu, usedInItems, packages: pkgs, checklists,
         toastGuids, sizesCount,
       },
@@ -397,7 +397,7 @@ export async function loadCatalogView(actor: AuthContext): Promise<CatalogEntity
       flags: { soldDirectly: false, cateringAvailable: mi.catering_available, cateringOnly: mi.catering_only, cateringPortionable: mi.catering_portionable },
       serves: num(mi.serves), priceCents: toCents(mi.menu_price),
       edges: {
-        producedBy: [], build: buildRef, skuNames: [], componentItems,
+        producedBy: [], build: buildRef, skus: [], componentItems,
         usedInMenuItems: [], usedInItems: [], packages: pkgs, checklists: [],
         toastGuids, sizesCount: 0,
       },
@@ -424,7 +424,7 @@ export async function loadCatalogView(actor: AuthContext): Promise<CatalogEntity
       flags: { soldDirectly: false, cateringAvailable: true, cateringOnly: false, cateringPortionable: null },
       serves: num(p.serves), priceCents: p.price_cents,
       edges: {
-        producedBy: [], build: null, skuNames: [], componentItems: [],
+        producedBy: [], build: null, skus: [], componentItems: [],
         usedInMenuItems: [], usedInItems: [], packages: [], checklists: [],
         toastGuids, sizesCount: 0,
       },

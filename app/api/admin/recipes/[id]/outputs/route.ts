@@ -15,7 +15,7 @@ export async function POST(
   const ctx = await requireSession(req, `/api/admin/recipes/${id}/outputs`);
   if (ctx instanceof Response) return ctx;
   if (ROLES[ctx.user.role].level < RECIPE_WRITE_MIN) return jsonError(403, "forbidden");
-  const su = assertStepUp(ctx, "B");
+  const su = assertStepUp(ctx, "E");
   if (!su.ok) return jsonError(403, su.code);
 
   const b = parsed as Record<string, unknown>;

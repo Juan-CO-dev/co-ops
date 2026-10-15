@@ -5,7 +5,7 @@
  * BELOW the recipe builder on /admin/recipes/[id], listing every MENU_ITEM this
  * recipe produces with its catering flags set AT BIRTH: Available / Catering-only
  * / Portions / Serves / Seasonal. Writes ride the EXISTING catering-menu PATCH
- * (/api/admin/catering/menu/[id], kind=menu_item, Tier-A step-up via the ambient
+ * (/api/admin/catering/menu/[id], kind=menu_item, the Tier E catalog edit window via the ambient
  * StepUpProvider) — no second trip to the catering-menu manager.
  *
  * Rendered as a sibling card (not threaded through the monolithic RecipeBuilder)
@@ -18,7 +18,7 @@ import { useRouter } from "next/navigation";
 import { useTranslation } from "@/lib/i18n/provider";
 import type { TranslationKey } from "@/lib/i18n/types";
 import { useStepUp } from "@/components/admin/StepUpProvider";
-import { postJson } from "@/components/admin/recipes/shared";
+import { useStepUpPost } from "@/components/admin/useStepUpPost";
 
 const tk = (k: string): TranslationKey => k as TranslationKey;
 
@@ -70,6 +70,8 @@ function FlagRow({ output, canEdit }: { output: RecipeMenuOutputFlags; canEdit: 
   const { t } = useTranslation();
   const router = useRouter();
   const { requestStepUp } = useStepUp();
+  // Forgets a refused unlock, so the retry below really prompts (catalog Phase 1).
+  const send = useStepUpPost();
   const [busy, setBusy] = useState(false);
   const [errorKey, setErrorKey] = useState<TranslationKey | null>(null);
   const [servesVal, setServesVal] = useState(output.serves == null ? "" : String(output.serves));
@@ -77,9 +79,9 @@ function FlagRow({ output, canEdit }: { output: RecipeMenuOutputFlags; canEdit: 
   const patch = async (body: Record<string, unknown>) => {
     if (!canEdit || busy) return;
     setErrorKey(null);
-    if ((await requestStepUp("A")) !== "ok") return;
+    if ((await requestStepUp("E")) !== "ok") return;
     setBusy(true);
-    const result = await postJson(
+    const result = await send(
       `/api/admin/catering/menu/${output.menuItemId}`,
       { kind: "menu_item", ...body },
       "PATCH",
@@ -89,9 +91,9 @@ function FlagRow({ output, canEdit }: { output: RecipeMenuOutputFlags; canEdit: 
       router.refresh();
     } else if (result.code === "step_up_required" || result.code === "step_up_stale") {
       // Advisory flag was stale — prompt then retry once.
-      if ((await requestStepUp("A")) !== "ok") return;
+      if ((await requestStepUp("E")) !== "ok") return;
       setBusy(true);
-      const retry = await postJson(
+      const retry = await send(
         `/api/admin/catering/menu/${output.menuItemId}`,
         { kind: "menu_item", ...body },
         "PATCH",

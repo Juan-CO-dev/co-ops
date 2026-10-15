@@ -10,6 +10,7 @@ import {
   deriveRoleBadges,
   deriveFlatFieldsFromChain,
   defaultWizardLevelLabel,
+  chainNeedsAvgOzPerEach,
   type SkuNameCollisionCandidate,
   type StarterChainLevel,
 } from "@/lib/admin/catalog-shared";
@@ -508,5 +509,44 @@ describe("deriveRoleBadges", () => {
       { role: "made" },
       { role: "used_in_builds", count: 2 },
     ]);
+  });
+});
+
+// ── chainNeedsAvgOzPerEach (catalog Phase 1 — the avg-weight dead end) ─────────
+describe("chainNeedsAvgOzPerEach — exactly when the server would say leaf_needs_avg", () => {
+  const dims = new Map<string, string>([["lb", "weight"], ["oz", "weight"], ["each", "count"], ["gal", "volume"]]);
+  const lvl = (containsMeasureUnit: string | null) => ({ containsMeasureUnit });
+
+  it("a raw chain ending in a count or volume unit needs it", () => {
+    expect(chainNeedsAvgOzPerEach([lvl(null), lvl("each")], dims, "raw")).toBe(true);
+    expect(chainNeedsAvgOzPerEach([lvl(null), lvl("gal")], dims, "raw")).toBe(true);
+  });
+
+  it("a raw chain ending in weight does not", () => {
+    expect(chainNeedsAvgOzPerEach([lvl(null), lvl("lb")], dims, "raw")).toBe(false);
+  });
+
+  it("non-raw classes never need it (the server only checks structure for them)", () => {
+    expect(chainNeedsAvgOzPerEach([lvl(null), lvl("each")], dims, "packaging")).toBe(false);
+    expect(chainNeedsAvgOzPerEach([lvl("each")], dims, "cleaning")).toBe(false);
+  });
+
+  it("an unregistered unit is not this errand (the server says unknown_measure instead)", () => {
+    expect(chainNeedsAvgOzPerEach([lvl("bushel")], dims, "raw")).toBe(false);
+    expect(chainNeedsAvgOzPerEach([], dims, "raw")).toBe(false);
+  });
+});
+
+describe("SkuBuilder offers the avg field where leaf_needs_avg can occur (source pin)", () => {
+  it("the chained edit branch renders it and the chain save sends it", async () => {
+    const { readFileSync } = await import("node:fs");
+    const src = readFileSync(new URL("../components/admin/skus/SkuBuilder.tsx", import.meta.url), "utf8");
+    const chained = src.slice(src.indexOf("CHAINED SKU → inline chain builder"), src.indexOf("// UNCHAINED (add flow"));
+    expect(chained).toContain("chainNeedsAvg ? (");
+    expect(chained).toContain('t("admin.skus.field.avg_oz_per_each")');
+    const save = src.slice(src.indexOf("const saveChain = async"), src.indexOf("// ── Wizard save"));
+    expect(save).toContain("onSaveChain(payload, needsAvg ? avg : undefined)");
+    expect(save).toContain('t("admin.skus.error.leaf_needs_avg")');
+    expect(save).toContain('t("admin.skus.error.invalid_avg_oz_per_each")');
   });
 });

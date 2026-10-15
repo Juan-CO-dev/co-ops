@@ -196,8 +196,10 @@ const RUN_AUDIT_ACTION: Record<"shadow" | "live", AuditAction> = {
  * MEANS inside a recipe, so the series before one of them is a different signal.
  *
  * The plan names "`recipe_input.*` / `recipe.update`"; live, `recipe_input.*` is three
- * spellings — add + remove sit in DESTRUCTIVE_ACTIONS, update in NON_DESTRUCTIVE — and
- * all three change the flatten. Verified against both registries rather than assumed: an
+ * spellings — add, remove and (since catalog Phase 1, 2026-10-15) update all sit in
+ * DESTRUCTIVE_ACTIONS — and all three change the flatten. The recipe builder's in-place
+ * line edit emits update, so it resets the velocity series like an add or a remove.
+ * Verified against both registries rather than assumed: an
  * action name that does not exist here would not error, it would silently never match,
  * and the reset would quietly stop working.
  *
