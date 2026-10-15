@@ -74,7 +74,7 @@ export function versionErrorFromRpc(message: string): never {
     non_positive_qty: 400, duplicate_label: 400, shared_child: 400, not_one_root: 400, cycle: 400,
     invalid_based_on: 400, invalid_price: 400, invalid_date: 400, invalid_payload: 400, location_required: 400,
     // chunk-4 review: a first chain that would move a set flat pack; a shop-owned SKU priced/packed by another shop
-    flat_pack_exists: 403, sku_owned_by_other_shop: 409,
+    flat_pack_exists: 403, sku_owned_by_other_shop: 409, version_sku_mismatch: 409,
     par_lane_mismatch: 400, invalid_patch: 400, request_mismatch: 400,
     sku_not_found: 404, location_not_found: 404, not_found: 404,
   };
@@ -199,7 +199,7 @@ export async function restoreSkuPackVersion(
 }
 
 /** A shop goes BACK TO DEFAULT for its pack: retire its live version (never the global one). */
-export async function retireShopPackVersion(actor: AuthContext, input: { versionId: string; locationId: string }): Promise<void> {
+export async function retireShopPackVersion(actor: AuthContext, input: { skuId: string; versionId: string; locationId: string }): Promise<void> {
   requireLocation(actor, "pack", input.locationId);
   const sb = getServiceRoleClient();
   const { data: v, error: vErr } = await sb.from("sku_pack_versions").select("id, sku_id, location_id")
@@ -207,6 +207,9 @@ export async function retireShopPackVersion(actor: AuthContext, input: { version
   if (vErr) throw new Error(`retireShopPackVersion read: ${vErr.message}`);
   // The version must be THIS shop's — the bind above was on the shop the caller named.
   if (!v || v.location_id !== input.locationId) throw new SkuVersionError(404, "not_found");
+  // …and THIS SKU's: the route addresses /sku/[id], so a version of another SKU is a mismatch,
+  // never a silent retire of the wrong item (Astra full-branch r1 P3).
+  if (v.sku_id !== input.skuId) throw new SkuVersionError(409, "version_sku_mismatch");
   const { error } = await sb.rpc("retire_sku_pack_version", { p_version: input.versionId, p_actor: actor.user.id });
   if (error) versionErrorFromRpc(error.message);
   await audit({

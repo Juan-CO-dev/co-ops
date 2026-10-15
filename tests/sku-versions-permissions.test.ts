@@ -3,6 +3,7 @@
  * holds even when the route is bypassed). vitest has no Supabase env, so a call that got PAST the
  * gates fails on the service client with a plain Error — which is how the MoO case proves it passed.
  */
+import { readFileSync } from "node:fs";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createFakeDb } from "./fixtures/counts-fake-db";
 import { loadSkuPackVersionHistory, restoreSkuPackVersion, retireShopPackVersion, retireShopPriceLane, saveSkuPackVersion, saveSkuPrice, SkuVersionError } from "@/lib/admin/sku-versions";
@@ -80,7 +81,7 @@ describe("AGM/GM write only their own shop's version; MoO+ any shop (D2)", () =>
     expect(await refused(saveSkuPackVersion(actor("agm", 6, [SHOP_A]), { skuId: "s", scope: null, levels: LEVELS, expectedLiveVersionId: null }))).toEqual({ status: 403, code: "forbidden" });
   });
   it("back to default: a GM may not retire another shop's version", async () => {
-    expect(await refused(retireShopPackVersion(actor("gm", 7, [SHOP_A]), { versionId: "v", locationId: SHOP_B }))).toEqual({ status: 404, code: "not_found" });
+    expect(await refused(retireShopPackVersion(actor("gm", 7, [SHOP_A]), { skuId: "s", versionId: "v", locationId: SHOP_B }))).toEqual({ status: 404, code: "not_found" });
   });
   it("a GLOBAL first value binds the SKU's OWNING shop (Astra 2a r3#1): a shop-B SKU refuses an AGM/GM of A, for price AND pack", async () => {
     current = createFakeDb({ vendor_items: [{ id: "s-b", location_id: SHOP_B, avg_oz_per_each: null, sku_class: "raw", active: true }] });
@@ -110,7 +111,7 @@ describe("level 6 is the operational managers only (lead decision, chunk-1 revie
     expect(await refused(saveSkuPrice(smm, { skuId: "s", scope: SHOP_A, unitPrice: 10, effectiveDate: "2026-10-15" }))).toEqual({ status: 403, code: "forbidden" });
     expect(await refused(saveSkuPrice(smm, { skuId: "s", scope: null, unitPrice: 10, effectiveDate: "2026-10-15" }))).toEqual({ status: 403, code: "forbidden" });
     expect(await refused(retireShopPriceLane(smm, { skuId: "s", locationId: SHOP_A }))).toEqual({ status: 403, code: "forbidden" });
-    expect(await refused(retireShopPackVersion(smm, { versionId: "v", locationId: SHOP_A }))).toEqual({ status: 403, code: "forbidden" });
+    expect(await refused(retireShopPackVersion(smm, { skuId: "s", versionId: "v", locationId: SHOP_A }))).toEqual({ status: 403, code: "forbidden" });
   });
   it("a prep manager and a catering manager (level 6) pass the gate at their own shop — the write goes through", async () => {
     current = passableDb();
@@ -171,5 +172,23 @@ describe("chunk-4 P2/P3b: the new RPC refusals reach the caller by name", () => 
     expect(as("ERROR: sku_price:sku_owned_by_other_shop")).toMatchObject({ status: 409, code: "sku_owned_by_other_shop" });
     expect(as("ERROR: sku_pack_version:cycle")).toMatchObject({ status: 400, code: "cycle" });
     expect(as("connection reset")).not.toBeInstanceOf(SkuVersionError);
+  });
+});
+
+describe("Astra full-branch r1 P3: back to default retires only a version of the SKU the route names", () => {
+  it("a version of ANOTHER SKU (same shop) is refused by name, before the RPC", async () => {
+    current = createFakeDb({ sku_pack_versions: [{ id: "v-other", sku_id: "s-other", location_id: SHOP_A, active: true }] });
+    expect(await refused(retireShopPackVersion(actor("gm", 7, [SHOP_A]), { skuId: "s", versionId: "v-other", locationId: SHOP_A })))
+      .toEqual({ status: 409, code: "version_sku_mismatch" });
+    expect(rpcCalls).toEqual([]);
+  });
+  it("this SKU's own shop version retires (the RPC runs, for exactly that version)", async () => {
+    current = createFakeDb({ sku_pack_versions: [{ id: "v-mine", sku_id: "s", location_id: SHOP_A, active: true }] });
+    await retireShopPackVersion(actor("gm", 7, [SHOP_A]), { skuId: "s", versionId: "v-mine", locationId: SHOP_A });
+    expect(rpcCalls).toEqual([{ fn: "retire_sku_pack_version", args: { p_version: "v-mine", p_actor: "u1" } }]);
+  });
+  it("the route passes the SKU it addresses", () => {
+    const src = readFileSync("app/api/admin/catalog/sku/[id]/pack/back-to-default/route.ts", "utf8");
+    expect(src).toContain("retireShopPackVersion(ctx, { skuId: id, versionId: b.versionId, locationId: b.locationId })");
   });
 });

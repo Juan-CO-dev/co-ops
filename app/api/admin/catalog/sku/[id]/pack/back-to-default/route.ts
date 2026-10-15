@@ -27,7 +27,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   if (typeof b.locationId !== "string" || !UUID_RE.test(b.locationId)) return jsonError(400, "invalid_payload", { field: "locationId" });
   if (typeof b.versionId !== "string" || !UUID_RE.test(b.versionId)) return jsonError(400, "invalid_payload", { field: "versionId" });
   try {
-    await retireShopPackVersion(ctx, { versionId: b.versionId, locationId: b.locationId });
+    await retireShopPackVersion(ctx, { skuId: id, versionId: b.versionId, locationId: b.locationId });
     return jsonOk({ ok: true });
   } catch (e) {
     if (e instanceof SkuVersionError) return jsonError(e.status, e.code, { message: e.message });
