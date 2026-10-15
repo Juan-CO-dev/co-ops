@@ -19,7 +19,10 @@ export interface RecipeBuilderCatalog {
   items: Array<{ id: string; name: string }>;
   products: RecipeBuilderProduct[];
   unitOptions: Array<{ id: string; label: string }>;
+  /** EVERY measure (active or not), so a saved line in a retired unit still converts to oz. */
   measures: Map<string, MeasureUnitFactor>;
+  /** The ACTIVE measure labels — the only ones the line editor offers (Astra full-branch #4). */
+  activeMeasureLabels: string[];
 }
 
 export async function loadRecipeBuilderCatalog(): Promise<RecipeBuilderCatalog> {
@@ -44,8 +47,8 @@ export async function loadRecipeBuilderCatalog(): Promise<RecipeBuilderCatalog> 
     sb.from("units").select("id, label").order("label").returns<Array<{ id: string; label: string }>>(),
     sb
       .from("measure_units")
-      .select("label, dimension, to_base_factor")
-      .returns<Array<{ label: string; dimension: string; to_base_factor: number | string }>>(),
+      .select("label, dimension, to_base_factor, active")
+      .returns<Array<{ label: string; dimension: string; to_base_factor: number | string; active: boolean | null }>>(),
     sb
       .from("products")
       .select("id, name, unit_oz")
@@ -80,5 +83,6 @@ export async function loadRecipeBuilderCatalog(): Promise<RecipeBuilderCatalog> 
       { dimension: m.dimension as MeasureUnitFactor["dimension"], toBaseFactor: Number(m.to_base_factor) },
     ]),
   );
-  return { skus, items, products, unitOptions, measures };
+  const activeMeasureLabels = (measuresRes.data ?? []).filter((m) => m.active === true).map((m) => m.label);
+  return { skus, items, products, unitOptions, measures, activeMeasureLabels };
 }

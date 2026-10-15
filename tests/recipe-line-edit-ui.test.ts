@@ -91,7 +91,7 @@ describe("chunk-3 review fixes — the picker and the line editor", () => {
   });
 
   it("(e) a saved unit outside the registry shows as a labelled legacy option, and a product line must change it", () => {
-    expect(editor).toContain("legacyLineUnit(unitChoices, unit)");
+    expect(editor).toContain("lineUnitOptions(choice.kind, sku, measureLabels, retiredMeasureLabels,"); // legacyLineUnit inside
     expect(editor).toContain('t(rk("recipes.input.legacy_unit"), { unit: legacyUnit })');
     expect(editor).toContain("!unitMustChange");
   });

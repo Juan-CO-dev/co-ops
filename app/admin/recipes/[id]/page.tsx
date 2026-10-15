@@ -76,6 +76,7 @@ export default async function AdminRecipeDetailPage({
         products={catalog.products}
         unitOptions={catalog.unitOptions}
         measures={catalog.measures}
+        activeMeasureLabels={catalog.activeMeasureLabels}
         level={level}
         readiness={readiness}
       />

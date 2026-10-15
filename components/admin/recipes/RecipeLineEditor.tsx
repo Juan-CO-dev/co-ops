@@ -17,7 +17,7 @@ import { useTranslation } from "@/lib/i18n/provider";
 import type { TranslationKey } from "@/lib/i18n/types";
 import { ozForRecipeInput, type MeasureUnitFactor, type RecipeInputSku } from "@/lib/recipe-math";
 import { productInputBasis } from "@/lib/products-shared";
-import { diffRecipeLine, legacyLineUnit, lineUnitChoices, type RecipeLineDraft } from "@/lib/recipe-line-shared";
+import { diffRecipeLine, lineUnitOptions, type RecipeLineDraft } from "@/lib/recipe-line-shared";
 import { lineTargetKey, optionForLine, type IngredientOption } from "@/lib/ingredient-picker-shared";
 import { IngredientPicker } from "./IngredientPicker";
 import type { RecipeBuilderProduct, RecipeBuilderSku } from "./RecipeBuilder";
@@ -34,6 +34,7 @@ export function RecipeLineEditor({
   skus,
   products,
   measures,
+  activeMeasureLabels,
   initial,
   busy,
   errorMsg,
@@ -46,6 +47,9 @@ export function RecipeLineEditor({
   skus: RecipeBuilderSku[];
   products: RecipeBuilderProduct[];
   measures: Map<string, MeasureUnitFactor>;
+  /** ACTIVE measure_units labels — the only measures offered (Astra full-branch #4). Absent → every
+   *  key of `measures` (which also carries retired units, so old lines still convert to oz). */
+  activeMeasureLabels?: readonly string[];
   /** null = add a new line; a line = edit it in place. */
   initial: RecipeLineDraft | null;
   busy: boolean;
@@ -65,13 +69,21 @@ export function RecipeLineEditor({
   const [portioned, setPortioned] = useState(initial?.portioned ?? false);
   const [localError, setLocalError] = useState<string | null>(null);
 
-  const measureLabels = useMemo(() => [...measures.keys()].sort((a, b) => a.localeCompare(b)), [measures]);
+  const measureLabels = useMemo(
+    () => [...(activeMeasureLabels ?? [...measures.keys()])].sort((a, b) => a.localeCompare(b)),
+    [activeMeasureLabels, measures],
+  );
+  const retiredMeasureLabels = useMemo(
+    () => new Set([...measures.keys()].filter((l) => !measureLabels.includes(l))),
+    [measures, measureLabels],
+  );
   const keepsTarget = initial !== null && choice !== null && lineTargetKey(initial) === choice.key;
   const sku = choice?.kind === "sku" ? (skus.find((s) => s.id === choice.id) ?? null) : null;
   const product = choice?.kind === "product" ? (products.find((p) => p.id === choice.id) ?? null) : null;
-  const unitChoices = choice
-    ? lineUnitChoices(choice.kind, sku, measureLabels, keepsTarget ? (initial?.unit ?? null) : null)
-    : [];
+  const unitOptions = choice
+    ? lineUnitOptions(choice.kind, sku, measureLabels, retiredMeasureLabels, keepsTarget ? (initial?.unit ?? null) : null, unit)
+    : { choices: [] as string[], legacy: null, mustChange: false };
+  const unitChoices = unitOptions.choices;
 
   const pick = (next: IngredientOption | null) => {
     setChoice(next);
@@ -104,17 +116,18 @@ export function RecipeLineEditor({
       }
     : null;
   const unchanged = initial !== null && draft !== null && diffRecipeLine(initial, draft).length === 0;
-  // A saved unit the list no longer offers shows as a labelled legacy option; a PRODUCT line must
-  // trade it for a measure-registry unit before it can save (chunk-3 review).
-  const legacyUnit = legacyLineUnit(unitChoices, unit);
-  const unitMustChange = choice?.kind === "product" && legacyUnit !== null;
+  // A saved unit the list no longer offers shows as a labelled legacy option; a PRODUCT line (any
+  // off-list unit) or a line saved in a RETIRED measure must trade it before it can save
+  // (chunk-3 review; Astra full-branch #4).
+  const legacyUnit = unitOptions.legacy;
+  const unitMustChange = unitOptions.mustChange;
   const canSave = !busy && draft !== null && qtyOk && !unchanged && !unitMustChange;
 
   const submit = () => {
     setLocalError(null);
     if (!draft) { setLocalError(t(rk("recipes.error.invalid_component"))); return; }
     if (!qtyOk) { setLocalError(t(rk("recipes.error.invalid_quantity"))); return; }
-    if (draft.componentProductId !== null && (draft.unit === null || unitMustChange)) {
+    if (unitMustChange || (draft.componentProductId !== null && draft.unit === null)) {
       setLocalError(t(rk("recipes.error.product_line_needs_measure_unit")));
       return;
     }

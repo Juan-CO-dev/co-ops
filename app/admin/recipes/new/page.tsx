@@ -52,6 +52,7 @@ export default async function AdminRecipesNewPage({
         products={catalog.products}
         unitOptions={catalog.unitOptions}
         measures={catalog.measures}
+        activeMeasureLabels={catalog.activeMeasureLabels}
         level={level}
         defaultType={defaultType}
       />

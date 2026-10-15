@@ -283,3 +283,28 @@ export function legacyLineUnit(choices: readonly string[] | null, unit: string |
   const u = normLineText(unit);
   return u !== null && !choices.includes(u) ? u : null;
 }
+
+/**
+ * The unit list the line editor shows, and what it must refuse (Astra full-branch review #4).
+ * Choices are built from the ACTIVE measure registry only (lineUnitChoices), and a RETIRED
+ * (inactive) measure is never offered — not even as a SKU line's own saved unit. A saved unit
+ * outside the list is the labelled legacy option; it MUST change before saving when it is a
+ * retired measure (any SKU or product line) or any unit off a product line's list (a pack label —
+ * the D3 rule). `savedUnit` is the unit the line had when editing began (null once the target
+ * changed); `unit` is what the select holds now.
+ */
+export function lineUnitOptions(
+  kind: RecipeLineKind,
+  sku: { packFormat: string | null; eachContainerLabel: string | null; eachMeasure: string | null } | null,
+  activeMeasureLabels: readonly string[],
+  retiredMeasureLabels: ReadonlySet<string>,
+  savedUnit: string | null,
+  unit: string | null,
+): { choices: string[] | null; legacy: string | null; mustChange: boolean } {
+  const raw = lineUnitChoices(kind, sku, activeMeasureLabels, savedUnit);
+  if (raw === null) return { choices: null, legacy: null, mustChange: false };
+  const choices = raw.filter((u) => !retiredMeasureLabels.has(u));
+  const legacy = legacyLineUnit(choices, unit);
+  const mustChange = legacy !== null && (kind === "product" || retiredMeasureLabels.has(legacy));
+  return { choices, legacy, mustChange };
+}

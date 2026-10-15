@@ -99,6 +99,7 @@ export function RecipeBuilder({
   products = [],
   unitOptions,
   measures,
+  activeMeasureLabels,
   level,
   defaultType = "production",
   readiness = null,
@@ -110,6 +111,8 @@ export function RecipeBuilder({
   products?: RecipeBuilderProduct[];
   unitOptions: Array<{ id: string; label: string }>;
   measures: Map<string, MeasureUnitFactor>;
+  /** ACTIVE measure labels for the line editor's unit list (Astra full-branch #4). */
+  activeMeasureLabels?: string[];
   level: number;
   defaultType?: RecipeType;
   readiness?: Readiness | null;
@@ -518,6 +521,7 @@ export function RecipeBuilder({
         items={items}
         products={products}
         measures={measures}
+        activeMeasureLabels={activeMeasureLabels}
         unitRegistryOptions={unitRegistryOptions}
         canEdit={canEdit}
         level={level}
@@ -649,6 +653,7 @@ function ConsumesSection({
   items,
   products,
   measures,
+  activeMeasureLabels,
   canEdit,
   isDraft,
   onAddDraftInput,
@@ -663,6 +668,7 @@ function ConsumesSection({
   items: Array<{ id: string; name: string }>;
   products: RecipeBuilderProduct[];
   measures: Map<string, MeasureUnitFactor>;
+  activeMeasureLabels?: string[];
   /** Kept so the call site is unchanged; the line editor needs neither. */
   unitRegistryOptions: RegistryOption[];
   level: number;
@@ -789,6 +795,7 @@ function ConsumesSection({
                 skus={skus}
                 products={products}
                 measures={measures}
+                activeMeasureLabels={activeMeasureLabels}
                 initial={live.initial}
                 busy={busy}
                 errorMsg={errorMsg}
@@ -821,6 +828,7 @@ function ConsumesSection({
                 skus={skus}
                 products={products}
                 measures={measures}
+                activeMeasureLabels={activeMeasureLabels}
                 initial={draftLine(di)}
                 busy={busy}
                 errorMsg={errorMsg}
@@ -856,6 +864,7 @@ function ConsumesSection({
               skus={skus}
               products={products}
               measures={measures}
+              activeMeasureLabels={activeMeasureLabels}
               initial={null}
               busy={busy}
               errorMsg={errorMsg}
