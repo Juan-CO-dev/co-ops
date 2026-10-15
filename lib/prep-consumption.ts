@@ -356,6 +356,21 @@ export async function loadResolvedRecipeInputs(scope: VersionScope, asOf: string
 }
 
 /**
+ * THE SAME RESOLUTION FOR SEVERAL SCOPES AT ONCE (chunk-2 review P3c): recipe_inputs is read ONCE and each scope
+ * gets its own overlay (one or two small reads), so a page that needs every shop's lines (the pack preview, the
+ * hub's readiness) never re-reads the whole line table per shop. Keyed by scope id; the global default is "global".
+ */
+export async function loadResolvedRecipeInputsByScope(scopes: readonly VersionScope[]): Promise<Map<string, ResolvedRecipeInput[]>> {
+  const sb = getServiceRoleClient();
+  const unique = [...new Set(scopes.map((s) => s ?? null))];
+  const [base, ...overlays] = await Promise.all([
+    readAllRecipeInputs(sb, "loadResolvedRecipeInputsByScope"),
+    ...unique.map((s) => loadRecipeLineOverlay(s, null)),
+  ]);
+  return new Map(unique.map((s, i) => [s ?? "global", mergeResolvedInputs(base, overlays[i]!)]));
+}
+
+/**
  * EVERY LIVE LINE IN ANY SCOPE: the global default's recipe_inputs plus every live shop version's lines
  * (catalog Phase 3a). For "is this used anywhere" answers that serve no single shop — the SKU list's
  * "used in", the items page's product links, "N recipes still pin this product" before a retire — so a

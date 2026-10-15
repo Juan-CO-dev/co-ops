@@ -247,7 +247,8 @@ export async function loadDemandSources(
 
   const [inputs, recipes] = await Promise.all([
     // CATALOG PHASE 3a (lead decision 4): THIS SHOP's recipe lines — a shop that swapped mayo for pickle
-    // is told pickle has a recipe and mayo lost its source, not the default's story.
+    // counts pickle as referenced and mayo as no longer referenced HERE. (The named "removed source" lane is
+    // still RETIRED recipes only: a shop version dropping a line raises no removed-source advisory.)
     loadResolvedRecipeInputs(locationId),
     selectAllRows<{ id: string; name: string; active: boolean }>(async (from, to) => {
       const { data, error } = await sb.from("recipes").select("id, name, active")

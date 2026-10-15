@@ -3,6 +3,9 @@
  * Existing product/recipe Readiness semantics remain unchanged.
  */
 import { buildRecipeGraph, perUnitSkuOzForItemFromGraph, perUnitSkuOzForMenuItemFromGraph, type GraphRecipe, type ProductIndex } from "@/lib/prep-consumption-graph";
+import {
+  mergeResolvedInputs, pickLiveShopRecipeVersions, recipeLineReplacements, type RecipeVersionLineRow, type RecipeVersionRow, type ResolvedRecipeInput,
+} from "@/lib/recipe-versions-shared";
 import { productInputBasis, resolveProductMember, storeRunReceiptStreak, type ProductMember, type ProductReceiptEvent } from "@/lib/products-shared";
 import { skuContentOz, type RecipeInputSku, type MeasureUnitFactor } from "@/lib/recipe-math";
 import { buildPackChain, chainRootLabel, validateChainStructure, firstLabelMeasureCollision, type PackChainLevel } from "@/lib/pack-chain-shared";
@@ -154,6 +157,24 @@ export function evaluateWave7Tables(tables: LiveTables, overrides = new Map<stri
       if (input[field] != null && !index.has(String(input[field]))) throw new Error(`INCOMPLETE_GRAPH: ${field}`);
     }
   }
+  // CATALOG PHASE 3a (chunk-2 review P2): each shop's graph is built from ITS resolved recipe lines — its live
+  // shop versions replace the default's rows through the SAME pure merge loadResolvedRecipeInputs uses
+  // (pickLiveShopRecipeVersions → recipeLineReplacements → mergeResolvedInputs). A pre-0262 load (no version
+  // tables) resolves to the default exactly as before. Version lines are verified like inputs: a dropped page
+  // must not become a smaller graph.
+  const shopVersions = (tables.recipe_versions ?? []) as unknown as RecipeVersionRow[];
+  const versionLines = (tables.recipe_version_lines ?? []) as unknown as RecipeVersionLineRow[];
+  for (const line of versionLines) {
+    if (!recipeIds.has(String(line.recipe_id))) throw new Error("INCOMPLETE_GRAPH: recipe version line parent");
+    for (const [field, index] of [["component_sku_id", skuIndex], ["component_item_id", items], ["component_product_id", productIds]] as const) {
+      const v = (line as unknown as LiveRow)[field];
+      if (v != null && !index.has(String(v))) throw new Error(`INCOMPLETE_GRAPH: version ${field}`);
+    }
+  }
+  const resolvedInputsFor = (shopId: string): LiveRow[] => {
+    const replacements = recipeLineReplacements(pickLiveShopRecipeVersions(shopVersions, shopId), versionLines);
+    return replacements.size === 0 ? inputs : mergeResolvedInputs(inputs as unknown as ResolvedRecipeInput[], replacements) as unknown as LiveRow[];
+  };
   for (const output of outputs) {
     if (!recipeIds.has(String(output.recipe_id)) || (output.output_item_id != null && !items.has(String(output.output_item_id))) || (output.output_menu_item_id != null && !menus.has(String(output.output_menu_item_id)))) throw new Error("INCOMPLETE_GRAPH: recipe output");
   }
@@ -187,13 +208,14 @@ export function evaluateWave7Tables(tables: LiveTables, overrides = new Map<stri
   const epochRows = tables.sku_pack_epochs ?? [];
   const epochFor = (shopId: string, skuId: string): number =>
     Number(epochRows.find((e) => e.location_id === shopId && e.sku_id === skuId)?.epoch ?? 0);
-  const graphRecipes: GraphRecipe[] = recipes.map(r => ({ recipeId: liveId(r), batchYield: liveNum(r.batch_yield),
-    inputs: inputs.filter(i => i.recipe_id === r.id).map(i => ({ quantity: Number(i.quantity), unit: liveText(i.unit), componentSkuId: liveText(i.component_sku_id), componentItemId: liveText(i.component_item_id), componentProductId: liveText(i.component_product_id) })),
+  const graphRecipesFor = (shopInputs: readonly LiveRow[]): GraphRecipe[] => recipes.map(r => ({ recipeId: liveId(r), batchYield: liveNum(r.batch_yield),
+    inputs: shopInputs.filter(i => i.recipe_id === r.id).map(i => ({ quantity: Number(i.quantity), unit: liveText(i.unit), componentSkuId: liveText(i.component_sku_id), componentItemId: liveText(i.component_item_id), componentProductId: liveText(i.component_product_id) })),
     outputs: outputs.filter(o => o.recipe_id === r.id).map(o => ({ outputItemId: liveText(o.output_item_id), outputMenuItemId: liveText(o.output_menu_item_id), yield: Number(o.yield), ozPerParUnit: liveNum(items.get(String(o.output_item_id))?.oz_per_par_unit), parUnitLabel: liveText(items.get(String(o.output_item_id))?.default_par_unit) })) }));
   const report: Wave7ReadinessReport = { asOf, shops: [], counts: Object.fromEntries(Object.entries(tables).map(([table, rows]) => [table, rows.length])) };
   for (const shop of liveRows(tables, "locations").filter(r => r.active !== false && (!visibleShopIds || visibleShopIds.has(liveId(r))))) {
     const shopId = liveId(shop), overlays = liveRows(tables, "location_sku_settings").filter(r => r.location_id === shopId);
     const { bases, prices } = basesFor(shopId);
+    const graphRecipes = graphRecipesFor(resolvedInputsFor(shopId));
     const overlayFor = (id: string) => overlays.find(r => r.sku_id === id);
     // Main's per-shop scope applies to EVERY SKU (regular and store alike); keep it unchanged.
     const active = (sku: LiveRow) => (sku.location_id == null || sku.location_id === shopId) && resolveActive(overlayFor(liveId(sku))?.active_override as boolean | null | undefined, sku.active === true);

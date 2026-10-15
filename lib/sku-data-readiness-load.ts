@@ -45,6 +45,9 @@ export function readinessOrder(table: keyof typeof COLUMNS): readonly string[] {
   return table === "sku_pack_epochs" ? ["sku_id", "location_id"] : ["id"];
 }
 export const READINESS_COLUMNS: Readonly<Record<keyof typeof COLUMNS, string>> = COLUMNS;
+/** Catalog Phase 3a: the live SHOP recipe versions and their lines (pinned against 0262 in the PGlite schema check). */
+export const RECIPE_VERSION_COLUMNS = "id,recipe_id,location_id,valid_from,valid_to,active";
+export const RECIPE_VERSION_LINE_COLUMNS = "id,version_id,recipe_id,quantity,unit,component_sku_id,component_item_id,component_product_id,display_order";
 
 export async function loadSkuDataReadiness(actor: AuthContext, locationId?: string): Promise<SkuDataShop[]> {
   if (actor.level < 6) throw new Error("SKU_DATA_READINESS_FORBIDDEN");
@@ -59,8 +62,23 @@ export async function loadSkuDataReadiness(actor: AuthContext, locationId?: stri
       return q.range(from, to).returns<LiveRow[]>();
     }),
   ] as const));
+  // CATALOG PHASE 3a (chunk-2 review P2): each shop's graph uses ITS resolved recipe — the LIVE shop recipe
+  // versions and their lines (evaluateWave7Tables merges them per shop through the one pure rule). Paged, ordered
+  // by id, id-chunked; a failed page throws (never a smaller graph).
+  const shopRecipeVersions = await selectAllRows<LiveRow>((from, to) => sb.from("recipe_versions")
+    .select(RECIPE_VERSION_COLUMNS).not("location_id", "is", null).eq("active", true)
+    .order("id", { ascending: true }).range(from, to).returns<LiveRow[]>());
+  const versionIds = shopRecipeVersions.map((v) => String(v.id));
+  const versionLines: LiveRow[] = [];
+  for (let i = 0; i < versionIds.length; i += 100) {
+    const chunk = versionIds.slice(i, i + 100);
+    versionLines.push(...await selectAllRows<LiveRow>((from, to) => sb.from("recipe_version_lines")
+      .select(RECIPE_VERSION_LINE_COLUMNS).in("version_id", chunk)
+      .order("id", { ascending: true }).range(from, to).returns<LiveRow[]>()));
+  }
   const today = etBusinessDate(new Date().toISOString());
-  const report = evaluateWave7Tables(Object.fromEntries(loaded), new Map(), addDaysEt(today, 1), today, visible);
+  const report = evaluateWave7Tables({ ...Object.fromEntries(loaded), recipe_versions: shopRecipeVersions, recipe_version_lines: versionLines },
+    new Map(), addDaysEt(today, 1), today, visible);
   return report.shops.map(shop => summarizeSkuDataShop(shop.id, shop.name, Object.fromEntries(shop.rows.map(row => [row.id,
     { order: row.order, count: row.count, cost: row.cost, errands: row.errands },
   ]))));

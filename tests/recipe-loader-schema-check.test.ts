@@ -50,6 +50,7 @@ vi.mock("@/lib/supabase-server", () => ({ getServiceRoleClient: () => recordingC
 
 import { createDatedGraphs, loadRecipeBoundaries, loadRecipeGraph, loadRecipeInputsAcrossScopes, loadRecipeLineOverlay, loadResolvedRecipeInputs } from "@/lib/prep-consumption";
 import { loadLiveMenuItemShopSettings } from "@/lib/menu-item-shop";
+import { loadSkuDataReadiness } from "@/lib/sku-data-readiness-load";
 import { loadMenuItemShopHistory, retireMenuItemShopSetting } from "@/lib/admin/menu-item-shop";
 import { loadRecipeLiveSet, loadRecipeVersionHistory, restoreRecipeVersion, retireShopRecipeVersion } from "@/lib/admin/recipe-versions";
 import type { AuthContext } from "@/lib/session";
@@ -83,6 +84,8 @@ beforeAll(async () => {
   await run("retireShopRecipeVersion", () => retireShopRecipeVersion(OWNER, { recipeId: RECIPE, versionId: RECIPE, locationId: LOC }));
   // 0263: the menu overlay loader (the costing board's shop view, the Toast matcher pool).
   await run("loadLiveMenuItemShopSettings", () => loadLiveMenuItemShopSettings(LOC));
+  // Chunk-2 review P2: the /admin/skus per-shop data panel reads the live shop recipe versions and their lines.
+  await run("loadSkuDataReadiness", () => loadSkuDataReadiness(OWNER));
   // Task 8: the menu-overlay writers' own reads.
   await run("loadMenuItemShopHistory", () => loadMenuItemShopHistory(OWNER, RECIPE, LOC));
   await run("retireMenuItemShopSetting", () => retireMenuItemShopSetting(OWNER, { menuItemId: RECIPE, locationId: LOC, settingId: RECIPE }));

@@ -89,6 +89,9 @@ describe("production follows the shop's recipe", () => {
     };
     expect(await tryRecord(LOC, "s-mayo")).toBe("invalid_conversion");
     expect(await tryRecord(OTHER, "s-pickle")).toBe("invalid_conversion");
+    // …and accepts what it does make (chunk-2 review P3a: the positive case).
+    expect(await tryRecord(LOC, "s-pickle")).toBe("accepted");
+    expect(await tryRecord(OTHER, "s-mayo")).toBe("accepted");
   });
 });
 
@@ -151,5 +154,18 @@ describe("'used anywhere' answers count every shop", () => {
     current = createFakeDb(withShopSlaw());
     const after = (await loadSkuUsageMap()).get("s-pickle") ?? [];
     expect(after.length).toBe(before.length + 1);
+  });
+});
+
+describe("shared reads (chunk-2 review P3c) — the hub reads recipe_inputs ONCE for every scope", () => {
+  it("countNotReady: one recipe_inputs read and one SKU list read, however many shops", async () => {
+    current = createFakeDb(withShopSlaw());
+    const before = current.log.length;
+    const { countNotReady } = await import("@/lib/admin/readiness-load");
+    const r = await countNotReady(owner);
+    const tables = current.log.slice(before).map((q) => q.table);
+    expect(tables.filter((t) => t === "recipe_inputs").length).toBe(1);
+    expect(tables.filter((t) => t === "recipe_outputs").length).toBe(1);
+    expect(r.byScope.length).toBeGreaterThanOrEqual(0);
   });
 });
