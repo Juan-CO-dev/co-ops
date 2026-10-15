@@ -148,8 +148,12 @@ Nothing structural is hard-coded. Each shop has a **Schedule structure** setting
   - manager on duty required every hour (on/off);
   - which roles can carry the Closing Manager role;
   - leader open/close defaults by role (§5.3).
+- **Managers' time:**
+  - Salaried GM/AGM have a **minimum on-the-clock per day**, tunable per position (default 8 h). This is a hard constraint, separate from the floor cap.
+  - When a manager isn't needed at a station, their time is **"Manager on duty"**; two managers can both be on duty. Managers have manager work, but **service comes first**: they drop into a station only when coverage needs them.
+  - **The board never double-covers a position:** no manager on a station another person already covers.
 - **Limits:**
-  - manager floor-time cap;
+  - manager floor-time cap (station coverage, a subset of their time on the clock);
   - overtime threshold (defaults from 7shifts labor settings);
   - flex-day rules (frequency, max length);
   - closing checklist duration (measured from real completion timestamps, with a manager override).
