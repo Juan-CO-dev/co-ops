@@ -17,6 +17,15 @@ export type PriceBasis = (typeof PRICE_BASES)[number];
 export type ItemJob = "pack" | "price";
 export type ItemSection = "arrives" | "price" | "ordering" | "counting" | "barcodes" | "connections" | "history";
 
+/**
+ * A door report's photo, through the REPORT-BOUND read (Astra 2b r2): the report's own photo, or one
+ * addition's. Never the generic /api/photos/{id}, which a MoO outside the shop cannot read.
+ */
+export function packRequestPhotoHref(requestId: string, additionId: string | null = null): string {
+  const base = `/api/admin/catalog/pack-requests/${encodeURIComponent(requestId)}`;
+  return additionId === null ? `${base}/photo` : `${base}/additions/${encodeURIComponent(additionId)}/photo`;
+}
+
 /** The page for one bought item; `shopId` null = the global default, undefined = the remembered shop. */
 export function skuItemHref(skuId: string, opts: { shopId?: string | null; job?: ItemJob; requestId?: string } = {}): string {
   const q: string[] = [];
@@ -116,7 +125,7 @@ export interface SkuItemView {
   openRequests: Array<{
     id: string; filedBy: string | null; filedAt: string; note: string | null; proposal: PackChangeProposal | null; photoId: string | null;
     /** What later reports of the same case ADDED (chunk-3 review P3a). */
-    additions: Array<{ filedBy: string | null; filedAt: string; note: string | null; proposal: PackChangeProposal | null; photoId: string | null }>;
+    additions: Array<{ id: string; filedBy: string | null; filedAt: string; note: string | null; proposal: PackChangeProposal | null; photoId: string | null }>;
   }>;
   measures: Array<{ label: string; dimension: "weight" | "volume" | "count"; toBaseFactor: number }>;
 }

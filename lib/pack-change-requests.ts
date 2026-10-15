@@ -161,7 +161,7 @@ async function shopManagers(sb: Sb, locationId: string): Promise<string[]> {
 }
 
 /** What a later report of the same case ADDED to the open one (chunk-3 review P3a). */
-export interface PackRequestAddition { filedBy: string | null; filedAt: string; note: string | null; proposal: PackChangeProposal | null; photoId: string | null }
+export interface PackRequestAddition { id: string; filedBy: string | null; filedAt: string; note: string | null; proposal: PackChangeProposal | null; photoId: string | null }
 
 /** The additions of the given reports, oldest first by real columns (filed_at, id). */
 export async function loadRequestAdditions(sb: Sb, requestIds: string[]): Promise<Map<string, Array<PackRequestAddition & { filedById: string }>>> {
@@ -173,7 +173,7 @@ export async function loadRequestAdditions(sb: Sb, requestIds: string[]): Promis
   if (error) throw new Error(`loadRequestAdditions: ${error.message}`);
   for (const a of data ?? []) {
     const list = out.get(a.request_id) ?? [];
-    list.push({ filedBy: null, filedById: a.filed_by, filedAt: a.filed_at, note: a.note, proposal: a.proposal, photoId: a.photo_id ?? null });
+    list.push({ id: a.id, filedBy: null, filedById: a.filed_by, filedAt: a.filed_at, note: a.note, proposal: a.proposal, photoId: a.photo_id ?? null });
     out.set(a.request_id, list);
   }
   return out;
@@ -251,4 +251,45 @@ export async function dismissPackChangeRequest(actor: AuthContext, input: { requ
     metadata: { sku_id: req.sku_id, location_id: req.location_id, outcome: "dismissed", version_id: null },
     ipAddress: null, userAgent: null,
   });
+}
+
+/** The private bucket lib/photos.ts writes; the signed URL lives as long as its own (60 s). */
+const PHOTO_BUCKET = "photos";
+const PHOTO_URL_TTL_SECONDS = 60;
+
+/**
+ * A REPORT-BOUND photo read (Astra 2b r2): the photo a door report (or one of its additions) carries,
+ * signed for a REVIEWER of that report — packRequestReviewAllowed (the social media manager refused)
+ * AND catalogShopAllowed for the REPORT's shop (a membership, or MoO+ for any shop, D2). This is why a
+ * MoO reviewing another shop's report can see its evidence while lib/photos.ts (membership below 9)
+ * stays exactly as narrow as it was. Only the photo id STORED on that report / addition is ever
+ * signed — never an arbitrary id — and it must be the report shop's photo. Every miss is 404.
+ */
+export async function signPackRequestPhoto(actor: AuthContext, input: { requestId: string; additionId: string | null }): Promise<{ signedUrl: string }> {
+  if (!packRequestReviewAllowed(actor)) throw new PackChangeRequestError(403, "forbidden");
+  const sb = getServiceRoleClient();
+  // An addition's photo: the addition must belong to THIS report (checked against the report below).
+  let addition: { id: string; request_id: string; photo_id: string | null } | null = null;
+  if (input.additionId !== null) {
+    const { data: add, error: aErr } = await sb.from("sku_pack_change_request_additions").select("id, request_id, photo_id")
+      .eq("id", input.additionId).maybeSingle<{ id: string; request_id: string; photo_id: string | null }>();
+    if (aErr) throw new Error(`signPackRequestPhoto addition: ${aErr.message}`);
+    if (!add || add.request_id !== input.requestId) throw new PackChangeRequestError(404, "not_found");
+    addition = add;
+  }
+  const { data: req, error } = await sb.from("sku_pack_change_requests").select("id, location_id, photo_id")
+    .eq("id", input.requestId).maybeSingle<{ id: string; location_id: string; photo_id: string | null }>();
+  if (error) throw new Error(`signPackRequestPhoto report: ${error.message}`);
+  if (!req) throw new PackChangeRequestError(404, "not_found");
+  requireLocation(actor, req.location_id, "review");
+  const photoId = addition ? addition.photo_id : req.photo_id;
+  if (!photoId) throw new PackChangeRequestError(404, "not_found");
+  const { data: photo, error: pErr } = await sb.from("photos").select("id, storage_path, location_id").eq("id", photoId)
+    .maybeSingle<{ id: string; storage_path: string; location_id: string }>();
+  if (pErr) throw new Error(`signPackRequestPhoto photo: ${pErr.message}`);
+  if (!photo || photo.location_id !== req.location_id) throw new PackChangeRequestError(404, "not_found");
+  const { data: signed, error: sErr } = await sb.storage.from(PHOTO_BUCKET).createSignedUrl(photo.storage_path, PHOTO_URL_TTL_SECONDS);
+  if (sErr) throw new Error(`signPackRequestPhoto sign: ${sErr.message}`);
+  if (!signed?.signedUrl) throw new Error("signPackRequestPhoto: no signed url returned");
+  return { signedUrl: signed.signedUrl };
 }

@@ -330,7 +330,7 @@ export function SkuItemClient({ view, job, requestId }: { view: SkuItemView; job
             <div key={r.id} className="mt-2 flex flex-col gap-1">
               <p className="text-sm text-co-text">{t("catalog.requests.by", { who: r.filedBy ?? "—", date: day(r.filedAt) })}</p>
               {r.note ? <p className="text-sm italic text-co-text">&ldquo;{r.note}&rdquo;</p> : null}
-              {r.photoId ? <DoorPhoto photoId={r.photoId} /> : null}
+              {r.photoId ? <DoorPhoto requestId={r.id} /> : null}
               {r.proposal?.innerCount != null ? <p className="text-xs text-co-text-muted">{t("catalog.requests.proposal_count", { n: formatQuantity(r.proposal.innerCount, language) })}</p> : null}
               {r.proposal?.eachWeight != null ? <p className="text-xs text-co-text-muted">{t("catalog.requests.proposal_weight", { w: formatQuantity(r.proposal.eachWeight, language), unit: r.proposal.eachUnit ?? "" })}</p> : null}
               {/* What later reports of the same case ADDED (chunk-3 review P3a). */}
@@ -338,7 +338,7 @@ export function SkuItemClient({ view, job, requestId }: { view: SkuItemView; job
                 <div key={`${r.id}-add-${k}`} className="ml-3 flex flex-col gap-1 border-l-2 border-co-warning pl-3">
                   <p className="text-xs text-co-text-muted">{t("catalog.requests.added_by", { who: a.filedBy ?? "—", date: day(a.filedAt) })}</p>
                   {a.note ? <p className="text-sm italic text-co-text">&ldquo;{a.note}&rdquo;</p> : null}
-                  {a.photoId ? <DoorPhoto photoId={a.photoId} /> : null}
+                  {a.photoId ? <DoorPhoto requestId={r.id} additionId={a.id} /> : null}
                   {a.proposal?.innerCount != null ? <p className="text-xs text-co-text-muted">{t("catalog.requests.proposal_count", { n: formatQuantity(a.proposal.innerCount, language) })}</p> : null}
                   {a.proposal?.eachWeight != null ? <p className="text-xs text-co-text-muted">{t("catalog.requests.proposal_weight", { w: formatQuantity(a.proposal.eachWeight, language), unit: a.proposal.eachUnit ?? "" })}</p> : null}
                 </div>

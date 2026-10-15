@@ -3,6 +3,7 @@
  * (and to that shop's delivery and photo) before any write; READING and DISMISSING are catalog acts
  * (the social media manager refused — a role check) bound to the report's shop and SKU.
  */
+import { readFileSync } from "node:fs";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createFakeDb } from "./fixtures/counts-fake-db";
 import {
@@ -21,6 +22,7 @@ vi.mock("@/lib/supabase-server", () => ({ getServiceRoleClient: () => {
   const db = current;
   return {
     from: db.client.from,
+    storage: { from: (bucket: string) => ({ createSignedUrl: async (path: string, ttl: number) => ({ data: { signedUrl: `https://signed/${bucket}/${path}?ttl=${ttl}` }, error: null }) }) },
     async rpc(name: string, a: Record<string, unknown>) {
       if (name !== "file_sku_pack_change_request") throw new Error(`unexpected rpc ${name}`);
       const open = await db.client.from("sku_pack_change_requests").select("id").eq("sku_id", a.p_sku).eq("location_id", a.p_location).eq("status", "open").maybeSingle<{ id: string }>();
@@ -43,7 +45,7 @@ vi.mock("@/lib/notifications", async (orig) => ({
   enqueueNotification: async (_sb: unknown, args: Notified) => { notified.push(args); return { notificationId: "n1", recipientIds: [] }; },
 }));
 import {
-  dismissPackChangeRequest, filePackChangeRequest, loadOpenPackChangeRequests, PackChangeRequestError,
+  dismissPackChangeRequest, filePackChangeRequest, loadOpenPackChangeRequests, PackChangeRequestError, signPackRequestPhoto,
 } from "@/lib/pack-change-requests";
 afterEach(() => { current = null; notified.length = 0; });
 
@@ -204,5 +206,51 @@ describe("dismiss is bound to the report's SKU and shop, and a reviewer role", (
   it("a report already closed is 409 already_resolved", async () => {
     current = createFakeDb(open("s", A, "applied"));
     expect(await refused(dismissPackChangeRequest(actor("gm", 7, [A]), { requestId: "r1", skuId: "s" }))).toEqual({ status: 409, code: "already_resolved" });
+  });
+});
+
+describe("the REPORT-BOUND photo read (Astra 2b r2)", () => {
+  const photoWorld = () => ({
+    ...world(),
+    photos: [{ id: "p-a", location_id: A, storage_path: "a/door.png" }, { id: "p-a2", location_id: A, storage_path: "a/second.png" },
+      { id: "p-other", location_id: A, storage_path: "a/unrelated.png" }, { id: "p-b", location_id: B, storage_path: "b/x.png" }] as Row[],
+    sku_pack_change_requests: [{ id: "r1", sku_id: "s", location_id: A, status: "open", photo_id: "p-a" }, { id: "r-nophoto", sku_id: "s", location_id: A, status: "open", photo_id: null }] as Row[],
+    sku_pack_change_request_additions: [{ id: "add-1", request_id: "r1", photo_id: "p-a2" }, { id: "add-x", request_id: "r-nophoto", photo_id: "p-other" }] as Row[],
+  });
+  it("a MoO WITHOUT a membership at the report's shop gets the report's photo, and an addition's (200 → signed)", async () => {
+    current = createFakeDb(photoWorld());
+    const moo = actor("moo", 8, [], "moo");
+    expect(await signPackRequestPhoto(moo, { requestId: "r1", additionId: null })).toEqual({ signedUrl: "https://signed/photos/a/door.png?ttl=60" });
+    expect(await signPackRequestPhoto(moo, { requestId: "r1", additionId: "add-1" })).toEqual({ signedUrl: "https://signed/photos/a/second.png?ttl=60" });
+  });
+  it("a GM of the OTHER shop is 404; the social media manager is refused before any read", async () => {
+    current = createFakeDb(photoWorld());
+    expect(await refused(signPackRequestPhoto(actor("gm", 7, [B]), { requestId: "r1", additionId: null }))).toEqual({ status: 404, code: "not_found" });
+    expect(await refused(signPackRequestPhoto(actor("social_media_mgr", 6, [A]), { requestId: "r1", additionId: null }))).toEqual({ status: 403, code: "forbidden" });
+  });
+  it("only the photo STORED on that report / addition is ever signed: another report's addition, a report with no photo, a missing report → 404", async () => {
+    current = createFakeDb(photoWorld());
+    const gm = actor("gm", 7, [A]);
+    expect(await refused(signPackRequestPhoto(gm, { requestId: "r1", additionId: "add-x" }))).toEqual({ status: 404, code: "not_found" });
+    expect(await refused(signPackRequestPhoto(gm, { requestId: "r-nophoto", additionId: null }))).toEqual({ status: 404, code: "not_found" });
+    expect(await refused(signPackRequestPhoto(gm, { requestId: "nope", additionId: null }))).toEqual({ status: 404, code: "not_found" });
+    expect(await signPackRequestPhoto(gm, { requestId: "r1", additionId: null })).toEqual({ signedUrl: "https://signed/photos/a/door.png?ttl=60" });
+  });
+  it("a stored photo that is not the report shop's is never signed (404)", async () => {
+    const w = photoWorld();
+    (w.sku_pack_change_requests[0] as Row).photo_id = "p-b";
+    current = createFakeDb(w);
+    expect(await refused(signPackRequestPhoto(actor("moo", 8, []), { requestId: "r1", additionId: null }))).toEqual({ status: 404, code: "not_found" });
+  });
+  it("the routes go through it, and lib/photos.ts was not widened", () => {
+    for (const f of ["app/api/admin/catalog/pack-requests/[requestId]/photo/route.ts", "app/api/admin/catalog/pack-requests/[requestId]/additions/[additionId]/photo/route.ts"]) {
+      const src = readFileSync(f, "utf8");
+      expect(src).toContain("signPackRequestPhoto(ctx,");
+      expect(src).toContain("requireSession(");
+      expect(src).not.toContain("assertStepUp");
+    }
+    const photos = readFileSync("lib/photos.ts", "utf8");
+    expect(photos).toContain("if (!lockLocationContext(actorLoc(actor), row.location_id)) {");
+    expect(readFileSync("components/catalog/DoorPhoto.tsx", "utf8")).not.toContain("/api/photos/");
   });
 });

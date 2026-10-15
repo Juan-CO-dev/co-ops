@@ -41,7 +41,7 @@ const view: SkuItemView = {
     { id: "gv-old", scope: "global", active: false, effectiveFrom: "2026-08-01T00:00:00Z", retiredAt: "2026-09-01T00:00:00Z", who: null, labels: ["case", "bag"] },
   ],
   openRequests: [{ id: "req", filedBy: "Luis", filedAt: "2026-10-14T13:00:00Z", note: "Bags are bigger", proposal: { innerCount: 4, eachWeight: 10, eachUnit: "lb" }, photoId: "ph-door-1",
-    additions: [{ filedBy: "Mia", filedAt: "2026-10-14T15:00:00Z", note: "Second case too", proposal: null, photoId: "ph-door-2" }] }],
+    additions: [{ id: "add-1", filedBy: "Mia", filedAt: "2026-10-14T15:00:00Z", note: "Second case too", proposal: null, photoId: "ph-door-2" }] }],
   measures: [{ label: "oz", dimension: "weight", toBaseFactor: 1 }, { label: "lb", dimension: "weight", toBaseFactor: 16 }],
 };
 /** React's static markup escapes an apostrophe; compare a translated string the way it is rendered. */
@@ -61,13 +61,15 @@ describe("SkuItemClient", () => {
     expect(html).toContain(en["catalog.requests.title"]);
     expect(html).toContain("Bags are bigger");
     // full-branch r1 P2-3: the door's photo reaches the reviewer, through the authorized photo read.
-    expect(html).toContain('src="/api/photos/ph-door-1"');
-    expect(html).toContain('href="/api/photos/ph-door-1"');
+    // Astra 2b r2: through the REPORT-BOUND read, never the generic /api/photos/{id}.
+    expect(html).toContain('src="/api/admin/catalog/pack-requests/req/photo"');
+    expect(html).toContain('href="/api/admin/catalog/pack-requests/req/photo"');
+    expect(html).not.toContain("/api/photos/");
     expect(html).toContain(en["catalog.requests.photo_open"]);
     // chunk-3 review P3a: what a second report ADDED shows under the report — its note and its photo.
     expect(html).toContain("Mia added to this");
     expect(html).toContain("Second case too");
-    expect(html).toContain('src="/api/photos/ph-door-2"');
+    expect(html).toContain('src="/api/admin/catalog/pack-requests/req/additions/add-1/photo"');
   });
   it("sections are collapsed with their summary in the header; every control is 44px", () => {
     const html = render(jsx(SkuItemClient, { view, job: null, requestId: null }));

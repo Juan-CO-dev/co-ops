@@ -53,7 +53,7 @@ import { loadSkuDataReadiness, READINESS_COLUMNS, readinessOrder } from "@/lib/s
 import { loadAllSkuPackResolution, loadPackBoundaries, loadShopPackEpochs, loadSkuPackResolution } from "@/lib/prep-consumption";
 import { loadCurrentSkuPriceHeads } from "@/lib/admin/cost";
 import { loadSkuPackVersionHistory, restoreSkuPackVersion, retireShopPackVersion } from "@/lib/admin/sku-versions";
-import { dismissPackChangeRequest, filePackChangeRequest, loadOpenPackChangeRequests, loadRequestAdditions } from "@/lib/pack-change-requests";
+import { dismissPackChangeRequest, filePackChangeRequest, loadOpenPackChangeRequests, loadRequestAdditions, signPackRequestPhoto } from "@/lib/pack-change-requests";
 import { globalValueExists, loadSkuPriceHistory, requestShop } from "@/lib/catalog/sku-item";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import { migratedSchemaDb } from "./fixtures/snapshot-migrate";
@@ -88,6 +88,8 @@ beforeAll(async () => {
   await run("globalValueExists(price)", () => globalValueExists(getServiceRoleClient(), SKU, "price"));
   await run("loadSkuPriceHistory(shop)", () => loadSkuPriceHistory(getServiceRoleClient(), SKU, LOC));
   await run("requestShop", () => requestShop(getServiceRoleClient(), SKU));
+  await run("signPackRequestPhoto(report)", () => signPackRequestPhoto(owner, { requestId: SKU, additionId: null }));
+  await run("signPackRequestPhoto(addition)", () => signPackRequestPhoto(owner, { requestId: SKU, additionId: SKU }));
   await run("loadRequestAdditions", () => loadRequestAdditions(getServiceRoleClient() as never, [SKU]));
   await run("filePackChangeRequest", () => filePackChangeRequest(owner, { skuId: SKU, locationId: LOC, deliveryId: null, note: null, proposal: null, photoId: null }));
 }, 120_000);
