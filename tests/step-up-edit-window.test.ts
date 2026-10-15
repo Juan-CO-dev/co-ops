@@ -3,7 +3,9 @@
  * window, a fixed 15 minutes from an admin password), the client only decides whether to
  * SHOW a prompt, and destructive acts carry a one-shot purpose.
  */
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
+import { assertStepUp, stepUpEditWindowMs, stepUpFreshWindowMs } from "@/lib/admin/step-up";
+import type { AuthContext } from "@/lib/session";
 import {
   CLIENT_EDIT_WINDOW_MARGIN_MS,
   DEFAULT_EDIT_WINDOW_MS,
@@ -114,5 +116,53 @@ describe("helpers", () => {
     expect(parseWindowSeconds("0", 7)).toBe(7);
     expect(parseWindowSeconds("-5", 7)).toBe(7);
     expect(parseWindowSeconds(undefined, 7)).toBe(7);
+  });
+});
+
+function ctx(sharedAt: string | null, catalogAt: string | null, shared = sharedAt !== null): AuthContext {
+  return { session: { stepUpUnlocked: shared, stepUpUnlockedAt: sharedAt, catalogEditUnlockedAt: catalogAt } } as unknown as AuthContext;
+}
+afterEach(() => {
+  delete process.env.ADMIN_STEP_UP_EDIT_WINDOW_SECONDS;
+  delete process.env.ADMIN_STEP_UP_FRESH_SECONDS;
+});
+
+describe("Tier E on the server — its own clock, checked on every write", () => {
+  it("defaults to 15 minutes with an EXCLUSIVE deadline: 899 999 ms ok, 900 000 and 900 001 refused", () => {
+    expect(stepUpEditWindowMs()).toBe(900_000);
+    expect(assertStepUp(ctx(null, ago(899_999)), "E", NOW)).toEqual({ ok: true });
+    expect(assertStepUp(ctx(null, ago(900_000)), "E", NOW)).toEqual({ ok: false, code: "step_up_stale" });
+    expect(assertStepUp(ctx(null, ago(900_001)), "E", NOW)).toEqual({ ok: false, code: "step_up_stale" });
+  });
+
+  it("Tier B's boundary is unchanged: inclusive at 120 000 ms", () => {
+    expect(assertStepUp(ctx(ago(120_000), null), "B", NOW)).toEqual({ ok: true });
+    expect(assertStepUp(ctx(ago(120_001), null), "B", NOW)).toEqual({ ok: false, code: "step_up_stale" });
+  });
+
+  it("the SHARED unlock never satisfies E, and the catalog clock never satisfies B", () => {
+    expect(assertStepUp(ctx(ago(1_000), null), "E", NOW)).toEqual({ ok: false, code: "step_up_required" });
+    expect(assertStepUp(ctx(null, ago(1_000)), "B", NOW)).toEqual({ ok: false, code: "step_up_required" });
+  });
+
+  it("garbage or future timestamps are stale", () => {
+    expect(assertStepUp(ctx(null, "nope"), "E", NOW)).toEqual({ ok: false, code: "step_up_stale" });
+    expect(assertStepUp(ctx(null, new Date(NOW + 60_000).toISOString()), "E", NOW)).toEqual({ ok: false, code: "step_up_stale" });
+  });
+
+  it("A and B are unchanged", () => {
+    expect(assertStepUp(ctx(ago(3_600_000), null), "A", NOW)).toEqual({ ok: true });
+    expect(assertStepUp(ctx(ago(30_000), null), "B", NOW)).toEqual({ ok: true });
+    expect(assertStepUp(ctx(ago(121_000), null), "B", NOW)).toEqual({ ok: false, code: "step_up_stale" });
+    expect(stepUpFreshWindowMs()).toBe(120_000);
+  });
+
+  it("the env override works, garbage falls back, and E is never shorter than B", () => {
+    process.env.ADMIN_STEP_UP_EDIT_WINDOW_SECONDS = "1800";
+    expect(stepUpEditWindowMs()).toBe(1_800_000);
+    process.env.ADMIN_STEP_UP_EDIT_WINDOW_SECONDS = "abc";
+    expect(stepUpEditWindowMs()).toBe(900_000);
+    process.env.ADMIN_STEP_UP_EDIT_WINDOW_SECONDS = "60";
+    expect(stepUpEditWindowMs()).toBe(120_000);
   });
 });

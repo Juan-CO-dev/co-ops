@@ -2,7 +2,11 @@
  * POST /api/auth/step-up — re-authenticate with password to unlock destructive
  * admin actions for the current session.
  *
- * Body: { password: string }
+ * Body: { password: string; catalogWindow?: boolean; purpose?: { action, targetId } }
+ *   catalogWindow — sent by the admin StepUpProvider: this password also opens the 15-minute
+ *                   catalog edit window (sessions.catalog_edit_unlocked_at, 0257).
+ *   purpose       — a ONE-SHOT grant for one destructive catalog act (lib/admin/step-up-grants.ts),
+ *                   minted only after the password verifies. Malformed → 400 before any check.
  *
  * Flow (locked Phase 2 Session 3):
  *   1. Validate body shape.
@@ -30,6 +34,9 @@ import { requireSession, unlockStepUp } from "@/lib/session";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import { jsonError, jsonOk, parseJsonBody, extractIp } from "@/lib/api-helpers";
 import { ROLES, type RoleCode } from "@/lib/roles";
+import { stepUpEditWindowMs } from "@/lib/admin/step-up";
+import { parseStepUpPurpose } from "@/lib/admin/step-up-shared";
+import { mintStepUpGrant } from "@/lib/admin/step-up-grants";
 
 interface StepUpBody {
   password: string;
@@ -55,6 +62,12 @@ export async function POST(req: NextRequest) {
       message: "password must not be empty",
     });
   }
+  const raw = parsed as unknown as Record<string, unknown>;
+  const purpose = parseStepUpPurpose(raw.purpose);
+  if (purpose === "invalid") {
+    return jsonError(400, "invalid_payload", { field: "purpose", message: "purpose must name a known action and a target id" });
+  }
+  const catalogWindow = raw.catalogWindow === true;
 
   // 2. requireSession
   const ctx = await requireSession(req, "/api/auth/step-up");
@@ -127,15 +140,20 @@ export async function POST(req: NextRequest) {
     user.id, password, pwRow.password_hash, user.role, { ipAddress, userAgent }, "step_up",
   );
 
-  // 5. Success
-  await unlockStepUp(session.id);
+  // 5. Success — stamp the shared flag (and the catalog window when asked), then mint the
+  //    one grant the purpose names. Both are recorded on the success row.
+  await unlockStepUp(session.id, { catalogWindow });
+  if (purpose) await mintStepUpGrant({ sessionId: session.id, userId: user.id, purpose });
   await audit({
     actorId: user.id,
     actorRole: user.role,
     action: "auth_step_up_success",
     resourceTable: "sessions",
     resourceId: session.id,
-    metadata: {},
+    metadata: {
+      edit_window_seconds: catalogWindow ? stepUpEditWindowMs() / 1000 : null,
+      grant: purpose ? { action: purpose.action, target_id: purpose.targetId } : null,
+    },
     ipAddress,
     userAgent,
   });

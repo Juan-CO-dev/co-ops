@@ -66,6 +66,8 @@ export interface Session {
   authMethod: "pin" | "password";
   stepUpUnlocked: boolean;
   stepUpUnlockedAt: string | null;
+  /** Catalog edit window (Tier E, 0257). Optional so pre-0257 shapes and test literals still type. */
+  catalogEditUnlockedAt?: string | null;
   createdAt: string;
   lastActivityAt: string;
   expiresAt: string;

@@ -104,6 +104,8 @@ interface SessionRow {
   auth_method: AuthMethod;
   step_up_unlocked: boolean | null;
   step_up_unlocked_at: string | null;
+  /** 0257 — absent before the migration is applied (select("*")). */
+  catalog_edit_unlocked_at?: string | null;
   created_at: string | null;
   last_activity_at: string | null;
   expires_at: string;
@@ -142,6 +144,7 @@ function mapSession(r: SessionRow): Session {
     authMethod: r.auth_method,
     stepUpUnlocked: r.step_up_unlocked ?? false,
     stepUpUnlockedAt: r.step_up_unlocked_at,
+    catalogEditUnlockedAt: r.catalog_edit_unlocked_at ?? null,
     createdAt: r.created_at ?? new Date(0).toISOString(),
     lastActivityAt: r.last_activity_at ?? new Date(0).toISOString(),
     expiresAt: r.expires_at,
@@ -516,12 +519,18 @@ export async function revokeAllUserSessions(userId: string): Promise<{ count: nu
   return { count: data?.length ?? 0 };
 }
 
-export async function unlockStepUp(sessionId: string): Promise<void> {
+/**
+ * Stamp a successful password. `catalogWindow` (catalog Phase 1, 0257) is true only for a
+ * password typed on the admin surface (StepUpProvider → PasswordModal): it ALSO (re)starts the
+ * fixed 15-minute catalog edit window. A counts or catering password never touches it. This is
+ * the ONLY writer of either clock (pinned by tests/step-up-edit-window-wiring.test.ts).
+ */
+export async function unlockStepUp(sessionId: string, opts: { catalogWindow?: boolean } = {}): Promise<void> {
   const sb = getServiceRoleClient();
   const now = new Date().toISOString();
   const { error } = await sb
     .from("sessions")
-    .update({ step_up_unlocked: true, step_up_unlocked_at: now })
+    .update({ step_up_unlocked: true, step_up_unlocked_at: now, ...(opts.catalogWindow ? { catalog_edit_unlocked_at: now } : {}) })
     .eq("id", sessionId);
   if (error) throw new Error(`unlockStepUp failed: ${error.message}`);
 }
