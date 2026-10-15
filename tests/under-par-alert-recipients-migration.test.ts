@@ -47,7 +47,7 @@ const MODS: ReadonlyArray<readonly [string, string]> = [
             'par', NULLIF(v_phase1->>'par_value', '')::numeric
           ),`],
   [`              'shift_lead', 'key_holder', 'trainer', 'employee'`,
-   `              'shift_lead', 'key_holder'`],
+   `              'prep_mgr', 'shift_lead', 'key_holder'`],
 ];
 
 const raw = read(FILE);
@@ -85,10 +85,10 @@ describe("0255 re-emits submit_phase2_atomic from its latest definer", () => {
 describe("0255 — the two owner decisions", () => {
   const recipients = emitted.slice(emitted.indexOf("INSERT INTO notification_recipients"), emitted.indexOf(") recipients;"));
 
-  it("recipients: key holders and up at the shop; trainer and employee are gone", () => {
+  it("recipients: key holders and up at the shop + prep_mgr; trainer, employee, social_media_mgr are not", () => {
     expect(recipients).toContain("'cgs', 'owner', 'moo', 'gm', 'agm', 'catering_mgr',");
-    expect(recipients).toContain("'shift_lead', 'key_holder'");
-    expect(recipients).not.toMatch(/'trainer'|'employee'|'trainee'/);
+    expect(recipients).toContain("'prep_mgr', 'shift_lead', 'key_holder'");
+    expect(recipients).not.toMatch(/'trainer'|'employee'|'trainee'|'social_media_mgr'/);
     expect(recipients).toContain("OR u.role = 'moo'");
     expect(recipients).toContain("OR u.role = 'owner'");
   });

@@ -9,7 +9,8 @@
 --   1. RECIPIENTS — owner decision "key holders and up". The under-par alert went to every active
 --      cgs/owner/moo/gm/agm/catering_mgr/shift_lead/key_holder/TRAINER/EMPLOYEE at the shop + every
 --      MoO and Owner. trainer and employee are dropped from the shop list; MoO + Owner everywhere
---      is unchanged. (prep_mgr / social_media_mgr were never in the list and are not added here.)
+--      is unchanged. prep_mgr (level 6) is ADDED at the shop — prep alerts are that role's job
+--      (coordinator ruling 2026-10-15); social_media_mgr (level 6) stays OFF.
 --      This now matches the opener's on-screen warning ("This will alert KH+, MoO, and Owner").
 --   2. PAR ON THE CARD — notifications.card.under_par.detail renders "(par {par}, …)" from
 --      data.bodyParams.par, which was never written, so every card read "par ," blank. bodyParams
@@ -221,7 +222,8 @@ BEGIN
       RETURNING id INTO v_notif_id;
 
       -- Recipients: KH+ at this location + MoO + Owner DISTINCT (0053:460-482 / 0055:564-575)
-      -- 0255 (Juan, 2026-10-15): key holders and up only — trainer and employee dropped.
+      -- 0255 (Juan, 2026-10-15): key holders and up only — trainer and employee dropped;
+      -- prep_mgr added (prep alerts are that role's job); social_media_mgr stays off.
       INSERT INTO notification_recipients (notification_id, user_id, delivery_method, delivery_status)
       SELECT v_notif_id, recipients.user_id, 'in_app', 'pending'
       FROM (
@@ -231,7 +233,7 @@ BEGIN
           AND (
             (u.role IN (
               'cgs', 'owner', 'moo', 'gm', 'agm', 'catering_mgr',
-              'shift_lead', 'key_holder'
+              'prep_mgr', 'shift_lead', 'key_holder'
             )
              AND EXISTS (
                SELECT 1 FROM user_locations ul
