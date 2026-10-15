@@ -26,7 +26,10 @@ type Result = { data: Row[] | null; error: { message: string } | null };
 let seq = 0;
 const isNull = (v: unknown) => v === null || v === undefined;
 
-export function fakeSupabase(tables: Record<string, Row[]>): FakeDb {
+/** A fake RPC: runs against the in-memory tables; returns PostgREST's { data, error } shape. */
+export type FakeRpc = (args: Record<string, unknown>, db: FakeDb) => { data: unknown; error: { code?: string; message: string } | null };
+
+export function fakeSupabase(tables: Record<string, Row[]>, rpcs: Record<string, FakeRpc> = {}): FakeDb {
   const db: FakeDb = { client: null as unknown as SupabaseClient, tables, writes: [], failUpdates: 0, failInserts: 0, failInsertTables: [] };
 
   function from(table: string) {
@@ -94,6 +97,11 @@ export function fakeSupabase(tables: Record<string, Row[]>): FakeDb {
     return q;
   }
 
-  db.client = { from } as unknown as SupabaseClient;
+  const rpc = async (name: string, args: Record<string, unknown>) => {
+    const fn = rpcs[name];
+    if (!fn) throw new Error(`fake-supabase: no fake for rpc ${name}`);
+    return fn(args, db);
+  };
+  db.client = { from, rpc } as unknown as SupabaseClient;
   return db;
 }

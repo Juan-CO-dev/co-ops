@@ -165,15 +165,15 @@ function componentTargets(input: {
  * Then the rules that need the database:
  *  · a PRODUCT line: an active product measured in an ACTIVE measure-registry unit of any
  *    dimension (D3, assertProductLineIsValid above);
- *  · an ITEM line: must not make this recipe consume its own output, directly or through a
- *    chain of prep recipes. createRecipeFull always had this guard; addRecipeInput did not,
- *    so a single added line could close a loop the flatten then had to survive.
+ *  · an ITEM line must not make this recipe consume its own output, directly or through a chain
+ *    of prep recipes — but that rule is NOT checked here: a read-then-write check races (Astra
+ *    full-branch #3), so it runs INSIDE the write, under the recipe-graph lock, in the 0258 RPCs
+ *    (add_recipe_input_atomic / update_recipe_input_atomic), which refuse would_create_cycle.
  * Mass balance is NOT a write rule: it is the costing board's read-time consistency check
  * (lib/menu-costing-shared.ts massBalanceIndex) and applies to any line once it is saved.
  */
 async function assertInputLineIsValid(
   sb: ReturnType<typeof getServiceRoleClient>,
-  recipeId: string,
   line: {
     componentSkuId: string | null;
     componentItemId: string | null;
@@ -191,21 +191,15 @@ async function assertInputLineIsValid(
   if (line.componentSkuId === null && normStr(line.eachContainerLabel) !== null) throw new RecipeError(400, "invalid_payload");
   if (line.componentItemId !== null && line.portioned) throw new RecipeError(400, "invalid_payload");
   if (line.componentProductId !== null) await assertProductLineIsValid(sb, line.componentProductId, line.unit);
-  if (line.componentItemId !== null) {
-    const { data: outs, error } = await sb
-      .from("recipe_outputs")
-      .select("output_item_id")
-      .eq("recipe_id", recipeId)
-      .not("output_item_id", "is", null)
-      .returns<Array<{ output_item_id: string }>>();
-    if (error) throw new Error(`assertInputLineIsValid outputs: ${error.message}`);
-    for (const o of outs ?? []) {
-      if (await itemConsumesTransitively(line.componentItemId, o.output_item_id)) {
-        throw new RecipeError(400, "would_create_cycle");
-      }
-    }
-  }
 }
+
+/** The 0258 recipe-line RPCs' named refusals (P0001), mapped to the lib's codes. */
+const RECIPE_INPUT_RPC_ERRORS: Record<string, number> = {
+  recipe_not_found: 404,
+  would_create_cycle: 400,
+  line_changed: 409,
+  edge_not_found: 404,
+};
 
 /** List recipes (>=6), optional type filter, with hydrated output names + completeness flags. */
 export async function loadRecipes(actor: AuthContext, type?: RecipeType): Promise<RecipeListRow[]> {
@@ -583,15 +577,30 @@ export async function addRecipeInput(actor: AuthContext, input: { recipeId: stri
   requireLevel(actor, RECIPE_WRITE_MIN);
   const { skuId, itemId, productId } = componentTargets(input);
   const sb = getServiceRoleClient();
-  await assertInputLineIsValid(sb, input.recipeId, {
+  await assertInputLineIsValid(sb, {
     componentSkuId: skuId, componentItemId: itemId, componentProductId: productId, quantity: input.quantity,
     unit: input.unit ?? null, eachContainerLabel: input.eachContainerLabel ?? null, portioned: input.portioned ?? false,
   });
-  const { data: max } = await sb.from("recipe_inputs").select("display_order").eq("recipe_id", input.recipeId).order("display_order", { ascending: false }).limit(1).maybeSingle<{ display_order: number }>();
-  const { data, error } = await sb.from("recipe_inputs").insert({ recipe_id: input.recipeId, component_sku_id: skuId, component_item_id: itemId, component_product_id: productId, quantity: input.quantity, unit: normStr(input.unit), each_container_label: normStr(input.eachContainerLabel), portioned: input.portioned ?? false, display_order: (max?.display_order ?? 0) + 1, created_by: actor.user.id })
-    .select("id").maybeSingle<{ id: string }>();
-  if (error) throw new Error(`addRecipeInput: ${error.message}`);
-  if (!data) throw new Error("addRecipeInput returned no row");
+  // ONE transaction behind the recipe-graph lock (0258): the item-cycle check, the display order
+  // and the INSERT can no longer interleave with another writer (Astra full-branch #3).
+  const { data: newId, error } = await sb.rpc("add_recipe_input_atomic", {
+    p_recipe_id: input.recipeId,
+    p_component_sku_id: skuId,
+    p_component_item_id: itemId,
+    p_component_product_id: productId,
+    p_quantity: input.quantity,
+    p_unit: normStr(input.unit),
+    p_each_container_label: normStr(input.eachContainerLabel),
+    p_portioned: input.portioned ?? false,
+    p_created_by: actor.user.id,
+  });
+  if (error) {
+    const named = rpcRecipeError(error, RECIPE_INPUT_RPC_ERRORS);
+    if (named) throw named;
+    throw new Error(`addRecipeInput: ${error.message}`);
+  }
+  if (typeof newId !== "string") throw new Error("addRecipeInput returned no row");
+  const data = { id: newId };
   await audit({ actorId: actor.user.id, actorRole: actor.user.role, action: "recipe_input.add", resourceTable: "recipe_inputs", resourceId: data.id, metadata: { recipe_id: input.recipeId, component_sku_id: skuId, component_item_id: itemId, component_product_id: productId, quantity: input.quantity }, ipAddress: null, userAgent: null });
   return { id: data.id };
 }
@@ -612,7 +621,8 @@ export async function addRecipeInput(actor: AuthContext, input: { recipeId: stri
  * overwritten); gone or on another recipe → 404 edge_not_found. The audit's `before` is the
  * matched expected line and its `after` is the returned row — never a separate read that could
  * race. Same validator as add (assertInputLineIsValid). An edit that changes nothing (compared
- * normalised) writes and audits nothing. No migration: full expected values, no version column.
+ * normalised) writes and audits nothing. The check-and-write runs in ONE transaction behind the
+ * recipe-graph lock: update_recipe_input_atomic (0258, Astra full-branch #3).
  */
 export async function updateRecipeInput(
   actor: AuthContext,
@@ -626,36 +636,38 @@ export async function updateRecipeInput(
   if (changed.length === 0) return { changed: false };
 
   const sb = getServiceRoleClient();
-  await assertInputLineIsValid(sb, input.recipeId, line);
+  await assertInputLineIsValid(sb, line);
 
   const seen = lineToRow(expected);
-  const match: Array<[string, string | number | boolean | null]> = [
-    ["component_sku_id", seen.component_sku_id],
-    ["component_item_id", seen.component_item_id],
-    ["component_product_id", seen.component_product_id],
-    ["quantity", seen.quantity],
-    ["unit", seen.unit],
-    ["each_container_label", seen.each_container_label],
-    ["portioned", seen.portioned],
-  ];
-  let write = sb.from("recipe_inputs").update(lineToRow(line)).eq("id", input.inputId).eq("recipe_id", input.recipeId);
-  for (const [col, value] of match) write = value === null ? write.is(col, null) : write.eq(col, value);
-  const { data: written, error } = await write
-    .select("component_sku_id, component_item_id, component_product_id, quantity, unit, each_container_label, portioned")
-    .returns<RecipeLineRow[]>();
-  if (error) throw new Error(`updateRecipeInput: ${error.message}`);
-
-  const row = written?.[0];
-  if (!row) {
-    const { data: still, error: readErr } = await sb
-      .from("recipe_inputs")
-      .select("id")
-      .eq("id", input.inputId)
-      .eq("recipe_id", input.recipeId)
-      .maybeSingle<{ id: string }>();
-    if (readErr) throw new Error(`updateRecipeInput recheck: ${readErr.message}`);
-    throw still ? new RecipeError(409, "line_changed") : new RecipeError(404, "edge_not_found");
+  const next = lineToRow(line);
+  // ONE transaction behind the recipe-graph lock (0258, Astra full-branch #3): the item-cycle
+  // check and the compare-and-set UPDATE (the FULL expected snapshot, null-safe) happen together;
+  // 0 rows is line_changed (still on this recipe) or edge_not_found, named by the RPC.
+  const { data: written, error } = await sb.rpc("update_recipe_input_atomic", {
+    p_input_id: input.inputId,
+    p_recipe_id: input.recipeId,
+    p_component_sku_id: next.component_sku_id,
+    p_component_item_id: next.component_item_id,
+    p_component_product_id: next.component_product_id,
+    p_quantity: next.quantity,
+    p_unit: next.unit,
+    p_each_container_label: next.each_container_label,
+    p_portioned: next.portioned,
+    p_expected_component_sku_id: seen.component_sku_id,
+    p_expected_component_item_id: seen.component_item_id,
+    p_expected_component_product_id: seen.component_product_id,
+    p_expected_quantity: seen.quantity,
+    p_expected_unit: seen.unit,
+    p_expected_each_container_label: seen.each_container_label,
+    p_expected_portioned: seen.portioned,
+  });
+  if (error) {
+    const named = rpcRecipeError(error, RECIPE_INPUT_RPC_ERRORS);
+    if (named) throw named;
+    throw new Error(`updateRecipeInput: ${error.message}`);
   }
+  const row = (written as RecipeLineRow[] | null)?.[0];
+  if (!row) throw new RecipeError(404, "edge_not_found");
 
   await audit({
     actorId: actor.user.id,

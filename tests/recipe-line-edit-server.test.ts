@@ -6,6 +6,7 @@
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fakeSupabase, type Row } from "./fake-supabase";
+import { recipeInputRpcs } from "./recipe-input-rpc-fake";
 
 const h = vi.hoisted(() => ({
   db: null as unknown as import("./fake-supabase").FakeDb,
@@ -49,7 +50,7 @@ beforeEach(() => {
     ],
     products: [{ id: "p-ham", active: true }, { id: "p-old", active: false }],
     measure_units: [{ label: "oz", active: true }, { label: "each", active: true }],
-  });
+  }, recipeInputRpcs); // the 0258 RPCs, faked statement by statement (tests/recipe-input-rpc-fake.ts)
 });
 
 const line = (over: Partial<RecipeLineFields> = {}): RecipeLineFields => ({
