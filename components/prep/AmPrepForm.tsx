@@ -67,6 +67,9 @@ import { useTranslation } from "@/lib/i18n/provider";
 import type { Language, TranslationKey, TranslationParams } from "@/lib/i18n/types";
 import { ActionButton } from "@/components/ActionButton";
 import { SaveStatus } from "@/components/ui/SaveStatus";
+import { WhatsLeft, focusWhatsLeft } from "@/components/ui/WhatsLeft";
+import { whatsLeft } from "@/lib/whats-left-shared";
+import { resolveTemplateItemContent } from "@/lib/i18n/content";
 import { shapeFromColumns, totalSourcesForShape } from "@/lib/prep-sections";
 import { unfinishedSectionIds } from "@/lib/collapsible-sections";
 import { useCollapsibleSections } from "@/lib/use-collapsible-sections";
@@ -381,6 +384,7 @@ interface SubmitResponseBodySuccess {
 // ─────────────────────────────────────────────────────────────────────────────
 
 export interface AmPrepFormProps {
+  actorLevel?: number;
   instance: ChecklistInstance;
   /** Pre-narrowed (lib/prep.ts narrowPrepTemplateItem). */
   templateItems: ChecklistTemplateItem[];
@@ -448,6 +452,7 @@ type SubmitState =
   | { kind: "error"; code: string; message: string };
 
 export function AmPrepForm({
+  actorLevel = 99,
   instance: initialInstance,
   templateItems,
   initialValues,
@@ -574,6 +579,11 @@ export function AmPrepForm({
     [sections, itemsBySection, validation.errors],
   );
   const collapsible = useCollapsibleSections("am-prep", sectionProgress);
+  const left = whatsLeft(Array.from(itemsBySection.entries()).flatMap(([sectionId, rows]) => rows.map((item) => ({
+    id: item.id, sectionId, label: resolveTemplateItemContent(item, language).label,
+    required: item.required, minRoleLevel: item.minRoleLevel, targetField: "primary",
+  }))), Object.fromEntries(templateItems.map((item) => [item.id,
+    !validation.errors[item.id] && Object.keys(rawValues[item.id] ?? {}).length > 0])), actorLevel);
   const collapseCtx = useMemo<AmPrepCollapse>(
     () => ({
       formKey: "am-prep",
@@ -882,6 +892,9 @@ export function AmPrepForm({
           {submitState.message}
         </section>
       ) : null}
+
+      {!isReadOnly ? <WhatsLeft result={left} onJump={(entry) => focusWhatsLeft(entry,
+        (id) => collapsible.setOpenTransient(id, true))} /> : null}
 
       {/* Sections — data-driven render in display order (Item/Inventory
           Spine, Task 4). `sections` is already display-ordered (the loader

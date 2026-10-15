@@ -90,7 +90,7 @@
  *     until the operator answers the banner (resume or discard re-enables it).
  */
 import { useEffect, useRef, useState } from "react";
-import { submitOutcome } from "@/lib/receiving-submit-shared";
+import { initialReceivingSubmit, submitOutcome, submitStart } from "@/lib/receiving-submit-shared";
 import { SaveStatus } from "@/components/ui/SaveStatus";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
@@ -390,10 +390,16 @@ export function ReceivingForm({
       lines: typeof update === "function" ? update(s.lines as LineDraft[]) : update,
     }));
   const [prefilling, setPrefilling] = useState(false);
-  const [busy, setBusy] = useState(false);
+  const [submitState, setSubmitState] = useState(initialReceivingSubmit);
+  const busy = submitState.busy;
   const submitBusyRef = useRef(false);
   const [retryStatus, setRetryStatus] = useState<"complete" | "in_progress" | null>(null);
-  const [err, setErr] = useState<string | null>(null);
+  const [otherErr, setOtherErr] = useState<string | null>(null);
+  const setErr = (message: string | null) => {
+    setOtherErr(message);
+    setSubmitState(initialReceivingSubmit);
+  };
+  const err = submitState.error ?? otherErr;
   const [dupId, setDupId] = useState<string | null>(null);
 
   // Draft persistence state (D1 Task 6).
@@ -1172,9 +1178,9 @@ export function ReceivingForm({
     setErr(null);
     setDupId(null);
     setRecorded(null);
-    setBusy(true);
+    setSubmitState((s) => submitStart(s));
     const showSubmitFailure = (message: string) =>
-      setErr(submitOutcome({ type: "refused", message }, { busy: true }).error);
+      setSubmitState((s) => submitOutcome({ type: "refused", message }, s));
     try {
     // The note is the operator's words and nothing else. "Photo later" used to append a
     // "[PHOTO PENDING]" tag here — an untranslated machine string wedged into free text,
@@ -1236,7 +1242,7 @@ export function ReceivingForm({
       // Read what was recorded BEFORE resetForm clears the vendor and the lines.
       const recordedVendorName = vendors.find((v) => v.id === vendorId)?.name ?? null;
       const recordedLineCount = payload.lines.length;
-      setBusy(false);
+      setSubmitState((s) => submitOutcome({ type: "ok" }, s));
       // Remove THIS draft BEFORE router.refresh() so it can't be resumed after a
       // successful submit (D1 Task 6 law: clear on success) — and only this one, by
       // its (vendor, startedAt) identity. A second truck's half-counted draft is not
@@ -1252,7 +1258,6 @@ export function ReceivingForm({
       router.refresh();
       return;
     }
-    setBusy(false);
     const j = (await res.json().catch(() => ({}))) as { code?: string; message?: string; error?: string };
     if (res.status === 409 && j?.code === "duplicate_delivery") {
       // The message carries "(delivery <id>)" — parse it for a deep link.
@@ -1276,10 +1281,9 @@ export function ReceivingForm({
     }
     showSubmitFailure(t(("receiving.error." + (j?.code ?? "generic")) as never));
     } catch {
-      setErr(submitOutcome({ type: "thrown", message: t("receiving.error.generic") }, { busy: true }).error);
+      setSubmitState((s) => submitOutcome({ type: "thrown", message: t("receiving.error.generic") }, s));
     } finally {
       submitBusyRef.current = false;
-      setBusy(false);
     }
   };
 
@@ -1958,7 +1962,7 @@ export function ReceivingForm({
           role="alert"
         >
           <SaveStatus phase="failed" detail={err}
-            onRetry={retryStatus && canSubmit ? () => void submit(retryStatus) : undefined} />
+            onRetry={submitState.retryable && retryStatus && canSubmit ? () => void submit(retryStatus) : undefined} />
           {dupId ? (
             <Link
               href={`/operations/receiving/${dupId}`}

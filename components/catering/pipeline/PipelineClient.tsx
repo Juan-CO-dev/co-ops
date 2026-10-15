@@ -90,9 +90,13 @@ export function PipelineClient({ notInToast, staff, leads, followUps, locations,
   const stageOverlayRef = useRef<CateringStageOverlay>({});
   const requestRef = useRef(0);
   const serverStages: Record<string, PipelineStage> = {};
-  for (const lead of leads) serverStages[lead.id] = lead.stage;
+  const serverVersions: Record<string, string | null> = {};
+  for (const lead of leads) {
+    serverStages[lead.id] = lead.stage;
+    serverVersions[lead.id] = lead.updatedAt;
+  }
   useEffect(() => {
-    const next = cateringStageOverlay(stageOverlayRef.current, serverStages, { type: "props" });
+    const next = cateringStageOverlay(stageOverlayRef.current, serverStages, { type: "props", versions: serverVersions });
     if (next !== stageOverlayRef.current) {
       stageOverlayRef.current = next;
       setStageOverlay(next);
@@ -101,7 +105,7 @@ export function PipelineClient({ notInToast, staff, leads, followUps, locations,
 
   const moveStage = useCallback(async (id: string, from: PipelineStage, to: PipelineStage) => {
     const request = ++requestRef.current;
-    const next = cateringStageOverlay(stageOverlayRef.current, serverStages, { type: "start", id, from, to, request });
+    const next = cateringStageOverlay(stageOverlayRef.current, serverStages, { type: "start", id, from, to, request, version: serverVersions[id] });
     if (next === stageOverlayRef.current) return;
     stageOverlayRef.current = next;
     setStageOverlay(next);

@@ -185,6 +185,7 @@ export function PrepRow({
 
   return (
     <div
+      data-whats-left-item={templateItemId}
       // Grid: label flexes; PAR + N input cells at fixed widths.
       // 1fr label + repeat(inputCount + 1, fixed-width-cell)
       // Mobile: each cell ~52px; sm: bumps to ~64px.

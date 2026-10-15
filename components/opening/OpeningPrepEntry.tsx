@@ -66,6 +66,8 @@ import { RevokeReasonModal } from "./RevokeReasonModal";
 import { etCalendarDate } from "@/lib/operational-day";
 import { TwoTapUndoButton } from "@/components/prep/TwoTapUndoButton";
 import { SaveStatusFrame } from "@/components/ui/SaveStatus";
+import { WhatsLeft, focusWhatsLeft } from "@/components/ui/WhatsLeft";
+import { whatsLeft } from "@/lib/whats-left-shared";
 
 export interface OpeningPhase2FormValue {
   /** Opener recount value when item flagged for per-item recount; NULL otherwise. */
@@ -162,6 +164,7 @@ export type Phase2RevokeOutcome =
   | { status: "error"; code: string };
 
 interface OpeningPrepEntryProps {
+  actorLevel?: number;
   items: ChecklistTemplateItem[];
   /**
    * Production-in-prep fold — per-Phase-2-item derived SKU consumption keyed by
@@ -237,6 +240,7 @@ interface OpeningPrepEntryProps {
 }
 
 export function OpeningPrepEntry({
+  actorLevel = 99,
   items,
   derivedByItem,
   values,
@@ -305,6 +309,11 @@ export function OpeningPrepEntry({
     done: group.filter((it) => saveStates.get(it.id)?.status === "saved").length,
   }));
   const collapsible = useCollapsibleSections("opening-p2", sectionProgress);
+  const left = whatsLeft(items.map((item) => ({ id: item.id,
+    sectionId: (item.prepMeta as OpeningPhase2Meta | null)?.section ?? "—",
+    label: resolveTemplateItemContent(item, language).label, required: item.required,
+    minRoleLevel: item.minRoleLevel, targetField: "primary" })),
+    Object.fromEntries(items.map((item) => [item.id, saveStates.get(item.id)?.status === "saved"])), actorLevel);
   // Finalize pressed with problems (showMissingErrors flips true): open + scroll to
   // every section that still has an unsaved item.
   const revealSections = collapsible.reveal;
@@ -327,6 +336,8 @@ export function OpeningPrepEntry({
 
   return (
     <div className="flex flex-col gap-4">
+      {!readOnly ? <WhatsLeft result={left} onJump={(entry) => focusWhatsLeft(entry,
+        (id) => collapsible.setOpenTransient(id, true))} /> : null}
       {hasUnsaved && !readOnly ? (
         <button
           type="button"
@@ -660,7 +671,7 @@ function PrepEntryRow({
   const groundTruthBadgeLabel = t("opening.phase2.closer_estimate_label");
 
   return (
-    <li className="flex flex-col gap-2 border-t border-co-border py-3 first:border-t-0 first:pt-0">
+    <li data-whats-left-item={item.id} className="flex flex-col gap-2 border-t border-co-border py-3 first:border-t-0 first:pt-0">
       <div className="flex items-baseline justify-between gap-3">
         <p className="text-sm font-medium text-co-text">{resolved.label}</p>
         {parDisplay ? (

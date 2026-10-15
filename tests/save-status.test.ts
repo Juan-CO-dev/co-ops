@@ -45,4 +45,15 @@ describe("save status revision rule", () => {
       expect(src).toContain('t("save_status.failed_count"');
     }
   });
+  it("opening Phase 1 uses the revision machine and mid-day consumption edits invalidate Saved", () => {
+    const opening = readFileSync("app/(authed)/operations/opening/opening-client.tsx", "utf8");
+    expect(opening).toContain("saveStatusStep(draftStatusRef.current, event)");
+    expect(opening).toContain('stepDraft({ type: "edit" })');
+    expect(opening).toContain('stepDraft({ type: "ack", revision })');
+    expect(opening).toContain('stepDraft({ type: "fail", revision })');
+    expect(opening).not.toContain("if (draftLatestRef.current === body) setDraftState");
+    const midDay = readFileSync("components/MidDayPhase2Form.tsx", "utf8");
+    expect(midDay).toContain('onChange={(rows) => patch(it.id, { confirmedConsumption: rows, status: "idle", error: null })}');
+    expect(midDay).toContain('if (p.status === "idle") stepSave(id, { type: "edit" })');
+  });
 });

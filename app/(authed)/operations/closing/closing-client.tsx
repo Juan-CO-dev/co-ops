@@ -73,6 +73,8 @@ import { closingStationAnchor } from "@/lib/assignment-sections";
 import { applyReasonToEmptyDrafts, countEmptyDrafts, groupIdsByStation } from "@/lib/closing-review-shared";
 import { useCollapsibleSections } from "@/lib/use-collapsible-sections";
 import { CollapsibleChecklistSection } from "@/components/ui/CollapsibleChecklistSection";
+import { WhatsLeft, focusWhatsLeft } from "@/components/ui/WhatsLeft";
+import { whatsLeft } from "@/lib/whats-left-shared";
 import type {
   ChecklistCompletion,
   ChecklistInstance,
@@ -361,6 +363,11 @@ export function ClosingClient({ initialState }: { initialState: ClosingInitialSt
     }
     return ids;
   }, [templateItems, completions]);
+  const left = whatsLeft(templateItems.map((item) => ({ id: item.id,
+    sectionId: item.station ?? STATION_FALLBACK,
+    label: resolveTemplateItemContent(item, language).label,
+    required: item.required, minRoleLevel: item.minRoleLevel, targetField: "primary" })),
+    Object.fromEntries(templateItems.map((item) => [item.id, completions.has(item.id)])), actor.level);
 
   // ─── onComplete callback (passed to each ChecklistItem) ─────────────────
 
@@ -906,6 +913,9 @@ export function ClosingClient({ initialState }: { initialState: ClosingInitialSt
         </div>
       </div>
 
+      {!readOnly ? <WhatsLeft result={left} onJump={(entry) => focusWhatsLeft(entry,
+        (id) => collapsible.setOpenTransient(id, true))} /> : null}
+
       {/* Stations.
           `station` value is the SYSTEM KEY (original English; used for
           React keys, refs, data-attrs, IntersectionObserver scroll
@@ -1289,8 +1299,8 @@ function StationGroup({
             // never in stations that carry report-reference items.
             if (it.reportReferenceType !== null) {
               return (
+                <div key={it.id} data-whats-left-item={it.id}>
                 <ReportReferenceItem
-                  key={it.id}
                   templateItem={it}
                   completion={c}
                   completionAuthor={author}
@@ -1300,6 +1310,7 @@ function StationGroup({
                   chainAttribution={reportRefChains[it.id] ?? null}
                   canEdit={reportRefCanEdit[it.id] ?? false}
                 />
+                </div>
               );
             }
 

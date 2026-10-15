@@ -281,6 +281,7 @@ export default async function OpeningPage({ searchParams }: OpeningPageProps) {
         saverNames={{ ...state.authors, [auth.user.id]: auth.user.name }}
         language={language}
         canSubmit={canSubmit}
+        actorLevel={auth.level}
         canEditConsumption={canEditConsumption(auth.level)}
       />
     </AuthShell>

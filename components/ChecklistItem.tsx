@@ -1137,7 +1137,7 @@ export function ChecklistItem({
   // ─── Render ──────────────────────────────────────────────────────────────
 
   return (
-    <div className="w-full">
+    <div data-whats-left-item={templateItem.id} className="w-full">
       <div className="flex items-stretch gap-2">
         <button
           type="button"

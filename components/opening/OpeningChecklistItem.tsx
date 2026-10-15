@@ -163,7 +163,7 @@ export function OpeningChecklistItem({
   const showAddonButton = !addonOpen;
 
   return (
-    <li className="flex flex-col gap-2 border-t border-co-border py-3 first:border-t-0 first:pt-0">
+    <li data-whats-left-item={item.id} className="flex flex-col gap-2 border-t border-co-border py-3 first:border-t-0 first:pt-0">
       <div className="flex items-start gap-3">
         <span
           aria-hidden

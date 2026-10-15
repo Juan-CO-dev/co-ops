@@ -6508,5 +6508,8 @@
   "catalog.requests.added_by": "{who} agregó a esto · {date}",
   "receiving.case_different.added": "Ya se reportó: agregamos tu nota y tu foto al reporte.",
   "catalog.item.change_for_shop": "Cámbialo para {shop}",
-  "catalog.item.pick_shop": "Cámbialo para una de tus tiendas"
+  "catalog.item.pick_shop": "Cámbialo para una de tus tiendas",
+  "whats_left.count": "{n} pendientes",
+  "whats_left.higher_role": "{n} necesitan a alguien con llave",
+  "whats_left.key_holder": "Necesita a alguien con llave"
 }

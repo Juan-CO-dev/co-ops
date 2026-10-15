@@ -10,13 +10,31 @@ const start = { type: "start" as const, id: "lead", from: "inquiry" as const, to
 
 describe("cateringStageOverlay", () => {
   it("moves immediately, survives stale props, and clears only on matching authoritative props", () => {
-    const saving = cateringStageOverlay({}, props, start);
+    const saving = cateringStageOverlay({}, props, { ...start, version: "2026-10-15T12:00:00.000Z" });
     expect(projectedCateringStage(props.lead, saving.lead)).toBe("confirmed");
     expect(cateringStageOverlay(saving, props, { type: "props" })).toBe(saving);
     const saved = cateringStageOverlay(saving, props, { type: "resolve", id: "lead", request: 1, result: { ok: true } });
     expect(saved.lead?.phase).toBe("saved");
-    expect(cateringStageOverlay(saved, props, { type: "props" })).toBe(saved);
+    expect(cateringStageOverlay(saved, props, { type: "props", versions: { lead: "2026-10-15T12:00:00.000Z" } })).toBe(saved);
     expect(cateringStageOverlay(saved, { lead: "confirmed" }, { type: "props" })).toEqual({});
+  });
+  it("keeps a stale refresh, then shows a newer move by another manager", () => {
+    const version = "2026-10-15T12:00:00.000Z";
+    const saving = cateringStageOverlay({}, props, { ...start, version });
+    const saved = cateringStageOverlay(saving, props, { type: "resolve", id: "lead", request: 1, result: { ok: true } });
+    expect(cateringStageOverlay(saved, props, { type: "props", versions: { lead: version } })).toBe(saved);
+    const newerProps = { lead: "quote_sent" as const };
+    const cleared = cateringStageOverlay(saved, newerProps, { type: "props", versions: { lead: "2026-10-15T12:01:00.000Z" } });
+    expect(cleared).toEqual({});
+    expect(projectedCateringStage(newerProps.lead, cleared.lead)).toBe("quote_sent");
+    const source = readFileSync("components/catering/pipeline/PipelineClient.tsx", "utf8");
+    expect(source).toContain("serverVersions[lead.id] = lead.updatedAt");
+    expect(source).toContain('type: "props", versions: serverVersions');
+  });
+  it("drops a saved overlay on the first refresh when the board has no version", () => {
+    const saving = cateringStageOverlay({}, props, start);
+    const saved = cateringStageOverlay(saving, props, { type: "resolve", id: "lead", request: 1, result: { ok: true } });
+    expect(cateringStageOverlay(saved, props, { type: "props" })).toEqual({});
   });
 
   it("rolls back with the exact refusal and permits a retry", () => {

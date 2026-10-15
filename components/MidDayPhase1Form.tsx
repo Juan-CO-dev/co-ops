@@ -18,9 +18,13 @@ import { ActionButton } from "@/components/ActionButton";
 import { CollapsibleChecklistSection } from "@/components/ui/CollapsibleChecklistSection";
 import { useCollapsibleSections } from "@/lib/use-collapsible-sections";
 import { formatPrepQty } from "@/lib/prep-display-shared";
+import { whatsLeft } from "@/lib/whats-left-shared";
+import { WhatsLeft, focusWhatsLeft } from "@/components/ui/WhatsLeft";
 
 export interface MidDayPhase1Item {
   id: string;
+  required?: boolean;
+  minRoleLevel?: number;
   label: string;
   section: string;
   parValue: number | null;
@@ -35,10 +39,12 @@ export interface MidDayPhase1Item {
 
 export function MidDayPhase1Form({
   instanceId,
+  actorLevel = 99,
   items,
   sectionLabels = {},
 }: {
   instanceId: string;
+  actorLevel?: number;
   items: MidDayPhase1Item[];
   /** DB-backed section labels (slug → { en, es }); preferred over the raw slug. */
   sectionLabels?: Record<string, { en: string; es: string | null }>;
@@ -88,6 +94,9 @@ export function MidDayPhase1Form({
       done: g.items.filter((it) => (counts[it.id] ?? "").trim() !== "" && batchBoxesComplete(it)).length,
     })),
   );
+  const left = whatsLeft(items.map((it) => ({ id: it.id, sectionId: it.section, label: it.label,
+    required: it.required ?? true, minRoleLevel: it.minRoleLevel ?? 0, targetField: "primary" })),
+    Object.fromEntries(items.map((it) => [it.id, (counts[it.id] ?? "").trim() !== "" && batchBoxesComplete(it)])), actorLevel);
 
   const onSubmit = async () => {
     if (submitting) return;
@@ -139,6 +148,7 @@ export function MidDayPhase1Form({
 
   return (
     <div className="mt-4 flex flex-col gap-5 lg:block lg:columns-2 lg:[column-gap:1.25rem] lg:[&>*]:break-inside-avoid lg:[&>*]:mb-5">
+      <WhatsLeft result={left} onJump={(entry) => focusWhatsLeft(entry, (id) => collapsible.setOpenTransient(id, true))} />
       {groups.map((g) => (
         <CollapsibleChecklistSection
           key={g.section}
@@ -164,6 +174,7 @@ export function MidDayPhase1Form({
               return (
                 <li
                   key={it.id}
+                  data-whats-left-item={it.id}
                   className={[
                     "flex items-center gap-3 rounded-md border-2 bg-co-surface px-3 py-2",
                     batchIncomplete ? "border-co-cta-text" : "border-co-border",
@@ -200,6 +211,7 @@ export function MidDayPhase1Form({
                   ) : null}
                   <input
                     type="number"
+                    data-whats-left-field="primary"
                     inputMode="decimal"
                     min={0}
                     value={raw}

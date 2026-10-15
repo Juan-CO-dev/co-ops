@@ -47,9 +47,13 @@ import { etCalendarDate } from "@/lib/operational-day";
 import { formatPrepQty } from "@/lib/prep-display-shared";
 import { canMakeTheNeed } from "@/lib/made-the-need-shared";
 import { initialMidDaySave, nextSaveStep, type MidDaySaveState } from "@/lib/mid-day-save-shared";
+import { whatsLeft } from "@/lib/whats-left-shared";
+import { WhatsLeft, focusWhatsLeft } from "@/components/ui/WhatsLeft";
 
 export interface MidDayPhase2Item {
   id: string;
+  required?: boolean;
+  minRoleLevel?: number;
   label: string;
   section: string;
   parValue: number | null;
@@ -128,6 +132,7 @@ function ouToUnderInitial(ou: MidDayOverUnder | null): UnderParCapture | null {
 
 export function MidDayPhase2Form({
   instanceId,
+  actorLevel = 99,
   items,
   managers,
   sectionLabels = {},
@@ -135,6 +140,7 @@ export function MidDayPhase2Form({
   canEditConsumption = false,
 }: {
   instanceId: string;
+  actorLevel?: number;
   items: MidDayPhase2Item[];
   managers: ManagerOption[];
   /** DB-backed section labels (slug → { en, es }); preferred over the raw slug. */
@@ -197,6 +203,9 @@ export function MidDayPhase2Form({
     done: g.items.filter((it) => (states[it.id] ?? EMPTY).status === "saved").length,
   }));
   const collapsible = useCollapsibleSections("mid-day-phase2", sectionProgress);
+  const left = whatsLeft(items.map((it) => ({ id: it.id, sectionId: it.section, label: it.label,
+    required: it.required ?? true, minRoleLevel: it.minRoleLevel ?? 0, targetField: "primary" })),
+    Object.fromEntries(items.map((it) => [it.id, (states[it.id] ?? EMPTY).status === "saved"])), actorLevel);
 
   const patch = (id: string, p: Partial<SaveState>) => {
     if (p.status === "idle") stepSave(id, { type: "edit" });
@@ -322,6 +331,7 @@ export function MidDayPhase2Form({
 
   return (
     <div className="mt-4 flex flex-col gap-5 lg:block lg:columns-2 lg:[column-gap:1.25rem] lg:[&>*]:break-inside-avoid lg:[&>*]:mb-5">
+      <WhatsLeft result={left} onJump={(entry) => focusWhatsLeft(entry, (id) => collapsible.setOpenTransient(id, true))} />
       {groups.map((g) => (
         <CollapsibleChecklistSection
           key={g.section}
@@ -352,6 +362,7 @@ export function MidDayPhase2Form({
                 <li
                   key={it.id}
                   className="flex min-w-0 flex-col gap-1.5 rounded-md border-2 border-co-border bg-co-surface px-3 py-2"
+                  data-whats-left-item={it.id}
                 >
                   {it.batch ? (
                     /* 0215 batch vs bottle — the batch half (batch_mode items only). */
@@ -380,6 +391,7 @@ export function MidDayPhase2Form({
                     </div>
                     <input
                       type="number"
+                      data-whats-left-field="primary"
                       inputMode="decimal"
                       min={0}
                       value={st.value}
@@ -453,7 +465,7 @@ export function MidDayPhase2Form({
                       derived={it.batch ? (it.batchDerived ?? []) : it.derived}
                       outputQty={it.batch ? st.batch.batches : (preppedNum ?? 0)}
                       value={st.confirmedConsumption}
-                      onChange={(rows) => patch(it.id, { confirmedConsumption: rows })}
+                      onChange={(rows) => patch(it.id, { confirmedConsumption: rows, status: "idle", error: null })}
                       canEdit={canEditConsumption}
                     />
                   ) : null}

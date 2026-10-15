@@ -6508,5 +6508,8 @@
   "catalog.requests.added_by": "{who} added to this · {date}",
   "receiving.case_different.added": "Already reported — we added your note and photo to it.",
   "catalog.item.change_for_shop": "Change it for {shop}",
-  "catalog.item.pick_shop": "Change it for one of your shops"
+  "catalog.item.pick_shop": "Change it for one of your shops",
+  "whats_left.count": "{n} left",
+  "whats_left.higher_role": "{n} need a key holder",
+  "whats_left.key_holder": "Needs a key holder"
 }

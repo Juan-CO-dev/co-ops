@@ -55,6 +55,10 @@ import type {
 
 import { ActionButton } from "@/components/ActionButton";
 import { SaveStatus } from "@/components/ui/SaveStatus";
+import { WhatsLeft, focusWhatsLeft } from "@/components/ui/WhatsLeft";
+import { whatsLeft } from "@/lib/whats-left-shared";
+import { resolveTemplateItemContent } from "@/lib/i18n/content";
+import { initialSaveStatus, saveStatusStep, type SaveStatusEvent } from "@/lib/save-status-shared";
 import {
   OpeningVerificationStation,
   openingStationProgress,
@@ -149,6 +153,7 @@ interface OpeningClientProps {
   language: Language;
   /** Server-resolved KH+ or active opening assignment; rechecked on every write. */
   canSubmit: boolean;
+  actorLevel?: number;
   /** D-13 — the viewer may edit the "Uses: …" panel (KH+); server-derived, re-gated on save. */
   canEditConsumption: boolean;
 }
@@ -415,6 +420,7 @@ export function OpeningClient({
   saverNames,
   language,
   canSubmit,
+  actorLevel = 99,
   canEditConsumption,
 }: OpeningClientProps) {
   const { t } = useTranslation();
@@ -866,9 +872,14 @@ export function OpeningClient({
   // no modal, no disabled control, no retry loop. Because `draftSentRef` is advanced only
   // on SUCCESS, the very next edit re-sends the full latest draft, which is the retry.
   const draftEnabled = instance.status === "open";
-  const [draftState, setDraftState] = useState<{
-    status: "idle" | "saving" | "saved" | "error";
-  }>({ status: "idle" });
+  const [draftState, setDraftState] = useState(initialSaveStatus);
+  const draftStatusRef = useRef(initialSaveStatus);
+  const stepDraft = useCallback((event: SaveStatusEvent) => {
+    const next = saveStatusStep(draftStatusRef.current, event);
+    draftStatusRef.current = next;
+    setDraftState(next);
+    return next;
+  }, []);
 
   /** The serialized body of the last SUCCESSFULLY persisted draft. Dedup + retry anchor. */
   const draftSentRef = useRef<string | null>(null);
@@ -913,7 +924,7 @@ export function OpeningClient({
   );
 
   const flushDraft = useCallback(async (body: string) => {
-    setDraftState({ status: "saving" });
+    const revision = stepDraft({ type: "start" }).revision;
     try {
       const res = await fetch("/api/opening/phase1/draft", {
         method: "POST",
@@ -922,14 +933,14 @@ export function OpeningClient({
       });
       if (!res.ok) throw new Error(`draft save ${res.status}`);
       draftSentRef.current = body;
-      if (draftLatestRef.current === body) setDraftState({ status: "saved" });
+      stepDraft({ type: "ack", revision });
     } catch {
       // Deliberately swallowed past the status line: an autosave failure is not an
       // operator error and must not interrupt the walk. draftSentRef stays put, so the
       // next edit resends.
-      if (draftLatestRef.current === body) setDraftState({ status: "error" });
+      stepDraft({ type: "fail", revision });
     }
-  }, []);
+  }, [stepDraft]);
 
   useEffect(() => {
     if (!draftEnabled) return;
@@ -942,14 +953,14 @@ export function OpeningClient({
       return;
     }
     if (draftSentRef.current === draftBody) return;
-    setDraftState({ status: "idle" });
+    stepDraft({ type: "edit" });
     const timer = setTimeout(() => {
       void flushDraft(draftBody);
     }, DRAFT_AUTOSAVE_DEBOUNCE_MS);
     // Cleanup on every re-run IS the coalescing: a burst of keystrokes cancels each
     // pending send and only the last one, 800ms after the operator stops, goes out.
     return () => clearTimeout(timer);
-  }, [draftEnabled, draftBody, flushDraft]);
+  }, [draftEnabled, draftBody, flushDraft, stepDraft]);
 
   // Navigating away, backgrounding the tab, or locking the tablet must not lose the last
   // edit inside the debounce window. `fetch` is cancelled on unload; `sendBeacon` is
@@ -1008,6 +1019,17 @@ export function OpeningClient({
     ),
   );
   const stationCollapse = useCollapsibleSections("opening-p1", stationProgress);
+  const phase1Left = whatsLeft(phase1Items.map((item) => ({ id: item.id,
+    sectionId: item.station ?? "—", label: resolveTemplateItemContent(item, language).label,
+    required: item.required, minRoleLevel: item.minRoleLevel, targetField: "primary" })),
+    Object.fromEntries(phase1Items.map((item) => {
+      const value = values.get(item.id);
+      const snapshot = closerSnapshotsMap.get(item.id);
+      const section = (item.prepMeta as OpeningPhase2Meta | null)?.section ?? item.station ?? "—";
+      const spotEntered = snapshot ? (sectionVerifications.get(section) === true || value?.openerRecount != null ||
+        (value?.openerRecountLine != null && value?.openerRecountBackUp != null)) : value?.ticked === true;
+      return [item.id, verificationLocked || (spotEntered && (!item.expectsCount || value?.countValue != null))];
+    })), actorLevel);
 
   // C.53 §10 — partition Phase 1 items. Spot-check items (in the closer-count-
   // snapshot universe) are resolved via section-verify/recount, NOT the tick
@@ -1892,6 +1914,8 @@ export function OpeningClient({
           desktop so the whole verification is visible at once. */}
       {activePhase === "verification" ? (
         <div className="columns-1 [column-gap:1rem] lg:columns-2">
+          {!verificationLocked ? <WhatsLeft result={phase1Left} onJump={(entry) => focusWhatsLeft(entry,
+            (id) => stationCollapse.setOpenTransient(id, true))} /> : null}
           {Array.from(stationGroups.entries()).map(([station, items]) => (
             <OpeningVerificationStation
               key={station}
@@ -1985,6 +2009,7 @@ export function OpeningClient({
           render an empty prep surface even if activePhase were "prep". */}
       {activePhase === "prep" && phase2Items.length > 0 ? (
         <OpeningPrepEntry
+          actorLevel={actorLevel}
           items={phase2Items}
           derivedByItem={derived}
           values={phase2Values}
@@ -2103,11 +2128,11 @@ export function OpeningClient({
                 deliberately quiet — this is a reassurance, not an alert, and even the
                 failure line is a statement rather than a demand. aria-live="polite" so a
                 screen reader hears it settle without interrupting the walk. */}
-            {draftEnabled && activePhase === "verification" && draftState.status !== "idle" ? (
-              <SaveStatus phase={draftState.status === "error" ? "failed" : draftState.status}
-                detail={draftState.status === "saving" ? t("opening.draft.saving")
-                  : draftState.status === "saved" ? t("opening.draft.saved") : t("opening.draft.error")}
-                onRetry={draftState.status === "error" ? () => void flushDraft(draftLatestRef.current ?? draftBody) : undefined} />
+            {draftEnabled && activePhase === "verification" && draftState.phase !== "idle" ? (
+              <SaveStatus phase={draftState.phase}
+                detail={draftState.phase === "saving" ? t("opening.draft.saving")
+                  : draftState.phase === "saved" ? t("opening.draft.saved") : t("opening.draft.error")}
+                onRetry={draftState.phase === "failed" ? () => void flushDraft(draftLatestRef.current ?? draftBody) : undefined} />
             ) : null}
           </div>
           <div className="flex flex-col gap-1 sm:flex-row sm:items-center">

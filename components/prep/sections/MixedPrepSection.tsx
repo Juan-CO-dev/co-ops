@@ -110,7 +110,7 @@ function MixedYesNoRow({
   });
 
   return (
-    <div className="flex flex-col gap-2 py-2 border-b border-co-border last:border-b-0">
+    <div data-whats-left-item={templateItemId} className="flex flex-col gap-2 py-2 border-b border-co-border last:border-b-0">
       <div className="flex items-center justify-between gap-3">
         <span className="text-sm font-semibold text-co-text leading-tight flex-1 min-w-0">
           {itemLabel}
@@ -203,7 +203,7 @@ function MixedFreeTextRow({
 }) {
   const { t } = useTranslation();
   return (
-    <div className="flex flex-col gap-2 py-2 border-b border-co-border last:border-b-0">
+    <div data-whats-left-item={templateItemId} className="flex flex-col gap-2 py-2 border-b border-co-border last:border-b-0">
       <label className="block">
         <span className="text-sm font-semibold text-co-text leading-tight">{itemLabel}</span>
         <textarea
