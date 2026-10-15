@@ -19,6 +19,7 @@ import { redirect } from "next/navigation";
 import { BackLink } from "@/components/nav/BackLink";
 import { ShopContextSync } from "@/components/ShopContextSync";
 import { StepUpProvider } from "@/components/admin/StepUpProvider";
+import { stepUpEditWindowMs } from "@/lib/admin/step-up";
 import { UserMenu } from "@/components/UserMenu";
 import { CanvasWatermark } from "@/components/layout/CanvasWatermark";
 import { IdleTimeoutWarning } from "@/components/auth/IdleTimeoutWarning";
@@ -58,6 +59,9 @@ export default async function AdminLayout({ children }: { children: ReactNode })
       <StepUpProvider
         unlocked={auth.session.stepUpUnlocked}
         unlockedAt={auth.session.stepUpUnlockedAt}
+        catalogUnlockedAt={auth.session.catalogEditUnlockedAt ?? null}
+        catalogWindow
+        editWindowMs={stepUpEditWindowMs()}
       >
         <div className="mx-auto w-full max-w-2xl md:max-w-3xl lg:max-w-5xl xl:max-w-6xl px-4 py-6">
           <BackLink />

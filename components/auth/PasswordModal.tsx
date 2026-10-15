@@ -34,11 +34,16 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { useTranslation } from "@/lib/i18n/provider";
+import type { StepUpPurpose } from "@/lib/admin/step-up-shared";
 
 export interface PasswordModalProps {
   open: boolean;
   onConfirm: () => Promise<void> | void;
   onCancel: () => void;
+  /** Catalog Phase 1: mint a one-shot grant for exactly this destructive act with the password. */
+  purpose?: StepUpPurpose | null;
+  /** Catalog Phase 1: true on the admin surface — this password also opens the 15-minute catalog edit window. */
+  catalogWindow?: boolean;
 }
 
 type ModalError =
@@ -54,7 +59,7 @@ function formatRemaining(seconds: number): string {
   return `${mm}:${ss.toString().padStart(2, "0")}`;
 }
 
-export function PasswordModal({ open, onConfirm, onCancel }: PasswordModalProps) {
+export function PasswordModal({ open, onConfirm, onCancel, purpose = null, catalogWindow = false }: PasswordModalProps) {
   const { t } = useTranslation();
   const [password, setPassword] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -112,7 +117,7 @@ export function PasswordModal({ open, onConfirm, onCancel }: PasswordModalProps)
         const res = await fetch("/api/auth/step-up", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ password }),
+          body: JSON.stringify({ password, ...(catalogWindow ? { catalogWindow: true } : {}), ...(purpose ? { purpose } : {}) }),
           redirect: "manual",
         });
         if (res.ok) {
@@ -153,7 +158,7 @@ export function PasswordModal({ open, onConfirm, onCancel }: PasswordModalProps)
         setSubmitting(false);
       }
     },
-    [password, submitting, retryRemaining, onConfirm, onCancel, t],
+    [password, submitting, retryRemaining, onConfirm, onCancel, t, purpose, catalogWindow],
   );
 
   const handleKeyDown = useCallback(

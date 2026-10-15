@@ -17,6 +17,7 @@ import { useRouter } from "next/navigation";
 import { useTranslation } from "@/lib/i18n/provider";
 import type { TranslationKey } from "@/lib/i18n/types";
 import { PasswordModal } from "@/components/auth/PasswordModal";
+import { useStepUp } from "@/components/admin/StepUpProvider";
 import { SummaryRow } from "@/components/ui/SummaryRow";
 import type { CatalogEntity, CatalogIssue, ItemType, RoleBadge } from "@/lib/admin/catalog-shared";
 import { ITEM_TYPES, deriveRoleBadges } from "@/lib/admin/catalog-shared";
@@ -65,6 +66,9 @@ export function CatalogClient({ entities, actorLevel }: { entities: CatalogEntit
   const [busyKey, setBusyKey] = useState<string | null>(null);
   const [errorKey, setErrorKey] = useState<TranslationKey | null>(null);
   const [stepUpOpen, setStepUpOpen] = useState(false);
+  // This modal is not the provider's; report its confirms and refusals so the provider's catalog
+  // clock stays true for every other admin surface (Astra r3 #1).
+  const { noteStepUpConfirmed, forgetStepUp } = useStepUp();
   const pendingRef = useRef<null | (() => Promise<void>)>(null);
 
   const canWriteSeasonal = actorLevel >= SEASONAL_MIN;
@@ -125,6 +129,7 @@ export function CatalogClient({ entities, actorLevel }: { entities: CatalogEntit
       }
       const b = (await res.json().catch(() => ({}))) as { code?: string };
       if (b.code === "step_up_required" || b.code === "step_up_stale") {
+        forgetStepUp();
         pendingRef.current = () => writeSeasonal(e, seasonal);
         setStepUpOpen(true);
         return;
@@ -156,6 +161,7 @@ export function CatalogClient({ entities, actorLevel }: { entities: CatalogEntit
       }
       const b = (await res.json().catch(() => ({}))) as { code?: string };
       if (b.code === "step_up_required" || b.code === "step_up_stale") {
+        forgetStepUp();
         pendingRef.current = () => writeItemType(e, itemType);
         setStepUpOpen(true);
         return;
@@ -228,8 +234,9 @@ export function CatalogClient({ entities, actorLevel }: { entities: CatalogEntit
       )}
 
       <PasswordModal
+        catalogWindow
         open={stepUpOpen}
-        onConfirm={async () => { if (pendingRef.current) await pendingRef.current(); }}
+        onConfirm={async () => { noteStepUpConfirmed(); if (pendingRef.current) await pendingRef.current(); }}
         onCancel={() => { setStepUpOpen(false); pendingRef.current = null; }}
       />
     </div>
