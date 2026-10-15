@@ -35,7 +35,7 @@ import { useMemo, useState } from "react";
 import { useTranslation } from "@/lib/i18n/provider";
 import type { TranslationKey } from "@/lib/i18n/types";
 import type { RegistryOption, MeasureUnitOption, SkuView } from "@/lib/admin/skus";
-import { SKU_CLASSES } from "@/lib/admin/catalog-shared";
+import { SKU_CLASSES, chainNeedsAvgOzPerEach } from "@/lib/admin/catalog-shared";
 import type { SkuClass } from "@/lib/admin/catalog-shared";
 import { CUSHION_BY_CLASS, parStepFor } from "@/lib/dynamic-pars-shared";
 import {
@@ -224,8 +224,9 @@ export function SkuBuilder({
   /** Edit-mode chain save (SKU exists → pack-chain route). Returns ok. When
    *  `avgOzPerEach` is provided (the wizard's raw count/volume leaf), the parent
    *  persists it on the SKU BEFORE the chain save so a count leaf is
-   *  oz-resolvable at validation time (undefined → the chain editor's path,
-   *  which never changes the avg). */
+   *  oz-resolvable at validation time. The chain editor passes it too when its
+   *  chain ends in a count/volume unit on a raw SKU (catalog Phase 1); otherwise
+   *  undefined → the avg is left alone). */
   onSaveChain?: (levels: StarterChainLevel[], avgOzPerEach?: number | null) => Promise<boolean>;
   onCancel: () => void;
 }) {
@@ -356,6 +357,19 @@ export function SkuBuilder({
     [initialChain, chainSavedTick],
   );
 
+  // The avg-weight dead end (catalog Phase 1, 2026-10-15): a chained RAW SKU whose chain ends
+  // in a count/volume unit needs avg_oz_per_each, and the field used to live only inside the
+  // wizard, which never renders for a chained SKU, so leaf_needs_avg had no fix on the edit
+  // path. The field now renders wherever that error can occur, bound to the SAME avgOzPerEach
+  // state the identity Save already sends, with the server's rule (a positive number).
+  const dimensionByLabel = useMemo(
+    () => new Map(measureUnits.map((m) => [m.label, m.dimension] as const)),
+    [measureUnits],
+  );
+  const chainNeedsAvg =
+    isEdit && hasChain &&
+    chainNeedsAvgOzPerEach(chainOpen ? editorRowsToPayload(chainRows) : displayChain, dimensionByLabel, skuClass);
+
   const startChainEdit = () => {
     setChainRows(displayChain.length > 0 ? toEditorLevels(displayChain) : [{ label: "", qty: "", link: "" }]);
     setChainOpen(true);
@@ -379,8 +393,16 @@ export function SkuBuilder({
     if (chainBusy || !onSaveChain) return;
     setChainErr(null);
     const payload = editorRowsToPayload(chainRows);
+    const needsAvg = chainNeedsAvgOzPerEach(payload, dimensionByLabel, skuClass);
+    const avg = parseNum(avgOzPerEach);
+    if (needsAvg && avg === null) { setChainErr(t("admin.skus.error.leaf_needs_avg")); return; }
+    if (needsAvg && avg !== null && !(Number.isFinite(avg) && avg > 0)) {
+      setChainErr(t("admin.skus.error.invalid_avg_oz_per_each"));
+      return;
+    }
     setChainBusy(true);
-    const ok = await onSaveChain(payload);
+    // With an avg, the parent PATCHes it onto the SKU BEFORE the chain save (one step-up).
+    const ok = await onSaveChain(payload, needsAvg ? avg : undefined);
     setChainBusy(false);
     if (ok) {
       setChainOpen(false);
@@ -622,6 +644,25 @@ export function SkuBuilder({
                 onCancel={() => { setChainOpen(false); setChainErr(null); }}
               />
             )}
+            {chainNeedsAvg ? (
+              // The same field PackChainWizard shows for a count/volume leaf. While the chain
+              // editor is open it rides the chain save; otherwise the identity Save sends it.
+              <label className="block">
+                <span className="text-[11px] font-bold text-co-text-muted">{t("admin.skus.field.avg_oz_per_each")}</span>
+                <input
+                  aria-label={t("admin.skus.field.avg_oz_per_each")}
+                  className={fieldCls}
+                  type="number"
+                  min={0}
+                  step="any"
+                  inputMode="decimal"
+                  value={avgOzPerEach}
+                  disabled={busy || chainBusy}
+                  onChange={(e) => setAvgOzPerEach(e.target.value)}
+                />
+                <span className="mt-1 block text-[11px] text-co-text-muted">{t("admin.skus.avg_oz_per_each_hint")}</span>
+              </label>
+            ) : null}
           </div>
         ) : (
           // UNCHAINED (add flow, or an unchained edit) → the class-aware WIZARD.
