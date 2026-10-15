@@ -103,7 +103,7 @@ export default async function AdminVendorDetailPage({
   //    app/admin/skus/page.tsx. ──
   const chainMap = await loadSkuPackChains(skus.map((s) => s.id), null);
 
-  const prices = await loadCurrentSkuPrices(skus.map((s) => s.id));
+  const prices = await loadCurrentSkuPrices(skus.map((s) => s.id), null);
   const costPerOz = computeSkuCostPerOz(skus, prices, measureUnits, chainMap);
   const usage = await loadSkuUsageMap();
   const skuCost: Record<string, { currentPrice: number | null; costPerOz: number | null; usedBy: string[] }> =

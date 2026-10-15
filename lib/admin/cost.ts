@@ -40,6 +40,7 @@ import { audit } from "@/lib/audit";
 import type { AuthContext } from "@/lib/session";
 import { loadMeasureUnits } from "@/lib/admin/skus";
 import { loadSkuPackChains } from "@/lib/prep-consumption";
+import { assertScopeToken, resolveCurrentPrices, type ResolvedPrice, type ScopedPriceRow, type VersionScope } from "@/lib/sku-versions-shared";
 import type { MeasureUnitFactor } from "@/lib/recipe-math";
 // The PURE half lives in cost-shared.ts (the house *-shared law) so the
 // derivation is test-pinnable; re-exported here so server consumers' import
@@ -75,33 +76,52 @@ function num(v: number | string | null): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
-/** Current pack price per SKU = latest vendor_price_history row (effective_date desc, recorded_at desc). */
-export async function loadCurrentSkuPrices(skuIds: string[]): Promise<Map<string, number>> {
-  const out = new Map<string, number>();
+const PRICE_COLUMNS = "id, vendor_item_id, unit_price, effective_date, recorded_at, location_id, price_lane_id";
+const PRICE_ID_CHUNK = 100;
+
+/** This shop's LIVE price lanes for these SKUs (0259): skuId → lane id. Paged; throws on error. */
+export async function loadLiveShopPriceLanes(skuIds: string[], locationId: string): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
   if (skuIds.length === 0) return out;
   const sb = getServiceRoleClient();
-  // Paginate past PostgREST's 1000-row cap: vendor_price_history is append-only
-  // and grows per delivery line, so a raw scan silently drops SKUs whose latest
-  // price row falls past row 1000 → they read "unpriced" (wrong readiness/cost).
-  // `id` is the unique tiebreaker that makes the newest-first order a total order.
-  // (Follow-up: a DISTINCT ON (vendor_item_id) RPC avoids loading history at all.)
-  const data = await selectAllRows<{ vendor_item_id: string; unit_price: number | string; effective_date: string; recorded_at: string | null }>(
-    (from, to) => sb
-      .from("vendor_price_history")
-      .select("vendor_item_id, unit_price, effective_date, recorded_at")
-      .in("vendor_item_id", skuIds)
-      .order("effective_date", { ascending: false })
-      .order("recorded_at", { ascending: false })
-      .order("id", { ascending: false })
-      .range(from, to),
-  );
-  for (const r of data) {
-    if (!out.has(r.vendor_item_id)) {
-      const p = num(r.unit_price);
-      if (p != null) out.set(r.vendor_item_id, p);
-    }
+  for (let i = 0; i < skuIds.length; i += PRICE_ID_CHUNK) {
+    const chunk = skuIds.slice(i, i + PRICE_ID_CHUNK);
+    const rows = await selectAllRows<{ id: string; sku_id: string }>((from, to) => sb
+      .from("sku_price_lanes").select("id, sku_id").eq("location_id", assertScopeToken(locationId)).eq("active", true)
+      .in("sku_id", chunk).order("id", { ascending: true }).range(from, to));
+    for (const r of rows) out.set(r.sku_id, r.id);
   }
   return out;
+}
+
+/**
+ * THE PRICE RESOLVER POINT (catalog Phase 2a). Current pack price per SKU as `scope` sees it:
+ * `null` = the newest GLOBAL row; a shop id = the newest row of that shop's LIVE lane, else the
+ * newest global row. The rule is pure (lib/sku-versions-shared.ts resolveCurrentPrices). Paged past
+ * PostgREST's row cap (an append-only ledger grows per delivery line); `id` makes newest-first a
+ * total order. `scope` is REQUIRED: an optional one is how a consumer silently stays global.
+ */
+export async function loadCurrentSkuPriceHeads(skuIds: string[], scope: VersionScope): Promise<Map<string, ResolvedPrice>> {
+  if (skuIds.length === 0) return new Map();
+  const sb = getServiceRoleClient();
+  const rows: ScopedPriceRow[] = [];
+  for (let i = 0; i < skuIds.length; i += PRICE_ID_CHUNK) {
+    const chunk = skuIds.slice(i, i + PRICE_ID_CHUNK);
+    rows.push(...await selectAllRows<ScopedPriceRow>((from, to) => {
+      const base = sb.from("vendor_price_history").select(PRICE_COLUMNS).in("vendor_item_id", chunk);
+      const scoped = scope == null ? base.is("location_id", null) : base.or(`location_id.is.null,location_id.eq.${assertScopeToken(scope)}`);
+      return scoped.order("effective_date", { ascending: false }).order("recorded_at", { ascending: false })
+        .order("id", { ascending: false }).range(from, to);
+    }));
+  }
+  const lanes = scope == null ? new Map<string, string>() : await loadLiveShopPriceLanes(skuIds, scope);
+  return resolveCurrentPrices(rows, lanes);
+}
+
+/** Current pack price (dollars) per SKU for `scope` — the pre-0259 return shape. */
+export async function loadCurrentSkuPrices(skuIds: string[], scope: VersionScope): Promise<Map<string, number>> {
+  const heads = await loadCurrentSkuPriceHeads(skuIds, scope);
+  return new Map([...heads].map(([id, h]) => [id, h.value]));
 }
 
 /** Recent prices for one SKU (for the panel's history list). */
@@ -112,6 +132,7 @@ export async function loadSkuPriceHistory(actor: AuthContext, skuId: string, lim
     .from("vendor_price_history")
     .select("unit_price, effective_date")
     .eq("vendor_item_id", skuId)
+    .is("location_id", null) // the global ledger; a shop's lane is listed on the item page (2b)
     .order("effective_date", { ascending: false })
     .limit(limit)
     .returns<Array<{ unit_price: number | string; effective_date: string }>>();
@@ -288,7 +309,7 @@ export async function loadSkuReceivingLedger(actor: AuthContext, skuIds: string[
       .range(from, to),
   );
 
-  const prices = await loadCurrentSkuPrices(skuIds);
+  const prices = await loadCurrentSkuPrices(skuIds, null); // org-wide ledgers: the global price
   const measures = await loadMeasureUnits(actor);
   const measuresMap = new Map<string, MeasureUnitFactor>(measures.map((m) => [m.label, { dimension: m.dimension, toBaseFactor: m.toBaseFactor }]));
   const contentOzById = await loadChainAwareContentOz(sb, skuIds, measuresMap);
@@ -334,7 +355,7 @@ export async function loadSkuConsumption(actor: AuthContext, skuIds: string[]): 
   const out = new Map<string, SkuConsumption>();
   if (skuIds.length === 0) return out;
   const sb = getServiceRoleClient();
-  const prices = await loadCurrentSkuPrices(skuIds);
+  const prices = await loadCurrentSkuPrices(skuIds, null); // org-wide ledgers: the global price
   const measures = await loadMeasureUnits(actor);
   const measuresMap = new Map<string, MeasureUnitFactor>(measures.map((m) => [m.label, { dimension: m.dimension, toBaseFactor: m.toBaseFactor }]));
   const contentOzById = await loadChainAwareContentOz(sb, skuIds, measuresMap);

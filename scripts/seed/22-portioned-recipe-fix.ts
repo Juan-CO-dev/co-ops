@@ -520,7 +520,7 @@ async function main(): Promise<void> {
 
   // ── Live universe ───────────────────────────────────────────────────────────
   const graphBefore = await loadRecipeGraph();
-  const prices = await loadCurrentSkuPrices([...graphBefore.skuPack.keys()]);
+  const prices = await loadCurrentSkuPrices([...graphBefore.skuPack.keys()], null);
   const costPerOz = costPerOzFromGraph(graphBefore, prices);
 
   const { data: itemRows, error: itemErr } = await sb

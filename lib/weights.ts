@@ -306,7 +306,7 @@ export async function loadWeightBoard(actor: AuthContext): Promise<WeightBoard> 
   const itemRows = itemRes.data ?? [];
   const skuIds = skuRows.map((s) => s.id);
 
-  const prices = await loadCurrentSkuPrices(skuIds);
+  const prices = await loadCurrentSkuPrices(skuIds, null);
   const costPerOz = costPerOzFromGraph(graph, prices);
 
   // ── Reads 7-11: usage, observation, drift evidence, provenance ─────────────

@@ -460,7 +460,7 @@ async function main(): Promise<void> {
     const sku = res.sku;
     const liveOz = chainContentOz(sku.chain);
     const liveClass = await livePackClass(sku.id);
-    const prices = await loadCurrentSkuPrices([sku.id]);
+    const prices = await loadCurrentSkuPrices([sku.id], null);
     rows.push({
       reading, sku, liveOz, liveClass, readingOz,
       disposition: disposeTub({ skuFound: true, readingOz, livePackOz: liveOz, livePackClass: liveClass }),
@@ -786,7 +786,7 @@ async function main(): Promise<void> {
   const menuInputs: MenuCostInput[] = (menuRows ?? []).map((m) => ({
     id: m.id, name: m.name, nameEs: m.name_es, section: m.section, menuPrice: num(m.menu_price),
   }));
-  const graphPrices = await loadCurrentSkuPrices([...graph.skuPack.keys()]);
+  const graphPrices = await loadCurrentSkuPrices([...graph.skuPack.keys()], null);
   const boardRows = composeMenuCostRows(menuInputs, graph, costPerOzFromGraph(graph, graphPrices));
 
   const watched = rows.filter((r) => r.sku != null).map((r) => r.sku!);

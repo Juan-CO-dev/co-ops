@@ -571,9 +571,8 @@ export async function recordDelivery(actor: AuthContext, input: RecordDeliveryIn
 
   const priced = resolved.priceLines;
   if (priced.length > 0) {
-    const { error: pErr } = await sb.from("vendor_price_history").insert(
-      receivingPriceRows(priced, input.deliveryDate, actor.user.id, vend.source_kind),
-    );
+    // CATALOG PHASE 2a: lane-or-global is decided UNDER THE SKU LOCK in SQL (record_receiving_prices).
+    const { error: pErr } = await sb.rpc("record_receiving_prices", { p_location: input.locationId, p_rows: receivingPriceRows(priced, input.deliveryDate, actor.user.id, vend.source_kind) });
     if (pErr) throw new Error(`recordDelivery prices: ${pErr.message}`);
   }
 
@@ -1290,9 +1289,7 @@ export async function addDeliveryLines(
 
   const priced = resolved.priceLines;
   if (priced.length > 0) {
-    const { error: pErr } = await sb.from("vendor_price_history").insert(
-      receivingPriceRows(priced, h.delivery_date, actor.user.id, source.source_kind),
-    );
+    const { error: pErr } = await sb.rpc("record_receiving_prices", { p_location: h.location_id, p_rows: receivingPriceRows(priced, h.delivery_date, actor.user.id, source.source_kind) });
     if (pErr) throw new Error(`addDeliveryLines prices: ${pErr.message}`);
   }
 

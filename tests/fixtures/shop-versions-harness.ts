@@ -43,7 +43,7 @@ export interface ResolverApi {
 export const liveApi: ResolverApi = {
   chains: (skuIds, scope) => loadSkuPackChains(skuIds, scope),
   allChains: (scope) => loadAllSkuPackChains(scope),
-  prices: (skuIds, _scope) => loadCurrentSkuPrices(skuIds), // TASK-6
+  prices: (skuIds, scope) => loadCurrentSkuPrices(skuIds, scope),
   graph: (scope) => loadRecipeGraph(scope == null ? undefined : { locationId: scope }),
   datedGraph: (scope, businessDate) => createDatedGraphs({ locationId: scope })(businessDate),
   flatContent: async (flat, scope, measures) => {

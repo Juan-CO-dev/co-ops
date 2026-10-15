@@ -39,7 +39,6 @@ import { auditOperationalTaskOverride, canDoOperationalTask } from "@/lib/operat
  */
 import { loadStoreVendorIds } from "@/lib/ordering-sources";
 import { getServiceRoleClient } from "@/lib/supabase-server";
-import { selectAllRows } from "@/lib/supabase-paginate";
 import { getRoleLevel } from "@/lib/roles";
 import { lockLocationContext, type LocationActor } from "@/lib/locations";
 import { audit } from "@/lib/audit";
@@ -50,6 +49,8 @@ import { etDayFromDate } from "@/lib/et-day-shared";
 import { loadCreditsForDelivery } from "@/lib/credits";
 import { emailOrderingAvailable, isPlausibleEmail } from "@/lib/po-email-shared";
 import { loadSkuPackChains } from "@/lib/prep-consumption";
+import { loadCurrentSkuPrices } from "@/lib/admin/cost";
+import { priceCentsFromDollars } from "@/lib/sku-versions-shared";
 import { buildPackChain, chainRootLabel } from "@/lib/pack-chain-shared";
 import { guideKeysFor } from "@/lib/order-guides";
 import { poLineGuideKey, resolveGuideKey } from "@/lib/order-guides-shared";
@@ -710,7 +711,7 @@ export async function confirmPO(actor: AuthContext, poId: string): Promise<void>
         ? sb.from("vendor_items").select("id, name, item_number").in("id", skuIds)
             .returns<Array<{ id: string; name: string; item_number: string | null }>>()
         : Promise.resolve({ data: [] as Array<{ id: string; name: string; item_number: string | null }>, error: null }),
-      loadLatestPriceCentsBySku(sb, skuIds),
+      loadLatestPriceCentsBySku(po.location_id, skuIds),
       sb.from("vendors").select("id, name").eq("id", po.vendor_id).maybeSingle<{ id: string; name: string }>(),
       sb.from("users").select("id, name").eq("id", actor.user.id).maybeSingle<{ id: string; name: string | null }>(),
     ]);
@@ -807,46 +808,15 @@ export async function confirmPO(actor: AuthContext, poId: string): Promise<void>
 }
 
 /**
- * Latest price (in CENTS) per SKU from vendor_price_history. One batched, PAGED
- * scan over the SKU set (never per-SKU I/O), ordered newest-first by
- * effective_date then recorded_at; the FIRST row seen per vendor_item wins.
- * unit_price is DOLLARS (numeric) → cents via Math.round(× 100). A SKU with no
- * price row is absent from the map (→ advisory null at the call site — never
- * fabricated).
+ * Latest price (in CENTS) per SKU at the PO's shop — THE ONE PRICE RESOLVER (lib/admin/cost.ts
+ * loadCurrentSkuPrices, catalog Phase 2a), never a second query of its own. Before 2a this was a
+ * private copy ordered `recorded_at desc nulls last`; the one resolver orders `recorded_at desc`.
+ * They differ ONLY on rows with a null recorded_at, of which the pre-flight requires zero (Task 1
+ * Step 8). A SKU with no price is absent (→ advisory null; never fabricated).
  */
-async function loadLatestPriceCentsBySku(sb: ServiceClient, skuIds: string[]): Promise<Map<string, number>> {
-  const out = new Map<string, number>();
-  if (skuIds.length === 0) return out;
-  // PAGED (the PR #63 lesson): vendor_price_history is an append-only ledger, so the
-  // desc scan loses its tail past 1000 rows — and the tail holds the only price row
-  // for a SKU whose price rarely changes (dropping it fabricates an advisory-null
-  // price on a confirmed PO). `id` is a tiebreaker ONLY (effective_date then
-  // recorded_at stay the ranking keys), making the order total so page boundaries
-  // can't reshuffle rows out from under the first-seen-per-SKU reduction.
-  const rows = await selectAllRows<{ vendor_item_id: string; unit_price: number | string; effective_date: string; recorded_at: string | null }>(
-    async (from, to) => {
-      const { data, error } = await sb.from("vendor_price_history")
-        .select("vendor_item_id, unit_price, effective_date, recorded_at")
-        .in("vendor_item_id", skuIds)
-        .order("effective_date", { ascending: false })
-        .order("recorded_at", { ascending: false, nullsFirst: false })
-        .order("id", { ascending: false })
-        .range(from, to)
-        .returns<Array<{ vendor_item_id: string; unit_price: number | string; effective_date: string; recorded_at: string | null }>>();
-      if (error) throw new Error(`loadLatestPriceCentsBySku: ${error.message}`);
-      return { data };
-    },
-  );
-  for (const r of rows) {
-    if (out.has(r.vendor_item_id)) continue; // desc order → first seen is the latest.
-    const dollars = num(r.unit_price);
-    // Epsilon-safe dollars→cents: bare `dollars * 100` inherits binary-float error
-    // (the 0.1 + 0.2 class — e.g. 19.99 * 100 = 1998.9999999999998), and Math.round
-    // usually saves it but not at every value. Fix the scaled value to 4 decimals
-    // FIRST (killing the sub-cent float noise) then round to an integer cent.
-    if (dollars != null) out.set(r.vendor_item_id, Math.round(Number((dollars * 100).toFixed(4))));
-  }
-  return out;
+async function loadLatestPriceCentsBySku(locationId: string, skuIds: string[]): Promise<Map<string, number>> {
+  const dollars = await loadCurrentSkuPrices(skuIds, locationId);
+  return new Map([...dollars].map(([id, d]) => [id, priceCentsFromDollars(d)]));
 }
 
 /**

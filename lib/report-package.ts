@@ -223,7 +223,7 @@ export async function loadPackageInput(sb: Sb, args: {
         names(sb, "users", rows.map((r) => r.tossed_by as string)),
         Promise.all(shopIds.map(async (shopId) => {
           const graph = await loadRecipeGraph({ versionLocationId: shopId });
-          const costPerOz = costPerOzFromGraph(graph, await loadCurrentSkuPrices([...graph.skuPack.keys()]));
+          const costPerOz = costPerOzFromGraph(graph, await loadCurrentSkuPrices([...graph.skuPack.keys()], shopId));
           return [shopId, { graph, costPerOz }] as const;
         })).then((pairs) => new Map(pairs)),
       ]);
@@ -255,7 +255,7 @@ export async function loadPackageInput(sb: Sb, args: {
       const lines = await inChunks(events.map((e) => e.id), (chunk) => selectAllRows<Record<string, unknown>>((f, t) => sb.from("sku_count_lines")
         .select("count_event_id, sku_id, level_label, qty, resolved_oz").in("count_event_id", chunk).order("id").range(f, t)));
       const skuIds = [...new Set(lines.map((l) => l.sku_id as string))];
-      const [skus, chainsByShop, measures, prices, who] = await Promise.all([
+      const [skus, chainsByShop, measures, pricesByShop, who] = await Promise.all([
         inChunks(skuIds, async (chunk) => {
           const { data, error } = await sb.from("vendor_items").select("id, name, units_per_pack, each_size, each_measure, avg_oz_per_each").in("id", chunk);
           if (error) throw new Error(`package skus: ${error.message}`);
@@ -263,7 +263,7 @@ export async function loadPackageInput(sb: Sb, args: {
         }),
         Promise.all(locationIds.map(async (shopId) => [shopId, await loadSkuPackChains(skuIds, shopId)] as const)).then((p) => new Map(p)),
         loadMeasures(),
-        loadCurrentSkuPrices(skuIds),
+        Promise.all(locationIds.map(async (shopId) => [shopId, await loadCurrentSkuPrices(skuIds, shopId)] as const)).then((p) => new Map(p)),
         names(sb, "users", events.map((e) => e.counted_by ?? "")),
       ]);
       // The same derivation the costing board uses: current price ÷ chain-aware content oz.
@@ -273,7 +273,7 @@ export async function loadPackageInput(sb: Sb, args: {
       const costPerOzAt = (shopId: string | undefined, skuId: string): number | null => {
         const s = skuRow.get(skuId);
         if (!s || !shopId) return null;
-        return skuCostPerOz(prices.get(skuId) ?? null, skuContentOz({
+        return skuCostPerOz(pricesByShop.get(shopId)?.get(skuId) ?? null, skuContentOz({
           unitsPerPack: s.units_per_pack, eachSize: num(s.each_size), eachMeasure: s.each_measure, avgOzPerEach: num(s.avg_oz_per_each),
           packChain: chainsByShop.get(shopId)?.get(skuId) ?? null,
         }, measures));

@@ -148,7 +148,7 @@ export async function loadMenuCostingBoard(actor: AuthContext): Promise<MenuCost
       sameAsName: parent?.name ?? null, sameAsNameEs: parent?.name_es ?? null };
   });
 
-  const prices = await loadCurrentSkuPrices([...graph.skuPack.keys()]);
+  const prices = await loadCurrentSkuPrices([...graph.skuPack.keys()], null); // global until Task 6b scopes the board
   const rows = composeMenuCostRows(inputs, graph, costPerOzFromGraph(graph, prices));
   const totals = summarizeMenuCostRows(rows);
 
