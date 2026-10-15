@@ -5,7 +5,7 @@ import { assertStepUp } from "@/lib/admin/step-up";
 import { jsonError, jsonOk, parseJsonBody } from "@/lib/api-helpers";
 import { attachMember, detachMember, ProductError } from "@/lib/products";
 
-// Membership edits (GM+ ≥7, Tier A — a membership change is a SKU-grade edit).
+// Membership edits (GM+ ≥7, Tier E — a membership change is a SKU-grade edit).
 //   POST   { skuId } — attach the SKU to this product.
 //   DELETE { skuId } — detach it (product_id → NULL = implicit singleton again).
 // Both refuse with a NAMED 409 when a product_primaries row names the SKU: the

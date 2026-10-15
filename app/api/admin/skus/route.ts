@@ -9,7 +9,7 @@ import type { SkuClass } from "@/lib/admin/catalog-shared";
 
 // GET — list SKUs (≥6). Optional ?vendorId=<uuid> filters to a vendor;
 //   ?vendorId=none → manual / vendor-less SKUs only; absent → all.
-// POST — create a SKU (GM+ ≥7, Tier B). vendor_id + location_id optional (null
+// POST — create a SKU (GM+ ≥7, Tier E — the 15-minute catalog edit window). vendor_id + location_id optional (null
 //   = manual / global). The lib enforces ≥7.
 export async function GET(req: NextRequest) {
   const ctx = await requireSession(req, "/api/admin/skus");
@@ -66,7 +66,7 @@ export async function POST(req: NextRequest) {
 
   // Optional atomic chain draft (SKU Builder streamline): the SkuBuilder can
   // persist a starter/edited pack chain alongside the new SKU in ONE request
-  // under the single Tier-B step-up above. Shape mirrors the pack-chain route's
+  // under the single Tier E step-up above. Shape mirrors the pack-chain route's
   // PackChainLevelInput (index-linked). Absent/empty → a bare unchained SKU
   // ("add pack detail later"). Parse strictly before we mint the SKU.
   let chainLevels: PackChainLevelInput[] | null = null;

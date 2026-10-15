@@ -4,7 +4,7 @@
  * CatalogClient — the Items Master Catalog surface (/admin/items, default view).
  * Lens chips + search + section-grouped rows, each expanding to a routing
  * DOSSIER of Links to the owning editors. The catalog only WRITES `seasonal`
- * (level ≥7, Tier-A step-up via the shared PasswordModal — pendingRef pattern
+ * (level ≥7, Tier E edit window via the shared PasswordModal — pendingRef pattern
  * cribbed from SalesTab). Every other edge is a read-only Link.
  *
  * Types come from lib/admin/catalog-shared (client-safe; the server loader
@@ -142,7 +142,7 @@ export function CatalogClient({ entities, actorLevel }: { entities: CatalogEntit
     }
   }, [router, forgetStepUp]);
 
-  // Dossier item_type editor (items only; GM+ Tier-A step-up via pendingRef).
+  // Dossier item_type editor (items only; GM+ Tier E edit window via pendingRef).
   const writeItemType = useCallback(async (e: CatalogEntity, itemType: ItemType) => {
     setErrorKey(null);
     setBusyKey(e.key);

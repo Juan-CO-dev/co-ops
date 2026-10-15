@@ -5,7 +5,7 @@ import { assertStepUp } from "@/lib/admin/step-up";
 import { jsonError, jsonOk, parseJsonBody } from "@/lib/api-helpers";
 import { setPrimary, ProductError } from "@/lib/products";
 
-// POST — designate the primary member for a scope (GM+ ≥7, Tier A).
+// POST — designate the primary member for a scope (GM+ ≥7, Tier E).
 //   locationId null = the GLOBAL default (the "null = global" house idiom);
 //   a location-scoped row overrides it for that shop only.
 // Membership is DB-proven by the composite FK; a non-member returns a named 400.

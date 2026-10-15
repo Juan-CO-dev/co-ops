@@ -28,7 +28,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
   }
 }
 
-// POST — replace the whole chain (supersede-as-a-SET). GM+ (≥7), Tier A (mirrors
+// POST — replace the whole chain (supersede-as-a-SET). GM+ (≥7), Tier E (mirrors
 // SKU edit). Body: { levels: [{ label, containsQty, containsIndex|null,
 // containsMeasureUnit|null }, ...] } — exactly one of containsIndex / containsMeasureUnit.
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {

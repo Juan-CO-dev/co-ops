@@ -6,7 +6,7 @@ import { jsonError, jsonOk, parseJsonBody } from "@/lib/api-helpers";
 import { setProductUnitOz, ProductError } from "@/lib/products";
 
 // PATCH — establish what ONE unit of the product weighs, with its provenance
-// (GM+ ≥7, Tier A — mirrors a SKU edit). `unitOz: null` clears the belief, and
+// (GM+ ≥7, Tier E — mirrors a SKU edit). `unitOz: null` clears the belief, and
 // clearing also clears who/when: NULL is the honest value, never a placeholder.
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;

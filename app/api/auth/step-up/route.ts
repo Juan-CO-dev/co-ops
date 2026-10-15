@@ -140,10 +140,11 @@ export async function POST(req: NextRequest) {
     user.id, password, pwRow.password_hash, user.role, { ipAddress, userAgent }, "step_up",
   );
 
-  // 5. Success — stamp the shared flag (and the catalog window when asked), then mint the
-  //    one grant the purpose names. Both are recorded on the success row.
-  await unlockStepUp(session.id, { catalogWindow });
+  // 5. Success — mint the one grant the purpose names FIRST, then stamp the shared flag (and
+  //    the catalog window when asked). Minting first means a failed mint (a 500) leaves no
+  //    clock stamped without its success audit row. Both are recorded on the success row.
   if (purpose) await mintStepUpGrant({ sessionId: session.id, userId: user.id, purpose });
+  await unlockStepUp(session.id, { catalogWindow });
   await audit({
     actorId: user.id,
     actorRole: user.role,

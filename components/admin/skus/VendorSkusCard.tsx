@@ -14,8 +14,8 @@
  * via chainsBySku / chainUnverifiedBySku, and the edit-mode chain save mirrors the
  * catalog's avg-PATCH-before-chain-POST flow.
  *
- * Authority (matches the routes): create = Tier B; edit + deactivate = Tier A;
- * chain save = Tier A. Below GM+ (≥7) the write affordances are hidden.
+ * Authority (matches the routes): create + edit + reactivate + chain save = Tier E (the
+ * catalog edit window); deactivate = a one-shot grant (a password every time). Below GM+ (≥7) the write affordances are hidden.
  */
 
 import { useState } from "react";
@@ -126,10 +126,10 @@ export function VendorSkusCard({
     } else setErrorMsg(t(resolveErrorKey(result.code)));
   };
 
-  // Edit-mode chain save (the SKU exists → the pack-chain route). Its own Tier-A
+  // Edit-mode chain save (the SKU exists → the pack-chain route). Its own Tier E
   // step-up (mirrors SkuCatalogClient). When the wizard hands an `avgOzPerEach`
   // (its raw count/volume leaf), PATCH it onto the SKU FIRST so the chain's count
-  // leaf is oz-resolvable at validation (both writes ride the one Tier-A step-up).
+  // leaf is oz-resolvable at validation (both writes ride the one Tier E step-up).
   const saveChain = async (
     id: string,
     levels: StarterChainLevel[],

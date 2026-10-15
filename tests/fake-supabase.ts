@@ -4,7 +4,8 @@
  * .eq("recipe_id", …) genuinely misses a row on another recipe — and every write records how
  * many rows it matched. Chains: select / eq / is / in / not(col, "is", null) / gt (ISO
  * timestamps only) / order / limit / range / returns / maybeSingle / then, insert(…)…,
- * update(…)….  `failUpdates = n` makes the next n updates return an error without applying.
+ * update(…)….  `failUpdates = n` / `failInserts = n` make the next n updates / inserts return an
+ * error without applying.
  * Never a real database. (tests/vault-fake-client.ts is the vault's own, richer twin.)
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
@@ -16,6 +17,7 @@ export interface FakeDb {
   tables: Record<string, Row[]>;
   writes: FakeWrite[];
   failUpdates: number;
+  failInserts: number;
 }
 type Result = { data: Row[] | null; error: { message: string } | null };
 
@@ -23,7 +25,7 @@ let seq = 0;
 const isNull = (v: unknown) => v === null || v === undefined;
 
 export function fakeSupabase(tables: Record<string, Row[]>): FakeDb {
-  const db: FakeDb = { client: null as unknown as SupabaseClient, tables, writes: [], failUpdates: 0 };
+  const db: FakeDb = { client: null as unknown as SupabaseClient, tables, writes: [], failUpdates: 0, failInserts: 0 };
 
   function from(table: string) {
     const filters: Array<(r: Row) => boolean> = [];
@@ -36,6 +38,11 @@ export function fakeSupabase(tables: Record<string, Row[]>): FakeDb {
 
     const run = (): Result => {
       if (op === "insert") {
+        if (db.failInserts > 0) {
+          db.failInserts -= 1;
+          db.writes.push({ table, op, payload, matched: 0 });
+          return { data: null, error: { message: "fake insert failure" } };
+        }
         const inserted = ((Array.isArray(payload) ? payload : [payload]) as Row[]).map((p) => ({ id: `${table}-${++seq}`, ...p }));
         rows().push(...inserted);
         db.writes.push({ table, op, payload, matched: inserted.length });

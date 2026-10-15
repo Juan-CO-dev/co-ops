@@ -173,11 +173,10 @@ export function RecipeBuilder({
   const patchField = async (field: string, value: string | number | null) => {
     if (!canEdit || !recipe) return;
     // TIER PARITY (the CreateUserForm class). PATCH /api/admin/recipes/[id] asserts
-    // Tier B, and this lane asked for nothing at all — so a header edit only ever
-    // succeeded when the actor happened to have unlocked FRESHLY for some other action
-    // on the same screen, and otherwise came back as an opaque error on blur. Every
-    // other write in this file already requests "B"; this one and removeEdge below were
-    // the two that did not.
+    // Tier E (the catalog edit window; Tier B before catalog Phase 1), and this lane once
+    // asked for nothing at all — so a header edit only succeeded when the actor happened
+    // to be unlocked already, and otherwise came back as an opaque error on blur. Every
+    // write in this file requests "E" (recipe delete takes a one-shot grant).
     if ((await requestStepUp("E")) !== "ok") return;
     setPatchError(null);
     setPatchBusy(true);
@@ -243,7 +242,7 @@ export function RecipeBuilder({
   // ── LIVE mode: remove edge ──
   const removeEdge = async (table: "recipe_inputs" | "recipe_outputs", edgeId: string) => {
     if (!canEdit) return;
-    // Same tier-parity fix as patchField: DELETE /api/admin/recipes/edges asserts Tier B.
+    // Same tier-parity fix as patchField: DELETE /api/admin/recipes/edges asserts Tier E.
     if ((await requestStepUp("E")) !== "ok") return;
     setPatchError(null);
     const result = await send("/api/admin/recipes/edges", { table, id: edgeId }, "DELETE");

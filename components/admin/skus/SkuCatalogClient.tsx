@@ -7,7 +7,8 @@
  * assigned to a vendor) + a per-SKU Edit (incl. reassigning the vendor — this
  * is how the 24 Baldor placeholders get moved) + deactivate.
  *
- * Authority (matches the routes): create = Tier B; edit + deactivate = Tier A.
+ * Authority (matches the routes): create + edit + reactivate = Tier E (the catalog edit
+ * window); deactivate = a one-shot grant (a password every time).
  * Filtering is client-side over the full set the server loaded.
  */
 
@@ -215,12 +216,12 @@ export function SkuCatalogClient({
     } else setErrorMsg(t(resolveErrorKey(result.code)));
   };
 
-  // Edit-mode chain save (the SKU exists → the pack-chain route). Its own Tier-A
+  // Edit-mode chain save (the SKU exists → the pack-chain route). Its own Tier E
   // step-up (mirrors the retired SkuPackChainPanel). Returns ok so the builder
   // can close the editor + refresh the seeded chain. When the wizard hands an
   // `avgOzPerEach` (its raw count/volume leaf), PATCH it onto the SKU FIRST so
   // the chain's count leaf is oz-resolvable at validation (both writes ride the
-  // one Tier-A step-up). The chain editor passes no avg → skips the PATCH.
+  // one Tier E step-up). The chain editor passes no avg → skips the PATCH.
   const saveChain = async (
     id: string,
     levels: StarterChainLevel[],

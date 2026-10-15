@@ -221,3 +221,17 @@ describe("a malformed target id is a 400 before any grant is touched", () => {
     expect(h.deactivateSku).not.toHaveBeenCalled();
   });
 });
+
+describe("a grant that cannot be minted stamps no clock (review P3)", () => {
+  it("the mint failing → 500, no unlock, no success audit, no grant", async () => {
+    h.session.mockResolvedValue(ctx());
+    h.verify.mockResolvedValue(true);
+    h.db.failInserts = 1;
+    await expect(
+      stepUpPOST(json("http://localhost/api/auth/step-up", "POST", { password: "right", catalogWindow: true, purpose: { action: "recipe.delete", targetId: T } })),
+    ).rejects.toThrow(/mintStepUpGrant/);
+    expect(h.unlock).not.toHaveBeenCalled();
+    expect(h.audit).not.toHaveBeenCalledWith(expect.objectContaining({ action: "auth_step_up_success" }));
+    expect(grants()).toEqual([]);
+  });
+});

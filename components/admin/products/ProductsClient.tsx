@@ -205,7 +205,7 @@ export function ProductsClient({
   );
 }
 
-/** Add a product. Tier B (a registry create), mirroring a SKU create. */
+/** Add a product. Tier E (the catalog edit window), mirroring a SKU create. */
 function CreateProductForm({
   busy,
   onMutate,
@@ -403,8 +403,9 @@ function ProductRow({
  * job is to make sure he can see what it costs before he says yes. A hard block
  * would put the software in charge of what the kitchen buys.
  *
- * Tier B, not the Tier A its sibling panels use: a membership edit moves which
- * vendor a product means; this decides whether it means anything at all.
+ * Retiring takes a one-shot grant (a password every time), not the Tier E window its
+ * sibling panels use: a membership edit moves which vendor a product means; this decides
+ * whether it means anything at all. Restoring is an ordinary Tier E edit.
  */
 function LifecyclePanel({
   product,
