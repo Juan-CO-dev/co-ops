@@ -1,5 +1,7 @@
 -- Migration 0258_recipe_input_write_atomic
 -- AUTHORED 2026-10-15. NOT YET APPLIED — apply via MCP after review (sim first, prod on Juan's word, BEFORE the code merges; 0257 first).
+-- APPLIED TO SIM 2026-10-15 (20261015100840 'recipe_input_write_atomic' = first version; 20261015101911 'recipe_input_write_atomic_v2' = the output-writer re-emits)
+-- APPLIED TO PROD 2026-10-15 (schema_migrations version 20261015103138, name 'recipe_input_write_atomic') — the full amended file; prod create_recipe_full/add_recipe_output verified = 0215 bodies before apply
 -- AMENDED 2026-10-15 (Astra r2 #1): the SIM received the FIRST version of this file (line writers only). It must be
 --   RE-APPLIED there (every statement is CREATE OR REPLACE / REVOKE / GRANT, so a re-run is safe). Prod never saw
 --   either version.

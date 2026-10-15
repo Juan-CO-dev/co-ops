@@ -1,5 +1,7 @@
 -- Migration 0257_step_up_catalog_window_and_grants
 -- AUTHORED 2026-10-15. NOT YET APPLIED — apply via MCP after review (sim first, prod on Juan's word, BEFORE the code merges).
+-- APPLIED TO SIM 2026-10-15 (schema_migrations version 20261015091628, name 'step_up_catalog_window_and_grants')
+-- APPLIED TO PROD 2026-10-15 (schema_migrations version 20261015103051, name 'step_up_catalog_window_and_grants'); prod dry-run with rollback first
 -- Provenance: catalog redesign Phase 1 (docs/superpowers/plans/2026-10-15-catalog-phase1-quick-fixes.md),
 --   Astra r1 P1-1 (an edit unlock must never satisfy an always-prompt act) and P2-3 (the edit
 --   window needs its own clock, independent of the shared step-up flag); Astra r2 #3 (explicit
