@@ -85,6 +85,7 @@ export function OpeningSectionVerify({
   return (
     <div className="flex flex-col items-end gap-1.5">
       <button
+        data-whats-left-field="primary"
         type="button"
         onClick={disabled ? undefined : onToggleVerified}
         disabled={disabled}

@@ -1140,6 +1140,7 @@ export function ChecklistItem({
     <div data-whats-left-item={templateItem.id} className="w-full">
       <div className="flex items-stretch gap-2">
         <button
+          data-whats-left-field="primary"
           type="button"
           onClick={handleRowTap}
           disabled={!interactable && !error}

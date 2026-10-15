@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { whatsLeft } from "@/lib/whats-left-shared";
+import { whatsLeft, openingPhase1StationWork } from "@/lib/whats-left-shared";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { TranslationProvider } from "@/lib/i18n/provider";
@@ -28,7 +28,7 @@ describe("what's left", () => {
     const midDay2 = readFileSync("components/MidDayPhase2Form.tsx", "utf8");
     expect(midDay2).toContain('(states[it.id] ?? EMPTY).status === "saved"');
     const opening = readFileSync("app/(authed)/operations/opening/opening-client.tsx", "utf8");
-    expect(opening).toContain("const phase1Left = whatsLeft(phase1Items");
+    expect(opening).toContain("const phase1Left = whatsLeft(phase1Work");
     const opening2 = readFileSync("components/opening/OpeningPrepEntry.tsx", "utf8");
     expect(opening2).toContain('saveStates.get(item.id)?.status === "saved"');
   });
@@ -39,10 +39,34 @@ describe("what's left", () => {
       const item = { id: "one", sectionId: "prep", label: "One", required: true, minRoleLevel: 3, targetField: "primary" };
       const html = render(whatsLeft([item], {}, 3));
       expect(html).toContain('aria-expanded="false"');
-      expect(html).toContain(language === "en" ? "1 left" : "1 pendientes");
+      expect(html).toContain(language === "en" ? "1 left" : "1 pendiente");
       expect(html).not.toContain("One</button>");
       expect(render(whatsLeft([item], { one: true }, 3))).toBe("");
     }
+  });
+  it("removes an entered opening reading while station verification remains", () => {
+    const row = { id: "temp", label: "Fridge temp", required: true, minRoleLevel: 3,
+      readingRequired: true, readingEntered: true };
+    const work = openingPhase1StationWork("Crunchy Boi Station", [row], false, "Verify Crunchy Boi Station");
+    expect(work.progress).toEqual({ id: "Crunchy Boi Station", done: 1, total: 2 });
+    expect(whatsLeft(work.template, work.state, 3).left).toEqual([
+      { itemId: "station:Crunchy Boi Station", sectionId: "Crunchy Boi Station",
+        label: "Verify Crunchy Boi Station", targetField: "primary" },
+    ]);
+    const before = openingPhase1StationWork("Crunchy Boi Station", [{ ...row, readingEntered: false }],
+      false, "Verify Crunchy Boi Station");
+    expect(whatsLeft(before.template, before.state, 3).left.map((entry) => entry.label))
+      .toEqual(["Fridge temp", "Verify Crunchy Boi Station"]);
+  });
+  it("pins primary focus controls on opening, closing and AM prep", () => {
+    for (const path of ["components/opening/OpeningCountInput.tsx", "components/opening/OpeningChecklistItem.tsx",
+      "components/opening/OpeningSectionVerify.tsx", "components/opening/OpeningVerificationStation.tsx",
+      "components/opening/OpeningPrepEntry.tsx", "components/ChecklistItem.tsx",
+      "components/ReportReferenceItem.tsx", "components/prep/PrepNumericCell.tsx",
+      "components/prep/sections/MiscSection.tsx", "components/prep/sections/MixedPrepSection.tsx"]) {
+      expect(readFileSync(path, "utf8"), path).toContain("data-whats-left-field=");
+    }
+    expect(readFileSync("components/prep/PrepRow.tsx", "utf8")).toContain("primary={!isAutoCalcTotal");
   });
   it("pins all four surfaces, role projections, jump order and 44px control", () => {
     for (const path of ["app/(authed)/operations/opening/opening-client.tsx", "components/opening/OpeningPrepEntry.tsx",

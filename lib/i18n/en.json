@@ -6510,6 +6510,8 @@
   "catalog.item.change_for_shop": "Change it for {shop}",
   "catalog.item.pick_shop": "Change it for one of your shops",
   "whats_left.count": "{n} left",
+  "whats_left.count_one": "1 left",
+  "whats_left.verify_station": "Verify {station}",
   "whats_left.higher_role": "{n} need a key holder",
   "whats_left.key_holder": "Needs a key holder"
 }

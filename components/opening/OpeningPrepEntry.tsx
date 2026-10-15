@@ -752,6 +752,7 @@ function PrepEntryRow({
           {batch !== null ? t("prep.batch.bottled_label" as TranslationKey) : t("opening.phase2.opener_prepped_label")}
         </label>
         <NumericInput
+          primary
           value={value.openerPrepped}
           onChange={(next) => onChange({ ...value, openerPrepped: next })}
           onBlur={
@@ -1006,6 +1007,7 @@ function PrepEntryRow({
 // ─────────────────────────────────────────────────────────────────────────────
 
 interface NumericInputProps {
+  primary?: boolean;
   value: number | null;
   onChange: (next: number | null) => void;
   /** Astra r1 P2-2: receives where focus went (null when unknown). */
@@ -1030,6 +1032,7 @@ const draftOf = (v: number | null) => (v === null ? "" : String(v));
  * prev-compare pattern (never an effect) when the value changes from outside the box.
  */
 function NumericInput({
+  primary = false,
   value,
   onChange,
   onBlur,
@@ -1050,6 +1053,7 @@ function NumericInput({
   return (
     <>
       <input
+        data-whats-left-field={primary ? "primary" : undefined}
         type="text"
         inputMode="decimal"
         value={draft}

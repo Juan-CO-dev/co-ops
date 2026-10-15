@@ -117,6 +117,7 @@ function MixedYesNoRow({
         </span>
         <div role="group" aria-label={yesAria} className="inline-flex shrink-0 gap-1.5">
           <button
+            data-whats-left-field="primary"
             type="button"
             aria-pressed={isYes}
             disabled={disabled}
@@ -207,6 +208,7 @@ function MixedFreeTextRow({
       <label className="block">
         <span className="text-sm font-semibold text-co-text leading-tight">{itemLabel}</span>
         <textarea
+          data-whats-left-field="primary"
           value={freeText ?? ""}
           onChange={(e) => onChange(templateItemId, "freeText", e.target.value)}
           placeholder={t("am_prep.misc.notes_placeholder")}

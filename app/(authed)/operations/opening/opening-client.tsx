@@ -56,12 +56,11 @@ import type {
 import { ActionButton } from "@/components/ActionButton";
 import { SaveStatus } from "@/components/ui/SaveStatus";
 import { WhatsLeft, focusWhatsLeft } from "@/components/ui/WhatsLeft";
-import { whatsLeft } from "@/lib/whats-left-shared";
+import { whatsLeft, openingPhase1StationWork } from "@/lib/whats-left-shared";
 import { resolveTemplateItemContent } from "@/lib/i18n/content";
 import { initialSaveStatus, saveStatusStep, type SaveStatusEvent } from "@/lib/save-status-shared";
 import {
   OpeningVerificationStation,
-  openingStationProgress,
 } from "@/components/opening/OpeningVerificationStation";
 import { showProblems, unfinishedSectionIds } from "@/lib/collapsible-sections";
 import { useCollapsibleSections } from "@/lib/use-collapsible-sections";
@@ -1005,31 +1004,31 @@ export function OpeningClient({
     return groups;
   }, [phase1Items]);
 
-  // Wave 1 B — collapsible Phase 1 stations. DONE per station comes from the form's
-  // own rules (openingStationProgress: ticked tick-items, section-verified spot-check
-  // items, everything when verificationLocked). First unfinished station starts open.
-  const stationProgress = Array.from(stationGroups.entries()).map(([station, items]) =>
-    openingStationProgress(
-      station,
-      items,
-      values,
-      closerSnapshotsMap,
-      sectionVerifications,
-      verificationLocked,
-    ),
-  );
-  const stationCollapse = useCollapsibleSections("opening-p1", stationProgress);
-  const phase1Left = whatsLeft(phase1Items.map((item) => ({ id: item.id,
-    sectionId: item.station ?? "—", label: resolveTemplateItemContent(item, language).label,
-    required: item.required, minRoleLevel: item.minRoleLevel, targetField: "primary" })),
-    Object.fromEntries(phase1Items.map((item) => {
+  // Each reading and the station's verify action contributes one progress step.
+  const phase1Work = Array.from(stationGroups.entries()).map(([station, items]) => {
+    const first = items[0];
+    const stationLabel = first ? resolveTemplateItemContent(first, language).station ?? station : station;
+    const hasSpot = items.some((it) => closerSnapshotsMap.has(it.id));
+    const tickItemsInStation = items.filter((it) => !closerSnapshotsMap.has(it.id));
+    const firstSpot = items.find((it) => closerSnapshotsMap.has(it.id));
+    const section = (firstSpot?.prepMeta as OpeningPhase2Meta | null)?.section ?? station;
+    const verified = verificationLocked ||
+      ((!hasSpot || sectionVerifications.get(section) === true) &&
+        tickItemsInStation.every((it) => values.get(it.id)?.ticked === true));
+    return openingPhase1StationWork(station, items.map((item) => {
       const value = values.get(item.id);
-      const snapshot = closerSnapshotsMap.get(item.id);
-      const section = (item.prepMeta as OpeningPhase2Meta | null)?.section ?? item.station ?? "—";
-      const spotEntered = snapshot ? (sectionVerifications.get(section) === true || value?.openerRecount != null ||
-        (value?.openerRecountLine != null && value?.openerRecountBackUp != null)) : value?.ticked === true;
-      return [item.id, verificationLocked || (spotEntered && (!item.expectsCount || value?.countValue != null))];
-    })), actorLevel);
+      const needsRecount = closerSnapshotsMap.has(item.id) && closerSnapshotsMap.get(item.id)?.closerCount == null;
+      return { id: item.id, label: resolveTemplateItemContent(item, language).label,
+        required: item.required, minRoleLevel: item.minRoleLevel,
+        readingRequired: item.expectsCount || needsRecount,
+        readingEntered: verificationLocked || ((!item.expectsCount || value?.countValue != null) &&
+          (!needsRecount || value?.openerRecount != null)) };
+    }), verified, t("whats_left.verify_station", { station: stationLabel }));
+  });
+  const phase1Left = whatsLeft(phase1Work.flatMap((work) => work.template),
+    Object.assign({}, ...phase1Work.map((work) => work.state)), actorLevel);
+  const stationProgress = phase1Work.map((work) => work.progress);
+  const stationCollapse = useCollapsibleSections("opening-p1", stationProgress);
 
   // C.53 §10 — partition Phase 1 items. Spot-check items (in the closer-count-
   // snapshot universe) are resolved via section-verify/recount, NOT the tick

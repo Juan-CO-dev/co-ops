@@ -189,6 +189,7 @@ export function OpeningChecklistItem({
                 required={value.ticked}
                 hasError={hasMissingCountError}
                 disabled={verificationLocked}
+                primary={value.countValue === null}
               />
               {hasMissingCountError ? (
                 <span className="text-xs text-co-cta-text">
@@ -258,6 +259,8 @@ export function OpeningChecklistItem({
                     <label key={box} className="flex flex-col gap-1">
                       <span className="text-xs font-bold text-co-text">{t(labelKey)}</span>
                       <input
+                        data-whats-left-field={(!item.expectsCount || value.countValue !== null) && current === null &&
+                          (box === "line" || value.openerRecountLine != null) ? "primary" : undefined}
                         type="number"
                         inputMode="decimal"
                         min={0}
@@ -304,6 +307,7 @@ export function OpeningChecklistItem({
                 {t("opening.recount.label")}
               </span>
               <input
+                data-whats-left-field={(!item.expectsCount || value.countValue !== null) && value.openerRecount === null ? "primary" : undefined}
                 type="number"
                 inputMode="decimal"
                 value={value.openerRecount === null ? "" : String(value.openerRecount)}

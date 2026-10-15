@@ -6510,6 +6510,8 @@
   "catalog.item.change_for_shop": "Cámbialo para {shop}",
   "catalog.item.pick_shop": "Cámbialo para una de tus tiendas",
   "whats_left.count": "{n} pendientes",
+  "whats_left.count_one": "1 pendiente",
+  "whats_left.verify_station": "Verificar {station}",
   "whats_left.higher_role": "{n} necesitan a alguien con llave",
   "whats_left.key_holder": "Necesita a alguien con llave"
 }

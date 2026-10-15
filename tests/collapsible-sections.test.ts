@@ -314,8 +314,8 @@ describe("review fixes (PR 384)", () => {
   it("opening: ticked with a missing count is NOT done; the station stays open", async () => {
     const { openingStationProgress } = await import("@/components/opening/OpeningVerificationStation");
     const items = [
-      { id: "a", expectsCount: true, prepMeta: null },
-      { id: "b", expectsCount: false, prepMeta: null },
+      { id: "a", expectsCount: true, prepMeta: null, required: true, minRoleLevel: 3 },
+      { id: "b", expectsCount: false, prepMeta: null, required: true, minRoleLevel: 3 },
     ] as never;
     const v = (ticked: boolean, countValue: number | null) => ({
       ticked,

@@ -32,15 +32,11 @@ import {
 } from "./OpeningChecklistItem";
 import { OpeningSectionVerify } from "./OpeningSectionVerify";
 import { CollapsibleChecklistSection } from "@/components/ui/CollapsibleChecklistSection";
+import { openingPhase1StationWork } from "@/lib/whats-left-shared";
 
 /**
- * Wave 1 B — progress for a Phase 1 station card, under the form's OWN done rules:
- *   - tick item   → DONE when ticked (the station tick / per-item tick);
- *   - spot-check  → DONE when its section is verified (sectionVerifications, keyed on
- *                   prep_meta.section) — the only way Phase 1 resolves a spot-check item;
- *   - EITHER kind, when it expectsCount (temperature / count) → additionally needs its
- *     count present: the same rule as the submit gate (allTicked AND allTempsFilled).
- *   - verificationLocked (Phase 1 already landed) → everything renders DONE.
+ * The station card and What's left count the same steps: each required reading
+ * and one station verification. A reading stays done while verification is pending.
  */
 export function openingStationProgress(
   station: string,
@@ -54,19 +50,19 @@ export function openingStationProgress(
   const sectionKey =
     (firstSpotCheck?.prepMeta as OpeningPhase2Meta | null)?.section ?? station;
   const sectionVerified = sectionVerifications.get(sectionKey) ?? false;
-  let done = 0;
-  for (const it of items) {
-    if (verificationLocked) {
-      done += 1;
-      continue;
-    }
-    const base = closerSnapshotsMap.has(it.id)
-      ? sectionVerified
-      : values.get(it.id)?.ticked === true;
-    const countOk = !it.expectsCount || (values.get(it.id)?.countValue ?? null) !== null;
-    if (base && countOk) done += 1;
-  }
-  return { id: station, done, total: items.length };
+  const hasTickItems = items.some((it) => !closerSnapshotsMap.has(it.id));
+  const hasSpotItems = items.some((it) => closerSnapshotsMap.has(it.id));
+  const verified = verificationLocked ||
+    ((!hasSpotItems || sectionVerified) && (!hasTickItems || items.filter((it) => !closerSnapshotsMap.has(it.id))
+      .every((it) => values.get(it.id)?.ticked === true)));
+  return openingPhase1StationWork(station, items.map((it) => {
+    const value = values.get(it.id);
+    const needsRecount = closerSnapshotsMap.has(it.id) && closerSnapshotsMap.get(it.id)?.closerCount == null;
+    return { id: it.id, label: it.label, required: it.required, minRoleLevel: it.minRoleLevel,
+      readingRequired: it.expectsCount || needsRecount,
+      readingEntered: verificationLocked || ((!it.expectsCount || value?.countValue != null) &&
+        (!needsRecount || value?.openerRecount != null)) };
+  }), verified, "").progress;
 }
 
 interface OpeningVerificationStationProps {
@@ -188,6 +184,7 @@ export function OpeningVerificationStation({
     sectionVerifications,
     verificationLocked,
   );
+  const verifyId = `station:${station}`;
 
   return (
     <CollapsibleChecklistSection
@@ -204,7 +201,9 @@ export function OpeningVerificationStation({
       headerExtras={
         <>
           {hasTickItems ? (
-            <button
+            <div data-whats-left-item={verifyId}>
+              <button
+                data-whats-left-field="primary"
               type="button"
               onClick={
                 verificationLocked
@@ -232,10 +231,12 @@ export function OpeningVerificationStation({
             >
               <span aria-hidden>{displayTicked ? "✓" : "○"}</span>
               {displayTicked ? t("opening.station.ticked_button") : t("opening.station.tick_button")}
-            </button>
+              </button>
+            </div>
           ) : null}
           {hasSpotCheckItems ? (
-            <OpeningSectionVerify
+            <div data-whats-left-item={!hasTickItems ? verifyId : undefined}>
+              <OpeningSectionVerify
               sectionKey={sectionKey}
               sectionDisplay={stationDisplay}
               verified={sectionVerified}
@@ -243,7 +244,8 @@ export function OpeningVerificationStation({
               disabledReason={sectionHasUnrecountedNull ? "null_items_unrecounted" : null}
               onToggleVerified={() => onSectionVerifyToggle(sectionKey)}
               language={language}
-            />
+              />
+            </div>
           ) : null}
         </>
       }

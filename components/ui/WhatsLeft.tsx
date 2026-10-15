@@ -29,7 +29,7 @@ export function WhatsLeft({ result, onJump }: { result: WhatsLeftResult; onJump:
   return <section className="rounded-xl border border-co-border bg-co-surface px-3 py-1">
     <button type="button" aria-expanded={open} onClick={() => setOpen(!open)}
       className="flex min-h-[44px] w-full items-center justify-between gap-2 text-left text-sm font-bold text-co-text focus-visible:ring-4 focus-visible:ring-co-gold/60">
-      <span>{t("whats_left.count", { n: result.left.length })}{result.needsHigherRole.length > 0
+      <span>{t(result.left.length === 1 ? "whats_left.count_one" : "whats_left.count", { n: result.left.length })}{result.needsHigherRole.length > 0
         ? ` · ${t("whats_left.higher_role", { n: result.needsHigherRole.length })}` : ""}</span>
       <span aria-hidden>{open ? "▾" : "▸"}</span>
     </button>

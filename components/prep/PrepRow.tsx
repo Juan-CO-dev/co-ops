@@ -253,6 +253,10 @@ export function PrepRow({
               ariaLabel={ariaLabel}
               disabled={disabled}
               readOnly={isAutoCalcTotal}
+              primary={!isAutoCalcTotal && inputColumns.find((candidate) => {
+                const candidateField = COLUMN_INPUT_FIELD[candidate];
+                return rowErrors?.[candidateField] || !(rawInputs[candidateField] ?? "").trim();
+              }) === col}
             />
             {fieldError ? (
               <span

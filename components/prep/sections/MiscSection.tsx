@@ -110,6 +110,7 @@ function MiscRow({
           className="inline-flex shrink-0 gap-1.5"
         >
           <button
+            data-whats-left-field="primary"
             type="button"
             aria-pressed={isYes}
             disabled={disabled}

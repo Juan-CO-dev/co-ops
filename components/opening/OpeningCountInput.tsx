@@ -24,6 +24,7 @@ interface OpeningCountInputProps {
   required?: boolean;
   hasError?: boolean;
   disabled?: boolean;
+  primary?: boolean;
 }
 
 export function OpeningCountInput({
@@ -34,12 +35,14 @@ export function OpeningCountInput({
   required = false,
   hasError = false,
   disabled = false,
+  primary = false,
 }: OpeningCountInputProps) {
   const inputId = useId();
   const stringValue = value === null ? "" : String(value);
 
   return (
     <input
+      data-whats-left-field={primary ? "primary" : undefined}
       id={inputId}
       type="text"
       inputMode="decimal"
