@@ -15,7 +15,7 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createFakeDb } from "./fixtures/counts-fake-db";
 import { buildRecipeVersionsFixture, EARLY_DAY, LOC, MID_DAY, OTHER, QUIET_DAY } from "./fixtures/recipe-versions-fixture";
-import { computeRecipeOutputs, liveRecipeApi, type RecipeEquivalenceOutputs } from "./fixtures/recipe-versions-harness";
+import { computeLineReaderOutputs, computeRecipeOutputs, liveRecipeApi, type LineReaderOutputs, type RecipeEquivalenceOutputs } from "./fixtures/recipe-versions-harness";
 
 const GOLDEN = "tests/fixtures/recipe-versions-golden.json";
 const DAYS = [EARLY_DAY, MID_DAY, QUIET_DAY];
@@ -72,5 +72,32 @@ describe("the fixture is not trivial — hand-checked anchors inside the golden"
     const g = golden();
     expect(pick(g[LOC]!.board.rows)).toEqual(pick(g.global!.board.rows));
     expect(pick(g[OTHER]!.board.rows)).toEqual(pick(g.global!.board.rows));
+  });
+});
+
+// ── THE DIRECT LINE READERS (chunk-1 review P2-2) ─────────────────────────────────────────────────────────
+// Frozen BEFORE Task 6b reroutes them through the one resolver. Their code was untouched between Task 1
+// (a7175de0) and this pin, and the golden was generated from a7175de0's tree (the readers' pre-change code).
+// Regenerate ONLY with a written reason: UPDATE_RECIPE_LINE_READERS_GOLDEN=1 npx vitest run tests/recipe-versions-equivalence.test.ts
+const LINE_GOLDEN = "tests/fixtures/recipe-line-readers-golden.json";
+
+describe("no shop versions ⇒ every direct recipe-line reader answers exactly as before 6b (the line-reader golden)", () => {
+  it("readiness, SKU 'used in', product links, product pins, par demand sources, the production picker and the conversion check", async () => {
+    const got = await computeLineReaderOutputs(buildRecipeVersionsFixture(), [LOC, OTHER]);
+    if (process.env.UPDATE_RECIPE_LINE_READERS_GOLDEN === "1") writeFileSync(LINE_GOLDEN, `${JSON.stringify(got, null, 2)}\n`);
+    expect(existsSync(LINE_GOLDEN), "line-reader golden missing").toBe(true);
+    expect(got).toEqual(JSON.parse(readFileSync(LINE_GOLDEN, "utf8")) as LineReaderOutputs);
+  });
+
+  it("the line-reader golden is not trivial — hand-checked anchors", () => {
+    const g = JSON.parse(readFileSync(LINE_GOLDEN, "utf8")) as LineReaderOutputs;
+    // The slaw is made from lettuce and mayo: the picker offers it, the check accepts it; turkey makes no slaw.
+    expect(JSON.stringify((g.productionPicker[LOC] as Record<string, unknown>)["s-lettuce"])).toContain("i-slaw");
+    expect(g.conversions[LOC]!["s-lettuce>i-slaw"]).toBe("accepted");
+    expect(g.conversions[LOC]!["s-turkey>i-slaw"]).toBe("invalid_conversion");
+    // Lettuce is used (via the slaw recipe); the retired Old sub's onion is a lost demand source by NAME.
+    expect(g.skuUsage["s-lettuce"]).toBeDefined();
+    expect(g.demandSources.activeRefsBySku["s-lettuce"]).toBe(1);
+    expect(Object.keys(g.readiness.recipes).length).toBeGreaterThan(0);
   });
 });

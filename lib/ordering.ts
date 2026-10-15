@@ -235,7 +235,8 @@ interface DemandSources {
   removedSourcesBySku: Map<string, string[]>;
 }
 
-async function loadDemandSources(
+/** Exported for the recipe/menu equivalence pin (tests/fixtures/recipe-versions-harness.ts); the walk is its only caller. */
+export async function loadDemandSources(
   sb: ReturnType<typeof getServiceRoleClient>,
   skus: ReadonlyArray<{ id: string; product_id: string | null }>,
 ): Promise<DemandSources> {

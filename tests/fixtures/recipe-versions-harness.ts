@@ -84,3 +84,70 @@ export async function computeRecipeOutputs(
   }
   return JSON.parse(JSON.stringify(out)) as RecipeEquivalenceOutputs;
 }
+
+// ── THE DIRECT LINE READERS (chunk-1 review P2-2): every reader that reads recipe_inputs itself, outside the
+// graph — the ones Task 6b routes through the one resolver. Frozen BEFORE 6b, so the reroute is proven to move
+// no number while no shop version exists. Per shop where the reader is (or will be) shop-aware.
+import { loadGraphReadiness } from "@/lib/admin/readiness-load";
+import { loadSkuUsageMap } from "@/lib/admin/cost";
+import { loadProductItemLinks } from "@/lib/admin/product-item-links";
+import { loadDemandSources } from "@/lib/ordering";
+import { loadProductionFormData, recordProduction } from "@/lib/production";
+import { listProducts } from "@/lib/products";
+import { getServiceRoleClient } from "@/lib/supabase-server";
+
+export interface LineReaderOutputs {
+  readiness: { recipes: Record<string, unknown>; items: Record<string, unknown> };
+  skuUsage: Record<string, string[]>;
+  productLinks: unknown;
+  productPins: Array<{ id: string; pinned: unknown }>;
+  demandSources: { activeRefsBySku: Record<string, number>; removedSourcesBySku: Record<string, string[]> };
+  /** shop → the production picker's SKU → items map. */
+  productionPicker: Record<string, unknown>;
+  /** shop → "sku>item" → accepted | the ProductionError code (the conversion check). */
+  conversions: Record<string, Record<string, string>>;
+}
+
+/** The conversion pairs the check is asked about: every SKU line × every item output, in id order. */
+function conversionPairs(tables: Tables): Array<[string, string]> {
+  const skus = [...new Set((tables.vendor_items ?? []).filter((s) => s.active !== false).map((s) => String(s.id)))].sort();
+  const items = [...new Set((tables.recipe_outputs ?? []).map((o) => o.output_item_id).filter((v): v is string => typeof v === "string"))].sort();
+  return skus.flatMap((s) => items.map((i) => [s, i] as [string, string]));
+}
+
+export async function computeLineReaderOutputs(tables: Tables, shopIds: readonly string[]): Promise<LineReaderOutputs> {
+  const readiness = await loadGraphReadiness(OWNER_ACTOR);
+  const skuUsage = await loadSkuUsageMap();
+  const productLinks = await loadProductItemLinks(OWNER_ACTOR);
+  const products = await listProducts(OWNER_ACTOR);
+  const skus = (tables.vendor_items ?? []).map((s) => ({ id: String(s.id), product_id: (s.product_id as string | null | undefined) ?? null }));
+  const demand = await loadDemandSources(getServiceRoleClient(), skus);
+  const productionPicker: Record<string, unknown> = {};
+  const conversions: Record<string, Record<string, string>> = {};
+  for (const shop of shopIds) {
+    productionPicker[shop] = (await loadProductionFormData(OWNER_ACTOR, shop)).skuToItems;
+  }
+  // The check LAST: an accepted conversion writes a production into the in-memory stand-in.
+  for (const shop of shopIds) {
+    const out: Record<string, string> = {};
+    for (const [sku, item] of conversionPairs(tables)) {
+      try {
+        await recordProduction(OWNER_ACTOR, { locationId: shop, inputSkuId: sku, outputItemId: item, inputQty: 1, outputQty: 1, notes: null });
+        out[`${sku}>${item}`] = "accepted";
+      } catch (e) {
+        const code = (e as { code?: unknown }).code;
+        out[`${sku}>${item}`] = typeof code === "string" ? code : `error:${(e as Error).message}`;
+      }
+    }
+    conversions[shop] = out;
+  }
+  return JSON.parse(JSON.stringify({
+    readiness: { recipes: sorted(readiness.recipeReadiness), items: sorted(readiness.itemReadiness) },
+    skuUsage: sorted(skuUsage),
+    productLinks,
+    productPins: products.map((p) => ({ id: p.id, pinned: p.pinnedRecipes })),
+    demandSources: { activeRefsBySku: sorted(demand.activeRefsBySku), removedSourcesBySku: sorted(demand.removedSourcesBySku) },
+    productionPicker,
+    conversions,
+  })) as LineReaderOutputs;
+}
