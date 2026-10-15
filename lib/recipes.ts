@@ -156,6 +156,13 @@ function componentTargets(input: {
 /**
  * ONE validator for a line about to be written — shared by addRecipeInput and
  * updateRecipeInput (catalog Phase 1), so an edit can never author what an add would refuse.
+ * It is the FULL rule set (chunk-2 review P2): a caller that skips parseRecipeLinePatch (the
+ * POST /inputs route does) still cannot write a malformed line. Shape first, before any read:
+ *  · exactly one target (sku | item | product) — else invalid_component;
+ *  · quantity a FINITE number > 0 — else invalid_quantity (`!(q > 0)` let Infinity through);
+ *  · a container label is a SKU's own word — on a product or item line it is invalid_payload;
+ *  · portioning is a bought-ingredient idea — a portioned ITEM line is invalid_payload.
+ * Then the rules that need the database:
  *  · a PRODUCT line: an active product measured in an ACTIVE measure-registry unit of any
  *    dimension (D3, assertProductLineIsValid above);
  *  · an ITEM line: must not make this recipe consume its own output, directly or through a
@@ -167,8 +174,22 @@ function componentTargets(input: {
 async function assertInputLineIsValid(
   sb: ReturnType<typeof getServiceRoleClient>,
   recipeId: string,
-  line: { componentItemId: string | null; componentProductId: string | null; unit: string | null },
+  line: {
+    componentSkuId: string | null;
+    componentItemId: string | null;
+    componentProductId: string | null;
+    quantity: number;
+    unit: string | null;
+    eachContainerLabel: string | null;
+    portioned: boolean;
+  },
 ): Promise<void> {
+  if (componentTargets(line).count !== 1) throw new RecipeError(400, "invalid_component");
+  if (!(typeof line.quantity === "number" && Number.isFinite(line.quantity) && line.quantity > 0)) {
+    throw new RecipeError(400, "invalid_quantity");
+  }
+  if (line.componentSkuId === null && normStr(line.eachContainerLabel) !== null) throw new RecipeError(400, "invalid_payload");
+  if (line.componentItemId !== null && line.portioned) throw new RecipeError(400, "invalid_payload");
   if (line.componentProductId !== null) await assertProductLineIsValid(sb, line.componentProductId, line.unit);
   if (line.componentItemId !== null) {
     const { data: outs, error } = await sb
@@ -560,11 +581,12 @@ async function outputWouldCycle(recipeId: string, childItemId: string): Promise<
 
 export async function addRecipeInput(actor: AuthContext, input: { recipeId: string; componentSkuId?: string | null; componentItemId?: string | null; componentProductId?: string | null; quantity: number; unit?: string | null; eachContainerLabel?: string | null; portioned?: boolean }): Promise<{ id: string }> {
   requireLevel(actor, RECIPE_WRITE_MIN);
-  const { skuId, itemId, productId, count } = componentTargets(input);
-  if (count !== 1) throw new RecipeError(400, "invalid_component");
-  if (!(input.quantity > 0)) throw new RecipeError(400, "invalid_quantity");
+  const { skuId, itemId, productId } = componentTargets(input);
   const sb = getServiceRoleClient();
-  await assertInputLineIsValid(sb, input.recipeId, { componentItemId: itemId, componentProductId: productId, unit: input.unit ?? null });
+  await assertInputLineIsValid(sb, input.recipeId, {
+    componentSkuId: skuId, componentItemId: itemId, componentProductId: productId, quantity: input.quantity,
+    unit: input.unit ?? null, eachContainerLabel: input.eachContainerLabel ?? null, portioned: input.portioned ?? false,
+  });
   const { data: max } = await sb.from("recipe_inputs").select("display_order").eq("recipe_id", input.recipeId).order("display_order", { ascending: false }).limit(1).maybeSingle<{ display_order: number }>();
   const { data, error } = await sb.from("recipe_inputs").insert({ recipe_id: input.recipeId, component_sku_id: skuId, component_item_id: itemId, component_product_id: productId, quantity: input.quantity, unit: normStr(input.unit), each_container_label: normStr(input.eachContainerLabel), portioned: input.portioned ?? false, display_order: (max?.display_order ?? 0) + 1, created_by: actor.user.id })
     .select("id").maybeSingle<{ id: string }>();
@@ -598,8 +620,6 @@ export async function updateRecipeInput(
 ): Promise<{ changed: boolean }> {
   requireLevel(actor, RECIPE_WRITE_MIN);
   const { line, expected } = input;
-  if (componentTargets(line).count !== 1) throw new RecipeError(400, "invalid_component");
-  if (!(Number.isFinite(line.quantity) && line.quantity > 0)) throw new RecipeError(400, "invalid_quantity");
   if (componentTargets(expected).count !== 1) throw new RecipeError(400, "invalid_payload");
 
   const changed = diffRecipeLine(normalizeRecipeLine(expected), line);

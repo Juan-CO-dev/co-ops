@@ -207,3 +207,39 @@ describe("PATCH /api/admin/recipes/[id]/inputs/[inputId]", () => {
     expect((await stale.json()).code).toBe("line_changed");
   });
 });
+
+describe("ONE validator is the full rule set for add AND update (chunk-2 review P2)", () => {
+  it("a non-finite quantity is refused by both (add used to let Infinity through)", async () => {
+    for (const quantity of [Number.POSITIVE_INFINITY, Number.NaN, 0, -1]) {
+      await expect(add({ componentSkuId: "sku-ham", unit: "oz", quantity })).rejects.toMatchObject({ code: "invalid_quantity" });
+      await expect(edit(gm, line({ quantity }))).rejects.toMatchObject({ code: "invalid_quantity" });
+    }
+    expect(h.db.writes).toEqual([]);
+  });
+
+  it("exactly one target, through both", async () => {
+    await expect(add({ componentSkuId: "sku-ham", componentItemId: "item-z", unit: "oz" })).rejects.toMatchObject({ code: "invalid_component" });
+    await expect(add({ unit: "oz" })).rejects.toMatchObject({ code: "invalid_component" });
+    await expect(edit(gm, line({ componentItemId: "item-z" }))).rejects.toMatchObject({ code: "invalid_component" });
+    expect(h.db.writes).toEqual([]);
+  });
+
+  it("a container label belongs to a SKU line only — a product or item line carrying one is refused by both", async () => {
+    await expect(add({ componentProductId: "p-ham", unit: "oz", eachContainerLabel: "bag" })).rejects.toMatchObject({ code: "invalid_payload" });
+    await expect(add({ componentItemId: "item-z", unit: "qt", eachContainerLabel: "bag" })).rejects.toMatchObject({ code: "invalid_payload" });
+    await expect(edit(gm, line({ componentSkuId: null, componentProductId: "p-ham", unit: "oz", eachContainerLabel: "bag" }))).rejects.toMatchObject({ code: "invalid_payload" });
+    await expect(edit(gm, line({ componentSkuId: null, componentItemId: "item-z", unit: "qt", eachContainerLabel: "bag" }))).rejects.toMatchObject({ code: "invalid_payload" });
+    expect(h.db.writes).toEqual([]);
+  });
+
+  it("a prep-item line is never portioned — refused by both", async () => {
+    await expect(add({ componentItemId: "item-z", unit: "qt", portioned: true })).rejects.toMatchObject({ code: "invalid_payload" });
+    await expect(edit(gm, line({ componentSkuId: null, componentItemId: "item-z", unit: "qt", portioned: true }))).rejects.toMatchObject({ code: "invalid_payload" });
+    expect(h.db.writes).toEqual([]);
+  });
+
+  it("…while a SKU line keeps its label and a SKU or product line may be portioned", async () => {
+    await expect(add({ componentSkuId: "sku-ham", unit: "oz", eachContainerLabel: "bag", portioned: true })).resolves.toEqual({ id: expect.any(String) });
+    await expect(edit(gm, line({ componentSkuId: null, componentProductId: "p-ham", unit: "oz", portioned: true }))).resolves.toEqual({ changed: true });
+  });
+});
