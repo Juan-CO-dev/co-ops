@@ -248,6 +248,31 @@ export function diffRecipeLineSets(before: readonly RecipeLineFields[], after: r
   return out;
 }
 
+// ── Named refusals (0262 'recipe_version:<code>' + the line ops / gate) ───────
+
+/**
+ * EVERY named refusal a recipe-version write can return, each with its OWN en + es message at
+ * `catalog.error.<code>` (pinned by tests/catalog-item-i18n.test.ts). `product_line_invalid` carries the
+ * 1-based line position in SQL ('recipe_version:product_line_invalid:<n>'): the message takes `{line}`.
+ */
+export const RECIPE_VERSION_ERROR_CODES = [
+  "invalid_payload", "recipe_not_found", "recipe_inactive", "location_not_found", "invalid_source",
+  "restore_source_out_of_scope", "invalid_lines", "dependencies_changed", "dependencies_busy", "version_changed",
+  "product_line_invalid", "would_create_cycle", "readback_failed", "not_found", "global_cannot_retire", "not_live",
+  "edge_not_found", "line_changed", "empty_recipe", "forbidden", "global_requires_moo", "invalid_component",
+  "invalid_quantity", "product_line_needs_measure_unit",
+] as const;
+export type RecipeVersionErrorCode = (typeof RECIPE_VERSION_ERROR_CODES)[number];
+
+/** 'recipe_version:<code>[:<n>]' (a P0001 message from 0262) → the code and, for a named line, its position. */
+export function parseRecipeVersionRefusal(message: string): { code: RecipeVersionErrorCode; line: number | null } | null {
+  const m = /recipe_version:([a-z_]+)(?::(\d+))?/.exec(message);
+  if (!m) return null;
+  const code = (RECIPE_VERSION_ERROR_CODES as readonly string[]).includes(m[1]!) ? (m[1] as RecipeVersionErrorCode) : null;
+  if (!code) return null;
+  return { code, line: m[2] !== undefined ? Number(m[2]) : null };
+}
+
 // ── The write gate (spec §2) ──────────────────────────────────────────────────
 
 export type RecipeWriteRefusal = { ok: false; status: 403 | 404; code: "forbidden" | "not_found" | "global_requires_moo" };

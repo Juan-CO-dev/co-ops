@@ -69,6 +69,8 @@
 --       'recipe_version:dependencies_busy' when a dependency is being written right now. Lock order: (7a).
 --   remove_recipe_input_atomic(p_input_id, p_actor)          the legacy line delete under the graph lock, so
 --       its commit-time journal never inverts the lock order (lib/recipes.ts removeRecipeEdge).
+-- A RESTORE copies only a GLOBAL version or THIS scope's own history ('recipe_version:restore_source_out_of_scope';
+-- another shop's version is ADOPT's job, a shop's version into the default is PROMOTE's).
 -- Named refusals: P0001 'recipe_version:<code>' (lib/admin/recipe-versions.ts maps them); the re-emits keep
 -- 0258's unprefixed codes.
 --
@@ -772,6 +774,12 @@ begin
        or (p_adopted_from is not null and (v_source.location_id is null or v_source.location_id = p_location or not v_source.active))
        or (p_promoted_from is not null and (v_source.location_id is null or not v_source.active)) then
       raise exception 'recipe_version:invalid_source' using errcode = 'P0001';
+    end if;
+    -- RESTORE stays inside its own history (the database is the backstop, as 2a's pack restore): a source that is
+    -- neither GLOBAL nor THIS scope's own version is refused by name. Taking another shop's version is ADOPT's job
+    -- (adopted_from, the link and its notices); the global default restores only from global history.
+    if p_restored_from is not null and v_source.location_id is not null and v_source.location_id is distinct from p_location then
+      raise exception 'recipe_version:restore_source_out_of_scope' using errcode = 'P0001';
     end if;
     select coalesce(jsonb_agg(jsonb_build_object(
              'keep_id', null, 'component_sku_id', l.component_sku_id, 'component_item_id', l.component_item_id,

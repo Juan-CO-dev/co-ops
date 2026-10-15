@@ -296,6 +296,10 @@ try {
     await refuses(async () => shopSave({ adoptedFrom: ital.id, lines: null }), "recipe_version:invalid_source", "W: adopt from the GLOBAL default");
     await refuses(async () => save({ recipe: R_ITAL, shop: S3, expected: s3v, adoptedFrom: s3v }), "recipe_version:invalid_source", "W: adopt from the shop's OWN version");
     await refuses(async () => shopSave({ adoptedFrom: (await head(R_DRESS)).id }), "recipe_version:invalid_source", "W: a source from ANOTHER recipe");
+    await refuses(async () => shopSave({ restoredFrom: s3v, lines: null }), "recipe_version:restore_source_out_of_scope",
+      "W: a shop RESTORE from ANOTHER shop's version (that is adopt's job)");
+    await refuses(async () => save({ recipe: R_ITAL, shop: null, expected: ital.id, restoredFrom: s3v }), "recipe_version:restore_source_out_of_scope",
+      "W: a GLOBAL restore from a shop's version (that is promote's job)");
     await refuses(async () => save({ recipe: R_ITAL, shop: null, expected: ital.id, promotedFrom: ital.id }), "recipe_version:invalid_source", "W: promote the GLOBAL default");
     for (const [lines, what] of [[[], "an empty set"], [Array.from({ length: 201 }, () => sku()), "201 lines"], [["x"], "a non-object line"],
       [[sku({ quantity: "2" })], "a string quantity"], [[sku({ quantity: 0 })], "a zero quantity"],

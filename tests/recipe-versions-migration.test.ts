@@ -157,6 +157,23 @@ describe("0262 structure", () => {
       for (const m of body.matchAll(/update public\.recipe_versions[\s\S]*?;/g)) expect(m[0], fn).toMatch(/and active;$/);
     }
   });
+  it("a RESTORE copies only global or THIS scope's own history — refused by name in SQL, the database as backstop (lead, after Task 3)", () => {
+    const save = extractFunction(src, "create or replace function public.save_recipe_version(", "\n$$;");
+    const rule = save.indexOf("if p_restored_from is not null and v_source.location_id is not null and v_source.location_id is distinct from p_location then");
+    expect(rule).toBeGreaterThan(save.indexOf("'recipe_version:invalid_source'"));
+    expect(rule).toBeLessThan(save.indexOf("from public.recipe_version_lines l where l.version_id = v_source.id;"));
+    expect(save).toContain("raise exception 'recipe_version:restore_source_out_of_scope' using errcode = 'P0001';");
+    for (const lang of ["en", "es"]) {
+      const dict = JSON.parse(readFileSync(`lib/i18n/${lang}.json`, "utf8")) as Record<string, string>;
+      expect(dict["catalog.error.restore_source_out_of_scope"], lang).toBeTruthy();
+    }
+  });
+  it("dependencies_busy (two sessions) has its sim check script, which refuses a prod URL and rolls everything back", () => {
+    const script = readFileSync("scripts/sim-0262-busy-check.mjs", "utf8");
+    expect(script).toContain("recipe_version:dependencies_busy");
+    expect(script).toContain("bgcvurheqzylyfehqgzh");
+    expect(script).toContain('await b.query("rollback")');
+  });
   it("the journal: graph lock, then the recipe row; a same-transaction head is updated, never versioned twice", () => {
     const body = extractFunction(src, "create or replace function public.recipe_global_journal(", "\n$$;");
     expect(body.indexOf("pg_advisory_xact_lock(7258025800)")).toBeLessThan(body.indexOf("from public.recipes where id = p_recipe for update"));

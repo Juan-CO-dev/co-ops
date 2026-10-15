@@ -1,8 +1,9 @@
 /** Catalog Phase 3a — the ONE recipe-version resolver (pure): live, as of an instant, the line ops, the gate, the cycle mirror. */
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import {
   RECIPE_GLOBAL_WRITE_MIN, RECIPE_SHOP_WRITE_MIN, RECIPE_VERSION_READ_MIN, applyRecipeLineOp, diffRecipeLineSets, parseRecipeLineOp,
-  recipeVersionReadAllowed,
+  recipeVersionReadAllowed, RECIPE_VERSION_ERROR_CODES, parseRecipeVersionRefusal,
   pickLiveShopRecipeVersions, pickRecipeVersionsAsOf, recipeLineReplacements, recipeLinesWouldCycle,
   recipeVersionWriteGate, rpcRecipeLines, scopedItemEdges, versionIdsNeedingLines,
   type LiveRecipeLine, type RecipeVersionLineRow, type RecipeVersionRow,
@@ -161,5 +162,20 @@ describe("the cycle mirror (0262 recipe_scope_item_edges + recipe_lines_would_cy
   it("the recipe's OWN old lines are replaced by the new set, never walked", () => {
     const edges = scopedItemEdges([...global, { recipe_id: "dress-r", component_item_id: "SLAW" }], new Map(), []);
     expect(recipeLinesWouldCycle({ recipeId: "dress-r", lineItemIds: [], startItemIds: [] }, outputs, edges)).toBe(false);
+  });
+});
+
+describe("named refusals — every SQL code the writers raise is in the list, and parses", () => {
+  const sql = readFileSync("supabase/migrations/0262_recipe_shop_versions.sql", "utf8");
+  it("every 'recipe_version:<code>' 0262 raises is a listed code", () => {
+    const raised = [...new Set([...sql.matchAll(/'recipe_version:([a-z_]+)/g)].map((m) => m[1]!))];
+    expect(raised.length).toBeGreaterThan(10);
+    for (const c of raised) expect(RECIPE_VERSION_ERROR_CODES as readonly string[], c).toContain(c);
+  });
+  it("parses a code, and a named line's position", () => {
+    expect(parseRecipeVersionRefusal("ERROR: recipe_version:product_line_invalid:2")).toEqual({ code: "product_line_invalid", line: 2 });
+    expect(parseRecipeVersionRefusal("recipe_version:restore_source_out_of_scope")).toEqual({ code: "restore_source_out_of_scope", line: null });
+    expect(parseRecipeVersionRefusal("recipe_version:made_up")).toBeNull();
+    expect(parseRecipeVersionRefusal("would_create_cycle")).toBeNull();
   });
 });
