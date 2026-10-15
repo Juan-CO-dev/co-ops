@@ -3,7 +3,9 @@
 -- Plan: docs/superpowers/plans/2026-10-15-catalog-phase2b-item-page-jobs.md (Task 5).
 -- Spec: docs/superpowers/specs/2026-10-15-catalog-redesign-design.md §2 ("This case looks different",
 -- which files a pack change for the GM to approve), §4 ("What this changes"), §5 job 1.
--- Requires 0259 + 0260 (sku_pack_versions, sku_pack_epochs, save_sku_pack_version).
+-- SIM: an earlier draft was applied at 20261015142750; this file was amended after it (Astra full-branch
+-- r1) — re-apply it WHOLE on the sim before prod (every object is create-or-replace / if-not-exists).
+-- Requires 0259 + 0260 (sku_pack_versions, sku_pack_epochs, save_sku_pack_version, save_sku_shop_price, save_sku_global_price).
 --
 -- WHAT.
 --   (1) sku_pack_change_requests — one row per "This case looks different" report from the receiving
@@ -33,6 +35,13 @@
 --       being converted. A conversion that CREATES the shop's own slot (`inherited`) comes from the
 --       value the shop used to answer with — the inherited GLOBAL par, or the shop's AUTO par (whose
 --       pack epoch this save bumps, D3) — and lands only while the shop's own slot is still EMPTY.
+--   (4) sku_price_snapshot + apply_sku_price_change — THE save behind "Price changed" (Astra
+--       full-branch r1 P2-2). The preview takes the price snapshot (the global head, and per reached
+--       shop its live lane and that lane's head, plus the active shops); the apply takes 0259's SKU
+--       lock FIRST, re-takes the snapshot under it and refuses `sku_price:price_changed` on any
+--       difference (a later-dated price that landed in between would turn the promised "today's price"
+--       into history), then calls 0259's save_sku_shop_price / save_sku_global_price INSIDE the same
+--       transaction. p_snapshot NULL = a caller with no preview (the legacy Record price): no re-check.
 --
 -- RLS: deny-all (RLS on, every PostgREST role revoked, no policies — the 0203/0214 posture) AND the
 -- service-role privilege CEILING (the 0257/0259 pattern): revoke all from every role INCLUDING
@@ -47,7 +56,8 @@
 --   select grantee, privilege_type from information_schema.role_table_grants where table_schema = 'public'
 --     and table_name = 'sku_pack_change_requests' order by 1, 2;   -- service_role INSERT / SELECT / UPDATE only (plus the owner)
 --   select grantee from information_schema.routine_privileges where routine_schema = 'public'
---     and routine_name in ('apply_sku_pack_change', 'sku_pack_change_snapshot') and privilege_type = 'EXECUTE' order by 1;  -- service_role (+ owner)
+--     and routine_name in ('apply_sku_pack_change', 'sku_pack_change_snapshot', 'apply_sku_price_change', 'sku_price_snapshot')
+--     and privilege_type = 'EXECUTE' order by 1;  -- service_role (+ owner)
 
 begin;
 
@@ -335,6 +345,81 @@ grant execute on function public.apply_sku_pack_change(uuid, uuid, jsonb, uuid, 
 revoke all on function public.sku_pack_change_snapshot(uuid, uuid[]) from public, anon, authenticated;
 grant execute on function public.sku_pack_change_snapshot(uuid, uuid[]) to service_role;
 
+-- ── (5) the price snapshot and the atomic price apply (full-branch r1 P2-2) ──
+create or replace function public.sku_price_snapshot(p_sku uuid, p_shops uuid[])
+returns jsonb
+language sql
+stable
+security definer
+set search_path = pg_catalog, public
+as $$
+  select jsonb_build_object(
+    'global_head', (select jsonb_build_object('id', h.id, 'unit_price', h.unit_price, 'effective_date', h.effective_date)
+                      from public.vendor_price_history h
+                     where h.vendor_item_id = p_sku and h.location_id is null
+                     order by h.effective_date desc, h.recorded_at desc nulls last, h.id desc limit 1),
+    'shops', coalesce((
+      select jsonb_agg(jsonb_build_object(
+               'shop_id', sh.id,
+               'lane_id', (select l.id from public.sku_price_lanes l where l.sku_id = p_sku and l.location_id = sh.id and l.active),
+               'lane_head', (select jsonb_build_object('id', h.id, 'unit_price', h.unit_price, 'effective_date', h.effective_date)
+                               from public.vendor_price_history h
+                               join public.sku_price_lanes l on l.id = h.price_lane_id
+                              where l.sku_id = p_sku and l.location_id = sh.id and l.active
+                              order by h.effective_date desc, h.recorded_at desc nulls last, h.id desc limit 1))
+             order by sh.id)
+        from unnest(p_shops) as sh(id)), '[]'::jsonb),
+    'active_shops', coalesce((select jsonb_agg(l.id order by l.id) from public.locations l where l.active), '[]'::jsonb));
+$$;
+
+create or replace function public.apply_sku_price_change(
+  p_sku            uuid,
+  p_location       uuid,
+  p_unit_price     numeric,
+  p_effective_date date,
+  p_actor          uuid,
+  p_first_only     boolean,
+  p_snapshot       jsonb
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = pg_catalog, public
+as $$
+declare
+  v_shops uuid[];
+begin
+  -- THE SKU LOCK FIRST — the very lock every 0259 writer takes; the writer called below re-takes it.
+  perform 1 from public.vendor_items where id = p_sku and active for update;
+  if not found then
+    raise exception 'sku_price:sku_not_found' using errcode = 'P0001';
+  end if;
+  if p_snapshot is not null then
+    if jsonb_typeof(p_snapshot -> 'shops') is distinct from 'array' then
+      raise exception 'sku_price:invalid_payload' using errcode = 'P0001';
+    end if;
+    v_shops := array(select (x ->> 'shop_id')::uuid from jsonb_array_elements(p_snapshot -> 'shops') x);
+    if p_location is not null and not (p_location = any (v_shops)) then
+      raise exception 'sku_price:invalid_payload' using errcode = 'P0001';
+    end if;
+    -- The live lanes of the reached shops are locked too, then the snapshot is compared UNDER the lock.
+    perform 1 from public.sku_price_lanes where sku_id = p_sku and location_id = any (v_shops) and active order by id for update;
+    if public.sku_price_snapshot(p_sku, v_shops) is distinct from p_snapshot then
+      raise exception 'sku_price:price_changed' using errcode = 'P0001';
+    end if;
+  end if;
+  if p_location is null then
+    return public.save_sku_global_price(p_sku, p_unit_price, p_effective_date, p_actor, p_first_only);
+  end if;
+  return public.save_sku_shop_price(p_sku, p_location, p_unit_price, p_effective_date, p_actor, null, null);
+end;
+$$;
+
+revoke all on function public.sku_price_snapshot(uuid, uuid[]) from public, anon, authenticated;
+grant execute on function public.sku_price_snapshot(uuid, uuid[]) to service_role;
+revoke all on function public.apply_sku_price_change(uuid, uuid, numeric, date, uuid, boolean, jsonb) from public, anon, authenticated;
+grant execute on function public.apply_sku_price_change(uuid, uuid, numeric, date, uuid, boolean, jsonb) to service_role;
+
 -- ── (4) the guards ──────────────────────────────────────────────────────────
 do $$ begin
   if exists (select 1 from information_schema.role_table_grants
@@ -356,17 +441,23 @@ do $$ begin
   if has_function_privilege('anon', 'public.apply_sku_pack_change(uuid, uuid, jsonb, uuid, uuid, text, uuid, boolean, jsonb, uuid, jsonb)', 'EXECUTE')
      or has_function_privilege('authenticated', 'public.apply_sku_pack_change(uuid, uuid, jsonb, uuid, uuid, text, uuid, boolean, jsonb, uuid, jsonb)', 'EXECUTE')
      or has_function_privilege('anon', 'public.sku_pack_change_snapshot(uuid, uuid[])', 'EXECUTE')
-     or has_function_privilege('authenticated', 'public.sku_pack_change_snapshot(uuid, uuid[])', 'EXECUTE') then
+     or has_function_privilege('authenticated', 'public.sku_pack_change_snapshot(uuid, uuid[])', 'EXECUTE')
+     or has_function_privilege('anon', 'public.apply_sku_price_change(uuid, uuid, numeric, date, uuid, boolean, jsonb)', 'EXECUTE')
+     or has_function_privilege('authenticated', 'public.apply_sku_price_change(uuid, uuid, numeric, date, uuid, boolean, jsonb)', 'EXECUTE')
+     or has_function_privilege('anon', 'public.sku_price_snapshot(uuid, uuid[])', 'EXECUTE')
+     or has_function_privilege('authenticated', 'public.sku_price_snapshot(uuid, uuid[])', 'EXECUTE') then
     raise exception '0261: unexpected execute grant';
   end if;
   if exists (select 1 from information_schema.routine_privileges
-              where routine_schema = 'public' and routine_name in ('apply_sku_pack_change', 'sku_pack_change_snapshot')
+              where routine_schema = 'public' and routine_name in ('apply_sku_pack_change', 'sku_pack_change_snapshot', 'apply_sku_price_change', 'sku_price_snapshot')
                 and grantee in ('PUBLIC', 'anon', 'authenticated') and privilege_type = 'EXECUTE') then
     raise exception '0261: unexpected execute grant';
   end if;
   if not (has_function_privilege('service_role', 'public.apply_sku_pack_change(uuid, uuid, jsonb, uuid, uuid, text, uuid, boolean, jsonb, uuid, jsonb)', 'EXECUTE')
-          and has_function_privilege('service_role', 'public.sku_pack_change_snapshot(uuid, uuid[])', 'EXECUTE')) then
-    raise exception '0261: service_role is missing EXECUTE on the apply or the snapshot';
+          and has_function_privilege('service_role', 'public.sku_pack_change_snapshot(uuid, uuid[])', 'EXECUTE')
+          and has_function_privilege('service_role', 'public.apply_sku_price_change(uuid, uuid, numeric, date, uuid, boolean, jsonb)', 'EXECUTE')
+          and has_function_privilege('service_role', 'public.sku_price_snapshot(uuid, uuid[])', 'EXECUTE')) then
+    raise exception '0261: service_role is missing EXECUTE on an apply or a snapshot';
   end if;
 end $$;
 

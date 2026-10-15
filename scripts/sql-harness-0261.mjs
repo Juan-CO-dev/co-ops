@@ -17,7 +17,9 @@
  *       shop's row is refused by name (par_changed), never a bare unique violation.
  *   A5  the report is bound: another SKU's report, another shop's report, a closed report refuse.
  *   A6  invalid patches and lane mismatches refuse by name; one open report per (sku, shop).
- *   A7  privileges: service_role cannot DELETE a report; anon/authenticated cannot execute the apply.
+ *   A7  privileges: service_role cannot DELETE a report; anon/authenticated cannot execute the applies.
+ *   A8  the atomic PRICE apply: a later-dated price (or a moved global head, or a shop's new lane)
+ *       landing between the preview's snapshot and the save is refused price_changed, writing nothing.
  */
 import { readFileSync } from "node:fs";
 import { PGlite } from "@electric-sql/pglite";
@@ -315,13 +317,49 @@ try {
     await refuses(() => fileRequest(sku, S3), "sku_pack_change_requests_one_open", "A6: a second OPEN report for the same (sku, shop)");
   }
 
+  // ── A8 the atomic PRICE apply (full-branch r1 P2-2) ──────────────────────
+  {
+    const { sku } = await freshSku();
+    const priceSnap = async (shops) => (await one("select public.sku_price_snapshot($1, $2::uuid[]) as s", [sku, shops])).s;
+    const applyPrice = (loc, price, date, snap) => db.query(
+      "select public.apply_sku_price_change($1, $2, $3, $4::date, $5, false, $6::jsonb) as r", [sku, loc, price, date, USER, snap == null ? null : JSON.stringify(snap)],
+    ).then((res) => res.rows[0].r);
+    const rows = async () => (await db.query("select unit_price::text as p, effective_date::text as d, location_id from public.vendor_price_history where vendor_item_id = $1 order by recorded_at, id", [sku])).rows;
+    // A global head of $100 dated Oct 15.
+    await applyPrice(null, 100, "2026-10-15", null);
+    // The preview for S1 promised: a $90 row dated Oct 15 becomes S1's current price.
+    const snap = await priceSnap([S1]);
+    // …and a concurrent writer lands a LATER-dated lane price for S1 in between (Oct 16).
+    await db.query("select public.save_sku_shop_price($1, $2, 95, '2026-10-16', $3, null, null)", [sku, S1, USER]);
+    const before = JSON.stringify(await rows());
+    await refuses(() => applyPrice(S1, 90, "2026-10-15", snap), "sku_price:price_changed", "A8: a later-dated price landed between the preview and the save");
+    check(JSON.stringify(await rows()) === before, "A8: …and nothing was written");
+    // A fresh preview (snapshot) of the new state saves.
+    const fresh = await priceSnap([S1]);
+    const ok = await applyPrice(S1, 90, "2026-10-17", fresh);
+    check(ok.price_id && ok.lane_id && ok.lane_created === false, "A8: with the snapshot it was shown, the shop price saves into the shop's lane");
+    // A GLOBAL save: a new global head in between refuses it too; the global writer runs inside.
+    const gsnap = await priceSnap(await allShops());
+    await applyPrice(null, 101, "2026-10-18", null); // the concurrent writer
+    await refuses(() => applyPrice(null, 102, "2026-10-17", gsnap), "sku_price:price_changed", "A8: a global head that moved after the preview");
+    const g2 = await applyPrice(null, 102, "2026-10-19", await priceSnap(await allShops()));
+    check(g2.price_id != null, "A8: the global save goes through 0259's global writer with a current snapshot");
+    // A shop that opened its own lane after a global preview changes who the save reaches.
+    const gsnap2 = await priceSnap(await allShops());
+    await db.query("select public.save_sku_shop_price($1, $2, 80, '2026-10-19', $3, null, null)", [sku, S2, USER]);
+    await refuses(() => applyPrice(null, 103, "2026-10-20", gsnap2), "sku_price:price_changed", "A8: a shop opened its own price lane after the global preview");
+    await refuses(async () => applyPrice(S1, 90, "2026-10-20", await priceSnap([S2])), "sku_price:invalid_payload", "A8: a shop save whose snapshot does not cover that shop");
+  }
+
   // ── A7 privileges ────────────────────────────────────────────────────────
   await refuses(() => db.query("delete from public.sku_pack_change_requests"), "permission denied", "A7: service_role cannot DELETE a report");
   await db.exec("reset role; set role authenticated;");
   await refuses(() => db.query("select public.apply_sku_pack_change(null, null, null, null, null, null, null, false, null, null, null)"), "permission denied", "A7: authenticated cannot execute the apply");
+  await refuses(() => db.query("select public.apply_sku_price_change(null, null, null, null, null, false, null)"), "permission denied", "A7: authenticated cannot execute the price apply");
+  await refuses(() => db.query("select public.sku_price_snapshot(null, null)"), "permission denied", "A7: authenticated cannot read the price snapshot");
   await refuses(() => db.query("select * from public.sku_pack_change_requests"), "permission denied", "A7: authenticated cannot read the reports");
   await db.exec("reset role;");
 
   if (failures > 0) { console.error(`\n${failures} check(s) FAILED`); process.exitCode = 1; }
-  else console.log("\nPASS 0261: atomic pack+par+report apply (A1), all-or-nothing refusals (A2), the snapshot re-check under the lock (A3), own-par from global/auto (A4), report binding (A5), named refusals (A6), privileges (A7)");
+  else console.log("\nPASS 0261: atomic pack+par+report apply (A1), all-or-nothing refusals (A2), the snapshot re-check under the lock (A3), own-par from global/auto (A4), report binding (A5), named refusals (A6), privileges (A7), the atomic price apply (A8)");
 } finally { await db.close(); }

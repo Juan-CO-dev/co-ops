@@ -98,6 +98,8 @@ const TENANCY_SCOPED_RPCS = [
   "retire_sku_price_lane",
   // 0261 — the atomic pack + par + report apply; lib/catalog/sku-item.ts binds before calling it.
   "apply_sku_pack_change",
+  // 0261 — the atomic price apply; lib/admin/sku-versions.ts saveSkuPrice binds (requireLocation) before calling it.
+  "apply_sku_price_change",
   "write_station_event",
   "write_station_break",
   "write_task_assignment",

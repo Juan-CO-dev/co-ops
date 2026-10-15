@@ -6463,5 +6463,6 @@
   "receiving.case_different.error.delivery_not_found": "Esa entrega no es de esta tienda. Repórtalo desde la entrega de esta tienda.",
   "receiving.case_different.error.photo_not_found": "Esa foto no se guardó para esta tienda. Tómala otra vez.",
   "receiving.case_different.error.invalid_payload": "Algo del reporte no se ve bien. Revisa los números e inténtalo de nuevo.",
-  "admin.skus.chain.use_item_page": "Cambia cómo llega para tu tienda"
+  "admin.skus.chain.use_item_page": "Cambia cómo llega para tu tienda",
+  "catalog.error.price_changed": "El precio cambió desde que lo viste. Vuelve a ver qué cambia."
 }

@@ -534,6 +534,11 @@ export async function computePricePreview(actor: AuthContext, skuId: string, tar
   requireOwnerScope(row, scope);
   if (target.kind === "global") await requireGlobalTarget(actor, sb, row, "price");
   const shops = reachableShops(row, target.kind === "shop" ? [await loadShop(sb, target.shopId)] : await loadActiveShops(sb));
+  // THE PRICE SNAPSHOT FIRST (full-branch r1 P2-2): the reached shops' lanes and heads and the global
+  // head; apply_sku_price_change re-takes it under the SKU lock and refuses any difference.
+  const snapshotShops = target.kind === "shop" ? shops : await loadActiveShops(sb);
+  const { data: snapshot, error: snapErr } = await sb.rpc("sku_price_snapshot", { p_sku: skuId, p_shops: snapshotShops.map((s) => s.id) });
+  if (snapErr) throw new Error(`sku-item price snapshot: ${snapErr.message}`);
   const [states, menuItems] = await Promise.all([Promise.all(shops.map((s) => loadShopState(sb, row, s))), loadMenuItems(sb)]);
   const body = previewPriceChange({ skuId, target, shops: states, newPrice, effectiveDate, menuItems });
   return {
@@ -542,7 +547,8 @@ export async function computePricePreview(actor: AuthContext, skuId: string, tar
     // THE TOKEN BINDS WHAT WAS SHOWN (full-branch r1 P2-1): the whole computed preview (every shop's
     // price, becomes-current, $/oz — which reads the pack size — and sandwich costs; the date and the
     // target ride in it), plus each shop's input versions (pack version, price heads).
-    token: previewToken({ kind: "price", body, deps: states.map((st) => st.deps) }),
+    snapshot,
+    token: previewToken({ kind: "price", body, deps: states.map((st) => st.deps), snapshot }),
   };
 }
 
@@ -673,7 +679,12 @@ export async function applyPriceChange(
   const preview = await computePricePreview(actor, input.skuId, input.target, input.unitPrice, input.effectiveDate);
   if (preview.token !== input.previewToken) throw new CatalogItemError(409, "preview_stale");
   try {
-    return await saveSkuPrice(actor, { skuId: input.skuId, scope: scopeOf(input.target), unitPrice: input.unitPrice, effectiveDate: input.effectiveDate });
+    return await saveSkuPrice(actor, {
+      skuId: input.skuId, scope: scopeOf(input.target), unitPrice: input.unitPrice, effectiveDate: input.effectiveDate,
+      // The snapshot of the preview recomputed just above (its token matched the person's): the RPC
+      // re-takes it under the SKU lock and refuses `price_changed` on any difference.
+      expectedSnapshot: preview.snapshot,
+    });
   } catch (e) {
     rethrow(e);
   }

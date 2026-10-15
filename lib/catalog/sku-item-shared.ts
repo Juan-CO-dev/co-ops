@@ -178,7 +178,7 @@ export const CATALOG_ITEM_ERROR_CODES = [
   "invalid_based_on", "invalid_basis", "invalid_date", "invalid_label", "invalid_levels", "invalid_link",
   "invalid_patch", "invalid_payload", "invalid_pointer", "invalid_price", "invalid_qty", "label_is_measure_unit",
   "leaf_needs_avg", "location_not_found", "location_required", "no_shop_price", "non_positive_qty", "not_found",
-  "not_live", "not_one_root", "par_changed", "par_forbidden", "par_lane_mismatch", "preview_stale",
+  "not_live", "not_one_root", "par_changed", "price_changed", "par_forbidden", "par_lane_mismatch", "preview_stale",
   "request_mismatch", "request_not_open", "self_reference", "shared_child", "sku_inactive", "sku_not_found",
   "sku_owned_by_other_shop", "step_up_required", "step_up_stale", "unknown_measure", "version_changed",
   "version_sku_mismatch",

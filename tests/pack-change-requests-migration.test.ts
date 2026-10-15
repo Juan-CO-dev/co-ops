@@ -74,8 +74,30 @@ describe("0261_sku_pack_change_requests", () => {
   });
 });
 
+describe("apply_sku_price_change — the atomic price save (full-branch r1 P2-2)", () => {
+  const price = sql.slice(sql.indexOf("create or replace function public.apply_sku_price_change("));
+  it("definer, locked search_path, service_role only — the snapshot function too", () => {
+    expect(price).toMatch(/^create or replace function public\.apply_sku_price_change\([\s\S]*?security definer\s+set search_path = pg_catalog, public/);
+    const sig = "(uuid, uuid, numeric, date, uuid, boolean, jsonb)";
+    expect(sql).toContain(`revoke all on function public.apply_sku_price_change${sig} from public, anon, authenticated;`);
+    expect(sql).toContain(`grant execute on function public.apply_sku_price_change${sig} to service_role;`);
+    expect(sql).toContain("revoke all on function public.sku_price_snapshot(uuid, uuid[]) from public, anon, authenticated;");
+    expect(sql).toContain("grant execute on function public.sku_price_snapshot(uuid, uuid[]) to service_role;");
+  });
+  it("THE SKU LOCK FIRST, the snapshot compared under it (price_changed), then 0259's writers INSIDE the transaction", () => {
+    const lock = price.indexOf(`perform 1 ${LOCK};`);
+    expect(lock).toBeGreaterThan(-1);
+    expect(price.slice(price.indexOf("begin\n"), lock).replace(/--[^\n]*\n/g, "").trim()).toBe("begin");
+    const cmp = price.indexOf("public.sku_price_snapshot(p_sku, v_shops) is distinct from p_snapshot");
+    expect(lock).toBeLessThan(cmp);
+    expect(price).toContain("'sku_price:price_changed'");
+    expect(cmp).toBeLessThan(price.indexOf("public.save_sku_global_price("));
+    expect(cmp).toBeLessThan(price.indexOf("public.save_sku_shop_price("));
+  });
+});
+
 describe("the executable proof (PGlite: the REAL 0259 + 0260 + 0261 on synthetic rows) runs green in CI", () => {
-  it("atomic apply, all-or-nothing refusals, the snapshot re-check, own-par, report binding, privileges", () => {
+  it("atomic apply, all-or-nothing refusals, the snapshot re-check, own-par, report binding, privileges, the atomic price apply", () => {
     const out = execFileSync(process.execPath, ["scripts/sql-harness-0261.mjs"], { encoding: "utf8", timeout: 180_000 });
     expect(out).not.toContain("FAIL ");
     expect(out).toContain("PASS 0261:");

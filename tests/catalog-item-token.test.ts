@@ -103,7 +103,9 @@ describe("the PRICE preview token binds every dependency it shows", () => {
     const t1 = await priceToken();
     expect(await priceToken()).toBe(t1);
     await applyPrice(t1);
-    expect(rpcCalls.map((c) => c.name).some((n) => n === "save_sku_shop_price" || n === "apply_sku_price_change")).toBe(true);
+    const write = rpcCalls.find((c) => c.name === "apply_sku_price_change")!;
+    // The save carries the snapshot its preview was computed on (full-branch r1 P2-2).
+    expect(write.args.p_snapshot).toMatchObject({ overlay: expect.any(Array), versions: expect.any(Array) });
   });
   // An open order is not on the price preview; the other three are.
   for (const [what, mutate] of DEPENDENCIES.slice(0, 3)) {

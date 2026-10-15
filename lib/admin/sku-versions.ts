@@ -75,6 +75,8 @@ export function versionErrorFromRpc(message: string): never {
     invalid_based_on: 400, invalid_price: 400, invalid_date: 400, invalid_payload: 400, location_required: 400,
     // chunk-4 review: a first chain that would move a set flat pack; a shop-owned SKU priced/packed by another shop
     flat_pack_exists: 403, sku_owned_by_other_shop: 409, version_sku_mismatch: 409,
+    // 0261 apply_sku_price_change: the price snapshot re-taken under the SKU lock differs from the preview's.
+    price_changed: 409,
     par_lane_mismatch: 400, invalid_patch: 400, request_mismatch: 400,
     // 0261: the dependency snapshot re-taken under the SKU lock differs from the preview's.
     dependencies_changed: 409,
@@ -221,7 +223,15 @@ export async function retireShopPackVersion(actor: AuthContext, input: { skuId: 
   });
 }
 
-export interface SavePriceInput { skuId: string; scope: VersionScope; unitPrice: number; effectiveDate: string }
+export interface SavePriceInput {
+  skuId: string; scope: VersionScope; unitPrice: number; effectiveDate: string;
+  /**
+   * The price snapshot the person's preview was computed on (0261 sku_price_snapshot). Present → the
+   * write re-takes it under the SKU lock and refuses `price_changed` on any difference; absent (the
+   * legacy Record price, which shows no preview) → no re-check.
+   */
+  expectedSnapshot?: unknown;
+}
 
 /** Record a price for a shop (opens its lane on the first one) or the global default (MoO+, or a FIRST global price). */
 export async function saveSkuPrice(actor: AuthContext, input: SavePriceInput): Promise<{ priceId: string; laneId: string | null; laneCreated: boolean }> {
@@ -235,12 +245,14 @@ export async function saveSkuPrice(actor: AuthContext, input: SavePriceInput): P
   // A shop-owned SKU has no other shop: no other shop prices it (chunk-4 P3b; also in SQL).
   else await requireNotOtherShopsSku(input.skuId, input.scope);
   const sb = getServiceRoleClient();
+  // ONE atomic write (0261 apply_sku_price_change): the SKU lock first, the preview's price snapshot
+  // re-checked under it, then 0259's shop or global writer inside the same transaction.
+  const { data, error } = await sb.rpc("apply_sku_price_change", {
+    p_sku: input.skuId, p_location: input.scope, p_unit_price: input.unitPrice, p_effective_date: input.effectiveDate,
+    p_actor: actor.user.id, p_first_only: firstOnly, p_snapshot: input.expectedSnapshot ?? null,
+  });
+  if (error) versionErrorFromRpc(error.message);
   if (input.scope !== null) {
-    const { data, error } = await sb.rpc("save_sku_shop_price", {
-      p_sku: input.skuId, p_location: input.scope, p_unit_price: input.unitPrice,
-      p_effective_date: input.effectiveDate, p_actor: actor.user.id, p_source: null, p_source_note: null,
-    });
-    if (error) versionErrorFromRpc(error.message);
     const r = data as { price_id: string; lane_id: string; lane_created: boolean };
     await audit({
       actorId: actor.user.id, actorRole: actor.user.role,
@@ -250,11 +262,6 @@ export async function saveSkuPrice(actor: AuthContext, input: SavePriceInput): P
     });
     return { priceId: r.price_id, laneId: r.lane_id, laneCreated: r.lane_created };
   }
-  const { data, error } = await sb.rpc("save_sku_global_price", {
-    p_sku: input.skuId, p_unit_price: input.unitPrice, p_effective_date: input.effectiveDate,
-    p_actor: actor.user.id, p_first_only: firstOnly,
-  });
-  if (error) versionErrorFromRpc(error.message);
   const r = data as { price_id: string };
   await audit({
     actorId: actor.user.id, actorRole: actor.user.role,

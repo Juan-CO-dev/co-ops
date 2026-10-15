@@ -170,6 +170,12 @@ export interface PricePreview {
   effectiveDate: string;
   shops: PriceShopDelta[];
   unaffected: Array<{ shopId: string; shopName: string }>;
+  /**
+   * The PRICE snapshot (0261 sku_price_snapshot) the preview was computed on: the global head and each
+   * reached shop's live lane + head. apply_sku_price_change re-takes it under the SKU lock and refuses
+   * `price_changed` on any difference (full-branch r1 P2-2).
+   */
+  snapshot: unknown;
   token: string;
 }
 
@@ -481,7 +487,7 @@ export function previewPriceChange(input: {
   newPrice: number;
   effectiveDate: string;
   menuItems: readonly PreviewMenuItem[];
-}): Omit<PricePreview, "token"> {
+}): Omit<PricePreview, "token" | "snapshot"> {
   const target = input.target;
   const affected = target.kind === "shop"
     ? input.shops.filter((s) => s.shopId === target.shopId)
