@@ -169,6 +169,8 @@ const FILES = [
   "lib/catalog/sku-item.ts",
   // 0262 — every recipe-version writer binds inside the lib (requireLocation) before any I/O.
   "lib/admin/recipe-versions.ts",
+  // 0263 — every menu-overlay writer binds inside the lib (requireLocation) before any I/O.
+  "lib/admin/menu-item-shop.ts",
 ];
 
 /**

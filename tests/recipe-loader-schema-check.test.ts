@@ -50,6 +50,7 @@ vi.mock("@/lib/supabase-server", () => ({ getServiceRoleClient: () => recordingC
 
 import { createDatedGraphs, loadRecipeBoundaries, loadRecipeGraph, loadRecipeInputsAcrossScopes, loadRecipeLineOverlay, loadResolvedRecipeInputs } from "@/lib/prep-consumption";
 import { loadLiveMenuItemShopSettings } from "@/lib/menu-item-shop";
+import { loadMenuItemShopHistory, retireMenuItemShopSetting } from "@/lib/admin/menu-item-shop";
 import { loadRecipeLiveSet, loadRecipeVersionHistory, restoreRecipeVersion, retireShopRecipeVersion } from "@/lib/admin/recipe-versions";
 import type { AuthContext } from "@/lib/session";
 import { migratedRecipeDb } from "./fixtures/recipe-versions-pglite";
@@ -82,6 +83,9 @@ beforeAll(async () => {
   await run("retireShopRecipeVersion", () => retireShopRecipeVersion(OWNER, { recipeId: RECIPE, versionId: RECIPE, locationId: LOC }));
   // 0263: the menu overlay loader (the costing board's shop view, the Toast matcher pool).
   await run("loadLiveMenuItemShopSettings", () => loadLiveMenuItemShopSettings(LOC));
+  // Task 8: the menu-overlay writers' own reads.
+  await run("loadMenuItemShopHistory", () => loadMenuItemShopHistory(OWNER, RECIPE, LOC));
+  await run("retireMenuItemShopSetting", () => retireMenuItemShopSetting(OWNER, { menuItemId: RECIPE, locationId: LOC, settingId: RECIPE }));
 }, 120_000);
 afterAll(async () => { await db?.close(); });
 
@@ -109,8 +113,8 @@ describe("every query a loader builds on a 0262 / 0263 table runs against the RE
     expect(unordered).toEqual([]);
     // Unpaged reads only where a unique key bounds the result: one recipe's LIVE versions (≤ 2: the one-live index per
     // scope) and a single version by id (the restore / retire source). Every other read on these tables pages.
-    const BOUNDED = new Set(["loadRecipeLiveSet(shop)", "loadRecipeLiveSet(global)", "restoreRecipeVersion", "retireShopRecipeVersion"]);
-    const unpaged = captured.filter((c) => FULLY_DEFINED.has(c.table) && !c.ranged && !(c.table === "recipe_versions" && BOUNDED.has(c.via)))
+    const BOUNDED = new Set(["loadRecipeLiveSet(shop)", "loadRecipeLiveSet(global)", "restoreRecipeVersion", "retireShopRecipeVersion", "retireMenuItemShopSetting"]);
+    const unpaged = captured.filter((c) => FULLY_DEFINED.has(c.table) && !c.ranged && !((c.table === "recipe_versions" || c.table === "menu_item_shop_settings") && BOUNDED.has(c.via)))
       .map((c) => `${c.via} → ${c.table}`);
     expect(unpaged).toEqual([]);
   });
