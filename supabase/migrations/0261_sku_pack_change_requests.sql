@@ -1,5 +1,6 @@
 -- Migration 0261_sku_pack_change_requests
 -- AUTHORED 2026-10-15. NOT YET APPLIED — apply via MCP after review.
+-- APPLIED TO SIM 20261015142750 (re-applied in place after review) · APPLIED TO PROD 2026-10-15 (schema_migrations version 20261015152724, name 'sku_pack_change_requests').
 -- Plan: docs/superpowers/plans/2026-10-15-catalog-phase2b-item-page-jobs.md (Task 5).
 -- Spec: docs/superpowers/specs/2026-10-15-catalog-redesign-design.md §2 ("This case looks different",
 -- which files a pack change for the GM to approve), §4 ("What this changes"), §5 job 1.
