@@ -46,7 +46,8 @@ describe("registry relationship rendering", () => {
     expect(html).toContain('href="/admin/skus?sku=bacon#bacon"');
     expect(html).toContain("Bacon · Supplier");
     expect(html).toContain("(sub-prep)");
-    expect(html).toContain('href="/admin/recipes/recipe"');
+    // Catalog Phase 3b (CC note 12 #2): below MoO the producing recipe opens the catalog recipe page, not the builder.
+    expect(html).toContain('href="/admin/catalog/recipe/recipe"');
     for (const anchor of html.matchAll(/<a\b[^>]*href="\/admin\/(?:products|skus|items)[^"]*"[^>]*>/g)) {
       expect(anchor[0]).toContain("min-h-[44px]");
       expect(anchor[0]).toContain("items-center");

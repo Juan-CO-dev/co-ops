@@ -6,7 +6,7 @@
  */
 import type { RecipeLineFields } from "@/lib/recipe-line-shared";
 import type { TranslationKey } from "@/lib/i18n/types";
-import { parseRecipeLineOp, RECIPE_VERSION_ERROR_CODES, type RecipeLineChange, type RecipeLineOp } from "@/lib/recipe-versions-shared";
+import { parseRecipeLineOp, RECIPE_GLOBAL_WRITE_MIN, RECIPE_VERSION_ERROR_CODES, type RecipeLineChange, type RecipeLineOp } from "@/lib/recipe-versions-shared";
 import { MENU_ITEM_SHOP_ERROR_CODES, parseMenuShopPatch, parseOptionalMenuName, type MenuShopPatch } from "@/lib/menu-item-shop-shared";
 import type { RecipeNotice } from "@/lib/catalog/recipe-notices-shared";
 import type { RecipeBuilderProduct, RecipeBuilderSku } from "@/components/admin/recipes/RecipeBuilder";
@@ -30,13 +30,17 @@ export function menuItemPageHref(menuItemId: string, opts: { shopId?: string | n
   return withShop(`/admin/catalog/menu-item/${encodeURIComponent(menuItemId)}`, opts.shopId);
 }
 /**
- * Where a recipe READINESS warning opens (plan Task 11, lead decision "shop item warnings deep-link to the
- * shop's view"): a list read for one shop (`/admin/recipes?location=`, `/admin/items?location=`) opens THAT
- * shop's version on the catalog page; the default's list (`shopScope` null) keeps the legacy builder, which
- * edits the default.
+ * Where a recipe row or a recipe READINESS warning opens (plan Task 11; lead decision "shop item warnings deep-link to
+ * the shop's view"; CC note 12 #2):
+ * - a list read for one shop (`/admin/recipes?location=`, `/admin/items?location=`) opens THAT shop's version on the
+ *   catalog page, for everyone;
+ * - the default's list opens the legacy builder only for who edits the default's lines there (MoO+,
+ *   RECIPE_GLOBAL_WRITE_MIN); below that the builder's lines are read-only, so the row opens the catalog page (the
+ *   remembered shop) — no dead end.
  */
-export function readinessRecipeHref(recipeId: string, shopScope: string | null): string {
-  return shopScope ? recipeItemHref(recipeId, { shopId: shopScope }) : `/admin/recipes/${encodeURIComponent(recipeId)}`;
+export function readinessRecipeHref(recipeId: string, shopScope: string | null, actorLevel: number): string {
+  if (shopScope) return recipeItemHref(recipeId, { shopId: shopScope });
+  return actorLevel >= RECIPE_GLOBAL_WRITE_MIN ? `/admin/recipes/${encodeURIComponent(recipeId)}` : recipeItemHref(recipeId);
 }
 export const SHOP_CHANGES_HREF = "/admin/catalog/shop-changes";
 export function noticesHref(shopId?: string | null): string {

@@ -116,40 +116,52 @@ describe("the legacy recipe page points at the shop-version page", () => {
 
 // ── Shop item warnings deep-link to the shop's view ─────────────────────────────────────────────────────────────
 describe("a readiness warning at a shop opens that shop's view", () => {
-  it("readinessRecipeHref: a shop scope → the catalog page for that shop; the default → the builder", () => {
-    expect(readinessRecipeHref(RID, SHOP)).toBe(`/admin/catalog/recipe/${RID}?location=${SHOP}`);
-    expect(readinessRecipeHref(RID, null)).toBe(`/admin/recipes/${RID}`);
+  it("readinessRecipeHref: a shop scope → that shop's catalog page; the default → the builder for MoO+, the catalog page below (CC note 12 #2)", () => {
+    expect(readinessRecipeHref(RID, SHOP, 7)).toBe(`/admin/catalog/recipe/${RID}?location=${SHOP}`);
+    expect(readinessRecipeHref(RID, SHOP, 8)).toBe(`/admin/catalog/recipe/${RID}?location=${SHOP}`);
+    expect(readinessRecipeHref(RID, null, 8)).toBe(`/admin/recipes/${RID}`);
+    expect(readinessRecipeHref(RID, null, 9)).toBe(`/admin/recipes/${RID}`);
+    // A GM (and a level-6 reader) can't change the builder's lines: the row opens the shop-version page instead.
+    expect(readinessRecipeHref(RID, null, 7)).toBe(`/admin/catalog/recipe/${RID}`);
+    expect(readinessRecipeHref(RID, null, 6)).toBe(`/admin/catalog/recipe/${RID}`);
   });
   const rows = [{ id: RID, name: "Italian", recipeType: "consumer" as const, active: true, outputNames: [], hasInputs: true, hasOutputs: true, batchYield: 1, batchMode: false }];
   const readiness = { [RID]: { status: "incomplete", reasons: [] } } as never;
-  it("/admin/recipes?location=<shop>: each row opens the shop's version", () => {
-    const html = render(createElement(RecipesClient, { recipes: rows, level: 7, readiness, shopScope: SHOP }));
-    expect(html).toContain(`href="/admin/catalog/recipe/${RID}?location=${SHOP}"`);
-    expect(html).not.toContain(`href="/admin/recipes/${RID}"`);
+  it("/admin/recipes?location=<shop>: each row opens the shop's version, for a GM and the MoO alike", () => {
+    for (const level of [7, 8]) {
+      const html = render(createElement(RecipesClient, { recipes: rows, level, readiness, shopScope: SHOP }));
+      expect(html, String(level)).toContain(`href="/admin/catalog/recipe/${RID}?location=${SHOP}"`);
+      expect(html, String(level)).not.toContain(`href="/admin/recipes/${RID}"`);
+    }
   });
-  it("/admin/recipes (the default): rows keep the builder", () => {
-    const html = render(createElement(RecipesClient, { recipes: rows, level: 7, readiness, shopScope: null }));
-    expect(html).toContain(`href="/admin/recipes/${RID}"`);
+  it("/admin/recipes (the default): the MoO keeps the builder; a GM's row opens the catalog page (no dead end)", () => {
+    const moo = render(createElement(RecipesClient, { recipes: rows, level: 8, readiness, shopScope: null }));
+    expect(moo).toContain(`href="/admin/recipes/${RID}"`);
+    const gmHtml = render(createElement(RecipesClient, { recipes: rows, level: 7, readiness, shopScope: null }));
+    expect(gmHtml).toContain(`href="/admin/catalog/recipe/${RID}"`);
+    expect(gmHtml).not.toContain(`href="/admin/recipes/${RID}"`);
   });
-  it("/admin/items?location=<shop>: a flagged item's recipe link opens that shop's version; the default keeps the builder", async () => {
+  it("/admin/items: a flagged item's recipe link follows the same rule (shop → that shop's view; default → builder for MoO+ only)", async () => {
     const { ItemRow } = await import("@/components/admin/items/ItemRow");
     const item = {
       itemId: "prep-ham", name: "Ham", nameEs: "Jamón", section: null, recommendedPar: null, recommendedParUnit: null, isDefault: false,
       specialInstruction: null, specialInstructionEs: null, required: false, minRoleLevel: null, openingVerify: true, trackingType: "portioned",
       batchYield: 1, ozPerParUnit: null, menuPrice: null, soldDirectly: false, sellPortion: null, sellPortionUnit: null,
     } as never;
-    const props = { item, actorLevel: 7, sections: [], units: [], language: "en", itemQuestions: [], readiness: { status: "incomplete", reasons: [] } as never, producingRecipeId: RID, madeFrom: [] };
-    expect(render(createElement(ItemRow, { ...props, shopScope: SHOP }))).toContain(`href="/admin/catalog/recipe/${RID}?location=${SHOP}"`);
-    expect(render(createElement(ItemRow, { ...props, shopScope: null }))).toContain(`href="/admin/recipes/${RID}"`);
+    const props = { item, sections: [], units: [], language: "en", itemQuestions: [], readiness: { status: "incomplete", reasons: [] } as never, producingRecipeId: RID, madeFrom: [] };
+    expect(render(createElement(ItemRow, { ...props, actorLevel: 7, shopScope: SHOP }))).toContain(`href="/admin/catalog/recipe/${RID}?location=${SHOP}"`);
+    expect(render(createElement(ItemRow, { ...props, actorLevel: 7, shopScope: null }))).toContain(`href="/admin/catalog/recipe/${RID}"`);
+    expect(render(createElement(ItemRow, { ...props, actorLevel: 8, shopScope: null }))).toContain(`href="/admin/recipes/${RID}"`);
   });
   it("the pages pass the scope they resolved through the shop-context getter", () => {
     expect(readFileSync("app/admin/recipes/page.tsx", "utf8")).toContain("shopScope={scope}");
     expect(readFileSync("app/admin/items/page.tsx", "utf8")).toContain("shopScope={scope}");
     expect(readFileSync("components/admin/items/ItemsClient.tsx", "utf8")).toContain("shopScope={shopScope}");
     const row = readFileSync("components/admin/items/ItemRow.tsx", "utf8");
-    expect(row).toContain("href={readinessRecipeHref(producingRecipeId, shopScope)}");
+    expect(row).toContain("href={readinessRecipeHref(producingRecipeId, shopScope, actorLevel)}");
     expect(row).not.toContain("href={`/admin/recipes/${producingRecipeId}`}");
   });
+
 });
 
 // ── The costing board opens the sandwich page for the board's shop ──────────────────────────────────────────────
