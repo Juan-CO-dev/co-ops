@@ -59,3 +59,21 @@ export function proposalToSentence(p: PackChangeProposal, current: SentenceDraft
   }
   return base;
 }
+
+/**
+ * EVERY refusal the door's report can get back (lib/pack-change-requests.ts filePackChangeRequest
+ * and its bind, POST /api/operations/receiving/pack-change). Each has its OWN en + es message
+ * `receiving.case_different.error.<code>`; anything else (a 500, a network error, a signed-out session
+ * or a cross-site POST — those answer without a `code`) is the generic one.
+ */
+export const DOOR_REPORT_ERROR_CODES = [
+  "forbidden", "not_found", "sku_not_found", "sku_owned_by_other_shop", "delivery_not_found", "photo_not_found",
+  "invalid_payload",
+] as const;
+export type DoorReportErrorCode = (typeof DOOR_REPORT_ERROR_CODES)[number];
+
+export function doorReportErrorKey(code: string | null): `receiving.case_different.error${"" | `.${DoorReportErrorCode}`}` {
+  return code != null && (DOOR_REPORT_ERROR_CODES as readonly string[]).includes(code)
+    ? `receiving.case_different.error.${code as DoorReportErrorCode}`
+    : "receiving.case_different.error";
+}
