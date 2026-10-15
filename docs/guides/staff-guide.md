@@ -192,7 +192,7 @@ You walk each station. You check that last night's closing matches what you see.
 
 ![The Crunchy Boi Station card after Verified, 3 of 4 done](img/staff/08-opening-station-verified.png)
 
-2. Read the fridge thermometer. Type the number in the temp box on that card. The card is done when the temp is in. Only the first card starts open. Tap a card's name to open it and find its temp box.
+2. Read the fridge thermometer. Type the number in the temp box on that card. The card is done when the temp is in. Only the first card starts open. Tap a card's name to open it and find its temp box. More than one card can be open at once.
 
 ![The fridge temp box with 36 typed in, 4 of 4 done](img/staff/09-opening-temperature.png)
 
@@ -200,9 +200,11 @@ You walk each station. You check that last night's closing matches what you see.
 
 4. Now the prep sections: Veg, Cooks, Sides, Sauces and Slicing. Open one. Some items have no count from last night. Type what you see in the **Opener recount** box for each one. Then tap **Verify section**.
 
+   Can't read a thermometer or count a shelf? Ask your key holder. Don't guess. The app keeps the number you type, and your manager sees it.
+
 ![The Veg section after Verify section, with the Opener recount boxes filled](img/staff/10-opening-section-verify.png)
 
-5. A pink box may show under the cards: "No prior closing data detected". It shows once you type a recount for an item with no count from last night. Pick the reason that fits: **Location was closed (planned)** or **Closing was missed / I don't know**.
+5. A pink box may show under the cards: "No prior closing data detected". It shows once you type a recount for an item with no count from last night. Pick the reason that fits: **Location was closed (planned)** or **Closing was missed / I don't know**. Weren't here last night? Pick **Closing was missed / I don't know**.
 
 6. Make sure every station is checked, every temp is in, and every prep section is verified. If the pink box showed, pick a reason. Then tap **Submit Opening**.
 
@@ -397,7 +399,7 @@ The closing checklist runs all day. Each station closes on its own when its jobs
 
 ![Two lines checked, each with Undo and Add note](img/staff/22-closing-ticked.png)
 
-4. A fridge temp line works a little differently. Tapping it opens a small box. Type the temp in **Temp (°F)**, then tap **Save**. A few lines ask for a number the same way, in a box called **Count**.
+4. A fridge temp line works a little differently. Tapping it opens a small box. Type the temp in **Temp (°F)**, then tap **Save**.
 
 ![A fridge temp line open, with 38 typed in the Temp (°F) box and the Save button](img/staff/22b-closing-temp-line.png)
 

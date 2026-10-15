@@ -344,6 +344,7 @@ You do this once a day, before the doors open at 10:30 AM. The opening is late a
 - A row with no closer count needs a recount first. The button stays grey: **Recount items without closer data first**. Type what you see in **Opener recount**. The box is red until you type a number.
 - Rows have no closer count when last night's AM prep is missing.
 - A pink box then asks why: **No prior closing data detected**. Pick **Location was closed (planned)** or **Closing was missed / I don't know**.
+- The recount you type becomes the **Closer count** on Phase 2. Prep need is worked out from it, so count for real. If nobody can count a row, don't guess a number.
 
 #### 4. Submit Opening
 
