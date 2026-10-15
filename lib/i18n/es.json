@@ -6250,7 +6250,10 @@
   "admin.menu_costing.export_scope": "Descargar: {scope}",
   "reports.export.pricing_scope_shop": "Precios: {shop}",
   "reports.export.pricing_scope_global": "Precios: globales (todas las tiendas)",
-  "admin.skus.error.global_requires_moo": "Solo un Gerente de Operaciones o superior puede cambiar esto para todos.",
-  "admin.skus.error.version_changed": "Esto cambió mientras editabas. Vuelve a cargar e inténtalo otra vez.",
-  "admin.skus.error.sku_inactive": "Este artículo está inactivo. Reactívalo antes de cambiar su empaque."
+  "admin.skus.error.global_requires_moo": "Solo el Director de Operaciones puede cambiar este empaque para todas las tiendas.",
+  "admin.skus.error.version_changed": "Alguien más cambió este empaque. Vuelve a cargar para verlo.",
+  "admin.skus.error.sku_inactive": "Este artículo está inactivo. Reactívalo antes de cambiar su empaque.",
+  "admin.skus.chain.global_read_only": "Solo el Director de Operaciones puede cambiar este empaque para todas las tiendas.",
+  "admin.skus.chain.no_changes": "No hay cambios que guardar.",
+  "admin.skus.error.not_found": "No puedes cambiar el empaque de este artículo desde tu tienda."
 }
