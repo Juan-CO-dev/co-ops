@@ -47,8 +47,8 @@ describe("the editor opens read-only instead of offering a doomed save", () => {
     expect(src).toMatch(/\{globalPackLocked \? \(\s+<p role="note"[^>]*>\{t\("admin\.skus\.chain\.global_read_only"\)\}<\/p>\s+\) : !wizardOpen \? \(/);
   });
   it("the line reads plainly in English and Spanish", () => {
-    expect(E["admin.skus.chain.global_read_only"]).toBe("Only the Director of Operations can change this pack for every shop.");
-    expect(S["admin.skus.chain.global_read_only"]).toMatch(/Director de Operaciones/);
+    expect(E["admin.skus.chain.global_read_only"]).toBe("Only a Manager of Operations can change this pack for every shop.");
+    expect(S["admin.skus.chain.global_read_only"]).toMatch(/Manager of Operations/);
   });
 });
 
@@ -89,7 +89,7 @@ describe("every named refusal shows its own message", () => {
     }
   });
   it("the first-value refusals and a concurrent change read as the sim asked", () => {
-    expect(E[resolveErrorKey("global_requires_moo")]).toBe("Only the Director of Operations can change this pack for every shop.");
+    expect(E[resolveErrorKey("global_requires_moo")]).toBe("Only a Manager of Operations can change this pack for every shop.");
     expect(E[resolveErrorKey("version_changed")]).toBe("Someone else changed this pack. Reload to see it.");
     expect(lib).toContain('flat_pack_exists: [403, "global_requires_moo"');
   });
