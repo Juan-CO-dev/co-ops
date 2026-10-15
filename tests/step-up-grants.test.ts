@@ -19,7 +19,11 @@ const h = vi.hoisted(() => ({
   deactivateSku: vi.fn(),
 }));
 vi.mock("@/lib/supabase-server", () => ({ getServiceRoleClient: () => h.db.client }));
-vi.mock("@/lib/audit", () => ({ audit: h.audit }));
+vi.mock("@/lib/audit", () => ({
+  audit: h.audit,
+  // The step-up POST records its success row with the CHECKED twin (review #2).
+  auditChecked: async (input: unknown) => { await h.audit(input); return { ok: true }; },
+}));
 vi.mock("@/lib/session", () => ({ requireSession: h.session, unlockStepUp: h.unlock }));
 vi.mock("@/lib/auth", () => ({ verifyPassword: h.verify }));
 vi.mock("@/lib/auth-flows", () => ({ upgradeLegacyPasswordHash: async () => undefined }));
@@ -237,7 +241,7 @@ describe("a grant that cannot be minted stamps no clock (review P3)", () => {
 });
 
 describe("a minted grant never outlives a failed success path (chunk-3 review f)", () => {
-  it("unlockStepUp throwing after the mint voids the grant, and no success is audited", async () => {
+  it("unlockStepUp throwing after the mint (and the checked success row) voids the grant", async () => {
     h.session.mockResolvedValue(ctx());
     h.verify.mockResolvedValue(true);
     h.unlock.mockRejectedValueOnce(new Error("unlock boom"));
@@ -246,7 +250,8 @@ describe("a minted grant never outlives a failed success path (chunk-3 review f)
     ).rejects.toThrow(/unlock boom/);
     expect(grants()).toHaveLength(1);
     expect(grants()[0]!.consumed_at).toEqual(expect.any(String));
-    expect(h.audit).not.toHaveBeenCalledWith(expect.objectContaining({ action: "auth_step_up_success" }));
+    // The success row is written BEFORE the stamp (review #2: a checked audit gates the stamp),
+    // so it records the verified password; the grant it names is void.
     // …and the voided grant cannot be spent.
     expect(await consumeStepUpGrant(ctx(), "recipe.delete", T)).toEqual({ ok: false, code: "step_up_grant_required" });
   });

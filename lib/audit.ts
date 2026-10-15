@@ -53,7 +53,15 @@ export interface AuditInput {
   userAgent: string | null;
 }
 
-export async function audit(input: AuditInput): Promise<void> {
+export type AuditOutcome = { ok: true } | { ok: false; message: string };
+
+/**
+ * The SAME insert as audit(), but the outcome is RETURNED instead of swallowed. For the rare
+ * lifecycle whose correctness depends on its audit row existing (the step-up POST: a stamped
+ * clock or a live one-shot grant with no auth_step_up_success row is a hole — Astra
+ * full-branch review #2). Everywhere else the fail-open law stands: call audit().
+ */
+export async function auditChecked(input: AuditInput): Promise<AuditOutcome> {
   try {
     const sb = getServiceRoleClient();
     const { error } = await sb.from("audit_log").insert({
@@ -71,9 +79,17 @@ export async function audit(input: AuditInput): Promise<void> {
     });
     if (error) {
       console.error(`[audit] insert failed for action=${input.action}:`, error.message);
+      return { ok: false, message: error.message };
     }
+    return { ok: true };
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error(`[audit] unexpected error for action=${input.action}:`, msg);
+    return { ok: false, message: msg };
   }
+}
+
+export async function audit(input: AuditInput): Promise<void> {
+  // Fail-open by law: the outcome is logged inside auditChecked and deliberately ignored here.
+  await auditChecked(input);
 }

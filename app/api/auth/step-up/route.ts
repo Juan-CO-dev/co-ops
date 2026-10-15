@@ -29,7 +29,7 @@ import { type NextRequest } from "next/server";
 
 import { verifyPassword } from "@/lib/auth";
 import { upgradeLegacyPasswordHash } from "@/lib/auth-flows";
-import { audit } from "@/lib/audit";
+import { audit, auditChecked } from "@/lib/audit";
 import { requireSession, unlockStepUp } from "@/lib/session";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import { jsonError, jsonOk, parseJsonBody, extractIp } from "@/lib/api-helpers";
@@ -140,15 +140,16 @@ export async function POST(req: NextRequest) {
     user.id, password, pwRow.password_hash, user.role, { ipAddress, userAgent }, "step_up",
   );
 
-  // 5. Success — mint the one grant the purpose names FIRST, then stamp the shared flag (and
-  //    the catalog window when asked). Minting first means a failed mint (a 500) leaves no
-  //    clock stamped without its success audit row. Both are recorded on the success row.
-  //    And the reverse (chunk-3 review f): if anything after the mint fails, the grant is voided
-  //    before the error propagates, so no live grant exists without its success audit row.
+  // 5. Success, in an order that never leaves a live authorization without its record:
+  //    (1) mint the one grant the purpose names (a failed mint is a 500 with nothing stamped);
+  //    (2) write the success row with a CHECKED audit — audit() is fail-open by law, so a
+  //        failure there would otherwise go unseen (Astra full-branch review #2); on failure the
+  //        grant is voided, NO clock is stamped, and the answer is a 500;
+  //    (3) only then stamp the shared flag (and the catalog window when asked). If that throws,
+  //        the grant is voided too (chunk-3 review f).
   const grantId = purpose ? await mintStepUpGrant({ sessionId: session.id, userId: user.id, purpose }) : null;
   try {
-    await unlockStepUp(session.id, { catalogWindow });
-    await audit({
+    const recorded = await auditChecked({
       actorId: user.id,
       actorRole: user.role,
       action: "auth_step_up_success",
@@ -161,6 +162,11 @@ export async function POST(req: NextRequest) {
       ipAddress,
       userAgent,
     });
+    if (!recorded.ok) {
+      if (grantId) await voidStepUpGrant(grantId);
+      return jsonError(500, "step_up_audit_failed", { message: "Could not record the confirmation. Try again." });
+    }
+    await unlockStepUp(session.id, { catalogWindow });
   } catch (e) {
     if (grantId) await voidStepUpGrant(grantId);
     throw e;
