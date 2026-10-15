@@ -18,7 +18,8 @@ import { loadCurrentSkuPrices } from "@/lib/admin/cost";
 import { costPerOzFromGraph } from "@/lib/admin/menu-costing";
 import { rollupItemCost, rollupMenuItemCost } from "@/lib/menu-costing-shared";
 import { perOrderUnitOz } from "@/lib/ordering";
-import type { MeasureUnitFactor, RecipeInputSku } from "@/lib/recipe-math";
+import { skuContentOz, type MeasureUnitFactor, type RecipeInputSku } from "@/lib/recipe-math";
+import * as v0 from "./prep-consumption-v0-oracle";
 import type { PackChainLevel } from "@/lib/pack-chain-shared";
 
 type Row = Record<string, unknown>;
@@ -40,6 +41,20 @@ export interface ResolverApi {
  * exactly what "no shop versions" must keep producing). Task 5 and Task 6 replace the marked
  * lines with the scoped calls and change NOTHING else in this file.
  */
+/**
+ * THE PRE-2a API (Astra full-branch r1 P2): origin/main 984346e6's own loaders, frozen verbatim in
+ * tests/fixtures/prep-consumption-v0-oracle.ts — exactly what Task 1's liveApi called before any
+ * change. The prod-snapshot proof computes its BASELINE through this over the ORIGINAL rows.
+ */
+export const legacyApi: ResolverApi = {
+  chains: (skuIds, _scope) => v0.loadSkuPackChains(skuIds),
+  allChains: (_scope) => v0.loadAllSkuPackChains(),
+  prices: (skuIds, _scope) => v0.loadCurrentSkuPrices(skuIds),
+  graph: (scope) => v0.loadRecipeGraph(scope == null ? undefined : { locationId: scope }),
+  datedGraph: (scope, _businessDate) => v0.loadRecipeGraph(scope == null ? undefined : { locationId: scope }),
+  flatContent: async (flat, _scope, measures) => new Map([...flat].map(([id, f]) => [id, skuContentOz(f, measures)])),
+};
+
 export const liveApi: ResolverApi = {
   chains: (skuIds, scope) => loadSkuPackChains(skuIds, scope),
   allChains: (scope) => loadAllSkuPackChains(scope),
