@@ -1,0 +1,24 @@
+{
+  "_comment": "THE ONE PM v2 copy lifecycle (r1 P2-9). Iterated by tests/people-access.test.ts (the pure rules), and later by the 0271 harness (RPC guards) and the PM v2 UI test, so all three pin the SAME table. act: write | markDone | reopen | seal. day: open | submitted. author: whether the actor wrote the copy. expect: null = allowed, else the refusal code.",
+  "cases": [
+    { "act": "write",    "copy": "open",   "day": "open",      "author": true,  "expect": null },
+    { "act": "write",    "copy": "done",   "day": "open",      "author": true,  "expect": "copy_done" },
+    { "act": "write",    "copy": "sealed", "day": "open",      "author": true,  "expect": "copy_sealed" },
+    { "act": "write",    "copy": "open",   "day": "submitted", "author": true,  "expect": "day_closed" },
+    { "act": "write",    "copy": "open",   "day": "open",      "author": false, "expect": "not_author" },
+    { "act": "markDone", "copy": "open",   "day": "open",      "author": true,  "expect": null },
+    { "act": "markDone", "copy": "done",   "day": "open",      "author": true,  "expect": "copy_done" },
+    { "act": "markDone", "copy": "sealed", "day": "open",      "author": true,  "expect": "copy_sealed" },
+    { "act": "markDone", "copy": "open",   "day": "submitted", "author": true,  "expect": "day_closed" },
+    { "act": "markDone", "copy": "open",   "day": "open",      "author": false, "expect": "not_author" },
+    { "act": "reopen",   "copy": "done",   "day": "open",      "author": true,  "expect": null },
+    { "act": "reopen",   "copy": "open",   "day": "open",      "author": true,  "expect": "copy_not_done" },
+    { "act": "reopen",   "copy": "sealed", "day": "open",      "author": true,  "expect": "copy_sealed" },
+    { "act": "reopen",   "copy": "done",   "day": "submitted", "author": true,  "expect": "day_closed" },
+    { "act": "reopen",   "copy": "done",   "day": "open",      "author": false, "expect": "not_author" },
+    { "act": "seal",     "copy": "open",   "day": "open",      "author": true,  "expect": null },
+    { "act": "seal",     "copy": "done",   "day": "open",      "author": false, "expect": null },
+    { "act": "seal",     "copy": "sealed", "day": "open",      "author": true,  "expect": "copy_sealed" },
+    { "act": "seal",     "copy": "open",   "day": "submitted", "author": true,  "expect": "day_closed" }
+  ]
+}
