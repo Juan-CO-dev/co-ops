@@ -1,5 +1,7 @@
 -- Migration 0267_pm_evals_privacy
 -- AUTHORED 2026-10-15. NOT YET APPLIED — apply via MCP after review (sim → prod; no code depends on it, so order is free).
+-- APPLIED TO SIM 2026-10-15 (schema_migrations version 20261015230147, name 'pm_evals_privacy')
+-- APPLIED TO PROD 2026-10-15 (schema_migrations version 20261015230846, name 'pm_evals_privacy')
 -- Both PM tables are accessed only by service-role server loaders and writers.
 -- Remove direct PostgREST access: self-read RLS cannot hide the manager-only note
 -- column, and the old insert policies did not bind author_id/created_by to the JWT.
