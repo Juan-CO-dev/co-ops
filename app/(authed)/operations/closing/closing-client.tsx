@@ -70,6 +70,7 @@ import { useTranslation } from "@/lib/i18n/provider";
 import type { Language } from "@/lib/i18n/types";
 import { unfinishedSectionIds } from "@/lib/collapsible-sections";
 import { closingStationAnchor } from "@/lib/assignment-sections";
+import { applyReasonToEmptyDrafts, countEmptyDrafts, groupIdsByStation } from "@/lib/closing-review-shared";
 import { useCollapsibleSections } from "@/lib/use-collapsible-sections";
 import { CollapsibleChecklistSection } from "@/components/ui/CollapsibleChecklistSection";
 import type {
@@ -857,9 +858,19 @@ export function ClosingClient({ initialState }: { initialState: ClosingInitialSt
           <ul className="mt-2 flex flex-col gap-2">
             {shownReasons.map((r) => {
               const item = templateItems.find((ti) => ti.id === r.templateItemId);
-              const label = item ? item.label : r.templateItemId;
+              // B11a: "Station · Label — reason · who", station resolved from the line the same
+              // way the review panel does (display only; no new storage).
+              const resolvedItem = item ? resolveTemplateItemContent(item, language) : null;
+              const label = resolvedItem ? resolvedItem.label : r.templateItemId;
+              const station = resolvedItem ? (resolvedItem.station ?? STATION_FALLBACK) : null;
               return (
                 <li key={r.templateItemId} className="text-sm text-co-text">
+                  {station ? (
+                    <span className="text-co-text-muted">
+                      {station}
+                      {t("closing.review.station_label_separator")}
+                    </span>
+                  ) : null}
                   <span className="font-semibold">{label}</span>
                   <span className="text-co-text-muted"> — </span>
                   {r.reason}
@@ -1352,6 +1363,13 @@ function ReviewSection({
     return m;
   }, [templateItems]);
 
+  // B11a: group the unfinished lines by station (SYSTEM KEY = the original English station,
+  // never the translated one), in template order.
+  const stationGroups = useMemo(
+    () => groupIdsByStation(incompleteRequiredIds, (id) => itemsById.get(id)?.station ?? STATION_FALLBACK),
+    [incompleteRequiredIds, itemsById],
+  );
+
   const requiredTotal = templateItems.filter((it) => it.required).length;
   const incompleteTotal = incompleteRequiredIds.length;
   const allDone = incompleteTotal === 0;
@@ -1375,44 +1393,76 @@ function ReviewSection({
         })}
       </p>
 
-      {/* Incomplete-required reason inputs */}
+      {/* Incomplete-required reason inputs — B11a: grouped by station, with "Same reason
+          for all" at the top and "Same reason for this station" per group. Both fill EMPTY
+          drafts only; every line keeps its own draft (one reason per line reaches the server). */}
       {incompleteRequiredIds.length > 0 ? (
-        <div className="mt-4 flex flex-col gap-3">
-          {incompleteRequiredIds.map((id) => {
-            const it = itemsById.get(id);
-            if (!it) return null;
-            const draft = reasonDrafts.get(id) ?? "";
-            // Resolver call once per row — display only (per
-            // SPEC_AMENDMENTS.md C.38). The reason-keying is by `id`
-            // (line 1146 key), not by label/station, so no system-key
-            // concern here.
-            const resolved = resolveTemplateItemContent(it, language);
+        <div className="mt-4 flex flex-col gap-4">
+          {incompleteRequiredIds.length > 1 ? (
+            <ReasonShortcut
+              label={t("closing.review.same_reason_all")}
+              ariaLabel={t("closing.review.same_reason_all")}
+              emptyCount={countEmptyDrafts(reasonDrafts, incompleteRequiredIds)}
+              onApply={(reason) =>
+                setReasonDrafts((prev) => applyReasonToEmptyDrafts(prev, incompleteRequiredIds, reason))
+              }
+            />
+          ) : null}
+          {stationGroups.map((group) => {
+            const first = itemsById.get(group.ids[0] ?? "");
+            const stationDisplay = first
+              ? (resolveTemplateItemContent(first, language).station ?? STATION_FALLBACK)
+              : group.station;
             return (
-              <label key={id} className="block">
-                <span className="block text-[11px] font-bold uppercase tracking-[0.14em] text-co-text-dim">
-                  {resolved.station ?? STATION_FALLBACK}
-                  {t("closing.review.station_label_separator")}
-                  {resolved.label}
-                </span>
-                <textarea
-                  value={draft}
-                  onChange={(e) => {
-                    const v = e.target.value;
-                    setReasonDrafts((prev) => {
-                      const next = new Map(prev);
-                      next.set(id, v);
-                      return next;
-                    });
-                  }}
-                  rows={2}
-                  placeholder={t("closing.review.reason_placeholder")}
-                  className="
-                    mt-1 w-full rounded-md border-2 border-co-border bg-white px-3 py-2
-                    text-sm text-co-text
-                    focus:outline-none focus:border-co-gold focus-visible:ring-4 focus-visible:ring-co-gold/40
-                  "
-                />
-              </label>
+              <div key={group.station} className="flex flex-col gap-3 rounded-xl border-2 border-co-border bg-co-surface-inset p-3">
+                <h3 className="text-xs font-bold tracking-wide text-co-text-muted">{stationDisplay}</h3>
+                {group.ids.length > 1 ? (
+                  <ReasonShortcut
+                    label={t("closing.review.same_reason_station")}
+                    ariaLabel={t("closing.review.same_reason_station_aria", { station: stationDisplay })}
+                    emptyCount={countEmptyDrafts(reasonDrafts, group.ids)}
+                    onApply={(reason) =>
+                      setReasonDrafts((prev) => applyReasonToEmptyDrafts(prev, group.ids, reason))
+                    }
+                  />
+                ) : null}
+                {group.ids.map((id) => {
+                  const it = itemsById.get(id);
+                  if (!it) return null;
+                  const draft = reasonDrafts.get(id) ?? "";
+                  // Resolver call once per row — display only (per
+                  // SPEC_AMENDMENTS.md C.38). The reason-keying is by `id`,
+                  // not by label/station, so no system-key concern here.
+                  const resolved = resolveTemplateItemContent(it, language);
+                  return (
+                    <label key={id} className="block">
+                      <span className="block text-[11px] font-bold uppercase tracking-[0.14em] text-co-text-dim">
+                        {resolved.station ?? STATION_FALLBACK}
+                        {t("closing.review.station_label_separator")}
+                        {resolved.label}
+                      </span>
+                      <textarea
+                        value={draft}
+                        onChange={(e) => {
+                          const v = e.target.value;
+                          setReasonDrafts((prev) => {
+                            const next = new Map(prev);
+                            next.set(id, v);
+                            return next;
+                          });
+                        }}
+                        rows={2}
+                        placeholder={t("closing.review.reason_placeholder")}
+                        className="
+                          mt-1 w-full rounded-md border-2 border-co-border bg-white px-3 py-2
+                          text-sm text-co-text
+                          focus:outline-none focus:border-co-gold focus-visible:ring-4 focus-visible:ring-co-gold/40
+                        "
+                      />
+                    </label>
+                  );
+                })}
+              </div>
             );
           })}
         </div>
@@ -1428,6 +1478,63 @@ function ReviewSection({
         {t("closing.review.continue")}
       </ActionButton>
     </section>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ReasonShortcut — B11a "Same reason for all" / "Same reason for this station"
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * A box + Apply that fills the EMPTY reason drafts it governs (the parent decides which
+ * ids). Apply is disabled when the box is blank or nothing is empty. The box clears after
+ * an Apply so it reads as a one-shot fill, not a live binding.
+ */
+function ReasonShortcut({
+  label,
+  ariaLabel,
+  emptyCount,
+  onApply,
+}: {
+  label: string;
+  ariaLabel: string;
+  emptyCount: number;
+  onApply: (reason: string) => void;
+}) {
+  const { t } = useTranslation();
+  const [text, setText] = useState("");
+  const canApply = text.trim() !== "" && emptyCount > 0;
+  return (
+    <div className="flex flex-col gap-1">
+      <span className="block text-[11px] font-bold uppercase tracking-[0.12em] text-co-text-dim">{label}</span>
+      <div className="flex items-stretch gap-2">
+        <input
+          type="text"
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          aria-label={ariaLabel}
+          placeholder={t("closing.review.reason_placeholder")}
+          className="
+            min-h-[44px] w-full min-w-0 flex-1 rounded-md border-2 border-co-border bg-white px-3 py-2
+            text-sm text-co-text
+            focus:outline-none focus:border-co-gold focus-visible:ring-4 focus-visible:ring-co-gold/40
+          "
+        />
+        <ActionButton
+          variant="secondary"
+          disabled={!canApply}
+          onClick={() => {
+            onApply(text);
+            setText("");
+          }}
+        >
+          {t("closing.review.apply_reason")}
+        </ActionButton>
+      </div>
+      <span className="text-[11px] text-co-text-dim">
+        {t("closing.review.apply_reason_hint", { count: emptyCount })}
+      </span>
+    </div>
   );
 }
 
