@@ -1,5 +1,5 @@
 -- Migration 0259_sku_shop_versions
--- AUTHORED 2026-10-15. NOT YET APPLIED — apply via MCP after review (sim → prod dry-run → prod, BEFORE the 2a code merges).
+-- AUTHORED 2026-10-15. APPLIED TO SIM 20261015114653 (functions re-applied after review) · APPLIED TO PROD 20261015131225 (before the 2a code merged).
 -- Plan: docs/superpowers/plans/2026-10-15-catalog-phase2a-shop-versions-data.md (Task 3).
 -- Spec: docs/superpowers/specs/2026-10-15-catalog-redesign-design.md §3 (global defaults + shop versions).
 --
