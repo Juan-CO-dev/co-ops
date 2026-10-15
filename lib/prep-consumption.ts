@@ -16,6 +16,7 @@
  * (recordBatchProductionFromPrep below) reads the SAME graph and multiplies by that yield.
  */
 import { getServiceRoleClient } from "@/lib/supabase-server";
+import { selectAllRows } from "@/lib/supabase-paginate";
 import { skuContentOz, type MeasureUnitFactor, type RecipeInputSku } from "@/lib/recipe-math";
 import type { PackChainLevel } from "@/lib/pack-chain-shared";
 import {
@@ -84,11 +85,39 @@ export async function loadSkuPackChains(skuIds: string[]): Promise<Map<string, P
     .in("sku_id", skuIds)
     .eq("active", true)
     .order("display_ordinal", { ascending: true })
-    .returns<Array<{ id: string; sku_id: string; label: string; contains_qty: number | string; contains_level_id: string | null; contains_measure_unit: string | null; display_ordinal: number }>>();
+    .returns<PackLevelRow[]>();
   // "No chain" is a MEANINGFUL answer here (it routes the SKU to the legacy flat-field
   // path), so a swallowed failure silently re-denominates every chained SKU in the graph.
   if (error) throw new Error(`loadSkuPackChains: ${error.message}`);
-  for (const r of data ?? []) {
+  return groupPackLevels(data ?? []);
+}
+
+/**
+ * EVERY active pack-chain level, grouped per SKU (B9: the counts render needs chains for
+ * nearly the whole catalog — the sheet's level pickers, the count rows, the product index —
+ * and a ~200-id `.in()` list sits at the request-line ceiling). Per SKU this is exactly
+ * what loadSkuPackChains returns. PAGED under (display_ordinal, id).
+ */
+export async function loadAllSkuPackChains(): Promise<Map<string, PackChainLevel[]>> {
+  const sb = getServiceRoleClient();
+  const rows = await selectAllRows<PackLevelRow>(async (from, to) => {
+    const { data, error } = await sb.from("sku_pack_levels")
+      .select("id, sku_id, label, contains_qty, contains_level_id, contains_measure_unit, display_ordinal")
+      .eq("active", true)
+      .order("display_ordinal", { ascending: true })
+      .order("id", { ascending: true })
+      .range(from, to)
+      .returns<PackLevelRow[]>();
+    if (error) throw new Error(`loadAllSkuPackChains: ${error.message}`);
+    return { data };
+  });
+  return groupPackLevels(rows);
+}
+
+type PackLevelRow = { id: string; sku_id: string; label: string; contains_qty: number | string; contains_level_id: string | null; contains_measure_unit: string | null; display_ordinal: number };
+function groupPackLevels(rows: PackLevelRow[]): Map<string, PackChainLevel[]> {
+  const out = new Map<string, PackChainLevel[]>();
+  for (const r of rows) {
     const list = out.get(r.sku_id) ?? [];
     list.push({
       id: r.id, label: r.label, containsQty: num(r.contains_qty) ?? 0,

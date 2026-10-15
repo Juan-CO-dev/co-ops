@@ -425,6 +425,9 @@ export function ReceivingForm({
   // Success/advisory state for the last submit's closure result.
   const [closedCount, setClosedCount] = useState<number>(0);
   const [closureError, setClosureError] = useState<boolean>(false);
+  // B9: the confirmation a normal save never had — which delivery was recorded, how many
+  // lines, from whom, with a link to it. Survives resetForm like the closure notice.
+  const [recorded, setRecorded] = useState<{ deliveryId: string; lineCount: number; vendorName: string | null } | null>(null);
 
   // Missing-item honesty gate. `armComplete` = the interrupt has been shown once, so the
   // next tap on the primary button completes. `notArrived` is keyed by LINE KEY (not skuId
@@ -1091,6 +1094,7 @@ export function ReceivingForm({
     setCheckedCreditIds(new Set());
     setClosedCount(0);
     setClosureError(false);
+    setRecorded(null);
     // A new vendor means a new expected list — never carry a stale arm or disposition.
     setArmComplete(false);
     setNotArrived({});
@@ -1161,6 +1165,7 @@ export function ReceivingForm({
     if (!canSubmit) return;
     setErr(null);
     setDupId(null);
+    setRecorded(null);
     setBusy(true);
     // The note is the operator's words and nothing else. "Photo later" used to append a
     // "[PHOTO PENDING]" tag here — an untranslated machine string wedged into free text,
@@ -1215,9 +1220,13 @@ export function ReceivingForm({
       // "N short(s) closed" / advisory notice. resetForm intentionally preserves
       // closedCount/closureError; router.refresh() does NOT reset client useState.
       const ok = (await res.json().catch(() => ({}))) as {
+        deliveryId?: string;
         resolvedCredits?: string[];
         creditClosureError?: boolean;
       };
+      // Read what was recorded BEFORE resetForm clears the vendor and the lines.
+      const recordedVendorName = vendors.find((v) => v.id === vendorId)?.name ?? null;
+      const recordedLineCount = payload.lines.length;
       setBusy(false);
       // Remove THIS draft BEFORE router.refresh() so it can't be resumed after a
       // successful submit (D1 Task 6 law: clear on success) — and only this one, by
@@ -1227,6 +1236,9 @@ export function ReceivingForm({
       resetForm();
       setClosedCount(Array.isArray(ok.resolvedCredits) ? ok.resolvedCredits.length : 0);
       setClosureError(ok.creditClosureError === true);
+      setRecorded(typeof ok.deliveryId === "string" && ok.deliveryId
+        ? { deliveryId: ok.deliveryId, lineCount: recordedLineCount, vendorName: recordedVendorName }
+        : null);
       router.refresh();
       return;
     }
@@ -1797,6 +1809,26 @@ export function ReceivingForm({
               })}
             </ul>
           </CollapsibleSection>
+        </div>
+      ) : null}
+
+      {/* B9: every successful save says so — which delivery, how many lines, from whom. */}
+      {recorded ? (
+        <div
+          role="status"
+          className="mt-4 rounded-lg border-2 border-co-success bg-co-success-surface px-3 py-3 text-sm text-co-text"
+        >
+          <p className="font-bold text-co-confirm-text">
+            {recorded.vendorName
+              ? t("receiving.recorded.notice", { n: recorded.lineCount, vendor: recorded.vendorName })
+              : t("receiving.recorded.notice_no_vendor", { n: recorded.lineCount })}
+          </p>
+          <Link
+            href={`/operations/receiving/${recorded.deliveryId}`}
+            className="mt-1 inline-flex min-h-[44px] items-center font-bold text-co-confirm-text underline"
+          >
+            {t("receiving.recorded.view")}
+          </Link>
         </div>
       ) : null}
 
