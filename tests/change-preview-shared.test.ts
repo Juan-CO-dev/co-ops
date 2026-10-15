@@ -8,7 +8,7 @@ import { buildRecipeGraph, type GraphRecipe } from "@/lib/prep-consumption-graph
 import type { MeasureUnitFactor, RecipeInputSku } from "@/lib/recipe-math";
 import type { PackChainLevel } from "@/lib/pack-chain-shared";
 import {
-  convertParQuantity, previewPackChange, previewPriceChange, previewToken, shopPriceStanding, type PreviewShopState,
+  convertParQuantity, previewPackChange, previewPriceChange, shopPriceStanding, type PreviewShopState,
 } from "@/lib/catalog/change-preview-shared";
 import { resolveCurrentPrices } from "@/lib/sku-versions-shared";
 
@@ -295,15 +295,8 @@ describe("the price head a save is compared against (chunk-1 review P3a/P3b)", (
   });
 });
 
-describe("previewToken — a save must present the preview it was shown", () => {
-  it("changes when the target, the live version, the levels or an offered conversion changes", () => {
-    const a = previewToken({ target: { kind: "global" }, liveVersionId: "gv", levels: [1], conversions: [{ locationId: null, slot: "weekday", expected: 3, to: 2 }] });
-    expect(previewToken({ target: { kind: "global" }, liveVersionId: "gv", levels: [1], conversions: [{ locationId: null, slot: "weekday", expected: 3, to: 2 }] })).toBe(a);
-    expect(previewToken({ target: { kind: "shop", shopId: "A" }, liveVersionId: "gv", levels: [1], conversions: [{ locationId: null, slot: "weekday", expected: 3, to: 2 }] })).not.toBe(a);
-    expect(previewToken({ target: { kind: "global" }, liveVersionId: "gv", levels: [1], conversions: [{ locationId: null, slot: "weekday", expected: 4, to: 2 }] })).not.toBe(a);
-    expect(previewToken({ kind: "price", newPrice: 80, effectiveDate: "2026-10-14" })).not.toBe(previewToken({ kind: "price", newPrice: 80, effectiveDate: "2026-10-15" }));
-  });
-});
+// The preview TOKEN is tested on the real server path (tests/catalog-item-token.test.ts): each real
+// dependency the preview shows changes the token and makes the apply refuse (full-branch r1 P2-1).
 
 describe("convertParQuantity", () => {
   it("rounds to the par step (default 1 for a whole par, 0.5 for a half) and never below one step", () => {

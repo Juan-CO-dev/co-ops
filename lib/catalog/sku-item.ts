@@ -254,7 +254,15 @@ function slotsFrom(overlay: OverlayRow | null, row: SkuRow): PreviewShopState["s
 }
 
 /** One shop as it stands today for this SKU — every number through the 2a resolvers, par lanes D3-stamped. */
-async function loadShopState(sb: Sb, row: SkuRow, shop: Shop): Promise<PreviewShopState> {
+/**
+ * The INPUT VERSIONS a shop's numbers came from: the pack version that answered, and the price rows
+ * (the shop lane's head and the global head). Bound into every preview token beside the computed
+ * OUTPUT, so a save can never land on numbers the person was not shown (Astra 2b full-branch r1 P2-1).
+ */
+interface ShopDeps { shopId: string; packVersionId: string | null; shopPriceId: string | null; laneId: string | null; globalPriceId: string | null }
+type ShopState = PreviewShopState & { deps: ShopDeps };
+
+async function loadShopState(sb: Sb, row: SkuRow, shop: Shop): Promise<ShopState> {
   const [graph, packAware, heads, globalHeads, openOrders] = await Promise.all([
     loadRecipeGraph({ locationId: shop.id }),
     loadPackAwareOverlay(sb, shop.id, [row.id]),
@@ -267,13 +275,16 @@ async function loadShopState(sb: Sb, row: SkuRow, shop: Shop): Promise<PreviewSh
   const overlay = packAware.overlayBySku.get(row.id) ?? null;
   // The heads the real selection rule compares a new row against (Astra 2b r3#2); a shop has its
   // own price only when its live lane answered with a row of its own (shopPriceStanding).
-  const standing = shopPriceStanding(heads.get(row.id) ?? null, globalHeads.get(row.id) ?? null);
+  const shopHead = heads.get(row.id) ?? null;
+  const globalHead = globalHeads.get(row.id) ?? null;
+  const standing = shopPriceStanding(shopHead, globalHead);
   return {
     shopId: shop.id, shopName: shop.name,
     basePack: basePackOf(row, pack?.levels ?? []),
     ownPackVersion: pack?.locationId === shop.id,
     ...standing,
     graph, prices, slots: slotsFrom(overlay, row), openOrders,
+    deps: { shopId: shop.id, packVersionId: pack?.versionId ?? null, shopPriceId: shopHead?.priceId ?? null, laneId: shopHead?.laneId ?? null, globalPriceId: globalHead?.priceId ?? null },
   };
 }
 
@@ -503,7 +514,11 @@ export async function computePackPreview(actor: AuthContext, skuId: string, targ
   });
   return {
     ...body, snapshot,
-    token: previewToken({ kind: "pack", target, liveVersionId, basedOnVersionId, levels: rpcLevels(validated), conversions: body.conversions, snapshot }),
+    // THE TOKEN BINDS WHAT WAS SHOWN (full-branch r1 P2-1): the whole computed preview (every shop's
+    // order unit, $/oz, sandwich costs, broken lines, open orders, par rows and offered conversions),
+    // the chain, the dependency snapshot, and each shop's input versions (pack version, price heads).
+    // Anything displayed that changes — a price, a pack, a recipe line, an open order — is a new token.
+    token: previewToken({ kind: "pack", levels: rpcLevels(validated), snapshot, body, deps: states.map((st) => st.deps) }),
   };
 }
 
@@ -524,10 +539,10 @@ export async function computePricePreview(actor: AuthContext, skuId: string, tar
   return {
     ...body,
     // The effective date is bound into the token: a save with any other date is a different change.
-    token: previewToken({
-      kind: "price", target, newPrice, effectiveDate,
-      before: body.shops.map((s) => [s.shopId, s.price.before, s.becomesCurrent]), unaffected: body.unaffected.map((u) => u.shopId),
-    }),
+    // THE TOKEN BINDS WHAT WAS SHOWN (full-branch r1 P2-1): the whole computed preview (every shop's
+    // price, becomes-current, $/oz — which reads the pack size — and sandwich costs; the date and the
+    // target ride in it), plus each shop's input versions (pack version, price heads).
+    token: previewToken({ kind: "price", body, deps: states.map((st) => st.deps) }),
   };
 }
 
