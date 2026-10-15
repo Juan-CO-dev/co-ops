@@ -257,7 +257,6 @@ const CLIENT_TIER_MAP: Record<string, string[]> = {
   "components/admin/skus/SkuCatalogClient.tsx": ["E"],
   "components/admin/skus/SkuCostPanel.tsx": ["E"],
   "components/admin/skus/SkuLocationOverlay.tsx": ["E"],
-  "components/admin/skus/SkuPackChainPanel.tsx": ["A"],
   "components/admin/skus/VendorSkusCard.tsx": ["E"],
   "components/admin/template-builder/TemplateBuilderClient.tsx": ["A"],
   "components/admin/templates/AddPrepItemForm.tsx": ["B"],
