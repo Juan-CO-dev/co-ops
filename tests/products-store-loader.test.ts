@@ -75,13 +75,31 @@ describe("product loader store eligibility", () => {
       .toMatchObject({ active: true, vendorActive: false });
     expect(loaded.index.resolution.get("product")?.skuId).toBe("regular-sku");
   });
-  it("resolves regular members on inactive vendors and scoped to another shop as before", async () => {
+  // Chunk 1's intentional red contract; the common eligibility sweep lands in Chunk 3.
+  it("CHUNK 3: excludes foreign regular members even when their supplier retires", async () => {
     fixture.tables.vendors![0]!.active = false;
     fixture.tables.vendor_items![0]!.location_id = "south";
     fixture.tables.vendor_items![1]!.active = false;
     const loaded = await loadProductIndex(["product"], "north");
-    expect(loaded.index.resolution.get("product")?.skuId).toBe("regular-sku");
+    expect(loaded.index.resolution.get("product")?.skuId).toBeNull();
     expect(loaded.byProduct.get("product")?.members.find(m => m.skuId === "regular-sku"))
-      .toMatchObject({ active: true, vendorActive: false, sourceKind: "vendor" });
+      .toBeUndefined();
+  });
+  it("preserves the store-copy exception at the global default", async () => {
+    fixture.tables.vendor_items![0]!.active = false;
+    const loaded = await loadProductIndex(["product"]);
+    expect(loaded.index.resolution.get("product")?.skuId).toBe("store-sku");
+  });
+  it("retains an ordinary owned member at its own shop", async () => {
+    fixture.tables.vendor_items![0]!.location_id = "north";
+    fixture.tables.vendor_items![1]!.active = false;
+    expect((await loadProductIndex(["product"], "north")).index.resolution.get("product")?.skuId).toBe("regular-sku");
+  });
+  it("CHUNK 3: the store-copy global exception never admits ordinary owned members", async () => {
+    fixture.tables.vendor_items![0]!.location_id = "north";
+    fixture.tables.vendor_items![1]!.active = false;
+    const loaded = await loadProductIndex(["product"]);
+    expect(loaded.index.resolution.get("product")?.skuId).toBeNull();
+    expect(loaded.byProduct.get("product")?.members.find(m => m.skuId === "regular-sku")).toBeUndefined();
   });
 });

@@ -11,13 +11,24 @@ grant usage on schema public to anon, authenticated, service_role;
 
 create table public.users(id uuid primary key);
 create table public.locations(id uuid primary key, name text, active boolean not null default true);
-create table public.vendors(id uuid primary key, name text, source_kind text, active boolean not null default true);
-create table public.products(id uuid primary key, name text, name_es text, active boolean not null default true, unit_oz numeric);
-create table public.vendor_items(id uuid primary key, name text, active boolean not null default true,
+create table public.vendors(id uuid primary key default gen_random_uuid(), name text, source_kind text, active boolean not null default true);
+create table public.products(
+  id uuid primary key default gen_random_uuid(), name text not null, name_es text, notes text,
+  unit_oz numeric check (unit_oz is null or unit_oz > 0), unit_oz_class text, unit_oz_source_note text,
+  unit_oz_established_at timestamptz, unit_oz_established_by uuid references public.users(id),
+  active boolean not null default true, created_at timestamptz not null default now(),
+  created_by uuid references public.users(id), updated_at timestamptz not null default now(),
+  updated_by uuid references public.users(id));
+create unique index products_name_lower_uq on public.products(lower(name)) where active;
+create table public.vendor_items(id uuid primary key default gen_random_uuid(), name text not null, active boolean not null default true,
   location_id uuid null references public.locations(id), vendor_id uuid references public.vendors(id),
   product_id uuid references public.products(id), pack_format text, each_container_label text,
   units_per_pack int, each_size numeric, each_measure text, avg_oz_per_each numeric,
-  weekday_par numeric, weekend_par numeric, updated_at timestamptz not null default now(), unique (id));
+  item_number text, sku_class text not null default 'raw', price_basis text,
+  weekday_par numeric, weekend_par numeric, created_at timestamptz not null default now(),
+  created_by uuid references public.users(id), updated_at timestamptz not null default now(),
+  updated_by uuid references public.users(id), unique (id),
+  constraint vendor_items_id_product_uq unique (id, product_id));
 create table public.measure_units(label text primary key, dimension text, to_base_factor numeric, active boolean not null default true);
 create table public.sku_pack_levels (
   id uuid primary key default gen_random_uuid(),
@@ -52,7 +63,11 @@ create table public.location_sku_settings (
 );
 create table public.product_primaries(id uuid primary key default gen_random_uuid(),
   product_id uuid not null references public.products(id), location_id uuid null references public.locations(id),
-  primary_sku_id uuid references public.vendor_items(id));
+  primary_sku_id uuid not null, note text, created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(), updated_by uuid references public.users(id),
+  constraint product_primaries_scope_uq unique nulls not distinct (product_id, location_id),
+  constraint product_primaries_member_fk foreign key (primary_sku_id, product_id)
+    references public.vendor_items(id, product_id));
 create table public.vendor_import_batches(id uuid primary key);
 create table public.vendor_import_observations(id uuid primary key);
 create table public.vendor_deliveries(id uuid primary key default gen_random_uuid(),
@@ -61,9 +76,20 @@ create table public.vendor_delivery_items(id uuid primary key default gen_random
   delivery_id uuid not null references public.vendor_deliveries(id), vendor_item_id uuid references public.vendor_items(id),
   created_at timestamptz not null default now());
 create table public.photos(id uuid primary key, location_id uuid not null references public.locations(id));
-create table public.items(id uuid primary key, name text, active boolean not null default true);
-create table public.menu_items(id uuid primary key, name text, name_es text, active boolean not null default true, menu_price numeric,
-  updated_at timestamptz not null default now(), updated_by uuid);
+create table public.items(
+  id uuid primary key default gen_random_uuid(), location_id uuid references public.locations(id),
+  name text not null, name_es text, section text, default_par numeric, default_par_unit text,
+  is_default boolean not null default false, special_instruction text, special_instruction_es text,
+  min_role_level integer, required boolean not null default false, opening_verify boolean not null default true,
+  active boolean not null default true, created_at timestamptz not null default now(),
+  created_by uuid references public.users(id), updated_at timestamptz not null default now(),
+  updated_by uuid references public.users(id));
+create table public.menu_items(
+  id uuid primary key default gen_random_uuid(), name text not null, name_es text, section text,
+  active boolean not null default true, menu_price numeric check (menu_price is null or menu_price >= 0),
+  catering_available boolean not null default false, created_at timestamptz not null default now(),
+  created_by uuid references public.users(id), updated_at timestamptz not null default now(),
+  updated_by uuid references public.users(id));
 -- 0103 + 0179 + 0215, the columns the 0258 writers read and write.
 create table public.recipes(id uuid primary key default gen_random_uuid(), name text, name_es text, recipe_type text,
   batch_yield numeric, directions text, directions_es text, active boolean not null default true,
