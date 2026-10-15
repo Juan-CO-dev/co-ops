@@ -61,3 +61,20 @@ describe("every new string exists in en AND es", () => {
     expect((es as Record<string, string>)[k]).toBeTruthy();
   });
 });
+
+describe("RecipeLineEditor — every control is programmatically labelled", () => {
+  it("quantity, unit and portioned point at their visible, translated labels", async () => {
+    const { RecipeLineEditor } = await import("@/components/admin/recipes/RecipeLineEditor");
+    const html = render(jsx(RecipeLineEditor, {
+      title: "t", submitLabel: "s", options,
+      skus: [{ id: "s-ham", name: "Ham", vendorName: "Baldor", packFormat: null, eachContainerLabel: null, unitsPerPack: null, eachSize: null, eachMeasure: null, avgOzPerEach: null }],
+      products: [], measures: new Map([["oz", { dimension: "weight", toBaseFactor: 1 }]]),
+      initial: { componentSkuId: "s-ham", componentItemId: null, componentProductId: null, quantity: 4, unit: "oz", eachContainerLabel: null, portioned: false, componentName: "Ham" },
+      busy: false, errorMsg: null, onSubmit: () => {}, onCancel: () => {},
+    }), "es");
+    const refs = [...html.matchAll(/aria-labelledby="([^"]+)"/g)].map((m) => m[1]!);
+    expect(refs).toHaveLength(3);
+    for (const id of refs) expect(html).toContain(`id="${id}"`);
+    expect(html).toContain(es["recipes.input.quantity"]);
+  });
+});

@@ -11,7 +11,7 @@
  * line keeps its free-text unit. The server re-checks every rule (assertInputLineIsValid).
  * Edit mode disables Save until something changed (diffRecipeLine — the server's own test).
  */
-import { useMemo, useState } from "react";
+import { useId, useMemo, useState } from "react";
 
 import { useTranslation } from "@/lib/i18n/provider";
 import type { TranslationKey } from "@/lib/i18n/types";
@@ -54,6 +54,11 @@ export function RecipeLineEditor({
   onCancel: () => void;
 }) {
   const { t } = useTranslation();
+  // Every control is named programmatically (aria-labelledby → its visible, translated label).
+  const ids = useId();
+  const qtyLabelId = `${ids}-qty`;
+  const unitLabelId = `${ids}-unit`;
+  const portionedLabelId = `${ids}-portioned`;
   const [choice, setChoice] = useState<IngredientOption | null>(() => (initial ? optionForLine(initial, options) : null));
   const [qty, setQty] = useState(initial ? String(initial.quantity) : "");
   const [unit, setUnit] = useState(initial?.unit ?? "");
@@ -126,8 +131,9 @@ export function RecipeLineEditor({
           <p className="text-xs text-co-text-muted">{t(rk("recipes.input.product_hint"))}</p>
         ) : null}
         <label className="block">
-          <span className="text-sm font-bold text-co-text">{t(rk("recipes.input.quantity"))}</span>
+          <span id={qtyLabelId} className="text-sm font-bold text-co-text">{t(rk("recipes.input.quantity"))}</span>
           <input
+            aria-labelledby={qtyLabelId}
             className={fieldCls}
             type="number"
             min={0.001}
@@ -139,9 +145,10 @@ export function RecipeLineEditor({
           />
         </label>
         <label className="block">
-          <span className="text-sm font-bold text-co-text">{t(rk("recipes.input.unit"))}</span>
+          <span id={unitLabelId} className="text-sm font-bold text-co-text">{t(rk("recipes.input.unit"))}</span>
           {unitChoices === null ? (
             <input
+              aria-labelledby={unitLabelId}
               className={fieldCls}
               type="text"
               value={unit}
@@ -150,7 +157,7 @@ export function RecipeLineEditor({
               onChange={(e) => setUnit(e.target.value)}
             />
           ) : (
-            <select className={fieldCls} value={unit} disabled={busy || choice === null} onChange={(e) => setUnit(e.target.value)}>
+            <select aria-labelledby={unitLabelId} className={fieldCls} value={unit} disabled={busy || choice === null} onChange={(e) => setUnit(e.target.value)}>
               <option value="">{t(rk("recipes.input.unit_placeholder"))}</option>
               {unitChoices.map((u) => (
                 <option key={u} value={u}>{u}</option>
@@ -166,13 +173,14 @@ export function RecipeLineEditor({
         {choice !== null && choice.kind !== "item" ? (
           <label className="flex min-h-[44px] items-center gap-2">
             <input
+              aria-labelledby={portionedLabelId}
               type="checkbox"
               checked={portioned}
               disabled={busy}
               onChange={(e) => setPortioned(e.target.checked)}
               className="h-5 w-5 rounded border-2 border-co-border"
             />
-            <span className="text-sm font-bold text-co-text">{t(rk("recipes.input.portioned"))}</span>
+            <span id={portionedLabelId} className="text-sm font-bold text-co-text">{t(rk("recipes.input.portioned"))}</span>
           </label>
         ) : null}
         {shownError ? <p role="alert" className="text-sm text-co-cta-text">{shownError}</p> : null}
