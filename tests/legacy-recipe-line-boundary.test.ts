@@ -6,6 +6,7 @@
  */
 import { readFileSync } from "node:fs";
 import { createElement, type ReactNode } from "react";
+import { jsx } from "react/jsx-runtime";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 
@@ -38,7 +39,7 @@ const RID = "7d0c1f2e-0000-4000-8000-000000000001";
 const SHOP = "6f1d2c3e-0000-4000-8000-00000000000a";
 const html_ = (s: string) => s.replace(/'/g, "&#x27;");
 const render = (children: ReactNode, language: Language = "en") =>
-  renderToStaticMarkup(createElement(TranslationProvider, { initialLanguage: language, children }));
+  renderToStaticMarkup(jsx(TranslationProvider, { initialLanguage: language, children }));
 
 describe("a GM never edits the global recipe's lines (lib, before any I/O)", () => {
   it("add, update and remove of a LINE refuse a GM by name", async () => {
