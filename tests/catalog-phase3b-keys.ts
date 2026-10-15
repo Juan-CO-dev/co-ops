@@ -6,7 +6,7 @@ export const PHASE3B_KEYS = [
   "catalog.recipe.connections", "catalog.recipe.ingredients_from", "catalog.recipe.vendors_none", "catalog.recipe.makes", "catalog.recipe.used_in", "catalog.recipe.used_in_none",
   "catalog.recipe.section.lines", "catalog.recipe.lines_count", "catalog.recipe.changed_here", "catalog.recipe.edit_line", "catalog.recipe.remove_line",
   "catalog.recipe.add_line", "catalog.recipe.edit_title", "catalog.recipe.add_title", "catalog.recipe.see_changes", "catalog.recipe.cancel",
-  "catalog.recipe.pick_shop_hint", "catalog.recipe.global_moo_hint",
+  "catalog.recipe.pick_shop_hint", "catalog.recipe.global_moo_hint", "catalog.recipe.view_only",
   "catalog.recipe.differs_title", "catalog.recipe.differs_none",
   "catalog.recipe.section.makes", "catalog.recipe.yield", "catalog.recipe.cost_here", "catalog.recipe.edit_outputs",
   "catalog.recipe.section.others", "catalog.recipe.others_count", "catalog.recipe.others_none", "catalog.recipe.adopt", "catalog.recipe.promote",

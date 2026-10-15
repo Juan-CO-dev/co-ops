@@ -6547,6 +6547,7 @@
   "catalog.recipe.cancel": "Cancelar",
   "catalog.recipe.pick_shop_hint": "Para cambiar la receta de tu tienda, elige tu tienda arriba.",
   "catalog.recipe.global_moo_hint": "Solo el Director de Operaciones cambia la receta para todas las tiendas.",
+  "catalog.recipe.view_only": "Puedes ver esta receta. Tu gerente general la cambia para tu tienda.",
   "catalog.recipe.differs_title": "Cambiado respecto al predeterminado",
   "catalog.recipe.differs_none": "Igual que el predeterminado ahora.",
   "catalog.recipe.section.makes": "Qué hace",

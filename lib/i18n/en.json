@@ -6547,6 +6547,7 @@
   "catalog.recipe.cancel": "Cancel",
   "catalog.recipe.pick_shop_hint": "To change your shop's recipe, pick your shop above.",
   "catalog.recipe.global_moo_hint": "Only the Director of Operations changes the recipe for every shop.",
+  "catalog.recipe.view_only": "You can look at this recipe. Your general manager changes it for your shop.",
   "catalog.recipe.differs_title": "Changed from the default",
   "catalog.recipe.differs_none": "Same as the default right now.",
   "catalog.recipe.section.makes": "What it makes",

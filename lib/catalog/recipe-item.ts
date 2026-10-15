@@ -223,7 +223,7 @@ export async function loadRecipeItemView(actor: AuthContext, recipeId: string, s
   return {
     recipe: { id: recipe.id, name: recipe.name, nameEs: recipe.name_es, recipeType: recipe.recipe_type === "production" ? "production" : "consumer", active: recipe.active !== false },
     shops, scope, scopeName: shopName(scope),
-    can: { editShop: canEditShop, editGlobal: gateFor(actor, null).ok },
+    can: { editShop: canEditShop, editGlobal: gateFor(actor, null).ok, shopsToEdit: shops.filter((s) => gateFor(actor, s.id).ok) },
     version: {
       scopeVersionId: live.scopeVersionId, globalVersionId: live.globalVersionId, ridesDefault: live.ridesDefault,
       adoptedFromShopName: adoptedFrom ? shopName(adoptedFrom.locationId) : null,
