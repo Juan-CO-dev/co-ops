@@ -283,13 +283,15 @@ Recorres cada estación. Revisas que el cierre de anoche coincida con lo que ves
 
 1. Revisa una estación. Si se ve bien, toca **Verificar** en su tarjeta. Las líneas de la tarjeta quedan marcadas.
 
-2. Lee el termómetro del refrigerador. Escribe el número en la casilla de temperatura de esa tarjeta. La tarjeta queda lista cuando pones la temperatura. Solo la primera tarjeta empieza abierta. Toca el nombre de una tarjeta para abrirla y ver su casilla de temperatura.
+2. Lee el termómetro del refrigerador. Escribe el número en la casilla de temperatura de esa tarjeta. La tarjeta queda lista cuando pones la temperatura. Solo la primera tarjeta empieza abierta. Toca el nombre de una tarjeta para abrirla y ver su casilla de temperatura. Puedes tener más de una tarjeta abierta a la vez.
 
 3. Si algo está mal, toca **Añadir comentario** en esa línea. Escribe lo que encontraste. Avísale también a tu encargado de llaves.
 
 4. Ahora las secciones de prep: Verduras (Veg), Cocidos (Cooks), Acompañantes (Sides), Salsas (Sauces) y Rebanado (Slicing). Abre una. Algunos productos no tienen conteo de anoche. Escribe lo que ves en la casilla **Recuento del opener** de cada uno. Luego toca **Verificar sección**.
 
-5. Puede salir un cuadro rosa debajo de las tarjetas: "No se detectaron datos de cierre previo". Sale cuando escribes un recuento de un producto que no tenía conteo de anoche. Elige el motivo correcto: **Ubicación cerrada (planificado)** o **Cierre omitido / No sé**.
+   ¿No puedes leer un termómetro o contar un estante? Pregúntale a tu encargado de llaves. No adivines. La app guarda el número que escribes, y tu gerente lo ve.
+
+5. Puede salir un cuadro rosa debajo de las tarjetas: "No se detectaron datos de cierre previo". Sale cuando escribes un recuento de un producto que no tenía conteo de anoche. Elige el motivo correcto: **Ubicación cerrada (planificado)** o **Cierre omitido / No sé**. ¿No estabas aquí anoche? Elige **Cierre omitido / No sé**.
 
 6. Asegúrate de que todas las estaciones estén revisadas, todas las temperaturas puestas y todas las secciones de prep verificadas. Si salió el cuadro rosa, elige un motivo. Luego toca **Enviar Apertura**.
 
@@ -586,7 +588,7 @@ La lista de cierre corre todo el día. Cada estación se cierra sola cuando sus 
 
 3. Haz un trabajo y luego toca su línea. La línea queda marcada, con "tú" y la hora.
 
-4. La línea de temperatura de un refrigerador es un poco distinta. Al tocarla se abre un cuadro chico. Escribe la temperatura en **Temp (°F)** y toca **Guardar**. Algunas líneas piden un número de la misma forma, en una casilla llamada **Cantidad**.
+4. La línea de temperatura de un refrigerador es un poco distinta. Al tocarla se abre un cuadro chico. Escribe la temperatura en **Temp (°F)** y toca **Guardar**.
 
 5. ¿Quieres agregar una nota? Toca **Agregar nota** en una línea marcada. Escribe en la casilla ("¿Algo importante?"). Toca **Guardar nota**.
 
@@ -628,11 +630,13 @@ Toca **Ver más** en una parte para abrir su página completa.
 
 Para registrar un problema:
 
-1. En **Registrar nota de mantenimiento**, elige el aparato en la lista **Equipo**. ¿No está en la lista? Elige **Otro…** y escribe su nombre en la casilla **Nombre del equipo**.
+1. En **Registrar nota de mantenimiento**, elige el aparato en la lista **Equipo**. ¿Un refrigerador caliente? Elige ese refrigerador, como **Sauce Fridge**. ¿No está en la lista? Elige **Otro…** y escribe su nombre en la casilla **Nombre del equipo**.
 
 2. Escribe qué está mal en la casilla de la nota ("¿Qué está pasando?").
 
-3. Toca **Guardar nota**. La casilla se vacía y tu nota aparece en la página.
+3. Toca **Guardar nota**. La casilla se vacía.
+
+4. Para ver tu nota, toca la tarjeta del refrigerador en **Temperaturas de refrigeradores**. Está en **Historial de mantenimiento**. Otros equipos muestran su nota más nueva en su tarjeta ("Última nota: …"). Una nota de **Otro…** sale en **Notas de otros equipos**.
 
 - No sale ningún mensaje de "guardado". Si la casilla queda vacía, funcionó.
 - Una nota es un registro, no una alarma. Si no puede esperar, avísale también a un gerente de inmediato.
