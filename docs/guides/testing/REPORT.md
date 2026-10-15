@@ -9,7 +9,7 @@ For Juan. Written 2026-10-14. Sources are in this folder: `round-1/`, `round-2/`
 - **The pass bar.** Both "flash" models (glmflash and dsflash) had to finish every core staff and manager goal from the guide alone. **Round 1 met it.** Both finished 12 of 12 staff goals and 13 of 13 manager goals.
 - **Headline.** 5 of 8 staff testers and 5 of 8 manager testers finished every goal. The catering goals were done in every report except the ezCater one. That goal failed because the sim had no ezCater orders to find.
 - **What changed.** We fixed the guides twice: once after round 1, and once after the fixed app was walked again. The app got 11 fix PRs, all merged to production (#458 to #468, plus #469 as housekeeping). Juan made 17 decisions. All 80 triaged issues were sorted. The bugs went into batches B1 to B8.
-- **Round 2** (on the fixed app and fixed guides) is still running. Some round-2 runs were voided when the sim crashed (see section 3).
+- **Round 2** (on the fixed app and fixed guides): 7 models, 17 reports. dsflash met the pass bar again (12/12, 13/13). Sol and DeepSeek flagship finished every staff and manager goal. Some early round-2 runs were voided when the sim crashed; they were re-run (see section 3).
 
 ## 2. Round 1 results
 
@@ -73,18 +73,56 @@ The step cap was then raised to 800 actions. A tester that runs out must now sti
 
 ## 3. Round 2 results
 
-**(running — filled in when round 2 finishes)**
+Round 2 ran the same goals on the fixed app (B1–B9 and B7c merged) and the fixed guides. It ran 7 models: Sol, DeepSeek flash (dsflash), DeepSeek flagship, Sonnet, Haiku 5.5, Terra and Luna. Opus, Fable and Astra were not re-run, because they finished every goal in round 1. GLM and GLM flash were stopped: their test runs used up the shared GLM rate limit, and that starved Aggie's scheduled jobs. GLM flash had already met the pass bar in round 1.
 
-Round 2 runs the same goals on the fixed app (B1–B8 and B7c merged) and the fixed guides.
+**The pass bar still holds.** dsflash finished 12 of 12 staff goals and 13 of 13 manager goals again, on the fixed app.
 
-### Terra so far (the one valid round-2 tester)
+### Staff guide (12 goals)
 
-| Guide | Round 1 (done / partly / stuck) | Round 2 (done / partly / stuck) | Change |
+| Model | Round 1 | Round 2 | Notes |
 |---|---|---|---|
-| Staff (12) | 9 / 3 / 0 | 9 / 3 / 0 | Same. Still stops at the three long forms (opening prep, mid-day, AM prep) |
-| Manager (13) | 3 / 2 / 8 | 7 / 2 / 4 | **+4 done.** Opening, mid-day, Pulse note and delivery report now done. Ran out of time before the night goals (7–10) |
+| sol | 11 / 1 / 0 | **12 / 0 / 0** | Mid-day Save now takes the tap |
+| dsflash | 12 / 0 / 0 | 12 / 0 / 0 | **Pass bar** |
+| deepseek | no report | **12 / 0 / 0** | Round 1 hit the old action cap |
+| sonnet | (catering only) | 12 / 0 / 0 | |
+| haiku | (not in round 1) | 12 / 0 / 0 | Ran on the CO desktop |
+| terra | 9 / 3 / 0 | 9 / 3 / 0 | Still stops at the three long forms |
+| luna | 9 / 3 / 0 | 8 / 3 / 1 | Station claim stayed "None yet" (4); Pulse sections timed out. The sim was slow during that run |
 
-Terra was not "stuck" by the guide either time. In its words: "No guide sentence misled me." It just stopped at long forms. Round 2 found two small app things: **Post note** stays grey until you leave the box, and mid-day lets you tap Finalize before it warns about unsaved rows.
+**Total (7 reports, 84 goals):** 77 done · 6 partly · 1 stuck. Round 1 was 89 / 7 / 0 out of 96.
+
+### Manager guide (13 goals)
+
+| Model | Round 1 | Round 2 | Notes |
+|---|---|---|---|
+| sol | 12 / 1 / 0 | **13 / 0 / 0** | |
+| dsflash | 13 / 0 / 0 | 13 / 0 / 0 | **Pass bar** |
+| deepseek | no report | **13 / 0 / 0** | |
+| sonnet | (catering only) | 12 / 1 / 0 | Full count (11): the old, slow counts page timed out once. B9 has since fixed that page |
+| haiku | (not in round 1) | 10 / 3 / 0 | AM prep (7), cash (9), full count (11): no real numbers to type in a practice copy |
+| terra | 3 / 2 / 8 | **7 / 2 / 4** | +4 done. Ran out of time before the night goals |
+| luna | 12 / 1 / 0 | 3 / 3 / 7 | Ran out of stamina after the opening |
+
+**Total (7 reports, 91 goals):** 71 done · 9 partly · 11 stuck. All 11 stuck goals are Terra's and Luna's: they ran out of time or steps, not into a wrong guide sentence.
+
+### Catering guide (8 goals)
+
+| Model | Round 1 | Round 2 | Notes |
+|---|---|---|---|
+| dsflash | 7 / 1 / 0 | **8 / 0 / 0** | |
+| sonnet | 7 / 1 / 0 | 7 / 1 / 0 | Goal 6: the customer list was empty |
+| haiku | (not in round 1) | 7 / 0 / 1 | Goal 6: same |
+
+**Total (3 reports, 24 goals):** 22 done · 1 partly · 1 stuck. The ezCater goal (5) is now done in every report: testers checked both places and confirmed there are none.
+
+**Why goal 6 failed.** A lead becomes a catering customer only when it has a client email. Goal 2 did not give one, so the customer list stayed empty and there was nothing to open. That was a gap in the test goal, not in the guide or the app. Goal 2 now gives a test email (`orders@<company>.example`).
+
+### What round 2 testers still asked for
+
+- **What to type when there is no real number.** No thermometer, no shelf, no Toast figure in a practice copy. The staff guide now says: ask your key holder, don't guess, the app keeps what you type. The manager guide now says a Phase 1 recount becomes Phase 2's closer count.
+- **Which pink-box reason to pick** if you weren't there last night. The staff guide now says: **Closing was missed / I don't know**.
+- **The "Count" box** in the closing checklist never shows at CO (every number line is a fridge temp). The line is gone from the staff guide.
+- App follow-ups (no sanity range on temps and recounts, a tap while saving can untick a closing line, two save styles for prep) are logged in `app-issues-triage.md`.
 
 ### The voided runs
 
@@ -231,10 +269,10 @@ From the triage, the PR notes and the walk findings.
 - **Waiting for a repro first:** station dropdown says "No station" right after a claim (#22). PM report view after submit (#29). Small leftovers: "Confirm with your PIN" text stays, an empty "DRAFT ORDERS" heading (#67).
 - **Check production data:** closing sections showing as uncovered floor stations on the Pulse (#25). "Walk-In Fridge" / "WALK INS STATION" names; CO has no walk-ins (#68).
 - **Pulse floor map** labels overlap at tablet width. Check once on a real tablet; it may only be the test browser (#65).
-- **Spanish coverage.** Terra (round 1) saw dashboard and operations text stay in English after the switch. #460 fixed Settings. Re-check the rest in round 2.
+- **Spanish coverage.** Terra (round 1) saw dashboard and operations text stay in English after the switch. #460 fixed Settings. In round 2, every staff tester switched to Spanish and back, and none reported English left over. A person who reads Spanish should still look once.
 
 **Sim and testing**
-- Finish round 2: the flash, sol and luna re-runs after the crash, glm and deepseek with the new 800-action cap, Sonnet (staff + manager) and Haiku 5.5 (on the CO desktop).
-- Seed one ezCater order per shop on the sim (one matched in Toast, one not), so the ezCater goal can pass.
+- Round 2 is done. GLM and GLM flash were not re-run (shared rate limit; see section 3). If they are wanted, run one GLM tester at a time.
+- Seed one ezCater order per shop on the sim (one matched in Toast, one not), so the ezCater goal tests finding a real order, not just the empty list.
 - The day reset does not clear maintenance notes (about 10 old "Prep fridge" notes). Catering now has its own reset.
 - Photo retakes owed after B8 (listed at the end of `walk-findings.md`).
