@@ -1305,7 +1305,7 @@ AGMs and up can open **Admin**.
 
 **What you see**
 
-![Admin home: Used this week counts and the section tiles](img/manager/61-admin-home.png)
+![Admin home: the This week in CO-OPS card and the section tiles](img/manager/61-admin-home.png)
 
 **What to do** — Tap **Admin** in the menu. Tap a tile.
 
@@ -1315,7 +1315,7 @@ AGMs and up can open **Admin**.
 - GMs also see **Stations**, **Toast employees**, **Customers** and **Checklist Templates**.
 - A Manager of Operations also sees **User Management** and **Categories**.
 - In **Stations**, a GM sets station times for their shop. It asks for your password: **Confirm your password**. These times are only hints. They don't close a station.
-- **Used this week** shows how much the app was used.
+- **This week in CO-OPS** puts each shop side by side for the last 7 days: how many people used the app, the checklists they finished, reports, orders, deliveries, counts and catering. Jobs that run on their own (Toast, ezCater) are shown apart. Tap **Details** to see people by role and checklists by type.
 
 ### En español
 
