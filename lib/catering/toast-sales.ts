@@ -122,7 +122,7 @@ export interface LedgerRow {
  * drift sums — with no error anywhere.
  *
  * `.order("id")` is the house's stable total order for paging (the PK; same treatment
- * `loadAdoption` gives audit_log). The page callback THROWS on a read error rather than
+ * `loadWeekCard` gives audit_log). The page callback THROWS on a read error rather than
  * taking `selectAllRows`' silent `data ?? []`: an empty map here does not degrade, it
  * re-inserts the whole day at version 1.
  */

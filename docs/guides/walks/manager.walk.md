@@ -191,7 +191,7 @@ Sales (`/reports/sales`) needs a GM; you are an AGM. Do not try to open it. Log 
 ### 19. MANAGER TOOLS — ADMIN HOME — guide "Manager tools › The admin pages"
 Customers and Catering accounts need a GM; the catering walk takes them.
 Tap path: Dashboard → **Explore** → **Admin**.
-- Shot **61-admin-home** (**Used this week** and the section tiles).
+- Shot **61-admin-home** (**This week in CO-OPS** and the section tiles).
 Log every tile, and whether **Customers** is listed. Look only; open nothing.
 
 ### 20. LOG OUT — guide "Start here › Log out"
