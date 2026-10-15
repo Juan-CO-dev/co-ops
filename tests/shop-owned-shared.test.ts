@@ -53,14 +53,23 @@ describe("creation scope keeps omitted and explicit global distinct", () => {
   it.each([{ locations: [] }, { locations: [A, B] }])("requires a selection with memberships $locations", ({ locations }) => {
     expect(creationScope(gm(locations))).toEqual({ ok: false, status: 400, code: "location_required" });
   });
+  it("the gate uses the shared safe-token contract; creation additionally requires a UUID shop id", () => {
+    expect(newThingScopeGate(gm(["shop-a"]), "shop-a")).toEqual({ ok: true });
+    expect(creationScope(gm(["shop-a"]), "shop-a")).toEqual({ ok: false, status: 400, code: "invalid_payload" });
+    expect(creationScope(moo, "shop-a")).toEqual({ ok: false, status: 400, code: "invalid_payload" });
+  });
   it("MoO can explicitly choose global or any shop, but omission is not implicit global", () => {
     expect(creationScope(moo, null)).toEqual({ ok: true, scope: null });
     expect(creationScope(moo, B)).toEqual({ ok: true, scope: B });
     expect(creationScope(moo)).toEqual({ ok: false, status: 400, code: "location_required" });
   });
   it("rejects malformed scope instead of inferring a shop", () => {
-    for (const scope of ["", "global", "not-a-uuid"]) {
-      expect(creationScope(gm(), scope)).toEqual({ ok: false, status: 400, code: "invalid_payload" });
+    for (const scope of ["", "shop,location_id.is.null", "shop/other", "a".repeat(65)]) {
+      const invalid = { ok: false, status: 400, code: "invalid_payload" };
+      expect(creationScope(gm(), scope)).toEqual(invalid);
+      expect(creationScope(gm([scope]))).toEqual(invalid);
+      expect(newThingScopeGate(gm([scope]), scope)).toEqual(invalid);
+      expect(newThingScopeGate(moo, scope)).toEqual(invalid);
     }
   });
 });

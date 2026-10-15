@@ -13,10 +13,12 @@ export const OWNED = [
 
 export function buildShopOwnedFixture(includeOwned = true): Tables {
   const tables = buildRecipeVersionsFixture();
-  // Preserve the old item's omitted location projection exactly: adding explicit null
-  // changes the legacy fake DB's .is(null) product-link read and invalidates its golden.
-  for (const table of ["recipes", "menu_items"]) {
-    for (const row of tables[table]!) row.location_id = null;
+  // Omit ownership consistently on every legacy entity projection. The fake DB's
+  // .is(null) distinguishes omitted from null for item/product links; preserving
+  // omission keeps the historical goldens intact. Owned rows below are explicit.
+  // This compatibility fixture does not replace the real-schema PGlite gate.
+  for (const table of ["vendor_items", "items", "recipes", "menu_items"]) {
+    for (const row of tables[table]!) delete row.location_id;
   }
   if (!includeOwned) return tables;
   for (const own of OWNED) {

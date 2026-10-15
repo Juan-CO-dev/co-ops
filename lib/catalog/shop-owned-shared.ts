@@ -5,14 +5,15 @@
  */
 import type { RoleCode } from "@/lib/roles";
 import { recipeVersionWriteGate } from "@/lib/recipe-versions-shared";
-import { catalogShopAllowed, catalogWriteRoleAllowed, GLOBAL_VERSION_WRITE_MIN, type VersionScope } from "@/lib/sku-versions-shared";
+import { assertScopeToken, catalogShopAllowed, catalogWriteRoleAllowed, GLOBAL_VERSION_WRITE_MIN, type VersionScope } from "@/lib/sku-versions-shared";
 
 export const NEW_THING_MIN = 7;
 export const SHARE_MIN = GLOBAL_VERSION_WRITE_MIN;
 export interface ShopOwnedActor { role: RoleCode; level: number; locations: readonly string[] }
 
-/** Closed application codes; SQL emits shop_owned:<code>[:position].
- * Chunk 2 must pin every actual 0264 refusal to this list; swap has its own namespace.
+/** Closed application codes for shop_owned:<code>[:position] only.
+ * recipe_version:*, menu_item_shop:* and swap:* have separate namespaces/mappers.
+ * Pin 0264 shop_owned refusals to this list, not every refusal in that migration.
  */
 export const SHOP_OWNED_ERROR_CODES = [
   "forbidden", "not_found", "global_requires_moo", "location_required", "shop_owned_edit_here",
@@ -56,6 +57,7 @@ export function filterOwnedEntities<E extends { id: string }>(entities: readonly
 export function newThingScopeGate(actor: ShopOwnedActor, scope: VersionScope): Gate {
   if (!canWrite(actor)) return refusal("forbidden");
   if (scope === null) return actor.level >= SHARE_MIN ? { ok: true } : refusal("global_requires_moo");
+  try { assertScopeToken(scope); } catch { return refusal("invalid_payload"); }
   return catalogShopAllowed(actor, scope) ? { ok: true } : refusal("not_found");
 }
 
@@ -68,6 +70,7 @@ export function creationScope(actor: ShopOwnedActor, requested?: VersionScope): 
     if (memberships.length !== 1) return refusal("location_required");
     scope = memberships[0]!;
   }
+  // A shop id is a UUID; the safe-token check alone would let a malformed id reach the RPC as a 22P02.
   if (scope !== null && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(scope)) {
     return refusal("invalid_payload");
   }
@@ -102,16 +105,20 @@ export function shareGate(actor: Pick<ShopOwnedActor, "role" | "level">): Gate {
   return actor.level >= SHARE_MIN ? { ok: true } : refusal("global_requires_moo");
 }
 
-/** One-based ingredient positions. Ownership maps contain owned rows only; existence is checked separately. */
+/** One-based ingredient positions. Ownership maps contain owned rows only; existence is checked separately.
+ * visibilityScope is the recipe owner shop for an owned recipe, or the selected
+ * shop-version scope (null for the shared default) for a shared recipe.
+ * It is not the owned recipe's direct-write scope, which remains null.
+ */
 export function linesOwnedElsewhere(
   lines: ReadonlyArray<{ componentSkuId: string | null; componentItemId: string | null }>,
   owners: { skus: ReadonlyMap<string, string>; items: ReadonlyMap<string, string> },
-  scope: VersionScope,
+  visibilityScope: VersionScope,
 ): number[] {
   return lines.flatMap((line, i) => {
     const skuOwner = line.componentSkuId === null ? undefined : owners.skus.get(line.componentSkuId);
     const itemOwner = line.componentItemId === null ? undefined : owners.items.get(line.componentItemId);
-    return ownerVisible(skuOwner, scope) && ownerVisible(itemOwner, scope) ? [] : [i + 1];
+    return ownerVisible(skuOwner, visibilityScope) && ownerVisible(itemOwner, visibilityScope) ? [] : [i + 1];
   });
 }
 

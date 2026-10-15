@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { buildShopOwnedFixture, OWNED } from "./fixtures/shop-owned-fixture";
 import { migratedShopOwnedDb, SHOP_OWNED_ID } from "./fixtures/shop-owned-pglite";
 
 describe("shop-owned PGlite fixture", () => {
@@ -58,6 +59,35 @@ describe("shop-owned PGlite fixture", () => {
       for (const id of Object.values(rows.rows[0]!)) expect(id).toMatch(/^[0-9a-f-]{36}$/);
     } finally {
       await db.close();
+    }
+  });
+});
+
+
+describe("shop-owned consumer fixture ownership", () => {
+  it("omits ownership consistently on all legacy entity rows", () => {
+    const tables = buildShopOwnedFixture(false);
+    for (const table of ["vendor_items", "items", "recipes", "menu_items"]) {
+      expect(tables[table]!.length).toBeGreaterThan(0);
+      for (const row of tables[table]!) expect(row).not.toHaveProperty("location_id");
+    }
+  });
+
+  it("keeps every owned input component in its recipe's owner shop", () => {
+    const tables = buildShopOwnedFixture();
+    const recipes = tables.recipes!.filter(row => row.location_id != null);
+    expect(recipes).toHaveLength(OWNED.length * 2);
+    for (const recipe of recipes) {
+      const lines = tables.recipe_inputs!.filter(row => row.recipe_id === recipe.id);
+      expect(lines.length).toBeGreaterThan(0);
+      for (const line of lines) {
+        const components = [
+          ...tables.vendor_items!.filter(row => row.id === line.component_sku_id),
+          ...tables.items!.filter(row => row.id === line.component_item_id),
+        ];
+        expect(components).toHaveLength(1);
+        expect(components[0]!.location_id).toBe(recipe.location_id);
+      }
     }
   });
 });

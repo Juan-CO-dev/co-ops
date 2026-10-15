@@ -1,6 +1,6 @@
 # Catalog Phase 4a — Chunk 1 handoff
 
-Approved basis: `2026-10-15-catalog-phase4a-BUILD.md` at `9ba65d7f` (Aggie round 3). Implementation is limited to Chunk 1. Branch `feat/catalog-p4a`, clone `C:\Users\conta\co-ops-astra-p4`. Changes remain uncommitted for CC's review. No new migration, external database access, route change or page integration.
+Approved basis: `2026-10-15-catalog-phase4a-BUILD.md` at `9ba65d7f` (Aggie round 3). Implementation is limited to Chunk 1. Branch `feat/catalog-p4a`, clone `C:\Users\conta\co-ops-astra-p4`. Chunk 1 was committed at `5a302b9d`; Chunk 2 follows at `99e84a26`. This review-fix change set remains uncommitted. No new migration, external database access, route change or page integration.
 
 ## Baseline and fixtures
 
@@ -8,7 +8,7 @@ Before implementation, `npx.cmd vitest run --pool=threads --no-cache tests/recip
 
 `shop-owned-equivalence.test.ts` reuses the Phase 3a costing/depletion/menu-board and line-reader goldens. Its two-shop fixture adds disjoint owned SKU → prep recipe/item → sandwich recipe/menu chains, with no foreign-owned edges. Shared depletion stays unchanged. All-scope impact readers remain inclusive. Tests labelled `CHUNK 3` are ordinary failing tests, deliberately neither skipped nor marked expected-failure: the operational reader implementation is later work. The regular foreign-product-member regression now specifies exclusion; global store-copy compatibility has a separate passing assertion.
 
-The legacy fake fixture omits `items.location_id`; its `.is(null)` behavior differs from real SQL. Preserve that historical projection for the existing golden rather than rewrite the golden. New owned items have explicit owners. This is why these goldens do **not** replace the approved real-schema equivalence gate.
+The legacy fake fixture consistently omits `location_id` on SKU, item, recipe and menu-item entity rows. Its `.is(null)` behavior differs from real SQL for item/product links, so omission preserves the existing goldens without rewriting them. New owned entities have explicit owners; a fixture test proves every owned recipe input component has the same owner as its recipe. These compatibility goldens do **not** replace the real-schema equivalence gate.
 
 `migratedCatalogDb()` runs the committed 0258–0263 files in memory. `migratedShopOwnedDb()` seeds a two-shop shared baseline; it does not invent 0264 columns or apply 0264. The base stub retains real product membership constraints, primary scope uniqueness (including null), metadata and generated IDs. Constraint tests assert named errors and persisted postconditions. Pack/price and menu-overlay tables come from the existing migration chain, not duplicate stubs.
 
@@ -22,7 +22,7 @@ Chunk 2 must apply its real 0264 **only in the authorized in-memory harness**, a
 | --- | --- |
 | `ShopOwnedActor` | Requires role code, level and memberships. Use the current authenticated role; social-media roles are excluded. |
 | `ownerVisible(owner, scope)` | Shared in every scope; owned only at its shop. This is operational visibility, not the authorization rule for an administrative all-shop list. Missing owner is pre-migration compatibility; new loaders must select the column. |
-| `creationScope(actor, requested?)` | Explicit null requests global and requires MoO+. Omission infers exactly one distinct membership; zero/multiple memberships return `location_required`, including MoO. Invalid UUID selection returns `invalid_payload`. The library caller must still verify an active shop. |
+| `creationScope(actor, requested?)` | Explicit null requests global and requires MoO+. Omission infers exactly one distinct membership; zero/multiple memberships return `location_required`, including MoO. Unsafe scope tokens return `invalid_payload` through the existing `assertScopeToken` in both creation gates; this helper is not strict UUID validation. The library caller must still verify an active shop. |
 | `newThingScopeGate` / `ownerWriteCheck` | GM+ own shop, MoO+ any shop/global. Shared default edits remain MoO+. A successful gate does not bind the later mutation: compare the read owner atomically, null-safely. |
 | `ownedAwareRecipeGate` | Preserves shared shop-version permissions; a GM's null-scope request returns `ownerCheck: true`, requiring the post-read owner check before any write. |
 | `ownedRecipeScopeRefusal` | Owned recipes edit directly at null write scope. Own-shop version request → 409 `shop_owned_edit_here`; foreign scope → 404 `not_found`. |
@@ -37,7 +37,7 @@ These are approved downstream contracts, **not routes or RPCs implemented by thi
 
 - Keep owner, direct-write scope (`null` for owned entities) and cost/read scope (owner shop) distinct in DTOs and capabilities. The owner-aware gate never alone authorizes a database write.
 - Chunk 2 owns atomic `create_catalog_sku`, `create_shop_recipe`, `create_shop_sandwich`, owned version saves and sharing. Inline prep output is exclusive with existing output ID; its definition and recipe commit or roll back together. Preserve HTTP recipe `{id}` and add committed output-item identities. Do not reassign shared prep items.
-- Preserve exact status/code and positional line details in library → route → client handling. Chunk 7 pins actual SQL refusals against the closed list and en/es messages; add new codes explicitly as the real migration is authored. No generic translation fallback counts as coverage.
+- Preserve exact status/code and positional line details in library → route → client handling. Chunk 7 pins HTTP status mapping against `RPC_STATUS` in `shop-owned-shared.ts` as the single source, plus actual SQL refusals against the closed list and en/es messages; add new codes explicitly as the real migration is authored. No generic translation fallback counts as coverage.
 - Treat `ownership_changed`, `items_changed` and `skus_changed` as 409 conflicts. Retain existing recipe/menu snapshot comparisons: adding ownership columns can stale open previews; refuse and require a fresh review, never auto-retry with a replacement baseline.
 - Recipe/menu catalog page editing, post-create navigation, both catalog/legacy reopen UI journeys, and delivered 3b capability/picker/history integration belong to 4b. Re-read the actual 3b delivery commit and `requireGlobalLineWriter`; absent page modules are not a 4a gate.
 - Legacy scoped server loaders, scope navigation and keyed draft reset, inline output payloads, owner-bound writers, add-menu-output ownership and their route/library/SQL tests remain 4a obligations. The scope selector must reauthorize and reload; `router.refresh()` alone does not reset drafts.
@@ -63,3 +63,45 @@ All eight failures are labelled `CHUNK 3`: graph visibility (3 scopes), single/b
 `npx.cmd tsc --noEmit` completed with exit 0 and no diagnostics. `git diff --check` passed. The unrestricted full-suite command and a retry with `--maxWorkers=2` were both started, then stopped without final counts after heavy load/slow progress. Neither attempt is a full-suite pass. No build, external DB test, new migration, 0264 equivalence proof or cross-family code review was run; those remain downstream/lead gates.
 
 Implementation deviations: only supporting fixture/test and handoff files were added beyond the named file list. The approved real-schema 0264 comparison remains deferred exactly as planned. The regular-member expectation was switched to its intended red contract in Chunk 1 so the upcoming eligibility change is test-first. No golden regeneration, production change, commit, push or merge.
+
+
+## Every chunk boundary (Aggie r1 conditions)
+
+Run the touched tests and existing golden suites, then both in-memory SQL harnesses and typecheck:
+
+```powershell
+node scripts/sql-harness-0262.mjs
+node scripts/sql-harness-0263.mjs
+npx.cmd vitest run --pool=threads --no-cache tests/shop-owned-migration.test.ts tests/shop-owned-pglite.test.ts
+npx.cmd tsc --noEmit
+```
+
+0264 currently has the Vitest migration/PGlite harness above, not a standalone `scripts/sql-harness-0264.mjs`. If that script is added, add and run it at every chunk boundary too. These harnesses use synthetic in-memory databases only.
+
+At the **start of Chunk 3**, extend the PGlite shared baseline with packs, prices, shop versions and count events/lines before capturing the pre-0264 outputs. Apply actual 0264 with triggers enabled, feed persisted rows into production resolvers, and compare costing/depletion/ordering/count outputs byte-for-byte. Do not substitute handwritten fixture goldens. This baseline extension is deferred work, not part of this review fix.
+
+CC gate: never open a PR or merge this branch while any of the eight `CHUNK 3` tests remain red.
+
+
+## Aggie r1 review-fix verification (after 99e84a26)
+
+P2-2 and P2-3, and P3-1 through P3-7 are addressed in this uncommitted change set. Only chunk-1 conditions were applied; Chunk 3 has not started. Migration 0264 was normalized to LF and verified byte-identical to HEAD after newline normalization.
+
+```powershell
+npx.cmd vitest run --pool=threads --no-cache tests/shop-owned-shared.test.ts tests/shop-owned-equivalence.test.ts tests/products-store-loader.test.ts tests/shop-owned-fixture.test.ts tests/recipe-versions-equivalence.test.ts tests/shop-versions-equivalence.test.ts tests/counts-onhand-equivalence.test.ts tests/recipe-provenance-writer.test.ts tests/recipe-loader-schema-check.test.ts tests/shop-owned-migration.test.ts tests/shop-owned-pglite.test.ts
+node scripts/sql-harness-0262.mjs
+node scripts/sql-harness-0263.mjs
+npx.cmd tsc --noEmit
+git diff --check
+```
+
+```text
+Vitest: Test Files 2 failed | 9 passed (11)
+        Tests      8 failed | 156 passed (164); exit 1
+0262:   PASS
+0263:   PASS
+tsc:    exit 0, no diagnostics
+diff:   exit 0
+```
+
+Intentionally red, separately: graph visibility at null/loc-1/loc-2 (3); single/batch line visibility at null/loc-1/loc-2 (3); foreign regular members with retired supplier (1); ordinary owned members excluded from the store-copy global exception (1). All eight are labelled `CHUNK 3`. All remaining tests, including unchanged goldens and the 0264 in-memory harness, passed. No external database, fetch, push, merge or commit was performed. The no-PR/no-merge gate remains in force.
