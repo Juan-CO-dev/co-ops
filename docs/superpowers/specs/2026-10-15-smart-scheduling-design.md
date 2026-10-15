@@ -132,6 +132,30 @@ The scheduler only places a person in positions their work type allows, and the 
   - **Slow days:** only ONE Prep/Dishwasher. A second is added only when expected demand needs it, and the reason says so.
   - **Weekends:** BOTH (Prep + Prep/Dishwasher) until about 5 PM, then only the Prep/Dishwasher through close.
 
+### 5.7 Schedule structure settings — every rule is tunable (Juan, 2026-10-15)
+"So the system can actually build schedules we want and fix the structure within those business constraints."
+
+Nothing structural is hard-coded. Each shop has a **Schedule structure** settings area that the manager edits; the scheduler builds strictly within it.
+- **Shop day** (§5.6): prep start, Prep/Dishwasher arrival, service start, service close, everyone-out window.
+- **Day types:** what makes a day slow, normal or busy (forecast thresholds, with a per-day manager override), and which days are the weekend.
+- **Crews per day type** (an editable table):
+  - the opening crew;
+  - BOH staffing (e.g. slow = 1 Prep/Dishwasher; weekend = both until ~5 PM);
+  - the line arrival waves (setup / at service / rush: counts and times);
+  - the closing crew (Register/Delivery count, Walk-ins count, Prep/Dishwasher).
+- **Station hours and head counts:** each station position's open, trim and close times and how many people it needs (e.g. Register & Delivery 2 until the 4 PM trim, 1 after).
+- **Leadership:**
+  - manager on duty required every hour (on/off);
+  - which roles can carry the Closing Manager role;
+  - leader open/close defaults by role (§5.3).
+- **Limits:**
+  - manager floor-time cap;
+  - overtime threshold (defaults from 7shifts labor settings);
+  - flex-day rules (frequency, max length);
+  - closing checklist duration (measured from real completion timestamps, with a manager override).
+
+Any change shows "Settings changed — regenerate?". The rebuilt week stays inside the new rules, and every reason cites the rule it followed ("Busy Thursday → 2 Walk-ins at close (Closing crew rule)").
+
 ## 6. The scheduler
 
 ### 6.1 When it runs
