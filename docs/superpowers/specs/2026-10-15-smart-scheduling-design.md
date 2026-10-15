@@ -113,11 +113,11 @@ From these it produces a **skill per position**, for every position the person h
 A per-day toggle: "Cristian in today", "Pete in today". When present, they add coverage at $0 to the hourly budget.
 
 ### 5.5 Work types (per employee)
-- **BOH (back of house):** prep (mostly slicing and portioning) and DISHWASHING. Some people are prep/dish ONLY.
+- **BOH (back of house):** two positions — **Prep** (pure prep: mostly slicing and portioning) and **Prep/Dishwasher** (prep plus dishes). Dishwashing is never a standalone position. Some people are BOH-only.
 - **FOH (front of house):** the line stations, plus some prep.
 - **Management** (GM, AGM, Shift Lead, MoO, Owner): can cover ANY station and/or prep, to save hourly hours or fill gaps (salaried cover first, §6.3).
 
-The scheduler only places a person in positions their work type allows, and the manager can widen it per person. **Dishwasher is a staffed position** needed through the day and especially at close.
+The scheduler only places a person in positions their work type allows, and the manager can widen it per person. **Prep/Dishwasher** is needed through the day and especially at close.
 
 ### 5.6 The day's anchor times (set per shop by the manager)
 - **Prep starts** at 7:00 AM.
