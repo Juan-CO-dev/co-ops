@@ -1438,6 +1438,7 @@
   "admin.skus.error.step_up_required": "Please confirm your password to continue.",
   "admin.skus.error.step_up_stale": "Your confirmation expired — please confirm your password again.",
   "admin.skus.error.step_up_grant_required": "This one asks for your password every time. Tap it again and confirm your password.",
+  "admin.skus.error.avg_required_by_chain": "This SKU's pack ends in a count or volume unit, so it needs its avg oz per each. Enter a number instead of clearing it.",
   "admin.skus.cost.per_oz": "Cost",
   "admin.skus.cost.current": "Current",
   "admin.skus.cost.used_by": "Used by",

@@ -42,7 +42,7 @@ import type { SkuClass } from "@/lib/admin/catalog-shared";
 // SKU_CLASSES + isSkuClass live in the client-safe shared module (used by the
 // SKU form); re-export so server consumers keep importing from lib/admin/skus.
 export { SKU_CLASSES, isSkuClass } from "@/lib/admin/catalog-shared";
-import { isSkuClass } from "@/lib/admin/catalog-shared";
+import { isSkuClass, chainNeedsAvgOzPerEach } from "@/lib/admin/catalog-shared";
 import { parWriteColumns, type DayClass } from "@/lib/dynamic-pars-shared";
 import { parAutoLaneReady } from "@/lib/dynamic-pars-probes";
 // MEMBERSHIP HAS ONE WRITER, AND IT IS NOT THIS MODULE (0179; audit fix 2026-08-29).
@@ -762,6 +762,30 @@ async function applyMembershipChange(
   }
 }
 
+/** Refuse to clear the avg when the SKU's ACTIVE chain needs it (chainNeedsAvgOzPerEach — the
+ *  same rule the client uses and the pack-chain leaf law enforces). */
+async function assertAvgNotNeededByChain(skuId: string, skuClass: SkuClass): Promise<void> {
+  if (skuClass !== "raw") return;
+  const sb = getServiceRoleClient();
+  const [levelsRes, measuresRes] = await Promise.all([
+    sb.from("sku_pack_levels").select("contains_measure_unit").eq("sku_id", skuId).eq("active", true)
+      .returns<Array<{ contains_measure_unit: string | null }>>(),
+    sb.from("measure_units").select("label, dimension").eq("active", true)
+      .returns<Array<{ label: string; dimension: string }>>(),
+  ]);
+  if (levelsRes.error) throw new Error(`updateSku chain read failed: ${levelsRes.error.message}`);
+  if (measuresRes.error) throw new Error(`updateSku measures read failed: ${measuresRes.error.message}`);
+  const dims = new Map((measuresRes.data ?? []).map((m) => [m.label, m.dimension] as const));
+  const levels = (levelsRes.data ?? []).map((l) => ({ containsMeasureUnit: l.contains_measure_unit }));
+  if (chainNeedsAvgOzPerEach(levels, dims, skuClass)) {
+    throw new AdminSkuError(
+      400,
+      "avg_required_by_chain",
+      "This SKU's chain ends in a count/volume unit, so it needs its avg oz per each — it can't be cleared",
+    );
+  }
+}
+
 export async function updateSku(
   actor: AuthContext,
   args: { id: string; changes: UpdateSkuChanges },
@@ -770,6 +794,7 @@ export async function updateSku(
 
   const { changes } = args;
   const update: Record<string, unknown> = {};
+  let currentSkuClass: string | null = null;
 
   // The SKU is addressed by opaque id, so its shop has to be READ before it can be bound
   // (the cancelLtoEvent posture). A shop-scoped SKU may only be edited by an actor who
@@ -778,11 +803,12 @@ export async function updateSku(
     const sbBind = getServiceRoleClient();
     const { data: cur, error: curErr } = await sbBind
       .from("vendor_items")
-      .select("id, location_id")
+      .select("id, location_id, sku_class")
       .eq("id", args.id)
-      .maybeSingle<{ id: string; location_id: string | null }>();
+      .maybeSingle<{ id: string; location_id: string | null; sku_class: string | null }>();
     if (curErr) throw new Error(`updateSku bind read failed: ${curErr.message}`);
     if (!cur) throw new AdminSkuError(404, "sku_not_found", "SKU not found");
+    currentSkuClass = cur.sku_class;
     if (cur.location_id !== null && !lockLocationContext(actorLoc(actor), cur.location_id)) {
       throw new AdminSkuError(404, "not_found", "SKU not found");
     }
@@ -827,6 +853,15 @@ export async function updateSku(
     if (!isSkuClass(changes.skuClass)) throw new AdminSkuError(400, "invalid_sku_class", "Unknown SKU class");
     update.sku_class = changes.skuClass;
   }
+  // Chunk-4 review P2: clearing avg_oz_per_each on a SKU whose LIVE chain needs it (a raw SKU
+  // whose chain ends in a count/volume unit — the leaf law's leaf_needs_avg) would leave the
+  // chain unresolvable to oz. The avg field is visible on chained SKUs now, so refuse it here,
+  // with the class this save leaves the SKU in (moving away from raw lifts the need).
+  if ("avg_oz_per_each" in update && update.avg_oz_per_each === null) {
+    const nextClass = (update.sku_class as SkuClass | undefined) ?? (isSkuClass(currentSkuClass) ? currentSkuClass : "raw");
+    await assertAvgNotNeededByChain(args.id, nextClass);
+  }
+
   // Membership (0179) is DELIBERATELY ABSENT from this payload — it is applied below,
   // through lib/products.ts, AFTER every other field has validated. See
   // applyMembershipChange.

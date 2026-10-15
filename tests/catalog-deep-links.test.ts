@@ -104,6 +104,7 @@ describe("no catalog deep link lands on a whole list any more", () => {
     const src = read("components/admin/menu-costing/MenuCostingClient.tsx");
     expect(src).toContain("href={skuCatalogHref(id)}");
     expect(src).toContain("prepItemHref)");
-    expect(src).toContain("productHref,");
+    // The CALL SITE, not the import line (the import also contains "productHref,").
+    expect(src).toMatch(/"admin\.menu_costing\.drawer\.unknown_product",\s*productHref,\s*\)/);
   });
 });

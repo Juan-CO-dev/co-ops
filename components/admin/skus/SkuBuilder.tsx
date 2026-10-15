@@ -30,7 +30,7 @@
  * design §1, builder-seat find).
  */
 
-import { useMemo, useState } from "react";
+import { useId, useMemo, useState } from "react";
 
 import { useTranslation } from "@/lib/i18n/provider";
 import type { TranslationKey } from "@/lib/i18n/types";
@@ -275,6 +275,9 @@ export function SkuBuilder({
   const [chainRows, setChainRows] = useState<EditorLevel[]>([]);
   const [chainBusy, setChainBusy] = useState(false);
   const [chainErr, setChainErr] = useState<string | null>(null);
+  // Chunk-4 review: the identity Save may not clear an avg the chain needs (shown under the field).
+  const [avgErr, setAvgErr] = useState<string | null>(null);
+  const avgHintId = useId();
   const [chainSavedTick, setChainSavedTick] = useState(0); // bump on save to refresh display copy
 
   const parseNum = (s: string): number | null => {
@@ -340,6 +343,13 @@ export function SkuBuilder({
 
   const submit = () => {
     if (!canSubmit) return;
+    setAvgErr(null);
+    // A chained raw SKU whose chain ends in count/volume needs its avg: clearing it would leave
+    // the chain unresolvable to oz (the server refuses too, avg_required_by_chain).
+    if (chainNeedsAvg && parseNum(avgOzPerEach) === null) {
+      setAvgErr(t("admin.skus.error.leaf_needs_avg"));
+      return;
+    }
     // ADD flow: the wizard's assembled chain (or null when the manager left it
     // untouched — a bare save stays valid). The server derives+syncs the flat
     // pack fields from this chain. EDIT-mode chain edits go through onSaveChain
@@ -651,16 +661,18 @@ export function SkuBuilder({
                 <span className="text-[11px] font-bold text-co-text-muted">{t("admin.skus.field.avg_oz_per_each")}</span>
                 <input
                   aria-label={t("admin.skus.field.avg_oz_per_each")}
+                  aria-describedby={avgHintId}
                   className={fieldCls}
                   type="number"
-                  min={0}
+                  min={0.001}
                   step="any"
                   inputMode="decimal"
                   value={avgOzPerEach}
                   disabled={busy || chainBusy}
-                  onChange={(e) => setAvgOzPerEach(e.target.value)}
+                  onChange={(e) => { setAvgOzPerEach(e.target.value); setAvgErr(null); }}
                 />
-                <span className="mt-1 block text-[11px] text-co-text-muted">{t("admin.skus.avg_oz_per_each_hint")}</span>
+                <span id={avgHintId} className="mt-1 block text-[11px] text-co-text-muted">{t("admin.skus.avg_oz_per_each_hint")}</span>
+                {avgErr ? <span role="alert" className="mt-1 block text-sm text-co-cta-text">{avgErr}</span> : null}
               </label>
             ) : null}
           </div>

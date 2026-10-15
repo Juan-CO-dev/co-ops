@@ -1438,6 +1438,7 @@
   "admin.skus.error.step_up_required": "Confirma tu contraseña para continuar.",
   "admin.skus.error.step_up_stale": "Tu confirmación expiró — confirma tu contraseña de nuevo.",
   "admin.skus.error.step_up_grant_required": "Esto pide tu contraseña cada vez. Tócalo otra vez y confirma tu contraseña.",
+  "admin.skus.error.avg_required_by_chain": "El empaque de este SKU termina en una unidad de conteo o volumen, así que necesita su promedio de oz por unidad. Escribe un número en vez de borrarlo.",
   "admin.skus.cost.per_oz": "Costo",
   "admin.skus.cost.current": "Actual",
   "admin.skus.cost.used_by": "Usado por",
