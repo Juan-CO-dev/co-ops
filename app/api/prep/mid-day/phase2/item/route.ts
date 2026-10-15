@@ -5,7 +5,9 @@ import { hasTaskAccess } from "@/lib/assignments";
  * Records the prepped amount for one item (append-only supersede). Any clocked-in
  * cook; window = phase1_complete.
  *
- * Body: { instanceId: uuid, templateItemId: uuid, prepped: number >= 0 }
+ * Body: { instanceId: uuid, templateItemId: uuid, prepped: number >= 0, overUnder?, batch?, confirmedConsumption? }
+ * 400 off_need_reason_required — off the need without a valid over/under reason (B11a: the
+ *     server runs opening's rule now; batch rows are exempt on the over side, as in opening).
  * Response (success): { completionId: string, savedAt: string }
  */
 
@@ -152,6 +154,15 @@ export async function POST(req: NextRequest) {
         // D-66 — the row's stored prep settings are malformed; it was skipped and cannot be written.
         return jsonError(400, "prep_shape", {
           message: "This item's prep settings are broken, so it can't be saved. A manager can fix it in Admin.",
+          template_item_id: result.templateItemId,
+        });
+      }
+      if (result.reason === "reason_invalid") {
+        // B11a: off the need without a valid reason (opening's rule, lib/prep-reason-shared.ts).
+        // The form renders mid_day_prep.phase2.reason_required for this code.
+        return jsonError(400, "off_need_reason_required", {
+          message: "A reason is required when the amount is off the need.",
+          field: result.field,
           template_item_id: result.templateItemId,
         });
       }

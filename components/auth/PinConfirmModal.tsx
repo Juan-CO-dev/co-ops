@@ -246,6 +246,12 @@ export function PinConfirmModal({
             onError(body);
             return;
 
+          case "blank_reason":
+            // B11a: the server refused an empty "why" — close and let the closer write one.
+            triggerError(t("auth.pin_modal.error_blank_reason"));
+            onError(body);
+            return;
+
           case "missing_count":
           case "missing_photo":
             triggerError(t("auth.pin_modal.error_reload"));

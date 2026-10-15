@@ -44,6 +44,7 @@ import {
 import type { TranslationKey } from "@/lib/i18n/types";
 import { etCalendarDate } from "@/lib/operational-day";
 import { formatPrepQty } from "@/lib/prep-display-shared";
+import { canMakeTheNeed } from "@/lib/made-the-need-shared";
 
 export interface MidDayPhase2Item {
   id: string;
@@ -191,8 +192,10 @@ export function MidDayPhase2Form({
   const patch = (id: string, p: Partial<SaveState>) =>
     setStates((s) => ({ ...s, [id]: { ...(s[id] ?? EMPTY), ...p } }));
 
-  const onSave = async (it: MidDayPhase2Item) => {
-    const st = states[it.id] ?? EMPTY;
+  // `override` lets a one-tap fill ("Made the need", B11a) save the value it just set without
+  // waiting for the state update to land — same body, same route, same RPC.
+  const onSave = async (it: MidDayPhase2Item, override?: Partial<SaveState>) => {
+    const st = { ...(states[it.id] ?? EMPTY), ...override };
     if (st.status === "saving") return;
     const raw = st.value.trim();
     const prepped = raw === "" ? NaN : Number(raw);
@@ -253,6 +256,8 @@ export function MidDayPhase2Form({
       } catch {
         // keep generic
       }
+      // B11a: the server's off-need reason refusal speaks the same words as the client gate.
+      if (code === "off_need_reason_required") msg = t("mid_day_prep.phase2.reason_required");
       patch(it.id, { status: "error", error: isBatchContractCode(code) ? null : msg, batchErrorCode: isBatchContractCode(code) ? code : null });
     } catch (e) {
       patch(it.id, { status: "error", error: e instanceof Error ? e.message : "Network error." });
@@ -380,6 +385,32 @@ export function MidDayPhase2Form({
                       {st.status === "saving" ? t("mid_day_prep.phase2.saving") : t("mid_day_prep.phase2.save")}
                     </ActionButton>
                   </div>
+
+                  {/* B11a — "Made the need": fill the box with the need and run this row's
+                      save (identical record to typing it; a stale over/under capture is dropped,
+                      an at-need row has no off-need question). Never on a batch row. */}
+                  {it.need !== null &&
+                  canMakeTheNeed({
+                    need: it.need,
+                    isBatch: !!it.batch,
+                    readOnly: false,
+                    current: preppedNum !== null && Number.isFinite(preppedNum) ? preppedNum : null,
+                    saved: st.status === "saved",
+                  }) ? (
+                    <ActionButton
+                      variant="secondary"
+                      onClick={() => {
+                        const fill = { value: String(it.need), overUnder: null };
+                        patch(it.id, { ...fill, status: "idle", error: null });
+                        void onSave(it, fill);
+                      }}
+                      disabled={st.status === "saving"}
+                      aria-label={t("prep.made_the_need_aria", { item: it.label, qty: formatPrepQty(it.need, it.parUnit) })}
+                      className="self-start"
+                    >
+                      {t("prep.made_the_need")}
+                    </ActionButton>
+                  ) : null}
 
                   {offPar ? (
                     <ActionButton

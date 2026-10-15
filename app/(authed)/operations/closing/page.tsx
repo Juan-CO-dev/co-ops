@@ -560,10 +560,17 @@ export default async function ClosingPage({ searchParams }: PageProps) {
   // registry is the source), so the expand panel says "Temp (°F)" instead of
   // "Count". Cosmetic only: a failed read falls back to the generic label.
   const tempReadingItems: Record<string, boolean> = {};
+  // B11a — the same registry owner carries the fridge's safe max (41°F when unset), so the
+  // count box can warn "Above N°F — tell a manager" (non-blocking) as the closer types.
+  const tempSafeMaxF: Record<string, number> = {};
   try {
     const tempIds = await loadLocationTempItemIds(sb, locationParam);
     for (const item of templateItems) {
-      if (item.expectsCount && tempIds.has(item.id)) tempReadingItems[item.id] = true;
+      const owner = tempIds.get(item.id);
+      if (item.expectsCount && owner) {
+        tempReadingItems[item.id] = true;
+        tempSafeMaxF[item.id] = owner.safeMaxF;
+      }
     }
   } catch {
     /* label-only; keep the generic Count label */
@@ -584,6 +591,7 @@ export default async function ClosingPage({ searchParams }: PageProps) {
     reportRefCanEdit,
     reportRefCanOpen,
     tempReadingItems,
+    tempSafeMaxF,
     amPrepGap,
     incompleteReasons,
   };

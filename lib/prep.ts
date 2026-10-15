@@ -73,6 +73,7 @@ import { consumptionOverrideFor } from "@/lib/consumption-edit-shared";
 import { loadBatchContextForItems, type BatchItemContext } from "@/lib/batch-prep";
 import { batchContractCodeFromMessage, toBatchPayload, type BatchContractCode, type BatchEntry } from "@/lib/batch-prep-shared";
 import { midDayFinalizeBlockers } from "@/lib/mid-day-shared";
+import { checkOffNeedCapture } from "@/lib/prep-reason-shared";
 import type {
   ChecklistCompletion,
   ChecklistInstance,
@@ -1537,7 +1538,12 @@ export type MidDayPhase2SaveResult =
   /** D-66: the save targets a row whose stored shape is bad (skipped) — refused. */
   | { ok: false; reason: "bad_row"; templateItemId: string }
   /** 0215: save_mid_day_phase2_item_atomic refused the batch contract (lib/batch-prep-shared.ts BATCH_CONTRACT_CODES). */
-  | { ok: false; reason: "batch_contract"; code: BatchContractCode; templateItemId: string };
+  | { ok: false; reason: "batch_contract"; code: BatchContractCode; templateItemId: string }
+  /**
+   * B11a: the off-need reason is missing or malformed — the same rule opening's route runs
+   * (lib/prep-reason-shared.ts checkOffNeedCapture). `field` names what is wrong.
+   */
+  | { ok: false; reason: "reason_invalid"; field: string; templateItemId: string };
 
 /**
  * Structured over/under-prep capture (C.43 Phase 2), mirroring opening's
@@ -1597,6 +1603,30 @@ export async function saveMidDayPhase2Item(
     const ctx = state.batchContext[args.templateItemId];
     if (!ctx || ctx.eligibility !== "batched") {
       return { ok: false, reason: "batch_contract", code: "batch_recipe_unresolved", templateItemId: args.templateItemId };
+    }
+  }
+
+  // B11a: the off-need reason, enforced on the server (it was client-only). The need is the
+  // page's expression (app/(authed)/operations/mid-day/page.tsx): par − Phase 1 onHand, floored
+  // at 0 — on a batch row onHand is LINE, so this is need_for_line. Batch rows are exempt on
+  // the over side, exactly as opening's RPC is.
+  {
+    let live: (typeof state.completions)[number] | undefined;
+    for (const c of state.completions) {
+      if (c.templateItemId !== args.templateItemId) continue;
+      if (!live || c.completedAt > live.completedAt) live = c;
+    }
+    const onHand = live?.prepData?.inputs.onHand ?? null;
+    const par = item.prepMeta.parValue ?? null;
+    const need = par !== null && onHand !== null ? Math.max(par - onHand, 0) : null;
+    const reasonCheck = checkOffNeedCapture({
+      prepped: args.prepped,
+      need,
+      isBatch: state.batchContext[args.templateItemId]?.eligibility === "batched",
+      capture: args.overUnder ?? null,
+    });
+    if (!reasonCheck.ok) {
+      return { ok: false, reason: "reason_invalid", field: reasonCheck.field, templateItemId: args.templateItemId };
     }
   }
 

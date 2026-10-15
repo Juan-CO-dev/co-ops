@@ -518,3 +518,35 @@ export function formatNotification(
     body: body.trim(),
   };
 }
+
+/**
+ * B11a-floor: which under-par card detail line to render. The par slot ("par {par}") was
+ * blank on every row before 0255 because the RPC never wrote bodyParams.par; old rows (and
+ * items with no par) take the no-par variant instead of printing "par ,". A blank closer
+ * keeps today's no-estimate variant.
+ */
+export type UnderParDetailKey =
+  | "notifications.card.under_par.detail"
+  | "notifications.card.under_par.detail_no_estimate"
+  | "notifications.card.under_par.detail_no_par"
+  | "notifications.card.under_par.detail_no_estimate_no_par";
+
+function present(v: unknown): boolean {
+  return v !== null && v !== undefined && String(v).trim() !== "";
+}
+
+export function underParDetailKey(params: {
+  par?: unknown;
+  closer?: unknown;
+}): UnderParDetailKey {
+  const hasPar = present(params.par);
+  const hasCloser = present(params.closer);
+  if (hasCloser) {
+    return hasPar
+      ? "notifications.card.under_par.detail"
+      : "notifications.card.under_par.detail_no_par";
+  }
+  return hasPar
+    ? "notifications.card.under_par.detail_no_estimate"
+    : "notifications.card.under_par.detail_no_estimate_no_par";
+}

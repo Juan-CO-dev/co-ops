@@ -43,6 +43,7 @@ import {
   type BatchRowContext,
 } from "@/lib/batch-prep-shared";
 import { phase2SaveGate } from "@/lib/opening-phase2-gate";
+import { isDuplicateInFlight } from "@/lib/made-the-need-shared";
 import { openingFooterHint } from "@/lib/prep-display-shared";
 import type {
   ChecklistCompletion,
@@ -870,6 +871,12 @@ export function OpeningClient({
 
   /** The serialized body of the last SUCCESSFULLY persisted draft. Dedup + retry anchor. */
   const draftSentRef = useRef<string | null>(null);
+  /**
+   * B11a (Astra r1 P2-2) — per Phase 2 row, the signature of the save in flight. A second
+   * request for the SAME value while it is pending (the "Made the need" save, then the box's
+   * later blur) is dropped, so one gesture is one save.
+   */
+  const phase2InFlightSigRef = useRef<Map<string, string>>(new Map());
   /** The serialized body of the newest local state, for the pagehide/visibility beacon. */
   const draftLatestRef = useRef<string | null>(null);
 
@@ -1327,6 +1334,8 @@ export function OpeningClient({
     const newSig = phase2Signature(valueToSave);
     const current = saveStates.get(templateItemId);
     if (current?.status === "saved" && current.savedSignature === newSig) return;
+    if (isDuplicateInFlight(phase2InFlightSigRef.current.get(templateItemId), newSig)) return;
+    phase2InFlightSigRef.current.set(templateItemId, newSig);
 
     // Optimistic "saving" — preserve prior saved attribution so a re-save shows
     // "saving" without dropping the existing "saved by" line if it fails.
@@ -1490,6 +1499,10 @@ export function OpeningClient({
         });
         return updated;
       });
+    } finally {
+      if (phase2InFlightSigRef.current.get(templateItemId) === newSig) {
+        phase2InFlightSigRef.current.delete(templateItemId);
+      }
     }
   };
 

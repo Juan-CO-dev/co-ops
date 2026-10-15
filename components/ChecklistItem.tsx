@@ -60,10 +60,18 @@
  */
 
 import { canCompleteChecklistItem } from "@/lib/checklist-constants";
-import { useState } from "react";
+import { useRef, useState, type FocusEvent, type KeyboardEvent } from "react";
 
 import { PhotoCapture } from "@/components/photos/PhotoCapture";
 import { interpretAnswer, validateAnswerForInputType, type InterpretedAnswer } from "@/lib/checklist-answers";
+import {
+  afterCountSaveSuccess,
+  isAboveSafeMax,
+  parseCountDraft,
+  type CountDraftSnapshot,
+  sanitizeCountInput,
+  shouldAutoSaveCount,
+} from "@/lib/closing-count-shared";
 import { resolveTemplateItemContent } from "@/lib/i18n/content";
 import { formatTime } from "@/lib/i18n/format";
 import { useTranslation } from "@/lib/i18n/provider";
@@ -214,6 +222,13 @@ interface ChecklistItemProps {
    */
   isTempReading?: boolean;
   /**
+   * B11a — the line's safe max (°F) when it is a fridge-temperature reading, resolved
+   * server-side from the fridge registry (lib/fridge-registry.ts; 41°F when the fridge has
+   * none set). A typed value above it shows a NON-blocking warning; saving still happens.
+   * null/absent = not a temp line, no warning.
+   */
+  tempSafeMaxF?: number | null;
+  /**
    * C.55 — async cross-user mark-not-done callback (post-60s, KH+, at-or-below
    * the completer's current level). Fires
    * POST /api/checklist/completions/[id]/mark-not-done. Pessimistic — UI
@@ -301,6 +316,7 @@ type ChecklistErrorCode =
   | "pin_mismatch"
   | "missing_reasons"
   | "extra_reasons"
+  | "blank_reason"
   | "supersede_failed"
   // Build #1.5 PR 1 additions (per SPEC_AMENDMENTS.md C.28)
   | "outside_quick_window"
@@ -336,6 +352,8 @@ const errorMessageFor = (t: TFn, err: ChecklistApiError): string => {
       return t("closing.error.missing_reasons");
     case "extra_reasons":
       return t("closing.error.extra_reasons");
+    case "blank_reason":
+      return t("auth.pin_modal.error_blank_reason");
     case "supersede_failed":
       return t("closing.error.supersede_failed");
     case "outside_quick_window":
@@ -404,6 +422,7 @@ export function ChecklistItem({
   onLoadPickerCandidates,
   completerLevel = null,
   isTempReading = false,
+  tempSafeMaxF = null,
   onMarkNotDone,
 }: ChecklistItemProps) {
   const { t, language } = useTranslation();
@@ -426,11 +445,27 @@ export function ChecklistItem({
 
   // Expand state for count / notes inputs (existing).
   const [expanded, setExpanded] = useState(false);
-  const [countDraft, setCountDraft] = useState<string>("");
-  const [notesDraft, setNotesDraft] = useState<string>("");
+  const [countDraft, setCountDraftState] = useState<string>("");
+  const [notesDraft, setNotesDraftState] = useState<string>("");
+  // Astra r1 P2-1 — the LATEST draft, readable from an async save continuation (state there is
+  // a stale closure). Every draft write goes through these two setters so the ref never lags.
+  const draftRef = useRef<CountDraftSnapshot>({ count: "", notes: "" });
+  const setCountDraft = (v: string) => {
+    draftRef.current = { ...draftRef.current, count: v };
+    setCountDraftState(v);
+  };
+  const setNotesDraft = (v: string) => {
+    draftRef.current = { ...draftRef.current, notes: v };
+    setNotesDraftState(v);
+  };
   // Photo captured for an expects_photo item (photo uploader seam, 0164). Threaded
   // into the completion payload on save; cleared alongside the other drafts.
   const [photoDraft, setPhotoDraft] = useState<string | null>(null);
+  // B11a — count-only lines: the note sits behind an "Add a note" link (open when the
+  // line already has a note). savingRef is the synchronous in-flight guard the blur
+  // autosave reads, so Enter-then-blur can never post twice (state lags a render).
+  const [noteOpen, setNoteOpen] = useState(false);
+  const savingRef = useRef(false);
 
   // Revoke / tag expand state.
   const [expandMode, setExpandMode] = useState<ExpandMode>("none");
@@ -516,15 +551,23 @@ export function ChecklistItem({
     interactable &&
     !!onMarkNotDone;
 
+  // B11a — a count line with no photo saves itself (Enter / leaving the panel).
+  const countOnly = templateItem.expectsCount && !templateItem.expectsPhoto;
+
   // ─── Save flow (existing completion path, unchanged) ──────────────────────
 
-  const performSave = async (payload: ChecklistCompletePayload) => {
+  const performSave = async (
+    payload: ChecklistCompletePayload,
+    /** Count-panel saves pass the draft they sent (Astra r1 P2-1: never discard a mid-save edit). */
+    sentDraft?: CountDraftSnapshot,
+  ) => {
     const dataCarrying = isDataCarrying(payload);
+    let resaveLatest = false;
     setError(null);
 
     if (!dataCarrying) {
       const optimistic: ChecklistCompletion = {
-        id: `optimistic-${Date.now()}`,
+        id: `optimistic-${new Date().getTime()}`,
         instanceId: completion?.instanceId ?? "",
         templateItemId: templateItem.id,
         completedBy: actorUserId,
@@ -553,6 +596,7 @@ export function ChecklistItem({
     }
 
     setInFlight(true);
+    savingRef.current = true;
     try {
       const result = await onComplete(payload);
       if ("error" in result) {
@@ -560,10 +604,19 @@ export function ChecklistItem({
         if (!dataCarrying) setLocalCompletion(null);
       } else {
         setLocalCompletion(null);
-        setExpanded(false);
-        setCountDraft("");
-        setNotesDraft("");
-        setPhotoDraft(null);
+        const next = sentDraft
+          ? afterCountSaveSuccess(sentDraft, draftRef.current, countOnly)
+          : "close";
+        if (next === "close") {
+          setExpanded(false);
+          setCountDraft("");
+          setNotesDraft("");
+          setPhotoDraft(null);
+        } else {
+          // The closer kept typing while this save was in flight: keep the panel and the newer
+          // draft; a count-only line saves that newer revision as soon as this one is done.
+          resaveLatest = next === "resave";
+        }
       }
     } catch (caught) {
       setError({
@@ -572,8 +625,24 @@ export function ChecklistItem({
       });
       if (!dataCarrying) setLocalCompletion(null);
     } finally {
+      savingRef.current = false;
       setInFlight(false);
     }
+    if (resaveLatest) saveLatestCountDraft();
+  };
+
+  // Astra r1 P2-1 — save the newest draft (read from the ref, never a stale closure). An empty
+  // or invalid newer draft is left in the open panel for the closer to fix; nothing is lost.
+  const saveLatestCountDraft = () => {
+    if (savingRef.current) return;
+    const latest = { ...draftRef.current };
+    const parsed = parseCountDraft(latest.count);
+    if (typeof parsed !== "number") return;
+    const note = latest.notes.trim();
+    void performSave(
+      { templateItemId: templateItem.id, countValue: parsed, photoId: null, notes: note === "" ? null : note },
+      latest,
+    );
   };
 
   const handleRowTap = () => {
@@ -587,6 +656,8 @@ export function ChecklistItem({
         );
         setNotesDraft(liveCompletion.notes ?? "");
       }
+      // B11a: a line that already has a note shows it open; otherwise behind the link.
+      if (!expanded) setNoteOpen((liveCompletion?.notes ?? "").trim() !== "");
       return;
     }
 
@@ -625,6 +696,8 @@ export function ChecklistItem({
   };
 
   const handleCountSave = () => {
+    // B11a: one save at a time (Enter then blur, or a double Enter).
+    if (savingRef.current) return;
     const trimmed = countDraft.trim();
     if (templateItem.expectsCount && trimmed === "") {
       setError({ code: "missing_count", message: t("closing.error.missing_count") });
@@ -636,17 +709,62 @@ export function ChecklistItem({
       setError({ code: "missing_photo", message: t("closing.error.missing_photo") });
       return;
     }
-    const parsed = trimmed === "" ? null : Number(trimmed);
-    if (parsed !== null && Number.isNaN(parsed)) {
+    // B11a: counts and temperatures are finite and ≥ 0 (the input strips "-" too).
+    const parsed = parseCountDraft(trimmed);
+    if (parsed === "invalid") {
       setError({ code: "invalid_payload", message: t("closing.error.invalid_number") });
       return;
     }
-    void performSave({
-      templateItemId: templateItem.id,
-      countValue: parsed,
-      photoId: photoDraft,
-      notes: notesDraft.trim() === "" ? null : notesDraft.trim(),
+    void performSave(
+      {
+        templateItemId: templateItem.id,
+        countValue: parsed,
+        photoId: photoDraft,
+        notes: notesDraft.trim() === "" ? null : notesDraft.trim(),
+      },
+      { count: countDraft, notes: notesDraft },
+    );
+  };
+
+  // ─── B11a: count-only lines save themselves ───────────────────────────────
+  // A count line with no photo: Enter saves; leaving the panel saves when the value (or the
+  // note) changed. Photo lines keep the explicit Save button (a photo is required there).
+  const safeMaxWarningId = `${templateItem.id}-safe-max-warning`;
+  const aboveSafeMax =
+    expanded && templateItem.expectsCount && isAboveSafeMax(parseCountDraft(countDraft), tempSafeMaxF);
+
+  const autoSaveWanted = () =>
+    shouldAutoSaveCount({
+      draft: countDraft,
+      notesDraft,
+      liveCount: liveCompletion?.countValue,
+      liveNotes: liveCompletion?.notes,
+      saving: savingRef.current,
     });
+
+  const handleCountKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
+    if (e.key !== "Enter" || e.nativeEvent.isComposing) return;
+    e.preventDefault();
+    // Already saved with this value → nothing new to record, just close. Otherwise save (an
+    // empty or bad box surfaces its error through handleCountSave).
+    if (liveCompletion && typeof parseCountDraft(countDraft) === "number" && !savingRef.current && !autoSaveWanted()) {
+      setExpanded(false);
+      return;
+    }
+    handleCountSave();
+  };
+
+  const handleCountPanelBlur = (e: FocusEvent<HTMLDivElement>) => {
+    // Focus moving inside the panel (box → note) is not leaving it.
+    if (e.relatedTarget instanceof Node && e.currentTarget.contains(e.relatedTarget)) return;
+    if (autoSaveWanted()) handleCountSave();
+  };
+
+  const handleCountPanelCancel = () => {
+    setExpanded(false);
+    setCountDraft("");
+    setNotesDraft("");
+    setError(null);
   };
 
   const handleNotesEditSave = () => {
@@ -1129,12 +1247,17 @@ export function ChecklistItem({
         />
       ) : null}
 
-      {/* Expand panel for data-carrying items (count + notes) — unchanged. */}
+      {/* Expand panel for data-carrying items (count + notes). B11a: a COUNT-ONLY line
+          (no photo) saves itself — the box is focused on open, Enter saves, leaving the panel
+          saves when the value changed (shouldAutoSaveCount); the note sits behind "Add a
+          note"; no Save/Cancel buttons, a small Cancel link discards and closes (tapping the
+          row closes too). Lines with a photo keep the explicit Save/Cancel panel. */}
       {expanded && (templateItem.expectsCount || templateItem.expectsPhoto) ? (
         <div
           className="mt-1 rounded-lg border border-co-border-2 bg-co-surface-2 p-3"
           role="region"
           aria-label={t("closing.expand.aria_details", { label: resolved.label })}
+          onBlur={countOnly ? handleCountPanelBlur : undefined}
         >
           {templateItem.expectsCount ? (
             <label className="block">
@@ -1144,8 +1267,11 @@ export function ChecklistItem({
               <input
                 type="text"
                 inputMode="decimal"
+                autoFocus={countOnly}
                 value={countDraft}
-                onChange={(e) => setCountDraft(e.target.value)}
+                onChange={(e) => setCountDraft(sanitizeCountInput(e.target.value))}
+                onKeyDown={countOnly ? handleCountKeyDown : undefined}
+                aria-describedby={aboveSafeMax ? safeMaxWarningId : undefined}
                 placeholder={t("closing.expand.count_placeholder")}
                 className="
                   mt-1 min-h-[44px] w-full rounded-md border-2 border-co-border bg-white px-3 py-2
@@ -1154,6 +1280,17 @@ export function ChecklistItem({
                 "
               />
             </label>
+          ) : null}
+
+          {/* B11a: out-of-range warning — informational only, the save still happens. */}
+          {aboveSafeMax ? (
+            <p
+              id={safeMaxWarningId}
+              role="status"
+              className="mt-2 rounded-md border border-co-warning bg-co-warning-surface px-3 py-2 text-xs font-semibold text-co-warning-text"
+            >
+              {t("closing.expand.temp_above_max", { max: tempSafeMaxF ?? "" })}
+            </p>
           ) : null}
 
           {templateItem.expectsPhoto ? (
@@ -1170,53 +1307,92 @@ export function ChecklistItem({
             </div>
           ) : null}
 
-          <label className="mt-3 block">
-            <span className="block text-[11px] font-bold uppercase tracking-[0.14em] text-co-text-dim">
-              {t("closing.expand.notes_label")}
-            </span>
-            <textarea
-              value={notesDraft}
-              onChange={(e) => setNotesDraft(e.target.value)}
-              rows={2}
-              placeholder={t("closing.expand.notes_placeholder")}
+          {!countOnly || noteOpen ? (
+            <label className="mt-3 block">
+              <span className="block text-[11px] font-bold uppercase tracking-[0.14em] text-co-text-dim">
+                {t("closing.expand.notes_label")}
+              </span>
+              <textarea
+                value={notesDraft}
+                onChange={(e) => setNotesDraft(e.target.value)}
+                rows={2}
+                placeholder={t("closing.expand.notes_placeholder")}
+                className="
+                  mt-1 w-full rounded-md border-2 border-co-border bg-white px-3 py-2
+                  text-sm text-co-text
+                  focus:outline-none focus:border-co-gold focus-visible:ring-4 focus-visible:ring-co-gold/40
+                "
+              />
+            </label>
+          ) : (
+            <button
+              type="button"
+              // Keep focus in the box (a tapped button never takes focus on iOS), so opening
+              // the note is not read as leaving the panel.
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => setNoteOpen(true)}
               className="
-                mt-1 w-full rounded-md border-2 border-co-border bg-white px-3 py-2
-                text-sm text-co-text
-                focus:outline-none focus:border-co-gold focus-visible:ring-4 focus-visible:ring-co-gold/40
+                mt-2 inline-flex min-h-[44px] items-center self-start text-xs font-bold uppercase
+                tracking-[0.1em] text-co-text-muted underline underline-offset-2 hover:text-co-text
+                focus:outline-none focus-visible:ring-2 focus-visible:ring-co-gold/60
               "
-            />
-          </label>
+            >
+              {t("closing.expand.add_note")}
+            </button>
+          )}
 
-          <div className="mt-3 flex gap-2">
-            <button
-              type="button"
-              onClick={handleCountSave}
-              disabled={inFlight}
-              className="
-                inline-flex min-h-[48px] flex-1 items-center justify-center rounded-md
-                bg-co-gold px-4 text-sm font-bold uppercase tracking-[0.12em] text-co-text
-                transition hover:bg-co-gold-deep
-                focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60
-                disabled:cursor-wait disabled:opacity-60
-              "
-            >
-              {inFlight ? t("common.saving") : isCompleted ? t("closing.expand.update") : t("closing.expand.save")}
-            </button>
-            <button
-              type="button"
-              onClick={() => setExpanded(false)}
-              disabled={inFlight}
-              className="
-                inline-flex min-h-[48px] items-center justify-center rounded-md
-                border-2 border-co-border bg-white px-4 text-sm font-semibold text-co-text-muted
-                transition hover:border-co-border-2
-                focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/40
-                disabled:cursor-wait disabled:opacity-60
-              "
-            >
-              {t("common.cancel")}
-            </button>
-          </div>
+          {countOnly ? (
+            <div className="mt-1 flex items-center justify-between gap-2">
+              <span className="text-[11px] text-co-text-dim" aria-live="polite">
+                {inFlight ? t("common.saving") : t("closing.expand.autosave_hint")}
+              </span>
+              <button
+                type="button"
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={handleCountPanelCancel}
+                disabled={inFlight}
+                className="
+                  inline-flex min-h-[44px] items-center px-2 text-xs font-semibold text-co-text-muted
+                  underline underline-offset-2 hover:text-co-text
+                  focus:outline-none focus-visible:ring-2 focus-visible:ring-co-gold/60
+                  disabled:cursor-wait disabled:opacity-60
+                "
+              >
+                {t("common.cancel")}
+              </button>
+            </div>
+          ) : (
+            <div className="mt-3 flex gap-2">
+              <button
+                type="button"
+                onClick={handleCountSave}
+                disabled={inFlight}
+                className="
+                  inline-flex min-h-[48px] flex-1 items-center justify-center rounded-md
+                  bg-co-gold px-4 text-sm font-bold uppercase tracking-[0.12em] text-co-text
+                  transition hover:bg-co-gold-deep
+                  focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60
+                  disabled:cursor-wait disabled:opacity-60
+                "
+              >
+                {inFlight ? t("common.saving") : isCompleted ? t("closing.expand.update") : t("closing.expand.save")}
+              </button>
+              <button
+                type="button"
+                onClick={() => setExpanded(false)}
+                disabled={inFlight}
+                className="
+                  inline-flex min-h-[48px] items-center justify-center rounded-md
+                  border-2 border-co-border bg-white px-4 text-sm font-semibold text-co-text-muted
+                  transition hover:border-co-border-2
+                  focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/40
+                  disabled:cursor-wait disabled:opacity-60
+                "
+              >
+                {t("common.cancel")}
+              </button>
+            </div>
+          )}
         </div>
       ) : null}
 

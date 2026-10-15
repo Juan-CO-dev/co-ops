@@ -48,6 +48,8 @@ import { ProductionConsumptionPanel } from "@/components/production/ProductionCo
 import { BatchEntryFields } from "@/components/prep/BatchEntryFields";
 import { emptyBatchFormValue, isBatchContractCode, type BatchFormValue, type BatchRowContext } from "@/lib/batch-prep-shared";
 import { formatPrepQty, parseDecimalDraft, prepNeedLabel, prepQtyParts, roundQty } from "@/lib/prep-display-shared";
+import { blurLeavesForMadeTheNeed, canMakeTheNeed, MADE_THE_NEED_ATTR } from "@/lib/made-the-need-shared";
+import { ActionButton } from "@/components/ActionButton";
 import type { ChecklistTemplateItem, OpeningPhase2Meta } from "@/lib/types";
 
 import { CollapsibleChecklistSection } from "@/components/ui/CollapsibleChecklistSection";
@@ -737,7 +739,16 @@ function PrepEntryRow({
         <NumericInput
           value={value.openerPrepped}
           onChange={(next) => onChange({ ...value, openerPrepped: next })}
-          onBlur={readOnly ? undefined : () => onSave(value)}
+          onBlur={
+            readOnly
+              ? undefined
+              : (related) => {
+                  // Astra r1 P2-2: focus leaving FOR "Made the need" is not a save of the
+                  // typed amount — the shortcut's own save is the one save of the gesture.
+                  if (blurLeavesForMadeTheNeed(related)) return;
+                  onSave(value);
+                }
+          }
           ariaLabel={t("opening.phase2.input_prepped_aria", { item: resolved.label })}
           invalidHint={t("opening.phase2.numbers_only")}
           hasError={!readOnly && prepAmountMissing}
@@ -745,6 +756,42 @@ function PrepEntryRow({
         />
         {batch !== null ? (
           <span className="text-xs text-co-text-muted">{t("prep.batch.bottled_hint" as TranslationKey)}</span>
+        ) : null}
+        {/* B11a — "Made the need": fills the box with the prep need and runs this row's
+         * existing save (same route + RPC as typing it; delta 0, at par). A stale over/under
+         * capture is dropped — an at-par row has no off-need question. Never on a batch row
+         * (lib/made-the-need-shared.ts). */}
+        {prepNeed !== null &&
+        canMakeTheNeed({
+          need: prepNeed,
+          isBatch: batch !== null,
+          readOnly,
+          current: value.openerPrepped,
+          saved: saveState.status === "saved",
+        }) ? (
+          <ActionButton
+            variant="secondary"
+            {...{ [MADE_THE_NEED_ATTR]: "" }}
+            // Astra r1 P2-2: keep focus in the box so its blur-save of the typed amount never
+            // runs (and never disables this button) before the click below.
+            onPointerDown={(e) => e.preventDefault()}
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={() => {
+              const next = { ...value, openerPrepped: prepNeed, overPar: null, underPar: null };
+              onChange(next);
+              onSave(next);
+            }}
+            // Astra r2: focus that merely PASSES the shortcut (Tab onto it, Tab away) must not
+            // swallow the typed amount — the box's blur skipped its save because focus came
+            // here, so leaving the button saves the row's current value. After an activation
+            // that value IS the need, and the parent's saved-signature / in-flight guards make
+            // this a no-op, so a click stays exactly one at-need save.
+            onBlur={() => onSave(value)}
+            disabled={saveState.status === "saving"}
+            aria-label={t("prep.made_the_need_aria", { item: resolved.label, qty: formatPrepQty(prepNeed, parUnit) })}
+          >
+            {t("prep.made_the_need")}
+          </ActionButton>
         ) : null}
       </div>
 
@@ -944,7 +991,8 @@ function PrepEntryRow({
 interface NumericInputProps {
   value: number | null;
   onChange: (next: number | null) => void;
-  onBlur?: () => void;
+  /** Astra r1 P2-2: receives where focus went (null when unknown). */
+  onBlur?: (relatedTarget: Element | null) => void;
   ariaLabel: string;
   /** B1 #5 — shown beside the box while its text is not a number (e.g. "5 1/3"). */
   invalidHint: string;
@@ -996,9 +1044,9 @@ function NumericInput({
           if (d.kind === "empty") onChange(null);
           else if ((d.kind === "number" || d.kind === "partial") && d.value !== null) onChange(d.value);
         }}
-        onBlur={() => {
+        onBlur={(e) => {
           if (!invalid) setDraft(draftOf(value));
-          onBlur?.();
+          onBlur?.(e.relatedTarget instanceof Element ? e.relatedTarget : null);
         }}
         aria-label={ariaLabel}
         aria-invalid={hasError || invalid}

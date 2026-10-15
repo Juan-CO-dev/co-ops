@@ -43,6 +43,7 @@ import { formatDateLabel, formatTime } from "@/lib/i18n/format";
 import { useTranslation } from "@/lib/i18n/provider";
 import {
   formatNotification,
+  underParDetailKey,
   type NotificationWithRecipient,
 } from "@/lib/notifications";
 
@@ -358,19 +359,14 @@ function renderUnderParDetail({
   const reasonCategory = params.reasonCategory ?? "";
   const freeText = params.freeText ?? null;
 
-  const detailLine =
-    closer !== null && closer !== ""
-      ? t("notifications.card.under_par.detail", {
-          openerName,
-          prepped: String(prepped),
-          par: String(par),
-          closer: String(closer),
-        })
-      : t("notifications.card.under_par.detail_no_estimate", {
-          openerName,
-          prepped: String(prepped),
-          par: String(par),
-        });
+  // B11a: rows written before 0255 carry no `par` — pick the no-par variant rather than
+  // rendering "par ,". The variant omits only the slots it has no value for.
+  const detailLine = t(underParDetailKey({ par, closer }), {
+    openerName,
+    prepped: String(prepped),
+    par: String(par),
+    closer: String(closer ?? ""),
+  });
 
   const reasonLine = reasonCategory
     ? t("notifications.card.under_par.reason_prefix", {
