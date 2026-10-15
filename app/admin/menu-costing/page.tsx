@@ -53,7 +53,7 @@ export default async function AdminMenuCostingPage({ searchParams }: { searchPar
     ? serverT(lang, "admin.menu_costing.scope_all")
     : serverT(lang, "admin.menu_costing.scope_shop", { shop: shops.find((s) => s.id === scope)?.name ?? "" });
 
-  const { rows, totals, skuNames, itemNames, productNames, toastFetchedAt, toastUnavailable, toastNotices } = await loadMenuCostingBoard(auth, { scope });
+  const { rows, totals, skuNames, itemNames, productNames, toastFetchedAt, toastUnavailable, toastNotices, notSoldHere } = await loadMenuCostingBoard(auth, { scope });
   // The shop-switcher grammar the dashboard established: selected = ink edge on a gold fill;
   // co-surface-2 is hover/pressed only (AGENTS.md token roles).
   const pill = (on: boolean) =>
@@ -76,6 +76,14 @@ export default async function AdminMenuCostingPage({ searchParams }: { searchPar
         </Link>
       </nav>
       <p className="mb-4 text-sm text-co-text-muted">{scopeLabel}</p>
+      {notSoldHere.length > 0 ? (
+        <p className="mb-4 text-sm text-co-text-muted">
+          {serverT(lang, "admin.menu_costing.not_sold_here", {
+            n: notSoldHere.length,
+            names: notSoldHere.map((m) => (lang === "es" && m.nameEs ? m.nameEs : m.name)).join(", "),
+          })}
+        </p>
+      ) : null}
       <ExportLinks className="mb-4" family="costing" language={lang} query={{ location: scope ?? "global" }}
         caption={serverT(lang, "admin.menu_costing.export_scope", { scope: scope === null ? serverT(lang, "admin.menu_costing.scope_all_short") : shops.find((s) => s.id === scope)?.name ?? "" })} />
       <MenuCostingClient

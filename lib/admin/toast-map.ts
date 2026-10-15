@@ -28,6 +28,8 @@ import {
 } from "@/lib/toast/modifiers-shared";
 import { MENU_ITEM_MODIFIER_PORTION_WHOLE_SUBS, WHOLE_SUB_UNIT } from "@/lib/toast/platter-shared";
 import { loadRecipeGraph } from "@/lib/prep-consumption";
+import { loadLiveMenuItemShopSettings } from "@/lib/menu-item-shop";
+import { applyMenuOverlayToEntities } from "@/lib/menu-item-shop-shared";
 
 export const TOAST_MAP_MIN = 7; // GM+ — mirrors the catering-menu admin surface
 
@@ -105,7 +107,7 @@ const toCents = (v: number | string | null) => (v != null ? Math.round(Number(v)
 
 /** Mappable universe. Item lane (spec #1): active global menu_items + sold_directly items.
  *  Modifier lane (spec 2026-07-24): ALL active global items — toppings are prep items. */
-async function loadEntities(all = false): Promise<CoEntity[]> {
+async function loadEntities(all = false, locationId: string | null = null): Promise<CoEntity[]> {
   const sb = getServiceRoleClient();
   let itemsQ = sb.from("items").select("id, name, menu_price").eq("active", true).is("location_id", null);
   if (!all) itemsQ = itemsQ.eq("sold_directly", true);
@@ -116,10 +118,14 @@ async function loadEntities(all = false): Promise<CoEntity[]> {
   ]);
   if (sErr) throw new Error(`toast-map entities menu_items: ${sErr.message}`);
   if (iErr) throw new Error(`toast-map entities items: ${iErr.message}`);
-  return [
+  const entities: CoEntity[] = [
     ...(subs ?? []).map((r): CoEntity => ({ kind: "menu_item", id: r.id, name: r.name, priceCents: toCents(r.menu_price) })),
     ...(items ?? []).map((r): CoEntity => ({ kind: "item", id: r.id, name: r.name, priceCents: toCents(r.menu_price) })),
   ];
+  // CATALOG PHASE 3a (0263): a SHOP's matcher pool reads each menu item through its shop overlay — off
+  // the menu here = out of the pool; its name and price here are what Toast is matched against.
+  if (locationId === null) return entities;
+  return applyMenuOverlayToEntities(entities, await loadLiveMenuItemShopSettings(locationId));
 }
 
 /** Raw SKUs (vendor ingredients, taxonomy 0157 `sku_class='raw'`) — modifier
@@ -207,7 +213,7 @@ export async function runAutoMatch(
     fetchToastMenuItems(guid),
     fetchToastModifierOptions(guid),
   ]);
-  const [rows, entities] = await Promise.all([loadActiveRows(locationId), loadEntities()]);
+  const [rows, entities] = await Promise.all([loadActiveRows(locationId), loadEntities(false, locationId)]);
 
   // Multi-guid law: a confirmed entity stays in the pool (it may gain more
   // channel-variant guids); only already-claimed GUIDs leave the pool.
@@ -245,7 +251,7 @@ export async function runAutoMatch(
   // carry disposition + portion (items: derived; menu_items: half a sub).
   let modifierInserted = 0;
   if (modifierOptions.length > 0) {
-    const allEntities = await loadEntities(true);
+    const allEntities = await loadEntities(true, locationId);
     const graph = await loadRecipeGraph();
     const classified = modifierOptions
       .filter((t) => !takenGuids.has(t.itemGuid))
@@ -398,7 +404,7 @@ export async function driftReport(actor: AuthContext, locationId: string): Promi
   const guid = await requireLocationGuid(locationId);
   const toastItems = await fetchToastMenuItems(guid);
   const byGuid = new Map(toastItems.map((t) => [t.itemGuid, t]));
-  const [rows, entities] = await Promise.all([loadActiveRows(locationId), loadEntities()]);
+  const [rows, entities] = await Promise.all([loadActiveRows(locationId), loadEntities(false, locationId)]);
   const entityById = new Map(entities.map((e) => [e.id, e]));
   // Drift compares the ITEM lane only — modifier options live in a different
   // payload block and would all read as "missing on Toast" here.

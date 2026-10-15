@@ -9,9 +9,9 @@ import { PGlite } from "@electric-sql/pglite";
 
 /** The minimum base schema the REAL 0258 → 0262 read and write (shared with scripts/sql-harness-0262.mjs). */
 const STUB = readFileSync("tests/fixtures/recipe-versions-pglite-stub.sql", "utf8");
-/** Every migration 0262 builds on, then 0262 itself — as committed (0259–0261: the pack/price tables its snapshot reads). */
+/** Every migration 0262 builds on, then 0262 and 0263 — as committed (0259–0261: the pack/price tables its snapshot reads). */
 const CHAIN = ["0258_recipe_input_write_atomic", "0259_sku_shop_versions", "0260_sku_pack_versions_finalize",
-  "0261_sku_pack_change_requests", "0262_recipe_shop_versions"];
+  "0261_sku_pack_change_requests", "0262_recipe_shop_versions", "0263_menu_item_shop_settings"];
 
 export const ID = {
   actor: "00000000-0000-4000-8000-0000000000a1",

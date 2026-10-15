@@ -39,6 +39,8 @@ import { getRoleLevel } from "@/lib/roles";
 import type { AuthContext } from "@/lib/session";
 import { COST_READ_MIN, loadCurrentSkuPrices } from "@/lib/admin/cost";
 import { loadRecipeGraph } from "@/lib/prep-consumption";
+import { loadLiveMenuItemShopSettings } from "@/lib/menu-item-shop";
+import { resolveMenuItemForShop, type MenuItemShopSettingRow } from "@/lib/menu-item-shop-shared";
 import { canReadReportLocation } from "@/lib/locations";
 import type { VersionScope } from "@/lib/sku-versions-shared";
 import {
@@ -79,6 +81,8 @@ import { costPerOzFromGraph } from "@/lib/menu-costing-shared";
 export interface MenuCostingBoard {
   /** The shop this board was costed for (its packs AND prices); null = All shops, on GLOBAL prices. */
   scope: string | null;
+  /** Shop view only: active menu items this shop has taken off its menu (never on the board's rows). */
+  notSoldHere: Array<{ id: string; name: string; nameEs: string | null }>;
   toastFetchedAt: string | null;
   toastUnavailable: boolean;
   toastNotices: Array<{ locationName: string; reason: "unavailable" | "menu_missing" | "menu_not_set" }>;
@@ -131,16 +135,26 @@ export async function loadMenuCostingBoard(actor: AuthContext, opts: { scope?: V
   ]);
   if (menuRes.error) throw new Error(`loadMenuCostingBoard menu_items: ${menuRes.error.message}`);
 
+  // CATALOG PHASE 3a (0263): a SHOP view reads each menu item THROUGH ITS SHOP OVERLAY — its price here,
+  // its name here, whether it is sold here (resolveMenuItemForShop, the one rule). "All shops" (scope
+  // null) reads the global rows exactly as before; with no overlay rows a shop view is identical too.
+  const overlay = scope === null ? new Map<string, MenuItemShopSettingRow>() : await loadLiveMenuItemShopSettings(scope);
+  const here = (m: { id: string; name: string; name_es: string | null; menu_price: number | string | null }) =>
+    resolveMenuItemForShop({ id: m.id, name: m.name, nameEs: m.name_es, menuPrice: num(m.menu_price) }, overlay.get(m.id));
   const menuById = new Map((menuRes.data ?? []).map((m) => [m.id, m]));
-  const inputs: MenuCostInput[] = (menuRes.data ?? []).map((m) => {
+  const notSoldHere = (menuRes.data ?? []).filter((m) => !here(m).soldHere)
+    .map((m) => ({ id: m.id, name: here(m).name, nameEs: here(m).nameEs }));
+  const inputs: MenuCostInput[] = (menuRes.data ?? []).filter((m) => here(m).soldHere).map((m) => {
     const parent = m.price_same_as_id ? menuById.get(m.price_same_as_id) : undefined;
+    const mine = here(m);
+    const parentHere = parent ? here(parent) : null;
     const resolved = resolveMenuPrice({
-      typedPrice: num(m.menu_price), toastPrices: toast.prices.get(m.id) ?? [], hasZeroPriceModifier: toast.zeroPriceModifierItems.has(m.id),
-      sameAs: parent ? { typedPrice: num(parent.menu_price), toastPrices: toast.prices.get(parent.id) ?? [] } : null,
+      typedPrice: mine.typedPrice, toastPrices: toast.prices.get(m.id) ?? [], hasZeroPriceModifier: toast.zeroPriceModifierItems.has(m.id),
+      sameAs: parent && parentHere ? { typedPrice: parentHere.typedPrice, toastPrices: toast.prices.get(parent.id) ?? [] } : null,
     });
-    return { id: m.id, name: m.name, nameEs: m.name_es, section: m.section,
-      ...resolved, cateringAvailable: m.catering_available, menuPrice: resolved.effectivePrice, typedPrice: num(m.menu_price),
-      sameAsName: parent?.name ?? null, sameAsNameEs: parent?.name_es ?? null };
+    return { id: m.id, name: mine.name, nameEs: mine.nameEs, section: m.section,
+      ...resolved, cateringAvailable: m.catering_available, menuPrice: resolved.effectivePrice, typedPrice: mine.typedPrice,
+      sameAsName: parentHere?.name ?? null, sameAsNameEs: parentHere?.nameEs ?? null };
   });
 
   const prices = await loadCurrentSkuPrices([...graph.skuPack.keys()], scope);
@@ -175,5 +189,5 @@ export async function loadMenuCostingBoard(actor: AuthContext, opts: { scope?: V
   for (const i of itemRes.data ?? []) itemNames[i.id] = { en: i.name, es: i.name_es };
   for (const p of productRes.data ?? []) productNames[p.id] = { en: p.name, es: p.name_es };
 
-  return { scope, rows, totals, skuNames, itemNames, productNames, toastFetchedAt: toast.fetchedAt, toastUnavailable: toast.unavailable, toastNotices: toast.notices };
+  return { scope, notSoldHere, rows, totals, skuNames, itemNames, productNames, toastFetchedAt: toast.fetchedAt, toastUnavailable: toast.unavailable, toastNotices: toast.notices };
 }

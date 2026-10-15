@@ -48,6 +48,7 @@ function recordingClient() {
 vi.mock("@/lib/supabase-server", () => ({ getServiceRoleClient: () => recordingClient() }));
 
 import { createDatedGraphs, loadRecipeBoundaries, loadRecipeGraph, loadRecipeLineOverlay } from "@/lib/prep-consumption";
+import { loadLiveMenuItemShopSettings } from "@/lib/menu-item-shop";
 import { migratedRecipeDb } from "./fixtures/recipe-versions-pglite";
 
 /** The 0262 / 0263 tables, defined fully by the real migrations in PGlite. */
@@ -64,6 +65,8 @@ beforeAll(async () => {
   await run("loadRecipeBoundaries(shop)", () => loadRecipeBoundaries(LOC));
   await run("loadRecipeGraph(shop)", () => loadRecipeGraph({ locationId: LOC }));
   await run("createDatedGraphs(shop)", () => createDatedGraphs({ locationId: LOC })("2026-09-01"));
+  // 0263: the menu overlay loader (the costing board's shop view, the Toast matcher pool).
+  await run("loadLiveMenuItemShopSettings", () => loadLiveMenuItemShopSettings(LOC));
 }, 120_000);
 afterAll(async () => { await db?.close(); });
 
@@ -72,6 +75,7 @@ describe("every query a loader builds on a 0262 / 0263 table runs against the RE
     const tables = new Set(captured.map((c) => c.table));
     expect(tables).toContain("recipe_versions");
     expect(tables).toContain("recipe_version_lines");
+    expect(tables).toContain("menu_item_shop_settings");
   });
 
   it("each executes in Postgres: every selected, filtered and ordered column exists", async () => {
