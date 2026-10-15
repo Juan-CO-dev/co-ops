@@ -112,6 +112,22 @@ From these it produces a **skill per position**, for every position the person h
 ### 5.4 Presence of the MoO / Owner
 A per-day toggle: "Cristian in today", "Pete in today". When present, they add coverage at $0 to the hourly budget.
 
+### 5.5 Work types (per employee)
+- **BOH (back of house):** prep (mostly slicing and portioning) and DISHWASHING. Some people are prep/dish ONLY.
+- **FOH (front of house):** the line stations, plus some prep.
+- **Management** (GM, AGM, Shift Lead, MoO, Owner): can cover ANY station and/or prep, to save hourly hours or fill gaps (salaried cover first, §6.3).
+
+The scheduler only places a person in positions their work type allows, and the manager can widen it per person. **Dishwasher is a staffed position** needed through the day and especially at close.
+
+### 5.6 The day's anchor times (set per shop by the manager)
+- **Prep starts** at 7:00 AM.
+- **The prep/dishwasher** arrives next. On slow days the morning may be ONLY prep/dish, unless demand says otherwise.
+- **Service starts** at 10:30 AM. Line arrivals come in three waves:
+  1. a **setup crew** before service, to set up the line;
+  2. arrivals **at service start**;
+  3. **rush reinforcements** right before the busy hours (from the demand curve).
+- **Store closed and people out** by a target time (8:30–9:00 PM). Closing duties and the closing checklist must fit before it.
+
 ## 6. The scheduler
 
 ### 6.1 When it runs
