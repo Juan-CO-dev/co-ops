@@ -1,7 +1,8 @@
 -- Migration 0264_catalog_shop_owned
 -- AUTHORED 2026-10-15. NOT YET APPLIED — apply via MCP after review
 -- Catalog Phase 4a, chunk 2. FILE ONLY; executable proof uses in-memory PGlite.
--- Existing rows remain shared. No new tables; 0262/0263 history ceilings remain unchanged.
+-- Existing recipes/menu_items remain shared; items/SKUs retain their existing owners.
+-- No new tables; 0262/0263 history ceilings remain unchanged.
 -- The old 16-argument update_recipe_input_atomic remains callable here. Its exact DROP
 -- belongs to 0266_drop_recipe_input_16arg, after deployment READY and old requests drain.
 -- Service-role RPCs rely on the app's role/location gate; triggers enforce graph integrity
@@ -16,7 +17,7 @@ create index menu_items_owner on public.menu_items(location_id) where location_i
 create or replace function public.shop_owned_owner_guard()
 returns trigger language plpgsql security definer set search_path = pg_catalog, public as $$
 begin
-  -- Promotion to shared is dependency-checked at commit. Recipe/menu moves and
+  -- Promotion to shared is dependency-checked at commit. Entity owner moves and
   -- retroactively making a shared entity private are never a supported write.
   if new.location_id is not null and old.location_id is distinct from new.location_id then
     raise exception 'shop_owned:owner_is_set_at_creation' using errcode='P0001';
@@ -26,6 +27,10 @@ end $$;
 create trigger shop_owned_owner_guard before update of location_id on public.recipes
   for each row execute function public.shop_owned_owner_guard();
 create trigger shop_owned_owner_guard before update of location_id on public.menu_items
+  for each row execute function public.shop_owned_owner_guard();
+create trigger shop_owned_owner_guard before update of location_id on public.items
+  for each row execute function public.shop_owned_owner_guard();
+create trigger shop_owned_owner_guard before update of location_id on public.vendor_items
   for each row execute function public.shop_owned_owner_guard();
 
 create or replace function public.shop_owned_graph_lock()
@@ -65,8 +70,8 @@ begin
       select location_id into v_component from public.items where id=v_line.component_item_id for share nowait;
     else v_component:=null;
     end if;
-    -- Shared default lines retain the legacy template-item exception. A shop
-    -- version and an owned recipe have an actual scope and enforce visibility.
+    -- Existing shared citations are read-compatible. shop_owned_integrity checks
+    -- new/changed global citations separately; scoped citations always enforce visibility.
     if v_line.scope is not null and v_component is not null and v_component is distinct from v_line.scope then
       raise exception 'shop_owned:line_other_shop:%',v_line.position using errcode='P0001';
     end if;
@@ -88,16 +93,59 @@ end $$;
 
 create or replace function public.shop_owned_integrity()
 returns trigger language plpgsql security definer set search_path = pg_catalog, public as $$
-declare v_id uuid; v_owner uuid; v_recipe uuid; v_row jsonb;
+declare v_id uuid; v_owner uuid; v_recipe uuid; v_row jsonb; v_column text; v_changed boolean := false;
 begin
+  -- UPDATE OF also fires for x=x. Do not revalidate historical citations unless
+  -- a citation/ownership field actually changed. Arguments mirror the trigger columns.
+  if tg_op='UPDATE' then
+    foreach v_column in array tg_argv loop
+      v_changed := v_changed or (to_jsonb(old)->v_column is distinct from to_jsonb(new)->v_column);
+    end loop;
+    if not v_changed then return null; end if;
+  end if;
   v_row:=case when tg_op='DELETE' then to_jsonb(old) else to_jsonb(new) end;
   v_id:=(v_row->>'id')::uuid;
+  -- Read compatibility only: inspect the newly written citation, not every
+  -- historical global edge in its recipe. Promotion must check all live edges.
+  -- Read final rows so deferred checks permit atomic sharing and superseding.
+  if tg_table_name in ('recipes','recipe_inputs','recipe_outputs','recipe_versions','recipe_version_lines') and tg_op<>'DELETE' then
+    for v_row in
+      select jsonb_build_object('sku',i.component_sku_id,'item',i.component_item_id) from public.recipe_inputs i
+        join public.recipes r on r.id=i.recipe_id where r.location_id is null
+        and ((tg_table_name='recipe_inputs' and i.id=v_id) or (tg_table_name='recipes' and r.id=v_id))
+      union all
+      select jsonb_build_object('sku',l.component_sku_id,'item',l.component_item_id) from public.recipe_version_lines l
+        join public.recipe_versions v on v.id=l.version_id join public.recipes r on r.id=v.recipe_id
+        where coalesce(r.location_id,v.location_id) is null
+        and ((tg_table_name='recipe_version_lines' and l.id=v_id)
+          or (tg_table_name='recipe_versions' and v.id=v_id and v.active)
+          or (tg_table_name='recipes' and r.id=v_id and v.active))
+    loop
+      if exists(select 1 from public.items where id=(v_row->>'item')::uuid and location_id is not null) then
+        raise exception 'shop_owned:uses_shop_only_item' using errcode='P0001';
+      end if;
+      if exists(select 1 from public.vendor_items where id=(v_row->>'sku')::uuid and location_id is not null) then
+        raise exception 'shop_owned:uses_other_shop_sku' using errcode='P0001';
+      end if;
+    end loop;
+    if exists(select 1 from public.recipe_outputs o join public.recipes r on r.id=o.recipe_id
+      left join public.items i on i.id=o.output_item_id left join public.menu_items m on m.id=o.output_menu_item_id
+      where r.location_id is null and (i.location_id is not null or m.location_id is not null)
+      and ((tg_table_name='recipe_outputs' and o.id=v_id) or (tg_table_name='recipes' and r.id=v_id))) then
+      raise exception 'shop_owned:global_recipe_makes_shop_item' using errcode='P0001';
+    end if;
+  end if;
+  v_row:=case when tg_op='DELETE' then to_jsonb(old) else to_jsonb(new) end;
+  if tg_table_name='items' and exists(select 1 from public.items where id=v_id and location_id is not null and is_default) then
+    raise exception 'shop_owned:invalid_payload' using errcode='P0001';
+  end if;
   if tg_table_name in ('recipe_inputs','recipe_outputs','recipe_versions','recipe_version_lines') then
     perform public.shop_owned_check_recipe((v_row->>'recipe_id')::uuid);
     if tg_op='UPDATE' and old.recipe_id is distinct from new.recipe_id then perform public.shop_owned_check_recipe(old.recipe_id); end if;
   elsif tg_table_name='recipes' then
     perform public.shop_owned_check_recipe(v_id);
-  elsif tg_table_name in ('items','vendor_items','menu_items') then
+  elsif tg_table_name in ('items','vendor_items','menu_items')
+    and (tg_op<>'UPDATE' or to_jsonb(old)->'location_id' is distinct from to_jsonb(new)->'location_id') then
     for v_recipe in
       select r.id from public.recipes r where r.active and (
         exists(select 1 from public.recipe_inputs i where i.recipe_id=r.id and (i.component_sku_id=v_id or i.component_item_id=v_id))
@@ -141,11 +189,27 @@ begin
   return null;
 end $$;
 
-do $$ declare t text; begin
-  foreach t in array array['recipes','recipe_inputs','recipe_outputs','recipe_versions','recipe_version_lines',
-    'items','vendor_items','menu_items','menu_item_shop_settings','toast_menu_map','toast_map_effects','toast_open_item_aliases'] loop
-    execute format('create trigger shop_owned_lock before insert or update or delete on public.%I for each statement execute function public.shop_owned_graph_lock()',t);
-    execute format('create constraint trigger shop_owned_integrity after insert or update or delete on public.%I deferrable initially deferred for each row execute function public.shop_owned_integrity()',t);
+-- Operational name/price/weight writes do not enter the ownership graph at all.
+-- Active flags are citation membership: reactivation must revalidate its edges.
+do $$ declare t record; events text; args text; begin
+  for t in select * from (values
+    ('recipes','location_id, active',true),
+    ('recipe_inputs','recipe_id, component_sku_id, component_item_id, component_product_id',false),
+    ('recipe_outputs','recipe_id, output_item_id, output_menu_item_id',false),
+    ('recipe_versions','recipe_id, location_id, active',false),
+    ('recipe_version_lines','version_id, recipe_id, location_id, component_sku_id, component_item_id, component_product_id',false),
+    ('items','location_id, is_default',true),
+    ('vendor_items','location_id',true),
+    ('menu_items','location_id, catering_available',true),
+    ('menu_item_shop_settings','menu_item_id, location_id, active',false),
+    ('toast_menu_map','location_id, menu_item_id, item_id, sku_id, active',false),
+    ('toast_map_effects','map_id, menu_item_id, item_id, sku_id, active',false),
+    ('toast_open_item_aliases','location_id, menu_item_id, item_id, active',false)
+  ) as surface(name,cols,entity) loop
+    events := 'insert or update of '||t.cols||case when t.entity then ' or delete' else '' end;
+    select string_agg(quote_literal(btrim(c)),',') into args from unnest(string_to_array(t.cols,',')) c;
+    execute format('create trigger shop_owned_lock before %s on public.%I for each statement execute function public.shop_owned_graph_lock()',events,t.name);
+    execute format('create constraint trigger shop_owned_integrity after %s on public.%I deferrable initially deferred for each row execute function public.shop_owned_integrity(%s)',events,t.name,args);
   end loop;
 end $$;
 
@@ -281,6 +345,7 @@ begin
       raise exception 'shop_owned:invalid_payload' using errcode='P0001'; end if;
     if jsonb_typeof(v_output->'yield') is distinct from 'number' or coalesce((v_output->>'yield')::numeric,0)<=0 then raise exception 'shop_owned:invalid_yield' using errcode='P0001'; end if;
     if nullif(v_output->'new_item','null'::jsonb) is not null then
+      if p_location_id is null then raise exception 'shop_owned:location_required' using errcode='P0001'; end if;
       v_definition:=v_output->'new_item';
       if jsonb_typeof(v_definition)<>'object' or nullif(btrim(v_definition->>'name'),'') is null
         or not exists(select 1 from public.prep_sections where slug=v_definition->>'section' and active)
@@ -322,7 +387,7 @@ returns jsonb language plpgsql security definer set search_path = pg_catalog, pu
 declare v_owner uuid; v_result jsonb;
 begin
   perform pg_advisory_xact_lock(7258025800);
-  select location_id into v_owner from public.recipes where id=p_recipe_id for update;
+  select location_id into v_owner from public.recipes where id=p_recipe_id for no key update;
   if not found then raise exception 'shop_owned:not_found' using errcode='P0001'; end if;
   if v_owner is distinct from p_expected_owner then raise exception 'shop_owned:ownership_changed' using errcode='P0001'; end if;
   if v_owner is null then raise exception 'shop_owned:already_shared' using errcode='P0001'; end if;
@@ -372,7 +437,7 @@ returns jsonb language plpgsql security definer set search_path = pg_catalog, pu
 declare v_owner uuid; v_items uuid[]; v_skus uuid[];
 begin
   perform pg_advisory_xact_lock(7258025800);
-  select location_id into v_owner from public.recipes where id=p_id for update;
+  select location_id into v_owner from public.recipes where id=p_id for no key update;
   if not found then raise exception 'shop_owned:not_found' using errcode='P0001'; end if;
   if v_owner is distinct from p_expected_owner then raise exception 'shop_owned:ownership_changed' using errcode='P0001'; end if;
   if v_owner is null then raise exception 'shop_owned:already_shared' using errcode='P0001'; end if;

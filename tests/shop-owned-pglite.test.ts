@@ -153,7 +153,7 @@ describe("0264 real SQL ownership writers (in-memory only, triggers enabled)", (
     await refusal(save(foreign), "shop_owned:line_other_shop:1");
     await save(own);
     expect((await db.query("select location_id from public.recipe_versions where recipe_id=$1 and location_id=$2 and active", [ID.sharedRecipe, ID.shopA])).rows).toEqual([{ location_id: ID.shopA }]);
-    await refusal(db.query("update public.vendor_items set location_id=$1 where id=$2", [ID.shopB, own]), "shop_owned:line_other_shop:1");
+    await refusal(db.query("update public.vendor_items set location_id=$1 where id=$2", [ID.shopB, own]), "shop_owned:owner_is_set_at_creation");
     expect((await db.query("select location_id from public.vendor_items where id=$1", [own])).rows).toEqual([{ location_id: ID.shopA }]);
   });
 
@@ -213,11 +213,11 @@ describe("0264 real SQL ownership writers (in-memory only, triggers enabled)", (
     await db.query("update public.recipes set active=true where id=$1", [retired.id]);
   });
 
-  it("supports unreferenced SKU moves and owner-bound direct SKU sharing", async () => {
+  it("refuses even unreferenced SKU owner moves and supports owner-bound sharing", async () => {
     const sku = (await db.query<{ id: string }>("insert into public.vendor_items(name,location_id) values ('Movable SKU',$1) returning id", [ID.shopA])).rows[0]!.id;
-    await db.query("update public.vendor_items set location_id=$1 where id=$2", [ID.shopB, sku]);
-    await refusal(db.query("select public.share_shop_sku($1,$2,$3)", [sku, ID.shopA, ID.actor]), "shop_owned:ownership_changed");
-    await db.query("select public.share_shop_sku($1,$2,$3)", [sku, ID.shopB, ID.actor]);
+    await refusal(db.query("update public.vendor_items set location_id=$1 where id=$2", [ID.shopB, sku]), "shop_owned:owner_is_set_at_creation");
+    await refusal(db.query("select public.share_shop_sku($1,$2,$3)", [sku, ID.shopB, ID.actor]), "shop_owned:ownership_changed");
+    await db.query("select public.share_shop_sku($1,$2,$3)", [sku, ID.shopA, ID.actor]);
     expect((await db.query("select location_id from public.vendor_items where id=$1", [sku])).rows).toEqual([{ location_id: null }]);
   });
 
@@ -252,6 +252,9 @@ describe("0264 preserves pre-migration preview compare-and-set", () => {
       const recipe = (await oldDb.query<{ id: string }>("select public.create_recipe_full($1::jsonb,$2::jsonb,$3::jsonb,$4) id", [JSON.stringify(header("Legacy shared producer")), JSON.stringify(inputs()), JSON.stringify([{ output_item_id: item, yield: 1 }]), ID.actor])).rows[0]!.id;
       await applyShopOwnership(oldDb);
       await oldDb.query("update public.recipes set name='Legacy shared producer edited' where id=$1", [recipe]);
+      await oldDb.query("update public.recipe_outputs set yield=2 where recipe_id=$1", [recipe]);
+      await oldDb.query("update public.recipe_outputs set output_item_id=output_item_id where recipe_id=$1", [recipe]);
+      expect((await oldDb.query("select yield from public.recipe_outputs where recipe_id=$1", [recipe])).rows).toEqual([{ yield: "2" }]);
       expect((await oldDb.query("select r.location_id recipe_owner,i.location_id item_owner from public.recipes r join public.recipe_outputs o on o.recipe_id=r.id join public.items i on i.id=o.output_item_id where r.id=$1", [recipe])).rows).toEqual([{ recipe_owner: null, item_owner: ID.shopA }]);
     } finally { await oldDb.close(); }
   }, 120_000);

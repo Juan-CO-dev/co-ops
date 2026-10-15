@@ -79,3 +79,16 @@ describe("owned inline output payload", () => {
     expect(await response.json()).toMatchObject({ code: "line_other_shop", line: { position: 1, reason: "line_other_shop" } });
   });
 });
+
+// Missing cited identities must produce a client refusal, including the inline atomic path.
+it.each([
+  ["23503", "recipe_inputs_component_sku_id_fkey", 400, "invalid_component"],
+  ["P0001", "recipe_version:dependencies_busy", 409, "dependencies_busy"],
+] as const)("maps %s / %s through the full recipe HTTP route", async (dbCode, message, status, code) => {
+  state.rpc.mockResolvedValue({ data: null, error: { code: dbCode, message } });
+  const response = await POST(new NextRequest("http://localhost/api/admin/recipes/full", {
+    method: "POST", body: JSON.stringify(draft()), headers: { "content-type": "application/json" },
+  }));
+  expect(response.status).toBe(status);
+  expect(await response.json()).toMatchObject({ code });
+});

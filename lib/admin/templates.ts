@@ -1,3 +1,4 @@
+import { catalogWriteError } from "@/lib/catalog/write-errors-shared";
 /**
  * Admin prep-template data layer (C.44 Module 3 slice 1).
  *
@@ -868,7 +869,7 @@ export async function updatePrepItemContent(
     itemUpdate.updated_by = actor.user.id;
     itemUpdate.updated_at = new Date().toISOString();
     const { error: itemErr } = await sb.from("items").update(itemUpdate).eq("id", item.itemId);
-    if (itemErr) throw new Error(`updatePrepItemContent item update: ${itemErr.message}`);
+    if (itemErr) throw catalogWriteError(itemErr, AdminTemplateError, "updatePrepItemContent item update");
   }
 
   if (Object.keys(after).length === 0) return; // nothing changed
@@ -1081,7 +1082,7 @@ export async function addPrepItem(
     })
     .select("id")
     .maybeSingle<{ id: string }>();
-  if (itemErr) throw new Error(`addPrepItem item insert failed: ${itemErr.message}`);
+  if (itemErr) throw catalogWriteError(itemErr, AdminTemplateError, "addPrepItem item insert failed");
   if (!itemRow) throw new Error(`addPrepItem item insert returned no row`);
   const itemId = itemRow.id;
 
@@ -1643,7 +1644,7 @@ export async function promoteItemToGlobal(
     .from("items")
     .update({ location_id: null, updated_by: actor.user.id, updated_at: new Date().toISOString() })
     .eq("id", args.itemId);
-  if (uErr) throw new Error(`promoteItemToGlobal update failed: ${uErr.message}`);
+  if (uErr) throw catalogWriteError(uErr, AdminTemplateError, "promoteItemToGlobal update failed");
 
   await audit({
     actorId: actor.user.id,
@@ -1950,7 +1951,7 @@ export async function setItemDefault(
     .from("items")
     .update({ is_default: args.isDefault, updated_by: actor.user.id, updated_at: new Date().toISOString() })
     .eq("id", args.itemId);
-  if (uErr) throw new Error(`setItemDefault update failed: ${uErr.message}`);
+  if (uErr) throw catalogWriteError(uErr, AdminTemplateError, "setItemDefault update failed");
 
   let propagatedLocationIds: string[] = [];
   if (args.isDefault) {
@@ -2189,7 +2190,7 @@ export async function addRegistryItem(
     })
     .select("id")
     .maybeSingle<{ id: string }>();
-  if (iErr) throw new Error(`addRegistryItem insert failed: ${iErr.message}`);
+  if (iErr) throw catalogWriteError(iErr, AdminTemplateError, "addRegistryItem insert failed");
   if (!itemRow) throw new Error(`addRegistryItem insert returned no row`);
   const itemId = itemRow.id;
 
@@ -2770,7 +2771,7 @@ export async function updateRegistryItemDefinition(
   update.updated_by = actor.user.id;
   update.updated_at = new Date().toISOString();
   const { error: uErr } = await sb.from("items").update(update).eq("id", args.itemId);
-  if (uErr) throw new Error(`updateRegistryItemDefinition update failed: ${uErr.message}`);
+  if (uErr) throw catalogWriteError(uErr, AdminTemplateError, "updateRegistryItemDefinition update failed");
 
   // Propagate the changed full-definition subset to every active line.
   const propagated = await propagateItemDefinitionToLines(sb, args.itemId, changes);

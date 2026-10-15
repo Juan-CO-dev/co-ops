@@ -91,8 +91,8 @@ create table public.menu_items(
   created_by uuid references public.users(id), updated_at timestamptz not null default now(),
   updated_by uuid references public.users(id));
 -- 0103 + 0179 + 0215, the columns the 0258 writers read and write.
--- The production type CHECK is real (0103). The default is fixture-only convenience
--- for existing name-only graph seeds; production deliberately requires an explicit type.
+-- Both the recipe_type CHECK and its production default match migration 0103.
+-- Name-only graph seeds therefore use the same default as production.
 create table public.recipes(id uuid primary key default gen_random_uuid(), name text, name_es text,
   recipe_type text not null default 'production' check (recipe_type in ('production','consumer')),
   batch_yield numeric, directions text, directions_es text, active boolean not null default true,

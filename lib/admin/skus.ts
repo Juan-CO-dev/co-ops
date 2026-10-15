@@ -1,3 +1,4 @@
+import { catalogWriteError } from "@/lib/catalog/write-errors-shared";
 /**
  * Admin SKU-catalog data layer (Item/Inventory Spine — vendor mini-arc, Slice C1).
  *
@@ -609,7 +610,7 @@ export async function createSku(actor: AuthContext, input: CreateSkuInput): Prom
     })
     .select("id")
     .maybeSingle<{ id: string }>();
-  if (error) throw new Error(`createSku insert failed: ${error.message}`);
+  if (error) throw catalogWriteError(error, AdminSkuError, "createSku insert failed");
   if (!inserted) throw new Error("createSku insert returned no row");
 
   await audit({
@@ -943,7 +944,7 @@ export async function updateSku(
   // The first-value rule rides the write itself: each newly set pack field must STILL be empty.
   for (const f of changedPack) q = q.is(f, null);
   const { error, count } = await q;
-  if (error) throw new Error(`updateSku failed: ${error.message}`);
+  if (error) throw catalogWriteError(error, AdminSkuError, "updateSku failed");
   if (count === 0) {
     throw changedPack.length > 0
       ? new AdminSkuError(403, "global_requires_moo", "Someone set this pack first — reload")

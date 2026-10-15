@@ -58,4 +58,13 @@ describe("0264 ownership migration contracts", () => {
       .replace("coalesce((p_header->>'shelf_life_days')::integer, 5), p_location_id", "coalesce((p_header->>'shelf_life_days')::integer, 5)");
     expect(owned).toBe(body(prior, "create_recipe_full"));
   });
+
+  it("uses the Phase-3 non-key target lock for owned recipe edits and sharing", () => {
+    for (const name of ["save_owned_recipe_version", "share_shop_recipe"]) {
+      const start = sql.indexOf(`create or replace function public.${name}(`);
+      const body = sql.slice(start, sql.indexOf("end $$;", start));
+      expect(body).toMatch(/from public\.recipes where id=p_\w+ for no key update;/);
+      expect(body).not.toMatch(/from public\.recipes where id=p_\w+ for update;/);
+    }
+  });
 });

@@ -1,3 +1,4 @@
+import { catalogWriteError } from "@/lib/catalog/write-errors-shared";
 /**
  * RECIPE SHOP VERSIONS — the gated writers and the reads (catalog Phase 3a, 0262). SERVER-ONLY,
  * service role. THE LIB IS THE AUTHORITY (spec §2): every writer decides role and shop HERE, before any
@@ -77,11 +78,11 @@ export async function loadRecipeChangeSnapshot(
   return data as RecipeChangeSnapshot;
 }
 
-/** Map an RPC P0001 refusal (`recipe_version:<code>`) to a typed error; anything else is a 500. */
-export function recipeVersionErrorFromRpc(message: string): never {
+/** Map recipe-version and catalog ownership refusals, plus missing-component FKs, to the route error class. Unknown failures remain 500s. */
+export function recipeVersionErrorFromRpc(message: string, dbCode?: string): never {
   const code = /recipe_version:([a-z_]+)/.exec(message)?.[1];
   if (code && RPC_STATUS[code]) throw new RecipeVersionError(RPC_STATUS[code]!, code);
-  throw new Error(`recipe-version rpc failed: ${message}`);
+  throw catalogWriteError({ message, code: dbCode }, RecipeVersionError, "recipe-version rpc failed");
 }
 
 /** A line's display name for a refusal: the SKU's, item's or product's name; the target key if it has none. */
@@ -95,14 +96,14 @@ async function lineName(f: RecipeLineFields): Promise<string> {
 }
 
 /** An RPC refusal that names a line (`recipe_version:<code>:<position>`, 0262) keeps WHICH line it was. */
-async function recipeVersionRpcRefusal(message: string, lines: readonly RecipeLineFields[]): Promise<never> {
+async function recipeVersionRpcRefusal(message: string, lines: readonly RecipeLineFields[], dbCode?: string): Promise<never> {
   const m = /recipe_version:([a-z_]+):(\d+)/.exec(message);
   const code = m?.[1];
   const line = m ? lines[Number(m[2]) - 1] : undefined;
   if (code && RPC_STATUS[code] && line) {
     throw new RecipeVersionError(RPC_STATUS[code]!, code, undefined, { position: Number(m![2]), name: await lineName(line), reason: code });
   }
-  return recipeVersionErrorFromRpc(message);
+  return recipeVersionErrorFromRpc(message, dbCode);
 }
 
 // ── The set a person sees ─────────────────────────────────────────────────────
@@ -228,7 +229,7 @@ export async function writeRecipeVersion(actor: AuthContext, input: WriteRecipeV
     p_restored_from: input.restoredFromVersionId ?? null, p_adopted_from: input.adoptedFromVersionId ?? null,
     p_promoted_from: input.promotedFromVersionId ?? null, p_snapshot: input.snapshot,
   });
-  if (error) await recipeVersionRpcRefusal(error.message, next);
+  if (error) await recipeVersionRpcRefusal(error.message, next, error.code);
   const r = data as {
     version_id: string; retired_version_id: string | null; changed_shops: string[] | null;
     returned_shop?: string | null; returned_version_id?: string | null;
@@ -346,7 +347,7 @@ export async function retireShopRecipeVersion(
   const { error } = await sb.rpc("retire_recipe_version", {
     p_version: input.versionId, p_location: input.locationId, p_actor: actor.user.id, p_snapshot: snapshot,
   });
-  if (error) recipeVersionErrorFromRpc(error.message);
+  if (error) recipeVersionErrorFromRpc(error.message, error.code);
   await audit({
     actorId: actor.user.id, actorRole: actor.user.role,
     action: "recipe_version.retire", resourceTable: "recipe_versions", resourceId: input.versionId,

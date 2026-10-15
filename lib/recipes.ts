@@ -1,3 +1,4 @@
+import { catalogWriteError } from "@/lib/catalog/write-errors-shared";
 /**
  * Recipe stage data layer (Derivation Spine #1). SERVER-ONLY, service-role;
  * authority re-checked per action (the lib is the authority). Two tiers via
@@ -333,7 +334,7 @@ export async function createRecipe(actor: AuthContext, input: { name: string; na
   const sb = getServiceRoleClient();
   const { data, error } = await sb.from("recipes").insert({ name: normStr(input.name), name_es: normStr(input.nameEs), recipe_type: input.recipeType, batch_yield: input.batchYield, directions: normStr(input.directions), directions_es: normStr(input.directionsEs), active: true, created_by: actor.user.id, ...(input.shelfLifeDays !== undefined ? { shelf_life_days: input.shelfLifeDays } : {}) })
     .select("id").maybeSingle<{ id: string }>();
-  if (error) throw new Error(`createRecipe: ${error.message}`);
+  if (error) throw catalogWriteError(error, RecipeError, "createRecipe");
   if (!data) throw new Error("createRecipe returned no row");
   await audit({ actorId: actor.user.id, actorRole: actor.user.role, action: "recipe.create", resourceTable: "recipes", resourceId: data.id, metadata: { name: input.name, recipe_type: input.recipeType, batch_yield: input.batchYield }, ipAddress: null, userAgent: null });
   return { id: data.id };
@@ -491,7 +492,7 @@ export async function createRecipeFull(actor: AuthContext, draft: RecipeDraft): 
     // invalid_shelf_life_days); same bridge, same reasoning as the line above.
     const named = rpcRecipeError(error, BATCH_MODE_RPC_ERRORS);
     if (named) throw named;
-    throw new Error(`createRecipeFull rpc: ${error.message}`);
+    throw catalogWriteError(error, RecipeError, "createRecipeFull rpc");
   }
   const id = typeof data === "string" ? data : (data as { id?: string } | null)?.id;
   if (!id) throw new Error("createRecipeFull returned no id");
@@ -533,7 +534,7 @@ export async function updateRecipe(actor: AuthContext, id: string, patch: { name
   if (rpcErr) {
     const named = rpcRecipeError(rpcErr, { ...BATCH_MODE_RPC_ERRORS, invalid_name: 400, invalid_batch_yield: 400 });
     if (named) throw named;
-    throw new Error(`updateRecipe update_recipe_atomic: ${rpcErr.message}`);
+    throw catalogWriteError(rpcErr, RecipeError, "updateRecipe update_recipe_atomic");
   }
   await audit({ actorId: actor.user.id, actorRole: actor.user.role, action: "recipe.update", resourceTable: "recipes", resourceId: id, metadata: { patch }, ipAddress: null, userAgent: null });
 }
@@ -543,7 +544,7 @@ export async function deactivateRecipe(actor: AuthContext, id: string): Promise<
   requireLevel(actor, RECIPE_DELETE_MIN);
   const sb = getServiceRoleClient();
   const { error, count } = await sb.from("recipes").update({ active: false, updated_at: new Date().toISOString(), updated_by: actor.user.id }, { count: "exact" }).eq("id", id);
-  if (error) throw new Error(`deactivateRecipe: ${error.message}`);
+  if (error) throw catalogWriteError(error, RecipeError, "deactivateRecipe");
   if (count === 0) throw new RecipeError(404, "recipe_not_found");
   await audit({ actorId: actor.user.id, actorRole: actor.user.role, action: "recipe.deactivate", resourceTable: "recipes", resourceId: id, metadata: {}, ipAddress: null, userAgent: null });
 }
@@ -562,7 +563,7 @@ export async function createMenuItem(actor: AuthContext, input: { name: string; 
   const sb = getServiceRoleClient();
   const { data, error } = await sb.from("menu_items").insert({ name: normStr(input.name), name_es: normStr(input.nameEs), menu_price: input.menuPrice ?? null, active: true, created_by: actor.user.id })
     .select("id").maybeSingle<{ id: string }>();
-  if (error) throw new Error(`createMenuItem: ${error.message}`);
+  if (error) throw catalogWriteError(error, RecipeError, "createMenuItem");
   if (!data) throw new Error("createMenuItem returned no row");
   await audit({ actorId: actor.user.id, actorRole: actor.user.role, action: "menu_item.create", resourceTable: "menu_items", resourceId: data.id, metadata: { name: input.name }, ipAddress: null, userAgent: null });
   return { id: data.id };
@@ -634,7 +635,7 @@ export async function addRecipeInput(actor: AuthContext, input: { recipeId: stri
   if (error) {
     const named = rpcRecipeError(error, RECIPE_INPUT_RPC_ERRORS);
     if (named) throw named;
-    throw new Error(`addRecipeInput: ${error.message}`);
+    throw catalogWriteError(error, RecipeError, "addRecipeInput");
   }
   if (typeof newId !== "string") throw new Error("addRecipeInput returned no row");
   const data = { id: newId };
@@ -703,7 +704,7 @@ export async function updateRecipeInput(
   if (error) {
     const named = rpcRecipeError(error, RECIPE_INPUT_RPC_ERRORS);
     if (named) throw named;
-    throw new Error(`updateRecipeInput: ${error.message}`);
+    throw catalogWriteError(error, RecipeError, "updateRecipeInput");
   }
   const row = (written as RecipeLineRow[] | null)?.[0];
   if (!row) throw new RecipeError(404, "edge_not_found");
@@ -746,7 +747,7 @@ export async function addRecipeOutput(actor: AuthContext, input: { recipeId: str
   if (error) {
     const named = rpcRecipeError(error, BATCH_MODE_RPC_ERRORS);
     if (named) throw named;
-    throw new Error(`addRecipeOutput: ${error.message}`);
+    throw catalogWriteError(error, RecipeError, "addRecipeOutput");
   }
   const newId = typeof data === "string" ? data : (data as { id?: string } | null)?.id;
   if (!newId) throw new Error("addRecipeOutput returned no row");
@@ -801,7 +802,7 @@ export async function removeRecipeEdge(actor: AuthContext, args: { table: "recip
     if (error) {
       const named = rpcRecipeError(error, BATCH_MODE_RPC_ERRORS);
       if (named) throw named;
-      throw new Error(`removeRecipeEdge: ${error.message}`);
+      throw catalogWriteError(error, RecipeError, "removeRecipeEdge");
     }
     await audit({ actorId: actor.user.id, actorRole: actor.user.role, action: "recipe_output.remove", resourceTable: args.table, resourceId: args.id, metadata: { before: (before as Record<string, unknown> | null) ?? null }, ipAddress: null, userAgent: null });
     return;
@@ -813,7 +814,7 @@ export async function removeRecipeEdge(actor: AuthContext, args: { table: "recip
   if (error) {
     const named = rpcRecipeError(error, RECIPE_INPUT_RPC_ERRORS);
     if (named) throw named;
-    throw new Error(`removeRecipeEdge: ${error.message}`);
+    throw catalogWriteError(error, RecipeError, "removeRecipeEdge");
   }
   await audit({ actorId: actor.user.id, actorRole: actor.user.role, action: "recipe_input.remove", resourceTable: args.table, resourceId: args.id, metadata: { before: (before as Record<string, unknown> | null) ?? null }, ipAddress: null, userAgent: null });
 }

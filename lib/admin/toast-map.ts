@@ -1,3 +1,4 @@
+import { catalogWriteError } from "@/lib/catalog/write-errors-shared";
 /**
  * Toast crosswalk admin data layer (read-track 1). SERVER-ONLY, service-role;
  * authz = requireSession → level floor at the route + re-checked here, writes
@@ -242,7 +243,7 @@ export async function runAutoMatch(
       match_score: c.score,
       created_by: actor.user.id,
     });
-    if (error) throw new Error(`toast-map candidate insert: ${error.message}`);
+    if (error) throw catalogWriteError(error, AdminToastMapError, "toast-map candidate insert");
     inserted += 1;
   }
   // Modifier lane (spec 2026-07-24; menu_item targets since the platter spec
@@ -283,7 +284,7 @@ export async function runAutoMatch(
         portion_unit: portion?.unit ?? null,
         created_by: actor.user.id,
       });
-      if (error) throw new Error(`toast-map modifier candidate insert: ${error.message}`);
+      if (error) throw catalogWriteError(error, AdminToastMapError, "toast-map modifier candidate insert");
       modifierInserted += 1;
     }
   }
@@ -331,7 +332,7 @@ export async function confirmMapping(actor: AuthContext, mapId: string): Promise
   for (const rival of rivals ?? []) {
     const { error, count } = await sb.from("toast_menu_map")
       .update({ active: false }, { count: "exact" }).eq("id", rival.id).eq("active", true);
-    if (error) throw new Error(`toast-map supersede: ${error.message}`);
+    if (error) throw catalogWriteError(error, AdminToastMapError, "toast-map supersede");
     if (count === 0) throw new AdminToastMapError(409, "conflict", "Concurrent change — reload and retry");
   }
   const { error, count } = await sb.from("toast_menu_map")
@@ -378,7 +379,7 @@ export async function unmapConfirmed(actor: AuthContext, mapId: string): Promise
   const sb = getServiceRoleClient();
   const { error, count } = await sb.from("toast_menu_map")
     .update({ active: false }, { count: "exact" }).eq("id", mapId).eq("active", true);
-  if (error) throw new Error(`toast-map unmap: ${error.message}`);
+  if (error) throw catalogWriteError(error, AdminToastMapError, "toast-map unmap");
   if (count === 0) throw new AdminToastMapError(409, "conflict", "Concurrent change — reload and retry");
   await audit({
     actorId: actor.user.id, actorRole: actor.user.role,
@@ -585,7 +586,7 @@ export async function manualMap(
   for (const rival of rivals ?? []) {
     const { error, count } = await sb.from("toast_menu_map")
       .update({ active: false }, { count: "exact" }).eq("id", rival.id).eq("active", true);
-    if (error) throw new Error(`toast-map manual supersede: ${error.message}`);
+    if (error) throw catalogWriteError(error, AdminToastMapError, "toast-map manual supersede");
     if (count === 0) throw new AdminToastMapError(409, "conflict", "Concurrent change — reload and retry");
   }
 
@@ -631,7 +632,7 @@ export async function manualMap(
     confirmed_at: new Date().toISOString(),
     created_by: actor.user.id,
   }).select("id").maybeSingle<{ id: string }>();
-  if (error) throw new Error(`toast-map manual insert: ${error.message}`);
+  if (error) throw catalogWriteError(error, AdminToastMapError, "toast-map manual insert");
   if (!inserted) throw new Error("toast-map manual insert returned no row");
 
   await audit({
