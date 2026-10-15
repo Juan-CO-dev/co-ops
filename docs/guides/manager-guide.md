@@ -1048,7 +1048,7 @@ Run a full count when the owner asks for one. Key holders and up can record it.
 
 **What you see**
 
-![Count lines with an item and How many filled in, the Unit box still empty, and Record audit still grey](img/manager/48-counts-filled.png)
+![Count lines with an item, a unit picked from its list, and How many filled in](img/manager/48-counts-filled.png)
 
 **What to do** — Pick the item in **Pick an item…**. Fill in **Unit**. Type **How many**. For a part of a container, tick **Loose (below a full container)** and type the part. Tap **+ Add item** for the next line.
 
@@ -1060,7 +1060,7 @@ Run a full count when the owner asks for one. Key holders and up can record it.
 - **How many** must be more than 0.
 - Count each unit once. Count full containers first, then loose ones.
 - Finish every line you want saved. A yellow note warns you: **… unfinished line(s) — they won't be saved**.
-- If a unit won't work for an item, a red message says nothing was saved. Pick a unit from that item's list.
+- If a unit won't work for an item, a red message says nothing was saved. Pick a unit from that item's list. No list, and the typed unit still fails? The item has no pack size or weight set up yet. Remove that line and ask your GM to add it.
 
 #### 3. Confirm it
 
