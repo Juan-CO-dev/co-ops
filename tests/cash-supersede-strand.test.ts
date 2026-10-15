@@ -100,7 +100,7 @@ const ARGS = {
   locationId: LOC, date: DATE, actor: ACTOR,
   projectedCents: 40_000, drawerTotalCents: 55_000, floatCents: 15_000,
   countMethod: "hand" as const, denominations: null,
-  cashTipsCents: 0, onShift: [], overShortNote: null,
+  cashTipsCents: 0, onShift: [], overShortNote: null, toastProjected: null,
 };
 
 /** Scenario knobs: what each step does. Everything else answers "nothing here". */
