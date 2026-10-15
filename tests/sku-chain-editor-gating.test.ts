@@ -43,8 +43,10 @@ describe("the editor opens read-only instead of offering a doomed save", () => {
   it("both branches (chained, and unchained with a flat pack) render the plain line in place of the edit trigger", () => {
     expect(src).toContain("const globalPackLocked = isEdit && !canChangeGlobalPack(actorLevel, hasGlobalPack(initial!, initialChain?.length ?? 0));");
     expect(src.match(/\{t\("admin\.skus\.chain\.global_read_only"\)\}/g)).toHaveLength(2);
-    expect(src).toMatch(/\{globalPackLocked \? \(\s+<p role="note"[^>]*>\{t\("admin\.skus\.chain\.global_read_only"\)\}<\/p>\s+\) : onSaveChain \? \(/);
-    expect(src).toMatch(/\{globalPackLocked \? \(\s+<p role="note"[^>]*>\{t\("admin\.skus\.chain\.global_read_only"\)\}<\/p>\s+\) : !wizardOpen \? \(/);
+    // Catalog Phase 2b: the read-only line is followed by the item page's pack job for a shop-version writer.
+    const lockedLine = String.raw`\{globalPackLocked \? \(\s+<>\s+<p role="note"[^>]*>\{t\("admin\.skus\.chain\.global_read_only"\)\}<\/p>\s+\{offerShopPackJob \? <ShopPackJobLink skuId=\{initial!\.id\} \/> : null\}\s+<\/>\s+\)`;
+    expect(src).toMatch(new RegExp(lockedLine + String.raw` : onSaveChain \? \(`));
+    expect(src).toMatch(new RegExp(lockedLine + String.raw` : !wizardOpen \? \(`));
   });
   it("the line reads plainly in English and Spanish", () => {
     expect(E["admin.skus.chain.global_read_only"]).toBe("Only a Manager of Operations can change this pack for every shop.");
@@ -89,7 +91,8 @@ describe("every named refusal shows its own message", () => {
     }
   });
   it("the first-value refusals and a concurrent change read as the sim asked", () => {
-    expect(E[resolveErrorKey("global_requires_moo")]).toBe("Only a Manager of Operations can change this pack for every shop.");
+    // Catalog Phase 2b (Task 12): the refusal now names the fix — the item page.
+    expect(E[resolveErrorKey("global_requires_moo")]).toBe("Only a Manager of Operations can change this for every shop. Change it for your shop on the item page.");
     expect(E[resolveErrorKey("version_changed")]).toBe("Someone else changed this pack. Reload to see it.");
     expect(lib).toContain('flat_pack_exists: [403, "global_requires_moo"');
   });
