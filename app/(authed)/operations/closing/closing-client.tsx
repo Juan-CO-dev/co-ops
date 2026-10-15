@@ -128,6 +128,12 @@ export interface ClosingInitialState {
   /** #18 — template_item_id -> true for fridge-temperature count items (label "Temp (°F)", not "Count"). */
   tempReadingItems: Record<string, boolean>;
   /**
+   * B11a — template_item_id → the fridge's safe max (°F) for temp lines (fridge registry,
+   * 41°F when unset). Drives the non-blocking "Above N°F — tell a manager" warning under the
+   * box. Absent = not a temp line.
+   */
+  tempSafeMaxF: Record<string, number>;
+  /**
    * Fulledit floor cut F — today's AM prep exists with ZERO saved completions
    * (or was never opened). Renders an ADVISORY pill only; never blocks
    * finalize (council: no hard gate on AM prep). False on historical views.
@@ -244,6 +250,7 @@ export function ClosingClient({ initialState }: { initialState: ClosingInitialSt
     reportRefCanEdit,
     reportRefCanOpen,
     tempReadingItems,
+    tempSafeMaxF,
     amPrepGap,
     incompleteReasons,
   } = initialState;
@@ -925,6 +932,7 @@ export function ClosingClient({ initialState }: { initialState: ClosingInitialSt
               reportRefCanEdit={reportRefCanEdit}
               reportRefCanOpen={reportRefCanOpen}
               tempReadingItems={tempReadingItems}
+              tempSafeMaxF={tempSafeMaxF}
               onToggle={() => collapsible.toggle(station)}
               onComplete={handleItemComplete}
               onRevoke={handleItemRevoke}
@@ -1146,6 +1154,7 @@ function StationGroup({
   reportRefCanEdit,
   reportRefCanOpen,
   tempReadingItems,
+  tempSafeMaxF,
   onToggle,
   onComplete,
   onRevoke,
@@ -1186,6 +1195,7 @@ function StationGroup({
   reportRefCanEdit: Record<string, boolean>;
   reportRefCanOpen: Record<string, boolean>;
   tempReadingItems: Record<string, boolean>;
+  tempSafeMaxF: Record<string, number>;
   onToggle: () => void;
   onComplete: (payload: ChecklistCompletePayload) => Promise<ChecklistCompleteResult>;
   onRevoke: (completionId: string) => Promise<ChecklistRevokeResult>;
@@ -1295,6 +1305,7 @@ function StationGroup({
                 actorUserId={actor.userId}
                 completerLevel={c ? (completerLevels[c.completedBy] ?? null) : null}
                 isTempReading={tempReadingItems[it.id] ?? false}
+                tempSafeMaxF={tempSafeMaxF[it.id] ?? null}
                 instanceStatus={instanceStatus}
                 locationId={locationId}
                 readOnly={readOnly}
