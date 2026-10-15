@@ -198,7 +198,7 @@ export function ItemRow({
         </span>
         <div className="flex gap-2">
           {producingRecipeId ? (
-            <Link href={readinessRecipeHref(producingRecipeId, shopScope)} className={smallBtn}>
+            <Link href={readinessRecipeHref(producingRecipeId, shopScope, actorLevel)} className={smallBtn}>
               {t("recipes.item_link.production_recipe" as TranslationKey)}
             </Link>
           ) : null}

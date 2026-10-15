@@ -2,7 +2,8 @@
 
 /**
  * RecipesClient — hub list for /admin/recipes. Client-side type filter
- * (Production | Consumer | All), row links to /admin/recipes/{id} (or, read for one shop, that shop's catalog version),
+ * (Production | Consumer | All), row links to /admin/recipes/{id} for MoO+ (the default's builder), else — and for any
+ * list read for one shop — the catalog recipe page (catalog Phase 3b: a GM edits its shop's version there),
  * and a "New recipe" link to /admin/recipes/new (GM+ only).
  */
 
@@ -83,7 +84,7 @@ export function RecipesClient({
             return (
               <Link
                 key={r.id}
-                href={readinessRecipeHref(r.id, shopScope)}
+                href={readinessRecipeHref(r.id, shopScope, level)}
                 className="co-card co-card-interactive flex items-center justify-between px-4 py-3"
               >
                 <div className="min-w-0">
