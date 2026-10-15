@@ -96,9 +96,11 @@ const SERVER_TIER_MAP: Record<string, string[]> = {
   "app/api/admin/catalog/sku/[id]/price-basis/route.ts": ["E"],
   "app/api/admin/catalog/sku/[id]/pack-requests/[requestId]/dismiss/route.ts": ["E"],
   // Catalog Phase 3a: recipe versions and menu overlays — every write is Tier E (reversible; no grant).
+  "app/api/admin/catalog/menu-item/[id]/apply/route.ts": ["E"],
   "app/api/admin/catalog/menu-item/[id]/shop/back-to-default/route.ts": ["E"],
   "app/api/admin/catalog/menu-item/[id]/shop/restore/route.ts": ["E"],
   "app/api/admin/catalog/menu-item/[id]/shop/route.ts": ["E"],
+  "app/api/admin/catalog/recipe/[id]/apply/route.ts": ["E"],
   "app/api/admin/catalog/recipe/[id]/back-to-default/route.ts": ["E"],
   "app/api/admin/catalog/recipe/[id]/lines/route.ts": ["E"],
   "app/api/admin/catalog/recipe/[id]/restore/route.ts": ["E"],
