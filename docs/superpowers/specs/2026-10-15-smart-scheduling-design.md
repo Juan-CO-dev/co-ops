@@ -152,6 +152,8 @@ The scheduler only places a person in positions their work type allows, and the 
   - Overtime is avoided. If unavoidable, it is shown with its reason and cost.
 - **Team strength** per day and per window (open / lunch rush / afternoon / close), computed from the skills of who is on the clock for what. The scheduler uses it to pair people; the board shows it ("Close: thin — both closers newer").
 - **Salaried managers (GM, AGM) cover positions at no cost to the hourly budget,** within a floor-time limit per week. The board shows the hourly hours they save.
+- **The closing crew:** slow days = 1 Register/Delivery + 1 Walk-ins + 1 Prep/Dishwasher; busy days = 1 Register/Delivery + 2 Walk-ins + 1 Prep/Dishwasher. **Closing Manager is a ROLE carried by one of the closers** (the Register/Delivery or a Walk-ins person, Key Holder or above), not an extra head. Register & Delivery keeps one person through close; its 4 PM trim drops the extra help.
+- **Manager on duty:** at every hour someone Shift Lead or above is the manager on duty; the board highlights them and flags any hour without one.
 - **Role rules:** e.g. Closing Manager requires Key Holder or above. Rules come from the role ladder (`lib/roles.ts`) and the station positions (`station_positions`).
 
 ### 6.3 Call-outs (sick or unexpected days off)
@@ -189,7 +191,8 @@ A fast 2D interactive board, not three.js; three.js only if a moment truly needs
   - team strength per window;
   - per-position coverage (red gap / amber extra / green covered / grey closed);
   - person rows with multi-segment shift bars: drag the bar, its edges, or the dividers between segments, in 15-min snaps.
-- **Leader shifts settings** and the MoO/Owner presence toggles.
+- **Leader shifts settings**, the MoO/Owner presence toggles, and **Add to schedule** (add anyone, MoO/Owner included, to a day with a block and the positions they can flex across).
+- **Manager on duty** lane and markers.
 - **Reason panel:** why this person, this shape, this segment, this budget, this flex use; their skill profile; who else could cover.
 - **The staffing recommendation panel** (§6.4).
 - **Out sick…**
