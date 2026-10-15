@@ -15,7 +15,9 @@
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 
+import Link from "next/link";
 import { useTranslation } from "@/lib/i18n/provider";
+import { skuItemHref } from "@/lib/catalog/sku-item-shared";
 import type { TranslationKey } from "@/lib/i18n/types";
 import { useStepUp } from "@/components/admin/StepUpProvider";
 import { useStepUpPost } from "@/components/admin/useStepUpPost";
@@ -73,6 +75,8 @@ export function SkuCatalogClient({
   productIdBySku,
   parsFieldsReady,
   actorLevel,
+  canEditShopVersion = false,
+  itemShopId = null,
   canManage,
   focusSkuId = null,
   initialVendorFilter = null,
@@ -106,6 +110,10 @@ export function SkuCatalogClient({
   /** True once migration 0182 (GATE M1) applied — gates the Ordering-rhythm group. */
   parsFieldsReady: boolean;
   actorLevel: number;
+  /** Catalog Phase 2b: may this actor write a SHOP version (catalogWriteRoleAllowed)? */
+  canEditShopVersion?: boolean;
+  /** Catalog Phase 2b (sim QA): the shop the item-page links land on — the page's resolved shop (null = none). */
+  itemShopId?: string | null;
   canManage: boolean; // GM+
   /** ?sku=<id> deep link (catalog Phase 1): the row opens, scrolls into view and is ringed. */
   focusSkuId?: string | null;
@@ -332,6 +340,8 @@ export function SkuCatalogClient({
           packFormats={packFormats}
           measureUnits={measureUnits}
           actorLevel={actorLevel}
+            canEditShopVersion={canEditShopVersion}
+            itemShopId={itemShopId}
           busy={busy}
           errorMsg={errorMsg}
           submitLabel={t("admin.skus.save")}
@@ -371,6 +381,7 @@ export function SkuCatalogClient({
           ledger={skuLedger[s.id] ?? null}
           consumption={skuConsumption[s.id] ?? null}
           canRecord={actorLevel >= 6}
+          itemShopId={itemShopId}
         />
       )}
     </li>
@@ -470,6 +481,8 @@ export function SkuCatalogClient({
             packFormats={packFormats}
             measureUnits={measureUnits}
             actorLevel={actorLevel}
+            canEditShopVersion={canEditShopVersion}
+            itemShopId={itemShopId}
             busy={busy}
             errorMsg={errorMsg}
             submitLabel={t("admin.skus.add")}
@@ -544,6 +557,7 @@ function CatalogRow({
   ledger,
   consumption,
   canRecord,
+  itemShopId,
 }: {
   sku: SkuView;
   chain: PackChainLevel[] | null;
@@ -564,6 +578,7 @@ function CatalogRow({
   ledger: SkuReceivingLedger | null;
   consumption: SkuConsumption | null;
   canRecord: boolean;
+  itemShopId: string | null;
 }) {
   const { t } = useTranslation();
   const meta: string[] = [];
@@ -640,6 +655,9 @@ function CatalogRow({
         </>
       }
     >
+      <Link href={skuItemHref(s.id, { shopId: itemShopId ?? undefined })} className="mb-2 inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-border bg-co-surface px-3 text-xs font-bold uppercase tracking-[0.1em] text-co-text hover:border-co-text">
+        {t("admin.skus.open_item")}
+      </Link>
       <SkuDataDrawer skuId={s.id} shops={dataShops} />
       <SkuCostPanel
         skuId={s.id}
@@ -647,6 +665,7 @@ function CatalogRow({
         ledger={ledger}
         consumption={consumption}
         canRecord={canRecord}
+        itemShopId={itemShopId}
       />
     </SummaryRow>
   );

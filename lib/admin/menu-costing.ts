@@ -41,8 +41,6 @@ import { COST_READ_MIN, loadCurrentSkuPrices } from "@/lib/admin/cost";
 import { loadRecipeGraph } from "@/lib/prep-consumption";
 import { canReadReportLocation } from "@/lib/locations";
 import type { VersionScope } from "@/lib/sku-versions-shared";
-import type { RecipeGraph } from "@/lib/prep-consumption-graph";
-import { skuContentOz, skuCostPerOz } from "@/lib/recipe-math";
 import {
   composeMenuCostRows,
   summarizeMenuCostRows,
@@ -73,23 +71,10 @@ function num(v: number | string | null): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
-/**
- * $/oz for every SKU the recipe universe references.
- *
- * null when the SKU has no current price OR no resolvable content_oz — the two
- * are indistinguishable downstream and both mean the same thing to the board:
- * this line cannot be costed, count it.
- */
-export function costPerOzFromGraph(
-  graph: RecipeGraph,
-  prices: Map<string, number>,
-): Map<string, number | null> {
-  const out = new Map<string, number | null>();
-  for (const [skuId, pack] of graph.skuPack) {
-    out.set(skuId, skuCostPerOz(prices.get(skuId) ?? null, skuContentOz(pack, graph.measures)));
-  }
-  return out;
-}
+// $/oz for every SKU the recipe universe references — moved to the client-safe
+// lib/menu-costing-shared.ts in catalog Phase 2b (the pure preview reuses THE costing formula).
+export { costPerOzFromGraph } from "@/lib/menu-costing-shared";
+import { costPerOzFromGraph } from "@/lib/menu-costing-shared";
 
 export interface MenuCostingBoard {
   /** The shop this board was costed for (its packs AND prices); null = All shops, on GLOBAL prices. */

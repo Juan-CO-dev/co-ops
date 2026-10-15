@@ -4,7 +4,8 @@
  * Supports exactly the builder surface lib/counts.ts, lib/products.ts, lib/prep-consumption.ts
  * and lib/toast/effective-depletion.ts use: select (with many-to-one `rel!fk!inner(cols)`
  * embeds and dotted filters on them), eq / is / not-is / in / gt / gte / lt / lte / or,
- * order (stable, NULLS LAST asc / FIRST desc), range / limit / maybeSingle, upsert.
+ * order (stable, NULLS LAST asc / FIRST desc), range / limit / maybeSingle, upsert, insert, and
+ * update (the matched rows, with PostgREST's exact `count`).
  *
  * Timestamps compare as INSTANTS (microsecond precision, any offset spelling) — the way
  * Postgres compares timestamptz — so a "Z" anchor against a "+00:00" ledger row behaves
@@ -22,6 +23,8 @@ const RELATIONS: Record<string, { table: string; local: string; foreign: string 
   "production_inputs.productions": { table: "productions", local: "production_id", foreign: "id" },
   "sku_count_lines.sku_count_events": { table: "sku_count_events", local: "count_event_id", foreign: "id" },
   "par_pass_lines.par_pass_events": { table: "par_pass_events", local: "event_id", foreign: "id" },
+  // Catalog Phase 2b — the item page's open orders (po_lines → purchase_orders, one FK).
+  "po_lines.purchase_orders": { table: "purchase_orders", local: "po_id", foreign: "id" },
 };
 
 const TS = /^(\d{4}-\d{2}-\d{2})[T ](\d{2}:\d{2}:\d{2})(\.\d+)?(Z|[+-]\d{2}(?::?\d{2})?)?$/;
@@ -109,6 +112,8 @@ export function createFakeDb(tables: Tables, latencyMs = 0) {
     let single = false;
     let upsertRows: Row[] | null = null;
     let insertRows: Row[] | null = null;
+    let updatePatch: Row | null = null;
+    let wantCount = false;
     let upsertOpts: { onConflict?: string; ignoreDuplicates?: boolean } = {};
 
     let depth = 0;
@@ -122,6 +127,13 @@ export function createFakeDb(tables: Tables, latencyMs = 0) {
         const fields = parseSelect(selectStr);
         const projected = inserted.map((r) => project(table, r, fields)).filter((r): r is Row => r !== null);
         return { data: single ? (projected[0] ?? null) : projected, error: null };
+      }
+      if (updatePatch) {
+        // UPDATE … WHERE <preds>: PostgREST's `count: "exact"` is the matched-row count.
+        const hit = (tables[table] ?? []).filter((r) => preds.every((p) => p(r)));
+        for (const r of hit) Object.assign(r, updatePatch);
+        writes.push({ table, rows: hit.map((r) => ({ ...r })) });
+        return { data: null, error: null, count: hit.length };
       }
       if (upsertRows) {
         writes.push({ table, rows: upsertRows });
@@ -157,11 +169,11 @@ export function createFakeDb(tables: Tables, latencyMs = 0) {
       const fields = parseSelect(selectStr);
       const projected = rows.map((r) => project(table, r, fields)).filter((r): r is Row => r !== null);
       if (single) return { data: projected[0] ?? null, error: null };
-      return { data: projected, error: null };
+      return wantCount ? { data: projected, error: null, count: projected.length } : { data: projected, error: null };
     };
 
     const q = {
-      select(cols: string) { selectStr = cols.replace(/\s+/g, " "); return q; },
+      select(cols: string, opts?: { count?: string; head?: boolean }) { selectStr = cols.replace(/\s+/g, " "); wantCount = opts?.count === "exact"; return q; },
       eq(col: string, v: unknown) { preds.push((r) => valueAt(table, r, col) === v); return q; },
       neq(col: string, v: unknown) { preds.push((r) => valueAt(table, r, col) !== v); return q; },
       is(col: string, v: unknown) { preds.push((r) => (valueAt(table, r, col) ?? null) === v); return q; },
@@ -191,6 +203,7 @@ export function createFakeDb(tables: Tables, latencyMs = 0) {
       maybeSingle() { single = true; return q; },
       upsert(rows: Row[], opts: { onConflict?: string; ignoreDuplicates?: boolean } = {}) { upsertRows = rows; upsertOpts = opts; return q; },
       insert(rows: Row | Row[]) { insertRows = Array.isArray(rows) ? rows : [rows]; return q; },
+      update(patch: Row) { updatePatch = patch; return q; },
       then(resolve: (v: unknown) => unknown, reject?: (e: unknown) => unknown) {
         depth = completedDepth + 1;
         stats.depth = Math.max(stats.depth, depth);

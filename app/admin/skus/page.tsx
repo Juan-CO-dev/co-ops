@@ -12,7 +12,12 @@
 import { redirect } from "next/navigation";
 
 import { requireSessionFromHeaders } from "@/lib/session";
+import { resolveShopId } from "@/lib/shop-context";
 import { ROLES } from "@/lib/roles";
+import { catalogShopAllowed, catalogWriteRoleAllowed } from "@/lib/sku-versions-shared";
+import { loadOpenPackChangeRequests } from "@/lib/pack-change-requests";
+import { packRequestReviewAllowed } from "@/lib/pack-change-requests-shared";
+import { PackChangeRequestsList } from "@/components/catalog/PackChangeRequestsList";
 import { serverT } from "@/lib/i18n/server";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import { loadSkus, loadPackFormats, loadMeasureUnits, loadLocationSkuSettings, parsColumnsReady, SKU_WRITE_MIN } from "@/lib/admin/skus";
@@ -161,6 +166,17 @@ export default async function AdminSkusPage({
     skuDataUnavailable = true;
   }
 
+  // Catalog Phase 2b — open door reports for the shops this actor works in (a reviewer role only:
+  // the operational managers and GM+; the social media manager is never asked for the list).
+  const packRequests = packRequestReviewAllowed(auth) ? await loadOpenPackChangeRequests(auth, { locationIds: locations.map((l) => l.id) }) : [];
+
+  // Catalog Phase 2b (sim QA): the shop every item-page link here lands on — THE one resolver over
+  // the shops this actor may write a version for (a membership, or MoO+ any active shop — D2).
+  const itemShopId = await resolveShopId(
+    ((await getServiceRoleClient().from("locations").select("id").eq("active", true).order("name").order("id").returns<Array<{ id: string }>>()).data ?? [])
+      .map((l) => l.id).filter((id) => catalogShopAllowed(auth, id)),
+  );
+
   return (
     <div>
       <PageHeader
@@ -169,6 +185,7 @@ export default async function AdminSkusPage({
       />
       {level >= SKU_WRITE_MIN ? <PendingStoreItems locations={locations.filter((location) => lockLocationContext({ role: auth.user.role, locations: auth.locations }, location.id))} /> : null}
       {level >= ROLES.gm.level ? <StoreManagement locations={locations.filter((location) => lockLocationContext({ role: auth.user.role, locations: auth.locations }, location.id))} /> : null}
+      <PackChangeRequestsList requests={packRequests} shops={locations} language={lang} />
       <SkuCatalogClient
         skus={skus}
         vendors={activeVendors}
@@ -189,6 +206,8 @@ export default async function AdminSkusPage({
         productIdBySku={productIdBySku}
         parsFieldsReady={parsReady}
         actorLevel={level}
+        canEditShopVersion={catalogWriteRoleAllowed(auth.user.role, level)}
+        itemShopId={itemShopId}
         canManage={level >= SKU_WRITE_MIN}
         focusSkuId={focusSkuId}
         initialVendorFilter={vendorParam}

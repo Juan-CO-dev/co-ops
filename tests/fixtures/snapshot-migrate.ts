@@ -134,13 +134,36 @@ export async function migrateSnapshot(snapshot: SnapshotTables): Promise<Migrate
 }
 
 /**
- * A PGlite database with the REAL 0259 + 0260 schema applied over the stub base tables (no rows).
+ * A PGlite database with the REAL 0259 + 0260 + 0261 schema applied over the stub base tables (no rows).
  * The caller closes it. Used to check that every column a loader names on a 0259 table exists.
  */
 export async function migratedSchemaDb(): Promise<PGlite> {
   const db = new PGlite();
   await db.exec(SCHEMA);
+  await db.exec(SCHEMA_FOR_0261);
   await db.exec(readFileSync("supabase/migrations/0259_sku_shop_versions.sql", "utf8"));
   await db.exec(readFileSync("supabase/migrations/0260_sku_pack_versions_finalize.sql", "utf8"));
+  // Catalog Phase 2b: the door's report table + the atomic apply (its sql-language snapshot
+  // function is validated against these columns at create time).
+  await db.exec(readFileSync("supabase/migrations/0261_sku_pack_change_requests.sql", "utf8"));
   return db;
 }
+
+/**
+ * The extra base columns/tables 0261 references (0172 vendor_items pars; 0174 + 0183 overlay
+ * columns; the FK targets vendor_deliveries and photos). Only migratedSchemaDb applies these, so
+ * the snapshot proof (migrateSnapshot) keeps exactly the schema it was frozen with.
+ */
+const SCHEMA_FOR_0261 = `
+  alter table public.vendor_items add column weekday_par numeric, add column weekend_par numeric;
+  alter table public.location_sku_settings
+    add column id uuid primary key default gen_random_uuid(),
+    add column active_override boolean, add column weekday_par numeric, add column weekend_par numeric,
+    add column updated_by uuid, add column updated_at timestamptz not null default now(),
+    add column auto_weekday_applied_at timestamptz, add column auto_weekend_applied_at timestamptz,
+    add column auto_weekday_baseline_par numeric, add column auto_weekend_baseline_par numeric,
+    add column pinned_weekday_at timestamptz, add column pinned_weekend_at timestamptz;
+  create table public.vendor_deliveries(id uuid primary key, location_id uuid not null references public.locations(id));
+  create table public.photos(id uuid primary key, location_id uuid not null references public.locations(id));
+  grant select, insert, update on all tables in schema public to service_role;
+`;

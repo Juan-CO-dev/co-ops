@@ -17,11 +17,14 @@ const RPC_RESULTS: Record<string, unknown> = {
   save_sku_shop_price: { price_id: "p-new", lane_id: "lane-new", lane_created: true },
   save_sku_global_price: { price_id: "p-new" },
 };
+/** 0261 apply_sku_price_change returns the shop or the global writer's own result. */
+const rpcResult = (fn: string, args: Record<string, unknown>): unknown =>
+  fn === "apply_sku_price_change" ? (args.p_location == null ? RPC_RESULTS.save_sku_global_price : RPC_RESULTS.save_sku_shop_price) : RPC_RESULTS[fn] ?? null;
 vi.mock("@/lib/supabase-server", () => ({ getServiceRoleClient: () => {
   if (!current) throw new Error("no fake db installed"); // "fails for want of a database"
   return {
     ...current.client,
-    rpc: async (fn: string, args: Record<string, unknown>) => { rpcCalls.push({ fn, args }); return { data: RPC_RESULTS[fn] ?? null, error: null }; },
+    rpc: async (fn: string, args: Record<string, unknown>) => { rpcCalls.push({ fn, args }); return { data: rpcResult(fn, args), error: null }; },
   };
 } }));
 vi.mock("@/lib/audit", () => ({ audit: async () => {} }));
@@ -95,7 +98,7 @@ describe("AGM/GM write only their own shop's version; MoO+ any shop (D2)", () =>
       expect(r).toEqual({ priceId: "p-new", laneId: null, laneCreated: false });
     }
     expect(rpcCalls.map((c) => [c.fn, c.args.p_sku, c.args.p_first_only])).toEqual([
-      ["save_sku_global_price", "s-shared", true], ["save_sku_global_price", "s-a", true],
+      ["apply_sku_price_change", "s-shared", true], ["apply_sku_price_change", "s-a", true],
     ]);
   });
   it("payload refusals come after the bind: an in-scope actor with an empty chain or a bad price gets the validation error", async () => {
@@ -119,7 +122,7 @@ describe("level 6 is the operational managers only (lead decision, chunk-1 revie
       const r = await saveSkuPrice(actor(role, 6, [SHOP_A]), { skuId: "s", scope: SHOP_A, unitPrice: 10, effectiveDate: "2026-10-15" });
       expect(r).toEqual({ priceId: "p-new", laneId: "lane-new", laneCreated: true });
     }
-    expect(rpcCalls.map((c) => [c.fn, c.args.p_location])).toEqual([["save_sku_shop_price", SHOP_A], ["save_sku_shop_price", SHOP_A]]);
+    expect(rpcCalls.map((c) => [c.fn, c.args.p_location])).toEqual([["apply_sku_price_change", SHOP_A], ["apply_sku_price_change", SHOP_A]]);
   });
   it("the social media manager is refused the version history read and Record price too (before any I/O)", async () => {
     const smm = actor("social_media_mgr", 6, [SHOP_A]);
@@ -138,7 +141,7 @@ describe("chunk-4 review: shop-owned SKUs and Restore stay inside their scope", 
     expect(await refused(saveSkuPrice(actor("moo", 8, []), { skuId: "s-b", scope: SHOP_A, unitPrice: 10, effectiveDate: "2026-10-15" }))).toEqual({ status: 409, code: "sku_owned_by_other_shop" });
     // …while the owning shop writes its own SKU
     expect((await saveSkuPrice(actor("gm", 7, [SHOP_B]), { skuId: "s-b", scope: SHOP_B, unitPrice: 10, effectiveDate: "2026-10-15" })).laneId).toBe("lane-new");
-    expect(rpcCalls.map((c) => c.fn)).toEqual(["save_sku_shop_price"]);
+    expect(rpcCalls.map((c) => c.fn)).toEqual(["apply_sku_price_change"]);
   });
   it("P3a: Restore takes only THIS SKU's version, global or this scope's own — never another shop's", async () => {
     current = passableDb();

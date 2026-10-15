@@ -55,6 +55,8 @@ export function VendorSkusCard({
   productIdBySku,
   parsFieldsReady,
   actorLevel,
+  canEditShopVersion = false,
+  itemShopId = null,
   canManage,
 }: {
   vendorId: string;
@@ -81,6 +83,10 @@ export function VendorSkusCard({
   /** True once migration 0182 (GATE M1) applied — gates the Ordering-rhythm group. */
   parsFieldsReady: boolean;
   actorLevel: number;
+  /** Catalog Phase 2b: may this actor write a SHOP version (catalogWriteRoleAllowed)? */
+  canEditShopVersion?: boolean;
+  /** Catalog Phase 2b (sim QA): the shop the item-page links land on — the page's resolved shop (null = none). */
+  itemShopId?: string | null;
   canManage: boolean; // GM+
 }) {
   const { t } = useTranslation();
@@ -209,6 +215,8 @@ export function VendorSkusCard({
                     packFormats={packFormats}
                     measureUnits={measureUnits}
                     actorLevel={actorLevel}
+            canEditShopVersion={canEditShopVersion}
+            itemShopId={itemShopId}
                     busy={busy}
                     errorMsg={errorMsg}
                     submitLabel={t("admin.skus.save")}
@@ -248,6 +256,7 @@ export function VendorSkusCard({
                     ledger={skuLedger[s.id] ?? null}
                     consumption={skuConsumption[s.id] ?? null}
                     canRecord={actorLevel >= 6}
+                    itemShopId={itemShopId}
                   />
                 )}
               </li>
@@ -270,6 +279,8 @@ export function VendorSkusCard({
                 packFormats={packFormats}
                 measureUnits={measureUnits}
                 actorLevel={actorLevel}
+            canEditShopVersion={canEditShopVersion}
+            itemShopId={itemShopId}
                 busy={busy}
                 errorMsg={errorMsg}
                 submitLabel={t("admin.skus.add")}

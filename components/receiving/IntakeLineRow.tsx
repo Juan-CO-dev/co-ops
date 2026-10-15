@@ -26,6 +26,7 @@
  * When `showPrice` is false the collapsed row is exactly what it always was.
  */
 import { PhotoCapture } from "@/components/photos/PhotoCapture";
+import { CaseLooksDifferent } from "@/components/receiving/CaseLooksDifferent";
 import { useTranslation } from "@/lib/i18n/provider";
 import type { TranslationKey } from "@/lib/i18n/types";
 import { collapsedPriceNotice } from "@/lib/receiving-shared";
@@ -497,6 +498,8 @@ export function IntakeLineRow({
         initialPhotoId={line.photoId}
         onUploaded={(pid) => onChange({ photoId: pid })}
       />
+      {/* Catalog Phase 2b: the crew reports a case that arrived different; the GM answers it on the item page. */}
+      {storeMode || !line.skuId ? null : <CaseLooksDifferent skuId={line.skuId} locationId={locationId} />}
 
       <div className="mt-2 flex flex-wrap items-center gap-4">
         {onRemove ? (

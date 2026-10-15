@@ -98,7 +98,12 @@ const SHOP_PARAMS_BY_PATH: Readonly<Record<string, readonly string[]>> = {
 };
 
 /** Dynamic routes, matched by prefix (`/mid-shift/[section]`). */
-const SHOP_PARAMS_BY_PREFIX: ReadonlyArray<readonly [string, readonly string[]]> = [["/mid-shift/", ["location"]]];
+const SHOP_PARAMS_BY_PREFIX: ReadonlyArray<readonly [string, readonly string[]]> = [
+  ["/mid-shift/", ["location"]],
+  // Catalog Phase 2b — the item page's shop switcher (?location=<shop> | global). "global" is not a
+  // shop id, so the sync never remembers it (shopParamFromUrl / shouldRememberShop).
+  ["/admin/catalog/sku/", ["location"]],
+];
 
 const NO_SHOP_PARAMS: readonly string[] = [];
 

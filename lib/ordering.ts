@@ -54,17 +54,8 @@ import type { AuthContext } from "@/lib/session";
 import { isPulseReadActor, requirePulseReadScope, type PulseScopedReadActor } from "@/lib/pulse/read-actor";
 import { loadMeasures, loadShopPackEpochs, loadSkuPackChains, loadSkuPackResolution } from "@/lib/prep-consumption";
 import { levelsBySku, type ResolvedPack } from "@/lib/sku-versions-shared";
-import {
-  ozForRecipeInput,
-  skuContentOz,
-  type MeasureUnitFactor,
-  type RecipeInputSku,
-} from "@/lib/recipe-math";
-import {
-  buildPackChain,
-  chainRootLabel,
-  type PackChainLevel,
-} from "@/lib/pack-chain-shared";
+import { type RecipeInputSku } from "@/lib/recipe-math";
+import { type PackChainLevel } from "@/lib/pack-chain-shared";
 import { loadOnHandDerived, type OnHandRow } from "@/lib/counts";
 import { etBusinessDate } from "@/lib/counts-shared";
 import {
@@ -210,42 +201,13 @@ async function loadCutoffsByVendor(
 
 
 // ── Per-order-unit oz conversion (chain root, else pack content) ─────────────────
-/**
- * oz of ONE order unit for a SKU. The order unit is the chain ROOT container (chained)
- * or one pack_format pack (unchained). Advisory-null when the conversion can't resolve
- * (A3 — never fabricate):
- *   chained  → ozForRecipeInput(1, rootLabel, skuShape, measures) (walks the chain).
- *              A malformed / count-terminated-unresolvable chain → null.
- *   unchained→ skuContentOz(skuShape, measures) = oz of one pack (the pack_format unit).
- * Pure over the passed shapes; the caller batch-loads chains + measures once.
- *
- * EXPORTED for the nightly pars engine (lib/dynamic-pars.ts). The order-unit denominator
- * is the whole coverage layer's arithmetic — a second spelling of it would let the engine
- * suggest a par in units the walker does not mean.
- */
-export function perOrderUnitOz(
-  sku: RecipeInputSku,
-  chain: PackChainLevel[] | null,
-  measures: Map<string, MeasureUnitFactor>,
-): number | null {
-  const hasChain = chain != null && chain.length > 0;
-  if (hasChain) {
-    const root = chainRootLabel(buildPackChain(chain));
-    if (root == null) return null; // no unique root → can't name the order unit → advisory-null.
-    return ozForRecipeInput(1, root, sku, measures);
-  }
-  // Unchained: the order unit is one pack_format pack; its oz is the pack content.
-  return skuContentOz(sku, measures);
-}
-
-/** The order-unit label = chain root label (chained) else pack_format else null. */
-function orderUnitLabelFor(packFormat: string | null, chain: PackChainLevel[] | null): string | null {
-  if (chain != null && chain.length > 0) {
-    const root = chainRootLabel(buildPackChain(chain));
-    if (root != null) return root;
-  }
-  return packFormat;
-}
+// perOrderUnitOz / orderUnitLabel live in the PURE, client-safe lib/order-unit-shared.ts (catalog
+// Phase 2b — the item page's "What this changes" preview needs them). EXPORTED for the nightly pars
+// engine (lib/dynamic-pars.ts) through this re-export, so the denominator keeps ONE spelling.
+import { orderUnitLabel as orderUnitLabelFor, perOrderUnitOz } from "@/lib/order-unit-shared";
+// Re-exported so the walker's existing importers keep ONE spelling of the denominator. A re-export
+// alone creates NO local binding — the import above is what this file's own calls resolve to.
+export { perOrderUnitOz };
 
 /**
  * Which recipes create demand for a SKU today, and which STOPPED — the input to the

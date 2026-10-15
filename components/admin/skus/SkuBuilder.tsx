@@ -44,7 +44,8 @@ import {
   type SkuNameCollisionCandidate,
 } from "@/lib/admin/catalog-shared";
 import type { PackChainLevel } from "@/lib/pack-chain-shared";
-import { canChangeGlobalPack, hasGlobalPack, resolveErrorKey, STEP_UP_CANCELLED, type SaveChainResult } from "./shared";
+import { shopPackJobOffered, canChangeGlobalPack, hasGlobalPack, resolveErrorKey, STEP_UP_CANCELLED, type SaveChainResult } from "./shared";
+import { ShopPackJobLink } from "./ShopPackJobLink";
 import { PackChainWizard } from "./PackChainWizard";
 import { SkuCostPanel, type SkuCostInfo } from "./SkuCostPanel";
 import { SkuLocationOverlay, type LocationSkuOverlayView } from "./SkuLocationOverlay";
@@ -172,6 +173,8 @@ export function SkuBuilder({
   packFormats,
   measureUnits,
   actorLevel,
+  canEditShopVersion = false,
+  itemShopId = null,
   busy,
   errorMsg,
   submitLabel,
@@ -207,6 +210,10 @@ export function SkuBuilder({
   packFormats: RegistryOption[];
   measureUnits: MeasureUnitOption[];
   actorLevel: number;
+  /** Catalog Phase 2b: may this actor write a SHOP version (catalogWriteRoleAllowed, decided by the page)? */
+  canEditShopVersion?: boolean;
+  /** Catalog Phase 2b (sim QA): the shop the item-page links land on — the page's resolved shop (null = none). */
+  itemShopId?: string | null;
   busy: boolean;
   errorMsg: string | null;
   submitLabel: string;
@@ -237,6 +244,8 @@ export function SkuBuilder({
   // CATALOG PHASE 2a (D5; sim QA): below MoO an EXISTING global pack is read-only here — the database
   // refuses the change anyway, so the screen says so plainly instead of a password prompt and a 403.
   const globalPackLocked = isEdit && !canChangeGlobalPack(actorLevel, hasGlobalPack(initial!, initialChain?.length ?? 0));
+  // Catalog Phase 2b: the read-only line points at the item page's pack job — THIS SHOP's version.
+  const offerShopPackJob = shopPackJobOffered(globalPackLocked, canEditShopVersion);
 
   // ── Section A state ──
   const initialVendor =
@@ -648,7 +657,10 @@ export function SkuBuilder({
                   ))}
                 </ul>
                 {globalPackLocked ? (
-                  <p role="note" className="text-sm text-co-text-muted">{t("admin.skus.chain.global_read_only")}</p>
+                  <>
+                    <p role="note" className="text-sm text-co-text-muted">{t("admin.skus.chain.global_read_only")}</p>
+                    {offerShopPackJob ? <ShopPackJobLink skuId={initial!.id} shopId={itemShopId} /> : null}
+                  </>
                 ) : onSaveChain ? (
                   <button
                     type="button"
@@ -702,7 +714,10 @@ export function SkuBuilder({
           // a bare save stays valid ("add pack detail later").
           <div className="flex flex-col gap-3">
             {globalPackLocked ? (
-              <p role="note" className="text-sm text-co-text-muted">{t("admin.skus.chain.global_read_only")}</p>
+              <>
+                <p role="note" className="text-sm text-co-text-muted">{t("admin.skus.chain.global_read_only")}</p>
+                {offerShopPackJob ? <ShopPackJobLink skuId={initial!.id} shopId={itemShopId} /> : null}
+              </>
             ) : !wizardOpen ? (
               <>
                 <p className="text-xs text-co-text-muted">{t("admin.skus.builder.add_detail_later")}</p>
@@ -761,6 +776,7 @@ export function SkuBuilder({
         <section className="flex flex-col gap-2 border-t-2 border-co-border pt-3" aria-label={t("admin.skus.builder.cost_aria")}>
           <SectionHeader title={t("admin.skus.builder.section_cost")} />
           <SkuCostPanel
+            itemShopId={itemShopId}
             skuId={initial!.id}
             cost={cost}
             ledger={ledger ?? null}

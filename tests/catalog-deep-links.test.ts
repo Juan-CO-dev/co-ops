@@ -96,8 +96,8 @@ describe("no catalog deep link lands on a whole list any more", () => {
   });
 
   it("vendor import's needs-a-person links name the matched SKU", () => {
-    expect(read("lib/vendor-import.ts")).toContain("href: o.match.sku_id ? skuCatalogHref(o.match.sku_id) :");
-    expect(read("components/admin/vendors/VendorImportPanel.tsx")).toContain("o.match.sku_id ? skuCatalogHref(o.match.sku_id) :");
+    expect(read("lib/vendor-import.ts")).toContain('href: o.match.sku_id ? skuItemHref(o.match.sku_id, { shopId: null, job: "pack" }) :');
+    expect(read("components/admin/vendors/VendorImportPanel.tsx")).toContain('o.match.sku_id ? skuItemHref(o.match.sku_id, { shopId: null, job: "pack" }) :');
   });
 
   it("the costing drawer links every name it blames", () => {

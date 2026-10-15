@@ -24,6 +24,9 @@ describe("0259 / 0260 headers", () => {
       expect(src).toMatch(/NOT YET APPLIED — apply via MCP after review|APPLIED TO SIM \d{14}/);
     }
     expect(read(M0260)).toContain("ONLY AFTER the Phase 2a code is deployed");
+    // The AGENTS.md stamp format, name part included (chunk-1 review P3d), on line 2 under the gate words.
+    expect(read(M0259).split(/\r?\n/)[1]).toContain("APPLIED TO PROD 2026-10-15 (schema_migrations version 20261015131225, name 'sku_shop_versions')");
+    expect(read(M0260).split(/\r?\n/)[1]).toContain("APPLIED TO PROD 2026-10-15 (schema_migrations version 20261015132616, name 'sku_pack_versions_finalize')");
   });
 });
 

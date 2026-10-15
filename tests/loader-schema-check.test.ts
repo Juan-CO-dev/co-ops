@@ -9,8 +9,8 @@
  *   3. every captured query on a table that schema defines fully is EXECUTED there as
  *      `select <cols> from <table> where <filter cols> ... order by <order cols> limit 0` — a
  *      missing column is a Postgres error, not a guess.
- * Fully defined here: the three 0259 tables, sku_pack_levels (0159 verbatim + 0259) and
- * vendor_price_history (the foundation columns + 0177 + 0259).
+ * Fully defined here: the three 0259 tables, sku_pack_levels (0159 verbatim + 0259),
+ * vendor_price_history (the foundation columns + 0177 + 0259) and 0261's sku_pack_change_requests.
  */
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import type { PGlite } from "@electric-sql/pglite";
@@ -53,12 +53,17 @@ import { loadSkuDataReadiness, READINESS_COLUMNS, readinessOrder } from "@/lib/s
 import { loadAllSkuPackResolution, loadPackBoundaries, loadShopPackEpochs, loadSkuPackResolution } from "@/lib/prep-consumption";
 import { loadCurrentSkuPriceHeads } from "@/lib/admin/cost";
 import { loadSkuPackVersionHistory, restoreSkuPackVersion, retireShopPackVersion } from "@/lib/admin/sku-versions";
+import { dismissPackChangeRequest, filePackChangeRequest, loadOpenPackChangeRequests, loadRequestAdditions, signPackRequestPhoto } from "@/lib/pack-change-requests";
+import { globalValueExists, loadSkuPriceHistory, requestShop } from "@/lib/catalog/sku-item";
+import { getServiceRoleClient } from "@/lib/supabase-server";
 import { migratedSchemaDb } from "./fixtures/snapshot-migrate";
 
 const LOC = "6f1d2c3e-0000-4000-8000-0000000000a1";
 const SKU = "6f1d2c3e-0000-4000-8000-0000000000b1";
 const owner = { user: { id: "u", role: "owner" }, role: "owner", level: 9, locations: [LOC] } as unknown as AuthContext;
-const FULLY_DEFINED = new Set(["sku_pack_versions", "sku_price_lanes", "sku_pack_epochs", "sku_pack_levels", "vendor_price_history"]);
+const FULLY_DEFINED = new Set(["sku_pack_versions", "sku_price_lanes", "sku_pack_epochs", "sku_pack_levels", "vendor_price_history",
+  // Catalog Phase 2b (0261): the door's report table.
+  "sku_pack_change_requests", "sku_pack_change_request_additions"]);
 
 let db: PGlite;
 beforeAll(async () => {
@@ -75,6 +80,18 @@ beforeAll(async () => {
   await run("loadSkuPackVersionHistory", () => loadSkuPackVersionHistory(owner, SKU, LOC));
   await run("retireShopPackVersion", () => retireShopPackVersion(owner, { skuId: SKU, versionId: SKU, locationId: LOC }));
   await run("restoreSkuPackVersion", () => restoreSkuPackVersion(owner, { skuId: SKU, scope: LOC, fromVersionId: SKU, expectedLiveVersionId: null }));
+  // Catalog Phase 2b (0261) — every read of the door's report table.
+  await run("loadOpenPackChangeRequests", () => loadOpenPackChangeRequests(owner, { locationIds: [LOC], skuId: SKU }));
+  await run("dismissPackChangeRequest", () => dismissPackChangeRequest(owner, { requestId: SKU, skuId: SKU }));
+  // Catalog Phase 2b — the item page's own reads of 0259/0261 tables.
+  await run("globalValueExists(pack)", () => globalValueExists(getServiceRoleClient(), SKU, "pack"));
+  await run("globalValueExists(price)", () => globalValueExists(getServiceRoleClient(), SKU, "price"));
+  await run("loadSkuPriceHistory(shop)", () => loadSkuPriceHistory(getServiceRoleClient(), SKU, LOC));
+  await run("requestShop", () => requestShop(getServiceRoleClient(), SKU));
+  await run("signPackRequestPhoto(report)", () => signPackRequestPhoto(owner, { requestId: SKU, additionId: null }));
+  await run("signPackRequestPhoto(addition)", () => signPackRequestPhoto(owner, { requestId: SKU, additionId: SKU }));
+  await run("loadRequestAdditions", () => loadRequestAdditions(getServiceRoleClient() as never, [SKU]));
+  await run("filePackChangeRequest", () => filePackChangeRequest(owner, { skuId: SKU, locationId: LOC, deliveryId: null, note: null, proposal: null, photoId: null }));
 }, 120_000);
 afterAll(async () => { await db?.close(); });
 

@@ -7,10 +7,11 @@ import { useStepUp } from "@/components/admin/StepUpProvider";
 import { useStepUpPost } from "@/components/admin/useStepUpPost";
 import type { SkuReceivingLedger, SkuConsumption } from "@/lib/admin/cost";
 import { resolveErrorKey } from "./shared";
+import { skuItemHref } from "@/lib/catalog/sku-item-shared";
 
 export interface SkuCostInfo { currentPrice: number | null; costPerOz: number | null; usedBy: string[]; }
 
-export function SkuCostPanel({ skuId, cost, ledger, consumption, canRecord }: { skuId: string; cost: SkuCostInfo; ledger: SkuReceivingLedger | null; consumption: SkuConsumption | null; canRecord: boolean }) {
+export function SkuCostPanel({ skuId, cost, ledger, consumption, canRecord, itemShopId = null }: { skuId: string; cost: SkuCostInfo; ledger: SkuReceivingLedger | null; consumption: SkuConsumption | null; canRecord: boolean; /** The shop the item-page link lands on (sim QA). */ itemShopId?: string | null }) {
   const { t } = useTranslation();
   const router = useRouter();
   const { requestStepUp } = useStepUp();
@@ -20,6 +21,7 @@ export function SkuCostPanel({ skuId, cost, ledger, consumption, canRecord }: { 
   const [price, setPrice] = useState("");
   const [date, setDate] = useState("");
   const [err, setErr] = useState<string | null>(null);
+  const [errCode, setErrCode] = useState<string | null>(null);
 
   const record = async () => {
     if (busy) return;
@@ -32,7 +34,7 @@ export function SkuCostPanel({ skuId, cost, ledger, consumption, canRecord }: { 
     const res = await send(`/api/admin/skus/${skuId}/price`, { unitPrice: p, effectiveDate: date }, "POST");
     setBusy(false);
     if (res.ok) { setPrice(""); setDate(""); setOpen(false); router.refresh(); }
-    else setErr(t(resolveErrorKey(res.code)));
+    else { setErr(t(resolveErrorKey(res.code))); setErrCode(res.code); }
   };
 
   const field = "mt-1 min-h-[44px] w-full rounded-lg border-2 border-co-border bg-co-surface px-3 text-base text-co-text focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60";
@@ -85,8 +87,13 @@ export function SkuCostPanel({ skuId, cost, ledger, consumption, canRecord }: { 
             <input className={field} type="number" min={0} step="any" inputMode="decimal" placeholder={t("admin.skus.cost.price_placeholder")} value={price} disabled={busy} onChange={(e) => setPrice(e.target.value)} />
             <input className={field} type="date" value={date} disabled={busy} onChange={(e) => setDate(e.target.value)} />
             {err ? <p className="text-sm text-co-cta-text">{err}</p> : null}
+            {errCode === "global_requires_moo" ? (
+              <Link href={skuItemHref(skuId, { shopId: itemShopId ?? undefined, job: "price" })} className="inline-flex min-h-[44px] items-center text-sm font-bold text-co-text underline">
+                {t("admin.skus.cost.use_item_page")}
+              </Link>
+            ) : null}
             <div className="flex justify-end gap-2">
-              <button type="button" disabled={busy} onClick={() => { setOpen(false); setErr(null); }} className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-border bg-co-surface px-3 text-xs font-bold text-co-text disabled:opacity-50">{t("admin.skus.cancel")}</button>
+              <button type="button" disabled={busy} onClick={() => { setOpen(false); setErr(null); setErrCode(null); }} className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-border bg-co-surface px-3 text-xs font-bold text-co-text disabled:opacity-50">{t("admin.skus.cancel")}</button>
               <button type="button" disabled={busy} onClick={() => void record()} className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-gold-deep bg-co-gold px-3 text-xs font-bold uppercase tracking-[0.1em] text-co-text disabled:opacity-50">{t("admin.skus.cost.record")}</button>
             </div>
           </div>
