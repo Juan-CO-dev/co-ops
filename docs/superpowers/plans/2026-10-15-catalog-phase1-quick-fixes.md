@@ -2,13 +2,29 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Ship the six Phase 1 quick fixes from the catalog redesign spec: a 15-minute edit unlock, recipe lines editable in place, a searchable ingredient picker, deep links that land on the exact item, a fix for the avg-weight dead end on chained SKUs, and removal of the dead `SkuPackChainPanel`.
+**Goal:** Ship the six Phase 1 quick fixes from the catalog redesign spec:
+- a 15-minute edit unlock, while destructive acts still ask every time;
+- recipe lines editable in place, saved lines and draft lines alike;
+- a searchable ingredient picker;
+- deep links that land on the exact item;
+- a fix for the avg-weight dead end on chained SKUs;
+- removal of the dead `SkuPackChainPanel`.
 
-**Architecture:** The edit unlock is a third step-up tier, **Tier E**, built on the existing step-up columns on the session row (`sessions.step_up_unlocked` + `step_up_unlocked_at`, stamped only by `POST /api/auth/step-up`). The window is checked on the server by the same pure `assertStepUp` on every write. It needs **no migration**. Recipe lines are config edges: removing one is already a hard DELETE with the before-row in the audit, and nothing keys on a line's id. So an edit is an in-place UPDATE, audited as `recipe_input.update` with the whole before and after line. It runs through one validator shared with the add path. The picker, line parsing and diffing, deep-link builders and the avg-weight rule are pure `*-shared.ts` modules with vitest tests. The UI changes rewire existing components onto them.
+The manager guide text for these screens ships with them.
+
+**Architecture:** Migration `0257` adds two things.
+
+1. **The edit window has its own clock.** The new column `sessions.catalog_edit_unlocked_at` is stamped only by a password typed on the admin surface. It is a FIXED 15-minute clock from that password: never extended by saving, never cleared by navigation or background requests, ended only by expiry or by the session ending (logout, revoke, session expiry). The pure `assertStepUp(ctx, "E")` checks this column on every catalog and recipe write, and ordinary catalog edits all move to Tier E, including those that sat at Tier A.
+2. **Destructive acts get a one-shot grant.** Retire a product, delete a recipe and deactivate a SKU each need a single-use authorization bound to the action and the target. The step-up POST mints it when it carries a `purpose`, into the deny-all `step_up_grants` table, with a 120 s TTL. The destructive route consumes it with one atomic conditional UPDATE. A wrong action, wrong target, wrong session, replay or expired grant is refused.
+
+Recipe lines are config edges, so an edit is an in-place, **compare-and-set** UPDATE. The client sends the line it saw. If someone else changed the line first, the UPDATE matches 0 rows and the route answers `409 line_changed`. The audit row records the matched expected line as "before" and the row the UPDATE returned as "after". The edit shares one validator with add, so the same product-unit rule and item cycle guard apply to both.
+
+Pure logic lives in `*-shared.ts` modules with vitest tests. DB-coupled code is tested through a predicate-aware fake client that really applies every filter.
 
 **Tech Stack:** Next.js 16.2.4 (App Router; page `searchParams` is a Promise), React 19.2.4, TypeScript strict + `noUncheckedIndexedAccess`, Tailwind v4 tokens, Supabase (service role), vitest 4.
 
 **Spec:** `docs/superpowers/specs/2026-10-15-catalog-redesign-design.md` §4 ("Passwords") and §7 (Phase 1).
+**Review:** Astra r1 (CHANGES REQUESTED), findings P1-1 … P3-8, all addressed. See "Review r1 — what changed" at the end.
 
 **Working copy:** `C:\Users\conta\co-ops-guides`. Branch from `origin/main`:
 
@@ -17,10 +33,10 @@ cd /c/Users/conta/co-ops-guides && git fetch origin && git checkout -b feat/cata
 ```
 
 **Standing rules for every task:**
-- Read `AGENTS.md` first. It is the law-book: the closed audit vocabulary, the 44px + `items-center` floor, the token roles, en + es in the same PR, and tú Spanish.
+- Read `AGENTS.md` first. It is the law-book: the closed audit vocabulary, the 44px + `items-center` floor, the token roles, en + es in the same PR, tú Spanish, and the migration headers.
 - Use the sim only (`node scripts/sim/dev-sim.mjs`, http://localhost:3100). Never test against production.
 - Every commit message ends with the two trailer lines shown in each commit step.
-- Do not apply any migration. This plan needs none.
+- **Migration `0257` is authored here and NOT applied.** Apply it via MCP after review: sim first, then prod on Juan's word, and **before** the code merges. The code writes `catalog_edit_unlocked_at` and `step_up_grants`. Merging first would 500 every step-up and refuse every catalog edit. The number is `0257` as the brief directs; `0256` stays free for the branch that holds it.
 
 ---
 
@@ -28,18 +44,19 @@ cd /c/Users/conta/co-ops-guides && git fetch origin && git checkout -b feat/cata
 
 | Claim | Where |
 |---|---|
-| Step-up lives on the session row: `step_up_unlocked` + `step_up_unlocked_at`. Only `unlockStepUp` sets it, after a password check in `POST /api/auth/step-up`, which already audits `auth_step_up_success`. | `lib/session.ts:518-526`, `app/api/auth/step-up/route.ts` |
-| `requireSessionCore` copies both columns into `AuthContext.session`. It **clears** them when the actor leaves the step-up surface (`/admin*`, `/api/admin*`, two catering money routes). | `lib/session.ts:229-400` |
-| `assertStepUp` is pure. Tier A = unlocked at any age. Tier B = unlocked within 120 s (`ADMIN_STEP_UP_FRESH_SECONDS`). | `lib/admin/step-up.ts` |
-| The client `StepUpProvider` always prompts for Tier B. It skips the prompt for Tier A when unlocked. | `components/admin/StepUpProvider.tsx:35-38` |
-| `DESTRUCTIVE_ACTIONS` does **not** drive step-up. Step-up is chosen per route (AGENTS.md "What destructive MEANS"). So "always prompt" is a list of **routes**, not registry names. | `lib/destructive-actions.ts` header |
-| Recipe and catalog routes at Tier B today: recipes (create, full, PATCH, DELETE, inputs, outputs, edges, yield-nudge), skus POST, products POST, products/[id]/active, items sold-directly, menu-items POST, menu price, weights. SKU edit, price, pack chain, overlay, and product members/primary are **Tier A**. | `tests/step-up-tier-map.test.ts` (pinned map) |
-| `recipe_inputs` has no active or superseded columns. `removeRecipeEdge` hard-deletes the row with `metadata.before`. No table has an FK to `recipe_inputs.id` (`production_inputs` stores SKU + oz). Seeds 22, 25 and 32 already UPDATE lines in place under `recipe_input.update`. That action is registered **non-destructive** today, beside destructive `add` and `remove`. | `0103_recipe_entities.sql:32-46`, `lib/recipes.ts:604-627`, `0102`, `lib/audit-actions.ts:242` |
-| `addRecipeInput` checks: exactly one of three targets, quantity > 0, and for a product line `assertProductLineIsValid` (active product + active measure unit). It has **no** cycle guard for item lines. Only `createRecipeFull` has one. "Mass balance" is a **read-time** costing guard (`lib/menu-costing-shared.ts massBalanceIndex`), not a write guard. | `lib/recipes.ts:108-134, 357-370, 520-534` |
-| The recipe builder offers three separate `<select>` pickers (SKU, item, product) with no search. The two recipe pages carry byte-identical loaders. | `RecipeBuilder.tsx:964-967`, `app/admin/recipes/[id]/page.tsx`, `app/admin/recipes/new/page.tsx` |
-| Lists the deep links land on: `CatalogClient.tsx:376` (`/admin/skus`), `lib/vendor-import.ts:212` (`/admin/skus`), `VendorImportPanel.tsx:131` (`/admin/skus?vendor=`, a param the page never read), `registryLinkHref` sku (`/admin/skus#id`, no expand), and the costing drawer (names, no links at all). SKU rows carry `id={s.id}` and `scroll-mt-24`. The products page already honours `?product=`. | listed files |
-| `leaf_needs_avg` is raised for a RAW chain whose leaf is a count or volume unit with no avg. The avg field renders only inside `PackChainWizard`, which never renders for a chained SKU. `SkuBuilder` already keeps an `avgOzPerEach` state and sends it on the identity Save. | `lib/admin/pack-chain.ts:216-239`, `SkuBuilder.tsx:249, 324, 584-660`, `PackChainWizard.tsx:373` |
-| `SkuPackChainPanel.tsx` has no importer. Only comments and the tier-map test's client map name it. | `grep -rn SkuPackChainPanel` |
+| Step-up lives on the session row: `step_up_unlocked` + `step_up_unlocked_at`, set only by `unlockStepUp` after a password check in `POST /api/auth/step-up`, which audits `auth_step_up_success`. | `lib/session.ts:518-526`, `app/api/auth/step-up/route.ts` |
+| `requireSessionCore` copies the columns into `AuthContext.session` (`select("*")`). It clears the shared flag outside `isStepUpSurface`, which **includes** `/operations/counts` + `/api/operations/counts` and two catering money routes. The catalog clock does not reuse this lifecycle (Astra r2 design decision: a fixed window, see Task 3). | `lib/session.ts:229-400` |
+| `assertStepUp` is pure. A = unlocked at any age; B = unlocked within 120 s. Today B and an edit unlock would read the **same** timestamp, so an edit unlock would pass a Tier B route for 120 s without a new password (Astra P1-1). | `lib/admin/step-up.ts` |
+| `DESTRUCTIVE_ACTIONS` does not drive step-up. Step-up is chosen per route (AGENTS.md). | `lib/destructive-actions.ts` header |
+| Catalog/recipe routes at Tier B today: recipes (create, full, PATCH, DELETE, inputs, outputs, edges, yield-nudge), skus POST, products POST, products/[id]/active, items sold-directly, menu-items POST, menu price, weights. At **Tier A** (unlocked indefinitely): skus/[id] (identity edits **and** deactivation), skus/[id]/pack-chain, price, location-settings, products/[id], members, primary, catalog/item-type. | `tests/step-up-tier-map.test.ts` (pinned map) |
+| `recipe_inputs` has no active, superseded or updated_at column. A removal is a hard DELETE with `metadata.before`. Nothing has an FK to a line id (`production_inputs` stores SKU + oz). Seeds 22/25/32 already UPDATE lines in place under `recipe_input.update`, which is registered **non-destructive** today. | `0103_recipe_entities.sql:32-46`, `lib/recipes.ts:604-627`, `0102`, `lib/audit-actions.ts:242` |
+| `addRecipeInput` checks: one of three targets, quantity > 0, and for a product line `assertProductLineIsValid` (an active product plus an ACTIVE `measure_units` label of any dimension — weight, volume or count; AGENTS.md "measure-registry unit"; the spec's "oz / each" is shorthand). It has **no** item cycle guard; only `createRecipeFull` has one. "Mass balance" is a read-time costing guard, not a write guard. | `lib/recipes.ts:108-134, 357-370, 520-534` |
+| `loadRecipe` returns line fields raw (`unit`, `each_container_label` untrimmed, `quantity` as a number). | `lib/recipes.ts:220-259` |
+| Three separate `<select>` pickers (SKU, item, product) with no search. Two byte-identical page loaders. Draft lines are remove-only. | `RecipeBuilder.tsx:925-1180`, `app/admin/recipes/[id]/page.tsx`, `new/page.tsx` |
+| Deep links land on lists: `CatalogClient.tsx:376`, `lib/vendor-import.ts:212`, `VendorImportPanel.tsx:131` (`?vendor=`, never read), `registryLinkHref` sku (`#id` only), and the costing drawer (names, no links). `SkuCatalogClient` keeps vendor/lens/query/expanded in `useState` initialisers only. | listed files |
+| `leaf_needs_avg` (RAW chain, count/volume leaf, no avg) has no fix on the chained edit path. | `lib/admin/pack-chain.ts:216-239`, `SkuBuilder.tsx:584-660`, `PackChainWizard.tsx:373` |
+| `SkuPackChainPanel.tsx` has no importer. | `grep -rn SkuPackChainPanel` |
+| A house fake client already exists (`tests/vault-fake-client.ts`); migration tests read SQL source (`tests/report-policy-migration.test.ts`). The guides carry an English block plus a `### En español` block per `##` section, at grade 6 or lower (`tests/guides-reading-level.test.ts`). | listed files |
 
 ---
 
@@ -47,47 +64,47 @@ cd /c/Users/conta/co-ops-guides && git fetch origin && git checkout -b feat/cata
 
 | File | Change | Responsibility |
 |---|---|---|
-| `lib/admin/step-up-shared.ts` | create | Pure tier logic: `StepUpTier` (A/B/E), window constants, `isFreshWithin`, the client `stepUpDecision`, `isStepUpRefusal`, `parseWindowSeconds`. |
-| `lib/admin/step-up.ts` | rewrite | Server check: `assertStepUp` gains Tier E (15 min, env `ADMIN_STEP_UP_EDIT_WINDOW_SECONDS`, never shorter than B). |
-| `components/admin/StepUpProvider.tsx` | rewrite | Client: Tier E proceeds inside the window; `forgetStepUp()`; refs so a forget takes effect in the same tick. |
-| `components/admin/useStepUpPost.ts` | create | `postJson` that forgets a refused unlock, so the next tap prompts. |
-| `app/admin/layout.tsx` | modify | Pass the server's window to the provider. |
-| `app/api/auth/step-up/route.ts` | modify | `auth_step_up_success` metadata records `edit_window_seconds`. |
-| 12 route files (Task 3 list) | modify | Non-destructive catalog and recipe writes move from Tier B to Tier E. |
-| `components/admin/recipes/RecipeBuilder.tsx` | modify | Tier E; `send` via `useStepUpPost`; the CONSUMES section is rebuilt on the line editor. |
-| `components/admin/skus/SkuCatalogClient.tsx`, `VendorSkusCard.tsx`, `components/admin/items/ItemRow.tsx`, `components/admin/weights/WeightBoardClient.tsx`, `components/admin/products/ProductsClient.tsx`, `components/admin/menu-costing/MenuPriceEditor.tsx` | modify | Request Tier E for the converted routes and forget on refusal. |
-| `tests/step-up-tier-map.test.ts` | modify | Pin the new tier map (regex accepts `E`). |
-| `tests/menu-prices-data.test.ts`, `tests/menu-prices-ui.test.ts` | modify | The price route asserts `E`; the mock exposes `forgetStepUp`. |
-| `AGENTS.md` | modify | New law bullet: three tiers, one timestamp, fixed window. |
-| `lib/recipe-line-shared.ts` | create | Pure recipe-line surface: types, `parseRecipeLinePatch`, row↔line, `diffRecipeLine`, `recipeLineKind`, `lineUnitChoices`, `lineDraftFromView`. |
-| `lib/recipes.ts` | modify | `assertInputLineIsValid` (one validator for add + edit, with an item-line cycle guard); `updateRecipeInput`. |
-| `lib/destructive-actions.ts`, `lib/audit-actions.ts`, `lib/dynamic-pars.ts` | modify | `recipe_input.update` becomes destructive (comment synced in dynamic-pars). |
-| `app/api/admin/recipes/[id]/inputs/[inputId]/route.ts` | create | `PATCH` one line (Tier E). |
-| `components/admin/recipes/shared.ts` | modify | Two product-line error codes get their own messages. |
-| `lib/ingredient-picker-shared.ts` | create | Pure picker: build options (name · vendor · kind), accent-blind multi-token search with ranking, `optionForLine`, `lineTargetKey`. |
+| `lib/admin/step-up-shared.ts` | create | Pure: tiers (A/B/E), grant actions/purposes, window constants, `isFreshWithin`, client `stepUpDecision`, `isStepUpRefusal`, `parseStepUpPurpose`, `grantExpiresAt`. |
+| `supabase/migrations/0257_step_up_catalog_window_and_grants.sql` | create | `sessions.catalog_edit_unlocked_at`; `step_up_grants` (deny-all, service_role select/insert/update, guard). |
+| `lib/types.ts`, `lib/session.ts` | modify | `Session.catalogEditUnlockedAt`; `unlockStepUp(…, { catalogWindow })`. No navigation clear: the window is a fixed 15-minute clock. |
+| `lib/admin/step-up.ts` | rewrite | `assertStepUp` "E" reads the catalog clock. |
+| `lib/admin/step-up-grants.ts` | create | `mintStepUpGrant`, `consumeStepUpGrant` (atomic conditional UPDATE). |
+| `app/api/auth/step-up/route.ts` | modify | Accepts `catalogWindow` + `purpose`; mints the grant; audits both. |
+| `tests/fake-supabase.ts` | create | Predicate-aware fake client (filters really applied; writes record matches; injectable update failures). |
+| `components/admin/StepUpProvider.tsx` | rewrite | Client catalog clock, `requestStepUpGrant`, `forgetStepUp`. |
+| `components/auth/PasswordModal.tsx` | modify | Sends `purpose` / `catalogWindow`. |
+| `components/admin/useStepUpPost.ts` | create | `postJson` that forgets a refused unlock. |
+| `app/admin/layout.tsx`, `components/admin/catalog/CatalogClient.tsx` | modify | Pass the catalog clock and window. The reactive modal opens the window too. |
+| 22 route files + 10 clients (Task 5 lists) | modify | Every ordinary catalog edit → E; the three destructive acts → grants. |
+| `tests/step-up-tier-map.test.ts`, `tests/dynamic-pars-write.test.ts`, `tests/menu-prices-data.test.ts`, `tests/menu-prices-ui.test.ts` | modify | Re-pinned tiers + a new grant map. |
+| `AGENTS.md` | modify | The step-up law; the overlay-route sentence. |
+| `lib/recipe-line-shared.ts` | create | Pure line surface: parse (patch, snapshot, edit), normalize, row↔line, diff, kind, unit choices, view→draft/snapshot. |
+| `lib/recipes.ts`, `lib/destructive-actions.ts`, `lib/audit-actions.ts`, `lib/dynamic-pars.ts` | modify | Shared validator (add + edit, with the cycle guard); compare-and-set `updateRecipeInput`; `recipe_input.update` destructive. |
+| `app/api/admin/recipes/[id]/inputs/[inputId]/route.ts` | create | `PATCH { line, expected }` (Tier E). |
+| `components/admin/recipes/shared.ts`, `components/admin/skus/shared.ts`, `components/admin/products/shared.ts` | modify | Error codes `line_changed`, `step_up_grant_required`, product-line codes. |
+| `lib/ingredient-picker-shared.ts` | create | Pure picker: options, search + ranking, `moveActive`, `optionForLine`, `lineTargetKey`. |
 | `lib/admin/recipe-builder-data.ts` | create | One loader for both recipe pages; SKUs carry `vendorName`. |
 | `app/admin/recipes/[id]/page.tsx`, `app/admin/recipes/new/page.tsx` | rewrite | Use the loader. |
-| `components/admin/recipes/IngredientPicker.tsx` | create | ARIA combobox: type to filter, arrows/Enter/Escape, 44px rows, phone-width. |
-| `components/admin/recipes/RecipeLineEditor.tsx` | create | One add/edit line form: picker + qty + kind-aware unit + portioned. |
-| `components/admin/recipes/RecipeInputRow.tsx` | modify | **Edit** button beside Remove. |
-| `lib/i18n/en.json`, `lib/i18n/es.json` | modify | New picker, editor and row keys. |
-| `lib/admin/product-item-links-shared.ts` | modify | `skuCatalogHref` / `productHref` / `prepItemHref` / `readFocusParam`; `registryLinkHref` delegates. |
-| `app/admin/skus/page.tsx`, `components/admin/skus/SkuCatalogClient.tsx` | modify | `?sku=` opens, rings and scrolls to the row; `?vendor=` preselects the filter. |
-| `lib/admin/catalog-shared.ts`, `lib/admin/catalog.ts`, `components/admin/catalog/CatalogClient.tsx` | modify | Item → SKU edges carry ids; each SKU links to its own row. |
-| `lib/vendor-import.ts`, `components/admin/vendors/VendorImportPanel.tsx` | modify | "Needs a person" links to the matched SKU. |
-| `components/admin/menu-costing/MenuCostingClient.tsx` | modify | Blocking SKUs, retired products and prep items in the drawer become links. |
-| `lib/admin/catalog-shared.ts` (`chainNeedsAvgOzPerEach`), `components/admin/skus/SkuBuilder.tsx` | modify | The avg oz field on the chained edit path, with the server's rule. |
+| `components/admin/recipes/IngredientPicker.tsx` | create | ARIA combobox; the active option scrolls into view. |
+| `components/admin/recipes/RecipeLineEditor.tsx` | create | One add/edit line form. |
+| `components/admin/recipes/RecipeBuilder.tsx`, `RecipeInputRow.tsx` | modify | Edit in place for saved and draft lines; add via the picker. |
+| `lib/i18n/en.json`, `lib/i18n/es.json` | modify | New strings. |
+| `lib/admin/product-item-links-shared.ts` | modify | `skuCatalogHref` / `productHref` / `prepItemHref` / `readFocusParam`. |
+| `lib/admin/sku-focus-shared.ts` | create | Pure: how a `?sku=` / `?vendor=` change patches the catalog's state. |
+| `app/admin/skus/page.tsx`, `components/admin/skus/SkuCatalogClient.tsx` | modify | Deep link opens, rings and scrolls; prev-compare sync on client navigation. |
+| `lib/admin/catalog-shared.ts`, `lib/admin/catalog.ts`, `components/admin/catalog/CatalogClient.tsx`, `lib/vendor-import.ts`, `components/admin/vendors/VendorImportPanel.tsx`, `components/admin/menu-costing/MenuCostingClient.tsx` | modify | Links land on the item. |
+| `lib/admin/catalog-shared.ts` (`chainNeedsAvgOzPerEach`), `components/admin/skus/SkuBuilder.tsx` | modify | Avg oz field on the chained edit path. |
 | `components/admin/skus/SkuPackChainPanel.tsx` | delete | Dead code. |
-| `tests/step-up-edit-window.test.ts`, `tests/step-up-edit-window-wiring.test.ts`, `tests/recipe-line-shared.test.ts`, `tests/recipe-line-edit-server.test.ts`, `tests/ingredient-picker-shared.test.ts`, `tests/ingredient-picker-ui.test.ts`, `tests/recipe-line-edit-ui.test.ts`, `tests/catalog-deep-links.test.ts`, `tests/dead-code-removed.test.ts` | create | Unit tests and source pins. |
-| `tests/product-item-links.test.ts`, `tests/sku-builder-shared.test.ts` | modify | Updated and added expectations. |
+| `docs/guides/manager-guide.md` | modify | "Recipes and the catalog" (en) + "Recetas y el catálogo" (es). |
+| `docs/superpowers/specs/2026-10-15-catalog-redesign-design.md` | modify | §7 amendment: guide text every phase, photo retakes in one pass after Phase 5. |
+| tests (new): `step-up-edit-window`, `step-up-grants-migration`, `catalog-window-lifecycle`, `step-up-grants`, `step-up-edit-window-wiring`, `recipe-line-shared`, `recipe-line-edit-server`, `ingredient-picker-shared`, `ingredient-picker-ui`, `recipe-line-edit-ui`, `catalog-deep-links`, `dead-code-removed` | create | Unit tests, fake-DB tests and source pins. |
 
 ---
 
-## Task 1: Tier E — the pure decision and the server check
+## Task 1: The pure step-up surface (tiers, grants, the catalog clock)
 
 **Files:**
 - Create: `lib/admin/step-up-shared.ts`
-- Rewrite: `lib/admin/step-up.ts`
 - Test: `tests/step-up-edit-window.test.ts`
 
 - [ ] **Step 1: Write the failing test**
@@ -96,115 +113,113 @@ Create `tests/step-up-edit-window.test.ts`:
 
 ```ts
 /**
- * Catalog Phase 1 — Tier E, the 15-minute catalog/recipe edit window.
- *
- * ONE timestamp (sessions.step_up_unlocked_at, stamped only by a password), three
- * freshness bounds. The server check (assertStepUp) is the authority; the client
- * decision (stepUpDecision) only decides whether to SHOW the prompt.
+ * Catalog Phase 1 — the pure step-up surface. Tier E reads its OWN clock (the catalog
+ * window, a fixed 15 minutes from an admin password), the client only decides whether to
+ * SHOW a prompt, and destructive acts carry a one-shot purpose.
  */
-import { afterEach, describe, expect, it } from "vitest";
-import { assertStepUp, stepUpEditWindowMs, stepUpFreshWindowMs } from "@/lib/admin/step-up";
+import { describe, expect, it } from "vitest";
 import {
   CLIENT_EDIT_WINDOW_MARGIN_MS,
   DEFAULT_EDIT_WINDOW_MS,
+  GRANT_ACTIONS,
+  GRANT_TTL_MS,
+  grantExpiresAt,
+  confirmClientUnlock,
   isFreshWithin,
+  isInsideWindow,
   isStepUpRefusal,
+  parseStepUpPurpose,
   parseWindowSeconds,
   stepUpDecision,
+  type ClientUnlock,
 } from "@/lib/admin/step-up-shared";
-import type { AuthContext } from "@/lib/session";
 
 const NOW = Date.parse("2026-10-15T15:00:00.000Z");
 const ago = (ms: number) => new Date(NOW - ms).toISOString();
-function ctx(unlockedAt: string | null, unlocked = true): AuthContext {
-  return { session: { stepUpUnlocked: unlocked, stepUpUnlockedAt: unlockedAt } } as unknown as AuthContext;
-}
-
-afterEach(() => {
-  delete process.env.ADMIN_STEP_UP_EDIT_WINDOW_SECONDS;
-  delete process.env.ADMIN_STEP_UP_FRESH_SECONDS;
-});
-
-describe("Tier E on the server — the window is checked on every write", () => {
-  it("defaults to 15 minutes", () => {
-    expect(stepUpEditWindowMs()).toBe(900_000);
-    expect(DEFAULT_EDIT_WINDOW_MS).toBe(900_000);
-  });
-
-  it("passes up to and including 15 minutes, and is stale one millisecond later", () => {
-    expect(assertStepUp(ctx(ago(14 * 60_000)), "E", NOW)).toEqual({ ok: true });
-    expect(assertStepUp(ctx(ago(900_000)), "E", NOW)).toEqual({ ok: true });
-    expect(assertStepUp(ctx(ago(900_001)), "E", NOW)).toEqual({ ok: false, code: "step_up_stale" });
-  });
-
-  it("a locked session is step_up_required, never stale", () => {
-    expect(assertStepUp(ctx(ago(1_000), false), "E", NOW)).toEqual({ ok: false, code: "step_up_required" });
-  });
-
-  it("a missing, garbled or future timestamp is stale", () => {
-    expect(assertStepUp(ctx(null), "E", NOW)).toEqual({ ok: false, code: "step_up_stale" });
-    expect(assertStepUp(ctx("not a date"), "E", NOW)).toEqual({ ok: false, code: "step_up_stale" });
-    expect(assertStepUp(ctx(new Date(NOW + 60_000).toISOString()), "E", NOW)).toEqual({ ok: false, code: "step_up_stale" });
-  });
-
-  it("the window is FIXED from the password: a 10-minute-old unlock passes E and fails B", () => {
-    expect(assertStepUp(ctx(ago(10 * 60_000)), "E", NOW)).toEqual({ ok: true });
-    expect(assertStepUp(ctx(ago(10 * 60_000)), "B", NOW)).toEqual({ ok: false, code: "step_up_stale" });
-  });
-
-  it("Tier A and Tier B are unchanged", () => {
-    expect(assertStepUp(ctx(ago(60 * 60_000)), "A", NOW)).toEqual({ ok: true });
-    expect(assertStepUp(ctx(ago(30_000)), "B", NOW)).toEqual({ ok: true });
-    expect(stepUpFreshWindowMs()).toBe(120_000);
-  });
-
-  it("the env override works, garbage falls back, and E is never shorter than B", () => {
-    process.env.ADMIN_STEP_UP_EDIT_WINDOW_SECONDS = "1800";
-    expect(stepUpEditWindowMs()).toBe(1_800_000);
-    process.env.ADMIN_STEP_UP_EDIT_WINDOW_SECONDS = "abc";
-    expect(stepUpEditWindowMs()).toBe(900_000);
-    process.env.ADMIN_STEP_UP_EDIT_WINDOW_SECONDS = "60";
-    expect(stepUpEditWindowMs()).toBe(120_000);
-  });
-});
+const UUID = "7d0c1f2e-0000-4000-8000-000000000001";
 
 describe("the client decision — when to SHOW the password prompt", () => {
-  it("Tier A proceeds whenever unlocked", () => {
-    expect(stepUpDecision("A", true, null, NOW)).toBe("proceed");
-    expect(stepUpDecision("A", false, null, NOW)).toBe("prompt");
+  it("Tier A proceeds whenever the shared flag is set", () => {
+    expect(stepUpDecision("A", { unlocked: true, catalogUnlockedAt: null }, NOW)).toBe("proceed");
+    expect(stepUpDecision("A", { unlocked: false, catalogUnlockedAt: ago(1) }, NOW)).toBe("prompt");
   });
 
   it("Tier B always prompts, even for a one-second-old unlock", () => {
-    expect(stepUpDecision("B", true, ago(1_000), NOW)).toBe("prompt");
+    expect(stepUpDecision("B", { unlocked: true, catalogUnlockedAt: ago(1_000) }, NOW)).toBe("prompt");
   });
 
-  it("Tier E proceeds inside the window minus the client margin, and prompts after it", () => {
+  it("Tier E reads the CATALOG clock only, inside the window minus the client margin", () => {
     const edge = DEFAULT_EDIT_WINDOW_MS - CLIENT_EDIT_WINDOW_MARGIN_MS;
-    expect(stepUpDecision("E", true, ago(edge), NOW)).toBe("proceed");
-    expect(stepUpDecision("E", true, ago(edge + 1), NOW)).toBe("prompt");
-  });
-
-  it("Tier E prompts when locked or when there is no timestamp", () => {
-    expect(stepUpDecision("E", false, ago(1_000), NOW)).toBe("prompt");
-    expect(stepUpDecision("E", true, null, NOW)).toBe("prompt");
+    expect(stepUpDecision("E", { unlocked: false, catalogUnlockedAt: ago(edge - 1) }, NOW)).toBe("proceed");
+    expect(stepUpDecision("E", { unlocked: true, catalogUnlockedAt: ago(edge) }, NOW)).toBe("prompt");
+    expect(stepUpDecision("E", { unlocked: true, catalogUnlockedAt: null }, NOW)).toBe("prompt");
   });
 
   it("Tier E honours the window the server passed down", () => {
-    expect(stepUpDecision("E", true, ago(20 * 60_000), NOW, 30 * 60_000)).toBe("proceed");
+    expect(stepUpDecision("E", { unlocked: false, catalogUnlockedAt: ago(20 * 60_000) }, NOW, 30 * 60_000)).toBe("proceed");
+  });
+});
+
+describe("destructive purposes and grants", () => {
+  it("the closed set of grant actions", () => {
+    expect([...GRANT_ACTIONS].sort()).toEqual(["product.retire", "recipe.delete", "sku.deactivate"]);
+  });
+
+  it("parseStepUpPurpose: absent is null, a known action + uuid is a purpose, anything else is invalid", () => {
+    expect(parseStepUpPurpose(undefined)).toBeNull();
+    expect(parseStepUpPurpose(null)).toBeNull();
+    expect(parseStepUpPurpose({ action: "recipe.delete", targetId: UUID })).toEqual({ action: "recipe.delete", targetId: UUID });
+    expect(parseStepUpPurpose({ action: "user.delete", targetId: UUID })).toBe("invalid");
+    expect(parseStepUpPurpose({ action: "recipe.delete", targetId: "not-a-uuid" })).toBe("invalid");
+    expect(parseStepUpPurpose("recipe.delete")).toBe("invalid");
+    expect(parseStepUpPurpose([])).toBe("invalid");
+  });
+
+  it("a grant lives 120 seconds", () => {
+    expect(GRANT_TTL_MS).toBe(120_000);
+    expect(grantExpiresAt(new Date(NOW)).toISOString()).toBe(new Date(NOW + 120_000).toISOString());
+  });
+});
+
+describe("a confirm from ANY admin modal advances the client's catalog clock (Astra r3 #1)", () => {
+  it("catalog modal confirm → router.refresh → a recipe edit proceeds without a second prompt", () => {
+    // Server-rendered state: no window yet.
+    let unlock: ClientUnlock = { unlocked: false, catalogUnlockedAt: null };
+    // The Items catalog's reactive modal posts the password with catalogWindow and reports the 200
+    // to the provider (noteStepUpConfirmed → confirmClientUnlock).
+    unlock = confirmClientUnlock(unlock, ago(1_000), true);
+    // router.refresh() re-renders the admin layout, but the provider is not re-seeded from props:
+    // its memory is exactly `unlock`. The recipe builder's next Tier E request:
+    expect(stepUpDecision("E", unlock, NOW)).toBe("proceed");
+  });
+
+  it("a confirm without the catalog window (counts, catering) never starts the catalog clock", () => {
+    expect(confirmClientUnlock({ unlocked: false, catalogUnlockedAt: null }, ago(1_000), false))
+      .toEqual({ unlocked: true, catalogUnlockedAt: null });
   });
 });
 
 describe("helpers", () => {
-  it("isFreshWithin is inclusive at the edge and refuses negative ages", () => {
+  it("isInsideWindow (Tier E) is EXCLUSIVE at the edge", () => {
+    expect(isInsideWindow(ago(499), NOW, 500)).toBe(true);
+    expect(isInsideWindow(ago(500), NOW, 500)).toBe(false);
+    expect(isInsideWindow(ago(501), NOW, 500)).toBe(false);
+    expect(isInsideWindow(new Date(NOW + 1).toISOString(), NOW, 500)).toBe(false);
+    expect(isInsideWindow(null, NOW, 500)).toBe(false);
+  });
+
+  it("isFreshWithin (Tier B, unchanged) is inclusive at the edge and refuses negative ages and garbage", () => {
     expect(isFreshWithin(ago(500), NOW, 500)).toBe(true);
     expect(isFreshWithin(ago(501), NOW, 500)).toBe(false);
     expect(isFreshWithin(new Date(NOW + 1).toISOString(), NOW, 500)).toBe(false);
+    expect(isFreshWithin("nope", NOW, 500)).toBe(false);
+    expect(isFreshWithin(null, NOW, 500)).toBe(false);
   });
 
-  it("isStepUpRefusal knows exactly the two codes assertStepUp returns", () => {
+  it("isStepUpRefusal knows the two window codes, not the grant code", () => {
     expect(isStepUpRefusal("step_up_required")).toBe(true);
     expect(isStepUpRefusal("step_up_stale")).toBe(true);
-    expect(isStepUpRefusal("forbidden")).toBe(false);
+    expect(isStepUpRefusal("step_up_grant_required")).toBe(false);
     expect(isStepUpRefusal(undefined)).toBe(false);
   });
 
@@ -220,34 +235,45 @@ describe("helpers", () => {
 - [ ] **Step 2: Run it and watch it fail**
 
 Run: `npx vitest run tests/step-up-edit-window.test.ts`
-Expected: FAIL. The output reads `Failed to resolve import "@/lib/admin/step-up-shared"` (or `Cannot find module`).
+Expected: FAIL with `Failed to resolve import "@/lib/admin/step-up-shared"`.
 
 - [ ] **Step 3: Create `lib/admin/step-up-shared.ts`**
 
 ```ts
 /**
- * Step-up tiers — CLIENT-SAFE pure surface (no I/O, no env, no server imports). Split out
- * 2026-10-15 (catalog redesign Phase 1) so StepUpProvider and lib/admin/step-up.ts decide
- * freshness with ONE function.
+ * Step-up — CLIENT-SAFE pure surface (no I/O, no env, no server imports). Catalog redesign
+ * Phase 1, 2026-10-15, revised after Astra r1.
  *
- *   A — unlocked at all (any age).
- *   B — unlocked within the 120 s freshness window; the client ALWAYS prompts.
- *   E — the catalog/recipe EDIT WINDOW: unlocked within 15 minutes of the password entry.
- *       The client skips the prompt while its copy of the unlock is inside the window minus
- *       a 30 s margin; the server re-checks the same `step_up_unlocked_at` on every write,
- *       so the server stays the authority.
+ * THREE TIERS, TWO CLOCKS:
+ *   A — the shared flag (sessions.step_up_unlocked) is set, any age.
+ *   B — the shared flag is set and step_up_unlocked_at is within 120 s; the client ALWAYS prompts.
+ *   E — the catalog/recipe EDIT WINDOW, on its OWN clock (sessions.catalog_edit_unlocked_at,
+ *       0257): stamped only by a password typed on the admin surface. A FIXED 15 minutes from
+ *       that password — never extended, never cleared by navigation or background requests
+ *       (Astra r2 design decision); it ends at expiry or with the session.
  *
- * The window is FIXED from the password entry and never slides. Nothing but a password may
- * move `sessions.step_up_unlocked_at`: sliding it on each edit would ALSO satisfy Tier B,
- * which would let a destructive action through without a password.
+ * DESTRUCTIVE CATALOG ACTS (retire a product, delete a recipe, deactivate a SKU) take neither:
+ * they need a ONE-SHOT GRANT — minted by the step-up POST for exactly one (action, target),
+ * bound to the session and user, consumed atomically by the route, 120 s TTL — so no window
+ * and no earlier password can stand in for "ask every time" (Astra r1 P1-1).
  */
 export type StepUpTier = "A" | "B" | "E";
+
+export const GRANT_ACTIONS = ["product.retire", "recipe.delete", "sku.deactivate"] as const;
+export type GrantAction = (typeof GRANT_ACTIONS)[number];
+export interface StepUpPurpose {
+  action: GrantAction;
+  targetId: string;
+}
+/** What a client asks for before a write: a tier, or a one-shot purpose. */
+export type StepUpGate = StepUpTier | StepUpPurpose;
 
 export const DEFAULT_FRESH_SECONDS = 120;
 export const DEFAULT_EDIT_WINDOW_SECONDS = 15 * 60;
 export const DEFAULT_EDIT_WINDOW_MS = DEFAULT_EDIT_WINDOW_SECONDS * 1000;
 /** The client gives up this much of the window so it never proceeds into a server-side stale. */
 export const CLIENT_EDIT_WINDOW_MARGIN_MS = 30_000;
+export const GRANT_TTL_MS = 120_000;
 
 /** A positive whole-second env value, else the fallback. */
 export function parseWindowSeconds(raw: string | undefined, fallback: number): number {
@@ -255,36 +281,776 @@ export function parseWindowSeconds(raw: string | undefined, fallback: number): n
   return Number.isFinite(n) && n > 0 ? n : fallback;
 }
 
-/** True when `unlockedAt` is a real instant, not after `now`, and at most `windowMs` old. */
-export function isFreshWithin(unlockedAt: string | null, now: number, windowMs: number): boolean {
-  if (!unlockedAt) return false;
-  const age = now - Date.parse(unlockedAt);
+/** Tier B's rule (unchanged): a real instant, not after `now`, and AT MOST `windowMs` old (inclusive). */
+export function isFreshWithin(at: string | null, now: number, windowMs: number): boolean {
+  if (!at) return false;
+  const age = now - Date.parse(at);
   return !Number.isNaN(age) && age >= 0 && age <= windowMs;
 }
 
-/** Client decision: may this request skip the password prompt? The server re-checks either way. */
+/** Tier E's rule: a real instant, not after `now`, and STRICTLY less than `windowMs` old — the
+ *  deadline is EXCLUSIVE, so at exactly 15:00 the window is already closed (Astra r3 #2). */
+export function isInsideWindow(at: string | null, now: number, windowMs: number): boolean {
+  if (!at) return false;
+  const age = now - Date.parse(at);
+  return !Number.isNaN(age) && age >= 0 && age < windowMs;
+}
+
+/** What a successful password does to this device's memory (pure, so the provider's own modal
+ *  and any reactive admin modal record a confirm the same way — Astra r3 #1). */
+export function confirmClientUnlock(unlock: ClientUnlock, nowIso: string, catalogWindow: boolean): ClientUnlock {
+  return { unlocked: true, catalogUnlockedAt: catalogWindow ? nowIso : unlock.catalogUnlockedAt };
+}
+
+/** This device's memory of the two clocks. Advisory: the server re-checks every write. */
+export interface ClientUnlock {
+  unlocked: boolean;
+  catalogUnlockedAt: string | null;
+}
+
+/** May this request skip the password prompt? */
 export function stepUpDecision(
   tier: StepUpTier,
-  unlocked: boolean,
-  unlockedAt: string | null = null,
+  unlock: ClientUnlock,
   now: number = Date.now(),
   editWindowMs: number = DEFAULT_EDIT_WINDOW_MS,
 ): "proceed" | "prompt" {
-  if (!unlocked) return "prompt";
-  if (tier === "A") return "proceed";
+  if (tier === "A") return unlock.unlocked ? "proceed" : "prompt";
   if (tier === "E") {
-    return isFreshWithin(unlockedAt, now, editWindowMs - CLIENT_EDIT_WINDOW_MARGIN_MS) ? "proceed" : "prompt";
+    return isInsideWindow(unlock.catalogUnlockedAt, now, editWindowMs - CLIENT_EDIT_WINDOW_MARGIN_MS) ? "proceed" : "prompt";
   }
   return "prompt";
 }
 
-/** The two codes assertStepUp answers with. On either, the client must forget its unlock. */
+/** The two window codes assertStepUp answers with. On either, the client forgets its unlock. */
 export function isStepUpRefusal(code: string | null | undefined): boolean {
   return code === "step_up_required" || code === "step_up_stale";
 }
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** The step-up POST's optional `purpose`: null when absent, "invalid" when malformed. */
+export function parseStepUpPurpose(raw: unknown): StepUpPurpose | null | "invalid" {
+  if (raw === undefined || raw === null) return null;
+  if (typeof raw !== "object" || Array.isArray(raw)) return "invalid";
+  const r = raw as Record<string, unknown>;
+  if (typeof r.action !== "string" || !(GRANT_ACTIONS as readonly string[]).includes(r.action)) return "invalid";
+  if (typeof r.targetId !== "string" || !UUID_RE.test(r.targetId)) return "invalid";
+  return { action: r.action as GrantAction, targetId: r.targetId };
+}
+
+export function grantExpiresAt(now: Date): Date {
+  return new Date(now.getTime() + GRANT_TTL_MS);
+}
+
 ```
 
-- [ ] **Step 4: Rewrite `lib/admin/step-up.ts`** (replace the whole file)
+- [ ] **Step 4: Run it**
+
+Run: `npx vitest run tests/step-up-edit-window.test.ts`
+Expected: PASS, 0 failed.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add lib/admin/step-up-shared.ts tests/step-up-edit-window.test.ts
+git commit -F - <<'EOF'
+feat(step-up): pure surface — Tier E on its own fixed clock, one-shot purposes
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01TiAmVpRCSW7w8NzTFk4L31
+EOF
+```
+
+---
+
+## Task 2: Migration 0257 — the catalog clock and the grants table (authored, NOT applied)
+
+**Files:**
+- Create: `supabase/migrations/0257_step_up_catalog_window_and_grants.sql`
+- Test: `tests/step-up-grants-migration.test.ts`
+
+- [ ] **Step 1: Write the failing test**
+
+Create `tests/step-up-grants-migration.test.ts`:
+
+```ts
+/** 0257 (authored SQL, not live integration) — catalog clock + one-shot grants. */
+import { readFileSync } from "node:fs";
+import { describe, expect, it } from "vitest";
+import { GRANT_ACTIONS } from "@/lib/admin/step-up-shared";
+
+const sql = readFileSync("supabase/migrations/0257_step_up_catalog_window_and_grants.sql", "utf8");
+
+describe("0257_step_up_catalog_window_and_grants", () => {
+  it("carries the house gate line", () => {
+    expect(sql).toContain("NOT YET APPLIED — apply via MCP after review");
+  });
+
+  it("adds exactly one column to sessions: the catalog clock", () => {
+    expect(sql).toMatch(/alter table public\.sessions\s+add column if not exists catalog_edit_unlocked_at timestamptz;/);
+    expect(sql.match(/alter table public\.sessions/g)).toHaveLength(1);
+  });
+
+  it("the grant action CHECK is exactly the code's closed set", () => {
+    const list = sql.match(/check \(action in \(([^)]*)\)\)/)?.[1] ?? "";
+    const actions = [...list.matchAll(/'([a-z_.]+)'/g)].map((m) => m[1]).sort();
+    expect(actions).toEqual([...GRANT_ACTIONS].sort());
+  });
+
+  it("deny-all to the PostgREST roles; service_role revoked to zero FIRST, then exactly select/insert/update", () => {
+    expect(sql).toMatch(/alter table public\.step_up_grants enable row level security;/);
+    const revoke = sql.indexOf("revoke all on public.step_up_grants from public, anon, authenticated, service_role;");
+    const grant = sql.indexOf("grant select, insert, update on public.step_up_grants to service_role;");
+    expect(revoke).toBeGreaterThan(-1);
+    expect(grant).toBeGreaterThan(revoke);
+    expect(sql).not.toMatch(/^\s*grant\s[^;]*\bdelete\b[^;]*;/im);
+    expect(sql).not.toMatch(/on delete cascade/i);
+    expect(sql).not.toMatch(/for all/i);
+  });
+
+  it("refuses to commit if a PostgREST role holds any grant, or service_role exceeds its ceiling", () => {
+    expect(sql).toContain("raise exception '0257: unexpected step_up_grants table grant'");
+    for (const p of ["DELETE", "TRUNCATE", "REFERENCES", "TRIGGER"]) {
+      expect(sql).toContain(`has_table_privilege('service_role', 'public.step_up_grants', '${p}')`);
+    }
+    expect(sql).toContain("privilege_type not in ('SELECT', 'INSERT', 'UPDATE')");
+  });
+
+  it("changes no grant on sessions, and refuses to commit if sessions lost RLS", () => {
+    expect(sql).not.toMatch(/^\s*(grant|revoke)\s[^;]*on public\.sessions/im);
+    expect(sql).toContain("raise exception '0257: sessions must keep RLS enabled'");
+  });
+});
+```
+
+- [ ] **Step 2: Run it and watch it fail**
+
+Run: `npx vitest run tests/step-up-grants-migration.test.ts`
+Expected: FAIL with `ENOENT: no such file or directory, open 'supabase/migrations/0257_step_up_catalog_window_and_grants.sql'`.
+
+- [ ] **Step 3: Create the migration**
+
+`supabase/migrations/0257_step_up_catalog_window_and_grants.sql`:
+
+```sql
+-- Migration 0257_step_up_catalog_window_and_grants
+-- AUTHORED 2026-10-15. NOT YET APPLIED — apply via MCP after review (sim first, prod on Juan's word, BEFORE the code merges).
+-- Provenance: catalog redesign Phase 1 (docs/superpowers/plans/2026-10-15-catalog-phase1-quick-fixes.md),
+--   Astra r1 P1-1 (an edit unlock must never satisfy an always-prompt act) and P2-3 (the edit
+--   window needs its own clock, independent of the shared step-up flag); Astra r2 #3 (explicit
+--   service_role privilege ceiling on the new table).
+--
+-- WHAT:
+--   1. sessions.catalog_edit_unlocked_at — the 15-minute catalog/recipe EDIT WINDOW's own clock.
+--      Stamped ONLY by a password typed on the admin surface (POST /api/auth/step-up with
+--      catalogWindow=true → lib/session.ts unlockStepUp). A FIXED window: never extended, never
+--      cleared by navigation; it ends 15 minutes after that password, or with the session
+--      (logout / revoke / expiry). Read by assertStepUp(ctx, "E") only.
+--   2. public.step_up_grants — ONE-SHOT, action-bound authorizations for the always-prompt
+--      catalog acts (product.retire, recipe.delete, sku.deactivate). Minted by the step-up POST
+--      when it carries a purpose (lib/admin/step-up-grants.ts mintStepUpGrant); consumed by the
+--      destructive route with ONE conditional UPDATE (same session + user + action + target,
+--      consumed_at IS NULL, expires_at > now → consumed_at = now; a row lock re-checks the
+--      predicate, so a concurrent second consume matches 0 rows). 120 s TTL. A consumed or
+--      expired row is history: no DELETE grant, no cascade.
+--
+-- WHO READS / WRITES (service role only, through the lib):
+--     lib/session.ts             unlockStepUp / requireSessionCore   ← sessions.catalog_edit_unlocked_at
+--     lib/admin/step-up-grants.ts mintStepUpGrant / consumeStepUpGrant ← step_up_grants
+--
+-- The staff JWT is a valid PostgREST bearer (AGENTS.md), so no PostgREST role gets any grant on
+-- step_up_grants; RLS is enabled with no policies (no grant → no policy; the 0203/0214 precedent).
+-- service_role gets an explicit CEILING (the 0218 pattern): everything is revoked first —
+-- Supabase's default privileges hand it ALL on a new table — then exactly SELECT, INSERT, UPDATE
+-- are granted, and the guard proves it holds no DELETE / TRUNCATE / REFERENCES / TRIGGER.
+-- sessions: NO grant change. The new column inherits the table's existing grants and RLS; the
+-- guard refuses to commit unless RLS is on for sessions (the 0200 posture).
+--
+-- PRE-FLIGHT (MCP, before apply — AGENTS.md "pre-flight every SQL emission"):
+--   select column_name from information_schema.columns
+--    where table_schema = 'public' and table_name = 'sessions';            -- no catalog_edit_unlocked_at yet
+--   select to_regclass('public.step_up_grants');                             -- NULL
+--
+-- VERIFY AFTER APPLY:
+--   select data_type from information_schema.columns
+--    where table_name = 'sessions' and column_name = 'catalog_edit_unlocked_at';  -- timestamp with time zone
+--   select grantee, privilege_type from information_schema.role_table_grants
+--    where table_schema = 'public' and table_name = 'step_up_grants' order by 1, 2;
+--     -- service_role INSERT / SELECT / UPDATE only (plus the owner)
+--   select has_table_privilege('service_role', 'public.step_up_grants', 'DELETE'),
+--          has_table_privilege('service_role', 'public.step_up_grants', 'TRUNCATE');   -- f, f
+--   select relrowsecurity from pg_class where oid = 'public.step_up_grants'::regclass;  -- t
+
+begin;
+
+alter table public.sessions
+  add column if not exists catalog_edit_unlocked_at timestamptz;
+comment on column public.sessions.catalog_edit_unlocked_at is
+  'Catalog/recipe edit window (Tier E): a fixed 15 minutes from a password typed on the admin surface; never extended, never cleared by navigation; ends with the session. 0257.';
+
+create table public.step_up_grants (
+  id uuid primary key default gen_random_uuid(),
+  session_id uuid not null references public.sessions(id),
+  user_id uuid not null references public.users(id),
+  action text not null check (action in ('product.retire', 'recipe.delete', 'sku.deactivate')),
+  target_id uuid not null,
+  created_at timestamptz not null,
+  expires_at timestamptz not null,
+  consumed_at timestamptz,
+  constraint step_up_grants_expiry_after_create check (expires_at > created_at)
+);
+comment on table public.step_up_grants is
+  'One-shot, action-bound step-up grants for always-prompt catalog acts (0257). Service role only; consumed by a conditional UPDATE; never deleted.';
+
+create index step_up_grants_open_idx
+  on public.step_up_grants (session_id, action, target_id)
+  where consumed_at is null;
+
+alter table public.step_up_grants enable row level security;
+revoke all on public.step_up_grants from public, anon, authenticated, service_role;
+grant select, insert, update on public.step_up_grants to service_role;
+
+do $$ begin
+  if exists (select 1 from information_schema.role_table_grants
+              where table_schema = 'public' and table_name = 'step_up_grants'
+                and grantee in ('PUBLIC', 'anon', 'authenticated')) then
+    raise exception '0257: unexpected step_up_grants table grant';
+  end if;
+  if exists (select 1 from information_schema.role_table_grants
+              where table_schema = 'public' and table_name = 'step_up_grants'
+                and grantee = 'service_role'
+                and privilege_type not in ('SELECT', 'INSERT', 'UPDATE')) then
+    raise exception '0257: service_role above its ceiling on step_up_grants';
+  end if;
+  if has_table_privilege('service_role', 'public.step_up_grants', 'DELETE')
+     or has_table_privilege('service_role', 'public.step_up_grants', 'TRUNCATE')
+     or has_table_privilege('service_role', 'public.step_up_grants', 'REFERENCES')
+     or has_table_privilege('service_role', 'public.step_up_grants', 'TRIGGER') then
+    raise exception '0257: service_role above its ceiling on step_up_grants';
+  end if;
+  if not (has_table_privilege('service_role', 'public.step_up_grants', 'SELECT')
+          and has_table_privilege('service_role', 'public.step_up_grants', 'INSERT')
+          and has_table_privilege('service_role', 'public.step_up_grants', 'UPDATE')) then
+    raise exception '0257: service_role is missing a privilege the grant lib needs';
+  end if;
+  if not (select relrowsecurity from pg_class where oid = 'public.sessions'::regclass) then
+    raise exception '0257: sessions must keep RLS enabled';
+  end if;
+end $$;
+
+commit;
+```
+
+- [ ] **Step 4: Run it**
+
+Run: `npx vitest run tests/step-up-grants-migration.test.ts`
+Expected: PASS, 0 failed.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add supabase/migrations/0257_step_up_catalog_window_and_grants.sql tests/step-up-grants-migration.test.ts
+git commit -F - <<'EOF'
+feat(db): 0257 — catalog edit clock on sessions + one-shot step-up grants (authored, NOT applied)
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01TiAmVpRCSW7w8NzTFk4L31
+EOF
+```
+
+---
+
+## Task 3: Server — the fixed catalog clock, Tier E, grants, and the step-up POST
+
+**Files:**
+- Create: `tests/fake-supabase.ts`
+- Modify: `lib/types.ts`, `lib/session.ts`
+- Rewrite: `lib/admin/step-up.ts`
+- Create: `lib/admin/step-up-grants.ts`
+- Modify: `app/api/auth/step-up/route.ts`
+- Test: `tests/catalog-window-lifecycle.test.ts`, `tests/step-up-grants.test.ts`
+
+- [ ] **Step 1: Create the predicate-aware fake** (test infrastructure, no assertions of its own)
+
+Create `tests/fake-supabase.ts`:
+
+```ts
+/**
+ * A small PREDICATE-AWARE fake SupabaseClient (catalog Phase 1, Astra r1 P2-5). Every filter
+ * the code under test applies is really applied to the in-memory rows — a write scoped by
+ * .eq("recipe_id", …) genuinely misses a row on another recipe — and every write records how
+ * many rows it matched. Chains: select / eq / is / in / not(col, "is", null) / gt (ISO
+ * timestamps only) / order / limit / range / returns / maybeSingle / then, insert(…)…,
+ * update(…)….  `failUpdates = n` makes the next n updates return an error without applying.
+ * Never a real database. (tests/vault-fake-client.ts is the vault's own, richer twin.)
+ */
+import type { SupabaseClient } from "@supabase/supabase-js";
+
+export type Row = Record<string, unknown>;
+export interface FakeWrite { table: string; op: "insert" | "update"; payload: unknown; matched: number }
+export interface FakeDb {
+  client: SupabaseClient;
+  tables: Record<string, Row[]>;
+  writes: FakeWrite[];
+  failUpdates: number;
+}
+type Result = { data: Row[] | null; error: { message: string } | null };
+
+let seq = 0;
+const isNull = (v: unknown) => v === null || v === undefined;
+
+export function fakeSupabase(tables: Record<string, Row[]>): FakeDb {
+  const db: FakeDb = { client: null as unknown as SupabaseClient, tables, writes: [], failUpdates: 0 };
+
+  function from(table: string) {
+    const filters: Array<(r: Row) => boolean> = [];
+    let op: "select" | "insert" | "update" = "select";
+    let payload: unknown = null;
+    let orderBy: { col: string; asc: boolean } | null = null;
+    let limitN: number | null = null;
+    let window: [number, number] | null = null;
+    const rows = () => (tables[table] ??= []);
+
+    const run = (): Result => {
+      if (op === "insert") {
+        const inserted = ((Array.isArray(payload) ? payload : [payload]) as Row[]).map((p) => ({ id: `${table}-${++seq}`, ...p }));
+        rows().push(...inserted);
+        db.writes.push({ table, op, payload, matched: inserted.length });
+        return { data: inserted.map((r) => ({ ...r })), error: null };
+      }
+      const matched = rows().filter((r) => filters.every((f) => f(r)));
+      if (op === "update") {
+        if (db.failUpdates > 0) {
+          db.failUpdates -= 1;
+          db.writes.push({ table, op, payload, matched: 0 });
+          return { data: null, error: { message: "fake update failure" } };
+        }
+        for (const r of matched) Object.assign(r, payload as Row);
+        db.writes.push({ table, op, payload, matched: matched.length });
+        return { data: matched.map((r) => ({ ...r })), error: null };
+      }
+      let out = [...matched];
+      if (orderBy) {
+        const { col, asc } = orderBy;
+        out.sort((a, b) => (String(a[col]) < String(b[col]) ? -1 : String(a[col]) > String(b[col]) ? 1 : 0) * (asc ? 1 : -1));
+      }
+      if (window) out = out.slice(window[0], window[1] + 1);
+      if (limitN !== null) out = out.slice(0, limitN);
+      return { data: out.map((r) => ({ ...r })), error: null };
+    };
+
+    const q = {
+      select: (_columns?: string) => q,
+      eq: (c: string, v: unknown) => { filters.push((r) => r[c] === v); return q; },
+      is: (c: string, v: null | boolean) => { filters.push((r) => (v === null ? isNull(r[c]) : r[c] === v)); return q; },
+      in: (c: string, vs: unknown[]) => { filters.push((r) => vs.includes(r[c])); return q; },
+      not: (c: string, operator: string, v: unknown) => {
+        if (operator !== "is" || v !== null) throw new Error(`fake-supabase: unsupported not(${c}, ${operator})`);
+        filters.push((r) => !isNull(r[c]));
+        return q;
+      },
+      gt: (c: string, v: string) => { filters.push((r) => !isNull(r[c]) && String(r[c]) > v); return q; },
+      order: (c: string, o?: { ascending?: boolean }) => { orderBy = { col: c, asc: o?.ascending !== false }; return q; },
+      limit: (n: number) => { limitN = n; return q; },
+      range: (a: number, b: number) => { window = [a, b]; return q; },
+      returns: () => q,
+      insert: (p: unknown) => { op = "insert"; payload = p; return q; },
+      update: (p: unknown) => { op = "update"; payload = p; return q; },
+      maybeSingle: async () => { const r = run(); return { data: r.data?.[0] ?? null, error: r.error }; },
+      then: (resolve: (v: Result) => unknown, reject?: (e: unknown) => unknown) => Promise.resolve(run()).then(resolve, reject),
+    };
+    return q;
+  }
+
+  db.client = { from } as unknown as SupabaseClient;
+  return db;
+}
+```
+
+- [ ] **Step 2: Write the failing tests**
+
+Create `tests/catalog-window-lifecycle.test.ts`. It runs the real `requireSession`, `unlockStepUp` and `revokeSession` against the fake:
+
+```ts
+/**
+ * Catalog Phase 1 (Astra r2 design decision) — the edit window is a FIXED 15-minute clock from an
+ * admin-page password: background and outside requests never close it, saving never extends it,
+ * it expires at 15 minutes exactly, and it ends with the session (logout / revoke / expiry).
+ * Runs the real requireSession / unlockStepUp / revokeSession over the predicate-aware fake.
+ */
+import { NextRequest } from "next/server";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { fakeSupabase } from "./fake-supabase";
+
+const h = vi.hoisted(() => ({ db: null as unknown as import("./fake-supabase").FakeDb }));
+vi.mock("@/lib/supabase-server", () => ({ getServiceRoleClient: () => h.db.client }));
+vi.mock("@/lib/audit", () => ({ audit: vi.fn() }));
+vi.mock("@/lib/auth", () => ({
+  verifyJwt: async () => ({ user_id: "user-1", session_id: "session-1", locations: [] }),
+  hashToken: async () => "hash-1",
+  signJwt: async () => "jwt",
+}));
+
+import { requireSession, revokeSession, SESSION_COOKIE_NAME, unlockStepUp } from "@/lib/session";
+import { assertStepUp } from "@/lib/admin/step-up";
+import type { AuthContext } from "@/lib/session";
+
+const req = (path: string) =>
+  new NextRequest(`http://localhost${path}`, { headers: { cookie: `${SESSION_COOKIE_NAME}=jwt` } });
+async function visit(path: string): Promise<AuthContext> {
+  const ctx = await requireSession(req(path), path);
+  if (ctx instanceof Response) throw new Error(`denied on ${path}`);
+  return ctx;
+}
+const sessionRow = () => (h.db.tables.sessions as Array<Record<string, unknown>>)[0]!;
+
+beforeEach(() => {
+  const future = new Date(Date.now() + 3_600_000).toISOString();
+  h.db = fakeSupabase({
+    sessions: [{
+      id: "session-1", user_id: "user-1", token_hash: "hash-1", auth_method: "password",
+      step_up_unlocked: false, step_up_unlocked_at: null, catalog_edit_unlocked_at: null,
+      created_at: new Date().toISOString(), last_activity_at: new Date().toISOString(),
+      expires_at: future, revoked_at: null, ip_address: null, user_agent: null,
+    }],
+    users: [{ id: "user-1", name: "GM", email: "gm@example.test", role: "gm", active: true, language: "en" }],
+    user_locations: [],
+  });
+});
+
+describe("the catalog edit window is a fixed 15-minute clock", () => {
+  it("only an admin-surface password opens it; a counts password does not", async () => {
+    await unlockStepUp("session-1");
+    expect(sessionRow().catalog_edit_unlocked_at).toBeNull();
+    await unlockStepUp("session-1", { catalogWindow: true });
+    expect(sessionRow().catalog_edit_unlocked_at).toEqual(expect.any(String));
+  });
+
+  it("background and outside requests never close it — language PATCH, dashboard prefetch, counts", async () => {
+    await unlockStepUp("session-1", { catalogWindow: true });
+    const stamped = sessionRow().catalog_edit_unlocked_at;
+    for (const p of ["/api/users/me/language", "/dashboard", "/operations/counts", "/api/operations/counts", "/api/catering/quotes/q/send"]) {
+      expect((await visit(p)).session.catalogEditUnlockedAt, p).toBe(stamped);
+    }
+    expect(sessionRow().catalog_edit_unlocked_at).toBe(stamped);
+    expect(assertStepUp(await visit("/admin/recipes"), "E")).toEqual({ ok: true });
+  });
+
+  it("saving never extends it, and it closes AT 15 minutes (exclusive deadline)", async () => {
+    await unlockStepUp("session-1", { catalogWindow: true });
+    const stamped = sessionRow().catalog_edit_unlocked_at as string;
+    const ctx = await visit("/api/admin/recipes/r/inputs");
+    expect(sessionRow().catalog_edit_unlocked_at).toBe(stamped); // a write request moved nothing
+    const t0 = Date.parse(stamped);
+    expect(assertStepUp(ctx, "E", t0 + 899_999)).toEqual({ ok: true });
+    expect(assertStepUp(ctx, "E", t0 + 900_000)).toEqual({ ok: false, code: "step_up_stale" });
+    expect(assertStepUp(ctx, "E", t0 + 900_001)).toEqual({ ok: false, code: "step_up_stale" });
+  });
+
+  it("logout / revoke ends it — the session stops resolving at all", async () => {
+    await unlockStepUp("session-1", { catalogWindow: true });
+    expect(assertStepUp(await visit("/admin/recipes"), "E")).toEqual({ ok: true });
+    await revokeSession("session-1");
+    expect(await requireSession(req("/admin/recipes"), "/admin/recipes")).toBeInstanceOf(Response);
+  });
+
+  it("the session ending ends it", async () => {
+    await unlockStepUp("session-1", { catalogWindow: true });
+    sessionRow().expires_at = new Date(Date.now() - 1_000).toISOString();
+    expect(await requireSession(req("/admin/recipes"), "/admin/recipes")).toBeInstanceOf(Response);
+  });
+
+  it("the shared flag keeps its own lifecycle — /dashboard clears IT, not the catalog clock", async () => {
+    await unlockStepUp("session-1", { catalogWindow: true });
+    const atDashboard = await visit("/dashboard");
+    expect(atDashboard.session.stepUpUnlocked).toBe(false);
+    expect(atDashboard.session.catalogEditUnlockedAt).toEqual(expect.any(String));
+  });
+});
+```
+
+Create `tests/step-up-grants.test.ts`:
+
+```ts
+/**
+ * Catalog Phase 1 (Astra r1 P1-1) — always-prompt acts need a ONE-SHOT, action-bound grant.
+ * A fresh edit window (or a fresh shared unlock) is never enough; a grant for X/T is refused
+ * for Y or T'; a replay and an expired grant are refused; the step-up POST mints exactly the
+ * grant it was asked for, only after a correct password.
+ */
+import { NextRequest } from "next/server";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { fakeSupabase } from "./fake-supabase";
+
+const h = vi.hoisted(() => ({
+  db: null as unknown as import("./fake-supabase").FakeDb,
+  session: vi.fn(),
+  unlock: vi.fn(),
+  verify: vi.fn(),
+  audit: vi.fn(),
+  setActive: vi.fn(),
+  deactivateRecipe: vi.fn(),
+  deactivateSku: vi.fn(),
+}));
+vi.mock("@/lib/supabase-server", () => ({ getServiceRoleClient: () => h.db.client }));
+vi.mock("@/lib/audit", () => ({ audit: h.audit }));
+vi.mock("@/lib/session", () => ({ requireSession: h.session, unlockStepUp: h.unlock }));
+vi.mock("@/lib/auth", () => ({ verifyPassword: h.verify }));
+vi.mock("@/lib/auth-flows", () => ({ upgradeLegacyPasswordHash: async () => undefined }));
+vi.mock("@/lib/products", () => ({
+  setProductActive: h.setActive,
+  ProductError: class ProductError extends Error { constructor(public status: number, public code: string) { super(code); } },
+}));
+vi.mock("@/lib/recipes", () => ({
+  updateRecipe: vi.fn(),
+  deactivateRecipe: h.deactivateRecipe,
+  RecipeError: class RecipeError extends Error { constructor(public status: number, public code: string) { super(code); } },
+  RECIPE_WRITE_MIN: 7,
+  RECIPE_DELETE_MIN: 8,
+}));
+vi.mock("@/lib/admin/skus", () => ({
+  updateSku: vi.fn(),
+  deactivateSku: h.deactivateSku,
+  AdminSkuError: class AdminSkuError extends Error { constructor(public status: number, public code: string) { super(code); } },
+  isSkuClass: () => true,
+}));
+
+import { consumeStepUpGrant, mintStepUpGrant } from "@/lib/admin/step-up-grants";
+import { POST as stepUpPOST } from "@/app/api/auth/step-up/route";
+import { POST as productActivePOST } from "@/app/api/admin/products/[id]/active/route";
+import { DELETE as recipeDELETE } from "@/app/api/admin/recipes/[id]/route";
+import { PATCH as skuPATCH } from "@/app/api/admin/skus/[id]/route";
+import type { AuthContext } from "@/lib/session";
+
+const SESSION = "5e551011-0000-4000-8000-000000000001";
+const USER = "05e20001-0000-4000-8000-000000000001";
+const T = "7a12e700-0000-4000-8000-000000000001";
+const T2 = "7a12e700-0000-4000-8000-000000000002";
+const NOW = new Date("2026-10-15T15:00:00.000Z");
+
+function ctx(role = "gm", sessionId = SESSION): AuthContext {
+  const fresh = new Date().toISOString();
+  return {
+    user: { id: USER, role },
+    session: { id: sessionId, stepUpUnlocked: true, stepUpUnlockedAt: fresh, catalogEditUnlockedAt: fresh },
+  } as unknown as AuthContext;
+}
+const grants = () => h.db.tables.step_up_grants as Array<Record<string, unknown>>;
+const json = (url: string, method: string, body: unknown) => new NextRequest(url, { method, body: JSON.stringify(body) });
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  h.db = fakeSupabase({ step_up_grants: [], users: [{ id: USER, password_hash: "hmac2$stored" }] });
+  h.setActive.mockResolvedValue({ pinnedRecipeCount: 0 });
+});
+
+describe("consumeStepUpGrant — one-shot, action-bound, session-bound", () => {
+  beforeEach(async () => {
+    await mintStepUpGrant({ sessionId: SESSION, userId: USER, purpose: { action: "product.retire", targetId: T }, now: NOW });
+  });
+  const at = (ms: number) => new Date(NOW.getTime() + ms);
+
+  it("mint stores who, what, when", () => {
+    expect(grants()[0]).toMatchObject({
+      session_id: SESSION, user_id: USER, action: "product.retire", target_id: T,
+      created_at: NOW.toISOString(), expires_at: at(120_000).toISOString(), consumed_at: null,
+    });
+  });
+
+  it("refused for another action or another target — and those refusals do not spend it", async () => {
+    expect(await consumeStepUpGrant(ctx(), "recipe.delete", T, at(1_000))).toEqual({ ok: false, code: "step_up_grant_required" });
+    expect(await consumeStepUpGrant(ctx(), "product.retire", T2, at(1_000))).toEqual({ ok: false, code: "step_up_grant_required" });
+    expect(await consumeStepUpGrant(ctx(), "product.retire", T, at(1_000))).toEqual({ ok: true });
+  });
+
+  it("works once; a replay is refused", async () => {
+    expect(await consumeStepUpGrant(ctx(), "product.retire", T, at(1_000))).toEqual({ ok: true });
+    expect(await consumeStepUpGrant(ctx(), "product.retire", T, at(2_000))).toEqual({ ok: false, code: "step_up_grant_required" });
+  });
+
+  it("refused at and after expiry", async () => {
+    expect(await consumeStepUpGrant(ctx(), "product.retire", T, at(120_000))).toEqual({ ok: false, code: "step_up_grant_required" });
+    expect(await consumeStepUpGrant(ctx(), "product.retire", T, at(119_999))).toEqual({ ok: true });
+  });
+
+  it("refused on another session", async () => {
+    expect(await consumeStepUpGrant(ctx("gm", "5e551011-0000-4000-8000-000000000002"), "product.retire", T, at(1_000)))
+      .toEqual({ ok: false, code: "step_up_grant_required" });
+  });
+});
+
+describe("the destructive routes demand the grant — a fresh edit window is not enough", () => {
+  const params = (id: string) => ({ params: Promise.resolve({ id }) });
+
+  it("retire a product: refused without a grant, accepted once with it, replay refused", async () => {
+    h.session.mockResolvedValue(ctx());
+    const call = () => productActivePOST(json(`http://localhost/api/admin/products/${T}/active`, "POST", { active: false }), params(T));
+    const refused = await call();
+    expect(refused.status).toBe(403);
+    expect((await refused.json()).code).toBe("step_up_grant_required");
+    expect(h.setActive).not.toHaveBeenCalled();
+
+    await mintStepUpGrant({ sessionId: SESSION, userId: USER, purpose: { action: "product.retire", targetId: T } });
+    expect((await call()).status).toBe(200);
+    expect(h.setActive).toHaveBeenCalledTimes(1);
+    expect((await call()).status).toBe(403);
+  });
+
+  it("restoring a product is an ordinary edit inside the window", async () => {
+    h.session.mockResolvedValue(ctx());
+    const res = await productActivePOST(json(`http://localhost/api/admin/products/${T}/active`, "POST", { active: true }), params(T));
+    expect(res.status).toBe(200);
+  });
+
+  it("delete a recipe: a grant for ANOTHER recipe is refused; the right one works", async () => {
+    h.session.mockResolvedValue(ctx("moo"));
+    await mintStepUpGrant({ sessionId: SESSION, userId: USER, purpose: { action: "recipe.delete", targetId: T2 } });
+    const call = () => recipeDELETE(new NextRequest(`http://localhost/api/admin/recipes/${T}`, { method: "DELETE" }), params(T));
+    expect((await call()).status).toBe(403);
+    await mintStepUpGrant({ sessionId: SESSION, userId: USER, purpose: { action: "recipe.delete", targetId: T } });
+    expect((await call()).status).toBe(200);
+    expect(h.deactivateRecipe).toHaveBeenCalledTimes(1);
+  });
+
+  it("deactivate a SKU needs the grant; reactivate needs only the window", async () => {
+    h.session.mockResolvedValue(ctx());
+    const call = (active: boolean) => skuPATCH(json(`http://localhost/api/admin/skus/${T}`, "PATCH", { active }), params(T));
+    expect((await call(false)).status).toBe(403);
+    expect(h.deactivateSku).not.toHaveBeenCalled();
+    await mintStepUpGrant({ sessionId: SESSION, userId: USER, purpose: { action: "sku.deactivate", targetId: T } });
+    expect((await call(false)).status).toBe(200);
+    expect((await call(true)).status).toBe(200);
+    expect(h.deactivateSku).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("POST /api/auth/step-up mints exactly what it was asked for", () => {
+  const call = (body: unknown) => stepUpPOST(json("http://localhost/api/auth/step-up", "POST", body));
+
+  it("a malformed purpose is a 400 before the password is checked", async () => {
+    h.session.mockResolvedValue(ctx());
+    const res = await call({ password: "right", purpose: { action: "user.delete", targetId: T } });
+    expect(res.status).toBe(400);
+    expect(h.verify).not.toHaveBeenCalled();
+    expect(grants()).toEqual([]);
+  });
+
+  it("a wrong password mints nothing", async () => {
+    h.session.mockResolvedValue(ctx());
+    h.verify.mockResolvedValue(false);
+    expect((await call({ password: "wrong", purpose: { action: "recipe.delete", targetId: T } })).status).toBe(401);
+    expect(grants()).toEqual([]);
+    expect(h.unlock).not.toHaveBeenCalled();
+  });
+
+  it("a right password opens the catalog window when asked and mints the one grant", async () => {
+    h.session.mockResolvedValue(ctx());
+    h.verify.mockResolvedValue(true);
+    const res = await call({ password: "right", catalogWindow: true, purpose: { action: "recipe.delete", targetId: T } });
+    expect(res.status).toBe(200);
+    expect(h.unlock).toHaveBeenCalledWith(SESSION, { catalogWindow: true });
+    expect(grants()).toHaveLength(1);
+    expect(grants()[0]).toMatchObject({ session_id: SESSION, user_id: USER, action: "recipe.delete", target_id: T });
+    expect(h.audit).toHaveBeenCalledWith(expect.objectContaining({
+      action: "auth_step_up_success",
+      metadata: { edit_window_seconds: 900, grant: { action: "recipe.delete", target_id: T } },
+    }));
+  });
+});
+```
+
+- [ ] **Step 3: Run them and watch them fail**
+
+Run: `npx vitest run tests/catalog-window-lifecycle.test.ts tests/step-up-grants.test.ts`
+Expected: FAIL. In the lifecycle file, `unlockStepUp` ignores the option, so `catalog_edit_unlocked_at` stays null and every case fails. `step-up-grants` fails with `Failed to resolve import "@/lib/admin/step-up-grants"`.
+
+- [ ] **Step 4: Add the field to `Session` (`lib/types.ts`)**
+
+Replace:
+
+```ts
+  stepUpUnlocked: boolean;
+  stepUpUnlockedAt: string | null;
+```
+
+with:
+
+```ts
+  stepUpUnlocked: boolean;
+  stepUpUnlockedAt: string | null;
+  /** Catalog edit window (Tier E, 0257). Optional so pre-0257 shapes and test literals still type. */
+  catalogEditUnlockedAt?: string | null;
+```
+
+- [ ] **Step 5: The catalog clock in `lib/session.ts`** (stamped by the password, mapped into the context; no navigation clear)
+
+In `interface SessionRow`, replace:
+
+```ts
+  step_up_unlocked_at: string | null;
+  created_at: string | null;
+```
+
+with:
+
+```ts
+  step_up_unlocked_at: string | null;
+  /** 0257 — absent before the migration is applied (select("*")). */
+  catalog_edit_unlocked_at?: string | null;
+  created_at: string | null;
+```
+
+In `mapSession`, replace:
+
+```ts
+    stepUpUnlockedAt: r.step_up_unlocked_at,
+```
+
+with:
+
+```ts
+    stepUpUnlockedAt: r.step_up_unlocked_at,
+    catalogEditUnlockedAt: r.catalog_edit_unlocked_at ?? null,
+```
+
+Leave the last-activity touch and the shared-flag auto-clear exactly as they are. The catalog clock is never cleared by a request: it is a fixed window (Astra r2 design decision), and logout / revoke / session expiry end it by ending the session itself (`requireSessionCore` denies a revoked or expired row before any context exists).
+
+Replace `unlockStepUp`:
+
+```ts
+export async function unlockStepUp(sessionId: string): Promise<void> {
+  const sb = getServiceRoleClient();
+  const now = new Date().toISOString();
+  const { error } = await sb
+    .from("sessions")
+    .update({ step_up_unlocked: true, step_up_unlocked_at: now })
+    .eq("id", sessionId);
+  if (error) throw new Error(`unlockStepUp failed: ${error.message}`);
+}
+```
+
+with:
+
+```ts
+/**
+ * Stamp a successful password. `catalogWindow` (catalog Phase 1, 0257) is true only for a
+ * password typed on the admin surface (StepUpProvider → PasswordModal): it ALSO (re)starts the
+ * fixed 15-minute catalog edit window. A counts or catering password never touches it. This is
+ * the ONLY writer of either clock (pinned by tests/step-up-edit-window-wiring.test.ts).
+ */
+export async function unlockStepUp(sessionId: string, opts: { catalogWindow?: boolean } = {}): Promise<void> {
+  const sb = getServiceRoleClient();
+  const now = new Date().toISOString();
+  const { error } = await sb
+    .from("sessions")
+    .update({ step_up_unlocked: true, step_up_unlocked_at: now, ...(opts.catalogWindow ? { catalog_edit_unlocked_at: now } : {}) })
+    .eq("id", sessionId);
+  if (error) throw new Error(`unlockStepUp failed: ${error.message}`);
+}
+```
+
+- [ ] **Step 6: Rewrite `lib/admin/step-up.ts`** (replace the whole file)
 
 ```ts
 import type { AuthContext } from "@/lib/session";
@@ -292,6 +1058,7 @@ import {
   DEFAULT_EDIT_WINDOW_SECONDS,
   DEFAULT_FRESH_SECONDS,
   isFreshWithin,
+  isInsideWindow,
   parseWindowSeconds,
   type StepUpTier,
 } from "@/lib/admin/step-up-shared";
@@ -299,15 +1066,13 @@ import {
 /**
  * Admin step-up enforcement (C.44 Module 1; Tier E added 2026-10-15, catalog Phase 1).
  *
- * Password verification lives solely in POST /api/auth/step-up, which stamps
- * sessions.step_up_unlocked + step_up_unlocked_at (lib/session.ts unlockStepUp). The tiers
- * differ only by a freshness bound on that ONE timestamp:
- *   Tier A — unlocked at all (any age).
- *   Tier B — unlocked within ADMIN_STEP_UP_FRESH_SECONDS (default 120 s). Destructive acts.
- *   Tier E — unlocked within ADMIN_STEP_UP_EDIT_WINDOW_SECONDS (default 900 s, never shorter
- *            than Tier B): the catalog/recipe edit window. Fixed from the password entry.
- * Every tier clears when the actor leaves the step-up surface (lib/session.ts
- * requireSessionCore). Pure over AuthContext; `now` is injectable.
+ *   Tier A — sessions.step_up_unlocked (any age).
+ *   Tier B — step_up_unlocked AND step_up_unlocked_at within ADMIN_STEP_UP_FRESH_SECONDS (120 s).
+ *   Tier E — sessions.catalog_edit_unlocked_at (0257) within ADMIN_STEP_UP_EDIT_WINDOW_SECONDS
+ *            (900 s, never shorter than B). Its OWN fixed clock: stamped only by an
+ *            admin-surface password, never extended, never cleared by navigation.
+ * The always-prompt catalog acts use none of these: they consume a one-shot grant
+ * (lib/admin/step-up-grants.ts). Pure over AuthContext; `now` is injectable.
  */
 export type { StepUpTier };
 
@@ -331,27 +1096,229 @@ export function assertStepUp(
   tier: StepUpTier,
   now: number = Date.now(),
 ): StepUpResult {
+  if (tier === "E") {
+    const at = ctx.session.catalogEditUnlockedAt ?? null;
+    if (at === null) return { ok: false, code: "step_up_required" };
+    // EXCLUSIVE deadline (Astra r3 #2): at exactly 15:00 the window is closed. Tier B below keeps
+    // its existing inclusive boundary.
+    return isInsideWindow(at, now, stepUpEditWindowMs()) ? { ok: true } : { ok: false, code: "step_up_stale" };
+  }
   if (!ctx.session.stepUpUnlocked) return { ok: false, code: "step_up_required" };
   if (tier === "A") return { ok: true };
-  const windowMs = tier === "E" ? stepUpEditWindowMs() : stepUpFreshWindowMs();
-  if (!isFreshWithin(ctx.session.stepUpUnlockedAt, now, windowMs)) {
+  if (!isFreshWithin(ctx.session.stepUpUnlockedAt, now, stepUpFreshWindowMs())) {
     return { ok: false, code: "step_up_stale" };
   }
   return { ok: true };
 }
 ```
 
-- [ ] **Step 5: Run the new test and the existing step-up test**
+Then add server-side E cases to `tests/step-up-edit-window.test.ts`. Add these imports at the top:
 
-Run: `npx vitest run tests/step-up-edit-window.test.ts tests/auth-step-up-hardening.test.ts`
-Expected: PASS for both files, 0 failed.
+```ts
+import { afterEach } from "vitest";
+import { assertStepUp, stepUpEditWindowMs, stepUpFreshWindowMs } from "@/lib/admin/step-up";
+import type { AuthContext } from "@/lib/session";
+```
 
-- [ ] **Step 6: Commit**
+and append:
+
+```ts
+function ctx(sharedAt: string | null, catalogAt: string | null, shared = sharedAt !== null): AuthContext {
+  return { session: { stepUpUnlocked: shared, stepUpUnlockedAt: sharedAt, catalogEditUnlockedAt: catalogAt } } as unknown as AuthContext;
+}
+afterEach(() => {
+  delete process.env.ADMIN_STEP_UP_EDIT_WINDOW_SECONDS;
+  delete process.env.ADMIN_STEP_UP_FRESH_SECONDS;
+});
+
+describe("Tier E on the server — its own clock, checked on every write", () => {
+  it("defaults to 15 minutes with an EXCLUSIVE deadline: 899 999 ms ok, 900 000 and 900 001 refused", () => {
+    expect(stepUpEditWindowMs()).toBe(900_000);
+    expect(assertStepUp(ctx(null, ago(899_999)), "E", NOW)).toEqual({ ok: true });
+    expect(assertStepUp(ctx(null, ago(900_000)), "E", NOW)).toEqual({ ok: false, code: "step_up_stale" });
+    expect(assertStepUp(ctx(null, ago(900_001)), "E", NOW)).toEqual({ ok: false, code: "step_up_stale" });
+  });
+
+  it("Tier B's boundary is unchanged: inclusive at 120 000 ms", () => {
+    expect(assertStepUp(ctx(ago(120_000), null), "B", NOW)).toEqual({ ok: true });
+    expect(assertStepUp(ctx(ago(120_001), null), "B", NOW)).toEqual({ ok: false, code: "step_up_stale" });
+  });
+
+  it("the SHARED unlock never satisfies E, and the catalog clock never satisfies B", () => {
+    expect(assertStepUp(ctx(ago(1_000), null), "E", NOW)).toEqual({ ok: false, code: "step_up_required" });
+    expect(assertStepUp(ctx(null, ago(1_000)), "B", NOW)).toEqual({ ok: false, code: "step_up_required" });
+  });
+
+  it("garbage or future timestamps are stale", () => {
+    expect(assertStepUp(ctx(null, "nope"), "E", NOW)).toEqual({ ok: false, code: "step_up_stale" });
+    expect(assertStepUp(ctx(null, new Date(NOW + 60_000).toISOString()), "E", NOW)).toEqual({ ok: false, code: "step_up_stale" });
+  });
+
+  it("A and B are unchanged", () => {
+    expect(assertStepUp(ctx(ago(3_600_000), null), "A", NOW)).toEqual({ ok: true });
+    expect(assertStepUp(ctx(ago(30_000), null), "B", NOW)).toEqual({ ok: true });
+    expect(assertStepUp(ctx(ago(121_000), null), "B", NOW)).toEqual({ ok: false, code: "step_up_stale" });
+    expect(stepUpFreshWindowMs()).toBe(120_000);
+  });
+
+  it("the env override works, garbage falls back, and E is never shorter than B", () => {
+    process.env.ADMIN_STEP_UP_EDIT_WINDOW_SECONDS = "1800";
+    expect(stepUpEditWindowMs()).toBe(1_800_000);
+    process.env.ADMIN_STEP_UP_EDIT_WINDOW_SECONDS = "abc";
+    expect(stepUpEditWindowMs()).toBe(900_000);
+    process.env.ADMIN_STEP_UP_EDIT_WINDOW_SECONDS = "60";
+    expect(stepUpEditWindowMs()).toBe(120_000);
+  });
+});
+```
+
+- [ ] **Step 7: Create `lib/admin/step-up-grants.ts`**
+
+```ts
+/**
+ * One-shot step-up grants (catalog Phase 1, 0257; Astra r1 P1-1). SERVER-ONLY (service role).
+ *
+ * The always-prompt catalog acts — retire a product, delete a recipe, deactivate a SKU — accept
+ * neither the edit window nor a "fresh" shared unlock. The step-up POST mints a grant for ONE
+ * (action, target), bound to the session and the user, valid 120 s; the destructive route
+ * consumes it with ONE conditional UPDATE. Postgres re-checks the WHERE under the row lock, so a
+ * concurrent second consume matches 0 rows: single use is a property of the statement, not of a
+ * read-then-write. A refused consume spends nothing.
+ */
+import { getServiceRoleClient } from "@/lib/supabase-server";
+import type { AuthContext } from "@/lib/session";
+import { grantExpiresAt, type GrantAction, type StepUpPurpose } from "@/lib/admin/step-up-shared";
+
+export async function mintStepUpGrant(args: {
+  sessionId: string;
+  userId: string;
+  purpose: StepUpPurpose;
+  now?: Date;
+}): Promise<void> {
+  const now = args.now ?? new Date();
+  const { error } = await getServiceRoleClient()
+    .from("step_up_grants")
+    .insert({
+      session_id: args.sessionId,
+      user_id: args.userId,
+      action: args.purpose.action,
+      target_id: args.purpose.targetId,
+      created_at: now.toISOString(),
+      expires_at: grantExpiresAt(now).toISOString(),
+    });
+  if (error) throw new Error(`mintStepUpGrant: ${error.message}`);
+}
+
+export type GrantResult = { ok: true } | { ok: false; code: "step_up_grant_required" };
+
+export async function consumeStepUpGrant(
+  ctx: AuthContext,
+  action: GrantAction,
+  targetId: string,
+  now: Date = new Date(),
+): Promise<GrantResult> {
+  const nowIso = now.toISOString();
+  const { data, error } = await getServiceRoleClient()
+    .from("step_up_grants")
+    .update({ consumed_at: nowIso })
+    .eq("session_id", ctx.session.id)
+    .eq("user_id", ctx.user.id)
+    .eq("action", action)
+    .eq("target_id", targetId)
+    .is("consumed_at", null)
+    .gt("expires_at", nowIso)
+    .select("id");
+  if (error) throw new Error(`consumeStepUpGrant: ${error.message}`);
+  return (data?.length ?? 0) > 0 ? { ok: true } : { ok: false, code: "step_up_grant_required" };
+}
+```
+
+- [ ] **Step 8: The step-up POST takes `catalogWindow` and `purpose`**
+
+In `app/api/auth/step-up/route.ts`:
+
+Add after `import { ROLES, type RoleCode } from "@/lib/roles";`:
+
+```ts
+import { stepUpEditWindowMs } from "@/lib/admin/step-up";
+import { parseStepUpPurpose } from "@/lib/admin/step-up-shared";
+import { mintStepUpGrant } from "@/lib/admin/step-up-grants";
+```
+
+Replace the doc line ` * Body: { password: string }` with:
+
+```ts
+ * Body: { password: string; catalogWindow?: boolean; purpose?: { action, targetId } }
+ *   catalogWindow — sent by the admin StepUpProvider: this password also opens the 15-minute
+ *                   catalog edit window (sessions.catalog_edit_unlocked_at, 0257).
+ *   purpose       — a ONE-SHOT grant for one destructive catalog act (lib/admin/step-up-grants.ts),
+ *                   minted only after the password verifies. Malformed → 400 before any check.
+```
+
+Insert directly after the `password must not be empty` block (after its closing `}`):
+
+```ts
+  const raw = parsed as unknown as Record<string, unknown>;
+  const purpose = parseStepUpPurpose(raw.purpose);
+  if (purpose === "invalid") {
+    return jsonError(400, "invalid_payload", { field: "purpose", message: "purpose must name a known action and a target id" });
+  }
+  const catalogWindow = raw.catalogWindow === true;
+```
+
+Replace the success block:
+
+```ts
+  // 5. Success
+  await unlockStepUp(session.id);
+  await audit({
+    actorId: user.id,
+    actorRole: user.role,
+    action: "auth_step_up_success",
+    resourceTable: "sessions",
+    resourceId: session.id,
+    metadata: {},
+    ipAddress,
+    userAgent,
+  });
+```
+
+with:
+
+```ts
+  // 5. Success — stamp the shared flag (and the catalog window when asked), then mint the
+  //    one grant the purpose names. Both are recorded on the success row.
+  await unlockStepUp(session.id, { catalogWindow });
+  if (purpose) await mintStepUpGrant({ sessionId: session.id, userId: user.id, purpose });
+  await audit({
+    actorId: user.id,
+    actorRole: user.role,
+    action: "auth_step_up_success",
+    resourceTable: "sessions",
+    resourceId: session.id,
+    metadata: {
+      edit_window_seconds: catalogWindow ? stepUpEditWindowMs() / 1000 : null,
+      grant: purpose ? { action: purpose.action, target_id: purpose.targetId } : null,
+    },
+    ipAddress,
+    userAgent,
+  });
+```
+
+- [ ] **Step 9: Run what can pass now**
+
+Run: `npx vitest run tests/catalog-window-lifecycle.test.ts tests/step-up-edit-window.test.ts tests/auth-step-up-hardening.test.ts`
+Expected: PASS, 0 failed.
+
+Run: `npx vitest run tests/step-up-grants.test.ts`
+Expected: the `consumeStepUpGrant` and `POST /api/auth/step-up` describes PASS. The **destructive routes** describe still FAILS (routes untouched until Task 5): the retire case gets 200 instead of 403, because the route still asserts Tier B on a fresh shared flag. That is the P1-1 hole, shown live.
+
+- [ ] **Step 10: Commit**
 
 ```bash
-git add lib/admin/step-up-shared.ts lib/admin/step-up.ts tests/step-up-edit-window.test.ts
+git add tests/fake-supabase.ts tests/catalog-window-lifecycle.test.ts tests/step-up-grants.test.ts tests/step-up-edit-window.test.ts lib/types.ts lib/session.ts lib/admin/step-up.ts lib/admin/step-up-grants.ts app/api/auth/step-up/route.ts
 git commit -F - <<'EOF'
-feat(step-up): Tier E — the 15-minute catalog edit window, checked on the server
+feat(step-up): catalog window on its own clock + one-shot grants minted by the step-up POST
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01TiAmVpRCSW7w8NzTFk4L31
@@ -360,13 +1327,13 @@ EOF
 
 ---
 
-## Task 2: Client wiring — provider, forget-on-refusal, layout window, unlock audit
+## Task 4: Client — provider clocks, grants, forget-on-refusal, the modal
 
 **Files:**
 - Rewrite: `components/admin/StepUpProvider.tsx`
+- Modify: `components/auth/PasswordModal.tsx`
 - Create: `components/admin/useStepUpPost.ts`
-- Modify: `app/admin/layout.tsx`
-- Modify: `app/api/auth/step-up/route.ts`
+- Modify: `app/admin/layout.tsx`, `components/admin/catalog/CatalogClient.tsx`
 - Test: `tests/step-up-edit-window-wiring.test.ts`
 
 - [ ] **Step 1: Write the failing test**
@@ -374,10 +1341,7 @@ EOF
 Create `tests/step-up-edit-window-wiring.test.ts`:
 
 ```ts
-/**
- * Catalog Phase 1 — how the edit window is wired. Source-level pins (the house fallback for
- * client wiring the unit spine cannot render: tests/dynamic-pars-write.test.ts).
- */
+/** Catalog Phase 1 — how the window and the grants are wired on the client. Source pins. */
 import { readdirSync, readFileSync } from "node:fs";
 import { dirname, join, sep } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -396,20 +1360,42 @@ function filesUnder(...roots: string[]): string[] {
 }
 
 describe("the window is decided once, and the server stays the authority", () => {
-  it("StepUpProvider decides with the shared stepUpDecision over refs, and exposes forgetStepUp", () => {
+  it("StepUpProvider decides over refs of BOTH clocks and exposes the grant and forget lanes", () => {
     const src = read("components/admin/StepUpProvider.tsx");
     expect(src).toContain('from "@/lib/admin/step-up-shared"');
-    expect(src).toContain("stepUpDecision(tier, unlockedRef.current, unlockedAtRef.current, Date.now(), editWindowMs)");
+    expect(src).toContain(
+      "stepUpDecision(tier, { unlocked: unlockedRef.current, catalogUnlockedAt: catalogRef.current }, Date.now(), editWindowMs)",
+    );
+    expect(src).toContain("requestStepUpGrant");
     expect(src).toContain("forgetStepUp");
   });
 
-  it("the admin layout hands the server's window to the client", () => {
-    expect(read("app/admin/layout.tsx")).toContain("editWindowMs={stepUpEditWindowMs()}");
+  it("the admin layout hands the server's clock and window to the client and opens the window", () => {
+    const layout = read("app/admin/layout.tsx");
+    expect(layout).toContain("catalogUnlockedAt={auth.session.catalogEditUnlockedAt ?? null}");
+    expect(layout).toContain("editWindowMs={stepUpEditWindowMs()}");
+    expect(layout).toMatch(/\n\s+catalogWindow\n/);
   });
 
-  it("a successful unlock is audited with the window it opened", () => {
+  it("the modal sends the purpose and the window flag; the reactive catalog modal opens the window too", () => {
+    const modal = read("components/auth/PasswordModal.tsx");
+    expect(modal).toContain("...(catalogWindow ? { catalogWindow: true } : {})");
+    expect(modal).toContain("...(purpose ? { purpose } : {})");
+    expect(read("components/admin/catalog/CatalogClient.tsx")).toMatch(/<PasswordModal\s+catalogWindow/);
+  });
+
+  it("the reactive catalog modal reports to the provider: confirm advances the clock, refusal forgets it (Astra r3 #1)", () => {
+    const catalog = read("components/admin/catalog/CatalogClient.tsx");
+    expect(catalog).toContain("onConfirm={async () => { noteStepUpConfirmed(); if (pendingRef.current) await pendingRef.current(); }}");
+    expect(catalog.match(/b\.code === "step_up_stale"\) \{\n\s+forgetStepUp\(\);/g)).toHaveLength(2);
+    const provider = read("components/admin/StepUpProvider.tsx");
+    expect(provider).toContain("confirmClientUnlock({ unlocked: unlockedRef.current, catalogUnlockedAt: catalogRef.current }, now, catalogWindow)");
+    expect(provider).toMatch(/const handleConfirm = useCallback\(\(\) => \{[\s\S]{0,120}noteStepUpConfirmed\(\);/);
+  });
+
+  it("a successful unlock is audited with the window and the grant it opened", () => {
     expect(read("app/api/auth/step-up/route.ts")).toMatch(
-      /action: "auth_step_up_success",[\s\S]{0,200}edit_window_seconds: stepUpEditWindowMs\(\) \/ 1000/,
+      /action: "auth_step_up_success",[\s\S]{0,300}edit_window_seconds: catalogWindow \? stepUpEditWindowMs\(\) \/ 1000 : null/,
     );
   });
 
@@ -419,11 +1405,11 @@ describe("the window is decided once, and the server stays the authority", () =>
     );
   });
 
-  it("only unlockStepUp stamps step_up_unlocked_at, so the window cannot slide", () => {
-    const writers = filesUnder("app", "lib", "components")
-      .filter((f) => /\.(ts|tsx)$/.test(f))
-      .filter((f) => /step_up_unlocked_at:\s*now/.test(read(f)));
-    expect(writers).toEqual(["lib/session.ts"]);
+  it("only unlockStepUp stamps either clock, so neither window can slide", () => {
+    const writers = (re: RegExp) =>
+      filesUnder("app", "lib", "components").filter((f) => /\.(ts|tsx)$/.test(f)).filter((f) => re.test(read(f)));
+    expect(writers(/step_up_unlocked_at:\s*now/)).toEqual(["lib/session.ts"]);
+    expect(writers(/catalog_edit_unlocked_at:\s*now/)).toEqual(["lib/session.ts"]);
   });
 });
 ```
@@ -431,7 +1417,7 @@ describe("the window is decided once, and the server stays the authority", () =>
 - [ ] **Step 2: Run it and watch it fail**
 
 Run: `npx vitest run tests/step-up-edit-window-wiring.test.ts`
-Expected: FAIL. 4 failed (provider, layout, audit, useStepUpPost `ENOENT`) and 1 passed (the "cannot slide" pin).
+Expected: FAIL. The provider, layout, modal and useStepUpPost cases fail; the audit and "cannot slide" cases PASS (Task 3).
 
 - [ ] **Step 3: Rewrite `components/admin/StepUpProvider.tsx`** (replace the whole file)
 
@@ -441,23 +1427,21 @@ Keep the docstring phrase `requestStepUp(tier)`. The tier-map test reads it as t
 "use client";
 
 /**
- * StepUpProvider — client orchestration for admin step-up (C.44 Module 1; Tier E added
- * 2026-10-15, catalog Phase 1). Hosts a single PasswordModal for the admin subtree and
- * exposes requestStepUp(tier) to descendants.
+ * StepUpProvider — client orchestration for admin step-up (C.44 Module 1; catalog Phase 1
+ * 2026-10-15 adds Tier E and one-shot grants). Hosts a single PasswordModal for the admin
+ * subtree and exposes requestStepUp(tier) and requestStepUpGrant(purpose) to descendants.
  *
- *   Tier A — if already unlocked, resolve "ok" without a prompt; else prompt.
- *   Tier B — always prompt (the prompt refreshes step_up_unlocked_at; the server-side
- *            freshness check in lib/admin/step-up.ts is the real gate).
- *   Tier E — the catalog/recipe edit window: no prompt while this device's unlock is inside
- *            the window (minus a 30 s margin), else prompt. The server re-checks every write.
+ *   Tier A — if the shared flag is set, resolve "ok" without a prompt; else prompt.
+ *   Tier B — always prompt (the server-side freshness check is the real gate).
+ *   Tier E — the catalog/recipe edit window, on its OWN clock: no prompt while this device's
+ *            catalog unlock is inside the window (minus a 30 s margin); else prompt.
+ *   Grant  — ALWAYS prompt; the password POST carries the purpose and the server mints one
+ *            single-use grant for exactly that action and target.
  *
- * The client's unlock is ADVISORY. When a route answers step_up_required / step_up_stale
- * (the server cleared or aged the unlock underneath us), the caller runs forgetStepUp() —
- * useStepUpPost does it for every write that goes through it — so the next request prompts
- * instead of proceeding on a stale memory until the client's own clock runs out.
- *
- * Refs mirror the unlock state so forgetStepUp() and a confirm take effect for a request
- * made in the same tick (a retry right after a refusal must prompt, not reuse a closure).
+ * `catalogWindow` is true only on the admin surface: its passwords also open the window. The
+ * client's memory is ADVISORY — when a route answers step_up_required / step_up_stale, the
+ * caller runs forgetStepUp() (useStepUpPost does it) so the next request prompts. Refs mirror
+ * the state so a forget or a confirm takes effect for a request made in the same tick.
  */
 
 import {
@@ -470,15 +1454,26 @@ import {
 } from "react";
 
 import { PasswordModal } from "@/components/auth/PasswordModal";
-import { DEFAULT_EDIT_WINDOW_MS, stepUpDecision, type StepUpTier } from "@/lib/admin/step-up-shared";
+import {
+  confirmClientUnlock,
+  DEFAULT_EDIT_WINDOW_MS,
+  stepUpDecision,
+  type StepUpPurpose,
+  type StepUpTier,
+} from "@/lib/admin/step-up-shared";
 
 export { stepUpDecision };
 
 interface StepUpContextValue {
   /** Ensure step-up for the tier; resolves "ok" once satisfied (possibly after a prompt) or "cancelled". */
   requestStepUp: (tier: StepUpTier) => Promise<"ok" | "cancelled">;
+  /** Always prompt, and mint a one-shot grant for exactly this destructive act. */
+  requestStepUpGrant: (purpose: StepUpPurpose) => Promise<"ok" | "cancelled">;
   /** Drop this device's memory of an unlock the server refused, so the next request prompts. */
   forgetStepUp: () => void;
+  /** A password confirmed by an admin modal the provider does not own (the reactive CatalogClient
+   *  modal): record it exactly as the provider's own confirm would (Astra r3 #1). */
+  noteStepUpConfirmed: () => void;
   unlocked: boolean;
   unlockedAt: string | null;
 }
@@ -488,11 +1483,17 @@ const StepUpContext = createContext<StepUpContextValue | null>(null);
 export function StepUpProvider({
   unlocked: initialUnlocked,
   unlockedAt: initialUnlockedAt,
+  catalogUnlockedAt: initialCatalogUnlockedAt = null,
+  catalogWindow = false,
   editWindowMs = DEFAULT_EDIT_WINDOW_MS,
   children,
 }: {
   unlocked: boolean;
   unlockedAt: string | null;
+  /** The server's catalog clock (sessions.catalog_edit_unlocked_at) at render. */
+  catalogUnlockedAt?: string | null;
+  /** True on the admin surface: a password typed here also opens the catalog edit window. */
+  catalogWindow?: boolean;
   /** The server's Tier E window (lib/admin/step-up.ts stepUpEditWindowMs) — how the env override reaches the client. */
   editWindowMs?: number;
   children: ReactNode;
@@ -500,50 +1501,76 @@ export function StepUpProvider({
   const [unlocked, setUnlocked] = useState(initialUnlocked);
   const [unlockedAt, setUnlockedAt] = useState<string | null>(initialUnlockedAt);
   const unlockedRef = useRef(initialUnlocked);
-  const unlockedAtRef = useRef<string | null>(initialUnlockedAt);
+  const catalogRef = useRef<string | null>(initialCatalogUnlockedAt);
   const [modalOpen, setModalOpen] = useState(false);
+  const [modalPurpose, setModalPurpose] = useState<StepUpPurpose | null>(null);
   const resolverRef = useRef<((r: "ok" | "cancelled") => void) | null>(null);
 
-  const remember = useCallback((on: boolean, at: string | null) => {
-    unlockedRef.current = on;
-    unlockedAtRef.current = at;
-    setUnlocked(on);
-    setUnlockedAt(at);
-  }, []);
+  const openModal = useCallback(
+    (purpose: StepUpPurpose | null) =>
+      new Promise<"ok" | "cancelled">((resolve) => {
+        resolverRef.current = resolve;
+        setModalPurpose(purpose);
+        setModalOpen(true);
+      }),
+    [],
+  );
 
   const requestStepUp = useCallback(
     (tier: StepUpTier): Promise<"ok" | "cancelled"> => {
-      if (stepUpDecision(tier, unlockedRef.current, unlockedAtRef.current, Date.now(), editWindowMs) === "proceed") {
+      if (stepUpDecision(tier, { unlocked: unlockedRef.current, catalogUnlockedAt: catalogRef.current }, Date.now(), editWindowMs) === "proceed") {
         return Promise.resolve("ok");
       }
-      return new Promise<"ok" | "cancelled">((resolve) => {
-        resolverRef.current = resolve;
-        setModalOpen(true);
-      });
+      return openModal(null);
     },
-    [editWindowMs],
+    [editWindowMs, openModal],
   );
 
-  const forgetStepUp = useCallback(() => remember(false, null), [remember]);
+  const requestStepUpGrant = useCallback((purpose: StepUpPurpose) => openModal(purpose), [openModal]);
+
+  const forgetStepUp = useCallback(() => {
+    unlockedRef.current = false;
+    catalogRef.current = null;
+    setUnlocked(false);
+    setUnlockedAt(null);
+  }, []);
+
+  // ONE way to record a confirmed password, whichever admin modal took it.
+  const noteStepUpConfirmed = useCallback(() => {
+    const now = new Date().toISOString();
+    const next = confirmClientUnlock({ unlocked: unlockedRef.current, catalogUnlockedAt: catalogRef.current }, now, catalogWindow);
+    unlockedRef.current = next.unlocked;
+    catalogRef.current = next.catalogUnlockedAt;
+    setUnlocked(true);
+    setUnlockedAt(now);
+  }, [catalogWindow]);
 
   const handleConfirm = useCallback(() => {
     // PasswordModal posts /api/auth/step-up and calls onConfirm only on 200.
-    remember(true, new Date().toISOString());
+    noteStepUpConfirmed();
     setModalOpen(false);
+    setModalPurpose(null);
     resolverRef.current?.("ok");
     resolverRef.current = null;
-  }, [remember]);
+  }, [noteStepUpConfirmed]);
 
   const handleCancel = useCallback(() => {
     setModalOpen(false);
+    setModalPurpose(null);
     resolverRef.current?.("cancelled");
     resolverRef.current = null;
   }, []);
 
   return (
-    <StepUpContext.Provider value={{ requestStepUp, forgetStepUp, unlocked, unlockedAt }}>
+    <StepUpContext.Provider value={{ requestStepUp, requestStepUpGrant, forgetStepUp, noteStepUpConfirmed, unlocked, unlockedAt }}>
       {children}
-      <PasswordModal open={modalOpen} onConfirm={handleConfirm} onCancel={handleCancel} />
+      <PasswordModal
+        open={modalOpen}
+        purpose={modalPurpose}
+        catalogWindow={catalogWindow}
+        onConfirm={handleConfirm}
+        onCancel={handleCancel}
+      />
     </StepUpContext.Provider>
   );
 }
@@ -555,7 +1582,57 @@ export function useStepUp(): StepUpContextValue {
 }
 ```
 
-- [ ] **Step 4: Create `components/admin/useStepUpPost.ts`**
+- [ ] **Step 4: `components/auth/PasswordModal.tsx` sends the purpose and the window flag**
+
+Add after `import { useTranslation } from "@/lib/i18n/provider";`:
+
+```tsx
+import type { StepUpPurpose } from "@/lib/admin/step-up-shared";
+```
+
+Replace:
+
+```tsx
+export interface PasswordModalProps {
+  open: boolean;
+  onConfirm: () => Promise<void> | void;
+  onCancel: () => void;
+}
+```
+
+with:
+
+```tsx
+export interface PasswordModalProps {
+  open: boolean;
+  onConfirm: () => Promise<void> | void;
+  onCancel: () => void;
+  /** Catalog Phase 1: mint a one-shot grant for exactly this destructive act with the password. */
+  purpose?: StepUpPurpose | null;
+  /** Catalog Phase 1: true on the admin surface — this password also opens the 15-minute catalog edit window. */
+  catalogWindow?: boolean;
+}
+```
+
+Replace `export function PasswordModal({ open, onConfirm, onCancel }: PasswordModalProps) {` with:
+
+```tsx
+export function PasswordModal({ open, onConfirm, onCancel, purpose = null, catalogWindow = false }: PasswordModalProps) {
+```
+
+Replace `          body: JSON.stringify({ password }),` with:
+
+```tsx
+          body: JSON.stringify({ password, ...(catalogWindow ? { catalogWindow: true } : {}), ...(purpose ? { purpose } : {}) }),
+```
+
+Replace `    [password, submitting, retryRemaining, onConfirm, onCancel, t],` with:
+
+```tsx
+    [password, submitting, retryRemaining, onConfirm, onCancel, t, purpose, catalogWindow],
+```
+
+- [ ] **Step 5: Create `components/admin/useStepUpPost.ts`**
 
 ```ts
 "use client";
@@ -563,9 +1640,7 @@ export function useStepUp(): StepUpContextValue {
 /**
  * useStepUpPost — postJson for a step-up-gated write, with the one extra duty the Tier E
  * window needs: when the server refuses with step_up_required / step_up_stale, tell
- * StepUpProvider to forget its unlock so the NEXT tap prompts. Without it a client that
- * believes it is inside the window would keep proceeding into the same refusal until its
- * own clock ran the window out (catalog Phase 1, 2026-10-15).
+ * StepUpProvider to forget its unlock so the NEXT tap prompts (catalog Phase 1, 2026-10-15).
  */
 import { useCallback } from "react";
 
@@ -588,9 +1663,9 @@ export function useStepUpPost(): (url: string, body: unknown, method?: Method) =
 }
 ```
 
-- [ ] **Step 5: Pass the window from `app/admin/layout.tsx`**
+- [ ] **Step 6: `app/admin/layout.tsx`**
 
-Add the import after `import { StepUpProvider } from "@/components/admin/StepUpProvider";`:
+Add after `import { StepUpProvider } from "@/components/admin/StepUpProvider";`:
 
 ```tsx
 import { stepUpEditWindowMs } from "@/lib/admin/step-up";
@@ -611,50 +1686,85 @@ with:
       <StepUpProvider
         unlocked={auth.session.stepUpUnlocked}
         unlockedAt={auth.session.stepUpUnlockedAt}
+        catalogUnlockedAt={auth.session.catalogEditUnlockedAt ?? null}
+        catalogWindow
         editWindowMs={stepUpEditWindowMs()}
       >
 ```
 
-(`app/(authed)/catering/pipeline/page.tsx` and `app/(authed)/stations/page.tsx` also mount the provider. They use Tiers A and B only and keep the default, so leave them unchanged.)
+(`app/(authed)/catering/pipeline/page.tsx` and `app/(authed)/stations/page.tsx` mount the provider without the window, because they are not catalog surfaces. Leave them unchanged.)
 
-- [ ] **Step 6: Audit the window on unlock in `app/api/auth/step-up/route.ts`**
+- [ ] **Step 7: The reactive catalog modal opens the window**
 
-Add the import after `import { ROLES, type RoleCode } from "@/lib/roles";`:
+In `components/admin/catalog/CatalogClient.tsx`, replace:
 
-```ts
-import { stepUpEditWindowMs } from "@/lib/admin/step-up";
-```
-
-In the success block (step 5, the only `metadata: {},` in the file), replace:
-
-```ts
-    action: "auth_step_up_success",
-    resourceTable: "sessions",
-    resourceId: session.id,
-    metadata: {},
+```tsx
+      <PasswordModal
+        open={stepUpOpen}
 ```
 
 with:
 
-```ts
-    action: "auth_step_up_success",
-    resourceTable: "sessions",
-    resourceId: session.id,
-    // Catalog Phase 1: one unlock opens the Tier E edit window — record how long it opened.
-    metadata: { edit_window_seconds: stepUpEditWindowMs() / 1000 },
+```tsx
+      <PasswordModal
+        catalogWindow
+        open={stepUpOpen}
 ```
 
-- [ ] **Step 7: Run the tests**
+The item-type route moves to Tier E in Task 5. Without this flag its reactive retry would loop forever.
 
-Run: `npx vitest run tests/step-up-edit-window-wiring.test.ts tests/step-up-edit-window.test.ts tests/step-up-tier-map.test.ts`
-Expected: PASS, 0 failed. The tier map is unchanged so far because the provider still reads as `VAR:tier`.
+The provider must also LEARN about this confirm (Astra r3 #1). Otherwise its catalog clock stays null, and a recipe edit right after the catalog password prompts again. Make these three replacements in the same file.
 
-- [ ] **Step 8: Commit**
+Add after `import { PasswordModal } from "@/components/auth/PasswordModal";`:
+
+```tsx
+import { useStepUp } from "@/components/admin/StepUpProvider";
+```
+
+Replace `  const [stepUpOpen, setStepUpOpen] = useState(false);` with:
+
+```tsx
+  const [stepUpOpen, setStepUpOpen] = useState(false);
+  // This modal is not the provider's; report its confirms and refusals so the provider's catalog
+  // clock stays true for every other admin surface (Astra r3 #1).
+  const { noteStepUpConfirmed, forgetStepUp } = useStepUp();
+```
+
+Replace (2 occurrences, the seasonal lane and the item-type lane):
+
+```tsx
+      if (b.code === "step_up_required" || b.code === "step_up_stale") {
+        pendingRef.current =
+```
+
+with:
+
+```tsx
+      if (b.code === "step_up_required" || b.code === "step_up_stale") {
+        forgetStepUp();
+        pendingRef.current =
+```
+
+Replace `        onConfirm={async () => { if (pendingRef.current) await pendingRef.current(); }}` with:
+
+```tsx
+        onConfirm={async () => { noteStepUpConfirmed(); if (pendingRef.current) await pendingRef.current(); }}
+```
+
+- [ ] **Step 8: Run the tests and tsc**
+
+Run: `npx vitest run tests/step-up-edit-window-wiring.test.ts tests/step-up-tier-map.test.ts`
+Expected: PASS, 0 failed. The tier map is unchanged so far: the provider still reads `VAR:tier`, and `requestStepUpGrant(` does not match the `requestStepUp(` pattern.
+
+Run: `npx tsc --noEmit 2>&1 | grep -v TS2307 | grep "error TS"`
+Expected: no output.
+
+- [ ] **Step 9: Commit**
 
 ```bash
-git add components/admin/StepUpProvider.tsx components/admin/useStepUpPost.ts app/admin/layout.tsx app/api/auth/step-up/route.ts tests/step-up-edit-window-wiring.test.ts
+git add components/admin/StepUpProvider.tsx components/auth/PasswordModal.tsx components/admin/useStepUpPost.ts app/admin/layout.tsx components/admin/catalog/CatalogClient.tsx tests/step-up-edit-window-wiring.test.ts
 git commit -F - <<'EOF'
-feat(step-up): client edit window, forget-on-refusal, and the window in the unlock audit
+feat(step-up): client catalog clock, one-shot grant prompts, forget-on-refusal
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01TiAmVpRCSW7w8NzTFk4L31
@@ -663,20 +1773,25 @@ EOF
 
 ---
 
-## Task 3: Move catalog and recipe edits to Tier E; destructive acts stay Tier B
+## Task 5: Every ordinary catalog edit → Tier E; the three destructive acts → grants
 
-**Routes that become Tier E** (non-destructive catalog and recipe writes; one literal each):
-`app/api/admin/recipes/route.ts`, `app/api/admin/recipes/full/route.ts`, `app/api/admin/recipes/[id]/route.ts` (**PATCH only**), `app/api/admin/recipes/[id]/inputs/route.ts`, `app/api/admin/recipes/[id]/outputs/route.ts`, `app/api/admin/recipes/edges/route.ts`, `app/api/admin/skus/route.ts` (POST create), `app/api/admin/products/route.ts` (POST create), `app/api/admin/items/[itemId]/sold-directly/route.ts`, `app/api/admin/menu-items/route.ts`, `app/api/admin/menu-items/[id]/price/route.ts`, `app/api/admin/weights/route.ts`.
+**Server — to Tier E (one literal each, all via the script below):**
+- from B: `recipes/route.ts`, `recipes/full`, `recipes/[id]` (PATCH), `recipes/[id]/inputs`, `recipes/[id]/outputs`, `recipes/edges`, `skus/route.ts`, `products/route.ts`, `items/[itemId]/sold-directly`, `menu-items/route.ts`, `menu-items/[id]/price`, `weights`;
+- from A (Astra P1-2): `catalog/item-type/[id]`, `products/[id]`, `products/[id]/members` (×2), `products/[id]/primary`, `skus/[id]/pack-chain`, `skus/[id]/price`, `skus/[id]/location-settings`, `skus/[id]` (identity edits and reactivation).
 
-**These stay Tier B and prompt every time:** `products/[id]/active` (retire), `recipes/[id]` **DELETE** (delete recipe), and every non-catalog route. `recipes/yield-nudge` also stays B: it is driven from `/production` outside `/admin`, where the unlock is cleared anyway. So are `skus/measure-units`, `skus/pack-formats` and `skus/pending`, which are registry and receiving writes. Tier A routes are not touched; they are already looser than E.
+**Server — to one-shot grants:** `products/[id]/active` (`active:false` → `product.retire`; restore → E), `recipes/[id]` DELETE (`recipe.delete`), `skus/[id]` PATCH `{active:false}` (`sku.deactivate`).
+
+**Unchanged:** `recipes/yield-nudge` (B; driven from `/production` outside `/admin`), `skus/measure-units`, `skus/pack-formats`, `skus/pending`, vendors, the toast map, templates, users and all catering routes. The Items-page registry edits run through `checklist-templates/registry*`, which the template editor shares. They stay **B**: stricter than E, so nothing escapes the window there. Phase 2's item page revisits them.
+
+**Clients (Task 5 script):** `RecipeBuilder`, `SkuCatalogClient`, `VendorSkusCard`, `SkuCostPanel`, `SkuLocationOverlay`, `ProductsClient`, `ItemRow`, `WeightBoardClient`, `MenuPriceEditor`.
 
 **Files:**
-- Modify: the 12 routes above
-- Modify: `components/admin/recipes/RecipeBuilder.tsx`, `components/admin/skus/SkuCatalogClient.tsx`, `components/admin/skus/VendorSkusCard.tsx`, `components/admin/items/ItemRow.tsx`, `components/admin/weights/WeightBoardClient.tsx`, `components/admin/products/ProductsClient.tsx`, `components/admin/menu-costing/MenuPriceEditor.tsx`
-- Modify: `tests/step-up-tier-map.test.ts`, `tests/menu-prices-data.test.ts`, `tests/menu-prices-ui.test.ts`, `tests/step-up-edit-window-wiring.test.ts`
+- Modify: the routes and clients above; rewrite `app/api/admin/products/[id]/active/route.ts`
+- Modify: `components/admin/recipes/shared.ts`, `components/admin/skus/shared.ts`, `components/admin/products/shared.ts`, `lib/i18n/en.json`, `lib/i18n/es.json`
+- Modify: `tests/step-up-tier-map.test.ts`, `tests/dynamic-pars-write.test.ts`, `tests/menu-prices-data.test.ts`, `tests/menu-prices-ui.test.ts`
 - Modify: `AGENTS.md`
 
-- [ ] **Step 1: Update the pinned tier map (the failing test)**
+- [ ] **Step 1: Re-pin the tier map and add the grant map (the failing test)**
 
 In `tests/step-up-tier-map.test.ts`:
 
@@ -686,32 +1801,46 @@ In `tests/step-up-tier-map.test.ts`:
   const literals = [...src.matchAll(new RegExp(`${fn}\\(${args}"([ABE])"`, "g"))].map((m) => m[1] as string);
 ```
 
-2. In `SERVER_TIER_MAP`, replace these entries:
+2. In `SERVER_TIER_MAP`, set these entries (replace each existing line):
 
 ```ts
+  "app/api/admin/catalog/item-type/[id]/route.ts": ["E"],
   "app/api/admin/items/[itemId]/sold-directly/route.ts": ["E"],
   "app/api/admin/menu-items/route.ts": ["E"],
   "app/api/admin/menu-items/[id]/price/route.ts": ["E"],
+  // Catalog Phase 1: restore = edit window; retire = one-shot grant (GRANT_SERVER_MAP).
+  "app/api/admin/products/[id]/active/route.ts": ["E"],
+  "app/api/admin/products/[id]/members/route.ts": ["E"],
+  "app/api/admin/products/[id]/primary/route.ts": ["E"],
+  "app/api/admin/products/[id]/route.ts": ["E"],
   "app/api/admin/products/route.ts": ["E"],
   "app/api/admin/recipes/[id]/inputs/route.ts": ["E"],
   "app/api/admin/recipes/[id]/outputs/route.ts": ["E"],
-  // Catalog Phase 1: PATCH is the edit window (E); DELETE (delete a recipe) still prompts (B).
-  "app/api/admin/recipes/[id]/route.ts": ["B", "E"],
+  // Catalog Phase 1: PATCH = edit window; DELETE = one-shot grant (GRANT_SERVER_MAP).
+  "app/api/admin/recipes/[id]/route.ts": ["E"],
   "app/api/admin/recipes/edges/route.ts": ["E"],
   "app/api/admin/recipes/full/route.ts": ["E"],
   "app/api/admin/recipes/route.ts": ["E"],
+  // Was Tier A; the dynamic-pars overlay law now names the edit window.
+  "app/api/admin/skus/[id]/location-settings/route.ts": ["E"],
+  "app/api/admin/skus/[id]/pack-chain/route.ts": ["E"],
+  "app/api/admin/skus/[id]/price/route.ts": ["E"],
+  // Catalog Phase 1: edits + reactivation = edit window; deactivation = one-shot grant.
+  "app/api/admin/skus/[id]/route.ts": ["E"],
   "app/api/admin/skus/route.ts": ["E"],
   "app/api/admin/weights/route.ts": ["E"],
 ```
 
-3. In `CLIENT_TIER_MAP`, replace these entries:
+3. In `CLIENT_TIER_MAP`, set these entries:
 
 ```ts
   "components/admin/menu-costing/MenuPriceEditor.tsx": ["E"],
   "components/admin/items/ItemRow.tsx": ["B", "E"],
-  "components/admin/recipes/RecipeBuilder.tsx": ["B", "E"],
-  "components/admin/skus/SkuCatalogClient.tsx": ["A", "E"],
-  "components/admin/skus/VendorSkusCard.tsx": ["A", "E"],
+  "components/admin/recipes/RecipeBuilder.tsx": ["E"],
+  "components/admin/skus/SkuCatalogClient.tsx": ["E"],
+  "components/admin/skus/SkuCostPanel.tsx": ["E"],
+  "components/admin/skus/SkuLocationOverlay.tsx": ["E"],
+  "components/admin/skus/VendorSkusCard.tsx": ["E"],
   "components/admin/weights/WeightBoardClient.tsx": ["E"],
 ```
 
@@ -722,7 +1851,6 @@ describe("RecipeBuilder — the two lanes that asked for nothing (fixed here)", 
   const src = () => read("components/admin/recipes/RecipeBuilder.tsx");
 
   it("patchField requests the edit window before PATCHing the recipe header", () => {
-    // /api/admin/recipes/[id] PATCH asserts Tier E (catalog Phase 1; was B).
     const lane = src().slice(src().indexOf("const patchField"));
     const body = lane.slice(0, lane.indexOf("};"));
     expect(body).toContain('requestStepUp("E")');
@@ -730,7 +1858,6 @@ describe("RecipeBuilder — the two lanes that asked for nothing (fixed here)", 
   });
 
   it("removeEdge requests the edit window and surfaces its refusal", () => {
-    // /api/admin/recipes/edges asserts Tier E; a removal that does not happen must say so.
     const lane = src().slice(src().indexOf("const removeEdge"));
     const body = lane.slice(0, lane.indexOf("\n  };"));
     expect(body).toContain('requestStepUp("E")');
@@ -740,292 +1867,314 @@ describe("RecipeBuilder — the two lanes that asked for nothing (fixed here)", 
 });
 ```
 
-5. Append this block to `tests/step-up-edit-window-wiring.test.ts`:
+5. Append the grant map at the end of the file:
 
 ```ts
-describe("destructive acts keep prompting every time (spec §4)", () => {
-  it("retiring a product and deleting a recipe stay Tier B on the server", () => {
-    expect(read("app/api/admin/products/[id]/active/route.ts")).toContain('assertStepUp(ctx, "B")');
-    const recipeRoute = read("app/api/admin/recipes/[id]/route.ts");
-    const del = recipeRoute.slice(recipeRoute.indexOf("export async function DELETE"));
-    expect(del).toContain('assertStepUp(ctx, "B")');
-    expect(del).not.toContain('assertStepUp(ctx, "E")');
-  });
+// ── THE ONE-SHOT GRANTS (catalog Phase 1, Astra r1 P1-1) ─────────────────────
+// The always-prompt catalog acts consume a single-use, action-bound grant. Pinned both ways so
+// a destructive route cannot quietly fall back to a tier, and a client cannot ask for a grant
+// the server never consumes.
+const GRANT_SERVER_MAP: Record<string, string[]> = {
+  "app/api/admin/products/[id]/active/route.ts": ["product.retire"],
+  "app/api/admin/recipes/[id]/route.ts": ["recipe.delete"],
+  "app/api/admin/skus/[id]/route.ts": ["sku.deactivate"],
+};
+const GRANT_CLIENT_MAP: Record<string, string[]> = {
+  "components/admin/products/ProductsClient.tsx": ["product.retire"],
+  "components/admin/recipes/RecipeBuilder.tsx": ["recipe.delete"],
+  "components/admin/skus/SkuCatalogClient.tsx": ["sku.deactivate"],
+  "components/admin/skus/VendorSkusCard.tsx": ["sku.deactivate"],
+};
+function grantsIn(pattern: RegExp, keep: (rel: string) => boolean) {
+  const map: Record<string, string[]> = {};
+  for (const rel of filesUnder("app", "components")) {
+    if (!keep(rel)) continue;
+    const found = [...new Set([...read(rel).matchAll(pattern)].map((m) => m[1] as string))].sort();
+    if (found.length > 0) map[rel] = found;
+  }
+  return map;
+}
 
-  it("…and the clients ask for Tier B for exactly those two acts", () => {
-    const builder = read("components/admin/recipes/RecipeBuilder.tsx");
-    const lane = builder.slice(builder.indexOf("const deleteRecipe"), builder.indexOf("// ── Header local state"));
-    expect(lane).toContain('requestStepUp("B")');
-    expect(read("components/admin/products/ProductsClient.tsx")).toMatch(
-      /onMutate\("B", `\/api\/admin\/products\/\$\{product\.id\}\/active`/,
-    );
+describe("step-up grant map", () => {
+  it("every destructive route consumes exactly its grant", () => {
+    expect(grantsIn(/consumeStepUpGrant\(\s*ctx\s*,\s*"([a-z_.]+)"/g, (r) => r.endsWith("route.ts"))).toEqual(GRANT_SERVER_MAP);
+  });
+  it("every client asks for exactly the grants the server consumes", () => {
+    expect(
+      grantsIn(/action:\s*"(product\.retire|recipe\.delete|sku\.deactivate)"/g, (r) => r.endsWith(".tsx")),
+    ).toEqual(GRANT_CLIENT_MAP);
   });
 });
 ```
 
-6. In `tests/menu-prices-data.test.ts`, replace:
+6. In `tests/dynamic-pars-write.test.ts`, replace:
 
 ```ts
-  it("requires session, level 8, and Tier B", async () => {
+  it("still carries its own Tier-A step-up — only the walker's verbs drop it (plan D2)", () => {
+    expect(src.includes('assertStepUp(ctx, "A")')).toBe(true);
+  });
 ```
 
 with:
 
 ```ts
-  it("requires session, level 8, and the Tier E edit window", async () => {
+  it("still carries its own step-up — now the catalog edit window; only the walker's verbs drop it (plan D2)", () => {
+    expect(src.includes('assertStepUp(ctx, "E")')).toBe(true);
+  });
 ```
 
-and replace `expect(mocks.step).toHaveBeenCalledWith(actor, "B");` with `expect(mocks.step).toHaveBeenCalledWith(actor, "E");`.
+7. In `tests/menu-prices-data.test.ts`, replace `  it("requires session, level 8, and Tier B", async () => {` with `  it("requires session, level 8, and the Tier E edit window", async () => {`, and `expect(mocks.step).toHaveBeenCalledWith(actor, "B");` with `expect(mocks.step).toHaveBeenCalledWith(actor, "E");`.
 
-7. In `tests/menu-prices-ui.test.ts`, replace the StepUpProvider mock line with:
+8. In `tests/menu-prices-ui.test.ts`, replace the StepUpProvider mock line with:
 
 ```ts
-vi.mock("@/components/admin/StepUpProvider", () => ({ useStepUp: () => ({ requestStepUp: vi.fn(), forgetStepUp: vi.fn() }) }));
+vi.mock("@/components/admin/StepUpProvider", () => ({ useStepUp: () => ({ requestStepUp: vi.fn(), requestStepUpGrant: vi.fn(), forgetStepUp: vi.fn(), noteStepUpConfirmed: vi.fn() }) }));
 ```
 
 - [ ] **Step 2: Run them and watch them fail**
 
-Run: `npx vitest run tests/step-up-tier-map.test.ts tests/menu-prices-data.test.ts tests/step-up-edit-window-wiring.test.ts`
-Expected: FAIL. The server-half and client-half map assertions fail (the received map still shows `B`). Both RecipeBuilder lane tests fail, and `menu-prices-data` "Tier E edit window" fails. The two new destructive tests PASS, because they pin today's B.
+Run: `npx vitest run tests/step-up-tier-map.test.ts tests/step-up-grants.test.ts tests/dynamic-pars-write.test.ts tests/menu-prices-data.test.ts`
+Expected: FAIL. Both map halves still show A/B; both grant maps are empty; the RecipeBuilder lanes fail; the destructive-routes describe in `step-up-grants` fails; `dynamic-pars-write` and `menu-prices-data` fail on the "E" literal.
 
-- [ ] **Step 3: Flip the 11 single-occurrence routes**
-
-```bash
-cd /c/Users/conta/co-ops-guides
-for f in \
-  app/api/admin/recipes/route.ts \
-  app/api/admin/recipes/full/route.ts \
-  "app/api/admin/recipes/[id]/inputs/route.ts" \
-  "app/api/admin/recipes/[id]/outputs/route.ts" \
-  app/api/admin/recipes/edges/route.ts \
-  app/api/admin/skus/route.ts \
-  app/api/admin/products/route.ts \
-  "app/api/admin/items/[itemId]/sold-directly/route.ts" \
-  app/api/admin/menu-items/route.ts \
-  "app/api/admin/menu-items/[id]/price/route.ts" \
-  app/api/admin/weights/route.ts; do
-  sed -i 's/assertStepUp(ctx, "B")/assertStepUp(ctx, "E")/' "$f"
-done
-grep -c 'assertStepUp(ctx, "E")' app/api/admin/recipes/route.ts app/api/admin/weights/route.ts
-```
-
-Expected: each grep count is `1`.
-
-- [ ] **Step 4: Flip only the PATCH in `app/api/admin/recipes/[id]/route.ts`**
-
-Replace (in `PATCH`, the only lane gated on `RECIPE_WRITE_MIN`):
+- [ ] **Step 3: Rewrite `app/api/admin/products/[id]/active/route.ts`** (replace the whole file)
 
 ```ts
-  if (ROLES[ctx.user.role].level < RECIPE_WRITE_MIN) return jsonError(403, "forbidden");
-  const su = assertStepUp(ctx, "B");
+import { type NextRequest } from "next/server";
+import { requireSession } from "@/lib/session";
+import { ROLES } from "@/lib/roles";
+import { assertStepUp } from "@/lib/admin/step-up";
+import { consumeStepUpGrant } from "@/lib/admin/step-up-grants";
+import { jsonError, jsonOk, parseJsonBody } from "@/lib/api-helpers";
+import { setProductActive, ProductError } from "@/lib/products";
+
+// Product retirement (Juan's ruling A+, 2026-08-21).
+//   POST { active: boolean } — retire the identity (false) or bring it back (true).
+//
+// GM+ (≥7, the PRODUCT_WRITE_MIN floor the lib re-checks). RETIRING is an always-prompt act
+// (catalog Phase 1, Astra r1 P1-1): it consumes a ONE-SHOT grant minted for exactly this product
+// by the password the client just asked for — no edit window and no earlier password stands in.
+// Every pinned recipe line stops costing and depleting; that blast radius asks every time.
+// RESTORING is an ordinary catalog edit inside the 15-minute window (Tier E).
+//
+// It never hard-blocks on pinned recipes. The pre-flight warning ("N recipes still pin this") is
+// rendered by /admin/products from the count listProducts already carries, and the count is
+// recorded in the audit row — the system surfaces the consequences; Juan's declaration wins.
+
+export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const { id } = await params;
+  const parsed = await parseJsonBody(req);
+  if (parsed instanceof Response) return parsed;
+  const ctx = await requireSession(req, `/api/admin/products/${id}/active`);
+  if (ctx instanceof Response) return ctx;
+  if (ROLES[ctx.user.role].level < 7) return jsonError(403, "forbidden");
+
+  const b = parsed as Record<string, unknown>;
+  if (typeof b.active !== "boolean") return jsonError(400, "invalid_payload", { field: "active" });
+
+  if (b.active === false) {
+    const grant = await consumeStepUpGrant(ctx, "product.retire", id);
+    if (!grant.ok) return jsonError(403, grant.code);
+  } else {
+    const su = assertStepUp(ctx, "E");
+    if (!su.ok) return jsonError(403, su.code);
+  }
+
+  try {
+    const { pinnedRecipeCount } = await setProductActive(ctx, { productId: id, active: b.active });
+    return jsonOk({ pinnedRecipeCount });
+  } catch (e) {
+    if (e instanceof ProductError) return jsonError(e.status, e.code, { message: e.message });
+    throw e;
+  }
+}
 ```
 
-with:
+- [ ] **Step 4: Run the conversion script for the other routes and the clients**
 
-```ts
-  if (ROLES[ctx.user.role].level < RECIPE_WRITE_MIN) return jsonError(403, "forbidden");
-  // Catalog Phase 1: a header edit rides the 15-minute edit window. DELETE below stays Tier B.
-  const su = assertStepUp(ctx, "E");
+Save this as `$TEMP/catalog-tier-e.mjs`. It asserts every match count before writing, so a drifted file stops it cold. Then run it from the repo root:
+
+```js
+import { readFileSync, writeFileSync } from "node:fs";
+
+const edit = (path, steps) => {
+  let src = readFileSync(path, "utf8");
+  for (const [from, to, expected] of steps) {
+    const n = src.split(from).length - 1;
+    if (n !== expected) throw new Error(`${path}: expected ${expected} × ${JSON.stringify(from)}, found ${n}`);
+    src = src.split(from).join(to);
+  }
+  writeFileSync(path, src);
+  console.log("ok", path);
+};
+
+const B = 'assertStepUp(ctx, "B")', A = 'assertStepUp(ctx, "A")', E = 'assertStepUp(ctx, "E")';
+for (const f of [
+  "app/api/admin/recipes/route.ts", "app/api/admin/recipes/full/route.ts",
+  "app/api/admin/recipes/[id]/inputs/route.ts", "app/api/admin/recipes/[id]/outputs/route.ts",
+  "app/api/admin/recipes/edges/route.ts", "app/api/admin/skus/route.ts", "app/api/admin/products/route.ts",
+  "app/api/admin/items/[itemId]/sold-directly/route.ts", "app/api/admin/menu-items/route.ts",
+  "app/api/admin/menu-items/[id]/price/route.ts", "app/api/admin/weights/route.ts",
+]) edit(f, [[B, E, 1]]);
+for (const [f, n] of [
+  ["app/api/admin/catalog/item-type/[id]/route.ts", 1], ["app/api/admin/products/[id]/route.ts", 1],
+  ["app/api/admin/products/[id]/members/route.ts", 2], ["app/api/admin/products/[id]/primary/route.ts", 1],
+  ["app/api/admin/skus/[id]/pack-chain/route.ts", 1], ["app/api/admin/skus/[id]/price/route.ts", 1],
+  ["app/api/admin/skus/[id]/location-settings/route.ts", 1],
+]) edit(f, [[A, E, n]]);
+
+const GRANTS_IMPORT = 'import { assertStepUp } from "@/lib/admin/step-up";\nimport { consumeStepUpGrant } from "@/lib/admin/step-up-grants";';
+edit("app/api/admin/recipes/[id]/route.ts", [
+  ['import { assertStepUp } from "@/lib/admin/step-up";', GRANTS_IMPORT, 1],
+  ['  if (ROLES[ctx.user.role].level < RECIPE_WRITE_MIN) return jsonError(403, "forbidden");\n  const su = assertStepUp(ctx, "B");',
+   '  if (ROLES[ctx.user.role].level < RECIPE_WRITE_MIN) return jsonError(403, "forbidden");\n  // Catalog Phase 1: a header edit rides the 15-minute edit window.\n  const su = assertStepUp(ctx, "E");', 1],
+  ['  if (ROLES[ctx.user.role].level < RECIPE_DELETE_MIN) return jsonError(403, "forbidden");\n  const su = assertStepUp(ctx, "B");\n  if (!su.ok) return jsonError(403, su.code);',
+   '  if (ROLES[ctx.user.role].level < RECIPE_DELETE_MIN) return jsonError(403, "forbidden");\n  // Deleting a recipe is an always-prompt act: a ONE-SHOT grant for exactly this recipe (catalog Phase 1).\n  const grant = await consumeStepUpGrant(ctx, "recipe.delete", id);\n  if (!grant.ok) return jsonError(403, grant.code);', 1],
+]);
+edit("app/api/admin/skus/[id]/route.ts", [
+  ['import { assertStepUp } from "@/lib/admin/step-up";', GRANTS_IMPORT, 1],
+  ['//   {active}-only        → deactivateSku  (GM+ ≥7, Tier A)\n//   else (other fields)  → updateSku      (GM+ ≥7, Tier A)',
+   '//   {active:false}       → deactivateSku  (GM+ ≥7, one-shot grant "sku.deactivate" — asks every time)\n//   {active:true}        → deactivateSku  (GM+ ≥7, Tier E — reactivation is an ordinary edit)\n//   else (other fields)  → updateSku      (GM+ ≥7, Tier E — the 15-minute catalog edit window)', 1],
+  ['  // Both deactivate + update are GM+ Tier A.\n  if (ROLES[ctx.user.role].level < 7) return jsonError(403, "forbidden");\n  const su = assertStepUp(ctx, "A");\n  if (!su.ok) return jsonError(403, su.code);',
+   '  // GM+. Deactivating a SKU is destructive: a ONE-SHOT grant for exactly this SKU (catalog\n  // Phase 1, Astra r1 P1-2). Every other write here rides the 15-minute edit window.\n  if (ROLES[ctx.user.role].level < 7) return jsonError(403, "forbidden");\n  if (hasActive && b.active === false) {\n    const grant = await consumeStepUpGrant(ctx, "sku.deactivate", id);\n    if (!grant.ok) return jsonError(403, grant.code);\n  } else {\n    const su = assertStepUp(ctx, "E");\n    if (!su.ok) return jsonError(403, su.code);\n  }', 1],
+]);
+
+// ── clients ────────────────────────────────────────────────────────────────
+const HOOK = 'import { useStepUp } from "@/components/admin/StepUpProvider";';
+const HOOK_PLUS = `${HOOK}\nimport { useStepUpPost } from "@/components/admin/useStepUpPost";`;
+const DESTRUCT = "  const { requestStepUp } = useStepUp();";
+const DESTRUCT_SEND = "  const { requestStepUp } = useStepUp();\n  const send = useStepUpPost();";
+const DESTRUCT_GRANT_SEND = "  const { requestStepUp, requestStepUpGrant } = useStepUp();\n  const send = useStepUpPost();";
+const TOGGLE_OLD = '    if ((await requestStepUp("E")) !== "ok") return;\n    setBusy(true);\n    const result = await send(`/api/admin/skus/${sku.id}`, { active: !sku.active }, "PATCH");';
+const TOGGLE_NEW = '    // Deactivating a SKU is destructive: a one-shot password for THIS SKU, every time.\n    // Reactivating is an ordinary edit inside the 15-minute window.\n    const gate = sku.active\n      ? await requestStepUpGrant({ action: "sku.deactivate", targetId: sku.id })\n      : await requestStepUp("E");\n    if (gate !== "ok") return;\n    setBusy(true);\n    const result = await send(`/api/admin/skus/${sku.id}`, { active: !sku.active }, "PATCH");';
+for (const f of ["components/admin/skus/SkuCatalogClient.tsx", "components/admin/skus/VendorSkusCard.tsx"]) {
+  edit(f, [
+    ['requestStepUp("B")', 'requestStepUp("E")', 1],
+    ['requestStepUp("A")', 'requestStepUp("E")', 3],
+    ["await postJson(", "await send(", 5],
+    ['import { postJson, resolveErrorKey, formatSkuPack } from "./shared";', 'import { resolveErrorKey, formatSkuPack } from "./shared";', 1],
+    [HOOK, HOOK_PLUS, 1],
+    [DESTRUCT, DESTRUCT_GRANT_SEND, 1],
+    [TOGGLE_OLD, TOGGLE_NEW, 1],
+  ]);
+}
+for (const f of ["components/admin/skus/SkuCostPanel.tsx", "components/admin/skus/SkuLocationOverlay.tsx"]) {
+  edit(f, [
+    ['requestStepUp("A")', 'requestStepUp("E")', 1],
+    ["await postJson(", "await send(", 1],
+    ['import { postJson, resolveErrorKey } from "./shared";', 'import { resolveErrorKey } from "./shared";', 1],
+    [HOOK, HOOK_PLUS, 1],
+    [DESTRUCT, DESTRUCT_SEND, 1],
+  ]);
+}
+edit("components/admin/products/ProductsClient.tsx", [
+  ['tier: "A" | "B"', "tier: StepUpGate", 8],
+  ['    if ((await requestStepUp(tier)) !== "ok") return false;',
+   '    const gate = typeof tier === "string" ? await requestStepUp(tier) : await requestStepUpGrant(tier);\n    if (gate !== "ok") return false;', 1],
+  ["await postJson(url, body, method)", "await send(url, body, method)", 1],
+  ['onMutate("A"', 'onMutate("E"', 3],
+  ['\n                "A",\n', '\n                "E",\n', 1],
+  ['onMutate("B", "/api/admin/products", {', 'onMutate("E", "/api/admin/products", {', 1],
+  ['    const ok = await onMutate("B", `/api/admin/products/${product.id}/active`, { active });',
+   '    // Retiring is destructive: a one-shot password for THIS product, every time. Restoring is an\n    // ordinary edit inside the 15-minute window.\n    const ok = await onMutate(active ? "E" : { action: "product.retire", targetId: product.id }, `/api/admin/products/${product.id}/active`, { active });', 1],
+  ['import { postJson, resolveErrorKey } from "./shared";',
+   'import { resolveErrorKey } from "./shared";\nimport type { StepUpGate } from "@/lib/admin/step-up-shared";', 1],
+  [HOOK, HOOK_PLUS, 1],
+  [DESTRUCT, DESTRUCT_GRANT_SEND, 1],
+]);
+edit("components/admin/items/ItemRow.tsx", [
+  [HOOK, HOOK_PLUS, 1],
+  [DESTRUCT, DESTRUCT_SEND, 1],
+  ['    if ((await requestStepUp("B")) !== "ok") return;\n    setSavingSoldDirect(true);\n    const result = await postJson(',
+   '    if ((await requestStepUp("E")) !== "ok") return;\n    setSavingSoldDirect(true);\n    const result = await send(', 1],
+]);
+edit("components/admin/weights/WeightBoardClient.tsx", [
+  [HOOK, HOOK_PLUS, 1],
+  [DESTRUCT, DESTRUCT_SEND, 1],
+  ['    if ((await requestStepUp("B")) !== "ok") return;\n    setBusy(true);\n    const result = await postJson("/api/admin/weights", {',
+   '    if ((await requestStepUp("E")) !== "ok") return;\n    setBusy(true);\n    const result = await send("/api/admin/weights", {', 1],
+  ["/** Commit the session: step-up B → POST → refresh. */", "/** Commit the session: the edit window (Tier E) → POST → refresh. */", 1],
+]);
+edit("components/admin/menu-costing/MenuPriceEditor.tsx", [
+  [DESTRUCT, "  const { requestStepUp, forgetStepUp } = useStepUp();", 1],
+  ['if (await requestStepUp("B") !== "ok") return;', 'if (await requestStepUp("E") !== "ok") return;', 1],
+  ['      if ((body.code === "step_up_required" || body.code === "step_up_stale") && await requestStepUp("B") === "ok") {',
+   '      if (body.code === "step_up_required" || body.code === "step_up_stale") forgetStepUp();\n      if ((body.code === "step_up_required" || body.code === "step_up_stale") && await requestStepUp("E") === "ok") {', 1],
+]);
+edit("components/admin/recipes/RecipeBuilder.tsx", [
+  ['requestStepUp("B")', 'requestStepUp("E")', 11],
+  ["await postJson(", "await send(", 11],
+  ['import { postJson, resolveErrorKey } from "./shared";', 'import { resolveErrorKey } from "./shared";', 1],
+  [HOOK, HOOK_PLUS, 1],
+  [DESTRUCT, DESTRUCT_GRANT_SEND, 3],
+  ['    if ((await requestStepUp("E")) !== "ok") return;\n    setDeleteBusy(true);',
+   '    // Deleting a recipe is destructive: a one-shot password for THIS recipe, every time.\n    if ((await requestStepUpGrant({ action: "recipe.delete", targetId: recipe.id })) !== "ok") return;\n    setDeleteBusy(true);', 1],
+]);
 ```
-
-- [ ] **Step 5: RecipeBuilder — Tier E everywhere except Delete, and every write through `send`**
 
 ```bash
-cd /c/Users/conta/co-ops-guides
-f=components/admin/recipes/RecipeBuilder.tsx
-sed -i 's/requestStepUp("B")/requestStepUp("E")/g' "$f"
-sed -i 's/await postJson(/await send(/g' "$f"
-sed -i 's/  const { requestStepUp } = useStepUp();/&\n  const send = useStepUpPost();/' "$f"
-sed -i 's#^import { postJson, resolveErrorKey } from "./shared";#import { resolveErrorKey } from "./shared";\nimport { useStepUpPost } from "@/components/admin/useStepUpPost";#' "$f"
-grep -c 'const send = useStepUpPost();' "$f"; grep -c 'postJson' "$f"
+cd /c/Users/conta/co-ops-guides && node "$TEMP/catalog-tier-e.mjs"
 ```
 
-Expected: `3` then `0`.
+Expected: 29 `ok …` lines (20 routes, 9 clients) and no error. If a count assertion fails, the file has drifted from this plan: stop and re-read it before editing by hand.
 
-Then put Delete back on Tier B. Replace:
+- [ ] **Step 5: The new error codes and strings**
 
-```tsx
-    if ((await requestStepUp("E")) !== "ok") return;
-    setDeleteBusy(true);
+Add `"step_up_grant_required",` directly after `"step_up_stale",` in `KNOWN_ERROR_CODES` of each of `components/admin/recipes/shared.ts`, `components/admin/skus/shared.ts` and `components/admin/products/shared.ts`. In `components/admin/recipes/shared.ts` also add `"line_changed",` after it.
+
+`lib/i18n/en.json`: insert each line right after its anchor line.
+- after `  "admin.skus.error.step_up_stale": "Your confirmation expired — please confirm your password again.",`:
+```json
+  "admin.skus.error.step_up_grant_required": "This one asks for your password every time. Tap it again and confirm your password.",
+```
+- after `  "admin.products.error.step_up_stale": "That confirmation expired. Confirm your password again.",`:
+```json
+  "admin.products.error.step_up_grant_required": "This one asks for your password every time. Tap it again and confirm your password.",
+```
+- after `  "recipes.error.step_up_stale": "Your confirmation expired — confirm your password again.",`:
+```json
+  "recipes.error.step_up_grant_required": "This one asks for your password every time. Tap it again and confirm your password.",
+  "recipes.error.line_changed": "Someone else changed this line first. Reload the page to see it, then edit again.",
 ```
 
-with:
-
-```tsx
-    // Deleting a recipe is destructive: it prompts every time (Tier B), never the edit window.
-    if ((await requestStepUp("B")) !== "ok") return;
-    setDeleteBusy(true);
+`lib/i18n/es.json`:
+- after `  "admin.skus.error.step_up_stale": "Tu confirmación expiró — confirma tu contraseña de nuevo.",`:
+```json
+  "admin.skus.error.step_up_grant_required": "Esto pide tu contraseña cada vez. Tócalo otra vez y confirma tu contraseña.",
+```
+- after `  "admin.products.error.step_up_stale": "Esa confirmación venció. Confirma tu contraseña otra vez.",`:
+```json
+  "admin.products.error.step_up_grant_required": "Esto pide tu contraseña cada vez. Tócalo otra vez y confirma tu contraseña.",
+```
+- after `  "recipes.error.step_up_stale": "Tu confirmación expiró — confirma tu contraseña de nuevo.",`:
+```json
+  "recipes.error.step_up_grant_required": "Esto pide tu contraseña cada vez. Tócalo otra vez y confirma tu contraseña.",
+  "recipes.error.line_changed": "Alguien más cambió esta línea primero. Recarga la página para verla y edítala otra vez.",
 ```
 
-- [ ] **Step 6: SKU create (catalog and vendor card)**
+- [ ] **Step 6: Write the law into `AGENTS.md`**
 
-In `components/admin/skus/SkuCatalogClient.tsx`, add after `import { useStepUp } from "@/components/admin/StepUpProvider";`:
-
-```tsx
-import { useStepUpPost } from "@/components/admin/useStepUpPost";
-```
-
-Replace `  const { requestStepUp } = useStepUp();` with:
-
-```tsx
-  const { requestStepUp } = useStepUp();
-  const send = useStepUpPost();
-```
-
-In `create`, replace:
-
-```tsx
-    if ((await requestStepUp("B")) !== "ok") return;
-    setBusy(true);
-    // Atomic add: identity + optional starter/edited chain in ONE request.
-    const result = await postJson("/api/admin/skus", { ...values, chain });
-```
-
-with:
-
-```tsx
-    if ((await requestStepUp("E")) !== "ok") return;
-    setBusy(true);
-    // Atomic add: identity + optional starter/edited chain in ONE request.
-    const result = await send("/api/admin/skus", { ...values, chain });
-```
-
-In `components/admin/skus/VendorSkusCard.tsx`, add the same `useStepUpPost` import after its `useStepUp` import. Replace `  const { requestStepUp } = useStepUp();` with the same two lines. Then replace:
-
-```tsx
-    if ((await requestStepUp("B")) !== "ok") return;
-    setBusy(true);
-    // Atomic add: identity + optional starter chain in ONE request (matches catalog).
-    const result = await postJson("/api/admin/skus", { ...values, vendorId, chain });
-```
-
-with:
-
-```tsx
-    if ((await requestStepUp("E")) !== "ok") return;
-    setBusy(true);
-    // Atomic add: identity + optional starter chain in ONE request (matches catalog).
-    const result = await send("/api/admin/skus", { ...values, vendorId, chain });
-```
-
-- [ ] **Step 7: Sold-directly, weights, product create**
-
-`components/admin/items/ItemRow.tsx`: add `import { useStepUpPost } from "@/components/admin/useStepUpPost";` after its `useStepUp` import. Replace `  const { requestStepUp } = useStepUp();` with the same two lines as Step 6. Then replace:
-
-```tsx
-    if ((await requestStepUp("B")) !== "ok") return;
-    setSavingSoldDirect(true);
-    const result = await postJson(
-      `/api/admin/items/${item.itemId}/sold-directly`,
-```
-
-with:
-
-```tsx
-    if ((await requestStepUp("E")) !== "ok") return;
-    setSavingSoldDirect(true);
-    const result = await send(
-      `/api/admin/items/${item.itemId}/sold-directly`,
-```
-
-`components/admin/weights/WeightBoardClient.tsx`: add the same import and the same two-line replacement of `  const { requestStepUp } = useStepUp();`. Then replace:
-
-```tsx
-    if ((await requestStepUp("B")) !== "ok") return;
-    setBusy(true);
-    const result = await postJson("/api/admin/weights", {
-```
-
-with:
-
-```tsx
-    if ((await requestStepUp("E")) !== "ok") return;
-    setBusy(true);
-    const result = await send("/api/admin/weights", {
-```
-
-and change the comment `/** Commit the session: step-up B → POST → refresh. */` to `/** Commit the session: the edit window (Tier E) → POST → refresh. */`.
-
-`components/admin/products/ProductsClient.tsx`:
-
-```bash
-cd /c/Users/conta/co-ops-guides
-f=components/admin/products/ProductsClient.tsx
-sed -i 's/tier: "A" | "B"/tier: StepUpTier/g' "$f"
-grep -c 'tier: StepUpTier' "$f"
-```
-
-Expected: `8`. Then add after `import { postJson, resolveErrorKey } from "./shared";`:
-
-```tsx
-import type { StepUpTier } from "@/lib/admin/step-up-shared";
-import { useStepUpPost } from "@/components/admin/useStepUpPost";
-```
-
-Replace `  const { requestStepUp } = useStepUp();` with:
-
-```tsx
-  const { requestStepUp } = useStepUp();
-  const send = useStepUpPost();
-```
-
-In `mutate`, replace `    const result = await postJson(url, body, method);` with `    const result = await send(url, body, method);`. In the create-product submit, replace `    const ok = await onMutate("B", "/api/admin/products", {` with `    const ok = await onMutate("E", "/api/admin/products", {`. Leave `onMutate("B", \`/api/admin/products/${product.id}/active\``, the retire action, unchanged.
-
-- [ ] **Step 8: Menu price editor**
-
-In `components/admin/menu-costing/MenuPriceEditor.tsx`, replace `  const { requestStepUp } = useStepUp();` with:
-
-```tsx
-  const { requestStepUp, forgetStepUp } = useStepUp();
-```
-
-Replace:
-
-```tsx
-      if (await requestStepUp("B") !== "ok") return;
-```
-
-with:
-
-```tsx
-      if (await requestStepUp("E") !== "ok") return;
-```
-
-Replace:
-
-```tsx
-      if ((body.code === "step_up_required" || body.code === "step_up_stale") && await requestStepUp("B") === "ok") {
-```
-
-with:
-
-```tsx
-      if (body.code === "step_up_required" || body.code === "step_up_stale") forgetStepUp();
-      if ((body.code === "step_up_required" || body.code === "step_up_stale") && await requestStepUp("E") === "ok") {
-```
-
-- [ ] **Step 9: Write the law into `AGENTS.md`**
-
-Insert this bullet as the last bullet of `### Auth & sessions`, right before the line `### Audit & append-only conventions`:
+Insert this bullet as the last bullet of `### Auth & sessions`, directly before `### Audit & append-only conventions`:
 
 ```markdown
-- **Step-up has THREE tiers on ONE timestamp** (catalog Phase 1, 2026-10-15). `sessions.step_up_unlocked` + `step_up_unlocked_at` are stamped ONLY by `POST /api/auth/step-up` (`unlockStepUp`) and read ONLY by the pure `assertStepUp` (`lib/admin/step-up.ts`, logic in `lib/admin/step-up-shared.ts`): **A** = unlocked at any age · **B** = unlocked within 120 s (`ADMIN_STEP_UP_FRESH_SECONDS`), and the client ALWAYS prompts · **E** = the 15-minute catalog/recipe **edit window** (`ADMIN_STEP_UP_EDIT_WINDOW_SECONDS`, never shorter than B): the client skips the prompt while its copy of the unlock is inside the window minus 30 s, and the server re-checks the same timestamp on every write. **The window is FIXED from the password entry and never slides**: no write may touch `step_up_unlocked_at`, because sliding it would also satisfy Tier B without a password (`tests/step-up-edit-window-wiring.test.ts` pins the single writer). Every tier still clears when the actor leaves the step-up surface. **Retire a product and delete a recipe stay Tier B**; step-up is chosen per ROUTE, never by `DESTRUCTIVE_ACTIONS` membership. A client that gets `step_up_required`/`step_up_stale` back must `forgetStepUp()` (`useStepUpPost` does it), or it would keep proceeding on a stale memory. The tier map is pinned in `tests/step-up-tier-map.test.ts`.
+- **Step-up: three tiers, TWO clocks, and one-shot grants** (catalog Phase 1, 2026-10-15, Astra r1; migration 0257). **A** = `sessions.step_up_unlocked`, any age · **B** = that flag + `step_up_unlocked_at` within 120 s, and the client always prompts · **E** = the catalog/recipe **edit window** on its OWN clock, `sessions.catalog_edit_unlocked_at`: stamped ONLY by a password typed on the admin surface (`catalogWindow`), a FIXED 15 minutes from that password — never extended by saving, never cleared by navigation or background requests (a deliberate design: a window that closes on a prefetch or a language toggle is a window nobody can rely on); it ends at expiry or with the session (logout, revoke, expiry). Checked by the pure `assertStepUp` on every write. Neither clock ever slides: only `unlockStepUp` stamps them (pinned). **Retire a product, delete a recipe and deactivate a SKU take NO tier**: each consumes a one-shot grant (`step_up_grants`, `lib/admin/step-up-grants.ts`) minted by the step-up POST for exactly that (action, target), bound to session + user, 120 s, consumed by ONE conditional UPDATE (replay, wrong action/target/session and expiry refused). Step-up is chosen per ROUTE, never by `DESTRUCTIVE_ACTIONS` membership. A client that gets `step_up_required`/`step_up_stale` must `forgetStepUp()` (`useStepUpPost` does). Tier and grant maps are pinned in `tests/step-up-tier-map.test.ts`.
 ```
 
-- [ ] **Step 10: Run the tests**
+In the Dynamic pars section, replace the sentence `The admin overlay route keeps its Tier-A step-up untouched.` with `The admin overlay route keeps its own step-up — the Tier E catalog edit window since catalog Phase 1 (it was Tier A).`
 
-Run: `npx vitest run tests/step-up-tier-map.test.ts tests/menu-prices-data.test.ts tests/menu-prices-ui.test.ts tests/step-up-edit-window-wiring.test.ts tests/yield-stats-server.test.ts tests/product-item-links-ui.test.ts`
+- [ ] **Step 7: Run the tests and tsc**
+
+Run: `npx vitest run tests/step-up-tier-map.test.ts tests/step-up-grants.test.ts tests/dynamic-pars-write.test.ts tests/menu-prices-data.test.ts tests/menu-prices-ui.test.ts tests/product-item-links-ui.test.ts tests/admin-sku-write-contracts.test.ts tests/yield-stats-server.test.ts`
 Expected: PASS, 0 failed.
 
-Run: `npx tsc --noEmit 2>&1 | grep -v "TS2307" | grep "error TS" | head`
-Expected: no output (only the 6 known Leaflet TS2307 lines exist, and they are filtered).
+Run: `npx tsc --noEmit 2>&1 | grep -v TS2307 | grep "error TS"`
+Expected: no output.
 
-- [ ] **Step 11: Commit**
+- [ ] **Step 8: Commit**
 
 ```bash
-git add -A app/api/admin components/admin tests AGENTS.md
+git add -A app/api/admin components/admin tests lib/i18n AGENTS.md
 git commit -F - <<'EOF'
-feat(step-up): catalog and recipe edits ride the 15-minute window; retire and delete still prompt
+feat(step-up): every catalog edit rides the window; retire/delete/deactivate take one-shot grants
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01TiAmVpRCSW7w8NzTFk4L31
@@ -1034,7 +2183,7 @@ EOF
 
 ---
 
-## Task 4: The pure recipe-line surface
+## Task 6: The pure recipe-line surface
 
 **Files:**
 - Create: `lib/recipe-line-shared.ts`
@@ -1051,9 +2200,14 @@ import {
   diffRecipeLine,
   lineDraftFromView,
   lineFromRow,
+  lineSnapshotFromView,
+  beginLineEdit,
   lineToRow,
   lineUnitChoices,
+  normalizeRecipeLine,
+  parseRecipeLineEdit,
   parseRecipeLinePatch,
+  parseRecipeLineSnapshot,
   recipeLineKind,
   type RecipeLineFields,
 } from "@/lib/recipe-line-shared";
@@ -1063,8 +2217,13 @@ const sku = (over: Partial<RecipeLineFields> = {}): RecipeLineFields => ({
   componentSkuId: "sku-ham", componentItemId: null, componentProductId: null,
   quantity: 4, unit: "oz", eachContainerLabel: null, portioned: false, ...over,
 });
+const view = (over: Partial<RecipeInputView> = {}): RecipeInputView => ({
+  id: "line-1", componentSkuId: "sku-ham", componentItemId: null, componentProductId: null,
+  componentName: "Ham", kind: "sku", componentRetired: false, quantity: 4, unit: " oz ",
+  eachContainerLabel: null, portioned: false, displayOrder: 1, ...over,
+});
 
-describe("parseRecipeLinePatch — the wire shape of one whole line", () => {
+describe("parseRecipeLinePatch — the wire shape of one whole NEW line", () => {
   it("accepts a SKU line and normalises its text", () => {
     expect(parseRecipeLinePatch({ componentSkuId: " sku-1 ", quantity: 4, unit: " oz ", eachContainerLabel: "", portioned: true }))
       .toEqual({ ok: true, line: { componentSkuId: "sku-1", componentItemId: null, componentProductId: null, quantity: 4, unit: "oz", eachContainerLabel: null, portioned: true } });
@@ -1075,33 +2234,63 @@ describe("parseRecipeLinePatch — the wire shape of one whole line", () => {
       .toEqual({ ok: true, line: { componentSkuId: null, componentItemId: "item-1", componentProductId: null, quantity: 2, unit: "qt", eachContainerLabel: null, portioned: false } });
   });
 
-  it("a product line needs a unit (the measure-registry check itself is the server's)", () => {
+  it("a product line needs a unit (WHICH units is the server's measure-registry check)", () => {
     expect(parseRecipeLinePatch({ componentProductId: "p-1", quantity: 3 })).toEqual({ ok: false, code: "product_line_needs_measure_unit" });
-    expect(parseRecipeLinePatch({ componentProductId: "p-1", quantity: 3, unit: "oz", portioned: true }))
-      .toEqual({ ok: true, line: { componentSkuId: null, componentItemId: null, componentProductId: "p-1", quantity: 3, unit: "oz", eachContainerLabel: null, portioned: true } });
   });
 
-  it("exactly one target", () => {
+  it("exactly one target; quantity a positive finite NUMBER; typed fields", () => {
     expect(parseRecipeLinePatch({ quantity: 1 })).toEqual({ ok: false, code: "invalid_component" });
     expect(parseRecipeLinePatch({ componentSkuId: "a", componentItemId: "b", quantity: 1 })).toEqual({ ok: false, code: "invalid_component" });
-  });
-
-  it("quantity is a positive finite NUMBER", () => {
     for (const quantity of ["4", 0, -1, Number.NaN, Number.POSITIVE_INFINITY, null]) {
       expect(parseRecipeLinePatch({ componentSkuId: "a", quantity })).toEqual({ ok: false, code: "invalid_quantity" });
     }
-  });
-
-  it("refuses non-objects and wrongly-typed fields", () => {
-    for (const raw of [null, [], "x", 3]) expect(parseRecipeLinePatch(raw)).toEqual({ ok: false, code: "invalid_payload" });
-    expect(parseRecipeLinePatch({ componentSkuId: 5, quantity: 1 })).toEqual({ ok: false, code: "invalid_payload" });
-    expect(parseRecipeLinePatch({ componentSkuId: "  ", quantity: 1 })).toEqual({ ok: false, code: "invalid_payload" });
-    expect(parseRecipeLinePatch({ componentSkuId: "a", quantity: 1, unit: 3 })).toEqual({ ok: false, code: "invalid_payload" });
-    expect(parseRecipeLinePatch({ componentSkuId: "a", quantity: 1, portioned: "yes" })).toEqual({ ok: false, code: "invalid_payload" });
+    for (const raw of [null, [], "x", { componentSkuId: 5, quantity: 1 }, { componentSkuId: "  ", quantity: 1 },
+      { componentSkuId: "a", quantity: 1, unit: 3 }, { componentSkuId: "a", quantity: 1, portioned: "yes" }]) {
+      expect(parseRecipeLinePatch(raw)).toEqual({ ok: false, code: "invalid_payload" });
+    }
   });
 });
 
-describe("row ↔ line and the diff", () => {
+describe("the EXPECTED line (compare-and-set, Astra r1 P2-4)", () => {
+  it("a snapshot keeps text RAW — it must equal the stored value byte for byte", () => {
+    expect(parseRecipeLineSnapshot({ componentSkuId: "sku-ham", quantity: 4, unit: " oz ", eachContainerLabel: null, portioned: false }))
+      .toEqual(sku({ unit: " oz " }));
+  });
+
+  it("a snapshot of a legacy product line without a unit is still a snapshot", () => {
+    expect(parseRecipeLineSnapshot({ componentProductId: "p-1", quantity: 1, unit: null, portioned: true }))
+      .toEqual({ componentSkuId: null, componentItemId: null, componentProductId: "p-1", quantity: 1, unit: null, eachContainerLabel: null, portioned: true });
+  });
+
+  it("a malformed snapshot is null", () => {
+    for (const raw of [null, [], {}, { componentSkuId: "a", componentItemId: "b", quantity: 1 }, { componentSkuId: "a", quantity: 0 }, { componentSkuId: "a", quantity: 1, portioned: "x" }]) {
+      expect(parseRecipeLineSnapshot(raw)).toBeNull();
+    }
+  });
+
+  it("parseRecipeLineEdit needs both halves", () => {
+    expect(parseRecipeLineEdit({ line: { componentSkuId: "sku-ham", quantity: 5, unit: "oz" }, expected: { componentSkuId: "sku-ham", quantity: 4, unit: " oz " } }))
+      .toEqual({ ok: true, line: sku({ quantity: 5 }), expected: sku({ unit: " oz " }) });
+    expect(parseRecipeLineEdit({ line: { componentSkuId: "sku-ham", quantity: 5 } })).toEqual({ ok: false, code: "invalid_payload" });
+    expect(parseRecipeLineEdit({ line: { quantity: 5 }, expected: {} })).toEqual({ ok: false, code: "invalid_component" });
+    expect(parseRecipeLineEdit(null)).toEqual({ ok: false, code: "invalid_payload" });
+  });
+
+  it("view → snapshot is raw; view → draft is normalised", () => {
+    expect(lineSnapshotFromView(view())).toEqual(sku({ unit: " oz " }));
+    expect(lineDraftFromView(view())).toEqual({ ...sku(), componentName: "Ham" });
+  });
+
+  it("beginLineEdit captures BOTH halves at the moment editing begins (Astra r2 #1)", () => {
+    const started = beginLineEdit(view());
+    // The page refreshes mid-edit: another manager swapped the ingredient. The capture must not follow.
+    const refreshed = view({ componentSkuId: "sku-turkey", componentName: "Turkey" });
+    expect(refreshed.componentSkuId).toBe("sku-turkey");
+    expect(started).toEqual({ id: "line-1", initial: { ...sku(), componentName: "Ham" }, expected: sku({ unit: " oz " }) });
+  });
+});
+
+describe("row ↔ line, normalise, diff, kind", () => {
   it("lineFromRow reads numeric strings and blank text the way the column stores them", () => {
     expect(lineFromRow({ component_sku_id: "sku-ham", component_item_id: null, component_product_id: null, quantity: "4", unit: " oz ", each_container_label: "", portioned: null }))
       .toEqual(sku());
@@ -1112,6 +2301,10 @@ describe("row ↔ line and the diff", () => {
       component_sku_id: "sku-ham", component_item_id: null, component_product_id: null,
       quantity: 5, unit: "oz", each_container_label: null, portioned: false,
     });
+  });
+
+  it("normalizeRecipeLine trims text only", () => {
+    expect(normalizeRecipeLine(sku({ unit: " oz ", eachContainerLabel: "  " }))).toEqual(sku());
   });
 
   it("diffRecipeLine names exactly the fields that moved", () => {
@@ -1129,30 +2322,19 @@ describe("row ↔ line and the diff", () => {
 
 describe("lineUnitChoices — the server's unit rules, offered up front", () => {
   const pack = { packFormat: "case", eachContainerLabel: "bag", eachMeasure: "lb" };
-  const measures = ["each", "lb", "oz"];
+  const measures = ["each", "gal", "lb", "oz"];
 
-  it("a PRODUCT line offers measure units only, never a vendor's pack label (D3)", () => {
-    expect(lineUnitChoices("product", pack, measures, "case")).toEqual(["each", "lb", "oz"]);
+  it("a PRODUCT line offers every active measure-registry unit and never a vendor's pack label", () => {
+    expect(lineUnitChoices("product", pack, measures, "case")).toEqual(["each", "gal", "lb", "oz"]);
   });
 
   it("a SKU line keeps its own unit first, then its pack labels, then the measures, without duplicates", () => {
-    expect(lineUnitChoices("sku", pack, measures, "log")).toEqual(["log", "case", "bag", "lb", "each", "oz"]);
-    expect(lineUnitChoices("sku", { packFormat: " ", eachContainerLabel: null, eachMeasure: null }, measures, null)).toEqual(["each", "lb", "oz"]);
+    expect(lineUnitChoices("sku", pack, measures, "log")).toEqual(["log", "case", "bag", "lb", "each", "gal", "oz"]);
+    expect(lineUnitChoices("sku", { packFormat: " ", eachContainerLabel: null, eachMeasure: null }, measures, null)).toEqual(["each", "gal", "lb", "oz"]);
   });
 
   it("a prep-item line keeps its free-text unit (null = no list)", () => {
     expect(lineUnitChoices("item", null, measures, "qt")).toBeNull();
-  });
-});
-
-describe("lineDraftFromView", () => {
-  it("carries the line and its name from the builder's view", () => {
-    const view = {
-      id: "line-1", componentSkuId: "sku-ham", componentItemId: null, componentProductId: null,
-      componentName: "Ham", kind: "sku", componentRetired: false, quantity: 4, unit: "oz",
-      eachContainerLabel: null, portioned: false, displayOrder: 1,
-    } satisfies RecipeInputView;
-    expect(lineDraftFromView(view)).toEqual({ ...sku(), componentName: "Ham" });
   });
 });
 ```
@@ -1166,14 +2348,16 @@ Expected: FAIL with `Failed to resolve import "@/lib/recipe-line-shared"`.
 
 ```ts
 /**
- * Recipe LINE (one recipe_inputs row) — CLIENT-SAFE pure surface (catalog redesign
- * Phase 1, 2026-10-15). Used by the edit route (parse), the lib (row ↔ line, diff, audit
- * shape) and the builder (unit choices, the "nothing changed" check), so all three agree
- * on what a line IS and when it changed.
+ * Recipe LINE (one recipe_inputs row) — CLIENT-SAFE pure surface (catalog redesign Phase 1,
+ * 2026-10-15). Used by the edit route (parse), the lib (row ↔ line, diff, the compare-and-set
+ * shape) and the builder (unit choices, "nothing changed", the expected snapshot), so all three
+ * agree on what a line IS and when it changed.
  *
- * A PATCH carries the WHOLE new line, not a partial: a swap of the ingredient changes
- * which of the three target columns is set, and a partial patch cannot say "clear the
- * other two" without inventing a second spelling for null.
+ * An edit carries the WHOLE new line AND the line the client saw (`expected`). The server
+ * writes only if the stored row still equals `expected` (Astra r1 P2-4): a concurrent edit is
+ * a named 409, never a silent overwrite, and the audit's "before" is the row that matched.
+ * `expected` is a RAW snapshot — text untrimmed — because it must equal the stored value byte
+ * for byte; the diff compares it NORMALISED, so whitespace alone never counts as a change.
  */
 import type { RecipeInputView } from "@/lib/recipes-shared";
 
@@ -1225,6 +2409,10 @@ export type RecipeLineParse =
   | { ok: true; line: RecipeLineFields }
   | { ok: false; code: RecipeLineParseError };
 
+export type RecipeLineEditParse =
+  | { ok: true; line: RecipeLineFields; expected: RecipeLineFields }
+  | { ok: false; code: RecipeLineParseError };
+
 /** Trimmed text, or null for absent/blank — the same rule lib/recipes.ts normStr applies at insert. */
 export function normLineText(v: string | null | undefined): string | null {
   if (typeof v !== "string") return null;
@@ -1233,44 +2421,77 @@ export function normLineText(v: string | null | undefined): string | null {
 }
 
 const isAbsent = (v: unknown) => v === undefined || v === null;
+const isObject = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
 
-export function parseRecipeLinePatch(raw: unknown): RecipeLineParse {
-  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return { ok: false, code: "invalid_payload" };
-  const b = raw as Record<string, unknown>;
+/** The shared shape checks: typed ids (non-blank strings), typed text, typed portioned. */
+function shapeOk(b: Record<string, unknown>): boolean {
   for (const id of [b.componentSkuId, b.componentItemId, b.componentProductId]) {
-    if (!isAbsent(id) && (typeof id !== "string" || id.trim() === "")) return { ok: false, code: "invalid_payload" };
+    if (!isAbsent(id) && (typeof id !== "string" || id.trim() === "")) return false;
   }
   for (const text of [b.unit, b.eachContainerLabel]) {
-    if (!isAbsent(text) && typeof text !== "string") return { ok: false, code: "invalid_payload" };
+    if (!isAbsent(text) && typeof text !== "string") return false;
   }
-  if (!isAbsent(b.portioned) && typeof b.portioned !== "boolean") return { ok: false, code: "invalid_payload" };
+  return isAbsent(b.portioned) || typeof b.portioned === "boolean";
+}
 
-  const skuId = typeof b.componentSkuId === "string" ? b.componentSkuId.trim() : null;
-  const itemId = typeof b.componentItemId === "string" ? b.componentItemId.trim() : null;
-  const productId = typeof b.componentProductId === "string" ? b.componentProductId.trim() : null;
-  const count = [skuId, itemId, productId].filter((v) => v !== null).length;
-  if (count !== 1) return { ok: false, code: "invalid_component" };
+const idOf = (v: unknown): string | null => (typeof v === "string" ? v.trim() : null);
+const positive = (q: unknown): q is number => typeof q === "number" && Number.isFinite(q) && q > 0;
 
-  const q = b.quantity;
-  if (typeof q !== "number" || !Number.isFinite(q) || q <= 0) return { ok: false, code: "invalid_quantity" };
-
-  const unit = normLineText(b.unit as string | null | undefined);
+export function parseRecipeLinePatch(raw: unknown): RecipeLineParse {
+  if (!isObject(raw) || !shapeOk(raw)) return { ok: false, code: "invalid_payload" };
+  const skuId = idOf(raw.componentSkuId);
+  const itemId = idOf(raw.componentItemId);
+  const productId = idOf(raw.componentProductId);
+  if ([skuId, itemId, productId].filter((v) => v !== null).length !== 1) return { ok: false, code: "invalid_component" };
+  if (!positive(raw.quantity)) return { ok: false, code: "invalid_quantity" };
+  const unit = normLineText(raw.unit as string | null | undefined);
   if (productId !== null && unit === null) return { ok: false, code: "product_line_needs_measure_unit" };
-
   return {
     ok: true,
     line: {
       componentSkuId: skuId,
       componentItemId: itemId,
       componentProductId: productId,
-      quantity: q,
+      quantity: raw.quantity,
       unit,
       // A container label is a SKU's own word; an item or product line never carries one.
-      eachContainerLabel: skuId !== null ? normLineText(b.eachContainerLabel as string | null | undefined) : null,
-      // Portioning is a bought-ingredient idea; a prep-item line is never portioned (the add form never offered it).
-      portioned: itemId !== null ? false : b.portioned === true,
+      eachContainerLabel: skuId !== null ? normLineText(raw.eachContainerLabel as string | null | undefined) : null,
+      // Portioning is a bought-ingredient idea; a prep-item line is never portioned.
+      portioned: itemId !== null ? false : raw.portioned === true,
     },
   };
+}
+
+/** The line as the client SAW it — raw text, no business rules beyond the table's own. Null = malformed. */
+export function parseRecipeLineSnapshot(raw: unknown): RecipeLineFields | null {
+  if (!isObject(raw) || !shapeOk(raw)) return null;
+  const skuId = typeof raw.componentSkuId === "string" ? raw.componentSkuId : null;
+  const itemId = typeof raw.componentItemId === "string" ? raw.componentItemId : null;
+  const productId = typeof raw.componentProductId === "string" ? raw.componentProductId : null;
+  if ([skuId, itemId, productId].filter((v) => v !== null).length !== 1) return null;
+  if (!positive(raw.quantity)) return null;
+  return {
+    componentSkuId: skuId,
+    componentItemId: itemId,
+    componentProductId: productId,
+    quantity: raw.quantity,
+    unit: typeof raw.unit === "string" ? raw.unit : null,
+    eachContainerLabel: typeof raw.eachContainerLabel === "string" ? raw.eachContainerLabel : null,
+    portioned: raw.portioned === true,
+  };
+}
+
+export function parseRecipeLineEdit(raw: unknown): RecipeLineEditParse {
+  if (!isObject(raw)) return { ok: false, code: "invalid_payload" };
+  const line = parseRecipeLinePatch(raw.line);
+  if (!line.ok) return line;
+  const expected = parseRecipeLineSnapshot(raw.expected);
+  if (!expected) return { ok: false, code: "invalid_payload" };
+  return { ok: true, line: line.line, expected };
+}
+
+export function normalizeRecipeLine(l: RecipeLineFields): RecipeLineFields {
+  return { ...l, unit: normLineText(l.unit), eachContainerLabel: normLineText(l.eachContainerLabel) };
 }
 
 export function recipeLineKind(
@@ -1320,10 +2541,10 @@ export function diffRecipeLine(before: RecipeLineFields, after: RecipeLineFields
 
 /**
  * The unit choices for a line's target. null = free text (prep-item lines, as before).
- * PRODUCT: measure-registry labels only (deviation D3 — a pack label means a different
- * thing per vendor). SKU: the line's current unit first (an edit never silently changes
- * it), then the SKU's own pack labels, then the measure registry (ozForRecipeInput step 3
- * resolves "oz"/"each"/… for any SKU).
+ * PRODUCT: every ACTIVE measure-registry label, any dimension (AGENTS.md "measure-registry unit";
+ * a pack label means a different thing per vendor — deviation D3). SKU: the line's current unit
+ * first (an edit never silently changes it), then the SKU's pack labels, then the measure
+ * registry (ozForRecipeInput step 3 resolves those for any SKU).
  */
 export function lineUnitChoices(
   kind: RecipeLineKind,
@@ -1353,6 +2574,7 @@ export function lineUnitChoices(
   return out;
 }
 
+/** The editor's starting line (normalised). */
 export function lineDraftFromView(v: RecipeInputView): RecipeLineDraft {
   return {
     componentSkuId: v.componentSkuId,
@@ -1364,6 +2586,38 @@ export function lineDraftFromView(v: RecipeInputView): RecipeLineDraft {
     portioned: v.portioned,
     componentName: v.componentName,
   };
+}
+
+/** The compare-and-set `expected` (RAW, exactly as loadRecipe returned it). */
+export function lineSnapshotFromView(v: RecipeInputView): RecipeLineFields {
+  return {
+    componentSkuId: v.componentSkuId,
+    componentItemId: v.componentItemId,
+    componentProductId: v.componentProductId,
+    quantity: v.quantity,
+    unit: v.unit,
+    eachContainerLabel: v.eachContainerLabel,
+    portioned: v.portioned,
+  };
+}
+
+/** A live edit's state, captured ONCE when editing begins (Astra r2 #1). */
+export interface LineEditStart {
+  id: string;
+  /** What the editor starts from (normalised). */
+  initial: RecipeLineDraft;
+  /** What the server must still hold for the save to land (raw). */
+  expected: RecipeLineFields;
+}
+
+/**
+ * Capture the editor's starting line AND the compare-and-set snapshot at the moment the person
+ * taps Edit. Both are copies: a router.refresh() mid-edit hands the row a NEW view (another
+ * manager's change), but the save must still be compared against what this person SAW — so a
+ * stale save is a 409, never a silent overwrite of the other manager's change.
+ */
+export function beginLineEdit(v: RecipeInputView): LineEditStart {
+  return { id: v.id, initial: lineDraftFromView(v), expected: lineSnapshotFromView(v) };
 }
 ```
 
@@ -1377,7 +2631,7 @@ Expected: PASS, 0 failed.
 ```bash
 git add lib/recipe-line-shared.ts tests/recipe-line-shared.test.ts
 git commit -F - <<'EOF'
-feat(recipes): pure recipe-line surface — parse, diff, row mapping, unit choices
+feat(recipes): pure recipe-line surface — parse, expected snapshot, diff, unit choices
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01TiAmVpRCSW7w8NzTFk4L31
@@ -1386,12 +2640,11 @@ EOF
 
 ---
 
-## Task 5: `updateRecipeInput` — one validator for add and edit, an in-place UPDATE, a full audit row
+## Task 7: `updateRecipeInput` — compare-and-set, one validator with add, a true audit trail
 
 **Files:**
-- Modify: `lib/recipes.ts`
-- Modify: `lib/destructive-actions.ts`, `lib/audit-actions.ts`, `lib/dynamic-pars.ts`
-- Test: `tests/recipe-line-edit-server.test.ts` (lib half; Task 6 adds the route half)
+- Modify: `lib/recipes.ts`, `lib/destructive-actions.ts`, `lib/audit-actions.ts`, `lib/dynamic-pars.ts`
+- Test: `tests/recipe-line-edit-server.test.ts` (lib half)
 
 - [ ] **Step 1: Write the failing test**
 
@@ -1399,115 +2652,154 @@ Create `tests/recipe-line-edit-server.test.ts`:
 
 ```ts
 /**
- * Catalog Phase 1 — editing a recipe line in place (lib/recipes.ts updateRecipeInput).
- * The database is a hand-rolled fake that knows only recipe_inputs: every case is a SKU
- * line, so the product/item validators (which read other tables) are never reached.
- * Those rules belong to the add path too, shared through assertInputLineIsValid.
+ * Catalog Phase 1 — editing a recipe line in place, over the PREDICATE-AWARE fake (Astra r1
+ * P2-4 + P2-5): the write really is scoped to (id, recipe_id, expected values); a concurrent
+ * change is a 409 with nothing written; the product-unit rule and the item cycle guard refuse
+ * through BOTH add and update; the audit's before/after are the matched and returned rows.
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { AuthContext } from "@/lib/session";
+import { fakeSupabase, type Row } from "./fake-supabase";
 
-const mocks = vi.hoisted(() => ({ audit: vi.fn(), session: vi.fn(), step: vi.fn(), from: vi.fn() }));
-vi.mock("@/lib/supabase-server", () => ({ getServiceRoleClient: () => ({ from: mocks.from }) }));
-vi.mock("@/lib/audit", () => ({ audit: mocks.audit }));
-vi.mock("@/lib/session", () => ({ requireSession: mocks.session }));
-vi.mock("@/lib/admin/step-up", () => ({ assertStepUp: mocks.step }));
+const h = vi.hoisted(() => ({
+  db: null as unknown as import("./fake-supabase").FakeDb,
+  audit: vi.fn(),
+  session: vi.fn(),
+  step: vi.fn(),
+}));
+vi.mock("@/lib/supabase-server", () => ({ getServiceRoleClient: () => h.db.client }));
+vi.mock("@/lib/audit", () => ({ audit: h.audit }));
+vi.mock("@/lib/session", () => ({ requireSession: h.session }));
+vi.mock("@/lib/admin/step-up", () => ({ assertStepUp: h.step }));
 
-import { updateRecipeInput } from "@/lib/recipes";
+import { addRecipeInput, updateRecipeInput } from "@/lib/recipes";
 import { isDestructive } from "@/lib/destructive-actions";
 import { NON_DESTRUCTIVE_ACTIONS } from "@/lib/audit-actions";
-import type { RecipeLineFields } from "@/lib/recipe-line-shared";
+import { beginLineEdit, type RecipeLineFields } from "@/lib/recipe-line-shared";
+import type { AuthContext } from "@/lib/session";
 
-const RECIPE = "recipe-1";
+const R = "recipe-1";
+const R2 = "recipe-2";
 const LINE = "line-1";
-const gm = { user: { id: "u-gm", role: "gm" }, session: { stepUpUnlocked: true, stepUpUnlockedAt: new Date().toISOString() } } as unknown as AuthContext;
+const gm = { user: { id: "u-gm", role: "gm" } } as unknown as AuthContext;
 const agm = { user: { id: "u-agm", role: "agm" } } as unknown as AuthContext;
-
-let row: Record<string, unknown> | null;
-let updatedRows: Array<{ id: string }>;
-let patches: unknown[];
 
 beforeEach(() => {
   vi.clearAllMocks();
-  row = {
-    id: LINE, recipe_id: RECIPE, component_sku_id: "sku-ham", component_item_id: null, component_product_id: null,
-    quantity: "4", unit: "oz", each_container_label: null, portioned: false,
-  };
-  updatedRows = [{ id: LINE }];
-  patches = [];
-  mocks.from.mockImplementation((table: string) => {
-    if (table !== "recipe_inputs") throw new Error(`unexpected table ${table}`);
-    const read = { select: () => read, eq: () => read, maybeSingle: async () => ({ data: row, error: null }) };
-    return {
-      select: () => read,
-      update: (patch: unknown) => {
-        patches.push(patch);
-        const write = { eq: () => write, select: async () => ({ data: updatedRows, error: null }) };
-        return write;
-      },
-    };
+  h.step.mockReturnValue({ ok: true });
+  // R outputs item-x. R2 outputs item-y and CONSUMES item-x — so item-y (and item-x itself)
+  // inside R would close a loop.
+  h.db = fakeSupabase({
+    recipe_inputs: [
+      { id: LINE, recipe_id: R, component_sku_id: "sku-ham", component_item_id: null, component_product_id: null, quantity: 4, unit: "oz", each_container_label: null, portioned: false, display_order: 1 },
+      { id: "line-r2", recipe_id: R2, component_sku_id: "sku-salt", component_item_id: null, component_product_id: null, quantity: 1, unit: "oz", each_container_label: null, portioned: false, display_order: 1 },
+      { id: "line-r2-x", recipe_id: R2, component_sku_id: null, component_item_id: "item-x", component_product_id: null, quantity: 1, unit: "qt", each_container_label: null, portioned: false, display_order: 2 },
+    ],
+    recipe_outputs: [
+      { id: "out-1", recipe_id: R, output_item_id: "item-x", output_menu_item_id: null },
+      { id: "out-2", recipe_id: R2, output_item_id: "item-y", output_menu_item_id: null },
+    ],
+    products: [{ id: "p-ham", active: true }, { id: "p-old", active: false }],
+    measure_units: [{ label: "oz", active: true }, { label: "each", active: true }],
   });
-  mocks.step.mockReturnValue({ ok: true });
 });
 
 const line = (over: Partial<RecipeLineFields> = {}): RecipeLineFields => ({
   componentSkuId: "sku-ham", componentItemId: null, componentProductId: null,
   quantity: 4, unit: "oz", eachContainerLabel: null, portioned: false, ...over,
 });
-const edit = (actor: AuthContext, l: RecipeLineFields) => updateRecipeInput(actor, { recipeId: RECIPE, inputId: LINE, line: l });
+const edit = (actor: AuthContext, next: RecipeLineFields, expected = line(), recipeId = R, inputId = LINE) =>
+  updateRecipeInput(actor, { recipeId, inputId, line: next, expected });
+const add = (over: Record<string, unknown>) =>
+  addRecipeInput(gm, { recipeId: R, quantity: 1, ...over } as Parameters<typeof addRecipeInput>[1]);
+const rowOf = (id: string) => (h.db.tables.recipe_inputs as Row[]).find((r) => r.id === id)!;
+const updates = () => h.db.writes.filter((w) => w.op === "update");
 
 describe("updateRecipeInput — the lib is the authority", () => {
-  it("refuses below GM before any database work", async () => {
+  it("refuses below GM, two targets, or a zero quantity before any database work", async () => {
     await expect(edit(agm, line({ quantity: 5 }))).rejects.toMatchObject({ status: 403, code: "forbidden" });
-    expect(mocks.from).not.toHaveBeenCalled();
+    await expect(edit(gm, line({ componentItemId: "item-1" }))).rejects.toMatchObject({ code: "invalid_component" });
+    await expect(edit(gm, line({ quantity: 0 }))).rejects.toMatchObject({ code: "invalid_quantity" });
+    expect(h.db.writes).toEqual([]);
   });
 
-  it("refuses two targets or a zero quantity before any database work", async () => {
-    await expect(edit(gm, line({ componentItemId: "item-1" }))).rejects.toMatchObject({ status: 400, code: "invalid_component" });
-    await expect(edit(gm, line({ quantity: 0 }))).rejects.toMatchObject({ status: 400, code: "invalid_quantity" });
-    expect(mocks.from).not.toHaveBeenCalled();
+  it("an edit that changes nothing writes nothing and audits nothing (whitespace is not a change)", async () => {
+    await expect(edit(gm, line(), line({ unit: " oz " }))).resolves.toEqual({ changed: false });
+    expect(h.db.writes).toEqual([]);
+    expect(h.audit).not.toHaveBeenCalled();
   });
 
-  it("a line that is not on this recipe is 404 edge_not_found and writes nothing", async () => {
-    row = null;
-    await expect(edit(gm, line({ quantity: 5 }))).rejects.toMatchObject({ status: 404, code: "edge_not_found" });
-    expect(patches).toEqual([]);
-    expect(mocks.audit).not.toHaveBeenCalled();
-  });
-
-  it("an edit that changes nothing writes nothing and audits nothing", async () => {
-    await expect(edit(gm, line())).resolves.toEqual({ changed: false });
-    expect(patches).toEqual([]);
-    expect(mocks.audit).not.toHaveBeenCalled();
-  });
-
-  it("updates IN PLACE and audits recipe_input.update with the whole before and after line", async () => {
+  it("updates IN PLACE only while the row still equals what the client saw, and audits the true before/after", async () => {
     await expect(edit(gm, line({ quantity: 5 }))).resolves.toEqual({ changed: true });
-    expect(patches).toEqual([{
-      component_sku_id: "sku-ham", component_item_id: null, component_product_id: null,
-      quantity: 5, unit: "oz", each_container_label: null, portioned: false,
-    }]);
-    expect(mocks.audit).toHaveBeenCalledTimes(1);
-    expect(mocks.audit.mock.calls[0]![0]).toMatchObject({
+    expect(updates()).toHaveLength(1);
+    expect(updates()[0]!.matched).toBe(1);
+    expect(rowOf(LINE).quantity).toBe(5);
+    expect(h.audit).toHaveBeenCalledTimes(1);
+    expect(h.audit.mock.calls[0]![0]).toMatchObject({
       actorId: "u-gm", action: "recipe_input.update", resourceTable: "recipe_inputs", resourceId: LINE,
       metadata: {
-        recipe_id: RECIPE, changed_fields: ["quantity"],
+        recipe_id: R, changed_fields: ["quantity"],
         before: { component_sku_id: "sku-ham", quantity: 4, unit: "oz" },
         after: { component_sku_id: "sku-ham", quantity: 5, unit: "oz" },
       },
     });
   });
 
-  it("swapping the ingredient is ONE update that sets the new target and clears nothing else wrongly", async () => {
-    await expect(edit(gm, line({ componentSkuId: "sku-turkey", unit: "lb" }))).resolves.toEqual({ changed: true });
-    expect(patches).toEqual([expect.objectContaining({ component_sku_id: "sku-turkey", component_item_id: null, component_product_id: null, unit: "lb" })]);
-    expect(mocks.audit.mock.calls[0]![0].metadata.changed_fields).toEqual(["componentSkuId", "unit"]);
+  it("someone else changed the line first → 409 line_changed, nothing overwritten, nothing audited", async () => {
+    rowOf(LINE).quantity = 6;
+    await expect(edit(gm, line({ quantity: 5 }))).rejects.toMatchObject({ status: 409, code: "line_changed" });
+    expect(rowOf(LINE).quantity).toBe(6);
+    expect(updates()[0]!.matched).toBe(0);
+    expect(h.audit).not.toHaveBeenCalled();
   });
 
-  it("an UPDATE that matched no row (raced away) is 404, never a silent success", async () => {
-    updatedRows = [];
-    await expect(edit(gm, line({ quantity: 5 }))).rejects.toMatchObject({ status: 404, code: "edge_not_found" });
-    expect(mocks.audit).not.toHaveBeenCalled();
+  it("refresh while editing (Astra r2 #1): another manager swaps the ingredient, the page refreshes, the stale save is a 409", async () => {
+    // Editing began on the line as it stood: Ham, 4 oz.
+    const started = beginLineEdit({
+      id: LINE, componentSkuId: "sku-ham", componentItemId: null, componentProductId: null, componentName: "Ham",
+      kind: "sku", componentRetired: false, quantity: 4, unit: "oz", eachContainerLabel: null, portioned: false, displayOrder: 1,
+    });
+    rowOf(LINE).component_sku_id = "sku-turkey"; // the other manager's save; the refreshed view now says Turkey
+    await expect(edit(gm, { ...started.initial, quantity: 5 }, started.expected)).rejects.toMatchObject({ status: 409, code: "line_changed" });
+    expect(rowOf(LINE)).toMatchObject({ component_sku_id: "sku-turkey", quantity: 4 });
+    expect(h.audit).not.toHaveBeenCalled();
+  });
+
+  it("a line id from ANOTHER recipe is a 404 and the row is untouched (the recipe bind is real)", async () => {
+    const otherSeen = line({ componentSkuId: "sku-salt", unit: "oz", quantity: 1 });
+    await expect(edit(gm, { ...otherSeen, quantity: 2 }, otherSeen, R, "line-r2")).rejects.toMatchObject({ status: 404, code: "edge_not_found" });
+    expect(rowOf("line-r2").quantity).toBe(1);
+    expect(updates()[0]!.matched).toBe(0);
+  });
+
+  it("swapping the ingredient is ONE update that sets the new target and clears the others", async () => {
+    await expect(edit(gm, line({ componentSkuId: null, componentProductId: "p-ham", unit: "each" }))).resolves.toEqual({ changed: true });
+    expect(rowOf(LINE)).toMatchObject({ component_sku_id: null, component_item_id: null, component_product_id: "p-ham", unit: "each" });
+  });
+});
+
+describe("the SAME rules refuse through add AND update", () => {
+  it("a product line measured in a vendor's pack label", async () => {
+    await expect(add({ componentProductId: "p-ham", unit: "case" })).rejects.toMatchObject({ code: "product_line_needs_measure_unit" });
+    await expect(edit(gm, line({ componentSkuId: null, componentProductId: "p-ham", unit: "case" }))).rejects.toMatchObject({ code: "product_line_needs_measure_unit" });
+    expect(h.db.writes).toEqual([]);
+  });
+
+  it("a retired product", async () => {
+    await expect(add({ componentProductId: "p-old", unit: "oz" })).rejects.toMatchObject({ code: "invalid_component_product" });
+    await expect(edit(gm, line({ componentSkuId: null, componentProductId: "p-old", unit: "oz" }))).rejects.toMatchObject({ code: "invalid_component_product" });
+    expect(h.db.writes).toEqual([]);
+  });
+
+  it("an item line that would make the recipe consume its own output (directly or through another recipe)", async () => {
+    await expect(add({ componentItemId: "item-x", unit: "qt" })).rejects.toMatchObject({ code: "would_create_cycle" });
+    await expect(add({ componentItemId: "item-y", unit: "qt" })).rejects.toMatchObject({ code: "would_create_cycle" });
+    await expect(edit(gm, line({ componentSkuId: null, componentItemId: "item-y", unit: "qt" }))).rejects.toMatchObject({ code: "would_create_cycle" });
+    expect(h.db.writes).toEqual([]);
+  });
+
+  it("…and a harmless item line goes through both", async () => {
+    await expect(add({ componentItemId: "item-z", unit: "qt" })).resolves.toEqual({ id: expect.any(String) });
+    await expect(edit(gm, line({ componentSkuId: null, componentItemId: "item-z", unit: "qt" }))).resolves.toEqual({ changed: true });
   });
 });
 
@@ -1524,7 +2816,7 @@ describe("recipe_input.update is a human change to the kitchen", () => {
 - [ ] **Step 2: Run it and watch it fail**
 
 Run: `npx vitest run tests/recipe-line-edit-server.test.ts`
-Expected: FAIL. TypeScript/vitest reports `updateRecipeInput` is not exported (`is not a function`), and the registry test fails at `isDestructive("recipe_input.update")` → `false`.
+Expected: FAIL. `updateRecipeInput` is not a function; `add({ componentItemId: "item-x" })` resolves (no cycle guard on add today); the registry test fails at `isDestructive("recipe_input.update")`.
 
 - [ ] **Step 3: Move `recipe_input.update` into the destructive registry**
 
@@ -1545,7 +2837,7 @@ with:
   "recipe_input.update",
 ```
 
-In `lib/audit-actions.ts`, delete the line `  "recipe_input.update",` from `NON_DESTRUCTIVE_ACTIONS`, the one directly after `  "recipe.input_unit_normalize",`.
+In `lib/audit-actions.ts`, delete the line `  "recipe_input.update",` (directly after `  "recipe.input_unit_normalize",`) from `NON_DESTRUCTIVE_ACTIONS`.
 
 In `lib/dynamic-pars.ts`, replace:
 
@@ -1565,31 +2857,32 @@ with:
  * Verified against both registries rather than assumed: an
 ```
 
-- [ ] **Step 4: Add the shared validator and `updateRecipeInput` to `lib/recipes.ts`**
+- [ ] **Step 4: The shared validator and `updateRecipeInput` in `lib/recipes.ts`**
 
-Add after the `@/lib/recipes-shared` import block (before `// Client-safe surface lives in…`):
+Add after the `@/lib/recipes-shared` import block:
 
 ```ts
 import {
   diffRecipeLine,
   lineFromRow,
   lineToRow,
+  normalizeRecipeLine,
   type RecipeLineFields,
   type RecipeLineRow,
 } from "@/lib/recipe-line-shared";
 ```
 
-Add this function directly after `componentTargets` (before `/** List recipes (>=6)…`). The cycle guard calls `itemConsumesTransitively`, a hoisted `async function` declaration defined further down the file:
+Add directly after `componentTargets` (`itemConsumesTransitively` is a hoisted function declaration further down):
 
 ```ts
 /**
  * ONE validator for a line about to be written — shared by addRecipeInput and
  * updateRecipeInput (catalog Phase 1), so an edit can never author what an add would refuse.
- *  · a PRODUCT line: an active product measured in an active registry unit (D3, above);
+ *  · a PRODUCT line: an active product measured in an ACTIVE measure-registry unit of any
+ *    dimension (D3, assertProductLineIsValid above);
  *  · an ITEM line: must not make this recipe consume its own output, directly or through a
  *    chain of prep recipes. createRecipeFull always had this guard; addRecipeInput did not,
- *    so a single added line could close a loop the flatten then had to survive. It reads
- *    the recipe's item outputs and walks the item graph once per output (normally one).
+ *    so a single added line could close a loop the flatten then had to survive.
  * Mass balance is NOT a write rule: it is the costing board's read-time consistency check
  * (lib/menu-costing-shared.ts massBalanceIndex) and applies to any line once it is saved.
  */
@@ -1632,57 +2925,67 @@ Add `updateRecipeInput` directly after `addRecipeInput`:
 
 ```ts
 /**
- * Edit ONE recipe line in place (catalog redesign Phase 1, 2026-10-15): quantity, unit, and
- * the ingredient itself (any of the three targets).
+ * Edit ONE recipe line in place (catalog redesign Phase 1, 2026-10-15): quantity, unit, and the
+ * ingredient itself (any of the three targets).
  *
- * THE STORAGE RULE. recipe_inputs rows are CONFIG EDGES, not history: the table has no
- * active/superseded columns, a removal is a hard DELETE whose before-row rides the audit
- * (removeRecipeEdge), and nothing keys on a line's id — production_inputs snapshot the SKU
- * and the ounces of each batch (0102), so editing a line can never rewrite a past batch,
- * count or sale. The history of a line therefore lives in audit_log, exactly as it already
- * does for add and remove: an in-place UPDATE whose audit row carries the WHOLE before and
- * after line. Seeds 22/25/32 already edit lines this way under the same action name.
- * Supersede-and-insert would need a migration and a filter in every graph reader for no
- * history the audit row does not already hold.
+ * THE STORAGE RULE. recipe_inputs rows are CONFIG EDGES, not history: no active/superseded/
+ * updated_at columns, a removal is a hard DELETE whose before-row rides the audit, and nothing
+ * keys on a line's id — production_inputs snapshot the SKU and the ounces of each batch (0102),
+ * so an edit never rewrites a past batch, count or sale. A line's history lives in audit_log,
+ * as it already does for add and remove. Seeds 22/25/32 edit lines this way under this action.
  *
- * SAME RULES AS addRecipeInput through the same validator (assertInputLineIsValid). An edit
- * that changes nothing writes nothing and audits nothing. The UPDATE is rowcount-checked
- * (AGENTS.md: UPDATE denials are silent), scoped to (id, recipe_id) so a line id from
- * another recipe is a 404, never a cross-recipe write.
+ * COMPARE-AND-SET (Astra r1 P2-4). The UPDATE is conditional on (id, recipe_id) AND on every
+ * column equalling `expected` — the line the client saw — and RETURNS the written row. 0 rows:
+ * the row still on this recipe → 409 line_changed (someone else edited it first; nothing is
+ * overwritten); gone or on another recipe → 404 edge_not_found. The audit's `before` is the
+ * matched expected line and its `after` is the returned row — never a separate read that could
+ * race. Same validator as add (assertInputLineIsValid). An edit that changes nothing (compared
+ * normalised) writes and audits nothing. No migration: full expected values, no version column.
  */
 export async function updateRecipeInput(
   actor: AuthContext,
-  input: { recipeId: string; inputId: string; line: RecipeLineFields },
+  input: { recipeId: string; inputId: string; line: RecipeLineFields; expected: RecipeLineFields },
 ): Promise<{ changed: boolean }> {
   requireLevel(actor, RECIPE_WRITE_MIN);
-  const { line } = input;
+  const { line, expected } = input;
   if (componentTargets(line).count !== 1) throw new RecipeError(400, "invalid_component");
   if (!(Number.isFinite(line.quantity) && line.quantity > 0)) throw new RecipeError(400, "invalid_quantity");
-  const sb = getServiceRoleClient();
+  if (componentTargets(expected).count !== 1) throw new RecipeError(400, "invalid_payload");
 
-  const { data: beforeRow, error: readErr } = await sb
-    .from("recipe_inputs")
-    .select("id, recipe_id, component_sku_id, component_item_id, component_product_id, quantity, unit, each_container_label, portioned")
-    .eq("id", input.inputId)
-    .eq("recipe_id", input.recipeId)
-    .maybeSingle<RecipeLineRow & { id: string; recipe_id: string }>();
-  if (readErr) throw new Error(`updateRecipeInput read: ${readErr.message}`);
-  if (!beforeRow) throw new RecipeError(404, "edge_not_found");
-
-  const before = lineFromRow(beforeRow);
-  const changed = diffRecipeLine(before, line);
+  const changed = diffRecipeLine(normalizeRecipeLine(expected), line);
   if (changed.length === 0) return { changed: false };
 
+  const sb = getServiceRoleClient();
   await assertInputLineIsValid(sb, input.recipeId, line);
 
-  const { data: updated, error } = await sb
-    .from("recipe_inputs")
-    .update(lineToRow(line))
-    .eq("id", input.inputId)
-    .eq("recipe_id", input.recipeId)
-    .select("id");
+  const seen = lineToRow(expected);
+  const match: Array<[string, string | number | boolean | null]> = [
+    ["component_sku_id", seen.component_sku_id],
+    ["component_item_id", seen.component_item_id],
+    ["component_product_id", seen.component_product_id],
+    ["quantity", seen.quantity],
+    ["unit", seen.unit],
+    ["each_container_label", seen.each_container_label],
+    ["portioned", seen.portioned],
+  ];
+  let write = sb.from("recipe_inputs").update(lineToRow(line)).eq("id", input.inputId).eq("recipe_id", input.recipeId);
+  for (const [col, value] of match) write = value === null ? write.is(col, null) : write.eq(col, value);
+  const { data: written, error } = await write
+    .select("component_sku_id, component_item_id, component_product_id, quantity, unit, each_container_label, portioned")
+    .returns<RecipeLineRow[]>();
   if (error) throw new Error(`updateRecipeInput: ${error.message}`);
-  if (!updated || updated.length === 0) throw new RecipeError(404, "edge_not_found");
+
+  const row = written?.[0];
+  if (!row) {
+    const { data: still, error: readErr } = await sb
+      .from("recipe_inputs")
+      .select("id")
+      .eq("id", input.inputId)
+      .eq("recipe_id", input.recipeId)
+      .maybeSingle<{ id: string }>();
+    if (readErr) throw new Error(`updateRecipeInput recheck: ${readErr.message}`);
+    throw still ? new RecipeError(409, "line_changed") : new RecipeError(404, "edge_not_found");
+  }
 
   await audit({
     actorId: actor.user.id,
@@ -1690,7 +2993,7 @@ export async function updateRecipeInput(
     action: "recipe_input.update",
     resourceTable: "recipe_inputs",
     resourceId: input.inputId,
-    metadata: { recipe_id: input.recipeId, changed_fields: changed, before: lineToRow(before), after: lineToRow(line) },
+    metadata: { recipe_id: input.recipeId, changed_fields: changed, before: seen, after: lineToRow(lineFromRow(row)) },
     ipAddress: null,
     userAgent: null,
   });
@@ -1698,17 +3001,20 @@ export async function updateRecipeInput(
 }
 ```
 
-- [ ] **Step 5: Run the tests**
+- [ ] **Step 5: Run the tests and tsc**
 
 Run: `npx vitest run tests/recipe-line-edit-server.test.ts tests/audit-actions.test.ts tests/recipe-line-shared.test.ts`
 Expected: PASS, 0 failed.
+
+Run: `npx tsc --noEmit 2>&1 | grep -v TS2307 | grep "error TS"`
+Expected: no output. The filter builder's `.eq` and `.is` return the builder's own type, so reassigning `write` in the loop type-checks.
 
 - [ ] **Step 6: Commit**
 
 ```bash
 git add lib/recipes.ts lib/destructive-actions.ts lib/audit-actions.ts lib/dynamic-pars.ts tests/recipe-line-edit-server.test.ts
 git commit -F - <<'EOF'
-feat(recipes): edit a recipe line in place — one validator with add, full before/after audit
+feat(recipes): edit a recipe line in place — compare-and-set, one validator with add, true audit
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01TiAmVpRCSW7w8NzTFk4L31
@@ -1717,93 +3023,95 @@ EOF
 
 ---
 
-## Task 6: `PATCH /api/admin/recipes/[id]/inputs/[inputId]`
+## Task 8: `PATCH /api/admin/recipes/[id]/inputs/[inputId]`
 
 **Files:**
 - Create: `app/api/admin/recipes/[id]/inputs/[inputId]/route.ts`
-- Modify: `components/admin/recipes/shared.ts`
-- Modify: `tests/recipe-line-edit-server.test.ts`, `tests/step-up-tier-map.test.ts`
+- Modify: `components/admin/recipes/shared.ts`, `tests/recipe-line-edit-server.test.ts`, `tests/step-up-tier-map.test.ts`
 
 - [ ] **Step 1: Write the failing tests**
 
-In `tests/recipe-line-edit-server.test.ts`, add these two imports at the top, directly after `import { updateRecipeInput } from "@/lib/recipes";`. The `vi.mock` calls above them are hoisted, so the route sees the mocks.
+In `tests/recipe-line-edit-server.test.ts`, add these imports at the top, directly after `import { addRecipeInput, updateRecipeInput } from "@/lib/recipes";`:
 
 ```ts
 import { NextRequest } from "next/server";
 import { PATCH } from "@/app/api/admin/recipes/[id]/inputs/[inputId]/route";
 ```
 
-Then append this block at the end of the file:
+Append:
 
 ```ts
 describe("PATCH /api/admin/recipes/[id]/inputs/[inputId]", () => {
   const call = (body: unknown) =>
     PATCH(
-      new NextRequest(`http://localhost/api/admin/recipes/${RECIPE}/inputs/${LINE}`, { method: "PATCH", body: JSON.stringify(body) }),
-      { params: Promise.resolve({ id: RECIPE, inputId: LINE }) },
+      new NextRequest(`http://localhost/api/admin/recipes/${R}/inputs/${LINE}`, { method: "PATCH", body: JSON.stringify(body) }),
+      { params: Promise.resolve({ id: R, inputId: LINE }) },
     );
-  const body = { componentSkuId: "sku-ham", quantity: 5, unit: "oz" };
+  const body = { line: { componentSkuId: "sku-ham", quantity: 5, unit: "oz" }, expected: { componentSkuId: "sku-ham", quantity: 4, unit: "oz", eachContainerLabel: null, portioned: false } };
 
   it("401 without a session", async () => {
-    mocks.session.mockResolvedValue(new Response(null, { status: 401 }));
+    h.session.mockResolvedValue(new Response(null, { status: 401 }));
     expect((await call(body)).status).toBe(401);
   });
 
   it("403 below GM, before the step-up check", async () => {
-    mocks.session.mockResolvedValue(agm);
+    h.session.mockResolvedValue(agm);
     expect((await call(body)).status).toBe(403);
-    expect(mocks.step).not.toHaveBeenCalled();
+    expect(h.step).not.toHaveBeenCalled();
   });
 
   it("asks for the Tier E edit window and stops on a stale unlock", async () => {
-    mocks.session.mockResolvedValue(gm);
-    mocks.step.mockReturnValue({ ok: false, code: "step_up_stale" });
+    h.session.mockResolvedValue(gm);
+    h.step.mockReturnValue({ ok: false, code: "step_up_stale" });
     const res = await call(body);
     expect(res.status).toBe(403);
     expect((await res.json()).code).toBe("step_up_stale");
-    expect(mocks.step).toHaveBeenCalledWith(gm, "E");
-    expect(mocks.from).not.toHaveBeenCalled();
+    expect(h.step).toHaveBeenCalledWith(gm, "E");
+    expect(h.db.writes).toEqual([]);
   });
 
-  it("400 on a malformed line, before any database work", async () => {
-    mocks.session.mockResolvedValue(gm);
-    const res = await call({ componentSkuId: "sku-ham", quantity: 0 });
-    expect(res.status).toBe(400);
-    expect((await res.json()).code).toBe("invalid_quantity");
-    expect(mocks.from).not.toHaveBeenCalled();
+  it("400 on a malformed line or a missing expected line, before any database work", async () => {
+    h.session.mockResolvedValue(gm);
+    expect((await (await call({ ...body, line: { componentSkuId: "sku-ham", quantity: 0 } })).json()).code).toBe("invalid_quantity");
+    expect((await call({ line: body.line })).status).toBe(400);
+    expect(h.db.writes).toEqual([]);
   });
 
-  it("200 { changed: true } on a real edit", async () => {
-    mocks.session.mockResolvedValue(gm);
-    const res = await call(body);
-    expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ ok: true, changed: true });
+  it("200 { changed: true } on a real edit; 409 line_changed when the line moved underneath", async () => {
+    h.session.mockResolvedValue(gm);
+    const ok = await call(body);
+    expect(ok.status).toBe(200);
+    expect(await ok.json()).toEqual({ ok: true, changed: true });
+    const stale = await call({ ...body, line: { ...body.line, quantity: 7 } }); // expected still says 4; the row is 5 now
+    expect(stale.status).toBe(409);
+    expect((await stale.json()).code).toBe("line_changed");
   });
 });
 ```
 
-In `tests/step-up-tier-map.test.ts` `SERVER_TIER_MAP`, add after the `"app/api/admin/recipes/[id]/inputs/route.ts": ["E"],` entry:
+In `tests/step-up-tier-map.test.ts` `SERVER_TIER_MAP`, add after `"app/api/admin/recipes/[id]/inputs/route.ts": ["E"],`:
 
 ```ts
-  // Catalog Phase 1: edit one recipe line in place.
+  // Catalog Phase 1: edit one recipe line in place (compare-and-set).
   "app/api/admin/recipes/[id]/inputs/[inputId]/route.ts": ["E"],
 ```
 
 - [ ] **Step 2: Run them and watch them fail**
 
 Run: `npx vitest run tests/recipe-line-edit-server.test.ts tests/step-up-tier-map.test.ts`
-Expected: FAIL. `Failed to resolve import "@/app/api/admin/recipes/[id]/inputs/[inputId]/route"`, and the server-half map is missing the new route.
+Expected: FAIL with `Failed to resolve import "@/app/api/admin/recipes/[id]/inputs/[inputId]/route"`; the server map is missing the new route.
 
-- [ ] **Step 3: Create `app/api/admin/recipes/[id]/inputs/[inputId]/route.ts`**
+- [ ] **Step 3: Create the route**
+
+`app/api/admin/recipes/[id]/inputs/[inputId]/route.ts`:
 
 ```ts
 /**
- * PATCH /api/admin/recipes/[id]/inputs/[inputId] — edit ONE recipe line in place
- * (catalog redesign Phase 1, 2026-10-15). Body: the WHOLE new line
- * { componentSkuId | componentItemId | componentProductId, quantity, unit?, eachContainerLabel?, portioned? }.
- * GM+ (RECIPE_WRITE_MIN) and the Tier E edit window; the lib re-checks the level and every
- * line rule (lib/recipes.ts updateRecipeInput). 200 { ok, changed } — changed:false means the
- * line already said exactly that and nothing was written.
+ * PATCH /api/admin/recipes/[id]/inputs/[inputId] — edit ONE recipe line in place (catalog
+ * redesign Phase 1, 2026-10-15). Body: { line, expected } — the WHOLE new line and the line the
+ * client saw (raw). GM+ (RECIPE_WRITE_MIN) and the Tier E edit window; the lib re-checks the
+ * level and every line rule and writes only if the row still equals `expected`
+ * (lib/recipes.ts updateRecipeInput). 200 { ok, changed } · 409 line_changed · 404 edge_not_found.
  */
 import { type NextRequest } from "next/server";
 import { requireSession } from "@/lib/session";
@@ -1811,7 +3119,7 @@ import { ROLES } from "@/lib/roles";
 import { assertStepUp } from "@/lib/admin/step-up";
 import { jsonError, jsonOk, parseJsonBody } from "@/lib/api-helpers";
 import { updateRecipeInput, RecipeError, RECIPE_WRITE_MIN } from "@/lib/recipes";
-import { parseRecipeLinePatch } from "@/lib/recipe-line-shared";
+import { parseRecipeLineEdit } from "@/lib/recipe-line-shared";
 
 export async function PATCH(
   req: NextRequest,
@@ -1826,11 +3134,11 @@ export async function PATCH(
   const su = assertStepUp(ctx, "E");
   if (!su.ok) return jsonError(403, su.code);
 
-  const line = parseRecipeLinePatch(parsed);
-  if (!line.ok) return jsonError(400, line.code);
+  const edit = parseRecipeLineEdit(parsed);
+  if (!edit.ok) return jsonError(400, edit.code);
 
   try {
-    const result = await updateRecipeInput(ctx, { recipeId: id, inputId, line: line.line });
+    const result = await updateRecipeInput(ctx, { recipeId: id, inputId, line: edit.line, expected: edit.expected });
     return jsonOk({ ok: true, changed: result.changed });
   } catch (e) {
     if (e instanceof RecipeError) return jsonError(e.status, e.code);
@@ -1839,9 +3147,9 @@ export async function PATCH(
 }
 ```
 
-- [ ] **Step 4: Give the two product-line codes their own messages**
+- [ ] **Step 4: The product-line codes get their own messages**
 
-In `components/admin/recipes/shared.ts`, add to `KNOWN_ERROR_CODES`, after `"invalid_shelf_life_days",`:
+In `components/admin/recipes/shared.ts`, add to `KNOWN_ERROR_CODES` after `"invalid_shelf_life_days",`:
 
 ```ts
   // Catalog Phase 1 — the line editor reaches these through add AND edit (the keys already exist).
@@ -1859,7 +3167,7 @@ Expected: PASS, 0 failed.
 ```bash
 git add "app/api/admin/recipes/[id]/inputs/[inputId]/route.ts" components/admin/recipes/shared.ts tests/recipe-line-edit-server.test.ts tests/step-up-tier-map.test.ts
 git commit -F - <<'EOF'
-feat(recipes): PATCH one recipe line behind the edit window
+feat(recipes): PATCH one recipe line (line + expected) behind the edit window
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01TiAmVpRCSW7w8NzTFk4L31
@@ -1868,7 +3176,7 @@ EOF
 
 ---
 
-## Task 7: The pure ingredient picker
+## Task 9: The pure ingredient picker
 
 **Files:**
 - Create: `lib/ingredient-picker-shared.ts`
@@ -1886,6 +3194,7 @@ import {
   filterIngredientOptions,
   ingredientKey,
   lineTargetKey,
+  moveActive,
   normalizeSearch,
   optionForLine,
 } from "@/lib/ingredient-picker-shared";
@@ -1944,6 +3253,15 @@ describe("filterIngredientOptions", () => {
   });
 });
 
+describe("moveActive — arrow keys clamp to the list (P3-8)", () => {
+  it("moves within bounds and never past either end", () => {
+    expect(moveActive(0, 1, 3)).toBe(1);
+    expect(moveActive(2, 1, 3)).toBe(2);
+    expect(moveActive(0, -1, 3)).toBe(0);
+    expect(moveActive(5, -1, 0)).toBe(0);
+  });
+});
+
 describe("a line's target as a picker option", () => {
   it("finds the offered option for a line", () => {
     const line = { componentSkuId: "s-ham-p", componentItemId: null, componentProductId: null, componentName: "Ham" };
@@ -1967,14 +3285,14 @@ Expected: FAIL with `Failed to resolve import "@/lib/ingredient-picker-shared"`.
 
 ```ts
 /**
- * Searchable ingredient picker — CLIENT-SAFE pure half (catalog redesign Phase 1,
- * 2026-10-15). Replaces three unsearchable <select>s (every SKU, every item, every product)
- * with ONE list a manager can type into on a phone: name · vendor · kind.
+ * Searchable ingredient picker — CLIENT-SAFE pure half (catalog redesign Phase 1, 2026-10-15).
+ * Replaces three unsearchable <select>s (every SKU, every item, every product) with ONE list a
+ * manager can type into on a phone: name · vendor · kind.
  *
- * Search is accent-blind and case-blind, and every typed word must appear in the name or the
- * vendor name ("ham baldor"). Ranking: the name STARTS with the whole query, then any word of
- * the name starts with the first word, then anywhere; ties sort by name, kind (product, SKU,
- * item — the product is the vendor-proof pin), vendor, id.
+ * Search is accent-blind and case-blind; every typed word must appear in the name or the vendor
+ * ("ham baldor"). Ranking: the name STARTS with the whole query, then any word of the name starts
+ * with the first word, then anywhere; ties by name, kind (product, SKU, item — the product is the
+ * vendor-proof pin), vendor, id.
  */
 export type IngredientKind = "sku" | "item" | "product";
 
@@ -2043,6 +3361,12 @@ export function filterIngredientOptions(
   return { matches: scored.slice(0, limit).map((s) => s.o), total: scored.length };
 }
 
+/** The keyboard's next active row: one step, clamped to the list. */
+export function moveActive(current: number, delta: 1 | -1, count: number): number {
+  if (count <= 0) return 0;
+  return Math.min(Math.max(current + delta, 0), count - 1);
+}
+
 type LineTarget = {
   componentSkuId: string | null;
   componentItemId: string | null;
@@ -2077,7 +3401,7 @@ Expected: PASS, 0 failed.
 ```bash
 git add lib/ingredient-picker-shared.ts tests/ingredient-picker-shared.test.ts
 git commit -F - <<'EOF'
-feat(recipes): pure searchable ingredient picker (name · vendor · kind, accent-blind, ranked)
+feat(recipes): pure searchable ingredient picker (name · vendor · kind, ranked, keyboard clamp)
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01TiAmVpRCSW7w8NzTFk4L31
@@ -2086,14 +3410,14 @@ EOF
 
 ---
 
-## Task 8: One loader for both recipe pages; SKUs carry their vendor's name
+## Task 10: One loader for both recipe pages; SKUs carry their vendor's name
 
 **Files:**
 - Create: `lib/admin/recipe-builder-data.ts`
 - Rewrite: `app/admin/recipes/[id]/page.tsx`, `app/admin/recipes/new/page.tsx`
 - Modify: `components/admin/recipes/RecipeBuilder.tsx` (the `RecipeBuilderSku` type)
 
-This task is DB-coupled loader code. It is verified by `tsc` here and on the sim in Task 16. There is no unit test, per the spine's pure-only rule.
+This is DB-coupled loader code. It is verified by `tsc` here and on the sim in Task 20; the spine is pure-only.
 
 - [ ] **Step 1: Add `vendorName` to `RecipeBuilderSku`**
 
@@ -2129,14 +3453,13 @@ Expected: two errors, `Property 'vendorName' is missing`, in `app/admin/recipes/
  * The picker universe both recipe builder pages load (/admin/recipes/[id] and /new) — ONE
  * loader so the two pages cannot drift (they carried byte-identical copies until catalog
  * Phase 1, 2026-10-15). Service-role reads with the same filters as before: active SKUs that
- * are not inventory-only (packaging/cleaning never belong in a recipe), active items, ACTIVE
- * products (load-bearing — a retired product refuses at the resolution ladder, Juan's ruling
- * A+, and lib/recipes.ts assertProductLineIsValid refuses the write anyway), the units
- * registry and the measure registry. New: each SKU carries its vendor's NAME so the
- * searchable ingredient picker can say "Ham · Baldor · SKU".
+ * are not inventory-only, active items, ACTIVE products (load-bearing — a retired product
+ * refuses at the resolution ladder, Juan's ruling A+, and assertProductLineIsValid refuses the
+ * write anyway), the units registry and the measure registry. New: each SKU carries its
+ * vendor's NAME so the searchable picker can say "Ham · Baldor · SKU".
  *
- * Errors keep the pages' old posture — a failed read yields an empty list and the matching
- * affordance has nothing to offer — and a failed vendors read only drops the names.
+ * Errors keep the pages' old posture — a failed read yields an empty list — and a failed
+ * vendors read only drops the names.
  */
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import type { MeasureUnitFactor } from "@/lib/recipe-math";
@@ -2388,11 +3711,10 @@ EOF
 
 ---
 
-## Task 9: `IngredientPicker` + `RecipeLineEditor` components and their strings
+## Task 11: `IngredientPicker` + `RecipeLineEditor` and their strings
 
 **Files:**
-- Create: `components/admin/recipes/IngredientPicker.tsx`
-- Create: `components/admin/recipes/RecipeLineEditor.tsx`
+- Create: `components/admin/recipes/IngredientPicker.tsx`, `components/admin/recipes/RecipeLineEditor.tsx`
 - Modify: `lib/i18n/en.json`, `lib/i18n/es.json`
 - Test: `tests/ingredient-picker-ui.test.ts`
 
@@ -2402,6 +3724,7 @@ Create `tests/ingredient-picker-ui.test.ts`:
 
 ```ts
 /** Catalog Phase 1 — the picker renders as an accessible combobox with 44px rows, in en and es. */
+import { readFileSync } from "node:fs";
 import { type ReactNode } from "react";
 import { jsx } from "react/jsx-runtime";
 import { renderToStaticMarkup } from "react-dom/server";
@@ -2438,6 +3761,13 @@ describe("IngredientPicker", () => {
     expect(html).not.toContain('role="listbox"');
     expect(html).toContain(es["recipes.picker.change"]);
   });
+
+  it("keyboard: arrows use the clamp and the active option scrolls into view (P3-8)", () => {
+    const src = readFileSync("components/admin/recipes/IngredientPicker.tsx", "utf8");
+    expect(src).toContain("moveActive(i, 1, matches.length)");
+    expect(src).toContain("moveActive(i, -1, matches.length)");
+    expect(src).toContain('scrollIntoView({ block: "nearest" })');
+  });
 });
 
 describe("every new string exists in en AND es", () => {
@@ -2448,6 +3778,8 @@ describe("every new string exists in en AND es", () => {
     "recipes.picker.kind.sku", "recipes.picker.kind.item", "recipes.picker.kind.product",
     "recipes.input.sku_unit_unresolved",
     "recipes.row.edit", "recipes.row.edit_aria", "recipes.row.edit_title", "recipes.row.save_changes",
+    "recipes.error.line_changed", "recipes.error.step_up_grant_required",
+    "admin.skus.error.step_up_grant_required", "admin.products.error.step_up_grant_required",
   ];
   it.each(keys)("%s", (k) => {
     expect((en as Record<string, string>)[k]).toBeTruthy();
@@ -2463,7 +3795,7 @@ Expected: FAIL with `Failed to resolve import "@/components/admin/recipes/Ingred
 
 - [ ] **Step 3: Add the strings**
 
-In `lib/i18n/en.json`, insert right after the line `  "recipes.row.cancel": "Cancel",`:
+`lib/i18n/en.json`, insert right after `  "recipes.row.cancel": "Cancel",`:
 
 ```json
   "recipes.row.edit": "Edit",
@@ -2486,7 +3818,7 @@ In `lib/i18n/en.json`, insert right after the line `  "recipes.row.cancel": "Can
   "recipes.input.sku_unit_unresolved": "This unit can't be turned into ounces for this SKU yet. Pick its pack or oz, or add the SKU's weight first.",
 ```
 
-In `lib/i18n/es.json`, insert right after the line `  "recipes.row.cancel": "Cancelar",`:
+`lib/i18n/es.json`, insert right after `  "recipes.row.cancel": "Cancelar",`:
 
 ```json
   "recipes.row.edit": "Editar",
@@ -2516,19 +3848,20 @@ In `lib/i18n/es.json`, insert right after the line `  "recipes.row.cancel": "Can
 
 /**
  * IngredientPicker — the searchable ingredient field (catalog redesign Phase 1, 2026-10-15).
- * An ARIA 1.2 combobox: type to filter (lib/ingredient-picker-shared.ts), ↑/↓ to move,
- * Enter to choose, Escape to close back to the current choice. Options are 44px rows that
- * work by tap (mousedown keeps focus in the input so a tap never blurs the list away).
- * The list flows in the page (no absolute overlay), so it never clips at phone width; rows
- * truncate long names instead of widening the page.
+ * An ARIA 1.2 combobox: type to filter (lib/ingredient-picker-shared.ts), ↑/↓ to move (clamped,
+ * and the active row scrolls into view), Enter to choose, Escape to close back to the current
+ * choice. Options are 44px rows that work by tap (mousedown keeps focus in the input so a tap
+ * never blurs the list away). The list flows in the page (no absolute overlay), so it never
+ * clips at phone width; rows truncate long names instead of widening the page.
  */
-import { useId, useMemo, useRef, useState, type KeyboardEvent } from "react";
+import { useEffect, useId, useMemo, useRef, useState, type KeyboardEvent } from "react";
 
 import { useTranslation } from "@/lib/i18n/provider";
 import type { TranslationKey } from "@/lib/i18n/types";
 import {
   filterIngredientOptions,
   INGREDIENT_RESULT_LIMIT,
+  moveActive,
   type IngredientKind,
   type IngredientOption,
 } from "@/lib/ingredient-picker-shared";
@@ -2564,6 +3897,12 @@ export function IngredientPicker({
     [options, query],
   );
 
+  // P3-8: the keyboard's active row is always visible inside the scrolling list.
+  useEffect(() => {
+    if (!open) return;
+    document.getElementById(`${baseId}-opt-${active}`)?.scrollIntoView({ block: "nearest" });
+  }, [active, open, baseId]);
+
   const kindLabel = (k: IngredientKind) => t(rk(`recipes.picker.kind.${k}`));
   const vendorLabel = (o: IngredientOption) => (o.kind === "sku" ? (o.vendorName ?? t(rk("recipes.picker.no_vendor"))) : null);
 
@@ -2578,10 +3917,10 @@ export function IngredientPicker({
     if (e.key === "ArrowDown") {
       e.preventDefault();
       setOpen(true);
-      setActive((i) => Math.min(i + 1, Math.max(matches.length - 1, 0)));
+      setActive((i) => moveActive(i, 1, matches.length));
     } else if (e.key === "ArrowUp") {
       e.preventDefault();
-      setActive((i) => Math.max(i - 1, 0));
+      setActive((i) => moveActive(i, -1, matches.length));
     } else if (e.key === "Enter") {
       const o = matches[active];
       if (open && o) {
@@ -2696,19 +4035,15 @@ export function IngredientPicker({
 "use client";
 
 /**
- * RecipeLineEditor — ONE form for adding a recipe line AND editing one in place (catalog
- * redesign Phase 1, 2026-10-15). Replaces the three per-kind add forms and their
- * unsearchable selects: the ingredient comes from the searchable IngredientPicker (SKUs,
- * prep items and products together), then qty + unit.
+ * RecipeLineEditor — ONE form for adding a recipe line AND editing one in place, saved or
+ * draft (catalog redesign Phase 1, 2026-10-15). Replaces the three per-kind add forms and their
+ * unsearchable selects: the ingredient comes from the searchable IngredientPicker, then qty + unit.
  *
- * The unit rules are the server's, offered up front so an author cannot author a refusal
- * (lib/recipe-line-shared.ts lineUnitChoices): a PRODUCT line offers measure-registry units
- * only (D3); a SKU line offers its own pack labels plus the measure registry and keeps the
- * line's current unit first; a prep-item line keeps its free-text unit. The server re-checks
- * every rule (lib/recipes.ts assertInputLineIsValid).
- *
- * Edit mode disables Save until something changed (diffRecipeLine — the same pure function
- * the server uses to decide whether to write).
+ * The unit rules are the server's, offered up front (lib/recipe-line-shared.ts lineUnitChoices):
+ * a PRODUCT line offers every active measure-registry unit and no pack label (D3); a SKU line
+ * offers its pack labels plus the measure registry and keeps its current unit first; a prep-item
+ * line keeps its free-text unit. The server re-checks every rule (assertInputLineIsValid).
+ * Edit mode disables Save until something changed (diffRecipeLine — the server's own test).
  */
 import { useMemo, useState } from "react";
 
@@ -2921,10 +4256,10 @@ EOF
 
 ---
 
-## Task 10: Wire the builder — edit a line in place, add with the picker
+## Task 12: Wire the builder — saved AND draft lines edit in place; add with the picker
 
 **Files:**
-- Modify: `components/admin/recipes/RecipeBuilder.tsx` (replace the CONSUMES section)
+- Modify: `components/admin/recipes/RecipeBuilder.tsx` (CONSUMES section + DraftInputRow + call site)
 - Modify: `components/admin/recipes/RecipeInputRow.tsx`
 - Test: `tests/recipe-line-edit-ui.test.ts`
 
@@ -2933,7 +4268,7 @@ EOF
 Create `tests/recipe-line-edit-ui.test.ts`:
 
 ```ts
-/** Catalog Phase 1 — the builder edits a line in place and picks ingredients by search. Source pins. */
+/** Catalog Phase 1 — saved and draft lines edit in place; ingredients come from the picker. Source pins. */
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -2943,26 +4278,44 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const read = (rel: string) => readFileSync(join(ROOT, ...rel.split("/")), "utf8");
 const builder = read("components/admin/recipes/RecipeBuilder.tsx");
 const consumes = builder.slice(builder.indexOf("function ConsumesSection"), builder.indexOf("function DraftInputRow"));
+const draftRow = builder.slice(builder.indexOf("function DraftInputRow"), builder.indexOf("// ── PRODUCES section"));
 
 describe("CONSUMES — one searchable picker, one line form", () => {
-  it("the three unsearchable selects (every SKU / item / product) are gone from the line form", () => {
+  it("the three unsearchable selects are gone from the line form", () => {
     expect(consumes).not.toContain("skus.map((s) => (<option");
     expect(consumes).not.toContain("items.map((i) => (<option");
     expect(consumes).not.toContain("products.map((p) => (<option");
     expect(consumes).toContain("buildIngredientOptions(");
-    expect(consumes.match(/<RecipeLineEditor/g)).toHaveLength(2); // add + edit
+    expect(consumes.match(/<RecipeLineEditor/g)).toHaveLength(3); // add + live edit + draft edit
   });
 
-  it("a live line is edited IN PLACE through PATCH …/inputs/[inputId], behind the edit window", () => {
-    const lane = consumes.slice(consumes.indexOf("const submitEdit"));
-    expect(lane).toContain("/inputs/${inputId}`");
+  it("a saved line is edited IN PLACE through PATCH …/inputs/[inputId], behind the window", () => {
+    const lane = consumes.slice(consumes.indexOf("const submitLiveEdit"), consumes.indexOf("const submitDraftEdit"));
+    expect(lane).toContain("/inputs/${start.id}`");
+    expect(lane).toContain("{ line: lineBody(line), expected: start.expected }");
     expect(lane).toContain('"PATCH"');
     expect(lane.indexOf('requestStepUp("E")')).toBeGreaterThan(-1);
     expect(lane.indexOf('requestStepUp("E")')).toBeLessThan(lane.indexOf("send("));
   });
 
-  it("a live add also asks for the edit window; a draft add writes nothing and asks for nothing", () => {
-    const lane = consumes.slice(consumes.indexOf("const submitAdd"), consumes.indexOf("const submitEdit"));
+  it("the expected line is captured when editing BEGINS, never re-read from a refreshed row (Astra r2 #1)", () => {
+    expect(consumes).toContain('setEditing({ kind: "live", ...beginLineEdit(inp) })');
+    expect(consumes).toContain("initial={live.initial}");
+    expect(consumes).not.toContain("lineSnapshotFromView(");
+    expect(consumes).not.toContain("initial={lineDraftFromView(inp)}");
+  });
+
+  it("a DRAFT line is edited in place locally (P2-7) — no request, no password", () => {
+    const lane = consumes.slice(consumes.indexOf("const submitDraftEdit"), consumes.indexOf("return ("));
+    expect(lane).toContain("onUpdateDraftInput(");
+    expect(lane).not.toContain("send(");
+    expect(lane).not.toContain("requestStepUp");
+    expect(draftRow).toContain("onEdit");
+    expect(builder).toContain("onUpdateDraftInput={updateDraftInput}");
+  });
+
+  it("a live add asks for the window; a draft add writes nothing and asks for nothing", () => {
+    const lane = consumes.slice(consumes.indexOf("const submitAdd"), consumes.indexOf("const submitLiveEdit"));
     expect(lane.indexOf("if (isDraft)")).toBeLessThan(lane.indexOf('requestStepUp("E")'));
   });
 
@@ -2978,11 +4331,11 @@ describe("CONSUMES — one searchable picker, one line form", () => {
 - [ ] **Step 2: Run it and watch it fail**
 
 Run: `npx vitest run tests/recipe-line-edit-ui.test.ts`
-Expected: FAIL. The selects are still present, `<RecipeLineEditor` is matched 0 times, and there is no `submitEdit` or `onEdit`.
+Expected: FAIL. The selects are still present, `<RecipeLineEditor` is matched 0 times, and there is no `submitLiveEdit`, `onUpdateDraftInput` or `onEdit`.
 
-- [ ] **Step 3: Add the Edit button to `RecipeInputRow.tsx`**
+- [ ] **Step 3: Add Edit to `RecipeInputRow.tsx`**
 
-In the docstring, replace ` * RecipeInputRow — one existing recipe_input edge with a remove (✕) button.` with:
+Replace ` * RecipeInputRow — one existing recipe_input edge with a remove (✕) button.` with:
 
 ```tsx
  * RecipeInputRow — one existing recipe_input edge with Edit (in place — catalog Phase 1)
@@ -3060,21 +4413,59 @@ with:
         ) : null}
 ```
 
-- [ ] **Step 4: Add the imports to `RecipeBuilder.tsx`**
+- [ ] **Step 4: Imports and the draft-update lane in `RecipeBuilder.tsx`**
 
 Replace `import { useState } from "react";` with `import { useMemo, useState } from "react";`.
 
-Add after `import { useStepUpPost } from "@/components/admin/useStepUpPost";` (added in Task 3):
+Add after `import { useStepUpPost } from "@/components/admin/useStepUpPost";` (added in Task 5):
 
 ```tsx
 import { buildIngredientOptions } from "@/lib/ingredient-picker-shared";
-import { lineDraftFromView, recipeLineKind, type RecipeLineDraft } from "@/lib/recipe-line-shared";
+import { beginLineEdit, recipeLineKind, type LineEditStart, type RecipeLineDraft } from "@/lib/recipe-line-shared";
 import { RecipeLineEditor } from "./RecipeLineEditor";
 ```
 
-- [ ] **Step 5: Replace the CONSUMES section**
+Replace:
 
-Save the block below to a temporary file outside the repo (for example `$TEMP/consumes-section.txt`). Then splice it in. The splice replaces everything from the line starting `// ── CONSUMES section` up to, not including, the line starting `// ── DraftInputRow`:
+```tsx
+  const removeDraftInput = (key: number) =>
+    setDraftInputs((prev) => prev.filter((x) => x._key !== key));
+```
+
+with:
+
+```tsx
+  const removeDraftInput = (key: number) =>
+    setDraftInputs((prev) => prev.filter((x) => x._key !== key));
+  /** Catalog Phase 1 (P2-7): a draft line is edited in place, keeping its key and position. */
+  const updateDraftInput = (key: number, di: Omit<DraftInput, "_key">) =>
+    setDraftInputs((prev) => prev.map((x) => (x._key === key ? { ...di, _key: key } : x)));
+```
+
+In the `<ConsumesSection … />` call, replace:
+
+```tsx
+        onRemoveDraftInput={removeDraftInput}
+        onRemoveLive={(id) => void removeEdge("recipe_inputs", id)}
+      />
+
+      {/* ── PRODUCES ── */}
+```
+
+with:
+
+```tsx
+        onRemoveDraftInput={removeDraftInput}
+        onUpdateDraftInput={updateDraftInput}
+        onRemoveLive={(id) => void removeEdge("recipe_inputs", id)}
+      />
+
+      {/* ── PRODUCES ── */}
+```
+
+- [ ] **Step 5: Replace the CONSUMES section and DraftInputRow**
+
+Save the block below to `$TEMP/consumes-section.txt`, then splice it over everything from the line starting `// ── CONSUMES section` up to (not including) the line starting `// ── PRODUCES section`:
 
 ```bash
 cd /c/Users/conta/co-ops-guides
@@ -3083,7 +4474,7 @@ const fs = require("fs");
 const p = "components/admin/recipes/RecipeBuilder.tsx";
 const s = fs.readFileSync(p, "utf8");
 const a = s.indexOf("// ── CONSUMES section");
-const b = s.indexOf("// ── DraftInputRow");
+const b = s.indexOf("// ── PRODUCES section");
 if (a < 0 || b < 0 || b < a) throw new Error("anchors not found");
 fs.writeFileSync(p, s.slice(0, a) + fs.readFileSync(process.argv[1], "utf8") + s.slice(b));
 ' "$TEMP/consumes-section.txt"
@@ -3093,10 +4484,14 @@ The block (it ends with a blank line):
 
 ```tsx
 // ── CONSUMES section ─────────────────────────────────────────────────────────
-// ONE add/edit form for all three kinds (catalog redesign Phase 1, 2026-10-15): the
-// searchable IngredientPicker replaced the three per-kind forms and their unsearchable
-// selects, and a live line is edited IN PLACE (PATCH …/inputs/[inputId]) instead of
-// delete + re-add. Draft rows stay remove-only: they are local until the recipe saves.
+// ONE add/edit form for all three kinds (catalog redesign Phase 1, 2026-10-15): the searchable
+// IngredientPicker replaced the per-kind forms and their unsearchable selects. A SAVED line is
+// edited in place through PATCH …/inputs/[inputId] with the line the client saw (compare-and-set);
+// a DRAFT line is edited in place locally — it is not on the server until the recipe saves.
+// A live edit captures its starting line AND the compare-and-set snapshot ONCE, when Edit is
+// tapped (beginLineEdit): a router.refresh() mid-edit must not quietly move "what I saw" (r2 #1).
+type LineEditing = ({ kind: "live" } & LineEditStart) | { kind: "draft"; key: number } | null;
+
 function ConsumesSection({
   recipeId,
   liveInputs,
@@ -3109,6 +4504,7 @@ function ConsumesSection({
   isDraft,
   onAddDraftInput,
   onRemoveDraftInput,
+  onUpdateDraftInput,
   onRemoveLive,
 }: {
   recipeId: string | null;
@@ -3125,6 +4521,7 @@ function ConsumesSection({
   isDraft: boolean;
   onAddDraftInput: (di: Omit<DraftInput, "_key">) => void;
   onRemoveDraftInput: (key: number) => void;
+  onUpdateDraftInput: (key: number, di: Omit<DraftInput, "_key">) => void;
   onRemoveLive: (id: string) => void;
 }) {
   const { t } = useTranslation();
@@ -3133,15 +4530,16 @@ function ConsumesSection({
   const send = useStepUpPost();
 
   const [adding, setAdding] = useState(false);
-  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editing, setEditing] = useState<LineEditing>(null);
   const [busy, setBusy] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
-  // Disclosure (D3: PRIMARY work section → default-open; D10: locked open while a form is
-  // in progress so the dirty line stays mounted).
+  // Disclosure (D3: PRIMARY work section → default-open; D10: locked open while a form is in
+  // progress so the dirty line stays mounted).
   const [sectionOpen, setSectionOpen] = useState(true);
-  const formInProgress = adding || editingId !== null;
+  const formInProgress = adding || editing !== null;
   const isOpen = sectionOpen || formInProgress;
+  const live = editing?.kind === "live" ? editing : null;
 
   const options = useMemo(() => buildIngredientOptions({ skus, items, products }), [skus, items, products]);
 
@@ -3154,10 +4552,22 @@ function ConsumesSection({
     eachContainerLabel: line.eachContainerLabel,
     portioned: line.portioned,
   });
+  const toDraftInput = (line: RecipeLineDraft): Omit<DraftInput, "_key"> =>
+    ({ kind: recipeLineKind(line), ...lineBody(line), componentName: line.componentName });
+  const draftLine = (di: DraftInput): RecipeLineDraft => ({
+    componentSkuId: di.componentSkuId,
+    componentItemId: di.componentItemId,
+    componentProductId: di.componentProductId,
+    quantity: di.quantity,
+    unit: di.unit,
+    eachContainerLabel: di.eachContainerLabel,
+    portioned: di.portioned,
+    componentName: di.componentName,
+  });
 
   const closeForms = () => {
     setAdding(false);
-    setEditingId(null);
+    setEditing(null);
     setErrorMsg(null);
   };
 
@@ -3166,7 +4576,7 @@ function ConsumesSection({
     setErrorMsg(null);
     if (isDraft) {
       // A draft line is local until the whole recipe saves — that save asks for the window.
-      onAddDraftInput({ kind: recipeLineKind(line), ...lineBody(line), componentName: line.componentName });
+      onAddDraftInput(toDraftInput(line));
       closeForms();
       return;
     }
@@ -3179,15 +4589,24 @@ function ConsumesSection({
     else setErrorMsg(t(resolveErrorKey(result.code)));
   };
 
-  const submitEdit = async (inputId: string, line: RecipeLineDraft) => {
+  const submitLiveEdit = async (start: LineEditStart, line: RecipeLineDraft) => {
     if (busy || !recipeId) return;
     setErrorMsg(null);
     if ((await requestStepUp("E")) !== "ok") return;
     setBusy(true);
-    const result = await send(`/api/admin/recipes/${recipeId}/inputs/${inputId}`, lineBody(line), "PATCH");
+    const result = await send(
+      `/api/admin/recipes/${recipeId}/inputs/${start.id}`,
+      { line: lineBody(line), expected: start.expected },
+      "PATCH",
+    );
     setBusy(false);
     if (result.ok) { closeForms(); router.refresh(); }
     else setErrorMsg(t(resolveErrorKey(result.code)));
+  };
+
+  const submitDraftEdit = (key: number, line: RecipeLineDraft) => {
+    onUpdateDraftInput(key, toDraftInput(line));
+    closeForms();
   };
 
   return (
@@ -3201,11 +4620,11 @@ function ConsumesSection({
     >
       <p className="mt-1 text-xs text-co-text-muted">{t(rk("recipes.builder.consumes_subtitle"))}</p>
 
-      {/* Live rows — each one edits in place */}
+      {/* Saved rows — each one edits in place */}
       {liveInputs.length > 0 ? (
         <div className="mt-3 flex flex-col gap-2">
           {liveInputs.map((inp) =>
-            editingId === inp.id ? (
+            live && live.id === inp.id ? (
               <RecipeLineEditor
                 key={inp.id}
                 title={t(rk("recipes.row.edit_title"))}
@@ -3214,10 +4633,10 @@ function ConsumesSection({
                 skus={skus}
                 products={products}
                 measures={measures}
-                initial={lineDraftFromView(inp)}
+                initial={live.initial}
                 busy={busy}
                 errorMsg={errorMsg}
-                onSubmit={(line) => void submitEdit(inp.id, line)}
+                onSubmit={(line) => void submitLiveEdit(live, line)}
                 onCancel={closeForms}
               />
             ) : (
@@ -3225,7 +4644,7 @@ function ConsumesSection({
                 key={inp.id}
                 input={inp}
                 canEdit={canEdit && !formInProgress}
-                onEdit={() => { setAdding(false); setErrorMsg(null); setEditingId(inp.id); }}
+                onEdit={() => { setAdding(false); setErrorMsg(null); setEditing({ kind: "live", ...beginLineEdit(inp) }); }}
                 onRemove={onRemoveLive}
               />
             ),
@@ -3233,19 +4652,37 @@ function ConsumesSection({
         </div>
       ) : null}
 
-      {/* Draft rows */}
+      {/* Draft rows — edit in place too (P2-7) */}
       {draftInputs.length > 0 ? (
         <div className={`${liveInputs.length > 0 ? "mt-2" : "mt-3"} flex flex-col gap-2`}>
-          {draftInputs.map((di) => (
-            <DraftInputRow
-              key={di._key}
-              di={di}
-              skus={skus}
-              products={products}
-              measures={measures}
-              onRemove={() => onRemoveDraftInput(di._key)}
-            />
-          ))}
+          {draftInputs.map((di) =>
+            editing?.kind === "draft" && editing.key === di._key ? (
+              <RecipeLineEditor
+                key={di._key}
+                title={t(rk("recipes.row.edit_title"))}
+                submitLabel={t(rk("recipes.row.save_changes"))}
+                options={options}
+                skus={skus}
+                products={products}
+                measures={measures}
+                initial={draftLine(di)}
+                busy={busy}
+                errorMsg={errorMsg}
+                onSubmit={(line) => submitDraftEdit(di._key, line)}
+                onCancel={closeForms}
+              />
+            ) : (
+              <DraftInputRow
+                key={di._key}
+                di={di}
+                skus={skus}
+                products={products}
+                measures={measures}
+                onEdit={formInProgress ? undefined : () => { setAdding(false); setErrorMsg(null); setEditing({ kind: "draft", key: di._key }); }}
+                onRemove={() => onRemoveDraftInput(di._key)}
+              />
+            ),
+          )}
         </div>
       ) : null}
 
@@ -3269,7 +4706,7 @@ function ConsumesSection({
               onSubmit={(line) => void submitAdd(line)}
               onCancel={closeForms}
             />
-          ) : editingId === null ? (
+          ) : editing === null ? (
             <button
               type="button"
               onClick={() => { setErrorMsg(null); setAdding(true); }}
@@ -3285,12 +4722,114 @@ function ConsumesSection({
   );
 }
 
+// ── DraftInputRow — a pending draft input with Edit and Remove ───────────────
+function DraftInputRow({
+  di,
+  skus,
+  products,
+  measures,
+  onEdit,
+  onRemove,
+}: {
+  di: DraftInput;
+  skus: RecipeBuilderSku[];
+  products: RecipeBuilderProduct[];
+  measures: Map<string, MeasureUnitFactor>;
+  /** Open the in-place editor; absent while another line form is open. */
+  onEdit?: () => void;
+  onRemove: () => void;
+}) {
+  const { t } = useTranslation();
+  const [confirming, setConfirming] = useState(false);
+
+  const label = [
+    di.quantity > 0 ? String(di.quantity) : null,
+    di.unit ?? null,
+    di.componentName,
+  ].filter(Boolean).join(" ");
+
+  // oz readout for draft SKU input
+  let ozNote: string | null = null;
+  if (di.kind === "sku" && di.componentSkuId && di.unit) {
+    const sku = skus.find((s) => s.id === di.componentSkuId);
+    if (sku) {
+      const oz = ozForRecipeInput(di.quantity, di.unit, sku, measures);
+      if (oz != null) ozNote = `≈ ${oz.toFixed(1)} oz`;
+    }
+  }
+  // …and for a draft PRODUCT input, through the SAME measure-only basis the flatten
+  // uses (productInputBasis), never through whichever member happens to be primary.
+  if (di.kind === "product" && di.componentProductId && di.unit) {
+    const p = products.find((x) => x.id === di.componentProductId);
+    if (p) {
+      const oz = ozForRecipeInput(di.quantity, di.unit, productInputBasis({ productId: p.id, unitOz: p.unitOz }, null), measures);
+      if (oz != null) ozNote = `≈ ${oz.toFixed(1)} oz`;
+    }
+  }
+
+  const metaParts: string[] = [];
+  if (di.eachContainerLabel) metaParts.push(t(rk("recipes.input.container_label")) + ": " + di.eachContainerLabel);
+  if (di.portioned) metaParts.push(t(rk("recipes.input.portioned_tag")));
+  metaParts.push(
+    di.kind === "product" ? t(rk("recipes.input.product_tag"))
+      : di.kind === "sku" ? t(rk("recipes.input.sku_tag"))
+        : t(rk("recipes.input.item_tag")),
+  );
+  if (ozNote) metaParts.push(ozNote);
+  const meta = metaParts.join(" · ");
+
+  return (
+    <div className="rounded-lg border-2 border-co-gold-deep/50 bg-co-surface p-3">
+      <div className="flex items-center justify-between gap-2">
+        <div className="min-w-0">
+          <p className="text-sm font-bold text-co-text">{label}</p>
+          {meta ? <p className="text-xs text-co-text-muted">{meta}</p> : null}
+        </div>
+        <div className="flex shrink-0 gap-2">
+          {onEdit ? (
+            <button
+              type="button"
+              onClick={onEdit}
+              aria-label={t(rk("recipes.row.edit_aria"), { name: di.componentName })}
+              className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-border bg-co-surface px-3 text-xs font-bold text-co-text hover:border-co-text"
+            >
+              {t(rk("recipes.row.edit"))}
+            </button>
+          ) : null}
+          <button
+            type="button"
+            onClick={() => setConfirming((v) => !v)}
+            className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-border bg-co-surface px-3 text-xs font-bold text-co-cta-text hover:border-co-cta-text"
+          >
+            {t(rk("recipes.row.remove"))}
+          </button>
+        </div>
+      </div>
+      {confirming ? (
+        <div className="mt-3 rounded-lg border-2 border-co-cta-text bg-co-cta/10 p-3">
+          <p className="text-sm font-bold text-co-text">{t(rk("recipes.row.confirm_remove"))}</p>
+          <div className="mt-3 flex justify-end gap-2">
+            <button type="button" onClick={() => setConfirming(false)}
+              className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-border bg-co-surface px-4 text-sm font-bold text-co-text">
+              {t(rk("recipes.row.cancel"))}
+            </button>
+            <button type="button" onClick={() => { setConfirming(false); onRemove(); }}
+              className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-cta bg-co-cta px-4 text-sm font-bold uppercase tracking-[0.1em] text-co-text">
+              {t(rk("recipes.row.remove"))}
+            </button>
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 ```
 
 - [ ] **Step 6: Run the tests and tsc**
 
 Run: `npx vitest run tests/recipe-line-edit-ui.test.ts tests/step-up-tier-map.test.ts tests/ingredient-picker-ui.test.ts`
-Expected: PASS, 0 failed. RecipeBuilder still maps to `["B","E"]`.
+Expected: PASS, 0 failed. RecipeBuilder still maps to `["E"]` and `["recipe.delete"]`.
 
 Run: `npx tsc --noEmit 2>&1 | grep -v TS2307 | grep "error TS"`
 Expected: no output.
@@ -3300,7 +4839,7 @@ Expected: no output.
 ```bash
 git add components/admin/recipes/RecipeBuilder.tsx components/admin/recipes/RecipeInputRow.tsx tests/recipe-line-edit-ui.test.ts
 git commit -F - <<'EOF'
-feat(recipes): edit recipe lines in place; add ingredients with the searchable picker
+feat(recipes): saved and draft recipe lines edit in place; add ingredients with the picker
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01TiAmVpRCSW7w8NzTFk4L31
@@ -3309,11 +4848,10 @@ EOF
 
 ---
 
-## Task 11: Deep-link builders that land on the item
+## Task 13: Deep-link builders that land on the item
 
 **Files:**
-- Modify: `lib/admin/product-item-links-shared.ts`
-- Modify: `tests/product-item-links.test.ts`
+- Modify: `lib/admin/product-item-links-shared.ts`, `tests/product-item-links.test.ts`
 - Test: `tests/catalog-deep-links.test.ts`
 
 - [ ] **Step 1: Write the failing tests**
@@ -3322,8 +4860,14 @@ Create `tests/catalog-deep-links.test.ts`:
 
 ```ts
 /** Catalog Phase 1 — deep links land on the exact item, never a whole list. */
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { prepItemHref, productHref, readFocusParam, skuCatalogHref } from "@/lib/admin/product-item-links-shared";
+
+const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
+const read = (rel: string) => readFileSync(join(ROOT, ...rel.split("/")), "utf8");
 
 describe("the href builders", () => {
   it("a SKU link opens the row (?sku=) AND scrolls to it (#id)", () => {
@@ -3357,6 +4901,8 @@ describe("readFocusParam — a deep-link param as one plain id, or nothing", () 
 });
 ```
 
+(`read` is used by the source pins that Tasks 14 and 15 append to this file.)
+
 In `tests/product-item-links.test.ts`, replace:
 
 ```ts
@@ -3372,9 +4918,9 @@ with:
 - [ ] **Step 2: Run them and watch them fail**
 
 Run: `npx vitest run tests/catalog-deep-links.test.ts tests/product-item-links.test.ts`
-Expected: FAIL. `skuCatalogHref is not a function` (the imports are undefined), and `/admin/skus#bacon` does not equal `/admin/skus?sku=bacon#bacon`.
+Expected: FAIL. `skuCatalogHref is not a function`, and `/admin/skus#bacon` does not equal `/admin/skus?sku=bacon#bacon`.
 
-- [ ] **Step 3: Add the builders to `lib/admin/product-item-links-shared.ts`**
+- [ ] **Step 3: The builders in `lib/admin/product-item-links-shared.ts`**
 
 Replace:
 
@@ -3392,9 +4938,8 @@ with:
 ```ts
 /**
  * Deep links that land ON the item, never on a whole list (catalog redesign Phase 1,
- * 2026-10-15). The query param is read server-side to open/expand the row; the hash scrolls
- * to its anchor (every row carries id={its id} + scroll-mt-24). One builder per destination,
- * so every link to a SKU row is spelled once.
+ * 2026-10-15). The query param is read to open/expand the row; the hash scrolls to its anchor
+ * (every row carries id={its id} + scroll-mt-24). One builder per destination.
  */
 export function skuCatalogHref(skuId: string): string {
   const id = encodeURIComponent(skuId);
@@ -3441,29 +4986,52 @@ EOF
 
 ---
 
-## Task 12: `/admin/skus?sku=` opens, rings and scrolls to the row; `?vendor=` preselects
+## Task 14: `/admin/skus?sku=` opens, rings and scrolls — on first load AND client navigation
 
 **Files:**
-- Modify: `app/admin/skus/page.tsx`
-- Modify: `components/admin/skus/SkuCatalogClient.tsx`
+- Create: `lib/admin/sku-focus-shared.ts`
+- Modify: `app/admin/skus/page.tsx`, `components/admin/skus/SkuCatalogClient.tsx`
 - Modify: `tests/catalog-deep-links.test.ts`
 
 - [ ] **Step 1: Write the failing test**
 
-In `tests/catalog-deep-links.test.ts`, add these imports at the top, after the existing imports, and add the two helper constants right below them:
+Add this import at the top of `tests/catalog-deep-links.test.ts`, after the existing imports:
 
 ```ts
-import { readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
-
-const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
-const read = (rel: string) => readFileSync(join(ROOT, ...rel.split("/")), "utf8");
+import { SKU_FILTER_ALL, skuFocusPatch } from "@/lib/admin/sku-focus-shared";
 ```
 
-Then append this block at the end of the file:
+Append:
 
 ```ts
+describe("skuFocusPatch — how a param change patches the catalog's state (Astra r1 P2-6)", () => {
+  const vendors = new Set(["v-baldor", "v-pfg"]);
+  const none = { focusSkuId: null, vendorParam: null };
+
+  it("first load with ?sku= expands that row and clears every filter that could hide it", () => {
+    expect(skuFocusPatch(none, { focusSkuId: "A", vendorParam: null }, vendors))
+      .toEqual({ expand: "A", vendorFilter: SKU_FILTER_ALL, resetOtherFilters: true });
+  });
+
+  it("sequential client navigation ?sku=A → ?sku=B patches again; the same params patch nothing", () => {
+    const a = { focusSkuId: "A", vendorParam: null };
+    expect(skuFocusPatch(a, { focusSkuId: "B", vendorParam: null }, vendors))
+      .toEqual({ expand: "B", vendorFilter: SKU_FILTER_ALL, resetOtherFilters: true });
+    expect(skuFocusPatch(a, a, vendors)).toBeNull();
+  });
+
+  it("a retained vendor filter that would hide the target clears itself", () => {
+    expect(skuFocusPatch({ focusSkuId: null, vendorParam: "v-pfg" }, { focusSkuId: "B", vendorParam: "v-pfg" }, vendors))
+      .toEqual({ expand: "B", vendorFilter: SKU_FILTER_ALL, resetOtherFilters: true });
+  });
+
+  it("?vendor= alone preselects a KNOWN vendor and ignores an unknown one", () => {
+    expect(skuFocusPatch(none, { focusSkuId: null, vendorParam: "v-baldor" }, vendors))
+      .toEqual({ expand: null, vendorFilter: "v-baldor", resetOtherFilters: false });
+    expect(skuFocusPatch(none, { focusSkuId: null, vendorParam: "v-gone" }, vendors)).toBeNull();
+  });
+});
+
 describe("the SKU catalog honours the deep link", () => {
   it("the page reads ?sku= and ?vendor= and only focuses a SKU it actually loaded", () => {
     const page = read("app/admin/skus/page.tsx");
@@ -3474,9 +5042,10 @@ describe("the SKU catalog honours the deep link", () => {
     expect(page).toContain("initialVendorFilter={vendorParam}");
   });
 
-  it("the client expands, rings and scrolls to the focused row", () => {
+  it("the client syncs params with the during-render prev-compare (never an effect), rings and scrolls", () => {
     const client = read("components/admin/skus/SkuCatalogClient.tsx");
-    expect(client).toContain("new Set(focusSkuId ? [focusSkuId] : [])");
+    expect(client).toContain("if (seenParams.focusSkuId !== focusSkuId || seenParams.vendorParam !== initialVendorFilter)");
+    expect(client).toContain("skuFocusPatch(seenParams,");
     expect(client).toContain("scrollIntoView");
     expect(client).toContain('s.id === focusSkuId ? " rounded-lg ring-4 ring-co-gold/60" : ""');
   });
@@ -3486,9 +5055,52 @@ describe("the SKU catalog honours the deep link", () => {
 - [ ] **Step 2: Run it and watch it fail**
 
 Run: `npx vitest run tests/catalog-deep-links.test.ts`
-Expected: FAIL. The 2 new tests fail on the missing strings.
+Expected: FAIL with `Failed to resolve import "@/lib/admin/sku-focus-shared"`.
 
-- [ ] **Step 3: Read the params in `app/admin/skus/page.tsx`**
+- [ ] **Step 3: Create `lib/admin/sku-focus-shared.ts`**
+
+```ts
+/**
+ * How a ?sku= / ?vendor= deep link patches the SKU catalog's client state (catalog Phase 1,
+ * Astra r1 P2-6). Pure. The catalog component keeps filters and expansion in useState; a
+ * client-side navigation ?sku=A → ?sku=B keeps it mounted, so initialisers alone would ignore
+ * B. The component therefore re-applies this patch whenever the params change, using the
+ * during-render prev-compare pattern (AGENTS.md), never an effect.
+ *
+ * A focused SKU wins over every filter: lens, query, errand filter and vendor reset, so a
+ * retained filter can never hide the row the link names.
+ */
+export const SKU_FILTER_ALL = "__all__";
+
+export interface SkuFocusParams {
+  focusSkuId: string | null;
+  vendorParam: string | null;
+}
+
+export interface SkuFocusPatch {
+  /** Row to expand, or null. */
+  expand: string | null;
+  /** New vendor filter, or null = leave it. */
+  vendorFilter: string | null;
+  /** Reset lens, query and the errand filter. */
+  resetOtherFilters: boolean;
+}
+
+export function skuFocusPatch(
+  prev: SkuFocusParams,
+  next: SkuFocusParams,
+  vendorIds: ReadonlySet<string>,
+): SkuFocusPatch | null {
+  if (prev.focusSkuId === next.focusSkuId && prev.vendorParam === next.vendorParam) return null;
+  if (next.focusSkuId) return { expand: next.focusSkuId, vendorFilter: SKU_FILTER_ALL, resetOtherFilters: true };
+  if (next.vendorParam && vendorIds.has(next.vendorParam)) {
+    return { expand: null, vendorFilter: next.vendorParam, resetOtherFilters: false };
+  }
+  return null;
+}
+```
+
+- [ ] **Step 4: Read the params in `app/admin/skus/page.tsx`**
 
 Add after `import type { SkuDataShop } from "@/lib/sku-data-readiness";`:
 
@@ -3546,9 +5158,17 @@ with:
       />
 ```
 
-- [ ] **Step 4: Focus the row in `components/admin/skus/SkuCatalogClient.tsx`**
+- [ ] **Step 5: Focus and sync in `components/admin/skus/SkuCatalogClient.tsx`**
 
 Replace `import { useMemo, useState } from "react";` with `import { useEffect, useMemo, useState } from "react";`.
+
+Add after `import { SKU_CLASSES } from "@/lib/admin/catalog-shared";`:
+
+```tsx
+import { SKU_FILTER_ALL, skuFocusPatch } from "@/lib/admin/sku-focus-shared";
+```
+
+Replace `const FILTER_ALL = "__all__";` with `const FILTER_ALL = SKU_FILTER_ALL;`.
 
 Replace:
 
@@ -3581,7 +5201,7 @@ with:
   canManage: boolean; // GM+
   /** ?sku=<id> deep link (catalog Phase 1): the row opens, scrolls into view and is ringed. */
   focusSkuId?: string | null;
-  /** ?vendor=<id> deep link: preselect the vendor filter (ignored when a SKU is focused). */
+  /** ?vendor=<id> deep link: preselect the vendor filter (a focused SKU wins). */
   initialVendorFilter?: string | null;
 }) {
 ```
@@ -3595,11 +5215,11 @@ Replace:
 with:
 
 ```tsx
-  const [vendorFilter, setVendorFilter] = useState<string>(() =>
-    !focusSkuId && initialVendorFilter && vendors.some((v) => v.id === initialVendorFilter)
-      ? initialVendorFilter
-      : FILTER_ALL,
+  // The deep link's FIRST patch seeds the initial state; later param changes re-patch below.
+  const [initialPatch] = useState(() =>
+    skuFocusPatch({ focusSkuId: null, vendorParam: null }, { focusSkuId, vendorParam: initialVendorFilter }, new Set(vendors.map((v) => v.id))),
   );
+  const [vendorFilter, setVendorFilter] = useState<string>(initialPatch?.vendorFilter ?? FILTER_ALL);
 ```
 
 Replace:
@@ -3611,13 +5231,35 @@ Replace:
 with:
 
 ```tsx
-  const [expanded, setExpanded] = useState<Set<string>>(() => new Set(focusSkuId ? [focusSkuId] : []));
-  // The hash already scrolls on a full load; this covers a client-side Link navigation too.
+  const [expanded, setExpanded] = useState<Set<string>>(() => new Set(initialPatch?.expand ? [initialPatch.expand] : []));
+
+  // P2-6: a client-side navigation ?sku=A → ?sku=B keeps this component mounted, so the params
+  // are re-applied with the during-render prev-compare pattern (AGENTS.md), never an effect.
+  const vendorIds = useMemo(() => new Set(vendors.map((v) => v.id)), [vendors]);
+  const [seenParams, setSeenParams] = useState({ focusSkuId, vendorParam: initialVendorFilter });
+  if (seenParams.focusSkuId !== focusSkuId || seenParams.vendorParam !== initialVendorFilter) {
+    const patch = skuFocusPatch(seenParams, { focusSkuId, vendorParam: initialVendorFilter }, vendorIds);
+    setSeenParams({ focusSkuId, vendorParam: initialVendorFilter });
+    if (patch) {
+      if (patch.vendorFilter !== null) setVendorFilter(patch.vendorFilter);
+      if (patch.resetOtherFilters) {
+        setLens("all");
+        setQuery("");
+        setNeedsErrand(false);
+      }
+      const target = patch.expand;
+      if (target) setExpanded((prev) => new Set(prev).add(target));
+    }
+  }
+
+  // The hash already scrolls on a full load; this covers a client-side navigation (A → B) too.
   useEffect(() => {
     if (!focusSkuId) return;
     document.getElementById(focusSkuId)?.scrollIntoView({ block: "start" });
   }, [focusSkuId]);
 ```
+
+(`lens`, `query` and `needsErrand` are declared above `expanded` in this component, so their setters exist by this point.)
 
 In `renderRow`, replace:
 
@@ -3631,7 +5273,7 @@ with:
         "scroll-mt-24 " + (s.active ? "" : "opacity-60") + (s.id === focusSkuId ? " rounded-lg ring-4 ring-co-gold/60" : "")
 ```
 
-- [ ] **Step 5: Run the test and tsc**
+- [ ] **Step 6: Run the test and tsc**
 
 Run: `npx vitest run tests/catalog-deep-links.test.ts`
 Expected: PASS, 0 failed.
@@ -3639,12 +5281,12 @@ Expected: PASS, 0 failed.
 Run: `npx tsc --noEmit 2>&1 | grep -v TS2307 | grep "error TS"`
 Expected: no output.
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 7: Commit**
 
 ```bash
-git add app/admin/skus/page.tsx components/admin/skus/SkuCatalogClient.tsx tests/catalog-deep-links.test.ts
+git add lib/admin/sku-focus-shared.ts app/admin/skus/page.tsx components/admin/skus/SkuCatalogClient.tsx tests/catalog-deep-links.test.ts
 git commit -F - <<'EOF'
-feat(skus): ?sku= opens, rings and scrolls to the row; ?vendor= preselects the filter
+feat(skus): ?sku= opens, rings and scrolls on load and client navigation; ?vendor= preselects
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01TiAmVpRCSW7w8NzTFk4L31
@@ -3653,26 +5295,23 @@ EOF
 
 ---
 
-## Task 13: Rewire the links that landed on lists
+## Task 15: Rewire the links that landed on lists
 
 Inventory (verified on `main`), and what this task does with each:
 
 | Link | Today | After |
 |---|---|---|
 | Items catalog → the item's SKUs (`CatalogClient.tsx:376`) | `/admin/skus` with the names joined | One link per SKU → `skuCatalogHref(id)` |
-| Vendor import "needs a person" (`lib/vendor-import.ts:212`) | `/admin/skus` | `skuCatalogHref(match.sku_id)`. The no-match fallback stays the vendor's order guide. |
-| Vendor import table, needs-person row (`VendorImportPanel.tsx:131`) | `/admin/skus?vendor=…` (the param was never read) | The matched SKU's row; with no match, `?vendor=`, which Task 12 now honours |
-| Registry relationships (items/products pages) | `/admin/skus#id` | `?sku=` + `#id` (Task 11, through `registryLinkHref`) |
-| Costing board drawer: blocking SKUs, retired products, inconsistent/unweighed prep items | plain names | links to the SKU row / product / prep item |
-| **Not done here:** the ordering walk's "check par" advisory | — | Deferred to Phase 2. The walk is a level-4+ 6 AM surface with no actor level in props. The par lives inside the SKU editor (Tier A, level 6+), and the spec's real destination is Phase 2's item page "Ordering" section. |
-| **Not done here:** Items catalog → catering packages | `/admin/catering/packages` | Package rows have no anchors (catering, out of scope). |
-| Readiness errands (SKU data lane, recipe readiness banner) | text only, already on the item's own row/page | No link needed. |
+| Vendor import "needs a person" (`lib/vendor-import.ts:212`) | `/admin/skus` | `skuCatalogHref(match.sku_id)`. The no-match fallback stays the order guide. |
+| Vendor import table, needs-person row (`VendorImportPanel.tsx:131`) | `/admin/skus?vendor=…` (never read) | The matched SKU's row; with no match, `?vendor=` (Task 14 honours it) |
+| Registry relationships (items/products pages) | `/admin/skus#id` | `?sku=` + `#id` (Task 13) |
+| Costing drawer: blocking SKUs, retired products, inconsistent/unweighed prep items | plain names | links to the fixing page |
+| **Deferred:** ordering walk "check par" | — | Phase 2 item page "Ordering" section. The walk is a level-4+ surface with no actor level in props, and the par edit lives in the admin SKU editor. |
+| **Deferred:** items catalog → catering packages | `/admin/catering/packages` | Package rows have no anchors (catering, out of scope). |
+| Readiness errands | text on the item's own row/page | No link needed. |
 
 **Files:**
-- Modify: `lib/admin/catalog-shared.ts`, `lib/admin/catalog.ts`, `components/admin/catalog/CatalogClient.tsx`
-- Modify: `lib/vendor-import.ts`, `components/admin/vendors/VendorImportPanel.tsx`
-- Modify: `components/admin/menu-costing/MenuCostingClient.tsx`
-- Modify: `tests/catalog-deep-links.test.ts`
+- Modify: `lib/admin/catalog-shared.ts`, `lib/admin/catalog.ts`, `components/admin/catalog/CatalogClient.tsx`, `lib/vendor-import.ts`, `components/admin/vendors/VendorImportPanel.tsx`, `components/admin/menu-costing/MenuCostingClient.tsx`, `tests/catalog-deep-links.test.ts`
 
 - [ ] **Step 1: Write the failing test**
 
@@ -3708,46 +5347,44 @@ Expected: FAIL. The 3 new tests fail.
 
 - [ ] **Step 3: SKU edges carry ids**
 
-In `lib/admin/catalog-shared.ts`, replace:
+`lib/admin/catalog-shared.ts`: replace
 
 ```ts
   /** items: leaf SKU names (display-capped). */
   skuNames: string[];
 ```
 
-with:
+with
 
 ```ts
   /** items: leaf SKUs (display-capped) — each links to its own row in /admin/skus (catalog Phase 1). */
   skus: CatalogEdgeRef[];
 ```
 
-In `lib/admin/catalog.ts`, replace:
+`lib/admin/catalog.ts` (`CatalogEdgeRef` is already imported there): replace
 
 ```ts
     const skuNames = skuKeys.slice(0, SKU_NAME_CAP).map((k) => skuNameById.get(k) ?? "—");
 ```
 
-with:
+with
 
 ```ts
     const skus: CatalogEdgeRef[] = skuKeys.slice(0, SKU_NAME_CAP).map((k) => ({ id: k, name: skuNameById.get(k) ?? "—" }));
 ```
 
-Then make three replacements in the same file:
+and make the three replacements:
 - `        producedBy, build: null, skuNames, componentItems: [],` → `        producedBy, build: null, skus, componentItems: [],`
 - `        producedBy: [], build: buildRef, skuNames: [], componentItems,` → `        producedBy: [], build: buildRef, skus: [], componentItems,`
 - `        producedBy: [], build: null, skuNames: [], componentItems: [],` → `        producedBy: [], build: null, skus: [], componentItems: [],`
 
-(`CatalogEdgeRef` is already imported in `lib/admin/catalog.ts`; the `packageRefs` and `edgeRefs` helpers return it.)
-
-In `components/admin/catalog/CatalogClient.tsx`, add after `import { ITEM_TYPES, deriveRoleBadges } from "@/lib/admin/catalog-shared";`:
+`components/admin/catalog/CatalogClient.tsx`: add after `import { ITEM_TYPES, deriveRoleBadges } from "@/lib/admin/catalog-shared";`
 
 ```tsx
 import { skuCatalogHref } from "@/lib/admin/product-item-links-shared";
 ```
 
-Replace:
+and replace
 
 ```tsx
           {e.kind === "item" && (
@@ -3759,7 +5396,7 @@ Replace:
           )}
 ```
 
-with:
+with
 
 ```tsx
           {e.kind === "item" && (
@@ -3777,45 +5414,45 @@ with:
 
 - [ ] **Step 4: Vendor import**
 
-In `lib/vendor-import.ts`, add after `import { buildPackChain, chainRootLabel, type PackChainLevel } from "@/lib/pack-chain-shared";`:
+`lib/vendor-import.ts`: add after `import { buildPackChain, chainRootLabel, type PackChainLevel } from "@/lib/pack-chain-shared";`
 
 ```ts
 import { skuCatalogHref } from "@/lib/admin/product-item-links-shared";
 ```
 
-Replace:
+replace
 
 ```ts
       href: o.match.sku_id ? "/admin/skus" : `/admin/vendors/${vendorId}#order-guide-${vendorId}` });
 ```
 
-with:
+with
 
 ```ts
       href: o.match.sku_id ? skuCatalogHref(o.match.sku_id) : `/admin/vendors/${vendorId}#order-guide-${vendorId}` });
 ```
 
-In `components/admin/vendors/VendorImportPanel.tsx`, add after `import { resolveErrorKey } from "./shared";`:
+`components/admin/vendors/VendorImportPanel.tsx`: add after `import { resolveErrorKey } from "./shared";`
 
 ```tsx
 import { skuCatalogHref } from "@/lib/admin/product-item-links-shared";
 ```
 
-Replace:
+and replace
 
 ```tsx
 href={`/admin/skus?vendor=${encodeURIComponent(vendorId)}`}
 ```
 
-with:
+with
 
 ```tsx
 href={o.match.sku_id ? skuCatalogHref(o.match.sku_id) : `/admin/skus?vendor=${encodeURIComponent(vendorId)}`}
 ```
 
-- [ ] **Step 5: Costing drawer**
+- [ ] **Step 5: Costing drawer (`components/admin/menu-costing/MenuCostingClient.tsx`)**
 
-In `components/admin/menu-costing/MenuCostingClient.tsx`, add after `import { SummaryRow } from "@/components/ui/SummaryRow";`:
+Add after `import { SummaryRow } from "@/components/ui/SummaryRow";`:
 
 ```tsx
 import { prepItemHref, productHref, skuCatalogHref } from "@/lib/admin/product-item-links-shared";
@@ -3828,7 +5465,7 @@ Add directly above `/** Group render order — mirrors the sort ranking in menu-
 const drawerLinkCls = "inline-flex min-h-[44px] items-center underline decoration-2 underline-offset-2 hover:text-co-gold-text";
 ```
 
-Replace the `nameList` helper:
+Replace
 
 ```tsx
   const nameList = (
@@ -3839,7 +5476,7 @@ Replace the `nameList` helper:
   ) => (
 ```
 
-with:
+with
 
 ```tsx
   const nameList = (
@@ -3851,7 +5488,7 @@ with:
   ) => (
 ```
 
-and inside it replace:
+and inside it replace
 
 ```tsx
             <li key={id} className="text-xs font-medium text-co-text">
@@ -3859,7 +5496,7 @@ and inside it replace:
             </li>
 ```
 
-with:
+with
 
 ```tsx
             <li key={id} className="text-xs font-medium text-co-text">
@@ -3869,26 +5506,16 @@ with:
             </li>
 ```
 
-Replace:
+Replace `    nameList(ids, labelKey, itemNames, "admin.menu_costing.drawer.unknown_item");` with `    nameList(ids, labelKey, itemNames, "admin.menu_costing.drawer.unknown_item", prepItemHref);`.
 
-```tsx
-    nameList(ids, labelKey, itemNames, "admin.menu_costing.drawer.unknown_item");
-```
-
-with:
-
-```tsx
-    nameList(ids, labelKey, itemNames, "admin.menu_costing.drawer.unknown_item", prepItemHref);
-```
-
-Replace:
+Replace
 
 ```tsx
             "admin.menu_costing.drawer.unknown_product",
           )}
 ```
 
-with:
+with
 
 ```tsx
             "admin.menu_costing.drawer.unknown_product",
@@ -3896,7 +5523,7 @@ with:
           )}
 ```
 
-Replace:
+Replace
 
 ```tsx
               <li key={id} className="text-xs font-medium text-co-text">
@@ -3904,7 +5531,7 @@ Replace:
               </li>
 ```
 
-with:
+with
 
 ```tsx
               <li key={id} className="text-xs font-medium text-co-text">
@@ -3936,16 +5563,14 @@ EOF
 
 ---
 
-## Task 14: The avg-weight dead end on chained SKUs
+## Task 16: The avg-weight dead end on chained SKUs
 
 **Files:**
-- Modify: `lib/admin/catalog-shared.ts` (add `chainNeedsAvgOzPerEach`)
-- Modify: `components/admin/skus/SkuBuilder.tsx`
-- Modify: `tests/sku-builder-shared.test.ts`
+- Modify: `lib/admin/catalog-shared.ts` (`chainNeedsAvgOzPerEach`), `components/admin/skus/SkuBuilder.tsx`, `tests/sku-builder-shared.test.ts`
 
 - [ ] **Step 1: Write the failing test**
 
-In `tests/sku-builder-shared.test.ts`, add `chainNeedsAvgOzPerEach,` to the `@/lib/admin/catalog-shared` import list, after `defaultWizardLevelLabel,`. Append at the end of the file:
+In `tests/sku-builder-shared.test.ts`, add `chainNeedsAvgOzPerEach,` to the `@/lib/admin/catalog-shared` import list after `defaultWizardLevelLabel,`. Append:
 
 ```ts
 // ── chainNeedsAvgOzPerEach (catalog Phase 1 — the avg-weight dead end) ─────────
@@ -3993,18 +5618,15 @@ describe("SkuBuilder offers the avg field where leaf_needs_avg can occur (source
 Run: `npx vitest run tests/sku-builder-shared.test.ts`
 Expected: FAIL. `chainNeedsAvgOzPerEach is not a function`, and the source pin fails.
 
-- [ ] **Step 3: Add `chainNeedsAvgOzPerEach` to `lib/admin/catalog-shared.ts`**
-
-Add directly after the `StarterChainLevel` interface:
+- [ ] **Step 3: Add `chainNeedsAvgOzPerEach` to `lib/admin/catalog-shared.ts`** (directly after the `StarterChainLevel` interface)
 
 ```ts
 /**
  * Does this chain need the SKU's avg oz per each? (catalog Phase 1 — the avg-weight dead
  * end.) True exactly when the server's class-aware leaf law (lib/admin/pack-chain.ts) would
- * throw `leaf_needs_avg` for a missing avg: a RAW SKU whose chain ends in a REGISTERED
- * measure that is not a weight (count or volume). Non-raw classes are checked for structure
- * only, and an unregistered unit is the server's `unknown_measure` — a different errand.
- * Takes any level shape with `containsMeasureUnit` (editor payload rows or saved levels).
+ * throw `leaf_needs_avg` for a missing avg: a RAW SKU whose chain ends in a REGISTERED measure
+ * that is not a weight (count or volume). Non-raw classes are checked for structure only, and
+ * an unregistered unit is the server's `unknown_measure` — a different errand.
  */
 export function chainNeedsAvgOzPerEach(
   levels: ReadonlyArray<{ containsMeasureUnit: string | null }>,
@@ -4061,7 +5683,7 @@ Directly after the `displayChain` `useMemo` (the statement ending `[initialChain
     chainNeedsAvgOzPerEach(chainOpen ? editorRowsToPayload(chainRows) : displayChain, dimensionByLabel, skuClass);
 ```
 
-Replace the whole `saveChain`:
+Replace:
 
 ```tsx
   const saveChain = async () => {
@@ -4090,8 +5712,6 @@ with:
     // With an avg, the parent PATCHes it onto the SKU BEFORE the chain save (one step-up).
     const ok = await onSaveChain(payload, needsAvg ? avg : undefined);
 ```
-
-(The rest of `saveChain`, from `setChainBusy(false);` onward, is unchanged.)
 
 In the chained branch, replace:
 
@@ -4155,7 +5775,7 @@ EOF
 
 ---
 
-## Task 15: Delete the dead `SkuPackChainPanel`
+## Task 17: Delete the dead `SkuPackChainPanel`
 
 **Files:**
 - Delete: `components/admin/skus/SkuPackChainPanel.tsx`
@@ -4190,7 +5810,7 @@ describe("dead code stays dead", () => {
 - [ ] **Step 3: Run it and watch it fail**
 
 Run: `npx vitest run tests/dead-code-removed.test.ts`
-Expected: FAIL. The assertion expected `true` to be `false`.
+Expected: FAIL with `expected true to be false`.
 
 - [ ] **Step 4: Delete the file and its tier-map entry**
 
@@ -4198,11 +5818,7 @@ Expected: FAIL. The assertion expected `true` to be `false`.
 cd /c/Users/conta/co-ops-guides && git rm components/admin/skus/SkuPackChainPanel.tsx
 ```
 
-In `tests/step-up-tier-map.test.ts` `CLIENT_TIER_MAP`, delete the line:
-
-```ts
-  "components/admin/skus/SkuPackChainPanel.tsx": ["A"],
-```
+In `tests/step-up-tier-map.test.ts` `CLIENT_TIER_MAP`, delete the line `  "components/admin/skus/SkuPackChainPanel.tsx": ["A"],`.
 
 - [ ] **Step 5: Run the tests and tsc**
 
@@ -4226,56 +5842,199 @@ EOF
 
 ---
 
-## Task 16: Full verification and the sim walk
+## Task 18: Manager guide — one password per 15 minutes, edit a line, the ingredient search (en + es)
+
+Photos are deferred. These steps carry "(not shown)" per the voice sheet, and all screens changed in Phases 1–5 get one retake pass after Phase 5 (spec §7 as amended in Task 19).
+
+**Files:**
+- Modify: `docs/guides/manager-guide.md`
+- Test (existing): `tests/guides-reading-level.test.ts`, `tests/guides-v2-shape.test.ts`, `tests/guides-markdown.test.ts`
+
+- [ ] **Step 1: Run the guide tests first (the baseline)**
+
+Run: `npx vitest run tests/guides-reading-level.test.ts tests/guides-v2-shape.test.ts tests/guides-markdown.test.ts`
+Expected: PASS. Record the result: the new text must keep it green.
+
+- [ ] **Step 2: Add the English section**
+
+In `docs/guides/manager-guide.md`, insert this block directly **before** the line `### En español` that follows the `### The admin pages` section (the `## Manager tools` Spanish block):
+
+```markdown
+### Recipes and the catalog
+
+GMs and up change recipes and SKUs.
+
+#### 1. One password for 15 minutes (not shown)
+
+**What to do** — The first time you save a change on an admin page, the app asks **Confirm your password**. Type it once. Then keep working.
+
+**Worth knowing**
+
+- After your password, editing stays unlocked for 15 minutes on this phone or computer. Saves in that time do not ask again.
+- The 15 minutes count from your password. Saving does not add time. When they run out, the app asks again.
+- Logging out ends it right away.
+- Three things ask every time: retire a product, delete a recipe, and deactivate a SKU.
+- If the app says your confirmation expired, tap save again and type your password.
+
+#### 2. Change a recipe line (not shown)
+
+**What to do** — Open the recipe. In **Consumes (inputs)**, tap **Edit** on the line. Change the amount, the unit or the ingredient. Tap **Save changes**.
+
+**Worth knowing**
+
+- **Save changes** stays gray until you change something.
+- Lines on a new recipe you have not saved yet have **Edit** too.
+- If someone else changed the same line first, the app tells you. Reload the page, then try again.
+- A product line takes a measure unit only, like oz, lb or each. A vendor's pack name means a different thing at each vendor.
+
+#### 3. Find an ingredient (not shown)
+
+**What to do** — Tap **+ Add ingredient**. Type part of the name, or the vendor's name. Tap the one you want.
+
+**Worth knowing**
+
+- Each row shows the name, the vendor and the kind: SKU, prep item or product.
+- On a computer, use the arrow keys and Enter.
+```
+
+- [ ] **Step 3: Add the Spanish section**
+
+Append to the end of `docs/guides/manager-guide.md` (the file ends with the `#### Las páginas de Admin` paragraph of the same `### En español` block), after a blank line:
+
+```markdown
+#### Recetas y el catálogo
+
+Los gerentes generales y roles más altos cambian recetas y SKUs.
+
+1. **Una contraseña por 15 minutos.** La primera vez que guardas un cambio en una página de Admin, la app pide **Confirma tu contraseña**. Después, editar queda desbloqueado por 15 minutos en este teléfono o computadora; en ese tiempo no la vuelve a pedir. Los 15 minutos cuentan desde tu contraseña: guardar no suma tiempo. Cuando se acaban, la app la pide otra vez. Salir de la app los termina. Tres cosas la piden siempre: retirar un producto, borrar una receta y desactivar un SKU. Si la app dice que tu confirmación venció, toca guardar otra vez y escribe tu contraseña.
+2. **Cambia una línea de la receta.** Abre la receta. En **Consume (entradas)**, toca **Editar** en la línea. Cambia la cantidad, la unidad o el ingrediente y toca **Guardar cambios**. El botón sigue gris hasta que cambias algo. Las líneas de una receta nueva que aún no guardas también tienen **Editar**. Si alguien más cambió esa línea antes, la app te avisa: recarga la página y vuelve a intentarlo. Una línea de producto solo acepta una unidad de medida, como oz, lb o each.
+3. **Busca un ingrediente.** Toca **+ Agregar ingrediente**. Escribe parte del nombre o el nombre del proveedor y toca el que quieres. Cada fila muestra el nombre, el proveedor y el tipo: SKU, preparación o producto.
+```
+
+- [ ] **Step 4: Run the guide tests**
+
+Run: `npx vitest run tests/guides-reading-level.test.ts tests/guides-v2-shape.test.ts tests/guides-markdown.test.ts`
+Expected: PASS, 0 failed. If "Manager tools" is reported above grade 6, shorten the named longest sentences. Never delete facts to pass.
+
+- [ ] **Step 5: Commit** (docs-only, but it ships in the same PR as the code it describes)
+
+```bash
+git add docs/guides/manager-guide.md
+git commit -F - <<'EOF'
+docs(guides): manager guide — 15-minute edit password, edit a recipe line, ingredient search (en + es)
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01TiAmVpRCSW7w8NzTFk4L31
+EOF
+```
+
+---
+
+## Task 19: Spec amendments — photos in one pass after Phase 5; the product-line unit rule
+
+Two one-line amendments so the spec and this plan agree:
+- Spec §7 says every phase ships "guide text + photo updates", but the plan defers photos (Task 18; Astra r2 #5).
+- Spec §1 "Keep" says product lines are measured "only in oz / each", but AGENTS.md and the code say any ACTIVE measure-registry unit (Astra r3 #3).
+
+This is a docs-only change and needs no unit test; the checks are the greps below.
+
+**Files:**
+- Modify: `docs/superpowers/specs/2026-10-15-catalog-redesign-design.md` (§1 "Keep" line; §7 "Each phase:" line)
+
+- [ ] **Step 1: Confirm the current wording**
+
+Run: `grep -n "then guide text + photo updates for the changed screens." docs/superpowers/specs/2026-10-15-catalog-redesign-design.md`
+Expected: one line (`101:Each phase: …`).
+
+Run: `grep -n "product lines measured only in oz / each;" docs/superpowers/specs/2026-10-15-catalog-redesign-design.md`
+Expected: one line (`22:Append-only price history; …`).
+
+- [ ] **Step 2: Amend it**
+
+Replace `then guide text + photo updates for the changed screens.` with:
+
+```markdown
+then guide TEXT updates for the changed screens every phase; photo retakes happen in ONE pass after Phase 5, because the screens change every phase (amended 2026-10-15, Phase 1 plan review).
+```
+
+In §1 "Keep", replace `product lines measured only in oz / each;` with:
+
+```markdown
+product lines measured only in an ACTIVE measure-registry unit of any dimension — weight, volume or count, never a vendor's pack label (AGENTS.md "measure-registry unit"; amended 2026-10-15);
+```
+
+- [ ] **Step 3: Check them**
+
+Run: `grep -c "photo retakes happen in ONE pass after Phase 5" docs/superpowers/specs/2026-10-15-catalog-redesign-design.md`
+Expected: `1`
+
+Run: `grep -c "only in oz / each" docs/superpowers/specs/2026-10-15-catalog-redesign-design.md`
+Expected: `0`
+
+- [ ] **Step 4: Commit**
+
+```bash
+git add docs/superpowers/specs/2026-10-15-catalog-redesign-design.md
+git commit -F - <<'EOF'
+docs(spec): catalog redesign — photo retakes once after Phase 5; product lines in any measure-registry unit
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01TiAmVpRCSW7w8NzTFk4L31
+EOF
+```
+
+---
+
+## Task 20: Full verification, the sim walk, and the PR
 
 - [ ] **Step 1: Run the whole unit spine**
 
 Run: `npx vitest run`
-Expected: every file passes, 0 failed. The count is the previous total plus the 9 new files.
+Expected: every file passes, 0 failed. The count is the previous total plus the 12 new test files.
 
 - [ ] **Step 2: Typecheck**
 
 Run: `npx tsc --noEmit`
 Expected: exactly the 6 known pre-existing `TS2307` errors (Leaflet module typings) and nothing else.
 
-- [ ] **Step 3: Production build** (CI runs it; `useSearchParams`/Suspense-class errors only show here)
+- [ ] **Step 3: Production build**
 
 Run: `npx next build`
-Expected: `✓ Compiled successfully` and the route table lists `/api/admin/recipes/[id]/inputs/[inputId]`.
+Expected: `✓ Compiled successfully`, and the route table lists `/api/admin/recipes/[id]/inputs/[inputId]`.
 
-- [ ] **Step 4: Manual sim checklist** (http://localhost:3100, started with `node scripts/sim/dev-sim.mjs`; never prod)
+- [ ] **Step 4: Apply 0257 to the SIM** (MCP, sim project only; never prod from here)
 
-Sign in as **Marcus Webb (GM)**, PIN and password from `scripts/sim/personas.md`. Use a phone-width window (390 px) for at least items 3, 5 and 7, then repeat 3 at desktop width.
+Run the PRE-FLIGHT queries from the migration header, apply the migration, then run the VERIFY queries. Expected values are in the header. Do not stamp the file yet; the stamp lands with the prod apply.
 
-1. **One unlock, 15 minutes.** Open `/admin/recipes`, then a recipe. Change the batch yield and tab out: the password prompt appears **once**. Change the name, add a line, remove a line, and edit a line: **no further prompts**. In Supabase (sim), `select action, metadata from audit_log where action = 'auth_step_up_success' order by occurred_at desc limit 1` shows `{"edit_window_seconds": 900}`.
-2. **The server is the authority.** Still on the recipe, run in the sim SQL editor: `update sessions set step_up_unlocked_at = now() - interval '16 minutes' where user_id = '<Marcus id>' and revoked_at is null`. Edit a line: the save fails with "Your confirmation expired — confirm your password again." Tap Save again: the password prompt appears (the client forgot its unlock), and after the password the save lands.
-3. **Searchable picker.** Tap "+ Add ingredient" and type `ham`. Rows read `name · vendor · kind`, each at least 44 px tall, and the page does not scroll sideways at 390 px. Arrow keys + Enter choose at desktop width; a tap chooses on the phone. Type a vendor name: only that vendor's SKUs remain. Type an accent-free spelling of an accented name: it still matches.
-4. **Edit a line in place.** On a live line tap **Edit**. The picker shows the current ingredient and Save is disabled until something changes. Change qty → Save: the row updates in place, its position unchanged. Swap the ingredient to a product: the unit list shows registry units only. Swap to a prep item: the unit becomes free text and Portioned disappears. Check `audit_log` for `recipe_input.update` with `before`, `after`, `changed_fields` and `destructive = true`.
-5. **Destructive acts still prompt.** Inside the 15 minutes, as a level-8+ sim account (MoO/owner; never a prod login): **Delete recipe** prompts for the password every time. On `/admin/products`, **Retire** prompts every time. As Marcus, creating a SKU (`/admin/skus` → Add SKU) and recording weights (`/admin/weights`) do **not** prompt again inside the window.
-6. **Leave admin, window closes.** Go to `/dashboard`, then back to a recipe. Editing prompts again (the unlock is cleared on leaving the step-up surface, by design).
-7. **Deep links land on the item.**
-   - `/admin/items` (catalog view): expand an item and tap one of its SKUs. `/admin/skus` opens with that row expanded, ringed in gold and scrolled into view.
-   - On a vendor's import panel with a "needs a person" row, the SKUs link opens the matched SKU row.
-   - On `/admin/menu-costing`, expand a row with blocking SKUs: each name is a link to its SKU row, and a retired-product name opens that product.
-   - `/admin/skus?vendor=<a vendor id>` opens with that vendor preselected.
-8. **Avg-weight dead end.** Pick a raw SKU whose chain ends in `each` with no avg (or make one on the sim). Tap Edit. Under the chain, "Avg oz per each" is shown. Open the chain editor and Save with the field empty: "This chain ends in a count/volume unit…". Enter `0`: "Average oz per each must be a positive number." Enter `4`: the chain saves, and the SKU's "Unverified" badge clears after refresh.
-9. **Spanish.** Switch Marcus to `es` and repeat items 3 and 4 briefly. Every new string reads in tú Spanish ("Escribe para buscar…", "Editar", "Guardar cambios").
+- [ ] **Step 5: Manual sim checklist** (http://localhost:3100, `node scripts/sim/dev-sim.mjs`; never prod)
 
-- [ ] **Step 5: Push and open the PR — stop at CI green**
+Sign in as **Marcus Webb (GM)** from `scripts/sim/personas.md`. Use a 390 px window for items 3, 5 and 8, then repeat 3 at desktop width.
+
+1. **One unlock, 15 minutes, from any admin modal.** On `/admin/items` change an item's type (its own password modal), then open a recipe and change the batch yield: **no second prompt**. Separately, starting from a recipe: change the batch yield and the password prompt appears **once**. Change the name, add a line, edit a line, remove a line, open `/admin/skus`, edit a SKU, record a price, change a shop par in the overlay, and edit a product's unit weight: **no further prompts**. In sim SQL, `select metadata from audit_log where action = 'auth_step_up_success' order by occurred_at desc limit 1` → `{"edit_window_seconds": 900, "grant": null}`.
+2. **Destructive acts ask every time.** Inside the window: **Delete recipe** (as a level-8+ sim account), **Retire** a product and **Deactivate** a SKU each prompt for the password **every time**, including twice in a row. Each latest `auth_step_up_success` row carries `grant` with that action and target, and `select action, consumed_at from step_up_grants order by created_at desc limit 3` shows them consumed. Reactivating the SKU and restoring the product do **not** prompt inside the window.
+3. **Searchable picker.** Tap "+ Add ingredient" and type `ham`. Rows read `name · vendor · kind`, each at least 44 px, with no sideways scroll at 390 px. Arrow down past the visible rows: the active row stays in view. Enter chooses (desktop); a tap chooses (phone). A vendor's name filters to its SKUs, and an accent-free spelling matches an accented name.
+4. **Edit in place, both kinds.** On a saved line tap **Edit**. Save stays disabled until something changes. Change qty → Save: the row updates in place. Swap to a product: registry units only. Swap to a prep item: free-text unit and no Portioned. In `/admin/recipes/new`, add two lines, tap **Edit** on one, change it: it updates in place, keeps its position, and no password is asked until **Save**.
+5. **Concurrent edit, including a refresh mid-edit.** Open the same recipe in two tabs. In tab 2 tap **Edit** on a line. In tab 1 swap that line's ingredient and save, then let tab 2 refresh (save any other line there). Save tab 2's edit: "Someone else changed this line first…", and the tab-1 value stays in the DB. In `audit_log`, the `recipe_input.update` row has `before` = the value tab 1 saw, `after` = what it wrote, and `destructive = true`.
+6. **A fixed 15-minute window.** Unlock by saving a recipe edit and note the time. Then open `/dashboard`, save a count on `/operations/counts`, switch language in the user menu and back, and return to the recipe: editing does **not** ask again. Keep saving every few minutes: the prompt still comes back 15 minutes after the **password**, not after the last save. In sim SQL, push `catalog_edit_unlocked_at` back 16 minutes and edit: "Your confirmation expired…". Tap Save again: the prompt appears and the save lands. Log out and back in: the next edit asks.
+7. **The server is the authority (curl).** With the browser's cookie and a fresh window, run `curl -X POST …/api/admin/products/<id>/active -d '{"active":false}'`: **403 `step_up_grant_required`**.
+8. **Deep links.** From `/admin/items`, tap one of an item's SKUs: `/admin/skus` opens with the row expanded, ringed and in view. Without reloading, open another SKU's link from the costing drawer: the new row opens, rings and scrolls, even if a vendor filter or search was set before. A vendor import's "needs a person" SKUs link opens the matched row. `/admin/skus?vendor=<id>` preselects the vendor.
+9. **Avg-weight dead end.** On a raw SKU whose chain ends in `each` with no avg, tap Edit: "Avg oz per each" shows under the chain. Saving the chain empty, then with `0`, gives the two errors; with `4` it saves and the "Unverified" badge clears after refresh.
+10. **Spanish.** Switch Marcus to `es` and repeat items 3 and 4 briefly. Every new string is tú Spanish. `/training` shows the new "Recetas y el catálogo" block.
+
+- [ ] **Step 6: Push and open the PR — stop at CI green**
 
 ```bash
 cd /c/Users/conta/co-ops-guides && git push -u origin feat/catalog-phase1-quick-fixes
-gh pr create --title "Catalog redesign Phase 1: edit window, recipe line edit, searchable picker, deep links, avg-weight fix" --body-file - <<'EOF'
-Phase 1 of docs/superpowers/specs/2026-10-15-catalog-redesign-design.md (plan: docs/superpowers/plans/2026-10-15-catalog-phase1-quick-fixes.md).
+gh pr create --title "Catalog redesign Phase 1: edit window, one-shot grants, recipe line edit, searchable picker, deep links, avg-weight fix" --body-file - <<'EOF'
+Phase 1 of docs/superpowers/specs/2026-10-15-catalog-redesign-design.md (plan: docs/superpowers/plans/2026-10-15-catalog-phase1-quick-fixes.md, revised after Astra r1 and r2). Includes the spec amendments (§7 photos once after Phase 5; §1 product-line unit rule).
 
-- Step-up Tier E: one password unlocks catalog/recipe editing for 15 minutes (fixed window, server-checked on the existing session columns, no migration). Retire product + delete recipe still prompt every time (Tier B).
-- Recipe lines editable in place (PATCH /api/admin/recipes/[id]/inputs/[inputId]); same validator as add (plus an item-line cycle guard on both); audited recipe_input.update (now destructive) with the full before/after line.
-- Searchable ingredient picker (SKUs, prep items, products; name · vendor · kind; keyboard + touch; 44px rows).
-- Deep links land on the exact SKU/product/prep item (?sku= opens + scrolls); ?vendor= now works.
-- Avg oz per each settable on chained SKUs (leaf_needs_avg dead end).
-- SkuPackChainPanel deleted.
-
-Follow-ups (not in this PR): guide text + photos for the changed screens (spec §7); the ordering walk's "check par" link (Phase 2 item page).
+- Migration 0257 (authored, NOT applied — apply sim → prod BEFORE merge): sessions.catalog_edit_unlocked_at + step_up_grants.
+- Tier E: one admin password unlocks every ordinary catalog/recipe edit for a FIXED 15 minutes, on its own clock (never extended, never cleared by navigation; ends at expiry or with the session), checked server-side on every write. Former Tier A catalog edits moved in.
+- Retire product / delete recipe / deactivate SKU: one-shot, action-bound grants (replay, wrong target, expiry refused).
+- Recipe lines editable in place — saved (compare-and-set PATCH, 409 line_changed) and draft; same validator as add, now with the item cycle guard on both; recipe_input.update destructive.
+- Searchable ingredient picker (name · vendor · kind; keyboard + touch; 44px; active row scrolls into view).
+- Deep links land on the exact SKU/product/prep item, on load and client navigation; ?vendor= works.
+- Avg oz per each settable on chained SKUs. SkuPackChainPanel deleted. Manager guide (en + es) updated; photos in the post-Phase-5 retake pass.
 
 🤖 Generated with [Claude Code](https://claude.com/claude-code)
 
@@ -4283,21 +6042,61 @@ https://claude.ai/code/session_01TiAmVpRCSW7w8NzTFk4L31
 EOF
 ```
 
-Expected: the PR opens and the `build` check (discipline + `npm test` + `next build`) goes green. **Do not merge.** Hand it to review (Astra to APPROVE, per spec §7), then to Juan.
+Expected: the PR opens and the `build` check goes green. **Do not merge.** Astra reviews to APPROVE, then Juan approves the prod apply of 0257. Stamp the migration header (`-- APPLIED TO PROD …`) in this PR right after the apply, and only then merge.
 
 ---
 
-## Self-review against the spec's Phase 1 list
+## Self-review against the spec's Phase 1 list (and Astra r1)
 
-| Spec Phase 1 item | Covered by | Notes |
+| Requirement | Covered by | Notes |
 |---|---|---|
-| 15-minute edit unlock; destructive actions still ask every time | Tasks 1–3 | Server-authoritative (`assertStepUp` "E" on every converted route). No migration. Fixed window, so Tier B can never be satisfied without a password. Unlock audited with `edit_window_seconds`. Retire product + delete recipe pinned at Tier B. |
-| Recipe lines editable in place (qty, unit, swap the ingredient), same validations as add, audit trail | Tasks 4–6, 10 | One validator shared with add (`assertInputLineIsValid`). Product lines measured only in registry units (`assertProductLineIsValid` + `lineUnitChoices`). Full before/after audit. In-place UPDATE per the storage rule. |
-| Searchable ingredient picker over SKUs, items and products; name · vendor · kind; keyboard + touch; 44px; phone width | Tasks 7–10 | Pure search tested. Combobox rendered and tested in en/es. Sim item 3 checks phone width. |
-| Deep links land on the item | Tasks 11–13 | Two named sites plus the registry links, the vendor-import panel and the costing drawer. Walk "check par" and the catering package links are deferred, with reasons in Task 13. |
-| Avg-weight dead end on chained SKUs | Task 14 | Field shown exactly where `leaf_needs_avg` can occur. Same positive-number rule as the server. |
-| Delete dead `SkuPackChainPanel` | Task 15 | No importer (Step 1 grep). The tier-map entry is removed. |
-| i18n en + es for every new string | Task 9 (+ existing keys reused elsewhere) | Pinned by `tests/ingredient-picker-ui.test.ts`. |
-| AGENTS.md updated when behaviour changes | Task 3 Step 9 | New law bullet on the three tiers. |
+| 15-minute edit unlock, server-authoritative | Tasks 1–5 | Own FIXED clock (`catalog_edit_unlocked_at`), stamped only by an admin password, never extended or cleared by navigation, ended by expiry or the session; checked by `assertStepUp(…, "E")` on every catalog write. Every former Tier A catalog edit moved in. Unlock audited with `edit_window_seconds`. |
+| Destructive acts ask every time | Tasks 2, 3, 5 | Retire product, delete recipe, deactivate SKU: one-shot, action-bound, session-bound, 120 s grants, consumed atomically. Tests cover a fresh window/shared unlock refused, X/T vs Y or T′ refused, replay refused, expiry refused and other session refused. |
+| Recipe lines editable in place (qty, unit, swap), same validations as add, audit trail | Tasks 6–8, 12 | Saved lines use a compare-and-set PATCH whose `expected` is captured when editing begins (`409 line_changed`, also after a mid-edit refresh; audit before = matched, after = returned). Draft lines edit in place locally. One validator (product line → active measure-registry unit of any dimension, per AGENTS.md; the spec's "oz / each" is shorthand) plus the item cycle guard, through add and update, over a predicate-aware fake. |
+| Searchable ingredient picker over SKUs, items and products; keyboard + touch; 44px; phone width | Tasks 9–12 | Pure search and clamp tested; combobox render tested in en/es; the active row scrolls into view. |
+| Deep links land on the item | Tasks 13–15 | On load and on client navigation (prev-compare); a retained filter clears itself. Walk "check par" and catering package links are deferred, with reasons. |
+| Avg-weight dead end on chained SKUs | Task 16 | Same positive-number rule as the server. |
+| Delete dead `SkuPackChainPanel` | Task 17 | |
+| i18n en + es; guide text | Tasks 5, 9, 11, 18, 19 | Manager guide en + es (SKU edits stated as GM+); photos in one retake pass after Phase 5, with the spec amended to match (Task 19). |
+| AGENTS.md updated when behaviour changes | Task 5 | Step-up law + the overlay-route sentence. |
 
-Type consistency checked across tasks: `RecipeLineFields`/`RecipeLineDraft` (Task 4) are used unchanged in Tasks 5, 6, 9 and 10. `IngredientOption`/`optionForLine`/`lineTargetKey` (Task 7) are used in Task 9. `skuCatalogHref`/`productHref`/`prepItemHref`/`readFocusParam` (Task 11) are used in Tasks 12 and 13. `StepUpTier` now includes `"E"` (Task 1) and is used by `ProductsClient` (Task 3). `RecipeBuilderSku.vendorName` (Task 8) feeds `buildIngredientOptions` (Task 10).
+Type consistency is checked across tasks:
+- `StepUpTier`/`StepUpPurpose`/`StepUpGate`/`GrantAction` (Task 1) feed Tasks 3–5.
+- `Session.catalogEditUnlockedAt` (Task 3) feeds the layout (Task 4).
+- `RecipeLineFields`/`RecipeLineDraft` and the snapshot helpers (Task 6) feed Tasks 7, 8, 11 and 12.
+- `IngredientOption`/`moveActive` (Task 9) feed Task 11.
+- The link helpers (Task 13) feed Tasks 14 and 15.
+- `RecipeBuilderSku.vendorName` (Task 10) feeds the picker (Task 12).
+
+## Review r1 — what changed
+
+| Finding | Resolution |
+|---|---|
+| P1-1 edit unlock satisfies B | Destructive catalog acts take no tier; they need one-shot grants (0257 `step_up_grants`, `lib/admin/step-up-grants.ts`), minted by the step-up POST's `purpose` and consumed by one conditional UPDATE. Tests: fresh E/shared refused, X/T vs Y/T′, replay, expiry, other session. |
+| P1-2 Tier A escapes | Every Tier A catalog edit route and its clients moved to E. SKU deactivation became a grant. Tier map re-pinned and a grant map added. |
+| P2-3 lifecycle | Own clock column, set only with `catalogWindow`. (Navigation-clear design superseded in r2 — see below.) |
+| P2-4 concurrent edits | Compare-and-set on full expected values (no migration for this) → `409 line_changed`; audit from the matched and returned rows. |
+| P2-5 weak bind test | Predicate-aware fake; cross-recipe, product-unit and cycle refusals tested through add and update. |
+| P2-6 sequential links | Pure `skuFocusPatch` + prev-compare sync; a retained filter clears; sequence tested. |
+| P2-7 draft lines | Edited in place through the same line editor. |
+| P3-8 picker scroll | `moveActive` clamp + `scrollIntoView({ block: "nearest" })`, tested. |
+| Unit rule text | Reconciled to AGENTS.md (any active measure-registry unit). |
+| Guides | Task 18; photos deferred to one retake pass after Phase 5. |
+
+## Review r2 — what changed
+
+| Finding | Resolution |
+|---|---|
+| Design decision (CC) — background requests closed the window (r2 #2); failed clears left it open (r2 #4) | The catalog window is a FIXED 15-minute clock from an admin password: never extended, never cleared by navigation, ended by expiry or by the session ending. The activity-touch clear, its retry and the outside-path logic (`keepsCatalogWindow` / `catalogWindowAfterRequest`) are removed with their tests. New tests through the real `requireSession`: language PATCH, dashboard prefetch, counts and catering requests leave it intact; it expires at 15 minutes exactly; saving does not extend it; logout/revoke and session expiry end it. Destructive acts keep the one-shot grant. Task 20 checklist and the guide text say "stays unlocked for 15 minutes". |
+| r2 #1 refresh defeats compare-and-set | `beginLineEdit` captures the starting line and the `expected` snapshot when Edit is tapped; the editor and the PATCH use that capture, never the refreshed row. Tests: a pure capture test, a server regression (another manager swaps the ingredient → refresh → stale save → 409, the row keeps their change), and a source pin that the builder never re-reads the snapshot. |
+| r2 #3 0257 privilege ceiling | `revoke all … from public, anon, authenticated, service_role` first (0218 pattern), then exactly SELECT/INSERT/UPDATE; the guard refuses any other service_role privilege (role_table_grants + `has_table_privilege` for DELETE/TRUNCATE/REFERENCES/TRIGGER) and a missing needed one. sessions: no grant change, and the guard requires RLS on sessions. The source test checks the revoke-then-grant order. |
+| r2 #5 photos vs spec | New Task 19 amends spec §7: guide text every phase, photo retakes in one pass after Phase 5. |
+| r2 #6 guide promised SKU edits to AGMs | en + es now say GMs and up change recipes and SKUs (`SKU_WRITE_MIN` = 7; AGM expansion is Phase 5). |
+
+## Review r3 — what changed
+
+| Finding | Resolution |
+|---|---|
+| #1 CatalogClient's own modal left the provider's catalog clock null | The provider exposes `noteStepUpConfirmed` (the same pure `confirmClientUnlock` its own modal uses). CatalogClient calls it on confirm and `forgetStepUp` on refusal. Tests: a pure catalog-confirm → refresh → recipe-edit regression (proceeds without a second prompt), source pins on both files, and sim checklist item 1. |
+| #2 Tier E deadline | `isInsideWindow` is EXCLUSIVE and is used by the server and client Tier E checks only. Tests: 899 999 ms ok, 900 000 and 900 001 refused (unit and lifecycle). Tier B keeps `isFreshWithin` (inclusive), now pinned at 120 000 / 120 001. |
+| #3 spec unit rule | Task 19 also amends spec §1: product lines take any active measure-registry unit, never a pack label. |
