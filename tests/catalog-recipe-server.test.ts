@@ -98,6 +98,7 @@ describe("the recipe page view", () => {
     expect(view.otherShopVersions.map((o) => [o.shopId, o.createdByName, o.changes.length])).toEqual([[OTHER, "Ana", 0]]);
     expect(view.makes.map((m) => m.id)).toEqual(["m-italian"]);
     expect(view.history.map((h) => h.id)).toEqual(["rv-r-italian-base"]); // global + this shop only, never OTHER's
+    expect(view.history.map((h) => h.shopId)).toEqual([null]); // each row says whose it is (Restore is offered only for global or THIS shop's)
   });
   it("the slaw is USED IN the Italian, from the scope-resolved graph", async () => {
     const view = (await loadRecipeItemView(moo, "r-slaw", null))!;
@@ -116,6 +117,18 @@ describe("the recipe page view", () => {
   });
   it("the social media manager is refused by ROLE in the lib (house rule)", async () => {
     expect(await refused(loadRecipeItemView(smm, "r-italian", LOC))).toEqual({ status: 403, code: "forbidden" });
+  });
+  it("each line of a shop version carries its lineage (source_line_id), so an open edit survives another manager's save (Astra chunks 3-4 P2 #1)", async () => {
+    const view = (await loadRecipeItemView(moo, "r-italian", OTHER))!;
+    const versionLines = tables.recipe_version_lines!.filter((r) => view.lines.some((l) => l.lineId === r.id));
+    expect(versionLines.length).toBe(view.lines.length);
+    for (const l of view.lines) {
+      const row = versionLines.find((r) => r.id === l.lineId)!;
+      expect(l.lineage, l.lineId).toEqual([row.source_line_id]); // the default's input it was copied from
+    }
+    // the default (recipe_inputs keeps its ids in place) has no lineage to walk
+    const global = (await loadRecipeItemView(moo, "r-italian", null))!;
+    expect(global.lines.every((l) => l.lineage.length === 0)).toBe(true);
   });
 });
 

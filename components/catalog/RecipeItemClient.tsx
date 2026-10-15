@@ -40,8 +40,9 @@ import type { RecipeLineDraft, RecipeLineFields } from "@/lib/recipe-line-shared
 import { createRequestGuard } from "@/lib/catalog/request-guard-shared";
 import { lineText, type RecipePreview } from "@/lib/catalog/recipe-preview-shared";
 import type { RecipeLineRefusal } from "@/lib/recipe-versions-shared";
+import type { IngredientOption } from "@/lib/ingredient-picker-shared";
 import {
-  lineEditStale, menuItemPageHref, recipeErrorKey as errorKey, recipeItemHref, recipeVersionLabel,
+  lineEditStale, menuItemPageHref, recipeErrorKey as errorKey, recipeItemHref, recipeLineKeys, recipeLineMatches, recipeVersionLabel,
   type RecipeChangeRequest, type RecipeItemView, type RecipeTarget,
 } from "@/lib/catalog/recipe-item-shared";
 
@@ -72,7 +73,7 @@ type Sections = { lines: boolean; makes: boolean; others: boolean; history: bool
  * an intervening change is caught (line_changed), never silently overwritten. "Start over" rebases on purpose: a new
  * baseline, the editor remounted, any preview cleared.
  */
-type Editing = { mode: "add" } | { mode: "edit"; lineId: string; expected: RecipeLineFields; name: string } | null;
+export type Editing = { mode: "add" } | { mode: "edit"; lineId: string; expected: RecipeLineFields; name: string } | null;
 
 const fieldsOf = (d: RecipeLineDraft): RecipeLineFields => ({
   componentSkuId: d.componentSkuId, componentItemId: d.componentItemId, componentProductId: d.componentProductId,
@@ -93,6 +94,106 @@ export function StaleLineNotice({
         <button type="button" className={btn} disabled={busy} onClick={onRebase}>{t("catalog.recipe.edit_rebase")}</button>
       </div>
     </div>
+  );
+}
+
+/**
+ * "What goes in" — the lines, each with its flag, its refusal, and Edit / Remove (or the open editor).
+ *
+ * A LINE IS FOUND BY ITS LINEAGE (Astra chunks 3-4 P2 #1): a shop save writes the set again with NEW ids and keeps
+ * the old in source_line_id, so the open edit (opened on the id seen then) is matched by recipeLineMatches and the row
+ * keyed by recipeLineKeys — another manager's save never unmounts the editor or loses the draft. If the line itself
+ * moved, StaleLineNotice shows was → now with "Start over from the new version"; only a line really removed says so.
+ * `previewDropped`: the draft was edited after its preview, so that preview and its Save are gone — "Preview again".
+ */
+export function RecipeLinesList({
+  view, target, editing, refused, busy, previewDropped, options, measures,
+  onStartEdit, onRemove, onSubmitEdit, onRebase, onCancel, onDraftChange,
+}: {
+  view: RecipeItemView;
+  target: RecipeTarget | null;
+  editing: Editing;
+  refused: RecipeLineRefusal | null;
+  busy: boolean;
+  previewDropped: boolean;
+  options: IngredientOption[];
+  measures: Map<string, MeasureUnitFactor>;
+  onStartEdit: (l: RecipeItemView["lines"][number]) => void;
+  onRemove: (l: RecipeItemView["lines"][number]) => void;
+  onSubmitEdit: (l: RecipeItemView["lines"][number], d: RecipeLineDraft) => void;
+  onRebase: (l: RecipeItemView["lines"][number]) => void;
+  onCancel: () => void;
+  onDraftChange: () => void;
+}) {
+  const { t, language } = useTranslation();
+  const fmt = (n: number) => formatQuantity(n, language);
+  const canEditLines = target !== null && view.recipe.active;
+  const keys = recipeLineKeys(view.lines);
+  // The line under an open edit is gone (someone removed it): say so, and let the draft go.
+  const editedLineGone = editing?.mode === "edit" && !view.lines.some((l) => recipeLineMatches(l, editing.lineId));
+  return (
+    <>
+      {editedLineGone ? (
+        <div role="status" className="flex flex-col gap-2 rounded-lg border-2 border-co-warning bg-co-warning-surface p-2">
+          <p className="text-sm text-co-text">{t(errorKey("edge_not_found"))}</p>
+          <div className="flex flex-wrap gap-2">
+            <button type="button" className={btn} disabled={busy} onClick={onCancel}>{t("catalog.recipe.preview.discard")}</button>
+          </div>
+        </div>
+      ) : null}
+      {previewDropped ? (
+        <p role="status" className="break-words text-sm text-co-text">{t("catalog.recipe.preview_again_hint")}</p>
+      ) : null}
+      <ul className="flex flex-col gap-2">
+        {view.lines.map((l, i) => {
+          const isEditing = editing?.mode === "edit" && recipeLineMatches(l, editing.lineId);
+          return (
+            <li key={keys[i]} className="flex min-w-0 flex-col gap-2 rounded-lg border-2 border-co-border bg-co-surface-inset p-2">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <span className="min-w-0 break-words text-sm text-co-text">
+                  {lineText(l.fields, view.names, fmt)}
+                  {l.vendorName ? <span className="text-co-text-muted"> · {l.vendorName}</span> : null}
+                </span>
+                {l.changedHere ? <span className="rounded-full bg-co-gold/20 px-2 py-0.5 text-xs font-bold text-co-text">{t("catalog.recipe.changed_here")}</span> : null}
+              </div>
+              {/* Lead decision (b): a saved line that would not pass an add today is FLAGGED, never hidden; Edit fixes it. */}
+              {l.problem ? (
+                <p className="break-words text-xs font-bold text-co-cta-text">
+                  {t("catalog.recipe.line_problem", { position: i + 1, name: l.name, reason: t(errorKey(l.problem)) })}
+                </p>
+              ) : null}
+              {refused && refused.position === i + 1 && isEditing ? (
+                <p role="alert" className="break-words text-xs font-bold text-co-cta-text">{t(errorKey(refused.reason))}</p>
+              ) : null}
+              {canEditLines ? (
+                isEditing && editing?.mode === "edit" ? (
+                  <>
+                    {lineEditStale(editing.expected, l.fields) ? (
+                      <StaleLineNotice expected={editing.expected} current={l.fields} names={view.names} busy={busy} onRebase={() => onRebase(l)} />
+                    ) : null}
+                    {/* Keyed by the id the edit was OPENED on (never the row's new id), so a refresh keeps the draft mounted. */}
+                    <RecipeLineEditor key={`edit-${editing.lineId}-${JSON.stringify(editing.expected)}`}
+                      title={t("catalog.recipe.edit_title")} submitLabel={t(previewDropped ? "catalog.recipe.preview_again" : "catalog.recipe.see_changes")}
+                      options={options} skus={view.picker.skus} products={view.picker.products} measures={measures}
+                      activeMeasureLabels={view.picker.activeMeasureLabels} initial={{ ...editing.expected, componentName: editing.name }}
+                      busy={busy} errorMsg={null}
+                      onSubmit={(d) => onSubmitEdit(l, d)}
+                      onCancel={onCancel} onDraftChange={onDraftChange} />
+                  </>
+                ) : (
+                  <div className="flex flex-wrap gap-2">
+                    <button type="button" className={btn} disabled={busy} onClick={() => onStartEdit(l)}>{t("catalog.recipe.edit_line")}</button>
+                    <button type="button" className={btnDanger} disabled={busy} onClick={() => onRemove(l)}>
+                      {t("catalog.recipe.remove_line")}
+                    </button>
+                  </div>
+                )
+              ) : null}
+            </li>
+          );
+        })}
+      </ul>
+    </>
   );
 }
 
@@ -119,7 +220,13 @@ export function RecipeHistoryList({
           </span>
           {h.active ? (
             <span className="text-xs font-bold text-co-confirm-text">{t("catalog.recipe.current")}</span>
-          ) : target && (h.scope === "global" || view.scope !== null) ? (
+          ) : target && h.scope === "global" && target.kind === "shop" ? (
+            // An old DEFAULT version restored for a shop becomes that shop's own version (CC note 5 #2) — said on the button.
+            <button type="button" className={`${btn} max-w-full break-words`} disabled={busy} onClick={() => onRestore(h.id)}>
+              {t("catalog.recipe.restore_as_shop", { shop: view.shops.find((s) => s.id === target.shopId)?.name ?? view.scopeName ?? "" })}
+            </button>
+          ) : target && (h.scope === "global" || (target.kind === "shop" && h.shopId === target.shopId)) ? (
+            // The default's own history (global view) or THIS shop's. Another shop's version is never restored here — that is adopt.
             <button type="button" className={btn} disabled={busy} onClick={() => onRestore(h.id)}>
               {t("catalog.recipe.restore")}
             </button>
@@ -179,7 +286,11 @@ export function RecipeItemClient({ view }: { view: RecipeItemView }) {
   const canEditLines = target !== null && view.recipe.active;
   const hasOwn = view.scope !== null && !view.version.ridesDefault;
 
-  const reset = () => { guard.invalidate(); setPending(null); setPreview(null); setEditing(null); setRetry(null); };
+  /** The draft was edited after its preview (Astra chunks 3-4 P2 #2): that preview and its Save no longer match it. */
+  const [previewDropped, setPreviewDropped] = useState(false);
+  const reset = () => { guard.invalidate(); setPending(null); setPreview(null); setEditing(null); setRetry(null); setPreviewDropped(false); };
+  // ANY edit after a preview drops pending AND preview — Save goes with them — and the editor asks to Preview again.
+  const dropPreview = () => { if (pending === null && preview === null) return; guard.invalidate(); setPending(null); setPreview(null); setRetry(null); setPreviewDropped(true); };
   const done = () => { reset(); setMessage(t("catalog.recipe.saved")); router.refresh(); };
 
   // D10 (docs/DISCLOSURE_DOCTRINE.md): a section holding an unsaved draft stays MOUNTED and LOCKED OPEN.
@@ -193,7 +304,7 @@ export function RecipeItemClient({ view }: { view: RecipeItemView }) {
 
   /** "What this changes" for ONE act — a read, guarded against late answers. */
   const askPreview = async (change: RecipeChangeRequest) => {
-    setMessage(null); setRetry(null); setPreview(null); setPending(change); setBusy(true);
+    setMessage(null); setRetry(null); setPreview(null); setPending(change); setPreviewDropped(false); setBusy(true);
     const r = await guard.run(() => postJson(`${base}/preview`, { change }));
     setBusy(false);
     if (r === null) return; // superseded — a newer request owns the panel
@@ -222,7 +333,8 @@ export function RecipeItemClient({ view }: { view: RecipeItemView }) {
   const saveLabel = (p: RecipePreview): string => {
     switch (p.kind) {
       case "lines": return p.target.kind === "shop" ? t("catalog.recipe.preview.save.lines_shop", { shop: shopName(p.target.shopId) }) : t("catalog.recipe.preview.save.lines_global");
-      case "restore": return t("catalog.recipe.preview.save.restore");
+      // Destination-aware (Astra chunks 3-4 P3 #3): a restore for a shop says whose version it becomes.
+      case "restore": return p.target.kind === "shop" ? t("catalog.recipe.restore_as_shop", { shop: shopName(p.target.shopId) }) : t("catalog.recipe.preview.save.restore");
       case "back_to_default": return t("catalog.recipe.preview.save.back_to_default", { shop: p.target.kind === "shop" ? shopName(p.target.shopId) : "" });
       case "adopt": return t("catalog.recipe.preview.save.adopt", { shop: p.target.kind === "shop" ? shopName(p.target.shopId) : "" });
       case "promote": return t("catalog.recipe.preview.save.promote");
@@ -245,7 +357,8 @@ export function RecipeItemClient({ view }: { view: RecipeItemView }) {
     </div>
   ) : null;
   const panel = preview && pending ? (
-    <RecipePreviewPanel preview={preview} saveLabel={saveLabel(preview)} busy={busy} onSave={() => void save()} onDiscard={reset} />
+    <RecipePreviewPanel preview={preview} saveLabel={saveLabel(preview)} busy={busy} onSave={() => void save()} onDiscard={reset}
+      becomesShopVersion={pending.kind === "restore" && pending.target.kind === "shop" ? shopName(pending.target.shopId) : null} />
   ) : retryBlock;
 
   // NO DEAD ENDS: the shops this viewer may change the recipe for, offered wherever this view is read-only.
@@ -276,9 +389,6 @@ export function RecipeItemClient({ view }: { view: RecipeItemView }) {
       {changeForShopLinks}
     </div>
   ) : null;
-
-  // The line under an open edit is gone (someone removed it): say so, and let the draft go.
-  const editedLineGone = editing?.mode === "edit" && !view.lines.some((l) => l.lineId === editing.lineId);
 
   const connections = (
     <section aria-label={t("catalog.recipe.connections")} className="min-w-0 break-words rounded-xl border-2 border-co-border bg-co-surface p-3">
@@ -385,68 +495,23 @@ export function RecipeItemClient({ view }: { view: RecipeItemView }) {
             badge={linesDirty ? <span className="text-xs text-co-text-muted">{t("catalog.recipe.lines_locked")}</span> : undefined}>
             <div className="flex min-w-0 flex-col gap-2 p-3">
               {readOnly}
-              {editedLineGone ? (
-                <div role="status" className="flex flex-col gap-2 rounded-lg border-2 border-co-warning bg-co-warning-surface p-2">
-                  <p className="text-sm text-co-text">{t(errorKey("edge_not_found"))}</p>
-                  <div className="flex flex-wrap gap-2">
-                    <button type="button" className={btn} disabled={busy} onClick={reset}>{t("catalog.recipe.preview.discard")}</button>
-                  </div>
-                </div>
-              ) : null}
-              <ul className="flex flex-col gap-2">
-                {view.lines.map((l, i) => (
-                  <li key={l.lineId} className="flex min-w-0 flex-col gap-2 rounded-lg border-2 border-co-border bg-co-surface-inset p-2">
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                      <span className="min-w-0 break-words text-sm text-co-text">
-                        {lineText(l.fields, view.names, fmt)}
-                        {l.vendorName ? <span className="text-co-text-muted"> · {l.vendorName}</span> : null}
-                      </span>
-                      {l.changedHere ? <span className="rounded-full bg-co-gold/20 px-2 py-0.5 text-xs font-bold text-co-text">{t("catalog.recipe.changed_here")}</span> : null}
-                    </div>
-                    {/* Lead decision (b): a saved line that would not pass an add today is FLAGGED, never hidden; Edit fixes it. */}
-                    {l.problem ? (
-                      <p className="break-words text-xs font-bold text-co-cta-text">
-                        {t("catalog.recipe.line_problem", { position: i + 1, name: l.name, reason: t(errorKey(l.problem)) })}
-                      </p>
-                    ) : null}
-                    {refused && refused.position === i + 1 && editing?.mode === "edit" && editing.lineId === l.lineId ? (
-                      <p role="alert" className="break-words text-xs font-bold text-co-cta-text">{t(errorKey(refused.reason))}</p>
-                    ) : null}
-                    {canEditLines && target ? (
-                      editing?.mode === "edit" && editing.lineId === l.lineId ? (
-                        <>
-                          {lineEditStale(editing.expected, l.fields) ? (
-                            <StaleLineNotice expected={editing.expected} current={l.fields} names={view.names} busy={busy}
-                              onRebase={() => { guard.invalidate(); setPending(null); setPreview(null); setRetry(null); setEditing({ mode: "edit", lineId: l.lineId, expected: l.fields, name: l.name }); }} />
-                          ) : null}
-                          <RecipeLineEditor key={`edit-${l.lineId}-${JSON.stringify(editing.expected)}`}
-                            title={t("catalog.recipe.edit_title")} submitLabel={t("catalog.recipe.see_changes")}
-                            options={options} skus={view.picker.skus} products={view.picker.products} measures={measures}
-                            activeMeasureLabels={view.picker.activeMeasureLabels} initial={{ ...editing.expected, componentName: editing.name }}
-                            busy={busy} errorMsg={null}
-                            onSubmit={(d) => void askPreview({ kind: "lines", target, op: { kind: "update", lineId: l.lineId, line: fieldsOf(d), expected: editing.expected } })}
-                            onCancel={reset} />
-                        </>
-                      ) : (
-                        <div className="flex flex-wrap gap-2">
-                          <button type="button" className={btn} disabled={busy} onClick={() => { reset(); setEditing({ mode: "edit", lineId: l.lineId, expected: l.fields, name: l.name }); }}>{t("catalog.recipe.edit_line")}</button>
-                          <button type="button" className={btnDanger} disabled={busy}
-                            onClick={() => { setEditing(null); void askPreview({ kind: "lines", target, op: { kind: "remove", lineId: l.lineId, expected: l.fields } }); }}>
-                            {t("catalog.recipe.remove_line")}
-                          </button>
-                        </div>
-                      )
-                    ) : null}
-                  </li>
-                ))}
-              </ul>
+              <RecipeLinesList view={view} target={target} editing={editing} refused={refused} busy={busy} previewDropped={previewDropped}
+                options={options} measures={measures}
+                onStartEdit={(l) => { reset(); setEditing({ mode: "edit", lineId: l.lineId, expected: l.fields, name: l.name }); }}
+                onRemove={(l) => { if (target) { setEditing(null); void askPreview({ kind: "lines", target, op: { kind: "remove", lineId: l.lineId, expected: l.fields } }); } }}
+                onSubmitEdit={(l, d) => {
+                  // The CURRENT row id (a save may have renewed it) with the baseline captured at Edit (Astra 3b r5#1).
+                  if (target && editing?.mode === "edit") void askPreview({ kind: "lines", target, op: { kind: "update", lineId: l.lineId, line: fieldsOf(d), expected: editing.expected } });
+                }}
+                onRebase={(l) => { guard.invalidate(); setPending(null); setPreview(null); setRetry(null); setPreviewDropped(false); setEditing({ mode: "edit", lineId: l.lineId, expected: l.fields, name: l.name }); }}
+                onCancel={reset} onDraftChange={dropPreview} />
               {canEditLines && target ? (
                 editing?.mode === "add" ? (
-                  <RecipeLineEditor title={t("catalog.recipe.add_title")} submitLabel={t("catalog.recipe.see_changes")}
+                  <RecipeLineEditor title={t("catalog.recipe.add_title")} submitLabel={t(previewDropped ? "catalog.recipe.preview_again" : "catalog.recipe.see_changes")}
                     options={options} skus={view.picker.skus} products={view.picker.products} measures={measures}
                     activeMeasureLabels={view.picker.activeMeasureLabels} initial={null} busy={busy} errorMsg={null}
                     onSubmit={(d) => void askPreview({ kind: "lines", target, op: { kind: "add", line: fieldsOf(d) } })}
-                    onCancel={reset} />
+                    onCancel={reset} onDraftChange={dropPreview} />
                 ) : (
                   <button type="button" className={`${btnPrimary} w-fit`} disabled={busy} onClick={() => { reset(); setEditing({ mode: "add" }); }}>{t("catalog.recipe.add_line")}</button>
                 )

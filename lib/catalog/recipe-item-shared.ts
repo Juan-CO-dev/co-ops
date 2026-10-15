@@ -51,6 +51,38 @@ export function historyLinkEndedSource(
 }
 
 /**
+ * A LINE'S IDENTITY ACROSS SAVES (Astra chunks 3-4 P2 #1). A shop save writes the whole set again with NEW
+ * recipe_version_lines ids and records each kept line's previous id in source_line_id (0262). The lineage is that
+ * chain walked back, nearest first; it stops at a line outside the map (the default's recipe_inputs id a fork copied,
+ * or another shop's line an adopt copied) and never loops.
+ */
+export function lineLineage(lineId: string, sourceOf: ReadonlyMap<string, string | null>): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>([lineId]);
+  let cur = sourceOf.get(lineId) ?? null;
+  while (cur !== null && !seen.has(cur)) {
+    out.push(cur);
+    seen.add(cur);
+    cur = sourceOf.get(cur) ?? null;
+  }
+  return out;
+}
+/** Is this the line an edit was opened on (by the id seen then — this line, or one it was copied from)? */
+export function recipeLineMatches(l: { lineId: string; lineage: readonly string[] }, id: string): boolean {
+  return l.lineId === id || l.lineage.includes(id);
+}
+/** A row key that survives a save: the line's oldest known ancestor (a duplicate falls back to the row id). */
+export function recipeLineKeys(lines: ReadonlyArray<{ lineId: string; lineage: readonly string[] }>): string[] {
+  const used = new Set<string>();
+  return lines.map((l) => {
+    const root = l.lineage[l.lineage.length - 1] ?? l.lineId;
+    const key = used.has(root) ? l.lineId : root;
+    used.add(key);
+    return key;
+  });
+}
+
+/**
  * Has the line changed under an open edit since its baseline was captured? (Astra 3b r5#1; lead decision:
  * a refresh keeps the draft's ORIGINAL baseline — when it moved, the page shows it and offers "Start over
  * from the new version".)
@@ -211,6 +243,8 @@ export function parseMenuChange(raw: unknown): ChangeParse<MenuChangeRequest> {
 
 export interface RecipeLineView {
   lineId: string;
+  /** The ids this line was copied from across saves, nearest first (lineLineage over source_line_id); [] for the default's lines. */
+  lineage: string[];
   fields: RecipeLineFields;
   name: string;
   kind: "sku" | "item" | "product";
@@ -244,7 +278,8 @@ export interface RecipeItemView {
   otherShopVersions: Array<{ versionId: string; shopId: string; shopName: string; validFrom: string; createdByName: string | null; changes: RecipeLineChange[] }>;
   notices: RecipeNotice[];
   history: Array<{
-    id: string; scope: "global" | "shop"; shopName: string | null; active: boolean; validFrom: string; validTo: string | null;
+    /** `shopId`: whose version this is (null = the default) — Restore is offered only for the default's or THIS shop's (never another shop's: that is adopt). */
+    id: string; scope: "global" | "shop"; shopId: string | null; shopName: string | null; active: boolean; validFrom: string; validTo: string | null;
     who: string | null; note: string | null; lineCount: number; promotedFromShopName: string | null; adoptedFromShopName: string | null;
     /** This version ENDED the link to that shop's recipe (a restore from before the adoption, or Back to default). */
     linkEndedFromShopName: string | null;
