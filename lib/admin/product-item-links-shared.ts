@@ -29,11 +29,34 @@ export interface ProductItemLinks {
   producingRecipeByItem: Record<string, string>;
 }
 
+/**
+ * Deep links that land ON the item, never on a whole list (catalog redesign Phase 1,
+ * 2026-10-15). The query param is read to open/expand the row; the hash scrolls to its anchor
+ * (every row carries id={its id} + scroll-mt-24). One builder per destination.
+ */
+export function skuCatalogHref(skuId: string): string {
+  const id = encodeURIComponent(skuId);
+  return `/admin/skus?sku=${id}#${id}`;
+}
+export function productHref(productId: string): string {
+  const id = encodeURIComponent(productId);
+  return `/admin/products?product=${id}#${id}`;
+}
+export function prepItemHref(itemId: string): string {
+  return `/admin/items?view=registry#${encodeURIComponent(itemId)}`;
+}
+
+/** A deep-link query param as ONE plain id (uuid or slug), else null. Arrays, blanks and anything else are ignored. */
+export function readFocusParam(v: string | string[] | undefined): string | null {
+  if (typeof v !== "string") return null;
+  const t = v.trim();
+  return /^[A-Za-z0-9_-]{1,64}$/.test(t) ? t : null;
+}
+
 export function registryLinkHref(link: RegistryLink): string {
-  const id = encodeURIComponent(link.id);
-  if (link.kind === "item") return `/admin/items?view=registry#${id}`;
-  if (link.kind === "product") return `/admin/products?product=${id}#${id}`;
-  return `/admin/skus#${id}`;
+  if (link.kind === "item") return prepItemHref(link.id);
+  if (link.kind === "product") return productHref(link.id);
+  return skuCatalogHref(link.id);
 }
 
 export function mapProductItemLinks(data: {
