@@ -1,0 +1,1408 @@
+{
+  "global": {
+    "chains": {
+      "s-bags": [
+        {
+          "id": "pl-b-case",
+          "label": "case",
+          "containsQty": 10,
+          "containsLevelId": "pl-b-sleeve",
+          "containsMeasureUnit": null,
+          "displayOrdinal": 1
+        },
+        {
+          "id": "pl-b-sleeve",
+          "label": "sleeve",
+          "containsQty": 50,
+          "containsLevelId": null,
+          "containsMeasureUnit": "each",
+          "displayOrdinal": 2
+        }
+      ],
+      "s-cups": [
+        {
+          "id": "pl-c-sleeve",
+          "label": "sleeve",
+          "containsQty": 100,
+          "containsLevelId": null,
+          "containsMeasureUnit": "each",
+          "displayOrdinal": 1
+        }
+      ],
+      "s-ham-a": [
+        {
+          "id": "pl-h-pack",
+          "label": "pack",
+          "containsQty": 32,
+          "containsLevelId": null,
+          "containsMeasureUnit": "oz",
+          "displayOrdinal": 1
+        }
+      ],
+      "s-ham-b": [
+        {
+          "id": "pl-hb-pack",
+          "label": "pack",
+          "containsQty": 2,
+          "containsLevelId": null,
+          "containsMeasureUnit": "lb",
+          "displayOrdinal": 1
+        }
+      ],
+      "s-tomato": [
+        {
+          "id": "pl-tom-case",
+          "label": "case",
+          "containsQty": 20,
+          "containsLevelId": null,
+          "containsMeasureUnit": "each",
+          "displayOrdinal": 1
+        }
+      ],
+      "s-turkey": [
+        {
+          "id": "pl-t-case",
+          "label": "case",
+          "containsQty": 4,
+          "containsLevelId": "pl-t-bag",
+          "containsMeasureUnit": null,
+          "displayOrdinal": 1
+        },
+        {
+          "id": "pl-t-bag",
+          "label": "bag",
+          "containsQty": 80,
+          "containsLevelId": null,
+          "containsMeasureUnit": "oz",
+          "displayOrdinal": 2
+        }
+      ],
+      "s-twin-x": [
+        {
+          "id": "pl-x-loaf",
+          "label": "loaf",
+          "containsQty": 20,
+          "containsLevelId": null,
+          "containsMeasureUnit": "oz",
+          "displayOrdinal": 1
+        }
+      ]
+    },
+    "allChains": {
+      "s-bags": [
+        {
+          "id": "pl-b-case",
+          "label": "case",
+          "containsQty": 10,
+          "containsLevelId": "pl-b-sleeve",
+          "containsMeasureUnit": null,
+          "displayOrdinal": 1
+        },
+        {
+          "id": "pl-b-sleeve",
+          "label": "sleeve",
+          "containsQty": 50,
+          "containsLevelId": null,
+          "containsMeasureUnit": "each",
+          "displayOrdinal": 2
+        }
+      ],
+      "s-cups": [
+        {
+          "id": "pl-c-sleeve",
+          "label": "sleeve",
+          "containsQty": 100,
+          "containsLevelId": null,
+          "containsMeasureUnit": "each",
+          "displayOrdinal": 1
+        }
+      ],
+      "s-ham-a": [
+        {
+          "id": "pl-h-pack",
+          "label": "pack",
+          "containsQty": 32,
+          "containsLevelId": null,
+          "containsMeasureUnit": "oz",
+          "displayOrdinal": 1
+        }
+      ],
+      "s-ham-b": [
+        {
+          "id": "pl-hb-pack",
+          "label": "pack",
+          "containsQty": 2,
+          "containsLevelId": null,
+          "containsMeasureUnit": "lb",
+          "displayOrdinal": 1
+        }
+      ],
+      "s-tomato": [
+        {
+          "id": "pl-tom-case",
+          "label": "case",
+          "containsQty": 20,
+          "containsLevelId": null,
+          "containsMeasureUnit": "each",
+          "displayOrdinal": 1
+        }
+      ],
+      "s-turkey": [
+        {
+          "id": "pl-t-case",
+          "label": "case",
+          "containsQty": 4,
+          "containsLevelId": "pl-t-bag",
+          "containsMeasureUnit": null,
+          "displayOrdinal": 1
+        },
+        {
+          "id": "pl-t-bag",
+          "label": "bag",
+          "containsQty": 80,
+          "containsLevelId": null,
+          "containsMeasureUnit": "oz",
+          "displayOrdinal": 2
+        }
+      ],
+      "s-twin-x": [
+        {
+          "id": "pl-x-loaf",
+          "label": "loaf",
+          "containsQty": 20,
+          "containsLevelId": null,
+          "containsMeasureUnit": "oz",
+          "displayOrdinal": 1
+        }
+      ]
+    },
+    "prices": {
+      "s-bags": 30,
+      "s-cheese": 46.2,
+      "s-ham-a": 3.1,
+      "s-ham-b": 6.4,
+      "s-lettuce": 38,
+      "s-mayo": 22,
+      "s-old": 7,
+      "s-pickle": 9.99,
+      "s-tomato": 25,
+      "s-turkey": 128,
+      "s-twin-x": 4,
+      "s-twin-y": 4.5
+    },
+    "priceCents": {
+      "s-bags": 3000,
+      "s-cheese": 4620,
+      "s-ham-a": 310,
+      "s-ham-b": 640,
+      "s-lettuce": 3800,
+      "s-mayo": 2200,
+      "s-old": 700,
+      "s-pickle": 999,
+      "s-tomato": 2500,
+      "s-turkey": 12800,
+      "s-twin-x": 400,
+      "s-twin-y": 450
+    },
+    "orderUnitOz": {
+      "s-bags": null,
+      "s-cheese": null,
+      "s-cups": null,
+      "s-ham-a": 32,
+      "s-ham-b": 32,
+      "s-ham-c": null,
+      "s-lettuce": 384,
+      "s-mayo": 480,
+      "s-old": null,
+      "s-onion": null,
+      "s-pepper": null,
+      "s-pickle": 32,
+      "s-relish": null,
+      "s-salt": null,
+      "s-store-ham": null,
+      "s-tomato": 90,
+      "s-turkey": 320,
+      "s-twin-x": 20,
+      "s-twin-y": null
+    },
+    "flatContentOz": {
+      "s-bags": null,
+      "s-cheese": null,
+      "s-cups": null,
+      "s-ham-a": null,
+      "s-ham-b": null,
+      "s-ham-c": null,
+      "s-lettuce": 384,
+      "s-mayo": 480,
+      "s-old": null,
+      "s-onion": null,
+      "s-pepper": null,
+      "s-pickle": 32,
+      "s-relish": null,
+      "s-salt": null,
+      "s-store-ham": null,
+      "s-tomato": null,
+      "s-turkey": null,
+      "s-twin-x": null,
+      "s-twin-y": null
+    },
+    "graph": {
+      "skuPack": {
+        "s-cheese": {
+          "packFormat": null,
+          "eachContainerLabel": null,
+          "unitsPerPack": null,
+          "eachSize": null,
+          "eachMeasure": null,
+          "avgOzPerEach": null,
+          "packChain": null
+        },
+        "s-ham-a": {
+          "packFormat": null,
+          "eachContainerLabel": null,
+          "unitsPerPack": null,
+          "eachSize": null,
+          "eachMeasure": null,
+          "avgOzPerEach": null,
+          "packChain": [
+            {
+              "id": "pl-h-pack",
+              "label": "pack",
+              "containsQty": 32,
+              "containsLevelId": null,
+              "containsMeasureUnit": "oz",
+              "displayOrdinal": 1
+            }
+          ]
+        },
+        "s-lettuce": {
+          "packFormat": "case",
+          "eachContainerLabel": null,
+          "unitsPerPack": 24,
+          "eachSize": 1,
+          "eachMeasure": "lb",
+          "avgOzPerEach": null,
+          "packChain": null
+        },
+        "s-mayo": {
+          "packFormat": "tub",
+          "eachContainerLabel": null,
+          "unitsPerPack": 1,
+          "eachSize": 30,
+          "eachMeasure": "lb",
+          "avgOzPerEach": null,
+          "packChain": null
+        },
+        "s-onion": {
+          "packFormat": null,
+          "eachContainerLabel": null,
+          "unitsPerPack": null,
+          "eachSize": null,
+          "eachMeasure": null,
+          "avgOzPerEach": null,
+          "packChain": null
+        },
+        "s-pickle": {
+          "packFormat": "jar",
+          "eachContainerLabel": null,
+          "unitsPerPack": 1,
+          "eachSize": 32,
+          "eachMeasure": "oz",
+          "avgOzPerEach": null,
+          "packChain": null
+        },
+        "s-tomato": {
+          "packFormat": null,
+          "eachContainerLabel": null,
+          "unitsPerPack": null,
+          "eachSize": null,
+          "eachMeasure": null,
+          "avgOzPerEach": 4.5,
+          "packChain": [
+            {
+              "id": "pl-tom-case",
+              "label": "case",
+              "containsQty": 20,
+              "containsLevelId": null,
+              "containsMeasureUnit": "each",
+              "displayOrdinal": 1
+            }
+          ]
+        },
+        "s-turkey": {
+          "packFormat": "case",
+          "eachContainerLabel": null,
+          "unitsPerPack": null,
+          "eachSize": null,
+          "eachMeasure": null,
+          "avgOzPerEach": null,
+          "packChain": [
+            {
+              "id": "pl-t-case",
+              "label": "case",
+              "containsQty": 4,
+              "containsLevelId": "pl-t-bag",
+              "containsMeasureUnit": null,
+              "displayOrdinal": 1
+            },
+            {
+              "id": "pl-t-bag",
+              "label": "bag",
+              "containsQty": 80,
+              "containsLevelId": null,
+              "containsMeasureUnit": "oz",
+              "displayOrdinal": 2
+            }
+          ]
+        },
+        "s-twin-x": {
+          "packFormat": null,
+          "eachContainerLabel": null,
+          "unitsPerPack": null,
+          "eachSize": null,
+          "eachMeasure": null,
+          "avgOzPerEach": null,
+          "packChain": [
+            {
+              "id": "pl-x-loaf",
+              "label": "loaf",
+              "containsQty": 20,
+              "containsLevelId": null,
+              "containsMeasureUnit": "oz",
+              "displayOrdinal": 1
+            }
+          ]
+        }
+      },
+      "menuOz": {
+        "m-italian": {
+          "s-cheese": 1.5,
+          "s-ham-a": 3,
+          "s-lettuce": 1.5,
+          "s-mayo": 0.5,
+          "s-tomato": 9,
+          "s-turkey": 4,
+          "s-twin-x": 16
+        },
+        "m-old": {},
+        "m-pickle-side": {
+          "s-pickle": 8
+        }
+      },
+      "itemOz": {
+        "i-slaw": {
+          "s-lettuce": 24,
+          "s-mayo": 8
+        }
+      },
+      "costPerOz": {
+        "s-cheese": null,
+        "s-ham-a": 0.096875,
+        "s-lettuce": 0.09895833333333333,
+        "s-mayo": 0.04583333333333333,
+        "s-onion": null,
+        "s-pickle": 0.3121875,
+        "s-tomato": 0.2777777777777778,
+        "s-turkey": 0.4,
+        "s-twin-x": 0.2
+      },
+      "menuCost": {
+        "m-italian": {
+          "status": "partial",
+          "cost": null,
+          "pricedCost": 7.761979166666666,
+          "pricedLineCount": 6,
+          "unpricedLineCount": 1,
+          "unpricedSkuIds": [
+            "s-cheese"
+          ],
+          "inconsistentItemIds": [],
+          "unweighedItemIds": [],
+          "retiredProductIds": []
+        },
+        "m-old": {
+          "status": "no_recipe",
+          "cost": null,
+          "pricedCost": 0,
+          "pricedLineCount": 0,
+          "unpricedLineCount": 0,
+          "unpricedSkuIds": [],
+          "inconsistentItemIds": [],
+          "unweighedItemIds": [],
+          "retiredProductIds": []
+        },
+        "m-pickle-side": {
+          "status": "costed",
+          "cost": 2.4975,
+          "pricedCost": 2.4975,
+          "pricedLineCount": 1,
+          "unpricedLineCount": 0,
+          "unpricedSkuIds": [],
+          "inconsistentItemIds": [],
+          "unweighedItemIds": [],
+          "retiredProductIds": []
+        }
+      },
+      "itemCost": {
+        "i-slaw": {
+          "status": "costed",
+          "cost": 2.7416666666666667,
+          "pricedCost": 2.7416666666666667,
+          "pricedLineCount": 2,
+          "unpricedLineCount": 0,
+          "unpricedSkuIds": [],
+          "inconsistentItemIds": [],
+          "unweighedItemIds": [],
+          "retiredProductIds": []
+        }
+      }
+    },
+    "datedMenuOz": {
+      "m-italian": {
+        "s-cheese": 1.5,
+        "s-ham-a": 3,
+        "s-lettuce": 1.5,
+        "s-mayo": 0.5,
+        "s-tomato": 9,
+        "s-turkey": 4,
+        "s-twin-x": 16
+      },
+      "m-old": {},
+      "m-pickle-side": {
+        "s-pickle": 8
+      }
+    }
+  },
+  "loc-1": {
+    "chains": {
+      "s-bags": [
+        {
+          "id": "pl-b-case",
+          "label": "case",
+          "containsQty": 10,
+          "containsLevelId": "pl-b-sleeve",
+          "containsMeasureUnit": null,
+          "displayOrdinal": 1
+        },
+        {
+          "id": "pl-b-sleeve",
+          "label": "sleeve",
+          "containsQty": 50,
+          "containsLevelId": null,
+          "containsMeasureUnit": "each",
+          "displayOrdinal": 2
+        }
+      ],
+      "s-cups": [
+        {
+          "id": "pl-c-sleeve",
+          "label": "sleeve",
+          "containsQty": 100,
+          "containsLevelId": null,
+          "containsMeasureUnit": "each",
+          "displayOrdinal": 1
+        }
+      ],
+      "s-ham-a": [
+        {
+          "id": "pl-h-pack",
+          "label": "pack",
+          "containsQty": 32,
+          "containsLevelId": null,
+          "containsMeasureUnit": "oz",
+          "displayOrdinal": 1
+        }
+      ],
+      "s-ham-b": [
+        {
+          "id": "pl-hb-pack",
+          "label": "pack",
+          "containsQty": 2,
+          "containsLevelId": null,
+          "containsMeasureUnit": "lb",
+          "displayOrdinal": 1
+        }
+      ],
+      "s-tomato": [
+        {
+          "id": "pl-tom-case",
+          "label": "case",
+          "containsQty": 20,
+          "containsLevelId": null,
+          "containsMeasureUnit": "each",
+          "displayOrdinal": 1
+        }
+      ],
+      "s-turkey": [
+        {
+          "id": "pl-t-case",
+          "label": "case",
+          "containsQty": 4,
+          "containsLevelId": "pl-t-bag",
+          "containsMeasureUnit": null,
+          "displayOrdinal": 1
+        },
+        {
+          "id": "pl-t-bag",
+          "label": "bag",
+          "containsQty": 80,
+          "containsLevelId": null,
+          "containsMeasureUnit": "oz",
+          "displayOrdinal": 2
+        }
+      ],
+      "s-twin-x": [
+        {
+          "id": "pl-x-loaf",
+          "label": "loaf",
+          "containsQty": 20,
+          "containsLevelId": null,
+          "containsMeasureUnit": "oz",
+          "displayOrdinal": 1
+        }
+      ]
+    },
+    "allChains": {
+      "s-bags": [
+        {
+          "id": "pl-b-case",
+          "label": "case",
+          "containsQty": 10,
+          "containsLevelId": "pl-b-sleeve",
+          "containsMeasureUnit": null,
+          "displayOrdinal": 1
+        },
+        {
+          "id": "pl-b-sleeve",
+          "label": "sleeve",
+          "containsQty": 50,
+          "containsLevelId": null,
+          "containsMeasureUnit": "each",
+          "displayOrdinal": 2
+        }
+      ],
+      "s-cups": [
+        {
+          "id": "pl-c-sleeve",
+          "label": "sleeve",
+          "containsQty": 100,
+          "containsLevelId": null,
+          "containsMeasureUnit": "each",
+          "displayOrdinal": 1
+        }
+      ],
+      "s-ham-a": [
+        {
+          "id": "pl-h-pack",
+          "label": "pack",
+          "containsQty": 32,
+          "containsLevelId": null,
+          "containsMeasureUnit": "oz",
+          "displayOrdinal": 1
+        }
+      ],
+      "s-ham-b": [
+        {
+          "id": "pl-hb-pack",
+          "label": "pack",
+          "containsQty": 2,
+          "containsLevelId": null,
+          "containsMeasureUnit": "lb",
+          "displayOrdinal": 1
+        }
+      ],
+      "s-tomato": [
+        {
+          "id": "pl-tom-case",
+          "label": "case",
+          "containsQty": 20,
+          "containsLevelId": null,
+          "containsMeasureUnit": "each",
+          "displayOrdinal": 1
+        }
+      ],
+      "s-turkey": [
+        {
+          "id": "pl-t-case",
+          "label": "case",
+          "containsQty": 4,
+          "containsLevelId": "pl-t-bag",
+          "containsMeasureUnit": null,
+          "displayOrdinal": 1
+        },
+        {
+          "id": "pl-t-bag",
+          "label": "bag",
+          "containsQty": 80,
+          "containsLevelId": null,
+          "containsMeasureUnit": "oz",
+          "displayOrdinal": 2
+        }
+      ],
+      "s-twin-x": [
+        {
+          "id": "pl-x-loaf",
+          "label": "loaf",
+          "containsQty": 20,
+          "containsLevelId": null,
+          "containsMeasureUnit": "oz",
+          "displayOrdinal": 1
+        }
+      ]
+    },
+    "prices": {
+      "s-bags": 30,
+      "s-cheese": 46.2,
+      "s-ham-a": 3.1,
+      "s-ham-b": 6.4,
+      "s-lettuce": 38,
+      "s-mayo": 22,
+      "s-old": 7,
+      "s-pickle": 9.99,
+      "s-tomato": 25,
+      "s-turkey": 128,
+      "s-twin-x": 4,
+      "s-twin-y": 4.5
+    },
+    "priceCents": {
+      "s-bags": 3000,
+      "s-cheese": 4620,
+      "s-ham-a": 310,
+      "s-ham-b": 640,
+      "s-lettuce": 3800,
+      "s-mayo": 2200,
+      "s-old": 700,
+      "s-pickle": 999,
+      "s-tomato": 2500,
+      "s-turkey": 12800,
+      "s-twin-x": 400,
+      "s-twin-y": 450
+    },
+    "orderUnitOz": {
+      "s-bags": null,
+      "s-cheese": null,
+      "s-cups": null,
+      "s-ham-a": 32,
+      "s-ham-b": 32,
+      "s-ham-c": null,
+      "s-lettuce": 384,
+      "s-mayo": 480,
+      "s-old": null,
+      "s-onion": null,
+      "s-pepper": null,
+      "s-pickle": 32,
+      "s-relish": null,
+      "s-salt": null,
+      "s-store-ham": null,
+      "s-tomato": 90,
+      "s-turkey": 320,
+      "s-twin-x": 20,
+      "s-twin-y": null
+    },
+    "flatContentOz": {
+      "s-bags": null,
+      "s-cheese": null,
+      "s-cups": null,
+      "s-ham-a": null,
+      "s-ham-b": null,
+      "s-ham-c": null,
+      "s-lettuce": 384,
+      "s-mayo": 480,
+      "s-old": null,
+      "s-onion": null,
+      "s-pepper": null,
+      "s-pickle": 32,
+      "s-relish": null,
+      "s-salt": null,
+      "s-store-ham": null,
+      "s-tomato": null,
+      "s-turkey": null,
+      "s-twin-x": null,
+      "s-twin-y": null
+    },
+    "graph": {
+      "skuPack": {
+        "s-cheese": {
+          "packFormat": null,
+          "eachContainerLabel": null,
+          "unitsPerPack": null,
+          "eachSize": null,
+          "eachMeasure": null,
+          "avgOzPerEach": null,
+          "packChain": null
+        },
+        "s-ham-a": {
+          "packFormat": null,
+          "eachContainerLabel": null,
+          "unitsPerPack": null,
+          "eachSize": null,
+          "eachMeasure": null,
+          "avgOzPerEach": null,
+          "packChain": [
+            {
+              "id": "pl-h-pack",
+              "label": "pack",
+              "containsQty": 32,
+              "containsLevelId": null,
+              "containsMeasureUnit": "oz",
+              "displayOrdinal": 1
+            }
+          ]
+        },
+        "s-lettuce": {
+          "packFormat": "case",
+          "eachContainerLabel": null,
+          "unitsPerPack": 24,
+          "eachSize": 1,
+          "eachMeasure": "lb",
+          "avgOzPerEach": null,
+          "packChain": null
+        },
+        "s-mayo": {
+          "packFormat": "tub",
+          "eachContainerLabel": null,
+          "unitsPerPack": 1,
+          "eachSize": 30,
+          "eachMeasure": "lb",
+          "avgOzPerEach": null,
+          "packChain": null
+        },
+        "s-onion": {
+          "packFormat": null,
+          "eachContainerLabel": null,
+          "unitsPerPack": null,
+          "eachSize": null,
+          "eachMeasure": null,
+          "avgOzPerEach": null,
+          "packChain": null
+        },
+        "s-pickle": {
+          "packFormat": "jar",
+          "eachContainerLabel": null,
+          "unitsPerPack": 1,
+          "eachSize": 32,
+          "eachMeasure": "oz",
+          "avgOzPerEach": null,
+          "packChain": null
+        },
+        "s-tomato": {
+          "packFormat": null,
+          "eachContainerLabel": null,
+          "unitsPerPack": null,
+          "eachSize": null,
+          "eachMeasure": null,
+          "avgOzPerEach": 4.5,
+          "packChain": [
+            {
+              "id": "pl-tom-case",
+              "label": "case",
+              "containsQty": 20,
+              "containsLevelId": null,
+              "containsMeasureUnit": "each",
+              "displayOrdinal": 1
+            }
+          ]
+        },
+        "s-turkey": {
+          "packFormat": "case",
+          "eachContainerLabel": null,
+          "unitsPerPack": null,
+          "eachSize": null,
+          "eachMeasure": null,
+          "avgOzPerEach": null,
+          "packChain": [
+            {
+              "id": "pl-t-case",
+              "label": "case",
+              "containsQty": 4,
+              "containsLevelId": "pl-t-bag",
+              "containsMeasureUnit": null,
+              "displayOrdinal": 1
+            },
+            {
+              "id": "pl-t-bag",
+              "label": "bag",
+              "containsQty": 80,
+              "containsLevelId": null,
+              "containsMeasureUnit": "oz",
+              "displayOrdinal": 2
+            }
+          ]
+        },
+        "s-twin-y": {
+          "packFormat": null,
+          "eachContainerLabel": null,
+          "unitsPerPack": null,
+          "eachSize": null,
+          "eachMeasure": null,
+          "avgOzPerEach": null,
+          "packChain": null
+        }
+      },
+      "menuOz": {
+        "m-italian": {
+          "s-cheese": 1.5,
+          "s-ham-a": 3,
+          "s-lettuce": 1.5,
+          "s-mayo": 0.5,
+          "s-tomato": 9,
+          "s-turkey": 4,
+          "s-twin-y": 16
+        },
+        "m-old": {},
+        "m-pickle-side": {
+          "s-pickle": 8
+        }
+      },
+      "itemOz": {
+        "i-slaw": {
+          "s-lettuce": 24,
+          "s-mayo": 8
+        }
+      },
+      "costPerOz": {
+        "s-cheese": null,
+        "s-ham-a": 0.096875,
+        "s-lettuce": 0.09895833333333333,
+        "s-mayo": 0.04583333333333333,
+        "s-onion": null,
+        "s-pickle": 0.3121875,
+        "s-tomato": 0.2777777777777778,
+        "s-turkey": 0.4,
+        "s-twin-y": null
+      },
+      "menuCost": {
+        "m-italian": {
+          "status": "partial",
+          "cost": null,
+          "pricedCost": 4.561979166666667,
+          "pricedLineCount": 5,
+          "unpricedLineCount": 2,
+          "unpricedSkuIds": [
+            "s-cheese",
+            "s-twin-y"
+          ],
+          "inconsistentItemIds": [],
+          "unweighedItemIds": [],
+          "retiredProductIds": []
+        },
+        "m-old": {
+          "status": "no_recipe",
+          "cost": null,
+          "pricedCost": 0,
+          "pricedLineCount": 0,
+          "unpricedLineCount": 0,
+          "unpricedSkuIds": [],
+          "inconsistentItemIds": [],
+          "unweighedItemIds": [],
+          "retiredProductIds": []
+        },
+        "m-pickle-side": {
+          "status": "costed",
+          "cost": 2.4975,
+          "pricedCost": 2.4975,
+          "pricedLineCount": 1,
+          "unpricedLineCount": 0,
+          "unpricedSkuIds": [],
+          "inconsistentItemIds": [],
+          "unweighedItemIds": [],
+          "retiredProductIds": []
+        }
+      },
+      "itemCost": {
+        "i-slaw": {
+          "status": "costed",
+          "cost": 2.7416666666666667,
+          "pricedCost": 2.7416666666666667,
+          "pricedLineCount": 2,
+          "unpricedLineCount": 0,
+          "unpricedSkuIds": [],
+          "inconsistentItemIds": [],
+          "unweighedItemIds": [],
+          "retiredProductIds": []
+        }
+      }
+    },
+    "datedMenuOz": {
+      "m-italian": {
+        "s-cheese": 1.5,
+        "s-ham-a": 3,
+        "s-lettuce": 1.5,
+        "s-mayo": 0.5,
+        "s-tomato": 9,
+        "s-turkey": 4,
+        "s-twin-y": 16
+      },
+      "m-old": {},
+      "m-pickle-side": {
+        "s-pickle": 8
+      }
+    }
+  },
+  "loc-2": {
+    "chains": {
+      "s-bags": [
+        {
+          "id": "pl-b-case",
+          "label": "case",
+          "containsQty": 10,
+          "containsLevelId": "pl-b-sleeve",
+          "containsMeasureUnit": null,
+          "displayOrdinal": 1
+        },
+        {
+          "id": "pl-b-sleeve",
+          "label": "sleeve",
+          "containsQty": 50,
+          "containsLevelId": null,
+          "containsMeasureUnit": "each",
+          "displayOrdinal": 2
+        }
+      ],
+      "s-cups": [
+        {
+          "id": "pl-c-sleeve",
+          "label": "sleeve",
+          "containsQty": 100,
+          "containsLevelId": null,
+          "containsMeasureUnit": "each",
+          "displayOrdinal": 1
+        }
+      ],
+      "s-ham-a": [
+        {
+          "id": "pl-h-pack",
+          "label": "pack",
+          "containsQty": 32,
+          "containsLevelId": null,
+          "containsMeasureUnit": "oz",
+          "displayOrdinal": 1
+        }
+      ],
+      "s-ham-b": [
+        {
+          "id": "pl-hb-pack",
+          "label": "pack",
+          "containsQty": 2,
+          "containsLevelId": null,
+          "containsMeasureUnit": "lb",
+          "displayOrdinal": 1
+        }
+      ],
+      "s-tomato": [
+        {
+          "id": "pl-tom-case",
+          "label": "case",
+          "containsQty": 20,
+          "containsLevelId": null,
+          "containsMeasureUnit": "each",
+          "displayOrdinal": 1
+        }
+      ],
+      "s-turkey": [
+        {
+          "id": "pl-t-case",
+          "label": "case",
+          "containsQty": 4,
+          "containsLevelId": "pl-t-bag",
+          "containsMeasureUnit": null,
+          "displayOrdinal": 1
+        },
+        {
+          "id": "pl-t-bag",
+          "label": "bag",
+          "containsQty": 80,
+          "containsLevelId": null,
+          "containsMeasureUnit": "oz",
+          "displayOrdinal": 2
+        }
+      ],
+      "s-twin-x": [
+        {
+          "id": "pl-x-loaf",
+          "label": "loaf",
+          "containsQty": 20,
+          "containsLevelId": null,
+          "containsMeasureUnit": "oz",
+          "displayOrdinal": 1
+        }
+      ]
+    },
+    "allChains": {
+      "s-bags": [
+        {
+          "id": "pl-b-case",
+          "label": "case",
+          "containsQty": 10,
+          "containsLevelId": "pl-b-sleeve",
+          "containsMeasureUnit": null,
+          "displayOrdinal": 1
+        },
+        {
+          "id": "pl-b-sleeve",
+          "label": "sleeve",
+          "containsQty": 50,
+          "containsLevelId": null,
+          "containsMeasureUnit": "each",
+          "displayOrdinal": 2
+        }
+      ],
+      "s-cups": [
+        {
+          "id": "pl-c-sleeve",
+          "label": "sleeve",
+          "containsQty": 100,
+          "containsLevelId": null,
+          "containsMeasureUnit": "each",
+          "displayOrdinal": 1
+        }
+      ],
+      "s-ham-a": [
+        {
+          "id": "pl-h-pack",
+          "label": "pack",
+          "containsQty": 32,
+          "containsLevelId": null,
+          "containsMeasureUnit": "oz",
+          "displayOrdinal": 1
+        }
+      ],
+      "s-ham-b": [
+        {
+          "id": "pl-hb-pack",
+          "label": "pack",
+          "containsQty": 2,
+          "containsLevelId": null,
+          "containsMeasureUnit": "lb",
+          "displayOrdinal": 1
+        }
+      ],
+      "s-tomato": [
+        {
+          "id": "pl-tom-case",
+          "label": "case",
+          "containsQty": 20,
+          "containsLevelId": null,
+          "containsMeasureUnit": "each",
+          "displayOrdinal": 1
+        }
+      ],
+      "s-turkey": [
+        {
+          "id": "pl-t-case",
+          "label": "case",
+          "containsQty": 4,
+          "containsLevelId": "pl-t-bag",
+          "containsMeasureUnit": null,
+          "displayOrdinal": 1
+        },
+        {
+          "id": "pl-t-bag",
+          "label": "bag",
+          "containsQty": 80,
+          "containsLevelId": null,
+          "containsMeasureUnit": "oz",
+          "displayOrdinal": 2
+        }
+      ],
+      "s-twin-x": [
+        {
+          "id": "pl-x-loaf",
+          "label": "loaf",
+          "containsQty": 20,
+          "containsLevelId": null,
+          "containsMeasureUnit": "oz",
+          "displayOrdinal": 1
+        }
+      ]
+    },
+    "prices": {
+      "s-bags": 30,
+      "s-cheese": 46.2,
+      "s-ham-a": 3.1,
+      "s-ham-b": 6.4,
+      "s-lettuce": 38,
+      "s-mayo": 22,
+      "s-old": 7,
+      "s-pickle": 9.99,
+      "s-tomato": 25,
+      "s-turkey": 128,
+      "s-twin-x": 4,
+      "s-twin-y": 4.5
+    },
+    "priceCents": {
+      "s-bags": 3000,
+      "s-cheese": 4620,
+      "s-ham-a": 310,
+      "s-ham-b": 640,
+      "s-lettuce": 3800,
+      "s-mayo": 2200,
+      "s-old": 700,
+      "s-pickle": 999,
+      "s-tomato": 2500,
+      "s-turkey": 12800,
+      "s-twin-x": 400,
+      "s-twin-y": 450
+    },
+    "orderUnitOz": {
+      "s-bags": null,
+      "s-cheese": null,
+      "s-cups": null,
+      "s-ham-a": 32,
+      "s-ham-b": 32,
+      "s-ham-c": null,
+      "s-lettuce": 384,
+      "s-mayo": 480,
+      "s-old": null,
+      "s-onion": null,
+      "s-pepper": null,
+      "s-pickle": 32,
+      "s-relish": null,
+      "s-salt": null,
+      "s-store-ham": null,
+      "s-tomato": 90,
+      "s-turkey": 320,
+      "s-twin-x": 20,
+      "s-twin-y": null
+    },
+    "flatContentOz": {
+      "s-bags": null,
+      "s-cheese": null,
+      "s-cups": null,
+      "s-ham-a": null,
+      "s-ham-b": null,
+      "s-ham-c": null,
+      "s-lettuce": 384,
+      "s-mayo": 480,
+      "s-old": null,
+      "s-onion": null,
+      "s-pepper": null,
+      "s-pickle": 32,
+      "s-relish": null,
+      "s-salt": null,
+      "s-store-ham": null,
+      "s-tomato": null,
+      "s-turkey": null,
+      "s-twin-x": null,
+      "s-twin-y": null
+    },
+    "graph": {
+      "skuPack": {
+        "s-cheese": {
+          "packFormat": null,
+          "eachContainerLabel": null,
+          "unitsPerPack": null,
+          "eachSize": null,
+          "eachMeasure": null,
+          "avgOzPerEach": null,
+          "packChain": null
+        },
+        "s-ham-a": {
+          "packFormat": null,
+          "eachContainerLabel": null,
+          "unitsPerPack": null,
+          "eachSize": null,
+          "eachMeasure": null,
+          "avgOzPerEach": null,
+          "packChain": [
+            {
+              "id": "pl-h-pack",
+              "label": "pack",
+              "containsQty": 32,
+              "containsLevelId": null,
+              "containsMeasureUnit": "oz",
+              "displayOrdinal": 1
+            }
+          ]
+        },
+        "s-lettuce": {
+          "packFormat": "case",
+          "eachContainerLabel": null,
+          "unitsPerPack": 24,
+          "eachSize": 1,
+          "eachMeasure": "lb",
+          "avgOzPerEach": null,
+          "packChain": null
+        },
+        "s-mayo": {
+          "packFormat": "tub",
+          "eachContainerLabel": null,
+          "unitsPerPack": 1,
+          "eachSize": 30,
+          "eachMeasure": "lb",
+          "avgOzPerEach": null,
+          "packChain": null
+        },
+        "s-onion": {
+          "packFormat": null,
+          "eachContainerLabel": null,
+          "unitsPerPack": null,
+          "eachSize": null,
+          "eachMeasure": null,
+          "avgOzPerEach": null,
+          "packChain": null
+        },
+        "s-pickle": {
+          "packFormat": "jar",
+          "eachContainerLabel": null,
+          "unitsPerPack": 1,
+          "eachSize": 32,
+          "eachMeasure": "oz",
+          "avgOzPerEach": null,
+          "packChain": null
+        },
+        "s-tomato": {
+          "packFormat": null,
+          "eachContainerLabel": null,
+          "unitsPerPack": null,
+          "eachSize": null,
+          "eachMeasure": null,
+          "avgOzPerEach": 4.5,
+          "packChain": [
+            {
+              "id": "pl-tom-case",
+              "label": "case",
+              "containsQty": 20,
+              "containsLevelId": null,
+              "containsMeasureUnit": "each",
+              "displayOrdinal": 1
+            }
+          ]
+        },
+        "s-turkey": {
+          "packFormat": "case",
+          "eachContainerLabel": null,
+          "unitsPerPack": null,
+          "eachSize": null,
+          "eachMeasure": null,
+          "avgOzPerEach": null,
+          "packChain": [
+            {
+              "id": "pl-t-case",
+              "label": "case",
+              "containsQty": 4,
+              "containsLevelId": "pl-t-bag",
+              "containsMeasureUnit": null,
+              "displayOrdinal": 1
+            },
+            {
+              "id": "pl-t-bag",
+              "label": "bag",
+              "containsQty": 80,
+              "containsLevelId": null,
+              "containsMeasureUnit": "oz",
+              "displayOrdinal": 2
+            }
+          ]
+        },
+        "s-twin-y": {
+          "packFormat": null,
+          "eachContainerLabel": null,
+          "unitsPerPack": null,
+          "eachSize": null,
+          "eachMeasure": null,
+          "avgOzPerEach": null,
+          "packChain": null
+        }
+      },
+      "menuOz": {
+        "m-italian": {
+          "s-cheese": 1.5,
+          "s-ham-a": 3,
+          "s-lettuce": 1.5,
+          "s-mayo": 0.5,
+          "s-tomato": 9,
+          "s-turkey": 4,
+          "s-twin-y": 16
+        },
+        "m-old": {},
+        "m-pickle-side": {
+          "s-pickle": 8
+        }
+      },
+      "itemOz": {
+        "i-slaw": {
+          "s-lettuce": 24,
+          "s-mayo": 8
+        }
+      },
+      "costPerOz": {
+        "s-cheese": null,
+        "s-ham-a": 0.096875,
+        "s-lettuce": 0.09895833333333333,
+        "s-mayo": 0.04583333333333333,
+        "s-onion": null,
+        "s-pickle": 0.3121875,
+        "s-tomato": 0.2777777777777778,
+        "s-turkey": 0.4,
+        "s-twin-y": null
+      },
+      "menuCost": {
+        "m-italian": {
+          "status": "partial",
+          "cost": null,
+          "pricedCost": 4.561979166666667,
+          "pricedLineCount": 5,
+          "unpricedLineCount": 2,
+          "unpricedSkuIds": [
+            "s-cheese",
+            "s-twin-y"
+          ],
+          "inconsistentItemIds": [],
+          "unweighedItemIds": [],
+          "retiredProductIds": []
+        },
+        "m-old": {
+          "status": "no_recipe",
+          "cost": null,
+          "pricedCost": 0,
+          "pricedLineCount": 0,
+          "unpricedLineCount": 0,
+          "unpricedSkuIds": [],
+          "inconsistentItemIds": [],
+          "unweighedItemIds": [],
+          "retiredProductIds": []
+        },
+        "m-pickle-side": {
+          "status": "costed",
+          "cost": 2.4975,
+          "pricedCost": 2.4975,
+          "pricedLineCount": 1,
+          "unpricedLineCount": 0,
+          "unpricedSkuIds": [],
+          "inconsistentItemIds": [],
+          "unweighedItemIds": [],
+          "retiredProductIds": []
+        }
+      },
+      "itemCost": {
+        "i-slaw": {
+          "status": "costed",
+          "cost": 2.7416666666666667,
+          "pricedCost": 2.7416666666666667,
+          "pricedLineCount": 2,
+          "unpricedLineCount": 0,
+          "unpricedSkuIds": [],
+          "inconsistentItemIds": [],
+          "unweighedItemIds": [],
+          "retiredProductIds": []
+        }
+      }
+    },
+    "datedMenuOz": {
+      "m-italian": {
+        "s-cheese": 1.5,
+        "s-ham-a": 3,
+        "s-lettuce": 1.5,
+        "s-mayo": 0.5,
+        "s-tomato": 9,
+        "s-turkey": 4,
+        "s-twin-y": 16
+      },
+      "m-old": {},
+      "m-pickle-side": {
+        "s-pickle": 8
+      }
+    }
+  }
+}
