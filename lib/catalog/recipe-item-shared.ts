@@ -6,7 +6,7 @@
  */
 import type { RecipeLineFields } from "@/lib/recipe-line-shared";
 import { parseRecipeLineOp, type RecipeLineChange, type RecipeLineOp } from "@/lib/recipe-versions-shared";
-import { parseMenuShopPatch, type MenuShopPatch } from "@/lib/menu-item-shop-shared";
+import { parseMenuShopPatch, parseOptionalMenuName, type MenuShopPatch } from "@/lib/menu-item-shop-shared";
 import type { RecipeNotice } from "@/lib/catalog/recipe-notices-shared";
 import type { RecipeBuilderProduct, RecipeBuilderSku } from "@/components/admin/recipes/RecipeBuilder";
 import type { PackChainLevel } from "@/lib/pack-chain-shared";
@@ -169,7 +169,8 @@ export type MenuChangeRequest =
   | { kind: "save"; shopId: string; patch: MenuShopPatch }
   | { kind: "back_to_default"; shopId: string }
   | { kind: "restore"; shopId: string; fromSettingId: string }
-  | { kind: "promote"; settingId: string; fields: MenuPromoteField[] };
+  /** `nameEs`: the optional "Spanish name" typed on the promote screen — present only when typed (CC note 1 #2). */
+  | { kind: "promote"; settingId: string; fields: MenuPromoteField[]; nameEs?: string };
 
 /** The routes' one parser for a menu change. "Sold here" is never promoted (judgment call 8). */
 export function parseMenuChange(raw: unknown): ChangeParse<MenuChangeRequest> {
@@ -190,9 +191,15 @@ export function parseMenuChange(raw: unknown): ChangeParse<MenuChangeRequest> {
     case "promote": {
       const fields: unknown[] = Array.isArray(b.fields) ? b.fields : [];
       const ok = fields.length > 0 && fields.length <= 2 && fields.every((f) => f === "price" || f === "name") && new Set(fields).size === fields.length;
-      return ok && isUuid(b.settingId)
-        ? { ok: true, change: { kind: "promote", settingId: b.settingId, fields: fields as MenuPromoteField[] } }
-        : { ok: false, code: "invalid_payload" };
+      if (!ok || !isUuid(b.settingId)) return { ok: false, code: "invalid_payload" };
+      // THE OPTIONAL SPANISH NAME IS PRESERVED (Astra chunk-1 review P2): validated by the lib's rule (blank = not
+      // typed, max MENU_NAME_MAX) and carried to preview and apply; only with the name promoted, as the lib refuses.
+      const es = parseOptionalMenuName(b.nameEs);
+      if (!es.ok) return { ok: false, code: "invalid_name" };
+      if (es.value !== null && !fields.includes("name")) return { ok: false, code: "invalid_payload" };
+      return { ok: true, change: {
+        kind: "promote", settingId: b.settingId, fields: fields as MenuPromoteField[], ...(es.value !== null ? { nameEs: es.value } : {}),
+      } };
     }
     default:
       return { ok: false, code: "invalid_payload" };

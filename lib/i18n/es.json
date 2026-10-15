@@ -6502,5 +6502,6 @@
   "catalog.item.change_for_shop": "Cámbialo para {shop}",
   "catalog.item.pick_shop": "Cámbialo para una de tus tiendas",
   "catalog.menu.preview.name_es_fallback": "Quienes usan la app en español verán el nombre en inglés hasta que agregues uno.",
-  "catalog.menu.promote.name_es_field": "Nombre en español (opcional)"
+  "catalog.menu.promote.name_es_field": "Nombre en español (opcional)",
+  "catalog.menu.promote.es_saved_not_promoted": "El nombre en español propio de {shop} se guardó (lo ves en el Historial), pero la promoción no se hizo."
 }

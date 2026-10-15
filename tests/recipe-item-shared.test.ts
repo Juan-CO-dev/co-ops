@@ -110,6 +110,28 @@ describe("parseMenuChange — the four menu acts", () => {
   });
 });
 
+describe("parseMenuChange — the promote's optional Spanish name (Astra chunk-1 review P2)", () => {
+  it("PRESERVES a typed Spanish name (trimmed) so it reaches preview and apply", () => {
+    expect(parseMenuChange({ kind: "promote", settingId: V, fields: ["name"], nameEs: "  Italiano grande " }))
+      .toEqual({ ok: true, change: { kind: "promote", settingId: V, fields: ["name"], nameEs: "Italiano grande" } });
+    expect(parseMenuChange({ kind: "promote", settingId: V, fields: ["price", "name"], nameEs: "bad" }))
+      .toEqual({ ok: true, change: { kind: "promote", settingId: V, fields: ["price", "name"], nameEs: "bad" } });
+  });
+  it("blank or absent = not typed; over 120 characters or not text = invalid_name; with a price-only promote = invalid_payload", () => {
+    const blank = parseMenuChange({ kind: "promote", settingId: V, fields: ["name"], nameEs: "   " });
+    expect(blank).toEqual({ ok: true, change: { kind: "promote", settingId: V, fields: ["name"] } });
+    expect(blank.ok && blank.change.kind === "promote" && "nameEs" in blank.change).toBe(false);
+    expect(parseMenuChange({ kind: "promote", settingId: V, fields: ["name"], nameEs: "x".repeat(120) }).ok).toBe(true);
+    expect(parseMenuChange({ kind: "promote", settingId: V, fields: ["name"], nameEs: "x".repeat(121) })).toEqual({ ok: false, code: "invalid_name" });
+    expect(parseMenuChange({ kind: "promote", settingId: V, fields: ["name"], nameEs: 7 })).toEqual({ ok: false, code: "invalid_name" });
+    expect(parseMenuChange({ kind: "promote", settingId: V, fields: ["price"], nameEs: "Italiano" })).toEqual({ ok: false, code: "invalid_payload" });
+  });
+  it("a shop save may use the literal name \"bad\" (the sentinel class of Astra's P3)", () => {
+    expect(parseMenuChange({ kind: "save", shopId: SHOP, patch: { nameOverride: "bad", nameOverrideEs: "bad" } }))
+      .toEqual({ ok: true, change: { kind: "save", shopId: SHOP, patch: { price: null, soldHere: true, nameOverride: "bad", nameOverrideEs: "bad" } } });
+  });
+});
+
 describe("an open edit keeps its baseline across a refresh (Astra 3b r5#1; lead decision: previews bind the change, Start over)", () => {
   const seen = { componentSkuId: "s1", componentItemId: null, componentProductId: null, quantity: 4, unit: "oz", eachContainerLabel: null, portioned: false };
   it("a changed line under the edit is stale; the same line is not", () => {

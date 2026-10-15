@@ -158,8 +158,14 @@ export function menuPromoteChangedShops(input: {
     .map((s) => ({ shopId: s.id, shopName: s.name }));
 }
 
-/** The two strings the promote's name preview adds (en + es, pinned by tests/recipe-preview-shared.test.ts). */
-export const MENU_PROMOTE_NAME_KEYS = ["catalog.menu.preview.name_es_fallback", "catalog.menu.promote.name_es_field"] as const;
+/**
+ * The strings the promote's Spanish name adds (en + es, pinned by tests/recipe-preview-shared.test.ts): the fallback,
+ * the optional field, and the plain sentence for a promote refused AFTER the Spanish name was saved (CC note 2 #3;
+ * MenuShopError.spanishNameSaved).
+ */
+export const MENU_PROMOTE_NAME_KEYS = [
+  "catalog.menu.preview.name_es_fallback", "catalog.menu.promote.name_es_field", "catalog.menu.promote.es_saved_not_promoted",
+] as const;
 
 /**
  * THE NAMES A PROMOTE LEAVES (CC note 1 #2, superseding the GO's promote bullet). 0263's promote copies the

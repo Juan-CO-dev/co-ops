@@ -6502,5 +6502,6 @@
   "catalog.item.change_for_shop": "Change it for {shop}",
   "catalog.item.pick_shop": "Change it for one of your shops",
   "catalog.menu.preview.name_es_fallback": "Spanish users will see the English name until you add one.",
-  "catalog.menu.promote.name_es_field": "Spanish name (optional)"
+  "catalog.menu.promote.name_es_field": "Spanish name (optional)",
+  "catalog.menu.promote.es_saved_not_promoted": "{shop}'s own Spanish name was saved (you can see it in History), but the promote did not happen."
 }
