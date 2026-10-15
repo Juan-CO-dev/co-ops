@@ -54,6 +54,7 @@ import {
   type GraphRecipe,
   type RecipeGraph,
 } from "@/lib/prep-consumption-graph";
+import { skuContentOz, skuCostPerOz } from "@/lib/recipe-math";
 
 /**
  * Food-cost % ABOVE which a row gets danger treatment on the board.
@@ -706,4 +707,24 @@ export function summarizeMenuCostRows(rows: MenuCostRow[]): MenuCostTotals {
   totals.inconsistentItemCount = broken.size;
   totals.unweighedItemCount = unweighed.size;
   return totals;
+}
+
+/**
+ * $/oz for every SKU the recipe universe references = current pack price ÷ chain-aware content oz
+ * (moved here from lib/admin/menu-costing.ts in catalog Phase 2b so the pure preview can reuse THE
+ * costing formula; the server module re-exports it).
+ *
+ * null when the SKU has no current price OR no resolvable content_oz — the two are
+ * indistinguishable downstream and both mean the same thing to the board: this line cannot be
+ * costed, count it.
+ */
+export function costPerOzFromGraph(
+  graph: RecipeGraph,
+  prices: ReadonlyMap<string, number>,
+): Map<string, number | null> {
+  const out = new Map<string, number | null>();
+  for (const [skuId, pack] of graph.skuPack) {
+    out.set(skuId, skuCostPerOz(prices.get(skuId) ?? null, skuContentOz(pack, graph.measures)));
+  }
+  return out;
 }
