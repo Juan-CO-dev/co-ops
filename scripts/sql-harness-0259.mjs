@@ -135,13 +135,22 @@ try {
   await refuses(save, [A, JSON.stringify([{ label: "case", containsQty: 0, containsMeasureUnit: "lb" }]), liveA], "sku_pack_version:non_positive_qty", "a zero quantity");
   await refuses(save, [E, JSON.stringify([{ label: "case", containsQty: 1, containsMeasureUnit: "lb" }]), null], "sku_pack_version:sku_not_found", "an inactive SKU");
 
+  // Chunk-3 P3d: a SHOP version made first must survive a later GLOBAL save untouched.
+  const shopSave = (await db.query("select public.save_sku_pack_version($1, $2, $3::jsonb, null, null, null, null, false) as r",
+    [A, SHOP, JSON.stringify([{ label: "crate", containsQty: 12, containsMeasureUnit: "lb" }])])).rows[0].r;
+
   // A good global save: the mirror is derived in the transaction; the epoch moves for EVERY shop (P3f).
   const ok = (await db.query(save, [A, JSON.stringify([{ label: "case", containsQty: 6, containsIndex: 1 }, { label: "bag", containsQty: 5, containsMeasureUnit: "lb" }]), liveA])).rows[0].r;
+  const shopAfter = (await db.query("select v.active, count(l.*) filter (where l.active)::int as live_levels from public.sku_pack_versions v join public.sku_pack_levels l on l.version_id = v.id where v.id = $1 group by v.active", [shopSave.version_id])).rows[0];
+  check(shopAfter.active === true && shopAfter.live_levels === 1, "a global save leaves the shop's version live, levels and all (chunk-3 P3d)");
   check(ok.mirror_synced === true && ok.retired_version_id === liveA, "a good global save retires the live version and syncs the mirror");
   const mirror = (await db.query("select pack_format, units_per_pack, each_size::text as each_size, each_measure from public.vendor_items where id = $1", [A])).rows[0];
   check(mirror.pack_format === "case" && mirror.units_per_pack === 6 && Number(mirror.each_size) === 5 && mirror.each_measure === "lb", "the flat mirror describes the saved chain (case of 6 × 5 lb)");
-  const epochs = (await db.query("select location_id from public.sku_pack_epochs where sku_id = $1 order by 1", [A])).rows.map((r) => r.location_id);
-  check(JSON.stringify(epochs) === JSON.stringify([SHOP, SHOP_OFF]), "the epoch moved for every shop riding the global pack, the inactive one too");
+  // SHOP made its own version (epoch 1) and does NOT ride the global pack, so the global save leaves
+  // it at 1; the inactive SHOP_OFF rides it and moves to 1 (P3f).
+  const epochs = (await db.query("select location_id, epoch::int as epoch from public.sku_pack_epochs where sku_id = $1 order by 1", [A])).rows;
+  check(JSON.stringify(epochs) === JSON.stringify([{ location_id: SHOP, epoch: 1 }, { location_id: SHOP_OFF, epoch: 1 }]),
+    "the global save moved the epoch of every shop riding it (the inactive one too) and not the shop on its own version");
 
   // P3c — the invoice writer.
   const rec = "select public.record_receiving_prices($1, $2::jsonb) as r";

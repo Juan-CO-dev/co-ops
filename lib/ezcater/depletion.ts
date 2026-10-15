@@ -1,11 +1,11 @@
 import "server-only";
 import type { getServiceRoleClient } from "@/lib/supabase-server";
 import { selectAllRows } from "@/lib/supabase-paginate";
-import { createDatedGraphs, loadRecipeGraph } from "@/lib/prep-consumption";
+import { loadRecipeGraph } from "@/lib/prep-consumption";
 import { perUnitSkuAttributionsForItem } from "@/lib/prep-consumption-graph";
 import { selectSalesDepletion } from "@/lib/depletion-shared";
 import { etCalendarDate, etYmdMinusDays } from "@/lib/operational-day";
-import { deriveCapturedSalesConsumption, loadSalesConsumptionContext } from "@/lib/catering/toast-sales";
+import { deriveCapturedSalesConsumption, loadSalesConsumptionContext, type SalesConsumptionContext } from "@/lib/catering/toast-sales";
 import { loadCapturedToastWindow } from "@/lib/toast/captured-window";
 import { loadSalesCoverageDisclosure, type EffectiveSalesWindow, type EffectiveSalesRow } from "@/lib/toast/effective-depletion";
 import { itemIdentity, probeItemMap, type ItemIdentity, type ProductionEvidence, type ToastMap, type TransferEvidence } from "./pass2-shared";
@@ -79,12 +79,14 @@ export async function loadReconciledSalesWindow(sb: Client, window: ReconciledWi
     if (!graph) { graph = await loadRecipeGraph({ locationId }); graphs.set(locationId, graph); }
     return graph;
   };
-  // D1: an ezCater ORDER depletes through the packs in force on its event date — never today's.
-  const datedByLocation = new Map<string, ReturnType<typeof createDatedGraphs>>();
-  const datedGraphFor = (locationId: string, businessDate: string) => {
-    let dated = datedByLocation.get(locationId);
-    if (!dated) { dated = createDatedGraphs({ locationId, liveGraph: graphs.get(locationId) }); datedByLocation.set(locationId, dated); }
-    return dated(businessDate);
+  // D1: an ezCater ORDER depletes through the packs in force on its event date — never today's —
+  // through the SAME dated-graph builder the shop's Toast window used (its context's graphFor), so a
+  // shop has ONE builder and every pack interval is loaded once (chunk-3 review P2b).
+  const contexts = new Map<string, SalesConsumptionContext>();
+  const datedGraphFor = async (locationId: string, businessDate: string) => {
+    let context = contexts.get(locationId);
+    if (!context) { context = await loadSalesConsumptionContext(locationId, await graphFor(locationId)); contexts.set(locationId, context); }
+    return context.graphFor ? context.graphFor(businessDate) : context.graph;
   };
   // Window loader performs its own generation fence. Derive afresh so a late
   // link removes all of a check's base selections AND modifiers immediately.
@@ -94,6 +96,7 @@ export async function loadReconciledSalesWindow(sb: Client, window: ReconciledWi
       loadCapturedToastWindow(sb, locationId, window.fromDate, end),
       loadSalesConsumptionContext(locationId, graph),
     ]);
+    contexts.set(locationId, context);
     for (const [date, day] of days) {
       const dayGraph = await context.graphFor!(date); // D1: that day's packs
       const consumption = await deriveCapturedSalesConsumption(locationId, date, day,

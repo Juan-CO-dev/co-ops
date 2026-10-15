@@ -7,7 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createFakeDb } from "./fixtures/counts-fake-db";
 import { buildShopVersionsFixture, LOC, OTHER } from "./fixtures/shop-versions-fixture";
 import { recordProduction } from "@/lib/production";
-import { loadDerivedForItems, recordProductionFromPrep } from "@/lib/prep-consumption";
+import { loadDerivedForItems, loadRecipeGraph, recordProductionFromPrep } from "@/lib/prep-consumption";
 import { unitToOz } from "@/lib/production-units-shared";
 import type { AuthContext } from "@/lib/session";
 
@@ -42,6 +42,18 @@ describe("manual production persists the shop's ounces", () => {
     await recordProduction(actor([LOC, OTHER]), { locationId: OTHER, inputSkuId: "s-lettuce", inputQty: 1, outputItemId: "i-slaw", outputQty: 2 });
     const lines = current!.writes.filter((w) => w.table === "production_inputs").flatMap((w) => w.rows);
     expect(lines.map((l) => l.input_oz)).toEqual([640, 384]);
+  });
+});
+
+describe("chunk-3 P3b: prep reuses the packs its graph already resolved", () => {
+  it("loadDerivedForItems reads sku_pack_levels exactly as often as the graph load itself — no second resolution", async () => {
+    const levelReads = () => current!.log.filter((q) => q.table === "sku_pack_levels").length;
+    const a = levelReads();
+    await loadRecipeGraph({ versionLocationId: LOC });
+    const graphOnly = levelReads() - a;
+    const b = levelReads();
+    await loadDerivedForItems(["i-slaw"], LOC);
+    expect(levelReads() - b).toBe(graphOnly);
   });
 });
 

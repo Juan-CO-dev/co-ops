@@ -6,7 +6,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createFakeDb } from "./fixtures/counts-fake-db";
 import { buildShopVersionsFixture, LOC, OTHER } from "./fixtures/shop-versions-fixture";
-import { createDatedGraphs, loadRecipeGraph } from "@/lib/prep-consumption";
+import { createDatedGraphs, loadRecipeGraph, packIntervalIndex } from "@/lib/prep-consumption";
 import { perUnitSkuOzForMenuItemFromGraph } from "@/lib/prep-consumption-graph";
 import { loadSalesConsumptionContext } from "@/lib/catering/toast-sales";
 import { skuContentOz } from "@/lib/recipe-math";
@@ -98,5 +98,39 @@ describe("D1 — depletion resolves packs as of its business date", () => {
     await dated("2026-10-16");
     await dated("2026-10-17");
     expect(current!.log.filter((q) => q.table === "recipes").length - before).toBe(1);
+  });
+  it("chunk-3 P2a: a window with ONE boundary in it costs TWO graph loads, never one per date", async () => {
+    // LOC's boundaries: 07-01, 08-01 (the backfilled versions) and TODAY_SAVE (10-15 14:00Z).
+    // 10-08 .. 10-14 sit in ONE interval [08-01, TODAY_SAVE); 10-15 .. 10-17 are after the last boundary.
+    const dated = createDatedGraphs({ locationId: LOC });
+    const before = current!.log.filter((q) => q.table === "recipes").length;
+    const days = ["2026-10-08", "2026-10-09", "2026-10-10", "2026-10-11", "2026-10-12", "2026-10-13", "2026-10-14", "2026-10-15", "2026-10-16", "2026-10-17"];
+    const graphs = [];
+    for (const d of days) graphs.push(await dated(d));
+    expect(current!.log.filter((q) => q.table === "recipes").length - before).toBe(2);
+    expect(new Set(graphs.slice(0, 7)).size).toBe(1); // one as-of graph for the whole interval
+    expect(new Set(graphs.slice(7)).size).toBe(1); // the live graph after the boundary
+    expect(turkeyOz(graphs[0]!)).toBeCloseTo(4, 10);
+    expect(turkeyOz(graphs[9]!)).toBeCloseTo(8, 10);
+    // the boundaries are read ONCE for the whole window
+    expect(current!.log.filter((q) => q.table === "sku_pack_versions" && q.select === "id, valid_from, valid_to").length).toBe(1);
+  });
+  it("chunk-3 P2b: ezCater orders reuse the shop's ONE dated-graph builder (its sales context), never a second", () => {
+    const src = readFileSync("lib/ezcater/depletion.ts", "utf8");
+    expect(src).not.toContain("createDatedGraphs");
+    expect(src).toContain("contexts.set(locationId, context);");
+    expect(src).toContain("return context.graphFor ? context.graphFor(businessDate) : context.graph;");
+  });
+});
+
+describe("packIntervalIndex — which pack interval an instant falls in (pure)", () => {
+  it("before the first boundary, inside, exactly on a boundary, after the last", () => {
+    const b = [100, 200, 300];
+    expect(packIntervalIndex(b, 50)).toBe(-1);
+    expect(packIntervalIndex(b, 100)).toBe(0);
+    expect(packIntervalIndex(b, 199)).toBe(0);
+    expect(packIntervalIndex(b, 200)).toBe(1);
+    expect(packIntervalIndex(b, 999)).toBe(2);
+    expect(packIntervalIndex([], 5)).toBe(-1);
   });
 });

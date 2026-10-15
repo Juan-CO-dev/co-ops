@@ -19,7 +19,7 @@ describe("LRA-231: the recipe graph hydrates pack data for resolved product memb
   });
   it("loads those packs with the same loader and merges them into the graph's skuPack before build", () => {
     // Catalog Phase 2a: the same loader, now with the graph's version scope and instant.
-    const merge = fn.indexOf("await loadSkuPack(memberIds, versionScope, asOf)");
+    const merge = fn.indexOf("await loadSkuPack(memberIds, versionScope, asOf, resolvedPacks)");
     const build = fn.indexOf("buildRecipeGraph(recipes, skuPack, measures, productIndex.index)");
     expect(merge).toBeGreaterThan(0);
     expect(build).toBeGreaterThan(merge);

@@ -52,7 +52,18 @@ export async function loadMeasures(): Promise<Map<string, MeasureUnitFactor>> {
   return new Map((data ?? []).map((m) => [m.label, { dimension: m.dimension, toBaseFactor: num(m.to_base_factor) ?? 0 }]));
 }
 
-async function loadSkuPack(skuIds: string[], scope: VersionScope, asOf: string | null = null): Promise<Map<string, RecipeInputSku>> {
+/**
+ * The resolved packs (which version, whose) behind a graph's skuPack — remembered per graph so a
+ * consumer of THAT graph never resolves the same packs a second time (chunk-3 review P3b). Kept off
+ * the RecipeGraph type on purpose: the pure graph module stays I/O-free and its shape unchanged.
+ */
+const GRAPH_PACKS = new WeakMap<RecipeGraph, Map<string, ResolvedPack>>();
+/** The packs loadRecipeGraph resolved for `graph` (empty for a graph it did not build). */
+export function resolvedPacksOf(graph: RecipeGraph): ReadonlyMap<string, ResolvedPack> {
+  return GRAPH_PACKS.get(graph) ?? new Map();
+}
+
+async function loadSkuPack(skuIds: string[], scope: VersionScope, asOf: string | null = null, resolvedOut?: Map<string, ResolvedPack>): Promise<Map<string, RecipeInputSku>> {
   if (skuIds.length === 0) return new Map();
   const sb = getServiceRoleClient();
   const { data, error } = await sb.from("vendor_items")
@@ -64,6 +75,7 @@ async function loadSkuPack(skuIds: string[], scope: VersionScope, asOf: string |
   // weighed one the read simply failed to return.
   if (error) throw new Error(`loadSkuPack: ${error.message}`);
   const packs = await loadSkuPackResolution(skuIds, scope, asOf);
+  if (resolvedOut) for (const [id, r] of packs) resolvedOut.set(id, r);
   return new Map((data ?? []).map((s) => {
     const pack = packs.get(s.id);
     // A past date inside a PRE-CHAIN BASELINE (0259) reads the flat pack it preserved, not today's
@@ -184,45 +196,66 @@ export async function loadAllSkuPackChains(scope: VersionScope): Promise<Map<str
 }
 
 /**
- * The latest pack BOUNDARY (a version opening or closing) visible to `scope` — after it, nothing
- * changed, so any business date ending later resolves to exactly the live graph. Two indexed reads.
+ * EVERY pack BOUNDARY (a version opening or closing) visible to `scope`, ascending, de-duplicated
+ * (epoch ms). Between two consecutive boundaries nothing about the packs `scope` sees changes, so
+ * every instant in that interval resolves to the SAME graph. Paged (one row per version).
  */
-export async function loadLatestPackBoundary(scope: VersionScope): Promise<string | null> {
+export async function loadPackBoundaries(scope: VersionScope): Promise<number[]> {
   const sb = getServiceRoleClient();
-  const base = () => {
-    const q = sb.from("sku_pack_versions").select("valid_from, valid_to");
-    return scope == null ? q.is("location_id", null) : q.or(`location_id.is.null,location_id.eq.${assertScopeToken(scope)}`);
-  };
-  const [opened, closed] = await Promise.all([
-    base().order("valid_from", { ascending: false }).limit(1).returns<Array<{ valid_from: string; valid_to: string | null }>>(),
-    base().not("valid_to", "is", null).order("valid_to", { ascending: false }).limit(1).returns<Array<{ valid_from: string; valid_to: string | null }>>(),
-  ]);
-  if (opened.error) throw new Error(`loadLatestPackBoundary opened: ${opened.error.message}`);
-  if (closed.error) throw new Error(`loadLatestPackBoundary closed: ${closed.error.message}`);
-  const times = [opened.data?.[0]?.valid_from, closed.data?.[0]?.valid_to].filter((t): t is string => typeof t === "string");
-  return times.length === 0 ? null : times.reduce((a, b) => (Date.parse(a) >= Date.parse(b) ? a : b));
+  const rows = await selectAllRows<{ id: string; valid_from: string; valid_to: string | null }>(async (from, to) => {
+    const base = sb.from("sku_pack_versions").select("id, valid_from, valid_to");
+    const scoped = scope == null ? base.is("location_id", null) : base.or(`location_id.is.null,location_id.eq.${assertScopeToken(scope)}`);
+    const { data, error } = await scoped.order("id", { ascending: true }).range(from, to)
+      .returns<Array<{ id: string; valid_from: string; valid_to: string | null }>>();
+    if (error) throw new Error(`loadPackBoundaries: ${error.message}`);
+    return { data };
+  });
+  const out = new Set<number>();
+  for (const r of rows) {
+    out.add(Date.parse(r.valid_from));
+    if (r.valid_to != null) out.add(Date.parse(r.valid_to));
+  }
+  return [...out].filter(Number.isFinite).sort((x, y) => x - y);
 }
 
 /**
- * D1 — ONE graph per business date for a shop, with the batch law kept: a date ending after the
- * last pack boundary IS the live graph (loaded once); an earlier date loads its own as-of graph,
- * memoized. Depletion (Toast and ezCater) resolves through this, so yesterday's rebuilt sales use
- * yesterday's packs. Product resolution is unchanged (current, as before).
+ * The INTERVAL an instant falls in: -1 before the first boundary, k for [b_k, b_k+1), and the last
+ * index for "after every boundary" (the live graph). Pure; boundaries ascending.
+ */
+export function packIntervalIndex(boundaries: readonly number[], at: number): number {
+  let lo = 0, hi = boundaries.length - 1, ans = -1;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    if (boundaries[mid]! <= at) { ans = mid; lo = mid + 1; } else hi = mid - 1;
+  }
+  return ans;
+}
+
+/**
+ * D1 — ONE graph per pack INTERVAL for a shop, with the batch law kept (chunk-3 review P2a): every
+ * business date whose last instant falls between the same two pack boundaries shares ONE as-of
+ * graph, and every date after the last boundary IS the live graph (loaded once). So a 30-day window
+ * with one boundary in it costs two graph loads, never thirty. Depletion (Toast and ezCater)
+ * resolves through this, so yesterday's rebuilt sales use yesterday's packs. Product resolution is
+ * unchanged (current, as before).
  */
 export function createDatedGraphs(opts: { locationId: string | null; liveGraph?: RecipeGraph }): (businessDate: string) => Promise<RecipeGraph> {
   let live: Promise<RecipeGraph> | null = opts.liveGraph ? Promise.resolve(opts.liveGraph) : null;
-  let epoch: Promise<string | null> | null = null;
-  const dated = new Map<string, Promise<RecipeGraph>>();
+  let bounds: Promise<number[]> | null = null;
+  const byInterval = new Map<number, Promise<RecipeGraph>>();
   return async (businessDate: string) => {
     const asOf = asOfForBusinessDate(businessDate);
-    epoch ??= loadLatestPackBoundary(opts.locationId);
-    const e = await epoch;
-    if (e == null || Date.parse(asOf) >= Date.parse(e)) {
+    bounds ??= loadPackBoundaries(opts.locationId);
+    const b = await bounds;
+    const at = Date.parse(asOf);
+    const k = packIntervalIndex(b, at);
+    if (b.length === 0 || k === b.length - 1) {
       live ??= loadRecipeGraph({ locationId: opts.locationId });
       return live;
     }
-    let g = dated.get(businessDate);
-    if (!g) { g = loadRecipeGraph({ locationId: opts.locationId, asOf }); dated.set(businessDate, g); }
+    let g = byInterval.get(k);
+    // Any instant inside the interval resolves the same versions; the first date's asOf stands for all.
+    if (!g) { g = loadRecipeGraph({ locationId: opts.locationId, asOf }); byInterval.set(k, g); }
     return g;
   };
 }
@@ -332,9 +365,10 @@ export async function loadRecipeGraph(opts?: { locationId?: string | null; versi
   const outputItemIds = [...new Set((outRows ?? []).filter((o) => o.output_item_id).map((o) => o.output_item_id!))];
   const skuIds = [...new Set((inRows ?? []).filter((c) => c.component_sku_id).map((c) => c.component_sku_id!))];
   const productIds = [...new Set((inRows ?? []).filter((c) => c.component_product_id).map((c) => c.component_product_id!))];
+  const resolvedPacks = new Map<string, ResolvedPack>();
   const [parBasis, skuPack, productIndex] = await Promise.all([
     loadItemParBasis(outputItemIds),
-    loadSkuPack(skuIds, versionScope, asOf),
+    loadSkuPack(skuIds, versionScope, asOf, resolvedPacks),
     // Zero product-pinned rows → zero queries (loadProductIndex returns early).
     loadProductIndex(productIds, locationId),
   ]);
@@ -349,7 +383,7 @@ export async function loadRecipeGraph(opts?: { locationId?: string | null; versi
     .map((r) => r.skuId)
     .filter((id): id is string => id != null && !skuPack.has(id)))];
   if (memberIds.length > 0) {
-    for (const [id, pack] of await loadSkuPack(memberIds, versionScope, asOf)) skuPack.set(id, pack);
+    for (const [id, pack] of await loadSkuPack(memberIds, versionScope, asOf, resolvedPacks)) skuPack.set(id, pack);
   }
 
   const inputsByRecipe = new Map<string, GraphRecipe["inputs"]>();
@@ -374,7 +408,9 @@ export async function loadRecipeGraph(opts?: { locationId?: string | null; versi
     recipeId: r.id, batchYield: num(r.batch_yield),
     inputs: inputsByRecipe.get(r.id) ?? [], outputs: outputsByRecipe.get(r.id) ?? [],
   }));
-  return buildRecipeGraph(recipes, skuPack, measures, productIndex.index);
+  const graph = buildRecipeGraph(recipes, skuPack, measures, productIndex.index);
+  GRAPH_PACKS.set(graph, resolvedPacks);
+  return graph;
 }
 
 /** Per-one-unit leaf-SKU oz for an ITEM (one-shot; loops should loadRecipeGraph once and use the FromGraph variant). */
@@ -435,9 +471,14 @@ export async function loadDerivedForItems(itemIds: string[], versionLocationId: 
   if (allSkuIds.size > 0) {
     const { data: skus } = await sb.from("vendor_items").select("id, name, units_per_pack, each_size, each_measure, avg_oz_per_each").in("id", [...allSkuIds])
       .returns<Array<{ id: string; name: string; units_per_pack: number | null; each_size: number | string | null; each_measure: string | null; avg_oz_per_each: number | string | null }>>();
-    const packs = await loadSkuPackResolution([...allSkuIds], versionLocationId); // this shop's pack (0259)
+    // The graph ALREADY resolved this shop's pack for every leaf (loadRecipeGraph's skuPack); a second
+    // resolution would be a second read of the same answer (chunk-3 review P3b). Only a leaf the graph
+    // has no pack for — never the case for a flattened leaf — falls back to the resolver.
+    const resolved = resolvedPacksOf(graph);
+    const missing = [...allSkuIds].filter((id) => !graph.skuPack.has(id));
+    const fallback = missing.length > 0 ? await loadSkuPackResolution(missing, versionLocationId) : new Map<string, ResolvedPack>();
     for (const s of skus ?? []) {
-      const pack = packs.get(s.id);
+      const pack = graph.skuPack.has(s.id) ? resolved.get(s.id) : fallback.get(s.id);
       const contentOz = skuContentOz({ unitsPerPack: s.units_per_pack, eachSize: num(s.each_size), eachMeasure: s.each_measure, avgOzPerEach: num(s.avg_oz_per_each), packChain: pack && pack.levels.length > 0 ? pack.levels : null }, measures);
       skuInfo.set(s.id, { name: s.name, unitsPerPack: unitsPerPackForScope(s.units_per_pack, pack), contentOz });
     }

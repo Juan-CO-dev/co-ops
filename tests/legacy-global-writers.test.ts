@@ -22,6 +22,21 @@ describe("the /admin/skus chain editor", () => {
     expect(b).not.toContain('.from("sku_pack_levels")');
     expect(b).toContain("skuOwnerAllowed(");
   });
+  it("chunk-3 P3d: a GLOBAL chain edit can never deactivate a shop's version", () => {
+    // The editor writes ONLY through the RPC, for the global scope (p_location: null), checking the
+    // GLOBAL live version (location_id null)…
+    expect(b).toContain("p_sku: args.skuId, p_location: null,");
+    expect(b).toMatch(/\.from\("sku_pack_versions"\)\.select\("id"\)\s+\.eq\("sku_id", args\.skuId\)\.is\("location_id", null\)\.eq\("active", true\)/);
+    // …and the RPC retires ONLY the live version of that scope plus that scope's unversioned stragglers.
+    const sql = readFileSync("supabase/migrations/0259_sku_shop_versions.sql", "utf8").replace(/\r\n/g, "\n");
+    const fn = sql.slice(sql.indexOf("create or replace function public.save_sku_pack_version("), sql.indexOf("\n$$;", sql.indexOf("create or replace function public.save_sku_pack_version(")));
+    expect(fn).toContain("select id into v_live from public.sku_pack_versions where sku_id = p_sku and scope_key = v_scope and active for update;");
+    expect(fn).toContain("update public.sku_pack_levels set active = false where version_id = v_live and active;");
+    expect(fn).toContain("update public.sku_pack_levels set active = false where sku_id = p_sku and scope_key = v_scope and active and version_id is null;");
+    const deactivations = fn.split("\n").filter((line) => line.includes("update public.sku_pack_levels set active = false"));
+    expect(deactivations).toHaveLength(2);
+    // Executed proof on Postgres: scripts/sql-harness-0259.mjs ("a global save leaves the shop's version live").
+  });
   it("never syncs the flat mirror after the transaction (Astra 2a r2#6 — the RPC derives it under the lock)", () => {
     const src = readFileSync("lib/admin/pack-chain.ts", "utf8");
     expect(src).not.toContain("syncSkuFlatFieldsFromChain");

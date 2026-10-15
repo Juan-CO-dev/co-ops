@@ -104,6 +104,14 @@ describe("as of an instant (D1) — the version IN FORCE then", () => {
     expect(asOfForBusinessDate("2026-10-14")).toBe("2026-10-15T03:59:59.999Z"); // EDT
     expect(asOfForBusinessDate("2026-12-14")).toBe("2026-12-15T04:59:59.999Z"); // EST
   });
+  it("chunk-3 P3a: DST days end at the NEXT day's ET start − 1 ms, never start + 24 h", () => {
+    // Fall back (25 h): 2026-11-01 runs 04:00Z → 2026-11-02 05:00Z. start + 24 h would cut its last hour.
+    expect(asOfForBusinessDate("2026-11-01")).toBe("2026-11-02T04:59:59.999Z");
+    // Spring forward (23 h): 2026-03-08 runs 05:00Z → 2026-03-09 04:00Z. start + 24 h would reach into 03-09.
+    expect(asOfForBusinessDate("2026-03-08")).toBe("2026-03-09T03:59:59.999Z");
+    // Month and year rollover.
+    expect(asOfForBusinessDate("2026-12-31")).toBe("2027-01-01T04:59:59.999Z");
+  });
 });
 
 describe("contentOzForScope — the two flat-path consumers (production, surplus)", () => {

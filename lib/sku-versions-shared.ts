@@ -226,10 +226,16 @@ export function packsFromVersions(
   return out;
 }
 
-/** A business date resolves at its LAST instant (ET), so a change made that day is that day's pack. */
+/**
+ * A business date resolves at its LAST instant (ET), so a change made that day is that day's pack.
+ * The last instant is the NEXT day's ET start minus 1 ms (chunk-3 review P3a) — never start + 24 h,
+ * which is an hour short on the 25-hour fall-back day and an hour into the next day on the 23-hour
+ * spring-forward day.
+ */
 export function asOfForBusinessDate(businessDate: string): string {
-  const { endExclusiveIso } = operationalDayUtcRange(businessDate);
-  return new Date(Date.parse(endExclusiveIso) - 1).toISOString();
+  const next = new Date(Date.parse(`${businessDate}T12:00:00Z`) + 86_400_000).toISOString().slice(0, 10);
+  const { startIso } = operationalDayUtcRange(next);
+  return new Date(Date.parse(startIso) - 1).toISOString();
 }
 
 // ── The two flat-path consumers ───────────────────────────────────────────────

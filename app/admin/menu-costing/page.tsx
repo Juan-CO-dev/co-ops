@@ -54,8 +54,10 @@ export default async function AdminMenuCostingPage({ searchParams }: { searchPar
     : serverT(lang, "admin.menu_costing.scope_shop", { shop: shops.find((s) => s.id === scope)?.name ?? "" });
 
   const { rows, totals, skuNames, itemNames, productNames, toastFetchedAt, toastUnavailable, toastNotices } = await loadMenuCostingBoard(auth, { scope });
+  // The shop-switcher grammar the dashboard established: selected = ink edge on a gold fill;
+  // co-surface-2 is hover/pressed only (AGENTS.md token roles).
   const pill = (on: boolean) =>
-    `inline-flex min-h-[44px] shrink-0 items-center rounded-full border-2 px-4 text-sm font-bold ${on ? "border-co-text bg-co-surface-2 text-co-text" : "border-co-border bg-co-surface text-co-text"}`;
+    `inline-flex min-h-[44px] shrink-0 items-center rounded-full border-2 px-4 text-sm font-bold transition ${on ? "border-co-text bg-co-gold text-co-text" : "border-co-border-2 bg-co-surface text-co-text-muted hover:border-co-text hover:text-co-text"}`;
 
   return (
     <div>
