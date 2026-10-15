@@ -8,6 +8,7 @@ import { skuContentOz, type RecipeInputSku, type MeasureUnitFactor } from "@/lib
 import { buildPackChain, chainRootLabel, validateChainStructure, firstLabelMeasureCollision, type PackChainLevel } from "@/lib/pack-chain-shared";
 import { resolveCountLineDim } from "@/lib/counts-shared";
 import { resolveActive, resolvePar } from "@/lib/location-sku-shared";
+import { resolveCurrentPrices, resolvePackLevels, type ResolvedPack, type ScopedLevelRow, type ScopedPriceRow } from "@/lib/sku-versions-shared";
 
 export const DATA_ERRAND_CODES = ["no_price", "price_stale", "no_countable_chain", "raw_pack_contents_missing", "weight_estimate", "no_par", "no_rhythm", "no_vendor", "no_order_unit", "recipe_unresolved"] as const;
 export type DataErrandCode = typeof DATA_ERRAND_CODES[number];
@@ -110,17 +111,19 @@ function liveChain(rows: LiveRow[]): PackChainLevel[] {
     containsLevelId: liveText(r.contains_level_id), containsMeasureUnit: liveText(r.contains_measure_unit), displayOrdinal: liveNum(r.display_ordinal) ?? 0 }));
 }
 function liveBasis(row: LiveRow, chain: LiveRow[]): RecipeInputSku {
+  return liveBasisFromLevels(row, liveChain(chain));
+}
+function liveBasisFromLevels(row: LiveRow, levels: PackChainLevel[]): RecipeInputSku {
   return { packFormat: liveText(row.pack_format), eachContainerLabel: liveText(row.each_container_label),
     unitsPerPack: liveNum(row.units_per_pack), eachSize: liveNum(row.each_size), eachMeasure: liveText(row.each_measure),
-    avgOzPerEach: liveNum(row.avg_oz_per_each), packChain: liveChain(chain) };
+    avgOzPerEach: liveNum(row.avg_oz_per_each), packChain: levels };
 }
-function liveHead(rows: LiveRow[]): LiveRow | null {
-  return [...rows].sort((a, b) => {
-    for (const key of ["effective_date", "recorded_at", "id"]) {
-      const d = String(b[key] ?? "").localeCompare(String(a[key] ?? "")); if (d) return d;
-    }
-    return 0;
-  })[0] ?? null;
+/** Newest first by (effective_date, recorded_at, id), all desc — this module's own order since r3. */
+function newestFirst(a: LiveRow, b: LiveRow): number {
+  for (const key of ["effective_date", "recorded_at", "id"]) {
+    const d = String(b[key] ?? "").localeCompare(String(a[key] ?? "")); if (d) return d;
+  }
+  return 0;
 }
 
 /** Recompute from a complete universe; no fixed lane-1 counts or success subtraction. */
@@ -159,19 +162,34 @@ export function evaluateWave7Tables(tables: LiveTables, overrides = new Map<stri
     if (!["weight", "volume", "count"].includes(String(m.dimension)) || !(Number(m.to_base_factor) > 0)) throw new Error("SCHEMA_MISMATCH: measure registry");
     measures.set(String(m.label), { dimension: m.dimension as MeasureUnitFactor["dimension"], toBaseFactor: Number(m.to_base_factor) });
   }
-  const prices = new Map<string, LiveRow | null>(), bases = new Map<string, RecipeInputSku>();
-  for (const sku of skus) {
-    const id = liveId(sku), override = overrides.get(id);
-    const chain = override?.chain ?? liveRows(tables, "sku_pack_levels").filter(r => r.sku_id === id && r.active === true);
-    bases.set(id, liveBasis(sku, chain));
-    prices.set(id, override ? override.price : liveHead(liveRows(tables, "vendor_price_history").filter(r => r.vendor_item_id === id)));
-  }
+  // CATALOG PHASE 2a: chain and price resolve PER SHOP through the one pure resolver
+  // (lib/sku-versions-shared.ts) — this module never picks a version itself. A pre-0259 table (no
+  // location/version columns, no lanes) resolves to exactly what it resolved to before.
+  const liveLevels = liveRows(tables, "sku_pack_levels").filter(r => r.active === true) as unknown as ScopedLevelRow[];
+  const priceRowsNewestFirst = [...liveRows(tables, "vendor_price_history")].sort(newestFirst);
+  const priceById = new Map(priceRowsNewestFirst.map(r => [liveId(r), r]));
+  const laneRows = tables.sku_price_lanes ?? [];
+  const basesFor = (shopId: string | null): { bases: Map<string, RecipeInputSku>; prices: Map<string, LiveRow | null>; packs: Map<string, ResolvedPack> } => {
+    const packs = resolvePackLevels(liveLevels, shopId);
+    const lanes = new Map<string, string>();
+    if (shopId) for (const l of laneRows) if (l.location_id === shopId && l.active === true) lanes.set(String(l.sku_id), liveId(l));
+    const heads = resolveCurrentPrices(priceRowsNewestFirst as unknown as ScopedPriceRow[], lanes);
+    const bases = new Map<string, RecipeInputSku>(), prices = new Map<string, LiveRow | null>();
+    for (const sku of skus) {
+      const id = liveId(sku), override = overrides.get(id);
+      bases.set(id, override ? liveBasis(sku, override.chain) : liveBasisFromLevels(sku, packs.get(id)?.levels ?? []));
+      const head = heads.get(id);
+      prices.set(id, override ? override.price : head?.priceId ? (priceById.get(head.priceId) ?? null) : null);
+    }
+    return { bases, prices, packs };
+  };
   const graphRecipes: GraphRecipe[] = recipes.map(r => ({ recipeId: liveId(r), batchYield: liveNum(r.batch_yield),
     inputs: inputs.filter(i => i.recipe_id === r.id).map(i => ({ quantity: Number(i.quantity), unit: liveText(i.unit), componentSkuId: liveText(i.component_sku_id), componentItemId: liveText(i.component_item_id), componentProductId: liveText(i.component_product_id) })),
     outputs: outputs.filter(o => o.recipe_id === r.id).map(o => ({ outputItemId: liveText(o.output_item_id), outputMenuItemId: liveText(o.output_menu_item_id), yield: Number(o.yield), ozPerParUnit: liveNum(items.get(String(o.output_item_id))?.oz_per_par_unit), parUnitLabel: liveText(items.get(String(o.output_item_id))?.default_par_unit) })) }));
   const report: Wave7ReadinessReport = { asOf, shops: [], counts: Object.fromEntries(Object.entries(tables).map(([table, rows]) => [table, rows.length])) };
   for (const shop of liveRows(tables, "locations").filter(r => r.active !== false && (!visibleShopIds || visibleShopIds.has(liveId(r))))) {
     const shopId = liveId(shop), overlays = liveRows(tables, "location_sku_settings").filter(r => r.location_id === shopId);
+    const { bases, prices, packs } = basesFor(shopId);
     const overlayFor = (id: string) => overlays.find(r => r.sku_id === id);
     // Main's per-shop scope applies to EVERY SKU (regular and store alike); keep it unchanged.
     const active = (sku: LiveRow) => (sku.location_id == null || sku.location_id === shopId) && resolveActive(overlayFor(liveId(sku))?.active_override as boolean | null | undefined, sku.active === true);
