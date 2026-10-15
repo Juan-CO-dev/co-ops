@@ -3,6 +3,7 @@ import { type NextRequest } from "next/server";
 import { jsonError, jsonOk, parseJsonBody } from "@/lib/api-helpers";
 import { lockLocationContext } from "@/lib/locations";
 import { verifyActorPin } from "@/lib/auth-flows";
+import { loadToastCashProjected } from "@/lib/cash-toast";
 import { CASH_REPORT_BASE_LEVEL, DENOMINATION_UNITS_CENTS, sumDenominations, submitCashReport, type Denominations, type OnShiftEntry } from "@/lib/cash";
 import { requireSession } from "@/lib/session";
 import { getServiceRoleClient } from "@/lib/supabase-server";
@@ -59,11 +60,16 @@ export async function POST(req: NextRequest) {
   }
 
   try {
+    // B10: the Toast figure is re-read HERE, after the location bind + task gate + PIN, for the
+    // same shop and report date being saved. The body never carries it; the stored figure is
+    // the server's (fail-soft: a Toast read failure stores null and the deposit still saves).
+    const toastProjected = await loadToastCashProjected(service, { locationId: b.locationId as string, businessDate: b.date as string });
     const result = await submitCashReport(service, {
       locationId: b.locationId as string, date: b.date as string,
       actor: { userId: ctx.user.id, role: ctx.role, level: ctx.level, locations: ctx.locations },
       projectedCents: b.projectedCents as number, drawerTotalCents, floatCents,
       countMethod: b.countMethod as "hand" | "denomination", denominations, cashTipsCents: b.cashTipsCents as number, onShift, overShortNote,
+      toastProjected,
     });
     if (!result.ok && result.reason === "location_access_denied") return jsonError(403, "location_access_denied", {});
     if (!result.ok && result.reason === "assignment_required") return jsonError(403, "role_insufficient", {});

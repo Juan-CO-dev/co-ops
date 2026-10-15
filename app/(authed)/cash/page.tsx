@@ -16,6 +16,8 @@ import { redirect } from "next/navigation";
 
 import { loadCashReport } from "@/lib/cash";
 import { overShortReadout } from "@/lib/cash-shared";
+import { loadToastCashProjected, type ToastProjected } from "@/lib/cash-toast";
+import { submittedToastLine } from "@/lib/cash-toast-shared";
 import { formatCents, formatTime } from "@/lib/i18n/format";
 import { serverT } from "@/lib/i18n/server";
 import type { Language, TranslationKey } from "@/lib/i18n/types";
@@ -119,6 +121,14 @@ export default async function CashPage({ searchParams }: PageProps) {
     }
   }
 
+  // B10: the Projected box prefills from Toast — that shop's Toast CASH for the same business
+  // date as report_date (`today`), read AFTER the location bind + task gate above. Only the entry
+  // form needs it; the submitted view shows the figure stored at save time.
+  let toastProjected: ToastProjected | null = null;
+  if (!report && !closingFinalized) {
+    toastProjected = await loadToastCashProjected(sb, { locationId: locationParam, businessDate: today });
+  }
+
   // Recomposition PR 4b (Juan overruled the narrow column): the page keeps the
   // house ladder and the CONTENT composes instead — cash-client lays the count
   // beside a tips/crew/submit rail at lg. Width without composition was the
@@ -152,11 +162,26 @@ export default async function CashPage({ searchParams }: PageProps) {
 
           {/* Detail rows */}
           <ul className="flex flex-col gap-1.5 text-sm">
-            <ReadOnlyRow
-              labelKey="cash.field.projected"
-              value={formatCents(report.projectedCents, lang)}
-              lang={lang}
-            />
+            {/* Projected — plus the Toast figure the server stored at save (B10). Neutral wording:
+                Toast may have moved after the page loaded, so a difference is not proof of an edit. */}
+            <li className="flex flex-col gap-0.5 rounded-md border-2 border-co-border bg-co-surface px-3 py-2 text-sm">
+              <span className="flex items-center justify-between gap-3">
+                <span className="font-semibold text-co-text">{serverT(lang, "cash.field.projected")}</span>
+                <span className="shrink-0 font-bold text-co-text">{formatCents(report.projectedCents, lang)}</span>
+              </span>
+              {(() => {
+                const line = submittedToastLine(report.projectedCents, report.toastProjectedCents, report.toastProjectedAsOf);
+                if (line === "none" || report.toastProjectedCents === null || !report.toastProjectedAsOf) return null;
+                const time = formatTime(report.toastProjectedAsOf, lang);
+                return (
+                  <span className="text-xs text-co-text-muted">
+                    {line === "at_save"
+                      ? serverT(lang, "cash.toast.at_save", { amount: formatCents(report.toastProjectedCents, lang), time })
+                      : serverT(lang, "cash.toast.from", { time })}
+                  </span>
+                );
+              })()}
+            </li>
             <ReadOnlyRow
               labelKey="cash.field.drawer_total"
               value={formatCents(report.drawerTotalCents, lang)}
@@ -211,6 +236,7 @@ export default async function CashPage({ searchParams }: PageProps) {
           closerName={auth.user.name}
           closerRole={auth.role}
           language={lang}
+          toastProjected={toastProjected}
         />
       )}
     </main>
