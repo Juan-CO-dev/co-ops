@@ -13,7 +13,8 @@
  *       gained its own case, or a new active shop after the preview refuses dependencies_changed —
  *       and nothing is written.
  *   A4  "give this shop its own par": from the inherited GLOBAL par or the shop's AUTO par, only on a
- *       shop save, only into an EMPTY slot; the global par is untouched.
+ *       shop save, only into an EMPTY slot; the global par is untouched. A4b: a concurrent insert of the
+ *       shop's row is refused by name (par_changed), never a bare unique violation.
  *   A5  the report is bound: another SKU's report, another shop's report, a closed report refuse.
  *   A6  invalid patches and lane mismatches refuse by name; one open report per (sku, shop).
  *   A7  privileges: service_role cannot DELETE a report; anon/authenticated cannot execute the apply.
@@ -248,6 +249,32 @@ try {
     await refuses(async () => apply({ sku, location: S1, expected: null, basedOn: live, snapshot: await snapshot(sku, [S1]), pars: [
       { location_id: S1, slot: "weekday", expected: 3, to: 2, inherited: true, from: "human", patch: humanPatch("weekday", 2) },
     ] }), "sku_pack_change:invalid_payload", "A4: an unknown source");
+  }
+
+  // ── A4b the "own par" insert race (chunk-2 review P3c) ───────────────────────
+  // No row existed to lock, and a concurrent writer creates the shop's row before our insert: the
+  // unique (location_id, sku_id) is hit. Simulated with a BEFORE INSERT trigger that inserts the same
+  // (shop, sku) first; the apply must refuse it by NAME and write nothing.
+  {
+    const { sku, live } = await freshSku();
+    await db.exec("reset role;");
+    await db.exec(`
+      create function public.harness_race() returns trigger language plpgsql as $f$
+      begin
+        if pg_trigger_depth() = 1 then
+          insert into public.location_sku_settings (location_id, sku_id, weekday_par) values (new.location_id, new.sku_id, 9);
+        end if;
+        return new;
+      end $f$;
+      create trigger harness_race before insert on public.location_sku_settings for each row execute function public.harness_race();`);
+    await db.exec("set role service_role;");
+    const snap = await snapshot(sku, [S1]);
+    const before = await state(sku);
+    await refuses(() => apply({ sku, location: S1, expected: null, basedOn: live, snapshot: snap, pars: [
+      { location_id: S1, slot: "weekday", expected: 3, to: 2, inherited: true, from: "global", patch: humanPatch("weekday", 2) },
+    ] }), "sku_pack_change:par_changed", "A4b: a concurrent writer created the shop's par row first → par_changed (never a bare 23505)");
+    check(await state(sku) === before, "A4b: …and nothing was written (the racing row and the version roll back too)");
+    await db.exec("reset role; drop trigger harness_race on public.location_sku_settings; drop function public.harness_race(); set role service_role;");
   }
 
   // ── A5 the report is bound ───────────────────────────────────────────────

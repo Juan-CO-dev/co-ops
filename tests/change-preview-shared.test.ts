@@ -74,13 +74,13 @@ describe("a shop-only save (target = that shop)", () => {
   it("the shop's OWN par converts, bound to the value it was computed from", () => {
     const p = previewPackChange({ ...base, target: { kind: "shop", shopId: "A" }, targetBasePack: pack(globalChain), globalPars: { weekday: 3, weekend: null },
       shops: [shop("A", { weekday: [3, "human"] })] });
-    expect(p.pars).toEqual([{ locationId: "A", shops: ["P Street"], slot: "weekday", lane: "human", status: "convertible", inherited: false, current: 3, currentOz: 960, keepOz: 1920, convertTo: 2, perOrderUnit: null, fallbackPar: null, fallbackOz: null }]);
+    expect(p.pars).toEqual([{ locationId: "A", shops: ["P Street"], slot: "weekday", lane: "human", status: "convertible", inherited: false, current: 3, currentOz: 960, keepOz: 1920, convertTo: 2, perOrderUnit: null, fallbackPar: null, fallbackOz: null, fallbackIfConverted: null, unit: { before: "case", after: "case" } }]);
     expect(p.conversions).toEqual([{ locationId: "A", slot: "weekday", expected: 3, to: 2 }]);
   });
   it("an INHERITED global par: the opt-in 'give this shop its own par' — the shop's slot is created, the global par untouched (2b r2#3)", () => {
     const p = previewPackChange({ ...base, target: { kind: "shop", shopId: "A" }, targetBasePack: pack(globalChain), globalPars: { weekday: 3, weekend: null },
       shops: [shop("A", { weekday: [3, "global"] })] });
-    expect(p.pars).toEqual([{ locationId: "A", shops: ["P Street"], slot: "weekday", lane: "global", status: "convertible", inherited: true, current: 3, currentOz: 960, keepOz: 1920, convertTo: 2, perOrderUnit: null, fallbackPar: null, fallbackOz: null }]);
+    expect(p.pars).toEqual([{ locationId: "A", shops: ["P Street"], slot: "weekday", lane: "global", status: "convertible", inherited: true, current: 3, currentOz: 960, keepOz: 1920, convertTo: 2, perOrderUnit: null, fallbackPar: null, fallbackOz: null, fallbackIfConverted: null, unit: { before: "case", after: "case" } }]);
     expect(p.conversions).toEqual([{ locationId: "A", slot: "weekday", expected: 3, to: 2, inherited: true }]);
   });
   it("a MACHINE par (lead decision P2-2): it restarts — the shop uses the default par read in the new case — and the opt-in 'own par' is prefilled with the weight-keeping value", () => {
@@ -88,7 +88,7 @@ describe("a shop-only save (target = that shop)", () => {
       shops: [shop("A", { weekday: [5, "auto"] })] });
     // auto 5 cases × 320 oz = 1600 oz; in the new 640-oz case that is 2.5 → 3 (whole-par step).
     expect(p.pars).toEqual([{ locationId: "A", shops: ["P Street"], slot: "weekday", lane: "auto", status: "machine_par", inherited: true,
-      current: 5, currentOz: 1600, keepOz: 3200, convertTo: 3, perOrderUnit: null, fallbackPar: 3, fallbackOz: 1920 }]);
+      current: 5, currentOz: 1600, keepOz: 3200, convertTo: 3, perOrderUnit: null, fallbackPar: 3, fallbackOz: 1920, fallbackIfConverted: null, unit: { before: "case", after: "case" } }]);
     expect(p.conversions).toEqual([{ locationId: "A", slot: "weekday", expected: 5, to: 3, inherited: true, from: "auto" }]);
   });
   it("a machine par with NO default par to fall back to says so plainly (fallbackPar null) — the opt-in is still offered", () => {
@@ -116,7 +116,7 @@ describe("a size with no honest ounce (no_weight)", () => {
     expect(p.changed).toBe(true);
     expect(p.shops[0]!.orderUnitOz).toEqual({ before: 320, after: null });
     expect(p.pars).toEqual([{ locationId: "A", shops: ["P Street"], slot: "weekday", lane: "human", status: "no_weight", inherited: false, current: 3, currentOz: 960, keepOz: null, convertTo: null,
-      perOrderUnit: { before: { qty: 320, unit: "oz" }, after: { qty: 12, unit: "each" } }, fallbackPar: null, fallbackOz: null }]);
+      perOrderUnit: { before: { qty: 320, unit: "oz" }, after: { qty: 12, unit: "each" } }, fallbackPar: null, fallbackOz: null, fallbackIfConverted: null, unit: { before: "case", after: "case" } }]);
     expect(p.conversions).toEqual([]);
   });
 });
@@ -159,6 +159,39 @@ describe("what counts as 'the order unit changed' (chunk-1 review P2-1)", () => 
   });
 });
 
+describe("chunk-2 review: every save restarts the machine par; units are the row's own", () => {
+  const twoBy20: PackChainLevel[] = [
+    { id: "x0", label: "case", containsQty: 2, containsLevelId: "x1", containsMeasureUnit: null, displayOrdinal: 0 },
+    { id: "x1", label: "sack", containsQty: 20, containsLevelId: null, containsMeasureUnit: "lb", displayOrdinal: 1 },
+  ];
+  const fourBy10 = newChain; // 4 × 10 lb = 640 oz, the same amount as 2 × 20 lb
+  it("P2-1: the case means the same amount (4 × 10 lb → 2 × 20 lb) — the human par asks nothing, but the auto par still restarts (the epoch bumps on every version)", () => {
+    const a = { ...shop("A", { weekday: [5, "auto"], weekend: [2, "human"] }), basePack: pack(fourBy10), graph: graphFor(pack(fourBy10)) };
+    const p = previewPackChange({ ...base, newChain: twoBy20, target: { kind: "shop", shopId: "A" }, targetBasePack: pack(fourBy10), globalPars: { weekday: 3, weekend: null }, shops: [a] });
+    expect(p.changed).toBe(true);
+    expect(p.pars).toEqual([{ locationId: "A", shops: ["P Street"], slot: "weekday", lane: "auto", status: "machine_par", inherited: true,
+      current: 5, currentOz: 3200, keepOz: 3200, convertTo: 5, perOrderUnit: null, fallbackPar: 3, fallbackOz: 1920,
+      fallbackIfConverted: null, unit: { before: "case", after: "case" } }]);
+    expect(p.conversions).toEqual([{ locationId: "A", slot: "weekday", expected: 5, to: 5, inherited: true, from: "auto" }]);
+  });
+  it("P3a: a renamed order unit — numbers in the new size carry the NEW unit; the global row carries the GLOBAL pack's unit", () => {
+    const box: PackChainLevel[] = [
+      { id: "b0", label: "box", containsQty: 4, containsLevelId: "b1", containsMeasureUnit: null, displayOrdinal: 0 },
+      { id: "b1", label: "sack", containsQty: 10, containsLevelId: null, containsMeasureUnit: "lb", displayOrdinal: 1 },
+    ];
+    const p = previewPackChange({ ...base, newChain: box, target: { kind: "global" }, targetBasePack: pack(globalChain), globalPars: { weekday: 3, weekend: null },
+      shops: [shop("A", { weekday: [3, "global"] }), shop("B", { weekday: [3, "global"] })] });
+    expect(p.pars).toEqual([expect.objectContaining({ locationId: null, convertTo: 2, unit: { before: "case", after: "box" } })]);
+  });
+  it("P3b: on a global save a restarting machine par falls back to the CONVERTED global par if that conversion is accepted", () => {
+    const p = previewPackChange({ ...base, target: { kind: "global" }, targetBasePack: pack(globalChain), globalPars: { weekday: 3, weekend: null },
+      shops: [shop("A", { weekday: [5, "auto"] }), shop("B", { weekday: [3, "global"] })] });
+    const machine = p.pars.find((r) => r.status === "machine_par")!;
+    expect(machine).toMatchObject({ fallbackPar: 3, fallbackOz: 1920, fallbackIfConverted: { par: 2, oz: 1280 } });
+    expect(p.conversions).toEqual([{ locationId: null, slot: "weekday", expected: 3, to: 2 }]);
+  });
+});
+
 describe("a save for everyone (target = global)", () => {
   it("every shop riding the global pack is affected; a shop with its own version is untouched", () => {
     const p = previewPackChange({ ...base, target: { kind: "global" }, targetBasePack: pack(globalChain), globalPars: { weekday: 3, weekend: 4 },
@@ -172,7 +205,7 @@ describe("a save for everyone (target = global)", () => {
   it("the global par converts when every shop inheriting it rides the global pack", () => {
     const p = previewPackChange({ ...base, target: { kind: "global" }, targetBasePack: pack(globalChain), globalPars: { weekday: 3, weekend: null },
       shops: [shop("A", { weekday: [3, "global"] }), shop("B", { weekday: [3, "global"] })] });
-    expect(p.pars).toEqual([{ locationId: null, shops: ["P Street", "Cap Hill"], slot: "weekday", lane: "global", status: "convertible", inherited: false, current: 3, currentOz: 960, keepOz: 1920, convertTo: 2, perOrderUnit: null, fallbackPar: null, fallbackOz: null }]);
+    expect(p.pars).toEqual([{ locationId: null, shops: ["P Street", "Cap Hill"], slot: "weekday", lane: "global", status: "convertible", inherited: false, current: 3, currentOz: 960, keepOz: 1920, convertTo: 2, perOrderUnit: null, fallbackPar: null, fallbackOz: null, fallbackIfConverted: null, unit: { before: "case", after: "case" } }]);
     expect(p.conversions).toEqual([{ locationId: null, slot: "weekday", expected: 3, to: 2 }]);
     expect(p.shops.flatMap((s) => s.openOrders.map((o) => o.displayCode))).toEqual(["A-1", "B-1"]);
   });

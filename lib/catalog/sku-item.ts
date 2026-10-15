@@ -302,6 +302,9 @@ export async function loadSkuItemView(
   const sb = getServiceRoleClient();
   const row = await loadSkuRow(sb, skuId);
   requireOwnerScope(row, scope);
+  // Chunk-2 review P2-2: at GLOBAL scope (?location=global, or no shop the actor may see), below MoO
+  // a shop-owned SKU is read only by its owner's people — a GM of shop A never reads shop B's item.
+  if (scope === null && !skuOwnerAllowed(actor, row.location_id)) throw new CatalogItemError(404, "not_found");
   const [packs, globalPacks, graph, heads, globalHeads, packAware, menuItems, measureUnits, historyRows, requests, priceHistory] = await Promise.all([
     loadSkuPackResolution([skuId], scope),
     loadSkuPackResolution([skuId], null),

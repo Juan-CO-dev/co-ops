@@ -69,6 +69,8 @@ describe("0261_sku_pack_change_requests", () => {
     expect(body).toContain("if coalesce((v_change->>'inherited')::boolean, false) then");
     expect(body).toContain("v_from not in ('global', 'auto')");
     expect(body).toContain("insert into public.location_sku_settings (location_id, sku_id, updated_by) values (v_loc, p_sku, p_actor) returning * into v_row;");
+    // chunk-2 review P3c: a concurrent insert of the shop's row is "the par moved", by name.
+    expect(body).toMatch(/returning \* into v_row;\s+exception when unique_violation then\s+raise exception 'sku_pack_change:par_changed'/);
   });
 });
 

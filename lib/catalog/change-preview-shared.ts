@@ -85,6 +85,18 @@ export interface PreviewParRow {
    */
   fallbackPar: number | null;
   fallbackOz: number | null;
+  /**
+   * "machine_par" on a GLOBAL save only (chunk-2 review P3b): the default par this shop falls back to
+   * IF the person also accepts the global par's conversion for this slot — the converted global par,
+   * read in the new case. null = no global conversion is offered for this slot.
+   */
+  fallbackIfConverted: { par: number; oz: number | null } | null;
+  /**
+   * The ORDER UNIT each number on this row is counted in (chunk-2 review P3a): `current` in `before`;
+   * `convertTo`, `fallbackPar` and `fallbackIfConverted` in `after` (the NEW order unit). A global row
+   * uses the GLOBAL pack's unit, never one shop's.
+   */
+  unit: { before: string | null; after: string | null };
 }
 
 /** What one order unit holds, structurally: `qty` of the leaf `unit` (a case = 1000 each). */
@@ -292,7 +304,10 @@ function sameOrderUnit(b: RowBasis): boolean {
   return b.before != null && b.after != null && b.before.unit === b.after.unit && sameOz(b.before.qty, b.after.qty);
 }
 
-interface RowBasis { beforeOz: number | null; afterOz: number | null; before: OrderUnitCount | null; after: OrderUnitCount | null }
+interface RowBasis {
+  beforeOz: number | null; afterOz: number | null; before: OrderUnitCount | null; after: OrderUnitCount | null;
+  unit: { before: string | null; after: string | null };
+}
 
 function parRow(
   locationId: string | null, shops: string[], slot: ParSlotName, lane: ParLane, status: ParRowStatus,
@@ -308,6 +323,8 @@ function parRow(
     perOrderUnit: beforeOz == null || afterOz == null ? { before: b.before, after: b.after } : null,
     fallbackPar: fallback?.par ?? null,
     fallbackOz: fallback?.par != null && afterOz != null ? round4(fallback.par * afterOz) : null,
+    fallbackIfConverted: null,
+    unit: b.unit,
   };
 }
 
@@ -352,11 +369,16 @@ export function previewPackChange(input: {
       beforeOz, afterOz,
       before: orderUnitCount(s.basePack, chainOf(s.basePack)),
       after: orderUnitCount({ ...s.basePack, packChain: input.newChain }, input.newChain),
+      unit: deltas[i]!.orderUnit,
     };
-    if (sameOrderUnit(basis)) return;
+    const sameUnit = sameOrderUnit(basis);
     for (const sl of s.slots) {
       if (sl.value == null || !(sl.value > 0)) continue;
       if (sl.lane === "global" && target.kind === "global") continue; // the global lane, below
+      // Chunk-2 review P2-1: EVERY saved version bumps the pack epoch of each shop it reaches (0259
+      // sku_pack_epoch_bump), so a machine par restarts even when the case means the same amount
+      // (4 × 10 lb → 2 × 20 lb). Its row is emitted before the "nothing to convert" skip.
+      if (sameUnit && sl.lane !== "auto") continue;
       const to = convertParQuantity(sl.value, beforeOz, afterOz, input.parStep);
       if (sl.lane === "human") {
         pars.push(parRow(s.shopId, [s.shopName], sl.slot, "human", to == null ? "no_weight" : "convertible", sl.value, basis, to));
@@ -390,12 +412,26 @@ export function previewPackChange(input: {
       const basis: RowBasis = {
         beforeOz, afterOz,
         before: orderUnitCount(input.targetBasePack, chainOf(input.targetBasePack)), after: orderUnitCount(newPack, input.newChain),
+        // The GLOBAL pack's own order unit — never one shop's (chunk-2 review P3a).
+        unit: { before: orderUnitLabel(input.targetBasePack.packFormat, chainOf(input.targetBasePack)), after: orderUnitLabel(input.targetBasePack.packFormat, input.newChain) },
       };
       if (sameOrderUnit(basis)) continue;
       const shared = inheriting.some((s) => s.ownPackVersion);
       const to = shared ? null : convertParQuantity(value, beforeOz, afterOz, input.parStep);
       const status: ParRowStatus = shared ? "global_par_shared" : to == null ? "no_weight" : "convertible";
       pars.push(parRow(null, inheriting.map((s) => s.shopName), slot, "global", status, value, basis, to));
+    }
+  }
+
+  // Chunk-2 review P3b: on a global save, a restarting machine par falls back to the GLOBAL par — the
+  // converted one if the person also accepts the global conversion for that slot.
+  if (target.kind === "global") {
+    for (const row of pars) {
+      if (row.status !== "machine_par") continue;
+      const g = pars.find((p) => p.locationId === null && p.slot === row.slot && p.status === "convertible" && p.convertTo != null);
+      if (!g) continue;
+      const afterOz = row.keepOz != null && row.current > 0 ? row.keepOz / row.current : null;
+      row.fallbackIfConverted = { par: g.convertTo!, oz: afterOz == null ? null : round4(g.convertTo! * afterOz) };
     }
   }
 

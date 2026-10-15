@@ -49,8 +49,8 @@ const shopPreview: PackPreview = {
   kind: "pack", target: { kind: "shop", shopId: "A" }, changed: true, liveVersionId: null, basedOnVersionId: "gv",
   shops: [shopDelta], unaffected: [],
   pars: [
-    { locationId: "A", shops: ["P Street"], slot: "weekday", lane: "human", status: "convertible", inherited: false, current: 3, currentOz: 960, keepOz: 1920, convertTo: 2, perOrderUnit: null, fallbackPar: null, fallbackOz: null },
-    { locationId: "A", shops: ["P Street"], slot: "weekend", lane: "global", status: "convertible", inherited: true, current: 4, currentOz: 1280, keepOz: 2560, convertTo: 2, perOrderUnit: null, fallbackPar: null, fallbackOz: null },
+    { locationId: "A", shops: ["P Street"], slot: "weekday", lane: "human", status: "convertible", inherited: false, current: 3, currentOz: 960, keepOz: 1920, convertTo: 2, perOrderUnit: null, fallbackPar: null, fallbackOz: null, fallbackIfConverted: null, unit: { before: "case", after: "case" } },
+    { locationId: "A", shops: ["P Street"], slot: "weekend", lane: "global", status: "convertible", inherited: true, current: 4, currentOz: 1280, keepOz: 2560, convertTo: 2, perOrderUnit: null, fallbackPar: null, fallbackOz: null, fallbackIfConverted: null, unit: { before: "case", after: "case" } },
   ],
   conversions: [{ locationId: "A", slot: "weekday", expected: 3, to: 2 }, { locationId: "A", slot: "weekend", expected: 4, to: 2, inherited: true }],
   snapshot: null,
@@ -59,7 +59,7 @@ const shopPreview: PackPreview = {
 const globalPreview: PackPreview = {
   ...shopPreview, target: { kind: "global" }, liveVersionId: "gv", basedOnVersionId: null,
   unaffected: [{ shopId: "B", shopName: "Cap Hill" }],
-  pars: [{ locationId: null, shops: ["P Street", "Cap Hill"], slot: "weekday", lane: "global", status: "global_par_shared", inherited: false, current: 3, currentOz: 960, keepOz: 1920, convertTo: null, perOrderUnit: null, fallbackPar: null, fallbackOz: null }],
+  pars: [{ locationId: null, shops: ["P Street", "Cap Hill"], slot: "weekday", lane: "global", status: "global_par_shared", inherited: false, current: 3, currentOz: 960, keepOz: 1920, convertTo: null, perOrderUnit: null, fallbackPar: null, fallbackOz: null, fallbackIfConverted: null, unit: { before: "case", after: "case" } }],
   conversions: [],
 };
 const props = { canSave: true, canEditPar: true, chosen: new Set<string>(), onToggleConversion: () => {}, onSave: () => {}, busy: false };
@@ -109,7 +109,7 @@ describe("ChangePreviewPanel — what really happens to a machine par and a coun
   const machine = (fallbackPar: number | null): PackPreview => ({
     ...shopPreview,
     pars: [{ locationId: "A", shops: ["P Street"], slot: "weekday", lane: "auto", status: "machine_par", inherited: true, current: 5, currentOz: 1600,
-      keepOz: 3200, convertTo: 3, perOrderUnit: null, fallbackPar, fallbackOz: fallbackPar == null ? null : fallbackPar * 640 }],
+      keepOz: 3200, convertTo: 3, perOrderUnit: null, fallbackPar, fallbackOz: fallbackPar == null ? null : fallbackPar * 640, fallbackIfConverted: null, unit: { before: "case", after: "case" } }],
     conversions: [{ locationId: "A", slot: "weekday", expected: 5, to: 3, inherited: true, from: "auto" }],
   });
   it("the machine par restarts: the default par is shown in the new case, and 'give this shop its own par' is offered prefilled", () => {
@@ -127,9 +127,41 @@ describe("ChangePreviewPanel — what really happens to a machine par and a coun
   });
   it("a count-ending case with no weight: the par now means a different count", () => {
     const p: PackPreview = { ...shopPreview, conversions: [], pars: [{ locationId: "A", shops: ["P Street"], slot: "weekday", lane: "human", status: "no_weight", inherited: false,
-      current: 3, currentOz: null, keepOz: null, convertTo: null, perOrderUnit: { before: { qty: 1000, unit: "each" }, after: { qty: 500, unit: "each" } }, fallbackPar: null, fallbackOz: null }] };
+      current: 3, currentOz: null, keepOz: null, convertTo: null, perOrderUnit: { before: { qty: 1000, unit: "each" }, after: { qty: 500, unit: "each" } }, fallbackPar: null, fallbackOz: null, fallbackIfConverted: null, unit: { before: "case", after: "case" } }] };
     const html = render(jsx(ChangePreviewPanel, { ...props, preview: p }));
     expect(html).toContain("one order unit held 1,000 each, now it holds 500 each");
     expect(html).toContain(en["catalog.preview.par_cant_convert"]);
+  });
+});
+
+describe("ChangePreviewPanel — chunk-2 review: the row's own units, the server's conversions, the converted fallback", () => {
+  it("P3a: a converted number is labelled with the NEW order unit; the global row with the global pack's unit", () => {
+    const p: PackPreview = { ...shopPreview, target: { kind: "global" },
+      shops: [{ ...shopDelta, orderUnit: { before: "tub", after: "tub" } }],
+      pars: [{ locationId: null, shops: ["P Street"], slot: "weekday", lane: "global", status: "convertible", inherited: false, current: 3, currentOz: 960, keepOz: 1920,
+        convertTo: 2, perOrderUnit: null, fallbackPar: null, fallbackOz: null, fallbackIfConverted: null, unit: { before: "case", after: "box" } }],
+      conversions: [{ locationId: null, slot: "weekday", expected: 3, to: 2 }] };
+    const html = render(jsx(ChangePreviewPanel, { ...props, preview: p }));
+    expect(html).toContain("Keep 3 case");
+    expect(html).toContain("Change to 2 box");
+    expect(html).not.toContain("3 tub");
+  });
+  it("P3d: a row the server offered no conversion for renders no choice (nothing is recomputed client-side)", () => {
+    const p: PackPreview = { ...shopPreview, conversions: [] };
+    const html = render(jsx(ChangePreviewPanel, { ...props, preview: p }));
+    expect(html).not.toContain("Change to");
+    expect(html).not.toContain("Give P Street its own par");
+  });
+  it("P3b: a restarting machine par on a global save shows the CONVERTED global par once that conversion is chosen", () => {
+    const p: PackPreview = { ...shopPreview, target: { kind: "global" },
+      pars: [
+        { locationId: null, shops: ["P Street", "Cap Hill"], slot: "weekday", lane: "global", status: "convertible", inherited: false, current: 3, currentOz: 960, keepOz: 1920,
+          convertTo: 2, perOrderUnit: null, fallbackPar: null, fallbackOz: null, fallbackIfConverted: null, unit: { before: "case", after: "case" } },
+        { locationId: "A", shops: ["P Street"], slot: "weekday", lane: "auto", status: "machine_par", inherited: false, current: 5, currentOz: 1600, keepOz: 3200,
+          convertTo: null, perOrderUnit: null, fallbackPar: 3, fallbackOz: 1920, fallbackIfConverted: { par: 2, oz: 1280 }, unit: { before: "case", after: "case" } },
+      ],
+      conversions: [{ locationId: null, slot: "weekday", expected: 3, to: 2 }] };
+    expect(render(jsx(ChangePreviewPanel, { ...props, preview: p }))).toContain("uses the default par: 3 case (1,920 oz)");
+    expect(render(jsx(ChangePreviewPanel, { ...props, preview: p, chosen: new Set(["global|weekday|3|2"]) }))).toContain("uses the default par: 2 case (1,280 oz)");
   });
 });

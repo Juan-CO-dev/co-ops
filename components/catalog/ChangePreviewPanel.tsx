@@ -53,7 +53,13 @@ export function ChangePreviewPanel({
   const targetShopName = preview.target.kind === "shop" ? (preview.shops[0]?.shopName ?? "") : "";
   const nothing = preview.kind === "pack" && !preview.changed;
 
-  const parText = (p: PreviewParRow, unit: string): string => {
+  // The global conversion the person has chosen, per slot — a restarting machine par on a global
+  // save then falls back to the CONVERTED global par (chunk-2 review P3b).
+  const chosenGlobal = (slot: "weekday" | "weekend") =>
+    preview.kind === "pack" && preview.conversions.some((c) => c.locationId === null && c.slot === slot && chosen.has(conversionKey(c)));
+
+  /** `unit` = the row's CURRENT order unit; `newUnit` = the NEW one (numbers in the new size). */
+  const parText = (p: PreviewParRow, unit: string, newUnit: string): string => {
     const base = { slot: slotName(p.slot), n: qty(p.current), unit };
     if (p.inherited && p.status !== "machine_par") {
       return t("catalog.preview.par_question_inherited", { ...base, oz: oz(p.currentOz), newOz: oz(p.keepOz), shop: p.shops[0] ?? "" });
@@ -64,8 +70,11 @@ export function ChangePreviewPanel({
       case "machine_par":
         // Lead decision (chunk-1 review P2-2): the new case retires the machine par (D3); until it
         // recomputes the shop uses the DEFAULT par, read in the new case — or has none, said plainly.
+        if (p.fallbackIfConverted && chosenGlobal(p.slot)) {
+          return t("catalog.preview.par_machine_restarts", { shop: p.shops[0] ?? "", par: `${qty(p.fallbackIfConverted.par)} ${newUnit}`, amount: oz(p.fallbackIfConverted.oz) });
+        }
         return p.fallbackPar != null
-          ? t("catalog.preview.par_machine_restarts", { shop: p.shops[0] ?? "", par: `${qty(p.fallbackPar)} ${unit}`, amount: oz(p.fallbackOz) })
+          ? t("catalog.preview.par_machine_restarts", { shop: p.shops[0] ?? "", par: `${qty(p.fallbackPar)} ${newUnit}`, amount: oz(p.fallbackOz) })
           : t("catalog.preview.par_machine_no_default", { shop: p.shops[0] ?? "" });
       default:
         return p.locationId === null
@@ -158,20 +167,17 @@ export function ChangePreviewPanel({
           {preview.kind === "pack" && preview.pars.length > 0 ? (
             <div className="mt-3 flex flex-col gap-3">
               {preview.pars.map((p) => {
-                const unit = (p.locationId !== null ? preview.shops.find((s) => s.shopId === p.locationId) : preview.shops[0])?.orderUnit.before ?? "";
-                const conv: ParConversion | null = p.convertTo == null ? null
-                  : p.status === "machine_par" && p.inherited
-                    ? { locationId: p.locationId, slot: p.slot, expected: p.current, to: p.convertTo, inherited: true, from: "auto" }
-                    : p.status !== "convertible" ? null
-                      : p.inherited
-                        ? { locationId: p.locationId, slot: p.slot, expected: p.current, to: p.convertTo, inherited: true }
-                        : { locationId: p.locationId, slot: p.slot, expected: p.current, to: p.convertTo };
+                // The row's own units (the global row: the GLOBAL pack's), never another shop's (chunk-2 P3a).
+                const unit = p.unit.before ?? "";
+                const newUnit = p.unit.after ?? unit;
+                // The conversion is the one the SERVER offered for this row — never recomputed here (P3d).
+                const conv: ParConversion | null = preview.conversions.find((c) => c.locationId === p.locationId && c.slot === p.slot) ?? null;
                 const fromAuto = conv?.from === "auto";
                 const key = conv ? conversionKey(conv) : `${p.locationId ?? "global"}|${p.slot}|${p.status}`;
                 const on = conv != null && chosen.has(key);
                 return (
                   <div key={key} className="flex flex-col gap-2">
-                    <p className="text-sm text-co-text">{parText(p, unit)}</p>
+                    <p className="text-sm text-co-text">{parText(p, unit, newUnit)}</p>
                     {p.perOrderUnit && p.perOrderUnit.before && p.perOrderUnit.after ? (
                       <p className="text-sm text-co-warning-text">
                         {t("catalog.preview.par_count_changed", {
@@ -189,10 +195,10 @@ export function ChangePreviewPanel({
                         </button>
                         <button type="button" className={choice(on)} aria-pressed={on} disabled={busy} onClick={() => onToggleConversion(key, true)}>
                           {fromAuto
-                            ? t("catalog.preview.par_own_from_auto", { to: `${qty(conv.to)} ${unit}` })
+                            ? t("catalog.preview.par_own_from_auto", { to: `${qty(conv.to)} ${newUnit}` })
                             : p.inherited
-                              ? t("catalog.preview.par_set_shop", { shop: p.shops[0] ?? "", n: qty(conv.to), unit })
-                              : t("catalog.preview.par_convert", { n: qty(conv.to), unit })}
+                              ? t("catalog.preview.par_set_shop", { shop: p.shops[0] ?? "", n: qty(conv.to), unit: newUnit })
+                              : t("catalog.preview.par_convert", { n: qty(conv.to), unit: newUnit })}
                         </button>
                       </div>
                     ) : conv ? (

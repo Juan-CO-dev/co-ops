@@ -281,7 +281,13 @@ begin
           raise exception 'sku_pack_change:par_changed' using errcode = 'P0001';
         end if;
         if not v_has_row then
-          insert into public.location_sku_settings (location_id, sku_id, updated_by) values (v_loc, p_sku, p_actor) returning * into v_row;
+          -- A concurrent writer may create the shop's row between the locked read above and this
+          -- insert (no row existed to lock): that is "the par moved", refused by name, never a bare 23505.
+          begin
+            insert into public.location_sku_settings (location_id, sku_id, updated_by) values (v_loc, p_sku, p_actor) returning * into v_row;
+          exception when unique_violation then
+            raise exception 'sku_pack_change:par_changed' using errcode = 'P0001';
+          end;
         end if;
       else
         if not v_has_row then

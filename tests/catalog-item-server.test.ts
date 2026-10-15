@@ -19,6 +19,7 @@ vi.mock("@/lib/supabase-server", () => ({ getServiceRoleClient: () => {
 import { applyPackChange, applyPriceChange, CatalogItemError, computePackPreview, computePricePreview, loadSkuItemView, setSkuPriceBasis } from "@/lib/catalog/sku-item";
 import { CATALOG_ITEM_ERROR_CODES, itemClientKey, parseConversions, parseLevels, parseTarget } from "@/lib/catalog/sku-item-shared";
 import { conversionKey } from "@/lib/catalog/change-preview-shared";
+import { pickShopId } from "@/lib/shop-context-shared";
 afterEach(() => { current = null; });
 
 const A = "6f1d2c3e-0000-4000-8000-00000000000a";
@@ -74,6 +75,23 @@ describe("a SHOP-OWNED SKU has no other shop (0259's owner rule)", () => {
     expect(await refused(loadSkuItemView(gm, "s", A, []))).toEqual({ status: 409, code: "sku_owned_by_other_shop" });
     expect(await refused(computePackPreview(gm, "s", { kind: "shop", shopId: A }, LEVELS))).toEqual({ status: 409, code: "sku_owned_by_other_shop" });
     expect(await refused(computePricePreview(gm, "s", { kind: "shop", shopId: A }, 10, "2026-10-15"))).toEqual({ status: 409, code: "sku_owned_by_other_shop" });
+  });
+  it("chunk-2 review P2-2: at GLOBAL scope below MoO, a GM of shop A cannot read shop B's item — by both ways in", async () => {
+    current = createFakeDb(owned(B));
+    const gmA = actor("gm", 7, [A]);
+    // ?location=global → the page asks for scope null.
+    expect(await refused(loadSkuItemView(gmA, "s", null, []))).toEqual({ status: 404, code: "not_found" });
+    // No ?location= → the page offers only shops the actor may act in AND that carry the SKU (its
+    // owner): none for this GM, so the one resolver picks no shop and the page asks for scope null too.
+    const page = readFileSync("app/admin/catalog/sku/[id]/page.tsx", "utf8");
+    expect(page).toContain("catalogShopAllowed(auth, l.id) && (sku.location_id === null || sku.location_id === l.id)");
+    expect(page).toContain('const scope = explicit === "global" ? null : await resolveShopId(shops.map((s) => s.id), explicit ?? null);');
+    expect(pickShopId({ allowed: [], explicit: null, remembered: A })).toBeNull();
+    expect(pickShopId({ allowed: [], explicit: B, remembered: null })).toBeNull();
+    expect(await refused(loadSkuItemView(gmA, "s", null, []))).toEqual({ status: 404, code: "not_found" });
+    // An AGM of shop A, and the social media manager, are refused the same way (the latter by role first).
+    expect(await refused(loadSkuItemView(actor("agm", 6, [A]), "s", null, []))).toEqual({ status: 404, code: "not_found" });
+    expect(await refused(loadSkuItemView(actor("social_media_mgr", 6, [B]), "s", null, []))).toEqual({ status: 403, code: "forbidden" });
   });
   it("below MoO, its GLOBAL value is reached only by the owning shop's people", async () => {
     current = createFakeDb(owned(B));
