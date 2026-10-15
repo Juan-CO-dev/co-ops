@@ -376,23 +376,23 @@ export function salesSummaryRows(buckets: readonly SalesBucket[], totals: SalesT
 
 export function salesBreakdownRows(view: Exclude<SalesExportView, "summary" | "checks" | "catering">, rows: readonly BreakdownRow[], period: Period, shop: ShopRef): ExportRow[] {
   const base = { ...periodCells(period), ...shopCells(shop) };
-  return rows.map((r) => {
-    switch (view) {
-      case "items": return { ...base, item_guid: r.key, item: r.label, units: r.units, checks: r.checks };
-      case "modifiers": return { ...base, item_guid: r.key, modifier: r.label, units: r.units, checks: r.checks };
-      case "channels": return {
-        ...base, channel: r.channel, provider: r.provider, source: r.saleClass === "ezcater_source" ? "ezcater" : "toast",
-        counted: r.saleClass === "sale" || r.saleClass === "ezcater_source", class: r.saleClass,
-        checks_or_orders: r.checks, sales: r.cents, amount_missing: r.amountMissing,
-      };
-      case "heatmap": return { ...base, weekday: r.dow, hour_et: r.hour !== undefined && r.hour >= 0 ? r.hour : null, checks: r.checks, sales: r.cents };
-      case "discounts": return { ...base, discount_name: r.label ?? "", applications: r.count, checks: r.checks, amount: r.cents, amount_missing: r.amountMissing };
-      case "servers": return {
-        ...base, server_first_name: r.label, server_ref: r.key ? r.key.slice(-4) : null, checks: r.checks, sales: r.cents,
-        amount_missing: r.amountMissing, average_check: rowAverageCents(r),
-      };
-    }
-  });
+  // Select the projection once. A switch inside the hot map callback intermittently
+  // emitted undefined rows on Node 22.20.0 during concurrent large exports.
+  switch (view) {
+    case "items": return rows.map((r) => ({ ...base, item_guid: r.key, item: r.label, units: r.units, checks: r.checks }));
+    case "modifiers": return rows.map((r) => ({ ...base, item_guid: r.key, modifier: r.label, units: r.units, checks: r.checks }));
+    case "channels": return rows.map((r) => ({
+      ...base, channel: r.channel, provider: r.provider, source: r.saleClass === "ezcater_source" ? "ezcater" : "toast",
+      counted: r.saleClass === "sale" || r.saleClass === "ezcater_source", class: r.saleClass,
+      checks_or_orders: r.checks, sales: r.cents, amount_missing: r.amountMissing,
+    }));
+    case "heatmap": return rows.map((r) => ({ ...base, weekday: r.dow, hour_et: r.hour !== undefined && r.hour >= 0 ? r.hour : null, checks: r.checks, sales: r.cents }));
+    case "discounts": return rows.map((r) => ({ ...base, discount_name: r.label ?? "", applications: r.count, checks: r.checks, amount: r.cents, amount_missing: r.amountMissing }));
+    case "servers": return rows.map((r) => ({
+      ...base, server_first_name: r.label, server_ref: r.key ? r.key.slice(-4) : null, checks: r.checks, sales: r.cents,
+      amount_missing: r.amountMissing, average_check: rowAverageCents(r),
+    }));
+  }
 }
 
 export function salesCheckRows(rows: readonly SalesCheckRow[], shop: ShopRef): ExportRow[] {
