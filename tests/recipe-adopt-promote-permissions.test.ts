@@ -258,6 +258,57 @@ describe("menu promote", () => {
     } catch (e) { plain = e; }
     expect(plain).toMatchObject({ code: "global_changed", spanishNameSaved: null });
   });
+  /**
+   * EVERY failure after the Spanish name commits keeps the record (Astra chunk-2 review P2): the reload of the
+   * promote's snapshot, the promote call itself throwing, an un-named rpc error — all answer with the named partial
+   * result (name saved, not promoted), never a generic failure that hides the shop's changed label.
+   */
+  async function afterSave(fail: { reloadSnapshot?: boolean; promote?: "throws" | "unnamed" }): Promise<{ err: unknown; calls: string[] }> {
+    const calls: string[] = [];
+    let snapshots = 0;
+    current = createFakeDb(withShopSetting());
+    (current.client as unknown as { rpc: unknown }).rpc = async (fn: string, args: Record<string, unknown>) => {
+      calls.push(fn);
+      if (fn === "save_menu_item_shop_setting") return { data: { setting_id: "ms-other-2", retired_setting_id: "ms-other" }, error: null };
+      if (fn === "promote_menu_item_shop_setting") {
+        if (fail.promote === "throws") throw new Error("fetch failed");
+        if (fail.promote === "unnamed") return { data: null, error: { message: "canceling statement due to statement timeout" } };
+        return { data: promoted(), error: null };
+      }
+      snapshots += 1;
+      // 1 = the preview's re-check, 2 = the shop save's own, 3 = the promote's reload AFTER the save
+      if (fail.reloadSnapshot && snapshots === 3) return { data: null, error: { message: "connection reset" } };
+      return { data: { snap: args.p_location === NIL_SCOPE ? "preview" : "shop" }, error: null };
+    };
+    let err: unknown;
+    try {
+      await promoteMenuItemShopSetting(actor("moo", 8, []), { menuItemId: "m-italian", settingId: "ms-other", fields: ["name"], expected, nameEs: "Italiano grande", snapshot: SNAP });
+    } catch (e) { err = e; }
+    return { err, calls };
+  }
+  it("the snapshot RELOAD failing after the Spanish name saved answers with the named partial result", async () => {
+    const { err, calls } = await afterSave({ reloadSnapshot: true });
+    expect(err).toBeInstanceOf(MenuShopError);
+    expect(err).toMatchObject({ status: 500, code: "promote_not_done", spanishNameSaved: { settingId: "ms-other-2", locationId: OTHER } });
+    expect((err as Error).message).toBe("promote_not_done"); // the database's words never reach the page
+    expect(calls).toEqual(["menu_item_change_snapshot", "menu_item_change_snapshot", "save_menu_item_shop_setting", "menu_item_change_snapshot"]);
+  });
+  it("the promote call THROWING or answering an un-named error after the save: the same named partial result", async () => {
+    for (const promote of ["throws", "unnamed"] as const) {
+      const { err, calls } = await afterSave({ promote });
+      expect(err, promote).toBeInstanceOf(MenuShopError);
+      expect(err, promote).toMatchObject({ status: 500, code: "promote_not_done", spanishNameSaved: { settingId: "ms-other-2", locationId: OTHER } });
+      expect(calls, promote).toContain("promote_menu_item_shop_setting");
+    }
+  });
+  it("with NO Spanish-name step a failing promote is still the plain failure (nothing was saved)", async () => {
+    current = createFakeDb(withShopSetting());
+    (current.client as unknown as { rpc: unknown }).rpc = async () => ({ data: null, error: { message: "connection reset" } });
+    const err = await promoteMenuItemShopSetting(actor("moo", 8, []), { menuItemId: "m-italian", settingId: "ms-other", fields: ["name"], expected, snapshot: SNAP })
+      .catch((e: unknown) => e);
+    expect(err).not.toBeInstanceOf(MenuShopError);
+    expect(err).toBeInstanceOf(Error);
+  });
   it("a blank or unchanged Spanish name is no extra step; a Spanish name with a price-only promote is refused by name; too long is invalid_name", async () => {
     let calls = install(withShopSetting({ name_override_es: "Italiano grande" }), { promote_menu_item_shop_setting: promoted });
     await promoteMenuItemShopSetting(actor("moo", 8, []), { menuItemId: "m-italian", settingId: "ms-other", fields: ["name"], expected, nameEs: "Italiano grande", snapshot: SNAP });

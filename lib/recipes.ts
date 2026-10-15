@@ -187,13 +187,39 @@ export async function assertInputLineIsValid(
     portioned: boolean;
   },
 ): Promise<void> {
+  assertInputLineShape(line);
+  if (line.componentProductId !== null) await assertProductLineIsValid(sb, line.componentProductId, line.unit);
+}
+
+type InputLineToCheck = Parameters<typeof assertInputLineIsValid>[1];
+
+/** The read-free half of assertInputLineIsValid (the line's shape), in the writer's order. */
+function assertInputLineShape(line: InputLineToCheck): void {
   if (componentTargets(line).count !== 1) throw new RecipeError(400, "invalid_component");
   if (!(typeof line.quantity === "number" && Number.isFinite(line.quantity) && line.quantity > 0)) {
     throw new RecipeError(400, "invalid_quantity");
   }
   if (line.componentSkuId === null && normStr(line.eachContainerLabel) !== null) throw new RecipeError(400, "invalid_payload");
   if (line.componentItemId !== null && line.portioned) throw new RecipeError(400, "invalid_payload");
-  if (line.componentProductId !== null) await assertProductLineIsValid(sb, line.componentProductId, line.unit);
+}
+
+/**
+ * assertInputLineIsValid against facts READ ONCE for a whole set (catalog 3b chunk-2 review P3): `productActive`
+ * maps every product id the set names to its `active` flag (an id missing from the map = no such product), and
+ * `activeMeasureLabels` holds the active measure labels. The SAME checks, in the SAME order, with the SAME codes as
+ * the writer's per-line reads (assertProductLineIsValid) — so a preview that validates a 200-line copied set from
+ * batched reads refuses exactly what the writer would.
+ */
+export function assertInputLineIsValidAgainst(
+  line: InputLineToCheck,
+  facts: { productActive: ReadonlyMap<string, boolean | null>; activeMeasureLabels: ReadonlySet<string> },
+): void {
+  assertInputLineShape(line);
+  if (line.componentProductId === null) return;
+  const active = facts.productActive.get(line.componentProductId);
+  if (active === undefined || active === false) throw new RecipeError(400, "invalid_component_product");
+  const label = normStr(line.unit);
+  if (label === null || !facts.activeMeasureLabels.has(label)) throw new RecipeError(400, "product_line_needs_measure_unit");
 }
 
 /** The 0258 recipe-line RPCs' named refusals (P0001), mapped to the lib's codes. */

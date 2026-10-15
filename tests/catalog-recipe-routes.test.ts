@@ -171,6 +171,19 @@ describe("the menu-item routes", () => {
       code: "global_changed", spanishNameSaved: { settingId: V, locationId: SHOP }, notice: "catalog.menu.promote.es_saved_not_promoted",
     });
   });
+  it("apply: a FAILURE after the Spanish name saved (not a refusal) is surfaced the same way — named code, the record, the notice", async () => {
+    const e = new MenuShopError(500, "promote_not_done");
+    e.spanishNameSaved = { settingId: V, locationId: SHOP };
+    vi.mocked(applyMenuChange).mockRejectedValue(e);
+    const res = await menuApply(post(`/api/admin/catalog/menu-item/${R}/apply`, { change: promote, previewToken: "ffff0000" }), params(R));
+    expect(res.status).toBe(500);
+    expect(await res.json()).toMatchObject({
+      code: "promote_not_done", spanishNameSaved: { settingId: V, locationId: SHOP }, notice: "catalog.menu.promote.es_saved_not_promoted",
+    });
+    // the code is a listed page refusal, so it has its own en + es message (tests/catalog-item-i18n.test.ts)
+    const { RECIPE_PAGE_ERROR_CODES } = await import("@/lib/catalog/recipe-item-shared");
+    expect(RECIPE_PAGE_ERROR_CODES as readonly string[]).toContain("promote_not_done");
+  });
   it("apply: an ordinary refusal carries no such record", async () => {
     vi.mocked(applyMenuChange).mockRejectedValue(new MenuShopError(409, "preview_stale"));
     const res = await menuApply(post(`/api/admin/catalog/menu-item/${R}/apply`, { change: promote, previewToken: "ffff0000" }), params(R));
