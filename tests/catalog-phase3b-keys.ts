@@ -67,4 +67,8 @@ export const PHASE3B_KEYS = [
   // Astra chunk-5 P2/P3: a read-only view still shows the current settings; History shows the Spanish name.
   "catalog.menu.now.title", "catalog.menu.now.price", "catalog.menu.now.global", "catalog.menu.now.sold",
   "catalog.menu.now.name", "catalog.menu.now.name_es", "catalog.menu.history_name_es",
+  // Task 10 (the Shop changes list): promote returns the shop (said before the preview), a version equal to the default,
+  // the shop's own Spanish name, a row that changed after its preview, and the rows folded away by Leave.
+  "catalog.changes.promote_returns", "catalog.changes.same_as_default_hint", "catalog.changes.name_here_es",
+  "catalog.changes.list_changed", "catalog.changes.row_gone", "catalog.changes.show_left",
 ] as const;

@@ -246,6 +246,8 @@ const CLIENT_TIER_MAP: Record<string, string[]> = {
   "components/catalog/RecipeItemClient.tsx": ["E"],
   // …and the menu item page, the same (save, back to the global menu, restore, promote).
   "components/catalog/MenuItemClient.tsx": ["E"],
+  // …and the Shop changes list (promote a shop's recipe or menu price / name; Leave writes nothing).
+  "components/catalog/ShopChangesClient.tsx": ["E"],
   "components/admin/menu-costing/MenuPriceEditor.tsx": ["E"],
   // POST /api/admin/catering/ezcater-review -> decideEzcaterMapping asserts B in lib.
   "app/admin/catering/ezcater-review/review-client.tsx": ["B"],

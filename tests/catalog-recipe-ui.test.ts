@@ -566,10 +566,138 @@ describe("chunk-5 review (CC note 8)", () => {
     expect(rh).not.toContain("Oct 15");
   });
   it("P3: no p3b screen slices an ISO timestamp for its date", () => {
-    for (const f of ["components/catalog/MenuItemClient.tsx", "components/catalog/RecipeItemClient.tsx"]) {
+    for (const f of ["components/catalog/MenuItemClient.tsx", "components/catalog/RecipeItemClient.tsx", "components/catalog/ShopChangesClient.tsx"]) {
       const src = readFileSync(f, "utf8");
       expect(src, f).not.toContain("iso.slice(0, 10)");
       expect(src, f).toContain("etDisplayDate(");
     }
+  });
+});
+
+// ── The Shop changes list (plan Task 10, with the lead decisions) ─────────────
+const { ShopChangesClient, ShopChangeRecipeCard, ShopChangeMenuCard } = await import("@/components/catalog/ShopChangesClient");
+type ChangesView = import("@/lib/catalog/recipe-item-shared").ShopChangesView;
+const RID = "7d0c1f2e-0000-4000-8000-000000000001";
+const MID = "7d0c1f2e-0000-4000-8000-0000000000e1";
+const changes: ChangesView = {
+  recipes: [{ recipeId: RID, recipeName: "Italian", versionId: "7d0c1f2e-0000-4000-8000-0000000000aa",
+    shopId: SHOP, shopName: "P Street", validFrom: "2026-10-14T00:00:00Z", createdByName: "Ana", adoptedFromShopName: null,
+    changes: [{ kind: "changed", key: "sku:sku-t", before: { ...turkey, quantity: 4 }, after: turkey }], sameAsDefault: false }],
+  menu: [{ menuItemId: MID, menuItemName: "Italian", settingId: "7d0c1f2e-0000-4000-8000-0000000000bb",
+    shopId: SHOP, shopName: "P Street", validFrom: "2026-10-14T00:00:00Z", createdByName: "Ana", price: 13.5, soldHere: true,
+    nameOverride: "Big Italian", nameOverrideEs: null, global: { price: 12.5, name: "Italian", nameEs: "Italiano" } }],
+  names: { "sku:sku-t": "Turkey" },
+};
+const recipeRow = changes.recipes[0]!;
+const menuRow = changes.menu[0]!;
+const idle = { preview: null, retry: null, dropped: false, message: null };
+const recipePromote: RecipePreview = {
+  ...preview, kind: "promote", target: { kind: "global" }, dropsLinkTo: null, flagged: [], returnedShop: { shopId: SHOP, shopName: "P Street" },
+};
+const recipeCard = (flow: Record<string, unknown> | null, language: Language = "en") => render(jsx(ShopChangeRecipeCard, {
+  row: recipeRow, names: changes.names, busy: false, flow, onPromote: noop, onLeave: noop, onSave: noop, onDiscard: noop, onRepreview: noop,
+} as never), language);
+const menuCard = (flow: Record<string, unknown> | null, extra: Record<string, unknown> = {}, language: Language = "en") => render(jsx(ShopChangeMenuCard, {
+  row: menuRow, busy: false, flow, onPromote: noop, onLeave: noop, onSave: noop, onDiscard: noop, onRepreview: noop, ...extra,
+} as never), language);
+
+describe("ShopChangesClient — every shop version, what / where / who, Promote or Leave", () => {
+  it("lists each shop version with who and where, and offers Promote or Leave; 44px", () => {
+    const html = render(jsx(ShopChangesClient, { view: changes }));
+    expect(html).toContain("P Street · Ana");
+    expect(html).toContain(en["catalog.changes.promote"]);
+    expect(html).toContain(en["catalog.changes.leave"]);
+    expect(html).toContain("Price here: $13.50 (everyone: $12.50)");
+    expect(html).toContain("Name here: Big Italian");
+    expect(html).toContain(html_("Make $13.50 everyone's price"));
+    expect(html).toContain(html_("Make “Big Italian” everyone's name"));
+    expect44(html);
+  });
+  it("lead decision: a shop item deep-links to THAT shop's view, never the default's", () => {
+    const html = render(jsx(ShopChangesClient, { view: changes }));
+    expect(html).toContain(`href="/admin/catalog/recipe/${RID}?location=${SHOP}"`);
+    expect(html).toContain(`href="/admin/catalog/menu-item/${MID}?location=${SHOP}"`);
+  });
+  it("lead decision: Promote says, before the preview, that the source shop goes back to the default", () => {
+    expect(recipeCard(null)).toContain(html_("Every shop on the default gets it, and P Street goes back to the default. Its food stays the same."));
+    expect(menuCard(null)).toContain(html_("Every shop on the global menu gets P Street's own price or name. P Street then follows the global menu for it."));
+  });
+  it("a version that matches the default offers no Promote (nothing to make the default) — but a way forward to that shop's page", () => {
+    const html = render(jsx(ShopChangeRecipeCard, {
+      row: { ...recipeRow, changes: [], sameAsDefault: true }, names: changes.names, busy: false, flow: null,
+      onPromote: noop, onLeave: noop, onSave: noop, onDiscard: noop, onRepreview: noop,
+    }));
+    expect(html).toContain(en["catalog.changes.same_as_default"]);
+    expect(html).not.toContain(`>${en["catalog.changes.promote"]}<`);
+    expect(html).toContain(html_("There's nothing to make the default. Open it to send P Street back to the default."));
+    expect(html).toContain(`href="/admin/catalog/recipe/${RID}?location=${SHOP}"`);
+    expect(html).toContain(en["catalog.changes.leave"]);
+  });
+  it("a shop's own Spanish name is shown as it is", () => {
+    expect(menuCard(null, { row: { ...menuRow, nameOverrideEs: "Italiano grande" } })).toContain("Spanish name here: Italiano grande");
+  });
+  it("Spanish (tú) throughout", () => {
+    const html = render(jsx(ShopChangesClient, { view: changes }), "es");
+    expect(html).toContain(es["catalog.changes.intro"]);
+    expect(html).toContain(es["catalog.changes.promote"]);
+    expect(html).toContain(es["catalog.changes.leave"]);
+    expect(html).toContain("Precio aquí: $13.50 (todos: $12.50)");
+    expect(recipeCard(null, "es")).toContain("Todas las tiendas en el predeterminado lo reciben, y P Street vuelve al predeterminado. Su comida sigue igual.");
+  });
+  it("375px: rows and button rows wrap, long names break, nothing scrolls sideways or clips", () => {
+    const long: ChangesView = { ...changes, recipes: [{ ...recipeRow, shopName: "Navy Yard Catering Kitchen", recipeName: "The Extremely Long Italian Combination Sub" }] };
+    const html = render(jsx(ShopChangesClient, { view: long }));
+    expect(html).toContain("Navy Yard Catering Kitchen");
+    expect(html).toContain("break-words");
+    expect(html).not.toMatch(/overflow-x-auto|whitespace-nowrap|\btruncate\b|shrink-0/);
+  });
+  it("an empty list says so in both sections", () => {
+    const html = render(jsx(ShopChangesClient, { view: { recipes: [], menu: [], names: {} } }));
+    expect(html.split(en["catalog.changes.none"]).length - 1).toBe(2);
+  });
+});
+
+describe("a Shop changes promote — the preview, its save, and what happens when something moves", () => {
+  it("a recipe promote shows What this changes with the returned shop and ONE save: Make it the default", () => {
+    const html = recipeCard({ ...idle, preview: recipePromote });
+    expect(html).toContain(en["catalog.recipe.preview.title"]);
+    expect(html).toContain("P Street goes back to the default. Its food stays the same.");
+    expect(html).toContain(en["catalog.recipe.preview.save.promote"]);
+    expect44(html);
+  });
+  it("lead decision: a NAME promote shows the Spanish name truthfully, the English fallback, and the optional Spanish name field", () => {
+    const html = menuCard({ ...idle, preview: menuPromote }, { promoteNameEs: { value: "", previewed: "", onChange: noop, onRepreview: noop } });
+    expect(html).toContain("Spanish name: Italiano → —");
+    expect(html).toContain(en["catalog.menu.preview.name_es_fallback"]);
+    expect(html).toContain(en["catalog.menu.promote.name_es_field"]);
+    expect(html).toContain("P Street goes back to the default for what you share.");
+    expect(html).toContain(html_(en["catalog.menu.preview.save_promote"]));
+    expect44(html);
+  });
+  it("a Spanish name typed after the preview hides Save until it is looked at again (the preview binds the complete change)", () => {
+    const html = menuCard({ ...idle, preview: menuPromote }, { promoteNameEs: { value: "Italiano grande", previewed: "", onChange: noop, onRepreview: noop } });
+    expect(html).toContain(en["catalog.menu.promote.name_es_unpreviewed"]);
+    expect(html).not.toContain(html_(en["catalog.menu.preview.save_promote"]));
+  });
+  it("the row changed after its preview: the preview and its Save are gone — Preview again (en + es)", () => {
+    for (const html of [recipeCard({ ...idle, dropped: true }), menuCard({ ...idle, dropped: true })]) {
+      expect(html).toContain(html_(en["catalog.changes.list_changed"]));
+      expect(html).toContain(en["catalog.recipe.preview_again"]);
+      // no panel, so no Save (the promote button shares the save's words, so look for the panel itself)
+      expect(html).not.toContain(en["catalog.recipe.preview.title"]);
+      expect(html).not.toContain(en["catalog.menu.preview.title"]);
+      expect44(html);
+    }
+    expect(recipeCard({ ...idle, dropped: true }, "es")).toContain(es["catalog.changes.list_changed"]);
+  });
+  it("a stale preview offers to look at the same change again, or not now", () => {
+    const html = recipeCard({ ...idle, retry: en["catalog.recipe.error.preview_stale"] });
+    expect(html).toContain(html_(en["catalog.recipe.error.preview_stale"]));
+    expect(html).toContain(en["catalog.recipe.see_changes"]);
+    expect(html).toContain(en["catalog.recipe.preview.discard"]);
+    expect44(html);
+  });
+  it("a refusal is shown on its own row, by name", () => {
+    expect(menuCard({ ...idle, message: en["catalog.menu.error.global_changed"] })).toContain(html_(en["catalog.menu.error.global_changed"]));
   });
 });
