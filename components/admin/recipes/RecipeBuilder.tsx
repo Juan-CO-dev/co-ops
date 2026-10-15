@@ -53,6 +53,8 @@ const textareaCls =
 export interface RecipeBuilderSku extends RecipeInputSku {
   id: string;
   name: string;
+  /** The SKU's vendor, for the picker's "name · vendor · kind" label; null = no vendor. */
+  vendorName: string | null;
 }
 
 /** A PRODUCT the recipe can pin instead of one vendor's SKU (0179). */
