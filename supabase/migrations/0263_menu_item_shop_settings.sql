@@ -1,5 +1,7 @@
 -- Migration 0263_menu_item_shop_settings
 -- AUTHORED 2026-10-15. NOT YET APPLIED — apply via MCP after review (sim → prod dry-run → prod, with 0262, BEFORE the 3a code merges).
+-- APPLIED TO SIM 2026-10-15 (schema_migrations version 20261015170502, name 'menu_item_shop_settings')
+-- APPLIED TO PROD 2026-10-15 (schema_migrations version 20261015171121, name 'menu_item_shop_settings')
 -- Plan: docs/superpowers/plans/2026-10-15-catalog-phase3a-recipe-menu-versions-data.md (Task 4).
 -- Spec: docs/superpowers/specs/2026-10-15-catalog-redesign-design.md §3 (menu items: shop price, sold here, name override).
 --

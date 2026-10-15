@@ -1,5 +1,7 @@
 -- Migration 0262_recipe_shop_versions
 -- AUTHORED 2026-10-15. NOT YET APPLIED — apply via MCP after review (sim → prod dry-run → prod, BEFORE the 3a code merges; 0259–0261 first).
+-- APPLIED TO SIM 2026-10-15 (schema_migrations version 20261015170452, name 'recipe_shop_versions')
+-- APPLIED TO PROD 2026-10-15 (schema_migrations version 20261015171117, name 'recipe_shop_versions')
 -- Plan: docs/superpowers/plans/2026-10-15-catalog-phase3a-recipe-menu-versions-data.md (Task 3).
 -- Spec: docs/superpowers/specs/2026-10-15-catalog-redesign-design.md §3 (global defaults + shop versions), §6 (notices).
 --
