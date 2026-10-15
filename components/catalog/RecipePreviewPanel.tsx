@@ -21,8 +21,12 @@ const btn =
 const eyebrow = "text-[11px] font-bold uppercase tracking-[0.12em] text-co-text-dim";
 
 export function RecipePreviewPanel({
-  preview, saveLabel, busy, onSave, onDiscard,
-}: { preview: RecipePreview; saveLabel: string; busy: boolean; onSave: () => void; onDiscard: () => void }) {
+  preview, saveLabel, busy, onSave, onDiscard, becomesShopVersion = null,
+}: {
+  preview: RecipePreview; saveLabel: string; busy: boolean; onSave: () => void; onDiscard: () => void;
+  /** A restore for a shop: that shop's name — the restored version becomes ITS own, never the default (CC note 5 #2). */
+  becomesShopVersion?: string | null;
+}) {
   const { t, language } = useTranslation();
   const money = (n: number | null) => (n == null ? "—" : formatCents(Math.round(n * 100), language));
   const fmt = (n: number) => formatQuantity(n, language);
@@ -67,6 +71,9 @@ export function RecipePreviewPanel({
       ))}
       {preview.untouched.length > 0 ? (
         <p className="mt-3 text-sm text-co-text-muted">{t("catalog.recipe.preview.untouched", { shops: preview.untouched.map((u) => u.shopName).join(", ") })}</p>
+      ) : null}
+      {becomesShopVersion ? (
+        <p role="note" className="mt-2 text-sm font-bold text-co-text">{t("catalog.recipe.preview.becomes_shop_version", { shop: becomesShopVersion })}</p>
       ) : null}
       {preview.returnedShop ? (
         <p className="mt-2 text-sm text-co-text">{t("catalog.recipe.preview.returned", { shop: preview.returnedShop.shopName })}</p>

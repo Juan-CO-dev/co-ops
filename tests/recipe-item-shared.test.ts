@@ -271,3 +271,26 @@ describe("one refusal-key map for both item pages (CC note 5 #3)", () => {
     }
   });
 });
+
+describe("a line keeps its identity across a shop save (Astra chunks 3-4 P2 #1: 0262 copies lines with NEW ids, source_line_id = the old)", () => {
+  it("lineLineage walks source_line_id back, nearest first, stopping at a line outside this shop (the default's input) or a loop", async () => {
+    const { lineLineage } = await import("@/lib/catalog/recipe-item-shared");
+    const sourceOf = new Map<string, string | null>([["v3-a", "v2-a"], ["v2-a", "v1-a"], ["v1-a", "ri-a"], ["loop-1", "loop-2"], ["loop-2", "loop-1"], ["fresh", null]]);
+    expect(lineLineage("v3-a", sourceOf)).toEqual(["v2-a", "v1-a", "ri-a"]);
+    expect(lineLineage("fresh", sourceOf)).toEqual([]);
+    expect(lineLineage("loop-1", sourceOf)).toEqual(["loop-2"]);
+    expect(lineLineage("unknown", sourceOf)).toEqual([]);
+  });
+  it("an edit opened on the old id still finds its line after another manager's save; the row key does not change", async () => {
+    const { recipeLineMatches, recipeLineKeys } = await import("@/lib/catalog/recipe-item-shared");
+    const before = [{ lineId: "v1-a", lineage: ["ri-a"] }, { lineId: "v1-b", lineage: ["ri-b"] }];
+    const after = [{ lineId: "v2-a", lineage: ["v1-a", "ri-a"] }, { lineId: "v2-b", lineage: ["v1-b", "ri-b"] }, { lineId: "v2-new", lineage: [] }];
+    expect(after.filter((l) => recipeLineMatches(l, "v1-a")).map((l) => l.lineId)).toEqual(["v2-a"]);
+    expect(recipeLineMatches(after[0]!, "v2-a")).toBe(true);
+    expect(recipeLineMatches(after[1]!, "v1-a")).toBe(false);
+    expect(recipeLineKeys(before)).toEqual(["ri-a", "ri-b"]);
+    expect(recipeLineKeys(after)).toEqual(["ri-a", "ri-b", "v2-new"]);
+    // a duplicated root never yields two equal keys
+    expect(recipeLineKeys([{ lineId: "x1", lineage: ["r"] }, { lineId: "x2", lineage: ["r"] }])).toEqual(["r", "x2"]);
+  });
+});

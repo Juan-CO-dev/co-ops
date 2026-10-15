@@ -57,6 +57,24 @@ describe("the recipe page's writes", () => {
     expect(readFileSync("components/catalog/RecipePreviewPanel.tsx", "utf8")).toContain("preview.flagged.map(");
     expect(readFileSync("components/admin/vendors/shared.ts", "utf8")).toContain("return line ? { ok: false, code, line } : { ok: false, code };");
   });
+  it("Astra chunks 3-4 P2 #1: lines are matched and keyed by their source_line_id lineage, so a refresh never unmounts an open editor", () => {
+    const src = readFileSync(RECIPE_CLIENT, "utf8");
+    expect(src).toContain("recipeLineKeys(view.lines)");
+    expect(src).toContain("recipeLineMatches(l, editing.lineId)");
+    expect(src).toContain("key={`edit-${editing.lineId}-${JSON.stringify(editing.expected)}`}");
+    expect(src).not.toContain("<li key={l.lineId}");
+  });
+  it("Astra chunks 3-4 P2 #2: any edit after a preview drops pending AND preview (no stale Save) and asks to Preview again", () => {
+    const src = readFileSync(RECIPE_CLIENT, "utf8");
+    expect(src).toContain("const dropPreview = () => { if (pending === null && preview === null) return; guard.invalidate(); setPending(null); setPreview(null); setRetry(null); setPreviewDropped(true); };");
+    expect(src.split("onDraftChange={dropPreview}").length - 1).toBe(2); // the edit AND the add editor
+    expect(readFileSync("components/admin/recipes/RecipeLineEditor.tsx", "utf8")).toContain("onDraftChange?.();");
+  });
+  it("Astra chunks 3-4 P3 #3: a restore for a shop says where it goes — on the Save button and in the preview", () => {
+    const src = readFileSync(RECIPE_CLIENT, "utf8");
+    expect(src).toContain('case "restore": return p.target.kind === "shop" ? t("catalog.recipe.restore_as_shop", { shop: shopName(p.target.shopId) })');
+    expect(src).toContain('becomesShopVersion={pending.kind === "restore" && pending.target.kind === "shop" ? shopName(pending.target.shopId) : null}');
+  });
   it("never keys on a location CODE — shops are ids and names", () => {
     for (const f of [RECIPE_PAGE, RECIPE_CLIENT, "components/catalog/RecipePreviewPanel.tsx"]) {
       expect(readFileSync(f, "utf8"), f).not.toMatch(/["'](EM|MEP)["']/);

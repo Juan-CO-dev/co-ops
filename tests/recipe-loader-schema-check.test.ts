@@ -164,6 +164,12 @@ describe("every query a loader builds on a 0262 / 0263 table runs against the RE
     expect(unpaged).toEqual([]);
   });
 
+  it("the recipe page's line-lineage read (Astra chunks 3-4 P2 #1) was reached, paged, and runs on the real columns above", () => {
+    const lineage = captured.filter((c) => c.via === "loadRecipeItemView" && c.table === "recipe_version_lines" && c.select.includes("source_line_id"));
+    expect(lineage.length).toBeGreaterThan(0);
+    expect(lineage.every((c) => c.ranged && c.order.length > 0)).toBe(true);
+  });
+
   it("3b Task 4 reached every new read, and the source read of each act", () => {
     for (const v of ["adoptRecipeVersion", "promoteRecipeVersion", "dismissRecipeNotice"]) {
       expect(captured.some((c) => c.via === v && c.table === "recipe_versions"), v).toBe(true);

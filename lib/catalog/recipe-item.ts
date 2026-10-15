@@ -32,7 +32,7 @@ import {
 } from "@/lib/admin/recipe-versions";
 import { selectAllRows } from "@/lib/supabase-paginate";
 import { menuCostDeltas, recipePreviewToken, type RecipePreview, type ScopeImpact } from "@/lib/catalog/recipe-preview-shared";
-import { historyLinkEndedSource, recipeChangeTarget, scopedPickerSkus, type RecipeChangeRequest, type RecipeItemView } from "@/lib/catalog/recipe-item-shared";
+import { historyLinkEndedSource, lineLineage, recipeChangeTarget, scopedPickerSkus, type RecipeChangeRequest, type RecipeItemView } from "@/lib/catalog/recipe-item-shared";
 import { computeShopNotices } from "@/lib/catalog/shop-changes";
 
 type Sb = ReturnType<typeof getServiceRoleClient>;
@@ -134,6 +134,21 @@ function gateFor(actor: AuthContext, scope: VersionScope) {
 type VersionHead = { id: string; recipe_id: string; location_id: string | null; active: boolean | null; adopted_from_version_id: string | null };
 type LineRowWithId = RecipeLineRow & { id: string; display_order: number | null };
 
+/**
+ * Every line this shop has had for this recipe → the line it was copied from (0262 source_line_id), paged and ordered,
+ * so the page can follow a line across another manager's save (Astra chunks 3-4 P2 #1).
+ */
+async function shopLineSources(sb: Sb, recipeId: string, shopId: string): Promise<Map<string, string | null>> {
+  const rows = await selectAllRows<{ id: string; source_line_id: string | null }>(async (from, to) => {
+    const { data, error } = await sb.from("recipe_version_lines").select("id, source_line_id")
+      .eq("recipe_id", recipeId).eq("location_id", shopId).order("id", { ascending: true })
+      .range(from, to).returns<Array<{ id: string; source_line_id: string | null }>>();
+    if (error) throw new Error(`catalog line lineage: ${error.message}`);
+    return { data };
+  });
+  return new Map(rows.map((r) => [r.id, r.source_line_id]));
+}
+
 /** One version (any scope) with its lines, or null. The single-row read is bounded by its id; the lines are paged. */
 async function versionWithLines(sb: Sb, versionId: string): Promise<(VersionHead & { lines: RecipeLineFields[] }) | null> {
   const { data: v, error } = await sb.from("recipe_versions").select("id, recipe_id, location_id, active, adopted_from_version_id").eq("id", versionId)
@@ -219,6 +234,8 @@ export async function loadRecipeItemView(actor: AuthContext, recipeId: string, s
     : [];
   const adoptedFrom = ownLive?.adoptedFromVersionId ? byId.get(ownLive.adoptedFromVersionId) : undefined;
   const flagCtx = await lineProblemContext(sb, live.lines.map((l) => l.fields));
+  // A shop's own lines get NEW ids on every save; their lineage lets an open edit find its line again.
+  const sourceOf = scope !== null && !live.ridesDefault ? await shopLineSources(sb, recipeId, scope) : new Map<string, string | null>();
 
   return {
     recipe: { id: recipe.id, name: recipe.name, nameEs: recipe.name_es, recipeType: recipe.recipe_type === "production" ? "production" : "consumer", active: recipe.active !== false },
@@ -230,7 +247,7 @@ export async function loadRecipeItemView(actor: AuthContext, recipeId: string, s
       validFrom: ownLive?.validFrom ?? null,
     },
     lines: live.lines.map((l) => ({
-      lineId: l.lineId!, fields: l.fields, name: names[recipeLineTargetKey(l.fields)] ?? recipeLineTargetKey(l.fields),
+      lineId: l.lineId!, lineage: lineLineage(l.lineId!, sourceOf), fields: l.fields, name: names[recipeLineTargetKey(l.fields)] ?? recipeLineTargetKey(l.fields),
       kind: recipeLineKind(l.fields), vendorName: l.fields.componentSkuId ? (vendorBySku.get(l.fields.componentSkuId) ?? null) : null,
       changedHere: scope !== null && !live.ridesDefault && !globalKeys.has(JSON.stringify(l.fields)),
       problem: recipeLineProblem(l.fields, flagCtx),
@@ -245,7 +262,7 @@ export async function loadRecipeItemView(actor: AuthContext, recipeId: string, s
     })),
     notices,
     history: all.filter((v) => v.locationId === null || v.locationId === scope).map((v) => ({
-      id: v.id, scope: v.locationId === null ? "global" as const : "shop" as const, shopName: shopName(v.locationId), active: v.active,
+      id: v.id, scope: v.locationId === null ? "global" as const : "shop" as const, shopId: v.locationId, shopName: shopName(v.locationId), active: v.active,
       validFrom: v.validFrom, validTo: v.validTo, who: v.createdByName, note: v.note, lineCount: v.lines.length,
       promotedFromShopName: v.promotedFromVersionId ? shopName(byId.get(v.promotedFromVersionId)?.locationId ?? null) : null,
       adoptedFromShopName: v.adoptedFromVersionId ? shopName(byId.get(v.adoptedFromVersionId)?.locationId ?? null) : null,

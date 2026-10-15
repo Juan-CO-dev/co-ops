@@ -71,6 +71,14 @@ describe("RecipePreviewPanel — what this changes", () => {
     expect(html).toContain(en["catalog.recipe.preview.flagged_title"].replace(/'/g, "&#x27;"));
     expect(html).toContain(html_(`Line 2 (Mayo) needs fixing: ${en["catalog.recipe.error.product_line_needs_measure_unit"]}`));
   });
+  it("CC note 5 #2: restoring for a shop says it becomes THAT shop's own version, not the default", () => {
+    const html = render(jsx(RecipePreviewPanel, { preview: { ...preview, dropsLinkTo: null }, saveLabel: "Save", busy: false, onSave: () => {}, onDiscard: () => {}, becomesShopVersion: "P Street" }));
+    expect(html).toContain(html_("This becomes P Street's own version. The default for everyone doesn't change."));
+    const plain = render(jsx(RecipePreviewPanel, { preview, saveLabel: "Save", busy: false, onSave: () => {}, onDiscard: () => {} }));
+    expect(plain).not.toContain("This becomes");
+    const esHtml = render(jsx(RecipePreviewPanel, { preview, saveLabel: "Save", busy: false, onSave: () => {}, onDiscard: () => {}, becomesShopVersion: "P Street" }), "es");
+    expect(esHtml).toContain("Esto se vuelve la versión propia de P Street. El predeterminado de todos no cambia.");
+  });
   it("a promote names the shop that goes back to the default", () => {
     const html = render(jsx(RecipePreviewPanel, {
       preview: { ...preview, kind: "promote", target: { kind: "global" }, dropsLinkTo: null, returnedShop: { shopId: OTHER, shopName: "Capitol Hill" } },
@@ -94,7 +102,7 @@ describe("RecipePreviewPanel — what this changes", () => {
 
 // ── The page body ─────────────────────────────────────────────────────────────
 
-const { RecipeItemClient, RecipeHistoryList, StaleLineNotice } = await import("@/components/catalog/RecipeItemClient");
+const { RecipeItemClient, RecipeHistoryList, StaleLineNotice, RecipeLinesList } = await import("@/components/catalog/RecipeItemClient");
 type View = import("@/lib/catalog/recipe-item-shared").RecipeItemView;
 
 const RECIPE = "7d0c1f2e-0000-4000-8000-000000000001";
@@ -105,8 +113,8 @@ const view: View = {
   can: { editShop: true, editGlobal: false, shopsToEdit: [{ id: SHOP, name: "P Street" }] },
   version: { scopeVersionId: "sv", globalVersionId: "gv", ridesDefault: false, adoptedFromShopName: null, validFrom: "2026-10-10T00:00:00Z" },
   lines: [
-    { lineId: "l1", fields: turkey, name: "Turkey", kind: "sku", vendorName: "Baldor", changedHere: true, problem: null },
-    { lineId: "l2", fields: mayo, name: "Mayo", kind: "product", vendorName: null, changedHere: false, problem: "product_line_needs_measure_unit" },
+    { lineId: "l1", lineage: [], fields: turkey, name: "Turkey", kind: "sku", vendorName: "Baldor", changedHere: true, problem: null },
+    { lineId: "l2", lineage: [], fields: mayo, name: "Mayo", kind: "product", vendorName: null, changedHere: false, problem: "product_line_needs_measure_unit" },
   ],
   differsFromDefault: [{ kind: "changed", key: "sku:sku-t", before: { ...turkey, quantity: 4 }, after: turkey }],
   makes: [{ kind: "menu_item", id: "m1", name: "Italian", nameEs: "Italiano", yield: 1, costHere: 2.5 }],
@@ -115,9 +123,9 @@ const view: View = {
   otherShopVersions: [{ versionId: "ov", shopId: OTHER, shopName: "Capitol Hill", validFrom: "2026-10-11T00:00:00Z", createdByName: "Luis", changes: [] }],
   notices: [{ kind: "new_default", recipeId: RECIPE, recipeName: "Italian", seenVersionId: "gv", fromShopName: "Capitol Hill", at: "2026-10-12T00:00:00Z" }],
   history: [
-    { id: "sv", scope: "shop", shopName: "P Street", active: true, validFrom: "2026-10-10T00:00:00Z", validTo: null, who: "Ana", note: null, lineCount: 2, promotedFromShopName: null, adoptedFromShopName: null, linkEndedFromShopName: null },
-    { id: "sv0", scope: "shop", shopName: "P Street", active: false, validFrom: "2026-10-05T00:00:00Z", validTo: "2026-10-10T00:00:00Z", who: "Ana", note: null, lineCount: 2, promotedFromShopName: null, adoptedFromShopName: null, linkEndedFromShopName: "Capitol Hill" },
-    { id: "g0", scope: "global", shopName: null, active: false, validFrom: "2000-01-01T00:00:00Z", validTo: "2026-10-01T00:00:00Z", who: null, note: "0262 baseline", lineCount: 1, promotedFromShopName: null, adoptedFromShopName: null, linkEndedFromShopName: null },
+    { id: "sv", scope: "shop", shopId: SHOP, shopName: "P Street", active: true, validFrom: "2026-10-10T00:00:00Z", validTo: null, who: "Ana", note: null, lineCount: 2, promotedFromShopName: null, adoptedFromShopName: null, linkEndedFromShopName: null },
+    { id: "sv0", scope: "shop", shopId: SHOP, shopName: "P Street", active: false, validFrom: "2026-10-05T00:00:00Z", validTo: "2026-10-10T00:00:00Z", who: "Ana", note: null, lineCount: 2, promotedFromShopName: null, adoptedFromShopName: null, linkEndedFromShopName: "Capitol Hill" },
+    { id: "g0", scope: "global", shopId: null, shopName: null, active: false, validFrom: "2000-01-01T00:00:00Z", validTo: "2026-10-01T00:00:00Z", who: null, note: "0262 baseline", lineCount: 1, promotedFromShopName: null, adoptedFromShopName: null, linkEndedFromShopName: null },
   ],
   names: { "sku:sku-t": "Turkey", "product:p-mayo": "Mayo" },
   picker: { skus: [], items: [], products: [], measures: [{ label: "oz", dimension: "weight", toBaseFactor: 1 }], activeMeasureLabels: ["oz"] },
@@ -219,8 +227,20 @@ describe("History — restore, and the recorded end of an adoption link", () => 
     const html = render(jsx(RecipeHistoryList, { view, target: { kind: "shop", shopId: SHOP }, busy: false, onRestore: () => {} }));
     expect(html).toContain(html_("Link to Capitol Hill's recipe ended"));
     expect(html).toContain(en["catalog.recipe.current"]);
-    expect(html.split(`>${en["catalog.recipe.restore"]}<`).length - 1).toBe(2);
+    // the shop's own past version: Restore; the old DEFAULT version: "Restore as P Street's version" (CC note 5 #2)
+    expect(html.split(`>${en["catalog.recipe.restore"]}<`).length - 1).toBe(1);
+    expect(html).toContain(html_("Restore as P Street's version"));
     expect44(html);
+  });
+  it("CC note 5 #2: another shop's version is NEVER offered as Restore (that is adopt); the global view restores the default's own history", () => {
+    const foreign = { ...view, history: [{ ...view.history[1]!, id: "ov0", shopId: OTHER, shopName: "Capitol Hill", linkEndedFromShopName: null }] };
+    const html = render(jsx(RecipeHistoryList, { view: foreign, target: { kind: "shop", shopId: SHOP }, busy: false, onRestore: () => {} }));
+    expect(html).not.toContain(`>${en["catalog.recipe.restore"]}<`);
+    expect(html).not.toContain("Restore as");
+    const globalView = { ...view, scope: null, scopeName: null, history: [view.history[2]!] };
+    const g = render(jsx(RecipeHistoryList, { view: globalView, target: { kind: "global" }, busy: false, onRestore: () => {} }));
+    expect(g.split(`>${en["catalog.recipe.restore"]}<`).length - 1).toBe(1);
+    expect(g).not.toContain("Restore as");
   });
   it("a viewer who can't save here gets no Restore", () => {
     const html = render(jsx(RecipeHistoryList, { view, target: null, busy: false, onRestore: () => {} }));
@@ -325,5 +345,44 @@ describe("MenuPreviewPanel — what this changes", () => {
     expect(html).toContain(es["catalog.menu.preview.name_es_fallback"]);
     expect(html).toContain(es["catalog.menu.promote.name_es_field"]);
     expect(html).toContain(es["catalog.menu.preview.title"]);
+  });
+});
+
+describe("an open line edit across another manager's save (Astra chunks 3-4 review)", () => {
+  // Another manager saved P Street's recipe while this line was open: 0262 wrote the set again with NEW ids.
+  const saved: View = { ...view, lines: [
+    { ...view.lines[0]!, lineId: "l1-v2", lineage: ["l1"] },
+    { ...view.lines[1]!, lineId: "l2-v2", lineage: ["l2"] },
+  ] };
+  const base = {
+    target: { kind: "shop" as const, shopId: SHOP }, refused: null, busy: false, previewDropped: false, options: [], measures: new Map(),
+    onStartEdit: noop, onRemove: noop, onSubmitEdit: noop, onRebase: noop, onCancel: noop, onDraftChange: noop,
+  };
+  it("P2 #1: the draft SURVIVES — the line is found by its lineage, the editor stays open, nothing says the line is gone", () => {
+    const html = render(jsx(RecipeLinesList, { ...base, view: saved, editing: { mode: "edit", lineId: "l1", expected: turkey, name: "Turkey" } }));
+    expect(html).toContain(html_(en["catalog.recipe.edit_title"]));
+    expect(html).not.toContain(html_(en["catalog.recipe.error.edge_not_found"]));
+    expect(html).not.toContain(html_(en["catalog.recipe.edit_conflict"]));
+  });
+  it("P2 #1: when the edited line itself changed, the draft stays and the page shows what moved, with Start over", () => {
+    const moved: View = { ...saved, lines: [{ ...saved.lines[0]!, fields: { ...turkey, quantity: 6 } }, saved.lines[1]!] };
+    const html = render(jsx(RecipeLinesList, { ...base, view: moved, editing: { mode: "edit", lineId: "l1", expected: turkey, name: "Turkey" } }));
+    expect(html).toContain(html_(en["catalog.recipe.edit_conflict"]));
+    expect(html).toContain("Turkey 5 oz → Turkey 6 oz");
+    expect(html).toContain(en["catalog.recipe.edit_rebase"]);
+    expect(html).toContain(html_(en["catalog.recipe.edit_title"]));
+  });
+  it("a line really removed underneath says so (and offers Not now)", () => {
+    const html = render(jsx(RecipeLinesList, { ...base, view: saved, editing: { mode: "edit", lineId: "gone", expected: turkey, name: "Turkey" } }));
+    expect(html).toContain(html_(en["catalog.recipe.error.edge_not_found"]));
+    expect(html).toContain(en["catalog.recipe.preview.discard"]);
+  });
+  it("P2 #2: an edit after a preview drops its Save — the editor asks to Preview again (en + es)", () => {
+    const html = render(jsx(RecipeLinesList, { ...base, view: saved, previewDropped: true, editing: { mode: "edit", lineId: "l1", expected: turkey, name: "Turkey" } }));
+    expect(html).toContain(en["catalog.recipe.preview_again"]);
+    expect(html).toContain(html_(en["catalog.recipe.preview_again_hint"]));
+    const esHtml = render(jsx(RecipeLinesList, { ...base, view: saved, previewDropped: true, editing: { mode: "edit", lineId: "l1", expected: turkey, name: "Turkey" } }), "es");
+    expect(esHtml).toContain(es["catalog.recipe.preview_again"]);
+    expect44(html);
   });
 });

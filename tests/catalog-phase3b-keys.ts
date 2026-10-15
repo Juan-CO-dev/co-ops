@@ -60,4 +60,8 @@ export const PHASE3B_KEYS = [
   // Task 9 (the menu item page): no dead ends, the moved-row conflict, and the promote panel.
   "catalog.menu.view_only", "catalog.menu.pick_shop_hint", "catalog.menu.edit_conflict", "catalog.menu.edit_rebase",
   "catalog.menu.promote.title", "catalog.menu.promote.hint", "catalog.menu.promote.name_es_unpreviewed",
+  // CC note 5 #2: restore an old default as the shop's own version.
+  "catalog.recipe.restore_as_shop", "catalog.recipe.preview.becomes_shop_version",
+  // Astra chunks 3-4 P2 #2: an edit after a preview drops it — "Preview again" (both pages).
+  "catalog.recipe.preview_again", "catalog.recipe.preview_again_hint", "catalog.menu.preview_again", "catalog.menu.preview_again_hint",
 ] as const;

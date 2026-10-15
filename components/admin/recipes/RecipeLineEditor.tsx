@@ -40,6 +40,7 @@ export function RecipeLineEditor({
   errorMsg,
   onSubmit,
   onCancel,
+  onDraftChange,
 }: {
   title: string;
   submitLabel: string;
@@ -56,6 +57,8 @@ export function RecipeLineEditor({
   errorMsg: string | null;
   onSubmit: (line: RecipeLineDraft) => void;
   onCancel: () => void;
+  /** Called on every change to the draft (catalog Phase 3b: an edit after a preview drops that preview). Optional. */
+  onDraftChange?: () => void;
 }) {
   const { t } = useTranslation();
   // Every control is named programmatically (aria-labelledby → its visible, translated label).
@@ -86,6 +89,7 @@ export function RecipeLineEditor({
   const unitChoices = unitOptions.choices;
 
   const pick = (next: IngredientOption | null) => {
+    onDraftChange?.();
     setChoice(next);
     setLocalError(null);
     const keeps = initial !== null && next !== null && lineTargetKey(initial) === next.key;
@@ -158,7 +162,7 @@ export function RecipeLineEditor({
             inputMode="decimal"
             value={qty}
             disabled={busy || choice === null}
-            onChange={(e) => setQty(e.target.value)}
+            onChange={(e) => { setQty(e.target.value); onDraftChange?.(); }}
           />
         </label>
         <label className="block">
@@ -171,10 +175,10 @@ export function RecipeLineEditor({
               value={unit}
               disabled={busy || choice === null}
               placeholder={t(rk("recipes.input.unit_placeholder"))}
-              onChange={(e) => setUnit(e.target.value)}
+              onChange={(e) => { setUnit(e.target.value); onDraftChange?.(); }}
             />
           ) : (
-            <select aria-labelledby={unitLabelId} className={fieldCls} value={unit} disabled={busy || choice === null} onChange={(e) => setUnit(e.target.value)}>
+            <select aria-labelledby={unitLabelId} className={fieldCls} value={unit} disabled={busy || choice === null} onChange={(e) => { setUnit(e.target.value); onDraftChange?.(); }}>
               <option value="">{t(rk("recipes.input.unit_placeholder"))}</option>
               {legacyUnit ? <option value={legacyUnit}>{t(rk("recipes.input.legacy_unit"), { unit: legacyUnit })}</option> : null}
               {unitChoices.map((u) => (
@@ -196,7 +200,7 @@ export function RecipeLineEditor({
               type="checkbox"
               checked={portioned}
               disabled={busy}
-              onChange={(e) => setPortioned(e.target.checked)}
+              onChange={(e) => { setPortioned(e.target.checked); onDraftChange?.(); }}
               className="h-5 w-5 rounded border-2 border-co-border"
             />
             <span id={portionedLabelId} className="text-sm font-bold text-co-text">{t(rk("recipes.input.portioned"))}</span>
