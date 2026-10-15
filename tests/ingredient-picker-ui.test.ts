@@ -51,6 +51,7 @@ describe("every new string exists in en AND es", () => {
     "recipes.picker.label", "recipes.picker.placeholder", "recipes.picker.results", "recipes.picker.no_matches",
     "recipes.picker.more", "recipes.picker.no_vendor", "recipes.picker.change", "recipes.picker.change_aria",
     "recipes.picker.kind.sku", "recipes.picker.kind.item", "recipes.picker.kind.product",
+    "recipes.picker.keep_current", "recipes.input.legacy_unit", "recipes.input.legacy_unit_must_change",
     "recipes.input.sku_unit_unresolved",
     "recipes.row.edit", "recipes.row.edit_aria", "recipes.row.edit_title", "recipes.row.save_changes",
     "recipes.error.line_changed", "recipes.error.step_up_grant_required",

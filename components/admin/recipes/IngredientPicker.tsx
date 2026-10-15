@@ -7,8 +7,13 @@
  * choice. Options are 44px rows that work by tap (mousedown keeps focus in the input so a tap
  * never blurs the list away). The list flows in the page (no absolute overlay), so it never
  * clips at phone width; rows truncate long names instead of widening the page.
+ *
+ * Chunk-3 review: with a value already chosen, a touch user closes the list with "Keep current"
+ * or by tapping anywhere outside it (blur); "Change" focuses the input synchronously inside the
+ * tap so iOS raises the keyboard; only a KEYBOARD move scrolls the active row (hover never does).
  */
 import { useEffect, useId, useMemo, useRef, useState, type KeyboardEvent } from "react";
+import { flushSync } from "react-dom";
 
 import { useTranslation } from "@/lib/i18n/provider";
 import type { TranslationKey } from "@/lib/i18n/types";
@@ -45,6 +50,8 @@ export function IngredientPicker({
   const [query, setQuery] = useState("");
   const [open, setOpen] = useState(value === null);
   const [active, setActive] = useState(0);
+  // Set by ↑/↓ only, so hovering a row (which also moves `active`) never scrolls the list.
+  const keyboardMoveRef = useRef(false);
 
   const { matches, total } = useMemo(
     () => filterIngredientOptions(options, query, INGREDIENT_RESULT_LIMIT),
@@ -53,7 +60,8 @@ export function IngredientPicker({
 
   // P3-8: the keyboard's active row is always visible inside the scrolling list.
   useEffect(() => {
-    if (!open) return;
+    if (!open || !keyboardMoveRef.current) return;
+    keyboardMoveRef.current = false;
     document.getElementById(`${baseId}-opt-${active}`)?.scrollIntoView({ block: "nearest" });
   }, [active, open, baseId]);
 
@@ -67,13 +75,22 @@ export function IngredientPicker({
     setActive(0);
   };
 
+  /** Close back to the current choice (only meaningful when one exists). */
+  const keepCurrent = () => {
+    setOpen(false);
+    setQuery("");
+    setActive(0);
+  };
+
   const onKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
     if (e.key === "ArrowDown") {
       e.preventDefault();
+      keyboardMoveRef.current = true;
       setOpen(true);
       setActive((i) => moveActive(i, 1, matches.length));
     } else if (e.key === "ArrowUp") {
       e.preventDefault();
+      keyboardMoveRef.current = true;
       setActive((i) => moveActive(i, -1, matches.length));
     } else if (e.key === "Enter") {
       const o = matches[active];
@@ -83,8 +100,7 @@ export function IngredientPicker({
       }
     } else if (e.key === "Escape" && value) {
       e.preventDefault();
-      setOpen(false);
-      setQuery("");
+      keepCurrent();
     }
   };
 
@@ -99,9 +115,12 @@ export function IngredientPicker({
           disabled={disabled}
           aria-label={t(rk("recipes.picker.change_aria"), { name: value.name })}
           onClick={() => {
-            setOpen(true);
-            setActive(0);
-            requestAnimationFrame(() => inputRef.current?.focus());
+            // Render the input NOW and focus it inside this tap, so iOS raises the keyboard.
+            flushSync(() => {
+              setOpen(true);
+              setActive(0);
+            });
+            inputRef.current?.focus();
           }}
           className="inline-flex min-h-[44px] shrink-0 items-center px-3 text-xs font-bold text-co-text underline underline-offset-2 disabled:opacity-50"
         >
@@ -113,7 +132,13 @@ export function IngredientPicker({
 
   const activeOption = matches[active];
   return (
-    <div className="mt-1">
+    <div
+      className="mt-1"
+      onBlur={(e) => {
+        // A tap outside the picker (focus left it) closes the list back to the current choice.
+        if (value && !e.currentTarget.contains(e.relatedTarget as Node | null)) keepCurrent();
+      }}
+    >
       <input
         ref={inputRef}
         type="text"
@@ -177,6 +202,15 @@ export function IngredientPicker({
             </li>
           ) : null}
         </ul>
+      ) : null}
+      {open && value ? (
+        <button
+          type="button"
+          onClick={keepCurrent}
+          className="mt-1 inline-flex min-h-[44px] items-center px-3 text-xs font-bold text-co-text underline underline-offset-2"
+        >
+          {t(rk("recipes.picker.keep_current"))}
+        </button>
       ) : null}
     </div>
   );

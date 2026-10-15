@@ -46,6 +46,8 @@ describe("CONSUMES — one searchable picker, one line form", () => {
 
   it("a live add asks for the window; a draft add writes nothing and asks for nothing", () => {
     const lane = consumes.slice(consumes.indexOf("const submitAdd"), consumes.indexOf("const submitLiveEdit"));
+    expect(lane.indexOf("if (isDraft)")).toBeGreaterThan(-1);
+    expect(lane.indexOf('requestStepUp("E")')).toBeGreaterThan(-1);
     expect(lane.indexOf("if (isDraft)")).toBeLessThan(lane.indexOf('requestStepUp("E")'));
   });
 
@@ -54,5 +56,43 @@ describe("CONSUMES — one searchable picker, one line form", () => {
     expect(row).toContain("onEdit");
     expect(row).toContain('rk("recipes.row.edit")');
     expect(row).toContain('rk("recipes.row.edit_aria")');
+  });
+});
+
+describe("chunk-3 review fixes — the live edit lane", () => {
+  it("(c) a row that vanished after a refresh drops its editor, during render (no effect)", () => {
+    expect(consumes).toContain("if (live && !liveInputs.some((i) => i.id === live.id)) setEditing(null);");
+  });
+
+  it("(d) a 409 line_changed refreshes the page so the next Edit captures the fresh row", () => {
+    const lane = consumes.slice(consumes.indexOf("const submitLiveEdit"), consumes.indexOf("const submitDraftEdit"));
+    expect(lane).toContain('if (result.code === "line_changed") router.refresh();');
+  });
+});
+
+describe("chunk-3 review fixes — the picker and the line editor", () => {
+  const picker = read("components/admin/recipes/IngredientPicker.tsx");
+  const editor = read("components/admin/recipes/RecipeLineEditor.tsx");
+
+  it("(P2) a touch user can close the list: Keep current, and blur/outside tap closes when a value is set", () => {
+    expect(picker).toContain('t(rk("recipes.picker.keep_current"))');
+    expect(picker).toContain("onBlur={(e) => {");
+    expect(picker).toContain("!e.currentTarget.contains(e.relatedTarget as Node | null)");
+  });
+
+  it("(a) Change focuses the input synchronously inside the tap (iOS keyboard), never in a later frame", () => {
+    expect(picker).not.toContain("requestAnimationFrame");
+    expect(picker).toContain("flushSync(");
+  });
+
+  it("(b) only a KEYBOARD move scrolls the active row into view; hover does not", () => {
+    expect(picker).toContain("keyboardMoveRef.current = true;");
+    expect(picker).toContain("if (!open || !keyboardMoveRef.current) return;");
+  });
+
+  it("(e) a saved unit outside the registry shows as a labelled legacy option, and a product line must change it", () => {
+    expect(editor).toContain("legacyLineUnit(unitChoices, unit)");
+    expect(editor).toContain('t(rk("recipes.input.legacy_unit"), { unit: legacyUnit })');
+    expect(editor).toContain("!unitMustChange");
   });
 });

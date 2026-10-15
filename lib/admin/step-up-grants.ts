@@ -19,9 +19,9 @@ export async function mintStepUpGrant(args: {
   userId: string;
   purpose: StepUpPurpose;
   now?: Date;
-}): Promise<void> {
+}): Promise<string> {
   const now = args.now ?? new Date();
-  const { error } = await getServiceRoleClient()
+  const { data, error } = await getServiceRoleClient()
     .from("step_up_grants")
     .insert({
       session_id: args.sessionId,
@@ -31,8 +31,26 @@ export async function mintStepUpGrant(args: {
       created_at: now.toISOString(),
       expires_at: grantExpiresAt(now).toISOString(),
       consumed_at: null,
-    });
+    })
+    .select("id")
+    .maybeSingle<{ id: string }>();
   if (error) throw new Error(`mintStepUpGrant: ${error.message}`);
+  if (!data) throw new Error("mintStepUpGrant returned no row");
+  return data.id;
+}
+
+/**
+ * Void a grant the step-up POST minted when the rest of its success path then failed (chunk-3
+ * review f): no live grant may exist without its auth_step_up_success row. Voiding = spending it
+ * now (consumed_at), the same one-way flip a consume makes; the row stays as history.
+ */
+export async function voidStepUpGrant(grantId: string, now: Date = new Date()): Promise<void> {
+  const { error } = await getServiceRoleClient()
+    .from("step_up_grants")
+    .update({ consumed_at: now.toISOString() })
+    .eq("id", grantId)
+    .is("consumed_at", null);
+  if (error) throw new Error(`voidStepUpGrant: ${error.message}`);
 }
 
 export type GrantResult = { ok: true } | { ok: false; code: "step_up_grant_required" };

@@ -270,3 +270,16 @@ export interface LineEditStart {
 export function beginLineEdit(v: RecipeInputView): LineEditStart {
   return { id: v.id, initial: lineDraftFromView(v), expected: lineSnapshotFromView(v) };
 }
+
+/**
+ * A saved unit the unit list no longer offers (chunk-3 review): e.g. a legacy PRODUCT line in a
+ * vendor's pack label ("case") from before the measure-registry rule. The editor shows it as a
+ * labelled legacy option — so the select never pretends the line has no unit — and a product
+ * line must change it before saving. null for free-text units (prep items), blanks, and any unit
+ * that IS offered (a SKU line's current unit is always offered first by lineUnitChoices).
+ */
+export function legacyLineUnit(choices: readonly string[] | null, unit: string | null): string | null {
+  if (choices === null) return null;
+  const u = normLineText(unit);
+  return u !== null && !choices.includes(u) ? u : null;
+}

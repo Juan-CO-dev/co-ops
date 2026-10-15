@@ -36,7 +36,7 @@ import { jsonError, jsonOk, parseJsonBody, extractIp } from "@/lib/api-helpers";
 import { ROLES, type RoleCode } from "@/lib/roles";
 import { stepUpEditWindowMs } from "@/lib/admin/step-up";
 import { parseStepUpPurpose } from "@/lib/admin/step-up-shared";
-import { mintStepUpGrant } from "@/lib/admin/step-up-grants";
+import { mintStepUpGrant, voidStepUpGrant } from "@/lib/admin/step-up-grants";
 
 interface StepUpBody {
   password: string;
@@ -143,21 +143,28 @@ export async function POST(req: NextRequest) {
   // 5. Success — mint the one grant the purpose names FIRST, then stamp the shared flag (and
   //    the catalog window when asked). Minting first means a failed mint (a 500) leaves no
   //    clock stamped without its success audit row. Both are recorded on the success row.
-  if (purpose) await mintStepUpGrant({ sessionId: session.id, userId: user.id, purpose });
-  await unlockStepUp(session.id, { catalogWindow });
-  await audit({
-    actorId: user.id,
-    actorRole: user.role,
-    action: "auth_step_up_success",
-    resourceTable: "sessions",
-    resourceId: session.id,
-    metadata: {
-      edit_window_seconds: catalogWindow ? stepUpEditWindowMs() / 1000 : null,
-      grant: purpose ? { action: purpose.action, target_id: purpose.targetId } : null,
-    },
-    ipAddress,
-    userAgent,
-  });
+  //    And the reverse (chunk-3 review f): if anything after the mint fails, the grant is voided
+  //    before the error propagates, so no live grant exists without its success audit row.
+  const grantId = purpose ? await mintStepUpGrant({ sessionId: session.id, userId: user.id, purpose }) : null;
+  try {
+    await unlockStepUp(session.id, { catalogWindow });
+    await audit({
+      actorId: user.id,
+      actorRole: user.role,
+      action: "auth_step_up_success",
+      resourceTable: "sessions",
+      resourceId: session.id,
+      metadata: {
+        edit_window_seconds: catalogWindow ? stepUpEditWindowMs() / 1000 : null,
+        grant: purpose ? { action: purpose.action, target_id: purpose.targetId } : null,
+      },
+      ipAddress,
+      userAgent,
+    });
+  } catch (e) {
+    if (grantId) await voidStepUpGrant(grantId);
+    throw e;
+  }
 
   return jsonOk({ ok: true });
 }

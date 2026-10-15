@@ -689,6 +689,9 @@ function ConsumesSection({
   const formInProgress = adding || editing !== null;
   const isOpen = sectionOpen || formInProgress;
   const live = editing?.kind === "live" ? editing : null;
+  // Chunk-3 review (c): the row being edited vanished after a refresh (removed elsewhere) — drop
+  // the editor during render (the prev-compare idiom, never an effect).
+  if (live && !liveInputs.some((i) => i.id === live.id)) setEditing(null);
 
   const options = useMemo(() => buildIngredientOptions({ skus, items, products }), [skus, items, products]);
 
@@ -750,7 +753,11 @@ function ConsumesSection({
     );
     setBusy(false);
     if (result.ok) { closeForms(); router.refresh(); }
-    else setErrorMsg(t(resolveErrorKey(result.code)));
+    else {
+      setErrorMsg(t(resolveErrorKey(result.code)));
+      // Someone else changed the line first: refresh so the next Edit captures the fresh row.
+      if (result.code === "line_changed") router.refresh();
+    }
   };
 
   const submitDraftEdit = (key: number, line: RecipeLineDraft) => {

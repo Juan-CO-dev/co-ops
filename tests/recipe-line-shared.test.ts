@@ -141,3 +141,14 @@ describe("lineUnitChoices — the server's unit rules, offered up front", () => 
     expect(lineUnitChoices("item", null, measures, "qt")).toBeNull();
   });
 });
+
+describe("legacyLineUnit — a saved unit the list no longer offers (chunk-3 review)", () => {
+  it("names a unit that is not among the choices; nothing for free text, blanks or offered units", async () => {
+    const { legacyLineUnit } = await import("@/lib/recipe-line-shared");
+    expect(legacyLineUnit(["each", "oz"], "case")).toBe("case");
+    expect(legacyLineUnit(["each", "oz"], " oz ")).toBeNull();
+    expect(legacyLineUnit(["each", "oz"], "")).toBeNull();
+    expect(legacyLineUnit(["each", "oz"], null)).toBeNull();
+    expect(legacyLineUnit(null, "qt")).toBeNull();
+  });
+});

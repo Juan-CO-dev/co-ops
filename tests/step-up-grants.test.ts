@@ -235,3 +235,19 @@ describe("a grant that cannot be minted stamps no clock (review P3)", () => {
     expect(grants()).toEqual([]);
   });
 });
+
+describe("a minted grant never outlives a failed success path (chunk-3 review f)", () => {
+  it("unlockStepUp throwing after the mint voids the grant, and no success is audited", async () => {
+    h.session.mockResolvedValue(ctx());
+    h.verify.mockResolvedValue(true);
+    h.unlock.mockRejectedValueOnce(new Error("unlock boom"));
+    await expect(
+      stepUpPOST(json("http://localhost/api/auth/step-up", "POST", { password: "right", purpose: { action: "recipe.delete", targetId: T } })),
+    ).rejects.toThrow(/unlock boom/);
+    expect(grants()).toHaveLength(1);
+    expect(grants()[0]!.consumed_at).toEqual(expect.any(String));
+    expect(h.audit).not.toHaveBeenCalledWith(expect.objectContaining({ action: "auth_step_up_success" }));
+    // …and the voided grant cannot be spent.
+    expect(await consumeStepUpGrant(ctx(), "recipe.delete", T)).toEqual({ ok: false, code: "step_up_grant_required" });
+  });
+});

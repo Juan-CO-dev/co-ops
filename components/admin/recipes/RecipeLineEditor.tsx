@@ -17,7 +17,7 @@ import { useTranslation } from "@/lib/i18n/provider";
 import type { TranslationKey } from "@/lib/i18n/types";
 import { ozForRecipeInput, type MeasureUnitFactor, type RecipeInputSku } from "@/lib/recipe-math";
 import { productInputBasis } from "@/lib/products-shared";
-import { diffRecipeLine, lineUnitChoices, type RecipeLineDraft } from "@/lib/recipe-line-shared";
+import { diffRecipeLine, legacyLineUnit, lineUnitChoices, type RecipeLineDraft } from "@/lib/recipe-line-shared";
 import { lineTargetKey, optionForLine, type IngredientOption } from "@/lib/ingredient-picker-shared";
 import { IngredientPicker } from "./IngredientPicker";
 import type { RecipeBuilderProduct, RecipeBuilderSku } from "./RecipeBuilder";
@@ -104,13 +104,17 @@ export function RecipeLineEditor({
       }
     : null;
   const unchanged = initial !== null && draft !== null && diffRecipeLine(initial, draft).length === 0;
-  const canSave = !busy && draft !== null && qtyOk && !unchanged;
+  // A saved unit the list no longer offers shows as a labelled legacy option; a PRODUCT line must
+  // trade it for a measure-registry unit before it can save (chunk-3 review).
+  const legacyUnit = legacyLineUnit(unitChoices, unit);
+  const unitMustChange = choice?.kind === "product" && legacyUnit !== null;
+  const canSave = !busy && draft !== null && qtyOk && !unchanged && !unitMustChange;
 
   const submit = () => {
     setLocalError(null);
     if (!draft) { setLocalError(t(rk("recipes.error.invalid_component"))); return; }
     if (!qtyOk) { setLocalError(t(rk("recipes.error.invalid_quantity"))); return; }
-    if (draft.componentProductId !== null && draft.unit === null) {
+    if (draft.componentProductId !== null && (draft.unit === null || unitMustChange)) {
       setLocalError(t(rk("recipes.error.product_line_needs_measure_unit")));
       return;
     }
@@ -159,6 +163,7 @@ export function RecipeLineEditor({
           ) : (
             <select aria-labelledby={unitLabelId} className={fieldCls} value={unit} disabled={busy || choice === null} onChange={(e) => setUnit(e.target.value)}>
               <option value="">{t(rk("recipes.input.unit_placeholder"))}</option>
+              {legacyUnit ? <option value={legacyUnit}>{t(rk("recipes.input.legacy_unit"), { unit: legacyUnit })}</option> : null}
               {unitChoices.map((u) => (
                 <option key={u} value={u}>{u}</option>
               ))}
@@ -170,6 +175,7 @@ export function RecipeLineEditor({
         ) : null}
         {productNeedsUnitOz ? <p className="text-xs text-co-warning-text">{t(rk("recipes.input.product_needs_unit_oz"))}</p> : null}
         {skuUnitUnresolved ? <p className="text-xs text-co-warning-text">{t(rk("recipes.input.sku_unit_unresolved"))}</p> : null}
+        {unitMustChange ? <p className="text-xs text-co-warning-text">{t(rk("recipes.input.legacy_unit_must_change"))}</p> : null}
         {choice !== null && choice.kind !== "item" ? (
           <label className="flex min-h-[44px] items-center gap-2">
             <input
