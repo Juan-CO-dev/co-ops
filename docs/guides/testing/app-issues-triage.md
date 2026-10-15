@@ -611,3 +611,8 @@ Juan: "The key holder gets that number from toast… which we were going to do b
 - **Station still reads as mine after it closed, or disappears after End shift** (sol staff, sonnet staff). Related to "Claim / change station" still showing after End my shift.
 - **Inventory Audit keeps showing an old error after a good save** (sonnet manager).
 - **PIN keypad dropped taps** (deepseek staff + manager). Possibly the test tool; check on a real tablet.
+
+## Juan's decisions — 2026-10-15 (batch B11)
+Juan: "let's look into the 4 things you want to fix" + the Admin "Used this week" card ("seems super inaccurate to how the app actually works").
+- **B11a** (quick wins): closing temp lines save on Enter/leaving the box (notes behind a link, >41°F warns but saves, negatives refused); "Made the need" one-tap on opening + mid-day prep rows; closing review reason shortcuts **per station + all** (each line still stores its own reason; any line stays editable); station named on the confirmed reasons list; server-side checks (mid-day off-need reason, non-empty closing reasons); under-par alert **to key holders and up** at that shop + MoO + Owner (was also trainer/employee), and its blank "par"; Admin card rebuilt as **"This week in CO-OPS", shops side by side**, people's work separate from automatic jobs (catering showed 0 while ezCater auto-created 305 leads; checklists showed 1 while 126 lines were ticked).
+- **B11b**: one shared "Saving… / Saved" status (closing Undo → two-tap; mid-day SAVE race; receiving stuck after a network error; catering card moves at once with "Saving…"), and a "What's left" list on opening, mid-day, AM prep and closing that jumps to each unfinished box.
