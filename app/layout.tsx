@@ -1,11 +1,16 @@
 import type { Metadata } from "next";
-import { DM_Sans } from "next/font/google";
+import localFont from "next/font/local";
 import "./globals.css";
 import { TENANT_NAME } from "@/lib/tenant";
 
-const dmSans = DM_Sans({
-  subsets: ["latin"],
-  weight: ["400", "500", "600", "700", "800"],
+// DM Sans is self-hosted (app/fonts, the Google Fonts v17 latin variable face, 400–800,
+// OFL). next/font/google fetched it from Google at every build, and Vercel builds failed
+// intermittently in its font loader ("next/font/google queries have exactly one entry",
+// 2026-10-14/15). A committed file has no build-time network dependency.
+const dmSans = localFont({
+  src: "./fonts/dm-sans-latin.woff2",
+  weight: "400 800",
+  style: "normal",
   variable: "--font-dm-sans",
   display: "swap",
 });

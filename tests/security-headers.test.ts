@@ -121,7 +121,7 @@ describe("the CSP origin inventory — every entry has a named consumer in the r
   });
 
   it("font-src is self-only — next/font self-hosts DM Sans at build time", () => {
-    // app/layout.tsx uses next/font/google, which downloads the faces at build
+    // app/layout.tsx self-hosts DM Sans (next/font/local, app/fonts); faces ship with the build
     // and serves them from /_next/static. There is NO fonts.gstatic.com request
     // at runtime, so granting one would be permission the app never uses.
     expect(d.get("font-src")).not.toContain("https://fonts.gstatic.com");

@@ -45,9 +45,9 @@
  *     govern navigation targets, so it needs no entry.
  *
  *   SELF-HOSTED, SO NO ENTRY NEEDED
- *     Fonts. app/layout.tsx uses next/font/google (DM Sans), which downloads
- *     the faces AT BUILD TIME and serves them from /_next/static — there is no
- *     runtime fonts.gstatic.com request, so `font-src 'self'` is not a
+ *     Fonts. app/layout.tsx loads DM Sans with next/font/local from a file
+ *     committed in app/fonts and serves it from /_next/static — there is no
+ *     fonts.gstatic.com request at build or run time, so `font-src 'self'` is not a
  *     restriction, it is the truth. Leaflet's marker PNGs are bundled asset
  *     imports and are 'self' for the same reason.
  */
