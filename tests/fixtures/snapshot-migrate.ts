@@ -132,3 +132,15 @@ export async function migrateSnapshot(snapshot: SnapshotTables): Promise<Migrate
     await db.close();
   }
 }
+
+/**
+ * A PGlite database with the REAL 0259 + 0260 schema applied over the stub base tables (no rows).
+ * The caller closes it. Used to check that every column a loader names on a 0259 table exists.
+ */
+export async function migratedSchemaDb(): Promise<PGlite> {
+  const db = new PGlite();
+  await db.exec(SCHEMA);
+  await db.exec(readFileSync("supabase/migrations/0259_sku_shop_versions.sql", "utf8"));
+  await db.exec(readFileSync("supabase/migrations/0260_sku_pack_versions_finalize.sql", "utf8"));
+  return db;
+}

@@ -35,14 +35,29 @@ const COLUMNS = {
   vendor_delivery_rhythm: "id,vendor_id,location_id,active",
 } as const;
 
+/**
+ * The TOTAL ORDER each table pages by (Astra full-branch r2 P2). `id` everywhere it exists;
+ * sku_pack_epochs (0259) has NO id — its key is (sku_id, location_id) — and ordering a page by a
+ * column that does not exist fails the whole load, which then reads as "unavailable". Every order
+ * column is pinned against the real 0259 schema in tests/loader-schema-check.test.ts.
+ */
+export function readinessOrder(table: keyof typeof COLUMNS): readonly string[] {
+  return table === "sku_pack_epochs" ? ["sku_id", "location_id"] : ["id"];
+}
+export const READINESS_COLUMNS: Readonly<Record<keyof typeof COLUMNS, string>> = COLUMNS;
+
 export async function loadSkuDataReadiness(actor: AuthContext, locationId?: string): Promise<SkuDataShop[]> {
   if (actor.level < 6) throw new Error("SKU_DATA_READINESS_FORBIDDEN");
   if (locationId && actor.level < 9 && !actor.locations.includes(locationId)) throw new Error("SKU_DATA_READINESS_FORBIDDEN");
   const visible = locationId ? new Set([locationId]) : actor.level >= 9 ? undefined : new Set(actor.locations);
   if (visible?.size === 0) return [];
   const sb = getServiceRoleClient();
-  const loaded = await Promise.all(Object.entries(COLUMNS).map(async ([table, columns]) => [table,
-    await selectAllRows<LiveRow>((from, to) => sb.from(table).select(columns).order("id", { ascending: true }).range(from, to).returns<LiveRow[]>()),
+  const loaded = await Promise.all((Object.entries(COLUMNS) as Array<[keyof typeof COLUMNS, string]>).map(async ([table, columns]) => [table,
+    await selectAllRows<LiveRow>((from, to) => {
+      let q = sb.from(table).select(columns);
+      for (const col of readinessOrder(table)) q = q.order(col, { ascending: true });
+      return q.range(from, to).returns<LiveRow[]>();
+    }),
   ] as const));
   const today = etBusinessDate(new Date().toISOString());
   const report = evaluateWave7Tables(Object.fromEntries(loaded), new Map(), addDaysEt(today, 1), today, visible);
