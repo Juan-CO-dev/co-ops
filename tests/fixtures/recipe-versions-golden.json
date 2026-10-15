@@ -1,0 +1,666 @@
+{
+  "global": {
+    "menuOz": {
+      "m-italian": {
+        "s-cheese": 1.5,
+        "s-ham-a": 3,
+        "s-lettuce": 1.5,
+        "s-mayo": 0.5,
+        "s-tomato": 9,
+        "s-turkey": 4,
+        "s-twin-x": 16
+      },
+      "m-old": {},
+      "m-pickle-side": {
+        "s-pickle": 8
+      }
+    },
+    "itemOz": {
+      "i-slaw": {
+        "s-lettuce": 24,
+        "s-mayo": 8
+      }
+    },
+    "costPerOz": {
+      "s-cheese": null,
+      "s-ham-a": 0.096875,
+      "s-lettuce": 0.09895833333333333,
+      "s-mayo": 0.04583333333333333,
+      "s-onion": null,
+      "s-pickle": 0.3121875,
+      "s-tomato": 0.3,
+      "s-turkey": 0.4,
+      "s-twin-x": 0.2
+    },
+    "menuCost": {
+      "m-italian": {
+        "status": "partial",
+        "cost": null,
+        "pricedCost": 7.961979166666666,
+        "pricedLineCount": 6,
+        "unpricedLineCount": 1,
+        "unpricedSkuIds": [
+          "s-cheese"
+        ],
+        "inconsistentItemIds": [],
+        "unweighedItemIds": [],
+        "retiredProductIds": []
+      },
+      "m-old": {
+        "status": "no_recipe",
+        "cost": null,
+        "pricedCost": 0,
+        "pricedLineCount": 0,
+        "unpricedLineCount": 0,
+        "unpricedSkuIds": [],
+        "inconsistentItemIds": [],
+        "unweighedItemIds": [],
+        "retiredProductIds": []
+      },
+      "m-pickle-side": {
+        "status": "costed",
+        "cost": 2.4975,
+        "pricedCost": 2.4975,
+        "pricedLineCount": 1,
+        "unpricedLineCount": 0,
+        "unpricedSkuIds": [],
+        "inconsistentItemIds": [],
+        "unweighedItemIds": [],
+        "retiredProductIds": []
+      }
+    },
+    "itemCost": {
+      "i-slaw": {
+        "status": "costed",
+        "cost": 2.7416666666666667,
+        "pricedCost": 2.7416666666666667,
+        "pricedLineCount": 2,
+        "unpricedLineCount": 0,
+        "unpricedSkuIds": [],
+        "inconsistentItemIds": [],
+        "unweighedItemIds": [],
+        "retiredProductIds": []
+      }
+    },
+    "datedMenuOz": {
+      "2026-07-15": {
+        "m-italian": {
+          "s-cheese": 1.5,
+          "s-ham-a": 3,
+          "s-lettuce": 1.5,
+          "s-mayo": 0.5,
+          "s-tomato": 9,
+          "s-turkey": 6,
+          "s-twin-x": 16
+        },
+        "m-old": {},
+        "m-pickle-side": {
+          "s-pickle": 8
+        }
+      },
+      "2026-09-15": {
+        "m-italian": {
+          "s-cheese": 1.5,
+          "s-ham-a": 3,
+          "s-lettuce": 1.5,
+          "s-mayo": 0.5,
+          "s-tomato": 9,
+          "s-turkey": 4,
+          "s-twin-x": 16
+        },
+        "m-old": {},
+        "m-pickle-side": {
+          "s-pickle": 8
+        }
+      },
+      "2026-10-14": {
+        "m-italian": {
+          "s-cheese": 1.5,
+          "s-ham-a": 3,
+          "s-lettuce": 1.5,
+          "s-mayo": 0.5,
+          "s-tomato": 9,
+          "s-turkey": 4,
+          "s-twin-x": 16
+        },
+        "m-old": {},
+        "m-pickle-side": {
+          "s-pickle": 8
+        }
+      }
+    },
+    "board": {
+      "rows": [
+        {
+          "id": "m-pickle-side",
+          "name": "Pickle side",
+          "nameEs": "Pepinillos",
+          "section": "Sides",
+          "menuPrice": 2.25,
+          "typedPrice": 2.25,
+          "priceSource": "typed",
+          "foodCostPct": 111.00000000000001,
+          "marginDollars": -0.24750000000000005,
+          "overThreshold": true,
+          "rollup": {
+            "status": "costed",
+            "cost": 2.4975,
+            "pricedCost": 2.4975,
+            "pricedLineCount": 1,
+            "unpricedLineCount": 0,
+            "unpricedSkuIds": [],
+            "inconsistentItemIds": [],
+            "unweighedItemIds": [],
+            "retiredProductIds": []
+          }
+        },
+        {
+          "id": "m-italian",
+          "name": "Italian",
+          "nameEs": "Italiano",
+          "section": "Subs",
+          "menuPrice": 12.5,
+          "typedPrice": 12.5,
+          "priceSource": "typed",
+          "foodCostPct": null,
+          "marginDollars": null,
+          "overThreshold": false,
+          "rollup": {
+            "status": "partial",
+            "cost": null,
+            "pricedCost": 7.961979166666666,
+            "pricedLineCount": 6,
+            "unpricedLineCount": 1,
+            "unpricedSkuIds": [
+              "s-cheese"
+            ],
+            "inconsistentItemIds": [],
+            "unweighedItemIds": [],
+            "retiredProductIds": []
+          }
+        },
+        {
+          "id": "m-italian-lunch",
+          "name": "Italian (lunch)",
+          "nameEs": "Italiano (almuerzo)",
+          "section": "Subs",
+          "menuPrice": 12.5,
+          "typedPrice": null,
+          "priceSource": "same_as",
+          "foodCostPct": null,
+          "marginDollars": null,
+          "overThreshold": false,
+          "rollup": {
+            "status": "no_recipe",
+            "cost": null,
+            "pricedCost": 0,
+            "pricedLineCount": 0,
+            "unpricedLineCount": 0,
+            "unpricedSkuIds": [],
+            "inconsistentItemIds": [],
+            "unweighedItemIds": [],
+            "retiredProductIds": []
+          }
+        }
+      ],
+      "totals": {
+        "rowCount": 3,
+        "costedCount": 1,
+        "partialCount": 1,
+        "unpricedCount": 0,
+        "inconsistentCount": 0,
+        "unweighedCount": 0,
+        "unresolvedCount": 0,
+        "noRecipeCount": 1,
+        "overThresholdCount": 1,
+        "blockingSkuCount": 1,
+        "inconsistentItemCount": 0,
+        "unweighedItemCount": 0
+      }
+    }
+  },
+  "loc-1": {
+    "menuOz": {
+      "m-italian": {
+        "s-cheese": 1.5,
+        "s-ham-a": 3,
+        "s-lettuce": 1.5,
+        "s-mayo": 0.5,
+        "s-tomato": 9,
+        "s-turkey": 4,
+        "s-twin-y": 16
+      },
+      "m-old": {},
+      "m-pickle-side": {
+        "s-pickle": 8
+      }
+    },
+    "itemOz": {
+      "i-slaw": {
+        "s-lettuce": 24,
+        "s-mayo": 8
+      }
+    },
+    "costPerOz": {
+      "s-cheese": null,
+      "s-ham-a": 0.096875,
+      "s-lettuce": 0.09895833333333333,
+      "s-mayo": 0.04583333333333333,
+      "s-onion": null,
+      "s-pickle": 0.3121875,
+      "s-tomato": 0.3,
+      "s-turkey": 0.4,
+      "s-twin-y": null
+    },
+    "menuCost": {
+      "m-italian": {
+        "status": "partial",
+        "cost": null,
+        "pricedCost": 4.761979166666666,
+        "pricedLineCount": 5,
+        "unpricedLineCount": 2,
+        "unpricedSkuIds": [
+          "s-cheese",
+          "s-twin-y"
+        ],
+        "inconsistentItemIds": [],
+        "unweighedItemIds": [],
+        "retiredProductIds": []
+      },
+      "m-old": {
+        "status": "no_recipe",
+        "cost": null,
+        "pricedCost": 0,
+        "pricedLineCount": 0,
+        "unpricedLineCount": 0,
+        "unpricedSkuIds": [],
+        "inconsistentItemIds": [],
+        "unweighedItemIds": [],
+        "retiredProductIds": []
+      },
+      "m-pickle-side": {
+        "status": "costed",
+        "cost": 2.4975,
+        "pricedCost": 2.4975,
+        "pricedLineCount": 1,
+        "unpricedLineCount": 0,
+        "unpricedSkuIds": [],
+        "inconsistentItemIds": [],
+        "unweighedItemIds": [],
+        "retiredProductIds": []
+      }
+    },
+    "itemCost": {
+      "i-slaw": {
+        "status": "costed",
+        "cost": 2.7416666666666667,
+        "pricedCost": 2.7416666666666667,
+        "pricedLineCount": 2,
+        "unpricedLineCount": 0,
+        "unpricedSkuIds": [],
+        "inconsistentItemIds": [],
+        "unweighedItemIds": [],
+        "retiredProductIds": []
+      }
+    },
+    "datedMenuOz": {
+      "2026-07-15": {
+        "m-italian": {
+          "s-cheese": 1.5,
+          "s-ham-a": 3,
+          "s-lettuce": 1.5,
+          "s-mayo": 0.5,
+          "s-tomato": 9,
+          "s-turkey": 6,
+          "s-twin-y": 16
+        },
+        "m-old": {},
+        "m-pickle-side": {
+          "s-pickle": 8
+        }
+      },
+      "2026-09-15": {
+        "m-italian": {
+          "s-cheese": 1.5,
+          "s-ham-a": 3,
+          "s-lettuce": 1.5,
+          "s-mayo": 0.5,
+          "s-tomato": 9,
+          "s-turkey": 4,
+          "s-twin-y": 16
+        },
+        "m-old": {},
+        "m-pickle-side": {
+          "s-pickle": 8
+        }
+      },
+      "2026-10-14": {
+        "m-italian": {
+          "s-cheese": 1.5,
+          "s-ham-a": 3,
+          "s-lettuce": 1.5,
+          "s-mayo": 0.5,
+          "s-tomato": 9,
+          "s-turkey": 4,
+          "s-twin-y": 16
+        },
+        "m-old": {},
+        "m-pickle-side": {
+          "s-pickle": 8
+        }
+      }
+    },
+    "board": {
+      "rows": [
+        {
+          "id": "m-pickle-side",
+          "name": "Pickle side",
+          "nameEs": "Pepinillos",
+          "section": "Sides",
+          "menuPrice": 2.25,
+          "typedPrice": 2.25,
+          "priceSource": "typed",
+          "foodCostPct": 111.00000000000001,
+          "marginDollars": -0.24750000000000005,
+          "overThreshold": true,
+          "rollup": {
+            "status": "costed",
+            "cost": 2.4975,
+            "pricedCost": 2.4975,
+            "pricedLineCount": 1,
+            "unpricedLineCount": 0,
+            "unpricedSkuIds": [],
+            "inconsistentItemIds": [],
+            "unweighedItemIds": [],
+            "retiredProductIds": []
+          }
+        },
+        {
+          "id": "m-italian",
+          "name": "Italian",
+          "nameEs": "Italiano",
+          "section": "Subs",
+          "menuPrice": 12.5,
+          "typedPrice": 12.5,
+          "priceSource": "typed",
+          "foodCostPct": null,
+          "marginDollars": null,
+          "overThreshold": false,
+          "rollup": {
+            "status": "partial",
+            "cost": null,
+            "pricedCost": 4.761979166666666,
+            "pricedLineCount": 5,
+            "unpricedLineCount": 2,
+            "unpricedSkuIds": [
+              "s-cheese",
+              "s-twin-y"
+            ],
+            "inconsistentItemIds": [],
+            "unweighedItemIds": [],
+            "retiredProductIds": []
+          }
+        },
+        {
+          "id": "m-italian-lunch",
+          "name": "Italian (lunch)",
+          "nameEs": "Italiano (almuerzo)",
+          "section": "Subs",
+          "menuPrice": 12.5,
+          "typedPrice": null,
+          "priceSource": "same_as",
+          "foodCostPct": null,
+          "marginDollars": null,
+          "overThreshold": false,
+          "rollup": {
+            "status": "no_recipe",
+            "cost": null,
+            "pricedCost": 0,
+            "pricedLineCount": 0,
+            "unpricedLineCount": 0,
+            "unpricedSkuIds": [],
+            "inconsistentItemIds": [],
+            "unweighedItemIds": [],
+            "retiredProductIds": []
+          }
+        }
+      ],
+      "totals": {
+        "rowCount": 3,
+        "costedCount": 1,
+        "partialCount": 1,
+        "unpricedCount": 0,
+        "inconsistentCount": 0,
+        "unweighedCount": 0,
+        "unresolvedCount": 0,
+        "noRecipeCount": 1,
+        "overThresholdCount": 1,
+        "blockingSkuCount": 2,
+        "inconsistentItemCount": 0,
+        "unweighedItemCount": 0
+      }
+    }
+  },
+  "loc-2": {
+    "menuOz": {
+      "m-italian": {
+        "s-cheese": 1.5,
+        "s-ham-a": 3,
+        "s-lettuce": 1.5,
+        "s-mayo": 0.5,
+        "s-tomato": 9,
+        "s-turkey": 4,
+        "s-twin-y": 16
+      },
+      "m-old": {},
+      "m-pickle-side": {
+        "s-pickle": 8
+      }
+    },
+    "itemOz": {
+      "i-slaw": {
+        "s-lettuce": 24,
+        "s-mayo": 8
+      }
+    },
+    "costPerOz": {
+      "s-cheese": null,
+      "s-ham-a": 0.096875,
+      "s-lettuce": 0.09895833333333333,
+      "s-mayo": 0.04583333333333333,
+      "s-onion": null,
+      "s-pickle": 0.3121875,
+      "s-tomato": 0.3,
+      "s-turkey": 0.4,
+      "s-twin-y": null
+    },
+    "menuCost": {
+      "m-italian": {
+        "status": "partial",
+        "cost": null,
+        "pricedCost": 4.761979166666666,
+        "pricedLineCount": 5,
+        "unpricedLineCount": 2,
+        "unpricedSkuIds": [
+          "s-cheese",
+          "s-twin-y"
+        ],
+        "inconsistentItemIds": [],
+        "unweighedItemIds": [],
+        "retiredProductIds": []
+      },
+      "m-old": {
+        "status": "no_recipe",
+        "cost": null,
+        "pricedCost": 0,
+        "pricedLineCount": 0,
+        "unpricedLineCount": 0,
+        "unpricedSkuIds": [],
+        "inconsistentItemIds": [],
+        "unweighedItemIds": [],
+        "retiredProductIds": []
+      },
+      "m-pickle-side": {
+        "status": "costed",
+        "cost": 2.4975,
+        "pricedCost": 2.4975,
+        "pricedLineCount": 1,
+        "unpricedLineCount": 0,
+        "unpricedSkuIds": [],
+        "inconsistentItemIds": [],
+        "unweighedItemIds": [],
+        "retiredProductIds": []
+      }
+    },
+    "itemCost": {
+      "i-slaw": {
+        "status": "costed",
+        "cost": 2.7416666666666667,
+        "pricedCost": 2.7416666666666667,
+        "pricedLineCount": 2,
+        "unpricedLineCount": 0,
+        "unpricedSkuIds": [],
+        "inconsistentItemIds": [],
+        "unweighedItemIds": [],
+        "retiredProductIds": []
+      }
+    },
+    "datedMenuOz": {
+      "2026-07-15": {
+        "m-italian": {
+          "s-cheese": 1.5,
+          "s-ham-a": 3,
+          "s-lettuce": 1.5,
+          "s-mayo": 0.5,
+          "s-tomato": 9,
+          "s-turkey": 6,
+          "s-twin-y": 16
+        },
+        "m-old": {},
+        "m-pickle-side": {
+          "s-pickle": 8
+        }
+      },
+      "2026-09-15": {
+        "m-italian": {
+          "s-cheese": 1.5,
+          "s-ham-a": 3,
+          "s-lettuce": 1.5,
+          "s-mayo": 0.5,
+          "s-tomato": 9,
+          "s-turkey": 4,
+          "s-twin-y": 16
+        },
+        "m-old": {},
+        "m-pickle-side": {
+          "s-pickle": 8
+        }
+      },
+      "2026-10-14": {
+        "m-italian": {
+          "s-cheese": 1.5,
+          "s-ham-a": 3,
+          "s-lettuce": 1.5,
+          "s-mayo": 0.5,
+          "s-tomato": 9,
+          "s-turkey": 4,
+          "s-twin-y": 16
+        },
+        "m-old": {},
+        "m-pickle-side": {
+          "s-pickle": 8
+        }
+      }
+    },
+    "board": {
+      "rows": [
+        {
+          "id": "m-pickle-side",
+          "name": "Pickle side",
+          "nameEs": "Pepinillos",
+          "section": "Sides",
+          "menuPrice": 2.25,
+          "typedPrice": 2.25,
+          "priceSource": "typed",
+          "foodCostPct": 111.00000000000001,
+          "marginDollars": -0.24750000000000005,
+          "overThreshold": true,
+          "rollup": {
+            "status": "costed",
+            "cost": 2.4975,
+            "pricedCost": 2.4975,
+            "pricedLineCount": 1,
+            "unpricedLineCount": 0,
+            "unpricedSkuIds": [],
+            "inconsistentItemIds": [],
+            "unweighedItemIds": [],
+            "retiredProductIds": []
+          }
+        },
+        {
+          "id": "m-italian",
+          "name": "Italian",
+          "nameEs": "Italiano",
+          "section": "Subs",
+          "menuPrice": 12.5,
+          "typedPrice": 12.5,
+          "priceSource": "typed",
+          "foodCostPct": null,
+          "marginDollars": null,
+          "overThreshold": false,
+          "rollup": {
+            "status": "partial",
+            "cost": null,
+            "pricedCost": 4.761979166666666,
+            "pricedLineCount": 5,
+            "unpricedLineCount": 2,
+            "unpricedSkuIds": [
+              "s-cheese",
+              "s-twin-y"
+            ],
+            "inconsistentItemIds": [],
+            "unweighedItemIds": [],
+            "retiredProductIds": []
+          }
+        },
+        {
+          "id": "m-italian-lunch",
+          "name": "Italian (lunch)",
+          "nameEs": "Italiano (almuerzo)",
+          "section": "Subs",
+          "menuPrice": 12.5,
+          "typedPrice": null,
+          "priceSource": "same_as",
+          "foodCostPct": null,
+          "marginDollars": null,
+          "overThreshold": false,
+          "rollup": {
+            "status": "no_recipe",
+            "cost": null,
+            "pricedCost": 0,
+            "pricedLineCount": 0,
+            "unpricedLineCount": 0,
+            "unpricedSkuIds": [],
+            "inconsistentItemIds": [],
+            "unweighedItemIds": [],
+            "retiredProductIds": []
+          }
+        }
+      ],
+      "totals": {
+        "rowCount": 3,
+        "costedCount": 1,
+        "partialCount": 1,
+        "unpricedCount": 0,
+        "inconsistentCount": 0,
+        "unweighedCount": 0,
+        "unresolvedCount": 0,
+        "noRecipeCount": 1,
+        "overThresholdCount": 1,
+        "blockingSkuCount": 2,
+        "inconsistentItemCount": 0,
+        "unweighedItemCount": 0
+      }
+    }
+  }
+}
