@@ -48,6 +48,8 @@ import { ProductionConsumptionPanel } from "@/components/production/ProductionCo
 import { BatchEntryFields } from "@/components/prep/BatchEntryFields";
 import { emptyBatchFormValue, isBatchContractCode, type BatchFormValue, type BatchRowContext } from "@/lib/batch-prep-shared";
 import { formatPrepQty, parseDecimalDraft, prepNeedLabel, prepQtyParts, roundQty } from "@/lib/prep-display-shared";
+import { canMakeTheNeed } from "@/lib/made-the-need-shared";
+import { ActionButton } from "@/components/ActionButton";
 import type { ChecklistTemplateItem, OpeningPhase2Meta } from "@/lib/types";
 
 import { CollapsibleChecklistSection } from "@/components/ui/CollapsibleChecklistSection";
@@ -745,6 +747,31 @@ function PrepEntryRow({
         />
         {batch !== null ? (
           <span className="text-xs text-co-text-muted">{t("prep.batch.bottled_hint" as TranslationKey)}</span>
+        ) : null}
+        {/* B11a — "Made the need": fills the box with the prep need and runs this row's
+         * existing save (same route + RPC as typing it; delta 0, at par). A stale over/under
+         * capture is dropped — an at-par row has no off-need question. Never on a batch row
+         * (lib/made-the-need-shared.ts). */}
+        {prepNeed !== null &&
+        canMakeTheNeed({
+          need: prepNeed,
+          isBatch: batch !== null,
+          readOnly,
+          current: value.openerPrepped,
+          saved: saveState.status === "saved",
+        }) ? (
+          <ActionButton
+            variant="secondary"
+            onClick={() => {
+              const next = { ...value, openerPrepped: prepNeed, overPar: null, underPar: null };
+              onChange(next);
+              onSave(next);
+            }}
+            disabled={saveState.status === "saving"}
+            aria-label={t("prep.made_the_need_aria", { item: resolved.label, qty: formatPrepQty(prepNeed, parUnit) })}
+          >
+            {t("prep.made_the_need")}
+          </ActionButton>
         ) : null}
       </div>
 

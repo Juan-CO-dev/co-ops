@@ -2698,6 +2698,8 @@
   "opening.phase1.recount_total_hint": "Total {total}",
   "opening.phase1.recount_two_box_hint": "Count what is ready on the line and the bulk container separately.",
   "opening.phase2.prep_need_label": "Prep need",
+  "prep.made_the_need": "Made the need",
+  "prep.made_the_need_aria": "Made the need for {item}: {qty}",
   "opening.phase2.prep_need_pending_verification": "Prep need: verify section first",
   "opening.phase2.prep_need_no_par": "No par set — type what you made",
   "opening.phase2.numbers_only": "Numbers only, like 5.5 — not saved",
