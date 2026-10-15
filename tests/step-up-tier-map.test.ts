@@ -63,7 +63,7 @@ const read = (rel: string) => readFileSync(join(ROOT, ...rel.split("/")), "utf8"
 /** Distinct, sorted tier tokens in a source string for one call shape. */
 function tiersIn(src: string, fn: "assertStepUp" | "requestStepUp"): string[] {
   const args = fn === "assertStepUp" ? String.raw`\s*ctx\s*,\s*` : String.raw`\s*`;
-  const literals = [...src.matchAll(new RegExp(`${fn}\\(${args}"([AB])"`, "g"))].map((m) => m[1] as string);
+  const literals = [...src.matchAll(new RegExp(`${fn}\\(${args}"([ABE])"`, "g"))].map((m) => m[1] as string);
   // A tier passed through a variable is recorded as `VAR:<name>` rather than dropped —
   // an unrecorded dynamic tier is exactly the hole a tier map exists to close.
   const vars = [...src.matchAll(new RegExp(`${fn}\\(${args}(?!")([A-Za-z_$][\\w$]*)`, "g"))].map(
@@ -96,7 +96,7 @@ const SERVER_TIER_MAP: Record<string, string[]> = {
   // 0220 report recipients: both writers are owner-level config changes (Tier B).
   "app/api/admin/report-recipients/route.ts": ["B"],
   "app/api/admin/report-recipients/settings/route.ts": ["B"],
-  "app/api/admin/catalog/item-type/[id]/route.ts": ["A"],
+  "app/api/admin/catalog/item-type/[id]/route.ts": ["E"],
   "app/api/admin/categories/route.ts": ["B"],
   "app/api/admin/catering/capacity/[id]/route.ts": ["A", "B"],
   "app/api/admin/catering/capacity/route.ts": ["A", "B"],
@@ -143,30 +143,34 @@ const SERVER_TIER_MAP: Record<string, string[]> = {
   "app/api/admin/checklist-templates/sections/route.ts": ["B"],
   "app/api/admin/checklist-templates/units/route.ts": ["B"],
   "app/api/admin/ezcater/location/route.ts": ["A"],
-  "app/api/admin/items/[itemId]/sold-directly/route.ts": ["B"],
-  "app/api/admin/menu-items/route.ts": ["B"],
-  "app/api/admin/menu-items/[id]/price/route.ts": ["B"],
+  "app/api/admin/items/[itemId]/sold-directly/route.ts": ["E"],
+  "app/api/admin/menu-items/route.ts": ["E"],
+  "app/api/admin/menu-items/[id]/price/route.ts": ["E"],
   "app/api/admin/order-types/route.ts": ["B"],
-  "app/api/admin/products/[id]/active/route.ts": ["B"],
-  "app/api/admin/products/[id]/members/route.ts": ["A"],
-  "app/api/admin/products/[id]/primary/route.ts": ["A"],
-  "app/api/admin/products/[id]/route.ts": ["A"],
-  "app/api/admin/products/route.ts": ["B"],
-  "app/api/admin/recipes/[id]/inputs/route.ts": ["B"],
-  "app/api/admin/recipes/[id]/outputs/route.ts": ["B"],
-  "app/api/admin/recipes/[id]/route.ts": ["B"],
-  "app/api/admin/recipes/edges/route.ts": ["B"],
-  "app/api/admin/recipes/full/route.ts": ["B"],
-  "app/api/admin/recipes/route.ts": ["B"],
+  // Catalog Phase 1: restore = edit window; retire = one-shot grant (GRANT_SERVER_MAP).
+  "app/api/admin/products/[id]/active/route.ts": ["E"],
+  "app/api/admin/products/[id]/members/route.ts": ["E"],
+  "app/api/admin/products/[id]/primary/route.ts": ["E"],
+  "app/api/admin/products/[id]/route.ts": ["E"],
+  "app/api/admin/products/route.ts": ["E"],
+  "app/api/admin/recipes/[id]/inputs/route.ts": ["E"],
+  "app/api/admin/recipes/[id]/outputs/route.ts": ["E"],
+  // Catalog Phase 1: PATCH = edit window; DELETE = one-shot grant (GRANT_SERVER_MAP).
+  "app/api/admin/recipes/[id]/route.ts": ["E"],
+  "app/api/admin/recipes/edges/route.ts": ["E"],
+  "app/api/admin/recipes/full/route.ts": ["E"],
+  "app/api/admin/recipes/route.ts": ["E"],
   // Batch vs bottle Phase B: Update recipe yield from the drift nudge — the recipe-edit gate.
   "app/api/admin/recipes/yield-nudge/route.ts": ["B"],
-  "app/api/admin/skus/[id]/location-settings/route.ts": ["A"],
-  "app/api/admin/skus/[id]/pack-chain/route.ts": ["A"],
-  "app/api/admin/skus/[id]/price/route.ts": ["A"],
-  "app/api/admin/skus/[id]/route.ts": ["A"],
+  // Was Tier A; the dynamic-pars overlay law now names the edit window.
+  "app/api/admin/skus/[id]/location-settings/route.ts": ["E"],
+  "app/api/admin/skus/[id]/pack-chain/route.ts": ["E"],
+  "app/api/admin/skus/[id]/price/route.ts": ["E"],
+  // Catalog Phase 1: edits + reactivation = edit window; deactivation = one-shot grant.
+  "app/api/admin/skus/[id]/route.ts": ["E"],
   "app/api/admin/skus/measure-units/route.ts": ["B"],
   "app/api/admin/skus/pack-formats/route.ts": ["B"],
-  "app/api/admin/skus/route.ts": ["B"],
+  "app/api/admin/skus/route.ts": ["E"],
   "app/api/admin/skus/pending/route.ts": ["B"],
   "app/api/admin/stores/route.ts": ["B"],
   "app/api/admin/template-builder/[id]/items/[itemId]/spine-link/route.ts": ["A"],
@@ -205,7 +209,7 @@ const SERVER_TIER_MAP: Record<string, string[]> = {
   "app/api/admin/vendors/[id]/schedule/route.ts": ["A"],
   "app/api/admin/vendors/[id]/transmission/route.ts": ["A"],
   "app/api/admin/vendors/route.ts": ["B"],
-  "app/api/admin/weights/route.ts": ["B"],
+  "app/api/admin/weights/route.ts": ["E"],
   // Not under /admin, but step-up-gated all the same.
   "app/api/catering/quotes/[id]/send/route.ts": ["B"],
   "app/api/operations/counts/route.ts": ["A"],
@@ -213,7 +217,7 @@ const SERVER_TIER_MAP: Record<string, string[]> = {
 
 // ── THE CLIENT HALF: component → the tiers it requests ────────────────────────
 const CLIENT_TIER_MAP: Record<string, string[]> = {
-  "components/admin/menu-costing/MenuPriceEditor.tsx": ["B"],
+  "components/admin/menu-costing/MenuPriceEditor.tsx": ["E"],
   // POST /api/admin/catering/ezcater-review -> decideEzcaterMapping asserts B in lib.
   "app/admin/catering/ezcater-review/review-client.tsx": ["B"],
   "components/catering/pipeline/TransferLead.tsx": ["B"],
@@ -239,20 +243,20 @@ const CLIENT_TIER_MAP: Record<string, string[]> = {
   "components/admin/catering/zones/ZonesClient.tsx": ["A", "B"],
   "components/admin/items/AddItemForm.tsx": ["B"],
   "components/admin/items/ItemQuestions.tsx": ["B"],
-  "components/admin/items/ItemRow.tsx": ["B"],
+  "components/admin/items/ItemRow.tsx": ["B", "E"],
   // Shared `mutate(tier, …)` lane; every caller passes a literal — see the join note.
   "components/admin/products/ProductsClient.tsx": ["VAR:tier"],
-  "components/admin/recipes/RecipeBuilder.tsx": ["B"],
+  "components/admin/recipes/RecipeBuilder.tsx": ["E"],
   "components/admin/recipes/RecipeCateringFlags.tsx": ["A"],
   "components/admin/skus/MeasureUnitSelect.tsx": ["B"],
   "components/admin/skus/RegistrySelect.tsx": ["B"],
   "components/admin/skus/PendingStoreItems.tsx": ["B"],
   "components/admin/skus/StoreManagement.tsx": ["B"],
-  "components/admin/skus/SkuCatalogClient.tsx": ["A", "B"],
-  "components/admin/skus/SkuCostPanel.tsx": ["A"],
-  "components/admin/skus/SkuLocationOverlay.tsx": ["A"],
+  "components/admin/skus/SkuCatalogClient.tsx": ["E"],
+  "components/admin/skus/SkuCostPanel.tsx": ["E"],
+  "components/admin/skus/SkuLocationOverlay.tsx": ["E"],
   "components/admin/skus/SkuPackChainPanel.tsx": ["A"],
-  "components/admin/skus/VendorSkusCard.tsx": ["A", "B"],
+  "components/admin/skus/VendorSkusCard.tsx": ["E"],
   "components/admin/template-builder/TemplateBuilderClient.tsx": ["A"],
   "components/admin/templates/AddPrepItemForm.tsx": ["B"],
   "components/admin/templates/LocationChecklistTab.tsx": ["A", "B"],
@@ -267,7 +271,7 @@ const CLIENT_TIER_MAP: Record<string, string[]> = {
   "components/admin/vendors/VendorDetailClient.tsx": ["A", "B"],
   "components/admin/vendors/VendorListClient.tsx": ["B"],
   "components/admin/vendors/VendorRhythmCard.tsx": ["A"],
-  "components/admin/weights/WeightBoardClient.tsx": ["B"],
+  "components/admin/weights/WeightBoardClient.tsx": ["E"],
 };
 
 /**
@@ -332,21 +336,54 @@ describe("step-up tier map — the client half", () => {
 describe("RecipeBuilder — the two lanes that asked for nothing (fixed here)", () => {
   const src = () => read("components/admin/recipes/RecipeBuilder.tsx");
 
-  it("patchField requests Tier B before PATCHing the recipe header", () => {
-    // /api/admin/recipes/[id] asserts Tier B; this lane asked for nothing at all.
+  it("patchField requests the edit window before PATCHing the recipe header", () => {
     const lane = src().slice(src().indexOf("const patchField"));
     const body = lane.slice(0, lane.indexOf("};"));
-    expect(body).toContain('requestStepUp("B")');
-    expect(body.indexOf('requestStepUp("B")')).toBeLessThan(body.indexOf("postJson"));
+    expect(body).toContain('requestStepUp("E")');
+    expect(body.indexOf('requestStepUp("E")')).toBeLessThan(body.indexOf("send("));
   });
 
-  it("removeEdge requests Tier B and surfaces its refusal", () => {
-    // /api/admin/recipes/edges asserts Tier B; this lane asked for nothing AND dropped
-    // the failure on the floor — no refresh, no message, the row just stayed.
+  it("removeEdge requests the edit window and surfaces its refusal", () => {
     const lane = src().slice(src().indexOf("const removeEdge"));
     const body = lane.slice(0, lane.indexOf("\n  };"));
-    expect(body).toContain('requestStepUp("B")');
+    expect(body).toContain('requestStepUp("E")');
     expect(body).toContain("setPatchError");
-    expect(body.indexOf('requestStepUp("B")')).toBeLessThan(body.indexOf("postJson"));
+    expect(body.indexOf('requestStepUp("E")')).toBeLessThan(body.indexOf("send("));
+  });
+});
+
+// ── THE ONE-SHOT GRANTS (catalog Phase 1, Astra r1 P1-1) ─────────────────────
+// The always-prompt catalog acts consume a single-use, action-bound grant. Pinned both ways so
+// a destructive route cannot quietly fall back to a tier, and a client cannot ask for a grant
+// the server never consumes.
+const GRANT_SERVER_MAP: Record<string, string[]> = {
+  "app/api/admin/products/[id]/active/route.ts": ["product.retire"],
+  "app/api/admin/recipes/[id]/route.ts": ["recipe.delete"],
+  "app/api/admin/skus/[id]/route.ts": ["sku.deactivate"],
+};
+const GRANT_CLIENT_MAP: Record<string, string[]> = {
+  "components/admin/products/ProductsClient.tsx": ["product.retire"],
+  "components/admin/recipes/RecipeBuilder.tsx": ["recipe.delete"],
+  "components/admin/skus/SkuCatalogClient.tsx": ["sku.deactivate"],
+  "components/admin/skus/VendorSkusCard.tsx": ["sku.deactivate"],
+};
+function grantsIn(pattern: RegExp, keep: (rel: string) => boolean) {
+  const map: Record<string, string[]> = {};
+  for (const rel of filesUnder("app", "components")) {
+    if (!keep(rel)) continue;
+    const found = [...new Set([...read(rel).matchAll(pattern)].map((m) => m[1] as string))].sort();
+    if (found.length > 0) map[rel] = found;
+  }
+  return map;
+}
+
+describe("step-up grant map", () => {
+  it("every destructive route consumes exactly its grant", () => {
+    expect(grantsIn(/consumeStepUpGrant\(\s*ctx\s*,\s*"([a-z_.]+)"/g, (r) => r.endsWith("route.ts"))).toEqual(GRANT_SERVER_MAP);
+  });
+  it("every client asks for exactly the grants the server consumes", () => {
+    expect(
+      grantsIn(/action:\s*"(product\.retire|recipe\.delete|sku\.deactivate)"/g, (r) => r.endsWith(".tsx")),
+    ).toEqual(GRANT_CLIENT_MAP);
   });
 });

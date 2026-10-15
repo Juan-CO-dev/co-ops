@@ -118,12 +118,12 @@ function request(body: unknown) {
   return PATCH(new NextRequest(`http://localhost/api/admin/menu-items/${id}/price`, { method: "PATCH", body: JSON.stringify(body) }), { params: Promise.resolve({ id }) });
 }
 describe("PATCH price", () => {
-  it("requires session, level 8, and Tier B", async () => {
+  it("requires session, level 8, and the Tier E edit window", async () => {
     mocks.session.mockResolvedValue(new Response(null, { status: 401 })); expect((await request({ menuPrice: 1 })).status).toBe(401);
     mocks.session.mockResolvedValue({ user: { role: "gm" } }); expect((await request({ menuPrice: 1 })).status).toBe(403);
     mocks.session.mockResolvedValue(actor); mocks.step.mockReturnValue({ ok: false, code: "step_up_stale" });
     expect((await request({ menuPrice: 1 })).status).toBe(403);
-    expect(mocks.step).toHaveBeenCalledWith(actor, "B"); expect(writes).toHaveLength(0);
+    expect(mocks.step).toHaveBeenCalledWith(actor, "E"); expect(writes).toHaveLength(0);
   });
   it.each([null, [], {}, { menuPrice: "12", expectedMenuPrice: null }, { menuPrice: 0, expectedMenuPrice: null }, { menuPrice: 1.001, expectedMenuPrice: null }])("rejects invalid body %j", async (body) => {
     expect((await request(body)).status).toBe(400); expect(writes).toHaveLength(0);

@@ -24,6 +24,8 @@ const KNOWN_ERROR_CODES = new Set([
   "invalid_table",
   "step_up_required",
   "step_up_stale",
+  "step_up_grant_required",
+  "line_changed",
   // Added in recipe-refinement slice (createRecipeFull / setItemSoldDirectly / addRecipeOutput errors)
   "incomplete_recipe",
   "would_create_cycle",

@@ -28,10 +28,12 @@ import { useTranslation } from "@/lib/i18n/provider";
 import type { TranslationKey } from "@/lib/i18n/types";
 import type { WeightClass } from "@/lib/angel-wave4";
 import { useStepUp } from "@/components/admin/StepUpProvider";
+import { useStepUpPost } from "@/components/admin/useStepUpPost";
 import { CollapsibleSection } from "@/components/ui/CollapsibleSection";
 import { SummaryRow } from "@/components/ui/SummaryRow";
 import type { ProductView } from "@/lib/products";
-import { postJson, resolveErrorKey } from "./shared";
+import { resolveErrorKey } from "./shared";
+import type { StepUpGate } from "@/lib/admin/step-up-shared";
 import { RegistryRelationships } from "@/components/admin/RegistryRelationships";
 import type { RegistryLink } from "@/lib/admin/product-item-links-shared";
 
@@ -96,7 +98,8 @@ export function ProductsClient({
 }) {
   const { t } = useTranslation();
   const router = useRouter();
-  const { requestStepUp } = useStepUp();
+  const { requestStepUp, requestStepUpGrant } = useStepUp();
+  const send = useStepUpPost();
 
   const canManage = actorLevel >= PRODUCT_WRITE_MIN;
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
@@ -113,16 +116,17 @@ export function ProductsClient({
 
   /** One mutation lane: step-up → postJson → refresh, or a localized code. */
   const mutate = async (
-    tier: "A" | "B",
+    tier: StepUpGate,
     url: string,
     body: unknown,
     method: "POST" | "PATCH" | "DELETE" = "POST",
   ): Promise<boolean> => {
     if (busy) return false;
     setErrorMsg(null);
-    if ((await requestStepUp(tier)) !== "ok") return false;
+    const gate = typeof tier === "string" ? await requestStepUp(tier) : await requestStepUpGrant(tier);
+    if (gate !== "ok") return false;
     setBusy(true);
-    const result = await postJson(url, body, method);
+    const result = await send(url, body, method);
     setBusy(false);
     if (result.ok) {
       router.refresh();
@@ -207,7 +211,7 @@ function CreateProductForm({
   onMutate,
 }: {
   busy: boolean;
-  onMutate: (tier: "A" | "B", url: string, body: unknown, method?: "POST" | "PATCH" | "DELETE") => Promise<boolean>;
+  onMutate: (tier: StepUpGate, url: string, body: unknown, method?: "POST" | "PATCH" | "DELETE") => Promise<boolean>;
 }) {
   const { t } = useTranslation();
   const [name, setName] = useState("");
@@ -219,7 +223,7 @@ function CreateProductForm({
 
   const submit = async () => {
     if (!name.trim() || busy) return;
-    const ok = await onMutate("B", "/api/admin/products", {
+    const ok = await onMutate("E", "/api/admin/products", {
       name: name.trim(),
       nameEs: nameEs.trim() || null,
       notes: notes.trim() || null,
@@ -302,7 +306,7 @@ function ProductRow({
   busy: boolean;
   expanded: boolean;
   onToggle: () => void;
-  onMutate: (tier: "A" | "B", url: string, body: unknown, method?: "POST" | "PATCH" | "DELETE") => Promise<boolean>;
+  onMutate: (tier: StepUpGate, url: string, body: unknown, method?: "POST" | "PATCH" | "DELETE") => Promise<boolean>;
 }) {
   const { t } = useTranslation();
   const primaryMember = product.members.find((m) => m.skuId === product.globalPrimarySkuId) ?? null;
@@ -411,7 +415,7 @@ function LifecyclePanel({
   product: ProductView;
   canManage: boolean;
   busy: boolean;
-  onMutate: (tier: "A" | "B", url: string, body: unknown, method?: "POST" | "PATCH" | "DELETE") => Promise<boolean>;
+  onMutate: (tier: StepUpGate, url: string, body: unknown, method?: "POST" | "PATCH" | "DELETE") => Promise<boolean>;
 }) {
   const { t } = useTranslation();
   const [confirming, setConfirming] = useState(false);
@@ -424,7 +428,9 @@ function LifecyclePanel({
   const NAME_LIMIT = 5;
 
   const submit = async (active: boolean) => {
-    const ok = await onMutate("B", `/api/admin/products/${product.id}/active`, { active });
+    // Retiring is destructive: a one-shot password for THIS product, every time. Restoring is an
+    // ordinary edit inside the 15-minute window.
+    const ok = await onMutate(active ? "E" : { action: "product.retire", targetId: product.id }, `/api/admin/products/${product.id}/active`, { active });
     if (ok) setConfirming(false);
   };
 
@@ -535,7 +541,7 @@ function MembersPanel({
   unattachedSkus: SkuOption[];
   canManage: boolean;
   busy: boolean;
-  onMutate: (tier: "A" | "B", url: string, body: unknown, method?: "POST" | "PATCH" | "DELETE") => Promise<boolean>;
+  onMutate: (tier: StepUpGate, url: string, body: unknown, method?: "POST" | "PATCH" | "DELETE") => Promise<boolean>;
 }) {
   const { t } = useTranslation();
   const [skuId, setSkuId] = useState("");
@@ -543,7 +549,7 @@ function MembersPanel({
 
   const attach = async () => {
     if (!skuId || busy) return;
-    const ok = await onMutate("A", `/api/admin/products/${product.id}/members`, { skuId });
+    const ok = await onMutate("E", `/api/admin/products/${product.id}/members`, { skuId });
     if (ok) setSkuId("");
   };
 
@@ -572,7 +578,7 @@ function MembersPanel({
                   disabled={busy}
                   aria-label={t("admin.products.members.detach_aria", { sku: m.name })}
                   onClick={() =>
-                    void onMutate("A", `/api/admin/products/${product.id}/members`, { skuId: m.skuId }, "DELETE")
+                    void onMutate("E", `/api/admin/products/${product.id}/members`, { skuId: m.skuId }, "DELETE")
                   }
                   className={secondaryBtnCls}
                 >
@@ -626,7 +632,7 @@ function PrimaryPanel({
   locations: LocationOption[];
   canManage: boolean;
   busy: boolean;
-  onMutate: (tier: "A" | "B", url: string, body: unknown, method?: "POST" | "PATCH" | "DELETE") => Promise<boolean>;
+  onMutate: (tier: StepUpGate, url: string, body: unknown, method?: "POST" | "PATCH" | "DELETE") => Promise<boolean>;
 }) {
   const { t } = useTranslation();
   const scopes: Array<{ locationId: string | null; label: string }> = [
@@ -668,7 +674,7 @@ function PrimaryScopeRow({
   label: string;
   canManage: boolean;
   busy: boolean;
-  onMutate: (tier: "A" | "B", url: string, body: unknown, method?: "POST" | "PATCH" | "DELETE") => Promise<boolean>;
+  onMutate: (tier: StepUpGate, url: string, body: unknown, method?: "POST" | "PATCH" | "DELETE") => Promise<boolean>;
 }) {
   const { t } = useTranslation();
   const current = product.primaries.find((p) => p.locationId === locationId)?.primarySkuId ?? "";
@@ -712,7 +718,7 @@ function PrimaryScopeRow({
           disabled={busy || !dirty}
           aria-label={t("admin.products.primary.set_aria", { scope: label })}
           onClick={() =>
-            void onMutate("A", `/api/admin/products/${product.id}/primary`, {
+            void onMutate("E", `/api/admin/products/${product.id}/primary`, {
               locationId,
               primarySkuId: choice,
             })
@@ -739,7 +745,7 @@ function UnitOzPanel({
   product: ProductView;
   canManage: boolean;
   busy: boolean;
-  onMutate: (tier: "A" | "B", url: string, body: unknown, method?: "POST" | "PATCH" | "DELETE") => Promise<boolean>;
+  onMutate: (tier: StepUpGate, url: string, body: unknown, method?: "POST" | "PATCH" | "DELETE") => Promise<boolean>;
 }) {
   const { t } = useTranslation();
   const serverValue = product.unitOz != null ? String(product.unitOz) : "";
@@ -819,7 +825,7 @@ function UnitOzPanel({
             aria-label={t("admin.products.unit_oz.save_aria", { product: product.name })}
             onClick={() =>
               void onMutate(
-                "A",
+                "E",
                 `/api/admin/products/${product.id}`,
                 { unitOz: parsed, unitOzClass: cls || null, sourceNote: note.trim() || null },
                 "PATCH",

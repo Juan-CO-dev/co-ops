@@ -5,7 +5,7 @@ import { TranslationProvider } from "@/lib/i18n/provider";
 import { MenuCostingClient } from "@/components/admin/menu-costing/MenuCostingClient";
 import { summarizeMenuCostRows, toMenuCostRow, type MenuCostRow } from "@/lib/menu-costing-shared";
 vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: vi.fn() }) }));
-vi.mock("@/components/admin/StepUpProvider", () => ({ useStepUp: () => ({ requestStepUp: vi.fn() }) }));
+vi.mock("@/components/admin/StepUpProvider", () => ({ useStepUp: () => ({ requestStepUp: vi.fn(), requestStepUpGrant: vi.fn(), forgetStepUp: vi.fn(), noteStepUpConfirmed: vi.fn() }) }));
 // Render the drawer's children to exercise the parent authorization boundary.
 vi.mock("@/components/ui/SummaryRow", () => ({ SummaryRow: ({ summary, badges, children }: { summary: ReactNode; badges: ReactNode; children: ReactNode }) => createElement("div", null, summary, badges, children) }));
 const row = toMenuCostRow({ id: "one", name: "Sub", nameEs: "Sub ES", section: "Subs", menuPrice: 12, typedPrice: null, priceSource: "toast", toastPriceCents: 1200 },

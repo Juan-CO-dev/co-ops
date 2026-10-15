@@ -4,8 +4,9 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useTranslation } from "@/lib/i18n/provider";
 import { useStepUp } from "@/components/admin/StepUpProvider";
+import { useStepUpPost } from "@/components/admin/useStepUpPost";
 import type { SkuReceivingLedger, SkuConsumption } from "@/lib/admin/cost";
-import { postJson, resolveErrorKey } from "./shared";
+import { resolveErrorKey } from "./shared";
 
 export interface SkuCostInfo { currentPrice: number | null; costPerOz: number | null; usedBy: string[]; }
 
@@ -13,6 +14,7 @@ export function SkuCostPanel({ skuId, cost, ledger, consumption, canRecord }: { 
   const { t } = useTranslation();
   const router = useRouter();
   const { requestStepUp } = useStepUp();
+  const send = useStepUpPost();
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [price, setPrice] = useState("");
@@ -25,9 +27,9 @@ export function SkuCostPanel({ skuId, cost, ledger, consumption, canRecord }: { 
     const p = Number(price);
     if (!Number.isFinite(p) || p <= 0) { setErr(t(resolveErrorKey("invalid_price"))); return; }
     if (!date) { setErr(t(resolveErrorKey("invalid_date"))); return; }
-    if ((await requestStepUp("A")) !== "ok") return;
+    if ((await requestStepUp("E")) !== "ok") return;
     setBusy(true);
-    const res = await postJson(`/api/admin/skus/${skuId}/price`, { unitPrice: p, effectiveDate: date }, "POST");
+    const res = await send(`/api/admin/skus/${skuId}/price`, { unitPrice: p, effectiveDate: date }, "POST");
     setBusy(false);
     if (res.ok) { setPrice(""); setDate(""); setOpen(false); router.refresh(); }
     else setErr(t(resolveErrorKey(res.code)));

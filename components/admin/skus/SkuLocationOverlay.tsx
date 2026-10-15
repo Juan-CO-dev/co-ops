@@ -23,8 +23,9 @@ import { useTranslation } from "@/lib/i18n/provider";
 import { formatDateLabel } from "@/lib/i18n/format";
 import type { TranslationKey } from "@/lib/i18n/types";
 import { useStepUp } from "@/components/admin/StepUpProvider";
+import { useStepUpPost } from "@/components/admin/useStepUpPost";
 import { CollapsibleSection } from "@/components/ui/CollapsibleSection";
-import { postJson, resolveErrorKey } from "./shared";
+import { resolveErrorKey } from "./shared";
 import type { SkuFormLocationOption } from "./SkuBuilder";
 import { etDisplayDate } from "@/lib/operational-day";
 
@@ -149,6 +150,7 @@ function LocationRow({
   const { t } = useTranslation();
   const router = useRouter();
   const { requestStepUp } = useStepUp();
+  const send = useStepUpPost();
 
   const [active, setActive] = useState<ActiveState>(toActiveState(overlay?.activeOverride ?? null));
   const [weekdayPar, setWeekdayPar] = useState(overlay?.weekdayPar != null ? String(overlay.weekdayPar) : "");
@@ -189,14 +191,14 @@ function LocationRow({
     if (busy) return;
     setErrorMsg(null);
     setSaved(false);
-    if ((await requestStepUp("A")) !== "ok") return;
+    if ((await requestStepUp("E")) !== "ok") return;
     setBusy(true);
     const sent: LocationSkuOverlayBaseline = {
       activeOverride: fromActiveState(active),
       weekdayPar: parseNum(weekdayPar),
       weekendPar: parseNum(weekendPar),
     };
-    const result = await postJson(
+    const result = await send(
       `/api/admin/skus/${skuId}/location-settings`,
       { locationId: location.id, ...sent, expected: baseline },
       "PUT",

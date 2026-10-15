@@ -34,12 +34,13 @@ import { useRouter } from "next/navigation";
 import { useTranslation } from "@/lib/i18n/provider";
 import type { TranslationKey } from "@/lib/i18n/types";
 import { useStepUp } from "@/components/admin/StepUpProvider";
+import { useStepUpPost } from "@/components/admin/useStepUpPost";
 import { AlertPill, type AlertPillTone } from "@/components/ui/AlertPill";
 import { CollapsibleSection } from "@/components/ui/CollapsibleSection";
 import { SummaryRow } from "@/components/ui/SummaryRow";
 import type { WeightBoard, WeightBoardRow } from "@/lib/weights";
 import type { WeightBelief, WeightSuggestion } from "@/lib/weights-shared";
-import { postJson, resolveErrorKey } from "./shared";
+import { resolveErrorKey } from "./shared";
 import { etDisplayDate } from "@/lib/operational-day";
 
 type T = (key: TranslationKey, params?: Record<string, string | number>) => string;
@@ -142,6 +143,7 @@ export function WeightBoardClient({ board, canWeigh }: { board: WeightBoard; can
   const { t, language } = useTranslation();
   const router = useRouter();
   const { requestStepUp } = useStepUp();
+  const send = useStepUpPost();
 
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [staged, setStaged] = useState<StagedMeasurement[]>([]);
@@ -218,14 +220,14 @@ export function WeightBoardClient({ board, canWeigh }: { board: WeightBoard; can
   });
   const readyCount = parsedStaged.filter((p) => p.valid).length;
 
-  /** Commit the session: step-up B → POST → refresh. */
+  /** Commit the session: the edit window (Tier E) → POST → refresh. */
   const commit = async () => {
     if (busy || readyCount === 0) return;
     setErrorMsg(null);
     setOkMsg(null);
-    if ((await requestStepUp("B")) !== "ok") return;
+    if ((await requestStepUp("E")) !== "ok") return;
     setBusy(true);
-    const result = await postJson("/api/admin/weights", {
+    const result = await send("/api/admin/weights", {
       measurements: parsedStaged
         .filter((p) => p.valid)
         .map((p) => ({

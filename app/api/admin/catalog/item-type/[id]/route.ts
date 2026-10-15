@@ -14,7 +14,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   if (ctx instanceof Response) return ctx;
   if (ROLES[ctx.user.role].level < ITEM_TYPE_WRITE_MIN) return jsonError(403, "forbidden");
 
-  const su = assertStepUp(ctx, "A");
+  const su = assertStepUp(ctx, "E");
   if (!su.ok) return jsonError(403, su.code);
 
   const b = parsed as Record<string, unknown>;

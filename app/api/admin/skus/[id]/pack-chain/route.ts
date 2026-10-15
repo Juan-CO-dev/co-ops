@@ -38,7 +38,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   const ctx = await requireSession(req, `/api/admin/skus/${id}/pack-chain`);
   if (ctx instanceof Response) return ctx;
   if (ROLES[ctx.user.role].level < PACK_CHAIN_WRITE_MIN) return jsonError(403, "forbidden");
-  const su = assertStepUp(ctx, "A");
+  const su = assertStepUp(ctx, "E");
   if (!su.ok) return jsonError(403, su.code);
 
   const b = parsed as Record<string, unknown>;

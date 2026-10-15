@@ -32,7 +32,7 @@ export async function POST(req: NextRequest) {
   const ctx = await requireSession(req, "/api/admin/weights");
   if (ctx instanceof Response) return ctx;
   if (ROLES[ctx.user.role].level < WEIGHT_WRITE_MIN) return jsonError(403, "forbidden");
-  const su = assertStepUp(ctx, "B");
+  const su = assertStepUp(ctx, "E");
   if (!su.ok) return jsonError(403, su.code);
 
   const body = parsed as Record<string, unknown>;

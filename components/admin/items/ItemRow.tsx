@@ -14,6 +14,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useTranslation } from "@/lib/i18n/provider";
 import { useStepUp } from "@/components/admin/StepUpProvider";
+import { useStepUpPost } from "@/components/admin/useStepUpPost";
 import { orderedSectionSlugs, sectionLabelByLang, isPrepSectionName } from "@/lib/prep-sections";
 import { roleLevelOptions } from "@/lib/roles";
 import type { PrepSection, PrepSectionDefn } from "@/lib/types";
@@ -52,6 +53,7 @@ export function ItemRow({
   const { t } = useTranslation();
   const router = useRouter();
   const { requestStepUp } = useStepUp();
+  const send = useStepUpPost();
   const canEdit = actorLevel >= 8; // MoO+ — item-definition editor
 
   const [open, setOpen] = useState(false);
@@ -92,9 +94,9 @@ export function ItemRow({
   const saveSoldDirect = async () => {
     if (savingSoldDirect) return;
     setSoldDirectError(null);
-    if ((await requestStepUp("B")) !== "ok") return;
+    if ((await requestStepUp("E")) !== "ok") return;
     setSavingSoldDirect(true);
-    const result = await postJson(
+    const result = await send(
       `/api/admin/items/${item.itemId}/sold-directly`,
       {
         soldDirectly,

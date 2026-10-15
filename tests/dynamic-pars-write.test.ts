@@ -225,8 +225,8 @@ describe("the admin overlay route cannot reach the machine's lane", () => {
     expect(/\bpinned_(weekday|weekend)_at\b/.test(src)).toBe(false);
   });
 
-  it("still carries its own Tier-A step-up — only the walker's verbs drop it (plan D2)", () => {
-    expect(src.includes('assertStepUp(ctx, "A")')).toBe(true);
+  it("still carries its own step-up — now the catalog edit window; only the walker's verbs drop it (plan D2)", () => {
+    expect(src.includes('assertStepUp(ctx, "E")')).toBe(true);
   });
 });
 

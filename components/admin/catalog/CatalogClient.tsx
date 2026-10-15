@@ -140,7 +140,7 @@ export function CatalogClient({ entities, actorLevel }: { entities: CatalogEntit
     } finally {
       setBusyKey(null);
     }
-  }, [router]);
+  }, [router, forgetStepUp]);
 
   // Dossier item_type editor (items only; GM+ Tier-A step-up via pendingRef).
   const writeItemType = useCallback(async (e: CatalogEntity, itemType: ItemType) => {
@@ -172,7 +172,7 @@ export function CatalogClient({ entities, actorLevel }: { entities: CatalogEntit
     } finally {
       setBusyKey(null);
     }
-  }, [router]);
+  }, [router, forgetStepUp]);
 
   const chip = (active: boolean) =>
     `inline-flex min-h-[44px] items-center rounded-full border-2 px-3 text-xs font-bold transition ${

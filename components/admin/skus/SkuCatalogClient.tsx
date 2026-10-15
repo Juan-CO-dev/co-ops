@@ -17,8 +17,9 @@ import { useRouter } from "next/navigation";
 import { useTranslation } from "@/lib/i18n/provider";
 import type { TranslationKey } from "@/lib/i18n/types";
 import { useStepUp } from "@/components/admin/StepUpProvider";
+import { useStepUpPost } from "@/components/admin/useStepUpPost";
 import type { RegistryOption, MeasureUnitOption, SkuView } from "@/lib/admin/skus";
-import { postJson, resolveErrorKey, formatSkuPack } from "./shared";
+import { resolveErrorKey, formatSkuPack } from "./shared";
 import type { SkuReceivingLedger, SkuConsumption } from "@/lib/admin/cost";
 import type { Readiness } from "@/lib/readiness";
 import type { PackChainLevel } from "@/lib/pack-chain-shared";
@@ -102,7 +103,8 @@ export function SkuCatalogClient({
 }) {
   const { t } = useTranslation();
   const router = useRouter();
-  const { requestStepUp } = useStepUp();
+  const { requestStepUp, requestStepUpGrant } = useStepUp();
+  const send = useStepUpPost();
 
   const [vendorFilter, setVendorFilter] = useState<string>(FILTER_ALL);
   const [lens, setLens] = useState<Lens>("all");
@@ -189,10 +191,10 @@ export function SkuCatalogClient({
   const create = async (values: SkuFormValues, chain: StarterChainLevel[] | null) => {
     if (busy) return;
     setErrorMsg(null);
-    if ((await requestStepUp("B")) !== "ok") return;
+    if ((await requestStepUp("E")) !== "ok") return;
     setBusy(true);
     // Atomic add: identity + optional starter/edited chain in ONE request.
-    const result = await postJson("/api/admin/skus", { ...values, chain });
+    const result = await send("/api/admin/skus", { ...values, chain });
     setBusy(false);
     if (result.ok) {
       setAdding(false);
@@ -203,9 +205,9 @@ export function SkuCatalogClient({
   const saveEdit = async (id: string, values: SkuFormValues) => {
     if (busy) return;
     setErrorMsg(null);
-    if ((await requestStepUp("A")) !== "ok") return;
+    if ((await requestStepUp("E")) !== "ok") return;
     setBusy(true);
-    const result = await postJson(`/api/admin/skus/${id}`, values, "PATCH");
+    const result = await send(`/api/admin/skus/${id}`, values, "PATCH");
     setBusy(false);
     if (result.ok) {
       setEditingId(null);
@@ -225,9 +227,9 @@ export function SkuCatalogClient({
     avgOzPerEach?: number | null,
   ): Promise<boolean> => {
     setErrorMsg(null);
-    if ((await requestStepUp("A")) !== "ok") return false;
+    if ((await requestStepUp("E")) !== "ok") return false;
     if (avgOzPerEach !== undefined && avgOzPerEach !== null) {
-      const avgResult = await postJson(`/api/admin/skus/${id}`, { avgOzPerEach }, "PATCH");
+      const avgResult = await send(`/api/admin/skus/${id}`, { avgOzPerEach }, "PATCH");
       if (!avgResult.ok) {
         setErrorMsg(t(resolveErrorKey(avgResult.code)));
         return false;
@@ -239,7 +241,7 @@ export function SkuCatalogClient({
       containsIndex: l.containsIndex,
       containsMeasureUnit: l.containsMeasureUnit,
     }));
-    const result = await postJson(`/api/admin/skus/${id}/pack-chain`, { levels: payload }, "POST");
+    const result = await send(`/api/admin/skus/${id}/pack-chain`, { levels: payload }, "POST");
     if (result.ok) {
       router.refresh();
       return true;
@@ -251,9 +253,14 @@ export function SkuCatalogClient({
   const toggleActive = async (sku: SkuView) => {
     if (busy) return;
     setErrorMsg(null);
-    if ((await requestStepUp("A")) !== "ok") return;
+    // Deactivating a SKU is destructive: a one-shot password for THIS SKU, every time.
+    // Reactivating is an ordinary edit inside the 15-minute window.
+    const gate = sku.active
+      ? await requestStepUpGrant({ action: "sku.deactivate", targetId: sku.id })
+      : await requestStepUp("E");
+    if (gate !== "ok") return;
     setBusy(true);
-    const result = await postJson(`/api/admin/skus/${sku.id}`, { active: !sku.active }, "PATCH");
+    const result = await send(`/api/admin/skus/${sku.id}`, { active: !sku.active }, "PATCH");
     setBusy(false);
     if (result.ok) {
       setConfirmDeactivateId(null);

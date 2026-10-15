@@ -18,7 +18,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   const ctx = await requireSession(req, `/api/admin/products/${id}/members`);
   if (ctx instanceof Response) return ctx;
   if (ROLES[ctx.user.role].level < 7) return jsonError(403, "forbidden");
-  const su = assertStepUp(ctx, "A");
+  const su = assertStepUp(ctx, "E");
   if (!su.ok) return jsonError(403, su.code);
 
   const b = parsed as Record<string, unknown>;
@@ -40,7 +40,7 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ i
   const ctx = await requireSession(req, `/api/admin/products/${id}/members`);
   if (ctx instanceof Response) return ctx;
   if (ROLES[ctx.user.role].level < 7) return jsonError(403, "forbidden");
-  const su = assertStepUp(ctx, "A");
+  const su = assertStepUp(ctx, "E");
   if (!su.ok) return jsonError(403, su.code);
 
   const b = parsed as Record<string, unknown>;
