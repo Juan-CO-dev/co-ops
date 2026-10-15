@@ -62,7 +62,8 @@ create table public.vendor_delivery_items(id uuid primary key default gen_random
   created_at timestamptz not null default now());
 create table public.photos(id uuid primary key, location_id uuid not null references public.locations(id));
 create table public.items(id uuid primary key, name text, active boolean not null default true);
-create table public.menu_items(id uuid primary key, name text, active boolean not null default true, menu_price numeric);
+create table public.menu_items(id uuid primary key, name text, name_es text, active boolean not null default true, menu_price numeric,
+  updated_at timestamptz not null default now(), updated_by uuid);
 -- 0103 + 0179 + 0215, the columns the 0258 writers read and write.
 create table public.recipes(id uuid primary key default gen_random_uuid(), name text, name_es text, recipe_type text,
   batch_yield numeric, directions text, directions_es text, active boolean not null default true,
