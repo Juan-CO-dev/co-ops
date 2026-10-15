@@ -26,3 +26,21 @@ export function canMakeTheNeed(args: {
   if (args.saved && args.current === args.need) return false;
   return true;
 }
+
+/**
+ * Astra r1 P2-2 — the box's blur-save must not fire when focus is leaving FOR the "Made the
+ * need" shortcut: that gesture saves the need, so a blur-save of the typed amount first would
+ * be a second save (and its "saving" state used to disable the shortcut before its click ran).
+ * The button also prevents the blur on pointer/mouse down; this is the fallback.
+ */
+export const MADE_THE_NEED_ATTR = "data-made-the-need";
+
+export function blurLeavesForMadeTheNeed(relatedTarget: { getAttribute?: (n: string) => string | null } | null): boolean {
+  return !!relatedTarget && typeof relatedTarget.getAttribute === "function" && relatedTarget.getAttribute(MADE_THE_NEED_ATTR) !== null;
+}
+
+/** One save per (row, value) in flight: a second request for the SAME signature while the
+ *  first is pending is a duplicate (e.g. the shortcut's save, then the box's later blur). */
+export function isDuplicateInFlight(inFlightSignature: string | undefined, signature: string): boolean {
+  return inFlightSignature !== undefined && inFlightSignature === signature;
+}

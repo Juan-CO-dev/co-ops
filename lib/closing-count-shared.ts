@@ -49,3 +49,37 @@ export function isAboveSafeMax(value: number | null | "invalid", safeMaxF: numbe
   if (safeMaxF === null || safeMaxF === undefined || !Number.isFinite(safeMaxF)) return false;
   return typeof value === "number" && value > safeMaxF;
 }
+
+/** A draft as it was when a save was sent, or as it is now. */
+export interface CountDraftSnapshot {
+  count: string;
+  notes: string;
+}
+
+/** Did the closer change the box or the note after the save was sent? ("38" vs "38.0" is no change.) */
+export function draftChangedSince(sent: CountDraftSnapshot, now: CountDraftSnapshot): boolean {
+  const a = parseCountDraft(sent.count);
+  const b = parseCountDraft(now.count);
+  const countChanged =
+    typeof a === "number" && typeof b === "number" ? a !== b : sent.count.trim() !== now.count.trim();
+  return countChanged || normNote(sent.notes) !== normNote(now.notes);
+}
+
+/**
+ * Astra r1 P2-1 — what a SUCCESSFUL count save does with the panel. The box and note stay
+ * editable while a save is pending, so an edit made mid-save (38 → Enter → type 39) must never
+ * be discarded:
+ *   · nothing changed since the send            → "close" (clear drafts, close the panel);
+ *   · changed, count-only line                  → "resave" (keep the panel and the newer draft,
+ *                                                  save the newer revision right away);
+ *   · changed, photo line                       → "keep_open" (keep the newer draft; the closer
+ *                                                  taps Save — a photo line never autosaves).
+ */
+export function afterCountSaveSuccess(
+  sent: CountDraftSnapshot,
+  now: CountDraftSnapshot,
+  countOnly: boolean,
+): "close" | "resave" | "keep_open" {
+  if (!draftChangedSince(sent, now)) return "close";
+  return countOnly ? "resave" : "keep_open";
+}

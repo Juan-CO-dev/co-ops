@@ -65,8 +65,10 @@ import { useRef, useState, type FocusEvent, type KeyboardEvent } from "react";
 import { PhotoCapture } from "@/components/photos/PhotoCapture";
 import { interpretAnswer, validateAnswerForInputType, type InterpretedAnswer } from "@/lib/checklist-answers";
 import {
+  afterCountSaveSuccess,
   isAboveSafeMax,
   parseCountDraft,
+  type CountDraftSnapshot,
   sanitizeCountInput,
   shouldAutoSaveCount,
 } from "@/lib/closing-count-shared";
@@ -443,8 +445,19 @@ export function ChecklistItem({
 
   // Expand state for count / notes inputs (existing).
   const [expanded, setExpanded] = useState(false);
-  const [countDraft, setCountDraft] = useState<string>("");
-  const [notesDraft, setNotesDraft] = useState<string>("");
+  const [countDraft, setCountDraftState] = useState<string>("");
+  const [notesDraft, setNotesDraftState] = useState<string>("");
+  // Astra r1 P2-1 — the LATEST draft, readable from an async save continuation (state there is
+  // a stale closure). Every draft write goes through these two setters so the ref never lags.
+  const draftRef = useRef<CountDraftSnapshot>({ count: "", notes: "" });
+  const setCountDraft = (v: string) => {
+    draftRef.current = { ...draftRef.current, count: v };
+    setCountDraftState(v);
+  };
+  const setNotesDraft = (v: string) => {
+    draftRef.current = { ...draftRef.current, notes: v };
+    setNotesDraftState(v);
+  };
   // Photo captured for an expects_photo item (photo uploader seam, 0164). Threaded
   // into the completion payload on save; cleared alongside the other drafts.
   const [photoDraft, setPhotoDraft] = useState<string | null>(null);
@@ -538,15 +551,23 @@ export function ChecklistItem({
     interactable &&
     !!onMarkNotDone;
 
+  // B11a — a count line with no photo saves itself (Enter / leaving the panel).
+  const countOnly = templateItem.expectsCount && !templateItem.expectsPhoto;
+
   // ─── Save flow (existing completion path, unchanged) ──────────────────────
 
-  const performSave = async (payload: ChecklistCompletePayload) => {
+  const performSave = async (
+    payload: ChecklistCompletePayload,
+    /** Count-panel saves pass the draft they sent (Astra r1 P2-1: never discard a mid-save edit). */
+    sentDraft?: CountDraftSnapshot,
+  ) => {
     const dataCarrying = isDataCarrying(payload);
+    let resaveLatest = false;
     setError(null);
 
     if (!dataCarrying) {
       const optimistic: ChecklistCompletion = {
-        id: `optimistic-${Date.now()}`,
+        id: `optimistic-${new Date().getTime()}`,
         instanceId: completion?.instanceId ?? "",
         templateItemId: templateItem.id,
         completedBy: actorUserId,
@@ -583,10 +604,19 @@ export function ChecklistItem({
         if (!dataCarrying) setLocalCompletion(null);
       } else {
         setLocalCompletion(null);
-        setExpanded(false);
-        setCountDraft("");
-        setNotesDraft("");
-        setPhotoDraft(null);
+        const next = sentDraft
+          ? afterCountSaveSuccess(sentDraft, draftRef.current, countOnly)
+          : "close";
+        if (next === "close") {
+          setExpanded(false);
+          setCountDraft("");
+          setNotesDraft("");
+          setPhotoDraft(null);
+        } else {
+          // The closer kept typing while this save was in flight: keep the panel and the newer
+          // draft; a count-only line saves that newer revision as soon as this one is done.
+          resaveLatest = next === "resave";
+        }
       }
     } catch (caught) {
       setError({
@@ -598,6 +628,21 @@ export function ChecklistItem({
       savingRef.current = false;
       setInFlight(false);
     }
+    if (resaveLatest) saveLatestCountDraft();
+  };
+
+  // Astra r1 P2-1 — save the newest draft (read from the ref, never a stale closure). An empty
+  // or invalid newer draft is left in the open panel for the closer to fix; nothing is lost.
+  const saveLatestCountDraft = () => {
+    if (savingRef.current) return;
+    const latest = { ...draftRef.current };
+    const parsed = parseCountDraft(latest.count);
+    if (typeof parsed !== "number") return;
+    const note = latest.notes.trim();
+    void performSave(
+      { templateItemId: templateItem.id, countValue: parsed, photoId: null, notes: note === "" ? null : note },
+      latest,
+    );
   };
 
   const handleRowTap = () => {
@@ -670,18 +715,20 @@ export function ChecklistItem({
       setError({ code: "invalid_payload", message: t("closing.error.invalid_number") });
       return;
     }
-    void performSave({
-      templateItemId: templateItem.id,
-      countValue: parsed,
-      photoId: photoDraft,
-      notes: notesDraft.trim() === "" ? null : notesDraft.trim(),
-    });
+    void performSave(
+      {
+        templateItemId: templateItem.id,
+        countValue: parsed,
+        photoId: photoDraft,
+        notes: notesDraft.trim() === "" ? null : notesDraft.trim(),
+      },
+      { count: countDraft, notes: notesDraft },
+    );
   };
 
   // ─── B11a: count-only lines save themselves ───────────────────────────────
   // A count line with no photo: Enter saves; leaving the panel saves when the value (or the
   // note) changed. Photo lines keep the explicit Save button (a photo is required there).
-  const countOnly = templateItem.expectsCount && !templateItem.expectsPhoto;
   const safeMaxWarningId = `${templateItem.id}-safe-max-warning`;
   const aboveSafeMax =
     expanded && templateItem.expectsCount && isAboveSafeMax(parseCountDraft(countDraft), tempSafeMaxF);
