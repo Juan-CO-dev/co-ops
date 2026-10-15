@@ -1108,10 +1108,10 @@ async function loadPmDetail(
   const isManager = args.viewer.level >= REPORTS_HUB_CASH_LEVEL; // L4+
   const showNotes = args.viewer.level >= REPORTS_HUB_NOTES_LEVEL; // L5+
 
-  // Load evals — always select note (service-role bypasses RLS); app-layer
-  // redaction below sets note to null for employees and for managers below L5.
+  // Select manager notes only when this viewer may see them; retain output redaction below.
   // SECURITY: employee (< L4) sees ONLY their own eval via the .eq() filter.
-  const evalCols = "id, employee_id, arrived_ready, attitude, production, team_player, area_to_improve, note";
+  const evalCols = "id, employee_id, arrived_ready, attitude, production, team_player, area_to_improve"
+    + (isManager && showNotes ? ", note" : "");
   type EvalRow = {
     id: string;
     employee_id: string;

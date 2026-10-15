@@ -176,7 +176,7 @@ describe("review regressions", () => {
     data.pm_reports=[{id:"draft",location_id:"shop",report_date:instance.date,status:"open",mvp_note:"MVP praise"},{id:"today-draft",location_id:"shop",report_date:"2026-10-07",status:"open"},...["submitted","incomplete_confirmed","auto_finalized"].map(status=>({id:status,location_id:"shop",report_date:"2026-10-07",status,mvp_note:"MVP praise"}))];
     data.pm_employee_evals=data.pm_reports.map(r=>({id:`eval-${r.id}`,pm_report_id:r.id,employee_id:"me",area_to_improve:"own evaluation",note:"private manager note"}));
     data.pm_employee_evals.push({id:"colleague-eval",pm_report_id:"submitted",employee_id:"colleague",area_to_improve:"colleague evaluation",note:"colleague manager note"});
-    const {client}=fake(data);
+    const {client,reads}=fake(data);
     const args={locationId:"shop",dateFrom:instance.date,dateTo:"2026-10-07",types:["pm" as const]};
     const employee=await listReportSkeleton(client,{...args,viewer});
     expect(employee.map(r=>r.id).sort()).toEqual(["auto_finalized","incomplete_confirmed","submitted"]);
@@ -190,10 +190,17 @@ describe("review regressions", () => {
       if(detail?.kind!=="pm") throw new Error("wrong detail");
       expect(detail.mvpNote).toBe("MVP praise");expect(detail.evals[0]?.note).toBeNull();
     }
+    expect(reads.filter(r=>r.table==="pm_employee_evals").every(r=>!/(^|,)\s*note\b/.test(r.columns))).toBe(true);
     const corpus=await buildSearchCorpus(client,{viewer:kh,locationId:"shop",items:employee});
     expect(JSON.stringify([...corpus])).toContain("MVP praise");expect(JSON.stringify([...corpus])).not.toContain("private manager note");
+    const readsBeforeEmployeeDetail=reads.length;
     const own=await loadReportDetail(client,{viewer,type:"pm",id:"submitted",locationId:"shop"});
     expect(own?.kind).toBe("pm");
     if(own?.kind==="pm") {expect(own.mvpNote).toBeNull();expect(own.evals).toHaveLength(1);expect(own.evals[0]?.note).toBeNull();}
+    expect(reads.slice(readsBeforeEmployeeDetail).filter(r=>r.table==="pm_employee_evals").every(r=>!/(^|,)\s*note\b/.test(r.columns))).toBe(true);
+    const senior=await loadReportDetail(client,{viewer:{...viewer,level:5},type:"pm",id:"submitted",locationId:"shop"});
+    if(senior?.kind!=="pm") throw new Error("wrong detail");
+    expect(senior.evals[0]?.note).toBe("private manager note");
+    expect(reads.filter(r=>r.table==="pm_employee_evals").at(-1)?.columns).toMatch(/\bnote\b/);
   });
 });
