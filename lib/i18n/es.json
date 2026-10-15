@@ -6464,5 +6464,7 @@
   "receiving.case_different.error.photo_not_found": "Esa foto no se guardó para esta tienda. Tómala otra vez.",
   "receiving.case_different.error.invalid_payload": "Algo del reporte no se ve bien. Revisa los números e inténtalo de nuevo.",
   "admin.skus.chain.use_item_page": "Cambia cómo llega para tu tienda",
-  "catalog.error.price_changed": "El precio cambió desde que lo viste. Vuelve a ver qué cambia."
+  "catalog.error.price_changed": "El precio cambió desde que lo viste. Vuelve a ver qué cambia.",
+  "catalog.requests.photo_alt": "Foto de la caja tomada en la puerta",
+  "catalog.requests.photo_open": "Ver la foto"
 }

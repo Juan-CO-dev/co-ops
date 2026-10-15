@@ -464,7 +464,7 @@ export async function loadSkuItemView(
       id: h.id, scope: h.locationId === null ? "global" : "shop", active: h.active, effectiveFrom: h.validFrom,
       retiredAt: h.validTo, who: h.createdBy ? (who.get(h.createdBy) ?? null) : null, labels: h.labels,
     })),
-    openRequests: requests.map((r) => ({ id: r.id, filedBy: r.filedBy, filedAt: r.filedAt, note: r.note, proposal: r.proposal })),
+    openRequests: requests.map((r) => ({ id: r.id, filedBy: r.filedBy, filedAt: r.filedAt, note: r.note, proposal: r.proposal, photoId: r.photoId })),
     measures: measureUnits.map((m) => ({ label: m.label, dimension: m.dimension, toBaseFactor: m.toBaseFactor })),
   };
 }

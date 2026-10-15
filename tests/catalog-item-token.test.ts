@@ -32,7 +32,7 @@ vi.mock("@/lib/supabase-server", () => ({ getServiceRoleClient: () => {
   };
 } }));
 vi.mock("@/lib/audit", () => ({ audit: async () => {}, auditChecked: async () => ({ ok: true }) }));
-import { applyPackChange, applyPriceChange, CatalogItemError, computePackPreview, computePricePreview } from "@/lib/catalog/sku-item";
+import { applyPackChange, applyPriceChange, CatalogItemError, computePackPreview, computePricePreview, loadSkuItemView } from "@/lib/catalog/sku-item";
 afterEach(() => { current = null; world = null; rpcCalls.length = 0; });
 
 const moo = { user: { id: "u-moo", role: "moo" }, role: "moo", level: 8, locations: [] } as unknown as AuthContext;
@@ -120,4 +120,16 @@ describe("the PRICE preview token binds every dependency it shows", () => {
       expect(rpcCalls.map((c) => c.name)).not.toContain("apply_sku_price_change");
     });
   }
+});
+
+describe("the reviewer sees the door's photo (full-branch r1 P2-3)", () => {
+  it("an open report's photo is carried through the authorized read into the item view", async () => {
+    install((w) => {
+      w.sku_pack_change_requests = [{ id: "req-1", sku_id: SKU, location_id: LOC, status: "open", filed_by: "u-kh", filed_at: "2026-10-15T10:00:00Z", note: null, proposal: null, photo_id: "ph-door" }];
+      w.users = [...(w.users ?? []), { id: "u-kh", name: "Kai" }];
+      w.vendor_delivery_rhythm ??= []; w.vendor_cutoffs ??= []; w.sku_barcodes ??= []; w.product_primaries ??= []; w.products ??= [];
+    });
+    const view = await loadSkuItemView(moo, SKU, LOC, [{ id: LOC, name: "Shop one" }]);
+    expect(view.openRequests).toEqual([expect.objectContaining({ id: "req-1", filedBy: "Kai", photoId: "ph-door" })]);
+  });
 });

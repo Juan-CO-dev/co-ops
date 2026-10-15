@@ -29,6 +29,7 @@ const REQUIRED = [
   "catalog.history.retired", "catalog.history.restore", "catalog.history.scope_global", "catalog.history.scope_shop",
   "catalog.history.empty", "catalog.requests.title", "catalog.requests.by", "catalog.requests.proposal_count",
   "catalog.requests.proposal_weight", "catalog.requests.review", "catalog.requests.dismiss",
+  "catalog.requests.photo_alt", "catalog.requests.photo_open",
   "catalog.pack.sentence_aria", "catalog.pack.container_label", "catalog.pack.inner_label", "catalog.pack.holds",
   "catalog.pack.qty_aria", "catalog.pack.remove_level", "catalog.pack.remove_level_aria", "catalog.pack.each_weighs",
   "catalog.pack.each_holds", "catalog.pack.amount", "catalog.pack.unit", "catalog.pack.leaf_uses_avg",

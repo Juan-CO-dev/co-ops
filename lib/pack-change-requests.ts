@@ -144,6 +144,8 @@ async function shopManagers(sb: Sb, locationId: string): Promise<string[]> {
 export interface OpenPackRequest {
   id: string; skuId: string; skuName: string; locationId: string;
   filedBy: string | null; filedAt: string; note: string | null; proposal: PackChangeProposal | null;
+  /** The door's photo (bound to THIS report's shop when filed); shown via /api/photos/{id}. */
+  photoId: string | null;
 }
 
 /** The newest open reports a page may show (newest first; ties by id). */
@@ -158,11 +160,11 @@ export async function loadOpenPackChangeRequests(actor: AuthContext, opts: { loc
   const allowed = opts.locationIds.filter((id) => catalogShopAllowed(actor, id));
   if (allowed.length === 0) return [];
   const sb = getServiceRoleClient();
-  let q = sb.from("sku_pack_change_requests").select("id, sku_id, location_id, filed_by, filed_at, note, proposal")
+  let q = sb.from("sku_pack_change_requests").select("id, sku_id, location_id, filed_by, filed_at, note, proposal, photo_id")
     .eq("status", "open").in("location_id", allowed);
   if (opts.skuId) q = q.eq("sku_id", opts.skuId);
   const { data, error } = await q.order("filed_at", { ascending: false }).order("id", { ascending: false }).limit(OPEN_REQUESTS_LIMIT)
-    .returns<Array<{ id: string; sku_id: string; location_id: string; filed_by: string; filed_at: string; note: string | null; proposal: PackChangeProposal | null }>>();
+    .returns<Array<{ id: string; sku_id: string; location_id: string; filed_by: string; filed_at: string; note: string | null; proposal: PackChangeProposal | null; photo_id: string | null }>>();
   if (error) throw new Error(`loadOpenPackChangeRequests: ${error.message}`);
   const rows = data ?? [];
   if (rows.length === 0) return [];
@@ -177,6 +179,7 @@ export async function loadOpenPackChangeRequests(actor: AuthContext, opts: { loc
   return rows.map((r) => ({
     id: r.id, skuId: r.sku_id, skuName: skuName.get(r.sku_id) ?? "", locationId: r.location_id,
     filedBy: userName.get(r.filed_by) ?? null, filedAt: r.filed_at, note: r.note, proposal: r.proposal,
+    photoId: r.photo_id ?? null,
   }));
 }
 

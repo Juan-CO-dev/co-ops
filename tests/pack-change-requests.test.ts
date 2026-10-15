@@ -124,7 +124,7 @@ describe("reading the open list", () => {
   const withRequests = () => ({
     ...world(),
     sku_pack_change_requests: [
-      { id: "r1", sku_id: "s", location_id: A, status: "open", filed_by: "kh", filed_at: "2026-10-15T10:00:00Z", note: null, proposal: null },
+      { id: "r1", sku_id: "s", location_id: A, status: "open", filed_by: "kh", filed_at: "2026-10-15T10:00:00Z", note: null, proposal: null, photo_id: "p-a" },
       { id: "r2", sku_id: "s", location_id: B, status: "open", filed_by: "gm-b", filed_at: "2026-10-15T11:00:00Z", note: "x", proposal: null },
       { id: "r3", sku_id: "s", location_id: A, status: "dismissed", filed_by: "kh", filed_at: "2026-10-15T12:00:00Z", note: null, proposal: null },
     ] as Row[],
@@ -135,7 +135,7 @@ describe("reading the open list", () => {
   });
   it("an AGM sees only their shop's OPEN reports; an unassigned MoO sees every shop's, newest first", async () => {
     current = createFakeDb(withRequests());
-    expect((await loadOpenPackChangeRequests(actor("agm", 6, [A]), { locationIds: [A, B] })).map((r) => [r.id, r.skuName, r.filedBy])).toEqual([["r1", "Turkey", "Kai"]]);
+    expect((await loadOpenPackChangeRequests(actor("agm", 6, [A]), { locationIds: [A, B] })).map((r) => [r.id, r.skuName, r.filedBy, r.photoId])).toEqual([["r1", "Turkey", "Kai", "p-a"]]);
     expect((await loadOpenPackChangeRequests(actor("moo", 8, []), { locationIds: [A, B] })).map((r) => r.id)).toEqual(["r2", "r1"]);
   });
 });

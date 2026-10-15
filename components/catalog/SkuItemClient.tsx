@@ -25,6 +25,7 @@ import { useStepUpPost } from "@/components/admin/useStepUpPost";
 import { postJson } from "@/components/admin/vendors/shared";
 import { PackSentenceEditor } from "@/components/catalog/PackSentenceEditor";
 import { ChangePreviewPanel } from "@/components/catalog/ChangePreviewPanel";
+import { DoorPhoto } from "@/components/catalog/DoorPhoto";
 import { levelsFromSentence, sentenceFromLevels, type SentenceDraft, type SentenceError } from "@/lib/catalog/pack-sentence-shared";
 import { proposalToSentence } from "@/lib/pack-change-requests-shared";
 import {
@@ -296,6 +297,7 @@ export function SkuItemClient({ view, job, requestId }: { view: SkuItemView; job
             <div key={r.id} className="mt-2 flex flex-col gap-1">
               <p className="text-sm text-co-text">{t("catalog.requests.by", { who: r.filedBy ?? "—", date: day(r.filedAt) })}</p>
               {r.note ? <p className="text-sm italic text-co-text">&ldquo;{r.note}&rdquo;</p> : null}
+              {r.photoId ? <DoorPhoto photoId={r.photoId} /> : null}
               {r.proposal?.innerCount != null ? <p className="text-xs text-co-text-muted">{t("catalog.requests.proposal_count", { n: formatQuantity(r.proposal.innerCount, language) })}</p> : null}
               {r.proposal?.eachWeight != null ? <p className="text-xs text-co-text-muted">{t("catalog.requests.proposal_weight", { w: formatQuantity(r.proposal.eachWeight, language), unit: r.proposal.eachUnit ?? "" })}</p> : null}
               {canSaveShop ? (
