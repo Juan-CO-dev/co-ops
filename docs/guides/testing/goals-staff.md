@@ -4,7 +4,7 @@
 3. * Now put in the morning prep you made and finish the morning report.
 4. * Find out which station is yours today. If you have none, take one.
 5. * It's the middle of the day. Check what is happening in the shop right now.
-6. * The prep fridge feels warm. Record it so a manager knows.
+6. * The Sauce Fridge feels warm. Record it so a manager knows.
 7. * The lunch rush is over. Do the mid-day prep count to get back to par.
 8. * Do your station's part of the closing checklist, and leave a note on one line you finished.
 9. * It's closing time. Do the count of what is left so tomorrow morning's crew knows what is there.
