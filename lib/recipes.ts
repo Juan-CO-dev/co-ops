@@ -77,6 +77,9 @@ function rpcRecipeError(error: { code?: string; message?: string }, map: Record<
   return null;
 }
 const BATCH_MODE_RPC_ERRORS: Record<string, number> = {
+  // 0258 (Astra r2 #1): create_recipe_full / add_recipe_output refuse a cycle INSIDE the
+  // transaction, under the recipe-graph lock; the TS precheck is only the fast friendly error.
+  would_create_cycle: 400,
   duplicate_active_producer: 409,
   batch_mode_single_output: 422,
   recipe_not_found: 404,

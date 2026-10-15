@@ -54,3 +54,35 @@ export function itemLineWouldCycle(
   }
   return false;
 }
+
+/**
+ * The OUTPUT side (0258 recipe_output_would_cycle, Astra r2 #1): a NEW output item O on recipe R
+ * closes a loop iff O is reachable from R's own inputs — R's input items, then every input item
+ * of every recipe that OUTPUTS a reached item (all producers). A plain set walk, so an existing
+ * loop elsewhere still terminates.
+ */
+export function outputItemWouldCycle(
+  args: { recipeId: string; itemId: string },
+  outputs: readonly GraphOutputRow[],
+  inputs: readonly GraphInputRow[],
+): boolean {
+  const reach = new Set<string>();
+  const queue: string[] = [];
+  for (const i of inputs) {
+    if (i.recipe_id === args.recipeId && i.component_item_id !== null && !reach.has(i.component_item_id)) {
+      reach.add(i.component_item_id);
+      queue.push(i.component_item_id);
+    }
+  }
+  while (queue.length > 0) {
+    const item = queue.shift() as string;
+    if (item === args.itemId) return true;
+    const producers = new Set(outputs.filter((o) => o.output_item_id === item).map((o) => o.recipe_id));
+    for (const i of inputs) {
+      if (i.component_item_id === null || !producers.has(i.recipe_id) || reach.has(i.component_item_id)) continue;
+      reach.add(i.component_item_id);
+      queue.push(i.component_item_id);
+    }
+  }
+  return false;
+}
