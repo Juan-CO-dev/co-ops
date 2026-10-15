@@ -604,3 +604,10 @@ Juan: "The key holder gets that number from toast… which we were going to do b
 - **Projected = the day's Toast CASH payments for that shop** (amount, no tips), minus cash refunds and voids, from `toast_payments` (captured every 10 min, 6 AM–11 PM ET). Not Toast's drawer "expected" (that needs cash paid-in/out access).
 - **Prefilled, editable.** The box fills in with "From Toast · <time>". The key holder may change it; the saved deposit records the Toast figure beside the typed one, so a change is visible.
 - Build: batch B10 (worktree `co-ops-b10-cash`). The manager guide's cash step changes when B10 merges.
+
+## Broken things round-2 testers hit (tally 2026-10-15) — to reproduce, then fix
+- **After the closing is confirmed, the day's report tiles vanish and the board reads "0 of 8"** (sol manager, dsflash manager).
+- **A delivery shows an open Short credit and also says "No vendor claim is linked"** (sol manager).
+- **Station still reads as mine after it closed, or disappears after End shift** (sol staff, sonnet staff). Related to "Claim / change station" still showing after End my shift.
+- **Inventory Audit keeps showing an old error after a good save** (sonnet manager).
+- **PIN keypad dropped taps** (deepseek staff + manager). Possibly the test tool; check on a real tablet.

@@ -184,7 +184,7 @@ Kept as they are, on Juan's word (D-80): assigning a task saves at once (Retract
 
 ## 5. App ideas from testers that are not built
 
-Each idea is listed once, with how many testers asked for it. Valid reports only.
+Each idea is listed once, with how many testers asked for it. Valid reports only. **Round 2 (2026-10-15 tally):** the 15 re-runs added askers to the rows below and these new ideas: "Saving… / Saved" feedback on slow saves, loads and taps (12: dsflash ×2, sol, deepseek, sonnet ×3, haiku ×3, luna ×2); fewer entries on long count forms (6: sol ×2, sonnet ×2, haiku, luna); buttons that don't jump when a line saves, and a tap while saving can't untick (4; partly fixed by B8); Recent deliveries reachable without scrolling past the form (2); a warning before Send quote asks for the password (2); plus one-off asks (numbers-only hint, warm-fridge reading on Maintenance, keep a long form through sign-out, note before ticking, ezCater filter chip, a date picker showing the year, a "not emailed" status, lead fills Client email, one place for catering sales). Round-2 additions to existing rows: board shows saving +2 (7), sub picker +1 (5), one save style +2, jump list +4 (8), one-tap made-the-need +3 (5), closing temps without Save +2 (4), one reason for many closing items +1 (2), board-task sign +1, vendor per item +1, Post note while typing +1, warn before Finalize +2. Built since: cash Projected from Toast (B10), a reliable Counts page (B9). Not needed: a Prep Fridge on Maintenance (3 asks) — CO has no prep fridge; it was an old test goal.
 
 | Idea | Asked by | Status |
 |---|---|---|
@@ -209,34 +209,36 @@ Also asked for, but for the sim, not the app: one practice ezCater order per sho
 
 ## 6. "The 5 best things CO-OPS does for a restaurant": the roll-up
 
-Every valid report named five things it used and saw working. That is 29 reports: 27 from round 1, plus Terra's two from round 2. A theme counts once per report.
+Every valid report named five things it used and saw working. That is **44 reports**: 27 from round 1 and 17 from round 2 (Terra's two plus the 15 later re-runs). A theme counts once per report. Manager-only themes count out of the manager reports (15).
 
-### Shift operations (staff and manager reports: 18)
-
-| Rank | Theme | Named by | Ranked #1 by |
-|---|---|---|---|
-| 1 | **Mid-Shift Pulse**: coverage, late work, fridges, handoff notes on one page | 17 of 18 | 1 |
-| 2 | **Closing checklist**: station by station, names and times; report lines tick themselves; PIN to finish | 16 of 18 | 3 |
-| 3 | **Opening verification**: stations, temps and recounts before the doors open | 12 of 18 | 10 |
-| 4 | **Prep-to-par math**: Par, count and "Prep need" on every row; off-par needs a reason | 9 of 18 | 4 |
-| 4 | **Receiving with vendor credits**: flag Short, and a credit opens with the invoice number | 9 of 9 manager reports | 0 |
-| 6 | **Maintenance log and fridge temps**: a named, dated record of a warm fridge | 8 of 18 | 0 |
-| 7 | **AM prep as the overnight handoff**: tonight's count is tomorrow's starting point | 6 of 18 | 0 |
-| 8 | **Ordering walk**: par and Suggest turn into a numbered draft order | 5 of 9 manager reports | 0 |
-| 9 | **Station claiming and the shift board** | 4 of 18 | 0 |
-| 10 | Cash deposit signed by PIN (2) · PM report grades and MVP (1) | | |
-
-### Catering (catering reports: 11)
+### Shift operations (staff and manager reports: 30)
 
 | Rank | Theme | Named by | Ranked #1 by |
 |---|---|---|---|
-| 1 | **Pipeline board**: every job by stage, one tap to move it | 11 of 11 | 10 |
-| 1 | **Catering Insights**: the month's leads, bookings, money and calendar | 11 of 11 | 0 |
-| 1 | **Customers that build themselves** from quotes, grouped by company | 11 of 11 | 0 |
-| 4 | **Quote builder**: package in, tax, total and deposit worked out | 10 of 11 | 0 |
-| 5 | **Confirmed feeds the kitchen** (Prep Demand) | 5 of 11 | 1 |
-| 6 | **Setup hub**: packages, menu, capacity, zones in one place | 4 of 11 | 0 |
-| 7 | ezCater tracking (1) · shop-and-role login (1) | | |
+| 1 | **Mid-Shift Pulse**: coverage, late work, fridges, handoff notes on one page | 27 of 30 | 2 |
+| 2 | **Closing checklist**: station by station, names and times; report lines tick themselves; PIN to finish | 26 of 30 | 3 |
+| 3 | **Opening verification**: stations, temps and recounts before the doors open | 23 of 30 | 19 |
+| 4 | **Prep-to-par math**: Par, count and "Prep need" on every row; off-par needs a reason | 19 of 30 | 4 |
+| 5 | **Receiving with vendor credits**: flag Short, and a credit opens with the invoice number | 15 of 15 manager reports | 1 |
+| 6 | **Maintenance log and fridge temps** | 10 of 30 | 0 |
+| 6 | **AM prep as the overnight handoff** | 10 of 30 | 0 |
+| 8 | **Ordering walk**: par and Suggest turn into a numbered draft order | 7 of 15 manager reports | 0 |
+| 9 | **Station claiming and the shift board** | 6 of 30 | 1 |
+| 10 | Cash deposit signed by PIN (3) · PM report grades and MVP (1) · Reports Hub as a dated day record (1, new in round 2) | | |
+
+### Catering (catering reports: 14)
+
+| Rank | Theme | Named by | Ranked #1 by |
+|---|---|---|---|
+| 1 | **Pipeline board**: every job by stage, one tap to move it | 14 of 14 | 13 |
+| 1 | **Catering Insights**: the month's leads, bookings, money and calendar | 14 of 14 | 0 |
+| 3 | **Quote builder**: package in, tax, total and deposit worked out | 13 of 14 | 0 |
+| 4 | **Customers that build themselves** from quotes, grouped by company | 11 of 14 | 0 |
+| 5 | **Confirmed feeds the kitchen** (Prep Demand) | 7 of 14 | 1 |
+| 6 | **Setup hub**: packages, menu, capacity, zones in one place | 5 of 14 | 0 |
+| 7 | Shop-and-role login (3) · ezCater tracking (2) | | |
+
+Customers is 11 of 14 only because the three round-2 catering testers never saw a customer: their test lead had no email (goal 6, since fixed in the test).
 
 ### In the testers' words
 
@@ -253,6 +255,7 @@ Every valid report named five things it used and saw working. That is 29 reports
 - **Customers.** opus: "The shop builds a catering contact list as a side effect of normal work."
 - **Quote builder.** glmflash: "Pricing a 25-person lunch takes a minute, not a spreadsheet."
 - **Prep Demand.** opus: "The kitchen sees catering work without anyone re-typing it."
+- **Round 2 adds:** sonnet (opening): "nobody can say 'it was fine' without a record." · dsflash (mid-day): "the second half of the day sells at full menu instead of running out." · dsflash (closing): "the night work is provable and split between people." · haiku (ezCater): "it catches ezCater orders that never reached the register." · deepseek (Reports Hub): "a clear, dated trail of who did what and what happened each day."
 
 ## 7. Open follow-ups
 
