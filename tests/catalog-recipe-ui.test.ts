@@ -1,4 +1,5 @@
 /** Catalog Phase 3b — the recipe page: "What this changes" and the page body (version, connections, lines, notices, other shops, history), en + es, 44px, 375px. */
+import { readFileSync } from "node:fs";
 import { type ReactNode } from "react";
 import { jsx } from "react/jsx-runtime";
 import { renderToStaticMarkup } from "react-dom/server";
@@ -511,5 +512,64 @@ describe("a refusal on the menu page is named — and a promote refused after it
   it("a plain refusal is its own message, never generic", () => {
     expect(menuRefusalText(tEn, { code: "global_changed" }, menuView.shops)).toBe(en["catalog.menu.error.global_changed"]);
     expect(menuRefusalText(tEn, { code: "invalid_price" }, menuView.shops)).toBe(en["catalog.error.invalid_price"]);
+  });
+});
+
+describe("chunk-5 review (CC note 8)", () => {
+  it("P2: a read-only view still SHOWS the current settings — price, sold here, both names — with only the edit controls withheld", () => {
+    const other: MenuView = { ...menuView, scope: OTHER, scopeName: "Capitol Hill", can: { editShop: false, promote: false, shopsToEdit: [{ id: SHOP, name: "P Street" }] },
+      here: { ...menuView.here, nameOverride: "Big Italian", nameOverrideEs: "Italiano grande", name: "Big Italian", nameEs: "Italiano grande" } };
+    const html = render(jsx(MenuItemClient, { view: other }));
+    expect(html).toContain(en["catalog.menu.now.title"]);
+    expect(html).toContain("Price: $13.50");
+    expect(html).toContain("Sold here: yes");
+    expect(html).toContain("Name: Big Italian");
+    expect(html).toContain("Spanish name: Italiano grande");
+    // the way forward stays, and nothing here can be typed into or saved
+    expect(html).toContain(html_(en["catalog.menu.pick_shop_hint"]));
+    expect(html).toContain("Change it for P Street");
+    expect(html).not.toMatch(/<input/);
+    expect(html).not.toContain(en["catalog.menu.see_changes"]);
+    // a level-6 reader (no shop to change) and the global view read the settings too
+    const reader = render(jsx(MenuItemClient, { view: { ...other, can: { editShop: false, promote: false, shopsToEdit: [] } } }));
+    expect(reader).toContain("Price: $13.50");
+    expect(reader).toContain(en["catalog.menu.view_only"]);
+    const global = render(jsx(MenuItemClient, { view: { ...menuView, scope: null, scopeName: null, history: [],
+      here: { ...menuView.here, settingId: null, price: null, typedPrice: 12.5 }, can: { editShop: false, promote: false, shopsToEdit: [{ id: SHOP, name: "P Street" }] } } }));
+    expect(global).toContain("Price: $12.50");
+    expect(global).not.toContain("Sold here:");
+    expect(global).toContain(en["catalog.menu.global_view_hint"]);
+    expect(render(jsx(MenuItemClient, { view: other }), "es")).toContain("Precio: $13.50");
+  });
+  it("P2: a shop riding the global price says so", () => {
+    const riding: MenuView = { ...menuView, scope: OTHER, scopeName: "Capitol Hill", can: { editShop: false, promote: false, shopsToEdit: [] },
+      here: { ...menuView.here, settingId: null, price: null, typedPrice: 12.5 } };
+    expect(render(jsx(MenuItemClient, { view: riding }))).toContain(html_(`Price: $12.50 ${en["catalog.menu.now.global"]}`));
+  });
+  it("P3: History shows each row's Spanish name, so a Spanish-only change is visible (en + es)", () => {
+    const v: MenuView = { ...menuView, history: [
+      menuView.history[0]!,
+      { id: "ms1", active: false, validFrom: "2026-10-05T15:00:00Z", validTo: "2026-10-10T00:00:00Z", who: "Ana", price: 13.5, soldHere: true, nameOverride: null, nameOverrideEs: "Italiano grande" },
+    ] };
+    expect(render(jsx(MenuHistoryList, { view: v, busy: false, onRestore: noop }))).toContain("Spanish name “Italiano grande”");
+    expect(render(jsx(MenuHistoryList, { view: v, busy: false, onRestore: noop }), "es")).toContain("Nombre en español “Italiano grande”");
+  });
+  it("P3: History dates are the operational (ET) day, never the UTC date — menu and recipe", () => {
+    const late = "2026-10-15T01:30:00Z"; // 9:30 PM on Oct 14 in DC
+    const m: MenuView = { ...menuView, history: [{ ...menuView.history[0]!, validFrom: late }] };
+    const mh = render(jsx(MenuHistoryList, { view: m, busy: false, onRestore: noop }));
+    expect(mh).toContain("Oct 14");
+    expect(mh).not.toContain("Oct 15");
+    const r = { ...view, history: view.history.map((h) => ({ ...h, validFrom: late })) };
+    const rh = render(jsx(RecipeHistoryList, { view: r, target: { kind: "shop", shopId: SHOP }, busy: false, onRestore: () => {} }));
+    expect(rh).toContain("Oct 14");
+    expect(rh).not.toContain("Oct 15");
+  });
+  it("P3: no p3b screen slices an ISO timestamp for its date", () => {
+    for (const f of ["components/catalog/MenuItemClient.tsx", "components/catalog/RecipeItemClient.tsx"]) {
+      const src = readFileSync(f, "utf8");
+      expect(src, f).not.toContain("iso.slice(0, 10)");
+      expect(src, f).toContain("etDisplayDate(");
+    }
   });
 });

@@ -28,6 +28,7 @@ import { useRouter } from "next/navigation";
 
 import { useTranslation } from "@/lib/i18n/provider";
 import { formatCents, formatDateLabel, formatQuantity } from "@/lib/i18n/format";
+import { etDisplayDate } from "@/lib/operational-day";
 import { CollapsibleSection } from "@/components/ui/CollapsibleSection";
 import { useStepUp } from "@/components/admin/StepUpProvider";
 import { useStepUpPost } from "@/components/admin/useStepUpPost";
@@ -206,7 +207,7 @@ export function RecipeHistoryList({
   view, target, busy, onRestore,
 }: { view: RecipeItemView; target: RecipeTarget | null; busy: boolean; onRestore: (fromVersionId: string) => void }) {
   const { t, language } = useTranslation();
-  const day = (iso: string) => formatDateLabel(iso.slice(0, 10), language);
+  const day = (iso: string) => formatDateLabel(etDisplayDate(iso), language); // the operational (ET) day, never the UTC date
   return (
     <ul className="flex flex-col gap-2 p-3">
       {view.history.map((h) => (
@@ -257,7 +258,7 @@ export function RecipeItemClient({ view }: { view: RecipeItemView }) {
   const measures = useMemo(() => new Map<string, MeasureUnitFactor>(view.picker.measures.map((m) => [m.label, { dimension: m.dimension, toBaseFactor: m.toBaseFactor }])), [view.picker.measures]);
   const options = useMemo(() => buildIngredientOptions({ skus: view.picker.skus, items: view.picker.items, products: view.picker.products }), [view.picker]);
   const money = (n: number | null) => (n == null ? "—" : formatCents(Math.round(n * 100), language));
-  const day = (iso: string) => formatDateLabel(iso.slice(0, 10), language);
+  const day = (iso: string) => formatDateLabel(etDisplayDate(iso), language); // the operational (ET) day, never the UTC date
   const fmt = (n: number) => formatQuantity(n, language);
   const shopName = (id: string) => view.shops.find((s) => s.id === id)?.name ?? "";
   // A refused LINE is named — position, name, why — in the message AND beside that line (lead decision (b)).
