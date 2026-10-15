@@ -16,11 +16,13 @@ import {
   cellIsZero,
   checklistKind,
   checklistOutcome,
+  ranAllWeek,
   roleBand,
   toastRunResult,
   WEEK_DETAIL_AREAS,
   WEEK_SUMMARY_AREAS,
   weekHasJobAlert,
+  weekBusinessDays,
   weekHasPeopleActivity,
   weekWindowStart,
   type WeekCardInput,
@@ -30,6 +32,7 @@ import { ROLES } from "@/lib/roles";
 const P = "loc-p";
 const C = "loc-c";
 const OTHER = "loc-other";
+const DAYS = ["2026-10-09", "2026-10-10", "2026-10-11", "2026-10-12", "2026-10-13", "2026-10-14", "2026-10-15"];
 
 function input(over: Partial<WeekCardInput> = {}): WeekCardInput {
   return {
@@ -51,6 +54,7 @@ function input(over: Partial<WeekCardInput> = {}): WeekCardInput {
     quotes: [],
     ezcaterArrivedLocations: [],
     ezcaterSyncs: [],
+    businessDays: DAYS,
     toastRuns: [],
     depletionRuns: [],
     ...over,
@@ -204,14 +208,37 @@ describe("automatic jobs", () => {
     expect(toastRunResult("failed")).toBe("failed");
     expect(toastRunResult("running")).toBeNull();
   });
-  it("tallies runs, syncs and DISTINCT depletion days per shop", () => {
+  it("the week's business days are the 7 ET dates ending today (an evening UTC instant is still ET today)", () => {
+    // 2026-10-16T02:00Z is 10 PM EDT on the 15th.
+    expect(weekBusinessDays(new Date("2026-10-16T02:00:00.000Z"))).toEqual(DAYS);
+  });
+  it("Toast health is DAYS with an OK run, not a run count; failures still counted", () => {
     const card = buildWeekCard(input({
       toastRuns: [
-        { locationId: P, status: "completed" },
-        { locationId: P, status: "modified_completed" },
-        { locationId: P, status: "failed" },
-        { locationId: P, status: "running" },
+        // ~1,160 runs a shop a week in prod — many runs on one day is still ONE day
+        ...DAYS.flatMap((d) => [1, 2, 3].map(() => ({ locationId: C, status: "completed", businessDate: d }))),
+        { locationId: P, status: "completed", businessDate: "2026-10-14" },
+        { locationId: P, status: "modified_completed", businessDate: "2026-10-15" },
+        { locationId: P, status: "completed", businessDate: "2026-10-08" }, // before the 7 days
+        { locationId: P, status: "failed", businessDate: "2026-10-13" }, // a failed run covers no day
+        { locationId: P, status: "running", businessDate: "2026-10-12" },
       ],
+    }));
+    expect(shop(card, C).jobs).toMatchObject({ toastDaysRan: 7, toastDaysExpected: 7, toastPullsFailed: 0 });
+    expect(shop(card, P).jobs).toMatchObject({ toastDaysRan: 2, toastDaysExpected: 7, toastPullsFailed: 1 });
+    const row = WEEK_SUMMARY_AREAS.flatMap((a) => a.rows).find((r) => r.id === "toast")!;
+    const c = row.cell(shop(card, C));
+    const p = row.cell(shop(card, P));
+    expect(c).toEqual({ kind: "days", ran: 7, of: 7, failed: 0 });
+    expect(p).toEqual({ kind: "days", ran: 2, of: 7, failed: 1 });
+    expect(ranAllWeek({ ran: 7, of: 7 })).toBe(true);
+    expect(ranAllWeek({ ran: 6, of: 7 })).toBe(false);
+    expect(ranAllWeek({ ran: 0, of: 0 })).toBe(false);
+    expect(cellIsZero(p)).toBe(false);
+    expect(weekHasJobAlert(card)).toBe(true);
+  });
+  it("tallies syncs and DISTINCT depletion days per shop", () => {
+    const card = buildWeekCard(input({
       ezcaterSyncs: [
         { locationId: P, hasError: false },
         { locationId: P, hasError: true },
@@ -223,13 +250,13 @@ describe("automatic jobs", () => {
         { locationId: C, businessDate: null },
       ],
     }));
-    expect(shop(card, P).jobs).toEqual({ toastPullsOk: 2, toastPullsFailed: 1, ezcaterSynced: 1, ezcaterSyncErrors: 1, depletionDays: 2 });
+    expect(shop(card, P).jobs).toMatchObject({ ezcaterSynced: 1, ezcaterSyncErrors: 1, depletionDays: 2 });
     expect(shop(card, C).jobs.depletionDays).toBe(0);
     expect(weekHasJobAlert(card)).toBe(true);
   });
   it("automatic work alone is not people activity", () => {
     const card = buildWeekCard(input({
-      toastRuns: [{ locationId: P, status: "completed" }],
+      toastRuns: [{ locationId: P, status: "completed", businessDate: "2026-10-15" }],
       leads: [{ locationId: P, createdBy: null, leadSource: "toast_catering" }],
     }));
     expect(weekHasPeopleActivity(card)).toBe(false);
@@ -265,7 +292,12 @@ describe("rows — rendering contract", () => {
   const all = [...WEEK_SUMMARY_AREAS, ...WEEK_DETAIL_AREAS];
 
   it("every area and row label exists in BOTH en and es (translate-from-day-one)", () => {
-    const keys = all.flatMap((a) => [a.labelKey, ...a.rows.map((r) => r.labelKey)]);
+    const keys = [
+      ...all.flatMap((a) => [a.labelKey, ...a.rows.map((r) => r.labelKey)]),
+      "admin.hub.week.ran_all",
+      "admin.hub.week.ran_days",
+      "admin.hub.week.failed_suffix",
+    ];
     for (const k of keys) {
       expect(en, k).toHaveProperty([k]);
       expect(es, k).toHaveProperty([k]);
@@ -279,7 +311,7 @@ describe("rows — rendering contract", () => {
 
   it("only automatic areas carry the automatic-job and arrived-catering rows", () => {
     const autoRowIds = new Set(all.filter((a) => a.automatic).flatMap((a) => a.rows.map((r) => r.id)));
-    for (const id of ["arrived", "toast_ok", "toast_failed", "ezcater_ok", "ezcater_errors", "depletion", "arrived_ezcater", "arrived_toast", "arrived_other"]) {
+    for (const id of ["arrived", "toast", "ezcater_ok", "ezcater_errors", "depletion", "arrived_ezcater", "arrived_toast", "arrived_other"]) {
       expect(autoRowIds.has(id), id).toBe(true);
     }
     const peopleRowIds = new Set(all.filter((a) => !a.automatic).flatMap((a) => a.rows.map((r) => r.id)));
@@ -289,7 +321,7 @@ describe("rows — rendering contract", () => {
   it("zero is muted; 'of' is muted only when nothing started; a failed job is an alert", () => {
     const card = buildWeekCard(input({
       checklists: [{ locationId: P, type: "opening", prepSubtype: null, status: "open", dropped: false }],
-      toastRuns: [{ locationId: P, status: "failed" }],
+      ezcaterSyncs: [{ locationId: P, hasError: true }],
     }));
     const p = shop(card, P);
     const cellOf = (id: string) => all.flatMap((a) => a.rows).find((r) => r.id === id)!.cell(p);
@@ -297,7 +329,7 @@ describe("rows — rendering contract", () => {
     expect(cellIsZero(cellOf("checklists"))).toBe(false);
     expect(cellIsZero(cellOf("closing"))).toBe(true);
     expect(cellIsZero(cellOf("lines"))).toBe(true);
-    expect(cellOf("toast_failed")).toEqual({ kind: "count", n: 1, alert: true });
-    expect(cellOf("ezcater_errors")).toEqual({ kind: "count", n: 0, alert: false });
+    expect(cellOf("ezcater_errors")).toEqual({ kind: "count", n: 1, alert: true });
+    expect(cellOf("ezcater_ok")).toEqual({ kind: "count", n: 0, alert: false });
   });
 });

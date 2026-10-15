@@ -31,6 +31,7 @@
  * person's CURRENT role level (lib/roles.ts): crew ≤ 3, key holders & leads 4–5, managers 6+.
  */
 import type { TranslationKey } from "@/lib/i18n/types";
+import { etCalendarDate, etYmdMinusDays } from "@/lib/operational-day";
 
 /** The look-back window: the last 7 days, ending now. */
 export const WEEK_WINDOW_DAYS = 7;
@@ -38,6 +39,15 @@ export const WEEK_WINDOW_DAYS = 7;
 /** ISO instant the window opens at (now − 7 days). Time enters as a parameter. */
 export function weekWindowStart(now: Date): string {
   return new Date(now.getTime() - WEEK_WINDOW_DAYS * 24 * 3600 * 1000).toISOString();
+}
+
+/**
+ * The 7 ET business days the window covers, oldest first, ending TODAY. The Toast pull
+ * runs all day, every day, so this is the set of days it should have run on.
+ */
+export function weekBusinessDays(now: Date): string[] {
+  const today = etCalendarDate(now.toISOString());
+  return Array.from({ length: WEEK_WINDOW_DAYS }, (_, i) => etYmdMinusDays(today, WEEK_WINDOW_DAYS - 1 - i));
 }
 
 // ── People ─────────────────────────────────────────────────────────────────────
@@ -172,7 +182,13 @@ export interface ShopWeek {
   quotesByPeople: number;
   arrived: { ezcater: number; toastCatering: number; other: number; total: number };
   jobs: {
-    toastPullsOk: number;
+    /**
+     * Business days (of `toastDaysExpected`) with at least one OK Toast run. The pull runs
+     * all day (~1,160 runs a shop a week), so a run COUNT is noise; days covered is the
+     * health signal. Failed runs are still counted, as the alert.
+     */
+    toastDaysRan: number;
+    toastDaysExpected: number;
     toastPullsFailed: number;
     ezcaterSynced: number;
     ezcaterSyncErrors: number;
@@ -218,8 +234,10 @@ export interface WeekCardInput {
   ezcaterArrivedLocations: ReadonlyArray<string | null>;
   /** ezCater orders whose latest sync attempt fell in the window. */
   ezcaterSyncs: ReadonlyArray<{ locationId: string | null; hasError: boolean }>;
+  /** the window's ET business days (weekBusinessDays) — what "ran all week" is measured against. */
+  businessDays: ReadonlyArray<string>;
   /** Toast capture runs started in the window. */
-  toastRuns: ReadonlyArray<{ locationId: string; status: string }>;
+  toastRuns: ReadonlyArray<{ locationId: string; status: string; businessDate: string | null }>;
   /** `toast_depletion.materialize` audit rows in the window (resource = the location). */
   depletionRuns: ReadonlyArray<{ locationId: string | null; businessDate: string | null }>;
 }
@@ -249,7 +267,7 @@ function emptyShop(id: string, name: string): ShopWeek {
     leadsByPeople: 0,
     quotesByPeople: 0,
     arrived: { ezcater: 0, toastCatering: 0, other: 0, total: 0 },
-    jobs: { toastPullsOk: 0, toastPullsFailed: 0, ezcaterSynced: 0, ezcaterSyncErrors: 0, depletionDays: 0 },
+    jobs: { toastDaysRan: 0, toastDaysExpected: 0, toastPullsFailed: 0, ezcaterSynced: 0, ezcaterSyncErrors: 0, depletionDays: 0 },
   };
 }
 
@@ -331,12 +349,25 @@ export function buildWeekCard(input: WeekCardInput): WeekCard {
     if (e.hasError) s.jobs.ezcaterSyncErrors += 1;
     else s.jobs.ezcaterSynced += 1;
   }
+  // Toast: which of the window's business days had an OK run, per shop; failures counted.
+  const expected = new Set(input.businessDays);
+  const ranOn = new Map<string, Set<string>>();
   for (const r of input.toastRuns) {
     const s = at(r.locationId);
     const result = toastRunResult(r.status);
     if (!s || !result) continue;
-    if (result === "ok") s.jobs.toastPullsOk += 1;
-    else s.jobs.toastPullsFailed += 1;
+    if (result === "failed") {
+      s.jobs.toastPullsFailed += 1;
+      continue;
+    }
+    if (r.businessDate == null || !expected.has(r.businessDate)) continue;
+    const set = ranOn.get(r.locationId) ?? new Set<string>();
+    set.add(r.businessDate);
+    ranOn.set(r.locationId, set);
+  }
+  for (const s of byId.values()) {
+    s.jobs.toastDaysExpected = expected.size;
+    s.jobs.toastDaysRan = ranOn.get(s.shopId)?.size ?? 0;
   }
   // Depletion: DISTINCT business days per shop (the job re-runs a day several times).
   const days = new Map<string, Set<string>>();
@@ -353,8 +384,15 @@ export function buildWeekCard(input: WeekCardInput): WeekCard {
 
 // ── Rows (what the card renders, in order) ─────────────────────────────────────
 
-/** One cell. `of` renders "{done} of {total}"; `alert` renders as a never-collapse danger value (D2). */
-export type WeekCell = { kind: "count"; n: number; alert?: boolean } | { kind: "of"; done: number; total: number };
+/**
+ * One cell. `of` renders "{done} of {total}"; `alert` renders as a never-collapse danger
+ * value (D2). `days` is a job's health line: "Ran all week" / "Ran {ran} of {of} days",
+ * plus "· {failed} failed" in the danger text role when any run failed.
+ */
+export type WeekCell =
+  | { kind: "count"; n: number; alert?: boolean }
+  | { kind: "of"; done: number; total: number }
+  | { kind: "days"; ran: number; of: number; failed: number };
 
 export interface WeekRow {
   id: string;
@@ -373,9 +411,17 @@ export interface WeekArea {
 const count = (n: number, alert = false): WeekCell => ({ kind: "count", n, alert: alert && n > 0 });
 const of = (t: ChecklistTally): WeekCell => ({ kind: "of", done: t.finished, total: t.started });
 
-/** Muted zero: a count of 0, or "of" with nothing started. "0 of 3" is a signal, not a zero. */
+/** Muted zero: a count of 0, or "of" with nothing started. "0 of 3" is a signal, not a zero;
+ *  a job that missed days is a signal too, so a `days` cell is never muted. */
 export function cellIsZero(c: WeekCell): boolean {
-  return c.kind === "count" ? c.n === 0 : c.total === 0;
+  if (c.kind === "count") return c.n === 0;
+  if (c.kind === "of") return c.total === 0;
+  return false;
+}
+
+/** Did the job run on every expected day? (The "Ran all week" wording.) */
+export function ranAllWeek(c: { ran: number; of: number }): boolean {
+  return c.of > 0 && c.ran >= c.of;
 }
 
 /** The always-visible summary. */
@@ -422,8 +468,11 @@ export const WEEK_SUMMARY_AREAS: readonly WeekArea[] = [
     automatic: true,
     rows: [
       { id: "arrived", labelKey: "admin.hub.week.row.arrived", cell: (s) => count(s.arrived.total) },
-      { id: "toast_ok", labelKey: "admin.hub.week.row.toast_ok", cell: (s) => count(s.jobs.toastPullsOk) },
-      { id: "toast_failed", labelKey: "admin.hub.week.row.toast_failed", cell: (s) => count(s.jobs.toastPullsFailed, true) },
+      {
+        id: "toast",
+        labelKey: "admin.hub.week.row.toast",
+        cell: (s) => ({ kind: "days", ran: s.jobs.toastDaysRan, of: s.jobs.toastDaysExpected, failed: s.jobs.toastPullsFailed }),
+      },
       { id: "ezcater_ok", labelKey: "admin.hub.week.row.ezcater_ok", cell: (s) => count(s.jobs.ezcaterSynced) },
       { id: "ezcater_errors", labelKey: "admin.hub.week.row.ezcater_errors", cell: (s) => count(s.jobs.ezcaterSyncErrors, true) },
       { id: "depletion", labelKey: "admin.hub.week.row.depletion", cell: (s) => count(s.jobs.depletionDays) },

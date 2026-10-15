@@ -11,6 +11,7 @@ import { cronRunFailureTotal } from "@/lib/admin/ops-health-shared";
 import { loadWeekCard } from "@/lib/admin/week-card";
 import {
   cellIsZero,
+  ranAllWeek,
   WEEK_DETAIL_AREAS,
   WEEK_SUMMARY_AREAS,
   weekHasJobAlert,
@@ -326,6 +327,22 @@ function WeekTable({ areas, shops, lang }: { areas: readonly WeekArea[]; shops: 
 
 /** Zero renders "0" muted (as the old card did); an alert renders in the danger TEXT role. */
 function WeekValue({ cell, lang }: { cell: WeekCell; lang: Language }) {
+  if (cell.kind === "days") {
+    // A job's health line: "Ran all week" / "Ran 6 of 7 days", plus "· N failed" (danger text).
+    const ran = ranAllWeek(cell)
+      ? serverT(lang, "admin.hub.week.ran_all")
+      : serverT(lang, "admin.hub.week.ran_days", { ran: formatQuantity(cell.ran, lang), of: formatQuantity(cell.of, lang) });
+    return (
+      <span className="font-bold tabular-nums">
+        <span className={ranAllWeek(cell) ? "text-co-text" : "text-co-warning-text"}>{ran}</span>
+        {cell.failed > 0 ? (
+          <span className="block text-co-cta-text">
+            {serverT(lang, "admin.hub.week.failed_suffix", { n: formatQuantity(cell.failed, lang) })}
+          </span>
+        ) : null}
+      </span>
+    );
+  }
   const tone =
     cell.kind === "count" && cell.alert ? "text-co-cta-text" : cellIsZero(cell) ? "text-co-text-dim" : "text-co-text";
   const text =

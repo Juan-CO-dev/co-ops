@@ -23,7 +23,9 @@
  *                                NOT NULL = a person, NULL = the scan / the customer
  *   ezCater arrived   ezcater_orders created_at in window
  *   ezCater sync      ezcater_orders last_attempt_at in window, last_sync_error set or not
- *   Toast pulls       toast_capture_runs started_at in window, by status
+ *   Toast pulls       toast_capture_runs started_at in window: distinct business_date
+ *                                with an OK run (of the window's 7 ET days) + failed runs.
+ *                                The pull runs all day, so a raw run count is noise
  *   depletion         audit_log `toast_depletion.materialize` (resource_id = the shop),
  *                                distinct metadata.business_date — the job's own event; the
  *                                ledger table holds one row per SKU, not per run
@@ -44,6 +46,7 @@ import { isRoleCode, ROLES } from "@/lib/roles";
 import {
   actionCountsAsUse,
   buildWeekCard,
+  weekBusinessDays,
   weekWindowStart,
   type WeekActor,
   type WeekCard,
@@ -158,8 +161,8 @@ export async function loadWeekCard(actor: LocationActor & { level: number }, now
       sb.from("ezcater_orders").select("location_id, last_sync_error")
         .in("location_id", shopIds).gte("last_attempt_at", since)
         .order("id", { ascending: true }).range(from, to)),
-    selectAllRows<{ location_id: string; status: string }>((from, to) =>
-      sb.from("toast_capture_runs").select("location_id, status")
+    selectAllRows<{ location_id: string; status: string; business_date: string | null }>((from, to) =>
+      sb.from("toast_capture_runs").select("location_id, status, business_date")
         .in("location_id", shopIds).gte("started_at", since)
         .order("id", { ascending: true }).range(from, to)),
     selectAllRows<{ resource_id: string | null; business_date: string | null }>((from, to) =>
@@ -218,7 +221,8 @@ export async function loadWeekCard(actor: LocationActor & { level: number }, now
     quotes: quotes.map((q) => ({ locationId: q.location_id, createdBy: q.created_by })),
     ezcaterArrivedLocations: ezArrived.map((e) => e.location_id),
     ezcaterSyncs: ezSyncs.map((e) => ({ locationId: e.location_id, hasError: e.last_sync_error != null })),
-    toastRuns: toastRuns.map((r) => ({ locationId: r.location_id, status: r.status })),
+    businessDays: weekBusinessDays(now),
+    toastRuns: toastRuns.map((r) => ({ locationId: r.location_id, status: r.status, businessDate: r.business_date })),
     depletionRuns: depletion.map((d) => ({ locationId: d.resource_id, businessDate: d.business_date })),
   });
 }
