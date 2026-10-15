@@ -12,7 +12,7 @@
  * Filtering is client-side over the full set the server loaded.
  */
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 
 import { useTranslation } from "@/lib/i18n/provider";
@@ -26,6 +26,7 @@ import type { Readiness } from "@/lib/readiness";
 import type { PackChainLevel } from "@/lib/pack-chain-shared";
 import type { StarterChainLevel, SkuNameCollisionCandidate, SkuClass } from "@/lib/admin/catalog-shared";
 import { SKU_CLASSES } from "@/lib/admin/catalog-shared";
+import { SKU_FILTER_ALL, skuFocusPatch } from "@/lib/admin/sku-focus-shared";
 import { StatusBadge, ReadinessReasons } from "@/components/admin/StatusBadge";
 import { SummaryRow } from "@/components/ui/SummaryRow";
 import { SkuCostPanel, type SkuCostInfo } from "./SkuCostPanel";
@@ -41,7 +42,7 @@ import type { SkuDataShop } from "@/lib/sku-data-readiness";
 import { SkuDataChips, SkuDataDrawer, SkuDataHeader } from "./SkuDataLane";
 
 // Vendor-select sentinels distinct from any real vendor id.
-const FILTER_ALL = "__all__";
+const FILTER_ALL = SKU_FILTER_ALL;
 const FILTER_MANUAL = "__manual__";
 
 const tk = (k: string): TranslationKey => k as TranslationKey;
@@ -72,6 +73,8 @@ export function SkuCatalogClient({
   parsFieldsReady,
   actorLevel,
   canManage,
+  focusSkuId = null,
+  initialVendorFilter = null,
 }: {
   skus: SkuView[];
   vendors: SkuFormVendorOption[];
@@ -101,13 +104,21 @@ export function SkuCatalogClient({
   parsFieldsReady: boolean;
   actorLevel: number;
   canManage: boolean; // GM+
+  /** ?sku=<id> deep link (catalog Phase 1): the row opens, scrolls into view and is ringed. */
+  focusSkuId?: string | null;
+  /** ?vendor=<id> deep link: preselect the vendor filter (a focused SKU wins). */
+  initialVendorFilter?: string | null;
 }) {
   const { t } = useTranslation();
   const router = useRouter();
   const { requestStepUp, requestStepUpGrant } = useStepUp();
   const send = useStepUpPost();
 
-  const [vendorFilter, setVendorFilter] = useState<string>(FILTER_ALL);
+  // The deep link's FIRST patch seeds the initial state; later param changes re-patch below.
+  const [initialPatch] = useState(() =>
+    skuFocusPatch({ focusSkuId: null, vendorParam: null }, { focusSkuId, vendorParam: initialVendorFilter }, new Set(vendors.map((v) => v.id))),
+  );
+  const [vendorFilter, setVendorFilter] = useState<string>(initialPatch?.vendorFilter ?? FILTER_ALL);
   const [lens, setLens] = useState<Lens>("all");
   const [query, setQuery] = useState("");
   const [needsErrand, setNeedsErrand] = useState(false);
@@ -120,7 +131,32 @@ export function SkuCatalogClient({
   // open. Caller-owned Set (mirrors CatalogClient) so several can be open at once
   // and collapse preserves scroll. Drawer children (the SkuCostPanel) lazy-render
   // only when expanded → 0 cost panels on first paint (the ×163 fix).
-  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [expanded, setExpanded] = useState<Set<string>>(() => new Set(initialPatch?.expand ? [initialPatch.expand] : []));
+
+  // P2-6: a client-side navigation ?sku=A → ?sku=B keeps this component mounted, so the params
+  // are re-applied with the during-render prev-compare pattern (AGENTS.md), never an effect.
+  const vendorIds = useMemo(() => new Set(vendors.map((v) => v.id)), [vendors]);
+  const [seenParams, setSeenParams] = useState({ focusSkuId, vendorParam: initialVendorFilter });
+  if (seenParams.focusSkuId !== focusSkuId || seenParams.vendorParam !== initialVendorFilter) {
+    const patch = skuFocusPatch(seenParams, { focusSkuId, vendorParam: initialVendorFilter }, vendorIds);
+    setSeenParams({ focusSkuId, vendorParam: initialVendorFilter });
+    if (patch) {
+      if (patch.vendorFilter !== null) setVendorFilter(patch.vendorFilter);
+      if (patch.resetOtherFilters) {
+        setLens("all");
+        setQuery("");
+        setNeedsErrand(false);
+      }
+      const target = patch.expand;
+      if (target) setExpanded((prev) => new Set(prev).add(target));
+    }
+  }
+
+  // The hash already scrolls on a full load; this covers a client-side navigation (A → B) too.
+  useEffect(() => {
+    if (!focusSkuId) return;
+    document.getElementById(focusSkuId)?.scrollIntoView({ block: "start" });
+  }, [focusSkuId]);
   const toggleExpand = (id: string) =>
     setExpanded((prev) => {
       const next = new Set(prev);
@@ -279,7 +315,7 @@ export function SkuCatalogClient({
         // Editing rows keep the card chrome around SkuBuilder; non-editing
         // rows let SummaryRow be the card (avoids a nested double-card).
         (editingId === s.id ? "rounded-lg border-2 border-co-border bg-co-surface p-3 " : "") +
-        "scroll-mt-24 " + (s.active ? "" : "opacity-60")
+        "scroll-mt-24 " + (s.active ? "" : "opacity-60") + (s.id === focusSkuId ? " rounded-lg ring-4 ring-co-gold/60" : "")
       }
     >
       {editingId === s.id ? (

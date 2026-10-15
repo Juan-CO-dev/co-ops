@@ -4,6 +4,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { prepItemHref, productHref, readFocusParam, skuCatalogHref } from "@/lib/admin/product-item-links-shared";
+import { SKU_FILTER_ALL, skuFocusPatch } from "@/lib/admin/sku-focus-shared";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const read = (rel: string) => readFileSync(join(ROOT, ...rel.split("/")), "utf8");
@@ -36,5 +37,52 @@ describe("readFocusParam — a deep-link param as one plain id, or nothing", () 
     expect(readFocusParam("")).toBeNull();
     expect(readFocusParam("x\"><script>")).toBeNull();
     expect(readFocusParam("a".repeat(65))).toBeNull();
+  });
+});
+
+describe("skuFocusPatch — how a param change patches the catalog's state (Astra r1 P2-6)", () => {
+  const vendors = new Set(["v-baldor", "v-pfg"]);
+  const none = { focusSkuId: null, vendorParam: null };
+
+  it("first load with ?sku= expands that row and clears every filter that could hide it", () => {
+    expect(skuFocusPatch(none, { focusSkuId: "A", vendorParam: null }, vendors))
+      .toEqual({ expand: "A", vendorFilter: SKU_FILTER_ALL, resetOtherFilters: true });
+  });
+
+  it("sequential client navigation ?sku=A → ?sku=B patches again; the same params patch nothing", () => {
+    const a = { focusSkuId: "A", vendorParam: null };
+    expect(skuFocusPatch(a, { focusSkuId: "B", vendorParam: null }, vendors))
+      .toEqual({ expand: "B", vendorFilter: SKU_FILTER_ALL, resetOtherFilters: true });
+    expect(skuFocusPatch(a, a, vendors)).toBeNull();
+  });
+
+  it("a retained vendor filter that would hide the target clears itself", () => {
+    expect(skuFocusPatch({ focusSkuId: null, vendorParam: "v-pfg" }, { focusSkuId: "B", vendorParam: "v-pfg" }, vendors))
+      .toEqual({ expand: "B", vendorFilter: SKU_FILTER_ALL, resetOtherFilters: true });
+  });
+
+  it("?vendor= alone preselects a KNOWN vendor and ignores an unknown one", () => {
+    expect(skuFocusPatch(none, { focusSkuId: null, vendorParam: "v-baldor" }, vendors))
+      .toEqual({ expand: null, vendorFilter: "v-baldor", resetOtherFilters: false });
+    expect(skuFocusPatch(none, { focusSkuId: null, vendorParam: "v-gone" }, vendors)).toBeNull();
+  });
+});
+
+describe("the SKU catalog honours the deep link", () => {
+  it("the page reads ?sku= and ?vendor= and only focuses a SKU it actually loaded", () => {
+    const page = read("app/admin/skus/page.tsx");
+    expect(page).toContain("readFocusParam(sp.sku)");
+    expect(page).toContain("readFocusParam(sp.vendor)");
+    expect(page).toContain("skus.some((s) => s.id === focusParam)");
+    expect(page).toContain("focusSkuId={focusSkuId}");
+    expect(page).toContain("initialVendorFilter={vendorParam}");
+  });
+
+  it("the client syncs params with the during-render prev-compare (never an effect), rings and scrolls", () => {
+    const client = read("components/admin/skus/SkuCatalogClient.tsx");
+    expect(client).toContain("if (seenParams.focusSkuId !== focusSkuId || seenParams.vendorParam !== initialVendorFilter)");
+    expect(client).toContain("skuFocusPatch(seenParams,");
+    expect(client).toContain("scrollIntoView");
+    expect(client).toContain('s.id === focusSkuId ? " rounded-lg ring-4 ring-co-gold/60" : ""');
   });
 });

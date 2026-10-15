@@ -30,12 +30,21 @@ import { lockLocationContext } from "@/lib/locations";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { loadSkuDataReadiness } from "@/lib/sku-data-readiness-load";
 import type { SkuDataShop } from "@/lib/sku-data-readiness";
+import { readFocusParam } from "@/lib/admin/product-item-links-shared";
 
-export default async function AdminSkusPage() {
+export default async function AdminSkusPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ sku?: string | string[]; vendor?: string | string[] }>;
+}) {
   const auth = await requireSessionFromHeaders("/admin");
   const level = ROLES[auth.user.role].level;
   if (level < 6) redirect("/dashboard");
   const lang = auth.user.language;
+  // Catalog Phase 1 deep links: ?sku=<id> lands ON the row; ?vendor=<id> preselects the filter.
+  const sp = await searchParams;
+  const focusParam = readFocusParam(sp.sku);
+  const vendorParam = readFocusParam(sp.vendor);
 
   const sb = getServiceRoleClient();
   const [skus, vendors, packFormats, measureUnits, locRes] = await Promise.all([
@@ -45,6 +54,7 @@ export default async function AdminSkusPage() {
     loadMeasureUnits(auth),
     sb.from("locations").select("id, name").eq("active", true).order("name"),
   ]);
+  const focusSkuId = focusParam && skus.some((s) => s.id === focusParam) ? focusParam : null;
 
   const activeVendors = vendors
     .filter((v) => v.active)
@@ -173,6 +183,8 @@ export default async function AdminSkusPage() {
         parsFieldsReady={parsReady}
         actorLevel={level}
         canManage={level >= SKU_WRITE_MIN}
+        focusSkuId={focusSkuId}
+        initialVendorFilter={vendorParam}
       />
     </div>
   );
