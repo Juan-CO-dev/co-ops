@@ -106,4 +106,3 @@ export function parseStepUpPurpose(raw: unknown): StepUpPurpose | null | "invali
 export function grantExpiresAt(now: Date): Date {
   return new Date(now.getTime() + GRANT_TTL_MS);
 }
-
