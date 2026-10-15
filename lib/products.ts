@@ -41,7 +41,7 @@ import {
   type ReceiptLot,
 } from "@/lib/products-shared";
 import type { ProductIndex } from "@/lib/prep-consumption-graph";
-import { loadMeasures, loadSkuPackChains } from "@/lib/prep-consumption";
+import { loadMeasures, loadRecipeInputsAcrossScopes, loadResolvedRecipeInputs, loadSkuPackChains } from "@/lib/prep-consumption";
 import { skuContentOz, type MeasureUnitFactor } from "@/lib/recipe-math";
 import type { PackChainLevel } from "@/lib/pack-chain-shared";
 import { storeRunReceiptStreak, type ProductReceiptEvent } from "@/lib/products-shared";
@@ -226,19 +226,12 @@ async function loadPinnedRecipesByProduct(
   const out = new Map<string, Array<{ id: string; name: string }>>();
   if (productIds.length === 0) return out;
 
-  const pins = await selectAllRows<{ recipe_id: string; component_product_id: string | null }>(
-    async (from, to) => {
-      const { data, error } = await sb
-        .from("recipe_inputs")
-        .select("recipe_id, component_product_id")
-        .in("component_product_id", productIds)
-        .order("id", { ascending: true })
-        .range(from, to)
-        .returns<Array<{ recipe_id: string; component_product_id: string | null }>>();
-      if (error) throw new Error(`loadPinnedRecipesByProduct pins: ${error.message}`);
-      return { data };
-    },
-  );
+  // CATALOG PHASE 3a: a pin in ANY scope — the default or a shop's live version — still pins the product,
+  // and retiring it would orphan that shop's line just the same.
+  const wanted = new Set(productIds);
+  const pins = (await loadRecipeInputsAcrossScopes())
+    .filter((p) => p.component_product_id != null && wanted.has(p.component_product_id))
+    .map((p) => ({ recipe_id: p.recipe_id, component_product_id: p.component_product_id }));
   if (pins.length === 0) return out;
 
   // PAGED like the read above it, and for a sharper reason than symmetry: past the
@@ -1018,17 +1011,10 @@ export async function recordResolutionFlips(
  */
 export async function recordResolutionFlipsForLocation(locationId: string): Promise<void> {
   try {
-    const sb = getServiceRoleClient();
-    const { data, error } = await sb
-      .from("recipe_inputs")
-      .select("component_product_id")
-      .not("component_product_id", "is", null)
-      .returns<Array<{ component_product_id: string | null }>>();
-    if (error) {
-      console.error("[products] recordResolutionFlipsForLocation pins lookup failed:", error.message);
-      return;
-    }
-    const productIds = [...new Set((data ?? []).map((r) => r.component_product_id).filter((v): v is string => v != null))];
+    // CATALOG PHASE 3a: the pins THIS location's recipes resolve to (a shop version may pin a product the
+    // default does not). The resolver throws; the surrounding try keeps this forensic read fail-open.
+    const data = await loadResolvedRecipeInputs(locationId);
+    const productIds = [...new Set(data.map((r) => r.component_product_id).filter((v): v is string => v != null))];
     if (productIds.length === 0) return;
     const { index } = await loadProductIndex(productIds, locationId);
     await recordResolutionFlips(locationId, index.resolution);

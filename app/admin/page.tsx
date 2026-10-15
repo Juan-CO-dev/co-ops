@@ -6,6 +6,7 @@
  */
 
 import { countNotReady } from "@/lib/admin/readiness-load";
+import { readinessScopeHref, type ReadinessByScope } from "@/lib/admin/readiness-scope-shared";
 import { loadCronHealth, type CronHealth } from "@/lib/admin/ops-health";
 import { cronRunFailureTotal } from "@/lib/admin/ops-health-shared";
 import { loadWeekCard } from "@/lib/admin/week-card";
@@ -50,10 +51,12 @@ export default async function AdminHubPage({ searchParams }: { searchParams: Pro
     (s) => s.id === "skus" || s.id === "recipes" || s.id === "items",
   );
   let counts: Record<string, number> = {};
+  let byScope: ReadinessByScope[] = [];
   if (wantsCounts) {
     try {
       const c = await countNotReady(auth);
       counts = { skus: c.skus, recipes: c.recipes, items: c.items };
+      byScope = c.byScope;
     } catch (e) {
       console.error("hub readiness counts failed (rendering without pills)", e);
     }
@@ -109,18 +112,33 @@ export default async function AdminHubPage({ searchParams }: { searchParams: Pro
               </span>
             </div>
           ) : (
-            <a
-              key={s.id}
-              href={s.href}
-              className="co-card co-card-interactive p-4 text-base font-bold text-co-text focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60"
-            >
-              {serverT(lang, s.i18nKey)}
-              {(counts[s.id] ?? 0) > 0 ? (
-                <AlertPill tone="danger" uppercase={false} className="ml-2">
-                  {serverT(lang, "readiness.hub.count", { count: counts[s.id]! })}
-                </AlertPill>
+            <div key={s.id} className="flex flex-col gap-1">
+              <a
+                href={s.href}
+                className="co-card co-card-interactive p-4 text-base font-bold text-co-text focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60"
+              >
+                {serverT(lang, s.i18nKey)}
+                {(counts[s.id] ?? 0) > 0 ? (
+                  <AlertPill tone="danger" uppercase={false} className="ml-2">
+                    {serverT(lang, "readiness.hub.count", { count: counts[s.id]! })}
+                  </AlertPill>
+                ) : null}
+              </a>
+              {(s.id === "recipes" || s.id === "items") && (counts[s.id] ?? 0) > 0 && byScope.length > 0 ? (
+                <ul className="flex flex-wrap gap-x-3 gap-y-1 px-1 text-sm" aria-label={serverT(lang, "readiness.hub.where")}>
+                  {byScope.filter((b) => (s.id === "recipes" ? b.recipes : b.items) > 0).map((b) => (
+                    <li key={b.scope ?? "global"}>
+                      <a href={readinessScopeHref(s.id, s.href, b.scope)}
+                        className="inline-flex min-h-[44px] items-center font-bold text-co-text underline">
+                        {b.scope === null
+                          ? serverT(lang, "readiness.hub.where_default", { count: s.id === "recipes" ? b.recipes : b.items })
+                          : serverT(lang, "readiness.hub.where_shop", { shop: b.scopeName ?? "", count: s.id === "recipes" ? b.recipes : b.items })}
+                      </a>
+                    </li>
+                  ))}
+                </ul>
               ) : null}
-            </a>
+            </div>
           ),
         )}
       </div>

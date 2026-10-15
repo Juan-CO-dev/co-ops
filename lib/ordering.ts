@@ -52,7 +52,7 @@ import { lockLocationContext, type LocationActor } from "@/lib/locations";
 import { audit } from "@/lib/audit";
 import type { AuthContext } from "@/lib/session";
 import { isPulseReadActor, requirePulseReadScope, type PulseScopedReadActor } from "@/lib/pulse/read-actor";
-import { loadMeasures, loadShopPackEpochs, loadSkuPackChains, loadSkuPackResolution } from "@/lib/prep-consumption";
+import { loadMeasures, loadResolvedRecipeInputs, loadShopPackEpochs, loadSkuPackChains, loadSkuPackResolution } from "@/lib/prep-consumption";
 import { levelsBySku, type ResolvedPack } from "@/lib/sku-versions-shared";
 import { type RecipeInputSku } from "@/lib/recipe-math";
 import { type PackChainLevel } from "@/lib/pack-chain-shared";
@@ -235,25 +235,21 @@ interface DemandSources {
   removedSourcesBySku: Map<string, string[]>;
 }
 
-async function loadDemandSources(
+/** Exported for the equivalence pin and tests/recipe-consumers-shop-scope.test.ts; the walk is its only caller. */
+export async function loadDemandSources(
   sb: ReturnType<typeof getServiceRoleClient>,
   skus: ReadonlyArray<{ id: string; product_id: string | null }>,
+  locationId: string,
 ): Promise<DemandSources> {
   const activeRefsBySku = new Map<string, number>();
   const removedSourcesBySku = new Map<string, string[]>();
   if (skus.length === 0) return { activeRefsBySku, removedSourcesBySku };
 
   const [inputs, recipes] = await Promise.all([
-    selectAllRows<{ recipe_id: string; component_sku_id: string | null; component_product_id: string | null }>(
-      async (from, to) => {
-        const { data, error } = await sb.from("recipe_inputs")
-          .select("recipe_id, component_sku_id, component_product_id")
-          .order("id", { ascending: true }).range(from, to)
-          .returns<Array<{ recipe_id: string; component_sku_id: string | null; component_product_id: string | null }>>();
-        if (error) throw new Error(`loadDemandSources inputs: ${error.message}`);
-        return { data };
-      },
-    ),
+    // CATALOG PHASE 3a (lead decision 4): THIS SHOP's recipe lines — a shop that swapped mayo for pickle
+    // counts pickle as referenced and mayo as no longer referenced HERE. (The named "removed source" lane is
+    // still RETIRED recipes only: a shop version dropping a line raises no removed-source advisory.)
+    loadResolvedRecipeInputs(locationId),
     selectAllRows<{ id: string; name: string; active: boolean }>(async (from, to) => {
       const { data, error } = await sb.from("recipes").select("id, name, active")
         .order("id", { ascending: true }).range(from, to)
@@ -755,7 +751,7 @@ export async function loadWalkerData(actor: AuthContext, locationId: string): Pr
       // (0179). Zero products → zero queries.
       loadProductIndex(productIds, locationId),
       // Which recipes still create demand for these pars, and which stopped (2026-08-21).
-      loadDemandSources(sb, skus),
+      loadDemandSources(sb, skus, locationId),
       // ── DYNAMIC PARS (Task 4.2) — THREE MORE PARALLEL PROMISES, NO SERIAL STEP ──
       // The batch law is preserved: the walk gains no round trip it did not already wait
       // on, and none of the three reads is per-SKU. Each degrades to an honest empty

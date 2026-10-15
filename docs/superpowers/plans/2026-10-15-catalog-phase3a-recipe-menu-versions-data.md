@@ -4479,6 +4479,9 @@ Yields stay global (lead decision 1: a version is the LINES only). Catering is u
 | **Product ↔ item links** `lib/admin/product-item-links.ts:21` (items page) | lines | **any scope** | now | **this task** |
 | **"N recipes still pin this product"** `lib/products.ts:232` (`loadPinnedRecipesByProduct`, before a retire) | lines | **any scope** | now | **this task** |
 | **Resolution flips** `lib/products.ts:1023` (`recordResolutionFlipsForLocation`) | lines | that location | now | **this task** |
+| **Per-shop SKU data panel** `lib/sku-data-readiness-load.ts` (generic `COLUMNS` loader incl. `recipe_inputs`) → `lib/sku-data-readiness.ts` `evaluateWave7Tables` (one graph per shop) | lines | each shop | now | **this task** (chunk-2 review P2: the live shop versions + lines are loaded and merged per shop through `mergeResolvedInputs`) |
+| Pack preview broken lines `lib/catalog/sku-item.ts` (`computePackPreview`) | lines | each affected shop | now | **this task** (build: `loadResolvedRecipeInputsByScope`, one base read) |
+| `scripts/parity-angel.ts` / `scripts/seed/26-angel-wave7.ts` (generic `loadAll` over a table-name list incl. `recipe_inputs`) | lines | global by intent (Angel parity CLI) | now | none — does not load the version tables, so every shop reads the default |
 | `lib/report-package.ts:223` | graph | per row's shop | now | Task 5 |
 | `lib/weights.ts:301`, `lib/admin/catalog.ts:183`, `lib/admin/toast-map.ts:249,602`, seeds, sim scripts | graph | global by intent (global weights, the global hub, the matcher's cost; its overlay read is Task 6) | now | none |
 | Legacy builder `lib/recipes.ts:226,285,544` | `recipe_inputs` | the global default by definition — it edits it (its MoO-only line restriction ships with 3b, never 3a alone) | now | none |

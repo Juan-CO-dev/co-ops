@@ -24,6 +24,10 @@ import {
   type PackPickWarning, type ResolvedPack, type ScopedLevelRow, type ScopedVersionRow, type VersionScope,
 } from "@/lib/sku-versions-shared";
 import {
+  mergeResolvedInputs, pickLiveShopRecipeVersions, pickRecipeVersionsAsOf, recipeLineReplacements, versionIdsNeedingLines,
+  type RecipeVersionLineRow, type RecipeVersionRow, type ResolvedRecipeInput,
+} from "@/lib/recipe-versions-shared";
+import {
   batchSkuOzForItemFromGraph,
   buildRecipeGraph,
   isSingleItemOutputFromGraph,
@@ -255,7 +259,152 @@ export function packIntervalIndex(boundaries: readonly number[], at: number): nu
 }
 
 /**
- * D1 — ONE graph per pack INTERVAL for a shop, with the batch law kept (chunk-3 review P2a): every
+ * EVERY RECIPE BOUNDARY (a recipe version opening or closing) visible to `scope`, ascending, de-duplicated
+ * (epoch ms) — catalog Phase 3a, 0262. Baseline versions open on 2000-01-01, so with no edit since the migration
+ * the only recipe boundary is that date and every later business date resolves to the live graph. Paged.
+ */
+export async function loadRecipeBoundaries(scope: VersionScope): Promise<number[]> {
+  const sb = getServiceRoleClient();
+  const rows = await selectAllRows<{ id: string; valid_from: string; valid_to: string | null }>(async (from, to) => {
+    const base = sb.from("recipe_versions").select("id, valid_from, valid_to");
+    const scoped = scope == null ? base.is("location_id", null) : base.or(`location_id.is.null,location_id.eq.${assertScopeToken(scope)}`);
+    const { data, error } = await scoped.order("id", { ascending: true }).range(from, to)
+      .returns<Array<{ id: string; valid_from: string; valid_to: string | null }>>();
+    if (error) throw new Error(`loadRecipeBoundaries: ${error.message}`);
+    return { data };
+  });
+  const out = new Set<number>();
+  for (const r of rows) {
+    out.add(Date.parse(r.valid_from));
+    if (r.valid_to != null) out.add(Date.parse(r.valid_to));
+  }
+  return [...out].filter(Number.isFinite).sort((x, y) => x - y);
+}
+
+/** Pack ∪ recipe boundaries for `scope`, ascending and de-duplicated: the cuts between dated-graph intervals. */
+export async function loadCatalogBoundaries(scope: VersionScope): Promise<number[]> {
+  const [packs, recipes] = await Promise.all([loadPackBoundaries(scope), loadRecipeBoundaries(scope)]);
+  return [...new Set([...packs, ...recipes])].sort((x, y) => x - y);
+}
+
+/**
+ * THE RECIPE-VERSION RESOLVER POINT (catalog Phase 3a, 0262). recipe → the lines that REPLACE its
+ * recipe_inputs for `scope` at `asOf`, decided by the pure rules in lib/recipe-versions-shared.ts:
+ *   live, global ....... nothing to read — recipe_inputs IS the live global (zero queries);
+ *   live, a shop ....... that shop's live versions (one read) and their lines (one read, when any);
+ *   as of an instant ... the versions of {global ∪ scope} opened by then, the pick, then the lines of
+ *                        every pick that is not the live global head.
+ * PAGED (the 1000-row cap, ordered by real columns) and id-CHUNKED (the request-line budget). Fails loud:
+ * a dropped read would silently put the default's lines where a shop's version belongs.
+ */
+export async function loadRecipeLineOverlay(scope: VersionScope, asOf: string | null): Promise<Map<string, RecipeVersionLineRow[]>> {
+  if (asOf == null && scope == null) return new Map();
+  const sb = getServiceRoleClient();
+  const versions = await selectAllRows<RecipeVersionRow>(async (from, to) => {
+    const base = sb.from("recipe_versions").select("id, recipe_id, location_id, valid_from, valid_to, active");
+    const scoped = asOf == null
+      ? base.eq("location_id", assertScopeToken(scope as string)).eq("active", true)
+      : (scope == null ? base.is("location_id", null) : base.or(`location_id.is.null,location_id.eq.${assertScopeToken(scope)}`)).lte("valid_from", asOf);
+    const { data, error } = await scoped.order("id", { ascending: true }).range(from, to).returns<RecipeVersionRow[]>();
+    if (error) throw new Error(`loadRecipeLineOverlay versions: ${error.message}`);
+    return { data };
+  });
+  const picked = asOf == null ? pickLiveShopRecipeVersions(versions, scope) : pickRecipeVersionsAsOf(versions, scope, asOf);
+  const ids = versionIdsNeedingLines(picked);
+  if (ids.length === 0) return new Map();
+  const lines: RecipeVersionLineRow[] = [];
+  for (let i = 0; i < ids.length; i += ID_CHUNK) {
+    const chunk = ids.slice(i, i + ID_CHUNK);
+    lines.push(...await selectAllRows<RecipeVersionLineRow>(async (from, to) => {
+      const { data, error } = await sb.from("recipe_version_lines")
+        .select("id, version_id, recipe_id, component_sku_id, component_item_id, component_product_id, quantity, unit, each_container_label, portioned, display_order")
+        .in("version_id", chunk)
+        .order("display_order", { ascending: true }).order("id", { ascending: true })
+        .range(from, to).returns<RecipeVersionLineRow[]>();
+      if (error) throw new Error(`loadRecipeLineOverlay lines: ${error.message}`);
+      return { data };
+    }));
+  }
+  return recipeLineReplacements(picked, lines);
+}
+
+async function readAllRecipeInputs(sb: ReturnType<typeof getServiceRoleClient>, label: string): Promise<ResolvedRecipeInput[]> {
+  return selectAllRows<ResolvedRecipeInput>(async (from, to) => {
+    const { data, error } = await sb.from("recipe_inputs")
+      .select("id, recipe_id, component_sku_id, component_item_id, component_product_id, quantity, unit")
+      .order("id", { ascending: true }).range(from, to).returns<ResolvedRecipeInput[]>();
+    if (error) throw new Error(`${label} inputs: ${error.message}`);
+    return { data };
+  });
+}
+
+/**
+ * THE RECIPE LINES `scope` RESOLVES, for readers that need lines but not a flattened graph (catalog
+ * Phase 3a, lead decision 4): readiness, the par advisories' demand sources, production's picker and its
+ * conversion check, a location's product pins. The SAME rule as the graph — loadRecipeLineOverlay
+ * decides; recipe_inputs answers wherever the live global head does. scope null = the global default.
+ * The whole line table is read (the graph is ~60 recipes; an id `.in()` of every SKU is the 414 cliff
+ * sim P1 #6 named) and filtered in memory by the caller. Paged; fails loud.
+ */
+export async function loadResolvedRecipeInputs(scope: VersionScope, asOf: string | null = null): Promise<ResolvedRecipeInput[]> {
+  const sb = getServiceRoleClient();
+  const [base, replacements] = await Promise.all([
+    readAllRecipeInputs(sb, "loadResolvedRecipeInputs"),
+    loadRecipeLineOverlay(scope, asOf),
+  ]);
+  return mergeResolvedInputs(base, replacements);
+}
+
+/**
+ * THE SAME RESOLUTION FOR SEVERAL SCOPES AT ONCE (chunk-2 review P3c): recipe_inputs is read ONCE and each scope
+ * gets its own overlay (one or two small reads), so a page that needs every shop's lines (the pack preview, the
+ * hub's readiness) never re-reads the whole line table per shop. Keyed by scope id; the global default is "global".
+ */
+export async function loadResolvedRecipeInputsByScope(scopes: readonly VersionScope[]): Promise<Map<string, ResolvedRecipeInput[]>> {
+  const sb = getServiceRoleClient();
+  const unique = [...new Set(scopes.map((s) => s ?? null))];
+  const [base, ...overlays] = await Promise.all([
+    readAllRecipeInputs(sb, "loadResolvedRecipeInputsByScope"),
+    ...unique.map((s) => loadRecipeLineOverlay(s, null)),
+  ]);
+  return new Map(unique.map((s, i) => [s ?? "global", mergeResolvedInputs(base, overlays[i]!)]));
+}
+
+/**
+ * EVERY LIVE LINE IN ANY SCOPE: the global default's recipe_inputs plus every live shop version's lines
+ * (catalog Phase 3a). For "is this used anywhere" answers that serve no single shop — the SKU list's
+ * "used in", the items page's product links, "N recipes still pin this product" before a retire — so a
+ * SKU or product only a shop's recipe uses is never reported unused. Paged, id-chunked, fails loud.
+ */
+export async function loadRecipeInputsAcrossScopes(): Promise<ResolvedRecipeInput[]> {
+  const sb = getServiceRoleClient();
+  const [base, shopVersions] = await Promise.all([
+    readAllRecipeInputs(sb, "loadRecipeInputsAcrossScopes"),
+    selectAllRows<{ id: string }>(async (from, to) => {
+      const { data, error } = await sb.from("recipe_versions").select("id")
+        .not("location_id", "is", null).eq("active", true)
+        .order("id", { ascending: true }).range(from, to).returns<Array<{ id: string }>>();
+      if (error) throw new Error(`loadRecipeInputsAcrossScopes versions: ${error.message}`);
+      return { data };
+    }),
+  ]);
+  const out = [...base];
+  const ids = shopVersions.map((v) => v.id);
+  for (let i = 0; i < ids.length; i += ID_CHUNK) {
+    const chunk = ids.slice(i, i + ID_CHUNK);
+    out.push(...await selectAllRows<ResolvedRecipeInput>(async (from, to) => {
+      const { data, error } = await sb.from("recipe_version_lines")
+        .select("id, recipe_id, component_sku_id, component_item_id, component_product_id, quantity, unit")
+        .in("version_id", chunk).order("id", { ascending: true }).range(from, to).returns<ResolvedRecipeInput[]>();
+      if (error) throw new Error(`loadRecipeInputsAcrossScopes lines: ${error.message}`);
+      return { data };
+    }));
+  }
+  return out;
+}
+
+/**
+ * D1 — ONE graph per catalog INTERVAL (pack and, since 3a, recipe boundaries) for a shop, with the batch law kept (chunk-3 review P2a): every
  * business date whose last instant falls between the same two pack boundaries shares ONE as-of
  * graph, and every date after the last boundary IS the live graph (loaded once). So a 30-day window
  * with one boundary in it costs two graph loads, never thirty. Depletion (Toast and ezCater)
@@ -268,7 +417,9 @@ export function createDatedGraphs(opts: { locationId: string | null; liveGraph?:
   const byInterval = new Map<number, Promise<RecipeGraph>>();
   return async (businessDate: string) => {
     const asOf = asOfForBusinessDate(businessDate);
-    bounds ??= loadPackBoundaries(opts.locationId);
+    // CATALOG PHASE 3a: recipe versions open and close too — the intervals are cut at every pack AND recipe
+    // boundary, so two dates on opposite sides of a recipe edit never share a graph.
+    bounds ??= loadCatalogBoundaries(opts.locationId);
     const b = await bounds;
     const at = Date.parse(asOf);
     const k = packIntervalIndex(b, at);
@@ -332,8 +483,19 @@ async function loadItemParBasis(
  * `opts.versionLocationId` (catalog Phase 2a) chooses whose SHOP VERSIONS of pack chains the graph's
  * skuPack carries (default: `locationId`); `opts.asOf` chooses WHEN (default: now). Depletion for a
  * business date goes through createDatedGraphs, never through a bare live graph.
+ *
+ * RECIPES ARE VERSIONED TOO (catalog Phase 3a, 0262): the same `versionLocationId` chooses whose shop
+ * recipe versions answer, and the same `asOf` chooses WHEN — loadRecipeLineOverlay is the one point
+ * that decides; recipe_inputs answers wherever the live global head does. Query count stays FIXED:
+ * +0 for the global live graph, +1–2 for a shop or a date, never per recipe.
  */
-export async function loadRecipeGraph(opts?: { locationId?: string | null; versionLocationId?: string | null; asOf?: string | null }): Promise<RecipeGraph> {
+export async function loadRecipeGraph(opts?: {
+  locationId?: string | null;
+  versionLocationId?: string | null;
+  asOf?: string | null;
+  /** A preview's hypothetical lines (catalog Phase 3b): recipe → lines, winning over every version. */
+  recipeOverrides?: ReadonlyMap<string, readonly RecipeVersionLineRow[]>;
+}): Promise<RecipeGraph> {
   const locationId = opts?.locationId ?? null;
   // WHOSE SHOP VERSIONS, AND WHEN (catalog Phase 2a, 0259). `versionLocationId` defaults to the
   // product-resolution location, so every location-aware caller follows that shop's pack versions.
@@ -385,9 +547,18 @@ export async function loadRecipeGraph(opts?: { locationId?: string | null; versi
   ] as const) {
     if (err) throw new Error(`loadRecipeGraph ${label}: ${err.message}`);
   }
+  // CATALOG PHASE 3a (0262): THE RECIPE LINES THIS SCOPE RESOLVES. A recipe whose answer is a shop
+  // version (live, or in force at `asOf`) or an older global version gets THAT version's lines; every
+  // other recipe keeps its recipe_inputs rows exactly as read above (the live global head IS
+  // recipe_inputs). A preview's overrides win over both. Outputs and product resolution are untouched.
+  const replacements = await loadRecipeLineOverlay(versionScope, asOf);
+  for (const [recipeId, lines] of opts?.recipeOverrides ?? []) replacements.set(recipeId, [...lines]);
+  const lineRows = [...(inRows ?? []), ...[...replacements.values()].flat()];
   const outputItemIds = [...new Set((outRows ?? []).filter((o) => o.output_item_id).map((o) => o.output_item_id!))];
-  const skuIds = [...new Set((inRows ?? []).filter((c) => c.component_sku_id).map((c) => c.component_sku_id!))];
-  const productIds = [...new Set((inRows ?? []).filter((c) => c.component_product_id).map((c) => c.component_product_id!))];
+  // Every SKU / product ANY resolved line names — the base rows first (so with no versions the order,
+  // and the graph, are byte-identical), then a version's or a preview's additions.
+  const skuIds = [...new Set(lineRows.filter((c) => c.component_sku_id).map((c) => c.component_sku_id!))];
+  const productIds = [...new Set(lineRows.filter((c) => c.component_product_id).map((c) => c.component_product_id!))];
   const resolvedPacks = new Map<string, ResolvedPack>();
   const [parBasis, skuPack, productIndex] = await Promise.all([
     loadItemParBasis(outputItemIds),
@@ -411,9 +582,16 @@ export async function loadRecipeGraph(opts?: { locationId?: string | null; versi
 
   const inputsByRecipe = new Map<string, GraphRecipe["inputs"]>();
   for (const c of inRows ?? []) {
+    if (replacements.has(c.recipe_id)) continue; // this scope answers with another version's lines (below)
     const list = inputsByRecipe.get(c.recipe_id) ?? [];
     list.push({ quantity: num(c.quantity) ?? 0, unit: c.unit, componentSkuId: c.component_sku_id, componentItemId: c.component_item_id, componentProductId: c.component_product_id });
     inputsByRecipe.set(c.recipe_id, list);
+  }
+  for (const [recipeId, lines] of replacements) {
+    inputsByRecipe.set(recipeId, lines.map((c) => ({
+      quantity: num(c.quantity) ?? 0, unit: c.unit, componentSkuId: c.component_sku_id,
+      componentItemId: c.component_item_id, componentProductId: c.component_product_id,
+    })));
   }
   const outputsByRecipe = new Map<string, GraphRecipe["outputs"]>();
   for (const o of outRows ?? []) {

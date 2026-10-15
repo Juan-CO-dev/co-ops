@@ -172,6 +172,18 @@ export const DESTRUCTIVE_ACTIONS = [
   // depletion and every future nudge read it — so the edit is destructive. Registered BEFORE
   // its first caller so every commit compiles on its own.
   "recipe_output.update",
+  // ── Shop versions of recipes (catalog Phase 3, 0262) ──────────────────────
+  // — recipe_version.save: a human saves a recipe's LINE SET for a shop or the global default (an
+  //   edit or a Restore; which one rides in metadata). The same "who changed the kitchen?" act as
+  //   recipe_input.update, scoped.
+  "recipe_version.save",
+  // — recipe_version.retire: a shop goes back to the default recipe.
+  "recipe_version.retire",
+  // — recipe_version.adopt: a shop copies another shop's version as-is (3b's first caller; registered
+  //   here so the writer that names it compiles on its own).
+  "recipe_version.adopt",
+  // — recipe_version.promote: MoO+ makes a shop's version the global default (3b's first caller).
+  "recipe_version.promote",
   // Batch vs bottle (0215). Tossing the counted bulk backup is a HUMAN act on the
   // accountability record — waste that variance reads — and its retraction on revoke is
   // the same act undone; both belong under "who changed the kitchen?" (Astra r1 Q11,
@@ -180,6 +192,13 @@ export const DESTRUCTIVE_ACTIONS = [
   "backup.toss_retracted",
   "menu_item.create",
   "menu_item.update",
+  // ── Menu items per shop (catalog Phase 3, 0263) ───────────────────────────
+  // — menu_item.shop_setting_save: a shop's price / sold here / name here saved (or restored).
+  "menu_item.shop_setting_save",
+  // — menu_item.shop_setting_retire: a shop goes back to the global menu item.
+  "menu_item.shop_setting_retire",
+  // — menu_item.shop_setting_promote: MoO+ makes a shop's price / name the global one (3b's first caller).
+  "menu_item.shop_setting_promote",
 
   // Category registry (Vendor Directory v2, Slice A).
   // — category.create adds a category to the shared `categories` registry (MoO+,

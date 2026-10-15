@@ -1,0 +1,191 @@
+{
+  "readiness": {
+    "recipes": {
+      "r-italian": {
+        "status": "upstream_gaps",
+        "reasons": [
+          {
+            "code": "not_ready_skus",
+            "count": 1
+          }
+        ]
+      },
+      "r-pickle": {
+        "status": "upstream_gaps",
+        "reasons": [
+          {
+            "code": "not_ready_skus",
+            "count": 1
+          }
+        ]
+      },
+      "r-slaw": {
+        "status": "ready",
+        "reasons": []
+      }
+    },
+    "items": {
+      "i-slaw": {
+        "status": "ready",
+        "reasons": []
+      }
+    }
+  },
+  "skuUsage": {
+    "s-cheese": [],
+    "s-ham-a": [],
+    "s-ham-b": [],
+    "s-ham-c": [],
+    "s-lettuce": [
+      "Slaw"
+    ],
+    "s-mayo": [
+      "Slaw"
+    ],
+    "s-onion": [],
+    "s-pickle": [],
+    "s-store-ham": [],
+    "s-tomato": [],
+    "s-turkey": [],
+    "s-twin-x": [],
+    "s-twin-y": []
+  },
+  "productLinks": {
+    "madeFromByItem": {},
+    "usedInByProduct": {},
+    "producingRecipeByItem": {}
+  },
+  "productPins": [
+    {
+      "id": "p-bread",
+      "pinned": [
+        {
+          "id": "r-italian",
+          "name": "Italian"
+        }
+      ]
+    },
+    {
+      "id": "p-ham",
+      "pinned": [
+        {
+          "id": "r-italian",
+          "name": "Italian"
+        }
+      ]
+    },
+    {
+      "id": "p-retired",
+      "pinned": []
+    }
+  ],
+  "demandSources": {
+    "activeRefsBySku": {
+      "s-cheese": 1,
+      "s-ham-a": 1,
+      "s-ham-b": 1,
+      "s-ham-c": 1,
+      "s-lettuce": 1,
+      "s-mayo": 1,
+      "s-pickle": 1,
+      "s-store-ham": 1,
+      "s-tomato": 1,
+      "s-turkey": 1,
+      "s-twin-x": 1,
+      "s-twin-y": 1
+    },
+    "removedSourcesBySku": {
+      "s-onion": [
+        "Old sub"
+      ]
+    }
+  },
+  "productionPicker": {
+    "loc-1": {
+      "s-lettuce": [
+        {
+          "itemId": "i-slaw",
+          "name": "Slaw"
+        }
+      ],
+      "s-mayo": [
+        {
+          "itemId": "i-slaw",
+          "name": "Slaw"
+        }
+      ],
+      "s-turkey": [],
+      "s-tomato": [],
+      "s-cheese": [],
+      "s-pickle": [],
+      "s-ham-a": [],
+      "s-ham-b": [],
+      "s-store-ham": [],
+      "s-twin-x": [],
+      "s-twin-y": []
+    },
+    "loc-2": {
+      "s-lettuce": [
+        {
+          "itemId": "i-slaw",
+          "name": "Slaw"
+        }
+      ],
+      "s-mayo": [
+        {
+          "itemId": "i-slaw",
+          "name": "Slaw"
+        }
+      ],
+      "s-turkey": [],
+      "s-tomato": [],
+      "s-cheese": [],
+      "s-pickle": [],
+      "s-ham-a": [],
+      "s-ham-b": [],
+      "s-store-ham": [],
+      "s-twin-x": [],
+      "s-twin-y": []
+    }
+  },
+  "conversions": {
+    "loc-1": {
+      "s-bags>i-slaw": "invalid_conversion",
+      "s-cheese>i-slaw": "invalid_conversion",
+      "s-cups>i-slaw": "invalid_conversion",
+      "s-ham-a>i-slaw": "invalid_conversion",
+      "s-ham-b>i-slaw": "invalid_conversion",
+      "s-lettuce>i-slaw": "accepted",
+      "s-mayo>i-slaw": "accepted",
+      "s-onion>i-slaw": "invalid_conversion",
+      "s-pepper>i-slaw": "invalid_conversion",
+      "s-pickle>i-slaw": "invalid_conversion",
+      "s-relish>i-slaw": "invalid_conversion",
+      "s-salt>i-slaw": "invalid_conversion",
+      "s-store-ham>i-slaw": "invalid_conversion",
+      "s-tomato>i-slaw": "invalid_conversion",
+      "s-turkey>i-slaw": "invalid_conversion",
+      "s-twin-x>i-slaw": "invalid_conversion",
+      "s-twin-y>i-slaw": "invalid_conversion"
+    },
+    "loc-2": {
+      "s-bags>i-slaw": "invalid_conversion",
+      "s-cheese>i-slaw": "invalid_conversion",
+      "s-cups>i-slaw": "invalid_conversion",
+      "s-ham-a>i-slaw": "invalid_conversion",
+      "s-ham-b>i-slaw": "invalid_conversion",
+      "s-lettuce>i-slaw": "accepted",
+      "s-mayo>i-slaw": "accepted",
+      "s-onion>i-slaw": "invalid_conversion",
+      "s-pepper>i-slaw": "invalid_conversion",
+      "s-pickle>i-slaw": "invalid_conversion",
+      "s-relish>i-slaw": "invalid_conversion",
+      "s-salt>i-slaw": "invalid_conversion",
+      "s-store-ham>i-slaw": "invalid_conversion",
+      "s-tomato>i-slaw": "invalid_conversion",
+      "s-turkey>i-slaw": "invalid_conversion",
+      "s-twin-x>i-slaw": "invalid_conversion",
+      "s-twin-y>i-slaw": "invalid_conversion"
+    }
+  }
+}

@@ -84,6 +84,9 @@ const SHOP_PARAMS_BY_PATH: Readonly<Record<string, readonly string[]>> = {
   "/assignments": ["location", "loc"],
   "/my-feedback": ["location", "loc"], // old ?loc= links keep working; the shared tabs use ?location=
   "/reports": ["location"],
+  // Catalog Phase 3a — readiness AT a shop (the hub's attributed counts link here; ?location=<shop>|global).
+  "/admin/recipes": ["location"],
+  "/admin/items": ["location"],
   "/reports/sales": ["location"],
   "/reports/sales/catering": ["location"],
   "/reports/sales/checks": ["location"],

@@ -25,6 +25,7 @@ vi.mock("@/lib/admin/cost", () => ({
   COST_READ_MIN: 6,
   loadCurrentSkuPrices: async (_ids: string[], scope: unknown) => { seen.prices.push(scope); return new Map(); },
 }));
+vi.mock("@/lib/menu-item-shop", () => ({ loadLiveMenuItemShopSettings: async () => new Map() }));
 import { loadMenuCostingBoard, MenuCostingError } from "@/lib/admin/menu-costing";
 
 const A = "6f1d2c3e-0000-4000-8000-00000000000a";

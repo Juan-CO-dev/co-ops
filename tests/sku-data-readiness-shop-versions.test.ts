@@ -45,3 +45,48 @@ describe("evaluateWave7Tables — per-shop chain and price", () => {
     for (const shop of evaluateWave7Tables(data).shops) expect(shop.rows[0]).toMatchObject({ order: "usable", count: "usable", cost: "usable" });
   });
 });
+
+describe("evaluateWave7Tables — per-shop RECIPE versions (catalog Phase 3a chunk-2 review P2)", () => {
+  /** North's slaw swaps mayo for pickle (its own live version); south rides the default. */
+  function withSlaw(): LiveTables {
+    const data = tables();
+    data.vendor_items = ["lettuce", "mayo", "pickle"].map((id) => ({ id, name: id, vendor_id: "vendor", active: true, sku_class: "raw", pack_format: null,
+      units_per_pack: null, each_size: null, each_measure: null, weight_class: "OPERATIONAL", weekday_par: 1, weekend_par: 1 }));
+    data.items = [{ id: "i-slaw", name: "Slaw", oz_per_par_unit: 32, default_par_unit: "quart" }];
+    data.recipes = [{ id: "r-slaw", name: "Slaw", active: true, created_at: "2026-09-01T00:00:00Z", batch_yield: 1 }];
+    data.recipe_outputs = [{ id: "ro", recipe_id: "r-slaw", output_item_id: "i-slaw", output_menu_item_id: null, yield: 1 }];
+    data.recipe_inputs = [
+      { id: "ri-1", recipe_id: "r-slaw", quantity: 48, unit: "oz", component_sku_id: "lettuce", component_item_id: null, component_product_id: null },
+      { id: "ri-2", recipe_id: "r-slaw", quantity: 16, unit: "oz", component_sku_id: "mayo", component_item_id: null, component_product_id: null },
+    ];
+    data.recipe_versions = [{ id: "rv-n", recipe_id: "r-slaw", location_id: "north", valid_from: "2026-10-01T00:00:00Z", valid_to: null, active: true }];
+    data.recipe_version_lines = [
+      { id: "l1", version_id: "rv-n", recipe_id: "r-slaw", quantity: 48, unit: "oz", component_sku_id: "lettuce", component_item_id: null, component_product_id: null, display_order: 0 },
+      { id: "l2", version_id: "rv-n", recipe_id: "r-slaw", quantity: 16, unit: "oz", component_sku_id: "pickle", component_item_id: null, component_product_id: null, display_order: 1 },
+    ];
+    return data;
+  }
+  const deps = (data: LiveTables, shop: string) =>
+    [...evaluateWave7Tables(data).shops.find((s) => s.id === shop)!.recipes.find((r) => r.id.startsWith("r-slaw/"))!.dependencies].sort();
+
+  it("each shop's graph is built from ITS resolved recipe: pickle at north, mayo at south", () => {
+    const data = withSlaw();
+    expect(deps(data, "north")).toEqual(["lettuce", "pickle"]);
+    expect(deps(data, "south")).toEqual(["lettuce", "mayo"]);
+  });
+  it("with no shop version (or the version tables absent, pre-0262) every shop reads the default", () => {
+    const none = withSlaw();
+    none.recipe_versions = [];
+    none.recipe_version_lines = [];
+    expect(deps(none, "north")).toEqual(["lettuce", "mayo"]);
+    const pre = withSlaw();
+    delete pre.recipe_versions;
+    delete pre.recipe_version_lines;
+    expect(deps(pre, "north")).toEqual(["lettuce", "mayo"]);
+  });
+  it("a version line naming a SKU the load does not hold refuses (a dropped page is not a smaller graph)", () => {
+    const data = withSlaw();
+    data.recipe_version_lines![1]!.component_sku_id = "ghost";
+    expect(() => evaluateWave7Tables(data)).toThrow(/INCOMPLETE_GRAPH/);
+  });
+});

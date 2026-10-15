@@ -143,8 +143,10 @@ const LATER_REEMITTERS: Readonly<Record<string, string>> = {
   submit_phase2_atomic: "0255_under_par_alert_recipients.sql",
   // 0258 (catalog Phase 1, Astra r2 #1): the recipe-graph lock + in-transaction output cycle refusal
   // → tests/recipe-input-write-atomic.test.ts pins both as line-subsequences of 0215.
-  create_recipe_full: "0258_recipe_input_write_atomic.sql",
-  add_recipe_output: "0258_recipe_input_write_atomic.sql",
+  // 0262 (catalog Phase 3a) re-emits both FROM 0258 (+ the per-shop cycle sweep, + the journal actor)
+  // → tests/recipe-versions-migration.test.ts pins them as line-subsequences of 0258.
+  create_recipe_full: "0262_recipe_shop_versions.sql",
+  add_recipe_output: "0262_recipe_shop_versions.sql",
 };
 
 describe("0215 re-emits every RPC from its latest definer — nothing dropped (GO correction 5)", () => {

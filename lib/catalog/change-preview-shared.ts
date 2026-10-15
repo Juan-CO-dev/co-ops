@@ -48,6 +48,11 @@ export interface PreviewShopState {
   /** Each day-class's par here and the lane that answers it (from the D3-stamped overlay). */
   slots: ReadonlyArray<{ slot: ParSlotName; value: number | null; lane: ParLane }>;
   openOrders: readonly PreviewOpenOrder[];
+  /**
+   * The recipe lines naming this SKU AS THIS SHOP RESOLVES ITS RECIPES (catalog Phase 3a, lead decision 4: a
+   * shop's own recipe version replaces the default's lines). Absent = the preview's default lines.
+   */
+  recipeLines?: readonly PreviewRecipeLine[];
 }
 
 export type ParRowStatus = "convertible" | "global_par_shared" | "machine_par" | "no_weight";
@@ -267,7 +272,7 @@ function shopPackDelta(
     orderUnitOz: { before: perOrderUnitOz(s.basePack, chainOf(s.basePack), m), after: perOrderUnitOz(newPack, newChain, m) },
     costPerOz: { before: skuCostPerOz(price, skuContentOz(s.basePack, m)), after: skuCostPerOz(price, skuContentOz(newPack, m)) },
     menuItems: menuDeltas(skuId, before, after, costPerOzFromGraph(before, s.prices), costPerOzFromGraph(after, s.prices), menuItems),
-    brokenLines: recipeLines.filter((l) =>
+    brokenLines: (s.recipeLines ?? recipeLines).filter((l) =>
       ozForRecipeInput(l.quantity, l.unit, s.basePack, m) != null && ozForRecipeInput(l.quantity, l.unit, newPack, m) == null),
     openOrders: [...s.openOrders],
   };

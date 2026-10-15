@@ -2,6 +2,7 @@ import "server-only";
 
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import { selectAllRows } from "@/lib/supabase-paginate";
+import { loadRecipeInputsAcrossScopes } from "@/lib/prep-consumption";
 import { getRoleLevel } from "@/lib/roles";
 import type { AuthContext } from "@/lib/session";
 import { ITEMS_READ_MIN } from "@/lib/admin/items";
@@ -18,8 +19,11 @@ export async function loadProductItemLinks(actor: AuthContext) {
   const [recipes, inputs, outputs, products, skus, items, vendors] = await Promise.all([
     selectAllRows<{ id: string; active: boolean }>((from, to) => sb.from("recipes")
       .select("id, active").eq("active", true).order("id").range(from, to)),
-    selectAllRows<LinkInput>((from, to) => sb.from("recipe_inputs")
-      .select("recipe_id, component_product_id, component_sku_id, component_item_id").order("id").range(from, to)),
+    // CATALOG PHASE 3a: a product feeds an item if ANY scope's recipe says so (the default or a shop's version).
+    loadRecipeInputsAcrossScopes().then((rows) => rows.map((r): LinkInput => ({
+      recipe_id: r.recipe_id, component_product_id: r.component_product_id,
+      component_sku_id: r.component_sku_id, component_item_id: r.component_item_id,
+    }))),
     selectAllRows<LinkOutput>((from, to) => sb.from("recipe_outputs")
       .select("recipe_id, output_item_id").not("output_item_id", "is", null).order("id").range(from, to)),
     selectAllRows<LinkEntity>((from, to) => sb.from("products")

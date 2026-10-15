@@ -211,7 +211,7 @@ export async function loadCatalogView(actor: AuthContext): Promise<CatalogEntity
   //    A blip big enough to fail readiness already fails this loader one line up, so the
   //    swallow bought nothing but an inconsistent story about the same failure.
   const readyItemIds = new Set<string>();
-  for (const [id, r] of (await loadGraphReadiness(actor)).itemReadiness) {
+  for (const [id, r] of (await loadGraphReadiness(actor, null)).itemReadiness) {
     if (r.status === "ready") readyItemIds.add(id);
   }
   const isReady = (itemId: string) => readyItemIds.has(itemId);

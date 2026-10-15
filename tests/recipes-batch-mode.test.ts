@@ -79,15 +79,16 @@ describe("outputs: every writer is an RPC under the recipe row lock", () => {
     // The race's loser gets the RPC's named refusal, mapped to the same 422 as the TS check.
     expect(body).toMatch(/rpcRecipeError\(error, BATCH_MODE_RPC_ERRORS\)/);
   });
-  it("removeRecipeEdge deletes an output through remove_recipe_output and keeps the direct path for inputs only", () => {
+  it("removeRecipeEdge deletes an output through remove_recipe_output and an input through remove_recipe_input_atomic (0262)", () => {
     const body = fnBody(lib, "removeRecipeEdge");
     expect(body).toMatch(/rpc\("remove_recipe_output"/);
-    // The remaining `.delete(` is reached only after the outputs branch has returned.
+    // The input path is reached only after the outputs branch has returned, and it is the graph-locked RPC.
     const rpcAt = body.indexOf('rpc("remove_recipe_output"');
     const returnAt = body.indexOf("return;", rpcAt);
-    const deleteAt = body.indexOf(".delete(");
+    const inputAt = body.indexOf('rpc("remove_recipe_input_atomic"');
     expect(returnAt).toBeGreaterThan(rpcAt);
-    expect(deleteAt).toBeGreaterThan(returnAt);
+    expect(inputAt).toBeGreaterThan(returnAt);
+    expect(body).not.toContain(".delete(");
   });
   it("createRecipeFull refuses batch_mode with anything but one ITEM output before the RPC, and sends batch_mode in the header", () => {
     const body = fnBody(lib, "createRecipeFull");

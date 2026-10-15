@@ -23,7 +23,8 @@ import { selectAllRows } from "@/lib/supabase-paginate";
 import { audit } from "@/lib/audit";
 import type { AuthContext } from "@/lib/session";
 import { AdminSkuError, loadMeasureUnits } from "@/lib/admin/skus";
-import { loadRecipeGraph, loadSkuPackResolution } from "@/lib/prep-consumption";
+import { loadRecipeGraph, loadResolvedRecipeInputsByScope, loadSkuPackResolution } from "@/lib/prep-consumption";
+import type { ResolvedRecipeInput } from "@/lib/recipe-versions-shared";
 import { loadPackAwareOverlay, type OverlayRow } from "@/lib/ordering";
 import { loadCurrentSkuPriceHeads, loadCurrentSkuPrices } from "@/lib/admin/cost";
 import {
@@ -191,10 +192,12 @@ async function loadMenuItems(sb: Sb): Promise<PreviewMenuItem[]> {
   return (data ?? []).map((m) => ({ id: m.id, name: m.name, nameEs: m.name_es }));
 }
 
-async function loadDirectRecipeLines(sb: Sb, skuId: string): Promise<PreviewRecipeLine[]> {
-  const { data: lines, error } = await sb.from("recipe_inputs").select("recipe_id, quantity, unit").eq("component_sku_id", skuId)
-    .returns<Array<{ recipe_id: string; quantity: number | string; unit: string | null }>>();
-  if (error) throw new Error(`sku-item recipe lines: ${error.message}`);
+/**
+ * The recipe lines naming this SKU AS `scope` RESOLVES ITS RECIPES (catalog Phase 3a, lead decision 4 — the one
+ * resolver: a shop's own recipe version replaces the default's lines; null = the global default).
+ */
+async function directRecipeLines(sb: Sb, skuId: string, resolved: readonly ResolvedRecipeInput[]): Promise<PreviewRecipeLine[]> {
+  const lines = resolved.filter((l) => l.component_sku_id === skuId);
   const ids = [...new Set((lines ?? []).map((l) => l.recipe_id))];
   if (ids.length === 0) return [];
   const { data: recipes, error: rErr } = await sb.from("recipes").select("id, name").in("id", ids).eq("active", true)
@@ -511,12 +514,19 @@ export async function computePackPreview(actor: AuthContext, skuId: string, targ
   // computed, or before the save — makes the apply's re-take differ, and the save is refused.
   const { data: snapshot, error: snapErr } = await sb.rpc("sku_pack_change_snapshot", { p_sku: skuId, p_shops: snapshotShops.map((s) => s.id) });
   if (snapErr) throw new Error(`sku-item snapshot: ${snapErr.message}`);
-  const [states, menuItems, recipeLines, targetPacks] = await Promise.all([
+  // Each shop's broken lines are judged on ITS resolved recipe (catalog Phase 3a, lead decision 4) — recipe_inputs
+  // read ONCE for the whole preview, one small overlay per shop (chunk-2 review P3c).
+  const [baseStates, resolvedByScope, menuItems, targetPacks] = await Promise.all([
     Promise.all(shops.map((s) => loadShopState(sb, row, s))),
+    loadResolvedRecipeInputsByScope([null, ...shops.map((s) => s.id)]),
     loadMenuItems(sb),
-    loadDirectRecipeLines(sb, skuId),
     loadSkuPackResolution([skuId], scope),
   ]);
+  const [recipeLines, ...shopLines] = await Promise.all([
+    directRecipeLines(sb, skuId, resolvedByScope.get("global") ?? []),
+    ...shops.map((s) => directRecipeLines(sb, skuId, resolvedByScope.get(s.id) ?? [])),
+  ]);
+  const states = baseStates.map((st, i) => ({ ...st, recipeLines: shopLines[i] ?? recipeLines! }));
   const tp = targetPacks.get(skuId) ?? null;
   // expected_live is the TARGET scope's OWN live version (a shop riding the global one has none);
   // a shop's first own version is based on the global version it replaces.

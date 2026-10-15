@@ -161,15 +161,15 @@ describe("production honours rung ⓪ — a retired product stops authorising co
     expect(body).toContain("filter((id) => !retiredProductIds.has(id))");
     // The exact spelling of the bug: every membership expanded, retirement never asked.
     expect(body).not.toContain("const productIds = [...membersByProduct.keys()];");
-    expect(body.indexOf("retiredProductIds")).toBeLessThan(body.indexOf('.in("component_product_id"'));
+    expect(body.indexOf("retiredProductIds")).toBeLessThan(body.indexOf("const pinned = new Set(productIds);"));
   });
 
   it("the SKU-pin pass is untouched — a directly-named SKU still makes what it made", () => {
     // The refusal is scoped to the PRODUCT-expansion half. A recipe that names this SKU
     // itself has nothing to do with any product's retirement.
     const load = fnBody(src, "loadSkuToItems");
-    expect(load).toContain('.in("component_sku_id", skuIds)');
-    expect(fnBody(src, "recordProduction")).toContain('.eq("component_sku_id", input.inputSkuId)');
+    expect(load).toContain("wanted.has(i.component_sku_id)");
+    expect(fnBody(src, "recordProduction")).toContain("r.component_sku_id === input.inputSkuId");
   });
 
   it("recordProduction refuses with a NAMED code, only when the retired pin was the sole authority", () => {

@@ -61,7 +61,7 @@ export default async function AdminRecipeDetailPage({
 
   let readiness: Readiness | null = null;
   try {
-    const g = await loadGraphReadiness(auth);
+    const g = await loadGraphReadiness(auth, null);
     readiness = g.recipeReadiness.get(id) ?? null;
   } catch (e) {
     console.error("readiness load failed (rendering without banner)", e);
