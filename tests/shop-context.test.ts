@@ -351,6 +351,8 @@ const PAGE_ROUTES: Record<string, string> = {
   "app/admin/menu-costing/page.tsx": "/admin/menu-costing", // catalog Phase 2a — the costing board's shop switcher
   // catalog Phase 2b — the item page's shop switcher (a prefix route: /admin/catalog/sku/[id]).
   "app/admin/catalog/sku/[id]/page.tsx": "/admin/catalog/sku/7d0c1f2e-0000-4000-8000-000000000001",
+  // catalog Phase 3b — the recipe page's shop switcher (a prefix route: /admin/catalog/recipe/[id]).
+  "app/admin/catalog/recipe/[id]/page.tsx": "/admin/catalog/recipe/7d0c1f2e-0000-4000-8000-000000000001",
   // catalog Phase 2b (sim QA) — the SKU catalog and the vendor page resolve the shop their item-page
   // links land on; they read no shop parameter of their own.
   "app/admin/skus/page.tsx": "/admin/skus",
@@ -459,6 +461,9 @@ const RESOLVER_PAGES: Record<string, RegExp> = {
   // Catalog Phase 3a: an explicit shop goes through the one resolver; absent / "global" is the default (not remembered).
   "app/admin/recipes/page.tsx": /explicit && explicit !== "global" && shops\.some\(\(s\) => s\.id === explicit\)\s*\? await resolveShopId\(shops\.map\(\(s\) => s\.id\), explicit\) : null/,
   "app/admin/items/page.tsx": /explicit && explicit !== "global" && shops\.some\(\(s\) => s\.id === explicit\)\s*\? await resolveShopId\(shops\.map\(\(s\) => s\.id\), explicit\) : null/,
+  // Catalog Phase 3b: "global" is the default; a shop the viewer works in goes through the one resolver; another active
+  // shop reads (read-only); absent → the one resolver over the viewer's shops.
+  "app/admin/catalog/recipe/[id]/page.tsx": /explicit === "global" \? null\s*: explicit && mine\.includes\(explicit\) \? await resolveShopId\(mine, explicit\)[\s\S]*: mine\.length > 0 \? await resolveShopId\(mine, null\) : null/,
 };
 
 describe("source shape — every shop-defaulting page uses the one resolver", () => {
