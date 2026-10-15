@@ -152,7 +152,11 @@ Nothing structural is hard-coded. Each shop has a **Schedule structure** setting
   - Salaried GM/AGM have a **minimum on-the-clock per day**, tunable per position (default 8 h). This is a hard constraint, separate from the floor cap.
   - When a manager isn't needed at a station, their time is **"Manager on duty"**; two managers can both be on duty. Managers have manager work, but **service comes first**: they drop into a station only when coverage needs them.
   - **The board never double-covers a position:** no manager on a station another person already covers.
+- **Positions:**
+  - **One person per position** at a time (default head count 1, tunable). When a station closes or trims, that person moves to another open position or clocks out. Two people never fill the same position at the same time; e.g. two walk-in closers fill Walk-ins and Walk-ins / Online.
+  - **Allowed roles per position** (tunable). E.g. Prep/Dishwasher = Employee (optionally Key Holder) and **never a manager** except as a call-out last resort, with the reason stated.
 - **Limits:**
+  - **minimum shift length** (default 4 h; the flex-day short shift is a separate tunable exception);
   - manager floor-time cap (station coverage, a subset of their time on the clock);
   - overtime threshold (defaults from 7shifts labor settings);
   - flex-day rules (frequency, max length);
