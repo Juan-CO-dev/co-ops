@@ -15,6 +15,7 @@ import {
   type OnShiftEntry,
   type CashTotals,
 } from "@/lib/cash-shared";
+import type { ToastProjected } from "@/lib/cash-toast-shared";
 
 // Client-safe money math lives in lib/cash-shared.ts (see its header for why);
 // re-exported here so existing server consumers keep their import paths.
@@ -45,13 +46,16 @@ export interface CashReport {
   overShortCents: number;
   depositCents: number;
   overShortNote: string | null;
+  /** B10 (0253): the server-read Toast CASH figure at save time; null = none recorded. */
+  toastProjectedCents: number | null;
+  toastProjectedAsOf: string | null;
   signedBy: string;
   signedByName: string | null; // resolved by loader
   signedAt: string;
   createdAt: string;
 }
 
-const ROW = "id, location_id, report_date, projected_cents, drawer_total_cents, float_cents, count_method, denominations, cash_tips_cents, on_shift, over_short_cents, deposit_cents, over_short_note, signed_by, signed_at, created_at";
+const ROW = "id, location_id, report_date, projected_cents, drawer_total_cents, float_cents, count_method, denominations, cash_tips_cents, on_shift, over_short_cents, deposit_cents, over_short_note, toast_projected_cents, toast_projected_as_of, signed_by, signed_at, created_at";
 
 function rowToCashReport(r: Record<string, unknown>, signedByName: string | null): CashReport {
   return {
@@ -61,6 +65,8 @@ function rowToCashReport(r: Record<string, unknown>, signedByName: string | null
     denominations: (r.denominations as Denominations | null) ?? null, cashTipsCents: r.cash_tips_cents as number,
     onShift: (r.on_shift as OnShiftEntry[]) ?? [], overShortCents: r.over_short_cents as number,
     depositCents: r.deposit_cents as number, overShortNote: (r.over_short_note as string | null) ?? null,
+    toastProjectedCents: r.toast_projected_cents == null ? null : Number(r.toast_projected_cents),
+    toastProjectedAsOf: (r.toast_projected_as_of as string | null) ?? null,
     signedBy: r.signed_by as string, signedByName, signedAt: r.signed_at as string, createdAt: r.created_at as string,
   };
 }
@@ -108,6 +114,11 @@ export async function submitCashReport(
     projectedCents: number; drawerTotalCents: number; floatCents: number;
     countMethod: "hand" | "denomination"; denominations: Denominations | null;
     cashTipsCents: number; onShift: OnShiftEntry[]; overShortNote: string | null;
+    /**
+     * B10: the Toast CASH figure the SERVER read for this shop+day (lib/cash-toast.ts) — never a
+     * client-sent number. null = Toast had no figure. Stored beside the typed projected_cents.
+     */
+    toastProjected: ToastProjected | null;
   },
 ): Promise<CashSubmitResult> {
   if (!lockLocationContext(args.actor, args.locationId)) {
@@ -164,6 +175,8 @@ export async function submitCashReport(
     over_short_cents: overShortCents, deposit_cents: depositCents,
     over_short_note: args.overShortNote, signed_by: args.actor.userId, signed_at: nowIso,
     entered_by: args.actor.userId,
+    toast_projected_cents: args.toastProjected?.cents ?? null,
+    toast_projected_as_of: args.toastProjected?.asOf ?? null,
   }).select("id").single<{ id: string }>();
   if (insErr) {
     // Attempt to undo the supersede so the prior row remains live.
@@ -246,7 +259,10 @@ export async function submitCashReport(
     actorId: args.actor.userId, actorRole: args.actor.role,
     action: prior ? "cash_report.supersede" : "cash_report.submit",
     resourceTable: "cash_reports", resourceId: inserted.id,
-    metadata: { over_short_cents: overShortCents, deposit_cents: depositCents, superseded: prior?.id ?? null },
+    metadata: {
+      over_short_cents: overShortCents, deposit_cents: depositCents, superseded: prior?.id ?? null,
+      projected_cents: args.projectedCents, toast_projected_cents: args.toastProjected?.cents ?? null,
+    },
     ipAddress: null, userAgent: null,
   });
   await auditTaskOverride(service, { ...args.actor, locationId: args.locationId, date: args.date, task: "cash_report", operation: prior ? "cash_report.supersede" : "cash_report.submit" });
