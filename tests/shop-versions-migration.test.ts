@@ -21,7 +21,7 @@ describe("0259 / 0260 headers", () => {
     for (const f of [M0259, M0260]) {
       const src = read(f);
       expect(src.split("\n")[0]).toBe(`-- Migration ${f.replace(/\.sql$/, "")}`);
-      expect(src).toContain("NOT YET APPLIED — apply via MCP after review");
+      expect(src).toMatch(/NOT YET APPLIED — apply via MCP after review|APPLIED TO SIM \d{14}/);
     }
     expect(read(M0260)).toContain("ONLY AFTER the Phase 2a code is deployed");
   });
