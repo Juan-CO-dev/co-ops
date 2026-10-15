@@ -45,6 +45,23 @@ describe("0259 structure", () => {
   it("the backfill asserts instead of hoping", () => {
     expect(src).toContain("pack levels left without a version");
     expect(src).toContain("would have two live global chains");
+    expect(src).toContain("levels point into a different version");
+    expect(src).toContain("level sets span two SKUs or mix live and retired levels");
+  });
+  it("migration review P1: a set is a CHAIN, not a timestamp — every active level of a SKU is one version; inactive sets by pointer connectivity", () => {
+    const backfill = extractFunction(src, "-- ── (3) backfill:", "end $$;");
+    // ACTIVE: one key per SKU, never per effective_from (5 prod SKUs wrote their live chain in several statements).
+    expect(backfill).toContain("select l.id, 'active:' || l.sku_id::text from public.sku_pack_levels l where l.version_id is null and l.active;");
+    // INACTIVE: connected components over contains_level_id, both directions, same SKU, both ends retired.
+    expect(backfill).toContain("with recursive edge(a, b) as (");
+    expect(backfill).toContain("undirected(a, b) as (select a, b from edge union select b, a from edge),");
+    expect(backfill).toContain("c.version_id is null and not c.active and c.sku_id = l.sku_id");
+    expect(backfill).toContain("select node as level_id, 'inactive:' || min(root::text) as set_key from reach group by node");
+    expect(backfill).toContain("min(l.effective_from)                                        as valid_from,");
+    expect(backfill).not.toMatch(/group by sku_id, effective_from, active/);
+    // History: the ACTIVE set sorts last on a tie; 0260 re-dates with the same order (P3a).
+    expect(backfill).toContain("window w as (partition by sku_id order by valid_from, active, created_at, id)");
+    // The executable proof on synthetic rows is scripts/sql-harness-0259.mjs (PGlite).
   });
   it("price lanes + the location/lane pairing", () => {
     expect(src).toContain("create table if not exists public.sku_price_lanes");
@@ -78,6 +95,37 @@ describe("0259 structure", () => {
     const mirror = extractFunction(src, "create or replace function public.sku_flat_mirror_apply(", "\n$$;");
     expect(mirror).toContain("units_per_pack = case when v_units = trunc(v_units) then v_units::int else null end");
     expect(mirror).toContain("set pack_format = 'Each (no case)', units_per_pack = null, each_size = null, each_measure = null");
+  });
+  it("review P3b: save_sku_pack_version proves the chain's shape with NAMED refusals, on an ACTIVE SKU", () => {
+    const body = extractFunction(src, "create or replace function public.save_sku_pack_version(", "\n$$;");
+    for (const code of ["non_positive_qty", "duplicate_label", "shared_child", "not_one_root", "cycle"]) {
+      expect(body).toContain(`raise exception 'sku_pack_version:${code}' using errcode = 'P0001';`);
+    }
+    expect(body).toContain("perform 1 from public.vendor_items where id = p_sku and active for update;");
+    // a surviving live label is a named refusal, never a bare 23505
+    expect(body).toMatch(/exception when unique_violation then\s+--[^\n]*\n\s+raise exception 'sku_pack_version:duplicate_label'/);
+    // every shape check runs BEFORE the lock and any write
+    expect(body.indexOf("sku_pack_version:cycle")).toBeLessThan(body.indexOf("for update"));
+  });
+  it("review P3c: record_receiving_prices guards price, date, SKU and shop with named refusals", () => {
+    const body = extractFunction(src, "create or replace function public.record_receiving_prices(", "\n$$;");
+    expect(body).toContain("if not exists (select 1 from public.locations where id = p_location and active) then");
+    expect(body).toMatch(/perform 1 from public\.vendor_items where id = v_sku for update;\s+if not found then\s+raise exception 'sku_price:sku_not_found'/);
+    expect(body).toContain("v_price := case when jsonb_typeof(v_row -> 'unit_price') = 'number' then (v_row ->> 'unit_price')::numeric end;");
+    expect(body).toContain("raise exception 'sku_price:invalid_date' using errcode = 'P0001';");
+  });
+  it("review P3f: a global pack change bumps the epoch of EVERY shop riding it, inactive shops included", () => {
+    const bump = extractFunction(src, "create or replace function public.sku_pack_epoch_bump(", "\n$$;");
+    expect(bump).not.toContain("l.active");
+  });
+  it("review P3e: the helpers are proven unreachable by PostgREST roles, and service_role proven to hold EXECUTE on every writer", () => {
+    expect(src).toContain("raise exception '0259: a helper is executable by a PostgREST role';");
+    expect(src).toContain("raise exception '0259: service_role is missing EXECUTE on a writer';");
+    for (const fn of ["sku_pack_epoch_bump()", "sku_pack_versions_flat_baseline()", "sku_flat_mirror_apply(uuid, uuid)"]) {
+      expect(src).toContain(`has_function_privilege('anon', 'public.${fn}', 'EXECUTE')`);
+      expect(src).toContain(`has_function_privilege('authenticated', 'public.${fn}', 'EXECUTE')`);
+    }
+    for (const fn of WRITERS) expect(src).toContain(`has_function_privilege('service_role', 'public.${fn}(`);
   });
   it("every writer is SECURITY DEFINER, locked search_path, service_role only; first-value is decided under the SKU lock", () => {
     for (const fn of WRITERS) {
@@ -139,7 +187,9 @@ describe("0259 re-emits its two SQL chain writers faithfully", () => {
   }
   it("the store copy derives its flat mirror from the chain it cloned (Astra 2a#10)", () => {
     const body = extractFunction(emitted0259, "create or replace function public.receiving_create_store_item(", "$$;");
-    expect(body).toContain("update public.vendor_items set pack_format = v_root_label");
+    // review P3d: through the ONE mirror rule, never a second copy of it.
+    expect(body).toContain("perform public.sku_flat_mirror_apply(v_id, v_version);");
+    expect(body).not.toContain("v_root_label");
   });
 });
 
@@ -151,8 +201,12 @@ describe("0260 finalize", () => {
     expect(src).toContain("assert v_mismatch = 0");
     expect(src).toContain("alter table public.sku_pack_levels alter column version_id set not null;");
   });
+  it("names its deadline: before the next depletion cron after the deploy (review P3g)", () => {
+    expect(src).toContain("DEADLINE: apply BEFORE THE NEXT DEPLETION CRON after the deploy — /api/cron/toast-sales-pull,");
+    expect(readFileSync("vercel.json", "utf8")).toContain('{ "path": "/api/cron/toast-sales-pull", "schedule": "0 9 * * *" }');
+  });
   it("re-dates the whole global timeline across versioned AND healed rows (Astra 2a r2#5), with the baseline trigger off", () => {
-    expect(src).toContain("lead(v.valid_from) over (partition by v.sku_id order by v.valid_from, v.created_at, v.id)");
+    expect(src).toContain("lead(v.valid_from) over (partition by v.sku_id order by v.valid_from, v.valid_to nulls last, v.created_at, v.id)");
     expect(src).toContain("assert v_overlap = 0");
     expect(src.indexOf("disable trigger sku_pack_versions_flat_baseline")).toBeLessThan(src.indexOf("'0260 backfill'"));
     expect(src).toContain("enable trigger sku_pack_versions_flat_baseline");

@@ -5902,7 +5902,7 @@ Expected: every VERIFY result as annotated, and the transaction rolls back. Conf
 
 - [ ] **Step 8: The A → B → C sequence check (Task 4 Step 2) on the sim, BEFORE applying 0260 there.** Expect `finalize sequence check: OK`. Then sim apply 0260 and run its VERIFY queries.
 
-- [ ] **Step 9: Prod dry-run 0260 with rollback, then prod apply 0260** (Juan's word), then VERIFY: `is_nullable = 'NO'`, plus zero levels whose version has no `valid_from`.
+- [ ] **Step 9: Prod dry-run 0260 with rollback, then prod apply 0260** (Juan's word), then VERIFY: `is_nullable = 'NO'`, plus zero levels whose version has no `valid_from`. **DEADLINE: 0260 is applied BEFORE THE NEXT DEPLETION CRON after the Step 7 deploy** — `/api/cron/toast-sales-pull`, `0 9 * * *` UTC (05:00 EDT; 04:00 EST after 2026-11-01), which rebuilds T-1..T-3 through the dated graphs. Deploy in the morning ET so the window is a full day, never a few hours. (`/api/cron/toast-sales-today` refreshes snapshots only and runs no nightly depletion.)
 
 - [ ] **Step 10: Stamp the headers** in a docs-only follow-up commit, directly on main as AGENTS.md allows for pure docs:
 - Under each gate line, add `-- APPLIED TO PROD <date> (schema_migrations version <v>, name '<name>')`, with the version read from `supabase_migrations.schema_migrations`.

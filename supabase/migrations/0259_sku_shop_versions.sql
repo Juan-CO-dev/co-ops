@@ -117,26 +117,69 @@ alter table public.sku_pack_levels
   add column if not exists scope_key uuid generated always as (coalesce(location_id, '00000000-0000-0000-0000-000000000000'::uuid)) stored;
 
 -- ── (3) backfill: every existing level set becomes a dated GLOBAL version ────
+-- A SET IS A CHAIN, NOT A TIMESTAMP (migration review P1, confirmed on prod 2026-10-15: 5 SKUs carry
+-- ACTIVE levels with more than one effective_from — chains written in several statements, e.g. seed
+-- 32's bottle/case — and 34 SKUs carry INACTIVE levels with more than one). So:
+--   ACTIVE   all active levels of a SKU are ONE global version (the live chain), valid_from = their
+--            earliest effective_from.
+--   INACTIVE levels are grouped into sets by contains_level_id CONNECTIVITY (undirected, same SKU,
+--            inactive and unversioned at both ends); each connected set is one historical version,
+--            valid_from = its earliest effective_from.
+-- History is ordered (valid_from, active, created_at, id): on a tie the ACTIVE set comes LAST, so a
+-- superseded set can never take the live set's interval. 0260 re-dates with an order that
+-- reproduces this one (valid_from, valid_to nulls last) and survives the live set being retired.
 do $$
 declare
   v_groups      int;
   v_levels      int;
   v_unversioned int;
   v_multi_live  int;
+  v_mixed       int;
+  v_cross       int;
 begin
-  insert into public.sku_pack_versions (sku_id, location_id, active, valid_from, created_at, created_by)
-  select g.sku_id, null, g.active, g.effective_from, g.effective_from, g.created_by
-    from (select sku_id, effective_from, active, (array_agg(created_by order by id))[1] as created_by
-            from public.sku_pack_levels
-           where version_id is null
-           group by sku_id, effective_from, active) g;
+  -- level → its set key. Active: one key per SKU. Inactive: the smallest level id reachable through
+  -- pointers in either direction (the connected component's canonical member).
+  create temp table _0259_level_set on commit drop as
+  with recursive edge(a, b) as (
+    select l.id, c.id
+      from public.sku_pack_levels l
+      join public.sku_pack_levels c on c.id = l.contains_level_id
+     where l.version_id is null and not l.active
+       and c.version_id is null and not c.active and c.sku_id = l.sku_id
+  ),
+  undirected(a, b) as (select a, b from edge union select b, a from edge),
+  reach(root, node) as (
+    select l.id, l.id from public.sku_pack_levels l where l.version_id is null and not l.active
+    union
+    select r.root, u.b from reach r join undirected u on u.a = r.node
+  )
+  select node as level_id, 'inactive:' || min(root::text) as set_key from reach group by node
+  union all
+  select l.id, 'active:' || l.sku_id::text from public.sku_pack_levels l where l.version_id is null and l.active;
+
+  create temp table _0259_set on commit drop as
+  select s.set_key,
+         min(l.sku_id::text)::uuid                                    as sku_id,
+         count(distinct l.sku_id)                                     as sku_count,
+         bool_and(l.active)                                           as active,
+         bool_or(l.active) <> bool_and(l.active)                      as mixed,
+         min(l.effective_from)                                        as valid_from,
+         (array_agg(l.created_by order by l.effective_from, l.id))[1] as created_by,
+         gen_random_uuid()                                            as version_id
+    from _0259_level_set s join public.sku_pack_levels l on l.id = s.level_id
+   group by s.set_key;
+
+  select count(*) into v_mixed from _0259_set where sku_count <> 1 or mixed;
+  assert v_mixed = 0, format('0259: %s level sets span two SKUs or mix live and retired levels', v_mixed);
+
+  insert into public.sku_pack_versions (id, sku_id, location_id, active, valid_from, created_at, created_by)
+  select version_id, sku_id, null, active, valid_from, valid_from, created_by from _0259_set;
   get diagnostics v_groups = row_count;
 
   update public.sku_pack_levels l
-     set version_id = v.id
-    from public.sku_pack_versions v
-   where l.version_id is null and v.location_id is null
-     and v.sku_id = l.sku_id and v.valid_from = l.effective_from and v.active = l.active;
+     set version_id = st.version_id
+    from _0259_level_set s join _0259_set st on st.set_key = s.set_key
+   where l.id = s.level_id and l.version_id is null;
   get diagnostics v_levels = row_count;
 
   select count(*) into v_unversioned from public.sku_pack_levels where version_id is null;
@@ -146,6 +189,12 @@ begin
     from (select sku_id from public.sku_pack_versions where active and location_id is null group by sku_id having count(*) > 1) x;
   assert v_multi_live = 0, format('0259: %s SKUs would have two live global chains', v_multi_live);
 
+  -- A chain never points across versions: a level's contains_level_id is in its OWN version.
+  select count(*) into v_cross
+    from public.sku_pack_levels l join public.sku_pack_levels c on c.id = l.contains_level_id
+   where l.version_id is distinct from c.version_id;
+  assert v_cross = 0, format('0259: %s levels point into a different version', v_cross);
+
   -- History: each global version is based on the one before it; an inactive one stopped being in
   -- force when the next began (an inactive set with no successor closes on its own start).
   update public.sku_pack_versions v
@@ -153,7 +202,7 @@ begin
          valid_to = case when v.active then null else coalesce(h.next_from, v.valid_from) end
     from (select id, lag(id) over w as prev_id, lead(valid_from) over w as next_from
             from public.sku_pack_versions where location_id is null
-          window w as (partition by sku_id order by valid_from, active, id)) h
+          window w as (partition by sku_id order by valid_from, active, created_at, id)) h
    where h.id = v.id and v.based_on_version_id is null;
 
   raise notice '0259 backfill: % global versions, % levels linked', v_groups, v_levels;
@@ -258,12 +307,12 @@ begin
       values (new.sku_id, new.location_id, 1, clock_timestamp())
       on conflict (sku_id, location_id) do update set epoch = e.epoch + 1, updated_at = clock_timestamp();
     else
-      -- the global pack changed: every active shop RIDING it (no own live version) is in a new epoch.
+      -- the global pack changed: every shop RIDING it (no own live version) is in a new epoch —
+      -- inactive shops too (review P3f): a shop reactivated later must not resurrect a stale auto par.
       insert into public.sku_pack_epochs as e (sku_id, location_id, epoch, updated_at)
       select new.sku_id, l.id, 1, clock_timestamp()
         from public.locations l
-       where l.active
-         and not exists (select 1 from public.sku_pack_versions v
+       where not exists (select 1 from public.sku_pack_versions v
                           where v.sku_id = new.sku_id and v.location_id = l.id and v.active)
       on conflict (sku_id, location_id) do update set epoch = e.epoch + 1, updated_at = clock_timestamp();
     end if;
@@ -397,6 +446,10 @@ declare
   v_unit    text;
   v_written int;
   v_mirror  boolean := null;
+  v_roots   int;
+  v_root    int;
+  v_seen    int;
+  v_cur     int;
 begin
   if p_levels is null or jsonb_typeof(p_levels) <> 'array' or jsonb_array_length(p_levels) = 0 then
     raise exception 'sku_pack_version:invalid_levels' using errcode = 'P0001';
@@ -406,9 +459,11 @@ begin
     v_level := p_levels -> v_i;
     if coalesce(jsonb_typeof(v_level), '') <> 'object'
        or coalesce(btrim(v_level ->> 'label'), '') = ''
-       or coalesce(jsonb_typeof(v_level -> 'containsQty'), '') <> 'number'
-       or (v_level ->> 'containsQty')::numeric <= 0 then
+       or coalesce(jsonb_typeof(v_level -> 'containsQty'), '') <> 'number' then
       raise exception 'sku_pack_version:invalid_levels' using errcode = 'P0001';
+    end if;
+    if (v_level ->> 'containsQty')::numeric <= 0 then
+      raise exception 'sku_pack_version:non_positive_qty' using errcode = 'P0001';
     end if;
     v_unit := nullif(btrim(coalesce(v_level ->> 'containsMeasureUnit', '')), '');
     if (v_level ->> 'containsIndex') is not null then
@@ -425,9 +480,36 @@ begin
       raise exception 'sku_pack_version:unknown_measure' using errcode = 'P0001';
     end if;
   end loop;
+  -- THE CHAIN'S SHAPE, proven here (review P3b) — the walk (lib/pack-chain-shared.ts) assumes it:
+  -- labels unique, no level contained by two others, exactly ONE root, and a single path from that
+  -- root to a measure leaf that visits EVERY level (anything left over sits on a cycle).
+  if exists (select 1 from jsonb_array_elements(p_levels) t(value) group by btrim(t.value ->> 'label') having count(*) > 1) then
+    raise exception 'sku_pack_version:duplicate_label' using errcode = 'P0001';
+  end if;
+  if exists (select 1 from jsonb_array_elements(p_levels) t(value)
+              where t.value ->> 'containsIndex' is not null
+              group by (t.value ->> 'containsIndex')::int having count(*) > 1) then
+    raise exception 'sku_pack_version:shared_child' using errcode = 'P0001';
+  end if;
+  select count(*), min(i) into v_roots, v_root
+    from generate_series(0, v_count - 1) i
+   where not exists (select 1 from jsonb_array_elements(p_levels) t(value)
+                      where t.value ->> 'containsIndex' is not null and (t.value ->> 'containsIndex')::int = i);
+  if v_roots <> 1 then
+    raise exception 'sku_pack_version:not_one_root' using errcode = 'P0001';
+  end if;
+  v_cur := v_root; v_seen := 1;
+  while (p_levels -> v_cur ->> 'containsIndex') is not null and v_seen <= v_count loop
+    v_cur := (p_levels -> v_cur ->> 'containsIndex')::int;
+    v_seen := v_seen + 1;
+  end loop;
+  if v_seen <> v_count then
+    raise exception 'sku_pack_version:cycle' using errcode = 'P0001';
+  end if;
 
   -- THE SKU LOCK: every pack/price writer of this SKU serializes here (lock order: SKU, then version).
-  perform 1 from public.vendor_items where id = p_sku for update;
+  -- An ACTIVE SKU only, like the price writers (review P3b).
+  perform 1 from public.vendor_items where id = p_sku and active for update;
   if not found then
     raise exception 'sku_pack_version:sku_not_found' using errcode = 'P0001';
   end if;
@@ -460,15 +542,20 @@ begin
   values (v_new, p_sku, p_location, coalesce(p_based_on, v_live), true, v_now, nullif(btrim(coalesce(p_note, '')), ''), v_now, p_actor);
 
   v_ids := array(select gen_random_uuid() from generate_series(1, v_count));
-  insert into public.sku_pack_levels
-    (id, sku_id, version_id, location_id, label, contains_qty, contains_level_id, contains_measure_unit, display_ordinal, effective_from, active, created_by)
-  select v_ids[t.ord::int], p_sku, v_new, p_location,
-         btrim(t.value ->> 'label'), (t.value ->> 'containsQty')::numeric,
-         case when (t.value ->> 'containsIndex') is null then null else v_ids[(t.value ->> 'containsIndex')::int + 1] end,
-         case when (t.value ->> 'containsIndex') is null then btrim(t.value ->> 'containsMeasureUnit') else null end,
-         (t.ord - 1)::int, v_now, true, p_actor
-    from jsonb_array_elements(p_levels) with ordinality as t(value, ord);
-  get diagnostics v_written = row_count;
+  begin
+    insert into public.sku_pack_levels
+      (id, sku_id, version_id, location_id, label, contains_qty, contains_level_id, contains_measure_unit, display_ordinal, effective_from, active, created_by)
+    select v_ids[t.ord::int], p_sku, v_new, p_location,
+           btrim(t.value ->> 'label'), (t.value ->> 'containsQty')::numeric,
+           case when (t.value ->> 'containsIndex') is null then null else v_ids[(t.value ->> 'containsIndex')::int + 1] end,
+           case when (t.value ->> 'containsIndex') is null then btrim(t.value ->> 'containsMeasureUnit') else null end,
+           (t.ord - 1)::int, v_now, true, p_actor
+      from jsonb_array_elements(p_levels) with ordinality as t(value, ord);
+    get diagnostics v_written = row_count;
+  exception when unique_violation then
+    -- a live label of this SKU and scope survived (sku_pack_levels_scope_label_active): named, never a bare 23505.
+    raise exception 'sku_pack_version:duplicate_label' using errcode = 'P0001';
+  end;
   if v_written <> v_count then
     raise exception 'sku_pack_version:readback_failed' using errcode = 'P0001';
   end if;
@@ -614,6 +701,8 @@ declare
   v_lane    uuid;
   v_owner   uuid;
   v_head    uuid;
+  v_price   numeric;
+  v_date    date;
   v_opened  int := 0;
   v_shop    int := 0;
   v_global  int := 0;
@@ -621,18 +710,28 @@ begin
   if p_rows is null or jsonb_typeof(p_rows) <> 'array' then
     raise exception 'sku_price:invalid_payload' using errcode = 'P0001';
   end if;
-  if not exists (select 1 from public.locations where id = p_location) then
+  if not exists (select 1 from public.locations where id = p_location and active) then
     raise exception 'sku_price:location_not_found' using errcode = 'P0001';
   end if;
   -- THE SKU LOCKS FIRST, in id order (no deadlock between two deliveries), so a lane cannot be
-  -- opened or retired between "is there a live lane?" and the append below.
+  -- opened or retired between "is there a live lane?" and the append below. A SKU that is not there
+  -- (or a row naming none) is a named refusal, checked under the lock (review P3c).
   for v_sku in select distinct (r ->> 'vendor_item_id')::uuid from jsonb_array_elements(p_rows) r order by 1 loop
     perform 1 from public.vendor_items where id = v_sku for update;
+    if not found then
+      raise exception 'sku_price:sku_not_found' using errcode = 'P0001';
+    end if;
   end loop;
   for v_row in select r from jsonb_array_elements(p_rows) r loop
     v_sku := (v_row ->> 'vendor_item_id')::uuid;
-    if (v_row ->> 'unit_price')::numeric is null or (v_row ->> 'unit_price')::numeric <= 0 then
+    -- A JSON NUMBER only (never null, never the strings 'NaN' / 'Infinity' numeric would accept), > 0.
+    v_price := case when jsonb_typeof(v_row -> 'unit_price') = 'number' then (v_row ->> 'unit_price')::numeric end;
+    if v_price is null or v_price <= 0 then
       raise exception 'sku_price:invalid_price' using errcode = 'P0001';
+    end if;
+    v_date := nullif(v_row ->> 'effective_date', '')::date;
+    if v_date is null then
+      raise exception 'sku_price:invalid_date' using errcode = 'P0001';
     end if;
     select id into v_lane from public.sku_price_lanes where sku_id = v_sku and location_id = p_location and active;
     if v_lane is null then
@@ -653,7 +752,7 @@ begin
     end if;
     insert into public.vendor_price_history
       (vendor_item_id, unit_price, effective_date, recorded_by, source, location_id, price_lane_id)
-    values (v_sku, (v_row ->> 'unit_price')::numeric, (v_row ->> 'effective_date')::date,
+    values (v_sku, v_price, v_date,
             nullif(v_row ->> 'recorded_by', '')::uuid, nullif(v_row ->> 'source', ''),
             case when v_lane is null then null else p_location end, v_lane);
     if v_lane is null then v_global := v_global + 1; else v_shop := v_shop + 1; end if;
@@ -900,7 +999,7 @@ create or replace function public.receiving_create_store_item(p_store uuid, p_lo
   p_reference uuid, p_name text, p_unit text, p_content_oz numeric, p_request uuid)
 returns jsonb language plpgsql security definer set search_path = pg_catalog, public as $$
 declare v_ref public.vendor_items%rowtype; v_id uuid; v_product uuid; v_map jsonb; v_group jsonb;
-  v_scope uuid; v_version uuid; v_node public.sku_pack_levels%rowtype; v_units numeric; v_root_label text; v_hops int;
+  v_scope uuid; v_version uuid;
 begin
   if not exists (select 1 from public.locations where id = p_location and active) then
     raise exception 'not_found' using errcode = 'P0002';
@@ -983,21 +1082,9 @@ begin
     now(), true, p_actor from public.sku_pack_levels where sku_id = p_reference and active
       and location_id is not distinct from v_scope;
   -- 0259: a SHOP version was cloned → the copy's flat mirror must describe THAT chain, derived
-  -- here (root label; product of the non-leaf quantities; the leaf's size and unit).
+  -- by the ONE mirror rule (sku_flat_mirror_apply), in this transaction.
   if v_scope is not null and v_map is not null then
-    select l.* into v_node from public.sku_pack_levels l
-     where l.sku_id = v_id and l.active
-       and not exists (select 1 from public.sku_pack_levels c
-                        where c.sku_id = v_id and c.active and c.contains_level_id = l.id);
-    v_root_label := v_node.label; v_units := 1; v_hops := 0;
-    while v_node.contains_level_id is not null and v_hops < 16 loop
-      v_units := v_units * v_node.contains_qty; v_hops := v_hops + 1;
-      select l.* into v_node from public.sku_pack_levels l where l.id = v_node.contains_level_id;
-    end loop;
-    update public.vendor_items set pack_format = v_root_label,
-      units_per_pack = case when v_units = trunc(v_units) then v_units::int else null end,
-      each_size = v_node.contains_qty, each_measure = v_node.contains_measure_unit
-     where id = v_id;
+    perform public.sku_flat_mirror_apply(v_id, v_version);
   end if;
   return v_group || jsonb_build_object('id', v_id, 'created', true);
 end;
@@ -1040,6 +1127,27 @@ grant execute on function public.apply_vendor_import(uuid, text, uuid, jsonb) to
 grant execute on function public.receiving_create_store_item(uuid, uuid, uuid, uuid, text, text, numeric, uuid) to service_role;
 
 do $$ begin
+  -- The three helpers run only inside the definer writers and the triggers (review P3e): no
+  -- PostgREST role may execute them (PUBLIC reaches anon/authenticated, so has_function_privilege
+  -- covers it), and service_role DOES hold EXECUTE on every writer it is meant to call.
+  if has_function_privilege('anon', 'public.sku_pack_epoch_bump()', 'EXECUTE')
+     or has_function_privilege('authenticated', 'public.sku_pack_epoch_bump()', 'EXECUTE')
+     or has_function_privilege('anon', 'public.sku_pack_versions_flat_baseline()', 'EXECUTE')
+     or has_function_privilege('authenticated', 'public.sku_pack_versions_flat_baseline()', 'EXECUTE')
+     or has_function_privilege('anon', 'public.sku_flat_mirror_apply(uuid, uuid)', 'EXECUTE')
+     or has_function_privilege('authenticated', 'public.sku_flat_mirror_apply(uuid, uuid)', 'EXECUTE') then
+    raise exception '0259: a helper is executable by a PostgREST role';
+  end if;
+  if not (has_function_privilege('service_role', 'public.save_sku_pack_version(uuid, uuid, jsonb, uuid, uuid, text, uuid, boolean)', 'EXECUTE')
+          and has_function_privilege('service_role', 'public.retire_sku_pack_version(uuid, uuid)', 'EXECUTE')
+          and has_function_privilege('service_role', 'public.save_sku_shop_price(uuid, uuid, numeric, date, uuid, text, text)', 'EXECUTE')
+          and has_function_privilege('service_role', 'public.save_sku_global_price(uuid, numeric, date, uuid, boolean)', 'EXECUTE')
+          and has_function_privilege('service_role', 'public.retire_sku_price_lane(uuid, uuid, uuid)', 'EXECUTE')
+          and has_function_privilege('service_role', 'public.record_receiving_prices(uuid, jsonb)', 'EXECUTE')
+          and has_function_privilege('service_role', 'public.apply_vendor_import(uuid, text, uuid, jsonb)', 'EXECUTE')
+          and has_function_privilege('service_role', 'public.receiving_create_store_item(uuid, uuid, uuid, uuid, text, text, numeric, uuid)', 'EXECUTE')) then
+    raise exception '0259: service_role is missing EXECUTE on a writer';
+  end if;
   if exists (select 1 from information_schema.routine_privileges
               where routine_schema = 'public'
                 and routine_name in ('save_sku_pack_version', 'retire_sku_pack_version', 'save_sku_shop_price', 'save_sku_global_price',

@@ -10,7 +10,8 @@
  * receiving_create_store_item (0216) clones the chain THIS SHOP receives (its own version when it
  * has one, else the global) into the new store copy as that copy's global version — and, when the
  * shop's own version was cloned, derives the copy's flat mirror from that chain in the same
- * transaction (the reference's flat fields describe the GLOBAL pack, not the shop's).
+ * transaction through 0259's ONE mirror rule, sku_flat_mirror_apply (the reference's flat fields
+ * describe the GLOBAL pack, not the shop's; review P3d: never a second copy of the mirror logic).
  */
 export type Mod = readonly [string, string];
 export interface Reemit { name: string; source: string; start: string; startReplaced: string; end: string; mods: readonly Mod[] }
@@ -104,7 +105,7 @@ export const REEMITS: readonly Reemit[] = [
       ["create function public.receiving_create_store_item(", "create or replace function public.receiving_create_store_item("],
       [
         "declare v_ref public.vendor_items%rowtype; v_id uuid; v_product uuid; v_map jsonb; v_group jsonb;",
-        "declare v_ref public.vendor_items%rowtype; v_id uuid; v_product uuid; v_map jsonb; v_group jsonb;\n  v_scope uuid; v_version uuid; v_node public.sku_pack_levels%rowtype; v_units numeric; v_root_label text; v_hops int;",
+        "declare v_ref public.vendor_items%rowtype; v_id uuid; v_product uuid; v_map jsonb; v_group jsonb;\n  v_scope uuid; v_version uuid;",
       ],
       [
         "  perform 1 from public.sku_pack_levels where sku_id = p_reference and active order by id for update;",
@@ -141,21 +142,9 @@ export const REEMITS: readonly Reemit[] = [
           "    now(), true, p_actor from public.sku_pack_levels where sku_id = p_reference and active",
           "      and location_id is not distinct from v_scope;",
           "  -- 0259: a SHOP version was cloned → the copy's flat mirror must describe THAT chain, derived",
-          "  -- here (root label; product of the non-leaf quantities; the leaf's size and unit).",
+          "  -- by the ONE mirror rule (sku_flat_mirror_apply), in this transaction.",
           "  if v_scope is not null and v_map is not null then",
-          "    select l.* into v_node from public.sku_pack_levels l",
-          "     where l.sku_id = v_id and l.active",
-          "       and not exists (select 1 from public.sku_pack_levels c",
-          "                        where c.sku_id = v_id and c.active and c.contains_level_id = l.id);",
-          "    v_root_label := v_node.label; v_units := 1; v_hops := 0;",
-          "    while v_node.contains_level_id is not null and v_hops < 16 loop",
-          "      v_units := v_units * v_node.contains_qty; v_hops := v_hops + 1;",
-          "      select l.* into v_node from public.sku_pack_levels l where l.id = v_node.contains_level_id;",
-          "    end loop;",
-          "    update public.vendor_items set pack_format = v_root_label,",
-          "      units_per_pack = case when v_units = trunc(v_units) then v_units::int else null end,",
-          "      each_size = v_node.contains_qty, each_measure = v_node.contains_measure_unit",
-          "     where id = v_id;",
+          "    perform public.sku_flat_mirror_apply(v_id, v_version);",
           "  end if;",
         ].join("\n"),
       ],

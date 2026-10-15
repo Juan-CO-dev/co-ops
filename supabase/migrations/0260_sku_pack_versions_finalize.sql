@@ -2,6 +2,10 @@
 -- AUTHORED 2026-10-15. NOT YET APPLIED — apply via MCP after review.
 -- ORDER: apply ONLY AFTER the Phase 2a code is deployed to production (plan Task 14, step 9), and
 -- only after the A → B → C sequence check (plan Task 4 Step 2) has passed on the sim.
+-- DEADLINE: apply BEFORE THE NEXT DEPLETION CRON after the deploy — /api/cron/toast-sales-pull,
+-- `0 9 * * *` UTC (05:00 EDT / 04:00 EST), which rebuilds T-1..T-3 through the dated graphs. Until
+-- 0260 heals the deploy window, a day inside it can resolve through a version marked live whose
+-- levels the old writer deactivated.
 -- Plan: docs/superpowers/plans/2026-10-15-catalog-phase2a-shop-versions-data.md (Task 4).
 --
 -- WHY A SECOND MIGRATION. 0259 had to stay compatible with the code running when it was applied:
@@ -74,8 +78,14 @@ begin
   --     (Astra 2a r2#5): each closed version ends exactly when the next one (in valid_from order)
   --     began. A → B (old code, unversioned) → C (new code) gives A until B, B until C — so a past
   --     day inside B resolves to B, never to A. Pre-chain baselines keep their own end.
+  --     THE ORDER REPRODUCES 0259's (review P3a): on a valid_from tie the set that ended LATER sorts
+  --     later and the open (live) set sorts last — `valid_to nulls last`. 0259 ordered by `active`,
+  --     which is the same thing at backfill time, but NOT here: once the new writer has retired the
+  --     backfilled live set it is `active = false` like the older set it tied with, and an `active`
+  --     tie-break would fall to a random id and could hand that older set's interval to it
+  --     (caught by scripts/sql-harness-0259.mjs, intermittently, before this order).
   with t as (
-    select v.id, lead(v.valid_from) over (partition by v.sku_id order by v.valid_from, v.created_at, v.id) as next_from
+    select v.id, lead(v.valid_from) over (partition by v.sku_id order by v.valid_from, v.valid_to nulls last, v.created_at, v.id) as next_from
       from public.sku_pack_versions v
      where v.location_id is null and v.flat_snapshot is null and v.sku_id = any (v_touched)
   )
