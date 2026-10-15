@@ -16,7 +16,7 @@ import { perUnitSkuOzForMenuItemFromGraph, type RecipeGraph } from "@/lib/prep-c
 import { costPerOzFromGraph, rollupMenuItemCost } from "@/lib/menu-costing-shared";
 import { orderUnitLabel, perOrderUnitOz } from "@/lib/order-unit-shared";
 import { ozForRecipeInput, skuContentOz, skuCostPerOz, type RecipeInputSku } from "@/lib/recipe-math";
-import type { PackChainLevel } from "@/lib/pack-chain-shared";
+import { buildPackChain, chainLeafUnitsPerRoot, chainRootLabel, type PackChainLevel } from "@/lib/pack-chain-shared";
 import type { ParLane } from "@/lib/location-sku-shared";
 
 export type PreviewTarget = { kind: "shop"; shopId: string } | { kind: "global" };
@@ -68,8 +68,27 @@ export interface PreviewParRow {
   current: number;
   currentOz: number | null;
   keepOz: number | null;
+  /**
+   * The weight-keeping number in the new order unit: "convertible" — the conversion; "machine_par"
+   * on a SHOP save — the prefilled opt-in "give this shop its own par" (the machine value restarts).
+   */
   convertTo: number | null;
+  /**
+   * Set ONLY when an ounce side is unknown (a count-ending chain with no weight): what ONE order
+   * unit holds before and after — "the par now means a different count" (1000 each → 500 each).
+   */
+  perOrderUnit: { before: OrderUnitCount | null; after: OrderUnitCount | null } | null;
+  /**
+   * "machine_par" only (lead decision, chunk-1 review P2-2): the new case bumps this shop's pack
+   * epoch, which retires the machine par (D3). Until it recomputes, the shop uses the DEFAULT par —
+   * this number, read in the new case (`fallbackOz`); null = there is no default par to fall back to.
+   */
+  fallbackPar: number | null;
+  fallbackOz: number | null;
 }
+
+/** What one order unit holds, structurally: `qty` of the leaf `unit` (a case = 1000 each). */
+export interface OrderUnitCount { qty: number; unit: string }
 
 /**
  * A conversion the preview OFFERS, bound to the value it was computed from. `inherited` = create the
@@ -236,15 +255,59 @@ function shopPackDelta(
   };
 }
 
+/** Two order-unit sizes are the same size — within float noise, never `===` on floats. */
+export function sameOz(a: number, b: number): boolean {
+  return Math.abs(a - b) <= 1e-9 * Math.max(1, Math.abs(a), Math.abs(b));
+}
+
+/** What ONE order unit holds, structurally (no weight needed): chained → leaf units per root; flat → units × size. */
+export function orderUnitCount(p: RecipeInputSku, chain: readonly PackChainLevel[] | null): OrderUnitCount | null {
+  if (chain && chain.length > 0) {
+    const c = buildPackChain([...chain]);
+    const qty = chainLeafUnitsPerRoot(c);
+    const root = chainRootLabel(c);
+    if (qty == null || root == null) return null;
+    let cur = c.byLabel.get(root);
+    const seen = new Set<string>();
+    while (cur && cur.containsLevelId != null && !seen.has(cur.id)) {
+      seen.add(cur.id);
+      cur = c.byId.get(cur.containsLevelId);
+    }
+    const unit = cur != null && cur.containsLevelId == null ? cur.containsMeasureUnit : null;
+    return unit == null ? null : { qty: round4(qty), unit };
+  }
+  if (p.eachSize == null || p.eachMeasure == null) return null;
+  return { qty: round4((p.unitsPerPack ?? 1) * p.eachSize), unit: p.eachMeasure };
+}
+
+/**
+ * Does the ORDER UNIT mean the same amount after the change? Both ounces known → compare them
+ * (epsilon). An ounce side unknown (a count-ending chain with no weight) → the same only when what
+ * one unit HOLDS is provably the same; anything unprovable is a change the person must see
+ * (chunk-1 review P2-1: a case of 1000 each → 500 each is not "nothing").
+ */
+function sameOrderUnit(b: RowBasis): boolean {
+  if (b.beforeOz != null && b.afterOz != null) return sameOz(b.beforeOz, b.afterOz);
+  if (b.beforeOz != null || b.afterOz != null) return false;
+  return b.before != null && b.after != null && b.before.unit === b.after.unit && sameOz(b.before.qty, b.after.qty);
+}
+
+interface RowBasis { beforeOz: number | null; afterOz: number | null; before: OrderUnitCount | null; after: OrderUnitCount | null }
+
 function parRow(
   locationId: string | null, shops: string[], slot: ParSlotName, lane: ParLane, status: ParRowStatus,
-  current: number, beforeOz: number | null, afterOz: number | null, convertTo: number | null, inherited = false,
+  current: number, b: RowBasis, convertTo: number | null, inherited = false,
+  fallback: { par: number | null } | null = null,
 ): PreviewParRow {
+  const { beforeOz, afterOz } = b;
   return {
     locationId, shops, slot, lane, status, inherited, current,
     currentOz: beforeOz == null ? null : round4(current * beforeOz),
     keepOz: afterOz == null ? null : round4(current * afterOz),
-    convertTo: status === "convertible" ? convertTo : null,
+    convertTo: status === "convertible" || status === "machine_par" ? convertTo : null,
+    perOrderUnit: beforeOz == null || afterOz == null ? { before: b.before, after: b.after } : null,
+    fallbackPar: fallback?.par ?? null,
+    fallbackOz: fallback?.par != null && afterOz != null ? round4(fallback.par * afterOz) : null,
   };
 }
 
@@ -278,22 +341,30 @@ export function previewPackChange(input: {
   const pars: PreviewParRow[] = [];
 
   // Per affected shop: its own (human) par converts; an inherited global par on a SHOP-only save is
-  // the opt-in "give this shop its own par" (the global par is untouched); the machine's par is
-  // named (D3 retires it once the pack changes).
+  // the opt-in "give this shop its own par" (the global par is untouched). The machine's par (lead
+  // decision, chunk-1 review P2-2): the new case bumps the shop's pack epoch and RETIRES it (D3), so
+  // the row says what really happens — until it recomputes, the shop uses the default par read in
+  // the new case — and, on a SHOP save, offers "give this shop its own par" prefilled with the
+  // weight-keeping value, through the same atomic apply (from: "auto").
   affected.forEach((s, i) => {
     const { before: beforeOz, after: afterOz } = deltas[i]!.orderUnitOz;
-    if (beforeOz === afterOz) return;
+    const basis: RowBasis = {
+      beforeOz, afterOz,
+      before: orderUnitCount(s.basePack, chainOf(s.basePack)),
+      after: orderUnitCount({ ...s.basePack, packChain: input.newChain }, input.newChain),
+    };
+    if (sameOrderUnit(basis)) return;
     for (const sl of s.slots) {
       if (sl.value == null || !(sl.value > 0)) continue;
       if (sl.lane === "global" && target.kind === "global") continue; // the global lane, below
+      const to = convertParQuantity(sl.value, beforeOz, afterOz, input.parStep);
       if (sl.lane === "human") {
-        const to = convertParQuantity(sl.value, beforeOz, afterOz, input.parStep);
-        pars.push(parRow(s.shopId, [s.shopName], sl.slot, "human", to == null ? "no_weight" : "convertible", sl.value, beforeOz, afterOz, to));
+        pars.push(parRow(s.shopId, [s.shopName], sl.slot, "human", to == null ? "no_weight" : "convertible", sl.value, basis, to));
       } else if (sl.lane === "auto") {
-        pars.push(parRow(s.shopId, [s.shopName], sl.slot, "auto", "machine_par", sl.value, beforeOz, afterOz, null));
+        const ownPar = target.kind === "shop" ? to : null;
+        pars.push(parRow(s.shopId, [s.shopName], sl.slot, "auto", "machine_par", sl.value, basis, ownPar, ownPar != null, { par: input.globalPars[sl.slot] }));
       } else if (sl.lane === "global") {
-        const to = convertParQuantity(sl.value, beforeOz, afterOz, input.parStep);
-        pars.push(parRow(s.shopId, [s.shopName], sl.slot, "global", to == null ? "no_weight" : "convertible", sl.value, beforeOz, afterOz, to, true));
+        pars.push(parRow(s.shopId, [s.shopName], sl.slot, "global", to == null ? "no_weight" : "convertible", sl.value, basis, to, true));
       }
     }
   });
@@ -316,19 +387,25 @@ export function previewPackChange(input: {
       const newPack: RecipeInputSku = { ...input.targetBasePack, packChain: input.newChain };
       const beforeOz = perOrderUnitOz(input.targetBasePack, chainOf(input.targetBasePack), m);
       const afterOz = perOrderUnitOz(newPack, input.newChain, m);
-      if (beforeOz === afterOz) continue;
+      const basis: RowBasis = {
+        beforeOz, afterOz,
+        before: orderUnitCount(input.targetBasePack, chainOf(input.targetBasePack)), after: orderUnitCount(newPack, input.newChain),
+      };
+      if (sameOrderUnit(basis)) continue;
       const shared = inheriting.some((s) => s.ownPackVersion);
       const to = shared ? null : convertParQuantity(value, beforeOz, afterOz, input.parStep);
       const status: ParRowStatus = shared ? "global_par_shared" : to == null ? "no_weight" : "convertible";
-      pars.push(parRow(null, inheriting.map((s) => s.shopName), slot, "global", status, value, beforeOz, afterOz, to));
+      pars.push(parRow(null, inheriting.map((s) => s.shopName), slot, "global", status, value, basis, to));
     }
   }
 
   const conversions: ParConversion[] = pars
-    .filter((p) => p.status === "convertible" && p.convertTo != null)
-    .map((p) => (p.inherited
-      ? { locationId: p.locationId, slot: p.slot, expected: p.current, to: p.convertTo!, inherited: true as const }
-      : { locationId: p.locationId, slot: p.slot, expected: p.current, to: p.convertTo! }));
+    .filter((p) => (p.status === "convertible" || (p.status === "machine_par" && p.inherited)) && p.convertTo != null)
+    .map((p): ParConversion => (p.status === "machine_par"
+      ? { locationId: p.locationId, slot: p.slot, expected: p.current, to: p.convertTo!, inherited: true, from: "auto" }
+      : p.inherited
+        ? { locationId: p.locationId, slot: p.slot, expected: p.current, to: p.convertTo!, inherited: true }
+        : { locationId: p.locationId, slot: p.slot, expected: p.current, to: p.convertTo! }));
   return { ...shell, shops: deltas, pars, conversions };
 }
 
@@ -339,6 +416,26 @@ export function previewPackChange(input: {
  */
 export function priceBecomesCurrent(effectiveDate: string, head: PriceHead | null): boolean {
   return head == null || effectiveDate >= head.effectiveDate;
+}
+
+/**
+ * A shop's PRICE STANDING from the two resolved heads (lib/admin/cost.ts → resolveCurrentPrices).
+ * The shop "has its own price" ONLY when its live lane answered with a row of ITS OWN (`laneId`): a
+ * live lane with no row yet falls back to the global head, so a global price save still reaches it
+ * (chunk-1 review P3b).
+ */
+export function shopPriceStanding(
+  shopHead: { value: number; effectiveDate: string; laneId: string | null } | null,
+  globalHead: { value: number; effectiveDate: string } | null,
+): { ownPriceLane: boolean; priceHeads: { global: PriceHead | null; lane: PriceHead | null } } {
+  const own = shopHead != null && shopHead.laneId != null;
+  return {
+    ownPriceLane: own,
+    priceHeads: {
+      global: globalHead ? { value: globalHead.value, effectiveDate: globalHead.effectiveDate } : null,
+      lane: own ? { value: shopHead.value, effectiveDate: shopHead.effectiveDate } : null,
+    },
+  };
 }
 
 export function previewPriceChange(input: {

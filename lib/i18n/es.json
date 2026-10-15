@@ -6307,5 +6307,10 @@
   "catalog.error.version_sku_mismatch": "Esa versión es de otro artículo.",
   "catalog.error.global_cannot_retire": "El valor global no puede volver al valor global.",
   "catalog.error.invalid_patch": "Ese cambio de par no coincide con lo que viste. Vuelve a ver qué cambia.",
-  "admin.skus.error.sku_owned_by_other_shop": "Este artículo es de otra tienda. Solo esa tienda puede cambiarlo."
+  "admin.skus.error.sku_owned_by_other_shop": "Este artículo es de otra tienda. Solo esa tienda puede cambiarlo.",
+  "catalog.preview.par_machine_restarts": "El par automático vuelve a empezar con la nueva caja. Hasta que se recalcule, {shop} usa el par por defecto: {par} ({amount}).",
+  "catalog.preview.par_machine_no_default": "El par automático vuelve a empezar con la nueva caja y no hay un par por defecto. {shop} no tiene par hasta que se recalcule o tú pongas uno.",
+  "catalog.preview.par_own_from_auto": "Dale a esta tienda su propio par: {to} (más o menos la misma cantidad que ahora)",
+  "catalog.preview.par_count_changed": "Este par ahora significa otra cantidad: una unidad de pedido traía {before}, ahora trae {after}.",
+  "catalog.pack.error.unknown_measure": "Esa unidad todavía no está configurada."
 }

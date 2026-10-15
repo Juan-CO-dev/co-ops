@@ -6307,5 +6307,10 @@
   "catalog.error.version_sku_mismatch": "That version belongs to a different item.",
   "catalog.error.global_cannot_retire": "The global default can't go back to default.",
   "catalog.error.invalid_patch": "That par change doesn't match what you were shown. See what this changes again.",
-  "admin.skus.error.sku_owned_by_other_shop": "This item belongs to another shop. Only that shop can change it."
+  "admin.skus.error.sku_owned_by_other_shop": "This item belongs to another shop. Only that shop can change it.",
+  "catalog.preview.par_machine_restarts": "The automatic par starts over with the new case. Until it recomputes, {shop} uses the default par: {par} ({amount}).",
+  "catalog.preview.par_machine_no_default": "The automatic par starts over with the new case, and there is no default par to fall back to. {shop} has no par until it recomputes or you set one.",
+  "catalog.preview.par_own_from_auto": "Give this shop its own par: {to} (about the same amount as now)",
+  "catalog.preview.par_count_changed": "This par now means a different amount: one order unit held {before}, now it holds {after}.",
+  "catalog.pack.error.unknown_measure": "That unit isn't set up yet."
 }

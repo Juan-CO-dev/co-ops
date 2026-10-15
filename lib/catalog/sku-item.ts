@@ -41,7 +41,7 @@ import { etBusinessDate } from "@/lib/counts-shared";
 import { skuContentOz, skuCostPerOz, type RecipeInputSku } from "@/lib/recipe-math";
 import { buildPackChain, formatChainDescriptor, type PackChainLevel, type PackChainSkuClass } from "@/lib/pack-chain-shared";
 import {
-  conversionKey, previewPackChange, previewPriceChange, previewToken,
+  conversionKey, previewPackChange, previewPriceChange, previewToken, shopPriceStanding,
   type PackPreview, type ParConversion, type PreviewMenuItem, type PreviewOpenOrder, type PreviewRecipeLine,
   type PreviewShopState, type PreviewTarget, type PricePreview,
 } from "@/lib/catalog/change-preview-shared";
@@ -265,21 +265,14 @@ async function loadShopState(sb: Sb, row: SkuRow, shop: Shop): Promise<PreviewSh
   const pack = packAware.packResolution.get(row.id) ?? null;
   const prices = await loadCurrentSkuPrices([...new Set([...graph.skuPack.keys(), row.id])], shop.id);
   const overlay = packAware.overlayBySku.get(row.id) ?? null;
-  const shopHead = heads.get(row.id) ?? null;
-  const globalHead = globalHeads.get(row.id) ?? null;
-  // A shop "has its own price" only when its live lane answered with a row of ITS OWN: a live lane
-  // with no row yet falls back to the global head (resolveCurrentPrices), so a global save reaches it.
-  const ownLane = shopHead != null && shopHead.laneId != null;
+  // The heads the real selection rule compares a new row against (Astra 2b r3#2); a shop has its
+  // own price only when its live lane answered with a row of its own (shopPriceStanding).
+  const standing = shopPriceStanding(heads.get(row.id) ?? null, globalHeads.get(row.id) ?? null);
   return {
     shopId: shop.id, shopName: shop.name,
     basePack: basePackOf(row, pack?.levels ?? []),
     ownPackVersion: pack?.locationId === shop.id,
-    ownPriceLane: ownLane,
-    // The heads the real selection rule compares a new row against (Astra 2b r3#2).
-    priceHeads: {
-      global: globalHead ? { value: globalHead.value, effectiveDate: globalHead.effectiveDate } : null,
-      lane: ownLane ? { value: shopHead.value, effectiveDate: shopHead.effectiveDate } : null,
-    },
+    ...standing,
     graph, prices, slots: slotsFrom(overlay, row), openOrders,
   };
 }

@@ -17,7 +17,7 @@ import type { StarterChainLevel } from "@/lib/admin/catalog-shared";
 
 export interface SentenceContainer { label: string; qty: string }
 export interface SentenceDraft { containers: SentenceContainer[]; leafQty: string; leafUnit: string }
-export type SentenceError = "empty_label" | "duplicate_label" | "label_is_measure_unit" | "bad_qty" | "no_leaf_unit";
+export type SentenceError = "empty_label" | "duplicate_label" | "label_is_measure_unit" | "bad_qty" | "no_leaf_unit" | "unknown_measure";
 
 /** The live chain as a sentence; null for an empty or non-linear chain. */
 export function sentenceFromLevels(levels: readonly PackChainLevel[]): SentenceDraft | null {
@@ -57,11 +57,14 @@ export function levelsFromSentence(
 ): { ok: true; levels: StarterChainLevel[] } | { ok: false; error: SentenceError; index: number } {
   const n = draft.containers.length;
   if (n === 0) return { ok: false, error: "empty_label", index: 0 };
+  // A container named like a unit — in ANY case ("LB", "Oz") — is refused: the walk could not tell
+  // a container from a unit (stricter than the writer's exact match, never looser).
+  const measuresLower = new Set([...measureLabels].map((m) => m.toLowerCase()));
   const seen = new Set<string>();
   for (let i = 0; i < n; i++) {
     const label = draft.containers[i]!.label.trim();
     if (!label) return { ok: false, error: "empty_label", index: i };
-    if (measureLabels.has(label)) return { ok: false, error: "label_is_measure_unit", index: i };
+    if (measuresLower.has(label.toLowerCase())) return { ok: false, error: "label_is_measure_unit", index: i };
     const key = label.toLowerCase();
     if (seen.has(key)) return { ok: false, error: "duplicate_label", index: i };
     seen.add(key);
@@ -70,6 +73,8 @@ export function levelsFromSentence(
   const leafQty = positive(draft.leafQty);
   if (leafQty == null) return { ok: false, error: "bad_qty", index: n - 1 };
   if (!draft.leafUnit.trim()) return { ok: false, error: "no_leaf_unit", index: n - 1 };
+  // The leaf must be a REGISTERED unit, exactly as spelled — the writer's unknown_measure, by name.
+  if (!measureLabels.has(draft.leafUnit.trim())) return { ok: false, error: "unknown_measure", index: n - 1 };
   const levels: StarterChainLevel[] = draft.containers.map((c, i) => i < n - 1
     ? { label: c.label.trim(), containsQty: positive(draft.containers[i + 1]!.qty)!, containsIndex: i + 1, containsMeasureUnit: null }
     : { label: c.label.trim(), containsQty: leafQty, containsIndex: null, containsMeasureUnit: draft.leafUnit.trim() });

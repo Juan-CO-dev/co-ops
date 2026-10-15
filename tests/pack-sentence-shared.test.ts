@@ -53,6 +53,12 @@ describe("levelsFromSentence", () => {
     expect(levelsFromSentence({ ...ok, leafQty: "x" }, measureLabels)).toEqual({ ok: false, error: "bad_qty", index: 1 });
     expect(levelsFromSentence({ ...ok, leafUnit: "" }, measureLabels)).toEqual({ ok: false, error: "no_leaf_unit", index: 1 });
   });
+  it("matches the writer (chunk-1 review P3c): a unit word in ANY case is not a container; the leaf must be a registered unit", () => {
+    expect(levelsFromSentence({ ...ok, containers: [{ label: "LB", qty: "1" }] }, measureLabels)).toEqual({ ok: false, error: "label_is_measure_unit", index: 0 });
+    expect(levelsFromSentence({ ...ok, containers: [{ label: "case", qty: "1" }, { label: "Oz", qty: "4" }] }, measureLabels)).toEqual({ ok: false, error: "label_is_measure_unit", index: 1 });
+    expect(levelsFromSentence({ ...ok, leafUnit: "kg" }, measureLabels)).toEqual({ ok: false, error: "unknown_measure", index: 1 });
+    expect(levelsFromSentence({ ...ok, leafUnit: "LB" }, measureLabels)).toEqual({ ok: false, error: "unknown_measure", index: 1 });
+  });
 });
 
 describe("leafUnitChoices", () => {
