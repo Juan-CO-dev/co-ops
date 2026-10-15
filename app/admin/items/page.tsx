@@ -72,7 +72,7 @@ export default async function AdminItemsPage({ searchParams }: {
         key={initialView}
         initialView={initialView}
         catalog={<CatalogClient entities={entities} actorLevel={level} />}
-        registry={<ItemsClient view={view} itemReadiness={itemReadiness} />}
+        registry={<ItemsClient view={view} itemReadiness={itemReadiness} shopScope={scope} />}
       />
     </div>
   );

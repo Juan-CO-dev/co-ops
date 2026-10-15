@@ -28,6 +28,7 @@ import { ItemQuestionsEditor } from "./ItemQuestions";
 import { Labeled } from "./Labeled";
 import { RegistryRelationships } from "@/components/admin/RegistryRelationships";
 import type { RegistryLink } from "@/lib/admin/product-item-links-shared";
+import { readinessRecipeHref } from "@/lib/catalog/recipe-item-shared";
 
 export function ItemRow({
   item,
@@ -39,6 +40,7 @@ export function ItemRow({
   readiness,
   producingRecipeId,
   madeFrom,
+  shopScope = null,
 }: {
   item: ChecklistRegistryItem;
   actorLevel: number;
@@ -49,6 +51,8 @@ export function ItemRow({
   readiness: Readiness | null;
   producingRecipeId: string | null;
   madeFrom: RegistryLink[];
+  /** Read for one shop: the recipe link opens that shop's version (catalog Phase 3b — warnings deep-link to the shop's view). */
+  shopScope?: string | null;
 }) {
   const { t } = useTranslation();
   const router = useRouter();
@@ -194,7 +198,7 @@ export function ItemRow({
         </span>
         <div className="flex gap-2">
           {producingRecipeId ? (
-            <Link href={`/admin/recipes/${producingRecipeId}`} className={smallBtn}>
+            <Link href={readinessRecipeHref(producingRecipeId, shopScope)} className={smallBtn}>
               {t("recipes.item_link.production_recipe" as TranslationKey)}
             </Link>
           ) : null}

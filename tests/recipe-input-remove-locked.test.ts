@@ -7,7 +7,8 @@ vi.mock("@/lib/supabase-server", () => ({ getServiceRoleClient: () => ({ rpc, fr
 vi.mock("@/lib/audit", () => ({ audit: async () => {} }));
 import { removeRecipeEdge } from "@/lib/recipes";
 
-const gm = { user: { id: "u1", role: "gm" }, role: "gm", level: 7, locations: [] } as never;
+// Catalog Phase 3b: deleting a GLOBAL recipe line is MoO+.
+const gm = { user: { id: "u1", role: "moo" }, role: "moo", level: 8, locations: [] } as never;
 
 describe("removeRecipeEdge(recipe_inputs)", () => {
   it("deletes through remove_recipe_input_atomic and never touches the table directly", async () => {
