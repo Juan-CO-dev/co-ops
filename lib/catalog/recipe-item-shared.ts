@@ -5,7 +5,8 @@
  * the change requests a page may post, with the parsers the routes use. PURE: no I/O, no server imports.
  */
 import type { RecipeLineFields } from "@/lib/recipe-line-shared";
-import { parseRecipeLineOp, type RecipeLineChange, type RecipeLineOp } from "@/lib/recipe-versions-shared";
+import type { TranslationKey } from "@/lib/i18n/types";
+import { parseRecipeLineOp, RECIPE_VERSION_ERROR_CODES, type RecipeLineChange, type RecipeLineOp } from "@/lib/recipe-versions-shared";
 import { parseMenuShopPatch, parseOptionalMenuName, type MenuShopPatch } from "@/lib/menu-item-shop-shared";
 import type { RecipeNotice } from "@/lib/catalog/recipe-notices-shared";
 import type { RecipeBuilderProduct, RecipeBuilderSku } from "@/components/admin/recipes/RecipeBuilder";
@@ -279,6 +280,28 @@ export interface MenuItemPageView {
  * each has its OWN en + es message at `catalog.error.<code>` (tests/catalog-item-i18n.test.ts).
  */
 export const RECIPE_PAGE_ERROR_CODES = ["preview_stale", "nothing_changed", "promote_not_done"] as const;
+
+/** The refusals the recipe page words in its OWN family (`catalog.recipe.error.<code>`, Task 7). */
+const RECIPE_PAGE_SCOPED_ERRORS: ReadonlySet<string> = new Set([
+  "version_changed", "forbidden", "not_found", "global_requires_moo", "step_up_required", "step_up_stale", "preview_stale",
+  "line_changed", "edge_not_found", "empty_recipe", "would_create_cycle", "recipe_inactive", "invalid_source", "not_live",
+  "nothing_changed", "invalid_payload", "invalid_component", "invalid_quantity", "product_line_needs_measure_unit",
+  "invalid_component_product", "invalid_lines", "recipe_not_found", "location_not_found",
+  "dependencies_changed", "dependencies_busy", "product_line_invalid",
+]);
+const RECIPE_NAMED_ERRORS: ReadonlySet<string> = new Set<string>([...RECIPE_VERSION_ERROR_CODES, ...RECIPE_PAGE_ERROR_CODES]);
+
+/**
+ * The message key for a refusal on the recipe page (house rule: every named refusal has its OWN en + es message,
+ * never generic text). The page-scoped wording first; a named code that family does not word (3a's
+ * restore_source_out_of_scope, readback_failed, global_cannot_retire, truncate_refused; promote_not_done) falls back
+ * to its `catalog.error.<code>` message, which tests/catalog-item-i18n.test.ts guarantees. Only an unknown code is generic.
+ */
+export function recipeErrorKey(code: string): TranslationKey {
+  if (RECIPE_PAGE_SCOPED_ERRORS.has(code)) return `catalog.recipe.error.${code}` as TranslationKey;
+  if (RECIPE_NAMED_ERRORS.has(code)) return `catalog.error.${code}` as TranslationKey;
+  return "catalog.recipe.error.generic";
+}
 
 // ── The Shop changes list (MoO+, catalog Phase 3b) ────────────────────────────
 

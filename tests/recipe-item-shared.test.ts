@@ -176,3 +176,23 @@ describe("the picker speaks the SHOP's pack (Astra 3b r4#1)", () => {
     expect(lineUnitOptions("sku", shop!, ["oz", "lb"], new Set(), null, "crate").choices).toContain("crate");
   });
 });
+
+describe("every refusal on the recipe page has its OWN message, never the generic one (house rule)", () => {
+  it("the page-scoped family first, else catalog.error.<code>; only an unknown code is generic", async () => {
+    const { recipeErrorKey } = await import("@/lib/catalog/recipe-item-shared");
+    const { RECIPE_VERSION_ERROR_CODES } = await import("@/lib/recipe-versions-shared");
+    const { RECIPE_PAGE_ERROR_CODES } = await import("@/lib/catalog/recipe-item-shared");
+    const en = (await import("@/lib/i18n/en.json")).default as Record<string, string>;
+    const es = (await import("@/lib/i18n/es.json")).default as Record<string, string>;
+    for (const code of [...RECIPE_VERSION_ERROR_CODES, ...RECIPE_PAGE_ERROR_CODES, "step_up_required", "step_up_stale"]) {
+      const key = recipeErrorKey(code);
+      expect(key, code).not.toBe("catalog.recipe.error.generic");
+      expect(en[key], `${code} → ${key} (en)`).toBeTruthy();
+      expect(es[key], `${code} → ${key} (es)`).toBeTruthy();
+    }
+    expect(recipeErrorKey("line_changed")).toBe("catalog.recipe.error.line_changed");
+    expect(recipeErrorKey("truncate_refused")).toBe("catalog.error.truncate_refused");
+    expect(recipeErrorKey("promote_not_done")).toBe("catalog.error.promote_not_done");
+    expect(recipeErrorKey("no_such_code")).toBe("catalog.recipe.error.generic");
+  });
+});
