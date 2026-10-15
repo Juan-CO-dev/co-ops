@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useId, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 
 import {
@@ -12,7 +12,8 @@ import {
   type Denominations,
   type OnShiftEntry,
 } from "@/lib/cash-shared";
-import { formatCents } from "@/lib/i18n/format";
+import { projectedChangedFromToast, toastPrefillDollars, type ToastProjected } from "@/lib/cash-toast-shared";
+import { formatCents, formatTime } from "@/lib/i18n/format";
 import { useTranslation } from "@/lib/i18n/provider";
 import type { Language } from "@/lib/i18n/types";
 import type { RoleCode } from "@/lib/roles";
@@ -33,6 +34,7 @@ export function CashClient({
   closerName,
   closerRole,
   language,
+  toastProjected,
 }: {
   locationId: string;
   date: string;
@@ -40,10 +42,14 @@ export function CashClient({
   closerName: string;
   closerRole: RoleCode;
   language: Language;
+  /** B10: the server-read Toast CASH figure for this shop+day; null = Toast has none yet. */
+  toastProjected: ToastProjected | null;
 }) {
   const { t } = useTranslation();
   const router = useRouter();
-  const [projected, setProjected] = useState("");
+  const projectedHintId = useId();
+  // Prefilled from Toast, editable. The server re-reads Toast at save and stores both figures.
+  const [projected, setProjected] = useState(() => toastPrefillDollars(toastProjected));
   const [mode, setMode] = useState<"hand" | "denomination">("hand");
   const [handTotal, setHandTotal] = useState("");
   const [denoms, setDenoms] = useState<Denominations>({});
@@ -116,23 +122,42 @@ export function CashClient({
         </h2>
 
         <div className="mt-3 flex flex-col gap-3">
-          {/* Projected field */}
-          <label className="flex flex-col gap-1">
-            <span className="text-sm font-semibold text-co-text">{t("cash.field.projected")}</span>
-            <input
-              type="number"
-              inputMode="decimal"
-              min={0}
-              value={projected}
-              onChange={(e) => setProjected(e.target.value.replace(/-/g, ""))}
-              placeholder="0.00"
-              className="
-                min-h-[44px] w-full rounded-md border-2 border-co-border-2 bg-co-surface
-                px-3 text-sm text-co-text focus:border-co-text focus:outline-none
-                focus-visible:ring-4 focus-visible:ring-co-gold/60
-              "
-            />
-          </label>
+          {/* Projected field — prefilled from Toast (B10), editable */}
+          <div className="flex flex-col gap-1">
+            <label className="flex flex-col gap-1">
+              <span className="text-sm font-semibold text-co-text">{t("cash.field.projected")}</span>
+              <input
+                type="number"
+                inputMode="decimal"
+                min={0}
+                value={projected}
+                onChange={(e) => setProjected(e.target.value.replace(/-/g, ""))}
+                placeholder="0.00"
+                aria-describedby={projectedHintId}
+                className="
+                  min-h-[44px] w-full rounded-md border-2 border-co-border-2 bg-co-surface
+                  px-3 text-sm text-co-text focus:border-co-text focus:outline-none
+                  focus-visible:ring-4 focus-visible:ring-co-gold/60
+                "
+              />
+            </label>
+            <p id={projectedHintId} className="flex flex-col gap-0.5 text-xs">
+              {toastProjected ? (
+                <>
+                  <span className="text-co-text-muted">
+                    {t("cash.toast.from", { time: formatTime(toastProjected.asOf, language) })}
+                  </span>
+                  {projectedChangedFromToast(projectedCents, toastProjected.cents) ? (
+                    <span className="font-semibold text-co-warning-text">
+                      {t("cash.toast.changed", { amount: formatCents(toastProjected.cents, language) })}
+                    </span>
+                  ) : null}
+                </>
+              ) : (
+                <span className="text-co-text-muted">{t("cash.toast.none")}</span>
+              )}
+            </p>
+          </div>
 
           {/* Mode toggle */}
           <div className="flex gap-2">
