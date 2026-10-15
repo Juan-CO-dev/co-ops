@@ -76,6 +76,7 @@ export function SkuCatalogClient({
   parsFieldsReady,
   actorLevel,
   canEditShopVersion = false,
+  itemShopId = null,
   canManage,
   focusSkuId = null,
   initialVendorFilter = null,
@@ -111,6 +112,8 @@ export function SkuCatalogClient({
   actorLevel: number;
   /** Catalog Phase 2b: may this actor write a SHOP version (catalogWriteRoleAllowed)? */
   canEditShopVersion?: boolean;
+  /** Catalog Phase 2b (sim QA): the shop the item-page links land on — the page's resolved shop (null = none). */
+  itemShopId?: string | null;
   canManage: boolean; // GM+
   /** ?sku=<id> deep link (catalog Phase 1): the row opens, scrolls into view and is ringed. */
   focusSkuId?: string | null;
@@ -338,6 +341,7 @@ export function SkuCatalogClient({
           measureUnits={measureUnits}
           actorLevel={actorLevel}
             canEditShopVersion={canEditShopVersion}
+            itemShopId={itemShopId}
           busy={busy}
           errorMsg={errorMsg}
           submitLabel={t("admin.skus.save")}
@@ -377,6 +381,7 @@ export function SkuCatalogClient({
           ledger={skuLedger[s.id] ?? null}
           consumption={skuConsumption[s.id] ?? null}
           canRecord={actorLevel >= 6}
+          itemShopId={itemShopId}
         />
       )}
     </li>
@@ -477,6 +482,7 @@ export function SkuCatalogClient({
             measureUnits={measureUnits}
             actorLevel={actorLevel}
             canEditShopVersion={canEditShopVersion}
+            itemShopId={itemShopId}
             busy={busy}
             errorMsg={errorMsg}
             submitLabel={t("admin.skus.add")}
@@ -551,6 +557,7 @@ function CatalogRow({
   ledger,
   consumption,
   canRecord,
+  itemShopId,
 }: {
   sku: SkuView;
   chain: PackChainLevel[] | null;
@@ -571,6 +578,7 @@ function CatalogRow({
   ledger: SkuReceivingLedger | null;
   consumption: SkuConsumption | null;
   canRecord: boolean;
+  itemShopId: string | null;
 }) {
   const { t } = useTranslation();
   const meta: string[] = [];
@@ -647,7 +655,7 @@ function CatalogRow({
         </>
       }
     >
-      <Link href={skuItemHref(s.id)} className="mb-2 inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-border bg-co-surface px-3 text-xs font-bold uppercase tracking-[0.1em] text-co-text hover:border-co-text">
+      <Link href={skuItemHref(s.id, { shopId: itemShopId ?? undefined })} className="mb-2 inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-border bg-co-surface px-3 text-xs font-bold uppercase tracking-[0.1em] text-co-text hover:border-co-text">
         {t("admin.skus.open_item")}
       </Link>
       <SkuDataDrawer skuId={s.id} shops={dataShops} />
@@ -657,6 +665,7 @@ function CatalogRow({
         ledger={ledger}
         consumption={consumption}
         canRecord={canRecord}
+        itemShopId={itemShopId}
       />
     </SummaryRow>
   );

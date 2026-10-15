@@ -74,6 +74,7 @@ export function VendorDetailClient({
   parsFieldsReady,
   actorLevel,
   canEditShopVersion = false,
+  itemShopId = null,
 }: {
   vendor: VendorView;
   categories: CategoryView[];
@@ -113,6 +114,8 @@ export function VendorDetailClient({
   actorLevel: number;
   /** Catalog Phase 2b: may this actor write a SHOP version (catalogWriteRoleAllowed)? */
   canEditShopVersion?: boolean;
+  /** Catalog Phase 2b (sim QA): the shop the item-page links land on — the page's resolved shop (null = none). */
+  itemShopId?: string | null;
 }) {
   const { t } = useTranslation();
   const { requestStepUp } = useStepUp();
@@ -193,6 +196,7 @@ export function VendorDetailClient({
         parsFieldsReady={parsFieldsReady}
         actorLevel={actorLevel}
         canEditShopVersion={canEditShopVersion}
+        itemShopId={itemShopId}
         canManage={canManage}
       />
       {actorLevel >= 8 ? <ActiveCard vendor={vendor} requestStepUp={requestStepUp} /> : null}

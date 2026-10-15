@@ -129,7 +129,7 @@ function ImportPanel({ vendorId, vendorName, canStage, canApply }: { vendorId: s
               disabled={!!busy || !canApply || view?.batch.status !== "staged" || !!result || changed} value={decisions[key] ?? "skip"}
               onChange={e => { if (!inFlight.current) patch({ decisions: { ...decisions, [key]: e.target.value as Decision }, error: null }); }}>
               <option value="accept">{t("admin.vendor_import.accept")}</option><option value="skip">{t("admin.vendor_import.skip")}</option>
-            </select> : o.kind === "needs_person" ? <><p>{t("admin.vendor_import.needs_hint")}</p><a className={`${control} mt-1`} href="#order-guide">{t("admin.vendor_import.guide")}</a><a className={`${control} mt-1`} href={o.match.sku_id ? skuItemHref(o.match.sku_id, { job: "pack" }) : `/admin/skus?vendor=${encodeURIComponent(vendorId)}`}>{t("admin.vendor_import.skus")}</a></> : null}</td>
+            </select> : o.kind === "needs_person" ? <><p>{t("admin.vendor_import.needs_hint")}</p><a className={`${control} mt-1`} href="#order-guide">{t("admin.vendor_import.guide")}</a><a className={`${control} mt-1`} href={o.match.sku_id ? skuItemHref(o.match.sku_id, { shopId: null, job: "pack" }) : `/admin/skus?vendor=${encodeURIComponent(vendorId)}`}>{t("admin.vendor_import.skus")}</a></> : null}</td>
           </tr>;
         })}</tbody>
       </table>

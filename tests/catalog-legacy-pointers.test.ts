@@ -1,5 +1,9 @@
 /** Catalog Phase 2b — a refused global change on /admin/skus points at the item page (the gate itself is 2a's). */
 import { readFileSync } from "node:fs";
+import { jsx } from "react/jsx-runtime";
+import { renderToStaticMarkup } from "react-dom/server";
+import { TranslationProvider } from "@/lib/i18n/provider";
+import { ShopPackJobLink } from "@/components/admin/skus/ShopPackJobLink";
 import { describe, expect, it } from "vitest";
 import en from "@/lib/i18n/en.json";
 import es from "@/lib/i18n/es.json";
@@ -12,13 +16,12 @@ describe("the SKU screens point at the item page", () => {
   it("the cost panel links to the price job when the global price is refused", () => {
     const panel = readFileSync("components/admin/skus/SkuCostPanel.tsx", "utf8");
     expect(panel).toContain('errCode === "global_requires_moo"');
-    expect(panel).toContain('skuItemHref(skuId, { job: "price" })');
+    expect(panel).toContain('skuItemHref(skuId, { shopId: itemShopId ?? undefined, job: "price" })');
   });
   it("the read-only pack line (2a's global boundary) links GMs/AGMs to the item page's pack job — this shop's version", () => {
     const builder = readFileSync("components/admin/skus/SkuBuilder.tsx", "utf8");
     expect(builder.match(/shopPackJobOffered\(globalPackLocked, canEditShopVersion\)/g)?.length).toBe(1);
-    expect(builder.match(/<ShopPackJobLink skuId=\{initial!\.id\} \/>/g)?.length).toBe(2); // the chained and the unchained read-only lines
-    expect(builder).toContain('skuItemHref(skuId, { job: "pack" })');
+    expect(builder.match(/<ShopPackJobLink skuId=\{initial!\.id\} shopId=\{itemShopId\} \/>/g)?.length).toBe(2); // the chained and the unchained read-only lines
   });
   it("the pages decide who is offered it with THE catalog role rule (the social media manager never)", () => {
     expect(readFileSync("app/admin/skus/page.tsx", "utf8")).toContain("canEditShopVersion={catalogWriteRoleAllowed(auth.user.role, level)}");
@@ -36,5 +39,17 @@ describe("the SKU screens point at the item page", () => {
       expect(E[k], k).toBeTruthy();
       expect(S[k], k).toBeTruthy();
     }
+  });
+  it("sim QA: the read-only pack line's link lands on the actor's shop — ?location=<shop> — and the pages resolve that shop", () => {
+    const SHOP = "6f1d2c3e-0000-4000-8000-00000000000a";
+    const SKU = "7d0c1f2e-0000-4000-8000-000000000001";
+    const html = renderToStaticMarkup(jsx(TranslationProvider, { initialLanguage: "en", children: jsx(ShopPackJobLink, { skuId: SKU, shopId: SHOP }) }));
+    expect(html).toContain(`href="/admin/catalog/sku/${SKU}?location=${SHOP}&amp;job=pack"`);
+    for (const page of ["app/admin/skus/page.tsx", "app/admin/vendors/[id]/page.tsx"]) {
+      const src = readFileSync(page, "utf8");
+      expect(src, page).toContain("const itemShopId = await resolveShopId(");
+      expect(src, page).toContain("itemShopId={itemShopId}");
+    }
+    expect(readFileSync("components/admin/skus/SkuCostPanel.tsx", "utf8")).toContain("shopId: itemShopId ?? undefined");
   });
 });

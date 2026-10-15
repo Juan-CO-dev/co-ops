@@ -351,6 +351,10 @@ const PAGE_ROUTES: Record<string, string> = {
   "app/admin/menu-costing/page.tsx": "/admin/menu-costing", // catalog Phase 2a — the costing board's shop switcher
   // catalog Phase 2b — the item page's shop switcher (a prefix route: /admin/catalog/sku/[id]).
   "app/admin/catalog/sku/[id]/page.tsx": "/admin/catalog/sku/7d0c1f2e-0000-4000-8000-000000000001",
+  // catalog Phase 2b (sim QA) — the SKU catalog and the vendor page resolve the shop their item-page
+  // links land on; they read no shop parameter of their own.
+  "app/admin/skus/page.tsx": "/admin/skus",
+  "app/admin/vendors/[id]/page.tsx": "/admin/vendors/v",
 };
 
 /** Where each audited page binds the awaited `searchParams` its getter reads. */

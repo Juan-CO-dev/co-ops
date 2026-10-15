@@ -10,6 +10,7 @@
 import { notFound, redirect } from "next/navigation";
 
 import { requireSessionFromHeaders } from "@/lib/session";
+import { resolveShopId } from "@/lib/shop-context";
 import { ROLES } from "@/lib/roles";
 import { serverT } from "@/lib/i18n/server";
 import { getServiceRoleClient } from "@/lib/supabase-server";
@@ -22,7 +23,7 @@ import { listProducts, ProductError, type ProductView } from "@/lib/products";
 import { loadCurrentSkuPrices, computeSkuCostPerOz, loadSkuUsageMap, loadSkuReceivingLedger, loadSkuConsumption, type SkuConsumption } from "@/lib/admin/cost";
 import { skuPackComplete, skuReadiness, type Readiness } from "@/lib/readiness";
 import { loadSkuPackResolution } from "@/lib/prep-consumption";
-import { catalogWriteRoleAllowed, levelsBySku } from "@/lib/sku-versions-shared";
+import { catalogShopAllowed, catalogWriteRoleAllowed, levelsBySku } from "@/lib/sku-versions-shared";
 import { buildPackChain, isChainUnverified, type PackChainLevel } from "@/lib/pack-chain-shared";
 import type { MeasureUnitFactor } from "@/lib/recipe-math";
 import { loadOrderGuide, ORDER_GUIDE_EDIT_MIN } from "@/lib/order-guides";
@@ -165,6 +166,13 @@ export default async function AdminVendorDetailPage({
     if (r && r.status !== "ready") skuReadinessMap[s.id] = r;
   }
 
+  // Catalog Phase 2b (sim QA): the shop every item-page link here lands on — THE one resolver over
+  // the shops this actor may write a version for (a membership, or MoO+ any active shop — D2).
+  const itemShopId = await resolveShopId(
+    ((await getServiceRoleClient().from("locations").select("id").eq("active", true).order("name").order("id").returns<Array<{ id: string }>>()).data ?? [])
+      .map((l) => l.id).filter((id) => catalogShopAllowed(auth, id)),
+  );
+
   return (
     <div>
       <PageHeader
@@ -208,6 +216,7 @@ export default async function AdminVendorDetailPage({
         parsFieldsReady={parsReady}
         actorLevel={level}
         canEditShopVersion={catalogWriteRoleAllowed(auth.user.role, level)}
+        itemShopId={itemShopId}
       />
       {/* Order guide (V3-A §6) — the vendor's own sheet order, which every PO surface
           follows. A sibling of the detail editor rather than a card inside it: the guide

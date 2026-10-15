@@ -212,7 +212,7 @@ export async function stageVendorImport(actor: AuthContext, vendorId: string, fi
     report.counts[o.kind] = (report.counts[o.kind] ?? 0) + 1;
     report.reasons[o.reason] = (report.reasons[o.reason] ?? 0) + 1;
     if (o.kind === "needs_person") report.needs_person.push({ key: observationKey(o), reason: o.reason,
-      href: o.match.sku_id ? skuItemHref(o.match.sku_id, { job: "pack" }) : `/admin/vendors/${vendorId}#order-guide-${vendorId}` });
+      href: o.match.sku_id ? skuItemHref(o.match.sku_id, { shopId: null, job: "pack" }) : `/admin/vendors/${vendorId}#order-guide-${vendorId}` });
   }
   const { data: staged, error } = await sb.rpc("stage_vendor_import", {
     p_batch: { vendor_id: vendorId, account_id: accounts[0] ?? null, adapter: adapter.id, adapter_version: ADAPTER_VERSION,

@@ -46,7 +46,7 @@ import {
 import type { PackChainLevel } from "@/lib/pack-chain-shared";
 import { shopPackJobOffered, canChangeGlobalPack, hasGlobalPack, resolveErrorKey, STEP_UP_CANCELLED, type SaveChainResult } from "./shared";
 import Link from "next/link";
-import { skuItemHref } from "@/lib/catalog/sku-item-shared";
+import { ShopPackJobLink } from "./ShopPackJobLink";
 import { PackChainWizard } from "./PackChainWizard";
 import { SkuCostPanel, type SkuCostInfo } from "./SkuCostPanel";
 import { SkuLocationOverlay, type LocationSkuOverlayView } from "./SkuLocationOverlay";
@@ -175,6 +175,7 @@ export function SkuBuilder({
   measureUnits,
   actorLevel,
   canEditShopVersion = false,
+  itemShopId = null,
   busy,
   errorMsg,
   submitLabel,
@@ -212,6 +213,8 @@ export function SkuBuilder({
   actorLevel: number;
   /** Catalog Phase 2b: may this actor write a SHOP version (catalogWriteRoleAllowed, decided by the page)? */
   canEditShopVersion?: boolean;
+  /** Catalog Phase 2b (sim QA): the shop the item-page links land on — the page's resolved shop (null = none). */
+  itemShopId?: string | null;
   busy: boolean;
   errorMsg: string | null;
   submitLabel: string;
@@ -657,7 +660,7 @@ export function SkuBuilder({
                 {globalPackLocked ? (
                   <>
                     <p role="note" className="text-sm text-co-text-muted">{t("admin.skus.chain.global_read_only")}</p>
-                    {offerShopPackJob ? <ShopPackJobLink skuId={initial!.id} /> : null}
+                    {offerShopPackJob ? <ShopPackJobLink skuId={initial!.id} shopId={itemShopId} /> : null}
                   </>
                 ) : onSaveChain ? (
                   <button
@@ -714,7 +717,7 @@ export function SkuBuilder({
             {globalPackLocked ? (
               <>
                 <p role="note" className="text-sm text-co-text-muted">{t("admin.skus.chain.global_read_only")}</p>
-                {offerShopPackJob ? <ShopPackJobLink skuId={initial!.id} /> : null}
+                {offerShopPackJob ? <ShopPackJobLink skuId={initial!.id} shopId={itemShopId} /> : null}
               </>
             ) : !wizardOpen ? (
               <>
@@ -774,6 +777,7 @@ export function SkuBuilder({
         <section className="flex flex-col gap-2 border-t-2 border-co-border pt-3" aria-label={t("admin.skus.builder.cost_aria")}>
           <SectionHeader title={t("admin.skus.builder.section_cost")} />
           <SkuCostPanel
+            itemShopId={itemShopId}
             skuId={initial!.id}
             cost={cost}
             ledger={ledger ?? null}
@@ -921,14 +925,4 @@ function orderedForDisplay(levels: PackChainLevel[]): PackChainLevel[] {
 function labelOf(levels: PackChainLevel[], id: string | null): string {
   if (id == null) return "";
   return levels.find((l) => l.id === id)?.label ?? "?";
-}
-
-/** Catalog Phase 2b: "It arrives differently now" on the item page — the shop the page resolves (D2). */
-function ShopPackJobLink({ skuId }: { skuId: string }) {
-  const { t } = useTranslation();
-  return (
-    <Link href={skuItemHref(skuId, { job: "pack" })} className="inline-flex min-h-[44px] w-fit items-center rounded-lg border-2 border-co-border bg-co-surface px-3 text-xs font-bold uppercase tracking-[0.1em] text-co-text hover:border-co-text">
-      {t("admin.skus.chain.use_item_page")}
-    </Link>
-  );
 }

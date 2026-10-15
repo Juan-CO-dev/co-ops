@@ -11,7 +11,7 @@ import { skuItemHref } from "@/lib/catalog/sku-item-shared";
 
 export interface SkuCostInfo { currentPrice: number | null; costPerOz: number | null; usedBy: string[]; }
 
-export function SkuCostPanel({ skuId, cost, ledger, consumption, canRecord }: { skuId: string; cost: SkuCostInfo; ledger: SkuReceivingLedger | null; consumption: SkuConsumption | null; canRecord: boolean }) {
+export function SkuCostPanel({ skuId, cost, ledger, consumption, canRecord, itemShopId = null }: { skuId: string; cost: SkuCostInfo; ledger: SkuReceivingLedger | null; consumption: SkuConsumption | null; canRecord: boolean; /** The shop the item-page link lands on (sim QA). */ itemShopId?: string | null }) {
   const { t } = useTranslation();
   const router = useRouter();
   const { requestStepUp } = useStepUp();
@@ -88,7 +88,7 @@ export function SkuCostPanel({ skuId, cost, ledger, consumption, canRecord }: { 
             <input className={field} type="date" value={date} disabled={busy} onChange={(e) => setDate(e.target.value)} />
             {err ? <p className="text-sm text-co-cta-text">{err}</p> : null}
             {errCode === "global_requires_moo" ? (
-              <Link href={skuItemHref(skuId, { job: "price" })} className="inline-flex min-h-[44px] items-center text-sm font-bold text-co-text underline">
+              <Link href={skuItemHref(skuId, { shopId: itemShopId ?? undefined, job: "price" })} className="inline-flex min-h-[44px] items-center text-sm font-bold text-co-text underline">
                 {t("admin.skus.cost.use_item_page")}
               </Link>
             ) : null}

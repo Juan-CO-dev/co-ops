@@ -44,7 +44,7 @@ describe("the editor opens read-only instead of offering a doomed save", () => {
     expect(src).toContain("const globalPackLocked = isEdit && !canChangeGlobalPack(actorLevel, hasGlobalPack(initial!, initialChain?.length ?? 0));");
     expect(src.match(/\{t\("admin\.skus\.chain\.global_read_only"\)\}/g)).toHaveLength(2);
     // Catalog Phase 2b: the read-only line is followed by the item page's pack job for a shop-version writer.
-    const lockedLine = String.raw`\{globalPackLocked \? \(\s+<>\s+<p role="note"[^>]*>\{t\("admin\.skus\.chain\.global_read_only"\)\}<\/p>\s+\{offerShopPackJob \? <ShopPackJobLink skuId=\{initial!\.id\} \/> : null\}\s+<\/>\s+\)`;
+    const lockedLine = String.raw`\{globalPackLocked \? \(\s+<>\s+<p role="note"[^>]*>\{t\("admin\.skus\.chain\.global_read_only"\)\}<\/p>\s+\{offerShopPackJob \? <ShopPackJobLink skuId=\{initial!\.id\} shopId=\{itemShopId\} \/> : null\}\s+<\/>\s+\)`;
     expect(src).toMatch(new RegExp(lockedLine + String.raw` : onSaveChain \? \(`));
     expect(src).toMatch(new RegExp(lockedLine + String.raw` : !wizardOpen \? \(`));
   });

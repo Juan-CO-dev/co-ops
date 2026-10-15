@@ -12,8 +12,9 @@
 import { redirect } from "next/navigation";
 
 import { requireSessionFromHeaders } from "@/lib/session";
+import { resolveShopId } from "@/lib/shop-context";
 import { ROLES } from "@/lib/roles";
-import { catalogWriteRoleAllowed } from "@/lib/sku-versions-shared";
+import { catalogShopAllowed, catalogWriteRoleAllowed } from "@/lib/sku-versions-shared";
 import { loadOpenPackChangeRequests } from "@/lib/pack-change-requests";
 import { packRequestReviewAllowed } from "@/lib/pack-change-requests-shared";
 import { PackChangeRequestsList } from "@/components/catalog/PackChangeRequestsList";
@@ -169,6 +170,13 @@ export default async function AdminSkusPage({
   // the operational managers and GM+; the social media manager is never asked for the list).
   const packRequests = packRequestReviewAllowed(auth) ? await loadOpenPackChangeRequests(auth, { locationIds: locations.map((l) => l.id) }) : [];
 
+  // Catalog Phase 2b (sim QA): the shop every item-page link here lands on — THE one resolver over
+  // the shops this actor may write a version for (a membership, or MoO+ any active shop — D2).
+  const itemShopId = await resolveShopId(
+    ((await getServiceRoleClient().from("locations").select("id").eq("active", true).order("name").order("id").returns<Array<{ id: string }>>()).data ?? [])
+      .map((l) => l.id).filter((id) => catalogShopAllowed(auth, id)),
+  );
+
   return (
     <div>
       <PageHeader
@@ -199,6 +207,7 @@ export default async function AdminSkusPage({
         parsFieldsReady={parsReady}
         actorLevel={level}
         canEditShopVersion={catalogWriteRoleAllowed(auth.user.role, level)}
+        itemShopId={itemShopId}
         canManage={level >= SKU_WRITE_MIN}
         focusSkuId={focusSkuId}
         initialVendorFilter={vendorParam}

@@ -56,6 +56,7 @@ export function VendorSkusCard({
   parsFieldsReady,
   actorLevel,
   canEditShopVersion = false,
+  itemShopId = null,
   canManage,
 }: {
   vendorId: string;
@@ -84,6 +85,8 @@ export function VendorSkusCard({
   actorLevel: number;
   /** Catalog Phase 2b: may this actor write a SHOP version (catalogWriteRoleAllowed)? */
   canEditShopVersion?: boolean;
+  /** Catalog Phase 2b (sim QA): the shop the item-page links land on — the page's resolved shop (null = none). */
+  itemShopId?: string | null;
   canManage: boolean; // GM+
 }) {
   const { t } = useTranslation();
@@ -213,6 +216,7 @@ export function VendorSkusCard({
                     measureUnits={measureUnits}
                     actorLevel={actorLevel}
             canEditShopVersion={canEditShopVersion}
+            itemShopId={itemShopId}
                     busy={busy}
                     errorMsg={errorMsg}
                     submitLabel={t("admin.skus.save")}
@@ -252,6 +256,7 @@ export function VendorSkusCard({
                     ledger={skuLedger[s.id] ?? null}
                     consumption={skuConsumption[s.id] ?? null}
                     canRecord={actorLevel >= 6}
+                    itemShopId={itemShopId}
                   />
                 )}
               </li>
@@ -275,6 +280,7 @@ export function VendorSkusCard({
                 measureUnits={measureUnits}
                 actorLevel={actorLevel}
             canEditShopVersion={canEditShopVersion}
+            itemShopId={itemShopId}
                 busy={busy}
                 errorMsg={errorMsg}
                 submitLabel={t("admin.skus.add")}
