@@ -18,6 +18,9 @@ const CANNED: Record<string, unknown[]> = {
   recipe_versions: [{ id: "6f1d2c3e-0000-4000-8000-0000000000c1", recipe_id: "6f1d2c3e-0000-4000-8000-0000000000d1", location_id: LOC,
     valid_from: "2026-10-01T00:00:00.000Z", valid_to: null, active: true }],
   recipes: [{ id: "6f1d2c3e-0000-4000-8000-0000000000d1", name: "Slaw", active: true }],
+  // 3b: the page views check the shop is an active one before reading on.
+  locations: [{ id: LOC, name: "Shop one", active: true }],
+  menu_items: [{ id: "6f1d2c3e-0000-4000-8000-0000000000d1", name: "Italian", name_es: null, menu_price: 12.5, section: null, active: true }],
 };
 
 function recordingClient() {
@@ -52,7 +55,8 @@ function recordingClient() {
       });
       return q;
     },
-    rpc: async () => ({ data: null, error: null }),
+    // A snapshot function answers an (empty) snapshot so a 3b preview goes on past it to the reads behind it.
+    rpc: async (fn: string) => ({ data: fn.endsWith("_snapshot") ? {} : null, error: null }),
   };
 }
 vi.mock("@/lib/supabase-server", () => ({ getServiceRoleClient: () => recordingClient() }));
@@ -65,6 +69,9 @@ import {
   adoptRecipeVersion, dismissRecipeNotice, loadRecipeLiveSet, loadRecipeVersionHistory, promoteRecipeVersion, restoreRecipeVersion,
   retireShopRecipeVersion,
 } from "@/lib/admin/recipe-versions";
+import { computeRecipePreview, loadRecipeItemView } from "@/lib/catalog/recipe-item";
+import { computeMenuPreview, loadMenuItemPageView } from "@/lib/catalog/menu-item-page";
+import { loadShopChanges, loadShopNotices } from "@/lib/catalog/shop-changes";
 import type { AuthContext } from "@/lib/session";
 import { migratedRecipeDb } from "./fixtures/recipe-versions-pglite";
 
@@ -109,6 +116,15 @@ beforeAll(async () => {
   await run("promoteRecipeVersion", () => promoteRecipeVersion(OWNER, { recipeId: RECIPE, sourceVersionId: SOURCE, expectedGlobalVersionId: null, snapshot: {} }));
   await run("dismissRecipeNotice", () => dismissRecipeNotice(OWNER, { locationId: LOC, recipeId: RECIPE, kind: "new_default", seenVersionId: SOURCE }));
   await run("promoteMenuItemShopSetting", () => promoteMenuItemShopSetting(OWNER, { menuItemId: RECIPE, settingId: RECIPE, fields: ["price"], expected: { price: 1, name: "x", nameEs: null }, snapshot: {} }));
+  // Catalog Phase 3b (Task 5): the page views, the previews, the Shop changes list and the notices read.
+  await run("loadRecipeItemView", () => loadRecipeItemView(OWNER, RECIPE, LOC));
+  await run("computeRecipePreview(restore)", () => computeRecipePreview(OWNER, RECIPE, { kind: "restore", target: { kind: "shop", shopId: LOC }, fromVersionId: SOURCE }));
+  await run("computeRecipePreview(promote)", () => computeRecipePreview(OWNER, RECIPE, { kind: "promote", sourceVersionId: SOURCE }));
+  await run("loadMenuItemPageView", () => loadMenuItemPageView(OWNER, RECIPE, LOC));
+  await run("computeMenuPreview(save)", () => computeMenuPreview(OWNER, RECIPE, { kind: "save", shopId: LOC, patch: { price: 1, soldHere: true, nameOverride: null, nameOverrideEs: null } }));
+  await run("computeMenuPreview(promote)", () => computeMenuPreview(OWNER, RECIPE, { kind: "promote", settingId: RECIPE, fields: ["price"] }));
+  await run("loadShopChanges", () => loadShopChanges(OWNER));
+  await run("loadShopNotices", () => loadShopNotices(OWNER, LOC));
 }, 120_000);
 afterAll(async () => { await db?.close(); });
 
@@ -138,7 +154,10 @@ describe("every query a loader builds on a 0262 / 0263 table runs against the RE
     // scope) and a single version by id (the restore / retire source). Every other read on these tables pages.
     const BOUNDED = new Set(["loadRecipeLiveSet(shop)", "loadRecipeLiveSet(global)", "restoreRecipeVersion", "retireShopRecipeVersion", "retireMenuItemShopSetting",
       // 3b Task 4: a single source / seen version or setting by id, plus the writer's one-recipe live read.
-      "adoptRecipeVersion", "promoteRecipeVersion", "dismissRecipeNotice", "promoteMenuItemShopSetting"]);
+      "adoptRecipeVersion", "promoteRecipeVersion", "dismissRecipeNotice", "promoteMenuItemShopSetting",
+      // 3b Task 5: loadRecipeLiveSet (≤ 2 live rows) and single versions / settings by id inside the views and previews.
+      "loadRecipeItemView", "computeRecipePreview(restore)", "computeRecipePreview(promote)", "loadMenuItemPageView",
+      "computeMenuPreview(save)", "computeMenuPreview(promote)"]);
     const unpaged = captured.filter((c) => FULLY_DEFINED.has(c.table) && !c.ranged && !((c.table === "recipe_versions" || c.table === "menu_item_shop_settings") && BOUNDED.has(c.via)))
       .filter((c) => !upserts.some((u) => u.table === c.table && u.via === c.via)) // a write is not a page
       .map((c) => `${c.via} → ${c.table}`);
@@ -152,6 +171,18 @@ describe("every query a loader builds on a 0262 / 0263 table runs against the RE
     // adopt and promote go on into the one writer: the copied version's lines are read too
     expect(captured.some((c) => c.via === "adoptRecipeVersion" && c.table === "recipe_version_lines")).toBe(true);
     expect(captured.some((c) => c.via === "promoteMenuItemShopSetting" && c.table === "menu_item_shop_settings")).toBe(true);
+  });
+
+  it("3b Task 5 reached every new read: the views, the previews, the Shop changes list and the notices", () => {
+    const reached = (v: string, t: string) => captured.some((c) => c.via === v && c.table === t);
+    expect(reached("loadRecipeItemView", "recipe_versions"), "loadRecipeItemView → recipe_versions").toBe(true);
+    expect(reached("computeRecipePreview(restore)", "recipe_version_lines"), "computeRecipePreview(restore) → recipe_version_lines").toBe(true);
+    expect(reached("computeRecipePreview(promote)", "recipe_versions"), "computeRecipePreview(promote) → recipe_versions").toBe(true);
+    expect(reached("computeMenuPreview(promote)", "menu_item_shop_settings"), "computeMenuPreview(promote) → menu_item_shop_settings").toBe(true);
+    expect(reached("loadShopChanges", "recipe_version_lines"), "loadShopChanges → recipe_version_lines").toBe(true);
+    expect(reached("loadShopChanges", "menu_item_shop_settings"), "loadShopChanges → menu_item_shop_settings").toBe(true);
+    expect(reached("loadShopNotices", "recipe_notice_dismissals"), "loadShopNotices → recipe_notice_dismissals").toBe(true);
+    expect(reached("loadShopNotices", "recipe_versions"), "loadShopNotices → recipe_versions").toBe(true);
   });
 
   it("the notice answer's UPSERT names real columns and a conflict target 0262 has a unique index for", async () => {

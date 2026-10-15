@@ -6341,6 +6341,7 @@
   "catalog.error.edge_not_found": "That line is gone. Reload to see the recipe.",
   "catalog.error.line_changed": "Someone changed this line first. Reload and try again.",
   "catalog.error.empty_recipe": "A recipe needs at least one ingredient.",
+  "catalog.error.nothing_changed": "That doesn't change anything. Change the amount or the ingredient first.",
   "catalog.error.invalid_component": "Pick exactly one ingredient for the line.",
   "catalog.error.invalid_quantity": "Enter an amount above zero.",
   "catalog.error.product_line_needs_measure_unit": "Pick a measure (oz, lb, each…) for this ingredient.",

@@ -273,3 +273,46 @@ export interface MenuItemPageView {
   toastLinks: number;
   history: Array<{ id: string; active: boolean; validFrom: string; validTo: string | null; who: string | null; price: number | null; soldHere: boolean; nameOverride: string | null; nameOverrideEs: string | null }>;
 }
+
+/**
+ * The named refusals the 3b page libs add beyond 3a's (RECIPE_VERSION_ERROR_CODES / MENU_ITEM_SHOP_ERROR_CODES):
+ * each has its OWN en + es message at `catalog.error.<code>` (tests/catalog-item-i18n.test.ts).
+ */
+export const RECIPE_PAGE_ERROR_CODES = ["preview_stale", "nothing_changed"] as const;
+
+// ── The Shop changes list (MoO+, catalog Phase 3b) ────────────────────────────
+
+export interface ShopChangeRecipeRow {
+  recipeId: string;
+  recipeName: string;
+  versionId: string;
+  shopId: string;
+  shopName: string;
+  validFrom: string;
+  createdByName: string | null;
+  adoptedFromShopName: string | null;
+  changes: RecipeLineChange[];
+  sameAsDefault: boolean;
+}
+
+export interface ShopChangeMenuRow {
+  menuItemId: string;
+  menuItemName: string;
+  settingId: string;
+  shopId: string;
+  shopName: string;
+  validFrom: string;
+  createdByName: string | null;
+  price: number | null;
+  soldHere: boolean;
+  nameOverride: string | null;
+  nameOverrideEs: string | null;
+  global: { price: number | null; name: string; nameEs: string | null };
+}
+
+export interface ShopChangesView {
+  recipes: ShopChangeRecipeRow[];
+  menu: ShopChangeMenuRow[];
+  /** recipeLineTargetKey → display name, for every change listed. */
+  names: Record<string, string>;
+}
