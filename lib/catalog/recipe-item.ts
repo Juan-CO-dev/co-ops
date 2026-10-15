@@ -19,7 +19,7 @@ import { loadRecipeGraph, loadSkuPackResolution } from "@/lib/prep-consumption";
 import { loadCurrentSkuPrices } from "@/lib/admin/cost";
 import { costPerOzFromGraph, rollupItemCost, rollupMenuItemCost } from "@/lib/menu-costing-shared";
 import { loadRecipeBuilderCatalog } from "@/lib/admin/recipe-builder-data";
-import { assertInputLineIsValid, RecipeError } from "@/lib/recipes";
+import { assertInputLineIsValidAgainst, RecipeError } from "@/lib/recipes";
 import { catalogShopAllowed, type VersionScope } from "@/lib/sku-versions-shared";
 import { lineFromRow, recipeLineKind, type RecipeLineFields, type RecipeLineRow } from "@/lib/recipe-line-shared";
 import {
@@ -47,39 +47,84 @@ export async function loadActiveShops(sb: Sb): Promise<Named[]> {
 
 const none = <T>() => Promise.resolve({ data: [] as T[], error: null });
 
-/** recipeLineTargetKey → display name (and SKU → vendor name) for every line given. */
+/** The id-list chunk for `.in()` reads (the request-line budget; 2a's / 3a's ID_CHUNK). */
+const ID_CHUNK = 100;
+
+/**
+ * Every row of one `.in()` read over `ids`, id-CHUNKED (the request-line budget) and PAGED (the 1,000-row cap) — the
+ * pattern of the 2a/3a loaders (prep-consumption, recipe-versions). `page` builds one chunk's ranged, ordered query.
+ * Fails loud. No ids → no read.
+ */
+async function rowsByIds<T>(
+  ids: readonly string[], label: string,
+  page: (chunk: string[], from: number, to: number) => PromiseLike<{ data: T[] | null; error: { message: string } | null }>,
+): Promise<T[]> {
+  const out: T[] = [];
+  for (let i = 0; i < ids.length; i += ID_CHUNK) {
+    const chunk = ids.slice(i, i + ID_CHUNK);
+    out.push(...await selectAllRows<T>(async (from, to) => {
+      const { data, error } = await page(chunk, from, to);
+      if (error) throw new Error(`${label}: ${error.message}`);
+      return { data };
+    }));
+  }
+  return out;
+}
+
+/**
+ * recipeLineTargetKey → display name (and SKU → vendor name) for every line given. The page combines the global,
+ * this shop's and every other shop's lines, so no line cap bounds these sets (Astra chunk-2 review P2): every read
+ * is id-chunked and paged.
+ */
 export async function lineNames(sb: Sb, lines: readonly RecipeLineFields[]): Promise<{ names: Record<string, string>; vendorBySku: Map<string, string | null> }> {
   const ids = (k: "componentSkuId" | "componentItemId" | "componentProductId") =>
     [...new Set(lines.map((l) => l[k]).filter((v): v is string => v !== null))];
   const [skuIds, itemIds, productIds] = [ids("componentSkuId"), ids("componentItemId"), ids("componentProductId")];
   type SkuRow = { id: string; name: string; vendor_id: string | null };
   const [skus, items, products] = await Promise.all([
-    skuIds.length ? sb.from("vendor_items").select("id, name, vendor_id").in("id", skuIds).returns<SkuRow[]>() : none<SkuRow>(),
-    itemIds.length ? sb.from("items").select("id, name").in("id", itemIds).returns<Named[]>() : none<Named>(),
-    productIds.length ? sb.from("products").select("id, name").in("id", productIds).returns<Named[]>() : none<Named>(),
+    rowsByIds<SkuRow>(skuIds, "catalog line names skus", (c, from, to) =>
+      sb.from("vendor_items").select("id, name, vendor_id").in("id", c).order("id", { ascending: true }).range(from, to).returns<SkuRow[]>()),
+    rowsByIds<Named>(itemIds, "catalog line names items", (c, from, to) =>
+      sb.from("items").select("id, name").in("id", c).order("id", { ascending: true }).range(from, to).returns<Named[]>()),
+    rowsByIds<Named>(productIds, "catalog line names products", (c, from, to) =>
+      sb.from("products").select("id, name").in("id", c).order("id", { ascending: true }).range(from, to).returns<Named[]>()),
   ]);
-  for (const r of [skus, items, products]) if (r.error) throw new Error(`catalog line names: ${r.error.message}`);
-  const vendorIds = [...new Set((skus.data ?? []).map((s) => s.vendor_id).filter((v): v is string => v !== null))];
-  const vendors = vendorIds.length ? await sb.from("vendors").select("id, name").in("id", vendorIds).returns<Named[]>() : await none<Named>();
-  if (vendors.error) throw new Error(`catalog vendor names: ${vendors.error.message}`);
-  const vendorName = new Map((vendors.data ?? []).map((v) => [v.id, v.name]));
+  const vendorIds = [...new Set(skus.map((s) => s.vendor_id).filter((v): v is string => v !== null))];
+  const vendors = await rowsByIds<Named>(vendorIds, "catalog vendor names", (c, from, to) =>
+    sb.from("vendors").select("id, name").in("id", c).order("id", { ascending: true }).range(from, to).returns<Named[]>());
+  const vendorName = new Map(vendors.map((v) => [v.id, v.name]));
   const names: Record<string, string> = {};
-  for (const s of skus.data ?? []) names[`sku:${s.id}`] = s.name;
-  for (const i of items.data ?? []) names[`item:${i.id}`] = i.name;
-  for (const p of products.data ?? []) names[`product:${p.id}`] = p.name;
-  return { names, vendorBySku: new Map((skus.data ?? []).map((s) => [s.id, s.vendor_id ? (vendorName.get(s.vendor_id) ?? null) : null])) };
+  for (const s of skus) names[`sku:${s.id}`] = s.name;
+  for (const i of items) names[`item:${i.id}`] = i.name;
+  for (const p of products) names[`product:${p.id}`] = p.name;
+  return { names, vendorBySku: new Map(skus.map((s) => [s.id, s.vendor_id ? (vendorName.get(s.vendor_id) ?? null) : null])) };
 }
 
-/** What `recipeLineProblem` needs for these lines: which of their products are active, and the active measures. */
-async function lineProblemContext(sb: Sb, lines: readonly RecipeLineFields[]): Promise<{ activeProductIds: Set<string>; activeMeasureLabels: Set<string> }> {
+/**
+ * What `recipeLineProblem` AND the batched line validator (assertInputLineIsValidAgainst) need for these lines, read
+ * ONCE for the whole set: every product they name with its `active` flag (id-chunked, paged) and the active measures
+ * (paged). Two reads however long the set (Astra chunk-2 review P3) — never two per product line.
+ */
+async function lineProblemContext(sb: Sb, lines: readonly RecipeLineFields[]): Promise<{
+  activeProductIds: Set<string>; activeMeasureLabels: Set<string>; productActive: Map<string, boolean | null>;
+}> {
   const productIds = [...new Set(lines.map((f) => f.componentProductId).filter((v): v is string => v !== null))];
+  type ProductRow = { id: string; active: boolean | null };
   const [products, measures] = await Promise.all([
-    productIds.length ? sb.from("products").select("id").in("id", productIds).eq("active", true).returns<Array<{ id: string }>>() : none<{ id: string }>(),
-    sb.from("measure_units").select("label").eq("active", true).returns<Array<{ label: string }>>(),
+    rowsByIds<ProductRow>(productIds, "catalog line flags products", (c, from, to) =>
+      sb.from("products").select("id, active").in("id", c).order("id", { ascending: true }).range(from, to).returns<ProductRow[]>()),
+    selectAllRows<{ label: string }>(async (from, to) => {
+      const { data, error } = await sb.from("measure_units").select("label").eq("active", true).order("label", { ascending: true })
+        .range(from, to).returns<Array<{ label: string }>>();
+      if (error) throw new Error(`catalog line flags measures: ${error.message}`);
+      return { data };
+    }),
   ]);
-  if (products.error) throw new Error(`catalog line flags products: ${products.error.message}`);
-  if (measures.error) throw new Error(`catalog line flags measures: ${measures.error.message}`);
-  return { activeProductIds: new Set((products.data ?? []).map((p) => p.id)), activeMeasureLabels: new Set((measures.data ?? []).map((m) => m.label)) };
+  return {
+    activeProductIds: new Set(products.filter((p) => p.active === true).map((p) => p.id)),
+    activeMeasureLabels: new Set(measures.map((m) => m.label)),
+    productActive: new Map(products.map((p) => [p.id, p.active])),
+  };
 }
 
 function gateFor(actor: AuthContext, scope: VersionScope) {
@@ -218,17 +263,22 @@ export async function loadRecipeItemView(actor: AuthContext, recipeId: string, s
 
 /**
  * LEAD DECISION (b) at preview time: every line the save ADDS or CREATES goes through the SAME validator the
- * writer runs (assertInputLineIsValid — so a preview never offers a save the writer would refuse), and a refusal
- * names WHICH line and WHY; a line it only CARRIES is flagged when it would no longer pass, never refused.
+ * writer runs (assertInputLineIsValid's checks, in its order, with its codes — so a preview never offers a save the
+ * writer would refuse), and a refusal names WHICH line and WHY; a line it only CARRIES is flagged when it would no
+ * longer pass, never refused. Exported for its read-count test.
  */
-async function judgeLines(
+export async function judgeLines(
   sb: Sb, after: readonly RecipeLineFields[], added: ReadonlySet<number>, names: Readonly<Record<string, string>>,
 ): Promise<RecipePreview["flagged"]> {
   const nameOf = (f: RecipeLineFields) => names[recipeLineTargetKey(f)] ?? recipeLineTargetKey(f);
+  // ONE products read and ONE measures read for the whole set (Astra chunk-2 review P3: a 200-line adopt or promote
+  // was ~400 serial reads), then the writer's checks line by line in position order — the first invalid ADDED line
+  // is refused, named, exactly as before.
+  const ctx = await lineProblemContext(sb, after);
   for (const position of [...added].sort((a, b) => a - b)) {
     const f = after[position - 1]!;
     try {
-      await assertInputLineIsValid(sb, f);
+      assertInputLineIsValidAgainst(f, ctx);
     } catch (e) {
       if (e instanceof RecipeError) {
         throw new RecipeVersionError(e.status, e.code, e.message, { position, name: nameOf(f), reason: e.code });
@@ -236,7 +286,6 @@ async function judgeLines(
       throw e;
     }
   }
-  const ctx = await lineProblemContext(sb, after);
   const flagged: RecipePreview["flagged"] = [];
   after.forEach((f, i) => {
     if (added.has(i + 1)) return;

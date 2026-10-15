@@ -182,7 +182,7 @@ export async function loadMenuItemShopHistory(actor: AuthContext, menuItemId: st
 export async function promoteMenuItemShopSetting(
   actor: AuthContext,
   input: {
-    menuItemId: string; settingId: string; fields: Array<"price" | "name">; expected: { price: number | null; name: string; nameEs: string | null };
+    menuItemId: string; settingId: string; fields: ReadonlyArray<"price" | "name">; expected: { price: number | null; name: string; nameEs: string | null };
     /** The optional "Spanish name" field (blank = not typed); only with the name promoted. */
     nameEs?: string | null;
     snapshot?: MenuChangeSnapshot;
@@ -210,6 +210,8 @@ export async function promoteMenuItemShopSetting(
 
   let settingId = row.id;
   let snapshot = input.snapshot;
+  /** Set the moment the Spanish name's own save COMMITS; from then on every failure says so (Astra chunk-2 review P2). */
+  let spanishNameSaved: { settingId: string; locationId: string } | null = null;
   if (typedEs !== null && typedEs !== row.name_override_es) {
     if (row.active === false) throw new MenuShopError(409, "not_live");
     if (row.name_override === null) throw new MenuShopError(400, "nothing_to_promote");
@@ -225,28 +227,35 @@ export async function promoteMenuItemShopSetting(
       restoredFromSettingId: null, note: "Spanish name added to promote",
     });
     settingId = saved.settingId;
-    snapshot = await loadMenuChangeSnapshot(input.menuItemId, NIL_SCOPE);
+    spanishNameSaved = { settingId, locationId: row.location_id };
   }
-  snapshot ??= await loadMenuChangeSnapshot(input.menuItemId, NIL_SCOPE);
 
-  const { data, error } = await sb.rpc("promote_menu_item_shop_setting", {
-    p_setting: settingId, p_fields: input.fields, p_expected_price: input.expected.price,
-    p_expected_name: input.expected.name, p_expected_name_es: input.expected.nameEs, p_actor: actor.user.id,
-    p_snapshot: snapshot,
-  });
-  if (error) {
-    try {
-      menuShopErrorFromRpc(error.message);
-    } catch (e) {
-      // The Spanish name was already saved (its own audited transaction): say so with the refusal (CC note 2 #3).
-      if (e instanceof MenuShopError && settingId !== row.id) e.spanishNameSaved = { settingId, locationId: row.location_id };
-      throw e;
-    }
-  }
-  const r = data as {
+  // THE WHOLE POST-SAVE PATH (Astra chunk-2 review P2): the snapshot reload, the promote call and its answer. Once
+  // the Spanish name has committed, ANY failure here — a named refusal, an un-named rpc error, a thrown read — answers
+  // with the named partial result (the shop's label changed and is in History; the promote did not happen), never a
+  // generic failure. With no Spanish-name step nothing was written, so a failure stays what it was.
+  type PromoteResult = {
     changed_shops: string[] | null; before: Record<string, unknown>;
     returned_shop: string | null; retired_setting_id: string | null; remaining_setting_id: string | null;
   };
+  let r: PromoteResult;
+  try {
+    if (spanishNameSaved !== null || snapshot === undefined) snapshot = await loadMenuChangeSnapshot(input.menuItemId, NIL_SCOPE);
+    const { data, error } = await sb.rpc("promote_menu_item_shop_setting", {
+      p_setting: settingId, p_fields: input.fields, p_expected_price: input.expected.price,
+      p_expected_name: input.expected.name, p_expected_name_es: input.expected.nameEs, p_actor: actor.user.id,
+      p_snapshot: snapshot,
+    });
+    if (error) menuShopErrorFromRpc(error.message);
+    r = data as PromoteResult;
+  } catch (e) {
+    if (spanishNameSaved === null) throw e;
+    // A named refusal keeps its own code (CC note 2 #3); anything else becomes the named `promote_not_done` — the
+    // database's words stay server-side (the cause), never on the page.
+    const named = e instanceof MenuShopError ? e : Object.assign(new MenuShopError(500, "promote_not_done"), { cause: e });
+    named.spanishNameSaved = spanishNameSaved;
+    throw named;
+  }
   await audit({
     actorId: actor.user.id, actorRole: actor.user.role,
     action: "menu_item.shop_setting_promote", resourceTable: "menu_items", resourceId: input.menuItemId,

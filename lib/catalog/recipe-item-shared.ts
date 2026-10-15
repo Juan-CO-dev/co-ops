@@ -170,7 +170,7 @@ export type MenuChangeRequest =
   | { kind: "back_to_default"; shopId: string }
   | { kind: "restore"; shopId: string; fromSettingId: string }
   /** `nameEs`: the optional "Spanish name" typed on the promote screen — present only when typed (CC note 1 #2). */
-  | { kind: "promote"; settingId: string; fields: MenuPromoteField[]; nameEs?: string };
+  | { kind: "promote"; settingId: string; fields: readonly MenuPromoteField[]; nameEs?: string };
 
 /** The routes' one parser for a menu change. "Sold here" is never promoted (judgment call 8). */
 export function parseMenuChange(raw: unknown): ChangeParse<MenuChangeRequest> {
@@ -278,7 +278,7 @@ export interface MenuItemPageView {
  * The named refusals the 3b page libs add beyond 3a's (RECIPE_VERSION_ERROR_CODES / MENU_ITEM_SHOP_ERROR_CODES):
  * each has its OWN en + es message at `catalog.error.<code>` (tests/catalog-item-i18n.test.ts).
  */
-export const RECIPE_PAGE_ERROR_CODES = ["preview_stale", "nothing_changed"] as const;
+export const RECIPE_PAGE_ERROR_CODES = ["preview_stale", "nothing_changed", "promote_not_done"] as const;
 
 // ── The Shop changes list (MoO+, catalog Phase 3b) ────────────────────────────
 
