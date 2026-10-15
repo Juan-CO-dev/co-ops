@@ -151,6 +151,7 @@ Nothing structural is hard-coded. Each shop has a **Schedule structure** setting
 - **Managers' time:**
   - Salaried GM/AGM have a **minimum on-the-clock per day**, tunable per position (default 8 h). This is a hard constraint, separate from the floor cap.
   - When a manager isn't needed at a station, their time is **"Manager on duty"**; two managers can both be on duty. Managers have manager work, but **service comes first**: they drop into a station only when coverage needs them.
+  - **Preferred cover positions per manager** (Shift Lead and up, tunable per person): an ordered list, e.g. Expeditor → Register & Delivery → Prep. When coverage is short, the scheduler pulls a manager into their preferred positions in order. It uses other positions only as a last resort, and the reason says so.
   - **The board never double-covers a position:** no manager on a station another person already covers.
 - **Positions:**
   - **One person per position** at a time (default head count 1, tunable). When a station closes or trims, that person moves to another open position or clocks out. Two people never fill the same position at the same time; e.g. two walk-in closers fill Walk-ins and Walk-ins / Online.
