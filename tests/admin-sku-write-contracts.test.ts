@@ -258,24 +258,17 @@ describe("the overlay route and its editor carry the baseline end to end", () =>
 // 3. The pack-chain flat-field mirror
 // ─────────────────────────────────────────────────────────────────────────────
 
-describe("syncSkuFlatFieldsFromChain stays non-fatal but stops being invisible", () => {
+describe("the pack-chain flat-field mirror is derived IN the save's transaction, and stays visible", () => {
+  // Catalog Phase 2a (D5; Astra 2a r2#6): the best-effort post-save sync (syncSkuFlatFieldsFromChain,
+  // SYNC_ATTEMPTS) is GONE. save_sku_pack_version derives the global mirror under the SKU lock in the
+  // same transaction (0259 sku_flat_mirror_apply), so two saves can never leave the older one's
+  // mirror. What the 2026-08-29 audit fix demanded still holds: the outcome is REPORTED, never silent.
   const src = read("lib/admin/pack-chain.ts");
 
-  it("reports its outcome instead of only logging it", () => {
-    expect(src).toMatch(/async function syncSkuFlatFieldsFromChain\([\s\S]*?\): Promise<boolean>/);
-    expect(src).toMatch(/flatFieldsSynced/);
-  });
-
-  it("still never throws — the chain is the source of truth and is already saved", () => {
-    // The non-fatal posture is deliberate and documented; only the silence was the defect.
-    const fn = src.slice(src.indexOf("async function syncSkuFlatFieldsFromChain"));
-    const body = fn.slice(0, fn.indexOf("\n}\n"));
-    expect(body).not.toMatch(/\bthrow\b/);
-    expect(body).toMatch(/console\.error/);
-  });
-
-  it("retries once before giving up on a transient write", () => {
-    expect(src).toMatch(/SYNC_ATTEMPTS/);
+  it("no post-save sync remains; the outcome comes from the RPC", () => {
+    expect(src).not.toMatch(/syncSkuFlatFieldsFromChain|SYNC_ATTEMPTS/);
+    expect(src).toContain('sb.rpc("save_sku_pack_version"');
+    expect(src).toMatch(/const flatFieldsSynced = \(saved as \{ mirror_synced: boolean \| null \}\)\.mirror_synced === true;/);
   });
 
   it("records the outcome on the audit row the chain save already writes", () => {

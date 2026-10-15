@@ -38,6 +38,7 @@ import { audit } from "@/lib/audit";
 import type { AuthContext } from "@/lib/session";
 import { lockLocationContext, isAllLocationsAccess, type LocationActor } from "@/lib/locations";
 import type { MeasureDimension } from "@/lib/recipe-math";
+import { GLOBAL_VERSION_WRITE_MIN } from "@/lib/sku-versions-shared";
 import type { SkuClass } from "@/lib/admin/catalog-shared";
 // SKU_CLASSES + isSkuClass live in the client-safe shared module (used by the
 // SKU form); re-export so server consumers keep importing from lib/admin/skus.
@@ -786,6 +787,15 @@ async function assertAvgNotNeededByChain(skuId: string, skuClass: SkuClass): Pro
   }
 }
 
+/** The flat pack fields — for an unchained SKU, its GLOBAL pack (catalog Phase 2a, D5). */
+const PACK_FIELDS = ["pack_format", "units_per_pack", "each_size", "each_measure", "each_container_label"] as const;
+function samePackValue(a: unknown, b: unknown): boolean {
+  if (a == null && b == null) return true;
+  if (a == null || b == null) return false;
+  if (typeof a === "number" || typeof b === "number") return Number(a) === Number(b);
+  return String(a) === String(b);
+}
+
 export async function updateSku(
   actor: AuthContext,
   args: { id: string; changes: UpdateSkuChanges },
@@ -796,6 +806,7 @@ export async function updateSku(
   const update: Record<string, unknown> = {};
   let currentSkuClass: string | null = null;
 
+  let packBefore: Record<string, unknown> = {};
   // The SKU is addressed by opaque id, so its shop has to be READ before it can be bound
   // (the cancelLtoEvent posture). A shop-scoped SKU may only be edited by an actor who
   // holds that shop; a GLOBAL SKU (location_id null) is org-scope.
@@ -803,12 +814,17 @@ export async function updateSku(
     const sbBind = getServiceRoleClient();
     const { data: cur, error: curErr } = await sbBind
       .from("vendor_items")
-      .select("id, location_id, sku_class")
+      .select("id, location_id, sku_class, pack_format, units_per_pack, each_size, each_measure, each_container_label")
       .eq("id", args.id)
-      .maybeSingle<{ id: string; location_id: string | null; sku_class: string | null }>();
+      .maybeSingle<{
+        id: string; location_id: string | null; sku_class: string | null;
+        pack_format: string | null; units_per_pack: number | null; each_size: number | string | null;
+        each_measure: string | null; each_container_label: string | null;
+      }>();
     if (curErr) throw new Error(`updateSku bind read failed: ${curErr.message}`);
     if (!cur) throw new AdminSkuError(404, "sku_not_found", "SKU not found");
     currentSkuClass = cur.sku_class;
+    packBefore = cur;
     if (cur.location_id !== null && !lockLocationContext(actorLoc(actor), cur.location_id)) {
       throw new AdminSkuError(404, "not_found", "SKU not found");
     }
@@ -882,6 +898,29 @@ export async function updateSku(
     if (changes.parStep !== undefined) update.par_step = normalizeParStep(changes.parStep);
   }
 
+  // CATALOG PHASE 2a (D5; Astra 2a r2#2): below MoO, the flat pack is the GLOBAL pack. A field equal
+  // to what was read is NOT written — a stale form must never restore a value a MoO changed
+  // meanwhile — and a changed field must have been EMPTY (a first value), enforced again by the
+  // UPDATE below as a compare-and-set on NULL. A GM changes how an item arrives on the item page.
+  const changedPack: string[] = [];
+  if (getRoleLevel(actor.user.role) < GLOBAL_VERSION_WRITE_MIN) {
+    for (const f of PACK_FIELDS) {
+      if (!(f in update)) continue;
+      if (samePackValue(update[f], packBefore[f])) { delete update[f]; continue; }
+      if (packBefore[f] != null) {
+        throw new AdminSkuError(403, "global_requires_moo", "Only a Manager of Operations or higher can change this item's pack for everyone");
+      }
+      changedPack.push(f);
+    }
+    if (changedPack.length > 0) {
+      // A CHAINED SKU's flat fields are the mirror of its global chain, never a first value of their own.
+      const { count: chained, error: chErr } = await getServiceRoleClient().from("sku_pack_versions")
+        .select("id", { count: "exact", head: true }).eq("sku_id", args.id).is("location_id", null).eq("active", true);
+      if (chErr) throw new Error(`updateSku chain check: ${chErr.message}`);
+      if ((chained ?? 0) > 0) throw new AdminSkuError(403, "global_requires_moo", "This item's pack is set by its pack chain — a Manager of Operations changes it for everyone");
+    }
+  }
+
   // MEMBERSHIP FIRST, AND ONLY AFTER THE REST HAS VALIDATED.
   //
   // Order is load-bearing in both directions. It runs AFTER the payload above because every
@@ -900,12 +939,16 @@ export async function updateSku(
   update.updated_at = new Date().toISOString();
 
   const sb = getServiceRoleClient();
-  const { error, count } = await sb
-    .from("vendor_items")
-    .update(update, { count: "exact" })
-    .eq("id", args.id);
+  let q = sb.from("vendor_items").update(update, { count: "exact" }).eq("id", args.id);
+  // The first-value rule rides the write itself: each newly set pack field must STILL be empty.
+  for (const f of changedPack) q = q.is(f, null);
+  const { error, count } = await q;
   if (error) throw new Error(`updateSku failed: ${error.message}`);
-  if (count === 0) throw new AdminSkuError(404, "sku_not_found", "SKU not found");
+  if (count === 0) {
+    throw changedPack.length > 0
+      ? new AdminSkuError(403, "global_requires_moo", "Someone set this pack first — reload")
+      : new AdminSkuError(404, "sku_not_found", "SKU not found");
+  }
 
   await audit({
     actorId: actor.user.id,

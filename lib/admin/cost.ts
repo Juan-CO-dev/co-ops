@@ -40,7 +40,7 @@ import { audit } from "@/lib/audit";
 import type { AuthContext } from "@/lib/session";
 import { loadMeasureUnits } from "@/lib/admin/skus";
 import { loadSkuPackChains } from "@/lib/prep-consumption";
-import { assertScopeToken, resolveCurrentPrices, type ResolvedPrice, type ScopedPriceRow, type VersionScope } from "@/lib/sku-versions-shared";
+import { assertScopeToken, catalogWriteRoleAllowed, GLOBAL_VERSION_WRITE_MIN, resolveCurrentPrices, skuOwnerAllowed, type ResolvedPrice, type ScopedPriceRow, type VersionScope } from "@/lib/sku-versions-shared";
 import type { MeasureUnitFactor } from "@/lib/recipe-math";
 // The PURE half lives in cost-shared.ts (the house *-shared law) so the
 // derivation is test-pinnable; re-exported here so server consumers' import
@@ -249,6 +249,10 @@ export async function recordSkuPrice(
   args: { skuId: string; unitPrice: number; effectiveDate: string },
 ): Promise<{ id: string }> {
   requireLevel(actor, PRICE_WRITE_MIN);
+  // Lead decision (catalog Phase 2a): at level 6 only the operational managers write the catalog.
+  if (!catalogWriteRoleAllowed(actor.user.role, getRoleLevel(actor.user.role))) {
+    throw new AdminCostError(403, "forbidden", "Insufficient role for this action");
+  }
   if (!Number.isFinite(args.unitPrice) || args.unitPrice <= 0) {
     throw new AdminCostError(400, "invalid_price", "Price must be a positive number");
   }
@@ -256,17 +260,27 @@ export async function recordSkuPrice(
     throw new AdminCostError(400, "invalid_date", "Effective date must be YYYY-MM-DD");
   }
   const sb = getServiceRoleClient();
-  const { data: sku, error: sErr } = await sb.from("vendor_items").select("id").eq("id", args.skuId).eq("active", true).maybeSingle<{ id: string }>();
+  const { data: sku, error: sErr } = await sb.from("vendor_items").select("id, location_id").eq("id", args.skuId).eq("active", true)
+    .maybeSingle<{ id: string; location_id: string | null }>();
   if (sErr) throw new Error(`recordSkuPrice sku check failed: ${sErr.message}`);
   if (!sku) throw new AdminCostError(400, "invalid_sku", "SKU not found or inactive");
+  // A shop-owned SKU's GLOBAL price belongs to that shop's people below MoO (skuOwnerAllowed, Astra 2a r3#1).
+  if (!skuOwnerAllowed({ level: getRoleLevel(actor.user.role), locations: actor.locations }, sku.location_id)) {
+    throw new AdminCostError(404, "not_found", "SKU not found");
+  }
 
-  const { data: inserted, error } = await sb
-    .from("vendor_price_history")
-    .insert({ vendor_item_id: args.skuId, unit_price: args.unitPrice, effective_date: args.effectiveDate, recorded_by: actor.user.id })
-    .select("id")
-    .maybeSingle<{ id: string }>();
-  if (error) throw new Error(`recordSkuPrice insert failed: ${error.message}`);
-  if (!inserted) throw new Error("recordSkuPrice returned no row");
+  // CATALOG PHASE 2a (D5): a price recorded here is the GLOBAL price. Below MoO it may be the FIRST
+  // one only, decided under the SKU lock with the insert (save_sku_global_price). Shops record their
+  // own price (a lane) on the item page (2b); delivery prices are captured at the door, unchanged.
+  const { data: savedPrice, error } = await sb.rpc("save_sku_global_price", {
+    p_sku: args.skuId, p_unit_price: args.unitPrice, p_effective_date: args.effectiveDate, p_actor: actor.user.id,
+    p_first_only: getRoleLevel(actor.user.role) < GLOBAL_VERSION_WRITE_MIN,
+  });
+  if (error) {
+    if (error.message.includes("sku_price:global_requires_moo")) throw new AdminCostError(403, "global_requires_moo", "Only a Manager of Operations or higher can change this price for everyone");
+    throw new Error(`recordSkuPrice save: ${error.message}`);
+  }
+  const inserted = { id: (savedPrice as { price_id: string }).price_id };
 
   await audit({
     actorId: actor.user.id, actorRole: actor.user.role,

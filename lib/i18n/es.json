@@ -6249,5 +6249,7 @@
   "admin.menu_costing.scope_shop": "{shop}: costeado con los empaques y precios de esta tienda.",
   "admin.menu_costing.export_scope": "Descargar: {scope}",
   "reports.export.pricing_scope_shop": "Precios: {shop}",
-  "reports.export.pricing_scope_global": "Precios: globales (todas las tiendas)"
+  "reports.export.pricing_scope_global": "Precios: globales (todas las tiendas)",
+  "admin.skus.error.global_requires_moo": "Solo un Gerente de Operaciones o superior puede cambiar esto para todos.",
+  "admin.skus.error.version_changed": "Esto cambió mientras editabas. Vuelve a cargar e inténtalo otra vez."
 }

@@ -63,6 +63,9 @@ const KNOWN_ERROR_CODES = new Set([
   "primary_must_be_reassigned",
   "invalid_product",
   "products_schema_pending",
+  // Catalog Phase 2a (D5): the global pack/price boundary.
+  "global_requires_moo",
+  "version_changed",
 ]);
 
 /** Resolve an error `code` to a localized message, falling back to generic. */

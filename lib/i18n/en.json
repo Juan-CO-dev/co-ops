@@ -6249,5 +6249,7 @@
   "admin.menu_costing.scope_shop": "{shop} — costed with this shop's packs and prices.",
   "admin.menu_costing.export_scope": "Download — {scope}",
   "reports.export.pricing_scope_shop": "Prices: {shop}",
-  "reports.export.pricing_scope_global": "Prices: global (all shops)"
+  "reports.export.pricing_scope_global": "Prices: global (all shops)",
+  "admin.skus.error.global_requires_moo": "Only a Manager of Operations or higher can change this for everyone.",
+  "admin.skus.error.version_changed": "This changed while you were editing. Reload and try again."
 }
