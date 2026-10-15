@@ -22,3 +22,14 @@ describe("postJson carries the refused line", () => {
     expect(await postJson("/x", {})).toEqual({ ok: true, data: { preview: { token: "t" } } });
   });
 });
+
+describe("postJson carries a promote's saved Spanish name (CC note 2 #3)", () => {
+  it("a promote refused AFTER its Spanish name saved returns the record with the code", async () => {
+    answer(409, { code: "version_changed", spanishNameSaved: { settingId: "s2", locationId: "l1" }, notice: "catalog.menu.promote.es_saved_not_promoted" });
+    expect(await postJson("/x", {})).toEqual({ ok: false, code: "version_changed", spanishNameSaved: { settingId: "s2", locationId: "l1" } });
+  });
+  it("a malformed record is dropped — the plain code, as before", async () => {
+    answer(409, { code: "version_changed", spanishNameSaved: { settingId: 3 } });
+    expect(await postJson("/x", {})).toEqual({ ok: false, code: "version_changed" });
+  });
+});

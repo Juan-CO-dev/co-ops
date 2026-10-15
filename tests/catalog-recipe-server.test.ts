@@ -249,8 +249,21 @@ describe("the menu item page", () => {
     const v = (await loadMenuItemPageView(gm, "m-italian", LOC))!;
     expect(v.here).toMatchObject({ settingId: null, price: null, soldHere: true, name: "Italian", nameEs: "Italiano", typedPrice: 12.5 });
     expect(v.recipe).toEqual({ id: "r-italian", name: "Italian" });
-    expect(v.can).toEqual({ editShop: true });
+    expect(v.can).toEqual({ editShop: true, promote: false, shopsToEdit: [{ id: LOC, name: expect.any(String) }] });
     expect(await refused(loadMenuItemPageView(smm, "m-italian", LOC))).toEqual({ status: 403, code: "forbidden" });
+  });
+  it("no dead ends: a GM reading another shop or the global menu is read-only with its own shop as the way forward; the MoO may promote and edit every shop", async () => {
+    const other = (await loadMenuItemPageView(gm, "m-italian", OTHER))!;
+    expect(other.can.editShop).toBe(false);
+    expect(other.can.promote).toBe(false);
+    expect(other.can.shopsToEdit.map((s) => s.id)).toEqual([LOC]);
+    const global = (await loadMenuItemPageView(gm, "m-italian", null))!;
+    expect(global.can).toMatchObject({ editShop: false, promote: false });
+    expect(global.can.shopsToEdit.map((s) => s.id)).toEqual([LOC]);
+    const mooView = (await loadMenuItemPageView(moo, "m-italian", LOC))!;
+    expect(mooView.can.editShop).toBe(true);
+    expect(mooView.can.promote).toBe(true);
+    expect(mooView.can.shopsToEdit.map((s) => s.id).sort()).toEqual([LOC, OTHER].sort());
   });
   it("the menu preview: a shop price and its margin over this shop's food cost", async () => {
     const p = await computeMenuPreview(gm, "m-italian", { kind: "save", shopId: LOC, patch: { price: 13.5, soldHere: true, nameOverride: null, nameOverrideEs: null } });

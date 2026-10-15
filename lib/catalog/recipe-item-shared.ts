@@ -7,7 +7,7 @@
 import type { RecipeLineFields } from "@/lib/recipe-line-shared";
 import type { TranslationKey } from "@/lib/i18n/types";
 import { parseRecipeLineOp, RECIPE_VERSION_ERROR_CODES, type RecipeLineChange, type RecipeLineOp } from "@/lib/recipe-versions-shared";
-import { parseMenuShopPatch, parseOptionalMenuName, type MenuShopPatch } from "@/lib/menu-item-shop-shared";
+import { MENU_ITEM_SHOP_ERROR_CODES, parseMenuShopPatch, parseOptionalMenuName, type MenuShopPatch } from "@/lib/menu-item-shop-shared";
 import type { RecipeNotice } from "@/lib/catalog/recipe-notices-shared";
 import type { RecipeBuilderProduct, RecipeBuilderSku } from "@/components/admin/recipes/RecipeBuilder";
 import type { PackChainLevel } from "@/lib/pack-chain-shared";
@@ -265,7 +265,12 @@ export interface MenuItemPageView {
   shops: Array<{ id: string; name: string }>;
   scope: string | null;
   scopeName: string | null;
-  can: { editShop: boolean };
+  /**
+   * `promote`: may make a shop's own price / name everyone's (MoO+, menuPromoteGate — the role rule included).
+   * `shopsToEdit`: every shop this actor may change the item for — the way forward a read-only view offers
+   * ("Change it for <shop>"; no dead ends).
+   */
+  can: { editShop: boolean; promote: boolean; shopsToEdit: Array<{ id: string; name: string }> };
   here: {
     settingId: string | null; price: number | null; soldHere: boolean; nameOverride: string | null; nameOverrideEs: string | null;
     name: string; nameEs: string | null; typedPrice: number | null;
@@ -282,26 +287,86 @@ export interface MenuItemPageView {
  */
 export const RECIPE_PAGE_ERROR_CODES = ["preview_stale", "nothing_changed", "promote_not_done"] as const;
 
-/** The refusals the recipe page words in its OWN family (`catalog.recipe.error.<code>`, Task 7). */
-const RECIPE_PAGE_SCOPED_ERRORS: ReadonlySet<string> = new Set([
-  "version_changed", "forbidden", "not_found", "global_requires_moo", "step_up_required", "step_up_stale", "preview_stale",
-  "line_changed", "edge_not_found", "empty_recipe", "would_create_cycle", "recipe_inactive", "invalid_source", "not_live",
-  "nothing_changed", "invalid_payload", "invalid_component", "invalid_quantity", "product_line_needs_measure_unit",
-  "invalid_component_product", "invalid_lines", "recipe_not_found", "location_not_found",
-  "dependencies_changed", "dependencies_busy", "product_line_invalid",
-]);
-const RECIPE_NAMED_ERRORS: ReadonlySet<string> = new Set<string>([...RECIPE_VERSION_ERROR_CODES, ...RECIPE_PAGE_ERROR_CODES]);
+/**
+ * THE PAGES' ONE REFUSAL-KEY MAP (CC note 5 #3: the recipe and menu item pages read alike). Each page words the
+ * refusals it expects in its OWN family (`catalog.<page>.error.<code>`, Task 7); every other NAMED code falls back to
+ * its `catalog.error.<code>` message, which tests/catalog-item-i18n.test.ts guarantees (house rule: every named refusal
+ * has its own en + es message, never generic text). Only an unknown code gets the page's generic message.
+ */
+const PAGE_ERROR_FAMILIES = {
+  recipe: {
+    scoped: new Set<string>([
+      "version_changed", "forbidden", "not_found", "global_requires_moo", "step_up_required", "step_up_stale", "preview_stale",
+      "line_changed", "edge_not_found", "empty_recipe", "would_create_cycle", "recipe_inactive", "invalid_source", "not_live",
+      "nothing_changed", "invalid_payload", "invalid_component", "invalid_quantity", "product_line_needs_measure_unit",
+      "invalid_component_product", "invalid_lines", "recipe_not_found", "location_not_found",
+      "dependencies_changed", "dependencies_busy", "product_line_invalid",
+    ]),
+    // 3a's restore_source_out_of_scope, readback_failed, global_cannot_retire, truncate_refused; promote_not_done → catalog.error.*
+    named: new Set<string>([...RECIPE_VERSION_ERROR_CODES, ...RECIPE_PAGE_ERROR_CODES]),
+  },
+  menu: {
+    scoped: new Set<string>([
+      "forbidden", "not_found", "version_changed", "not_live", "global_changed", "nothing_to_promote", "invalid_menu_price",
+      "invalid_name", "empty_setting", "invalid_source", "invalid_payload", "preview_stale", "step_up_required", "step_up_stale",
+      "menu_item_not_found", "location_not_found", "global_requires_moo", "dependencies_changed", "dependencies_busy",
+    ]),
+    // 3a's invalid_price; the 3b page codes nothing_changed, promote_not_done → catalog.error.*
+    named: new Set<string>([...MENU_ITEM_SHOP_ERROR_CODES, ...RECIPE_PAGE_ERROR_CODES]),
+  },
+} as const;
+export type CatalogPage = keyof typeof PAGE_ERROR_FAMILIES;
+
+/** The message key for a refusal on a catalog item page: `catalog.<page>.error.<code>`, else `catalog.error.<code>`, else generic. */
+export function pageErrorKey(page: CatalogPage, code: string): TranslationKey {
+  const f = PAGE_ERROR_FAMILIES[page];
+  if (f.scoped.has(code)) return `catalog.${page}.error.${code}` as TranslationKey;
+  if (f.named.has(code)) return `catalog.error.${code}` as TranslationKey;
+  return `catalog.${page}.error.generic` as TranslationKey;
+}
+/** The recipe page's refusal key (pageErrorKey for "recipe"). */
+export const recipeErrorKey = (code: string): TranslationKey => pageErrorKey("recipe", code);
+/** The menu item page's refusal key (pageErrorKey for "menu") — the recipe page's twin. */
+export const menuErrorKey = (code: string): TranslationKey => pageErrorKey("menu", code);
+
+// ── The menu form's baseline (lead decision: a refresh keeps the draft's ORIGINAL baseline) ──
+
+type MenuShopRow = Pick<MenuItemPageView["here"], "settingId" | "price" | "soldHere" | "nameOverride" | "nameOverrideEs">;
+/** What the "At this shop" form holds: the typed text, exactly as the inputs show it. */
+export interface MenuDraft { price: string; soldHere: boolean; name: string; nameEs: string }
+
+/** The form for a committed shop row (blank = inherit the default). */
+export function menuDraftFrom(h: Omit<MenuShopRow, "settingId">): MenuDraft {
+  return { price: h.price === null ? "" : String(h.price), soldHere: h.soldHere, name: h.nameOverride ?? "", nameEs: h.nameOverrideEs ?? "" };
+}
+const sameDraft = (a: MenuDraft, b: MenuDraft) =>
+  a.price.trim() === b.price.trim() && a.soldHere === b.soldHere && a.name.trim() === b.name.trim() && a.nameEs.trim() === b.nameEs.trim();
+
+export type MenuRowMove =
+  | { field: "price"; before: number | null; after: number | null }
+  | { field: "soldHere"; before: boolean; after: boolean }
+  | { field: "name" | "nameEs"; before: string | null; after: string | null };
+
+/** Every field of this shop's row that moved between two committed reads (a new row id alone is not a move). */
+export function menuRowMoves(was: MenuShopRow, now: MenuShopRow): MenuRowMove[] {
+  const out: MenuRowMove[] = [];
+  if (was.price !== now.price) out.push({ field: "price", before: was.price, after: now.price });
+  if (was.soldHere !== now.soldHere) out.push({ field: "soldHere", before: was.soldHere, after: now.soldHere });
+  if (was.nameOverride !== now.nameOverride) out.push({ field: "name", before: was.nameOverride, after: now.nameOverride });
+  if (was.nameOverrideEs !== now.nameOverrideEs) out.push({ field: "nameEs", before: was.nameOverrideEs, after: now.nameOverrideEs });
+  return out;
+}
 
 /**
- * The message key for a refusal on the recipe page (house rule: every named refusal has its OWN en + es message,
- * never generic text). The page-scoped wording first; a named code that family does not word (3a's
- * restore_source_out_of_scope, readback_failed, global_cannot_retire, truncate_refused; promote_not_done) falls back
- * to its `catalog.error.<code>` message, which tests/catalog-item-i18n.test.ts guarantees. Only an unknown code is generic.
+ * When the committed row changes under the form (a router.refresh()): keep the person's draft — with its ORIGINAL
+ * baseline, so the page can show what moved and offer "Start over from the new version" — only when they TYPED
+ * something (the draft differs from the row they started from AND from the new one) and the shop's row really moved.
+ * Otherwise the form follows the committed row (Astra 3b r1#6). `follow`: their own act just saved — always follow.
  */
-export function recipeErrorKey(code: string): TranslationKey {
-  if (RECIPE_PAGE_SCOPED_ERRORS.has(code)) return `catalog.recipe.error.${code}` as TranslationKey;
-  if (RECIPE_NAMED_ERRORS.has(code)) return `catalog.error.${code}` as TranslationKey;
-  return "catalog.recipe.error.generic";
+export function keepMenuDraft(input: { draft: MenuDraft; was: MenuShopRow; now: MenuShopRow; follow: boolean }): boolean {
+  if (input.follow) return false;
+  if (sameDraft(input.draft, menuDraftFrom(input.was)) || sameDraft(input.draft, menuDraftFrom(input.now))) return false;
+  return menuRowMoves(input.was, input.now).length > 0;
 }
 
 // ── The Shop changes list (MoO+, catalog Phase 3b) ────────────────────────────
