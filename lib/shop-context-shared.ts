@@ -106,6 +106,11 @@ const SHOP_PARAMS_BY_PREFIX: ReadonlyArray<readonly [string, readonly string[]]>
   // Catalog Phase 2b — the item page's shop switcher (?location=<shop> | global). "global" is not a
   // shop id, so the sync never remembers it (shopParamFromUrl / shouldRememberShop).
   ["/admin/catalog/sku/", ["location"]],
+  // Catalog Phase 3b — the recipe and menu-item pages' shop switcher (?location=<shop> | global).
+  // (The notices list declares "/admin/catalog/notices" in SHOP_PARAMS_BY_PATH WITH its page, Task 10:
+  // every declared exact route must be backed by an audited page — tests/shop-context.test.ts.)
+  ["/admin/catalog/recipe/", ["location"]],
+  ["/admin/catalog/menu-item/", ["location"]],
 ];
 
 const NO_SHOP_PARAMS: readonly string[] = [];
