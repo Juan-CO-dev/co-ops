@@ -15,7 +15,9 @@
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 
+import Link from "next/link";
 import { useTranslation } from "@/lib/i18n/provider";
+import { skuItemHref } from "@/lib/catalog/sku-item-shared";
 import type { TranslationKey } from "@/lib/i18n/types";
 import { useStepUp } from "@/components/admin/StepUpProvider";
 import { useStepUpPost } from "@/components/admin/useStepUpPost";
@@ -645,6 +647,9 @@ function CatalogRow({
         </>
       }
     >
+      <Link href={skuItemHref(s.id)} className="mb-2 inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-border bg-co-surface px-3 text-xs font-bold uppercase tracking-[0.1em] text-co-text hover:border-co-text">
+        {t("admin.skus.open_item")}
+      </Link>
       <SkuDataDrawer skuId={s.id} shops={dataShops} />
       <SkuCostPanel
         skuId={s.id}

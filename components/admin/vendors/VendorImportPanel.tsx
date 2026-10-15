@@ -8,7 +8,7 @@ import type { ImportApplyResult, ImportBatchView } from "@/lib/vendor-import";
 import type { Decision, Observation } from "@/lib/vendor-import-shared/model";
 import { observationKey, planDigest, planFromDecisions } from "@/lib/vendor-import-shared/match";
 import { resolveErrorKey } from "./shared";
-import { skuCatalogHref } from "@/lib/admin/product-item-links-shared";
+import { skuItemHref } from "@/lib/catalog/sku-item-shared";
 
 const control = "inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-gold-deep bg-co-surface px-3 text-sm text-co-text focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60 disabled:opacity-50";
 const kinds = ["price", "item_number", "pack", "needs_person", "noop"] as const;
@@ -129,7 +129,7 @@ function ImportPanel({ vendorId, vendorName, canStage, canApply }: { vendorId: s
               disabled={!!busy || !canApply || view?.batch.status !== "staged" || !!result || changed} value={decisions[key] ?? "skip"}
               onChange={e => { if (!inFlight.current) patch({ decisions: { ...decisions, [key]: e.target.value as Decision }, error: null }); }}>
               <option value="accept">{t("admin.vendor_import.accept")}</option><option value="skip">{t("admin.vendor_import.skip")}</option>
-            </select> : o.kind === "needs_person" ? <><p>{t("admin.vendor_import.needs_hint")}</p><a className={`${control} mt-1`} href="#order-guide">{t("admin.vendor_import.guide")}</a><a className={`${control} mt-1`} href={o.match.sku_id ? skuCatalogHref(o.match.sku_id) : `/admin/skus?vendor=${encodeURIComponent(vendorId)}`}>{t("admin.vendor_import.skus")}</a></> : null}</td>
+            </select> : o.kind === "needs_person" ? <><p>{t("admin.vendor_import.needs_hint")}</p><a className={`${control} mt-1`} href="#order-guide">{t("admin.vendor_import.guide")}</a><a className={`${control} mt-1`} href={o.match.sku_id ? skuItemHref(o.match.sku_id, { job: "pack" }) : `/admin/skus?vendor=${encodeURIComponent(vendorId)}`}>{t("admin.vendor_import.skus")}</a></> : null}</td>
           </tr>;
         })}</tbody>
       </table>
