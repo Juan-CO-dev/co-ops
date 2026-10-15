@@ -8,6 +8,9 @@ import { selectAllRows } from "@/lib/supabase-paginate";
 import { getRoleLevel } from "@/lib/roles";
 import { audit } from "@/lib/audit";
 import type { AuthContext } from "@/lib/session";
+import { creationScope, shopOwnedErrorFromRpc } from "@/lib/catalog/shop-owned-shared";
+import type { RecipeDraftOutput } from "@/lib/recipes-shared";
+export type { RecipeDraftOutput } from "@/lib/recipes-shared";
 
 import {
   RECIPE_READ_MIN,
@@ -337,8 +340,9 @@ export async function createRecipe(actor: AuthContext, input: { name: string; na
 }
 
 export interface RecipeDraftInput { componentSkuId?: string | null; componentItemId?: string | null; componentProductId?: string | null; quantity: number; unit?: string | null; eachContainerLabel?: string | null; portioned?: boolean; }
-export interface RecipeDraftOutput { outputItemId?: string | null; outputMenuItemId?: string | null; yield: number; outputContainerLabel?: string | null; }
 export interface RecipeDraft {
+  /** Explicit authorized creation scope. Omission retains the legacy shared path. */
+  locationId?: string | null;
   name: string; nameEs?: string | null; recipeType: RecipeType; batchYield: number;
   directions?: string | null; directionsEs?: string | null;
   inputs: RecipeDraftInput[]; outputs: RecipeDraftOutput[];
@@ -400,8 +404,12 @@ async function activeProducerExists(
   return !!(active && active.length > 0);
 }
 
-export async function createRecipeFull(actor: AuthContext, draft: RecipeDraft): Promise<{ id: string }> {
+export async function createRecipeFull(actor: AuthContext, draft: RecipeDraft): Promise<{ id: string; outputItemIds: string[] }> {
   requireLevel(actor, RECIPE_WRITE_MIN);
+  if (draft.locationId !== undefined) {
+    const scope = creationScope({ role: actor.user.role, level: getRoleLevel(actor.user.role), locations: actor.locations }, draft.locationId);
+    if (!scope.ok) throw new RecipeError(scope.status, scope.code);
+  }
   if (!normStr(draft.name)) throw new RecipeError(400, "invalid_name");
   if (!(draft.batchYield > 0)) throw new RecipeError(400, "invalid_batch_yield");
   if (draft.recipeType !== "production" && draft.recipeType !== "consumer") throw new RecipeError(400, "invalid_type");
@@ -411,7 +419,7 @@ export async function createRecipeFull(actor: AuthContext, draft: RecipeDraft): 
     // The single-output rule (plan S r4 ruling H): a batch is ONE item's whole recipe. The
     // RPC re-checks under its row lock; this is the named-422 fast path.
     const only = draft.outputs.length === 1 ? draft.outputs[0] : null;
-    if (!only || (only.outputItemId ?? null) === null || !(only.yield > 0)) throw new RecipeError(422, "batch_mode_single_output");
+    if (!only || ((only.outputItemId ?? null) === null && only.newItem == null) || only.outputMenuItemId != null || !(only.yield > 0)) throw new RecipeError(422, "batch_mode_single_output");
   }
   for (const i of draft.inputs) {
     if (componentTargets(i).count !== 1) throw new RecipeError(400, "invalid_component");
@@ -419,7 +427,18 @@ export async function createRecipeFull(actor: AuthContext, draft: RecipeDraft): 
   }
   for (const o of draft.outputs) {
     const it = o.outputItemId ?? null, mi = o.outputMenuItemId ?? null;
-    if ((it === null) === (mi === null)) throw new RecipeError(400, "invalid_output");
+    if ([it, mi, o.newItem ?? null].filter(v => v !== null).length !== 1) throw new RecipeError(400, "invalid_output");
+    if (o.newItem != null && !draft.locationId) throw new RecipeError(400, "invalid_output");
+    if (o.newItem != null) {
+      const item = o.newItem;
+      if (typeof item !== "object" || Array.isArray(item) || !normStr(item.name) || !normStr(item.section)
+        || [item.nameEs, item.recommendedParUnit, item.specialInstruction, item.specialInstructionEs].some(value => value != null && typeof value !== "string")
+        || (item.recommendedPar !== null && (!Number.isFinite(item.recommendedPar) || item.recommendedPar < 0))
+        || (item.required !== undefined && typeof item.required !== "boolean")
+        || (item.minRoleLevel !== undefined && (!Number.isInteger(item.minRoleLevel) || item.minRoleLevel < 0 || item.minRoleLevel > 10))) {
+        throw new RecipeError(400, "invalid_payload");
+      }
+    }
     if (!(o.yield > 0)) throw new RecipeError(400, "invalid_yield");
     if (it !== null) {
       for (const i of draft.inputs) {
@@ -441,13 +460,24 @@ export async function createRecipeFull(actor: AuthContext, draft: RecipeDraft): 
       throw new RecipeError(409, "duplicate_active_producer");
     }
   }
-  const { data, error } = await sb.rpc("create_recipe_full", {
+  const params = {
     p_header: { name: normStr(draft.name), name_es: normStr(draft.nameEs), recipe_type: draft.recipeType, batch_yield: draft.batchYield, directions: normStr(draft.directions), directions_es: normStr(draft.directionsEs), batch_mode: draft.batchMode === true, ...(draft.shelfLifeDays !== undefined ? { shelf_life_days: draft.shelfLifeDays } : {}) },
     p_inputs: draft.inputs.map((i, idx) => ({ component_sku_id: i.componentSkuId ?? null, component_item_id: i.componentItemId ?? null, component_product_id: i.componentProductId ?? null, quantity: i.quantity, unit: normStr(i.unit), each_container_label: normStr(i.eachContainerLabel), portioned: i.portioned ?? false, display_order: idx })),
-    p_outputs: draft.outputs.map((o, idx) => ({ output_item_id: o.outputItemId ?? null, output_menu_item_id: o.outputMenuItemId ?? null, yield: o.yield, output_container_label: normStr(o.outputContainerLabel), display_order: idx })),
+    p_outputs: draft.outputs.map((o, idx) => ({ output_item_id: o.outputItemId ?? null, output_menu_item_id: o.outputMenuItemId ?? null, yield: o.yield, output_container_label: normStr(o.outputContainerLabel), display_order: idx,
+      ...(o.newItem == null ? {} : { new_item: {
+        name: normStr(o.newItem.name), name_es: normStr(o.newItem.nameEs), section: o.newItem.section,
+        recommended_par: o.newItem.recommendedPar, recommended_par_unit: normStr(o.newItem.recommendedParUnit),
+        special_instructions: normStr(o.newItem.specialInstruction), special_instructions_es: normStr(o.newItem.specialInstructionEs),
+        required: o.newItem.required ?? false, ...(o.newItem.minRoleLevel === undefined ? {} : { min_role_level: o.newItem.minRoleLevel }),
+      } }),
+    })),
     p_created_by: actor.user.id,
-  });
+  };
+  const { data, error } = draft.locationId
+    ? await sb.rpc("create_shop_recipe", { ...params, p_location_id: draft.locationId })
+    : await sb.rpc("create_recipe_full", params);
   if (error) {
+    if (error.message?.startsWith("shop_owned:")) shopOwnedErrorFromRpc(error.message);
     // 0187's in-transaction backstop raises P0001 'duplicate_active_producer' when a
     // concurrent writer won the race the app-layer check above cannot see. Mapping it to
     // the SAME named 409 the app-layer check returns means the two guards are one answer
@@ -466,7 +496,11 @@ export async function createRecipeFull(actor: AuthContext, draft: RecipeDraft): 
   const id = typeof data === "string" ? data : (data as { id?: string } | null)?.id;
   if (!id) throw new Error("createRecipeFull returned no id");
   await audit({ actorId: actor.user.id, actorRole: actor.user.role, action: "recipe.create", resourceTable: "recipes", resourceId: id, metadata: { name: draft.name, recipe_type: draft.recipeType, batch_yield: draft.batchYield, batch_mode: draft.batchMode === true, shelf_life_days: draft.shelfLifeDays ?? null, input_count: draft.inputs.length, output_count: draft.outputs.length, component_product_ids: draft.inputs.map((i) => i.componentProductId ?? null).filter((v): v is string => v !== null), atomic: true }, ipAddress: null, userAgent: null });
-  return { id };
+  const outputItemIds = draft.locationId
+    ? (data as { output_item_ids: string[] }).output_item_ids
+    : draft.outputs.flatMap(o => o.outputItemId ? [o.outputItemId] : []);
+  if (!Array.isArray(outputItemIds) || outputItemIds.some(itemId => typeof itemId !== "string")) throw new Error("createRecipeFull returned no output identities");
+  return { id, outputItemIds };
 }
 
 export async function updateRecipe(actor: AuthContext, id: string, patch: { name?: string; nameEs?: string | null; batchYield?: number; directions?: string | null; directionsEs?: string | null; shelfLifeDays?: number; batchMode?: boolean }): Promise<void> {

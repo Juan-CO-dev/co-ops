@@ -1,9 +1,10 @@
 /**
  * Catalog Phase 4a fixture foundation: production-shaped base schema followed by
- * the real committed 0258-0263 migrations. Ownership columns arrive with 0264 in
- * Chunk 2, so this fixture deliberately does not invent or execute them.
+ * the real 0258-0264 migrations, exclusively in memory. The opt-out exists to
+ * capture real pre-migration snapshots before applying the actual 0264 file.
  */
 import type { PGlite } from "@electric-sql/pglite";
+import { readFileSync } from "node:fs";
 import { migratedCatalogDb } from "./recipe-versions-pglite";
 
 export const SHOP_OWNED_ID = {
@@ -17,7 +18,7 @@ export const SHOP_OWNED_ID = {
 } as const;
 
 /** Two-shop, shared-only baseline ready for 0264 ownership tests in Chunk 2. */
-export async function migratedShopOwnedDb(): Promise<PGlite> {
+export async function migratedShopOwnedDb(applyOwnership = true): Promise<PGlite> {
   const db = await migratedCatalogDb();
   await db.exec(`
     insert into public.users(id) values ('${SHOP_OWNED_ID.actor}');
@@ -26,6 +27,7 @@ export async function migratedShopOwnedDb(): Promise<PGlite> {
       ('${SHOP_OWNED_ID.shopB}', 'Shop B', true);
     insert into public.measure_units(label, dimension, to_base_factor, active)
       values ('oz', 'weight', 1, true);
+    insert into public.prep_sections(slug, label_en, columns) values ('prep', 'Prep', '[]');
     insert into public.vendor_items(id, name) values ('${SHOP_OWNED_ID.sharedSku}', 'Shared turkey');
     insert into public.items(id, name) values ('${SHOP_OWNED_ID.sharedItem}', 'Shared prep');
     insert into public.menu_items(id, name, menu_price) values ('${SHOP_OWNED_ID.sharedMenu}', 'Shared sandwich', 12);
@@ -36,5 +38,10 @@ export async function migratedShopOwnedDb(): Promise<PGlite> {
     insert into public.recipe_outputs(recipe_id, output_menu_item_id, yield, created_by)
       values ('${SHOP_OWNED_ID.sharedRecipe}', '${SHOP_OWNED_ID.sharedMenu}', 1, '${SHOP_OWNED_ID.actor}');
   `);
+  if (applyOwnership) await applyShopOwnership(db);
   return db;
+}
+
+export async function applyShopOwnership(db: PGlite): Promise<void> {
+  await db.exec(readFileSync("supabase/migrations/0264_catalog_shop_owned.sql", "utf8"));
 }

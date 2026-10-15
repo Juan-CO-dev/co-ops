@@ -34,6 +34,7 @@ import { StatusBadge, ReadinessReasons } from "@/components/admin/StatusBadge";
 import type { Readiness } from "@/lib/readiness";
 import { RegistrySelect } from "@/components/admin/skus/RegistrySelect";
 import type { RecipeView, RecipeInputView, RecipeOutputView, RecipeType } from "@/lib/recipes-shared";
+import type { RecipeNewPrepItem } from "@/lib/recipes-shared";
 import { RECIPE_WRITE_MIN, RECIPE_DELETE_MIN } from "@/lib/recipes-shared";
 import type { RegistryOption } from "@/lib/admin/skus";
 import type { TranslationKey } from "@/lib/i18n/types";
@@ -82,6 +83,7 @@ interface DraftInput {
   portioned: boolean;
 }
 interface DraftOutput {
+  newItem?: RecipeNewPrepItem | null;
   _key: number;
   kind: "item" | "menuItem";
   outputItemId: string | null;
@@ -103,6 +105,7 @@ export function RecipeBuilder({
   level,
   defaultType = "production",
   readiness = null,
+  locationId,
 }: {
   recipe: RecipeView | null;
   skus: RecipeBuilderSku[];
@@ -116,6 +119,8 @@ export function RecipeBuilder({
   level: number;
   defaultType?: RecipeType;
   readiness?: Readiness | null;
+  /** Authorized scope supplied by the server page; scope navigation is wired in Chunk 3/4. */
+  locationId?: string | null;
 }) {
   const { t } = useTranslation();
   const router = useRouter();
@@ -282,6 +287,7 @@ export function RecipeBuilder({
     if ((await requestStepUp("E")) !== "ok") return;
     setSaveBusy(true);
     const result = await send("/api/admin/recipes/full", {
+      ...(locationId === undefined ? {} : { locationId }),
       name,
       nameEs: nameEsVal.trim() || null,
       recipeType: effectiveType,
@@ -309,6 +315,7 @@ export function RecipeBuilder({
       outputs: draftOutputs.map((out) => ({
         outputItemId: out.outputItemId ?? undefined,
         outputMenuItemId: out.outputMenuItemId ?? undefined,
+        newItem: out.newItem ?? undefined,
         yield: out.yield,
         outputContainerLabel: out.outputContainerLabel ?? undefined,
       })),

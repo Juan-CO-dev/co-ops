@@ -16,6 +16,28 @@ export const MENU_PRICE_MIN = 8;
 
 export type RecipeType = "production" | "consumer";
 
+/** Inline owned output; ownership and non-default status are supplied by the RPC. */
+export interface RecipeNewPrepItem {
+  name: string;
+  nameEs?: string | null;
+  section: string;
+  recommendedPar: number | null;
+  recommendedParUnit: string | null;
+  specialInstruction?: string | null;
+  specialInstructionEs?: string | null;
+  required?: boolean;
+  minRoleLevel?: number;
+}
+
+export interface RecipeDraftOutput {
+  outputItemId?: string | null;
+  outputMenuItemId?: string | null;
+  /** Exclusive with both existing identities. Only supported in an owned recipe. */
+  newItem?: RecipeNewPrepItem | null;
+  yield: number;
+  outputContainerLabel?: string | null;
+}
+
 /** Which of the THREE component targets a recipe line names (0179). */
 export type RecipeInputKind = "sku" | "item" | "product";
 

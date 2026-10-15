@@ -24,7 +24,7 @@ create table public.vendor_items(id uuid primary key default gen_random_uuid(), 
   location_id uuid null references public.locations(id), vendor_id uuid references public.vendors(id),
   product_id uuid references public.products(id), pack_format text, each_container_label text,
   units_per_pack int, each_size numeric, each_measure text, avg_oz_per_each numeric,
-  item_number text, sku_class text not null default 'raw', price_basis text,
+  item_number text, sku_class text not null default 'raw', price_basis text, notes text,
   weekday_par numeric, weekend_par numeric, created_at timestamptz not null default now(),
   created_by uuid references public.users(id), updated_at timestamptz not null default now(),
   updated_by uuid references public.users(id), unique (id),
@@ -91,7 +91,10 @@ create table public.menu_items(
   created_by uuid references public.users(id), updated_at timestamptz not null default now(),
   updated_by uuid references public.users(id));
 -- 0103 + 0179 + 0215, the columns the 0258 writers read and write.
-create table public.recipes(id uuid primary key default gen_random_uuid(), name text, name_es text, recipe_type text,
+-- The production type CHECK is real (0103). The default is fixture-only convenience
+-- for existing name-only graph seeds; production deliberately requires an explicit type.
+create table public.recipes(id uuid primary key default gen_random_uuid(), name text, name_es text,
+  recipe_type text not null default 'production' check (recipe_type in ('production','consumer')),
   batch_yield numeric, directions text, directions_es text, active boolean not null default true,
   batch_mode boolean not null default false, shelf_life_days integer not null default 5,
   created_at timestamptz not null default now(), created_by uuid references public.users(id));
@@ -107,4 +110,52 @@ create table public.recipe_outputs(id uuid primary key default gen_random_uuid()
   output_item_id uuid references public.items(id), output_menu_item_id uuid references public.menu_items(id),
   yield numeric not null default 1, output_container_label text, display_order integer not null default 0,
   created_by uuid references public.users(id));
+-- 0082 registry section definition, needed by the real 0264 inline-output writer.
+create table public.prep_sections (
+  id uuid primary key default gen_random_uuid(), slug text not null unique,
+  label_en text not null, label_es text, columns jsonb not null,
+  display_order integer not null default 0, active boolean not null default true,
+  created_at timestamptz not null default now(), created_by uuid references public.users(id),
+  updated_at timestamptz not null default now(), updated_by uuid references public.users(id)
+);
+-- 0146 crosswalk plus 0152/0155/0158/0226 target/disposition extensions.
+create table public.catering_packages(id uuid primary key default gen_random_uuid());
+create table public.toast_menu_map (
+  id uuid primary key default gen_random_uuid(), location_id uuid not null references public.locations(id),
+  menu_item_id uuid references public.menu_items(id), item_id uuid references public.items(id),
+  package_id uuid references public.catering_packages(id), sku_id uuid references public.vendor_items(id),
+  toast_item_guid text not null, toast_item_name text not null, toast_price_cents integer,
+  match_status text not null check (match_status in ('candidate','confirmed','rejected','stale')),
+  match_score numeric, matched_at timestamptz not null default now(), confirmed_by uuid, confirmed_at timestamptz,
+  active boolean not null default true, created_at timestamptz not null default now(), created_by uuid,
+  is_modifier boolean not null default false, disposition text not null default 'deplete',
+  portion_qty numeric, portion_unit text, parent_only boolean not null default false,
+  constraint toast_map_entity_xor check (
+    (disposition <> 'open_item' and num_nonnulls(menu_item_id,item_id,package_id,sku_id)=1)
+    or (is_modifier and disposition in ('assortment_full','assortment_classics') and num_nonnulls(menu_item_id,item_id,package_id,sku_id)=0)
+    or (not is_modifier and disposition='open_item' and num_nonnulls(menu_item_id,item_id,package_id,sku_id)=0)),
+  constraint toast_menu_map_disposition_check check (disposition in ('deplete','remove','ignore','assortment_full','assortment_classics','open_item'))
+);
+create unique index toast_map_uq_guid on public.toast_menu_map(location_id,toast_item_guid) where active and match_status='confirmed';
+create unique index toast_map_uq_menu_item on public.toast_menu_map(location_id,menu_item_id) where active and match_status='confirmed' and menu_item_id is not null;
+create unique index toast_map_uq_item on public.toast_menu_map(location_id,item_id) where active and match_status='confirmed' and item_id is not null;
+create table public.toast_map_effects (
+  id uuid primary key default gen_random_uuid(), map_id uuid not null references public.toast_menu_map(id),
+  ordinal integer not null check(ordinal>0), item_id uuid references public.items(id),
+  sku_id uuid references public.vendor_items(id), menu_item_id uuid references public.menu_items(id),
+  disposition text not null check(disposition in ('deplete','remove')), portion_qty numeric check(portion_qty>0),
+  portion_unit text, parent_only boolean not null default false, active boolean not null default true,
+  created_at timestamptz not null default now(), created_by uuid references public.users(id),
+  constraint toast_map_effects_entity_xor check(num_nonnulls(item_id,sku_id,menu_item_id)=1)
+);
+create unique index toast_map_effects_active_ordinal on public.toast_map_effects(map_id,ordinal) where active;
+create table public.toast_open_item_aliases (
+  id uuid primary key default gen_random_uuid(), location_id uuid references public.locations(id),
+  normalized_text text not null check(btrim(normalized_text)<>''), menu_item_id uuid references public.menu_items(id),
+  item_id uuid references public.items(id), qty_multiplier numeric not null default 1 check(qty_multiplier>0),
+  active boolean not null default true, created_at timestamptz not null default now(), created_by uuid references public.users(id),
+  constraint toast_open_item_aliases_entity_xor check(num_nonnulls(menu_item_id,item_id)=1)
+);
+create unique index toast_open_item_aliases_active_text on public.toast_open_item_aliases
+  (coalesce(location_id,'00000000-0000-0000-0000-000000000000'::uuid),normalized_text) where active;
 grant select, insert, update, delete on all tables in schema public to service_role;
