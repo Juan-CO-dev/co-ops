@@ -16,7 +16,7 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createFakeDb } from "./fixtures/counts-fake-db";
-import { buildShopVersionsFixture, LOC, OTHER, QUIET_DAY } from "./fixtures/shop-versions-fixture";
+import { buildShopVersionsFixture, LOC, OLD_VERSION_DAY, OTHER, QUIET_DAY } from "./fixtures/shop-versions-fixture";
 import { computeOutputs, liveApi, type EquivalenceOutputs } from "./fixtures/shop-versions-harness";
 
 const GOLDEN = "tests/fixtures/shop-versions-golden.json";
@@ -32,7 +32,7 @@ afterEach(() => { current = null; });
 
 describe("no shop versions ⇒ every number is identical to today (the golden)", () => {
   it("matches the frozen golden for global, shop one and shop two", async () => {
-    const got = await computeOutputs(liveApi, buildShopVersionsFixture(), [LOC, OTHER], QUIET_DAY);
+    const got = await computeOutputs(liveApi, buildShopVersionsFixture(), [LOC, OTHER], QUIET_DAY, OLD_VERSION_DAY);
     if (process.env.UPDATE_SHOP_VERSIONS_GOLDEN === "1") {
       writeFileSync(GOLDEN, `${JSON.stringify(got, null, 2)}\n`);
     }
@@ -75,6 +75,25 @@ describe("the fixture is not trivial — hand-checked anchors inside the golden"
     const g = golden().global!;
     expect(g.graph.costPerOz["s-turkey"]).toBeCloseTo(0.4, 12);
     expect(g.datedMenuOz).toEqual(g.graph.menuOz);
+  });
+
+  it("the superseded turkey chain is invisible to every LIVE read (inactive levels), and to the after-boundary day", () => {
+    const g = golden().global!;
+    expect(g.chains["s-turkey"]!.map((l) => l.id).sort()).toEqual(["pl-t-bag", "pl-t-case"]);
+    expect(g.allChains["s-turkey"]!.map((l) => l.id).sort()).toEqual(["pl-t-bag", "pl-t-case"]);
+    expect(g.datedMenuOz["m-italian"]!["s-turkey"]).toBeCloseTo(4, 10);
+  });
+
+  it("the probe INSIDE the old version is frozen as TODAY's date-blind loaders answer it (live: 4 oz); D1 corrects it to 6 oz", () => {
+    const g = golden().global!;
+    expect(g.datedProbe!.day).toBe(OLD_VERSION_DAY);
+    expect(g.datedProbe!.menuOz["m-italian"]!["s-turkey"]).toBeCloseTo(4, 10);
+  });
+
+  it("a FUTURE-dated price is today's current price (frozen as-is): tomato $27, not the $25 in force today", () => {
+    const g = golden().global!;
+    expect(g.prices["s-tomato"]).toBe(27);
+    expect(g.graph.costPerOz["s-tomato"]).toBeCloseTo(0.3, 12); // $27 / 90 oz
   });
 
   it("every shop reads the global pack and price (no shop versions exist)", () => {

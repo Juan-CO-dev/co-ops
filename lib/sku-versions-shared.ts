@@ -21,6 +21,7 @@
 import type { PackChainLevel } from "@/lib/pack-chain-shared";
 import { skuContentOz, type MeasureUnitFactor } from "@/lib/recipe-math";
 import { operationalDayUtcRange } from "@/lib/operational-day";
+import type { RoleCode } from "@/lib/roles";
 
 /** null = the global default; otherwise a shop (locations.id). */
 export type VersionScope = string | null;
@@ -72,6 +73,8 @@ export interface ResolvedPack {
   effectiveFrom: string | null;
   /** Set only on an as-of answer from a pre-chain baseline version: the flat pack in force then. */
   flat?: FlatPackSnapshot;
+  /** Set only when a shop version's levels were missing and THIS (global) answer stood in for it. */
+  fallbackFromVersionId?: string;
 }
 
 function numOrZero(v: number | string): number {
@@ -143,7 +146,7 @@ function inForceAt(v: ScopedVersionRow, at: number): boolean {
  * global one. A retired shop version answers only inside its own dates — that is "back to
  * default", seen from the past.
  */
-export function pickVersionsAsOf(versions: readonly ScopedVersionRow[], scope: VersionScope, asOf: string): Map<string, ScopedVersionRow> {
+export function pickVersionsAsOf(versions: readonly ScopedVersionRow[], scope: VersionScope, asOf: string): Map<string, PickedVersion> {
   const at = Date.parse(asOf);
   const shop = new Map<string, ScopedVersionRow>();
   const global = new Map<string, ScopedVersionRow>();
@@ -154,14 +157,44 @@ export function pickVersionsAsOf(versions: readonly ScopedVersionRow[], scope: V
     const prior = bucket.get(v.sku_id);
     if (!prior || Date.parse(v.valid_from) > Date.parse(prior.valid_from)) bucket.set(v.sku_id, v);
   }
-  const out = new Map<string, ScopedVersionRow>();
+  const out = new Map<string, PickedVersion>();
   for (const [sku, v] of global) out.set(sku, v);
-  for (const [sku, v] of shop) out.set(sku, v);
+  // A shop pick carries the global version in force at the same instant, so packsFromVersions can
+  // fall back to it (loudly) if the shop version's levels did not load.
+  for (const [sku, v] of shop) out.set(sku, { ...v, globalFallback: global.get(sku) });
   return out;
 }
 
-/** The chains of exactly the picked versions (levels of any activity; history is append-only). */
-export function packsFromVersions(picked: ReadonlyMap<string, ScopedVersionRow>, levels: readonly ScopedLevelRow[]): Map<string, ResolvedPack> {
+/** A picked version; a SHOP pick also names the global version in force at the same instant. */
+export type PickedVersion = ScopedVersionRow & { globalFallback?: ScopedVersionRow };
+
+/**
+ * A NAMED as-of resolution warning (chunk-1 review): a picked version whose levels are not in the
+ * loaded set must never make the SKU vanish silently.
+ *   shop_version_levels_missing   — the shop version had no loaded level; the global version in
+ *                                   force then answered instead (fellBackToVersionId), or nothing
+ *                                   could (null → the SKU rides the flat path, today's "no chain").
+ *   global_version_levels_missing — the global version had no loaded level and no flat baseline;
+ *                                   the SKU rides the flat path (today's "no chain" answer).
+ */
+export interface PackPickWarning {
+  code: "shop_version_levels_missing" | "global_version_levels_missing";
+  skuId: string;
+  versionId: string;
+  locationId: string | null;
+  fellBackToVersionId: string | null;
+}
+
+/**
+ * The chains of exactly the picked versions (levels of any activity; history is append-only).
+ * A shop version whose levels are missing falls back to the global version in force then and
+ * pushes a named warning into `warnings` (when given) — never a silent disappearance.
+ */
+export function packsFromVersions(
+  picked: ReadonlyMap<string, PickedVersion>,
+  levels: readonly ScopedLevelRow[],
+  warnings?: PackPickWarning[],
+): Map<string, ResolvedPack> {
   const byVersion = new Map<string, ScopedLevelRow[]>();
   for (const l of levels) {
     if (l.version_id == null) continue;
@@ -169,16 +202,26 @@ export function packsFromVersions(picked: ReadonlyMap<string, ScopedVersionRow>,
     list.push(l);
     byVersion.set(l.version_id, list);
   }
-  const out = new Map<string, ResolvedPack>();
-  for (const [sku, v] of picked) {
+  const answer = (v: ScopedVersionRow): ResolvedPack | null => {
     if (v.flat_snapshot) {
       // A pre-chain baseline answers with the FLAT pack it preserved (Astra 2b r2#5).
-      out.set(sku, { levels: [], versionId: v.id, locationId: v.location_id, effectiveFrom: v.valid_from, flat: v.flat_snapshot });
-      continue;
+      return { levels: [], versionId: v.id, locationId: v.location_id, effectiveFrom: v.valid_from, flat: v.flat_snapshot };
     }
     const rows = byVersion.get(v.id);
-    if (!rows || rows.length === 0) continue;
-    out.set(sku, { levels: rows.map(toLevel), versionId: v.id, locationId: v.location_id, effectiveFrom: v.valid_from });
+    if (!rows || rows.length === 0) return null;
+    return { levels: rows.map(toLevel), versionId: v.id, locationId: v.location_id, effectiveFrom: v.valid_from };
+  };
+  const out = new Map<string, ResolvedPack>();
+  for (const [sku, v] of picked) {
+    const own = answer(v);
+    if (own) { out.set(sku, own); continue; }
+    if (v.location_id !== null) {
+      const fb = v.globalFallback ? answer(v.globalFallback) : null;
+      warnings?.push({ code: "shop_version_levels_missing", skuId: sku, versionId: v.id, locationId: v.location_id, fellBackToVersionId: fb ? fb.versionId : null });
+      if (fb) out.set(sku, { ...fb, fallbackFromVersionId: v.id });
+      continue;
+    }
+    warnings?.push({ code: "global_version_levels_missing", skuId: sku, versionId: v.id, locationId: null, fellBackToVersionId: null });
   }
   return out;
 }
@@ -323,6 +366,23 @@ export function skuOwnerAllowed(actor: { level: number; locations: readonly stri
   return ownerLocationId === null || catalogShopAllowed(actor, ownerLocationId);
 }
 
+/** GM (7) and up: every role at that level writes the catalog (within the floors below). */
+export const CATALOG_ANY_ROLE_MIN = 7;
+/**
+ * LEVEL 6 IS NOT ONE THING (lead decision, chunk-1 review). Catalog writes at level 6 belong to the
+ * OPERATIONAL managers only — AGM, prep manager, catering manager. The social media manager shares
+ * the level and is EXCLUDED: a role check, never level-only (AGENTS.md: level 6 also means
+ * social_media_mgr).
+ */
+export const CATALOG_LEVEL6_WRITE_ROLES: readonly RoleCode[] = ["agm", "prep_mgr", "catering_mgr"];
+
+/** May this role write the catalog at all? Level 7+ any role; level 6 the operational managers only. */
+export function catalogWriteRoleAllowed(role: RoleCode, level: number): boolean {
+  if (level >= CATALOG_ANY_ROLE_MIN) return true;
+  if (level >= SHOP_VERSION_WRITE_MIN) return CATALOG_LEVEL6_WRITE_ROLES.includes(role);
+  return false;
+}
+
 export type VersionKind = "pack" | "price";
 export type VersionWriteRefusal = { ok: false; status: 403 | 404; code: "forbidden" | "not_found" | "global_requires_moo" };
 
@@ -332,13 +392,15 @@ export type VersionWriteRefusal = { ok: false; status: 403 | 404; code: "forbidd
  * it, under the SKU lock and in the same transaction as the insert, if a global value exists.
  */
 export function versionWriteGate(input: {
-  kind: VersionKind; level: number; scope: VersionScope; scopeAllowed: boolean;
+  kind: VersionKind; role: RoleCode; level: number; scope: VersionScope; scopeAllowed: boolean;
 }): { ok: true; firstOnly: boolean } | VersionWriteRefusal {
   if (input.scope !== null) {
     if (input.level < SHOP_VERSION_WRITE_MIN) return { ok: false, status: 403, code: "forbidden" };
+    if (!catalogWriteRoleAllowed(input.role, input.level)) return { ok: false, status: 403, code: "forbidden" };
     if (!input.scopeAllowed) return { ok: false, status: 404, code: "not_found" };
     return { ok: true, firstOnly: false };
   }
+  if (!catalogWriteRoleAllowed(input.role, input.level)) return { ok: false, status: 403, code: "forbidden" };
   if (input.level >= GLOBAL_VERSION_WRITE_MIN) return { ok: true, firstOnly: false };
   if (input.level >= FIRST_GLOBAL_WRITE_MIN[input.kind]) return { ok: true, firstOnly: true };
   return { ok: false, status: 403, code: "forbidden" };

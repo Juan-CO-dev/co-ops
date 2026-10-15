@@ -1,10 +1,10 @@
 /** Catalog Phase 2a — the ONE version resolver (pure): live, as of an instant, prices, flat content, gates. */
 import { describe, expect, it } from "vitest";
 import {
-  FIRST_GLOBAL_WRITE_MIN, GLOBAL_VERSION_WRITE_MIN, SHOP_VERSION_WRITE_MIN,
+  CATALOG_LEVEL6_WRITE_ROLES, FIRST_GLOBAL_WRITE_MIN, GLOBAL_VERSION_WRITE_MIN, SHOP_VERSION_WRITE_MIN, catalogWriteRoleAllowed,
   asOfForBusinessDate, assertScopeToken, catalogShopAllowed, contentOzForScope, levelsBySku,
   packsFromVersions, pickVersionsAsOf, priceCentsFromDollars, resolveCurrentPrices, resolvePackLevels,
-  skuOwnerAllowed, unitsPerPackForScope, versionWriteGate, type ScopedLevelRow, type ScopedPriceRow, type ScopedVersionRow,
+  skuOwnerAllowed, unitsPerPackForScope, versionWriteGate, type ScopedLevelRow, type ScopedPriceRow, type ScopedVersionRow, type PackPickWarning,
 } from "@/lib/sku-versions-shared";
 import type { MeasureUnitFactor } from "@/lib/recipe-math";
 
@@ -67,6 +67,27 @@ describe("as of an instant (D1) — the version IN FORCE then", () => {
     const packs = packsFromVersions(picked, [lvl("x", "turkey", "shop-a", "s1", 0, "case"), lvl("y", "turkey", null, "g2", 0, "case"), lvl("z", "turkey", "shop-a", "s1", 1, "bag")]);
     expect(packs.get("turkey")).toMatchObject({ versionId: "s1", locationId: "shop-a", effectiveFrom: "2026-10-15T14:00:00Z" });
     expect(packs.get("turkey")!.levels.map((l) => l.id)).toEqual(["x", "z"]);
+  });
+  it("a shop version whose levels did not load falls back to the global version in force — with a NAMED warning, never silently", () => {
+    const picked = pickVersionsAsOf(versions, "shop-a", "2026-10-16T03:59:59.999Z");
+    expect(picked.get("turkey")!.globalFallback?.id).toBe("g2");
+    const warnings: PackPickWarning[] = [];
+    // s1's levels are absent from the loaded set; g2's are present.
+    const packs = packsFromVersions(picked, [lvl("y", "turkey", null, "g2", 0, "case"), lvl("h", "ham", null, "h1", 0, "pack")], warnings);
+    expect(packs.get("turkey")).toMatchObject({ versionId: "g2", locationId: null, fallbackFromVersionId: "s1" });
+    expect(packs.get("turkey")!.levels.map((l) => l.id)).toEqual(["y"]);
+    expect(warnings).toEqual([{ code: "shop_version_levels_missing", skuId: "turkey", versionId: "s1", locationId: "shop-a", fellBackToVersionId: "g2" }]);
+  });
+  it("…and when neither the shop nor the global version has levels, both absences are named", () => {
+    const picked = pickVersionsAsOf(versions, "shop-a", "2026-10-16T03:59:59.999Z");
+    const warnings: PackPickWarning[] = [];
+    const packs = packsFromVersions(picked, [], warnings);
+    expect(packs.size).toBe(0);
+    expect(warnings).toEqual(expect.arrayContaining([
+      { code: "shop_version_levels_missing", skuId: "turkey", versionId: "s1", locationId: "shop-a", fellBackToVersionId: null },
+      { code: "global_version_levels_missing", skuId: "ham", versionId: "h1", locationId: null, fellBackToVersionId: null },
+    ]));
+    expect(warnings).toHaveLength(2);
   });
   it("a pre-chain baseline version answers with the flat pack it preserved (Astra 2b r2#5)", () => {
     const flat = { pack_format: "case", each_container_label: null, units_per_pack: 24, each_size: 1, each_measure: "lb" };
@@ -155,15 +176,31 @@ describe("the catalog shop allowance (D2) and the write gates (spec §2)", () =>
     expect(catalogShopAllowed({ level: 6, locations: ["shop-a"] }, "shop-a")).toBe(true);
   });
   it("a shop version needs level 6 AND the shop", () => {
-    expect(versionWriteGate({ kind: "pack", level: 5, scope: "a", scopeAllowed: true })).toEqual({ ok: false, status: 403, code: "forbidden" });
-    expect(versionWriteGate({ kind: "pack", level: 7, scope: "a", scopeAllowed: false })).toEqual({ ok: false, status: 404, code: "not_found" });
-    expect(versionWriteGate({ kind: "price", level: 6, scope: "a", scopeAllowed: true })).toEqual({ ok: true, firstOnly: false });
+    expect(versionWriteGate({ kind: "pack", role: "shift_lead", level: 5, scope: "a", scopeAllowed: true })).toEqual({ ok: false, status: 403, code: "forbidden" });
+    expect(versionWriteGate({ kind: "pack", role: "gm", level: 7, scope: "a", scopeAllowed: false })).toEqual({ ok: false, status: 404, code: "not_found" });
+    expect(versionWriteGate({ kind: "price", role: "agm", level: 6, scope: "a", scopeAllowed: true })).toEqual({ ok: true, firstOnly: false });
   });
   it("global: MoO+ freely; a GM (pack) / AGM (price) only the FIRST value — the database decides that, atomically", () => {
-    expect(versionWriteGate({ kind: "pack", level: 8, scope: null, scopeAllowed: false })).toEqual({ ok: true, firstOnly: false });
-    expect(versionWriteGate({ kind: "pack", level: 7, scope: null, scopeAllowed: false })).toEqual({ ok: true, firstOnly: true });
-    expect(versionWriteGate({ kind: "pack", level: 6, scope: null, scopeAllowed: false })).toEqual({ ok: false, status: 403, code: "forbidden" });
-    expect(versionWriteGate({ kind: "price", level: 6, scope: null, scopeAllowed: false })).toEqual({ ok: true, firstOnly: true });
+    expect(versionWriteGate({ kind: "pack", role: "moo", level: 8, scope: null, scopeAllowed: false })).toEqual({ ok: true, firstOnly: false });
+    expect(versionWriteGate({ kind: "pack", role: "gm", level: 7, scope: null, scopeAllowed: false })).toEqual({ ok: true, firstOnly: true });
+    expect(versionWriteGate({ kind: "pack", role: "agm", level: 6, scope: null, scopeAllowed: false })).toEqual({ ok: false, status: 403, code: "forbidden" });
+    expect(versionWriteGate({ kind: "price", role: "agm", level: 6, scope: null, scopeAllowed: false })).toEqual({ ok: true, firstOnly: true });
+  });
+  it("level 6 is the OPERATIONAL managers only: AGM, prep, catering — never social media (role check, not level-only)", () => {
+    expect([...CATALOG_LEVEL6_WRITE_ROLES].sort()).toEqual(["agm", "catering_mgr", "prep_mgr"]);
+    for (const role of ["agm", "prep_mgr", "catering_mgr"] as const) {
+      expect(catalogWriteRoleAllowed(role, 6)).toBe(true);
+      expect(versionWriteGate({ kind: "pack", role, level: 6, scope: "a", scopeAllowed: true })).toEqual({ ok: true, firstOnly: false });
+      expect(versionWriteGate({ kind: "price", role, level: 6, scope: null, scopeAllowed: false })).toEqual({ ok: true, firstOnly: true });
+    }
+    expect(catalogWriteRoleAllowed("social_media_mgr", 6)).toBe(false);
+    expect(versionWriteGate({ kind: "pack", role: "social_media_mgr", level: 6, scope: "a", scopeAllowed: true })).toEqual({ ok: false, status: 403, code: "forbidden" });
+    expect(versionWriteGate({ kind: "price", role: "social_media_mgr", level: 6, scope: "a", scopeAllowed: true })).toEqual({ ok: false, status: 403, code: "forbidden" });
+    expect(versionWriteGate({ kind: "price", role: "social_media_mgr", level: 6, scope: null, scopeAllowed: false })).toEqual({ ok: false, status: 403, code: "forbidden" });
+    // GM and up: every role at that level; below 6 nobody.
+    expect(catalogWriteRoleAllowed("gm", 7)).toBe(true);
+    expect(catalogWriteRoleAllowed("moo", 8)).toBe(true);
+    expect(catalogWriteRoleAllowed("shift_lead", 5)).toBe(false);
   });
   it("assertScopeToken refuses anything that could break a PostgREST filter", () => {
     expect(assertScopeToken("6f1d2c3e-0000-4000-8000-000000000001")).toBe("6f1d2c3e-0000-4000-8000-000000000001");

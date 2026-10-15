@@ -185,7 +185,7 @@
       "s-mayo": 22,
       "s-old": 7,
       "s-pickle": 9.99,
-      "s-tomato": 25,
+      "s-tomato": 27,
       "s-turkey": 128,
       "s-twin-x": 4,
       "s-twin-y": 4.5
@@ -199,7 +199,7 @@
       "s-mayo": 2200,
       "s-old": 700,
       "s-pickle": 999,
-      "s-tomato": 2500,
+      "s-tomato": 2700,
       "s-turkey": 12800,
       "s-twin-x": 400,
       "s-twin-y": 450
@@ -402,7 +402,7 @@
         "s-mayo": 0.04583333333333333,
         "s-onion": null,
         "s-pickle": 0.3121875,
-        "s-tomato": 0.2777777777777778,
+        "s-tomato": 0.3,
         "s-turkey": 0.4,
         "s-twin-x": 0.2
       },
@@ -410,7 +410,7 @@
         "m-italian": {
           "status": "partial",
           "cost": null,
-          "pricedCost": 7.761979166666666,
+          "pricedCost": 7.961979166666666,
           "pricedLineCount": 6,
           "unpricedLineCount": 1,
           "unpricedSkuIds": [
@@ -470,6 +470,24 @@
       "m-old": {},
       "m-pickle-side": {
         "s-pickle": 8
+      }
+    },
+    "datedProbe": {
+      "day": "2026-07-15",
+      "menuOz": {
+        "m-italian": {
+          "s-cheese": 1.5,
+          "s-ham-a": 3,
+          "s-lettuce": 1.5,
+          "s-mayo": 0.5,
+          "s-tomato": 9,
+          "s-turkey": 4,
+          "s-twin-x": 16
+        },
+        "m-old": {},
+        "m-pickle-side": {
+          "s-pickle": 8
+        }
       }
     }
   },
@@ -659,7 +677,7 @@
       "s-mayo": 22,
       "s-old": 7,
       "s-pickle": 9.99,
-      "s-tomato": 25,
+      "s-tomato": 27,
       "s-turkey": 128,
       "s-twin-x": 4,
       "s-twin-y": 4.5
@@ -673,7 +691,7 @@
       "s-mayo": 2200,
       "s-old": 700,
       "s-pickle": 999,
-      "s-tomato": 2500,
+      "s-tomato": 2700,
       "s-turkey": 12800,
       "s-twin-x": 400,
       "s-twin-y": 450
@@ -867,7 +885,7 @@
         "s-mayo": 0.04583333333333333,
         "s-onion": null,
         "s-pickle": 0.3121875,
-        "s-tomato": 0.2777777777777778,
+        "s-tomato": 0.3,
         "s-turkey": 0.4,
         "s-twin-y": null
       },
@@ -875,7 +893,7 @@
         "m-italian": {
           "status": "partial",
           "cost": null,
-          "pricedCost": 4.561979166666667,
+          "pricedCost": 4.761979166666666,
           "pricedLineCount": 5,
           "unpricedLineCount": 2,
           "unpricedSkuIds": [
@@ -936,6 +954,24 @@
       "m-old": {},
       "m-pickle-side": {
         "s-pickle": 8
+      }
+    },
+    "datedProbe": {
+      "day": "2026-07-15",
+      "menuOz": {
+        "m-italian": {
+          "s-cheese": 1.5,
+          "s-ham-a": 3,
+          "s-lettuce": 1.5,
+          "s-mayo": 0.5,
+          "s-tomato": 9,
+          "s-turkey": 4,
+          "s-twin-y": 16
+        },
+        "m-old": {},
+        "m-pickle-side": {
+          "s-pickle": 8
+        }
       }
     }
   },
@@ -1125,7 +1161,7 @@
       "s-mayo": 22,
       "s-old": 7,
       "s-pickle": 9.99,
-      "s-tomato": 25,
+      "s-tomato": 27,
       "s-turkey": 128,
       "s-twin-x": 4,
       "s-twin-y": 4.5
@@ -1139,7 +1175,7 @@
       "s-mayo": 2200,
       "s-old": 700,
       "s-pickle": 999,
-      "s-tomato": 2500,
+      "s-tomato": 2700,
       "s-turkey": 12800,
       "s-twin-x": 400,
       "s-twin-y": 450
@@ -1333,7 +1369,7 @@
         "s-mayo": 0.04583333333333333,
         "s-onion": null,
         "s-pickle": 0.3121875,
-        "s-tomato": 0.2777777777777778,
+        "s-tomato": 0.3,
         "s-turkey": 0.4,
         "s-twin-y": null
       },
@@ -1341,7 +1377,7 @@
         "m-italian": {
           "status": "partial",
           "cost": null,
-          "pricedCost": 4.561979166666667,
+          "pricedCost": 4.761979166666666,
           "pricedLineCount": 5,
           "unpricedLineCount": 2,
           "unpricedSkuIds": [
@@ -1402,6 +1438,24 @@
       "m-old": {},
       "m-pickle-side": {
         "s-pickle": 8
+      }
+    },
+    "datedProbe": {
+      "day": "2026-07-15",
+      "menuOz": {
+        "m-italian": {
+          "s-cheese": 1.5,
+          "s-ham-a": 3,
+          "s-lettuce": 1.5,
+          "s-mayo": 0.5,
+          "s-tomato": 9,
+          "s-turkey": 4,
+          "s-twin-y": 16
+        },
+        "m-old": {},
+        "m-pickle-side": {
+          "s-pickle": 8
+        }
       }
     }
   }

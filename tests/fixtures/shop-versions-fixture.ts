@@ -18,6 +18,9 @@
  *   retired recipe ........................... r-old
  *   price ties ............................... s-cheese: same effective_date, later recorded_at wins
  *   price on an inactive SKU ................. s-old
+ *   SUPERSEDED global chain on a recipe SKU .. s-turkey (case → 6 bag → 80 oz = 480 oz, valid 07-01 → 08-01);
+ *                                              OLD_VERSION_DAY sits INSIDE it, QUIET_DAY after it (chunk-1 review)
+ *   FUTURE-dated price on a recipe SKU ....... s-tomato $27 effective 2026-11-01 (today's loader reads it as current)
  *
  * THE POST-0259 SHAPE. Every level carries version_id + location_id (null); the backfilled global
  * sku_pack_versions rows exist with their real dates (valid_from / valid_to); every price row
@@ -34,6 +37,13 @@ export const ACTIVE_FROM = "2026-08-01T00:00:00.000Z";
 export const OLD_FROM = "2026-07-01T00:00:00.000Z";
 /** A business date after every pack boundary in the fixture: its dated graph IS the live graph. */
 export const QUIET_DAY = "2026-10-14";
+/**
+ * A business date INSIDE s-turkey's superseded global version (OLD_FROM → ACTIVE_FROM). Today's
+ * loaders are date-blind, so the golden freezes the LIVE answer here (4 oz of turkey per Italian);
+ * the as-of resolver (D1, Task 5) must answer the OLD chain (6 oz) — a DELIBERATE, reviewed change
+ * of exactly `datedProbe` in the golden, and the trap for a resolver that picks the wrong version.
+ */
+export const OLD_VERSION_DAY = "2026-07-15";
 
 /** Turn plain chain rows into the post-0259 shape: one global version per (sku, active) set, dated. */
 export function withBackfilledVersions(tables: Record<string, Row[]>): Record<string, Row[]> {
@@ -85,6 +95,15 @@ export function buildShopVersionsFixture(): Record<string, Row[]> {
     id: "pl-tom-case", sku_id: "s-tomato", label: "case", contains_qty: 20,
     contains_level_id: null, contains_measure_unit: "each", display_ordinal: 1, active: true,
   });
+  // A SUPERSEDED global chain on a recipe SKU (chunk-1 review): turkey's case held 6 bags until
+  // ACTIVE_FROM. Inactive, so every live read ignores it; only an as-of read inside its dates
+  // (OLD_VERSION_DAY) may answer with it; an as-of read after its end (QUIET_DAY) must not.
+  t.sku_pack_levels!.push(
+    { id: "pl-t-old-bag", sku_id: "s-turkey", label: "bag", contains_qty: 80, contains_level_id: null,
+      contains_measure_unit: "oz", display_ordinal: 2, active: false, effective_from: OLD_FROM },
+    { id: "pl-t-old-case", sku_id: "s-turkey", label: "case", contains_qty: 6, contains_level_id: "pl-t-old-bag",
+      contains_measure_unit: null, display_ordinal: 1, active: false, effective_from: OLD_FROM },
+  );
 
   t.items = [{ id: "i-slaw", name: "Slaw", oz_per_par_unit: 32, default_par_unit: "quart", active: true }];
   t.menu_items = [
@@ -135,6 +154,9 @@ export function buildShopVersionsFixture(): Record<string, Row[]> {
     price("ph-12", "s-tomato", 25, "2026-10-03", "2026-10-03T12:00:00.000Z"),
     price("ph-13", "s-old", 7, "2026-10-03", "2026-10-03T12:00:00.000Z"),
     price("ph-14", "s-bags", 30, "2026-10-03", "2026-10-03T12:00:00.000Z"),
+    // FUTURE-dated (chunk-1 review): today's loader orders by effective_date desc, so this IS
+    // tomato's "current" price — frozen as-is.
+    price("ph-15", "s-tomato", 27, "2026-11-01", "2026-10-14T12:00:00.000Z"),
   ];
   t.locations = [
     { id: LOC, name: "Shop one", active: true },

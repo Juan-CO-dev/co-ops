@@ -85,11 +85,13 @@ export interface ScopeOutputs {
     itemCost: Record<string, unknown>;
   };
   datedMenuOz: Record<string, Record<string, number>>;
+  /** The optional second dated probe (a day INSIDE a superseded version; chunk-1 review). */
+  datedProbe?: { day: string; menuOz: Record<string, Record<string, number>> };
 }
 export type EquivalenceOutputs = Record<string, ScopeOutputs>;
 
 /** Every number, for "global" and for each shop id in `shopIds`. JSON-normalized. */
-export async function computeOutputs(api: ResolverApi, tables: Tables, shopIds: readonly string[], datedDay: string): Promise<EquivalenceOutputs> {
+export async function computeOutputs(api: ResolverApi, tables: Tables, shopIds: readonly string[], datedDay: string, probeDay?: string): Promise<EquivalenceOutputs> {
   const skuRows = [...(tables.vendor_items ?? [])].sort((a, b) => String(a.id).localeCompare(String(b.id)));
   const skuIds = skuRows.map((r) => String(r.id));
   const outputs = tables.recipe_outputs ?? [];
@@ -106,6 +108,7 @@ export async function computeOutputs(api: ResolverApi, tables: Tables, shopIds: 
     const prices = await api.prices(skuIds, scope);
     const graph = await api.graph(scope);
     const dated = await api.datedGraph(scope, datedDay);
+    const probe = probeDay === undefined ? null : await api.datedGraph(scope, probeDay);
     const costPerOz = costPerOzFromGraph(graph, prices);
     out[label] = {
       chains: sorted(chains),
@@ -129,6 +132,7 @@ export async function computeOutputs(api: ResolverApi, tables: Tables, shopIds: 
         itemCost: Object.fromEntries(itemIds.map((i) => [i, rollupItemCost(graph, i, costPerOz)])),
       },
       datedMenuOz: Object.fromEntries(menuIds.map((m) => [m, sorted(perUnitSkuOzForMenuItemFromGraph(dated, m))])),
+      ...(probe && probeDay !== undefined ? { datedProbe: { day: probeDay, menuOz: Object.fromEntries(menuIds.map((m) => [m, sorted(perUnitSkuOzForMenuItemFromGraph(probe, m))])) } } : {}),
     };
   }
   return JSON.parse(JSON.stringify(out)) as EquivalenceOutputs;
