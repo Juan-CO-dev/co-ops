@@ -1,365 +1,293 @@
-# Catering walk — step log (Marcus Webb, 2026-09-08)
+# Catering walk — step log (Marcus Webb, 2026-10-14)
 
-> Images 08–15 (first quote run: hit the menu-item à-la-carte save defect + missing pricing rule) and 49 (duplicate of 39) were removed from the repo; Supplement B (40–48) is the clean run the guide uses. The defect is tracked in the PR body and CHIEF bugs.
+## Step 01 — where-are-you
+- URL: /
+- Persona / viewport: (not logged in) / 1024x768
+- Action: `start tablet walker`, looked at the first screen.
+- Saw: "Manager login →" (top right); heading "Where are you?"; two tiles "MEP Capitol Hill" and "EM P Street".
+- Shot: img/catering/01-where-are-you.png
 
-## Step 01 — catering-hub
-- URL: /catering
-- Persona / viewport: Marcus Webb, General Manager / 1280x800
-- Action: Logged in (tiles: P Street → General Manager → Marcus Webb → PIN 9999), then navigated to /catering.
-- Saw: Heading "Catering" with subtext "Pipeline, quotes, and customers in one place." Five cards: "Catering Insights" ("Leads, booked catering and a calendar — by week, month, 30 days or all time."), "Catering Pipeline" ("Leads from inquiry to confirmed."), "Catering Quotes" ("Build, price, and send quotes."), "Catering Customers" ("Customer directory and history."), "Catering Companies" ("Company accounts + email attribution."), and "Admin & setup" ("Packages, menu, pricing, zones & rate rules.").
-- Shot: img/catering/01-catering-hub.png
+## Step 02 — whats-your-role
+- URL: /
+- Persona / viewport: (not logged in) / 1024x768
+- Action: tapped the P Street tile.
+- Saw: heading "What's your role?", sub-line "EM · P STREET"; tiles GM General Manager, AGM Assistant General Manager, CTR Catering Manager, SL Shift Lead, KH Key Holder, TR Trainer, EMP Employee, TRN Trainee; "← Back".
+- Shot: img/catering/02-whats-your-role.png
 
-## Step 02 — pipeline-board
+## Step 03 — who-are-you
+- URL: /
+- Persona / viewport: (not logged in) / 1024x768
+- Action: tapped the General Manager tile.
+- Saw: heading "Who are you?", sub-line "EM · P STREET · GENERAL MANAGER"; one tile "MW Marcus Webb"; "← Back".
+- Shot: img/catering/03-who-are-you.png
+
+## Step 04 — pin-keypad
+- URL: /
+- Persona / viewport: (not logged in) / 1024x768
+- Action: tapped the Marcus Webb tile.
+- Saw: badge "GENERAL MANAGER", "Marcus Webb", "Enter your 4-digit PIN", four empty dots, keypad 1-9, "Clear", 0, "← Back", "Use system keyboard".
+- Shot: img/catering/04-pin-keypad.png
+
+## Step 05 — dashboard
+- URL: /dashboard?loc=d2cced11-b167-49fa-bab6-86ec9bf4ff09
+- Persona / viewport: Marcus Webb, General Manager / 1024x768
+- Action: tapped 9 four times; waited for the dashboard (login took roughly 20 s).
+- Saw: round "M" user button sits in the page (top right, not floating over content); "DASHBOARD" "Hi, Marcus Webb."; badge "GENERAL MANAGER"; bell with 41 unread; shop switcher "MEP · CAPITOL HILL" and "EM · P STREET" (P STREET highlighted yellow = selected; "TODAY'S OPERATIONS EM · P Street" further down). **EXPLORE** chips: Mid-Shift Pulse, Reports Hub, Assignments, Trends, LTO, Written Reports, Catering, Maintenance, Production, Training, Recipes, Profile, Settings, My Performance, Admin. Then "My shift".
+- Shot: img/catering/05-dashboard.png
+- Confused: none. The dashboard opened on P Street (as expected; no switch needed).
+
+## Step 06 — catering-hub
+- URL: /catering?location=d2cced11-b167-49fa-bab6-86ec9bf4ff09
+- Persona / viewport: Marcus Webb, General Manager / 1024x768
+- Action: Dashboard -> Explore -> Catering (tap reported a 5 s click timeout but the page opened; the sim was slow).
+- Saw: "‹ DASHBOARD"; heading "Catering"; "Pipeline, quotes, and customers in one place."; six cards: "Catering Insights — Leads, booked catering and a calendar — by week, month, 30 days or all time."; "Catering Pipeline — Leads from inquiry to completed."; "Catering Quotes — Build, price, and send quotes."; "Catering Customers — Customer directory and history."; "Catering Companies — Company accounts + email attribution."; "Admin & setup — Packages, menu, capacity, zones & FAQ."
+- Shot: img/catering/06-catering-hub.png
+- Confused: "Admin & setup" names Packages, menu, capacity, zones & FAQ (no Pricing / Rate rules / ezCater) — matches the "names only what Marcus can open" change.
+
+## Step 06b — pulse-catering
+- URL: /mid-shift?location=d2cced11-b167-49fa-bab6-86ec9bf4ff09
+- Persona / viewport: Marcus Webb, General Manager / 1024x768
+- Action: Dashboard -> Explore -> Mid-Shift Pulse (page header "Mid-shift Pulse", "EM · P Street", shop buttons "Capitol Hill" / "P Street"); scrolled down to the Catering section. Looked only; no handoff note written.
+- Saw: card "Catering  as of 2:40 PM" with "See more"; "DUE TODAY" "No catering due today."; "Tomorrow: no catering booked"; "Prep: AM Not started · mid-day Not started"; "NOT RUNG INTO TOAST" "Every ezCater order is in Toast." (green). No money figures show in the Catering card. (Money does show elsewhere on the page, in the Sales card: "Sales so far —" "No completed Toast capture for today yet." — not part of this shot.) The Inventory card sits beside it (Order cutoffs: Boar's Head 3:00 PM, Cardinal Bakery 3:00 PM, PFG 4:00 PM, Trimark 6:00 PM, all "no draft yet").
+- Shot: img/catering/06b-pulse-catering.png
+- Confused: In this shot the Food safety fridge tiles show clipped one-letter names ("W", "3.", "S.", "D", "C", "F.", "B.", "3.") beside "Not checked today" — display truncation on the tablet, not part of the catering section.
+- Note: after the hub I used `goto /dashboard` once (a walker shortcut, it timed out at 30 s but the page loaded) instead of tapping "Dashboard" back; no data effect.
+
+## Step 07 — pipeline
 - URL: /catering/pipeline
-- Persona / viewport: Marcus Webb, General Manager / 1280x800
-- Action: Navigated to the pipeline from the hub.
-- Saw: Heading "Catering Pipeline" with subtext "Leads from inquiry to completed — track, follow up, and confirm." A search box "Search leads by name, company, or phone…", a "+ Add lead" button, filter dropdowns "Order lead" and "Source". Six columns left to right with counts: "INQUIRY" (1) — Maybe Corp, Sat Sep 19, 50 ppl, Walk-in, $900.00; "QUOTE SENT" (0) — "None"; "CONFIRMED" (4) — EZCater order SIM2, Rachel Wagley, Nav Gill, Block OS; "OUT FOR DELIVERY" (1) — EZCater order SIM1; "COMPLETED" (1) — Cris/CO; "LOST" (1) — Lost Lead. The board was NOT empty (8 leads total, matching the seeded sim data).
-- Shot: img/catering/02-pipeline-board.png
+- Persona / viewport: Marcus Webb, General Manager / 1024x768
+- Action: Dashboard -> Explore -> Catering -> Catering Pipeline (page took ~25 s to load).
+- Saw: "‹ CATERING"; heading "Catering Pipeline"; "Leads from inquiry to completed — track, follow up, and confirm."; search box placeholder "Search leads by name, company, or phone…" + "Search" button; "+ Add lead"; filters "Order lead" (All, Angel Reyes, Dana Brooks, Deshawn Carter, Luis Herrera, Marcus Webb, Maya Torres, Nicole Boyd, Priya Shah, Rosa Delgado, Tommy Nguyen) and "Source" (All, Online portal, Staff entered, Phone, Walk-in, Toast catering, EZCater, Direct invoice, Other). Columns in order: INQUIRY, QUOTE SENT, CONFIRMED, OUT FOR DELIVERY, COMPLETED, LOST — all "0" / "None" (clean board). At tablet width only the first four columns are in the picture; COMPLETED and LOST are off the right edge (the board scrolls sideways).
+- Shot: img/catering/07-pipeline.png
+- Confused: The guide text may say the shot shows all stage columns; at 1024 wide COMPLETED and LOST are not visible.
 
-## Step 03 — lead-detail
+## Step 08 — add-lead-form
 - URL: /catering/pipeline
-- Persona / viewport: Marcus Webb, General Manager / 1280x800
-- Action: Clicked the "Maybe Corp" lead card in the Inquiry column to expand it.
-- Saw: The card expands in place (accordion, not a separate page/URL) to show "No caps set", a definition list "Est. revenue: $900.00", and a "Move to" row of stage buttons: "Inquiry" (implicit, current), "Confirmed", "Out for delivery", "Completed", "Lost" (plus "Quote sent" was one of the options before the move). No note field appears on this card because it had none.
-- Shot: img/catering/03-lead-detail.png
-- Confused: Expected a separate lead-detail page or route; the board's row-click accordion IS the detail view — there's no dedicated /catering/pipeline/<id> URL reachable from the UI.
+- Persona / viewport: Marcus Webb, General Manager / 1024x768
+- Action: tapped "+ Add lead"; typed Contact name "Jordan Sample", Company "Hill Staffers LLC", Event date 10/23/2026 (Friday of next week; the browser date box needs 2026-10-23 typed, it shows mm/dd/yyyy), Headcount "25", Notes "Sim walk: wants a mix of hot and cold subs. Call Thursday to confirm."; left Lead source on "Staff entered" and Order lead on "Unassigned". Location was already "P Street" without my touching it.
+- Saw: form fields in order: "Contact name *", "Company", "Phone", "Email" (hint under it: "Links the lead to the customer with this email — or adds them as a new customer."), "Event date" (mm/dd/yyyy), "Headcount", "Lead source" (Online portal, Staff entered, Phone, Walk-in, Toast catering, EZCater, Direct invoice, Other), "Order lead (assigned to)" (Unassigned + the 10 staff names), "Follow-up date" (mm/dd/yyyy), "Location" (No location (global), Capitol Hill, P Street; starts on P Street), "Notes", buttons "Add" and "Cancel". The photo shows the form down to Notes; Add/Cancel are just below the picture.
+- Shot: img/catering/08-add-lead-form.png
+- Confused: none. Placeholders: no text field (Contact name, Company, Phone, Email, Headcount, Notes) shows placeholder text — all are blank when empty. The Notes box here has no placeholder.
+- Bug?: none. (Location starting on P Street is the fixed behaviour.)
 
-## Step 04 — pipeline-stage-change
+## Step 09 — lead-created
 - URL: /catering/pipeline
-- Persona / viewport: Marcus Webb, General Manager / 1280x800
-- Action: Clicked the "Quote sent" stage button inside the expanded Maybe Corp card.
-- Saw: The lead moved instantly (no confirmation dialog) — "INQUIRY" count dropped to 0 ("None"), "QUOTE SENT" count rose to 1 showing the Maybe Corp card in its new column.
-- Shot: img/catering/04-pipeline-stage-change.png
+- Persona / viewport: Marcus Webb, General Manager / 1024x768
+- Action: tapped "Add".
+- Saw: INQUIRY column "1" with a card: "Jordan Sample", "Hill Staffers LLC", chip "P Street", "Fri, Oct 23   25 ppl   Staff entered". Other columns "0" / "None".
+- Shot: img/catering/09-lead-created.png
 
-## Step 05 — add-lead-note
+## Step 10 — lead-detail
 - URL: /catering/pipeline
-- Persona / viewport: Marcus Webb, General Manager / 1280x800
-- Action: Since the expanded lead card had no editable note field for an existing lead, used "+ Add lead" to create a new lead with a note attached at creation: Contact name "Erin Walsh", Company "Hill Staffers LLC", Event date 2026-09-18 (next Friday), Headcount 25, Lead source "Phone", Order lead (assigned to) "Marcus Webb", Location "P Street", Notes "Called about a Friday office lunch for ~25 people. Wants two packages plus an a la carte add-on. Delivery address 1200 Pennsylvania Ave NW. Follow up with a quote this week."
-- Saw: Form fields exactly as above; a required-field marker "Contact name *"; buttons "Add" and "Cancel".
-- Shot: img/catering/05-add-lead-note.png
-- Confused: Notes can only be entered when creating a lead through this form — the existing lead's expanded card view has no "add note" control, so a note can't be appended to a lead already in the pipeline from this screen.
+- Persona / viewport: Marcus Webb, General Manager / 1024x768
+- Action: tapped the Jordan Sample card; scrolled down one screen so the Move to buttons are all in view. (First attempt showed no "No caps set" yet — that line appears a second or two after the card opens; I retook the shot after it had loaded.)
+- Saw: card opened with "No caps set", "Notes   Sim walk: wants a mix of hot and cold subs. Call Thursday to confirm.", button "Edit details", "Move to" buttons "Quote sent", "Confirmed", "Out for delivery", "Completed", "Lost". No amber "Order comparison is currently unavailable." line. No "Move to other shop" button.
+- Shot: img/catering/10-lead-detail.png
+- Bug?: none now. (The "No caps set" line loads late; a quick shot can miss it.)
 
-## Step 06 — lead-note-saved
+## Step 10b — lead-edit-details
 - URL: /catering/pipeline
-- Persona / viewport: Marcus Webb, General Manager / 1280x800
-- Action: Submitted the Add lead form, then clicked the new "Erin Walsh / Hill Staffers LLC" card in the Inquiry column to expand it and confirm the note saved.
-- Saw: Card now reads "Erin Walsh · Hill Staffers LLC · Fri, Sep 18 · 25 ppl · Phone · @Marcus Webb". Expanded view shows "No caps set" and a definition list with term "Notes" and definition "Called about a Friday office lunch for ~25 people. Wants two packages plus an a la carte add-on. Delivery address 1200 Pennsylvania Ave NW. Follow up with a quote this week." Then clicked "Quote sent" under "Move to" to advance this lead one stage.
-- Shot: img/catering/06-lead-note-saved.png
+- Persona / viewport: Marcus Webb, General Manager / 1024x768
+- Action: tapped "Edit details"; set Follow-up date to 10/22/2026 (Thursday of next week); scrolled so the whole form is in view; then tapped "Save".
+- Saw: the edit form stacks inside the card in one column: "Contact name *" (Jordan Sample), "Company" (Hill Staffers LLC), "Phone" (empty), "Event date" (10/23/2026), "Headcount" (25), "Follow-up date" (10/22/2026), "Notes" (the lead note), buttons "Save" and "Cancel", then "Move to" below. There is no Email field in this form. No placeholder text on Phone or Notes. After Save the card stays open and now shows "Follow-up date   Thu, Oct 22" under the notes, above "Edit details".
+- Shot: img/catering/10b-lead-edit-details.png
 
-## Step 07 — quotes-list
+## Step 11 — lead-moved
+- URL: /catering/pipeline
+- Persona / viewport: Marcus Webb, General Manager / 1024x768
+- Action: the card was still open after Save, so I tapped "Quote sent" under Move to.
+- Saw: INQUIRY "0" / "None"; QUOTE SENT "1" with the card "Jordan Sample / Hill Staffers LLC / P Street / Fri, Oct 23   25 ppl   Staff entered"; CONFIRMED and OUT FOR DELIVERY "0" / "None". The card collapsed (no follow-up line shown on the closed card).
+- Shot: img/catering/11-lead-moved.png
+
+## Step 12 — quotes-list
 - URL: /catering/quotes
-- Persona / viewport: Marcus Webb, General Manager / 1280x800
-- Action: Navigated to Catering Quotes from the hub.
-- Saw: Heading "Catering Quotes" with subtext "Build a priced quote, send it, and track its status." A "New quote" button and the message "No quotes yet." — confirms the sim starts with zero quotes as briefed.
-- Shot: img/catering/07-quotes-list.png
+- Persona / viewport: Marcus Webb, General Manager / 1024x768
+- Action: Back to Catering -> Catering Quotes.
+- Saw: "‹ CATERING"; heading "Catering Quotes"; "Build a priced quote, send it, and track its status."; button "NEW QUOTE"; a card with "No quotes yet."
+- Shot: img/catering/12-quotes-list.png
 
-## Step 08 — quote-builder-full
+## Step 13 — quote-builder
 - URL: /catering/quotes
-- Persona / viewport: Marcus Webb, General Manager / 1280x800
-- Action: Clicked "New quote", then filled the builder for the Hill Staffers LLC lead: Location "P Street", Event date 2026-09-18, Headcount 25, Client email "erin.walsh@hillstaffers.com", Client name "Erin Walsh", Company "Hill Staffers LLC", Pipeline lead "Erin Walsh · Hill Staffers LLC". Added two packages ("16 pc platter — $115.00" and "Full Lunch — $19.99") and one à la carte item ("Case of Assorted Chips (24) — $52.00"), checked "Delivery", and wrote the address into Notes.
-- Saw: A red banner "No pricing rule for this location — tax, gratuity, and service charge stay $0 until one is set in Admin." even after switching to P Street. Adding a package auto-inserted a line item labeled "Choose your subs (×8)" (for the 16 pc platter) or "Choose your sub" (for the Full Lunch) with the quantity pre-filled but the Unit price field left BLANK — the package's listed price ($115.00 / $19.99) did not carry over, so I typed it in myself. Adding the à la carte item, by contrast, auto-filled both description "Case of Assorted Chips (24)" AND unit price "52" correctly. Checking "Delivery" revealed a "Delivery zone" field whose only option was "None" (no zones configured for P Street). Subtotal and Total both read "$187.03".
-- Shot: img/catering/08-quote-builder-full.png
-- Confused: Selecting a package from "Add package" does not price the line item the way selecting an à la carte item does — the manager has to know the package's listed price and type it in manually, or the quote silently totals to less than intended.
-- Bug?: Red validation-style banner "No pricing rule for this location — tax, gratuity, and service charge stay $0 until one is set in Admin." appears for P Street (Marcus's own location), meaning tax/gratuity/service charge are not being calculated on any quote built here.
+- Persona / viewport: Marcus Webb, General Manager / 1024x768
+- Action: tapped "NEW QUOTE"; under PIPELINE LEAD picked "Jordan Sample · Hill Staffers LLC · Fri, Oct 23 · P Street"; typed Client email "orders@hillstaffers.example".
+- Saw: heading "New quote" with "Cancel"; fields LOCATION (Capitol Hill / P Street; shows "P Street"), EVENT DATE, HEADCOUNT, CLIENT EMAIL (input hint "name@company.com"; help text "The client's email is their identifier — used to send the quote and roll them up to their company account."), CLIENT NAME, COMPANY, PIPELINE LEAD (options "None" and the lead; the option reads contact · company · date · shop). Picking the lead filled Event date "10/23/2026", Headcount "25", Client name "Jordan Sample", Company "Hill Staffers LLC", and Location stayed "P Street". Client email did NOT fill (the lead has no email) — I typed it. Below the picture: LINE ITEMS (DESCRIPTION / QTY / UNIT PRICE / ×), "Add package" and "Add à la carte" drop-downs, "+ Add line", a "Delivery" checkbox, NOTES (empty box, no placeholder), "SAVE DRAFT".
+- Shot: img/catering/13-quote-builder.png
+- Confused: Before I added anything there WAS one empty first line (Description empty, Qty 1, Unit price empty, "Remove line" greyed out). Adding the package replaced that empty line.
+- Note fields: Notes box (below Delivery): no placeholder. Description / Qty / Unit price boxes: no placeholder.
 
-## Step 09 — quote-totals
+## Step 14 — quote-totals
 - URL: /catering/quotes
-- Persona / viewport: Marcus Webb, General Manager / 1280x800
-- Action: Cropped shot of just the totals block after entering all line items.
-- Saw: "Subtotal $187.03" and, in bold, "Total $187.03" — total equals subtotal because tax/gratuity/service charge are $0 (no pricing rule, per Step 08).
-- Shot: img/catering/09-quote-totals.png
+- Persona / viewport: Marcus Webb, General Manager / 1024x768
+- Action: Add package -> first one "8 pc platter — $60.00". It came in as "8 pc platter" Qty 1 Unit price 60 plus a second line "Choose your subs (×4)" Qty 4, no unit price (the package carries its parts). I left Qty at 1 because an 8 pc platter is a flat price, not per head (the script says set Qty 25 only if per head; it was not). Add à la carte -> first item "Napkins & Utensils — $20.00": line "Napkins & Utensils" Qty 1, Unit price 20. Scrolled to the totals.
+- Saw: Delivery checkbox (unticked), NOTES, "Subtotal $80.00", "Tax $8.00", "Total $88.00", "Deposit due $22.00", "SAVE DRAFT". The unit-price box of the "Choose your subs (×4)" line is empty. Package list in the drop-down: 8 pc platter $60, 16 pc platter $115, 32 pc platter $210, 48 pc platter $330, Light Lunch $12, Full Lunch $19.99, Three Footer $135, Six Footer $260.
+- Shot: img/catering/14-quote-totals.png
 
-## Step 10 — quote-save-error
+## Step 15 — quote-saved
 - URL: /catering/quotes
-- Persona / viewport: Marcus Webb, General Manager / 1280x800
-- Action: Clicked "Save draft".
-- Saw: A red line of text appeared under the totals: "Something went wrong. Please try again." Tried unchecking Delivery and retrying, then clearing the Pipeline lead field and retrying — both retries showed the same error. Browser console confirmed three consecutive 500 Internal Server Errors from POST /api/catering/quotes.
-- Shot: img/catering/10-quote-save-error.png
-- Bug?: "Save draft" shows "Something went wrong. Please try again." (server 500) on every attempt, but navigating back to the quotes list afterward showed the draft HAD been saved each time — three retries created three duplicate $187.03 drafts for the same lead. The error message is false/misleading and the retry-on-error path silently creates duplicates instead of failing cleanly.
+- Persona / viewport: Marcus Webb, General Manager / 1024x768
+- Action: tapped "SAVE DRAFT" (page said "Loading…" for about 30 s before the saved quote appeared); scrolled down one screen so the buttons are in the picture.
+- Saw: "← Back"; badge "DRAFT"; "$88.00"; "2026-10-23 · 25 covers"; "Client: Jordan Sample · Hill Staffers LLC · orders@hillstaffers.example"; "Lead: Jordan Sample · Hill Staffers LLC · Fri, Oct 23"; "Expires: Wed, Oct 28"; LINE ITEMS "8 pc platter × 1 $60.00", "Choose your subs (×4) × 4 $0.00", "Napkins & Utensils × 1 $20.00"; "Subtotal $80.00", "Tax $8.00", "Total $88.00", "Deposit due $22.00"; buttons "SEND QUOTE", "Revise", "Print labels" (not tapped). No Mark accepted / Mark declined on a draft. Totals split: subtotal + tax (10%) = total; deposit due is 25% of the total.
+- Shot: img/catering/15-quote-saved.png
+- Confused: the event date here prints as "2026-10-23" (ISO) while the lead and the Lead line print "Fri, Oct 23" — two date styles on one screen.
 
-## Step 11 — quotes-list-after-save
-- URL: /catering/quotes
-- Persona / viewport: Marcus Webb, General Manager / 1280x800
-- Action: Navigated back to the quotes list after the three "failed" save attempts.
-- Saw: Heading "draft · 3" — three separate quote cards, each "$187.03", "2026-09-18 · 25 covers", status pill "draft".
-- Shot: img/catering/11-quotes-list-after-save.png
+## Step 05x — ezcater-filter (no shot, goal 5)
+- URL: /catering/pipeline
+- Persona / viewport: Marcus Webb, General Manager / 1024x768
+- Action: back on Catering Pipeline, set Source to "EZCater", waited, looked, then set Source back to "All".
+- Saw: INQUIRY 0 / None, QUOTE SENT 0 / None, CONFIRMED 0 / None, OUT FOR DELIVERY 0 / None, COMPLETED 0 / None, LOST 0 / None. No "Not in Toast yet" panel (the only "Toast" text on the page is the Source option "Toast catering"). No ezCater lead shown. No shot taken, per script.
 
-## Step 12 — quote-detail-draft
-- URL: /catering/quotes
-- Persona / viewport: Marcus Webb, General Manager / 1280x800
-- Action: Clicked the first of the three draft quotes to open its detail view.
-- Saw: Status pill "DRAFT", "$187.03", "2026-09-18 · 25 covers", "Expires: Tue, Sep 22". A "LINE ITEMS" section header with nothing listed under it (no line rows shown despite a nonzero subtotal). "Subtotal $187.03" / "Total $187.03". Buttons "SEND QUOTE", "Revise", "Print labels".
-- Shot: img/catering/12-quote-detail-draft.png
-- Bug?: The quote detail view's "Line items" section renders no line rows at all (the three items I added — two "Choose your sub(s)" lines and the chips case — don't display here), even though the dollar totals below it are correct.
-
-## Step 13 — quote-send-password-stepup
-- URL: /catering/quotes
-- Persona / viewport: Marcus Webb, General Manager / 1280x800
-- Action: Clicked "Send quote".
-- Saw: A modal dialog titled "Confirm your password" with body text "Re-enter your password to confirm this action.", a "Password" field, and buttons "Confirm" / "Cancel".
-- Shot: img/catering/13-quote-send-password-stepup.png
-
-## Step 14 — quote-sent
-- URL: /catering/quotes
-- Persona / viewport: Marcus Webb, General Manager / 1280x800
-- Action: Entered the password and clicked "Confirm".
-- Saw: Status pill changed to "sent". Message: "Quote marked sent. No customer email on file, so nothing was emailed." (this is despite having typed "erin.walsh@hillstaffers.com" into Client email during the builder step). New buttons appeared: "Resend", "Revise", "Mark accepted", "Mark declined", "Print labels".
-- Shot: img/catering/14-quote-sent.png
-- Confused: The quote says "No customer email on file" right after I entered a client email while building it — unclear whether that email never saved, or whether "on file" refers to a separate customer record the quote doesn't yet link to.
-
-## Step 15 — quote-label
-- URL: /catering/quotes/45f0093d-a231-4aff-98a6-d553b09e2ccc/label
-- Persona / viewport: Marcus Webb, General Manager / 1280x800
-- Action: Clicked "Print labels" (opened in a new tab).
-- Saw: Heading "Food Labels", subtext "Print allergen labels for this quote's items.", a "Print" button — and nothing else. The page body below the header is entirely blank; no labels rendered for any of the quote's three line items.
-- Shot: img/catering/15-quote-label.png
-- Bug?: The label page shows no labels at all for a sent quote with three line items — likely because the manually-priced "Choose your sub(s)" lines aren't linked to catalog items with allergen data, but the page gives no explanation and just renders empty.
-
-## Step 16 — customers-list
+## Step 16 — catering-customers
 - URL: /catering/customers
-- Persona / viewport: Marcus Webb, General Manager / 1280x800
-- Action: Navigated to Catering Customers.
-- Saw: Heading "Catering Customers", subtext "Customer directory grouped by company, with lead and order history." A "+ Add customer" button, and one group heading "Hill Staffers LLC" containing "Erin Walsh · erin.walsh@hillstaffers.com" — the customer record the quote builder created.
-- Shot: img/catering/16-customers-list.png
+- Persona / viewport: Marcus Webb, General Manager / 1024x768
+- Action: Back to Catering -> Catering Customers.
+- Saw: heading "Catering Customers"; "Customer directory grouped by company, with lead and order history."; "+ Add customer"; group "HILL STAFFERS LLC" with one card "Jordan Sample / orders@hillstaffers.example". (The customer was created from the quote's client email, since the lead had no email.) The email is shown in full to this GM on this page.
+- Shot: img/catering/16-catering-customers.png
 
 ## Step 17 — customer-detail
 - URL: /catering/customers
-- Persona / viewport: Marcus Webb, General Manager / 1280x800
-- Action: Clicked the Erin Walsh row to expand it.
-- Saw: Two columns, "Pipeline" — "None yet." and "Orders" — "None yet." — plus "Edit" and "Deactivate" buttons.
+- Persona / viewport: Marcus Webb, General Manager / 1024x768
+- Action: tapped the Jordan Sample card.
+- Saw: card opens in place: "Jordan Sample", "orders@hillstaffers.example"; three columns "Pipeline — Jordan Sample · Quote sent · 2026-10-23", "Quotes — $88.00 · draft · Fri, Oct 23", "Orders — None yet."; buttons "Edit" and "Deactivate". Nothing edited.
 - Shot: img/catering/17-customer-detail.png
-- Confused: Erin Walsh has an active pipeline lead (Step 06) and three sent quotes (Steps 11-14), but her customer record shows "None yet." under both Pipeline and Orders — the customer directory doesn't appear to be linked to the pipeline lead or the quotes I just built for her.
+- Bug?: On the FIRST open of this card (about 30 s of waiting) Pipeline said "None yet." and Quotes said "None yet.". I left the page (Back to Catering) and came back to Catering Customers -> Jordan Sample and then Pipeline and Quotes filled in as above. So the first load can show the lists as "None yet." even though the lead and the quote exist (stale or slow first load). The photo is of the second, correct load.
 
-## Step 18 — companies-list-empty
+## Step 18 — catering-companies
 - URL: /catering/companies
-- Persona / viewport: Marcus Webb, General Manager / 1280x800
-- Action: Navigated to Catering Companies.
-- Saw: Heading "Catering Companies", subtext "Company accounts — corporate domains auto-attribute contacts; an account can later be claimed via portal sign-up." A "New company" button and the message "No company accounts yet." — even though the customer list (Step 16) already showed a "Hill Staffers LLC" grouping heading, that grouping is evidently just the free-text Company field, not a real company account here.
-- Shot: img/catering/18-companies-list-empty.png
+- Persona / viewport: Marcus Webb, General Manager / 1024x768
+- Action: Back to Catering -> Catering Companies.
+- Saw: heading "Catering Companies"; "Company accounts — corporate domains auto-attribute contacts; an account can later be claimed via portal sign-up."; button "NEW COMPANY"; card "No company accounts yet."
+- Shot: img/catering/18-catering-companies.png
 
-## Step 19 — new-company-form
+## Step 18b — new-company-form
 - URL: /catering/companies
-- Persona / viewport: Marcus Webb, General Manager / 1280x800
-- Action: Since there were no company accounts yet, clicked "New company" and filled Company name "Hill Staffers LLC", Corporate domain "hillstaffers.com".
-- Saw: Fields "Company name" and "Corporate domain (optional)" with helper text "Emails from this domain auto-attribute to this company. Personal domains (gmail, etc.) can't be used — attach those contacts by hand." Buttons "Create" / "Cancel".
-- Shot: img/catering/19-new-company-form.png
+- Persona / viewport: Marcus Webb, General Manager / 1024x768
+- Action: tapped "NEW COMPANY". Typed nothing. Closed it with "Cancel" (nothing saved).
+- Saw: "COMPANY NAME" (empty box, no placeholder); "CORPORATE DOMAIN (OPTIONAL)" (placeholder "acme.com"); help text "Emails from this domain auto-attribute to this company. Personal domains (gmail, etc.) can't be used — attach those contacts by hand."; buttons "CREATE" and "Cancel". The NEW COMPANY button is replaced by the form while it is open.
+- Shot: img/catering/18b-new-company-form.png
 
-## Step 20 — company-detail
-- URL: /catering/companies
-- Persona / viewport: Marcus Webb, General Manager / 1280x800
-- Action: Clicked "Create", then clicked the new "Hill Staffers LLC" row to expand it.
-- Saw: "Auto-attribution domains" heading listing "hillstaffers.com" with a "Remove domain" (×) control and a field to add another domain. "Contacts" heading with "No contacts attributed yet." and a field "Attach an existing contact by email — for personal-email clients that can't auto-attribute."
-- Shot: img/catering/20-company-detail.png
-- Confused: Erin Walsh's email (erin.walsh@hillstaffers.com) matches the domain I just added, but she still shows "No contacts attributed yet." — auto-attribution doesn't appear to run retroactively on domains added after the customer already existed.
-
-## Step 21 — insights-full
+## Step 19 — insights
 - URL: /catering/insights
-- Persona / viewport: Marcus Webb, General Manager / 1280x800
-- Action: Navigated to Catering Insights (default range "This month").
-- Saw: Heading "Catering Insights", subtext "Leads, booked catering and feedback — by week, month, 30 days or all time." Range toggle buttons "This week" / "This month" (pressed) / "Last 30 days" / "All time". Stat tiles: "New leads" 7, "Booked events" 5, "Confirmed (upcoming)" $3,386.57 (5 events), "Completed" $0.00 (0 events), "Win rate" 80%, "Lost" 1, "Avg. headcount" 23, "Open pipeline" $900.00. Caption: "Money counts by event date; leads count by the day they arrived." Collapsible sections "Leads by source" (5 sources), "Events by stage" (8 events), and an expanded "Booked catering calendar" (6 booked) with a legend (Confirmed / Out for delivery / Completed) and a September 2026 month grid with dots on Aug 31, Sep 5, Sep 6, and Sep 11; selected day Tue, Sep 8 read "No booked catering this day." A "Customer feedback" section read "No feedback yet."
-- Shot: img/catering/21-insights-full.png
+- Persona / viewport: Marcus Webb, General Manager / 1024x768
+- Action: Back to Catering -> Catering Insights.
+- Saw: heading "Catering Insights"; "Leads, booked catering and feedback — by week, month, 30 days or all time."; "Download" "CSV" "PDF" (not tapped); range buttons "THIS WEEK", "THIS MONTH" (selected, dark), "LAST 30 DAYS", "ALL TIME"; tiles: "NEW LEADS 1", "BOOKED EVENTS 0", "CONFIRMED (UPCOMING) $0.00 · 0 events", "COMPLETED $0.00 · 0 events", "WIN RATE —  No settled leads yet", "LOST 0", "AVG. HEADCOUNT —", "OPEN PIPELINE $0.00". Line under the tiles: "Money counts by event date; leads count by the day they arrived." Then collapsed sections "Leads by source 1 source", "Events by stage 1 events", "Booked catering calendar 0 booked".
+- Shot: img/catering/19-insights.png
+- Confused: OPEN PIPELINE shows "$0.00" even though a draft quote for $88.00 exists and the lead sits in Quote sent (event date Oct 23, inside this month). So a draft quote is not counted in OPEN PIPELINE, and "Events by stage" says "1 events" while "BOOKED EVENTS" says 0. The money split on screen is only the two tiles CONFIRMED (UPCOMING) and COMPLETED, both $0.00 / 0 events.
 
-## Step 22 — order-landing
-- URL: /order
-- Persona / viewport: logged out / 1280x800
-- Action: Signed out via the user menu ("Sign out" menuitem), then navigated to /order.
-- Saw: The public storefront: banner "Compliments Only" with "Menu" and "Sign in" links, hero "Where every bite deserves a compliment." with subtext "Chef-inspired subs and house-made ingredients, built the morning of your event and delivered on time — for 10 to 500." and buttons "Start your order" / "See the menu". Below: "Serves 4–500 • Delivery or free pickup • Built the morning of • Allergens on every item", then platter/lunch-box/footer-sub/à-la-carte/sides/sweets/drinks menu sections.
-- Shot: img/catering/22-order-landing.png
+## Step 20 — insights-full
+- URL: /catering/insights
+- Persona / viewport: Marcus Webb, General Manager / 1024x768 (full page)
+- Action: `shot ... full` on the same page, This month range.
+- Saw: everything above, plus "Booked catering calendar  0 booked" open: legend "Confirmed" (yellow dot), "Out for delivery" (black), "Completed" (green); month bar "‹ October 2026 ›"; switch "Show lost ✓"; "Dots mark booked events. Tap a day to see them."; the month grid MON–SUN with 14 highlighted; "WED, OCT 14  No booked catering this day."; "CUSTOMER FEEDBACK  No feedback yet." No dot on Fri 23 (the lead is only Quote sent).
+- Shot: img/catering/20-insights-full.png
+- Confused: in the full-page picture the page background shows a faint seam and a pale drawing at the right edge of the lower half (a page background effect of the full-page capture, not content).
 
-## Step 23 — order-start-empty
-- URL: /order/start
-- Persona / viewport: logged out / 1280x800
-- Action: Clicked "Start your order".
-- Saw: Heading "Let's cater your event." with an empty form: "Your name", "Email" ("This is your login — we'll email a link to confirm."), "Company (optional)", "Contact phone (optional)", "Event date", "Guests" (defaulted to 20), "Event / order name (optional)", "Event type / occasion (optional)", "Time window (optional)", "Delivery or pickup?" toggle (delivery/pickup), "Nearest shop" toggle (Capitol Hill/P Street), "Delivery address", "Preferred drop-off door (optional)", "Dietary & allergen notes (optional)". A disabled "Continue →" button, "Ordered with us before? Sign in", a tip "💡 Good to know — New here? Order for your best-guess headcount — we confirm the final count with you.", and footer text "No passwords to remember — your email is your account."
-- Shot: img/catering/23-order-start-empty.png
+## Step 21 — sales
+- URL: /reports/sales?location=d2cced11-b167-49fa-bab6-86ec9bf4ff09&range=last7&from=2026-10-08&to=2026-10-14&compare=false (hub range) -> page opened with from=2026-10-07 to=2026-10-13
+- Persona / viewport: Marcus Webb, General Manager / 1024x768
+- Action: Back to Catering -> Back to Dashboard -> Reports Hub (hub shows "Reports", "Date range" "Last 7 days", family "Sales" with links "Sales", "Sales checks", "Catering sales", Download CSV/PDF) -> tapped "Sales".
+- Saw: "‹ REPORTS", "DASHBOARD", shop buttons "Capitol Hill" / "P Street" (selected); heading "Sales"; tabs top right "Checks" and "Catering"; "Date range" select (Yesterday, Last 7 full days, Last 30 full days, Last 90 full days, This month, Last month, Last 12 months, Today, Custom) showing "Last 7 full days"; From 10/07/2026; To 10/13/2026; "Group by" Day / Week / Month; "Compare with previous period"; "Apply"; "Finished business days only (today only when you pick Today). Up to 92 days by day, 26 weeks by week, 12 months by month."; view buttons "Summary", "Items", "Modifiers", "Channels", "Hour × weekday", "Discounts", "Servers"; "Download CSV PDF"; "Wed, Oct 7 to Tue, Oct 13 · Toast business dates · ezCater event dates"; red badge "No capture · 0/7 days"; "No sales recorded for these days: not the same as $0."; tiles "Toast item-sales net (captured) —", "Toast gross item sales —", "Toast discounts and comps —", "Toast item voids —", "Toast non-gratuity service charges", "Toast item-sales refunds", "Sales (before refunds)", "Toast check totals (before refunds)" all —; also "ezCater reported subtotal — 0 ezCater orders", "Checks —", "Average check —", "Discounts — 0 applied", "Sales tax —", "Tips —", "Refunds captured so far —", then "Not counted as sales 0 checks" and "By day 7 rows" (collapsed). The old "Last 7 days" wording is gone here: the button reads "Last 7 full days". (The Reports Hub page itself still says "Last 7 days" in its own range list.)
+- Shot: img/catering/21-sales.png
+- Confused: the script says "Sales (tabs, views, date range and the sales tiles)"; the page shows only dashes (no capture in the sim) so the tiles read "—".
 
-## Step 24 — order-start-filled
-- URL: /order/start
-- Persona / viewport: logged out / 1280x800
-- Action: Filled the form with fake values: Your name "Jordan Blake", Email "jordan.blake@hillstaffers.com", Company "Hill Staffers LLC", Contact phone "(202) 555-0142", Event date 2026-09-18, Guests 25, Event/order name "Friday Office Lunch", Event type "Corporate", Time window "12:00-12:30 PM", Nearest shop "P Street", Delivery address "1200 Pennsylvania Ave NW, Washington, DC 20004", Preferred drop-off door "Front desk". Left "Delivery or pickup?" on its default "delivery".
-- Saw: All fields populated as entered; "Continue →" became enabled once required fields were filled.
-- Shot: img/catering/24-order-start-filled.png
+## Step 22 — catering-sales
+- URL: /reports/sales/catering?range=last7&from=2026-10-07&to=2026-10-13&g=day&compare=false
+- Persona / viewport: Marcus Webb, General Manager / 1024x768
+- Action: tapped the "Catering" tab on the Sales page.
+- Saw: "‹ SALES"; heading "Catering sales"; same range controls ("Last 7 full days"); "Wed, Oct 7 to Tue, Oct 13 · Toast business dates · ezCater event dates"; "Download CSV PDF"; card "ezCater orders — 0 ezCater orders · $0.00 — Subtotal by event date. ezCater is the source; a Toast ring linked to the order is not counted again." with chips "Matched in Toast: 0", "Not in Toast: 0", "Amount does not match: 0"; card "Catering rung in Toast — Sales (before refunds): $0.00 — Nothing in this range."; card "Catering pipeline value — Completed events (0): $0.00 / Confirmed, not yet done (0): $0.00 — Quote or estimate value by event date. Not register sales, never added to the totals above."; card "ezCater orders in this range — Nothing in this range."
+- Shot: img/catering/22-catering-sales.png
 
-## Step 25 — order-check-email
-- URL: /order/start
-- Persona / viewport: logged out / 1280x800
-- Action: Clicked "Continue →".
-- Saw: The page swapped to a confirmation screen (same URL, /order/start): "✉️ Check your email" — "We sent a link to jordan.blake@hillstaffers.com to confirm your order and set up your account. Click it and you'll pick up right where you left off." and "The link works once and expires in 30 minutes."
-- Shot: img/catering/25-order-check-email.png
-- Confused: The walk expected a straight-through /order/start → /order/build → /order/review → /order/verify flow, but the real flow gates on a magic-link email between "start" and "build" — there is no way to proceed to /order/build without clicking a real emailed link, which this sim environment doesn't deliver anywhere reachable from the browser.
+## Step 09x — desktop login (no shot, goal 9)
+- Action: `stop`, `start desktop walker`, logged in again P Street -> General Manager -> Marcus Webb -> 9999. The dashboard opened on loc d2cced11-b167-49fa-bab6-86ec9bf4ff09 (same id as the tablet P Street session). Desktop browser 1440x900.
+- Confused: at the Admin page my first tap used a stale control number and opened Admin > Stations by mistake; I changed nothing there (no Save, no toggle) and went back with "Back to Admin".
 
-## Step 26 — order-build-blocked
-- URL: /order/build
-- Persona / viewport: logged out / 1280x800
-- Action: Navigated directly to /order/build to see if a session already existed.
-- Saw: Heading "Start your order" (not the build screen) with message "We couldn't find an order to build. Start a new one and we'll email you a link to pick up right where you left off." and a "Start your order →" link back to /order/start.
-- Shot: img/catering/26-order-build-blocked.png
-- BLOCKED goal 6 (order/build, order/review): could not reach the actual builder or review screens — they require a confirmed session from clicking the real magic-link email, which isn't deliverable/clickable in this browser session. Tried: (1) direct navigation to /order/build — blocked with "couldn't find an order to build"; (2) direct navigation to /order/review — silently redirected back to a blank /order/start form; (3) direct navigation to /order/account — redirected to /order/start. No dev/sim bypass for the email step was found.
+## Step 23 — customers
+- URL: /admin/customers
+- Persona / viewport: Marcus Webb, General Manager / 1440x900
+- Action: Dashboard -> Explore -> Admin -> Customers.
+- Saw: "‹ ADMIN"; heading "Customers"; button "Catering accounts" (top right); "Who orders from your shop: visits, spend, favourite items and how often they come. Contact details are not shown here."; count chips "People: 0", "Regulars: 0", "Gone quiet: 0", "Both shops: 0", "Catering: 0", "Marketplace guests: 0 · 0 linked"; group chips "Regulars (5+ visits)", "Gone quiet (60+ days)", "One visit", "New (30 days)", "Both shops", "Catering customers"; filters "Search by name", "Sort by" (Most recent order, Most visits, Most spent, Highest average order, Most cards, Most catering orders, Newest customers, Quiet repeat customers), "Shop: Capitol Hill, P Street" (plain text, no drop-down), "Order channel" (All, In store, Online, App, Delivery, Catering), "Customer group", "Minimum visits", "Minimum spend ($)", "Include marketplace guests", "Apply filters", "Clear"; "Profiles (0)" "No customers match these filters."; "Likely same person (0)" collapsed. No contact fields are shown anywhere ("Contact details are not shown here.").
+- Shot: img/catering/23-customers.png
+- Confused: "Catering: 0" and "Catering customers" are empty although Jordan Sample (a catering customer with a quote) exists in Catering Customers; this directory is built from orders, so the sim shows none.
 
-## Step 27 — order-verify-link-expired
-- URL: /order/verify
-- Persona / viewport: logged out / 1280x800
-- Action: Navigated directly to /order/verify (no token) to see what the verification step asks for.
-- Saw: "🔗 Link expired" — "This link has expired, was already used, or was replaced by a newer one. Only your most recent link works, and links expire after 30 minutes." with a "Request a new link →" link back to /order/start, and footer "No passwords to remember — your email is your account." Did NOT click "Request a new link" (would trigger a new email). /order/verify does not ask the customer to type anything — it only reads a token from the emailed link's URL; with no valid token it always shows this expired-link message.
-- Shot: img/catering/27-order-verify-link-expired.png
+## Step 24 — catering-accounts
+- URL: /admin/customers/catering
+- Persona / viewport: Marcus Webb, General Manager / 1440x900
+- Action: on Customers tapped "Catering accounts" (one tap; no goto needed).
+- Saw: "‹ ADMIN"; "Back to customers"; heading "Catering accounts"; chips "Accounts: 0", "Repeat accounts: 0", "Gone quiet: 0", "12-month catering spend: $0.00"; "Sort by" (Most spent on catering, Most catering orders, Most recent catering order, Quiet repeat accounts); checkbox "Gone quiet only (over 90 days)"; "Apply filters"; "Accounts: 0" "No catering accounts match these filters." No contact details on the page.
+- Shot: img/catering/24-catering-accounts.png
 
-## Step 28 — pipeline-after-funnel
-- URL: /catering/pipeline
-- Persona / viewport: Marcus Webb, General Manager / 1280x800
-- Action: Logged back in as Marcus Webb (P Street → General Manager → Marcus Webb → PIN 9999) and reopened the pipeline to check for the "Jordan Blake / Hill Staffers LLC" funnel submission from Step 24.
-- Saw: No "Jordan Blake" card anywhere on the board. Columns unchanged from Step 06 (Inquiry 0, Quote sent 2 — Erin Walsh + Maybe Corp, Confirmed 4, Out for delivery 1, Completed 1, Lost 1). The /order/start submission never became a pipeline lead because the customer never completed the email-verification step.
-- Shot: img/catering/28-pipeline-after-funnel.png
-
-## Step 29 — admin-catering-hub
+## Step 25 — catering-setup
 - URL: /admin/catering
-- Persona / viewport: Marcus Webb, General Manager / 1280x800
-- Action: Navigated to /admin/catering (read-only for this goal).
-- Saw: Heading "Catering", subtext "Packages, pricing, capacity, delivery zones, and menu FAQ." Link tiles: "Packages", "Catering Menu", "Capacity & Blackouts", "Delivery Zones", "FAQ", "Prep Demand", "LTO & discounts", "Fulfillment Zones", "Catering workspace". No separate "Pricing" or "Rate rules" tile is listed here.
-- Shot: img/catering/29-admin-catering-hub.png
+- Persona / viewport: Marcus Webb, General Manager / 1440x900
+- Action: Dashboard -> Explore -> Catering -> Admin & setup.
+- Saw: "‹ ADMIN"; heading "Catering"; sub-line "Packages, capacity, delivery zones, and menu FAQ."; nine tiles in this order: "Packages", "Catering Menu", "Capacity & Blackouts", "Delivery Zones", "FAQ", "Prep Demand", "LTO & discounts", "Fulfillment Zones", "Catering workspace". Not listed: Pricing, Rate rules, ezCater item review.
+- Shot: img/catering/25-catering-setup.png
+- Confused: the sub-line does not mention Catering Menu, Prep Demand, LTO or Fulfillment Zones, and "Catering workspace" is a ninth tile the script did not name.
 
-## Step 30 — admin-catering-menu
-- URL: /admin/catering/menu
-- Persona / viewport: Marcus Webb, General Manager / 1280x800
-- Action: Opened "Catering Menu" (no edits).
-- Saw: Heading "Catering Menu", subtext "Flag items available for catering (à la carte) and, optionally, catering-only. Changes need a password step-up." Tabs "Menu" / "Toast". A callout: "How this list works — Toast items come from the store menu and are named in Toast. Catering items exist only here — tubs, cases, waters — and get their sizes and prices here. Rows appear to customers under the same headings you see below, in the same order." Filter buttons "All" / "On menu" / "Hidden" / "Toast items" / "Catering items", a search box, and a "Preview as customer" checkbox. A "Packages" summary row ("16 active", link "Open packages →"). Collapsible category groups: Drinks (21 on the menu of 21), Sides (22 on the menu of 23), Desserts (4 on the menu of 4), Add-ons (1 on the menu of 1), Cooks (1 on the menu of 9), Sauces (0 on the menu of 11), Slicing (0 on the menu of 9), Veg (0 on the menu of 11), Build Your Own (0 on the menu of 9), Gear (0 on the menu of 2), Subs (9 on the menu of 15) — each row shows per-item "Feeds" people count and toggle buttons "On catering menu" / "Catering only" / "Sold by portion".
-- Shot: img/catering/30-admin-catering-menu.png
-
-## Step 31 — admin-catering-packages
+## Step 26 — setup-packages
 - URL: /admin/catering/packages
-- Persona / viewport: Marcus Webb, General Manager / 1280x800
-- Action: Opened "Packages" (no edits).
-- Saw: Heading "Catering Packages", subtext "Build the catering packages customers can order, with pricing and what's included." An "ADD PACKAGE" button. Packages are duplicated per location (separate "8 pc platter" rows for "P Street" and "Capitol Hill", etc.), each showing "Per platter", price, "Min N people", "24h lead time", "Serves N", item count, with "Edit" / "Deactivate" / "Show details" controls.
-- Shot: img/catering/31-admin-catering-packages.png
+- Persona / viewport: Marcus Webb, General Manager / 1440x900
+- Action: tapped "Packages" (look only; nothing changed).
+- Saw: "‹ CATERING"; "Catering Packages"; "Build the catering packages customers can order, with pricing and what's included."; "ADD PACKAGE"; rows, each with Edit, Deactivate, Show details, e.g. "8 pc platter — P Street · Per platter · $60.00 · Min 4 people · 24h lead time · Serves 8 · 1 items", then the Capitol Hill copy, 16 pc platter $115.00, 32 pc platter $210.00, 48 pc platter $330.00, "Light Lunch — Per head · $12.00 · Min 1 people", "Full Lunch — Per head · $19.99", Three Footer, Six Footer (16 packages, both shops).
+- Shot: img/catering/26-setup-packages.png
 
-## Step 32 — admin-catering-zones
-- URL: /admin/catering/zones
-- Persona / viewport: Marcus Webb, General Manager / 1280x800
-- Action: Opened "Delivery Zones" (no edits).
-- Saw: Heading "Delivery zones", subtext "Per-location delivery zones: fee and minimum order." Two sections, "Capitol Hill (MEP)" and "P Street (EM)", each with an "ADD ZONE" button and the message "No zones yet for this location." This explains why the quote builder's Delivery-zone dropdown only offered "None" and why the "No pricing rule for this location" banner appeared.
-- Shot: img/catering/32-admin-catering-zones.png
+## Step 27 — setup-menu
+- URL: /admin/catering/menu
+- Persona / viewport: Marcus Webb, General Manager / 1440x900
+- Action: tapped "Catering Menu" (look only).
+- Saw: "Catering Menu"; "Flag items available for catering (à la carte) and, optionally, catering-only. Changes need a password step-up."; tabs "Menu" / "Toast"; help box "HOW THIS LIST WORKS — Toast items come from the store menu and are named in Toast. Catering items exist only here — tubs, cases, waters — and get their sizes and prices here. Rows appear to customers under the same headings you see below, in the same order." with button "Got it"; filters "All", "On menu", "Hidden", "Toast items", "Catering items"; search box placeholder "Search items…"; checkbox "Preview as customer"; "Packages — Packages are built on their own page. Customers see them first. 16 active  Open packages →"; groups "Drinks 21 on the menu of 21", "Sides 22 on the menu of 33", "Desserts 4 on the menu of 5" (open, with Berger Cookies - 2 pk, Berger Cookies- Large, Fruity Pebble Cannoli (single) "HIDDEN FROM CUSTOMERS") and per row "Feeds [ ] people", "ON CATERING MENU", "CATERING ONLY", "SOLD BY PORTION".
+- Shot: img/catering/27-setup-menu.png
 
-## Step 33 — admin-catering-fulfillment
-- URL: /admin/catering/fulfillment
-- Persona / viewport: Marcus Webb, General Manager / 1280x800
-- Action: Opened "Fulfillment Zones" (no edits).
-- Saw: Heading "Fulfillment Zones", subtext "Set each store's delivery zone: drag the pin to center, adjust the radius, and toggle delivery / pickup availability." A "Location" dropdown reading "Capitol Hill — not set", an interactive OpenStreetMap/Leaflet map with a draggable pin and a 5-mile radius circle, a "Delivery radius (miles)" field showing "5", and a checked "Offers delivery" checkbox. This is a distinct concept from "Delivery Zones" (Step 32) — one sets the service radius/pin, the other would set fee/minimum-order zones.
-- Shot: img/catering/33-admin-catering-fulfillment.png
-
-## Step 34 — admin-catering-capacity
+## Step 28 — setup-capacity
 - URL: /admin/catering/capacity
-- Persona / viewport: Marcus Webb, General Manager / 1280x800
-- Action: Opened "Capacity & Blackouts" (no edits).
-- Saw: Heading "Capacity & Blackouts", subtext "Per-location booking caps, lead time, and blackout dates." Both "Capitol Hill" and "P Street" show a "NOT CONFIGURED" pill, "Max covers per day: No cap · Max events per day: No cap · Minimum lead time (hours): No cap", a "Configure" button, "Blackout dates — No blackout dates.", and a Date + Reason (optional) row with an "ADD BLACKOUT" button.
-- Shot: img/catering/34-admin-catering-capacity.png
+- Persona / viewport: Marcus Webb, General Manager / 1440x900
+- Action: tapped "Capacity & Blackouts" (look only).
+- Saw: "Capacity & Blackouts"; "Per-location booking caps, lead time, and blackout dates."; for Capitol Hill and for P Street: badge "NOT CONFIGURED", "Max covers per day: No cap · Max events per day: No cap · Minimum lead time (hours): No cap", button "Configure", "Blackout dates" "No blackout dates.", "Date" (mm/dd/yyyy), "Reason (optional)" (empty box, no placeholder), "ADD BLACKOUT" (greyed out).
+- Shot: img/catering/28-setup-capacity.png
 
-## Step 35 — admin-catering-faq
+## Step 29 — setup-zones
+- URL: /admin/catering/zones
+- Persona / viewport: Marcus Webb, General Manager / 1440x900
+- Action: tapped "Delivery Zones" (look only).
+- Saw: heading "Delivery zones" (lower-case z); "Per-location delivery zones: fee and minimum order."; "Capitol Hill (MEP)" "ADD ZONE" "No zones yet for this location."; "P Street (EM)" "ADD ZONE" "No zones yet for this location."
+- Shot: img/catering/29-setup-zones.png
+- Confused: the tile is "Delivery Zones" but the page heading is "Delivery zones".
+
+## Step 30 — setup-fulfillment
+- URL: /admin/catering/fulfillment
+- Persona / viewport: Marcus Webb, General Manager / 1440x900
+- Action: tapped "Fulfillment Zones" (look only; waited about 45 s so the map tiles were all drawn). Did not tap PLACE PIN or SAVE ZONE.
+- Saw: heading "Fulfillment Zones"; "Set each store's delivery zone: drag the pin to center, adjust the radius, and toggle delivery / pickup availability."; "LOCATION" drop-down showing "P Street — not set" (options "Capitol Hill — not set", "P Street — not set"); dashed note "P Street has no delivery location set yet." with button "PLACE PIN"; a map of the Washington DC area with zoom + / − and "Leaflet | © OpenStreetMap contributors" and NO pin and NO radius circle; "DELIVERY RADIUS (MILES)" box showing 5; checkboxes "Offers delivery" (ticked) and "Offers pickup" (ticked); "SAVE ZONE" (greyed out).
+- Shot: img/catering/30-setup-fulfillment.png
+- Bug?: MISMATCH WITH THE GUIDE: the guide caption for this photo (catering-guide.md line 1156) reads "Fulfillment Zones with the map, the pin and the delivery radius", and guide step 3 says "Drag the pin to the shop and set Delivery radius (miles)". The screen shows no pin and no circle: it shows "P Street has no delivery location set yet." and a "PLACE PIN" button. Not changed in the guide, per instructions.
+
+## Step 31 — setup-faq
 - URL: /admin/catering/faq
-- Persona / viewport: Marcus Webb, General Manager / 1280x800
-- Action: Opened "FAQ" (no edits).
-- Saw: Heading "Catering FAQ", subtext "Manage frequently asked questions shown to catering clients." An "ADD FAQ" button and "No FAQs yet. Add one above."
-- Shot: img/catering/35-admin-catering-faq.png
+- Persona / viewport: Marcus Webb, General Manager / 1440x900
+- Action: tapped "FAQ" (look only).
+- Saw: heading "Catering FAQ"; "Manage frequently asked questions shown to catering clients."; "ADD FAQ"; "No FAQs yet. Add one above."
+- Shot: img/catering/31-setup-faq.png
 
-## Step 36 — admin-catering-lto
-- URL: /admin/catering/lto
-- Persona / viewport: Marcus Webb, General Manager / 1280x800
-- Action: Opened "LTO & discounts" (no edits).
-- Saw: Heading "Surplus → LTO / discount", subtext "Turn surplus into a featured LTO or a discount." Location dropdown "Capitol Hill". Two panels: "Surplus available to promote" — "No perishable surplus to act on." and "LTOs & discounts" — "No LTOs or discounts yet."
-- Shot: img/catering/36-admin-catering-lto.png
-
-## Step 37 — admin-catering-prep-demand
+## Step 32 — setup-prep-demand
 - URL: /admin/catering/prep-demand
-- Persona / viewport: Marcus Webb, General Manager / 1280x800
-- Action: Opened "Prep Demand" (no edits).
-- Saw: Heading "Catering Prep Demand", subtext "Upcoming prep required by confirmed catering leads, with over-par alerts for the next 14 days." Location "Capitol Hill", date range "Tue, Sep 8 – Tue, Sep 22". Tabs "Prep" (selected) / "Raw / SKU" / "Surplus" / "Sales". Body: "No upcoming catering prep demand for this location."
-- Shot: img/catering/37-admin-catering-prep-demand.png
-- BLOCKED goal 7 (pricing, rate-rules): the admin catering hub (Step 29) has no "Pricing" or "Rate rules" tile, and direct navigation to both /admin/catering/pricing and /admin/catering/rate-rules silently redirected to /dashboard rather than showing a page or a 404 — these two named admin surfaces don't exist as separate routes in this build. (The pricing-rule concept itself is visible only indirectly, via the quote builder's "No pricing rule for this location" banner from Step 08.)
+- Persona / viewport: Marcus Webb, General Manager / 1440x900
+- Action: tapped "Prep Demand" (look only).
+- Saw: heading "Catering Prep Demand"; "Upcoming prep required by confirmed catering leads, with over-par alerts for the next 14 days."; "LOCATION" drop-down "P Street" (Capitol Hill / P Street); "Wed, Oct 14 – Wed, Oct 28"; tabs "Prep" (selected), "Raw / SKU", "Surplus", "Sales"; dashed box "No upcoming catering prep demand for this location." The text "Sub — par comparison in W4b" is gone.
+- Shot: img/catering/32-setup-prep-demand.png
+- Confused: the Hill Staffers lead is in Quote sent (not Confirmed), so no demand shows, as expected.
 
-## Step 38 — pipeline-source-badges
-- URL: /catering/pipeline
-- Persona / viewport: Marcus Webb, General Manager / 1280x800
-- Action: Reopened the pipeline board and looked for leads with an EZCater or Toast source badge.
-- Saw: PRESENT. In "Confirmed": "EZCater order SIM2" tagged "EZCater" ($1,209.93, Sun Sep 6, 40 ppl) and "Nav Gill" tagged "Toast catering" ($289.48, Sat Sep 5, 12 ppl). In "Out for delivery": "EZCater order SIM1" tagged "EZCater" ($1,021.80, Sat Sep 5, 24 ppl). The Source filter dropdown also lists "Toast catering" and "EZCater" as selectable values alongside "Online portal", "Staff entered", "Phone", "Walk-in", "Direct invoice", "Other".
-- Shot: img/catering/38-pipeline-source-badges.png
+## Step 33 — setup-lto
+- URL: /admin/catering/lto
+- Persona / viewport: Marcus Webb, General Manager / 1440x900
+- Action: tapped "LTO & discounts" (look only).
+- Saw: page heading "Surplus → LTO / discount"; "Turn surplus into a featured LTO or a discount."; "LOCATION" drop-down "P Street"; card "Surplus available to promote — No perishable surplus to act on."; card "LTOs & discounts — No LTOs or discounts yet."
+- Shot: img/catering/33-setup-lto.png
+- Confused: the tile is "LTO & discounts" but the page heading is "Surplus → LTO / discount".
 
-## Step 39 — logged-out
+## Step 34 — logged-out
 - URL: /
-- Persona / viewport: logged out / 1280x800
-- Action: Opened the user menu and clicked "Sign out".
-- Saw: Returned to the location-tile screen: "Compliments Only", "Operations", "Manager login →", heading "Where are you?" with tiles "Capitol Hill" (MEP) and "P Street" (EM).
-- Shot: img/catering/39-logged-out.png
-
-# Supplement B — quote builder re-shoot (Marcus Webb, 2026-09-08)
-
-## Step 40 — new-quote-form-filled
-- URL: /catering/quotes
-- Persona / viewport: Marcus Webb, General Manager / 1280x800
-- Action: Logged in fresh (P Street → General Manager → Marcus Webb → PIN 9999; carried over from Supplement A's session), opened /catering/quotes, clicked "New quote", set Location to "P Street", Pipeline lead to the existing "Erin Walsh · Hill Staffers LLC", and typed Client email "erin.walsh@hillstaffers.com", Client name "Erin Walsh", Company "Hill Staffers LLC", Event date "2026-09-18", Headcount "25".
-- Saw: The "New quote" panel with every field holding the typed value; picking the pipeline lead did NOT auto-fill client email/name/company — those still had to be typed by hand.
-- Confused: The Client email field is a combobox (has a dropdown arrow) but accepted free-typed text with no visible suggestion list.
-- Shot: img/catering/40-new-quote-form-filled.png
-
-## Step 41 — quote-builder-with-lines
-- URL: /catering/quotes
-- Persona / viewport: Marcus Webb, General Manager / 1280x800
-- Action: From "Add package" selected "16 pc platter — $115.00" (auto-inserted a "Choose your subs (×8)" line, Qty 8, Unit price blank) and typed 115 into its Unit price; then selected "Full Lunch — $19.99" (auto-inserted a second "Choose your sub" line, Qty 1, Unit price blank) and typed 19.99 into its Unit price; then from "Add à la carte" selected "Napkins & Utensils — $20.00" only (no other à-la-carte item touched); then ticked "Delivery" (a "Delivery zone" dropdown appeared, left at "None").
-- Saw: Three line-item rows — "Choose your subs (×8)" qty 8 @ 115, "Choose your sub" qty 1 @ 19.99, "Napkins & Utensils" qty 1 @ 20 — sitting above the package/à-la-carte pickers and the now-checked Delivery box.
-- Confused: The "Choose your subs (×8)" line prices as Unit price × Qty (115 × 8 = $920), not as a flat $115 package price — typing the package's listed price into Unit price the way the task described inflates that line to 8× the sticker price.
-- Shot: img/catering/41-quote-builder-with-lines.png
-
-## Step 42 — quote-totals-area
-- URL: /catering/quotes
-- Persona / viewport: Marcus Webb, General Manager / 1280x800
-- Action: Scrolled to the bottom of the builder to read the totals block.
-- Saw: "Subtotal $959.99" / "Tax $96.00" / "Total $1,055.99" / "Deposit due $264.00" — a tax line now renders (it did not in the earlier Capitol Hill attempt, which banner-warned "No pricing rule for this location"), computed at 10% of subtotal ($96.00 on $959.99, rounded). No gratuity line and no separate service-charge line appear anywhere in the totals block.
-- Shot: img/catering/42-quote-totals-area.png
-
-## Step 43 — quote-saved-draft-detail
-- URL: /catering/quotes
-- Persona / viewport: Marcus Webb, General Manager / 1280x800
-- Action: Clicked "Save draft".
-- Saw: The draft saved on the FIRST TRY with no error — the screen swapped straight from the builder to the quote's own detail view: a "draft" status label, "$1,055.99" / "2026-09-18 · 25 covers" / "Expires: Tue, Sep 22", a "Line items" list already showing all three rows with their prices, the same Subtotal/Tax/Total/Deposit-due block, and three actions — "Send quote", "Revise", "Print labels". There was no separate toast or banner reading "saved" — landing on this detail page WAS the success signal.
-- Shot: img/catering/43-quote-saved-draft-detail.png
-
-## Step 44 — quote-detail-line-items
-- URL: /catering/quotes
-- Persona / viewport: Marcus Webb, General Manager / 1280x800
-- Action: Navigated back to /catering/quotes, found the new "$1,055.99 · 2026-09-18 · 25 covers · draft" tile under "draft · 3", and clicked it to reopen the saved quote's detail.
-- Saw: A "DRAFT" status pill at the top right, and the "Line items" section listing "Choose your subs (×8) × 8 — $920.00", "Choose your sub × 1 — $19.99", "Napkins & Utensils × 1 — $20.00" — confirming the rows persisted correctly after the save/reload round-trip.
-- Shot: img/catering/44-quote-detail-line-items.png
-
-## Step 45 — send-quote-password-stepup
-- URL: /catering/quotes
-- Persona / viewport: Marcus Webb, General Manager / 1280x800
-- Action: Clicked "Send quote".
-- Saw: A dialog headed "Confirm your password" with body "Re-enter your password to confirm this action." and a single Password field with "Confirm" / "Cancel" buttons — a password step-up, not a PIN pad (unlike the closing checklist's confirm in Supplement A).
-- Shot: img/catering/45-send-quote-password-stepup.png
-
-## Step 46 — quote-sent-state
-- URL: /catering/quotes
-- Persona / viewport: Marcus Webb, General Manager / 1280x800
-- Action: Typed the password "sim-marcus-pw" and clicked "Confirm".
-- Saw: The status pill flipped to "sent" and a line appeared reading exactly: "Quote marked sent. No customer email on file, so nothing was emailed." The action buttons changed to "Resend", "Revise", "Mark accepted", "Mark declined", "Print labels".
-- Bug?: The quote WAS built with a client email ("erin.walsh@hillstaffers.com" typed into the builder's Client email field in Step 40), yet the send confirmation claims no customer email is on file — the typed email evidently isn't being read as "on file" for the send-notification check, or it lives on a different record (e.g. a customer/company row) than the one this check reads.
-- Shot: img/catering/46-quote-sent-state.png
-
-## Step 47 — quote-label-page
-- URL: /catering/quotes/fdd2b4fa-5aed-499e-84a5-d0c665aa50b0/label
-- Persona / viewport: Marcus Webb, General Manager / 1280x800
-- Action: Clicked "Print labels" (opened in a new tab) and switched to it.
-- Saw: Heading "Food Labels" / "Print allergen labels for this quote's items." with a "Print" button, and one label block per line item — "Choose your subs (×8)" Qty 8, "Choose your sub" Qty 1, "Napkins & Utensils" Qty 1 — each carrying "⚠ Allergen info not on file — verify before serving."
-- Shot: img/catering/47-quote-label-page.png
-
-## Step 48 — pipeline-hillstaffers-quotesent
-- URL: /catering/pipeline
-- Persona / viewport: Marcus Webb, General Manager / 1280x800
-- Action: Closed the label tab and opened /catering/pipeline to find the Hill Staffers lead.
-- Saw: The lead now sits under "Quote sent · 2" as "Erin Walsh / Hill Staffers LLC / Fri, Sep 18 / 25 ppl / Phone / @Marcus Webb" — moved into the Quote-sent column with an owner badge, but (unlike its column-mate "Maybe Corp … $900.00") it carries NO dollar-amount badge, even though the quote behind it totals $1,055.99.
-- Confused: Why the Erin Walsh card shows no price chip while the other "Quote sent" card does — possibly because this lead's quote total is read from the pipeline lead's own stored value rather than the just-sent quote, and that field was never populated by this flow.
-- Shot: img/catering/48-pipeline-hillstaffers-quotesent.png
-
-## Step 49 — logged-out
-- URL: /
-- Persona / viewport: logged out / 1280x800
-- Action: Opened the user menu and clicked "Sign out".
-- Saw: Returned to the location-tile screen — "Compliments Only" / "Operations" / "Manager login →" and "Where are you?" with tiles "Capitol Hill" (MEP) and "P Street" (EM).
-- Shot: img/catering/49-logged-out.png
+- Persona / viewport: (logged out; was Marcus Webb, General Manager) / 1024x768
+- Action: after the desktop pages, `stop`, `start tablet walker`, logged in again (P Street -> General Manager -> Marcus Webb -> 9999), scrolled to the bottom of the dashboard and tapped "LOG OUT" (no confirmation box appeared).
+- Saw: the "Where are you?" screen: "Manager login →"; tiles "MEP Capitol Hill" and "EM P Street".
+- Shot: img/catering/34-logged-out.png
+- Note: this shot is the tablet-width one (like 01-04); it was taken last, per the script's exception (1).
+- Note on fields: the only note / comment fields met on this walk were: Add lead "Notes" (no placeholder text), lead Edit details "Notes" (no placeholder), quote builder "NOTES" (no placeholder), capacity "Reason (optional)" (no placeholder), Catering Menu search "Search items…". No "Move to other shop" button showed for Marcus on the lead card.

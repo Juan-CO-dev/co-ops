@@ -2,13 +2,13 @@
 
 Three guides, one per job. They are written for people who know sandwiches, not software.
 
-The base guides retain their earlier screenshots. The short October 12 and October 8 launch sections are text only and live in `launch-<role>.<en|es>.md`, newest first; `/training` appends the matching language to each role guide. The base guides remain in English while the Spanish edition is being completed.
+Guides v2 (2026-10-13): each guide runs in the order of a real shift, explains the app's words first, reads at a 6th-grade level, and carries its Spanish right after every section. The photos come from the sim walks in `walks/`.
 
 | Guide | Who reads it |
 |---|---|
-| [Staff guide](staff-guide.md) | Anyone on the line (employee). Login, checklists, prep, notes, maintenance, feedback. |
-| [Manager guide](manager-guide.md) | Key holders, shift leads, AGMs, the GM. Confirming, receiving, counts, ordering, reports, admin. |
-| [Catering guide](catering-guide.md) | Whoever runs catering (AGM and up, or the catering manager). Pipeline, quotes, customers, the order funnel, setup. |
+| [Staff guide](staff-guide.md) | Anyone on the line. Start here → morning → all day → night → your stuff. |
+| [Manager guide](manager-guide.md) | Key holders, shift leads, AGMs, the GM. Start here → morning → all day → night → manager tools. |
+| [Catering guide](catering-guide.md) | Whoever runs catering. Start here → hub, pipeline, quotes, ezCater, customers, insights, setup. |
 
 ## Voice sheet (writers: follow exactly)
 
@@ -22,16 +22,42 @@ The base guides retain their earlier screenshots. The short October 12 and Octob
 - Stub pages (tips, announcements, comms) get one line: "Coming soon."
 - Never describe behavior you did not verify in the code or on screen. If a step could not be photographed, say "not shown" and describe it in words.
 
+## Guides v2 rules (2026-10-13)
+
+- **One guide per audience, in shift order:** Start here → Morning → All day → Night → tools.
+- **Grade 6.** Short sentences. "You". One idea per step. `tests/guides-reading-level.test.ts` fails any
+  English section above grade 6 (Flesch-Kincaid; a bold UI label counts as one short word, a bolded
+  sentence is scored like any other).
+- **App words.** Every guide opens with "Start here", which explains each app word in one line before the
+  guide uses it: shop, dashboard, roles, PIN, station, position, the board, par, opening verification,
+  opening prep, prep, mid-day prep, AM prep, closing checklist, walk-out, PM report, cash deposit,
+  Mid-Shift Pulse, delivery, count, ordering walk, 86, handoff note, saved.
+- **The real day.** The morning **Opening Report**: opening verification (check last night's count,
+  **Phase 1 · Verify**, then **Submit Opening**) → opening prep (**Phase 2 — Prep Entry**: make food up to
+  par, then **Finalize Phase 2**). The closing checklist runs all day, station by station. Mid-day prep after
+  the rush gets you back to par. AM prep is done at CLOSING: you count what is left so the morning crew
+  knows what is there (start the closing checklist first, or AM prep won't submit). The PM report, cash
+  deposit and closing confirm are night jobs.
+- **Assigned work.** A report tile shows only to the person assigned it today. Crew get their reports
+  from a manager; key holders and up can take tasks on the board themselves. A crew member assigned the
+  opening can submit it.
+- **Spanish right after English.** Inside every `##` section, the English comes first, then a
+  `### En español` heading with the same content in natural Latin-American restaurant Spanish (tú form).
+  Labels match es.json exactly.
+- **Facts.** Write only what `testing/facts.md` proves (plus what the steplogs show on screen). If it isn't
+  there, check the code and add it to the facts sheet first. Never document anything in its
+  "DO NOT DOCUMENT" list.
+
 ## Screenshot conventions
 
-- Staff guide: phone viewport 390×844. Manager and catering guides: desktop 1280×800.
+- Staff guide: phone 390×844. Manager and catering guides: tablet 1024×768; catering setup/admin pages: desktop 1440×900. All at 2× scale.
 - PNG, CSS scale. Path: `docs/guides/img/<guide>/<NN>-<slug>.png`, NN two digits in path order.
 - Source: the sim sandbox (fake staff, fake data, fake names). Never production.
 
 ## Re-shoot procedure (the UI changed, or the Spanish edition)
 
-1. Bring the sim database up to the current migration lineage (see the sim notes below). Boot the sim: `node scripts/sim/dev-sim.mjs` (port 3100).
-2. Run the lane's walk script in `walks/<guide>.walk.md`, as a walker agent or a human, following `walks/_steplog-schema.md` for the log.
+1. Bring the sim database up to the current migration lineage (see the sim notes below). Boot the sim with production's on-screen switches: `PULSE_V2=1 WHOS_HERE=1 CUSTOMER_PROFILES=1 node scripts/sim/dev-sim.mjs` (port 3100), the tester browser `node scripts/guide-test/browser-daemon.mjs`, and reset the sim day with `scripts/guide-test/reset-sim-day.sql` (sim project only).
+2. Run the lane's walk script in `walks/<guide>.walk.md` with `scripts/guide-test/gt.mjs` (walker mode), following `walks/_steplog-schema.md` for the log.
 3. Replace the PNGs in place and keep the numbers. Update guide text only where the screen changed.
 4. For the Spanish edition: switch the persona's language in their profile first, walk the same script, and save under `img/<guide>-es/`.
 

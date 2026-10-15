@@ -1,1136 +1,1377 @@
 # Manager guide
 
-For key holders, shift leads, AGMs and the GM. It covers the jobs that only you can finish: confirming the day's reports, prep, receiving, counts, ordering, cash, the end-of-shift report, and the admin console.
-
-You do not need to read it front to back. Find your section, do the steps.
-
-You can read this guide inside the app. Open **Training** from the Explore list on your dashboard; it is the same guide, with the same pictures.
-
-If you also work the line, the [staff guide](staff-guide.md) covers the parts of the app everyone uses.
+For key holders, trainers, shift leads, AGMs and GMs. It walks your day in order: start here, morning, all day, night, then your manager tools.
 
 ---
 
-## Your day at a glance
+## Start here
 
-You sign in like everyone else, but your dashboard carries the jobs nobody below you can finish.
+Read this part once. It explains the app words and how you get in.
 
-Morning: the **opening report**. Staff walk the stations and fill it in; **Submit Opening** is yours — key holder and up. Then the prep half of that same report, then **AM prep**. Around 6 AM, before the vendor cutoffs, walk **Ordering**: say what is on each shelf, review it, record the walk. That creates or updates today's draft order per vendor, which you confirm and send; an order already confirmed or placed is left alone.
+### What CO-OPS is
 
-Through the day: log every delivery as it lands, log what you cook down from raw stock, and read **Mid-Shift Pulse** to see what the shop still owes.
+CO-OPS is the app we use to run the shop. You check the shop in the morning. You track prep, trucks and the closing list all day. At night you count, grade the team, do the cash and lock up. The app keeps a record of each step, with your name and the time.
 
-Evening: the **PM report** — grade the crew, name an MVP. Then the **cash deposit**. Then the closing checklist's final confirm, which needs the walk-out items done and the deposit already filed. Any required line still unfinished needs a written reason first.
+### App words
 
-Two ceremonies ask you to prove it is you:
+The app uses these words. Each one is explained here, in the order you meet it.
 
-- **Your PIN** — signing the cash deposit, and confirming the closing.
-- **Your password** — recording an inventory audit, and changes you save in Admin.
+| Word | What it means |
+|---|---|
+| Shop | One of our two places: P Street or Capitol Hill. |
+| Dashboard | Your home page after you log in. |
+| Roles | Your job in the app. From lowest: Trainee, Employee, Key Holder or Trainer, Shift Lead, AGM (and Catering Manager), GM, Manager of Operations, Owner. A higher role can do more. |
+| PIN | Your 4-digit number. You log in with it. You also sign the cash deposit and the closing with it. |
+| Station | One part of the shop, like Crunchy Boi Station or Prep Area. Each station has its own part of the closing checklist. |
+| Position | One spot to fill at a station. Expo Station has two: Expeditor and Register & Delivery. |
+| The board | The **Assignments** page. It shows who has which station and which task today. |
+| Task | One of the daily reports on the board: Opening prep, AM prep, Mid-day prep, Receiving, Counts, Ordering, Cash report and PM report. |
+| Take / assign | Take: you open a task and do it yourself. Assign: you give a task to someone on the team. |
+| Par | How much of an item you want on hand. You prep or order up to par. |
+| Prep | Getting food ready for the line: cutting, mixing, filling containers. |
+| Opening verification | Part 1 of the morning **Opening Report**. You check each station against last night's count. |
+| Closer count | Last night's AM prep count, or your morning recount. The opener checks it in the morning. |
+| Opening prep | Part 2 of the **Opening Report**. You make food up to par. On the board this task is called **Opening prep**. |
+| Mid-day prep | After the rush, you count and prep back up to par. |
+| AM prep | The closing count. At night you count what is left, so the morning crew knows what is there. It is done at night, not in the morning. |
+| Closing checklist | The day's list of closing jobs, station by station. It runs all day. |
+| Walk-out | The last five checks before you leave: lights, devices, oven, front doors, back door. |
+| PM report | The night report. You grade each person and can pick an MVP. |
+| Cash deposit | The night cash count: drawer, deposit and cash tips, signed with your PIN. |
+| Mid-Shift Pulse | A live view of the shop: stations, people, prep, fridges and notes. |
+| Handoff note | A note on the Pulse for the next shift. |
+| Delivery | A vendor's order coming in. You check it in on **Receiving**. |
+| Purchase order | An order the app made for a vendor. You can only claim a missing item against one. |
+| Vendor credit | What a vendor owes you for an item that was short. |
+| Count | Writing down how much you have. The full stock count is called **Inventory Audit**. |
+| Ordering walk | You walk the shelves and mark what to order from each vendor. |
+| Production | You log food you made from raw stock outside the prep sheets. |
+| 86 | Kitchen talk for an item you have run out of. |
+| Saved | Most forms save by themselves as you type. Look for **Saved** or **Saved a moment ago**. |
 
-Inventory audits and the team pages start at AGM. User management is not a GM page at all.
+### Log in with the tiles
 
----
+You do this at the start of every shift. The login screens are always in English.
 
-## Logging in as a manager
-
-Two ways in. Which one you get depends on your role, not on your preference.
-
-### 1. Pick a way in
+#### 1. Pick your shop
 
 **What you see**
 
-![Login screen with a "Manager login" button above the two location tiles](img/manager/01-login-where.png)
+![Login screen asking "Where are you?" with the Capitol Hill and P Street tiles](img/manager/01-where-are-you.png)
 
-**What to do** — For the tile route, tap your shop. For the email route, tap **Manager login →** at the top of the card.
+**What to do** — Tap the shop you are working at.
+
+#### 2. Pick your role
+
+**What you see**
+
+![Role tiles: GM, AGM, Catering Manager, Shift Lead, Key Holder, Trainer, Employee, Trainee](img/manager/03-whats-your-role.png)
+
+**What to do** — Tap your role.
 
 **Worth knowing**
 
-- The tiles and a four-digit PIN work for every role, yours included. It is the faster route on a shared tablet.
-- The email-and-password route only works for **AGM and above**. A key holder or a shift lead has no email login — the tiles are your way in.
+- There is no tile for Prep Manager, Social Media Manager, Manager of Operations or Owner. Use **Manager login →** instead.
+- **← Back** goes back one screen.
 
-### 2. The manager login form
-
-**What you see**
-
-![Manager login form with Email and Password fields](img/manager/02-manager-login-form.png)
-
-**What to do** — Type your work email and password, then **Sign in**. **Use tile login →** takes you back.
-
-**Worth knowing**
-
-- **Forgot password?** sends a reset link to a manager email account. If you sign in with a PIN, there is nothing to email — ask a manager to reset the PIN instead.
-
-### 3. What's your role?
+#### 3. Pick your name
 
 **What you see**
 
-![Role tiles: GM, AGM, CTR, SL, KH, TR, EMP, TRN](img/manager/03-login-role.png)
-
-**What to do** — Tap your real role.
-
-**Worth knowing**
-
-- The line above the tiles shows what you have picked so far. **Back** undoes one step.
-- What you can finish later — submit the opening, lock up, record an audit, open Admin — follows from your role. Picking the wrong tile just means your name is not on the next list.
-
-### 4. Who are you?
-
-**What you see**
-
-![Name tiles for the managers at this location and role](img/manager/04-login-user.png)
+![Name tiles for the people with this role at this shop](img/manager/04-who-are-you.png)
 
 **What to do** — Tap your name.
 
-**Worth knowing**
-
-- Only people assigned to this shop, in that role, appear. If you are missing, you are not assigned to this location yet.
-
-### 5. Enter your PIN
+#### 4. Type your PIN
 
 **What you see**
 
-![PIN keypad reading "Enter your 4-digit PIN"](img/manager/05-login-pin.png)
+![PIN keypad with "Enter your 4-digit PIN"](img/manager/05-pin-keypad.png)
 
-**What to do** — Tap your four digits.
+**What to do** — Tap your 4 digits. The fourth digit logs you in. There is no OK button.
 
 **Worth knowing**
 
-- The fourth digit signs you in. There is no Submit button.
-- PINs are four digits for every role, GM included. Five wrong tries locks the account for fifteen minutes.
+- **Clear** wipes what you typed.
+- A wrong PIN shows **Wrong PIN. Try again.**
+- Too many wrong tries locks the account for a while: **Account locked**.
+- Many sign-ins on one device in a short time show **Too many tries**, with a wait time. This is not a wrong PIN. Wait, then try again.
 
-### 6. The manager dashboard
+### Use Manager login
+
+AGMs and up also have an email and a password.
+
+#### 1. Open the form
 
 **What you see**
 
-![Manager dashboard with the full Explore list and both shops in the location switcher](img/manager/06-dashboard-capitol-hill-full.png)
+![Manager login form with email and password boxes and a Sign in button](img/manager/02-manager-login-form.png)
 
-**What to do** — Read the shop name in the heading first, then work down the page.
+**What to do** — Tap **Manager login →** at the top right. Type your email and password. Tap **Sign in**.
 
 **Worth knowing**
 
-- **Check which shop you are on before you touch anything.** The dashboard opens on one of your shops, and it is not always the one you are standing in.
-- The location switcher lists the shops **you are assigned to**. A GM assigned to both sees both; being a GM does not by itself give you every shop.
-- Tiles staff never see: **Cash Deposit**, **PM Report** and **Mid-day Prep** (key holder and up), **Inventory Audit** (AGM and up).
-- The **Explore** list adds **Mid-Shift Pulse**, **Ordering**, **Trends** and **Admin** to the staff list. **Training** opens the written guides. **Tip Pool**, **AI Insights**, **Rollups**, **Deep Cleaning**, **Feedback**, **LTO**, **Recipes**, **Announcements** and **Comms** are placeholder pages today.
+- **Use tile login →** takes you back to the tiles.
+- **Forgot password?** sits under the button.
 
-### 7. Switch shops
+### Your dashboard
+
+This is your home page. You land here after you log in.
+
+#### 1. The top of the page
 
 **What you see**
 
-![The dashboard after switching to the other shop, showing that shop's reports and team](img/manager/07-dashboard-p-street-full.png)
+![Dashboard: greeting, Explore buttons, role badge, shop chip and the My shift board](img/manager/06-dashboard.png)
 
-**What to do** — Tap the other shop in the switcher. Everything on the page reloads for that shop.
+**What to do** — Check the shop name under your role. Then look at **My shift**.
 
 **Worth knowing**
 
-- Every card is one shop's answer: the closing checklist, the reports, the counts, the team panel. Nothing on this page adds the two shops together.
-- The **Team** panel's *"needs a check-in"* list is about activity recorded in the app over the last stretch, not about the grades you have given anyone. See [Reports and trends](#reports-and-trends).
+- The row of buttons under **Explore** is the menu.
+- If you work at more than one shop, you can switch shops here. The app opens on the shop you picked at login. It keeps that shop on this device until you switch.
+- If last night's closing was not confirmed, a warning shows here. Tap **Review yesterday's closing**.
+- To read the app in Spanish, tap the round button with your first letter, top right. Pick **Español**.
+
+#### 2. The rest of the page
+
+**What you see**
+
+![Full dashboard with the shift board, the Today's operations card, and Reports with the Ordering and Inventory Audit tiles](img/manager/07-dashboard-full.png)
+
+**What to do** — Find the **Today's operations** card. It holds the **Closing checklist**, with **Start closing** or **Continue closing**.
+
+**Worth knowing**
+
+- A **Reports** part shows only if you have a task or a station today.
+- A report tile shows only to the person who has that task today. This is true for managers too.
+- A task you took from the board counts as yours. Its tile then shows under **Reports**, like **Ordering** or **Inventory Audit**.
+- If you hold a station, a **My station: …** card takes you to it.
+- **Ordering**, **Counts** and **Receiving** are not in the menu. Open them from the board, or from the Reports Hub under **Inventory**.
+
+### The board comes first
+
+Start each shift on the board. It shows who has what today. You take tasks yourself or give them out.
+
+#### 1. Open the board
+
+**What you see**
+
+![Assignments page: Today's team, Take or assign stations, and Take or assign tasks with each task unassigned](img/manager/08-board-tasks.png)
+
+**What to do** — Tap **Assignments** in the menu. Or tap **Assignments** at the bottom of **My shift**.
+
+**Worth knowing**
+
+- **Take or assign tasks** lists the day's tasks. **Closing checklist** comes first. It needs no one assigned: **Everyone on shift · no assignment needed**.
+- To take a task, tap it and do it. There is no Take button. The board then shows **Taken by …** with your name and the time.
+- On your dashboard, an open task shows as **Unassigned: AM prep · assign or take it**.
+
+#### 2. Place people at stations
+
+**What you see**
+
+![Take or assign stations: each station with a Person list and a Set station button](img/manager/09-board-stations.png)
+
+**What to do** — Open **Take or assign stations**. Pick a person under the station. Tap **Set station**. Then tap **Confirm change**.
+
+**Worth knowing**
+
+- On a person's card, the **Station** list marks some spots **fill first**. That is the first open spot at a station with no one on it.
+- Crew can claim their own station from **My shift** on the dashboard, with **Claim / change station**.
+- The **Stations** button on the board shows station times. Only a GM or above can change them. It asks for your password: **Confirm your password**.
+
+#### 3. Assign a task to a person
+
+**What you see**
+
+![Who has what: one card per person, with Task list, Note box and Assign task button](img/manager/10-assign-task.png)
+
+**What to do** — Open **Who has what**. Find the person's card. Pick the task. Add a note if you want. Tap **Assign task**. Then tap **Confirm change**.
+
+**Worth knowing**
+
+- Each change on the board asks you to confirm first: assign, set a station, retract and end a shift. **Cancel** backs out.
+- You can only assign to people at your role or below.
+- The list shows only tasks that person's role allows. An employee can get Opening prep, AM prep and Mid-day prep. Key holders and up can get every task.
+- **Retract** takes an assignment back.
+- If someone with a higher role made the assignment, you must pick a reason to change it.
+- You can't assign a task to yourself. Ask another key holder, or just take it.
+- Under a task held by someone else, an employee sees a message that starts **Assigned to someone else**. They can't open that task.
+
+### Log out
+
+Do this when you leave.
+
+#### 1. Tap Log out
+
+**What you see**
+
+![Back on the "Where are you?" screen after logging out](img/manager/62-logged-out.png)
+
+**What to do** — Scroll to the bottom of the dashboard. Tap **Log out**. You are back on the first login screen.
+
+**Worth knowing**
+
+- **Sign out** in the round menu, top right, does the same.
+- The app logs you out after 10 minutes with no taps. The login screen then says **You were signed out after 10 minutes of inactivity.**
+
+### En español
+
+Lee esta parte una vez. Explica las palabras de la app y cómo entrar.
+
+#### Qué es CO-OPS
+
+CO-OPS es la app que usamos para manejar la tienda. En la mañana revisas la tienda. Durante el día llevas la prep, los camiones y la lista de cierre. En la noche cuentas, calificas al equipo, haces el efectivo y cierras. La app guarda cada paso con tu nombre y la hora.
+
+#### Palabras de la app
+
+| Palabra | Qué significa |
+|---|---|
+| Tienda | Uno de nuestros dos locales: P Street o Capitol Hill. |
+| Dashboard (inicio) | Tu página principal después de entrar. |
+| Roles | Tu puesto en la app. Del más bajo al más alto: Aprendiz, Empleado, Encargado de Llaves o Entrenador, Líder de Turno, Subgerente General (y Gerente de Catering), Gerente General, Gerente de Operaciones, Dueño. Un rol más alto puede hacer más. |
+| PIN | Tu número de 4 dígitos. Entras con él. También firmas el depósito y el cierre. |
+| Estación | Una parte de la tienda, como Crunchy Boi Station o Prep Area. Cada estación tiene su parte en la lista de cierre. |
+| Puesto | Un lugar que se llena en una estación. Expo Station tiene dos: Expeditor y Register & Delivery. |
+| El tablero | La página **Asignaciones**. Muestra quién tiene cada estación y cada tarea hoy. |
+| Tarea | Uno de los reportes del día en el tablero: apertura, AM prep, prep de mediodía, recepción, conteos, pedidos, caja y reporte PM. |
+| Tomar / asignar | Tomar: abres una tarea y la haces tú. Asignar: le das la tarea a alguien del equipo. |
+| Par | Cuánto quieres tener de un artículo. Preparas o pides hasta llegar al par. |
+| Prep | Dejar la comida lista para la línea: cortar, mezclar, llenar recipientes. |
+| Verificación de apertura | Parte 1 del **Reporte de apertura** en la mañana. Revisas cada estación contra el conteo de anoche. |
+| Conteo de cierre | El conteo de AM prep de anoche, o tu recuento de la mañana. El que abre lo revisa en la mañana. |
+| Prep de apertura | Parte 2 del **Reporte de apertura**. Preparas comida hasta el par. En el tablero se llama **Preparación de apertura**. |
+| Prep de mediodía | Después del rush, cuentas y preparas para volver al par. |
+| AM prep | El conteo del cierre. En la noche cuentas lo que queda, para que el equipo de la mañana sepa qué hay. Se hace en la noche, no en la mañana. |
+| Lista de cierre | Los trabajos de cierre del día, estación por estación. Corre todo el día. |
+| Salida (walk-out) | Las cinco revisiones finales antes de irte: luces, aparatos, horno, puertas de enfrente, puerta de atrás. |
+| Reporte PM | El reporte de la noche. Calificas a cada persona y puedes elegir un MVP. |
+| Depósito de efectivo | El conteo de efectivo de la noche: caja, depósito y propinas, firmado con tu PIN. |
+| Pulso de medio turno | Una vista en vivo de la tienda: estaciones, gente, prep, refrigeradores y notas. |
+| Nota de entrega | Una nota en el Pulso para el siguiente turno. |
+| Entrega | Un pedido de proveedor que llega. Lo registras en **Recepción**. |
+| Orden de compra | Un pedido que la app hizo para un proveedor. Solo puedes reclamar un faltante contra una. |
+| Crédito de proveedor | Lo que un proveedor te debe por algo que llegó de menos. |
+| Conteo | Anotar cuánto tienes. El conteo completo de inventario se llama **Auditoría de inventario**. |
+| Recorrido de pedido | Recorres los estantes y marcas qué pedir a cada proveedor. |
+| Producción | Registras comida que hiciste con materia prima fuera de las listas de prep. |
+| 86 | En la cocina, un artículo que se acabó. |
+| Guardado | Casi todo se guarda solo mientras escribes. Busca **Guardado** o **Guardado hace un momento**. |
+
+#### Entrar con los mosaicos
+
+Lo haces al empezar cada turno. Las pantallas de entrada siempre están en inglés.
+
+1. **Tu tienda.** En **Where are you?**, toca la tienda donde trabajas.
+2. **Tu rol.** Toca tu rol. No hay mosaico para Prep Manager, Social Media Manager, Manager of Operations ni Owner: usa **Manager login →**. **← Back** regresa una pantalla.
+3. **Tu nombre.** Toca tu nombre.
+4. **Tu PIN.** Toca tus 4 dígitos. El cuarto dígito te deja entrar; no hay botón de OK. **Clear** borra lo que escribiste. Un PIN mal puesto dice **Wrong PIN. Try again.** Muchos intentos fallidos bloquean la cuenta un rato: **Account locked**. Muchas entradas en un mismo aparato en poco tiempo muestran **Too many tries**, con un tiempo de espera. No es un PIN mal puesto: espera y vuelve a intentar.
+
+#### Entrar como gerente
+
+Los subgerentes (AGM) y roles más altos también tienen correo y contraseña. Toca **Manager login →** arriba a la derecha. Escribe tu correo y contraseña y toca **Sign in**. **Use tile login →** te regresa a los mosaicos. **Forgot password?** está debajo del botón.
+
+#### Tu dashboard
+
+1. **Arriba.** Revisa el nombre de la tienda debajo de tu rol. Luego mira **Mi turno**. La fila de botones bajo **Explorar** es el menú. Si trabajas en más de una tienda, aquí cambias de tienda. La app abre en la tienda que elegiste al entrar y la recuerda en ese aparato hasta que cambies. Si el cierre de anoche no se confirmó, aquí sale un aviso: toca **Revisar el cierre de ayer**. Para ver la app en español, toca el botón redondo con tu inicial, arriba a la derecha, y elige **Español**.
+2. **El resto.** Busca la tarjeta **Operaciones de hoy**. Ahí está la **Lista de cierre**, con **Empezar cierre** o **Continuar cierre**. La parte **Reportes** solo sale si tienes una tarea o una estación hoy. Una tarjeta de reporte solo la ve la persona que tiene esa tarea hoy, también si eres gerente. Una tarea que tomaste del tablero cuenta como tuya: su tarjeta sale en **Reportes**, como **Pedidos** o **Auditoría de inventario**. Si tienes estación, la tarjeta **Mi estación: …** te lleva a ella. **Pedidos**, **Conteos** y **Recepción** no están en el menú. Ábrelos desde el tablero, o desde el Centro de reportes en **Inventario**.
+
+#### Primero, el tablero
+
+Empieza cada turno en el tablero. Ahí ves quién tiene qué. Tomas tareas o las repartes.
+
+1. **Abre el tablero.** Toca **Asignaciones** en el menú, o **Asignaciones** al final de **Mi turno**. **Tomar o asignar tareas** muestra las tareas del día. Primero sale **Lista de cierre**, que no necesita asignación: **Todos en el turno · no requiere asignación**. Para tomar una tarea, tócala y hazla; no hay botón de tomar. Luego el tablero muestra **Iniciado por …** con tu nombre y la hora. En tu dashboard, una tarea libre sale como **Sin asignar: Preparación de la mañana · asigna o haz la tarea**.
+2. **Pon gente en las estaciones.** Abre **Tomar o asignar estaciones**. Elige a la persona en la estación, toca **Asignar estación** y luego **Confirma el cambio**. En la tarjeta de una persona, la lista **Estación** marca algunos lugares con **cubrir primero**: es el primer lugar libre de una estación sin nadie. El equipo puede elegir su propia estación desde **Mi turno** con **Elegir / cambiar estación**. El botón **Estaciones** del tablero muestra los horarios; solo un gerente general o más los cambia, y te pide tu contraseña: **Confirma tu contraseña**.
+3. **Asigna una tarea.** Abre **Quién tiene qué**. Busca la tarjeta de la persona, elige la tarea, agrega una nota si quieres, toca **Asignar tarea** y luego **Confirma el cambio**. Cada cambio en el tablero pide confirmar primero: asignar, poner una estación, retirar y terminar un turno. **Cancelar** te regresa. Solo puedes asignar a gente de tu rol o menor. La lista muestra solo las tareas que ese rol permite: un empleado puede recibir apertura, AM prep y prep de mediodía; un encargado de llaves o más, todas. **Retirar** quita una asignación. Si la hizo alguien de rol más alto, debes elegir un motivo para cambiarla. No te puedes asignar una tarea a ti: pídeselo a otro encargado de llaves, o solo tómala. Debajo de una tarea de otra persona, un empleado ve un mensaje que empieza con **Asignada a otra persona**. No puede abrir esa tarea.
+
+#### Salir
+
+Baja al final del dashboard y toca **Cerrar sesión**. Vuelves a la primera pantalla. **Cerrar sesión** en el menú redondo de arriba hace lo mismo. La app te saca sola después de 10 minutos sin tocar nada; la pantalla de entrada dice **You were signed out after 10 minutes of inactivity.**
 
 ---
 
-## The opening report
+## Morning
 
-You do this once a day, before the doors open. The crew can fill the whole thing in; finishing it is yours.
+The morning job is the **Opening Report**. Part 1 checks last night's count. Part 2 makes food up to par.
 
-### 1. Phase 1 — verification
+Plan your time. Part 2 has one row for every prep item, and every row needs a number. If last night's AM prep is missing, Part 1 also needs a recount on every prep row. Then the report is long. Start early, and get help with Part 2.
 
-**What you see**
+### Opening verification
 
-![Phase 1 with ten station cards, eight temperature boxes and five prep-recount sections](img/manager/08-opening-phase1-filled.png)
+You do this once a day, before the doors open at 10:30 AM. The opening is late after 10:30 AM.
 
-**What to do** — Walk the stations, type the fridge temperatures, and type an **Opener recount** for every prep item last night's closer left no count for.
-
-**Worth knowing**
-
-- As a manager you usually arrive at a half-done page and finish it. Read the footer counter — *"44 of 44 verified · 8 of 8 temp readings entered"* — rather than assuming the opener got there.
-- **Nothing on this screen saves until Submit Opening goes through.** Ticks, temperatures and comments live on the tablet until then. Do not close the page halfway.
-- A prep section's **Verify section** button stays greyed out with *"Recount items without closer data first"* until every item with no closer count has a recount typed in.
-- The *"prep entries"* number in the footer belongs to Phase 2, not to these recounts. It stays at zero all the way through Phase 1. That is normal.
-
-### 2. Submit the verification
+#### 1. Open the Opening Report
 
 **What you see**
 
-![Footer reading "Submit ready" with Submit Opening enabled, and the "No prior closing data detected" reason prompt above it](img/manager/09-opening-ready-to-submit.png)
+![Opening Report, Phase 1 — Verification, with station cards and the locked Phase 2 tab](img/manager/11-opening-verify.png)
 
-**What to do** — Tick every station, verify every section, answer the reason prompt if it appears, then tap **Submit Opening**.
+**What to do** — On the board, tap **Opening prep**. If the opening is assigned to you, you can also tap the **Opening Report** tile on the dashboard, then **Open / continue**.
 
 **Worth knowing**
 
-- **Submit Opening is key holder and up.** For an employee the button reads **Hand to a key holder** and stays off. They fill it in; you finish it.
-- The button turns on only when all three counters are full: every line ticked, every temperature box filled, every count section verified. There is no partial submit.
-- **"No prior closing data detected"** appears when items had no closing count last night and the opener recounted them instead. Pick the true one: **"Location was closed (planned)"** or **"Closing was missed / I don't know"**.
-- Both options do the same thing to the numbers — the recount becomes the day's count either way — and both send the same urgent notice to key holders and up. What differs is the sentence printed on the saved report, which is how tomorrow's reader knows whether a closing was skipped or the shop was shut. Answer it honestly.
-- Once submitted, the verification half is read-only for everybody, comments included.
+- Key holders and up can always open it. An employee can open it and submit it only when the opening is assigned to them today.
+- If last night's closing is still open, you see **Waiting on last night's closing at …**. Tap **View last night's closing**. The opening unlocks once that closing is confirmed or released.
+- The **Phase 2 (locked)** tab opens after you submit Part 1.
 
-### 3. Phase 2 — prep entry
+#### 2. Check each station
 
 **What you see**
 
-![Phase 2 showing Par, Closer count, Prep need, an "Opener prepped" box and a "Uses" row per item](img/manager/10-opening-phase2-prep-entry.png)
+![Crunchy Boi Station ticked with Verified, 3 of 4 done; the fridge temp box is still empty](img/manager/12-opening-station-verified.png)
 
-**What to do** — For each item, type how much you actually prepped into **Opener prepped**, then tap out of the box.
+**What to do** — Walk to each station. Check that it looks like last night's close. Tap the station's name to open its card. Tap **Verified**. Then type the fridge temp in the box inside the card.
 
 **Worth knowing**
 
-- Each row asks for **one number**. **Par**, **Closer count** and **Prep need** are shown to you, not entered by you — prep need is par minus what was on hand, never below zero.
-- **Rows save one at a time, when you leave the box.** There is no page-wide save in this half.
-- If your number differs from **Prep need** at all — by one, in either direction — the row asks why before it will save. Over par offers a short list of reasons and wants a name if you picked *management directive*; under par always wants a sentence in your own words.
-- **"Prep need: verify section first"** means the app cannot work the number out. Usually the section is not verified yet. It also shows on an item that has no par set at all — that item takes your number with no reason needed.
-- The **"Uses:"** row is the raw stock the app thinks that batch consumed. Open it and correct it if you used something else; it is what gets deducted from stock.
+- Most cards start closed. The temp box is inside, so open each station.
+- **Verified** ticks the station's lines, but not the fridge temp. Each temp needs its own number.
+- A temp still missing? The bottom bar says **Temp reading required for …**. Tap that line. It opens that station for you.
+- If something looks wrong, tap **Add comment** on that line.
+- The page saves as you go: **Saved a moment ago**. If someone else opens the same opening, they see your work.
 
-### 4. If a row will not save
+#### 3. Check the prep sections
 
 **What you see**
 
-![A prep row showing a red "Save failed" alert with a Retry button — from the walk that found the bug](img/manager/11-opening-phase2-save-failed-bug.png)
+![Veg section verified after an Opener recount on each row](img/manager/13-opening-section-verify.png)
 
-**What to do** — Tap **Retry** on the row. If it fails again, tell your GM — the opening cannot be finished until rows save.
-
-**Worth knowing**
-
-- A row that has not saved shows **Save failed** with **Retry** right there, and the bottom bar counts it as outstanding. Nothing is lost from the screen; it just has not landed.
-- **Finalize Phase 2** stays disabled while any row is outstanding, and it names how many.
-- Saving a row again replaces its earlier number. The picture shows the failure that stopped every row on the first walk; that bug is fixed. If **Retry** still fails, tell your GM.
-- **If two of you type the same row at the same moment, the row keeps the number that landed and tells you so.** It shows their figure, their name on **Saved by**, and the line *"Saved a moment ago by someone else — showing the latest"*. It is not an error and there is no **Retry** to tap: nothing was lost, and the row is saved. If their number is wrong, type yours over it and tap out of the box again.
-
-### 5. Finalize Phase 2 — *not shown*
-
-This step was not photographed on the walk. What the button does is written into the app, and it is this:
-
-**What to do** — When every prep row has saved, tap **Finalize Phase 2**.
+**What to do** — Open each prep section: Veg, Cooks, Sides, Sauces, Slicing. Tap its name to open it. Check the counts. Tap **Verify section**.
 
 **Worth knowing**
 
-- It refuses until **every** prep item on the list has a saved row. If one is missing it tells you how many.
-- It closes the opening report and stamps your name and the time on it. The report becomes read-only.
-- For every item you prepped **under** its prep need, it sends an urgent notice to key holders and up at your shop.
-- It writes a production record for each item — what you made, and the raw stock it used — from the numbers you entered. That is how prep shows up in stock.
-- **It does not touch last night's closing.** Nothing in the opening ticks a closing line; the closing is confirmed on its own, by hand.
-- There is **no PIN and no password** on this step. One tap finishes it.
+- A row with no closer count needs a recount first. The button stays grey: **Recount items without closer data first**. Type what you see in **Opener recount**. The box is red until you type a number.
+- Rows have no closer count when last night's AM prep is missing.
+- A pink box then asks why: **No prior closing data detected**. Pick **Location was closed (planned)** or **Closing was missed / I don't know**.
+- The recount you type becomes the **Closer count** on Phase 2. Prep need is worked out from it, so count for real. If nobody can count a row, don't guess a number.
+
+#### 4. Submit Opening
+
+**What you see**
+
+![All 44 verified and all 8 temps in; the footer says Submit ready](img/manager/14-opening-ready.png)
+
+**What to do** — When the bottom bar says **Submit ready**, tap **Submit Opening**.
+
+**Worth knowing**
+
+- The button stays grey until each station is ticked, each temp is typed and every prep section says Verified. If the pink box showed, you must also pick a reason in it.
+- The bottom bar names what is left, like **Pick a reason in the pink “No prior closing data detected” box**.
+- **… of … verified** counts only the station ticks. The prep sections are a separate check.
+- **Show me what needs fixing** takes you to what is left.
+- After you submit, the **Phase 2 — Prep Entry** tab opens for everyone who can work the opening.
+
+### Opening prep
+
+You do this right after Part 1. You make the food you need to get to par.
+
+#### 1. Read each row
+
+**What you see**
+
+![Phase 2 — Prep Entry open; Iceberg shows Par, Closer count, Prep need and an empty Opener prepped box](img/manager/15-opening-submitted.png)
+
+**What to do** — Each row shows **Par**, **Closer count** and **Prep need**. Make the amount in **Prep need**.
+
+**Worth knowing**
+
+- **Closer count** is last night's AM prep count. If you typed a recount in Part 1, it shows your recount.
+- **Prep need** is what you must make to reach par.
+- The title now reads **Phase 2 — Prep Entry**.
+- Each section starts closed, except the first one with work left. Tap a section's name to open it.
+- Two people can work Part 2 at the same time. Each row shows who saved it. Split the sections to finish faster.
+
+![More Phase 2 rows: Onion, Basil, Radish, each marked Not saved](img/manager/16-opening-prep-entry.png)
+
+#### 2. Type what you made
+
+**What you see**
+
+![Three rows filled, each with At par, Saved by and an Undo button](img/manager/17-opening-prep-filled.png)
+
+**What to do** — Type the amount you made in **Opener prepped**. Then tap outside the box.
+
+**Worth knowing**
+
+- A row saves when you leave its box. Then it says **Saved by … at …** with an **Undo** button. Until then it says **Not saved**.
+- **Undo** takes two taps. The first tap shows **Tap again to undo** for about 4 seconds. Only a second tap undoes the row. The rows don't jump when a row saves.
+- **At par** means you hit the need.
+- A need like **5 × 1/3 Pan** means five 1/3 pans. Type 5. Use numbers only, like 5 or 5.5.
+- Every row needs a number, even when you made none. Type 0 then.
+- Made less than the need? The row says **Below prep need by …**. Tap it. Pick a reason and type a note. Managers get an alert.
+- Made more than the need? The row says **Above prep need by …**. Tap it and pick a reason.
+- The row saves only after the reason is in. Until then it says **Add a reason to save**.
+- A row with no par says **No par set — type what you made**. Type what you made, or 0. It needs no reason.
+
+#### 3. Finalize Phase 2
+
+**What you see**
+
+![All prep sections done; the button now reads Phase 2 finalized](img/manager/18-opening-finalize.png)
+
+**What to do** — When every row is saved, tap **Finalize Phase 2**.
+
+**Worth knowing**
+
+- Until then, the button shows how many rows are left. Look for rows that say **Not saved** or **Add a reason to save**.
+- No box asks you to confirm. The button then reads **Phase 2 finalized**, and the bottom bar says **Phase 2 already finalized**. The opening is done and can't be changed.
+- The title still reads **Phase 2 — Prep Entry**. Each section shows a tick and closes.
+
+### En español
+
+El trabajo de la mañana es el **Reporte de apertura**. La parte 1 revisa el conteo de anoche. La parte 2 prepara comida hasta el par.
+
+Calcula tu tiempo. La parte 2 tiene una fila por cada artículo de prep, y cada fila necesita un número. Si falta el AM prep de anoche, la parte 1 también pide un recuento en cada fila de prep. Entonces el reporte es largo. Empieza temprano y pide ayuda con la parte 2.
+
+#### Verificación de apertura
+
+Lo haces una vez al día, antes de abrir a las 10:30 AM. La apertura va tarde después de las 10:30 AM.
+
+1. **Abre el Reporte de apertura.** En el tablero, toca **Preparación de apertura**. Si la apertura está asignada a ti, también puedes tocar la tarjeta **Reporte de apertura** en el dashboard y luego **Abrir / continuar**. Un encargado de llaves o más siempre puede abrirla. Un empleado puede abrirla y enviarla solo si hoy la tiene asignada. Si el cierre de anoche sigue abierto, ves **Esperando el cierre de anoche en …**; toca **Ver el cierre de anoche**. La apertura se abre cuando ese cierre se confirma o se libera. La pestaña **Fase 2 (bloqueada)** se abre cuando envías la parte 1.
+2. **Revisa cada estación.** Ve a cada estación y mira que esté como quedó anoche. Toca el nombre de la estación para abrir su tarjeta. Toca **Verificar**. Luego escribe la temperatura del refrigerador en la casilla dentro de la tarjeta. Casi todas las tarjetas empiezan cerradas, y la casilla está adentro: abre cada estación. **Verificar** marca las líneas de la estación, pero no la temperatura: cada una necesita su número. ¿Falta una temperatura? La barra de abajo dice **Falta lectura de temperatura para …**; toca esa línea y se abre esa estación. Si algo no cuadra, toca **Añadir comentario** en esa línea. La página se guarda sola: **Guardado hace un momento**. Si otra persona abre la misma apertura, ve tu trabajo.
+3. **Revisa las secciones de prep.** Abre cada sección (Veg, Cooks, Sides, Sauces, Slicing) tocando su nombre. Revisa los conteos y toca **Verificar sección**. Una fila sin conteo de cierre necesita un recuento primero; el botón queda gris: **Recuenta primero los items sin datos del cierre**. Escribe lo que ves en **Recuento del opener**. La casilla queda roja hasta que escribes un número. Las filas quedan sin conteo de cierre cuando falta el AM prep de anoche. Entonces un cuadro rosa pregunta por qué: **No se detectaron datos de cierre previo**. Elige **Ubicación cerrada (planificado)** o **Cierre omitido / No sé**. El recuento que escribes pasa a ser el **Conteo de cierre** en la Fase 2, y la necesidad de prep sale de él. Cuenta de verdad. Si nadie puede contar una fila, no adivines un número.
+4. **Envía la apertura.** Cuando la barra de abajo diga **Listo para enviar**, toca **Enviar Apertura**. El botón sigue gris hasta que cada estación esté marcada, cada temperatura escrita y cada sección de prep esté verificada. Si salió el cuadro rosa, también debes elegir un motivo ahí. La barra de abajo dice qué falta, como **Elige un motivo en el recuadro rosa “No se detectaron datos de cierre previo”**. **… de … verificadas** cuenta solo las estaciones marcadas; las secciones de prep son otra revisión. **Muéstrame qué hay que corregir** te lleva a lo que falta. Al enviar, se abre la pestaña **Fase 2 — Entrada de Prep** para todos los que pueden trabajar la apertura.
+
+#### Prep de apertura
+
+Lo haces justo después de la parte 1. Preparas lo que falta para llegar al par.
+
+1. **Lee cada fila.** Cada fila muestra **Par**, **Conteo de cierre** y **Por preparar**. Prepara la cantidad de **Por preparar**. El conteo de cierre es el AM prep de anoche; si escribiste un recuento en la parte 1, sale tu recuento. **Por preparar** es lo que debes hacer para llegar al par. El título ahora dice **Fase 2 — Entrada de Prep**. Cada sección empieza cerrada, menos la primera con trabajo pendiente: toca el nombre de una sección para abrirla. Dos personas pueden trabajar la parte 2 a la vez; cada fila dice quién la guardó. Repártanse las secciones para terminar antes.
+2. **Escribe lo que preparaste.** Escribe la cantidad en **Preparado hoy** y toca fuera de la casilla. La fila se guarda cuando sales de la casilla; entonces dice **Guardado por … a las …** con un botón **Deshacer**. Antes dice **Sin guardar**. **Deshacer** pide dos toques: el primero muestra **Toca otra vez para deshacer** unos 4 segundos, y solo el segundo deshace la fila. Las filas no saltan cuando una fila se guarda. **Al par** quiere decir que llegaste. Una cantidad como **5 × 1/3 Pan** son cinco bandejas de 1/3: escribe 5. Usa solo números, como 5 o 5.5. Cada fila necesita un número, aunque no hayas hecho nada: entonces escribe 0. ¿Hiciste menos de lo necesario? La fila dice **Bajo el necesario por …**: tócala, elige un motivo y escribe una nota. Los gerentes reciben un aviso. ¿Hiciste más? La fila dice **Sobre el necesario por …**: tócala y elige un motivo. La fila se guarda solo cuando el motivo está puesto; antes dice **Agrega una razón para guardar**. Una fila sin par dice **Sin par — escribe lo que preparaste**: escribe lo que hiciste, o 0. No pide motivo.
+3. **Finaliza la fase 2.** Cuando todas las filas estén guardadas, toca **Finalizar Fase 2**. Antes de eso, el botón dice cuántas filas faltan; busca las filas que dicen **Sin guardar** o **Agrega una razón para guardar**. No sale ningún cuadro para confirmar. Después el botón dice **Fase 2 finalizada** y la barra de abajo dice **Fase 2 ya finalizada**. La apertura está lista y ya no se puede cambiar. El título sigue diciendo **Fase 2 — Entrada de Prep**. Cada sección muestra una marca y se cierra.
 
 ---
 
-## Confirming the closing
+## All day
 
-The last thing that happens at night. The crew ticks the list as they go; the confirm at the end is yours, and it is a signature.
+Between open and close, you watch the shop, check in trucks, prep after the rush and keep the closing list moving.
 
-### 1. See where the closing stands
+### The Mid-Shift Pulse
 
-**What you see**
+Open it any time to see the shop at a glance. It updates every 60 seconds.
 
-![Dashboard tile reading "Closing checklist — In progress · 3 of 61 items" with a Continue closing link](img/manager/64-dashboard-closing-in-progress.png)
-
-**What to do** — Read the tile, then tap **Continue closing**.
-
-**Worth knowing**
-
-- Unlike the opening, **the closing saves every tap as it happens**. Whatever the crew has ticked is already on the record before you arrive.
-- Check the **Cash Deposit** and **PM Report** tiles on the same screen first. Both feed the closing, and one of them can stop it dead — see step 5.
-
-### 2. Open the checklist
+#### 1. Open the Pulse
 
 **What you see**
 
-![Closing checklist with a progress bar and the ten station cards](img/manager/65-closing-checklist-arrival.png)
+![Mid-shift Pulse: the Needs attention card with uncovered stations, each with an Assign button](img/manager/25-pulse.png)
 
-**What to do** — Work down the stations, finishing whatever the crew left.
+**What to do** — Tap **Mid-Shift Pulse** in the menu. Read **Needs attention** first.
 
 **Worth knowing**
 
-- Lines somebody else ticked carry **their** name and time, and any note they left shows on the row. Read the notes on your way down — that is where "we ran out of rags" lives.
-- **Progress** counts required items across the whole list. Each station header carries its own count.
-- Some lines are greyed out as waiting on a higher role. Those are the ones the crew could not tap; they are yours.
+- **Needs attention** lists what needs action now. Tap the button on the line. A station with no one on it says "… is uncovered" and has **Assign**.
+- Red lines come first: a report that is overdue, a late task, a fridge out of range, a vendor cutoff that passed with no order (**missed the … cutoff — call the vendor**), or an ezCater order not rung into Toast.
+- Stations come next. A station with no one on it is red too.
+- Smaller things come last, in yellow, like fridges not checked yet or items low against par.
+- When nothing is late, the stations lead the list.
+- The card shows the first 8 lines. Tap **See more** to see them all.
+- Mid-day prep shows as late only after 3:30 PM.
 
-### 3. The Walk-Out Verification station
+#### 2. Read the cards
 
 **What you see**
 
-![The Walk-Out Verification card reading "0 of 5 required done" with five untouched lines](img/manager/66-walkout-verification-section.png)
+![Full Pulse: Live shop floor, People, Stations & tasks, Catering, Inventory, Food safety and Handoff](img/manager/26-pulse-full.png)
 
-**What to do** — Leave this station until you are genuinely the last one out. Then tick all five.
+**What to do** — Scroll the cards. **Live shop floor** shows the stations; tap one for details. **Inventory** shows today's order cutoffs. **Food safety** shows the fridge temps. **Handoff** shows which reports are done.
 
 **Worth knowing**
 
-- **Walk-Out Verification is the gate.** Every line in this station has to be ticked before the confirm control appears at all. There is no reason path and no override here — while it is short you get *"Walk-Out Verification not complete — finalize unlocks once all 5 walk-out items are checked off."*
-- **Only a key holder or above can confirm the closing.** Below that the page says *"Only Key Holder or higher can finalize the closing."* Both of these are enforced on the server as well as on screen, so there is no way around them.
-- The **Closing Manager** card's *"Cash deposited"* and *"PM Report submitted"* rows tick themselves when those reports are filed, with the filer's name and time. You do not tap them.
+- **Stations & tasks** counts only the tasks given out on the board. **Handoff** counts all of today's reports. So the two numbers can differ.
+- A missed cutoff shows in red on **Inventory** too: **missed cutoff — call the vendor**.
+- What you see depends on your role.
+- Key holders, trainers and shift leads see full detail, except money.
+- AGMs also write handoff notes.
+- GMs also see **Sales** and money. A GM can also **Arrange** the floor layout.
+- A Manager of Operations and up can see **Both shops** side by side. A GM sees only their own shops.
+- The title shows the code and name of the shop you are looking at. If you can see more than one shop, check it before you act.
+- One button switches the floor picture. It reads **Map view** or **3D view**: the view you get when you tap it.
 
-### 4. Everything you can tick, ticked
+#### 3. See more
 
 **What you see**
 
-![Every station at its full count, with a floating bar reading "Review & submit (incomplete) · 58 of 61 required done"](img/manager/67-closing-checklist-fully-done.png)
+![People detail page: Here now, stations covered, and a timeline](img/manager/27-pulse-section.png)
 
-**What to do** — Check every station card reads its full count, then tap the **Review & submit** bar.
+**What to do** — Tap **See more** on a card for the full list. Tap **‹ Pulse** to go back.
 
-**Worth knowing**
+### Handoff notes
 
-- **Three Closing Manager lines cannot be ticked from this page: AM Prep List, Opening verified, and Mid-day Prep.** They read *"Pending — submit from the dashboard"* and each one is a link out to that report's own page. They tick themselves when their report is submitted.
-- So **61 of 61 is not reachable from the closing checklist alone.** If you want a clean close, finish those three reports first. If you cannot, the next step is where you say why.
+A handoff note tells the next shift what they need to know. Everyone can read them on the Pulse. AGMs and up write them.
 
-### 5. If the cash deposit is missing — *not shown*
-
-This did not come up on the walk, because the deposit and the PM report were already filed. It is worth knowing before it happens to you at 11 PM.
-
-**What to do** — File the cash deposit, then come back.
-
-**Worth knowing**
-
-- **With the walk-out done but no cash deposit on file, the confirm control never appears.** In its place you get a banner reading *"Cash deposit required before you can finalize the closing."* and a **Do the cash deposit** button that takes you there.
-- **This is a hard gate. There is no explain-why path for it**, and the server refuses it too — the deposit has to exist.
-- A template can mark any other line the same way. A hard-gated line that is not done blocks the whole submission and the app names the line; no reason will get you past it. Everything else that is required takes a written reason instead.
-
-### 6. Review and explain
+#### 1. Write a note
 
 **What you see**
 
-![The Review & submit panel headed "Some required items aren't done — explain why" with a reason box per unfinished line](img/manager/68-review-submit-explain-why.png)
+![Handoff page with the Write a handoff note form, Who should see it list and Post note button](img/manager/28-handoff-write.png)
 
-**What to do** — Write a real sentence in each box, then tap **Continue**.
+**What to do** — On the Pulse, scroll to the last card, **Handoff**. Tap the **See more** at the top right of that card, next to the word Handoff. Under **Write a handoff note**, pick **Who should see it**: **For everyone**, **For crew** or **For managers**. Type your **Note**. Tap **Post note**.
 
 **Worth knowing**
 
-- Each box is labelled with the station and the line — *"Closing Manager · AM Prep List"* — so you know what you are explaining. The placeholder asks the question plainly: *"Why couldn't this be completed?"*
-- **Continue stays disabled until every box has something in it.** A space does not count.
-- If nothing is outstanding, this same panel just reads **All required items complete** and there is nothing to write.
-- **The reason is stored against that line — but nothing in the app reads it back to you.** It is not on the saved report and it is not on the checklist afterwards. If tomorrow morning needs to know, tell the opener as well.
+- Every card has its own **See more**. Pick the one inside the **Handoff** card.
+- A note can be up to 1000 characters.
+- Crew see only notes for crew or for everyone. They don't see who wrote it.
 
-### 7. Confirm with your PIN
+#### 2. After you post
 
 **What you see**
 
-![The "Confirm with your PIN" dialog with the four-digit keypad](img/manager/69-confirm-pin-prompt.png)
+![The posted note with the writer's name, time, Got it and Retract](img/manager/29-handoff-posted.png)
 
-**What to do** — Enter your four digits. The fourth one submits.
+**What to do** — Check your note. It shows who wrote it, the time, and two buttons: **Got it** and **Retract**. AGMs and up tap **Got it** to show they read it.
 
 **Worth knowing**
 
-- **The closing is confirmed with your PIN, not your password.** The cash deposit and the closing are the two PIN ceremonies in the app; the inventory audit and Admin use your password instead.
-- Your name goes on the confirmation and on every reason you just wrote. Do not let somebody else tap it in for you.
+- After you tap **Got it**, the note says **You acknowledged this**.
+- **Retract** takes a note down. Only the writer or a higher role can do it.
+- The form clears after you post, so you can write another note.
 
-### 8. The confirmed closing
+### Check in a delivery
+
+You do this each time a truck comes. Key holders and up.
+
+#### 1. Open Receiving
 
 **What you see**
 
-![The banner reading "Closing submitted with incomplete items · 4:04 AM by you" over a locked checklist](img/manager/70-closing-confirmed-state.png)
+![Receiving page: vendor list, delivery date, invoice boxes and the greyed Delivery confirmed button](img/manager/19-receiving.png)
 
-**What to do** — Read the banner, then leave.
+**What to do** — On the board, tap **Receiving**. You can also use the **Receiving** tile if it is assigned to you, or the Reports Hub: **Inventory**, then **Receiving**.
 
-**Worth knowing**
-
-- The banner reads **"Closing submitted with incomplete items"** when you explained your way past something, and **"Closing confirmed"** when the list was clean. The difference is on the record.
-- **Every line locks for everybody.** No more ticking, no more notes, no undo — and the cash deposit for that night can no longer be corrected either.
-- Confirming happens once. There is no reopening it.
-
-### 9. Back on the dashboard
+#### 2. Pick the vendor and count
 
 **What you see**
 
-![The dashboard tile now reading "Closed with items incomplete" with a Review closing link](img/manager/71-dashboard-closed-incomplete.png)
+![Baldor picked: one usual-order line, a Pick a SKU list and the + Add item button](img/manager/20-receiving-vendor.png)
 
-**What to do** — Check the tile flipped. **Review closing** is now read-only.
+**What to do** — Under **Vendor**, tap **Pick a vendor…** and pick one. The vendor's usual order loads. Tap each line and type what came. Type the **Invoice #** and the **Invoice total ($)**.
 
 **Worth knowing**
 
-- The tile reads **"Closed with items incomplete"**, or just **"Closed"** when nothing was outstanding.
-- **A closing left unconfirmed blocks tomorrow morning's opening.** The opener cannot start until last night's closing is finished. So confirm it with honest reasons rather than walking out on an open list — an explained close costs the shop nothing; an open one costs the opener their morning.
-- Lines you could not finish count against **Checklist Completion** on the Trends page. That is the point: the number is supposed to move when the night was short.
+- The usual order may not match today's truck. It can be short, or hold items that did not come.
+- A line marked **Suggested — from this vendor's usage** has no expected number. It says "Tap to count". Tap it and type what came.
+- An item not on the list? Pick it in **Pick a SKU…**, then tap **+ Add item**.
+
+#### 3. Flag a problem
+
+**What you see**
+
+![An open line with a count of 1 and Short marked under Flag a problem](img/manager/21-receiving-didnt-arrive.png)
+
+**What to do** — If a line is wrong, tap a button under **Flag a problem**: **Short**, **Over**, **Damaged** or **Sub**. Add a **Line note (optional)** if it helps.
+
+**Worth knowing**
+
+- A flag you picked turns pink with a solid red edge. Tap it again to take it off.
+- Use **Short** when only part of an item came. Type what did come, then tap **Short**. This works on any delivery.
+- A line needs a count above 0. So **Short** can't claim an item that never came at all.
+- An item that never came is claimed with **Didn't arrive** in the next step. That works only when the delivery has a purchase order.
+
+#### 4. Confirm the delivery
+
+**What you see**
+
+![After Delivery confirmed: the delivery in Recent deliveries with Photo missing, and Open vendor credits](img/manager/22-receiving-confirmed.png)
+
+**What to do** — Tap **Take receipt photo**, or tick **Photo later**. Tap **Delivery confirmed**. If the truck is still unloading, tap **Save partial — truck still unloading** instead.
+
+**Worth knowing**
+
+- **Delivery confirmed** stays grey until at least one line has a count and you have taken the photo or ticked **Photo later**. A half-filled new-item line also blocks it.
+- Type the **Invoice #** anyway. It helps match the paperwork later.
+- Most of the time, one tap saves the delivery at once. There is no pop-up. The form clears for the next truck.
+- A second step comes only for lines that show **Expected …**. Those come from a purchase order or the last delivery. If you leave one of them untouched (no count, no flag), the first tap lists it: **Some expected items were never confirmed**. Tap **Received** or **Didn't arrive** on each. The button now says **Tap again to confirm**. Tap it.
+- Lines with no **Expected …**, like **Suggested** lines, never show in that list.
+- With a purchase order, the app tells you how many shorts it will claim. With no purchase order, **Didn't arrive** claims nothing.
+- Anything left blank is filed as not counted. It will show against the invoice.
+- The delivery shows under **Recent deliveries**, lower on the same page. If you skipped the photo, it says **Photo missing**. Tap a delivery to see its lines, flags and credits.
+- Each flag you picked (**Short**, **Over**, **Damaged** or **Sub**) opens a vendor credit. It shows under **Open vendor credits**, with how many are open.
+
+### Mid-day prep
+
+After the lunch rush, you count and prep back up to par. It is due from 2:00 PM and late after 3:30 PM.
+
+#### 1. Start it
+
+**What you see**
+
+![Mid-day prep, Phase 1 — count to par, with On hand boxes and par for each item](img/manager/23-midday-start.png)
+
+**What to do** — On the board, tap **Mid-day prep**, then **+ New mid-day prep**. If it is assigned to you, the **Mid-day Prep** tile works too.
+
+**Worth knowing**
+
+- Key holders and up can do it. An employee can do it when it is assigned to them today.
+- A shop can do two a day at most. After that you see **Mid-day prep limit reached (2 per day).**
+
+#### 2. Count to par
+
+**What you see**
+
+![Pickles and Sweet Peppers counted; each row now shows how much is needed](img/manager/24-midday-filled.png)
+
+**What to do** — In **Phase 1 — count to par**, type what you have in **On hand** on each row. The row shows how much you need. Tap **Submit count → Phase 2**.
+
+**Worth knowing**
+
+- If a row can't load, a note says **Some items couldn't load** and names them. The rest still works. Tell a manager.
+
+#### 3. Prep and finish
+
+**What you see**
+
+![Phase 2 — prep: one row saved with Saved ✓, the next row with its Prepped box and Save button](img/manager/24b-midday-phase2-saved.png)
+
+**What to do** — In **Phase 2 — prep**, each row shows **Need:**. Type what you made in **Prepped**. Tap **Save** on that row. Do this on every row. Then tap **Finalize prep**.
+
+**Worth knowing**
+
+- Each row has its own **Save**. A row is kept only after it says **Saved ✓**.
+- Save every row before you tap **Finalize prep**. It does not stop you or warn you. A row you did not save is left out and shows **Made: —**.
+- If you made more or less than the need, tap **Add over/under reason** on the row first. Then save it.
+- When it is done, the page says **Finalized — prep made**, with who finished it and when. Each row shows what was **Made:**.
+- This ticks the **Mid-day Prep** line on the closing checklist for you.
+- After that, tapping **Mid-day prep** on the board opens the finished one.
+
+![Finalized — prep made, with who finished it and when, and Need: and Made: on each row](img/manager/24c-midday-finalized.png)
+
+### Keep the closing checklist moving
+
+The closing checklist is not only a night job. It runs all day, one station at a time.
+
+#### 1. Open the checklist
+
+**What you see**
+
+![Closing checklist with progress at the top and each station's count of done lines](img/manager/30-closing-overview.png)
+
+**What to do** — On the dashboard, tap **Start closing** or **Continue closing**. Or tap **Closing checklist** on the board.
+
+**Worth knowing**
+
+- No one needs to be assigned. Everyone on shift can use it.
+- An employee or higher starts the day's list. Once it exists, a trainee can open it too.
+- Some lines need a higher role. A station with such lines says how many are **awaiting higher role**.
+
+#### 2. Close each station when it is done
+
+**What you see**
+
+![The closing checklist with the station sections open, each with its lines](img/manager/31-closing-full.png)
+
+![Further down: the Closing Manager report lines and Walk-Out Verification](img/manager/31a-closing-report-lines.png)
+
+**What to do** — When a station winds down, tick its lines. When every line in a station is done, that station is closed. The board then shows **Closed · …** with the time.
+
+**Worth knowing**
+
+- The "usually closes" times on the board are hints only. Ticked lines close a station, not the clock.
+- If a line is undone, the station opens again.
+- Most report lines under **Closing Manager** are links, not tick boxes. They tick themselves when that report is filed. An open one says **Pending — tap to open**. Tap it to go to that report.
+- Two lines there are normal tick lines: **Count the drawer** and **Count and secure tips**. Tick them yourself.
+- **Add note** shows on a line after you tick it.
+- The closing has its own fridge temp lines. Morning temps don't count for it.
+- To fill a temp line, tap it. A **Temp (°F)** box opens. Type the temp and tap **Save**. The line ticks only after **Save**.
+- The shop closes at 8:00 PM. The closing is late after 9:00 PM.
+
+![A fridge temp line open, with 38 typed in the Temp (°F) box and the Save button](img/manager/31b-closing-temp-line.png)
+
+### Breaks and the end of a shift
+
+Use these on the board or on **My shift**.
+
+#### 1. Breaks and end of shift (not shown)
+
+**What to do** — Tap **Start break** when someone goes on break. Tap **Back from break** when they return. When you leave, tap **End my shift**, then **Confirm change**.
+
+**Worth knowing**
+
+- **End my shift** frees your station and takes your open tasks off you.
+- It does not clock you out of Toast.
+- Key holders and up can do these for others at their role or below. For someone else, the button is **End shift**.
+
+### En español
+
+Entre la apertura y el cierre, vigilas la tienda, recibes camiones, preparas después del rush y mantienes la lista de cierre en marcha.
+
+#### El Pulso de medio turno
+
+Ábrelo cuando quieras ver la tienda de un vistazo. Se actualiza cada 60 segundos.
+
+1. **Abre el Pulso.** Toca **Pulso de medio turno** en el menú. Lee primero **Requiere atención**: muestra lo que hay que resolver ya. Toca el botón de la línea; una estación sin nadie dice "… está sin cubrir" y tiene **Asignar**. Primero salen las líneas rojas: un reporte atrasado, una tarea tarde, un refrigerador fuera de rango, un corte de proveedor que pasó sin pedido (**se pasó el corte de las … — llama al proveedor**) o un pedido de ezCater que no está en Toast. Después, las estaciones; una estación sin nadie también sale en rojo. Al final, en amarillo, cosas menores, como refrigeradores sin revisar o artículos bajos respecto al par. Si nada va tarde, las estaciones encabezan la lista. La tarjeta muestra las primeras 8 líneas; toca **Ver más** para verlas todas. La prep de mediodía sale tarde solo después de las 3:30 PM.
+2. **Lee las tarjetas.** **Piso en vivo** muestra las estaciones; toca una para ver detalles. **Inventario** muestra los cierres de pedido de hoy. **Seguridad alimentaria** muestra las temperaturas. **Entrega de turno** muestra qué reportes están listos. **Estaciones y tareas** cuenta solo las tareas repartidas en el tablero; **Entrega de turno** cuenta todos los reportes de hoy, así que los números pueden ser distintos. Un corte perdido también sale en rojo en **Inventario**: **se pasó el corte — llama al proveedor**. Lo que ves depende de tu rol. Encargados de llaves, entrenadores y líderes de turno ven todo menos el dinero. Los subgerentes también escriben notas de entrega. Los gerentes generales también ven **Ventas** y el dinero, y pueden usar **Organizar** en el plano. Un Gerente de Operaciones o más ve **Ambas tiendas** lado a lado; un gerente general solo ve sus tiendas. El título muestra el código y el nombre de la tienda que estás viendo. Si puedes ver más de una tienda, revísalo antes de actuar. Un solo botón cambia el plano: dice **Vista de mapa** o **Vista 3D**, la vista que sale al tocarlo.
+3. **Ver más.** Toca **Ver más** en una tarjeta para la lista completa. Toca **‹ Pulso** para regresar.
+
+#### Notas de entrega
+
+Una nota de entrega le dice al siguiente turno lo que necesita saber. Todos la leen en el Pulso. Los subgerentes y roles más altos la escriben.
+
+1. **Escribe una nota.** En el Pulso, baja hasta la última tarjeta, **Entrega de turno**. Toca el **Ver más** de arriba a la derecha de esa tarjeta, junto a su nombre. Cada tarjeta tiene su propio **Ver más**: usa el de **Entrega de turno**. Bajo **Escribir una nota de entrega**, elige **Quién debe verla**: **Para todos**, **Para el equipo** o **Para gerentes**. Escribe tu **Nota** y toca **Publicar nota**. Una nota puede tener hasta 1000 caracteres. El equipo solo ve las notas para el equipo o para todos, y no ve quién la escribió.
+2. **Después de publicar.** Revisa tu nota. Muestra quién la escribió, la hora y dos botones: **Recibido** y **Retirar**. Los subgerentes y roles más altos tocan **Recibido** para mostrar que la leyeron; después la nota dice **Ya lo confirmaste**. **Retirar** quita la nota; solo puede hacerlo quien la escribió o un rol más alto. El formulario se vacía al publicar, así que puedes escribir otra nota.
+
+#### Recibir una entrega
+
+Lo haces cada vez que llega un camión. Encargado de llaves o más.
+
+1. **Abre Recepción.** En el tablero, toca **Recepción**. También sirve la tarjeta **Recepción** si la tienes asignada, o el Centro de reportes: **Inventario** y luego **Recepción**.
+2. **Elige el proveedor y cuenta.** En **Proveedor**, toca **Elige un proveedor…** y elige uno. Se carga su pedido habitual. Toca cada línea y escribe lo que llegó. Escribe **Factura #** y **Total de factura ($)**. El pedido habitual puede no cuadrar con el camión de hoy: le pueden faltar cosas o tener cosas que no llegaron. Una línea marcada **Sugerido — según el uso de este proveedor** no tiene número esperado; dice "Toca para contar". Tócala y escribe lo que llegó. ¿Llegó algo que no está en la lista? Elígelo en **Elige un SKU…** y toca **+ Agregar artículo**.
+3. **Marca un problema.** Si una línea está mal, toca un botón bajo **Marca un problema**: **Faltante**, **De más**, **Dañado** o **Sustituto**. Agrega una **Nota de línea (opcional)** si ayuda. La marca que elegiste se pone rosa con borde rojo; tócala otra vez para quitarla. Usa **Faltante** cuando llegó solo una parte: escribe lo que sí llegó y toca **Faltante**. Esto sirve en cualquier entrega. Una línea necesita una cantidad mayor que 0, así que **Faltante** no reclama algo que no llegó nada. Lo que no llegó nada se reclama con **No llegó** en el siguiente paso, y solo si la entrega tiene orden de compra.
+4. **Confirma la entrega.** Toca **Toma foto del recibo** o marca **Foto después**. Toca **Entrega confirmada**. Si el camión sigue descargando, toca **Guardar parcial — el camión sigue descargando**. **Entrega confirmada** sigue gris hasta que al menos una línea tenga cantidad y tomes la foto o marques **Foto después**. Una línea de artículo nuevo a medio llenar también lo bloquea. Escribe la **Factura #** de todos modos: ayuda a cuadrar los papeles después. Casi siempre, un solo toque guarda la entrega de una vez, sin ventana emergente, y el formulario se vacía para el siguiente camión. Solo hay un segundo paso con las líneas que dicen **Esperado …**, que vienen de una orden de compra o de la última entrega. Si dejas una de esas sin tocar (sin cantidad ni marca), el primer toque la muestra: **No confirmaste algunos artículos esperados**. Toca **Sí llegó** o **No llegó** en cada una. El botón ahora dice **Toca otra vez para confirmar**; tócalo. Las líneas sin **Esperado …**, como las **Sugerido**, nunca salen en esa lista. Con orden de compra, la app te dice cuántos faltantes va a reclamar. Sin orden de compra, **No llegó** no reclama nada. Lo que dejes sin responder se registra como no contado y aparece contra la factura. La entrega sale en **Entregas recientes**, más abajo en la misma página; si no tomaste foto, dice **Falta foto**. Toca una entrega para ver sus líneas, marcas y créditos. Cada marca que elegiste (**Faltante**, **De más**, **Dañado** o **Sustituto**) abre un crédito de proveedor. Aparece en **Créditos de proveedor abiertos**, con cuántos hay abiertos.
+
+#### Prep de mediodía
+
+Después del rush del almuerzo, cuentas y preparas hasta volver al par. Toca desde las 2:00 PM y va tarde después de las 3:30 PM.
+
+1. **Empieza.** En el tablero, toca **Preparación del mediodía** y luego **+ Nueva preparación de mediodía**. Si la tienes asignada, también sirve la tarjeta **Preparación de mediodía**. Un encargado de llaves o más puede hacerla; un empleado, si hoy la tiene asignada. Una tienda puede hacer dos al día como máximo; después ves **Límite de preparación de mediodía alcanzado (2 por día).**
+2. **Cuenta al par.** En **Fase 1 — conteo al par**, escribe lo que tienes en **En mano** en cada fila. La fila muestra cuánto falta. Toca **Enviar conteo → Fase 2**. Si una fila no carga, una nota dice **Algunos artículos no se pudieron cargar** y los nombra; lo demás funciona. Avísale a un gerente.
+3. **Prepara y termina.** En **Fase 2 — preparación**, cada fila muestra **Falta:**. Escribe lo que preparaste en **Preparado** y toca **Guardar** en esa fila. Hazlo en cada fila. Luego toca **Finalizar preparación**. Cada fila tiene su propio **Guardar**, y queda solo cuando dice **Guardado ✓**. Guarda cada fila antes de finalizar: el botón no te detiene ni te avisa. Una fila sin guardar queda fuera y muestra **Hecho: —**. Si hiciste más o menos de lo necesario, primero toca **Agregar razón sobre/bajo par** en la fila y luego guárdala. Al terminar, la página dice **Finalizada — preparación hecha**, con quién la terminó y a qué hora, y cada fila muestra lo **Hecho:**. La línea de prep de mediodía en la lista de cierre se marca sola. Después, tocar **Preparación del mediodía** en el tablero abre la que ya terminaste.
+
+#### Mantén la lista de cierre en marcha
+
+La lista de cierre no es solo de la noche. Corre todo el día, estación por estación.
+
+1. **Abre la lista.** En el dashboard, toca **Empezar cierre** o **Continuar cierre**. O toca **Lista de cierre** en el tablero. No hace falta asignar a nadie; todos en el turno la usan. Un empleado o más empieza la lista del día; ya creada, un aprendiz también la abre. Algunas líneas necesitan un rol más alto; la estación dice cuántas están **esperando rol superior**.
+2. **Cierra cada estación cuando termine.** Cuando una estación va bajando, marca sus líneas. Cuando todas las líneas de una estación están listas, esa estación queda cerrada, y el tablero muestra **Cerrada · …** con la hora. Las horas de "cierra normalmente" son solo una guía: las líneas marcadas cierran la estación, no el reloj. Si se desmarca una línea, la estación se vuelve a abrir. Casi todas las líneas de reportes bajo **Gerente de cierre** (Closing Manager) son enlaces, no casillas; se marcan solas al enviar el reporte. Una pendiente dice **Pendiente — toca para abrir**: tócala para ir a ese reporte. Dos líneas ahí son casillas normales: **Contar la caja** y **Contar y guardar propinas**. Márcalas tú. **Agregar nota** sale en una línea después de marcarla. El cierre tiene sus propias líneas de temperatura; las de la mañana no cuentan. Para llenar una línea de temperatura, tócala: se abre la casilla **Temp (°F)**. Escribe la temperatura y toca **Guardar**. La línea se marca solo después de **Guardar**. La tienda cierra a las 8:00 PM y el cierre va tarde después de las 9:00 PM.
+
+#### Descansos y fin de turno
+
+Úsalos en el tablero o en **Mi turno**. Toca **Iniciar descanso** cuando alguien sale a descansar y **Volver del descanso** cuando regresa. Cuando te vas, toca **Terminar mi turno** y luego **Confirma el cambio**. Eso libera tu estación y te quita las tareas abiertas. No te saca del reloj de Toast. Un encargado de llaves o más puede hacerlo por otros de su rol o menor; para otra persona el botón es **Terminar turno**.
 
 ---
 
-## AM prep and mid-day prep
+## Night
 
-Two separate lists, both yours. A manager can assign an employee a specific day's AM prep; mid-day prep stays a key-holder job.
+Night jobs go in this order: AM prep, the PM report, the cash deposit, then confirm the closing.
 
-### 1. The AM prep sheet
+### AM prep: the closing count
 
-**What you see**
+AM prep is a night job. Before you leave, you count what is left. The morning crew reads your count as their **Closer count**. On the board it is listed as **AM prep**, but you do it at night.
 
-![AM Prep sheet with PAR, an editable column, BACK UP and an auto-filled TOTAL per item](img/manager/12-am-prep-sheet.png)
+#### 1. Start the closing checklist first (not shown)
 
-**What to do** — Work down the sheet filling the editable column for each item, then answer the **Misc** yes/no questions at the bottom.
-
-**Worth knowing**
-
-- **AM prep and mid-day prep are key holder and up.** The staff guide sends employees here for their own information; the page will bounce them. A manager can assign a specific day's AM prep to an employee, and then it opens for them.
-- The editable column is named for the section — **ON HAND**, **PORTIONED** or **LINE**. **BACK UP** is what is behind it. **TOTAL** adds the two for you.
-- Every input carries a red **Required** flag until it has a number. Zero is a number; blank is not.
-
-### 2. Fill a row
-
-**What you see**
-
-![Three Veg rows filled in with their totals computed and the issue counter dropping](img/manager/13-am-prep-filled-row.png)
-
-**What to do** — Type the count. The total fills itself.
+**What to do** — On the dashboard, tap **Start closing** if the closing has not started yet.
 
 **Worth knowing**
 
-- The footer counts what is still blocking you — *"Fix 37 issues before submitting"*. The submit button carries the same words while it is disabled, so a button reading **Fix issues before submitting** is not broken; it is a to-do list.
+- AM prep won't submit until the closing is started. You would see **Closing not yet started — start it from the dashboard, then re-submit AM Prep**. Your counts are kept.
 
-### 3. Start a mid-day prep
-
-**What you see**
-
-![A new mid-day prep, Phase 1 — count to par, with Veg and Sauces sections](img/manager/15-midday-prep-new.png)
-
-**What to do** — From the dashboard, tap **+ New mid-day prep**. Count each item against its par and type it into **On hand**.
-
-**Worth knowing**
-
-- Mid-day prep is a **two-phase list**: count to par first, then prep against what the count says you are short.
-- You can run **at most two mid-day preps in a day**. The dashboard numbers them.
-
-### 4. Fill the count
+#### 2. Open AM prep
 
 **What you see**
 
-![Two mid-day items counted, with the values held in their boxes](img/manager/16-midday-prep-filled.png)
+![AM Prep page: Veg rows with PAR, ON HAND, BACK UP and TOTAL, each marked Required](img/manager/41-am-prep.png)
 
-**What to do** — Fill every item, then **Submit count → Phase 2**.
+**What to do** — On the board, tap **AM prep**. If it is assigned to you, use the **AM Prep** tile and tap **Start AM Prep**. You can also tap the AM Prep line on the closing checklist.
 
 **Worth knowing**
 
-- This screen shows no per-field save state — the count goes in when you submit the phase, not as you type.
-- **Finishing a mid-day prep ticks the closing checklist's Mid-day Prep line for you**, and carries a count of how many you have finished today. You do not tick it by hand.
+- Key holders and up can do it. An employee can do it when it is assigned to them today.
+
+#### 3. Count every row
+
+**What you see**
+
+![Iceberg, Onion and Basil counted; TOTAL filled in by itself](img/manager/42-am-prep-filled.png)
+
+**What to do** — Type what is on the line in **ON HAND**. Type the bulk container in **BACK UP**. **TOTAL** fills itself.
+
+**Worth knowing**
+
+- Every row needs a number. A red **Required** tag marks the empty ones.
+- **BACK UP** can stay empty. It is the bulk the opener starts from.
+- In Sauces and Slicing, the first box is **LINE**: what is on the line. In Sides, it is **PORT**: the portioned items.
+- Misc rows are questions. Tap **YES** or **NO**.
+- If a row can't load, a note says **Some items couldn't load** and names them. The rest of the page still works and still submits. Tell a manager. They fix it in Admin.
+- The count saves as you go. Another person can pick it up where you left off. The page then says who saved it last.
+
+#### 4. Submit AM Prep
+
+**What you see**
+
+![Banner "AM Prep submitted" with every section done](img/manager/43-am-prep-submitted.png)
+
+**What to do** — Tap **Submit AM Prep**.
+
+**Worth knowing**
+
+- Until every row is filled, the button reads **Fix issues before submitting**. Tap **Show me what needs fixing**.
+- When it goes in, a banner says **AM Prep submitted at … by …**. The AM Prep line on the closing ticks itself.
+- From 6 PM, until AM prep is in, the closing shows a yellow note: **Tonight’s AM prep count isn’t in yet. The closer does it before lock-up.** It never blocks the closing.
+
+### PM report
+
+You do this once a night. Key holders and up.
+
+#### 1. Open the PM report
+
+**What you see**
+
+![PM Report: Shift activity, MVP, and the first grade card with no grade picked yet](img/manager/32-pm-report.png)
+
+**What to do** — On the board, tap **PM report**. If it is assigned to you, the **PM Report** tile works too.
+
+**Worth knowing**
+
+- **Shift activity** shows who did what and which reports are in.
+
+#### 2. Grade each person
+
+**What you see**
+
+![Two saved grade cards, every line graded: Attitude Great on one, Production Needs work on the other](img/manager/33-pm-grades.png)
+
+**What to do** — Each person gets four grades: **Arrived ready**, **Attitude**, **Production** and **Team player**. Tap **Great**, **Good** or **Needs work** on each. Tap **Save** on the card.
+
+**Worth knowing**
+
+- Nothing is picked to start. **Save** stays grey until all four lines have a grade: **Pick a grade on every line to save.**
+- After you tap **Save**, the button says **Saved ✓** for about two seconds. Then it goes back to **Save**. Your grades are kept.
+- Only saved cards count. A card you don't save is not graded.
+- Type in **Area to improve** if they need to work on something.
+- **Note (managers only)** is private: **Only managers see this note**.
+- At first the list shows today's team at this shop: people who were on shift, held a station or had a task. Anyone already graded shows too. To add someone, use **Select employee…** at the bottom.
+
+#### 3. Pick an MVP
+
+**What you see**
+
+![MVP picked, with the Why MVP? box filled in](img/manager/34-pm-mvp.png)
+
+**What to do** — Under **MVP**, pick a person. Type why in **Why MVP?**. Tap **Save**.
+
+**Worth knowing**
+
+- The MVP is your choice. You can leave **No MVP**.
+
+#### 4. Submit it
+
+**What you see**
+
+![Submitted PM report with read-only grade cards](img/manager/35-pm-submitted.png)
+
+**What to do** — Tap **Submit PM Report**.
+
+**Worth knowing**
+
+- A green banner says **Submitted … by …**. The grades lock.
+- Each person you graded gets a **New shift feedback** notice. They see their grades in **My Performance**.
+
+### Cash deposit
+
+You do this once a night, before you confirm the closing. Key holders and up.
+
+#### 1. Open it
+
+**What you see**
+
+![Cash Deposit form: Projected, Drawer total, $200 note, Cash tips and On shift today](img/manager/36-cash-deposit.png)
+
+**What to do** — On the board, tap **Cash report**. The page is called **Cash Deposit**. You can also use the **Cash Deposit** tile, or the **Do the cash deposit** button on the closing.
+
+#### 2. Fill it in
+
+**What you see**
+
+![Form filled: deposit $845.00, Even, and one name ticked](img/manager/37-cash-filled.png)
+
+**What to do** — Check the **Projected (from Toast)** amount. It fills in by itself with today's cash sales in Toast. Under it, a line says when: "From Toast · 10:40 PM". Count the drawer with **Enter total** or **Count by denomination**. Type the **Drawer total** and the **Cash tips**. Tick who worked under **On shift today**.
+
+**Worth knowing**
+
+- No Toast number yet? The box stays empty and says so. Type the projected amount yourself.
+- You can change the number. The form then says "Changed from Toast" with Toast's number. The saved deposit keeps Toast's number too.
+- **$200 stays in the register**. The deposit is the drawer total minus $200.
+- So the drawer total includes the $200. Count all the cash in the drawer.
+- On an even night, the drawer total is the projected amount plus $200. Example: projected $845, drawer $1,045, deposit $845, **Even**.
+- The app compares the deposit to the projected amount and shows over or short. This shows once you have typed the projected amount and the drawer.
+- If it is off, explain in **Over/short note (optional)**.
+- **On shift today** lists the whole team. Tick only the people who worked. **+ Add** adds a name.
+
+#### 3. Sign it
+
+**What you see**
+
+![PIN keypad over the cash form](img/manager/38-cash-pin.png)
+
+**What to do** — Tap **Sign & submit deposit**. Type your PIN.
+
+#### 4. Done
+
+**What you see**
+
+![Read-only deposit: $845.00, signed with name and time](img/manager/39-cash-submitted.png)
+
+**What to do** — Check the amounts.
+
+**Worth knowing**
+
+- A green line says **Deposited … · signed by … at …**. Below it are the amounts, the deposit, the cash tips and who was on shift.
+- On an even night, this page says **Even**, just like the form did.
+- Once signed, the deposit is read-only. You can't redo it. Check the amounts before you sign.
+- If the closing is confirmed before anyone files the deposit, the page is locked: **Today's closing is already finalized — the cash deposit is locked.**
+- Filing it ticks the cash line on the closing. You can't confirm the closing without it.
+
+### Confirm the closing
+
+This is the last job of the night. Key holders and up.
+
+#### 1. Do the walk-out
+
+**What you see**
+
+![Walk-Out Verification, 5 of 5 done, each line with Undo and Add note](img/manager/40-closing-walk-out.png)
+
+**What to do** — Tap **Continue closing**. In **Walk-Out Verification**, tick all five: lights off, devices charging, oven off, front doors locked, back door locked.
+
+**Worth knowing**
+
+- You can't confirm the closing until all five are ticked.
+
+#### 2. Review and explain
+
+**What you see**
+
+![Review panel: one "Why couldn't this be completed?" box for each open line, and Continue](img/manager/44-closing-review.png)
+
+**What to do** — Tap **Review & submit**. If lines are still open, it reads **Review & submit (incomplete)**. Type a reason in each **Why couldn't this be completed?** box. Tap the yellow **Continue** at the bottom of the reasons panel.
+
+**Worth knowing**
+
+- Some lines are hard stops. No reason will do. You must finish them.
+- The cash deposit must be in. If not, you see **Cash deposit required before you can finalize the closing.**
+- Your role must be as high as the highest role on any ticked line.
+
+#### 3. Confirm with your PIN
+
+**What you see**
+
+![Confirm with your PIN keypad over the checklist](img/manager/45-closing-pin.png)
+
+**What to do** — In **Confirm with your PIN**, type your PIN.
+
+**Worth knowing**
+
+- The fourth digit sends it. The keypad then waits a moment. Don't tap again.
+
+#### 4. The closing is done
+
+**What you see**
+
+![Closed closing: the banner "Closing submitted with incomplete items" and the greyed-out lines](img/manager/46-closing-confirmed.png)
+
+**What to do** — Check the banner. With every line done, it says **Closing confirmed … by …**, with the time and "you". With reasons, it says **Closing submitted with incomplete items … by …**. Every line turns grey.
+
+**Worth knowing**
+
+- Under the banner, **Reasons given for unfinished lines** lists each line, its reason and who wrote it. It shows right away.
+- The list can't be changed after this.
+- The dashboard card then says **Closed** or **Closed with items incomplete**, with **Review closing**.
+- If no one confirms, the dashboard warns the next day. The opener has to wait until it is confirmed or released.
+
+### If you see "This checklist is already confirmed."
+
+This can show right after your PIN.
+
+#### 1. Check the dashboard
+
+**What to do** — If you see **This checklist is already confirmed.**, someone already submitted this closing. Maybe they did it on another device. It is saved. Don't redo it. Go to the dashboard. The closing card says **Closed** or **Closed with items incomplete**. Tap **Review closing** to see it.
+
+### En español
+
+En la noche, el orden es: AM prep, reporte PM, depósito de efectivo y confirmar el cierre.
+
+#### AM prep: el conteo del cierre
+
+AM prep es un trabajo de la noche. Antes de irte, cuentas lo que queda. El equipo de la mañana lee tu conteo como su **Conteo de cierre**. Ojo: en el tablero la tarea se llama **Preparación de la mañana**, pero se hace en la noche.
+
+1. **Primero empieza la lista de cierre (sin foto).** En el dashboard, toca **Empezar cierre** si el cierre no ha empezado. AM prep no se envía hasta que el cierre esté empezado; verías **El cierre no ha comenzado — ábrelo desde el dashboard, luego envía de nuevo**. Tus conteos se guardan.
+2. **Abre AM prep.** En el tablero, toca **Preparación de la mañana**. Si la tienes asignada, usa la tarjeta **Lista de Prep AM** y toca **Iniciar Lista de Prep AM**. También puedes tocar la línea de AM Prep en la lista de cierre. Un encargado de llaves o más puede hacerlo; un empleado, si hoy lo tiene asignado.
+3. **Cuenta cada fila.** Escribe lo que hay en la línea en **EN MANO**. Escribe el recipiente a granel en **RESPALDO**. **TOTAL** se llena solo. Cada fila necesita un número; una etiqueta roja **Obligatorio** marca las vacías. **RESPALDO** puede quedar vacío: es lo que tiene a granel el que abre. En Sauces y Slicing, la primera casilla es **LÍNEA**: lo que hay en la línea. En Sides es **PORC**: las porciones. Las filas de Misc son preguntas: toca **SÍ** o **NO**. Si una fila no carga, una nota dice **Algunos artículos no se pudieron cargar** y los nombra. El resto de la página funciona y se puede enviar. Avísale a un gerente; lo corrige en Admin. El conteo se guarda solo. Otra persona puede seguir donde lo dejaste; la página dice quién guardó por última vez.
+4. **Envía.** Toca **Enviar Lista de Prep AM**. Hasta llenar todas las filas, el botón dice **Corrige los errores antes de enviar**; toca **Muéstrame qué hay que corregir**. Al enviarlo, un aviso dice **Lista de Prep AM enviada a las … por …** y la línea de AM Prep del cierre se marca sola. Desde las 6 PM, mientras no esté el AM prep, el cierre muestra una nota amarilla: **El conteo de preparación AM de esta noche aún no está. Quien cierra lo hace antes de cerrar el local.** Nunca bloquea el cierre.
+
+#### Reporte PM
+
+Lo haces una vez por noche. Encargado de llaves o más.
+
+1. **Abre el reporte PM.** En el tablero, toca **Reporte PM**. Si lo tienes asignado, también sirve la tarjeta **Reporte PM**. **Actividad del turno** muestra quién hizo qué y qué reportes están.
+2. **Califica a cada persona.** Cada persona tiene cuatro notas: **Llegó listo**, **Actitud**, **Producción** y **Trabajo en equipo**. En cada una toca **Excelente**, **Bien** o **Necesita mejorar**, y luego **Guardar** en la tarjeta. Al inicio no hay nada marcado. **Guardar** sigue gris hasta que las cuatro líneas tengan nota: **Elige una calificación en cada línea para guardar.** Al tocar **Guardar**, el botón dice **Guardado ✓** unos dos segundos y luego vuelve a **Guardar**; tus notas quedan guardadas. Solo cuentan las tarjetas guardadas; una tarjeta sin guardar no queda calificada. Escribe en **Área a mejorar** si hace falta. **Nota (solo gerentes)** es privada: **Solo los gerentes ven esta nota**. Al principio sale el equipo de hoy en esta tienda: quienes estuvieron en turno, tuvieron estación o tuvieron una tarea. También salen los que ya calificaste. Para agregar a alguien, usa **Selecciona empleado…** abajo.
+3. **Elige un MVP.** En **MVP**, elige a una persona. Escribe por qué en **¿Por qué MVP?** y toca **Guardar**. Es tu decisión; puedes dejar **Sin MVP**.
+4. **Envíalo.** Toca **Enviar Reporte PM**. Un aviso verde dice **Enviado … por …** y las notas quedan fijas. Cada persona que calificaste recibe el aviso **Nuevo comentario de turno** y ve sus notas en **Mi Desempeño**.
+
+#### Depósito de efectivo
+
+Lo haces una vez por noche, antes de confirmar el cierre. Encargado de llaves o más.
+
+1. **Ábrelo.** En el tablero, toca **Reporte de caja**. La página se llama **Depósito de efectivo**. También sirve la tarjeta **Depósito de efectivo** o el botón **Hacer el depósito de efectivo** en el cierre.
+2. **Llénalo.** Revisa **Proyectado (de Toast)**. Se llena solo con las ventas en efectivo de hoy en Toast. Debajo, una línea dice cuándo: "De Toast · 10:40 PM". ¿Toast todavía no tiene la cifra? La casilla queda vacía y lo dice: escribe tú lo proyectado. Puedes cambiar el número; el formulario dice entonces "Cambiado respecto a Toast" con la cifra de Toast, y el depósito guardado también guarda la cifra de Toast. Cuenta la caja con **Ingresar total** o **Contar por billete**. Escribe **Total de la caja** y **Propinas en efectivo**. Marca en **En turno hoy** a quienes trabajaron. **$200 se quedan en la caja**: el depósito es el total de la caja menos $200. O sea, el total de la caja incluye los $200: cuenta todo el efectivo de la caja. En una noche exacta, el total de la caja es lo proyectado más $200. Ejemplo: proyectado $845, caja $1,045, depósito $845, **Exacto**. La app compara el depósito con lo proyectado y muestra si sobra o falta; esto sale cuando ya escribiste lo proyectado y la caja. Si no cuadra, explica en **Nota de sobra/falta (opcional)**. **En turno hoy** muestra a todo el equipo: marca solo a quienes trabajaron. **+ Agregar** suma un nombre.
+3. **Fírmalo.** Toca **Firmar y enviar depósito** y escribe tu PIN.
+4. **Listo.** Revisa los montos. Una línea verde dice **Depositado … · firmado por … a las …**. Debajo están los montos, el depósito, las propinas y quién estuvo en turno. En una noche exacta, esta página dice **Exacto**, igual que el formulario. Ya firmado, el depósito es de solo lectura: no lo puedes rehacer. Revisa los montos antes de firmar. Si el cierre se confirma antes de que alguien envíe el depósito, la página queda bloqueada: **El cierre de hoy ya está finalizado — el depósito de efectivo está bloqueado.** Al enviarlo se marca la línea de efectivo del cierre. Sin él no puedes confirmar el cierre.
+
+#### Confirmar el cierre
+
+Es el último trabajo de la noche. Encargado de llaves o más.
+
+1. **Haz la salida.** Toca **Continuar cierre**. En **Verificación de salida** (Walk-Out Verification), marca las cinco: luces apagadas, aparatos cargando, horno apagado, puertas de enfrente con llave, puerta de atrás con llave. No puedes confirmar el cierre hasta marcar las cinco.
+2. **Revisa y explica.** Toca **Revisar y enviar**. Si quedan líneas abiertas, dice **Revisar y enviar (incompleto)**. Escribe un motivo en cada casilla **¿Por qué no se completó?** y toca el botón amarillo **Continuar** al final del panel de motivos. Algunas líneas son obligatorias sin excusa: debes terminarlas. El depósito de efectivo debe estar; si no, ves **Se requiere el depósito de efectivo antes de finalizar el cierre.** Tu rol debe ser igual o más alto que el rol más alto de las líneas marcadas.
+3. **Confirma con tu PIN.** En **Confirma con tu PIN**, escribe tu PIN. El cuarto dígito lo envía; luego el teclado espera un momento. No vuelvas a tocar.
+4. **El cierre está listo.** Revisa el aviso. Si todo se hizo, dice **Cierre confirmado … por …**, con la hora y "tú". Con motivos, dice **Cierre enviado con ítems sin completar … por …**. Todas las líneas se ponen grises. Debajo del aviso, **Motivos indicados para las líneas sin terminar** muestra enseguida cada línea, su motivo y quién lo escribió. Ya no se puede cambiar. La tarjeta del dashboard dice **Cerrado** o **Cerrado con pendientes**, con **Revisar cierre**. Si nadie confirma, el dashboard avisa al día siguiente, y el que abre tiene que esperar a que se confirme o se libere.
+
+#### Si ves "Esta lista ya está confirmada."
+
+Si ves **Esta lista ya está confirmada.** justo después de tu PIN, alguien ya envió este cierre, quizás en otro aparato. Está guardado; no lo rehagas. Ve al dashboard: la tarjeta del cierre dice **Cerrado** o **Cerrado con pendientes**. Toca **Revisar cierre** para verlo.
 
 ---
 
-## Receiving a delivery
+## Manager tools
 
-Do this at the door, while the driver is still there. Key holder and up.
+These are the jobs and pages you use beyond the daily reports.
 
-### 1. Pick the vendor
+### Counts (Inventory Audit)
 
-**What you see**
+Run a full count when the owner asks for one. Key holders and up can record it.
 
-![Receiving step 1 with the Vendor dropdown, delivery date, invoice number and invoice total](img/manager/17-receiving-vendor-pick.png)
-
-**What to do** — Pick the vendor, check the delivery date, and copy the invoice number and total off the paperwork.
-
-**Worth knowing**
-
-- **Pick the vendor first.** The page loads that vendor's usual order once you do, and the item picker is limited to what that vendor sells.
-- The invoice number is the duplicate guard: the same vendor, the same day and the same invoice number is refused as already received. That is what stops a driver's second copy of the paperwork being filed twice.
-- **Recent deliveries** on the right flags older drops that are still missing a photo or an invoice email.
-
-### 2. The line list
+#### 1. Open it
 
 **What you see**
 
-![After picking a vendor: a blank "New item" line card and a "Pick a SKU…" dropdown with + Add item](img/manager/18-receiving-vendor-selected.png)
+![Inventory Audit page: New audit form on the left, On hand list on the right](img/manager/47-counts.png)
 
-**What to do** — Use **Pick a SKU…** and **+ Add item** to add a line for each thing on the truck.
+**What to do** — On the board, tap **Counts**. If it is assigned to you, the **Inventory Audit** tile works too.
 
 **Worth knowing**
 
-- **The blank "New item" card at the top is a placeholder, not a line.** It has no product attached, and it is thrown away on submit — see step 5.
-- "SKU" here means one exact thing from one vendor: their pack, their size, their item number. Two vendors' mozzarella are two different lines.
-- A line only survives submit if it names an item **and** has a quantity above zero — see step 5 before you type into the blank card.
-- **Scan a case label to jump to its line.** Tap **Scan** for the phone camera, or use a Bluetooth scanner; the first time the app sees a code it asks which item it is and remembers. Scanning is optional — picking from the list always works the same.
+- AGMs and up can also open it from the Reports Hub: **Inventory**, then **Counts and variance**.
+- Only AGMs and up see the on-hand side of the page.
 
-### 3. Enter the line
+#### 2. Add your lines
 
 **What you see**
 
-![The line card filled with a quantity, a price per pack and a line note](img/manager/19-receiving-line-entry.png)
+![Count lines with an item, a unit picked from its list, and How many filled in](img/manager/48-counts-filled.png)
 
-**What to do** — Type the quantity you counted off the truck, and the price per pack from the invoice.
+**What to do** — Pick the item in **Pick an item…**. Fill in **Unit**. Type **How many**. For a part of a container, tick **Loose (below a full container)** and type the part. Tap **+ Add item** for the next line.
 
 **Worth knowing**
 
-- The header badge counts how many lines carry a price — *"1 priced"*. Prices you enter here become the price the app believes for that item.
-- A line note travels with that one item. The **Notes** box at the bottom of the page is about the whole delivery.
+- **Unit** is a list or a box, by item. An item with packs set up shows a list (**Pick a unit…**), like Case or head. Pick one. Many items have no list. Then **Unit** is a box that says **Unit (e.g. tub)**. Type the unit, like each or tub.
+- A unit is required. A line with no unit is not saved, even with a number in **How many**.
+- **Record audit** stays grey until at least one line has all three: an item, a unit and **How many**.
+- **How many** must be more than 0.
+- Count each unit once. Count full containers first, then loose ones.
+- Finish every line you want saved. A yellow note warns you: **… unfinished line(s) — they won't be saved**.
+- If a unit won't work for an item, a red message says nothing was saved. Pick a unit from that item's list. No list, and the typed unit still fails? The item has no pack size or weight set up yet. Remove that line and ask your GM to add it.
 
-### 4. Flag a problem
+#### 3. Confirm it
 
 **What you see**
 
-![The Onions line with Short pressed on its "Flag a problem" row](img/manager/20-receiving-short-flagged.png)
+![Confirm your password box over the count form](img/manager/49-counts-password.png)
 
-**What to do** — Enter what actually arrived, then tap **Short**, **Over**, **Damaged** or **Sub** on that line.
+**What to do** — Key holders, trainers and shift leads: type your PIN in the **PIN** box next to the button first. **Record audit** stays grey until it has 4 digits. Then tap **Record audit**. AGMs and up: tap **Record audit**. Then type your password in **Confirm your password**.
 
-**Worth knowing**
-
-- **The quantity you type is what arrived, not what was ordered.** The flag is the story; the number is the count.
-- Nothing happens on screen when you tap the flag. The vendor credit is filed when you tap **Delivery confirmed**, and it shows up on the delivery afterwards.
-- **Delivery confirmed** stays off until there is a receipt photo or **Photo later** is ticked. If expected items are still unconfirmed, the first tap opens a review notice. Check those items, then tap again to file the delivery.
-
-### 5. Read the finished delivery
+#### 4. The recorded count
 
 **What you see**
 
-![The delivery detail page with the items list, a "Receipt photo still missing" callout and a Vendor credits section](img/manager/21-receiving-detail-short-item.png)
+![Form cleared; the counted items now show on hand, with notes about which vendor got the count](img/manager/50-counts-recorded.png)
 
-**What to do** — Open the delivery from **Recent deliveries** and check the item list against your paperwork before the driver leaves.
+**What to do** — The form clears. AGMs and up: check the on-hand list. On a tablet it is on the right. On a phone it is below. It now says **Anchored to the audit on …**. That means on-hand now starts from your count.
 
 **Worth knowing**
 
-- **Lines without a catalog item are not saved.** Only lines that name an item *and* carry a quantity above zero are submitted. Expected items you never touched show up in the review notice first; a blank card with no item never saves at all. If something came off the truck that is not in the picker, put it in the delivery **Notes** box and get it added to the catalog.
-- A **Short** flag on a line that was not on a purchase order records the problem but no quantity and no dollar amount, because there is no ordered quantity to subtract from. That is the *"Short — — —"* row you are looking at. Flag shorts against a purchase order when there is one, and the amount fills itself in.
-- **Vendor claim — "Not compared"** means no vendor invoice has been matched to this delivery yet.
+- A note may say the count went under one vendor. **Count by vendor instead** lets you split it.
+- An item marked **below zero — count it** shows 0. The app thinks you have less than none, so its numbers are off. Count that item next.
 
-### 6. Resolve a vendor credit
+### Ordering walk
+
+Walk the shelves and mark what to order, before each vendor's cutoff. Key holders and up.
+
+#### 1. Open the walk
 
 **What you see**
 
-![The Short row expanded to a "Note (optional)" box and four buttons: Credit, Refund, Write off, Cancel](img/manager/22-receiving-short-item-options.png)
+![Ordering walk: Today's orders, Cutoff today with two vendors to draft, and the vendor item lists](img/manager/51-ordering-walk.png)
 
-**What to do** — Tap **Resolve**, type what was agreed into **Note (optional)**, then pick the outcome.
+**What to do** — Ordering is not in the menu. On the board, tap **Ordering**. You can also use the **Ordering** tile if it is assigned to you, or the Reports Hub: **Inventory**, then **Ordering**.
 
 **Worth knowing**
 
-- **Credit**, **Refund** and **Write off** are **AGM and up**. **Cancel** just closes the panel and changes nothing.
-- All three close the credit and none of them moves money on their own. What you are choosing is the record of what the vendor agreed to: money off the next invoice, money back, or we ate it. Pick the one that is true — somebody checks these against the vendor's statement later.
-- **If the vendor makes the short up on a later truck, do not resolve it here.** Tick it off on that delivery's intake instead. A key holder can do that — the second delivery is the proof, so no manager judgment is needed.
+- **Cutoff today** lists the vendors with a cutoff today, and the time.
+- A cutoff that passed with no order placed shows in red: **Missed cutoff — call the vendor**. Call the vendor to place the order.
+- Each item shows its par and about how much is on hand.
 
-### 7. The closed credit
+#### 2. Mark what to order
 
 **What you see**
 
-![The credit row now reading "Credited" with the note shown underneath](img/manager/23-receiving-finished-receipt.png)
+![One item set to 2 and another set to 1; the bar says 2 SKUs marked](img/manager/52-ordering-adjusted.png)
 
-**What to do** — Check the status and the note read the way you meant them.
+**What to do** — Use **+** and **−** under **Order to par** to set how many to order.
 
 **Worth knowing**
 
-- Your note is **added to** anything already on the credit, never written over it.
-- A resolved credit cannot be resolved again. If you picked the wrong outcome, say so in a note on the delivery — there is no undo.
+- Quick buttons sit under each item, like **Suggest 2**, **Empty · order 3** and **We're full · 0**.
+- **Suggest** lights up when your number matches the app's suggestion.
 
----
-
-## Counts (Inventory Audit)
-
-Run this when the owner calls for a full audit. Day to day the app works on-hand out from deliveries, production and sales — the audit is what re-anchors it to reality.
-
-### 1. Start a new audit
+#### 3. Review the order
 
 **What you see**
 
-![Inventory Audit with the New audit panel on the left and the On hand list on the right](img/manager/24-counts-new-audit.png)
+![Review order sheet: one card per vendor with the marked items](img/manager/53-ordering-review.png)
 
-**What to do** — Read the instruction under the heading, then start adding items.
+**What to do** — Tap **Review order**. Check each vendor's list. Tap **Record walk** to save it. The button also shows how many you marked, like **Record walk · 2 SKUs**. **Keep walking** takes you back.
 
-**Worth knowing**
-
-- **Counts are AGM and up.** A key holder or shift lead cannot open this page.
-- *"Count each unit once: full containers, then loose units below. Never count the same stock twice."* The whole number only means something if nothing is counted twice.
-- The **On hand** list on the right is anchored to the last audit. Items marked **Inferred / advisory** have never been counted here; the app is guessing them from paperwork.
-
-### 2. Add your lines
+#### 4. The draft order
 
 **What you see**
 
-![Three count lines added, each collapsed to a compact row with a Remove button](img/manager/25-counts-filled.png)
+![Walk recorded, with a green link for each vendor's draft and the Start a new walk button](img/manager/54-ordering-draft.png)
 
-**What to do** — Pick the item, set the unit, type how many. Tick **Loose (below a full container)** and give a **Partial** — *0.5* for a half — for the open container.
+**What to do** — Find your order. A green box says **Walk recorded — … SKUs.** A new order shows under **Draft orders**. If the vendor already had a draft today, your items go into it. Then a green link says **…: added to today's draft — PO …**, and **Draft orders** can be empty. Tap the link to open that order. Use it to place the order with the vendor.
 
 **Worth knowing**
 
-- **The Unit field comes in two kinds.** For an item with its pack units on file it is a dropdown reading **Pick a unit…** — pick from it and you are safe. For an item with no pack-unit list it is a plain text box reading *"Unit (e.g. tub)"* — whatever you type still has to be a unit the app can convert. See step 4.
-- A line you start and do not finish is dropped, with a warning above the button telling you how many.
+- If a vendor minimum is shown, check it before you order. The app does not warn when an order is under it.
+- Some drafts show how the vendor takes orders, like a portal with a **Copy** button.
+- **Start a new walk** begins again.
 
-### 3. Confirm your password
+### Production
+
+Log food you make from raw stock outside the prep sheets. Employees and up can do it.
+
+#### 1. Open it
 
 **What you see**
 
-![The "Confirm your password" dialog with a Password field, Confirm and Cancel](img/manager/26-counts-confirm-dialog.png)
+![Production page: Log a conversion form and the Recent production list](img/manager/55-production.png)
 
-**What to do** — Type your account password — not your PIN — and tap **Confirm**.
+**What to do** — Tap **Production** in the menu. It opens on your shop.
 
 **Worth knowing**
 
-- **Recording an audit needs your password.** It is the one job outside Admin that does. A count re-anchors every number downstream of it, so the app wants to know it is you.
-- One confirmation covers the rest of the session's audits. It clears when you leave the admin area or sign out.
+- Use it only for food that is not on a prep sheet. The opening and mid-day prep rows already log what you make there.
+- Logging takes the raw stock you used off on-hand. It also teaches the app how much each pack makes.
+- Shift leads and up also see **Yield variance →** on this page.
 
-### 4. The unit error
+#### 2. Fill it in
 
 **What you see**
 
-![The error "Can't convert that unit to ounces — set the item's pack chain or avg oz first" above the Record audit button](img/manager/27-counts-unit-error.png)
+![Cheddar picked, Makes set to Cheddar, 1 used and 4 made](img/manager/56-production-filled.png)
 
-**What to do** — Remove the line the app cannot read, and record the rest.
+**What to do** — Pick the **Raw item (SKU)**. Then **Makes** shows up, with **Pick what you made…**. Pick what it makes. Type the **Amount used (packs)** and the **Amount made**.
 
 **Worth knowing**
 
-- **One unreadable line fails the whole audit.** Nothing is saved — not even the lines that were fine. The message does not name the line, so look for the one where you typed the unit yourself.
-- **Avoid it by picking a listed unit whenever there is one.** If the app refuses a unit you typed, that item's pack information or average weight is missing in the SKU catalog — fix it there, or leave the item off this audit and record the rest.
+- **Makes** is not on the form until you pick the raw item.
+- Two raw items can share a name. Then each one shows its vendor too: "name — vendor". It says **no vendor** when none is set.
+- The app may fill in **Amount made** with what it expects (**Predicted output**). Change it to what you really made.
+- Some items have nothing to pick in **Makes**. Then **Log production** stays grey. Pick another item.
 
-### 5. The recorded audit
+#### 3. Log it
 
 **What you see**
 
-![The On hand anchor moved to today, with the counted items showing fresh totals](img/manager/28-counts-submitted.png)
+![New row at the top of Recent production](img/manager/57-production-logged.png)
 
-**What to do** — Check the items you counted now read **Audited** with today's date.
+**What to do** — Tap **Log production**.
 
 **Worth knowing**
 
-- Only the items you actually counted get a new anchor. Everything else keeps the date it had — a partial audit does not stale out the rest.
-- **"since"** on a row is what the app thinks has been used since you counted. It grows through the day.
-- An audit is never edited. If you got a number wrong, count that item again — the newest count wins.
+- No message pops up. The new row at the top of **Recent production** is your sign it worked.
+- Your opening prep entries show in this list too.
 
----
+### Reports Hub
 
-## Ordering and purchase orders
+Look back at any day's reports. Everyone can open it. What you see grows with your role.
 
-The 6 AM job. Walk the shelves, say what is there, and the app works out the order. Key holder and up.
-
-### 1. The ordering walk
+#### 1. Open it and pick dates
 
 **What you see**
 
-![Ordering walk with the vendor accordion, per-SKU steppers and a sticky footer](img/manager/29-ordering-walk-list.png)
+![Reports Hub: date range, shop card with signals, and the report families](img/manager/58-reports-hub.png)
 
-**What to do** — Open the vendor whose cutoff is next and work down its list, shelf by shelf.
+**What to do** — Tap **Reports Hub** in the menu. Pick a **Date range**. Tap **Apply**.
 
 **Worth knowing**
 
-- Vendors whose **order day** is today sort to the top and carry an **ORDER DAY** badge. The header also shows that vendor's cutoff time.
-- The warning banner — *"N par'd products have no ordering path today"* — means somebody set a par on something the app cannot order: usually the par sits on a **deactivated item** while the one you actually buy carries none. Nothing will be suggested for those until you move the par or turn the item back on. They are silent, not broken, and that silence is expensive.
-- *"Par tuning hasn't run at this shop yet"* means the nightly par engine has never written anything here. Even where it has, **nothing changes a par by itself** — it only ever suggests, and only a GM can accept a suggestion.
+- Report groups: **Operations**, **Operations trends**, **Written reports**, **People**, **Inventory**, **Catering**, **Menu costing** and, for GMs, **Sales**.
+- **Team trends** under **People** needs an AGM or up. So does **Menu costing**.
+- **Inventory** shows **Receiving** and **Ordering** to key holders and up. **Counts and variance** there needs an AGM or up.
+- **Receiving** here opens the live Receiving page, not a report. Past deliveries are under **Recent deliveries**, lower on that page. Tap one to see its lines, flags and credits.
+- The shop card shows **Last close**: the newest closing that was confirmed, or closed by itself.
+- **Catering** needs a shift lead or up. **Sales** needs a GM or up.
+- **Compare with previous period** sets this range next to the one before.
+- Cash reports show from key holder up. Notes on checklist lines show from shift lead up.
 
-### 2. Say what is on the shelf
+#### 2. Read a report
 
 **What you see**
 
-![One line stepped up to 2 with a Clear button, another set by the "Empty · order 3" button](img/manager/30-ordering-adjusted-line.png)
+![The day's Opening report with each station's ticks, names and temps](img/manager/59-reports-opening.png)
 
-**What to do** — For each item either use the stepper, or tap one of the two quick buttons.
+**What to do** — Tap **Operations**. Tap a row to open that report.
 
 **Worth knowing**
 
-- **A blank box is not an answer.** A line you never touch is not submitted at all. **We're full · 0** is a real answer — it says the shelf is at par, orders nothing, and records that you looked.
-- **Empty · order N** orders the full par. It is the other extreme: the shelf is bare.
-- **Suggest N** appears only where the app has an on-hand estimate to work from. It is the par minus that estimate, rounded up to whole order units. No estimate, no chip — it will not invent a number.
-- The footer counts marked items. That number is what gets recorded, zeros included.
+- **Same day** tabs open the day's other reports. **Previous day** and **Next day** move through the days.
+- **CSV** and **PDF** download a file.
+- A closing nobody confirmed shows **Auto-closed — not confirmed**.
 
-### 3. Review before you commit
+### Trends
+
+See how the shop is doing over time. Key holders and up.
+
+#### 1. Open Trends
 
 **What you see**
 
-![The Review order panel listing each vendor's lines with item numbers and quantities](img/manager/31-ordering-review-order.png)
+![Trends page: Ops Trends, Team and Yield cards, and Relevant right now](img/manager/60-trends.png)
 
-**What to do** — Read the table against your walk. **Keep walking** goes back; **Record walk** commits.
+**What to do** — Tap **Trends** in the menu. Tap a card for the full view.
 
 **Worth knowing**
 
-- **Nothing is sent to any vendor at this point.** The note says so: delivery options appear after you submit.
-- **Generate draft**, the cutoff shortcut beside the list, drafts from the app's suggestions, not the quantities you typed on the walk. Your typed walk quantities only become an order through **Record walk**.
+- **Ops Trends** shows par, temps, cash and how much got done.
+- **Team** needs an AGM or up.
+- **Relevant right now** points out things to check, like team check-ins and **Fridge Temp Flags**.
+- The **Fridge Temp Flags** and **Under / Over Par** counts cover the dates shown with them, about the last 30 days. They are not just today.
+- A temp is flagged only when it is above that fridge's own safe max. A fridge with no max set uses 41°F. Trends, the Reports Hub and the Pulse all use this same rule.
 
-### 4. The draft order
+### Sales (GM)
+
+GMs and up see the shop's sales.
+
+#### 1. Open Sales
 
 **What you see**
 
-![Today's orders showing a draft purchase order for the vendor](img/manager/32-ordering-draft-created.png)
+![Sales page with tabs, views, date range and sales tiles](img/catering/21-sales.png)
 
-**What to do** — Open the draft, check it, then confirm it and send it.
+**What to do** — In the Reports Hub, under **Sales**, tap **Sales**. Pick a view: **Summary**, **Items**, **Modifiers**, **Channels**, **Hour × weekday**, **Discounts** or **Servers**.
 
 **Worth knowing**
 
-- **One draft order per vendor**, covering only the lines above zero. The zeros stay on the walk record as evidence you checked.
-- **Recording a walk never creates a second order for the same vendor at the same shop that day.** If a draft exists, your positive quantities update it: a line you typed takes your number, a new item is added, everything else stays. Nothing is summed, and a zero on the walk does not remove a draft line. The screen says **added to today's draft**. For a deliberate extra order after placing, use **Add-on order** (step 7).
-- If today's order is already confirmed or placed, the walk still records what you saw but changes nothing on the order, and says so. **Generate draft** refuses outright while any order exists for that vendor today.
-- The order's code is your shop's code, today's date, and the vendor — so `EM-20260908-PFG` reads at a glance.
-- **Confirm** freezes the prices and the line list; it does not send anything. Confirming twice is refused. To change a confirmed order before it is placed, unlock it first, as in step 6.
-- **The order lists items in the vendor's own guide order, section by section, so you can key it into their portal top to bottom.** Anything not on the guide sits last under *Not on the guide*. The guide itself lives on the vendor's admin page (Order guide), where a GM can move lines and sections once; the shelf walk keeps its own order.
-- **Sending is a separate tap**, and the email is rebuilt on the server from the confirmed order — not from anything on your screen. If the vendor has no ordering email on file, the app says so and leaves the order alone; use the phone or portal link instead and mark it placed.
+- **Checks** and **Catering** are tabs at the top.
+- **Group by** groups the numbers by day, week or month.
+- Here the ranges read **Last 7 full days**, **Last 30 full days** and **Last 90 full days**. They stop at yesterday. The Reports Hub's **Last 7 days** counts today too.
+- A dash ("—") means that number is not available. It does not mean $0.
+- You see the shops you belong to. All shops at once needs a Manager of Operations or up.
 
-### 5. Edit the draft
+#### 2. Catering sales
 
 **What you see**
 
-![Draft order with Add an item open and the vendor's item picker](img/manager/32b-ordering-draft-add-item.png)
+![Catering sales page: ezCater orders and catering rung in Toast](img/catering/22-catering-sales.png)
 
-**What to do** — Change quantities in the boxes or with the steppers. Tap **Add an item**, choose what you need, set its quantity, then tap **Save changes**.
+**What to do** — Tap the **Catering** tab to see catering sales.
 
-**Worth knowing**
+### Customers and catering accounts (GM)
 
-- **Add an item** offers any of this vendor's active SKUs that are not already on the order, including ones that were not on your walk. An item already on the order is edited on its existing row.
-- Set a draft line to **0** to remove it from what you will order. The row stays, struck through, because it is part of the history.
-- Typing does not save. **Save changes** writes your edits and keeps the order as a draft. **Confirm** takes two taps and also saves pending edits before freezing the order.
+GMs and up can see who orders from the shop.
 
-### 6. Unlock a confirmed order
+#### 1. Customers
 
 **What you see**
 
-![Confirmed order with Mark placed and Unlock to edit beneath it](img/manager/32c-ordering-confirmed-unlock.png)
+![Customers page: counts, groups, filters and the profile list](img/catering/23-customers.png)
 
-**What to do** — If you need to change an order that has not been placed, tap **Unlock to edit**, then **Tap again to unlock**. Edit the draft, save your changes and **Confirm** again when it is right.
+**What to do** — Tap **Admin**, then **Customers**. Use the groups, **Sort by** and the filters. Tap **Apply filters**.
 
 **Worth knowing**
 
-- Unlocking unfreezes prices. Confirming again takes the current prices and lines; the earlier confirmation remains in the history.
-- **Mark placed** records that you ordered through the phone, portal or another channel. Sending the order with the app's email send button also marks it placed.
-- Once it is placed, you cannot unlock it. Use **Add-on order** if you need more.
+- It shows visits, spend and favorite items. It does not show emails or phone numbers. Only Owners and up can see those.
+- A GM sees their own shops. A Manager of Operations and up sees every shop.
+- **Include marketplace guests** adds guests from delivery apps.
+- The opted-in marketing list is for Owners and up only. Its button is **Download opted-in list for this view**, and it asks for a password.
+- That list holds only people who opted in to email. There is no way to add anyone else.
 
-### 7. Make an add-on order
+#### 2. Catering accounts
 
 **What you see**
 
-![Placed order with the Add-on order form open](img/manager/32d-ordering-placed-add-on.png)
+![Catering accounts page with counts and filters](img/catering/24-catering-accounts.png)
 
-**What to do** — Open the placed order, tap **Add-on order**, choose the extra items and enter their quantities. Tap **Create add-on order**, then open the new draft to check, confirm and send it.
+**What to do** — On **Customers**, tap **Catering accounts**. Tick **Gone quiet only (over 90 days)** to find accounts that stopped ordering.
 
-**Worth knowing**
+### The admin pages
 
-- This is a deliberate second order for the same vendor at this shop today. It starts as a draft with a **-2** at the end of today's order code; another add-on takes the next free number.
-- Enter only the extra quantities you need. The placed order stays as it was, and creating the add-on does not send it.
-- The picker offers any of this vendor's active items, including more of something already on the placed order.
-- A later walk can update this new draft. The cutoff **Generate draft** shortcut still refuses another order for that vendor today.
+AGMs and up can open **Admin**.
 
-### 8. Import a vendor export
+#### 1. The admin home
 
 **What you see**
 
-The **Vendor import** card at the bottom of a vendor's admin page, under its order guide.
+![Admin home: Used this week counts and the section tiles](img/manager/61-admin-home.png)
 
-**What to do** — Export the vendor's list or purchase history from their portal (PFG CustomerFirst: Lists → Export; US Foods MOXē: Lists → ⋮ → Export), then choose the file and tap **Stage import**. The app matches every row to this vendor's SKUs and shows a report: what is the same, what would change, and what needs a person. Set each changing row to **Accept** or **Skip**, then tap **Apply** to write the accepted prices, item numbers and pack sizes in one go.
-
-**Worth knowing**
-
-- Staging writes nothing to the catalog. The report is a dry run, and the same file staged twice returns the same report.
-- Rows marked **Needs a person** never apply on their own: a new item the catalog has never seen, a number shared by two SKUs, a pack sold by volume where the catalog counts weight, or a per-pound price on an item counted by the piece. Fix those in the SKU editor or the order guide, then stage again.
-- An export with no prices (US Foods lists) can fill in missing item numbers and packs but never blanks a price the catalog already has.
-- Applying is an owner-level act and asks for your password first, because both shops order on the same vendor accounts and an applied price is a two-shop change. Every applied row keeps its evidence: the file, its date and the row it came from.
-- If the catalog changed between staging and applying, the app refuses with **Report out of date** — stage the file again and re-check.
-
----
-
-## Production capture
-
-Log it whenever you turn raw stock into something else — a case of mozzarella into portions, a bag of onions into caramelised onion. It is how the app knows stock went down.
-
-### 1. The production form
-
-**What you see**
-
-![Production form with a Raw item dropdown showing in-stock counts](img/manager/33-production-form.png)
-
-**What to do** — Pick the raw item you used.
+**What to do** — Tap **Admin** in the menu. Tap a tile.
 
 **Worth knowing**
 
-- Key holder and up.
-- **"in stock" here is packs received at this shop minus packs used in production.** It is not the Inventory Audit's on-hand, and the two will not agree — an audit re-anchors ounces, this counts packs off the paperwork. Do not read it as a shelf count.
+- AGMs see **Vendors**, **SKUs**, **Products**, **Recipes**, **Items**, **Menu Costing**, **Weights & Trim** and **Catering**.
+- GMs also see **Stations**, **Toast employees**, **Customers** and **Checklist Templates**.
+- A Manager of Operations also sees **User Management** and **Categories**.
+- In **Stations**, a GM sets station times for their shop. It asks for your password: **Confirm your password**. These times are only hints. They don't close a station.
+- **Used this week** shows how much the app was used.
 
-### 2. Fill it in
+### En español
 
-**What you see**
+Estos son los trabajos y páginas que usas además de los reportes diarios.
 
-![The form with Makes revealed, amounts filled and Log production enabled](img/manager/34-production-filled.png)
+#### Conteos (Auditoría de inventario)
 
-**What to do** — Set **Makes**, then the amount used and the amount made.
+Haz un conteo completo cuando el dueño lo pida. Un encargado de llaves o más lo puede registrar.
 
-**Worth knowing**
+1. **Ábrelo.** En el tablero, toca **Conteos**. Si lo tienes asignado, también sirve la tarjeta **Auditoría de inventario**. Los subgerentes y roles más altos también lo abren en el Centro de reportes: **Inventario** y luego **Conteos y variaciones**. Solo los subgerentes y roles más altos ven la parte de lo que hay en existencia.
+2. **Agrega tus líneas.** Elige el artículo en **Elige un artículo…**. Llena **Unidad**. Escribe **Cuántos**. Para una parte de un recipiente, marca **Suelto (debajo de un contenedor lleno)** y escribe la parte. Toca **+ Agregar artículo** para otra línea. **Unidad** es una lista o una casilla, según el artículo. Un artículo con paquetes muestra una lista (**Elige una unidad…**), como Case o head: elige una. Muchos artículos no tienen lista; entonces **Unidad** es una casilla que dice **Unidad (p. ej. tina)**. Escribe la unidad, como pieza o tina. La unidad es obligatoria: una línea sin unidad no se guarda, aunque tenga número en **Cuántos**. **Registrar auditoría** sigue gris hasta que al menos una línea tenga las tres cosas: artículo, unidad y **Cuántos**. **Cuántos** debe ser mayor que 0. Cuenta cada unidad una sola vez: primero los recipientes llenos, luego los sueltos. Termina cada línea que quieras guardar; una nota amarilla avisa: **… línea(s) sin terminar — no se guardarán**. Si una unidad no sirve para un artículo, un mensaje rojo dice que no se guardó nada: elige una unidad de la lista de ese artículo. ¿No tiene lista y la unidad escrita sigue fallando? Al artículo le falta su tamaño de paquete o su peso. Quita esa línea y pídele a tu GM que lo agregue.
+3. **Confírmalo.** Encargados de llaves, entrenadores y líderes de turno: primero escribe tu PIN en la casilla **PIN** junto al botón. **Registrar auditoría** sigue gris hasta tener 4 dígitos. Luego toca **Registrar auditoría**. Subgerentes y roles más altos: toca **Registrar auditoría** y luego escribe tu contraseña en **Confirma tu contraseña**.
+4. **El conteo registrado.** El formulario se limpia. Subgerentes y roles más altos: revisen la lista de existencias, a la derecha en una tableta o abajo en un teléfono. Ahora dice **Anclado a la auditoría del …**: las existencias ahora parten de tu conteo. Una nota puede decir que el conteo quedó bajo un solo proveedor; **Contar por proveedor** te deja repartirlo. Un artículo marcado **bajo cero — cuéntalo** muestra 0: la app cree que tienes menos que nada, así que sus números están mal. Cuenta ese artículo después.
 
-- **The "Makes" dropdown only appears after you pick a raw item, and Log production stays disabled until you set it.** That is the usual reason the button looks stuck.
-- Only combinations the app has a recipe for are offered. If what you made is not in the list, the recipe is missing — tell whoever keeps the recipes.
+#### Recorrido de pedido
 
-### 3. Log it
+Recorre los estantes y marca qué pedir, antes del cierre de cada proveedor. Encargado de llaves o más.
 
-**What you see**
+1. **Abre el recorrido.** Pedidos no está en el menú. En el tablero, toca **Pedidos**. También sirve la tarjeta **Pedidos** si la tienes asignada, o el Centro de reportes: **Inventario** y luego **Pedidos**. **Cierre hoy** muestra los proveedores con hora límite hoy, y la hora. Un corte que pasó sin pedido sale en rojo: **Se pasó el corte — llama al proveedor**. Llama al proveedor para hacer el pedido. Cada artículo muestra su par y más o menos cuánto hay.
+2. **Marca qué pedir.** Usa **+** y **−** bajo **Pedir hasta el par** para poner cuánto pedir. Debajo de cada artículo hay botones rápidos, como **Sugerir 2**, **Vacío · pedir 3** y **Estamos llenos · 0**. **Sugerir** se enciende cuando tu número coincide con la sugerencia de la app.
+3. **Revisa el pedido.** Toca **Revisar pedido** y revisa la lista de cada proveedor. Toca **Registrar recorrido** para guardarlo. El botón también muestra cuántos marcaste, como **Registrar recorrido · 2 SKUs**. **Seguir recorriendo** te regresa.
+4. **El pedido borrador.** Busca tu pedido. Un cuadro verde dice **Recorrido registrado — … SKUs.** Un pedido nuevo sale en **Pedidos borrador**. Si el proveedor ya tenía un borrador hoy, tus artículos se agregan a ese. Entonces un enlace verde dice **…: se agregó al borrador de hoy — OC …**, y **Pedidos borrador** puede quedar vacío. Toca el enlace para abrir ese pedido. Úsalo para hacer el pedido al proveedor. Si sale el mínimo del proveedor, revísalo antes de pedir; la app no avisa cuando un pedido queda por debajo. Algunos borradores muestran cómo recibe pedidos el proveedor, como un portal con un botón **Copiar**. **Iniciar un nuevo recorrido** empieza otra vez.
 
-![Recent production listing the conversion, with the raw item's stock reduced](img/manager/35-production-logged.png)
+#### Producción
 
-**What to do** — Tap **Log production** and check the entry appears under **Recent production**.
+Registra comida que haces con materia prima fuera de las listas de prep. Empleados y roles más altos pueden hacerlo.
 
-**Worth knowing**
+1. **Ábrela.** Toca **Producción** en el menú. Abre en tu tienda. Úsala solo para comida que no está en una lista de prep: las filas de prep de apertura y de mediodía ya registran lo que haces ahí. Al registrar, la materia prima que usaste sale de las existencias, y la app aprende cuánto rinde cada paquete. Los líderes de turno y roles más altos también ven **Variación de rendimiento →** en esta página.
+2. **Llénala.** Elige la **Materia prima (SKU)**. Entonces sale **Hace**, con **Elige lo que hiciste…**; **Hace** no está en el formulario hasta que eliges la materia prima. Dos materias primas pueden tener el mismo nombre; entonces cada una muestra también su proveedor: "nombre — proveedor". Dice **sin proveedor** si no tiene. Elige lo que hace. La app puede llenar **Cantidad hecha** con lo que espera (**Salida estimada**); cámbiala por lo que de verdad hiciste. Escribe **Cantidad usada (paquetes)** y **Cantidad hecha**. Algunos artículos no tienen nada en **Hace**; entonces **Registrar producción** sigue gris. Elige otro.
+3. **Regístrala.** Toca **Registrar producción**. No sale ningún mensaje: la fila nueva arriba en **Producción reciente** te dice que funcionó. Tus entradas de prep de apertura también salen en esta lista.
 
-- The raw item's in-stock count drops by what you used, straight away.
-- Prep entered on the opening report's Phase 2 lands here too. You do not log the same batch twice.
+#### Centro de reportes
 
----
+Revisa los reportes de cualquier día. Todos lo abren; lo que ves crece con tu rol.
 
-## Mid-Shift Pulse
+1. **Ábrelo y elige fechas.** Toca **Centro de reportes** en el menú. Elige un **Rango de fechas** y toca **Aplicar**. Los grupos son **Operaciones**, **Tendencias de operaciones**, **Reportes escritos**, **Equipo**, **Inventario**, **Catering**, **Costos del menú** y, para gerentes generales, **Ventas**. **Tendencias del equipo** dentro de **Equipo** necesita subgerente o más, igual que **Costos del menú**. **Inventario** muestra **Recepción** y **Pedidos** a encargados de llaves o más; **Conteos y variaciones** ahí necesita subgerente o más. **Recepción** aquí abre la página de recepción en vivo, no un reporte. Las entregas pasadas están en **Entregas recientes**, más abajo en esa página; toca una para ver sus líneas, marcas y créditos. La tarjeta de la tienda muestra **Último cierre**: el cierre más reciente que se confirmó o se cerró solo. **Catering** necesita líder de turno o más, y **Ventas**, gerente general o más. **Comparar con el período anterior** pone este rango junto al anterior. Los reportes de caja se ven desde encargado de llaves; las notas en las líneas, desde líder de turno.
+2. **Lee un reporte.** Toca **Operaciones** y luego una fila para abrir ese reporte. Las pestañas **Mismo día** abren los otros reportes del día. **Día anterior** y **Día siguiente** cambian de día. **CSV** y **PDF** descargan un archivo. Un cierre que nadie confirmó dice **Cerrado automáticamente — sin confirmar**.
 
-A read-only picture of where the shop is right now. Open it once mid-shift instead of chasing five pages. Key holder and up.
+#### Tendencias
 
-### 1. Read the pulse
+Mira cómo va la tienda con el tiempo. Encargado de llaves o más. Toca **Tendencias** en el menú y toca una tarjeta para verla completa. **Tendencias de Operación** muestra par, temperaturas, efectivo y cuánto se hizo. **Equipo** necesita subgerente o más. **Relevante ahora** señala cosas para revisar, como el seguimiento al equipo y **Alertas de Temperatura**. Los números de **Alertas de Temperatura** y **Bajo / Sobre Par** cubren las fechas que salen con ellos, más o menos los últimos 30 días. No son solo de hoy. Una temperatura solo cuenta como alerta cuando pasa la máxima segura de ese refrigerador; uno sin máxima usa 41°F. Tendencias, el Centro de reportes y el Pulso usan esta misma regla.
 
-**What you see**
+#### Ventas (gerente general)
 
-![Mid-Shift Pulse with an attention alert, today's operations, report statuses and fridge temps](img/manager/36-midshift-pulse.png)
+Los gerentes generales y roles más altos ven las ventas.
 
-**What to do** — Read the top alert first, then the report list, then the fridge board.
+1. **Abre Ventas.** En el Centro de reportes, bajo **Ventas**, toca **Ventas**. Elige una vista: **Resumen**, **Artículos**, **Modificadores**, **Canales**, **Hora × día**, **Descuentos** o **Meseros**. **Cuentas** y **Catering** son pestañas arriba. **Agrupar por** agrupa los números por día, semana o mes. Aquí los rangos dicen **Últimos 7 días completos**, **Últimos 30 días completos** y **Últimos 90 días completos**: terminan ayer. En el Centro de reportes, **Últimos 7 días** también cuenta hoy. Una raya ("—") quiere decir que ese número no está disponible; no quiere decir $0. Ves las tiendas a las que perteneces; todas a la vez necesita Gerente de Operaciones o más.
+2. **Ventas de catering.** Toca la pestaña **Catering** para ver las ventas de catering.
 
-**Worth knowing**
+#### Clientes y cuentas de catering (gerente general)
 
-- **Nothing on this page is a form.** Every tile links to the page where the work actually happens.
-- The report list judges against a clock: the opening is late after **10:30 AM**, mid-day prep is due from **2:00 PM** and late after **3:30 PM**, the closing is late after **9:00 PM**.
-- **Fridge temps** are the readings typed on this morning's opening and tonight's closing — nobody enters them here.
-- **Active today** is worked out from who has touched a report today, not from a schedule. Someone on shift who has not tapped anything yet will not be listed.
-- The **Inventory Audit** tile only appears for AGM and above, because the audit itself starts there.
+Los gerentes generales y roles más altos ven quién le compra a la tienda.
 
----
+1. **Clientes.** Toca **Admin** y luego **Clientes**. Usa los grupos, **Ordenar por** y los filtros, y toca **Aplica filtros**. Muestra visitas, gasto y productos favoritos. No muestra correos ni teléfonos; solo el Dueño y roles más altos los pueden ver. Un gerente general ve sus tiendas; un Gerente de Operaciones o más ve todas. **Incluye clientes de plataformas** suma clientes de apps de reparto. La lista de mercadeo es solo para el Dueño y roles más altos: su botón es **Descargar la lista de esta vista con consentimiento** y pide contraseña. Esa lista tiene solo a quienes aceptaron recibir correos. No hay forma de agregar a nadie más.
+2. **Cuentas de catering.** En **Clientes**, toca **Cuentas de catering**. Marca **Solo cuentas sin volver (más de 90 días)** para ver las cuentas que dejaron de pedir.
 
-## Maintenance log as a manager
+#### Las páginas de Admin
 
-Same form the crew uses — the [staff guide](staff-guide.md#maintenance-log) covers filling it in. What is worth knowing is where the note ends up.
-
-### 1. Log a note
-
-**What you see**
-
-![The maintenance form with "Other…" chosen, an Equipment name typed and the note filled in](img/manager/37-maintenance-note-filled.png)
-
-**What to do** — Pick the equipment from the dropdown when you can. Only use **Other…** when the thing is genuinely not listed.
-
-**Worth knowing**
-
-- The dropdown holds the eight fridges plus the Oven and the Fryer. Those are the only pieces of equipment with a tile of their own.
-- **A note filed under "Other…" is saved, but it has nowhere to be read.** It does not appear on any tile, and it does not appear on the day's maintenance report either. That is why you cannot find yesterday's slicer note.
-
-### 2. Save it
-
-**What you see**
-
-![After saving: the note box cleared, no confirmation message, no note history on the page](img/manager/38-maintenance-note-saved.png)
-
-**What to do** — Tap **Save note**. The note box clearing is the only confirmation you get.
-
-**Worth knowing**
-
-- If something matters today, **say it out loud as well as logging it**. The log is a record, not an alarm.
-- To read back what was logged against a named fridge, the Oven or the Fryer, open that item's tile, or open the day's **Maintenance** report from the Reports Hub.
-
----
-
-## PM report and evaluations
-
-The end-of-shift report. Key holder and up. It is the only place the crew's ratings come from.
-
-### 1. Open the report
-
-**What you see**
-
-![PM Report showing shift activity, today's report statuses, the MVP picker and per-person evaluation cards](img/manager/39-pmreport-form.png)
-
-**What to do** — Read the shift activity at the top, then work down the crew.
-
-**Worth knowing**
-
-- The people already listed are the ones the app saw working today. Use **Select employee…** to add anyone it missed.
-- **Note (managers only)** is exactly that. The person you are writing about never sees it — not on their performance page, not anywhere.
-
-### 2. Grade the shift
-
-**What you see**
-
-![Ratings set on two crew cards, with an area to improve and a manager note filled in](img/manager/40-pmreport-evals.png)
-
-**What to do** — Name an MVP and say why, then grade each person on the four rows and **Save** their card.
-
-**Worth knowing**
-
-- **Each person's Save is its own action**, separate from the page's Submit. Saving a card again replaces what was there.
-- **Area to improve** is the half the person will read. Write it to them, not about them.
-- Grades add up on that person's card in **Team** trends as a running Great / Good / Needs work tally, alongside MVP wins and how often an area to improve was flagged. One rough shift does not define anyone; a pattern shows.
-
-### 3. Submit it
-
-**What you see**
-
-![The submitted PM report, stamped with the time and read-only](img/manager/41-pmreport-submitted.png)
-
-**What to do** — Tap **Submit PM Report** once you have graded everyone you meant to.
-
-**Worth knowing**
-
-- **Submitting notifies every person you graded.** Until you submit, nobody sees anything — their performance page only shows ratings from submitted reports.
-- **There is no reopening it.** Every field goes read-only and the MVP picker disappears. Grade first, submit last.
-
----
-
-## Cash deposit
-
-End of night, before the closing can be confirmed. Key holder and up.
-
-### 1. Open the form
-
-**What you see**
-
-![Cash Deposit with the Projected and Drawer total boxes, a tips panel and the on-shift list](img/manager/42-cash-form.png)
-
-**What to do** — Put the Toast figure in **Projected**, then count the drawer.
-
-**Worth knowing**
-
-- **Enter total** takes one number. **Count by denomination** adds them up for you — use it when the drawer is off and you want a second pair of eyes on the count.
-- **$200 stays in the register.** The app subtracts the float for you; do not subtract it yourself.
-
-### 2. Fill it in
-
-**What you see**
-
-![The form filled, with the live line reading "Deposit $845.00 · Even"](img/manager/43-cash-filled.png)
-
-**What to do** — Add the cash tips, tick who was on shift, and read the live line before you sign.
-
-**Worth knowing**
-
-- **Deposit is the drawer total minus the float. Over or short is the deposit minus the projected figure.** The live line does that sum as you type, and the server does it again when you submit — the numbers you send are never taken on trust.
-- If it is off, write down why in **Over/short note** while you still remember. That note is what somebody reads tomorrow.
-
-### 3. Sign it
-
-**What you see**
-
-![The PIN keypad shown for signing the deposit](img/manager/44-cash-sign-pin.png)
-
-**What to do** — Tap **Sign & submit deposit** and enter your PIN.
-
-**Worth knowing**
-
-- **The deposit is signed with your PIN.** Your name goes on it, so count it yourself.
-
-### 4. The filed deposit
-
-**What you see**
-
-![The signed deposit with its summary of projected, drawer, over/short, deposit and tips](img/manager/45-cash-deposited.png)
-
-**What to do** — Check the summary, then go and confirm the closing.
-
-**Worth knowing**
-
-- **The closing cannot be confirmed until a deposit is filed.** That is deliberate — the deposit is part of locking up.
-- You can correct a deposit by filing it again, and the newer one replaces it. **Once the closing is confirmed, that window shuts** and the deposit is fixed for the night.
-
----
-
-## Reports and trends
-
-Everything filed at your shop, and the shape it makes over time.
-
-### 1. The Reports Hub
-
-**What you see**
-
-![Reports Hub with the date and type filters, signal filters and today's report list](img/manager/46-reports-hub.png)
-
-**What to do** — Set the dates and the type, then **Apply**.
-
-**Worth knowing**
-
-- **Signal filters** find the days worth reading instead of all of them:
-  - **Under par** — a prep item whose total came in below its par.
-  - **Temp out of range** — a fridge reading above 41°F.
-  - **Skipped items** — a required line with nobody's name on it.
-  - **Cash over / Cash short** — a deposit that did not match the projected figure.
-- **Cash reports are visible from key holder up. The notes people wrote on checklist lines are visible from shift lead up.** A report can look emptier to a key holder than it does to you.
-
-### 2. Read a saved report
-
-**What you see**
-
-![The opening report read back with every line ticked, its actor and the temperatures inline](img/manager/47-reports-opening-detail.png)
-
-**What to do** — Open a report from the list to read the whole thing back, line by line.
-
-**Worth knowing**
-
-- Every line carries the name of whoever ticked it and the temperature or count they entered. This is the accountability record — it is what "who changed the kitchen" means.
-- On an opening, the prep rows read *"Recount"*, *"Ground truth"* and *"prep need"* so you can see where the day's numbers came from — and the note at the top says whether there was a prior closing to check against.
-
-### 3. Trends
-
-**What you see**
-
-![Trends with the Ops and Team entry cards and their snapshots](img/manager/48-reports-trends.png)
-
-**What to do** — Pick **Ops Trends** for par, temps, cash and completion over time, or **Team** for people.
-
-**Worth knowing**
-
-- Every chart runs by day, week or month, and a period with no report is drawn as a **gap, not a zero**. A flat line at nothing means nobody filed; it does not mean nothing happened.
-- Cash is only in these charts for viewers who can see cash.
-
-### 4. Team
-
-**What you see**
-
-![The Team page with the check-in banner and per-person cards](img/manager/49-reports-trends-team.png)
-
-**What to do** — Read the banner, then open anyone it names.
-
-**Worth knowing**
-
-- **Team is AGM and up.**
-- *"Needs a check-in"* is not a rating and not a warning. It fires when somebody did **none** of a kind of work their role is expected to do in the window, or when their activity fell to 60% or less of the period before. It is a prompt to go and ask, and a quiet person who is genuinely off rota will land there.
-- What counts differs by role — an employee is measured on tasks and notes, a key holder or shift lead adds finishing reports and oversight, an AGM or GM on finishing, people management, oversight and notes.
-- Their card carries the grades you gave them, their MVP wins, their streaks and their busiest day.
-
----
-
-## Admin console
-
-Business configuration: who you buy from, what you buy, what the lists say. **Admin opens at AGM.** Changes need your password — some reuse the confirmation you just gave, others ask again.
-
-### 1. The admin home
-
-**What you see**
-
-![Admin home with a "Used this week" tally and the section grid](img/manager/50-admin-home.png)
-
-**What to do** — Pick a section. The **Used this week** tally at the top is a quick read of whether the shop is actually using the app.
-
-**Worth knowing**
-
-- **There is no Users tile, and there is no way to add a person from here.** User management starts at **Manager of Operations**. A GM who types the address in is returned to Admin with a line explaining why — it is not a bug, it is not a GM page. Ask the Manager of Operations or the owner to add, deactivate or re-role somebody.
-- **Checklist Templates and the Par Levels placeholder are GM and up.** Every other section on this page opens at AGM.
-- Counts on the tiles — *"SKUs — 160 not ready"*, *"Items — 46 not ready"* — are how much setup is still missing, not how much is broken.
-
-### 2. Checklist templates
-
-**What you see**
-
-![The Opening template with its version tab, item count and a List check status button](img/manager/53-admin-checklist-templates-opening.png)
-
-**What to do** — Pick the list you want to change, and use **Preview (what staff see)** before you save anything.
-
-**Worth knowing**
-
-- *"Changes apply going forward — past reports stay as submitted."* Editing a list never rewrites history.
-- Prep lists are shown here **read-only** — they are edited in the prep editor.
-
-### 3. A checklist line
-
-**What you see**
-
-![A checklist item expanded showing Label, role, requirement, connections and the Spanish translation](img/manager/54-admin-checklist-item-open.png)
-
-**What to do** — Tap **Details** on a line to open it. Read before you change.
-
-**Worth knowing**
-
-- **Who can do it?** sets the lowest role that may tick that line. People below it still see the line, locked and marked with the role it needs.
-- **When is this required?** has three settings: **Optional**, **Must complete — or explain**, and **Hard gate — can't submit until done**. A hard gate stops the whole list being confirmed, so use it sparingly.
-- **Connections** ticks the line automatically when a named report is finished.
-- Every line has a **Spanish** field. Fill it in when you add a line, or half your crew reads English.
-
-### 4. Par levels
-
-**What you see**
-
-![The Par Levels page reading "Coming in Phase 5"](img/manager/55-admin-pars.png)
-
-**What to do** — Nothing. Coming soon.
-
-**Worth knowing**
-
-- Pars are set today on each item in the **SKU** catalog. A GM can also accept a suggested par on the ordering walk; the app never changes a par on its own.
-
-### 5. Vendors
-
-**What you see**
-
-![The vendor list with status, categories, contacts and order/delivery days](img/manager/56-admin-vendors.png)
-
-**What to do** — Read a vendor's order and delivery days here when you are planning a walk.
-
-**Worth knowing**
-
-- The order and delivery days on each row are what the ordering walk uses to decide whose cutoff is today.
-- A vendor is never deleted — it is switched off. Its history stays.
-
-### 6. A vendor record
-
-**What you see**
-
-![The Baldor record with details, order minimum and category tags](img/manager/57-admin-vendor-baldor.png)
-
-**What to do** — Update contacts, categories and the ordering schedule as they change.
-
-**Worth knowing**
-
-- Some fields carry the note *"Only a Managing Operator can edit these fields"* — payment terms, account number, order minimum. You can read them; you cannot change them.
-- **Order minimum is a note in the vendor's own words.** Nothing checks an order against it.
-
-### 7. The SKU catalog
-
-**What you see**
-
-![The SKU Catalog with category filters, a "No pack info" filter and per-SKU readiness](img/manager/58-admin-skus.png)
-
-![SKU data readiness header with blocked and degraded counts for each shop](img/manager/58b-admin-skus-readiness.png)
-
-![An open SKU drawer showing the data errands for that item](img/manager/58c-admin-skus-readiness-drawer.png)
-
-**What to do** — Read **SKU data readiness for tomorrow**, then use **Needs an errand** to find the items that need attention and open a row to see what to do. **No pack info** still narrows the list to missing pack information.
-
-**Worth knowing**
-
-- **ORDER · COUNT · COST** show whether each job has the data it needs for that SKU: **usable** needs nothing, **degraded** needs attention, **blocked** is missing something required. The three can differ for one SKU. Pack sizes are edited here.
-- The header gives blocked and degraded counts for each job at each shop you can see. The row chips show the worst state across those shops; the drawer explains any differences. **Same at both shops** means the results agree.
-- The drawer gives you the errand in plain words: *"Enter the invoice price in this SKU's order unit."*, *"Read the package label and enter the case → piece chain."*, *"Tare and weigh the standard portion."* or *"Count the shelf and enter the standing par."* Follow the errand for that item rather than guessing from a general readiness badge.
-- **Not included in this shop's daily operations.** means the SKU is outside the set being checked for that shop, not broken. If readiness cannot load, the page says so; refresh rather than treating it as no errands.
-- Prices come from invoices, entered at receiving or with **Record price** in the SKU's drawer — always the price of one order unit. The latest invoice date wins; on the same date, the latest entry. The September 2026 purchase-history import filled in prices and pack sizes for about 20 items and says so on each; do not type those again.
-
-### 8. Items
-
-**What you see**
-
-![The Items Catalog grouped by section, each item tagged and showing an issue count](img/manager/59-admin-items.png)
-
-**What to do** — Read it to see what the shop makes, and what each thing is built from.
-
-**Worth knowing**
-
-- Items are the things you **prep and sell**; SKUs are the things you **buy**. Recipes join the two.
-- **Issues** on an item means its recipe cannot be fully priced or converted yet — usually a SKU underneath it is missing a weight or a price.
-
-### 9. Weights & Trim
-
-**What you see**
-
-![Weights & Trim with the believed/unverified tally and a "Suggested next" weighing list](img/manager/60-admin-weights.png)
-
-**What to do** — Open it when you have a scale and a spare ten minutes. **Weigh this** records one item.
-
-**Worth knowing**
-
-- *"Open it when you have a scale — nothing here is due."* This list suggests; it never nags, and skipping it costs nothing today.
-- The list is ranked by what the weight is worth: an item you use a lot, never weighed, sits at the top. **Never measured** means the app is working off an estimate — which is what makes a cost number soft.
-
----
-
-## Settings and logging out
-
-### 1. Settings
-
-**What you see**
-
-![Settings with the Language choice and a link to the Profile page](img/manager/61-settings.png)
-
-**What to do** — Pick **English** or **Español**. It switches straight away.
-
-**Worth knowing**
-
-- The choice is saved to your account, so it follows you to any tablet.
-- Notification preferences are not built yet. Language is the only setting here today.
-
-### 2. Log out
-
-**What you see**
-
-![The dashboard scrolled to the Log out button](img/manager/62-dashboard-before-logout.png)
-
-**What to do** — Scroll to the bottom of the dashboard and tap **Log out**.
-
-**Worth knowing**
-
-- The app signs you out on its own after about ten minutes of no touching, and warns you first.
-- Log out anyway, every time you walk away. Anything tapped while you are signed in is recorded under your name — including a cash deposit and a closing confirmation.
-- **Log out** ends only this sign-in. Deactivation, a role change, a password reset or setting your first password ends your old sign-ins on every device at once. A deactivated account has to be reactivated before you can sign in; otherwise you just sign in again, and setting your first password does that for you on the device you used.
-
-### 3. You are out
-
-**What you see**
-
-![Back at the "Where are you?" login screen](img/manager/63-logged-out.png)
-
-**What to do** — Hand the tablet over. It is ready for the next person.
-
-**Worth knowing**
-
-- An opening report you had open but never submitted **is not saved**. If you are mid-walk, finish it before you go.
+Los subgerentes y roles más altos pueden abrir **Admin**. Toca **Admin** en el menú y luego una tarjeta. Los subgerentes ven **Proveedores**, **SKUs**, **Productos**, **Recetas**, **Artículos**, **Costeo del Menú**, **Pesos y merma** y **Catering**. Los gerentes generales también ven **Estaciones**, **Empleados de Toast**, **Clientes** y **Plantillas de Listas**. Un Gerente de Operaciones también ve **Gestión de Usuarios** y **Categorías**. En **Estaciones**, un gerente general pone los horarios de las estaciones de su tienda y la app le pide su contraseña (**Confirma tu contraseña**); esos horarios son solo una guía y no cierran una estación. **Usado esta semana** muestra cuánto se usó la app.

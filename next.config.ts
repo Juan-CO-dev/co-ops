@@ -28,7 +28,8 @@ const nextConfig: NextConfig = {
   // config true to what each function carries.
   //
   // MEASURED, not assumed (production build, 2026-09-15): exactly these two
-  // .nft.json manifests carry docs/guides — 146 PNGs and 11 Markdown files —
+  // .nft.json manifests carry docs/guides — 140 PNGs and 3 guide Markdown files (counts
+  // updated for guides v2 on 2026-10-13; the 09-15 measurement had 146 + 11) —
   // and the other 283 routes carry none. The patterns resolve a little wider
   // than they read (the walk scripts beside the guides come along, ~40 KB);
   // that is Next's globbing, and it is cheap enough to leave alone.

@@ -1,312 +1,362 @@
-# Staff walk — step log (Maya Torres, 2026-09-08)
+# Staff walk — step log (Maya Torres, 2026-10-14)
 
 ## Step 01 — where-are-you
 - URL: /
 - Persona / viewport: Maya Torres, Employee / 390x844
-- Action: Opened http://localhost:3100
-- Saw: Heading "Compliments Only" / "Operations", a "Manager login →" button top right, and "Where are you?" with two location tiles: "MEP / Capitol Hill" and "EM / P Street"
+- Action: `start phone walker`, then `look` on the login page.
+- Saw: Top-right link "Manager login →". Heading "Where are you?". Two tiles with short codes: "MEP / Capitol Hill" and "EM / P Street".
 - Shot: img/staff/01-where-are-you.png
-- Confused:
-- Bug?:
 
 ## Step 02 — whats-your-role
 - URL: /
 - Persona / viewport: Maya Torres, Employee / 390x844
-- Action: Clicked the "EM / P Street" tile
-- Saw: "What's your role?" with breadcrumb "EM · P Street" and eight role tiles: "GM / General Manager", "AGM / Assistant General Manager", "CTR / Catering Manager", "SL / Shift Lead", "KH / Key Holder", "TR / Trainer", "EMP / Employee", "TRN / Trainee"; a "← Back" button
+- Action: tapped the P Street tile.
+- Saw: Heading "What's your role?", sub-line "EM · P STREET". Eight tiles with codes: GM General Manager, AGM Assistant General Manager, CTR Catering Manager, SL Shift Lead, KH Key Holder, TR Trainer, EMP Employee, TRN Trainee. "← Back" below the tiles (just off the bottom of the photo).
 - Shot: img/staff/02-whats-your-role.png
-- Confused:
-- Bug?:
 
 ## Step 03 — who-are-you
 - URL: /
 - Persona / viewport: Maya Torres, Employee / 390x844
-- Action: Clicked the "EMP / Employee" tile
-- Saw: "Who are you?" with breadcrumb "EM · P Street · Employee" and two user tiles: "DC Deshawn Carter" and "MT Maya Torres"; a "← Back" button
+- Action: tapped the Employee tile.
+- Saw: Heading "Who are you?", sub-line "EM · P STREET · EMPLOYEE". Two tiles: "DC Deshawn Carter" and "MT Maya Torres". "← Back".
 - Shot: img/staff/03-who-are-you.png
-- Confused:
-- Bug?:
 
 ## Step 04 — pin-keypad
 - URL: /
 - Persona / viewport: Maya Torres, Employee / 390x844
-- Action: Clicked the "MT Maya Torres" tile
-- Saw: "Employee" label, heading "Maya Torres", "Enter your 4-digit PIN", a PIN entry indicator reading "PIN entry: 0 of 4 digits entered", a numeric keypad 0-9 plus "Clear", and "← Back" / "Use system keyboard" links
+- Action: tapped the Maya Torres tile, then the digit 1 four times (it signed in on the fourth digit; no submit button).
+- Saw: Badge "EMPLOYEE", name "Maya Torres", "Enter your 4-digit PIN", four empty dots, keypad 1-9 and 0, "Clear" (left of 0), "← Back" and "Use system keyboard" at the bottom. No submit button.
 - Shot: img/staff/04-pin-keypad.png
-- Confused:
-- Bug?:
+- Confused: in the walker's control list the digit 1 is control [2] (control [1] is "Manager login →"), so `tap 1` would hit the wrong thing.
 
 ## Step 05 — dashboard
-- URL: /dashboard
+- URL: /dashboard?loc=d2cced11-b167-49fa-bab6-86ec9bf4ff09
 - Persona / viewport: Maya Torres, Employee / 390x844
-- Action: Pressed "1" four times on the PIN keypad — the fourth digit submitted automatically, no separate submit button
-- Saw: Header "Compliments Only" / "Operations"; "Dashboard" label and heading "Hi, Maya Torres."; an "Explore" nav list (Reports Hub, Trends, Announcements, Tip Pool, AI Insights, Rollups, Deep Cleaning, Feedback, LTO, Written Reports, Catering, Training, Recipes, Comms, Profile, Settings, My Performance); a badge "Employee" and a "Notifications, 2 unread" bell; "EM · P Street"; "Today's operations at P Street" showing "Closing checklist — Not started" with a "Start closing" link; "Reports" showing "Opening Report — Not started today" with "Open / continue"; "Trends" showing "Under / Over Par 0", "Fridge Temp Flags 0", "Checklist Completion 87%"; a "Maintenance" link; a "Log out" button
+- Action: signed in with PIN 1111; waited for "Loading…" to clear.
+- Saw: Round "M" user button top right, sitting in the page above the yellow "COMPLIMENTS ONLY / OPERATIONS" banner (not over the Explore chips). "DASHBOARD", "Hi, Maya Torres.", "EXPLORE" chips: Mid-Shift Pulse, Reports Hub, Assignments, Written Reports, Maintenance, Production, Training, Profile, Settings, My Performance. Badge "EMPLOYEE", bell "Notifications, 25 unread", shop chip "EM · P STREET", top of "My shift" (Tasks "3 of 8 assigned", My station "None yet").
 - Shot: img/staff/05-dashboard.png
-- Confused: The PIN keypad has no visible "submit" — it just fires on the 4th tap, easy to not notice it already logged in
-- Bug?:
 
 ## Step 06 — dashboard-full
+- URL: /dashboard?loc=d2cced11-b167-49fa-bab6-86ec9bf4ff09
+- Persona / viewport: Maya Torres, Employee / 390x844
+- Action: full-page shot of the dashboard.
+- Saw: top to bottom: "M" user button; banner; "DASHBOARD / Hi, Maya Torres."; EXPLORE chips as above (10, includes "Production"); badge "EMPLOYEE"; bell 25; chip "EM · P STREET"; "My shift" with rows "Tasks — 3 of 8 assigned", "My station — None yet", "Team today — 1 of 7 assigned" and a "VIEW MY DAY" button; "TODAY'S OPERATIONS" card "EM · P Street", "Wed, Oct 14", "CLOSING CHECKLIST — Not started", "START CLOSING"; "REPORTS" section with tiles "OPENING REPORT — Not started today / OPEN / CONTINUE", "AM PREP — Not yet started / Assigned by Priya Shah / START AM PREP", "MID-DAY PREP — No mid-day preps started today. / + NEW MID-DAY PREP"; "LOG OUT" at the bottom. (Tile order is Opening, AM Prep, Mid-day.)
+- Shot: img/staff/06-dashboard-full.png
+
+## Step 07 — opening-verify
+- URL: /operations/opening?location=d2cced11-b167-49fa-bab6-86ec9bf4ff09
+- Persona / viewport: Maya Torres, Employee / 390x844
+- Action: Dashboard → Reports → "OPEN / CONTINUE" on the Opening Report tile (it went straight to /operations/opening); waited for "Loading…" to clear.
+- Saw: "‹ DASHBOARD", "OPENING REPORT", "Phase 1 — Verification", "Verify last night's closing matches reality. Tap each station once you've checked it; add a comment if anything looks off." Tabs "PHASE 1 · VERIFY" and "PHASE 2 (LOCKED)". First card "CRUNCHY BOI STATION — 0 of 4 done" with the "VERIFIED" button. Lines: "Station appears clean as reported", "Crunchy Boi Fridge temp (≤41°F)" (small box showing "—"), "Sauces topped off & dated correctly", "Station ready for service (containers placed, prep ready)", each with "ADD COMMENT". Bottom bar: "0 of 44 verified · 0 of 8 temp readings entered", "44 items not yet verified", "SHOW ME WHAT NEEDS FIXING", disabled "SUBMIT OPENING". Station cards in order: Crunchy Boi, 3rd Party, Walk Ins, Prep Fridge, Prep Area, Back Line Open, Expo, Front of House Open, Manager Open, Walk-Out Verification; prep sections Veg, Cooks, Sides, Sauces, Slicing (each "VERIFY SECTION" greyed with "Recount items without closer data first").
+- Shot: img/staff/07-opening-verify.png
+
+## Step 08 — opening-station-verified
+- URL: /operations/opening?location=d2cced11-b167-49fa-bab6-86ec9bf4ff09
+- Persona / viewport: Maya Torres, Employee / 390x844
+- Action: tapped "VERIFIED" on the Crunchy Boi Station card.
+- Saw: Card now reads "3 of 4 done", the button is filled "✓ VERIFIED", three lines ticked (the fridge temp line ticked too, box still empty). Bottom bar: "4 of 44 verified · 0 of 8 temp readings entered", "40 items not yet verified", "Saved a moment ago".
+- Shot: img/staff/08-opening-station-verified.png
+
+## Step 09 — opening-temperature
+- URL: /operations/opening?location=d2cced11-b167-49fa-bab6-86ec9bf4ff09
+- Persona / viewport: Maya Torres, Employee / 390x844
+- Action: typed 36 in the Crunchy Boi Fridge temp box, tabbed out.
+- Saw: Card reads "4 of 4 done" with a green tick by the station name; box shows 36. Bottom bar "4 of 44 verified · 1 of 8 temp readings entered", "Saved a moment ago".
+- Shot: img/staff/09-opening-temperature.png
+
+## Step 10 — opening-section-verify
+- URL: /operations/opening?location=d2cced11-b167-49fa-bab6-86ec9bf4ff09
+- Persona / viewport: Maya Torres, Employee / 390x844
+- Action: opened the Veg section; "VERIFY SECTION" was greyed. The Veg rows showed no "Closer count" so I typed 2 in each of the six red "OPENER RECOUNT" boxes (Iceberg, Onion, Basil, Radish, Cucumber, Tomato); the "Recount items without closer data first" hint went away and the button became active. Tapped "VERIFY SECTION".
+- Saw: Veg card "✓ VEG — 6 of 6 done" with the filled "✓ VERIFIED" button; "OPENER RECOUNT" boxes showing 2. The red borders went away once filled (the box edge turns gold/cream); nothing stayed red.
+- Shot: img/staff/10-opening-section-verify.png
+- Note/comment fields: every line has an "ADD COMMENT" link (no placeholder visible until tapped); the Opener recount boxes show "—" when empty.
+
+## Step 11 — opening-ready
+- URL: /operations/opening?location=d2cced11-b167-49fa-bab6-86ec9bf4ff09
+- Persona / viewport: Maya Torres, Employee / 390x844
+- Action: tapped "Verified" on every other station, opened each card and typed the temps 37, 38, 35, 36, 37, 38, 36 (3rd-Party Fridge 37, Walk-In Fridge 38, Sauce Fridge 35, 3-Door Fridge 36, Back-Line Drinks Fridge 37, Deli Display Fridge 38, FOH Drinks Fridge 36); typed 2 in every opener recount box of Cooks, Sides, Sauces and Slicing and verified each section. A pink box "NO PRIOR CLOSING DATA DETECTED — 38 item(s) had no closing count from last night — morning recounts were entered. Confirm the reason:" asked for a reason; chose "Closing was missed / I don't know" (other choice: "Location was closed (planned)"). Then "Attestation: Closing was missed / I don't know" showed.
+- Saw: Bottom bar "44 of 44 verified · 8 of 8 temp readings entered", "Submit ready", "Saved a moment ago", enabled yellow "SUBMIT OPENING". Footer hint while not ready, in order: "44 items not yet verified" → "Verify all sections before submitting" → "Pick a reason in the pink “No prior closing data detected” box" → "Submit ready". "SHOW ME WHAT NEEDS FIXING" link shows only while not ready.
+- Shot: img/staff/11-opening-ready.png
+- Confused: the selected radio shows a dark focus ring in this photo (it is the radio just tapped).
+
+## Step 12 — opening-submitted
+- URL: /operations/opening?location=d2cced11-b167-49fa-bab6-86ec9bf4ff09
+- Persona / viewport: Maya Torres, Employee / 390x844
+- Action: tapped "SUBMIT OPENING"; the Phase 2 tab opened by itself.
+- Saw: Page title now reads "Phase 2 — Prep Entry" (not "Phase 1 — Verification"), sub-line "Type what you prepped for each item. Each row saves when you leave its box." Tabs "PHASE 1 · VERIFY" and "PHASE 2 — PREP ENTRY", link "SHOW ME WHAT NEEDS FIXING". VEG card "0 of 6 done" with a green "✓ VERIFIED" pill. First row "Iceberg — Par: 7 × 1/3 Pan", "CLOSER COUNT: 2 × 1/3 Pan", "PREP NEED: 5 × 1/3 Pan", "OPENER PREPPED" box (quantities are written "5 × 1/3 Pan"). Bottom bar: "44 of 44 verified · 8 of 8 temp readings entered · 0 of 38 prep entries", "38 prep items not yet saved", greyed "FINALIZE PHASE 2 (38 OUTSTANDING)".
+- Shot: img/staff/12-opening-submitted.png
+
+## Step 13 — opening-prep-entry
+- URL: /operations/opening?location=d2cced11-b167-49fa-bab6-86ec9bf4ff09
+- Persona / viewport: Maya Torres, Employee / 390x844
+- Action: scrolled down a little.
+- Saw: rows Onion (Par: 8 Quart, closer 2 Quart, prep need 6 Quart) and Basil (Par: 4 Quart, closer 2 Quart, prep need 2 Quart), each with an empty "OPENER PREPPED" box, "Uses: 0 Onion (red) · ~0 oz" style line and "Not saved". Tomato row (further down) says "No par set — type what you made" and "CLOSER COUNT: 2".
+- Shot: img/staff/13-opening-prep-entry.png
+
+## Step 14 — opening-prep-filled
+- URL: /operations/opening?location=d2cced11-b167-49fa-bab6-86ec9bf4ff09
+- Persona / viewport: Maya Torres, Employee / 390x844
+- Action: typed 5 (Iceberg), 6 (Onion), 2 (Basil) in "OPENER PREPPED", tapping the "PHASE 2 — PREP ENTRY" tab after each so the box lost focus and the row saved.
+- Saw: Each of the three rows shows "At par" and "Saved by Maya Torres at 10:17 PM" with an "UNDO" button. VEG card "3 of 6 done". Bottom bar "3 of 38 prep entries", "35 prep items not yet saved", "FINALIZE PHASE 2 (35 OUTSTANDING)" (greyed; not tapped). No blue ring on any box or button in the photo.
+- Shot: img/staff/14-opening-prep-filled.png
+- Bug?: the Iceberg row's "Uses:" line reads "Uses: 1.02 Iceberg · ~685 oz" after prepping 5 × 1/3 Pan (~685 oz looks very large for about one head of iceberg; Onion reads "0 Onion (red) · ~2 oz" for 6 quarts).
+
+## Step 15 — my-shift
 - URL: /dashboard
 - Persona / viewport: Maya Torres, Employee / 390x844
-- Action: No action — full-page capture of the same dashboard, top to bottom
-- Saw: Full stack top to bottom — header, "Hi, Maya Torres." greeting, the 17-item "Explore" nav (Reports Hub, Trends, Announcements, Tip Pool, AI Insights, Rollups, Deep Cleaning, Feedback, LTO, Written Reports, Catering, Training, Recipes, Comms, Profile, Settings, My Performance), "Today's operations at P Street" (closing checklist card), "Reports" (Opening Report card), "Trends" (three stat tiles), "Maintenance" link, "Log out" button at the very bottom
-- Shot: img/staff/06-dashboard-full.png
-- Confused: As an employee I would only actually tap: Feedback, My Performance, Profile, Settings, Deep Cleaning, Training, Recipes, Comms, Announcements, Tip Pool, and the checklist links under "Today's operations" — Reports Hub, Trends, Rollups, AI Insights, Written Reports, Catering, and LTO read like manager tools mixed into the same list with no visual separation
-- Bug?:
+- Action: Back to the dashboard (tapped "Back to Dashboard" on the opening page), scrolled so the whole My shift board is in the picture, then tapped the "Team today" row open and closed so no button holds a focus ring.
+- Saw: "EMPLOYEE" badge, bell "26 unread", "EM · P STREET" chip; board "My shift" with rows "Tasks — 3 of 8 assigned", "My station — None yet", "Team today — 1 of 7 assigned" and the "VIEW MY DAY" button; below it "TODAY'S OPERATIONS" card. The Opening Report tile now reads "In progress".
+- Shot: img/staff/15-my-shift.png
 
-## Step 07 — team-profiles
+## Step 16 — board-tasks
+- URL: /assignments?location=d2cced11-b167-49fa-bab6-86ec9bf4ff09
+- Persona / viewport: Maya Torres, Employee / 390x844
+- Action: tapped "VIEW MY DAY"; on the Assignments page ("Today's team") collapsed Stations and opened Tasks.
+- Saw: "Dashboard" link, "Assignments", "Wed, Oct 14", chip "P Street", "Today's team", a "STATIONS" button, "Stations — 0 of 12 assigned", "Tasks — 3 of 8 assigned" open. Tasks, in order: "CLOSING CHECKLIST — Everyone on shift · no assignment needed" (link), "AM PREP — Assigned to Maya Torres by Priya Shah · 10:11 PM" (link), "MID-DAY PREP — Assigned to Maya Torres by Priya Shah · 10:11 PM" (link), "Cash report — Unassigned" (plain text), "OPENING PREP — Assigned to Maya Torres by Priya Shah · 10:11 PM" (link), "Receiving — Unassigned", "Counts — Unassigned", "Ordering — Unassigned", "PM report — Unassigned" (plain text). Also a "Who has what — 1 of 7 assigned" row. Only my three tasks plus Closing checklist are links; the others are not tappable for me.
+- Shot: img/staff/16-board-tasks.png
+- Confused: the task is called "OPENING PREP" here, the dashboard tile is "OPENING REPORT".
+
+## Step 17 — board-stations
+- URL: /assignments?location=d2cced11-b167-49fa-bab6-86ec9bf4ff09
+- Persona / viewport: Maya Torres, Employee / 390x844
+- Action: opened the Stations row.
+- Saw: "Stations — 0 of 12 assigned". Groups and positions: Crunchy Boi Station 0 of 1 (Crunchy Boi Station · Unassigned); 3rd Party Station 0 of 1 (3rd Party Station · Unassigned); Walk Ins Station 0 of 2 (Walk-ins · Unassigned — "Dedicated to walk-in orders; helps with online orders when there are no subs to make"; Walk-ins / Online · Unassigned — "Half walk-ins, half online orders; leans toward walk-ins"); Prep Fridge 0 of 1; Shut Down Back Line 0 of 1; Expo Station 0 of 2 (Expeditor — "Expedites the orders"; Register & Delivery — "Runs the cash register and hands out delivery orders"); Clean front of house 0 of 1; Prep Area 0 of 1; Closing Manager 0 of 1; Walk-Out Verification 0 of 1. All "Unassigned".
+- Shot: img/staff/17-board-stations.png
+
+## Step 18 — claim-station
+- URL: /dashboard?loc=d2cced11-b167-49fa-bab6-86ec9bf4ff09
+- Persona / viewport: Maya Torres, Employee / 390x844
+- Action: from the dashboard tapped the "My station" row on My shift to open it.
+- Saw: "My station — None yet" open: green "On shift · Active in CO-OPS", buttons "START BREAK" and "END MY SHIFT", heading "No station", label "Station" with a drop-down showing "No station", yellow "CLAIM / CHANGE STATION", then "Tasks" with links "AM PREP / MID-DAY PREP / OPENING PREP" (each "Assigned by Priya Shah · 10:11 PM"). Drop-down choices: No station; Crunchy Boi Station · Crunchy Boi Station · fill first; 3rd Party Station · 3rd Party Station · fill first; Walk Ins Station · Walk-ins · fill first; Walk Ins Station · Walk-ins / Online; Prep Fridge · Prep Fridge · fill first; Shut Down Back Line · Shut Down Back Line · fill first; Expo Station · Expeditor · fill first; Expo Station · Register & Delivery; Clean front of house · Clean front of house · fill first; Prep Area · Prep Area · fill first; Closing Manager · Closing Manager · fill first; Walk-Out Verification · Walk-Out Verification · fill first.
+- Shot: img/staff/18-claim-station.png
+- Confused: "START BREAK" and "END MY SHIFT" already show before any station is claimed.
+
+## Step 19 — station-claimed
+- URL: /dashboard?loc=d2cced11-b167-49fa-bab6-86ec9bf4ff09
+- Persona / viewport: Maya Torres, Employee / 390x844
+- Action: picked "Crunchy Boi Station · Crunchy Boi Station · fill first" (the first open position), tapped "CLAIM / CHANGE STATION". The app's "Confirm change" box appeared: "Reason for change" drop-down (No reason (optional), Coverage change, Person left or unavailable, Skill fit, Correction, Other), "Note (optional)" text box, "CONFIRM CHANGE" and "CANCEL". Left the reason on "No reason (optional)" and tapped "CONFIRM CHANGE".
+- Saw: the row now reads "✓ My station — Yours: Crunchy Boi Station"; inside it "Crunchy Boi Station · Crunchy Bo…" and "Claimed · 10:19 PM"; the drop-down now lists that position as "taken by Maya"; "START BREAK" and "END MY SHIFT" still show. The "My station: Crunchy Boi Station" card is a link under Reports (above "OPENING REPORT"), too far down to fit in the same screen. The My shift board has no "stations count" line of its own; the only counts on it are Tasks "3 of 8 assigned" and Team today "1 of 7 assigned".
+- Shot: img/staff/19-station-claimed.png
+
+## Step 20 — closing-checklist
+- URL: /operations/closing?location=d2cced11-b167-49fa-bab6-86ec9bf4ff09
+- Persona / viewport: Maya Torres, Employee / 390x844
+- Action: Dashboard → "START CLOSING" on Today's operations.
+- Saw: "‹ DASHBOARD", "CLOSING CHECKLIST", "EM · P Street", "PROGRESS 0/61" with a thin bar. My station's section "CRUNCHY BOI STATION — 0 of 6 done" is open with lines: Restock, Wipe inside & outside, Wipe tops of sauce bottles, Combine & check dates on sauces, Pull out station and sweep, "Crunchy Boi Fridge temp (≤41°F)". Other sections (collapsed): 3rd Party Station (6), Walk Ins Station (6), Prep Fridge (6), Shut Down Back Line (4), Expo Station (5), Clean Front of House (7), Prep Area (9), Closing Manager (7), Walk-Out Verification (5).
+- Shot: img/staff/20-closing-checklist.png
+
+## Step 22 — closing-ticked
+- URL: /operations/closing?location=d2cced11-b167-49fa-bab6-86ec9bf4ff09
+- Persona / viewport: Maya Torres, Employee / 390x844
+- Action: tapped "Restock", waited for it to save (progress 1/61), then tapped "Wipe inside & outside" once and waited (2/61).
+- Saw: Both lines ticked, each with "UNDO", "you · 10:20 PM" and an "Add note" link. "2 of 6 done", "PROGRESS 2/61".
+- Shot: img/staff/22-closing-ticked.png
+
+## Step 22b — closing-temp-line
+- URL: /operations/closing?location=d2cced11-b167-49fa-bab6-86ec9bf4ff09
+- Persona / viewport: Maya Torres, Employee / 390x844
+- Action: tapped the "Crunchy Boi Fridge temp (≤41°F)" line; a box opened. Typed 38 in the temp box; scrolled so the box is in view and waited for the page to settle; tapped "SAVE".
+- Saw: Box labels "TEMP (°F)" (text box placeholder "e.g. 38"), "NOTES (OPTIONAL)" (box placeholder "Anything noteworthy?"), buttons "SAVE" and "Cancel". The label reads "Temp (°F)", not "Count". The Progress bar sits at the top of the screen. After "SAVE": the line is ticked with "UNDO" and "38° · you · 10:20 PM"; progress 3/61, "3 of 6 done".
+- Shot: img/staff/22b-closing-temp-line.png
+- Confused: the line's own name is half hidden behind the sticky Progress bar at the top of the photo.
+
+## Step 23 — closing-note
+- URL: /operations/closing?location=d2cced11-b167-49fa-bab6-86ec9bf4ff09
+- Persona / viewport: Maya Torres, Employee / 390x844
+- Action: on "Restock" tapped "Add note" (a note box opened, placeholder "Anything noteworthy?", buttons "SAVE NOTE" and "Cancel"), typed "Out of lids — told the shift lead", tapped "SAVE NOTE".
+- Saw: under Restock: "you · 10:20 PM", the italic note "Out of lids — told the shift lead" and an "Edit note" link.
+- Shot: img/staff/23-closing-note.png
+
+## Step 24 — closing-full
+- URL: /operations/closing?location=d2cced11-b167-49fa-bab6-86ec9bf4ff09
+- Persona / viewport: Maya Torres, Employee / 390x844
+- Action: full-page shot after `look` showed no "Loading".
+- Saw: Whole page top to bottom: Progress "3/61" at the top (not in the middle), the open Crunchy Boi Station section with Restock (note), Wipe inside & outside, three open lines and the 38° temp line, then the nine collapsed sections, and at the bottom an orange box "Tonight’s AM prep count isn’t in yet. The closer does it before lock-up." There is no button at the bottom of the page, no line marked "awaiting higher role", and no report line other than that AM prep box.
+- Shot: img/staff/24-closing-full.png
+- Confused: a faint colour seam crosses the page background about a third of the way down (the page gradient only covers the first screen height); nothing is drawn over the content.
+
+## Step 25 — pulse
+- URL: /mid-shift?location=d2cced11-b167-49fa-bab6-86ec9bf4ff09
+- Persona / viewport: Maya Torres, Employee / 390x844
+- Action: Dashboard → Explore → "Mid-Shift Pulse".
+- Saw: "‹ DASHBOARD", "Mid-shift Pulse", "EM · P Street", "Updated 10:21 PM", "Refreshes every 60 s". Card "Needs attention — as of 10:21 PM" with "See more" and a red "NEEDS ACTION" tag; items in order: "Needs action: Mid-day prep is late" (OPEN), "Needs action: Opening prep is late" (OPEN) — both red, nothing else. Card "Live shop floor — as of 10:21 PM", "See more", "Tap a station for details.", "MAP VIEW" button, a map picture with station name labels.
+- Shot: img/staff/25-pulse.png
+- Bug?: in the Live shop floor map the station labels overlap each other and the red/grey floor shapes look jumbled (labels like "Walk-Out Verification", "Closing Manager", "Prep Area" stacked on top of one another).
+
+## Step 26 — pulse-full
+- URL: /mid-shift?location=d2cced11-b167-49fa-bab6-86ec9bf4ff09
+- Persona / viewport: Maya Torres, Employee / 390x844
+- Action: full-page shot.
+- Saw: Section headings in order: "Needs attention", "Live shop floor" (legend "Green covered · amber short, closing soon or past its close time · red uncovered · grey closed"), "Stations & tasks" ("1 covered · 0 short · 0 closing soon · 0 to close now · 9 uncovered · 0 closed", "Tasks: 0 done · 3 left", "MY SHIFT — Crunchy Boi Station · Crunchy Boi Station" with AM prep / Mid-day prep / Opening prep each "OPEN", then "Crunchy Boi Station · Maya COVERED" and 3rd Party Station, Walk Ins Station, Prep Fridge, Shut Down Back Line, Expo Station each "UNCOVERED"), "Catering" ("DUE TODAY — No catering due today.", "Tomorrow: no catering booked", "Prep: AM Not started · mid-day Not started", "Timing only: names and details are on the catering board for managers."), "Food safety" ("All fridges checked and in range." / "8 in range · 0 out of range · 0 unchecked"), "Handoff" ("Reports: 0 done · 5 left" with tags OPENING, AM PREP, MID-DAY PREP, CASH DEPOSIT, CLOSING; "No handoff notes for today."). Every card has "See more". No "Not available for your role." card. No fridge reminder text (fridges were all in range).
+- Shot: img/staff/26-pulse-full.png
+
+## Step 27 — pulse-section
+- URL: /mid-shift/stations?location=d2cced11-b167-49fa-bab6-86ec9bf4ff09
+- Persona / viewport: Maya Torres, Employee / 390x844
+- Action: tapped "See more" on the "Stations & tasks" card.
+- Saw: "‹ PULSE", "Stations & tasks — as of 10:22 PM", the same counts, "MY SHIFT" block with three OPEN tasks, then every station with COVERED / UNCOVERED (Crunchy Boi Station · Maya COVERED; the other nine UNCOVERED), and further down headings "Stations" and "Closing checklist".
+- Shot: img/staff/27-pulse-section.png
+
+## Step 28 — maintenance
+- URL: /maintenance?location=d2cced11-b167-49fa-bab6-86ec9bf4ff09
+- Persona / viewport: Maya Torres, Employee / 390x844
+- Action: (retake, fresh `walk-staff` session after the old test notes were deleted) logged in as Maya, Dashboard → Explore → "Maintenance".
+- Saw: "‹ DASHBOARD", "Maintenance Log", "FRIDGE TEMPS" with one card per fridge, each a link with a status word and a small line chart: Walk-In Fridge OK 38°F, 3-Door Fridge OK 36°F, Sauce Fridge OK 35°F, Deli Display Fridge OK 38°F, Crunchy Boi Fridge OK 38°F, FOH Drinks Fridge OK 36°F, Back-Line Drinks Fridge OK 37°F, 3rd-Party Fridge OK 37°F. No "Out of range" or "No reading today". Then "EQUIPMENT" (Oven — "No issues logged"; Fryer — "Last note: sim-seed 2026-10-07: Oil changed early, smelled burnt. (Sat, Sep 12)"), then "LOG A MAINTENANCE NOTE". There is no "OTHER EQUIPMENT NOTES" section now and no "Prep fridge" notes.
+- Shot: img/staff/28-maintenance.png
+
+## Step 29 — maintenance-note
+- URL: /maintenance?location=d2cced11-b167-49fa-bab6-86ec9bf4ff09
+- Persona / viewport: Maya Torres, Employee / 390x844
+- Action: (retake per updated script) in "LOG A MAINTENANCE NOTE": "Equipment" drop-down set to "Sauce Fridge" (choices: Walk-In Fridge, 3-Door Fridge, Sauce Fridge, Deli Display Fridge, Crunchy Boi Fridge, FOH Drinks Fridge, Back-Line Drinks Fridge, 3rd-Party Fridge, Oven, Fryer, Other…); with a fridge chosen there is no "Equipment name" box. The note box (placeholder "What's going on?") — typed "Sauce Fridge feels warm". "SAVE NOTE" is greyed until the note box has text.
+- Saw: Oven and Fryer cards above, the filled form with Sauce Fridge selected and a yellow "SAVE NOTE" button.
+- Shot: img/staff/29-maintenance-note.png
+
+## Step 30 — maintenance-saved
+- URL: /maintenance?location=d2cced11-b167-49fa-bab6-86ec9bf4ff09&equipment=a888b8a2-19e4-45cc-a68a-651306cfac95
+- Persona / viewport: Maya Torres, Employee / 390x844
+- Action: tapped "SAVE NOTE" (the form cleared), then tapped the "Sauce Fridge" card under Fridge temps.
+- Saw: Sauce Fridge page (status OK, readings list, "WHERE THESE READINGS COME FROM", "MAINTENANCE HISTORY") with one entry: "Sauce Fridge feels warm — Maya Torres · 10:38 PM" (time 10:38 PM; the entry shows a time only, no date). The log form repeats at the bottom with "Sauce Fridge" selected.
+- Shot: img/staff/30-maintenance-saved.png
+- Confused: a note saved for a fridge appears only on that fridge's page ("Maintenance history"), not on the main Maintenance Log.
+
+## Step 31 — midday-tile
+- URL: /dashboard?loc=d2cced11-b167-49fa-bab6-86ec9bf4ff09
+- Persona / viewport: Maya Torres, Employee / 390x844
+- Action: Dashboard → scrolled to Reports.
+- Saw: "REPORTS" with a "My station: Crunchy Boi Station" card, "OPENING REPORT — In progress — OPEN / CONTINUE", "AM PREP — Not yet started — Assigned by Priya Shah — START AM PREP", "MID-DAY PREP — No mid-day preps started today. — + NEW MID-DAY PREP", then "LOG OUT". Above it the Today's operations card now reads "CLOSING CHECKLIST — In progress · 3 of 61 items — CONTINUE CLOSING".
+- Shot: img/staff/31-midday-tile.png
+
+## Step 32 — midday-count
+- URL: /operations/mid-day?instance=40eaf7cb-133b-4039-8649-27744eeca28c
+- Persona / viewport: Maya Torres, Employee / 390x844
+- Action: tapped "+ NEW MID-DAY PREP".
+- Saw: "‹ DASHBOARD", "MID-DAY PREP", "Phase 1 — count to par". VEG (open, "0 of 6 done"): Pickles PAR 20 QUART, Sweet Peppers PAR 12 QUART, Hot Peppers PAR 12 QUART, Basil PAR 4 QUART, Shredded Mozzarella PAR 5 QUART, Fresh Mozzarella PAR 12 QUART, each with an "On hand" box (placeholder "On hand"). SAUCES collapsed ("0 of 10 done"). Button "SUBMIT COUNT → PHASE 2".
+- Shot: img/staff/32-midday-count.png
+
+## Step 33 — midday-filled
+- URL: /operations/mid-day?instance=40eaf7cb-133b-4039-8649-27744eeca28c
+- Persona / viewport: Maya Torres, Employee / 390x844
+- Action: typed 4 in Pickles "On hand" and 2 in Sweet Peppers "On hand"; tapped the VEG header open/closed so no box holds the focus ring.
+- Saw: "2 of 6 done"; Pickles "PAR 20 QUART · NEED: 16 QUART"; Sweet Peppers "PAR 12 QUART · NEED: 10 QUART"; other rows still empty.
+- Shot: img/staff/33-midday-filled.png
+
+## Step 33b — midday-phase2
+- URL: /operations/mid-day?instance=40eaf7cb-133b-4039-8649-27744eeca28c
+- Persona / viewport: Maya Torres, Employee / 390x844
+- Action: left the other boxes empty and tapped "SUBMIT COUNT → PHASE 2" ("SUBMITTING…" for a few seconds). It did not refuse; no "Bulk backup" message appeared.
+- Saw: Title "Phase 2 — prep". VEG "0 of 6 done". Each row: name, "NEED: 16 QUART" (10, 12, 4, 5, 12), an empty box with placeholder "Prepped", a "SAVE" button, and a "Uses: … · ~0 oz" line. The page is no wider than the screen; "SAVE" on every row is fully on screen and the "Prepped" box is fully visible. SAUCES collapsed ("0 of 10 done"); bottom button "FINALIZE PREP".
+- Shot: img/staff/33b-midday-phase2.png
+- Confused: long item names are cut with "…" next to the box ("Sweet Pepp…", "Shredded M…").
+
+## Step 33c — midday-row-saved
+- URL: /operations/mid-day?instance=40eaf7cb-133b-4039-8649-27744eeca28c
+- Persona / viewport: Maya Torres, Employee / 390x844
+- Action: typed 16 in the Pickles "Prepped" box and tapped "SAVE" ("SAVING…" then done); tapped the VEG header open/closed to drop the focus ring.
+- Saw: Pickles row shows 16 in the box, "Uses: 0.03 Pickle slices · ~8 oz" and "SAVED ✓"; "1 of 6 done".
+- Shot: img/staff/33c-midday-row-saved.png
+
+## Step 33d — midday-finalized
+- URL: /operations/mid-day?instance=40eaf7cb-133b-4039-8649-27744eeca28c
+- Persona / viewport: Maya Torres, Employee / 390x844
+- Action: saved Sweet Peppers 10 and Hot Peppers 12 the same way (each "SAVED ✓", "3 of 6 done"), then tapped "FINALIZE PREP" (no confirm box).
+- Saw: Title "Finalized — prep made", green line "Finalized at 10:24 PM by Maya Torres". VEG rows: Pickles NEED: 16 QUART · MADE: 16 QUART; Sweet Peppers NEED: 10 QUART · MADE: 10 QUART; Hot Peppers NEED: 12 QUART · MADE: 12 QUART; Basil, Shredded Mozzarella, Fresh Mozzarella NEED: 4 / 5 / 12 QUART · MADE: —. SAUCES rows: Aioli NEED: 15 BOTTLE, HC Aioli 4, HP Mayo 4, Mustard Aioli 4, Horsey Mayo 4, Salsa Verde 1, Dukes 3, Vin 6, Caesar Dressing "NEED: —", Lemon Oil 1 (all MADE: —). No "The interactive count and prep forms ship in the next build." text. No row showed "Add over/under reason" and no limit message appeared.
+- Shot: img/staff/33d-midday-finalized.png
+
+## Step 33e — production
+- URL: /operations/production?location=d2cced11-b167-49fa-bab6-86ec9bf4ff09
+- Persona / viewport: Maya Torres, Employee / 390x844
+- Action: Dashboard → Explore → "Production" (opened by tapping; no goto). Looked only; logged nothing.
+- Saw: "‹ DASHBOARD", "Production", card "LOG A CONVERSION" with "Raw item (SKU)" drop-down ("Pick a SKU…", entries like "Arugula (0 in stock)"), "Amount used (packs)" and "Amount made" boxes side by side, "Notes" box, a greyed "LOG PRODUCTION" button. The "Makes" field did not show before a SKU was picked. "RECENT PRODUCTION" below lists today's rows, e.g. "0 Hot Peppers → 12 Hot Peppers — Wed, Oct 14", "0 Sweet Peppers → 10 Sweet Peppers", "0 Pickle slices → 16 Pickles", "0 Basil → 2 Basil", "0 Onion (red) → 6 Onion". No shop name is printed on the page (the address carries the P Street location); no "Yield variance →" link showed for me.
+- Shot: img/staff/33e-production.png
+- Confused: the mid-day prep and opening prep I saved show up here as "0 X → N X" conversions.
+
+## Step 43 — am-prep-sheet
+- URL: /operations/am-prep?location=d2cced11-b167-49fa-bab6-86ec9bf4ff09
+- Persona / viewport: Maya Torres, Employee / 390x844
+- Action: Dashboard → Reports → "START AM PREP" (the closing was already started).
+- Saw: "‹ DASHBOARD", "AM PREP", "EM · P Street". Sections VEG (open, "0 of 6 done"), COOKS, SIDES, SAUCES, SLICING, MISC (collapsed). Column headings on Veg: "PAR", "ON HAND", "BACK UP", "TOTAL" (Cooks the same; Sides: "PAR", "PORT", "BACK UP", "TOTAL"; Sauces and Slicing: "PAR", "LINE", "BACK UP", "TOTAL"). Rows: Iceberg 7 1/3 Pan, Onion 8 Quart, Basil 4 Quart, Radish 1 Quart, Cucumber 3 Quart, Tomato "Prep Daily"; each first box has a red "Required" tag. Bottom: "Fix 42 issues before submitting", "SHOW ME WHAT NEEDS FIXING", greyed "FIX ISSUES BEFORE SUBMITTING". No "Picked up where you left off …" line appeared.
+- Shot: img/staff/43-am-prep-sheet.png
+
+## Step 44 — am-prep-filled-row
+- URL: /operations/am-prep?location=d2cced11-b167-49fa-bab6-86ec9bf4ff09
+- Persona / viewport: Maya Torres, Employee / 390x844
+- Action: typed 2 (Iceberg), 1 (Onion), 3 (Basil) in ON HAND; tapped the VEG header open/closed to drop the focus ring.
+- Saw: "3 of 6 done"; the three rows show their numbers and the shaded TOTAL box fills in with 2, 1, 3; the other three rows still show red "Required".
+- Shot: img/staff/44-am-prep-filled-row.png
+
+## Step 45 — am-prep-done
+- URL: /operations/am-prep?location=d2cced11-b167-49fa-bab6-86ec9bf4ff09
+- Persona / viewport: Maya Torres, Employee / 390x844
+- Action: typed 1 in every empty first box (Veg, Cooks, Sides "PORT", Sauces/Slicing "LINE"), tapped YES on all four Misc questions (Meatball mix - ready?, Meatballs - ready to cook?, Meatballs - for reheat?, Cook Bacon?), left BACK UP empty; Misc also has a "Notes" box with placeholder "Add notes…". The bottom button changed to "SUBMIT AM PREP" (and a "DISCARD CHANGES" button appeared while editing). Tapped "SUBMIT AM PREP"; it accepted the first time.
+- Saw: green box "AM Prep submitted at 10:27 PM by Maya Torres", every section "✓ … done", boxes now greyed (read-only).
+- Shot: img/staff/45-am-prep-done.png
+
+## Step 34 — end-my-shift
+- URL: /dashboard?loc=d2cced11-b167-49fa-bab6-86ec9bf4ff09
+- Persona / viewport: Maya Torres, Employee / 390x844
+- Action: back on the dashboard; the "My station" row was still open from before, so I did not tap it (it would have closed it); scrolled to the My shift board.
+- Saw: "✓ My station — Yours: Crunchy Boi Station" open: "On shift · Active in CO-OPS", "START BREAK", "END MY SHIFT", "Crunchy Boi Station · Crunchy Bo…", "Claimed · 10:19 PM", Station drop-down, "CLAIM / CHANGE STATION", "Tasks" with AM PREP, MID-DAY PREP, OPENING PREP (each "Assigned by Priya Shah · 10:11 PM"). No focus ring on any button.
+- Shot: img/staff/34-end-my-shift.png
+
+## Step 35 — shift-ended
+- URL: /dashboard?loc=d2cced11-b167-49fa-bab6-86ec9bf4ff09
+- Persona / viewport: Maya Torres, Employee / 390x844
+- Action: tapped "END MY SHIFT". The app's "Confirm change" box asked: "End your shift? Your station is released and your open tasks are unassigned." with "Reason for change" (No reason (optional) / Coverage change / Person left or unavailable / Skill fit / Correction / Other) and a note box; left "No reason (optional)", tapped "CONFIRM CHANGE".
+- Saw: the board now: Tasks "0 of 8 assigned" (was 3 of 8); "My station — None yet" with "Ended shift 10:28 PM", "No station", Station drop-down, "No assigned tasks today."; "Team today — 0 of 7 assigned" (was 1 of 7). The whole REPORTS section with the Opening Report, AM Prep and Mid-day Prep tiles and the "My station: …" card is gone from the dashboard (only Today's operations remains: "CLOSING CHECKLIST — In progress · 5 of 61 items — CONTINUE CLOSING"). "START BREAK" and "END MY SHIFT" are gone, but "CLAIM / CHANGE STATION" still shows (it should not).
+- Shot: img/staff/35-shift-ended.png
+- Bug?: after "End my shift" the "CLAIM / CHANGE STATION" button and the Station drop-down are still shown.
+
+## Step 36 — profile
 - URL: /profile
 - Persona / viewport: Maya Torres, Employee / 390x844
-- Action: Tapped "Profile" in the Explore nav
-- Saw: Heading "Team Profiles" / "Teammates at your location", a list of six teammate rows: "Deshawn Carter EMP", "Marcus Webb GM", "Maya Torres You EMP", "Priya Shah AGM", "Rosa Delgado KH", "Tommy Nguyen SL"
-- Shot: img/staff/07-team-profiles.png
-- Confused: "Profile" in the nav did not open MY profile/settings directly — it opened a team directory first, and I had to tap my own row to see anything about me
-- Bug?:
+- Action: Dashboard → Explore → "Profile".
+- Saw: "‹ DASHBOARD", "Team Profiles", "Teammates at your location", group "LEADERSHIP" (Dana Brooks, MOO), then cards: Maya Torres "You" EMP ⭐ 10, Deshawn Carter EMP ⭐ 5, Marcus Webb GM, Priya Shah AGM, Rosa Delgado KH, Tommy Nguyen SL. Long names are cut with "…" (Dan…, Maya …, Deshawn C…).
+- Shot: img/staff/36-profile.png
 
-## Step 08 — my-profile
-- URL: /profile/42867291-4068-465b-a573-795bbfe3e3c9
-- Persona / viewport: Maya Torres, Employee / 390x844
-- Action: Tapped my own row, "Maya Torres You EMP"
-- Saw: "Maya Torres EMP You", "EM · 27 days on the team"; stat tiles "0 MVP wins", "1 longest streak", "10 tasks all-time"; "current streak 0" / "personal best / day 10"; a "Task velocity — recent" chart with caption "Days active over the last 30 days."; "Manager ratings — mostly Great 🌟" with "No ratings yet."; footnotes "Early-clock-in streaks unlock when Toast connects." and "Profiles show positive highlights only — never scores, notes, or areas to improve."
-- Shot: img/staff/08-my-profile.png
-- Confused: No language switch or account settings live here — this page is stats/highlights only, not what I'd call "my profile" for settings purposes
-- Bug?:
-
-## Step 09 — settings-language
+## Step 37 — settings-language
 - URL: /settings
 - Persona / viewport: Maya Torres, Employee / 390x844
-- Action: Navigated to Settings from the dashboard's Explore nav (the language control is NOT on the profile page — it lives here)
-- Saw: Heading "Settings" / "Your app preferences."; a "Language" section reading "The language used across the app." with two radio options "English" (selected) and "Español"; a "Profile" section reading "View your team and update your profile blurb." with a "Go to Profile" link; a "More settings" section reading "Notification preferences are coming in a follow-up."
-- Shot: img/staff/09-settings-language.png
-- Confused: Did not switch the language, per instructions — just confirmed English is selected
-- Bug?:
+- Action: Dashboard → Explore → "Settings". Did not change the language.
+- Saw: "Settings", "Your app preferences."; card "Language — The language used across the app." with buttons "ENGLISH" (selected, yellow) and "ESPAÑOL"; card "Profile — View your team and update your profile blurb." with "GO TO PROFILE".
+- Shot: img/staff/37-settings-language.png
 
-## Step 10 — opening-list
-- URL: /operations/opening?location=d2cced11-b167-49fa-bab6-86ec9bf4ff09
+## Step 38 — user-menu
+- URL: /settings
 - Persona / viewport: Maya Torres, Employee / 390x844
-- Action: Navigated to the "Open / continue" link under the dashboard's "Reports" card (labeled "Opening Report", not "Opening checklist")
-- Saw: "Opening Report" / heading "Phase 1 — Verification" with instructions "Verify last night's closing matches reality. Tap each station once you've checked it; add a comment if anything looks off."; a "Phase 1 · Verify" toggle and a disabled "Phase 2 (locked)" button labeled "Phase 2 locked — complete verification first"; a long list of station sections (Crunchy Boi Station, 3rd Party Station, Walk Ins Station, Prep Fridge, Prep Area, Back Line Open, Expo Station, Front of House Open, Manager Open, Walk-Out Verification), each with its own "Mark [Station] as verified" button and a bulleted list of checks, several of which are temperature fields (placeholder "—", target "≤41°F"); below those, five more sections (Veg, Cooks, Sides, Sauces, Slicing) each with a disabled "Verify section" button and the note "Recount items without closer data first" and per-item "Opener recount" number fields; a footer reading "0 of 44 verified · 0 of 8 temp readings entered · 0 of 36 prep entries" / "44 items not yet verified" and a disabled "Submit Opening" button
-- Shot: img/staff/10-opening-list.png
-- Confused: The dashboard calls this "Opening Report" (under "Reports"), not "checklist" — took a second to realize this is the opening checklist the walk meant. Also, clicking directly on an item's description text does nothing — the only way to mark an item is the whole-station "Verified" toggle
-- Bug?:
+- Action: tapped the round "M" button at the top right; the menu opened in the page. Closed it by tapping the same button again (nothing chosen).
+- Saw: panel with "SIGNED IN AS", "Maya Torres", "maya@sim.co-ops", "LANGUAGE" with two buttons "EN · ENGLISH" (selected) and "ES · ESPAÑOL", then "Dashboard" and "Sign out".
+- Shot: img/staff/38-user-menu.png
 
-## Step 11 — opening-temp-filled
-- URL: /operations/opening?location=d2cced11-b167-49fa-bab6-86ec9bf4ff09
+## Step 39 — written-reports
+- URL: /reports/written?location=d2cced11-b167-49fa-bab6-86ec9bf4ff09
 - Persona / viewport: Maya Torres, Employee / 390x844
-- Action: Typed "38" into the "Crunchy Boi Fridge temp (≤41°F)" field
-- Saw: The temperature textbox now shows "38"; footer counter not yet re-checked at this point
-- Shot: img/staff/11-opening-temp-filled.png
-- Confused:
-- Bug?:
+- Action: Dashboard → Explore → "Written Reports".
+- Saw: "‹ REPORTS" and the "DASHBOARD" link both fully visible at the top, chip "P Street", "Written Reports", "Free-form posts for anything that doesn't fit a structured report.", "Date range" (drop-down "Last 7 days"; other choices Today, Yesterday, Last 30 days, This month, Last month, Custom), "From 10/08/2026", "To 10/14/2026", "Compare with previous period" tick-box, "Apply", "Up to 92 inclusive days. Comparison applies to summary counts and trends.", "Download" with "CSV" and "PDF" (not tapped), yellow "NEW REPORT", "No written reports yet."
+- Shot: img/staff/39-written-reports.png
 
-## Step 12 — opening-station-verified
-- URL: /operations/opening?location=d2cced11-b167-49fa-bab6-86ec9bf4ff09
+## Step 40 — written-report-form
+- URL: /reports/written?location=d2cced11-b167-49fa-bab6-86ec9bf4ff09
 - Persona / viewport: Maya Torres, Employee / 390x844
-- Action: Tapped "Mark Walk Ins Station as verified" (the whole-station yes/no toggle)
-- Saw: All four bullets under "Walk Ins Station" flipped from "·" to a checkmark, and the button label changed to "Untick Walk Ins Station" / "Verified" with a checkmark icon
-- Shot: img/staff/12-opening-station-verified.png
-- Confused: There is no per-line yes/no — verifying is one tap per whole station, which marks every line under it at once
-- Bug?:
+- Action: tapped "NEW REPORT"; looked at the form; did not post; tapped "CANCEL".
+- Saw: Form fields: "Title (optional)" (placeholder "Short summary"); "What happened" (placeholder "Describe it in your own words…"); "Category" drop-down (None, Incident, Observation, Request, Feedback, Other; default None); "Who can see this" drop-down (only "All staff"); buttons "CANCEL" and a greyed "POST REPORT" (stays greyed until "What happened" has text).
+- Shot: img/staff/40-written-report-form.png
 
-## Step 13 — opening-comment-open
-- URL: /operations/opening?location=d2cced11-b167-49fa-bab6-86ec9bf4ff09
-- Persona / viewport: Maya Torres, Employee / 390x844
-- Action: Tapped "Add comment" on the "3rd party tablets on, charged, signed in" line (under 3rd Party Station, left unverified — the "not-done" item)
-- Saw: A "Comment" field appeared with placeholder "Note any discrepancy", plus a disabled button "Photo upload coming soon"
-- Shot: img/staff/13-opening-comment-open.png
-- Confused:
-- Bug?:
-
-## Step 14 — opening-comment-filled
-- URL: /operations/opening?location=d2cced11-b167-49fa-bab6-86ec9bf4ff09
-- Persona / viewport: Maya Torres, Employee / 390x844
-- Action: Typed "One tablet was dead overnight, plugged it in to charge before opening." into the comment field
-- Saw: The reason text now sits in the comment box under the "3rd party tablets on, charged, signed in" line; that station's "Verified" toggle was NOT tapped, so the item stays unverified with the reason attached
-- Shot: img/staff/14-opening-comment-filled.png
-- Confused:
-- Bug?:
-
-## Step 15 — opening-list-after
-- URL: /operations/opening?location=d2cced11-b167-49fa-bab6-86ec9bf4ff09
-- Persona / viewport: Maya Torres, Employee / 390x844
-- Action: Scrolled to the bottom of the page (no further input)
-- Saw: The footer counter updated to "4 of 44 verified · 1 of 8 temp readings entered · 0 of 36 prep entries" / "40 items not yet verified"; "Submit Opening" still disabled
-- Shot: img/staff/15-opening-list-after.png
-- Confused: "Submit Opening" stays disabled well before all 44 items are done — no visible threshold for when it would enable, so it's unclear how much is actually required before submitting is possible
-- Bug?:
-
-## Step 16 — am-prep-blocked
-- URL: /operations/am-prep
-- Persona / viewport: Maya Torres, Employee / 390x844
-- Action: Tried three ways in: (1) looked for an AM Prep entry point on the dashboard's "Today's operations" and "Reports" cards — none exists there, (2) tapped the "AM Prep List" link inside the Closing checklist's "Closing Manager" section (labeled "Pending — submit from the dashboard"), (3) typed the URL directly, with and without `?location=`
-- Saw: All three attempts silently redirected to /dashboard — no error message, no toast, no explanation
-- Confused: BLOCKED AM PREP: /operations/am-prep bounces to /dashboard every time for Maya Torres (Employee), even when reached via the closing checklist's own link to it. Could not tell whether AM Prep needs a different role, a different time-of-day/shift phase in the sim, or is simply a dead link right now.
-- Bug?: The closing checklist advertises "AM Prep List — tap to submit from the AM Prep page" as a live link, but following it does not work for this persona
-
-## Step 17 — midday-empty
-- URL: /operations/mid-day?location=d2cced11-b167-49fa-bab6-86ec9bf4ff09
-- Persona / viewport: Maya Torres, Employee / 390x844
-- Action: Navigated to /operations/mid-day (this route does NOT redirect, unlike AM Prep)
-- Saw: Heading "Mid-day Prep" / "Mid-day Prep" / "No mid-day prep template for this location yet."
-- Shot: img/staff/16-midday-empty.png
-- Confused: BLOCKED MID-DAY PREP: the page itself loads fine, but P Street has no mid-day prep template configured in this sim, so there is nothing to fill in for phase 1 — could not enter amounts for any items
-- Bug?:
-
-## Step 18 — closing-list
-- URL: /operations/closing?location=d2cced11-b167-49fa-bab6-86ec9bf4ff09
-- Persona / viewport: Maya Torres, Employee / 390x844
-- Action: Opened the closing checklist ("Continue closing" from the dashboard)
-- Saw: Heading "EM · P Street" / "Closing checklist"; a "Progress" bar reading "0/61" ("0 of 61 required items complete"); ten expandable station sections (Crunchy Boi Station, 3rd Party Station, Walk Ins Station, Prep Fridge, Shut Down Back Line, Expo Station, Clean front of house, Prep Area, Closing Manager, Walk-Out Verification), each item its own tap-to-complete row; a footer note "AM Prep had 0 items saved today - check with the opener."
-- Shot: img/staff/17-closing-list.png
-- Confused: This is a completely different interaction model from the Opening Report — here EVERY line is its own tap target (not a whole-station toggle)
-- Bug?:
-
-## Step 19 — closing-item-ticked
-- URL: /operations/closing?location=d2cced11-b167-49fa-bab6-86ec9bf4ff09
-- Persona / viewport: Maya Torres, Employee / 390x844
-- Action: Tapped "Restock" under Crunchy Boi Station
-- Saw: The row now reads "Restock — completed by you at 2:49 AM" with a small "Undo" button, an attribution line "you · 2:49 AM", and a new "Add note" button; the station header updated to "1 of 6 required done"
-- Shot: img/staff/18-closing-item-ticked.png
-- Confused: "Add note" only appears AFTER an item is marked complete — there's no way to attach a note to a still-open item the way the Opening Report lets you comment on an unverified one
-- Bug?:
-
-## Step 20 — closing-two-ticked
-- URL: /operations/closing?location=d2cced11-b167-49fa-bab6-86ec9bf4ff09
-- Persona / viewport: Maya Torres, Employee / 390x844
-- Action: Tapped "Wipe inside & outside" under Crunchy Boi Station (second item ticked)
-- Saw: Both "Restock" and "Wipe inside & outside" now show "completed by you at 2:49 AM" with "Undo" and "Add note"; station header "2 of 6 required done"
-- Shot: img/staff/19-closing-two-ticked.png
-- Confused:
-- Bug?:
-
-## Step 21 — closing-note-open
-- URL: /operations/closing?location=d2cced11-b167-49fa-bab6-86ec9bf4ff09
-- Persona / viewport: Maya Torres, Employee / 390x844
-- Action: Tapped "Wipe tops of sauce bottles" to complete it (third item), then tapped its "Add note" button
-- Saw: A note field opened labeled "Edit note" with a textbox placeholder "Anything noteworthy?" and two buttons, "Save note" and "Cancel"
-- Shot: img/staff/20-closing-note-open.png
-- Confused:
-- Bug?:
-
-## Step 22 — closing-note-saved
-- URL: /operations/closing?location=d2cced11-b167-49fa-bab6-86ec9bf4ff09
-- Persona / viewport: Maya Torres, Employee / 390x844
-- Action: Typed "Ran out of clean rags halfway through — used paper towels to finish, someone should restock the rag bin." and tapped "Save note"
-- Saw: The note now displays inline under the "you · 2:50 AM" attribution, and the button changed to "Edit note"
-- Shot: img/staff/21-closing-note-saved.png
-- Confused:
-- Bug?:
-
-## Step 23 — deep-cleaning-stub
-- URL: /deep-cleaning?location=d2cced11-b167-49fa-bab6-86ec9bf4ff09
-- Persona / viewport: Maya Torres, Employee / 390x844
-- Action: Tapped "Deep Cleaning" in the Explore nav
-- Saw: Heading "Deep Cleaning Rotation" / "Coming in Module #15 (Deep Cleaning)" / "Frequency-based assignments with verification photos." with a bullet list of planned features: "Tasks with frequency_days and estimated_minutes", "Auto-schedule per location based on last completion", "Verification photo on completion", "Overdue tasks surface as handoff flags"
-- Shot: img/staff/22-deep-cleaning-stub.png
-- Confused: This is a stub — nothing to actually mark a task done on yet, despite being linked from the main nav as if it were live
-- Bug?:
-
-## Step 24 — maintenance-list
-- URL: /maintenance?location=d2cced11-b167-49fa-bab6-86ec9bf4ff09
-- Persona / viewport: Maya Torres, Employee / 390x844
-- Action: Tapped "Maintenance" link from the dashboard
-- Saw: Heading "Maintenance Log"; a "Fridge temps" section listing all eight fridges (Walk-In, 3-Door, Sauce, Deli Display, Crunchy Boi, FOH Drinks, Back-Line Drinks, 3rd-Party), each tagged "No reading today"; an "Equipment" section listing "Oven" and "Fryer", each tagged "No issues logged"; below that, a form "Log a maintenance note" with an "Equipment" dropdown (defaulted to "Walk-In Fridge", with options for every fridge plus Oven, Fryer, and "Other…"), a "What's going on?" textbox, and a disabled "Save note" button
-- Shot: img/staff/23-maintenance-list.png
-- Confused: There is no "Slicer" in the Equipment dropdown — had to use "Other…" to log the slicer issue
-- Bug?:
-
-## Step 25 — maintenance-form-other
-- URL: /maintenance?location=d2cced11-b167-49fa-bab6-86ec9bf4ff09
-- Persona / viewport: Maya Torres, Employee / 390x844
-- Action: Selected "Other…" in the Equipment dropdown
-- Saw: A new "Equipment name" text field appeared above "What's going on?"
-- Shot: img/staff/24-maintenance-form-other.png
-- Confused:
-- Bug?:
-
-## Step 26 — maintenance-form-filled
-- URL: /maintenance?location=d2cced11-b167-49fa-bab6-86ec9bf4ff09
-- Persona / viewport: Maya Torres, Employee / 390x844
-- Action: Typed "Slicer" into "Equipment name" and "Slicer guard loose — wobbles when engaged, needs a bolt tightened before next use." into "What's going on?"
-- Saw: Both fields hold the typed text; "Save note" is no longer disabled
-- Shot: img/staff/25-maintenance-form-filled.png
-- Confused:
-- Bug?:
-
-## Step 27 — maintenance-after-save
-- URL: /maintenance?location=d2cced11-b167-49fa-bab6-86ec9bf4ff09
-- Persona / viewport: Maya Torres, Employee / 390x844
-- Action: Tapped "Save note"
-- Saw: The "What's going on?" field cleared and "Save note" went back to disabled; "Equipment name" still showed "Slicer"; no visible confirmation toast or message, and the Slicer note doesn't appear anywhere in the "Fridge temps" or "Equipment" lists above (since Slicer isn't one of the named equipment tiles)
-- Shot: img/staff/26-maintenance-after-save.png
-- Confused: No confirmation that the note actually saved — the only signal is the form clearing itself. Since "Slicer" was logged via "Other…", there's no tile anywhere on this page to go check that it registered
-- Bug?:
-
-## Step 28 — feedback-stub
-- URL: /feedback?location=d2cced11-b167-49fa-bab6-86ec9bf4ff09
-- Persona / viewport: Maya Torres, Employee / 390x844
-- Action: Tapped "Feedback" in the Explore nav
-- Saw: Heading "Customer Feedback" / "Coming in Module #16 (Customer Feedback)" / "1–5 ratings with optional comments and follow-up assignment." with planned-feature bullets: "Star rating + category + free-text comment", "Follow-up flag with assigned-to user", "Tracks response loop close-out", "Surfaces in handoff for negative ratings"
-- Shot: img/staff/27-feedback-stub.png
-- Confused: BLOCKED SUBMIT ONE LINE ON /feedback: this page is CUSTOMER feedback (a stub, no form at all), not a place for a staff member to submit a line of their own — nothing here to fill in or submit
-- Bug?:
-
-## Step 29 — my-performance
+## Step 41 — my-performance
 - URL: /my-feedback
 - Persona / viewport: Maya Torres, Employee / 390x844
-- Action: Tapped "My Performance" in the Explore nav
-- Saw: Heading "My Performance"; a Day/Week/Month grouping toggle and a "Compare to previous" link; "Steady work this period. Every shift counts." with a big "14" labeled "your score · counts the work your role is here to do"; "1-day streak" / "best day: 10"; charts "Your contribution — tasks completed" and "On-time completion" (caption "Task-window timeliness (not clock-in)"); a heading "How managers have rated you" (empty); a "Streaks" panel showing "1 active days", "0 on-time in a row", "10 personal best", "0 MVP wins" with footnote "Early-clock-in streaks unlock when Toast connects."; "Feedback from shifts" section reading "No activity recorded for this location yet."
-- Shot: img/staff/28-my-performance.png
-- Confused: This page (My Performance / /my-feedback) appears to BE the profile performance view the walk also asked about — it shows the same kind of stats (streaks, tasks, MVP wins) as my own /profile/[id] page from Step 08, just with more detail and a time-range picker. Did not find a separate, different "performance view" inside the profile page itself
-- Bug?:
+- Action: Dashboard → Explore → "My Performance"; ran `look` twice 5 s apart (text identical); on the default DAY view the two charts stayed broken after more than 10 s and a third wait, so I tapped "WEEK" (a link on the page), waited 8 s and shot again.
+- Saw: Page: "‹ REPORTS", "DASHBOARD", "My Performance", chip "P Street", "From 09/15/2026", "To 10/14/2026", "Apply range", chips "DAY / WEEK / MONTH", "COMPARE TO PREVIOUS"; green card "2 MVP win(s) this period — keep it up! 🌟", score "1107 — your score · counts the work your role is here to do", chips "2-day streak", "2 MVP", "best day: 145", "100% on-time". Photo (WEEK view): "YOUR CONTRIBUTION — TASKS COMPLETED" shows a finished line chart; "ON-TIME COMPLETION — Task-window timeliness (not clock-in)" reads "Not enough days yet — this chart fills in after a few more shifts."; "HOW MANAGERS HAVE RATED YOU" colour bar; "STREAKS": 2 ACTIVE DAYS, 3 ON-TIME IN A ROW, 145 PERSONAL BEST, 2 MVP WINS. Further down: "Early-clock-in streaks unlock when Toast connects." and "FEEDBACK FROM SHIFTS" with MVP days Mon Sep 28, Wed Sep 23, Sun Sep 13 and ratings such as "Arrived ready: Great", "Attitude: Needs work".
+- Shot: img/staff/41-my-performance.png
+- Bug?: on the default DAY view the "Your contribution — tasks completed" chart renders as a few separate short dashes and a lone line at the right edge, and the "On-time completion" chart as one lone green mark, and they never finish drawing (waited well over 10 s; same on a second look). The WEEK view draws correctly. The photo therefore shows WEEK, not the default view.
 
-## Step 30 — tips-stub
-- URL: /tips?location=d2cced11-b167-49fa-bab6-86ec9bf4ff09
-- Persona / viewport: Maya Torres, Employee / 390x844
-- Action: Tapped "Tip Pool" in the Explore nav
-- Saw: Heading "Tip Pool" / "Coming in Module #11 (Tip Pool)" / "Period-based tip pool calculation and distribution log." with bullets: "Hours from 7shifts adapter (when activated) or manual entry", "Rate-per-hour computed from pool ÷ total hours", "Per-employee distribution rows", "Status: draft / calculated / distributed"
-- Shot: img/staff/29-tips-stub.png
-- Confused:
-- Bug?:
-
-## Step 31 — training-stub
-- URL: /training
-- Persona / viewport: Maya Torres, Employee / 390x844
-- Action: Tapped "Training" in the Explore nav
-- Saw: Heading "Training" / "Coming in Module #14 (Training)" / "Position-based training matrix with module sign-offs and trainee progress." with bullets: "Positions and module assignments", "Status: not_started / in_progress / completed / signed_off", "Sign-off requires GM+ attestation", "Trainer reports + observational reports from non-trainers"
-- Shot: img/staff/30-training-stub.png
-- Confused:
-- Bug?:
-
-## Step 32 — announcements-stub
-- URL: /announcements?location=d2cced11-b167-49fa-bab6-86ec9bf4ff09
-- Persona / viewport: Maya Torres, Employee / 390x844
-- Action: Tapped "Announcements" in the Explore nav
-- Saw: Heading "Announcements" / "Coming in Module #3 (Announcements)" / "Top-down directives with acknowledgement tracking. AGM+ can post." with bullets: "Priority: info / standard / urgent / critical", "Per-recipient acknowledgement tracking", "Role-band targeting — min and optional max level", "Location-scoped or org-wide", "Banner on dashboard until acknowledged"
-- Shot: img/staff/31-announcements-stub.png
-- Confused:
-- Bug?:
-
-## Step 33 — comms-stub
-- URL: /comms
-- Persona / viewport: Maya Torres, Employee / 390x844
-- Action: Tapped "Comms" in the Explore nav
-- Saw: Heading "Internal Comms" / "Coming in Module #8 (Internal Comms)" / "Threaded discussion attached to artifacts and announcements." with bullets: "Thread per artifact or announcement", "@-mentions trigger notifications", "Read receipts", "Attach photos via report_photos"
-- Shot: img/staff/32-comms-stub.png
-- Confused:
-- Bug?:
-
-## Step 34 — logged-out
+## Step 42 — logged-out
 - URL: /
 - Persona / viewport: Maya Torres, Employee / 390x844
-- Action: Tapped "Log out" on the dashboard
-- Saw: Back at the tile login's "Where are you?" screen with the two location tiles ("MEP / Capitol Hill", "EM / P Street") and the "Manager login →" button — same as Step 01
-- Shot: img/staff/33-logged-out.png
-- Confused:
-- Bug?:
+- Action: Dashboard → scrolled to the bottom → "LOG OUT".
+- Saw: back on the first screen: "Manager login →", "Where are you?", tiles "MEP Capitol Hill" and "EM P Street".
+- Shot: img/staff/42-logged-out.png
 
-## Notes and comment fields encountered (Goal 11 roundup)
-- Opening Report (/operations/opening), per verification item: "Add comment" button reveals a "Comment" textbox with placeholder "Note any discrepancy", plus a disabled "Photo upload coming soon" button. Available on EVERY line item, whether or not the item (or its station) is verified — this is how you flag something wrong on an item you are NOT marking done.
-- Closing checklist (/operations/closing), per checklist item: "Add note" button appears ONLY after an item is marked complete; it opens a region labeled "Edit note" with a textbox placeholder "Anything noteworthy?" and "Save note" / "Cancel" buttons. There is no way to attach a note to a still-incomplete item here — notes are for flagging something about a task you DID finish, not for explaining one you skipped.
-- Maintenance Log (/maintenance): the "Log a maintenance note" form's second field is a plain textbox labeled "What's going on?" with NO placeholder text inside it (empty until typed). Selecting "Other…" in the Equipment dropdown reveals a preceding "Equipment name" textbox, also with no placeholder.
-- Net takeaway for the writer: two different note vocabularies exist side by side — "comment" on the Opening Report (attached to any item, done or not) versus "note" on the Closing checklist (attached only to completed items) versus a free-standing "What's going on?" field on Maintenance (not attached to a checklist item at all, its own log).
+## Notes
+- Used `goto /dashboard` once (after step 24) instead of tapping "Dashboard"; every other move was by tapping.
+- The scripted order lists shots 43–45 before 34–35; they were taken in that order, as the script says.
