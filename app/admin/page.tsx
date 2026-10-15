@@ -6,11 +6,24 @@
  */
 
 import { countNotReady } from "@/lib/admin/readiness-load";
-import { loadCronHealth, loadAdoption, type CronHealth } from "@/lib/admin/ops-health";
-import { cronRunFailureTotal, type AdoptionSurfaceCount } from "@/lib/admin/ops-health-shared";
+import { loadCronHealth, type CronHealth } from "@/lib/admin/ops-health";
+import { cronRunFailureTotal } from "@/lib/admin/ops-health-shared";
+import { loadWeekCard } from "@/lib/admin/week-card";
+import {
+  cellIsZero,
+  ranAllWeek,
+  WEEK_DETAIL_AREAS,
+  WEEK_SUMMARY_AREAS,
+  weekHasJobAlert,
+  weekHasPeopleActivity,
+  type ShopWeek,
+  type WeekArea,
+  type WeekCard,
+  type WeekCell,
+} from "@/lib/admin/week-card-shared";
 import { adminSectionsFor } from "@/lib/admin/sections";
 import { serverT } from "@/lib/i18n/server";
-import { formatDateLabel } from "@/lib/i18n/format";
+import { formatDateLabel, formatQuantity } from "@/lib/i18n/format";
 import { requireSessionFromHeaders } from "@/lib/session";
 import type { Language } from "@/lib/i18n/types";
 import { PageHeader } from "@/components/ui/PageHeader";
@@ -54,11 +67,12 @@ export default async function AdminHubPage({ searchParams }: { searchParams: Pro
   } catch (e) {
     console.error("hub cron health failed (rendering without card)", e);
   }
-  let adoption: AdoptionSurfaceCount[] = [];
+  // "This week in CO-OPS" — the shops side by side, bound to the shops this viewer may read.
+  let week: WeekCard | null = null;
   try {
-    adoption = await loadAdoption();
+    week = await loadWeekCard({ role: auth.role, locations: auth.locations, level: auth.level });
   } catch (e) {
-    console.error("hub adoption failed (rendering without card)", e);
+    console.error("hub week card failed (rendering without card)", e);
   }
 
   return (
@@ -74,7 +88,7 @@ export default async function AdminHubPage({ searchParams }: { searchParams: Pro
       ) : null}
 
       <CronHealthCard health={cronHealth} lang={lang} />
-      <AdoptionCard surfaces={adoption} lang={lang} />
+      <WeekInCoopsCard card={week} lang={lang} />
 
       <div className="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
         {sections.map((s) =>
@@ -174,54 +188,171 @@ function CronHealthCard({ health, lang }: { health: CronHealth | null; lang: Lan
   return null;
 }
 
+
 /**
- * Adoption card ("Used this week", Ops guardrails NOW #3). Answers "is anyone using it?"
- * — the curated surfaces with their 7-day event counts. Zero-count surfaces render muted
- * (the roster stays stable). Renders nothing when the derive failed (empty list).
+ * "This week in CO-OPS" (B11a-admin; replaced "Used this week"). One column per shop the
+ * viewer may read, rows grouped by area. Where every number comes from is documented in
+ * lib/admin/week-card.ts; what each one means is decided (and tested) in week-card-shared.ts.
+ *
+ * Disclosure (docs/DISCLOSURE_DOCTRINE.md): the summary rows are always visible; the
+ * breakdown (role bands, checklist types, where automatic catering came from) is a
+ * default-collapsed CollapsibleSection with an i18n'd count (D3, D5). A failed automatic
+ * job is an alert: it renders in the danger TEXT role on the summary and never hides (D2).
+ * A week where no PERSON did anything collapses the whole card, as the old card did,
+ * unless a job failed.
+ *
+ * Phone: the table scrolls inside its own container when the shops outgrow the width — the
+ * page body never scrolls sideways.
  */
-function AdoptionCard({ surfaces, lang }: { surfaces: AdoptionSurfaceCount[]; lang: Language }) {
-  if (surfaces.length === 0) return null;
-  const list = (
-    <ul className="flex flex-col gap-1">
-      {surfaces.map((s) => {
-        const zero = s.count === 0;
-        return (
-          <li
-            key={s.id}
-            className={`flex items-center justify-between gap-3 text-sm ${zero ? "text-co-text-dim" : "text-co-text"}`}
-          >
-            <span>{serverT(lang, s.labelKey)}</span>
-            <span className="tabular-nums font-bold">{s.count}</span>
-          </li>
-        );
-      })}
-    </ul>
+function WeekInCoopsCard({ card, lang }: { card: WeekCard | null; lang: Language }) {
+  if (!card) return null;
+  const peopleInShops = card.shops.reduce((n, s) => n + s.people.total, 0);
+  const checklistsStarted = card.shops.reduce((n, s) => n + s.checklistsTotal.started, 0);
+  const body = (
+    <>
+      <p className="text-xs text-co-text-dim">{serverT(lang, "admin.hub.week.window")}</p>
+      <p className="mt-1 text-sm font-bold text-co-text">
+        {serverT(lang, "admin.hub.week.people_line", { n: formatQuantity(card.overallPeople, lang) })}
+      </p>
+      <div className="mt-2">
+        <WeekTable areas={WEEK_SUMMARY_AREAS} shops={card.shops} lang={lang} />
+      </div>
+      {card.shops.length > 1 ? (
+        <p className="mt-2 text-xs text-co-text-dim">{serverT(lang, "admin.hub.week.people_note")}</p>
+      ) : null}
+      <div className="mt-3">
+        <CollapsibleSection
+          idBase="admin-hub-week-details"
+          title={serverT(lang, "admin.hub.week.details")}
+          count={serverT(lang, "admin.hub.week.details_count", {
+            people: formatQuantity(peopleInShops, lang),
+            checklists: formatQuantity(checklistsStarted, lang),
+          })}
+          defaultOpen={false}
+        >
+          <WeekTable areas={WEEK_DETAIL_AREAS} shops={card.shops} lang={lang} />
+        </CollapsibleSection>
+      </div>
+    </>
   );
 
-  // When NOTHING moved in 7 days the card is low-signal secondary content →
-  // collapse it by default (Disclosure Doctrine D3) so a quiet week doesn't
-  // clutter the hub. With any activity, show the full card.
-  if (surfaces.every((s) => s.count === 0)) {
+  if (!weekHasPeopleActivity(card) && !weekHasJobAlert(card)) {
     return (
       <div className="mt-4">
         <CollapsibleSection
-          idBase="admin-hub-adoption"
-          title={serverT(lang, "admin.hub.adoption.title")}
-          count={serverT(lang, "admin.hub.adoption.all_quiet")}
+          idBase="admin-hub-week"
+          title={serverT(lang, "admin.hub.week.title")}
+          count={serverT(lang, "admin.hub.week.all_quiet")}
           defaultOpen={false}
         >
-          {list}
+          {body}
         </CollapsibleSection>
       </div>
     );
   }
 
   return (
-    <div className="co-card mt-4 p-4">
-      <h2 className="text-xs font-bold uppercase tracking-[0.14em] text-co-text-dim">
-        {serverT(lang, "admin.hub.adoption.title")}
+    <section className="co-card mt-4 p-4" aria-labelledby="admin-hub-week-title">
+      <h2 id="admin-hub-week-title" className="text-xs font-bold uppercase tracking-[0.14em] text-co-text-dim">
+        {serverT(lang, "admin.hub.week.title")}
       </h2>
-      <div className="mt-2">{list}</div>
+      <div className="mt-2">{body}</div>
+    </section>
+  );
+}
+
+/**
+ * Label column + one column per shop. The rem min-width keeps each shop column readable;
+ * past the card's width the wrapper scrolls (inside the card, never the page).
+ */
+function WeekTable({ areas, shops, lang }: { areas: readonly WeekArea[]; shops: ShopWeek[]; lang: Language }) {
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full table-fixed border-collapse text-sm" style={{ minWidth: `${9 + shops.length * 6}rem` }}>
+        <caption className="sr-only">{serverT(lang, "admin.hub.week.caption")}</caption>
+        <colgroup>
+          <col />
+          {shops.map((s) => (
+            <col key={s.shopId} className="w-24 sm:w-32" />
+          ))}
+        </colgroup>
+        <thead>
+          <tr>
+            <th scope="col" className="text-left">
+              <span className="sr-only">{serverT(lang, "admin.hub.week.activity")}</span>
+            </th>
+            {shops.map((s) => (
+              <th
+                key={s.shopId}
+                scope="col"
+                className="pb-1 pl-2 text-right align-bottom text-xs font-bold break-words text-co-text"
+              >
+                {s.shopName}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        {areas.map((area) => (
+          <tbody key={area.id}>
+            <tr>
+              <th
+                scope="colgroup"
+                colSpan={shops.length + 1}
+                className="pt-3 pb-1 text-left text-xs font-bold tracking-wide text-co-text-muted"
+              >
+                {serverT(lang, area.labelKey)}
+              </th>
+            </tr>
+            {area.rows.map((row) => (
+              <tr key={row.id} className="border-t border-co-border">
+                <th
+                  scope="row"
+                  className={`py-1.5 pr-2 text-left font-normal ${area.automatic ? "text-co-text-muted" : "text-co-text"}`}
+                >
+                  {serverT(lang, row.labelKey)}
+                </th>
+                {shops.map((s) => (
+                  <td key={s.shopId} className="py-1.5 pl-2 text-right">
+                    <WeekValue cell={row.cell(s)} lang={lang} />
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        ))}
+      </table>
     </div>
   );
+}
+
+/** Zero renders "0" muted (as the old card did); an alert renders in the danger TEXT role. */
+function WeekValue({ cell, lang }: { cell: WeekCell; lang: Language }) {
+  if (cell.kind === "days") {
+    // A job's health line: "Ran all week" / "Ran 6 of 7 days", plus "· N failed" (danger text).
+    const ran = ranAllWeek(cell)
+      ? serverT(lang, "admin.hub.week.ran_all")
+      : serverT(lang, "admin.hub.week.ran_days", { ran: formatQuantity(cell.ran, lang), of: formatQuantity(cell.of, lang) });
+    return (
+      <span className="font-bold tabular-nums">
+        <span className={ranAllWeek(cell) ? "text-co-text" : "text-co-warning-text"}>{ran}</span>
+        {cell.failed > 0 ? (
+          <span className="block text-co-cta-text">
+            {serverT(lang, "admin.hub.week.failed_suffix", { n: formatQuantity(cell.failed, lang) })}
+          </span>
+        ) : null}
+      </span>
+    );
+  }
+  const tone =
+    cell.kind === "count" && cell.alert ? "text-co-cta-text" : cellIsZero(cell) ? "text-co-text-dim" : "text-co-text";
+  const text =
+    cell.kind === "count"
+      ? formatQuantity(cell.n, lang)
+      : cell.total === 0
+        ? formatQuantity(0, lang)
+        : serverT(lang, "admin.hub.week.of", {
+            done: formatQuantity(cell.done, lang),
+            total: formatQuantity(cell.total, lang),
+          });
+  return <span className={`font-bold tabular-nums ${tone}`}>{text}</span>;
 }
