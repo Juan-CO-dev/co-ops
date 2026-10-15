@@ -386,3 +386,130 @@ describe("an open line edit across another manager's save (Astra chunks 3-4 revi
     expect44(html);
   });
 });
+
+// ── The menu item page body (plan Task 9 Step 1, with the lead decisions) ─────
+const { MenuItemClient, MenuHistoryList, MenuStaleNotice, menuRefusalText } = await import("@/components/catalog/MenuItemClient");
+type MenuView = import("@/lib/catalog/recipe-item-shared").MenuItemPageView;
+const { serverT } = await import("@/lib/i18n/server");
+
+const menuView: MenuView = {
+  item: { id: "7d0c1f2e-0000-4000-8000-0000000000a1", name: "Italian", nameEs: "Italiano", menuPrice: 12.5, section: "Subs" },
+  shops: [{ id: SHOP, name: "P Street" }, { id: OTHER, name: "Capitol Hill" }],
+  scope: SHOP, scopeName: "P Street",
+  can: { editShop: true, promote: false, shopsToEdit: [{ id: SHOP, name: "P Street" }] },
+  here: { settingId: "ms", price: 13.5, soldHere: true, nameOverride: null, nameOverrideEs: null, name: "Italian", nameEs: "Italiano", typedPrice: 13.5 },
+  cost: 2.5,
+  recipe: { id: "7d0c1f2e-0000-4000-8000-0000000000r1", name: "Italian" },
+  toastLinks: 1,
+  history: [
+    { id: "ms", active: true, validFrom: "2026-10-10T00:00:00Z", validTo: null, who: "Ana", price: 13.5, soldHere: true, nameOverride: null, nameOverrideEs: null },
+    { id: "ms0", active: false, validFrom: "2026-10-01T00:00:00Z", validTo: "2026-10-10T00:00:00Z", who: "Ana", price: 14, soldHere: false, nameOverride: "Big Italian", nameOverrideEs: null },
+  ],
+};
+
+describe("MenuItemClient", () => {
+  it("shows this shop's settings, its food cost, the recipe and the Toast link; every control is 44px", () => {
+    const html = render(jsx(MenuItemClient, { view: menuView }));
+    expect(html).toContain("P Street&#x27;s settings");
+    expect(html).toContain(en["catalog.menu.section.here"]);
+    expect(html).toContain('value="13.5"');
+    expect(html).toContain("Linked in Toast: 1");
+    expect(html).toContain("Food cost here: $2.50");
+    expect(html).toContain(en["catalog.menu.back_to_default"]);
+    expect(html).toContain(en["catalog.menu.see_changes"]);
+    expect44(html);
+  });
+  it("the global view asks to pick a shop, with the way forward; Spanish throughout", () => {
+    const g: MenuView = { ...menuView, scope: null, scopeName: null, can: { editShop: false, promote: false, shopsToEdit: [{ id: SHOP, name: "P Street" }] }, history: [] };
+    const html = render(jsx(MenuItemClient, { view: g }));
+    expect(html).toContain(en["catalog.menu.global_view_hint"]);
+    expect(html).toContain("Change it for P Street");
+    expect(html).not.toContain('value="13.5"');
+    expect(render(jsx(MenuItemClient, { view: menuView }), "es")).toContain(es["catalog.menu.section.here"]);
+    expect(render(jsx(MenuItemClient, { view: g }), "es")).toContain("Cámbialo para P Street");
+  });
+  it("no dead ends: another shop's view is read-only with 'Change it for <shop>'; a reader with no shop sees the view-only sentence", () => {
+    const other: MenuView = { ...menuView, scope: OTHER, scopeName: "Capitol Hill", can: { editShop: false, promote: false, shopsToEdit: [{ id: SHOP, name: "P Street" }] } };
+    const html = render(jsx(MenuItemClient, { view: other }));
+    expect(html).toContain(html_(en["catalog.menu.pick_shop_hint"]));
+    expect(html).toContain("Change it for P Street");
+    expect(html).toContain(`href="/admin/catalog/menu-item/${menuView.item.id}?location=${SHOP}"`);
+    expect(html).not.toContain(en["catalog.menu.back_to_default"]);
+    const reader: MenuView = { ...other, can: { editShop: false, promote: false, shopsToEdit: [] } };
+    expect(render(jsx(MenuItemClient, { view: reader }))).toContain(en["catalog.menu.view_only"]);
+    const many: MenuView = { ...menuView, scope: null, scopeName: null, can: { editShop: false, promote: true, shopsToEdit: menuView.shops } };
+    const m = render(jsx(MenuItemClient, { view: many }));
+    expect(m).toContain(en["catalog.item.pick_shop"]);
+    expect(m).toContain("Change it for Capitol Hill");
+  });
+  it("the Director of Operations sees Promote for a shop's OWN price and name — never a GM, never a shop riding the global menu", () => {
+    const own: MenuView = { ...menuView, can: { editShop: true, promote: true, shopsToEdit: menuView.shops },
+      here: { ...menuView.here, nameOverride: "Big Italian", name: "Big Italian" } };
+    const html = render(jsx(MenuItemClient, { view: own }));
+    expect(html).toContain(html_(en["catalog.menu.promote.title"]));
+    expect(html).toContain(html_("Make $13.50 everyone's price"));
+    expect(html).toContain(html_("Make “Big Italian” everyone's name"));
+    expect(html).toContain(html_("Every shop on the global menu gets P Street's own price or name. P Street then follows the global menu for it."));
+    expect(render(jsx(MenuItemClient, { view: { ...own, can: { ...own.can, promote: false } } }))).not.toContain("everyone&#x27;s price");
+    const riding: MenuView = { ...own, here: { ...own.here, settingId: null, price: null, nameOverride: null } };
+    expect(render(jsx(MenuItemClient, { view: riding }))).not.toContain(html_(en["catalog.menu.promote.title"]));
+    const priceOnly = render(jsx(MenuItemClient, { view: { ...own, here: { ...own.here, nameOverride: null } } }));
+    expect(priceOnly).not.toContain("everyone&#x27;s name");
+    expect44(html);
+  });
+  it("375px: the shop chips WRAP (no sideways scroll), long names break, nothing is clipped", () => {
+    const many: MenuView = { ...menuView, shops: [...menuView.shops, { id: "6f1d2c3e-0000-4000-8000-00000000000c", name: "Navy Yard Catering Kitchen" }] };
+    const html = render(jsx(MenuItemClient, { view: many }));
+    const nav = new RegExp(`<nav[^>]*aria-label="${en["catalog.menu.shop_switcher"]}"[^>]*>`).exec(html)?.[0] ?? "";
+    expect(nav).toContain("flex-wrap");
+    expect(html).not.toMatch(/overflow-x-auto|whitespace-nowrap|\btruncate\b|shrink-0/);
+    expect(html).toContain("Navy Yard Catering Kitchen");
+    expect(html).toContain("break-words");
+  });
+});
+
+describe("the menu History", () => {
+  it("lists every change here with Restore on the past ones (who can save here only); 44px; Spanish", () => {
+    const html = render(jsx(MenuHistoryList, { view: menuView, busy: false, onRestore: noop }));
+    expect(html).toContain(en["catalog.menu.current"]);
+    expect(html.split(`>${en["catalog.menu.restore"]}<`).length - 1).toBe(1);
+    expect(html).toContain("Price $14.00");
+    expect(html).toContain(en["catalog.menu.history_off"]);
+    expect(html).toContain("Name “Big Italian”");
+    expect44(html);
+    const ro = render(jsx(MenuHistoryList, { view: { ...menuView, can: { ...menuView.can, editShop: false } }, busy: false, onRestore: noop }));
+    expect(ro).not.toContain(`>${en["catalog.menu.restore"]}<`);
+    expect(render(jsx(MenuHistoryList, { view: menuView, busy: false, onRestore: noop }), "es")).toContain(es["catalog.menu.restore"]);
+  });
+});
+
+describe("the menu form across a refresh (lead decision: the draft keeps its ORIGINAL baseline; show what moved; Start over)", () => {
+  it("shows each field of the shop's row that moved — was → now — with 'Start over from the new version'", () => {
+    const html = render(jsx(MenuStaleNotice, { moves: [{ field: "price", before: 13.5, after: 14 }, { field: "soldHere", before: true, after: false }, { field: "nameEs", before: null, after: "Grande" }], busy: false, onRebase: noop }));
+    expect(html).toContain(html_(en["catalog.menu.edit_conflict"]));
+    expect(html).toContain("Price: $13.50 → $14.00");
+    expect(html).toContain("Sold here: yes → no");
+    expect(html).toContain("Spanish name: — → Grande");
+    expect(html).toContain(en["catalog.menu.edit_rebase"]);
+    expect44(html);
+    expect(render(jsx(MenuStaleNotice, { moves: [{ field: "name", before: null, after: "Big" }], busy: false, onRebase: noop }), "es")).toContain(es["catalog.menu.edit_rebase"]);
+  });
+});
+
+describe("a refusal on the menu page is named — and a promote refused after its Spanish name saved says so plainly (CC note 2 #3)", () => {
+  const tEn = (k: Parameters<typeof serverT>[1], p?: Parameters<typeof serverT>[2]) => serverT("en", k, p);
+  const tEs = (k: Parameters<typeof serverT>[1], p?: Parameters<typeof serverT>[2]) => serverT("es", k, p);
+  it("the shop's label changed (in History) but the promote did not happen — then the reason", () => {
+    const text = menuRefusalText(tEn, { code: "version_changed", spanishNameSaved: { settingId: "s2", locationId: SHOP } }, menuView.shops);
+    expect(text).toContain("P Street's own Spanish name was saved (you can see it in History), but the promote did not happen.");
+    expect(text).toContain(en["catalog.menu.error.version_changed"]);
+    const unnamed = menuRefusalText(tEn, { code: "promote_not_done", spanishNameSaved: { settingId: "s2", locationId: SHOP } }, menuView.shops);
+    expect(unnamed).toContain(en["catalog.error.promote_not_done"]);
+    expect(menuRefusalText(tEs, { code: "version_changed", spanishNameSaved: { settingId: "s2", locationId: SHOP } }, menuView.shops))
+      .toContain("El nombre en español propio de P Street se guardó (lo ves en el Historial), pero la promoción no se hizo.");
+  });
+  it("a plain refusal is its own message, never generic", () => {
+    expect(menuRefusalText(tEn, { code: "global_changed" }, menuView.shops)).toBe(en["catalog.menu.error.global_changed"]);
+    expect(menuRefusalText(tEn, { code: "invalid_price" }, menuView.shops)).toBe(en["catalog.error.invalid_price"]);
+  });
+});
