@@ -24,7 +24,8 @@ describe("links land on the item", () => {
     expect(noticesHref()).toBe("/admin/catalog/notices");
     expect(SHOP_CHANGES_HREF).toBe("/admin/catalog/shop-changes");
   });
-  it("the shop switcher's param is declared for both item pages (the notices page declares its own with the page, Task 10)", () => {
+  it("the shop switcher's param is declared for both item pages and the notices page (Task 10, with its page)", () => {
+    expect(shopParamNames("/admin/catalog/notices")).toEqual(["location"]);
     expect(shopParamNames(`/admin/catalog/recipe/${R}`)).toEqual(["location"]);
     expect(shopParamNames(`/admin/catalog/menu-item/${R}`)).toEqual(["location"]);
     // the bare prefix is not an item page

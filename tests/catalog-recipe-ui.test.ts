@@ -566,7 +566,7 @@ describe("chunk-5 review (CC note 8)", () => {
     expect(rh).not.toContain("Oct 15");
   });
   it("P3: no p3b screen slices an ISO timestamp for its date", () => {
-    for (const f of ["components/catalog/MenuItemClient.tsx", "components/catalog/RecipeItemClient.tsx", "components/catalog/ShopChangesClient.tsx"]) {
+    for (const f of ["components/catalog/MenuItemClient.tsx", "components/catalog/RecipeItemClient.tsx", "components/catalog/ShopChangesClient.tsx", "components/catalog/RecipeNoticesClient.tsx"]) {
       const src = readFileSync(f, "utf8");
       expect(src, f).not.toContain("iso.slice(0, 10)");
       expect(src, f).toContain("etDisplayDate(");
@@ -699,5 +699,57 @@ describe("a Shop changes promote — the preview, its save, and what happens whe
   });
   it("a refusal is shown on its own row, by name", () => {
     expect(menuCard({ ...idle, message: en["catalog.menu.error.global_changed"] })).toContain(html_(en["catalog.menu.error.global_changed"]));
+  });
+});
+
+// ── A GM's recipe updates (plan Task 10, with the lead decisions) ─────────────
+const { RecipeNoticesClient } = await import("@/components/catalog/RecipeNoticesClient");
+type Notice = import("@/lib/catalog/recipe-notices-shared").RecipeNotice;
+const newDefault: Notice = { kind: "new_default", recipeId: RID, recipeName: "Italian", seenVersionId: "7d0c1f2e-0000-4000-8000-0000000000cc", fromShopName: "P Street", at: "2026-10-12T16:00:00Z" };
+const srcChanged: Notice = {
+  kind: "source_changed", recipeId: RID, recipeName: "Italian", sourceShopId: OTHER, sourceShopName: "Capitol Hill",
+  seenVersionId: "7d0c1f2e-0000-4000-8000-0000000000dd", sourceLiveVersionId: "7d0c1f2e-0000-4000-8000-0000000000dd",
+  dismissKind: "source_changed", editedSinceAdopting: false, promotedToDefault: false, at: "2026-10-13T16:00:00Z",
+};
+
+describe("RecipeNoticesClient — a GM's recipe updates", () => {
+  it("a new default names the recipe and the shop it came from, with Got it; 44px", () => {
+    const html = render(jsx(RecipeNoticesClient, { shopId: SHOP, notices: [newDefault] }));
+    expect(html).toContain("Italian has a new default for every shop (from P Street).");
+    expect(html).toContain(en["catalog.recipe.notice.got_it"]);
+    expect44(html);
+  });
+  it("lead decision: every notice deep-links to THIS shop's view of the recipe", () => {
+    const html = render(jsx(RecipeNoticesClient, { shopId: SHOP, notices: [newDefault, srcChanged] }));
+    expect(html.split(`href="/admin/catalog/recipe/${RID}?location=${SHOP}"`).length - 1).toBe(2);
+    expect(html).toContain(en["catalog.recipe.notice.open"]);
+  });
+  it("another shop changed the recipe this shop copied: Keep mine — and, after an edit of the copy, the link holds and the notice says so", () => {
+    const plain = render(jsx(RecipeNoticesClient, { shopId: SHOP, notices: [srcChanged] }));
+    expect(plain).toContain("Capitol Hill changed the Italian you copied. Take the update?");
+    expect(plain).toContain(en["catalog.recipe.notice.keep_mine"]);
+    expect(plain).not.toContain(html_("You've changed your copy since adopting it."));
+    const edited = render(jsx(RecipeNoticesClient, { shopId: SHOP, notices: [{ ...srcChanged, editedSinceAdopting: true }] }));
+    expect(edited).toContain(html_("You've changed your copy since adopting it."));
+    expect(render(jsx(RecipeNoticesClient, { shopId: SHOP, notices: [{ ...srcChanged, editedSinceAdopting: true }] }), "es"))
+      .toContain(es["catalog.recipe.notice.edited_since"]);
+  });
+  it("the source went back to the default, or became the default: each says which", () => {
+    const gone = render(jsx(RecipeNoticesClient, { shopId: SHOP, notices: [{ ...srcChanged, sourceLiveVersionId: null, dismissKind: "source_retired" }] }));
+    expect(gone).toContain("Capitol Hill went back to the default Italian.");
+    const promoted = render(jsx(RecipeNoticesClient, { shopId: SHOP, notices: [{ ...srcChanged, sourceLiveVersionId: null, dismissKind: "source_retired", promotedToDefault: true }] }));
+    expect(promoted).toContain(html_("Capitol Hill's Italian is now the default for every shop. Go back to the default?"));
+  });
+  it("dates are the operational (ET) day", () => {
+    const html = render(jsx(RecipeNoticesClient, { shopId: SHOP, notices: [{ ...newDefault, at: "2026-10-15T01:30:00Z" }] }));
+    expect(html).toContain("Oct 14");
+    expect(html).not.toContain("Oct 15");
+  });
+  it("nothing new says so (en + es); long names wrap at 375px", () => {
+    expect(render(jsx(RecipeNoticesClient, { shopId: SHOP, notices: [] }))).toContain(en["catalog.notices.none"]);
+    expect(render(jsx(RecipeNoticesClient, { shopId: SHOP, notices: [] }), "es")).toContain(es["catalog.notices.none"]);
+    const html = render(jsx(RecipeNoticesClient, { shopId: SHOP, notices: [{ ...srcChanged, sourceShopName: "Navy Yard Catering Kitchen" }] }));
+    expect(html).toContain("break-words");
+    expect(html).not.toMatch(/overflow-x-auto|whitespace-nowrap|\btruncate\b|shrink-0/);
   });
 });

@@ -212,3 +212,40 @@ describe("the admin hub card for Shop changes", () => {
     expect(adminSectionsFor(9).find((s) => s.id === "shop-changes")?.href).toBe("/admin/catalog/shop-changes");
   });
 });
+
+// ── A GM's recipe updates: the notices page (plan Task 10) ──
+const NOTICES_CLIENT = "components/catalog/RecipeNoticesClient.tsx";
+const NOTICES_PAGE = "app/admin/catalog/notices/page.tsx";
+
+describe("the recipe updates (notices) page", () => {
+  it("the answer records the version seen IN the state seen, and asks no password (it changes no food)", () => {
+    const src = readFileSync(NOTICES_CLIENT, "utf8");
+    expect(src).toContain('const kind = n.kind === "source_changed" ? n.dismissKind : n.kind;');
+    expect(src).toContain("{ locationId: shopId, kind, seenVersionId: n.seenVersionId }");
+    expect(src).not.toContain("requestStepUp(");
+    // a refused answer is named, never generic
+    expect(src).toContain("t(recipeErrorKey(r.code))");
+  });
+  it("reads ?location= through the one getter and the one resolver over the viewer's shops; the lib's refusal lands on the dashboard", () => {
+    const src = readFileSync(NOTICES_PAGE, "utf8");
+    expect(src).toContain('shopParamFor("/admin/catalog/notices", searchParamValues(sp))');
+    expect(src).toContain("await resolveShopId(mine, explicit ?? null)");
+    expect(src).toContain("if (auth.level < RECIPE_SHOP_WRITE_MIN) redirect(");
+    expect(src).toContain('e instanceof RecipeVersionError && e.status === 403) redirect("/dashboard")');
+  });
+  it("375px: the shop chips WRAP — no sideways scroller, nothing clipped", () => {
+    const src = readFileSync(NOTICES_PAGE, "utf8");
+    expect(src).toMatch(/<nav[^>]*className="[^"]*flex-wrap/);
+    expect(src).not.toMatch(/overflow-x-auto|whitespace-nowrap|\btruncate\b|shrink-0/);
+    expect(src).toContain("min-h-[44px]");
+  });
+  it("never keys on a location CODE — shops are ids and names", () => {
+    for (const f of [NOTICES_CLIENT, NOTICES_PAGE]) expect(readFileSync(f, "utf8"), f).not.toMatch(/["'](EM|MEP)["']/);
+    expect(readFileSync(NOTICES_PAGE, "utf8")).toContain('.select("id, name")');
+  });
+  it("the hub card: Recipe updates is the GM's (7)", async () => {
+    const { adminSectionsFor } = await import("@/lib/admin/sections");
+    expect(adminSectionsFor(7).find((s) => s.id === "recipe-notices")?.href).toBe("/admin/catalog/notices");
+    expect(adminSectionsFor(6).map((s) => s.id)).not.toContain("recipe-notices");
+  });
+});

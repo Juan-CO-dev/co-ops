@@ -98,6 +98,7 @@ const SHOP_PARAMS_BY_PATH: Readonly<Record<string, readonly string[]>> = {
   "/admin/catering/prep-demand": ["location"],
   "/admin/catering/lto": ["location"],
   "/admin/menu-costing": ["location"], // catalog Phase 2a — the costing board's shop switcher
+  "/admin/catalog/notices": ["location"], // catalog Phase 3b — a GM's recipe updates for one shop
 };
 
 /** Dynamic routes, matched by prefix (`/mid-shift/[section]`). */
@@ -107,8 +108,7 @@ const SHOP_PARAMS_BY_PREFIX: ReadonlyArray<readonly [string, readonly string[]]>
   // shop id, so the sync never remembers it (shopParamFromUrl / shouldRememberShop).
   ["/admin/catalog/sku/", ["location"]],
   // Catalog Phase 3b — the recipe and menu-item pages' shop switcher (?location=<shop> | global).
-  // (The notices list declares "/admin/catalog/notices" in SHOP_PARAMS_BY_PATH WITH its page, Task 10:
-  // every declared exact route must be backed by an audited page — tests/shop-context.test.ts.)
+  // (The notices list is an exact route, "/admin/catalog/notices", declared in SHOP_PARAMS_BY_PATH with its page.)
   ["/admin/catalog/recipe/", ["location"]],
   ["/admin/catalog/menu-item/", ["location"]],
 ];

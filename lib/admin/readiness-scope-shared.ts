@@ -5,6 +5,7 @@
  * Pure: the caller loads one readiness map per scope (one graph read per scope, never per recipe).
  */
 import type { Readiness } from "@/lib/readiness";
+import type { TranslationParams } from "@/lib/i18n/types";
 
 export interface ScopeReadiness {
   scope: string | null;
@@ -44,4 +45,27 @@ export function attributeNotReady(perScope: readonly ScopeReadiness[]): { recipe
     if (r.length > 0 || i.length > 0) byScope.push({ scope: s.scope, scopeName: s.scopeName, recipes: r.length, items: i.length });
   }
   return { recipes: allRecipes.size, items: allItems.size, byScope };
+}
+
+/** One "where" entry under a hub card: its link, and its words — the default, or a shop by NAME (never a code). */
+export interface ReadinessWhereEntry {
+  scope: string | null;
+  href: string;
+  key: "readiness.hub.where_default" | "readiness.hub.where_shop";
+  params: TranslationParams;
+}
+
+/**
+ * THE HUB'S ATTRIBUTED COUNT, in reading order (catalog Phase 3b lead decision: "1 in the default · 2 at P Street"):
+ * the default first when it has failures, then each shop with failures for this section, each linking to that
+ * scope's list. The hub joins them with a dot.
+ */
+export function readinessWhereEntries(sectionId: "recipes" | "items", href: string, byScope: readonly ReadinessByScope[]): ReadinessWhereEntry[] {
+  const count = (b: ReadinessByScope) => (sectionId === "recipes" ? b.recipes : b.items);
+  return byScope.filter((b) => count(b) > 0).map((b): ReadinessWhereEntry => {
+    const href_ = readinessScopeHref(sectionId, href, b.scope);
+    return b.scope === null
+      ? { scope: null, href: href_, key: "readiness.hub.where_default", params: { count: count(b) } }
+      : { scope: b.scope, href: href_, key: "readiness.hub.where_shop", params: { shop: b.scopeName ?? "", count: count(b) } };
+  });
 }
