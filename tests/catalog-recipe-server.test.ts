@@ -91,7 +91,9 @@ describe("the recipe page view", () => {
   it("a GM at its shop: riding the default, may edit its shop, not everyone; OTHER's version is listed to adopt", async () => {
     const view = (await loadRecipeItemView(gm, "r-italian", LOC))!;
     expect(view.version).toMatchObject({ ridesDefault: true, scopeVersionId: null, globalVersionId: "rv-r-italian-base" });
-    expect(view.can).toEqual({ editShop: true, editGlobal: false });
+    expect(view.can).toMatchObject({ editShop: true, editGlobal: false });
+    // No dead ends: the shops this GM may change it for — its own, never OTHER.
+    expect(view.can.shopsToEdit.map((s) => s.id)).toEqual([LOC]);
     expect(view.lines.map((l) => l.lineId)).toContain("ri-03");
     expect(view.otherShopVersions.map((o) => [o.shopId, o.createdByName, o.changes.length])).toEqual([[OTHER, "Ana", 0]]);
     expect(view.makes.map((m) => m.id)).toEqual(["m-italian"]);
@@ -100,7 +102,17 @@ describe("the recipe page view", () => {
   it("the slaw is USED IN the Italian, from the scope-resolved graph", async () => {
     const view = (await loadRecipeItemView(moo, "r-slaw", null))!;
     expect(view.usedIn.map((u) => u.id)).toEqual(["r-italian"]);
-    expect(view.can).toEqual({ editShop: false, editGlobal: true });
+    expect(view.can).toMatchObject({ editShop: false, editGlobal: true });
+    // The MoO may change it for every active shop.
+    expect(view.can.shopsToEdit.map((s) => s.id).sort()).toEqual([LOC, OTHER].sort());
+  });
+  it("a GM reading ANOTHER shop's recipe sees it read-only, with its own shop as the way forward (no dead ends)", async () => {
+    const view = (await loadRecipeItemView(gm, "r-italian", OTHER))!;
+    expect(view.can).toMatchObject({ editShop: false, editGlobal: false });
+    expect(view.can.shopsToEdit.map((s) => s.id)).toEqual([LOC]);
+    const global = (await loadRecipeItemView(gm, "r-italian", null))!;
+    expect(global.can).toMatchObject({ editShop: false, editGlobal: false });
+    expect(global.can.shopsToEdit.map((s) => s.id)).toEqual([LOC]);
   });
   it("the social media manager is refused by ROLE in the lib (house rule)", async () => {
     expect(await refused(loadRecipeItemView(smm, "r-italian", LOC))).toEqual({ status: 403, code: "forbidden" });

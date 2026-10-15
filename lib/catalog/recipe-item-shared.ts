@@ -226,7 +226,8 @@ export interface RecipeItemView {
   shops: Array<{ id: string; name: string }>;
   scope: string | null;
   scopeName: string | null;
-  can: { editShop: boolean; editGlobal: boolean };
+  /** `shopsToEdit`: every shop this actor may change the recipe for — the way forward a read-only view offers ("Change it for <shop>"; no dead ends). */
+  can: { editShop: boolean; editGlobal: boolean; shopsToEdit: Array<{ id: string; name: string }> };
   version: {
     scopeVersionId: string | null;
     globalVersionId: string | null;
