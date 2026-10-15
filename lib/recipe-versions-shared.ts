@@ -260,7 +260,7 @@ export const RECIPE_VERSION_ERROR_CODES = [
   "restore_source_out_of_scope", "invalid_lines", "dependencies_changed", "dependencies_busy", "version_changed",
   "product_line_invalid", "would_create_cycle", "readback_failed", "not_found", "global_cannot_retire", "not_live",
   "edge_not_found", "line_changed", "empty_recipe", "forbidden", "global_requires_moo", "invalid_component",
-  "invalid_quantity", "product_line_needs_measure_unit", "truncate_refused",
+  "invalid_quantity", "product_line_needs_measure_unit", "truncate_refused", "invalid_component_product",
 ] as const;
 export type RecipeVersionErrorCode = (typeof RECIPE_VERSION_ERROR_CODES)[number];
 

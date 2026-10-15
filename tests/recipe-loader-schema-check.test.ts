@@ -16,6 +16,7 @@ const LOC = "6f1d2c3e-0000-4000-8000-0000000000a1";
 const CANNED: Record<string, unknown[]> = {
   recipe_versions: [{ id: "6f1d2c3e-0000-4000-8000-0000000000c1", recipe_id: "6f1d2c3e-0000-4000-8000-0000000000d1", location_id: LOC,
     valid_from: "2026-10-01T00:00:00.000Z", valid_to: null, active: true }],
+  recipes: [{ id: "6f1d2c3e-0000-4000-8000-0000000000d1", name: "Slaw", active: true }],
 };
 
 function recordingClient() {
@@ -37,7 +38,7 @@ function recordingClient() {
         order: (c: string) => { rec.order.push(c); return q; },
         range: () => { rec.ranged = true; return q; },
         limit: () => q, returns: () => q,
-        maybeSingle: async () => ({ data: null, error: null }),
+        maybeSingle: async () => ({ data: (CANNED[table] ?? [])[0] ?? null, error: null }),
         then: (resolve: (v: unknown) => unknown) => Promise.resolve({ data: CANNED[table] ?? [], error: null, count: 0 }).then(resolve),
       });
       return q;
@@ -49,7 +50,12 @@ vi.mock("@/lib/supabase-server", () => ({ getServiceRoleClient: () => recordingC
 
 import { createDatedGraphs, loadRecipeBoundaries, loadRecipeGraph, loadRecipeInputsAcrossScopes, loadRecipeLineOverlay, loadResolvedRecipeInputs } from "@/lib/prep-consumption";
 import { loadLiveMenuItemShopSettings } from "@/lib/menu-item-shop";
+import { loadRecipeLiveSet, loadRecipeVersionHistory, restoreRecipeVersion, retireShopRecipeVersion } from "@/lib/admin/recipe-versions";
+import type { AuthContext } from "@/lib/session";
 import { migratedRecipeDb } from "./fixtures/recipe-versions-pglite";
+
+const OWNER = { user: { id: "u", role: "owner" }, role: "owner", level: 9, locations: [LOC] } as unknown as AuthContext;
+const RECIPE = "6f1d2c3e-0000-4000-8000-0000000000d1";
 
 /** The 0262 / 0263 tables, defined fully by the real migrations in PGlite. */
 const FULLY_DEFINED = new Set(["recipe_versions", "recipe_version_lines", "recipe_notice_dismissals", "menu_item_shop_settings"]);
@@ -68,6 +74,12 @@ beforeAll(async () => {
   // Task 6b: the line resolvers every direct reader now goes through.
   await run("loadResolvedRecipeInputs(shop)", () => loadResolvedRecipeInputs(LOC));
   await run("loadRecipeInputsAcrossScopes", () => loadRecipeInputsAcrossScopes());
+  // Task 7: the gated recipe writers' own reads.
+  await run("loadRecipeLiveSet(shop)", () => loadRecipeLiveSet(RECIPE, LOC));
+  await run("loadRecipeLiveSet(global)", () => loadRecipeLiveSet(RECIPE, null));
+  await run("loadRecipeVersionHistory", () => loadRecipeVersionHistory(OWNER, RECIPE, LOC));
+  await run("restoreRecipeVersion", () => restoreRecipeVersion(OWNER, { recipeId: RECIPE, scope: LOC, fromVersionId: RECIPE, expectedVersionId: null, basedOnVersionId: null }));
+  await run("retireShopRecipeVersion", () => retireShopRecipeVersion(OWNER, { recipeId: RECIPE, versionId: RECIPE, locationId: LOC }));
   // 0263: the menu overlay loader (the costing board's shop view, the Toast matcher pool).
   await run("loadLiveMenuItemShopSettings", () => loadLiveMenuItemShopSettings(LOC));
 }, 120_000);
@@ -95,6 +107,11 @@ describe("every query a loader builds on a 0262 / 0263 table runs against the RE
   it("every PAGED read is ordered (a page boundary without a total order reshuffles rows)", () => {
     const unordered = captured.filter((c) => FULLY_DEFINED.has(c.table) && c.ranged && c.order.length === 0).map((c) => `${c.via} → ${c.table}`);
     expect(unordered).toEqual([]);
-    expect(captured.filter((c) => FULLY_DEFINED.has(c.table)).every((c) => c.ranged)).toBe(true);
+    // Unpaged reads only where a unique key bounds the result: one recipe's LIVE versions (≤ 2: the one-live index per
+    // scope) and a single version by id (the restore / retire source). Every other read on these tables pages.
+    const BOUNDED = new Set(["loadRecipeLiveSet(shop)", "loadRecipeLiveSet(global)", "restoreRecipeVersion", "retireShopRecipeVersion"]);
+    const unpaged = captured.filter((c) => FULLY_DEFINED.has(c.table) && !c.ranged && !(c.table === "recipe_versions" && BOUNDED.has(c.via)))
+      .map((c) => `${c.via} → ${c.table}`);
+    expect(unpaged).toEqual([]);
   });
 });

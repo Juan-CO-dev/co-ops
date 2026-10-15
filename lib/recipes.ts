@@ -175,7 +175,7 @@ function componentTargets(input: {
  * Mass balance is NOT a write rule: it is the costing board's read-time consistency check
  * (lib/menu-costing-shared.ts massBalanceIndex) and applies to any line once it is saved.
  */
-async function assertInputLineIsValid(
+export async function assertInputLineIsValid(
   sb: ReturnType<typeof getServiceRoleClient>,
   line: {
     componentSkuId: string | null;

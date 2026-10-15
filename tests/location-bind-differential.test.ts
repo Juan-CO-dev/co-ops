@@ -60,6 +60,11 @@ const TENANCY_SCOPED_TABLES = [
   "sku_pack_levels",
   "sku_price_lanes",
   "vendor_price_history",
+  // 0262/0263 — a shop's own recipe version / menu overlay / notice answer belongs to that shop (location_id NULL = global).
+  "recipe_versions",
+  "recipe_version_lines",
+  "recipe_notice_dismissals",
+  "menu_item_shop_settings",
   // 0261 — a door report belongs to one shop.
   "sku_pack_change_requests",
   "stations",
@@ -96,6 +101,12 @@ const TENANCY_SCOPED_RPCS = [
   "save_sku_shop_price",
   "save_sku_global_price",
   "retire_sku_price_lane",
+  // 0262/0263 — the recipe-version and menu-overlay writers; their libs bind before calling them.
+  "save_recipe_version",
+  "retire_recipe_version",
+  "save_menu_item_shop_setting",
+  "retire_menu_item_shop_setting",
+  "promote_menu_item_shop_setting",
   // 0261 — the atomic pack + par + report apply; lib/catalog/sku-item.ts binds before calling it.
   "apply_sku_pack_change",
   // 0261 — the atomic price apply; lib/admin/sku-versions.ts saveSkuPrice binds (requireLocation) before calling it.
@@ -156,6 +167,8 @@ const FILES = [
   // Catalog Phase 2b — applyPackChange binds (requireLocation: 2a's version gate with the role) before
   // calling apply_sku_pack_change; setSkuPriceBasis binds a shop-owned SKU to its owner (skuOwnerAllowed).
   "lib/catalog/sku-item.ts",
+  // 0262 — every recipe-version writer binds inside the lib (requireLocation) before any I/O.
+  "lib/admin/recipe-versions.ts",
 ];
 
 /**

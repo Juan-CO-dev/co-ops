@@ -6314,6 +6314,7 @@
   "catalog.error.version_sku_mismatch": "Esa versión es de otro artículo.",
   "catalog.error.global_cannot_retire": "El valor global no puede volver al valor global.",
   "catalog.error.restore_source_out_of_scope": "Solo puedes restaurar versiones anteriores de esta tienda o el valor global. Para usar la versión de otra tienda, adóptala.",
+  "catalog.error.invalid_component_product": "Ese ingrediente está retirado. Elige otro.",
   "catalog.error.truncate_refused": "Las recetas no se pueden borrar en bloque. Cámbialas línea por línea.",
   "catalog.error.global_changed": "El precio o el nombre global cambió desde que lo viste. Revisa otra vez qué cambia esto.",
   "catalog.error.nothing_to_promote": "Esta tienda no cambia eso aquí, así que no hay nada que convertir en el valor global.",
