@@ -205,6 +205,19 @@ Any change shows "Settings changed — regenerate?". The rebuilt week stays insi
 - It **always shows the math:** hours/week, sample cost, what it removes (gaps, overtime, flex uses, manager floor hours). Call-out pressure is included, e.g. "3 sick calls this month covered by managers for 11 floor h; one more Employee at 20 h/week ≈ $380/week would free them".
 - It reacts live as the manager edits.
 
+### 6.5 Schedule rules validator (non-negotiable)
+One pure `checkScheduleRules(schedule, structure)` validator runs on every generated, regenerated, call-out-filled and manager-edited schedule, and in the test suite. It checks:
+- no person is double-booked;
+- no position is over its head count in any 15-minute slot;
+- every shift is at least the minimum length (or meets the flex exception);
+- each position is filled only by its allowed roles (managers on BOH only as a call-out last resort);
+- segments sit inside each position's open–trim–close window;
+- the Closing Manager role is carried by an allowed role;
+- a manager is on duty every hour when required;
+- salaried minimums are met.
+
+A generated schedule that fails is a bug: the generator must not emit it. A manager edit that fails is shown on the board with the rule it breaks.
+
 ## 7. The board (manager surface)
 
 A fast 2D interactive board, not three.js; three.js only if a moment truly needs it. It works on a phone first. Per shop, per week:
