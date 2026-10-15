@@ -1228,6 +1228,11 @@ function StationGroup({
 }) {
   const { t } = useTranslation();
   const requiredItems = items.filter((it) => it.required);
+  const [rowFailures, setRowFailures] = useState<Record<string, boolean>>({});
+  const onRowErrorChange = useCallback((itemId: string, failed: boolean) => {
+    setRowFailures((prev) => prev[itemId] === failed ? prev : { ...prev, [itemId]: failed });
+  }, []);
+  const failedCount = items.filter((it) => rowFailures[it.id]).length;
   const completedRequired = requiredItems.filter((it) => completions.has(it.id)).length;
   const totalRequired = requiredItems.length;
 
@@ -1251,7 +1256,8 @@ function StationGroup({
       open={expanded}
       onToggle={onToggle}
       progressSuffix={
-        aboveRoleCount > 0 ? t("closing.station.awaiting_higher_role", { count: aboveRoleCount }) : ""
+        [aboveRoleCount > 0 ? t("closing.station.awaiting_higher_role", { count: aboveRoleCount }) : "",
+          failedCount > 0 ? ` · ${t("save_status.failed_count", { n: failedCount })}` : ""].join("")
       }
       className="co-card mb-4 break-inside-avoid"
       headerClassName="px-4 py-1"
@@ -1306,6 +1312,7 @@ function StationGroup({
                 : null;
             return (
               <ChecklistItem
+                onErrorChange={onRowErrorChange}
                 templateType="closing"
                 key={it.id}
                 templateItem={it}

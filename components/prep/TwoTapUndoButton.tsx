@@ -33,6 +33,8 @@ export function TwoTapUndoButton({
   pendingLabel,
   ariaLabel,
   armedAriaLabel,
+  variant = "opening",
+  resetKey,
 }: {
   onConfirm: () => void;
   disabled: boolean;
@@ -42,11 +44,22 @@ export function TwoTapUndoButton({
   pendingLabel: string;
   ariaLabel: string;
   armedAriaLabel: string;
+  variant?: "opening" | "closing";
+  resetKey?: string;
 }) {
   const [armed, setArmed] = useState(false);
+  const armedRef = useRef(false);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Unmount cleanup only — never a state sync.
+  // A different completion/action must never inherit the previous row's arm.
+  useEffect(() => {
+    if (timer.current !== null) clearTimeout(timer.current);
+    timer.current = null;
+    armedRef.current = false;
+    setArmed(false);
+  }, [resetKey]);
+
+  // Unmount cleanup.
   useEffect(
     () => () => {
       if (timer.current !== null) clearTimeout(timer.current);
@@ -59,11 +72,13 @@ export function TwoTapUndoButton({
       clearTimeout(timer.current);
       timer.current = null;
     }
-    const step = twoTapStep(armed, "tap");
+    const step = twoTapStep(armedRef.current, "tap");
+    armedRef.current = step.armed;
     setArmed(step.armed);
     if (step.armed) {
       timer.current = setTimeout(() => {
         timer.current = null;
+        armedRef.current = false;
         setArmed(twoTapStep(true, "timeout").armed);
       }, UNDO_CONFIRM_WINDOW_MS);
     }
@@ -78,7 +93,9 @@ export function TwoTapUndoButton({
       aria-label={armed ? armedAriaLabel : ariaLabel}
       data-armed={armed ? "true" : "false"}
       className={[
-        "inline-flex min-h-[44px] items-center rounded-full border-2 bg-co-surface px-3 py-1",
+        variant === "closing"
+          ? "shrink-0 inline-flex min-h-[48px] min-w-[64px] items-center justify-center rounded-lg border-2 bg-co-surface px-3 py-1"
+          : "inline-flex min-h-[44px] items-center rounded-full border-2 bg-co-surface px-3 py-1",
         "text-[10px] font-bold uppercase tracking-[0.12em]",
         "transition focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60",
         "disabled:cursor-not-allowed disabled:opacity-60",

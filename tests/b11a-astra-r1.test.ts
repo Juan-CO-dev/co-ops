@@ -70,9 +70,10 @@ describe("P2-2 wiring", () => {
     expect(client).toContain("if (isDuplicateInFlight(phase2InFlightSigRef.current.get(templateItemId), newSig)) return;");
     expect(client).toContain("phase2InFlightSigRef.current.delete(templateItemId);");
   });
-  it("mid-day has no blur-save on the box (its Save is explicit), so the race cannot occur there", () => {
+  it("mid-day has no blur-save race; its distinct tap/edit race uses a synchronous per-item rule", () => {
     const midday = readFileSync("components/MidDayPhase2Form.tsx", "utf8");
     const input = midday.slice(midday.indexOf('type="number"'), midday.indexOf("<ActionButton", midday.indexOf('type="number"')));
     expect(input).not.toContain("onBlur");
+    expect(midday).toContain("saveOrderRef.current.set(id, result.state)");
   });
 });

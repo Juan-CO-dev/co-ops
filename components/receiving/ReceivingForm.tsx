@@ -90,6 +90,8 @@
  *     until the operator answers the banner (resume or discard re-enables it).
  */
 import { useEffect, useRef, useState } from "react";
+import { submitOutcome } from "@/lib/receiving-submit-shared";
+import { SaveStatus } from "@/components/ui/SaveStatus";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { useTranslation } from "@/lib/i18n/provider";
@@ -389,6 +391,8 @@ export function ReceivingForm({
     }));
   const [prefilling, setPrefilling] = useState(false);
   const [busy, setBusy] = useState(false);
+  const submitBusyRef = useRef(false);
+  const [retryStatus, setRetryStatus] = useState<"complete" | "in_progress" | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [dupId, setDupId] = useState<string | null>(null);
 
@@ -1162,11 +1166,16 @@ export function ReceivingForm({
   };
 
   const submit = async (deliveryStatus: "complete" | "in_progress") => {
-    if (!canSubmit) return;
+    if (!canSubmit || submitBusyRef.current) return;
+    submitBusyRef.current = true;
+    setRetryStatus(deliveryStatus);
     setErr(null);
     setDupId(null);
     setRecorded(null);
     setBusy(true);
+    const showSubmitFailure = (message: string) =>
+      setErr(submitOutcome({ type: "refused", message }, { busy: true }).error);
+    try {
     // The note is the operator's words and nothing else. "Photo later" used to append a
     // "[PHOTO PENDING]" tag here — an untranslated machine string wedged into free text,
     // duplicating state the data already carries: receipt_url IS NULL drives the
@@ -1234,6 +1243,7 @@ export function ReceivingForm({
       // this delivery's to delete. Runs before resetForm, which clears both halves.
       if (startedAtRef.current !== null) removeDraft(locationId, vendorId, startedAtRef.current);
       resetForm();
+      setRetryStatus(null);
       setClosedCount(Array.isArray(ok.resolvedCredits) ? ok.resolvedCredits.length : 0);
       setClosureError(ok.creditClosureError === true);
       setRecorded(typeof ok.deliveryId === "string" && ok.deliveryId
@@ -1249,7 +1259,7 @@ export function ReceivingForm({
       const text = j.message ?? j.error ?? "";
       const m = /\(delivery ([^)]+)\)/.exec(text);
       if (m && m[1]) setDupId(m[1].trim());
-      setErr(text || t("receiving.error.duplicate_delivery"));
+      showSubmitFailure(text || t("receiving.error.duplicate_delivery"));
       return;
     }
     // VO-6: PO linkage errors — clear the PO context so the form can resubmit
@@ -1257,14 +1267,20 @@ export function ReceivingForm({
     if (res.status === 409 && (j?.code === "po_mismatch" || j?.code === "po_not_placed" || j?.code === "po_already_received")) {
       setLinkedPoId(null);
       setLinkedPoCode(null);
-      setErr(t(("receiving.error." + j.code) as never));
+      showSubmitFailure(t(("receiving.error." + j.code) as never));
       return;
     }
     if (res.status === 403 || res.status === 409) {
-      setErr(j.message ?? j.error ?? t("receivingStore.error_forbidden"));
+      showSubmitFailure(j.message ?? j.error ?? t("receivingStore.error_forbidden"));
       return;
     }
-    setErr(t(("receiving.error." + (j?.code ?? "generic")) as never));
+    showSubmitFailure(t(("receiving.error." + (j?.code ?? "generic")) as never));
+    } catch {
+      setErr(submitOutcome({ type: "thrown", message: t("receiving.error.generic") }, { busy: true }).error);
+    } finally {
+      submitBusyRef.current = false;
+      setBusy(false);
+    }
   };
 
   /**
@@ -1941,7 +1957,8 @@ export function ReceivingForm({
           }
           role="alert"
         >
-          <p>{err}</p>
+          <SaveStatus phase="failed" detail={err}
+            onRetry={retryStatus && canSubmit ? () => void submit(retryStatus) : undefined} />
           {dupId ? (
             <Link
               href={`/operations/receiving/${dupId}`}

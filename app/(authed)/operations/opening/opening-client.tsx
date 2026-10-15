@@ -54,6 +54,7 @@ import type {
 } from "@/lib/types";
 
 import { ActionButton } from "@/components/ActionButton";
+import { SaveStatus } from "@/components/ui/SaveStatus";
 import {
   OpeningVerificationStation,
   openingStationProgress,
@@ -921,12 +922,12 @@ export function OpeningClient({
       });
       if (!res.ok) throw new Error(`draft save ${res.status}`);
       draftSentRef.current = body;
-      setDraftState({ status: "saved" });
+      if (draftLatestRef.current === body) setDraftState({ status: "saved" });
     } catch {
       // Deliberately swallowed past the status line: an autosave failure is not an
       // operator error and must not interrupt the walk. draftSentRef stays put, so the
       // next edit resends.
-      setDraftState({ status: "error" });
+      if (draftLatestRef.current === body) setDraftState({ status: "error" });
     }
   }, []);
 
@@ -941,6 +942,7 @@ export function OpeningClient({
       return;
     }
     if (draftSentRef.current === draftBody) return;
+    setDraftState({ status: "idle" });
     const timer = setTimeout(() => {
       void flushDraft(draftBody);
     }, DRAFT_AUTOSAVE_DEBOUNCE_MS);
@@ -2102,18 +2104,10 @@ export function OpeningClient({
                 failure line is a statement rather than a demand. aria-live="polite" so a
                 screen reader hears it settle without interrupting the walk. */}
             {draftEnabled && activePhase === "verification" && draftState.status !== "idle" ? (
-              <p
-                role="status"
-                aria-live="polite"
-                aria-label={t("opening.draft.aria")}
-                className="text-[11px] text-co-text-muted"
-              >
-                {draftState.status === "saving"
-                  ? t("opening.draft.saving")
-                  : draftState.status === "saved"
-                    ? t("opening.draft.saved")
-                    : t("opening.draft.error")}
-              </p>
+              <SaveStatus phase={draftState.status === "error" ? "failed" : draftState.status}
+                detail={draftState.status === "saving" ? t("opening.draft.saving")
+                  : draftState.status === "saved" ? t("opening.draft.saved") : t("opening.draft.error")}
+                onRetry={draftState.status === "error" ? () => void flushDraft(draftLatestRef.current ?? draftBody) : undefined} />
             ) : null}
           </div>
           <div className="flex flex-col gap-1 sm:flex-row sm:items-center">

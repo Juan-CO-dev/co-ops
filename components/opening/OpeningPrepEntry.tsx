@@ -65,6 +65,7 @@ import { UnderParModal, type UnderParCapture } from "./UnderParModal";
 import { RevokeReasonModal } from "./RevokeReasonModal";
 import { etCalendarDate } from "@/lib/operational-day";
 import { TwoTapUndoButton } from "@/components/prep/TwoTapUndoButton";
+import { SaveStatusFrame } from "@/components/ui/SaveStatus";
 
 export interface OpeningPhase2FormValue {
   /** Opener recount value when item flagged for per-item recount; NULL otherwise. */
@@ -359,6 +360,9 @@ export function OpeningPrepEntry({
             title={sectionDisplay}
             done={progress?.done ?? 0}
             total={progress?.total ?? sectionItems.length}
+            progressSuffix={sectionItems.some((it) => saveStates.get(it.id)?.status === "failed")
+              ? ` · ${t("save_status.failed_count", { n: sectionItems.filter((it) => saveStates.get(it.id)?.status === "failed").length })}`
+              : undefined}
             open={collapsible.isOpen(sectionKey)}
             onToggle={() => collapsible.toggle(sectionKey)}
             className="rounded-2xl border-2 border-co-border bg-co-surface p-4 shadow-sm sm:p-5"
@@ -880,7 +884,7 @@ function PrepEntryRow({
        * so the badge and the gate can never disagree. */}
       {/* B8 #1 — the status line reserves the 44px control height so a save (which
        * grows the Undo pill) never shifts the rows below under a finger. */}
-      <div className="flex min-h-[44px] flex-wrap items-center gap-2 text-[11px]">
+      <SaveStatusFrame>
         {saveState.status === "saving" ? (
           <span className="font-bold uppercase tracking-[0.12em] text-co-text-muted">
             {t("opening.phase2.save.saving")}
@@ -901,6 +905,8 @@ function PrepEntryRow({
             {!readOnly ? (
               /* B8 #1 — two taps: the first only arms ("Tap again to undo", ~4 s). */
               <TwoTapUndoButton
+                key={saveState.completionId ?? item.id}
+                resetKey={saveState.completionId ?? item.id}
                 onConfirm={onRevoke}
                 disabled={revoking}
                 pending={revoking}
@@ -962,7 +968,7 @@ function PrepEntryRow({
             {t("opening.phase2.save.unsaved")}
           </span>
         )}
-      </div>
+      </SaveStatusFrame>
 
       {/* Submit-gate inline error badges — render only when showMissingErrors active */}
       {sectionUnverifiedAndNoRecount ? (

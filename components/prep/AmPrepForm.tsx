@@ -66,6 +66,7 @@ import { formatChainAttribution, formatTime } from "@/lib/i18n/format";
 import { useTranslation } from "@/lib/i18n/provider";
 import type { Language, TranslationKey, TranslationParams } from "@/lib/i18n/types";
 import { ActionButton } from "@/components/ActionButton";
+import { SaveStatus } from "@/components/ui/SaveStatus";
 import { shapeFromColumns, totalSourcesForShape } from "@/lib/prep-sections";
 import { unfinishedSectionIds } from "@/lib/collapsible-sections";
 import { useCollapsibleSections } from "@/lib/use-collapsible-sections";
@@ -996,14 +997,9 @@ export function AmPrepForm({
               even the failure line is a statement, and typing is never blocked. Renders
               only once a save has been attempted (an "idle" line would be noise). */}
           {draftEnabled && draftStatusText ? (
-            <p
-              role="status"
-              aria-live="polite"
-              aria-label={t("am_prep.draft.aria")}
-              className="self-center text-[11px] text-co-text-muted"
-            >
-              {draftStatusText}
-            </p>
+            <SaveStatus phase={draftStatus} detail={draftStatusText}
+              onRetry={draftStatus === "failed" ? flushDraft : undefined}
+              className="self-center" />
           ) : null}
 
           {/* Discard-changes affordance — visible only when there are changes
