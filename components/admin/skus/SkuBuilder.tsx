@@ -44,7 +44,9 @@ import {
   type SkuNameCollisionCandidate,
 } from "@/lib/admin/catalog-shared";
 import type { PackChainLevel } from "@/lib/pack-chain-shared";
-import { canChangeGlobalPack, hasGlobalPack, resolveErrorKey, STEP_UP_CANCELLED, type SaveChainResult } from "./shared";
+import { shopPackJobOffered, canChangeGlobalPack, hasGlobalPack, resolveErrorKey, STEP_UP_CANCELLED, type SaveChainResult } from "./shared";
+import Link from "next/link";
+import { skuItemHref } from "@/lib/catalog/sku-item-shared";
 import { PackChainWizard } from "./PackChainWizard";
 import { SkuCostPanel, type SkuCostInfo } from "./SkuCostPanel";
 import { SkuLocationOverlay, type LocationSkuOverlayView } from "./SkuLocationOverlay";
@@ -172,6 +174,7 @@ export function SkuBuilder({
   packFormats,
   measureUnits,
   actorLevel,
+  canEditShopVersion = false,
   busy,
   errorMsg,
   submitLabel,
@@ -207,6 +210,8 @@ export function SkuBuilder({
   packFormats: RegistryOption[];
   measureUnits: MeasureUnitOption[];
   actorLevel: number;
+  /** Catalog Phase 2b: may this actor write a SHOP version (catalogWriteRoleAllowed, decided by the page)? */
+  canEditShopVersion?: boolean;
   busy: boolean;
   errorMsg: string | null;
   submitLabel: string;
@@ -237,6 +242,8 @@ export function SkuBuilder({
   // CATALOG PHASE 2a (D5; sim QA): below MoO an EXISTING global pack is read-only here — the database
   // refuses the change anyway, so the screen says so plainly instead of a password prompt and a 403.
   const globalPackLocked = isEdit && !canChangeGlobalPack(actorLevel, hasGlobalPack(initial!, initialChain?.length ?? 0));
+  // Catalog Phase 2b: the read-only line points at the item page's pack job — THIS SHOP's version.
+  const offerShopPackJob = shopPackJobOffered(globalPackLocked, canEditShopVersion);
 
   // ── Section A state ──
   const initialVendor =
@@ -648,7 +655,10 @@ export function SkuBuilder({
                   ))}
                 </ul>
                 {globalPackLocked ? (
-                  <p role="note" className="text-sm text-co-text-muted">{t("admin.skus.chain.global_read_only")}</p>
+                  <>
+                    <p role="note" className="text-sm text-co-text-muted">{t("admin.skus.chain.global_read_only")}</p>
+                    {offerShopPackJob ? <ShopPackJobLink skuId={initial!.id} /> : null}
+                  </>
                 ) : onSaveChain ? (
                   <button
                     type="button"
@@ -702,7 +712,10 @@ export function SkuBuilder({
           // a bare save stays valid ("add pack detail later").
           <div className="flex flex-col gap-3">
             {globalPackLocked ? (
-              <p role="note" className="text-sm text-co-text-muted">{t("admin.skus.chain.global_read_only")}</p>
+              <>
+                <p role="note" className="text-sm text-co-text-muted">{t("admin.skus.chain.global_read_only")}</p>
+                {offerShopPackJob ? <ShopPackJobLink skuId={initial!.id} /> : null}
+              </>
             ) : !wizardOpen ? (
               <>
                 <p className="text-xs text-co-text-muted">{t("admin.skus.builder.add_detail_later")}</p>
@@ -908,4 +921,14 @@ function orderedForDisplay(levels: PackChainLevel[]): PackChainLevel[] {
 function labelOf(levels: PackChainLevel[], id: string | null): string {
   if (id == null) return "";
   return levels.find((l) => l.id === id)?.label ?? "?";
+}
+
+/** Catalog Phase 2b: "It arrives differently now" on the item page — the shop the page resolves (D2). */
+function ShopPackJobLink({ skuId }: { skuId: string }) {
+  const { t } = useTranslation();
+  return (
+    <Link href={skuItemHref(skuId, { job: "pack" })} className="inline-flex min-h-[44px] w-fit items-center rounded-lg border-2 border-co-border bg-co-surface px-3 text-xs font-bold uppercase tracking-[0.1em] text-co-text hover:border-co-text">
+      {t("admin.skus.chain.use_item_page")}
+    </Link>
+  );
 }

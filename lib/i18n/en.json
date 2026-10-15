@@ -6250,7 +6250,7 @@
   "admin.menu_costing.export_scope": "Download — {scope}",
   "reports.export.pricing_scope_shop": "Prices: {shop}",
   "reports.export.pricing_scope_global": "Prices: global (all shops)",
-  "admin.skus.error.global_requires_moo": "Only a Manager of Operations can change this pack for every shop.",
+  "admin.skus.error.global_requires_moo": "Only a Manager of Operations can change this for every shop. Change it for your shop on the item page.",
   "admin.skus.error.version_changed": "Someone else changed this pack. Reload to see it.",
   "admin.skus.error.sku_inactive": "This item is inactive. Reactivate it before changing its pack.",
   "admin.skus.chain.global_read_only": "Only a Manager of Operations can change this pack for every shop.",
@@ -6462,5 +6462,6 @@
   "receiving.case_different.error.sku_owned_by_other_shop": "This item belongs to another shop, so it can't be reported here.",
   "receiving.case_different.error.delivery_not_found": "That delivery isn't this shop's. Report it from this shop's delivery.",
   "receiving.case_different.error.photo_not_found": "That photo didn't save for this shop. Take it again.",
-  "receiving.case_different.error.invalid_payload": "Something in the report didn't look right. Check the numbers and try again."
+  "receiving.case_different.error.invalid_payload": "Something in the report didn't look right. Check the numbers and try again.",
+  "admin.skus.chain.use_item_page": "Change how it arrives for your shop"
 }

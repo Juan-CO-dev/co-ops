@@ -136,6 +136,16 @@ export function hasGlobalPack(
  * of a SKU that has none (catalog Phase 2a, D5). When false the editor opens READ-ONLY with a plain
  * line, and never asks for a password for a save that cannot succeed.
  */
+/**
+ * Catalog Phase 2b: where 2a's global boundary makes the pack read-only for this actor, offer the
+ * item page's "It arrives differently now" job — THIS SHOP's version — but only to someone who may
+ * write a shop version (the page decides that with catalogWriteRoleAllowed: never the social media
+ * manager). Pure; the item page and its writers re-check everything.
+ */
+export function shopPackJobOffered(globalPackLocked: boolean, canEditShopVersion: boolean): boolean {
+  return globalPackLocked && canEditShopVersion;
+}
+
 export function canChangeGlobalPack(actorLevel: number, skuHasGlobalPack: boolean): boolean {
   return actorLevel >= GLOBAL_VERSION_WRITE_MIN || !skuHasGlobalPack;
 }

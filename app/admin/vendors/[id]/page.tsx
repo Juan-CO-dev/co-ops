@@ -22,7 +22,7 @@ import { listProducts, ProductError, type ProductView } from "@/lib/products";
 import { loadCurrentSkuPrices, computeSkuCostPerOz, loadSkuUsageMap, loadSkuReceivingLedger, loadSkuConsumption, type SkuConsumption } from "@/lib/admin/cost";
 import { skuPackComplete, skuReadiness, type Readiness } from "@/lib/readiness";
 import { loadSkuPackResolution } from "@/lib/prep-consumption";
-import { levelsBySku } from "@/lib/sku-versions-shared";
+import { catalogWriteRoleAllowed, levelsBySku } from "@/lib/sku-versions-shared";
 import { buildPackChain, isChainUnverified, type PackChainLevel } from "@/lib/pack-chain-shared";
 import type { MeasureUnitFactor } from "@/lib/recipe-math";
 import { loadOrderGuide, ORDER_GUIDE_EDIT_MIN } from "@/lib/order-guides";
@@ -207,6 +207,7 @@ export default async function AdminVendorDetailPage({
         skuProductIdBySku={productIdBySku}
         parsFieldsReady={parsReady}
         actorLevel={level}
+        canEditShopVersion={catalogWriteRoleAllowed(auth.user.role, level)}
       />
       {/* Order guide (V3-A §6) — the vendor's own sheet order, which every PO surface
           follows. A sibling of the detail editor rather than a card inside it: the guide

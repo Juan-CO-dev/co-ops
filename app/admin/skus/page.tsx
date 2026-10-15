@@ -13,6 +13,7 @@ import { redirect } from "next/navigation";
 
 import { requireSessionFromHeaders } from "@/lib/session";
 import { ROLES } from "@/lib/roles";
+import { catalogWriteRoleAllowed } from "@/lib/sku-versions-shared";
 import { serverT } from "@/lib/i18n/server";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import { loadSkus, loadPackFormats, loadMeasureUnits, loadLocationSkuSettings, parsColumnsReady, SKU_WRITE_MIN } from "@/lib/admin/skus";
@@ -189,6 +190,7 @@ export default async function AdminSkusPage({
         productIdBySku={productIdBySku}
         parsFieldsReady={parsReady}
         actorLevel={level}
+        canEditShopVersion={catalogWriteRoleAllowed(auth.user.role, level)}
         canManage={level >= SKU_WRITE_MIN}
         focusSkuId={focusSkuId}
         initialVendorFilter={vendorParam}

@@ -73,6 +73,7 @@ export function SkuCatalogClient({
   productIdBySku,
   parsFieldsReady,
   actorLevel,
+  canEditShopVersion = false,
   canManage,
   focusSkuId = null,
   initialVendorFilter = null,
@@ -106,6 +107,8 @@ export function SkuCatalogClient({
   /** True once migration 0182 (GATE M1) applied — gates the Ordering-rhythm group. */
   parsFieldsReady: boolean;
   actorLevel: number;
+  /** Catalog Phase 2b: may this actor write a SHOP version (catalogWriteRoleAllowed)? */
+  canEditShopVersion?: boolean;
   canManage: boolean; // GM+
   /** ?sku=<id> deep link (catalog Phase 1): the row opens, scrolls into view and is ringed. */
   focusSkuId?: string | null;
@@ -332,6 +335,7 @@ export function SkuCatalogClient({
           packFormats={packFormats}
           measureUnits={measureUnits}
           actorLevel={actorLevel}
+            canEditShopVersion={canEditShopVersion}
           busy={busy}
           errorMsg={errorMsg}
           submitLabel={t("admin.skus.save")}
@@ -470,6 +474,7 @@ export function SkuCatalogClient({
             packFormats={packFormats}
             measureUnits={measureUnits}
             actorLevel={actorLevel}
+            canEditShopVersion={canEditShopVersion}
             busy={busy}
             errorMsg={errorMsg}
             submitLabel={t("admin.skus.add")}

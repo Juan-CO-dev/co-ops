@@ -73,6 +73,7 @@ export function VendorDetailClient({
   skuProductIdBySku,
   parsFieldsReady,
   actorLevel,
+  canEditShopVersion = false,
 }: {
   vendor: VendorView;
   categories: CategoryView[];
@@ -110,6 +111,8 @@ export function VendorDetailClient({
   /** True once migration 0182 (GATE M1) applied — gates the SKU form's Ordering-rhythm group. */
   parsFieldsReady: boolean;
   actorLevel: number;
+  /** Catalog Phase 2b: may this actor write a SHOP version (catalogWriteRoleAllowed)? */
+  canEditShopVersion?: boolean;
 }) {
   const { t } = useTranslation();
   const { requestStepUp } = useStepUp();
@@ -189,6 +192,7 @@ export function VendorDetailClient({
         productIdBySku={skuProductIdBySku}
         parsFieldsReady={parsFieldsReady}
         actorLevel={actorLevel}
+        canEditShopVersion={canEditShopVersion}
         canManage={canManage}
       />
       {actorLevel >= 8 ? <ActiveCard vendor={vendor} requestStepUp={requestStepUp} /> : null}
