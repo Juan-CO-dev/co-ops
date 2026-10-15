@@ -154,6 +154,8 @@ const SERVER_TIER_MAP: Record<string, string[]> = {
   "app/api/admin/products/[id]/route.ts": ["E"],
   "app/api/admin/products/route.ts": ["E"],
   "app/api/admin/recipes/[id]/inputs/route.ts": ["E"],
+  // Catalog Phase 1: edit one recipe line in place (compare-and-set).
+  "app/api/admin/recipes/[id]/inputs/[inputId]/route.ts": ["E"],
   "app/api/admin/recipes/[id]/outputs/route.ts": ["E"],
   // Catalog Phase 1: PATCH = edit window; DELETE = one-shot grant (GRANT_SERVER_MAP).
   "app/api/admin/recipes/[id]/route.ts": ["E"],

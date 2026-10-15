@@ -37,6 +37,9 @@ const KNOWN_ERROR_CODES = new Set([
   "batch_mode_single_output",
   "batch_mode_requires_output",
   "invalid_shelf_life_days",
+  // Catalog Phase 1 — the line editor reaches these through add AND edit (the keys already exist).
+  "invalid_component_product",
+  "product_line_needs_measure_unit",
 ]);
 
 export function resolveErrorKey(code: string): TranslationKey {

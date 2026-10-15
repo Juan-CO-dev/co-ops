@@ -19,6 +19,8 @@ vi.mock("@/lib/session", () => ({ requireSession: h.session }));
 vi.mock("@/lib/admin/step-up", () => ({ assertStepUp: h.step }));
 
 import { addRecipeInput, updateRecipeInput } from "@/lib/recipes";
+import { NextRequest } from "next/server";
+import { PATCH } from "@/app/api/admin/recipes/[id]/inputs/[inputId]/route";
 import { isDestructive } from "@/lib/destructive-actions";
 import { NON_DESTRUCTIVE_ACTIONS } from "@/lib/audit-actions";
 import { beginLineEdit, type RecipeLineFields } from "@/lib/recipe-line-shared";
@@ -156,5 +158,52 @@ describe("recipe_input.update is a human change to the kitchen", () => {
     expect(isDestructive("recipe_input.remove")).toBe(true);
     expect(isDestructive("recipe_input.update")).toBe(true);
     expect((NON_DESTRUCTIVE_ACTIONS as readonly string[]).includes("recipe_input.update")).toBe(false);
+  });
+});
+
+describe("PATCH /api/admin/recipes/[id]/inputs/[inputId]", () => {
+  const call = (body: unknown) =>
+    PATCH(
+      new NextRequest(`http://localhost/api/admin/recipes/${R}/inputs/${LINE}`, { method: "PATCH", body: JSON.stringify(body) }),
+      { params: Promise.resolve({ id: R, inputId: LINE }) },
+    );
+  const body = { line: { componentSkuId: "sku-ham", quantity: 5, unit: "oz" }, expected: { componentSkuId: "sku-ham", quantity: 4, unit: "oz", eachContainerLabel: null, portioned: false } };
+
+  it("401 without a session", async () => {
+    h.session.mockResolvedValue(new Response(null, { status: 401 }));
+    expect((await call(body)).status).toBe(401);
+  });
+
+  it("403 below GM, before the step-up check", async () => {
+    h.session.mockResolvedValue(agm);
+    expect((await call(body)).status).toBe(403);
+    expect(h.step).not.toHaveBeenCalled();
+  });
+
+  it("asks for the Tier E edit window and stops on a stale unlock", async () => {
+    h.session.mockResolvedValue(gm);
+    h.step.mockReturnValue({ ok: false, code: "step_up_stale" });
+    const res = await call(body);
+    expect(res.status).toBe(403);
+    expect((await res.json()).code).toBe("step_up_stale");
+    expect(h.step).toHaveBeenCalledWith(gm, "E");
+    expect(h.db.writes).toEqual([]);
+  });
+
+  it("400 on a malformed line or a missing expected line, before any database work", async () => {
+    h.session.mockResolvedValue(gm);
+    expect((await (await call({ ...body, line: { componentSkuId: "sku-ham", quantity: 0 } })).json()).code).toBe("invalid_quantity");
+    expect((await call({ line: body.line })).status).toBe(400);
+    expect(h.db.writes).toEqual([]);
+  });
+
+  it("200 { changed: true } on a real edit; 409 line_changed when the line moved underneath", async () => {
+    h.session.mockResolvedValue(gm);
+    const ok = await call(body);
+    expect(ok.status).toBe(200);
+    expect(await ok.json()).toEqual({ ok: true, changed: true });
+    const stale = await call({ ...body, line: { ...body.line, quantity: 7 } }); // expected still says 4; the row is 5 now
+    expect(stale.status).toBe(409);
+    expect((await stale.json()).code).toBe("line_changed");
   });
 });
