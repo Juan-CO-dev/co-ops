@@ -54,6 +54,8 @@ import { loadAllSkuPackResolution, loadPackBoundaries, loadShopPackEpochs, loadS
 import { loadCurrentSkuPriceHeads } from "@/lib/admin/cost";
 import { loadSkuPackVersionHistory, restoreSkuPackVersion, retireShopPackVersion } from "@/lib/admin/sku-versions";
 import { dismissPackChangeRequest, filePackChangeRequest, loadOpenPackChangeRequests } from "@/lib/pack-change-requests";
+import { globalValueExists, loadSkuPriceHistory, requestShop } from "@/lib/catalog/sku-item";
+import { getServiceRoleClient } from "@/lib/supabase-server";
 import { migratedSchemaDb } from "./fixtures/snapshot-migrate";
 
 const LOC = "6f1d2c3e-0000-4000-8000-0000000000a1";
@@ -81,6 +83,11 @@ beforeAll(async () => {
   // Catalog Phase 2b (0261) — every read of the door's report table.
   await run("loadOpenPackChangeRequests", () => loadOpenPackChangeRequests(owner, { locationIds: [LOC], skuId: SKU }));
   await run("dismissPackChangeRequest", () => dismissPackChangeRequest(owner, { requestId: SKU, skuId: SKU }));
+  // Catalog Phase 2b — the item page's own reads of 0259/0261 tables.
+  await run("globalValueExists(pack)", () => globalValueExists(getServiceRoleClient(), SKU, "pack"));
+  await run("globalValueExists(price)", () => globalValueExists(getServiceRoleClient(), SKU, "price"));
+  await run("loadSkuPriceHistory(shop)", () => loadSkuPriceHistory(getServiceRoleClient(), SKU, LOC));
+  await run("requestShop", () => requestShop(getServiceRoleClient(), SKU));
   await run("filePackChangeRequest", () => filePackChangeRequest(owner, { skuId: SKU, locationId: LOC, deliveryId: null, note: null, proposal: null, photoId: null }));
 }, 120_000);
 afterAll(async () => { await db?.close(); });

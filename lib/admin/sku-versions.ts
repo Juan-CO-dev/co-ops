@@ -76,6 +76,8 @@ export function versionErrorFromRpc(message: string): never {
     // chunk-4 review: a first chain that would move a set flat pack; a shop-owned SKU priced/packed by another shop
     flat_pack_exists: 403, sku_owned_by_other_shop: 409, version_sku_mismatch: 409,
     par_lane_mismatch: 400, invalid_patch: 400, request_mismatch: 400,
+    // 0261: the dependency snapshot re-taken under the SKU lock differs from the preview's.
+    dependencies_changed: 409,
     sku_not_found: 404, location_not_found: 404, not_found: 404,
   };
   if (code && status[code]) throw new SkuVersionError(status[code]!, code);

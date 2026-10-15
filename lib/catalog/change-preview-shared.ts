@@ -73,9 +73,17 @@ export interface PreviewParRow {
 
 /**
  * A conversion the preview OFFERS, bound to the value it was computed from. `inherited` = create the
- * shop's own par slot (which must still be EMPTY) from the inherited global value `expected`.
+ * shop's own par slot (which must still be EMPTY) from the value the shop answered with: the
+ * inherited GLOBAL par (`from` absent), or the shop's own AUTO par (`from: "auto"` — the machine
+ * value this save's pack-epoch bump retires, D3). apply_sku_pack_change (0261) re-checks `expected`
+ * against exactly that source.
  */
-export interface ParConversion { locationId: string | null; slot: ParSlotName; expected: number; to: number; inherited?: true }
+export interface ParConversion { locationId: string | null; slot: ParSlotName; expected: number; to: number; inherited?: true; from?: "auto" }
+
+/** One conversion's identity (target lane + slot + the bound values) — the client's choice set and the server's match. */
+export function conversionKey(c: ParConversion): string {
+  return `${c.locationId ?? "global"}|${c.slot}|${c.expected}|${c.to}${c.inherited ? `|inherited${c.from === "auto" ? ":auto" : ""}` : ""}`;
+}
 
 export interface PackShopDelta {
   shopId: string;

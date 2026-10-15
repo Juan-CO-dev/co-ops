@@ -118,6 +118,9 @@ const BIND_PRIMITIVES = [
   "accessibleLocations",
   "isAllLocationsAccess",
   "requireLocation",
+  // 2a: level ≥ 8 or a membership (D2) — and the owning-shop rule built on it.
+  "catalogShopAllowed",
+  "skuOwnerAllowed",
 ];
 
 /** The audit's named surface. Widen deliberately, one file per follow-up PR. */
@@ -146,6 +149,9 @@ const FILES = [
   "lib/admin/sku-versions.ts",
   // 0261 — filing and dismissing a door report bind inside the lib (requireLocation) before any write.
   "lib/pack-change-requests.ts",
+  // Catalog Phase 2b — applyPackChange binds (requireLocation: 2a's version gate with the role) before
+  // calling apply_sku_pack_change; setSkuPriceBasis binds a shop-owned SKU to its owner (skuOwnerAllowed).
+  "lib/catalog/sku-item.ts",
 ];
 
 /**

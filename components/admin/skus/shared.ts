@@ -70,6 +70,8 @@ const KNOWN_ERROR_CODES = new Set([
   "sku_inactive",
   // the owning-shop bind on a shop-owned SKU (pack-chain.ts skuOwnerAllowed)
   "not_found",
+  // 0259's owner rule: a shop-owned SKU has no other shop (catalog Phase 2b gave it its own message).
+  "sku_owned_by_other_shop",
 ]);
 
 /** Resolve an error `code` to a localized message, falling back to generic. */
