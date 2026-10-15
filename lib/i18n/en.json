@@ -6513,5 +6513,7 @@
   "whats_left.count_one": "1 left",
   "whats_left.verify_station": "Verify {station}",
   "whats_left.higher_role": "{n} need a key holder",
-  "whats_left.key_holder": "Needs a key holder"
+  "whats_left.key_holder": "Needs a key holder",
+  "catalog.menu.preview.name_es_fallback": "Spanish users will see the English name until you add one.",
+  "catalog.menu.promote.name_es_field": "Spanish name (optional)"
 }

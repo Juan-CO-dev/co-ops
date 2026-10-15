@@ -6513,5 +6513,7 @@
   "whats_left.count_one": "1 pendiente",
   "whats_left.verify_station": "Verificar {station}",
   "whats_left.higher_role": "{n} necesitan a alguien con llave",
-  "whats_left.key_holder": "Necesita a alguien con llave"
+  "whats_left.key_holder": "Necesita a alguien con llave",
+  "catalog.menu.preview.name_es_fallback": "Quienes usan la app en español verán el nombre en inglés hasta que agregues uno.",
+  "catalog.menu.promote.name_es_field": "Nombre en español (opcional)"
 }

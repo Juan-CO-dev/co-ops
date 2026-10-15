@@ -6,6 +6,7 @@ import es from "@/lib/i18n/es.json";
 import { CATALOG_ITEM_ERROR_CODES } from "@/lib/catalog/sku-item-shared";
 import { RECIPE_VERSION_ERROR_CODES } from "@/lib/recipe-versions-shared";
 import { MENU_ITEM_SHOP_ERROR_CODES } from "@/lib/menu-item-shop-shared";
+import { MENU_PROMOTE_NAME_KEYS } from "@/lib/catalog/recipe-preview-shared";
 
 const REQUIRED = [
   "customers.catering.sort.quiet", "catalog.item.kind_bought", "catalog.item.version_global",
@@ -57,6 +58,8 @@ const REQUIRED = [
   // Catalog Phase 3a: every named recipe-version refusal (0262 + the line ops / gate) has its own message too.
   ...RECIPE_VERSION_ERROR_CODES.map((c) => `catalog.error.${c}`),
   ...MENU_ITEM_SHOP_ERROR_CODES.map((c) => `catalog.error.${c}`),
+  // Catalog Phase 3b (CC note 1 #2): the promote's Spanish-name fallback and its optional field.
+  ...MENU_PROMOTE_NAME_KEYS,
   "receiving.case_different.button", "receiving.case_different.title",
   "receiving.case_different.note", "receiving.case_different.inner_count", "receiving.case_different.each_weight",
   "receiving.case_different.unit", "receiving.case_different.send", "receiving.case_different.sent",
