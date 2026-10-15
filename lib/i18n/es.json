@@ -6500,5 +6500,7 @@
   "catalog.requests.added_by": "{who} agregó a esto · {date}",
   "receiving.case_different.added": "Ya se reportó: agregamos tu nota y tu foto al reporte.",
   "catalog.item.change_for_shop": "Cámbialo para {shop}",
-  "catalog.item.pick_shop": "Cámbialo para una de tus tiendas"
+  "catalog.item.pick_shop": "Cámbialo para una de tus tiendas",
+  "catalog.menu.preview.name_es_fallback": "Quienes usan la app en español verán el nombre en inglés hasta que agregues uno.",
+  "catalog.menu.promote.name_es_field": "Nombre en español (opcional)"
 }

@@ -6500,5 +6500,7 @@
   "catalog.requests.added_by": "{who} added to this · {date}",
   "receiving.case_different.added": "Already reported — we added your note and photo to it.",
   "catalog.item.change_for_shop": "Change it for {shop}",
-  "catalog.item.pick_shop": "Change it for one of your shops"
+  "catalog.item.pick_shop": "Change it for one of your shops",
+  "catalog.menu.preview.name_es_fallback": "Spanish users will see the English name until you add one.",
+  "catalog.menu.promote.name_es_field": "Spanish name (optional)"
 }
