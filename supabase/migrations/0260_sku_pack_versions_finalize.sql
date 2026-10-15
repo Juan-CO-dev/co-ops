@@ -1,5 +1,5 @@
 -- Migration 0260_sku_pack_versions_finalize
--- AUTHORED 2026-10-15. NOT YET APPLIED — apply via MCP after review.
+-- AUTHORED 2026-10-15. APPLIED TO SIM 20261015124920 · PROD: applied right after the 2a deploy (see PR #477).
 -- ORDER: apply ONLY AFTER the Phase 2a code is deployed to production (plan Task 14, step 9), and
 -- only after the A → B → C sequence check (plan Task 4 Step 2) has passed on the sim.
 -- DEADLINE: apply BEFORE THE NEXT DEPLETION CRON after the deploy — /api/cron/toast-sales-pull,
