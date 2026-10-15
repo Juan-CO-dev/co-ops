@@ -1,5 +1,7 @@
 -- Migration 0255_under_par_alert_recipients
 -- AUTHORED 2026-10-15. NOT YET APPLIED — apply via MCP after review (sim first, prod on Juan's word).
+-- APPLIED TO SIM 2026-10-15 (schema_migrations version 20261015060531, name 'under_par_alert_recipients')
+-- APPLIED TO PROD 2026-10-15 (schema_migrations version 20261015061615, name 'under_par_alert_recipients'); prod was the 0215 body (verified) before apply
 -- Provenance: B11a-floor (Juan's B11 decisions, 2026-10-15). Re-emits submit_phase2_atomic from its
 --   LATEST definer (0215_batch_vs_bottle.sql §6f, APPLIED) with exactly two changes; every other
 --   line is byte-identical — tests/under-par-alert-recipients-migration.test.ts pins the 0215 body
