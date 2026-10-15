@@ -243,3 +243,87 @@ describe("an edit whose line moved underneath (lead decision: the draft keeps it
       .toContain(es["catalog.recipe.edit_rebase"]);
   });
 });
+
+// ── The menu item page (plan Task 9) ──────────────────────────────────────────
+const { MenuPreviewPanel } = await import("@/components/catalog/MenuPreviewPanel");
+import type { MenuPreview } from "@/lib/catalog/recipe-preview-shared";
+
+const menuSave: MenuPreview = {
+  kind: "save", menuItemId: "7d0c1f2e-0000-4000-8000-0000000000a1", shopId: SHOP,
+  before: { name: "Italian", nameEs: "Italiano", price: 12.5, soldHere: true, inherits: { price: true, name: true } },
+  after: { name: "Italian", nameEs: "Italiano", price: 13.5, soldHere: true, inherits: { price: false, name: true } },
+  cost: 2.5, marginBefore: 10, marginAfter: 11, changedShops: [], returnedShop: null, spanishFallsBackToEnglish: false,
+  snapshot: {}, expectedSettingId: null, expectedGlobal: null, token: "tok",
+};
+const menuPromote: MenuPreview = {
+  ...menuSave, kind: "promote", shopId: null,
+  before: { name: "Italian", nameEs: "Italiano", price: 12.5, soldHere: true, inherits: { price: false, name: false } },
+  // An English-only rename: the shop has no Spanish name, so the promote leaves NONE — never the old "Italiano".
+  after: { name: "Big Italian", nameEs: null, price: 12.5, soldHere: true, inherits: { price: false, name: false } },
+  changedShops: [{ shopId: OTHER, shopName: "Capitol Hill" }], returnedShop: { shopId: SHOP, shopName: "P Street" },
+  spanishFallsBackToEnglish: true, expectedSettingId: "ms", expectedGlobal: { price: 12.5, name: "Italian", nameEs: "Italiano" },
+};
+const noop = () => {};
+
+describe("MenuPreviewPanel — what this changes", () => {
+  it("a shop save: price, margin, sold here, both names and what is inherited; one save and Cancel; 44px", () => {
+    const html = render(jsx(MenuPreviewPanel, { preview: menuSave, saveLabel: "Save for P Street", busy: false, onSave: noop, onDiscard: noop }));
+    expect(html).toContain(en["catalog.menu.preview.title"]);
+    expect(html).toContain("Price: $12.50 → $13.50");
+    expect(html).toContain("Margin: $10.00 → $11.00");
+    expect(html).toContain("Sold here: yes → yes");
+    expect(html).toContain("Spanish name: Italiano → Italiano");
+    expect(html).toContain(html_("After this save — price: this shop's own · name: the default's"));
+    expect(html).toContain("Save for P Street");
+    expect(html).toContain(en["catalog.menu.cancel"]);
+    expect(html).not.toContain(en["catalog.menu.preview.name_es_fallback"]);
+    expect44(html);
+  });
+  it("lead decision: a promote shows the Spanish name before → after TRUTHFULLY — no resurrected old name — and the English fallback when it ends up empty", () => {
+    const html = render(jsx(MenuPreviewPanel, {
+      preview: menuPromote, saveLabel: en["catalog.menu.preview.save_promote"], busy: false, onSave: noop, onDiscard: noop,
+      promoteNameEs: { value: "", previewed: "", onChange: noop, onRepreview: noop },
+    }));
+    expect(html).toContain("Name: Italian → Big Italian");
+    expect(html).toContain("Spanish name: Italiano → —");
+    expect(html).not.toContain("Big Italian → Italiano");
+    expect(html).toContain(en["catalog.menu.preview.name_es_fallback"]);
+    expect(html).toContain("Shops that change: Capitol Hill");
+    expect(html).toContain("P Street goes back to the default for what you share.");
+    // the optional Spanish name field, in the same step
+    expect(html).toContain(en["catalog.menu.promote.name_es_field"]);
+    expect(html).toMatch(/<input[^>]*min-h-\[44px\]/);
+    expect(html).toContain(html_(en["catalog.menu.preview.save_promote"]));
+    expect44(html);
+  });
+  it("a typed Spanish name the preview has not shown yet hides Save and asks to look again (the preview binds the complete change)", () => {
+    const html = render(jsx(MenuPreviewPanel, {
+      preview: menuPromote, saveLabel: "SAVE-IT", busy: false, onSave: noop, onDiscard: noop,
+      promoteNameEs: { value: "Italiano grande", previewed: "", onChange: noop, onRepreview: noop },
+    }));
+    expect(html).toContain(en["catalog.menu.promote.name_es_unpreviewed"]);
+    expect(html).toContain(en["catalog.menu.see_changes"]);
+    expect(html).not.toContain("SAVE-IT");
+    const shown = render(jsx(MenuPreviewPanel, {
+      preview: { ...menuPromote, after: { ...menuPromote.after, nameEs: "Italiano grande" }, spanishFallsBackToEnglish: false },
+      saveLabel: "SAVE-IT", busy: false, onSave: noop, onDiscard: noop,
+      promoteNameEs: { value: "Italiano grande ", previewed: "Italiano grande", onChange: noop, onRepreview: noop },
+    }));
+    expect(shown).toContain("Spanish name: Italiano → Italiano grande");
+    expect(shown).toContain("SAVE-IT");
+    expect(shown).not.toContain(en["catalog.menu.preview.name_es_fallback"]);
+  });
+  it("a price-only promote has no Spanish name field", () => {
+    const html = render(jsx(MenuPreviewPanel, { preview: { ...menuPromote, after: { ...menuPromote.before, price: 13.5 }, spanishFallsBackToEnglish: false }, saveLabel: "S", busy: false, onSave: noop, onDiscard: noop }));
+    expect(html).not.toContain(en["catalog.menu.promote.name_es_field"]);
+  });
+  it("Spanish (tú)", () => {
+    const html = render(jsx(MenuPreviewPanel, {
+      preview: menuPromote, saveLabel: es["catalog.menu.preview.save_promote"], busy: false, onSave: noop, onDiscard: noop,
+      promoteNameEs: { value: "", previewed: "", onChange: noop, onRepreview: noop },
+    }), "es");
+    expect(html).toContain(es["catalog.menu.preview.name_es_fallback"]);
+    expect(html).toContain(es["catalog.menu.promote.name_es_field"]);
+    expect(html).toContain(es["catalog.menu.preview.title"]);
+  });
+});

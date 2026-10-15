@@ -24,6 +24,12 @@ describe("catalog Phase 3b strings", () => {
     expect(E["catalog.recipe.notice.edited_since"]).toMatch(/^You've changed your copy since adopting it\./);
     expect(E["catalog.menu.preview.name_es_fallback"]).toBe("Spanish users will see the English name until you add one.");
     expect(E["catalog.recipe.edit_rebase"]).toBe("Start over from the new version");
+    expect(E["catalog.menu.edit_rebase"]).toBe("Start over from the new version");
+    // CC note 5 #1: the level-6 reader's view-only sentence, the same pattern on both pages.
+    expect(E["catalog.recipe.view_only"]).toBe("View only — a GM at this shop can change this recipe.");
+    expect(S["catalog.recipe.view_only"]).toBe("Solo lectura — un GM de esta tienda puede cambiar esta receta.");
+    expect(E["catalog.menu.view_only"]).toBe("View only — a GM at this shop can change this item.");
+    expect(S["catalog.menu.view_only"]).toBe("Solo lectura — un GM de esta tienda puede cambiar este artículo.");
     expect(E["catalog.item.change_for_shop"]).toBe("Change it for {shop}");
     expect(E["readiness.hub.where_default"]).toBe("{count} in the default");
     expect(E["readiness.hub.where_shop"]).toBe("{count} at {shop}");

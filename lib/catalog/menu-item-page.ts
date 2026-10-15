@@ -72,7 +72,13 @@ export async function loadMenuItemPageView(actor: AuthContext, menuItemId: strin
   return {
     item: { id: item.id, name: item.name, nameEs: item.name_es, menuPrice: num(item.menu_price), section: item.section },
     shops, scope, scopeName: scope === null ? null : (shops.find((s) => s.id === scope)?.name ?? null),
-    can: { editShop: scope !== null && menuShopWriteGate({ role: actor.user.role, level: actor.level, scopeAllowed: catalogShopAllowed(actor, scope) }).ok },
+    can: {
+      editShop: scope !== null && writeGate(actor, scope),
+      // Promote is everyone's (MoO+), the role rule included — the same gate computeMenuPreview runs.
+      promote: menuPromoteGate({ role: actor.user.role, level: actor.level }).ok,
+      // No dead ends: the shops this actor may change the item for, offered wherever this view is read-only.
+      shopsToEdit: shops.filter((s) => writeGate(actor, s.id)),
+    },
     here: {
       settingId: setting?.id ?? null, price: num(setting?.price ?? null), soldHere: setting?.sold_here ?? true,
       nameOverride: setting?.name_override ?? null, nameOverrideEs: setting?.name_override_es ?? null,
@@ -86,6 +92,11 @@ export async function loadMenuItemPageView(actor: AuthContext, menuItemId: strin
       price: num(h.price), soldHere: h.sold_here, nameOverride: h.name_override, nameOverrideEs: h.name_override_es,
     })),
   };
+}
+
+/** May this actor change the item for this shop? (the role rule and the shop bind — the lib's gate, as the writers run it) */
+function writeGate(actor: AuthContext, shopId: string): boolean {
+  return menuShopWriteGate({ role: actor.user.role, level: actor.level, scopeAllowed: catalogShopAllowed(actor, shopId) }).ok;
 }
 
 /** One setting row by id (bounded by its id). */

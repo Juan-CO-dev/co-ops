@@ -196,3 +196,78 @@ describe("every refusal on the recipe page has its OWN message, never the generi
     expect(recipeErrorKey("no_such_code")).toBe("catalog.recipe.error.generic");
   });
 });
+
+describe("every refusal on the menu item page has its OWN message, never the generic one (house rule)", () => {
+  it("the page-scoped catalog.menu.error.* first, else catalog.error.<code>; only an unknown code is generic", async () => {
+    const { menuErrorKey, RECIPE_PAGE_ERROR_CODES } = await import("@/lib/catalog/recipe-item-shared");
+    const { MENU_ITEM_SHOP_ERROR_CODES } = await import("@/lib/menu-item-shop-shared");
+    const en = (await import("@/lib/i18n/en.json")).default as Record<string, string>;
+    const es = (await import("@/lib/i18n/es.json")).default as Record<string, string>;
+    for (const code of [...MENU_ITEM_SHOP_ERROR_CODES, ...RECIPE_PAGE_ERROR_CODES, "step_up_required", "step_up_stale"]) {
+      const key = menuErrorKey(code);
+      expect(key, code).not.toBe("catalog.menu.error.generic");
+      expect(en[key], `${code} → ${key} (en)`).toBeTruthy();
+      expect(es[key], `${code} → ${key} (es)`).toBeTruthy();
+    }
+    expect(menuErrorKey("global_changed")).toBe("catalog.menu.error.global_changed");
+    expect(menuErrorKey("invalid_price")).toBe("catalog.error.invalid_price");
+    expect(menuErrorKey("promote_not_done")).toBe("catalog.error.promote_not_done");
+    expect(menuErrorKey("nothing_changed")).toBe("catalog.error.nothing_changed");
+    expect(menuErrorKey("no_such_code")).toBe("catalog.menu.error.generic");
+  });
+});
+
+describe("the menu form's baseline (lead decision: a refresh keeps the draft's ORIGINAL baseline; if it moved, show it and offer Start over)", () => {
+  const was = { settingId: "ms1", price: 13.5, soldHere: true, nameOverride: null, nameOverrideEs: null };
+  it("the draft is the committed row as the form shows it", async () => {
+    const { menuDraftFrom } = await import("@/lib/catalog/recipe-item-shared");
+    expect(menuDraftFrom(was)).toEqual({ price: "13.5", soldHere: true, name: "", nameEs: "" });
+    expect(menuDraftFrom({ ...was, price: null, nameOverride: "Big", nameOverrideEs: "Grande" })).toEqual({ price: "", soldHere: true, name: "Big", nameEs: "Grande" });
+  });
+  it("names every field of the shop's row that moved — and nothing when only the row id changed", async () => {
+    const { menuRowMoves } = await import("@/lib/catalog/recipe-item-shared");
+    expect(menuRowMoves(was, { ...was, settingId: "ms2", price: 14, nameOverrideEs: "Grande" })).toEqual([
+      { field: "price", before: 13.5, after: 14 },
+      { field: "nameEs", before: null, after: "Grande" },
+    ]);
+    expect(menuRowMoves(was, { ...was, soldHere: false, nameOverride: "Big" })).toEqual([
+      { field: "soldHere", before: true, after: false },
+      { field: "name", before: null, after: "Big" },
+    ]);
+    expect(menuRowMoves(was, { ...was, settingId: "ms2" })).toEqual([]);
+  });
+  it("keeps the draft only when the person typed something AND the row moved under it; a save of their own always follows", async () => {
+    const { keepMenuDraft, menuDraftFrom } = await import("@/lib/catalog/recipe-item-shared");
+    const now = { ...was, settingId: "ms2", price: 14 };
+    const typed = { ...menuDraftFrom(was), name: "Big Italian" };
+    expect(keepMenuDraft({ draft: typed, was, now, follow: false })).toBe(true);
+    // untouched form → follow the new row (nothing of theirs is lost)
+    expect(keepMenuDraft({ draft: menuDraftFrom(was), was, now, follow: false })).toBe(false);
+    // the draft already IS the new row (e.g. their own save landed)
+    expect(keepMenuDraft({ draft: menuDraftFrom(now), was, now, follow: false })).toBe(false);
+    // their own act just saved (save, back to default, restore, promote) → always follow the committed row (Astra 3b r1#6)
+    expect(keepMenuDraft({ draft: typed, was, now, follow: true })).toBe(false);
+    // only the global values moved (the shop row did not) → the draft stays valid, no conflict to show
+    expect(keepMenuDraft({ draft: typed, was, now: { ...was }, follow: false })).toBe(false);
+    // whitespace is not a change
+    expect(keepMenuDraft({ draft: { ...menuDraftFrom(was), price: " 13.5 " }, was, now, follow: false })).toBe(false);
+  });
+});
+
+describe("one refusal-key map for both item pages (CC note 5 #3)", () => {
+  it("recipeErrorKey and menuErrorKey are the shared pageErrorKey; the same code reads in each page's own family", async () => {
+    const { pageErrorKey, recipeErrorKey, menuErrorKey } = await import("@/lib/catalog/recipe-item-shared");
+    const en = (await import("@/lib/i18n/en.json")).default as Record<string, string>;
+    const es = (await import("@/lib/i18n/es.json")).default as Record<string, string>;
+    for (const code of ["forbidden", "preview_stale", "dependencies_busy", "promote_not_done", "no_such_code"]) {
+      expect(recipeErrorKey(code)).toBe(pageErrorKey("recipe", code));
+      expect(menuErrorKey(code)).toBe(pageErrorKey("menu", code));
+    }
+    expect(pageErrorKey("recipe", "forbidden")).toBe("catalog.recipe.error.forbidden");
+    expect(pageErrorKey("menu", "forbidden")).toBe("catalog.menu.error.forbidden");
+    for (const key of [pageErrorKey("recipe", "x"), pageErrorKey("menu", "x")]) {
+      expect(en[key], key).toBeTruthy();
+      expect(es[key], key).toBeTruthy();
+    }
+  });
+});
