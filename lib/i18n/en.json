@@ -6242,5 +6242,18 @@
   "customers.catering.sort.spend": "Most spent on catering",
   "customers.catering.sort.orders": "Most catering orders",
   "customers.catering.sort.recent": "Most recent catering order",
-  "customers.catering.sort.quiet": "Quiet repeat accounts"
+  "customers.catering.sort.quiet": "Quiet repeat accounts",
+  "admin.menu_costing.shop_switcher": "Show costs for",
+  "admin.menu_costing.scope_all_short": "All shops",
+  "admin.menu_costing.scope_all": "All shops — costed with GLOBAL prices. A shop's own prices show on that shop's view.",
+  "admin.menu_costing.scope_shop": "{shop} — costed with this shop's packs and prices.",
+  "admin.menu_costing.export_scope": "Download — {scope}",
+  "reports.export.pricing_scope_shop": "Prices: {shop}",
+  "reports.export.pricing_scope_global": "Prices: global (all shops)",
+  "admin.skus.error.global_requires_moo": "Only a Manager of Operations can change this pack for every shop.",
+  "admin.skus.error.version_changed": "Someone else changed this pack. Reload to see it.",
+  "admin.skus.error.sku_inactive": "This item is inactive. Reactivate it before changing its pack.",
+  "admin.skus.chain.global_read_only": "Only a Manager of Operations can change this pack for every shop.",
+  "admin.skus.chain.no_changes": "No changes to save.",
+  "admin.skus.error.not_found": "You can't change this item's pack from your shop."
 }

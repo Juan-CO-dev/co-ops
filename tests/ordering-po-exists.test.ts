@@ -55,6 +55,8 @@ function setup(storeIds: string[] = []) {
     getServiceRoleClient: () => sb, etWalkDay: () => ({ weekend: false }),
     loadStoreVendorIds: async () => new Set(storeIds),
     loadSkuPackChains: async () => new Map(), loadMeasures: async () => new Map(), loadOverlayBySku: async () => new Map(),
+    // Catalog Phase 2a (D3): the walk and the submit read through ONE pack-aware loader.
+    loadPackAwareOverlay: async () => ({ chainsBySku: new Map(), overlayBySku: new Map(), packResolution: new Map(), epochs: new Map() }),
     resolveActive: () => true, num: Number, resolvePar: () => 4,
     perOrderUnitOz: () => 1, orderUnitLabelFor: () => "case",
     assertNoLivePoToday: guard, createDraftsFromLines: create, updateDraftLines: update, audit,

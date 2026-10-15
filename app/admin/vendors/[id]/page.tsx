@@ -21,7 +21,8 @@ import { loadSkus, loadPackFormats, loadMeasureUnits, loadLocationSkuSettings, p
 import { listProducts, ProductError, type ProductView } from "@/lib/products";
 import { loadCurrentSkuPrices, computeSkuCostPerOz, loadSkuUsageMap, loadSkuReceivingLedger, loadSkuConsumption, type SkuConsumption } from "@/lib/admin/cost";
 import { skuPackComplete, skuReadiness, type Readiness } from "@/lib/readiness";
-import { loadSkuPackChains } from "@/lib/prep-consumption";
+import { loadSkuPackResolution } from "@/lib/prep-consumption";
+import { levelsBySku } from "@/lib/sku-versions-shared";
 import { buildPackChain, isChainUnverified, type PackChainLevel } from "@/lib/pack-chain-shared";
 import type { MeasureUnitFactor } from "@/lib/recipe-math";
 import { loadOrderGuide, ORDER_GUIDE_EDIT_MIN } from "@/lib/order-guides";
@@ -101,9 +102,14 @@ export default async function AdminVendorDetailPage({
   //    oz resolution as the costing board (2026-08-21). Loaded HERE, above the cost
   //    derivation, because computeSkuCostPerOz now requires it. Mirrors
   //    app/admin/skus/page.tsx. ──
-  const chainMap = await loadSkuPackChains(skus.map((s) => s.id));
+  // The global default, WITH the live version each chain was loaded at: the chain editor sends it
+  // back so a concurrent save is a 409, never a silent overwrite (catalog Phase 2a, chunk-4 P3c).
+  const chainResolution = await loadSkuPackResolution(skus.map((s) => s.id), null);
+  const chainMap = levelsBySku(chainResolution);
+  const chainVersionBySku: Record<string, string> = {};
+  for (const [skuId, r] of chainResolution) if (r.versionId) chainVersionBySku[skuId] = r.versionId;
 
-  const prices = await loadCurrentSkuPrices(skus.map((s) => s.id));
+  const prices = await loadCurrentSkuPrices(skus.map((s) => s.id), null);
   const costPerOz = computeSkuCostPerOz(skus, prices, measureUnits, chainMap);
   const usage = await loadSkuUsageMap();
   const skuCost: Record<string, { currentPrice: number | null; costPerOz: number | null; usedBy: string[] }> =
@@ -194,6 +200,7 @@ export default async function AdminVendorDetailPage({
         skuConsumption={skuConsumption}
         skuReadiness={skuReadinessMap}
         skuChains={chainsBySku}
+        skuChainVersions={chainVersionBySku}
         skuChainUnverified={chainUnverifiedBySku}
         skuOverlays={overlaysBySku}
         skuProducts={products}

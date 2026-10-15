@@ -140,7 +140,9 @@ describe("lib/prep-consumption.ts — the inventory moat's foundation never buil
     for (const [decl, marker] of [
       ["export async function loadMeasures(", "loadMeasures:"],
       ["async function loadSkuPack(", "loadSkuPack:"],
-      ["export async function loadSkuPackChains(", "loadSkuPackChains:"],
+      // Catalog Phase 2a: the query (and its throw) moved into the resolver point; the markers stay.
+      ["export async function loadSkuPackResolution(", "loadSkuPackChains:"],
+      ["export async function loadAllSkuPackResolution(", "loadAllSkuPackChains:"],
       ["async function loadItemParBasis(", "loadItemParBasis:"],
     ] as const) {
       const body = fnBody(src, decl);

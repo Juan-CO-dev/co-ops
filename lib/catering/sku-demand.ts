@@ -134,7 +134,7 @@ export async function deriveCateringSkuDemand(
   // content-oz reflects the chain (chain-first in skuContentOz) — a newly-chained
   // SKU now feeds reorder without waiting on the legacy flat-field sync. ONE batch
   // chain load for all skuIds (loadRecipeGraph law — zero per-row queries).
-  const [measures, chainsBySku] = await Promise.all([loadMeasures(), loadSkuPackChains(skuIds)]);
+  const [measures, chainsBySku] = await Promise.all([loadMeasures(), loadSkuPackChains(skuIds, args.locationId ?? null)]);
   const { data: skuRows } = await sb
     .from("vendor_items")
     .select("id, name, pack_format, units_per_pack, each_size, each_measure, avg_oz_per_each")

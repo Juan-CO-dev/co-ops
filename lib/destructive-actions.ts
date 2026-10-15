@@ -394,6 +394,15 @@ export const DESTRUCTIVE_ACTIONS = [
   //   flat-field mirror going stale silently splits the cost board from the
   //   catalog screens (the defect this PR's second commit fixes).
   "sku.pack_chain_update",
+  // ── Shop versions (catalog Phase 2a, 0259) ─────────────────────────────────
+  // — sku.pack_version_save: a human saves a pack chain version (a shop's own, the global default,
+  //   or a Restore). The same basis-altering act as sku.pack_chain_update, scoped.
+  "sku.pack_version_save",
+  // — sku.pack_version_retire: a shop goes "back to default"; the global chain answers for it again.
+  "sku.pack_version_retire",
+  // — sku.price_lane_retire: a shop's own price retired; the global price answers again.
+  //   (A shop price itself is vendor_item.price_recorded, like every recorded price.)
+  "sku.price_lane_retire",
   // — item.set_type changes an item's semantic CLASS, which re-routes how every
   //   downstream reader treats it (what it can be counted in, whether it is a
   //   production output, which surfaces list it). Same shape as the registered

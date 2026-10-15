@@ -90,15 +90,17 @@ async function loadCatalog(vendorId: string): Promise<{ catalog: CatalogSku[]; p
   // Bounded ID windows avoid an unbounded PostgREST URL; 84 SKUs use ONE pack query.
   for (let start = 0; start < skus.length; start += 100) {
     const ids = skus.slice(start, start + 100).map(s => s.id);
+    // GLOBAL LANE ONLY (catalog Phase 2a): the import supersedes the GLOBAL chain and appends a
+    // GLOBAL price, and apply_vendor_import (re-emitted in 0259) re-checks exactly this before-state.
     const [levels, prices] = await Promise.all([
       selectAllRows<PackRow>((from, to) => sb.from("sku_pack_levels")
         .select("sku_id,id,label,contains_qty,contains_level_id,contains_measure_unit,display_ordinal")
-        .in("sku_id", ids).eq("active", true).order("id").range(from, to)),
+        .in("sku_id", ids).eq("active", true).is("location_id", null).order("id").range(from, to)),
       // Mirrors loadCurrentSkuPrices, lib/admin/cost.ts:88–97, including pagination
       // and all THREE sort keys. Add id because the apply precondition needs it.
       selectAllRows<{ id: string; vendor_item_id: string; unit_price: number | string; effective_date: string }>((from, to) => sb
         .from("vendor_price_history").select("id,vendor_item_id,unit_price,effective_date,recorded_at")
-        .in("vendor_item_id", ids).order("effective_date", { ascending: false })
+        .in("vendor_item_id", ids).is("location_id", null).order("effective_date", { ascending: false })
         .order("recorded_at", { ascending: false }).order("id", { ascending: false }).range(from, to)),
     ]);
     for (const level of levels) {

@@ -134,7 +134,8 @@ export async function POST(req: NextRequest) {
   // a count/volume leaf resolves against it during chain validation.
   if (chainLevels) {
     try {
-      await replaceSkuPackChain(ctx, { skuId: id, levels: chainLevels });
+      // A SKU minted a moment ago has no live chain: the form saw none.
+      await replaceSkuPackChain(ctx, { skuId: id, levels: chainLevels, expectedLiveVersionId: null });
     } catch (e) {
       try {
         await deactivateSku(ctx, { id, active: false });

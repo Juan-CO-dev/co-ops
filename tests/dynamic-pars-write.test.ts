@@ -96,7 +96,7 @@ describe("parWriteColumns — the machine-lane bypass is STRUCTURAL", () => {
   it("the human patch never names a machine column, and vice versa", () => {
     for (const kind of KINDS) {
       for (const dayClass of DAY_CLASSES) {
-        const cols = parWriteColumns({ kind, dayClass, value: 4, autoValue: 4, baselinePar: 3, appliedAt: AT });
+        const cols = parWriteColumns({ kind, dayClass, value: 4, autoValue: 4, baselinePar: 3, appliedAt: AT, packEpoch: 1 });
         for (const k of Object.keys(cols.human)) {
           expect(k.startsWith("auto_")).toBe(false);
           expect(k.startsWith("pinned_")).toBe(false);
@@ -118,7 +118,7 @@ describe("parWriteColumns — the machine-lane bypass is STRUCTURAL", () => {
   it("`machine` NEVER touches the human lane or the pin", () => {
     for (const dayClass of DAY_CLASSES) {
       const cols = parWriteColumns({
-        kind: "machine", dayClass, value: 99, autoValue: 4, baselinePar: 3, appliedAt: AT,
+        kind: "machine", dayClass, value: 99, autoValue: 4, baselinePar: 3, appliedAt: AT, packEpoch: 1,
       });
       expect(cols.human).toEqual({});
       expect(Object.keys(cols.autoLane)).not.toContain(`pinned_${dayClass}_at`);
@@ -127,12 +127,13 @@ describe("parWriteColumns — the machine-lane bypass is STRUCTURAL", () => {
 
   it("`machine` writes value, baseline and stamp together on ITS OWN slot", () => {
     const cols = parWriteColumns({
-      kind: "machine", dayClass: "weekend", value: null, autoValue: 6, baselinePar: 5, appliedAt: AT,
+      kind: "machine", dayClass: "weekend", value: null, autoValue: 6, baselinePar: 5, appliedAt: AT, packEpoch: 1,
     });
     expect(cols.autoLane).toEqual({
       auto_weekend_par: 6,
       auto_weekend_baseline_par: 5,
       auto_weekend_applied_at: AT,
+      auto_weekend_pack_epoch: 1,
     });
     // PER-SLOT, NOT PER-ROW (aggie r3): a weekend move may not stamp the weekday slot.
     expect(Object.keys(cols.autoLane).some((k) => k.includes("weekday"))).toBe(false);
@@ -162,7 +163,7 @@ describe("parWriteColumns — the machine-lane bypass is STRUCTURAL", () => {
       expect(() => parWriteColumns({ kind, dayClass: "weekday", value: 3 })).not.toThrow();
     }
     expect(() =>
-      parWriteColumns({ kind: "machine", dayClass: "weekday", value: null, autoValue: 4 }),
+      parWriteColumns({ kind: "machine", dayClass: "weekday", value: null, autoValue: 4, packEpoch: 0 }),
     ).not.toThrow();
   });
 
@@ -288,7 +289,7 @@ describe("writeParFromSuggestion / dismissSuggestion bind the location", () => {
     // (the write bit is off), and that refusal must not be a location error.
     await expect(
       writeParFromSuggestion({
-        actor: null, actorKind: "machine", value: null, autoValue: 4, ...args,
+        actor: null, actorKind: "machine", value: null, autoValue: 4, packEpoch: 0, ...args,
       }),
     ).rejects.toMatchObject({ status: 503, code: "auto_apply_disabled" });
   });

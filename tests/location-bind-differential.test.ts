@@ -55,6 +55,11 @@ const TENANCY_SCOPED_TABLES = [
   "prep_batch_sessions",
   // 0218 — a Retrain note is one shop's verdict about its own batches (location_id NOT NULL).
   "recipe_yield_retrain_notes",
+  // 0259 — a shop's own pack version / price lane belongs to that shop (location_id NULL = global).
+  "sku_pack_versions",
+  "sku_pack_levels",
+  "sku_price_lanes",
+  "vendor_price_history",
   "stations",
   "station_positions",
   "station_break_events",
@@ -83,6 +88,12 @@ const TENANCY_SCOPED_RPCS = [
   "revoke_phase2_item_atomic",
   // 0218 — the guarded one-time completion of a retrain note (lib/yield-stats.ts completeYieldRetrain).
   "complete_yield_retrain",
+  // 0259 — the shop-version writers; lib/admin/sku-versions.ts binds before calling them.
+  "save_sku_pack_version",
+  "retire_sku_pack_version",
+  "save_sku_shop_price",
+  "save_sku_global_price",
+  "retire_sku_price_lane",
   "write_station_event",
   "write_station_break",
   "write_task_assignment",
@@ -127,6 +138,8 @@ const FILES = [
   "lib/assignments.ts",
   // 0218 — recordYieldRetrain binds inside the lib before any I/O (batch vs bottle Phase B).
   "lib/yield-stats.ts",
+  // 0259 — every shop-version writer binds inside the lib (requireLocation) before any I/O.
+  "lib/admin/sku-versions.ts",
 ];
 
 /**

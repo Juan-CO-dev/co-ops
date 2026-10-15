@@ -20,6 +20,10 @@ import { selectAllRows } from "@/lib/supabase-paginate";
 import { skuContentOz, type MeasureUnitFactor, type RecipeInputSku } from "@/lib/recipe-math";
 import type { PackChainLevel } from "@/lib/pack-chain-shared";
 import {
+  asOfForBusinessDate, assertScopeToken, levelsBySku, packsFromVersions, pickVersionsAsOf, resolvePackLevels, unitsPerPackForScope,
+  type PackPickWarning, type ResolvedPack, type ScopedLevelRow, type ScopedVersionRow, type VersionScope,
+} from "@/lib/sku-versions-shared";
+import {
   batchSkuOzForItemFromGraph,
   buildRecipeGraph,
   isSingleItemOutputFromGraph,
@@ -48,7 +52,18 @@ export async function loadMeasures(): Promise<Map<string, MeasureUnitFactor>> {
   return new Map((data ?? []).map((m) => [m.label, { dimension: m.dimension, toBaseFactor: num(m.to_base_factor) ?? 0 }]));
 }
 
-async function loadSkuPack(skuIds: string[]): Promise<Map<string, RecipeInputSku>> {
+/**
+ * The resolved packs (which version, whose) behind a graph's skuPack — remembered per graph so a
+ * consumer of THAT graph never resolves the same packs a second time (chunk-3 review P3b). Kept off
+ * the RecipeGraph type on purpose: the pure graph module stays I/O-free and its shape unchanged.
+ */
+const GRAPH_PACKS = new WeakMap<RecipeGraph, Map<string, ResolvedPack>>();
+/** The packs loadRecipeGraph resolved for `graph` (empty for a graph it did not build). */
+export function resolvedPacksOf(graph: RecipeGraph): ReadonlyMap<string, ResolvedPack> {
+  return GRAPH_PACKS.get(graph) ?? new Map();
+}
+
+async function loadSkuPack(skuIds: string[], scope: VersionScope, asOf: string | null = null, resolvedOut?: Map<string, ResolvedPack>): Promise<Map<string, RecipeInputSku>> {
   if (skuIds.length === 0) return new Map();
   const sb = getServiceRoleClient();
   const { data, error } = await sb.from("vendor_items")
@@ -59,74 +74,213 @@ async function loadSkuPack(skuIds: string[]): Promise<Map<string, RecipeInputSku
   // weigh this" — the honest answer for a genuinely unweighed SKU and a lie for a
   // weighed one the read simply failed to return.
   if (error) throw new Error(`loadSkuPack: ${error.message}`);
-  // ONE batch query for the whole universe's active chain levels (loadRecipeGraph
-  // law — never per-SKU). Pack-hierarchy 0159; SKUs without a chain get [].
-  const chainsBySku = await loadSkuPackChains(skuIds);
-  return new Map((data ?? []).map((s) => [s.id, {
-    packFormat: s.pack_format, eachContainerLabel: s.each_container_label,
-    unitsPerPack: s.units_per_pack, eachSize: num(s.each_size), eachMeasure: s.each_measure,
-    avgOzPerEach: num(s.avg_oz_per_each),
-    packChain: chainsBySku.get(s.id) ?? null,
-  }]));
+  const packs = await loadSkuPackResolution(skuIds, scope, asOf);
+  if (resolvedOut) for (const [id, r] of packs) resolvedOut.set(id, r);
+  return new Map((data ?? []).map((s) => {
+    const pack = packs.get(s.id);
+    // A past date inside a PRE-CHAIN BASELINE (0259) reads the flat pack it preserved, not today's
+    // overwritten mirror (Astra 2b r2#5). Every other answer reads the flat fields exactly as before.
+    const f = pack?.flat;
+    return [s.id, {
+      packFormat: f ? f.pack_format : s.pack_format, eachContainerLabel: f ? f.each_container_label : s.each_container_label,
+      unitsPerPack: f ? f.units_per_pack : s.units_per_pack, eachSize: num(f ? f.each_size : s.each_size), eachMeasure: f ? f.each_measure : s.each_measure,
+      avgOzPerEach: num(s.avg_oz_per_each),
+      packChain: pack && pack.levels.length > 0 ? pack.levels : null,
+    }];
+  }));
 }
 
 /**
- * Batch-load active pack-chain levels for a set of SKUs into per-SKU level arrays
- * (pack-hierarchy 0159). ONE query regardless of SKU count (loadRecipeGraph law).
- * Returns an empty map when there are no chains — every consumer treats a missing
- * entry as "no chain → legacy flat-field path".
+ * The level columns every pack read selects. version_id / location_id / effective_from ride along
+ * so THE ONE RESOLVER (lib/sku-versions-shared.ts) can choose "this shop's version, else the global
+ * one" — no consumer ever chooses (catalog Phase 2a, 0259).
  */
-export async function loadSkuPackChains(skuIds: string[]): Promise<Map<string, PackChainLevel[]>> {
-  const out = new Map<string, PackChainLevel[]>();
-  if (skuIds.length === 0) return out;
+const PACK_LEVEL_COLUMNS =
+  "id, sku_id, version_id, location_id, effective_from, label, contains_qty, contains_level_id, contains_measure_unit, display_ordinal";
+/** How many ids ride one `.in()` filter (the request-line budget, lib/supabase-paginate.ts). */
+const ID_CHUNK = 100;
+
+/**
+ * THE PACK RESOLVER POINT (catalog Phase 2a). Chains for these SKUs as `scope` sees them — `null` =
+ * the global default; a shop id = that shop's version, else the global one. LIVE by default; with
+ * `asOf`, the versions IN FORCE at that instant (D1 — a past business date's packs). PAGED and
+ * id-CHUNKED: {global ∪ shop} rows can exceed the row cap, and a truncated page would drop a leaf
+ * and break a conversion silently. `scope` is REQUIRED so the compiler makes every caller decide.
+ */
+export async function loadSkuPackResolution(skuIds: string[], scope: VersionScope, asOf: string | null = null): Promise<Map<string, ResolvedPack>> {
+  if (skuIds.length === 0) return new Map();
+  if (asOf != null) return loadSkuPackResolutionAsOf(skuIds, scope, asOf);
   const sb = getServiceRoleClient();
-  const { data, error } = await sb.from("sku_pack_levels")
-    .select("id, sku_id, label, contains_qty, contains_level_id, contains_measure_unit, display_ordinal")
-    .in("sku_id", skuIds)
-    .eq("active", true)
-    .order("display_ordinal", { ascending: true })
-    .returns<PackLevelRow[]>();
-  // "No chain" is a MEANINGFUL answer here (it routes the SKU to the legacy flat-field
-  // path), so a swallowed failure silently re-denominates every chained SKU in the graph.
-  if (error) throw new Error(`loadSkuPackChains: ${error.message}`);
-  return groupPackLevels(data ?? []);
+  const rows: ScopedLevelRow[] = [];
+  for (let i = 0; i < skuIds.length; i += ID_CHUNK) {
+    const chunk = skuIds.slice(i, i + ID_CHUNK);
+    rows.push(...await selectAllRows<ScopedLevelRow>(async (from, to) => {
+      const base = sb.from("sku_pack_levels").select(PACK_LEVEL_COLUMNS).in("sku_id", chunk).eq("active", true);
+      const scoped = scope == null ? base.is("location_id", null) : base.or(`location_id.is.null,location_id.eq.${assertScopeToken(scope)}`);
+      const { data, error } = await scoped
+        .order("display_ordinal", { ascending: true }).order("id", { ascending: true })
+        .range(from, to).returns<ScopedLevelRow[]>();
+      // "No chain" is a MEANINGFUL answer (it routes the SKU to the legacy flat-field path), so a
+      // swallowed failure would silently re-denominate every chained SKU in the graph.
+      if (error) throw new Error(`loadSkuPackChains: ${error.message}`);
+      return { data };
+    }));
+  }
+  return resolvePackLevels(rows, scope);
+}
+
+/** D1: the versions in force at `asOf` (versions first, then exactly their levels; both paged). */
+async function loadSkuPackResolutionAsOf(skuIds: string[], scope: VersionScope, asOf: string): Promise<Map<string, ResolvedPack>> {
+  const sb = getServiceRoleClient();
+  const versions: ScopedVersionRow[] = [];
+  for (let i = 0; i < skuIds.length; i += ID_CHUNK) {
+    const chunk = skuIds.slice(i, i + ID_CHUNK);
+    versions.push(...await selectAllRows<ScopedVersionRow>(async (from, to) => {
+      const base = sb.from("sku_pack_versions").select("id, sku_id, location_id, valid_from, valid_to, flat_snapshot").in("sku_id", chunk).lte("valid_from", asOf);
+      const scoped = scope == null ? base.is("location_id", null) : base.or(`location_id.is.null,location_id.eq.${assertScopeToken(scope)}`);
+      const { data, error } = await scoped.order("id", { ascending: true }).range(from, to).returns<ScopedVersionRow[]>();
+      if (error) throw new Error(`loadSkuPackChains as-of versions: ${error.message}`);
+      return { data };
+    }));
+  }
+  const picked = pickVersionsAsOf(versions, scope, asOf);
+  // A shop pick's global fallback (the version in force at the same instant) loads too, so a shop
+  // version whose levels are missing falls back to it instead of vanishing (chunk-1 review).
+  const versionIds = [...new Set([...picked.values()]
+    .flatMap((v) => [v, v.globalFallback])
+    .filter((v): v is ScopedVersionRow => v != null && !v.flat_snapshot)
+    .map((v) => v.id))];
+  const levels: ScopedLevelRow[] = [];
+  for (let i = 0; i < versionIds.length; i += ID_CHUNK) {
+    const chunk = versionIds.slice(i, i + ID_CHUNK);
+    levels.push(...await selectAllRows<ScopedLevelRow>(async (from, to) => {
+      const { data, error } = await sb.from("sku_pack_levels").select(PACK_LEVEL_COLUMNS).in("version_id", chunk)
+        .order("display_ordinal", { ascending: true }).order("id", { ascending: true })
+        .range(from, to).returns<ScopedLevelRow[]>();
+      if (error) throw new Error(`loadSkuPackChains as-of levels: ${error.message}`);
+      return { data };
+    }));
+  }
+  const warnings: PackPickWarning[] = [];
+  const packs = packsFromVersions(picked, levels, warnings);
+  // NAMED, never silent: a picked version with no loaded level is a data fault the log must show.
+  for (const w of warnings) console.warn(`sku_pack_as_of_${w.code}`, { skuId: w.skuId, versionId: w.versionId, locationId: w.locationId, fellBackToVersionId: w.fellBackToVersionId, asOf });
+  return packs;
+}
+
+/** Chain levels per SKU for `scope` (the pre-0259 return shape); missing entry = no chain. */
+export async function loadSkuPackChains(skuIds: string[], scope: VersionScope, asOf: string | null = null): Promise<Map<string, PackChainLevel[]>> {
+  return levelsBySku(await loadSkuPackResolution(skuIds, scope, asOf));
 }
 
 /**
- * EVERY active pack-chain level, grouped per SKU (B9: the counts render needs chains for
- * nearly the whole catalog — the sheet's level pickers, the count rows, the product index —
- * and a ~200-id `.in()` list sits at the request-line ceiling). Per SKU this is exactly
- * what loadSkuPackChains returns. PAGED under (display_ordinal, id).
+ * EVERY live chain, grouped per SKU, as `scope` sees them (B9: the counts render needs chains for
+ * nearly the whole catalog, and a ~200-id `.in()` list sits at the request-line ceiling). PAGED.
  */
-export async function loadAllSkuPackChains(): Promise<Map<string, PackChainLevel[]>> {
+export async function loadAllSkuPackResolution(scope: VersionScope): Promise<Map<string, ResolvedPack>> {
   const sb = getServiceRoleClient();
-  const rows = await selectAllRows<PackLevelRow>(async (from, to) => {
-    const { data, error } = await sb.from("sku_pack_levels")
-      .select("id, sku_id, label, contains_qty, contains_level_id, contains_measure_unit, display_ordinal")
-      .eq("active", true)
-      .order("display_ordinal", { ascending: true })
-      .order("id", { ascending: true })
-      .range(from, to)
-      .returns<PackLevelRow[]>();
+  const rows = await selectAllRows<ScopedLevelRow>(async (from, to) => {
+    const base = sb.from("sku_pack_levels").select(PACK_LEVEL_COLUMNS).eq("active", true);
+    const scoped = scope == null ? base.is("location_id", null) : base.or(`location_id.is.null,location_id.eq.${assertScopeToken(scope)}`);
+    const { data, error } = await scoped
+      .order("display_ordinal", { ascending: true }).order("id", { ascending: true })
+      .range(from, to).returns<ScopedLevelRow[]>();
     if (error) throw new Error(`loadAllSkuPackChains: ${error.message}`);
     return { data };
   });
-  return groupPackLevels(rows);
+  return resolvePackLevels(rows, scope);
 }
 
-type PackLevelRow = { id: string; sku_id: string; label: string; contains_qty: number | string; contains_level_id: string | null; contains_measure_unit: string | null; display_ordinal: number };
-function groupPackLevels(rows: PackLevelRow[]): Map<string, PackChainLevel[]> {
-  const out = new Map<string, PackChainLevel[]>();
-  for (const r of rows) {
-    const list = out.get(r.sku_id) ?? [];
-    list.push({
-      id: r.id, label: r.label, containsQty: num(r.contains_qty) ?? 0,
-      containsLevelId: r.contains_level_id, containsMeasureUnit: r.contains_measure_unit,
-      displayOrdinal: r.display_ordinal,
+export async function loadAllSkuPackChains(scope: VersionScope): Promise<Map<string, PackChainLevel[]>> {
+  return levelsBySku(await loadAllSkuPackResolution(scope));
+}
+
+/**
+ * This shop's CURRENT pack epoch per SKU (0259 sku_pack_epochs; D3). A SKU with no row is at epoch 0
+ * and is simply absent here. Chunked + paged like every pack read; throws on error (a swallowed
+ * failure would read every epoch as 0 and resurrect stale machine pars).
+ */
+export async function loadShopPackEpochs(skuIds: string[], locationId: string): Promise<Map<string, number>> {
+  const out = new Map<string, number>();
+  if (skuIds.length === 0) return out;
+  const sb = getServiceRoleClient();
+  for (let i = 0; i < skuIds.length; i += ID_CHUNK) {
+    const chunk = skuIds.slice(i, i + ID_CHUNK);
+    const rows = await selectAllRows<{ sku_id: string; epoch: number | string }>(async (from, to) => {
+      const { data, error } = await sb.from("sku_pack_epochs").select("sku_id, epoch")
+        .eq("location_id", assertScopeToken(locationId)).in("sku_id", chunk)
+        .order("sku_id", { ascending: true }).range(from, to).returns<Array<{ sku_id: string; epoch: number | string }>>();
+      if (error) throw new Error(`loadShopPackEpochs: ${error.message}`);
+      return { data };
     });
-    out.set(r.sku_id, list);
+    for (const r of rows) out.set(r.sku_id, Number(r.epoch));
   }
   return out;
+}
+
+/**
+ * EVERY pack BOUNDARY (a version opening or closing) visible to `scope`, ascending, de-duplicated
+ * (epoch ms). Between two consecutive boundaries nothing about the packs `scope` sees changes, so
+ * every instant in that interval resolves to the SAME graph. Paged (one row per version).
+ */
+export async function loadPackBoundaries(scope: VersionScope): Promise<number[]> {
+  const sb = getServiceRoleClient();
+  const rows = await selectAllRows<{ id: string; valid_from: string; valid_to: string | null }>(async (from, to) => {
+    const base = sb.from("sku_pack_versions").select("id, valid_from, valid_to");
+    const scoped = scope == null ? base.is("location_id", null) : base.or(`location_id.is.null,location_id.eq.${assertScopeToken(scope)}`);
+    const { data, error } = await scoped.order("id", { ascending: true }).range(from, to)
+      .returns<Array<{ id: string; valid_from: string; valid_to: string | null }>>();
+    if (error) throw new Error(`loadPackBoundaries: ${error.message}`);
+    return { data };
+  });
+  const out = new Set<number>();
+  for (const r of rows) {
+    out.add(Date.parse(r.valid_from));
+    if (r.valid_to != null) out.add(Date.parse(r.valid_to));
+  }
+  return [...out].filter(Number.isFinite).sort((x, y) => x - y);
+}
+
+/**
+ * The INTERVAL an instant falls in: -1 before the first boundary, k for [b_k, b_k+1), and the last
+ * index for "after every boundary" (the live graph). Pure; boundaries ascending.
+ */
+export function packIntervalIndex(boundaries: readonly number[], at: number): number {
+  let lo = 0, hi = boundaries.length - 1, ans = -1;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    if (boundaries[mid]! <= at) { ans = mid; lo = mid + 1; } else hi = mid - 1;
+  }
+  return ans;
+}
+
+/**
+ * D1 — ONE graph per pack INTERVAL for a shop, with the batch law kept (chunk-3 review P2a): every
+ * business date whose last instant falls between the same two pack boundaries shares ONE as-of
+ * graph, and every date after the last boundary IS the live graph (loaded once). So a 30-day window
+ * with one boundary in it costs two graph loads, never thirty. Depletion (Toast and ezCater)
+ * resolves through this, so yesterday's rebuilt sales use yesterday's packs. Product resolution is
+ * unchanged (current, as before).
+ */
+export function createDatedGraphs(opts: { locationId: string | null; liveGraph?: RecipeGraph }): (businessDate: string) => Promise<RecipeGraph> {
+  let live: Promise<RecipeGraph> | null = opts.liveGraph ? Promise.resolve(opts.liveGraph) : null;
+  let bounds: Promise<number[]> | null = null;
+  const byInterval = new Map<number, Promise<RecipeGraph>>();
+  return async (businessDate: string) => {
+    const asOf = asOfForBusinessDate(businessDate);
+    bounds ??= loadPackBoundaries(opts.locationId);
+    const b = await bounds;
+    const at = Date.parse(asOf);
+    const k = packIntervalIndex(b, at);
+    if (b.length === 0 || k === b.length - 1) {
+      live ??= loadRecipeGraph({ locationId: opts.locationId });
+      return live;
+    }
+    let g = byInterval.get(k);
+    // Any instant inside the interval resolves the same versions; the first date's asOf stands for all.
+    if (!g) { g = loadRecipeGraph({ locationId: opts.locationId, asOf }); byInterval.set(k, g); }
+    return g;
+  };
 }
 
 /**
@@ -174,9 +328,19 @@ async function loadItemParBasis(
  * Location-aware callers (toast-sales, sku-demand, surplus) pass theirs; costing,
  * catalog, toast-map, readiness and the scripts pass nothing and resolve against the
  * GLOBAL primary row — the honest org-level replacement cost the board prices at.
+ *
+ * `opts.versionLocationId` (catalog Phase 2a) chooses whose SHOP VERSIONS of pack chains the graph's
+ * skuPack carries (default: `locationId`); `opts.asOf` chooses WHEN (default: now). Depletion for a
+ * business date goes through createDatedGraphs, never through a bare live graph.
  */
-export async function loadRecipeGraph(opts?: { locationId?: string | null }): Promise<RecipeGraph> {
+export async function loadRecipeGraph(opts?: { locationId?: string | null; versionLocationId?: string | null; asOf?: string | null }): Promise<RecipeGraph> {
   const locationId = opts?.locationId ?? null;
+  // WHOSE SHOP VERSIONS, AND WHEN (catalog Phase 2a, 0259). `versionLocationId` defaults to the
+  // product-resolution location, so every location-aware caller follows that shop's pack versions.
+  // Capture paths pass ONLY versionLocationId: their ounces become the shop's while their product
+  // resolution stays global exactly as today. `asOf` (D1) resolves the packs in force at an instant.
+  const versionScope: VersionScope = opts?.versionLocationId !== undefined ? opts.versionLocationId : locationId;
+  const asOf = opts?.asOf ?? null;
   const sb = getServiceRoleClient();
   const measures = await loadMeasures();
   const [{ data: recRows, error: recErr }, { data: inRows, error: inErr }, { data: outRows, error: outErr }] = await Promise.all([
@@ -224,9 +388,10 @@ export async function loadRecipeGraph(opts?: { locationId?: string | null }): Pr
   const outputItemIds = [...new Set((outRows ?? []).filter((o) => o.output_item_id).map((o) => o.output_item_id!))];
   const skuIds = [...new Set((inRows ?? []).filter((c) => c.component_sku_id).map((c) => c.component_sku_id!))];
   const productIds = [...new Set((inRows ?? []).filter((c) => c.component_product_id).map((c) => c.component_product_id!))];
+  const resolvedPacks = new Map<string, ResolvedPack>();
   const [parBasis, skuPack, productIndex] = await Promise.all([
     loadItemParBasis(outputItemIds),
-    loadSkuPack(skuIds),
+    loadSkuPack(skuIds, versionScope, asOf, resolvedPacks),
     // Zero product-pinned rows → zero queries (loadProductIndex returns early).
     loadProductIndex(productIds, locationId),
   ]);
@@ -241,7 +406,7 @@ export async function loadRecipeGraph(opts?: { locationId?: string | null }): Pr
     .map((r) => r.skuId)
     .filter((id): id is string => id != null && !skuPack.has(id)))];
   if (memberIds.length > 0) {
-    for (const [id, pack] of await loadSkuPack(memberIds)) skuPack.set(id, pack);
+    for (const [id, pack] of await loadSkuPack(memberIds, versionScope, asOf, resolvedPacks)) skuPack.set(id, pack);
   }
 
   const inputsByRecipe = new Map<string, GraphRecipe["inputs"]>();
@@ -266,12 +431,14 @@ export async function loadRecipeGraph(opts?: { locationId?: string | null }): Pr
     recipeId: r.id, batchYield: num(r.batch_yield),
     inputs: inputsByRecipe.get(r.id) ?? [], outputs: outputsByRecipe.get(r.id) ?? [],
   }));
-  return buildRecipeGraph(recipes, skuPack, measures, productIndex.index);
+  const graph = buildRecipeGraph(recipes, skuPack, measures, productIndex.index);
+  GRAPH_PACKS.set(graph, resolvedPacks);
+  return graph;
 }
 
 /** Per-one-unit leaf-SKU oz for an ITEM (one-shot; loops should loadRecipeGraph once and use the FromGraph variant). */
-export async function perUnitSkuOzForItem(itemId: string): Promise<Map<string, number>> {
-  const graph = await loadRecipeGraph();
+export async function perUnitSkuOzForItem(itemId: string, versionLocationId: VersionScope): Promise<Map<string, number>> {
+  const graph = await loadRecipeGraph({ versionLocationId });
   return perUnitSkuOzForItemFromGraph(graph, itemId);
 }
 
@@ -279,14 +446,14 @@ export async function perUnitSkuOzForItem(itemId: string): Promise<Map<string, n
  * Per-one-unit leaf-SKU oz for a MENU_ITEM (sub) — the sub-shop analog of perUnitSkuOzForItem.
  * One-shot wrapper; loops should loadRecipeGraph once and use the FromGraph variant.
  */
-export async function perUnitSkuOzForMenuItem(menuItemId: string): Promise<Map<string, number>> {
-  const graph = await loadRecipeGraph();
+export async function perUnitSkuOzForMenuItem(menuItemId: string, versionLocationId: VersionScope): Promise<Map<string, number>> {
+  const graph = await loadRecipeGraph({ versionLocationId });
   return perUnitSkuOzForMenuItemFromGraph(graph, menuItemId);
 }
 
-export async function skuConsumptionForItem(itemId: string, outputQty: number): Promise<Map<string, number>> {
+export async function skuConsumptionForItem(itemId: string, outputQty: number, versionLocationId: VersionScope): Promise<Map<string, number>> {
   if (!Number.isFinite(outputQty) || outputQty <= 0) return new Map();
-  const perUnit = await perUnitSkuOzForItem(itemId);
+  const perUnit = await perUnitSkuOzForItem(itemId, versionLocationId);
   const out = new Map<string, number>();
   for (const [sku, oz] of perUnit) out.set(sku, oz * outputQty);
   return out;
@@ -309,12 +476,12 @@ export interface RecordFromPrepInput {
  * (empty perUnitSkuOzForItem) map to [] = non-convertible (no panel). Batches the SKU
  * name/pack loads across all items.
  */
-export async function loadDerivedForItems(itemIds: string[]): Promise<Map<string, DerivedSku[]>> {
+export async function loadDerivedForItems(itemIds: string[], versionLocationId: VersionScope): Promise<Map<string, DerivedSku[]>> {
   const out = new Map<string, DerivedSku[]>();
   const uniq = [...new Set(itemIds.filter(Boolean))];
   if (uniq.length === 0) return out;
   const sb = getServiceRoleClient();
-  const graph = await loadRecipeGraph();
+  const graph = await loadRecipeGraph({ versionLocationId });
   const perItem = new Map<string, Map<string, number>>();
   const allSkuIds = new Set<string>();
   for (const id of uniq) {
@@ -327,10 +494,16 @@ export async function loadDerivedForItems(itemIds: string[]): Promise<Map<string
   if (allSkuIds.size > 0) {
     const { data: skus } = await sb.from("vendor_items").select("id, name, units_per_pack, each_size, each_measure, avg_oz_per_each").in("id", [...allSkuIds])
       .returns<Array<{ id: string; name: string; units_per_pack: number | null; each_size: number | string | null; each_measure: string | null; avg_oz_per_each: number | string | null }>>();
-    const chainsBySku = await loadSkuPackChains([...allSkuIds]); // chain-aware content (0159)
+    // The graph ALREADY resolved this shop's pack for every leaf (loadRecipeGraph's skuPack); a second
+    // resolution would be a second read of the same answer (chunk-3 review P3b). Only a leaf the graph
+    // has no pack for — never the case for a flattened leaf — falls back to the resolver.
+    const resolved = resolvedPacksOf(graph);
+    const missing = [...allSkuIds].filter((id) => !graph.skuPack.has(id));
+    const fallback = missing.length > 0 ? await loadSkuPackResolution(missing, versionLocationId) : new Map<string, ResolvedPack>();
     for (const s of skus ?? []) {
-      const contentOz = skuContentOz({ unitsPerPack: s.units_per_pack, eachSize: num(s.each_size), eachMeasure: s.each_measure, avgOzPerEach: num(s.avg_oz_per_each), packChain: chainsBySku.get(s.id) ?? null }, measures);
-      skuInfo.set(s.id, { name: s.name, unitsPerPack: s.units_per_pack, contentOz });
+      const pack = graph.skuPack.has(s.id) ? resolved.get(s.id) : fallback.get(s.id);
+      const contentOz = skuContentOz({ unitsPerPack: s.units_per_pack, eachSize: num(s.each_size), eachMeasure: s.each_measure, avgOzPerEach: num(s.avg_oz_per_each), packChain: pack && pack.levels.length > 0 ? pack.levels : null }, measures);
+      skuInfo.set(s.id, { name: s.name, unitsPerPack: unitsPerPackForScope(s.units_per_pack, pack), contentOz });
     }
   }
   for (const id of uniq) {
@@ -414,6 +587,7 @@ export interface BatchDerived { yieldPerBatch: number; singleOutput: boolean; sk
 async function hydrateSkuInfo(
   graph: RecipeGraph,
   skuIds: string[],
+  scope: VersionScope,
 ): Promise<Map<string, { name: string; unitsPerPack: number | null; contentOz: number | null }>> {
   const skuInfo = new Map<string, { name: string; unitsPerPack: number | null; contentOz: number | null }>();
   if (skuIds.length === 0) return skuInfo;
@@ -421,10 +595,11 @@ async function hydrateSkuInfo(
   const { data: skus, error } = await sb.from("vendor_items").select("id, name, units_per_pack, each_size, each_measure, avg_oz_per_each").in("id", skuIds)
     .returns<Array<{ id: string; name: string; units_per_pack: number | null; each_size: number | string | null; each_measure: string | null; avg_oz_per_each: number | string | null }>>();
   if (error) throw new Error(`hydrateSkuInfo: ${error.message}`);
-  const chainsBySku = await loadSkuPackChains(skuIds);
+  const packs = await loadSkuPackResolution(skuIds, scope);
   for (const s of skus ?? []) {
-    const contentOz = skuContentOz({ unitsPerPack: s.units_per_pack, eachSize: num(s.each_size), eachMeasure: s.each_measure, avgOzPerEach: num(s.avg_oz_per_each), packChain: chainsBySku.get(s.id) ?? null }, graph.measures);
-    skuInfo.set(s.id, { name: s.name, unitsPerPack: s.units_per_pack, contentOz });
+    const pack = packs.get(s.id);
+    const contentOz = skuContentOz({ unitsPerPack: s.units_per_pack, eachSize: num(s.each_size), eachMeasure: s.each_measure, avgOzPerEach: num(s.avg_oz_per_each), packChain: pack && pack.levels.length > 0 ? pack.levels : null }, graph.measures);
+    skuInfo.set(s.id, { name: s.name, unitsPerPack: unitsPerPackForScope(s.units_per_pack, pack), contentOz });
   }
   return skuInfo;
 }
@@ -443,7 +618,7 @@ export async function loadBatchDerivedForItems(itemIds: string[], locationId: st
     perItem.set(id, { yieldPerBatch, singleOutput: isSingleItemOutputFromGraph(graph, id), map: m });
     for (const sku of m.keys()) allSkuIds.add(sku);
   }
-  const skuInfo = await hydrateSkuInfo(graph, [...allSkuIds]);
+  const skuInfo = await hydrateSkuInfo(graph, [...allSkuIds], locationId);
   for (const [id, d] of perItem) {
     const skus: DerivedSku[] = [];
     for (const [skuId, perBatchOz] of d.map) {

@@ -348,6 +348,7 @@ const PAGE_ROUTES: Record<string, string> = {
   "app/admin/catering/fulfillment/page.tsx": "/admin/catering/fulfillment",
   "app/(authed)/catering/quotes/page.tsx": "/catering/quotes",
   "app/(authed)/catering/pipeline/page.tsx": "/catering/pipeline", // B8 #3 — add-lead default shop
+  "app/admin/menu-costing/page.tsx": "/admin/menu-costing", // catalog Phase 2a — the costing board's shop switcher
 };
 
 /** Where each audited page binds the awaited `searchParams` its getter reads. */
@@ -444,6 +445,8 @@ const RESOLVER_PAGES: Record<string, RegExp> = {
   "app/admin/stations/page.tsx": /await resolveShop\(locations, shopParamFor\("\/admin\/stations", /,
   "app/admin/toast-employees/page.tsx": /await resolveShop\(locations, shopParamFor\("\/admin\/toast-employees", /,
   "app/ordering/page.tsx": /location \?\? \(await resolveShopId\(accessible\.map/,
+  // Catalog Phase 2a: "global" is the explicit All-shops view; otherwise the one resolver over the readable shops.
+  "app/admin/menu-costing/page.tsx": /explicit === "global" \? null : await resolveShopId\(shops\.map\(\(s\) => s\.id\), explicit \?\? null\)/,
 };
 
 describe("source shape — every shop-defaulting page uses the one resolver", () => {

@@ -41,11 +41,11 @@ import { audit } from "@/lib/audit";
 import type { AuthContext } from "@/lib/session";
 import type { AuditAction } from "@/lib/audit-actions";
 import { etCalendarDate } from "@/lib/operational-day";
-import { loadMeasures, loadSkuPackChains } from "@/lib/prep-consumption";
+import { loadMeasures, loadShopPackEpochs, loadSkuPackChains } from "@/lib/prep-consumption";
 import type { MeasureUnitFactor, RecipeInputSku } from "@/lib/recipe-math";
 import { loadProductIndex } from "@/lib/products";
 import { WALKER_SKU_COLUMNS, perOrderUnitOz } from "@/lib/ordering";
-import { resolveActive, resolveParSlot, type LocationSkuOverlay } from "@/lib/location-sku-shared";
+import { resolveActive, resolveParSlot, stampEffectivePack, type LocationSkuOverlay } from "@/lib/location-sku-shared";
 import {
   loadRhythmByVendor, loadRhythmSkips, loadAllCutoffsByVendor,
 } from "@/lib/vendor-rhythm";
@@ -437,7 +437,7 @@ export async function loadDemandInputs(
     // ⑧ THE SAME loader the recipe graph uses — one resolution ladder, not two.
     loadProductIndex(productIds, locationId),
     // ⑩ the perOrderUnitOz inputs, exactly as loadWalkerData assembles them.
-    loadSkuPackChains(skuIds),
+    loadSkuPackChains(skuIds, locationId),
     loadMeasures(),
     // ⑨ Phase 1's rhythm loaders + the all-dows cutoff read (plan D5).
     loadRhythmByVendor(sb, vendorIds, locationId),
@@ -473,6 +473,9 @@ export async function loadDemandInputs(
 
   if (signalRows.error) throw new Error(`loadDemandInputs signals: ${signalRows.error.message}`);
   if (actionRows.error) throw new Error(`loadDemandInputs suggestion actions: ${actionRows.error.message}`);
+  // CATALOG PHASE 2a (D3): the epoch stamp that retires an auto par computed in any other pack epoch
+  // (one chunked read for the whole shop — the batch law holds).
+  stampEffectivePack(overlayBySku, await loadShopPackEpochs(skuIds, locationId));
 
   // ⑦ the production lane. Bounded by the window's production ids, so the `.in()` list is
   //    the same shape loadSkuUsageRank already spends.
@@ -680,7 +683,7 @@ async function loadParOverlay(
 ): Promise<Map<string, ParOverlayRow>> {
   const human = "sku_id, active_override, weekday_par, weekend_par";
   const auto =
-    "auto_weekday_par, auto_weekend_par, auto_weekday_baseline_par, auto_weekend_baseline_par, pinned_weekday_at, pinned_weekend_at";
+    "auto_weekday_par, auto_weekend_par, auto_weekday_baseline_par, auto_weekend_baseline_par, pinned_weekday_at, pinned_weekend_at, auto_weekday_pack_epoch, auto_weekend_pack_epoch";
   const { data, error } = await sb.from("location_sku_settings")
     .select(autoLane ? `${human}, ${auto}` : human)
     .eq("location_id", locationId)
@@ -690,6 +693,8 @@ async function loadParOverlay(
       auto_weekday_par?: number | string | null; auto_weekend_par?: number | string | null;
       auto_weekday_baseline_par?: number | string | null;
       auto_weekend_baseline_par?: number | string | null;
+      auto_weekday_pack_epoch?: number | string | null;
+      auto_weekend_pack_epoch?: number | string | null;
       pinned_weekday_at?: string | null; pinned_weekend_at?: string | null;
     }>>();
   if (error) throw new Error(`loadParOverlay: ${error.message}`);
@@ -707,6 +712,8 @@ async function loadParOverlay(
       row.autoWeekendPar = num(r.auto_weekend_par ?? null);
       row.autoWeekdayBaselinePar = num(r.auto_weekday_baseline_par ?? null);
       row.autoWeekendBaselinePar = num(r.auto_weekend_baseline_par ?? null);
+      row.autoWeekdayPackEpoch = num(r.auto_weekday_pack_epoch ?? null);
+      row.autoWeekendPackEpoch = num(r.auto_weekend_pack_epoch ?? null);
     }
     out.set(r.sku_id, row);
   }
@@ -1192,6 +1199,8 @@ export interface ParWriteInput {
   generationId?: string | null;
   /** "machine" only: the global par it was computed against (r2-6 baseline). */
   baselinePar?: number | null;
+  /** "machine" only, REQUIRED (D3): the pack epoch (sku_pack_epochs) the auto value was computed in. */
+  packEpoch?: number;
 }
 
 /**
@@ -1226,6 +1235,9 @@ export async function writeParFromSuggestion(input: ParWriteInput): Promise<void
     if (input.actor != null) {
       throw new DynamicParsError(400, "machine_write_has_actor", "A machine write carries no actor");
     }
+    if (input.packEpoch === undefined) {
+      throw new DynamicParsError(400, "machine_write_needs_pack", "A machine par names the pack epoch it was computed in");
+    }
     if (!PAR_AUTO_APPLY_ENABLED) {
       // Belt AND braces (Task 3.9): "the write bit is off" and "the columns do not exist"
       // must both be true, and must be true INDEPENDENTLY. This is the first of the two.
@@ -1255,6 +1267,7 @@ export async function writeParFromSuggestion(input: ParWriteInput): Promise<void
     value: input.value,
     autoValue: input.autoValue ?? null,
     baselinePar: input.baselinePar ?? null,
+    packEpoch: input.packEpoch,
     appliedAt: nowIso,
   });
 

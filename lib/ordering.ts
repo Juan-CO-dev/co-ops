@@ -52,7 +52,8 @@ import { lockLocationContext, type LocationActor } from "@/lib/locations";
 import { audit } from "@/lib/audit";
 import type { AuthContext } from "@/lib/session";
 import { isPulseReadActor, requirePulseReadScope, type PulseScopedReadActor } from "@/lib/pulse/read-actor";
-import { loadMeasures, loadSkuPackChains } from "@/lib/prep-consumption";
+import { loadMeasures, loadShopPackEpochs, loadSkuPackChains, loadSkuPackResolution } from "@/lib/prep-consumption";
+import { levelsBySku, type ResolvedPack } from "@/lib/sku-versions-shared";
 import {
   ozForRecipeInput,
   skuContentOz,
@@ -67,7 +68,7 @@ import {
 import { loadOnHandDerived, type OnHandRow } from "@/lib/counts";
 import { etBusinessDate } from "@/lib/counts-shared";
 import {
-  resolvePar, resolveParSlot, resolveActive, walkDisposition, parReviewAdvisory,
+  resolvePar, resolveParSlot, resolveActive, walkDisposition, parReviewAdvisory, stampEffectivePack,
   type LocationSkuOverlay, type ParAdvisory,
 } from "@/lib/location-sku-shared";
 import { parAutoLaneReady } from "@/lib/dynamic-pars-probes";
@@ -778,16 +779,15 @@ export async function loadWalkerData(actor: AuthContext, locationId: string): Pr
   // overlayBySku: per-location active/par overrides; empty map = day-one (pure inheritance).
   const productIds = [...new Set(skus.map((s) => s.product_id).filter((v): v is string => v != null))];
   const eventWindowEnd = addDaysEt(walkDateEt, EVENT_ADVISORY_HORIZON_DAYS);
-  const [chainsBySku, measures, rawUsageBySku, onHandView, { data: vendorRows, error: vErr }, lastOrderBySku, overlayBySku, cutoffsByVendor, productIndex, demandSources, suggestionBySku, parSilence, cateringDemand] =
+  const [packAware, measures, rawUsageBySku, onHandView, { data: vendorRows, error: vErr }, lastOrderBySku, cutoffsByVendor, productIndex, demandSources, suggestionBySku, parSilence, cateringDemand] =
     await Promise.all([
-      loadSkuPackChains(skuIds),
+      loadPackAwareOverlay(sb, locationId, skuIds),
       loadMeasures(),
       loadSkuUsageRank(sb, locationId),
       loadOnHandDerived(actor, locationId), // ONE advisory on-hand pass for the whole location.
       sb.from("vendors").select("id, name, order_days").in("id", vendorIds).eq("active", true).eq("source_kind", "vendor")
         .returns<Array<{ id: string; name: string; order_days: number[] | null }>>(),
       loadLatestOrderQtyBySku(sb, skuIds),
-      loadOverlayBySku(sb, locationId),
       loadCutoffsByVendor(sb, vendorIds, locationId, todayDow),
       // THE SAME loader the recipe graph uses — one resolution ladder, not two
       // (0179). Zero products → zero queries.
@@ -816,6 +816,8 @@ export async function loadWalkerData(actor: AuthContext, locationId: string): Pr
         }),
     ]);
   if (vErr) throw new Error(`loadWalkerData vendors: ${vErr.message}`);
+  // CATALOG PHASE 2a (D3): the chains and the epoch-stamped overlay come from ONE pack-aware read.
+  const { overlayBySku, chainsBySku } = packAware;
   const vendorById = new Map((vendorRows ?? []).map((v) => [v.id, v]));
   const advisoryBySku = advisoryOnHandBySku(onHandView);
   // D9 — members of one product SHARE the product's trailing usage, so the backup
@@ -1171,7 +1173,7 @@ export async function loadWalkerData(actor: AuthContext, locationId: string): Pr
     const rescueIds = [...rescueTargets.keys()];
     const [{ data: rescueRows, error: rErr }, rescueChains] = await Promise.all([
       sb.from("vendor_items").select(WALKER_SKU_COLUMNS).in("id", rescueIds).returns<WalkerSkuRow[]>(),
-      loadSkuPackChains(rescueIds),
+      loadSkuPackChains(rescueIds, locationId),
     ]);
     if (rErr) throw new Error(`loadWalkerData rerouted backups: ${rErr.message}`);
     for (const [id, chain] of rescueChains) chainsBySku.set(id, chain);
@@ -1307,7 +1309,7 @@ export interface OverlayRow extends LocationSkuOverlay {
 const OVERLAY_HUMAN_COLUMNS = "sku_id, active_override, weekday_par, weekend_par";
 /** …plus the machine lane (0183). Selected ONLY when the probe says the columns exist. */
 const OVERLAY_AUTO_COLUMNS =
-  "auto_weekday_par, auto_weekend_par, auto_weekday_baseline_par, auto_weekend_baseline_par";
+  "auto_weekday_par, auto_weekend_par, auto_weekday_baseline_par, auto_weekend_baseline_par, auto_weekday_pack_epoch, auto_weekend_pack_epoch";
 
 /**
  * One query: all location_sku_settings rows for a location, keyed by sku_id.
@@ -1339,6 +1341,8 @@ async function loadOverlayBySku(
       auto_weekend_par?: number | string | null;
       auto_weekday_baseline_par?: number | string | null;
       auto_weekend_baseline_par?: number | string | null;
+      auto_weekday_pack_epoch?: number | string | null;
+      auto_weekend_pack_epoch?: number | string | null;
     }>>();
   if (error) throw new Error(`loadOverlayBySku: ${error.message}`);
   const out = new Map<string, OverlayRow>();
@@ -1353,10 +1357,33 @@ async function loadOverlayBySku(
       row.autoWeekendPar = num(r.auto_weekend_par ?? null);
       row.autoWeekdayBaselinePar = num(r.auto_weekday_baseline_par ?? null);
       row.autoWeekendBaselinePar = num(r.auto_weekend_baseline_par ?? null);
+      row.autoWeekdayPackEpoch = num(r.auto_weekday_pack_epoch ?? null);
+      row.autoWeekendPackEpoch = num(r.auto_weekend_pack_epoch ?? null);
     }
     out.set(r.sku_id, row);
   }
   return out;
+}
+
+/**
+ * THE ONE OVERLAY READ OF THE WALK (catalog Phase 2a, D3). The overlay, THIS shop's pack resolution
+ * and its pack epochs, loaded together and stamped together: chains feed the order units, and the
+ * epoch retires an auto par computed in any other epoch (a new case, or back to default).
+ * loadWalkerData (what the manager SEES) and submitParPass (the par_qty snapshot and the implied
+ * on-hand it SAVES) both call exactly this, so display and submission cannot disagree.
+ */
+export async function loadPackAwareOverlay(
+  sb: ReturnType<typeof getServiceRoleClient>,
+  locationId: string,
+  skuIds: string[],
+): Promise<{ overlayBySku: Map<string, OverlayRow>; chainsBySku: Map<string, PackChainLevel[]>; packResolution: Map<string, ResolvedPack>; epochs: Map<string, number> }> {
+  const [overlayBySku, packResolution, epochs] = await Promise.all([
+    loadOverlayBySku(sb, locationId),
+    loadSkuPackResolution(skuIds, locationId),
+    loadShopPackEpochs(skuIds, locationId),
+  ]);
+  stampEffectivePack(overlayBySku, epochs);
+  return { overlayBySku, chainsBySku: levelsBySku(packResolution), packResolution, epochs };
 }
 
 // ── submitParPass: record the walk + derive draft orders + shrinkage ─────────────
@@ -1517,11 +1544,9 @@ export async function submitParPass(
     seenProducts.add(s.product_id);
   }
 
-  const [chainsBySku, measures, overlayBySku] = await Promise.all([
-    loadSkuPackChains(skuIds),
-    loadMeasures(),
-    loadOverlayBySku(sb, locationId),
-  ]);
+  // CATALOG PHASE 2a (D3): the SAME pack-aware read the walk rendered from — a stale auto par the
+  // manager did not see can never become the par_qty snapshot or the implied on-hand saved here.
+  const [{ chainsBySku, overlayBySku }, measures] = await Promise.all([loadPackAwareOverlay(sb, locationId, skuIds), loadMeasures()]);
 
   // Resolve each line: snapshot par, per-order-unit oz, implied on-hand oz.
   interface ResolvedLine {
@@ -1866,7 +1891,7 @@ export async function loadShrinkageSignals(
   // Simpler + honest: recompute perUnitOz from the live SKU shape (one batched load), so
   // the threshold matches submit's exactly.
   const [chainsBySku, measures, { data: shapeRows, error: shErr }] = await Promise.all([
-    loadSkuPackChains(skuIds),
+    loadSkuPackChains(skuIds, locationId),
     loadMeasures(),
     sb.from("vendor_items")
       .select("id, pack_format, each_container_label, units_per_pack, each_size, each_measure, avg_oz_per_each")

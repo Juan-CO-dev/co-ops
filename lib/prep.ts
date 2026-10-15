@@ -984,7 +984,7 @@ export async function loadAmPrepState(
 
   // 0215 — which lines are batch items (hint only; the count itself is unchanged).
   const amItemIds = resolvedItems.map((t) => t.itemId).filter((x): x is string => !!x);
-  const amBatchContext = await loadBatchContextForItems(amItemIds);
+  const amBatchContext = await loadBatchContextForItems(amItemIds, args.locationId);
   const batchModeByItem: Record<string, boolean> = {};
   for (const tItem of resolvedItems) {
     const ctx = tItem.itemId ? amBatchContext.get(tItem.itemId) : undefined;
@@ -1139,13 +1139,13 @@ export async function loadMidDayPrepState(
 
   // Item/Inventory Spine — production-in-prep fold. Per convertible item (keyed by
   // TEMPLATE-ITEM id), the leaf-SKU consumption for the panel; [] = non-convertible.
-  const derivedByItemId = await loadDerivedForItems(itemIds);
+  const derivedByItemId = await loadDerivedForItems(itemIds, instanceRow.location_id);
   const derived: Record<string, DerivedSku[]> = {};
   for (const tItem of resolvedItems) derived[tItem.id] = tItem.itemId ? (derivedByItemId.get(tItem.itemId) ?? []) : [];
 
   // 0215 batch vs bottle — eligibility per template item (the RPCs re-derive it; this only
   // shapes the row). PURELY ADDITIVE.
-  const batchContextByItemId = await loadBatchContextForItems(itemIds);
+  const batchContextByItemId = await loadBatchContextForItems(itemIds, instanceRow.location_id);
   const batchContext: Record<string, BatchItemContext> = {};
   for (const tItem of resolvedItems) {
     const ctx = tItem.itemId ? batchContextByItemId.get(tItem.itemId) : undefined;
@@ -1732,7 +1732,7 @@ export async function saveMidDayPhase2Item(
     try {
       let consumption = confirmedConsumption;
       if (consumption === null) {
-        const derivedMap = await skuConsumptionForItem(item.itemId, args.prepped);
+        const derivedMap = await skuConsumptionForItem(item.itemId, args.prepped, state.instance.locationId);
         consumption = [...derivedMap].map(([skuId, oz]) => ({ skuId, qtyOz: oz, qtyEntered: null, unitEntered: null, derivedOz: oz }));
       }
       await recordProductionFromPrep(args.actor, {

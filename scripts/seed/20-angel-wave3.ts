@@ -311,7 +311,7 @@ async function main(): Promise<void> {
     throw new Error(`vendor_items truncated: got ${skuRows?.length} of ${skuCount} — raise the page size before trusting this run`);
   }
 
-  const chains = await loadSkuPackChains((skuRows ?? []).map((r) => r.id));
+  const chains = await loadSkuPackChains((skuRows ?? []).map((r) => r.id), null);
   const skus: LiveSku[] = (skuRows ?? []).map((r) => ({
     id: r.id, name: r.name, vendorId: r.vendor_id, vendorName: r.vendors?.name ?? "(no vendor)",
     active: r.active, packFormat: r.pack_format, eachContainerLabel: r.each_container_label,
@@ -1503,7 +1503,7 @@ async function execute(
     if (error) throw new Error(`read back ${product} pins: ${error.message}`);
     const mine = data ?? [];
     if (count != null && mine.length < count) throw new Error(`read back ${product} pins truncated: got ${mine.length} of ${count}`);
-    const chainsAfter = await loadSkuPackChains(mine.map((r) => r.vendor_items!.id));
+    const chainsAfter = await loadSkuPackChains(mine.map((r) => r.vendor_items!.id), null);
     for (const r of mine) {
       const vi = r.vendor_items!;
       const shape: RecipeInputSku = {

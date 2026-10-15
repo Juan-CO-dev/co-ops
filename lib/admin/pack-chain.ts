@@ -40,7 +40,7 @@ import {
   type PackChainLevel,
   type PackChainSkuClass,
 } from "@/lib/pack-chain-shared";
-import { deriveFlatFieldsFromChain } from "@/lib/admin/catalog-shared";
+import { GLOBAL_VERSION_WRITE_MIN, skuOwnerAllowed } from "@/lib/sku-versions-shared";
 
 // Mirror the SKU floors (view chain = catalog read; write chain = catalog write).
 export const PACK_CHAIN_READ_MIN = 6; // AGM+
@@ -88,7 +88,7 @@ export interface SkuPackChainView {
   unverified: boolean;
 }
 
-async function loadMeasuresMap(): Promise<Map<string, MeasureUnitFactor>> {
+export async function loadMeasuresMap(): Promise<Map<string, MeasureUnitFactor>> {
   const sb = getServiceRoleClient();
   const { data } = await sb
     .from("measure_units")
@@ -99,7 +99,7 @@ async function loadMeasuresMap(): Promise<Map<string, MeasureUnitFactor>> {
 }
 
 /** The set of active measure-unit labels (for the label-collision rule, L1). */
-async function loadMeasureLabels(): Promise<Set<string>> {
+export async function loadMeasureLabels(): Promise<Set<string>> {
   const sb = getServiceRoleClient();
   const { data } = await sb.from("measure_units").select("label").eq("active", true).returns<Array<{ label: string }>>();
   return new Set((data ?? []).map((m) => m.label));
@@ -113,16 +113,16 @@ function normalizeSkuClass(v: string | null): PackChainSkuClass {
 /** Verify a SKU exists (active OR inactive — chains can be inspected either way).
  *  Returns the SKU's avg_oz_per_each + sku_class (the class gates the leaf law:
  *  raw chains must be oz-resolvable; non-raw may terminate at a bare count leaf). */
-async function assertSkuExists(skuId: string): Promise<{ avgOzPerEach: number | null; skuClass: PackChainSkuClass }> {
+export async function assertSkuExists(skuId: string): Promise<{ avgOzPerEach: number | null; skuClass: PackChainSkuClass; ownerLocationId: string | null }> {
   const sb = getServiceRoleClient();
   const { data, error } = await sb
     .from("vendor_items")
-    .select("id, avg_oz_per_each, sku_class")
+    .select("id, avg_oz_per_each, sku_class, location_id")
     .eq("id", skuId)
-    .maybeSingle<{ id: string; avg_oz_per_each: number | string | null; sku_class: string | null }>();
+    .maybeSingle<{ id: string; avg_oz_per_each: number | string | null; sku_class: string | null; location_id: string | null }>();
   if (error) throw new Error(`assertSkuExists failed: ${error.message}`);
   if (!data) throw new PackChainError(404, "sku_not_found", "SKU not found");
-  return { avgOzPerEach: num(data.avg_oz_per_each), skuClass: normalizeSkuClass(data.sku_class) };
+  return { avgOzPerEach: num(data.avg_oz_per_each), skuClass: normalizeSkuClass(data.sku_class), ownerLocationId: data.location_id };
 }
 
 // ── Read (AGM+) ────────────────────────────────────────────────────────────────
@@ -136,6 +136,7 @@ export async function loadSkuPackChain(actor: AuthContext, skuId: string): Promi
     .select("id, label, contains_qty, contains_level_id, contains_measure_unit, display_ordinal")
     .eq("sku_id", skuId)
     .eq("active", true)
+    .is("location_id", null)
     .order("display_ordinal", { ascending: true })
     .returns<Array<{ id: string; label: string; contains_qty: number | string; contains_level_id: string | null; contains_measure_unit: string | null; display_ordinal: number }>>();
   if (error) throw new Error(`loadSkuPackChain failed: ${error.message}`);
@@ -157,7 +158,7 @@ export async function loadSkuPackChain(actor: AuthContext, skuId: string): Promi
 // ── Validation (pure over the submitted set + the registries) ────────────────────
 /** Validate a submitted chain; throws PackChainError on the first problem.
  *  Returns the parsed level shape (index-linked) ready for insert. */
-function validateSubmission(
+export function validateSubmission(
   input: PackChainLevelInput[],
   measureLabels: Set<string>,
   measures: Map<string, MeasureUnitFactor>,
@@ -242,61 +243,6 @@ function validateSubmission(
   return input;
 }
 
-/** One immediate retry for the flat-field mirror below. Enough for a momentary write
- *  failure, few enough that a genuinely broken write does not multiply the latency of
- *  every chain save. */
-const SYNC_ATTEMPTS = 2;
-
-/**
- * Sync the legacy flat pack columns on vendor_items from a persisted chain
- * (PR-B sync-on-save). Derives pack_format / units_per_pack / each_size /
- * each_measure via the pure `deriveFlatFieldsFromChain` (the tested linear
- * root→leaf collapse) and writes them. avg_oz_per_each is intentionally NOT
- * written here — it's set on the SKU create/update payload and the chain's
- * oz-resolution relies on it. Best-effort by design: the chain is already
- * persisted; a flat-sync failure is logged, not thrown, so a transient write
- * blip never reverts a good chain (the flat fields are a back-compat mirror, not
- * the source of truth). `pack_format` NULL from a malformed derive is coalesced
- * to a non-empty placeholder so the NOT-NULL-friendly consumers never see blank
- * (validateSubmission guarantees a well-formed chain reaches here anyway).
- *
- * ── NON-FATAL, BUT NO LONGER INVISIBLE (audit fix 2026-08-29) ─────────────────
- *
- * Staying non-fatal is the right call and is unchanged. What was wrong was the SILENCE: a
- * failure reached a server log nobody reads and nothing else — no return value, no audit
- * trace — so a SKU could sit with a mirror that disagrees with its own chain and no operator
- * or reviewer could ever learn it. lib/admin/cost.ts's own header names this exact risk
- * ("the agreement is one failed sync away from breaking, and when it breaks it is silent,
- * permanent"). So: retry once (most write blips are momentary), then REPORT the outcome —
- * up through replaceSkuPackChain's return value and onto the `sku.pack_chain_update` audit
- * row the save already writes. Reporting rides existing metadata rather than a new audit
- * action, because the action vocabulary is closed and this is not a new event.
- */
-async function syncSkuFlatFieldsFromChain(
-  sb: ReturnType<typeof getServiceRoleClient>,
-  skuId: string,
-  levels: PackChainLevelInput[],
-): Promise<boolean> {
-  const flat = deriveFlatFieldsFromChain(levels);
-  const payload = {
-    pack_format: flat.packFormat ?? "Each (no case)",
-    units_per_pack: flat.unitsPerPack,
-    each_size: flat.eachSize,
-    each_measure: flat.eachMeasure,
-  };
-  let lastMessage = "";
-  for (let attempt = 1; attempt <= SYNC_ATTEMPTS; attempt += 1) {
-    const { error } = await sb.from("vendor_items").update(payload).eq("id", skuId);
-    if (!error) return true;
-    lastMessage = error.message;
-  }
-  // Non-fatal: the chain (source of truth) is already saved. The caller audits the outcome.
-  console.error(
-    `syncSkuFlatFieldsFromChain(${skuId}) failed after ${SYNC_ATTEMPTS} attempts (chain saved; flat fields stale): ${lastMessage}`,
-  );
-  return false;
-}
-
 // ── Write (GM+; supersede-as-a-SET) ──────────────────────────────────────────────
 /**
  * Replace a SKU's whole active chain with a new version (append-only): validate,
@@ -311,57 +257,68 @@ async function syncSkuFlatFieldsFromChain(
  * saved either way (`flatFieldsSynced: false` is a partial success, never a failed save) —
  * the flag exists so a caller can say so, and it is on the audit row regardless.
  */
+/**
+ * The save RPC's named refusals as the SKU screens' codes (chunk-4 review P3c): every one is a typed
+ * 4xx, never a 500. Codes reuse the editor's existing vocabulary (components/admin/skus/shared.ts).
+ */
+const RPC_REFUSALS: Record<string, [number, string, string]> = {
+  global_requires_moo: [403, "global_requires_moo", "Only a Manager of Operations or higher can change this for everyone"],
+  flat_pack_exists: [403, "global_requires_moo", "This item already has a pack — only a Manager of Operations or higher can change it for everyone"],
+  version_changed: [409, "version_changed", "This pack changed since it was loaded — reload and re-apply"],
+  sku_not_found: [409, "sku_inactive", "This item is inactive — reactivate it before changing its pack"],
+  duplicate_label: [400, "duplicate_label", "Two levels share a label"],
+  cycle: [400, "chain_cycle", "The chain loops back on itself"],
+  not_one_root: [400, "chain_invalid", "The chain must have exactly one outer level"],
+  shared_child: [400, "chain_invalid", "Two levels cannot contain the same level"],
+  invalid_levels: [400, "chain_invalid", "The chain is invalid"],
+  non_positive_qty: [400, "invalid_qty", "Quantities must be positive"],
+  unknown_measure: [400, "unknown_measure", "Unknown measure unit"],
+};
+export function packChainErrorFromRpc(message: string): Error {
+  const code = /sku_pack_version:([a-z_]+)/.exec(message)?.[1];
+  const hit = code ? RPC_REFUSALS[code] : undefined;
+  return hit ? new PackChainError(hit[0], hit[1], hit[2]) : new Error(`replaceSkuPackChain save: ${message}`);
+}
+
 export async function replaceSkuPackChain(
   actor: AuthContext,
-  args: { skuId: string; levels: PackChainLevelInput[] },
+  args: {
+    skuId: string;
+    levels: PackChainLevelInput[];
+    /**
+     * The GLOBAL live version the FORM was loaded with (chunk-4 review P3c) — null = it showed no
+     * chain. Never re-read here: a re-read just before the save would always "match" and a stale
+     * form would silently overwrite a chain someone saved meanwhile. A mismatch is 409 version_changed.
+     */
+    expectedLiveVersionId: string | null;
+  },
 ): Promise<{ levelCount: number; flatFieldsSynced: boolean }> {
   requireLevel(actor, PACK_CHAIN_WRITE_MIN);
-  const { avgOzPerEach, skuClass } = await assertSkuExists(args.skuId);
+  const { avgOzPerEach, skuClass, ownerLocationId } = await assertSkuExists(args.skuId);
+  // A shop-owned SKU's GLOBAL chain belongs to that shop's people below MoO (skuOwnerAllowed).
+  if (!skuOwnerAllowed({ level: getRoleLevel(actor.user.role), locations: actor.locations }, ownerLocationId)) {
+    throw new PackChainError(404, "not_found", "SKU not found");
+  }
   const [measureLabels, measures] = await Promise.all([loadMeasureLabels(), loadMeasuresMap()]);
   const validated = validateSubmission(args.levels, measureLabels, measures, avgOzPerEach, skuClass);
 
   const sb = getServiceRoleClient();
 
-  // 1) Deactivate the whole current active set (supersede-as-a-SET). Check error.
-  //    (count may be 0 for a SKU that has no chain yet — that's fine.)
-  const { error: deErr } = await sb
-    .from("sku_pack_levels")
-    .update({ active: false }, { count: "exact" })
-    .eq("sku_id", args.skuId)
-    .eq("active", true);
-  if (deErr) throw new Error(`replaceSkuPackChain deactivate: ${deErr.message}`);
-
-  // 2) Insert the new set. Mint ids up front so contains_level_id can be wired
-  //    to concrete ids (deterministic, no round-trip). crypto.randomUUID is
-  //    available in the Node runtime this server lib runs in.
-  const now = new Date().toISOString();
-  const ids = validated.map(() => crypto.randomUUID());
-  const rows = validated.map((lvl, i) => ({
-    id: ids[i]!,
-    sku_id: args.skuId,
-    label: lvl.label.trim(),
-    contains_qty: lvl.containsQty,
-    contains_level_id: lvl.containsIndex != null ? ids[lvl.containsIndex]! : null,
-    contains_measure_unit: lvl.containsIndex != null ? null : lvl.containsMeasureUnit!.trim(),
-    display_ordinal: i,
-    effective_from: now,
-    active: true,
-    created_by: actor.user.id,
-  }));
-  const { error: insErr } = await sb.from("sku_pack_levels").insert(rows);
-  if (insErr) throw new Error(`replaceSkuPackChain insert: ${insErr.message}`);
-
-  // FLAT-FIELD SYNC-ON-SAVE (SKU top-tier PR-B): derive the legacy flat pack
-  // columns from the just-persisted chain and write them, so the 3 laggard
-  // consumers that still read flat fields (readiness.skuPackComplete,
-  // sku-demand's skuContentOz-sans-chain, formatSkuPack) stay correct until PR-C
-  // migrates them to read chains. Server-authoritative — every chain write path
-  // (add flow, unchained-edit wizard, chain editor) flows through here, so a
-  // hand-crafted client payload can't skip the sync. avg_oz_per_each is NOT
-  // touched (it's a SKU-level column set on the create/update payload). A
-  // malformed chain derives to all-null — but validateSubmission already rejected
-  // those above, so a persisted chain always derives cleanly.
-  const flatFieldsSynced = await syncSkuFlatFieldsFromChain(sb, args.skuId, validated);
+  // CATALOG PHASE 2a (D5): the legacy editor writes the GLOBAL default through the one atomic writer.
+  // Below MoO it may set the FIRST chain of a SKU that has none (the add-SKU flow) and never change
+  // one — decided by the RPC under the SKU lock. A GM changes how an item arrives for their own shop
+  // on the item page (2b). The old deactivate-all/insert pair would also have deactivated every shop
+  // version's levels, so it is gone.
+  const { data: saved, error: rpcErr } = await sb.rpc("save_sku_pack_version", {
+    p_sku: args.skuId, p_location: null,
+    p_levels: validated.map((l) => ({ label: l.label.trim(), containsQty: l.containsQty, containsIndex: l.containsIndex, containsMeasureUnit: l.containsIndex != null ? null : l.containsMeasureUnit!.trim() })),
+    p_expected_live: args.expectedLiveVersionId, p_based_on: null, p_note: null, p_actor: actor.user.id,
+    p_first_only: getRoleLevel(actor.user.role) < GLOBAL_VERSION_WRITE_MIN,
+  });
+  if (rpcErr) throw packChainErrorFromRpc(rpcErr.message);
+  const rows = validated.map((l) => ({ label: l.label.trim() }));
+  // The flat mirror was derived inside the RPC's locked transaction (Astra 2a r2#6).
+  const flatFieldsSynced = (saved as { mirror_synced: boolean | null }).mirror_synced === true;
 
   await audit({
     actorId: actor.user.id,
@@ -373,9 +330,10 @@ export async function replaceSkuPackChain(
       sku_id: args.skuId,
       level_count: rows.length,
       labels: rows.map((r) => r.label),
-      // THE SIGNAL A SWALLOWED FAILURE USED TO LACK. `false` means the chain is saved and
-      // correct while the legacy flat mirror on vendor_items is stale — findable by a query
-      // rather than only by noticing a wrong number months later.
+      // `false` = the saved chain is MALFORMED for the mirror (no single root, or no measure leaf), so
+      // the GLOBAL flat mirror was set to the 'Each (no case)' unknown placeholder IN THE SAME
+      // transaction (0259 sku_flat_mirror_apply; chunk-4 review P3d). It can no longer mean "saved
+      // but the sync failed" — there is no separate sync. Findable by a query on this column.
       flat_fields_synced: flatFieldsSynced,
     },
     ipAddress: null,

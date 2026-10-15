@@ -19,6 +19,8 @@ vi.mock("@/lib/supabase-server", () => ({
     const result = { data: rows[table] ?? [], error: null };
     const query = {
       select: () => query, eq: () => query, is: () => query, in: () => query, order: () => query,
+      // Catalog Phase 2a: the pack loader is scoped (`or`) and paged (`range`).
+      or: () => query, range: () => query,
       update: () => query,
       insert: (value: unknown) => { mocks.inserts.push({ table, value }); return query; },
       returns: () => Promise.resolve(result), maybeSingle: () => Promise.resolve(result),

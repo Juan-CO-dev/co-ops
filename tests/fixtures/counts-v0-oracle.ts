@@ -208,7 +208,7 @@ async function loadCountCatalog(locationId: string): Promise<CountFormData> {
     if (vErr) console.error(`[counts] loadCountFormData vendor names lookup failed:`, vErr.message);
     for (const v of vs ?? []) vendorNameById.set(v.id, v.name);
   }
-  const chainsBySku = await loadSkuPackChains(list.map((s) => s.id));
+  const chainsBySku = await loadSkuPackChains(list.map((s) => s.id), null);
   const chainLabelsFor = (skuId: string): string[] =>
     chainLabelsInWalkOrder(chainsBySku.get(skuId) ?? []);
 
@@ -1026,7 +1026,7 @@ async function onHandCore(
   // SKU names + chains (count rows derive received-units read-time from the chain).
   const [nameRes, chainsBySku, measures] = await Promise.all([
     sb.from("vendor_items").select("id, name").in("id", skuIds).returns<Array<{ id: string; name: string }>>(),
-    loadSkuPackChains(countSkuIds),
+    loadSkuPackChains(countSkuIds, null),
     loadMeasures(),
   ]);
   // LABEL-ONLY read: names never touch the drift math (rows fall back to "(sku)"), so

@@ -149,7 +149,7 @@ async function main() {
     (measures ?? []).map((m) => [m.label, { dimension: m.dimension as MeasureUnitFactor["dimension"], toBaseFactor: Number(m.to_base_factor) }]),
   );
 
-  const chains = await loadSkuPackChains((skuRows ?? []).map((s) => s.id));
+  const chains = await loadSkuPackChains((skuRows ?? []).map((s) => s.id), null);
   const num = (v: number | string | null): number | null => {
     if (v === null) return null;
     const n = typeof v === "string" ? Number(v) : v;

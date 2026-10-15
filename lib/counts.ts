@@ -73,6 +73,7 @@ import { lockLocationContext, type LocationActor } from "@/lib/locations";
 import { etCalendarDate, etYmdMinusDays } from "@/lib/operational-day";
 import { audit } from "@/lib/audit";
 import type { AuthContext } from "@/lib/session";
+import type { VersionScope } from "@/lib/sku-versions-shared";
 import { loadMeasures, loadSkuPackChains } from "@/lib/prep-consumption";
 import { createCountsReadRefs, type CountsReadRefs, type RosterSku } from "@/lib/counts-read-refs";
 import { type MeasureUnitFactor, type RecipeInputSku } from "@/lib/recipe-math";
@@ -243,7 +244,7 @@ export interface CountFormData {
 
 /** Load active SKUs + each one's root→leaf chain labels for the count level picker.
  *  `refs` (B9): the page's render-scoped reference reads, shared with its on-hand panel. */
-export async function loadCountFormData(actor: AuthContext, locationId: string, refs: CountsReadRefs = createCountsReadRefs()): Promise<CountFormData> {
+export async function loadCountFormData(actor: AuthContext, locationId: string, refs: CountsReadRefs = createCountsReadRefs(locationId)): Promise<CountFormData> {
   requireLevel(actor, COUNT_WRITE_MIN);
   if (!lockLocationContext(actorLoc(actor), locationId)) throw new CountError(404, "not_found", "Location not found");
   if (!(await canDoOperationalTask(actor, locationId, "counts"))) throw new CountError(403, "forbidden");
@@ -251,7 +252,7 @@ export async function loadCountFormData(actor: AuthContext, locationId: string, 
 }
 
 /** Reference labels for the AGM+ read-only variance/on-hand panel; never authorizes a count. */
-export async function loadCountReferenceData(actor: AuthContext, locationId: string, refs: CountsReadRefs = createCountsReadRefs()): Promise<CountFormData> {
+export async function loadCountReferenceData(actor: AuthContext, locationId: string, refs: CountsReadRefs = createCountsReadRefs(locationId)): Promise<CountFormData> {
   requireLevel(actor, COUNT_READ_MIN);
   if (!lockLocationContext(actorLoc(actor), locationId)) throw new CountError(404, "not_found", "Location not found");
   return loadCountCatalog(locationId, refs);
@@ -391,7 +392,7 @@ async function loadCountProductOptions(
 }
 
 // ── Load per-SKU RecipeInputSku shapes (chain-aware) for oz resolution ───────────
-async function loadRecipeSkus(skuIds: string[]): Promise<Map<string, RecipeInputSku>> {
+async function loadRecipeSkus(skuIds: string[], scope: VersionScope): Promise<Map<string, RecipeInputSku>> {
   if (skuIds.length === 0) return new Map();
   const sb = getServiceRoleClient();
   // Feeds the write-time oz resolution (L3) — a swallowed error would resolve every
@@ -401,7 +402,7 @@ async function loadRecipeSkus(skuIds: string[]): Promise<Map<string, RecipeInput
     .in("id", skuIds)
     .returns<Array<{ id: string; pack_format: string | null; each_container_label: string | null; units_per_pack: number | null; each_size: number | string | null; each_measure: string | null; avg_oz_per_each: number | string | null }>>();
   if (error) throw new Error(`loadRecipeSkus: ${error.message}`);
-  const chainsBySku = await loadSkuPackChains(skuIds);
+  const chainsBySku = await loadSkuPackChains(skuIds, scope);
   return new Map((data ?? []).map((s) => [s.id, {
     packFormat: s.pack_format, eachContainerLabel: s.each_container_label,
     unitsPerPack: s.units_per_pack, eachSize: num(s.each_size), eachMeasure: s.each_measure,
@@ -560,7 +561,7 @@ export async function createCountEvent(actor: AuthContext, input: CreateCountEve
   // a weight line persists resolved_oz; a count-terminated (packaging/cleaning/misc)
   // line persists resolved_units in LEAF units + resolved_oz NULL. Reject the whole
   // event if ANY line resolves to NEITHER space — a line with no anchor can't verify.
-  const [measures, recipeSkus] = await Promise.all([loadMeasures(), loadRecipeSkus(skuIds)]);
+  const [measures, recipeSkus] = await Promise.all([loadMeasures(), loadRecipeSkus(skuIds, input.locationId)]);
   const resolution = resolveCountLinesDim(lines, recipeSkus, measures);
   if (!resolution.ok) {
     // Name the line: one unreadable unit fails the WHOLE audit (atomic by design), so the
@@ -725,7 +726,7 @@ async function allocateProductLines(
   // line uses (council L3): the product row's level picker borrows the primary's
   // chain labels, so the primary's chain is what those labels mean.
   const primaryIds = [...new Set(productIds.map((id) => byProduct.get(id)!.resolution.skuId!))];
-  const [measures, recipeSkus] = await Promise.all([loadMeasures(), loadRecipeSkus(primaryIds)]);
+  const [measures, recipeSkus] = await Promise.all([loadMeasures(), loadRecipeSkus(primaryIds, locationId)]);
 
   const out: AllocatedProductLine[] = [];
   for (const line of productLines) {
@@ -1331,7 +1332,7 @@ function loadParEstimateRows(par: ParAnchors, ctx: OnHandLedgerContext, now: num
  * that SKU stale. SKUs with NO census anchor but real consumption history get an
  * INFERRED baseline row (spec D6, anchorSource "inferred") — see loadInferredRows.
  */
-export async function loadOnHand(actor: AuthContext, locationId: string, now: number = Date.now(), refs: CountsReadRefs = createCountsReadRefs()): Promise<OnHandView> {
+export async function loadOnHand(actor: AuthContext, locationId: string, now: number = Date.now(), refs: CountsReadRefs = createCountsReadRefs(locationId)): Promise<OnHandView> {
   requireLevel(actor, COUNT_READ_MIN);
   // The location bind runs BEFORE any read (the prep-waste read below starts beside the
   // derivation, so it must not wait for the derivation's own bind).
@@ -1415,7 +1416,7 @@ export async function loadOnHandDerived(
    */
   opts: { withProducts?: boolean; seedBaselines?: boolean } = {},
   /** B9: a caller rendering the count sheet beside this read shares its reference reads. */
-  refs: CountsReadRefs = createCountsReadRefs(),
+  refs: CountsReadRefs = createCountsReadRefs(locationId),
 ): Promise<OnHandView> {
   requireLevel(actor, ON_HAND_DERIVED_MIN);
   if (!lockLocationContext(actorLoc(actor), locationId)) throw new CountError(404, "not_found", "Location not found");
@@ -1759,7 +1760,7 @@ async function onHandCore(
   locationId: string,
   now: number,
   opts: { withProducts?: boolean; seedBaselines?: boolean },
-  refs: CountsReadRefs = createCountsReadRefs(),
+  refs: CountsReadRefs = createCountsReadRefs(locationId),
 ): Promise<OnHandView> {
   const withProducts = opts.withProducts === true;
   const seedBaselines = opts.seedBaselines ?? true;

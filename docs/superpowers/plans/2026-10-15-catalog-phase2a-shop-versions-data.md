@@ -626,7 +626,7 @@ select coalesce(json_agg(t order by t.id), '[]'::json) from public.locations t;
 select count(*) as null_recorded_at from public.vendor_price_history where recorded_at is null;
 ```
 
-Then, still on this commit: `SHOP_VERSIONS_SNAPSHOT_DIR=tmp/shop-versions-snapshot SHOP_VERSIONS_SNAPSHOT_OUT=tmp/before.json npx vitest run tests/shop-versions-snapshot.test.ts`. Expected: 1 passed. Keep `tmp/before.json` for Task 14 Step 6.
+*(Superseded by Astra full-branch r1 P2: the snapshot proof is `scripts/snapshot-equivalence.mjs` — it computes its own BEFORE from origin/main's frozen loaders and runs the REAL 0259 + 0260 in PGlite; no `before.json` is taken on this commit. Its header lists the exact export. See Task 14 Step 6.)
 
 ---
 
@@ -5893,16 +5893,15 @@ Expected: every VERIFY result as annotated, and the transaction rolls back. Conf
 
 - [ ] **Step 5: Prod apply 0259** (Juan's word): `apply_migration` with name `0259_sku_shop_versions`. Re-run the VERIFY queries read-only.
 
-- [ ] **Step 6: The snapshot proof.**
-1. Export the prod snapshot (Task 1 Step 8 SQL) to `tmp/shop-versions-snapshot-after/`.
-2. On the final branch commit, run `SHOP_VERSIONS_SNAPSHOT_DIR=tmp/shop-versions-snapshot-after SHOP_VERSIONS_SNAPSHOT_BASELINE=tmp/before.json npx vitest run tests/shop-versions-snapshot.test.ts`. Expected: 1 passed. The real catalog produces identical live numbers, and the dated day equals live unless Step 1's report listed a change after it.
-3. If prod data moved between the two exports (new deliveries), re-take `before.json` on the Task 1 commit from the NEW export and compare again.
+- [ ] **Step 6: The snapshot proof — run it BEFORE Step 5 (it needs a pre-0259 export).** *(Superseded by Astra full-branch r1 P2.)*
+1. Export prod READ-ONLY with the SELECTs in the header of `scripts/snapshot-equivalence.mjs` (15 catalog tables, named columns, no customer data) to `tmp/shop-versions-snapshot/` (git-ignored).
+2. On the final branch commit: `node scripts/snapshot-equivalence.mjs tmp/shop-versions-snapshot --out tmp/snapshot-report.json`. It computes the BEFORE numbers with origin/main's frozen loaders over the original rows, executes the REAL 0259 + 0260 over the same rows in PGlite (in memory), reads the rows back, computes the AFTER numbers with the new resolver, and asserts no shop version, no lane, an untouched flat mirror and identical numbers. Expected: `PROVEN`, exit 0.
 
 - [ ] **Step 7: Merge** (Juan clicks the production merge). Vercel deploys main.
 
 - [ ] **Step 8: The A → B → C sequence check (Task 4 Step 2) on the sim, BEFORE applying 0260 there.** Expect `finalize sequence check: OK`. Then sim apply 0260 and run its VERIFY queries.
 
-- [ ] **Step 9: Prod dry-run 0260 with rollback, then prod apply 0260** (Juan's word), then VERIFY: `is_nullable = 'NO'`, plus zero levels whose version has no `valid_from`.
+- [ ] **Step 9: Prod dry-run 0260 with rollback, then prod apply 0260** (Juan's word), then VERIFY: `is_nullable = 'NO'`, plus zero levels whose version has no `valid_from`. **DEADLINE: 0260 is applied BEFORE THE NEXT DEPLETION CRON after the Step 7 deploy** — `/api/cron/toast-sales-pull`, `0 9 * * *` UTC (05:00 EDT; 04:00 EST after 2026-11-01), which rebuilds T-1..T-3 through the dated graphs. Deploy in the morning ET so the window is a full day, never a few hours. (`/api/cron/toast-sales-today` refreshes snapshots only and runs no nightly depletion.)
 
 - [ ] **Step 10: Stamp the headers** in a docs-only follow-up commit, directly on main as AGENTS.md allows for pure docs:
 - Under each gate line, add `-- APPLIED TO PROD <date> (schema_migrations version <v>, name '<name>')`, with the version read from `supabase_migrations.schema_migrations`.

@@ -6242,5 +6242,18 @@
   "customers.catering.sort.spend": "Mayor gasto en catering",
   "customers.catering.sort.orders": "Más pedidos de catering",
   "customers.catering.sort.recent": "Pedido de catering más reciente",
-  "customers.catering.sort.quiet": "Cuentas habituales sin volver"
+  "customers.catering.sort.quiet": "Cuentas habituales sin volver",
+  "admin.menu_costing.shop_switcher": "Ver costos de",
+  "admin.menu_costing.scope_all_short": "Todas las tiendas",
+  "admin.menu_costing.scope_all": "Todas las tiendas: costeado con precios GLOBALES. Los precios propios de una tienda se ven en la vista de esa tienda.",
+  "admin.menu_costing.scope_shop": "{shop}: costeado con los empaques y precios de esta tienda.",
+  "admin.menu_costing.export_scope": "Descargar: {scope}",
+  "reports.export.pricing_scope_shop": "Precios: {shop}",
+  "reports.export.pricing_scope_global": "Precios: globales (todas las tiendas)",
+  "admin.skus.error.global_requires_moo": "Solo un Manager of Operations puede cambiar este empaque para todas las tiendas.",
+  "admin.skus.error.version_changed": "Alguien más cambió este empaque. Vuelve a cargar para verlo.",
+  "admin.skus.error.sku_inactive": "Este artículo está inactivo. Reactívalo antes de cambiar su empaque.",
+  "admin.skus.chain.global_read_only": "Solo un Manager of Operations puede cambiar este empaque para todas las tiendas.",
+  "admin.skus.chain.no_changes": "No hay cambios que guardar.",
+  "admin.skus.error.not_found": "No puedes cambiar el empaque de este artículo desde tu tienda."
 }

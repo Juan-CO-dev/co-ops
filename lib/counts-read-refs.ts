@@ -24,6 +24,7 @@ import { loadAllSkuPackChains, loadMeasures } from "@/lib/prep-consumption";
 import { loadProductIndex, loadProductLots, type ProductIndexLoad, type ProductLotLoad } from "@/lib/products";
 import type { MeasureUnitFactor } from "@/lib/recipe-math";
 import type { PackChainLevel } from "@/lib/pack-chain-shared";
+import type { VersionScope } from "@/lib/sku-versions-shared";
 
 export interface RosterSku { id: string; name: string; pack_format: string | null; vendor_id: string | null; product_id: string | null }
 export interface VendorRef { id: string; name: string; source_kind: "vendor" | "store"; active: boolean }
@@ -51,7 +52,11 @@ function once<T>(load: () => Promise<T>): () => Promise<T> {
   return () => (p ??= quiet(load()));
 }
 
-export function createCountsReadRefs(): CountsReadRefs {
+/**
+ * ONE SHOP PER RENDER (catalog Phase 2a). The refs read that shop's live pack versions; a product
+ * index asked for under a different shop would mix two shops' chains, so it refuses.
+ */
+export function createCountsReadRefs(shopScope: VersionScope): CountsReadRefs {
   const roster = once(async () => {
     const sb = getServiceRoleClient();
     // The sheet's own order (name) — the par and inferred tiers filter the same rows. PAGED
@@ -76,7 +81,7 @@ export function createCountsReadRefs(): CountsReadRefs {
     return new Map(rows.map((v) => [v.id, v]));
   });
   const measures = once(() => loadMeasures());
-  const allChains = once(() => loadAllSkuPackChains());
+  const allChains = once(() => loadAllSkuPackChains(shopScope));
   const packChains = async (skuIds: readonly string[]) => {
     const all = await allChains();
     const out = new Map<string, PackChainLevel[]>();
@@ -96,6 +101,7 @@ export function createCountsReadRefs(): CountsReadRefs {
   // loads that cover it, narrowed back to exactly the ids asked for.
   const indexLoads = new Map<string, Map<string, Promise<ProductIndexLoad>>>();
   const productIndex = async (productIds: readonly string[], locationId: string): Promise<ProductIndexLoad> => {
+    if (locationId !== shopScope) throw new Error("counts refs: one shop per render");
     const ids = [...new Set(productIds.filter(Boolean))];
     let byId = indexLoads.get(locationId);
     if (!byId) { byId = new Map(); indexLoads.set(locationId, byId); }

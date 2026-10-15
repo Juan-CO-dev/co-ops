@@ -290,7 +290,7 @@ async function loadUniverse(sb: Sb, measures: Map<string, MeasureUnitFactor>): P
     throw new Error("FATAL: vendor_items loaded empty — refusing to reason about an empty catalog.");
   }
 
-  const chains = await loadSkuPackChains((skuRows ?? []).map((r) => r.id));
+  const chains = await loadSkuPackChains((skuRows ?? []).map((r) => r.id), null);
   const skuById = new Map<string, LiveSku>();
   for (const r of skuRows ?? []) {
     const chain: PackChainLevel[] = chains.get(r.id) ?? [];

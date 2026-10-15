@@ -22,16 +22,19 @@ export function exportHref(family: ExportFamily, format: "csv" | "pdf", query: U
   return `/api/reports/export?${params.toString()}`;
 }
 
-export function ExportLinks({ family, query, language, className = "" }: {
+export function ExportLinks({ family, query, language, className = "", caption }: {
   family: ExportFamily;
   query: URLSearchParams | Record<string, string | undefined>;
   language: Language;
   className?: string;
+  /** Optional context shown before the links (catalog Phase 2a: the costing export's pricing scope). */
+  caption?: string;
 }) {
   const link = "inline-flex min-h-[44px] items-center rounded-lg border border-co-border-2 px-3 text-xs font-bold uppercase tracking-[0.1em] text-co-text-muted hover:bg-co-surface-2 hover:text-co-text";
   return (
     <div className={`flex flex-wrap items-center gap-2 ${className}`} role="group" aria-label={serverT(language, "reports.export.group_aria")}>
       <span className="text-[11px] font-bold tracking-[0.12em] text-co-text-dim">{serverT(language, "reports.export.label")}</span>
+      {caption ? <span className="text-xs font-bold text-co-text-muted">{caption}</span> : null}
       <a className={link} href={exportHref(family, "csv", query)} download aria-label={serverT(language, "reports.export.csv_aria")}>{serverT(language, "reports.export.csv")}</a>
       <a className={link} href={exportHref(family, "pdf", query)} download aria-label={serverT(language, "reports.export.pdf_aria")}>{serverT(language, "reports.export.pdf")}</a>
     </div>

@@ -283,7 +283,7 @@ async function main(): Promise<void> {
     throw new Error(`vendor_items truncated: got ${skuRows?.length} of ${skuCount} — raise the page size before trusting this run`);
   }
 
-  const chains = await loadSkuPackChains((skuRows ?? []).map((r) => r.id));
+  const chains = await loadSkuPackChains((skuRows ?? []).map((r) => r.id), null);
   const skus: LiveSku[] = (skuRows ?? []).map((r) => ({
     id: r.id, name: r.name, vendorName: r.vendors?.name ?? "(no vendor)", active: r.active,
     packFormat: r.pack_format, unitsPerPack: r.units_per_pack,
@@ -460,7 +460,7 @@ async function main(): Promise<void> {
     const sku = res.sku;
     const liveOz = chainContentOz(sku.chain);
     const liveClass = await livePackClass(sku.id);
-    const prices = await loadCurrentSkuPrices([sku.id]);
+    const prices = await loadCurrentSkuPrices([sku.id], null);
     rows.push({
       reading, sku, liveOz, liveClass, readingOz,
       disposition: disposeTub({ skuFound: true, readingOz, livePackOz: liveOz, livePackClass: liveClass }),
@@ -786,7 +786,7 @@ async function main(): Promise<void> {
   const menuInputs: MenuCostInput[] = (menuRows ?? []).map((m) => ({
     id: m.id, name: m.name, nameEs: m.name_es, section: m.section, menuPrice: num(m.menu_price),
   }));
-  const graphPrices = await loadCurrentSkuPrices([...graph.skuPack.keys()]);
+  const graphPrices = await loadCurrentSkuPrices([...graph.skuPack.keys()], null);
   const boardRows = composeMenuCostRows(menuInputs, graph, costPerOzFromGraph(graph, graphPrices));
 
   const watched = rows.filter((r) => r.sku != null).map((r) => r.sku!);
@@ -1172,7 +1172,7 @@ async function main(): Promise<void> {
       avg_oz_per_each: number | string | null; weight_class: string | null; vendors: { name: string } | null;
     }>>();
   if (aErr) throw new Error(`read back: ${aErr.message}`);
-  const chainsAfter = await loadSkuPackChains(touched);
+  const chainsAfter = await loadSkuPackChains(touched, null);
   for (const r of after ?? []) {
     const ch = chainsAfter.get(r.id) ?? [];
     p(

@@ -84,6 +84,12 @@ function extract(fn: "assertStepUp" | "requestStepUp", keep: (rel: string) => bo
 
 // ── THE SERVER HALF: route file → the tiers it asserts ────────────────────────
 const SERVER_TIER_MAP: Record<string, string[]> = {
+  // Catalog Phase 2a — the shop-version routes run in the 15-minute edit window.
+  "app/api/admin/catalog/sku/[id]/pack/route.ts": ["E"],
+  "app/api/admin/catalog/sku/[id]/pack/back-to-default/route.ts": ["E"],
+  "app/api/admin/catalog/sku/[id]/pack/restore/route.ts": ["E"],
+  "app/api/admin/catalog/sku/[id]/price/route.ts": ["E"],
+  "app/api/admin/catalog/sku/[id]/price/back-to-default/route.ts": ["E"],
   "app/api/admin/stations/route.ts": ["B"],
   // 0233 Toast employee links: link/unlink is an attribution change (Tier B); its only client,
   // ToastEmployeeLinks, asks B proactively and retries on step_up_required/stale (joined by hand).

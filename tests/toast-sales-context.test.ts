@@ -8,7 +8,14 @@ import type { RecipeInputSku, MeasureUnitFactor } from "@/lib/recipe-math";
 import { loadReconciledSalesWindow } from "@/lib/ezcater/depletion";
 
 vi.mock("@/lib/supabase-server", () => ({ getServiceRoleClient: vi.fn() }));
-vi.mock("@/lib/prep-consumption", () => ({ loadRecipeGraph: vi.fn() }));
+vi.mock("@/lib/prep-consumption", () => {
+  const loadRecipeGraph = vi.fn();
+  // Catalog Phase 2a (D1): the context's dated-graph factory, as the real one behaves when no pack
+  // boundary falls inside the window — every day reuses the live graph (no extra load).
+  const createDatedGraphs = vi.fn((opts: { locationId: string | null; liveGraph?: unknown }) => async () =>
+    opts.liveGraph ?? loadRecipeGraph({ locationId: opts.locationId }));
+  return { loadRecipeGraph, createDatedGraphs };
+});
 
 type Row = Record<string, unknown>;
 let tables: Record<string, Row[]>;

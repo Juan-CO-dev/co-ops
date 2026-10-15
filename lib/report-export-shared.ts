@@ -101,9 +101,11 @@ export function csvField(text: string): string {
   return /[",\r\n]|^\s|\s$/.test(text) ? `"${text.replaceAll('"', '""')}"` : text;
 }
 
-/** The whole file: BOM + one header row + one line per row, CRLF, trailing CRLF. */
-export function toCsv(columns: readonly ExportColumn[], rows: readonly ExportRow[]): string {
-  const lines = [columns.map((c) => csvField(c.key)).join(",")];
+/** The whole file: BOM + optional preamble lines + one header row + one line per row, CRLF, trailing CRLF. */
+export function toCsv(columns: readonly ExportColumn[], rows: readonly ExportRow[], preamble: readonly string[] = []): string {
+  // Optional context lines BEFORE the header row (the costing export's pricing scope). Every other
+  // family passes none, so their files are byte-identical.
+  const lines = [...preamble.map((p) => csvField(p)), columns.map((c) => csvField(c.key)).join(",")];
   for (const row of rows) lines.push(columns.map((c) => csvField(formatCell(c.kind, row[c.key]))).join(","));
   return `${CSV_BOM}${lines.join("\r\n")}\r\n`;
 }

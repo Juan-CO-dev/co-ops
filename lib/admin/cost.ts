@@ -40,6 +40,7 @@ import { audit } from "@/lib/audit";
 import type { AuthContext } from "@/lib/session";
 import { loadMeasureUnits } from "@/lib/admin/skus";
 import { loadSkuPackChains } from "@/lib/prep-consumption";
+import { assertScopeToken, catalogWriteRoleAllowed, GLOBAL_VERSION_WRITE_MIN, resolveCurrentPrices, skuOwnerAllowed, type ResolvedPrice, type ScopedPriceRow, type VersionScope } from "@/lib/sku-versions-shared";
 import type { MeasureUnitFactor } from "@/lib/recipe-math";
 // The PURE half lives in cost-shared.ts (the house *-shared law) so the
 // derivation is test-pinnable; re-exported here so server consumers' import
@@ -75,33 +76,52 @@ function num(v: number | string | null): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
-/** Current pack price per SKU = latest vendor_price_history row (effective_date desc, recorded_at desc). */
-export async function loadCurrentSkuPrices(skuIds: string[]): Promise<Map<string, number>> {
-  const out = new Map<string, number>();
+const PRICE_COLUMNS = "id, vendor_item_id, unit_price, effective_date, recorded_at, location_id, price_lane_id";
+const PRICE_ID_CHUNK = 100;
+
+/** This shop's LIVE price lanes for these SKUs (0259): skuId → lane id. Paged; throws on error. */
+export async function loadLiveShopPriceLanes(skuIds: string[], locationId: string): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
   if (skuIds.length === 0) return out;
   const sb = getServiceRoleClient();
-  // Paginate past PostgREST's 1000-row cap: vendor_price_history is append-only
-  // and grows per delivery line, so a raw scan silently drops SKUs whose latest
-  // price row falls past row 1000 → they read "unpriced" (wrong readiness/cost).
-  // `id` is the unique tiebreaker that makes the newest-first order a total order.
-  // (Follow-up: a DISTINCT ON (vendor_item_id) RPC avoids loading history at all.)
-  const data = await selectAllRows<{ vendor_item_id: string; unit_price: number | string; effective_date: string; recorded_at: string | null }>(
-    (from, to) => sb
-      .from("vendor_price_history")
-      .select("vendor_item_id, unit_price, effective_date, recorded_at")
-      .in("vendor_item_id", skuIds)
-      .order("effective_date", { ascending: false })
-      .order("recorded_at", { ascending: false })
-      .order("id", { ascending: false })
-      .range(from, to),
-  );
-  for (const r of data) {
-    if (!out.has(r.vendor_item_id)) {
-      const p = num(r.unit_price);
-      if (p != null) out.set(r.vendor_item_id, p);
-    }
+  for (let i = 0; i < skuIds.length; i += PRICE_ID_CHUNK) {
+    const chunk = skuIds.slice(i, i + PRICE_ID_CHUNK);
+    const rows = await selectAllRows<{ id: string; sku_id: string }>((from, to) => sb
+      .from("sku_price_lanes").select("id, sku_id").eq("location_id", assertScopeToken(locationId)).eq("active", true)
+      .in("sku_id", chunk).order("id", { ascending: true }).range(from, to));
+    for (const r of rows) out.set(r.sku_id, r.id);
   }
   return out;
+}
+
+/**
+ * THE PRICE RESOLVER POINT (catalog Phase 2a). Current pack price per SKU as `scope` sees it:
+ * `null` = the newest GLOBAL row; a shop id = the newest row of that shop's LIVE lane, else the
+ * newest global row. The rule is pure (lib/sku-versions-shared.ts resolveCurrentPrices). Paged past
+ * PostgREST's row cap (an append-only ledger grows per delivery line); `id` makes newest-first a
+ * total order. `scope` is REQUIRED: an optional one is how a consumer silently stays global.
+ */
+export async function loadCurrentSkuPriceHeads(skuIds: string[], scope: VersionScope): Promise<Map<string, ResolvedPrice>> {
+  if (skuIds.length === 0) return new Map();
+  const sb = getServiceRoleClient();
+  const rows: ScopedPriceRow[] = [];
+  for (let i = 0; i < skuIds.length; i += PRICE_ID_CHUNK) {
+    const chunk = skuIds.slice(i, i + PRICE_ID_CHUNK);
+    rows.push(...await selectAllRows<ScopedPriceRow>((from, to) => {
+      const base = sb.from("vendor_price_history").select(PRICE_COLUMNS).in("vendor_item_id", chunk);
+      const scoped = scope == null ? base.is("location_id", null) : base.or(`location_id.is.null,location_id.eq.${assertScopeToken(scope)}`);
+      return scoped.order("effective_date", { ascending: false }).order("recorded_at", { ascending: false })
+        .order("id", { ascending: false }).range(from, to);
+    }));
+  }
+  const lanes = scope == null ? new Map<string, string>() : await loadLiveShopPriceLanes(skuIds, scope);
+  return resolveCurrentPrices(rows, lanes);
+}
+
+/** Current pack price (dollars) per SKU for `scope` — the pre-0259 return shape. */
+export async function loadCurrentSkuPrices(skuIds: string[], scope: VersionScope): Promise<Map<string, number>> {
+  const heads = await loadCurrentSkuPriceHeads(skuIds, scope);
+  return new Map([...heads].map(([id, h]) => [id, h.value]));
 }
 
 /** Recent prices for one SKU (for the panel's history list). */
@@ -112,6 +132,7 @@ export async function loadSkuPriceHistory(actor: AuthContext, skuId: string, lim
     .from("vendor_price_history")
     .select("unit_price, effective_date")
     .eq("vendor_item_id", skuId)
+    .is("location_id", null) // the global ledger; a shop's lane is listed on the item page (2b)
     .order("effective_date", { ascending: false })
     .limit(limit)
     .returns<Array<{ unit_price: number | string; effective_date: string }>>();
@@ -141,7 +162,7 @@ async function loadChainAwareContentOz(
   const [{ data: skuRows }, chains] = await Promise.all([
     sb.from("vendor_items").select("id, units_per_pack, each_size, each_measure, avg_oz_per_each").in("id", skuIds)
       .returns<Array<{ id: string; units_per_pack: number | null; each_size: number | string | null; each_measure: string | null; avg_oz_per_each: number | string | null }>>(),
-    loadSkuPackChains(skuIds),
+    loadSkuPackChains(skuIds, null), // the drawer's ledgers span every shop: the global default
   ]);
   return new Map<string, number | null>(
     (skuRows ?? []).map((s) => [
@@ -228,6 +249,10 @@ export async function recordSkuPrice(
   args: { skuId: string; unitPrice: number; effectiveDate: string },
 ): Promise<{ id: string }> {
   requireLevel(actor, PRICE_WRITE_MIN);
+  // Lead decision (catalog Phase 2a): at level 6 only the operational managers write the catalog.
+  if (!catalogWriteRoleAllowed(actor.user.role, getRoleLevel(actor.user.role))) {
+    throw new AdminCostError(403, "forbidden", "Insufficient role for this action");
+  }
   if (!Number.isFinite(args.unitPrice) || args.unitPrice <= 0) {
     throw new AdminCostError(400, "invalid_price", "Price must be a positive number");
   }
@@ -235,17 +260,27 @@ export async function recordSkuPrice(
     throw new AdminCostError(400, "invalid_date", "Effective date must be YYYY-MM-DD");
   }
   const sb = getServiceRoleClient();
-  const { data: sku, error: sErr } = await sb.from("vendor_items").select("id").eq("id", args.skuId).eq("active", true).maybeSingle<{ id: string }>();
+  const { data: sku, error: sErr } = await sb.from("vendor_items").select("id, location_id").eq("id", args.skuId).eq("active", true)
+    .maybeSingle<{ id: string; location_id: string | null }>();
   if (sErr) throw new Error(`recordSkuPrice sku check failed: ${sErr.message}`);
   if (!sku) throw new AdminCostError(400, "invalid_sku", "SKU not found or inactive");
+  // A shop-owned SKU's GLOBAL price belongs to that shop's people below MoO (skuOwnerAllowed, Astra 2a r3#1).
+  if (!skuOwnerAllowed({ level: getRoleLevel(actor.user.role), locations: actor.locations }, sku.location_id)) {
+    throw new AdminCostError(404, "not_found", "SKU not found");
+  }
 
-  const { data: inserted, error } = await sb
-    .from("vendor_price_history")
-    .insert({ vendor_item_id: args.skuId, unit_price: args.unitPrice, effective_date: args.effectiveDate, recorded_by: actor.user.id })
-    .select("id")
-    .maybeSingle<{ id: string }>();
-  if (error) throw new Error(`recordSkuPrice insert failed: ${error.message}`);
-  if (!inserted) throw new Error("recordSkuPrice returned no row");
+  // CATALOG PHASE 2a (D5): a price recorded here is the GLOBAL price. Below MoO it may be the FIRST
+  // one only, decided under the SKU lock with the insert (save_sku_global_price). Shops record their
+  // own price (a lane) on the item page (2b); delivery prices are captured at the door, unchanged.
+  const { data: savedPrice, error } = await sb.rpc("save_sku_global_price", {
+    p_sku: args.skuId, p_unit_price: args.unitPrice, p_effective_date: args.effectiveDate, p_actor: actor.user.id,
+    p_first_only: getRoleLevel(actor.user.role) < GLOBAL_VERSION_WRITE_MIN,
+  });
+  if (error) {
+    if (error.message.includes("sku_price:global_requires_moo")) throw new AdminCostError(403, "global_requires_moo", "Only a Manager of Operations or higher can change this price for everyone");
+    throw new Error(`recordSkuPrice save: ${error.message}`);
+  }
+  const inserted = { id: (savedPrice as { price_id: string }).price_id };
 
   await audit({
     actorId: actor.user.id, actorRole: actor.user.role,
@@ -288,7 +323,7 @@ export async function loadSkuReceivingLedger(actor: AuthContext, skuIds: string[
       .range(from, to),
   );
 
-  const prices = await loadCurrentSkuPrices(skuIds);
+  const prices = await loadCurrentSkuPrices(skuIds, null); // org-wide ledgers: the global price
   const measures = await loadMeasureUnits(actor);
   const measuresMap = new Map<string, MeasureUnitFactor>(measures.map((m) => [m.label, { dimension: m.dimension, toBaseFactor: m.toBaseFactor }]));
   const contentOzById = await loadChainAwareContentOz(sb, skuIds, measuresMap);
@@ -334,7 +369,7 @@ export async function loadSkuConsumption(actor: AuthContext, skuIds: string[]): 
   const out = new Map<string, SkuConsumption>();
   if (skuIds.length === 0) return out;
   const sb = getServiceRoleClient();
-  const prices = await loadCurrentSkuPrices(skuIds);
+  const prices = await loadCurrentSkuPrices(skuIds, null); // org-wide ledgers: the global price
   const measures = await loadMeasureUnits(actor);
   const measuresMap = new Map<string, MeasureUnitFactor>(measures.map((m) => [m.label, { dimension: m.dimension, toBaseFactor: m.toBaseFactor }]));
   const contentOzById = await loadChainAwareContentOz(sb, skuIds, measuresMap);

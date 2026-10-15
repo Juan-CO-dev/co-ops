@@ -44,6 +44,7 @@ import {
   type SkuNameCollisionCandidate,
 } from "@/lib/admin/catalog-shared";
 import type { PackChainLevel } from "@/lib/pack-chain-shared";
+import { canChangeGlobalPack, hasGlobalPack, resolveErrorKey, STEP_UP_CANCELLED, type SaveChainResult } from "./shared";
 import { PackChainWizard } from "./PackChainWizard";
 import { SkuCostPanel, type SkuCostInfo } from "./SkuCostPanel";
 import { SkuLocationOverlay, type LocationSkuOverlayView } from "./SkuLocationOverlay";
@@ -227,12 +228,15 @@ export function SkuBuilder({
    *  oz-resolvable at validation time. The chain editor passes it too when its
    *  chain ends in a count/volume unit on a raw SKU (catalog Phase 1); otherwise
    *  undefined → the avg is left alone). */
-  onSaveChain?: (levels: StarterChainLevel[], avgOzPerEach?: number | null) => Promise<boolean>;
+  onSaveChain?: (levels: StarterChainLevel[], avgOzPerEach?: number | null) => Promise<SaveChainResult>;
   onCancel: () => void;
 }) {
   const { t } = useTranslation();
   const isEdit = initial !== undefined;
   const hasChain = (initialChain?.length ?? 0) > 0;
+  // CATALOG PHASE 2a (D5; sim QA): below MoO an EXISTING global pack is read-only here — the database
+  // refuses the change anyway, so the screen says so plainly instead of a password prompt and a 403.
+  const globalPackLocked = isEdit && !canChangeGlobalPack(actorLevel, hasGlobalPack(initial!, initialChain?.length ?? 0));
 
   // ── Section A state ──
   const initialVendor =
@@ -275,6 +279,9 @@ export function SkuBuilder({
   const [chainRows, setChainRows] = useState<EditorLevel[]>([]);
   const [chainBusy, setChainBusy] = useState(false);
   const [chainErr, setChainErr] = useState<string | null>(null);
+  // The chain the editor opened with (payload JSON): saving it unchanged is a no-op, never a request.
+  const [chainBaseline, setChainBaseline] = useState<string | null>(null);
+  const [chainNote, setChainNote] = useState<string | null>(null);
   // Chunk-4 review: the identity Save may not clear an avg the chain needs (shown under the field).
   const [avgErr, setAvgErr] = useState<string | null>(null);
   const avgHintId = useId();
@@ -381,9 +388,12 @@ export function SkuBuilder({
     chainNeedsAvgOzPerEach(chainOpen ? editorRowsToPayload(chainRows) : displayChain, dimensionByLabel, skuClass);
 
   const startChainEdit = () => {
-    setChainRows(displayChain.length > 0 ? toEditorLevels(displayChain) : [{ label: "", qty: "", link: "" }]);
+    const rows = displayChain.length > 0 ? toEditorLevels(displayChain) : [{ label: "", qty: "", link: "" }];
+    setChainRows(rows);
+    setChainBaseline(JSON.stringify(editorRowsToPayload(rows)));
     setChainOpen(true);
     setChainErr(null);
+    setChainNote(null);
   };
   const addChainRow = () => setChainRows((r) => [...r, { label: "", qty: "", link: "" }]);
   const removeChainRow = (i: number) =>
@@ -402,6 +412,7 @@ export function SkuBuilder({
   const saveChain = async () => {
     if (chainBusy || !onSaveChain) return;
     setChainErr(null);
+    setChainNote(null);
     const payload = editorRowsToPayload(chainRows);
     const needsAvg = chainNeedsAvgOzPerEach(payload, dimensionByLabel, skuClass);
     const avg = parseNum(avgOzPerEach);
@@ -410,15 +421,21 @@ export function SkuBuilder({
       setChainErr(t("admin.skus.error.invalid_avg_oz_per_each"));
       return;
     }
+    // Nothing changed (the chain, and the avg it may carry): no request, no password prompt.
+    if (JSON.stringify(payload) === chainBaseline && (!needsAvg || avg === (initial?.avgOzPerEach ?? null))) {
+      setChainNote(t("admin.skus.chain.no_changes"));
+      return;
+    }
     setChainBusy(true);
     // With an avg, the parent PATCHes it onto the SKU BEFORE the chain save (one step-up).
-    const ok = await onSaveChain(payload, needsAvg ? avg : undefined);
+    const res = await onSaveChain(payload, needsAvg ? avg : undefined);
     setChainBusy(false);
-    if (ok) {
+    if (res.ok) {
       setChainOpen(false);
       setChainSavedTick((n) => n + 1);
-    } else {
-      setChainErr(errorMsg ?? t("admin.skus.error.generic"));
+    } else if (res.code !== STEP_UP_CANCELLED) {
+      // The refusal's OWN message (sim QA): never the generic text for a named 4xx.
+      setChainErr(t(resolveErrorKey(res.code)));
     }
   };
 
@@ -431,13 +448,13 @@ export function SkuBuilder({
     setWizardBusy(true);
     // Pass the avg so the parent persists it on the SKU before the chain save —
     // a raw count/volume leaf needs it to pass validation (leaf_needs_avg).
-    const ok = await onSaveChain(wizardChain, parseNum(avgOzPerEach));
+    const res = await onSaveChain(wizardChain, parseNum(avgOzPerEach));
     setWizardBusy(false);
-    if (ok) {
+    if (res.ok) {
       setWizardOpen(false);
       setWizardChain(null);
-    } else {
-      setWizardErr(errorMsg ?? t("admin.skus.error.generic"));
+    } else if (res.code !== STEP_UP_CANCELLED) {
+      setWizardErr(t(resolveErrorKey(res.code)));
     }
   };
 
@@ -630,7 +647,9 @@ export function SkuBuilder({
                     </li>
                   ))}
                 </ul>
-                {onSaveChain ? (
+                {globalPackLocked ? (
+                  <p role="note" className="text-sm text-co-text-muted">{t("admin.skus.chain.global_read_only")}</p>
+                ) : onSaveChain ? (
                   <button
                     type="button"
                     onClick={startChainEdit}
@@ -651,9 +670,10 @@ export function SkuBuilder({
                 onAdd={addChainRow}
                 onRemove={removeChainRow}
                 onSave={() => void saveChain()}
-                onCancel={() => { setChainOpen(false); setChainErr(null); }}
+                onCancel={() => { setChainOpen(false); setChainErr(null); setChainNote(null); }}
               />
             )}
+            {chainOpen && chainNote ? <p role="status" className="text-sm text-co-text-muted">{chainNote}</p> : null}
             {chainNeedsAvg ? (
               // The same field PackChainWizard shows for a count/volume leaf. While the chain
               // editor is open it rides the chain save; otherwise the identity Save sends it.
@@ -681,7 +701,9 @@ export function SkuBuilder({
           // A triggered flow (D4): closed until "Add ordering info" is tapped so
           // a bare save stays valid ("add pack detail later").
           <div className="flex flex-col gap-3">
-            {!wizardOpen ? (
+            {globalPackLocked ? (
+              <p role="note" className="text-sm text-co-text-muted">{t("admin.skus.chain.global_read_only")}</p>
+            ) : !wizardOpen ? (
               <>
                 <p className="text-xs text-co-text-muted">{t("admin.skus.builder.add_detail_later")}</p>
                 <button

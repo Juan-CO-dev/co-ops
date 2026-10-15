@@ -366,7 +366,7 @@ async function adjudicate(
   // ── Step 0 — live pre-flight on BOTH twins ──────────────────────────────────
   const primary = await loadTwin(sb, pair.primary);
   const backup = await loadTwin(sb, pair.backup);
-  const chains = await loadSkuPackChains([primary.id, backup.id]);
+  const chains = await loadSkuPackChains([primary.id, backup.id], null);
   const primaryShape = shapeOf(primary, chains.get(primary.id) ?? null);
   const backupShape = shapeOf(backup, chains.get(backup.id) ?? null);
   const primaryContentOz = skuContentOz(primaryShape, measures);
@@ -640,7 +640,7 @@ async function adjudicate(
   console.log("\nAFTER (read back from the destination)");
   const primaryAfter = await loadTwin(sb, pair.primary);
   const backupAfter = await loadTwin(sb, pair.backup);
-  const chainsAfter = await loadSkuPackChains([primaryAfter.id, backupAfter.id]);
+  const chainsAfter = await loadSkuPackChains([primaryAfter.id, backupAfter.id], null);
   const primaryPinsAfter = await loadPins(sb, primaryAfter.id);
   const backupPinsAfter = await loadPins(sb, backupAfter.id);
   const [{ count: pPricesAfter }, { count: bPricesAfter }] = await Promise.all([
