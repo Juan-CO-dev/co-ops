@@ -34,6 +34,17 @@ export interface LocationSkuOverlay {
   /** The global par each auto value was computed against (r2-6 self-invalidation). */
   autoWeekdayBaselinePar?: number | null;
   autoWeekendBaselinePar?: number | null;
+  /**
+   * The pack EPOCH each auto value was computed in (0259 sku_pack_epochs; catalog Phase 2a D3).
+   * Absent before the probe; null = never stamped (cannot prove its epoch).
+   */
+  autoWeekdayPackEpoch?: number | null;
+  autoWeekendPackEpoch?: number | null;
+  /**
+   * This SKU's CURRENT pack epoch at this shop, set by stampEffectivePack. UNDEFINED = this reader
+   * did not stamp, and nothing below changes; a number = the epoch (0 when no change ever happened).
+   */
+  effectivePackEpoch?: number;
 }
 
 /** One lane's resolution, so a caller can SAY which lane answered. */
@@ -61,14 +72,30 @@ export interface GlobalSkuPar {
  * or an auto value written without one) can only validate against a null global — an
  * unprovable claim about what the machine computed against never wins.
  */
+/**
+ * D3 (catalog Phase 2a): an auto value is a number of ORDER UNITS computed against the pack the
+ * shop effectively had, and it is valid only in the pack EPOCH it was computed in. Every change of
+ * the effective pack — a shop version made or retired, the global one replaced while the shop rides
+ * it — is a NEW epoch (monotonic, 0259), so "back to default" can never resurrect a value computed
+ * before the detour. `undefined` effective = an unstamped reader = today's behaviour.
+ */
+export function autoPackStale(autoEpoch: number | null | undefined, effective: number | undefined): boolean {
+  if (effective === undefined) return false;
+  return (autoEpoch ?? null) !== effective;
+}
+
 function resolveLane(
   human: number | null | undefined,
   auto: number | null | undefined,
   autoBaseline: number | null | undefined,
   global: number | null,
+  autoEpoch?: number | null,
+  effectiveEpoch?: number,
 ): { value: number | null; lane: ParLane } {
   if (human != null) return { value: human, lane: "human" };
-  if (auto != null && (autoBaseline ?? null) === global) return { value: auto, lane: "auto" };
+  if (auto != null && (autoBaseline ?? null) === global && !autoPackStale(autoEpoch, effectiveEpoch)) {
+    return { value: auto, lane: "auto" };
+  }
   return { value: global, lane: global == null ? "none" : "global" };
 }
 
@@ -93,11 +120,11 @@ export function resolveParSlot(
   return dayClass === "weekend"
     ? resolveLane(
         overlay?.weekendPar, overlay?.autoWeekendPar, overlay?.autoWeekendBaselinePar,
-        global.weekendPar,
+        global.weekendPar, overlay?.autoWeekendPackEpoch, overlay?.effectivePackEpoch,
       )
     : resolveLane(
         overlay?.weekdayPar, overlay?.autoWeekdayPar, overlay?.autoWeekdayBaselinePar,
-        global.weekdayPar,
+        global.weekdayPar, overlay?.autoWeekdayPackEpoch, overlay?.effectivePackEpoch,
       );
 }
 
@@ -289,4 +316,16 @@ export function parReviewAdvisory(input: ParAdvisoryInput): ParAdvisory | null {
     removedSources,
     activeRecipeRefs,
   };
+}
+
+/**
+ * Stamp each overlay with its SKU's CURRENT pack epoch at this shop (D3) — from sku_pack_epochs
+ * (lib/prep-consumption.ts loadShopPackEpochs). No row = epoch 0. A SKU with no overlay row has no
+ * auto value to retire.
+ */
+export function stampEffectivePack<T extends LocationSkuOverlay>(
+  overlays: Map<string, T>,
+  epochs: ReadonlyMap<string, number>,
+): void {
+  for (const [skuId, overlay] of overlays) overlay.effectivePackEpoch = epochs.get(skuId) ?? 0;
 }

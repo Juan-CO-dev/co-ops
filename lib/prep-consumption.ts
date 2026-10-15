@@ -196,6 +196,29 @@ export async function loadAllSkuPackChains(scope: VersionScope): Promise<Map<str
 }
 
 /**
+ * This shop's CURRENT pack epoch per SKU (0259 sku_pack_epochs; D3). A SKU with no row is at epoch 0
+ * and is simply absent here. Chunked + paged like every pack read; throws on error (a swallowed
+ * failure would read every epoch as 0 and resurrect stale machine pars).
+ */
+export async function loadShopPackEpochs(skuIds: string[], locationId: string): Promise<Map<string, number>> {
+  const out = new Map<string, number>();
+  if (skuIds.length === 0) return out;
+  const sb = getServiceRoleClient();
+  for (let i = 0; i < skuIds.length; i += ID_CHUNK) {
+    const chunk = skuIds.slice(i, i + ID_CHUNK);
+    const rows = await selectAllRows<{ sku_id: string; epoch: number | string }>(async (from, to) => {
+      const { data, error } = await sb.from("sku_pack_epochs").select("sku_id, epoch")
+        .eq("location_id", assertScopeToken(locationId)).in("sku_id", chunk)
+        .order("sku_id", { ascending: true }).range(from, to).returns<Array<{ sku_id: string; epoch: number | string }>>();
+      if (error) throw new Error(`loadShopPackEpochs: ${error.message}`);
+      return { data };
+    });
+    for (const r of rows) out.set(r.sku_id, Number(r.epoch));
+  }
+  return out;
+}
+
+/**
  * EVERY pack BOUNDARY (a version opening or closing) visible to `scope`, ascending, de-duplicated
  * (epoch ms). Between two consecutive boundaries nothing about the packs `scope` sees changes, so
  * every instant in that interval resolves to the SAME graph. Paged (one row per version).

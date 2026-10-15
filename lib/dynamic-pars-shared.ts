@@ -1007,6 +1007,12 @@ export interface ParWriteColumnsInput {
   /** "machine" only: the global par it was computed against (r2-6 self-invalidation). */
   baselinePar?: number | null;
   /**
+   * "machine" only, REQUIRED (catalog Phase 2a, D3): the pack EPOCH the auto value was computed in.
+   * Its absence THROWS — the same posture as a revert with no appliedAt: a machine value that cannot
+   * say which case it counted in must never be written.
+   */
+  packEpoch?: number;
+  /**
    * ISO stamp for `auto_*_applied_at` ("machine") or `pinned_*_at` ("revert").
    *
    * TIME ENTERS A PURE FUNCTION AS A PARAMETER — never as `new Date()` inside it. For
@@ -1059,15 +1065,17 @@ export function parWriteColumns(input: ParWriteColumnsInput): ParWriteColumnEffe
   const pinCol = `pinned_${dc}_at`;
 
   if (input.kind === "machine") {
+    if (input.packEpoch === undefined) throw new Error("parWriteColumns: machine requires packEpoch (D3)");
     // Writes the AUTO lane ONLY. Never the human lane, never the pin, never the global
-    // vendor_items par. actor null. The baseline rides along so the read-time
-    // self-invalidation rule has something to compare against.
+    // vendor_items par. actor null. The baseline AND the pack epoch ride along so the
+    // read-time self-invalidation rules (r2-6, D3) have something to compare against.
     return {
       human: {},
       autoLane: {
         [autoCol]: input.autoValue ?? null,
         [baselineCol]: input.baselinePar ?? null,
         [appliedCol]: input.appliedAt ?? null,
+        [`auto_${dc}_pack_epoch`]: input.packEpoch,
       },
     };
   }

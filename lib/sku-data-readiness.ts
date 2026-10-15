@@ -183,13 +183,17 @@ export function evaluateWave7Tables(tables: LiveTables, overrides = new Map<stri
     }
     return { bases, prices, packs };
   };
+  // D3: this shop's current pack epoch per SKU (no row = 0).
+  const epochRows = tables.sku_pack_epochs ?? [];
+  const epochFor = (shopId: string, skuId: string): number =>
+    Number(epochRows.find((e) => e.location_id === shopId && e.sku_id === skuId)?.epoch ?? 0);
   const graphRecipes: GraphRecipe[] = recipes.map(r => ({ recipeId: liveId(r), batchYield: liveNum(r.batch_yield),
     inputs: inputs.filter(i => i.recipe_id === r.id).map(i => ({ quantity: Number(i.quantity), unit: liveText(i.unit), componentSkuId: liveText(i.component_sku_id), componentItemId: liveText(i.component_item_id), componentProductId: liveText(i.component_product_id) })),
     outputs: outputs.filter(o => o.recipe_id === r.id).map(o => ({ outputItemId: liveText(o.output_item_id), outputMenuItemId: liveText(o.output_menu_item_id), yield: Number(o.yield), ozPerParUnit: liveNum(items.get(String(o.output_item_id))?.oz_per_par_unit), parUnitLabel: liveText(items.get(String(o.output_item_id))?.default_par_unit) })) }));
   const report: Wave7ReadinessReport = { asOf, shops: [], counts: Object.fromEntries(Object.entries(tables).map(([table, rows]) => [table, rows.length])) };
   for (const shop of liveRows(tables, "locations").filter(r => r.active !== false && (!visibleShopIds || visibleShopIds.has(liveId(r))))) {
     const shopId = liveId(shop), overlays = liveRows(tables, "location_sku_settings").filter(r => r.location_id === shopId);
-    const { bases, prices, packs } = basesFor(shopId);
+    const { bases, prices } = basesFor(shopId);
     const overlayFor = (id: string) => overlays.find(r => r.sku_id === id);
     // Main's per-shop scope applies to EVERY SKU (regular and store alike); keep it unchanged.
     const active = (sku: LiveRow) => (sku.location_id == null || sku.location_id === shopId) && resolveActive(overlayFor(liveId(sku))?.active_override as boolean | null | undefined, sku.active === true);
@@ -264,7 +268,8 @@ export function evaluateWave7Tables(tables: LiveTables, overrides = new Map<stri
       // Store runs retain their graph/cost facts, but are not regular catalog errands.
       if (vendors.get(String(sku.vendor_id))?.source_kind === "store") continue;
       const id = liveId(sku), overlay = overlayFor(id), basis = bases.get(id)!;
-      const par = resolvePar(overlay ? { weekdayPar: liveNum(overlay.weekday_par), weekendPar: liveNum(overlay.weekend_par), autoWeekdayPar: liveNum(overlay.auto_weekday_par), autoWeekendPar: liveNum(overlay.auto_weekend_par), autoWeekdayBaselinePar: liveNum(overlay.auto_weekday_baseline_par), autoWeekendBaselinePar: liveNum(overlay.auto_weekend_baseline_par) } : null, { weekdayPar: liveNum(sku.weekday_par), weekendPar: liveNum(sku.weekend_par) }, weekend);
+      const stamped = overlay != null && ("auto_weekday_pack_epoch" in overlay || "auto_weekend_pack_epoch" in overlay);
+      const par = resolvePar(overlay ? { weekdayPar: liveNum(overlay.weekday_par), weekendPar: liveNum(overlay.weekend_par), autoWeekdayPar: liveNum(overlay.auto_weekday_par), autoWeekendPar: liveNum(overlay.auto_weekend_par), autoWeekdayBaselinePar: liveNum(overlay.auto_weekday_baseline_par), autoWeekendBaselinePar: liveNum(overlay.auto_weekend_baseline_par), autoWeekdayPackEpoch: liveNum(overlay.auto_weekday_pack_epoch), autoWeekendPackEpoch: liveNum(overlay.auto_weekend_pack_epoch), effectivePackEpoch: stamped ? epochFor(shopId, id) : undefined } : null, { weekdayPar: liveNum(sku.weekday_par), weekendPar: liveNum(sku.weekend_par) }, weekend);
       if (!dependencies.has(id) && par == null && sku.inventory_only !== true) continue;
       const head = prices.get(id), price = liveNum(head?.unit_price);
       const date = liveText(head?.effective_date), ageAt = (at: string) => date ? Math.floor((Date.parse(at) - Date.parse(date)) / 86400000) : null;
