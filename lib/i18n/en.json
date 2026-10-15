@@ -6454,5 +6454,6 @@
   "admin.skus.open_item": "Open item page",
   "admin.skus.pack_requests.title": "Cases reported different at the door",
   "admin.skus.pack_requests.review": "Review {item} · {shop}",
-  "admin.skus.cost.use_item_page": "Change it for your shop on the item page"
+  "admin.skus.cost.use_item_page": "Change it for your shop on the item page",
+  "catalog.preview.par_let_restart": "Let the app learn it again"
 }

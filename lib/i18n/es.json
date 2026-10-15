@@ -6454,5 +6454,6 @@
   "admin.skus.open_item": "Abrir la página del artículo",
   "admin.skus.pack_requests.title": "Cajas reportadas diferentes en la puerta",
   "admin.skus.pack_requests.review": "Revisar {item} · {shop}",
-  "admin.skus.cost.use_item_page": "Cámbialo para tu tienda en la página del artículo"
+  "admin.skus.cost.use_item_page": "Cámbialo para tu tienda en la página del artículo",
+  "catalog.preview.par_let_restart": "Dejar que la app lo vuelva a aprender"
 }

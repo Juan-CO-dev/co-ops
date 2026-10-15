@@ -44,7 +44,7 @@ const REQUIRED = [
   "catalog.preview.par_status.global_par_shared",
   // chunk-1 review P2-1 / P2-2 (lead decision): the count change and the machine par's real outcome.
   "catalog.preview.par_count_changed", "catalog.preview.par_machine_restarts", "catalog.preview.par_machine_no_default",
-  "catalog.preview.par_own_from_auto",
+  "catalog.preview.par_own_from_auto", "catalog.preview.par_let_restart",
   "catalog.preview.par_keep", "catalog.preview.par_convert",
   "catalog.preview.par_cant_convert", "catalog.preview.par_gm_only", "catalog.preview.slot.weekday",
   "catalog.preview.slot.weekend", "catalog.preview.broken_lines", "catalog.preview.open_orders",
