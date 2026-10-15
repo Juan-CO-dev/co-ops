@@ -6743,5 +6743,7 @@
   "admin.section.recipe-notices": "Novedades de recetas",
   "recipes.error.global_requires_moo": "Solo el Director de Operaciones cambia la receta para todas las tiendas. Cambia la versión de tu tienda en la página del catálogo de la receta.",
   "recipes.catalog_link": "Versiones de tienda de esta receta",
-  "recipes.catalog_link_hint": "Cada tienda puede tener sus propios ingredientes y cantidades. Cámbialos en la página del catálogo."
+  "recipes.catalog_link_hint": "Cada tienda puede tener sus propios ingredientes y cantidades. Cámbialos en la página del catálogo.",
+  "recipes.builder.lines_global_only": "Solo el Director de Operaciones cambia estas líneas para todas las tiendas. Cambia la versión propia de tu tienda en la página del catálogo.",
+  "recipes.builder.lines_change_shop": "Cambiar la versión de tu tienda"
 }

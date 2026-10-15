@@ -40,6 +40,8 @@ const KNOWN_ERROR_CODES = new Set([
   // Catalog Phase 1 — the line editor reaches these through add AND edit (the keys already exist).
   "invalid_component_product",
   "product_line_needs_measure_unit",
+  // Catalog Phase 3b: the global recipe's lines are MoO+; a GM edits its shop's version on the catalog page.
+  "global_requires_moo",
 ]);
 
 export function resolveErrorKey(code: string): TranslationKey {

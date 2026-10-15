@@ -57,6 +57,8 @@ export const PHASE3B_KEYS = [
   "catalog.notices.title", "catalog.notices.intro", "catalog.notices.none", "catalog.notices.pick_shop",
   "admin.section.shop-changes", "admin.section.recipe-notices",
   "recipes.error.global_requires_moo", "recipes.catalog_link", "recipes.catalog_link_hint",
+  // Task 11: the legacy builder's read-only lines for a GM, with the way forward.
+  "recipes.builder.lines_global_only", "recipes.builder.lines_change_shop",
   // Task 9 (the menu item page): no dead ends, the moved-row conflict, and the promote panel.
   "catalog.menu.view_only", "catalog.menu.pick_shop_hint", "catalog.menu.edit_conflict", "catalog.menu.edit_rebase",
   "catalog.menu.promote.title", "catalog.menu.promote.hint", "catalog.menu.promote.name_es_unpreviewed",

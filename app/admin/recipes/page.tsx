@@ -62,7 +62,7 @@ export default async function AdminRecipesPage({ searchParams }: { searchParams:
         {scope === null ? serverT(lang, "readiness.scope.default") : serverT(lang, "readiness.scope.shop", { shop: scopeName ?? "" })}
         {scope !== null ? <> · <a href="/admin/recipes" className="inline-flex min-h-[44px] items-center font-bold text-co-text underline">{serverT(lang, "readiness.scope.show_default")}</a></> : null}
       </p>
-      <RecipesClient recipes={recipes} level={level} readiness={recipeReadiness} />
+      <RecipesClient recipes={recipes} level={level} readiness={recipeReadiness} shopScope={scope} />
     </div>
   );
 }

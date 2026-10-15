@@ -29,6 +29,15 @@ export function recipeItemHref(recipeId: string, opts: { shopId?: string | null 
 export function menuItemPageHref(menuItemId: string, opts: { shopId?: string | null } = {}): string {
   return withShop(`/admin/catalog/menu-item/${encodeURIComponent(menuItemId)}`, opts.shopId);
 }
+/**
+ * Where a recipe READINESS warning opens (plan Task 11, lead decision "shop item warnings deep-link to the
+ * shop's view"): a list read for one shop (`/admin/recipes?location=`, `/admin/items?location=`) opens THAT
+ * shop's version on the catalog page; the default's list (`shopScope` null) keeps the legacy builder, which
+ * edits the default.
+ */
+export function readinessRecipeHref(recipeId: string, shopScope: string | null): string {
+  return shopScope ? recipeItemHref(recipeId, { shopId: shopScope }) : `/admin/recipes/${encodeURIComponent(recipeId)}`;
+}
 export const SHOP_CHANGES_HREF = "/admin/catalog/shop-changes";
 export function noticesHref(shopId?: string | null): string {
   return withShop("/admin/catalog/notices", shopId);
