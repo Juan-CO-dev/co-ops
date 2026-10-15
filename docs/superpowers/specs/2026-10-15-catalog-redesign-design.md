@@ -19,7 +19,7 @@ Juan tried to change how a SKU's package comes from the vendor and found it very
 
 ### Keep (non-negotiable)
 
-Append-only price history; pack chains versioned whole and audited; receipts and counts keep the ounces they had at the time; the single product resolution ladder and vendor failover (`resolveProductMember`); retirement refuses loudly and suppresses pars without mutating them; product lines measured only in oz / each; three-lane pars with "a human always wins" and the Dynamic Pars guards; vendor import's stage → review → apply with before-state snapshots and its refusal to guess multi-level pack changes; readiness errands; step-up for truly destructive writes; the tenant-vocabulary law (no CO literals in code); i18n en + es for every string.
+Append-only price history; pack chains versioned whole and audited; receipts and counts keep the ounces they had at the time; the single product resolution ladder and vendor failover (`resolveProductMember`); retirement refuses loudly and suppresses pars without mutating them; product lines measured only in an ACTIVE measure-registry unit of any dimension — weight, volume or count, never a vendor's pack label (AGENTS.md "measure-registry unit"; amended 2026-10-15); three-lane pars with "a human always wins" and the Dynamic Pars guards; vendor import's stage → review → apply with before-state snapshots and its refusal to guess multi-level pack changes; readiness errands; step-up for truly destructive writes; the tenant-vocabulary law (no CO literals in code); i18n en + es for every string.
 
 ## 2. Users and permissions
 
@@ -98,7 +98,7 @@ Each starts from the item page and from wherever the problem first shows up, and
 4. **Guided jobs:** new item, swap vendor, new sandwich with Toast.
 5. **Pars page, Sandwiches page, the permission changes** (AGM floor fixes, GM shop-complete, level walls moved; lib-level location binds).
 
-Each phase: an Opus builder in its own worktree, Astra review to APPROVE, full vitest + CI, a browser check on the sim, migrations sim → prod dry-run with rollback → prod before merge, then guide text + photo updates for the changed screens.
+Each phase: an Opus builder in its own worktree, Astra review to APPROVE, full vitest + CI, a browser check on the sim, migrations sim → prod dry-run with rollback → prod before merge, then guide TEXT updates for the changed screens every phase; photo retakes happen in ONE pass after Phase 5, because the screens change every phase (amended 2026-10-15, Phase 1 plan review).
 
 ## 8. Testing
 
