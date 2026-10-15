@@ -598,3 +598,9 @@ Not fixed yet. For a later batch; none blocks the guides.
 - **Closing "Reasons given for unfinished lines" never names the station.** Lines like Restock / Wipe inside & outside repeat once per station, so the list shows the same five names over and over (manager photo 46). Prefix each reason with its station.
 - **Counts: packaging SKUs (1/2 pint bottoms/tops, portion cup lids) have no pack chain or average weight**, so any typed unit fails "Can't convert … to ounces". The first items in **Pick an item…** are exactly these. Add their pack data on prod before the first physical count.
 - **Opening Phase 2: typing 0 on a row with a higher Prep need doesn't save** until a reason is picked; the footer keeps counting it. Working as designed (the reason gate), but 10 rows at once is heavy. Consider one "nothing made this morning" reason for a whole section.
+
+## Juan's decision — 2026-10-14 night (cash Projected from Toast)
+Juan: "The key holder gets that number from toast… which we were going to do by pulling it from toast api once we got it… and we got it now."
+- **Projected = the day's Toast CASH payments for that shop** (amount, no tips), minus cash refunds and voids, from `toast_payments` (captured every 10 min, 6 AM–11 PM ET). Not Toast's drawer "expected" (that needs cash paid-in/out access).
+- **Prefilled, editable.** The box fills in with "From Toast · <time>". The key holder may change it; the saved deposit records the Toast figure beside the typed one, so a change is visible.
+- Build: batch B10 (worktree `co-ops-b10-cash`). The manager guide's cash step changes when B10 merges.
