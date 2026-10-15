@@ -4,7 +4,8 @@
 -- Spec: docs/superpowers/specs/2026-10-15-catalog-redesign-design.md §2 ("This case looks different",
 -- which files a pack change for the GM to approve), §4 ("What this changes"), §5 job 1.
 -- SIM: an earlier draft was applied at 20261015142750; this file was amended after it (Astra full-branch
--- r1) — re-apply it WHOLE on the sim before prod (every object is create-or-replace / if-not-exists).
+-- r1: the atomic price apply, the report additions and the filing RPC) — re-apply it WHOLE on the sim
+-- before prod (every object is create-or-replace / if-not-exists).
 -- Requires 0259 + 0260 (sku_pack_versions, sku_pack_epochs, save_sku_pack_version, save_sku_shop_price, save_sku_global_price).
 --
 -- WHAT.
@@ -35,6 +36,11 @@
 --       being converted. A conversion that CREATES the shop's own slot (`inherited`) comes from the
 --       value the shop used to answer with — the inherited GLOBAL par, or the shop's AUTO par (whose
 --       pack epoch this save bumps, D3) — and lands only while the shop's own slot is still EMPTY.
+--   (1b) sku_pack_change_request_additions + file_sku_pack_change_request — a second crew member who
+--       reports the same case JOINS the open report and their note / photo / numbers are ADDED to it
+--       (chunk-3 review P3a), never dropped. The filing RPC takes 0259's SKU lock first (so a filing
+--       and the apply that closes a report serialize), finds the OPEN report for (sku, shop) under it,
+--       and either opens one or appends an addition. APPEND-ONLY: service_role SELECT + INSERT only.
 --   (4) sku_price_snapshot + apply_sku_price_change — THE save behind "Price changed" (Astra
 --       full-branch r1 P2-2). The preview takes the price snapshot (the global head, and per reached
 --       shop its live lane and that lane's head, plus the active shops); the apply takes 0259's SKU
@@ -94,6 +100,90 @@ create index if not exists sku_pack_change_requests_shop_open_ix
 alter table public.sku_pack_change_requests enable row level security;
 revoke all on public.sku_pack_change_requests from public, anon, authenticated, service_role;
 grant select, insert, update on public.sku_pack_change_requests to service_role;
+
+-- ── (1b) a joined report's additions, and the filing RPC (chunk-3 review P3a) ──
+create table if not exists public.sku_pack_change_request_additions (
+  id          uuid        primary key default gen_random_uuid(),
+  request_id  uuid        not null references public.sku_pack_change_requests(id),
+  note        text        null check (note is null or length(note) <= 500),
+  proposal    jsonb       null check (proposal is null or jsonb_typeof(proposal) = 'object'),
+  photo_id    uuid        null references public.photos(id),
+  filed_by    uuid        not null references public.users(id),
+  filed_at    timestamptz not null default now(),
+  constraint sku_pack_change_request_additions_something check (num_nonnulls(note, proposal, photo_id) > 0)
+);
+comment on table public.sku_pack_change_request_additions is
+  'What a later "This case looks different" report of the SAME case added to the open one (0261): a note, '
+  'numbers, a photo. Append-only (service_role SELECT/INSERT only). Written only by file_sku_pack_change_request.';
+create index if not exists sku_pack_change_request_additions_request_ix
+  on public.sku_pack_change_request_additions (request_id, filed_at, id);
+
+alter table public.sku_pack_change_request_additions enable row level security;
+revoke all on public.sku_pack_change_request_additions from public, anon, authenticated, service_role;
+grant select, insert on public.sku_pack_change_request_additions to service_role;
+
+create or replace function public.file_sku_pack_change_request(
+  p_sku      uuid,
+  p_location uuid,
+  p_delivery uuid,
+  p_note     text,
+  p_proposal jsonb,
+  p_photo    uuid,
+  p_actor    uuid
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = pg_catalog, public
+as $$
+declare
+  v_id    uuid;
+  v_note  text := nullif(btrim(coalesce(p_note, '')), '');
+  v_added boolean := false;
+begin
+  -- THE SKU LOCK FIRST (0259's lock; apply_sku_pack_change takes it too), so a filing and the save that
+  -- closes the report serialize: a note can never be added to a report that is being closed.
+  perform 1 from public.vendor_items where id = p_sku and active for update;
+  if not found then
+    raise exception 'sku_pack_change:sku_not_found' using errcode = 'P0001';
+  end if;
+  if p_location is null or not exists (select 1 from public.locations where id = p_location and active) then
+    raise exception 'sku_pack_change:location_not_found' using errcode = 'P0001';
+  end if;
+  if exists (select 1 from public.vendor_items where id = p_sku and location_id is not null and location_id <> p_location) then
+    raise exception 'sku_pack_change:sku_owned_by_other_shop' using errcode = 'P0001';
+  end if;
+  -- The evidence a report names must be THIS shop's (the lib checks it too).
+  if p_delivery is not null and not exists (select 1 from public.vendor_deliveries where id = p_delivery and location_id = p_location) then
+    raise exception 'sku_pack_change:delivery_not_found' using errcode = 'P0001';
+  end if;
+  if p_photo is not null and not exists (select 1 from public.photos where id = p_photo and location_id = p_location) then
+    raise exception 'sku_pack_change:photo_not_found' using errcode = 'P0001';
+  end if;
+  if p_proposal is not null and jsonb_typeof(p_proposal) <> 'object' then
+    raise exception 'sku_pack_change:invalid_payload' using errcode = 'P0001';
+  end if;
+
+  select id into v_id from public.sku_pack_change_requests
+   where sku_id = p_sku and location_id = p_location and status = 'open' for update;
+  if v_id is null then
+    insert into public.sku_pack_change_requests (sku_id, location_id, delivery_id, note, proposal, photo_id, filed_by)
+    values (p_sku, p_location, p_delivery, left(v_note, 500), p_proposal, p_photo, p_actor)
+    returning id into v_id;
+    return jsonb_build_object('id', v_id, 'already', false, 'added', false);
+  end if;
+  -- JOIN the open report: whatever this crew member brought is ADDED, never dropped.
+  if v_note is not null or p_proposal is not null or p_photo is not null then
+    insert into public.sku_pack_change_request_additions (request_id, note, proposal, photo_id, filed_by)
+    values (v_id, left(v_note, 500), p_proposal, p_photo, p_actor);
+    v_added := true;
+  end if;
+  return jsonb_build_object('id', v_id, 'already', true, 'added', v_added);
+end;
+$$;
+
+revoke all on function public.file_sku_pack_change_request(uuid, uuid, uuid, text, jsonb, uuid, uuid) from public, anon, authenticated;
+grant execute on function public.file_sku_pack_change_request(uuid, uuid, uuid, text, jsonb, uuid, uuid) to service_role;
 
 -- ── (2) the dependency snapshot (taken by the preview, re-taken by the apply under the lock) ──
 create or replace function public.sku_pack_change_snapshot(p_sku uuid, p_shops uuid[])
@@ -422,6 +512,28 @@ grant execute on function public.apply_sku_price_change(uuid, uuid, numeric, dat
 
 -- ── (4) the guards ──────────────────────────────────────────────────────────
 do $$ begin
+  -- The additions table: deny-all, and APPEND-ONLY for service_role (no UPDATE either).
+  if exists (select 1 from information_schema.role_table_grants
+              where table_schema = 'public' and table_name = 'sku_pack_change_request_additions'
+                and grantee in ('PUBLIC', 'anon', 'authenticated')) then
+    raise exception '0261: unexpected table grant on the additions';
+  end if;
+  if has_table_privilege('service_role', 'public.sku_pack_change_request_additions', 'UPDATE')
+     or has_table_privilege('service_role', 'public.sku_pack_change_request_additions', 'DELETE')
+     or has_table_privilege('service_role', 'public.sku_pack_change_request_additions', 'TRUNCATE')
+     or has_table_privilege('service_role', 'public.sku_pack_change_request_additions', 'REFERENCES')
+     or has_table_privilege('service_role', 'public.sku_pack_change_request_additions', 'TRIGGER') then
+    raise exception '0261: service_role above its ceiling on the additions';
+  end if;
+  if not (has_table_privilege('service_role', 'public.sku_pack_change_request_additions', 'SELECT')
+          and has_table_privilege('service_role', 'public.sku_pack_change_request_additions', 'INSERT')) then
+    raise exception '0261: service_role is missing a privilege the lib needs on the additions';
+  end if;
+  if has_function_privilege('anon', 'public.file_sku_pack_change_request(uuid, uuid, uuid, text, jsonb, uuid, uuid)', 'EXECUTE')
+     or has_function_privilege('authenticated', 'public.file_sku_pack_change_request(uuid, uuid, uuid, text, jsonb, uuid, uuid)', 'EXECUTE')
+     or not has_function_privilege('service_role', 'public.file_sku_pack_change_request(uuid, uuid, uuid, text, jsonb, uuid, uuid)', 'EXECUTE') then
+    raise exception '0261: file_sku_pack_change_request is not service_role-only';
+  end if;
   if exists (select 1 from information_schema.role_table_grants
               where table_schema = 'public' and table_name = 'sku_pack_change_requests'
                 and grantee in ('PUBLIC', 'anon', 'authenticated')) then
@@ -449,7 +561,8 @@ do $$ begin
     raise exception '0261: unexpected execute grant';
   end if;
   if exists (select 1 from information_schema.routine_privileges
-              where routine_schema = 'public' and routine_name in ('apply_sku_pack_change', 'sku_pack_change_snapshot', 'apply_sku_price_change', 'sku_price_snapshot')
+              where routine_schema = 'public' and routine_name in ('apply_sku_pack_change', 'sku_pack_change_snapshot', 'apply_sku_price_change', 'sku_price_snapshot',
+                                                                 'file_sku_pack_change_request')
                 and grantee in ('PUBLIC', 'anon', 'authenticated') and privilege_type = 'EXECUTE') then
     raise exception '0261: unexpected execute grant';
   end if;

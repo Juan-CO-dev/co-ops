@@ -100,6 +100,8 @@ const TENANCY_SCOPED_RPCS = [
   "apply_sku_pack_change",
   // 0261 — the atomic price apply; lib/admin/sku-versions.ts saveSkuPrice binds (requireLocation) before calling it.
   "apply_sku_price_change",
+  // 0261 — filing a door report (opens one or adds to the open one); filePackChangeRequest binds first.
+  "file_sku_pack_change_request",
   "write_station_event",
   "write_station_break",
   "write_task_assignment",

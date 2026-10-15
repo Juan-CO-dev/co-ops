@@ -29,6 +29,13 @@ describe("CaseLooksDifferent", () => {
     expect(src).toContain("{storeMode || !line.skuId ? null : <CaseLooksDifferent skuId={line.skuId} locationId={locationId} />}");
     expect(src).toContain('import { CaseLooksDifferent } from "@/components/receiving/CaseLooksDifferent";');
   });
+  it("joining an open report says the note and photo were ADDED; the panel id is unique per line (chunk-3 review P3a/P3b)", () => {
+    const src = readFileSync("components/receiving/CaseLooksDifferent.tsx", "utf8");
+    expect(src).toContain('r.data.added === true ? "added" : "already"');
+    expect(src).toContain("const panelId = `case-different-${useId()}`;");
+    expect(E["receiving.case_different.added"]).toMatch(/added/);
+    expect(S["receiving.case_different.added"]).toBeTruthy();
+  });
   it("a refusal is shown by its own name, through the closed map", () => {
     const src = readFileSync("components/receiving/CaseLooksDifferent.tsx", "utf8");
     expect(src).toContain("t(doorReportErrorKey(errorCode))");

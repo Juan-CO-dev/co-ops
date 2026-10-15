@@ -74,6 +74,23 @@ describe("0261_sku_pack_change_requests", () => {
   });
 });
 
+describe("filing joins and ADDS (chunk-3 review P3a)", () => {
+  const filing = sql.slice(sql.indexOf("create or replace function public.file_sku_pack_change_request("));
+  it("the additions are deny-all and APPEND-ONLY for service_role (select + insert, no update), asserted", () => {
+    expect(sql).toContain("create table if not exists public.sku_pack_change_request_additions");
+    expect(sql).toContain("revoke all on public.sku_pack_change_request_additions from public, anon, authenticated, service_role;");
+    expect(sql).toContain("grant select, insert on public.sku_pack_change_request_additions to service_role;");
+    expect(sql).toContain("has_table_privilege('service_role', 'public.sku_pack_change_request_additions', 'UPDATE')");
+  });
+  it("the filing RPC takes THE SKU LOCK first, finds the open report under it, then opens one or adds to it", () => {
+    const lock = filing.indexOf(`perform 1 ${LOCK};`);
+    expect(lock).toBeGreaterThan(-1);
+    expect(lock).toBeLessThan(filing.indexOf("status = 'open' for update"));
+    expect(filing.indexOf("status = 'open' for update")).toBeLessThan(filing.indexOf("insert into public.sku_pack_change_request_additions"));
+    expect(sql).toContain("grant execute on function public.file_sku_pack_change_request(uuid, uuid, uuid, text, jsonb, uuid, uuid) to service_role;");
+  });
+});
+
 describe("apply_sku_price_change — the atomic price save (full-branch r1 P2-2)", () => {
   const price = sql.slice(sql.indexOf("create or replace function public.apply_sku_price_change("));
   it("definer, locked search_path, service_role only — the snapshot function too", () => {
@@ -97,7 +114,7 @@ describe("apply_sku_price_change — the atomic price save (full-branch r1 P2-2)
 });
 
 describe("the executable proof (PGlite: the REAL 0259 + 0260 + 0261 on synthetic rows) runs green in CI", () => {
-  it("atomic apply, all-or-nothing refusals, the snapshot re-check, own-par, report binding, privileges, the atomic price apply", () => {
+  it("atomic apply, all-or-nothing refusals, the snapshot re-check, own-par, report binding, privileges, the atomic price apply, filing joins and adds", () => {
     const out = execFileSync(process.execPath, ["scripts/sql-harness-0261.mjs"], { encoding: "utf8", timeout: 180_000 });
     expect(out).not.toContain("FAIL ");
     expect(out).toContain("PASS 0261:");

@@ -362,6 +362,8 @@ export function previewPackChange(input: {
 
   const deltas = affected.map((s) => shopPackDelta(input.skuId, s, input.newChain, input.menuItems, input.recipeLines));
   const pars: PreviewParRow[] = [];
+  /** Each machine-par row's unrounded new order-unit oz (for the converted-global fallback). */
+  const rowAfterOz = new Map<PreviewParRow, number | null>();
 
   // Per affected shop: its own (human) par converts; an inherited global par on a SHOP-only save is
   // the opt-in "give this shop its own par" (the global par is untouched). The machine's par (lead
@@ -390,7 +392,9 @@ export function previewPackChange(input: {
         pars.push(parRow(s.shopId, [s.shopName], sl.slot, "human", to == null ? "no_weight" : "convertible", sl.value, basis, to));
       } else if (sl.lane === "auto") {
         const ownPar = target.kind === "shop" ? to : null;
-        pars.push(parRow(s.shopId, [s.shopName], sl.slot, "auto", "machine_par", sl.value, basis, ownPar, ownPar != null, { par: input.globalPars[sl.slot] }));
+        const row = parRow(s.shopId, [s.shopName], sl.slot, "auto", "machine_par", sl.value, basis, ownPar, ownPar != null, { par: input.globalPars[sl.slot] });
+        rowAfterOz.set(row, afterOz);
+        pars.push(row);
       } else if (sl.lane === "global") {
         pars.push(parRow(s.shopId, [s.shopName], sl.slot, "global", to == null ? "no_weight" : "convertible", sl.value, basis, to, true));
       }
@@ -436,7 +440,8 @@ export function previewPackChange(input: {
       if (row.status !== "machine_par") continue;
       const g = pars.find((p) => p.locationId === null && p.slot === row.slot && p.status === "convertible" && p.convertTo != null);
       if (!g) continue;
-      const afterOz = row.keepOz != null && row.current > 0 ? row.keepOz / row.current : null;
+      // The shop's OWN new order-unit oz, carried through — never rebuilt from the rounded keepOz (P3d).
+      const afterOz = rowAfterOz.get(row) ?? null;
       row.fallbackIfConverted = { par: g.convertTo!, oz: afterOz == null ? null : round4(g.convertTo! * afterOz) };
     }
   }

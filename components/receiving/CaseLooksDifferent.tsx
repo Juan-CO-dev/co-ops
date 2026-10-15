@@ -9,7 +9,7 @@
  * Disclosure state is useState only. Operational surface → the ActionButton grammar. Every refusal
  * the route can return is shown by its own name (doorReportErrorKey), never as the generic text.
  */
-import { useState } from "react";
+import { useId, useState } from "react";
 
 import { useTranslation } from "@/lib/i18n/provider";
 import { ActionButton } from "@/components/ActionButton";
@@ -37,9 +37,10 @@ export function CaseLooksDifferent({ skuId, locationId, deliveryId = null }: { s
   const [unit, setUnit] = useState<"oz" | "lb">("lb");
   const [photoId, setPhotoId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [status, setStatus] = useState<"idle" | "sent" | "already" | "error">("idle");
+  const [status, setStatus] = useState<"idle" | "sent" | "already" | "added" | "error">("idle");
   const [errorCode, setErrorCode] = useState<string | null>(null);
-  const panelId = `case-different-${skuId}`;
+  // Unique per LINE, not per SKU: the same item can sit on two door lines (chunk-3 review P3b).
+  const panelId = `case-different-${useId()}`;
 
   const submit = async () => {
     if (busy) return;
@@ -52,7 +53,8 @@ export function CaseLooksDifferent({ skuId, locationId, deliveryId = null }: { s
     });
     setBusy(false);
     if (!r.ok) { setErrorCode(r.code); setStatus("error"); return; }
-    setStatus(r.data.already === true ? "already" : "sent");
+    // Joining the open report ADDS what this person brought; the door says so (chunk-3 review P3a).
+    setStatus(r.data.already === true ? (r.data.added === true ? "added" : "already") : "sent");
     setOpen(false);
   };
 
@@ -62,9 +64,9 @@ export function CaseLooksDifferent({ skuId, locationId, deliveryId = null }: { s
         onClick={() => { setOpen((o) => !o); setStatus("idle"); }}>
         {t("receiving.case_different.button")}
       </ActionButton>
-      {status === "sent" || status === "already" ? (
+      {status === "sent" || status === "already" || status === "added" ? (
         <p role="status" className="mt-2 text-sm text-co-confirm-text">
-          {t(status === "sent" ? "receiving.case_different.sent" : "receiving.case_different.already")}
+          {t(status === "sent" ? "receiving.case_different.sent" : status === "added" ? "receiving.case_different.added" : "receiving.case_different.already")}
         </p>
       ) : null}
       {status === "error" ? <p role="alert" className="mt-2 text-sm text-co-cta-text">{t(doorReportErrorKey(errorCode))}</p> : null}

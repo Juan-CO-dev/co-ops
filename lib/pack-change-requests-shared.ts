@@ -11,7 +11,11 @@ export interface PackChangeProposal { innerCount: number | null; eachWeight: num
 
 /** Reporting is a key-holder act at the door (receiving's own floor, RECEIVE_MIN). */
 export const PACK_REQUEST_FILE_MIN = 4;
-/** Resolving (apply or "nothing changed") and reading the open list is the shop's version writer: AGM+. */
+/**
+ * The level floor for READING the open list and for "Nothing changed" (dismiss) — AGM+, and at level 6
+ * only the operational managers (packRequestReviewAllowed). APPLYING a report is not gated here: it is
+ * the pack save itself (2a's version gate in applyPackChange, then 0261 apply_sku_pack_change).
+ */
 export const PACK_REQUEST_RESOLVE_MIN = 6;
 export const PACK_REQUEST_NOTE_MAX = 500;
 

@@ -12,9 +12,29 @@ import type { AuthContext } from "@/lib/session";
 import type { RoleCode } from "@/lib/roles";
 
 let current: ReturnType<typeof createFakeDb> | null = null;
+/**
+ * The in-memory DB plus a stand-in for 0261's file_sku_pack_change_request (the SQL itself is proven
+ * in scripts/sql-harness-0261.mjs A9): open a report, or JOIN the open one and ADD what was brought.
+ */
 vi.mock("@/lib/supabase-server", () => ({ getServiceRoleClient: () => {
   if (!current) throw new Error("no fake db installed");
-  return current.client;
+  const db = current;
+  return {
+    from: db.client.from,
+    async rpc(name: string, a: Record<string, unknown>) {
+      if (name !== "file_sku_pack_change_request") throw new Error(`unexpected rpc ${name}`);
+      const open = await db.client.from("sku_pack_change_requests").select("id").eq("sku_id", a.p_sku).eq("location_id", a.p_location).eq("status", "open").maybeSingle<{ id: string }>();
+      if (!open.data) {
+        const ins = await db.client.from("sku_pack_change_requests").insert({
+          sku_id: a.p_sku, location_id: a.p_location, delivery_id: a.p_delivery, note: a.p_note, proposal: a.p_proposal, photo_id: a.p_photo, filed_by: a.p_actor, status: "open",
+        }).select("id").maybeSingle<{ id: string }>();
+        return { data: { id: ins.data!.id, already: false, added: false }, error: null };
+      }
+      const something = a.p_note != null || a.p_proposal != null || a.p_photo != null;
+      if (something) await db.client.from("sku_pack_change_request_additions").insert({ request_id: open.data.id, note: a.p_note, proposal: a.p_proposal, photo_id: a.p_photo, filed_by: a.p_actor }).select("id").maybeSingle();
+      return { data: { id: open.data.id, already: true, added: something }, error: null };
+    },
+  };
 } }));
 type Notified = { recipients: Array<{ userId: string }>; titleParams?: Record<string, unknown> };
 const notified = vi.hoisted(() => [] as Array<{ recipients: Array<{ userId: string }>; titleParams?: Record<string, unknown> }>);
@@ -92,6 +112,7 @@ const world = () => ({
     { id: "gm-b", role: "gm", active: true, name: "Bo" }, { id: "moo", role: "moo", active: true, name: "Cris" },
   ] as Row[],
   sku_pack_change_requests: [] as Row[],
+  sku_pack_change_request_additions: [] as Row[],
   audit_log: [] as Row[],
 });
 const auditActions = (db: ReturnType<typeof createFakeDb>) => db.writes.filter((w) => w.table === "audit_log").flatMap((w) => w.rows.map((x) => x.action));
@@ -108,6 +129,22 @@ describe("filing a report", () => {
     expect(notified.map((n) => n.recipients)).toEqual([[{ userId: "gm-a" }]]);
     expect(notified[0]!.titleParams).toEqual({ item: "Turkey", shop: "P Street" });
     expect(auditActions(current)).toEqual(["sku.pack_change_request.file"]);
+  });
+  it("a second report of the same case JOINS the open one: its note, numbers and photo are ADDED, the GM is not re-notified (chunk-3 review P3a)", async () => {
+    current = createFakeDb(world());
+    const first = await filePackChangeRequest(actor("key_holder", 4, [A], "kh"), { skuId: "s", locationId: A, ...NO_EXTRAS, note: "bigger bags" });
+    const second = await filePackChangeRequest(actor("gm", 7, [A], "gm-a"), {
+      skuId: "s", locationId: A, deliveryId: null, note: " 10 lb each ", photoId: "p-a", proposal: { innerCount: 4, eachWeight: 10, eachUnit: "lb" },
+    });
+    expect(second).toEqual({ id: first.id, already: true, added: true });
+    expect(current.writes.filter((w) => w.table === "sku_pack_change_request_additions").flatMap((w) => w.rows))
+      .toEqual([expect.objectContaining({ request_id: first.id, note: "10 lb each", photo_id: "p-a", filed_by: "gm-a", proposal: { innerCount: 4, eachWeight: 10, eachUnit: "lb" } })]);
+    expect(notified).toHaveLength(1); // the first report only
+    const third = await filePackChangeRequest(actor("key_holder", 4, [A], "kh"), { skuId: "s", locationId: A, ...NO_EXTRAS });
+    expect(third).toEqual({ id: first.id, already: true, added: false });
+    // The reviewer sees the addition under the report, with who added it.
+    const [open] = await loadOpenPackChangeRequests(actor("gm", 7, [A]), { locationIds: [A] });
+    expect(open!.additions).toEqual([expect.objectContaining({ filedBy: "Gia", note: "10 lb each", photoId: "p-a" })]);
   });
   it("another shop's delivery, photo or owned SKU, or a missing SKU, is refused by name — and nothing is written", async () => {
     current = createFakeDb(world());

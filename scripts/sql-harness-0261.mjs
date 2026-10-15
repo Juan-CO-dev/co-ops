@@ -18,6 +18,8 @@
  *   A5  the report is bound: another SKU's report, another shop's report, a closed report refuse.
  *   A6  invalid patches and lane mismatches refuse by name; one open report per (sku, shop).
  *   A7  privileges: service_role cannot DELETE a report; anon/authenticated cannot execute the applies.
+ *   A9  filing: a second report of the same case JOINS the open one and its note / numbers / photo are
+ *       ADDED (append-only); another shop's photo or delivery is refused by name.
  *   A8  the atomic PRICE apply: a later-dated price (or a moved global head, or a shop's new lane)
  *       landing between the preview's snapshot and the save is refused price_changed, writing nothing.
  */
@@ -351,6 +353,33 @@ try {
     await refuses(async () => applyPrice(S1, 90, "2026-10-20", await priceSnap([S2])), "sku_price:invalid_payload", "A8: a shop save whose snapshot does not cover that shop");
   }
 
+  // ── A9 filing JOINS the open report and ADDS what it brought (chunk-3 review P3a) ──
+  {
+    const { sku, live } = await freshSku();
+    await db.exec("reset role;");
+    await db.query("insert into public.photos (id, location_id) values ($1, $2), ($3, $4)", [u(901), S1, u(902), S2]);
+    await db.query("insert into public.vendor_deliveries (id, location_id) values ($1, $2)", [u(911), S2]);
+    await db.exec("set role service_role;");
+    const file = (note, photo, proposal = null, delivery = null) => db.query(
+      "select public.file_sku_pack_change_request($1, $2, $3, $4, $5::jsonb, $6, $7) as r",
+      [sku, S1, delivery, note, proposal == null ? null : JSON.stringify(proposal), photo, USER]).then((res) => res.rows[0].r);
+    const first = await file("4 bags not 6", null);
+    check(first.already === false && first.added === false, "A9: the first report opens one");
+    const second = await file("  they're 10 lb now ", u(901), { innerCount: 4 });
+    check(second.id === first.id && second.already === true && second.added === true, "A9: the second report JOINS the open one and its note, numbers and photo are ADDED");
+    const adds = (await db.query("select note, photo_id, proposal from public.sku_pack_change_request_additions where request_id = $1", [first.id])).rows;
+    check(adds.length === 1 && adds[0].note === "they're 10 lb now" && adds[0].photo_id === u(901) && adds[0].proposal.innerCount === 4, "A9: …kept as an addition, trimmed");
+    const third = await file(null, null);
+    check(third.already === true && third.added === false, "A9: a bare tap joins and adds nothing (nothing to add)");
+    await refuses(() => file("x", u(902)), "sku_pack_change:photo_not_found", "A9: another shop's photo is refused by name");
+    await refuses(() => file("x", null, null, u(911)), "sku_pack_change:delivery_not_found", "A9: another shop's delivery is refused by name");
+    await refuses(() => db.query("update public.sku_pack_change_request_additions set note = 'edited'"), "permission denied", "A9: additions are append-only for service_role");
+    // Once the GM's save closes the report, the next report opens a NEW one.
+    await apply({ sku, location: S1, expected: null, basedOn: live, request: first.id, snapshot: await snapshot(sku, [S1]) });
+    const after = await file("still different", null);
+    check(after.already === false && after.id !== first.id, "A9: after the report is applied, the next one opens a new report");
+  }
+
   // ── A7 privileges ────────────────────────────────────────────────────────
   await refuses(() => db.query("delete from public.sku_pack_change_requests"), "permission denied", "A7: service_role cannot DELETE a report");
   await db.exec("reset role; set role authenticated;");
@@ -361,5 +390,5 @@ try {
   await db.exec("reset role;");
 
   if (failures > 0) { console.error(`\n${failures} check(s) FAILED`); process.exitCode = 1; }
-  else console.log("\nPASS 0261: atomic pack+par+report apply (A1), all-or-nothing refusals (A2), the snapshot re-check under the lock (A3), own-par from global/auto (A4), report binding (A5), named refusals (A6), privileges (A7), the atomic price apply (A8)");
+  else console.log("\nPASS 0261: atomic pack+par+report apply (A1), all-or-nothing refusals (A2), the snapshot re-check under the lock (A3), own-par from global/auto (A4), report binding (A5), named refusals (A6), privileges (A7), the atomic price apply (A8), filing joins and adds (A9)");
 } finally { await db.close(); }

@@ -3,7 +3,8 @@
  * A REPORT, not an edit: KH+ at their shop (the lib binds), same-origin, no step-up.
  * Body: { skuId: uuid, locationId: uuid, deliveryId?: uuid | null, note?: string | null,
  *         proposal?: { innerCount, eachWeight, eachUnit } | null, photoId?: uuid | null }
- * 201 = filed; 200 = joined the shop's open report for this item (the door says "already reported").
+ * 201 = filed; 200 = joined the shop's open report for this item — and whatever this report brought
+ * (note, numbers, photo) was ADDED to it (`added`); the door says so.
  */
 import { type NextRequest } from "next/server";
 
@@ -44,7 +45,7 @@ export async function POST(req: NextRequest) {
       skuId: b.skuId, locationId: b.locationId, deliveryId, photoId, proposal,
       note: typeof b.note === "string" ? b.note : null,
     });
-    return jsonOk({ id: r.id, already: r.already }, r.already ? 200 : 201);
+    return jsonOk({ id: r.id, already: r.already, added: r.added }, r.already ? 200 : 201);
   } catch (e) {
     if (e instanceof PackChangeRequestError) return jsonError(e.status, e.code, { message: e.message });
     throw e;

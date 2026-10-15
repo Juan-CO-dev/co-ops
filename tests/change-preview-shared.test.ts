@@ -183,6 +183,20 @@ describe("chunk-2 review: every save restarts the machine par; units are the row
       shops: [shop("A", { weekday: [3, "global"] }), shop("B", { weekday: [3, "global"] })] });
     expect(p.pars).toEqual([expect.objectContaining({ locationId: null, convertTo: 2, unit: { before: "case", after: "box" } })]);
   });
+  it("P3d: the converted fallback reads the shop's OWN new order-unit oz, never one rebuilt from the rounded keepOz", () => {
+    // case → 3 × 1.11111 oz pouch = 3.33333 oz: keepOz = round4(7 × 3.33333) loses digits a rebuild would carry.
+    const odd: PackChainLevel[] = [
+      { id: "q0", label: "case", containsQty: 3, containsLevelId: "q1", containsMeasureUnit: null, displayOrdinal: 0 },
+      { id: "q1", label: "pouch", containsQty: 1.11111, containsLevelId: null, containsMeasureUnit: "oz", displayOrdinal: 1 },
+    ];
+    const p = previewPackChange({ ...base, newChain: odd, target: { kind: "global" }, targetBasePack: pack(globalChain), globalPars: { weekday: 3, weekend: null },
+      shops: [shop("A", { weekday: [7, "auto"] }), shop("B", { weekday: [3, "global"] })] });
+    const machine = p.pars.find((r) => r.status === "machine_par")!;
+    const afterOz = 3 * 1.11111;
+    const g = p.pars.find((r) => r.locationId === null)!;
+    expect(machine.fallbackIfConverted!.oz).toBe(Number((g.convertTo! * afterOz).toFixed(4)));
+    expect(machine.fallbackIfConverted!.oz).not.toBe(Number((g.convertTo! * (machine.keepOz! / machine.current)).toFixed(4)));
+  });
   it("P3b: on a global save a restarting machine par falls back to the CONVERTED global par if that conversion is accepted", () => {
     const p = previewPackChange({ ...base, target: { kind: "global" }, targetBasePack: pack(globalChain), globalPars: { weekday: 3, weekend: null },
       shops: [shop("A", { weekday: [5, "auto"] }), shop("B", { weekday: [3, "global"] })] });

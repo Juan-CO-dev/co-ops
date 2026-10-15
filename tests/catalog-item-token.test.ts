@@ -127,7 +127,7 @@ describe("the reviewer sees the door's photo (full-branch r1 P2-3)", () => {
     install((w) => {
       w.sku_pack_change_requests = [{ id: "req-1", sku_id: SKU, location_id: LOC, status: "open", filed_by: "u-kh", filed_at: "2026-10-15T10:00:00Z", note: null, proposal: null, photo_id: "ph-door" }];
       w.users = [...(w.users ?? []), { id: "u-kh", name: "Kai" }];
-      w.vendor_delivery_rhythm ??= []; w.vendor_cutoffs ??= []; w.sku_barcodes ??= []; w.product_primaries ??= []; w.products ??= [];
+      w.sku_pack_change_request_additions = []; w.vendor_delivery_rhythm ??= []; w.vendor_cutoffs ??= []; w.sku_barcodes ??= []; w.product_primaries ??= []; w.products ??= [];
     });
     const view = await loadSkuItemView(moo, SKU, LOC, [{ id: LOC, name: "Shop one" }]);
     expect(view.openRequests).toEqual([expect.objectContaining({ id: "req-1", filedBy: "Kai", photoId: "ph-door" })]);

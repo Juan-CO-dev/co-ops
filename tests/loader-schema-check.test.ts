@@ -53,7 +53,7 @@ import { loadSkuDataReadiness, READINESS_COLUMNS, readinessOrder } from "@/lib/s
 import { loadAllSkuPackResolution, loadPackBoundaries, loadShopPackEpochs, loadSkuPackResolution } from "@/lib/prep-consumption";
 import { loadCurrentSkuPriceHeads } from "@/lib/admin/cost";
 import { loadSkuPackVersionHistory, restoreSkuPackVersion, retireShopPackVersion } from "@/lib/admin/sku-versions";
-import { dismissPackChangeRequest, filePackChangeRequest, loadOpenPackChangeRequests } from "@/lib/pack-change-requests";
+import { dismissPackChangeRequest, filePackChangeRequest, loadOpenPackChangeRequests, loadRequestAdditions } from "@/lib/pack-change-requests";
 import { globalValueExists, loadSkuPriceHistory, requestShop } from "@/lib/catalog/sku-item";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import { migratedSchemaDb } from "./fixtures/snapshot-migrate";
@@ -63,7 +63,7 @@ const SKU = "6f1d2c3e-0000-4000-8000-0000000000b1";
 const owner = { user: { id: "u", role: "owner" }, role: "owner", level: 9, locations: [LOC] } as unknown as AuthContext;
 const FULLY_DEFINED = new Set(["sku_pack_versions", "sku_price_lanes", "sku_pack_epochs", "sku_pack_levels", "vendor_price_history",
   // Catalog Phase 2b (0261): the door's report table.
-  "sku_pack_change_requests"]);
+  "sku_pack_change_requests", "sku_pack_change_request_additions"]);
 
 let db: PGlite;
 beforeAll(async () => {
@@ -88,6 +88,7 @@ beforeAll(async () => {
   await run("globalValueExists(price)", () => globalValueExists(getServiceRoleClient(), SKU, "price"));
   await run("loadSkuPriceHistory(shop)", () => loadSkuPriceHistory(getServiceRoleClient(), SKU, LOC));
   await run("requestShop", () => requestShop(getServiceRoleClient(), SKU));
+  await run("loadRequestAdditions", () => loadRequestAdditions(getServiceRoleClient() as never, [SKU]));
   await run("filePackChangeRequest", () => filePackChangeRequest(owner, { skuId: SKU, locationId: LOC, deliveryId: null, note: null, proposal: null, photoId: null }));
 }, 120_000);
 afterAll(async () => { await db?.close(); });

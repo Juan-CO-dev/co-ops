@@ -51,7 +51,24 @@ export interface FilePackChangeInput {
 }
 
 /** File a report (or join the open one). Notifies the shop's GM(s); if the shop has none, MoO and the owner. */
-export async function filePackChangeRequest(actor: AuthContext, input: FilePackChangeInput): Promise<{ id: string; already: boolean }> {
+/** A filing RPC refusal (`sku_pack_change:<code>`) as the door's named error; anything else is a 500. */
+const FILE_REFUSALS: Record<string, number> = {
+  sku_not_found: 404, location_not_found: 404, delivery_not_found: 404, photo_not_found: 404,
+  sku_owned_by_other_shop: 409, invalid_payload: 400,
+};
+function fileErrorFromRpc(message: string): never {
+  const code = /sku_pack_change:([a-z_]+)/.exec(message)?.[1];
+  if (code && FILE_REFUSALS[code]) throw new PackChangeRequestError(FILE_REFUSALS[code]!, code === "location_not_found" ? "not_found" : code);
+  throw new Error(`filePackChangeRequest: ${message}`);
+}
+
+/**
+ * File a report, or JOIN the shop's open report for this item: whatever this crew member brought
+ * (note, numbers, photo) is ADDED to it, never dropped (chunk-3 review P3a). One atomic RPC
+ * (0261 file_sku_pack_change_request) under 0259's SKU lock. A NEW report notifies the shop's GM(s)
+ * (none → MoO and the owner); a join does not re-notify.
+ */
+export async function filePackChangeRequest(actor: AuthContext, input: FilePackChangeInput): Promise<{ id: string; already: boolean; added: boolean }> {
   requireLocation(actor, input.locationId, "file");
   const note = input.note?.trim() ? input.note.trim().slice(0, PACK_REQUEST_NOTE_MAX) : null;
   const sb = getServiceRoleClient();
@@ -75,21 +92,23 @@ export async function filePackChangeRequest(actor: AuthContext, input: FilePackC
     if (!p || p.location_id !== input.locationId) throw new PackChangeRequestError(404, "photo_not_found");
   }
 
-  const { data: inserted, error } = await sb.from("sku_pack_change_requests").insert({
-    sku_id: input.skuId, location_id: input.locationId, delivery_id: input.deliveryId,
-    note, proposal: input.proposal, photo_id: input.photoId, filed_by: actor.user.id,
-  }).select("id").maybeSingle<{ id: string }>();
-  if (error) {
-    // One OPEN report per (sku, shop): a second report of the same case joins the first.
-    if (error.code === "23505") {
-      const { data: open, error: oErr } = await sb.from("sku_pack_change_requests").select("id")
-        .eq("sku_id", input.skuId).eq("location_id", input.locationId).eq("status", "open").maybeSingle<{ id: string }>();
-      if (oErr) throw new Error(`filePackChangeRequest open: ${oErr.message}`);
-      if (open) return { id: open.id, already: true };
-    }
-    throw new Error(`filePackChangeRequest insert: ${error.message}`);
+  const { data, error } = await sb.rpc("file_sku_pack_change_request", {
+    p_sku: input.skuId, p_location: input.locationId, p_delivery: input.deliveryId, p_note: note,
+    p_proposal: input.proposal, p_photo: input.photoId, p_actor: actor.user.id,
+  });
+  if (error) fileErrorFromRpc(error.message);
+  const filed = data as { id: string; already: boolean; added: boolean } | null;
+  if (!filed?.id) throw new Error("filePackChangeRequest returned no report");
+  if (filed.already) {
+    await audit({
+      actorId: actor.user.id, actorRole: actor.user.role,
+      action: "sku.pack_change_request.file", resourceTable: "sku_pack_change_requests", resourceId: filed.id,
+      metadata: { sku_id: input.skuId, location_id: input.locationId, joined: true, added: filed.added, has_note: note != null, has_proposal: input.proposal != null, has_photo: input.photoId != null },
+      ipAddress: null, userAgent: null,
+    });
+    return { id: filed.id, already: true, added: filed.added };
   }
-  if (!inserted) throw new Error("filePackChangeRequest returned no row");
+  const inserted = { id: filed.id };
 
   const [shopRes, recipients, meRes] = await Promise.all([
     sb.from("locations").select("name").eq("id", input.locationId).maybeSingle<{ name: string }>(),
@@ -120,7 +139,7 @@ export async function filePackChangeRequest(actor: AuthContext, input: FilePackC
     metadata: { sku_id: input.skuId, location_id: input.locationId, delivery_id: input.deliveryId, has_proposal: input.proposal != null, has_photo: input.photoId != null, notified: recipients.length },
     ipAddress: null, userAgent: null,
   });
-  return { id: inserted.id, already: false };
+  return { id: inserted.id, already: false, added: false };
 }
 
 /** Active GMs assigned to the shop; none → active MoO and owner (org-wide). */
@@ -141,11 +160,32 @@ async function shopManagers(sb: Sb, locationId: string): Promise<string[]> {
   return (org ?? []).map((u) => u.id);
 }
 
+/** What a later report of the same case ADDED to the open one (chunk-3 review P3a). */
+export interface PackRequestAddition { filedBy: string | null; filedAt: string; note: string | null; proposal: PackChangeProposal | null; photoId: string | null }
+
+/** The additions of the given reports, oldest first by real columns (filed_at, id). */
+export async function loadRequestAdditions(sb: Sb, requestIds: string[]): Promise<Map<string, Array<PackRequestAddition & { filedById: string }>>> {
+  const out = new Map<string, Array<PackRequestAddition & { filedById: string }>>();
+  if (requestIds.length === 0) return out;
+  const { data, error } = await sb.from("sku_pack_change_request_additions").select("id, request_id, note, proposal, photo_id, filed_by, filed_at")
+    .in("request_id", requestIds).order("filed_at", { ascending: true }).order("id", { ascending: true })
+    .returns<Array<{ id: string; request_id: string; note: string | null; proposal: PackChangeProposal | null; photo_id: string | null; filed_by: string; filed_at: string }>>();
+  if (error) throw new Error(`loadRequestAdditions: ${error.message}`);
+  for (const a of data ?? []) {
+    const list = out.get(a.request_id) ?? [];
+    list.push({ filedBy: null, filedById: a.filed_by, filedAt: a.filed_at, note: a.note, proposal: a.proposal, photoId: a.photo_id ?? null });
+    out.set(a.request_id, list);
+  }
+  return out;
+}
+
 export interface OpenPackRequest {
   id: string; skuId: string; skuName: string; locationId: string;
   filedBy: string | null; filedAt: string; note: string | null; proposal: PackChangeProposal | null;
   /** The door's photo (bound to THIS report's shop when filed); shown via /api/photos/{id}. */
   photoId: string | null;
+  /** What later reports of the same case added (note, numbers, photo), oldest first. */
+  additions: PackRequestAddition[];
 }
 
 /** The newest open reports a page may show (newest first; ties by id). */
@@ -168,9 +208,11 @@ export async function loadOpenPackChangeRequests(actor: AuthContext, opts: { loc
   if (error) throw new Error(`loadOpenPackChangeRequests: ${error.message}`);
   const rows = data ?? [];
   if (rows.length === 0) return [];
+  const additions = await loadRequestAdditions(sb, rows.map((r) => r.id));
+  const filers = [...new Set([...rows.map((r) => r.filed_by), ...[...additions.values()].flat().map((a) => a.filedById)])];
   const [{ data: skus, error: sErr }, { data: users, error: uErr }] = await Promise.all([
     sb.from("vendor_items").select("id, name").in("id", [...new Set(rows.map((r) => r.sku_id))]).returns<Array<{ id: string; name: string }>>(),
-    sb.from("users").select("id, name").in("id", [...new Set(rows.map((r) => r.filed_by))]).returns<Array<{ id: string; name: string | null }>>(),
+    sb.from("users").select("id, name").in("id", filers).returns<Array<{ id: string; name: string | null }>>(),
   ]);
   if (sErr) throw new Error(`loadOpenPackChangeRequests skus: ${sErr.message}`);
   if (uErr) throw new Error(`loadOpenPackChangeRequests users: ${uErr.message}`);
@@ -180,6 +222,7 @@ export async function loadOpenPackChangeRequests(actor: AuthContext, opts: { loc
     id: r.id, skuId: r.sku_id, skuName: skuName.get(r.sku_id) ?? "", locationId: r.location_id,
     filedBy: userName.get(r.filed_by) ?? null, filedAt: r.filed_at, note: r.note, proposal: r.proposal,
     photoId: r.photo_id ?? null,
+    additions: (additions.get(r.id) ?? []).map(({ filedById, ...a }) => ({ ...a, filedBy: userName.get(filedById) ?? null })),
   }));
 }
 

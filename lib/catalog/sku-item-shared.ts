@@ -100,7 +100,11 @@ export interface SkuItemView {
   };
   missing: DataErrand[];
   history: Array<{ id: string; scope: "global" | "shop"; active: boolean; effectiveFrom: string; retiredAt: string | null; who: string | null; labels: string[] }>;
-  openRequests: Array<{ id: string; filedBy: string | null; filedAt: string; note: string | null; proposal: PackChangeProposal | null; photoId: string | null }>;
+  openRequests: Array<{
+    id: string; filedBy: string | null; filedAt: string; note: string | null; proposal: PackChangeProposal | null; photoId: string | null;
+    /** What later reports of the same case ADDED (chunk-3 review P3a). */
+    additions: Array<{ filedBy: string | null; filedAt: string; note: string | null; proposal: PackChangeProposal | null; photoId: string | null }>;
+  }>;
   measures: Array<{ label: string; dimension: "weight" | "volume" | "count"; toBaseFactor: number }>;
 }
 
