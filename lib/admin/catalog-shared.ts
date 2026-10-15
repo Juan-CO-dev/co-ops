@@ -499,8 +499,8 @@ export interface CatalogEdges {
   producedBy: CatalogEdgeRef[];
   /** menu_items: the consumer build recipe → /admin/recipes/[id]. */
   build: CatalogEdgeRef | null;
-  /** items: leaf SKU names (display-capped). */
-  skuNames: string[];
+  /** items: leaf SKUs (display-capped) — each links to its own row in /admin/skus (catalog Phase 1). */
+  skus: CatalogEdgeRef[];
   /** menu_items: first-level component item names. */
   componentItems: CatalogEdgeRef[];
   /** items: menu_items whose recipe consumes this item. */

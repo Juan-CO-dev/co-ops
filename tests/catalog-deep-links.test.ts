@@ -86,3 +86,24 @@ describe("the SKU catalog honours the deep link", () => {
     expect(client).toContain('s.id === focusSkuId ? " rounded-lg ring-4 ring-co-gold/60" : ""');
   });
 });
+
+describe("no catalog deep link lands on a whole list any more", () => {
+  it("the items catalog links each SKU to its own row", () => {
+    const src = read("components/admin/catalog/CatalogClient.tsx");
+    expect(src).not.toContain('href="/admin/skus"');
+    expect(src).toContain("href={skuCatalogHref(r.id)}");
+    expect(read("lib/admin/catalog-shared.ts")).toContain("skus: CatalogEdgeRef[];");
+  });
+
+  it("vendor import's needs-a-person links name the matched SKU", () => {
+    expect(read("lib/vendor-import.ts")).toContain("href: o.match.sku_id ? skuCatalogHref(o.match.sku_id) :");
+    expect(read("components/admin/vendors/VendorImportPanel.tsx")).toContain("o.match.sku_id ? skuCatalogHref(o.match.sku_id) :");
+  });
+
+  it("the costing drawer links every name it blames", () => {
+    const src = read("components/admin/menu-costing/MenuCostingClient.tsx");
+    expect(src).toContain("href={skuCatalogHref(id)}");
+    expect(src).toContain("prepItemHref)");
+    expect(src).toContain("productHref,");
+  });
+});

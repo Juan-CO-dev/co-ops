@@ -21,6 +21,7 @@ import { useStepUp } from "@/components/admin/StepUpProvider";
 import { SummaryRow } from "@/components/ui/SummaryRow";
 import type { CatalogEntity, CatalogIssue, ItemType, RoleBadge } from "@/lib/admin/catalog-shared";
 import { ITEM_TYPES, deriveRoleBadges } from "@/lib/admin/catalog-shared";
+import { skuCatalogHref } from "@/lib/admin/product-item-links-shared";
 
 const tk = (k: string): TranslationKey => k as TranslationKey;
 
@@ -379,8 +380,12 @@ function CatalogRow({
 
           {e.kind === "item" && (
             <EdgeList label={t("admin.catalog.edge.skus")}>
-              {e.edges.skuNames.length > 0
-                ? <Link href="/admin/skus" className={linkCls}>{e.edges.skuNames.join(", ")}</Link>
+              {e.edges.skus.length > 0
+                ? e.edges.skus.map((r, i) => (
+                    <Link key={r.id} href={skuCatalogHref(r.id)} className={linkCls}>
+                      {r.name}{i < e.edges.skus.length - 1 ? "," : ""}
+                    </Link>
+                  ))
                 : none}
             </EdgeList>
           )}
