@@ -12,7 +12,12 @@
 - the new spec additions (min shift length, one person per position, position priority, preferred cover positions, the §6.5 validator) are read from `origin/main` @ f79f4200, and the skill model now exposes what the Phase 2 scheduler needs (see "What Phase 2 reads");
 - Juan's added Walk-ins criterion is included (CC note r1b).
 
-The finding-by-finding map is the **Round 1 response** table at the end. **r0** was the first draft, at deb6823c.
+**Revision r2 (2026-10-15)** answers Astra's round 2 (CHANGES REQUESTED: r1 P2-3 partly open, plus 3 new P2s). It adds three things:
+- **response shapes per endpoint**: assignments, wages, labor settings and whoami are singletons, not cursor pages;
+- **row-level snapshot completeness**: a row the normalizer rejects makes that user's snapshot incomplete, so nothing is retired and the watermark does not move;
+- **tunables that can never make a skill undefined**: strict validation in both TS and SQL, a defined zero-weight rule, and finite-output property tests.
+
+The finding-by-finding maps are the **Round 1 response** and **Round 2 response** tables at the end. **r0** was the first draft, at deb6823c; **r1** was at 6cc002fb.
 
 **Prerequisite — `0267_pm_evals_privacy`.** This plan does not start Task 1 until 0267's PR has MERGED to main. That PR revokes the direct grants on the PM v1 tables, moves reads and writes to the service role, and lets employees read their own evals without `note`. Two consequences:
 - The golden is frozen on top of 0267's library changes. If 0267 changes `loadMyFeedback` or any other output the golden covers, the golden records the post-0267 behaviour.
@@ -89,7 +94,13 @@ ls supabase/migrations | tail -3   # expect 0267_pm_evals_privacy present (the p
 ### 7shifts API facts (developers.7shifts.com, read 2026-10-15; no live call was made)
 - Base `https://api.7shifts.com/v2`. `Authorization: Bearer <token>`. Every call sends `x-api-version` (current docs value **`2026-01-01`**, pinned in one constant).
 - Company-scoped paths `GET /v2/company/{company_id}/…`. `GET /v2/whoami` gives the identity (and company).
-- **Cursor pagination:** `limit` (1–500, default 100; punches default 20) + `cursor`. Follow `meta.cursor.next` until it is null. **r1 (P2-5):** "null" means the end ONLY when `meta.cursor` is a well-formed object whose `next` is explicitly null. Any other shape is `bad_pagination`, a distinct failure (Task 4).
+- **Response shapes differ per endpoint (r2):**
+  - List endpoints return `{ data: [...], meta: { cursor: { next, … } } }`.
+  - `GET …/users/{id}/assignments` returns a SINGLETON `{ object: "assignments", data: { locations: [{id,name}], departments: [{id,company_id,location_id,name,…}], roles: [{id,company_id,location_id,department_id,name,is_primary?,skill_level?,sort?}] } }` with NO cursor (developers.7shifts.com/reference/getassignments, read 2026-10-15).
+  - `…/users/{id}/wages` returns `{ data: { current_wages: [...], upcoming_wages: [...] } }` with no cursor.
+  - `…/labor_settings` returns `{ object: "labor_settings", data: {…} }`.
+  - `/v2/whoami` returns `{ object: "whoami", data: { identity_id, users: [{ company_id, … }] } }`; the company comes from the DISTINCT `users[].company_id`.
+- **Cursor pagination** (paginated endpoints only): `limit` (1–500, default 100; punches default 20) + `cursor`. Follow `meta.cursor.next` until it is null. **r1 (P2-5):** "null" means the end ONLY when `meta.cursor` is a well-formed object whose `next` is explicitly null. Any other shape is `bad_pagination`, a distinct failure (Task 4).
 - **Rate limits** (spec §2): 10 req/s and 600 req/min. Handle `429` with backoff.
 - Paths: `users` (`status`, `modified_since` YYYY-MM-DD; the payload carries email, phones, birth date and wage, which we DROP) · `users/{id}/assignments` (also per-location / per-role list endpoints) · `users/{id}/wages` (`current_wages` / `upcoming_wages`: `wage_type hourly|weekly_salary|annual_salary`, `wage_cents`, `role_id`, `effective_date`) · `roles` · `departments` · `locations` · `availabilities` (`week_gte`, `repeating`; **min plan "The Works"**) · `time_off` · `shifts` (`start[gte|lte]`, `include_deleted`, `include_draft`, `modified_since`; fields `id, user_id, role_id, station_id, department_id, location_id, start, end, draft, open, deleted, modified`) · `time_punches` (`clocked_in[gte|lte]`, `modified_since`, `deleted`; it also carries `hourly_wage`, `tips`, `notes`, which we DROP) · `labor_settings` (OT thresholds and multipliers).
 - **Stations:** shifts carry `station_id`, but the docs list **no stations endpoint**. Phase 1 stores `station_id` as a bare id. The station names/mapping wait for the spec §8 mapping screen (Phase 2), after the read-only look at CO's setup (spec §10).
@@ -228,7 +239,7 @@ Every table: `enable row level security`, NO user policies (the 0257/0203 postur
 **New — tests and harnesses**
 - `tests/fixtures/people-layer-fixture.ts`, `tests/fixtures/people-layer-harness.ts`, `tests/fixtures/people-layer-golden.json`, `tests/people-layer-equivalence.test.ts`.
 - `tests/people-access.test.ts`, `tests/people-positions.test.ts`, `tests/people-skills.test.ts`, `tests/people-loader-schema-check.test.ts`.
-- `tests/sevenshifts-mirror-upsert.test.ts` (PGlite: every mirror's real upsert/reconcile against its declared schema), `tests/people-skill-tunables.test.ts`, `tests/people-role-carry.test.ts`, `tests/pm-copy-lifecycle.test.ts`.
+- `tests/sevenshifts-mirror-upsert.test.ts` (PGlite: every mirror's real upsert/reconcile against its declared schema), `tests/people-skill-tunables.test.ts`, `tests/people-role-carry.test.ts`, `tests/pm-copy-lifecycle.test.ts`, `tests/people-skills-finite.test.ts`, `tests/fixtures/skill-tunables-cases.json`, `tests/fixtures/sevenshifts/assignments-doc-example.json`.
 - `tests/sevenshifts-rate-limit.test.ts`, `tests/sevenshifts-paginate.test.ts`, `tests/sevenshifts-normalize.test.ts`, `tests/sevenshifts-client.test.ts`, `tests/sevenshifts-sync.test.ts`, `tests/sevenshifts-links.test.ts`, `tests/sevenshifts-screen-ui.test.ts`.
 - `tests/pm-report-v2-shared.test.ts`, `tests/pm-report-v2.test.ts`, `tests/pm-report-v2-ui.test.ts`, `tests/pm-report-v2-no-notify.test.ts`.
 - `tests/sevenshifts-sync-migration.test.ts`, `tests/sevenshifts-links-migration.test.ts`, `tests/people-layer-migration.test.ts`, `tests/pm-reports-v2-migration.test.ts`.
@@ -341,17 +352,36 @@ export function positionsWorked(iv: readonly PositionInterval[], userId: string)
   - 500 in a minute, then the 501st waits for the oldest to age out;
   - a `penalize(retryAfterMs)` after a 429 pushes every later reservation past it;
   - the clock is injected, so there are no real sleeps in tests.
-- [ ] **Step 2: the paginator (r1 P2-5).** `pageStep(json): { kind: "next"; cursor: string } | { kind: "end" } | { kind: "malformed" }`.
+- [ ] **Step 2: response shapes (r2 #1) and the paginator (r1 P2-5).** Every `SEVENSHIFTS_ENDPOINTS` entry declares `shape: "paginated" | "singleton" | "list-unpaginated"`, and the client dispatches on it. **Only `paginated` entries go through `pageStep` and demand cursor metadata.**
+
+  | Resource | Shape | Validator |
+  |---|---|---|
+  | locations, departments, roles, users, availabilities, time_off, shifts, time_punches | `paginated` | `pageStep` (below) |
+  | assignments | `singleton` | `assignmentsSnapshot(json)`: `data` is an object; `data.locations`, `data.departments`, `data.roles` are each an ARRAY (an absent key or a non-array is `bad_snapshot`); `object`, when present, equals `"assignments"` |
+  | wages | `singleton` | `wagesSnapshot(json)`: `data.current_wages` and `data.upcoming_wages` are arrays |
+  | labor_settings | `singleton` | `laborSettingsSnapshot(json)`: `data` is an object |
+  | whoami | `singleton` | `whoamiSnapshot(json)`: `data.users` is an array; companies = the distinct `company_id` |
+  | (none today) | `list-unpaginated` | `data` is an array and no cursor is demanded. The shape exists so an endpoint the build-time doc re-read (Task 6 Step 1) finds unpaginated is declared, never forced through `pageStep` |
+
+  A singleton that fails its validator is the resource error **`bad_snapshot`**: a failure, never an empty success. A singleton that carries a `meta.cursor` anyway is ignored (one request, no follow).
+
+  `pageStep(json): { kind: "next"; cursor: string } | { kind: "end" } | { kind: "malformed" }` (paginated only):
   - **`end` ONLY** when `meta` is an object, `meta.cursor` is an object, and `meta.cursor.next` is explicitly `null`.
   - A non-empty string is `next`.
   - **Everything else is `malformed`**: missing `meta`, missing `cursor`, `next` absent/undefined/number/object/empty string, or `data` not an array.
   - `followPages` turns `malformed` into the resource error **`bad_pagination`**, `page_cap` past `MAX_PAGES_PER_RESOURCE = 200`, and a repeated cursor into `cursor_loop`. **All three are FAILURES of that resource**, never a successful end. Rows from earlier, good pages may still be upserted (an upsert is idempotent), but the resource is marked failed, so its **watermark does not move** and a snapshot built from it is **incomplete** (Task 7).
   - Tests: each malformed shape on page 1; **a valid page 1 followed by a malformed page 2 → `bad_pagination`, the rows of page 1 are returned with `complete: false`**; an explicit null on page 3 → `end` with `complete: true`; a repeated cursor; the page cap.
+  - **Tests per shape (r2 #1):**
+    - `paginated`: as above;
+    - `singleton`: the documented assignments example verbatim (fixture `tests/fixtures/sevenshifts/assignments-doc-example.json`) is ACCEPTED with no cursor; a payload with `data.roles` missing or set to an object is `bad_snapshot`; the same for wages, labor settings and whoami (one or two companies);
+    - `list-unpaginated`: an array with no meta is accepted and a non-array is refused;
+    - every entry in `SEVENSHIFTS_ENDPOINTS` declares a shape, and the table above is pinned (assignments, wages, labor_settings and whoami are `singleton`).
 - [ ] **Step 3: the normalizers.** One function per resource → a row typed for its table. Each one:
   - **drops** email, mobile/home numbers, birth date, `hourly_wage` (users, punches), tips, notes, availability `*_comments`/`*_reason`/`status_action_message`, time-off comments;
   - keeps the 7shifts ids as strings of digits validated with `/^\d{1,18}$/` (stored as `bigint`);
   - keeps instants as ISO strings and `deleted` booleans;
-  - skips a malformed row and counts it (`skipped`), never throws.
+  - never throws: it returns `{ rows, rejected }`, where `rejected` lists each refused input row by index with a fixed reason code (`bad_id`, `bad_instant`, `missing_field`, …). **A rejection is reported, never silently dropped (r2 #2):** for list resources it is counted as `skipped` and the resource is marked failed for that run, so its watermark does not move; for the snapshot kinds (assignments, wages) ANY rejection makes that user's snapshot incomplete (Task 7).
+  - **assignments (r2 #1):** `normalizeAssignments(userId, snapshot)` turns the singleton into EDGES. Each `roles[]` entry gives `(location_id, department_id, role_id, is_primary)`. Each department with no role under it gives `(location_id, department_id, -)`. Each location with no department or role under it gives `(location_id, -, -)`. A role whose `location_id` / `department_id` are not among the snapshot's own `locations` / `departments` is still an edge (7shifts is the authority), and the case is tested.
 
   Users keep `first_name`, `last_name`, `preferred_first_name`, `active`, `type`, `hire_date`, `skill_level`, and **`employee_id`** (R4: the link screen shows it). That is what a manager needs to recognise a person on the link screen, plus a tenure hint for new hires. **`punch_id` is NOT kept**: it is a clock-in credential. A **leak test** feeds a fully-populated payload and asserts that no output value contains the planted email, phone, birth date, wage, tip or note strings (deep scan of the JSON).
 - [ ] **Step 3b: the mirror write spec (r1 P2-4).** `lib/sevenshifts/mirror-spec-shared.ts` exports ONE table, the only place a resource's write shape is decided. Every resource has its own key:
@@ -467,7 +497,16 @@ create index sevenshifts_user_assignments_user on public.sevenshifts_user_assign
   3. **only when `p_complete` is true**: `update … set active = false, retired_run = p_run, retired_at = clock_timestamp() where user_id = p_user and active and last_seen_run <> p_run`;
   4. when `p_complete` is false: NO retirement, and it returns `{ retired: 0, refused_retire: 'snapshot_incomplete' }`.
 
-  Returns `{ seen, inserted, retired }`. The lib passes `p_complete = true` only when every page of that user's resource came back `complete` (Task 4 Step 2) with no error. An empty but COMPLETE snapshot retires every live row of that user (a person stripped of every role), which is correct and tested.
+  Returns `{ seen, inserted, retired }`. **What "complete" means (r2 #2, closing r1 P2-3):** the lib passes `p_complete = true` ONLY when ALL of these hold for that user:
+  - the singleton request succeeded;
+  - its shape validator passed (no `bad_snapshot`);
+  - **the normalizer rejected ZERO rows** of that user's snapshot.
+
+  One rejected row (an edge whose ids fail validation, or a wage with an unknown `wage_type`) makes the whole user snapshot INCOMPLETE, because the rejected row may be exactly the live edge a retire would wrongly close. The valid rows are still passed (adds and updates only), and the retire step does not run. The ledger records `incomplete_snapshot` for that user's resource, with a failure count, and the resource's watermark does not advance.
+
+  An EMPTY snapshot that was received, passed the shape validator and had zero rejections is complete. It retires every live row of that user (a person stripped of every role), which is correct and tested. **Empty-because-everything-was-rejected is NOT empty**: it is incomplete.
+
+  The RPC also defends itself: `p_complete = true` with any row failing ITS validation → `invalid_payload`, and nothing is written.
 
   Indexes:
   - `sevenshifts_shifts (location_id, start_at)`;
@@ -487,6 +526,7 @@ create index sevenshifts_user_assignments_user on public.sevenshifts_user_assign
     - (a) snapshot 1 = {A, B} complete → two live rows;
     - (b) snapshot 2 = {B, C} complete → A retired with `retired_run`, B `last_seen_run` advanced, C inserted;
     - (c) snapshot 3 = {C} with `p_complete=false` → B NOT retired, `refused_retire: snapshot_incomplete`;
+    - (c2) live {A, B}; the next call passes {A} with `p_complete=false` (B's payload was rejected upstream) → B stays LIVE, A's `last_seen_run` advances;
     - (d) A reappears → a NEW live row, and the retired A row stays as history;
     - (e) an empty complete snapshot retires all;
     - (f) the same for wages, including upcoming → current;
@@ -518,7 +558,7 @@ create index sevenshifts_user_assignments_user on public.sevenshifts_user_assign
     - waits for the limiter before every request;
     - on 429 honours `Retry-After`, calls `penalize`, and retries ONCE;
     - maps 401 → `auth_failed`, 403 → `plan_forbidden`, 404 → `not_found`, 5xx → `server_error`, abort → `deadline`, a non-JSON body → `bad_payload`;
-    - follows cursors through `paginate-shared`;
+    - dispatches on the endpoint's declared `shape`: follows cursors through `paginate-shared` for `paginated` only; makes ONE request and runs the shape validator for `singleton` and `list-unpaginated` (r2 #1);
     - counts requests;
     - never puts the response body, URL or token in an error message.
   - The module exports no POST/PUT/PATCH/DELETE, pinned by a source scan: `client.ts` contains no `method:` other than `"GET"`.
@@ -537,7 +577,16 @@ create index sevenshifts_user_assignments_user on public.sevenshifts_user_assign
   - **windows:** the first run backfills shifts and punches from `today − 90 days`; later runs use `modified_since = watermark − 48 h` (overlap; upsert makes it idempotent). The watermark advances ONLY for a resource that fully succeeded;
   - **deadline:** when the budget runs out mid-resource, that resource is `deadline`, its watermark does not move, and the ledger row is still written;
   - **writes through `MIRROR_WRITE_SPEC` only:** each upsert uses its spec conflict key; a 7shifts `deleted: true` updates the flag; nothing is ever deleted;
-  - **(r1 P2-3) assignments and wages are reconciled per user:** for each user fetched this run, the lib collects ALL pages of that user's assignments (and wages), then calls the reconciler once with `p_complete = (every page complete && no error)`. Tests: a removed role assignment is retired after a complete snapshot; **a 5xx on page 2 of one user's assignments → that user's call has `p_complete=false`, nothing of theirs is retired, the resource is `partial`, and the assignments watermark does not move**; users NOT fetched this run (inactive and unmodified) are never passed to the reconciler, so their rows are untouched;
+  - **(r1 P2-3, r2 #1/#2) assignments and wages are reconciled per user:** for each user fetched this run, the lib makes the ONE singleton request, validates its shape, normalizes it into edges (or wage rows), then calls the reconciler once with `p_complete = (request ok && shape ok && rejected.length === 0)`.
+  - **The documented payload end to end (r2 #1):** `assignments-doc-example.json` goes through the client (fake fetch, no cursor) → `normalizeAssignments` → the reconciler, giving one live edge `(4569, 7890, 2583)` and status `ok`, never `bad_pagination`.
+  - **Rejections never retire (r2 #2):**
+    - (i) user X has live edges {A, B}; the next snapshot carries A valid and B malformed (a non-numeric `role_id`) → X's call has `p_complete=false`, **B stays live**, A is refreshed, the ledger shows `incomplete_snapshot` for assignments, the run is `partial`, and the assignments watermark does not move;
+    - (ii) mixed valid and invalid rows across two users → only the user with a rejection is incomplete, and the other user reconciles completely (a removal there IS retired);
+    - (iii) an ENTIRELY invalid snapshot (every role malformed) → zero rows passed, `p_complete=false`, nothing retired;
+    - (iv) a GENUINELY empty snapshot (`locations: [], departments: [], roles: []`) → `p_complete=true`, and X's live edges ARE retired;
+    - (v) the same four cases for wages.
+  - **Other reconcile tests:** a removed role assignment is retired after a complete snapshot; **a 5xx (or `bad_snapshot`) on one user's assignments request → that user's call is skipped or `p_complete=false`, nothing of theirs is retired, the resource is `partial`, and the assignments watermark does not move**; users NOT fetched this run (inactive and unmodified) are never passed to the reconciler, so their rows are untouched;
+  - **list-resource rejections (r2 #2):** a shifts page with one malformed row → that row is counted `skipped`, the valid rows are upserted, the resource is marked failed (`rejected_rows`), and **the shifts watermark does not move**, so the next run re-reads the window;
   - **(r1 P2-5) malformed pagination after a good first page:** shifts page 1 is fine and page 2 has a malformed `meta` → the resource is `bad_pagination` (distinct from `deadline`, `server_error` and `ok`), page 1's rows are upserted, the **shifts watermark keeps its previous value**, and the run status is `partial`. The next run re-reads from the old watermark − 48 h, so the missing rows are fetched then;
   - **one ledger row per run** with per-resource `{ rows, skipped, pages, error_code }` and the request count, then **one heartbeat** `cron.success|cron.failure` with `metadata.job = "sevenshifts-sync"` (manual: `sevenshifts-sync-manual`). Counts and fixed codes only, no names;
   - **budget:** over a fixture of 60 users the limiter never exceeds 8/s or 500/min (assert on the fake clock's timestamps).
@@ -727,22 +776,25 @@ create unique index people_skill_tunables_one_per_scope
   on public.people_skill_tunables (coalesce(location_id, '00000000-0000-0000-0000-000000000000'::uuid));
 ```
 
-  Ranges enforced by both `valid_skill_tunables` (SQL) and `validSkillTunables` (TS); a test pins the two as equal over a table of valid and invalid inputs:
-  - `priorWhenNoRating` 0..1;
-  - `priorStrength` 1..60;
-  - `weights.pm/closeOnTime/prepYield` 0..1 with sum > 0;
-  - `gradeValue.great ≥ good ≥ needs_work`, each 0..1;
-  - `yieldTolerance` 0.01..0.5;
-  - `closeGraceMinutes` 0..120;
-  - `bands.building < bands.strong`, each 0..1;
-  - `minQualityDaysForLearned` 0..30;
-  - `windowDays` 7..365.
+  **The rules (r2 #3)**, enforced IDENTICALLY by `valid_skill_tunables` (SQL, in the CHECK) and `validSkillTunables` (TS, before any write). A test pins the two as equal over one shared JSON table of valid and invalid inputs (`tests/fixtures/skill-tunables-cases.json`), run by vitest against the TS validator and by the 0270 harness against the SQL one:
+  - exactly the known keys, each a JSON **number** (never a string, null, NaN or Infinity; JSON cannot carry NaN, and the TS side also checks `Number.isFinite`);
+  - `priorWhenNoRating` ∈ [0, 1];
+  - `priorStrength` (k) **> 0**, and ≤ 60;
+  - `weights.pm`, `weights.closeOnTime`, `weights.prepYield` each ≥ 0 and ≤ 1, with **sum > 0**. They are NORMALISED at use (divided by the sum), so they need not sum to 1; the zero-weight rule is in Task 15;
+  - `gradeValue.great ≥ good ≥ needs_work`, each ∈ [0, 1];
+  - `yieldTolerance` ∈ [0.01, 0.5];
+  - `closeGraceMinutes` ∈ [0, 120];
+  - **`0 < bands.building < bands.strong < 1`** (strict at both ends);
+  - `minQualityDaysForLearned` an integer ∈ [0, 30];
+  - `windowDays` an integer ∈ [7, 365].
+
+  **A rejected set leaves the previous set live.** The TS validator refuses before the write (`invalid_tunables`, naming the key). If a bad set reached SQL anyway, the CHECK fails the single upsert statement, so the previous row is untouched. Both paths are tested: save valid set A, then try invalid set B, and the loader still returns A.
 
   No row = `SKILL_TUNABLE_DEFAULTS` (Task 15), so nothing has to be seeded. The settings change history is the audit trail (`people.skill_tunables_update`, before/after).
 
 - [ ] **Step 1:** preflight. Assert `station_positions` has the columns `id, location_id`, then add `create unique index if not exists station_positions_id_location on public.station_positions(id, location_id)` (additive; `id` is already unique, so it cannot fail on existing data) and use it for the composite FKs. **Adding the index changes no row and no grant.**
 - [ ] **Step 2:** grants. Settings and `people_skill_tunables`: the SELECT/INSERT/UPDATE ceiling. `valid_skill_tunables`: revoked from the PostgREST roles, EXECUTE to service_role (the 0238 `valid_station_trims` pattern). Adjustments and ratings: the SELECT/INSERT ceiling (append-only: "current" = the latest row per `(user, position)`; a correction is a new row). RLS on, no policies, plus the guard.
-- [ ] **Step 3: the harness.** The step/clamp CHECKs (0.05 granularity, ±0.30); a position from another shop is refused by the FK; UPDATE/DELETE are refused for `service_role` on the append-only tables; the tunables CHECK accepts the defaults and refuses each out-of-range key and any unknown key; one row per scope; ceilings. `PASS 0270:`.
+- [ ] **Step 3: the harness.** The step/clamp CHECKs (0.05 granularity, ±0.30); a position from another shop is refused by the FK; UPDATE/DELETE are refused for `service_role` on the append-only tables; the tunables CHECK runs the SHARED case file (every accepted case accepted, every refused case refused, including k = 0, `building` = 0, `strong` = 1, `building = strong`, all weights 0, a negative weight, a string number); after a refused upsert the previous row is unchanged; one row per scope; ceilings. `PASS 0270:`.
 - [ ] **Step 4:** the pin. Green. Commit.
 
 ## Task 14b: The BOH positions data step (R3) — dry run first, through the station admin, never a migration
@@ -804,11 +856,15 @@ export function skillFor(signals: PositionSignals, prior: number | null, adjustm
 ```
 
 - `perKind[kind].mean` = the weight-weighted mean of that kind's observations inside `windowDays`, after deduplicating by `sourceId`.
-- `q` = the tunable-weighted mean of the kinds present (weights renormalised over the kinds that have ≥1 observation).
-- **`n` = the size of the SET of distinct `day` values across ALL observations of all kinds.** A day with a PM grade AND a closing line AND a batch counts ONCE. A day worked with no quality observation counts ZERO (r1 P2-7).
-- `learned = (k·prior + n·q) / (k + n)`; with n = 0, `learned = prior`.
-- `confidence = n / (k + n)`.
+- **Within a kind:** observation weights are ≥ 0 (minutes, or 1). When a kind's observation weights sum to 0 (e.g. every PM copy had zero observed minutes), its mean uses EQUAL weights over those observations and is flagged `equalWeightFallback`, so a kind with observations always has a finite mean.
+- **(r2 #3) COUNTING kinds:** a kind COUNTS when it has ≥ 1 observation in the window AND its tunable weight is > 0. A kind that has observations but weight 0 is SHOWN as evidence ("Closing lines: 17 of 18 · not counted in the skill") but contributes nothing to q, n or confidence.
+- `q` = Σ_{counting} w_k · mean_k / Σ_{counting} w_k. The denominator is > 0 whenever at least one kind counts.
+- **`n` = the size of the SET of distinct `day` values across the observations of the COUNTING kinds.** A day with a PM grade AND a closing line AND a batch counts ONCE. A day worked with no counted quality observation counts ZERO (r1 P2-7).
+- **No counting kind** (no evidence at all, OR evidence only of weight-0 kinds, e.g. weights `{pm:1, closeOnTime:0, prepYield:0}` and a person with only closing evidence): q is UNDEFINED and never computed. Then `n = 0`, `learned = prior` (the manager's rating, else `priorWhenNoRating`), `confidence = 0`, `startingPoint = true`, and `perKind` still reports the uncounted kinds for evidence. **No division by a zero sum ever runs.**
+- `learned = (k·prior + n·q) / (k + n)` when n > 0 (k > 0 by validation, so k + n > 0); `learned = prior` when n = 0.
+- `confidence = n / (k + n)` (0 when n = 0).
 - `value = clamp(learned + adjustment, 0, 1)`.
+- **Every output is finite:** `learned`, `value`, `confidence`, each `perKind.mean` ∈ [0, 1]; `qualityDays`, `workedDays` and `minutesWorked` are non-negative integers. `skillFor` asserts this before returning, and throws `skill_not_finite` if a future change ever breaks it (a test failure, never a NaN on a screen).
 
 **Evidence lines** (keys under `people.skills.evidence.*`), e.g.:
 - "Worked 14 shifts here this month (52 h)";
@@ -823,6 +879,17 @@ export function skillFor(signals: PositionSignals, prior: number | null, adjustm
   - no data, no rating → 0.5 neutral, `startingPoint: true`;
   - a rating of 0.8 and 2 quality days of `q = 0.4` → `(6·0.8 + 2·0.4)/8 = 0.7`, `confidence = 2/8 = 0.25`;
   - **(r1 P2-7) overlap:** on the same day a PM grade + 3 closing lines + 2 batches → `qualityDays = 1`, not 6 and not 3; three kinds on three DIFFERENT days → 3; **20 worked days with ONE quality day → `qualityDays = 1`, `workedDays = 20`**, and confidence follows `qualityDays`; a duplicated `sourceId` (a re-loaded row) counts once; an observation outside `windowDays` is excluded from both q and n;
+  - **(r2 #3) zero-weight evidence:** weights `{pm:1, closeOnTime:0, prepYield:0}`, a person with ONLY closing evidence → `learned = prior`, `confidence = 0`, `qualityDays = 0`, `startingPoint = true`, `perKind.closeOnTime` reported, and every number finite; the same person with one PM grade added → n = 1 and q = that PM mean;
+  - **(r2 #3) property test, finite outputs** (`tests/people-skills-finite.test.ts`). No new dependency: a seeded deterministic generator (mulberry32, fixed seeds, 2,000 cases per run) plus an exhaustive EDGE grid. The grid covers:
+    - every weight vector over {0, 0.0001, 0.5, 1} with sum > 0;
+    - k ∈ {0.0001, 1, 6, 60};
+    - bands at their strict edges (0.0001 / 0.9999, building = strong − 0.0001);
+    - prior ∈ {0, 1, null};
+    - adjustment ∈ {−0.30, 0, +0.30};
+    - gradeValue all equal or all 0;
+    - observation sets: empty, one kind only (each kind), all kinds on the same day, kinds on disjoint days, zero-minute PM weights, duplicate `sourceId`s, and observations all outside the window.
+
+    For EVERY configuration the TS validator ACCEPTS, it asserts that every numeric output is finite and in range, that `band` is one of the three, and that `confidence = 0 ⇔ qualityDays = 0`. Configurations the validator refuses are asserted refused (the same edges from the shared case file).
   - **tunables are a parameter:** the same signals under two different `SkillTunables` give the two expected values; `validSkillTunables(SKILL_TUNABLE_DEFAULTS)` is true; each out-of-range key is false (the SQL twin is pinned in Task 14);
   - 40 days pull the value to `q`;
   - the adjustment clamps at 0 and 1;
@@ -1093,11 +1160,11 @@ export function rosterForCopy(presenceRoster, intervals, addedPositions): Array<
   - person and shop links are manual only, joined at read time (unlink removes attribution at once);
   - `SEVENSHIFTS_ACCESS_TOKEN` is Juan's; `SEVENSHIFTS_SYNC=1` comes after 0268/0269; the client is GET-only;
   - the job is not in `JOBS_REGISTRY` (no email before launch); sync status is in-app;
-  - each mirror's write shape lives in `MIRROR_WRITE_SPEC` only; assignments and wages are snapshot-reconciled by their one RPC and retire only after a COMPLETE per-user snapshot; malformed pagination is `bad_pagination`, never an end;
+  - each mirror's write shape lives in `MIRROR_WRITE_SPEC` only; assignments and wages are snapshot-reconciled by their one RPC and retire only after a COMPLETE per-user snapshot; malformed pagination is `bad_pagination`, never an end; each endpoint declares its response shape (`paginated` | `singleton` | `list-unpaginated`) and only paginated ones demand a cursor; ANY normalizer rejection makes a user's snapshot incomplete (no retire, no watermark);
   - one company per token (multi-company is `not_supported`); `punch_id` is never stored;
   - one people fact loader + pure rules; a new consumer of people facts goes through `loadPeopleFacts`, never its own query;
   - the people equivalence pin is permanent; new inputs enter only through `PeopleInputs` per shop;
-  - skills key on `station_positions.id` (shop-scoped); quality evidence is DATED and `n` is the distinct quality-day set; learned = shrink(prior, q, n) and `confidence = n/(k+n)`; the tunables are settings (`people_skill_tunables`, MoO+, validated in SQL and TS); the adjustment is ±0.30 in 0.05 steps, append-only and audited; prep evidence reads `productions` with the yield-stats filters, never a maker join; `loadSkillMatrix` is the Phase 2 contract;
+  - skills key on `station_positions.id` (shop-scoped); quality evidence is DATED and `n` is the distinct quality-day set; learned = shrink(prior, q, n) and `confidence = n/(k+n)`; the tunables are settings (`people_skill_tunables`, MoO+, validated by the SAME rules in SQL and TS: k > 0, 0 < building < strong < 1, weights ≥ 0 with sum > 0, prior ∈ [0, 1]); a kind with weight 0 never counts, and with no counting kind the skill is the prior with confidence 0, so every output is finite; the adjustment is ±0.30 in 0.05 steps, append-only and audited; prep evidence reads `productions` with the yield-stats filters, never a maker join; `loadSkillMatrix` is the Phase 2 contract;
   - people-data authorization takes the trusted ROLE (`Viewer.role`, `PeopleActor`), never a level alone;
   - PM v2 is blind until submit; one copy lifecycle (`PM_COPY_TRANSITIONS`: done is read-only until Reopen); every grade is bound to a position of the report's shop (composite FKs) that the subject worked or this copy added; submit seals; averages are weighted by observed minutes; no notification; criteria are DATA (Tier E editor);
   - `social_media_mgr` is refused people data by ROLE;
@@ -1206,6 +1273,9 @@ export interface SkillMatrix {
 - **J17 (r1) — Assignments and wages are reconciled per user, by a definer RPC that is their only writer.** Retirement needs a COMPLETE snapshot of that user. A failed or malformed page never retires anything, and history is kept (a reappearing edge is a new row).
 - **J18 (r1) — Run ids are minted before the ledger row** (`sevenshifts_sync_run_ids`), so reconciled rows can name their run while the ledger stays append-only and is written once at the end.
 - **J19 (r1) — Skill tunables are company-wide with an optional per-shop override, MoO+ only**, validated identically in SQL and TS. No row = the defaults, so nothing needs seeding.
+- **J21 (r2) — Snapshot completeness is decided per user, not per resource.** One user's rejected row blocks only that user's retirements (and the resource's watermark); other users in the same run reconcile fully.
+- **J22 (r2) — Weights are normalised at use, not required to sum to 1.** An editor can set 0.6 / 0.2 / 0.2 or 3 / 1 / 1 with the same meaning. A weight of 0 means "show it, don't count it".
+- **J23 (r2) — No property-testing dependency.** The finite-output test uses a seeded in-repo generator plus an exhaustive edge grid, so no new package enters the lockfile.
 - **J20 (r1) — A position added mid-shift and then retired:** grades already saved stay (history). A new grade on it is refused `position_retired`, and the UI explains why.
 
 ## Resolved (CC defaults, Juan may override)
@@ -1276,3 +1346,11 @@ export interface SkillMatrix {
 | P2-7 | The skill input cannot compute its confidence formula | Signals are DATED `QualityObservation`s (position, day, kind, value, weight, sourceId) plus separate `WorkedDay` exposure. `n` = the distinct-day SET across all kinds; `confidence = n/(k+n)`; worked days never count as quality days. | Task 15 (types, formula), Task 16, Task 23 (c) | Overlap tests: PM + closing + prep on one day = 1 quality day; three days = 3; 20 worked / 1 quality day → n = 1; a duplicate `sourceId` counts once; window edge |
 | P2-8 | Role refusal vs a role-less `Viewer` | `Viewer` gains a REQUIRED trusted `role` from the session; `PeopleActor` built by `peopleActorFromAuth`. Every caller is listed and updated (`my-feedback`, trends, team, person page incl. `loadPersonReportLocations`, `report-export:249/269`), and every fixture. `tsc` catches a missed site. | Permissions preamble; ground truth; Task 2; Task 11 Step 5; Task 13 | `tests/people-role-carry.test.ts`: same level 6, same shop, AGM allowed vs SMM refused on all four entry points + export + page gate; prep_mgr and catering_mgr follow AGM |
 | P2-9 | "Done" copies have contradictory edit rules | ONE lifecycle, `PM_COPY_TRANSITIONS`: writes need `open`; `done` is read-only; only `reopen_pm_copy` (author, day open) leaves it; submit seals open + done. The same table drives the pure rules, the RPC guards (`copy_done`, `copy_not_done`, `copy_sealed`) and the UI (read-only banner + Reopen). | Permissions; Task 2; Task 18; Task 20; Task 21; J16 | `tests/fixtures/pm-copy-lifecycle-cases.json` iterated by the pure test, the 0271 harness and the UI test |
+
+## Round 2 response (Astra r2, CHANGES REQUESTED: r1 P2-3 partly open + 3 new P2)
+
+| # | Finding | What changed | Where | Test |
+|---|---|---|---|---|
+| r2 #1 | Singleton responses (assignments) rejected as malformed pagination | Every `SEVENSHIFTS_ENDPOINTS` entry declares `shape: paginated \| singleton \| list-unpaginated`, and the client dispatches on it. Only `paginated` uses `pageStep` and demands a cursor. Singletons (assignments, wages, labor_settings, whoami) are ONE request validated by their own snapshot validator (`bad_snapshot` on failure). `normalizeAssignments` turns the documented `{locations, departments, roles}` object into edges. whoami's company comes from the distinct `users[].company_id`. | API facts; Task 4 Steps 2–3; Task 6; Task 7 | A test per shape. The documented assignments example (verbatim fixture) goes client → `normalizeAssignments` → reconciler and gives one live edge and status `ok`. Malformed singletons give `bad_snapshot`. A pin that every endpoint declares a shape. |
+| r2 #2 (closes r1 P2-3) | Skipped malformed rows can retire valid assignments/wages | Normalizers return `{rows, rejected}` and never drop silently. `p_complete = request ok && shape ok && rejected.length === 0`, per user. An incomplete snapshot passes its valid rows (add/update only), retires nothing, records `incomplete_snapshot` in the ledger, and holds the watermark. An all-rejected snapshot is incomplete; only a genuinely empty, fully valid snapshot retires. List resources with rejections are marked failed and keep their watermark. The RPC refuses `p_complete=true` with an invalid row. | Task 4 Step 3; Task 5 Step 3c + harness (c2); Task 7 | (i) A malformed row for user X → X's existing edge stays LIVE, `incomplete_snapshot`, watermark held. (ii) Mixed valid/invalid across two users. (iii) An entirely invalid snapshot retires nothing. (iv) A genuinely empty snapshot retires. (v) The same for wages. Plus a shifts page with one bad row keeps its watermark. |
+| r2 #3 | Accepted tunables can make skill computation undefined | One rule set in TS AND SQL (a shared case file): numbers only; k > 0; 0 < building < strong < 1; weights ≥ 0 with sum > 0 (normalised at use); prior ∈ [0, 1]; gradeValue ordered; integer windows. A rejected set leaves the previous set live. Defined semantics: only COUNTING kinds (observed AND weight > 0) enter q and n; no counting kind → learned = prior, confidence 0, qualityDays 0, startingPoint, with the uncounted evidence still shown. Within-kind zero weights fall back to equal weights. `skillFor` asserts finite outputs. | Task 14 (rules, harness); Task 15 (formula, tests) | The shared case file runs against the TS validator and the SQL CHECK. Valid A then invalid B → A still live. The zero-weight example (`{pm:1,…0}`, closing-only person). A property test (seeded generator + edge grid): every accepted configuration × every sparse evidence combination gives finite in-range outputs, and confidence 0 ⇔ qualityDays 0. |
