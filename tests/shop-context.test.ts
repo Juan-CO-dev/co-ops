@@ -355,6 +355,8 @@ const PAGE_ROUTES: Record<string, string> = {
   "app/admin/catalog/recipe/[id]/page.tsx": "/admin/catalog/recipe/7d0c1f2e-0000-4000-8000-000000000001",
   // catalog Phase 3b — the menu item page's shop switcher (a prefix route: /admin/catalog/menu-item/[id]).
   "app/admin/catalog/menu-item/[id]/page.tsx": "/admin/catalog/menu-item/7d0c1f2e-0000-4000-8000-000000000001",
+  // catalog Phase 3b — a GM's recipe updates for one shop (an exact route; ?location=<shop>).
+  "app/admin/catalog/notices/page.tsx": "/admin/catalog/notices",
   // catalog Phase 2b (sim QA) — the SKU catalog and the vendor page resolve the shop their item-page
   // links land on; they read no shop parameter of their own.
   "app/admin/skus/page.tsx": "/admin/skus",
@@ -468,6 +470,8 @@ const RESOLVER_PAGES: Record<string, RegExp> = {
   "app/admin/catalog/recipe/[id]/page.tsx": /explicit === "global" \? null\s*: explicit && mine\.includes\(explicit\) \? await resolveShopId\(mine, explicit\)[\s\S]*: mine\.length > 0 \? await resolveShopId\(mine, null\) : null/,
   // …and the menu item page, the same way.
   "app/admin/catalog/menu-item/[id]/page.tsx": /explicit === "global" \? null\s*: explicit && mine\.includes\(explicit\) \? await resolveShopId\(mine, explicit\)[\s\S]*: mine\.length > 0 \? await resolveShopId\(mine, null\) : null/,
+  // …and the recipe updates (notices) page: the one resolver over the shops the viewer works in.
+  "app/admin/catalog/notices/page.tsx": /const explicit = shopParamFor\("\/admin\/catalog\/notices", searchParamValues\(sp\)\);\s*const shopId = mine\.length === 0 \? null : await resolveShopId\(mine, explicit \?\? null\);/,
 };
 
 describe("source shape — every shop-defaulting page uses the one resolver", () => {

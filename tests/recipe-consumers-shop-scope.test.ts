@@ -140,7 +140,9 @@ describe("hub readiness is attributed per scope (lead decision (c), Astra 3a r2#
       expect(src, f).toContain("loadGraphReadiness(auth, scope)");
       expect(src, f).toContain("readiness.scope.shop");
     }
-    expect(readFileSync("app/admin/page.tsx", "utf8")).toContain("readiness.hub.where_shop");
+    // the hub words each entry through readinessWhereEntries (3b: the shop by name; tests/readiness-hub-where.test.ts)
+    expect(readFileSync("app/admin/page.tsx", "utf8")).toContain("readinessWhereEntries(");
+    expect(readFileSync("lib/admin/readiness-scope-shared.ts", "utf8")).toContain("readiness.hub.where_shop");
   });
 });
 
