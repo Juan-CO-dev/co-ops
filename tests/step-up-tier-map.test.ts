@@ -90,6 +90,11 @@ const SERVER_TIER_MAP: Record<string, string[]> = {
   "app/api/admin/catalog/sku/[id]/pack/restore/route.ts": ["E"],
   "app/api/admin/catalog/sku/[id]/price/route.ts": ["E"],
   "app/api/admin/catalog/sku/[id]/price/back-to-default/route.ts": ["E"],
+  // Catalog Phase 2b — the item page's writes run in the edit window; the preview is a read (no tier).
+  "app/api/admin/catalog/sku/[id]/pack/apply/route.ts": ["E"],
+  "app/api/admin/catalog/sku/[id]/price/apply/route.ts": ["E"],
+  "app/api/admin/catalog/sku/[id]/price-basis/route.ts": ["E"],
+  "app/api/admin/catalog/sku/[id]/pack-requests/[requestId]/dismiss/route.ts": ["E"],
   "app/api/admin/stations/route.ts": ["B"],
   // 0233 Toast employee links: link/unlink is an attribution change (Tier B); its only client,
   // ToastEmployeeLinks, asks B proactively and retries on step_up_required/stale (joined by hand).
