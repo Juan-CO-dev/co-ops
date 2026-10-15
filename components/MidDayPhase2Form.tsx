@@ -253,6 +253,8 @@ export function MidDayPhase2Form({
       } catch {
         // keep generic
       }
+      // B11a: the server's off-need reason refusal speaks the same words as the client gate.
+      if (code === "off_need_reason_required") msg = t("mid_day_prep.phase2.reason_required");
       patch(it.id, { status: "error", error: isBatchContractCode(code) ? null : msg, batchErrorCode: isBatchContractCode(code) ? code : null });
     } catch (e) {
       patch(it.id, { status: "error", error: e instanceof Error ? e.message : "Network error." });

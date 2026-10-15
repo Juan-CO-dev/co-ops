@@ -9,7 +9,7 @@
  * class has a stable HTTP status:
  *
  *   400 invalid_payload         — caller-driven request errors
- *       missing_count, missing_photo, missing_reasons, extra_reasons,
+ *       missing_count, missing_photo, missing_reasons, extra_reasons, blank_reason,
  *       empty_batch, completion_not_found, completion_wrong_instance,
  *       completion_wrong_author, invalid_picker_candidate,
  *       revocation_note_required, use_quick_revoke
@@ -41,6 +41,7 @@ import {
   ChecklistPinMismatchError,
   ChecklistMissingReasonError,
   ChecklistExtraReasonError,
+  ChecklistBlankReasonError,
   ChecklistSupersedeFailedError,
   ChecklistOutsideQuickWindowError,
   ChecklistNotSelfError,
@@ -113,6 +114,13 @@ export function mapChecklistError(err: ChecklistError): NextResponse {
     return jsonError(400, err.code, {
       message: err.message,
       extra_template_item_ids: err.extraTemplateItemIds,
+    });
+  }
+  // B11a: a blank/whitespace-only reason (the client shows auth.pin_modal.error_blank_reason).
+  if (err instanceof ChecklistBlankReasonError) {
+    return jsonError(400, err.code, {
+      message: err.message,
+      blank_template_item_ids: err.blankTemplateItemIds,
     });
   }
   if (err instanceof ChecklistSupersedeFailedError) {

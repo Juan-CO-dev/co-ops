@@ -201,6 +201,21 @@ export class ChecklistMissingReasonError extends ChecklistError {
   }
 }
 
+/**
+ * B11a: a reason that is blank or whitespace-only. The client gates Continue on a trimmed
+ * reason; this is the server half, so a curl (or a stale client) cannot record an empty
+ * "why" against an unfinished required line.
+ */
+export class ChecklistBlankReasonError extends ChecklistError {
+  constructor(public readonly blankTemplateItemIds: string[]) {
+    super(
+      `Reasons must not be blank (${blankTemplateItemIds.length} item(s)).`,
+      "blank_reason",
+    );
+    this.name = "ChecklistBlankReasonError";
+  }
+}
+
 export class ChecklistExtraReasonError extends ChecklistError {
   constructor(public readonly extraTemplateItemIds: string[]) {
     super(
@@ -1430,6 +1445,12 @@ export async function confirmInstance(
   const extraReasonIds = callerReasonIds.filter((id) => !incompleteRequiredSet.has(id));
   if (extraReasonIds.length > 0) {
     throw new ChecklistExtraReasonError(extraReasonIds);
+  }
+  const blankReasonIds = incompleteReasons
+    .filter((r) => typeof r.reason !== "string" || r.reason.trim() === "")
+    .map((r) => r.templateItemId);
+  if (blankReasonIds.length > 0) {
+    throw new ChecklistBlankReasonError(blankReasonIds);
   }
 
   // PIN attestation. Service-role read of the actor's own row: since 0198 the

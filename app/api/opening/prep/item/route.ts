@@ -50,26 +50,13 @@ import { getServiceRoleClient } from "@/lib/supabase-server";
 import type { ConfirmedInput } from "@/lib/prep-consumption";
 import type { OpeningEntryPhase2 } from "@/lib/types";
 import { isOverBatchReasonCode, isWholeCount, type BatchEntry } from "@/lib/batch-prep-shared";
+// B11a: the off-need reason rule is shared with mid-day Phase 2 (lib/prep.ts saveMidDayPhase2Item).
+import { validateOverReason, validateUnderReason } from "@/lib/prep-reason-shared";
 
 import { mapOpeningError } from "../../_helpers";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-const OVER_REASONS: ReadonlySet<string> = new Set([
-  "management_directive",
-  "clear_fridge_space",
-  "prevent_expiration",
-  "forecast_busy",
-  "bulk_efficiency",
-  "other",
-]);
-const UNDER_REASONS: ReadonlySet<string> = new Set([
-  "ingredient_unavailable",
-  "equipment_issue",
-  "time_constraint",
-  "staff_shortage",
-  "other",
-]);
 
 interface ValidBody {
   instanceId: string;
@@ -167,30 +154,12 @@ function validateBody(
   let overPar: OpeningEntryPhase2["overPar"] = null;
   if (e.overPar !== null && e.overPar !== undefined) {
     if (typeof e.overPar !== "object") return { ok: false, field: "entry.overPar" };
-    const op = e.overPar as Record<string, unknown>;
-    if (typeof op.reasonCategory !== "string" || !OVER_REASONS.has(op.reasonCategory)) {
-      return { ok: false, field: "entry.overPar.reasonCategory" };
-    }
-    const directedBy =
-      op.directedBy === null || op.directedBy === undefined ? null : op.directedBy;
-    if (directedBy !== null && (typeof directedBy !== "string" || !UUID_RE.test(directedBy))) {
-      return { ok: false, field: "entry.overPar.directedBy" };
-    }
-    if (op.reasonCategory === "management_directive" && directedBy === null) {
-      return { ok: false, field: "entry.overPar.directedBy" };
-    }
-    const freeText =
-      op.freeText === null || op.freeText === undefined ? null : op.freeText;
-    if (freeText !== null && typeof freeText !== "string") {
-      return { ok: false, field: "entry.overPar.freeText" };
-    }
-    if (op.reasonCategory === "other" && (freeText === null || freeText.trim() === "")) {
-      return { ok: false, field: "entry.overPar.freeText" };
-    }
+    const op = validateOverReason(e.overPar as Record<string, unknown>);
+    if (!op.ok) return { ok: false, field: `entry.overPar.${op.field}` };
     overPar = {
-      reasonCategory: op.reasonCategory as NonNullable<OpeningEntryPhase2["overPar"]>["reasonCategory"],
-      directedBy: directedBy as string | null,
-      freeText: (freeText as string | null) ?? null,
+      reasonCategory: op.value.reasonCategory as NonNullable<OpeningEntryPhase2["overPar"]>["reasonCategory"],
+      directedBy: op.value.directedBy,
+      freeText: op.value.freeText,
     };
   }
 
@@ -198,16 +167,11 @@ function validateBody(
   let underPar: OpeningEntryPhase2["underPar"] = null;
   if (e.underPar !== null && e.underPar !== undefined) {
     if (typeof e.underPar !== "object") return { ok: false, field: "entry.underPar" };
-    const up = e.underPar as Record<string, unknown>;
-    if (typeof up.reasonCategory !== "string" || !UNDER_REASONS.has(up.reasonCategory)) {
-      return { ok: false, field: "entry.underPar.reasonCategory" };
-    }
-    if (typeof up.freeText !== "string" || up.freeText.trim() === "") {
-      return { ok: false, field: "entry.underPar.freeText" };
-    }
+    const up = validateUnderReason(e.underPar as Record<string, unknown>);
+    if (!up.ok) return { ok: false, field: `entry.underPar.${up.field}` };
     underPar = {
-      reasonCategory: up.reasonCategory as NonNullable<OpeningEntryPhase2["underPar"]>["reasonCategory"],
-      freeText: up.freeText,
+      reasonCategory: up.value.reasonCategory as NonNullable<OpeningEntryPhase2["underPar"]>["reasonCategory"],
+      freeText: up.value.freeText,
     };
   }
 
