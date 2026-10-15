@@ -116,12 +116,13 @@ function conversionPairs(tables: Tables): Array<[string, string]> {
 }
 
 export async function computeLineReaderOutputs(tables: Tables, shopIds: readonly string[]): Promise<LineReaderOutputs> {
-  const readiness = await loadGraphReadiness(OWNER_ACTOR);
+  const readiness = await loadGraphReadiness(OWNER_ACTOR, null);
   const skuUsage = await loadSkuUsageMap();
   const productLinks = await loadProductItemLinks(OWNER_ACTOR);
   const products = await listProducts(OWNER_ACTOR);
   const skus = (tables.vendor_items ?? []).map((s) => ({ id: String(s.id), product_id: (s.product_id as string | null | undefined) ?? null }));
-  const demand = await loadDemandSources(getServiceRoleClient(), skus);
+  // The walk's demand sources are per shop since 6b; with no shop version every shop answers as the default did.
+  const demand = await loadDemandSources(getServiceRoleClient(), skus, shopIds[0]!);
   const productionPicker: Record<string, unknown> = {};
   const conversions: Record<string, Record<string, string>> = {};
   for (const shop of shopIds) {

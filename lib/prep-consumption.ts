@@ -24,8 +24,8 @@ import {
   type PackPickWarning, type ResolvedPack, type ScopedLevelRow, type ScopedVersionRow, type VersionScope,
 } from "@/lib/sku-versions-shared";
 import {
-  pickLiveShopRecipeVersions, pickRecipeVersionsAsOf, recipeLineReplacements, versionIdsNeedingLines,
-  type RecipeVersionLineRow, type RecipeVersionRow,
+  mergeResolvedInputs, pickLiveShopRecipeVersions, pickRecipeVersionsAsOf, recipeLineReplacements, versionIdsNeedingLines,
+  type RecipeVersionLineRow, type RecipeVersionRow, type ResolvedRecipeInput,
 } from "@/lib/recipe-versions-shared";
 import {
   batchSkuOzForItemFromGraph,
@@ -326,6 +326,66 @@ export async function loadRecipeLineOverlay(scope: VersionScope, asOf: string | 
     }));
   }
   return recipeLineReplacements(picked, lines);
+}
+
+async function readAllRecipeInputs(sb: ReturnType<typeof getServiceRoleClient>, label: string): Promise<ResolvedRecipeInput[]> {
+  return selectAllRows<ResolvedRecipeInput>(async (from, to) => {
+    const { data, error } = await sb.from("recipe_inputs")
+      .select("id, recipe_id, component_sku_id, component_item_id, component_product_id, quantity, unit")
+      .order("id", { ascending: true }).range(from, to).returns<ResolvedRecipeInput[]>();
+    if (error) throw new Error(`${label} inputs: ${error.message}`);
+    return { data };
+  });
+}
+
+/**
+ * THE RECIPE LINES `scope` RESOLVES, for readers that need lines but not a flattened graph (catalog
+ * Phase 3a, lead decision 4): readiness, the par advisories' demand sources, production's picker and its
+ * conversion check, a location's product pins. The SAME rule as the graph — loadRecipeLineOverlay
+ * decides; recipe_inputs answers wherever the live global head does. scope null = the global default.
+ * The whole line table is read (the graph is ~60 recipes; an id `.in()` of every SKU is the 414 cliff
+ * sim P1 #6 named) and filtered in memory by the caller. Paged; fails loud.
+ */
+export async function loadResolvedRecipeInputs(scope: VersionScope, asOf: string | null = null): Promise<ResolvedRecipeInput[]> {
+  const sb = getServiceRoleClient();
+  const [base, replacements] = await Promise.all([
+    readAllRecipeInputs(sb, "loadResolvedRecipeInputs"),
+    loadRecipeLineOverlay(scope, asOf),
+  ]);
+  return mergeResolvedInputs(base, replacements);
+}
+
+/**
+ * EVERY LIVE LINE IN ANY SCOPE: the global default's recipe_inputs plus every live shop version's lines
+ * (catalog Phase 3a). For "is this used anywhere" answers that serve no single shop — the SKU list's
+ * "used in", the items page's product links, "N recipes still pin this product" before a retire — so a
+ * SKU or product only a shop's recipe uses is never reported unused. Paged, id-chunked, fails loud.
+ */
+export async function loadRecipeInputsAcrossScopes(): Promise<ResolvedRecipeInput[]> {
+  const sb = getServiceRoleClient();
+  const [base, shopVersions] = await Promise.all([
+    readAllRecipeInputs(sb, "loadRecipeInputsAcrossScopes"),
+    selectAllRows<{ id: string }>(async (from, to) => {
+      const { data, error } = await sb.from("recipe_versions").select("id")
+        .not("location_id", "is", null).eq("active", true)
+        .order("id", { ascending: true }).range(from, to).returns<Array<{ id: string }>>();
+      if (error) throw new Error(`loadRecipeInputsAcrossScopes versions: ${error.message}`);
+      return { data };
+    }),
+  ]);
+  const out = [...base];
+  const ids = shopVersions.map((v) => v.id);
+  for (let i = 0; i < ids.length; i += ID_CHUNK) {
+    const chunk = ids.slice(i, i + ID_CHUNK);
+    out.push(...await selectAllRows<ResolvedRecipeInput>(async (from, to) => {
+      const { data, error } = await sb.from("recipe_version_lines")
+        .select("id, recipe_id, component_sku_id, component_item_id, component_product_id, quantity, unit")
+        .in("version_id", chunk).order("id", { ascending: true }).range(from, to).returns<ResolvedRecipeInput[]>();
+      if (error) throw new Error(`loadRecipeInputsAcrossScopes lines: ${error.message}`);
+      return { data };
+    }));
+  }
+  return out;
 }
 
 /**

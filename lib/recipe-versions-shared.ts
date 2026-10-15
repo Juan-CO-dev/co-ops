@@ -363,3 +363,72 @@ export function recipeLinesWouldCycle(
   }
   return false;
 }
+
+/** One resolved recipe line in recipe_inputs' row shape (id = the recipe_inputs id, or the version line's id). */
+export interface ResolvedRecipeInput {
+  id: string;
+  recipe_id: string;
+  component_sku_id: string | null;
+  component_item_id: string | null;
+  component_product_id: string | null;
+  quantity: number | string;
+  unit: string | null;
+}
+
+/**
+ * The lines a scope resolves: every base row of a recipe with no replacement, then the replacement
+ * lines of each replaced recipe (catalog Phase 3a). With no replacements this is `base` itself, in order.
+ */
+export function mergeResolvedInputs(
+  base: readonly ResolvedRecipeInput[],
+  replacements: ReadonlyMap<string, readonly RecipeVersionLineRow[]>,
+): ResolvedRecipeInput[] {
+  if (replacements.size === 0) return [...base];
+  const out = base.filter((r) => !replacements.has(r.recipe_id));
+  for (const [recipeId, lines] of replacements) {
+    for (const l of lines) {
+      out.push({
+        id: l.id, recipe_id: recipeId, component_sku_id: l.component_sku_id, component_item_id: l.component_item_id,
+        component_product_id: l.component_product_id, quantity: l.quantity, unit: l.unit,
+      });
+    }
+  }
+  return out;
+}
+
+// ── Lead decision (b): judge what a save ADDS; flag what it carries; name every refusal ─────────────
+
+/** WHICH line was refused and WHY (1-based position in the set written; reason = the error code). */
+export interface RecipeLineRefusal { position: number; name: string; reason: string }
+
+const carriedKey = (f: RecipeLineFields) =>
+  JSON.stringify([f.componentSkuId, f.componentItemId, f.componentProductId, f.quantity, f.unit?.trim() || null]);
+
+/**
+ * The 1-based positions of every line in `next` that is NOT carried unchanged from `current` (multiset match on
+ * component, quantity and unit — 0262's SQL rule) — what a save ADDS or CREATES, and so what must pass the line
+ * rules. A carried line stays even if it no longer would (it is flagged instead).
+ */
+export function addedLinePositions(current: readonly RecipeLineFields[], next: readonly RecipeLineFields[]): number[] {
+  const pool = new Map<string, number>();
+  for (const f of current) pool.set(carriedKey(f), (pool.get(carriedKey(f)) ?? 0) + 1);
+  const out: number[] = [];
+  next.forEach((f, i) => {
+    const k = carriedKey(f);
+    const n = pool.get(k) ?? 0;
+    if (n > 0) pool.set(k, n - 1);
+    else out.push(i + 1);
+  });
+  return out;
+}
+
+/** Why a saved line would not pass an add today (the product rule) — a FLAG on the page, never a refusal of a carried line. */
+export function recipeLineProblem(
+  f: RecipeLineFields,
+  ctx: { activeProductIds: ReadonlySet<string>; activeMeasureLabels: ReadonlySet<string> },
+): "invalid_component_product" | "product_line_needs_measure_unit" | null {
+  if (f.componentProductId === null) return null;
+  if (!ctx.activeProductIds.has(f.componentProductId)) return "invalid_component_product";
+  const unit = f.unit?.trim() ?? "";
+  return unit !== "" && ctx.activeMeasureLabels.has(unit) ? null : "product_line_needs_measure_unit";
+}

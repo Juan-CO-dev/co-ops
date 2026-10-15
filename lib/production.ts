@@ -14,7 +14,7 @@ import { lockLocationContext, type LocationActor } from "@/lib/locations";
 import { audit } from "@/lib/audit";
 import type { AuthContext } from "@/lib/session";
 import type { MeasureUnitFactor } from "@/lib/recipe-math";
-import { loadSkuPackResolution } from "@/lib/prep-consumption";
+import { loadResolvedRecipeInputs, loadSkuPackResolution } from "@/lib/prep-consumption";
 import { contentOzForScope } from "@/lib/sku-versions-shared";
 import type { MeasureDimension } from "@/lib/recipe-math";
 import { markSkuNameClashes, type ProductionSkuOption } from "@/lib/production-shared";
@@ -162,18 +162,20 @@ export interface ProductionView {
  *  with no signal, while the costing board, readiness lane and order walk all read the
  *  same pin as `unresolved`. A retired product's pins are dropped here; the SKU-pin pass
  *  is untouched, so a SKU that a recipe names DIRECTLY still makes what it always made. */
-async function loadSkuToItems(skuIds: string[]): Promise<Record<string, Array<{ itemId: string; name: string }>>> {
+/** Exported for tests/recipe-consumers-shop-scope.test.ts. */
+export async function loadSkuToItems(skuIds: string[], locationId: string): Promise<Record<string, Array<{ itemId: string; name: string }>>> {
   const out: Record<string, Array<{ itemId: string; name: string }>> = {};
   if (skuIds.length === 0) return out;
   const sb = getServiceRoleClient();
-  // Recipe inputs that consume one of these SKUs.
-  const { data: ins, error: insErr } = await sb.from("recipe_inputs").select("recipe_id, component_sku_id").in("component_sku_id", skuIds).not("component_sku_id", "is", null)
-    .returns<Array<{ recipe_id: string; component_sku_id: string }>>();
-  // Every read in this chain narrows the SKU→output-item map, and the failure mode is one
-  // direction only: FEWER options in the prep-capture dropdown. The operator cannot record
-  // a prep they actually did, production capture stays dark, and depletion goes with it —
-  // all of it looking like "this SKU just isn't used in a recipe".
-  if (insErr) throw new Error(`loadSkuToItems recipe_inputs: ${insErr.message}`);
+  // CATALOG PHASE 3a (lead decision 4): THIS SHOP's recipe lines (the one resolver) — a shop whose slaw
+  // uses pickle is offered pickle → slaw here. Every read in this chain narrows the SKU→output-item map,
+  // and the failure mode is one direction only: FEWER options in the prep-capture dropdown. The operator
+  // cannot record a prep they actually did — so the resolver throws rather than return a partial set.
+  const resolved = await loadResolvedRecipeInputs(locationId);
+  const wanted = new Set(skuIds);
+  const ins = resolved
+    .filter((i): i is typeof i & { component_sku_id: string } => i.component_sku_id != null && wanted.has(i.component_sku_id))
+    .map((i) => ({ recipe_id: i.recipe_id, component_sku_id: i.component_sku_id }));
 
   // PRODUCT pass: which of these SKUs are members of a product, and which recipes
   // pin those products. One membership read + one pins read, both batched.
@@ -191,11 +193,9 @@ async function loadSkuToItems(skuIds: string[]): Promise<Record<string, Array<{ 
   const productIds = [...membersByProduct.keys()].filter((id) => !retiredProductIds.has(id));
   const productIns: Array<{ recipe_id: string; component_sku_id: string }> = [];
   if (productIds.length > 0) {
-    const { data: pins, error: pinErr } = await sb.from("recipe_inputs").select("recipe_id, component_product_id")
-      .in("component_product_id", productIds)
-      .returns<Array<{ recipe_id: string; component_product_id: string }>>();
-    if (pinErr) throw new Error(`loadSkuToItems product pins: ${pinErr.message}`);
-    for (const p of pins ?? []) {
+    const pinned = new Set(productIds);
+    for (const p of resolved) {
+      if (p.component_product_id == null || !pinned.has(p.component_product_id)) continue;
       for (const skuId of membersByProduct.get(p.component_product_id) ?? []) {
         // Flattened into the same shape the SKU pass produces, so ONE downstream
         // loop maps recipes to output items — no second, subtly different copy.
@@ -203,7 +203,7 @@ async function loadSkuToItems(skuIds: string[]): Promise<Record<string, Array<{ 
       }
     }
   }
-  const allIns = [...(ins ?? []), ...productIns];
+  const allIns = [...ins, ...productIns];
 
   const recipeIds = [...new Set(allIns.map((i) => i.recipe_id))];
   if (recipeIds.length === 0) return out;
@@ -287,7 +287,7 @@ export async function loadProductionFormData(actor: AuthContext, locationId: str
   const ids = (skus ?? []).map((s) => s.id);
   const vendorIds = [...new Set((skus ?? []).flatMap((s) => (s.vendor_id ? [s.vendor_id] : [])))];
   const [skuToItems, inStock, vendorRes] = await Promise.all([
-    loadSkuToItems(ids),
+    loadSkuToItems(ids, locationId),
     loadInStockPacks(ids, locationId),
     vendorIds.length ? sb.from("vendors").select("id, name").in("id", vendorIds).returns<Array<{ id: string; name: string }>>() : Promise.resolve({ data: [] as Array<{ id: string; name: string }>, error: null }),
   ]);
@@ -339,8 +339,11 @@ export async function recordProduction(actor: AuthContext, input: RecordProducti
   // Valid conversion = an ACTIVE recipe that takes this SKU as an input AND outputs
   // this item (canonical recipes graph; was the legacy item_components edge). Two-step
   // (not an embedded filter) per the AGENTS.md RLS/embedded-select note.
-  const { data: inRows } = await sb.from("recipe_inputs").select("recipe_id").eq("component_sku_id", input.inputSkuId)
-    .returns<Array<{ recipe_id: string }>>();
+  // CATALOG PHASE 3a (lead decision 4): the conversion is checked against THIS SHOP's resolved recipe — the
+  // same lines its dropdown was built from (loadSkuToItems), so an offered conversion is never refused and a
+  // conversion only the default makes is refused here.
+  const resolvedLines = await loadResolvedRecipeInputs(input.locationId);
+  const inRows = resolvedLines.filter((r) => r.component_sku_id === input.inputSkuId).map((r) => ({ recipe_id: r.recipe_id }));
   // A recipe pinning this SKU's PRODUCT counts as a valid conversion for EVERY
   // member (0179) — the same expansion loadSkuToItems does for the dropdown, so a
   // cook offered the backup SKU does not then hit `invalid_conversion` on submit.
@@ -353,11 +356,9 @@ export async function recordProduction(actor: AuthContext, input: RecordProducti
   let productRetired = false;
   if (sku.product_id != null) {
     productRetired = (await loadRetiredProductIds(sb, [sku.product_id])).has(sku.product_id);
-    const { data: pinRows } = await sb.from("recipe_inputs").select("recipe_id").eq("component_product_id", sku.product_id)
-      .returns<Array<{ recipe_id: string }>>();
-    productRecipeIds = (pinRows ?? []).map((r) => r.recipe_id);
+    productRecipeIds = resolvedLines.filter((r) => r.component_product_id === sku.product_id).map((r) => r.recipe_id);
   }
-  const skuPinnedRecipeIds = new Set((inRows ?? []).map((r) => r.recipe_id));
+  const skuPinnedRecipeIds = new Set(inRows.map((r) => r.recipe_id));
   const productPinnedRecipeIds = new Set(productRecipeIds);
   const candidateSourceIds = [...new Set([...skuPinnedRecipeIds, ...productPinnedRecipeIds])];
   let validBySkuPin = false;

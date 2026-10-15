@@ -14,7 +14,8 @@ import { getRoleLevel } from "@/lib/roles";
 import { serverT } from "@/lib/i18n/server";
 import { loadItemsAdminView, ITEMS_READ_MIN } from "@/lib/admin/items";
 import { loadCatalogView } from "@/lib/admin/catalog";
-import { loadGraphReadiness } from "@/lib/admin/readiness-load";
+import { loadActiveShopsForReadiness, loadGraphReadiness } from "@/lib/admin/readiness-load";
+import { itemsLandingView } from "@/lib/admin/readiness-scope-shared";
 import type { Readiness } from "@/lib/readiness";
 import { ItemsClient } from "@/components/admin/items/ItemsClient";
 import { CatalogClient } from "@/components/admin/catalog/CatalogClient";
@@ -22,13 +23,20 @@ import { ItemsPageTabs } from "@/components/admin/catalog/ItemsPageTabs";
 import { PageHeader } from "@/components/ui/PageHeader";
 
 export default async function AdminItemsPage({ searchParams }: {
-  searchParams: Promise<{ view?: string }>;
+  searchParams: Promise<{ view?: string; location?: string }>;
 }) {
   const auth = await requireSessionFromHeaders("/admin/items");
   const level = getRoleLevel(auth.user.role);
   if (level < ITEMS_READ_MIN) redirect("/dashboard");
   const lang = auth.user.language;
-  const initialView = (await searchParams).view === "registry" ? "registry" : "catalog";
+  const sp = await searchParams;
+  // A shop-scoped link (the hub's attributed readiness) opens the REGISTRY tab — the one that reads the scoped
+  // readiness; the catalog tab's readiness stays the default's (loadCatalogView, global by intent).
+  const initialView = itemsLandingView(sp);
+  const shops = await loadActiveShopsForReadiness();
+  const location = sp.location;
+  const scope = location && location !== "global" && shops.some((s) => s.id === location) ? location : null;
+  const scopeName = scope ? shops.find((s) => s.id === scope)?.name ?? null : null;
 
   const [view, entities] = await Promise.all([
     loadItemsAdminView(auth),
@@ -37,7 +45,7 @@ export default async function AdminItemsPage({ searchParams }: {
 
   let itemReadiness: Record<string, Readiness> = {};
   try {
-    const g = await loadGraphReadiness(auth);
+    const g = await loadGraphReadiness(auth, scope);
     itemReadiness = Object.fromEntries(
       [...g.itemReadiness.entries()].filter(([, r]) => r.status !== "ready"),
     );
@@ -51,6 +59,10 @@ export default async function AdminItemsPage({ searchParams }: {
         title={serverT(lang, "admin.catalog.title")}
         subtitle={serverT(lang, "admin.catalog.subtitle")}
       />
+      <p className="mt-2 text-sm text-co-text-muted">
+        {scope === null ? serverT(lang, "readiness.scope.default") : serverT(lang, "readiness.scope.shop", { shop: scopeName ?? "" })}
+        {scope !== null ? <> · <a href="/admin/items?view=registry" className="inline-flex min-h-[44px] items-center font-bold text-co-text underline">{serverT(lang, "readiness.scope.show_default")}</a></> : null}
+      </p>
       <ItemsPageTabs
         key={initialView}
         initialView={initialView}

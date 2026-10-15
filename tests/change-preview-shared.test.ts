@@ -322,3 +322,13 @@ describe("convertParQuantity", () => {
     expect(convertParQuantity(3, null, 640, null)).toBeNull();
   });
 });
+
+describe("catalog Phase 3a — a shop's broken lines are judged on ITS recipe (lead decision 4)", () => {
+  it("a shop whose own recipe version no longer uses the bag line has no broken line; a shop on the default does", () => {
+    const own = { ...shop("A", { weekday: [3, "human"] }), recipeLines: [{ recipeId: "r1", recipeName: "Oz sub", quantity: 4, unit: "oz" }] };
+    const p = previewPackChange({ ...base, target: { kind: "global" }, targetBasePack: pack(globalChain), globalPars: { weekday: 3, weekend: null },
+      shops: [own, shop("B", { weekday: [3, "global"] })] });
+    const by = Object.fromEntries(p.shops.map((s) => [s.shopId, s.brokenLines.map((l) => l.recipeId)]));
+    expect(by).toEqual({ A: [], B: ["r3"] });
+  });
+});

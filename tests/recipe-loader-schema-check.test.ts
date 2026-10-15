@@ -47,7 +47,7 @@ function recordingClient() {
 }
 vi.mock("@/lib/supabase-server", () => ({ getServiceRoleClient: () => recordingClient() }));
 
-import { createDatedGraphs, loadRecipeBoundaries, loadRecipeGraph, loadRecipeLineOverlay } from "@/lib/prep-consumption";
+import { createDatedGraphs, loadRecipeBoundaries, loadRecipeGraph, loadRecipeInputsAcrossScopes, loadRecipeLineOverlay, loadResolvedRecipeInputs } from "@/lib/prep-consumption";
 import { loadLiveMenuItemShopSettings } from "@/lib/menu-item-shop";
 import { migratedRecipeDb } from "./fixtures/recipe-versions-pglite";
 
@@ -65,6 +65,9 @@ beforeAll(async () => {
   await run("loadRecipeBoundaries(shop)", () => loadRecipeBoundaries(LOC));
   await run("loadRecipeGraph(shop)", () => loadRecipeGraph({ locationId: LOC }));
   await run("createDatedGraphs(shop)", () => createDatedGraphs({ locationId: LOC })("2026-09-01"));
+  // Task 6b: the line resolvers every direct reader now goes through.
+  await run("loadResolvedRecipeInputs(shop)", () => loadResolvedRecipeInputs(LOC));
+  await run("loadRecipeInputsAcrossScopes", () => loadRecipeInputsAcrossScopes());
   // 0263: the menu overlay loader (the costing board's shop view, the Toast matcher pool).
   await run("loadLiveMenuItemShopSettings", () => loadLiveMenuItemShopSettings(LOC));
 }, 120_000);

@@ -12,7 +12,9 @@ import { selectAllRows } from "@/lib/supabase-paginate";
 import type { AuthContext } from "@/lib/session";
 import { loadSkus, loadMeasureUnits } from "@/lib/admin/skus";
 import { loadCurrentSkuPrices } from "@/lib/admin/cost";
-import { loadSkuPackChains } from "@/lib/prep-consumption";
+import { loadResolvedRecipeInputs, loadSkuPackChains } from "@/lib/prep-consumption";
+import type { VersionScope } from "@/lib/sku-versions-shared";
+import { attributeNotReady, type ReadinessByScope } from "@/lib/admin/readiness-scope-shared";
 import { loadProductIndex } from "@/lib/products";
 import type { MeasureUnitFactor } from "@/lib/recipe-math";
 import {
@@ -48,8 +50,10 @@ export async function loadSkuDeliveryCounts(skuIds: string[]): Promise<Map<strin
   return out;
 }
 
-/** Readiness per ACTIVE SKU (inactive → absent from the map = no badge). */
-export async function loadSkuReadinessMap(actor: AuthContext): Promise<Map<string, Readiness>> {
+/** Readiness per ACTIVE SKU AT `scope` (catalog Phase 3a): that shop's price lane and pack versions (2a's one
+ *  resolver), else the global ones; null = the global default. Delivery history stays org-wide (a SKU delivered
+ *  anywhere has been delivered). Inactive → absent from the map = no badge. */
+export async function loadSkuReadinessMap(actor: AuthContext, scope: VersionScope): Promise<Map<string, Readiness>> {
   const skus = await loadSkus(actor);
   const active = skus.filter((s) => s.active);
   const ids = active.map((s) => s.id);
@@ -57,7 +61,7 @@ export async function loadSkuReadinessMap(actor: AuthContext): Promise<Map<strin
   // registry so skuPackComplete delegates to the chain badge predicate for chained
   // SKUs (ONE query each — loadRecipeGraph law; never per-SKU).
   const [prices, deliveries, chainsBySku, measureUnits] = await Promise.all([
-    loadCurrentSkuPrices(ids, null), loadSkuDeliveryCounts(ids), loadSkuPackChains(ids, null), loadMeasureUnits(actor),
+    loadCurrentSkuPrices(ids, scope), loadSkuDeliveryCounts(ids), loadSkuPackChains(ids, scope), loadMeasureUnits(actor),
   ]);
   const measuresByLabel = new Map<string, MeasureUnitFactor>(
     measureUnits.map((m) => [m.label, { dimension: m.dimension, toBaseFactor: m.toBaseFactor }]),
@@ -82,7 +86,8 @@ interface GraphRows {
   items: Array<{ id: string; oz_per_par_unit: number | string | null; sold_directly: boolean; sell_portion: number | string | null; sell_portion_unit: string | null; menu_price: number | string | null }>;
 }
 
-async function loadGraphRows(): Promise<GraphRows> {
+/** Exported for tests/recipe-consumers-shop-scope.test.ts. */
+export async function loadGraphRows(scope: VersionScope): Promise<GraphRows> {
   const sb = getServiceRoleClient();
   // Paginate past the 1000-row cap on every whole-graph read — as recipes/edges/
   // items grow past 1000 a truncated read would silently drop nodes and corrupt
@@ -94,9 +99,12 @@ async function loadGraphRows(): Promise<GraphRows> {
     // component_product_id is SELECTED, not inferred: without it a re-pointed line
     // is invisible here and readiness would see a recipe with fewer inputs than it
     // has and call it ready (0179 — the quiet reader).
-    selectAllRows<GraphRows["inputs"][number]>((from, to) =>
-      sb.from("recipe_inputs").select("recipe_id, component_sku_id, component_item_id, component_product_id, unit")
-        .order("id", { ascending: true }).range(from, to)),
+    // CATALOG PHASE 3a (lead decision 4): the lines THIS SCOPE resolves — a shop's live version replaces
+    // its recipe's rows (the one resolver, lib/prep-consumption.ts); null = the global default.
+    loadResolvedRecipeInputs(scope).then((rows) => rows.map((r) => ({
+      recipe_id: r.recipe_id, component_sku_id: r.component_sku_id, component_item_id: r.component_item_id,
+      component_product_id: r.component_product_id, unit: r.unit,
+    }))),
     selectAllRows<GraphRows["outputs"][number]>((from, to) =>
       sb.from("recipe_outputs").select("recipe_id, output_item_id, output_menu_item_id")
         .order("id", { ascending: true }).range(from, to)),
@@ -112,20 +120,20 @@ async function loadGraphRows(): Promise<GraphRows> {
  * Memoized recursion with a visiting-set cycle guard (graph is cycle-guarded
  * at write time via outputWouldCycle, but belt-and-braces here).
  */
-export async function loadGraphReadiness(actor: AuthContext): Promise<{
+export async function loadGraphReadiness(actor: AuthContext, scope: VersionScope): Promise<{
   recipeReadiness: Map<string, Readiness>;
   itemReadiness: Map<string, Readiness>;
 }> {
   const [skuStatus, g, measureUnits] = await Promise.all([
-    loadSkuReadinessMap(actor), loadGraphRows(), loadMeasureUnits(actor),
+    loadSkuReadinessMap(actor, scope), loadGraphRows(scope), loadMeasureUnits(actor),
   ]);
 
-  // PRODUCT-pinned inputs (0179). Resolution is the GLOBAL one (deviation D7 — this
-  // board has no location), and a line is ready iff the product resolves to a member
+  // PRODUCT-pinned inputs (0179). Resolution is the SCOPE's (catalog Phase 3a: a shop's readiness
+  // resolves products as that shop does; null = the global one, deviation D7), and a line is ready iff the product resolves to a member
   // AND the quantity can be denominated: either the product knows what one unit
   // weighs, or the line is weight-denominated and needs no unit_oz at all.
   const pinnedProductIds = [...new Set(g.inputs.map((i) => i.component_product_id).filter((v): v is string => v != null))];
-  const { byProduct } = await loadProductIndex(pinnedProductIds, null);
+  const { byProduct } = await loadProductIndex(pinnedProductIds, scope);
   const weightUnits = new Set(measureUnits.filter((m) => m.dimension === "weight").map((m) => m.label));
 
   /**
@@ -287,16 +295,32 @@ export async function loadGraphReadiness(actor: AuthContext): Promise<{
 
 /** Hub rollups — computed ONLY for sections the viewer can see (caller filters). */
 export async function countNotReady(actor: AuthContext): Promise<{
-  skus: number; recipes: number; items: number;
+  skus: number; recipes: number; items: number; byScope: ReadinessByScope[];
 }> {
-  const [skuMap, graph] = await Promise.all([
-    loadSkuReadinessMap(actor), loadGraphReadiness(actor),
+  // CATALOG PHASE 3a: not ready for the default OR for ANY active shop (each shop's resolved recipe — lead
+  // decision 4), ATTRIBUTED per scope (lead decision (c)). One graph read per scope, never per recipe.
+  const shops = await loadActiveShopsForReadiness();
+  const scopes: Array<{ id: string | null; name: string | null }> = [{ id: null, name: null }, ...shops];
+  const [skuMap, ...graphs] = await Promise.all([
+    loadSkuReadinessMap(actor, null), ...scopes.map((s) => loadGraphReadiness(actor, s.id)),
   ]);
+  const attributed = attributeNotReady(graphs.map((g, i) => ({
+    scope: scopes[i]!.id, scopeName: scopes[i]!.name, recipeReadiness: g.recipeReadiness, itemReadiness: g.itemReadiness,
+  })));
   const countBad = (m: Map<string, Readiness>) =>
     [...m.values()].filter((r) => r.status !== "ready").length;
   return {
     skus: countBad(skuMap),
-    recipes: countBad(graph.recipeReadiness),
-    items: countBad(graph.itemReadiness),
+    recipes: attributed.recipes,
+    items: attributed.items,
+    byScope: attributed.byScope,
   };
+}
+
+/** The active shops a readiness view can be scoped to (the hub's attribution, the lists' ?location=). Fails loud. */
+export async function loadActiveShopsForReadiness(): Promise<Array<{ id: string; name: string }>> {
+  const { data, error } = await getServiceRoleClient().from("locations").select("id, name").eq("active", true)
+    .order("name", { ascending: true }).order("id", { ascending: true }).returns<Array<{ id: string; name: string }>>();
+  if (error) throw new Error(`readiness shops: ${error.message}`);
+  return data ?? [];
 }

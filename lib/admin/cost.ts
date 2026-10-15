@@ -39,7 +39,7 @@ import { getRoleLevel } from "@/lib/roles";
 import { audit } from "@/lib/audit";
 import type { AuthContext } from "@/lib/session";
 import { loadMeasureUnits } from "@/lib/admin/skus";
-import { loadSkuPackChains } from "@/lib/prep-consumption";
+import { loadRecipeInputsAcrossScopes, loadSkuPackChains } from "@/lib/prep-consumption";
 import { assertScopeToken, catalogWriteRoleAllowed, GLOBAL_VERSION_WRITE_MIN, resolveCurrentPrices, skuOwnerAllowed, type ResolvedPrice, type ScopedPriceRow, type VersionScope } from "@/lib/sku-versions-shared";
 import type { MeasureUnitFactor } from "@/lib/recipe-math";
 // The PURE half lives in cost-shared.ts (the house *-shared law) so the
@@ -186,9 +186,8 @@ async function loadChainAwareContentOz(
  * SKU editor reports it as unused (the quiet reader). */
 export async function loadSkuUsageMap(): Promise<Map<string, string[]>> {
   const sb = getServiceRoleClient();
-  const { data: ins, error: e1 } = await sb.from("recipe_inputs").select("recipe_id, component_sku_id, component_item_id, component_product_id")
-    .returns<Array<{ recipe_id: string; component_sku_id: string | null; component_item_id: string | null; component_product_id: string | null }>>();
-  if (e1) throw new Error(`loadSkuUsageMap inputs: ${e1.message}`);
+  // CATALOG PHASE 3a: "used in" counts EVERY scope — a SKU only one shop's recipe uses is not unused.
+  const ins = await loadRecipeInputsAcrossScopes();
   const pinnedProductIds = [...new Set((ins ?? []).map((i) => i.component_product_id).filter((v): v is string => v != null))];
   const membersByProduct = new Map<string, string[]>();
   if (pinnedProductIds.length > 0) {

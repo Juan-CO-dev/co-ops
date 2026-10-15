@@ -147,6 +147,9 @@ describe("lib/prep-consumption.ts — the inventory moat's foundation never buil
       // Catalog Phase 3a: the recipe-version resolver point fails loud too.
       ["export async function loadRecipeLineOverlay(", "loadRecipeLineOverlay versions:"],
       ["export async function loadRecipeBoundaries(", "loadRecipeBoundaries:"],
+      ["export async function loadResolvedRecipeInputs(", 'readAllRecipeInputs(sb, "loadResolvedRecipeInputs")'],
+      ["async function readAllRecipeInputs(", "inputs: ${error.message}"],
+      ["export async function loadRecipeInputsAcrossScopes(", "loadRecipeInputsAcrossScopes lines:"],
     ] as const) {
       const body = fnBody(src, decl);
       expect(droppedErrorReads(body), decl).toEqual([]);
@@ -185,7 +188,7 @@ describe("lib/admin/catalog.ts — a readiness-load failure never reads as READY
     // recipes / checklist_templates / vendor_items. The readiness swallow was the one
     // anomaly — and loadRecipeGraph, in the SAME Promise.all, now throws anyway.
     const body = fnBody(src, "export async function loadCatalogView(");
-    expect(body).toContain("loadGraphReadiness(actor)");
+    expect(body).toContain("loadGraphReadiness(actor, null)");
     expect(body).not.toContain("catch");
   });
 });
@@ -268,7 +271,7 @@ describe("lib/production.ts — the prep capture form's SKU→item map fails lou
     // prep they actually did — and the depletion lane goes dark with no message.
     const body = fnBody(src, "async function loadSkuToItems(");
     expect(droppedErrorReads(body)).toEqual([]);
-    expect(body).toContain("loadSkuToItems recipe_inputs:");
+    expect(body).toContain("await loadResolvedRecipeInputs(locationId)"); // the resolver throws on its own reads
   });
 
   it("loadRecentProductions binds error on its line and name reads", () => {
