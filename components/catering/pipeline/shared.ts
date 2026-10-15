@@ -40,7 +40,7 @@ export async function postJson(
     }
     return { ok: false, code };
   } catch {
-    return { ok: false, code: "generic" };
+    return { ok: false, code: "network" };
   }
 }
 
@@ -68,6 +68,7 @@ const KNOWN_ERROR_CODES = new Set([
   "stage_changed",
   "illegal_transition", // guarded moveStage 409 (concurrent move) — actionable, not generic
   "generic",
+  "network",
 ]);
 
 export function resolveErrorKey(code: string): TranslationKey {

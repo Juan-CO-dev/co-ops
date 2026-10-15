@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 
 import { formatTime } from "@/lib/i18n/format";
@@ -15,6 +15,8 @@ import type {
 import type { ReportKey, ReportProgress, ReportStatusRow } from "@/lib/midshift";
 import { evalGradesComplete } from "@/lib/pm-report-shared";
 import { ActionButton } from "@/components/ActionButton";
+import { SaveStatus } from "@/components/ui/SaveStatus";
+import { initialSaveStatus, saveStatusStep, type SavePhase, type SaveStatusEvent, type SaveStatusState } from "@/lib/save-status-shared";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -30,8 +32,17 @@ interface Props {
   submitted: boolean;
 }
 
-// Per-card save state.
-type SaveState = "idle" | "saving" | "saved" | "error";
+function usePmSaveStatus() {
+  const [state, setState] = useState<SaveStatusState>(initialSaveStatus);
+  const current = useRef(state);
+  const step = (event: SaveStatusEvent) => {
+    const next = saveStatusStep(current.current, event);
+    current.current = next;
+    setState(next);
+    return next;
+  };
+  return { state, step };
+}
 
 /**
  * Map a failed /api/pm-report response to a message key.
@@ -83,7 +94,7 @@ const REPORT_LABEL_KEY: Record<ReportKey, TranslationKey> = {
 
 // ─── EmployeeEvalCard ─────────────────────────────────────────────────────────
 
-function EmployeeEvalCard({
+export function EmployeeEvalCard({
   employeeId,
   employeeName,
   existing,
@@ -107,12 +118,12 @@ function EmployeeEvalCard({
   const gradesComplete = evalGradesComplete({ arrivedReady, attitude, production, teamPlayer });
   const [area, setArea] = useState(existing?.areaToImprove ?? "");
   const [note, setNote] = useState(existing?.note ?? "");
-  const [saveState, setSaveState] = useState<SaveState>("idle");
+  const { state: saveState, step: saveStep } = usePmSaveStatus();
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   const handleSave = async () => {
     if (!gradesComplete) return;
-    setSaveState("saving");
+    const revision = saveStep({ type: "start" }).revision;
     setErrorMsg(null);
     try {
       const res = await fetch("/api/pm-report", {
@@ -132,35 +143,31 @@ function EmployeeEvalCard({
         }),
       });
       if (res.ok) {
-        setSaveState("saved");
-        // Reset "saved" indicator after 2s.
-        setTimeout(() => setSaveState("idle"), 2000);
+        saveStep({ type: "ack", revision });
       } else {
-        setSaveState("error");
-        setErrorMsg(t(await errorKeyForResponse(res)));
+        const message = t(await errorKeyForResponse(res));
+        if (saveStep({ type: "fail", revision }).revision === revision) setErrorMsg(message);
       }
     } catch {
-      setSaveState("error");
-      setErrorMsg(t("pm.error.generic"));
+      if (saveStep({ type: "fail", revision }).revision === revision) setErrorMsg(t("pm.error.generic"));
     }
   };
 
   const saveBtnLabel =
-    saveState === "saving"
+    saveState.phase === "saving"
       ? t("pm.saving")
-      : saveState === "saved"
-        ? t("pm.saved")
-        : t("pm.save");
+      : t("pm.save");
+  const edited = () => { saveStep({ type: "edit" }); setErrorMsg(null); };
 
   return (
     <div className="rounded-2xl border-2 border-co-border bg-co-surface p-4">
       <p className="mb-3 text-sm font-bold text-co-text">{employeeName}</p>
 
       {/* D-28: four 3-way grades, none picked until the manager taps one. */}
-      <GradeRow label={t("pm.eval.arrived_ready")} value={arrivedReady} onPick={setArrivedReady} readOnly={readOnly} />
-      <GradeRow label={t("pm.eval.attitude")} value={attitude} onPick={setAttitude} readOnly={readOnly} />
-      <GradeRow label={t("pm.eval.production")} value={production} onPick={setProduction} readOnly={readOnly} />
-      <GradeRow label={t("pm.eval.team_player")} value={teamPlayer} onPick={setTeamPlayer} readOnly={readOnly} />
+      <GradeRow label={t("pm.eval.arrived_ready")} value={arrivedReady} onPick={(g) => { setArrivedReady(g); edited(); }} readOnly={readOnly} />
+      <GradeRow label={t("pm.eval.attitude")} value={attitude} onPick={(g) => { setAttitude(g); edited(); }} readOnly={readOnly} />
+      <GradeRow label={t("pm.eval.production")} value={production} onPick={(g) => { setProduction(g); edited(); }} readOnly={readOnly} />
+      <GradeRow label={t("pm.eval.team_player")} value={teamPlayer} onPick={(g) => { setTeamPlayer(g); edited(); }} readOnly={readOnly} />
 
       {/* Area to improve */}
       <div className="mb-3">
@@ -171,7 +178,7 @@ function EmployeeEvalCard({
           <textarea
             value={area}
             readOnly={readOnly}
-            onChange={(e) => setArea(e.target.value)}
+            onChange={(e) => { setArea(e.target.value); edited(); }}
             placeholder={readOnly ? "" : t("pm.eval.area_placeholder")}
             rows={2}
             className="
@@ -193,7 +200,7 @@ function EmployeeEvalCard({
           <textarea
             value={note}
             readOnly={readOnly}
-            onChange={(e) => setNote(e.target.value)}
+            onChange={(e) => { setNote(e.target.value); edited(); }}
             placeholder={readOnly ? "" : t("pm.eval.note_placeholder")}
             rows={2}
             className="
@@ -209,9 +216,7 @@ function EmployeeEvalCard({
         </p>
       </div>
 
-      {errorMsg && (
-        <p className="mb-2 text-sm text-co-cta-text">{errorMsg}</p>
-      )}
+      {!readOnly && <SaveStatus phase={saveState.phase} detail={saveState.phase === "failed" ? errorMsg : undefined} onRetry={() => void handleSave()} />}
 
       {!readOnly && !gradesComplete && (
         <p className="mb-2 text-xs text-co-text-muted">{t("pm.eval.pick_all")}</p>
@@ -220,9 +225,9 @@ function EmployeeEvalCard({
       {!readOnly && (
         <ActionButton
           size="default"
-          variant={saveState === "saved" ? "secondary" : "primary"}
+          variant={saveState.phase === "saved" ? "secondary" : "primary"}
           onClick={() => void handleSave()}
-          disabled={saveState === "saving" || !gradesComplete}
+          disabled={saveState.phase === "saving" || !gradesComplete}
         >
           {saveBtnLabel}
         </ActionButton>
@@ -248,7 +253,7 @@ export function PmReportClient({
   // MVP state
   const [mvpUserId, setMvpUserId] = useState<string | null>(report?.mvpUserId ?? null);
   const [mvpNote, setMvpNote] = useState(report?.mvpNote ?? "");
-  const [mvpSaveState, setMvpSaveState] = useState<SaveState>("idle");
+  const { state: mvpSaveState, step: mvpSaveStep } = usePmSaveStatus();
   const [mvpError, setMvpError] = useState<string | null>(null);
 
   // Employees being evaluated: D-28 — today's presence at this shop ∪ any existing evals. Only when
@@ -265,7 +270,7 @@ export function PmReportClient({
   const [selectValue, setSelectValue] = useState("");
 
   // Submit state
-  const [submitState, setSubmitState] = useState<SaveState>("idle");
+  const [submitState, setSubmitState] = useState<SavePhase>("idle");
   const [submitError, setSubmitError] = useState<string | null>(null);
 
   // All employee IDs in the eval set (auto + manually added)
@@ -286,7 +291,8 @@ export function PmReportClient({
 
   // ── MVP save ──
   const handleMvpSave = async () => {
-    setMvpSaveState("saving");
+    const revision = mvpSaveStep({ type: "start" }).revision;
+    setMvpError(null);
     try {
       const res = await fetch("/api/pm-report", {
         method: "POST",
@@ -300,19 +306,16 @@ export function PmReportClient({
         }),
       });
       if (res.ok) {
-        setMvpSaveState("saved");
-        setMvpError(null);
-        setTimeout(() => setMvpSaveState("idle"), 2000);
+        mvpSaveStep({ type: "ack", revision });
       } else {
-        setMvpSaveState("error");
         // This card had NO message slot at all: a refused MVP write showed only a button
         // that stopped saying "Saved", which is the silent-failure shape the guard exists
         // to end. The 409 now says why.
-        setMvpError(t(await errorKeyForResponse(res)));
+        const message = t(await errorKeyForResponse(res));
+        if (mvpSaveStep({ type: "fail", revision }).revision === revision) setMvpError(message);
       }
     } catch {
-      setMvpSaveState("error");
-      setMvpError(t("pm.error.generic"));
+      if (mvpSaveStep({ type: "fail", revision }).revision === revision) setMvpError(t("pm.error.generic"));
     }
   };
 
@@ -330,11 +333,11 @@ export function PmReportClient({
       if (res.ok) {
         router.refresh(); // Server re-renders; submitted=true locks the form
       } else {
-        setSubmitState("error");
+        setSubmitState("failed");
         setSubmitError(t(await errorKeyForResponse(res)));
       }
     } catch {
-      setSubmitState("error");
+      setSubmitState("failed");
       setSubmitError(t("pm.error.generic"));
     }
   };
@@ -366,6 +369,11 @@ export function PmReportClient({
         <p className="rounded-lg border-2 border-co-success bg-co-success-surface px-3 py-2 text-sm font-semibold text-co-text">
           {bannerText}
         </p>
+        <section className="rounded-lg border border-co-border bg-co-surface p-3">
+          <h2 className="text-xs font-bold uppercase tracking-[0.14em] text-co-gold-text">{t("pm.mvp.heading")}</h2>
+          <p className="mt-2 text-sm font-semibold text-co-text">{report.mvpUserId ? (nameById.get(report.mvpUserId) ?? report.mvpUserId) : t("pm.mvp.none")}</p>
+          {report.mvpNote?.trim() && <p className="mt-1 whitespace-pre-wrap text-sm text-co-text">{report.mvpNote}</p>}
+        </section>
         {/* Read-only wrap-up and evals below */}
         <WrapUpSection wrapUp={wrapUp} timeliness={timeliness} language={language} />
         {/* Eval cards two-up at lg (recomposition PR 4b) — phone keeps the stack. Only people who
@@ -400,7 +408,8 @@ export function PmReportClient({
         <div className="flex flex-col gap-3">
           <select
             value={mvpUserId ?? ""}
-            onChange={(e) => setMvpUserId(e.target.value || null)}
+            onChange={(e) => { setMvpUserId(e.target.value || null); mvpSaveStep({ type: "edit" }); setMvpError(null); }}
+            aria-label={t("pm.mvp.pick")}
             className="
               min-h-[44px] w-full rounded-md border-2 border-co-border-2 bg-co-surface
               px-3 text-sm text-co-text focus:border-co-text focus:outline-none
@@ -417,7 +426,7 @@ export function PmReportClient({
           {mvpUserId && (
             <textarea
               value={mvpNote}
-              onChange={(e) => setMvpNote(e.target.value)}
+              onChange={(e) => { setMvpNote(e.target.value); mvpSaveStep({ type: "edit" }); setMvpError(null); }}
               placeholder={t("pm.mvp.note_placeholder")}
               rows={2}
               className="
@@ -429,17 +438,15 @@ export function PmReportClient({
           )}
           <ActionButton
             size="default"
-            variant={mvpSaveState === "saved" ? "secondary" : "primary"}
+            variant={mvpSaveState.phase === "saved" ? "secondary" : "primary"}
             onClick={() => void handleMvpSave()}
-            disabled={mvpSaveState === "saving"}
+            disabled={mvpSaveState.phase === "saving"}
           >
-            {mvpSaveState === "saving"
+            {mvpSaveState.phase === "saving"
               ? t("pm.saving")
-              : mvpSaveState === "saved"
-                ? t("pm.saved")
-                : t("pm.save")}
+              : t("pm.save")}
           </ActionButton>
-          {mvpError && <p className="text-sm text-co-cta-text">{mvpError}</p>}
+          <SaveStatus phase={mvpSaveState.phase} detail={mvpSaveState.phase === "failed" ? mvpError : undefined} onRetry={() => void handleMvpSave()} />
         </div>
       </section>
 

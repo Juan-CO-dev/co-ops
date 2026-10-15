@@ -634,6 +634,7 @@
   "catering.pipeline.quote_not_accepted_hint": "La cocina planifica este pedido, pero Insights lo cuenta solo cuando la cotización se marca como aceptada.",
   "catering.pipeline.error.stage_changed": "Este contacto cambió de etapa desde que lo cargaste — actualiza e inténtalo de nuevo.",
   "catering.pipeline.error.generic": "Algo salió mal. Inténtalo de nuevo.",
+  "catering.pipeline.error.network": "Se perdió la conexión. Revísala e inténtalo de nuevo.",
   "catering.pipeline.error.forbidden": "No tienes permiso para eso.",
   "catering.pipeline.error.not_found": "No encontrado.",
   "catering.pipeline.error.invalid_payload": "Revisa los campos e inténtalo de nuevo.",

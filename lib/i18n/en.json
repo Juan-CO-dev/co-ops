@@ -634,6 +634,7 @@
   "catering.pipeline.quote_not_accepted_hint": "The kitchen plans this order, but Insights counts it only once the quote is marked accepted.",
   "catering.pipeline.error.stage_changed": "This lead moved stages since you loaded it — reload and try again.",
   "catering.pipeline.error.generic": "Something went wrong. Please try again.",
+  "catering.pipeline.error.network": "Connection lost. Check your connection and try again.",
   "catering.pipeline.error.forbidden": "You do not have permission for that.",
   "catering.pipeline.error.not_found": "Not found.",
   "catering.pipeline.error.invalid_payload": "Check the fields and try again.",
