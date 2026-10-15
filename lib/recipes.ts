@@ -663,6 +663,8 @@ export async function updateRecipeInput(
     p_expected_unit: seen.unit,
     p_expected_each_container_label: seen.each_container_label,
     p_expected_portioned: seen.portioned,
+    // 0262's authorship overload (+ p_actor): the journal records WHO made the version this edit opens.
+    p_actor: actor.user.id,
   });
   if (error) {
     const named = rpcRecipeError(error, RECIPE_INPUT_RPC_ERRORS);
@@ -770,12 +772,16 @@ export async function removeRecipeEdge(actor: AuthContext, args: { table: "recip
     await audit({ actorId: actor.user.id, actorRole: actor.user.role, action: "recipe_output.remove", resourceTable: args.table, resourceId: args.id, metadata: { before: (before as Record<string, unknown> | null) ?? null }, ipAddress: null, userAgent: null });
     return;
   }
-  const { data: before } = await sb.from(args.table).select("*").eq("id", args.id).maybeSingle<Record<string, unknown>>();
-  if (!before) throw new RecipeError(404, "edge_not_found");
-  const { error, count } = await sb.from(args.table).delete({ count: "exact" }).eq("id", args.id);
-  if (error) throw new Error(`removeRecipeEdge: ${error.message}`);
-  if (count === 0) throw new RecipeError(404, "edge_not_found");
-  await audit({ actorId: actor.user.id, actorRole: actor.user.role, action: "recipe_input.remove", resourceTable: args.table, resourceId: args.id, metadata: { before }, ipAddress: null, userAgent: null });
+  // 0262: a recipe line leaves through remove_recipe_input_atomic, under the recipe-graph lock, so its
+  // commit-time journal (recipe_global_journal) never inverts the lock order against another graph
+  // writer. It returns the deleted row for the same `before` audit the direct delete wrote.
+  const { data: before, error } = await sb.rpc("remove_recipe_input_atomic", { p_input_id: args.id, p_actor: actor.user.id });
+  if (error) {
+    const named = rpcRecipeError(error, RECIPE_INPUT_RPC_ERRORS);
+    if (named) throw named;
+    throw new Error(`removeRecipeEdge: ${error.message}`);
+  }
+  await audit({ actorId: actor.user.id, actorRole: actor.user.role, action: "recipe_input.remove", resourceTable: args.table, resourceId: args.id, metadata: { before: (before as Record<string, unknown> | null) ?? null }, ipAddress: null, userAgent: null });
 }
 
 export const SOLD_DIRECT_WRITE_MIN = 7;

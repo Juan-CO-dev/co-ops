@@ -126,6 +126,7 @@ describe("both lib writers go through the RPCs", () => {
   it("updateRecipeInput calls update_recipe_input_atomic and writes no row itself", () => {
     const upd = fn("updateRecipeInput");
     expect(upd).toContain('sb.rpc("update_recipe_input_atomic"');
+    expect(upd).toContain("p_actor: actor.user.id"); // 0262 authorship overload
     expect(upd).not.toContain('.from("recipe_inputs")');
   });
 });
