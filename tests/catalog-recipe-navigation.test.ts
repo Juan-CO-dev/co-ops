@@ -1,7 +1,7 @@
 /**
  * Catalog Phase 3b — a shop switch remounts the page body; every preview goes through the guard; saves post the
- * preview's token. (Plan Task 8 Step 2; the menu item page's pins joined with Task 9. The ShopChangesClient pins join
- * this file with Task 10, when that file exists.)
+ * preview's token. (Plan Task 8 Step 2; the menu item page's pins joined with Task 9; the ShopChangesClient pins
+ * and the notices page joined with Task 10.)
  */
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
@@ -145,5 +145,70 @@ describe("the menu item page's writes", () => {
     for (const f of [MENU_CLIENT, "components/catalog/MenuPreviewPanel.tsx"]) {
       expect(readFileSync(f, "utf8"), f).not.toMatch(/["'](EM|MEP)["']/);
     }
+  });
+});
+
+// ── The Shop changes list (plan Task 10; the pins chunk 2 and chunk 4 deferred to it) ──
+const CHANGES_CLIENT = "components/catalog/ShopChangesClient.tsx";
+const CHANGES_PAGE = "app/admin/catalog/shop-changes/page.tsx";
+
+describe("the Shop changes list's writes", () => {
+  it("previews run through the guard; a save posts exactly the previewed change and its token (Tier E)", () => {
+    const src = readFileSync(CHANGES_CLIENT, "utf8");
+    expect(src).toContain("guard.run(");
+    expect(src).toContain("previewToken: preview.token");
+    expect(src).toContain('requestStepUp("E")');
+  });
+  it("a refused line or code is NAMED, from the preview AND the save, through the pages' one refusal map (Astra 3b r3#3, CC note 5 #3)", () => {
+    const src = readFileSync(CHANGES_CLIENT, "utf8");
+    expect(src).toContain('t("catalog.recipe.error.line_refused", { position: r.line.position, name: r.line.name, reason: t(recipeErrorKey(r.line.reason)) })');
+    expect(src).toContain("menuRefusalText(t, r, shopsOf(view))");
+    expect(src.split("fail(p, r)").length - 1).toBeGreaterThanOrEqual(2); // preview and save
+    expect(src).not.toMatch(/const KNOWN\b/); // no local key set that sends a named code to generic text
+  });
+  it("lead decision: the menu promote reuses the menu page's panel — truthful Spanish name, the optional Spanish field", () => {
+    const src = readFileSync(CHANGES_CLIENT, "utf8");
+    expect(src).toContain("<MenuPreviewPanel");
+    expect(src).toContain("promoteNameEs={promoteNameEs}");
+    expect(readFileSync("components/catalog/MenuPreviewPanel.tsx", "utf8")).toContain('t("catalog.menu.preview.name_es", { before: preview.before.nameEs ?? "—", after: preview.after.nameEs ?? "—" })');
+  });
+  it("CC note 2 #3: a promote refused after its Spanish name saved says so (menuRefusalText) and reloads the list", () => {
+    const src = readFileSync(CHANGES_CLIENT, "utf8");
+    expect(src).toContain("if (r.spanishNameSaved) {");
+    expect(src).toMatch(/if \(r\.spanishNameSaved\) \{[^}]*router\.refresh\(\);/);
+  });
+  it("something moved underneath → the list refreshes and offers to look at the same change again", () => {
+    const src = readFileSync(CHANGES_CLIENT, "utf8");
+    expect(src).toContain('const REPREVIEW_ON: ReadonlySet<string> = new Set(["preview_stale", "dependencies_changed"]);');
+    expect(src).toMatch(/const REFRESH_ON[^\n]*"version_changed"[^\n]*"global_changed"[^\n]*"not_live"/);
+  });
+  it("mirrors the pages: a preview whose row changed (or went away) after it is dropped — Save goes with it — Preview again", () => {
+    const src = readFileSync(CHANGES_CLIENT, "utf8");
+    expect(src).toContain("shopChangeRowRevision(");
+    expect(src).toContain("if (pending && pendingRev !== null && pendingRev !== pending.rev) {");
+  });
+  it("Leave writes nothing: it folds the row away on this screen, and the folded rows can be shown again", () => {
+    const src = readFileSync(CHANGES_CLIENT, "utf8");
+    expect(src).not.toMatch(/leave[^\n]*postJson|postJson[^\n]*leave/i);
+    expect(src).toContain('t("catalog.changes.show_left", { n:');
+  });
+  it("never keys on a location CODE — shops are ids and names", () => {
+    for (const f of [CHANGES_CLIENT, CHANGES_PAGE]) expect(readFileSync(f, "utf8"), f).not.toMatch(/["'](EM|MEP)["']/);
+  });
+  it("the page: MoO+ before any read; the lib's refusal (the social media manager by role) lands on the dashboard", () => {
+    const src = readFileSync(CHANGES_PAGE, "utf8");
+    expect(src).toContain("if (auth.level < GLOBAL_VERSION_WRITE_MIN) redirect(");
+    expect(src).toContain('e instanceof RecipeVersionError && e.status === 403) redirect("/dashboard")');
+    expect(src).toContain("<ShopChangesClient view={view} />");
+  });
+});
+
+describe("the admin hub card for Shop changes", () => {
+  it("Shop changes is the Director of Operations' (MoO+, 8)", async () => {
+    const { adminSectionsFor } = await import("@/lib/admin/sections");
+    const ids = (level: number) => adminSectionsFor(level).map((s) => s.id);
+    expect(ids(8)).toContain("shop-changes");
+    expect(ids(7)).not.toContain("shop-changes");
+    expect(adminSectionsFor(9).find((s) => s.id === "shop-changes")?.href).toBe("/admin/catalog/shop-changes");
   });
 });

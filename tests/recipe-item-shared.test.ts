@@ -294,3 +294,24 @@ describe("a line keeps its identity across a shop save (Astra chunks 3-4 P2 #1: 
     expect(recipeLineKeys([{ lineId: "x1", lineage: ["r"] }, { lineId: "x2", lineage: ["r"] }])).toEqual(["r", "x2"]);
   });
 });
+
+describe("the Shop changes list: a preview belongs to the row as it was when previewed (mirrors the pages' Preview again)", () => {
+  it("a row's revision moves with anything the preview showed — the shop's lines, its price or names, the default it is compared with", async () => {
+    const { shopChangeRowRevision } = await import("@/lib/catalog/recipe-item-shared");
+    const menu = {
+      menuItemId: R, menuItemName: "Italian", settingId: "s1", shopId: SHOP, shopName: "P Street", validFrom: "2026-10-14T00:00:00Z",
+      createdByName: "Ana", price: 13.5, soldHere: true, nameOverride: null, nameOverrideEs: null, global: { price: 12.5, name: "Italian", nameEs: "Italiano" },
+    };
+    expect(shopChangeRowRevision(menu)).toBe(shopChangeRowRevision({ ...menu }));
+    expect(shopChangeRowRevision({ ...menu, global: { ...menu.global, price: 13 } })).not.toBe(shopChangeRowRevision(menu));
+    expect(shopChangeRowRevision({ ...menu, nameOverrideEs: "Grande" })).not.toBe(shopChangeRowRevision(menu));
+    const recipe = {
+      recipeId: R, recipeName: "Italian", versionId: V, shopId: SHOP, shopName: "P Street", validFrom: "2026-10-14T00:00:00Z",
+      createdByName: "Ana", adoptedFromShopName: null, changes: [], sameAsDefault: true,
+    };
+    const moved = { ...recipe, sameAsDefault: false, changes: [{ kind: "removed" as const, key: "sku:x", before: null, after: null }] };
+    expect(shopChangeRowRevision(moved)).not.toBe(shopChangeRowRevision(recipe));
+    // the name of who made it is not part of what a preview binds
+    expect(shopChangeRowRevision({ ...recipe, createdByName: "Bo" })).toBe(shopChangeRowRevision(recipe));
+  });
+});

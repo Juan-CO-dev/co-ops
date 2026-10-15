@@ -440,3 +440,13 @@ export interface ShopChangesView {
   /** recipeLineTargetKey → display name, for every change listed. */
   names: Record<string, string>;
 }
+
+/**
+ * WHAT A SHOP CHANGES PREVIEW WAS COMPUTED AGAINST (mirrors the pages' "Preview again", Astra chunks 3-4 P2 #2): every
+ * field the row shows — the shop's lines against the default, its price, sold here and both names, the global values
+ * it is compared with. When a refresh brings the row back different (another manager saved, the default moved) or not
+ * at all, the open preview and its Save are dropped. Who made it is not part of what a preview binds.
+ */
+export function shopChangeRowRevision(row: ShopChangeRecipeRow | ShopChangeMenuRow): string {
+  return JSON.stringify({ ...row, createdByName: null });
+}
