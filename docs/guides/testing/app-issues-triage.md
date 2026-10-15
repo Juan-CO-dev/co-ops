@@ -592,3 +592,6 @@ Not fixed yet. For a later batch; none blocks the guides.
 - **"SUBMIT OPENING" sits on "SUBMITTING…" for a few seconds** before Phase 2 opens. A progress hint would stop double taps.
 - **Sim data:** the Baldor usual order includes Cholula, which isn't a Baldor item. Sim seed only; check the prod usual-order lines before launch.
 - **Open question for Juan:** where does a key holder or AGM get the **Projected (from Toast)** cash figure? Sales is GM-only in the app. The guide says "from Toast" and nothing more.
+- **Prep "Uses:" summary drops the unit** (`ProductionConsumptionPanel.tsx:165`, `fmtQty`): "Uses: 1.02 Iceberg · ~685 oz" means 1.02 *cases*; the default display unit (case > each > oz) is never printed. Add the unit word ("1.02 case Iceberg"). Also sanity-check the sim's shredded-iceberg recipe yield: ~685 oz for 5 × 1/3 pan looks high.
+- **After "End my shift", My shift still shows "Claim / change station" and the Station drop-down** (staff walk, 2026-10-14). They should hide once the shift ends.
+- **My Performance DAY view: charts stay as dashes / a lone mark**; WEEK draws fine (seen again on the B9 sim; photo 41 now uses WEEK).
