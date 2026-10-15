@@ -132,7 +132,7 @@ describe("hub readiness is attributed per scope (lead decision (c), Astra 3a r2#
     expect(itemsLandingView({ location: LOC })).toBe("registry");
     expect(itemsLandingView({})).toBe("catalog");
     expect(itemsLandingView({ view: "catalog", location: LOC })).toBe("catalog");
-    expect(readFileSync("app/admin/items/page.tsx", "utf8")).toContain("itemsLandingView(sp)");
+    expect(readFileSync("app/admin/items/page.tsx", "utf8")).toContain("itemsLandingView({ view: sp.view, location: explicit })");
   });
   it("the recipes and items lists read the scope the hub links to", () => {
     for (const f of ["app/admin/recipes/page.tsx", "app/admin/items/page.tsx"]) {

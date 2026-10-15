@@ -355,6 +355,9 @@ const PAGE_ROUTES: Record<string, string> = {
   // links land on; they read no shop parameter of their own.
   "app/admin/skus/page.tsx": "/admin/skus",
   "app/admin/vendors/[id]/page.tsx": "/admin/vendors/v",
+  // catalog Phase 3a — readiness at a shop (the hub's attributed counts deep-link ?location=<shop>).
+  "app/admin/recipes/page.tsx": "/admin/recipes",
+  "app/admin/items/page.tsx": "/admin/items",
 };
 
 /** Where each audited page binds the awaited `searchParams` its getter reads. */
@@ -453,6 +456,9 @@ const RESOLVER_PAGES: Record<string, RegExp> = {
   "app/ordering/page.tsx": /location \?\? \(await resolveShopId\(accessible\.map/,
   // Catalog Phase 2a: "global" is the explicit All-shops view; otherwise the one resolver over the readable shops.
   "app/admin/menu-costing/page.tsx": /explicit === "global" \? null : await resolveShopId\(shops\.map\(\(s\) => s\.id\), explicit \?\? null\)/,
+  // Catalog Phase 3a: an explicit shop goes through the one resolver; absent / "global" is the default (not remembered).
+  "app/admin/recipes/page.tsx": /explicit && explicit !== "global" && shops\.some\(\(s\) => s\.id === explicit\)\s*\? await resolveShopId\(shops\.map\(\(s\) => s\.id\), explicit\) : null/,
+  "app/admin/items/page.tsx": /explicit && explicit !== "global" && shops\.some\(\(s\) => s\.id === explicit\)\s*\? await resolveShopId\(shops\.map\(\(s\) => s\.id\), explicit\) : null/,
 };
 
 describe("source shape — every shop-defaulting page uses the one resolver", () => {

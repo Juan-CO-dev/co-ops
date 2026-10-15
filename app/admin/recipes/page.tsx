@@ -14,6 +14,8 @@ import { getRoleLevel } from "@/lib/roles";
 import { serverT } from "@/lib/i18n/server";
 import { loadRecipes, RECIPE_READ_MIN } from "@/lib/recipes";
 import { loadActiveShopsForReadiness, loadGraphReadiness } from "@/lib/admin/readiness-load";
+import { resolveShopId } from "@/lib/shop-context";
+import { searchParamValues, shopParamFor } from "@/lib/shop-context-shared";
 import type { Readiness } from "@/lib/readiness";
 import { RecipesClient } from "@/components/admin/recipes/RecipesClient";
 import { PageHeader } from "@/components/ui/PageHeader";
@@ -29,9 +31,13 @@ export default async function AdminRecipesPage({ searchParams }: { searchParams:
   const lang = auth.user.language;
   // ?location=<shop> shows THAT shop's readiness (its resolved recipes — lead decisions 4 and (c)); the hub's
   // attributed counts link here. Absent or "global" = the default, labelled.
-  const { location } = await searchParams;
+  // Read through the shop-context getter and the one resolver (route contract, lib/shop-context-shared.ts). Absent
+  // or "global" = the default — never the remembered shop: this list's scope is what the link asked for.
+  const sp = await searchParams;
+  const explicit = shopParamFor("/admin/recipes", searchParamValues(sp));
   const shops = await loadActiveShopsForReadiness();
-  const scope = location && location !== "global" && shops.some((s) => s.id === location) ? location : null;
+  const scope = explicit && explicit !== "global" && shops.some((s) => s.id === explicit)
+    ? await resolveShopId(shops.map((s) => s.id), explicit) : null;
   const scopeName = scope ? shops.find((s) => s.id === scope)?.name ?? null : null;
 
   const recipes = await loadRecipes(auth);

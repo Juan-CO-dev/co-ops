@@ -16,6 +16,8 @@ import { loadItemsAdminView, ITEMS_READ_MIN } from "@/lib/admin/items";
 import { loadCatalogView } from "@/lib/admin/catalog";
 import { loadActiveShopsForReadiness, loadGraphReadiness } from "@/lib/admin/readiness-load";
 import { itemsLandingView } from "@/lib/admin/readiness-scope-shared";
+import { resolveShopId } from "@/lib/shop-context";
+import { searchParamValues, shopParamFor } from "@/lib/shop-context-shared";
 import type { Readiness } from "@/lib/readiness";
 import { ItemsClient } from "@/components/admin/items/ItemsClient";
 import { CatalogClient } from "@/components/admin/catalog/CatalogClient";
@@ -32,10 +34,13 @@ export default async function AdminItemsPage({ searchParams }: {
   const sp = await searchParams;
   // A shop-scoped link (the hub's attributed readiness) opens the REGISTRY tab — the one that reads the scoped
   // readiness; the catalog tab's readiness stays the default's (loadCatalogView, global by intent).
-  const initialView = itemsLandingView(sp);
+  // ?location= is read through the shop-context getter and the one resolver (route contract). Absent or "global" =
+  // the default — never the remembered shop: this view's scope is what the link asked for.
+  const explicit = shopParamFor("/admin/items", searchParamValues(sp));
+  const initialView = itemsLandingView({ view: sp.view, location: explicit });
   const shops = await loadActiveShopsForReadiness();
-  const location = sp.location;
-  const scope = location && location !== "global" && shops.some((s) => s.id === location) ? location : null;
+  const scope = explicit && explicit !== "global" && shops.some((s) => s.id === explicit)
+    ? await resolveShopId(shops.map((s) => s.id), explicit) : null;
   const scopeName = scope ? shops.find((s) => s.id === scope)?.name ?? null : null;
 
   const [view, entities] = await Promise.all([
