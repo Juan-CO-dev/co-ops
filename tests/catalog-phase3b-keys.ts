@@ -64,4 +64,7 @@ export const PHASE3B_KEYS = [
   "catalog.recipe.restore_as_shop", "catalog.recipe.preview.becomes_shop_version",
   // Astra chunks 3-4 P2 #2: an edit after a preview drops it — "Preview again" (both pages).
   "catalog.recipe.preview_again", "catalog.recipe.preview_again_hint", "catalog.menu.preview_again", "catalog.menu.preview_again_hint",
+  // Astra chunk-5 P2/P3: a read-only view still shows the current settings; History shows the Spanish name.
+  "catalog.menu.now.title", "catalog.menu.now.price", "catalog.menu.now.global", "catalog.menu.now.sold",
+  "catalog.menu.now.name", "catalog.menu.now.name_es", "catalog.menu.history_name_es",
 ] as const;

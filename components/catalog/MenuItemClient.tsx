@@ -29,6 +29,7 @@ import { useRouter } from "next/navigation";
 import { useTranslation } from "@/lib/i18n/provider";
 import type { TranslationKey, TranslationParams } from "@/lib/i18n/types";
 import { formatCents, formatDateLabel } from "@/lib/i18n/format";
+import { etDisplayDate } from "@/lib/operational-day";
 import { CollapsibleSection } from "@/components/ui/CollapsibleSection";
 import { useStepUp } from "@/components/admin/StepUpProvider";
 import { useStepUpPost } from "@/components/admin/useStepUpPost";
@@ -103,7 +104,8 @@ export function MenuStaleNotice({ moves, busy, onRebase }: { moves: MenuRowMove[
 export function MenuHistoryList({ view, busy, onRestore }: { view: MenuItemPageView; busy: boolean; onRestore: (fromSettingId: string) => void }) {
   const { t, language } = useTranslation();
   const money = (n: number | null) => (n == null ? "—" : formatCents(Math.round(n * 100), language));
-  const day = (iso: string) => formatDateLabel(iso.slice(0, 10), language);
+  // The operational (ET) day, never the UTC date (Astra chunk-5 P3: a 9:30 PM save in DC is that day, not tomorrow).
+  const day = (iso: string) => formatDateLabel(etDisplayDate(iso), language);
   return (
     <ul className="flex flex-col gap-2 p-3">
       {view.history.map((h) => (
@@ -113,6 +115,8 @@ export function MenuHistoryList({ view, busy, onRestore }: { view: MenuItemPageV
             {h.price !== null ? <span className="block text-xs">{t("catalog.menu.history_price", { price: money(h.price) })}</span> : null}
             {!h.soldHere ? <span className="block text-xs">{t("catalog.menu.history_off")}</span> : null}
             {h.nameOverride ? <span className="block text-xs">{t("catalog.menu.history_name", { name: h.nameOverride })}</span> : null}
+            {/* The Spanish name too (Astra chunk-5 P3): a Spanish-only change — e.g. the one a refused promote saved — is visible. */}
+            {h.nameOverrideEs ? <span className="block text-xs">{t("catalog.menu.history_name_es", { name: h.nameOverrideEs })}</span> : null}
           </span>
           {h.active ? (
             <span className="text-xs font-bold text-co-confirm-text">{t("catalog.menu.current")}</span>
@@ -122,6 +126,29 @@ export function MenuHistoryList({ view, busy, onRestore }: { view: MenuItemPageV
         </li>
       ))}
     </ul>
+  );
+}
+
+/**
+ * The settings in force in this view, READ-ONLY (Astra chunk-5 P2): everyone who may read the page sees the price, sold
+ * here and both names — a level-6 reader, a GM looking at another shop, anyone on the global menu. Only the edit
+ * controls are withheld. A shop riding the global price says so; "sold here" belongs to a shop, never the global menu.
+ */
+export function MenuCurrentSettings({ view }: { view: MenuItemPageView }) {
+  const { t, language } = useTranslation();
+  const money = (n: number | null) => (n == null ? "—" : formatCents(Math.round(n * 100), language));
+  const yesNo = (b: boolean) => t(b ? "catalog.menu.preview.yes" : "catalog.menu.preview.no");
+  const ridesGlobalPrice = view.scope !== null && view.here.price === null;
+  return (
+    <div className="mt-2 flex min-w-0 flex-col gap-1 break-words">
+      <p className={eyebrow}>{t("catalog.menu.now.title")}</p>
+      <p className="text-sm text-co-text">
+        {t("catalog.menu.now.price", { price: money(view.here.typedPrice) })}{ridesGlobalPrice ? ` ${t("catalog.menu.now.global")}` : ""}
+      </p>
+      {view.scope !== null ? <p className="text-sm text-co-text">{t("catalog.menu.now.sold", { value: yesNo(view.here.soldHere) })}</p> : null}
+      <p className="text-sm text-co-text">{t("catalog.menu.now.name", { name: view.here.name })}</p>
+      <p className="text-sm text-co-text">{t("catalog.menu.now.name_es", { name: view.here.nameEs ?? "—" })}</p>
+    </div>
   );
 }
 
@@ -291,6 +318,7 @@ export function MenuItemClient({ view }: { view: MenuItemPageView }) {
   const canEdit = view.scope !== null && view.can.editShop;
   const readOnly = !canEdit ? (
     <div className="mt-2 flex flex-col gap-2">
+      <MenuCurrentSettings view={view} />
       <p role="note" className="text-sm text-co-text">
         {view.can.shopsToEdit.length === 0 ? t("catalog.menu.view_only")
           : view.scope === null ? t("catalog.menu.global_view_hint")
