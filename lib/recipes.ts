@@ -21,6 +21,14 @@ import {
   type RecipeListRow,
   isValidShelfLifeDays,
 } from "@/lib/recipes-shared";
+import {
+  diffRecipeLine,
+  lineFromRow,
+  lineToRow,
+  normalizeRecipeLine,
+  type RecipeLineFields,
+  type RecipeLineRow,
+} from "@/lib/recipe-line-shared";
 
 // Client-safe surface lives in lib/recipes-shared.ts (see its header for why);
 // re-exported here so existing server consumers keep their import paths.
@@ -143,6 +151,39 @@ function componentTargets(input: {
   const productId = input.componentProductId ?? null;
   const count = (skuId !== null ? 1 : 0) + (itemId !== null ? 1 : 0) + (productId !== null ? 1 : 0);
   return { skuId, itemId, productId, count };
+}
+
+/**
+ * ONE validator for a line about to be written — shared by addRecipeInput and
+ * updateRecipeInput (catalog Phase 1), so an edit can never author what an add would refuse.
+ *  · a PRODUCT line: an active product measured in an ACTIVE measure-registry unit of any
+ *    dimension (D3, assertProductLineIsValid above);
+ *  · an ITEM line: must not make this recipe consume its own output, directly or through a
+ *    chain of prep recipes. createRecipeFull always had this guard; addRecipeInput did not,
+ *    so a single added line could close a loop the flatten then had to survive.
+ * Mass balance is NOT a write rule: it is the costing board's read-time consistency check
+ * (lib/menu-costing-shared.ts massBalanceIndex) and applies to any line once it is saved.
+ */
+async function assertInputLineIsValid(
+  sb: ReturnType<typeof getServiceRoleClient>,
+  recipeId: string,
+  line: { componentItemId: string | null; componentProductId: string | null; unit: string | null },
+): Promise<void> {
+  if (line.componentProductId !== null) await assertProductLineIsValid(sb, line.componentProductId, line.unit);
+  if (line.componentItemId !== null) {
+    const { data: outs, error } = await sb
+      .from("recipe_outputs")
+      .select("output_item_id")
+      .eq("recipe_id", recipeId)
+      .not("output_item_id", "is", null)
+      .returns<Array<{ output_item_id: string }>>();
+    if (error) throw new Error(`assertInputLineIsValid outputs: ${error.message}`);
+    for (const o of outs ?? []) {
+      if (await itemConsumesTransitively(line.componentItemId, o.output_item_id)) {
+        throw new RecipeError(400, "would_create_cycle");
+      }
+    }
+  }
 }
 
 /** List recipes (>=6), optional type filter, with hydrated output names + completeness flags. */
@@ -523,7 +564,7 @@ export async function addRecipeInput(actor: AuthContext, input: { recipeId: stri
   if (count !== 1) throw new RecipeError(400, "invalid_component");
   if (!(input.quantity > 0)) throw new RecipeError(400, "invalid_quantity");
   const sb = getServiceRoleClient();
-  if (productId !== null) await assertProductLineIsValid(sb, productId, input.unit ?? null);
+  await assertInputLineIsValid(sb, input.recipeId, { componentItemId: itemId, componentProductId: productId, unit: input.unit ?? null });
   const { data: max } = await sb.from("recipe_inputs").select("display_order").eq("recipe_id", input.recipeId).order("display_order", { ascending: false }).limit(1).maybeSingle<{ display_order: number }>();
   const { data, error } = await sb.from("recipe_inputs").insert({ recipe_id: input.recipeId, component_sku_id: skuId, component_item_id: itemId, component_product_id: productId, quantity: input.quantity, unit: normStr(input.unit), each_container_label: normStr(input.eachContainerLabel), portioned: input.portioned ?? false, display_order: (max?.display_order ?? 0) + 1, created_by: actor.user.id })
     .select("id").maybeSingle<{ id: string }>();
@@ -531,6 +572,82 @@ export async function addRecipeInput(actor: AuthContext, input: { recipeId: stri
   if (!data) throw new Error("addRecipeInput returned no row");
   await audit({ actorId: actor.user.id, actorRole: actor.user.role, action: "recipe_input.add", resourceTable: "recipe_inputs", resourceId: data.id, metadata: { recipe_id: input.recipeId, component_sku_id: skuId, component_item_id: itemId, component_product_id: productId, quantity: input.quantity }, ipAddress: null, userAgent: null });
   return { id: data.id };
+}
+
+/**
+ * Edit ONE recipe line in place (catalog redesign Phase 1, 2026-10-15): quantity, unit, and the
+ * ingredient itself (any of the three targets).
+ *
+ * THE STORAGE RULE. recipe_inputs rows are CONFIG EDGES, not history: no active/superseded/
+ * updated_at columns, a removal is a hard DELETE whose before-row rides the audit, and nothing
+ * keys on a line's id — production_inputs snapshot the SKU and the ounces of each batch (0102),
+ * so an edit never rewrites a past batch, count or sale. A line's history lives in audit_log,
+ * as it already does for add and remove. Seeds 22/25/32 edit lines this way under this action.
+ *
+ * COMPARE-AND-SET (Astra r1 P2-4). The UPDATE is conditional on (id, recipe_id) AND on every
+ * column equalling `expected` — the line the client saw — and RETURNS the written row. 0 rows:
+ * the row still on this recipe → 409 line_changed (someone else edited it first; nothing is
+ * overwritten); gone or on another recipe → 404 edge_not_found. The audit's `before` is the
+ * matched expected line and its `after` is the returned row — never a separate read that could
+ * race. Same validator as add (assertInputLineIsValid). An edit that changes nothing (compared
+ * normalised) writes and audits nothing. No migration: full expected values, no version column.
+ */
+export async function updateRecipeInput(
+  actor: AuthContext,
+  input: { recipeId: string; inputId: string; line: RecipeLineFields; expected: RecipeLineFields },
+): Promise<{ changed: boolean }> {
+  requireLevel(actor, RECIPE_WRITE_MIN);
+  const { line, expected } = input;
+  if (componentTargets(line).count !== 1) throw new RecipeError(400, "invalid_component");
+  if (!(Number.isFinite(line.quantity) && line.quantity > 0)) throw new RecipeError(400, "invalid_quantity");
+  if (componentTargets(expected).count !== 1) throw new RecipeError(400, "invalid_payload");
+
+  const changed = diffRecipeLine(normalizeRecipeLine(expected), line);
+  if (changed.length === 0) return { changed: false };
+
+  const sb = getServiceRoleClient();
+  await assertInputLineIsValid(sb, input.recipeId, line);
+
+  const seen = lineToRow(expected);
+  const match: Array<[string, string | number | boolean | null]> = [
+    ["component_sku_id", seen.component_sku_id],
+    ["component_item_id", seen.component_item_id],
+    ["component_product_id", seen.component_product_id],
+    ["quantity", seen.quantity],
+    ["unit", seen.unit],
+    ["each_container_label", seen.each_container_label],
+    ["portioned", seen.portioned],
+  ];
+  let write = sb.from("recipe_inputs").update(lineToRow(line)).eq("id", input.inputId).eq("recipe_id", input.recipeId);
+  for (const [col, value] of match) write = value === null ? write.is(col, null) : write.eq(col, value);
+  const { data: written, error } = await write
+    .select("component_sku_id, component_item_id, component_product_id, quantity, unit, each_container_label, portioned")
+    .returns<RecipeLineRow[]>();
+  if (error) throw new Error(`updateRecipeInput: ${error.message}`);
+
+  const row = written?.[0];
+  if (!row) {
+    const { data: still, error: readErr } = await sb
+      .from("recipe_inputs")
+      .select("id")
+      .eq("id", input.inputId)
+      .eq("recipe_id", input.recipeId)
+      .maybeSingle<{ id: string }>();
+    if (readErr) throw new Error(`updateRecipeInput recheck: ${readErr.message}`);
+    throw still ? new RecipeError(409, "line_changed") : new RecipeError(404, "edge_not_found");
+  }
+
+  await audit({
+    actorId: actor.user.id,
+    actorRole: actor.user.role,
+    action: "recipe_input.update",
+    resourceTable: "recipe_inputs",
+    resourceId: input.inputId,
+    metadata: { recipe_id: input.recipeId, changed_fields: changed, before: seen, after: lineToRow(lineFromRow(row)) },
+    ipAddress: null,
+    userAgent: null,
+  });
+  return { changed: true };
 }
 
 export async function addRecipeOutput(actor: AuthContext, input: { recipeId: string; outputItemId?: string | null; outputMenuItemId?: string | null; yield: number; outputContainerLabel?: string | null }): Promise<{ id: string }> {

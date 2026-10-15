@@ -239,7 +239,6 @@ export const NON_DESTRUCTIVE_ACTIONS = [
   "receipt.parsed",
   "receipt.po_linked",
   "recipe.input_unit_normalize",
-  "recipe_input.update",
   // Batch vs bottle Phase B (0218): a Retrain note on a yield-drift nudge. It records that the
   // drift is a training question and snoozes that nudge; it changes NO recipe, par or stock, so
   // it is not an answer to "who changed the kitchen?" (the card edit is recipe_output.update).

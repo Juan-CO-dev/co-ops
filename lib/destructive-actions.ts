@@ -160,6 +160,11 @@ export const DESTRUCTIVE_ACTIONS = [
   "recipe.deactivate",
   "recipe_input.add",
   "recipe_input.remove",
+  // Catalog Phase 1 (2026-10-15): a human edits a recipe line in place (qty, unit, or the
+  // ingredient itself) — the same act as remove + add, so it answers "who changed the
+  // kitchen?" like its siblings. Seeds 22/25/32 wrote it earlier as non-destructive; those
+  // rows keep the flag they were written with (audit rows are never updated).
+  "recipe_input.update",
   "recipe_output.add",
   "recipe_output.remove",
   // Batch vs bottle Phase B (0218): a GM rewrites a batch recipe card's yield from the drift
