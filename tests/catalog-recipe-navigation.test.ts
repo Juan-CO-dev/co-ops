@@ -84,6 +84,22 @@ describe("the recipe page's writes", () => {
 
 // ── The menu item page (plan Task 9; the pins chunk 4 deferred) ───────────────
 const MENU_CLIENT = "components/catalog/MenuItemClient.tsx";
+const MENU_PAGE = "app/admin/catalog/menu-item/[id]/page.tsx";
+
+describe("the menu item page remounts per (item, shop)", () => {
+  it("keys the client by pageClientKey", () => {
+    expect(readFileSync(MENU_PAGE, "utf8")).toContain('key={pageClientKey("menu", view.item.id, view.scope)}');
+  });
+  it("reads ?location= through the one getter and the one resolver; 'global' is the default; the lib's 403 / 404 never crash", () => {
+    const src = readFileSync(MENU_PAGE, "utf8");
+    expect(src).toContain("shopParamFor(`/admin/catalog/menu-item/${id}`, searchParamValues(sp))");
+    expect(src).toContain('explicit === "global" ? null');
+    expect(src).toContain("await resolveShopId(mine, explicit)");
+    expect(src).toContain('e instanceof MenuShopError && e.status === 403) redirect("/dashboard")');
+    expect(src).toContain("e instanceof MenuShopError && e.status === 404) notFound()");
+    expect(src).not.toMatch(/["'](EM|MEP)["']/);
+  });
+});
 
 describe("the menu item page's writes", () => {
   it("previews run through the guard; a save posts exactly the previewed change and its token (Tier E)", () => {
