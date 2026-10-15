@@ -9,6 +9,8 @@ import path from "node:path";
 import {
   cashToastRowCounts,
   computeToastCashProjected,
+  nextPrefillBaseline,
+  prefillBaselineKey,
   projectedEditedFromPrefill,
   submittedToastLine,
   toastPrefillCents,
@@ -74,6 +76,16 @@ describe("computeToastCashProjected", () => {
     expect(r).toEqual({ cents: 2125, asOf: AS_OF });
   });
 
+  it("excludes a VOIDED cash payment with a NEGATIVE amount (Astra fixture)", () => {
+    const r = computeToastCashProjected(facts({
+      payments: [
+        { ...OK, amount_cents: 5000 },
+        { ...OK, payment_status: "VOIDED", void_business_date: "2026-10-14", amount_cents: -2452 },
+      ],
+    }));
+    expect(r).toEqual({ cents: 5000, asOf: AS_OF });
+  });
+
   it("subtracts cash refunds dated the day, never tips", () => {
     const r = computeToastCashProjected(facts({
       payments: [{ ...OK, amount_cents: 10_000 }],
@@ -127,6 +139,20 @@ describe("prefill + changed hint", () => {
     // a negative Toast net prefills 0.00 — leaving it untouched is not an edit
     expect(projectedEditedFromPrefill(0, { cents: -500, asOf: AS_OF })).toBe(false);
   });
+  it("form baseline: kept across a refresh that brings a newer Toast figure", () => {
+    const prev = { key: prefillBaselineKey("shop-a", "2026-10-14"), toast: { cents: 1000, asOf: AS_OF } };
+    const newer = { cents: 1300, asOf: "2026-10-14T23:20:00Z" };
+    const next = nextPrefillBaseline(prev, "shop-a", "2026-10-14", newer);
+    expect(next).toBe(prev); // same object = no reset
+    // the draft still holds the 10.00 prefill: not an edit, even though Toast now says 13.00
+    expect(projectedEditedFromPrefill(1000, next.toast)).toBe(false);
+  });
+  it("form baseline: resets to the current figure when the shop or business date changes", () => {
+    const prev = { key: prefillBaselineKey("shop-a", "2026-10-14"), toast: { cents: 1000, asOf: AS_OF } };
+    const cur = { cents: 400, asOf: AS_OF };
+    expect(nextPrefillBaseline(prev, "shop-b", "2026-10-14", cur)).toEqual({ key: "shop-b|2026-10-14", toast: cur });
+    expect(nextPrefillBaseline(prev, "shop-a", "2026-10-15", null)).toEqual({ key: "shop-a|2026-10-15", toast: null });
+  });
   it("submitted view: neutral line, never 'Changed'", () => {
     expect(submittedToastLine(1000, null, null)).toBe("none");
     expect(submittedToastLine(1000, 1000, null)).toBe("none");
@@ -149,6 +175,19 @@ describe("migration 0253 posture", () => {
     expect(lower).toContain("add column toast_projected_cents bigint");
     expect(lower).toContain("add column toast_projected_as_of timestamptz");
     expect(lower).not.toMatch(/drop column|alter column|not null default/);
+  });
+
+  it("builds no index inside the cash_reports transaction (the index is 0254)", () => {
+    const code = lower.split("\n").filter((l) => !l.trim().startsWith("--")).join("\n");
+    expect(code).not.toMatch(/create\s+index/);
+  });
+
+  it("0254 builds the CASH paid-day index CONCURRENTLY, outside any transaction", () => {
+    const idx = readFileSync(path.resolve(__dirname, "../supabase/migrations/0254_toast_payments_cash_paid_date_index.sql"), "utf8");
+    const code = idx.split("\n").filter((l) => !l.trim().startsWith("--")).join("\n").toLowerCase();
+    expect(code).toMatch(/create index concurrently if not exists toast_payments_cash_paid_date\s+on public\.toast_payments\(paid_business_date\)\s+where type = 'cash';/);
+    expect(code).not.toMatch(/\bbegin\b|\bcommit\b/);
+    expect(idx).toMatch(/OUTSIDE A TRANSACTION/);
   });
 
   it("leaves 0188's submit_cash_report_atomic untouched (unwired; no re-emit, no drop)", () => {

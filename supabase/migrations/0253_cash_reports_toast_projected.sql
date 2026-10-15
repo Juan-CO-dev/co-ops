@@ -3,8 +3,9 @@
 --
 -- B10 (owner decision, final): the Cash Deposit page's "Projected (from Toast)" box PREFILLS from
 -- Toast — that shop's Toast CASH payments for the business day — and stays editable. The saved
--- deposit records BOTH the Toast figure (and its as-of instant) and the typed figure, so a change is
--- visible later ("Changed from Toast ($X)" on the form and on the submitted view).
+-- deposit records BOTH the Toast figure (and its as-of instant) and the typed figure. The FORM says
+-- "Changed from Toast ($X)" when the key holder edits the prefill; the SUBMITTED view stays neutral
+-- ("Toast at save: $X · <time>"), because Toast can advance between page load and save.
 --
 -- ── WHAT THIS FILE DOES ───────────────────────────────────────────────────────────────
 --   1. cash_reports + toast_projected_cents bigint, toast_projected_as_of timestamptz. Nullable,
@@ -16,9 +17,9 @@
 --      that decides what counts is pure TypeScript in lib/cash-toast-shared.ts, pinned by
 --      tests/cash-toast-projected.test.ts. Returning a single jsonb value means PostgREST's
 --      1000-row cap never applies.
---   3. A partial index on toast_payments(paid_business_date) WHERE type = 'CASH', so the paid-day
---      read is bounded by the day instead of scanning every payment snapshot ever captured. The
---      refund-day read uses the existing toast_payments_refund_date partial index (0221).
+--   3. NO index here. The optional CASH paid-day partial index is 0254 (CREATE INDEX CONCURRENTLY,
+--      outside any transaction); the unindexed read measured ~45 ms on prod. The refund-day read
+--      uses the existing toast_payments_refund_date partial index (0221).
 --   4. submit_cash_report_atomic (0188) is deliberately NOT touched. Nothing calls it (lib/cash.ts
 --      writes cash_reports directly and tests/audit-flags-cleanup.test.ts pins that), so re-emitting a
 --      live prod function nobody uses is risk with no benefit. lib/cash.ts's direct insert carries the
@@ -38,7 +39,7 @@
 --     and never zero.
 --
 -- ── AUTHORIZATION ─────────────────────────────────────────────────────────────────────
--- Both functions are SECURITY DEFINER with a pinned search_path, executable by service_role ONLY
+-- cash_toast_projected_facts is SECURITY DEFINER with a pinned search_path, executable by service_role ONLY
 -- (revoked from public, anon AND authenticated: the staff JWT is a valid PostgREST bearer, 0189).
 -- The cash page and /api/cash bind the location (lockLocationContext + the cash_report task gate)
 -- BEFORE any call; this file widens nothing.
@@ -57,13 +58,10 @@ alter table public.cash_reports add column toast_projected_as_of timestamptz;
 comment on column public.cash_reports.toast_projected_cents is
   'B10: the Toast CASH figure for the shop+day, computed by the SERVER at save time (never client-sent). '
   'Null = no Toast figure was recorded (pre-0253 rows, or no completed capture run). projected_cents is what '
-  'the key holder signed; a difference between the two is the "Changed from Toast" record.';
+  'the key holder signed. A difference is NOT necessarily a human change: Toast can advance between page load '
+  'and save, and this is the server re-read at save.';
 comment on column public.cash_reports.toast_projected_as_of is
   'B10: finished_at of the latest completed toast_capture_runs row for the shop+day when toast_projected_cents was read.';
-
-create index toast_payments_cash_paid_date
-  on public.toast_payments(paid_business_date)
-  where type = 'CASH';
 
 create function public.cash_toast_projected_facts(p_location_id uuid, p_business_date date)
 returns jsonb language sql stable security definer set search_path = pg_catalog, public as $$

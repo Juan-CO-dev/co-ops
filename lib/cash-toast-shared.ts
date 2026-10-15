@@ -101,6 +101,29 @@ export function toastPrefillDollars(toast: ToastProjected | null): string {
 }
 
 /**
+ * FORM: the Toast figure the Projected box was prefilled with, keyed by shop + business date.
+ * The form compares edits against THIS, not the current prop: a router.refresh() (e.g. a language
+ * switch) can bring a newer Toast figure while the input still holds the old prefill.
+ */
+export interface PrefillBaseline { key: string; toast: ToastProjected | null }
+
+export function prefillBaselineKey(locationId: string, date: string): string {
+  return `${locationId}|${date}`;
+}
+
+/**
+ * Keep the baseline unless the shop or business date changed — then the form resets (draft AND
+ * baseline together) to the current Toast figure. Returns `prev` itself when nothing changes, so
+ * the caller's during-render prev-compare (`next !== prev`) is the reset signal.
+ */
+export function nextPrefillBaseline(
+  prev: PrefillBaseline, locationId: string, date: string, current: ToastProjected | null,
+): PrefillBaseline {
+  const key = prefillBaselineKey(locationId, date);
+  return prev.key === key ? prev : { key, toast: current };
+}
+
+/**
  * FORM ONLY: true when the typed Projected differs from what the page PREFILLED. This is a true
  * statement about an edit ("Changed from Toast ($X)") — it compares against the figure the key
  * holder actually saw, never a later re-read.

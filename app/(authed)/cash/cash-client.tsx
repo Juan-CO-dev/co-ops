@@ -12,7 +12,15 @@ import {
   type Denominations,
   type OnShiftEntry,
 } from "@/lib/cash-shared";
-import { projectedEditedFromPrefill, toastPrefillCents, toastPrefillDollars, type ToastProjected } from "@/lib/cash-toast-shared";
+import {
+  nextPrefillBaseline,
+  prefillBaselineKey,
+  projectedEditedFromPrefill,
+  toastPrefillCents,
+  toastPrefillDollars,
+  type PrefillBaseline,
+  type ToastProjected,
+} from "@/lib/cash-toast-shared";
 import { formatCents, formatTime } from "@/lib/i18n/format";
 import { useTranslation } from "@/lib/i18n/provider";
 import type { Language } from "@/lib/i18n/types";
@@ -49,7 +57,20 @@ export function CashClient({
   const router = useRouter();
   const projectedHintId = useId();
   // Prefilled from Toast, editable. The server re-reads Toast at save and stores both figures.
+  // `baseline` is the figure the box was PREFILLED with: the "Changed from Toast" hint compares
+  // against it, never the current prop (a router.refresh() can bring a newer Toast figure while
+  // the draft keeps the old prefill). Draft + baseline reset together only when the shop or
+  // business date changes — during-render prev-compare, not an effect (AGENTS.md).
+  const [baseline, setBaseline] = useState<PrefillBaseline>(() => ({
+    key: prefillBaselineKey(locationId, date), toast: toastProjected,
+  }));
   const [projected, setProjected] = useState(() => toastPrefillDollars(toastProjected));
+  const nextBaseline = nextPrefillBaseline(baseline, locationId, date, toastProjected);
+  if (nextBaseline !== baseline) {
+    setBaseline(nextBaseline);
+    setProjected(toastPrefillDollars(nextBaseline.toast));
+  }
+  const prefilledToast = nextBaseline.toast;
   const [mode, setMode] = useState<"hand" | "denomination">("hand");
   const [handTotal, setHandTotal] = useState("");
   const [denoms, setDenoms] = useState<Denominations>({});
@@ -142,14 +163,14 @@ export function CashClient({
               />
             </label>
             <p id={projectedHintId} className="flex flex-col gap-0.5 text-xs">
-              {toastProjected ? (
+              {prefilledToast ? (
                 <>
                   <span className="text-co-text-muted">
-                    {t("cash.toast.from", { time: formatTime(toastProjected.asOf, language) })}
+                    {t("cash.toast.from", { time: formatTime(prefilledToast.asOf, language) })}
                   </span>
-                  {projectedEditedFromPrefill(projectedCents, toastProjected) ? (
+                  {projectedEditedFromPrefill(projectedCents, prefilledToast) ? (
                     <span className="font-semibold text-co-warning-text">
-                      {t("cash.toast.changed", { amount: formatCents(toastPrefillCents(toastProjected) ?? 0, language) })}
+                      {t("cash.toast.changed", { amount: formatCents(toastPrefillCents(prefilledToast) ?? 0, language) })}
                     </span>
                   ) : null}
                 </>
