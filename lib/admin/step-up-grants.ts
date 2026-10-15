@@ -7,6 +7,8 @@
  * consumes it with ONE conditional UPDATE. Postgres re-checks the WHERE under the row lock, so a
  * concurrent second consume matches 0 rows: single use is a property of the statement, not of a
  * read-then-write. A refused consume spends nothing.
+ * Consuming FIRST is deliberate: a grant is spent even if the action then fails (not found,
+ * a lib refusal) — that is what makes replay impossible; re-entering a password is acceptable.
  */
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import type { AuthContext } from "@/lib/session";

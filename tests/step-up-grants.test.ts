@@ -183,3 +183,41 @@ describe("POST /api/auth/step-up mints exactly what it was asked for", () => {
     }));
   });
 });
+
+describe("a malformed target id is a 400 before any grant is touched", () => {
+  const BAD = "not-a-uuid";
+  const params = (id: string) => ({ params: Promise.resolve({ id }) });
+  const updates = () => h.db.writes.filter((w) => w.table === "step_up_grants" && w.op === "update");
+
+  beforeEach(async () => {
+    await mintStepUpGrant({ sessionId: SESSION, userId: USER, purpose: { action: "product.retire", targetId: T } });
+  });
+
+  it("retire a product", async () => {
+    h.session.mockResolvedValue(ctx());
+    const res = await productActivePOST(json(`http://localhost/api/admin/products/${BAD}/active`, "POST", { active: false }), params(BAD));
+    expect(res.status).toBe(400);
+    expect((await res.json()).code).toBe("invalid_id");
+    expect(updates()).toEqual([]);
+    expect(grants()[0]?.consumed_at).toBeNull();
+    expect(h.setActive).not.toHaveBeenCalled();
+  });
+
+  it("delete a recipe", async () => {
+    h.session.mockResolvedValue(ctx("moo"));
+    const res = await recipeDELETE(new NextRequest(`http://localhost/api/admin/recipes/${BAD}`, { method: "DELETE" }), params(BAD));
+    expect(res.status).toBe(400);
+    expect((await res.json()).code).toBe("invalid_id");
+    expect(updates()).toEqual([]);
+    expect(h.deactivateRecipe).not.toHaveBeenCalled();
+  });
+
+  it("deactivate a SKU", async () => {
+    h.session.mockResolvedValue(ctx());
+    const res = await skuPATCH(json(`http://localhost/api/admin/skus/${BAD}`, "PATCH", { active: false }), params(BAD));
+    expect(res.status).toBe(400);
+    expect((await res.json()).code).toBe("invalid_id");
+    expect(updates()).toEqual([]);
+    expect(h.deactivateSku).not.toHaveBeenCalled();
+  });
+});

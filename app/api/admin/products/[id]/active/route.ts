@@ -3,6 +3,7 @@ import { requireSession } from "@/lib/session";
 import { ROLES } from "@/lib/roles";
 import { assertStepUp } from "@/lib/admin/step-up";
 import { consumeStepUpGrant } from "@/lib/admin/step-up-grants";
+import { isUuid } from "@/lib/admin/step-up-shared";
 import { jsonError, jsonOk, parseJsonBody } from "@/lib/api-helpers";
 import { setProductActive, ProductError } from "@/lib/products";
 
@@ -31,6 +32,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   if (typeof b.active !== "boolean") return jsonError(400, "invalid_payload", { field: "active" });
 
   if (b.active === false) {
+    if (!isUuid(id)) return jsonError(400, "invalid_id");
     const grant = await consumeStepUpGrant(ctx, "product.retire", id);
     if (!grant.ok) return jsonError(403, grant.code);
   } else {

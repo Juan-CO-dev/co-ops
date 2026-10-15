@@ -3,6 +3,7 @@ import { requireSession } from "@/lib/session";
 import { ROLES } from "@/lib/roles";
 import { assertStepUp } from "@/lib/admin/step-up";
 import { consumeStepUpGrant } from "@/lib/admin/step-up-grants";
+import { isUuid } from "@/lib/admin/step-up-shared";
 import { jsonError, jsonOk, parseJsonBody } from "@/lib/api-helpers";
 import { updateSku, deactivateSku, AdminSkuError, isSkuClass, type UpdateSkuChanges } from "@/lib/admin/skus";
 import type { SkuClass } from "@/lib/admin/catalog-shared";
@@ -61,6 +62,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   // Phase 1, Astra r1 P1-2). Every other write here rides the 15-minute edit window.
   if (ROLES[ctx.user.role].level < 7) return jsonError(403, "forbidden");
   if (hasActive && b.active === false) {
+    if (!isUuid(id)) return jsonError(400, "invalid_id");
     const grant = await consumeStepUpGrant(ctx, "sku.deactivate", id);
     if (!grant.ok) return jsonError(403, grant.code);
   } else {

@@ -87,6 +87,12 @@ export function isStepUpRefusal(code: string | null | undefined): boolean {
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+/** A grant target is a uuid. The destructive routes check the path id with this BEFORE touching a
+ *  grant, so a malformed id is a 400 and never reaches the uuid column (a 22P02 → 500). */
+export function isUuid(raw: unknown): raw is string {
+  return typeof raw === "string" && UUID_RE.test(raw);
+}
+
 /** The step-up POST's optional `purpose`: null when absent, "invalid" when malformed. */
 export function parseStepUpPurpose(raw: unknown): StepUpPurpose | null | "invalid" {
   if (raw === undefined || raw === null) return null;
