@@ -877,10 +877,12 @@ You do this once a night, before you confirm the closing. Key holders and up.
 
 ![Form filled: deposit $845.00, Even, and one name ticked](img/manager/37-cash-filled.png)
 
-**What to do** — Type the **Projected (from Toast)** amount. Count the drawer with **Enter total** or **Count by denomination**. Type the **Drawer total** and the **Cash tips**. Tick who worked under **On shift today**.
+**What to do** — Check the **Projected (from Toast)** amount. It fills in by itself with today's cash sales in Toast. Under it, a line says when: "From Toast · 10:40 PM". Count the drawer with **Enter total** or **Count by denomination**. Type the **Drawer total** and the **Cash tips**. Tick who worked under **On shift today**.
 
 **Worth knowing**
 
+- No Toast number yet? The box stays empty and says so. Type the projected amount yourself.
+- You can change the number. The form then says "Changed from Toast" with Toast's number. The saved deposit keeps Toast's number too.
 - **$200 stays in the register**. The deposit is the drawer total minus $200.
 - So the drawer total includes the $200. Count all the cash in the drawer.
 - On an even night, the drawer total is the projected amount plus $200. Example: projected $845, drawer $1,045, deposit $845, **Even**.
@@ -1004,7 +1006,7 @@ Lo haces una vez por noche. Encargado de llaves o más.
 Lo haces una vez por noche, antes de confirmar el cierre. Encargado de llaves o más.
 
 1. **Ábrelo.** En el tablero, toca **Reporte de caja**. La página se llama **Depósito de efectivo**. También sirve la tarjeta **Depósito de efectivo** o el botón **Hacer el depósito de efectivo** en el cierre.
-2. **Llénalo.** Escribe **Proyectado (de Toast)**. Cuenta la caja con **Ingresar total** o **Contar por billete**. Escribe **Total de la caja** y **Propinas en efectivo**. Marca en **En turno hoy** a quienes trabajaron. **$200 se quedan en la caja**: el depósito es el total de la caja menos $200. O sea, el total de la caja incluye los $200: cuenta todo el efectivo de la caja. En una noche exacta, el total de la caja es lo proyectado más $200. Ejemplo: proyectado $845, caja $1,045, depósito $845, **Exacto**. La app compara el depósito con lo proyectado y muestra si sobra o falta; esto sale cuando ya escribiste lo proyectado y la caja. Si no cuadra, explica en **Nota de sobra/falta (opcional)**. **En turno hoy** muestra a todo el equipo: marca solo a quienes trabajaron. **+ Agregar** suma un nombre.
+2. **Llénalo.** Revisa **Proyectado (de Toast)**. Se llena solo con las ventas en efectivo de hoy en Toast. Debajo, una línea dice cuándo: "De Toast · 10:40 PM". ¿Toast todavía no tiene la cifra? La casilla queda vacía y lo dice: escribe tú lo proyectado. Puedes cambiar el número; el formulario dice entonces "Cambiado respecto a Toast" con la cifra de Toast, y el depósito guardado también guarda la cifra de Toast. Cuenta la caja con **Ingresar total** o **Contar por billete**. Escribe **Total de la caja** y **Propinas en efectivo**. Marca en **En turno hoy** a quienes trabajaron. **$200 se quedan en la caja**: el depósito es el total de la caja menos $200. O sea, el total de la caja incluye los $200: cuenta todo el efectivo de la caja. En una noche exacta, el total de la caja es lo proyectado más $200. Ejemplo: proyectado $845, caja $1,045, depósito $845, **Exacto**. La app compara el depósito con lo proyectado y muestra si sobra o falta; esto sale cuando ya escribiste lo proyectado y la caja. Si no cuadra, explica en **Nota de sobra/falta (opcional)**. **En turno hoy** muestra a todo el equipo: marca solo a quienes trabajaron. **+ Agregar** suma un nombre.
 3. **Fírmalo.** Toca **Firmar y enviar depósito** y escribe tu PIN.
 4. **Listo.** Revisa los montos. Una línea verde dice **Depositado … · firmado por … a las …**. Debajo están los montos, el depósito, las propinas y quién estuvo en turno. En una noche exacta, esta página dice **Exacto**, igual que el formulario. Ya firmado, el depósito es de solo lectura: no lo puedes rehacer. Revisa los montos antes de firmar. Si el cierre se confirma antes de que alguien envíe el depósito, la página queda bloqueada: **El cierre de hoy ya está finalizado — el depósito de efectivo está bloqueado.** Al enviarlo se marca la línea de efectivo del cierre. Sin él no puedes confirmar el cierre.
 
