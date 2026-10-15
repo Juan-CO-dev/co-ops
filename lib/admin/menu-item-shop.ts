@@ -164,6 +164,42 @@ export async function loadMenuItemShopHistory(actor: AuthContext, menuItemId: st
 }
 
 
+/** Key-order-independent JSON, for comparing two snapshot parts. */
+function canonical(v: unknown): string {
+  if (Array.isArray(v)) return `[${v.map(canonical).join(",")}]`;
+  if (v !== null && typeof v === "object") {
+    const o = v as Record<string, unknown>;
+    return `{${Object.keys(o).sort().map((k) => `${JSON.stringify(k)}:${canonical(o[k])}`).join(",")}}`;
+  }
+  return JSON.stringify(v) ?? "undefined";
+}
+
+/**
+ * Did anything move between `before` (the promote's baseline) and `after` (re-taken after this operation's own
+ * shop save) OTHER than that save? 0263's snapshot is `{ item, settings: [live rows by shop], active_shops, costs }`;
+ * the save (0263 save_menu_item_shop_setting) touches only `settings` at its own shop — it closes the row the preview
+ * showed (`previousSettingId`) and opens `newSettingId`. So: every other part is unchanged, every other shop's live
+ * rows are unchanged, the shop had exactly the previewed row before and has exactly the new one after. Exported for
+ * tests.
+ */
+export function menuSnapshotMovedBeyondOwnSave(
+  before: MenuChangeSnapshot, after: MenuChangeSnapshot,
+  own: { locationId: string; previousSettingId: string; newSettingId: string },
+): boolean {
+  const keys = new Set([...Object.keys(before), ...Object.keys(after)]);
+  for (const k of keys) if (k !== "settings" && canonical(before[k]) !== canonical(after[k])) return true;
+  const rows = (s: MenuChangeSnapshot) => (Array.isArray(s.settings) ? (s.settings as Array<Record<string, unknown>>) : null);
+  const b = rows(before);
+  const a = rows(after);
+  if (b === null || a === null) return true;
+  const others = (xs: Array<Record<string, unknown>>) => xs.filter((x) => x.location_id !== own.locationId);
+  if (canonical(others(b)) !== canonical(others(a))) return true;
+  const mine = (xs: Array<Record<string, unknown>>) => xs.filter((x) => x.location_id === own.locationId).map((x) => x.id);
+  const bm = mine(b);
+  const am = mine(a);
+  return !(bm.length === 1 && bm[0] === own.previousSettingId && am.length === 1 && am[0] === own.newSettingId);
+}
+
 /**
  * PROMOTE (MoO+): a shop's price and/or name becomes the global one (menu_items), under a compare-and-set on
  * the global values the preview showed and the dependency snapshot of the global view alone (NIL_SCOPE; 0263
@@ -177,7 +213,11 @@ export async function loadMenuItemShopHistory(actor: AuthContext, menuItemId: st
  * name is first saved onto the source shop's own row (an ordinary audited shop save, compare-and-set on the row
  * the preview showed), and THAT row is promoted — after re-checking that the preview's snapshot still held
  * before anything was written. Two transactions: if the promote then refuses, the shop keeps its new Spanish
- * name (its own label, recorded in History) and nothing else moved.
+ * name (its own label, recorded in History) and nothing else moved. The promote is held to the PREVIEWED baseline
+ * (Astra full-branch review P2): the snapshot re-taken after the save may differ only by that save's own row
+ * (`menuSnapshotMovedBeyondOwnSave`); anything else is `dependencies_changed` — a new preview — never a promote that
+ * reaches shops the person did not see. (One transaction would need the promote RPC to take the Spanish name — a
+ * migration, which 3b does not have.)
  */
 export async function promoteMenuItemShopSetting(
   actor: AuthContext,
@@ -215,11 +255,11 @@ export async function promoteMenuItemShopSetting(
   if (typedEs !== null && typedEs !== row.name_override_es) {
     if (row.active === false) throw new MenuShopError(409, "not_live");
     if (row.name_override === null) throw new MenuShopError(400, "nothing_to_promote");
-    // Nothing is written on a moved preview: its snapshot must still hold BEFORE the Spanish name is saved.
-    if (snapshot !== undefined) {
-      const now = await loadMenuChangeSnapshot(input.menuItemId, NIL_SCOPE);
-      if (JSON.stringify(now) !== JSON.stringify(snapshot)) throw new MenuShopError(409, "dependencies_changed");
-    }
+    // Nothing is written on a moved preview: its snapshot must still hold BEFORE the Spanish name is saved. A direct
+    // call with no preview binds the snapshot it takes now — the baseline the promote below is held to.
+    const now = await loadMenuChangeSnapshot(input.menuItemId, NIL_SCOPE);
+    if (snapshot !== undefined && JSON.stringify(now) !== JSON.stringify(snapshot)) throw new MenuShopError(409, "dependencies_changed");
+    snapshot = now;
     const price = row.price === null ? null : Number(row.price);
     const saved = await writeSetting(actor, {
       menuItemId: input.menuItemId, locationId: row.location_id, expectedSettingId: row.id,
@@ -240,7 +280,20 @@ export async function promoteMenuItemShopSetting(
   };
   let r: PromoteResult;
   try {
-    if (spanishNameSaved !== null || snapshot === undefined) snapshot = await loadMenuChangeSnapshot(input.menuItemId, NIL_SCOPE);
+    if (spanishNameSaved !== null) {
+      // KEEP THE PREVIEWED BASELINE (Astra full-branch review P2). The name save and the promote are two
+      // transactions (0263's promote takes no Spanish name; one RPC would need a migration, and 3b has none), so the
+      // snapshot re-taken now may differ from the preview ONLY by this operation's own committed row. Anything else —
+      // another shop's inheritance, the item row, the active shops, a cost — moved between the two steps, and the
+      // promote could reach shops the person never saw: refuse, and the name save stands as the named partial result.
+      const after = await loadMenuChangeSnapshot(input.menuItemId, NIL_SCOPE);
+      if (menuSnapshotMovedBeyondOwnSave(snapshot!, after, { locationId: row.location_id, previousSettingId: row.id, newSettingId: settingId })) {
+        throw new MenuShopError(409, "dependencies_changed");
+      }
+      snapshot = after;
+    } else if (snapshot === undefined) {
+      snapshot = await loadMenuChangeSnapshot(input.menuItemId, NIL_SCOPE);
+    }
     const { data, error } = await sb.rpc("promote_menu_item_shop_setting", {
       p_setting: settingId, p_fields: input.fields, p_expected_price: input.expected.price,
       p_expected_name: input.expected.name, p_expected_name_es: input.expected.nameEs, p_actor: actor.user.id,

@@ -176,6 +176,22 @@ describe("menu promote", () => {
   }
   const expected = { price: 12.5, name: "Italian", nameEs: "Italiano" };
   const promoted = () => ({ changed_shops: [LOC], before: { menu_price: 12.5 }, returned_shop: OTHER, retired_setting_id: "ms-other", remaining_setting_id: null });
+  /** A realistic NIL-scope snapshot (0263 menu_item_change_snapshot): the item row, every LIVE shop row (by shop), the active shops, the costs. */
+  const nilSnap = (settings: Row[], item: Row = { id: "m-italian", name: "Italian", name_es: "Italiano", menu_price: 12.5 }) =>
+    ({ item, settings, active_shops: [LOC, OTHER], costs: [] });
+  const PREVIEW = nilSnap([{ id: "ms-other", location_id: OTHER, name_override: "Big Italian", name_override_es: null }]);
+  /** After the name save and NOTHING else: OTHER's live row is the new one this operation wrote. */
+  const AFTER_OWN_SAVE = nilSnap([{ id: "ms-other-2", location_id: OTHER, name_override: "Big Italian", name_override_es: "Italiano grande" }]);
+  /** The rpc answers: the NIL snapshot is the preview's until the shop save commits, then `after`. */
+  function stateful(after: Row = AFTER_OWN_SAVE, extra: Record<string, (args: Record<string, unknown>) => unknown> = {}) {
+    let saved = false;
+    return {
+      menu_item_change_snapshot: (a: Record<string, unknown>) => (a.p_location === NIL_SCOPE ? (saved ? after : PREVIEW) : { snap: "shop" }),
+      save_menu_item_shop_setting: () => { saved = true; return { setting_id: "ms-other-2", retired_setting_id: "ms-other" }; },
+      promote_menu_item_shop_setting: promoted,
+      ...extra,
+    };
+  }
 
   it("price and name: the compare-and-set values and the snapshot go to SQL; the shops that change and the returned shop come back", async () => {
     const calls = install(withShopSetting(), { promote_menu_item_shop_setting: promoted });
@@ -192,26 +208,76 @@ describe("menu promote", () => {
       .toEqual({ status: 404, code: "not_found" });
   });
   it("THE OPTIONAL SPANISH NAME (CC note 1 #2): set on the shop's row first, then that row is promoted — the pair is copied exactly", async () => {
-    const calls = install(withShopSetting(), {
-      menu_item_change_snapshot: (a) => ({ snap: a.p_location === NIL_SCOPE ? "preview" : "shop" }),
-      save_menu_item_shop_setting: () => ({ setting_id: "ms-other-2", retired_setting_id: "ms-other" }),
-      promote_menu_item_shop_setting: promoted,
-    });
+    const calls = install(withShopSetting(), stateful());
     const r = await promoteMenuItemShopSetting(actor("moo", 8, []), {
-      menuItemId: "m-italian", settingId: "ms-other", fields: ["name"], expected, nameEs: "  Italiano grande ", snapshot: SNAP,
+      menuItemId: "m-italian", settingId: "ms-other", fields: ["name"], expected, nameEs: "  Italiano grande ", snapshot: PREVIEW,
     });
     expect(r).toEqual({ changedShops: [LOC], returnedShop: OTHER, promotedSettingId: "ms-other-2" });
     expect(calls.map((c) => c.fn)).toEqual([
       "menu_item_change_snapshot", // the preview's snapshot re-checked BEFORE anything is written
       "menu_item_change_snapshot", // the shop save's own snapshot (its scope)
       "save_menu_item_shop_setting",
-      "menu_item_change_snapshot", // the promote's, re-taken after the save
+      "menu_item_change_snapshot", // re-taken after the save: it must be the preview's, moved ONLY by this save
       "promote_menu_item_shop_setting",
     ]);
     expect(calls[2]!.args).toMatchObject({
       p_menu_item: "m-italian", p_location: OTHER, p_price: 13.5, p_sold_here: true, p_name: "Big Italian", p_name_es: "Italiano grande", p_expected: "ms-other",
     });
-    expect(calls[4]!.args).toMatchObject({ p_setting: "ms-other-2", p_fields: ["name"], p_snapshot: { snap: "preview" } });
+    // The promote is bound to the PREVIEW'S baseline, adjusted only for this operation's own committed row.
+    expect(calls[4]!.args).toMatchObject({ p_setting: "ms-other-2", p_fields: ["name"], p_snapshot: AFTER_OWN_SAVE });
+  });
+  /**
+   * Astra full-branch review P2: between the name save and the promote (two transactions — 0263's promote takes no
+   * Spanish name, and 3b adds no migration) another shop's inheritance can change. The promote must then NOT reach
+   * shops the person never saw: it refuses dependencies_changed; the name save stands as the named partial result.
+   */
+  it("an inheritance change INTERLEAVED between the name save and the promote is refused; the promote never runs", async () => {
+    // LOC gained its own name between the two steps: it no longer inherits the name the preview said it would get.
+    const interleaved = nilSnap([
+      { id: "ms-loc-new", location_id: LOC, name_override: "Italiano de LOC", name_override_es: null },
+      { id: "ms-other-2", location_id: OTHER, name_override: "Big Italian", name_override_es: "Italiano grande" },
+    ]);
+    const calls = install(withShopSetting(), stateful(interleaved));
+    const err = await promoteMenuItemShopSetting(actor("moo", 8, []), {
+      menuItemId: "m-italian", settingId: "ms-other", fields: ["name"], expected, nameEs: "Italiano grande", snapshot: PREVIEW,
+    }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(MenuShopError);
+    expect(err).toMatchObject({ status: 409, code: "dependencies_changed", spanishNameSaved: { settingId: "ms-other-2", locationId: OTHER } });
+    expect(calls.map((c) => c.fn)).not.toContain("promote_menu_item_shop_setting");
+    expect(audits.map((a) => a.action)).toEqual(["menu_item.shop_setting_save"]); // the name save only
+  });
+  it("…and so is any other move after the save: the item row, a shop leaving, our row not being the one we wrote, our row gone", async () => {
+    const own = AFTER_OWN_SAVE.settings;
+    for (const after of [
+      nilSnap(own, { id: "m-italian", name: "Italian", name_es: "Italiano", menu_price: 13 }),
+      { ...nilSnap(own), active_shops: [OTHER] },
+      nilSnap([{ id: "ms-other-3", location_id: OTHER, name_override: "Big Italian", name_override_es: "Italiano grande" }]),
+      nilSnap([]),
+    ]) {
+      const calls = install(withShopSetting(), stateful(after as Row));
+      const err = await promoteMenuItemShopSetting(actor("moo", 8, []), {
+        menuItemId: "m-italian", settingId: "ms-other", fields: ["name"], expected, nameEs: "Italiano grande", snapshot: PREVIEW,
+      }).catch((e: unknown) => e);
+      expect(err, JSON.stringify(after)).toMatchObject({ status: 409, code: "dependencies_changed", spanishNameSaved: { settingId: "ms-other-2", locationId: OTHER } });
+      expect(calls.map((c) => c.fn)).not.toContain("promote_menu_item_shop_setting");
+    }
+  });
+  it("a direct call with no preview snapshot binds the one it takes BEFORE the save, the same way", async () => {
+    const interleaved = nilSnap([
+      { id: "ms-loc-new", location_id: LOC, name_override: "Italiano de LOC", name_override_es: null },
+      { id: "ms-other-2", location_id: OTHER, name_override: "Big Italian", name_override_es: "Italiano grande" },
+    ]);
+    let calls = install(withShopSetting(), stateful(interleaved));
+    expect(await refused(promoteMenuItemShopSetting(actor("moo", 8, []), {
+      menuItemId: "m-italian", settingId: "ms-other", fields: ["name"], expected, nameEs: "Italiano grande",
+    }))).toEqual({ status: 409, code: "dependencies_changed" });
+    expect(calls.map((c) => c.fn)).not.toContain("promote_menu_item_shop_setting");
+    calls = install(withShopSetting(), stateful());
+    const r = await promoteMenuItemShopSetting(actor("moo", 8, []), {
+      menuItemId: "m-italian", settingId: "ms-other", fields: ["name"], expected, nameEs: "Italiano grande",
+    });
+    expect(r.promotedSettingId).toBe("ms-other-2");
+    expect(calls.at(-1)).toMatchObject({ fn: "promote_menu_item_shop_setting", args: { p_snapshot: AFTER_OWN_SAVE } });
   });
   it("the Spanish name step refuses a moved preview BEFORE writing anything", async () => {
     const calls = install(withShopSetting(), { menu_item_change_snapshot: () => ({ snap: "moved" }) });
@@ -221,13 +287,9 @@ describe("menu promote", () => {
     expect(calls.map((c) => c.fn)).toEqual(["menu_item_change_snapshot"]);
   });
   it("the literal Spanish name \"bad\" is a NAME, not an error sentinel (Astra chunk-1 review P3)", async () => {
-    const calls = install(withShopSetting(), {
-      menu_item_change_snapshot: (a) => ({ snap: a.p_location === NIL_SCOPE ? "preview" : "shop" }),
-      save_menu_item_shop_setting: () => ({ setting_id: "ms-other-2", retired_setting_id: "ms-other" }),
-      promote_menu_item_shop_setting: promoted,
-    });
+    const calls = install(withShopSetting(), stateful());
     const r = await promoteMenuItemShopSetting(actor("moo", 8, []), {
-      menuItemId: "m-italian", settingId: "ms-other", fields: ["name"], expected, nameEs: "bad", snapshot: SNAP,
+      menuItemId: "m-italian", settingId: "ms-other", fields: ["name"], expected, nameEs: "bad", snapshot: PREVIEW,
     });
     expect(r).toEqual({ changedShops: [LOC], returnedShop: OTHER, promotedSettingId: "ms-other-2" });
     expect(calls[2]!.args).toMatchObject({ p_name_es: "bad" });
@@ -236,15 +298,16 @@ describe("menu promote", () => {
   it("a promote refused AFTER the Spanish name was saved says so (CC note 2 #3): the shop's label changed, the promote did not happen", async () => {
     const calls: RpcCall[] = [];
     current = createFakeDb(withShopSetting());
+    let saved = false;
     (current.client as unknown as { rpc: unknown }).rpc = async (fn: string, args: Record<string, unknown>) => {
       calls.push({ fn, args });
       if (fn === "promote_menu_item_shop_setting") return { data: null, error: { message: "menu_item_shop:global_changed" } };
-      if (fn === "save_menu_item_shop_setting") return { data: { setting_id: "ms-other-2", retired_setting_id: "ms-other" }, error: null };
-      return { data: { snap: args.p_location === NIL_SCOPE ? "preview" : "shop" }, error: null };
+      if (fn === "save_menu_item_shop_setting") { saved = true; return { data: { setting_id: "ms-other-2", retired_setting_id: "ms-other" }, error: null }; }
+      return { data: args.p_location === NIL_SCOPE ? (saved ? AFTER_OWN_SAVE : PREVIEW) : { snap: "shop" }, error: null };
     };
     let err: unknown;
     try {
-      await promoteMenuItemShopSetting(actor("moo", 8, []), { menuItemId: "m-italian", settingId: "ms-other", fields: ["name"], expected, nameEs: "Italiano grande", snapshot: SNAP });
+      await promoteMenuItemShopSetting(actor("moo", 8, []), { menuItemId: "m-italian", settingId: "ms-other", fields: ["name"], expected, nameEs: "Italiano grande", snapshot: PREVIEW });
     } catch (e) { err = e; }
     expect(err).toBeInstanceOf(MenuShopError);
     expect(err).toMatchObject({ status: 409, code: "global_changed", spanishNameSaved: { settingId: "ms-other-2", locationId: OTHER } });
@@ -266,10 +329,11 @@ describe("menu promote", () => {
   async function afterSave(fail: { reloadSnapshot?: boolean; promote?: "throws" | "unnamed" }): Promise<{ err: unknown; calls: string[] }> {
     const calls: string[] = [];
     let snapshots = 0;
+    let saved = false;
     current = createFakeDb(withShopSetting());
     (current.client as unknown as { rpc: unknown }).rpc = async (fn: string, args: Record<string, unknown>) => {
       calls.push(fn);
-      if (fn === "save_menu_item_shop_setting") return { data: { setting_id: "ms-other-2", retired_setting_id: "ms-other" }, error: null };
+      if (fn === "save_menu_item_shop_setting") { saved = true; return { data: { setting_id: "ms-other-2", retired_setting_id: "ms-other" }, error: null }; }
       if (fn === "promote_menu_item_shop_setting") {
         if (fail.promote === "throws") throw new Error("fetch failed");
         if (fail.promote === "unnamed") return { data: null, error: { message: "canceling statement due to statement timeout" } };
@@ -278,11 +342,11 @@ describe("menu promote", () => {
       snapshots += 1;
       // 1 = the preview's re-check, 2 = the shop save's own, 3 = the promote's reload AFTER the save
       if (fail.reloadSnapshot && snapshots === 3) return { data: null, error: { message: "connection reset" } };
-      return { data: { snap: args.p_location === NIL_SCOPE ? "preview" : "shop" }, error: null };
+      return { data: args.p_location === NIL_SCOPE ? (saved ? AFTER_OWN_SAVE : PREVIEW) : { snap: "shop" }, error: null };
     };
     let err: unknown;
     try {
-      await promoteMenuItemShopSetting(actor("moo", 8, []), { menuItemId: "m-italian", settingId: "ms-other", fields: ["name"], expected, nameEs: "Italiano grande", snapshot: SNAP });
+      await promoteMenuItemShopSetting(actor("moo", 8, []), { menuItemId: "m-italian", settingId: "ms-other", fields: ["name"], expected, nameEs: "Italiano grande", snapshot: PREVIEW });
     } catch (e) { err = e; }
     return { err, calls };
   }

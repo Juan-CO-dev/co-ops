@@ -344,10 +344,15 @@ describe("the menu item page", () => {
   it("apply carries the typed Spanish name through the two-step promote (saved on the shop's row, then promoted)", async () => {
     tables.menu_item_shop_settings!.push(shopRow("ms-en", OTHER, null, "Big Italian"));
     const change = { kind: "promote", settingId: "ms-en", fields: ["name"], nameEs: "Italiano grande" } as const;
+    // 0263's snapshot shape: after the name save it differs from the preview's ONLY by OTHER's own new row.
+    const before = { item: { id: "m-italian" }, settings: [{ id: "ms-en", location_id: OTHER }], active_shops: [LOC, OTHER], costs: [] };
+    const after = { ...before, settings: [{ id: "ms-en-2", location_id: OTHER }] };
+    snap = before;
+    let saved = false;
     const p = await computeMenuPreview(moo, "m-italian", change);
     const calls = recordRpc({
-      menu_item_change_snapshot: () => snap,
-      save_menu_item_shop_setting: () => ({ setting_id: "ms-en-2", retired_setting_id: "ms-en" }),
+      menu_item_change_snapshot: () => (saved ? after : before),
+      save_menu_item_shop_setting: () => { saved = true; return { setting_id: "ms-en-2", retired_setting_id: "ms-en" }; },
       promote_menu_item_shop_setting: () => ({ changed_shops: [LOC], before: {}, returned_shop: OTHER, retired_setting_id: "ms-en-2", remaining_setting_id: null }),
     });
     expect(await applyMenuChange(moo, "m-italian", change, p.token)).toEqual({ ok: true });
