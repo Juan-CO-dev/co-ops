@@ -1,4 +1,6 @@
-// PATCH catering flags on an item (GM+ >= 7, Tier A step-up).
+// PATCH catering flags on an item (GM+ >= 7). Tier E — the 15-minute catalog edit window: these
+// flags (seasonal included) are catalog edits the Items catalog and the recipe page make too, so
+// they ride the same clock (catalog Phase 1, Astra full-branch review #1).
 import { type NextRequest } from "next/server";
 import { requireSession } from "@/lib/session";
 import { ROLES } from "@/lib/roles";
@@ -14,7 +16,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   if (ctx instanceof Response) return ctx;
   if (ROLES[ctx.user.role].level < MENU_ADMIN_MIN) return jsonError(403, "forbidden");
 
-  const su = assertStepUp(ctx, "A");
+  const su = assertStepUp(ctx, "E");
   if (!su.ok) return jsonError(403, su.code);
 
   const b = parsed as Record<string, unknown>;

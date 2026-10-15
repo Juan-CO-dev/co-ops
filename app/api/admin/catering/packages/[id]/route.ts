@@ -21,10 +21,10 @@ const PACKAGE_MIN = 6; // catering.kb.packages.write — floor for every concern
 
 // PATCH — one concern per call, each with its own step-up tier:
 //   fields  {labelEn,labelEs,descriptionEn,descriptionEs,pricingMode,priceCents,
-//            minHeadcount,leadTimeHours} → edit package fields → ≥6, Tier A
+//            minHeadcount,leadTimeHours,serves,seasonal} → edit package fields → ≥6, Tier E
 //   active  {active}                    → deactivate/reactivate → ≥6, Tier B
-//   addItem {addItem:{description,quantity}} → add line item     → ≥6, Tier A
-//   removeItem {removeItemId}            → remove line item      → ≥6, Tier A
+//   addItem {addItem:{description,quantity}} → add line item     → ≥6, Tier E
+//   removeItem {removeItemId}            → remove line item      → ≥6, Tier E
 const FIELD_KEYS = [
   "labelEn",
   "labelEs",
@@ -71,7 +71,9 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   }
 
   // Step-up tier per concern: active/deactivate = B; everything else = A.
-  const tier: StepUpTier = hasActive ? "B" : "A";
+  // Catalog Phase 1 (Astra full-branch review #1): every non-activation concern is a catalog
+  // edit and rides the 15-minute edit window (Tier E); (de)activation keeps its stricter Tier B.
+  const tier: StepUpTier = hasActive ? "B" : "E";
   const su = assertStepUp(ctx, tier);
   if (!su.ok) return jsonError(403, su.code);
 
@@ -147,7 +149,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       return jsonOk({ ok: true });
     }
 
-    // hasFields — edit package fields (Tier A).
+    // hasFields — edit package fields (Tier E).
     const changes: UpdatePackageChanges = {};
     if ("labelEn" in b) {
       if (typeof b.labelEn !== "string") return jsonError(400, "invalid_payload", { field: "labelEn" });

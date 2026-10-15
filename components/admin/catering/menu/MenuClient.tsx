@@ -1,7 +1,7 @@
 "use client";
 
 /**
- * MenuClient — GM+ catering-menu manager. Owns STATE and the ONE WRITE PATH (`apiWrite`, Tier-A
+ * MenuClient — GM+ catering-menu manager. Owns STATE and the ONE WRITE PATH (`apiWrite`, reactive
  * step-up retry via PasswordModal) and composes the presentation: legend → toolbar → either the
  * grouped editor (MenuSectionList + MenuRow) or the read-only customer preview (MenuPreview).
  * Grouping/filtering is pure (lib/admin/catering/menu-view-shared.ts) and shared with the order
@@ -14,6 +14,7 @@ import { useCallback, useMemo, useRef, useState } from "react";
 import { useTranslation } from "@/lib/i18n/provider";
 import type { TranslationKey } from "@/lib/i18n/types";
 import { PasswordModal } from "@/components/auth/PasswordModal";
+import { useStepUp } from "@/components/admin/StepUpProvider";
 import type { AdminMenuItem, AdminSize } from "@/lib/admin/catering/menu";
 import { filterAdminRows, groupAdminRows, type FlagChanges, type MenuFilterChip, type SizeInput } from "@/lib/admin/catering/menu-view-shared";
 import { MenuLegend } from "./MenuLegend";
@@ -32,6 +33,10 @@ export function MenuClient({ items: initial, canWrite, packageCount }: { items: 
   const [items, setItems] = useState<AdminMenuItem[]>(initial);
   const [errorKey, setErrorKey] = useState<TranslationKey | null>(null);
   const [stepUpOpen, setStepUpOpen] = useState(false);
+  // The flags PATCH rides the catalog edit window (Tier E, Astra full-branch review #1): this
+  // reactive modal opens the window and reports its confirms/refusals to the provider, exactly
+  // as the Items catalog's does, so a retry never loops on a shared-flag-only password.
+  const { noteStepUpConfirmed, forgetStepUp } = useStepUp();
   const pendingRef = useRef<null | (() => Promise<void>)>(null);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [chip, setChip] = useState<MenuFilterChip>("all");
@@ -67,6 +72,7 @@ export function MenuClient({ items: initial, canWrite, packageCount }: { items: 
     }
     const b = (await res.json().catch(() => ({}))) as { code?: string };
     if (b.code === "step_up_required" || b.code === "step_up_stale") {
+      forgetStepUp();
       pendingRef.current = () => apiWrite(url, method, body, onOk);
       setStepUpOpen(true);
       return;
@@ -140,7 +146,7 @@ export function MenuClient({ items: initial, canWrite, packageCount }: { items: 
           )}
         />
       )}
-      <PasswordModal open={stepUpOpen} onConfirm={async () => { if (pendingRef.current) await pendingRef.current(); }} onCancel={() => { setStepUpOpen(false); pendingRef.current = null; }} />
+      <PasswordModal catalogWindow open={stepUpOpen} onConfirm={async () => { noteStepUpConfirmed(); if (pendingRef.current) await pendingRef.current(); }} onCancel={() => { setStepUpOpen(false); pendingRef.current = null; }} />
     </div>
   );
 }

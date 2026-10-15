@@ -106,9 +106,10 @@ const SERVER_TIER_MAP: Record<string, string[]> = {
   "app/api/admin/catering/item-sizes/[sizeId]/route.ts": ["A"],
   "app/api/admin/catering/lto/events/[id]/cancel/route.ts": ["A"],
   "app/api/admin/catering/lto/events/route.ts": ["A"],
-  "app/api/admin/catering/menu/[id]/route.ts": ["A"],
+  // Catalog Phase 1 (Astra full-branch #1): catering flags incl. seasonal ride the catalog clock.
+  "app/api/admin/catering/menu/[id]/route.ts": ["E"],
   "app/api/admin/catering/menu/[id]/sizes/route.ts": ["A"],
-  // The one runtime-chosen tier in the repo: `hasActive ? "B" : "A"`.
+  // The one runtime-chosen tier in the repo: `hasActive ? "B" : "E"` (catalog Phase 1).
   "app/api/admin/catering/packages/[id]/route.ts": ["VAR:tier"],
   "app/api/admin/catering/packages/route.ts": ["B"],
   "app/api/admin/catering/pricing/[id]/route.ts": ["B"],
@@ -240,7 +241,7 @@ const CLIENT_TIER_MAP: Record<string, string[]> = {
   "components/admin/catering/faq/FaqClient.tsx": ["A", "B"],
   "components/admin/catering/fulfillment/FulfillmentClient.tsx": ["A"],
   "components/admin/catering/lto/LtoClient.tsx": ["A"],
-  "components/admin/catering/packages/PackagesClient.tsx": ["A", "B", "VAR:tier"],
+  "components/admin/catering/packages/PackagesClient.tsx": ["B", "E", "VAR:tier"],
   "components/admin/catering/pricing/PricingClient.tsx": ["B"],
   "components/admin/catering/zones/ZonesClient.tsx": ["A", "B"],
   "components/admin/items/AddItemForm.tsx": ["B"],
@@ -249,7 +250,7 @@ const CLIENT_TIER_MAP: Record<string, string[]> = {
   // Shared `mutate(tier, …)` lane; every caller passes a literal — see the join note.
   "components/admin/products/ProductsClient.tsx": ["VAR:tier"],
   "components/admin/recipes/RecipeBuilder.tsx": ["E"],
-  "components/admin/recipes/RecipeCateringFlags.tsx": ["A"],
+  "components/admin/recipes/RecipeCateringFlags.tsx": ["E"],
   "components/admin/skus/MeasureUnitSelect.tsx": ["B"],
   "components/admin/skus/RegistrySelect.tsx": ["B"],
   "components/admin/skus/PendingStoreItems.tsx": ["B"],
