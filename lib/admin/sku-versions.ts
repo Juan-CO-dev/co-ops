@@ -54,6 +54,15 @@ async function requireOwningShop(actor: AuthContext, skuId: string): Promise<voi
   if (!skuOwnerAllowed(actor, data.location_id)) throw new SkuVersionError(404, "not_found");
 }
 
+/** A shop-scope write on a SKU OWNED by a different shop is refused by name (chunk-4 review P3b). */
+async function requireNotOtherShopsSku(skuId: string, shopId: string): Promise<void> {
+  const { data, error } = await getServiceRoleClient().from("vendor_items").select("id, location_id").eq("id", skuId)
+    .maybeSingle<{ id: string; location_id: string | null }>();
+  if (error) throw new Error(`requireNotOtherShopsSku: ${error.message}`);
+  if (!data) throw new SkuVersionError(404, "sku_not_found");
+  if (data.location_id !== null && data.location_id !== shopId) throw new SkuVersionError(409, "sku_owned_by_other_shop");
+}
+
 /** Map an RPC P0001 refusal (`area:code`) to a typed error; anything else is a 500. */
 export function versionErrorFromRpc(message: string): never {
   const m = /(?:sku_pack_version|sku_price|sku_pack_change):([a-z_]+)/.exec(message);
@@ -64,6 +73,8 @@ export function versionErrorFromRpc(message: string): never {
     // 0259's chain-shape refusals (migration review P3b)
     non_positive_qty: 400, duplicate_label: 400, shared_child: 400, not_one_root: 400, cycle: 400,
     invalid_based_on: 400, invalid_price: 400, invalid_date: 400, invalid_payload: 400, location_required: 400,
+    // chunk-4 review: a first chain that would move a set flat pack; a shop-owned SKU priced/packed by another shop
+    flat_pack_exists: 403, sku_owned_by_other_shop: 409,
     par_lane_mismatch: 400, invalid_patch: 400, request_mismatch: 400,
     sku_not_found: 404, location_not_found: 404, not_found: 404,
   };
@@ -87,6 +98,10 @@ export async function preparePackVersionWrite(
     const { avgOzPerEach, skuClass, ownerLocationId } = await assertSkuExists(input.skuId);
     // A GLOBAL chain of a shop-owned SKU binds that shop below MoO (Astra 2a r3#1).
     if (input.scope === null && !skuOwnerAllowed(actor, ownerLocationId)) throw new SkuVersionError(404, "not_found");
+    // A shop-owned SKU has no other shop: no other shop holds a version of it (chunk-4 P3b; also in SQL).
+    if (input.scope !== null && ownerLocationId !== null && ownerLocationId !== input.scope) {
+      throw new SkuVersionError(409, "sku_owned_by_other_shop");
+    }
     const [measureLabels, measures] = await Promise.all([loadMeasureLabels(), loadMeasuresMap()]);
     return { levels: validateSubmission(input.levels, measureLabels, measures, avgOzPerEach, skuClass), firstOnly };
   } catch (e) {
@@ -155,6 +170,14 @@ export async function restoreSkuPackVersion(
 ): Promise<{ versionId: string; retiredVersionId: string | null }> {
   requireLocation(actor, "pack", input.scope);
   const sb = getServiceRoleClient();
+  // The source version must be THIS SKU's, and global or THIS scope's own (chunk-4 review P3a):
+  // adopting another shop's version is Phase 3's job. Refused as not_found (no existence leak).
+  const { data: from, error: fromErr } = await sb.from("sku_pack_versions").select("id, sku_id, location_id")
+    .eq("id", input.fromVersionId).maybeSingle<{ id: string; sku_id: string; location_id: string | null }>();
+  if (fromErr) throw new Error(`restoreSkuPackVersion version: ${fromErr.message}`);
+  if (!from || from.sku_id !== input.skuId || (from.location_id !== null && from.location_id !== input.scope)) {
+    throw new SkuVersionError(404, "not_found");
+  }
   const { data: rows, error } = await sb.from("sku_pack_levels")
     .select("id, label, contains_qty, contains_level_id, contains_measure_unit, display_ordinal")
     .eq("version_id", input.fromVersionId).eq("sku_id", input.skuId)
@@ -204,6 +227,8 @@ export async function saveSkuPrice(actor: AuthContext, input: SavePriceInput): P
   }
   // A GLOBAL price of a shop-owned SKU binds that shop below MoO (Astra 2a r3#1).
   if (input.scope === null) await requireOwningShop(actor, input.skuId);
+  // A shop-owned SKU has no other shop: no other shop prices it (chunk-4 P3b; also in SQL).
+  else await requireNotOtherShopsSku(input.skuId, input.scope);
   const sb = getServiceRoleClient();
   if (input.scope !== null) {
     const { data, error } = await sb.rpc("save_sku_shop_price", {

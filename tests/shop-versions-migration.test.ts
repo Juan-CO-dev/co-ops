@@ -101,11 +101,29 @@ describe("0259 structure", () => {
     for (const code of ["non_positive_qty", "duplicate_label", "shared_child", "not_one_root", "cycle"]) {
       expect(body).toContain(`raise exception 'sku_pack_version:${code}' using errcode = 'P0001';`);
     }
-    expect(body).toContain("perform 1 from public.vendor_items where id = p_sku and active for update;");
+    expect(body).toContain("from public.vendor_items vi where vi.id = p_sku and vi.active for update;");
     // a surviving live label is a named refusal, never a bare 23505
     expect(body).toMatch(/exception when unique_violation then\s+--[^\n]*\n\s+raise exception 'sku_pack_version:duplicate_label'/);
     // every shape check runs BEFORE the lock and any write
     expect(body.indexOf("sku_pack_version:cycle")).toBeLessThan(body.indexOf("for update"));
+  });
+  it("chunk-4 P2: below MoO a first chain may not move a flat pack that was already set (named, atomic)", () => {
+    const body = extractFunction(src, "create or replace function public.save_sku_pack_version(", "\n$$;");
+    // the flat pack is read UNDER the SKU lock, in the same statement that takes it
+    expect(body).toMatch(/select vi\.location_id, vi\.pack_format, vi\.units_per_pack, vi\.each_size, vi\.each_measure\s+into v_flat\s+from public\.vendor_items vi where vi\.id = p_sku and vi\.active for update;/);
+    // "had a flat pack" = any mirror field set, except the 'Each (no case)' unknown placeholder alone
+    expect(body).toContain("v_had_flat := p_first_only and p_location is null and (");
+    expect(body).toContain("or (v_flat.pack_format is not null and v_flat.pack_format <> 'Each (no case)'));");
+    // compared against the mirror THIS chain derived, after it is applied, so a mismatch rolls it all back
+    expect(body.indexOf("raise exception 'sku_pack_version:flat_pack_exists'")).toBeGreaterThan(body.indexOf("v_mirror := public.sku_flat_mirror_apply(p_sku, v_new);"));
+    expect(body).toContain("is distinct from (v_flat.pack_format, v_flat.units_per_pack, v_flat.each_size, v_flat.each_measure)) then");
+  });
+  it("chunk-4 P3b: a shop-owned SKU has no other shop — refused by name for packs AND prices", () => {
+    const pack = extractFunction(src, "create or replace function public.save_sku_pack_version(", "\n$$;");
+    expect(pack).toContain("if p_location is not null and v_owner is not null and v_owner <> p_location then");
+    expect(pack).toContain("raise exception 'sku_pack_version:sku_owned_by_other_shop' using errcode = 'P0001';");
+    const price = extractFunction(src, "create or replace function public.save_sku_shop_price(", "\n$$;");
+    expect(price).toContain("raise exception 'sku_price:sku_owned_by_other_shop' using errcode = 'P0001';");
   });
   it("review P3c: record_receiving_prices guards price, date, SKU and shop with named refusals", () => {
     const body = extractFunction(src, "create or replace function public.record_receiving_prices(", "\n$$;");

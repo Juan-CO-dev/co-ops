@@ -66,6 +66,7 @@ export function VendorDetailClient({
   skuConsumption,
   skuReadiness,
   skuChains,
+  skuChainVersions,
   skuChainUnverified,
   skuOverlays,
   skuProducts,
@@ -96,6 +97,8 @@ export function VendorDetailClient({
   skuReadiness: Record<string, Readiness>;
   /** Server batch-loaded active chains per SKU (PR-C — no lazy GET). Absent = unchained. */
   skuChains: Record<string, PackChainLevel[]>;
+  /** The GLOBAL live version id each chain was loaded at (catalog Phase 2a). Absent = unchained. */
+  skuChainVersions: Record<string, string>;
   /** Server class-aware "chain unverified" flag per SKU. */
   skuChainUnverified: Record<string, boolean>;
   /** VO-7: per-location overlay rows per SKU (edit-mode overlay section). */
@@ -179,6 +182,7 @@ export function VendorDetailClient({
         skuConsumption={skuConsumption}
         skuReadiness={skuReadiness}
         chainsBySku={skuChains}
+        chainVersionBySku={skuChainVersions}
         chainUnverifiedBySku={skuChainUnverified}
         overlaysBySku={skuOverlays}
         products={skuProducts}

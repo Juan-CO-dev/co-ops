@@ -257,9 +257,41 @@ export function validateSubmission(
  * saved either way (`flatFieldsSynced: false` is a partial success, never a failed save) —
  * the flag exists so a caller can say so, and it is on the audit row regardless.
  */
+/**
+ * The save RPC's named refusals as the SKU screens' codes (chunk-4 review P3c): every one is a typed
+ * 4xx, never a 500. Codes reuse the editor's existing vocabulary (components/admin/skus/shared.ts).
+ */
+const RPC_REFUSALS: Record<string, [number, string, string]> = {
+  global_requires_moo: [403, "global_requires_moo", "Only a Manager of Operations or higher can change this for everyone"],
+  flat_pack_exists: [403, "global_requires_moo", "This item already has a pack — only a Manager of Operations or higher can change it for everyone"],
+  version_changed: [409, "version_changed", "This pack changed since it was loaded — reload and re-apply"],
+  sku_not_found: [409, "sku_inactive", "This item is inactive — reactivate it before changing its pack"],
+  duplicate_label: [400, "duplicate_label", "Two levels share a label"],
+  cycle: [400, "chain_cycle", "The chain loops back on itself"],
+  not_one_root: [400, "chain_invalid", "The chain must have exactly one outer level"],
+  shared_child: [400, "chain_invalid", "Two levels cannot contain the same level"],
+  invalid_levels: [400, "chain_invalid", "The chain is invalid"],
+  non_positive_qty: [400, "invalid_qty", "Quantities must be positive"],
+  unknown_measure: [400, "unknown_measure", "Unknown measure unit"],
+};
+export function packChainErrorFromRpc(message: string): Error {
+  const code = /sku_pack_version:([a-z_]+)/.exec(message)?.[1];
+  const hit = code ? RPC_REFUSALS[code] : undefined;
+  return hit ? new PackChainError(hit[0], hit[1], hit[2]) : new Error(`replaceSkuPackChain save: ${message}`);
+}
+
 export async function replaceSkuPackChain(
   actor: AuthContext,
-  args: { skuId: string; levels: PackChainLevelInput[] },
+  args: {
+    skuId: string;
+    levels: PackChainLevelInput[];
+    /**
+     * The GLOBAL live version the FORM was loaded with (chunk-4 review P3c) — null = it showed no
+     * chain. Never re-read here: a re-read just before the save would always "match" and a stale
+     * form would silently overwrite a chain someone saved meanwhile. A mismatch is 409 version_changed.
+     */
+    expectedLiveVersionId: string | null;
+  },
 ): Promise<{ levelCount: number; flatFieldsSynced: boolean }> {
   requireLevel(actor, PACK_CHAIN_WRITE_MIN);
   const { avgOzPerEach, skuClass, ownerLocationId } = await assertSkuExists(args.skuId);
@@ -277,20 +309,13 @@ export async function replaceSkuPackChain(
   // one — decided by the RPC under the SKU lock. A GM changes how an item arrives for their own shop
   // on the item page (2b). The old deactivate-all/insert pair would also have deactivated every shop
   // version's levels, so it is gone.
-  const { data: live, error: liveErr } = await sb.from("sku_pack_versions").select("id")
-    .eq("sku_id", args.skuId).is("location_id", null).eq("active", true).maybeSingle<{ id: string }>();
-  if (liveErr) throw new Error(`replaceSkuPackChain live version: ${liveErr.message}`);
   const { data: saved, error: rpcErr } = await sb.rpc("save_sku_pack_version", {
     p_sku: args.skuId, p_location: null,
     p_levels: validated.map((l) => ({ label: l.label.trim(), containsQty: l.containsQty, containsIndex: l.containsIndex, containsMeasureUnit: l.containsIndex != null ? null : l.containsMeasureUnit!.trim() })),
-    p_expected_live: live?.id ?? null, p_based_on: null, p_note: null, p_actor: actor.user.id,
+    p_expected_live: args.expectedLiveVersionId, p_based_on: null, p_note: null, p_actor: actor.user.id,
     p_first_only: getRoleLevel(actor.user.role) < GLOBAL_VERSION_WRITE_MIN,
   });
-  if (rpcErr) {
-    if (rpcErr.message.includes("sku_pack_version:global_requires_moo")) throw new PackChainError(403, "global_requires_moo", "Only a Manager of Operations or higher can change this for everyone");
-    if (rpcErr.message.includes("sku_pack_version:version_changed")) throw new PackChainError(409, "version_changed", "This pack changed since it was loaded — reload and re-apply");
-    throw new Error(`replaceSkuPackChain save: ${rpcErr.message}`);
-  }
+  if (rpcErr) throw packChainErrorFromRpc(rpcErr.message);
   const rows = validated.map((l) => ({ label: l.label.trim() }));
   // The flat mirror was derived inside the RPC's locked transaction (Astra 2a r2#6).
   const flatFieldsSynced = (saved as { mirror_synced: boolean | null }).mirror_synced === true;
@@ -305,9 +330,10 @@ export async function replaceSkuPackChain(
       sku_id: args.skuId,
       level_count: rows.length,
       labels: rows.map((r) => r.label),
-      // THE SIGNAL A SWALLOWED FAILURE USED TO LACK. `false` means the chain is saved and
-      // correct while the legacy flat mirror on vendor_items is stale — findable by a query
-      // rather than only by noticing a wrong number months later.
+      // `false` = the saved chain is MALFORMED for the mirror (no single root, or no measure leaf), so
+      // the GLOBAL flat mirror was set to the 'Each (no case)' unknown placeholder IN THE SAME
+      // transaction (0259 sku_flat_mirror_apply; chunk-4 review P3d). It can no longer mean "saved
+      // but the sync failed" — there is no separate sync. Findable by a query on this column.
       flat_fields_synced: flatFieldsSynced,
     },
     ipAddress: null,

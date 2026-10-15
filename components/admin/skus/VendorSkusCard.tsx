@@ -48,6 +48,7 @@ export function VendorSkusCard({
   skuConsumption,
   skuReadiness,
   chainsBySku,
+  chainVersionBySku,
   chainUnverifiedBySku,
   overlaysBySku,
   products,
@@ -67,6 +68,8 @@ export function VendorSkusCard({
   skuReadiness: Record<string, Readiness>;
   /** Server batch-loaded active chains per SKU (PR-C — no lazy GET). Absent = unchained. */
   chainsBySku: Record<string, PackChainLevel[]>;
+  /** The GLOBAL live version id each chain was loaded at (catalog Phase 2a). Absent = unchained. */
+  chainVersionBySku: Record<string, string>;
   /** Server class-aware "chain unverified" flag per SKU. */
   chainUnverifiedBySku: Record<string, boolean>;
   /** VO-7: per-location overlay rows per SKU (edit-mode overlay section). */
@@ -150,7 +153,8 @@ export function VendorSkusCard({
       containsIndex: l.containsIndex,
       containsMeasureUnit: l.containsMeasureUnit,
     }));
-    const result = await send(`/api/admin/skus/${id}/pack-chain`, { levels: payload }, "POST");
+    // The GLOBAL live version this form was loaded with (null = it showed no chain) — chunk-4 P3c.
+    const result = await send(`/api/admin/skus/${id}/pack-chain`, { levels: payload, expectedLiveVersionId: chainVersionBySku[id] ?? null }, "POST");
     if (result.ok) {
       router.refresh();
       return true;

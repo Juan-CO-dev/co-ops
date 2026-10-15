@@ -12,6 +12,8 @@ import {
   type PackChainLevelInput,
 } from "@/lib/admin/pack-chain";
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 // GET — the SKU's active pack chain + an "unverified" flag (AGM+ ≥6, no step-up
 // for a read, mirroring the SKU catalog read).
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
@@ -43,6 +45,13 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
   const b = parsed as Record<string, unknown>;
   if (!Array.isArray(b.levels)) return jsonError(400, "invalid_payload", { field: "levels" });
+  // CATALOG PHASE 2a (chunk-4 review P3c): the GLOBAL live version the form was LOADED with. A form
+  // that does not say what it saw cannot be checked for a concurrent save, so it is told to reload.
+  if (!("expectedLiveVersionId" in b)) return jsonError(409, "version_changed");
+  const expectedLiveVersionId = b.expectedLiveVersionId;
+  if (expectedLiveVersionId !== null && (typeof expectedLiveVersionId !== "string" || !UUID_RE.test(expectedLiveVersionId))) {
+    return jsonError(400, "invalid_payload", { field: "expectedLiveVersionId" });
+  }
 
   const levels: PackChainLevelInput[] = [];
   for (const raw of b.levels) {
@@ -68,7 +77,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   }
 
   try {
-    const res = await replaceSkuPackChain(ctx, { skuId: id, levels });
+    const res = await replaceSkuPackChain(ctx, { skuId: id, levels, expectedLiveVersionId });
     return jsonOk({ ok: true, levelCount: res.levelCount });
   } catch (e) {
     if (e instanceof PackChainError) return jsonError(e.status, e.code, { message: e.message });

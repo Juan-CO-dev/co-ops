@@ -450,6 +450,9 @@ declare
   v_root    int;
   v_seen    int;
   v_cur     int;
+  v_flat    record;
+  v_owner   uuid;
+  v_had_flat boolean := false;
 begin
   if p_levels is null or jsonb_typeof(p_levels) <> 'array' or jsonb_array_length(p_levels) = 0 then
     raise exception 'sku_pack_version:invalid_levels' using errcode = 'P0001';
@@ -508,13 +511,22 @@ begin
   end if;
 
   -- THE SKU LOCK: every pack/price writer of this SKU serializes here (lock order: SKU, then version).
-  -- An ACTIVE SKU only, like the price writers (review P3b).
-  perform 1 from public.vendor_items where id = p_sku and active for update;
+  -- An ACTIVE SKU only, like the price writers (review P3b). The flat pack it had is read UNDER the
+  -- lock too: it is the first-value rule's other half (chunk-4 review P2).
+  select vi.location_id, vi.pack_format, vi.units_per_pack, vi.each_size, vi.each_measure
+    into v_flat
+    from public.vendor_items vi where vi.id = p_sku and vi.active for update;
   if not found then
     raise exception 'sku_pack_version:sku_not_found' using errcode = 'P0001';
   end if;
+  v_owner := v_flat.location_id;
   if p_location is not null and not exists (select 1 from public.locations where id = p_location and active) then
     raise exception 'sku_pack_version:location_not_found' using errcode = 'P0001';
+  end if;
+  -- A SHOP-OWNED SKU (a store copy, a shop-only item) has no other shop: no other shop may hold a
+  -- version of it (chunk-4 review P3b).
+  if p_location is not null and v_owner is not null and v_owner <> p_location then
+    raise exception 'sku_pack_version:sku_owned_by_other_shop' using errcode = 'P0001';
   end if;
   -- FIRST VALUE ONLY (D5), decided under the lock: a GM may set the FIRST global chain, never change one.
   if p_first_only and p_location is null and (
@@ -522,6 +534,13 @@ begin
        or exists (select 1 from public.sku_pack_levels where sku_id = p_sku and location_id is null and active)) then
     raise exception 'sku_pack_version:global_requires_moo' using errcode = 'P0001';
   end if;
+  -- …and an UNCHAINED SKU whose FLAT pack is already set (a legacy pack, or a MoO's) HAS a global
+  -- pack: the first chain may only restate it. Checked against the mirror the new chain derives,
+  -- below, in this transaction (chunk-4 review P2). 'Each (no case)' with nothing else is the
+  -- "unknown" placeholder the mirror writes for no pack at all — not a value.
+  v_had_flat := p_first_only and p_location is null and (
+    v_flat.units_per_pack is not null or v_flat.each_size is not null or v_flat.each_measure is not null
+    or (v_flat.pack_format is not null and v_flat.pack_format <> 'Each (no case)'));
 
   select id into v_live from public.sku_pack_versions where sku_id = p_sku and scope_key = v_scope and active for update;
   if v_live is distinct from p_expected_live then
@@ -563,6 +582,15 @@ begin
   -- can never commit chains A then B but mirrors B then A. A shop version has no mirror.
   if p_location is null then
     v_mirror := public.sku_flat_mirror_apply(p_sku, v_new);
+  end if;
+  -- FIRST VALUE ONLY, flat half (chunk-4 review P2): below MoO the new chain may not move a flat pack
+  -- that was already set. The mirror it derived must equal what was there; otherwise the whole
+  -- transaction (versions, levels, mirror) rolls back with a named refusal.
+  if v_had_flat and exists (
+       select 1 from public.vendor_items vi where vi.id = p_sku
+          and (vi.pack_format, vi.units_per_pack, vi.each_size, vi.each_measure)
+              is distinct from (v_flat.pack_format, v_flat.units_per_pack, v_flat.each_size, v_flat.each_measure)) then
+    raise exception 'sku_pack_version:flat_pack_exists' using errcode = 'P0001';
   end if;
   return jsonb_build_object('version_id', v_new, 'retired_version_id', v_live, 'valid_from', v_now, 'level_count', v_count,
                             'mirror_synced', v_mirror);
@@ -622,6 +650,10 @@ begin
   if not found then raise exception 'sku_price:sku_not_found' using errcode = 'P0001'; end if;
   if not exists (select 1 from public.locations where id = p_location and active) then
     raise exception 'sku_price:location_not_found' using errcode = 'P0001';
+  end if;
+  -- A SHOP-OWNED SKU has no other shop: no other shop may price it (chunk-4 review P3b).
+  if exists (select 1 from public.vendor_items where id = p_sku and location_id is not null and location_id <> p_location) then
+    raise exception 'sku_price:sku_owned_by_other_shop' using errcode = 'P0001';
   end if;
   select id into v_lane from public.sku_price_lanes where sku_id = p_sku and location_id = p_location and active for update;
   if v_lane is null then

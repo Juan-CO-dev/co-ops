@@ -6251,5 +6251,6 @@
   "reports.export.pricing_scope_shop": "Precios: {shop}",
   "reports.export.pricing_scope_global": "Precios: globales (todas las tiendas)",
   "admin.skus.error.global_requires_moo": "Solo un Gerente de Operaciones o superior puede cambiar esto para todos.",
-  "admin.skus.error.version_changed": "Esto cambió mientras editabas. Vuelve a cargar e inténtalo otra vez."
+  "admin.skus.error.version_changed": "Esto cambió mientras editabas. Vuelve a cargar e inténtalo otra vez.",
+  "admin.skus.error.sku_inactive": "Este artículo está inactivo. Reactívalo antes de cambiar su empaque."
 }

@@ -14,6 +14,9 @@
  *   P3c record_receiving_prices refuses a null / 'NaN' price, a missing SKU, a null date and an
  *       inactive shop by NAME; a good invoice opens the shop's lane.
  *   P3e the migration's own privilege guard runs (it raises if a helper is reachable or a writer is not).
+ *   chunk-4 P2 a first-only (GM) chain may not MOVE a flat pack that was already set — refused by name
+ *       and rolled back whole; restating it exactly, the 'Each (no case)' placeholder, an all-null pack
+ *       and a MoO all pass. P3b a shop-owned SKU refuses another shop's pack version and price.
  *   0260 the deploy-window heal (plan Task 4 Step 2's A → B → C): A ends when the old writer's set B
  *       began, B ends when the new writer's C began, C stays live, version_id becomes NOT NULL.
  */
@@ -162,6 +165,43 @@ try {
   await refuses(rec, [SHOP_OFF, row({})], "sku_price:location_not_found", "an inactive shop");
   const inv = (await db.query(rec, [SHOP, row({})])).rows[0].r;
   check(inv.lanes_opened === 1 && inv.shop_rows === 1 && inv.global_rows === 0, "a good first invoice opens the shop's lane and lands in it");
+
+  // Chunk-4 P2: an UNCHAINED SKU whose FLAT pack is already set (legacy, 24 × 1 lb) HAS a global pack.
+  await db.exec("reset role;");
+  await db.exec(`insert into public.vendor_items (id, active, pack_format, units_per_pack, each_size, each_measure) values
+    ('${u(106)}', true, 'case', 24, 1, 'lb'), ('${u(107)}', true, 'Each (no case)', null, null, null),
+    ('${u(108)}', true, null, null, null, null), ('${u(109)}', true, null, null, null, null);
+    update public.vendor_items set location_id = '${SHOP}' where id = '${u(109)}';`);
+  await db.exec("set role service_role;");
+  const firstOnly = "select public.save_sku_pack_version($1, null, $2::jsonb, null, null, null, null, true) as r";
+  const flatBefore = async (id) => (await db.query("select pack_format, units_per_pack, each_size::text as each_size, each_measure from public.vendor_items where id = $1", [id])).rows[0];
+  const legacy = await flatBefore(u(106));
+  await refuses(firstOnly, [u(106), JSON.stringify([{ label: "case", containsQty: 12, containsMeasureUnit: "lb" }])], "sku_pack_version:flat_pack_exists",
+    "a GM's first chain that would MOVE a set flat pack (24 × 1 lb → 12 lb)");
+  check(JSON.stringify(await flatBefore(u(106))) === JSON.stringify(legacy), "…and the refusal rolled the mirror back: the flat pack is untouched");
+  check((await db.query("select count(*)::int as n from public.sku_pack_versions where sku_id = $1", [u(106)])).rows[0].n === 0, "…and no version or baseline row survived it");
+  const restate = (await db.query(firstOnly, [u(106), JSON.stringify([{ label: "case", containsQty: 24, containsIndex: 1 }, { label: "bag", containsQty: 1, containsMeasureUnit: "lb" }])])).rows[0].r;
+  check(restate.version_id != null && restate.mirror_synced === true, "a GM's first chain that RESTATES the flat pack exactly is allowed");
+  const moo = (await db.query("select public.save_sku_pack_version($1, null, $2::jsonb, $3, null, null, null, false) as r",
+    [u(106), JSON.stringify([{ label: "case", containsQty: 12, containsMeasureUnit: "lb" }]), restate.version_id])).rows[0].r;
+  check(moo.version_id != null, "a MoO (not first-only) may change it");
+  const placeholder = (await db.query(firstOnly, [u(107), JSON.stringify([{ label: "case", containsQty: 12, containsMeasureUnit: "lb" }])])).rows[0].r;
+  check(placeholder.version_id != null, "the 'Each (no case)' unknown placeholder alone is not a value: a GM's first chain is allowed");
+  const empty = (await db.query(firstOnly, [u(108), JSON.stringify([{ label: "case", containsQty: 12, containsMeasureUnit: "lb" }])])).rows[0].r;
+  check(empty.version_id != null, "an all-null flat pack: a GM's first chain is allowed");
+
+  // Chunk-4 P3b: a shop-owned SKU has no other shop.
+  const otherShop = u(3);
+  await db.exec("reset role;");
+  await db.exec(`insert into public.locations values ('${otherShop}', true);`);
+  await db.exec("set role service_role;");
+  await refuses("select public.save_sku_pack_version($1, $2, $3::jsonb, null, null, null, null, false) as r",
+    [u(109), otherShop, JSON.stringify([{ label: "case", containsQty: 2, containsMeasureUnit: "lb" }])], "sku_pack_version:sku_owned_by_other_shop",
+    "another shop's pack version of a shop-owned SKU");
+  await refuses("select public.save_sku_shop_price($1, $2, 10, '2026-10-15', null, null, null) as r", [u(109), otherShop], "sku_price:sku_owned_by_other_shop",
+    "another shop's price of a shop-owned SKU");
+  const own = (await db.query("select public.save_sku_shop_price($1, $2, 10, '2026-10-15', null, null, null) as r", [u(109), SHOP])).rows[0].r;
+  check(own.lane_id != null, "the owning shop still prices its own SKU");
   await db.exec("reset role;");
 
   // 0260 — the deploy-window heal (plan Task 4 Step 2's A → B → C, executed here on synthetic rows):
