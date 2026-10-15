@@ -88,7 +88,7 @@ export interface SkuPackChainView {
   unverified: boolean;
 }
 
-async function loadMeasuresMap(): Promise<Map<string, MeasureUnitFactor>> {
+export async function loadMeasuresMap(): Promise<Map<string, MeasureUnitFactor>> {
   const sb = getServiceRoleClient();
   const { data } = await sb
     .from("measure_units")
@@ -99,7 +99,7 @@ async function loadMeasuresMap(): Promise<Map<string, MeasureUnitFactor>> {
 }
 
 /** The set of active measure-unit labels (for the label-collision rule, L1). */
-async function loadMeasureLabels(): Promise<Set<string>> {
+export async function loadMeasureLabels(): Promise<Set<string>> {
   const sb = getServiceRoleClient();
   const { data } = await sb.from("measure_units").select("label").eq("active", true).returns<Array<{ label: string }>>();
   return new Set((data ?? []).map((m) => m.label));
@@ -113,16 +113,16 @@ function normalizeSkuClass(v: string | null): PackChainSkuClass {
 /** Verify a SKU exists (active OR inactive — chains can be inspected either way).
  *  Returns the SKU's avg_oz_per_each + sku_class (the class gates the leaf law:
  *  raw chains must be oz-resolvable; non-raw may terminate at a bare count leaf). */
-async function assertSkuExists(skuId: string): Promise<{ avgOzPerEach: number | null; skuClass: PackChainSkuClass }> {
+export async function assertSkuExists(skuId: string): Promise<{ avgOzPerEach: number | null; skuClass: PackChainSkuClass; ownerLocationId: string | null }> {
   const sb = getServiceRoleClient();
   const { data, error } = await sb
     .from("vendor_items")
-    .select("id, avg_oz_per_each, sku_class")
+    .select("id, avg_oz_per_each, sku_class, location_id")
     .eq("id", skuId)
-    .maybeSingle<{ id: string; avg_oz_per_each: number | string | null; sku_class: string | null }>();
+    .maybeSingle<{ id: string; avg_oz_per_each: number | string | null; sku_class: string | null; location_id: string | null }>();
   if (error) throw new Error(`assertSkuExists failed: ${error.message}`);
   if (!data) throw new PackChainError(404, "sku_not_found", "SKU not found");
-  return { avgOzPerEach: num(data.avg_oz_per_each), skuClass: normalizeSkuClass(data.sku_class) };
+  return { avgOzPerEach: num(data.avg_oz_per_each), skuClass: normalizeSkuClass(data.sku_class), ownerLocationId: data.location_id };
 }
 
 // ── Read (AGM+) ────────────────────────────────────────────────────────────────
@@ -158,7 +158,7 @@ export async function loadSkuPackChain(actor: AuthContext, skuId: string): Promi
 // ── Validation (pure over the submitted set + the registries) ────────────────────
 /** Validate a submitted chain; throws PackChainError on the first problem.
  *  Returns the parsed level shape (index-linked) ready for insert. */
-function validateSubmission(
+export function validateSubmission(
   input: PackChainLevelInput[],
   measureLabels: Set<string>,
   measures: Map<string, MeasureUnitFactor>,
