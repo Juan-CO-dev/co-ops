@@ -32,13 +32,19 @@ export async function GET(req: NextRequest) {
 
   const language = ctx.user.language;
   const shopLabel = table.shop ? table.shop.name : serverT(language, "reports.export.header.all_shops");
+  // Catalog Phase 2a: the costing export names WHOSE prices it used, on its first line (CSV) / header (PDF).
+  const pricingLine = table.pricingScope
+    ? table.pricingScope.kind === "shop"
+      ? serverT(language, "reports.export.pricing_scope_shop", { shop: table.pricingScope.name })
+      : serverT(language, "reports.export.pricing_scope_global")
+    : null;
   const filename = exportFilename(table.fileFamily ?? family, table.shop?.code ?? "all", table.from, table.to, format);
   let body: string | Buffer;
   try {
     body = format === "csv"
-      ? toCsv(table.columns, table.rows)
+      ? toCsv(table.columns, table.rows, pricingLine ? [pricingLine] : [])
       : await renderReportPdf(
-        { title: serverT(language, EXPORT_TITLE_KEY[family]), lines: pdfHeaderLines(language, { shop: shopLabel, from: table.from, to: table.to, at: new Date(), by: ctx.user.name }) },
+        { title: serverT(language, EXPORT_TITLE_KEY[family]), lines: [...pdfHeaderLines(language, { shop: shopLabel, from: table.from, to: table.to, at: new Date(), by: ctx.user.name }), ...(pricingLine ? [pricingLine] : [])] },
         [{ heading: null, columns: table.columns.map((c) => c.key === "check_amount_pre_tax"
           ? { ...c, label: serverT(language, "reports.export.column.check_amount_pre_tax") } : c),
         rows: table.rows, emptyText: serverT(language, "reports.export.empty") }],

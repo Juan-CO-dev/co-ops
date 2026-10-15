@@ -39,6 +39,8 @@ import { getRoleLevel } from "@/lib/roles";
 import type { AuthContext } from "@/lib/session";
 import { COST_READ_MIN, loadCurrentSkuPrices } from "@/lib/admin/cost";
 import { loadRecipeGraph } from "@/lib/prep-consumption";
+import { canReadReportLocation } from "@/lib/locations";
+import type { VersionScope } from "@/lib/sku-versions-shared";
 import type { RecipeGraph } from "@/lib/prep-consumption-graph";
 import { skuContentOz, skuCostPerOz } from "@/lib/recipe-math";
 import {
@@ -90,6 +92,8 @@ export function costPerOzFromGraph(
 }
 
 export interface MenuCostingBoard {
+  /** The shop this board was costed for (its packs AND prices); null = All shops, on GLOBAL prices. */
+  scope: string | null;
   toastFetchedAt: string | null;
   toastUnavailable: boolean;
   toastNotices: Array<{ locationName: string; reason: "unavailable" | "menu_missing" | "menu_not_set" }>;
@@ -120,12 +124,18 @@ export interface MenuCostingBoard {
  * the designed day-one output, not a failure, and the counts fall as the price
  * ledger fills.
  */
-export async function loadMenuCostingBoard(actor: AuthContext): Promise<MenuCostingBoard> {
+export async function loadMenuCostingBoard(actor: AuthContext, opts: { scope?: VersionScope } = {}): Promise<MenuCostingBoard> {
   requireLevel(actor, MENU_COSTING_READ_MIN);
+  // CATALOG PHASE 2a (lead decision): the board is costed FOR A SHOP — its pack versions and product
+  // resolution (the graph) AND its prices (its lane, else global). null = All shops = global prices.
+  const scope = opts.scope ?? null;
+  if (scope !== null && !canReadReportLocation({ role: actor.user.role, locations: actor.locations }, scope)) {
+    throw new MenuCostingError(404, "not_found", "Location not found");
+  }
   const sb = getServiceRoleClient();
 
   const [graph, menuRes, toast] = await Promise.all([
-    loadRecipeGraph(),
+    loadRecipeGraph(scope === null ? undefined : { locationId: scope }),
     sb
       .from("menu_items")
       .select("id, name, name_es, section, menu_price, price_same_as_id, catering_available")
@@ -148,7 +158,7 @@ export async function loadMenuCostingBoard(actor: AuthContext): Promise<MenuCost
       sameAsName: parent?.name ?? null, sameAsNameEs: parent?.name_es ?? null };
   });
 
-  const prices = await loadCurrentSkuPrices([...graph.skuPack.keys()], null); // global until Task 6b scopes the board
+  const prices = await loadCurrentSkuPrices([...graph.skuPack.keys()], scope);
   const rows = composeMenuCostRows(inputs, graph, costPerOzFromGraph(graph, prices));
   const totals = summarizeMenuCostRows(rows);
 
@@ -180,5 +190,5 @@ export async function loadMenuCostingBoard(actor: AuthContext): Promise<MenuCost
   for (const i of itemRes.data ?? []) itemNames[i.id] = { en: i.name, es: i.name_es };
   for (const p of productRes.data ?? []) productNames[p.id] = { en: p.name, es: p.name_es };
 
-  return { rows, totals, skuNames, itemNames, productNames, toastFetchedAt: toast.fetchedAt, toastUnavailable: toast.unavailable, toastNotices: toast.notices };
+  return { scope, rows, totals, skuNames, itemNames, productNames, toastFetchedAt: toast.fetchedAt, toastUnavailable: toast.unavailable, toastNotices: toast.notices };
 }

@@ -71,6 +71,8 @@ export interface ExportTable {
   shop: ShopRef | null;
   from: string;
   to: string;
+  /** costing only (catalog Phase 2a): whose prices the costs use — named on the file's first line. */
+  pricingScope?: { kind: "global" } | { kind: "shop"; name: string };
   /** File-name family when one family has several tables (sales views: `sales-items`). */
   fileFamily?: string;
 }
@@ -299,8 +301,21 @@ export async function loadExportTable(auth: AuthContext, family: ExportFamily, p
         return { ...base, from: today, to: today, rows: countRows(view.rows, shop!) };
       }
       case "costing": {
-        const board = await loadMenuCostingBoard(auth);
-        return { ...base, from: today, to: today, rows: costingRows(board.rows) };
+        // CATALOG PHASE 2a (lead decision): the export IS the board on screen — the page's ?location=
+        // (a shop, or "global" / absent = All shops on global prices), bound exactly as the page binds.
+        const loc = params.location;
+        let scope: string | null = null;
+        if (loc !== undefined && loc !== "" && loc !== "global") {
+          if (!/^[0-9a-f-]{36}$/i.test(loc)) throw new ExportError(400, "invalid_location");
+          if (!canReadReportLocation(actorOf(auth), loc)) throw new ExportError(403, "location_forbidden");
+          scope = loc;
+        }
+        const board = await loadMenuCostingBoard(auth, { scope });
+        const pricingShop = scope ? await loadShop(scope) : null;
+        return {
+          ...base, shop: pricingShop, from: today, to: today, rows: costingRows(board.rows),
+          pricingScope: pricingShop ? { kind: "shop", name: pricingShop.name } : { kind: "global" },
+        };
       }
       case "sales":
         return { ...base, ...(await salesExportTable(auth, params, shop!, today)) };

@@ -19,7 +19,12 @@
  */
 
 import { MENU_PRICE_WRITE_MIN } from "@/lib/admin/menu-prices";
+import Link from "next/link";
 import { redirect } from "next/navigation";
+import { getServiceRoleClient } from "@/lib/supabase-server";
+import { canReadReportLocation } from "@/lib/locations";
+import { resolveShopId } from "@/lib/shop-context";
+import { searchParamValues, shopParamFor } from "@/lib/shop-context-shared";
 
 import { requireSessionFromHeaders } from "@/lib/session";
 import { ROLES } from "@/lib/roles";
@@ -29,13 +34,28 @@ import { MenuCostingClient } from "@/components/admin/menu-costing/MenuCostingCl
 import { PageHeader } from "@/components/ui/PageHeader";
 import { ExportLinks } from "@/components/reports-export/ExportLinks";
 
-export default async function AdminMenuCostingPage() {
+export default async function AdminMenuCostingPage({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> }) {
+  const sp = await searchParams;
   const auth = await requireSessionFromHeaders("/admin");
   const level = ROLES[auth.user.role].level;
   if (level < MENU_COSTING_READ_MIN) redirect("/dashboard");
   const lang = auth.user.language;
 
-  const { rows, totals, skuNames, itemNames, productNames, toastFetchedAt, toastUnavailable, toastNotices } = await loadMenuCostingBoard(auth);
+  // THE ONE SHOP RESOLVER over the shops this viewer may read (level 8+: every shop):
+  // ?location=<shop> | global → the remembered shop → the first allowed.
+  const { data: locs, error: locErr } = await getServiceRoleClient().from("locations").select("id, name").eq("active", true).order("name")
+    .returns<Array<{ id: string; name: string }>>();
+  if (locErr) throw new Error(`menu costing page locations: ${locErr.message}`);
+  const shops = (locs ?? []).filter((l) => canReadReportLocation({ role: auth.user.role, locations: auth.locations }, l.id));
+  const explicit = shopParamFor("/admin/menu-costing", searchParamValues(sp));
+  const scope = explicit === "global" ? null : await resolveShopId(shops.map((s) => s.id), explicit ?? null);
+  const scopeLabel = scope === null
+    ? serverT(lang, "admin.menu_costing.scope_all")
+    : serverT(lang, "admin.menu_costing.scope_shop", { shop: shops.find((s) => s.id === scope)?.name ?? "" });
+
+  const { rows, totals, skuNames, itemNames, productNames, toastFetchedAt, toastUnavailable, toastNotices } = await loadMenuCostingBoard(auth, { scope });
+  const pill = (on: boolean) =>
+    `inline-flex min-h-[44px] shrink-0 items-center rounded-full border-2 px-4 text-sm font-bold ${on ? "border-co-text bg-co-surface-2 text-co-text" : "border-co-border bg-co-surface text-co-text"}`;
 
   return (
     <div>
@@ -43,7 +63,19 @@ export default async function AdminMenuCostingPage() {
         title={serverT(lang, "admin.menu_costing.title")}
         subtitle={serverT(lang, "admin.menu_costing.subtitle")}
       />
-      <ExportLinks className="mb-4" family="costing" language={lang} query={{}} />
+      <nav aria-label={serverT(lang, "admin.menu_costing.shop_switcher")} className="-mx-1 mb-2 flex gap-2 overflow-x-auto px-1 pb-1">
+        {shops.map((s) => (
+          <Link key={s.id} href={`/admin/menu-costing?location=${s.id}`} aria-current={scope === s.id ? "page" : undefined} className={pill(scope === s.id)}>
+            {s.name}
+          </Link>
+        ))}
+        <Link href="/admin/menu-costing?location=global" aria-current={scope === null ? "page" : undefined} className={pill(scope === null)}>
+          {serverT(lang, "admin.menu_costing.scope_all_short")}
+        </Link>
+      </nav>
+      <p className="mb-4 text-sm text-co-text-muted">{scopeLabel}</p>
+      <ExportLinks className="mb-4" family="costing" language={lang} query={{ location: scope ?? "global" }}
+        caption={serverT(lang, "admin.menu_costing.export_scope", { scope: scope === null ? serverT(lang, "admin.menu_costing.scope_all_short") : shops.find((s) => s.id === scope)?.name ?? "" })} />
       <MenuCostingClient
         canEditPrice={level >= MENU_PRICE_WRITE_MIN}
         toastNotices={toastNotices}
