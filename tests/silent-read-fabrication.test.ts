@@ -144,6 +144,9 @@ describe("lib/prep-consumption.ts — the inventory moat's foundation never buil
       ["export async function loadSkuPackResolution(", "loadSkuPackChains:"],
       ["export async function loadAllSkuPackResolution(", "loadAllSkuPackChains:"],
       ["async function loadItemParBasis(", "loadItemParBasis:"],
+      // Catalog Phase 3a: the recipe-version resolver point fails loud too.
+      ["export async function loadRecipeLineOverlay(", "loadRecipeLineOverlay versions:"],
+      ["export async function loadRecipeBoundaries(", "loadRecipeBoundaries:"],
     ] as const) {
       const body = fnBody(src, decl);
       expect(droppedErrorReads(body), decl).toEqual([]);
