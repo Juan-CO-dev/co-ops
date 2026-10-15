@@ -154,6 +154,12 @@ Nothing structural is hard-coded. Each shop has a **Schedule structure** setting
   - **The board never double-covers a position:** no manager on a station another person already covers.
 - **Positions:**
   - **One person per position** at a time (default head count 1, tunable). When a station closes or trims, that person moves to another open position or clocks out. Two people never fill the same position at the same time; e.g. two walk-in closers fill Walk-ins and Walk-ins / Online.
+  - **Position priority per station** (a toggle):
+    - Prep → **Prep/Dishwasher** is primary over Prep;
+    - Expo → **Register & Delivery** is primary over Expeditor;
+    - Walk-ins → **Walk-ins / Online** is primary over Walk-ins.
+
+    When a station needs only one person, the primary is filled. The secondary is filled only when demand needs a second person. At a trim, the secondary goes first. This applies to build, regenerate, call-out fill and trims.
   - **Allowed roles per position** (tunable). E.g. Prep/Dishwasher = Employee (optionally Key Holder) and **never a manager** except as a call-out last resort, with the reason stated.
 - **Limits:**
   - **minimum shift length** (default 4 h; the flex-day short shift is a separate tunable exception);
