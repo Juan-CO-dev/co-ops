@@ -47,14 +47,33 @@ describe("auditChecked reports what audit() swallows", () => {
 });
 
 describe("POST /api/auth/step-up with the success audit failing", () => {
-  it("500, the minted grant is voided, and neither clock is stamped", async () => {
+  it("500, NO grant is ever inserted, and neither clock is stamped (Astra r2 #2)", async () => {
     h.db.failInsertTables = ["audit_log"];
     const res = await call({ password: "right", catalogWindow: true, purpose: { action: "recipe.delete", targetId: T } });
     expect(res.status).toBe(500);
     expect((await res.json()).code).toBe("step_up_audit_failed");
-    expect(grants()).toHaveLength(1);
-    expect(grants()[0]!.consumed_at).toEqual(expect.any(String));
+    expect(grants()).toEqual([]);
     expect(session()).toMatchObject({ step_up_unlocked: false, step_up_unlocked_at: null, catalog_edit_unlocked_at: null });
+  });
+
+  it("the grant insert failing AFTER a good audit: 500, no stamp (an audit row without a grant is acceptable)", async () => {
+    h.db.failInsertTables = ["step_up_grants"];
+    const res = await call({ password: "right", catalogWindow: true, purpose: { action: "recipe.delete", targetId: T } });
+    expect(res.status).toBe(500);
+    expect((await res.json()).code).toBe("step_up_grant_failed");
+    expect((h.db.tables.audit_log as Row[]).map((r) => r.action)).toEqual(["auth_step_up_success"]);
+    expect(grants()).toEqual([]);
+    expect(session()).toMatchObject({ step_up_unlocked: false, step_up_unlocked_at: null, catalog_edit_unlocked_at: null });
+  });
+
+  it("ORDER: the checked audit (naming the grant id) is written BEFORE the grant exists, the stamp last", async () => {
+    const res = await call({ password: "right", catalogWindow: true, purpose: { action: "recipe.delete", targetId: T } });
+    expect(res.status).toBe(200);
+    const order = h.db.writes.map((w) => `${w.op}:${w.table}`);
+    expect(order).toEqual(["insert:audit_log", "insert:step_up_grants", "update:sessions"]);
+    const auditRow = (h.db.tables.audit_log as Row[])[0]!;
+    const grantRow = grants()[0]!;
+    expect((auditRow.metadata as { grant: { id: string } }).grant).toEqual({ id: grantRow.id, action: "recipe.delete", target_id: T });
   });
 
   it("with the audit healthy: 200, the success row is written, the grant is live, both clocks stamped", async () => {

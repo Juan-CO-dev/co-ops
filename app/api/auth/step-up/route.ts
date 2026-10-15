@@ -25,6 +25,7 @@
  * tooling can flag clusters of step-up failures from a single session.
  */
 
+import { randomUUID } from "node:crypto";
 import { type NextRequest } from "next/server";
 
 import { verifyPassword } from "@/lib/auth";
@@ -140,32 +141,41 @@ export async function POST(req: NextRequest) {
     user.id, password, pwRow.password_hash, user.role, { ipAddress, userAgent }, "step_up",
   );
 
-  // 5. Success, in an order that never leaves a live authorization without its record:
-  //    (1) mint the one grant the purpose names (a failed mint is a 500 with nothing stamped);
-  //    (2) write the success row with a CHECKED audit — audit() is fail-open by law, so a
-  //        failure there would otherwise go unseen (Astra full-branch review #2); on failure the
-  //        grant is voided, NO clock is stamped, and the answer is a 500;
-  //    (3) only then stamp the shared flag (and the catalog window when asked). If that throws,
-  //        the grant is voided too (chunk-3 review f).
-  const grantId = purpose ? await mintStepUpGrant({ sessionId: session.id, userId: user.id, purpose }) : null;
-  try {
-    const recorded = await auditChecked({
-      actorId: user.id,
-      actorRole: user.role,
-      action: "auth_step_up_success",
-      resourceTable: "sessions",
-      resourceId: session.id,
-      metadata: {
-        edit_window_seconds: catalogWindow ? stepUpEditWindowMs() / 1000 : null,
-        grant: purpose ? { action: purpose.action, target_id: purpose.targetId } : null,
-      },
-      ipAddress,
-      userAgent,
-    });
-    if (!recorded.ok) {
-      if (grantId) await voidStepUpGrant(grantId);
-      return jsonError(500, "step_up_audit_failed", { message: "Could not record the confirmation. Try again." });
+  // 5. Success, in an order that never leaves a live authorization without its record, and never
+  //    a usable grant before its record exists (Astra full-branch #2, r2 #2):
+  //    (1) choose the grant's id;
+  //    (2) write the success row with a CHECKED audit naming that id — audit() is fail-open by
+  //        law, so a failure there would otherwise go unseen; on failure: no grant, no stamp, 500;
+  //    (3) insert the grant with that id — a failure here is a 500 with no stamp (a success row
+  //        naming a grant that never existed is acceptable: it records a verified password);
+  //    (4) only then stamp the shared flag (and the catalog window when asked). If that throws,
+  //        the grant is voided (chunk-3 review f).
+  const grantId = purpose ? randomUUID() : null;
+  const recorded = await auditChecked({
+    actorId: user.id,
+    actorRole: user.role,
+    action: "auth_step_up_success",
+    resourceTable: "sessions",
+    resourceId: session.id,
+    metadata: {
+      edit_window_seconds: catalogWindow ? stepUpEditWindowMs() / 1000 : null,
+      grant: purpose && grantId ? { id: grantId, action: purpose.action, target_id: purpose.targetId } : null,
+    },
+    ipAddress,
+    userAgent,
+  });
+  if (!recorded.ok) {
+    return jsonError(500, "step_up_audit_failed", { message: "Could not record the confirmation. Try again." });
+  }
+  if (purpose && grantId) {
+    try {
+      await mintStepUpGrant({ id: grantId, sessionId: session.id, userId: user.id, purpose });
+    } catch (e) {
+      console.error(`[step-up] grant insert failed after the success audit: ${e instanceof Error ? e.message : String(e)}`);
+      return jsonError(500, "step_up_grant_failed", { message: "Could not record the confirmation. Try again." });
     }
+  }
+  try {
     await unlockStepUp(session.id, { catalogWindow });
   } catch (e) {
     if (grantId) await voidStepUpGrant(grantId);

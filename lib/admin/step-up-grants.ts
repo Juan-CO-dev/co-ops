@@ -15,6 +15,8 @@ import type { AuthContext } from "@/lib/session";
 import { grantExpiresAt, type GrantAction, type StepUpPurpose } from "@/lib/admin/step-up-shared";
 
 export async function mintStepUpGrant(args: {
+  /** The id the caller already wrote into the success audit row (Astra r2 #2); else generated. */
+  id?: string;
   sessionId: string;
   userId: string;
   purpose: StepUpPurpose;
@@ -24,6 +26,7 @@ export async function mintStepUpGrant(args: {
   const { data, error } = await getServiceRoleClient()
     .from("step_up_grants")
     .insert({
+      ...(args.id ? { id: args.id } : {}),
       session_id: args.sessionId,
       user_id: args.userId,
       action: args.purpose.action,

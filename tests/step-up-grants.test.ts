@@ -183,7 +183,7 @@ describe("POST /api/auth/step-up mints exactly what it was asked for", () => {
     expect(grants()[0]).toMatchObject({ session_id: SESSION, user_id: USER, action: "recipe.delete", target_id: T });
     expect(h.audit).toHaveBeenCalledWith(expect.objectContaining({
       action: "auth_step_up_success",
-      metadata: { edit_window_seconds: 900, grant: { action: "recipe.delete", target_id: T } },
+      metadata: { edit_window_seconds: 900, grant: { id: grants()[0]!.id, action: "recipe.delete", target_id: T } },
     }));
   });
 });
@@ -226,16 +226,15 @@ describe("a malformed target id is a 400 before any grant is touched", () => {
   });
 });
 
-describe("a grant that cannot be minted stamps no clock (review P3)", () => {
-  it("the mint failing → 500, no unlock, no success audit, no grant", async () => {
+describe("a grant that cannot be minted stamps no clock (review P3; Astra r2 #2)", () => {
+  it("the mint failing (after the checked audit) → 500 step_up_grant_failed, no unlock, no grant", async () => {
     h.session.mockResolvedValue(ctx());
     h.verify.mockResolvedValue(true);
-    h.db.failInserts = 1;
-    await expect(
-      stepUpPOST(json("http://localhost/api/auth/step-up", "POST", { password: "right", catalogWindow: true, purpose: { action: "recipe.delete", targetId: T } })),
-    ).rejects.toThrow(/mintStepUpGrant/);
+    h.db.failInsertTables = ["step_up_grants"];
+    const res = await stepUpPOST(json("http://localhost/api/auth/step-up", "POST", { password: "right", catalogWindow: true, purpose: { action: "recipe.delete", targetId: T } }));
+    expect(res.status).toBe(500);
+    expect((await res.json()).code).toBe("step_up_grant_failed");
     expect(h.unlock).not.toHaveBeenCalled();
-    expect(h.audit).not.toHaveBeenCalledWith(expect.objectContaining({ action: "auth_step_up_success" }));
     expect(grants()).toEqual([]);
   });
 });
