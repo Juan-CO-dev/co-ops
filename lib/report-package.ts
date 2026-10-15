@@ -213,20 +213,25 @@ export async function loadPackageInput(sb: Sb, args: {
       .order("instance_id").order("template_item_id").range(f, t));
     if (rows.length > 0) {
       const itemIds = [...new Set(rows.map((r) => r.item_id as string))];
-      const [items, who, graph] = await Promise.all([
+      const shopIds = [...new Set(rows.map((r) => r.location_id as string))];
+      const [items, who, costing] = await Promise.all([
         inChunks(itemIds, async (chunk) => {
           const { data, error } = await sb.from("items").select("id, name, section, default_par_unit").in("id", chunk);
           if (error) throw new Error(`package items: ${error.message}`);
           return (data ?? []) as Array<{ id: string; name: string; section: string | null; default_par_unit: string | null }>;
         }),
         names(sb, "users", rows.map((r) => r.tossed_by as string)),
-        loadRecipeGraph(),
+        Promise.all(shopIds.map(async (shopId) => {
+          const graph = await loadRecipeGraph({ versionLocationId: shopId });
+          const costPerOz = costPerOzFromGraph(graph, await loadCurrentSkuPrices([...graph.skuPack.keys()]));
+          return [shopId, { graph, costPerOz }] as const;
+        })).then((pairs) => new Map(pairs)),
       ]);
-      const costPerOz = costPerOzFromGraph(graph, await loadCurrentSkuPrices([...graph.skuPack.keys()]));
       const item = new Map(items.map((i) => [i.id, i]));
       input.waste = rows.map((r): WasteRaw => {
         const it = item.get(r.item_id as string);
-        const rollup = rollupItemCost(graph, r.item_id as string, costPerOz);
+        const shopCosting = costing.get(r.location_id as string)!;
+        const rollup = rollupItemCost(shopCosting.graph, r.item_id as string, shopCosting.costPerOz);
         const unit = (r.tossed_par_unit as string | null) ?? null;
         // rollupItemCost prices ONE par unit of the item; a toss counted in another unit has no honest price.
         const sameUnit = !unit || !it?.default_par_unit || unit.trim().toLowerCase() === it.default_par_unit.trim().toLowerCase();
@@ -250,32 +255,36 @@ export async function loadPackageInput(sb: Sb, args: {
       const lines = await inChunks(events.map((e) => e.id), (chunk) => selectAllRows<Record<string, unknown>>((f, t) => sb.from("sku_count_lines")
         .select("count_event_id, sku_id, level_label, qty, resolved_oz").in("count_event_id", chunk).order("id").range(f, t)));
       const skuIds = [...new Set(lines.map((l) => l.sku_id as string))];
-      const [skus, chains, measures, prices, who] = await Promise.all([
+      const [skus, chainsByShop, measures, prices, who] = await Promise.all([
         inChunks(skuIds, async (chunk) => {
           const { data, error } = await sb.from("vendor_items").select("id, name, units_per_pack, each_size, each_measure, avg_oz_per_each").in("id", chunk);
           if (error) throw new Error(`package skus: ${error.message}`);
           return (data ?? []) as Array<{ id: string; name: string; units_per_pack: number | null; each_size: number | string | null; each_measure: string | null; avg_oz_per_each: number | string | null }>;
         }),
-        loadSkuPackChains(skuIds),
+        Promise.all(locationIds.map(async (shopId) => [shopId, await loadSkuPackChains(skuIds, shopId)] as const)).then((p) => new Map(p)),
         loadMeasures(),
         loadCurrentSkuPrices(skuIds),
         names(sb, "users", events.map((e) => e.counted_by ?? "")),
       ]);
       // The same derivation the costing board uses: current price ÷ chain-aware content oz.
-      const sku = new Map(skus.map((s) => [s.id, {
-        name: s.name,
-        costPerOz: skuCostPerOz(prices.get(s.id) ?? null, skuContentOz({
+      const skuRow = new Map(skus.map((s) => [s.id, s]));
+      const eventShop = new Map(events.map((e) => [e.id, e.location_id]));
+      // Cost per oz AT THE SHOP THAT COUNTED: its own pack version (0259), else the global one.
+      const costPerOzAt = (shopId: string | undefined, skuId: string): number | null => {
+        const s = skuRow.get(skuId);
+        if (!s || !shopId) return null;
+        return skuCostPerOz(prices.get(skuId) ?? null, skuContentOz({
           unitsPerPack: s.units_per_pack, eachSize: num(s.each_size), eachMeasure: s.each_measure, avgOzPerEach: num(s.avg_oz_per_each),
-          packChain: chains.get(s.id) ?? null,
-        }, measures)),
-      }]));
+          packChain: chainsByShop.get(shopId)?.get(skuId) ?? null,
+        }, measures));
+      };
       input.inventoryEvents = events.map((e): InventoryEventRaw => ({
         id: e.id, location_id: e.location_id, counted_at: e.counted_at, counted_day: etCalendarDate(e.counted_at), counted_by: e.counted_by ? (who.get(e.counted_by) ?? null) : null,
       }));
       input.inventoryLines = lines.map((l): InventoryLineRaw => ({
-        count_event_id: l.count_event_id as string, sku_id: l.sku_id as string, sku: sku.get(l.sku_id as string)?.name ?? "(sku)",
+        count_event_id: l.count_event_id as string, sku_id: l.sku_id as string, sku: skuRow.get(l.sku_id as string)?.name ?? "(sku)",
         level_label: l.level_label as string, qty: num(l.qty as number | string) ?? 0, resolved_oz: num(l.resolved_oz as number | string) ?? 0,
-        cost_per_oz: sku.get(l.sku_id as string)?.costPerOz ?? null,
+        cost_per_oz: costPerOzAt(eventShop.get(l.count_event_id as string), l.sku_id as string),
       }));
     }
     input.loaded.push("inventory");

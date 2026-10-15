@@ -108,11 +108,21 @@ export function createFakeDb(tables: Tables, latencyMs = 0) {
     let rangeFrom: number | null = null, rangeTo: number | null = null, lim: number | null = null;
     let single = false;
     let upsertRows: Row[] | null = null;
+    let insertRows: Row[] | null = null;
     let upsertOpts: { onConflict?: string; ignoreDuplicates?: boolean } = {};
 
     let depth = 0;
     const run = () => {
       log.push({ table, select: selectStr, depth });
+      if (insertRows) {
+        const list = (tables[table] ??= []);
+        const inserted = insertRows.map((r, i) => ({ id: `ins-${table}-${list.length + i + 1}`, ...r }));
+        list.push(...inserted);
+        writes.push({ table, rows: inserted });
+        const fields = parseSelect(selectStr);
+        const projected = inserted.map((r) => project(table, r, fields)).filter((r): r is Row => r !== null);
+        return { data: single ? (projected[0] ?? null) : projected, error: null };
+      }
       if (upsertRows) {
         writes.push({ table, rows: upsertRows });
         const keys = (upsertOpts.onConflict ?? "id").split(",");
@@ -180,6 +190,7 @@ export function createFakeDb(tables: Tables, latencyMs = 0) {
       returns() { return q; },
       maybeSingle() { single = true; return q; },
       upsert(rows: Row[], opts: { onConflict?: string; ignoreDuplicates?: boolean } = {}) { upsertRows = rows; upsertOpts = opts; return q; },
+      insert(rows: Row | Row[]) { insertRows = Array.isArray(rows) ? rows : [rows]; return q; },
       then(resolve: (v: unknown) => unknown, reject?: (e: unknown) => unknown) {
         depth = completedDepth + 1;
         stats.depth = Math.max(stats.depth, depth);

@@ -437,7 +437,7 @@ export async function loadDemandInputs(
     // ⑧ THE SAME loader the recipe graph uses — one resolution ladder, not two.
     loadProductIndex(productIds, locationId),
     // ⑩ the perOrderUnitOz inputs, exactly as loadWalkerData assembles them.
-    loadSkuPackChains(skuIds),
+    loadSkuPackChains(skuIds, locationId),
     loadMeasures(),
     // ⑨ Phase 1's rhythm loaders + the all-dows cutoff read (plan D5).
     loadRhythmByVendor(sb, vendorIds, locationId),

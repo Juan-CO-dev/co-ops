@@ -658,7 +658,7 @@ async function loadCatalog(sb: Sb, measures: Map<string, MeasureUnitFactor>): Pr
   if (rows.length === 0) throw new Error("FATAL: vendor_items loaded empty — refusing to reason about an empty catalog.");
 
   const ids = rows.map((r) => r.id);
-  const chains = await loadSkuPackChains(ids);
+  const chains = await loadSkuPackChains(ids, null);
 
   const { data: pinRows, error: pErr } = await sb
     .from("recipe_inputs")

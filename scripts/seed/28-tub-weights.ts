@@ -283,7 +283,7 @@ async function main(): Promise<void> {
     throw new Error(`vendor_items truncated: got ${skuRows?.length} of ${skuCount} — raise the page size before trusting this run`);
   }
 
-  const chains = await loadSkuPackChains((skuRows ?? []).map((r) => r.id));
+  const chains = await loadSkuPackChains((skuRows ?? []).map((r) => r.id), null);
   const skus: LiveSku[] = (skuRows ?? []).map((r) => ({
     id: r.id, name: r.name, vendorName: r.vendors?.name ?? "(no vendor)", active: r.active,
     packFormat: r.pack_format, unitsPerPack: r.units_per_pack,
@@ -1172,7 +1172,7 @@ async function main(): Promise<void> {
       avg_oz_per_each: number | string | null; weight_class: string | null; vendors: { name: string } | null;
     }>>();
   if (aErr) throw new Error(`read back: ${aErr.message}`);
-  const chainsAfter = await loadSkuPackChains(touched);
+  const chainsAfter = await loadSkuPackChains(touched, null);
   for (const r of after ?? []) {
     const ch = chainsAfter.get(r.id) ?? [];
     p(

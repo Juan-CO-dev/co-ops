@@ -1026,7 +1026,7 @@ export async function loadOpeningState(
   const phase2DerivedItemIds = phase2ForDerived
     .map((it) => it.itemId)
     .filter((x): x is string => !!x);
-  const derivedMap = await loadDerivedForItems(phase2DerivedItemIds);
+  const derivedMap = await loadDerivedForItems(phase2DerivedItemIds, args.locationId);
   const derived: Record<string, DerivedSku[]> = {};
   for (const it of phase2ForDerived) {
     derived[it.id] = it.itemId ? (derivedMap.get(it.itemId) ?? []) : [];
@@ -1036,7 +1036,7 @@ export async function loadOpeningState(
   // TEMPLATE-ITEM id like `derived`; a non-linked item or one without an active production
   // recipe is simply absent (= single box). The RPCs re-derive this under the recipe row
   // lock, so this map only ever decides what the row LOOKS like, never what it saves.
-  const batchContextMap = await loadBatchContextForItems(phase2DerivedItemIds);
+  const batchContextMap = await loadBatchContextForItems(phase2DerivedItemIds, args.locationId);
   const batchContext: Record<string, BatchItemContext> = {};
   for (const it of phase2ForDerived) {
     const ctx = it.itemId ? batchContextMap.get(it.itemId) : undefined;
@@ -2146,7 +2146,7 @@ export async function savePhase2Item(
       .eq("id", args.entry.templateItemId)
       .maybeSingle<{ item_id: string | null }>();
     if (tItemErr) throw new Error(`savePhase2Item template item: ${tItemErr.message}`);
-    const ctx = tItemPre?.item_id ? (await loadBatchContextForItems([tItemPre.item_id])).get(tItemPre.item_id) : undefined;
+    const ctx = tItemPre?.item_id ? (await loadBatchContextForItems([tItemPre.item_id], args.locationId)).get(tItemPre.item_id) : undefined;
     if (!ctx || ctx.eligibility !== "batched") {
       void audit({ ...auditBase, metadata: { outcome: "batch_recipe_unresolved", template_item_id: args.entry.templateItemId, blocked_reason: ctx?.blockedReason ?? "no_recipe" } });
       throw new OpeningBatchContractError("batch_recipe_unresolved", args.entry.templateItemId);
@@ -2315,7 +2315,7 @@ export async function savePhase2Item(
     } else if (tItem?.item_id) {
       let consumption = confirmedConsumption;
       if (consumption === null) {
-        const m = await skuConsumptionForItem(tItem.item_id, args.entry.openerPrepped);
+        const m = await skuConsumptionForItem(tItem.item_id, args.entry.openerPrepped, args.locationId);
         consumption = [...m].map(([skuId, oz]) => ({ skuId, qtyOz: oz, qtyEntered: null, unitEntered: null, derivedOz: oz }));
       }
       await recordProductionFromPrep(args.actor, {

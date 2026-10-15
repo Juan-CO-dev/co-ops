@@ -8,7 +8,16 @@ import { buildRecipeGraph } from "@/lib/prep-consumption-graph";
 import { parseShadowArgs } from "../scripts/ezcater-shadow-backfill";
 import { loadKnownToastOrderCodes, toastCodeSelectionKey } from "@/lib/ezcater/toast-codes";
 vi.mock("@/lib/supabase-server", () => ({ getServiceRoleClient: vi.fn() }));
-vi.mock("@/lib/prep-consumption", () => ({ loadRecipeGraph: vi.fn() }));
+vi.mock("@/lib/prep-consumption", () => {
+  const loadRecipeGraph = vi.fn();
+  // Catalog Phase 2a (D1): pass 2 resolves each order through createDatedGraphs; with no pack
+  // boundary in the window every date reuses ONE live graph per shop, as the real factory does.
+  const createDatedGraphs = (opts: { locationId: string | null; liveGraph?: unknown }) => {
+    let live: Promise<unknown> | null = opts.liveGraph ? Promise.resolve(opts.liveGraph) : null;
+    return async () => (live ??= loadRecipeGraph({ locationId: opts.locationId }));
+  };
+  return { loadRecipeGraph, createDatedGraphs };
+});
 vi.mock("@/lib/toast/captured-day", () => ({ loadCapturedToastDay: vi.fn() }));
 vi.mock("@/lib/toast/effective-depletion", () => ({ loadRawToastSalesRows: vi.fn() }));
 vi.mock("@/lib/ezcater/toast-codes", () => ({ loadKnownToastOrderCodes: vi.fn(), toastCodeSelectionKey: (...ids: string[]) => JSON.stringify(ids) }));

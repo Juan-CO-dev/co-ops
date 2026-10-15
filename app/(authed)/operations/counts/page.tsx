@@ -50,7 +50,7 @@ export default async function CountsPage({ searchParams }: { searchParams: Promi
   const lang = auth.user.language;
   // B9: ONE set of reference reads (roster, vendors, measures, chains, the product index +
   // lots) for the whole render — the count sheet and the on-hand panel share them.
-  const refs = createCountsReadRefs();
+  const refs = createCountsReadRefs(location);
   // Start the panel's read NOW, beside the sheet's. Its outcome belongs to the boundary
   // below; the no-op catch only keeps an early failure from surfacing as unhandled.
   const onHand = auth.level >= COUNT_READ_MIN ? withDeadline(loadOnHand(auth, location, undefined, refs), ON_HAND_DEADLINE_MS) : null;

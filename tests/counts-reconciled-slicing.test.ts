@@ -32,7 +32,12 @@ import { createFakeDb } from "./fixtures/counts-fake-db";
 
 const mocks = vi.hoisted(() => ({ graph: vi.fn(), derive: vi.fn(), context: vi.fn(), window: vi.fn() }));
 vi.mock("@/lib/toast/captured-window", () => ({ loadCapturedToastWindow: mocks.window }));
-vi.mock("@/lib/prep-consumption", () => ({ loadRecipeGraph: mocks.graph }));
+vi.mock("@/lib/prep-consumption", () => ({
+  loadRecipeGraph: mocks.graph,
+  // Catalog Phase 2a (D1): no pack boundary inside the window — every date reuses the live graph.
+  createDatedGraphs: (opts: { locationId: string | null; liveGraph?: unknown }) => async () =>
+    opts.liveGraph ?? mocks.graph({ locationId: opts.locationId }),
+}));
 vi.mock("@/lib/catering/toast-sales", () => ({ deriveCapturedSalesConsumption: mocks.derive, loadSalesConsumptionContext: mocks.context }));
 
 const SHOP = "shop";
@@ -88,7 +93,8 @@ beforeEach(() => {
     outputs: [{ outputItemId: "prep", outputMenuItemId: null, yield: 1, ozPerParUnit: null }],
   }], new Map([["sku", { packFormat: null, eachContainerLabel: null, unitsPerPack: null, eachSize: null, eachMeasure: null, avgOzPerEach: null }]]),
   new Map([["oz", { dimension: "weight", toBaseFactor: 1 }]])));
-  mocks.context.mockImplementation(async (locationId: string, graph: unknown) => ({ locationId, graph }));
+  // The real context always carries graphFor (D1); with no pack boundary it answers the live graph.
+  mocks.context.mockImplementation(async (locationId: string, graph: unknown) => ({ locationId, graph, graphFor: async () => graph }));
   // The Toast capture window: one day per business date, a capture GAP on Oct 7.
   mocks.window.mockImplementation(async (_sb: unknown, _loc: string, fromDate: string, end: string) => {
     const days = new Map<string, CapturedToastDay>();

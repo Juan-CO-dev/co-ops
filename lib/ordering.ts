@@ -780,7 +780,7 @@ export async function loadWalkerData(actor: AuthContext, locationId: string): Pr
   const eventWindowEnd = addDaysEt(walkDateEt, EVENT_ADVISORY_HORIZON_DAYS);
   const [chainsBySku, measures, rawUsageBySku, onHandView, { data: vendorRows, error: vErr }, lastOrderBySku, overlayBySku, cutoffsByVendor, productIndex, demandSources, suggestionBySku, parSilence, cateringDemand] =
     await Promise.all([
-      loadSkuPackChains(skuIds),
+      loadSkuPackChains(skuIds, locationId),
       loadMeasures(),
       loadSkuUsageRank(sb, locationId),
       loadOnHandDerived(actor, locationId), // ONE advisory on-hand pass for the whole location.
@@ -1171,7 +1171,7 @@ export async function loadWalkerData(actor: AuthContext, locationId: string): Pr
     const rescueIds = [...rescueTargets.keys()];
     const [{ data: rescueRows, error: rErr }, rescueChains] = await Promise.all([
       sb.from("vendor_items").select(WALKER_SKU_COLUMNS).in("id", rescueIds).returns<WalkerSkuRow[]>(),
-      loadSkuPackChains(rescueIds),
+      loadSkuPackChains(rescueIds, locationId),
     ]);
     if (rErr) throw new Error(`loadWalkerData rerouted backups: ${rErr.message}`);
     for (const [id, chain] of rescueChains) chainsBySku.set(id, chain);
@@ -1518,7 +1518,7 @@ export async function submitParPass(
   }
 
   const [chainsBySku, measures, overlayBySku] = await Promise.all([
-    loadSkuPackChains(skuIds),
+    loadSkuPackChains(skuIds, locationId),
     loadMeasures(),
     loadOverlayBySku(sb, locationId),
   ]);
@@ -1866,7 +1866,7 @@ export async function loadShrinkageSignals(
   // Simpler + honest: recompute perUnitOz from the live SKU shape (one batched load), so
   // the threshold matches submit's exactly.
   const [chainsBySku, measures, { data: shapeRows, error: shErr }] = await Promise.all([
-    loadSkuPackChains(skuIds),
+    loadSkuPackChains(skuIds, locationId),
     loadMeasures(),
     sb.from("vendor_items")
       .select("id, pack_format, each_container_label, units_per_pack, each_size, each_measure, avg_oz_per_each")

@@ -9,7 +9,12 @@ import type { getServiceRoleClient } from "@/lib/supabase-server";
 
 const mocks = vi.hoisted(() => ({ day: vi.fn(), graph: vi.fn(), derive: vi.fn(), context: vi.fn(), window: vi.fn() }));
 vi.mock("@/lib/toast/captured-window", () => ({ loadCapturedToastWindow: mocks.window }));
-vi.mock("@/lib/prep-consumption", () => ({ loadRecipeGraph: mocks.graph }));
+vi.mock("@/lib/prep-consumption", () => ({
+  loadRecipeGraph: mocks.graph,
+  // Catalog Phase 2a (D1): no pack boundary inside the window — every date reuses the live graph.
+  createDatedGraphs: (opts: { locationId: string | null; liveGraph?: unknown }) => async () =>
+    opts.liveGraph ?? mocks.graph({ locationId: opts.locationId }),
+}));
 vi.mock("@/lib/catering/toast-sales", () => ({ deriveCapturedSalesConsumption: mocks.derive, loadSalesConsumptionContext: mocks.context }));
 type Row = Record<string, unknown>;
 let tables: Record<string, Row[]>;
@@ -57,7 +62,8 @@ beforeEach(() => {
     outputs: [{ outputItemId: "prep", outputMenuItemId: null, yield: 1, ozPerParUnit: null }],
   }], new Map([["sku", { packFormat: null, eachContainerLabel: null, unitsPerPack: null, eachSize: null, eachMeasure: null, avgOzPerEach: null }]]), new Map([["oz", { dimension: "weight", toBaseFactor: 1 }]])));
   mocks.day.mockResolvedValue({ coverage: { runId: "run", finishedAt: "2026-10-07T06:00:00Z" }, orders: [ring] });
-  mocks.context.mockImplementation(async (locationId, graph) => ({ locationId, graph }));
+  // The real context always carries graphFor (D1); with no pack boundary it answers the live graph.
+  mocks.context.mockImplementation(async (locationId, graph) => ({ locationId, graph, graphFor: async () => graph }));
   mocks.window.mockImplementation(async (_sb, locationId, fromDate, end) => {
     const days = new Map();
     for (let date = fromDate; date < end;) {

@@ -271,7 +271,7 @@ export async function loadYieldVariance(actor: AuthContext, locationId: string, 
 
   const itemIds = [...new Set(batches.map((b) => b.itemId))];
   const [ctx, itemsRes] = await Promise.all([
-    loadBatchContextForItems(itemIds),
+    loadBatchContextForItems(itemIds, locationId),
     sb.from("items").select("id, name, name_es, default_par_unit").in("id", itemIds)
       .returns<Array<{ id: string; name: string; name_es: string | null; default_par_unit: string | null }>>(),
   ]);
@@ -398,7 +398,7 @@ export async function recordYieldRetrain(actor: AuthContext, input: RetrainInput
   const verdict = await currentVerdict(sb, input.locationId, input.itemId, now);
   const scopeVerdict = input.scope === "recipe" ? verdict.recipe : verdict.makers.find((m) => m.makerId === makerId);
   if (!scopeVerdict || !scopeVerdict.nudge || !scopeVerdict.summary) throw new YieldStatsError(409, "no_active_nudge");
-  const ctx = (await loadBatchContextForItems([input.itemId])).get(input.itemId);
+  const ctx = (await loadBatchContextForItems([input.itemId], input.locationId)).get(input.itemId);
   if (!ctx) throw new YieldStatsError(404, "recipe_not_found");
 
   const outliers = input.scope === "recipe" ? verdict.recipe.outlierMakerIds : [makerId as string];
@@ -544,7 +544,7 @@ export async function updateRecipeYieldFromNudge(actor: AuthContext, input: { lo
   const sb = getServiceRoleClient();
   const verdict = await currentVerdict(sb, input.locationId, input.itemId, now);
   if (!verdict.recipe.nudge || !verdict.recipe.summary) throw new YieldStatsError(409, "no_active_nudge");
-  const ctx = (await loadBatchContextForItems([input.itemId])).get(input.itemId);
+  const ctx = (await loadBatchContextForItems([input.itemId], input.locationId)).get(input.itemId);
   if (!ctx || !ctx.isBatch) throw new YieldStatsError(409, "not_batch_recipe");
 
   return updateRecipeOutputYield(actor, {

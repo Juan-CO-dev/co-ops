@@ -13,7 +13,9 @@ import { getRoleLevel } from "@/lib/roles";
 import { lockLocationContext, type LocationActor } from "@/lib/locations";
 import { audit } from "@/lib/audit";
 import type { AuthContext } from "@/lib/session";
-import { skuContentOz, type MeasureUnitFactor } from "@/lib/recipe-math";
+import type { MeasureUnitFactor } from "@/lib/recipe-math";
+import { loadSkuPackResolution } from "@/lib/prep-consumption";
+import { contentOzForScope } from "@/lib/sku-versions-shared";
 import type { MeasureDimension } from "@/lib/recipe-math";
 import { markSkuNameClashes, type ProductionSkuOption } from "@/lib/production-shared";
 
@@ -89,14 +91,25 @@ async function loadRetiredProductIds(
   return retired;
 }
 
-/** content_oz (oz per pack) for one SKU, or null if not configured. */
-async function skuContentOzById(skuId: string): Promise<number | null> {
+/**
+ * content_oz (oz per pack) for one SKU AT A SHOP (catalog Phase 2a): the shop's own pack version
+ * when it has one, else today's flat mirror byte-for-byte (contentOzForScope). Manual production
+ * PERSISTS input_oz from this, so the shop's case must be the one counted.
+ */
+async function skuContentOzAt(skuId: string, locationId: string): Promise<number | null> {
   const sb = getServiceRoleClient();
-  const { data: sku } = await sb.from("vendor_items").select("units_per_pack, each_size, each_measure, avg_oz_per_each").eq("id", skuId)
-    .maybeSingle<{ units_per_pack: number | null; each_size: number | string | null; each_measure: string | null; avg_oz_per_each: number | string | null }>();
+  const [{ data: sku }, packs, measures] = await Promise.all([
+    sb.from("vendor_items").select("units_per_pack, each_size, each_measure, avg_oz_per_each").eq("id", skuId)
+      .maybeSingle<{ units_per_pack: number | null; each_size: number | string | null; each_measure: string | null; avg_oz_per_each: number | string | null }>(),
+    loadSkuPackResolution([skuId], locationId),
+    loadMeasuresMap(),
+  ]);
   if (!sku) return null;
-  const measures = await loadMeasuresMap();
-  return skuContentOz({ unitsPerPack: sku.units_per_pack, eachSize: num(sku.each_size), eachMeasure: sku.each_measure, avgOzPerEach: num(sku.avg_oz_per_each) }, measures);
+  return contentOzForScope(
+    { unitsPerPack: sku.units_per_pack, eachSize: num(sku.each_size), eachMeasure: sku.each_measure, avgOzPerEach: num(sku.avg_oz_per_each) },
+    packs.get(skuId),
+    measures,
+  );
 }
 
 export interface RecordProductionInput {
@@ -378,7 +391,7 @@ export async function recordProduction(actor: AuthContext, input: RecordProducti
   }
 
   // Resolve consumed oz for the single SKU line: inputQty (packs) × content_oz (oz/pack).
-  const contentOz = await skuContentOzById(input.inputSkuId);
+  const contentOz = await skuContentOzAt(input.inputSkuId, input.locationId);
   if (contentOz == null) throw new ProductionError(400, "invalid_conversion", "SKU has no oz content configured");
   const inputOz = input.inputQty * contentOz;
 

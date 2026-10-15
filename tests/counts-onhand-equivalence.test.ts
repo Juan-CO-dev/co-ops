@@ -228,7 +228,7 @@ describe("B9 step 3 — the count-dimension N+1 is one read", () => {
 });
 
 const pageRender = async () => {
-  const refs = counts.createCountsReadRefs();
+  const refs = counts.createCountsReadRefs(LOC);
   return Promise.all([counts.loadCountReferenceData(actor, LOC, refs), counts.loadOnHand(actor, LOC, NOW, refs)]);
 };
 const v0PageRender = () => Promise.all([v0.v0LoadCountCatalog(LOC), v0Panel()]);

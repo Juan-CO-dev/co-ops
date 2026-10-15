@@ -1506,7 +1506,7 @@ export async function loadPoDetail(actor: AuthContext, poId: string): Promise<Po
   // case — so every active SKU stays offered (LRA-230, CC 2026-09-11).
   const onPo = new Set(po.status === "draft" ? (lineRows ?? []).map((l) => l.sku_id) : []);
   const availableSkus = (vendorSkuRows ?? []).filter((s) => !onPo.has(s.id));
-  const chains = await loadSkuPackChains(availableSkus.map((s) => s.id));
+  const chains = await loadSkuPackChains(availableSkus.map((s) => s.id), po.location_id);
   const vendorSkus = availableSkus.map((s) => ({
     skuId: s.id, name: s.name, itemNumber: s.item_number,
     guidePosition: liveGuide.get(s.id)?.position ?? null, guideSection: liveGuide.get(s.id)?.section ?? null,

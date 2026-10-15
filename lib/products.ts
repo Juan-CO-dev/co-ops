@@ -338,7 +338,7 @@ export async function listProducts(actor: AuthContext): Promise<ProductView[]> {
   }
 
   const [registryMeasures, registryChains] = await Promise.all([
-    loadMeasures(), loadSkuPackChains(members.map((m) => m.id)),
+    loadMeasures(), loadSkuPackChains(members.map((m) => m.id), null),
   ]);
   const registryUnitOz = new Map(products.map((p) => [p.id, num(p.unit_oz)]));
   const membersByProduct = new Map<string, ProductMemberView[]>();
@@ -695,7 +695,7 @@ export async function loadProductIndex(
           })(),
     loadReceiptHistory(sb, memberIds, locationId),
     shared.measures ? shared.measures() : loadMeasures(),
-    shared.packChains ? shared.packChains(memberIds) : loadSkuPackChains(memberIds),
+    shared.packChains ? shared.packChains(memberIds) : loadSkuPackChains(memberIds, locationId),
   ]);
   const overlayBySku = new Map<string, boolean | null>();
   for (const r of ovRows) overlayBySku.set(r.sku_id, r.active_override);

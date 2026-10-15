@@ -17,6 +17,7 @@ import { selectAllRows } from "@/lib/supabase-paginate";
 import { loadRecipeGraph } from "@/lib/prep-consumption";
 import { batchSkuOzForItemFromGraph, type RecipeGraph } from "@/lib/prep-consumption-graph";
 import { batchEligibility, type BatchItemContext } from "@/lib/batch-prep-shared";
+import type { VersionScope } from "@/lib/sku-versions-shared";
 
 export type { BatchItemContext };
 
@@ -31,7 +32,7 @@ function num(v: number | string | null | undefined): number | null {
  * (callers treat absent as single-box: there is nothing to count by batch). Every read
  * throws on `error` (the lib/prep-consumption.ts posture: a smaller answer is a wrong answer).
  */
-export async function loadBatchContextForItems(itemIds: string[], graphIn?: RecipeGraph): Promise<Map<string, BatchItemContext>> {
+export async function loadBatchContextForItems(itemIds: string[], versionLocationId: VersionScope, graphIn?: RecipeGraph): Promise<Map<string, BatchItemContext>> {
   const out = new Map<string, BatchItemContext>();
   const uniq = [...new Set(itemIds.filter(Boolean))];
   if (uniq.length === 0) return out;
@@ -39,7 +40,7 @@ export async function loadBatchContextForItems(itemIds: string[], graphIn?: Reci
   // Astra P2 #5 (BC-031): resolvability comes from the SAME graph the fold will read — a
   // single-output recipe with an unconvertible ingredient is NOT usable, whatever its flags
   // say, and the row/save say so instead of committing a completion the fold then refuses.
-  const graph = graphIn ?? (await loadRecipeGraph());
+  const graph = graphIn ?? (await loadRecipeGraph({ versionLocationId }));
 
   // 1. Every output row naming one of our items → candidate producer recipes.
   const myOutputs = await selectAllRows<{ recipe_id: string; output_item_id: string; yield: number | string | null }>((from, to) =>

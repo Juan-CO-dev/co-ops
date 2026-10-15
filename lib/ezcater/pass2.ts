@@ -1,7 +1,7 @@
 import "server-only";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import { selectAllRows } from "@/lib/supabase-paginate";
-import { loadRecipeGraph } from "@/lib/prep-consumption";
+import { createDatedGraphs } from "@/lib/prep-consumption";
 import { loadCapturedToastDay } from "@/lib/toast/captured-day";
 import { loadRawToastSalesRows } from "@/lib/toast/effective-depletion";
 import { etYmdMinusDays } from "@/lib/operational-day";
@@ -48,11 +48,12 @@ async function materialize(fromDate: string, toDate: string, deadlineAt: number,
   for (const order of orders) order.location_id = byLead.get(order.lead_id)?.location_id ?? order.location_id;
   const targets = orders.filter((o) => o.event_date! >= fromDate && o.event_date! <= toDate);
   if (!targets.length) return { processed: 0, failed: 0, deferred: false };
-  const graphs = new Map<string, Awaited<ReturnType<typeof loadRecipeGraph>>>();
-  const graphFor = async (locationId: string) => {
-    let graph = graphs.get(locationId);
-    if (!graph) { graph = await loadRecipeGraph({ locationId }); graphs.set(locationId, graph); }
-    return graph;
+  // D1: an order's ounces resolve through the packs in force on its event date.
+  const datedByLocation = new Map<string, ReturnType<typeof createDatedGraphs>>();
+  const graphFor = async (locationId: string, businessDate: string) => {
+    let dated = datedByLocation.get(locationId);
+    if (!dated) { dated = createDatedGraphs({ locationId }); datedByLocation.set(locationId, dated); }
+    return dated(businessDate);
   };
   let customizations: Awaited<ReturnType<typeof loadCustomizationContext>> | undefined;
   const maps = await selectAllRows<ToastMap & { location_id: string }>((from, to) => sb.from("toast_menu_map")
@@ -166,7 +167,7 @@ async function materialize(fromDate: string, toDate: string, deadlineAt: number,
         if (!probe.confirmed) { reviews.push({ source: "ezcater", code: probe.reason, identity_key: identity, candidates: probe.candidates }); continue; }
         if (!active) continue;
         const evidence = transfers.filter((t) => t.resource_id === order.lead_id);
-        const graph = await graphFor(order.location_id);
+        const graph = await graphFor(order.location_id, order.event_date!);
         const { amounts, issues } = customizedLineAmounts({ graph, target: probe.confirmed, quantity: Number(item.quantity),
           options: item.options, maps: customizations?.maps ?? [], skuWeights: customizations?.skuWeights,
           locationId: order.location_id, eventDate: order.event_date!, productions, transfers: evidence, packages });

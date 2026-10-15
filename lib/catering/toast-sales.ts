@@ -26,7 +26,8 @@ import {
   matchesExclusion, SUSPECT_NAME_RE, SUSPECT_CHECK_QTY,
   type IngestExclusion, type ExclusionTarget,
 } from "./toast-sales-shared";
-import { loadRecipeGraph } from "@/lib/prep-consumption";
+import { createDatedGraphs, loadRecipeGraph } from "@/lib/prep-consumption";
+import { asOfForBusinessDate } from "@/lib/sku-versions-shared";
 import { recordResolutionFlipsForLocation } from "@/lib/products";
 import { salesSignalsReady } from "@/lib/dynamic-pars-probes";
 import {
@@ -562,7 +563,7 @@ export async function materializeCapturedDepletion(
     return { data };
   });
   const produced = new Set(productions.map((p) => p.output_item_id));
-  const graph = await loadRecipeGraph({ locationId });
+  const graph = await loadRecipeGraph({ locationId, asOf: asOfForBusinessDate(businessDate) });
   const descendants = new Map<string, ReadonlySet<string>>();
   const visit = (itemId: string, seen = new Set<string>()): Set<string> => {
     if (seen.has(itemId)) return new Set();
@@ -781,6 +782,11 @@ type SkuNameRow = NameRow & { avg_oz_per_each: number | string | null };
 export interface SalesConsumptionContext {
   locationId: string;
   graph: RecipeGraph;
+  /**
+   * D1 — the graph for ONE business date (packs in force that day). Optional only so hand-built test
+   * contexts compile; loadSalesConsumptionContext always sets it, and every derivation prefers it.
+   */
+  graphFor?: (businessDate: string) => Promise<RecipeGraph>;
   exclusions: ExclusionView[];
   mapRows: MapRow[];
   effectRows: EffectRow[];
@@ -829,7 +835,7 @@ export async function loadSalesConsumptionContext(locationId: string, graph?: Re
   const packageOptions = await related<PackageOptionRow>("catering_package_slot_options", "package_item_id, item_id, menu_item_id, classic", "package_item_id", packageLines.filter((r) => r.slot_type === "choice").map((r) => r.id), true);
   // Preserve the legacy fingerprint's map/ordinal/id effect ordering.
   effectRows.sort((a, b) => a.map_id.localeCompare(b.map_id) || a.ordinal - b.ordinal || a.id.localeCompare(b.id));
-  return { locationId, graph: resolvedGraph, mapRows, effectRows, aliasRows, packageRows, packageLines, packageOptions, menuNames, itemNames, skuNames,
+  return { locationId, graph: resolvedGraph, graphFor: createDatedGraphs({ locationId, liveGraph: resolvedGraph }), mapRows, effectRows, aliasRows, packageRows, packageLines, packageOptions, menuNames, itemNames, skuNames,
     exclusions: exclusionRows.map((r) => ({ id: r.id, locationId: r.location_id, kind: r.kind, value: r.value, note: r.note, createdAt: r.created_at })) };
 }
 
@@ -999,7 +1005,11 @@ export async function deriveSalesConsumptionFrom(locationId: string, businessDat
   //    (PR #180 invariant: recombination === full flatten, no 2× SKUs). ─────
   // locationId scopes product resolution (0179): this shop's primary designation,
   // its activation overlay and its receipt history — never another shop's.
-  const graph = context?.graph ?? await loadRecipeGraph({ locationId });
+  // CATALOG PHASE 2a (D1): a business date's ounces resolve through the packs IN FORCE THAT DAY —
+  // a shop pack version made today never re-resolves yesterday's rebuilt depletion.
+  const graph = context?.graphFor
+    ? await context.graphFor(businessDate)
+    : context?.graph ?? await loadRecipeGraph({ locationId, asOf: asOfForBusinessDate(businessDate) });
   const poisonedRecipes = new Set<string>();
   const menuItemUnits = new Map<string, number>();   // signed whole-sub units per menu_item
   const itemUnits = new Map<string, number>();       // signed par-units per item

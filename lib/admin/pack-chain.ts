@@ -136,6 +136,7 @@ export async function loadSkuPackChain(actor: AuthContext, skuId: string): Promi
     .select("id, label, contains_qty, contains_level_id, contains_measure_unit, display_ordinal")
     .eq("sku_id", skuId)
     .eq("active", true)
+    .is("location_id", null)
     .order("display_ordinal", { ascending: true })
     .returns<Array<{ id: string; label: string; contains_qty: number | string; contains_level_id: string | null; contains_measure_unit: string | null; display_ordinal: number }>>();
   if (error) throw new Error(`loadSkuPackChain failed: ${error.message}`);

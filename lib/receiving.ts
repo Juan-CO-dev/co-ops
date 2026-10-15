@@ -292,7 +292,7 @@ export async function loadReceivingFormData(actor: AuthContext, locationId: stri
   // Chain labels are ordered root→leaf for the level picker (display_ordinal).
   // Usage rank is a SECOND batch pair (production + sales lanes) — never per-SKU.
   const [chainsBySku, usageBySku] = await Promise.all([
-    loadReceivingChains(skuList.map((s) => s.id)),
+    loadReceivingChains(skuList.map((s) => s.id), locationId),
     loadSkuUsageRank(sb, locationId),
   ]);
   return {
@@ -315,10 +315,10 @@ export async function loadReceivingFormData(actor: AuthContext, locationId: stri
 
 // Stores grow the catalog across vendors. Bound request lines and response sizes
 // when loading the full picker universe (paging SKU rows alone is insufficient).
-async function loadReceivingChains(ids: string[]): Promise<Map<string, PackChainLevel[]>> {
+async function loadReceivingChains(ids: string[], locationId: string): Promise<Map<string, PackChainLevel[]>> {
   const out = new Map<string, PackChainLevel[]>();
   for (let i = 0; i < ids.length; i += 100) {
-    const chunk = await loadSkuPackChains(ids.slice(i, i + 100));
+    const chunk = await loadSkuPackChains(ids.slice(i, i + 100), locationId);
     for (const [id, chain] of chunk) out.set(id, chain);
   }
   return out;
@@ -802,7 +802,7 @@ async function validateAndResolveDeliveryLines(
     throw new ReceivingError(400, "sku_vendor_mismatch", "An item belongs to a different vendor than this delivery");
   }
 
-  const [measures, chainsBySku] = await Promise.all([loadMeasures(), loadSkuPackChains(skuIds)]);
+  const [measures, chainsBySku] = await Promise.all([loadMeasures(), loadSkuPackChains(skuIds, deliveryLocationId ?? null)]);
   const skuById = new Map((activeSkus ?? []).map((s) => [s.id, s]));
   const chained = new Set([...chainsBySku.entries()].filter(([, lv]) => lv.length > 0).map(([id]) => id));
   const resolvedOzByLineIdx = lines.map((l) => resolveReceivedOz(l, skuById.get(l.skuId), chainsBySku.get(l.skuId) ?? null, measures));
@@ -1206,7 +1206,7 @@ export async function loadOpenPoTemplate(
   // order_unit_label ONLY when the SKU has an active chain (its root label is
   // guaranteed to be the first member of chainLabelsInWalkOrder), else null.
   const poSkuIds = [...new Set((lineRows ?? []).map((l) => l.sku_id))];
-  const chainsBySku = await loadSkuPackChains(poSkuIds);
+  const chainsBySku = await loadSkuPackChains(poSkuIds, locationId);
   const isChained = (skuId: string): boolean => (chainsBySku.get(skuId)?.length ?? 0) > 0;
 
   const usableLines = (lineRows ?? [])

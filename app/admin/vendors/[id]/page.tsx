@@ -101,7 +101,7 @@ export default async function AdminVendorDetailPage({
   //    oz resolution as the costing board (2026-08-21). Loaded HERE, above the cost
   //    derivation, because computeSkuCostPerOz now requires it. Mirrors
   //    app/admin/skus/page.tsx. ──
-  const chainMap = await loadSkuPackChains(skus.map((s) => s.id));
+  const chainMap = await loadSkuPackChains(skus.map((s) => s.id), null);
 
   const prices = await loadCurrentSkuPrices(skus.map((s) => s.id));
   const costPerOz = computeSkuCostPerOz(skus, prices, measureUnits, chainMap);

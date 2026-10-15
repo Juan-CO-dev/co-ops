@@ -84,10 +84,15 @@ describe("the fixture is not trivial — hand-checked anchors inside the golden"
     expect(g.datedMenuOz["m-italian"]!["s-turkey"]).toBeCloseTo(4, 10);
   });
 
-  it("the probe INSIDE the old version is frozen as TODAY's date-blind loaders answer it (live: 4 oz); D1 corrects it to 6 oz", () => {
-    const g = golden().global!;
-    expect(g.datedProbe!.day).toBe(OLD_VERSION_DAY);
-    expect(g.datedProbe!.menuOz["m-italian"]!["s-turkey"]).toBeCloseTo(4, 10);
+  it("D1: the probe INSIDE the superseded version resolves THAT version's chain (6 oz: case of 6 bags), never the live one (4 oz)", () => {
+    // Task 1 froze 4 oz (today's loaders were date-blind); Task 5's as-of resolver moved exactly
+    // these three values (global, shop one, shop two) to 6 oz — the deliberate D1 correction.
+    for (const scope of ["global", LOC, OTHER]) {
+      const g = golden()[scope]!;
+      expect(g.datedProbe!.day).toBe(OLD_VERSION_DAY);
+      expect(g.datedProbe!.menuOz["m-italian"]!["s-turkey"]).toBeCloseTo(6, 10);
+      expect(g.graph.menuOz["m-italian"]!["s-turkey"]).toBeCloseTo(4, 10);
+    }
   });
 
   it("a FUTURE-dated price is today's current price (frozen as-is): tomato $27, not the $25 in force today", () => {

@@ -12,9 +12,9 @@ import { etCalendarDate } from "@/lib/operational-day";
 import type { AuthContext } from "@/lib/session";
 import { PORTION_FRACTION, type Portion } from "@/lib/catering/pricing-derivation";
 import { resolveRefs } from "@/lib/catering/prep-demand";
-import { loadRecipeGraph, loadMeasures } from "@/lib/prep-consumption";
+import { loadRecipeGraph, loadMeasures, loadSkuPackResolution } from "@/lib/prep-consumption";
 import { perUnitSkuOzForItemFromGraph, perUnitSkuOzForMenuItemFromGraph } from "@/lib/prep-consumption-graph";
-import { skuContentOz } from "@/lib/recipe-math";
+import { contentOzForScope } from "@/lib/sku-versions-shared";
 
 export const PREP_START_LEAD_DAYS = 3;    // ~72h prep-start window (Juan: "2–3 days before")
 export const SURPLUS_READ_MIN = 6;        // catering_mgr+ (mirrors PREP_DEMAND_READ_MIN)
@@ -162,15 +162,17 @@ export async function loadCateringSurplus(
   const skuIds = [...new Set([...skuAcc.values()].map((a) => a.skuId))];
   const skuMeta = new Map<string, { name: string; contentOz: number | null }>();
   if (skuIds.length) {
-    const measures = await loadMeasures();
+    // The shop's own case when it has one (catalog Phase 2a); else today's flat mirror, unchanged.
+    const [measures, packs] = await Promise.all([loadMeasures(), loadSkuPackResolution(skuIds, args.locationId ?? null)]);
     const { data: skuRows } = await sb
       .from("vendor_items")
       .select("id, name, units_per_pack, each_size, each_measure, avg_oz_per_each")
       .in("id", skuIds)
       .returns<Array<{ id: string; name: string; units_per_pack: number | null; each_size: number | string | null; each_measure: string | null; avg_oz_per_each: number | string | null }>>();
     for (const s of skuRows ?? []) {
-      const contentOz = skuContentOz(
+      const contentOz = contentOzForScope(
         { unitsPerPack: s.units_per_pack, eachSize: num(s.each_size) || null, eachMeasure: s.each_measure, avgOzPerEach: num(s.avg_oz_per_each) || null },
+        packs.get(s.id),
         measures,
       );
       skuMeta.set(s.id, { name: s.name, contentOz });

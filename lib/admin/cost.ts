@@ -141,7 +141,7 @@ async function loadChainAwareContentOz(
   const [{ data: skuRows }, chains] = await Promise.all([
     sb.from("vendor_items").select("id, units_per_pack, each_size, each_measure, avg_oz_per_each").in("id", skuIds)
       .returns<Array<{ id: string; units_per_pack: number | null; each_size: number | string | null; each_measure: string | null; avg_oz_per_each: number | string | null }>>(),
-    loadSkuPackChains(skuIds),
+    loadSkuPackChains(skuIds, null), // the drawer's ledgers span every shop: the global default
   ]);
   return new Map<string, number | null>(
     (skuRows ?? []).map((s) => [

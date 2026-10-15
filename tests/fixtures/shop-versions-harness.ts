@@ -11,13 +11,14 @@
  * (perOrderUnitOz — the ONLY pack/price input to the walk's suggestion and Dynamic Pars); and the
  * FLAT content oz that manual production and catering surplus divide by.
  */
-import { loadAllSkuPackChains, loadMeasures, loadRecipeGraph, loadSkuPackChains } from "@/lib/prep-consumption";
+import { createDatedGraphs, loadAllSkuPackChains, loadMeasures, loadRecipeGraph, loadSkuPackChains, loadSkuPackResolution } from "@/lib/prep-consumption";
+import { contentOzForScope } from "@/lib/sku-versions-shared";
 import { perUnitSkuOzForItemFromGraph, perUnitSkuOzForMenuItemFromGraph, type RecipeGraph } from "@/lib/prep-consumption-graph";
 import { loadCurrentSkuPrices } from "@/lib/admin/cost";
 import { costPerOzFromGraph } from "@/lib/admin/menu-costing";
 import { rollupItemCost, rollupMenuItemCost } from "@/lib/menu-costing-shared";
 import { perOrderUnitOz } from "@/lib/ordering";
-import { skuContentOz, type MeasureUnitFactor, type RecipeInputSku } from "@/lib/recipe-math";
+import type { MeasureUnitFactor, RecipeInputSku } from "@/lib/recipe-math";
 import type { PackChainLevel } from "@/lib/pack-chain-shared";
 
 type Row = Record<string, unknown>;
@@ -40,12 +41,15 @@ export interface ResolverApi {
  * lines with the scoped calls and change NOTHING else in this file.
  */
 export const liveApi: ResolverApi = {
-  chains: (skuIds, _scope) => loadSkuPackChains(skuIds), // TASK-5
-  allChains: (_scope) => loadAllSkuPackChains(), // TASK-5
+  chains: (skuIds, scope) => loadSkuPackChains(skuIds, scope),
+  allChains: (scope) => loadAllSkuPackChains(scope),
   prices: (skuIds, _scope) => loadCurrentSkuPrices(skuIds), // TASK-6
   graph: (scope) => loadRecipeGraph(scope == null ? undefined : { locationId: scope }),
-  datedGraph: (scope, _businessDate) => loadRecipeGraph(scope == null ? undefined : { locationId: scope }), // TASK-5
-  flatContent: async (flat, _scope, measures) => new Map([...flat].map(([id, f]) => [id, skuContentOz(f, measures)])), // TASK-5
+  datedGraph: (scope, businessDate) => createDatedGraphs({ locationId: scope })(businessDate),
+  flatContent: async (flat, scope, measures) => {
+    const packs = await loadSkuPackResolution([...flat.keys()], scope);
+    return new Map([...flat].map(([id, f]) => [id, contentOzForScope(f, packs.get(id), measures)]));
+  },
 };
 
 const n = (v: unknown): number | null => {

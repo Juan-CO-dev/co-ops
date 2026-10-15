@@ -1,7 +1,7 @@
 import "server-only";
 import type { getServiceRoleClient } from "@/lib/supabase-server";
 import { selectAllRows } from "@/lib/supabase-paginate";
-import { loadRecipeGraph } from "@/lib/prep-consumption";
+import { createDatedGraphs, loadRecipeGraph } from "@/lib/prep-consumption";
 import { perUnitSkuAttributionsForItem } from "@/lib/prep-consumption-graph";
 import { selectSalesDepletion } from "@/lib/depletion-shared";
 import { etCalendarDate, etYmdMinusDays } from "@/lib/operational-day";
@@ -79,6 +79,13 @@ export async function loadReconciledSalesWindow(sb: Client, window: ReconciledWi
     if (!graph) { graph = await loadRecipeGraph({ locationId }); graphs.set(locationId, graph); }
     return graph;
   };
+  // D1: an ezCater ORDER depletes through the packs in force on its event date — never today's.
+  const datedByLocation = new Map<string, ReturnType<typeof createDatedGraphs>>();
+  const datedGraphFor = (locationId: string, businessDate: string) => {
+    let dated = datedByLocation.get(locationId);
+    if (!dated) { dated = createDatedGraphs({ locationId, liveGraph: graphs.get(locationId) }); datedByLocation.set(locationId, dated); }
+    return dated(businessDate);
+  };
   // Window loader performs its own generation fence. Derive afresh so a late
   // link removes all of a check's base selections AND modifiers immediately.
   for (const locationId of locationIds) {
@@ -88,10 +95,11 @@ export async function loadReconciledSalesWindow(sb: Client, window: ReconciledWi
       loadSalesConsumptionContext(locationId, graph),
     ]);
     for (const [date, day] of days) {
+      const dayGraph = await context.graphFor!(date); // D1: that day's packs
       const consumption = await deriveCapturedSalesConsumption(locationId, date, day,
         links.filter((link) => link.location_id === locationId && link.business_date === date), context);
       const produced = new Set(productions.filter((p) => p.location_id === locationId && etCalendarDate(p.produced_at) === date).map((p) => p.output_item_id));
-      const attributed = consumption.prepConsumed.flatMap((item) => perUnitSkuAttributionsForItem(graph, item.itemId)
+      const attributed = consumption.prepConsumed.flatMap((item) => perUnitSkuAttributionsForItem(dayGraph, item.itemId)
         .map((row) => ({ ...row, itemId: item.itemId, oz: row.oz * item.units })));
       const selected = selectSalesDepletion(consumption.skuConsumed, attributed, produced);
       for (const [sku_id, direct_oz] of selected) rows.push({ location_id: locationId, business_date: date, sku_id, direct_oz,
@@ -141,7 +149,7 @@ export async function loadReconciledSalesWindow(sb: Client, window: ReconciledWi
       if (!lead || lead.stage === "lost" || /cancel|reject|fail/i.test(order.status ?? "")) continue;
       const locationId = lead.location_id;
       if (window.locationId && locationId !== window.locationId) continue;
-      const graph = await graphFor(locationId);
+      const graph = await datedGraphFor(locationId, order.event_date); // D1: the order's event date
       const items = orderItems.filter((item) => item.order_id === order.id && item.snapshot_id === order.snapshot_id);
       const unresolved = () => unresolvedDays.add(`${locationId}:${order.event_date}`);
       if (!items.length) unresolved();

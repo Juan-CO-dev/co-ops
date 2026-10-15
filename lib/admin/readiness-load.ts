@@ -57,7 +57,7 @@ export async function loadSkuReadinessMap(actor: AuthContext): Promise<Map<strin
   // registry so skuPackComplete delegates to the chain badge predicate for chained
   // SKUs (ONE query each — loadRecipeGraph law; never per-SKU).
   const [prices, deliveries, chainsBySku, measureUnits] = await Promise.all([
-    loadCurrentSkuPrices(ids), loadSkuDeliveryCounts(ids), loadSkuPackChains(ids), loadMeasureUnits(actor),
+    loadCurrentSkuPrices(ids), loadSkuDeliveryCounts(ids), loadSkuPackChains(ids, null), loadMeasureUnits(actor),
   ]);
   const measuresByLabel = new Map<string, MeasureUnitFactor>(
     measureUnits.map((m) => [m.label, { dimension: m.dimension, toBaseFactor: m.toBaseFactor }]),
