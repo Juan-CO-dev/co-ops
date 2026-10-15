@@ -114,12 +114,17 @@ export type MenuShopPatchParse =
   | { ok: true; patch: MenuShopPatch }
   | { ok: false; code: "invalid_payload" | "invalid_menu_price" | "invalid_name" | "empty_setting" };
 
-function nameOf(v: unknown): string | null | "bad" {
-  if (v === undefined || v === null) return null;
-  if (typeof v !== "string") return "bad";
+/**
+ * One optional menu name as typed: absent / blank = `value: null` (not typed); not text or over MENU_NAME_MAX
+ * = `ok: false`. A DISCRIMINATED result (Astra 3b chunk-1 review P3): a string sentinel such as "bad" was also a
+ * valid name, so the literal name "bad" was refused.
+ */
+export function parseOptionalMenuName(v: unknown): { ok: true; value: string | null } | { ok: false } {
+  if (v === undefined || v === null) return { ok: true, value: null };
+  if (typeof v !== "string") return { ok: false };
   const t = v.trim();
-  if (t === "") return null;
-  return t.length > MENU_NAME_MAX ? "bad" : t;
+  if (t === "") return { ok: true, value: null };
+  return t.length > MENU_NAME_MAX ? { ok: false } : { ok: true, value: t };
 }
 
 /** The route's one parser. A patch that sets nothing is "back to default" — its own act (empty_setting). */
@@ -130,9 +135,11 @@ export function parseMenuShopPatch(raw: unknown): MenuShopPatchParse {
   if (price !== null && !isValidMenuPrice(price)) return { ok: false, code: "invalid_menu_price" };
   const soldHere = b.soldHere === undefined ? true : b.soldHere;
   if (typeof soldHere !== "boolean") return { ok: false, code: "invalid_payload" };
-  const name = nameOf(b.nameOverride);
-  const nameEs = nameOf(b.nameOverrideEs);
-  if (name === "bad" || nameEs === "bad") return { ok: false, code: "invalid_name" };
+  const n = parseOptionalMenuName(b.nameOverride);
+  const nEs = parseOptionalMenuName(b.nameOverrideEs);
+  if (!n.ok || !nEs.ok) return { ok: false, code: "invalid_name" };
+  const name = n.value;
+  const nameEs = nEs.value;
   if (price === null && soldHere && name === null && nameEs === null) return { ok: false, code: "empty_setting" };
   return { ok: true, patch: { price: price as number | null, soldHere, nameOverride: name, nameOverrideEs: nameEs } };
 }

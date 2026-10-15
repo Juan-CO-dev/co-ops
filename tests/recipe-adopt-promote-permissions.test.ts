@@ -220,6 +220,44 @@ describe("menu promote", () => {
     }))).toEqual({ status: 409, code: "dependencies_changed" });
     expect(calls.map((c) => c.fn)).toEqual(["menu_item_change_snapshot"]);
   });
+  it("the literal Spanish name \"bad\" is a NAME, not an error sentinel (Astra chunk-1 review P3)", async () => {
+    const calls = install(withShopSetting(), {
+      menu_item_change_snapshot: (a) => ({ snap: a.p_location === NIL_SCOPE ? "preview" : "shop" }),
+      save_menu_item_shop_setting: () => ({ setting_id: "ms-other-2", retired_setting_id: "ms-other" }),
+      promote_menu_item_shop_setting: promoted,
+    });
+    const r = await promoteMenuItemShopSetting(actor("moo", 8, []), {
+      menuItemId: "m-italian", settingId: "ms-other", fields: ["name"], expected, nameEs: "bad", snapshot: SNAP,
+    });
+    expect(r).toEqual({ changedShops: [LOC], returnedShop: OTHER, promotedSettingId: "ms-other-2" });
+    expect(calls[2]!.args).toMatchObject({ p_name_es: "bad" });
+    expect(calls[4]!.args).toMatchObject({ p_setting: "ms-other-2" });
+  });
+  it("a promote refused AFTER the Spanish name was saved says so (CC note 2 #3): the shop's label changed, the promote did not happen", async () => {
+    const calls: RpcCall[] = [];
+    current = createFakeDb(withShopSetting());
+    (current.client as unknown as { rpc: unknown }).rpc = async (fn: string, args: Record<string, unknown>) => {
+      calls.push({ fn, args });
+      if (fn === "promote_menu_item_shop_setting") return { data: null, error: { message: "menu_item_shop:global_changed" } };
+      if (fn === "save_menu_item_shop_setting") return { data: { setting_id: "ms-other-2", retired_setting_id: "ms-other" }, error: null };
+      return { data: { snap: args.p_location === NIL_SCOPE ? "preview" : "shop" }, error: null };
+    };
+    let err: unknown;
+    try {
+      await promoteMenuItemShopSetting(actor("moo", 8, []), { menuItemId: "m-italian", settingId: "ms-other", fields: ["name"], expected, nameEs: "Italiano grande", snapshot: SNAP });
+    } catch (e) { err = e; }
+    expect(err).toBeInstanceOf(MenuShopError);
+    expect(err).toMatchObject({ status: 409, code: "global_changed", spanishNameSaved: { settingId: "ms-other-2", locationId: OTHER } });
+    expect(calls.map((c) => c.fn)).toContain("save_menu_item_shop_setting");
+    // a promote refused with NO Spanish-name step carries no such record
+    current = createFakeDb(withShopSetting());
+    (current.client as unknown as { rpc: unknown }).rpc = async () => ({ data: null, error: { message: "menu_item_shop:global_changed" } });
+    let plain: unknown;
+    try {
+      await promoteMenuItemShopSetting(actor("moo", 8, []), { menuItemId: "m-italian", settingId: "ms-other", fields: ["name"], expected, snapshot: SNAP });
+    } catch (e) { plain = e; }
+    expect(plain).toMatchObject({ code: "global_changed", spanishNameSaved: null });
+  });
   it("a blank or unchanged Spanish name is no extra step; a Spanish name with a price-only promote is refused by name; too long is invalid_name", async () => {
     let calls = install(withShopSetting({ name_override_es: "Italiano grande" }), { promote_menu_item_shop_setting: promoted });
     await promoteMenuItemShopSetting(actor("moo", 8, []), { menuItemId: "m-italian", settingId: "ms-other", fields: ["name"], expected, nameEs: "Italiano grande", snapshot: SNAP });

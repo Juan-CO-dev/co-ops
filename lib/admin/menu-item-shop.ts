@@ -12,11 +12,17 @@ import { audit } from "@/lib/audit";
 import type { AuthContext } from "@/lib/session";
 import { assertScopeToken, catalogShopAllowed, catalogWriteRoleAllowed, NIL_SCOPE } from "@/lib/sku-versions-shared";
 import {
-  MENU_NAME_MAX, menuPromoteGate, menuShopWriteGate, type MenuItemShopSettingRow, type MenuShopPatch,
+  menuPromoteGate, menuShopWriteGate, parseOptionalMenuName, type MenuItemShopSettingRow, type MenuShopPatch,
 } from "@/lib/menu-item-shop-shared";
 import { MENU_SHOP_SETTING_COLUMNS } from "@/lib/menu-item-shop";
 
 export class MenuShopError extends Error {
+  /**
+   * A promote refused AFTER its optional Spanish name was already saved onto the source shop's own row (CC note 2
+   * #3): that label change stands (recorded in History) but the promote did not happen. The page says so plainly
+   * (`catalog.menu.promote.es_saved_not_promoted`). Null on every other refusal.
+   */
+  public spanishNameSaved: { settingId: string; locationId: string } | null = null;
   constructor(public status: number, public code: string, message?: string) {
     super(message ?? code);
     this.name = "MenuShopError";
@@ -157,14 +163,6 @@ export async function loadMenuItemShopHistory(actor: AuthContext, menuItemId: st
   return data.map((r) => ({ ...r, createdByName: r.created_by ? (nameBy.get(r.created_by) ?? null) : null }));
 }
 
-/** The optional Spanish name typed on the promote screen: null = not typed (blank), "bad" = over MENU_NAME_MAX / not text. */
-function typedSpanishName(v: unknown): string | null | "bad" {
-  if (v === undefined || v === null) return null;
-  if (typeof v !== "string") return "bad";
-  const t = v.trim();
-  if (t === "") return null;
-  return t.length > MENU_NAME_MAX ? "bad" : t;
-}
 
 /**
  * PROMOTE (MoO+): a shop's price and/or name becomes the global one (menu_items), under a compare-and-set on
@@ -192,8 +190,10 @@ export async function promoteMenuItemShopSetting(
 ): Promise<{ changedShops: string[]; returnedShop: string | null; promotedSettingId: string }> {
   const gate = menuPromoteGate({ role: actor.user.role, level: actor.level });
   if (!gate.ok) throw new MenuShopError(gate.status, gate.code);
-  const typedEs = typedSpanishName(input.nameEs);
-  if (typedEs === "bad") throw new MenuShopError(400, "invalid_name");
+  // A discriminated result (Astra chunk-1 review P3): the literal name "bad" is a name, not an error.
+  const typed = parseOptionalMenuName(input.nameEs);
+  if (!typed.ok) throw new MenuShopError(400, "invalid_name");
+  const typedEs = typed.value;
   if (typedEs !== null && !input.fields.includes("name")) throw new MenuShopError(400, "invalid_payload");
   const sb = getServiceRoleClient();
   type SourceRow = {
@@ -234,7 +234,15 @@ export async function promoteMenuItemShopSetting(
     p_expected_name: input.expected.name, p_expected_name_es: input.expected.nameEs, p_actor: actor.user.id,
     p_snapshot: snapshot,
   });
-  if (error) menuShopErrorFromRpc(error.message);
+  if (error) {
+    try {
+      menuShopErrorFromRpc(error.message);
+    } catch (e) {
+      // The Spanish name was already saved (its own audited transaction): say so with the refusal (CC note 2 #3).
+      if (e instanceof MenuShopError && settingId !== row.id) e.spanishNameSaved = { settingId, locationId: row.location_id };
+      throw e;
+    }
+  }
   const r = data as {
     changed_shops: string[] | null; before: Record<string, unknown>;
     returned_shop: string | null; retired_setting_id: string | null; remaining_setting_id: string | null;

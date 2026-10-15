@@ -6515,5 +6515,6 @@
   "whats_left.higher_role": "{n} need a key holder",
   "whats_left.key_holder": "Needs a key holder",
   "catalog.menu.preview.name_es_fallback": "Spanish users will see the English name until you add one.",
-  "catalog.menu.promote.name_es_field": "Spanish name (optional)"
+  "catalog.menu.promote.name_es_field": "Spanish name (optional)",
+  "catalog.menu.promote.es_saved_not_promoted": "{shop}'s own Spanish name was saved (you can see it in History), but the promote did not happen."
 }
