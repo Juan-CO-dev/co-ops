@@ -45,7 +45,6 @@ import {
 } from "@/lib/admin/catalog-shared";
 import type { PackChainLevel } from "@/lib/pack-chain-shared";
 import { shopPackJobOffered, canChangeGlobalPack, hasGlobalPack, resolveErrorKey, STEP_UP_CANCELLED, type SaveChainResult } from "./shared";
-import Link from "next/link";
 import { ShopPackJobLink } from "./ShopPackJobLink";
 import { PackChainWizard } from "./PackChainWizard";
 import { SkuCostPanel, type SkuCostInfo } from "./SkuCostPanel";
