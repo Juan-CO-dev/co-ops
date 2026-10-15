@@ -10,8 +10,10 @@ import { getServiceRoleClient } from "@/lib/supabase-server";
 import { selectAllRows } from "@/lib/supabase-paginate";
 import { audit } from "@/lib/audit";
 import type { AuthContext } from "@/lib/session";
-import { assertScopeToken, catalogShopAllowed, catalogWriteRoleAllowed } from "@/lib/sku-versions-shared";
-import { menuShopWriteGate, type MenuItemShopSettingRow, type MenuShopPatch } from "@/lib/menu-item-shop-shared";
+import { assertScopeToken, catalogShopAllowed, catalogWriteRoleAllowed, NIL_SCOPE } from "@/lib/sku-versions-shared";
+import {
+  MENU_NAME_MAX, menuPromoteGate, menuShopWriteGate, type MenuItemShopSettingRow, type MenuShopPatch,
+} from "@/lib/menu-item-shop-shared";
 import { MENU_SHOP_SETTING_COLUMNS } from "@/lib/menu-item-shop";
 
 export class MenuShopError extends Error {
@@ -153,4 +155,99 @@ export async function loadMenuItemShopHistory(actor: AuthContext, menuItemId: st
   if (uErr) throw new Error(`loadMenuItemShopHistory users: ${uErr.message}`);
   const nameBy = new Map((users ?? []).map((u) => [u.id, u.name]));
   return data.map((r) => ({ ...r, createdByName: r.created_by ? (nameBy.get(r.created_by) ?? null) : null }));
+}
+
+/** The optional Spanish name typed on the promote screen: null = not typed (blank), "bad" = over MENU_NAME_MAX / not text. */
+function typedSpanishName(v: unknown): string | null | "bad" {
+  if (v === undefined || v === null) return null;
+  if (typeof v !== "string") return "bad";
+  const t = v.trim();
+  if (t === "") return null;
+  return t.length > MENU_NAME_MAX ? "bad" : t;
+}
+
+/**
+ * PROMOTE (MoO+): a shop's price and/or name becomes the global one (menu_items), under a compare-and-set on
+ * the global values the preview showed and the dependency snapshot of the global view alone (NIL_SCOPE; 0263
+ * takes the same). "Sold here" is never promoted. FIELD BY FIELD: a shop changes when it inherits ANY promoted
+ * field. In the same transaction the source shop returns to the default for the promoted fields (lead decision 5).
+ *
+ * THE NAME PAIR IS COPIED EXACTLY (CC note 1 #2, superseding the GO's promote bullet): 0263 writes the shop's
+ * name AND its Spanish name as they are — "no Spanish name" included, so an English-only rename never resurrects
+ * the old default's Spanish name; the app then shows the English name to Spanish users and the preview says so.
+ * THE OPTIONAL SPANISH NAME FIELD (`nameEs`): 0263's promote takes no Spanish-name parameter, so a typed Spanish
+ * name is first saved onto the source shop's own row (an ordinary audited shop save, compare-and-set on the row
+ * the preview showed), and THAT row is promoted — after re-checking that the preview's snapshot still held
+ * before anything was written. Two transactions: if the promote then refuses, the shop keeps its new Spanish
+ * name (its own label, recorded in History) and nothing else moved.
+ */
+export async function promoteMenuItemShopSetting(
+  actor: AuthContext,
+  input: {
+    menuItemId: string; settingId: string; fields: Array<"price" | "name">; expected: { price: number | null; name: string; nameEs: string | null };
+    /** The optional "Spanish name" field (blank = not typed); only with the name promoted. */
+    nameEs?: string | null;
+    snapshot?: MenuChangeSnapshot;
+  },
+): Promise<{ changedShops: string[]; returnedShop: string | null; promotedSettingId: string }> {
+  const gate = menuPromoteGate({ role: actor.user.role, level: actor.level });
+  if (!gate.ok) throw new MenuShopError(gate.status, gate.code);
+  const typedEs = typedSpanishName(input.nameEs);
+  if (typedEs === "bad") throw new MenuShopError(400, "invalid_name");
+  if (typedEs !== null && !input.fields.includes("name")) throw new MenuShopError(400, "invalid_payload");
+  const sb = getServiceRoleClient();
+  type SourceRow = {
+    id: string; menu_item_id: string; location_id: string; price: number | string | null; sold_here: boolean;
+    name_override: string | null; name_override_es: string | null; active: boolean | null;
+  };
+  const { data: row, error: rErr } = await sb.from("menu_item_shop_settings")
+    .select("id, menu_item_id, location_id, price, sold_here, name_override, name_override_es, active")
+    .eq("id", input.settingId).maybeSingle<SourceRow>();
+  if (rErr) throw new Error(`promoteMenuItemShopSetting read: ${rErr.message}`);
+  if (!row || row.menu_item_id !== input.menuItemId) throw new MenuShopError(404, "not_found");
+  // The shop whose setting is promoted is bound like any write of it (MoO+ passes for every active shop).
+  requireLocation(actor, row.location_id);
+
+  let settingId = row.id;
+  let snapshot = input.snapshot;
+  if (typedEs !== null && typedEs !== row.name_override_es) {
+    if (row.active === false) throw new MenuShopError(409, "not_live");
+    if (row.name_override === null) throw new MenuShopError(400, "nothing_to_promote");
+    // Nothing is written on a moved preview: its snapshot must still hold BEFORE the Spanish name is saved.
+    if (snapshot !== undefined) {
+      const now = await loadMenuChangeSnapshot(input.menuItemId, NIL_SCOPE);
+      if (JSON.stringify(now) !== JSON.stringify(snapshot)) throw new MenuShopError(409, "dependencies_changed");
+    }
+    const price = row.price === null ? null : Number(row.price);
+    const saved = await writeSetting(actor, {
+      menuItemId: input.menuItemId, locationId: row.location_id, expectedSettingId: row.id,
+      patch: { price, soldHere: row.sold_here, nameOverride: row.name_override, nameOverrideEs: typedEs },
+      restoredFromSettingId: null, note: "Spanish name added to promote",
+    });
+    settingId = saved.settingId;
+    snapshot = await loadMenuChangeSnapshot(input.menuItemId, NIL_SCOPE);
+  }
+  snapshot ??= await loadMenuChangeSnapshot(input.menuItemId, NIL_SCOPE);
+
+  const { data, error } = await sb.rpc("promote_menu_item_shop_setting", {
+    p_setting: settingId, p_fields: input.fields, p_expected_price: input.expected.price,
+    p_expected_name: input.expected.name, p_expected_name_es: input.expected.nameEs, p_actor: actor.user.id,
+    p_snapshot: snapshot,
+  });
+  if (error) menuShopErrorFromRpc(error.message);
+  const r = data as {
+    changed_shops: string[] | null; before: Record<string, unknown>;
+    returned_shop: string | null; retired_setting_id: string | null; remaining_setting_id: string | null;
+  };
+  await audit({
+    actorId: actor.user.id, actorRole: actor.user.role,
+    action: "menu_item.shop_setting_promote", resourceTable: "menu_items", resourceId: input.menuItemId,
+    metadata: {
+      setting_id: settingId, location_id: row.location_id, fields: input.fields, before: r.before, changed_shops: r.changed_shops ?? [],
+      returned_shop: r.returned_shop, remaining_setting_id: r.remaining_setting_id,
+      spanish_name_saved_from_setting_id: settingId !== row.id ? row.id : null,
+    },
+    ipAddress: null, userAgent: null,
+  });
+  return { changedShops: r.changed_shops ?? [], returnedShop: r.returned_shop ?? null, promotedSettingId: settingId };
 }

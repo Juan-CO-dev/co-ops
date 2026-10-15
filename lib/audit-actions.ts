@@ -224,6 +224,9 @@ export const NON_DESTRUCTIVE_ACTIONS = [
   // budget. It exists so the trust ramp has a denominator and the ledger can tell "offered
   // and refused" from "offered and ignored" (r2-2).
   "par.suggestion_dismiss",
+  // recipe_version.notice_dismiss (catalog Phase 3b): a GM answers a read-time notice ("keep mine" /
+  // "got it"). Nothing in the kitchen changes — no recipe, no version — so it is findable, never destructive.
+  "recipe_version.notice_dismiss",
   "par_pass.submitted",
   "po.confirmed",
   // "po.reopened" reverses accountability: registered in DESTRUCTIVE_ACTIONS,
