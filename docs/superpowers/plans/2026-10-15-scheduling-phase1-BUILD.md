@@ -780,7 +780,7 @@ create unique index people_skill_tunables_one_per_scope
   - exactly the known keys, each a JSON **number** (never a string, null, NaN or Infinity; JSON cannot carry NaN, and the TS side also checks `Number.isFinite`);
   - `priorWhenNoRating` ∈ [0, 1];
   - `priorStrength` (k) **> 0**, and ≤ 60;
-  - `weights.pm`, `weights.closeOnTime`, `weights.prepYield` each ≥ 0 and ≤ 1, with **sum > 0**. They are NORMALISED at use (divided by the sum), so they need not sum to 1; the zero-weight rule is in Task 15;
+  - `weights.pm`, `weights.closeOnTime`, `weights.prepYield` each ≥ 0, **at least one > 0** (sum > 0), and **no per-weight upper cap** (CC ruling 2026-10-15, Astra r3 P3): `3 / 1 / 1` is accepted and means the same as `0.6 / 0.2 / 0.2`. They are NORMALISED at use (divided by the sum), so they need not sum to 1; the zero-weight rule is in Task 15. The sum must also be finite: the TS validator checks `Number.isFinite(sum)`, and the SQL twin refuses a sum above `1.7976931348623157e308` (the largest double), so the two agree on an overflowing vector such as three weights of `1e308`;
   - `gradeValue.great ≥ good ≥ needs_work`, each ∈ [0, 1];
   - `yieldTolerance` ∈ [0.01, 0.5];
   - `closeGraceMinutes` ∈ [0, 120];
@@ -794,7 +794,7 @@ create unique index people_skill_tunables_one_per_scope
 
 - [ ] **Step 1:** preflight. Assert `station_positions` has the columns `id, location_id`, then add `create unique index if not exists station_positions_id_location on public.station_positions(id, location_id)` (additive; `id` is already unique, so it cannot fail on existing data) and use it for the composite FKs. **Adding the index changes no row and no grant.**
 - [ ] **Step 2:** grants. Settings and `people_skill_tunables`: the SELECT/INSERT/UPDATE ceiling. `valid_skill_tunables`: revoked from the PostgREST roles, EXECUTE to service_role (the 0238 `valid_station_trims` pattern). Adjustments and ratings: the SELECT/INSERT ceiling (append-only: "current" = the latest row per `(user, position)`; a correction is a new row). RLS on, no policies, plus the guard.
-- [ ] **Step 3: the harness.** The step/clamp CHECKs (0.05 granularity, ±0.30); a position from another shop is refused by the FK; UPDATE/DELETE are refused for `service_role` on the append-only tables; the tunables CHECK runs the SHARED case file (every accepted case accepted, every refused case refused, including k = 0, `building` = 0, `strong` = 1, `building = strong`, all weights 0, a negative weight, a string number); after a refused upsert the previous row is unchanged; one row per scope; ceilings. `PASS 0270:`.
+- [ ] **Step 3: the harness.** The step/clamp CHECKs (0.05 granularity, ±0.30); a position from another shop is refused by the FK; UPDATE/DELETE are refused for `service_role` on the append-only tables; the tunables CHECK runs the SHARED case file (every accepted case accepted, every refused case refused, including k = 0, `building` = 0, `strong` = 1, `building = strong`, all weights 0, a negative weight, a string number; and ACCEPTED: weights `3 / 1 / 1`, a single weight above 1 with the others 0, e.g. `{pm: 5, closeOnTime: 0, prepYield: 0}`; REFUSED: three weights of `1e308`, whose sum overflows a double); after a refused upsert the previous row is unchanged; one row per scope; ceilings. `PASS 0270:`.
 - [ ] **Step 4:** the pin. Green. Commit.
 
 ## Task 14b: The BOH positions data step (R3) — dry run first, through the station admin, never a migration
@@ -881,7 +881,7 @@ export function skillFor(signals: PositionSignals, prior: number | null, adjustm
   - **(r1 P2-7) overlap:** on the same day a PM grade + 3 closing lines + 2 batches → `qualityDays = 1`, not 6 and not 3; three kinds on three DIFFERENT days → 3; **20 worked days with ONE quality day → `qualityDays = 1`, `workedDays = 20`**, and confidence follows `qualityDays`; a duplicated `sourceId` (a re-loaded row) counts once; an observation outside `windowDays` is excluded from both q and n;
   - **(r2 #3) zero-weight evidence:** weights `{pm:1, closeOnTime:0, prepYield:0}`, a person with ONLY closing evidence → `learned = prior`, `confidence = 0`, `qualityDays = 0`, `startingPoint = true`, `perKind.closeOnTime` reported, and every number finite; the same person with one PM grade added → n = 1 and q = that PM mean;
   - **(r2 #3) property test, finite outputs** (`tests/people-skills-finite.test.ts`). No new dependency: a seeded deterministic generator (mulberry32, fixed seeds, 2,000 cases per run) plus an exhaustive EDGE grid. The grid covers:
-    - every weight vector over {0, 0.0001, 0.5, 1} with sum > 0;
+    - every weight vector over {0, 0.0001, 0.5, 1, 3} with sum > 0 (3 covers a weight above 1, which is valid: no per-weight cap);
     - k ∈ {0.0001, 1, 6, 60};
     - bands at their strict edges (0.0001 / 0.9999, building = strong − 0.0001);
     - prior ∈ {0, 1, null};
@@ -1274,7 +1274,7 @@ export interface SkillMatrix {
 - **J18 (r1) — Run ids are minted before the ledger row** (`sevenshifts_sync_run_ids`), so reconciled rows can name their run while the ledger stays append-only and is written once at the end.
 - **J19 (r1) — Skill tunables are company-wide with an optional per-shop override, MoO+ only**, validated identically in SQL and TS. No row = the defaults, so nothing needs seeding.
 - **J21 (r2) — Snapshot completeness is decided per user, not per resource.** One user's rejected row blocks only that user's retirements (and the resource's watermark); other users in the same run reconcile fully.
-- **J22 (r2) — Weights are normalised at use, not required to sum to 1.** An editor can set 0.6 / 0.2 / 0.2 or 3 / 1 / 1 with the same meaning. A weight of 0 means "show it, don't count it".
+- **J22 (r2) — Weights are normalised at use, not required to sum to 1.** An editor can set 0.6 / 0.2 / 0.2 or 3 / 1 / 1 with the same meaning: each weight is ≥ 0 with no upper cap, at least one is > 0, and the sum is finite (Task 14's rules; the per-weight cap of 1 in r2 was dropped by CC's ruling on Astra r3 P3). A weight of 0 means "show it, don't count it".
 - **J23 (r2) — No property-testing dependency.** The finite-output test uses a seeded in-repo generator plus an exhaustive edge grid, so no new package enters the lockfile.
 - **J20 (r1) — A position added mid-shift and then retired:** grades already saved stay (history). A new grade on it is refused `position_retired`, and the UI explains why.
 
