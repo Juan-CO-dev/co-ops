@@ -171,3 +171,22 @@ describe("the costing drawer opens the menu item page", () => {
     expect(readFileSync("app/admin/menu-costing/page.tsx", "utf8")).toContain("scope={scope}");
   });
 });
+
+// ── The manager guide sends a GM to the shop-version pages (Task 12; Astra full-branch P3) ─────────────────────
+describe("the manager guide matches what was built, en + es", () => {
+  const guide = readFileSync("docs/guides/manager-guide.md", "utf8");
+  it("no longer sends a GM to the legacy line editor", () => {
+    expect(guide).not.toContain("In **Consumes (inputs)**, tap **Edit**");
+    expect(guide).not.toContain("En **Consume (entradas)**, toca **Editar**");
+  });
+  it("names the real buttons, in both languages", () => {
+    const named = (s: string) => `**${s.replace(/\{[a-z]+\}/g, "").trim()}`;
+    for (const k of ["recipes.catalog_link", "recipes.builder.lines_change_shop", "catalog.recipe.see_changes", "catalog.recipe.back_to_default",
+      "catalog.recipe.section.others", "catalog.recipe.edit_rebase", "catalog.recipe.preview_again", "catalog.recipe.notice.take_update",
+      "catalog.recipe.notice.keep_mine", "catalog.recipe.notice.got_it", "catalog.recipe.notice.open", "catalog.menu.open_page", "catalog.menu.back_to_default",
+      "catalog.changes.promote", "catalog.changes.leave", "catalog.menu.promote.name_es_field", "admin.section.shop-changes", "admin.section.recipe-notices"] as const) {
+      expect(guide, k).toContain(named(en[k]));
+      expect(guide, `${k} (es)`).toContain(named(es[k]));
+    }
+  });
+});
