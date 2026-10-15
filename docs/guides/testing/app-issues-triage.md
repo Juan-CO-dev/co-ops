@@ -581,3 +581,14 @@ Not batched until reproduced: #22, #29, #67.
 - **Re-saving a ticked line (e.g. adding a note) drops its peer tag** — the new completion row does not copy `actual_completer_id` / tag fields from the row it supersedes, so a line ticked "for" a teammate looks self-done after a note. Pre-existing (before B8); B8 only makes sure a tagged line never keeps its old time. Needs its own fix in `completeItem`'s supersede path.
 - Closing checklist's one-tap Undo (`ChecklistItem.tsx` UndoButton, 60 s quick revoke) is the same one-tap-revoke shape B8 fixed for opening prep rows; it doesn't shift layout, so lower risk — consider two-tap for consistency.
 - `loadProductionFormData` reads `vendor_items` without paging (silently caps at 1000 SKUs).
+
+## App follow-ups from round 2 (Sonnet + Haiku, 2026-10-14)
+Not fixed yet. For a later batch; none blocks the guides.
+- **No sanity range on temps or recounts.** Any number saves. A typed 36°F becomes the Maintenance fridge record ("Sauce Fridge OK 36°F"), and a typed recount becomes Phase 2's closer count and drives Prep need. Consider a soft "that looks off" check (e.g. a temp outside 20–60°F, a recount far from par).
+- **Closing checklist: a tap while a line is still saving can untick it** (Haiku manager unticked "Change & stock cannoli pan"). Same family as the one-tap Undo follow-up above; the line should ignore taps while its save is in flight.
+- **Mid-day prep saves per row with SAVE; Opening Phase 2 saves when you leave the box.** Two "prep" screens, two save styles. Guide covers both; the app could pick one.
+- **Maintenance note box missed the first typing once** (SAVE NOTE stayed grey; second try worked). Looks like typing before hydration finished. Not reproduced yet.
+- **Handoff note shows on the next load, not right away** after posting. Guide says it can take a moment; the app could add it optimistically.
+- **"SUBMIT OPENING" sits on "SUBMITTING…" for a few seconds** before Phase 2 opens. A progress hint would stop double taps.
+- **Sim data:** the Baldor usual order includes Cholula, which isn't a Baldor item. Sim seed only; check the prod usual-order lines before launch.
+- **Open question for Juan:** where does a key holder or AGM get the **Projected (from Toast)** cash figure? Sales is GM-only in the app. The guide says "from Toast" and nothing more.
