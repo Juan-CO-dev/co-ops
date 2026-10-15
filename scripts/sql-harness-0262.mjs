@@ -29,10 +29,11 @@ import { PGlite } from "@electric-sql/pglite";
 
 const u = (n) => `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
 const ACTOR = u(1), ACTOR2 = u(2);
+const NIL = "00000000-0000-0000-0000-000000000000";
 const S1 = u(11), S2 = u(12), S3 = u(13), S_OFF = u(14);
 const V1 = u(21);
 const P1 = u(31), P_OFF = u(32);
-const K1 = u(41), K2 = u(42), K3 = u(43), K4 = u(44), K_UNREL = u(45), K_OTHER = u(46), K_MEMBER = u(47);
+const K1 = u(41), K2 = u(42), K3 = u(43), K4 = u(44), K_UNREL = u(45), K_OTHER = u(46), K_MEMBER = u(47), K_MEMBER2 = u(48);
 const I_SLAW = u(51), I_DRESS = u(52), I_X = u(53), I_Q = u(54), I_Q2 = u(55);
 const M1 = u(61);
 const R_SLAW = u(71), R_DRESS = u(72), R_ITAL = u(73), R_EMPTY = u(74), R_X = u(75), R_Z = u(76), R_OFF = u(77), R_DUP = u(78);
@@ -114,7 +115,7 @@ try {
     insert into public.vendor_items(id, name, vendor_id, product_id, each_measure) values
       ('${K1}', 'Turkey', '${V1}', null, 'oz'), ('${K2}', 'Mayo', '${V1}', null, 'lb'), ('${K3}', 'Lettuce', '${V1}', null, 'lb'),
       ('${K4}', 'Pickle', '${V1}', null, 'oz'), ('${K_UNREL}', 'Unrelated', '${V1}', null, 'oz'), ('${K_OTHER}', 'Other-shop only', '${V1}', null, 'oz'),
-      ('${K_MEMBER}', 'Ham member', '${V1}', '${P1}', 'lb');
+      ('${K_MEMBER}', 'Ham member', '${V1}', '${P1}', 'lb'), ('${K_MEMBER2}', 'Second ham member', '${V1}', '${P1}', 'lb');
     insert into public.items(id, name) values ('${I_SLAW}', 'Slaw'), ('${I_DRESS}', 'Dressing'), ('${I_X}', 'X'), ('${I_Q}', 'Q'), ('${I_Q2}', 'Q2');
     insert into public.menu_items(id, name) values ('${M1}', 'Italian');
     insert into public.recipes(id, name) values ('${R_SLAW}', 'Slaw'), ('${R_DRESS}', 'Dressing'), ('${R_ITAL}', 'Italian'),
@@ -460,6 +461,21 @@ try {
     check(JSON.stringify(await snapshot(R, S1, lines)) === JSON.stringify(r0), "S6: a receipt of a plain (non-member) closure SKU leaves the snapshot alone");
     await asOwner(() => db.query("insert into public.vendor_delivery_items(delivery_id, vendor_item_id) values ($1, $2)", [del, K_MEMBER]));
     check(JSON.stringify(await snapshot(R, S1, lines)) !== JSON.stringify(r0), "S6: a receipt of a PRODUCT MEMBER moves it (product resolution's most-recently-received rung)");
+    // A global preview resolves the latest product member across ALL shops, including NIL (menu promotion).
+    const globalBefore = await snapshot(R, null, lines);
+    const nilBefore = await snapshot(R, NIL, lines);
+    const selectedMember = async () => (await one(`select di.vendor_item_id from public.vendor_delivery_items di
+      join public.vendor_deliveries d on d.id = di.delivery_id
+      join public.vendor_items vi on vi.id = di.vendor_item_id
+      where vi.product_id = $1 order by di.created_at desc, di.id desc limit 1`, [P1]))?.vendor_item_id;
+    check(await selectedMember() === K_MEMBER, "S7: the first member is selected before another shop receives a newer member");
+    const otherDelivery = (await asOwner(() => one("insert into public.vendor_deliveries(location_id) values ($1) returning id", [S2]))).id;
+    await asOwner(() => db.query("insert into public.vendor_delivery_items(delivery_id, vendor_item_id, created_at) values ($1, $2, now() + interval '1 hour')", [otherDelivery, K_MEMBER2]));
+    check(await selectedMember() === K_MEMBER2, "S7: another shop's receipt changes the global selected member");
+    check(JSON.stringify(await snapshot(R, null, lines)) !== JSON.stringify(globalBefore), "S7: the global recipe preview includes that receipt");
+    check(JSON.stringify(await snapshot(R, NIL, lines)) !== JSON.stringify(nilBefore), "S7: the NIL menu-promotion preview includes that receipt");
+    await refuses(async () => save({ recipe: R, shop: null, expected: (await head(R)).id, lines, snap: globalBefore }),
+      "recipe_version:dependencies_changed", "S7: a global save refuses the preview taken before the selected member changed");
   }
 
   // ── V privilege ceilings, RLS, the helpers and the writers' grants ────────

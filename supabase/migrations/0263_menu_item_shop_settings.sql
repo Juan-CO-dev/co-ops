@@ -293,7 +293,7 @@ begin
   update public.menu_items
      set menu_price = case when v_price then v_row.price else menu_price end,
          name       = case when v_name then v_row.name_override else name end,
-         name_es    = case when v_name then coalesce(v_row.name_override_es, name_es) else name_es end,
+         name_es    = case when v_name then v_row.name_override_es else name_es end,
          updated_at = now(),
          updated_by = p_actor
    where id = v_item.id;

@@ -598,6 +598,7 @@ $$;
 -- row a resolver reads for it). Product resolution's inputs are all here: the product rows (active, unit_oz), the
 -- members (active, vendor, pack), the primaries (global + affected shops), the shops' activation overlay, the
 -- members' vendors (active, source kind) and the RECEIPT history at the affected shops (the store-run streak).
+-- A global graph also resolves the most-recently-received member across the whole organization.
 create or replace function public.recipe_change_snapshot(p_recipe uuid, p_location uuid, p_lines jsonb)
 returns jsonb
 language plpgsql
@@ -653,7 +654,8 @@ begin
                     -- Only PRODUCT MEMBERS (review P3a): receipts feed product resolution's "most recently received"
                     -- rung and nothing else here, so a plain SKU's delivery never stales a preview.
                     where di.vendor_item_id in (select vi.id from public.vendor_items vi where vi.product_id = any(v_products))
-                      and d.location_id = any(v_shops)),
+                      and (p_location is null or p_location = '00000000-0000-0000-0000-000000000000'::uuid
+                           or d.location_id = any(v_shops))),
       'measure_units', (select md5(coalesce(string_agg(to_jsonb(t)::text, '|' order by t.label), '')) from public.measure_units t where t.label = any(v_measures)),
       'sku_pack_versions', (select md5(coalesce(string_agg(to_jsonb(t)::text, '|' order by t.id), '')) from public.sku_pack_versions t
                              where t.sku_id = any(v_skus) and (t.location_id is null or t.location_id = any(v_shops))),

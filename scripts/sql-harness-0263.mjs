@@ -179,6 +179,11 @@ try {
     check(JSON.stringify(res.changed_shops) === JSON.stringify([S2, S3].sort()), "M5: name promoted → S3 changes too (own price, default name) — field by field");
     check(res.remaining_setting_id === null && await live(M1, S1) === undefined, "M5: nothing left to say → no remaining row; S1 rides the default");
     check((await live(M1, S3)).id === s3.setting_id, "M5: S3's own row is untouched");
+    const englishOnly = await save({ shop: S1, name: "New name" });
+    await promote({ setting: englishOnly.setting_id, fields: ["name"] });
+    const renamed = await one("select name, name_es from public.menu_items where id = $1", [M1]);
+    check(renamed.name === "New name" && renamed.name_es === null,
+      "M5: promoting an English-only override copies its resolved New name / NULL pair, not the old global Spanish name");
   }
 
   // ── M6 ceiling and grants; M7 the graph lock ─────────────────────────────
