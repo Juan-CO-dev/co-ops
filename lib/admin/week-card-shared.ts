@@ -50,6 +50,12 @@ export function weekBusinessDays(now: Date): string[] {
   return Array.from({ length: WEEK_WINDOW_DAYS }, (_, i) => etYmdMinusDays(today, WEEK_WINDOW_DAYS - 1 - i));
 }
 
+/** The ET calendar day an instant fell on; null for a missing/unparseable instant. */
+export function etDayOf(iso: string | null): string | null {
+  if (iso == null || Number.isNaN(new Date(iso).getTime())) return null;
+  return etCalendarDate(iso);
+}
+
 // ── People ─────────────────────────────────────────────────────────────────────
 
 export type RoleBand = "crew" | "leads" | "managers";
@@ -237,7 +243,7 @@ export interface WeekCardInput {
   /** the window's ET business days (weekBusinessDays) — what "ran all week" is measured against. */
   businessDays: ReadonlyArray<string>;
   /** Toast capture runs started in the window. */
-  toastRuns: ReadonlyArray<{ locationId: string; status: string; businessDate: string | null }>;
+  toastRuns: ReadonlyArray<{ locationId: string; status: string; startedAt: string | null }>;
   /** `toast_depletion.materialize` audit rows in the window (resource = the location). */
   depletionRuns: ReadonlyArray<{ locationId: string | null; businessDate: string | null }>;
 }
@@ -349,7 +355,11 @@ export function buildWeekCard(input: WeekCardInput): WeekCard {
     if (e.hasError) s.jobs.ezcaterSyncErrors += 1;
     else s.jobs.ezcaterSynced += 1;
   }
-  // Toast: which of the window's business days had an OK run, per shop; failures counted.
+  // Toast: on which of the window's ET days did the job ACTUALLY RUN OK, per shop; failures
+  // counted. The day is the ET date of `started_at` — when it ran — NEVER the run's
+  // `business_date` (the sales day it pulled): one backfill run today can pull seven past
+  // sales dates, and keying on those would read "Ran all week" after six silent days
+  // (Astra r1 P2).
   const expected = new Set(input.businessDays);
   const ranOn = new Map<string, Set<string>>();
   for (const r of input.toastRuns) {
@@ -360,9 +370,10 @@ export function buildWeekCard(input: WeekCardInput): WeekCard {
       s.jobs.toastPullsFailed += 1;
       continue;
     }
-    if (r.businessDate == null || !expected.has(r.businessDate)) continue;
+    const ranDay = etDayOf(r.startedAt);
+    if (ranDay == null || !expected.has(ranDay)) continue;
     const set = ranOn.get(r.locationId) ?? new Set<string>();
-    set.add(r.businessDate);
+    set.add(ranDay);
     ranOn.set(r.locationId, set);
   }
   for (const s of byId.values()) {

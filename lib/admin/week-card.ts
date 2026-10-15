@@ -6,14 +6,15 @@
  * WHERE EACH NUMBER COMES FROM (schema verified live 2026-10-15; source table wherever a
  * row IS the thing, audit_log only where no table fits):
  *
- *   people            audit_log  actor_id NOT NULL, minus failed/refused sign-ins
- *                                (no table records "used the app") → users.role (band)
- *                                → user_locations active (the shop columns)
+ *   people            user_locations active AT THE VIEWER'S SHOPS → those members' audit_log
+ *                                rows (actor_id), minus failed/refused sign-ins (no table
+ *                                records "used the app") → users.role (band)
  *   checklists        checklist_instances created in window × checklist_templates
  *                                (type + prep_subtype), status → finished / system-closed
  *   lines ticked      checklist_completions completed in window, completed_by NOT NULL,
  *                                live (not superseded, not revoked), not auto-completed;
- *                                shop via the instance
+ *                                shop via an !inner embed of the instance, filtered to the
+ *                                viewer's shops IN the query
  *   PM reports        pm_reports submitted_at in window, not superseded
  *   cash reports      cash_reports created_at in window, not superseded
  *   orders placed     purchase_orders placed_at in window
@@ -23,21 +24,29 @@
  *                                NOT NULL = a person, NULL = the scan / the customer
  *   ezCater arrived   ezcater_orders created_at in window
  *   ezCater sync      ezcater_orders last_attempt_at in window, last_sync_error set or not
- *   Toast pulls       toast_capture_runs started_at in window: distinct business_date
- *                                with an OK run (of the window's 7 ET days) + failed runs.
- *                                The pull runs all day, so a raw run count is noise
+ *   Toast pulls       toast_capture_runs started_at in window: the ET days it actually RAN
+ *                                OK (from started_at, never the business_date it pulled — a
+ *                                backfill is one day of running) + failed runs. The pull runs
+ *                                all day, so a raw run count is noise
  *   depletion         audit_log `toast_depletion.materialize` (resource_id = the shop),
  *                                distinct metadata.business_date — the job's own event; the
  *                                ledger table holds one row per SKU, not per run
  *
- * LOCATION BIND: the columns are the ACTIVE locations the viewer may read under the report
- * grant (`canReadReportLocation`: level 8+ every shop, else their own memberships), and
- * every source read is `.in("location_id", columns)` — a GM never receives another shop's
- * rows. Every read pages past PostgREST's 1000-row cap; id lists are chunked so no request
- * line grows with the business.
+ * LOCATION BIND (Astra r1 P2): the columns are the ACTIVE locations the viewer may read under
+ * the report grant (`canReadReportLocation`: level 8+ every shop, else their own memberships),
+ * and every shop-owned read is scoped to those shops IN THE QUERY — `.in("location_id", …)`,
+ * the completions' instance embed, `user_locations` by location, and audit_log by the members
+ * of those shops — so a GM's request never fetches another shop's rows. Two reads stay
+ * global on purpose: `locations` (the column list itself, filtered by the grant before use)
+ * and `checklist_templates` (type + prep_subtype only — LABELS for the instances already
+ * scoped above, never counted on their own). The one audit read that is not member-scoped is
+ * the all-shops viewer's (level 8+), who may read every shop: the approved people rule
+ * counts a person with no membership in that viewer's overall line only.
  *
- * Fails LOUD (throws) — the hub catches it and renders without the card (an ops signal must
- * never take down the admin hub), never a half-read card dressed as the truth.
+ * Every read pages past PostgREST's 1000-row cap; id lists are chunked so no request line
+ * grows with the business. Fails LOUD (throws) — the hub catches it and renders without the
+ * card (an ops signal must never take down the admin hub), never a half-read card dressed as
+ * the truth.
  */
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import { selectAllRows } from "@/lib/supabase-paginate";
@@ -73,12 +82,30 @@ async function selectByIds<T>(
 }
 
 /**
+ * The completions' instance embed. `checklist_completions` has exactly ONE FK to
+ * `checklist_instances` (`checklist_completions_instance_id_fkey`, verified live); it is
+ * named anyway, per the service-role embed law (AGENTS.md, Database & RLS). Parity with the
+ * two-step read it replaced, checked by SQL on prod 2026-10-15: 196 live person-ticked lines
+ * at one shop, 0 at the other, identical either way.
+ */
+const COMPLETION_INSTANCE_EMBED = "checklist_instances!checklist_completions_instance_id_fkey!inner(location_id)";
+
+/** A to-one embed arrives as an object; the untyped client's inference says array — accept both. */
+type EmbeddedInstance = { location_id: string } | Array<{ location_id: string }> | null;
+
+function embeddedLocation(e: EmbeddedInstance): string | null {
+  if (e == null) return null;
+  return Array.isArray(e) ? (e[0]?.location_id ?? null) : e.location_id;
+}
+
+/**
  * Load the card for this viewer. Returns null when the viewer can read no active shop
  * (nothing to put in a column).
  */
 export async function loadWeekCard(actor: LocationActor & { level: number }, now: Date = new Date()): Promise<WeekCard | null> {
   const sb = getServiceRoleClient();
   const since = weekWindowStart(now);
+  const allShopsViewer = actor.level >= REPORT_ALL_LOCATIONS_LEVEL;
 
   const { data: locRows, error: locErr } = await sb
     .from("locations")
@@ -93,7 +120,7 @@ export async function loadWeekCard(actor: LocationActor & { level: number }, now
   const shopIds = shops.map((s) => s.id);
 
   const [
-    auditActors,
+    memberships,
     instances,
     templates,
     completions,
@@ -109,22 +136,25 @@ export async function loadWeekCard(actor: LocationActor & { level: number }, now
     toastRuns,
     depletion,
   ] = await Promise.all([
-    selectAllRows<{ actor_id: string; action: string }>((from, to) =>
-      sb.from("audit_log").select("actor_id, action")
-        .not("actor_id", "is", null).gte("occurred_at", since)
-        .order("id", { ascending: true }).range(from, to)),
+    selectAllRows<{ user_id: string; location_id: string }>((from, to) =>
+      sb.from("user_locations").select("user_id, location_id")
+        .in("location_id", shopIds).eq("active", true)
+        .order("user_id", { ascending: true }).order("location_id", { ascending: true }).range(from, to)),
     selectAllRows<{ id: string; location_id: string; template_id: string; status: string; dropped_at: string | null }>((from, to) =>
       sb.from("checklist_instances").select("id, location_id, template_id, status, dropped_at")
         .in("location_id", shopIds).gte("created_at", since)
         .order("id", { ascending: true }).range(from, to)),
+    // Global by design: labels (type + prep_subtype) for the shop-scoped instances above.
     selectAllRows<{ id: string; type: string; prep_subtype: string | null }>((from, to) =>
       sb.from("checklist_templates").select("id, type, prep_subtype")
         .order("id", { ascending: true }).range(from, to)),
-    selectAllRows<{ instance_id: string }>((from, to) =>
-      sb.from("checklist_completions").select("instance_id")
+    selectAllRows<{ checklist_instances: EmbeddedInstance }>((from, to) =>
+      sb.from("checklist_completions").select(`id, ${COMPLETION_INSTANCE_EMBED}`)
+        .in("checklist_instances.location_id", shopIds)
         .gte("completed_at", since).not("completed_by", "is", null)
         .is("superseded_at", null).is("revoked_at", null).is("auto_complete_meta", null)
-        .order("id", { ascending: true }).range(from, to)),
+        .order("id", { ascending: true }).range(from, to)
+        .returns<Array<{ checklist_instances: EmbeddedInstance }>>()),
     selectAllRows<{ location_id: string }>((from, to) =>
       sb.from("pm_reports").select("location_id")
         .in("location_id", shopIds).gte("submitted_at", since).is("superseded_at", null)
@@ -161,8 +191,8 @@ export async function loadWeekCard(actor: LocationActor & { level: number }, now
       sb.from("ezcater_orders").select("location_id, last_sync_error")
         .in("location_id", shopIds).gte("last_attempt_at", since)
         .order("id", { ascending: true }).range(from, to)),
-    selectAllRows<{ location_id: string; status: string; business_date: string | null }>((from, to) =>
-      sb.from("toast_capture_runs").select("location_id, status, business_date")
+    selectAllRows<{ location_id: string; status: string; started_at: string | null }>((from, to) =>
+      sb.from("toast_capture_runs").select("location_id, status, started_at")
         .in("location_id", shopIds).gte("started_at", since)
         .order("id", { ascending: true }).range(from, to)),
     selectAllRows<{ resource_id: string | null; business_date: string | null }>((from, to) =>
@@ -171,45 +201,44 @@ export async function loadWeekCard(actor: LocationActor & { level: number }, now
         .order("id", { ascending: true }).range(from, to)),
   ]);
 
-  // People: distinct actors whose week includes real use → their role + memberships.
-  const actorIds = [...new Set(auditActors.filter((r) => actionCountsAsUse(r.action)).map((r) => r.actor_id))];
-  const [users, memberships] = await Promise.all([
-    selectByIds<{ id: string; role: string }>(actorIds, (c, from, to) =>
-      sb.from("users").select("id, role").in("id", c).order("id", { ascending: true }).range(from, to)),
-    selectByIds<{ user_id: string; location_id: string }>(actorIds, (c, from, to) =>
-      sb.from("user_locations").select("user_id, location_id").in("user_id", c).eq("active", true)
-        .order("user_id", { ascending: true }).order("location_id", { ascending: true }).range(from, to)),
-  ]);
-  const roleOf = new Map(users.map((u) => [u.id, u.role]));
+  // People. Eligible actors come from the memberships AT THE VIEWER'S SHOPS, read BEFORE any
+  // audit activity: a shop-bound viewer's audit read is `.in("actor_id", members)` (chunked).
+  // Only the all-shops viewer reads the window's actors unfiltered — they may read every shop,
+  // and the approved rule shows them people with no membership in the overall line.
   const memberOf = new Map<string, string[]>();
   for (const m of memberships) memberOf.set(m.user_id, [...(memberOf.get(m.user_id) ?? []), m.location_id]);
+  const memberIds = [...memberOf.keys()];
+  const auditActors = allShopsViewer
+    ? await selectAllRows<{ actor_id: string; action: string }>((from, to) =>
+        sb.from("audit_log").select("actor_id, action")
+          .not("actor_id", "is", null).gte("occurred_at", since)
+          .order("id", { ascending: true }).range(from, to))
+    : await selectByIds<{ actor_id: string; action: string }>(memberIds, (c, from, to) =>
+        sb.from("audit_log").select("actor_id, action")
+          .in("actor_id", c).gte("occurred_at", since)
+          .order("id", { ascending: true }).range(from, to));
+  const actorIds = [...new Set(auditActors.filter((r) => actionCountsAsUse(r.action)).map((r) => r.actor_id))];
+  const users = await selectByIds<{ id: string; role: string }>(actorIds, (c, from, to) =>
+    sb.from("users").select("id, role").in("id", c).order("id", { ascending: true }).range(from, to));
+  const roleOf = new Map(users.map((u) => [u.id, u.role]));
   const actors: WeekActor[] = actorIds.map((id) => {
     const role = roleOf.get(id);
     return { userId: id, level: role != null && isRoleCode(role) ? ROLES[role].level : null, locationIds: memberOf.get(id) ?? [] };
   });
-
-  // Lines ticked: the shop lives on the instance. Instances may predate the window, so look
-  // them up by id (chunked) rather than reusing the in-window instance read — still bound to
-  // the viewer's shops, so another shop's line resolves to no column at all.
-  const instanceIds = [...new Set(completions.map((c) => c.instance_id))];
-  const instanceShop = await selectByIds<{ id: string; location_id: string }>(instanceIds, (c, from, to) =>
-    sb.from("checklist_instances").select("id, location_id").in("id", c).in("location_id", shopIds)
-      .order("id", { ascending: true }).range(from, to));
-  const shopOfInstance = new Map(instanceShop.map((i) => [i.id, i.location_id]));
 
   const templateOf = new Map(templates.map((t) => [t.id, t]));
 
   return buildWeekCard({
     since,
     shops,
-    allShopsViewer: actor.level >= REPORT_ALL_LOCATIONS_LEVEL,
+    allShopsViewer,
     actors,
     checklists: instances.flatMap((i) => {
       const t = templateOf.get(i.template_id);
       return t ? [{ locationId: i.location_id, type: t.type, prepSubtype: t.prep_subtype, status: i.status, dropped: i.dropped_at != null }] : [];
     }),
     lineLocations: completions.flatMap((c) => {
-      const loc = shopOfInstance.get(c.instance_id);
+      const loc = embeddedLocation(c.checklist_instances);
       return loc ? [loc] : [];
     }),
     pmReportLocations: pmReports.map((r) => r.location_id),
@@ -222,7 +251,7 @@ export async function loadWeekCard(actor: LocationActor & { level: number }, now
     ezcaterArrivedLocations: ezArrived.map((e) => e.location_id),
     ezcaterSyncs: ezSyncs.map((e) => ({ locationId: e.location_id, hasError: e.last_sync_error != null })),
     businessDays: weekBusinessDays(now),
-    toastRuns: toastRuns.map((r) => ({ locationId: r.location_id, status: r.status, businessDate: r.business_date })),
+    toastRuns: toastRuns.map((r) => ({ locationId: r.location_id, status: r.status, startedAt: r.started_at })),
     depletionRuns: depletion.map((d) => ({ locationId: d.resource_id, businessDate: d.business_date })),
   });
 }

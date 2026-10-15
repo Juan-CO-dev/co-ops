@@ -7,6 +7,9 @@
  * bands, the shop columns, and what "finished" means.
  */
 import { describe, it, expect } from "vitest";
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import en from "@/lib/i18n/en.json";
 import es from "@/lib/i18n/es.json";
 import {
@@ -16,6 +19,7 @@ import {
   cellIsZero,
   checklistKind,
   checklistOutcome,
+  etDayOf,
   ranAllWeek,
   roleBand,
   toastRunResult,
@@ -216,12 +220,13 @@ describe("automatic jobs", () => {
     const card = buildWeekCard(input({
       toastRuns: [
         // ~1,160 runs a shop a week in prod — many runs on one day is still ONE day
-        ...DAYS.flatMap((d) => [1, 2, 3].map(() => ({ locationId: C, status: "completed", businessDate: d }))),
-        { locationId: P, status: "completed", businessDate: "2026-10-14" },
-        { locationId: P, status: "modified_completed", businessDate: "2026-10-15" },
-        { locationId: P, status: "completed", businessDate: "2026-10-08" }, // before the 7 days
-        { locationId: P, status: "failed", businessDate: "2026-10-13" }, // a failed run covers no day
-        { locationId: P, status: "running", businessDate: "2026-10-12" },
+        ...DAYS.flatMap((d) => ["14:00", "18:00", "23:30"].map((t) => ({ locationId: C, status: "completed", startedAt: `${d}T${t}:00.000Z` }))),
+        { locationId: P, status: "completed", startedAt: "2026-10-14T16:00:00.000Z" },
+        { locationId: P, status: "modified_completed", startedAt: "2026-10-15T16:00:00.000Z" },
+        { locationId: P, status: "completed", startedAt: "2026-10-08T16:00:00.000Z" }, // before the 7 days
+        { locationId: P, status: "failed", startedAt: "2026-10-13T16:00:00.000Z" }, // a failed run covers no day
+        { locationId: P, status: "running", startedAt: "2026-10-12T16:00:00.000Z" },
+        { locationId: P, status: "completed", startedAt: null },
       ],
     }));
     expect(shop(card, C).jobs).toMatchObject({ toastDaysRan: 7, toastDaysExpected: 7, toastPullsFailed: 0 });
@@ -236,6 +241,29 @@ describe("automatic jobs", () => {
     expect(ranAllWeek({ ran: 0, of: 0 })).toBe(false);
     expect(cellIsZero(p)).toBe(false);
     expect(weekHasJobAlert(card)).toBe(true);
+  });
+  it("BACKFILL REGRESSION (Astra r1 P2): one run today that pulls seven sales dates ran on ONE day", () => {
+    // Each run carries the sales day it pulled (business_date) — irrelevant here. What counts
+    // is WHEN it ran: seven backfill runs all started this afternoon cover today only, so six
+    // silent days must read "Ran 1 of 7 days", never "Ran all week".
+    const card = buildWeekCard(input({
+      toastRuns: DAYS.map((d, i) => ({
+        locationId: P,
+        status: "completed",
+        businessDate: d,
+        startedAt: `2026-10-15T18:0${i}:00.000Z`,
+      })),
+    }));
+    const row = WEEK_SUMMARY_AREAS.flatMap((a) => a.rows).find((r) => r.id === "toast")!;
+    expect(row.cell(shop(card, P))).toEqual({ kind: "days", ran: 1, of: 7, failed: 0 });
+  });
+  it("a run's day is its ET day: 01:30Z on the 15th ran on the 14th in ET", () => {
+    expect(etDayOf("2026-10-15T01:30:00.000Z")).toBe("2026-10-14");
+    expect(etDayOf(null)).toBeNull();
+    expect(etDayOf("not a date")).toBeNull();
+    const card = buildWeekCard(input({ toastRuns: [{ locationId: P, status: "completed", startedAt: "2026-10-09T01:30:00.000Z" }] }));
+    // 2026-10-08 in ET — the day before the window's first business day
+    expect(shop(card, P).jobs.toastDaysRan).toBe(0);
   });
   it("tallies syncs and DISTINCT depletion days per shop", () => {
     const card = buildWeekCard(input({
@@ -256,7 +284,7 @@ describe("automatic jobs", () => {
   });
   it("automatic work alone is not people activity", () => {
     const card = buildWeekCard(input({
-      toastRuns: [{ locationId: P, status: "completed", businessDate: "2026-10-15" }],
+      toastRuns: [{ locationId: P, status: "completed", startedAt: "2026-10-15T16:00:00.000Z" }],
       leads: [{ locationId: P, createdBy: null, leadSource: "toast_catering" }],
     }));
     expect(weekHasPeopleActivity(card)).toBe(false);
@@ -331,5 +359,47 @@ describe("rows — rendering contract", () => {
     expect(cellIsZero(cellOf("lines"))).toBe(true);
     expect(cellOf("ezcater_errors")).toEqual({ kind: "count", n: 1, alert: true });
     expect(cellOf("ezcater_ok")).toEqual({ kind: "count", n: 0, alert: false });
+  });
+});
+
+// ── The loader's location bind (Astra r1 P2), pinned at the source ─────────────
+//
+// The loader is DB-coupled, so the spine cannot run it; it CAN prove every shop-owned read
+// is scoped in the query. Each `sb.from("<table>")…range(` chain must carry its scope.
+describe("lib/admin/week-card.ts — every shop-owned read is scoped IN the query", () => {
+  const src = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "..", "lib/admin/week-card.ts"), "utf8");
+  const chains = [...src.matchAll(/sb\.from\("([a-z_]+)"\)([\s\S]*?)\.range\(/g)].map((m) => ({ table: m[1]!, chain: m[2]! }));
+
+  it("finds the reads it pins", () => {
+    expect(chains.length).toBeGreaterThanOrEqual(16);
+  });
+
+  it("shop tables filter on location_id (completions through the instance embed)", () => {
+    const byLocation = ["user_locations", "checklist_instances", "pm_reports", "cash_reports", "purchase_orders", "vendor_deliveries", "sku_count_events", "catering_pipeline", "catering_quotes", "ezcater_orders", "toast_capture_runs"];
+    for (const c of chains.filter((x) => byLocation.includes(x.table))) {
+      expect(c.chain, c.table).toContain('.in("location_id", shopIds)');
+    }
+    const completions = chains.filter((c) => c.table === "checklist_completions");
+    expect(completions).toHaveLength(1);
+    expect(completions[0]!.chain).toContain('.in("checklist_instances.location_id", shopIds)');
+    expect(src).toContain("checklist_instances!checklist_completions_instance_id_fkey!inner(location_id)");
+  });
+
+  it("audit reads are scoped: depletion by shop, people by the shops' members (all-shops viewer excepted)", () => {
+    const audit = chains.filter((c) => c.table === "audit_log");
+    expect(audit).toHaveLength(3);
+    expect(audit.filter((c) => c.chain.includes('.in("resource_id", shopIds)'))).toHaveLength(1);
+    expect(audit.filter((c) => c.chain.includes('.in("actor_id", c)'))).toHaveLength(1);
+    // the unfiltered actor read exists only on the all-shops branch
+    expect(src).toMatch(/allShopsViewer\s*\?\s*await selectAllRows<\{ actor_id: string; action: string \}>/);
+  });
+
+  it("users are read only for the eligible actors; templates (labels) are the only global table read", () => {
+    const users = chains.filter((c) => c.table === "users");
+    expect(users).toHaveLength(1);
+    expect(users[0]!.chain).toContain('.in("id", c)');
+    // checklist_templates = labels only; audit_log = the all-shops viewer's actor read (above)
+    const global = chains.filter((c) => !/\.in\(/.test(c.chain)).map((c) => c.table);
+    expect(global.sort()).toEqual(["audit_log", "checklist_templates"]);
   });
 });
