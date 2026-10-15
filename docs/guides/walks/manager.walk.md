@@ -99,7 +99,7 @@ Log every card heading, the items under **Needs attention** in their exact order
 
 ### 7. ALL DAY — HANDOFF NOTE — guide "All day › Handoff notes"
 On the Pulse, scroll to the **Handoff** card and tap the **See more** inside that card.
-- Under **Write a handoff note**, choose **For everyone** and type `Bread comes early tomorrow. Clear a shelf in the prep fridge first.` in **Note**. Shot **28-handoff-write** with the filled form and **Post note** in view.
+- Under **Write a handoff note**, choose **For everyone** and type `Bread comes early tomorrow. Clear a shelf on the bread rack first.` in **Note**. Shot **28-handoff-write** with the filled form and **Post note** in view.
 - Tap **Post note**. Shot **29-handoff-posted** showing the note with your name, the time, **Got it** and **Retract**. Do not tap **Retract**.
 
 ### 8. ALL DAY — RECEIVING — guide "All day › Check in a delivery"

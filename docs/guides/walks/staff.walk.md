@@ -118,8 +118,8 @@ Log: every section heading, the order of the items under **Needs attention** (re
 ### 9. ALL DAY — FRIDGE TEMPS AND BROKEN EQUIPMENT — guide "All day › Fridge temps and broken equipment"
 Tap path: Dashboard → **Explore** → **Maintenance** ("Maintenance Log").
 - Shot **28-maintenance** with **Fridge temps** in view.
-- In **Log a maintenance note**: in **Equipment** pick "Other…" and type `Prep fridge` in **Equipment name**. In the note box type `Prep fridge feels warm`. Shot **29-maintenance-note** with the filled form in view.
-- Tap **Save note**. Shot **30-maintenance-saved** showing the saved note under **Other equipment notes**. Log its date (it must be today's date, not tomorrow's).
+- In **Log a maintenance note**: in **Equipment** pick **Sauce Fridge**. In the note box type `Sauce Fridge feels warm`. Shot **29-maintenance-note** with the filled form in view.
+- Tap **Save note**. Then tap the **Sauce Fridge** card under **Fridge temps**. Shot **30-maintenance-saved** with the note under **Maintenance history**. Log its time.
 Log the placeholder of each field, and the fridge status words you saw ("Out of range", "No reading today", ok).
 
 ### 10. ALL DAY — MID-DAY PREP, start to finish — guide "All day › Mid-day prep"

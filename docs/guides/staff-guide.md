@@ -459,15 +459,17 @@ Use this when a fridge runs warm or something breaks. Tap **Maintenance** in **E
 
 To log a problem:
 
-1. Under **Log a maintenance note**, pick the item in the **Equipment** list. Not on the list? Pick **Other…** and type its name in the **Equipment name** box.
+1. Under **Log a maintenance note**, pick the item in the **Equipment** list. A warm fridge? Pick that fridge, like **Sauce Fridge**. Not on the list? Pick **Other…** and type its name in the **Equipment name** box.
 
-![The note form with Other…, "Prep fridge", and the note typed in](img/staff/29-maintenance-note.png)
+![The note form with Sauce Fridge picked and the note typed in](img/staff/29-maintenance-note.png)
 
 2. Type what is wrong in the note box ("What's going on?").
 
-3. Tap **Save note**. The box clears, and your note shows on the page.
+3. Tap **Save note**. The box clears.
 
-![The saved note under Other equipment notes](img/staff/30-maintenance-saved.png)
+4. To see your note, tap the fridge's card under **Fridge temps**. It is under **Maintenance history**. Other equipment shows its newest note on its card ("Last note: …"). A note for **Other…** shows under **Other equipment notes**.
+
+![The Sauce Fridge page, with the note under Maintenance history](img/staff/30-maintenance-saved.png)
 
 **Worth knowing**
 
