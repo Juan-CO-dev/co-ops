@@ -29,14 +29,26 @@ const day = (over: Partial<DailyRaw> = {}): DailyRaw => ({ classes: [], tips: []
 
 let rpc: (fn: string, args: Record<string, unknown>) => unknown;
 const calls: Array<{ fn: string; args: Record<string, unknown> }> = [];
+/**
+ * DETERMINISTIC STUB (deflake, 2026-10-15): each client SNAPSHOTS the rpc implementation and the
+ * call log it was created under, so a call still in flight can never read a stub a later test
+ * installed (the module-level `rpc` is reassigned per test). The route creates its client inside
+ * the request, i.e. after the test assigned its stub.
+ */
 function client() {
+  const impl = rpc;
+  const log = calls;
   const chain = { id: "" };
   const q = { select: () => q, eq: (_c: string, v: string) => { chain.id = v; return q; }, maybeSingle: async () => ({ data: chain.id === A ? SHOP : null, error: null }) };
   return {
     from: (t: string) => { if (t !== "locations") throw new Error(`unexpected read ${t}`); return q; },
-    rpc: async (fn: string, args: Record<string, unknown>) => { calls.push({ fn, args }); return { data: rpc(fn, args), error: null }; },
+    rpc: async (fn: string, args: Record<string, unknown>) => { log.push({ fn, args }); return { data: impl(fn, args), error: null }; },
   };
 }
+/** One frozen breakdown payload per size, built ONCE and shared by every window (no per-window rebuild under load). */
+const breakdownRows = (n: number) => Object.freeze(Array.from({ length: n }, (_, i) => Object.freeze({ key: `item-${i}`, label: `Item ${i}`, units: 1, checks: 1 })));
+const ROWS_25_000 = breakdownRows(25_000);
+const ROWS_25_001 = breakdownRows(25_001);
 const get = (q: string) => GET(new NextRequest(`https://example.test/api/reports/export?${q}`));
 
 beforeEach(() => {
@@ -95,12 +107,17 @@ describe("P2-6: catering values are read per bounded window, never over all hist
 
 describe("P2-7: EVERY Sales export view refuses past 25,000 rows", () => {
   it("a breakdown with 25,001 distinct item keys is a 413, not a file", async () => {
-    rpc = (fn) => fn === "sales_report_breakdown" ? Array.from({ length: 25_001 }, (_, i) => ({ key: `item-${i}`, label: `Item ${i}`, units: 1, checks: 1 })) : [];
-    expect((await get(`family=sales&format=csv&location=${A}&view=items`)).status).toBe(413);
+    rpc = (fn) => fn === "sales_report_breakdown" ? ROWS_25_001 : [];
+    const res = await get(`family=sales&format=csv&location=${A}&view=items`);
+    expect(res.status, await res.clone().text()).toBe(413);
   });
   it("25,000 rows still export", async () => {
-    rpc = (fn) => fn === "sales_report_breakdown" ? Array.from({ length: 25_000 }, (_, i) => ({ key: `item-${i}`, label: `Item ${i}`, units: 1, checks: 1 })) : [];
-    expect((await get(`family=sales&format=csv&location=${A}&view=items`)).status).toBe(200);
+    rpc = (fn) => fn === "sales_report_breakdown" ? ROWS_25_000 : [];
+    const res = await get(`family=sales&format=csv&location=${A}&view=items`);
+    // On failure, print the route's own body: the export logs only error.message, so the body is the evidence.
+    expect(res.status, res.status === 200 ? "" : await res.clone().text()).toBe(200);
+    // …and the file really holds every row: BOM + header + 25,000 lines + the trailing CRLF.
+    expect((await res.text()).split("\r\n")).toHaveLength(25_002);
   });
 });
 
