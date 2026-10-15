@@ -133,3 +133,19 @@ describe("the reviewer sees the door's photo (full-branch r1 P2-3)", () => {
     expect(view.openRequests).toEqual([expect.objectContaining({ id: "req-1", filedBy: "Kai", photoId: "ph-door" })]);
   });
 });
+
+describe("sim QA: the page's global-scope affordances match the writers", () => {
+  it("a GM (below MoO) on a SKU with a global pack and price: no global edit, their own shop offered; a MoO: global editable", async () => {
+    install((w) => {
+      w.sku_pack_change_requests = []; w.sku_pack_change_request_additions = []; w.users ??= [];
+      w.vendor_delivery_rhythm ??= []; w.vendor_cutoffs ??= []; w.sku_barcodes ??= []; w.product_primaries ??= []; w.products ??= [];
+    });
+    const gm = { user: { id: "u-gm", role: "gm" }, role: "gm", level: 7, locations: [LOC] } as unknown as AuthContext;
+    const shops = [{ id: LOC, name: "Shop one" }];
+    const g = await loadSkuItemView(gm, SKU, null, shops);
+    expect(g.can).toMatchObject({ editGlobalPack: false, editGlobalPrice: false, shopsToEdit: [{ id: LOC, name: "Shop one" }] });
+    const m = await loadSkuItemView(moo, SKU, null, shops);
+    expect(m.can).toMatchObject({ editGlobalPack: true, editGlobalPrice: true });
+  });
+});
+

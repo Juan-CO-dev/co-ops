@@ -21,7 +21,7 @@ const view: SkuItemView = {
   product: null,
   shops: [{ id: SHOP, name: "P Street" }],
   scope: SHOP, scopeName: "P Street",
-  can: { editShop: true, editGlobal: false, editPar: true, editBasis: false },
+  can: { editShop: true, editGlobalPack: false, editGlobalPrice: false, editPar: true, editBasis: false, shopsToEdit: [{ id: SHOP, name: "P Street" }] },
   pack: {
     levels: [
       { id: "c", label: "case", containsQty: 4, containsLevelId: "b", containsMeasureUnit: null, displayOrdinal: 0 },
@@ -86,7 +86,7 @@ describe("SkuItemClient", () => {
   });
   it("the preview for everyone is offered only to those who may save for everyone", () => {
     expect(render(jsx(SkuItemClient, { view, job: "pack", requestId: null }))).not.toContain(en["catalog.item.see_changes_everyone"]);
-    const moo = { ...view, can: { ...view.can, editGlobal: true } };
+    const moo = { ...view, can: { ...view.can, editGlobalPack: true, editGlobalPrice: true } };
     expect(render(jsx(SkuItemClient, { view: moo, job: "pack", requestId: null }))).toContain(en["catalog.item.see_changes_everyone"]);
   });
   it("job=price opens the price editor; Spanish throughout", () => {
@@ -96,7 +96,7 @@ describe("SkuItemClient", () => {
     expect(html).toContain(es["catalog.item.connections"]);
   });
   it("a reader who may not write sees no job, no save and no door-report actions — the page offers only what its writers allow", () => {
-    const readOnly = { ...view, can: { editShop: false, editGlobal: false, editPar: false, editBasis: false } };
+    const readOnly = { ...view, can: { editShop: false, editGlobalPack: false, editGlobalPrice: false, editPar: false, editBasis: false, shopsToEdit: [] } };
     const html = render(jsx(SkuItemClient, { view: readOnly, job: null, requestId: null }));
     expect(html).not.toContain(html_(en["catalog.item.job_pack"]));
     expect(html).not.toContain(en["catalog.item.job_price"]);
@@ -105,3 +105,40 @@ describe("SkuItemClient", () => {
     expect(html).not.toContain(en["catalog.history.restore"]);
   });
 });
+
+describe("sim QA: no dead end at the global default", () => {
+  const SHOP_B = "6f1d2c3e-0000-4000-8000-00000000000b";
+  const atGlobal = (over: Partial<SkuItemView["can"]>): SkuItemView => ({ ...view, scope: null, scopeName: null, pack: { ...view.pack, isShopVersion: false },
+    price: { ...view.price, isShopLane: false }, can: { ...view.can, editShop: false, ...over } });
+  it("a GM at 'Everyone (global)' with a global pack set: read-only, the refusal in plain words, and 'Change it for P Street' straight to the shop's pack job", () => {
+    const html = render(jsx(SkuItemClient, { view: atGlobal({ editGlobalPack: false, editGlobalPrice: false }), job: "pack", requestId: null }));
+    expect(html).not.toContain(en["catalog.pack.sentence_aria"]); // no editor that can never save
+    expect(html).toContain(html_(en["catalog.error.global_requires_moo"]));
+    expect(html).toContain(`href="/admin/catalog/sku/${view.sku.id}?location=${SHOP}&amp;job=pack"`);
+    expect(html).toContain("Change it for P Street");
+    expect(html).not.toContain(en["catalog.item.job_pack"]);
+    // The price job gets the same treatment.
+    const price = render(jsx(SkuItemClient, { view: atGlobal({ editGlobalPack: false, editGlobalPrice: false }), job: "price", requestId: null }));
+    expect(price).toContain(`href="/admin/catalog/sku/${view.sku.id}?location=${SHOP}&amp;job=price"`);
+    expect(price).not.toContain('type="date"'); // no price editor that can never save
+  });
+  it("with several shops of their own: a shop picker, each opening that shop's job", () => {
+    const html = render(jsx(SkuItemClient, { view: atGlobal({ shopsToEdit: [{ id: SHOP, name: "P Street" }, { id: SHOP_B, name: "Cap Hill" }] }), job: "pack", requestId: null }));
+    expect(html).toContain(en["catalog.item.pick_shop"]);
+    expect(html).toContain(`?location=${SHOP_B}&amp;job=pack`);
+    expect(html).toContain("Change it for Cap Hill");
+  });
+  it("a MoO at 'Everyone (global)': the pack job is editable and previews for everyone", () => {
+    const html = render(jsx(SkuItemClient, { view: atGlobal({ editGlobalPack: true, editGlobalPrice: true, shopsToEdit: [] }), job: "pack", requestId: null }));
+    expect(html).toContain(en["catalog.pack.sentence_aria"]);
+    expect(html).toContain(en["catalog.item.see_changes"]);
+    expect(html).not.toContain(html_(en["catalog.error.global_requires_moo"]));
+  });
+  it("phone width: the shop chips WRAP — no clipped chip, no hidden horizontal scroller", () => {
+    const html = render(jsx(SkuItemClient, { view, job: null, requestId: null }));
+    const nav = /<nav aria-label="[^"]*" class="([^"]*)"/.exec(html)![1]!;
+    expect(nav.split(" ")).toContain("flex-wrap");
+    expect(nav).not.toContain("overflow-x-auto");
+  });
+});
+

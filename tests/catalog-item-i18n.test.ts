@@ -17,7 +17,7 @@ const REQUIRED = [
   "catalog.item.missing_none", "catalog.item.fix", "catalog.item.no_pack", "catalog.item.order_unit",
   "catalog.item.job_pack", "catalog.item.job_price", "catalog.item.back_to_default",
   "catalog.item.back_to_default_confirm", "catalog.item.cancel", "catalog.item.see_changes",
-  "catalog.item.see_changes_everyone", "catalog.item.saved", "catalog.price.current", "catalog.price.none",
+  "catalog.item.see_changes_everyone", "catalog.item.saved", "catalog.item.change_for_shop", "catalog.item.pick_shop", "catalog.price.current", "catalog.price.none",
   "catalog.price.shop_own", "catalog.price.global_is", "catalog.price.cost_per_oz", "catalog.price.new",
   "catalog.price.date", "catalog.price.basis", "catalog.price.basis.unset", "catalog.price.basis.per_case",
   "catalog.price.basis.per_each", "catalog.price.basis.per_lb", "catalog.price.basis.per_dozen",

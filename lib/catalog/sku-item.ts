@@ -418,6 +418,19 @@ export async function loadSkuItemView(
     ? [...new Set(vendorRes.data?.order_days ?? [])].sort((a, b) => a - b)
     : [...new Set((rhythmRes.data ?? []).map((r) => r.order_dow))].sort((a, b) => a - b);
   const visibleShops = reachableShops(row, shops);
+  // The GLOBAL boundary as the page must show it (sim QA dead end): below MoO only a FIRST value —
+  // a global pack exists when a global version is live OR the legacy flat pack is set (0259's own
+  // test, 'Each (no case)' alone being the "unknown" placeholder); a global price when a head exists.
+  const roleOk = catalogWriteRoleAllowed(actor.role, actor.level);
+  const ownerOk = skuOwnerAllowed(actor, row.location_id);
+  const globalPackExists = globalPacks.get(skuId)?.versionId != null
+    || row.units_per_pack != null || row.each_size != null || row.each_measure != null
+    || (row.pack_format != null && row.pack_format !== "Each (no case)");
+  const globalPriceExists = globalHeads.get(skuId) != null;
+  const canGlobal = (kind: VersionKind, exists: boolean) =>
+    roleOk && ownerOk && (actor.level >= GLOBAL_VERSION_WRITE_MIN || (actor.level >= FIRST_GLOBAL_WRITE_MIN[kind] && !exists));
+  const shopsToEdit = visibleShops.filter((s) =>
+    versionWriteGate({ kind: "pack", role: actor.role, level: actor.level, scope: s.id, scopeAllowed: catalogShopAllowed(actor, s.id) }).ok);
   const shopGate = scope === null ? null : versionWriteGate({ kind: "pack", role: actor.role, level: actor.level, scope, scopeAllowed: catalogShopAllowed(actor, scope) });
 
   return {
@@ -435,7 +448,9 @@ export async function loadSkuItemView(
       // The SAME gates the writers bind with (2a's versionWriteGate with the ROLE; D2's allowance; the
       // owner rule) — the page never offers a save its writer would refuse.
       editShop: shopGate?.ok === true,
-      editGlobal: catalogWriteRoleAllowed(actor.role, actor.level) && actor.level >= GLOBAL_VERSION_WRITE_MIN,
+      editGlobalPack: canGlobal("pack", globalPackExists),
+      editGlobalPrice: canGlobal("price", globalPriceExists),
+      shopsToEdit,
       editPar: actor.level >= PAR_WRITE_MIN,
       editBasis: actor.level >= GLOBAL_VERSION_WRITE_MIN || (actor.level >= BASIS_WRITE_MIN && row.price_basis == null && skuOwnerAllowed(actor, row.location_id)),
     },

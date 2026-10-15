@@ -64,7 +64,12 @@ export function SkuItemClient({ view, job, requestId }: { view: SkuItemView; job
   const base = `/api/admin/catalog/sku/${view.sku.id}`;
   const measureLabels = new Set(view.measures.map((m) => m.label));
   const firstWeight = view.measures.find((m) => m.dimension === "weight")?.label ?? "oz";
-  const canEditPack = view.can.editShop || view.can.editGlobal;
+  // At a SHOP the job is that shop's version; at GLOBAL scope it is the global value — offered only
+  // where the writers would take it (sim QA: no editor that can never save).
+  const canEditPack = view.scope === null ? view.can.editGlobalPack : view.can.editShop;
+  const canEditPrice = view.scope === null ? view.can.editGlobalPrice : view.can.editShop;
+  const globalPackLocked = view.scope === null && !view.can.editGlobalPack;
+  const globalPriceLocked = view.scope === null && !view.can.editGlobalPrice;
   const canSaveShop = view.can.editShop;
 
   const [activeRequestId, setActiveRequestId] = useState<string | null>(requestId);
@@ -107,7 +112,7 @@ export function SkuItemClient({ view, job, requestId }: { view: SkuItemView; job
     const s = fixItSection(code);
     setOpen((o) => ({ ...o, [s]: true }));
     if (s === "arrives" && canEditPack) startJob("pack");
-    if (s === "price" && canEditPack) startJob("price");
+    if (s === "price" && canEditPrice) startJob("price");
     document.getElementById(`item-${s}`)?.scrollIntoView({ behavior: "smooth", block: "start" });
   };
 
@@ -218,10 +223,38 @@ export function SkuItemClient({ view, job, requestId }: { view: SkuItemView; job
       : t("catalog.item.version_shop_default", { shop: view.scopeName ?? "" });
   // The two save targets this actor may preview (and so save): their shop, and — MoO+ — everyone.
   const shopTarget: PreviewTarget | null = view.scope !== null && canSaveShop ? { kind: "shop", shopId: view.scope } : null;
-  const globalTarget: PreviewTarget | null = view.can.editGlobal ? { kind: "global" } : null;
+  const globalPackTarget: PreviewTarget | null = view.can.editGlobalPack ? { kind: "global" } : null;
+  const globalPriceTarget: PreviewTarget | null = view.can.editGlobalPrice ? { kind: "global" } : null;
   const toggleConversion = (key: string, on: boolean) =>
     setChosen((c) => { const next = new Set(c); if (on) next.add(key); else next.delete(key); return next; });
-  const canSaveFor = (p: PackPreview | PricePreview) => (p.target.kind === "global" ? view.can.editGlobal : canSaveShop);
+  const canSaveFor = (p: PackPreview | PricePreview) =>
+    (p.target.kind === "global" ? (p.kind === "pack" ? view.can.editGlobalPack : view.can.editGlobalPrice) : canSaveShop);
+  /**
+   * GLOBAL scope below MoO, a global value already set (sim QA dead end): the job is READ-ONLY — the
+   * refusal in plain words, and the way to the actor's own shop with the job open (one shop: straight
+   * there; several: pick one).
+   */
+  const globalLocked = (job: ItemJob) => (
+    <div className="flex flex-col gap-2">
+      <p role="note" className="text-sm text-co-text">{t("catalog.error.global_requires_moo")}</p>
+      {view.can.shopsToEdit.length === 1 ? (
+        <Link href={skuItemHref(view.sku.id, { shopId: view.can.shopsToEdit[0]!.id, job })} className={`${btnPrimary} w-fit`}>
+          {t("catalog.item.change_for_shop", { shop: view.can.shopsToEdit[0]!.name })}
+        </Link>
+      ) : view.can.shopsToEdit.length > 1 ? (
+        <>
+          <p className={fieldLabel}>{t("catalog.item.pick_shop")}</p>
+          <div className="flex flex-wrap gap-2">
+            {view.can.shopsToEdit.map((s) => (
+              <Link key={s.id} href={skuItemHref(view.sku.id, { shopId: s.id, job })} className={btnPrimary}>
+                {t("catalog.item.change_for_shop", { shop: s.name })}
+              </Link>
+            ))}
+          </div>
+        </>
+      ) : null}
+    </div>
+  );
   const days = view.ordering.orderDays.map((d) => formatWeekday(sundayAnchoredDate(d), language)).join(", ");
   const laneKey = (lane: "human" | "auto" | "global" | "none"): TranslationKey | null =>
     lane === "human" ? "catalog.ordering.lane.human" : lane === "auto" ? "catalog.ordering.lane.auto" : lane === "global" ? "catalog.ordering.lane.global" : null;
@@ -274,7 +307,7 @@ export function SkuItemClient({ view, job, requestId }: { view: SkuItemView; job
         {!view.sku.active ? <span className="text-xs font-bold text-co-cta-text">{t("catalog.item.inactive")}</span> : null}
       </div>
 
-      <nav aria-label={t("catalog.item.shop_switcher")} className="-mx-1 flex gap-2 overflow-x-auto px-1 pb-1">
+      <nav aria-label={t("catalog.item.shop_switcher")} className="flex flex-wrap gap-2">
         <Link href={skuItemHref(view.sku.id, { shopId: null })} aria-current={view.scope === null ? "page" : undefined}
           className={`inline-flex min-h-[44px] shrink-0 items-center rounded-full border-2 px-4 text-sm font-bold ${view.scope === null ? "border-co-text bg-co-surface-2 text-co-text" : "border-co-border bg-co-surface text-co-text"}`}>
           {t("catalog.item.shop_global")}
@@ -353,15 +386,15 @@ export function SkuItemClient({ view, job, requestId }: { view: SkuItemView; job
               count={view.pack.descriptor ?? t("catalog.item.no_pack")} open={open.arrives} onToggle={() => toggle("arrives")}>
               <div className="flex flex-col gap-3 p-3">
                 {view.pack.orderUnit ? <p className="text-sm text-co-text">{t("catalog.item.order_unit", { unit: view.pack.orderUnit, oz: oz(view.pack.orderUnitOz) })}</p> : null}
-                {editing === "pack" ? (
+                {globalPackLocked ? globalLocked("pack") : editing === "pack" ? (
                   <>
                     <PackSentenceEditor draft={draft} onChange={(d) => { setDraft(d); setPreview(null); guard.invalidate(); }} units={view.measures}
                       skuClass={view.sku.skuClass} currentLeafUnit={view.pack.levels.find((l) => l.containsLevelId == null)?.containsMeasureUnit ?? null}
                       avgOzPerEach={view.sku.avgOzPerEach} error={sentenceError} busy={busy} />
                     <div className="flex flex-wrap gap-2">
                       {shopTarget ? <button type="button" className={btnPrimary} disabled={busy} onClick={() => void previewPack(shopTarget)}>{t("catalog.item.see_changes")}</button> : null}
-                      {globalTarget ? (
-                        <button type="button" className={btn} disabled={busy} onClick={() => void previewPack(globalTarget)}>
+                      {globalPackTarget ? (
+                        <button type="button" className={btn} disabled={busy} onClick={() => void previewPack(globalPackTarget)}>
                           {t(view.scope === null ? "catalog.item.see_changes" : "catalog.item.see_changes_everyone")}
                         </button>
                       ) : null}
@@ -403,7 +436,7 @@ export function SkuItemClient({ view, job, requestId }: { view: SkuItemView; job
                     {PRICE_BASES.map((b) => <option key={b} value={b}>{t(`catalog.price.basis.${b}` as TranslationKey)}</option>)}
                   </select>
                 </label>
-                {editing === "price" ? (
+                {globalPriceLocked ? globalLocked("price") : editing === "price" ? (
                   <>
                     <div className="grid gap-2 sm:grid-cols-2">
                       <label className="block">
@@ -418,8 +451,8 @@ export function SkuItemClient({ view, job, requestId }: { view: SkuItemView; job
                     </div>
                     <div className="flex flex-wrap gap-2">
                       {shopTarget ? <button type="button" className={btnPrimary} disabled={busy} onClick={() => void previewPrice(shopTarget)}>{t("catalog.item.see_changes")}</button> : null}
-                      {globalTarget ? (
-                        <button type="button" className={btn} disabled={busy} onClick={() => void previewPrice(globalTarget)}>
+                      {globalPriceTarget ? (
+                        <button type="button" className={btn} disabled={busy} onClick={() => void previewPrice(globalPriceTarget)}>
                           {t(view.scope === null ? "catalog.item.see_changes" : "catalog.item.see_changes_everyone")}
                         </button>
                       ) : null}
@@ -432,7 +465,7 @@ export function SkuItemClient({ view, job, requestId }: { view: SkuItemView; job
                   </>
                 ) : (
                   <div className="flex flex-wrap gap-2">
-                    {canEditPack ? <button type="button" className={btnPrimary} onClick={() => startJob("price")}>{t("catalog.item.job_price")}</button> : null}
+                    {canEditPrice ? <button type="button" className={btnPrimary} onClick={() => startJob("price")}>{t("catalog.item.job_price")}</button> : null}
                     {view.price.isShopLane && canSaveShop ? (
                       <button type="button" className={btnDanger} disabled={busy} onClick={() => void backToDefault("price")}>
                         {confirming === "price" ? t("catalog.item.back_to_default_confirm", { shop: view.scopeName ?? "" }) : t("catalog.item.back_to_default")}
@@ -507,7 +540,7 @@ export function SkuItemClient({ view, job, requestId }: { view: SkuItemView; job
               count={String(view.history.length)} open={open.history} onToggle={() => toggle("history")}>
               <div className="flex flex-col gap-2 p-3">
                 {view.history.length === 0 ? <p className="text-sm text-co-text">{t("catalog.history.empty")}</p> : view.history.map((h) => {
-                  const canRestore = !h.active && (h.scope === "shop" ? canSaveShop : view.can.editGlobal);
+                  const canRestore = !h.active && (h.scope === "shop" ? canSaveShop : view.can.editGlobalPack);
                   return (
                     <div key={h.id} className="flex flex-wrap items-center justify-between gap-2 border-b-2 border-co-border py-2 text-sm text-co-text">
                       <div className="min-w-0">

@@ -71,7 +71,20 @@ export interface SkuItemView {
   shops: Array<{ id: string; name: string }>;
   scope: string | null;
   scopeName: string | null;
-  can: { editShop: boolean; editGlobal: boolean; editPar: boolean; editBasis: boolean };
+  can: {
+    editShop: boolean;
+    /**
+     * May this actor change the GLOBAL pack / price (sim QA dead end)? MoO+ always; below MoO only the
+     * FIRST value (none set yet — the writers decide it again under the SKU lock). False → the global
+     * job renders read-only with the refusal and a way to the actor's own shop (`shopsToEdit`).
+     */
+    editGlobalPack: boolean;
+    editGlobalPrice: boolean;
+    editPar: boolean;
+    editBasis: boolean;
+    /** The shops whose OWN version this actor may write (2a's version gate), for "Change it for <shop>". */
+    shopsToEdit: Array<{ id: string; name: string }>;
+  };
   pack: {
     levels: PackChainLevel[];
     versionId: string | null;
