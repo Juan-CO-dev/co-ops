@@ -9,7 +9,9 @@ import path from "node:path";
 import {
   cashToastRowCounts,
   computeToastCashProjected,
-  projectedChangedFromToast,
+  projectedEditedFromPrefill,
+  submittedToastLine,
+  toastPrefillCents,
   toastPrefillDollars,
   type CashToastFacts,
   type CashToastFlags,
@@ -113,11 +115,23 @@ describe("prefill + changed hint", () => {
     expect(toastPrefillDollars({ cents: 0, asOf: AS_OF })).toBe("0.00");
     expect(toastPrefillDollars({ cents: -500, asOf: AS_OF })).toBe("0.00");
   });
-  it("flags a change only when Toast had a figure and the typed one differs", () => {
-    expect(projectedChangedFromToast(1000, null)).toBe(false);
-    expect(projectedChangedFromToast(1000, 1000)).toBe(false);
-    expect(projectedChangedFromToast(1001, 1000)).toBe(true);
-    expect(projectedChangedFromToast(0, -500)).toBe(true);
+  it("prefill cents: clamped at zero, null when there is no figure", () => {
+    expect(toastPrefillCents(null)).toBeNull();
+    expect(toastPrefillCents({ cents: 700, asOf: AS_OF })).toBe(700);
+    expect(toastPrefillCents({ cents: -500, asOf: AS_OF })).toBe(0);
+  });
+  it("form: 'Changed' compares against what was PREFILLED, never a later figure", () => {
+    expect(projectedEditedFromPrefill(1000, null)).toBe(false);
+    expect(projectedEditedFromPrefill(1000, { cents: 1000, asOf: AS_OF })).toBe(false);
+    expect(projectedEditedFromPrefill(1001, { cents: 1000, asOf: AS_OF })).toBe(true);
+    // a negative Toast net prefills 0.00 — leaving it untouched is not an edit
+    expect(projectedEditedFromPrefill(0, { cents: -500, asOf: AS_OF })).toBe(false);
+  });
+  it("submitted view: neutral line, never 'Changed'", () => {
+    expect(submittedToastLine(1000, null, null)).toBe("none");
+    expect(submittedToastLine(1000, 1000, null)).toBe("none");
+    expect(submittedToastLine(1000, 1000, AS_OF)).toBe("from");
+    expect(submittedToastLine(1200, 1000, AS_OF)).toBe("at_save");
   });
 });
 
@@ -137,19 +151,17 @@ describe("migration 0253 posture", () => {
     expect(lower).not.toMatch(/drop column|alter column|not null default/);
   });
 
-  it("drops the 0188 signature before re-creating, so no ambiguous overload remains", () => {
-    expect(lower).toMatch(/drop function public\.submit_cash_report_atomic\(\s*uuid, date, integer, integer, integer, text, jsonb, integer, jsonb, integer, integer, text, uuid, timestamptz\s*\)/);
-    expect(lower).toContain("p_toast_projected_cents bigint default null");
-    expect(lower).toContain("p_toast_projected_as_of timestamptz default null");
+  it("leaves 0188's submit_cash_report_atomic untouched (unwired; no re-emit, no drop)", () => {
+    expect(lower).not.toMatch(/(create|drop|replace)[^;]*function public\.submit_cash_report_atomic/);
+    expect(lower).not.toMatch(/(grant|revoke)[^;]*submit_cash_report_atomic/);
   });
 
-  it("both functions are SECURITY DEFINER, pinned search_path, service_role only", () => {
-    for (const fn of ["submit_cash_report_atomic", "cash_toast_projected_facts"]) {
-      expect(lower, fn).toContain(`function public.${fn}(`);
-    }
-    expect(lower.match(/security definer set search_path = pg_catalog, public/g)?.length).toBe(2);
-    expect(lower).toContain("from public, anon, authenticated");
-    expect(lower.match(/to service_role;/g)?.length).toBeGreaterThanOrEqual(2);
+  it("the facts function is SECURITY DEFINER, pinned search_path, service_role only", () => {
+    expect(lower).toContain("create function public.cash_toast_projected_facts(");
+    expect(lower.match(/security definer set search_path = pg_catalog, public/g)?.length).toBe(1);
+    expect(lower).toContain("revoke all on function public.cash_toast_projected_facts(uuid, date) from public, anon, authenticated;");
+    expect(lower).toContain("grant execute on function public.cash_toast_projected_facts(uuid, date) to service_role;");
+    expect(lower).toContain("raise exception '0253 unexpected function grant'");
   });
 
   it("the facts read is CASH-only, latest-snapshot, shop-bound, tips never selected", () => {

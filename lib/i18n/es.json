@@ -2166,6 +2166,7 @@
   "cash.toast.from": "De Toast · {time}",
   "cash.toast.none": "Toast todavía no tiene la cifra de efectivo de hoy — escribe el monto proyectado.",
   "cash.toast.changed": "Cambiado respecto a Toast ({amount})",
+  "cash.toast.at_save": "Toast al guardar: {amount} · {time}",
   "cash.field.drawer_total": "Total de la caja",
   "cash.field.cash_tips": "Propinas en efectivo",
   "cash.field.over_short_note": "Nota de sobra/falta (opcional)",

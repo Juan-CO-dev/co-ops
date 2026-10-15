@@ -89,13 +89,38 @@ export function computeToastCashProjected(facts: CashToastFacts | null): ToastPr
   return { cents, asOf: facts.as_of };
 }
 
-/** The Projected input's starting text: dollars with cents; "" when there is no figure. */
-export function toastPrefillDollars(toast: ToastProjected | null): string {
-  if (!toast) return "";
-  return (Math.max(0, toast.cents) / 100).toFixed(2);
+/** The cents the Projected box is PREFILLED with: the Toast figure, clamped at zero; null = no prefill. */
+export function toastPrefillCents(toast: ToastProjected | null): number | null {
+  return toast ? Math.max(0, toast.cents) : null;
 }
 
-/** True when the typed Projected differs from the Toast figure (drives "Changed from Toast"). */
-export function projectedChangedFromToast(typedCents: number, toastCents: number | null): boolean {
-  return toastCents !== null && typedCents !== toastCents;
+/** The Projected input's starting text: dollars with cents; "" when there is no figure. */
+export function toastPrefillDollars(toast: ToastProjected | null): string {
+  const cents = toastPrefillCents(toast);
+  return cents === null ? "" : (cents / 100).toFixed(2);
+}
+
+/**
+ * FORM ONLY: true when the typed Projected differs from what the page PREFILLED. This is a true
+ * statement about an edit ("Changed from Toast ($X)") — it compares against the figure the key
+ * holder actually saw, never a later re-read.
+ */
+export function projectedEditedFromPrefill(typedCents: number, toast: ToastProjected | null): boolean {
+  const prefilled = toastPrefillCents(toast);
+  return prefilled !== null && typedCents !== prefilled;
+}
+
+/**
+ * SUBMITTED VIEW: which neutral Toast line shows under the stored Projected. The server re-read
+ * Toast at save, and Toast may have moved since the page loaded — so a difference here is NOT
+ * proof of an edit and the view never says "Changed":
+ *   · "at_save" — signed figure differs from the stored Toast figure: "Toast at save: $X · <time>".
+ *   · "from"    — they match: "From Toast · <time>".
+ *   · "none"    — no Toast figure was stored (pre-0253 rows, or Toast had none).
+ */
+export function submittedToastLine(
+  projectedCents: number, toastCents: number | null, toastAsOf: string | null,
+): "at_save" | "from" | "none" {
+  if (toastCents === null || !toastAsOf) return "none";
+  return projectedCents === toastCents ? "from" : "at_save";
 }

@@ -12,7 +12,7 @@ import {
   type Denominations,
   type OnShiftEntry,
 } from "@/lib/cash-shared";
-import { projectedChangedFromToast, toastPrefillDollars, type ToastProjected } from "@/lib/cash-toast-shared";
+import { projectedEditedFromPrefill, toastPrefillCents, toastPrefillDollars, type ToastProjected } from "@/lib/cash-toast-shared";
 import { formatCents, formatTime } from "@/lib/i18n/format";
 import { useTranslation } from "@/lib/i18n/provider";
 import type { Language } from "@/lib/i18n/types";
@@ -147,9 +147,9 @@ export function CashClient({
                   <span className="text-co-text-muted">
                     {t("cash.toast.from", { time: formatTime(toastProjected.asOf, language) })}
                   </span>
-                  {projectedChangedFromToast(projectedCents, toastProjected.cents) ? (
+                  {projectedEditedFromPrefill(projectedCents, toastProjected) ? (
                     <span className="font-semibold text-co-warning-text">
-                      {t("cash.toast.changed", { amount: formatCents(toastProjected.cents, language) })}
+                      {t("cash.toast.changed", { amount: formatCents(toastPrefillCents(toastProjected) ?? 0, language) })}
                     </span>
                   ) : null}
                 </>

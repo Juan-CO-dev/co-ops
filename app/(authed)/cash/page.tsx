@@ -17,7 +17,7 @@ import { redirect } from "next/navigation";
 import { loadCashReport } from "@/lib/cash";
 import { overShortReadout } from "@/lib/cash-shared";
 import { loadToastCashProjected, type ToastProjected } from "@/lib/cash-toast";
-import { projectedChangedFromToast } from "@/lib/cash-toast-shared";
+import { submittedToastLine } from "@/lib/cash-toast-shared";
 import { formatCents, formatTime } from "@/lib/i18n/format";
 import { serverT } from "@/lib/i18n/server";
 import type { Language, TranslationKey } from "@/lib/i18n/types";
@@ -162,23 +162,25 @@ export default async function CashPage({ searchParams }: PageProps) {
 
           {/* Detail rows */}
           <ul className="flex flex-col gap-1.5 text-sm">
-            {/* Projected — plus the Toast figure stored at save time (B10): "Changed from Toast ($X)"
-                when the key holder typed something else, else where it came from. */}
+            {/* Projected — plus the Toast figure the server stored at save (B10). Neutral wording:
+                Toast may have moved after the page loaded, so a difference is not proof of an edit. */}
             <li className="flex flex-col gap-0.5 rounded-md border-2 border-co-border bg-co-surface px-3 py-2 text-sm">
               <span className="flex items-center justify-between gap-3">
                 <span className="font-semibold text-co-text">{serverT(lang, "cash.field.projected")}</span>
                 <span className="shrink-0 font-bold text-co-text">{formatCents(report.projectedCents, lang)}</span>
               </span>
-              {report.toastProjectedCents !== null &&
-              projectedChangedFromToast(report.projectedCents, report.toastProjectedCents) ? (
-                <span className="text-xs font-semibold text-co-warning-text">
-                  {serverT(lang, "cash.toast.changed", { amount: formatCents(report.toastProjectedCents, lang) })}
-                </span>
-              ) : report.toastProjectedCents !== null && report.toastProjectedAsOf ? (
-                <span className="text-xs text-co-text-muted">
-                  {serverT(lang, "cash.toast.from", { time: formatTime(report.toastProjectedAsOf, lang) })}
-                </span>
-              ) : null}
+              {(() => {
+                const line = submittedToastLine(report.projectedCents, report.toastProjectedCents, report.toastProjectedAsOf);
+                if (line === "none" || report.toastProjectedCents === null || !report.toastProjectedAsOf) return null;
+                const time = formatTime(report.toastProjectedAsOf, lang);
+                return (
+                  <span className="text-xs text-co-text-muted">
+                    {line === "at_save"
+                      ? serverT(lang, "cash.toast.at_save", { amount: formatCents(report.toastProjectedCents, lang), time })
+                      : serverT(lang, "cash.toast.from", { time })}
+                  </span>
+                );
+              })()}
             </li>
             <ReadOnlyRow
               labelKey="cash.field.drawer_total"

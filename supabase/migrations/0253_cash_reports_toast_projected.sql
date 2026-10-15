@@ -19,12 +19,10 @@
 --   3. A partial index on toast_payments(paid_business_date) WHERE type = 'CASH', so the paid-day
 --      read is bounded by the day instead of scanning every payment snapshot ever captured. The
 --      refund-day read uses the existing toast_payments_refund_date partial index (0221).
---   4. submit_cash_report_atomic RE-EMITTED with two trailing params (default null) that land in the
---      two new columns. Byte-faithful to 0188 otherwise. The 0188 signature is DROPPED first: a
---      `create or replace` with a different argument list makes a second overload, and a 14-arg call
---      would then be ambiguous. Nothing calls the function today (0188 left it unwired on purpose,
---      tests/audit-flags-cleanup.test.ts pins that lib/cash.ts does not call it), so the drop has no
---      caller to break; lib/cash.ts's direct insert carries the two columns itself.
+--   4. submit_cash_report_atomic (0188) is deliberately NOT touched. Nothing calls it (lib/cash.ts
+--      writes cash_reports directly and tests/audit-flags-cleanup.test.ts pins that), so re-emitting a
+--      live prod function nobody uses is risk with no benefit. lib/cash.ts's direct insert carries the
+--      two new columns; whoever wires the RPC later adds them to it in that PR.
 --
 -- ── THE CANDIDATE ROWS (what the SQL bounds) ──────────────────────────────────────────
 --   · this shop only, and only the LATEST snapshot of each order: toast_payments → toast_orders
@@ -48,7 +46,7 @@
 -- ── VERIFIED BEFORE AUTHORING (source, 2026-10-14) ────────────────────────────────────
 --   · toast_payments / toast_orders / toast_order_checks / toast_order_latest_pointers /
 --     toast_capture_runs columns: 0221 (+ 0239 added toast_payments.sales_refund_cents, unused here).
---   · cash_reports insert list: 0188 + lib/cash.ts, field for field, plus the two new columns.
+--   · cash_reports writers: lib/cash.ts's direct insert is the only live one (0188's RPC is unwired).
 --   · No checksum asserted; this session had no MCP access.
 
 begin;
@@ -110,116 +108,13 @@ comment on function public.cash_toast_projected_facts(uuid, date) is
 revoke all on function public.cash_toast_projected_facts(uuid, date) from public, anon, authenticated;
 grant execute on function public.cash_toast_projected_facts(uuid, date) to service_role;
 
--- ── submit_cash_report_atomic, re-emitted (0188 + two trailing params) ────────────────
-drop function public.submit_cash_report_atomic(
-  uuid, date, integer, integer, integer, text, jsonb, integer, jsonb, integer, integer, text, uuid, timestamptz
-);
-
-create or replace function public.submit_cash_report_atomic(
-  p_location_id        uuid,
-  p_report_date        date,
-  p_projected_cents    integer,
-  p_drawer_total_cents integer,
-  p_float_cents        integer,
-  p_count_method       text,
-  p_denominations      jsonb,
-  p_cash_tips_cents    integer,
-  p_on_shift           jsonb,
-  p_over_short_cents   integer,
-  p_deposit_cents      integer,
-  p_over_short_note    text,
-  p_actor_id           uuid,
-  p_now                timestamptz,
-  p_toast_projected_cents bigint default null,
-  p_toast_projected_as_of timestamptz default null
-) returns table (new_id uuid, superseded_id uuid)
-language plpgsql security definer set search_path = pg_catalog, public as $$
-declare v_prior_id uuid; v_new_id uuid;
-begin
-  -- (1) Find and supersede the live row for this (location, date), if there is one.
-  --     The compare-and-set on `superseded_at IS NULL` means a concurrent transaction
-  --     that already claimed this row updates zero rows here and its INSERT then loses
-  --     to cash_reports_one_live_per_day — one winner, and the loser's whole transaction
-  --     rolls back rather than leaving a half-applied edit.
-  update cash_reports
-     set superseded_at = p_now
-   where location_id = p_location_id
-     and report_date = p_report_date
-     and superseded_at is null
-  returning id into v_prior_id;
-
-  -- (2) Insert the new live row. A 23505 here (a genuinely concurrent submit that
-  --     committed first) aborts the transaction, which un-supersedes (1) for free.
-  insert into cash_reports (
-    location_id, report_date,
-    projected_cents, drawer_total_cents, float_cents,
-    count_method, denominations, cash_tips_cents, on_shift,
-    over_short_cents, deposit_cents, over_short_note,
-    signed_by, signed_at, entered_by,
-    toast_projected_cents, toast_projected_as_of
-  ) values (
-    p_location_id, p_report_date,
-    p_projected_cents, p_drawer_total_cents, p_float_cents,
-    p_count_method,
-    case when p_count_method = 'denomination' then p_denominations else null end,
-    p_cash_tips_cents, coalesce(p_on_shift, '[]'::jsonb),
-    p_over_short_cents, p_deposit_cents, p_over_short_note,
-    p_actor_id, p_now, p_actor_id,
-    p_toast_projected_cents, p_toast_projected_as_of
-  ) returning id into v_new_id;
-
-  -- (3) The back-pointer. Unconditional now, not best-effort: it shares the
-  --     transaction with the insert whose id it records, so it cannot be the one
-  --     write that silently did not happen.
-  if v_prior_id is not null then
-    update cash_reports set superseded_by = v_new_id where id = v_prior_id;
-  end if;
-
-  new_id := v_new_id;
-  superseded_id := v_prior_id;
-  return next;
-end $$;
-
-comment on function public.submit_cash_report_atomic(
-  uuid, date, integer, integer, integer, text, jsonb, integer, jsonb, integer, integer, text, uuid, timestamptz, bigint, timestamptz
-) is
-  'Supersede the live cash_reports row for (location, date), insert the new one, and write '
-  'the back-pointer — in ONE transaction, so a failed insert cannot strand the day with no '
-  'live report. The edit-window gate (closing_finalized), the totals (computeCashTotals) '
-  'and the audit row stay in lib/cash.ts on purpose. Returns (new_id, superseded_id); '
-  'superseded_id is null on a first submit. 23505 propagates for the caller to map to 409. '
-  '0253: + p_toast_projected_cents / p_toast_projected_as_of (the server-read Toast figure, default null).';
-
--- REVOKE-FROM-PUBLIC (AGENTS.md): Supabase's default ACLs grant EXECUTE to anon
--- EXPLICITLY, so revoking from public alone is not enough. Verify after apply via
--- information_schema.routine_privileges.
-revoke execute on function public.submit_cash_report_atomic(
-  uuid, date, integer, integer, integer, text, jsonb, integer, jsonb, integer, integer, text, uuid, timestamptz, bigint, timestamptz
-) from public;
-
-revoke execute on function public.submit_cash_report_atomic(
-  uuid, date, integer, integer, integer, text, jsonb, integer, jsonb, integer, integer, text, uuid, timestamptz, bigint, timestamptz
-) from anon;
-
-revoke execute on function public.submit_cash_report_atomic(
-  uuid, date, integer, integer, integer, text, jsonb, integer, jsonb, integer, integer, text, uuid, timestamptz, bigint, timestamptz
-) from authenticated;
-
-grant execute on function public.submit_cash_report_atomic(
-  uuid, date, integer, integer, integer, text, jsonb, integer, jsonb, integer, integer, text, uuid, timestamptz, bigint, timestamptz
-) to service_role;
-
 -- Post-apply posture check: nothing here may be executable by the PostgREST user roles.
 do $$ begin
   if exists (select 1 from information_schema.routine_privileges
               where routine_schema = 'public'
-                and routine_name in ('cash_toast_projected_facts', 'submit_cash_report_atomic')
+                and routine_name = 'cash_toast_projected_facts'
                 and grantee in ('PUBLIC', 'anon', 'authenticated')) then
     raise exception '0253 unexpected function grant';
-  end if;
-  if (select count(*) from pg_proc where proname = 'submit_cash_report_atomic'
-        and pronamespace = 'public'::regnamespace) <> 1 then
-    raise exception '0253 expected exactly one submit_cash_report_atomic';
   end if;
 end $$;
 
