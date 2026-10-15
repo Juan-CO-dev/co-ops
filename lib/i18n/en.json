@@ -6308,6 +6308,7 @@
   "catalog.error.version_sku_mismatch": "That version belongs to a different item.",
   "catalog.error.global_cannot_retire": "The global default can't go back to default.",
   "catalog.error.restore_source_out_of_scope": "You can only restore this shop's own earlier versions or the global default. To use another shop's version, adopt it.",
+  "catalog.error.truncate_refused": "Recipes can't be wiped in bulk. Change them one line at a time.",
   "catalog.error.global_changed": "The default price or name changed since you looked. See what this changes again.",
   "catalog.error.nothing_to_promote": "This shop doesn't set that here, so there's nothing to make the default.",
   "catalog.error.empty_setting": "Nothing to save for this shop. Use Back to default instead.",

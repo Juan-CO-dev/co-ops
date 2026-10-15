@@ -266,7 +266,7 @@ declare
 begin
   -- The 0258 lock order: the graph lock, then the recipe row.
   perform pg_advisory_xact_lock(7258025800);
-  perform 1 from public.recipes where id = p_recipe for update;
+  perform 1 from public.recipes where id = p_recipe for no key update;
   if not found then
     return null;
   end if;
@@ -351,6 +351,26 @@ create constraint trigger recipes_journal
   after insert on public.recipes
   deferrable initially deferred
   for each row execute function public.recipes_journal_trg();
+
+-- recipe_inputs / recipes are never TRUNCATEd (review P3d): a truncate skips row triggers, so it would empty the global
+-- lines with no journal entry (and TRUNCATE recipes CASCADE would wipe the version history itself). Refused.
+create or replace function public.recipe_journal_refuse_truncate()
+returns trigger
+language plpgsql
+security definer
+set search_path = pg_catalog, public
+as $$
+begin
+  raise exception 'recipe_version:truncate_refused' using errcode = 'P0001',
+        detail = format('%s is journaled (0262): remove lines through the writers, never TRUNCATE', tg_table_name);
+end;
+$$;
+drop trigger if exists recipe_inputs_no_truncate on public.recipe_inputs;
+create trigger recipe_inputs_no_truncate before truncate on public.recipe_inputs
+  for each statement execute function public.recipe_journal_refuse_truncate();
+drop trigger if exists recipes_no_truncate on public.recipes;
+create trigger recipes_no_truncate before truncate on public.recipes
+  for each statement execute function public.recipe_journal_refuse_truncate();
 
 -- ── (5b) the cutover proof: every baseline still equals recipe_inputs, recipe by recipe ──
 do $$
@@ -630,7 +650,10 @@ begin
                      from public.vendor_delivery_items di
                      join public.vendor_deliveries d on d.id = di.delivery_id
                      left join public.vendors v on v.id = d.vendor_id
-                    where di.vendor_item_id = any(v_skus) and d.location_id = any(v_shops)),
+                    -- Only PRODUCT MEMBERS (review P3a): receipts feed product resolution's "most recently received"
+                    -- rung and nothing else here, so a plain SKU's delivery never stales a preview.
+                    where di.vendor_item_id in (select vi.id from public.vendor_items vi where vi.product_id = any(v_products))
+                      and d.location_id = any(v_shops)),
       'measure_units', (select md5(coalesce(string_agg(to_jsonb(t)::text, '|' order by t.label), '')) from public.measure_units t where t.label = any(v_measures)),
       'sku_pack_versions', (select md5(coalesce(string_agg(to_jsonb(t)::text, '|' order by t.id), '')) from public.sku_pack_versions t
                              where t.sku_id = any(v_skus) and (t.location_id is null or t.location_id = any(v_shops))),
@@ -646,7 +669,12 @@ $$;
 -- THE CLOSURE LOCKS (Astra 3a r2#3, 3b r2#1). Taken by every writer AFTER the graph lock and its own target-row lock,
 -- BEFORE it re-takes the snapshot, held to COMMIT — so nothing the snapshot covers can change between the check and
 -- the commit. Each lock is chosen to block that dependency's writers, insertions included:
---   locations, measure_units      SHARE table lock — no shop or measure is added, changed or (de)activated;
+--   locations, measure_units      FOR SHARE NOWAIT on the ROWS (every active shop; the closure's measures) — no shop
+--                                  or measure the snapshot reads is changed or (de)activated. ROW locks, never a table
+--                                  SHARE lock (review P3b: a table SHARE lock conflicts with autovacuum / ANALYZE's
+--                                  SHARE UPDATE EXCLUSIVE and would refuse dependencies_busy for no reason). A brand-new
+--                                  shop row is not blocked; it changes 'active_shops', so a save that raced one is
+--                                  refused dependencies_changed by the next re-check (never written against a stale list);
 --   recipes, items, recipe_outputs FOR SHARE — blocks header / yield / item updates and legacy output deletes
 --                                  (line and output INSERTS already need the graph lock we hold);
 --   products                      FOR UPDATE — also blocks every INSERT/UPDATE whose foreign key names the product
@@ -677,21 +705,24 @@ declare
   v_products uuid[];
   v_skus     uuid[];
   v_vendors  uuid[];
+  v_measures text[];
   v_shops    uuid[];
 begin
   -- The graph lock FIRST (re-entrant: every writer already holds it, so this returns at once; the order above
   -- therefore holds even for a direct caller such as the sim scenario).
   perform pg_advisory_xact_lock(7258025800);
-  lock table public.locations, public.measure_units in share mode nowait;
   select coalesce(array_agg(member_id::uuid) filter (where member_kind = 'recipe'), '{}'),
          coalesce(array_agg(member_id::uuid) filter (where member_kind = 'item'), '{}'),
          coalesce(array_agg(member_id::uuid) filter (where member_kind = 'menu_item'), '{}'),
          coalesce(array_agg(member_id::uuid) filter (where member_kind = 'product'), '{}'),
          coalesce(array_agg(member_id::uuid) filter (where member_kind = 'sku'), '{}'),
          coalesce(array_agg(member_id::uuid) filter (where member_kind = 'vendor'), '{}'),
+         coalesce(array_agg(member_id) filter (where member_kind = 'measure'), '{}'),
          coalesce(array_agg(member_id::uuid) filter (where member_kind = 'shop'), '{}')
-    into v_recipes, v_items, v_menu, v_products, v_skus, v_vendors, v_shops
+    into v_recipes, v_items, v_menu, v_products, v_skus, v_vendors, v_measures, v_shops
     from public.recipe_change_closure(p_recipe, p_location, p_lines);
+  perform 1 from public.locations where active order by id for share nowait;
+  perform 1 from public.measure_units where label = any(v_measures) order by label for share nowait;
   perform 1 from public.recipes where id = any(v_recipes) order by id for share nowait;
   perform 1 from public.items where id = any(v_items) order by id for share nowait;
   perform 1 from public.products where id = any(v_products) order by id for update nowait;
@@ -756,7 +787,7 @@ begin
 
   -- THE GRAPH LOCK, then the recipe row (0258's order: every recipe writer serializes here).
   perform pg_advisory_xact_lock(7258025800);
-  select r.active into v_active from public.recipes r where r.id = p_recipe for update;
+  select r.active into v_active from public.recipes r where r.id = p_recipe for no key update;
   if not found then
     raise exception 'recipe_version:recipe_not_found' using errcode = 'P0001';
   end if;
@@ -978,10 +1009,14 @@ begin
   -- retired (kept in history), closing at the instant the new default opens, so no instant has two answers
   -- and none has none. Its lines equal the new default's, so its graph — and the cycle law there — is unchanged.
   if p_promoted_from is not null then
+    -- If the promoted version carried an ADOPTION pointer, its closing ends that link — recorded on the retired row
+    -- (review P2-3, the retire_recipe_version rule; never over an earlier record), so History shows the link ending.
     update public.recipe_versions
        set active = false,
            valid_to = greatest((select valid_from from public.recipe_versions where id = v_new), valid_from),
-           retired_by = p_actor
+           retired_by = p_actor,
+           adoption_ended_from_version_id = coalesce(adoption_ended_from_version_id,
+                                                     case when adopted_from_version_id is not null then id end)
      where id = p_promoted_from and active;
     get diagnostics v_written = row_count;
     if v_written <> 1 then
@@ -1015,7 +1050,7 @@ begin
     raise exception 'recipe_version:not_found' using errcode = 'P0001';
   end if;
   perform pg_advisory_xact_lock(7258025800);
-  perform 1 from public.recipes where id = v_recipe for update;
+  perform 1 from public.recipes where id = v_recipe for no key update;
   -- The closure locks, then the snapshot under them (7a). Back to default puts the DEFAULT's lines into this shop's
   -- graph: they are the line set of this change (the preview passes the same lines), so their dependencies are in it.
   v_default := coalesce((select jsonb_agg(jsonb_build_object('component_sku_id', ri.component_sku_id, 'component_item_id', ri.component_item_id,
@@ -1475,6 +1510,7 @@ revoke all on function public.recipe_journal_lines_equal(uuid, uuid) from public
 revoke all on function public.recipe_global_journal(uuid, uuid, uuid, text) from public, anon, authenticated, service_role;
 revoke all on function public.recipe_inputs_journal_trg() from public, anon, authenticated, service_role;
 revoke all on function public.recipes_journal_trg() from public, anon, authenticated, service_role;
+revoke all on function public.recipe_journal_refuse_truncate() from public, anon, authenticated, service_role;
 revoke all on function public.recipe_scope_item_edges(uuid) from public, anon, authenticated, service_role;
 revoke all on function public.recipe_lines_would_cycle(uuid, uuid, uuid[], uuid[]) from public, anon, authenticated, service_role;
 revoke all on function public.recipe_shops_input_would_cycle(uuid, uuid, uuid) from public, anon, authenticated, service_role;
@@ -1516,6 +1552,7 @@ begin
                 and routine_name in ('save_recipe_version', 'retire_recipe_version', 'remove_recipe_input_atomic',
                                      'add_recipe_input_atomic', 'update_recipe_input_atomic', 'create_recipe_full', 'add_recipe_output',
                                      'recipe_journal_lines_equal', 'recipe_global_journal', 'recipe_inputs_journal_trg', 'recipes_journal_trg',
+                                     'recipe_journal_refuse_truncate',
                                      'recipe_scope_item_edges', 'recipe_lines_would_cycle', 'recipe_shops_input_would_cycle',
                                      'recipe_shops_output_would_cycle', 'recipe_change_snapshot', 'recipe_scope_lines',
                                      'recipe_change_closure', 'recipe_change_lock')
@@ -1527,7 +1564,7 @@ begin
                 and routine_name in ('recipe_journal_lines_equal', 'recipe_global_journal', 'recipe_inputs_journal_trg', 'recipes_journal_trg',
                                      'recipe_scope_item_edges', 'recipe_lines_would_cycle', 'recipe_shops_input_would_cycle',
                                      'recipe_shops_output_would_cycle', 'recipe_scope_lines', 'recipe_change_closure',
-                                     'recipe_change_lock')
+                                     'recipe_change_lock', 'recipe_journal_refuse_truncate')
                 and grantee = 'service_role' and privilege_type = 'EXECUTE') then
     raise exception '0262: unexpected execute grant';
   end if;

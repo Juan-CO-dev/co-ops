@@ -35,7 +35,7 @@ const P1 = u(31), P_OFF = u(32);
 const K1 = u(41), K2 = u(42), K3 = u(43), K4 = u(44), K_UNREL = u(45), K_OTHER = u(46), K_MEMBER = u(47);
 const I_SLAW = u(51), I_DRESS = u(52), I_X = u(53), I_Q = u(54), I_Q2 = u(55);
 const M1 = u(61);
-const R_SLAW = u(71), R_DRESS = u(72), R_ITAL = u(73), R_EMPTY = u(74), R_X = u(75), R_Z = u(76), R_OFF = u(77);
+const R_SLAW = u(71), R_DRESS = u(72), R_ITAL = u(73), R_EMPTY = u(74), R_X = u(75), R_Z = u(76), R_OFF = u(77), R_DUP = u(78);
 const LOCK_KEY = 7258025800n;
 
 const db = new PGlite();
@@ -118,7 +118,7 @@ try {
     insert into public.items(id, name) values ('${I_SLAW}', 'Slaw'), ('${I_DRESS}', 'Dressing'), ('${I_X}', 'X'), ('${I_Q}', 'Q'), ('${I_Q2}', 'Q2');
     insert into public.menu_items(id, name) values ('${M1}', 'Italian');
     insert into public.recipes(id, name) values ('${R_SLAW}', 'Slaw'), ('${R_DRESS}', 'Dressing'), ('${R_ITAL}', 'Italian'),
-      ('${R_EMPTY}', 'Empty'), ('${R_X}', 'X'), ('${R_Z}', 'Z');
+      ('${R_EMPTY}', 'Empty'), ('${R_X}', 'X'), ('${R_Z}', 'Z'), ('${R_DUP}', 'Duplicate lines');
     insert into public.recipes(id, name, active) values ('${R_OFF}', 'Retired recipe', false);
     insert into public.recipe_outputs(recipe_id, output_item_id, output_menu_item_id) values
       ('${R_SLAW}', '${I_SLAW}', null), ('${R_DRESS}', '${I_DRESS}', null), ('${R_ITAL}', null, '${M1}'), ('${R_X}', '${I_X}', null);
@@ -126,7 +126,8 @@ try {
       ('${R_SLAW}', '${K3}', null, null, 48, 'oz', 0), ('${R_SLAW}', null, '${I_DRESS}', null, 2, 'oz', 1),
       ('${R_DRESS}', '${K2}', null, null, 16, 'oz', 0),
       ('${R_ITAL}', '${K1}', null, null, 4, 'oz', 0), ('${R_ITAL}', null, '${I_SLAW}', null, 2, 'oz', 1), ('${R_ITAL}', null, null, '${P1}', 3, 'oz', 2),
-      ('${R_X}', '${K4}', null, null, 1, 'oz', 0), ('${R_Z}', null, '${I_DRESS}', null, 1, 'oz', 0), ('${R_OFF}', '${K1}', null, null, 1, 'oz', 0);
+      ('${R_X}', '${K4}', null, null, 1, 'oz', 0), ('${R_Z}', null, '${I_DRESS}', null, 1, 'oz', 0), ('${R_OFF}', '${K1}', null, null, 1, 'oz', 0),
+      ('${R_DUP}', '${K1}', null, null, 1, 'oz', 0), ('${R_DUP}', '${K1}', null, null, 1, 'oz', 0);
   `);
   await db.exec(readFileSync("supabase/migrations/0262_recipe_shop_versions.sql", "utf8"));
   console.log("ok   0258 → 0262 applied over seeded recipes (0262's backfill assertions, cutover proof and privilege guards passed)");
@@ -138,10 +139,12 @@ try {
       (select count(*)::int from public.recipe_versions where valid_from <> '2000-01-01T00:00:00Z') as dated,
       (select count(*)::int from public.recipe_version_lines) as lines, (select count(*)::int from public.recipe_inputs) as inputs,
       (select count(*)::int from public.recipe_version_lines l join public.recipe_inputs ri on ri.id = l.source_line_id) as sourced`);
-    check(r.recipes === 7 && r.live === 7 && r.dated === 0, "B: every recipe (inactive and line-less included) has ONE live global baseline from 2000-01-01");
+    check(r.recipes === 8 && r.live === 8 && r.dated === 0, "B: every recipe (inactive and line-less included) has ONE live global baseline from 2000-01-01");
     check(r.lines === r.inputs && r.sourced === r.inputs, "B: the baseline lines are a copy of recipe_inputs, each naming its source line");
     const bad = await one("select count(*)::int as n from public.recipe_versions v where v.location_id is null and v.active and not public.recipe_journal_lines_equal(v.recipe_id, v.id)");
     check(bad.n === 0, "B: every baseline equals recipe_inputs (the cutover proof's own query)");
+    const dup = await one("select count(*)::int as n from public.recipe_version_lines l join public.recipe_versions v on v.id = l.version_id where v.recipe_id = $1", [R_DUP]);
+    check(dup.n === 2, "B: a recipe with two IDENTICAL lines keeps both in its baseline (multiset copy, review P3f)");
     const trg = await all("select tgname from pg_trigger where tgrelid in ('public.recipe_inputs'::regclass, 'public.recipes'::regclass) and not tgisinternal and tgname like '%journal%' order by 1");
     check(JSON.stringify(trg.map((t) => t.tgname)) === JSON.stringify(["recipe_inputs_journal", "recipes_journal"]), "B: the two journal triggers exist");
     const def = await all("select tgname, tgdeferrable, tginitdeferred from pg_trigger where tgname in ('recipe_inputs_journal', 'recipes_journal')");
@@ -194,6 +197,19 @@ try {
       "J8: a line MOVED to another recipe journals BOTH recipes");
     await db.query("update public.recipe_inputs set recipe_id = $1 where recipe_id = $2 and component_sku_id = $3", [R_ITAL, R_Z, K1]);
   }
+  // J10 multiplicity (review P3f): deleting ONE of two identical lines is a change; the head holds exactly one.
+  {
+    const before = await head(R_DUP);
+    const oneLine = await one("select id from public.recipe_inputs where recipe_id = $1 order by id limit 1", [R_DUP]);
+    await db.query("delete from public.recipe_inputs where id = $1", [oneLine.id]);
+    const after = await head(R_DUP);
+    const n = await one("select count(*)::int as n from public.recipe_version_lines where version_id = $1", [after.id]);
+    check(after.id !== before.id && n.n === 1 && await headEqualsInputs(R_DUP), "J10: removing one of two identical lines journals a new head with ONE (EXCEPT ALL counts multiplicity)");
+  }
+  // J11 TRUNCATE is refused (review P3d) — even for the owner: it would skip the journal entirely.
+  await refuses(async () => asOwner(() => db.query("truncate public.recipe_inputs")), "recipe_version:truncate_refused", "J11: TRUNCATE recipe_inputs is refused");
+  await refuses(async () => asOwner(() => db.query("truncate public.recipes cascade")), "recipe_version:truncate_refused", "J11: TRUNCATE recipes CASCADE (which would wipe the journal) is refused");
+
   // J9 the 0258 writers (re-emitted) and the 0262 delete record their actor for the journal.
   {
     const before = await head(R_X);
@@ -394,6 +410,16 @@ try {
     check(s3Live !== null && !res.changed_shops.includes(a2), "P7: a shop with its own version is not reported as changed");
     check((await live(S1)) === null, "P7: S1 now rides the default");
     await refuses(async () => save({ recipe: R, shop: null, expected: res.version_id, promotedFrom: vSource, snapLines: srcLines }), "recipe_version:invalid_source", "P8: a retired version cannot be promoted again");
+    check((await row(vSource)).adoption_ended_from_version_id === null, "P8: promoting a version that was never adopted records no adoption end");
+    // P9 adopt → PROMOTE (review P2-3): the promoted version carried an adoption pointer, so its closing ENDS the link —
+    // recorded on the retired row, exactly as Back to default does.
+    const s1own = (await save({ recipe: R, shop: S1, expected: await live(S1), basedOn: (await head(R)).id, lines: [line({ component_sku_id: K1, quantity: 7 })] })).version_id;
+    const adoptedForPromote = (await save({ recipe: R, shop: a1, expected: await live(a1), basedOn: (await head(R)).id, adoptedFrom: s1own, snapLines: [line({ component_sku_id: K1 })] })).version_id;
+    const pl = await all("select component_sku_id, component_item_id, component_product_id, quantity::text as q, unit from public.recipe_version_lines where version_id = $1", [adoptedForPromote]);
+    await save({ recipe: R, shop: null, expected: (await head(R)).id, promotedFrom: adoptedForPromote, lines: [], snapLines: pl });
+    const pr = await row(adoptedForPromote);
+    check(!pr.active && pr.adopted_from_version_id === s1own && pr.adoption_ended_from_version_id === adoptedForPromote,
+      "P9: adopt → promote: the retired (promoted) row records that its closing ended the adoption link");
   }
 
   // ── S the dependency snapshot is SCOPED ───────────────────────────────────
@@ -427,6 +453,13 @@ try {
     check((await shopLive(R, S2)) === undefined, "S5: S2 rides the default");
     await asOwner(() => db.query("insert into public.location_sku_settings (location_id, sku_id, active_override) values ($1, $2, false)", [S2, K1]));
     check(JSON.stringify(await snapshot(R, null, lines)) !== JSON.stringify(g1), "S5: a RIDING shop's activation overlay on a closure SKU moves the global preview");
+    // S6 receipts are digested for PRODUCT MEMBERS only (review P3a): a plain SKU's delivery never stales a preview.
+    const del = (await asOwner(() => one("insert into public.vendor_deliveries(location_id) values ($1) returning id", [S1]))).id;
+    const r0 = await snapshot(R, S1, lines);
+    await asOwner(() => db.query("insert into public.vendor_delivery_items(delivery_id, vendor_item_id) values ($1, $2)", [del, K1]));
+    check(JSON.stringify(await snapshot(R, S1, lines)) === JSON.stringify(r0), "S6: a receipt of a plain (non-member) closure SKU leaves the snapshot alone");
+    await asOwner(() => db.query("insert into public.vendor_delivery_items(delivery_id, vendor_item_id) values ($1, $2)", [del, K_MEMBER]));
+    check(JSON.stringify(await snapshot(R, S1, lines)) !== JSON.stringify(r0), "S6: a receipt of a PRODUCT MEMBER moves it (product resolution's most-recently-received rung)");
   }
 
   // ── V privilege ceilings, RLS, the helpers and the writers' grants ────────

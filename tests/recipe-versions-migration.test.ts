@@ -19,7 +19,7 @@ const WRITERS = ["save_recipe_version", "retire_recipe_version", "remove_recipe_
 const HELPERS = [
   "recipe_journal_lines_equal", "recipe_global_journal", "recipe_inputs_journal_trg", "recipes_journal_trg",
   "recipe_scope_item_edges", "recipe_lines_would_cycle", "recipe_shops_input_would_cycle", "recipe_shops_output_would_cycle",
-  "recipe_scope_lines", "recipe_change_closure", "recipe_change_lock",
+  "recipe_scope_lines", "recipe_change_closure", "recipe_change_lock", "recipe_journal_refuse_truncate",
 ];
 
 /** The house header: the first line names the file; the AUTHORED line carries the gate; a later APPLIED stamp is allowed. */
@@ -100,7 +100,10 @@ describe("0262 structure", () => {
   });
   it("serialized: the closure locks (NOWAIT, after the graph lock) come BEFORE the snapshot re-check in both writers (Astra r2#3)", () => {
     const lockFn = extractFunction(src, "create or replace function public.recipe_change_lock(", "\n$$;");
-    expect(lockFn).toContain("lock table public.locations, public.measure_units in share mode nowait;");
+    // ROW locks, never a table SHARE lock (review P3b: that conflicts with autovacuum / ANALYZE → spurious busy).
+    expect(lockFn).not.toMatch(/lock table/i);
+    expect(lockFn).toContain("from public.locations where active order by id for share nowait;");
+    expect(lockFn).toContain("from public.measure_units where label = any(v_measures) order by label for share nowait;");
     expect(lockFn).toContain("from public.products where id = any(v_products) order by id for update nowait;");
     expect(lockFn).toContain("from public.vendor_items where id = any(v_skus) order by id for update nowait;");
     expect(lockFn).toContain("when lock_not_available then");
@@ -174,9 +177,28 @@ describe("0262 structure", () => {
     expect(script).toContain("bgcvurheqzylyfehqgzh");
     expect(script).toContain('await b.query("rollback")');
   });
+  it("recipes are row-locked FOR NO KEY UPDATE, never FOR UPDATE (review P3c: FK checks against the recipe keep flowing)", () => {
+    for (const fn of ["recipe_global_journal", "save_recipe_version", "retire_recipe_version"]) {
+      const body = extractFunction(src, `create or replace function public.${fn}(`, "\n$$;");
+      expect(body, fn).toMatch(/from public\.recipes( r)? where (r\.)?id = [a-z_.]+ for no key update;/);
+      expect(body, fn).not.toMatch(/from public\.recipes( r)? where (r\.)?id = [a-z_.]+ for update;/);
+    }
+  });
+  it("promote's retirement of the source records an adoption link ending (review P2-3); receipts digest product members only (P3a)", () => {
+    const save = extractFunction(src, "create or replace function public.save_recipe_version(", "\n$$;");
+    const retire = save.slice(save.indexOf("where id = p_promoted_from and active;") - 600, save.indexOf("where id = p_promoted_from and active;"));
+    expect(retire).toContain("adoption_ended_from_version_id = coalesce(adoption_ended_from_version_id,");
+    const snap = extractFunction(src, "create or replace function public.recipe_change_snapshot(", "\n$$;");
+    expect(snap).toContain("where di.vendor_item_id in (select vi.id from public.vendor_items vi where vi.product_id = any(v_products))");
+  });
+  it("TRUNCATE of recipe_inputs / recipes is refused by a BEFORE TRUNCATE trigger (review P3d)", () => {
+    expect(src).toMatch(/create trigger recipe_inputs_no_truncate before truncate on public\.recipe_inputs/);
+    expect(src).toMatch(/create trigger recipes_no_truncate before truncate on public\.recipes/);
+    expect(src).toContain("raise exception 'recipe_version:truncate_refused'");
+  });
   it("the journal: graph lock, then the recipe row; a same-transaction head is updated, never versioned twice", () => {
     const body = extractFunction(src, "create or replace function public.recipe_global_journal(", "\n$$;");
-    expect(body.indexOf("pg_advisory_xact_lock(7258025800)")).toBeLessThan(body.indexOf("from public.recipes where id = p_recipe for update"));
+    expect(body.indexOf("pg_advisory_xact_lock(7258025800)")).toBeLessThan(body.indexOf("from public.recipes where id = p_recipe for no key update"));
     expect(body).toContain("v_head.created_xact = pg_current_xact_id()");
     expect(body).toContain("current_setting('app.recipe_journal_actor', true)");
     expect(body).toContain("then v_now else '2000-01-01T00:00:00Z'::timestamptz end");

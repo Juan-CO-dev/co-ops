@@ -5,7 +5,8 @@
  *
  * Run against the service-role DB (the engine is DORMANT in prod — 0 catering menu
  * rows — so this smoke SEEDS its own temp data, drives the REAL lib code paths, and
- * hard-deletes everything it created in a finally block, leaving ZERO residue):
+ * hard-deletes everything it created in a finally block — except what the 0262 recipe journal pins (its
+ * recipes, the SKUs their lines name, a seeded vendor), which it RETIRES (active = false) — leaving no live residue):
  *   npx tsx --env-file=.env.local scripts/w4b-smoke.ts
  *
  * Mirrors scripts/w4a-smoke.ts structure: env via --env-file, service-role client via
@@ -522,22 +523,28 @@ async function main() {
       }
       await sb.from("catering_packages").delete().eq("id", packageId);
     }
+    // 0262 (catalog Phase 3a): every recipe and every line written is JOURNALED as an append-only
+    // recipe version (FKs to recipes and to the SKUs its lines name; service_role holds no DELETE on
+    // the journal, by design). So the smoke's recipes and SKUs can no longer be hard-deleted: they are
+    // RETIRED (active = false) instead — the sim keeps them as inert, inactive rows. Outputs are not
+    // versioned and still go, which frees the seeded items and the sub for deletion below.
     if (recipeIds.length > 0) {
-      await sb.from("recipe_inputs").delete().in("recipe_id", recipeIds);
       await sb.from("recipe_outputs").delete().in("recipe_id", recipeIds);
-      await sb.from("recipes").delete().in("id", recipeIds);
+      await sb.from("recipes").update({ active: false }).in("id", recipeIds);
     }
     if (deliveryId) {
       await sb.from("vendor_delivery_items").delete().eq("delivery_id", deliveryId);
       await sb.from("vendor_deliveries").delete().eq("id", deliveryId);
     }
     const skuIds = [skuShortId, skuOkId, skuOzOnlyId].filter((x): x is string => x !== null);
-    if (skuIds.length > 0) await sb.from("vendor_items").delete().in("id", skuIds);
+    // Retired, not deleted: the journal's version lines name them (0262).
+    if (skuIds.length > 0) await sb.from("vendor_items").update({ active: false }).in("id", skuIds);
     if (subId) await sb.from("menu_items").delete().eq("id", subId);
     const itemIds = [itemShortId, itemOkId].filter((x): x is string => x !== null);
     if (itemIds.length > 0) await sb.from("items").delete().in("id", itemIds);
     if (pipelineId) await sb.from("catering_pipeline").delete().eq("id", pipelineId);
-    if (seededVendorId) await sb.from("vendors").delete().eq("id", seededVendorId);
+    // The seeded vendor is still named by the retired SKUs: retired too.
+    if (seededVendorId) await sb.from("vendors").update({ active: false }).eq("id", seededVendorId);
 
     // Verify zero residue (re-select by seeded ids/names → expect none).
     const { data: leftDemand } = pipelineId
@@ -558,14 +565,11 @@ async function main() {
     const { data: leftPkgs } = packageId
       ? await sb.from("catering_packages").select("id").eq("id", packageId).returns<Array<{ id: string }>>()
       : { data: [] as Array<{ id: string }> };
-    const { data: leftRecipeInputs } = recipeIds.length
-      ? await sb.from("recipe_inputs").select("id").in("recipe_id", recipeIds).returns<Array<{ id: string }>>()
-      : { data: [] as Array<{ id: string }> };
     const { data: leftRecipeOutputs } = recipeIds.length
       ? await sb.from("recipe_outputs").select("id").in("recipe_id", recipeIds).returns<Array<{ id: string }>>()
       : { data: [] as Array<{ id: string }> };
     const { data: leftRecipes } = recipeIds.length
-      ? await sb.from("recipes").select("id").in("id", recipeIds).returns<Array<{ id: string }>>()
+      ? await sb.from("recipes").select("id").in("id", recipeIds).eq("active", true).returns<Array<{ id: string }>>()
       : { data: [] as Array<{ id: string }> };
     const { data: leftDelItems } = deliveryId
       ? await sb.from("vendor_delivery_items").select("id").eq("delivery_id", deliveryId).returns<Array<{ id: string }>>()
@@ -577,6 +581,7 @@ async function main() {
       .from("vendor_items")
       .select("id")
       .in("name", [SKU_SHORT_NAME, SKU_OK_NAME, SKU_OZONLY_NAME])
+      .eq("active", true)
       .returns<Array<{ id: string }>>();
     const { data: leftSubs } = await sb
       .from("menu_items")
@@ -592,7 +597,7 @@ async function main() {
       ? await sb.from("catering_pipeline").select("id").eq("id", pipelineId).returns<Array<{ id: string }>>()
       : { data: [] as Array<{ id: string }> };
     const { data: leftVendors } = seededVendorId
-      ? await sb.from("vendors").select("id").eq("id", seededVendorId).returns<Array<{ id: string }>>()
+      ? await sb.from("vendors").select("id").eq("id", seededVendorId).eq("active", true).returns<Array<{ id: string }>>()
       : { data: [] as Array<{ id: string }> };
     const residue = {
       demand: (leftDemand ?? []).length,
@@ -601,9 +606,8 @@ async function main() {
       slotOptions: (leftOpts ?? []).length,
       packageItems: (leftComps ?? []).length,
       packages: (leftPkgs ?? []).length,
-      recipeInputs: (leftRecipeInputs ?? []).length,
       recipeOutputs: (leftRecipeOutputs ?? []).length,
-      recipes: (leftRecipes ?? []).length,
+      recipes: (leftRecipes ?? []).length, // ACTIVE ones: the journal-pinned recipes are retired, not deleted (0262)
       deliveryItems: (leftDelItems ?? []).length,
       deliveries: (leftDeliveries ?? []).length,
       skus: (leftSkus ?? []).length,
@@ -616,7 +620,7 @@ async function main() {
     if (Object.values(residue).some((n) => n > 0)) {
       throw new Error(`cleanup left residue: ${JSON.stringify(residue)}`);
     }
-    console.log("  ✓ zero residue");
+    console.log("  ✓ zero live residue (recipes, their SKUs and a seeded vendor stay RETIRED: the 0262 journal pins them)");
   }
 
   process.exit(0);
