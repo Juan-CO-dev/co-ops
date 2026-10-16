@@ -7021,5 +7021,20 @@
   "pmCriteria.error.duplicate_label": "This position already has that criterion.",
   "pmCriteria.error.pm_v2_unavailable": "The PM report criteria aren't switched on yet.",
   "pmCriteria.error.step_up_required": "Enter your password to change criteria.",
-  "pmCriteria.error.step_up_stale": "Your 15 minutes ran out. Enter your password again."
+  "pmCriteria.error.step_up_stale": "Your 15 minutes ran out. Enter your password again.",
+  "pmV2Switch.title": "PM reports v2, by shop",
+  "pmV2Switch.intro": "Each shop starts on the current PM report. Turn v2 on for a shop once its Prep positions and criteria are ready. Turning it off is always allowed. Changes ask for your password.",
+  "pmV2Switch.state.on": "On",
+  "pmV2Switch.state.off": "Off",
+  "pmV2Switch.turnOn": "Turn on v2",
+  "pmV2Switch.turnOff": "Turn off v2",
+  "pmV2Switch.toggle": "PM reports v2 at {shop}",
+  "pmV2Switch.missing.title": "Still missing:",
+  "pmV2Switch.missing.boh": "The Prep and Prep/Dishwasher positions (name them in Stations)",
+  "pmV2Switch.missing.criteria": "An active criterion under “Every position” (seed or add one below)",
+  "pmV2Switch.saved": "Saved.",
+  "pmV2Switch.error.generic": "That didn't save. Try again.",
+  "pmV2Switch.error.forbidden": "Only the MoO, the owner or the CGS can switch PM reports v2.",
+  "pmV2Switch.error.step_up_required": "Enter your password to switch PM reports v2.",
+  "pmV2Switch.error.step_up_stale": "Your 15 minutes ran out. Enter your password again."
 }

@@ -1303,7 +1303,7 @@ export interface SkillMatrix {
 
 - **The MoO skill-tunables editor SCREEN** (CC ruling on chunk E, 2026-10-15). Phase 1 keeps the tunables in SQL settings (`people_skill_tunables`, validated by `valid_skill_tunables` / `validSkillTunables`), editable ONLY through the reviewed route `POST /api/people/settings` (`action: "tunables"`, MoO+, Tier E). No Phase 1 screen edits them; Phase 2 builds the MoO screen on that same route.
 
-- **A people shop-settings SCREEN** (the per-shop PM v2 switch and the prep evidence position). Phase 1 ships the reviewed route only (`POST /api/people/settings`, `action: "shop"`, GM own shop / MoO+, Tier E), exactly as the plan's file list has it; the switch is turned on through that route once a shop is ready (see "Go-live sequence"). A small admin card on the same route is the natural first Phase 2 item (open question for CC).
+- **A people shop-settings SCREEN for the prep evidence position.** The per-shop PM v2 switch itself got its card in Phase 1 (CC's chunk G ruling 2: `/admin/pm-criteria`, MoO+ only, Tier E, `components/people/PmV2SwitchCard.tsx`); choosing the prep evidence position stays route-only (`POST /api/people/settings`, `action: "shop"`) until Phase 2.
 - **Work types, days off, flex day, soft hours** (spec §5.1, §5.5) and **every board surface** (week board, timeline, coverage, demand curve, budget suggestion, Regenerate, Out sick, Add to schedule, Leader shifts, staffing recommendation, schedule-structure settings) — Phase 2 / 3, per "The mockup: what is Phase 1, what waits".
 - **The Phase 2 position settings**: min shift length, one-person-per-position checks in a validator, position priority per station, allowed roles per position, preferred cover positions per manager, the §6.5 `checkScheduleRules` validator. Phase 1 only keys skills on the same `station_positions.id` and exposes `loadSkillMatrix`.
 - **A Closing Manager skill / role.** Phase 1 shows closing on time as evidence only; the closing manager is whoever submits (J11).
@@ -1327,7 +1327,7 @@ export interface SkillMatrix {
 6. Juan (any time): `SEVENSHIFTS_ACCESS_TOKEN` in Vercel. CC: `SEVENSHIFTS_SYNC=1` after 0268 + 0269 are on prod. Then link each shop (MoO) and its people (GMs) at `/admin/sevenshifts`.
 7. **BOH positions** (Task 14b), a reviewed data step: `scripts/check-boh-positions.ts` dry run → name "Prep" and "Prep/Dishwasher" in the station admin at both shops → the dry run exits 0.
 8. **Criteria seed** (Task 22), a reviewed data step: `scripts/seed-pm-criteria.ts` dry run per shop (READY) → `--apply --shop <id> --actor <id>` **on Juan's word**.
-9. **The per-shop switch**: `POST /api/people/settings` `{ action: "shop", locationId, pmV2: true, prepPositionId }` (GM own shop / MoO+, Tier E) — refused `pm_v2_not_ready` until 7 and 8 hold for that shop. From the next new day the shop's PM report is v2, and its PM v2 grades and notes feed the people layer.
+9. **The per-shop switch**: the "PM reports v2, by shop" card on `/admin/pm-criteria` (MoO+ only, Tier E; CC's chunk G ruling 2), which posts `POST /api/people/settings` `{ action: "shop", locationId, pmV2: true, prepPositionId }` (the route itself: GM own shop / MoO+, Tier E) — refused `pm_v2_not_ready` until 7 and 8 hold for that shop. From the next new day the shop's PM report is v2, and its PM v2 grades and notes feed the people layer.
 
 ### Build self-review (spec point → where built → the test that proves it)
 

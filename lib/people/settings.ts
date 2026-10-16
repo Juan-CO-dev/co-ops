@@ -15,7 +15,8 @@
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { audit } from "@/lib/audit";
-import { canEditPeopleSettings, type PeopleActor } from "@/lib/people/access-shared";
+import { canEditPeopleSettings, canManagePmV2Switch, type PeopleActor } from "@/lib/people/access-shared";
+import type { PmV2SwitchShop } from "@/lib/people/pm-v2-switch-shared";
 import { isMissingTable } from "@/lib/people/facts";
 import { PeopleSkillError, requireUsablePosition, rpcFailure } from "@/lib/people/skills";
 import { bohPositionsReport, type BohPositionRow, type BohStationRow } from "@/lib/people/boh-positions-shared";
@@ -81,4 +82,21 @@ export async function pmV2Readiness(service: SupabaseClient, locationId: string)
     if (!isMissingTable({ message: e instanceof Error ? e.message : String(e) })) throw e;
   }
   return { ready: boh && criteria > 0, boh, criteria };
+}
+
+/**
+ * The PM v2 switch CARD's read (CC's chunk G ruling 2): every given shop's switch, prep position and readiness.
+ * MoO+ only (`canManagePmV2Switch`), refused before any read. Read-only; one shop at a time.
+ */
+export async function loadPmV2SwitchView(
+  service: SupabaseClient, actor: PeopleActor, locations: ReadonlyArray<{ id: string; name: string }>,
+): Promise<PmV2SwitchShop[]> {
+  if (!canManagePmV2Switch(actor)) throw new PeopleSkillError(403, "forbidden");
+  const out: PmV2SwitchShop[] = [];
+  for (const l of locations) {
+    const settings = await loadPeopleShopSettings(service, l.id);
+    const r = await pmV2Readiness(service, l.id);
+    out.push({ locationId: l.id, name: l.name, pmV2: settings.pmV2, prepPositionId: settings.prepPositionId, ready: r.ready, boh: r.boh, criteria: r.criteria });
+  }
+  return out;
 }

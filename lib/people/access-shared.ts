@@ -51,6 +51,12 @@ export const OPERATIONAL_LEVEL6_ROLES: readonly RoleCode[] = ["agm", "catering_m
  */
 export const PM_CRITERIA_EDITOR_ROLES: readonly RoleCode[] = ["gm", "moo", "owner", "cgs"];
 
+/**
+ * The roles that get the per-shop PM v2 switch CARD (CC's chunk G ruling 2): MoO+ only — moo, owner, cgs. The social
+ * media manager never, whatever its level; a GM keeps the criteria editor but not this card.
+ */
+export const PM_V2_SWITCH_ROLES: readonly RoleCode[] = ["moo", "owner", "cgs"];
+
 function isSmm(actor: PeopleActor): boolean {
   return actor.role === "social_media_mgr";
 }
@@ -149,6 +155,11 @@ export function canEditPeopleSettings(actor: PeopleActor, locationId: string): b
 /** The PM criteria editor (the route ALSO requires the Tier E window; that is not decided here). */
 export function canEditPmCriteria(actor: PeopleActor, locationId: string): boolean {
   return gmOwnOrMooAny(actor, locationId);
+}
+
+/** Ruling 2 (chunk G): the PM v2 switch card — MoO+ by level AND by trusted role; SMM never. (Tier E: the route.) */
+export function canManagePmV2Switch(actor: PeopleActor): boolean {
+  return isMooPlus(actor) && PM_V2_SWITCH_ROLES.includes(actor.role);
 }
 
 /** R11: the skill tunables shape every shop's read — MoO+ only (Tier E checked by the route). */

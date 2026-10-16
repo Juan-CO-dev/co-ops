@@ -7021,5 +7021,20 @@
   "pmCriteria.error.duplicate_label": "Este puesto ya tiene ese criterio.",
   "pmCriteria.error.pm_v2_unavailable": "Los criterios del reporte PM todavía no están activados.",
   "pmCriteria.error.step_up_required": "Escribe tu contraseña para cambiar criterios.",
-  "pmCriteria.error.step_up_stale": "Se acabaron tus 15 minutos. Escribe tu contraseña otra vez."
+  "pmCriteria.error.step_up_stale": "Se acabaron tus 15 minutos. Escribe tu contraseña otra vez.",
+  "pmV2Switch.title": "Reportes PM v2, por tienda",
+  "pmV2Switch.intro": "Cada tienda empieza con el reporte PM actual. Activa v2 en una tienda cuando sus puestos Prep y sus criterios estén listos. Siempre puedes desactivarlo. Los cambios te piden tu contraseña.",
+  "pmV2Switch.state.on": "Activado",
+  "pmV2Switch.state.off": "Desactivado",
+  "pmV2Switch.turnOn": "Activar v2",
+  "pmV2Switch.turnOff": "Desactivar v2",
+  "pmV2Switch.toggle": "Reportes PM v2 en {shop}",
+  "pmV2Switch.missing.title": "Todavía falta:",
+  "pmV2Switch.missing.boh": "Los puestos Prep y Prep/Dishwasher (nómbralos en Estaciones)",
+  "pmV2Switch.missing.criteria": "Un criterio activo en “Todos los puestos” (cárgalos o agrega uno abajo)",
+  "pmV2Switch.saved": "Guardado.",
+  "pmV2Switch.error.generic": "No se guardó. Inténtalo de nuevo.",
+  "pmV2Switch.error.forbidden": "Solo el MoO, el dueño o el CGS pueden cambiar los reportes PM v2.",
+  "pmV2Switch.error.step_up_required": "Escribe tu contraseña para cambiar los reportes PM v2.",
+  "pmV2Switch.error.step_up_stale": "Se acabaron tus 15 minutos. Escribe tu contraseña otra vez."
 }
