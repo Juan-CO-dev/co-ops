@@ -163,6 +163,12 @@ async function loadNames(service: SupabaseClient, ids: readonly string[]): Promi
   return out;
 }
 
+/** The day row's state for the page's choice (format and status), or null when there is none. */
+export async function pmDayState(service: SupabaseClient, locationId: string, date: string): Promise<{ id: string; status: PmDayStatus; format: "v1" | "v2" } | null> {
+  const day = await loadDay(service, locationId, date);
+  return day ? { id: day.id, status: day.status, format: day.format === "v2" ? "v2" : "v1" } : null;
+}
+
 function dayRef(day: DayRow, copies: readonly CopyRow[]): PmDayRef {
   return { locationId: day.location_id, status: day.status, authorIds: copies.map((c) => c.author_id) };
 }

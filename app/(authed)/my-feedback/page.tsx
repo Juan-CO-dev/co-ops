@@ -32,6 +32,8 @@ import { MyPerformance } from "@/components/me/MyPerformance";
 import { MySkills } from "@/components/people/MySkills";
 import { peopleActorFromAuth } from "@/lib/people/access-shared";
 import { loadMySkills, PeopleSkillError } from "@/lib/people/skills";
+import { loadMyFeedbackV2 } from "@/lib/pm-report-v2";
+import { MyFeedbackV2 } from "@/components/pm-report-v2/MyFeedbackV2";
 
 interface PageProps {
   searchParams: Promise<Record<string, string | undefined>>;
@@ -102,6 +104,9 @@ async function renderPage(query: Record<string, string | undefined>, allShops = 
     if (e instanceof PeopleSkillError) return null;
     throw e;
   });
+  // PM v2 (Task 21, R9): own grades from SUBMITTED v2 days as bands — no author, no number, no note text.
+  // v1 feedback above renders as today; before 0271 is applied this is [] and the section is absent.
+  const feedbackV2 = (await loadMyFeedbackV2(sb, { userId: auth.user.id })).filter((d) => d.locationId === selected.id);
 
   const Container = allShops ? "div" : "main";
   return (
@@ -115,6 +120,7 @@ async function renderPage(query: Record<string, string | undefined>, allShops = 
         </p>
       )}
       {mySkills?.available && <MySkills rows={mySkills.view} language={language} />}
+      <MyFeedbackV2 days={feedbackV2} />
     </Container>
   );
 }

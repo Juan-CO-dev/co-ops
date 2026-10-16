@@ -20,6 +20,7 @@ import {
   type PmDayRef,
 } from "@/lib/people/access-shared";
 import { positionsWorked, type PositionInterval } from "@/lib/people/positions-shared";
+import { etClockTime, etWallClockToUtcIso, etYmdMinusDays } from "@/lib/operational-day";
 
 export type PmGrade = "great" | "good" | "needs_work";
 export const PM_GRADES: readonly PmGrade[] = ["great", "good", "needs_work"];
@@ -298,4 +299,25 @@ export function criteriaForPosition<T extends PmCriterionLike>(criteria: readonl
   const own = positionId === null ? [] : criteria.filter((c) => c.active && c.positionId === positionId).sort(order);
   const shared = criteria.filter((c) => c.active && c.positionId === null).sort(order);
   return [...own, ...shared];
+}
+
+// ─── the form's window (ET wall times) ───────────────────────────────────────
+
+/**
+ * "My time on the floor" from the form's ET wall times ("HH:MM") on business day `date`: `from` on that day;
+ * `to` on that day, or the NEXT day when it is not after `from` (a close after midnight). DST-correct through
+ * `etWallClockToUtcIso`. Null on a malformed time. The 0271 RPC bounds both to [day start, +30 h].
+ */
+export function windowFromWallTimes(date: string, from: string, to: string | null): { from: string; to: string | null } | null {
+  const f = etWallClockToUtcIso(date, from);
+  if (!f) return null;
+  if (to === null || to === "") return { from: f, to: null };
+  let t = etWallClockToUtcIso(date, to);
+  if (!t) return null;
+  if (Date.parse(t) <= Date.parse(f)) t = etWallClockToUtcIso(etYmdMinusDays(date, -1), to);
+  return t ? { from: f, to: t } : null;
+}
+/** An instant as the ET wall time "HH:MM" for a time input ("" when none). */
+export function wallTimeOf(iso: string | null): string {
+  return iso ? etClockTime(iso) : "";
 }

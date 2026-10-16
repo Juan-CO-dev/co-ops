@@ -240,3 +240,16 @@ describe("rosterForCopy and criteriaForPosition", () => {
     expect(criteriaForPosition(crit, null).map((c) => c.id)).toEqual(["s1"]);
   });
 });
+
+describe("windowFromWallTimes — the form's \"My time on the floor\" (ET wall times) as instants", () => {
+  it("2:00 PM – 9:00 PM on the 15th; a close after midnight rolls to the 16th; DST-correct; bad input is null", async () => {
+    const { windowFromWallTimes, wallTimeOf } = await import("@/lib/pm-report-v2-shared");
+    expect(windowFromWallTimes("2026-10-15", "14:00", "21:00")).toEqual({ from: "2026-10-15T18:00:00.000Z", to: "2026-10-16T01:00:00.000Z" });
+    expect(windowFromWallTimes("2026-10-15", "17:00", "00:30")).toEqual({ from: "2026-10-15T21:00:00.000Z", to: "2026-10-16T04:30:00.000Z" });
+    expect(windowFromWallTimes("2026-10-31", "18:00", "01:30")).toEqual({ from: "2026-10-31T22:00:00.000Z", to: "2026-11-01T05:30:00.000Z" });
+    expect(windowFromWallTimes("2026-10-15", "14:00", null)).toEqual({ from: "2026-10-15T18:00:00.000Z", to: null });
+    expect(windowFromWallTimes("2026-10-15", "25:00", null)).toBeNull();
+    expect(wallTimeOf("2026-10-16T01:00:00.000Z")).toBe("21:00");
+    expect(wallTimeOf(null)).toBe("");
+  });
+});
