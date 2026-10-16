@@ -18,7 +18,7 @@ import { useTranslation } from "@/lib/i18n/provider";
 import type { TranslationKey } from "@/lib/i18n/types";
 import type { ManagerSkillRow, ManagerSkillView } from "@/lib/people/skill-matrix-shared";
 import {
-  formatDelta, SKILL_ADJUSTMENT_LIMIT, SKILL_ADJUSTMENT_STEP, SKILL_REASON_CODES, type SkillEvidenceLine,
+  formatDelta, SKILL_ADJUSTMENT_LIMIT, SKILL_REASON_CODES, snapSkillStep, stepSkillControl, type SkillEvidenceLine,
 } from "@/lib/people/skills-shared";
 
 const button = "inline-flex min-h-[44px] items-center justify-center rounded-lg border-2 border-co-gold-deep bg-co-gold px-4 font-bold text-co-text disabled:opacity-60";
@@ -34,7 +34,6 @@ const ERROR_CODES = [
 function errorKey(code: unknown): TranslationKey {
   return typeof code === "string" && ERROR_CODES.includes(code) ? (`people.skills.error.${code}` as TranslationKey) : "people.skills.error.generic";
 }
-const cents = (v: number) => Math.round(v * 100) / 100;
 
 function useLine() {
   const { t, language } = useTranslation();
@@ -134,7 +133,7 @@ function SkillRow({ row, view, initiallyOpen }: { row: ManagerSkillRow; view: Ma
             <SkillControl kind="adjust" row={row} view={view} initial={s.adjustment} min={-SKILL_ADJUSTMENT_LIMIT} max={SKILL_ADJUSTMENT_LIMIT} />
           )}
           {view.canAdjust && s.startingPoint && (
-            <SkillControl kind="rate" row={row} view={view} initial={Math.round(s.prior * 20) / 20} min={0} max={1} />
+            <SkillControl kind="rate" row={row} view={view} initial={s.prior} min={0} max={1} />
           )}
         </div>
       )}
@@ -147,14 +146,14 @@ function SkillControl({ kind, row, view, initial, min, max }: {
 }) {
   const { t } = useTranslation();
   const router = useRouter();
-  const [draft, setDraft] = useState(cents(initial));
+  const [draft, setDraft] = useState(() => snapSkillStep(initial, min, max));
   const [reason, setReason] = useState("");
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<TranslationKey | null>(null);
   const [saved, setSaved] = useState(false);
   const id = useId();
-  const step = (dir: 1 | -1) => setDraft((d) => cents(Math.min(max, Math.max(min, d + dir * SKILL_ADJUSTMENT_STEP))));
+  const step = (dir: 1 | -1) => setDraft((d) => stepSkillControl(d, dir, min, max));
   const needsNote = reason === "other" && !/\S/.test(note);
   const shownValue = kind === "adjust" ? t("people.skills.adjust.value", { delta: formatDelta(draft) }) : t("people.skills.rate.value", { rating: draft.toFixed(2) });
 

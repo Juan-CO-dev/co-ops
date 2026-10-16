@@ -1299,6 +1299,10 @@ export interface SkillMatrix {
 - **O1 — The 7shifts reference re-read.** Task 6 Step 1 re-reads the endpoint pages at build time; if a path changed, it is fixed in one table. Not a question for Juan unless an endpoint we rely on turns out to need a plan above Pro (then: upgrade, or live without that resource).
 - **O2 — The cron budget** (CC): one more hourly Vercel cron.
 
+## Phase 2 backlog (deferred out of Phase 1 by ruling)
+
+- **The MoO skill-tunables editor SCREEN** (CC ruling on chunk E, 2026-10-15). Phase 1 keeps the tunables in SQL settings (`people_skill_tunables`, validated by `valid_skill_tunables` / `validSkillTunables`), editable ONLY through the reviewed route `POST /api/people/settings` (`action: "tunables"`, MoO+, Tier E). No Phase 1 screen edits them; Phase 2 builds the MoO screen on that same route.
+
 ## Findings for CC (outside this phase's scope)
 
 - **F1 (security):** `pm_evals_read_self` (0072) exposed `note` to the employee through PostgREST. **Being fixed by `0267_pm_evals_privacy`** (lead ruling); this plan depends on it.

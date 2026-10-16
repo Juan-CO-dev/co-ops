@@ -421,6 +421,21 @@ function onStep(v: unknown, lo: number, hi: number): v is number {
   const cents = Math.round(v * 100);
   return Math.abs(v * 100 - cents) < 1e-6 && cents % 5 === 0;
 }
+/**
+ * THE CONTROL'S STEPPER (CC ruling 2 on chunk E): the adjust and rate controls offer ONLY values the RPC
+ * accepts. `snapSkillStep` puts any start on the 0.05 grid inside [min, max] (an off-grid or non-finite
+ * start can never be sent), and `stepSkillControl` moves one step and clamps. Every value they return
+ * passes `validAdjustmentDelta` (±0.30) or `validSkillRating` (0..1) for those ranges.
+ */
+export function snapSkillStep(v: number, min: number, max: number): number {
+  const lo = Math.ceil(Math.round(min * 100) / 5) * 5;
+  const hi = Math.floor(Math.round(max * 100) / 5) * 5;
+  const c = Number.isFinite(v) ? Math.round((v * 100) / 5) * 5 : 0;
+  return Math.min(hi, Math.max(lo, c)) / 100;
+}
+export function stepSkillControl(current: number, dir: 1 | -1, min: number, max: number): number {
+  return snapSkillStep(snapSkillStep(current, min, max) + dir * SKILL_ADJUSTMENT_STEP, min, max);
+}
 /** ±0.30 in 0.05 steps (the mockup's control). */
 export function validAdjustmentDelta(v: unknown): v is number {
   return onStep(v, -SKILL_ADJUSTMENT_LIMIT, SKILL_ADJUSTMENT_LIMIT);
