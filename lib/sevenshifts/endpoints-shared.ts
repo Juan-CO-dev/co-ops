@@ -31,7 +31,7 @@
  * Read-only by construction: Phase 1 has no write path to 7shifts. Every id that enters a path or a
  * query is validated as 1–18 digits, so no value from a payload or a request can steer a request.
  */
-import { etCalendarDate, etYmdMinusDays, operationalDayUtcRange } from "@/lib/operational-day";
+import { etCalendarDate, operationalDayUtcRange } from "@/lib/operational-day";
 
 export const SEVENSHIFTS_API_VERSION = "2026-01-01";
 export const SEVENSHIFTS_API_BASE = "https://api.7shifts.com";
@@ -113,8 +113,8 @@ export function windowInstants(w: SyncWindow): { gte: string; lte: string } {
   checkWindow(w);
   return {
     gte: iso(Date.parse(operationalDayUtcRange(w.from).startIso)),
-    // The NEXT day's start, not start + 24 h: a fall-back day is 25 hours long.
-    lte: iso(Date.parse(operationalDayUtcRange(etYmdMinusDays(w.to, -1)).startIso) - 1000),
+    // The shared helper ends a day at the next ET midnight (23/24/25 h since #484).
+    lte: iso(Date.parse(operationalDayUtcRange(w.to).endExclusiveIso) - 1000),
   };
 }
 function modifiedInstant(w: SyncWindow): string | null {

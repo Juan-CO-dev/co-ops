@@ -9,6 +9,7 @@ import {
   windowInstants,
   type SyncWindow,
 } from "@/lib/sevenshifts/endpoints-shared";
+import { operationalDayUtcRange } from "@/lib/operational-day";
 
 const WINDOW: SyncWindow = { modifiedSince: "2026-10-12T18:30:00.000Z", from: "2026-07-16", to: "2026-10-15" };
 
@@ -135,6 +136,38 @@ describe("chunk A review (Astra) — fixes pinned against the docs re-read 2026-
     // A shift starting 11:30 PM ET on the fall-back day is inside the upper bound.
     const lte = windowInstants({ modifiedSince: null, from: "2026-11-01", to: "2026-11-01" }).lte;
     expect(Date.parse("2026-11-02T04:30:00Z")).toBeLessThanOrEqual(Date.parse(lte));
+  });
+});
+
+describe("the sync window uses the shared operationalDayUtcRange (DST fix #484)", () => {
+  it("the upper bound is the shared helper's endExclusiveIso minus 1 s, for every day around both DST changes", () => {
+    for (const day of ["2026-03-07", "2026-03-08", "2026-03-09", "2026-10-31", "2026-11-01", "2026-11-02"]) {
+      const { startIso, endExclusiveIso } = operationalDayUtcRange(day);
+      const w = windowInstants({ modifiedSince: null, from: day, to: day });
+      expect(Date.parse(w.gte)).toBe(Date.parse(startIso));
+      expect(Date.parse(w.lte)).toBe(Date.parse(endExclusiveIso) - 1000);
+    }
+  });
+
+  it("2026-11-01 (fall back) is a 25 h window; 2026-03-08 (spring forward) is a 23 h window", () => {
+    const span = (day: string) => {
+      const w = windowInstants({ modifiedSince: null, from: day, to: day });
+      return (Date.parse(w.lte) + 1000 - Date.parse(w.gte)) / 3_600_000;
+    };
+    expect(windowInstants({ modifiedSince: null, from: "2026-11-01", to: "2026-11-01" }))
+      .toEqual({ gte: "2026-11-01T04:00:00Z", lte: "2026-11-02T04:59:59Z" });
+    expect(span("2026-11-01")).toBe(25);
+    expect(windowInstants({ modifiedSince: null, from: "2026-03-08", to: "2026-03-08" }))
+      .toEqual({ gte: "2026-03-08T05:00:00Z", lte: "2026-03-09T03:59:59Z" });
+    expect(span("2026-03-08")).toBe(23);
+    expect(span("2026-10-15")).toBe(24);
+  });
+
+  it("drops the local patch: the module no longer derives the next day's start itself", async () => {
+    const { readFileSync } = await import("node:fs");
+    const src = readFileSync("lib/sevenshifts/endpoints-shared.ts", "utf8");
+    expect(src).not.toMatch(/operationalDayUtcRange\(etYmdMinusDays\(/);
+    expect(src).toMatch(/operationalDayUtcRange\(w\.to\)\.endExclusiveIso/);
   });
 });
 
