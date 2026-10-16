@@ -348,6 +348,126 @@ describe("Task 22 — person rows, handles and the reason panel", () => {
   });
 });
 
+describe("Task 23 — the horizon builder, What changed, Approve", () => {
+  const diff = (days: Array<{ date: string; changes: Array<Record<string, unknown>> }>, added = 1) => ({
+    summary: { added, removed: 0, moved: 1, relabelled: 0, closingManagerChanged: 0, gapHoursDelta: -1, hourlyHoursDelta: 2, newProblemsDelta: 0, inheritedProblemsDelta: 0 },
+    summaryLine: { key: "schedule.diff.summary", params: { days: days.length, added, removed: 0, moved: 1, relabelled: 0, gapHoursDelta: -1, hourlyHoursDelta: 2 } },
+    days,
+  });
+  const W1 = "2026-10-26", W2 = "2026-11-02";
+  const preview = {
+    token: "tok-1",
+    request: { mode: "next_weeks" as const, n: 2 },
+    weeks: [
+      { weekStart: W1, buildDays: [W1], keptDays: [], confidence: "normal" as const, edited: false, headRevisionId: "h1",
+        whatChanged: diff([{ date: W1, changes: [{ kind: "person_added", userId: "u-05-dani", startQ: 44, endQ: 60 }] }]),
+        problems: { newErrors: 0, newGaps: 2, newWarnings: 0, inherited: 3, unresolved: 1, budgetLimited: 1 },
+        gaps: [
+          { date: W1, code: "coverage_gap" as const, positionId: null, fromQ: 44, toQ: 52, cause: "budget_limited" as const, line: { key: "schedule.gap.certificate.budget_limited", params: { fillHours: 3.5, remainingHours: 1 } } },
+          { date: W1, code: "coverage_gap" as const, positionId: null, fromQ: 60, toQ: 64, cause: "unresolved_search" as const, line: { key: "schedule.gap.certificate.unresolved_search" } },
+        ], hourlyHoursOnBudgetedDates: 40 },
+      { weekStart: W2, buildDays: [W2], keptDays: [], confidence: "further_out" as const, edited: true, headRevisionId: "h2",
+        whatChanged: diff([], 0), problems: { newErrors: 0, newGaps: 0, newWarnings: 0, inherited: 0, unresolved: 0, budgetLimited: 0 }, gaps: [], hourlyHoursOnBudgetedDates: 0 },
+    ],
+  };
+  const H = async (props: Record<string, unknown>, lang: "en" | "es" = "en") => {
+    const { HorizonBuilder } = await import("@/components/schedule/HorizonBuilder");
+    return renderToStaticMarkup(createElement(TranslationProvider, { initialLanguage: lang, children: createElement(StepUpProvider, { unlocked: false, unlockedAt: null,
+      children: createElement(HorizonBuilder, { locationId: "L", names: { "u-05-dani": "Dani" }, positions: {}, ...props }) as ReactNode }) }));
+  };
+
+  it("the board hosts the horizon builder for an editor and Approve for an approver; an AGM (read only) sees neither", () => {
+    const gm = renderBoard(ready());
+    expect(gm).toContain('data-section="horizon"');
+    expect(gm).toMatch(/<button[^>]*data-act="approve"/);
+    const agm = renderBoard(ready({ perms: { canSeeMoney: false, canEdit: false, canApprove: false, canBudget: false } }));
+    expect(agm).not.toContain('data-section="horizon"');
+    expect(agm).not.toMatch(/data-act="approve"/);
+  });
+
+  it("the horizon choices: next week · next N weeks · rest of the month · a month (44 px)", async () => {
+    const h = await H({});
+    const t = text(h);
+    for (const k of ["next_week", "next_weeks", "rest_of_month", "month"]) expect(t).toContain(en[`schedule.board.horizon.mode.${k}` as keyof typeof en]);
+    for (const l of h.match(/<label[^>]*data-mode=[^>]*>/g) ?? []) { expect(l).toContain("min-h-[44px]"); expect(l).toContain("items-center"); }
+    const { requestFor } = await import("@/components/schedule/horizon-flow-shared");
+    expect(requestFor({ mode: "next_weeks", n: 3, month: "2026-11" })).toEqual({ mode: "next_weeks", n: 3 });
+    expect(requestFor({ mode: "month", n: 2, month: "2026-11" })).toEqual({ mode: "month", month: "2026-11" });
+    expect(requestFor({ mode: "next_week", n: 2, month: "2026-11" })).toEqual({ mode: "next_week" });
+  });
+
+  it("the preview: per-week What changed (summary + a COLLAPSED per-day list), gaps by cause with the certificate line, earlier problems labelled", async () => {
+    const h = await H({ initialPreview: preview });
+    const t = text(h);
+    expect(t).toContain("1 days changed: 1 added");
+    expect(h).toMatch(/<button[^>]*aria-expanded="false"[^>]*data-days=/);
+    expect(t).toContain("Over budget: needs at least ~3.5 h (best fill found); 1 h of budget left.");
+    expect(t).toContain("No fill found within the search limit — you may find one.");
+    expect(t).toContain(en["schedule.board.horizon.earlier_problems"].replace("{n}", "3"));
+    expect(t).toContain(en["schedule.board.banner.further_out"]);
+  });
+
+  it("an edited week warns and asks per week (a 44 px label); Apply needs Tier B ONLY when an edited week is checked; unchecked edited weeks are skipped and say so", async () => {
+    const h = await H({ initialPreview: preview });
+    expect(text(h)).toContain(en["schedule.board.horizon.edited_warning"]);
+    const label = h.match(/<label[^>]*data-confirm-week="2026-11-02"[^>]*>/)![0];
+    expect(label).toContain("min-h-[44px]");
+    const { applyNeedsStepUp, skippedWeeks } = await import("@/components/schedule/horizon-flow-shared");
+    expect(applyNeedsStepUp(preview, [])).toBe(false);
+    expect(applyNeedsStepUp(preview, [W1])).toBe(false);
+    expect(applyNeedsStepUp(preview, [W2])).toBe(true);
+    expect(skippedWeeks(preview, [])).toEqual([W2]);
+    expect(text(h)).toContain(en["schedule.board.horizon.will_skip"].replace("{date}", "Mon, Nov 2"));
+  });
+
+  it("a cancelled password prompt keeps the preview and applies NOTHING; Tier B is asked before the post", async () => {
+    const { runGuarded } = await import("@/components/schedule/horizon-flow-shared");
+    const post = vi.fn(async () => ({ ok: true as const, data: {} }));
+    const cancelled = await runGuarded({ tier: "B", requestStepUp: async () => "cancelled", post });
+    expect(cancelled).toEqual({ kind: "cancelled" });
+    expect(post).not.toHaveBeenCalled();
+    const order: string[] = [];
+    const ok = await runGuarded({ tier: "B", requestStepUp: async () => { order.push("password"); return "ok"; }, post: async () => { order.push("post"); return { ok: true, data: { result: 1 } }; } });
+    expect(ok).toEqual({ kind: "ok", data: { result: 1 } });
+    expect(order).toEqual(["password", "post"]);
+    expect(await runGuarded({ tier: null, requestStepUp: async () => { throw new Error("no prompt"); }, post: async () => ({ ok: false, code: "preview_stale" }) })).toEqual({ kind: "refused", code: "preview_stale" });
+    const src = readFileSync("components/schedule/HorizonBuilder.tsx", "utf8");
+    expect(src).toContain('requestStepUp("B")');
+  });
+
+  it("preview_stale says preview again; a partial result names the landed, skipped and failed weeks", async () => {
+    expect(text(await H({ initialPreview: preview, initialError: "preview_stale" }))).toContain(en["schedule.board.horizon.preview_again"]);
+    const t = text(await H({ initialResult: { landed: [{ weekStart: W1, revisionId: "r" }], skipped: [{ weekStart: W2, code: "edited_week_unconfirmed" }], failed: { weekStart: "2026-11-09", code: "history_changed" }, horizonRunId: "x" } }));
+    expect(t).toContain(en["schedule.board.horizon.landed"].replace("{date}", "Mon, Oct 26"));
+    expect(t).toContain(en["schedule.board.horizon.skipped"].replace("{date}", "Mon, Nov 2"));
+    expect(t).toContain(en["schedule.board.horizon.failed"].replace("{date}", "Mon, Nov 9"));
+    expect(t).toContain(en["schedule.error.history_changed"]);
+  });
+
+  it("Approve (Tier B) is disabled WITH its reason while rules fail or an unresolved gap remains; allowed otherwise; approved says Ready for 7shifts and offers no send", async () => {
+    const { ApproveBar } = await import("@/components/schedule/HorizonBuilder");
+    const A = (approve: { allowed: boolean; refusal: string | null }, week: { headRevisionId: string; approved: boolean; edited: boolean } | null = { headRevisionId: "h1", approved: false, edited: false }) =>
+      renderToStaticMarkup(createElement(TranslationProvider, { initialLanguage: "en", children: createElement(StepUpProvider, { unlocked: false, unlockedAt: null,
+        children: createElement(ApproveBar, { locationId: "L", weekStart: W1, week, approve }) as ReactNode }) }));
+    const blocked = A({ allowed: false, refusal: "unresolved_gaps" });
+    expect(blocked).toMatch(/<button[^>]*data-act="approve"[^>]*disabled=""/);
+    expect(text(blocked)).toContain(en["schedule.error.unresolved_gaps"]);
+    expect(text(A({ allowed: false, refusal: "rules_failing" }))).toContain(en["schedule.error.rules_failing"]);
+    const ok = A({ allowed: true, refusal: null });
+    expect(ok).toMatch(/<button[^>]*data-act="approve"/);
+    expect(ok).not.toMatch(/<button[^>]*data-act="approve"[^>]*disabled=""/);
+    const done = A({ allowed: false, refusal: "approved" }, { headRevisionId: "h1", approved: true, edited: false });
+    expect(text(done)).toContain(en["schedule.board.ready_for_7shifts"]);
+    expect(done).not.toMatch(/<button[^>]*>[^<]*(Send|7shifts)[^<]*<\/button>/i);
+    expect(text(A({ allowed: false, refusal: "forbidden" }))).not.toContain(en["schedule.board.approve.button"]);
+    const src = readFileSync("components/schedule/HorizonBuilder.tsx", "utf8");
+    expect(src).toMatch(/approveBody\(/);
+    const { approveBody } = await import("@/components/schedule/horizon-flow-shared");
+    const { SCHEDULE_ACTIONS } = await import("@/lib/scheduling/route-shapes-shared");
+    expect(Object.keys(approveBody("L", W1, "h1")).sort()).toEqual([...SCHEDULE_ACTIONS.approve!].sort());
+  });
+});
+
 describe("Task 20 — the hub entry mirrors who may open the board", () => {
   it("GM, AGM, MoO and up see the Schedule card; the social media, catering and prep managers and a key holder never", async () => {
     const { adminSectionsFor } = await import("@/lib/admin/sections");

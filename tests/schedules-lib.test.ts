@@ -188,6 +188,10 @@ describe("the horizon: preview, token, apply", () => {
     expect(p.weeks.map((w) => w.weekStart)).toEqual([WEEK, "2026-11-02"]);
     expect(p.weeks[1]!.confidence).toBe("further_out");
     expect(typeof p.token).toBe("string");
+    // Chunk F (Task 23): every previewed gap carries its certificate as the board words it (never the raw certificate).
+    const gaps = p.weeks.flatMap((w) => w.gaps);
+    expect(gaps.length).toBeGreaterThan(0);
+    for (const g of gaps) { expect(g.line.key).toMatch(/^schedule\.gap\.(certificate|structure)\./); expect(g).not.toHaveProperty("certificate"); }
     s.tables.schedule_day_types!.push({ id: "dt", location_id: A, business_date: "2026-10-27", day_type: "busy", created_at: "2026-10-21T13:00:00Z" });
     expect(await code(lib.applyHorizon(s.deps, { actor: gm, locationId: A, request: { mode: "next_weeks", n: 2 }, token: p.token, confirmedWeekStarts: [] }))).toBe("preview_stale");
     const p2 = await lib.previewHorizon(s.deps, { actor: gm, locationId: A, request: { mode: "next_weeks", n: 2 } });

@@ -24,6 +24,7 @@ import { addDays, formatQ } from "@/lib/scheduling/time-shared";
 import { BudgetSuggestion } from "./BudgetSuggestion";
 import { DayTabs } from "./DayTabs";
 import { DayTimeline } from "./DayTimeline";
+import { ApproveBar, HorizonBuilder } from "./HorizonBuilder";
 import { LaborTargetCard } from "./LaborTargetCard";
 import { MoneyStrip } from "./MoneyStrip";
 import { EditNotice, PersonRow, shiftKeyOf } from "./PersonRow";
@@ -200,6 +201,9 @@ function ReadyBoard({ view, initialDate, initialSelected }: { view: BoardView; i
       ) : null}
 
       {notice ? <p role="alert" className="text-sm font-bold text-co-cta-text">{t(notice)}</p> : null}
+
+      {view.perms.canEdit && !view.generate.disabled ? <HorizonBuilder locationId={view.locationId} today={view.today} names={view.names} positions={view.positions} /> : null}
+      <ApproveBar locationId={view.locationId} weekStart={view.weekStart} week={view.week} approve={view.approve} />
     </div>
   );
 }

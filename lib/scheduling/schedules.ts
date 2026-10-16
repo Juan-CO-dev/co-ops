@@ -27,6 +27,8 @@ import type { AuditAction } from "@/lib/audit-actions";
 import { operationalNow } from "@/lib/midshift-shared";
 import { isMissingTable } from "@/lib/people/facts";
 import { canSeeScheduleMoney, scheduleActRefusal, type ScheduleAct } from "./access-shared";
+import { gapLine } from "./board-view-shared";
+import type { NarrativeLine } from "@/lib/people-narrative";
 import { assertContextFits, canonicalJson, contextAdvisory, digest64, toContextSnapshot, type AdvisoryItem, type RuleContext } from "./context-shared";
 import { diffWeeks, type WeekDiff } from "./diff-shared";
 import { applyEdit, isEditOp, type EditOp } from "./edit-shared";
@@ -192,7 +194,8 @@ export async function generateWeek(deps: ScheduleDeps, args: { actor: PeopleActo
 
 export interface PreviewWeek {
   weekStart: string; buildDays: string[]; keptDays: string[]; confidence: "normal" | "further_out"; edited: boolean; headRevisionId: string | null;
-  whatChanged: WeekDiff; problems: ProblemsSplit; gaps: Array<Pick<DeclaredGap, "date" | "code" | "positionId" | "fromQ" | "toQ" | "cause">>; hourlyHoursOnBudgetedDates: number;
+  /** Each gap with its certificate as the board words it (chunk F, Task 23) — never the raw certificate. */
+  whatChanged: WeekDiff; problems: ProblemsSplit; gaps: Array<Pick<DeclaredGap, "date" | "code" | "positionId" | "fromQ" | "toQ" | "cause"> & { line: NarrativeLine }>; hourlyHoursOnBudgetedDates: number;
 }
 export interface HorizonPreview { weeks: PreviewWeek[]; token: string }
 
@@ -222,7 +225,7 @@ export async function previewHorizon(deps: ScheduleDeps, args: { actor: PeopleAc
     weeks: built.map((b) => ({
       weekStart: b.plan.weekStart, buildDays: b.plan.buildDays, keptDays: b.plan.keptDays, confidence: b.plan.confidence, edited: !!b.week?.edited,
       headRevisionId: b.week?.headRevisionId ?? null, whatChanged: diffOf(inputs, args.actor, b.week, b.out), problems: splitProblems(b.out),
-      gaps: b.out.gaps.map((g) => ({ date: g.date, code: g.code, positionId: g.positionId, fromQ: g.fromQ, toQ: g.toQ, cause: g.cause })),
+      gaps: b.out.gaps.map((g) => ({ date: g.date, code: g.code, positionId: g.positionId, fromQ: g.fromQ, toQ: g.toQ, cause: g.cause, line: gapLine(g) })),
       hourlyHoursOnBudgetedDates: b.out.stats.budgetedDates.reduce((n, d) => n + (b.out.stats.hourlyHoursByDate[d] ?? 0), 0),
     })),
   };
