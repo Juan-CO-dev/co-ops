@@ -52,6 +52,10 @@ export const ADMIN_SECTIONS: AdminSection[] = [
   // Sits here (not under catering) because it reads the whole regular menu, and
   // at 6 because it is a cost READ (lib/admin/cost.ts COST_READ_MIN).
   { id: "menu-costing",        i18nKey: "admin.section.menu-costing",                          href: "/admin/menu-costing",        minLevel: 6 },
+  // Catalog Phase 3b: every shop's own recipes and menu settings, with Promote / Leave (the Director of Operations).
+  { id: "shop-changes",        i18nKey: "admin.section.shop-changes",                          href: "/admin/catalog/shop-changes", minLevel: 8 },
+  // Catalog Phase 3b: a GM's read-time notices — another shop changed a recipe this shop copied; a new default.
+  { id: "recipe-notices",      i18nKey: "admin.section.recipe-notices",                        href: "/admin/catalog/notices",      minLevel: 7 },
   // BESIDE the costing board, by the spec's own placement — the weight audit is
   // what makes the costing board's numbers mean anything. It is an ON-DEMAND TOOL
   // (Juan, 2026-08-20: "triggered on demand, behaves just like the regular audit"),

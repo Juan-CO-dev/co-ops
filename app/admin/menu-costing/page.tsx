@@ -87,6 +87,7 @@ export default async function AdminMenuCostingPage({ searchParams }: { searchPar
       <ExportLinks className="mb-4" family="costing" language={lang} query={{ location: scope ?? "global" }}
         caption={serverT(lang, "admin.menu_costing.export_scope", { scope: scope === null ? serverT(lang, "admin.menu_costing.scope_all_short") : shops.find((s) => s.id === scope)?.name ?? "" })} />
       <MenuCostingClient
+        scope={scope}
         canEditPrice={level >= MENU_PRICE_WRITE_MIN}
         toastNotices={toastNotices}
         toastFetchedAt={toastFetchedAt}

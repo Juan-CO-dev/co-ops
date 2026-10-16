@@ -21,6 +21,30 @@ describe("etCalendarDate", () => {
 });
 
 describe("operationalDayUtcRange", () => {
+  it.each([
+    ["2026-07-10", "2026-07-10T04:00:00.000Z", "2026-07-11T04:00:00.000Z", 24],
+    ["2026-11-01", "2026-11-01T04:00:00.000Z", "2026-11-02T05:00:00.000Z", 25],
+    ["2027-03-14", "2027-03-14T05:00:00.000Z", "2027-03-15T04:00:00.000Z", 23],
+  ])("resolves the entire ET day %s", (day, start, end, hours) => {
+    const range = operationalDayUtcRange(day);
+    expect(range).toEqual({ startIso: start, endExclusiveIso: end });
+    expect((Date.parse(range.endExclusiveIso) - Date.parse(range.startIso)) / 3_600_000).toBe(hours);
+  });
+  it("includes the fall-back day's 23:30 ET and excludes the next spring day's 00:30 ET", () => {
+    const fall = operationalDayUtcRange("2026-11-01");
+    const spring = operationalDayUtcRange("2027-03-14");
+    expect("2026-11-02T04:30:00.000Z" >= fall.startIso && "2026-11-02T04:30:00.000Z" < fall.endExclusiveIso).toBe(true);
+    expect("2027-03-15T04:30:00.000Z" >= spring.startIso && "2027-03-15T04:30:00.000Z" < spring.endExclusiveIso).toBe(false);
+  });
+  it.each([
+    ["2026-10-28", "2026-11-04"],
+    ["2027-03-10", "2027-03-17"],
+  ])("has contiguous day ranges from %s through %s", (first, last) => {
+    for (let day = first; day < last; day = etYmdMinusDays(day, -1)) {
+      const next = etYmdMinusDays(day, -1);
+      expect(operationalDayUtcRange(day).endExclusiveIso).toBe(operationalDayUtcRange(next).startIso);
+    }
+  });
   it("an EDT (−4) day starts at 04:00Z and ends 24h later", () => {
     const { startIso, endExclusiveIso } = operationalDayUtcRange("2026-07-10");
     expect(startIso).toBe("2026-07-10T04:00:00.000Z");

@@ -1312,14 +1312,14 @@ AGMs and up can open **Admin**.
 **Worth knowing**
 
 - AGMs see **Vendors**, **SKUs**, **Products**, **Recipes**, **Items**, **Menu Costing**, **Weights & Trim** and **Catering**.
-- GMs also see **Stations**, **Toast employees**, **Customers** and **Checklist Templates**.
-- A Manager of Operations also sees **User Management** and **Categories**.
+- GMs also see **Stations**, **Toast employees**, **Customers**, **Checklist Templates** and **Recipe updates**.
+- A Manager of Operations also sees **User Management**, **Categories** and **Shop changes**.
 - In **Stations**, a GM sets station times for their shop. It asks for your password: **Confirm your password**. These times are only hints. They don't close a station.
 - **This week in CO-OPS** puts each shop side by side for the last 7 days: how many people used the app, the checklists they finished, reports, orders, deliveries, counts and catering. Jobs that run on their own (Toast, ezCater) are shown apart. Tap **Details** to see people by role and checklists by type.
 
 ### Recipes and the catalog
 
-GMs and up change recipes and SKUs.
+GMs and up change recipes and SKUs. Each shop can have its own version of a recipe and its own price and name for a sandwich. The other shop is not touched.
 
 #### 1. One password for 15 minutes (not shown)
 
@@ -1333,19 +1333,32 @@ GMs and up change recipes and SKUs.
 - Three things ask every time: retire a product, delete a recipe, and deactivate a SKU.
 - If the app says your confirmation expired, tap save again and type your password.
 
-#### 2. Change a recipe line (not shown)
+#### 2. Open your shop's recipe (not shown)
 
-**What to do** — Open the recipe. In **Consumes (inputs)**, tap **Edit** on the line. Change the amount, the unit or the ingredient. Tap **Save changes**.
+**What to do** — Tap **Admin**, then **Recipes**. Tap the recipe. It opens the recipe's catalog page. Under **Show the recipe for**, pick your shop.
 
 **Worth knowing**
 
-- **Save changes** stays gray until you change something.
-- Lines on a new recipe you have not saved yet have **Edit** too.
-- If someone else changed the same line first, the app tells you. Reload the page, then try again.
-- A product line takes a measure unit only, like oz, lb or each. A vendor's pack name means a different thing at each vendor.
-- If a product line shows an old unit, pick a measure unit before you save.
+- The top of the page says whose recipe you see. It says **using the global default** until your shop changes it.
+- On the old recipe page, a GM can't change the lines. Tap **Shop versions of this recipe** or **Change your shop's version** to come here.
+- Only the Director of Operations changes the recipe for every shop.
+- Another shop's recipe is view only. Tap **Change it for** your shop to get back to yours.
+- The admin home counts recipes that are not ready, shop by shop. It can say "1 in the default · 2 at" a shop. Tap one to see that shop's list. Each recipe there opens that shop's version.
 
-#### 3. Find an ingredient (not shown)
+#### 3. Change your shop's recipe (not shown)
+
+**What to do** — In **What goes in**, tap **Edit** on a line, or tap **+ Add ingredient**. Make your change. Tap **See what this changes**. Check the costs. Tap **Save for** your shop.
+
+**Worth knowing**
+
+- Your first change makes your shop's own version. The other shop keeps the default.
+- Lines that are not like the default say **Changed here**.
+- Changed something after the preview? The button says **Preview again**. You can't save until you look again.
+- Someone saved this recipe while you were editing? Your change stays, and the app shows what moved. Tap **Start over from the new version** to begin again from theirs.
+- A line that was already broken can stay. It shows a note, and you can fix one line at a time.
+- A new line must be right before it saves. The app names the line and the reason.
+
+#### 4. Find an ingredient (not shown)
 
 **What to do** — Tap **+ Add ingredient**. Type part of the name, or the vendor's name. Tap the one you want.
 
@@ -1354,6 +1367,71 @@ GMs and up change recipes and SKUs.
 - Each row shows the name, the vendor and the kind: SKU, prep item or product.
 - On a computer, use the arrow keys and Enter.
 - Changed your mind? Tap **Keep current** to keep the ingredient you had.
+- A product line takes a measure unit only, like oz, lb or each. A vendor's pack name means a different thing at each vendor.
+
+#### 5. Go back to the default (not shown)
+
+**What to do** — On your shop's recipe, tap **Go back to the default**. Check the costs. Tap **Go back to the default at** your shop.
+
+**Worth knowing**
+
+- Your version stays in **History**. You can restore it.
+
+#### 6. Restore an old version (not shown)
+
+**What to do** — Open **History**. On one of your shop's versions, tap **Restore**. On an old default version, the button says **Restore as** your shop's **version**. Check what changes. Save.
+
+**Worth knowing**
+
+- A restore makes a new version for your shop. The default for everyone does not change.
+- Some versions are older than a recipe you copied from another shop. Restoring one of those ends the link to that shop. The preview tells you first. You stop getting their updates.
+
+#### 7. Use another shop's recipe (not shown)
+
+**What to do** — Open **Other shops' versions**. Tap **Use** their **version here**. Check the costs. Tap **Use it at** your shop.
+
+**Worth knowing**
+
+- You get a copy, linked to their recipe.
+- You can still change your copy. The link stays, and you still hear about their updates.
+- **Go back to the default** ends the link.
+
+#### 8. Recipe updates (not shown)
+
+**What to do** — Tap **Admin**, then **Recipe updates**. Read each note. Tap **Open the recipe** to see it.
+
+**Worth knowing**
+
+- A note shows when the shop you copied changes its recipe. It also shows when that shop goes back to the default, or when its recipe becomes the default.
+- A note also shows when there is a new default for every shop.
+- On the recipe page, **Take the update** shows what changes. Then it copies their new version.
+- **Keep mine** leaves yours as it is. **Got it** hides a note. The note comes back if they change it again.
+- If you changed your copy, the note says so. Taking the update replaces your changes.
+- Your food never changes unless you say yes.
+
+#### 9. Price, name and "sold here" for your shop (not shown)
+
+**What to do** — On **Menu Costing**, open a sandwich. Tap **Open the sandwich page**. Pick your shop. Type the **Price here** or the **Name here**, or clear **Sold at this shop**. Tap **See what this changes**. Tap **Save for** your shop.
+
+**Worth knowing**
+
+- Leave the price empty to use the price for every shop.
+- A sandwich not sold here leaves your shop's costing board.
+- With no Spanish name, people who use Spanish see the English name.
+- **Go back to the global menu** uses everyone's price and name again.
+
+#### 10. Shop changes, for the Director of Operations (not shown)
+
+**What to do** — Tap **Admin**, then **Shop changes**. Read what each shop changed. Tap **Make it the default** to give it to every shop. Or tap **Leave it**.
+
+**Worth knowing**
+
+- The preview lists every shop that will change. Shops with their own version stay as they are.
+- The shop it came from goes back to the default. Its food stays the same.
+- For a sandwich, you can make one shop's price or name everyone's.
+- Is the new name in English only? Type a **Spanish name (optional)** before you save. Without one, people who use Spanish see the English name.
+- **Leave it** saves nothing. **Show the** ones **you left** brings them back.
+- The recipe page has **Make it the default for everyone** too.
 
 ### En español
 
@@ -1412,12 +1490,19 @@ Los gerentes generales y roles más altos ven quién le compra a la tienda.
 
 #### Las páginas de Admin
 
-Los subgerentes y roles más altos pueden abrir **Admin**. Toca **Admin** en el menú y luego una tarjeta. Los subgerentes ven **Proveedores**, **SKUs**, **Productos**, **Recetas**, **Artículos**, **Costeo del Menú**, **Pesos y merma** y **Catering**. Los gerentes generales también ven **Estaciones**, **Empleados de Toast**, **Clientes** y **Plantillas de Listas**. Un Gerente de Operaciones también ve **Gestión de Usuarios** y **Categorías**. En **Estaciones**, un gerente general pone los horarios de las estaciones de su tienda y la app le pide su contraseña (**Confirma tu contraseña**); esos horarios son solo una guía y no cierran una estación. **Usado esta semana** muestra cuánto se usó la app.
+Los subgerentes y roles más altos pueden abrir **Admin**. Toca **Admin** en el menú y luego una tarjeta. Los subgerentes ven **Proveedores**, **SKUs**, **Productos**, **Recetas**, **Artículos**, **Costeo del Menú**, **Pesos y merma** y **Catering**. Los gerentes generales también ven **Estaciones**, **Empleados de Toast**, **Clientes**, **Plantillas de Listas** y **Novedades de recetas**. Un Gerente de Operaciones también ve **Gestión de Usuarios**, **Categorías** y **Cambios de las tiendas**. En **Estaciones**, un gerente general pone los horarios de las estaciones de su tienda y la app le pide su contraseña (**Confirma tu contraseña**); esos horarios son solo una guía y no cierran una estación. **Usado esta semana** muestra cuánto se usó la app.
 
 #### Recetas y el catálogo
 
-Los gerentes generales y roles más altos cambian recetas y SKUs.
+Los gerentes generales y roles más altos cambian recetas y SKUs. Cada tienda puede tener su propia versión de una receta y su propio precio y nombre para un sándwich. La otra tienda no cambia.
 
 1. **Una contraseña por 15 minutos.** La primera vez que guardas un cambio en una página de Admin, la app pide **Confirma tu contraseña**. Después, editar queda desbloqueado por 15 minutos en este teléfono o computadora; en ese tiempo no la vuelve a pedir. Los 15 minutos cuentan desde tu contraseña: guardar no suma tiempo. Cuando se acaban, la app la pide otra vez. Salir de la app los termina. Tres cosas la piden siempre: retirar un producto, borrar una receta y desactivar un SKU. Si la app dice que tu confirmación venció, toca guardar otra vez y escribe tu contraseña.
-2. **Cambia una línea de la receta.** Abre la receta. En **Consume (entradas)**, toca **Editar** en la línea. Cambia la cantidad, la unidad o el ingrediente y toca **Guardar cambios**. El botón sigue gris hasta que cambias algo. Las líneas de una receta nueva que aún no guardas también tienen **Editar**. Si alguien más cambió esa línea antes, la app te avisa: recarga la página y vuelve a intentarlo. Una línea de producto solo acepta una unidad de medida, como oz, lb o each. Si muestra una unidad vieja, elige una unidad de medida antes de guardar.
-3. **Busca un ingrediente.** Toca **+ Agregar ingrediente**. Escribe parte del nombre o el nombre del proveedor y toca el que quieres. Cada fila muestra el nombre, el proveedor y el tipo: SKU, preparación o producto. Si cambias de idea, toca **Dejar el actual**.
+2. **Abre la receta de tu tienda.** Toca **Admin** y luego **Recetas**. Toca la receta: se abre su página del catálogo. En **Ver la receta de**, elige tu tienda. Arriba dice de quién es la receta que ves: dice **usa el predeterminado global** hasta que tu tienda la cambia. En la página vieja de la receta, un gerente general no puede cambiar las líneas; toca **Versiones de tienda de esta receta** o **Cambiar la versión de tu tienda** para llegar aquí. Solo el Director de Operaciones cambia la receta para todas las tiendas. La receta de otra tienda es solo lectura; toca **Cámbialo para** tu tienda para volver a la tuya. La página de inicio de Admin cuenta las recetas que no están listas, tienda por tienda, por ejemplo "1 en el predeterminado · 2 en" una tienda. Toca una para ver la lista de esa tienda; cada receta ahí abre la versión de esa tienda.
+3. **Cambia la receta de tu tienda.** En **Qué lleva**, toca **Editar** en una línea, o **+ Agregar ingrediente**. Haz tu cambio, toca **Ver qué cambia**, revisa los costos y toca **Guardar para** tu tienda. Tu primer cambio crea la versión propia de tu tienda; la otra tienda sigue con el predeterminado. Las líneas distintas al predeterminado dicen **Cambiado aquí**. Si cambias algo después de ver qué cambia, el botón dice **Ver qué cambia otra vez**: no puedes guardar hasta volver a verlo. Si alguien guardó esta receta mientras editabas, tu cambio se queda y la app te muestra qué se movió; toca **Empezar de nuevo desde la versión nueva** para empezar desde la suya. Una línea que ya estaba mal puede quedarse: muestra una nota y la puedes arreglar línea por línea. Una línea nueva tiene que estar bien para guardarse; la app dice qué línea y por qué.
+4. **Busca un ingrediente.** Toca **+ Agregar ingrediente**. Escribe parte del nombre o el nombre del proveedor y toca el que quieres. Cada fila muestra el nombre, el proveedor y el tipo: SKU, preparación o producto. Si cambias de idea, toca **Dejar el actual**. Una línea de producto solo acepta una unidad de medida, como oz, lb o each.
+5. **Vuelve al predeterminado.** En la receta de tu tienda, toca **Volver al predeterminado**, revisa los costos y toca **Volver al predeterminado en** tu tienda. Tu versión queda en el **Historial**; la puedes restaurar.
+6. **Restaura una versión vieja.** Abre el **Historial**. En una versión de tu tienda, toca **Restaurar**. En una versión vieja del predeterminado, el botón dice **Restaurar como la versión de** tu tienda. Revisa qué cambia y guarda. Restaurar crea una versión nueva para tu tienda; el predeterminado de todos no cambia. Si la versión es de antes de copiar la receta de otra tienda, restaurarla termina el vínculo con esa tienda. La vista previa te lo dice primero, y dejas de recibir sus actualizaciones.
+7. **Usa la receta de otra tienda.** Abre **Versiones de otras tiendas**, toca **Usar aquí la versión de** esa tienda, revisa los costos y toca **Usarla en** tu tienda. Recibes una copia vinculada a su receta. Puedes seguir cambiando tu copia: el vínculo se queda y sigues recibiendo sus actualizaciones. **Volver al predeterminado** termina el vínculo.
+8. **Novedades de recetas.** Toca **Admin** y luego **Novedades de recetas**. Lee cada nota y toca **Abrir la receta** para verla. Sale una nota cuando la tienda que copiaste cambia su receta, vuelve al predeterminado o su receta se vuelve el predeterminado, y cuando hay un predeterminado nuevo para todas las tiendas. En la página de la receta, **Tomar la actualización** te muestra qué cambia y luego copia su versión nueva. **Quedarme con la mía** deja la tuya como está; **Entendido** esconde una nota. La nota vuelve si la cambian otra vez. Si cambiaste tu copia, la nota lo dice: tomar la actualización reemplaza tus cambios. Tu comida nunca cambia si no dices que sí.
+9. **Precio, nombre y "se vende aquí".** En **Costeo del Menú**, abre un sándwich y toca **Abrir la página del sándwich**. Elige tu tienda. Escribe el **Precio aquí** o el **Nombre aquí**, o quita **Se vende en esta tienda**. Toca **Ver qué cambia** y luego **Guardar para** tu tienda. Deja el precio vacío para usar el precio de todas las tiendas. Un sándwich que no se vende aquí sale del costeo de tu tienda. Sin nombre en español, quienes usan la app en español ven el nombre en inglés. **Volver al menú global** vuelve a usar el precio y el nombre de todos.
+10. **Cambios de las tiendas (Director de Operaciones).** Toca **Admin** y luego **Cambios de las tiendas**. Lee lo que cambió cada tienda. Toca **Hacerlo el predeterminado** para dárselo a todas las tiendas, o **Dejarlo**. La vista previa muestra cada tienda que cambia; las que tienen su propia versión no cambian. La tienda de donde vino vuelve al predeterminado, y su comida sigue igual. En un sándwich puedes hacer de todos el precio o el nombre de una tienda. Si el nombre nuevo está solo en inglés, escribe un **Nombre en español (opcional)** antes de guardar; sin él, quienes usan la app en español ven el nombre en inglés. **Dejarlo** no guarda nada, y **Mostrar los que dejaste** los trae de vuelta. La página de la receta también tiene **Hacerla el predeterminado para todos**.

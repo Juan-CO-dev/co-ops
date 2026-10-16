@@ -30,7 +30,10 @@ import type { AuthContext } from "@/lib/session";
 const R = "recipe-1";
 const R2 = "recipe-2";
 const LINE = "line-1";
-const gm = { user: { id: "u-gm", role: "gm" } } as unknown as AuthContext;
+// Catalog Phase 3b: the GLOBAL recipe's lines are MoO+ (a GM edits its shop's version). This suite
+// exercises the global line writer, so its writer is a MoO; the name stays to keep the suite's diff small.
+const gm = { user: { id: "u-gm", role: "moo" } } as unknown as AuthContext;
+const realGm = { user: { id: "u-gm", role: "gm" } } as unknown as AuthContext;
 const agm = { user: { id: "u-agm", role: "agm" } } as unknown as AuthContext;
 
 beforeEach(() => {
@@ -179,6 +182,15 @@ describe("PATCH /api/admin/recipes/[id]/inputs/[inputId]", () => {
     h.session.mockResolvedValue(agm);
     expect((await call(body)).status).toBe(403);
     expect(h.step).not.toHaveBeenCalled();
+  });
+
+  it("catalog Phase 3b: a GM is refused by name (global_requires_moo) and nothing is written", async () => {
+    h.session.mockResolvedValue(realGm);
+    const res = await call(body);
+    expect(res.status).toBe(403);
+    expect((await res.json()).code).toBe("global_requires_moo");
+    expect(h.db.writes).toEqual([]);
+    expect(h.audit).not.toHaveBeenCalled();
   });
 
   it("asks for the Tier E edit window and stops on a stale unlock", async () => {

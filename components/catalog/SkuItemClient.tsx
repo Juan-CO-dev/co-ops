@@ -19,6 +19,7 @@ import { useRouter } from "next/navigation";
 import { useTranslation } from "@/lib/i18n/provider";
 import type { TranslationKey } from "@/lib/i18n/types";
 import { formatDateLabel, formatQuantity, formatWeekday } from "@/lib/i18n/format";
+import { etDisplayDate } from "@/lib/operational-day";
 import { CollapsibleSection } from "@/components/ui/CollapsibleSection";
 import { useStepUp } from "@/components/admin/StepUpProvider";
 import { useStepUpPost } from "@/components/admin/useStepUpPost";
@@ -97,7 +98,8 @@ export function SkuItemClient({ view, job, requestId }: { view: SkuItemView; job
 
   const money = (n: number | null) => (n == null ? "—" : `$${n.toFixed(2)}`);
   const oz = (n: number | null) => (n == null ? "—" : `${formatQuantity(n, language)} oz`);
-  const day = (iso: string) => formatDateLabel(iso.slice(0, 10), language);
+  // The operational (ET) day, never the UTC date (CC note 9; the menu page's helper).
+  const day = (iso: string) => formatDateLabel(etDisplayDate(iso), language);
   const toggle = (s: ItemSection) => setOpen((o) => ({ ...o, [s]: !o[s] }));
   const fail = (code: string) => setMessage(t(errorKey(code)));
   const done = (key: TranslationKey) => { guard.invalidate(); setMessage(t(key)); setEditing(null); setPreview(null); router.refresh(); };

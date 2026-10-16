@@ -233,9 +233,8 @@ export function packsFromVersions(
  * spring-forward day.
  */
 export function asOfForBusinessDate(businessDate: string): string {
-  const next = new Date(Date.parse(`${businessDate}T12:00:00Z`) + 86_400_000).toISOString().slice(0, 10);
-  const { startIso } = operationalDayUtcRange(next);
-  return new Date(Date.parse(startIso) - 1).toISOString();
+  const { endExclusiveIso } = operationalDayUtcRange(businessDate);
+  return new Date(Date.parse(endExclusiveIso) - 1).toISOString();
 }
 
 // ── The two flat-path consumers ───────────────────────────────────────────────

@@ -6,6 +6,9 @@ import es from "@/lib/i18n/es.json";
 import { CATALOG_ITEM_ERROR_CODES } from "@/lib/catalog/sku-item-shared";
 import { RECIPE_VERSION_ERROR_CODES } from "@/lib/recipe-versions-shared";
 import { MENU_ITEM_SHOP_ERROR_CODES } from "@/lib/menu-item-shop-shared";
+import { MENU_PROMOTE_NAME_KEYS } from "@/lib/catalog/recipe-preview-shared";
+import { RECIPE_PAGE_ERROR_CODES } from "@/lib/catalog/recipe-item-shared";
+import { PHASE3B_KEYS } from "./catalog-phase3b-keys";
 
 const REQUIRED = [
   "customers.catering.sort.quiet", "catalog.item.kind_bought", "catalog.item.version_global",
@@ -57,6 +60,12 @@ const REQUIRED = [
   // Catalog Phase 3a: every named recipe-version refusal (0262 + the line ops / gate) has its own message too.
   ...RECIPE_VERSION_ERROR_CODES.map((c) => `catalog.error.${c}`),
   ...MENU_ITEM_SHOP_ERROR_CODES.map((c) => `catalog.error.${c}`),
+  // Catalog Phase 3b (CC note 1 #2): the promote's Spanish-name fallback and its optional field.
+  ...MENU_PROMOTE_NAME_KEYS,
+  // Catalog Phase 3b Task 5: the page libs' own named refusals (preview_stale, nothing_changed).
+  ...RECIPE_PAGE_ERROR_CODES.map((c) => `catalog.error.${c}`),
+  // Catalog Phase 3b Task 7: every string the recipe / menu / Shop changes / notices screens use (tests/catalog-recipe-i18n.test.ts).
+  ...PHASE3B_KEYS,
   "receiving.case_different.button", "receiving.case_different.title",
   "receiving.case_different.note", "receiving.case_different.inner_count", "receiving.case_different.each_weight",
   "receiving.case_different.unit", "receiving.case_different.send", "receiving.case_different.sent",

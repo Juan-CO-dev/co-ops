@@ -83,6 +83,21 @@ describe("effective capture depletion", () => {
     );
     expect((await loadEffectiveSalesRows(db(), window))[0]?.direct_oz).toBe(12);
   });
+  it("uses contiguous ET midnight production windows through both DST changes", async () => {
+    for (const [businessDate, nextDate, late, next] of [
+      ["2026-11-01", "2026-11-02", "2026-11-02T04:30:00Z", "2026-11-02T05:30:00Z"],
+      ["2027-03-14", "2027-03-15", "2027-03-15T03:30:00Z", "2027-03-15T04:30:00Z"],
+    ] as const) {
+      for (const table of ["toast_capture_runs", "toast_depletion_day_coverage", "toast_capture_daily_depletion", "toast_depletion_item_attribution"]) {
+        for (const row of tables[table] ?? []) row.business_date = businessDate;
+      }
+      const dates = { ...window, fromDate: businessDate, untilDateExclusive: nextDate };
+      tables.productions = [{ location_id: "shop", output_item_id: "parent", produced_at: late }];
+      expect((await loadEffectiveSalesRows(db(), dates))[0]?.direct_oz).toBe(2);
+      tables.productions = [{ location_id: "shop", output_item_id: "parent", produced_at: next }];
+      expect((await loadEffectiveSalesRows(db(), dates))[0]?.direct_oz).toBe(12);
+    }
+  });
 
   it("revoking or superseding production restores fallback without rebuilding sales", async () => {
     tables.productions!.push(

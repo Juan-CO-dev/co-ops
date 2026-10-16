@@ -96,9 +96,11 @@ const SERVER_TIER_MAP: Record<string, string[]> = {
   "app/api/admin/catalog/sku/[id]/price-basis/route.ts": ["E"],
   "app/api/admin/catalog/sku/[id]/pack-requests/[requestId]/dismiss/route.ts": ["E"],
   // Catalog Phase 3a: recipe versions and menu overlays — every write is Tier E (reversible; no grant).
+  "app/api/admin/catalog/menu-item/[id]/apply/route.ts": ["E"],
   "app/api/admin/catalog/menu-item/[id]/shop/back-to-default/route.ts": ["E"],
   "app/api/admin/catalog/menu-item/[id]/shop/restore/route.ts": ["E"],
   "app/api/admin/catalog/menu-item/[id]/shop/route.ts": ["E"],
+  "app/api/admin/catalog/recipe/[id]/apply/route.ts": ["E"],
   "app/api/admin/catalog/recipe/[id]/back-to-default/route.ts": ["E"],
   "app/api/admin/catalog/recipe/[id]/lines/route.ts": ["E"],
   "app/api/admin/catalog/recipe/[id]/restore/route.ts": ["E"],
@@ -242,6 +244,12 @@ const SERVER_TIER_MAP: Record<string, string[]> = {
 const CLIENT_TIER_MAP: Record<string, string[]> = {
   // Catalog Phase 2b — the item page asks for the 15-minute edit window only.
   "components/catalog/SkuItemClient.tsx": ["E"],
+  // Catalog Phase 3b — the recipe page asks for the 15-minute edit window only (no one-shot grant).
+  "components/catalog/RecipeItemClient.tsx": ["E"],
+  // …and the menu item page, the same (save, back to the global menu, restore, promote).
+  "components/catalog/MenuItemClient.tsx": ["E"],
+  // …and the Shop changes list (promote a shop's recipe or menu price / name; Leave writes nothing).
+  "components/catalog/ShopChangesClient.tsx": ["E"],
   "components/admin/menu-costing/MenuPriceEditor.tsx": ["E"],
   // POST /api/admin/catering/ezcater-review -> decideEzcaterMapping asserts B in lib.
   "app/admin/catering/ezcater-review/review-client.tsx": ["B"],
