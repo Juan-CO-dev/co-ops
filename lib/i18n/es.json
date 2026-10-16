@@ -7071,5 +7071,6 @@
   "schedule.error.unresolved_gaps": "Algunos huecos todavía necesitan a alguien. Llénalos, o rehaz el horario, antes de aprobar.",
   "schedule.error.shift_over_maximum": "Ese turno es más largo que el turno máximo de esta tienda. Acórtalo o divídelo entre dos personas.",
   "schedule.error.invalid_payload": "A esa solicitud le faltaba algo o tenía un valor que no se puede usar. Recarga e inténtalo de nuevo.",
-  "schedule.error.roster_include_refused": "Ese puesto nunca se pone en el horario del piso."
+  "schedule.error.roster_include_refused": "Ese puesto nunca se pone en el horario del piso.",
+  "schedule.error.gap_certificate_invalid": "La prueba de un hueco no tiene la forma correcta, así que no se guardó la semana. Vuelve a armar la semana."
 }

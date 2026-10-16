@@ -1,0 +1,30 @@
+{
+  "_comment": "THE ONE gap-certificate SHAPE rule set (Scheduling Phase 2, Task 14). Run by tests/schedule-shapes.test.ts against the TS twin validGapCertificateShape (lib/scheduling/shapes-shared.ts) and by scripts/sql-harness-0275.mjs against the SQL valid_gap_certificate AND the schedule_revision_gaps CHECK. Shape only: whether a certificate VERIFIES is checkCertificate's job against the revision's context snapshot. The harness also runs every certificate in the 27 generator goldens through the SQL check.",
+  "cases": [
+    { "name": "budget", "cause": "budget", "certificate": { "budgetedDates": ["2026-10-26"], "budgetHours": 0, "usedHours": 33.75, "essentialHours": 33.75, "hoursNeeded": 4 }, "valid": true },
+    { "name": "budget with a negative number", "cause": "budget", "certificate": { "budgetedDates": [], "budgetHours": -1, "usedHours": 0, "essentialHours": 0, "hoursNeeded": 4 }, "valid": false },
+    { "name": "budget missing hoursNeeded", "cause": "budget", "certificate": { "budgetedDates": [], "budgetHours": 0, "usedHours": 0, "essentialHours": 0 }, "valid": false },
+    { "name": "budget with a date that is not a string", "cause": "budget", "certificate": { "budgetedDates": [20261026], "budgetHours": 0, "usedHours": 0, "essentialHours": 0, "hoursNeeded": 4 }, "valid": false },
+    { "name": "budget with an extra key", "cause": "budget", "certificate": { "budgetedDates": [], "budgetHours": 0, "usedHours": 0, "essentialHours": 0, "hoursNeeded": 4, "note": "x" }, "valid": false },
+    { "name": "floor_limit", "cause": "floor_limit", "certificate": { "managerIds": ["u-gm"], "floorHoursUsed": { "u-gm": 32 }, "limitH": 32 }, "valid": true },
+    { "name": "floor_limit with a string hour count", "cause": "floor_limit", "certificate": { "managerIds": ["u-gm"], "floorHoursUsed": { "u-gm": "32" }, "limitH": 32 }, "valid": false },
+    { "name": "eligibility", "cause": "eligibility", "certificate": { "positionId": "5c000000-0000-4000-8000-000000000002", "eligibleCount": 0 }, "valid": true },
+    { "name": "eligibility for the MoD (no position)", "cause": "eligibility", "certificate": { "positionId": null, "eligibleCount": 0 }, "valid": true },
+    { "name": "eligibility that names eligible people", "cause": "eligibility", "certificate": { "positionId": null, "eligibleCount": 2 }, "valid": false },
+    { "name": "availability", "cause": "availability", "certificate": { "eligibleIds": ["u-a"], "unavailableIds": ["u-a"] }, "valid": true },
+    { "name": "availability with an id that is not a string", "cause": "availability", "certificate": { "eligibleIds": [1], "unavailableIds": [1] }, "valid": false },
+    { "name": "capacity", "cause": "capacity", "certificate": { "fromQ": 46, "toQ": 56, "positionIds": ["5c000000-0000-4000-8000-000000000003"], "requiredHeads": 2, "peopleIds": ["u-a"], "people": 1, "shortBy": 1 }, "valid": true },
+    { "name": "capacity that is not short", "cause": "capacity", "certificate": { "fromQ": 46, "toQ": 56, "positionIds": [], "requiredHeads": 1, "peopleIds": ["u-a"], "people": 1, "shortBy": 0 }, "valid": false },
+    { "name": "capacity with an empty window", "cause": "capacity", "certificate": { "fromQ": 56, "toQ": 56, "positionIds": [], "requiredHeads": 2, "peopleIds": [], "people": 0, "shortBy": 2 }, "valid": false },
+    { "name": "capacity with a fractional head count", "cause": "capacity", "certificate": { "fromQ": 46, "toQ": 56, "positionIds": [], "requiredHeads": 1.5, "peopleIds": [], "people": 0, "shortBy": 1 }, "valid": false },
+    { "name": "structure", "cause": "structure", "certificate": { "rule": "primary_window_closed", "detail": { "positionId": "p1", "primaryId": "p2" } }, "valid": true },
+    { "name": "structure max_shift (CC chunk C ruling 2)", "cause": "structure", "certificate": { "rule": "max_shift", "detail": { "positionId": "mod", "runFromQ": 28, "runToQ": 83, "runQ": 55, "maxShiftQ": 42, "requiredQ": 55, "peopleIds": ["u-a"], "availableQ": 55, "coverableQ": 42, "shortQ": 13 } }, "valid": true },
+    { "name": "structure with an unknown rule", "cause": "structure", "certificate": { "rule": "window_shorter_than_minimum", "detail": {} }, "valid": false },
+    { "name": "structure with a detail that is not an object", "cause": "structure", "certificate": { "rule": "no_mod_member", "detail": [] }, "valid": false },
+    { "name": "unresolved_search", "cause": "unresolved_search", "certificate": { "searched": { "steps": 200, "donorsTried": 8, "chainDepth": 3 }, "limits": { "REPAIR_MAX_STEPS": 200, "maxDonors": 8, "maxChainDepth": 3 }, "candidateIds": ["u-a", "u-b"] }, "valid": true },
+    { "name": "unresolved_search without its limits", "cause": "unresolved_search", "certificate": { "searched": { "steps": 200, "donorsTried": 8, "chainDepth": 3 }, "candidateIds": [] }, "valid": false },
+    { "name": "unresolved_search with a negative counter", "cause": "unresolved_search", "certificate": { "searched": { "steps": -1, "donorsTried": 8, "chainDepth": 3 }, "limits": { "REPAIR_MAX_STEPS": 200, "maxDonors": 8, "maxChainDepth": 3 }, "candidateIds": [] }, "valid": false },
+    { "name": "a cause that does not exist", "cause": "nobody_wanted_it", "certificate": {}, "valid": false },
+    { "name": "a certificate that is not an object", "cause": "budget", "certificate": [], "valid": false }
+  ]
+}

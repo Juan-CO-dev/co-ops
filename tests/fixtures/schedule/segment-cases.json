@@ -1,0 +1,28 @@
+{
+  "_comment": "THE ONE segment-shape rule set (Scheduling Phase 2, Task 14). Run by tests/schedule-shapes.test.ts against the TS twin validScheduleSegments (lib/scheduling/shapes-shared.ts) and by scripts/sql-harness-0275.mjs against the SQL valid_schedule_segments AND the schedule_revision_shifts CHECK, so both pin the SAME table. Each case: the shift's startQ / endQ and its segments.",
+  "cases": [
+    { "name": "one segment spanning the shift", "startQ": 44, "endQ": 60, "segments": [{ "positionId": "5c000000-0000-4000-8000-000000000003", "startQ": 44, "endQ": 60 }], "valid": true },
+    { "name": "two contiguous segments", "startQ": 44, "endQ": 60, "segments": [{ "positionId": "5c000000-0000-4000-8000-000000000003", "startQ": 44, "endQ": 52 }, { "positionId": "5c000000-0000-4000-8000-000000000005", "startQ": 52, "endQ": 60 }], "valid": true },
+    { "name": "a MoD segment then a position", "startQ": 28, "endQ": 60, "segments": [{ "positionId": "mod", "startQ": 28, "endQ": 44 }, { "positionId": "5c000000-0000-4000-8000-000000000003", "startQ": 44, "endQ": 60, "lastResort": true }], "valid": true },
+    { "name": "every optional flag", "startQ": 70, "endQ": 72, "segments": [{ "positionId": "5c000000-0000-4000-8000-000000000002", "startQ": 70, "endQ": 72, "lastResort": false, "coverFor": "u-1", "reasonKey": "schedule.reason.callout_last_resort" }], "valid": true },
+    { "name": "a one-quarter segment", "startQ": 0, "endQ": 1, "segments": [{ "positionId": "mod", "startQ": 0, "endQ": 1 }], "valid": true },
+    { "name": "the whole day to 24:00", "startQ": 0, "endQ": 96, "segments": [{ "positionId": "mod", "startQ": 0, "endQ": 96 }], "valid": true },
+    { "name": "no segment", "startQ": 44, "endQ": 60, "segments": [], "valid": false },
+    { "name": "not an array", "startQ": 44, "endQ": 60, "segments": { "positionId": "mod", "startQ": 44, "endQ": 60 }, "valid": false },
+    { "name": "a hole between segments", "startQ": 44, "endQ": 60, "segments": [{ "positionId": "mod", "startQ": 44, "endQ": 50 }, { "positionId": "mod", "startQ": 52, "endQ": 60 }], "valid": false },
+    { "name": "overlapping segments", "startQ": 44, "endQ": 60, "segments": [{ "positionId": "mod", "startQ": 44, "endQ": 54 }, { "positionId": "mod", "startQ": 52, "endQ": 60 }], "valid": false },
+    { "name": "starts after the shift", "startQ": 44, "endQ": 60, "segments": [{ "positionId": "mod", "startQ": 46, "endQ": 60 }], "valid": false },
+    { "name": "ends before the shift", "startQ": 44, "endQ": 60, "segments": [{ "positionId": "mod", "startQ": 44, "endQ": 58 }], "valid": false },
+    { "name": "runs past the shift", "startQ": 44, "endQ": 60, "segments": [{ "positionId": "mod", "startQ": 44, "endQ": 62 }], "valid": false },
+    { "name": "a zero-length segment", "startQ": 44, "endQ": 60, "segments": [{ "positionId": "mod", "startQ": 44, "endQ": 44 }, { "positionId": "mod", "startQ": 44, "endQ": 60 }], "valid": false },
+    { "name": "a position that is neither a uuid nor mod", "startQ": 44, "endQ": 60, "segments": [{ "positionId": "Register", "startQ": 44, "endQ": 60 }], "valid": false },
+    { "name": "a quarter sent as a string", "startQ": 44, "endQ": 60, "segments": [{ "positionId": "mod", "startQ": "44", "endQ": 60 }], "valid": false },
+    { "name": "an off-grid quarter", "startQ": 44, "endQ": 60, "segments": [{ "positionId": "mod", "startQ": 44, "endQ": 52.5 }, { "positionId": "mod", "startQ": 52.5, "endQ": 60 }], "valid": false },
+    { "name": "past 24:00", "startQ": 90, "endQ": 97, "segments": [{ "positionId": "mod", "startQ": 90, "endQ": 97 }], "valid": false },
+    { "name": "an unknown key", "startQ": 44, "endQ": 60, "segments": [{ "positionId": "mod", "startQ": 44, "endQ": 60, "reasons": [] }], "valid": false },
+    { "name": "lastResort that is not a boolean", "startQ": 44, "endQ": 60, "segments": [{ "positionId": "mod", "startQ": 44, "endQ": 60, "lastResort": "yes" }], "valid": false },
+    { "name": "coverFor that is not a string", "startQ": 44, "endQ": 60, "segments": [{ "positionId": "mod", "startQ": 44, "endQ": 60, "coverFor": 7 }], "valid": false },
+    { "name": "a missing endQ", "startQ": 44, "endQ": 60, "segments": [{ "positionId": "mod", "startQ": 44 }], "valid": false },
+    { "name": "an empty shift window", "startQ": 60, "endQ": 60, "segments": [{ "positionId": "mod", "startQ": 60, "endQ": 60 }], "valid": false }
+  ]
+}

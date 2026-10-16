@@ -46,6 +46,8 @@ export const SCHEDULE_ERROR_CODES = [
   // chunk D (0274): a malformed writer payload, and roster_include for a role that is never on the floor (R6)
   "invalid_payload",
   "roster_include_refused",
+  // chunk D (0275): a declared gap whose certificate is not even the shape of its cause
+  "gap_certificate_invalid",
 ] as const;
 
 export type ScheduleErrorCode = (typeof SCHEDULE_ERROR_CODES)[number];

@@ -23,6 +23,8 @@ describe("ScheduleErrorCode", () => {
       "shift_over_maximum",
       // chunk D (0274): the SQL writers' payload refusal and the R6 roster rule
       "invalid_payload", "roster_include_refused",
+      // chunk D (0275): a certificate that is not the shape of its cause
+      "gap_certificate_invalid",
     ].sort());
   });
 

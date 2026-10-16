@@ -7071,5 +7071,6 @@
   "schedule.error.unresolved_gaps": "Some gaps still need a person. Fill them, or rebuild, before you approve.",
   "schedule.error.shift_over_maximum": "That shift is longer than this shop's maximum shift. Shorten it or split it between two people.",
   "schedule.error.invalid_payload": "That request was missing something or had a value we can't use. Reload and try again.",
-  "schedule.error.roster_include_refused": "That role is never put on the floor schedule."
+  "schedule.error.roster_include_refused": "That role is never put on the floor schedule.",
+  "schedule.error.gap_certificate_invalid": "A gap's proof is not in the right form, so the week was not saved. Rebuild the week."
 }
