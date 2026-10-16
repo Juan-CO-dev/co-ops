@@ -12,6 +12,7 @@
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { audit } from "@/lib/audit";
+import { isMissingTable } from "@/lib/people/facts";
 import { operationalNow } from "@/lib/midshift-shared";
 import { selectAllRows } from "@/lib/supabase-paginate";
 import { assertContextFits, canonicalJson, digest64, toContextSnapshot } from "./context-shared";
@@ -29,7 +30,35 @@ export const DRAFT_EARLIEST_ET_HOUR = 6;
 export type DraftShopOutcome =
   | { locationId: string; outcome: "built"; weekStart: string; revisionId: string; demand: "ok" | "no_history" }
   | { locationId: string; outcome: "skipped"; weekStart: string; reason: "already_built" | ScheduleErrorCode | "error" };
-export type DraftRun = { ran: false; reason: "not_wednesday_morning" | "no_shop_enabled" } | { ran: true; weekStart: string; shops: DraftShopOutcome[] };
+export type DraftIdleReason = "not_wednesday_morning" | "no_shop_enabled" | "not_installed";
+export type DraftRun = { ran: false; reason: DraftIdleReason } | { ran: true; weekStart: string; shops: DraftShopOutcome[] };
+export type DraftPrecheck = { go: false; reason: DraftIdleReason } | { go: true; shops: string[]; weekStart: string };
+
+/**
+ * CC chunk F GO — INERT UNTIL ENABLED. Read-only, before the lease (0275 owns the lease name 'schedule-draft'): not a
+ * Wednesday morning → idle; 0274 (`schedule_shop_settings`) or 0275 (`schedule_weeks`) not applied → `not_installed`
+ * (prod right after merge, before the applies — a clean skip, never a failure heartbeat); no settings row or the switch
+ * off → `no_shop_enabled`. Any other read error throws (a real failure).
+ */
+export async function draftPrecheck(deps: { service: SupabaseClient; now: Date }): Promise<DraftPrecheck> {
+  const et = operationalNow(deps.now);
+  if (isoDowOf(et.date) !== DRAFT_ISO_DOW || Math.floor(et.minutesOfDay / 60) < DRAFT_EARLIEST_ET_HOUR) return { go: false, reason: "not_wednesday_morning" };
+  let shops: string[];
+  try {
+    shops = (await selectAllRows<{ location_id: string }>((f, t) => deps.service.from("schedule_shop_settings").select("location_id")
+      .eq("enabled", true).order("location_id", { ascending: true }).range(f, t))).map((r) => r.location_id);
+  } catch (e) {
+    if (isMissingTable({ message: e instanceof Error ? e.message : String(e) })) return { go: false, reason: "not_installed" };
+    throw e;
+  }
+  if (shops.length === 0) return { go: false, reason: "no_shop_enabled" };
+  const probe = await deps.service.from("schedule_weeks").select("id").limit(1);
+  if (probe.error) {
+    if (isMissingTable(probe.error)) return { go: false, reason: "not_installed" };
+    throw new Error(`schedule_weeks probe: ${probe.error.message}`);
+  }
+  return { go: true, shops, weekStart: addDays(isoWeekStart(et.date), 7) };
+}
 
 async function log(action: "schedule.draft_auto" | "schedule.draft_skipped" | "schedule.generator_invalid", locationId: string, metadata: Record<string, unknown>): Promise<void> {
   await audit({ actorId: null, actorRole: null, action, resourceTable: "schedule_weeks", resourceId: locationId,
@@ -37,12 +66,10 @@ async function log(action: "schedule.draft_auto" | "schedule.draft_skipped" | "s
 }
 
 export async function runWednesdayDraft(deps: { service: SupabaseClient; now: Date; loadInputs?: LoadInputs }): Promise<DraftRun> {
+  const pre = await draftPrecheck(deps);
+  if (!pre.go) return { ran: false, reason: pre.reason };
   const et = operationalNow(deps.now);
-  if (isoDowOf(et.date) !== DRAFT_ISO_DOW || Math.floor(et.minutesOfDay / 60) < DRAFT_EARLIEST_ET_HOUR) return { ran: false, reason: "not_wednesday_morning" };
-  const shops = (await selectAllRows<{ location_id: string }>((f, t) => deps.service.from("schedule_shop_settings").select("location_id")
-    .eq("enabled", true).order("location_id", { ascending: true }).range(f, t))).map((r) => r.location_id);
-  if (shops.length === 0) return { ran: false, reason: "no_shop_enabled" };
-  const weekStart = addDays(isoWeekStart(et.date), 7);
+  const { shops, weekStart } = pre;
   const out: DraftShopOutcome[] = [];
   for (const locationId of shops) {
     try {

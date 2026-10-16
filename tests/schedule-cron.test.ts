@@ -79,6 +79,28 @@ describe("the run (lib/scheduling/draft.ts)", () => {
     expect(o.calls).toEqual([]);
   });
 
+  it("CC chunk F GO: inert until enabled — no settings row, or the switch off → nothing read beyond the switch, nothing written", async () => {
+    const t = shopTables();
+    t.schedule_shop_settings = [];
+    const s = scheduleStore(t);
+    expect(await runWednesdayDraft({ service: s.client, now: new Date("2026-10-21T10:15:00Z") })).toEqual({ ran: false, reason: "no_shop_enabled" });
+    expect(s.calls).toEqual([]);
+    expect(vi.mocked(audit)).not.toHaveBeenCalled();
+  });
+
+  it("CC chunk F GO: 0274 or 0275 not applied (prod right after merge) → skipped cleanly as not_installed, no throw, no audit", async () => {
+    const no0274 = shopTables();
+    delete no0274.schedule_shop_settings;
+    const a = scheduleStore(no0274);
+    expect(await runWednesdayDraft({ service: a.client, now: new Date("2026-10-21T10:15:00Z") })).toEqual({ ran: false, reason: "not_installed" });
+    const no0275 = shopTables();
+    delete no0275.schedule_weeks;
+    const b = scheduleStore(no0275);
+    expect(await runWednesdayDraft({ service: b.client, now: new Date("2026-10-21T10:15:00Z") })).toEqual({ ran: false, reason: "not_installed" });
+    expect([...a.calls, ...b.calls]).toEqual([]);
+    expect(vi.mocked(audit)).not.toHaveBeenCalled();
+  });
+
   it("a generator throw is audited schedule.generator_invalid and the shop is skipped — never committed", async () => {
     vi.resetModules();
     vi.doMock("@/lib/scheduling/generator/build-shared", async (orig) => {
@@ -107,7 +129,7 @@ describe("the route (app/api/cron/schedule-draft)", () => {
   });
   it("the cron secret fails closed (503 / 401); the lease 'schedule-draft' is claimed; busy → skipped; a run writes the cron.success heartbeat", async () => {
     vi.resetModules();
-    vi.doMock("@/lib/scheduling/draft", () => ({ runWednesdayDraft: vi.fn(async () => ({ ran: true, weekStart: NEXT, shops: [{ locationId: A, outcome: "built", weekStart: NEXT, revisionId: "r", demand: "ok" }] })) }));
+    vi.doMock("@/lib/scheduling/draft", () => ({ draftPrecheck: vi.fn(async () => ({ go: true })), runWednesdayDraft: vi.fn(async () => ({ ran: true, weekStart: NEXT, shops: [{ locationId: A, outcome: "built", weekStart: NEXT, revisionId: "r", demand: "ok" }] })) }));
     const { GET, runtime, maxDuration } = await import("@/app/api/cron/schedule-draft/route");
     const { claimCronRoute: claim } = await import("@/lib/cron-route-lease");
     const { audit: audit3 } = await import("@/lib/audit");
@@ -131,6 +153,32 @@ describe("the route (app/api/cron/schedule-draft)", () => {
     vi.mocked(run).mockRejectedValueOnce(new Error("db down"));
     expect((await GET(request())).status).toBe(500);
     expect(vi.mocked(audit3).mock.calls.some(([a]) => a.action === "cron.failure" && (a.metadata as Record<string, unknown>).job === "schedule-draft")).toBe(true);
+  });
+});
+
+describe("the route before the applies (CC chunk F GO)", () => {
+  const request = () => new NextRequest("https://example.com/api/cron/schedule-draft", { headers: { authorization: "Bearer test-cron" } });
+  it("not installed / no shop enabled → 200 skipped BEFORE the lease (0275 owns 'schedule-draft'), no cron.failure, no heartbeat", async () => {
+    vi.stubEnv("CRON_SECRET", "test-cron");
+    for (const reason of ["not_installed", "no_shop_enabled", "not_wednesday_morning"] as const) {
+      vi.resetModules();
+      vi.doMock("@/lib/scheduling/draft", () => ({
+        draftPrecheck: vi.fn(async () => ({ go: false, reason })),
+        runWednesdayDraft: vi.fn(async () => { throw new Error("must not run"); }),
+      }));
+      const { GET } = await import("@/app/api/cron/schedule-draft/route");
+      const { claimCronRoute: claim } = await import("@/lib/cron-route-lease");
+      const { audit: audit4 } = await import("@/lib/audit");
+      vi.mocked(claim).mockClear();
+      vi.mocked(audit4).mockClear();
+      const res = await GET(request());
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual({ skipped: true, reason });
+      expect(claim).not.toHaveBeenCalled();
+      expect(vi.mocked(audit4)).not.toHaveBeenCalled();
+      vi.doUnmock("@/lib/scheduling/draft");
+    }
+    vi.resetModules();
   });
 });
 

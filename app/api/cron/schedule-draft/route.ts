@@ -7,7 +7,7 @@ import { jsonError, jsonOk } from "@/lib/api-helpers";
 import { audit } from "@/lib/audit";
 import { cronAuthStatus } from "@/lib/cron-auth";
 import { claimCronRoute } from "@/lib/cron-route-lease";
-import { runWednesdayDraft } from "@/lib/scheduling/draft";
+import { draftPrecheck, runWednesdayDraft } from "@/lib/scheduling/draft";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 
 export const runtime = "nodejs";
@@ -17,6 +17,10 @@ export async function GET(req: NextRequest) {
   const auth = cronAuthStatus(req.headers);
   if (auth) return jsonError(auth, auth === 503 ? "cron_disabled" : "unauthorized");
   try {
+    // CC chunk F GO: inert until enabled — before the applies (0274 / 0275) or with no shop switched on, a clean skip
+    // BEFORE the lease (0275 owns the lease name): no heartbeat, no failure row.
+    const pre = await draftPrecheck({ service: getServiceRoleClient(), now: new Date() });
+    if (!pre.go) return jsonOk({ skipped: true, reason: pre.reason });
     if (!await claimCronRoute("schedule-draft")) return jsonOk({ skipped: true, reason: "cron_route_busy" });
     const run = await runWednesdayDraft({ service: getServiceRoleClient(), now: new Date() });
     if (!run.ran) return jsonOk({ skipped: true, reason: run.reason });
