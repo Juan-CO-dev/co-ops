@@ -86,6 +86,7 @@ async function passesCapacity(
   eventDate: string | null,
   headcount: number | null,
 ): Promise<boolean> {
+  if (eventDate != null && !/^\d{4}-\d{2}-\d{2}$/.test(eventDate)) return false;
   const { data: policyRow, error: pErr } = await sb
     .from("catering_capacity_policy")
     .select("max_covers_per_day, max_events_per_day, min_lead_time_hours")

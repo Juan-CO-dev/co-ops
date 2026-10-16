@@ -69,6 +69,7 @@ async function materialize(fromDate: string, toDate: string, deadlineAt: number,
   const transferAudit = await selectAllRows<TransferEvidence & { resource_id: string }>((from, to) => sb.from("audit_log")
     .select("resource_id,occurred_at,metadata").eq("resource_table", "catering_pipeline")
     .in("action", ["catering.pipeline.transfer_location", "ezcater.location_reassigned"])
+    // Exact earliest ET day accepted by productionLocations(eventDate, transfers): eventDate - 1.
     .gte("occurred_at", operationalDayUtcRange(etYmdMinusDays(fromDate, 1)).startIso).order("id").range(from, to).abortSignal(signal));
   // The observation shares an audit action with provider transfers but moved
   // nothing. Do not invent a transfer or fail the gate for its intentional shape.
