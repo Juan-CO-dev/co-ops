@@ -23,13 +23,34 @@ function Metric({ label, value, sub, tone = "plain" }: { label: string; value: s
   );
 }
 
-export function MoneyStrip({ strip, budgetLines, names, positions, canSetEstimates, locationId }: {
+/**
+ * One budget line. "No budget set for this week." (CC chunk G: one line, never one per date) carries "Set one", linking
+ * the budget control on this page, for a viewer who may set the budget.
+ */
+export function BudgetLineItem({ line: l, canBudget, render, setLink }: {
+  line: { key: string; params?: Record<string, string | number> };
+  canBudget: boolean;
+  render: (l: { key: string; params?: Record<string, string | number> }) => string;
+  setLink: string;
+}) {
+  if (l.key !== "schedule.budget.none_set") return <li>{render(l)}</li>;
+  return (
+    <li className="flex flex-wrap items-center gap-x-2" data-budget="none_set">
+      <span>{render(l)}</span>
+      {canBudget ? <a href="#schedule-budget-set" className="inline-flex min-h-[44px] items-center font-bold text-co-text underline">{setLink}</a> : null}
+    </li>
+  );
+}
+
+export function MoneyStrip({ strip, budgetLines, names, positions, canSetEstimates, canBudget = false, locationId }: {
   strip: Strip;
   budgetLines: Array<{ key: string; params?: Record<string, string | number> }>;
   names: Record<string, string>;
   positions: Record<string, { name: string; nameEs: string | null }>;
   /** MoO+: the errand links to schedule settings. */
   canSetEstimates: boolean;
+  /** The budget act: "Set one" links the budget control. */
+  canBudget?: boolean;
   locationId: string;
 }) {
   const { t, language, line } = useBoardLine({ names, positions });
@@ -70,7 +91,7 @@ export function MoneyStrip({ strip, budgetLines, names, positions, canSetEstimat
       {[...strip.notes, ...budgetLines].length > 0 ? (
         <ul className="grid gap-1 text-sm text-co-text-muted" data-section="budget-lines">
           {strip.notes.map((n, i) => <li key={`n${i}`} className="font-bold text-co-warning-text">{line(n)}</li>)}
-          {budgetLines.map((n, i) => <li key={`b${i}`}>{line(n)}</li>)}
+          {budgetLines.map((n, i) => <BudgetLineItem key={`b${i}`} line={n} canBudget={canBudget} render={line} setLink={t("schedule.board.budget.set_link")} />)}
         </ul>
       ) : null}
     </section>

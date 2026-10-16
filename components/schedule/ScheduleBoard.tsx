@@ -21,12 +21,13 @@ import type { BoardBanner, BoardView, GapLine, ShiftView } from "@/lib/schedulin
 import type { EditOp } from "@/lib/scheduling/edit-shared";
 import type { PositionRole } from "@/lib/scheduling/structure-shared";
 import { addDays, formatQ } from "@/lib/scheduling/time-shared";
+import { BudgetSetter } from "./BudgetSetter";
 import { BudgetSuggestion } from "./BudgetSuggestion";
 import { DayTabs } from "./DayTabs";
 import { DayTimeline } from "./DayTimeline";
 import { ApproveBar, HorizonBuilder } from "./HorizonBuilder";
 import { LaborTargetCard } from "./LaborTargetCard";
-import { MoneyStrip } from "./MoneyStrip";
+import { BudgetLineItem, MoneyStrip } from "./MoneyStrip";
 import { EditNotice, PersonRow, shiftKeyOf } from "./PersonRow";
 import { ReasonPanel } from "./ReasonPanel";
 import { RulesBadge } from "./RulesBadge";
@@ -149,12 +150,15 @@ function ReadyBoard({ view, initialDate, initialSelected }: { view: BoardView; i
 
       {view.strip ? (
         <MoneyStrip strip={view.strip} budgetLines={view.budgetLines} names={view.names} positions={view.positions}
-          canSetEstimates={view.perms.canManageSwitch} locationId={view.locationId} />
+          canSetEstimates={view.perms.canManageSwitch} canBudget={view.perms.canBudget} locationId={view.locationId} />
       ) : view.budgetLines.length > 0 ? (
-        <ul className="grid gap-1 text-sm text-co-text-muted" data-section="budget-lines">{view.budgetLines.map((l, i) => <li key={i}>{line(l)}</li>)}</ul>
+        <ul className="grid gap-1 text-sm text-co-text-muted" data-section="budget-lines">{view.budgetLines.map((l, i) =>
+          <BudgetLineItem key={i} line={l} canBudget={view.perms.canBudget} render={line} setLink={t("schedule.board.budget.set_link")} />)}</ul>
       ) : null}
 
       {view.suggestion ? <BudgetSuggestion suggestion={view.suggestion} locationId={view.locationId} weekStart={view.weekStart} names={view.names} positions={view.positions} /> : null}
+
+      {view.perms.canBudget ? <BudgetSetter locationId={view.locationId} weekStart={view.weekStart} /> : null}
 
       {view.advisory.length > 0 ? (
         <section className="co-card grid gap-1 p-3" data-section="advisory">

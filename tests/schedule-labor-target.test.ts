@@ -70,7 +70,7 @@ describe("laborTarget: the math, line by line", () => {
     const w = out.windows[0]!;
     expect(w.demandShare).toBeCloseTo(100_000 / 430_000, 10);
     expect(w.spreadHeads).toBeCloseTo((58.73170731707317 * (100_000 / 430_000)) / 3, 6);
-    expect(w).toMatchObject({ key: "lunch_rush", floorHeads: 4, optimal: { min: 4, max: 5 }, on: 5, tone: "good", floorOverTarget: false });
+    expect(w).toMatchObject({ key: "lunch_rush", floorHeads: 4, optimal: { min: 4, max: 5 }, on: 5, tone: "good" });
     expect(out.lines).toContainEqual({ key: "schedule.labor.window", params: { window: "lunch_rush", on: 5, min: 4, max: 5 } });
   });
 
@@ -88,18 +88,56 @@ describe("laborTarget: the math, line by line", () => {
     expect((en as Record<string, string>)["schedule.labor.minus_salaried"]).toMatch(/minus salaried cost/i);
   });
 
-  it("amber when over the target or under the minimum crew; a floor above the target says so", () => {
+  it("chunk G (CC's 375 px read): amber ONLY when a window is over its optimal AND above its minimum; optimal is never below the minimum crew", () => {
     const over = laborTarget(input({}, 6), { canSeeMoney: true });
     if (over.state !== "ok") throw new Error(over.state);
-    expect(over.windows[0]).toMatchObject({ on: 6, tone: "amber" });
+    expect(over.windows[0]).toMatchObject({ on: 6, tone: "amber", amberReasons: ["over_target"] });
+    // Under the minimum crew is a coverage problem (red on the coverage row, and its own line), never the labor card's amber.
     const under = laborTarget(input({}, 3), { canSeeMoney: true });
     if (under.state !== "ok") throw new Error(under.state);
-    expect(under.windows[0]).toMatchObject({ on: 3, tone: "amber" });
+    expect(under.windows[0]).toMatchObject({ on: 3, tone: "good", amberReasons: [] });
+    expect(under.lines).toContainEqual({ key: "schedule.labor.window_under_floor", params: { window: "lunch_rush", hours: 3, floor: 4 } });
+    // A window whose minimum crew is above its share of the target reads "6 on, optimal 6": no contradiction, no amber,
+    // and no per-window "already over the target" note (CC, superseding the chunk C per-window conflict line).
     const floor = laborTarget(input({ need: need(6) }, 6), { canSeeMoney: true });
     if (floor.state !== "ok") throw new Error(floor.state);
-    // Astra chunk C P2: a minimum crew already over the target is a target CONFLICT — amber, with its reason.
-    expect(floor.windows[0]).toMatchObject({ floorHeads: 6, optimal: { min: 6, max: 6 }, floorOverTarget: true, tone: "amber", amberReasons: ["floor_over_target"] });
-    expect(floor.lines).toContainEqual({ key: "schedule.labor.floor_over_target", params: { window: "lunch_rush", floor: 6 } });
+    expect(floor.windows[0]).toMatchObject({ floorHeads: 6, optimal: { min: 6, max: 6 }, tone: "good", amberReasons: [] });
+    expect(floor.lines.some((l) => /floor_over_target|minimums_over_target/.test(l.key))).toBe(false);
+    for (const w of [...over.windows, ...under.windows, ...floor.windows]) {
+      expect(w.optimal.min).toBeGreaterThanOrEqual(w.floorHeads);
+      expect(w.optimal.max).toBeGreaterThanOrEqual(w.optimal.min);
+    }
+  });
+
+  it("chunk G: when the minimum crews ALONE are above the target, ONE note for the day with its math line (never one per window)", () => {
+    // 20 heads 11:00–14:00 = 60 h of minimum crew > the 58.7 h the target allows.
+    const two = { ...input({ need: need(20) }, 0), windows: [LUNCH, { key: "afternoon", fromQ: 56, toQ: 64 }] };
+    two.shifts = Array.from({ length: 20 }, (_, i) => shift(`u-extra-${i}`, THU, 44, 56, P.REG));
+    two.wageCentsByUser = Object.fromEntries(two.shifts.map((sh) => [sh.userId, 2050]));
+    two.people = { ...two.people, ...Object.fromEntries(two.shifts.map((sh) => [sh.userId, { ...two.people[U.maya]! }])) };
+    const out = laborTarget(two, { canSeeMoney: true });
+    if (out.state !== "ok") throw new Error(out.state);
+    const notes = out.lines.filter((l) => l.key.startsWith("schedule.labor.minimums_over_target"));
+    expect(notes).toEqual([
+      { key: "schedule.labor.minimums_over_target", params: { targetPct: 28 } },
+      { key: "schedule.labor.minimums_over_target_math", params: { minHours: 60, wageCents: 2050, minCostCents: 123_000, maxLaborCents: 120_400 } },
+    ]);
+    // Once, before the windows.
+    expect(out.lines.findIndex((l) => l.key === "schedule.labor.minimums_over_target")).toBeLessThan(out.lines.findIndex((l) => l.key.startsWith("schedule.labor.window")));
+    // The AGM gets the note and the HOURS only (no wage, no cost).
+    const agm = laborTarget(two, { canSeeMoney: false });
+    if (agm.state !== "ok") throw new Error(agm.state);
+    expect(agm.lines.filter((l) => l.key.startsWith("schedule.labor.minimums_over_target"))).toEqual([
+      { key: "schedule.labor.minimums_over_target", params: { targetPct: 28 } },
+      { key: "schedule.labor.minimums_over_target_hours", params: { minHours: 60 } },
+    ]);
+    // Below the target: no note.
+    const fine = laborTarget(input({ need: need(19) }, 5), { canSeeMoney: true });
+    if (fine.state !== "ok") throw new Error(fine.state);
+    expect(fine.lines.some((l) => l.key.startsWith("schedule.labor.minimums_over_target"))).toBe(false);
+    const fill = (k: string, p: Record<string, string | number>) => (en as Record<string, string>)[k]!.replace(/\{(\w+)\}/g, (_m, n: string) => String(p[n]));
+    expect(fill("schedule.labor.minimums_over_target", { targetPct: 28 }))
+      .toBe("At this day's forecast, the minimum crews alone are above 28%. The target can't be met without more sales or smaller minimums.");
   });
 
   it("Astra chunk C P2: the tone comes from QUARTER-level shortages, never the window max — 5 on at 11:00, 2 leave at noon, minimum 4 to 2:00 → amber", () => {
@@ -107,7 +145,8 @@ describe("laborTarget: the math, line by line", () => {
     base.shifts = base.shifts.map((sh, i) => (i < 2 ? { ...sh, endQ: 48, segments: [{ ...sh.segments[0]!, endQ: 48 }] } : sh));
     const out = laborTarget(base, { canSeeMoney: true });
     if (out.state !== "ok") throw new Error(out.state);
-    expect(out.windows[0]).toMatchObject({ on: 5, onMin: 3, shortQuarters: 8, overQuarters: 0, tone: "amber", amberReasons: ["under_floor"] });
+    // chunk G (CC): under the minimum crew is counted and named, but it is not the labor card's amber.
+    expect(out.windows[0]).toMatchObject({ on: 5, onMin: 3, shortQuarters: 8, overQuarters: 0, tone: "good", amberReasons: [] });
     expect(out.lines).toContainEqual({ key: "schedule.labor.window_under_floor", params: { window: "lunch_rush", hours: 2, floor: 4 } });
     // Fully staffed at every quarter stays good, with no reason.
     const full = laborTarget(input({}, 5), { canSeeMoney: true });
@@ -138,6 +177,9 @@ describe("laborTarget: the math, line by line", () => {
     const out = laborTarget(input(), { canSeeMoney: false });
     if (out.state !== "ok") throw new Error(out.state);
     expect(JSON.stringify(out)).not.toMatch(/Cents|\$/);
+    // chunk G (CC): nothing money-DERIVABLE either. The exact spread and demand share give the max hours, and with a sales
+    // figure that is a wage; the AGM keeps the whole-head optimal range only.
+    expect(JSON.stringify(out)).not.toMatch(/spreadHeads|demandShare|maxHours|wage|salar/i);
     expect(out.lines.map((l) => l.key)).toEqual(["schedule.labor.window"]);
     const all = laborTarget(input({ need: need(6) }, 6), { canSeeMoney: true });
     if (all.state !== "ok") throw new Error(all.state);

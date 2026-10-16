@@ -84,6 +84,16 @@ describe("budgetForDates: per-DATE precedence — the newest entry covering a da
     expect(got.lines).toContainEqual({ key: "schedule.budget.unbudgeted", params: { date: DAYS[6]! } });
   });
 
+  it("chunk G (CC): NO budget for any day of the week → ONE line 'No budget set for this week', never one line per date", () => {
+    const none = budgetForDates([], [], DAYS);
+    expect(none.unbudgetedDates).toEqual(DAYS);
+    expect(none.total).toBe(0);
+    expect(none.lines).toEqual([{ key: "schedule.budget.none_set" }]);
+    expect(BUDGET_LINE_KEYS).toContain("schedule.budget.none_set");
+    // Some days budgeted: the unbudgeted ones are named individually (F13 above).
+    expect(budgetForDates([october], rowsOf(october), DAYS).lines.some((l) => l.key === "schedule.budget.none_set")).toBe(false);
+  });
+
   it("October then November and November then October give the SAME week (both entry orders)", () => {
     const a = budgetForDates([october, november], [...rowsOf(october), ...rowsOf(november)], DAYS);
     const flipped = [{ ...november, createdAt: "2026-10-02T09:00:00Z" }, { ...october, createdAt: "2026-10-03T09:00:00Z" }];

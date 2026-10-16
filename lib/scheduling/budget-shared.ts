@@ -24,6 +24,8 @@ import { addDays, isoDowOf, isYmd, weekDays } from "./time-shared";
 
 export const BUDGET_LINE_KEYS = [
   "schedule.budget.composition", "schedule.budget.unbudgeted",
+  // CC chunk G: a week with NO budgeted date is ONE line, never one per date.
+  "schedule.budget.none_set",
   "schedule.budget.ratio", "schedule.budget.unmatched_kept", "schedule.budget.clamped_min_crew",
   "schedule.budget.catering_delta", "schedule.budget.structure_delta",
   "schedule.budget.errand.no_reference", "schedule.budget.errand.reference_not_ended", "schedule.budget.errand.incomplete_reference",
@@ -134,7 +136,10 @@ export function budgetForDates(entries: readonly BudgetEntry[], rows: readonly B
     lines.push({ key: "schedule.budget.composition", params: { scope: composition[i]!.scope, from: composition[i]!.date, to: composition[j - 1]!.date, days: j - i, hours: toH(h) } });
     i = j;
   }
-  for (const date of unbudgetedDates) lines.push({ key: "schedule.budget.unbudgeted", params: { date } });
+  // CC chunk G (375 px read): no budget on ANY date is one line ("No budget set for this week. Set one"); the dates are
+  // named one by one only when SOME of them have a budget.
+  if (dates.length > 0 && composition.length === 0) lines.push({ key: "schedule.budget.none_set" });
+  else for (const date of unbudgetedDates) lines.push({ key: "schedule.budget.unbudgeted", params: { date } });
   return { byDate, total: toH(totalH), unbudgetedDates, composition, lines };
 }
 

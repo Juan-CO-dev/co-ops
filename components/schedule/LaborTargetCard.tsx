@@ -3,9 +3,10 @@
  * The labor-target card (spec §6.6, Juan 2026-10-16): per day and per window, the optimal people and hours that keep
  * great service without going over the labor target. It shows the math exactly as the spec words it — "Max hourly
  * labor $ = forecast sales × target %", "Max hours = max labor $ ÷ blended average wage" — then the draft against it per
- * window ("Lunch rush: 5 on, optimal 4–5"), and turns AMBER when a window is over the target or under its minimum crew
- * (judged per quarter, Astra chunk C). With no forecast or no wage it names its errand. An AGM sees the heads, never
- * the dollar lines (J1: they are absent from the view-model).
+ * window ("Lunch rush: 5 on, optimal 4–5"), and turns AMBER only when a window is over its optimal AND above its minimum
+ * crew (judged per quarter; CC chunk G). When the minimum crews alone are above the target it says so ONCE for the day,
+ * with its math line. With no forecast or no wage it names its errand. An AGM sees the heads, never the dollar lines
+ * (J1: they are absent from the view-model).
  */
 import type { LaborTarget } from "@/lib/scheduling/labor-target-shared";
 import { useBoardLine } from "./use-board-line";
@@ -27,7 +28,7 @@ export function LaborTargetCard({ labor, names, positions }: {
           {amber ? <p className="text-sm font-bold text-co-warning-text">{t("schedule.board.labor_card.amber")}</p> : null}
           <ul className="grid gap-1 text-sm text-co-text">
             {labor.lines.map((l, i) => (
-              <li key={i} className={/window_(under_floor|over_target)|floor_over_target/.test(l.key) ? "font-bold text-co-warning-text" : ""}>{line(l)}</li>
+              <li key={i} data-labor-line={l.key} className={/window_over_target|minimums_over_target$/.test(l.key) ? "font-bold text-co-warning-text" : ""}>{line(l)}</li>
             ))}
           </ul>
         </>

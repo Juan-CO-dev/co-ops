@@ -105,6 +105,38 @@ describe("Task 20 — the strip, the tabs, the suggestion", () => {
     expect(t).toContain(`${en["schedule.board.scope.month"]} budget: 50 h over 5 days`);
     expect(t).toMatch(/Sat, Oct 31 has no budget\./);
   });
+
+  it("chunk G (CC): no budget on any day → ONE line 'No budget set for this week. Set one', linking the budget control (en + es)", () => {
+    const html = renderBoard(ready());
+    const t = text(html);
+    expect(t.split(en["schedule.budget.none_set"]).length - 1).toBe(1);
+    expect(t).not.toMatch(/has no budget/);
+    expect(html).toMatch(new RegExp(`<a[^>]*href="#schedule-budget-set"[^>]*>${en["schedule.board.budget.set_link"]}</a>`));
+    const setter = html.match(/<section[^>]*id="schedule-budget-set"[\s\S]*?<\/section>/)![0];
+    expect(text(setter)).toContain(en["schedule.board.budget.title"]);
+    expect(text(setter)).toContain(en["schedule.board.budget.scope_week"]);
+    expect(text(setter)).toContain(en["schedule.board.budget.scope_month"]);
+    const save = setter.match(/<button[^>]*data-act="budget-save"[^>]*>/)![0];
+    expect(save).toContain("min-h-[44px]");
+    expect(save).toContain("items-center");
+    const es1 = renderBoard(ready(), "es");
+    expect(text(es1)).toContain(es["schedule.budget.none_set"]);
+    expect(es1).toContain(`>${es["schedule.board.budget.set_link"]}</a>`);
+    // A viewer without the budget act (an AGM reading) sees the line, no link and no control.
+    const agm = renderBoard(ready({ perms: { canBudget: false, canSeeMoney: false, canEdit: false, canApprove: false } }));
+    expect(text(agm)).toContain(en["schedule.budget.none_set"]);
+    expect(agm).not.toContain('href="#schedule-budget-set"');
+    expect(agm).not.toContain('id="schedule-budget-set"');
+  });
+
+  it("chunk G: the budget control posts the route's EXACT body (week or month, the hours)", async () => {
+    const { budgetBody } = await import("@/components/schedule/BudgetSetter");
+    const { SCHEDULE_ACTIONS } = await import("@/lib/scheduling/route-shapes-shared");
+    const week = budgetBody("loc-1", "week", DATES[0]!, 312.5);
+    expect(week).toEqual({ action: "budget", locationId: "loc-1", scope: "week", weekStart: DATES[0]!, month: null, hours: 312.5 });
+    expect(Object.keys(week).sort()).toEqual([...SCHEDULE_ACTIONS.budget!].sort());
+    expect(budgetBody("loc-1", "month", DATES[0]!, 1200)).toEqual({ action: "budget", locationId: "loc-1", scope: "month", weekStart: null, month: "2026-10-01", hours: 1200 });
+  });
 });
 
 describe("Task 20 — banners", () => {
@@ -224,6 +256,36 @@ describe("Task 21 — the day timeline", () => {
     const agmCard = agm.match(/<section[^>]*data-section="labor-target"[\s\S]*?<\/section>/)![0];
     expect(agmCard).not.toContain("$");
     expect(text(agmCard)).toMatch(/Lunch rush: \d+ on, optimal/);
+  });
+  it("chunk G (CC's 375 px read): the card never contradicts itself — no per-window 'already over the target', amber only on a window over its optimal", () => {
+    const view = ready();
+    for (const d of view.days) {
+      if (d.labor?.state !== "ok") continue;
+      for (const w of d.labor.windows) {
+        expect(w.optimal.min).toBeGreaterThanOrEqual(w.floorHeads);
+        expect(w.tone === "amber").toBe(w.overQuarters > 0);
+      }
+      for (const lang of ["en", "es"] as const) {
+        const card = renderBoard(view, lang, { initialDate: d.date }).match(/<section[^>]*data-section="labor-target"[\s\S]*?<\/section>/)![0];
+        expect(text(card)).not.toMatch(/already over the target|ya pasa del objetivo/);
+        const notes = text(card).split(lang === "en" ? "minimum crews alone are above" : "solo los equipos mínimos ya pasan").length - 1;
+        expect(notes).toBeLessThanOrEqual(1);
+      }
+    }
+  });
+  it("chunk G: the minimums-over-target note renders ONCE with its math line, in en and es", () => {
+    const view = ready();
+    const day = view.days.find((d) => d.labor?.state === "ok")!;
+    if (day.labor?.state !== "ok") throw new Error("no labor");
+    const forced = { ...view, days: view.days.map((d) => d.date !== day.date || d.labor?.state !== "ok" ? d : { ...d, labor: { ...d.labor, lines: [
+      { key: "schedule.labor.minimums_over_target", params: { targetPct: 28 } },
+      { key: "schedule.labor.minimums_over_target_math", params: { minHours: 60, wageCents: 2050, minCostCents: 123000, maxLaborCents: 120400 } },
+      ...d.labor.lines] } }) };
+    const en1 = text(renderBoard(forced, "en", { initialDate: day.date }));
+    expect(en1).toContain("At this day's forecast, the minimum crews alone are above 28%. The target can't be met without more sales or smaller minimums.");
+    expect(en1).toMatch(/Minimum crews: 60 h × \$[\d.,]+\/h = \$1,230, more than the \$1,204 the target allows\./);
+    const es1 = text(renderBoard(forced, "es", { initialDate: day.date }));
+    expect(es1).toContain(es["schedule.labor.minimums_over_target"].replace("{targetPct}", "28"));
   });
   it("the rules badge: 'all checks pass' or 'N problems', opening the named problems with day, person, position and time", () => {
     const view = ready({}, "F0g-history");
