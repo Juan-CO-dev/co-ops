@@ -16,6 +16,7 @@
  * Phone-first: every row breaks long words and every button row wraps, so nothing clips at 375px.
  */
 import { useTranslation } from "@/lib/i18n/provider";
+import { useRevealOnOpen } from "@/components/catalog/useRevealOnOpen";
 import { formatCents } from "@/lib/i18n/format";
 import type { MenuPreview } from "@/lib/catalog/recipe-preview-shared";
 
@@ -47,6 +48,7 @@ export function MenuPreviewPanel({
   promoteNameEs?: PromoteNameEs;
 }) {
   const { t, language } = useTranslation();
+  const { panelRef, headingRef } = useRevealOnOpen<HTMLElement, HTMLHeadingElement>();
   const money = (n: number | null) => (n == null ? "—" : formatCents(Math.round(n * 100), language));
   const yesNo = (b: boolean) => t(b ? "catalog.menu.preview.yes" : "catalog.menu.preview.no");
   const promote = preview.kind === "promote";
@@ -54,8 +56,8 @@ export function MenuPreviewPanel({
   const unpreviewed = promoteNameEs !== undefined && promoteNameEs.value.trim() !== promoteNameEs.previewed.trim();
   const fallsBack = preview.spanishFallsBackToEnglish || preview.after.nameEs === null;
   return (
-    <section aria-label={t("catalog.menu.preview.title")} className="min-w-0 break-words rounded-xl border-2 border-co-text bg-co-surface p-3">
-      <h3 className="text-[12px] font-bold tracking-wide text-co-text-muted">{t("catalog.menu.preview.title")}</h3>
+    <section ref={panelRef} aria-label={t("catalog.menu.preview.title")} className="min-w-0 break-words rounded-xl border-2 border-co-text bg-co-surface p-3">
+      <h3 ref={headingRef} tabIndex={-1} className="text-[12px] font-bold tracking-wide text-co-text-muted">{t("catalog.menu.preview.title")}</h3>
       <p className="mt-2 text-sm text-co-text">{t("catalog.menu.preview.price", { before: money(preview.before.price), after: money(preview.after.price) })}</p>
       <p className="text-sm text-co-text">{t("catalog.menu.preview.margin", { before: money(preview.marginBefore), after: money(preview.marginAfter) })}</p>
       {!promote ? (

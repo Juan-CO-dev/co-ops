@@ -10,6 +10,7 @@
  * Phone-first: every row breaks long words and every button row wraps, so nothing clips at 375px.
  */
 import { useTranslation } from "@/lib/i18n/provider";
+import { useRevealOnOpen } from "@/components/catalog/useRevealOnOpen";
 import { formatCents, formatQuantity } from "@/lib/i18n/format";
 import { lineText, type RecipePreview } from "@/lib/catalog/recipe-preview-shared";
 import { recipeErrorKey } from "@/lib/catalog/recipe-item-shared";
@@ -28,12 +29,13 @@ export function RecipePreviewPanel({
   becomesShopVersion?: string | null;
 }) {
   const { t, language } = useTranslation();
+  const { panelRef, headingRef } = useRevealOnOpen<HTMLElement, HTMLHeadingElement>();
   const money = (n: number | null) => (n == null ? "—" : formatCents(Math.round(n * 100), language));
   const fmt = (n: number) => formatQuantity(n, language);
   const line = (f: Parameters<typeof lineText>[0]) => lineText(f, preview.names, fmt);
   return (
-    <section aria-label={t("catalog.recipe.preview.title")} className="min-w-0 break-words rounded-xl border-2 border-co-text bg-co-surface p-3">
-      <h3 className="text-[12px] font-bold tracking-wide text-co-text-muted">{t("catalog.recipe.preview.title")}</h3>
+    <section ref={panelRef} aria-label={t("catalog.recipe.preview.title")} className="min-w-0 break-words rounded-xl border-2 border-co-text bg-co-surface p-3">
+      <h3 ref={headingRef} tabIndex={-1} className="text-[12px] font-bold tracking-wide text-co-text-muted">{t("catalog.recipe.preview.title")}</h3>
       <p className={`mt-2 ${eyebrow}`}>{t("catalog.recipe.preview.changes")}</p>
       {preview.changes.length === 0 ? (
         <p className="text-sm text-co-text">{t("catalog.recipe.preview.none")}</p>
