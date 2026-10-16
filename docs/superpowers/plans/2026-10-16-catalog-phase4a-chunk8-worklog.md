@@ -1,5 +1,7 @@
 # Catalog Phase 4a Chunk 8 execution plan
 
+> Custody (corrected by CC 2026-10-16, Aggie chunk-8 P2-1): these changes are COMMITTED in 8355d7d3 on feat/catalog-p4a; the frozen revision's full suite is 10,423 passed (the 10,421 figure was the pre-credential-isolation tree).
+
 Baseline: `feat/catalog-p4a` at `35748f42e974a3f7fc81dc1687e5bc1e929bd6ef`, clean at task entry. Worktree: `C:\Users\conta\co-ops-astra-p4`. All task changes remain uncommitted; no fetch, push, merge, deployment or database operation.
 
 Authority: approved `2026-10-15-catalog-phase4a-BUILD.md`, Chunk 8; Aggie's r3 APPROVE; CC's chunk-8 dispatch with explicit chunk-7 review rulings. CC committed the durable rules in `35748f42` after implementation commit `712a57c3`.

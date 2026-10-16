@@ -1,5 +1,7 @@
 # Chunk 7 review fixes — separate uncommitted change set
 
+> Custody (corrected by CC 2026-10-16, Aggie chunk-8 P2-1): these changes are COMMITTED in 8355d7d3 on feat/catalog-p4a; the frozen revision's full suite is 10,423 passed (the 10,421 figure was the pre-credential-isolation tree).
+
 Base: `35748f42`; branch `feat/catalog-p4a`. This set precedes chunk-8 concurrency/release additions. No commit, fetch, push or merge.
 
 | Review item | Change and regression evidence |
