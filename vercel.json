@@ -7,6 +7,7 @@
     { "path": "/api/cron/toast-sales-today", "schedule": "*/10 0-3,10-23 * * *" },
     { "path": "/api/cron/toast-catering-scan", "schedule": "*/10 0-3,10-23 * * *" },
     { "path": "/api/cron/digest-tick", "schedule": "0 * * * *" },
-    { "path": "/api/cron/sevenshifts-sync", "schedule": "20 * * * *" }
+    { "path": "/api/cron/sevenshifts-sync", "schedule": "20 * * * *" },
+    { "path": "/api/cron/schedule-draft", "schedule": "15 10,11 * * 3" }
   ]
 }
