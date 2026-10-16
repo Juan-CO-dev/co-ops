@@ -139,6 +139,10 @@ function ReadyBoard({ view, initialDate, initialSelected }: { view: BoardView; i
         <Link href={weekHref(addDays(view.weekStart, 7))} className="inline-flex min-h-[44px] min-w-[44px] items-center justify-center rounded-lg border-2 border-co-border px-3 font-bold text-co-text" aria-label={t("schedule.board.week.next")}>›</Link>
       </nav>
 
+      {view.perms.canEditStructure || view.perms.canEdit || view.perms.canManageSwitch ? (
+        <Link href={`/schedule/settings?loc=${view.locationId}`} className="inline-flex min-h-[44px] items-center justify-self-start text-sm font-bold text-co-text underline">{t("schedule.board.settings_link")}</Link>
+      ) : null}
+
       {view.banners.map((b) => (
         <p key={b.id} role="status" data-banner={b.id} className={`rounded-lg border-2 p-3 text-sm font-bold ${BANNER_TONE[b.tone]}`}>{line(b.line)}</p>
       ))}

@@ -113,6 +113,11 @@ beforeAll(async () => {
     const board = await import("@/lib/scheduling/board");
     await board.loadPositionLabelRows(svc, LOC);
     await board.loadOriginContexts(svc, LOC, [REV]);
+    // Task 24: the settings page's own reads (the station seed columns, the MoO / Owner presence list).
+    const inputsMod = await import("@/lib/scheduling/inputs");
+    await inputsMod.loadStationSeedRows(svc, LOC);
+    const settingsView = await import("@/lib/scheduling/settings-view");
+    await settingsView.loadPresencePeople(svc);
   } finally {
     if (prev.t === undefined) delete process.env.SEVENSHIFTS_ACCESS_TOKEN; else process.env.SEVENSHIFTS_ACCESS_TOKEN = prev.t;
     if (prev.s === undefined) delete process.env.SEVENSHIFTS_SYNC; else process.env.SEVENSHIFTS_SYNC = prev.s;

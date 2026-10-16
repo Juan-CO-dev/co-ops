@@ -380,9 +380,12 @@ describe("Task 23 — the horizon builder, What changed, Approve", () => {
     const gm = renderBoard(ready());
     expect(gm).toContain('data-section="horizon"');
     expect(gm).toMatch(/<button[^>]*data-act="approve"/);
-    const agm = renderBoard(ready({ perms: { canSeeMoney: false, canEdit: false, canApprove: false, canBudget: false } }));
+    const agm = renderBoard(ready({ perms: { canSeeMoney: false, canEdit: false, canApprove: false, canBudget: false, canEditStructure: false } }));
     expect(agm).not.toContain('data-section="horizon"');
     expect(agm).not.toMatch(/data-act="approve"/);
+    // Task 24: the way to the settings (the editor's), never a dead end.
+    expect(gm).toMatch(/href="\/schedule\/settings\?loc=[^"]+"/);
+    expect(agm).not.toMatch(/href="\/schedule\/settings/);
   });
 
   it("the horizon choices: next week · next N weeks · rest of the month · a month (44 px)", async () => {

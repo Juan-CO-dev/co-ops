@@ -38,7 +38,7 @@ export type PostOutcome = { ok: true; data: Record<string, unknown> } | { ok: fa
 export type Guarded = { kind: "cancelled" } | { kind: "ok"; data: Record<string, unknown> } | { kind: "refused"; code: string };
 
 /** The password (when the tier asks for it) BEFORE the post; a cancelled prompt posts nothing. */
-export async function runGuarded(args: { tier: "B" | null; requestStepUp: (tier: "B") => Promise<"ok" | "cancelled">; post: () => Promise<PostOutcome> }): Promise<Guarded> {
+export async function runGuarded(args: { tier: "B" | "E" | null; requestStepUp: (tier: "B" | "E") => Promise<"ok" | "cancelled">; post: () => Promise<PostOutcome> }): Promise<Guarded> {
   if (args.tier) {
     const s = await args.requestStepUp(args.tier);
     if (s !== "ok") return { kind: "cancelled" };

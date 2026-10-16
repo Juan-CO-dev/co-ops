@@ -40,7 +40,7 @@ import {
 } from "./inputs-shared";
 import type { PersonSettingsRow } from "./people-input-shared";
 import type { DayRecord, DeclaredGap, RuleProblem, Segment, Shift } from "./rules-shared";
-import { SCHEDULE_STRUCTURE_DEFAULTS, structureFromStations, type ScheduleStructure } from "./structure-shared";
+import { SCHEDULE_STRUCTURE_DEFAULTS, structureFromStations, type ScheduleStructure, type SeedPosition, type SeedStation } from "./structure-shared";
 import { Q_MINUTES } from "./time-shared";
 import { addDays, isoWeekStart } from "./time-shared";
 
@@ -80,14 +80,21 @@ export async function loadLiveStructure(service: SupabaseClient, locationId: str
   const saved = await firstRow<{ id: string; structure: ScheduleStructure; created_at: string }>(service.from("schedule_structures")
     .select("id, structure, created_at").eq("location_id", locationId).order("created_at", { ascending: false }).order("id", { ascending: false }).limit(1));
   if (saved) return { id: saved.id, structure: saved.structure, source: "saved" };
+  const rows = await loadStationSeedRows(service, locationId);
+  const seeded = structureFromStations(rows.stations, rows.positions, {});
+  return { id: STRUCTURE_DEFAULTS_ID, structure: seeded.ok ? seeded.structure : SCHEDULE_STRUCTURE_DEFAULTS, source: "defaults" };
+}
+
+/** The station columns the structure is seeded from (0230 / 0238 / the position trims), as `structureFromStations` reads them. */
+export async function loadStationSeedRows(service: SupabaseClient, locationId: string): Promise<{ stations: SeedStation[]; positions: SeedPosition[] }> {
   const stations = await selectAllRows<{ id: string; active: boolean; usually_closes_at: string | null; trims: Array<{ at: string; to_count: number }> | null }>((from, to) => service
     .from("stations").select("id, active, usually_closes_at, trims").eq("location_id", locationId).order("id", { ascending: true }).range(from, to));
   const positions = await selectAllRows<{ id: string; station_id: string; active: boolean; usually_trims_at: string | null }>((from, to) => service
     .from("station_positions").select("id, station_id, active, usually_trims_at").eq("location_id", locationId).order("id", { ascending: true }).range(from, to));
-  const seeded = structureFromStations(
-    stations.map((s) => ({ id: s.id, active: s.active, usuallyClosesAt: s.usually_closes_at, trims: s.trims })),
-    positions.map((p) => ({ id: p.id, stationId: p.station_id, active: p.active, usuallyTrimsAt: p.usually_trims_at })), {});
-  return { id: STRUCTURE_DEFAULTS_ID, structure: seeded.ok ? seeded.structure : SCHEDULE_STRUCTURE_DEFAULTS, source: "defaults" };
+  return {
+    stations: stations.map((s) => ({ id: s.id, active: s.active, usuallyClosesAt: s.usually_closes_at, trims: s.trims })),
+    positions: positions.map((p) => ({ id: p.id, stationId: p.station_id, active: p.active, usuallyTrimsAt: p.usually_trims_at })),
+  };
 }
 
 async function loadMembersWithSince(service: SupabaseClient, locationId: string): Promise<MemberRow[]> {
