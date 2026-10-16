@@ -113,6 +113,8 @@ const SERVER_TIER_MAP: Record<string, string[]> = {
   // Scheduling Phase 1 (Task 16): the people settings (skill tunables MoO+, shop settings) take the Tier E edit
   // window; adjust / rate (/api/people/skills) take none (J8). No client calls it yet (no settings screen in Phase 1).
   "app/api/people/settings/route.ts": ["E"],
+  // Scheduling Phase 1 (Task 22, R10): the PM v2 criteria editor's writes take the Tier E edit window.
+  "app/api/pm-criteria/route.ts": ["E"],
   // 0234 customer profiles: Tier A = reveal / lookup / dismiss / link catering; Tier B = merge, erase,
   // retention, consent import; exports Tier B.
   "app/api/admin/customers/route.ts": ["A"],
@@ -253,6 +255,8 @@ const CLIENT_TIER_MAP: Record<string, string[]> = {
   "components/catalog/MenuItemClient.tsx": ["E"],
   // …and the Shop changes list (promote a shop's recipe or menu price / name; Leave writes nothing).
   "components/catalog/ShopChangesClient.tsx": ["E"],
+  // Scheduling Phase 1 (Task 22): the PM v2 criteria editor asks for the edit window before each write.
+  "components/pm-report-v2/PmCriteriaEditor.tsx": ["E"],
   "components/admin/menu-costing/MenuPriceEditor.tsx": ["E"],
   // POST /api/admin/catering/ezcater-review -> decideEzcaterMapping asserts B in lib.
   "app/admin/catering/ezcater-review/review-client.tsx": ["B"],

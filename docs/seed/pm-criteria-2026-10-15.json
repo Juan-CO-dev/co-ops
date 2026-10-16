@@ -1,0 +1,60 @@
+{
+  "_comment": "PM v2 criteria CONFIRMED by Juan 2026-10-15 (plan docs/superpowers/plans/2026-10-15-scheduling-phase1-BUILD.md, 'PM criteria per position — Confirmed by Juan 2026-10-15', verbatim; CC notes r1b, r1c, r1d). DATA, never code: scripts/seed-pm-criteria.ts loads it into pm_criteria ONCE per shop (dry run by default; --apply only on Juan's word, CC runs it on sim first), after Task 14b's BOH positions exist; managers then edit it in the Tier E criteria editor. A position entry matches a station_positions row of the shop by its EXACT name (station: null = whichever station holds it; more than one match, or none, is a refusal — never a guess). Order within a position is the sort order: the Walk-ins guest line is FIRST on both Walk-ins positions; 'Helps walk-ins when there are no 3rd-party orders' is LAST on 3rd Party Station.",
+  "confirmedBy": "Juan",
+  "confirmedOn": "2026-10-15",
+  "shared": [
+    { "en": "Arrived ready (on time, in uniform)", "es": "Llegó listo (a tiempo, con uniforme)" },
+    { "en": "Teamwork and attitude", "es": "Trabajo en equipo y actitud" }
+  ],
+  "positions": [
+    { "position": "Expeditor", "station": null, "criteria": [
+      { "en": "Ticket accuracy (right items, right mods)", "es": "Precisión de tickets" },
+      { "en": "Pace (tickets moving, no pile-ups)", "es": "Ritmo" },
+      { "en": "Clear call-outs and communication", "es": "Comunicación clara" },
+      { "en": "Bags checked before hand-off", "es": "Bolsas revisadas antes de entregar" }
+    ] },
+    { "position": "Register & Delivery", "station": null, "criteria": [
+      { "en": "Order accuracy at the register", "es": "Precisión en caja" },
+      { "en": "Greets and helps guests", "es": "Atención al cliente" },
+      { "en": "Delivery hand-offs (right bag, right driver)", "es": "Entregas correctas" },
+      { "en": "Cash handling", "es": "Manejo de efectivo" }
+    ] },
+    { "position": "Walk-ins", "station": null, "criteria": [
+      { "en": "Greets guests promptly and takes the order in a welcoming way", "es": "Saluda rápido y toma la orden de forma amable" },
+      { "en": "Builds to spec (portions, order)", "es": "Arma según la receta" },
+      { "en": "Speed in the rush", "es": "Rapidez en la hora pico" },
+      { "en": "Station stocked and clean", "es": "Estación surtida y limpia" },
+      { "en": "Helps online when there are no walk-ins", "es": "Ayuda con pedidos en línea" }
+    ] },
+    { "position": "Walk-ins / Online", "station": null, "criteria": [
+      { "en": "Greets guests promptly and takes the order in a welcoming way", "es": "Saluda rápido y toma la orden de forma amable" },
+      { "en": "Online order accuracy", "es": "Precisión en pedidos en línea" },
+      { "en": "Ready by the quoted time", "es": "Listo a la hora prometida" },
+      { "en": "Balances walk-ins and online", "es": "Equilibra tienda y en línea" },
+      { "en": "Station stocked", "es": "Estación surtida" }
+    ] },
+    { "position": "Crunchy Boi Station", "station": null, "criteria": [
+      { "en": "Builds to spec", "es": "Arma según la receta" },
+      { "en": "Speed", "es": "Rapidez" },
+      { "en": "Station stocked and clean", "es": "Estación surtida y limpia" }
+    ] },
+    { "position": "3rd Party Station", "station": null, "criteria": [
+      { "en": "Ticket accuracy, incl. modifications", "es": "Precisión incluyendo cambios" },
+      { "en": "Packed and labeled right", "es": "Empaque y etiquetas correctas" },
+      { "en": "Ready for driver pickup", "es": "Listo para el repartidor" },
+      { "en": "Helps walk-ins when there are no 3rd-party orders", "es": "Ayuda en tienda cuando no hay pedidos de terceros" }
+    ] },
+    { "position": "Prep", "station": null, "criteria": [
+      { "en": "Prep list done on time", "es": "Lista de prep a tiempo" },
+      { "en": "Yield and portions vs recipe", "es": "Rendimiento y porciones" },
+      { "en": "Safe, clean slicer and knife work", "es": "Rebanadora y cuchillos con seguridad y limpieza" },
+      { "en": "Labeled and dated (first in, first out)", "es": "Etiquetado y fechado (PEPS)" }
+    ] },
+    { "position": "Prep/Dishwasher", "station": null, "criteria": [
+      { "en": "Prep list done on time", "es": "Lista de prep a tiempo" },
+      { "en": "Dishes kept up (no pile at rush or close)", "es": "Platos al día" },
+      { "en": "Sanitation and cleanliness", "es": "Higiene y limpieza" },
+      { "en": "Closing dish duties done", "es": "Tareas de cierre de platos" }
+    ] }
+  ]
+}

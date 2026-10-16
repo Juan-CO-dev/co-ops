@@ -47,13 +47,14 @@ import { loadMySkills, loadSkillMatrix } from "@/lib/people/skills";
 import { loadPeopleShopSettings } from "@/lib/people/settings";
 import { loadBatches } from "@/lib/yield-stats";
 import { loadDayResults, loadMyCopy, loadMyFeedbackV2 } from "@/lib/pm-report-v2";
+import { loadCriteriaEditor } from "@/lib/pm-criteria";
 import { applyPmV1Tables } from "../scripts/pm-v2-pglite-base.mjs";
 
 const LOC = "6f1d2c3e-0000-4000-8000-0000000000a1";
 const owner = { userId: "6f1d2c3e-0000-4000-8000-0000000000c1", role: "owner" as const, level: 9, locations: [LOC] };
 const PEOPLE_TABLES = new Set(["people_shop_settings", "people_skill_adjustments", "people_skill_ratings", "people_skill_tunables"]);
 const PM_V2_TABLES = new Set(["pm_reports", "pm_report_copies", "pm_copy_grades", "pm_copy_notes", "pm_copy_positions", "pm_criteria", "station_events", "station_positions", "stations"]);
-const PM_V2_VIA = new Set(["loadMyCopy", "loadDayResults", "loadMyFeedbackV2"]);
+const PM_V2_VIA = new Set(["loadMyCopy", "loadDayResults", "loadMyFeedbackV2", "loadCriteriaEditor"]);
 const PM_DAY = "6f1d2c3e-0000-4000-8000-0000000000d1";
 const PM_COPY = "6f1d2c3e-0000-4000-8000-0000000000d2";
 const SUBJECT = "6f1d2c3e-0000-4000-8000-0000000000e1";
@@ -95,6 +96,7 @@ beforeAll(async () => {
   const doneSvc = recordingClient({ pm_reports: [day("submitted")], pm_report_copies: [copy("sealed")], pm_copy_grades: [grade] });
   await run("loadDayResults", () => loadDayResults(doneSvc, { actor: owner, locationId: LOC, date: "2026-10-15" }));
   await run("loadMyFeedbackV2", () => loadMyFeedbackV2(doneSvc, { userId: SUBJECT }));
+  await run("loadCriteriaEditor", () => loadCriteriaEditor(openSvc, { actor: owner, locationId: LOC }));
 }, 240_000);
 afterAll(async () => { await db?.close(); });
 
@@ -127,6 +129,9 @@ describe("the skills loaders against the real 0270 schema", () => {
       const sql = `select ${c.select.join(", ")} from public.${c.table} where ${where}${order} limit 0`;
       await expect(db.query(sql), `${c.via}: ${sql}`).resolves.toBeDefined();
     }
+    // The criteria editor's UPDATE (rename / deactivate / move) names these columns (Task 22).
+    await expect(db.query("update public.pm_criteria set label = label, label_es = label_es, sort = sort, active = active, updated_by = updated_by, updated_at = updated_at where false"))
+      .resolves.toBeDefined();
   });
 
   it("(r1 P2-6) the production read IS loadBatches' read: same table, columns and filters, the window bound excepted", () => {

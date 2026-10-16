@@ -45,6 +45,8 @@ export const ADMIN_SECTIONS: AdminSection[] = [
   // 8+ every shop). The card shows from GM up AND to the operational level-6 managers, who may view the
   // status (canViewSevenShiftsStatus); the social media manager never sees it (role-aware, not level).
   { id: "sevenshifts", i18nKey: "sevenshifts.title", href: "/admin/sevenshifts", minLevel: 7, alsoRoles: OPERATIONAL_LEVEL6_ROLES },
+  // Scheduling Phase 1 (0271, Task 22): the PM v2 criteria editor — GM own shop, 8+ every shop; Tier E.
+  { id: "pm-criteria", i18nKey: "pmCriteria.title", href: "/admin/pm-criteria", minLevel: 7 },
   // 0234: customer profiles (stats GM+ own shop / 8+ every shop; contact + consent desk 9+).
   { id: "customers", i18nKey: "customers.title", href: "/admin/customers", minLevel: 7 },
   { id: "users",               i18nKey: "admin.section.users",               href: "/admin/users",               minLevel: 8 },
