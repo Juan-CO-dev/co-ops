@@ -36,6 +36,8 @@ jobs:
           node-version-file: .nvmrc
           cache: npm
       - run: npm ci
+      # next-env.d.ts (static-image module types) is gitignored; generate it like `next build` does.
+      - run: npx next typegen
       - run: npx tsc --noEmit --incremental false
       - run: npx vitest run tests/landing tests/security-headers.test.ts tests/sim-isolation.test.ts --pool=threads --no-cache --maxWorkers=3
       - run: node --experimental-strip-types scripts/landing/order-click-sql-check.ts
