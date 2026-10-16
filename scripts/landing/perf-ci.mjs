@@ -31,7 +31,7 @@ for(const state of (launch?['accepted']:['unset','accepted'])) {
     const consentFailures=checkConsentRuns(reports,state,{blockPixel});
     const failures=[...budgetFailures,...consentFailures];
     failed ||= failures.length>0;
-    const summary={state,measurement,thirdPartyCostMeasured:!blockPixel&&state==='accepted'&&reports.length===3&&consentFailures.length===0,failures,runs:failures.includes('incomplete-run')?[]:reports.map(summarizeRun)};
+    const summary={state,measurement,thirdPartyCostMeasured:!blockPixel&&state==='accepted'&&reports.length===5&&consentFailures.length===0,failures,runs:failures.includes('incomplete-run')?[]:reports.map(summarizeRun)};
     writeFileSync(`${runDir}/${state}.json`,JSON.stringify(summary,null,2));
     console.log(JSON.stringify(summary));
   }

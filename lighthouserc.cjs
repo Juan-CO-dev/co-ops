@@ -8,7 +8,7 @@ const blocked = process.env.LANDING_PERF_BLOCK_PIXEL === '1'
   ? { blockedUrlPatterns: ['*://connect.facebook.net/*', '*://www.facebook.com/tr/*'] } : {};
 module.exports = {
   ci: {
-    collect: { url: [url], numberOfRuns: 3,
+    collect: { url: [url], numberOfRuns: 5,
       puppeteerScript: 'scripts/landing/perf-consent.cjs',
       // Match Playwright's local browser launch in restricted test environments.
       puppeteerLaunchOptions: { args: process.env.LANDING_PERF_NO_SANDBOX === '1' ? ['--no-sandbox'] : [] },

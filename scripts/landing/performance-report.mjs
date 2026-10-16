@@ -17,11 +17,11 @@ export function summarizeRun(report) {
     firstParty,thirdParty,total:firstParty+thirdParty};
 }
 export function checkFirstPartyRuns(reports) {
-  if(reports.length!==3)return ['three-cold-runs-required'];
+  if(reports.length!==5)return ['five-cold-runs-required'];
   try {
     const runs=reports.map(summarizeRun);
     const failures=runs.some(run=>run.firstParty>500000)?['first-party-bytes']:[];
-    const median=key=>runs.map(run=>run[key]).sort((a,b)=>a-b)[1];
+    const median=key=>runs.map(run=>run[key]).sort((a,b)=>a-b)[2];
     for(const key of ['performance','lcp','tbt']) if(runs.some(run=>!Number.isFinite(run[key]))) return ['incomplete-run'];
     if(median('performance')<0.85)failures.push('performance');
     if(median('lcp')>=2500)failures.push('lcp');
@@ -30,7 +30,7 @@ export function checkFirstPartyRuns(reports) {
   } catch {return ['incomplete-run'];}
 }
 export function checkConsentRuns(reports,state,{blockPixel=false}={}) {
-  if(reports.length!==3)return ['three-cold-runs-required'];
+  if(reports.length!==5)return ['five-cold-runs-required'];
   for(const report of reports) {
     const origin=new URL(report.finalDisplayedUrl ?? report.finalUrl ?? report.requestedUrl).origin;
     const requests=report.audits['network-requests']?.details?.items ?? [];
