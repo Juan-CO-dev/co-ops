@@ -83,6 +83,14 @@ export function canViewPeople(actor: PeopleActor, locationId: string): boolean {
   return managerOwnOrMooAny(actor, locationId);
 }
 
+/**
+ * May this actor open the people views at all (the team pages, before a shop is chosen)? GM, Op-6 and
+ * MoO+; the social media manager never (R7, by ROLE). The per-shop rule is `canViewPeople`.
+ */
+export function canOpenPeopleViews(actor: PeopleActor): boolean {
+  return !isSmm(actor) && (isMooPlus(actor) || isGm(actor) || isOp6(actor));
+}
+
 /** The 7shifts status line for a shop. */
 export function canViewSevenShiftsStatus(actor: PeopleActor, locationId: string): boolean {
   return managerOwnOrMooAny(actor, locationId);

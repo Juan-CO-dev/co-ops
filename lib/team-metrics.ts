@@ -17,7 +17,8 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { ROLES, type RoleCode } from "@/lib/roles";
 import { healthFromCounts } from "@/lib/team-scoring";
 import { personReadNarrative, myPerformanceRead, type NarrativeLine } from "@/lib/people-narrative";
-import { resolveTrendRange, clippedBucketKeys, trendLocationAllowed, type TrendRange, bucketStart, type TrendGranularity } from "@/lib/reports-trends";
+import { resolveTrendRange, clippedBucketKeys, type TrendRange, bucketStart, type TrendGranularity } from "@/lib/reports-trends";
+import { canOpenPeopleViews, canViewPeople, type PeopleActor } from "@/lib/people/access-shared";
 import { loadPeopleFacts } from "@/lib/people/facts";
 import { LEGACY_PERSON_FAMILIES, LEGACY_TEAM_FAMILIES, unionWindow } from "@/lib/people/facts-shared";
 import {
@@ -33,10 +34,24 @@ export type {
   OversightAuditRow, PersonMetrics, PersonSignals, PersonStreaks, TeamMember, TeamOperatingHealth,
 } from "@/lib/people/performance-shared";
 
-export const TEAM_VIEW_LEVEL = 6; // AGM+
+/** The level floor of the people views (AGM+). The ROLE rule on top of it is `canViewPeople` (R7). */
+export const TEAM_VIEW_LEVEL = 6;
 
 /** Who is looking: the verified session's user, TRUSTED role, level and shops. */
 export interface Viewer { userId: string; role: RoleCode; level: number; locations?: readonly string[] | "all"; }
+
+/** The viewer as the people rules take it ("all" or no list = no shop list; MoO+ reads every shop anyway). */
+function peopleActorOf(viewer: Viewer): PeopleActor {
+  return { userId: viewer.userId, role: viewer.role, level: viewer.level, locations: Array.isArray(viewer.locations) ? viewer.locations : [] };
+}
+
+/**
+ * Task 13: ONE access rule for people data about others — `canViewPeople`: GM or Op-6 at their own
+ * shops, MoO+ any shop, the social media manager never (by ROLE). Decided before any read.
+ */
+function mayViewPeople(viewer: Viewer, locationId: string): boolean {
+  return viewer.level >= TEAM_VIEW_LEVEL && canViewPeople(peopleActorOf(viewer), locationId);
+}
 
 /** One trend window as the pure rules take it. */
 function peopleWindow(range: { from: string; to: string }, granularity: TrendGranularity): PeopleWindow {
@@ -51,7 +66,7 @@ function peopleWindow(range: { from: string; to: string }, granularity: TrendGra
 
 type TeamArgs = { viewer: Viewer; locationId: string; granularity: TrendGranularity; compare: boolean; today: string; range?: TrendRange };
 export async function loadTeamOperatingHealth(service: SupabaseClient, args: TeamArgs): Promise<TeamOperatingHealth | null> {
-  if (args.viewer.level < TEAM_VIEW_LEVEL || !trendLocationAllowed(args.viewer, args.locationId)) return null;
+  if (!mayViewPeople(args.viewer, args.locationId)) return null;
   const range = args.range ? resolveTrendRange(Object.fromEntries(reportRangeParams(args.range)), args.today, args.granularity) : resolveTrendRange({ compare: args.compare ? "1" : "0" }, args.today, args.granularity);
   const current = peopleWindow(range, args.granularity);
   const previous = range.compare ? peopleWindow(range.previous, args.granularity) : null;
@@ -134,11 +149,11 @@ async function computePersonMetrics(
 
 /** Shops this person can actually be opened at, intersected with the viewer's scope. */
 export async function loadPersonReportLocations(service: SupabaseClient, viewer: Viewer, personId: string): Promise<string[]> {
-  if (viewer.level < TEAM_VIEW_LEVEL) return [];
+  if (viewer.level < TEAM_VIEW_LEVEL || !canOpenPeopleViews(peopleActorOf(viewer))) return [];
   const { data: memberships, error: membershipError } = await service.from("user_locations")
     .select("location_id").eq("user_id", personId).eq("active", true);
   if (membershipError) throw new Error(membershipError.message);
-  const ids = (memberships ?? []).map(row => row.location_id as string).filter(id => trendLocationAllowed(viewer, id));
+  const ids = (memberships ?? []).map(row => row.location_id as string).filter(id => mayViewPeople(viewer, id));
   if (!ids.length) return [];
   const { data: locations, error } = await service.from("locations").select("id").in("id", ids).eq("active", true).order("name");
   if (error) throw new Error(error.message);
@@ -150,7 +165,7 @@ export async function loadPersonDetail(
   args: { viewer: Viewer; personId: string; locationId: string; granularity: TrendGranularity; compare: boolean; today: string; range?: TrendRange },
 ): Promise<PersonDetail | null> {
   if (args.range) args = { ...args, range: resolveTrendRange(Object.fromEntries(reportRangeParams(args.range)), args.today, args.granularity) };
-  if (args.viewer.level < TEAM_VIEW_LEVEL || !trendLocationAllowed(args.viewer, args.locationId)) return null;
+  if (!mayViewPeople(args.viewer, args.locationId)) return null;
 
   // IDOR: person must be assigned to this location, active, and rankable (< MoO).
   const { data: ul } = await service

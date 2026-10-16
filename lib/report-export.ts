@@ -17,8 +17,9 @@ import { operationalNow } from "@/lib/midshift-shared";
 import { parseReportRange } from "@/lib/report-range";
 import { REPORTS_HUB_CASH_LEVEL, listReports, loadReportDetail, type CashReportDetail, type ReportTypeKey, type SignalFilters, type Viewer } from "@/lib/reports-hub";
 import { buildSearchCorpus, searchReport } from "@/lib/reports-search";
-import { OPS_TRENDS_LEVEL, loadTrendSeries, resolveTrendRange, trendLocationAllowed, type TrendGranularity } from "@/lib/reports-trends";
+import { OPS_TRENDS_LEVEL, loadTrendSeries, resolveTrendRange, type TrendGranularity } from "@/lib/reports-trends";
 import { TEAM_VIEW_LEVEL, loadTeamOperatingHealth } from "@/lib/team-metrics";
+import { canOpenPeopleViews, canViewPeople, peopleActorFromAuth } from "@/lib/people/access-shared";
 import { listWrittenReports } from "@/lib/written-reports";
 import { INSIGHTS_READ_MIN, loadCateringInsightsV2 } from "@/lib/catering/insights";
 import { RECEIVE_MIN, ReceivingError, loadDeliveriesForExport } from "@/lib/receiving";
@@ -177,6 +178,9 @@ export function assertFamilyFloor(auth: AuthContext, family: ExportFamily): void
     sales: SALES_EXPORT_MIN,
   };
   if (auth.level < floor[family]) throw new ExportError(403, "role_insufficient");
+  // Task 13 (R7): the team section is people data about others — the social media manager is
+  // refused by ROLE, before any database work.
+  if (family === "team" && !canOpenPeopleViews(peopleActorFromAuth(auth))) throw new ExportError(403, "role_insufficient");
 }
 
 function granularity(g: string | undefined): TrendGranularity {
@@ -267,7 +271,7 @@ export async function loadExportTable(auth: AuthContext, family: ExportFamily, p
       case "team": {
         const g = granularity(params.g);
         const trendRange = resolveTrendRange(params, today, g);
-        if (!trendLocationAllowed(viewer, locationId!)) throw new ExportError(403, "location_forbidden");
+        if (!canViewPeople(peopleActorFromAuth(auth), locationId!)) throw new ExportError(403, "location_forbidden");
         const team = await loadTeamOperatingHealth(sb, { viewer, locationId: locationId!, granularity: g, compare: false, today, range: { ...trendRange, compare: false } });
         if (!team) throw new ExportError(403, "role_insufficient");
         return { ...base, from: trendRange.from, to: trendRange.to, rows: teamRows(team, shop!, trendRange) };

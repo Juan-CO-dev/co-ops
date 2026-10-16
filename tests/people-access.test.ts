@@ -10,6 +10,8 @@ import {
   canLinkSevenShiftsUser,
   canManageSevenShiftsPeople,
   canManageSevenShiftsShops,
+  canOpenPeopleViews,
+  linkNeedsRemoteAtShop,
   canMarkDone,
   canRateNewHire,
   canReadPmCopy,
@@ -350,5 +352,27 @@ describe("canManageSevenShiftsPeople — the person-link screen's act gate: GM o
       const shop = shopFor(where);
       expect(canManageSevenShiftsPeople(actor(role, where), shop)).toBe(canLinkSevenShiftsUser(actor(role, where), 0, [shop], shop));
     }
+  });
+});
+
+describe("Task 13 — canOpenPeopleViews: the team pages' role gate, every role", () => {
+  it.each(ALL_ROLES)("%s", (role) => {
+    const expected = role !== "social_media_mgr" && ROLES[role].level >= 6;
+    expect(canOpenPeopleViews(actor(role))).toBe(expected);
+    expect(canOpenPeopleViews(actor(role, "none"))).toBe(expected);
+  });
+  it("a level-forged SMM stays refused", () => {
+    expect(canOpenPeopleViews({ userId: "s", role: "social_media_mgr", level: 9, locations: [OWN] })).toBe(false);
+  });
+  it("agrees with canViewPeople: whoever may view a shop may open the views", () => {
+    for (const role of ALL_ROLES) for (const where of ["own", "other", "none"] as const) {
+      if (canViewPeople(actor(role, where), OWN)) expect(canOpenPeopleViews(actor(role, where)), role).toBe(true);
+    }
+  });
+});
+
+describe("ruling (a) — linkNeedsRemoteAtShop: below MoO only", () => {
+  it.each(ALL_ROLES)("%s", (role) => {
+    expect(linkNeedsRemoteAtShop(actor(role))).toBe(role === "social_media_mgr" || ROLES[role].level < 8);
   });
 });

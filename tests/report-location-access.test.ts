@@ -5,6 +5,7 @@ import { readFileSync } from "node:fs";
 import ts from "typescript";
 import { describe, expect, it, vi } from "vitest";
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { canOpenPeopleViews, peopleActorFromAuth } from "@/lib/people/access-shared";
 import { canReadReportLocation, lockLocationContext } from "@/lib/locations";
 import { listWrittenReports, loadWrittenReport } from "@/lib/written-reports";
 import type { RoleCode } from "@/lib/roles";
@@ -101,6 +102,7 @@ describe("per-person team report location boundary", () => {
       const deps = {
         requireSessionFromHeaders: async () => ({ role, level: role === "gm" ? 7 : 8, locations: ["mine"], user: { id: "manager", language: "en" } }),
         TEAM_VIEW_LEVEL: 6, REPORT_ALL_LOCATIONS_LEVEL: 8, canReadReportLocation, resolveTrendRange, reportRangeParams,
+        canOpenPeopleViews, peopleActorFromAuth,
         redirect: () => { throw new Error("redirect"); },
         parseGranularity: () => "day", operationalNow: () => ({ date: "2026-10-07" }),
         parseReportRange: () => ({ range: "last7", from: "2026-10-01", to: "2026-10-07", compare: false, previous: { from: "2026-09-24", to: "2026-09-30" } }),
