@@ -16,3 +16,25 @@ export function disclosureIsOpen(open: boolean, lockedByDirty: boolean): boolean
 export function toggleDisclosure(open: boolean, lockedByDirty: boolean): boolean {
   return lockedByDirty ? true : !open;
 }
+
+// ─── several editors under one disclosure (Astra chunk F review #3) ──────────
+
+/** One editor's key under a disclosure scope: `${scope}/${part}` (e.g. a position's "adjust" and "rate" controls). */
+export function editorKey(scope: string, part: string): string {
+  return `${scope}/${part}`;
+}
+
+/** The dirty set after one editor reports: each editor is tracked on its OWN key, never folded into its scope. */
+export function withDirty(prev: ReadonlySet<string>, key: string, dirty: boolean): ReadonlySet<string> {
+  if (prev.has(key) === dirty) return prev;
+  const next = new Set(prev);
+  if (dirty) next.add(key); else next.delete(key);
+  return next;
+}
+
+/** A scope is dirty while ANY of its editors is (a clean editor never clears a dirty sibling). */
+export function dirtyUnder(dirty: ReadonlySet<string>, scope: string): boolean {
+  const prefix = `${scope}/`;
+  for (const k of dirty) if (k.startsWith(prefix)) return true;
+  return false;
+}

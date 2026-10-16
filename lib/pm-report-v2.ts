@@ -460,7 +460,9 @@ export interface PmResultsPosition {
 export interface PmDayResultsView {
   reportId: string; date: string; locationId: string; submittedByName: string | null; submittedAt: string | null;
   copies: Array<{ copyId: string; authorName: string; status: PmCopyStatus; observedFrom: string | null; observedTo: string | null;
-    entries: Array<{ subjectName: string; positionName: string | null; criterion: string; grade: PmGrade | null }>; notes: Array<{ subjectName: string; positionName: string | null; text: string }> }>;
+    /** Both languages travel (Astra chunk F P3); the component resolves them by the reader's language. */
+    entries: Array<{ subjectName: string; positionName: string | null; positionNameEs: string | null; criterion: string; criterionEs: string | null; grade: PmGrade | null }>;
+    notes: Array<{ subjectName: string; positionName: string | null; positionNameEs: string | null; text: string }> }>;
   people: Array<{ subjectId: string; name: string; positions: PmResultsPosition[] }>;
 }
 
@@ -533,10 +535,16 @@ export async function loadDayResults(service: SupabaseClient, args: { actor: Peo
     copies: copies.map((c) => ({
       copyId: c.id, authorName: names.get(c.author_id) ?? "", status: c.status, observedFrom: c.observed_from, observedTo: c.observed_to,
       entries: grades.filter((g) => g.copy_id === c.id).map((g) => ({
-        subjectName: names.get(g.subject_id) ?? "", positionName: g.position_id ? posById.get(g.position_id)?.name ?? null : null,
-        criterion: critById.get(g.criterion_id)?.label ?? "", grade: g.grade,
+        subjectName: names.get(g.subject_id) ?? "",
+        positionName: g.position_id ? posById.get(g.position_id)?.name ?? null : null,
+        positionNameEs: g.position_id ? posById.get(g.position_id)?.name_es ?? null : null,
+        criterion: critById.get(g.criterion_id)?.label ?? "", criterionEs: critById.get(g.criterion_id)?.label_es ?? null, grade: g.grade,
       })),
-      notes: notes.filter((n) => n.copy_id === c.id).map((n) => ({ subjectName: names.get(n.subject_id) ?? "", positionName: n.position_id ? posById.get(n.position_id)?.name ?? null : null, text: n.note })),
+      notes: notes.filter((n) => n.copy_id === c.id).map((n) => ({
+        subjectName: names.get(n.subject_id) ?? "",
+        positionName: n.position_id ? posById.get(n.position_id)?.name ?? null : null,
+        positionNameEs: n.position_id ? posById.get(n.position_id)?.name_es ?? null : null, text: n.note,
+      })),
     })),
     people,
   };

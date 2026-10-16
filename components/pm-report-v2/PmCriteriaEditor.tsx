@@ -18,7 +18,7 @@ import { disclosureIsOpen, toggleDisclosure } from "@/lib/disclosure-lock-shared
 import { useTranslation } from "@/lib/i18n/provider";
 import type { TranslationKey } from "@/lib/i18n/types";
 import type { PmCriteriaEditorView } from "@/lib/pm-criteria";
-import type { EditorGroup } from "@/lib/pm-criteria-shared";
+import { addFormAfter, criteriaWriteOutcome, type CriteriaWriteOutcome, type EditorGroup } from "@/lib/pm-criteria-shared";
 
 const button = "inline-flex min-h-[44px] items-center justify-center rounded-lg border-2 border-co-gold-deep bg-co-gold px-4 font-bold text-co-text disabled:opacity-60";
 const quiet = "inline-flex min-h-[44px] min-w-[44px] items-center justify-center rounded-lg border-2 border-co-border bg-co-surface px-3 font-bold text-co-text disabled:opacity-60";
@@ -33,12 +33,12 @@ function useWrite() {
   const { requestStepUp } = useStepUp();
   const post = useStepUpPost();
   const router = useRouter();
-  return useCallback(async (body: Record<string, unknown>): Promise<TranslationKey | null> => {
-    if ((await requestStepUp("E")) !== "ok") return null;
-    const r = await post("/api/pm-criteria", body);
-    if (!r.ok) return errorKey(r.code);
-    router.refresh();
-    return null;
+  // A canceled password prompt is its own outcome (Astra chunk F #4): the caller keeps the draft.
+  return useCallback(async (body: Record<string, unknown>): Promise<CriteriaWriteOutcome> => {
+    const stepUp = await requestStepUp("E");
+    const outcome = stepUp === "ok" ? criteriaWriteOutcome(stepUp, await post("/api/pm-criteria", body)) : criteriaWriteOutcome(stepUp);
+    if (outcome.kind === "saved") router.refresh();
+    return outcome;
   }, [requestStepUp, post, router]);
 }
 
@@ -93,7 +93,8 @@ function CriterionRowEditor({ criterion, locationId, first, last, onDirty }: {
   useEffect(() => { onDirty(criterion.id, dirty); }, [onDirty, criterion.id, dirty]);
   const run = async (body: Record<string, unknown>) => {
     setBusy(true); setError(null);
-    setError(await write({ locationId, criterionId: criterion.id, ...body }));
+    const outcome = await write({ locationId, criterionId: criterion.id, ...body });
+    setError(outcome.kind === "error" ? errorKey(outcome.code) : null);
     setBusy(false);
   };
   return (
@@ -146,10 +147,11 @@ function AddCriterion({ positionId, locationId, onDirty }: { positionId: string 
       <div className="flex flex-wrap items-center gap-2">
         <button type="button" className={button} disabled={busy || !label.trim()} onClick={async () => {
           setBusy(true); setError(null);
-          const e = await write({ action: "create", locationId, positionId, label, labelEs: labelEs || null });
+          const outcome = await write({ action: "create", locationId, positionId, label, labelEs: labelEs || null });
           setBusy(false);
-          if (e) { setError(e); return; }
-          setLabel(""); setLabelEs("");
+          if (outcome.kind === "error") setError(errorKey(outcome.code));
+          const next = addFormAfter(outcome, { label, labelEs });
+          setLabel(next.label); setLabelEs(next.labelEs);
         }}>{t("pmCriteria.add")}</button>
       </div>
     </div>

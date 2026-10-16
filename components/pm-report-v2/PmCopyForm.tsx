@@ -12,14 +12,26 @@
  * a SEALED copy renders no controls (the page shows the results). Other managers' copies are COUNTS only: the
  * view this component receives never contains them. Autosave per answer (the save-status pattern). 44 px
  * controls with items-center; useState only; no email, no notification.
+ *
+ * DRAFTS AND SAVES (Astra chunk F review #1, #2; lib/pm-copy-drafts-shared): every answer and note lives in ONE
+ * store above the person cards, with a saved baseline that moves on each successful save (so a saved note can be
+ * cleared, and a collapse never loses a draft). A card holding unsaved work — a changed note, a pending or a
+ * failed save — stays locked open with "Unsaved changes" (D10). Saves go through ONE queue per copy, in order;
+ * the latest save of an answer wins. Done and Submit save any changed note, wait for every pending save, and
+ * refuse with "pmv2.error.unsaved" when one failed. `initialNoteDrafts` exists for the SSR tests only.
  */
-import { useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useTranslation } from "@/lib/i18n/provider";
 import type { TranslationKey } from "@/lib/i18n/types";
 import type { PmCopyPositionView, PmCopyView } from "@/lib/pm-report-v2";
 import { PM_GRADES, PM_V2_ERROR_CODES, wallTimeOf, type PmGrade } from "@/lib/pm-report-v2-shared";
 import { SaveStatus } from "@/components/ui/SaveStatus";
+import { disclosureIsOpen, toggleDisclosure } from "@/lib/disclosure-lock-shared";
+import {
+  answerKey, applyGradeResult, applyNoteResult, chooseGrade, createSaveQueue, dirtyNoteKeys, editNote, initialCopyDrafts,
+  noteKey, noteNeedsSave, personHasUnsaved, type CopyDrafts,
+} from "@/lib/pm-copy-drafts-shared";
 import type { SavePhase } from "@/lib/save-status-shared";
 
 const button = "inline-flex min-h-[44px] items-center justify-center rounded-lg border-2 border-co-gold-deep bg-co-gold px-4 font-bold text-co-text disabled:opacity-60";
@@ -45,11 +57,14 @@ function minutesLabel(t: (k: TranslationKey, p?: Record<string, string | number>
   return h > 0 ? t("pmv2.duration.hm", { h, m }) : t("pmv2.duration.m", { m });
 }
 
-export function PmCopyForm({ view, prefillFrom = null, initiallyOpen = false }: { view: PmCopyView; prefillFrom?: string | null; initiallyOpen?: boolean }) {
+export function PmCopyForm({ view, prefillFrom = null, initiallyOpen = false, initialNoteDrafts }: {
+  view: PmCopyView; prefillFrom?: string | null; initiallyOpen?: boolean; initialNoteDrafts?: Readonly<Record<string, string>>;
+}) {
   const { t } = useTranslation();
   const router = useRouter();
   const editable = view.formState === "editable";
   const [busy, setBusy] = useState(false);
+  const store = useCopyStore(view, initialNoteDrafts);
   const [error, setError] = useState<TranslationKey | null>(null);
   const [from, setFrom] = useState(wallTimeOf(view.copy.observedFrom) || wallTimeOf(prefillFrom));
   const [to, setTo] = useState(wallTimeOf(view.copy.observedTo));
@@ -98,13 +113,19 @@ export function PmCopyForm({ view, prefillFrom = null, initiallyOpen = false }: 
         {view.others.started > 0 && <p className="text-sm text-co-text-muted">{t("pmv2.copy.others", { n: view.others.started })}</p>}
       </div>
 
-      {view.people.map((p) => <PersonCard key={p.subjectId} person={p} view={view} editable={editable && !busy} initiallyOpen={initiallyOpen} />)}
+      {view.people.map((p) => <PersonCard key={p.subjectId} person={p} view={view} editable={editable && !busy} initiallyOpen={initiallyOpen} store={store} />)}
 
       {error && <p role="alert" className="text-sm font-bold text-co-cta-text">{t(error)}</p>}
       {view.formState !== "sealed" && (
         <div className="co-card grid gap-2 p-4">
           {editable && (
-            <button type="button" className={quiet} disabled={busy || !windowSaved} onClick={() => act({ action: "done", copyId: view.copy.id })}>{t("pmv2.copy.markDone")}</button>
+            <button type="button" className={quiet} disabled={busy || !windowSaved} onClick={async () => {
+              setBusy(true); setError(null);
+              const saved = await store.settleSaves();
+              setBusy(false);
+              if (!saved) { setError("pmv2.error.unsaved"); return; }
+              await act({ action: "done", copyId: view.copy.id });
+            }}>{t("pmv2.copy.markDone")}</button>
           )}
           {!confirming ? (
             <button type="button" className={button} disabled={busy} onClick={() => setConfirming(true)}>{t("pmv2.submit.button")}</button>
@@ -120,6 +141,7 @@ export function PmCopyForm({ view, prefillFrom = null, initiallyOpen = false }: 
               <div className="flex flex-wrap items-center gap-2">
                 <button type="button" className={button} disabled={busy} onClick={async () => {
                   setBusy(true); setError(null);
+                  if (editable && !(await store.settleSaves())) { setBusy(false); setError("pmv2.error.unsaved"); return; }
                   if ((view.mvpUserId ?? "") !== mvp) {
                     const m = await post({ action: "set_mvp", locationId: view.locationId, mvpUserId: mvp || null });
                     if (!m.ok) { setBusy(false); setError(pmV2ErrorKey(m.code)); return; }
@@ -140,23 +162,86 @@ export function PmCopyForm({ view, prefillFrom = null, initiallyOpen = false }: 
   );
 }
 
-function PersonCard({ person, view, editable, initiallyOpen }: { person: PmCopyView["people"][number]; view: PmCopyView; editable: boolean; initiallyOpen: boolean }) {
+/** The copy's ONE draft store and save queue (Astra chunk F #1/#2). Lives in the form, above every card. */
+type CopyStore = ReturnType<typeof useCopyStore>;
+function useCopyStore(view: PmCopyView, initialNoteDrafts?: Readonly<Record<string, string>>) {
+  const [drafts, setDrafts] = useState<CopyDrafts>(() => initialCopyDrafts(view, initialNoteDrafts));
+  const [errors, setErrors] = useState<Readonly<Record<string, TranslationKey>>>({});
+  const draftsRef = useRef(drafts);
+  useEffect(() => { draftsRef.current = drafts; }, [drafts]);
+  const [queue] = useState(() => createSaveQueue((body: Record<string, unknown>) => post(body)));
+  const scopeError = useCallback((scope: string, r: { ok: boolean; stale: boolean; code?: unknown }) => {
+    if (r.stale) return;
+    setErrors((e) => {
+      const next = { ...e };
+      if (r.ok) delete next[scope]; else next[scope] = pmV2ErrorKey(r.code);
+      return next;
+    });
+  }, []);
+  const base = useCallback((subjectId: string, positionId: string | null) =>
+    ({ locationId: view.locationId, copyId: view.copy.id, subjectId, positionId }), [view.locationId, view.copy.id]);
+
+  const choose = useCallback((subjectId: string, positionId: string | null, criterionId: string, grade: PmGrade | null) => {
+    const k = answerKey(subjectId, positionId, criterionId);
+    setDrafts((d) => chooseGrade(d, k, grade));
+    void queue.save(`g:${k}`, { ...base(subjectId, positionId), action: "grade", criterionId, grade }).then((r) => {
+      setDrafts((d) => applyGradeResult(d, k, grade, r));
+      scopeError(noteKey(subjectId, positionId), r);
+    });
+  }, [queue, base, scopeError]);
+
+  const saveNote = useCallback((k: string, subjectId: string, positionId: string | null, text: string) => {
+    return queue.save(`n:${k}`, { ...base(subjectId, positionId), action: "note", note: text }).then((r) => {
+      setDrafts((d) => applyNoteResult(d, k, text, r));
+      scopeError(k, r);
+    });
+  }, [queue, base, scopeError]);
+
+  const typeNote = useCallback((subjectId: string, positionId: string | null, text: string) => {
+    setDrafts((d) => editNote(d, noteKey(subjectId, positionId), text));
+  }, []);
+  /** On blur: save the note when it differs from the SAVED baseline (a cleared note included). */
+  const blurNote = useCallback((subjectId: string, positionId: string | null, text: string) => {
+    const k = noteKey(subjectId, positionId);
+    if (!noteNeedsSave(editNote(draftsRef.current, k, text), k)) return;
+    void saveNote(k, subjectId, positionId, text);
+  }, [saveNote]);
+
+  /** Before Done / Submit: save every changed note, then wait for every pending save. False = one failed. */
+  const settleSaves = useCallback(async (): Promise<boolean> => {
+    const d = draftsRef.current;
+    for (const k of dirtyNoteKeys(d)) {
+      const subjectId = k.slice(0, k.indexOf("|"));
+      const positionId = k.slice(k.indexOf("|") + 1) || null;
+      void saveNote(k, subjectId, positionId, d.draft.notes[k] ?? "");
+    }
+    return (await queue.settle()).ok;
+  }, [queue, saveNote]);
+
+  return { drafts, errors, choose, typeNote, blurNote, settleSaves };
+}
+
+function PersonCard({ person, view, editable, initiallyOpen, store }: { person: PmCopyView["people"][number]; view: PmCopyView; editable: boolean; initiallyOpen: boolean; store: CopyStore }) {
   const { t, language } = useTranslation();
-  const [open, setOpen] = useState(initiallyOpen);
+  const [chosenOpen, setOpen] = useState(initiallyOpen);
+  // D10: a card holding unsaved work stays open; a tap on its header cannot collapse it.
+  const unsaved = personHasUnsaved(store.drafts, person.subjectId);
+  const open = disclosureIsOpen(chosenOpen, unsaved);
   const name = (p: PmCopyPositionView) => p.positionId === null ? t("pmv2.position.none") : (language === "es" && p.nameEs ? p.nameEs : p.name ?? "");
   const worked = person.positions.map((p) => p.positionId === null ? name(p) : `${name(p)} ${p.added ? t("pmv2.position.addedShort") : minutesLabel(t, p.minutes)}`).join(" · ");
   const id = `pmv2-${person.subjectId}`;
   return (
     <div className="co-card p-0">
       <button type="button" className="flex min-h-[44px] w-full flex-wrap items-center gap-x-3 gap-y-1 px-4 py-3 text-left" aria-expanded={open} aria-controls={id}
-        aria-label={t("pmv2.person.toggle", { name: person.name })} onClick={() => setOpen((o) => !o)}>
+        aria-label={t("pmv2.person.toggle", { name: person.name })} onClick={() => setOpen((o) => toggleDisclosure(disclosureIsOpen(o, unsaved), unsaved))}>
         <span className="min-w-0 flex-1 basis-[10rem] font-bold text-co-text">{person.name}</span>
         <span className="text-sm text-co-text-muted">{worked}</span>
         {person.rated && <span className="rounded-full bg-co-gold/20 px-2 py-0.5 text-xs font-bold text-co-text">{t("pmv2.person.rated")}</span>}
+        {unsaved && <span className="rounded-full bg-co-warning-surface px-2 py-0.5 text-xs font-bold text-co-warning-text">{t("pmv2.person.unsaved")}</span>}
       </button>
       {open && (
         <div id={id} className="grid gap-4 border-t border-co-border/50 px-4 pb-4 pt-3">
-          {person.positions.map((p) => <PositionBlock key={p.positionId ?? "none"} subjectId={person.subjectId} position={p} positionName={name(p)} view={view} editable={editable} />)}
+          {person.positions.map((p) => <PositionBlock key={p.positionId ?? "none"} subjectId={person.subjectId} position={p} positionName={name(p)} editable={editable} store={store} />)}
           {editable && <AddPosition subjectId={person.subjectId} view={view} />}
         </div>
       )}
@@ -164,26 +249,16 @@ function PersonCard({ person, view, editable, initiallyOpen }: { person: PmCopyV
   );
 }
 
-function PositionBlock({ subjectId, position, positionName, view, editable }: { subjectId: string; position: PmCopyPositionView; positionName: string; view: PmCopyView; editable: boolean }) {
+function PositionBlock({ subjectId, position, positionName, editable, store }: { subjectId: string; position: PmCopyPositionView; positionName: string; editable: boolean; store: CopyStore }) {
   const { t, language } = useTranslation();
-  const [answers, setAnswers] = useState<Record<string, PmGrade | null>>(() => Object.fromEntries(position.answers.map((a) => [a.criterionId, a.grade])));
-  const [note, setNote] = useState(position.note ?? "");
-  const [phase, setPhase] = useState<SavePhase>("idle");
-  const [error, setError] = useState<TranslationKey | null>(null);
-  async function save(body: Record<string, unknown>, onFail: () => void) {
-    setPhase("saving"); setError(null);
-    const r = await post({ locationId: view.locationId, copyId: view.copy.id, subjectId, positionId: position.positionId, ...body });
-    if (r.ok) setPhase("saved"); else { setPhase("failed"); setError(pmV2ErrorKey(r.code)); onFail(); }
-  }
-  function choose(criterionId: string, grade: PmGrade | null) {
-    const before = answers[criterionId];
-    setAnswers((a) => ({ ...a, [criterionId]: grade }));
-    void save({ action: "grade", criterionId, grade }, () => setAnswers((a) => {
-      const next = { ...a };
-      if (before === undefined) delete next[criterionId]; else next[criterionId] = before;
-      return next;
-    }));
-  }
+  const { drafts } = store;
+  const nk = noteKey(subjectId, position.positionId);
+  const note = drafts.draft.notes[nk] ?? "";
+  const keys = position.criteria.map((c) => answerKey(subjectId, position.positionId, c.id));
+  const error = store.errors[nk] ?? null;
+  const phase: SavePhase = keys.some((k) => drafts.pending[k]) ? "saving"
+    : error || keys.some((k) => drafts.failed[k]) || drafts.failed[`n:${nk}`] ? "failed"
+      : keys.some((k) => k in drafts.saved.answers) || (drafts.saved.notes[nk] ?? "") !== "" ? "saved" : "idle";
   const choices: Array<{ grade: PmGrade | null; key: TranslationKey }> = [
     ...PM_GRADES.map((g) => ({ grade: g, key: `pmv2.grade.${g}` as TranslationKey })),
     { grade: null, key: "pmv2.grade.didntSee" },
@@ -194,7 +269,8 @@ function PositionBlock({ subjectId, position, positionName, view, editable }: { 
         {positionName}{position.added ? ` · ${t("pmv2.position.added", { reason: position.added.reason })}` : ""}
       </h3>
       {position.criteria.map((c) => {
-        const current = c.id in answers ? answers[c.id] : undefined;
+        const k = answerKey(subjectId, position.positionId, c.id);
+        const current = k in drafts.draft.answers ? drafts.draft.answers[k] : undefined;
         return (
           <fieldset key={c.id} className="grid gap-1" disabled={!editable}>
             <legend className="text-sm text-co-text">{language === "es" && c.labelEs ? c.labelEs : c.label}</legend>
@@ -202,7 +278,7 @@ function PositionBlock({ subjectId, position, positionName, view, editable }: { 
               {choices.map((ch) => (
                 <button key={String(ch.grade)} type="button" aria-pressed={current === ch.grade}
                   className={`inline-flex min-h-[44px] items-center justify-center rounded-lg border-2 px-3 text-sm font-bold disabled:opacity-60 ${current === ch.grade ? "border-co-text bg-co-gold text-co-text" : "border-co-border bg-co-surface text-co-text"}`}
-                  disabled={!editable} onClick={() => choose(c.id, ch.grade)}>{t(ch.key)}</button>
+                  disabled={!editable} onClick={() => store.choose(subjectId, position.positionId, c.id, ch.grade)}>{t(ch.key)}</button>
               ))}
             </div>
           </fieldset>
@@ -210,7 +286,8 @@ function PositionBlock({ subjectId, position, positionName, view, editable }: { 
       })}
       <label className={fieldLabel}>{t("pmv2.note.label")}
         <textarea className={`${control} min-h-[88px] py-2`} value={note} maxLength={500} disabled={!editable}
-          onChange={(e) => setNote(e.target.value)} onBlur={() => { if (note !== (position.note ?? "")) void save({ action: "note", note }, () => undefined); }} />
+          onChange={(e) => store.typeNote(subjectId, position.positionId, e.target.value)}
+          onBlur={(e) => store.blurNote(subjectId, position.positionId, e.target.value)} />
       </label>
       <SaveStatus phase={phase} />
       {error && <p role="alert" className="text-sm font-bold text-co-cta-text">{t(error)}</p>}

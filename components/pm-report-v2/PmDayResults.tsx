@@ -28,9 +28,10 @@ function useLabels() {
   return { t, grade, minutes };
 }
 
-export function PmDayResults({ results, initiallyOpen = false }: { results: PmDayResultsView; initiallyOpen?: boolean }) {
+/** `initialTab` exists for the SSR tests only; the page opens on "By person". */
+export function PmDayResults({ results, initiallyOpen = false, initialTab = "people" }: { results: PmDayResultsView; initiallyOpen?: boolean; initialTab?: "people" | "copies" }) {
   const { t, language } = useTranslation();
-  const [view, setView] = useState<"people" | "copies">("people");
+  const [view, setView] = useState<"people" | "copies">(initialTab);
   return (
     <section className="grid gap-3" aria-label={t("pmv2.results.title")}>
       <div className="co-card grid gap-2 p-4">
@@ -109,6 +110,8 @@ function PositionResult({ position, initiallyOpen }: { position: PmResultsPositi
 function Copies({ results }: { results: PmDayResultsView }) {
   const { t, grade } = useLabels();
   const { language } = useTranslation();
+  // Criterion and position labels in the reader's language (Astra chunk F P3); English when no Spanish exists.
+  const pick = <T extends string | null>(en: T, es: string | null): T | string => (language === "es" && es ? es : en);
   return (
     <div className="grid gap-3 lg:grid-cols-2">
       {results.copies.map((c) => (
@@ -118,9 +121,15 @@ function Copies({ results }: { results: PmDayResultsView }) {
             {c.observedFrom ? t("pmv2.results.window", { from: formatTime(c.observedFrom, language), to: c.observedTo ? formatTime(c.observedTo, language) : "—" }) : t("pmv2.results.noWindow")}
           </p>
           <ul className="grid gap-1 text-sm text-co-text">
-            {c.entries.map((e, i) => <li key={i}>{e.subjectName}{e.positionName ? ` · ${e.positionName}` : ""} · {e.criterion} · {grade(e.grade)}</li>)}
+            {c.entries.map((e, i) => {
+              const position = pick(e.positionName, e.positionNameEs);
+              return <li key={i}>{e.subjectName}{position ? ` · ${position}` : ""} · {pick(e.criterion, e.criterionEs)} · {grade(e.grade)}</li>;
+            })}
           </ul>
-          {c.notes.length > 0 && <ul className="grid gap-1 text-sm text-co-text-muted">{c.notes.map((n, i) => <li key={i}>{n.subjectName}: {n.text}</li>)}</ul>}
+          {c.notes.length > 0 && <ul className="grid gap-1 text-sm text-co-text-muted">{c.notes.map((n, i) => {
+            const position = pick(n.positionName, n.positionNameEs);
+            return <li key={i}>{n.subjectName}{position ? ` · ${position}` : ""}: {n.text}</li>;
+          })}</ul>}
         </div>
       ))}
     </div>

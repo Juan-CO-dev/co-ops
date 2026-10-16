@@ -141,3 +141,19 @@ export function formatSeedPlan(plan: SeedPlan, opts: { apply: boolean }): string
   if (!plan.shops.length) lines.push("No active shop found.");
   return lines.join("\n");
 }
+
+// ─── the editor's write outcome (Astra chunk F review #4) ────────────────────
+
+/** A criteria write ends one of three ways; a canceled password prompt is its OWN outcome, never a success. */
+export type CriteriaWriteOutcome = { kind: "saved" } | { kind: "canceled" } | { kind: "error"; code: unknown };
+
+export function criteriaWriteOutcome(stepUp: "ok" | "cancelled", post?: { ok: boolean; code?: unknown }): CriteriaWriteOutcome {
+  if (stepUp !== "ok") return { kind: "canceled" };
+  if (post?.ok) return { kind: "saved" };
+  return { kind: "error", code: post?.code };
+}
+
+/** The Add form after a write: cleared ONLY when the criterion was saved; a cancel or a refusal keeps both languages. */
+export function addFormAfter<T extends { label: string; labelEs: string }>(outcome: CriteriaWriteOutcome, draft: T): T | { label: ""; labelEs: "" } {
+  return outcome.kind === "saved" ? { label: "", labelEs: "" } : draft;
+}

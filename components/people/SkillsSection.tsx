@@ -17,7 +17,7 @@
 import { useCallback, useEffect, useId, useState } from "react";
 import { useRouter } from "next/navigation";
 import { CollapsibleSection } from "@/components/ui/CollapsibleSection";
-import { disclosureIsOpen, toggleDisclosure } from "@/lib/disclosure-lock-shared";
+import { dirtyUnder, disclosureIsOpen, editorKey, toggleDisclosure, withDirty } from "@/lib/disclosure-lock-shared";
 import { etDisplayDate } from "@/lib/operational-day";
 import { formatDateLabel } from "@/lib/i18n/format";
 import { useTranslation } from "@/lib/i18n/provider";
@@ -63,20 +63,17 @@ export function SkillsSection({ view, initiallyOpen = false, initiallyDirty = []
   const others = view.rows.filter((r) => !r.hasEvidence);
   const [sectionOpen, setSectionOpen] = useState(initiallyOpen);
   const [othersOpen, setOthersOpen] = useState(initiallyOpen);
-  const [dirty, setDirty] = useState<ReadonlySet<string>>(() => new Set(initiallyDirty));
-  const onDirtyChange = useCallback((positionId: string, isDirty: boolean) => {
-    setDirty((prev) => {
-      if (prev.has(positionId) === isDirty) return prev;
-      const next = new Set(prev);
-      if (isDirty) next.add(positionId); else next.delete(positionId);
-      return next;
-    });
+  // Each control (Adjust, Starting rating) is its OWN dirty editor, aggregated per position (Astra chunk F #3):
+  // returning one control to its start never clears a sibling that still holds unsaved work.
+  const [dirty, setDirty] = useState<ReadonlySet<string>>(() => new Set(initiallyDirty.map((p) => editorKey(p, "seed"))));
+  const onDirtyChange = useCallback((positionId: string, kind: string, isDirty: boolean) => {
+    setDirty((prev) => withDirty(prev, editorKey(positionId, kind), isDirty));
   }, []);
   const anyDirty = dirty.size > 0;
-  const othersDirty = others.some((r) => dirty.has(r.position.positionId));
+  const othersDirty = others.some((r) => dirtyUnder(dirty, r.position.positionId));
   const unsavedBadge = <span className="rounded-full bg-co-warning-surface px-2 py-0.5 text-xs font-bold text-co-warning-text">{t("people.skills.unsaved")}</span>;
   const rowProps = (row: ManagerSkillRow) => ({
-    row, view, initiallyOpen, dirty: dirty.has(row.position.positionId), onDirtyChange,
+    row, view, initiallyOpen, dirty: dirtyUnder(dirty, row.position.positionId), onDirtyChange,
   });
   return (
     <section className="mt-6" aria-label={t("people.skills.title")}>
@@ -115,7 +112,7 @@ export function SkillsSection({ view, initiallyOpen = false, initiallyDirty = []
 }
 
 function SkillRow({ row, view, initiallyOpen, dirty, onDirtyChange }: {
-  row: ManagerSkillRow; view: ManagerSkillView; initiallyOpen: boolean; dirty: boolean; onDirtyChange: (positionId: string, dirty: boolean) => void;
+  row: ManagerSkillRow; view: ManagerSkillView; initiallyOpen: boolean; dirty: boolean; onDirtyChange: (positionId: string, kind: string, dirty: boolean) => void;
 }) {
   const { t, language } = useTranslation();
   const line = useLine();
@@ -185,7 +182,7 @@ function SkillRow({ row, view, initiallyOpen, dirty, onDirtyChange }: {
 
 function SkillControl({ kind, row, view, initial, min, max, onDirtyChange }: {
   kind: "adjust" | "rate"; row: ManagerSkillRow; view: ManagerSkillView; initial: number; min: number; max: number;
-  onDirtyChange: (positionId: string, dirty: boolean) => void;
+  onDirtyChange: (positionId: string, kind: string, dirty: boolean) => void;
 }) {
   const { t } = useTranslation();
   const router = useRouter();
@@ -201,7 +198,7 @@ function SkillControl({ kind, row, view, initial, min, max, onDirtyChange }: {
   // D10: unsaved edits (or a save in flight) hold this control's row and sections open.
   const isDirty = busy || draft !== snapSkillStep(initial, min, max) || reason !== "" || note !== "";
   const positionId = row.position.positionId;
-  useEffect(() => { onDirtyChange(positionId, isDirty); }, [onDirtyChange, positionId, isDirty]);
+  useEffect(() => { onDirtyChange(positionId, kind, isDirty); }, [onDirtyChange, positionId, kind, isDirty]);
   const shownValue = kind === "adjust" ? t("people.skills.adjust.value", { delta: formatDelta(draft) }) : t("people.skills.rate.value", { rating: draft.toFixed(2) });
 
   async function save() {
