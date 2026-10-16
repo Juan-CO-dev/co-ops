@@ -19,6 +19,7 @@ import "server-only";
 import { audit } from "@/lib/audit";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import { etCalendarDate } from "@/lib/operational-day";
+import { withDeadline as withDeadlineShared } from "@/lib/deadline-shared";
 import { toastGet } from "./client";
 import { toastModifiedParam } from "./dates-shared";
 export { toastModifiedParam } from "./dates-shared";
@@ -56,17 +57,10 @@ function code(e: unknown): string {
   return "toast_labor_failed";
 }
 
-/** Settle `p` or reject with toast_labor_deadline when the signal fires — whichever comes first. */
+/** Settle `p` or reject with toast_labor_deadline when the signal fires — whichever comes first.
+ *  The mechanism lives in lib/deadline-shared.ts (shared with the 7shifts sync); this keeps its code. */
 export function withDeadline<T>(p: PromiseLike<T>, signal: AbortSignal): Promise<T> {
-  if (signal.aborted) return Promise.reject(new Error("toast_labor_deadline"));
-  return new Promise<T>((resolve, reject) => {
-    const onAbort = () => reject(new Error("toast_labor_deadline"));
-    signal.addEventListener("abort", onAbort, { once: true });
-    Promise.resolve(p).then(
-      (v) => { signal.removeEventListener("abort", onAbort); resolve(v); },
-      (e) => { signal.removeEventListener("abort", onAbort); reject(e); },
-    );
-  });
+  return withDeadlineShared(p, signal, "toast_labor_deadline");
 }
 
 export async function runToastLaborPull(
