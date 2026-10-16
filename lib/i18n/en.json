@@ -6910,6 +6910,7 @@
   "people.skills.error.skills_unavailable": "Skills aren't switched on yet.",
   "people.skills.error.pm_v2_unavailable": "PM reports v2 can't be switched on yet.",
   "people.skills.error.pm_v2_not_ready": "PM reports v2 can't be switched on here yet: name the Prep and Prep/Dishwasher positions and seed the criteria first.",
+  "people.skills.error.pm_v2_moo_only": "Only the owner, CGS or managers of operations can switch PM reports v2 on or off. Ask one of them, or use the PM v2 card on the PM criteria page.",
   "people.skills.error.write_failed": "That didn't save. Try again.",
   "people.skills.error.generic": "That didn't save. Try again.",
   "pmv2.copy.title": "Your PM report copy",

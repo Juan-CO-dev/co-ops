@@ -274,7 +274,9 @@ describe("saveSkillTunables / savePeopleShopSettings", () => {
 
   it("shop settings: GM own shop; PM v2 ON is refused until the shop's criteria are seeded (pm_v2_not_ready); an AGM is refused; audited before/after", async () => {
     await expect(savePeopleShopSettings(service(), { actor: agmA, locationId: A, pmV2: false, prepPositionId: P_PREP })).rejects.toMatchObject({ code: "forbidden" });
-    await expect(savePeopleShopSettings(service(), { actor: gmA, locationId: A, pmV2: true, prepPositionId: P_PREP })).rejects.toMatchObject({ status: 409, code: "pm_v2_not_ready" });
+    // CC gate ruling: a GM can no longer flip the switch at all (MoO+ only); a MoO still meets the readiness gate.
+    await expect(savePeopleShopSettings(service(), { actor: gmA, locationId: A, pmV2: true, prepPositionId: P_PREP })).rejects.toMatchObject({ status: 403, code: "pm_v2_moo_only" });
+    await expect(savePeopleShopSettings(service(), { actor: moo, locationId: A, pmV2: true, prepPositionId: P_PREP })).rejects.toMatchObject({ status: 409, code: "pm_v2_not_ready" });
     expect(rpc).not.toHaveBeenCalled();
     rpc.mockResolvedValueOnce({ data: { before: null, after: { pm_v2: false, prep_position_id: P_PREP } }, error: null });
     expect(await savePeopleShopSettings(service(), { actor: gmA, locationId: A, pmV2: false, prepPositionId: P_PREP })).toEqual({ pmV2: false, prepPositionId: P_PREP });

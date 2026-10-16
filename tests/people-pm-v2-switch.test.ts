@@ -24,6 +24,7 @@ const A = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const id = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
 const GM = id(1), ST = id(11), ST_OFF = id(12), P_PREP = id(21), P_DISH = id(22);
 const gm: PeopleActor = { userId: GM, role: "gm", level: 7, locations: [A] };
+const moo: PeopleActor = { userId: id(2), role: "moo", level: 8, locations: [A] };
 
 function tables(over: Partial<Tables> = {}): Tables {
   return {
@@ -55,7 +56,7 @@ describe("the PM v2 switch: wired, per shop, off by default, gated by data readi
   it("ready shop: both BOH positions + an active shared criterion → ON is saved", async () => {
     db = createFakeDb(tables());
     expect(await pmV2Readiness(svc(), A)).toMatchObject({ ready: true, boh: true, criteria: 1 });
-    expect(await savePeopleShopSettings(svc(), { actor: gm, locationId: A, pmV2: true, prepPositionId: null })).toEqual({ pmV2: true, prepPositionId: null });
+    expect(await savePeopleShopSettings(svc(), { actor: moo, locationId: A, pmV2: true, prepPositionId: null })).toEqual({ pmV2: true, prepPositionId: null });
     expect(rpc).toHaveBeenCalledWith("save_people_shop_settings", expect.objectContaining({ p_pm_v2: true }));
   });
 
@@ -66,7 +67,7 @@ describe("the PM v2 switch: wired, per shop, off by default, gated by data readi
       [{ id: P_PREP, station_id: ST, location_id: A, name: "Prep", name_es: null, active: true }, { id: P_DISH, station_id: ST_OFF, location_id: A, name: "Prep/Dishwasher", name_es: null, active: true }],
     ]) {
       db = createFakeDb(tables({ station_positions: positions }));
-      await expect(savePeopleShopSettings(svc(), { actor: gm, locationId: A, pmV2: true, prepPositionId: null })).rejects.toMatchObject({ status: 409, code: "pm_v2_not_ready" });
+      await expect(savePeopleShopSettings(svc(), { actor: moo, locationId: A, pmV2: true, prepPositionId: null })).rejects.toMatchObject({ status: 409, code: "pm_v2_not_ready" });
     }
     expect(rpc).not.toHaveBeenCalled();
   });
@@ -75,7 +76,7 @@ describe("the PM v2 switch: wired, per shop, off by default, gated by data readi
     for (const criteria of [[], [{ id: "k", location_id: A, position_id: null, label: "x", label_es: null, sort: 1, active: false }],
       [{ id: "k", location_id: A, position_id: P_PREP, label: "x", label_es: null, sort: 1, active: true }]]) {
       db = createFakeDb(tables({ pm_criteria: criteria }));
-      await expect(savePeopleShopSettings(svc(), { actor: gm, locationId: A, pmV2: true, prepPositionId: null })).rejects.toMatchObject({ code: "pm_v2_not_ready" });
+      await expect(savePeopleShopSettings(svc(), { actor: moo, locationId: A, pmV2: true, prepPositionId: null })).rejects.toMatchObject({ code: "pm_v2_not_ready" });
     }
     const t = tables();
     delete t.pm_criteria;
@@ -87,7 +88,7 @@ describe("the PM v2 switch: wired, per shop, off by default, gated by data readi
   it("turning it OFF is never gated (no readiness read)", async () => {
     db = createFakeDb(tables({ station_positions: [], pm_criteria: [] }));
     rpc.mockResolvedValueOnce({ data: { before: { pm_v2: true, prep_position_id: null }, after: { pm_v2: false, prep_position_id: null } }, error: null });
-    expect(await savePeopleShopSettings(svc(), { actor: gm, locationId: A, pmV2: false, prepPositionId: null })).toEqual({ pmV2: false, prepPositionId: null });
+    expect(await savePeopleShopSettings(svc(), { actor: moo, locationId: A, pmV2: false, prepPositionId: null })).toEqual({ pmV2: false, prepPositionId: null });
     expect(db.log.some((q) => q.table === "pm_criteria")).toBe(false);
   });
 
@@ -95,5 +96,32 @@ describe("the PM v2 switch: wired, per shop, off by default, gated by data readi
     expect(en["people.skills.error.pm_v2_not_ready"]).toBeTruthy();
     expect(es["people.skills.error.pm_v2_not_ready"]).toBeTruthy();
     expect(es["people.skills.error.pm_v2_not_ready"]).not.toBe(en["people.skills.error.pm_v2_not_ready"]);
+  });
+});
+
+describe("CC gate ruling: flipping the switch is MoO+ only (the same rule as the admin card)", () => {
+  it("a GM cannot turn it ON at their own shop, even when the shop is ready: pm_v2_moo_only, nothing written", async () => {
+    db = createFakeDb(tables());
+    await expect(savePeopleShopSettings(svc(), { actor: gm, locationId: A, pmV2: true, prepPositionId: null })).rejects.toMatchObject({ status: 403, code: "pm_v2_moo_only" });
+    expect(rpc).not.toHaveBeenCalled();
+  });
+
+  it("a GM cannot turn it OFF once a MoO turned it on", async () => {
+    db = createFakeDb(tables({ people_shop_settings: [{ location_id: A, pm_v2: true, prep_position_id: null }] }));
+    await expect(savePeopleShopSettings(svc(), { actor: gm, locationId: A, pmV2: false, prepPositionId: null })).rejects.toMatchObject({ status: 403, code: "pm_v2_moo_only" });
+    expect(rpc).not.toHaveBeenCalled();
+  });
+
+  it("a GM may still save the shop's prep position when the switch value travels unchanged", async () => {
+    db = createFakeDb(tables());
+    rpc.mockResolvedValueOnce({ data: { before: null, after: { pm_v2: false, prep_position_id: P_PREP } }, error: null });
+    expect(await savePeopleShopSettings(svc(), { actor: gm, locationId: A, pmV2: false, prepPositionId: P_PREP })).toEqual({ pmV2: false, prepPositionId: P_PREP });
+    expect(rpc).toHaveBeenCalledTimes(1);
+  });
+
+  it("the refusal has its en + es message", () => {
+    expect(en["people.skills.error.pm_v2_moo_only"]).toBeTruthy();
+    expect(es["people.skills.error.pm_v2_moo_only"]).toBeTruthy();
+    expect(es["people.skills.error.pm_v2_moo_only"]).not.toBe(en["people.skills.error.pm_v2_moo_only"]);
   });
 });

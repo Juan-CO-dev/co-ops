@@ -48,6 +48,11 @@ export async function savePeopleShopSettings(
       || (args.prepPositionId !== null && (typeof args.prepPositionId !== "string" || !UUID.test(args.prepPositionId)))) {
     throw new PeopleSkillError(400, "invalid_payload");
   }
+  // CC gate ruling (chunk G Q3): flipping the PM v2 switch is MoO+ only, the same rule as its admin card. A GM may
+  // still save the shop's other setting (the prep position) as long as the switch value travels unchanged.
+  if (!canManagePmV2Switch(args.actor) && args.pmV2 !== (await loadPeopleShopSettings(service, args.locationId)).pmV2) {
+    throw new PeopleSkillError(403, "pm_v2_moo_only");
+  }
   if (args.pmV2 && !PM_V2_SWITCH_AVAILABLE) throw new PeopleSkillError(409, "pm_v2_unavailable");
   if (args.pmV2 && !(await pmV2Readiness(service, args.locationId)).ready) throw new PeopleSkillError(409, "pm_v2_not_ready");
   if (typeof args.prepPositionId === "string") await requireUsablePosition(service, args.locationId, args.prepPositionId);

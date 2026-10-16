@@ -34,7 +34,7 @@ import { resolveTunables, type SkillTunables } from "@/lib/people/tunables-share
 export const PEOPLE_SKILL_ERROR_CODES = [
   "forbidden", "not_found", "invalid_payload", "invalid_adjustment", "invalid_rating", "invalid_reason", "invalid_tunables",
   "role_insufficient", "location_access_denied", "assignee_unavailable", "position_not_at_shop", "position_retired",
-  "skills_unavailable", "pm_v2_unavailable", "pm_v2_not_ready", "write_failed",
+  "skills_unavailable", "pm_v2_unavailable", "pm_v2_not_ready", "pm_v2_moo_only", "write_failed",
 ] as const;
 export type PeopleSkillErrorCode = (typeof PEOPLE_SKILL_ERROR_CODES)[number];
 

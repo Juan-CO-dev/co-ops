@@ -6910,6 +6910,7 @@
   "people.skills.error.skills_unavailable": "Las habilidades todavía no están activadas.",
   "people.skills.error.pm_v2_unavailable": "Los reportes PM v2 todavía no se pueden activar.",
   "people.skills.error.pm_v2_not_ready": "Todavía no se puede activar PM v2 aquí: primero nombra los puestos Prep y Prep/Dishwasher y carga los criterios.",
+  "people.skills.error.pm_v2_moo_only": "Solo el dueño, el CGS o los gerentes de operaciones pueden activar o desactivar los reportes PM v2. Pídeselo a uno de ellos o usa la tarjeta PM v2 en la página de criterios PM.",
   "people.skills.error.write_failed": "No se guardó. Inténtalo de nuevo.",
   "people.skills.error.generic": "No se guardó. Inténtalo de nuevo.",
   "pmv2.copy.title": "Tu copia del reporte PM",
