@@ -1,4 +1,5 @@
-import { readdirSync } from "node:fs";
+import { catalogRouteFiles, readBoundaryViolations } from "./helpers/catalog-read-boundary";
+import { readdirSync, readFileSync } from "node:fs";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
 
@@ -61,8 +62,7 @@ beforeEach(() => {
   mocks.db.mockImplementation(() => { throw new Error('Unexpected database access'); });
 });
 it('classifies every route file exactly once and pins 39 files / 41 handlers', async () => {
-  const files = readdirSync('app/api/admin/catalog', { recursive: true }).map(String)
-    .map(p => p.replaceAll('\\', '/')).filter(p => p === 'route.ts' || p.endsWith('/route.ts')).sort();
+  const files = catalogRouteFiles(readdirSync('app/api/admin/catalog', { recursive: true }).map(String));
   const listed = [...Object.keys(mutations), ...Object.keys(readOnly)];
   expect(new Set(listed).size).toBe(listed.length);
   expect(files).toEqual(listed.map(p => `${p}/route.ts`).sort());
@@ -116,4 +116,14 @@ describe.each(Object.entries({ ...readOnly, ...mixedReads }))('%s %s read author
     expect(mocks.step).not.toHaveBeenCalled();
     expect(mocks.db).not.toHaveBeenCalled();
   });
+});
+
+it.each(Object.keys(readOnly))('%s imports only reviewed readers and contains no writes', path => {
+  expect(readBoundaryViolations(readFileSync(`app/api/admin/catalog/${path}/route.ts`, 'utf8'))).toEqual([]);
+});
+it.each(Object.entries(mixedReads))('%s %s contains no write calls or writer references', (path, method) => {
+  expect(readBoundaryViolations(readFileSync(`app/api/admin/catalog/${path}/route.ts`, 'utf8'), method)).toEqual([]);
+});
+it('the sole allowed read RPC remains STABLE', () => {
+  expect(readFileSync('supabase/migrations/0265_sku_swaps.sql', 'utf8')).toMatch(/function public\.sku_swap_product_snapshot[^$]*?language sql stable security definer/i);
 });

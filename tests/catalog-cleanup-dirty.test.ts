@@ -22,7 +22,8 @@ vi.mock('../scripts/sim/concurrency/driver.mjs', () => ({
   makeReport: () => { const rows: { name: string; pass: boolean }[] = []; return { check: (name: string, pass: boolean) => rows.push({ name, pass }), done: () => ({ rows, fails: rows.filter(r => !r.pass) }) }; },
 }));
 import { runCatalogContracts } from '../scripts/sim/catalog/catalog';
-import { assertClean } from '../scripts/sim/launch-readiness/reset';
+import { assertClean, resetFixture } from '../scripts/sim/launch-readiness/reset';
+vi.mock('../scripts/sim/launch-readiness/lease.mjs', () => ({ assertHeld: () => ({ pid: process.pid }) }));
 const options = { assertLease: vi.fn(), verifiedServer: true, pin: '1234', password: 'mock' };
 beforeEach(() => { state.marker = undefined; state.writeFails = false; state.calls = []; state.q.mockReset(); state.inner.mockReset().mockResolvedValue(undefined); options.assertLease.mockClear(); });
 const ok = (rows: object[] = []) => ({ ok: true, rows });
@@ -86,11 +87,13 @@ describe('catalog cleanup DIRTY boundary (no DB)', () => {
     outerQuery('ok'); state.inner.mockImplementation(async () => { state.marker = 'inner failure'; throw Error('cleanup'); });
     const report = await runCatalogContracts(options); expect(report.fails.some(r => r.name === 'catalog.scenarios-completed')).toBe(true); expect(state.marker).toBe('inner failure');
   });
-  it('only intentional CC clearance after complete verification permits reuse', async () => {
-    state.marker = 'catalog failure'; outerQuery('ok');
-    const recover = (complete: boolean, intentional: boolean) => { if (complete && intentional) state.marker = undefined; };
-    recover(false, true); expect(() => assertClean()).toThrow('DIRTY');
-    recover(true, false); expect(() => assertClean()).toThrow('DIRTY');
-    recover(true, true); expect(() => assertClean()).not.toThrow(); await runCatalogContracts(options); expect(state.marker).toBeUndefined();
+  it('reset refuses catalog quarantine before overwriting evidence or touching the target', async () => {
+    state.marker = JSON.stringify({ status: 'catalog-cleanup-failed', prefix: 'F4-catalog-evidence' });
+    const prior = state.marker;
+    await expect(resetFixture({ runId: 'reset', fixtureId: 'cold-empty', env: {}, schemaDigest: '' }))
+      .rejects.toThrow('CC-owned catalog clearance');
+    expect(state.marker).toBe(prior);
+    expect(state.calls).toEqual([]);
+    expect(() => assertClean()).toThrow('swap-journal');
   });
 });

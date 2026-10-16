@@ -1,4 +1,4 @@
-import { mkdirSync, readFileSync, writeFileSync, rmSync, unlinkSync, renameSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync, rmSync, unlinkSync, renameSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { hostname } from "node:os";
 
@@ -40,6 +40,7 @@ export function acquire({ runId, dir = leaseDirectory(), log = console.error }) 
     try { mkdirSync(dir); }
     catch (error) {
       if (error.code !== "EEXIST") throw error;
+      if (existsSync(join(dir, "REFUSED"))) throw refused(undefined);
       const owner = readOwner(dir);
       if (classifyOwner(owner, pidAlive) !== "stale") throw refused(owner);
       // Serialize stale cleanup inside the old directory. A contender seeing a
@@ -47,6 +48,7 @@ export function acquire({ runId, dir = leaseDirectory(), log = console.error }) 
       const reclaim = join(dir, "reclaim");
       try { writeFileSync(reclaim, String(process.pid), { flag: "wx" }); }
       catch { throw refused(readOwner(dir)); }
+      if (existsSync(join(dir, "REFUSED"))) throw refused(undefined);
       const current = readOwner(dir);
       if (JSON.stringify(current) !== JSON.stringify(owner) || classifyOwner(current, pidAlive) !== "stale") {
         unlinkSync(reclaim);
@@ -83,12 +85,29 @@ export function release(runId, { dir = leaseDirectory() } = {}) {
 }
 
 /** A failed DIRTY write must not become a reclaimable stale lease after exit.
- * Keep the directory and original evidence, but remove its recognizable owner.
- * Unknown owners fail closed in acquire; only CC may recover this quarantine.
+ * Keep the directory and evidence: remove its recognizable owner, or persist
+ * REFUSED if rename fails twice. Both paths block acquire until CC clearance.
  */
 export function quarantine(runId, { dir = leaseDirectory() } = {}) {
   const owner = readOwner(dir);
   if (!owner || owner.runId !== runId) throw refused(owner);
-  renameSync(join(dir, "owner.json"), join(dir, "quarantined-owner.json"));
-  if (readOwner(dir) !== undefined) throw new Error("Lease quarantine verification failed");
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      renameSync(join(dir, "owner.json"), join(dir, "quarantined-owner.json"));
+      if (readOwner(dir) !== undefined) throw new Error("Lease quarantine verification failed");
+      return;
+    } catch { /* Retry once, then persist a refusal independent of owner PID. */ }
+  }
+  const record = join(dir, "REFUSED");
+  const evidence = JSON.stringify({ runId, status: "catalog-cleanup-failed", recovery: "CC-owned complete catalog clearance required, including swap-journal tables" });
+  try {
+    writeFileSync(record, evidence, { flag: "wx", mode: 0o600 });
+    if (readFileSync(record, "utf8") !== evidence) throw new Error("Lease refusal verification failed");
+  } catch {
+    // File writes may share the original DIRTY failure. A directory is also a
+    // durable refusal record; acquire checks existence, never its contents/PID.
+    if (!existsSync(record)) mkdirSync(record);
+    if (!existsSync(record)) throw new Error("Lease refusal persistence failed");
+  }
+  return;
 }
