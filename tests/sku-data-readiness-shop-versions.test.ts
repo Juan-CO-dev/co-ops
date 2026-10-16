@@ -69,6 +69,18 @@ describe("evaluateWave7Tables — per-shop RECIPE versions (catalog Phase 3a chu
   const deps = (data: LiveTables, shop: string) =>
     [...evaluateWave7Tables(data).shops.find((s) => s.id === shop)!.recipes.find((r) => r.id.startsWith("r-slaw/"))!.dependencies].sort();
 
+  it("owned recipes appear only at their shop after full-universe validation", () => {
+    const data = withSlaw();
+    data.recipes![0]!.location_id = "north";
+    delete data.recipe_versions;
+    delete data.recipe_version_lines;
+    const report = evaluateWave7Tables(data);
+    expect(report.shops.find(s => s.id === "north")!.recipes).toHaveLength(1);
+    expect(report.shops.find(s => s.id === "south")!.recipes).toHaveLength(0);
+    data.recipe_inputs![0]!.component_sku_id = "missing";
+    expect(() => evaluateWave7Tables(data, new Map(), "2026-10-15", "2026-10-15", new Set(["south"]))).toThrow("INCOMPLETE_GRAPH");
+  });
+
   it("each shop's graph is built from ITS resolved recipe: pickle at north, mayo at south", () => {
     const data = withSlaw();
     expect(deps(data, "north")).toEqual(["lettuce", "pickle"]);

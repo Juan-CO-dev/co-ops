@@ -717,6 +717,10 @@ export async function loadProductIndex(
   const productBySku = new Map<string, string>();
   for (const m of memberRowList) {
     if (m.product_id == null) continue;
+    const sourceKind = m.vendor_id ? vendorById.get(m.vendor_id)?.source_kind ?? "vendor" : "vendor";
+    // Shop-owned ordinary SKUs are visible only at their owner. Store copies retain the
+    // deliberate global-default exception, while still staying hidden at other shops.
+    if (m.location_id != null && m.location_id !== locationId && !(locationId == null && sourceKind === "store")) continue;
     productBySku.set(m.id, m.product_id);
     const list = membersByProduct.get(m.product_id) ?? [];
     list.push({
@@ -724,7 +728,7 @@ export async function loadProductIndex(
       name: m.name,
       vendorId: m.vendor_id,
       vendorName: m.vendor_id != null ? vendorNameById.get(m.vendor_id) ?? null : null,
-      sourceKind: m.vendor_id ? vendorById.get(m.vendor_id)?.source_kind ?? "vendor" : "vendor",
+      sourceKind,
       storeRunStreak: m.location_id == null ? 0 : streakFor(m.product_id, m.location_id),
       pendingReview: m.pending_review,
       hasOzBasis: (skuContentOz({ unitsPerPack: m.units_per_pack, eachSize: num(m.each_size),

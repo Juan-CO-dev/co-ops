@@ -22,6 +22,8 @@
  * edit module directly — the AGENTS.md § Module boundaries split, one file further along the
  * arc that already ships `lib/order-guide-sort.ts` as its pure comparator.
  */
+import { ownerVisible } from "@/lib/catalog/shop-owned-shared";
+import { assertScopeToken } from "@/lib/sku-versions-shared";
 import { loadStoreVendorIds } from "@/lib/ordering-sources";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import { audit } from "@/lib/audit";
@@ -55,7 +57,7 @@ type SectionRow = { id: string; guide_id: string; name: string; position: number
 type LineRow = { id: string; section_id: string; position: number; sku_id: string | null; label: string; item_number: string | null; note: string | null };
 
 /** The vendor's guide, or null when none exists yet. */
-export async function loadOrderGuide(vendorId: string): Promise<GuideModel | null> {
+export async function loadOrderGuide(vendorId: string, scope?: string): Promise<GuideModel | null> {
   if ((await loadStoreVendorIds()).has(vendorId)) return null;
   const sb = getServiceRoleClient();
   const { data: g, error: gErr } = await sb.from("vendor_order_guides").select("id, vendor_id, name, updated_at").eq("vendor_id", vendorId).maybeSingle<GuideRow>();
@@ -68,7 +70,14 @@ export async function loadOrderGuide(vendorId: string): Promise<GuideModel | nul
     ? await sb.from("order_guide_lines").select("id, section_id, position, sku_id, label, item_number, note").in("section_id", sectionIds).order("position").returns<LineRow[]>()
     : { data: [] as LineRow[], error: null };
   if (lineRead.error) throw new Error(`loadOrderGuide lines: ${lineRead.error.message}`);
-  const lines = lineRead.data;
+  let lines = lineRead.data;
+  if (scope !== undefined) {
+    assertScopeToken(scope);
+    const { data: skus, error } = await sb.from("vendor_items").select("id, location_id").eq("vendor_id", vendorId).returns<Array<{id: string; location_id: string | null}>>();
+    if (error) throw new Error(`loadOrderGuide ownership: ${error.message}`);
+    const visible = new Set((skus ?? []).filter(s => ownerVisible(s.location_id, scope)).map(s => s.id));
+    lines = (lines ?? []).filter(l => l.sku_id === null || visible.has(l.sku_id));
+  }
   return {
     guideId: g.id, vendorId: g.vendor_id, name: g.name, updatedAt: g.updated_at,
     sections: (sections ?? []).map((s) => ({

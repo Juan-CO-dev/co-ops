@@ -1,4 +1,3 @@
-import { catalogWriteError } from "@/lib/catalog/write-errors-shared";
 /**
  * Toast crosswalk admin data layer (read-track 1). SERVER-ONLY, service-role;
  * authz = requireSession → level floor at the route + re-checked here, writes
@@ -15,6 +14,8 @@ import { catalogWriteError } from "@/lib/catalog/write-errors-shared";
  * Toast stays MENU SOURCE-OF-TRUTH. Everything here is advisory read + curated
  * mapping — CO-OPS never mutates Toast, and never auto-mutates its own menu.
  */
+import { ownerVisible } from "@/lib/catalog/shop-owned-shared";
+import { catalogWriteError } from "@/lib/catalog/write-errors-shared";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import { getRoleLevel } from "@/lib/roles";
 import { audit } from "@/lib/audit";
@@ -108,20 +109,20 @@ const toCents = (v: number | string | null) => (v != null ? Math.round(Number(v)
 
 /** Mappable universe. Item lane (spec #1): active global menu_items + sold_directly items.
  *  Modifier lane (spec 2026-07-24): ALL active global items — toppings are prep items. */
-async function loadEntities(all = false, locationId: string | null = null): Promise<CoEntity[]> {
+async function loadEntities(all = false, locationId: string | null = null, allOwners = false): Promise<Array<CoEntity & { locationId?: string | null }>> {
   const sb = getServiceRoleClient();
-  let itemsQ = sb.from("items").select("id, name, menu_price").eq("active", true).is("location_id", null);
+  let itemsQ = sb.from("items").select("id, name, menu_price, location_id").eq("active", true);
   if (!all) itemsQ = itemsQ.eq("sold_directly", true);
   const [{ data: subs, error: sErr }, { data: items, error: iErr }] = await Promise.all([
-    sb.from("menu_items").select("id, name, menu_price").eq("active", true)
-      .returns<Array<{ id: string; name: string; menu_price: number | string | null }>>(),
-    itemsQ.returns<Array<{ id: string; name: string; menu_price: number | string | null }>>(),
+    sb.from("menu_items").select("id, name, menu_price, location_id").eq("active", true)
+      .returns<Array<{ id: string; name: string; menu_price: number | string | null; location_id: string | null }>>(),
+    itemsQ.returns<Array<{ id: string; name: string; menu_price: number | string | null; location_id: string | null }>>(),
   ]);
   if (sErr) throw new Error(`toast-map entities menu_items: ${sErr.message}`);
   if (iErr) throw new Error(`toast-map entities items: ${iErr.message}`);
-  const entities: CoEntity[] = [
-    ...(subs ?? []).map((r): CoEntity => ({ kind: "menu_item", id: r.id, name: r.name, priceCents: toCents(r.menu_price) })),
-    ...(items ?? []).map((r): CoEntity => ({ kind: "item", id: r.id, name: r.name, priceCents: toCents(r.menu_price) })),
+  const entities: Array<CoEntity & { locationId: string | null }> = [
+    ...(subs ?? []).filter(r => allOwners || ownerVisible(r.location_id, locationId)).map((r): CoEntity & { locationId: string | null } => ({ kind: "menu_item", id: r.id, name: r.name, priceCents: toCents(r.menu_price), locationId: r.location_id ?? null })),
+    ...(items ?? []).filter(r => allOwners || ownerVisible(r.location_id, locationId)).map((r): CoEntity & { locationId: string | null } => ({ kind: "item", id: r.id, name: r.name, priceCents: toCents(r.menu_price), locationId: r.location_id ?? null })),
   ];
   // CATALOG PHASE 3a (0263): a SHOP's matcher pool reads each menu item through its shop overlay — off
   // the menu here = out of the pool; its name and price here are what Toast is matched against.
@@ -133,11 +134,11 @@ async function loadEntities(all = false, locationId: string | null = null): Prom
  *  targets with NO prep item (Sub Roll for salad conversion; Arugula /
  *  Pepperoncini / Dijon condiments). SKUs never enter the auto-matcher pool —
  *  they are manual-map-only — so this stays out of loadEntities/CoEntity. */
-async function loadRawSkus(): Promise<Array<{ id: string; name: string }>> {
+async function loadRawSkus(): Promise<Array<{ id: string; name: string; location_id: string | null }>> {
   const sb = getServiceRoleClient();
-  const { data, error } = await sb.from("vendor_items").select("id, name")
+  const { data, error } = await sb.from("vendor_items").select("id, name, location_id")
     .eq("active", true).eq("sku_class", "raw")
-    .returns<Array<{ id: string; name: string }>>();
+    .returns<Array<{ id: string; name: string; location_id: string | null }>>();
   if (error) throw new Error(`toast-map raw skus: ${error.message}`);
   return data ?? [];
 }
@@ -162,7 +163,7 @@ export async function loadToastMapState(actor: AuthContext): Promise<ToastMapSta
       .returns<Array<{ id: string; name: string; toast_restaurant_guid: string | null }>>(),
     loadActiveRows(),
     loadEntities(),
-    loadEntities(true), // display names must cover MODIFIER targets (all items), not just the sellable lane
+    loadEntities(true, null, true), // display names must cover MODIFIER targets (all items), not just the sellable lane
     sb.from("catering_packages").select("id, label_en").eq("active", true)
       .returns<Array<{ id: string; label_en: string }>>(),
     loadRawSkus(), // SKU-target modifier rows (Part 2) resolve their display name here
@@ -253,7 +254,7 @@ export async function runAutoMatch(
   let modifierInserted = 0;
   if (modifierOptions.length > 0) {
     const allEntities = await loadEntities(true, locationId);
-    const graph = await loadRecipeGraph();
+    const graph = await loadRecipeGraph({ locationId });
     const classified = modifierOptions
       .filter((t) => !takenGuids.has(t.itemGuid))
       .map((t) => ({ toast: t, cls: classifyModifier(t.name) }))
@@ -606,7 +607,7 @@ export async function manualMap(
       portionQty = SKU_MODIFIER_DEFAULT_PORTION_QTY;
       portionUnit = SKU_MODIFIER_DEFAULT_PORTION_UNIT;
     } else {
-      const graph = await loadRecipeGraph();
+      const graph = await loadRecipeGraph({ locationId: input.locationId });
       const portion = derivePortion(graph, input.entityId!);
       portionQty = portion?.qty ?? null;
       portionUnit = portion?.unit ?? null;
@@ -652,7 +653,7 @@ export interface MappableEntity {
   id: string;
   name: string;
   kind: "item" | "menu_item" | "package" | "sku";
-  /** Packages only: null = global, else the owning location. Items/menu_items/SKUs are global (null). */
+  /** Null = shared; otherwise the picker offers the entity only at its owning shop. */
   locationId: string | null;
 }
 
@@ -663,16 +664,16 @@ export async function listMappableEntities(actor: AuthContext): Promise<Mappable
   requireLevel(actor, 6); // AGM+ — read-only names for the picker (writes stay >=7)
   const sb = getServiceRoleClient();
   const [all, { data: pkgs, error: pErr }, rawSkus] = await Promise.all([
-    loadEntities(true),
+    loadEntities(true, null, true),
     sb.from("catering_packages").select("id, label_en, location_id").eq("active", true)
       .returns<Array<{ id: string; label_en: string; location_id: string | null }>>(),
     loadRawSkus(),
   ]);
   if (pErr) throw new Error(`toast-map mappable packages: ${pErr.message}`);
   return [
-    ...all.map((e): MappableEntity => ({ id: e.id, name: e.name, kind: e.kind, locationId: null })),
+    ...all.map((e): MappableEntity => ({ id: e.id, name: e.name, kind: e.kind, locationId: e.locationId ?? null })),
     ...(pkgs ?? []).map((p): MappableEntity => ({ id: p.id, name: p.label_en, kind: "package", locationId: p.location_id })),
-    ...rawSkus.map((s): MappableEntity => ({ id: s.id, name: s.name, kind: "sku", locationId: null })),
+    ...rawSkus.map((s): MappableEntity => ({ id: s.id, name: s.name, kind: "sku", locationId: s.location_id ?? null })),
   ].sort((a, b) => (a.name < b.name ? -1 : 1));
 }
 

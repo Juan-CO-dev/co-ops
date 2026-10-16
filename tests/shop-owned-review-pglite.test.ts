@@ -17,6 +17,15 @@ describe("0264 chunk-2 review regression probes (real SQL, in-memory only)", () 
   beforeAll(async () => { db = await migratedShopOwnedDb(); }, 120_000);
   afterAll(async () => { await db?.close(); });
 
+  it("owned menu items refuse catering on insert and update; shared menus may cater", async () => {
+    await refuses(db.query("insert into public.menu_items(name,location_id,catering_available) values ('Owned catering',$1,true)", [ID.shopA]), "owned_not_catering");
+    const menu = (await db.query<{ id: string }>("insert into public.menu_items(name,location_id) values ('Owned menu',$1) returning id", [ID.shopA])).rows[0]!.id;
+    await refuses(db.query("update public.menu_items set catering_available=true where id=$1", [menu]), "owned_not_catering");
+    expect((await db.query("select catering_available from public.menu_items where id=$1", [menu])).rows).toEqual([{ catering_available: false }]);
+    await db.query("update public.menu_items set catering_available=true where id=$1", [ID.sharedMenu]);
+    expect((await db.query("select catering_available from public.menu_items where id=$1", [ID.sharedMenu])).rows).toEqual([{ catering_available: true }]);
+  });
+
   it("receiving's exact weight-fold columns take no advisory lock or integrity check", async () => {
     // Missing receiving-only columns are added locally; ownership schema/triggers remain real.
     await db.exec(`alter table public.vendor_items

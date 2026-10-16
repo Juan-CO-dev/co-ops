@@ -30,6 +30,8 @@
  * only the SKUs the RECIPE UNIVERSE references (64 of 182 live), which is exactly
  * this board's population and a subset of the catalog those screens list.
  */
+import { compareMenuCostRows } from "@/lib/menu-costing-shared";
+import { ownerVisible } from "@/lib/catalog/shop-owned-shared";
 import "server-only";
 import { loadCachedMenuPrices } from "@/lib/admin/menu-costing-toast";
 import { resolveMenuPrice } from "@/lib/toast/in-store-prices-shared";
@@ -127,10 +129,10 @@ export async function loadMenuCostingBoard(actor: AuthContext, opts: { scope?: V
     loadRecipeGraph(scope === null ? undefined : { locationId: scope }),
     sb
       .from("menu_items")
-      .select("id, name, name_es, section, menu_price, price_same_as_id, catering_available")
+      .select("id, name, name_es, section, menu_price, price_same_as_id, catering_available, location_id")
       .eq("active", true)
       .order("name")
-      .returns<Array<{ id: string; name: string; name_es: string | null; section: string | null; menu_price: number | string | null; price_same_as_id: string | null; catering_available: boolean }>>(),
+      .returns<Array<{ id: string; name: string; name_es: string | null; section: string | null; menu_price: number | string | null; price_same_as_id: string | null; catering_available: boolean; location_id: string | null }>>(),
     loadCachedMenuPrices(),
   ]);
   if (menuRes.error) throw new Error(`loadMenuCostingBoard menu_items: ${menuRes.error.message}`);
@@ -138,13 +140,14 @@ export async function loadMenuCostingBoard(actor: AuthContext, opts: { scope?: V
   // CATALOG PHASE 3a (0263): a SHOP view reads each menu item THROUGH ITS SHOP OVERLAY — its price here,
   // its name here, whether it is sold here (resolveMenuItemForShop, the one rule). "All shops" (scope
   // null) reads the global rows exactly as before; with no overlay rows a shop view is identical too.
+  const menuRows = (menuRes.data ?? []).filter(m => scope === null || ownerVisible(m.location_id, scope));
   const overlay = scope === null ? new Map<string, MenuItemShopSettingRow>() : await loadLiveMenuItemShopSettings(scope);
   const here = (m: { id: string; name: string; name_es: string | null; menu_price: number | string | null }) =>
     resolveMenuItemForShop({ id: m.id, name: m.name, nameEs: m.name_es, menuPrice: num(m.menu_price) }, overlay.get(m.id));
-  const menuById = new Map((menuRes.data ?? []).map((m) => [m.id, m]));
-  const notSoldHere = (menuRes.data ?? []).filter((m) => !here(m).soldHere)
+  const menuById = new Map(menuRows.map((m) => [m.id, m]));
+  const notSoldHere = menuRows.filter((m) => !here(m).soldHere)
     .map((m) => ({ id: m.id, name: here(m).name, nameEs: here(m).nameEs }));
-  const inputs: MenuCostInput[] = (menuRes.data ?? []).filter((m) => here(m).soldHere).map((m) => {
+  const inputs: MenuCostInput[] = menuRows.filter((m) => here(m).soldHere).map((m) => {
     const parent = m.price_same_as_id ? menuById.get(m.price_same_as_id) : undefined;
     const mine = here(m);
     const parentHere = parent ? here(parent) : null;
@@ -158,7 +161,17 @@ export async function loadMenuCostingBoard(actor: AuthContext, opts: { scope?: V
   });
 
   const prices = await loadCurrentSkuPrices([...graph.skuPack.keys()], scope);
-  const rows = composeMenuCostRows(inputs, graph, costPerOzFromGraph(graph, prices));
+  const scopes = new Map<string | null, { graph: typeof graph; costs: ReturnType<typeof costPerOzFromGraph> }>();
+  scopes.set(scope, { graph, costs: costPerOzFromGraph(graph, prices) });
+  if (scope === null) await Promise.all([...new Set(menuRows.map(m => m.location_id).filter((id): id is string => id != null))].map(async owner => {
+    const ownedGraph = await loadRecipeGraph({ locationId: owner });
+    const ownedPrices = await loadCurrentSkuPrices([...ownedGraph.skuPack.keys()], owner);
+    scopes.set(owner, { graph: ownedGraph, costs: costPerOzFromGraph(ownedGraph, ownedPrices) });
+  }));
+  const rows = inputs.flatMap(input => {
+    const resolved = scopes.get(scope ?? menuById.get(input.id)?.location_id ?? null)!;
+    return composeMenuCostRows([input], resolved.graph, resolved.costs);
+  }).sort(compareMenuCostRows);
   const totals = summarizeMenuCostRows(rows);
 
   const blocking = [...new Set(rows.flatMap((r) => r.rollup.unpricedSkuIds))];

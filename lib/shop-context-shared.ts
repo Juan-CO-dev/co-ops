@@ -110,6 +110,7 @@ const SHOP_PARAMS_BY_PREFIX: ReadonlyArray<readonly [string, readonly string[]]>
   // Catalog Phase 3b — the recipe and menu-item pages' shop switcher (?location=<shop> | global).
   // (The notices list is an exact route, "/admin/catalog/notices", declared in SHOP_PARAMS_BY_PATH with its page.)
   ["/admin/catalog/recipe/", ["location"]],
+  ["/admin/recipes/", ["location"]],
   ["/admin/catalog/menu-item/", ["location"]],
 ];
 

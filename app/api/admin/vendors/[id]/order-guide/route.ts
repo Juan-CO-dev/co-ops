@@ -16,6 +16,8 @@
  * `saveOrderGuide` refuses a stale token with 409 `guide_stale`, which the panel turns
  * into "reloaded — redo your change".
  */
+import { ownerVisible } from "@/lib/catalog/shop-owned-shared";
+import { catalogShopAllowed } from "@/lib/sku-versions-shared";
 import { type NextRequest } from "next/server";
 
 import { requireSession } from "@/lib/session";
@@ -41,24 +43,35 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
   if (ctx instanceof Response) return ctx;
   if (ROLES[ctx.user.role].level < READ_MIN) return jsonError(403, "forbidden");
 
-  const guide = await loadOrderGuide(id);
+  const scope = req.nextUrl.searchParams.get("location");
+  if (scope !== null) {
+    if (!/^[0-9a-f-]{36}$/i.test(scope) || !catalogShopAllowed({level: ROLES[ctx.user.role].level, locations: ctx.locations}, scope)) return jsonError(404, "not_found");
+    const {data: shop, error} = await getServiceRoleClient().from("locations").select("id").eq("id", scope).eq("active", true).maybeSingle();
+    if (error) return jsonError(500, "internal_error");
+    if (!shop) return jsonError(404, "not_found");
+  }
+  const guide = await loadOrderGuide(id, scope ?? undefined);
   const placed = new Set<string>();
   for (const s of guide?.sections ?? []) for (const l of s.lines) if (l.skuId) placed.add(l.skuId);
 
   const sb = getServiceRoleClient();
   const { data: skus, error } = await sb
     .from("vendor_items")
-    .select("id, name, item_number")
+    .select("id, name, item_number, location_id, active")
     .eq("vendor_id", id)
-    .eq("active", true)
     .order("name")
-    .returns<Array<{ id: string; name: string; item_number: string | null }>>();
+    .returns<Array<{ id: string; name: string; item_number: string | null; location_id?: string | null; active?: boolean }>>();
   if (error) return jsonError(500, "internal_error");
 
+  const ownerIds = [...new Set((skus ?? []).map(s => s.location_id).filter((id): id is string => id != null))];
+  const ownerRead = ownerIds.length ? await sb.from("locations").select("id, name").in("id", ownerIds).returns<Array<{id: string; name: string}>>() : {data: [], error: null};
+  if (ownerRead.error) return jsonError(500, "internal_error");
+  const names = new Map((ownerRead.data ?? []).map(s => [s.id, s.name]));
   return jsonOk({
     guide,
+    ownership: Object.fromEntries((skus ?? []).filter(s => s.location_id != null && (scope === null || ownerVisible(s.location_id, scope))).map(s => [s.id, names.get(s.location_id!) ?? s.location_id])),
     skusNotOnGuide: (skus ?? [])
-      .filter((s) => !placed.has(s.id))
+      .filter((s) => s.active !== false && !placed.has(s.id) && (scope === null || ownerVisible(s.location_id, scope)))
       .map((s) => ({ skuId: s.id, name: s.name, itemNumber: s.item_number })),
   });
 }

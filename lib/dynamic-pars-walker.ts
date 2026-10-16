@@ -69,18 +69,22 @@ const AUTO_MOVE_WEEK_DAYS = DYNAMIC_PARS.BUDGET_WINDOW_DAYS;
 export interface ParSkuIndexEntry {
   vendorId: string | null;
   name: string;
+  locationId?: string | null;
 }
 
 /** The par'd-SKU universe, exactly as the walker defines it. NO id list in the request
  *  line: the `.or(...)` par filter is the same predicate `loadWalkerData` uses. */
-async function loadParSkuIndex(sb: ServiceClient): Promise<Map<string, ParSkuIndexEntry>> {
+async function loadParSkuIndex(sb: ServiceClient, locationId: string): Promise<Map<string, ParSkuIndexEntry>> {
   const { data, error } = await sb.from("vendor_items")
-    .select("id, name, vendor_id")
+    .select("id, name, vendor_id, location_id")
     .or("weekday_par.not.is.null,weekend_par.not.is.null")
-    .returns<Array<{ id: string; name: string; vendor_id: string | null }>>();
+    .returns<Array<{ id: string; name: string; vendor_id: string | null; location_id: string | null }>>();
   if (error) throw new Error(`loadParSkuIndex: ${error.message}`);
   const storeVendorIds = await loadStoreVendorIds();
-  return new Map((data ?? []).filter((r) => r.vendor_id == null || !storeVendorIds.has(r.vendor_id)).map((r) => [r.id, { vendorId: r.vendor_id, name: r.name }]));
+  return new Map((data ?? []).filter((r) =>
+    (r.location_id == null || r.location_id === locationId) &&
+    (r.vendor_id == null || !storeVendorIds.has(r.vendor_id)),
+  ).map((r) => [r.id, { vendorId: r.vendor_id, name: r.name, locationId: r.location_id }]));
 }
 
 /** The `par_auto_moves` columns the walk-time re-selection reads. One spelling. */
@@ -183,7 +187,7 @@ export async function loadParSuggestions(
       if (error) throw new Error(`loadParSuggestions ledger: ${error.message}`);
       return { data };
     }),
-    skuIndex != null ? Promise.resolve(skuIndex) : loadParSkuIndex(sb),
+    skuIndex != null ? Promise.resolve(new Map([...skuIndex].filter(([, sku]) => sku.locationId == null || sku.locationId === locationId))) : loadParSkuIndex(sb, locationId),
   ]);
   if (ledgerRows.length === 0) return out;
 
@@ -386,22 +390,27 @@ export async function loadParSilence(
       });
       return new Set(rowsA.map((r) => r.generation_id));
     })(),
-    skuIndex != null ? Promise.resolve(skuIndex) : loadParSkuIndex(sb),
+    skuIndex != null
+      ? Promise.resolve(new Map([...skuIndex].filter(([, sku]) => sku.locationId == null || sku.locationId === locationId)))
+      : loadParSkuIndex(sb, locationId),
   ]);
+
+  const visibleRows = rows.filter((r) => index.has(r.sku_id));
+  const visibleWeekRows = weekRows.filter((r) => index.has(r.sku_id));
 
   // OFFERED AND UNANSWERED, counted in DISTINCT GENERATIONS (r2-2 + r3): a standing
   // suggestion re-offered fourteen nights is ONE waiting suggestion, not fourteen.
   const waiting = new Set<string>();
-  for (const r of rows) {
+  for (const r of visibleRows) {
     if (r.tier !== "suggestion" || r.generation_id == null) continue;
     if (actions.has(r.generation_id)) continue;
     waiting.add(r.generation_id);
   }
   // Auto-moves are counted per SLOT, not per row: seven nightly re-affirmations of one
   // standing move are one move, and in shadow they are all `would_apply`.
-  const autoSlots = new Set(weekRows.map((r) => `${r.sku_id}:${r.day_class}`));
+  const autoSlots = new Set(visibleWeekRows.map((r) => `${r.sku_id}:${r.day_class}`));
 
-  const silenceRows: SilenceLedgerRow[] = rows.map((r) => ({
+  const silenceRows: SilenceLedgerRow[] = visibleRows.map((r) => ({
     skuId: r.sku_id,
     reasonCode: r.reason_code,
     skuName: index.get(r.sku_id)?.name ?? null,

@@ -320,9 +320,10 @@ async function namesAndActiveById(
 export async function loadRecipe(actor: AuthContext, recipeId: string): Promise<RecipeView | null> {
   requireLevel(actor, RECIPE_READ_MIN);
   const sb = getServiceRoleClient();
-  const { data: r } = await sb.from("recipes").select("id, name, name_es, recipe_type, batch_yield, directions, directions_es, active, batch_mode, shelf_life_days").eq("id", recipeId)
-    .maybeSingle<{ id: string; name: string; name_es: string | null; recipe_type: RecipeType; batch_yield: number | string; directions: string | null; directions_es: string | null; active: boolean; batch_mode: boolean | null; shelf_life_days: number | string | null }>();
+  const { data: r } = await sb.from("recipes").select("id, location_id, name, name_es, recipe_type, batch_yield, directions, directions_es, active, batch_mode, shelf_life_days").eq("id", recipeId)
+    .maybeSingle<{ id: string; location_id: string | null; name: string; name_es: string | null; recipe_type: RecipeType; batch_yield: number | string; directions: string | null; directions_es: string | null; active: boolean; batch_mode: boolean | null; shelf_life_days: number | string | null }>();
   if (!r) return null;
+  if (r.location_id != null && getRoleLevel(actor.user.role) < 8 && !actor.locations.includes(r.location_id)) return null;
   const { data: inRows } = await sb.from("recipe_inputs").select("*").eq("recipe_id", recipeId).order("display_order")
     .returns<Array<{ id: string; component_sku_id: string | null; component_item_id: string | null; component_product_id: string | null; quantity: number | string; unit: string | null; each_container_label: string | null; portioned: boolean; display_order: number }>>();
   const { data: outRows } = await sb.from("recipe_outputs").select("*").eq("recipe_id", recipeId).order("display_order")
@@ -338,6 +339,7 @@ export async function loadRecipe(actor: AuthContext, recipeId: string): Promise<
   const outItemNames = await namesById("items", (outRows ?? []).map((x) => x.output_item_id).filter((v): v is string => !!v));
   const outMenuNames = await namesById("menu_items", (outRows ?? []).map((x) => x.output_menu_item_id).filter((v): v is string => !!v));
   return {
+    ownerLocationId: r.location_id ?? null,
     id: r.id, name: r.name, nameEs: r.name_es, recipeType: r.recipe_type, batchYield: num(r.batch_yield) ?? 1,
     directions: r.directions, directionsEs: r.directions_es, active: r.active,
     batchMode: r.batch_mode === true, shelfLifeDays: num(r.shelf_life_days) ?? 5,

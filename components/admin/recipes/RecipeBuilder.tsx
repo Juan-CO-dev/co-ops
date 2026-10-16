@@ -109,6 +109,9 @@ export function RecipeBuilder({
   defaultType = "production",
   readiness = null,
   locationId,
+  outputItems = items,
+  scopeOptions = [],
+  allowGlobalScope = false,
 }: {
   recipe: RecipeView | null;
   skus: RecipeBuilderSku[];
@@ -124,12 +127,16 @@ export function RecipeBuilder({
   readiness?: Readiness | null;
   /** Authorized scope supplied by the server page; scope navigation is wired in Chunk 3/4. */
   locationId?: string | null;
+  outputItems?: Array<{ id: string; name: string }>;
+  scopeOptions?: Array<{ id: string; name: string }>;
+  allowGlobalScope?: boolean;
 }) {
   const { t } = useTranslation();
   const router = useRouter();
   const { requestStepUp, requestStepUpGrant } = useStepUp();
   const send = useStepUpPost();
-  const canEdit = level >= RECIPE_WRITE_MIN;
+  const [scopePending, setScopePending] = useState(false);
+  const canEdit = level >= RECIPE_WRITE_MIN && !scopePending;
   const canDelete = level >= RECIPE_DELETE_MIN;
   // Catalog Phase 3b (plan Task 11): a SAVED recipe's lines are the global default's, the Director of Operations'
   // (8+). A GM changes its shop's version on the catalog page, so here its lines are read-only with the way
@@ -371,7 +378,21 @@ export function RecipeBuilder({
   return (
     // Focused width: the recipe editor is a form — keep it comfortable and
     // centered inside the wide admin container instead of stretching to full width.
-    <div className="mt-2 mx-auto w-full max-w-3xl">
+    <fieldset disabled={scopePending} className="mt-2 mx-auto w-full max-w-3xl">
+      {scopeOptions.length > 0 || allowGlobalScope ? (
+        <label className="mb-3 block text-sm font-bold">
+          {t("catalog.item.shop_switcher")}
+          <select className={fieldCls} value={locationId ?? "global"} disabled={saveBusy || patchBusy || scopePending}
+            onChange={e => {
+              setScopePending(true);
+              const path = recipe ? `/admin/recipes/${recipe.id}` : "/admin/recipes/new";
+              router.push(`${path}?location=${encodeURIComponent(e.target.value)}${recipe ? "" : `&type=${defaultType}`}`);
+            }}>
+            {allowGlobalScope ? <option value="global">{t("catalog.item.shop_global")}</option> : null}
+            {scopeOptions.map(shop => <option key={shop.id} value={shop.id}>{shop.name}</option>)}
+          </select>
+        </label>
+      ) : null}
       {/* ── LIVE mode: what's-missing banner ── */}
       {recipe !== null && readiness && readiness.status !== "ready" ? (
         <div className="mt-3 rounded-lg border-2 border-co-border bg-co-surface p-3">
@@ -555,7 +576,7 @@ export function RecipeBuilder({
         liveOutputs={liveOutputs}
         liveInputs={liveInputs}
         draftOutputs={draftOutputs}
-        items={items}
+        items={outputItems}
         unitRegistryOptions={unitRegistryOptions}
         canEdit={canEdit}
         level={level}
@@ -572,7 +593,7 @@ export function RecipeBuilder({
           <div className="flex justify-end gap-2">
             <button
               type="button"
-              disabled={saveBusy || !draftSaveEnabled}
+              disabled={scopePending || saveBusy || !draftSaveEnabled}
               onClick={() => void saveDraft()}
               className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-gold-deep bg-co-gold px-6 text-sm font-bold uppercase tracking-[0.1em] text-co-text disabled:opacity-50"
             >
@@ -647,7 +668,7 @@ export function RecipeBuilder({
         </CollapsibleSection>
         </div>
       ) : null}
-    </div>
+    </fieldset>
   );
 }
 

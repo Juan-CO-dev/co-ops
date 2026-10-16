@@ -244,4 +244,4 @@ tests/shop-owned-review-pglite.test.ts
 tests/shop-owned-write-errors.test.ts
 ```
 
-Branch/worktree: `feat/catalog-p4a`, `C:\Users\conta\co-ops-astra-p4`. HEAD remains `735ddc3d`; round-2 changes are uncommitted. Nothing staged, committed, fetched, pushed, merged, deployed, or applied to a real database. Migration 0264 remains authored, not applied. Cross-family acceptance remains with CC.
+Branch/worktree: `feat/catalog-p4a`, `C:\Users\conta\co-ops-astra-p4`. Historical delivery correction (Aggie r3 P3-1): the round-2 fixes were subsequently committed in `093f2d4a` and approved by Aggie r3; that packet was committed, unmerged. The prior uncommitted statements describe authoring-time status only. Migration 0264 remains authored, not applied by Astra. Cross-family acceptance remains with CC.

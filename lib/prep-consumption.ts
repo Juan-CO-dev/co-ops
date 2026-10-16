@@ -15,6 +15,7 @@
  * LEAF SKU instead of summing. Returns oz-per-output-unit; callers scale. 0215's batch fold
  * (recordBatchProductionFromPrep below) reads the SAME graph and multiplies by that yield.
  */
+import { ownerVisible } from "@/lib/catalog/shop-owned-shared";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import { selectAllRows } from "@/lib/supabase-paginate";
 import { skuContentOz, type MeasureUnitFactor, type RecipeInputSku } from "@/lib/recipe-math";
@@ -328,6 +329,18 @@ export async function loadRecipeLineOverlay(scope: VersionScope, asOf: string | 
   return recipeLineReplacements(picked, lines);
 }
 
+/** Ownership is projected at the common line boundary; impact readers remain inclusive. */
+async function loadRecipeOwners(): Promise<Map<string, string>> {
+  const sb = getServiceRoleClient();
+  const rows = await selectAllRows<{ id: string; location_id: string | null }>(async (from, to) => {
+    const { data, error } = await sb.from("recipes").select("id, location_id")
+      .order("id", { ascending: true }).range(from, to).returns<Array<{ id: string; location_id: string | null }>>();
+    if (error) throw new Error(`loadRecipeOwners: ${error.message}`);
+    return { data };
+  });
+  return new Map(rows.filter(r => r.location_id != null).map(r => [r.id, r.location_id!]));
+}
+
 async function readAllRecipeInputs(sb: ReturnType<typeof getServiceRoleClient>, label: string): Promise<ResolvedRecipeInput[]> {
   return selectAllRows<ResolvedRecipeInput>(async (from, to) => {
     const { data, error } = await sb.from("recipe_inputs")
@@ -348,11 +361,12 @@ async function readAllRecipeInputs(sb: ReturnType<typeof getServiceRoleClient>, 
  */
 export async function loadResolvedRecipeInputs(scope: VersionScope, asOf: string | null = null): Promise<ResolvedRecipeInput[]> {
   const sb = getServiceRoleClient();
-  const [base, replacements] = await Promise.all([
+  const [base, owners, replacements] = await Promise.all([
     readAllRecipeInputs(sb, "loadResolvedRecipeInputs"),
+    loadRecipeOwners(),
     loadRecipeLineOverlay(scope, asOf),
   ]);
-  return mergeResolvedInputs(base, replacements);
+  return mergeResolvedInputs(base, replacements).filter(r => ownerVisible(owners.get(r.recipe_id), scope));
 }
 
 /**
@@ -363,11 +377,12 @@ export async function loadResolvedRecipeInputs(scope: VersionScope, asOf: string
 export async function loadResolvedRecipeInputsByScope(scopes: readonly VersionScope[]): Promise<Map<string, ResolvedRecipeInput[]>> {
   const sb = getServiceRoleClient();
   const unique = [...new Set(scopes.map((s) => s ?? null))];
-  const [base, ...overlays] = await Promise.all([
+  const [base, owners, ...overlays] = await Promise.all([
     readAllRecipeInputs(sb, "loadResolvedRecipeInputsByScope"),
+    loadRecipeOwners(),
     ...unique.map((s) => loadRecipeLineOverlay(s, null)),
   ]);
-  return new Map(unique.map((s, i) => [s ?? "global", mergeResolvedInputs(base, overlays[i]!)]));
+  return new Map(unique.map((s, i) => [s ?? "global", mergeResolvedInputs(base, overlays[i]!).filter(r => ownerVisible(owners.get(r.recipe_id), s))]));
 }
 
 /**
@@ -506,6 +521,8 @@ export async function loadRecipeGraph(opts?: {
   const sb = getServiceRoleClient();
   const measures = await loadMeasures();
   const [{ data: recRows, error: recErr }, { data: inRows, error: inErr }, { data: outRows, error: outErr }] = await Promise.all([
+    // Only active rows enter the graph below. Read every owner here so retired
+    // shared inputs keep their legacy pack hydration without exposing foreign owned leaves.
     // ACTIVE ONLY (multi-vendor audit P5, second half — 2026-08-20). An inactive
     // recipe is a RETIRED one: `active = false` is how this codebase deactivates
     // config rows, and nothing else in the app treats a retired recipe as live
@@ -528,10 +545,10 @@ export async function loadRecipeGraph(opts?: {
     // (lib/readiness.ts, `duplicate_producers`). created_at is nullable, so `id`
     // (PK, never null) is the tiebreak that makes the order total rather than
     // merely mostly-stable.
-    sb.from("recipes").select("id, batch_yield").eq("active", true)
+    sb.from("recipes").select("id, batch_yield, location_id, active")
       .order("created_at", { ascending: true, nullsFirst: true })
       .order("id", { ascending: true })
-      .returns<Array<{ id: string; batch_yield: number | string | null }>>(),
+      .returns<Array<{ id: string; batch_yield: number | string | null; location_id: string | null; active: boolean }>>(),
     sb.from("recipe_inputs").select("recipe_id, quantity, unit, component_sku_id, component_item_id, component_product_id")
       .returns<Array<{ recipe_id: string; quantity: number | string; unit: string | null; component_sku_id: string | null; component_item_id: string | null; component_product_id: string | null }>>(),
     sb.from("recipe_outputs").select("recipe_id, output_item_id, output_menu_item_id, yield")
@@ -551,10 +568,15 @@ export async function loadRecipeGraph(opts?: {
   // version (live, or in force at `asOf`) or an older global version gets THAT version's lines; every
   // other recipe keeps its recipe_inputs rows exactly as read above (the live global head IS
   // recipe_inputs). A preview's overrides win over both. Outputs and product resolution are untouched.
+  const visibleRecipes = (recRows ?? []).filter(r => ownerVisible(r.location_id, locationId ?? versionScope));
+  const visibleRecipeIds = new Set(visibleRecipes.map(r => r.id));
   const replacements = await loadRecipeLineOverlay(versionScope, asOf);
-  for (const [recipeId, lines] of opts?.recipeOverrides ?? []) replacements.set(recipeId, [...lines]);
-  const lineRows = [...(inRows ?? []), ...[...replacements.values()].flat()];
-  const outputItemIds = [...new Set((outRows ?? []).filter((o) => o.output_item_id).map((o) => o.output_item_id!))];
+  for (const id of replacements.keys()) if (!visibleRecipeIds.has(id)) replacements.delete(id);
+  for (const [recipeId, lines] of opts?.recipeOverrides ?? []) {
+    if (visibleRecipeIds.has(recipeId)) replacements.set(recipeId, [...lines]);
+  }
+  const lineRows = [...(inRows ?? []).filter(r => visibleRecipeIds.has(r.recipe_id)), ...[...replacements.values()].flat()];
+  const outputItemIds = [...new Set((outRows ?? []).filter((o) => visibleRecipeIds.has(o.recipe_id) && o.output_item_id).map((o) => o.output_item_id!))];
   // Every SKU / product ANY resolved line names — the base rows first (so with no versions the order,
   // and the graph, are byte-identical), then a version's or a preview's additions.
   const skuIds = [...new Set(lineRows.filter((c) => c.component_sku_id).map((c) => c.component_sku_id!))];
@@ -605,7 +627,7 @@ export async function loadRecipeGraph(opts?: {
     });
     outputsByRecipe.set(o.recipe_id, list);
   }
-  const recipes: GraphRecipe[] = (recRows ?? []).map((r) => ({
+  const recipes: GraphRecipe[] = visibleRecipes.filter(r => r.active === true).map((r) => ({
     recipeId: r.id, batchYield: num(r.batch_yield),
     inputs: inputsByRecipe.get(r.id) ?? [], outputs: outputsByRecipe.get(r.id) ?? [],
   }));

@@ -285,6 +285,7 @@ interface DbSkuRow {
   units_per_pack: number | null; each_size: number | string | null;
   each_measure: string | null; avg_oz_per_each: number | string | null;
   product_id: string | null; inventory_only: boolean | null;
+  location_id: string | null;
   cushion_class: string | null; par_step: number | string | null;
 }
 
@@ -374,7 +375,10 @@ export async function loadDemandInputs(
   // data. The `vendor_id != null` cut is safe here — loadWalkerData makes the identical one
   // (a par'd SKU nobody can be asked for is unorderable) before it builds any id list.
   const storeVendorIds = await loadStoreVendorIds();
-  const routable = (skuRows ?? []).filter((s) => s.vendor_id != null && !storeVendorIds.has(s.vendor_id));
+  const routable = (skuRows ?? []).filter((s) =>
+    (s.location_id == null || s.location_id === locationId) &&
+    s.vendor_id != null && !storeVendorIds.has(s.vendor_id),
+  );
   const skuIds = routable.map((s) => s.id);
   const vendorIds = [...new Set(routable.map((s) => s.vendor_id as string))];
   const productIds = [...new Set(routable.map((s) => s.product_id).filter((v): v is string => v != null))];
@@ -1136,9 +1140,9 @@ export async function recordParRunSkipped(
   // read too. Still only two reads: no demand, no rhythm, no product index.
   const [{ data, error }, overlayBySku] = await Promise.all([
     sb.from("vendor_items")
-      .select("id, vendor_id, active, weekday_par, weekend_par, par_step")
+      .select("id, vendor_id, active, weekday_par, weekend_par, par_step, location_id")
       .or("weekday_par.not.is.null,weekend_par.not.is.null")
-      .returns<Array<{ id: string; vendor_id: string | null; active: boolean; weekday_par: number | string | null; weekend_par: number | string | null; par_step: number | string | null }>>(),
+      .returns<Array<{ id: string; vendor_id: string | null; active: boolean; weekday_par: number | string | null; weekend_par: number | string | null; par_step: number | string | null; location_id: string | null }>>(),
     loadParOverlay(sb, locationId, await parAutoLaneReady(sb)),
   ]);
   if (error) throw new Error(`recordParRunSkipped skus: ${error.message}`);
@@ -1147,7 +1151,8 @@ export async function recordParRunSkipped(
   const ledger: LedgerRow[] = [];
   const storeVendorIds = await loadStoreVendorIds();
   const universe = (data ?? []).filter(
-    (s) => s.vendor_id != null && !storeVendorIds.has(s.vendor_id) && resolveActive(overlayBySku.get(s.id)?.activeOverride, s.active),
+    (s) => (s.location_id == null || s.location_id === locationId) && s.vendor_id != null &&
+      !storeVendorIds.has(s.vendor_id) && resolveActive(overlayBySku.get(s.id)?.activeOverride, s.active),
   );
   for (const s of universe) {
     const parStep = parStepFor({

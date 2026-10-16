@@ -9,12 +9,16 @@
  * Gate: >= RECIPE_READ_MIN (6, AGM+).
  */
 
+import Link from "next/link";
+import { getServiceRoleClient } from "@/lib/supabase-server";
+import { catalogShopAllowed } from "@/lib/sku-versions-shared";
 import { redirect } from "next/navigation";
 
 import { requireSessionFromHeaders } from "@/lib/session";
 import { getRoleLevel } from "@/lib/roles";
 import { RECIPE_READ_MIN } from "@/lib/recipes";
-import { loadRecipeBuilderCatalog } from "@/lib/admin/recipe-builder-data";
+import { shopParamFor, searchParamValues } from "@/lib/shop-context-shared";
+import { loadRecipeBuilderCatalog, loadRecipeBuilderScope } from "@/lib/admin/recipe-builder-data";
 import { RecipeBuilder } from "@/components/admin/recipes/RecipeBuilder";
 import { PageHeader } from "@/components/ui/PageHeader";
 import type { RecipeType } from "@/lib/recipes";
@@ -37,7 +41,22 @@ export default async function AdminRecipesNewPage({
   if (level < RECIPE_READ_MIN) redirect("/dashboard");
 
   const lang = auth.user.language;
-  const catalog = await loadRecipeBuilderCatalog();
+  const requested = shopParamFor("/admin/recipes/new", searchParamValues(sp));
+  if (requested === undefined && new Set(auth.locations).size !== 1) {
+    if (level < 7 || auth.user.role === "social_media_mgr") redirect("/dashboard");
+    const { data: shops, error } = await getServiceRoleClient().from("locations").select("id, name").eq("active", true).order("name").returns<Array<{ id: string; name: string }>>();
+    if (error) throw new Error(`builder shops: ${error.message}`);
+    const choices = (shops ?? []).filter(shop => catalogShopAllowed({level, locations: auth.locations}, shop.id));
+    return <div>
+      <PageHeader title={serverT(lang, rk("recipes.new.title"))} subtitle={serverT(lang, "catalog.error.location_required")} />
+      <div className="flex flex-wrap gap-3">
+        {choices.map(shop => <Link key={shop.id} className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-border p-3" href={`/admin/recipes/new?location=${encodeURIComponent(shop.id)}&type=${defaultType}`}>{shop.name}</Link>)}
+        {level >= 8 ? <Link className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-border p-3" href={`/admin/recipes/new?location=global&type=${defaultType}`}>{serverT(lang, "catalog.item.shop_global")}</Link> : null}
+      </div>
+    </div>;
+  }
+  const context = await loadRecipeBuilderScope(auth, requested, true);
+  const catalog = await loadRecipeBuilderCatalog(auth, context.scope, context.scope);
 
   return (
     <div>
@@ -46,6 +65,11 @@ export default async function AdminRecipesNewPage({
         subtitle={serverT(lang, rk("recipes.new.subtitle"))}
       />
       <RecipeBuilder
+        key={`new:${context.scope ?? "global"}`}
+        locationId={context.scope}
+        scopeOptions={context.shops}
+        allowGlobalScope={context.allowGlobal}
+        outputItems={catalog.outputItems}
         recipe={null}
         skus={catalog.skus}
         items={catalog.items}

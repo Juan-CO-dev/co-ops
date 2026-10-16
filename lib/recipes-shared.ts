@@ -76,6 +76,7 @@ export interface RecipeOutputView {
   ozAllocShare: number | null; displayOrder: number;
 }
 export interface RecipeView {
+  ownerLocationId?: string | null;
   id: string; name: string; nameEs: string | null; recipeType: RecipeType;
   batchYield: number; directions: string | null; directionsEs: string | null;
   active: boolean; inputs: RecipeInputView[]; outputs: RecipeOutputView[];
