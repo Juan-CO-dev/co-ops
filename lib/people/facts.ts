@@ -17,6 +17,7 @@ import {
   type FactSubject, type FactWindow, type InstanceFact, type OversightFact, type PeopleFacts, type PmGradeFact,
   type PmNoteFact, type PmReportFact, type ProfileFacts, type StationFact, type PositionFact, type StationEventFact,
   type ClosingInstanceFact, type ClosingItemFact, type ClosingCompletionFact, type SkillAdjustmentFact, type SkillRatingFact,
+  emptyPmV2Facts, type PmV2CopyFact, type PmV2DayFact, type PmV2GradeFact, type PmV2NoteFact,
 } from "@/lib/people/facts-shared";
 import { OVERSIGHT_ACTIONS } from "@/lib/people/performance-shared";
 
@@ -224,7 +225,70 @@ export async function loadPeopleFacts(service: SupabaseClient, scope: PeopleFact
   }
 
   await loadSkillFamilies(service, scope, want, facts, loaded);
+  await loadPmV2Families(service, scope, want, facts, loaded);
   return { ...facts, loaded };
+}
+
+// ─── PM v2 (Task 23) ─────────────────────────────────────────────────────────
+// SUBMITTED v2 days only: format 'v2', a finalized status, live. A day is dated by its business date for grades
+// (the v1 grade rule's twin) and by its submit instant for notes (the v1 notes rule's twin). Before 0271 is
+// applied (no `format` column, no copy tables) every family is EMPTY — never an error: the skills and the legacy
+// numbers keep working on a database that has not got PM v2 yet.
+
+async function loadPmV2Families(
+  service: SupabaseClient, scope: PeopleFactScope, want: ReadonlySet<FactFamily>, facts: PeopleFacts, loaded: Set<FactFamily>,
+): Promise<void> {
+  const wantGrades = want.has("pmV2Grades"), wantNotes = want.has("pmV2Notes");
+  if (!wantGrades && !wantNotes) return;
+  const { locationId, subject, window } = scope;
+  const person = subject.kind === "person" ? subject.personId : null;
+  const members = new Set(subject.kind === "team" ? subject.memberIds : [person as string]);
+  const cols = "id, report_date, submitted_at";
+  try {
+    const byId = new Map<string, PmV2DayFact>();
+    if (wantGrades) {
+      for (const d of await selectAllRows<PmV2DayFact>((from, to) => service
+        .from("pm_reports").select(cols).eq("location_id", locationId).eq("format", "v2").is("superseded_at", null)
+        .in("status", FINALIZED_PM_STATUSES).gte("report_date", window.dates.from).lte("report_date", window.dates.to)
+        .order("id", { ascending: true }).range(from, to))) byId.set(d.id, d);
+    }
+    if (wantNotes) {
+      for (const d of await selectAllRows<PmV2DayFact>((from, to) => service
+        .from("pm_reports").select(cols).eq("location_id", locationId).eq("format", "v2").is("superseded_at", null)
+        .in("status", FINALIZED_PM_STATUSES).gte("submitted_at", window.bounds.start).lt("submitted_at", window.bounds.end)
+        .order("id", { ascending: true }).range(from, to))) byId.set(d.id, d);
+    }
+    const v2 = facts.pmV2;
+    v2.days = [...byId.values()].sort((a, b) => a.id.localeCompare(b.id));
+    for (const ids of chunk(v2.days.map((d) => d.id), ID_CHUNK)) {
+      v2.copies.push(...await selectAllRows<PmV2CopyFact>((from, to) => service
+        .from("pm_report_copies").select("id, pm_report_id, author_id, observed_from, observed_to").in("pm_report_id", ids)
+        .order("id", { ascending: true }).range(from, to)));
+    }
+    if (wantGrades) {
+      for (const ids of chunk(v2.copies.map((c) => c.id), ID_CHUNK)) {
+        const rows = await selectAllRows<PmV2GradeFact>((from, to) => {
+          const q = service.from("pm_copy_grades").select("id, copy_id, subject_id, position_id, criterion_id, grade").in("copy_id", ids).is("superseded_at", null);
+          return (person !== null ? q.eq("subject_id", person) : q).order("id", { ascending: true }).range(from, to);
+        });
+        v2.grades.push(...rows.filter((g) => members.has(g.subject_id)));
+      }
+    }
+    if (wantNotes) {
+      // Only the subject's OWN copies: a note counts for the manager who wrote it.
+      const authored = v2.copies.filter((c) => members.has(c.author_id)).map((c) => c.id);
+      for (const ids of chunk(authored, ID_CHUNK)) {
+        v2.notes.push(...await selectAllRows<PmV2NoteFact>((from, to) => service
+          .from("pm_copy_notes").select("id, copy_id").in("copy_id", ids).is("superseded_at", null)
+          .order("id", { ascending: true }).range(from, to)));
+      }
+    }
+  } catch (e) {
+    if (!isMissingTable({ message: e instanceof Error ? e.message : String(e) })) throw e;
+    facts.pmV2 = emptyPmV2Facts();
+  }
+  if (wantGrades) loaded.add("pmV2Grades");
+  if (wantNotes) loaded.add("pmV2Notes");
 }
 
 // ─── the skill families (Task 16) ────────────────────────────────────────────

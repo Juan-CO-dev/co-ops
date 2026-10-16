@@ -34,7 +34,7 @@ import { resolveTunables, type SkillTunables } from "@/lib/people/tunables-share
 export const PEOPLE_SKILL_ERROR_CODES = [
   "forbidden", "not_found", "invalid_payload", "invalid_adjustment", "invalid_rating", "invalid_reason", "invalid_tunables",
   "role_insufficient", "location_access_denied", "assignee_unavailable", "position_not_at_shop", "position_retired",
-  "skills_unavailable", "pm_v2_unavailable", "write_failed",
+  "skills_unavailable", "pm_v2_unavailable", "pm_v2_not_ready", "write_failed",
 ] as const;
 export type PeopleSkillErrorCode = (typeof PEOPLE_SKILL_ERROR_CODES)[number];
 
@@ -127,7 +127,7 @@ export async function loadSkillMatrix(
   try {
     const members = await loadMembers(service, args.locationId);
     const l = await loadSkillFacts(service, args.locationId, { kind: "team", memberIds: members.map((m) => m.userId) }, args.now ?? new Date());
-    return computeSkills({ locationId: args.locationId, facts: l.facts.skills, members, asOf: l.asOf, nowIso: l.nowIso, tunables: l.tunables, actorNames: l.names }).matrix;
+    return computeSkills({ locationId: args.locationId, facts: l.facts.skills, members, asOf: l.asOf, nowIso: l.nowIso, tunables: l.tunables, actorNames: l.names, pmV2: l.facts.pmV2 }).matrix;
   } catch (e) {
     if (unavailable(e)) throw new PeopleSkillError(503, "skills_unavailable");
     throw e;
@@ -150,7 +150,7 @@ export async function loadSkills(
     const l = await loadSkillFacts(service, args.locationId, { kind: "person", personId: s.id }, args.now ?? new Date());
     const computed = computeSkills({
       locationId: args.locationId, facts: l.facts.skills, members: [{ userId: s.id, name: s.name, role: s.role }],
-      asOf: l.asOf, nowIso: l.nowIso, tunables: l.tunables, actorNames: l.names,
+      asOf: l.asOf, nowIso: l.nowIso, tunables: l.tunables, actorNames: l.names, pmV2: l.facts.pmV2,
     });
     return {
       available: true,
@@ -171,7 +171,7 @@ export async function loadMySkills(
     const l = await loadSkillFacts(service, args.locationId, { kind: "person", personId: args.actor.userId }, args.now ?? new Date());
     const computed = computeSkills({
       locationId: args.locationId, facts: l.facts.skills, members: [{ userId: args.actor.userId, name: "", role: args.actor.role }],
-      asOf: l.asOf, nowIso: l.nowIso, tunables: l.tunables, actorNames: new Map(),
+      asOf: l.asOf, nowIso: l.nowIso, tunables: l.tunables, actorNames: new Map(), pmV2: l.facts.pmV2,
     });
     return { available: true, view: toSelfSkillView(computed.matrix, args.actor.userId, l.tunables) };
   } catch (e) {

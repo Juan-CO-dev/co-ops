@@ -19,7 +19,8 @@
 import type { NarrativeLine } from "@/lib/people-narrative";
 import type { RoleCode } from "@/lib/roles";
 import { etCalendarDate, operationalDayUtcRange } from "@/lib/operational-day";
-import type { FactWindow, SkillFacts } from "@/lib/people/facts-shared";
+import type { FactWindow, PmV2Facts, SkillFacts } from "@/lib/people/facts-shared";
+import { observationMinutes } from "@/lib/pm-report-v2-shared";
 import { closeOpenIntervals, positionTimeline, type PositionInterval } from "@/lib/people/positions-shared";
 import {
   closeOnTimeObservations, pmObservations, prepYieldObservations, signalsFor, skillBand, skillFor, skillWindowStart,
@@ -132,6 +133,30 @@ function latestBy<T extends { user_id: string; position_id: string; created_at: 
   return out;
 }
 
+/**
+ * PM v2 grades → position grades for the skill model (Task 23 (c)). The loader hands only SUBMITTED v2 days
+ * (`pmV2Grades`); each live, ANSWERED grade at a position becomes one, weighted by the minutes the grading copy
+ * observed that person at that position that day (Task 19's `observationMinutes`; a position the copy added —
+ * no interval there that day — counts the person's whole presence). "Didn't see" and a grade with no position
+ * never enter a position skill; PM v1 grades are never loaded here at all (J6).
+ */
+export function pmV2PositionGrades(v2: PmV2Facts, intervals: readonly PositionInterval[]): PmPositionGrade[] {
+  const dayById = new Map(v2.days.map((d) => [d.id, d] as const));
+  const copyById = new Map(v2.copies.map((c) => [c.id, c] as const));
+  const out: PmPositionGrade[] = [];
+  for (const g of [...v2.grades].sort((a, b) => a.id.localeCompare(b.id))) {
+    if (g.grade === null || g.position_id === null) continue;
+    const copy = copyById.get(g.copy_id);
+    const day = copy ? dayById.get(copy.pm_report_id) : undefined;
+    if (!copy || !day) continue;
+    const mine = intervals.filter((i) => i.userId === g.subject_id && i.businessDate === day.report_date);
+    const added = !mine.some((i) => i.positionId === g.position_id);
+    const observedMinutes = observationMinutes({ copyId: copy.id, authorId: copy.author_id, from: copy.observed_from, to: copy.observed_to }, mine, g.subject_id, g.position_id, { added });
+    out.push({ id: g.id, day: day.report_date, subjectId: g.subject_id, positionId: g.position_id, grade: g.grade, observedMinutes });
+  }
+  return out;
+}
+
 export interface ComputedSkills {
   matrix: SkillMatrix;
   /** Per person: minutes at a station with no recorded position (0217-era events). */
@@ -144,11 +169,11 @@ export interface ComputedSkills {
 
 /**
  * Every member × every active position. `actorNames` resolves who adjusted / rated (evidence lines).
- * PM v2 grades enter only through `pmGrades` (Task 23); Phase 1 passes none.
+ * PM v2 grades enter from `pmV2` (the SUBMITTED v2 days the loader read, Task 23) and/or a ready `pmGrades` list.
  */
 export function computeSkills(input: {
   locationId: string; facts: SkillFacts; members: readonly SkillMember[]; asOf: string; nowIso: string; tunables: SkillTunables;
-  actorNames: ReadonlyMap<string, string>; pmGrades?: readonly PmPositionGrade[];
+  actorNames: ReadonlyMap<string, string>; pmGrades?: readonly PmPositionGrade[]; pmV2?: PmV2Facts;
 }): ComputedSkills {
   const { facts, tunables: t } = input;
   const intervals = skillIntervals(facts, input.nowIso);
@@ -164,7 +189,8 @@ export function computeSkills(input: {
     closures, intervals,
   }, t);
   const prep = prepYieldObservations(facts.productions, intervals, facts.settings?.prepPositionId ?? null, t, etCalendarDate);
-  const observations: PersonObservation[] = [...closing, ...prep.observations, ...pmObservations(input.pmGrades ?? [], t)];
+  const pmGrades = [...(input.pmGrades ?? []), ...(input.pmV2 ? pmV2PositionGrades(input.pmV2, intervals) : [])];
+  const observations: PersonObservation[] = [...closing, ...prep.observations, ...pmObservations(pmGrades, t)];
 
   const adjustments = latestBy(facts.adjustments);
   const ratings = latestBy(facts.ratings);

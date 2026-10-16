@@ -52,12 +52,21 @@ export type FactFamily =
   /** people_skill_tunables: the company row and this shop's row. */
   | "skillTunables"
   /** people_shop_settings for the shop (the prep evidence position; the PM v2 switch). */
-  | "shopSettings";
+  | "shopSettings"
+  // ── PM v2 (Task 23). Read by the skills (always) and by the legacy numbers ONLY while the shop's switch is on. ──
+  /** Live v2 grades of the subject on the shop's SUBMITTED v2 days dated in the window (+ those days and copies). */
+  | "pmV2Grades"
+  /** Live v2 notes authored by the subject on the shop's SUBMITTED v2 days submitted in the bounds (+ days, copies). */
+  | "pmV2Notes";
 
 /** Every skill family (the matrix loads them all; nothing else does). */
 export const SKILL_FAMILIES: readonly FactFamily[] = [
-  "shopPositions", "positionIntervals", "closingLines", "productionFacts", "skillAdjustments", "skillRatings", "shopSettings",
+  "shopPositions", "positionIntervals", "closingLines", "productionFacts", "skillAdjustments", "skillRatings", "shopSettings", "pmV2Grades",
 ];
+
+/** The PM v2 families the legacy numbers add while a shop's `pm_v2` switch is ON (Task 23); never otherwise. */
+export const PM_V2_TEAM_FAMILIES: readonly FactFamily[] = ["pmV2Notes"];
+export const PM_V2_PERSON_FAMILIES: readonly FactFamily[] = ["pmV2Grades", "pmV2Notes"];
 
 export const LEGACY_TEAM_FAMILIES: readonly FactFamily[] = ["instances", "completions", "cash", "pmReports", "pmNotes", "oversight"];
 export const LEGACY_PERSON_FAMILIES: readonly FactFamily[] = [
@@ -121,6 +130,8 @@ export interface PeopleFacts {
   mvps: DatedReportFact[];
   /** The skill families (Task 16): empty unless asked for. */
   skills: SkillFacts;
+  /** PM v2 (Task 23): empty unless asked for, and empty before 0271 is applied. */
+  pmV2: PmV2Facts;
   loaded: ReadonlySet<FactFamily>;
 }
 
@@ -166,12 +177,26 @@ export function emptySkillFacts(): SkillFacts {
   };
 }
 
+// ─── PM v2 (Task 23) ─────────────────────────────────────────────────────────
+
+/** A SUBMITTED v2 day at the shop (format 'v2', a finalized status, live). */
+export interface PmV2DayFact { id: string; report_date: string; submitted_at: string | null }
+export interface PmV2CopyFact { id: string; pm_report_id: string; author_id: string; observed_from: string | null; observed_to: string | null }
+/** A live grade; `grade` NULL = "Didn't see" (never counted). */
+export interface PmV2GradeFact { id: string; copy_id: string; subject_id: string; position_id: string | null; criterion_id: string; grade: "great" | "good" | "needs_work" | null }
+/** A live note (only its existence counts; the text is never loaded here). */
+export interface PmV2NoteFact { id: string; copy_id: string }
+export interface PmV2Facts { days: PmV2DayFact[]; copies: PmV2CopyFact[]; grades: PmV2GradeFact[]; notes: PmV2NoteFact[] }
+export function emptyPmV2Facts(): PmV2Facts {
+  return { days: [], copies: [], grades: [], notes: [] };
+}
+
 /** An empty fact set over a window (a loader fills what it is asked for). */
 export function emptyPeopleFacts(locationId: string, subject: FactSubject, window: FactWindow): PeopleFacts {
   return {
     locationId, subject, window,
     instances: [], completions: [], confirmations: [], cash: [], pmReports: [], pmNotes: [], oversight: [],
-    pmGradedReports: [], pmGrades: [], mvps: [], skills: emptySkillFacts(), loaded: new Set(),
+    pmGradedReports: [], pmGrades: [], mvps: [], skills: emptySkillFacts(), pmV2: emptyPmV2Facts(), loaded: new Set(),
   };
 }
 

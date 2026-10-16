@@ -22,8 +22,9 @@ import { personCardLine, teamBannerNarrative, type NarrativeLine } from "@/lib/p
 import { etCalendarDate } from "@/lib/operational-day";
 import type { TrendGranularity } from "@/lib/reports-trends";
 import {
-  inBounds, requireFamilies, type FactWindow, type OversightAuditRow, type PeopleFacts, type ProfileFacts,
+  inBounds, requireFamilies, type FactWindow, type OversightAuditRow, type PeopleFacts, type PmV2Facts, type ProfileFacts,
 } from "@/lib/people/facts-shared";
+import { LEGACY_INPUTS, type PeopleInputs } from "@/lib/people/inputs-shared";
 
 export type { OversightAuditRow } from "@/lib/people/facts-shared";
 
@@ -105,6 +106,44 @@ export interface PeopleWindow extends FactWindow {
   bucketOf: (day: string) => string;
 }
 
+// ─── PM v2 into the legacy numbers (Task 23), ONLY while a shop's switch is on ──
+//
+// With `inputs.pmV2` false (the default, `LEGACY_INPUTS`) nothing below runs and no PM v2 family is even
+// required: every legacy number is byte-identical to the golden. With it on for a shop:
+//   · NOTES — each live v2 note counts one "notes" act for the manager who WROTE it (its copy's author), placed
+//     at the day's submit instant, for days submitted in the window: the v1 rule's twin (a v1 eval note counts
+//     for the day's submitter at that instant);
+//   · GRADIENTS — each live v2 grade of the person on a day dated in the window adds one great / good /
+//     needs_work to `gradientTally` (one per graded criterion); "Didn't see" adds nothing.
+// Finalizations and peopleMgmt are untouched: they come from the shared day row (`pm_reports`), v1 or v2.
+
+/** Each live v2 note as one act of its author at the day's submit instant (days with no submit instant: none). */
+export function pmV2NoteActs(v2: PmV2Facts): Array<{ authorId: string; at: string }> {
+  const dayById = new Map(v2.days.map((d) => [d.id, d] as const));
+  const copyById = new Map(v2.copies.map((c) => [c.id, c] as const));
+  const out: Array<{ authorId: string; at: string }> = [];
+  for (const n of v2.notes) {
+    const copy = copyById.get(n.copy_id);
+    const at = copy ? dayById.get(copy.pm_report_id)?.submitted_at : null;
+    if (copy && at) out.push({ authorId: copy.author_id, at });
+  }
+  return out;
+}
+
+/** Each live, answered v2 grade with its day's business date. */
+export function pmV2DatedGrades(v2: PmV2Facts): Array<{ subjectId: string; day: string; grade: "great" | "good" | "needs_work" }> {
+  const dayById = new Map(v2.days.map((d) => [d.id, d] as const));
+  const copyById = new Map(v2.copies.map((c) => [c.id, c] as const));
+  const out: Array<{ subjectId: string; day: string; grade: "great" | "good" | "needs_work" }> = [];
+  for (const g of v2.grades) {
+    if (g.grade === null) continue;
+    const copy = copyById.get(g.copy_id);
+    const day = copy ? dayById.get(copy.pm_report_id)?.report_date : undefined;
+    if (day) out.push({ subjectId: g.subject_id, day, grade: g.grade });
+  }
+  return out;
+}
+
 /** A rule may compute only inside what was loaded. */
 function requireCovered(facts: PeopleFacts, w: FactWindow): void {
   const lb = facts.window.bounds;
@@ -157,8 +196,9 @@ function scoreRelevant(role: RoleCode, category: ActionCategory): number {
  * null and health is judged without one; a compare re-judges with the previous window's scores
  * (`withPreviousScores`), exactly as the legacy loader did.
  */
-export function teamWindow(facts: PeopleFacts, roster: readonly RosterMember[], w: PeopleWindow): TeamOperatingHealth {
+export function teamWindow(facts: PeopleFacts, roster: readonly RosterMember[], w: PeopleWindow, inputs: PeopleInputs = LEGACY_INPUTS): TeamOperatingHealth {
   requireFamilies(facts, "instances", "completions", "cash", "pmReports", "pmNotes", "oversight");
+  if (inputs.pmV2) requireFamilies(facts, "pmV2Notes");
   requireCovered(facts, w);
   if (roster.length === 0) return emptyTeam(w.granularity);
 
@@ -219,6 +259,11 @@ export function teamWindow(facts: PeopleFacts, roster: readonly RosterMember[], 
     if (rep?.submitted_by && rep.submitted_at && ((e.area_to_improve && e.area_to_improve.trim()) || (e.note && e.note.trim()))) {
       place(rep.submitted_by, rep.submitted_at, "notes");
     }
+  }
+
+  // 3b. NOTES from PM v2 copies (Task 23; the shop's switch on): one per live note, for its author.
+  if (inputs.pmV2) {
+    for (const n of pmV2NoteActs(facts.pmV2)) if (inBounds(n.at, w.bounds)) place(n.authorId, n.at, "notes");
   }
 
   // 4. OVERSIGHT (bound to THIS location's instances — see the OVERSIGHT LOCATION BIND note)
@@ -300,7 +345,7 @@ export interface PersonMetrics {
 const WEEKDAYS = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"];
 
 /** One person's counts in a window: the score half of `personMetrics`. */
-function personCounts(facts: PeopleFacts, w: PeopleWindow) {
+function personCounts(facts: PeopleFacts, w: PeopleWindow, inputs: PeopleInputs) {
   const current = emptyCounts();
   const inWindow = (tstz: string): boolean => {
     const day = etCalendarDate(tstz);
@@ -362,6 +407,12 @@ function personCounts(facts: PeopleFacts, w: PeopleWindow) {
     }
   }
 
+  // PM v2 notes the person WROTE (Task 23; the shop's switch on) — the twin of the v1 rule above.
+  if (inputs.pmV2 && facts.subject.kind === "person") {
+    const me = facts.subject.personId;
+    for (const n of pmV2NoteActs(facts.pmV2)) if (n.authorId === me && inBounds(n.at, w.bounds)) add(n.at, "notes");
+  }
+
   // The roster rule's twin — the same location bind, for the same reason (this is the path
   // /my-performance runs, and it applies no RANKED_MAX_LEVEL ceiling).
   const locInstanceIdSet = new Set(facts.instances.map((r) => r.id));
@@ -383,15 +434,17 @@ export function personMetrics(
   w: PeopleWindow,
   today: string,
   previous: PeopleWindow | null = null,
+  inputs: PeopleInputs = LEGACY_INPUTS,
 ): PersonMetrics {
   requireFamilies(facts, "instances", "completions", "confirmations", "cash", "pmReports", "pmNotes", "oversight", "pmGrades", "mvps");
+  if (inputs.pmV2) requireFamilies(facts, "pmV2Grades", "pmV2Notes");
   if (facts.subject.kind !== "person") throw new Error("person_facts_required");
   requireCovered(facts, w);
   if (previous) requireCovered(facts, previous);
 
-  const c = personCounts(facts, w);
+  const c = personCounts(facts, w, inputs);
   const score = scoreFromCounts(person.role, c.current);
-  const previousScore = previous ? scoreFromCounts(person.role, personCounts(facts, previous).current) : null;
+  const previousScore = previous ? scoreFromCounts(person.role, personCounts(facts, previous, inputs).current) : null;
   const scoreDeltaPct = previousScore && previousScore > 0 ? Math.round(((score - previousScore) / previousScore) * 100) : null;
 
   const finalsChrono = c.finalsChrono;
@@ -417,6 +470,14 @@ export function personMetrics(
       if (g === "great") great++; else if (g === "good") good++; else if (g === "needs_work") needsWork++;
     }
     if (e.area_to_improve && e.area_to_improve.trim()) flaggedToImprove++;
+  }
+  // PM v2 grades of the person on days dated in the window (Task 23; the shop's switch on): one per criterion.
+  if (inputs.pmV2) {
+    const me = facts.subject.personId;
+    for (const g of pmV2DatedGrades(facts.pmV2)) {
+      if (g.subjectId !== me || g.day < w.dates.from || g.day > w.dates.to) continue;
+      if (g.grade === "great") great++; else if (g.grade === "good") good++; else needsWork++;
+    }
   }
   const mvpAwards = facts.mvps.filter(dated).length;
 

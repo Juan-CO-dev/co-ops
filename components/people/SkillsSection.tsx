@@ -35,7 +35,7 @@ const fieldLabel = "grid min-w-0 gap-1 text-[11px] font-bold tracking-[0.12em] t
 const ERROR_CODES = [
   "forbidden", "not_found", "invalid_payload", "invalid_adjustment", "invalid_rating", "invalid_reason", "invalid_tunables",
   "role_insufficient", "location_access_denied", "assignee_unavailable", "position_not_at_shop", "position_retired",
-  "skills_unavailable", "pm_v2_unavailable", "write_failed",
+  "skills_unavailable", "pm_v2_unavailable", "pm_v2_not_ready", "write_failed",
 ];
 function errorKey(code: unknown): TranslationKey {
   return typeof code === "string" && ERROR_CODES.includes(code) ? (`people.skills.error.${code}` as TranslationKey) : "people.skills.error.generic";

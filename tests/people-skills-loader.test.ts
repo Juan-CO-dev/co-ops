@@ -272,9 +272,9 @@ describe("saveSkillTunables / savePeopleShopSettings", () => {
     expect(vi.mocked(audit).mock.calls[0]![0]).toMatchObject({ action: "people.skill_tunables_update", metadata: { location_id: null, before: null } });
   });
 
-  it("shop settings: GM own shop; the PM v2 switch stays off (pm_v2_unavailable); an AGM is refused; audited before/after", async () => {
+  it("shop settings: GM own shop; PM v2 ON is refused until the shop's criteria are seeded (pm_v2_not_ready); an AGM is refused; audited before/after", async () => {
     await expect(savePeopleShopSettings(service(), { actor: agmA, locationId: A, pmV2: false, prepPositionId: P_PREP })).rejects.toMatchObject({ code: "forbidden" });
-    await expect(savePeopleShopSettings(service(), { actor: gmA, locationId: A, pmV2: true, prepPositionId: P_PREP })).rejects.toMatchObject({ status: 409, code: "pm_v2_unavailable" });
+    await expect(savePeopleShopSettings(service(), { actor: gmA, locationId: A, pmV2: true, prepPositionId: P_PREP })).rejects.toMatchObject({ status: 409, code: "pm_v2_not_ready" });
     expect(rpc).not.toHaveBeenCalled();
     rpc.mockResolvedValueOnce({ data: { before: null, after: { pm_v2: false, prep_position_id: P_PREP } }, error: null });
     expect(await savePeopleShopSettings(service(), { actor: gmA, locationId: A, pmV2: false, prepPositionId: P_PREP })).toEqual({ pmV2: false, prepPositionId: P_PREP });

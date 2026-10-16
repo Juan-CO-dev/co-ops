@@ -44,7 +44,9 @@ function recordingClient(canned: Record<string, Array<Record<string, unknown>>> 
 }
 
 import { loadMySkills, loadSkillMatrix } from "@/lib/people/skills";
-import { loadPeopleShopSettings } from "@/lib/people/settings";
+import { loadPeopleShopSettings, pmV2Readiness } from "@/lib/people/settings";
+import { loadPeopleFacts } from "@/lib/people/facts";
+import { loadPeopleInputs } from "@/lib/people/inputs";
 import { loadBatches } from "@/lib/yield-stats";
 import { loadDayResults, loadMyCopy, loadMyFeedbackV2 } from "@/lib/pm-report-v2";
 import { loadCriteriaEditor } from "@/lib/pm-criteria";
@@ -97,6 +99,13 @@ beforeAll(async () => {
   await run("loadDayResults", () => loadDayResults(doneSvc, { actor: owner, locationId: LOC, date: "2026-10-15" }));
   await run("loadMyFeedbackV2", () => loadMyFeedbackV2(doneSvc, { userId: SUBJECT }));
   await run("loadCriteriaEditor", () => loadCriteriaEditor(openSvc, { actor: owner, locationId: LOC }));
+  // Task 23: the PM v2 fact families (team + person), the per-shop inputs read and the switch's readiness read.
+  const v2Svc = recordingClient({ pm_reports: [day("submitted")], pm_report_copies: [copy("sealed")], pm_copy_grades: [grade], pm_copy_notes: [{ id: "n1", copy_id: PM_COPY }] });
+  const window = { bounds: { start: "2026-10-01T04:00:00Z", end: "2026-10-16T04:00:00Z" }, dates: { from: "2026-10-01", to: "2026-10-15" } };
+  await run("pmV2Facts", () => loadPeopleFacts(v2Svc, { locationId: LOC, subject: { kind: "team", memberIds: [owner.userId, SUBJECT] }, window, families: ["pmV2Grades", "pmV2Notes"] }));
+  await run("pmV2Facts", () => loadPeopleFacts(v2Svc, { locationId: LOC, subject: { kind: "person", personId: owner.userId }, window, families: ["pmV2Grades", "pmV2Notes"] }));
+  await run("pmV2Facts", () => loadPeopleInputs(v2Svc, LOC));
+  await run("pmV2Facts", () => pmV2Readiness(v2Svc, LOC));
 }, 240_000);
 afterAll(async () => { await db?.close(); });
 
@@ -132,6 +141,21 @@ describe("the skills loaders against the real 0270 schema", () => {
     // The criteria editor's UPDATE (rename / deactivate / move) names these columns (Task 22).
     await expect(db.query("update public.pm_criteria set label = label, label_es = label_es, sort = sort, active = active, updated_by = updated_by, updated_at = updated_at where false"))
       .resolves.toBeDefined();
+  });
+
+  it("Task 23: every PM v2 fact-family, inputs and readiness query executes against the real 0270/0271 schema", async () => {
+    const mine = captured.filter((c) => c.via === "pmV2Facts");
+    for (const t of ["pm_reports", "pm_report_copies", "pm_copy_grades", "pm_copy_notes", "people_shop_settings", "pm_criteria", "stations", "station_positions"]) {
+      expect(mine.map((c) => c.table), t).toContain(t);
+    }
+    for (const c of mine) {
+      const where = [...new Set(c.filters)].map((f) => `${f} is not distinct from ${f}`).join(" and ") || "true";
+      const order = c.order.length ? ` order by ${c.order.join(", ")}` : "";
+      const sql = `select ${c.select.join(", ")} from public.${c.table} where ${where}${order} limit 0`;
+      await expect(db.query(sql), `${c.via}: ${sql}`).resolves.toBeDefined();
+    }
+    // The notes family never reads the note TEXT (only that a live note exists).
+    expect(mine.filter((c) => c.table === "pm_copy_notes").every((c) => !c.select.includes("note"))).toBe(true);
   });
 
   it("(r1 P2-6) the production read IS loadBatches' read: same table, columns and filters, the window bound excepted", () => {

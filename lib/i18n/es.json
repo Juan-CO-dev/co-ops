@@ -6909,6 +6909,7 @@
   "people.skills.error.position_retired": "Ese puesto ya no está activo.",
   "people.skills.error.skills_unavailable": "Las habilidades todavía no están activadas.",
   "people.skills.error.pm_v2_unavailable": "Los reportes PM v2 todavía no se pueden activar.",
+  "people.skills.error.pm_v2_not_ready": "Todavía no se puede activar PM v2 aquí: primero nombra los puestos Prep y Prep/Dishwasher y carga los criterios.",
   "people.skills.error.write_failed": "No se guardó. Inténtalo de nuevo.",
   "people.skills.error.generic": "No se guardó. Inténtalo de nuevo.",
   "pmv2.copy.title": "Tu copia del reporte PM",

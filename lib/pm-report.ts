@@ -245,9 +245,9 @@ import { loadPeopleShopSettings, PM_V2_SWITCH_AVAILABLE } from "@/lib/people/set
 export type PmReportFormat = "v1" | "v2";
 
 /**
- * The format a NEW day row gets (Scheduling Phase 1, Task 20): v2 only while the PM v2 switch exists
- * (`PM_V2_SWITCH_AVAILABLE`, off until the chunk that wires it) AND the shop's `people_shop_settings.pm_v2`
- * is on. With the switch unavailable nothing is read and every day is v1, exactly as before.
+ * The format a NEW day row gets (Scheduling Phase 1, Tasks 20/23): v2 only while the code-level switch is
+ * available (`PM_V2_SWITCH_AVAILABLE`, wired in Task 23) AND the shop's `people_shop_settings.pm_v2` is on
+ * (per shop, off by default, ON only once the shop's data is ready). No row, or 0270 not applied: v1, as before.
  */
 async function newDayFormat(service: SupabaseClient, locationId: string): Promise<PmReportFormat> {
   if (!PM_V2_SWITCH_AVAILABLE) return "v1";

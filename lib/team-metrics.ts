@@ -20,6 +20,7 @@ import { personReadNarrative, myPerformanceRead, type NarrativeLine } from "@/li
 import { resolveTrendRange, clippedBucketKeys, type TrendRange, bucketStart, type TrendGranularity } from "@/lib/reports-trends";
 import { canOpenPeopleViews, canViewPeople, type PeopleActor } from "@/lib/people/access-shared";
 import { loadPeopleFacts } from "@/lib/people/facts";
+import { familiesFor, loadPeopleInputs } from "@/lib/people/inputs";
 import { LEGACY_PERSON_FAMILIES, LEGACY_TEAM_FAMILIES, unionWindow } from "@/lib/people/facts-shared";
 import {
   RANKED_MAX_LEVEL, emptyTeam, personMetrics, teamWindow, withPreviousScores,
@@ -74,14 +75,16 @@ export async function loadTeamOperatingHealth(service: SupabaseClient, args: Tea
   const roster = await loadTeamRoster(service, args.locationId);
   if (roster.length === 0) return range.compare ? withPreviousScores(emptyTeam(args.granularity), emptyTeam(args.granularity)) : emptyTeam(args.granularity);
 
+  // Task 23: the shop's inputs (PM v2 OFF unless its switch is on) decide what is loaded and what counts.
+  const inputs = await loadPeopleInputs(service, args.locationId);
   const facts = await loadPeopleFacts(service, {
     locationId: args.locationId,
     subject: { kind: "team", memberIds: roster.map((m) => m.userId) },
     window: previous ? unionWindow(current, previous) : current,
-    families: LEGACY_TEAM_FAMILIES,
+    families: familiesFor(LEGACY_TEAM_FAMILIES, inputs, "team"),
   });
-  const team = teamWindow(facts, roster, current);
-  return previous ? withPreviousScores(team, teamWindow(facts, roster, previous)) : team;
+  const team = teamWindow(facts, roster, current, inputs);
+  return previous ? withPreviousScores(team, teamWindow(facts, roster, previous, inputs)) : team;
 }
 
 /** The roster: location-assigned, active, level < 8, in the users query's order. */
@@ -138,13 +141,14 @@ async function computePersonMetrics(
   const range = args.range ?? resolveTrendRange({ compare: args.compare ? "1" : "0" }, args.today, args.granularity);
   const current = peopleWindow(range, args.granularity);
   const previous = range.compare ? peopleWindow(range.previous, args.granularity) : null;
+  const inputs = await loadPeopleInputs(service, args.locationId);
   const facts = await loadPeopleFacts(service, {
     locationId: args.locationId,
     subject: { kind: "person", personId: args.personId },
     window: previous ? unionWindow(current, previous) : current,
-    families: LEGACY_PERSON_FAMILIES,
+    families: familiesFor(LEGACY_PERSON_FAMILIES, inputs, "person"),
   });
-  return personMetrics(facts, { role: args.role, createdAt: args.createdAt }, current, args.today, previous);
+  return personMetrics(facts, { role: args.role, createdAt: args.createdAt }, current, args.today, previous, inputs);
 }
 
 /** Shops this person can actually be opened at, intersected with the viewer's scope. */

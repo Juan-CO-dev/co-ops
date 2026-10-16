@@ -6909,6 +6909,7 @@
   "people.skills.error.position_retired": "That position was retired.",
   "people.skills.error.skills_unavailable": "Skills aren't switched on yet.",
   "people.skills.error.pm_v2_unavailable": "PM reports v2 can't be switched on yet.",
+  "people.skills.error.pm_v2_not_ready": "PM reports v2 can't be switched on here yet: name the Prep and Prep/Dishwasher positions and seed the criteria first.",
   "people.skills.error.write_failed": "That didn't save. Try again.",
   "people.skills.error.generic": "That didn't save. Try again.",
   "pmv2.copy.title": "Your PM report copy",

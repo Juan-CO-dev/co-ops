@@ -17,8 +17,8 @@ const FIELDS: Record<string, readonly string[]> = {
  * Scheduling Phase 1, Task 16: the people settings writes. Both take the Tier E edit window (the catalog's
  * 15-minute password window): the skill tunables shape how EVERY shop's people are read (R11, J8), and the
  * shop settings decide where a shop's prep evidence counts. Rules in the lib, before any I/O: tunables MoO+
- * only (`locationId` null = the company set), shop settings GM own shop / MoO+ any; the PM v2 switch stays
- * off until the chunk that wires it (`pm_v2_unavailable`). Refusals by name; `invalid_tunables` names the
+ * only (`locationId` null = the company set), shop settings GM own shop / MoO+ any; the per-shop PM v2 switch
+ * (Task 23) turns ON only when the shop's data is ready (`pm_v2_not_ready`). Refusals by name; `invalid_tunables` names the
  * key. No email, no notification.
  */
 export async function POST(req: NextRequest) {
