@@ -109,6 +109,10 @@ beforeAll(async () => {
       sevenshifts_user_links: [{ sevenshifts_user_id: "77", user_id: "u1" }],
     });
     await loadSchedulingInputs(svc, { locationId: LOC, weekStarts: [WEEK], now: new Date("2026-10-21T16:00:00Z") });
+    // Chunk F: the board's own two reads (position labels; an edited head's origin contexts).
+    const board = await import("@/lib/scheduling/board");
+    await board.loadPositionLabelRows(svc, LOC);
+    await board.loadOriginContexts(svc, LOC, [REV]);
   } finally {
     if (prev.t === undefined) delete process.env.SEVENSHIFTS_ACCESS_TOKEN; else process.env.SEVENSHIFTS_ACCESS_TOKEN = prev.t;
     if (prev.s === undefined) delete process.env.SEVENSHIFTS_SYNC; else process.env.SEVENSHIFTS_SYNC = prev.s;

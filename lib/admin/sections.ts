@@ -54,6 +54,9 @@ export const ADMIN_SECTIONS: AdminSection[] = [
   // Scheduling Phase 1 (0271, Task 22): the PM v2 criteria editor — GM own shop, 8+ every shop; Tier E. Role-aware
   // (chunk F ruling (a)): the GM and MoO+ roles only; the page binds a GM to their own shops (canEditPmCriteria).
   { id: "pm-criteria", i18nKey: "pmCriteria.title", href: "/admin/pm-criteria", minLevel: 7, onlyRoles: PM_CRITERIA_EDITOR_ROLES },
+  // Scheduling Phase 2 (chunk F): the schedule board — GM own shop, MoO+ any, and the AGM at their own shop (read; edit
+  // when the shop grants it). Role-aware like canViewSchedule: never the social media, catering or prep managers.
+  { id: "schedule", i18nKey: "schedule.page.title", href: "/schedule", minLevel: 7, alsoRoles: ["agm"] },
   // 0234: customer profiles (stats GM+ own shop / 8+ every shop; contact + consent desk 9+).
   { id: "customers", i18nKey: "customers.title", href: "/admin/customers", minLevel: 7 },
   { id: "users",               i18nKey: "admin.section.users",               href: "/admin/users",               minLevel: 8 },

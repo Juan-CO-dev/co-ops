@@ -344,9 +344,15 @@ export async function replayWeek(deps: ScheduleDeps, args: { actor: PeopleActor;
 export async function currentInputsAdvisory(deps: ScheduleDeps, args: { actor: PeopleActor; locationId: string; weekStart: string }): Promise<AdvisoryItem[]> {
   await gate(deps.service, args.actor, args.locationId, "view");
   const inputs = await loader(deps)(deps.service, { locationId: args.locationId, weekStarts: [args.weekStart], now: nowOf(deps) });
-  const w = inputs.weeks[args.weekStart];
-  if (!w?.head) throw new ScheduleError("week_not_found");
+  if (!inputs.weeks[args.weekStart]?.head) throw new ScheduleError("week_not_found");
+  return adviseFromInputs(inputs, args.weekStart, args.actor);
+}
+
+/** The advisory for a week from inputs already loaded (the board reuses its one load): the head's built dates re-run on the live inputs. */
+export async function adviseFromInputs(inputs: SchedulingInputs, weekStart: string, actor: PeopleActor): Promise<AdvisoryItem[]> {
+  const w = inputs.weeks[weekStart];
+  if (!w?.head) return [];
   const builtDates = Object.keys(w.head.context.days);
-  const live = (await build(inputs, args.weekStart, w.head.context.today, builtDates, args.actor)).out.context;
+  const live = (await build(inputs, weekStart, w.head.context.today, builtDates, actor)).out.context;
   return contextAdvisory(w.head.context, live);
 }
