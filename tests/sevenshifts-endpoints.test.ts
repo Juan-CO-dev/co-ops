@@ -75,7 +75,7 @@ describe("the endpoint table", () => {
     expect(shifts.get("modified_since")).toBe("2026-10-12T18:30:00Z");
     expect(shifts.get("include_deleted")).toBe("true");
     expect(shifts.get("include_draft")).toBe("false");
-    expect(shifts.get("consider_tz_in_ranges")).toBe("false");
+    expect(shifts.get("consider_tz_in_ranges")).toBe("true"); // chunk B review #1: true honours the explicit UTC offset
     const punches = SEVENSHIFTS_ENDPOINTS.time_punches.params(WINDOW, "1234");
     expect(punches.get("clocked_in[gte]")).toBe("2026-07-16T04:00:00Z");
     expect(punches.get("clocked_in[lte]")).toBe("2026-10-16T03:59:59Z");
@@ -116,7 +116,7 @@ describe("chunk A review (Astra) — fixes pinned against the docs re-read 2026-
       expect(p.get("clocked_in[gte]")).toBe("2026-07-16T04:00:00Z");
       expect(p.get("modified_since")).toBe("2026-10-12T18:30:00Z");
     }
-    for (const r of SEVENSHIFTS_RESOURCES) if (r !== "time_punches") expect(requestPasses(r, WINDOW, "1234")).toHaveLength(1);
+    for (const r of SEVENSHIFTS_RESOURCES) if (!["time_punches", "users", "availabilities"].includes(r)) expect(requestPasses(r, WINDOW, "1234")).toHaveLength(1);
   });
 
   it("#4 ET business dates become DST-correct instants: the final day is covered to its last second", () => {
@@ -135,5 +135,29 @@ describe("chunk A review (Astra) — fixes pinned against the docs re-read 2026-
     // A shift starting 11:30 PM ET on the fall-back day is inside the upper bound.
     const lte = windowInstants({ modifiedSince: null, from: "2026-11-01", to: "2026-11-01" }).lte;
     expect(Date.parse("2026-11-02T04:30:00Z")).toBeLessThanOrEqual(Date.parse(lte));
+  });
+});
+
+describe("chunk B review (Astra) — the endpoint table", () => {
+  it("#1 shifts send consider_tz_in_ranges=true: 7shifts honours the explicit UTC offset of start[gte|lte]", () => {
+    for (const p of requestPasses("shifts", WINDOW, "1234")) expect(p.get("consider_tz_in_ranges")).toBe("true");
+  });
+
+  it("#3 availability is TWO disjoint passes: weekly records bounded by week_gte, repeating records with NO week floor", () => {
+    const passes = requestPasses("availabilities", WINDOW, "1234");
+    expect(passes.map((p) => [p.get("repeating"), p.get("week_gte")])).toEqual([["false", "2026-07-16"], ["true", null]]);
+    for (const p of passes) expect(p.get("limit")).toBe(String(LIST_PAGE_LIMIT));
+  });
+
+  it("users: explicit active and inactive passes (no reliance on the status default), modified_since stays a DATE", () => {
+    const passes = requestPasses("users", WINDOW, "1234");
+    expect(passes.map((p) => p.get("status"))).toEqual(["active", "inactive"]);
+    for (const p of passes) expect(p.get("modified_since")).toBe("2026-10-12");
+  });
+
+  it("a pass may REMOVE a base parameter (null), and only the declared keys change", () => {
+    const [weekly, repeating] = requestPasses("availabilities", WINDOW, "1234");
+    expect([...repeating!.keys()].sort()).toEqual(["limit", "repeating"]);
+    expect([...weekly!.keys()].sort()).toEqual(["limit", "repeating", "week_gte"]);
   });
 });

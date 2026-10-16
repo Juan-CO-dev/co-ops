@@ -15,7 +15,7 @@ import { audit } from "@/lib/audit";
 import { claimCronRoute } from "@/lib/cron-route-lease";
 import { canSyncNow, type PeopleActor } from "@/lib/people/access-shared";
 import { sevenShiftsStatus } from "@/lib/sevenshifts/config";
-import { runSevenShiftsSync, type SyncStatus } from "@/lib/sevenshifts/sync";
+import { runSevenShiftsSync, type PersistenceErrorCode, type SyncStatus } from "@/lib/sevenshifts/sync";
 
 export type SyncNowErrorCode = "forbidden" | "not_connected" | "sync_off" | "sync_busy";
 export class SyncNowError extends Error {
@@ -28,7 +28,7 @@ export const SYNC_NOW_DEADLINE_MS = 110_000;
 export async function requestSyncNow(
   actor: PeopleActor,
   opts: { deadlineMs?: number } = {},
-): Promise<{ runId: string | null; status: SyncStatus; requests: number }> {
+): Promise<{ runId: string | null; status: SyncStatus; requests: number; persistenceErrors: PersistenceErrorCode[] }> {
   if (!canSyncNow(actor)) throw new SyncNowError(403, "forbidden");
   const status = sevenShiftsStatus();
   if (status.reason === "token_missing") throw new SyncNowError(409, "not_connected");
@@ -41,5 +41,5 @@ export async function requestSyncNow(
   });
   const outcome = await runSevenShiftsSync({ trigger: "manual", requestedBy: actor.userId, deadlineMs: opts.deadlineMs ?? SYNC_NOW_DEADLINE_MS });
   if (!outcome.ran) throw new SyncNowError(409, outcome.reason === "token_missing" ? "not_connected" : "sync_off");
-  return { runId: outcome.runId, status: outcome.status, requests: outcome.requests };
+  return { runId: outcome.runId, status: outcome.status, requests: outcome.requests, persistenceErrors: outcome.persistenceErrors };
 }

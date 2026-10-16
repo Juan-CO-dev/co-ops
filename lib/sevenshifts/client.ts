@@ -6,7 +6,11 @@
  *   · waits for the shared limiter (8/s, 500/min — 80% of the published limits);
  *   · sends `Authorization: Bearer <token>` and `x-api-version` (SEVENSHIFTS_API_VERSION), `cache: no-store`;
  *   · is bounded by the run's ONE AbortSignal;
- *   · on 429 honours Retry-After, penalizes the limiter, and retries ONCE (a second 429 is `rate_limited`).
+ *   · on 429 honours Retry-After IN FULL (no cap) on the SHARED limiter and retries ONCE; a second 429 is
+ *     `rate_limited` and its Retry-After lands on the limiter too. A cooldown that cannot fit before the
+ *     run's deadline ends that resource at once (`rate_limited`), and any later wait that cannot fit ends
+ *     its resource as `deadline` without sending, so the next resource honours the cooldown too
+ *     (chunk B review #5).
  * It dispatches on the endpoint's declared shape: only `paginated` follows cursors (through
  * paginate-shared); a `singleton` / `list-unpaginated` is ONE request run through its validator.
  *
@@ -50,6 +54,10 @@ export interface SevenShiftsClientDeps {
   fetch?: SevenShiftsFetch;
   /** Real time by default; tests inject a fake clock. */
   sleep?: (ms: number) => Promise<void>;
+  /** The limiter's clock (ms); Date.now by default. Retry-After dates and the deadline are read on it. */
+  now?: () => number;
+  /** The run's deadline on `now`'s clock. A wait that cannot finish before it is not started. */
+  deadlineAt?: number;
 }
 
 export type GetResult =
@@ -64,14 +72,14 @@ export interface GetArgs {
 }
 
 const DEFAULT_RETRY_AFTER_MS = 1_000;
-const MAX_RETRY_AFTER_MS = 60_000;
 
+/** The server's cooldown, in full (chunk B review #5: no cap; the run's deadline bounds the wait). */
 function retryAfterMs(h: string | null, nowMs: number): number {
   if (h === null || h.trim() === "") return DEFAULT_RETRY_AFTER_MS;
   const secs = Number(h);
-  if (Number.isFinite(secs) && secs >= 0) return Math.min(MAX_RETRY_AFTER_MS, secs * 1000);
+  if (Number.isFinite(secs) && secs >= 0) return secs * 1000;
   const at = Date.parse(h);
-  if (Number.isFinite(at)) return Math.min(MAX_RETRY_AFTER_MS, Math.max(0, at - nowMs));
+  if (Number.isFinite(at)) return Math.max(0, at - nowMs);
   return DEFAULT_RETRY_AFTER_MS;
 }
 
@@ -103,10 +111,15 @@ const VALIDATORS: Partial<Record<SevenShiftsResource, (json: unknown) => Snapsho
 export function createSevenShiftsClient(deps: SevenShiftsClientDeps) {
   const doFetch: SevenShiftsFetch = deps.fetch ?? ((url, init) => globalThis.fetch(url, init));
   const sleep = deps.sleep ?? ((ms: number) => sleepWithSignal(ms, deps.signal));
+  const now = deps.now ?? Date.now;
+  const fits = (ms: number) => deps.deadlineAt === undefined || now() + ms <= deps.deadlineAt;
 
   async function waitTurn(): Promise<void> {
     if (deps.signal.aborted) throw new SevenShiftsApiError("deadline");
-    await sleep(deps.limiter.reserve());
+    const wait = deps.limiter.reserve();
+    // A wait (a shared cooldown, usually) that cannot end before the deadline is never started.
+    if (!fits(wait)) throw new SevenShiftsApiError("deadline");
+    await sleep(wait);
     if (deps.signal.aborted) throw new SevenShiftsApiError("deadline");
   }
 
@@ -132,10 +145,16 @@ export function createSevenShiftsClient(deps: SevenShiftsClientDeps) {
     await waitTurn();
     let res = await send(url);
     if (res.status === 429) {
-      deps.limiter.penalize(retryAfterMs(res.headers.get("retry-after"), Date.now()));
+      const cooldown = retryAfterMs(res.headers.get("retry-after"), now());
+      // The cooldown always lands on the SHARED limiter, even when this resource gives up below.
+      deps.limiter.penalize(cooldown);
+      if (!fits(cooldown)) throw new SevenShiftsApiError("rate_limited");
       await waitTurn();
       res = await send(url);
-      if (res.status === 429) throw new SevenShiftsApiError("rate_limited");
+      if (res.status === 429) {
+        deps.limiter.penalize(retryAfterMs(res.headers.get("retry-after"), now()));
+        throw new SevenShiftsApiError("rate_limited");
+      }
     }
     if (!res.ok) throw new SevenShiftsApiError(statusCode(res.status));
     try {

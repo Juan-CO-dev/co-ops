@@ -22,6 +22,15 @@
  * (upserts are idempotent). The watermark is the run's START instant; the next run asks for
  * `modified_since = watermark − 48 h`.
  *
+ * THE ROLLING SHIFT HORIZON (chunk B review #2): shifts are read to today + 28. On an incremental run the
+ * days the horizon admitted since the watermark are ALSO read WITHOUT `modified_since` (a backfill of just
+ * those days), so a shift made weeks ago for a newly admitted date is imported the day it enters the window.
+ *
+ * PERSISTENCE IS NEVER REPORTED AS SUCCESSFUL WHEN IT FAILED (chunk B review #4). Supabase resolves a refused
+ * write with `error`; every state and ledger write checks it. A failure is a fixed code in
+ * `persistenceErrors` (`state_write_failed` / `ledger_write_failed`) and in the heartbeat, which is then
+ * `cron.failure`. The run itself stays fail-open.
+ *
  * WRITES go through MIRROR_WRITE_SPEC only: upserts on the spec's conflict key (nothing is ever
  * deleted; 7shifts' `deleted` flag is a column), and the per-user reconciler for assignments and
  * wages, called with `p_complete = request ok && shape ok && zero rejected rows` (r2 #2).
@@ -65,9 +74,14 @@ export interface ResourceResult {
   failed_users?: number;
 }
 export type SyncStatus = "ok" | "partial" | "failed";
+export type PersistenceErrorCode = "state_write_failed" | "ledger_write_failed";
 export type SyncOutcome =
   | { ran: false; reason: "token_missing" | "sync_off" }
-  | { ran: true; runId: string | null; status: SyncStatus; requests: number; results: Record<string, ResourceResult> };
+  | {
+    ran: true; runId: string | null; status: SyncStatus; requests: number; results: Record<string, ResourceResult>;
+    /** Writes of the run's own record that did NOT land (chunk B review #4). Empty = all persisted. */
+    persistenceErrors: PersistenceErrorCode[];
+  };
 
 export interface SyncDeps {
   env?: Readonly<Record<string, string | undefined>>;
@@ -106,8 +120,11 @@ export async function runSevenShiftsSync(
   const signal = deps.signal ?? AbortSignal.timeout(Math.max(1_000, opts.deadlineMs));
   const db = deps.db ?? getServiceRoleClient();
   const counter = { requests: 0 };
-  const limiter = createLimiter({ ...SEVENSHIFTS_LIMITS, now: deps.clock ?? Date.now });
-  const client = createSevenShiftsClient({ token, limiter, signal, counter, fetch: deps.fetch, sleep: deps.sleep });
+  const clock = deps.clock ?? Date.now;
+  const limiter = createLimiter({ ...SEVENSHIFTS_LIMITS, now: clock });
+  // The deadline on the limiter's clock: a cooldown that cannot end before it is never waited (review #5).
+  const deadlineAt = clock() + Math.max(1_000, opts.deadlineMs);
+  const client = createSevenShiftsClient({ token, limiter, signal, counter, fetch: deps.fetch, sleep: deps.sleep, now: clock, deadlineAt });
   const results: Record<string, ResourceResult> = {};
   const succeeded = new Set<MirroredResource>();
   const bounded = <T,>(p: PromiseLike<T>) => withDeadline(p, signal);
@@ -165,6 +182,7 @@ export async function runSevenShiftsSync(
       const upsert = async (resource: MirroredResource, rows: Row[]) => {
         const spec = MIRROR_WRITE_SPEC[resource];
         if (spec.mode !== "upsert") throw new Error("not_upsert");
+        rows = dedupeOnKey(rows, spec.onConflict);
         for (let i = 0; i < rows.length; i += UPSERT_CHUNK) {
           const { error } = await bounded(db.from(spec.table).upsert(rows.slice(i, i + UPSERT_CHUNK), { onConflict: spec.onConflict.join(",") }));
           if (error) throw new Error(signal.aborted ? "deadline" : "write_failed");
@@ -174,21 +192,27 @@ export async function runSevenShiftsSync(
       async function listOrSingleton(resource: Exclude<MirroredResource, "assignments" | "wages">): Promise<ResourceResult> {
         const spec = MIRROR_WRITE_SPEC[resource];
         try {
-          const got = await client.get(resource, { companyId: cid, window: windowFor(resource, since(resource), now) });
-          let raw: unknown[];
-          let pages = 1;
+          const window = windowFor(resource, since(resource), now);
+          const backfill = resource === "shifts" ? admittedShiftWindow(window.modifiedSince, now) : null;
+          let raw: unknown[] = [];
+          let pages = 0;
           let pageError: string | null = null;
-          if (got.kind === "list") {
-            raw = got.rows;
-            pages = got.pages;
-            pageError = got.complete ? null : (got.error ?? "bad_pagination");
-          } else {
-            raw = [got.value];
+          for (const w of backfill ? [window, backfill] : [window]) {
+            const got = await client.get(resource, { companyId: cid, window: w });
+            if (got.kind === "list") {
+              raw.push(...got.rows);
+              pages += got.pages;
+              if (!got.complete) { pageError = got.error ?? "bad_pagination"; break; }
+            } else {
+              raw = [got.value];
+              pages = 1;
+            }
           }
           const out = resource === "labor_settings"
             ? normalizers.normalizeLaborSettings((raw[0] ?? {}) as Record<string, unknown>)
             : (normalizers[spec.normalizer] as unknown as (xs: readonly unknown[]) => normalizers.Normalized<Row>)(raw);
-          const rows = out.rows as Row[];
+          // Passes and the horizon backfill may overlap: one row per conflict key, counted once.
+          const rows = spec.mode === "upsert" ? dedupeOnKey(out.rows as Row[], spec.onConflict) : (out.rows as Row[]);
           await upsert(resource, rows);
           if (resource === "users") for (const r of rows) fetchedUsers.add(String(r.id));
           const error_code = pageError ?? (out.rejected.length > 0 ? "rejected_rows" : null);
@@ -274,39 +298,72 @@ export async function runSevenShiftsSync(
   const finish = AbortSignal.timeout(FINISH_BUDGET_MS);
   const finishedAt = new Date(Math.max(Date.now(), now.getTime())).toISOString();
 
-  if (runMinted && companyId !== null) {
+  const persistenceErrors: PersistenceErrorCode[] = [];
+  /** A write that resolved with `error` (Supabase never throws), threw, or ran out of budget did NOT land. */
+  const landed = async (write: PromiseLike<{ error: unknown }>): Promise<boolean> => {
     try {
-      const ok = SYNC_ORDER.filter((r) => succeeded.has(r)).map((resource) => ({
-        resource, last_success_at: startedAt, modified_watermark: startedAt, last_error_code: null, updated_at: finishedAt,
-      }));
-      if (ok.length) await withDeadline(db.from("sevenshifts_sync_state").upsert(ok, { onConflict: "resource" }), finish);
-      const bad = failedResources.map((resource) => ({ resource, last_error_code: results[resource]!.error_code, updated_at: finishedAt }));
-      if (bad.length) await withDeadline(db.from("sevenshifts_sync_state").upsert(bad, { onConflict: "resource" }), finish);
-    } catch { /* a missed state write only means the next run re-reads more; the ledger still records the run */ }
+      const { error } = await withDeadline(write, finish);
+      return !error;
+    } catch {
+      return false;
+    }
+  };
+  if (runMinted && companyId !== null) {
+    // A missed state write only means the next run re-reads more — but it is never reported as written.
+    const ok = SYNC_ORDER.filter((r) => succeeded.has(r)).map((resource) => ({
+      resource, last_success_at: startedAt, modified_watermark: startedAt, last_error_code: null, updated_at: finishedAt,
+    }));
+    const bad = failedResources.map((resource) => ({ resource, last_error_code: results[resource]!.error_code, updated_at: finishedAt }));
+    let stateLanded = true;
+    if (ok.length && !(await landed(db.from("sevenshifts_sync_state").upsert(ok, { onConflict: "resource" })))) stateLanded = false;
+    if (bad.length && !(await landed(db.from("sevenshifts_sync_state").upsert(bad, { onConflict: "resource" })))) stateLanded = false;
+    if (!stateLanded) persistenceErrors.push("state_write_failed");
   }
   if (runMinted) {
-    try {
-      await withDeadline(db.from("sevenshifts_sync_runs").insert({
-        id: runId, trigger, requested_by: requestedBy, started_at: startedAt, finished_at: finishedAt,
-        status: runStatus, company_id: companyId, requests: counter.requests, results,
-      }), finish);
-    } catch { /* fail-open: the run id without a ledger row reads as "interrupted" on the screen */ }
+    // Fail-open: the run id without a ledger row reads as "interrupted" on the screen.
+    const ledgerLanded = await landed(db.from("sevenshifts_sync_runs").insert({
+      id: runId, trigger, requested_by: requestedBy, started_at: startedAt, finished_at: finishedAt,
+      status: runStatus, company_id: companyId, requests: counter.requests, results,
+    }));
+    if (!ledgerLanded) persistenceErrors.push("ledger_write_failed");
   }
   try {
     await withDeadline((deps.audit ?? auditImpl)({
-      actorId: null, actorRole: null, action: runStatus === "ok" ? "cron.success" : "cron.failure",
+      actorId: null, actorRole: null, action: runStatus === "ok" && persistenceErrors.length === 0 ? "cron.success" : "cron.failure",
       resourceTable: "cron", resourceId: null,
       metadata: {
         job: trigger === "cron" ? "sevenshifts-sync" : "sevenshifts-sync-manual",
-        status: runStatus, requests: counter.requests,
+        status: runStatus, requests: counter.requests, persistence_errors: persistenceErrors,
         errors: [...(results.whoami?.error_code ? [`whoami:${results.whoami.error_code}`] : []),
-          ...failedResources.map((r) => `${r}:${results[r]!.error_code}`)],
+          ...failedResources.map((r) => `${r}:${results[r]!.error_code}`),
+          ...persistenceErrors.map((c) => `persistence:${c}`)],
       },
       ipAddress: null, userAgent: null,
     }), finish);
   } catch { /* the heartbeat is fail-open and bounded */ }
 
-  return { ran: true, runId: runMinted ? runId : null, status: runStatus, requests: counter.requests, results };
+  return { ran: true, runId: runMinted ? runId : null, status: runStatus, requests: counter.requests, results, persistenceErrors };
+}
+
+/**
+ * The ET dates the rolling shift horizon admitted since the last good run (chunk B review #2):
+ * (ET date of `modifiedSince` + lookahead, today + lookahead], read WITHOUT `modified_since`. The overlap
+ * instant (watermark − 48 h) is used, so the range errs wide. null on a first run (the whole window is
+ * already a backfill) or when nothing new was admitted.
+ */
+export function admittedShiftWindow(modifiedSince: string | null, now: Date): SyncWindow | null {
+  if (modifiedSince === null) return null;
+  const to = etYmdMinusDays(etCalendarDate(now.toISOString()), -SHIFT_LOOKAHEAD_DAYS);
+  const previousTo = etYmdMinusDays(etCalendarDate(new Date(Date.parse(modifiedSince)).toISOString()), -SHIFT_LOOKAHEAD_DAYS);
+  const from = etYmdMinusDays(previousTo, -1);
+  return from <= to ? { modifiedSince: null, from, to } : null;
+}
+
+/** One row per conflict key, the LAST one read winning (passes and requests may overlap). */
+function dedupeOnKey(rows: Row[], key: readonly string[]): Row[] {
+  const byKey = new Map<string, Row>();
+  for (const r of rows) byKey.set(key.map((k) => String(r[k])).join("|"), r);
+  return byKey.size === rows.length ? rows : [...byKey.values()];
 }
 
 /** The window each resource is read with (ET business dates → the endpoint table makes instants). */

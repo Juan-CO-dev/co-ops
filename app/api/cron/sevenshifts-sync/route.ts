@@ -24,7 +24,8 @@ export async function GET(req: NextRequest) {
     // The run writes its own ledger row and its own heartbeat (cron.success | cron.failure, job sevenshifts-sync).
     const outcome = await runSevenShiftsSync({ trigger: "cron", deadlineMs });
     if (!outcome.ran) return jsonOk({ skipped: true, reason: outcome.reason });
-    return jsonOk({ runId: outcome.runId, status: outcome.status, requests: outcome.requests, results: outcome.results });
+    return jsonOk({ runId: outcome.runId, status: outcome.status, requests: outcome.requests, results: outcome.results,
+      persistenceErrors: outcome.persistenceErrors });
   } catch {
     // Counts and fixed codes only: never a provider message, URL or token.
     void audit({

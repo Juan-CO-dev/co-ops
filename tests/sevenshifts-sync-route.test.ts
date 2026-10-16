@@ -15,7 +15,7 @@ import type { PeopleActor } from "@/lib/people/access-shared";
 vi.mock("@/lib/audit", () => ({ audit: vi.fn(async () => {}) }));
 vi.mock("@/lib/cron-route-lease", () => ({ claimCronRoute: vi.fn(async () => true) }));
 vi.mock("@/lib/sevenshifts/sync", () => ({
-  runSevenShiftsSync: vi.fn(async () => ({ ran: true, runId: "run-1", status: "ok", requests: 12, results: {} })),
+  runSevenShiftsSync: vi.fn(async () => ({ ran: true, runId: "run-1", status: "ok", requests: 12, results: {}, persistenceErrors: [] })),
 }));
 vi.mock("@/lib/supabase-server", () => ({ getServiceRoleClient: () => { throw new Error("no database in this test"); } }));
 
@@ -91,6 +91,7 @@ describe("GET /api/cron/sevenshifts-sync", () => {
     expect(opts.deadlineMs).toBeGreaterThan(100_000);
     const text = JSON.stringify(await res.json());
     expect(text).toContain("\"status\":\"ok\"");
+    expect(text).toContain("\"persistenceErrors\":[]");
     expect(text).not.toContain(TOKEN);
   });
 
@@ -156,7 +157,7 @@ describe("requestSyncNow (Sync now)", () => {
 
   it("claims, audits sevenshifts.sync_requested (ids only), then runs ONE manual sync naming the requester", async () => {
     const out = await requestSyncNow(moo, { deadlineMs: 90_000 });
-    expect(out).toEqual({ runId: "run-1", status: "ok", requests: 12 });
+    expect(out).toEqual({ runId: "run-1", status: "ok", requests: 12, persistenceErrors: [] });
     expect(audit).toHaveBeenCalledTimes(1);
     expect(vi.mocked(audit).mock.calls[0]![0]).toMatchObject({
       actorId: moo.userId, actorRole: "moo", action: "sevenshifts.sync_requested", resourceTable: "sevenshifts_sync_runs",

@@ -16,7 +16,17 @@
  *   · `start[gte|lte]`, `clocked_in[gte|lte]` and `modified_since` on shifts and punches are
  *     DATE-TIMES. The window's ET business dates become explicit UTC instants through the house ET
  *     helper (DST-correct), and the watermark is an instant (reference/listshift, gettimepunches).
- *     Users keep a DATE `modified_since` (plan API facts; that page was not re-read).
+ *     Users keep a DATE `modified_since` (YYYY-MM-DD, confirmed on reference/listuserslist by Astra's
+ *     chunk B review).
+ *
+ * CHUNK B REVIEW (Astra, 2026-10-15):
+ *   · shifts send `consider_tz_in_ranges=true`: `true` honours the offset of the explicit UTC instants
+ *     we send; `false` would read them as shop-local times (reference/listshift).
+ *   · availability is TWO disjoint passes into one mirror: weekly records (`repeating=false`) bounded by
+ *     `week_gte`, and repeating records (`repeating=true`) with NO week floor, because a repeating set
+ *     made months ago can still govern today (reference/listavailabilities).
+ *   · users are read in two explicit passes, `status=active` and `status=inactive`, so the endpoint's
+ *     status default never decides what we see.
  *
  * Read-only by construction: Phase 1 has no write path to 7shifts. Every id that enters a path or a
  * query is validated as 1–18 digits, so no value from a payload or a request can steer a request.
@@ -59,9 +69,10 @@ export interface EndpointSpec {
   params(window: SyncWindow, companyId: string): URLSearchParams;
   /**
    * Extra query sets, one REQUEST PASS each, merged over `params` (time punches: `deleted=false`
-   * then `deleted=true`). Absent = one pass. A resource is complete only when every pass is.
+   * then `deleted=true`). A null value REMOVES that base parameter for the pass (availability's
+   * repeating pass drops `week_gte`). Absent = one pass. A resource is complete only when every pass is.
    */
-  passes?: readonly Readonly<Record<string, string>>[];
+  passes?: readonly Readonly<Record<string, string | null>>[];
 }
 
 const ID = /^\d{1,18}$/;
@@ -139,10 +150,18 @@ export const SEVENSHIFTS_ENDPOINTS: Record<SevenShiftsResource, EndpointSpec> = 
   locations: { shape: "paginated", path: company("locations"), params: (w) => listParams(w) },
   departments: { shape: "paginated", path: company("departments"), params: (w) => listParams(w) },
   roles: { shape: "paginated", path: company("roles"), params: (w) => listParams(w) },
-  users: { shape: "paginated", path: company("users"), params: (w) => listParams(w, {}, "date") },
+  users: {
+    shape: "paginated", path: company("users"), params: (w) => listParams(w, {}, "date"),
+    // Explicit statuses: never rely on the endpoint's default (chunk B review).
+    passes: [{ status: "active" }, { status: "inactive" }],
+  },
   assignments: { shape: "singleton", path: perUser("assignments"), params: noParams },
   wages: { shape: "singleton", path: perUser("wages"), params: noParams },
-  availabilities: { shape: "paginated", path: company("availabilities"), params: (w) => listParams(w, { week_gte: w.from }) },
+  availabilities: {
+    shape: "paginated", path: company("availabilities"), params: (w) => listParams(w, { week_gte: w.from }),
+    // Disjoint: weekly records inside the window, and EVERY repeating record (no week floor) — chunk B review #3.
+    passes: [{ repeating: "false" }, { repeating: "true", week_gte: null }],
+  },
   time_off: {
     shape: "paginated",
     path: (companyId) => { id(companyId); return "/v2/time_off"; },
@@ -150,10 +169,10 @@ export const SEVENSHIFTS_ENDPOINTS: Record<SevenShiftsResource, EndpointSpec> = 
   },
   shifts: {
     shape: "paginated", path: company("shifts"),
-    // Explicit UTC instants; consider_tz_in_ranges=false so 7shifts reads them exactly as sent.
+    // Explicit UTC instants; consider_tz_in_ranges=true so 7shifts honours their offset (chunk B review #1).
     params: (w) => {
       const { gte, lte } = windowInstants(w);
-      return listParams(w, { "start[gte]": gte, "start[lte]": lte, include_deleted: "true", include_draft: "false", consider_tz_in_ranges: "false" }, "instant");
+      return listParams(w, { "start[gte]": gte, "start[lte]": lte, include_deleted: "true", include_draft: "false", consider_tz_in_ranges: "true" }, "instant");
     },
   },
   time_punches: {
@@ -175,7 +194,10 @@ export function requestPasses(resource: SevenShiftsResource, w: SyncWindow, comp
   if (!spec.passes || spec.passes.length === 0) return [base];
   return spec.passes.map((extra) => {
     const p = new URLSearchParams(base);
-    for (const [k, v] of Object.entries(extra)) p.set(k, v);
+    for (const [k, v] of Object.entries(extra)) {
+      if (v === null) p.delete(k);
+      else p.set(k, v);
+    }
     return p;
   });
 }

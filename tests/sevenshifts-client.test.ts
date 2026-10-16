@@ -42,7 +42,7 @@ describe("sevenShiftsStatus — the one line every surface renders", () => {
 
 // ── the client harness: a fake clock, an injected fetch, an injected sleep ──
 interface Call { url: string; init: RequestInit }
-function harness(responses: Array<(call: Call) => Response | Promise<Response>>, opts: { signal?: AbortSignal } = {}) {
+function harness(responses: Array<(call: Call) => Response | Promise<Response>>, opts: { signal?: AbortSignal; deadlineInMs?: number } = {}) {
   let clock = 1_000_000;
   const calls: Call[] = [];
   const sentAt: number[] = [];
@@ -61,8 +61,10 @@ function harness(responses: Array<(call: Call) => Response | Promise<Response>>,
     token: TOKEN, fetch: fetchImpl, limiter, counter,
     sleep: async (ms) => { sleeps.push(ms); clock += ms; },
     signal: opts.signal ?? new AbortController().signal,
+    now: () => clock,
+    deadlineAt: opts.deadlineInMs === undefined ? undefined : clock + opts.deadlineInMs,
   });
-  return { client, calls, sentAt, sleeps, counter, tick: (ms: number) => { clock += ms; } };
+  return { client, calls, sentAt, sleeps, counter, limiter, now: () => clock, tick: (ms: number) => { clock += ms; } };
 }
 const json = (body: unknown, status = 200, headers: Record<string, string> = {}) => () =>
   new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json", ...headers } });
@@ -179,6 +181,49 @@ describe("sevenShiftsGet — GET only, headers, limiter, retries, fixed codes", 
     await expect(h.client.get("locations", { companyId: null, window: WINDOW })).rejects.toThrow("bad_id");
     await expect(h.client.get("wages", { companyId: "1234", userId: "x", window: WINDOW })).rejects.toThrow("bad_id");
     expect(h.calls).toHaveLength(0);
+  });
+});
+
+describe("chunk B review (Astra) #5 — Retry-After is honoured in full and shared", () => {
+  it("a cooldown above 60 s is honoured in full (no cap) when it fits before the run deadline", async () => {
+    const h = harness([json({}, 429, { "retry-after": "120" }), page([{ id: 1 }], null)], { deadlineInMs: 300_000 });
+    const out = await h.client.get("locations", { companyId: "1234", window: WINDOW });
+    expect(out).toMatchObject({ rows: [{ id: 1 }] });
+    expect(h.sentAt[1]! - h.sentAt[0]!).toBeGreaterThanOrEqual(120_000);
+  });
+
+  it("an HTTP-date Retry-After beyond 60 s is honoured in full too", async () => {
+    // The harness clock starts at 1_000_000 ms; the date is read against the client's injected clock.
+    const at = new Date(1_000_000 + 90_000).toUTCString();
+    const h = harness([json({}, 429, { "retry-after": at }), page([], null)], { deadlineInMs: 600_000 });
+    await h.client.get("locations", { companyId: "1234", window: WINDOW });
+    expect(h.sentAt[1]! - h.sentAt[0]!).toBeGreaterThanOrEqual(89_000);
+  });
+
+  it("a cooldown that cannot fit before the deadline ends the resource (rate_limited, no retry, no sleep) …", async () => {
+    const h = harness([json({}, 429, { "retry-after": "300" })], { deadlineInMs: 100_000 });
+    await expect(h.client.get("locations", { companyId: "1234", window: WINDOW })).rejects.toMatchObject({ code: "rate_limited" });
+    expect(h.counter.requests).toBe(1);
+    expect(h.sleeps.every((ms) => ms < 300_000)).toBe(true);
+  });
+
+  it("… and the cooldown still lands on the SHARED limiter, so the next resource waits too (here: past the deadline → deadline, nothing sent)", async () => {
+    const h = harness([json({}, 429, { "retry-after": "300" }), page([], null)], { deadlineInMs: 100_000 });
+    await h.client.get("locations", { companyId: "1234", window: WINDOW }).catch(() => undefined);
+    await expect(h.client.get("roles", { companyId: "1234", window: WINDOW })).rejects.toMatchObject({ code: "deadline" });
+    expect(h.counter.requests).toBe(1);
+  });
+
+  it("the SECOND 429's Retry-After also penalizes the limiter before rate_limited is thrown", async () => {
+    const h = harness([json({}, 429, { "retry-after": "1" }), json({}, 429, { "retry-after": "200" })], { deadlineInMs: 1_000_000 });
+    await expect(h.client.get("locations", { companyId: "1234", window: WINDOW })).rejects.toMatchObject({ code: "rate_limited" });
+    expect(h.limiter.reserve()).toBeGreaterThanOrEqual(199_000);
+  });
+
+  it("without a deadline the full cooldown is waited (the signal still bounds it)", async () => {
+    const h = harness([json({}, 429, { "retry-after": "3600" }), page([], null)]);
+    await h.client.get("locations", { companyId: "1234", window: WINDOW });
+    expect(h.sentAt[1]! - h.sentAt[0]!).toBeGreaterThanOrEqual(3_600_000);
   });
 });
 

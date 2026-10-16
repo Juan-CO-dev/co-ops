@@ -126,8 +126,9 @@ describe("a healthy run", () => {
     expect(out).toMatchObject({ ran: true, status: "ok" });
     expect(w.paths()).toEqual([
       "/v2/whoami", "/v2/company/1234/locations", "/v2/company/1234/departments", "/v2/company/1234/roles",
-      "/v2/company/1234/users", "/v2/company/1234/users/501/assignments", "/v2/company/1234/users/501/wages",
-      "/v2/company/1234/labor_settings", "/v2/company/1234/availabilities", "/v2/time_off", "/v2/company/1234/shifts",
+      // users and availabilities read two passes each (chunk B review: status active/inactive; repeating false/true)
+      "/v2/company/1234/users", "/v2/company/1234/users", "/v2/company/1234/users/501/assignments", "/v2/company/1234/users/501/wages",
+      "/v2/company/1234/labor_settings", "/v2/company/1234/availabilities", "/v2/company/1234/availabilities", "/v2/time_off", "/v2/company/1234/shifts",
       "/v2/company/1234/time_punches", "/v2/company/1234/time_punches",
     ]);
     expect(SYNC_ORDER).toEqual(["locations", "departments", "roles", "users", "assignments", "wages", "labor_settings",
@@ -162,7 +163,7 @@ describe("a healthy run", () => {
     await run(w);
     expect(ledger(w)).toHaveLength(1);
     const row = ledger(w)[0]!;
-    expect(row).toMatchObject({ trigger: "cron", requested_by: null, status: "ok", company_id: "1234", requests: 13 });
+    expect(row).toMatchObject({ trigger: "cron", requested_by: null, status: "ok", company_id: "1234", requests: 15 }); // 13 + the second users and availability passes
     expect(row.id).toBe(w.tables.sevenshifts_sync_run_ids![0]!.id);
     expect(JSON.stringify(row.results)).not.toMatch(/Ana|Ruiz|http|PLANTED/);
     expect(w.audits).toHaveLength(1);
@@ -246,7 +247,8 @@ describe("list resources: rejections and pagination never move the watermark", (
   it("a shifts page with one malformed row → skipped, the valid rows upserted, rejected_rows, watermark held", async () => {
     const bad = { ...PAYLOAD.shifts, id: 9002, start: "soon" };
     const w = world({
-      routes: healthyRoutes({ "/v2/company/1234/shifts": () => list([PAYLOAD.shifts, bad]) }),
+      // The incremental request carries the bad row; the horizon backfill (no modified_since) returns nothing.
+      routes: healthyRoutes({ "/v2/company/1234/shifts": (u) => list(u.searchParams.has("modified_since") ? [PAYLOAD.shifts, bad] : []) }),
       tables: { sevenshifts_sync_state: [{ resource: "shifts", modified_watermark: "2026-10-14T18:00:00.000Z", last_error_code: null }] },
     });
     const out = await run(w);
@@ -402,12 +404,151 @@ describe("the rate budget", () => {
     const w = world({ routes });
     const out = await run(w);
     expect(out).toMatchObject({ status: "ok" });
-    expect(w.sentAt.length).toBe(1 + 4 + 120 + 1 + 1 + 1 + 1 + 2);
+    expect(w.sentAt.length).toBe(1 + 5 + 120 + 1 + 2 + 1 + 1 + 2); // users and availability: two passes each
     for (let i = 0; i < w.sentAt.length; i++) {
       const inSecond = w.sentAt.filter((t) => t >= w.sentAt[i]! && t < w.sentAt[i]! + 1000).length;
       const inMinute = w.sentAt.filter((t) => t >= w.sentAt[i]! && t < w.sentAt[i]! + 60_000).length;
       expect(inSecond).toBeLessThanOrEqual(8);
       expect(inMinute).toBeLessThanOrEqual(500);
     }
+  });
+});
+
+describe("chunk B review (Astra) — the sync run", () => {
+  const OCT16 = new Date("2026-10-16T18:00:00Z"); // 2:00 PM ET, the day Nov 13 enters the 28-day horizon
+  const NOV13 = { ...PAYLOAD.shifts, id: 9100, start: "2026-11-13T10:00:00-05:00", end: "2026-11-13T16:00:00-05:00", modified: "2026-10-01T12:00:00Z" };
+  const runAt = (w: ReturnType<typeof world>, now: Date) => runSevenShiftsSync({ trigger: "cron", deadlineMs: 110_000, now }, w.deps);
+  const shiftsWatermark = { resource: "shifts", modified_watermark: "2026-10-15T18:00:00.000Z", last_success_at: "2026-10-15T18:00:00.000Z", last_error_code: null };
+
+  it("#2 a shift created Oct 1 for Nov 13 is imported the day Nov 13 enters the horizon: the newly admitted days are read WITHOUT modified_since", async () => {
+    const w = world({
+      tables: { sevenshifts_sync_state: [{ ...shiftsWatermark }] },
+      routes: healthyRoutes({
+        // The API's own filters: modified_since drops a shift last modified Oct 1; the date range must include Nov 13.
+        "/v2/company/1234/shifts": (u) => {
+          const since = u.searchParams.get("modified_since");
+          const at = Date.parse(NOV13.start);
+          const inRange = at >= Date.parse(u.searchParams.get("start[gte]")!) && at <= Date.parse(u.searchParams.get("start[lte]")!);
+          return list(inRange && (since === null || Date.parse(NOV13.modified) >= Date.parse(since)) ? [NOV13] : []);
+        },
+      }),
+    });
+    const out = await runAt(w, OCT16);
+    const shiftReqs = w.requests.filter((u) => u.pathname.endsWith("/shifts"));
+    expect(shiftReqs).toHaveLength(2);
+    expect(shiftReqs[0]!.searchParams.get("modified_since")).toBe("2026-10-13T18:00:00Z");
+    expect(shiftReqs[1]!.searchParams.has("modified_since")).toBe(false);
+    // Only the admitted days: after the previous horizon (ET date of the overlap instant + 28) through today + 28.
+    expect(shiftReqs[1]!.searchParams.get("start[gte]")).toBe("2026-11-11T05:00:00Z");
+    expect(shiftReqs[1]!.searchParams.get("start[lte]")).toBe("2026-11-14T04:59:59Z");
+    expect(w.tables.sevenshifts_shifts!.map((r) => String(r.id))).toEqual(["9100"]);
+    expect(out).toMatchObject({ status: "ok" });
+    expect(ledger(w)[0]!.results).toMatchObject({ shifts: { rows: 1, pages: 2, error_code: null } });
+  });
+
+  it("#2 a first run needs no second request (the whole horizon is already a backfill)", async () => {
+    const w = world();
+    await run(w);
+    expect(w.requests.filter((u) => u.pathname.endsWith("/shifts"))).toHaveLength(1);
+  });
+
+  it("#2 a row returned by both requests is upserted ONCE (deduplicated on the conflict key)", async () => {
+    const w = world({
+      tables: { sevenshifts_sync_state: [{ ...shiftsWatermark }] },
+      routes: healthyRoutes({ "/v2/company/1234/shifts": () => list([NOV13]) }),
+    });
+    await runAt(w, OCT16);
+    const upserts = w.fake.writes.filter((x) => x.table === "sevenshifts_shifts");
+    expect(upserts).toHaveLength(1);
+    expect(upserts[0]!.rows).toHaveLength(1);
+    expect(ledger(w)[0]!.results).toMatchObject({ shifts: { rows: 1, error_code: null } });
+  });
+
+  it("#2 a failed backfill request fails the resource and holds the watermark", async () => {
+    const w = world({
+      tables: { sevenshifts_sync_state: [{ ...shiftsWatermark }] },
+      routes: healthyRoutes({ "/v2/company/1234/shifts": (u) => (u.searchParams.has("modified_since") ? list([]) : { status: 500 }) }),
+    });
+    await runAt(w, OCT16);
+    expect(ledger(w)[0]!.results).toMatchObject({ shifts: { error_code: "server_error" } });
+    expect(state(w, "shifts")!.modified_watermark).toBe("2026-10-15T18:00:00.000Z");
+  });
+
+  it("#3 availability: a weekly pass bounded by week_gte and a repeating pass with no week floor; an old repeating set is mirrored", async () => {
+    const OLD_REPEATING = { ...PAYLOAD.availabilities, id: 3100, week: "2025-01-06", repeat: true };
+    const WEEKLY = { ...PAYLOAD.availabilities, id: 3200, week: "2026-10-12", repeat: false };
+    const w = world({
+      routes: healthyRoutes({
+        "/v2/company/1234/availabilities": (u) => (u.searchParams.get("repeating") === "true" ? list([OLD_REPEATING]) : list([WEEKLY])),
+      }),
+    });
+    await run(w);
+    const reqs = w.requests.filter((u) => u.pathname.endsWith("/availabilities"));
+    expect(reqs.map((u) => [u.searchParams.get("repeating"), u.searchParams.get("week_gte")])).toEqual([["false", "2026-07-17"], ["true", null]]);
+    expect(w.tables.sevenshifts_availabilities!.map((r) => String(r.id)).sort()).toEqual(["3100", "3200"]);
+  });
+
+  it("users: explicit active and inactive passes; an inactive user from the second pass is mirrored", async () => {
+    const GONE = { ...PAYLOAD.users, id: 777, active: false, employee_id: "E777" };
+    const w = world({
+      routes: healthyRoutes({
+        "/v2/company/1234/users": (u) => (u.searchParams.get("status") === "inactive" ? list([GONE]) : list([PAYLOAD.users])),
+        "/v2/company/1234/users/777/assignments": () => ({ body: { object: "assignments", data: { locations: [], departments: [], roles: [] } } }),
+        "/v2/company/1234/users/777/wages": () => ({ body: { data: { current_wages: [], upcoming_wages: [] } } }),
+      }),
+    });
+    await run(w);
+    expect(w.requests.filter((u) => u.pathname.endsWith("/users")).map((u) => u.searchParams.get("status"))).toEqual(["active", "inactive"]);
+    expect(w.tables.sevenshifts_users!.map((r) => String(r.id)).sort()).toEqual(["501", "777"]);
+  });
+
+  /** Make one table's insert or upsert RESOLVE with an error, as Supabase does (it never throws). */
+  function failWrites(w: ReturnType<typeof world>, table: string, op: "insert" | "upsert") {
+    const db = w.deps.db as unknown as { from: (t: string) => Record<string, unknown> };
+    const from = db.from;
+    db.from = (t: string) => {
+      const q = from(t);
+      if (t === table) q[op] = () => ({ then: (ok: (v: unknown) => unknown) => ok({ data: null, error: { message: "permission denied" } }) });
+      return q;
+    };
+  }
+
+  it("#4 a refused ledger insert is NEVER reported as persisted: ledger_write_failed in the outcome and a cron.failure heartbeat", async () => {
+    const w = world();
+    failWrites(w, "sevenshifts_sync_runs", "insert");
+    const out = await run(w);
+    expect(out).toMatchObject({ ran: true, status: "ok", persistenceErrors: ["ledger_write_failed"] });
+    expect(ledger(w)).toHaveLength(0);
+    expect(w.audits).toHaveLength(1);
+    expect(w.audits[0]).toMatchObject({ action: "cron.failure", metadata: expect.objectContaining({ persistence_errors: ["ledger_write_failed"] }) });
+    expect(w.audits[0]!.metadata.errors as string[]).toContain("persistence:ledger_write_failed");
+  });
+
+  it("#4 a refused state write is state_write_failed (the run stays fail-open: the ledger row is still written)", async () => {
+    const w = world();
+    failWrites(w, "sevenshifts_sync_state", "upsert");
+    const out = await run(w);
+    expect(out).toMatchObject({ ran: true, persistenceErrors: ["state_write_failed"] });
+    expect(ledger(w)).toHaveLength(1);
+    expect(w.audits[0]!.action).toBe("cron.failure");
+  });
+
+  it("#4 a clean run reports no persistence error and a cron.success heartbeat", async () => {
+    const w = world();
+    expect(await run(w)).toMatchObject({ persistenceErrors: [] });
+    expect(w.audits[0]!.action).toBe("cron.success");
+  });
+
+  it("#5 a Retry-After that cannot fit before the deadline ends that resource, and its cooldown holds the next resources (nothing more is sent)", async () => {
+    const w = world({ routes: healthyRoutes({ "/v2/company/1234/locations": () => ({ status: 429, headers: { "retry-after": "300" } }) }) });
+    const out = await run(w);
+    expect(w.paths()).toEqual(["/v2/whoami", "/v2/company/1234/locations"]);
+    const results = ledger(w)[0]!.results as Record<string, Row>;
+    expect(results.locations).toMatchObject({ error_code: "rate_limited" });
+    for (const r of ["departments", "roles", "users", "labor_settings", "availabilities", "time_off", "shifts", "time_punches"]) {
+      expect(results[r], r).toMatchObject({ error_code: "deadline" });
+    }
+    // assignments and wages had no user to read (users failed, the mirror is empty), so they sent nothing either.
+    expect(out).toMatchObject({ ran: true, status: "partial" });
   });
 });
