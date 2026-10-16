@@ -360,6 +360,22 @@ export function buildWeek(raw: GeneratorInput): GeneratorOutput {
       salariedCoverHours += sh.segments.filter((g) => g.positionId !== MOD).reduce((n, g) => n + (g.endQ - g.startQ), 0) / 4;
     }
   }
+  // CC chunk C ruling 3: essential closer hours are EXEMPT from the budget cap (never refused for budget) but COUNTED in
+  // every total; when they carry the budgeted dates past the budget the board names it: "essential hours past budget: X h".
+  if (budgetedDates.length > 0) {
+    let usedB = 0;
+    let essB = 0;
+    for (const sh of shifts) {
+      const p = people[sh.userId];
+      if (!p || p.salaried || p.presenceOnly || !budgetedDates.includes(sh.date)) continue;
+      const h = (sh.endQ - sh.startQ) / 4;
+      usedB += h;
+      const cw = closingWindowByDate[sh.date];
+      if (cw && sh.segments.some((g) => g.positionId !== MOD && g.startQ < cw.toQ && g.endQ > cw.fromQ)) essB += h;
+    }
+    const past = Math.max(0, Math.min(essB, usedB - b.budgetHours));
+    if (past > 0) notes.push({ code: "essential_past_budget", date: null, userId: null, positionId: null, params: { hours: past, budgetHours: b.budgetHours } });
+  }
   const stats: GeneratorStats = {
     hourlyHours, hourlyHoursByDate: Object.fromEntries(Object.keys(hourlyHoursByDate).sort().map((k) => [k, hourlyHoursByDate[k]!])), essentialHours, salariedCoverHours,
     hourlyCostCents: cost, budgetedDates, budgetHours: b.budgetHours, repair: counters, shifts: shifts.length, gaps: gaps.length,

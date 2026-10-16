@@ -10,6 +10,7 @@
  * not null, absent — so nothing reaches the client. Never per person: only shop totals and per-hour ratios.
  * A $ figure with an unknown wage or forecast is null ("—" with its errand), never 0 (R2).
  */
+import type { NarrativeLine } from "@/lib/people-narrative";
 import type { DayContext, RuleContext, RulePerson } from "./context-shared";
 import { skillOf, type SkillLookup } from "./people-input-shared";
 import { MOD, closingManagerEligible, coversClosingWindow, eligibleForPosition, modCountsAt, type Shift } from "./rules-shared";
@@ -200,9 +201,17 @@ export interface MoneyStripHours {
   /** Salaried managers' floor (non-MoD) hours, and the hourly hours that floor time saves (no hourly person on that position then). */
   managerFloorHours: number;
   hourlySavedBySalaried: number;
+  /**
+   * CC chunk C ruling 3: the ESSENTIAL hourly hours on the budgeted dates (whole shifts working the closing window) —
+   * exempt from the budget cap, counted in every total — and how much of the budget they pass (0 within it; null with
+   * no budget).
+   */
+  essentialHoursOnBudgetedDates: number;
+  essentialPastBudgetHours: number | null;
 }
 export interface MoneyStripMoney { hourlyCostCents: number | null; hourlyPct: number | null; salariedFixedCents: number | null; totalPct: number | null }
-export interface MoneyStrip { hours: MoneyStripHours; money?: MoneyStripMoney }
+/** `notes`: board lines with no $ (shown to every viewer), e.g. "essential hours past budget: X h" (CC chunk C ruling 3). */
+export interface MoneyStrip { hours: MoneyStripHours; notes: NarrativeLine[]; money?: MoneyStripMoney }
 
 function structureFor(ctx: RuleContext, date: string): ScheduleStructure | null {
   const d = ctx.days[date] ?? Object.values(ctx.days)[0];
@@ -217,12 +226,16 @@ export function moneyStrip(input: MoneyStripInput, opts: { canSeeMoney: boolean 
   const unbudgetedDates = input.dates.filter((d) => !budgetedDates.includes(d));
   let hourlyQ = 0;
   let budgetedQ = 0;
+  let essentialQ = 0;
   const weekQ = new Map<string, number>();
   for (const sh of inWeek) {
     weekQ.set(sh.userId, (weekQ.get(sh.userId) ?? 0) + (sh.endQ - sh.startQ));
     if (!isHourly(people[sh.userId])) continue;
     hourlyQ += sh.endQ - sh.startQ;
-    if (budgetedDates.includes(sh.date)) budgetedQ += sh.endQ - sh.startQ;
+    if (!budgetedDates.includes(sh.date)) continue;
+    budgetedQ += sh.endQ - sh.startQ;
+    const cw = ctx.closingWindowByDate[sh.date];
+    if (cw && sh.segments.some((g) => g.positionId !== MOD && g.startQ < cw.toQ && g.endQ > cw.fromQ)) essentialQ += sh.endQ - sh.startQ;
   }
   const overtimeH = structureFor(ctx, input.dates[0]!)?.limits.overtimeH ?? 40;
   const otRiskCount = [...weekQ.entries()].filter(([u, q]) => isHourly(people[u]) && q / 4 > overtimeH).length;
@@ -247,13 +260,20 @@ export function moneyStrip(input: MoneyStripInput, opts: { canSeeMoney: boolean 
     hourlyHours: hourlyQ / 4, hourlyHoursOnBudgetedDates: budgetedQ / 4, budgetHours, unbudgetedDates,
     remainingHours: budgetHours === null ? null : budgetHours - budgetedQ / 4, otRiskCount, flexUsed: 0, flexAvailable: false,
     managerFloorHours: floorQ / 4, hourlySavedBySalaried: savedQ / 4,
+    essentialHoursOnBudgetedDates: essentialQ / 4,
+    essentialPastBudgetHours: budgetHours === null ? null : Math.max(0, Math.min(essentialQ / 4, budgetedQ / 4 - budgetHours)),
   };
-  if (!opts.canSeeMoney) return { hours };
+  const notes: NarrativeLine[] = [];
+  if (hours.essentialPastBudgetHours !== null && hours.essentialPastBudgetHours > 0) {
+    notes.push({ key: "schedule.note.essential_past_budget", params: { hours: hours.essentialPastBudgetHours, budgetHours: budgetHours! } });
+  }
+  if (!opts.canSeeMoney) return { hours, notes };
   const cost = hourlyCostCents(inWeek, people, input.wageCentsByUser);
   const fc = input.forecastWeekCents !== null && input.forecastWeekCents > 0 ? input.forecastWeekCents : null;
   const salaried = input.salariedWeeklyCents;
   return {
     hours,
+    notes,
     money: {
       hourlyCostCents: cost,
       hourlyPct: cost !== null && fc !== null ? round1((100 * cost) / fc) : null,

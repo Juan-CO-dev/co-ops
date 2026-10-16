@@ -344,6 +344,16 @@
  ],
  "notes": [
   {
+   "code": "essential_past_budget",
+   "date": null,
+   "params": {
+    "budgetHours": 240,
+    "hours": 111.25
+   },
+   "positionId": null,
+   "userId": null
+  },
+  {
    "code": "overtime_used",
    "date": "2026-10-26",
    "params": {},

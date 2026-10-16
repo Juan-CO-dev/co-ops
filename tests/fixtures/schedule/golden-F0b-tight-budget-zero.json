@@ -228,6 +228,16 @@
  ],
  "notes": [
   {
+   "code": "essential_past_budget",
+   "date": null,
+   "params": {
+    "budgetHours": 0,
+    "hours": 33.75
+   },
+   "positionId": null,
+   "userId": null
+  },
+  {
    "code": "budget_stopped",
    "date": "2026-10-26",
    "params": {

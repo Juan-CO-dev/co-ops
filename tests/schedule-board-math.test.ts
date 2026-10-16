@@ -124,6 +124,26 @@ describe("the money strip", () => {
     expect(noForecast.money).toMatchObject({ hourlyCostCents: hourlyCost, hourlyPct: null, totalPct: null });
   });
 
+  it("CC chunk C ruling 3: essential closer hours are COUNTED (hours, $, %) and named — 'essential hours past budget: X h' — never refused for budget", () => {
+    const ctx = context();
+    ctx.budgetByDate = Object.fromEntries(DATES.map((d) => [d, d === THU ? 6 : null]));
+    // Thursday: Maya 11:00–7:00 PM (8 h, not the closing window) + Iris 4:00–8:45 PM (4.75 h, works the closing window 8:00–8:45).
+    const shifts = [shift(U.maya, THU, 44, 76, P.REG), shift(U.iris, THU, 64, 83, P.REG, { closingManager: true })];
+    const strip = moneyStrip({ dates: DATES, shifts, ctx, wageCentsByUser: WAGES, forecastWeekCents: 2_000_000, salariedWeeklyCents: 125_000 }, { canSeeMoney: true });
+    expect(strip.hours).toMatchObject({ hourlyHours: 12.75, hourlyHoursOnBudgetedDates: 12.75, essentialHoursOnBudgetedDates: 4.75, budgetHours: 6, remainingHours: 6 - 12.75, essentialPastBudgetHours: 4.75 });
+    expect(strip.notes).toEqual([{ key: "schedule.note.essential_past_budget", params: { hours: 4.75, budgetHours: 6 } }]);
+    // The $ counts every hour, essential included (the true wage cost).
+    expect(strip.money!.hourlyCostCents).toBe(2000 * 8 + 2200 * 4.75);
+    // Within budget: no note; no budget at all: null, no note. The note carries no $ (it shows to the AGM too).
+    ctx.budgetByDate[THU] = 20;
+    expect(moneyStrip({ dates: DATES, shifts, ctx, wageCentsByUser: WAGES, forecastWeekCents: null, salariedWeeklyCents: null }, { canSeeMoney: false })).toMatchObject({ hours: { essentialPastBudgetHours: 0 }, notes: [] });
+    ctx.budgetByDate[THU] = null;
+    expect(moneyStrip({ dates: DATES, shifts, ctx, wageCentsByUser: WAGES, forecastWeekCents: null, salariedWeeklyCents: null }, { canSeeMoney: false })).toMatchObject({ hours: { essentialPastBudgetHours: null }, notes: [] });
+    // Only the part past the budget is named, and only up to the essential hours: 12.75 h against 10 h → 2.75 h.
+    ctx.budgetByDate[THU] = 10;
+    expect(moneyStrip({ dates: DATES, shifts, ctx, wageCentsByUser: WAGES, forecastWeekCents: null, salariedWeeklyCents: null }, { canSeeMoney: false }).hours.essentialPastBudgetHours).toBe(2.75);
+  });
+
   it("without canSeeScheduleMoney (the AGM) the money block is ABSENT from the view-model — no key, no $ anywhere", () => {
     const { ctx, shifts } = base();
     const strip = moneyStrip({ dates: DATES, shifts, ctx, wageCentsByUser: WAGES, forecastWeekCents: 2_000_000, salariedWeeklyCents: 125_000 }, { canSeeMoney: false });

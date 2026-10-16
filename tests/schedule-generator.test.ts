@@ -322,6 +322,15 @@ describe("Task 7: budget, certificates and the repair search", () => {
     expectClean(loose);
     expect(loose.gaps.filter((g) => g.cause === "budget")).toEqual([]);
     expect(loose.notes.some((n) => n.code === "unbudgeted_date")).toBe(false);
+    // CC chunk C ruling 3: essential closer hours are exempt from the cap but COUNTED and NAMED — at budget 0 every
+    // hourly hour is essential, all of it past the budget; salaried / MoD cover was taken first (no zero-cost fill left).
+    expect(zero.stats.hourlyHours).toBe(zero.stats.essentialHours);
+    expect(zero.notes.filter((n) => n.code === "essential_past_budget")).toEqual([
+      { code: "essential_past_budget", date: null, userId: null, positionId: null, params: { hours: zero.stats.essentialHours, budgetHours: 0 } },
+    ]);
+    const sched = { locationId: zero.context.locationId, weekStart: zero.context.weekStart, shifts: zero.shifts, gaps: zero.gaps, days: zero.days };
+    for (const g of zero.gaps) expect(zeroCostCovers(g, sched, zero.context)).toEqual([]);
+    expect(loose.notes.some((n) => n.code === "essential_past_budget")).toBe(false);
   });
 
   it("Astra chunk B P1-1: budget 0 — the GM on MoD takes Register at ZERO hourly cost before the budget stops the fill; no budget gap a manager could take", () => {
