@@ -52,6 +52,9 @@ describe("the edits, on 15-minute snaps", () => {
     expect(run({ kind: "removeShift", shift: { date: MON, userId: U.maya, startQ: 44 } }, [shift(U.maya, MON, 44, 60, P.REG)])).toBe("day_locked");
     expect(run({ kind: "end", shift: ref, toQ: 87 })).toBe("shift_over_maximum"); // 43 quarters > 10.5 h — CC chunk B ruling 3 (HARD), default per chunk C ruling 2
     expect(run({ kind: "end", shift: ref, toQ: 86 })).not.toBe("shift_over_maximum"); // exactly 10.5 h is allowed
+    // CC chunk C ruling 2: the maximum is per person per DATE — Maya's 4 h + a new 7 h shift that day is 11 h.
+    expect(run({ kind: "addShift", date: THU, userId: U.maya, startQ: 60, endQ: 88, positionId: P.REG })).toBe("shift_over_maximum");
+    expect(run({ kind: "addShift", date: THU, userId: U.maya, startQ: 60, endQ: 86, positionId: P.REG })).not.toBe("shift_over_maximum");
     expect(run({ kind: "setSegmentPosition", shift: ref, index: 0, positionId: "elsewhere" })).toBe("position_not_at_shop");
     expect(run({ kind: "addShift", date: THU, userId: U.tess, startQ: 60, endQ: 76, positionId: P.REG })).toBe("person_not_at_shop");
     expect(run({ kind: "move", shift: { ...ref, startQ: 40 }, deltaQ: 4 })).toBe("head_moved");

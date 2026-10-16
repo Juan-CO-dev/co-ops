@@ -21,7 +21,7 @@ import type { DayContext, RuleContext, RulePerson } from "../context-shared";
 import { closeScore, skillOf, type SchedPerson, type SkillLookup } from "../people-input-shared";
 import { noteOrder, reason, type BoardNote, type Reason } from "../reasons-shared";
 import {
-  MOD, checkScheduleRules, closingManagerEligible, coversClosingWindow, eligibleForPosition, leaderSettingAllows, modCountsAt, shiftExtendsOver, zeroCostCovers,
+  MOD, availableOn, checkScheduleRules, closingManagerEligible, coversClosingWindow, eligibleForPosition, leaderSettingAllows, modCountsAt, shiftExtendsOver, zeroCostCovers,
   type DayRecord, type RuleProblem, type Segment, type Shift,
 } from "../rules-shared";
 import { isLineRole, isSecondary, positionLimit, primaryOf, type ScheduleStructure } from "../structure-shared";
@@ -673,6 +673,67 @@ export function takeZeroCostFills(b: BuildCtx, week: WeekState, date: string, de
     }
     if (!progress) return;
   }
+}
+
+/**
+ * CC chunk C ruling 2: when a deficit sits right beside someone's shift and only the DAILY MAXIMUM stops the whole
+ * extension, extend that shift as far as the cap allows toward it (the part nearest the shift), so what remains is
+ * exactly what the cap leaves — the remainder the `max_shift` counting bound can then certify. Every condition a
+ * placement has: an active, non-presence, unpinned person, eligible at every added quarter (the MoD from the KH time
+ * when that applies), inside their availability and leader setting over the merged span, room under the head limit
+ * (a secondary only where its primary is staffed), never an untouchable day, the budget stop on a budgeted date for a
+ * non-essential shift; guarded, and kept only when the day's uncovered total strictly falls and essential coverage
+ * never does.
+ */
+export function extendToCap(b: BuildCtx, week: WeekState, date: string, d: { code: string; positionId: string | null; fromQ: number; toQ: number }): boolean {
+  if (d.code !== "coverage_gap" && d.code !== "mod_missing") return false;
+  if (d.code === "coverage_gap" && !d.positionId) return false;
+  const day = b.ctx.days[date]!;
+  const s = b.structure;
+  const capQ = maxShiftQ(s);
+  const shifts = week.built[date]!;
+  const pos = d.positionId ? s.positions[d.positionId] : undefined;
+  const primary = d.positionId ? primaryOf(s, d.positionId) : null;
+  const needsPrimary = !!d.positionId && primary !== null && primary !== d.positionId;
+  const baseline = uncoveredTotals(b, date, shifts);
+  for (const sh of [...shifts].sort(shiftOrder)) {
+    const p = b.people[sh.userId];
+    if (!p || !p.activeMember || p.presenceOnly || sh.pinned || p.untouchableDates.includes(date)) continue;
+    const forward = sh.endQ === d.fromQ;
+    if (!forward && sh.startQ !== d.toQ) continue;
+    const dayQ = shifts.filter((x) => x.userId === sh.userId).reduce((n, x) => n + (x.endQ - x.startQ), 0);
+    const room = capQ - dayQ;
+    if (room <= 0 || room >= d.toQ - d.fromQ) continue; // only where the cap binds (a whole extension is the fill's business)
+    const a = forward ? sh.endQ : d.toQ - room;
+    const z = forward ? sh.endQ + room : d.toQ;
+    const spanFrom = Math.min(sh.startQ, a);
+    const spanTo = Math.max(sh.endQ, z);
+    if (!availableOn(p, date, spanFrom, spanTo) || !leaderSettingAllows(p, s, spanFrom, spanTo)) continue;
+    let ok = true;
+    for (let q = a; q < z && ok; q++) {
+      if (d.code === "mod_missing") ok = modCountsAt(p, s, q);
+      else ok = eligibleForPosition(p, pos) && occupancy(shifts, d.positionId!, q) < positionLimit(pos!, q) && (!needsPrimary || occupancy(shifts, primary!, q) > 0);
+    }
+    if (!ok) continue;
+    const r = reason("extended_to_cap", { positionId: d.positionId ?? MOD, fromQ: a, toQ: z, userId: sh.userId, maxShiftQ: capQ });
+    const mutate = (next: GShift[]) => {
+      const mine = next.find((x) => x.userId === sh.userId && x.startQ === sh.startQ);
+      if (!mine) return false;
+      const seg: GSegment = { positionId: d.positionId ?? MOD, startQ: a, endQ: z, reasons: [r] };
+      mine.segments = forward ? [...mine.segments, seg] : [seg, ...mine.segments];
+      mine.startQ = Math.min(mine.startQ, a);
+      mine.endQ = Math.max(mine.endQ, z);
+      mine.reasons = [...mine.reasons, r];
+      return true;
+    };
+    if (b.budgetedDates.includes(date) && isHourly(p) && !worksClosingWindow(b, date, spanFrom, spanTo)) {
+      const next = shifts.map(cloneShift);
+      mutate(next);
+      if (budgetUsedHours(b, { built: { ...week.built, [date]: next }, inherited: week.inherited }) > b.budgetHours) continue;
+    }
+    if (guarded(b, week, date, mutate, (next) => { const after = uncoveredTotals(b, date, next); return after.total < baseline.total && after.essential <= baseline.essential; })) return true;
+  }
+  return false;
 }
 
 // ─── Priority enforcement (the mockup's enforcePriority) ─────────────────────

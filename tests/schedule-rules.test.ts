@@ -10,6 +10,7 @@ import {
   proveGap, structureInfeasible, type DeclaredGap, type RuleCode, type RuleProblem,
 } from "@/lib/scheduling/rules-shared";
 import { contextAdvisory, ruleContextFromSnapshot, toContextSnapshot, type RuleContext } from "@/lib/scheduling/context-shared";
+import type { ScheduleStructure } from "@/lib/scheduling/structure-shared";
 import {
   DATES, FRI, MON, P, SAT, SUN, THU, TUE, U, WED, context, setNeed, shift, structure, week,
 } from "./fixtures/schedule/rules-fixture";
@@ -752,5 +753,79 @@ describe("Astra's chunk C review probes (failing first)", () => {
     setNeed(solo, WED, P.WALK, 44, 48);
     solo.budgetByDate[WED] = 0;
     expect(proveGap({ code: "coverage_gap", date: WED, positionId: P.WALK, fromQ: 44, toQ: 48 }, week([]), solo)?.cause).not.toBe("budget");
+  });
+});
+
+describe("CC chunk C ruling 2: the cap-only structure certificate (max_shift) — a counting bound over eligible people × availability, capped per day", () => {
+  /** Register 10:30–9:00 PM (42 quarters) needs one head; the shop's cap is 8 h (32 q); Ben is the only eligible member. */
+  const capShop = (over: (s: ScheduleStructure) => void = () => {}) => {
+    const ctx = context({ s: structure((x) => { x.positions[P.REG]!.allowedRoles = ["employee"]; x.limits.maxShiftH = 8; x.limits.gmMinimumH = 8; x.limits.agmMinimumH = 8; over(x); }) });
+    setNeed(ctx, WED, P.REG, 42, 84);
+    return ctx;
+  };
+  const subject = { code: "coverage_gap" as const, date: WED, positionId: P.REG, fromQ: 74, toQ: 84 };
+
+  it("the validator's daily maximum is per person per DATE (a split day cannot dodge it), one problem at the day's first shift", () => {
+    const two = run([shift(U.ben, WED, 42, 66, P.REG), shift(U.ben, WED, 66, 86, P.WALKON)]);
+    expect(of(two, "shift_over_maximum")).toEqual([expect.objectContaining({ userId: U.ben, q: 42, params: { minutes: 660, maximumMinutes: 630 } })]);
+    expect(of(run([shift(U.ben, WED, 42, 60, P.REG), shift(U.ben, WED, 64, 84, P.WALKON)]), "shift_over_maximum")).toEqual([]); // 9.5 h in two shifts
+  });
+
+  it("positive: one eligible person, a 10.5 h need, an 8 h cap → short 10 quarters in EVERY allocation; the 2:30–9:00 PM remainder is certified by the numbers", () => {
+    const ctx = capShop();
+    const s = week([shift(U.ben, WED, 42, 74, P.REG)]);
+    const proof = proveGap(subject, s, ctx);
+    expect(proof).toEqual({ cause: "structure", certificate: { rule: "max_shift", detail: {
+      positionId: P.REG, runFromQ: 42, runToQ: 84, runQ: 42, maxShiftQ: 32, requiredQ: 42, peopleIds: [U.ben], availableQ: 42, coverableQ: 32, shortQ: 10,
+    } } });
+    expect(checkCertificate({ ...subject, ...proof! } as DeclaredGap, s, ctx)).toBe(true);
+    // And the validator accepts the declared gap as certified.
+    const gap = { ...subject, ...proof! } as DeclaredGap;
+    const problems = run(s.shifts, ctx, [gap]);
+    expect(problems.find((p) => p.code === "coverage_gap")).toMatchObject({ positionId: P.REG, q: 74, params: { cause: "structure", proven: true } });
+    expect(problems.filter((p) => (p.code === "uncertified_gap" || p.code === "undeclared_gap") && p.params.gap === "coverage_gap")).toEqual([]);
+  });
+
+  it("negative: an overlong window ALONE is not proof — a second eligible person who is available makes it coverable (8 + 8 ≥ 10.5 h)", () => {
+    const ctx = capShop((x) => { x.positions[P.REG]!.allowedRoles = ["employee", "trainer"]; }); // + Maya
+    const s = week([shift(U.ben, WED, 42, 74, P.REG)]);
+    expect(proveGap(subject, s, ctx)?.certificate).not.toMatchObject({ rule: "max_shift" });
+    const forged: DeclaredGap = { ...subject, cause: "structure", certificate: { rule: "max_shift", detail: {
+      positionId: P.REG, runFromQ: 42, runToQ: 84, runQ: 42, maxShiftQ: 32, requiredQ: 42, peopleIds: [U.ben], availableQ: 42, coverableQ: 32, shortQ: 10,
+    } } };
+    expect(checkCertificate(forged, s, ctx)).toBe(false);
+    // …unless Maya is unavailable that day: then the bound is back (availability enters the count).
+    ctx.people[U.maya]!.availability[WED] = null;
+    expect(checkCertificate(forged, s, ctx)).toBe(true);
+  });
+
+  it("negative: the cap must be the ONLY reason — no availability shortage (a quarter with nobody available is not the cap's), no excess beyond the bound, a run that fits one shift", () => {
+    const ctx = capShop();
+    ctx.people[U.ben]!.availability[WED] = { fromQ: 42, toQ: 70, source: "toast_pattern" }; // nobody can stand there after 5:30 PM
+    expect(proveGap(subject, week([shift(U.ben, WED, 42, 70, P.REG)]), ctx)?.certificate).not.toMatchObject({ rule: "max_shift" });
+    const excess = capShop();
+    expect(proveGap({ ...subject, fromQ: 66 }, week([shift(U.ben, WED, 42, 66, P.REG)]), excess)?.certificate).not.toMatchObject({ rule: "max_shift" }); // 18 q uncovered > 10 provable
+    const fits = capShop((x) => { x.limits.maxShiftH = 12; });
+    expect(proveGap(subject, week([shift(U.ben, WED, 42, 74, P.REG)]), fits)?.certificate).not.toMatchObject({ rule: "max_shift" });
+  });
+
+  it("tampered numbers are refused (every field is recomputed)", () => {
+    const ctx = capShop();
+    const s = week([shift(U.ben, WED, 42, 74, P.REG)]);
+    const proof = proveGap(subject, s, ctx)!;
+    const detail = (proof.certificate as { detail: Record<string, unknown> }).detail;
+    for (const [k, v] of [["shortQ", 12], ["maxShiftQ", 40], ["runFromQ", 40], ["peopleIds", [U.ben, U.maya]], ["coverableQ", 30]] as const) {
+      expect(checkCertificate({ ...subject, cause: "structure", certificate: { rule: "max_shift", detail: { ...detail, [k]: v } } } as DeclaredGap, s, ctx), k).toBe(false);
+    }
+  });
+
+  it("the MoD: one manager for a 13.75 h shop day under a 10.5 h cap → the evening remainder is certified; with a second manager it is not", () => {
+    const ctx = context({ s: structure((x) => { x.leadership.modRequired = true; }) });
+    ctx.people[U.alex]!.activeMember = false; // Dani is the only SL+ member
+    const s = week([shift(U.dani, WED, 28, 70, "mod")]);
+    const mod = { code: "mod_missing" as const, date: WED, positionId: null, fromQ: 70, toQ: 83 };
+    expect(proveGap(mod, s, ctx)).toMatchObject({ cause: "structure", certificate: { rule: "max_shift", detail: { positionId: "mod", runFromQ: 28, runToQ: 83, requiredQ: 55, coverableQ: 42, shortQ: 13 } } });
+    ctx.people[U.alex]!.activeMember = true;
+    expect(proveGap(mod, s, ctx)?.certificate).not.toMatchObject({ rule: "max_shift" });
   });
 });

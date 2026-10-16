@@ -11,12 +11,12 @@
      "day": "2026-10-26",
      "inherited": false,
      "params": {
-      "cause": "unresolved_search",
-      "fromQ": 60,
-      "proven": false,
+      "cause": "structure",
+      "fromQ": 70,
+      "proven": true,
       "toQ": 83
      },
-     "q": 60,
+     "q": 70,
      "severity": "gap"
     }
    ],
@@ -33,11 +33,11 @@
      "inherited": false,
      "params": {
       "cause": "unresolved_search",
-      "fromQ": 66,
+      "fromQ": 76,
       "proven": false,
       "toQ": 83
      },
-     "q": 66,
+     "q": 76,
      "severity": "gap"
     }
    ],
@@ -54,11 +54,11 @@
      "inherited": false,
      "params": {
       "cause": "unresolved_search",
-      "fromQ": 66,
+      "fromQ": 76,
       "proven": false,
       "toQ": 83
      },
-     "q": 66,
+     "q": 76,
      "severity": "gap"
     }
    ],
@@ -75,11 +75,11 @@
      "inherited": false,
      "params": {
       "cause": "unresolved_search",
-      "fromQ": 66,
+      "fromQ": 76,
       "proven": false,
       "toQ": 83
      },
-     "q": 66,
+     "q": 76,
      "severity": "gap"
     }
    ],
@@ -96,11 +96,11 @@
      "inherited": false,
      "params": {
       "cause": "unresolved_search",
-      "fromQ": 66,
+      "fromQ": 76,
       "proven": false,
       "toQ": 83
      },
-     "q": 66,
+     "q": 76,
      "severity": "gap"
     }
    ],
@@ -117,11 +117,11 @@
      "inherited": false,
      "params": {
       "cause": "unresolved_search",
-      "fromQ": 66,
+      "fromQ": 76,
       "proven": false,
       "toQ": 83
      },
-     "q": 66,
+     "q": 76,
      "severity": "gap"
     },
     {
@@ -140,7 +140,7 @@
      "day": "2026-10-31",
      "inherited": false,
      "params": {
-      "hours": 48,
+      "hours": 50.5,
       "limit": 40
      },
      "severity": "warning",
@@ -185,11 +185,11 @@
      "inherited": false,
      "params": {
       "cause": "unresolved_search",
-      "fromQ": 66,
+      "fromQ": 76,
       "proven": false,
       "toQ": 83
      },
-     "q": 66,
+     "q": 76,
      "severity": "gap"
     },
     {
@@ -219,7 +219,7 @@
      "day": "2026-11-01",
      "inherited": false,
      "params": {
-      "hours": 48,
+      "hours": 63,
       "limit": 40
      },
      "severity": "warning",
@@ -267,27 +267,27 @@
  ],
  "gaps": [
   {
-   "cause": "unresolved_search",
+   "cause": "structure",
    "certificate": {
-    "candidateIds": [
-     "u-05-dani",
-     "u-15-alex",
-     "u-16-jules"
-    ],
-    "limits": {
-     "REPAIR_MAX_STEPS": 200,
-     "maxChainDepth": 3,
-     "maxDonors": 8
+    "detail": {
+     "availableQ": 55,
+     "coverableQ": 42,
+     "maxShiftQ": 42,
+     "peopleIds": [
+      "u-15-alex"
+     ],
+     "positionId": "mod",
+     "requiredQ": 55,
+     "runFromQ": 28,
+     "runQ": 55,
+     "runToQ": 83,
+     "shortQ": 13
     },
-    "searched": {
-     "chainDepth": 3,
-     "donorsTried": 1,
-     "steps": 15
-    }
+    "rule": "max_shift"
    },
    "code": "mod_missing",
    "date": "2026-10-26",
-   "fromQ": 60,
+   "fromQ": 70,
    "positionId": null,
    "toQ": 83
   },
@@ -312,7 +312,7 @@
    },
    "code": "mod_missing",
    "date": "2026-10-27",
-   "fromQ": 66,
+   "fromQ": 76,
    "positionId": null,
    "toQ": 83
   },
@@ -337,7 +337,7 @@
    },
    "code": "mod_missing",
    "date": "2026-10-28",
-   "fromQ": 66,
+   "fromQ": 76,
    "positionId": null,
    "toQ": 83
   },
@@ -362,7 +362,7 @@
    },
    "code": "mod_missing",
    "date": "2026-10-29",
-   "fromQ": 66,
+   "fromQ": 76,
    "positionId": null,
    "toQ": 83
   },
@@ -387,7 +387,7 @@
    },
    "code": "mod_missing",
    "date": "2026-10-30",
-   "fromQ": 66,
+   "fromQ": 76,
    "positionId": null,
    "toQ": 83
   },
@@ -412,7 +412,7 @@
    },
    "code": "mod_missing",
    "date": "2026-10-31",
-   "fromQ": 66,
+   "fromQ": 76,
    "positionId": null,
    "toQ": 83
   },
@@ -462,7 +462,7 @@
    },
    "code": "mod_missing",
    "date": "2026-11-01",
-   "fromQ": 66,
+   "fromQ": 76,
    "positionId": null,
    "toQ": 83
   }
@@ -989,6 +989,16 @@
        "toQ": 60,
        "userId": "u-15-alex"
       }
+     },
+     {
+      "key": "extended_to_cap",
+      "params": {
+       "fromQ": 60,
+       "maxShiftQ": 42,
+       "positionId": "mod",
+       "toQ": 70,
+       "userId": "u-15-alex"
+      }
      }
     ]
    ],
@@ -998,6 +1008,16 @@
      "params": {
       "fromQ": 28,
       "toQ": 60,
+      "userId": "u-15-alex"
+     }
+    },
+    {
+     "key": "extended_to_cap",
+     "params": {
+      "fromQ": 60,
+      "maxShiftQ": 42,
+      "positionId": "mod",
+      "toQ": 70,
       "userId": "u-15-alex"
      }
     }
@@ -1474,6 +1494,16 @@
        "toQ": 66,
        "userId": "u-16-jules"
       }
+     },
+     {
+      "key": "extended_to_cap",
+      "params": {
+       "fromQ": 66,
+       "maxShiftQ": 42,
+       "positionId": "mod",
+       "toQ": 76,
+       "userId": "u-16-jules"
+      }
      }
     ]
    ],
@@ -1483,6 +1513,16 @@
      "params": {
       "fromQ": 34,
       "toQ": 66,
+      "userId": "u-16-jules"
+     }
+    },
+    {
+     "key": "extended_to_cap",
+     "params": {
+      "fromQ": 66,
+      "maxShiftQ": 42,
+      "positionId": "mod",
+      "toQ": 76,
       "userId": "u-16-jules"
      }
     }
@@ -2056,6 +2096,16 @@
        "toQ": 66,
        "userId": "u-16-jules"
       }
+     },
+     {
+      "key": "extended_to_cap",
+      "params": {
+       "fromQ": 66,
+       "maxShiftQ": 42,
+       "positionId": "mod",
+       "toQ": 76,
+       "userId": "u-16-jules"
+      }
      }
     ]
    ],
@@ -2065,6 +2115,16 @@
      "params": {
       "fromQ": 34,
       "toQ": 66,
+      "userId": "u-16-jules"
+     }
+    },
+    {
+     "key": "extended_to_cap",
+     "params": {
+      "fromQ": 66,
+      "maxShiftQ": 42,
+      "positionId": "mod",
+      "toQ": 76,
       "userId": "u-16-jules"
      }
     }
@@ -2663,6 +2723,16 @@
        "toQ": 66,
        "userId": "u-16-jules"
       }
+     },
+     {
+      "key": "extended_to_cap",
+      "params": {
+       "fromQ": 66,
+       "maxShiftQ": 42,
+       "positionId": "mod",
+       "toQ": 76,
+       "userId": "u-16-jules"
+      }
      }
     ]
    ],
@@ -2672,6 +2742,16 @@
      "params": {
       "fromQ": 34,
       "toQ": 66,
+      "userId": "u-16-jules"
+     }
+    },
+    {
+     "key": "extended_to_cap",
+     "params": {
+      "fromQ": 66,
+      "maxShiftQ": 42,
+      "positionId": "mod",
+      "toQ": 76,
       "userId": "u-16-jules"
      }
     }
@@ -3246,6 +3326,16 @@
        "toQ": 66,
        "userId": "u-16-jules"
       }
+     },
+     {
+      "key": "extended_to_cap",
+      "params": {
+       "fromQ": 66,
+       "maxShiftQ": 42,
+       "positionId": "mod",
+       "toQ": 76,
+       "userId": "u-16-jules"
+      }
      }
     ]
    ],
@@ -3264,6 +3354,16 @@
       "fromQ": 44,
       "positionId": "5c000000-0000-4000-8000-000000000005",
       "toQ": 56
+     }
+    },
+    {
+     "key": "extended_to_cap",
+     "params": {
+      "fromQ": 66,
+      "maxShiftQ": 42,
+      "positionId": "mod",
+      "toQ": 76,
+      "userId": "u-16-jules"
      }
     }
    ]
@@ -3873,6 +3973,16 @@
        "toQ": 66,
        "userId": "u-16-jules"
       }
+     },
+     {
+      "key": "extended_to_cap",
+      "params": {
+       "fromQ": 66,
+       "maxShiftQ": 42,
+       "positionId": "mod",
+       "toQ": 76,
+       "userId": "u-16-jules"
+      }
      }
     ]
    ],
@@ -3882,6 +3992,16 @@
      "params": {
       "fromQ": 34,
       "toQ": 66,
+      "userId": "u-16-jules"
+     }
+    },
+    {
+     "key": "extended_to_cap",
+     "params": {
+      "fromQ": 66,
+      "maxShiftQ": 42,
+      "positionId": "mod",
+      "toQ": 76,
       "userId": "u-16-jules"
      }
     }
@@ -4407,6 +4527,16 @@
        "toQ": 66,
        "userId": "u-16-jules"
       }
+     },
+     {
+      "key": "extended_to_cap",
+      "params": {
+       "fromQ": 66,
+       "maxShiftQ": 42,
+       "positionId": "mod",
+       "toQ": 76,
+       "userId": "u-16-jules"
+      }
      }
     ]
    ],
@@ -4425,6 +4555,16 @@
       "fromQ": 38,
       "positionId": "5c000000-0000-4000-8000-000000000008",
       "toQ": 62
+     }
+    },
+    {
+     "key": "extended_to_cap",
+     "params": {
+      "fromQ": 66,
+      "maxShiftQ": 42,
+      "positionId": "mod",
+      "toQ": 76,
+      "userId": "u-16-jules"
      }
     }
    ]
@@ -4578,12 +4718,12 @@
   {
    "closingManager": false,
    "date": "2026-10-26",
-   "endQ": 60,
+   "endQ": 70,
    "flex": false,
    "pinned": false,
    "segments": [
     {
-     "endQ": 60,
+     "endQ": 70,
      "positionId": "mod",
      "startQ": 28
     }
@@ -4759,12 +4899,12 @@
   {
    "closingManager": false,
    "date": "2026-10-27",
-   "endQ": 66,
+   "endQ": 76,
    "flex": false,
    "pinned": false,
    "segments": [
     {
-     "endQ": 66,
+     "endQ": 76,
      "positionId": "mod",
      "startQ": 34
     }
@@ -4967,12 +5107,12 @@
   {
    "closingManager": false,
    "date": "2026-10-28",
-   "endQ": 66,
+   "endQ": 76,
    "flex": false,
    "pinned": false,
    "segments": [
     {
-     "endQ": 66,
+     "endQ": 76,
      "positionId": "mod",
      "startQ": 34
     }
@@ -5185,12 +5325,12 @@
   {
    "closingManager": false,
    "date": "2026-10-29",
-   "endQ": 66,
+   "endQ": 76,
    "flex": false,
    "pinned": false,
    "segments": [
     {
-     "endQ": 66,
+     "endQ": 76,
      "positionId": "mod",
      "startQ": 34
     }
@@ -5393,7 +5533,7 @@
   {
    "closingManager": false,
    "date": "2026-10-30",
-   "endQ": 66,
+   "endQ": 76,
    "flex": false,
    "pinned": false,
    "segments": [
@@ -5409,7 +5549,7 @@
      "startQ": 44
     },
     {
-     "endQ": 66,
+     "endQ": 76,
      "positionId": "mod",
      "startQ": 56
     }
@@ -5633,12 +5773,12 @@
   {
    "closingManager": false,
    "date": "2026-10-31",
-   "endQ": 66,
+   "endQ": 76,
    "flex": false,
    "pinned": false,
    "segments": [
     {
-     "endQ": 66,
+     "endQ": 76,
      "positionId": "mod",
      "startQ": 34
     }
@@ -5825,7 +5965,7 @@
   {
    "closingManager": false,
    "date": "2026-11-01",
-   "endQ": 66,
+   "endQ": 76,
    "flex": false,
    "pinned": false,
    "segments": [
@@ -5841,7 +5981,7 @@
      "startQ": 38
     },
     {
-     "endQ": 66,
+     "endQ": 76,
      "positionId": "mod",
      "startQ": 62
     }

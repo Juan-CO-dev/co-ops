@@ -54,9 +54,14 @@ export interface CapacityCertificate { fromQ: number; toQ: number; positionIds: 
  * The configuration itself makes the need impossible. A position window shorter than the minimum shift is
  * NOT one of them (Astra chunk A P2-4): the minimum applies to the whole SHIFT, and a short window is
  * filled as a segment of a multi-position shift.
+ *
+ * `max_shift` (CC chunk C ruling 2, with Astra's condition): the shop's daily maximum ALONE makes part of a need run
+ * uncoverable — a counting bound over the eligible people and their availability, each capped at the daily maximum
+ * (see `capOnlyBound`). Its detail carries every number and is recomputed exactly; an overlong window alone is not
+ * proof.
  */
-export type StructureRule = "primary_window_closed" | "no_mod_member" | "no_closing_role";
-export interface StructureCertificate { rule: StructureRule; detail: Record<string, string | number> }
+export type StructureRule = "primary_window_closed" | "no_mod_member" | "no_closing_role" | "max_shift";
+export interface StructureCertificate { rule: StructureRule; detail: Record<string, string | number | string[]> }
 export interface UnresolvedSearchCertificate {
   searched: { steps: number; donorsTried: number; chainDepth: number };
   limits: { REPAIR_MAX_STEPS: number; maxDonors: number; maxChainDepth: number };
@@ -361,8 +366,8 @@ function budgetMayExcuse(g: GapSubject, ctx: RuleContext): boolean {
 
 // ─── Structure infeasibility (the `structure` cause) ─────────────────────────
 
-function structureRules(st: ScheduleStructure, g: GapSubject, roster: readonly RulePerson[]): Array<{ rule: StructureRule; detail: Record<string, string | number> }> {
-  const out: Array<{ rule: StructureRule; detail: Record<string, string | number> }> = [];
+function structureRules(st: ScheduleStructure, g: GapSubject, roster: readonly RulePerson[]): StructureCertificate[] {
+  const out: StructureCertificate[] = [];
   if (g.code === "coverage_gap" && g.positionId) {
     const primary = primaryOf(st, g.positionId);
     const pp = primary && primary !== g.positionId ? st.positions[primary] : undefined;
@@ -389,6 +394,69 @@ function structureRules(st: ScheduleStructure, g: GapSubject, roster: readonly R
 export function structureInfeasible(structure: ScheduleStructure, date: string, g: GapSubject, roster: readonly RulePerson[] = []): boolean {
   void date;
   return structureRules(structure, g, roster).length > 0;
+}
+
+// ─── The cap-only bound (CC chunk C ruling 2: the `max_shift` structure rule) ────────
+
+/**
+ * Does the shop's daily maximum ALONE leave part of this deficit's need run uncoverable? A counting bound, sound in
+ * EVERY allocation because the validator caps a person's working time per DATE (`shift_over_maximum`):
+ * - the run = the maximal contiguous quarters around the deficit where the need is >= 1 (coverage: the position's
+ *   need; MoD: the shop day when the MoD is required); it must be longer than one shift can be (runQ > maxShiftQ);
+ * - the people = every member who counts at some quarter of the run (eligible at that quarter AND available, or
+ *   already standing there), each contributing at most min(maxShiftQ, their counting quarters);
+ * - only the cap: at every quarter the need <= the people who count there (else it is a capacity / availability
+ *   shortage, another cause), so the uncapped total covers the requirement and the capped one does not:
+ *   shortQ = requiredQ - coverableQ >= 1;
+ * - no excess: the head-quarters actually uncovered over the run are <= shortQ (more needs another cause).
+ * Null otherwise. Closing Manager deficits never qualify (one shift must span the closing window).
+ */
+export function capOnlyBound(g: GapSubject, s: WeekSchedule, ctx: RuleContext): StructureCertificate | null {
+  const day = ctx.days[g.date];
+  if (!day || g.toQ <= g.fromQ || g.code === "closing_manager_missing") return null;
+  if (g.code === "coverage_gap" && !g.positionId) return null;
+  const st = day.structure;
+  const maxQ = Math.round(st.limits.maxShiftH * 4);
+  const shop = shopWindow(day);
+  const needAt = (q: number): number => {
+    if (q < 0 || q >= 96) return 0;
+    if (g.code === "coverage_gap") return day.need.positions[g.positionId!]?.[q] ?? 0;
+    return st.leadership.modRequired && q >= shop.fromQ && q < shop.toQ ? 1 : 0;
+  };
+  if (needAt(g.fromQ) < 1) return null;
+  let a = g.fromQ;
+  while (needAt(a - 1) >= 1) a--;
+  let z = g.fromQ;
+  while (needAt(z) >= 1) z++;
+  if (g.toQ > z || z - a <= maxQ) return null;
+  const shifts = shiftsOn(s, g.date);
+  const placedAt = (p: RulePerson, q: number) => shifts.some((sh) => sh.userId === p.userId && (g.code === "coverage_gap"
+    ? sh.segments.some((x) => x.positionId === g.positionId && x.startQ <= q && x.endQ > q)
+    : sh.segments.some((x) => x.startQ <= q && x.endQ > q) && modCountsAt(p, st, q)));
+  const countsAt = (p: RulePerson, q: number) => (eligibleFor(p, g.code, g.positionId, st, q) && availableOn(p, g.date, q, q + 1)) || placedAt(p, q);
+  const people = Object.values(ctx.people).sort((x, y) => (x.userId < y.userId ? -1 : x.userId > y.userId ? 1 : 0));
+  const avail = new Map<string, number>();
+  let requiredQ = 0;
+  for (let q = a; q < z; q++) {
+    const need = needAt(q);
+    requiredQ += need;
+    let here = 0;
+    for (const p of people) if (countsAt(p, q)) { here++; avail.set(p.userId, (avail.get(p.userId) ?? 0) + 1); }
+    if (here < need) return null; // a per-quarter shortage is not the cap's
+  }
+  const peopleIds = [...avail.keys()].sort();
+  const availableQ = peopleIds.reduce((n, id) => n + avail.get(id)!, 0);
+  const coverableQ = peopleIds.reduce((n, id) => n + Math.min(maxQ, avail.get(id)!), 0);
+  const shortQ = requiredQ - coverableQ;
+  if (availableQ < requiredQ || shortQ < 1) return null;
+  const cov = dayCoverage(shifts, day, ctx);
+  let uncovered = 0;
+  for (let q = a; q < z; q++) uncovered += uncoveredFrom(cov, g.code, g.positionId, day, q);
+  if (uncovered > shortQ) return null;
+  return { rule: "max_shift", detail: {
+    positionId: g.code === "coverage_gap" ? g.positionId! : MOD, runFromQ: a, runToQ: z, runQ: z - a, maxShiftQ: maxQ,
+    requiredQ, peopleIds, availableQ, coverableQ, shortQ,
+  } };
 }
 
 // ─── Capacity (the r3 counting bound) ────────────────────────────────────────
@@ -667,6 +735,10 @@ function verify(g: DeclaredGap, s: WeekSchedule, ctx: RuleContext, depth: number
       return excessFits(c, g, s, day, ctx); // the excess needs another cause
     }
     case "structure": {
+      if (g.certificate.rule === "max_shift") {
+        const re = capOnlyBound(g, s, ctx);
+        return !!re && canonicalJson(re) === canonicalJson(g.certificate);
+      }
       const found = structureRules(st, g, Object.values(ctx.people)).map((r) => r.rule);
       return found.includes(g.certificate.rule);
     }
@@ -719,13 +791,17 @@ export function proveGap(subject: GapSubject, s: WeekSchedule, ctx: RuleContext)
     } });
     if (fl) return fl;
   }
-  if (!budgetMayExcuse(subject, ctx)) return null;
-  const f = budgetFacts(s, ctx);
-  const hoursNeeded = hoursNeededFor(subject, s, day, ctx);
-  if (hoursNeeded === null) return null;
-  return tryCert({ ...subject, cause: "budget", certificate: {
-    budgetedDates: f.budgetedDates, budgetHours: f.budgetHours, usedHours: f.usedHours, essentialHours: f.essentialHours, hoursNeeded,
-  } });
+  if (budgetMayExcuse(subject, ctx)) {
+    const f = budgetFacts(s, ctx);
+    const hoursNeeded = hoursNeededFor(subject, s, day, ctx);
+    const bud = hoursNeeded === null ? null : tryCert({ ...subject, cause: "budget", certificate: {
+      budgetedDates: f.budgetedDates, budgetHours: f.budgetHours, usedHours: f.usedHours, essentialHours: f.essentialHours, hoursNeeded,
+    } });
+    if (bud) return bud;
+  }
+  // CC chunk C ruling 2: last, the cap-only counting bound (it only ever converts what would otherwise be unresolved).
+  const cap = capOnlyBound(subject, s, ctx);
+  return cap ? tryCert({ ...subject, cause: "structure", certificate: cap }) : null;
 }
 
 // ─── The validator ───────────────────────────────────────────────────────────
@@ -798,8 +874,12 @@ export function checkScheduleRules(s: WeekSchedule, ctx: RuleContext): RuleProbl
       const flexDay = sh.flex && p.flexDates.includes(date) && st.limits.flexUsesPer2w > 0;
       const minQ = flexDay ? st.limits.flexMinimumQ : st.limits.minimumShiftQ;
       if (sh.endQ - sh.startQ < minQ) push("shift_below_minimum", date, { userId: u, q: sh.startQ, params: { minutes: (sh.endQ - sh.startQ) * 15, minimumMinutes: minQ * 15 } });
+      // CC chunk C ruling 2: the daily maximum is per person per DATE (a split day cannot dodge it); one problem, at
+      // the person's first shift of the day, carrying the day's total. With one shift a day it reads exactly as before.
       const maxQ = Math.round(st.limits.maxShiftH * 4);
-      if (sh.endQ - sh.startQ > maxQ) push("shift_over_maximum", date, { userId: u, q: sh.startQ, params: { minutes: (sh.endQ - sh.startQ) * 15, maximumMinutes: maxQ * 15 } });
+      const mineToday = shifts.filter((x) => x.userId === u);
+      const dayQ = mineToday.reduce((n, x) => n + (x.endQ - x.startQ), 0);
+      if (dayQ > maxQ && mineToday.every((x) => x.startQ >= sh.startQ)) push("shift_over_maximum", date, { userId: u, q: sh.startQ, params: { minutes: dayQ * 15, maximumMinutes: maxQ * 15 } });
       if (sh.flex) push("flex_used", date, { userId: u, q: sh.startQ });
       const setting = leaderSettingOf(p, st);
       if (LEADER_ROLES.includes(p.role)

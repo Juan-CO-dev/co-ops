@@ -32,7 +32,7 @@ import { skillOf } from "../people-input-shared";
 import { teamStrength, type WindowStrength } from "../strength-shared";
 import { weekDays } from "../time-shared";
 import {
-  allShifts, assignClosingManager, canonicalDay, cmp, deficitAt, enforcePriority, fillRun, guarded, modHoles, fillModHole, shiftOrder, sortNotes, takeZeroCostFills, toShift,
+  allShifts, assignClosingManager, canonicalDay, cmp, deficitAt, enforcePriority, extendToCap, fillRun, guarded, modHoles, fillModHole, shiftOrder, sortNotes, takeZeroCostFills, toShift,
   type BuildCtx, type GShift, type WeekState,
 } from "./assign-shared";
 import { deficitsOf, newCounters, repairDay, type RepairCounters } from "./repair-shared";
@@ -262,6 +262,22 @@ export function buildWeek(raw: GeneratorInput): GeneratorOutput {
   // refused while one exists, and a free fill should never sit beside a hole.
   for (const date of builtDates) {
     takeZeroCostFills(b, week, date, () => deficitsOf(b, date, week.built[date]!));
+    enforcePriority(b, week, date);
+    assignClosingManager(b, week, date);
+  }
+
+  // CC chunk C ruling 2: where only the daily maximum stops a shift reaching a deficit that NO proven cause certifies
+  // (it would be declared unresolved_search), extend that shift up to the cap, so the remainder is exactly the cap's
+  // (the `max_shift` counting bound certifies it). A deficit already proven (budget, availability, …) is left as it
+  // is. Bounded: each step lowers the uncovered total.
+  const unproven = (date: string, d: { code: GapSubject["code"]; positionId: string | null; fromQ: number; toQ: number }) => {
+    const probe = { locationId: input.locationId, weekStart: input.weekStart, shifts: [...inheritedShifts, ...allShifts({ built: week.built, inherited: [] })], gaps: [] as DeclaredGap[], days: inheritedDays };
+    return proveGap({ code: d.code, date, positionId: d.positionId, fromQ: d.fromQ, toQ: d.toQ }, probe, ctx) === null;
+  };
+  for (const date of builtDates) {
+    for (let round = 0; round < 32; round++) {
+      if (!deficitsOf(b, date, week.built[date]!).some((d) => unproven(date, d) && extendToCap(b, week, date, d))) break;
+    }
     enforcePriority(b, week, date);
     assignClosingManager(b, week, date);
   }

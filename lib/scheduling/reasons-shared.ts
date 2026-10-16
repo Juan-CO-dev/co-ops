@@ -15,6 +15,8 @@ export const REASON_KEYS = [
   "overtime_last_resort", "closing_manager", "mod_cover", "inherited",
   // Astra chunk B ruling (hoursNeeded): an essential closer extended over a hole costs no non-essential hour.
   "essential_extension",
+  // CC chunk C ruling 2: a shift extended up to the shop's daily maximum toward a need run longer than one shift.
+  "extended_to_cap",
 ] as const;
 export type ReasonKey = (typeof REASON_KEYS)[number];
 

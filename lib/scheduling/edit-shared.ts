@@ -133,6 +133,9 @@ export function applyEdit(schedule: WeekSchedule, op: EditOp, ctx: RuleContext, 
   if (edited && op.kind !== "removeShift") {
     validateShape(edited, minQ, maxQ);
     if (shifts.some((x) => x !== edited && x.date === date && x.userId === edited!.userId && x.startQ < edited!.endQ && x.endQ > edited!.startQ)) refuse("edit_overlap");
+    // CC chunk C ruling 2: the daily maximum is per person per DATE — a second shift that day counts too (HARD).
+    const dayQ = shifts.filter((x) => x.date === date && x.userId === edited!.userId).reduce((n, x) => n + (x.endQ - x.startQ), 0);
+    if (dayQ > maxQ) refuse("shift_over_maximum", { minutes: dayQ * 15, maximumMinutes: maxQ * 15 });
   }
   shifts.sort((x, y) => cmp(x.date, y.date) || cmp(x.userId, y.userId) || x.startQ - y.startQ);
 

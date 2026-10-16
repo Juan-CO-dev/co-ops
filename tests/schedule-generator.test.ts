@@ -641,3 +641,34 @@ describe("CC chunk B ruling 3: the daily maximum shift is HARD in the generator"
     expect(longest(out)).toBeLessThanOrEqual(42);
   });
 });
+
+describe("CC chunk C ruling 2: a cap-only gap — the generator fills up to the cap, then the counting bound certifies the rest", () => {
+  /** Register 10:00 AM – 9:00 PM (11 h = 44 q) needs one head all day; the default cap is 10.5 h (42 q). */
+  const longRegister = () => onePosition((s) => {
+    s.shopDay = { prepStartQ: 40, prepDishArrivalQ: 40, serviceStartQ: 40, serviceCloseQ: 84, outEarliestQ: 84, outLatestQ: 88 };
+    s.positions[I.$REG] = { ...s.positions[I.$REG]!, openQ: 40, trimQ: 84, closeQ: 84 };
+    for (const t of ["slow", "normal", "busy", "weekend"] as const) {
+      s.crews[t].prepUntilQ = 40;
+      s.crews[t].waves = { setup: { heads: 1, atQ: 40 }, service: { heads: 0 }, rush: { heads: 0, atQ: 48 } };
+    }
+  });
+
+  it("one eligible person: a 10.5 h shift, and the 30-minute remainder is a `structure` gap with rule max_shift (never unresolved_search)", () => {
+    const s = longRegister();
+    const out = buildWeek(fixture({ structure: s, specs: [{ id: "u-e", role: "employee", skills: { [I.$REG]: [0.8, 0.7] } }], days: [day(MON, {}, s)] }));
+    expectClean(out);
+    expect(out.shifts.map((x) => x.endQ - x.startQ)).toEqual([42]);
+    expect(out.gaps).toHaveLength(1);
+    expect(out.gaps[0]).toMatchObject({ code: "coverage_gap", positionId: I.$REG, cause: "structure",
+      certificate: { rule: "max_shift", detail: { runFromQ: 40, runToQ: 84, maxShiftQ: 42, requiredQ: 44, peopleIds: ["u-e"], coverableQ: 42, shortQ: 2 } } });
+    expect(out.gaps[0]!.toQ - out.gaps[0]!.fromQ).toBe(2);
+    expect(out.problems.filter((p) => p.code === "uncertified_gap" || p.code === "undeclared_gap")).toEqual([]);
+  });
+
+  it("two eligible people: covered end to end, no gap (the overlong run alone is never a proof)", () => {
+    const s = longRegister();
+    const out = buildWeek(fixture({ structure: s, specs: [{ id: "u-e", role: "employee" }, { id: "u-f", role: "employee" }], days: [day(MON, {}, s)] }));
+    expectClean(out);
+    expect(out.gaps).toEqual([]);
+  });
+});
