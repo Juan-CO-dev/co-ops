@@ -109,7 +109,7 @@ Implementation plan followed: narrow 0264's statement locks and deferred row che
 - `items`: RLS enabled; `no_user` INSERT/UPDATE/DELETE policies; no SELECT policy. This packet does not supply an item grant enumeration, so none is claimed here.
 - `vendor_items`: RLS read floor L3+, INSERT/UPDATE floor L6+ for `authenticated`; anon and authenticated hold full table grants. This is a pre-existing security-track issue, explicitly excluded from 0264 by the lead.
 - **86** items have non-null `location_id`; **all 86 are inactive**; **none is cited by a recipe input or output**. **0** vendor_items have non-null `location_id`.
-- These are supplied release facts, not queries run by Astra. They do not claim a separately measured shop-version-line cross-shop count. CC's final release evidence still owns that count and real-session contention checks.
+- Additional CC read-only PROD evidence, 2026-10-15: **0** global version lines citing an owned item/SKU; **0** shop version lines citing a foreign-shop item/SKU; **0** owned items with `is_default`; **0** owned items with `catering_available`. These are supplied release facts, not queries run by Astra. Real-session contention remains CC's release gate.
 
 ### Other review observations retained
 
@@ -121,7 +121,7 @@ Concurrency observations remain bounded: graph lock then target then NOWAIT depe
 
 P2-5's final reachability sweep also found legacy recipe create/edit/input/output/removal and recipe-version/menu-setting writers with plain-Error fallbacks. They now use the same mapper, with their existing route-domain classes and positional metadata preserved. This is refusal mapping only: no owner authorization, reader, navigation, or later-chunk behavior was added.
 
-## Review-fix verification (final, 2026-10-15)
+## Round-1 review-fix verification (historical, 2026-10-15)
 
 ```powershell
 node scripts/sql-harness-0262.mjs
@@ -150,7 +150,7 @@ Intentional **CHUNK 3** failures, unchanged and not skipped:
 
 No other final-run failures. This run includes every shop-owned test, the 0264 source pins, actual 0264 PGlite regression probes, bilingual parity, mapper route coverage, and adjacent changed-writer tests. Log: `%TEMP%/catalog-p4a-chunk2-r1-final.log`. The full repository suite was not rerun; the earlier full-suite output above is historical. Single-connection PGlite does not prove independent-session contention, and the separate security-track issue remains open.
 
-Files changed by this review-fix set (UTF-8, LF; all uncommitted):
+Files changed by the round-1 review-fix set (UTF-8, LF; subsequently committed in `735ddc3d`):
 
 ```text
 supabase/migrations/0264_catalog_shop_owned.sql
@@ -174,4 +174,74 @@ tests/recipe-inline-output.test.ts
 docs/superpowers/plans/2026-10-15-catalog-phase4a-chunk2-handoff.md
 ```
 
-Branch/worktree: `feat/catalog-p4a`, `C:\Users\conta\co-ops-astra-p4`, HEAD remains `a62f6061`. Nothing staged, committed, fetched, pushed, merged, deployed, or applied to a real database.
+## Aggie round-2 fix packet (2026-10-15)
+
+Scope: CC's eight-item round-2 packet only; no Chunk 3 implementation. Starting HEAD is `735ddc3d35938ea5b7ea739a826345b4fa0371f7`, branch `feat/catalog-p4a`. The release change set is **commit `735ddc3d` plus this round-2 fix**, to be committed only by CC after review; this delivery is deliberately **uncommitted** and has no invented fix-commit hash.
+
+| Packet item | Resolution / verification |
+| --- | --- |
+| 1 / P1-1 | Removed the nine new duplicate keys in each dictionary; each retained line was checked against pre-existing `a62f6061` wording. Registered every shop-owned code in `catalog-item-i18n.test.ts`. The chunk-boundary command below now includes that file; full-suite results below supersede the historical focused-only claims. |
+| 2 / P2-1 | `setCateringFlags` uses `catalogWriteError` with `AdminCateringMenuError`. The existing `app/api/admin/catering/menu/[id]/route.ts` catch already returns named 4xx and needs no edit. `shop-owned-write-errors.test.ts` now lists this route and exercises its real PATCH + writer with an owned-menu refusal. |
+| 3 / P3-a | Recipe UI resolves `dependencies_busy` through `catalog.error.dependencies_busy`; the bilingual resolver test includes it alongside every ownership code. `invalid_component` retains its existing recipe-specific message. |
+| 4 / P3-b | An active-only UPDATE revalidates only false-to-true; deactivation alone does not refuse. Simultaneous ownership/citation changes still validate. Actual-migration PGlite tests cover both directions with legacy owned item and SKU inputs and verify rollback of refused reactivation. |
+| 5 / P3-d | 23503 maps to `invalid_component` only for the six exact `recipe_inputs` / `recipe_version_lines` component item/SKU/product FK names. Other FKs remain unexpected thrown errors, preserving the constraint name for Next server logging and generic 500 handling. Mapper and HTTP propagation tests pin that behavior. |
+| 6 / P3-e | Footer corrected to `735ddc3d` plus this fix; verification includes the catering route and `catalog-item-i18n.test.ts`. |
+| 7 / P3-c | Release note: **owned items: catering_available not enforced at items level (menu_items only)**. No code change for this item. |
+| 8 / P3-g | Recorded CC's four zero-count PROD observations above, attributed to CC's read-only evidence on 2026-10-15; no database access by Astra. |
+
+### Round-2 verification
+
+The pre-fix regression run failed **10 tests / 119 passed**, across four files: duplicate keys (1), catering route mapping (1), busy UI resolution (1), unrelated FK mapping (5), and legacy deactivation (2: item and SKU). Exact log: `%TEMP%/catalog-p4a-r2-before.log`. The initial post-fix focused run passed **151/151** across five files; two additional HTTP regressions were then added and included in the full run.
+
+Chunk-boundary command set (includes the new namespace registration guard):
+
+```powershell
+node scripts/sql-harness-0262.mjs
+node scripts/sql-harness-0263.mjs
+$shopTests = @(Get-ChildItem tests/shop-owned-*.test.ts | ForEach-Object { $_.FullName })
+npx.cmd vitest run --pool=threads --no-cache --maxWorkers=2 @shopTests tests/catalog-item-i18n.test.ts tests/recipe-inline-output.test.ts tests/products-store-loader.test.ts
+npx.cmd vitest run --pool=threads --no-cache --maxWorkers=2 --reporter=default --reporter=json --outputFile.json=$env:TEMP/catalog-p4a-r2-full.json
+npx.cmd tsc --noEmit
+git diff --check
+```
+
+| Verification surface | Command / coverage | Result |
+| --- | --- | --- |
+| 0262 SQL | `node scripts/sql-harness-0262.mjs` | PASS, exit 0 |
+| 0263 SQL | `node scripts/sql-harness-0263.mjs` | PASS, exit 0 |
+| Whole repository | Full Vitest command above, including every chunk-boundary file | 9280 passed, 8 intentional CHUNK 3 failed, 3 skipped (9291); files: 605 passed, 2 failed, 1 skipped (608); 400.42s, exit 1 |
+| Catalog dictionary registration | `tests/catalog-item-i18n.test.ts`, included in full suite | 5/5 passed |
+| Catering route | `tests/shop-owned-write-errors.test.ts`: `app/api/admin/catering/menu/[id]/route.ts` source catch + real PATCH/writer | 78/78 passed |
+| TypeScript | `npx.cmd tsc --noEmit` | PASS, exit 0, no diagnostics |
+
+Intentional CHUNK 3 failures, by exact test name (unchanged):
+
+1. `products-store-loader.test.ts`: `CHUNK 3: excludes foreign regular members even when their supplier retires`.
+2. `products-store-loader.test.ts`: `CHUNK 3: the store-copy global exception never admits ordinary owned members`.
+3. `shop-owned-equivalence.test.ts`: `CHUNK 3: graph excludes foreign-owned outputs at null`.
+4. `shop-owned-equivalence.test.ts`: `CHUNK 3: graph excludes foreign-owned outputs at loc-1`.
+5. `shop-owned-equivalence.test.ts`: `CHUNK 3: graph excludes foreign-owned outputs at loc-2`.
+6. `shop-owned-equivalence.test.ts`: `CHUNK 3: single and batch line readers exclude foreign recipes at null`.
+7. `shop-owned-equivalence.test.ts`: `CHUNK 3: single and batch line readers exclude foreign recipes at loc-1`.
+8. `shop-owned-equivalence.test.ts`: `CHUNK 3: single and batch line readers exclude foreign recipes at loc-2`.
+
+No other failures and no environmental EEXIST in this full run. Full log and machine-readable report: `%TEMP%/catalog-p4a-r2-full.log` and `%TEMP%/catalog-p4a-r2-full.json`. Harness logs: `%TEMP%/catalog-p4a-r2-harness0262.log`, `%TEMP%/catalog-p4a-r2-harness0263.log`; TypeScript log: `%TEMP%/catalog-p4a-r2-tsc.log`. `git diff --check` passed; all 12 changed files were verified UTF-8 without BOM and LF-only.
+
+Round-2 files changed (only):
+
+```text
+components/admin/recipes/shared.ts
+docs/superpowers/plans/2026-10-15-catalog-phase4a-chunk2-handoff.md
+lib/admin/catering/menu.ts
+lib/catalog/write-errors-shared.ts
+lib/i18n/en.json
+lib/i18n/es.json
+supabase/migrations/0264_catalog_shop_owned.sql
+tests/catalog-item-i18n.test.ts
+tests/recipe-inline-output.test.ts
+tests/shop-owned-i18n.test.ts
+tests/shop-owned-review-pglite.test.ts
+tests/shop-owned-write-errors.test.ts
+```
+
+Branch/worktree: `feat/catalog-p4a`, `C:\Users\conta\co-ops-astra-p4`. HEAD remains `735ddc3d`; round-2 changes are uncommitted. Nothing staged, committed, fetched, pushed, merged, deployed, or applied to a real database. Migration 0264 remains authored, not applied. Cross-family acceptance remains with CC.

@@ -92,3 +92,11 @@ it.each([
   expect(response.status).toBe(status);
   expect(await response.json()).toMatchObject({ code });
 });
+
+it("rethrows an unrelated FK with its constraint for server logging and a framework 500", async () => {
+  const message = 'insert or update violates foreign key constraint "recipes_created_by_fkey"';
+  state.rpc.mockResolvedValue({ data: null, error: { code: "23503", message } });
+  await expect(POST(new NextRequest("http://localhost/api/admin/recipes/full", {
+    method: "POST", body: JSON.stringify(draft()), headers: { "content-type": "application/json" },
+  }))).rejects.toThrow(`createRecipeFull rpc: ${message}`);
+});

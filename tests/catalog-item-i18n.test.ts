@@ -7,7 +7,10 @@ import { CATALOG_ITEM_ERROR_CODES } from "@/lib/catalog/sku-item-shared";
 import { RECIPE_VERSION_ERROR_CODES } from "@/lib/recipe-versions-shared";
 import { MENU_ITEM_SHOP_ERROR_CODES } from "@/lib/menu-item-shop-shared";
 
+import { SHOP_OWNED_ERROR_CODES } from "@/lib/catalog/shop-owned-shared";
+
 const REQUIRED = [
+  ...SHOP_OWNED_ERROR_CODES.map((c) => `catalog.error.${c}`),
   "customers.catering.sort.quiet", "catalog.item.kind_bought", "catalog.item.version_global",
   "catalog.item.version_shop_default", "catalog.item.version_shop", "catalog.item.based_on_global",
   "catalog.item.shop_switcher", "catalog.item.shop_global", "catalog.item.inactive", "catalog.item.item_number",

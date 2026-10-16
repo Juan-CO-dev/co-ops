@@ -111,6 +111,22 @@ describe("0264 chunk-2 review regression probes (real SQL, in-memory only)", () 
     expect((await db.query("select component_sku_id,quantity from public.recipe_inputs where id=$1", [line])).rows).toEqual([{ component_sku_id: ID.sharedSku, quantity: "1" }]);
   });
 
+  it.each([
+    ["items", "component_item_id", "uses_shop_only_item"],
+    ["vendor_items", "component_sku_id", "uses_other_shop_sku"],
+  ] as const)("legacy owned %s permits deactivation but refuses reactivation", async (table, column, code) => {
+    const old = await migratedShopOwnedDb(false);
+    try {
+      const component = (await old.query<{ id: string }>(`insert into public.${table}(name,location_id) values ('Legacy owned',$1) returning id`, [ID.shopA])).rows[0]!.id;
+      await old.query(`insert into public.recipe_inputs(recipe_id,${column},quantity,unit) values ($1,$2,1,'oz')`, [ID.sharedRecipe, component]);
+      await applyShopOwnership(old);
+      await old.query("update public.recipes set active=false where id=$1", [ID.sharedRecipe]);
+      expect((await old.query("select active from public.recipes where id=$1", [ID.sharedRecipe])).rows).toEqual([{ active: false }]);
+      await refuses(old.query("update public.recipes set active=true where id=$1", [ID.sharedRecipe]), code);
+      expect((await old.query("select active from public.recipes where id=$1", [ID.sharedRecipe])).rows).toEqual([{ active: false }]);
+    } finally { await old.close(); }
+  }, 120_000);
+
   it("pre-0264 global owned citations survive non-citation edits but reject new citations", async () => {
     const old = await migratedShopOwnedDb(false);
     try {

@@ -11,7 +11,7 @@ describe("shop-owned refusal translations", () => {
     expect(keys(en)).toEqual(keys(es));
   });
 
-  it.each(SHOP_OWNED_ERROR_CODES)("renders %s through the catalog namespace in both languages", code => {
+  it.each([...SHOP_OWNED_ERROR_CODES, "dependencies_busy"])("renders %s through the catalog namespace in both languages", code => {
     const key = `catalog.error.${code}`;
     for (const dictionary of [en, es] as Record<string, string>[]) {
       expect(dictionary[key]).toEqual(expect.any(String));

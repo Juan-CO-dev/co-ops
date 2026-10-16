@@ -99,7 +99,13 @@ begin
   -- a citation/ownership field actually changed. Arguments mirror the trigger columns.
   if tg_op='UPDATE' then
     foreach v_column in array tg_argv loop
-      v_changed := v_changed or (to_jsonb(old)->v_column is distinct from to_jsonb(new)->v_column);
+      -- Dropping active membership never introduces an edge. Other changed
+      -- ownership/citation columns still validate, even alongside deactivation.
+      if v_column='active' then
+        v_changed := v_changed or (to_jsonb(old)->'active'='false'::jsonb and to_jsonb(new)->'active'='true'::jsonb);
+      else
+        v_changed := v_changed or (to_jsonb(old)->v_column is distinct from to_jsonb(new)->v_column);
+      end if;
     end loop;
     if not v_changed then return null; end if;
   end if;

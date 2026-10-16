@@ -7,7 +7,7 @@ import type { TranslationKey } from "@/lib/i18n/types";
 
 export { postJson, type PostResult } from "@/components/admin/vendors/shared";
 
-const SHOP_ERROR_CODES: ReadonlySet<string> = new Set(SHOP_OWNED_ERROR_CODES);
+const SHOP_ERROR_CODES: ReadonlySet<string> = new Set([...SHOP_OWNED_ERROR_CODES, "dependencies_busy"]);
 
 const KNOWN_ERROR_CODES = new Set([
   "forbidden",
