@@ -1303,6 +1303,60 @@ export interface SkillMatrix {
 
 - **The MoO skill-tunables editor SCREEN** (CC ruling on chunk E, 2026-10-15). Phase 1 keeps the tunables in SQL settings (`people_skill_tunables`, validated by `valid_skill_tunables` / `validSkillTunables`), editable ONLY through the reviewed route `POST /api/people/settings` (`action: "tunables"`, MoO+, Tier E). No Phase 1 screen edits them; Phase 2 builds the MoO screen on that same route.
 
+- **A people shop-settings SCREEN** (the per-shop PM v2 switch and the prep evidence position). Phase 1 ships the reviewed route only (`POST /api/people/settings`, `action: "shop"`, GM own shop / MoO+, Tier E), exactly as the plan's file list has it; the switch is turned on through that route once a shop is ready (see "Go-live sequence"). A small admin card on the same route is the natural first Phase 2 item (open question for CC).
+- **Work types, days off, flex day, soft hours** (spec §5.1, §5.5) and **every board surface** (week board, timeline, coverage, demand curve, budget suggestion, Regenerate, Out sick, Add to schedule, Leader shifts, staffing recommendation, schedule-structure settings) — Phase 2 / 3, per "The mockup: what is Phase 1, what waits".
+- **The Phase 2 position settings**: min shift length, one-person-per-position checks in a validator, position priority per station, allowed roles per position, preferred cover positions per manager, the §6.5 `checkScheduleRules` validator. Phase 1 only keys skills on the same `station_positions.id` and exposes `loadSkillMatrix`.
+- **A Closing Manager skill / role.** Phase 1 shows closing on time as evidence only; the closing manager is whoever submits (J11).
+- **The 7shifts station mapping screen** (spec §8): shifts keep 7shifts `station_id` as a bare id until then.
+- **Any write to 7shifts** ("Send to 7shifts as draft") — Phase 3; the Phase 1 client is GET-only.
+- **Wage surfaces.** The two access rules (`canSeeWageRates`, `canSeeShopLaborTotals`) ship tested; no screen, export or log shows a rate.
+- **7shifts punches in presence ("Who's here")** (J14) and **assignment changes / Toast hourly sales in the skill math** (J7) — evidence only in Phase 1.
+- **Guide screenshots** for the three Task 25 sections (every step is marked "(not shown)").
+
+## Chunk G as built (2026-10-16)
+
+**Task 23 deviation (ruled in chunk F (c), Astra's chunk E acceptance):** the per-shop switch is WIRED in code (`PM_V2_SWITCH_AVAILABLE = true`, kept as the code-level kill switch) and stays OFF everywhere by default (no `people_shop_settings` row = off). Turning it ON for a shop is gated by that shop's DATA in the lib, before the RPC (`pmV2Readiness`): both BOH positions "Prep" and "Prep/Dishwasher" exactly once, active, on an active station (Task 14b's rule) AND at least one active shared criterion (Task 22's seed). Otherwise 409 `pm_v2_not_ready` (en + es). Turning it OFF is never gated. `PeopleInputs` is resolved per shop by `lib/people/inputs.ts`; with it off no PM v2 family is even loaded. The skills read submitted v2 grades whatever the switch says (Step 1 (c)).
+
+### Go-live sequence (CC / Juan; nothing here was run by the builder)
+
+1. CC: integration (merge main into the branch), the full suite, `tsc`, `next build`.
+2. CC: a sim walk at 375 px in en and es (the copy form, results, criteria editor, skills, 7shifts screen).
+3. CC, sim: apply **0268 → 0269 → 0270 → 0271** (0267 is already on prod; 0271's preflight refuses without it), run each migration header’s verification queries, then **`scripts/sim-0270-0271-lock-check.mjs`** (required before apply/enable; it refuses any non-sim URL).
+4. CC: a prod rollback dry-run; then prod apply in the same order, **on Juan's word**; stamp each header `APPLIED TO PROD`.
+5. PR, CI green, merge (Juan clicks).
+6. Juan (any time): `SEVENSHIFTS_ACCESS_TOKEN` in Vercel. CC: `SEVENSHIFTS_SYNC=1` after 0268 + 0269 are on prod. Then link each shop (MoO) and its people (GMs) at `/admin/sevenshifts`.
+7. **BOH positions** (Task 14b), a reviewed data step: `scripts/check-boh-positions.ts` dry run → name "Prep" and "Prep/Dishwasher" in the station admin at both shops → the dry run exits 0.
+8. **Criteria seed** (Task 22), a reviewed data step: `scripts/seed-pm-criteria.ts` dry run per shop (READY) → `--apply --shop <id> --actor <id>` **on Juan's word**.
+9. **The per-shop switch**: `POST /api/people/settings` `{ action: "shop", locationId, pmV2: true, prepPositionId }` (GM own shop / MoO+, Tier E) — refused `pm_v2_not_ready` until 7 and 8 hold for that shop. From the next new day the shop's PM report is v2, and its PM v2 grades and notes feed the people layer.
+
+### Build self-review (spec point → where built → the test that proves it)
+
+| Spec point | Where built | Proof |
+|---|---|---|
+| 7shifts read: users + assignments, roles, availability, time off, shifts, punches, wages, labor settings | 0268; `lib/sevenshifts/{endpoints-shared,normalize-shared,client,sync}.ts` | `sevenshifts-normalize`, `-endpoints`, `-client`, `-sync`, `-mirror-upsert`; harness 0268 |
+| Poll with a company token; 10/s + 600/min; cursors | `rate-limit-shared` (8/500), `paginate-shared`, `client` (Retry-After, deadline) | `sevenshifts-rate-limit`, `-paginate`, `-client` |
+| Upsert-by-id mirrors + an append-only ledger | 0268, `MIRROR_WRITE_SPEC`, `reconcile_sevenshifts_user_snapshot` | `sevenshifts-mirror-upsert`, `sevenshifts-sync-migration`; harness 0268 (H4b, H6) |
+| Person match ONLY by a manager-confirmed link | 0269; `lib/sevenshifts/links*`; `/admin/sevenshifts` | `sevenshifts-links`, `-links-migration`, `-screen-ui`, `-admin-route`; harness 0269 |
+| No token → dormant, "Not connected" | `lib/sevenshifts/config.ts`, `sync.ts`, the screen | `sevenshifts-sync`, `-sync-route`, `-screen-ui` |
+| No email / notification | no `JOBS_REGISTRY` entry; v2 submit enqueues nothing | `pm-report-v2-no-notify`; Task 26 grep (0 hits) |
+| One people layer, no second scoring | `lib/people/facts.ts` + `performance-shared.ts`; team-metrics / profiles wrappers | `people-facts`, `people-profile`, `people-layer-equivalence` |
+| Equivalence pin: frozen first, unchanged until inputs switch on | the golden (one commit, 7bc3d806) | equivalence golden + Task 23 (a) off ⇒ byte-identical |
+| Skills per position from attributed facts, with evidence and confidence | `skills-shared`, `skill-matrix-shared`, `skills.ts` | `people-skills`, `-skills-finite`, `-skills-loader`, `people-chunkE-review` |
+| Manager adjustment recorded / audited / shown; new hires from a rating | 0270 writers; `SkillsSection` | `people-skills-loader`, `-skills-ui`, `-skills-route`, `people-skill-control-steps`; harness 0270 |
+| PM v2: a copy per manager, private until the closing manager submits | 0271; `lib/pm-report-v2*.ts`; `PmCopyForm` | `pm-report-v2`, `-shared`, `-ui`; the lifecycle file; harness 0271 |
+| Per-position evaluations for positions actually worked; criteria + free text | `rosterForCopy`, `gradeTargetProblem`, composite FKs | `tests/fixtures/pm-grade-target-cases.json` (lib + harness) |
+| After submit: side by side, attributed, minute-weighted averages, write-ins, themes | `averageGrades`, `writeInThemes`, `loadDayResults`, `PmDayResults` | `pm-report-v2-shared`, `-ui`, `sched-p1-chunkF-review` (es) |
+| Results feed the people layer | Task 23: `pmV2Grades` / `pmV2Notes`, `PeopleInputs`, `pmV2PositionGrades` | equivalence (b) one shop moves; `people-pm-v2-skills`; `people-pm-v2-switch` |
+| Criteria per position (Juan's table) as data | seed JSON + script; `/admin/pm-criteria` (Tier E) | `pm-criteria`, `sched-p1-chunkF-rulings` |
+| Migrations 0268–0271 after 0267; ceilings, deny-all RLS, append-only | the four files | harnesses 93 / 68 / 104 / 88; the migration pins; `people-loader-schema-check` |
+| Location bind; SMM refused people data; who sees which copy | `lib/people/access-shared.ts` | `people-access`, `people-smm-refusal`, `people-role-carry` |
+| Concurrency (first settings save; copy edits vs submit) | advisory lock (0270); day-row-first locks (0271) | `scripts/sim-0270-0271-lock-check.mjs` (sim, CC) + its guard test |
+| en + es, 375 px / 44 px, disclosure | every surface; D10 locks | key-parity + 44 px pins in the UI tests; `people-chunkE-review`, `sched-p1-chunkF-review` |
+| Staff PII minimal; wages MoO+ / GM totals | the normalizer allow-list; `canSeeWageRates`, `canSeeShopLaborTotals` | `sevenshifts-normalize` (leak test), harness H6, `people-access` |
+| Never key on `EM` / `MEP` | ids everywhere | Task 26 grep (0 hits) |
+| The Phase 2 contract | `loadSkillMatrix` | `people-skills-loader` |
+| The law and the guide | AGENTS.md section; `docs/guides/manager-guide.md` | `manager-guide-scheduling` |
+
 ## Findings for CC (outside this phase's scope)
 
 - **F1 (security):** `pm_evals_read_self` (0072) exposed `note` to the employee through PostgREST. **Being fixed by `0267_pm_evals_privacy`** (lead ruling); this plan depends on it.

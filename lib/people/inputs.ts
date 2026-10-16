@@ -14,12 +14,13 @@ import { PM_V2_PERSON_FAMILIES, PM_V2_TEAM_FAMILIES, type FactFamily } from "@/l
 const PM_V2_ON: PeopleInputs = Object.freeze({ pmV2: true });
 
 export async function loadPeopleInputs(service: SupabaseClient, locationId: string): Promise<PeopleInputs> {
-  const { data, error } = await service.from("people_shop_settings").select("pm_v2").eq("location_id", locationId).maybeSingle();
+  // A plain list read (one row per shop by PK), so it needs no single-row helper from the client.
+  const { data, error } = await service.from("people_shop_settings").select("pm_v2").eq("location_id", locationId);
   if (error) {
     if (isMissingTable(error)) return LEGACY_INPUTS;
     throw new Error(`loadPeopleInputs: ${error.message}`);
   }
-  return (data as { pm_v2?: unknown } | null)?.pm_v2 === true ? PM_V2_ON : LEGACY_INPUTS;
+  return ((data ?? []) as Array<{ pm_v2?: unknown }>).some((r) => r.pm_v2 === true) ? PM_V2_ON : LEGACY_INPUTS;
 }
 
 /** The fact families a load needs for these inputs: the legacy ones, plus PM v2's only while it is on. */
