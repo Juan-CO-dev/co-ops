@@ -1,323 +1,107 @@
+/**
+ * TEAM SCORING, PERSON DETAIL, MY PERFORMANCE — the wrappers (gate → facts → pure).
+ *
+ * Scheduling Phase 1, Task 11. The exports, names and shapes are unchanged; the bodies moved:
+ *   - the queries into ONE fact loader, `loadPeopleFacts` (lib/people/facts.ts), verbatim;
+ *   - the materialization into pure rules (lib/people/performance-shared.ts): `teamWindow`,
+ *     `withPreviousScores`, `personMetrics`, and the oversight location bind.
+ * A compare loads the facts ONCE over the union of its two windows and computes twice. The people
+ * equivalence pin (tests/people-layer-equivalence.test.ts) proves every number is byte-identical.
+ *
+ * `Viewer` carries the TRUSTED role from the session (r1 P2-8), so an AGM and a social media manager
+ * (both level 6) are no longer the same viewer to this module.
+ */
 import { reportTimestampBounds, reportRangeParams } from "@/lib/report-range";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { ROLES, type RoleCode } from "@/lib/roles";
+import { healthFromCounts } from "@/lib/team-scoring";
+import { personReadNarrative, myPerformanceRead, type NarrativeLine } from "@/lib/people-narrative";
+import { resolveTrendRange, clippedBucketKeys, type TrendRange, bucketStart, type TrendGranularity } from "@/lib/reports-trends";
+import { canOpenPeopleViews, canViewPeople, type PeopleActor } from "@/lib/people/access-shared";
+import { loadPeopleFacts } from "@/lib/people/facts";
+import { familiesFor, loadPeopleInputs } from "@/lib/people/inputs";
+import { LEGACY_PERSON_FAMILIES, LEGACY_TEAM_FAMILIES, unionWindow } from "@/lib/people/facts-shared";
 import {
-  type ActionCategory, type CategoryCounts, emptyCounts,
-  scoreFromCounts, healthFromCounts, type Health,
-  activeDayStreak, onTimeStreak, personalBest,
-} from "@/lib/team-scoring";
-import { personCardLine, personReadNarrative, teamBannerNarrative, myPerformanceRead, type NarrativeLine } from "@/lib/people-narrative";
-import { etCalendarDate } from "@/lib/operational-day";
-import { resolveTrendRange, clippedBucketKeys, trendLocationAllowed, type TrendRange, bucketStart, type TrendGranularity } from "@/lib/reports-trends";
-import { selectAllRows } from "@/lib/supabase-paginate";
+  RANKED_MAX_LEVEL, emptyTeam, personMetrics, teamWindow, withPreviousScores,
+  type PeopleWindow, type PersonMetrics, type PersonSignals, type PersonStreaks, type RosterMember, type TeamOperatingHealth,
+} from "@/lib/people/performance-shared";
+import type { CategoryCounts, Health } from "@/lib/team-scoring";
 
-export const TEAM_VIEW_LEVEL = 6; // AGM+
-export const RANKED_MAX_LEVEL = 8; // roster excludes level >= 8 (MoO+)
+export {
+  OVERSIGHT_ACTIONS, RANKED_MAX_LEVEL, oversightInstanceId, oversightRowAtLocation,
+} from "@/lib/people/performance-shared";
+export type {
+  OversightAuditRow, PersonMetrics, PersonSignals, PersonStreaks, TeamMember, TeamOperatingHealth,
+} from "@/lib/people/performance-shared";
 
-export const OVERSIGHT_ACTIONS = [
-  "checklist_completion.revoke",
-  "checklist_completion.revoke_by_authority",
-  "checklist_completion.tag_actual_completer",
-  "report.update",
-  "report.drop",
-];
+/** The level floor of the people views (AGM+). The ROLE rule on top of it is `canViewPeople` (R7). */
+export const TEAM_VIEW_LEVEL = 6;
 
-// ─────────────────────────────────────────────────────────────────────────────
-// OVERSIGHT — THE LOCATION BIND (audit fix 2026-08-29)
-//
-// Every other category on this page is location-scoped by construction: tasks and
-// notes ride the location's own instance ids, finalizations come from that instance
-// list, cash and pm rows are filtered on location_id. Oversight was the exception —
-// `audit_log` was read by actor_id alone, so a person active at two shops carried the
-// revokes they did at one INTO the other's roster and into their own /my-performance
-// read. The 2026-06-18 plan recorded that as a deliberate v1 impurity, on the premise
-// that audit_log is "not reliably location-tagged".
-//
-// THAT PREMISE NO LONGER HOLDS FOR THIS CURATED SET. Each of the five actions hangs
-// off exactly one checklist_instance, and every emission site says so:
-//   · checklist_completion.revoke / .revoke_by_authority / .tag_actual_completer
-//        → resource_table "checklist_completions", metadata.instance_id  (lib/checklists.ts)
-//   · report.update
-//        → resource_table "checklist_submissions", metadata.report_instance_id
-//          (migrations 0044 / 0048 / 0050 / 0053 / 0055 — all five build the same key)
-//   · report.drop
-//        → resource_table "checklist_instances", resource_id IS the instance id, and
-//          metadata carries location_id besides  (lib/checklists.ts dropInstance)
-// Live-verified against prod 2026-08-29: 44 of 44 oversight rows resolve this way, none
-// unresolvable. So the bind is a metadata read, not a join, and it costs no query.
-//
-// An UNATTRIBUTABLE row is not counted here. A per-location metric may not claim an act
-// it cannot place at this location, and counting it at BOTH shops would score one act
-// twice — the very thing this bind exists to stop.
-// ─────────────────────────────────────────────────────────────────────────────
+/** Who is looking: the verified session's user, TRUSTED role, level and shops. */
+export interface Viewer { userId: string; role: RoleCode; level: number; locations?: readonly string[] | "all"; }
 
-/** The audit_log columns the oversight bind reads. */
-export interface OversightAuditRow {
-  resource_table: string | null;
-  resource_id: string | null;
-  metadata: Record<string, unknown> | null;
-}
-
-/** The checklist_instance an oversight row is ABOUT, or null when it names none. */
-export function oversightInstanceId(row: OversightAuditRow): string | null {
-  const meta = row.metadata ?? {};
-  for (const key of ["instance_id", "report_instance_id"] as const) {
-    const v = meta[key];
-    if (typeof v === "string" && v !== "") return v;
-  }
-  if (row.resource_table === "checklist_instances" && row.resource_id) return row.resource_id;
-  return null;
+/** The viewer as the people rules take it ("all" or no list = no shop list; MoO+ reads every shop anyway). */
+function peopleActorOf(viewer: Viewer): PeopleActor {
+  return { userId: viewer.userId, role: viewer.role, level: viewer.level, locations: Array.isArray(viewer.locations) ? viewer.locations : [] };
 }
 
 /**
- * True when an oversight row belongs to THIS location. The instance link is preferred —
- * membership in the location's own instance list is a fact about our data, where
- * metadata.location_id is a value the writer supplied — and metadata.location_id is the
- * fallback for a row that names a location but no instance.
+ * Task 13: ONE access rule for people data about others — `canViewPeople`: GM or Op-6 at their own
+ * shops, MoO+ any shop, the social media manager never (by ROLE). Decided before any read.
  */
-export function oversightRowAtLocation(
-  row: OversightAuditRow,
-  locationId: string,
-  locationInstanceIds: ReadonlySet<string>,
-): boolean {
-  const instanceId = oversightInstanceId(row);
-  if (instanceId !== null) return locationInstanceIds.has(instanceId);
-  const loc = row.metadata?.location_id;
-  return typeof loc === "string" && loc === locationId;
+function mayViewPeople(viewer: Viewer, locationId: string): boolean {
+  return viewer.level >= TEAM_VIEW_LEVEL && canViewPeople(peopleActorOf(viewer), locationId);
 }
 
-export interface Viewer { userId: string; level: number; locations?: readonly string[] | "all"; }
-
-export interface TeamMember {
-  userId: string;
-  name: string;
-  role: RoleCode;
-  level: number;
-  score: number;
-  previousScore: number | null;
-  counts: CategoryCounts;
-  health: Health;
-  reasons: string[];
-  sparkline: number[];
-  cardLine: NarrativeLine;
-}
-
-export interface TeamOperatingHealth {
-  granularity: TrendGranularity;
-  members: TeamMember[];
-  summary: { onTrack: number; needsAttention: number };
-  banner: NarrativeLine;
-}
-
-interface MemberAcc {
-  current: CategoryCounts;
-  previous: CategoryCounts;
-  byBucketScoreActions: Map<string, number>;
+/** One trend window as the pure rules take it. */
+function peopleWindow(range: { from: string; to: string }, granularity: TrendGranularity): PeopleWindow {
+  return {
+    bounds: reportTimestampBounds(range.from, range.to),
+    dates: { from: range.from, to: range.to },
+    granularity,
+    keys: clippedBucketKeys(range.from, range.to, granularity),
+    bucketOf: (day) => bucketStart(day, granularity),
+  };
 }
 
 type TeamArgs = { viewer: Viewer; locationId: string; granularity: TrendGranularity; compare: boolean; today: string; range?: TrendRange };
 export async function loadTeamOperatingHealth(service: SupabaseClient, args: TeamArgs): Promise<TeamOperatingHealth | null> {
-  if (args.viewer.level < TEAM_VIEW_LEVEL || !trendLocationAllowed(args.viewer, args.locationId)) return null;
+  if (!mayViewPeople(args.viewer, args.locationId)) return null;
   const range = args.range ? resolveTrendRange(Object.fromEntries(reportRangeParams(args.range)), args.today, args.granularity) : resolveTrendRange({ compare: args.compare ? "1" : "0" }, args.today, args.granularity);
-  const current = await loadTeamWindow(service, { ...args, compare: false, range });
-  if (!current || !range.compare) return current;
-  const previous = await loadTeamWindow(service, { ...args, compare: false, range: { ...range, ...range.previous, compare: false } });
-  current.members = current.members.map(m => {
-    const previousScore = previous?.members.find(p => p.userId === m.userId)?.score ?? 0;
-    const { health, reasons } = healthFromCounts(m.role, m.counts, m.score, previousScore);
-    const scoreDeltaPct = previousScore > 0 ? Math.round(((m.score - previousScore) / previousScore) * 100) : null;
-    return { ...m, previousScore, health, reasons, cardLine: personCardLine({ rank: 0, role: m.role, health, reasons, scoreDeltaPct, onTimePct: null }) };
+  const current = peopleWindow(range, args.granularity);
+  const previous = range.compare ? peopleWindow(range.previous, args.granularity) : null;
+
+  const roster = await loadTeamRoster(service, args.locationId);
+  if (roster.length === 0) return range.compare ? withPreviousScores(emptyTeam(args.granularity), emptyTeam(args.granularity)) : emptyTeam(args.granularity);
+
+  // Task 23: the shop's inputs (PM v2 OFF unless its switch is on) decide what is loaded and what counts.
+  const inputs = await loadPeopleInputs(service, args.locationId);
+  const facts = await loadPeopleFacts(service, {
+    locationId: args.locationId,
+    subject: { kind: "team", memberIds: roster.map((m) => m.userId) },
+    window: previous ? unionWindow(current, previous) : current,
+    families: familiesFor(LEGACY_TEAM_FAMILIES, inputs, "team"),
   });
-  const needsAttention = current.members.filter(m => m.health === "needs_attention");
-  current.summary = { onTrack: current.members.length - needsAttention.length, needsAttention: needsAttention.length };
-  current.banner = teamBannerNarrative({ ...current.summary, attentionNames: needsAttention.slice(0, 3).map(m => m.name) });
-  return current;
+  const team = teamWindow(facts, roster, current, inputs);
+  return previous ? withPreviousScores(team, teamWindow(facts, roster, previous, inputs)) : team;
 }
 
-async function loadTeamWindow(
-  service: SupabaseClient,
-  args: { viewer: Viewer; locationId: string; granularity: TrendGranularity; compare: boolean; today: string; range?: TrendRange },
-): Promise<TeamOperatingHealth | null> {
-  if (args.viewer.level < TEAM_VIEW_LEVEL || !trendLocationAllowed(args.viewer, args.locationId)) return null;
-
-  const range = args.range ?? resolveTrendRange({ compare: args.compare ? "1" : "0" }, args.today, args.granularity);
-  const currentKeys = clippedBucketKeys(range.from, range.to, args.granularity);
-  const previousKeys = null as string[] | null;
-  const loadFrom = range.from;
-  const curSet = new Set(currentKeys);
-  const prevSet = new Set(previousKeys ?? []);
-  const loadToInclusive = range.to;
-  const bounds = reportTimestampBounds(loadFrom, loadToInclusive);
-  const upperTs = bounds.end;
-
-  const emptyResult = (): TeamOperatingHealth => ({
-    granularity: args.granularity, members: [], summary: { onTrack: 0, needsAttention: 0 },
-    banner: teamBannerNarrative({ onTrack: 0, needsAttention: 0, attentionNames: [] }),
-  });
-
-  // ── Roster: location-assigned, active, level < 8 ──
+/** The roster: location-assigned, active, level < 8, in the users query's order. */
+async function loadTeamRoster(service: SupabaseClient, locationId: string): Promise<RosterMember[]> {
   const { data: ulRows } = await service
-    .from("user_locations").select("user_id").eq("location_id", args.locationId).eq("active", true);
+    .from("user_locations").select("user_id").eq("location_id", locationId).eq("active", true);
   const userIds = [...new Set((ulRows ?? []).map((r) => (r as { user_id: string }).user_id))];
-  if (userIds.length === 0) return emptyResult();
-
+  if (userIds.length === 0) return [];
   const { data: userRows } = await service
     .from("users").select("id, name, role, active").in("id", userIds).eq("active", true);
-  const members = new Map<string, { name: string; role: RoleCode; level: number; acc: MemberAcc }>();
+  const roster: RosterMember[] = [];
   for (const u of (userRows ?? []) as Array<{ id: string; name: string; role: RoleCode; active: boolean }>) {
     const level = ROLES[u.role]?.level ?? 0;
     if (level >= RANKED_MAX_LEVEL) continue;
-    members.set(u.id, { name: u.name, role: u.role, level, acc: { current: emptyCounts(), previous: emptyCounts(), byBucketScoreActions: new Map() } });
+    roster.push({ userId: u.id, name: u.name, role: u.role, level });
   }
-  if (members.size === 0) return emptyResult();
-  const memberIds = [...members.keys()];
-
-  const place = (uid: string, tstz: string, category: ActionCategory) => {
-    const m = members.get(uid);
-    if (!m) return;
-    const day = etCalendarDate(tstz);
-    if (day < range.from || day > range.to) return;
-    const bs = bucketStart(day, args.granularity);
-    if (curSet.has(bs)) {
-      m.acc.current[category]++;
-      m.acc.byBucketScoreActions.set(bs, (m.acc.byBucketScoreActions.get(bs) ?? 0) + scoreRelevant(m.role, category));
-    } else if (prevSet.has(bs)) {
-      m.acc.previous[category]++;
-    }
-  };
-
-  // Location instance ids bind completions and oversight events by their event time.
-  // An event in this window can refer to an instance dated before it.
-  const instRows = await selectAllRows<{ id: string; confirmed_by: string | null; confirmed_at: string | null }>(
-    (from, to) => service
-      .from("checklist_instances").select("id, confirmed_by, confirmed_at")
-      .eq("location_id", args.locationId)
-      .order("id", { ascending: true }).range(from, to),
-  );
-  const locInstanceIds = new Set(instRows.map((r) => r.id));
-
-  // 1. TASKS + NOTES (completions: completed_at in span, live, instance at location)
-  if (locInstanceIds.size) {
-    const ids = [...locInstanceIds];
-    for (let i = 0; i < ids.length; i += 50) {
-      const comps = await selectAllRows<{ instance_id: string; template_item_id: string; completed_by: string | null; completed_at: string; notes: string | null }>(
-        (from, to) => service
-          .from("checklist_completions")
-          .select("instance_id, template_item_id, completed_by, completed_at, notes")
-          .in("instance_id", ids.slice(i, i + 50))
-          .gte("completed_at", bounds.start).lt("completed_at", upperTs)
-          .is("superseded_at", null).is("revoked_at", null)
-          .order("completed_at", { ascending: true }).order("id", { ascending: true }).range(from, to),
-      );
-      const tasks = new Set<string>();
-      for (const c of comps) {
-        if (!c.completed_by) continue;
-        const key = `${c.completed_by}:${c.instance_id}:${c.template_item_id}`;
-        if (!tasks.has(key)) {
-          tasks.add(key);
-          place(c.completed_by, c.completed_at, "tasks");
-        }
-        if (c.notes && c.notes.trim()) place(c.completed_by, c.completed_at, "notes");
-      }
-    }
-  }
-
-  // 2. FINALIZATIONS
-  for (const i of instRows) {
-    if (i.confirmed_by && i.confirmed_at) place(i.confirmed_by, i.confirmed_at, "finalizations");
-  }
-  // Paginate past the 1000-row cap (WB5-06 sibling of computePersonMetrics — same silent-truncation
-  // class over the same growth tables at the location+window grain).
-  const cashRows = await selectAllRows<{ signed_by: string | null; signed_at: string | null; over_short_note: string | null }>(
-    (from, to) => service
-      .from("cash_reports").select("signed_by, signed_at, over_short_note")
-      .eq("location_id", args.locationId).is("superseded_at", null)
-      .gte("signed_at", bounds.start).lt("signed_at", upperTs)
-      .order("id", { ascending: true }).range(from, to),
-  );
-  for (const c of cashRows) {
-    if (c.signed_by && c.signed_at) {
-      place(c.signed_by, c.signed_at, "finalizations");
-      if (c.over_short_note && c.over_short_note.trim()) place(c.signed_by, c.signed_at, "notes");
-    }
-  }
-  const pmRows = await selectAllRows<{ id: string; submitted_by: string | null; submitted_at: string | null }>(
-    (from, to) => service
-      .from("pm_reports").select("id, submitted_by, submitted_at")
-      .eq("location_id", args.locationId).is("superseded_at", null)
-      .gte("submitted_at", bounds.start).lt("submitted_at", upperTs)
-      .order("id", { ascending: true }).range(from, to),
-  );
-  for (const r of pmRows) {
-    if (r.submitted_by && r.submitted_at) {
-      place(r.submitted_by, r.submitted_at, "finalizations");
-      place(r.submitted_by, r.submitted_at, "peopleMgmt");
-    }
-  }
-
-  // 3. NOTES from pm evals (authored by report submitter)
-  const pmReportById = new Map(pmRows.map((row) => [row.id, row] as const));
-  if (pmReportById.size) {
-    const evalRows = await selectAllRows<{ pm_report_id: string; area_to_improve: string | null; note: string | null }>(
-      (from, to) => service
-        .from("pm_employee_evals").select("pm_report_id, area_to_improve, note")
-        .in("pm_report_id", [...pmReportById.keys()]).is("superseded_at", null)
-        .order("pm_report_id", { ascending: true }).order("id", { ascending: true }).range(from, to),
-    );
-    for (const e of evalRows) {
-      const rep = pmReportById.get(e.pm_report_id);
-      if (rep?.submitted_by && rep.submitted_at && ((e.area_to_improve && e.area_to_improve.trim()) || (e.note && e.note.trim()))) {
-        place(rep.submitted_by, rep.submitted_at, "notes");
-      }
-    }
-  }
-
-  // 4. OVERSIGHT (audit_log by actor_id, bound to THIS location's instances — see the
-  //    OVERSIGHT LOCATION BIND note at the top; audit_log grows fastest, so paginate)
-  const auditRows = await selectAllRows<OversightAuditRow & { actor_id: string | null; occurred_at: string }>(
-    (from, to) => service
-      .from("audit_log").select("actor_id, action, occurred_at, resource_table, resource_id, metadata")
-      .in("actor_id", memberIds).in("action", OVERSIGHT_ACTIONS)
-      .gte("occurred_at", bounds.start).lt("occurred_at", upperTs)
-      .order("id", { ascending: true }).range(from, to),
-  );
-  for (const a of auditRows) {
-    if (!a.actor_id) continue;
-    if (!oversightRowAtLocation(a, args.locationId, locInstanceIds)) continue;
-    place(a.actor_id, a.occurred_at, "oversight");
-  }
-
-  // ── materialize ──
-  const out: TeamMember[] = [];
-  let onTrack = 0, needsAttention = 0;
-  const attentionNames: string[] = [];
-  for (const [uid, m] of members) {
-    const score = scoreFromCounts(m.role, m.acc.current);
-    const previousScore = args.compare ? scoreFromCounts(m.role, m.acc.previous) : null;
-    const { health, reasons } = healthFromCounts(m.role, m.acc.current, score, previousScore);
-    const sparkline = currentKeys.map((k) => m.acc.byBucketScoreActions.get(k) ?? 0);
-    const scoreDeltaPct = previousScore && previousScore > 0 ? Math.round(((score - previousScore) / previousScore) * 100) : null;
-    if (health === "needs_attention") { needsAttention++; attentionNames.push(m.name); } else onTrack++;
-    out.push({
-      userId: uid, name: m.name, role: m.role, level: m.level,
-      score, previousScore, counts: m.acc.current, health, reasons, sparkline,
-      cardLine: personCardLine({ rank: 0, role: m.role, health, reasons, scoreDeltaPct, onTimePct: null }),
-    });
-  }
-  out.sort((a, b) => b.score - a.score || a.name.localeCompare(b.name));
-
-  return {
-    granularity: args.granularity,
-    members: out,
-    summary: { onTrack, needsAttention },
-    banner: teamBannerNarrative({ onTrack, needsAttention, attentionNames: attentionNames.slice(0, 3) }),
-  };
-}
-
-/** 1 when the category is expected for the role (counts toward score/sparkline), else 0. */
-function scoreRelevant(role: RoleCode, category: ActionCategory): number {
-  return scoreFromCounts(role, { ...emptyCounts(), [category]: 1 }) > 0 ? 1 : 0;
+  return roster;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -325,20 +109,6 @@ function scoreRelevant(role: RoleCode, category: ActionCategory): number {
 // score (same 5-category model as the roster), so the detail header matches the
 // roster rank exactly. Adds per-bucket series, our-data streaks, and signals.
 // ─────────────────────────────────────────────────────────────────────────────
-
-export interface PersonStreaks {
-  activeDays: number;
-  onTime: number;
-  personalBest: number;
-}
-
-export interface PersonSignals {
-  mvpAwards: number;
-  flaggedToImprove: number;
-  mostActiveDay: string | null; // "mon".."sun" or null
-  tenureDays: number;
-  lastActive: string | null; // YYYY-MM-DD
-}
 
 export interface PersonDetail {
   userId: string;
@@ -360,243 +130,34 @@ export interface PersonDetail {
   signals: PersonSignals;
 }
 
-const WEEKDAYS = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"];
-
-/** Raw per-person metric bundle shared by loadPersonDetail (manager) and
- *  loadMyPerformance (self). No health/read/rank — callers layer those on. */
-export interface PersonMetrics {
-  counts: CategoryCounts;
-  score: number;
-  previousScore: number | null;
-  scoreDeltaPct: number | null;
-  bucketKeys: string[];
-  contribution: (number | null)[];
-  onTime: (number | null)[];
-  overallOnTime: number | null;
-  gradientTally: { great: number; good: number; needsWork: number };
-  streaks: PersonStreaks;
-  signals: PersonSignals;
-}
-
 /**
- * Core per-person metric computation over a window at one location. Pure of
- * gating/framing — the caller fetches the user + decides access and narrative.
+ * Core per-person metric computation over a window at one location: one fact load (over the
+ * union of the two windows when comparing), then the pure `personMetrics`.
  */
 async function computePersonMetrics(
   service: SupabaseClient,
   args: { personId: string; role: RoleCode; createdAt: string; locationId: string; granularity: TrendGranularity; compare: boolean; today: string; range?: TrendRange },
 ): Promise<PersonMetrics> {
   const range = args.range ?? resolveTrendRange({ compare: args.compare ? "1" : "0" }, args.today, args.granularity);
-  const currentKeys = clippedBucketKeys(range.from, range.to, args.granularity);
-  const previousKeys = null as string[] | null;
-  const loadFrom = range.from;
-  const curSet = new Set(currentKeys);
-  const prevSet = new Set(previousKeys ?? []);
-  const toIncl = range.to;
-  const bounds = reportTimestampBounds(loadFrom, toIncl);
-  const upperTsP = bounds.end;
-
-  const current = emptyCounts();
-  const previous = emptyCounts();
-  const windowOf = (tstz: string): "cur" | "prev" | null => {
-    const day = etCalendarDate(tstz);
-    return day >= range.from && day <= range.to ? "cur" : null;
-  };
-  const add = (tstz: string, cat: ActionCategory) => {
-    const w = windowOf(tstz);
-    if (w === "cur") current[cat]++;
-    else if (w === "prev") previous[cat]++;
-  };
-
-  const contribBucket = new Map<string, number>();
-  const activeDates = new Set<string>();
-  const dayTaskCounts = new Map<string, number>();
-  const weekdayCounts = new Map<string, number>();
-  let lastActive: string | null = null;
-  const touch = (d: string) => { if (!lastActive || d > lastActive) lastActive = d; activeDates.add(d); };
-
-  // Keep older instance ids: a completion or oversight event in this window can
-  // refer to an instance dated before the window.
-  const instAll = await selectAllRows<{ id: string }>(
-    (from, to) => service
-      .from("checklist_instances").select("id").eq("location_id", args.locationId)
-      .order("id", { ascending: true }).range(from, to),
-  );
-  const locInstanceIds = instAll.map((r) => r.id);
-
-  if (locInstanceIds.length) {
-    for (let i = 0; i < locInstanceIds.length; i += 50) {
-      const comps = await selectAllRows<{ instance_id: string; template_item_id: string; completed_at: string; notes: string | null }>(
-        (from, to) => service
-          .from("checklist_completions").select("instance_id, template_item_id, completed_at, notes")
-          .eq("completed_by", args.personId).in("instance_id", locInstanceIds.slice(i, i + 50))
-          .gte("completed_at", bounds.start).lt("completed_at", upperTsP)
-          .is("superseded_at", null).is("revoked_at", null)
-          .order("completed_at", { ascending: true }).order("id", { ascending: true }).range(from, to),
-      );
-      const tasks = new Set<string>();
-      for (const c of comps) {
-        if (c.notes && c.notes.trim()) add(c.completed_at, "notes");
-        const key = `${c.instance_id}:${c.template_item_id}`;
-        // Query order assigns each task to its first live completion in this window.
-        if (tasks.has(key)) continue;
-        tasks.add(key);
-        add(c.completed_at, "tasks");
-        if (windowOf(c.completed_at) === "cur") {
-          const d = etCalendarDate(c.completed_at);
-          const bs = bucketStart(d, args.granularity);
-          contribBucket.set(bs, (contribBucket.get(bs) ?? 0) + 1);
-          touch(d);
-          dayTaskCounts.set(d, (dayTaskCounts.get(d) ?? 0) + 1);
-          const wd = WEEKDAYS[new Date(`${d}T00:00:00Z`).getUTCDay()]!;
-          weekdayCounts.set(wd, (weekdayCounts.get(wd) ?? 0) + 1);
-        }
-      }
-    }
-  }
-
-  const finalsChrono: { at: string; inWindow: boolean }[] = [];
-  const finInst = await selectAllRows<{ date: string; confirmed_at: string }>(
-    (from, to) => service
-      .from("checklist_instances").select("date, confirmed_at")
-      .eq("location_id", args.locationId).eq("confirmed_by", args.personId).not("confirmed_at", "is", null)
-      .gte("confirmed_at", bounds.start).lt("confirmed_at", upperTsP)
-      .order("id", { ascending: true }).range(from, to),
-  );
-  for (const f of finInst) {
-    add(f.confirmed_at, "finalizations");
-    if (windowOf(f.confirmed_at) === "cur") { finalsChrono.push({ at: f.confirmed_at, inWindow: etCalendarDate(f.confirmed_at) === f.date }); touch(etCalendarDate(f.confirmed_at)); }
-  }
-  const cashRows = await selectAllRows<{ signed_at: string | null; over_short_note: string | null; report_date: string }>(
-    (from, to) => service
-      .from("cash_reports").select("signed_at, over_short_note, report_date")
-      .eq("location_id", args.locationId).eq("signed_by", args.personId).is("superseded_at", null)
-      .gte("signed_at", bounds.start).lt("signed_at", upperTsP)
-      .order("id", { ascending: true }).range(from, to),
-  );
-  for (const c of cashRows) {
-    if (!c.signed_at) continue;
-    add(c.signed_at, "finalizations");
-    if (c.over_short_note && c.over_short_note.trim()) add(c.signed_at, "notes");
-    if (windowOf(c.signed_at) === "cur") { finalsChrono.push({ at: c.signed_at, inWindow: etCalendarDate(c.signed_at) === c.report_date }); touch(etCalendarDate(c.signed_at)); }
-  }
-  const pmMine = await selectAllRows<{ id: string; submitted_at: string | null; report_date: string }>(
-    (from, to) => service
-      .from("pm_reports").select("id, submitted_at, report_date")
-      .eq("location_id", args.locationId).eq("submitted_by", args.personId).is("superseded_at", null)
-      .gte("submitted_at", bounds.start).lt("submitted_at", upperTsP)
-      .order("id", { ascending: true }).range(from, to),
-  );
-  for (const r of pmMine) {
-    if (!r.submitted_at) continue;
-    add(r.submitted_at, "finalizations");
-    add(r.submitted_at, "peopleMgmt");
-    if (windowOf(r.submitted_at) === "cur") { finalsChrono.push({ at: r.submitted_at, inWindow: etCalendarDate(r.submitted_at) === r.report_date }); touch(etCalendarDate(r.submitted_at)); }
-  }
-  if (pmMine.length) {
-    const submittedAtById = new Map(pmMine.map((r) => [r.id, r.submitted_at] as const));
-    const evAuthored = await selectAllRows<{ pm_report_id: string; area_to_improve: string | null; note: string | null }>(
-      (from, to) => service
-        .from("pm_employee_evals").select("pm_report_id, area_to_improve, note")
-        .in("pm_report_id", pmMine.map((r) => r.id)).is("superseded_at", null)
-        .order("id", { ascending: true }).range(from, to),
-    );
-    for (const e of evAuthored) {
-      const at = submittedAtById.get(e.pm_report_id);
-      if (at && ((e.area_to_improve && e.area_to_improve.trim()) || (e.note && e.note.trim()))) add(at, "notes");
-    }
-  }
-
-  // The roster loader's twin — the same location bind, for the same reason (this is the
-  // path /my-performance runs, and it applies no RANKED_MAX_LEVEL ceiling, so it is
-  // where a multi-location actor's cross-shop oversight actually surfaces today).
-  const locInstanceIdSet = new Set(locInstanceIds);
-  const auditRows = await selectAllRows<OversightAuditRow & { occurred_at: string }>(
-    (from, to) => service
-      .from("audit_log").select("occurred_at, resource_table, resource_id, metadata")
-      .eq("actor_id", args.personId).in("action", OVERSIGHT_ACTIONS)
-      .gte("occurred_at", bounds.start).lt("occurred_at", upperTsP)
-      .order("id", { ascending: true }).range(from, to),
-  );
-  for (const a of auditRows) {
-    if (oversightRowAtLocation(a, args.locationId, locInstanceIdSet)) add(a.occurred_at, "oversight");
-  }
-
-  const score = scoreFromCounts(args.role, current);
-  const previousMetrics = range.compare ? await computePersonMetrics(service, { ...args, compare: false, range: { ...range, ...range.previous, compare: false } }) : null;
-  const previousScore = previousMetrics?.score ?? null;
-  const scoreDeltaPct = previousScore && previousScore > 0 ? Math.round(((score - previousScore) / previousScore) * 100) : null;
-
-  finalsChrono.sort((a, b) => (a.at < b.at ? -1 : 1));
-  const onTimeByBucket = new Map<string, { hit: number; total: number }>();
-  for (const f of finalsChrono) {
-    const bs = bucketStart(etCalendarDate(f.at), args.granularity);
-    const e = onTimeByBucket.get(bs) ?? { hit: 0, total: 0 };
-    e.total++; if (f.inWindow) e.hit++;
-    onTimeByBucket.set(bs, e);
-  }
-  let oh = 0, ot = 0;
-  for (const e of onTimeByBucket.values()) { oh += e.hit; ot += e.total; }
-  const overallOnTime = ot > 0 ? Math.round((oh / ot) * 100) : null;
-
-  const pmInLoc = await selectAllRows<{ id: string }>(
-    (from, to) => service
-      .from("pm_reports").select("id").eq("location_id", args.locationId).is("superseded_at", null)
-      .in("status", ["submitted", "incomplete_confirmed", "auto_finalized"])
-      .gte("report_date", loadFrom).lte("report_date", toIncl)
-      .order("id", { ascending: true }).range(from, to),
-  );
-  const repIds = pmInLoc.map((r) => r.id);
-  let great = 0, good = 0, needsWork = 0, flaggedToImprove = 0;
-  if (repIds.length) {
-    const evals = await selectAllRows<{ arrived_ready: string; attitude: string; production: string; team_player: string; area_to_improve: string | null }>(
-      (from, to) => service
-        .from("pm_employee_evals").select("arrived_ready, attitude, production, team_player, area_to_improve")
-        .in("pm_report_id", repIds).eq("employee_id", args.personId).is("superseded_at", null)
-        .order("id", { ascending: true }).range(from, to),
-    );
-    for (const e of evals) {
-      for (const g of [e.arrived_ready, e.attitude, e.production, e.team_player]) {
-        if (g === "great") great++; else if (g === "good") good++; else if (g === "needs_work") needsWork++;
-      }
-      if (e.area_to_improve && e.area_to_improve.trim()) flaggedToImprove++;
-    }
-  }
-  const mvp = await selectAllRows<{ id: string }>(
-    (from, to) => service
-      .from("pm_reports").select("id").eq("location_id", args.locationId).eq("mvp_user_id", args.personId).is("superseded_at", null)
-      .in("status", ["submitted", "incomplete_confirmed", "auto_finalized"])
-      .gte("report_date", loadFrom).lte("report_date", toIncl)
-      .order("id", { ascending: true }).range(from, to),
-  );
-  const mvpAwards = mvp.length;
-
-  const contribution = currentKeys.map((k) => (contribBucket.has(k) ? contribBucket.get(k)! : null));
-  const onTime = currentKeys.map((k) => { const e = onTimeByBucket.get(k); return e && e.total > 0 ? Math.round((e.hit / e.total) * 100) : null; });
-  const streaks: PersonStreaks = {
-    activeDays: activeDayStreak([...activeDates], args.today),
-    onTime: onTimeStreak(finalsChrono.map((f) => f.inWindow)),
-    personalBest: personalBest([...dayTaskCounts.values()]),
-  };
-  let mostActiveDay: string | null = null; let mx = -1;
-  for (const [wd, n] of weekdayCounts) if (n > mx) { mx = n; mostActiveDay = wd; }
-  const tenureDays = Math.max(0, Math.round((Date.parse(`${args.today}T00:00:00Z`) - Date.parse(args.createdAt)) / 86400000));
-
-  return {
-    counts: current, score, previousScore, scoreDeltaPct,
-    bucketKeys: currentKeys, contribution, onTime, overallOnTime,
-    gradientTally: { great, good, needsWork }, streaks,
-    signals: { mvpAwards, flaggedToImprove, mostActiveDay, tenureDays, lastActive },
-  };
+  const current = peopleWindow(range, args.granularity);
+  const previous = range.compare ? peopleWindow(range.previous, args.granularity) : null;
+  const inputs = await loadPeopleInputs(service, args.locationId);
+  const facts = await loadPeopleFacts(service, {
+    locationId: args.locationId,
+    subject: { kind: "person", personId: args.personId },
+    window: previous ? unionWindow(current, previous) : current,
+    families: familiesFor(LEGACY_PERSON_FAMILIES, inputs, "person"),
+  });
+  return personMetrics(facts, { role: args.role, createdAt: args.createdAt }, current, args.today, previous, inputs);
 }
 
 /** Shops this person can actually be opened at, intersected with the viewer's scope. */
 export async function loadPersonReportLocations(service: SupabaseClient, viewer: Viewer, personId: string): Promise<string[]> {
-  if (viewer.level < TEAM_VIEW_LEVEL) return [];
+  if (viewer.level < TEAM_VIEW_LEVEL || !canOpenPeopleViews(peopleActorOf(viewer))) return [];
   const { data: memberships, error: membershipError } = await service.from("user_locations")
     .select("location_id").eq("user_id", personId).eq("active", true);
   if (membershipError) throw new Error(membershipError.message);
-  const ids = (memberships ?? []).map(row => row.location_id as string).filter(id => trendLocationAllowed(viewer, id));
+  const ids = (memberships ?? []).map(row => row.location_id as string).filter(id => mayViewPeople(viewer, id));
   if (!ids.length) return [];
   const { data: locations, error } = await service.from("locations").select("id").in("id", ids).eq("active", true).order("name");
   if (error) throw new Error(error.message);
@@ -608,7 +169,7 @@ export async function loadPersonDetail(
   args: { viewer: Viewer; personId: string; locationId: string; granularity: TrendGranularity; compare: boolean; today: string; range?: TrendRange },
 ): Promise<PersonDetail | null> {
   if (args.range) args = { ...args, range: resolveTrendRange(Object.fromEntries(reportRangeParams(args.range)), args.today, args.granularity) };
-  if (args.viewer.level < TEAM_VIEW_LEVEL || !trendLocationAllowed(args.viewer, args.locationId)) return null;
+  if (!mayViewPeople(args.viewer, args.locationId)) return null;
 
   // IDOR: person must be assigned to this location, active, and rankable (< MoO).
   const { data: ul } = await service

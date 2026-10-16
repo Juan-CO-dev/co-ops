@@ -207,3 +207,23 @@ describe("the type is the primary guard", () => {
     expect(bad).toBe("product.set_actve");
   });
 });
+
+describe("scheduling phase 1 — the vocabulary is registered ahead of its emitters (Task 4 Step 5)", () => {
+  it.each([
+    "sevenshifts_location_link.create", "sevenshifts_location_link.deactivate",
+    "sevenshifts_user_link.create", "sevenshifts_user_link.deactivate",
+    "people.skill_adjust", "people.skill_rating", "people.shop_settings_update", "people.skill_tunables_update",
+    "pm_criteria.create", "pm_criteria.update",
+  ])("%s is destructive", (action) => {
+    expect(isDestructive(action)).toBe(true);
+    expect(isKnownAuditAction(action)).toBe(true);
+  });
+  it.each([
+    "sevenshifts.sync_requested", "pm_report.copy_open", "pm_report.copy_grade", "pm_report.copy_note",
+    "pm_report.copy_position_add", "pm_report.copy_window", "pm_report.copy_done", "pm_report.copy_reopen",
+    "pm_report.submit_v2",
+  ])("%s is known and NOT destructive (an observation of people, like pm_report.submit)", (action) => {
+    expect(isKnownAuditAction(action)).toBe(true);
+    expect(isDestructive(action)).toBe(false);
+  });
+});

@@ -29,6 +29,11 @@ import { ReportShopTabs } from "@/components/reports-hub/ReportShopTabs";
 import { TrendShopPanels } from "@/components/trends/TrendShopPanels";
 import { TrendControls } from "@/components/trends/TrendControls";
 import { MyPerformance } from "@/components/me/MyPerformance";
+import { MySkills } from "@/components/people/MySkills";
+import { peopleActorFromAuth } from "@/lib/people/access-shared";
+import { loadMySkills, PeopleSkillError } from "@/lib/people/skills";
+import { loadMyFeedbackV2 } from "@/lib/pm-report-v2";
+import { MyFeedbackV2 } from "@/components/pm-report-v2/MyFeedbackV2";
 
 interface PageProps {
   searchParams: Promise<Record<string, string | undefined>>;
@@ -87,12 +92,21 @@ async function renderPage(query: Record<string, string | undefined>, allShops = 
   }
 
   const data = await loadMyPerformance(sb, {
-    viewer: { userId: auth.user.id, level: auth.level, locations: auth.locations },
+    viewer: { userId: auth.user.id, role: auth.role, level: auth.level, locations: auth.locations },
     locationId: selected.id, granularity, compare, today, range,
   });
 
   const allFeedback = await loadMyFeedback(sb, { userId: auth.user.id });
   const feedback = allFeedback.filter((f) => f.locationId === selected.id);
+  // Task 17 (R8): "My skills" — bands and positive lines only, stripped at the lib boundary. The person
+  // comes from the session. Before 0270 is applied (or on a refusal) the section is simply absent.
+  const mySkills = await loadMySkills(sb, { actor: peopleActorFromAuth(auth), locationId: selected.id }).catch((e: unknown) => {
+    if (e instanceof PeopleSkillError) return null;
+    throw e;
+  });
+  // PM v2 (Task 21, R9): own grades from SUBMITTED v2 days as bands — no author, no number, no note text.
+  // v1 feedback above renders as today; before 0271 is applied this is [] and the section is absent.
+  const feedbackV2 = (await loadMyFeedbackV2(sb, { userId: auth.user.id })).filter((d) => d.locationId === selected.id);
 
   const Container = allShops ? "div" : "main";
   return (
@@ -105,6 +119,8 @@ async function renderPage(query: Record<string, string | undefined>, allShops = 
           {serverT(language, "me.empty")}
         </p>
       )}
+      {mySkills?.available && <MySkills rows={mySkills.view} language={language} />}
+      <MyFeedbackV2 days={feedbackV2} />
     </Container>
   );
 }

@@ -10,6 +10,7 @@ import { REPORT_ALL_LOCATIONS_LEVEL, canReadReportLocation, type LocationActor }
 import { operationalNow } from "@/lib/midshift";
 import type { TrendGranularity } from "@/lib/reports-trends";
 import { loadTeamOperatingHealth, TEAM_VIEW_LEVEL } from "@/lib/team-metrics";
+import { canOpenPeopleViews, peopleActorFromAuth } from "@/lib/people/access-shared";
 import { requireSessionFromHeaders } from "@/lib/session";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 
@@ -33,7 +34,8 @@ export default async function TeamRosterPage({ searchParams }: PageProps): Promi
 
 async function renderPage(paramsRange: Record<string, string | undefined>, allShops = false): Promise<ReactNode> {
   const auth = await requireSessionFromHeaders("/reports/trends/team");
-  if (auth.level < TEAM_VIEW_LEVEL) redirect("/dashboard");
+  // Task 13 (R7): the people views refuse the social media manager by ROLE, before any read.
+  if (auth.level < TEAM_VIEW_LEVEL || !canOpenPeopleViews(peopleActorFromAuth(auth))) redirect("/dashboard");
   const { location: locationParam, g } = paramsRange;
   if (!locationParam) redirect("/dashboard");
   const locActor: LocationActor = { role: auth.role, locations: auth.locations };
@@ -65,7 +67,7 @@ async function renderPage(paramsRange: Record<string, string | undefined>, allSh
   }
 
   const team = await loadTeamOperatingHealth(sb, {
-    viewer: { userId: auth.user.id, level: auth.level, locations: auth.locations },
+    viewer: { userId: auth.user.id, role: auth.role, level: auth.level, locations: auth.locations },
     locationId: locationParam, granularity, compare, today, range,
   });
 

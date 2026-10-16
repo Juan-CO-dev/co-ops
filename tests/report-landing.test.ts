@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import ts from "typescript";
 import { describe, expect, it, vi } from "vitest";
 import { canReadReportLocation, lockLocationContext } from "@/lib/locations";
+import { canViewPeople, peopleActorFromAuth } from "@/lib/people/access-shared";
 import { parseReportRange, reportRangeParams, shiftReportDate } from "@/lib/report-range";
 import { composeLastClose, composeReportSummary, reportIsFinalized } from "@/lib/report-summary";
 import { searchParamValues, shopParamFor } from "@/lib/shop-context-shared";
@@ -28,6 +29,7 @@ async function render(level: number, role: RoleCode, location = "mine", assigned
     Link: "link", ReportPageNav: "back", ReportShopTabs: "tabs", ReportRangeControls: "range", ExportLinks: "export",
     requireSessionFromHeaders: async () => ({ role, level, locations: ["mine"], user: { id: "viewer", language: "en" } }),
     redirect: () => { throw new Error("redirect"); }, canReadReportLocation, lockLocationContext, REPORT_ALL_LOCATIONS_LEVEL: 8,
+    canViewPeople, peopleActorFromAuth, // Task 13: the hub's Team link is canViewPeople per shop
     getServiceRoleClient: () => ({ from: () => query }), serverT: (_language: string, key: string) => key,
     operationalNow: () => ({ date: "2026-10-07" }), formatDateLabel: (date: string) => date,
     reportLandingContext, parseReportRange, reportRangeParams, shiftReportDate, composeLastClose, composeReportSummary, reportIsFinalized,

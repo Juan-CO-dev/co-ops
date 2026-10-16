@@ -48,7 +48,7 @@ it("chunks more than 220 shop instance ids for team completion metrics", async (
       then:(resolve:(value:unknown)=>unknown)=>Promise.resolve(resolve({data:rows.slice(start,end===Infinity?undefined:end+1),error:null})),
     };return q;
   }} as unknown as SupabaseClient;
-  const result=await loadTeamOperatingHealth(service,{viewer:{userId:"manager",level:8,locations:[HERE]},locationId:HERE,granularity:"day",compare:false,today:"2026-10-07"});
+  const result=await loadTeamOperatingHealth(service,{viewer:{userId:"manager",role:"moo",level:8,locations:[HERE]},locationId:HERE,granularity:"day",compare:false,today:"2026-10-07"});
   expect(chunks).toEqual([50,50,50,50,25]);
   expect(result?.members[0]?.counts.tasks).toBe(225);
 });
@@ -144,7 +144,10 @@ describe("both loaders apply the bind — the roster and the self-view", () => {
   // this table (loadTeamOperatingHealth's roster and computePersonMetrics, which serves
   // both /reports/trends/team's person detail and /my-performance); the twin is exactly
   // how the first version of this gap got written twice.
-  const src = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "..", "lib", "team-metrics.ts"), "utf8");
+  // Scheduling Phase 1 Task 11 moved both reads into the ONE fact loader (lib/people/facts.ts) and
+  // both binds into the pure rules (lib/people/performance-shared.ts); team-metrics only wraps them.
+  const lib = (...p: string[]) => readFileSync(join(dirname(fileURLToPath(import.meta.url)), "..", "lib", ...p), "utf8");
+  const src = lib("people", "performance-shared.ts") + lib("people", "facts.ts") + lib("team-metrics.ts");
 
   it("calls oversightRowAtLocation on BOTH audit_log reads", () => {
     const calls = src.split("oversightRowAtLocation(").length - 1;

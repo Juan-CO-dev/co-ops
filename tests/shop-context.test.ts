@@ -331,6 +331,8 @@ const PAGE_ROUTES: Record<string, string> = {
   "app/(authed)/stations/page.tsx": "/stations",
   "app/admin/stations/page.tsx": "/admin/stations",
   "app/admin/toast-employees/page.tsx": "/admin/toast-employees",
+  "app/admin/sevenshifts/page.tsx": "/admin/sevenshifts",
+  "app/admin/pm-criteria/page.tsx": "/admin/pm-criteria",
   "app/(authed)/assignments/page.tsx": "/assignments",
   "app/(authed)/my-feedback/page.tsx": "/my-feedback",
   "app/(authed)/reports/page.tsx": "/reports",
@@ -459,6 +461,8 @@ const RESOLVER_PAGES: Record<string, RegExp> = {
   "app/admin/catering/fulfillment/page.tsx": /await resolveShopId\(nodes\.map/,
   "app/admin/stations/page.tsx": /await resolveShop\(locations, shopParamFor\("\/admin\/stations", /,
   "app/admin/toast-employees/page.tsx": /await resolveShop\(locations, shopParamFor\("\/admin\/toast-employees", /,
+  "app/admin/sevenshifts/page.tsx": /await resolveShop\(locations, shopParamFor\("\/admin\/sevenshifts", /,
+  "app/admin/pm-criteria/page.tsx": /await resolveShop\(locations, shopParamFor\("\/admin\/pm-criteria", /,
   "app/ordering/page.tsx": /location \?\? \(await resolveShopId\(accessible\.map/,
   // Catalog Phase 2a: "global" is the explicit All-shops view; otherwise the one resolver over the readable shops.
   "app/admin/menu-costing/page.tsx": /explicit === "global" \? null : await resolveShopId\(shops\.map\(\(s\) => s\.id\), explicit \?\? null\)/,
