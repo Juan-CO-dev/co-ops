@@ -37,10 +37,13 @@ export const approveBody = (locationId: string, weekStart: string, expectedHead:
 export type PostOutcome = { ok: true; data: Record<string, unknown> } | { ok: false; code: string };
 export type Guarded = { kind: "cancelled" } | { kind: "ok"; data: Record<string, unknown> } | { kind: "refused"; code: string };
 
-/** The password (when the tier asks for it) BEFORE the post; a cancelled prompt posts nothing. */
-export async function runGuarded(args: { tier: "B" | "E" | null; requestStepUp: (tier: "B" | "E") => Promise<"ok" | "cancelled">; post: () => Promise<PostOutcome> }): Promise<Guarded> {
+/**
+ * The password (when the tier asks for it) BEFORE the post; a cancelled prompt posts nothing. `requestStepUp` is the
+ * caller's own literal-tier prompt (the client tier map pins each component's tier by its literal call).
+ */
+export async function runGuarded(args: { tier: "B" | "E" | null; requestStepUp: () => Promise<"ok" | "cancelled">; post: () => Promise<PostOutcome> }): Promise<Guarded> {
   if (args.tier) {
-    const s = await args.requestStepUp(args.tier);
+    const s = await args.requestStepUp();
     if (s !== "ok") return { kind: "cancelled" };
   }
   const r = await args.post();

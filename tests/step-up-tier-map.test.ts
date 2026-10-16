@@ -264,6 +264,13 @@ const CLIENT_TIER_MAP: Record<string, string[]> = {
   "components/pm-report-v2/PmCriteriaEditor.tsx": ["E"],
   // Chunk G ruling 2: the per-shop PM v2 switch card asks for the edit window before POST /api/people/settings (E).
   "components/people/PmV2SwitchCard.tsx": ["E"],
+  // Scheduling Phase 2, chunk F: the schedule settings ask for the edit window before each write (structure, the MoO's
+  // shop card, the skill tunables, the prep position); the board asks Tier B for Approve and a confirmed overwrite.
+  "components/schedule/StructureEditor.tsx": ["E"],
+  "components/schedule/ShopSettingsCard.tsx": ["E"],
+  "components/people/SkillTunablesEditor.tsx": ["E"],
+  "components/people/PrepPositionCard.tsx": ["E"],
+  "components/schedule/HorizonBuilder.tsx": ["B"],
   "components/admin/menu-costing/MenuPriceEditor.tsx": ["E"],
   // POST /api/admin/catering/ezcater-review -> decideEzcaterMapping asserts B in lib.
   "app/admin/catering/ezcater-review/review-client.tsx": ["B"],
