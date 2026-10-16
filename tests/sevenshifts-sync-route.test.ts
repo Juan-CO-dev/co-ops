@@ -14,13 +14,15 @@ import type { PeopleActor } from "@/lib/people/access-shared";
 
 vi.mock("@/lib/audit", () => ({ audit: vi.fn(async () => {}) }));
 vi.mock("@/lib/cron-route-lease", () => ({ claimCronRoute: vi.fn(async () => true) }));
-vi.mock("@/lib/sevenshifts/sync", () => ({
+vi.mock("@/lib/sevenshifts/sync", async (original) => ({
+  ...await original<typeof import("@/lib/sevenshifts/sync")>(),
   runSevenShiftsSync: vi.fn(async () => ({ ran: true, runId: "run-1", status: "ok", requests: 12, results: {}, persistenceErrors: [] })),
 }));
 vi.mock("@/lib/supabase-server", () => ({ getServiceRoleClient: () => { throw new Error("no database in this test"); } }));
 
 const { GET, maxDuration, runtime } = await import("@/app/api/cron/sevenshifts-sync/route");
-const { requestSyncNow, SyncNowError } = await import("@/lib/sevenshifts/sync-now");
+const { requestSyncNow, SyncNowError, SYNC_NOW_AUDIT_WAIT_MS, SYNC_ROUTE_LIMIT_MS, SYNC_ROUTE_MARGIN_MS } = await import("@/lib/sevenshifts/sync-now");
+const { SYNC_FINISH_BUDGET_MS } = await import("@/lib/sevenshifts/sync");
 const { audit } = await import("@/lib/audit");
 const { claimCronRoute } = await import("@/lib/cron-route-lease");
 const { runSevenShiftsSync } = await import("@/lib/sevenshifts/sync");
@@ -156,7 +158,7 @@ describe("requestSyncNow (Sync now)", () => {
   });
 
   it("claims, audits sevenshifts.sync_requested (ids only), then runs ONE manual sync naming the requester", async () => {
-    const out = await requestSyncNow(moo, { deadlineMs: 90_000 });
+    const out = await requestSyncNow(moo, { routeStartedAt: 1_000_000, clock: () => 1_000_000 + 15_000 });
     expect(out).toEqual({ runId: "run-1", status: "ok", requests: 12, persistenceErrors: [] });
     expect(audit).toHaveBeenCalledTimes(1);
     expect(vi.mocked(audit).mock.calls[0]![0]).toMatchObject({
@@ -167,10 +169,63 @@ describe("requestSyncNow (Sync now)", () => {
       vi.mocked(runSevenShiftsSync).mock.invocationCallOrder[0]!];
     expect([...order].sort((a, b) => a - b)).toEqual(order);
     expect(vi.mocked(runSevenShiftsSync).mock.calls[0]![0]).toMatchObject({ trigger: "manual", requestedBy: moo.userId, deadlineMs: 90_000 });
+    // 120 s route − 10 s margin − 5 s finalization − 15 s already spent = 90 s.
   });
 
   it("a run that turned dormant between the check and the run is reported as such, not as a success", async () => {
     vi.mocked(runSevenShiftsSync).mockResolvedValueOnce({ ran: false, reason: "sync_off" });
     await expect(requestSyncNow(moo)).rejects.toMatchObject({ status: 409, code: "sync_off" });
+  });
+});
+
+describe("chunk C review (Astra P2): Sync now fits the route's 120 s, finalization included", () => {
+  afterEach(() => { vi.useRealTimers(); });
+  const T0 = 5_000_000;
+
+  it("pins the budget constants: 120 s route, 10 s margin, the sync's own finalization window reserved", () => {
+    expect(SYNC_ROUTE_LIMIT_MS).toBe(maxDuration * 1000);
+    expect(SYNC_ROUTE_MARGIN_MS).toBe(10_000);
+    expect(SYNC_FINISH_BUDGET_MS).toBe(5_000);
+    expect(SYNC_NOW_AUDIT_WAIT_MS).toBeLessThanOrEqual(3_000);
+  });
+
+  it("a slow setup (24 s of auth, lease and audit) is deducted: run + finalization end by route start + 110 s (was 134 s)", async () => {
+    let t = T0;
+    vi.mocked(claimCronRoute).mockImplementationOnce(async () => { t += 20_000; return true; });
+    vi.mocked(audit).mockImplementationOnce(async () => { t += 1_000; });
+    const clock = () => t;
+    t += 3_000; // auth before requestSyncNow
+    await requestSyncNow(moo, { routeStartedAt: T0, clock });
+    const { deadlineMs } = vi.mocked(runSevenShiftsSync).mock.calls[0]![0];
+    expect(deadlineMs).toBe(120_000 - 10_000 - 5_000 - 24_000);
+    expect(24_000 + deadlineMs + SYNC_FINISH_BUDGET_MS).toBeLessThanOrEqual(SYNC_ROUTE_LIMIT_MS - SYNC_ROUTE_MARGIN_MS);
+  });
+
+  it("a hung audit write is bounded: the run starts after the audit wait, with that wait deducted", async () => {
+    vi.useFakeTimers({ now: T0 });
+    vi.mocked(audit).mockImplementationOnce(() => new Promise<void>(() => {}));
+    const p = requestSyncNow(moo, { routeStartedAt: T0 });
+    await vi.advanceTimersByTimeAsync(SYNC_NOW_AUDIT_WAIT_MS);
+    await p;
+    expect(runSevenShiftsSync).toHaveBeenCalledTimes(1);
+    const { deadlineMs } = vi.mocked(runSevenShiftsSync).mock.calls[0]![0];
+    expect(deadlineMs).toBe(120_000 - 10_000 - 5_000 - SYNC_NOW_AUDIT_WAIT_MS);
+  });
+
+  it("no time left for a run → 409 deadline and no run (the setup already spent the budget)", async () => {
+    let t = T0;
+    vi.mocked(claimCronRoute).mockImplementationOnce(async () => { t += 104_500; return true; });
+    await expect(requestSyncNow(moo, { routeStartedAt: T0, clock: () => t })).rejects.toMatchObject({ status: 409, code: "deadline" });
+    expect(runSevenShiftsSync).not.toHaveBeenCalled();
+    const { SEVENSHIFTS_LINK_ERROR_CODES } = await import("@/lib/sevenshifts/links-shared");
+    expect(SEVENSHIFTS_LINK_ERROR_CODES).toContain("deadline");
+  });
+
+  it("the admin route stamps its entry time BEFORE the session check and hands it to Sync now", () => {
+    const src = readFileSync("app/api/admin/sevenshifts/route.ts", "utf8");
+    const stamp = src.indexOf("const routeStartedAt = Date.now();");
+    expect(stamp).toBeGreaterThan(-1);
+    expect(stamp).toBeLessThan(src.indexOf("await requireSession("));
+    expect(src).toContain("requestSyncNow(actor, { routeStartedAt })");
   });
 });

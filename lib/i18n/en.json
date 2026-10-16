@@ -6593,6 +6593,7 @@
   "sevenshifts.error.not_connected": "7shifts isn't connected yet.",
   "sevenshifts.error.sync_off": "7shifts syncing is switched off.",
   "sevenshifts.error.sync_busy": "A sync is already running. Try again in a few minutes.",
+  "sevenshifts.error.deadline": "There wasn't enough time left to sync. Try again.",
   "sevenshifts.shops.unlinkConfirm": "Unlink {shop} from the 7shifts location {remote}?",
   "catalog.menu.preview.name_es_fallback": "Spanish users will see the English name until you add one.",
   "catalog.menu.promote.name_es_field": "Spanish name (optional)",

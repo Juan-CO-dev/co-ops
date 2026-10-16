@@ -208,6 +208,6 @@ export function screenStateFor(status: SevenShiftsStatus, runs: readonly RunSumm
 export const SEVENSHIFTS_LINK_ERROR_CODES = [
   "invalid_payload", "forbidden", "role_insufficient", "location_access_denied", "assignee_unavailable",
   "remote_unknown", "remote_not_at_shop", "shop_already_linked", "remote_already_linked", "user_already_linked",
-  "link_not_found", "link_failed", "not_connected", "sync_off", "sync_busy",
+  "link_not_found", "link_failed", "not_connected", "sync_off", "sync_busy", "deadline",
 ] as const;
 export type SevenShiftsLinkErrorCode = (typeof SEVENSHIFTS_LINK_ERROR_CODES)[number];

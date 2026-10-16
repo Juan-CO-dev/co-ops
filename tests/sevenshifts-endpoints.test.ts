@@ -182,6 +182,14 @@ describe("chunk B review (Astra) — the endpoint table", () => {
     for (const p of passes) expect(p.get("limit")).toBe(String(LIST_PAGE_LIMIT));
   });
 
+  it("chunk C review: the availability parameter is exactly `repeating` (official List Availabilities reference)", () => {
+    for (const p of requestPasses("availabilities", WINDOW, "1234")) {
+      const keys = [...p.keys()];
+      expect(keys).toContain("repeating");
+      expect(keys.filter((k) => /repeat|recur/i.test(k))).toEqual(["repeating"]);
+    }
+  });
+
   it("users: explicit active and inactive passes (no reliance on the status default), modified_since stays a DATE", () => {
     const passes = requestPasses("users", WINDOW, "1234");
     expect(passes.map((p) => p.get("status"))).toEqual(["active", "inactive"]);

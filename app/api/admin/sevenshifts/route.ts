@@ -27,6 +27,8 @@ const ACTIONS: Record<string, readonly string[]> = {
  * No email, no notification.
  */
 export async function POST(req: NextRequest) {
+  // Sync now's ONE absolute deadline starts here, before the session check (chunk C review, Astra P2).
+  const routeStartedAt = Date.now();
   const ctx = await requireSession(req, "/api/admin/sevenshifts");
   if (ctx instanceof Response) return ctx;
   const body = await parseJsonBody(req);
@@ -40,7 +42,7 @@ export async function POST(req: NextRequest) {
   const s = (k: string) => b[k] as string;
   const actor = peopleActorFromAuth(ctx);
   try {
-    if (b.action === "sync_now") return jsonOk({ ...(await requestSyncNow(actor)) });
+    if (b.action === "sync_now") return jsonOk({ ...(await requestSyncNow(actor, { routeStartedAt })) });
     const stepUp = assertStepUp(ctx, "B");
     if (!stepUp.ok) return jsonError(403, stepUp.code);
     const service = getServiceRoleClient();

@@ -60,7 +60,8 @@ export const BACKFILL_DAYS = 90;
 export const SHIFT_LOOKAHEAD_DAYS = 28;
 /** Incremental runs re-read this much before the watermark (an upsert makes the overlap idempotent). */
 export const MODIFIED_OVERLAP_HOURS = 48;
-const FINISH_BUDGET_MS = 5_000;
+/** The finalization window (state, ledger, heartbeat) after the run's own deadline. Callers reserve it. */
+export const SYNC_FINISH_BUDGET_MS = 5_000;
 const UPSERT_CHUNK = 500;
 
 export type SyncTrigger = "cron" | "manual";
@@ -295,7 +296,7 @@ export async function runSevenShiftsSync(
   const runStatus: SyncStatus = companyId === null || results.whoami?.error_code
     ? "failed"
     : failedResources.length === 0 ? "ok" : failedResources.length === SYNC_ORDER.length ? "failed" : "partial";
-  const finish = AbortSignal.timeout(FINISH_BUDGET_MS);
+  const finish = AbortSignal.timeout(SYNC_FINISH_BUDGET_MS);
   const finishedAt = new Date(Math.max(Date.now(), now.getTime())).toISOString();
 
   const persistenceErrors: PersistenceErrorCode[] = [];

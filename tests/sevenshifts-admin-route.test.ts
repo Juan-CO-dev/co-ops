@@ -70,7 +70,8 @@ describe("POST /api/admin/sevenshifts", () => {
     expect(res.status).toBe(200);
     expect(await res.json()).toMatchObject({ status: "ok", persistenceErrors: [] });
     expect(assertStepUp).not.toHaveBeenCalled();
-    expect(requestSyncNow).toHaveBeenCalledWith({ userId: "moo-1", role: "moo", level: 8, locations: [SHOP] });
+    expect(requestSyncNow).toHaveBeenCalledWith({ userId: "moo-1", role: "moo", level: 8, locations: [SHOP] },
+      { routeStartedAt: expect.any(Number) });
   });
 
   it.each([

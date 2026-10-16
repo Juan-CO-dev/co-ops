@@ -6593,6 +6593,7 @@
   "sevenshifts.error.not_connected": "7shifts aún no está conectado.",
   "sevenshifts.error.sync_off": "La sincronización de 7shifts está apagada.",
   "sevenshifts.error.sync_busy": "Ya hay una sincronización en curso. Inténtalo en unos minutos.",
+  "sevenshifts.error.deadline": "No quedó tiempo suficiente para sincronizar. Inténtalo de nuevo.",
   "sevenshifts.shops.unlinkConfirm": "¿Desenlazar {shop} de la ubicación de 7shifts {remote}?",
   "catalog.menu.preview.name_es_fallback": "Quienes usan la app en español verán el nombre en inglés hasta que agregues uno.",
   "catalog.menu.promote.name_es_field": "Nombre en español (opcional)",

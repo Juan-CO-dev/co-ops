@@ -143,3 +143,28 @@ describe("source pins", () => {
     expect(page).toMatch(/canViewSevenShiftsStatus\(actor, /);
   });
 });
+
+describe("chunk C review (Astra P3): the admin hub card is role-aware", () => {
+  it("GM+ and the operational level-6 managers see the 7shifts card; the social media manager never does", async () => {
+    const { adminSectionsFor } = await import("@/lib/admin/sections");
+    const sees = (level: number, role: Parameters<typeof adminSectionsFor>[1]) =>
+      adminSectionsFor(level, role).some((s) => s.id === "sevenshifts" && s.href === "/admin/sevenshifts");
+    for (const role of ["agm", "prep_mgr", "catering_mgr"] as const) expect(sees(6, role), role).toBe(true);
+    expect(sees(6, "social_media_mgr")).toBe(false);
+    expect(sees(7, "gm")).toBe(true);
+    expect(sees(8, "moo")).toBe(true);
+    expect(sees(9, "owner")).toBe(true);
+    expect(sees(5, "shift_lead")).toBe(false);
+  });
+
+  it("the role-aware rule changes no other card: level-6 roles see the same cards as before, apart from 7shifts", async () => {
+    const { adminSectionsFor } = await import("@/lib/admin/sections");
+    const ids = (level: number, role: Parameters<typeof adminSectionsFor>[1]) => adminSectionsFor(level, role).map((s) => s.id);
+    expect(ids(6, "agm").filter((id) => id !== "sevenshifts")).toEqual(ids(6, "social_media_mgr"));
+    expect(ids(7, "gm")).toContain("recipe-notices");
+  });
+
+  it("the hub passes the session's trusted role", () => {
+    expect(readFileSync("app/admin/page.tsx", "utf8")).toContain("adminSectionsFor(auth.level, auth.role)");
+  });
+});

@@ -1,4 +1,6 @@
 import type { TranslationKey } from "@/lib/i18n/types";
+import { OPERATIONAL_LEVEL6_ROLES } from "@/lib/people/access-shared";
+import type { RoleCode } from "@/lib/roles";
 
 /**
  * Admin section registry — single source of truth for the /admin hub.
@@ -25,6 +27,12 @@ export interface AdminSection {
    * direct URL for anyone who bookmarks it.
    */
   comingSoon?: boolean;
+  /**
+   * Roles BELOW minLevel that also see the card, by trusted role (never by level alone). Used where
+   * level 6 is not one thing: the operational level-6 managers may open the 7shifts status, the
+   * social media manager (also level 6) may not (chunk C review, Astra P3).
+   */
+  alsoRoles?: readonly RoleCode[];
 }
 
 // Order = display order, and it walks the derivation pipeline (Juan's model):
@@ -34,9 +42,9 @@ export const ADMIN_SECTIONS: AdminSection[] = [
   // 0233: Toast employee -> CO-OPS user links (GM own shop, level 8+ every shop).
   { id: "toast-employees", i18nKey: "toastLinks.title", href: "/admin/toast-employees", minLevel: 7 },
   // Scheduling Phase 1 (0268–0269): the 7shifts connection, shop links (8+) and person links (GM own shop,
-  // 8+ every shop). The card shows from GM up; the operational level-6 managers can open the status by URL
-  // (the page binds every viewer through canViewSevenShiftsStatus, so the social media manager never can).
-  { id: "sevenshifts", i18nKey: "sevenshifts.title", href: "/admin/sevenshifts", minLevel: 7 },
+  // 8+ every shop). The card shows from GM up AND to the operational level-6 managers, who may view the
+  // status (canViewSevenShiftsStatus); the social media manager never sees it (role-aware, not level).
+  { id: "sevenshifts", i18nKey: "sevenshifts.title", href: "/admin/sevenshifts", minLevel: 7, alsoRoles: OPERATIONAL_LEVEL6_ROLES },
   // 0234: customer profiles (stats GM+ own shop / 8+ every shop; contact + consent desk 9+).
   { id: "customers", i18nKey: "customers.title", href: "/admin/customers", minLevel: 7 },
   { id: "users",               i18nKey: "admin.section.users",               href: "/admin/users",               minLevel: 8 },
@@ -79,7 +87,7 @@ export const ADMIN_SECTIONS: AdminSection[] = [
   { id: "audit",               i18nKey: "admin.section.audit",               href: "/admin/audit",               minLevel: 9, comingSoon: true },
 ];
 
-/** Sections the given role level may reach, in display order. */
-export function adminSectionsFor(level: number): AdminSection[] {
-  return ADMIN_SECTIONS.filter((s) => level >= s.minLevel);
+/** Sections the viewer may reach, in display order: by level, plus a card's `alsoRoles` by trusted role. */
+export function adminSectionsFor(level: number, role: RoleCode): AdminSection[] {
+  return ADMIN_SECTIONS.filter((s) => level >= s.minLevel || (s.alsoRoles?.includes(role) ?? false));
 }
