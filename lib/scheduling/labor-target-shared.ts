@@ -20,7 +20,7 @@ import { Q_PER_HOUR } from "./time-shared";
 
 export const LABOR_LINE_KEYS = [
   "schedule.labor.max_labor", "schedule.labor.minus_salaried", "schedule.labor.max_hours",
-  "schedule.labor.window", "schedule.labor.floor_over_target", "schedule.labor.window_under_floor", "schedule.labor.window_over_target",
+  "schedule.labor.window", "schedule.labor.window_exact", "schedule.labor.floor_over_target", "schedule.labor.window_under_floor", "schedule.labor.window_over_target",
   "schedule.labor.errand.no_forecast", "schedule.labor.errand.set_wage_estimate",
 ] as const;
 export type LaborLineKey = (typeof LABOR_LINE_KEYS)[number];
@@ -170,7 +170,10 @@ export function laborTarget(input: LaborTargetInput, opts: { canSeeMoney: boolea
     lines.push({ key: "schedule.labor.max_hours", params: { maxLaborCents, wageCents: blendedWageCents, hours: round1(maxHoursExact) } });
   }
   for (const w of windows) {
-    lines.push({ key: "schedule.labor.window", params: { window: w.key, on: w.on, min: w.optimal.min, max: w.optimal.max } });
+    // Spec §6.6 wording: "Lunch: 5 on, optimal 4–5" · "Close: 3 on, optimal 3" — one number when the range is one.
+    lines.push(w.optimal.min === w.optimal.max
+      ? { key: "schedule.labor.window_exact", params: { window: w.key, on: w.on, optimal: w.optimal.min } }
+      : { key: "schedule.labor.window", params: { window: w.key, on: w.on, min: w.optimal.min, max: w.optimal.max } });
     if (w.shortQuarters > 0) lines.push({ key: "schedule.labor.window_under_floor", params: { window: w.key, hours: w.shortQuarters / Q_PER_HOUR, floor: w.floorHeads } });
     if (w.overQuarters > 0) lines.push({ key: "schedule.labor.window_over_target", params: { window: w.key, hours: w.overQuarters / Q_PER_HOUR, max: w.optimal.max } });
     if (w.floorOverTarget) lines.push({ key: "schedule.labor.floor_over_target", params: { window: w.key, floor: w.floorHeads } });

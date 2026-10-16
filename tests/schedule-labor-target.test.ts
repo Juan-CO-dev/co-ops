@@ -6,6 +6,7 @@
  * numeric params; no forecast / no wage are named states with their errands; $ lines hidden without money.
  */
 import { describe, expect, it } from "vitest";
+import en from "@/lib/i18n/en.json";
 import { LABOR_LINE_KEYS, laborTarget, type LaborTargetInput } from "@/lib/scheduling/labor-target-shared";
 import type { DayNeed } from "@/lib/scheduling/context-shared";
 import { P, THU, U, context, shift, structure, zeros } from "./fixtures/schedule/rules-fixture";
@@ -71,6 +72,20 @@ describe("laborTarget: the math, line by line", () => {
     expect(w.spreadHeads).toBeCloseTo((58.73170731707317 * (100_000 / 430_000)) / 3, 6);
     expect(w).toMatchObject({ key: "lunch_rush", floorHeads: 4, optimal: { min: 4, max: 5 }, on: 5, tone: "good", floorOverTarget: false });
     expect(out.lines).toContainEqual({ key: "schedule.labor.window", params: { window: "lunch_rush", on: 5, min: 4, max: 5 } });
+  });
+
+  it("chunk F, the spec's exact wording (§6.6): \"Lunch: 5 on, optimal 4–5\" · \"Close: 3 on, optimal 3\" (one number when the range is one), and the math lines", () => {
+    const exact = laborTarget(input({ need: need(6) }, 6), { canSeeMoney: true });
+    if (exact.state !== "ok") throw new Error(exact.state);
+    expect(exact.lines).toContainEqual({ key: "schedule.labor.window_exact", params: { window: "lunch_rush", on: 6, optimal: 6 } });
+    expect(exact.lines.some((l) => l.key === "schedule.labor.window")).toBe(false);
+    expect(LABOR_LINE_KEYS).toContain("schedule.labor.window_exact");
+    const fill = (k: string, p: Record<string, string | number>) => (en as Record<string, string>)[k]!.replace(/\{(\w+)\}/g, (_m, n: string) => String(p[n]));
+    expect(fill("schedule.labor.window", { window: "Lunch", on: 5, min: 4, max: 5 })).toBe("Lunch: 5 on, optimal 4–5");
+    expect(fill("schedule.labor.window_exact", { window: "Close", on: 3, optimal: 3 })).toBe("Close: 3 on, optimal 3");
+    expect((en as Record<string, string>)["schedule.labor.max_labor"]).toMatch(/^Max hourly labor \$ = forecast sales × target %/);
+    expect((en as Record<string, string>)["schedule.labor.max_hours"]).toMatch(/^Max hours = max labor \$ ÷ blended average wage/);
+    expect((en as Record<string, string>)["schedule.labor.minus_salaried"]).toMatch(/minus salaried cost/i);
   });
 
   it("amber when over the target or under the minimum crew; a floor above the target says so", () => {

@@ -18,6 +18,8 @@ import type { BoardBanner, BoardView, GapLine } from "@/lib/scheduling/board-vie
 import { addDays, formatQ } from "@/lib/scheduling/time-shared";
 import { BudgetSuggestion } from "./BudgetSuggestion";
 import { DayTabs } from "./DayTabs";
+import { DayTimeline } from "./DayTimeline";
+import { LaborTargetCard } from "./LaborTargetCard";
 import { MoneyStrip } from "./MoneyStrip";
 import { RulesBadge } from "./RulesBadge";
 import { scheduleErrorKey } from "./schedule-errors";
@@ -134,6 +136,8 @@ function ReadyBoard({ view, initialDate }: { view: BoardView; initialDate?: stri
       {day ? (
         <section className="grid min-w-0 gap-2" aria-label={formatDateLabel(day.date, language)} data-day={day.date}>
           {day.notes.map((n, i) => <p key={i} className="text-sm text-co-text-muted">{line(n)}</p>)}
+          <DayTimeline day={day} names={view.names} positions={view.positions} />
+          {day.labor ? <LaborTargetCard labor={day.labor} names={view.names} positions={view.positions} /> : null}
           {day.gaps.length > 0 ? (
             <ul className="grid gap-2" aria-label={t("schedule.board.gap.title", { n: day.gaps.length })}>
               {day.gaps.map((g, i) => <GapRow key={i} g={g} names={view.names} positions={view.positions} />)}

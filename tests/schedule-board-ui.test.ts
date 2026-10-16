@@ -174,6 +174,76 @@ describe("Task 20 — problems, gaps, the advisory", () => {
   });
 });
 
+describe("Task 21 — the day timeline", () => {
+  const html = (over: Parameters<typeof boardSource>[0] = {}, fixture?: string, date = DATES[3]!) => renderBoard(ready(over, fixture), "en", { initialDate: date });
+  it("the demand SVG carries an aria-label naming its basis (4-week same-day average); a no-history day draws none", () => {
+    const h = html();
+    expect(h).toMatch(/<svg[^>]*role="img"[^>]*aria-label="[^"]*4-week same-day average[^"]*"/);
+    const out = built();
+    const ctx = Object.fromEntries(DATES.map((d) => [d, { ...out.context.days[d]!, inputs: { ...out.context.days[d]!.inputs, demandKind: "no_history" as const, hourlyCents: null, dayCents: null } }]));
+    expect(html({ demand: "no_history", week: { ...boardSource().week!, dayContexts: ctx } })).not.toMatch(/<svg[^>]*aria-label="[^"]*4-week/);
+  });
+  it("the labor % row is toned from the shop target (good / watch / high / none) with a text label; an AGM gets no labor row", () => {
+    const h = html();
+    const cells = h.match(/data-labor-tone="(good|watch|high|none)"/g) ?? [];
+    expect(cells.length).toBeGreaterThan(5);
+    expect(h).toMatch(/data-labor-tone="good"[^>]*>[\s\S]*?On target/);
+    expect(html({ perms: { canSeeMoney: false } })).not.toMatch(/data-labor-tone=/);
+  });
+  it("coverage cells: red / amber / green / grey, each with its TEXT label (colour is never the only signal)", () => {
+    const view = ready({}, "F0b-tight-budget-zero");
+    const day = view.days.find((d) => d.coverage.some((c) => c.tone === "gap"))!;
+    const h = renderBoard(view, "en", { initialDate: day.date });
+    for (const [tone, label] of [["gap", "Short"], ["good", "Covered"], ["closed", "Closed"]] as const) {
+      expect(h, tone).toMatch(new RegExp(`data-coverage-tone="${tone}"[^>]*>[\\s\\S]*?${label}`));
+    }
+  });
+  it("the MoD lane flags its gaps; the Closing Manager row names the closer or the gap", () => {
+    const view = ready({}, "F0a-infeasible-structure");
+    const day = view.days.find((d) => d.mod.some((m) => m.tone === "gap"))!;
+    const h = renderBoard(view, "en", { initialDate: day.date });
+    expect(h).toMatch(/data-mod-tone="gap"[^>]*>[\s\S]*?No manager on duty/);
+    const v17 = html();
+    expect(v17).toMatch(/data-closing-state="covered"[^>]*>[\s\S]*?Closing Manager/);
+  });
+  it("strength chips per window carry the window and the word", () => {
+    const t = text(html());
+    expect(t).toMatch(/Lunch rush: (Strong|Watch|Thin|Starting point|Nobody on)/);
+    expect(t).toMatch(/Close: (Strong|Watch|Thin|Starting point|Nobody on)/);
+  });
+  it("the labor-target card shows each math line, turns amber, and an AGM sees heads without dollars", () => {
+    const view = ready();
+    const day = view.days.find((d) => d.labor?.state === "ok" && d.labor.windows.some((w) => w.tone === "amber")) ?? view.days[3]!;
+    const h = renderBoard(view, "en", { initialDate: day.date });
+    const card = h.match(/<section[^>]*data-section="labor-target"[\s\S]*?<\/section>/)![0];
+    expect(text(card)).toMatch(/Max hourly labor \$ = forecast sales × target %: \$[\d,]+ × 28% = \$[\d,]+/);
+    expect(text(card)).toMatch(/Max hours = max labor \$ ÷ blended average wage/);
+    expect(text(card)).toMatch(/Lunch rush: \d+ on, optimal \d+(–\d+)?/);
+    if (day.labor?.state === "ok" && day.labor.windows.some((w) => w.tone === "amber")) expect(card).toContain('data-tone="amber"');
+    const agm = renderBoard(ready({ perms: { canSeeMoney: false } }), "en", { initialDate: day.date });
+    const agmCard = agm.match(/<section[^>]*data-section="labor-target"[\s\S]*?<\/section>/)![0];
+    expect(agmCard).not.toContain("$");
+    expect(text(agmCard)).toMatch(/Lunch rush: \d+ on, optimal/);
+  });
+  it("the rules badge: 'all checks pass' or 'N problems', opening the named problems with day, person, position and time", () => {
+    const view = ready({}, "F0g-history");
+    const h = renderBoard(view);
+    expect(text(h)).toContain(en["schedule.board.rules.problems"].replace("{n}", String(view.rules.fresh.length + view.rules.inherited.length)));
+    expect(h).toMatch(/data-problem="shift_below_minimum"/);
+    expect(text(h)).toContain("Shift is shorter than the minimum (240 min).");
+    const clean = { ...ready(), rules: { fresh: [], inherited: [] } };
+    expect(text(renderBoard(clean))).toContain(en["schedule.board.rules.pass"]);
+    expect(text(renderBoard(ready({}, "F0g-history"), "es"))).toContain(es["schedule.board.problem.earlier"]);
+  });
+  it("the timeline is the ONE horizontally scrollable region (the page never is), with a sticky label column and a Fit hours toggle", () => {
+    const h = html();
+    expect((h.match(/overflow-x-auto/g) ?? []).length).toBeGreaterThanOrEqual(1);
+    expect(h).toMatch(/data-section="timeline"[^>]*class="[^"]*overflow-x-auto/);
+    expect(h).toMatch(/sticky left-0/);
+    expect(h).toMatch(/<button[^>]*aria-pressed="false"[^>]*data-act="fit"[^>]*>|<button[^>]*data-act="fit"[^>]*aria-pressed="false"/);
+  });
+});
+
 describe("Task 20 — the hub entry mirrors who may open the board", () => {
   it("GM, AGM, MoO and up see the Schedule card; the social media, catering and prep managers and a key holder never", async () => {
     const { adminSectionsFor } = await import("@/lib/admin/sections");

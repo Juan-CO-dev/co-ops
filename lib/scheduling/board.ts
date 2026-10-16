@@ -7,8 +7,9 @@
  * never a 500. The head week is shown EXACTLY as saved (the historical contract): each date reads its OWN validation
  * context — the head's, or, for a day an edit carried, its origin revision's (one extra read of those contexts). The
  * suggestion is computed only for an actor with the budget act and only when demand loaded; the current-inputs
- * advisory only when demand loaded. Wages enter the view-model only for an actor who may see money (J1); `boardView`
- * drops them again regardless. No write, no email, no notification.
+ * advisory only when demand loaded. Wages stay SERVER-side: `boardView` uses them for money viewers, and for anyone else
+ * only inside the labor-target card's head maths, whose $ lines and fields are then absent (J1); no wage, rate or
+ * per-person $ ever reaches the serialized view. No write, no email, no notification.
  */
 import { canApproveSchedule, canEditStructure, canManageShopSwitch, canSeeScheduleMoney, scheduleActRefusal } from "./access-shared";
 import type { PeopleActor } from "@/lib/people/access-shared";
@@ -94,9 +95,9 @@ export async function loadBoard(deps: ScheduleDeps, args: { actor: PeopleActor; 
   const people = head?.context.people ?? {};
   const names: Record<string, string> = Object.fromEntries(inputs.members.map((m) => [m.userId, m.name]));
   const roles = Object.fromEntries(inputs.members.map((m) => [m.userId, m.role]));
-  const wageCentsByUser: Record<string, number | null> = money
-    ? Object.fromEntries(Object.values(people).map((p) => [p.userId, inputs.wages.byUserCents[p.userId] ?? inputs.shopSettings.estimatedHourlyCents]))
-    : {};
+  // Server-side only: the view-model drops wages for anyone who may not see money, and uses them for an AGM only inside
+  // the labor-target card's HEAD maths (its $ lines and fields are absent then — chunk C's contract).
+  const wageCentsByUser: Record<string, number | null> = Object.fromEntries(Object.values(people).map((p) => [p.userId, inputs.wages.byUserCents[p.userId] ?? inputs.shopSettings.estimatedHourlyCents]));
   const demand = inputs.demand.kind;
   const forecastWeekCents = inputs.demand.kind === "ok"
     ? inputs.demand.days.filter((d) => dates.includes(d.date)).reduce((n, d) => n + (d.kind === "ok" ? d.dayCents : 0), 0)
@@ -124,8 +125,8 @@ export async function loadBoard(deps: ScheduleDeps, args: { actor: PeopleActor; 
     },
     liveStructureId: inputs.structure.id, demand, names, roles, positions,
     skills: makeSkillLookup(inputs.skills, inputs.skillBands),
-    wageCentsByUser, shopEstimateHourlyCents: money ? inputs.shopSettings.estimatedHourlyCents : null,
-    salariedWeeklyCents: money ? inputs.shopSettings.estimatedSalariedWeeklyCents : null, forecastWeekCents: money ? forecastWeekCents : null,
+    wageCentsByUser, shopEstimateHourlyCents: inputs.shopSettings.estimatedHourlyCents,
+    salariedWeeklyCents: inputs.shopSettings.estimatedSalariedWeeklyCents, forecastWeekCents,
     budget: budgetForDates(inputs.budget.entries, inputs.budget.rows, dates), suggestion, advisory,
     week: head && w ? {
       headRevisionId: head.revision.id, approvedRevisionId: w.approvedRevisionId, edited: w.edited, structureVersionId: head.revision.structureVersionId,

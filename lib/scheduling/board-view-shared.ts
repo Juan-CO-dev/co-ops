@@ -6,7 +6,8 @@
  * validator's recorded problems; every line is an i18n KEY + params.
  *
  * MONEY (J1, J9): with `perms.canSeeMoney` false every $-bearing field is ABSENT (not null) — the strip's `money`, the
- * labor % per hour, the labor card's $ lines — and the wages are dropped before any maths runs. Never per person.
+ * labor % per hour, the labor card's $ lines. The wages are dropped before every maths except the labor card's HEADS
+ * ("Lunch rush: 5 on, optimal 4–5"), whose output carries no $ field then (chunk C's pinned contract). Never per person.
  *
  * The board shows the HEAD exactly as saved (the historical contract): a day's coverage reads that day's own stored
  * context; an inherited day with no context still shows its shifts and its recorded problems.
@@ -320,8 +321,10 @@ function dayView(src: BoardSource, week: BoardWeekSource, date: string, weekQ: M
     date, demand: src.demand === "unavailable" && ctx.inputs.demandKind !== "ok" ? { kind: "unavailable" }
       : ctx.inputs.demandKind === "ok" && ctx.inputs.hourlyCents && ctx.inputs.dayCents !== null ? { kind: "ok", hourlyCents: ctx.inputs.hourlyCents, dayCents: ctx.inputs.dayCents } : { kind: "no_history" },
     structure: s, need: ctx.need, windows: strengthWindows(s, ctx.dayType, ctx.scheduledOutQ).map((w) => ({ key: w.key, fromQ: w.fromQ, toQ: w.toQ })),
-    shifts, people: week.people, wageCentsByUser: wages, shopEstimateHourlyCents: money ? src.shopEstimateHourlyCents : null,
-    salariedWeeklyCents: money ? src.salariedWeeklyCents : null, weekForecastCents: src.forecastWeekCents,
+    // The card's HEADS need the wage maths for every viewer; with canSeeMoney false its $ lines and fields are ABSENT
+    // (labor-target-shared's contract, pinned in chunk C), so the AGM sees "Lunch rush: 5 on, optimal 4–5" and no dollar.
+    shifts, people: week.people, wageCentsByUser: src.wageCentsByUser, shopEstimateHourlyCents: src.shopEstimateHourlyCents,
+    salariedWeeklyCents: src.salariedWeeklyCents, weekForecastCents: src.forecastWeekCents,
   }, { canSeeMoney: money });
   return {
     ...base,
