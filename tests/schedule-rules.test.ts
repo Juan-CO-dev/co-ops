@@ -53,16 +53,19 @@ describe("every code: a positive and a negative case", () => {
     expect(of(run([shift(U.ben, WED, 44, 60, P.REG)]), "shift_below_minimum")).toEqual([]);
   });
 
-  it("shift_over_maximum — CC chunk B ruling 3: a HARD daily maximum, the per-shop setting limits.maxShiftH (default 10 h)", () => {
-    const over = of(run([shift(U.ben, WED, 42, 83, P.WALKON)]), "shift_over_maximum");
+  it("shift_over_maximum — CC chunk B ruling 3: a HARD daily maximum, the per-shop setting limits.maxShiftH (default 10.5 h, CC chunk C ruling 2)", () => {
+    const over = of(run([shift(U.ben, WED, 42, 85, P.WALKON)]), "shift_over_maximum");
     expect(over).toHaveLength(1);
-    expect(over[0]).toMatchObject({ severity: "error", userId: U.ben, q: 42, params: { minutes: 615, maximumMinutes: 600 } });
-    expect(of(run([shift(U.ben, WED, 42, 82, P.WALKON)]), "shift_over_maximum")).toEqual([]); // exactly 10 h is allowed
+    expect(over[0]).toMatchObject({ severity: "error", userId: U.ben, q: 42, params: { minutes: 645, maximumMinutes: 630 } });
+    expect(of(run([shift(U.ben, WED, 42, 84, P.WALKON)]), "shift_over_maximum")).toEqual([]); // exactly 10.5 h is allowed
+    expect(of(run([shift(U.ben, WED, 42, 83, P.WALKON)]), "shift_over_maximum")).toEqual([]); // the v17 line day, 10.25 h
+    const ten = context({ s: structure((s) => { s.limits.maxShiftH = 10; }) });
+    expect(of(run([shift(U.ben, WED, 42, 83, P.WALKON)], ten), "shift_over_maximum")).toHaveLength(1); // the setting decides
     const twelve = context({ s: structure((s) => { s.limits.maxShiftH = 12; }) });
-    expect(of(run([shift(U.ben, WED, 42, 83, P.WALKON)], twelve), "shift_over_maximum")).toEqual([]);
+    expect(of(run([shift(U.ben, WED, 42, 85, P.WALKON)], twelve), "shift_over_maximum")).toEqual([]);
     // A multi-position shift counts whole; an inherited day is never re-judged.
-    const multi = shift(U.ben, WED, 42, 84, P.WALKON);
-    multi.segments = [{ positionId: P.REG, startQ: 42, endQ: 60 }, { positionId: P.WALKON, startQ: 60, endQ: 84 }];
+    const multi = shift(U.ben, WED, 42, 86, P.WALKON);
+    multi.segments = [{ positionId: P.REG, startQ: 42, endQ: 60 }, { positionId: P.WALKON, startQ: 60, endQ: 86 }];
     expect(of(run([multi]), "shift_over_maximum")).toHaveLength(1);
     const inheritedMon = [{ date: MON, originRevisionId: "rev-0", structureVersionId: "sv-1", inherited: true, problems: [] }];
     expect(of(checkScheduleRules(week([shift(U.ben, MON, 42, 83, P.WALKON)], [], inheritedMon), context()), "shift_over_maximum")).toEqual([]);

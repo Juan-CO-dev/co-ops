@@ -79,7 +79,7 @@
     { "name": "max shift below the minimum shift", "base": "defaults", "set": { "limits.maxShiftH": 3.75 }, "valid": false, "key": "limits.maxShiftH" },
     { "name": "max shift off the quarter grid", "base": "defaults", "set": { "limits.maxShiftH": 10.1 }, "valid": false, "key": "limits.maxShiftH" },
     { "name": "max shift longer than a day", "base": "defaults", "set": { "limits.maxShiftH": 24.25 }, "valid": false, "key": "limits.maxShiftH" },
-    { "name": "max shift below the GM minimum", "base": "defaults", "set": { "limits.gmMinimumH": 10.25 }, "valid": false, "key": "limits.maxShiftH" },
+    { "name": "max shift below the GM minimum", "base": "defaults", "set": { "limits.gmMinimumH": 10.75 }, "valid": false, "key": "limits.maxShiftH" },
     { "name": "max shift below the AGM minimum", "base": "defaults", "set": { "limits.agmMinimumH": 9, "limits.maxShiftH": 8.75 }, "valid": false, "key": "limits.maxShiftH" },
     { "name": "max shift missing", "base": "defaults", "set": { "limits.maxShiftH": "__drop__" }, "valid": false, "key": "limits.maxShiftH" },
     { "name": "max shift sent as a string", "base": "defaults", "set": { "limits.maxShiftH": "10" }, "valid": false, "key": "limits.maxShiftH" },

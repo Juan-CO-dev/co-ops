@@ -74,7 +74,8 @@ export interface ScheduleStructure {
     /** r4: DISPLAY ONLY — a shaped rush further than this from its configured time is flagged in the reason; never alters heads. */
     rushShiftMaxQ: number;
     /**
-     * CC chunk B ruling 3 (2026-10-16): the daily MAXIMUM shift length, in hours (default 10). A HARD rule in the
+     * CC chunk B ruling 3 (2026-10-16): the daily MAXIMUM shift length, in hours (default 10.5, CC chunk C ruling 2, pending
+     * Juan: 10 h was below the v17 line day of 10.25 h). A HARD rule in the
      * validator (`shift_over_maximum`, error) and the generator (a longer run is split across people); the minimum
      * (`minimumShiftQ`, 4 h) is unchanged and never above it.
      */
@@ -116,7 +117,7 @@ export const SCHEDULE_STRUCTURE_DEFAULTS: ScheduleStructure = {
   },
   limits: {
     minimumShiftQ: 16, flexMinimumQ: 12, flexUsesPer2w: 1, flexMaxQ: 12, overtimeH: 40,
-    managerFloorH: 32, gmMinimumH: 8, agmMinimumH: 8, closingMinutesOverride: null, segmentMinQ: 2, rushShiftMaxQ: 4, maxShiftH: 10,
+    managerFloorH: 32, gmMinimumH: 8, agmMinimumH: 8, closingMinutesOverride: null, segmentMinQ: 2, rushShiftMaxQ: 4, maxShiftH: 10.5,
   },
   catering: { minHeadcount: 30, extraPrepDishHeads: 1, defaultStartQ: 34, defaultEndQ: 52, leadMinutes: 210 },
   labor: { targetPct: 28, basis: "total", strong: 0.8, watch: 0.65, budgetDeadbandH: 2 },

@@ -329,9 +329,9 @@ export function f0eRepairNeeded(): GeneratorInput {
     x.leadership.modRequired = false;
     x.positions[I.$WALKON]!.allowedRoles = ["key_holder"];
     for (const t of ["slow", "normal", "busy", "weekend"] as const) x.crews[t].close = { registerHeads: 1, walkHeads: 1, prepDishHeads: 1 };
-    // F0e's premise is ONE key holder holding Walk-ins / Online 10:30 → 20:45 (10.25 h). CC chunk B ruling 3 caps a shift at
-    // 10 h by default; this fixture tests the repair chain, not the cap, so it sets the shop's cap to 12 h (its golden is
-    // byte-identical). The cap has its own tests (tests/schedule-generator.test.ts "ruling 3", tests/schedule-rules.test.ts).
+    // F0e's premise is ONE key holder holding Walk-ins / Online 10:30 → 20:45 (10.25 h). This fixture tests the repair chain,
+    // not the cap, so it pins the shop's cap at 12 h explicitly (independent of the default, 10.5 h since CC chunk C ruling 2).
+    // The cap has its own tests (tests/schedule-generator.test.ts "ruling 3", tests/schedule-rules.test.ts).
     x.limits.maxShiftH = 12;
   });
   const specs: PersonSpec[] = [

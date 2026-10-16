@@ -468,7 +468,7 @@ export function sourceReason(source: Template["source"], positionId: string, fro
   return reason(key, { positionId, fromQ, toQ });
 }
 
-/** The daily maximum shift in quarters (CC chunk B ruling 3; `limits.maxShiftH`, default 10 h). */
+/** The daily maximum shift in quarters (CC chunk B ruling 3; `limits.maxShiftH`, default 10.5 h per CC chunk C ruling 2). */
 export function maxShiftQ(s: ScheduleStructure): number {
   return Math.round(s.limits.maxShiftH * 4);
 }

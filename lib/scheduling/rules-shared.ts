@@ -84,7 +84,7 @@ export const RULE_CODES = {
   person_overlap: "error",
   position_over_headcount: "error",
   shift_below_minimum: "error",
-  /** CC chunk B ruling 3: a shift longer than the shop's daily maximum (`limits.maxShiftH`, default 10 h). HARD. */
+  /** CC chunk B ruling 3: a shift longer than the shop's daily maximum (`limits.maxShiftH`, default 10.5 h). HARD. */
   shift_over_maximum: "error",
   role_not_allowed: "error",
   manager_on_boh: "error",

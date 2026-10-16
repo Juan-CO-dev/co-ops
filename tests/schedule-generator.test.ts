@@ -601,11 +601,11 @@ describe("buildWeek smoke: the small shop builds a validator-clean week", () => 
 describe("CC chunk B ruling 3: the daily maximum shift is HARD in the generator", () => {
   const longest = (out: GeneratorOutput) => Math.max(...out.shifts.map((x) => x.endQ - x.startQ));
 
-  it("never produces a shift over limits.maxShiftH (default 10 h); a 13.75 h Prep/Dishwasher day is split across two people, covered", () => {
+  it("never produces a shift over limits.maxShiftH (default 10.5 h, CC chunk C ruling 2); a 13.75 h Prep/Dishwasher day is split across two people, covered", () => {
     const s = structure((x) => { x.leadership.modRequired = false; });
     const out = buildWeek(small({ structure: s, days: [day(MON, {}, s)] }));
     expectClean(out);
-    expect(longest(out)).toBeLessThanOrEqual(40);
+    expect(longest(out)).toBeLessThanOrEqual(42);
     // Prep/Dishwasher is needed 7:00 → everyone out (28 → 83): no one person can hold it, so two people do, and it is covered.
     const dish = out.shifts.filter((x) => x.date === MON && x.segments.some((g) => g.positionId === I.$DISH));
     expect(new Set(dish.map((x) => x.userId)).size).toBeGreaterThanOrEqual(2);
@@ -630,9 +630,9 @@ describe("CC chunk B ruling 3: the daily maximum shift is HARD in the generator"
     expect(out.gaps.filter((g) => g.positionId === I.$DISH)).toEqual([]);
   });
 
-  it("the whole sample week (the mockup's people, MoD on) has no shift over 10 h", () => {
+  it("the whole sample week (the mockup's people, MoD on) has no shift over the 10.5 h default", () => {
     const out = buildWeek(small({ days: DATES.map((d) => day(d)) }));
     expectClean(out);
-    expect(longest(out)).toBeLessThanOrEqual(40);
+    expect(longest(out)).toBeLessThanOrEqual(42);
   });
 });

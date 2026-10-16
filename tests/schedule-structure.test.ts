@@ -27,8 +27,9 @@ describe("the shared structure case file against validScheduleStructure", () => 
     expect(SCHEDULE_STRUCTURE_DEFAULTS.labor.basis).toBe("total");
     expect(SCHEDULE_STRUCTURE_DEFAULTS.labor.targetPct).toBe(28);
     expect(SCHEDULE_STRUCTURE_DEFAULTS.limits.managerFloorH).toBe(32);
-    // CC chunk B ruling 3: a daily maximum shift length, a per-shop setting, default 10 h (the minimum stays 4 h).
-    expect(SCHEDULE_STRUCTURE_DEFAULTS.limits.maxShiftH).toBe(10);
+    // CC chunk B ruling 3: a daily maximum shift length, a per-shop setting (the minimum stays 4 h). CC chunk C ruling 2:
+    // the default is 10.5 h (pending Juan) — 10 h was below the v17 line day (10:30 → 20:45 = 10.25 h).
+    expect(SCHEDULE_STRUCTURE_DEFAULTS.limits.maxShiftH).toBe(10.5);
     expect(SCHEDULE_STRUCTURE_DEFAULTS.limits.minimumShiftQ).toBe(16);
     expect(SCHEDULE_STRUCTURE_DEFAULTS.roster.excludedRoles).toEqual(["cgs", "social_media_mgr", "catering_mgr", "prep_mgr"]);
   });
