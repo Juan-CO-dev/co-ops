@@ -28,6 +28,7 @@ import { canDoOperationalTask } from "@/lib/operational-task-access";
 import { serverT } from "@/lib/i18n/server";
 import type { TranslationKey } from "@/lib/i18n/types";
 import type { AuthContext } from "@/lib/session";
+import type { RoleCode } from "@/lib/roles";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import {
   SALES_EXPORT_MAX_ROWS, SALES_READ_MIN, SalesReportError, VIEW_DIMENSION, isSalesExportView, loadSalesBreakdown,
@@ -205,7 +206,8 @@ export async function loadExportTable(auth: AuthContext, family: ExportFamily, p
   const locationId = assertExportShop(auth, family, params.location);
   const today = operationalNow(now).date;
   const sb = getServiceRoleClient();
-  const viewer: Viewer = { userId: auth.user.id, level: auth.level, locations: auth.locations };
+  // The trusted role rides along for the team section (Scheduling Phase 1, r1 P2-8).
+  const viewer: Viewer & { role: RoleCode } = { userId: auth.user.id, role: auth.role, level: auth.level, locations: auth.locations };
   const shop = locationId ? await loadShop(locationId) : null;
   const shops = new Map(shop ? [[shop.id, shop]] : []);
   const range = parseReportRange(params, today);

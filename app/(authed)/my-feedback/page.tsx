@@ -87,7 +87,7 @@ async function renderPage(query: Record<string, string | undefined>, allShops = 
   }
 
   const data = await loadMyPerformance(sb, {
-    viewer: { userId: auth.user.id, level: auth.level, locations: auth.locations },
+    viewer: { userId: auth.user.id, role: auth.role, level: auth.level, locations: auth.locations },
     locationId: selected.id, granularity, compare, today, range,
   });
 

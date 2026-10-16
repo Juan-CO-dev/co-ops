@@ -50,7 +50,7 @@ async function renderPage(paramsRange: Record<string, string | undefined>, allSh
   for (const [key, value] of Object.entries(paramsRange)) if (value !== undefined && !["location", "loc", "g", "range", "from", "to", "compare", "cmp"].includes(key)) context.set(key, value);
   if (allShops) context.set("returnLocation", "all");
   const sb = getServiceRoleClient();
-  const viewer = { userId: auth.user.id, level: auth.level, locations: auth.locations };
+  const viewer = { userId: auth.user.id, role: auth.role, level: auth.level, locations: auth.locations };
   const canSeeTeam = auth.level >= TEAM_VIEW_LEVEL;
 
   const header = <>

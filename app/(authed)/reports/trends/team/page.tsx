@@ -65,7 +65,7 @@ async function renderPage(paramsRange: Record<string, string | undefined>, allSh
   }
 
   const team = await loadTeamOperatingHealth(sb, {
-    viewer: { userId: auth.user.id, level: auth.level, locations: auth.locations },
+    viewer: { userId: auth.user.id, role: auth.role, level: auth.level, locations: auth.locations },
     locationId: locationParam, granularity, compare, today, range,
   });
 

@@ -41,7 +41,7 @@ async function renderPage(personId: string, paramsRange: Record<string, string |
   const locActor: LocationActor = { role: auth.role, locations: auth.locations };
   if (locationParam !== "all" && !canReadReportLocation(locActor, locationParam)) redirect("/dashboard");
   const sb = getServiceRoleClient();
-  const availableLocations = personLocations ?? await loadPersonReportLocations(sb, { userId: auth.user.id, level: auth.level, locations: auth.locations }, personId);
+  const availableLocations = personLocations ?? await loadPersonReportLocations(sb, { userId: auth.user.id, role: auth.role, level: auth.level, locations: auth.locations }, personId);
   if (availableLocations.length === 1) locationParam = availableLocations[0]!;
   paramsRange = { ...paramsRange, location: locationParam };
 
@@ -66,7 +66,7 @@ async function renderPage(personId: string, paramsRange: Record<string, string |
   }
 
   const detail = await loadPersonDetail(sb, {
-    viewer: { userId: auth.user.id, level: auth.level, locations: auth.locations },
+    viewer: { userId: auth.user.id, role: auth.role, level: auth.level, locations: auth.locations },
     personId, locationId: locationParam, granularity, compare, today, range,
   });
 
