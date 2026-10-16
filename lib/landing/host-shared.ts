@@ -16,13 +16,13 @@ export function configuredOrigin(raw: string | undefined): URL | null {
   if (!authority) return null;
   try { return new URL(raw); } catch { return null; }
 }
-export function classifyLandingHost(headers: Pick<Headers, 'get'>, env: LandingHostEnv = { LANDING_HOSTS: process.env.LANDING_HOSTS, SITE_ORIGIN: process.env.SITE_ORIGIN, STAFF_ORIGIN: process.env.STAFF_ORIGIN }): 'landing' | 'staff' | 'invalid' {
+export function classifyLandingHost(headers: Pick<Headers, 'get'>, env: LandingHostEnv = { LANDING_HOSTS: process.env.LANDING_HOSTS, SITE_ORIGIN: process.env.SITE_ORIGIN, STAFF_ORIGIN: process.env.STAFF_ORIGIN }): 'landing' | 'staff' {
   const host = parseAuthority(headers.get('host'));
-  if (!host) return 'invalid';
+  if (!host) { console.warn('[landing] invalid host; landing dormant'); return 'staff'; }
   const forwarded = headers.get('x-forwarded-host');
   if (forwarded !== null) {
     const other = parseAuthority(forwarded);
-    if (!other || other.hostname !== host.hostname || other.port !== host.port) return 'invalid';
+    if (!other || other.hostname !== host.hostname || other.port !== host.port) { console.warn('[landing] host disagreement; landing dormant'); return 'staff'; }
   }
   const entries = (env.LANDING_HOSTS ?? '').split(',').map(s => s.trim()).filter(Boolean);
   const allowed = entries.length > 0 && entries.every(s => parseAuthority(s)?.hostname === s && !s.includes(':'));
@@ -33,11 +33,11 @@ export function classifyLandingHost(headers: Pick<Headers, 'get'>, env: LandingH
   return entries.includes(host.hostname) ? 'landing' : 'staff';
 }
 // Finite approved public inventory; new assets must be explicitly added with provenance.
-export const LANDING_ASSETS = new Set(['/brand/co-wordmark.png', '/brand/co-wordmark-icon.png', '/brand/co-logomark.png', '/brand/co-icon.png']);
+export const LANDING_ASSETS = new Set(['/media/crunchy-boi-014.webp', '/media/crunchy-boi-spin.mp4', '/brand/co-wordmark.svg', '/brand/co-wordmark.png', '/brand/co-wordmark-icon.png', '/brand/co-logomark.png', '/brand/co-icon.png']);
 export function isLandingAsset(path: string, search: URLSearchParams): boolean {
   if (LANDING_ASSETS.has(path)) return true;
   if (path.startsWith('/_next/static/') && !path.includes('..') && !path.includes('%')) return true;
-  if (path === '/_next/image') return search.getAll('url').length === 1 && LANDING_ASSETS.has(search.get('url') ?? '');
+  if (path === '/_next/image') return search.getAll('url').length === 1 && /\.(?:png|webp)$/.test(search.get('url') ?? '') && LANDING_ASSETS.has(search.get('url') ?? '');
   return false;
 }
 export function landingPathDecision(path: string, search: URLSearchParams): 'rewrite' | 'redirect' | 'allow' | 'deny' {

@@ -1,3 +1,4 @@
+import { Hero } from "@/components/landing/Hero";
 import { headers } from "next/headers";
 import { notFound } from "next/navigation";
 import { classifyLandingHost } from "@/lib/landing/host-shared";
@@ -24,16 +25,17 @@ export default async function LandingPage({searchParams}:{searchParams:Promise<R
   const language = resolveLandingLanguage(query.lang,requestHeaders.get("accept-language"));
   const links = getLandingLinks(config);
   const queryString = new URLSearchParams(Object.entries(query).flatMap(([key,value])=>typeof value === "string" ? [[key,value]] : Array.isArray(value) ? value.map((v)=>[key,v]) : [])).toString();
-  const sectionKeys = ["hero","field-guide","lineup","subdex","shops","catering","footer"] as const;
+  const sectionKeys = ["field-guide","lineup","subdex","shops","catering","footer"] as const;
   return <div lang={language} className="mx-auto max-w-5xl px-5 pb-28">
-    <header className="flex flex-wrap items-center justify-between gap-4 py-5"><span className="text-xl font-black">{TENANT_NAME}</span><LanguageToggle language={language} query={queryString} label={serverT(language,"landing.language")} policy={config.attribution}/></header>
+    <header className="flex flex-wrap items-center justify-between gap-4 py-5"><img src="/brand/co-wordmark.svg" alt={TENANT_NAME} width={1125} height={140} className="h-12 w-44 object-contain"/><LanguageToggle language={language} query={queryString} label={serverT(language,"landing.language")} policy={config.attribution}/></header>
     <main>
-      {sectionKeys.map((key,index)=><section key={key} id={key} aria-labelledby={`${key}-title`} className="border-t border-co-border py-10 sm:py-14">
+      <Hero language={language} config={config} ad={captureAttribution(queryString,config.attribution).ad}/>
+      {sectionKeys.map(key=><section key={key} id={key} aria-labelledby={`${key}-title`} className="border-t border-co-border py-10 sm:py-14">
         <SectionView section={key}>
-          {index === 0 ? <h1 id={`${key}-title`} className="max-w-xl text-4xl font-black tracking-tight sm:text-6xl">{serverT(language,`landing.${key}.title`)}</h1> : <h2 id={`${key}-title`} className="text-3xl font-black tracking-tight">{serverT(language,`landing.${key}.title`)}</h2>}
+          <h2 id={`${key}-title`} className="text-3xl font-black tracking-tight">{serverT(language,`landing.${key}.title`)}</h2>
           <p className="mt-4 max-w-xl text-lg">{serverT(language,`landing.${key}.body`)}</p>
-          {(key === "hero" || key === "field-guide" || key === "shops") && <div className="mt-6 flex flex-wrap items-center gap-3">{config.stores.map((store)=><OrderLink key={store.key} href={store.orderUrl} store={store.key} placement={key} className="inline-flex min-h-11 items-center justify-center rounded-xl bg-co-cta px-5 py-3 font-bold text-co-text">{serverT(language,"landing.order",{shop:store.orderLabel})}</OrderLink>)}</div>}
-          {(key === "hero" || key === "field-guide" || key === "shops") && config.stores.map((store) => <OfferCode key={store.key} ad={captureAttribution(queryString,config.attribution).ad} store={store.key} label={serverT(language,"landing.offer.code")}/>)}
+          {(key === "field-guide" || key === "shops") && <div className="mt-6 flex flex-wrap items-center gap-3">{config.stores.map((store)=><OrderLink key={store.key} href={store.orderUrl} store={store.key} placement={key} className="inline-flex min-h-11 items-center justify-center rounded-xl bg-co-cta px-5 py-3 font-bold text-co-text">{serverT(language,"landing.order",{shop:store.orderLabel})}</OrderLink>)}</div>}
+          {(key === "field-guide" || key === "shops") && config.stores.map((store) => <OfferCode key={store.key} ad={captureAttribution(queryString,config.attribution).ad} store={store.key} label={serverT(language,"landing.offer.code")}/>)}
           {key === "field-guide" && <div className="mt-6"><Reveal><FaqItem q={serverT(language,"landing.faq.question")} a={serverT(language,"landing.faq.answer")}/></Reveal></div>}
           {key === "shops" && <div className="mt-6"><GoodToKnow items={[serverT(language,"landing.shops.body")]} label={serverT(language,"landing.good-to-know")} tone="dark"/></div>}
           {key === "catering" && <div className="mt-6 flex flex-wrap items-center gap-3"><OrderLink href={links.catering} placement="catering" event="CateringClick" className="inline-flex min-h-11 items-center rounded-xl bg-co-cta px-5 py-3 font-bold text-co-text">{serverT(language,"landing.catering.order")}</OrderLink><OrderLink href={links.inquiry} placement="catering" event="Lead" className="inline-flex min-h-11 items-center rounded-xl border-2 border-co-cta-text px-5 py-3 font-bold text-co-cta-text">{serverT(language,"landing.catering.inquiry")}</OrderLink></div>}

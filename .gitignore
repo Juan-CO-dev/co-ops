@@ -91,3 +91,8 @@ tmp/
 /tmp-landing-*.log
 !/.env.example
 /tmp-landing-server-pids.json
+
+# Landing private intermediates and Python environment
+/assets/work/
+/scripts/assets/__pycache__/
+/assets/.venv/

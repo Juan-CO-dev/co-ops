@@ -6,8 +6,6 @@ import { assertSimTarget } from "./lib/sim-isolation-shared";
 if (process.env.SIM_MODE) assertSimTarget(process.env.NEXT_PUBLIC_SUPABASE_URL);
 
 const nextConfig: NextConfig = {
-  // Host isolation must run before slash redirects; proxy preserves staff canonicalization.
-  skipTrailingSlashRedirect: true,
   ...(process.env.SIM_MODE ? { distDir: ".next-sim-launch" } : {}),
   // Next 16 dev mode blocks cross-origin requests to /_next/* dev resources by
   // default. When loading the dev server from a phone on the LAN

@@ -7,15 +7,13 @@ import { LANDING_SECURITY_HEADERS, SECURITY_HEADERS } from './lib/security-heade
 
 const PUBLIC_PATHS = new Set(['/', '/verify', '/reset-password', '/api/auth/pin', '/api/auth/password', '/api/auth/logout', '/api/auth/verify', '/api/auth/password-reset-request', '/api/auth/password-reset', '/api/locations', '/api/users/login-options', '/order']);
 function isPublicPath(path: string): boolean {
-  return PUBLIC_PATHS.has(path) || ['/order/', '/api/portal/', '/api/webhooks/', '/api/cron/', '/brand/', '/_next/static/'].some(prefix => path.startsWith(prefix)) || ['/favicon.ico', '/icon.png', '/apple-icon.png', '/opengraph-image.png', '/_next/image', '/robots.txt', '/sitemap.xml', '/window.svg', '/vercel.svg', '/next.svg', '/globe.svg', '/file.svg'].includes(path);
+  // The original matcher bypasses remain staff-only after the landing gate.
+  return PUBLIC_PATHS.has(path) || ['/order/', '/api/portal/', '/api/webhooks/', '/api/cron/', '/brand/', '/_next/static', '/_next/image', '/favicon.ico'].some(prefix => path.startsWith(prefix)) || /\.(?:png|jpg|jpeg|gif|svg|webp|ico|woff|woff2|ttf)$/.test(path);
 }
 function finish(response: NextResponse, landing: boolean): NextResponse {
   for (const { key, value } of landing ? LANDING_SECURITY_HEADERS : SECURITY_HEADERS) response.headers.set(key, value);
   if (landing) {
     response.headers.set('Cache-Control', 'private, no-store');
-    const vary = new Set((response.headers.get('Vary') ?? '').split(',').map(v => v.trim()).filter(Boolean));
-    vary.add('Host');
-    response.headers.set('Vary', [...vary].join(', '));
   }
   return response;
 }
@@ -23,7 +21,6 @@ export async function proxy(req: NextRequest): Promise<NextResponse> {
   const landingConfig = loadLandingConfig();
   const kind = classifyLandingHost(req.headers, landingConfig);
   const path = req.nextUrl.pathname;
-  if (kind === 'invalid') return finish(new NextResponse(null, { status: 404 }), false);
   const headers = new Headers(req.headers);
   // No client-supplied routing/identity hints survive the public boundary.
   for (const key of [...headers.keys()]) if (key.startsWith('x-landing') || key.startsWith('x-co-')) headers.delete(key);
@@ -46,11 +43,8 @@ export async function proxy(req: NextRequest): Promise<NextResponse> {
     return finish(target.pathname !== path ? NextResponse.rewrite(target, { request: { headers } }) : NextResponse.next({ request: { headers } }), true);
   }
   if (path.startsWith('/eat') || path.startsWith('/api/landing')) return finish(new NextResponse(null, { status: 404 }), false);
-  if (path !== '/' && path.endsWith('/')) {
-    const canonical = req.nextUrl.clone(); canonical.pathname = path.replace(/\/+$/, '');
-    return NextResponse.redirect(canonical, 308);
-  }
-  if (isPublicPath(path)) return NextResponse.next({ request: { headers } });
+  // Preserve the pre-chunk-A matcher bypass on staff, including static suffixes.
+  if (isPublicPath(path)) return NextResponse.next();
   const jwt = req.cookies.get('co_ops_session')?.value;
   if (!jwt) return redirectToLogin(req);
   try {

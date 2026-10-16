@@ -11,10 +11,20 @@ async function main() {
     checks++;
   }
   try {
+    // Supabase service_role has BYPASSRLS; grants must still enforce its write ceiling.
     await db.exec("CREATE ROLE anon; CREATE ROLE authenticated; CREATE ROLE service_role BYPASSRLS; GRANT USAGE ON SCHEMA public TO anon, authenticated, service_role;");
     // Simulate Supabase's explicit default function grants: migration must revoke both.
     await db.exec("ALTER DEFAULT PRIVILEGES GRANT EXECUTE ON FUNCTIONS TO anon, authenticated;");
     await db.exec(readFileSync("supabase/migrations/0273_landing_order_click_counts.sql", "utf8"));
+    for (const role of ["anon", "authenticated", "service_role"]) {
+      for (const privilege of ["REFERENCES", "TRIGGER"]) {
+        const ceiling = await db.query<{ allowed: boolean }>(
+          "SELECT has_table_privilege($1, 'public.landing_order_click_counts', $2) AS allowed",
+          [role, privilege],
+        );
+        assert.equal(ceiling.rows[0]?.allowed, false, `${role} must not hold ${privilege}`); checks++;
+      }
+    }
     const columns = await db.query<{ column_name: string }>("SELECT column_name FROM information_schema.columns WHERE table_name = 'landing_order_click_counts' ORDER BY ordinal_position");
     assert.deepEqual(columns.rows.map(row => row.column_name), ["day_utc", "store_key", "ad_code", "click_count"]); checks++;
     for (const role of ["anon", "authenticated"]) {

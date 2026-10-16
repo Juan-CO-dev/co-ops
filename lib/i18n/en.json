@@ -6790,5 +6790,10 @@
   "recipes.catalog_link": "Shop versions of this recipe",
   "recipes.catalog_link_hint": "Each shop can have its own ingredients and amounts. Change them on the catalog page.",
   "recipes.builder.lines_global_only": "Only the Director of Operations changes these lines for every shop. Change your shop's own version on the catalog page.",
-  "recipes.builder.lines_change_shop": "Change your shop's version"
+  "recipes.builder.lines_change_shop": "Change your shop's version",
+  "landing.metadata.title": "Chef-inspired subs | {brand}",
+  "landing.metadata.description": "Big flavors, fresh builds. Find your shop and order your next sub.",
+  "landing.hero.alt": "Crunchy Boi sub",
+  "landing.hero.pause": "Pause spin",
+  "landing.hero.play": "Play spin"
 }

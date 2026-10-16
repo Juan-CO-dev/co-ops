@@ -1,0 +1,24 @@
+import sharp from 'sharp';
+import { readFileSync, writeFileSync, mkdirSync, copyFileSync, statSync } from 'node:fs';
+import { sha256, safeOutput, approvedSource } from './inventory.mjs';
+const root=process.cwd(), source=JSON.parse(readFileSync('assets/source-manifest.json','utf8'));
+const src=approvedSource(source,'014');
+if(sha256(src.path)!==src.sha256)throw new Error('Original source changed');
+const metadata=await sharp(src.path).metadata();
+const dest=safeOutput(root,'public/media/crunchy-boi-014.webp');
+mkdirSync('public/media',{recursive:true});mkdirSync('public/brand',{recursive:true});mkdirSync('assets/provenance',{recursive:true});
+let data,quality=86;
+for(;quality>=60;quality-=2){data=await sharp(src.path).rotate().resize({width:750,withoutEnlargement:true}).webp({quality,effort:6}).toBuffer();if(data.length<=100000)break;}
+if(data.length>100000)throw new Error('Poster budget failed');
+writeFileSync(dest,data);
+const out=await sharp(data).metadata();
+const record={id:'hero-poster',sourceId:'014',publicPath:'/media/crunchy-boi-014.webp',classification:'real-photo',sourcePath:src.path,sourceSha256:src.sha256,sha256:sha256(dest),bytes:data.length,maxBytes:100000,width:out.width,height:out.height,sidecar:'assets/provenance/hero-poster.json',crop:[0,0,metadata.width,metadata.height],steps:['full-frame uniform resize','WebP encode; metadata stripped'],quality,tool:{sharp:sharp.versions.sharp,vips:sharp.versions.vips,scriptSha256:sha256('scripts/assets/export.mjs')},command:'node scripts/assets/export.mjs',review:'Full frame preserved; phone visual review remains required'};
+writeFileSync(record.sidecar,JSON.stringify(record,null,2)+'\n');
+const logo='C:/Users/conta/co-3d/logo-pack/vector/co-wordmark.svg';
+const logoDest=safeOutput(root,'public/brand/co-wordmark.svg');copyFileSync(logo,logoDest);
+const logoMeta=await sharp(logo).metadata();
+const brand={id:'wordmark',publicPath:'/brand/co-wordmark.svg',classification:'brand',sourcePath:logo,sourceSha256:sha256(logo),sha256:sha256(logoDest),bytes:statSync(logoDest).size,maxBytes:500000,width:logoMeta.width,height:logoMeta.height,sidecar:'assets/provenance/wordmark.json',steps:['byte-identical copy']};
+writeFileSync(brand.sidecar,JSON.stringify(brand,null,2)+'\n');
+const manifest=JSON.parse(readFileSync('assets/approved-media.json','utf8'));manifest.media=manifest.media.filter(e=>!['hero-poster','wordmark'].includes(e.id));manifest.media.push(record,brand);writeFileSync('assets/approved-media.json',JSON.stringify(manifest,null,2)+'\n');
+if(sha256(src.path)!==src.sha256)throw new Error('Original source changed');
+console.log(JSON.stringify({width:out.width,height:out.height,bytes:data.length,quality}));

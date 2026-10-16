@@ -10,7 +10,24 @@ import { TENANT_NAME } from "@/lib/tenant";
 import { TrackingProvider } from "@/components/landing/TrackingProvider";
 
 export const dynamic = "force-dynamic";
-export const metadata: Metadata = { title: TENANT_NAME, robots:{index:false,follow:false}, icons:{icon:"/eat/icon.png",apple:"/eat/apple-icon.png"}, openGraph:{images:[]}, twitter:{images:[]} };
+export async function generateMetadata(): Promise<Metadata> {
+  const config = loadLandingConfig();
+  const requestHeaders = await headers();
+  if (classifyLandingHost(requestHeaders, config) !== "landing") notFound();
+  const language = resolveLandingLanguage(requestHeaders.get("x-landing-language"), requestHeaders.get("accept-language"));
+  const title = serverT(language, "landing.metadata.title", { brand: TENANT_NAME });
+  const description = serverT(language, "landing.metadata.description");
+  const canonical = new URL(requestHeaders.get("x-landing-path") === "/privacy" ? "/privacy" : "/", config.siteOrigin!);
+  canonical.searchParams.set("lang", language);
+  return {
+    metadataBase: new URL(config.siteOrigin!), title, description,
+    alternates: { canonical: canonical.href },
+    robots: { index: false, follow: false },
+    icons: { icon: "/eat/icon.png", apple: "/eat/apple-icon.png" },
+    openGraph: { title, description, url: canonical.href, locale: language === "es" ? "es_US" : "en_US", images: [] },
+    twitter: { title, description, images: [] },
+  };
+}
 
 export default async function LandingLayout({children}:{children:ReactNode}) {
   const config = loadLandingConfig();

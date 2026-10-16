@@ -1,6 +1,6 @@
 # Landing phase 1 — chunk A handoff
 
-Branch: `feat/landing-p1` at approved r4 `051d5100`.
+Historical Chunk A base: approved r4 `051d5100`; reviewed implementation `df131fa7`. Current branch: `feat/landing-p1`.
 Worktree: `C:/Users/conta/co-ops-landing`.
 All implementation changes are UNCOMMITTED. No fetch, push, merge, deployment, resources, production reads/writes, or remote migration apply.
 
@@ -10,7 +10,7 @@ A1–A5: seven-section bilingual skeleton and privacy page; strict host-first ro
 
 ## Files
 
-- Routing/security: `proxy.ts`, `next.config.ts`, `instrumentation.ts`, `lib/security-headers.ts`, `lib/landing/host-shared.ts`, `lib/landing/vary-server.ts`.
+- Routing/security: `proxy.ts`, `next.config.ts`, `instrumentation.ts`, `lib/security-headers.ts`, `lib/landing/host-shared.ts`. R5 deletes `lib/landing/vary-server.ts` and its test, restoring instrumentation.ts to 051d5100.
 - Shell/config: `config/tenant/landing.ts`, `lib/landing/config.ts`, `lib/landing/links.ts`, `lib/landing/stores.ts`, `lib/landing/language-shared.ts`, `app/eat/{layout,page}.tsx`, `app/eat/privacy/page.tsx`, `components/landing/LanguageToggle.tsx`, both `lib/i18n/{en,es}.json`.
 - Progressive enhancement: `components/portal/{Reveal,FaqItem}.tsx`.
 - Browser measurement: `lib/landing/{attribution-shared,consent-shared,offers,tracking-client}.ts`, `components/landing/{ConsentNotice,TrackingProvider,SectionView,OrderLink,OfferCode}.tsx`.
@@ -20,7 +20,7 @@ A1–A5: seven-section bilingual skeleton and privacy page; strict host-first ro
 - Tests: all `tests/landing/*`, `tests/e2e/landing/*`, `tests/live/landing-links.probe.ts`; additions to `tests/security-headers.test.ts` and `tests/sim-isolation.test.ts`.
 - Supporting documentation: `docs/dependency-baseline.md`, `docs/tracking.md`, this handoff.
 
-## Verification
+## Historical verification of Chunk A at df131fa7 (not the r5 rerun)
 
 - `npm run build`: passed (Next16.2.4 production build).
 - `npx vitest run tests/landing --pool=threads --no-cache --maxWorkers=3`: 18 files, 163 tests passed.
@@ -34,7 +34,7 @@ TDD red runs were observed for missing host/config/tracking/server modules, prog
 
 `node --experimental-strip-types scripts/landing/order-click-sql-check.ts`: the isolated SQL harness passed 25 checks and 100 concurrently submitted increments. PGlite uses one serialized connection; independent-session Postgres contention remains a separate activation gate.
 
-The first complete browser run proved both-browser axe AA, translated sections, JS-off/native links, consent/DNT/GPC, deduplicated event IDs and dormant endpoints. It exposed Next's pre-proxy slash redirect and overwritten Host Vary. Those defects were fixed; all 52 tests passed on the final production rerun.
+The first complete browser run proved both-browser axe AA, translated sections, JS-off/native links, consent/DNT/GPC, deduplicated event IDs and dormant endpoints. It exposed Next's pre-proxy slash redirect and overwritten Host Vary. The original workarounds passed those 52 tests, but Aggie later found the slash loop and the lead rejected the Vary guard. R5 replaces both; historical passing counts do not certify those fixes.
 
 ## Deviations and review points
 
@@ -42,11 +42,24 @@ The first complete browser run proved both-browser axe AA, translated sections, 
 - `axe-core`4.11.3 already existed in the lockfile and is now an explicit dependency; Playwright injects it directly. New wrapper/LHCI installs were blocked by registry EACCES and offline ENOTCACHED. `perf:ci` is pinned to LHCI0.15.1 but produced no score; transitive dependency/engine resolution remains open.
 - Default browser installation failed EPERM creating its cache lock. Existing Chromium/WebKit binaries launched and were used.
 - Browser ports moved from occupied3100 to43170/43171; test servers use synthetic auth material and no DB/provider credentials.
-- Next16.2.4 overwrites Vary in its generated app-page handler. A runtime Node header guard preserves only the proxy's existing Host token; staff responses are unchanged. This additional `instrumentation.ts` integration needs CC review and deployment verification, and should be removed once Next preserves Vary itself.
-- Next's slash normalization otherwise precedes host isolation. Disabled that global pre-proxy redirect and retained staff308 behavior inside proxy after host checks.
+- R5 removes the Node Vary guard and restores pre-Chunk-A instrumentation verbatim. Landing HTML/RSC is private, no-store; Vercel CDN keys by host; no Vary: Host. Host-specific content and cache-policy assertions replace the guard assertions.
+- R5 restores Next stock slash canonicalization and removes the looping proxy 308. Canonical follow-up requests still run host isolation; same-host redirects reveal no staff content.
 - Coordinates do not exist in the current locations schema. Public loader explicitly selects code/name/address/phone; coordinates/hours remain null tenant-config fields pending D2. Skeleton renders no invented shop facts and does not query live locations.
 - No real assets or offers were introduced. Merchant probe refuses to certify a200 SPA shell without branch payload/manual serving-option evidence.
 
 ## Open launch gates
 
 CC cross-family review; merchant link/branch/serving-option and branded-host equivalence evidence; final media/shop facts; Lighthouse measured performance; WAF entitlement/ingress/rule/burst proof before CAPI activation; approved disclosure and real Meta Test Events/custom conversion; real SDK cookie-domain and withdrawal verification; independent-session SQL contention and CC/Juan migration review/application. Pixel-only launch remains allowed if WAF/CAPI is unavailable. The counter needs its own explicit activation after migration; no unique-user/purchase claims.
+
+
+## R5 review handoff notes
+
+Invalid/unparseable Host or disagreement with X-Forwarded-Host now requires STAFF fallback, landing/tracking dormant and a PII-free warning; it must not 404 the whole app. Empty/absent LANDING_HOSTS preserves existing staff routing. The production ingress smoke remains an activation gate because disagreement disables the landing, not the staff app.
+
+The six activation names are now explicit in the r5 plan table. META_GRAPH_API_VERSION is pinned to v25.0 in code, so env-only upgrades cannot activate another version. LANDING_COUNTER_ENABLED stays false until reviewed 0273 application and independent-session verification; early enablement yields 503 on eligible counter requests without delaying navigation. Migration 0273 remains file-only.
+
+P3-8 (observation only): Aggie observed /_next/image returning 400 for the tested local and absolute image URLs on both hosts at df131fa7. The allowlist was inert for those requests; this is not approval of optimizer behavior for B2/B3. The planned LCP poster bypasses optimization.
+
+Current r5 verification results are to be recorded by the implementing lead after the required reruns. Historical numbers above are not new test claims.
+
+R5 isolated SQL verification: `node --experimental-strip-types scripts/landing/order-click-sql-check.ts` passed 31 checks and 100 concurrently submitted increments. The six new checks assert REFERENCES/TRIGGER ceilings for anon, authenticated and service_role. Migration 0273 was not changed or applied. `git diff --check` passed at the documentation/SQL handoff.

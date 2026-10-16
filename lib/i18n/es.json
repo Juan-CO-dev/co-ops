@@ -6790,5 +6790,10 @@
   "recipes.catalog_link": "Versiones de tienda de esta receta",
   "recipes.catalog_link_hint": "Cada tienda puede tener sus propios ingredientes y cantidades. Cámbialos en la página del catálogo.",
   "recipes.builder.lines_global_only": "Solo el Director de Operaciones cambia estas líneas para todas las tiendas. Cambia la versión propia de tu tienda en la página del catálogo.",
-  "recipes.builder.lines_change_shop": "Cambiar la versión de tu tienda"
+  "recipes.builder.lines_change_shop": "Cambiar la versión de tu tienda",
+  "landing.metadata.title": "Subs inspirados por chefs | {brand}",
+  "landing.metadata.description": "Mucho sabor, preparados al momento. Encuentra tu tienda y pide tu próximo sub.",
+  "landing.hero.alt": "Sub Crunchy Boi",
+  "landing.hero.pause": "Pausar giro",
+  "landing.hero.play": "Reproducir giro"
 }

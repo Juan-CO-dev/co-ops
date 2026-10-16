@@ -12,7 +12,7 @@
 
 Production browser checks reproduced two framework behaviors absent from pure tests:
 
-1. The built-in trailing-slash 308 precedes proxy host checks. `skipTrailingSlashRedirect` now lets host checks run first; the proxy retains the staff-host 308 explicitly.
-2. `node_modules/next/dist/build/templates/app-page.js:454` replaces Vary after proxy/config headers. The Node instrumentation hook installs `lib/landing/vary-server.ts` only when LANDING_HOSTS is nonempty. It preserves only an already-present Host token while retaining Next's RSC tokens. Staff responses without that token are unchanged. This runtime compatibility guard is an implementation deviation requiring CC review and a deployment smoke; remove it when the framework preserves prior Vary. The existing sim network guard remains independently gated.
+1. Next's stock trailing-slash 308 precedes the proxy. R5 restores it by removing `skipTrailingSlashRedirect` and the proxy redirect. Same-host canonicalization exposes no staff content; the canonical request still receives host isolation.
+2. Next overwrites Vary in its app-page handler. R5 removes the process-wide header patch and restores instrumentation.ts exactly to its pre-Chunk-A content, including the sim rationale comment. Landing HTML/RSC uses `Cache-Control: private, no-store`; Vercel CDN keys by host; no `Vary: Host` is required or added. Production tests assert cache policy and differing host content.
 
 Browser harness ports are 43170/43171 because 3100 was already occupied. Installed Chromium and WebKit both launched successfully despite the installer cache-lock EPERM. A teardown hook stops only the child PIDs created by this harness; Windows process-tree termination otherwise left the two test servers alive.

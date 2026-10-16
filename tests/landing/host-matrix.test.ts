@@ -8,9 +8,9 @@ describe('strict authoritative host matrix', () => {
   it.each(['staff.example.test', 'unlisted.vercel.app', 'eat.example.test.evil.test'])('keeps %s outside landing', host => expect(classifyLandingHost(headers(host), env)).toBe('staff'));
   it.each(['', 'eat.example.test.', 'user@eat.example.test', 'eat.example.test/path', 'eat.example.test\\', 'eat.example.test,evil.test', ' eat.example.test', 'eat.example.test:0', 'eat.example.test:65536', 'eat.example.test:abc', 'xn--eat-9za.test', 'éat.example.test', 'eat.example.test?', 'eat.example.test#'])('rejects authority %s', host => expect(parseAuthority(host)).toBeNull());
   it('requires Host, ignores internal hints and refuses forwarded disagreement', () => {
-    expect(classifyLandingHost(new Headers({ 'x-forwarded-host': 'eat.example.test', 'x-landing': 'true' }), env)).toBe('invalid');
-    expect(classifyLandingHost(headers('eat.example.test', 'staff.example.test'), env)).toBe('invalid');
-    expect(classifyLandingHost(headers('eat.example.test:3100', 'eat.example.test'), env)).toBe('invalid');
+    expect(classifyLandingHost(new Headers({ 'x-forwarded-host': 'eat.example.test', 'x-landing': 'true' }), env)).toBe('staff');
+    expect(classifyLandingHost(headers('eat.example.test', 'staff.example.test'), env)).toBe('staff');
+    expect(classifyLandingHost(headers('eat.example.test:3100', 'eat.example.test'), env)).toBe('staff');
     expect(classifyLandingHost(headers('EAT.EXAMPLE.TEST:443', 'eat.example.test'), env)).toBe('landing');
   });
   it.each([undefined, ''])('empty allowlist fails closed: %s', LANDING_HOSTS => {

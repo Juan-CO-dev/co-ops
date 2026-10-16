@@ -1,0 +1,32 @@
+{
+  "id": "hero-poster",
+  "sourceId": "014",
+  "publicPath": "/media/crunchy-boi-014.webp",
+  "classification": "real-photo",
+  "sourcePath": "C:/Users/conta/co-chief-assets/shoot/Product/compliementsonly_073126_sm_014.JPG",
+  "sourceSha256": "aa41b3421c36f4ca029f99a4e0d77c60682240ce2a9dfc6ba092ee6d70c5b6b0",
+  "sha256": "3566a724066c84283bbda344aeea78cf90e8115398b39196bea1f4b7c04b0463",
+  "bytes": 44380,
+  "maxBytes": 100000,
+  "width": 750,
+  "height": 1125,
+  "sidecar": "assets/provenance/hero-poster.json",
+  "crop": [
+    0,
+    0,
+    3707,
+    5560
+  ],
+  "steps": [
+    "full-frame uniform resize",
+    "WebP encode; metadata stripped"
+  ],
+  "quality": 86,
+  "tool": {
+    "sharp": "0.34.5",
+    "vips": "8.17.3",
+    "scriptSha256": "3dea968a987ea8e4c435abf3aa85ab345fd565364ec7d4b52ac1cc715c67aa59"
+  },
+  "command": "node scripts/assets/export.mjs",
+  "review": "Full frame preserved; phone visual review remains required"
+}

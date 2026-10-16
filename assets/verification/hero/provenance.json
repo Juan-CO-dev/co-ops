@@ -1,0 +1,584 @@
+{
+  "toolVersion": "ffmpeg version 8.1.1-full_build-www.gyan.dev Copyright (c) 2000-2026 the FFmpeg developers\r",
+  "entry": {
+    "id": "crunchy-boi-spin",
+    "publicPath": "/media/crunchy-boi-spin.mp4",
+    "classification": "drawn",
+    "sourcePath": "C:/Users/conta/CO-Ads-Launch-2026-10/08 Crunchy Boi 360 Spin (asset)/Spin_1x1_transparent.webm",
+    "sourceSha256": "ebb277e24a3d8e7bc71b90081931af8d959680cca5f585c22173270b266c4127",
+    "sha256": "dfb8c93fe64d4c2aac3380dab9762a74110423b93f3f545288425ac0b5a2645a",
+    "width": 720,
+    "height": 720,
+    "bytes": 562664,
+    "maxBytes": 1500000,
+    "sidecar": "assets/provenance/hero-spin.json",
+    "duration": 8,
+    "background": "#FFE560",
+    "codec": "h264",
+    "provenance": "DRAWN (AI REFERENCE), supplied approved spin; decode/composite/encode only"
+  },
+  "control": {
+    "path": "C:/Users/conta/CO-Ads-Launch-2026-10/19 Brand Assets - Logo Pack/02 3D Stamp Spin/StampSpin_1x1_3s_ALPHA.webm",
+    "sha256": "e051fb3dd65f19acde314c1d8a80da7f6c88c1fd99d10d60a3d9c9080a7461f5",
+    "alpha": {
+      "min": 0,
+      "max": 255,
+      "bytes": 1166400,
+      "nonconstant": true
+    }
+  },
+  "sourceAlpha": [
+    {
+      "time": 0,
+      "min": 0,
+      "max": 255,
+      "bytes": 1166400,
+      "nonconstant": true
+    },
+    {
+      "time": 2,
+      "min": 0,
+      "max": 255,
+      "bytes": 1166400,
+      "nonconstant": true
+    },
+    {
+      "time": 4,
+      "min": 0,
+      "max": 255,
+      "bytes": 1166400,
+      "nonconstant": true
+    },
+    {
+      "time": 6,
+      "min": 0,
+      "max": 255,
+      "bytes": 1166400,
+      "nonconstant": true
+    }
+  ],
+  "opaqueAlpha": {
+    "min": 255,
+    "max": 255,
+    "bytes": 4096,
+    "nonconstant": false
+  },
+  "comparisons": [
+    {
+      "name": "yellow",
+      "color": "0xFFE560",
+      "mp4": "C:\\Users\\conta\\co-ops-landing\\public\\media\\crunchy-boi-spin.mp4",
+      "reference": "C:\\Users\\conta\\co-ops-landing\\assets\\work\\video/spin-yellow-reference.png",
+      "decoded": "C:\\Users\\conta\\co-ops-landing\\assets\\work\\video/spin-yellow-decoded.png"
+    },
+    {
+      "name": "ink",
+      "color": "0x141414",
+      "mp4": "C:\\Users\\conta\\co-ops-landing\\assets\\work\\video/spin-ink.mp4",
+      "reference": "C:\\Users\\conta\\co-ops-landing\\assets\\work\\video/spin-ink-reference.png",
+      "decoded": "C:\\Users\\conta\\co-ops-landing\\assets\\work\\video/spin-ink-decoded.png"
+    }
+  ],
+  "commands": [
+    {
+      "tool": "ffprobe",
+      "args": [
+        "-v",
+        "error",
+        "-show_streams",
+        "-show_format",
+        "-of",
+        "json",
+        "C:/Users/conta/CO-Ads-Launch-2026-10/08 Crunchy Boi 360 Spin (asset)/Spin_1x1_transparent.webm"
+      ]
+    },
+    {
+      "tool": "ffmpeg",
+      "args": [
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-y",
+        "-c:v",
+        "libvpx-vp9",
+        "-i",
+        "C:/Users/conta/CO-Ads-Launch-2026-10/19 Brand Assets - Logo Pack/02 3D Stamp Spin/StampSpin_1x1_3s_ALPHA.webm",
+        "-ss",
+        "0",
+        "-vf",
+        "format=rgba,alphaextract",
+        "-frames:v",
+        "1",
+        "-f",
+        "rawvideo",
+        "-pix_fmt",
+        "gray",
+        "pipe:1"
+      ]
+    },
+    {
+      "tool": "ffmpeg",
+      "args": [
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-y",
+        "-c:v",
+        "libvpx-vp9",
+        "-i",
+        "C:/Users/conta/CO-Ads-Launch-2026-10/08 Crunchy Boi 360 Spin (asset)/Spin_1x1_transparent.webm",
+        "-ss",
+        "0",
+        "-vf",
+        "format=rgba,alphaextract",
+        "-frames:v",
+        "1",
+        "-f",
+        "rawvideo",
+        "-pix_fmt",
+        "gray",
+        "pipe:1"
+      ]
+    },
+    {
+      "tool": "ffmpeg",
+      "args": [
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-y",
+        "-c:v",
+        "libvpx-vp9",
+        "-i",
+        "C:/Users/conta/CO-Ads-Launch-2026-10/08 Crunchy Boi 360 Spin (asset)/Spin_1x1_transparent.webm",
+        "-ss",
+        "2",
+        "-vf",
+        "format=rgba,alphaextract",
+        "-frames:v",
+        "1",
+        "-f",
+        "rawvideo",
+        "-pix_fmt",
+        "gray",
+        "pipe:1"
+      ]
+    },
+    {
+      "tool": "ffmpeg",
+      "args": [
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-y",
+        "-c:v",
+        "libvpx-vp9",
+        "-i",
+        "C:/Users/conta/CO-Ads-Launch-2026-10/08 Crunchy Boi 360 Spin (asset)/Spin_1x1_transparent.webm",
+        "-ss",
+        "4",
+        "-vf",
+        "format=rgba,alphaextract",
+        "-frames:v",
+        "1",
+        "-f",
+        "rawvideo",
+        "-pix_fmt",
+        "gray",
+        "pipe:1"
+      ]
+    },
+    {
+      "tool": "ffmpeg",
+      "args": [
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-y",
+        "-c:v",
+        "libvpx-vp9",
+        "-i",
+        "C:/Users/conta/CO-Ads-Launch-2026-10/08 Crunchy Boi 360 Spin (asset)/Spin_1x1_transparent.webm",
+        "-ss",
+        "6",
+        "-vf",
+        "format=rgba,alphaextract",
+        "-frames:v",
+        "1",
+        "-f",
+        "rawvideo",
+        "-pix_fmt",
+        "gray",
+        "pipe:1"
+      ]
+    },
+    {
+      "tool": "ffmpeg",
+      "args": [
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-y",
+        "-f",
+        "lavfi",
+        "-i",
+        "color=c=white:s=64x64:r=30:d=0.1",
+        "-c:v",
+        "libx264",
+        "-pix_fmt",
+        "yuv420p",
+        "C:\\Users\\conta\\co-ops-landing\\assets\\work\\video/opaque-control.mp4"
+      ]
+    },
+    {
+      "tool": "ffmpeg",
+      "args": [
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-y",
+        "-i",
+        "C:\\Users\\conta\\co-ops-landing\\assets\\work\\video/opaque-control.mp4",
+        "-ss",
+        "0",
+        "-vf",
+        "format=rgba,alphaextract",
+        "-frames:v",
+        "1",
+        "-f",
+        "rawvideo",
+        "-pix_fmt",
+        "gray",
+        "pipe:1"
+      ]
+    },
+    {
+      "tool": "ffmpeg",
+      "args": [
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-y",
+        "-c:v",
+        "libvpx-vp9",
+        "-i",
+        "C:/Users/conta/CO-Ads-Launch-2026-10/08 Crunchy Boi 360 Spin (asset)/Spin_1x1_transparent.webm",
+        "-filter_complex",
+        "[0:v]format=rgba,scale=720:720:flags=lanczos,setsar=1[fg];color=c=0xFFE560:s=720x720:r=30,format=rgba[bg];[bg][fg]overlay=shortest=1:format=rgb,format=yuv420p[out]",
+        "-map",
+        "[out]",
+        "-t",
+        "8",
+        "-r",
+        "30",
+        "-c:v",
+        "libx264",
+        "-crf",
+        "23",
+        "-preset",
+        "slow",
+        "-pix_fmt",
+        "yuv420p",
+        "-movflags",
+        "+faststart",
+        "-an",
+        "C:\\Users\\conta\\co-ops-landing\\public\\media\\crunchy-boi-spin.mp4"
+      ]
+    },
+    {
+      "tool": "ffmpeg",
+      "args": [
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-y",
+        "-c:v",
+        "libvpx-vp9",
+        "-i",
+        "C:/Users/conta/CO-Ads-Launch-2026-10/08 Crunchy Boi 360 Spin (asset)/Spin_1x1_transparent.webm",
+        "-filter_complex",
+        "[0:v]format=rgba,scale=720:720:flags=lanczos,setsar=1[fg];color=c=0xFFE560:s=720x720:r=30,format=rgba[bg];[bg][fg]overlay=shortest=1:format=rgb,format=rgb24[out]",
+        "-map",
+        "[out]",
+        "-frames:v",
+        "1",
+        "-an",
+        "C:\\Users\\conta\\co-ops-landing\\assets\\work\\video/spin-yellow-reference.png"
+      ]
+    },
+    {
+      "tool": "ffmpeg",
+      "args": [
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-y",
+        "-i",
+        "C:\\Users\\conta\\co-ops-landing\\public\\media\\crunchy-boi-spin.mp4",
+        "-frames:v",
+        "1",
+        "C:\\Users\\conta\\co-ops-landing\\assets\\work\\video/spin-yellow-decoded.png"
+      ]
+    },
+    {
+      "tool": "ffmpeg",
+      "args": [
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-y",
+        "-c:v",
+        "libvpx-vp9",
+        "-i",
+        "C:/Users/conta/CO-Ads-Launch-2026-10/19 Brand Assets - Logo Pack/02 3D Stamp Spin/StampSpin_1x1_3s_ALPHA.webm",
+        "-filter_complex",
+        "[0:v]format=rgba,scale=720:720:flags=lanczos,setsar=1[fg];color=c=0xFFE560:s=720x720:r=30,format=rgba[bg];[bg][fg]overlay=shortest=1:format=rgb,format=rgb24[out]",
+        "-map",
+        "[out]",
+        "-frames:v",
+        "1",
+        "-an",
+        "C:\\Users\\conta\\co-ops-landing\\assets\\work\\video/control-yellow-reference.png"
+      ]
+    },
+    {
+      "tool": "ffmpeg",
+      "args": [
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-y",
+        "-c:v",
+        "libvpx-vp9",
+        "-i",
+        "C:/Users/conta/CO-Ads-Launch-2026-10/19 Brand Assets - Logo Pack/02 3D Stamp Spin/StampSpin_1x1_3s_ALPHA.webm",
+        "-filter_complex",
+        "[0:v]format=rgba,scale=720:720:flags=lanczos,setsar=1[fg];color=c=0xFFE560:s=720x720:r=30,format=rgba[bg];[bg][fg]overlay=shortest=1:format=rgb,format=yuv420p[out]",
+        "-map",
+        "[out]",
+        "-t",
+        "8",
+        "-r",
+        "30",
+        "-c:v",
+        "libx264",
+        "-crf",
+        "23",
+        "-preset",
+        "slow",
+        "-pix_fmt",
+        "yuv420p",
+        "-movflags",
+        "+faststart",
+        "-an",
+        "C:\\Users\\conta\\co-ops-landing\\assets\\work\\video/control-yellow.mp4"
+      ]
+    },
+    {
+      "tool": "ffmpeg",
+      "args": [
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-y",
+        "-i",
+        "C:\\Users\\conta\\co-ops-landing\\assets\\work\\video/control-yellow.mp4",
+        "-frames:v",
+        "1",
+        "C:\\Users\\conta\\co-ops-landing\\assets\\work\\video/control-yellow-decoded.png"
+      ]
+    },
+    {
+      "tool": "ffmpeg",
+      "args": [
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-y",
+        "-c:v",
+        "libvpx-vp9",
+        "-i",
+        "C:/Users/conta/CO-Ads-Launch-2026-10/08 Crunchy Boi 360 Spin (asset)/Spin_1x1_transparent.webm",
+        "-filter_complex",
+        "[0:v]format=rgba,scale=720:720:flags=lanczos,setsar=1[fg];color=c=0x141414:s=720x720:r=30,format=rgba[bg];[bg][fg]overlay=shortest=1:format=rgb,format=yuv420p[out]",
+        "-map",
+        "[out]",
+        "-t",
+        "8",
+        "-r",
+        "30",
+        "-c:v",
+        "libx264",
+        "-crf",
+        "23",
+        "-preset",
+        "slow",
+        "-pix_fmt",
+        "yuv420p",
+        "-movflags",
+        "+faststart",
+        "-an",
+        "C:\\Users\\conta\\co-ops-landing\\assets\\work\\video/spin-ink.mp4"
+      ]
+    },
+    {
+      "tool": "ffmpeg",
+      "args": [
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-y",
+        "-c:v",
+        "libvpx-vp9",
+        "-i",
+        "C:/Users/conta/CO-Ads-Launch-2026-10/08 Crunchy Boi 360 Spin (asset)/Spin_1x1_transparent.webm",
+        "-filter_complex",
+        "[0:v]format=rgba,scale=720:720:flags=lanczos,setsar=1[fg];color=c=0x141414:s=720x720:r=30,format=rgba[bg];[bg][fg]overlay=shortest=1:format=rgb,format=rgb24[out]",
+        "-map",
+        "[out]",
+        "-frames:v",
+        "1",
+        "-an",
+        "C:\\Users\\conta\\co-ops-landing\\assets\\work\\video/spin-ink-reference.png"
+      ]
+    },
+    {
+      "tool": "ffmpeg",
+      "args": [
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-y",
+        "-i",
+        "C:\\Users\\conta\\co-ops-landing\\assets\\work\\video/spin-ink.mp4",
+        "-frames:v",
+        "1",
+        "C:\\Users\\conta\\co-ops-landing\\assets\\work\\video/spin-ink-decoded.png"
+      ]
+    },
+    {
+      "tool": "ffmpeg",
+      "args": [
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-y",
+        "-c:v",
+        "libvpx-vp9",
+        "-i",
+        "C:/Users/conta/CO-Ads-Launch-2026-10/19 Brand Assets - Logo Pack/02 3D Stamp Spin/StampSpin_1x1_3s_ALPHA.webm",
+        "-filter_complex",
+        "[0:v]format=rgba,scale=720:720:flags=lanczos,setsar=1[fg];color=c=0x141414:s=720x720:r=30,format=rgba[bg];[bg][fg]overlay=shortest=1:format=rgb,format=rgb24[out]",
+        "-map",
+        "[out]",
+        "-frames:v",
+        "1",
+        "-an",
+        "C:\\Users\\conta\\co-ops-landing\\assets\\work\\video/control-ink-reference.png"
+      ]
+    },
+    {
+      "tool": "ffmpeg",
+      "args": [
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-y",
+        "-c:v",
+        "libvpx-vp9",
+        "-i",
+        "C:/Users/conta/CO-Ads-Launch-2026-10/19 Brand Assets - Logo Pack/02 3D Stamp Spin/StampSpin_1x1_3s_ALPHA.webm",
+        "-filter_complex",
+        "[0:v]format=rgba,scale=720:720:flags=lanczos,setsar=1[fg];color=c=0x141414:s=720x720:r=30,format=rgba[bg];[bg][fg]overlay=shortest=1:format=rgb,format=yuv420p[out]",
+        "-map",
+        "[out]",
+        "-t",
+        "8",
+        "-r",
+        "30",
+        "-c:v",
+        "libx264",
+        "-crf",
+        "23",
+        "-preset",
+        "slow",
+        "-pix_fmt",
+        "yuv420p",
+        "-movflags",
+        "+faststart",
+        "-an",
+        "C:\\Users\\conta\\co-ops-landing\\assets\\work\\video/control-ink.mp4"
+      ]
+    },
+    {
+      "tool": "ffmpeg",
+      "args": [
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-y",
+        "-i",
+        "C:\\Users\\conta\\co-ops-landing\\assets\\work\\video/control-ink.mp4",
+        "-frames:v",
+        "1",
+        "C:\\Users\\conta\\co-ops-landing\\assets\\work\\video/control-ink-decoded.png"
+      ]
+    },
+    {
+      "tool": "ffprobe",
+      "args": [
+        "-v",
+        "error",
+        "-show_streams",
+        "-show_format",
+        "-of",
+        "json",
+        "C:\\Users\\conta\\co-ops-landing\\public\\media\\crunchy-boi-spin.mp4"
+      ]
+    },
+    {
+      "tool": "ffmpeg",
+      "args": [
+        "-version"
+      ]
+    }
+  ],
+  "fixtureFiles": [
+    {
+      "path": "assets/verification/hero/spin-yellow-reference.png",
+      "bytes": 215382,
+      "sha256": "9825241f7bb8f60ab432c6ac4aa1122c98474dc05eab85623e84ae71d2903212"
+    },
+    {
+      "path": "assets/verification/hero/spin-ink-reference.png",
+      "bytes": 217167,
+      "sha256": "23ac3106c543cec2f563891d04ac0f7958d3046a1bc87d615093d09383403601"
+    },
+    {
+      "path": "assets/verification/hero/spin-ink.mp4",
+      "bytes": 570027,
+      "sha256": "71c01c379b89d7c99d886582bc675a20516c9edb5ca319f651b777099f98ac98"
+    },
+    {
+      "path": "assets/verification/hero/control-yellow-reference.png",
+      "bytes": 16195,
+      "sha256": "f3edfcee28f16d56b126599365669f2ea2e5a8888af19105905add7e01d6ecb8"
+    },
+    {
+      "path": "assets/verification/hero/control-ink-reference.png",
+      "bytes": 15546,
+      "sha256": "63b866bb3ae51ad92daf69f423423b5cf5473fd3cc0ffe1581c2f40c04e42d4f"
+    },
+    {
+      "path": "assets/verification/hero/control-yellow.mp4",
+      "bytes": 302837,
+      "sha256": "6561adc44f33cf04f40d34a1228f2b0c43be9ce0ec3d0d68f9f42fb49b57bfd8"
+    },
+    {
+      "path": "assets/verification/hero/control-ink.mp4",
+      "bytes": 307982,
+      "sha256": "fad5a7efa79334248240f6166d5785a5da97cb547189d0a83bf296566c5f548a"
+    }
+  ],
+  "note": "Derived verification fixtures only; never served publicly. Full master originals remain external."
+}
